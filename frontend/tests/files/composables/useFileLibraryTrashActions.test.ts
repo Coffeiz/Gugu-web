@@ -16,13 +16,15 @@ const { confirmDialog, activeEmpty, getEmptyJob, startEmpty, showAppError, showA
 
 vi.mock('@/services/api', () => ({
   trashApi: {
+    page: vi.fn(),
+    foldersPage: vi.fn(),
     list: vi.fn(),
     listFolders: vi.fn(),
     restore: vi.fn(),
     restoreFolder: vi.fn(),
     hardDelete: vi.fn(),
     hardDeleteFolder: vi.fn(),
-    listFolderContents: vi.fn(),
+    folderContentsPage: vi.fn(),
     activeEmpty,
     getEmptyJob,
     startEmpty,
@@ -45,6 +47,7 @@ function mountActions() {
         selectedTrashFolderIds: ref(new Set<number>()),
         expandedTrashFolders: ref(new Set<number>()),
         trashFolderContents: ref({}),
+        trashFolderCursors: ref({}),
         loadContents,
         clearSelection: vi.fn(),
         refreshCache,

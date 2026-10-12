@@ -1,10 +1,8 @@
 """定时任务时区与文件版本查询的回归测试。"""
 from datetime import timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy.exc import DBAPIError
 
 
 @pytest.mark.asyncio
@@ -108,43 +106,3 @@ async def test_list_tasks_keeps_in_flight_once_task_untouched(db, user_a, monkey
 
     await db.refresh(running_task)
     assert running_task.last_run_failed is False   # 没被误标成失败
-
-
-@pytest.mark.asyncio
-async def test_files_version_retries_deadlock_after_rollback(monkeypatch):
-    from app.services.files.browser import get_file_version_snapshot
-
-    class DeadlockDetectedError(Exception):
-        pass
-
-    db = SimpleNamespace(
-        execute=AsyncMock(side_effect=[
-            DBAPIError("SELECT", {}, DeadlockDetectedError()),
-        SimpleNamespace(one=lambda: (1, "updated", None)),
-        ]),
-        rollback=AsyncMock(),
-    )
-    monkeypatch.setattr("asyncio.sleep", AsyncMock())
-
-    result = await get_file_version_snapshot(db, 1)
-
-    assert result == (1, "updated", None)
-    assert db.execute.await_count == 2
-    db.rollback.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_files_version_does_not_retry_non_deadlock():
-    from app.services.files.browser import get_file_version_snapshot
-
-    db_error = DBAPIError("SELECT", {}, ValueError("bad query"))
-    db = SimpleNamespace(
-        execute=AsyncMock(side_effect=db_error),
-        rollback=AsyncMock(),
-    )
-
-    with pytest.raises(DBAPIError):
-        await get_file_version_snapshot(db, 1)
-
-    db.execute.assert_awaited_once()
-    db.rollback.assert_not_awaited()

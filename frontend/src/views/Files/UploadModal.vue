@@ -172,6 +172,10 @@
                 </svg>
                 {{ f.name }}
               </button>
+              <button v-if="projectFoldersHasMore" class="select-btn" :disabled="projectFoldersLoading" @click="loadMoreFolders">
+                {{ projectFoldersLoading ? t('filesUi.loading') : t('filesUi.loadMoreFolders') }}
+              </button>
+              <small v-else-if="projectFoldersLimited">{{ t('filesViewUi.pageLimitReached') }}</small>
             </div>
             <span v-else class="no-proj-hint">{{ t('filesUi.noFolders') }}</span>
           </div>
@@ -243,6 +247,10 @@ const doneExpanded    = ref(false)
 const openYears       = ref(new Set())
 const openMonths      = ref(new Set())
 const projectFolders  = ref<any[]>([])
+const projectFoldersCursor = ref<string | null>(null)
+const projectFoldersHasMore = ref(false)
+const projectFoldersLimited = ref(false)
+const projectFoldersLoading = ref(false)
 
 const effectiveProjectId = computed(() => props.lockedProjectId ?? selectedId.value)
 const currentProjectStages = computed(() => {
@@ -259,9 +267,41 @@ function stageDefault(pid = effectiveProjectId.value) {
 }
 
 async function loadFolders(pid: any) {
-  if (!pid) { projectFolders.value = []; return }
-  try { projectFolders.value = await foldersApi.list(pid) }
-  catch { projectFolders.value = [] }
+  projectFolders.value = []
+  projectFoldersCursor.value = null
+  projectFoldersHasMore.value = false
+  projectFoldersLimited.value = false
+  if (!pid) return
+  projectFoldersLoading.value = true
+  try {
+    const page = await foldersApi.page({ projectId: pid, limit: 100, sortBy: 'name', sortOrder: 'asc' })
+    projectFolders.value = page.items
+    projectFoldersCursor.value = page.next_cursor
+    projectFoldersHasMore.value = page.has_more
+  } catch { projectFolders.value = [] }
+  finally { projectFoldersLoading.value = false }
+}
+
+async function loadMoreFolders() {
+  const pid = effectiveProjectId.value == null ? null : Number(effectiveProjectId.value)
+  if (!pid || !projectFoldersHasMore.value || projectFoldersLoading.value) return
+  const remaining = Math.max(0, 2000 - projectFolders.value.length)
+  if (remaining === 0) {
+    projectFoldersHasMore.value = false
+    projectFoldersLimited.value = true
+    return
+  }
+  projectFoldersLoading.value = true
+  try {
+    const page = await foldersApi.page({ projectId: pid, cursor: projectFoldersCursor.value, limit: 100, sortBy: 'name', sortOrder: 'asc' })
+    if (effectiveProjectId.value !== pid) return
+    const accepted = page.items.slice(0, remaining)
+    projectFolders.value = [...projectFolders.value, ...accepted]
+    projectFoldersCursor.value = page.next_cursor
+    projectFoldersHasMore.value = page.has_more && accepted.length === page.items.length
+    projectFoldersLimited.value = projectFolders.value.length >= 2000 && page.has_more
+  } catch { /* 允许用户再次加载 */ }
+  finally { projectFoldersLoading.value = false }
 }
 
 watch(effectiveProjectId, (pid) => {
@@ -287,6 +327,8 @@ watch(() => props.show, v => {
     uploadedCount.value = 0
     doneExpanded.value = false
     projectFolders.value = []
+    projectFoldersCursor.value = null
+    projectFoldersHasMore.value = false
   }
 })
 

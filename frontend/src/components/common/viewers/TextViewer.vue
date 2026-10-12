@@ -51,14 +51,14 @@ import { ref, watch, nextTick, computed, defineAsyncComponent, onMounted, onBefo
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/icons/Icon.vue'
-import { filesApi, foldersApi } from '@/services/api'
+import { filesApi } from '@/services/api'
 import { sanitizeHtml, splitYamlFrontmatter } from '@/utils/markdown'
 import { bindMermaidInteractions, cleanupMermaidInteractions } from '@/utils/mermaidInteraction'
 import { resolveMermaidThemeColors } from '@/utils/mermaidTheme'
-import { useFilesCacheStore, type FileMeta, type FolderMeta } from '@/stores/filesCache'
+import type { FileMeta } from '@/stores/filesCache'
 import { usePreviewStore, isPreviewable, isTextMime, isImageExt } from '@/stores/preview'
 import { useUiStore } from '@/stores/ui'
-import { resolveRelativeFileLink, buildFileLinkIndex, isRelativeFileLink, isSiblingFileLink } from '@/utils/fileLinks'
+import { isRelativeFileLink } from '@/utils/fileLinks'
 
 const { t } = useI18n()
 
@@ -90,7 +90,6 @@ const emit = defineEmits<{
 }>()
 
 const router = useRouter()
-const filesCache = useFilesCacheStore()
 const previewStore = usePreviewStore()
 const uiStore = useUiStore()
 
@@ -541,48 +540,20 @@ async function onMdClick(e: MouseEvent) {
   if (!anchor || !props.fileContext?.id) return
   const href = anchor.getAttribute('href')
   if (!href || !isRelativeFileLink(href)) return
-  let files = filesCache.allFiles
-  let folders = filesCache.allFolders
-  if (!filesCache.loaded && isSiblingFileLink(href)) {
-    const context = props.fileContext
-    const space = context.space ?? (context.projectId != null ? 'project' : 'personal')
-    try {
-      ;[files, folders] = await Promise.all([
-        filesApi.list({
-          space,
-          projectId: context.projectId ?? undefined,
-          folderId: context.folderId ?? undefined,
-          workspaceDirectoryId: context.workspaceDirectoryId ?? undefined,
-        }) as Promise<FileMeta[]>,
-        foldersApi.list({
-          projectId: context.projectId ?? undefined,
-          parentId: context.folderId ?? undefined,
-          workspaceDirectoryId: context.workspaceDirectoryId ?? undefined,
-        }) as Promise<FolderMeta[]>,
-      ])
-    } catch {
-      return
-    }
-  } else if (!filesCache.loaded) {
-    // 跨目录相对路径需要祖先链；暂沿用完整索引确保 ../ 与多级路径语义不变。
-    await filesCache.load()
-    files = filesCache.allFiles
-    folders = filesCache.allFolders
-  }
-  const resolved = resolveRelativeFileLink(
-    href,
-    { folderId: props.fileContext.folderId, projectId: props.fileContext.projectId },
-    files,
-    folders,
-  )
+  let resolved: Awaited<ReturnType<typeof filesApi.resolvePaths>>[number] | undefined
+  try { resolved = (await filesApi.resolvePaths(props.fileContext.id, [href]))[0] } catch { return }
   if (!resolved) return
 
   e.preventDefault()
-  if (resolved.kind === 'file' && isPreviewable(resolved.file.ext, resolved.file.mimeType)) {
-    previewStore.open(resolved.file)
+  if (resolved.file && isPreviewable(resolved.file.ext, resolved.file.mimeType)) {
+    previewStore.open(resolved.file as FileMeta)
     return
   }
-  uiStore.pendingFileTarget = { kind: resolved.kind, id: resolved.kind === 'file' ? resolved.file.id : resolved.folder.id }
+  const target = resolved.file
+    ? { kind: 'file' as const, id: resolved.file.id }
+    : resolved.folder ? { kind: 'folder' as const, id: resolved.folder.id } : null
+  if (!target) return
+  uiStore.pendingFileTarget = target
   await router.push('/files')
 }
 
@@ -632,44 +603,20 @@ async function resolveMdRelativeImages() {
   const token    = localStorage.getItem('user_token') ?? ''
   const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
   releaseMdObjectUrls()
-  let files = filesCache.allFiles
-  let folders = filesCache.allFolders
-  const siblingImagesOnly = localImages.every(img => isSiblingFileLink(img.getAttribute('src') || ''))
-  if (!filesCache.loaded && siblingImagesOnly) {
-    // 最常见的 ./image.png 只需查询 Markdown 所在目录；无须下载用户全部文件及文件夹索引。
-    try {
-      files = await filesApi.list({
-        space: fileContext.space ?? (fileContext.projectId != null ? 'project' : 'personal'),
-        projectId: fileContext.projectId ?? undefined,
-        folderId: fileContext.folderId ?? undefined,
-        workspaceDirectoryId: fileContext.workspaceDirectoryId ?? undefined,
-      }) as FileMeta[]
-      folders = []
-    } catch {
-      return // 图片路径解析失败不影响正文预览
-    }
-    if (mdRoot.value !== root) return
-  } else if (!filesCache.loaded) {
-    // 跨目录相对路径需要祖先链；暂沿用完整索引确保 ../ 与多级路径语义不变。
-    await filesCache.load()
-    if (mdRoot.value !== root) return
-    files = filesCache.allFiles
-    folders = filesCache.allFolders
-  }
-  // 索引一次构建 O(N)，每张图 O(1) 查找；逐图全量扫描在大文件库上会拖到秒级。
-  const index = buildFileLinkIndex(files, folders)
-  const resolve = (href: string) => index.resolve(href, {
-    folderId: fileContext.folderId,
-    projectId: fileContext.projectId,
-  })
+  let resolved: Awaited<ReturnType<typeof filesApi.resolvePaths>> = []
+  try {
+    resolved = await filesApi.resolvePaths(fileContext.id, localImages.map(image => image.getAttribute('src') || ''))
+  } catch { return }
+  if (mdRoot.value !== root) return
+  const byPath = new Map(resolved.map(item => [item.path, item.file]))
   for (const img of localImages) {
     const src = img.getAttribute('src') || ''
     if (!src || src.startsWith('#') || src.startsWith('/') || src.startsWith('//')) continue
     if (/^[a-z][a-z\d+.-]*:/i.test(src)) continue
-    const resolved = resolve(src)
-    if (!resolved || resolved.kind !== 'file' || !isImageExt(resolved.file.ext)) continue
+    const file = byPath.get(src)
+    if (!file || !isImageExt(file.ext)) continue
     try {
-      const res = await fetch(`${BASE_URL}/files/${resolved.file.id}/download`, {
+      const res = await fetch(`${BASE_URL}/files/${file.id}/download`, {
         headers, credentials: 'include', cache: 'no-cache',
       })
       if (!res.ok) continue

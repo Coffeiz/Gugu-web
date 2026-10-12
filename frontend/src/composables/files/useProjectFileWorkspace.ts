@@ -3,12 +3,11 @@ import type { FileMeta, FolderMeta } from '@/stores/filesCache'
 import { useFolderNavigation } from '@/composables/files/useFolderNavigation'
 
 interface ProjectFileCache {
-  getProjectRootFolders(projectId: number): FolderMeta[]
-  getSubFolders(parentId: number): FolderMeta[]
-  getProjectRootFiles(projectId: number): FileMeta[]
-  getFolderFiles(folderId: number): FileMeta[]
+  getProjectRootFolders(projectId: number, sortBy?: string, sortOrder?: 'asc' | 'desc'): FolderMeta[]
+  getSubFolders(parentId: number, sortBy?: string, sortOrder?: 'asc' | 'desc'): FolderMeta[]
+  getProjectRootFiles(projectId: number, sortBy?: string, sortOrder?: 'asc' | 'desc'): FileMeta[]
+  getFolderFiles(folderId: number, sortBy?: string, sortOrder?: 'asc' | 'desc'): FileMeta[]
   getFolder(folderId: number): FolderMeta | null
-  allFolders: FolderMeta[]
 }
 
 /**
@@ -21,8 +20,12 @@ export function useProjectFileWorkspace(options: {
   projectId: () => number | null | undefined
   fileCacheStore: ProjectFileCache
   isDirectoryLoaded: (projectId: number, folderId: number) => boolean
+  sortBy?: () => string
+  sortOrder?: () => 'asc' | 'desc'
 }) {
   const { projectId, fileCacheStore, isDirectoryLoaded } = options
+  const sortBy = () => options.sortBy?.() ?? 'createdAt'
+  const sortOrder = () => options.sortOrder?.() ?? 'desc'
   const fileViewMode = ref<'grid' | 'list'>('grid')
   const openFolders = ref(new Set<number>())
   const {
@@ -39,16 +42,16 @@ export function useProjectFileWorkspace(options: {
 
   const currentFolders = computed(() => {
     const pid = projectId() ?? -1
-    if (!folderStack.value.length) return fileCacheStore.getProjectRootFolders(pid)
+    if (!folderStack.value.length) return fileCacheStore.getProjectRootFolders(pid, sortBy(), sortOrder())
     const parentId = folderStack.value[folderStack.value.length - 1].id
-    return fileCacheStore.getSubFolders(parentId)
+    return fileCacheStore.getSubFolders(parentId, sortBy(), sortOrder())
   })
 
   const currentFiles = computed(() => {
     const pid = projectId() ?? -1
-    if (!folderStack.value.length) return fileCacheStore.getProjectRootFiles(pid)
+    if (!folderStack.value.length) return fileCacheStore.getProjectRootFiles(pid, sortBy(), sortOrder())
     const folderId = folderStack.value[folderStack.value.length - 1].id
-    return fileCacheStore.getFolderFiles(folderId)
+    return fileCacheStore.getFolderFiles(folderId, sortBy(), sortOrder())
   })
 
   const currentFolder = computed(() =>
@@ -60,15 +63,6 @@ export function useProjectFileWorkspace(options: {
     if (isDirectoryLoaded(pid, folderId)) return fileCacheStore.getFolderFiles(folderId).length
     return fileCacheStore.getFolder(folderId)?.fileCount ?? fileCacheStore.getFolderFiles(folderId).length
   }
-
-  const totalFileCount = computed(() => {
-    const pid = projectId() ?? -1
-    let count = fileCacheStore.getProjectRootFiles(pid).length
-    for (const folder of fileCacheStore.allFolders) {
-      if (folder.projectId === pid) count += fileCacheStore.getFolderFiles(folder.id).length
-    }
-    return count
-  })
 
   return {
     fileViewMode,
@@ -87,6 +81,5 @@ export function useProjectFileWorkspace(options: {
     currentFolder,
     currentFolderFiles,
     pmFolderCount,
-    totalFileCount,
   }
 }

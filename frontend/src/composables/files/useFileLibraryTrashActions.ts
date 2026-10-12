@@ -1,5 +1,5 @@
 import { type Ref } from 'vue'
-import { trashApi, type TrashFolderContents, type TrashFolderMeta } from '@/services/api'
+import { trashApi, type TrashFolderContentsPage, type TrashFolderContentsSnapshot, type TrashFolderMeta } from '@/services/api'
 import type { FileMeta } from '@/stores/filesCache'
 import { confirmFileDeletion } from './useFileDeleteConfirm'
 import { useFileLibraryTrashPurge, type TrashPurgeApi } from './useFileLibraryTrashPurge'
@@ -7,13 +7,11 @@ import { useFileLibraryTrashPurge, type TrashPurgeApi } from './useFileLibraryTr
 export type { EmptyTrashProgress } from './useFileLibraryTrashPurge'
 
 interface TrashApi extends TrashPurgeApi {
-  list: () => Promise<FileMeta[]>
-  listFolders: () => Promise<TrashFolderMeta[]>
   restore: (id: number) => Promise<unknown>
   restoreFolder: (id: number) => Promise<unknown>
   hardDelete: (id: number) => Promise<unknown>
   hardDeleteFolder: (id: number) => Promise<unknown>
-  listFolderContents: (id: number) => Promise<TrashFolderContents>
+  folderContentsPage: (id: number, params?: { limit?: number; folderCursor?: string | null; fileCursor?: string | null }) => Promise<TrashFolderContentsPage>
 }
 
 export interface FileLibraryTrashActionOptions {
@@ -21,7 +19,8 @@ export interface FileLibraryTrashActionOptions {
   selectedFileIds: Ref<Set<number>>
   selectedTrashFolderIds: Ref<Set<number>>
   expandedTrashFolders: Ref<Set<number>>
-  trashFolderContents: Ref<Record<number, TrashFolderContents>>
+  trashFolderContents: Ref<Record<number, TrashFolderContentsSnapshot>>
+  trashFolderCursors: Ref<Record<number, { folderCursor: string | null; fileCursor: string | null; folderHasMore: boolean; fileHasMore: boolean }>>
   loadContents: () => void
   clearSelection: () => void
   refreshCache: () => void | Promise<void | boolean>
@@ -71,7 +70,24 @@ export function useFileLibraryTrashActions(options: FileLibraryTrashActionOption
       try {
         options.trashFolderContents.value = {
           ...options.trashFolderContents.value,
-          [folder.id]: await api.listFolderContents(folder.id),
+          [folder.id]: await (async () => {
+            const remaining = Math.max(0, 2000 - Object.values(options.trashFolderContents.value)
+              .reduce((count, content) => count + content.folders.length + content.files.length, 0))
+            if (remaining === 0) return { folders: [], files: [] }
+            const page = await api.folderContentsPage(folder.id)
+            const files = page.files.items.slice(0, remaining)
+            const folders = page.folders.items.slice(0, Math.max(0, remaining - files.length))
+            options.trashFolderCursors.value = {
+              ...options.trashFolderCursors.value,
+              [folder.id]: {
+                folderCursor: folders.length === page.folders.items.length ? page.folders.next_cursor : null,
+                fileCursor: files.length === page.files.items.length ? page.files.next_cursor : null,
+                folderHasMore: folders.length === page.folders.items.length && page.folders.has_more,
+                fileHasMore: files.length === page.files.items.length && page.files.has_more,
+              },
+            }
+            return { folders, files }
+          })(),
         }
       } catch (error) {
         console.error('[Files] 加载回收站文件夹内容失败:', error instanceof Error ? error.message : String(error))
@@ -80,6 +96,40 @@ export function useFileLibraryTrashActions(options: FileLibraryTrashActionOption
     }
     next.add(folder.id)
     options.expandedTrashFolders.value = next
+  }
+
+  async function loadMoreFolderContents(folderId: number) {
+    const cursor = options.trashFolderCursors.value[folderId]
+    if (!cursor || (!cursor.folderHasMore && !cursor.fileHasMore)) return
+    const previous = options.trashFolderContents.value[folderId]
+    if (!previous) return
+    const loaded = Object.values(options.trashFolderContents.value)
+      .reduce((count, content) => count + content.folders.length + content.files.length, 0)
+    const remaining = Math.max(0, 2000 - loaded)
+    if (remaining === 0) return
+    try {
+      const page = await api.folderContentsPage(folderId, cursor)
+      const files = page.files.items.slice(0, remaining)
+      const folders = page.folders.items.slice(0, Math.max(0, remaining - files.length))
+      options.trashFolderContents.value = {
+        ...options.trashFolderContents.value,
+        [folderId]: {
+          folders: [...previous.folders, ...folders],
+          files: [...previous.files, ...files],
+        },
+      }
+      options.trashFolderCursors.value = {
+        ...options.trashFolderCursors.value,
+        [folderId]: {
+          folderCursor: folders.length === page.folders.items.length && page.folders.has_more ? page.folders.next_cursor : null,
+          fileCursor: files.length === page.files.items.length && page.files.has_more ? page.files.next_cursor : null,
+          folderHasMore: folders.length === page.folders.items.length && page.folders.has_more,
+          fileHasMore: files.length === page.files.items.length && page.files.has_more,
+        },
+      }
+    } catch (error) {
+      console.error('[Files] 继续加载回收站文件夹失败:', error instanceof Error ? error.message : String(error))
+    }
   }
 
   async function hardDeleteFile(file: FileMeta) {
@@ -143,7 +193,7 @@ export function useFileLibraryTrashActions(options: FileLibraryTrashActionOption
   const emptyTrash = purge.empty
 
   return {
-    restoreFile, restoreFolder, toggleFolder, hardDeleteFile, hardDeleteFolder,
+    restoreFile, restoreFolder, toggleFolder, loadMoreFolderContents, hardDeleteFile, hardDeleteFolder,
     restoreSelected, hardDeleteSelected, emptyTrash,
     emptyTrashBusy: purge.busy, emptyTrashProgress: purge.progress,
   }

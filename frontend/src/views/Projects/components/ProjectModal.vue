@@ -258,6 +258,7 @@ const {
   reset: resetProjectDraft,
   syncExternal: syncProjectDraft,
 } = useProjectDraft()
+const { SORT_OPTIONS: PM_SORT_OPTIONS, sortKey: pmSortKey, sortDir: pmSortDir, onSortSelect: onPmSortSelect } = useSorting('project-modal')
 const projectStages = useProjectStages({
   stages: localStages,
   currentStage: localCurrentStage,
@@ -279,11 +280,13 @@ const {
   fileViewMode, openFolders, folderStack, pmCanGoBack, pmCanGoForward,
   pmEnterFolder, pmNavigateTo, pmGoBack, pmGoForward, prunePmHistoryForFolder,
   resetPmNavigation, currentFolders, currentFiles, currentFolder, currentFolderFiles,
-  pmFolderCount, totalFileCount,
+  pmFolderCount,
 } = useProjectFileWorkspace({
   projectId: () => props.project?.id ?? null,
   fileCacheStore,
   isDirectoryLoaded: (projectId, folderId) => isDirectoryLoaded(projectId, folderId),
+  sortBy: () => pmSortKey.value,
+  sortOrder: () => pmSortDir.value,
 })
 const projectFileMutations = useProjectFileMutations({
   fileActions,
@@ -361,9 +364,6 @@ const { moveFolders: movePmFoldersInto, moveFiles: movePmFilesInto } = useProjec
   projectId: () => props.project?.id ?? null,
 })
 
-
-// ── 排序 ──────────────────────────────────────────────────────────────────────
-const { SORT_OPTIONS: PM_SORT_OPTIONS, sortKey: pmSortKey, sortDir: pmSortDir, onSortSelect: onPmSortSelect } = useSorting('project-modal')
 
 const {
   sortedFolders: sortedCurrentFolders,
@@ -556,7 +556,8 @@ async function deleteFolderCard(folder: FolderMeta) {
 }
 
 // 外部（Agent/IM）修改日期时同步本地状态（project?.id 不变，但日期值变了）
-const { initializing, ensureDirectoryLoaded, isDirectoryLoaded, invalidateProjectDirectories } = useProjectFileProjectSync({
+const { initializing, ensureDirectoryLoaded, isDirectoryLoaded, invalidateProjectDirectories,
+  loadMoreDirectory, directoryHasMore, directoryLimitReached, loadingMore: projectFilesLoadingMore } = useProjectFileProjectSync({
   project: () => props.project,
   openFolders,
   folderStack,
@@ -564,12 +565,21 @@ const { initializing, ensureDirectoryLoaded, isDirectoryLoaded, invalidateProjec
   showNewFolder,
   resetDraft: resetProjectDraft,
   fileCacheStore,
+  sortBy: () => pmSortKey.value as 'name' | 'type' | 'stage' | 'createdAt' | 'size' | 'id',
+  sortOrder: () => pmSortDir.value,
+})
+
+watch([pmSortKey, pmSortDir], () => {
+  const projectId = props.project?.id
+  if (projectId == null) return
+  invalidateProjectDirectories(projectId)
+  void loadCurrentProjectDirectory()
 })
 
 let projectDirectoryRefreshTimer: number | null = null
 watch(() => liveStore.resourceEvent, event => {
   const projectId = props.project?.id
-  if (event?.resource !== 'files' || projectId == null || fileCacheStore.loaded) return
+  if (event?.resource !== 'files' || projectId == null) return
   invalidateProjectDirectories(projectId)
   window.clearTimeout(projectDirectoryRefreshTimer ?? undefined)
   projectDirectoryRefreshTimer = window.setTimeout(loadCurrentProjectDirectory, 180)
@@ -779,6 +789,10 @@ const filePanelContext = {
   onPmDragLeave,
   onPmDrop,
   sortedCurrentFolders,
+  loadMoreDirectory,
+  directoryHasMore,
+  directoryLimitReached,
+  projectFilesLoadingMore,
   pmFolderCount,
   accentColor,
   folderLayoutKey: pmFolderLayoutKey,

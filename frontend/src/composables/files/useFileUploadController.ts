@@ -71,7 +71,15 @@ export async function prepareUploadBatch(
 ): Promise<PreparedUploadBatch> {
   const needsFolderIndex = items.some(item => item.relativePath.includes('/'))
   const existingFolders = needsFolderIndex
-    ? await foldersApi.list({ projectId: context.projectId ?? undefined, workspaceDirectoryId: context.workspaceDirectoryId ?? undefined, allInScope: true })
+    ? await foldersApi.resolvePaths({
+      projectId: context.projectId,
+      workspaceDirectoryId: context.workspaceDirectoryId,
+      parentId: context.folderId,
+      paths: [...new Set(items.flatMap(item => {
+        const separator = item.relativePath.lastIndexOf('/')
+        return separator > 0 ? [item.relativePath.slice(0, separator)] : []
+      }))],
+    })
     : undefined
   const resolved = await resolveUploadConflicts(items, context, showDialog, existingFolders)
   return {

@@ -24,7 +24,7 @@ export interface FileArchiveActionsOptions {
     getFile(id: number): FileMeta | null
     getFolder(id: number): FolderMeta | null
     addFile(file: FileMeta): void
-    refresh(): Promise<void | boolean>
+    invalidatePages(): void
   }
   getSelectedFileIds: () => number[]
   getSelectedFolderKeys: () => Array<number | string>
@@ -160,7 +160,7 @@ export function useFileArchiveActions(options: FileArchiveActionsOptions) {
           folderName: name,
           format: archiveFormatForFile(archive) ?? undefined,
         })
-        await options.cacheStore.refresh()
+        options.cacheStore.invalidatePages()
       }
     } catch (cause) {
       if (submittedMode === 'extract') {

@@ -61,8 +61,9 @@ async def test_delete_folder_endpoint_not_found(db, user_a):
 async def test_delete_folder_hidden_from_list_endpoint(db, user_a):
     folder, _ = await _mk_folder_with_file(db, user_a, "资料")
     await folders_api.delete_folder(folder.id, current_user=user_a, origin=None, db=db)
-    kids = await folders_api.list_folders(project_id=None, parent_id=None, current_user=user_a, db=db)
-    assert kids == []
+    kids = await folders_api.list_folder_page(project_id=None, parent_id=None, limit=100, cursor=None,
+        sort_by='createdAt', sort_order='desc', current_user=user_a, db=db)
+    assert kids['items'] == []
 
 
 async def test_list_trash_folders_top_level_only(db, user_a):
@@ -72,42 +73,28 @@ async def test_list_trash_folders_top_level_only(db, user_a):
     await db.commit()
 
     await folders_api.delete_folder(parent.id, current_user=user_a, origin=None, db=db)
-    out = await trash_api.list_trash_folders(current_user=user_a, db=db)
+    out = await trash_api.list_trash_folders_page(limit=100, cursor=None, current_user=user_a, db=db)
+    out = out['items']
     assert [f.id for f in out] == [parent.id]        # child 被祖先那次删除连带扫入，不单列
     assert out[0].file_count == 1                     # parent 自己直接包含的那个文件
 
 
 async def test_list_trash_folders_excludes_live(db, user_a):
     await _mk_folder_with_file(db, user_a, "live")
-    out = await trash_api.list_trash_folders(current_user=user_a, db=db)
-    assert out == []
-
-
-async def test_trash_counts_counts_top_level_units_without_loading_items(db, user_a):
-    folder, _ = await _mk_folder_with_file(db, user_a, "deleted-folder")
-    await folders_api.delete_folder(folder.id, current_user=user_a, origin=None, db=db)
-    db.add_all([
-        File(user_id=user_a.id, display_name="standalone", ext="TXT", storage_key="personal/standalone",
-             deleted_at=now_utc()),
-        File(user_id=user_a.id, display_name="live", ext="TXT", storage_key="personal/live"),
-    ])
-    await db.commit()
-
-    counts = await trash_api.trash_counts(current_user=user_a, db=db)
-
-    assert counts.file_count == 1
-    assert counts.folder_count == 1
-    assert counts.total_count == 2
+    out = await trash_api.list_trash_folders_page(limit=100, cursor=None, current_user=user_a, db=db)
+    assert out['items'] == []
 
 
 async def test_trash_folder_endpoints_isolate_other_users(db, user_a, user_b):
     folder, _ = await _mk_folder_with_file(db, user_b, "他人的回收站")
     await folders_api.delete_folder(folder.id, current_user=user_b, origin=None, db=db)
 
-    assert await trash_api.list_trash_folders(current_user=user_a, db=db) == []
+    folders = await trash_api.list_trash_folders_page(limit=100, cursor=None, current_user=user_a, db=db)
+    assert folders['items'] == []
 
     with pytest.raises(HTTPException) as contents_error:
-        await trash_api.list_trash_folder_contents(folder.id, current_user=user_a, db=db)
+        await trash_api.list_trash_folder_contents_page(folder.id, limit=100, folder_cursor=None,
+            file_cursor=None, current_user=user_a, db=db)
     assert contents_error.value.status_code == 404
 
     with pytest.raises(HTTPException) as delete_error:
@@ -127,12 +114,13 @@ async def test_list_trash_folder_contents_returns_children(db, user_a):
     await db.commit()
     await folders_api.delete_folder(parent.id, current_user=user_a, origin=None, db=db)
 
-    out = await trash_api.list_trash_folder_contents(current_user=user_a, fid=parent.id, db=db)
+    out = await trash_api.list_trash_folder_contents_page(parent.id, limit=100, folder_cursor=None,
+        file_cursor=None, current_user=user_a, db=db)
 
-    assert [folder.name for folder in out.folders] == ["二级目录"]
-    assert out.folders[0].file_count == 1
-    assert {file.display_name for file in out.files} == {parent_file.display_name}
-    assert child_file.display_name not in {file.display_name for file in out.files}
+    assert [folder.name for folder in out['folders']['items']] == ["二级目录"]
+    assert out['folders']['items'][0].file_count == 1
+    assert {file.display_name for file in out['files']['items']} == {parent_file.display_name}
+    assert child_file.display_name not in {file.display_name for file in out['files']['items']}
 
 
 async def test_folder_deleted_files_are_hidden_and_cannot_restore_individually(db, user_a):
@@ -140,7 +128,8 @@ async def test_folder_deleted_files_are_hidden_and_cannot_restore_individually(d
     await folders_api.delete_folder(folder.id, current_user=user_a, origin=None, db=db)
 
     # 文件夹是唯一恢复单元：子文件既不应单列，也不能被直接恢复成指向已删父目录的幽灵。
-    assert await trash_api.list_trash(current_user=user_a, db=db) == []
+    page = await trash_api.list_trash_page(limit=100, cursor=None, current_user=user_a, db=db)
+    assert page['items'] == []
     with pytest.raises(HTTPException) as exc:
         await trash_api.restore_file(f.id, current_user=user_a, origin=None, db=db)
     assert exc.value.status_code == 409
@@ -223,8 +212,9 @@ async def test_restore_folder_endpoint_round_trip(db, user_a):
     assert row.deleted_at is None
     await db.refresh(f)
     assert f.deleted_at is None
-    kids = await folders_api.list_folders(project_id=None, parent_id=None, current_user=user_a, db=db)
-    assert folder.id in {k.id for k in kids}
+    kids = await folders_api.list_folder_page(project_id=None, parent_id=None, limit=100, cursor=None,
+        sort_by='createdAt', sort_order='desc', current_user=user_a, db=db)
+    assert folder.id in {k.id for k in kids['items']}
 
 
 async def test_restore_folder_endpoint_not_found_when_live(db, user_a):

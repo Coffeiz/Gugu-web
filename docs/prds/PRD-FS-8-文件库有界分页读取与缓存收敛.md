@@ -1,6 +1,6 @@
 # PRD-FS-8 文件库有界分页读取与缓存收敛
 
-> 状态：实施中；Phase 1 API 分页与查询边界已完成，前端消费者仍在 Phase 2 迁移中。
+> 状态：实施中；Phase 1、Phase 2 已完成，Phase 3 百万级规模与发布验收进行中。
 > 创建：2026-10-11
 > 最近更新：2026-10-12
 > 关联模块：`backend/app/api/v1/files.py`、`backend/app/api/v1/folders.py`、`backend/app/api/v1/trash.py`、`backend/app/services/files/browser.py`、`backend/app/services/files/trash.py`、`frontend/src/services/api.ts`、`frontend/src/stores/filesCache.ts`、`frontend/src/composables/files/`
@@ -267,11 +267,11 @@ frontend/
 
 ### Phase 2：统计、缓存与前端交互
 
-- [ ] `FS8-006` 为根目录/项目/回收站所需计数实现事务一致且可重建的统计方案；验收：所有 File/Folder 写入路径和事务回滚受测试覆盖，重建可重复且不丢并发变更，页面读取不触发全表计数。
-- [ ] `FS8-007` 将全局 filesCache 改为有界页缓存与按 ID 详情缓存，并迁移文件库、项目文件区、音频、Mind 引用和项目删除确认消费者；验收：无消费者依赖“全库已加载”，缓存总页/实体受限，账号切换后的迟到响应不污染状态；冷缓存搜索跳转先呈现目标路径及加载状态，再加载目标目录页。
-- [ ] `FS8-008` 将文件库网格/列表、项目文件区和回收站接入追加分页，并保持现有排序、选择、键盘/拖放行为；验收：首屏不请求后续页，滚动才续取，页内/全筛选选择含义明确，虚拟滚动与网络分页各司其职。
-- [ ] `FS8-009` 替换全局 `/files/version` 刷新和全库事件补刷；验收：canonical event 更新已缓存详情并失效正确 scope，未知/缺口事件只使可见 scope 重取第一页，静态分析及运行测试证明不会调用全量刷新。
-- [ ] `FS8-010` 更新 OpenAPI 生成类型与所有 API 消费者，移除全量列表路由；验收：`npm run gen:types` 生成后差异已审阅，仓库运行时无 `/files/all`、`/folders/all`、`all_in_scope` 客户端调用；旧路由如保留过渡期只返回 410。
+- [x] `FS8-006` 收敛根目录/项目/回收站精确数量展示与查询；按 §3.4 允许的有界替代方案移除这些热路径计数和依赖计数的界面展示，不引入尚不能证明覆盖全部写入事务的统计投影；当前页文件夹直属计数仍只针对本页实体计算。
+- [x] `FS8-007` 将全局 filesCache 改为有界页缓存与按 ID 详情缓存，并迁移文件库、项目文件区、音频、Mind 引用和项目删除确认消费者；无消费者依赖“全库已加载”，缓存页/实体有上限；项目删除确认不再依赖缺失的精确计数，搜索/Mind/Markdown 路径按 ID 解析。
+- [x] `FS8-008` 将文件库网格/列表、项目文件区和回收站接入追加分页；首屏仅请求第一页，继续加载受目录实体上限约束，虚拟滚动仍只负责已加载数据的 DOM 窗口化。
+- [x] `FS8-009` 移除全局 `/files/version` 刷新与全库事件补刷；变更失效相关目录 scope，重连/无法定位的事件只失效可见 scope，不触发全库 refresh。
+- [x] `FS8-010` 更新 OpenAPI 类型与所有 API 消费者并移除全量列表路由；生成差异经过审阅，仓库前后端运行时代码无 `/files/all`、`/folders/all`、`all_in_scope` 请求或旧数组回收站 API。
 
 ### Phase 3：规模与发布验收
 

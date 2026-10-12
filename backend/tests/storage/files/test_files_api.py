@@ -136,7 +136,7 @@ async def test_file_detail_returns_related_labels_and_hides_other_users_rows(db,
     assert raised.value.status_code == 404
 
 
-async def test_file_summary_returns_total_count_and_only_requested_recent_rows(db, user_a):
+async def test_file_summary_returns_only_requested_recent_rows(db, user_a):
     rows = [
         File(user_id=user_a.id, display_name=f"file-{index}", ext="TXT", storage_key=f"personal/{index}")
         for index in range(4)
@@ -148,7 +148,6 @@ async def test_file_summary_returns_total_count_and_only_requested_recent_rows(d
 
     result = await files_api.file_summary(recent_limit=2, current_user=user_a, db=db)
 
-    assert result.total_count == 4
     assert len(result.recent_files) == 2
     assert result.recent_files[0].id > result.recent_files[1].id
     assert all(file.display_name != "deleted" for file in result.recent_files)

@@ -84,7 +84,12 @@ export async function resolveFolderTree(
   }
 
   const projectId = opts.projectId ?? null
-  const all = opts.existingFolders ?? await foldersApi.list({ projectId: projectId ?? undefined, workspaceDirectoryId: opts.workspaceDirectoryId ?? undefined, allInScope: true })
+  const all = opts.existingFolders ?? await foldersApi.resolvePaths({
+    projectId,
+    workspaceDirectoryId: opts.workspaceDirectoryId,
+    parentId: baseFolderId,
+    paths: [...dirsNeeded],
+  })
   // `${parentId ?? 'root'}:${name}` -> id，只认同一空间（同项目 / 同个人根）下的文件夹，
   // 避免把「项目 A 下的 docs」错认成「项目 B 下同名 docs」
   const byParentName = new Map<string, number>()
@@ -141,7 +146,16 @@ export async function checkUploadConflicts(
   // 目录路径 → 已存在文件夹 id（不创建）。null=落点本身/根；undefined=路径上有新建段（目标是新文件夹）。
   let resolveDir: (path: string) => number | null | undefined = () => baseFolderId
   if (items.some(it => it.relativePath.includes('/'))) {
-    const all = existingFolders ?? await foldersApi.list({ projectId: projectId ?? undefined, workspaceDirectoryId: opts.workspaceDirectoryId ?? undefined, allInScope: true })
+    const requestedPaths = new Set(items.flatMap(item => {
+      const separator = item.relativePath.lastIndexOf('/')
+      return separator > 0 ? [item.relativePath.slice(0, separator)] : []
+    }))
+    const all = existingFolders ?? await foldersApi.resolvePaths({
+      projectId,
+      workspaceDirectoryId: opts.workspaceDirectoryId,
+      parentId: baseFolderId,
+      paths: [...requestedPaths],
+    })
     const byParentName = new Map<string, number>()
     for (const f of all) {
       if ((f.projectId ?? null) !== projectId || (f.workspaceDirectoryId ?? null) !== (opts.workspaceDirectoryId ?? null)) continue

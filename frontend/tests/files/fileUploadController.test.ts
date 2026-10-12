@@ -6,7 +6,7 @@ import { filesApi, foldersApi } from '@/services/api'
 
 vi.mock('@/services/api', () => ({
   filesApi: { checkConflicts: vi.fn() },
-  foldersApi: { list: vi.fn(), create: vi.fn() },
+  foldersApi: { list: vi.fn(), resolvePaths: vi.fn(), create: vi.fn() },
 }))
 
 vi.mock('@/composables/files/useFileUploadCore', async importOriginal => {
@@ -32,7 +32,7 @@ describe('getTopLevelUploadGroups', () => {
 
 describe('nested upload folder index', () => {
   it('冲突检查与目录创建解析复用同一份目标空间目录快照', async () => {
-    vi.mocked(foldersApi.list).mockResolvedValue([{
+    vi.mocked(foldersApi.resolvePaths).mockResolvedValue([{
       id: 44, name: 'docs', projectId: null, workspaceDirectoryId: null,
       parentId: null, fileCount: 0, version: 1,
     }] as never)
@@ -42,8 +42,10 @@ describe('nested upload folder index', () => {
     const prepared = await prepareUploadBatch(items, { space: 'personal', projectId: null, folderId: null }, async () => new Map())
     const resolved = await resolveFolderTree(items, { existingFolders: prepared.existingFolders })
 
-    expect(foldersApi.list).toHaveBeenCalledOnce()
-    expect(foldersApi.list).toHaveBeenCalledWith({ projectId: undefined, workspaceDirectoryId: undefined, allInScope: true })
+    expect(foldersApi.resolvePaths).toHaveBeenCalledOnce()
+    expect(foldersApi.resolvePaths).toHaveBeenCalledWith({
+      projectId: null, workspaceDirectoryId: undefined, parentId: null, paths: ['docs'],
+    })
     expect(resolved[0].folderId).toBe(44)
   })
 })

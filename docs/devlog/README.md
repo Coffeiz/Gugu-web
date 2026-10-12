@@ -9,6 +9,7 @@
 ### 2026-10-12
 
 - [PRD-FS-8 Phase 1：分页 API 与 PostgreSQL 查询计划](./2026-10-12-PRD-FS-8-Phase1分页API与PostgreSQL计划.md)
+- [PRD-FS-8 Phase 2：缓存边界与消费者迁移](./2026-10-12-PRD-FS-8-Phase2缓存与消费者迁移.md)
 
 ### 2026-10-09
 

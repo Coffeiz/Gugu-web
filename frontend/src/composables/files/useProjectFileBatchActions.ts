@@ -55,7 +55,7 @@ export function useProjectFileBatchActions(options: ProjectFileBatchActionOption
         options.fileCacheStore.removeFolder(id)
         options.pruneFolderHistory([id])
       })
-      await options.fileCacheStore.refresh()
+      options.fileCacheStore.invalidatePages()
     } catch (error) {
       console.error('[ProjectModal] 批量删除失败:', error instanceof Error ? error.message : String(error))
     }

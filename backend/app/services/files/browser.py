@@ -1,24 +1,14 @@
-import asyncio
 from datetime import datetime
 from typing import Any, Optional
 from urllib.parse import unquote, urlsplit
 
-from sqlalchemy import Select, String, case, func, literal, literal_column, select, type_coerce
-from sqlalchemy.exc import DBAPIError
+from sqlalchemy import Select, String, case, func, literal, literal_column, select, tuple_, type_coerce
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import File, Folder, Project
 from app.core.ownership import get_owned
 from app.search.query import keyword_condition, keyword_score, normalize_queries
 from app.services.files.pagination import apply_keyset, decode_cursor, encode_cursor
-
-_VERSION_RETRY_BACKOFF = (0.05, 0.15)
-
-
-def _is_deadlock_error(exc: DBAPIError) -> bool:
-    """仅识别 PostgreSQL/asyncpg 的死锁，避免把普通数据库错误当成可重试。"""
-    return type(getattr(exc, "orig", None)).__name__ == "DeadlockDetectedError"
-
 
 def file_listing_query(
     user_id: int,
@@ -193,48 +183,6 @@ async def list_file_page_rows(
     return {"items": items, "next_cursor": next_cursor, "has_more": has_more}
 
 
-def all_files_query(user_id: int) -> Select:
-    return (
-        select(File, Project.name, Project.color, Folder.name)
-        .outerjoin(Project, Project.id == File.project_id)
-        .outerjoin(Folder, Folder.id == File.folder_id)
-        .where(File.user_id == user_id, File.deleted_at.is_(None))
-        .order_by(File.created_at.desc())
-    )
-
-
-async def list_file_rows(
-    db: AsyncSession,
-    user_id: int,
-    *,
-    space: Optional[str] = None,
-    project_id: Optional[int] = None,
-    folder_id: Optional[int] = None,
-    workspace_directory_id: Optional[int] = None,
-    mind_map_id: Optional[int] = None,
-    ext: Optional[str] = None,
-    query: Optional[str] = None,
-):
-    """查询当前目录文件行；响应模型组装由 API 边界负责。"""
-    result = await db.execute(file_listing_query(
-        user_id,
-        space=space,
-        project_id=project_id,
-        folder_id=folder_id,
-        workspace_directory_id=workspace_directory_id,
-        mind_map_id=mind_map_id,
-        ext=ext,
-        query=query,
-    ))
-    return result.all()
-
-
-async def list_all_file_rows(db: AsyncSession, user_id: int):
-    """查询当前用户全部存活文件行。"""
-    result = await db.execute(all_files_query(user_id))
-    return result.all()
-
-
 async def get_file_detail_row(db: AsyncSession, user_id, file_id: int):
     """读取单个存活文件及其项目/文件夹展示信息。"""
     return (await db.execute(
@@ -347,6 +295,22 @@ async def _find_relative_file(db: AsyncSession, user_id, source_file: File,
     )).first()
 
 
+async def _find_relative_folder(db: AsyncSession, user_id, source_file: File,
+                                current_path: list[Folder], basename: str):
+    if basename in {"", ".", ".."}:
+        return None
+    parent_id = current_path[-1].id if current_path else None
+    return (await db.execute(select(Folder).where(
+        Folder.user_id == user_id,
+        Folder.deleted_at.is_(None),
+        Folder.project_id == source_file.project_id if source_file.project_id is not None else Folder.project_id.is_(None),
+        Folder.workspace_directory_id == source_file.workspace_directory_id
+        if source_file.workspace_directory_id is not None else Folder.workspace_directory_id.is_(None),
+        Folder.parent_id == parent_id if parent_id is not None else Folder.parent_id.is_(None),
+        Folder.name == basename,
+    ).limit(1))).scalar_one_or_none()
+
+
 async def resolve_relative_file_paths(db: AsyncSession, user_id, source_file_id: int, paths: list[str]):
     """在来源文件的逻辑 scope 内解析有限数量的相对文件路径。"""
     source = await get_file_detail_row(db, user_id, source_file_id)
@@ -366,7 +330,7 @@ async def resolve_relative_file_paths(db: AsyncSession, user_id, source_file_id:
     for original_path in paths:
         parts = _relative_path_parts(original_path)
         if parts is None:
-            resolved.append((original_path, None))
+            resolved.append((original_path, None, None))
             continue
         current_path = await _resolve_relative_parent_path(
             db, user_id, source_file, folder_path, parts,
@@ -375,18 +339,15 @@ async def resolve_relative_file_paths(db: AsyncSession, user_id, source_file_id:
             await _find_relative_file(db, user_id, source_file, current_path, parts[-1])
             if current_path is not None else None
         )
-        resolved.append((original_path, target))
+        folder = None
+        if target is None and current_path is not None:
+            folder = await _find_relative_folder(db, user_id, source_file, current_path, parts[-1])
+        resolved.append((original_path, target, folder))
     return resolved
 
 
 async def get_file_summary(db: AsyncSession, user_id: int, recent_limit: int):
-    """读取轻量总数和有限的最近文件，不物化完整文件库。"""
-    total_count = (await db.execute(
-        select(func.count(File.id)).where(
-            File.user_id == user_id,
-            File.deleted_at.is_(None),
-        )
-    )).scalar_one()
+    """读取有限的最近文件，不为看板统计扫描整份文件库。"""
     recent_rows = (await db.execute(
         select(File, Project.name, Project.color, Folder.name)
         .outerjoin(Project, Project.id == File.project_id)
@@ -395,18 +356,7 @@ async def get_file_summary(db: AsyncSession, user_id: int, recent_limit: int):
         .order_by(File.id.desc())
         .limit(recent_limit)
     )).all()
-    return total_count, recent_rows
-
-
-async def list_existing_file_rows(db: AsyncSession, storage, user_id: int):
-    """列出全部文件。
-
-    读取接口不能因为物理对象暂时缺失就删除数据库记录。数据库记录是文件
-    库的权威元数据，物理存储对账应由显式 doctor/清理任务完成；否则打开文件
-    库就会把 Agent 创建但尚未同步完成的文件静默抹掉，造成 UI 与数据库不一致。
-    ``storage`` 参数保留以兼容调用方，实际对账由专门任务负责。
-    """
-    return await list_all_file_rows(db, user_id), False
+    return recent_rows
 
 
 async def get_storage_usage(db: AsyncSession, user_id: int) -> int:
@@ -414,68 +364,6 @@ async def get_storage_usage(db: AsyncSession, user_id: int) -> int:
     from app.services.storage.quota_ledger import measure_user_storage_usage
 
     return await measure_user_storage_usage(db, user_id)
-
-
-async def get_file_version_snapshot(db: AsyncSession, user_id: int):
-    """查询文件表状态摘要所需的聚合值。"""
-    stmt = select(
-        func.count(File.id),
-        func.max(File.updated_at),
-        func.max(File.deleted_at),
-    ).where(File.user_id == user_id)
-    for attempt in range(len(_VERSION_RETRY_BACKOFF) + 1):
-        try:
-            return (await db.execute(stmt)).one()
-        except DBAPIError as exc:
-            if not _is_deadlock_error(exc) or attempt >= len(_VERSION_RETRY_BACKOFF):
-                raise
-            await db.rollback()
-            await asyncio.sleep(_VERSION_RETRY_BACKOFF[attempt])
-
-
-async def get_file_tree_rows(db: AsyncSession, user_id: int):
-    """查询文件库树与根目录卡片所需的聚合计数和项目行。"""
-    project_file_rows = await db.execute(
-        select(File.project_id, func.count().label("cnt"))
-        .where(
-            File.user_id == user_id,
-            File.space == "project",
-            File.project_id.isnot(None),
-            File.deleted_at.is_(None),
-        )
-        .group_by(File.project_id)
-    )
-    project_rows = await db.execute(
-        select(Project)
-        .where(Project.user_id == user_id, Project.deleted_at.is_(None))
-        .order_by(Project.created_at.desc())
-    )
-    personal_count = await db.execute(
-        select(func.count()).where(
-            File.user_id == user_id,
-            File.space == "personal",
-            File.deleted_at.is_(None),
-        )
-    )
-    personal_root_count = await db.execute(select(
-        select(func.count()).select_from(File).where(
-            File.user_id == user_id,
-            File.space == "personal",
-            File.folder_id.is_(None),
-            File.deleted_at.is_(None),
-        ).scalar_subquery()
-        + select(func.count()).select_from(Folder).where(
-            Folder.user_id == user_id,
-            Folder.project_id.is_(None),
-            Folder.workspace_directory_id.is_(None),
-            Folder.parent_id.is_(None),
-            Folder.deleted_at.is_(None),
-        ).scalar_subquery()
-    ))
-    return (
-        project_file_rows.all(), project_rows.scalars().all(),
-        personal_count.scalar_one(), personal_root_count.scalar_one(),
-    )
 
 
 async def folder_download_rows(db: AsyncSession, user_id: int, folder_id: int):
@@ -726,45 +614,74 @@ async def search_user_folders(db, user_id, queries, mode, primary_query: str, li
     )).scalars().all()
 
 
-async def list_folder_rows_with_file_counts(
+async def resolve_existing_folder_paths(
     db: AsyncSession,
     user_id,
     *,
-    project_id=None,
-    workspace_directory_id=None,
-    parent_id=None,
-    all_folders=False,
-    all_in_scope=False,
-):
-    """查询文件夹及其直属存活文件数，统一应用用户和软删边界。"""
-    stmt = select(Folder).where(
-        Folder.user_id == user_id,
-        Folder.deleted_at.is_(None),
-    )
-    if not all_folders:
-        stmt = stmt.where(
-            Folder.project_id == project_id if project_id is not None
-            else Folder.project_id.is_(None),
-            Folder.workspace_directory_id == workspace_directory_id if workspace_directory_id is not None
-            else Folder.workspace_directory_id.is_(None),
-        )
-        if not all_in_scope:
-            stmt = stmt.where(
-                Folder.parent_id == parent_id if parent_id is not None
-                else Folder.parent_id.is_(None),
-            )
-    folders = (await db.execute(stmt.order_by(Folder.created_at))).scalars().all()
-    if not folders:
+    project_id: int | None,
+    workspace_directory_id: int | None,
+    parent_id: int | None,
+    paths: list[str],
+) -> list[Folder]:
+    """只读取上传批次实际涉及的目录前缀，不枚举整个空间目录树。"""
+    from urllib.parse import unquote
+
+    if project_id is not None and workspace_directory_id is not None:
         return []
-    counts = await db.execute(
-        select(File.folder_id, func.count().label("cnt")).where(
-            File.user_id == user_id,
-            File.folder_id.in_([folder.id for folder in folders]),
-            File.deleted_at.is_(None),
-        ).group_by(File.folder_id)
-    )
-    count_map = {row.folder_id: row.cnt for row in counts}
-    return [(folder, count_map.get(folder.id, 0)) for folder in folders]
+    base = None
+    if parent_id is not None:
+        base = await get_owned(db, Folder, parent_id, user_id)
+        if (base is None or base.deleted_at is not None
+                or base.project_id != project_id
+                or base.workspace_directory_id != workspace_directory_id):
+            return []
+
+    resolved = {path: [part for part in unquote(path).split("/") if part not in {"", "."}]
+                for path in paths}
+    if any(not parts or len(parts) > 64
+           or any(part in {".."} or "\\" in part or "\x00" in part for part in parts)
+           for parts in resolved.values()):
+        return []
+    states: dict[str, int | None] = {"": parent_id}
+    found: dict[int, Folder] = {}
+    max_depth = max((len(parts) for parts in resolved.values()), default=0)
+    for depth in range(max_depth):
+        pairs = {
+            ((states[prefix] or 0), parts[depth])
+            for parts in resolved.values()
+            if len(parts) > depth
+            for prefix in ["/".join(parts[:depth])]
+            if prefix in states
+        }
+        if not pairs:
+            break
+        stmt = select(Folder).where(
+            Folder.user_id == user_id,
+            Folder.deleted_at.is_(None),
+            Folder.project_id == project_id if project_id is not None else Folder.project_id.is_(None),
+            Folder.workspace_directory_id == workspace_directory_id
+            if workspace_directory_id is not None else Folder.workspace_directory_id.is_(None),
+            tuple_(func.coalesce(Folder.parent_id, literal_column("0")), Folder.name).in_(pairs),
+        ).limit(256)
+        rows = (await db.execute(stmt)).scalars().all()
+        by_pair = {(folder.parent_id or 0, folder.name): folder for folder in rows}
+        next_states: dict[str, int] = {}
+        for parts in resolved.values():
+            if len(parts) <= depth:
+                continue
+            prefix = "/".join(parts[:depth])
+            if prefix not in states:
+                continue
+            parent = states[prefix]
+            folder = by_pair.get((parent or 0, parts[depth]))
+            if folder is None:
+                continue
+            found[folder.id] = folder
+            next_states["/".join(parts[:depth + 1])] = folder.id
+        states = next_states
+        if not states:
+            break
+    return list(found.values())
 
 
 async def list_folder_page_rows(

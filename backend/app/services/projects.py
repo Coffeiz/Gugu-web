@@ -17,7 +17,7 @@ def project_trash_cutoff():
 
 
 async def list_project_rows(db, user_id, *, archived: bool, deleted: bool = False):
-    """查询项目列表及根目录存活文件数；删除列表只保留 30 天内墓碑。"""
+    """查询项目列表；删除列表只保留 30 天内墓碑，不扫描项目文件统计。"""
     project_filters = [Project.user_id == user_id]
     if deleted:
         project_filters.extend((
@@ -27,32 +27,14 @@ async def list_project_rows(db, user_id, *, archived: bool, deleted: bool = Fals
     else:
         project_filters.extend((Project.archived == archived, Project.deleted_at.is_(None)))
 
-    project_scope = select(Project.id).where(*project_filters).subquery()
-    file_counts = (
-        select(File.project_id, func.count(File.id).label("fc"))
-        .join(project_scope, project_scope.c.id == File.project_id)
-        .where(File.deleted_at.is_(None), File.folder_id.is_(None))
-        .group_by(File.project_id)
-        .subquery()
-    )
-    stmt = (
-        select(Project, func.coalesce(file_counts.c.fc, 0).label("fc"))
-        .outerjoin(file_counts, file_counts.c.project_id == Project.id)
-        .where(*project_filters)
-    )
-    result = await db.execute(stmt.order_by(Project.deleted_at.desc() if deleted else Project.created_at.desc()))
-    return result.all()
+    result = await db.execute(select(Project).where(*project_filters).order_by(
+        Project.deleted_at.desc() if deleted else Project.created_at.desc()))
+    return result.scalars().all()
 
 
 async def get_project_row(db, user_id, project_id: int):
-    """查询当前用户项目及其文件数。"""
-    result = await db.execute(
-        select(Project, func.count(File.id).label("fc"))
-        .outerjoin(File, (File.project_id == Project.id) & File.deleted_at.is_(None))
-        .where(Project.id == project_id, Project.user_id == user_id, Project.deleted_at.is_(None))
-        .group_by(Project.id)
-    )
-    return result.one_or_none()
+    """按用户归属读取项目，不扫描项目文件统计。"""
+    return await get_owned(db, Project, project_id, user_id)
 
 
 async def add_project(db, project):
@@ -62,6 +44,7 @@ async def add_project(db, project):
 
 
 async def count_project_files(db, user_id, project_id: int) -> int:
+    """按需为单项目操作读取文件数；列表页不调用此聚合。"""
     return (await db.execute(
         select(func.count(File.id)).where(
             File.project_id == project_id,
@@ -69,8 +52,6 @@ async def count_project_files(db, user_id, project_id: int) -> int:
             File.deleted_at.is_(None),
         )
     )).scalar_one()
-
-
 
 
 async def list_agent_projects(db, user_id, *, archived: bool):

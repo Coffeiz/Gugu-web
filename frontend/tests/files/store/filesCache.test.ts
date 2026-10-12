@@ -2,110 +2,78 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useFilesCacheStore, type FileMeta, type FolderMeta } from '@/stores/filesCache'
+import type { CursorPage } from '@/services/api'
 
 vi.mock('@/services/api', () => ({
-  filesApi: { all: vi.fn(), version: vi.fn() },
-  foldersApi: { all: vi.fn() },
+  filesApi: { get: vi.fn() },
+  foldersApi: { get: vi.fn() },
 }))
+vi.mock('@/stores/live', () => ({ useLiveStore: () => ({ resourceEvent: null }) }))
+vi.mock('@/utils/accountBoundary', () => ({ getAccountBoundaryEpoch: () => 0 }))
 
-vi.mock('@/stores/live', () => ({
-  useLiveStore: () => ({ resourceEvent: null }),
-}))
-
-vi.mock('@/utils/accountBoundary', () => ({
-  getAccountBoundaryEpoch: () => 0,
-}))
-
-function file(overrides: Partial<FileMeta>): FileMeta {
+function file(id: number, overrides: Partial<FileMeta> = {}): FileMeta {
   return {
-    id: 1, displayName: '文件', ext: 'png', space: 'personal',
-    workspaceDirectoryId: null, projectId: null, projectName: null,
-    projectColor: null, stageName: '', folderId: null, folderName: null,
-    mindMapId: null, size: '1 KB', sizeBytes: 1, mimeType: 'image/png',
-    createdAt: '2026-09-09', deletedAt: null, imgWidth: null, imgHeight: null,
-    version: 1, ...overrides,
+    id, displayName: `文件 ${id}`, ext: 'png', space: 'personal',
+    workspaceDirectoryId: null, projectId: null, projectName: null, projectColor: null,
+    stageName: '', folderId: null, folderName: null, mindMapId: null,
+    size: '1 KB', sizeBytes: 1, mimeType: 'image/png', createdAt: '2026-09-09',
+    deletedAt: null, imgWidth: null, imgHeight: null, version: 1, ...overrides,
   } as FileMeta
 }
-
-function folder(overrides: Partial<FolderMeta>): FolderMeta {
-  return {
-    id: 1, name: '目录', projectId: null, workspaceDirectoryId: null,
-    parentId: null, fileCount: 0, version: 1, ...overrides,
-  } as FolderMeta
+function folder(id: number, overrides: Partial<FolderMeta> = {}): FolderMeta {
+  return { id, name: `目录 ${id}`, projectId: null, workspaceDirectoryId: null,
+    parentId: null, fileCount: 0, version: 1, ...overrides } as FolderMeta
 }
+const page = <T>(items: T[]): CursorPage<T> => ({ items, next_cursor: null, has_more: false })
 
-describe('filesCache 空间索引', () => {
-  beforeEach(() => {
-    setActivePinia(createPinia())
-  })
+describe('filesCache 有界目录页与 ID 缓存', () => {
+  beforeEach(() => setActivePinia(createPinia()))
 
-  it('移动与替换缓存后 Workspace 索引立即更新，不残留旧父级或其他空间记录', () => {
+  it('目录页按 personal/project/workspace 与父目录隔离', () => {
     const store = useFilesCacheStore()
-    store.allFiles = [file({ id: 101, space: 'workspace', workspaceDirectoryId: 7 }), file({ id: 102, space: 'personal', workspaceDirectoryId: 7 })]
-    store.allFolders = [folder({ id: 201, workspaceDirectoryId: 7 })]
-    expect(store.getWorkspaceFiles(7).map(item => item.id)).toEqual([101])
-    store.updateFile(101, { folderId: 201 })
-    store.updateFolder(201, { parentId: 202 })
-    expect(store.getWorkspaceFiles(7)).toEqual([])
-    expect(store.getWorkspaceFiles(7, 201).map(item => item.id)).toEqual([101])
-    expect(store.getWorkspaceFolders(7)).toEqual([])
-    expect(store.getWorkspaceFolders(7, 202).map(item => item.id)).toEqual([201])
-    store.allFiles = []
-    store.allFolders = []
-    expect(store.getWorkspaceFiles(7, 201)).toEqual([])
-    expect(store.getWorkspaceFolders(7, 202)).toEqual([])
-  })
-
-  it('不会把独立 Workspace 根文件和文件夹混入个人根目录', () => {
-    const store = useFilesCacheStore()
-    const personal = file({ id: 1, displayName: '个人文件' })
-    const workspace = file({
-      id: 2, displayName: 'F1 图表', space: 'workspace', workspaceDirectoryId: 34,
-    })
-    const personalFolder = folder({ id: 1, name: '个人目录' })
-    const workspaceFolder = folder({ id: 2, name: 'scripts', workspaceDirectoryId: 34 })
-    store.allFiles = [personal, workspace]
-    store.allFolders = [personalFolder, workspaceFolder]
+    const personal = file(1)
+    const root = file(2, { space: 'workspace', workspaceDirectoryId: 34 })
+    const child = file(3, { space: 'workspace', workspaceDirectoryId: 34, folderId: 20 })
+    const rootFolder = folder(20, { workspaceDirectoryId: 34 })
+    const childFolder = folder(21, { workspaceDirectoryId: 34, parentId: 20 })
+    store.setDirectoryPage({ space: 'personal' }, page([personal]), page([]))
+    store.setDirectoryPage({ space: 'workspace', workspaceDirectoryId: 34 }, page([root]), page([rootFolder]))
+    store.setDirectoryPage({ space: 'workspace', workspaceDirectoryId: 34, folderId: 20 }, page([child]), page([childFolder]))
 
     expect(store.getPersonalRootFiles()).toEqual([personal])
-    expect(store.getPersonalRootFolders()).toEqual([personalFolder])
-  })
-
-  it('Workspace 投影按目录和父级过滤文件及文件夹', () => {
-    const store = useFilesCacheStore()
-    const rootFile = file({ id: 10, displayName: '根文件', space: 'workspace', workspaceDirectoryId: 34 })
-    const nestedFile = file({ id: 11, displayName: '子目录文件', space: 'workspace', workspaceDirectoryId: 34, folderId: 20 })
-    const otherWorkspaceFile = file({ id: 12, displayName: '其他工作区文件', space: 'workspace', workspaceDirectoryId: 35 })
-    const rootFolder = folder({ id: 20, name: 'scripts', workspaceDirectoryId: 34 })
-    const nestedFolder = folder({ id: 21, name: 'charts', workspaceDirectoryId: 34, parentId: 20 })
-    const otherWorkspaceFolder = folder({ id: 22, name: '其他工作区目录', workspaceDirectoryId: 35 })
-    store.allFiles = [rootFile, nestedFile, otherWorkspaceFile]
-    store.allFolders = [rootFolder, nestedFolder, otherWorkspaceFolder]
-
-    expect(store.getWorkspaceFiles(34)).toEqual([rootFile])
-    expect(store.getWorkspaceFiles(34, 20)).toEqual([nestedFile])
+    expect(store.getWorkspaceFiles(34)).toEqual([root])
+    expect(store.getWorkspaceFiles(34, 20)).toEqual([child])
     expect(store.getWorkspaceFolders(34)).toEqual([rootFolder])
-    expect(store.getWorkspaceFolders(34, 20)).toEqual([nestedFolder])
+    expect(store.getWorkspaceFolders(34, 20)).toEqual([childFolder])
   })
 
-  it('权威目录快照删除本目录旧成员及其子树，不影响其他未加载目录', () => {
+  it('实体变更使目录 cursor 链失效，但按 ID 详情仍可读取', () => {
     const store = useFilesCacheStore()
-    store.allFiles = [
-      file({ id: 1, displayName: '已删除根文件' }),
-      file({ id: 2, displayName: '子目录文件', folderId: 20 }),
-      file({ id: 3, displayName: '其他项目文件', space: 'project', projectId: 9 }),
-      file({ id: 4, displayName: '其他工作区文件', space: 'workspace', workspaceDirectoryId: 34 }),
-    ]
-    store.allFolders = [
-      folder({ id: 20, name: '已删除目录' }),
-      folder({ id: 21, name: '后代目录', parentId: 20 }),
-      folder({ id: 22, name: '其他项目目录', projectId: 9 }),
-      folder({ id: 23, name: '其他工作区目录', workspaceDirectoryId: 34 }),
-    ]
+    const original = file(1)
+    store.setDirectoryPage({ space: 'personal' }, page([original]), page([]))
+    store.updateFile(1, { space: 'workspace', workspaceDirectoryId: 34 })
 
-    store.replaceDirectorySnapshot({ space: 'personal' }, [], [])
+    expect(store.getDirectory({ space: 'personal' })).toBeNull()
+    expect(store.getFile(1)?.workspaceDirectoryId).toBe(34)
+  })
 
-    expect(store.allFiles.map(item => item.id)).toEqual([3, 4])
-    expect(store.allFolders.map(item => item.id)).toEqual([22, 23])
+  it('目录页缓存按 LRU 限制在 8 个 scope，淘汰不表示 ID 详情不存在', () => {
+    const store = useFilesCacheStore()
+    const first = file(1)
+    for (let id = 1; id <= 9; id++) {
+      store.setDirectoryPage({ space: 'project', projectId: id }, page([file(id)]), page([]))
+    }
+    expect(store.directories.size).toBe(8)
+    expect(store.getDirectory({ space: 'project', projectId: 1 })).toBeNull()
+    expect(store.getFile(first.id)).toEqual(first)
+  })
+
+  it('账号切换清空 ID、目录页和进行中的请求引用', () => {
+    const store = useFilesCacheStore()
+    store.addFile(file(1))
+    store.setDirectoryPage({ space: 'personal' }, page([file(1)]), page([]))
+    store.resetAccountState()
+    expect(store.getFile(1)).toBeNull()
+    expect(store.directories.size).toBe(0)
   })
 })

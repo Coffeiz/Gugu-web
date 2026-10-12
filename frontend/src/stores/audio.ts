@@ -116,15 +116,18 @@ export const useAudioStore = defineStore('audio', () => {
       if (!saved?.id) return
       const requestEpoch = getAccountBoundaryEpoch()
       try {
-        const files = await filesApi.list({
+        const page = await filesApi.page({
           space: saved.space ?? (saved.projectId != null ? 'project' : 'personal'),
           projectId: saved.projectId ?? undefined,
           folderId: saved.folderId ?? undefined,
           workspaceDirectoryId: saved.workspaceDirectoryId ?? undefined,
+          limit: 100,
         })
         if (requestEpoch !== getAccountBoundaryEpoch()) return
+        const files = page.items
         const current = files.find(candidate => candidate.id === saved.id) ?? saved
         const siblings = files.filter(candidate => isAudioTrack(candidate) && sameDirectory(candidate, current))
+        if (isAudioTrack(current) && !siblings.some(candidate => candidate.id === current.id)) siblings.unshift(current)
         await play(current, siblings)
       } catch {
         if (requestEpoch === getAccountBoundaryEpoch()) await play(saved)

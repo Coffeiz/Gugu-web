@@ -70,19 +70,7 @@ export function useProjectModalActions(options: ProjectModalActionsOptions) {
     const current = project()
     if (!current) return
 
-    const fileCount = fileCacheStore.loaded
-      ? fileCacheStore.allFiles.filter(file => file.projectId === current.id).length
-      : (current.fileCount || 0)
-    const folderCount = fileCacheStore.loaded
-      ? fileCacheStore.allFolders.filter(folder => folder.projectId === current.id).length
-      : 0
-
-    const parts = []
-    if (fileCount) parts.push(i18n.global.t('projects.fileCount', { count: fileCount }))
-    if (folderCount) parts.push(i18n.global.t('projects.folderCount', { count: folderCount }))
-    const message = parts.length
-      ? i18n.global.t('projects.deleteContentsMessage', { name: current.name, contents: parts.join(i18n.global.t('projects.countSeparator')) })
-      : i18n.global.t('projects.deleteMessage', { name: current.name })
+    const message = i18n.global.t('projects.deleteContentsMessage', { name: current.name })
     if (!await confirmDialog({
       title: i18n.global.t('projects.deleteTitle'),
       message,
@@ -91,7 +79,7 @@ export function useProjectModalActions(options: ProjectModalActionsOptions) {
     })) return
 
     await projectStore.deleteProject(current.id)
-    if (fileCount + folderCount > 0) fileCacheStore.refresh()
+    fileCacheStore.invalidatePages()
     close()
   }
 

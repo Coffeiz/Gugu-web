@@ -85,7 +85,7 @@
 
     <!-- 内容区 -->
     <div class="files-body">
-      <div class="files-main glass-card scroll-surface" ref="mainRef"
+      <div class="files-main glass-card scroll-surface" ref="mainRef" @scroll.passive="onMainScroll"
         :class="{ 'is-selecting': boxStart !== null }"
         @contextmenu.prevent.self="openCtx('empty', null, $event)"
         @dragenter.prevent="onDragEnter"
@@ -118,6 +118,8 @@
         <FilesGridView v-else-if="viewMode === 'grid'" :context="gridViewContext" />
         <!-- ── 列表视图 ── -->
         <FilesListView v-else :context="listViewContext" />
+        <div v-if="loadingMore" class="files-page-loading" role="status">正在加载更多…</div>
+        <div v-else-if="retentionLimitReached" class="files-page-loading" role="status">{{ t('filesViewUi.pageLimitReached') }}</div>
 
         </div>
       </div>
@@ -418,10 +420,18 @@ const {
   trashFolders,
   expandedTrashFolders,
   trashFolderContents,
+  trashFolderCursors,
   sortedTrashFolders,
+  loadingMore,
+  retentionLimitReached,
 } = directory
 
 const sortedContents = useFileLibrarySorting({ contents, currentType, sortKey, sortDir })
+
+function onMainScroll(event: Event) {
+  const element = event.currentTarget as HTMLElement
+  if (element.scrollHeight - element.scrollTop - element.clientHeight < 480) void directory.loadMore()
+}
 
 // tiny 已由 v-lazy-src 视口门控（更大 rootMargin 先于 card），不再全量预热——避免屏幕外缩略图挤占并发队列
 
@@ -430,20 +440,9 @@ onMounted(async () => {
   refreshWorkspaceFolders()
   // 顶栏搜索点了文件/文件夹：优先定位到目标目录，不走 restoreNav
   const target = consumePendingTarget()
-  // 热缓存：同步初始化，避免 await 微任务暂停导致空帧
-  if (cacheStore.loaded && projectStore.projects.length > 0) {
-    if (target) { jumpToTarget(target) } else { restoreNav(); loadContents() }
-    return
+  if (target?.workspaceDirectoryId == null && projectStore.projects.length === 0) {
+    await projectStore.fetchProjects?.()
   }
-  await Promise.all([
-    target?.workspaceDirectoryId == null && projectStore.projects.length === 0
-      ? projectStore.fetchProjects?.()
-      : Promise.resolve(),
-    // 只有缺少工作区路径元数据的旧式定位才需要全量索引；工作区搜索跳转按目录加载。
-    target && target.workspaceDirectoryId == null && !cacheStore.loaded
-      ? cacheStore.load()
-      : Promise.resolve(),
-  ])
   if (target) { jumpToTarget(target) } else { restoreNav(); loadContents() }
 })
 
@@ -598,15 +597,17 @@ const trashActions = useFileLibraryTrashActions({
   selectedTrashFolderIds,
   expandedTrashFolders,
   trashFolderContents,
+  trashFolderCursors,
   loadContents,
   clearSelection,
-  refreshCache: () => cacheStore.refresh(),
+  refreshCache: () => { cacheStore.invalidatePages(); loadContents() },
   fetchStorage,
 })
 
 const restoreFile = (file: FileMeta) => trashActions.restoreFile(file)
 const restoreTrashFolder = (folder: TrashFolderMeta) => trashActions.restoreFolder(folder)
 const toggleTrashFolder = (folder: TrashFolderMeta) => trashActions.toggleFolder(folder)
+const loadMoreTrashFolderContents = (folderId: number) => trashActions.loadMoreFolderContents(folderId)
 const hardDeleteFile = (file: FileMeta) => trashActions.hardDeleteFile(file)
 const hardDeleteTrashFolder = (folder: TrashFolderMeta) => trashActions.hardDeleteFolder(folder)
 const restoreSelected = () => trashActions.restoreSelected()
@@ -616,6 +617,7 @@ const confirmEmptyTrash = () => trashActions.emptyTrash()
 // 页面级回收站视图的依赖集中从入口注入，视图组件不直接读取 stores 或执行 API。
 const trashViewContext = {
   trashFolders, contents, sortedContents, sortedTrashFolders, expandedTrashFolders, trashFolderContents,
+  trashFolderCursors, loadMoreTrashFolderContents,
   sortKey, sortDir, onSortSelect, inSelectionMode, selectedTrashFolderIds, selectedIds,
   previewFolderKeys, previewFileIds, handleTrashFolderClick, toggleTrashFolder,
   restoreTrashFolder, hardDeleteTrashFolder, handleTrashFileClick, restoreFile,
@@ -732,7 +734,9 @@ async function moveFilesInto(fileIds: Array<number | string>, targetFolderId: nu
       }))
       if (compensation.some(result => result.status === 'rejected')) {
         // 补偿也失败时，先把服务端实际状态拉回缓存，避免 rollback 显示一个虚假的全量回滚。
-        refreshedAfterCompensationFailure = await cacheStore.refresh()
+        cacheStore.invalidatePages()
+        loadContents()
+        refreshedAfterCompensationFailure = true
         throw new Error(refreshedAfterCompensationFailure
           ? '多文件移动失败，部分文件无法恢复；已刷新实际状态'
           : '多文件移动失败，部分文件无法恢复，且未能读取服务端状态；请刷新文件库核对结果')

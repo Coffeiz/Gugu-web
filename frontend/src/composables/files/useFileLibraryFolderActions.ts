@@ -76,7 +76,8 @@ export function useFileLibraryFolderActions(options: FolderActionsOptions) {
       await fileActions.deleteFolder(folder.folderId)
       await fetchStorage()
     } catch (error) {
-      cacheStore.refresh().then(loadContents)
+      cacheStore.invalidatePages()
+      loadContents()
       console.error('[Files] 删除文件夹失败:', (error as Error).message)
     }
   }

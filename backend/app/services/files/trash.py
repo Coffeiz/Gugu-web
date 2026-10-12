@@ -41,21 +41,6 @@ async def list_top_level_deleted_folders(db: AsyncSession, user_id):
     return (await db.execute(top_level_deleted_folders_stmt(user_id))).scalars().all()
 
 
-async def list_top_level_deleted_folders_with_counts(db: AsyncSession, user_id):
-    """列出顶层回收站文件夹及其直属已删文件数，避免 API 层直接拼 ORM 查询。"""
-    folders = await list_top_level_deleted_folders(db, user_id)
-    if not folders:
-        return [], {}
-    counts = await db.execute(
-        select(File.folder_id, func.count().label("cnt")).where(
-            File.user_id == user_id,
-            File.folder_id.in_([folder.id for folder in folders]),
-            File.deleted_at.isnot(None),
-        ).group_by(File.folder_id)
-    )
-    return folders, {row.folder_id: row.cnt for row in counts}
-
-
 async def get_top_level_deleted_folder(db: AsyncSession, user_id, folder_id: int):
     """读取当前用户可见的顶层回收站文件夹。"""
     return (await db.execute(
@@ -80,20 +65,6 @@ async def list_deleted_folders(db: AsyncSession, user_id, limit: int, deleted_be
     return (await db.execute(
         top_level_deleted_folders_stmt(user_id, deleted_before).limit(limit)
     )).scalars().all()
-
-
-async def list_trash_file_rows(db: AsyncSession, user_id):
-    """查询回收站独立文件及响应所需的关联名称。"""
-    return (await db.execute(
-        select(File, Project.name, Project.color, Folder.name)
-        .outerjoin(Project, Project.id == File.project_id)
-        .outerjoin(Folder, Folder.id == File.folder_id)
-        .where(
-            File.user_id == user_id,
-            File.deleted_at.isnot(None),
-            or_(File.folder_id.is_(None), Folder.deleted_at.is_(None)),
-        ).order_by(File.deleted_at.desc())
-    )).all()
 
 
 async def list_trash_file_page_rows(db: AsyncSession, user_id, *, limit: int, cursor: str | None):
@@ -156,58 +127,6 @@ async def list_trash_folder_page_rows(db: AsyncSession, user_id, *, limit: int, 
     ) if has_more and items else None
     return {"items": [(folder, count_map.get(folder.id, 0)) for folder in items],
             "next_cursor": next_cursor, "has_more": has_more}
-
-
-async def get_trash_counts(db: AsyncSession, user_id) -> tuple[int, int]:
-    """只统计回收站顶层恢复单元数量，避免为根目录计数载入完整内容。"""
-    file_count = (await db.execute(
-        select(func.count(File.id))
-        .outerjoin(Folder, File.folder_id == Folder.id)
-        .where(
-            File.user_id == user_id,
-            File.deleted_at.isnot(None),
-            or_(File.folder_id.is_(None), Folder.deleted_at.is_(None)),
-        )
-    )).scalar_one()
-    folder_count = (await db.execute(
-        top_level_deleted_folders_stmt(user_id)
-        .with_only_columns(func.count(Folder.id))
-        .order_by(None)
-    )).scalar_one()
-    return file_count, folder_count
-
-
-async def list_trash_folder_contents_rows(db: AsyncSession, user_id, folder_id: int):
-    """查询顶层回收站文件夹的直属文件夹、文件和浅层计数。"""
-    folder = await get_top_level_deleted_folder(db, user_id, folder_id)
-    if not folder:
-        return None
-    child_folders = (await db.execute(
-        select(Folder).where(
-            Folder.user_id == user_id,
-            Folder.parent_id == folder.id,
-            Folder.deleted_at.isnot(None),
-        ).order_by(Folder.deleted_at.desc())
-    )).scalars().all()
-    direct_files = (await db.execute(
-        select(File, Project.name, Project.color, Folder.name)
-        .outerjoin(Project, Project.id == File.project_id)
-        .outerjoin(Folder, Folder.id == File.folder_id)
-        .where(
-            File.user_id == user_id,
-            File.folder_id == folder.id,
-            File.deleted_at.isnot(None),
-        ).order_by(File.deleted_at.desc())
-    )).all()
-    counts = await db.execute(
-        select(File.folder_id, func.count().label("cnt")).where(
-            File.user_id == user_id,
-            File.folder_id.in_([item.id for item in child_folders]),
-            File.deleted_at.isnot(None),
-        ).group_by(File.folder_id)
-    ) if child_folders else None
-    count_map = {row.folder_id: row.cnt for row in counts} if counts else {}
-    return folder, child_folders, direct_files, count_map
 
 
 async def list_trash_folder_contents_page_rows(

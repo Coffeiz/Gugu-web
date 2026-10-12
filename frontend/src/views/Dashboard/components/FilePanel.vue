@@ -209,8 +209,8 @@ async function commitRename(f: any) {
   try {
     await InteractionSync.execute({
       scope: 'file.dashboard-rename', entityKey: `file:${f.id}`,
-      apply: () => { if (store.loaded) store.updateFile(f.id, { displayName: name, ext: nextExtension }) },
-      rollback: () => { if (store.loaded) store.updateFile(f.id, { displayName: snapshot.displayName, ext: snapshot.ext }) },
+      apply: () => store.updateFile(f.id, { displayName: name, ext: nextExtension }),
+      rollback: () => store.updateFile(f.id, { displayName: snapshot.displayName, ext: snapshot.ext }),
       request: mutation => filesApi.update(f.id, { displayName: name, ...(extension ? { ext: extension } : {}) }, { mutationId: mutation.mutationId }),
     })
     emit('refresh')
@@ -238,8 +238,8 @@ async function deleteFile(f: any) {
   try {
     await InteractionSync.execute({
       scope: 'file.dashboard-delete', entityKey: `file:${f.id}`,
-      apply: () => { if (store.loaded) store.removeFile(f.id) },
-      rollback: () => { if (store.loaded) store.addFile(previous) },
+      apply: () => store.removeFile(f.id),
+      rollback: () => store.addFile(previous),
       request: mutation => filesApi.delete(f.id, { mutationId: mutation.mutationId }),
       onCommit: () => clearThumbCache(f.id),
     })

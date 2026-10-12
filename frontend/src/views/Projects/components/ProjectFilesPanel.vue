@@ -5,7 +5,7 @@
             <ProjectFileToolbar :context="props.context" />
           </template>
 
-          <div class="file-content scroll-surface" :ref="bindPmGridEl" style="position:relative" @mousedown="onPmGridMouseDown"
+          <div class="file-content scroll-surface" :ref="bindPmGridEl" style="position:relative" @scroll.passive="onPmScroll" @mousedown="onPmGridMouseDown"
             @click="onPmContentClick"
             @contextmenu.prevent.self="openPmCtx('empty', null, $event)"
             @dragenter.prevent="onPmDragEnter"
@@ -238,6 +238,8 @@
                   @select="handleFileInput" />
               </FileBrowserList>
             </template>
+            <div v-if="projectFilesLoadingMore" class="files-page-loading" role="status">{{ t('filesViewUi.loadingMore') }}</div>
+            <div v-else-if="directoryLimitReached()" class="files-page-loading" role="status">{{ t('filesViewUi.pageLimitReached') }}</div>
           </div>
 
           <!-- 批量栏挂在 modal-right，而不是可滚动/隔离的 file-content 内。
@@ -299,7 +301,16 @@ const {
   pmArchiveBusy, pmCanExtractSelectedArchive, openPmCompressSelected, extractSelectedPmArchive,
   downloadSelectedPm, pmSelCut, pmSelCopy, deleteSelectedPm, clearPmSelection, pmCbStore,
   pmSortKey, pmSortDir, onPmSortSelect,
+  loadMoreDirectory, directoryHasMore, directoryLimitReached, projectFilesLoadingMore,
 } = props.context
+
+function onPmScroll(event: Event) {
+  const element = event.currentTarget as HTMLElement
+  if (element.scrollHeight - element.scrollTop - element.clientHeight < 480
+      && directoryHasMore() && !projectFilesLoadingMore.value) {
+    void loadMoreDirectory()
+  }
+}
 </script>
 
 <style>

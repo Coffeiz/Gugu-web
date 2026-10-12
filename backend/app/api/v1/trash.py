@@ -12,8 +12,6 @@ from app.schemas import (
     BatchDeleteBody,
     FileResponse,
     FolderResponse,
-    TrashCountsResponse,
-    TrashFolderContentsResponse,
     TrashFolderContentsPageResponse,
     TrashFolderResponse,
     TrashPurgeJobResponse,
@@ -26,14 +24,10 @@ from app.services.files.trash import (
     permanently_delete_file,
     permanently_delete_folder,
     get_top_level_deleted_folder,
-    get_trash_counts,
     list_top_level_deleted_folders,
-    list_top_level_deleted_folders_with_counts,
-    list_trash_file_rows,
     list_trash_file_page_rows,
     list_trash_folder_page_rows,
     list_trash_folder_contents_page_rows,
-    list_trash_folder_contents_rows,
     restore_file_by_id,
     restore_files_by_ids,
 )
@@ -116,72 +110,6 @@ async def list_trash_folder_contents_page(
             "has_more": page["files"]["has_more"],
         },
     }
-
-
-@router.get("/counts", response_model=TrashCountsResponse)
-async def trash_counts(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    file_count, folder_count = await get_trash_counts(db, current_user.id)
-    return TrashCountsResponse(
-        file_count=file_count,
-        folder_count=folder_count,
-        total_count=file_count + folder_count,
-    )
-
-
-# ── GET /trash ────────────────────────────────────────────────────────────────
-
-@router.get("", response_model=list[FileResponse])
-async def list_trash(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    return [
-        to_file_response(f, pname, color_value(pcolor), fname)
-        for f, pname, pcolor, fname in await list_trash_file_rows(db, current_user.id)
-    ]
-
-
-# ── GET /trash/folders （P2.3：顶层已删文件夹）───────────────────────────────
-
-@router.get("/folders", response_model=list[TrashFolderResponse])
-async def list_trash_folders(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    folders, count_map = await list_top_level_deleted_folders_with_counts(db, current_user.id)
-    return [
-        TrashFolderResponse(
-            id=f.id, project_id=f.project_id, parent_id=f.parent_id, name=f.name,
-            file_count=count_map.get(f.id, 0), version=f.version,
-            deleted_at=f.deleted_at.strftime("%Y-%m-%dT%H:%M:%S"),
-        )
-        for f in folders
-    ]
-
-
-@router.get("/folders/{fid}/contents", response_model=TrashFolderContentsResponse)
-async def list_trash_folder_contents(
-    fid: int,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """读取顶层回收站文件夹的直属内容，内部文件不作为独立恢复单元。"""
-    contents = await list_trash_folder_contents_rows(db, current_user.id, fid)
-    if not contents:
-        raise HTTPException(404, "文件夹不存在")
-    folder, child_folders, direct_files, count_map = contents
-    return TrashFolderContentsResponse(
-        folders=[TrashFolderResponse(
-            id=f.id, project_id=f.project_id, parent_id=f.parent_id, name=f.name,
-            file_count=count_map.get(f.id, 0), version=f.version,
-            deleted_at=f.deleted_at.strftime("%Y-%m-%dT%H:%M:%S"),
-        ) for f in child_folders],
-        files=[to_file_response(f, pname, color_value(pcolor), fname)
-               for f, pname, pcolor, fname in direct_files],
-    )
 
 
 # ── POST /trash/folders/{fid}/restore （P2.4）────────────────────────────────

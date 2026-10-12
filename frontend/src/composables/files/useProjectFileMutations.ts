@@ -64,7 +64,7 @@ export function useProjectFileMutations(options: ProjectFileMutationsOptions) {
       fileCacheStore.updateFolder(folderId, { version: updated.version })
     } catch (error) {
       if (oldName != null) fileCacheStore.updateFolder(folderId, { name: oldName })
-      fileCacheStore.refresh()
+      fileCacheStore.invalidatePages()
       throw error
     }
   }

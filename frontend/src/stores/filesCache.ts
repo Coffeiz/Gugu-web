@@ -1,26 +1,19 @@
 import { defineStore } from 'pinia'
-import { ref, computed, watch } from 'vue'
-import { filesApi, foldersApi } from '@/services/api'
+import { shallowReactive, watch } from 'vue'
+import { filesApi, foldersApi, type CursorPage } from '@/services/api'
 import { useLiveStore } from '@/stores/live'
 import type { components } from '@/types/api'
 import type { LiveEventPayload } from '@/types/live-events'
 import { getAccountBoundaryEpoch } from '@/utils/accountBoundary'
-import { InteractionSyncEventQueue } from '@/interaction/sync/InteractionSyncEventQueue'
 
-// 文件/文件夹领域类型：核心字段绑定 OpenAPI 生成的响应体（filesApi.all / foldersApi.all 的返回）。
-// 文件对象在各视图里是「带客户端增补的袋子」——已知 wire 字段照常有类型，另留少量历史/客户端字段
-// 与索引签名，容纳消费方现存用法（如聊天附件预览携带 attach_id、旧面板仍读 versions）。
 export type FileMeta = components['schemas']['FileResponse'] & {
-  /** 新增的顶层 Workspace 目录归属；旧 OpenAPI 类型生成前先由前端领域类型承接。 */
   workspaceDirectoryId?: number | null
-  /** 覆盖上传/粘贴覆盖后强制缩略图指令重建节点。 */
   thumbRevision?: number
-  versions?: Array<{ size?: string }>   // 历史字段：wire 现已直接给 size，个别面板仍读 versions
-  attach_id?: number | string | null    // 聊天附件预览时携带（非库文件）
+  versions?: Array<{ size?: string }>
+  attach_id?: number | string | null
   file_id?: number | null
 }
 export type FolderMeta = components['schemas']['FolderResponse'] & {
-  /** 新增的顶层 Workspace 目录边界；旧 OpenAPI 类型生成前先由前端领域类型承接。 */
   workspaceDirectoryId?: number | null
 }
 
@@ -29,353 +22,242 @@ export interface DirectorySnapshotScope {
   projectId?: number
   folderId?: number
   workspaceDirectoryId?: number
+  sortBy?: string
+  sortOrder?: 'asc' | 'desc'
 }
 
-let _lastVersion: string | number | null = null
-let _visibilityBound = false
-let _pendingLiveRefresh = false
+export interface DirectoryPageState {
+  files: FileMeta[]
+  folders: FolderMeta[]
+  fileCursor: string | null
+  folderCursor: string | null
+  fileHasMore: boolean
+  folderHasMore: boolean
+}
+
+const MAX_DIRECTORY_CACHES = 8
+const MAX_CACHED_DIRECTORY_ENTITIES = 2000
+const MAX_CACHED_DETAILS = 600
+
+function directoryKey(scope: DirectorySnapshotScope): string {
+  return [scope.space, scope.projectId ?? 0, scope.workspaceDirectoryId ?? 0,
+    scope.folderId ?? 0, scope.sortBy ?? 'createdAt', scope.sortOrder ?? 'desc'].join(':')
+}
+
+function touch<T>(map: Map<number, T>, id: number, value: T) {
+  map.delete(id)
+  map.set(id, value)
+  while (map.size > MAX_CACHED_DETAILS) map.delete(map.keys().next().value!)
+}
 
 export const useFilesCacheStore = defineStore('filesCache', () => {
-  const allFiles   = ref<FileMeta[]>([])
-  const allFolders = ref<FolderMeta[]>([])
-  const loaded     = ref(false)
-  const loading    = ref(false)
+  // 仅缓存明确读取的 ID 和目录页；容量有上限，缓存未命中不代表实体不存在。
+  const filesById = shallowReactive(new Map<number, FileMeta>())
+  const foldersById = shallowReactive(new Map<number, FolderMeta>())
+  const directories = shallowReactive(new Map<string, DirectoryPageState>())
   const fileLookups = new Map<string, Promise<FileMeta | null>>()
+  const folderLookups = new Map<string, Promise<FolderMeta | null>>()
 
-  // 画布文件卡会在节点更新时按 ID 读取文件。缓存数组用于列表/目录视图，单项读取则用
-  // 这个惰性索引，避免每张卡都在线性扫描整个文件缓存。
-  const _fileById = computed(() => new Map(allFiles.value.map(file => [file.id, file])))
-
-  // ── 索引 ──────────────────────────────────────────────────────────────────
-  // files key: folderId (int) | 'workspace:{directoryId}' | 'proj:{id}' | 'personal'
-  const _fileIdx = computed(() => {
-    const m = new Map<number | string, FileMeta[]>()
-    for (const f of allFiles.value) {
-      const key = f.folderId != null
-        ? f.folderId
-        : f.workspaceDirectoryId != null || f.space === 'workspace'
-          ? `workspace:${f.workspaceDirectoryId ?? 'unknown'}`
-        : f.projectId != null ? `proj:${f.projectId}` : 'personal'
-      if (!m.has(key)) m.set(key, [])
-      m.get(key)!.push(f)
-    }
-    return m
-  })
-
-  // folders key: 'personal' | 'workspace:{directoryId}' | 'proj:{id}' | 'sub:{parentId}'
-  const _folderIdx = computed(() => {
-    const m = new Map<string, FolderMeta[]>()
-    for (const f of allFolders.value) {
-      const key = f.parentId != null
-        ? `sub:${f.parentId}`
-        : f.workspaceDirectoryId != null
-          ? `workspace:${f.workspaceDirectoryId}`
-        : f.projectId != null ? `proj:${f.projectId}` : 'personal'
-      if (!m.has(key)) m.set(key, [])
-      m.get(key)!.push(f)
-    }
-    return m
-  })
-
-  // ── 查找 ──────────────────────────────────────────────────────────────────
-  // Workspace 查询包含归属和父级，独立索引避免反复全库扫描，并保留跨空间隔离。
-  const workspaceFiles = computed(() => {
-    const index = new Map<string, FileMeta[]>()
-    for (const file of allFiles.value) {
-      if (file.space !== 'workspace' || file.workspaceDirectoryId == null) continue
-      const key = `${file.workspaceDirectoryId}:${file.folderId ?? 'root'}`
-      const bucket = index.get(key) ?? []
-      bucket.push(file)
-      index.set(key, bucket)
-    }
-    return index
-  })
-  const workspaceFolders = computed(() => {
-    const index = new Map<string, FolderMeta[]>()
-    for (const folder of allFolders.value) {
-      if (folder.workspaceDirectoryId == null) continue
-      const key = `${folder.workspaceDirectoryId}:${folder.parentId ?? 'root'}`
-      const bucket = index.get(key) ?? []
-      bucket.push(folder)
-      index.set(key, bucket)
-    }
-    return index
-  })
-  const getPersonalRootFiles   = ()          => _fileIdx.value.get('personal')            ?? []
-  const getProjectRootFiles    = (projectId: number) => _fileIdx.value.get(`proj:${projectId}`)   ?? []
-  const getFolderFiles         = (folderId: number)  => _fileIdx.value.get(folderId)               ?? []
-  const getWorkspaceFiles      = (workspaceDirectoryId: number, folderId: number | null = null) =>
-    workspaceFiles.value.get(`${workspaceDirectoryId}:${folderId ?? 'root'}`) ?? []
-
-  const getPersonalRootFolders = ()          => _folderIdx.value.get('personal')           ?? []
-  const getProjectRootFolders  = (projectId: number) => _folderIdx.value.get(`proj:${projectId}`)  ?? []
-  const getSubFolders          = (parentId: number)  => _folderIdx.value.get(`sub:${parentId}`)    ?? []
-  const getWorkspaceFolders    = (workspaceDirectoryId: number, parentId: number | null = null) =>
-    workspaceFolders.value.get(`${workspaceDirectoryId}:${parentId ?? 'root'}`) ?? []
-
-  // ── 加载 ──────────────────────────────────────────────────────────────────
-  async function load() {
-    if (loading.value) return
-    loading.value = true
-    const requestEpoch = getAccountBoundaryEpoch()
-    try {
-      const [files, folders, ver] = await Promise.all([filesApi.all(), foldersApi.all(), filesApi.version()])
-      if (requestEpoch !== getAccountBoundaryEpoch()) return
-      allFiles.value   = files
-      allFolders.value = folders
-      loaded.value     = true
-      _lastVersion = ver?.version ?? null
-      // 首次加载和 watcher 事件可能并发：不能因为 cache 尚未 ready 就丢掉 live
-      // 事件，否则请求返回旧快照后必须手动刷新页面才能看到本地文件变化。
-      if (_pendingLiveRefresh) {
-        _pendingLiveRefresh = false
-        void refresh()
-      }
-    } catch (e) {
-      console.error('[filesCache] 加载失败:', e instanceof Error ? e.message : e)
-    } finally {
-      loading.value = false
-    }
-    _bindVisibility()
+  function getDirectory(scope: DirectorySnapshotScope): DirectoryPageState | null {
+    const key = directoryKey(scope)
+    const entry = directories.get(key)
+    if (!entry) return null
+    directories.delete(key)
+    directories.set(key, entry)
+    return entry
   }
 
-  async function refresh(): Promise<boolean> {
-    const requestEpoch = getAccountBoundaryEpoch()
-    try {
-      const [files, folders, ver] = await Promise.all([filesApi.all(), foldersApi.all(), filesApi.version()])
-      if (requestEpoch !== getAccountBoundaryEpoch()) return false
-      allFiles.value   = files
-      allFolders.value = folders
-      _lastVersion = ver?.version ?? null
-      return true
-    } catch {
-      return false
+  function rememberDirectory(scope: DirectorySnapshotScope, entry: DirectoryPageState) {
+    const key = directoryKey(scope)
+    directories.delete(key)
+    directories.set(key, entry)
+    for (const file of entry.files) touch(filesById, file.id, file)
+    for (const folder of entry.folders) touch(foldersById, folder.id, folder)
+    const entityCount = () => [...directories.values()].reduce((count, page) => count + page.files.length + page.folders.length, 0)
+    while (directories.size > MAX_DIRECTORY_CACHES || entityCount() > MAX_CACHED_DIRECTORY_ENTITIES) {
+      directories.delete(directories.keys().next().value!)
     }
   }
 
-  function resetAccountState() {
-    eventQueue.cancel()
-    allFiles.value = []
-    allFolders.value = []
-    loaded.value = false
-    loading.value = false
-    fileLookups.clear()
-    _lastVersion = null
-    _pendingLiveRefresh = false
-  }
-
-  async function _checkVersion() {
-    if (!loaded.value) return
-    try {
-      const ver = await filesApi.version()
-      if (ver?.version && ver.version !== _lastVersion) {
-        await refresh()
-      }
-    } catch { /* 静默失败 */ }
-  }
-
-  function _bindVisibility() {
-    if (_visibilityBound) return
-    _visibilityBound = true
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') _checkVersion()
+  function setDirectoryPage(
+    scope: DirectorySnapshotScope,
+    files: CursorPage<FileMeta>,
+    folders: CursorPage<FolderMeta>,
+    append = false,
+  ) {
+    const previous = append ? getDirectory(scope) : null
+    const nextFiles = append ? [...(previous?.files ?? []), ...files.items] : [...files.items]
+    const nextFolders = append ? [...(previous?.folders ?? []), ...folders.items] : [...folders.items]
+    const dedupe = <T extends { id: number }>(items: T[]) => [...new Map(items.map(item => [item.id, item])).values()]
+    rememberDirectory(scope, {
+      files: dedupe(nextFiles), folders: dedupe(nextFolders),
+      fileCursor: files.next_cursor ?? (append ? previous?.fileCursor ?? null : null),
+      folderCursor: folders.next_cursor ?? (append ? previous?.folderCursor ?? null : null),
+      fileHasMore: files.has_more,
+      folderHasMore: folders.has_more,
     })
   }
 
-  // ── 乐观更新：文件 ────────────────────────────────────────────────────────
-  function addFile(file: FileMeta) {
-    const index = allFiles.value.findIndex(item => item.id === file.id)
-    if (index < 0) allFiles.value = [file, ...allFiles.value]
-    else allFiles.value.splice(index, 1, file)
+  function invalidatePages(scope?: DirectorySnapshotScope) {
+    if (scope) directories.delete(directoryKey(scope))
+    else directories.clear()
   }
 
+  function getPersonalRootFiles(sortBy?: string, sortOrder?: 'asc' | 'desc') { return getDirectory({ space: 'personal', sortBy, sortOrder })?.files ?? [] }
+  function getProjectRootFiles(projectId: number, sortBy?: string, sortOrder?: 'asc' | 'desc') { return getDirectory({ space: 'project', projectId, sortBy, sortOrder })?.files ?? [] }
+  function getFolderFiles(folderId: number, sortBy?: string, sortOrder?: 'asc' | 'desc') {
+    const folder = getFolder(folderId)
+    return getDirectory({
+      space: folder?.workspaceDirectoryId != null ? 'workspace' : folder?.projectId != null ? 'project' : 'personal',
+      ...(folder?.projectId != null ? { projectId: folder.projectId } : {}),
+      ...(folder?.workspaceDirectoryId != null ? { workspaceDirectoryId: folder.workspaceDirectoryId } : {}),
+      folderId, sortBy, sortOrder,
+    })?.files ?? []
+  }
+  function getWorkspaceFiles(workspaceDirectoryId: number, folderId: number | null = null, sortBy?: string, sortOrder?: 'asc' | 'desc') {
+    return getDirectory({ space: 'workspace', workspaceDirectoryId, ...(folderId != null ? { folderId } : {}), sortBy, sortOrder })?.files ?? []
+  }
+  function getProjectRootFolders(projectId: number, sortBy?: string, sortOrder?: 'asc' | 'desc') { return getDirectory({ space: 'project', projectId, sortBy, sortOrder })?.folders ?? [] }
+  function getSubFolders(parentId: number, sortBy?: string, sortOrder?: 'asc' | 'desc') { return getDirectoryForFolder(parentId, sortBy, sortOrder)?.folders ?? [] }
+  function getWorkspaceFolders(workspaceDirectoryId: number, parentId: number | null = null, sortBy?: string, sortOrder?: 'asc' | 'desc') {
+    return getDirectory({ space: 'workspace', workspaceDirectoryId, ...(parentId != null ? { folderId: parentId } : {}), sortBy, sortOrder })?.folders ?? []
+  }
+
+  function getDirectoryForFolder(folderId: number, sortBy?: string, sortOrder?: 'asc' | 'desc') {
+    const folder = getFolder(folderId)
+    if (!folder) return null
+    const scope: DirectorySnapshotScope = {
+      space: folder.workspaceDirectoryId != null ? 'workspace' : folder.projectId != null ? 'project' : 'personal',
+      ...(folder.projectId != null ? { projectId: folder.projectId } : {}),
+      ...(folder.workspaceDirectoryId != null ? { workspaceDirectoryId: folder.workspaceDirectoryId } : {}),
+      folderId, sortBy, sortOrder,
+    }
+    return getDirectory(scope)
+  }
+
+  function addFile(file: FileMeta) { touch(filesById, file.id, file); invalidatePages() }
   function removeFile(id: number) {
-    allFiles.value = allFiles.value.filter(f => f.id !== id)
+    filesById.delete(id)
+    invalidatePages()
   }
-
   function removeFiles(ids: number[]) {
-    const set = new Set(ids)
-    allFiles.value = allFiles.value.filter(f => !set.has(f.id))
+    const remove = new Set(ids)
+    for (const id of remove) filesById.delete(id)
+    invalidatePages()
   }
-
   function updateFile(id: number, patch: Partial<FileMeta>) {
-    allFiles.value = allFiles.value.map(f => f.id === id ? { ...f, ...patch } : f)
+    const current = filesById.get(id)
+    if (current) touch(filesById, id, { ...current, ...patch })
+    invalidatePages()
   }
+  function getFile(id: number) { return filesById.get(id) ?? null }
 
-  function getFile(id: number) {
-    return _fileById.value.get(id) ?? null
-  }
-
-  /** Mind 画布只需读取实际引用的文件；按 ID 加载并合并缓存，不触发文件库全量扫描。 */
   async function ensureFile(id: number): Promise<FileMeta | null> {
     const cached = getFile(id)
-    if (cached) return cached
-    if (loaded.value) return null
-
+    if (cached) { touch(filesById, id, cached); return cached }
     const epoch = getAccountBoundaryEpoch()
     const key = `${epoch}:${id}`
     const pending = fileLookups.get(key)
     if (pending) return pending
-
-    const lookup = filesApi.get(id).then(file => {
+    const request = filesApi.get(id).then(file => {
       if (epoch !== getAccountBoundaryEpoch()) return null
-      const normalized = file as FileMeta
-      addFile(normalized)
+      touch(filesById, file.id, file as FileMeta)
+      return file as FileMeta
+    }).catch(error => {
+      if ((error as { status?: number }).status === 404) return null
+      throw error
+    }).finally(() => fileLookups.delete(key))
+    fileLookups.set(key, request)
+    return request
+  }
+
+  function addFolder(folder: { id: number; name: string; projectId?: number | null; workspaceDirectoryId?: number | null; parentId?: number | null; fileCount?: number; version?: number }) {
+    touch(foldersById, folder.id, {
+      id: folder.id, name: folder.name, projectId: folder.projectId ?? null,
+      workspaceDirectoryId: folder.workspaceDirectoryId ?? null, parentId: folder.parentId ?? null,
+      fileCount: folder.fileCount ?? 0, version: folder.version ?? 1,
+    } as FolderMeta)
+    invalidatePages()
+  }
+  function getFolder(id: number) { return foldersById.get(id) ?? null }
+  async function ensureFolder(id: number): Promise<FolderMeta | null> {
+    const cached = getFolder(id)
+    if (cached) { touch(foldersById, id, cached); return cached }
+    const epoch = getAccountBoundaryEpoch()
+    const key = `${epoch}:${id}`
+    const pending = folderLookups.get(key)
+    if (pending) return pending
+    const request = foldersApi.get(id).then(folder => {
+      if (epoch !== getAccountBoundaryEpoch()) return null
+      const normalized = folder as FolderMeta
+      touch(foldersById, normalized.id, normalized)
       return normalized
     }).catch(error => {
       if ((error as { status?: number }).status === 404) return null
       throw error
-    }).finally(() => {
-      fileLookups.delete(key)
-    })
-    fileLookups.set(key, lookup)
-    return lookup
+    }).finally(() => folderLookups.delete(key))
+    folderLookups.set(key, request)
+    return request
   }
-
-  // ── 乐观更新：文件夹 ──────────────────────────────────────────────────────
-  // 上传链路新建的文件夹可能不带 fileCount（useFileUpload 的 onFolderCreated 未标该字段）——
-  // 新建文件夹本就 0 文件，缺省补 0，保证入库的都是完整 FolderMeta。
-  function addFolder(folder: { id: number; name: string; projectId?: number | null; workspaceDirectoryId?: number | null; parentId?: number | null; fileCount?: number; version?: number }) {
-    const normalized: FolderMeta = {
-      id: folder.id, name: folder.name,
-      projectId: folder.projectId ?? null,
-      workspaceDirectoryId: folder.workspaceDirectoryId ?? null,
-      parentId:  folder.parentId ?? null,
-      fileCount: folder.fileCount ?? 0,
-      version:   folder.version ?? 1,
-    }
-    const index = allFolders.value.findIndex(item => item.id === folder.id)
-    if (index < 0) allFolders.value = [...allFolders.value, normalized]
-    else allFolders.value.splice(index, 1, normalized)
-  }
-
-  function fileBelongsToDirectory(file: FileMeta, scope: DirectorySnapshotScope): boolean {
-    if (scope.folderId != null) return file.folderId === scope.folderId
-    if (scope.space === 'workspace') {
-      return file.space === 'workspace' && file.workspaceDirectoryId === scope.workspaceDirectoryId && file.folderId == null
-    }
-    if (scope.space === 'project') return file.projectId === scope.projectId && file.folderId == null
-    return file.space === 'personal' && file.projectId == null && file.workspaceDirectoryId == null && file.folderId == null
-  }
-
-  function folderBelongsToDirectory(folder: FolderMeta, scope: DirectorySnapshotScope): boolean {
-    if (scope.folderId != null) return folder.parentId === scope.folderId
-    if (scope.space === 'workspace') {
-      return folder.workspaceDirectoryId === scope.workspaceDirectoryId && folder.parentId == null
-    }
-    if (scope.space === 'project') return folder.projectId === scope.projectId && folder.parentId == null
-    return folder.projectId == null && folder.workspaceDirectoryId == null && folder.parentId == null
-  }
-
-  // 目录 API 返回的是该目录的权威快照：替换同一目录成员，保留其他未加载目录。
-  function replaceDirectorySnapshot(scope: DirectorySnapshotScope, files: FileMeta[], folders: FolderMeta[]) {
-    const incomingFolderIds = new Set(folders.map(folder => folder.id))
-    const removedFolderIds = new Set<number>()
-    allFolders.value.filter(folder => folderBelongsToDirectory(folder, scope) && !incomingFolderIds.has(folder.id))
-      .forEach(folder => removedFolderIds.add(folder.id))
-    let foundDescendant = true
-    while (foundDescendant) {
-      foundDescendant = false
-      for (const folder of allFolders.value) {
-        if (folder.parentId != null && removedFolderIds.has(folder.parentId) && !removedFolderIds.has(folder.id)) {
-          removedFolderIds.add(folder.id)
-          foundDescendant = true
+  function removeFolder(id: number) {
+    const removed = new Set<number>([id])
+    let changed = true
+    while (changed) {
+      changed = false
+      for (const folder of foldersById.values()) {
+        if (folder.parentId != null && removed.has(folder.parentId) && !removed.has(folder.id)) {
+          removed.add(folder.id); changed = true
         }
       }
     }
-
-    const nextFiles = new Map(allFiles.value.filter(file =>
-      !fileBelongsToDirectory(file, scope) && (file.folderId == null || !removedFolderIds.has(file.folderId)),
-    ).map(file => [file.id, file]))
-    files.forEach(file => nextFiles.set(file.id, file))
-    allFiles.value = [...nextFiles.values()]
-    const nextFolders = new Map(allFolders.value.filter(folder =>
-      !folderBelongsToDirectory(folder, scope) && !removedFolderIds.has(folder.id),
-    ).map(folder => [folder.id, folder]))
-    folders.forEach(folder => nextFolders.set(folder.id, folder))
-    allFolders.value = [...nextFolders.values()]
+    for (const folderId of removed) foldersById.delete(folderId)
+    invalidatePages()
   }
-
-  function removeFolder(id: number) {
-    const toRemove = new Set()
-    const collect = (fid: number) => {
-      toRemove.add(fid)
-      for (const sub of getSubFolders(fid)) collect(sub.id)
-    }
-    collect(id)
-    allFolders.value = allFolders.value.filter(f => !toRemove.has(f.id))
-    allFiles.value   = allFiles.value.filter(f => !toRemove.has(f.folderId))
-  }
-
   function updateFolder(id: number, patch: Partial<FolderMeta>) {
-    allFolders.value = allFolders.value.map(f => f.id === id ? { ...f, ...patch } : f)
+    const folder = getFolder(id)
+    if (folder) touch(foldersById, id, { ...folder, ...patch })
+    invalidatePages()
   }
 
-  function getFolder(id: number) {
-    return allFolders.value.find(f => f.id === id) ?? null
+  function resetAccountState() {
+    directories.clear(); filesById.clear(); foldersById.clear()
+    fileLookups.clear(); folderLookups.clear()
   }
 
   function applyCanonicalEvent(event: LiveEventPayload): boolean {
     const id = Number(event.entity_id)
     if (!Number.isFinite(id)) return false
-    const wrapped = event.payload && typeof event.payload === 'object' ? event.payload as Record<string, any> : null
+    const wrapped = event.payload && typeof event.payload === 'object' ? event.payload as Record<string, unknown> : null
     const kind = wrapped?.kind === 'folder' || wrapped?.kind === 'file' ? wrapped.kind : null
-    const value = wrapped?.entity ?? wrapped
+    const value = (wrapped?.entity ?? wrapped) as Record<string, unknown> | null
     if (event.operation === 'delete') {
-      const hadFile = allFiles.value.some(file => file.id === id)
-      const hadFolder = allFolders.value.some(folder => folder.id === id)
-      removeFiles([id])
-      if (hadFolder) removeFolder(id)
-      return hadFile || hadFolder
+      const known = filesById.has(id) || foldersById.has(id)
+      removeFile(id)
+      if (foldersById.has(id)) removeFolder(id)
+      invalidatePages()
+      return known
     }
-    if (!value || typeof value !== 'object') return false
+    if (!value || typeof value !== 'object') { invalidatePages(); return false }
     if (kind === 'folder' || (!kind && 'fileCount' in value && !('storageKey' in value))) {
-      const folder = value as FolderMeta
-      if (Number(folder.id) !== id) return false
-      const index = allFolders.value.findIndex(item => item.id === id)
-      if (event.operation === 'create' && index < 0) allFolders.value = [folder, ...allFolders.value]
-      else if (index >= 0) allFolders.value.splice(index, 1, folder)
-      else return false
-      return true
+      if (Number(value.id) !== id) { invalidatePages(); return false }
+      addFolder(value as unknown as FolderMeta)
+    } else {
+      if (Number(value.id) !== id) { invalidatePages(); return false }
+      addFile(value as unknown as FileMeta)
     }
-    const file = value as FileMeta
-    if (Number(file.id) !== id) return false
-    const index = allFiles.value.findIndex(item => item.id === id)
-    if (event.operation === 'create' && index < 0) allFiles.value = [file, ...allFiles.value]
-    else if (index >= 0) allFiles.value.splice(index, 1, file)
-    else return false
+    invalidatePages()
     return true
   }
 
-  // ── canonical 实时同步：能增量应用实体就直接应用，否则合并重拉。 ──
-  // 三种处理：
-  //  ① 回声抑制：origin === 本页 client-id → 本页发起的改动，早已乐观更新过，跳过（不再全量重拉自己）。
-  //  ② remove 快路径：别的标签页/端删了文件/文件夹 → 本地直接剔除（零网络），文件夹级联剔子树。
-  //  ③ 其余（add/update/移动/批量/重连补刷）：合并防抖后全量 refresh —— 这些需要 join 后的完整实体
-  //     （projectName/color/排序等），本地拼不出，仍靠重拉；防抖把一串事件收敛成一次重拉。
-  // ⚠️ 别改成 _checkVersion 版本门控——/files/version 的 GET 可能被浏览器缓存拿到旧版本号 → 漏刷（踩过）。
-  const eventQueue = new InteractionSyncEventQueue()
-  eventQueue.register('files', applyCanonicalEvent, () => { if (loaded.value) void refresh() })
-  watch(() => useLiveStore().resourceEvent, (event) => {
-    if (!event || event.resource !== 'files') return
-    if (!loaded.value) {
-      // Mind 的按 ID 查询会建立局部缓存，但不代表完整文件库已加载。实时事件仍需更新已缓存的
-      // 引用实体；只有无法应用的变更才留待之后的全量 load 补齐。
-      const applied = applyCanonicalEvent(event)
-      if (!applied && event.operation !== 'delete') _pendingLiveRefresh = true
-      return
-    }
-    eventQueue.receive(event)
+  watch(() => useLiveStore().resourceEvent, event => {
+    if (event?.resource === 'files') applyCanonicalEvent(event)
   }, { immediate: true })
 
   return {
-    allFiles, allFolders, loaded, loading,
-    load, refresh, resetAccountState,
-    getPersonalRootFiles, getProjectRootFiles, getFolderFiles,
-    getWorkspaceFiles,
-    getPersonalRootFolders, getProjectRootFolders, getSubFolders, getWorkspaceFolders,
+    directories, getDirectory, setDirectoryPage, invalidatePages,
+    getPersonalRootFiles, getProjectRootFiles, getFolderFiles, getWorkspaceFiles,
+    getProjectRootFolders, getSubFolders, getWorkspaceFolders,
     addFile, removeFile, removeFiles, updateFile, getFile, ensureFile,
-    addFolder, removeFolder, updateFolder, getFolder,
-    replaceDirectorySnapshot,
+    addFolder, removeFolder, updateFolder, getFolder, ensureFolder, resetAccountState,
   }
 })

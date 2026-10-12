@@ -21,7 +21,6 @@ from app.services.undo.files import file_snapshot, folder_snapshot
 from app.services.projects import (
     soft_delete_project_full,
     add_project,
-    count_project_files,
     get_project_row,
     list_project_rows,
     project_trash_cutoff,
@@ -36,7 +35,7 @@ def _proj_date(p: Project) -> tuple[str, str]:
     return date_str[:4], date_str[5:7]
 
 
-def _to_resp(p: Project, file_count: int = 0) -> ProjectResponse:
+def _to_resp(p: Project, file_count: int | None = None) -> ProjectResponse:
     return ProjectResponse(
         id=p.id,
         name=p.name,
@@ -69,7 +68,7 @@ async def list_projects(
     if archived and deleted:
         raise HTTPException(400, "archived 和 deleted 不能同时为 true")
     # 只计根目录文件（folder_id IS NULL），和项目文件视图保持一致；文件夹内文件通过文件夹 UI 展示
-    return [_to_resp(p, fc) for p, fc in await list_project_rows(
+    return [_to_resp(p) for p in await list_project_rows(
         db, current_user.id, archived=archived, deleted=deleted)]
 
 
@@ -96,7 +95,7 @@ async def create_project(
     )
     await db.commit()
     await db.refresh(p)
-    response = _to_resp(p, 0)
+    response = _to_resp(p)
     await events.publish(current_user.id, "projects", origin=request.headers.get("X-Client-Id"),
                          operation="create", entity_id=p.id, event_payload=response.model_dump(mode="json", by_alias=True))
     return response
@@ -109,9 +108,9 @@ async def get_project(
     db: AsyncSession = Depends(get_db),
 ):
     row = await get_project_row(db, current_user.id, pid)
-    if not row:
+    if not row or row.deleted_at is not None:
         raise HTTPException(404, "项目不存在")
-    return _to_resp(row[0], row[1])
+    return _to_resp(row)
 
 
 @router.patch("/{pid}", response_model=ProjectResponse)
@@ -176,7 +175,7 @@ async def update_project(
     )
     await db.commit()
     await db.refresh(p)
-    response = _to_resp(p, await count_project_files(db, current_user.id, pid))
+    response = _to_resp(p)
     await events.publish(current_user.id, "projects", origin=request.headers.get("X-Client-Id"),
                          operation="update", entity_id=p.id, event_payload=response.model_dump(mode="json", by_alias=True))
 
@@ -318,7 +317,7 @@ async def restore_project(
     await db.commit()
     await db.refresh(p)
 
-    response = _to_resp(p, await count_project_files(db, current_user.id, pid))
+    response = _to_resp(p)
     origin = request.headers.get("X-Client-Id")
     await events.publish(current_user.id, "projects", origin=origin, operation="create",
                          entity_id=pid, event_payload=response.model_dump(mode="json", by_alias=True))

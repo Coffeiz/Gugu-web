@@ -32,12 +32,12 @@ async def test_deleted_project_list_only_contains_projects_within_retention(db, 
 
     rows = await list_project_rows(db, user_a.id, archived=False, deleted=True)
 
-    assert [project.id for project, _ in rows] == [recent.id]
+    assert [project.id for project in rows] == [recent.id]
     assert expired.id != recent.id and live.id != recent.id
 
 
 @pytest.mark.asyncio
-async def test_project_list_counts_only_live_root_files_for_owned_projects(db, user_a, user_b):
+async def test_project_list_does_not_materialize_file_counts(db, user_a, user_b):
     project = await _save(db, Project(user_id=user_a.id, name="项目文件计数"))
     empty_project = await _save(db, Project(user_id=user_a.id, name="无文件项目"))
     other_project = await _save(db, Project(user_id=user_b.id, name="其他用户项目"))
@@ -61,8 +61,7 @@ async def test_project_list_counts_only_live_root_files_for_owned_projects(db, u
 
     rows = await list_project_rows(db, user_a.id, archived=False)
 
-    counts = {row.id: file_count for row, file_count in rows}
-    assert counts == {project.id: 1, empty_project.id: 0}
+    assert {row.id for row in rows} == {project.id, empty_project.id}
 
 
 @pytest.mark.asyncio

@@ -294,7 +294,7 @@ class ProjectResponse(CamelModel):
     updated_at: Optional[str] = None
     deleted_at: Optional[str] = None
     created_at: str = ""
-    file_count: int = 0
+    file_count: Optional[int] = None
 
 
 # ── File ──────────────────────────────────────────────────────────────────────
@@ -324,7 +324,6 @@ class FileResponse(CamelModel):
 
 
 class FileSummaryResponse(CamelModel):
-    total_count: int
     recent_files: list[FileResponse]
 
 
@@ -446,9 +445,34 @@ class ResolveFilePathsRequest(CamelModel):
         return values
 
 
+class ResolveFolderPathsRequest(CamelModel):
+    project_id: Optional[int] = None
+    workspace_directory_id: Optional[int] = None
+    parent_id: Optional[int] = None
+    paths: list[str] = Field(min_length=1, max_length=100)
+
+    @field_validator("paths")
+    @classmethod
+    def validate_folder_paths(cls, values: list[str]) -> list[str]:
+        if any(not value or len(value) > 1000 for value in values):
+            raise ValueError("路径不能为空且单条不能超过 1000 个字符")
+        segments = [
+            [part for part in unquote(value).split("/") if part not in {"", "."}]
+            for value in values
+        ]
+        if sum(map(len, segments)) > 256 or any(len(parts) > 64 for parts in segments):
+            raise ValueError("批量路径最多解析 256 个片段，单条路径最多 64 个片段")
+        if any(value.startswith(("/", "\\")) or "\\" in value or "\x00" in value
+               or any(part == ".." for part in parts)
+               for value, parts in zip(values, segments)):
+            raise ValueError("目录路径必须是当前目录下的相对路径")
+        return values
+
+
 class ResolvedFilePath(CamelModel):
     path: str
     file: Optional[FileResponse] = None
+    folder: Optional[FolderResponse] = None
 
 
 class FolderLocationResponse(CamelModel):
@@ -459,18 +483,6 @@ class FolderLocationResponse(CamelModel):
 class TrashFolderResponse(FolderResponse):
     """回收站里的顶层已删文件夹（P2.3）：deleted_at 供前端显示删除时间/30 天过期倒计时。"""
     deleted_at: str
-
-
-class TrashCountsResponse(CamelModel):
-    file_count: int
-    folder_count: int
-    total_count: int
-
-
-class TrashFolderContentsResponse(CamelModel):
-    """回收站顶层文件夹的直属内容，只读查看，不改变整体恢复单元语义。"""
-    folders: list[TrashFolderResponse] = Field(default_factory=list)
-    files: list[FileResponse] = Field(default_factory=list)
 
 
 class TrashFolderContentsPageResponse(CamelModel):
@@ -487,21 +499,6 @@ class TrashPurgeJobResponse(CamelModel):
     progress_total: int
     failed_count: int
     error_code: Optional[str] = None
-
-
-# ── File Tree ─────────────────────────────────────────────────────────────────
-
-class ProjectTreeEntry(CamelModel):
-    id: int
-    name: str
-    color: str
-    total_count: int
-
-
-class FileTreeResponse(CamelModel):
-    projects: list[ProjectTreeEntry]
-    personal_count: int
-    personal_root_count: int
 
 
 # ── CalendarEvent ─────────────────────────────────────────────────────────────

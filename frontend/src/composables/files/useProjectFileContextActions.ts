@@ -59,7 +59,7 @@ export function useProjectFileContextActions(options: ProjectFileContextOptions)
         version: folder.version,
       }))
       options.clipboardStore.clear()
-      await options.fileCacheStore.refresh()
+      options.fileCacheStore.invalidatePages()
     },
     getCopyConflicts: fileIds => {
       const destinationFiles = options.getFiles()
@@ -98,7 +98,7 @@ export function useProjectFileContextActions(options: ProjectFileContextOptions)
       const copiedFolders = await Promise.all(folderIds.map(id =>
         options.fileActions.copyFolder(id, destination.folderId, destination.projectId)))
       copiedFolders.forEach(folder => options.fileCacheStore.addFolder(folder))
-      await options.fileCacheStore.refresh()
+      options.fileCacheStore.invalidatePages()
     },
     onError: error => console.error('[ProjectModal] 粘贴失败:', error instanceof Error ? error.message : String(error)),
   })

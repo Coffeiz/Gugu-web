@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.models import Folder, Project, User, WorkspaceDirectory  # orm-exempt: 模型引用随本文件遗留查询，Service 收口时一并移除
-from app.schemas import FolderCopy, FolderCreate, FolderLocationResponse, FolderMove, FolderRename, FolderResponse, PageResponse
+from app.schemas import FolderCopy, FolderCreate, FolderLocationResponse, FolderMove, FolderRename, FolderResponse, PageResponse, ResolveFolderPathsRequest
 from app.core.security import get_current_user, get_client_id
 from app.core.ownership import get_owned
 from app.core import events
@@ -21,7 +21,7 @@ from app.services.files.browser import (
     get_folder_detail_row,
     get_folder_path_rows,
     list_folder_page_rows,
-    list_folder_rows_with_file_counts,
+    resolve_existing_folder_paths,
 )
 from app.services.undo import UndoService
 from app.services.undo.files import folder_snapshot, operation_state, ref_for
@@ -29,7 +29,8 @@ from app.services.undo.files import folder_snapshot, operation_state, ref_for
 router = APIRouter(prefix="/folders", tags=["folders"])
 
 
-@router.get("/page", response_model=PageResponse[FolderResponse])
+@router.get("", response_model=PageResponse[FolderResponse])
+@router.get("/page", response_model=PageResponse[FolderResponse], include_in_schema=False)
 async def list_folder_page(
     project_id: Optional[int] = None,
     workspace_directory_id: Optional[int] = None,
@@ -67,55 +68,33 @@ async def list_folder_page(
     }
 
 
-# ── GET /folders/all ─────────────────────────────────────────────────────────
-
-@router.get("/all", response_model=list[FolderResponse])
-async def list_all_folders(
+@router.post("/resolve-paths", response_model=list[FolderResponse])
+async def resolve_folder_paths(
+    body: ResolveFolderPathsRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    folder_rows = await list_folder_rows_with_file_counts(
-        db, current_user.id, all_folders=True)
-
-    return [
-        FolderResponse(
-            id=f.id, project_id=f.project_id, parent_id=f.parent_id,
-            workspace_directory_id=f.workspace_directory_id,
-            name=f.name, file_count=file_count, version=f.version,
-        )
-        for f, file_count in folder_rows
-    ]
-
-
-# ── GET /folders?project_id=X  （省略 project_id = 个人文件夹）─────────────────
-
-@router.get("", response_model=list[FolderResponse])
-async def list_folders(
-    project_id: Optional[int] = None,
-    workspace_directory_id: Optional[int] = None,
-    parent_id:  Optional[int] = None,
-    all_in_scope: bool = False,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    if project_id is not None:
-        proj = await get_owned(db, Project, project_id, current_user.id)
-        if not proj or proj.deleted_at is not None:
+    """只返回上传批次所请求路径上的已有目录节点。"""
+    if body.project_id is not None and body.workspace_directory_id is not None:
+        raise HTTPException(422, "项目与 Workspace 目录不能同时指定")
+    if body.project_id is not None:
+        project = await get_owned(db, Project, body.project_id, current_user.id)
+        if project is None or project.deleted_at is not None:
             raise HTTPException(404, "项目不存在")
-    if workspace_directory_id is not None:
-        directory = await get_owned(db, WorkspaceDirectory, workspace_directory_id, current_user.id)
+    if body.workspace_directory_id is not None:
+        directory = await get_owned(db, WorkspaceDirectory, body.workspace_directory_id, current_user.id)
         if directory is None or directory.deleted_at is not None:
             raise HTTPException(404, "Workspace 不存在")
-
-    folder_rows = await list_folder_rows_with_file_counts(
-        db, current_user.id, project_id=project_id, parent_id=parent_id,
-        workspace_directory_id=workspace_directory_id, all_in_scope=all_in_scope)
-
-    return [
-        FolderResponse(id=f.id, project_id=f.project_id, workspace_directory_id=f.workspace_directory_id, parent_id=f.parent_id,
-                       name=f.name, file_count=file_count, version=f.version)
-        for f, file_count in folder_rows
-    ]
+    rows = await resolve_existing_folder_paths(
+        db, current_user.id, project_id=body.project_id,
+        workspace_directory_id=body.workspace_directory_id,
+        parent_id=body.parent_id, paths=body.paths,
+    )
+    return [FolderResponse(
+        id=folder.id, project_id=folder.project_id,
+        workspace_directory_id=folder.workspace_directory_id,
+        parent_id=folder.parent_id, name=folder.name,
+    ) for folder in rows]
 
 
 @router.get("/{fid}", response_model=FolderResponse)
