@@ -20,6 +20,9 @@ _trace: ContextVar[str] = ContextVar("trace_id", default="")
 _scope_run: ContextVar["_ScopeRun | None"] = ContextVar("loopscope_run", default=None)
 _active_llm_span: ContextVar["_Span | None"] = ContextVar("loopscope_active_llm_span", default=None)
 _send_tasks: set[asyncio.Task] = set()
+_snapshot_tasks: dict[str, asyncio.Task] = {}
+_pending_snapshots: dict[str, dict[str, Any]] = {}
+_last_snapshot_at: dict[str, float] = {}
 _layout_logger = logging.getLogger("agent.core")
 
 def _enabled() -> bool:
@@ -735,6 +738,7 @@ class _Span:
     duration_ms: float | None = None
     status: str = "running"
     output: Any = field(default_factory=dict)
+    run: "_ScopeRun | None" = field(default=None, repr=False, compare=False)
 
     def finish(self, output: Any = None, *, status: str = "success") -> None:
         self.ended_at = _now()
@@ -742,9 +746,11 @@ class _Span:
         self.status = status
         if output is not None:
             self.output = _jsonable(output)
+        if self.run is not None:
+            _queue_snapshot(self.run)
 
     def payload(self) -> dict[str, Any]:
-        return _jsonable(vars(self))
+        return _jsonable({key: value for key, value in vars(self).items() if key != "run"})
 
 @dataclass
 class _ScopeRun:
@@ -787,6 +793,7 @@ class _ScopeRun:
             parent_span_id=parent_span_id,
             code=_jsonable(code or {}),
             token_impact=_jsonable(token_impact or {}),
+            run=self,
         )
         self.spans.append(s)
         return s
@@ -794,6 +801,7 @@ class _ScopeRun:
     def attach_context_spans(self, parent_span_id: str) -> None:
         for s in self.pending_context_spans:
             s.parent_span_id = parent_span_id
+            s.run = self
             self.spans.append(s)
         self.pending_context_spans.clear()
 
@@ -819,7 +827,8 @@ class _ScopeRun:
         self.attributes["tokens"] = copy.deepcopy(self.usage)
 
     def snapshot(self) -> dict[str, Any]:
-        ended = self.ended_at or _now()
+        ended = self.ended_at
+        measured_until = ended if ended is not None else _now()
         return {
             "id": self.id,
             "trace_id": self.trace_id,
@@ -829,13 +838,61 @@ class _ScopeRun:
             "status": self.status,
             "started_at": self.started_at,
             "ended_at": ended,
-            "duration_ms": round((ended - self.started_at) * 1000, 3),
+            "duration_ms": round((measured_until - self.started_at) * 1000, 3),
             "input": _jsonable(self.input),
             "output": {"text": self.output_text},
             "attributes": _jsonable(self.attributes),
             "usage": _jsonable(self.usage),
             "spans": [s.payload() for s in self.spans],
         }
+
+
+async def _drain_snapshots(run_id: str) -> None:
+    try:
+        while True:
+            snapshot = _pending_snapshots.pop(run_id, None)
+            if snapshot is None:
+                return
+            await _post_snapshot(snapshot)
+            if snapshot.get("ended_at") is not None and run_id not in _pending_snapshots:
+                _last_snapshot_at.pop(run_id, None)
+    finally:
+        _snapshot_tasks.pop(run_id, None)
+        # No await occurs between the final empty check and removing the task, so a
+        # newly queued snapshot cannot be stranded here.
+        snapshot = _pending_snapshots.pop(run_id, None)
+        if snapshot is not None:
+            _pending_snapshots[run_id] = snapshot
+            try:
+                task = asyncio.get_running_loop().create_task(_drain_snapshots(run_id))
+                _snapshot_tasks[run_id] = task
+                _send_tasks.add(task)
+                task.add_done_callback(_send_tasks.discard)
+            except Exception:
+                _pending_snapshots.pop(run_id, None)
+                _last_snapshot_at.pop(run_id, None)
+
+
+def _queue_snapshot(run: _ScopeRun, *, force: bool = False) -> None:
+    """异步提交最新快照；运行中最多每秒一次，终态快照不丢。"""
+    if not _enabled():
+        return
+    now = _now()
+    if not force and now - _last_snapshot_at.get(run.id, 0.0) < 1.0:
+        return
+    _last_snapshot_at[run.id] = now
+    _pending_snapshots[run.id] = copy.deepcopy(run.snapshot())
+    task = _snapshot_tasks.get(run.id)
+    if task is not None and not task.done():
+        return
+    try:
+        task = asyncio.get_running_loop().create_task(_drain_snapshots(run.id))
+        _snapshot_tasks[run.id] = task
+        _send_tasks.add(task)
+        task.add_done_callback(_send_tasks.discard)
+    except Exception:
+        _pending_snapshots.pop(run.id, None)
+        _last_snapshot_at.pop(run.id, None)
 
 def record_context_source(
     kind: str,
@@ -1058,13 +1115,7 @@ def _finish_run(run: _ScopeRun, status: str) -> None:
             final.finish({"text": final_text})
     run.status = status
     run.ended_at = _now()
-    snapshot = copy.deepcopy(run.snapshot())
-    try:
-        task = asyncio.create_task(_post_snapshot(snapshot))
-        _send_tasks.add(task)
-        task.add_done_callback(_send_tasks.discard)
-    except Exception:
-        pass
+    _queue_snapshot(run, force=True)
 
 def _discard_run() -> None:
     """丢弃没有进入 Agent 执行链路的临时 run，不向 Collector 上报。"""

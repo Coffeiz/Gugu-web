@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ZodError } from 'zod'
+import { TraceRunInputSchema } from '@loopscope/contracts'
 import { TraceStore } from '@loopscope/storage'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
@@ -48,6 +49,7 @@ function integerParam(url: URL, name: string, fallback: number, min: number, max
 }
 
 export function createCollectorServer(store: TraceStore) {
+  const runEventClients = new Set<ServerResponse>()
   return createServer(async (req, res) => {
   applyCors(req, res)
   if (req.method === 'OPTIONS') { res.statusCode = 204; res.end(); return }
@@ -59,8 +61,38 @@ export function createCollectorServer(store: TraceStore) {
       sendJson(res, 200, { ok: true, version: '0.3.0', runtime: 'node', orm: 'drizzle', db: store.connection.path })
       return
     }
+    if (req.method === 'GET' && pathname === '/api/events') {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache, no-transform',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      })
+      res.write(': connected\n\n')
+      runEventClients.add(res)
+      const heartbeat = setInterval(() => {
+        if (!res.destroyed && res.writable) res.write(': ping\n\n')
+      }, 15000)
+      heartbeat.unref()
+      res.on('close', () => {
+        clearInterval(heartbeat)
+        runEventClients.delete(res)
+      })
+      return
+    }
     if (req.method === 'POST' && pathname === '/api/collector/runs') {
-      sendJson(res, 200, store.ingestRun(await readJson(req)))
+      const payload = TraceRunInputSchema.parse(await readJson(req))
+      const result = store.ingestRun(payload)
+      const event = JSON.stringify({
+        type: 'run.changed',
+        run_id: payload.id,
+        session_key: payload.session_key,
+        status: payload.status,
+      })
+      for (const client of runEventClients) {
+        if (client.writable) client.write(`data: ${event}\n\n`)
+      }
+      sendJson(res, 200, result)
       return
     }
     if (req.method === 'GET' && pathname === '/api/sessions') {

@@ -53,3 +53,20 @@ export async function health() {
   if (!r.ok) throw new Error(`LoopScope ${r.status}`)
   return r.json()
 }
+
+export function subscribeTraceEvents(onEvent: (event: { run_id: string; session_key: string; status: string }) => void) {
+  const stream = new EventSource(`${BASE}/events`)
+  stream.onmessage = message => {
+    try {
+      const event = JSON.parse(message.data) as Record<string, unknown>
+      if (event.type !== 'run.changed'
+        || typeof event.run_id !== 'string'
+        || typeof event.session_key !== 'string'
+        || typeof event.status !== 'string') return
+      onEvent({ run_id: event.run_id, session_key: event.session_key, status: event.status })
+    } catch {
+      // 忽略格式错误的通知；后续通知或手动刷新可以恢复。
+    }
+  }
+  return () => stream.close()
+}

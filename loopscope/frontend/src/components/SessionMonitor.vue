@@ -25,8 +25,8 @@
         :class="{ active: run.id === selectedId, selected: selectedRunIds.has(run.id) }"
         @click="handleRunClick(run.id)"
         >
-          <span class="run-dot" :data-status="run.status"></span>
-          <span class="run-main"><b>{{ shortRun(run.id) }}</b><small>{{ runTime(run.started_at) }}</small></span>
+          <span class="run-dot" :data-status="run.status" :title="runStatus(run.status)"></span>
+          <span class="run-main"><b>{{ shortRun(run.id) }}</b><small>{{ runTime(run.started_at) }} · {{ runStatus(run.status) }}</small></span>
           <em>{{ fmtMs(run.duration_ms) }}</em>
         </button>
       </div>
@@ -324,6 +324,11 @@ function runTime(sec: number) { return new Date(sec * 1000).toLocaleTimeString([
 function fmtMs(v: number | null | undefined) {
   if (v == null) return '—'
   return v >= 1000 ? `${(v / 1000).toFixed(2)}s` : `${Math.round(v)}ms`
+}
+function runStatus(status: string) {
+  if (status === 'running') return '进行中'
+  if (status === 'error' || status === 'failed' || status === 'cancelled') return '失败或中断'
+  return '已完成'
 }
 function fmtTokens(v: number | null | undefined) {
   return formatCompactNumber(v)

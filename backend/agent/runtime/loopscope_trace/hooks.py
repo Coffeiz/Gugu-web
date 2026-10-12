@@ -402,6 +402,8 @@ def ensure_hooks() -> None:
                 "api_format": getattr(driver, "api_format", ""),
                 "cache_mode": getattr(_adapter, "cache_mode", "active"),
             })
+            from .state import _queue_snapshot
+            _queue_snapshot(run, force=True)
             model_name = str(getattr(ai, "model", "") or "")
             system_est = _estimate_tokens(plain_system, model_name)
             messages_est = _estimate_tokens(messages, model_name)
