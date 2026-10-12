@@ -142,8 +142,8 @@ def test_empty_postgres_bootstrap_installs_custom_search_and_paging_objects(tmp_
         info = json.loads(_run("docker", "inspect", container).stdout)[0]
         env["DB__PORT"] = info["NetworkSettings"]["Ports"]["5432/tcp"][0]["HostPort"]
         migration = subprocess.run(
-            [str(Path(sys.executable).parent / "alembic"), "upgrade", "head"],
-            env=env, cwd=tmp_path, capture_output=True, text=True,
+            ["bash", str(BACKEND / "scripts/migrations/bootstrap_database.sh")],
+            env=env, cwd=BACKEND, capture_output=True, text=True,
         )
         assert migration.returncode == 0, migration.stderr
 
