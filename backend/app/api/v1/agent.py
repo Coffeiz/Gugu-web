@@ -19,7 +19,7 @@ from app.core.security import get_current_user, get_current_user_id, get_current
 from app.core.ownership import get_owned
 from app.core.tz import iso_utc, now_utc
 from app.db.session import get_db
-from app.models import ConversationMessage, ConversationSession, FilesystemAuthorizationGrant, InteractionRequest, User, UserBot, Workspace  # orm-exempt: agent 会话域遗留查询（未新增边界，仅随 MCP 引用变更被 diff 命中），随 agent Service 收口一并迁移
+from app.models import ConversationMessage, ConversationSession, FilesystemAuthorizationGrant, User, UserBot, Workspace  # orm-exempt: agent 会话域遗留查询（未新增边界，仅随 MCP 引用变更被 diff 命中），随 agent Service 收口一并迁移
 from app.services import conversation_pending_queue, interactions
 from app.services.workspaces import resolve_sandbox_root, workspace_shell_supported
 from app.services.filesystem_authorization import (
@@ -197,10 +197,9 @@ async def get_interaction_session(
     db: AsyncSession = Depends(get_db),
 ):
     """解析非授权 prompt 深链，只向其 owner 返回所属会话 ID。"""
-    prompt = await db.scalar(select(InteractionRequest).where(
-        InteractionRequest.id == prompt_id,
-        InteractionRequest.user_id == current_user.id,
-    ))
+    prompt = await interactions.get_user_prompt(
+        db, user_id=current_user.id, prompt_id=prompt_id,
+    )
     if prompt is None:
         raise HTTPException(404, "交互不存在")
     schema = prompt.schema_json if isinstance(prompt.schema_json, dict) else {}
@@ -242,10 +241,9 @@ async def submit_secret_interaction(
     db: AsyncSession = Depends(get_db),
 ):
     """通用敏感字段入口；业务目标负责把值写入自己的加密存储。"""
-    prompt = await db.scalar(select(InteractionRequest).where(  # orm-exempt: agent 会话域遗留查询（未新增边界，仅随 MCP 引用变更被 diff 命中），随 agent Service 收口一并迁移
-        InteractionRequest.id == prompt_id,
-        InteractionRequest.user_id == current_user.id,
-    ).with_for_update())
+    prompt = await interactions.get_user_prompt(
+        db, user_id=current_user.id, prompt_id=prompt_id, for_update=True,
+    )
     if prompt is None:
         raise HTTPException(404, "敏感信息输入不存在")
     schema = prompt.schema_json if isinstance(prompt.schema_json, dict) else {}
@@ -266,10 +264,9 @@ async def cancel_secret_interaction(
     db: AsyncSession = Depends(get_db),
 ):
     """登录态 Web 取消 secret prompt；历史 IM 群会话也允许走此私密入口。"""
-    prompt = await db.scalar(select(InteractionRequest).where(
-        InteractionRequest.id == prompt_id,
-        InteractionRequest.user_id == current_user.id,
-    ))
+    prompt = await interactions.get_user_prompt(
+        db, user_id=current_user.id, prompt_id=prompt_id,
+    )
     if prompt is None:
         raise HTTPException(404, "凭据输入不存在")
     from app.services.mcp_secret_inputs import cancel_mcp_secret_prompt_web

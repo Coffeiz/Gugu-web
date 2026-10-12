@@ -220,6 +220,13 @@ async def create_all_tables():
         await conn.execute(text("SET LOCAL lock_timeout = '3s'"))
         await conn.execute(text("SET LOCAL statement_timeout = '15s'"))
         await conn.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _MIGRATION_LOCK_KEY})
+        # 空库由 metadata.create_all 初始化时不会经过创建数据库级对象的 Alembic
+        # revision；文件分页查询依赖此排序规则，因此必须在服务启动建表前补齐。
+        if conn.dialect.name == "postgresql":
+            await conn.execute(text(
+                'CREATE COLLATION IF NOT EXISTS "gugu_natural_zh" '
+                "(provider = icu, locale = 'zh-u-kn-true')"
+            ))
         await conn.run_sync(Base.metadata.create_all)
         for sql in _MIGRATIONS:
             await conn.execute(text(sql))

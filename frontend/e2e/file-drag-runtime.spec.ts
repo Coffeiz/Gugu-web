@@ -19,33 +19,26 @@ import { test, expect, type Page, type Locator } from '@playwright/test'
 test.describe.configure({ mode: 'serial' })
 
 const multiSelectModifier = process.platform === 'darwin' ? 'Meta' : 'Control'
-const createdNames = new Set<string>()
+const createdFileIds = new Set<number>()
+const createdFolderIds = new Set<number>()
 
 test.afterEach(async ({ page }) => {
-  const names = [...createdNames]
-  createdNames.clear()
-  if (!names.length) return
-  await page.evaluate(async targetNames => {
+  const fileIds = [...createdFileIds]
+  const folderIds = [...createdFolderIds].reverse()
+  createdFileIds.clear()
+  createdFolderIds.clear()
+  if (!fileIds.length && !folderIds.length) return
+  await page.evaluate(async ({ fileIds, folderIds }) => {
     const token = localStorage.getItem('user_token')
     const headers = token ? { Authorization: `Bearer ${token}` } : {}
-    const matches = new Set(targetNames)
-    if (targetNames.length) {
-      const allFiles = await fetch('/api/v1/files/all', { headers }).then(response => response.ok ? response.json() : [])
-      for (const file of allFiles.filter((item: { displayName?: string }) => matches.has(item.displayName))) {
-        await fetch(`/api/v1/files/${file.id}`, { method: 'DELETE', headers })
-      }
+    for (const fileId of fileIds) {
+      await fetch(`/api/v1/files/${fileId}`, { method: 'DELETE', headers })
     }
-    if (targetNames.length) {
-      const allFolders = await fetch('/api/v1/folders/all', { headers }).then(response => response.ok ? response.json() : [])
-      // 先删根文件夹；服务端会递归处理子文件夹和文件，子项即使随后返回 404 也不影响清理。
-      const folders = allFolders
-        .filter((item: { name?: string }) => matches.has(item.name))
-        .sort((a: { parentId?: number | null }, b: { parentId?: number | null }) => Number(Boolean(a.parentId)) - Number(Boolean(b.parentId)))
-      for (const folder of folders) {
-        await fetch(`/api/v1/folders/${folder.id}`, { method: 'DELETE', headers })
-      }
+    // 从内向外删除；不依赖已移除的全量文件/文件夹接口。
+    for (const folderId of folderIds) {
+      await fetch(`/api/v1/folders/${folderId}`, { method: 'DELETE', headers })
     }
-  }, names)
+  }, { fileIds, folderIds })
 })
 
 async function dragOnto(page: Page, source: Locator, target: Locator, edgeOffset?: { x: number; y: number }) {
@@ -78,8 +71,11 @@ async function createFolder(root: Locator, name: string) {
   await root.locator('button', { hasText: '新建文件夹' }).click()
   await root.locator('.new-folder-input').fill(name)
   await root.getByRole('button', { name: '确定' }).click()
-  await expect(root.locator('.folder-card', { hasText: name })).toBeVisible({ timeout: 10000 })
-  createdNames.add(name)
+  const card = root.locator('.folder-card', { hasText: name })
+  await expect(card).toBeVisible({ timeout: 10000 })
+  const folderId = Number(await card.getAttribute('data-folder-id'))
+  expect(Number.isInteger(folderId)).toBeTruthy()
+  createdFolderIds.add(folderId)
 }
 
 async function enterFolder(root: Locator, name: string) {
@@ -91,33 +87,26 @@ async function uploadTextFile(root: Locator, name: string) {
   await root.locator('.fub input[type="file"]').setInputFiles({
     name: `${name}.txt`, mimeType: 'text/plain', buffer: Buffer.from('drag e2e fixture'),
   })
-  await expect(root.locator('.fc-card', { hasText: name })).toBeVisible({ timeout: 15000 })
-  createdNames.add(name)
+  const card = root.locator('.fc-card', { hasText: name })
+  await expect(card).toBeVisible({ timeout: 15000 })
+  const fileId = Number(await card.getAttribute('data-file-id'))
+  expect(Number.isInteger(fileId)).toBeTruthy()
+  createdFileIds.add(fileId)
 }
 
-async function waitForMovedFile(page: Page, folderPath: string[], ...fileNames: string[]) {
+async function waitForMovedFiles(page: Page, fileIds: number[], targetFolderId: number) {
   // 拖拽先更新本地缓存，API 提交随后完成；刷新后直接核对服务端记录及目标目录，
-  // 避免路由重载回到文件库首页后把“没重新导航”误判成数据未持久化。
+  // 避免依赖已移除的全量 /files/all、/folders/all 端点。
   await page.reload()
-  await expect.poll(async () => page.evaluate(async ({ folderPath, fileNames }) => {
+  await expect.poll(async () => page.evaluate(async ({ fileIds, targetFolderId }) => {
     const token = localStorage.getItem('user_token')
     const headers = token ? { Authorization: `Bearer ${token}` } : {}
-    const [folders, files] = await Promise.all([
-      fetch('/api/v1/folders/all', { headers }).then(response => response.ok ? response.json() : []),
-      fetch('/api/v1/files/all', { headers }).then(response => response.ok ? response.json() : []),
-    ])
-    let targetFolderId: number | null = null
-    for (const folderName of folderPath) {
-      const folder = folders.find((item: { name?: string; parentId?: number | null }) =>
-        item.name === folderName && (targetFolderId == null || item.parentId === targetFolderId),
-      )
-      if (!folder) return false
-      targetFolderId = folder.id
-    }
-    return fileNames.every(fileName => files.some((file: { displayName?: string; folderId?: number | null }) =>
-      file.displayName === fileName && file.folderId === targetFolderId,
-    ))
-  }, { folderPath, fileNames })).toBe(true)
+    const files = await Promise.all(fileIds.map(async fileId => {
+      const response = await fetch(`/api/v1/files/${fileId}`, { headers })
+      return response.ok ? response.json() : null
+    }))
+    return files.every(file => file?.folderId === targetFolderId)
+  }, { fileIds, targetFolderId })).toBe(true)
 }
 
 async function waitForMoveRuntime(page: Page) {
@@ -146,6 +135,10 @@ test.describe('文件库：单文件拖拽（Runtime Core API）', () => {
 
     const card = root.locator('.fc-card', { hasText: baseName })
     const target = root.locator('.folder-card', { hasText: folderName })
+    const fileId = Number(await card.getAttribute('data-file-id'))
+    const targetFolderId = Number(await target.getAttribute('data-folder-id'))
+    expect(Number.isInteger(fileId)).toBeTruthy()
+    expect(Number.isInteger(targetFolderId)).toBeTruthy()
     const moveResponse = page.waitForResponse(response =>
       response.request().method() === 'PATCH' && response.url().includes('/api/v1/files/'))
     await dragOnto(page, card, target)
@@ -156,7 +149,7 @@ test.describe('文件库：单文件拖拽（Runtime Core API）', () => {
     // Runtime pointer 事务收尾期间直接派发语义 click，避免再次走拖拽指针序列；
     // 目录进入仍由文件夹卡片的真实 click handler 完成。
     await target.evaluate(element => (element as HTMLElement).click())
-    await waitForMovedFile(page, [workspaceName, folderName], baseName)
+    await waitForMovedFiles(page, [fileId], targetFolderId)
   })
 
   test('单文件拖到面包屑返回上一层', async ({ page }) => {
@@ -235,10 +228,14 @@ test.describe('文件库：Runtime 多选拖拽', () => {
 
     const cardA = root.locator('.fc-card', { hasText: nameA })
     const cardB = root.locator('.fc-card', { hasText: nameB })
+    const fileIdA = Number(await cardA.getAttribute('data-file-id'))
+    const fileIdB = Number(await cardB.getAttribute('data-file-id'))
+    const target = root.locator('.folder-card', { hasText: folderName })
+    const targetFolderId = Number(await target.getAttribute('data-folder-id'))
+    expect([fileIdA, fileIdB, targetFolderId].every(Number.isInteger)).toBeTruthy()
     await cardA.click({ modifiers: [multiSelectModifier] })
     await cardB.click({ modifiers: [multiSelectModifier] })
 
-    const target = root.locator('.folder-card', { hasText: folderName })
     await dragOnto(page, cardA, target, { x: 10, y: 10 })
 
     await expect(root.locator('.fc-card', { hasText: nameA })).toHaveCount(0, { timeout: 10000 })
@@ -248,7 +245,7 @@ test.describe('文件库：Runtime 多选拖拽', () => {
     // 落地后点文件夹应该正常导航进入，不是切换选中（见 selectModeForced 回归修复）
     await waitForMoveRuntime(page)
     await target.click()
-    await waitForMovedFile(page, [workspaceName, folderName], nameA, nameB)
+    await waitForMovedFiles(page, [fileIdA, fileIdB], targetFolderId)
   })
 
   test('文件和文件夹混合多选后拖入文件夹', async ({ page }) => {
@@ -338,6 +335,7 @@ test.describe('文件库：Runtime 多选拖拽', () => {
     const workspaceName = `e2e-failed-group-${Date.now()}`
     const folderName = `e2e-failed-group-target-${Date.now()}`
     await createFolder(root, workspaceName)
+    const sourceFolderId = Number(await root.locator('.folder-card', { hasText: workspaceName }).getAttribute('data-folder-id'))
     await enterFolder(root, workspaceName)
     await createFolder(root, folderName)
     const nameA = `e2e-failed-a-${Date.now()}`
@@ -346,6 +344,11 @@ test.describe('文件库：Runtime 多选拖拽', () => {
     await uploadTextFile(root, nameB)
     const cardA = root.locator('.fc-card', { hasText: nameA })
     const cardB = root.locator('.fc-card', { hasText: nameB })
+    const fileIdA = Number(await cardA.getAttribute('data-file-id'))
+    const fileIdB = Number(await cardB.getAttribute('data-file-id'))
+    const target = root.locator('.folder-card', { hasText: folderName })
+    const targetFolderId = Number(await target.getAttribute('data-folder-id'))
+    expect([sourceFolderId, fileIdA, fileIdB, targetFolderId].every(Number.isInteger)).toBeTruthy()
     await cardA.click({ modifiers: [multiSelectModifier] })
     await cardB.click({ modifiers: [multiSelectModifier] })
     let moveCount = 0
@@ -359,29 +362,28 @@ test.describe('文件库：Runtime 多选拖拽', () => {
       }
       await route.continue()
     })
-    const target = root.locator('.folder-card', { hasText: folderName })
     await dragOnto(page, cardA, target, { x: 10, y: 10 })
     await expect(root.locator('.fc-card', { hasText: nameA })).toBeVisible({ timeout: 10000 })
     await expect(root.locator('.fc-card', { hasText: nameB })).toBeVisible({ timeout: 10000 })
     await expect(target).toContainText('0 项', { timeout: 10000 })
     await page.reload()
-    const persistedFolders = await page.evaluate(async ({ workspaceName, folderName, fileNames }) => {
+    const persisted = await page.evaluate(async ({ fileIds, sourceFolderId, targetFolderId }) => {
       const token = localStorage.getItem('user_token')
       const headers = token ? { Authorization: `Bearer ${token}` } : {}
-      const [folders, files] = await Promise.all([
-        fetch('/api/v1/folders/all', { headers }).then(response => response.json()),
-        fetch('/api/v1/files/all', { headers }).then(response => response.json()),
+      const [targetResponse, ...fileResponses] = await Promise.all([
+        fetch(`/api/v1/folders/${targetFolderId}`, { headers }),
+        ...fileIds.map(fileId => fetch(`/api/v1/files/${fileId}`, { headers })),
       ])
-      const source = folders.find((folder: { name: string }) => folder.name === workspaceName)
-      const target = folders.find((folder: { name: string; parentId: number }) => folder.name === folderName && folder.parentId === source?.id)
+      if (!targetResponse.ok || fileResponses.some(response => !response.ok)) return null
+      const target = await targetResponse.json()
+      const files = await Promise.all(fileResponses.map(response => response.json()))
       return {
-        targetFileCount: files.filter((file: { folderId: number | null }) => file.folderId === target?.id).length,
-        sourceFileIds: files.filter((file: { displayName: string; folderId: number | null }) =>
-          fileNames.includes(file.displayName) && file.folderId === source?.id,
-        ).map((file: { displayName: string }) => file.displayName).sort(),
+        targetFileCount: target.fileCount,
+        sourceFolderIds: files.map((file: { folderId: number | null }) => file.folderId),
       }
-    }, { workspaceName, folderName, fileNames: [nameA, nameB] })
-    expect(persistedFolders.targetFileCount).toBe(0)
-    expect(persistedFolders.sourceFileIds).toEqual([nameA, nameB].sort())
+    }, { fileIds: [fileIdA, fileIdB], sourceFolderId, targetFolderId })
+    expect(persisted).not.toBeNull()
+    expect(persisted?.targetFileCount).toBe(0)
+    expect(persisted?.sourceFolderIds).toEqual([sourceFolderId, sourceFolderId])
   })
 })

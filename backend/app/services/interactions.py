@@ -18,6 +18,19 @@ CUSTOM_REPLY_OPTION_ID = "__custom_reply__"
 CUSTOM_REPLY_LABEL = "自定义回复"
 
 
+async def get_user_prompt(
+    db: AsyncSession, *, user_id, prompt_id: int, for_update: bool = False,
+) -> InteractionRequest | None:
+    """按用户归属读取交互；敏感字段提交时可在同一事务内锁定记录。"""
+    stmt = select(InteractionRequest).where(
+        InteractionRequest.id == prompt_id,
+        InteractionRequest.user_id == user_id,
+    )
+    if for_update:
+        stmt = stmt.with_for_update()
+    return await db.scalar(stmt)
+
+
 def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 

@@ -188,8 +188,11 @@ test('周末作为框选头尾时比范围内的周末日期更突出', async ({
 test('框选范围头尾在亮暗主题中都比中段更突出', async ({ page }) => {
   await page.goto('/calendar')
   await expect(page.locator('.month-body')).toBeVisible()
+  // 颜色断言比较最终背景，不应取到 120 ms 背景过渡的中间帧。
+  await page.addStyleTag({ content: '.month-cell { transition: none !important; }' })
 
   let monday: ReturnType<typeof page.locator> | null = null
+  let tuesday: ReturnType<typeof page.locator> | null = null
   let wednesday: ReturnType<typeof page.locator> | null = null
   for (let weekIndex = 0; weekIndex < await page.locator('.week-row').count(); weekIndex += 1) {
     const cells = page.locator('.week-row').nth(weekIndex).locator('.month-cell')
@@ -205,6 +208,7 @@ test('框选范围头尾在亮暗主题中都比中段更突出', async ({ page 
         && new Date(`${endDate}T00:00:00`).getDay() === 3
       ) {
         monday = cells.nth(dayIndex)
+        tuesday = cells.nth(dayIndex + 1)
         wednesday = cells.nth(dayIndex + 2)
         break
       }
@@ -213,6 +217,7 @@ test('框选范围头尾在亮暗主题中都比中段更突出', async ({ page 
   }
 
   expect(monday).not.toBeNull()
+  expect(tuesday).not.toBeNull()
   expect(wednesday).not.toBeNull()
   const startBox = await monday!.boundingBox()
   const endBox = await wednesday!.boundingBox()
@@ -228,24 +233,28 @@ test('框选范围头尾在亮暗主题中都比中段更突出', async ({ page 
 
     await page.mouse.move(startBox!.x + startBox!.width / 2, startBox!.y + 12)
     await page.mouse.down()
-    await page.mouse.move(endBox!.x + endBox!.width / 2, endBox!.y + 12)
+    // 显式经过中间日期，避免单步鼠标跳跃在 CI 里偶发地只触发起点点击。
+    await page.mouse.move(endBox!.x + endBox!.width / 2, endBox!.y + 12, { steps: 5 })
     await page.mouse.up()
 
-    const alpha = async (selector: string) => page.locator(selector).evaluate((element) => {
+    await expect(monday!).toHaveClass(/range-start/)
+    await expect(wednesday!).toHaveClass(/range-end/)
+
+    const alpha = async (element: ReturnType<typeof page.locator>) => element.evaluate((node) => {
       const canvas = document.createElement('canvas')
       canvas.width = 1
       canvas.height = 1
       const context = canvas.getContext('2d')
       if (!context) throw new Error('无法创建颜色验证画布')
       context.clearRect(0, 0, 1, 1)
-      context.fillStyle = getComputedStyle(element).backgroundColor
+      context.fillStyle = getComputedStyle(node).backgroundColor
       context.fillRect(0, 0, 1, 1)
       return context.getImageData(0, 0, 1, 1).data[3]
     })
 
-    const startAlpha = await alpha('.month-cell.range-start')
-    const middleAlpha = await alpha('.month-cell.in-range:not(.range-start):not(.range-end)')
-    const endAlpha = await alpha('.month-cell.range-end')
+    const startAlpha = await alpha(monday!)
+    const middleAlpha = await alpha(tuesday!)
+    const endAlpha = await alpha(wednesday!)
     expect(startAlpha, `${theme} 模式的起始日期需强于中段`).toBeGreaterThan(middleAlpha)
     expect(endAlpha, `${theme} 模式的结束日期需强于中段`).toBeGreaterThan(middleAlpha)
   }

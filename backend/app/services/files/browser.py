@@ -2,13 +2,14 @@ from datetime import datetime
 from typing import Any, Optional
 from urllib.parse import unquote, urlsplit
 
-from sqlalchemy import String, case, func, literal, literal_column, select, tuple_, type_coerce
+from sqlalchemy import String, and_, case, func, literal, literal_column, or_, select, tuple_, type_coerce
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import File, Folder, Project
 from app.core.ownership import get_owned
 from app.search.query import keyword_condition, keyword_score, normalize_queries
 from app.services.files.pagination import apply_keyset, decode_cursor, encode_cursor
+from app.utils.romaji import is_romaji_query
 
 def file_listing_conditions(
     user_id: int,
@@ -645,6 +646,50 @@ async def search_user_folders(db, user_id, queries, mode, primary_query: str, li
             _folder_primary_rank(primary_query),
             Folder.created_at.desc(),
         ).limit(limit)
+    )).scalars().all()
+
+
+def _romaji_alias_condition(columns, alias_column, queries, mode: str):
+    terms = []
+    for query in queries:
+        alternatives = [column.ilike(f"%{query}%") for column in columns]
+        if is_romaji_query(query):
+            alternatives.append(alias_column.ilike(f"%{query.lower().replace(' ', '')}%"))
+        terms.append(or_(*alternatives))
+    return and_(*terms) if mode == "AND" else or_(*terms)
+
+
+async def search_user_files_by_romaji_alias(
+    db, user_id, queries, mode: str, limit: int, exclude_ids=(),
+):
+    """从当前用户文件中按拼音别名补齐常规 ILIKE 搜索未命中的结果。"""
+    stmt = select(File).where(
+        File.user_id == user_id,
+        File.deleted_at.is_(None),
+        File.search_romaji.is_not(None),
+        _romaji_alias_condition([File.display_name, File.ext], File.search_romaji, queries, mode),
+    )
+    if exclude_ids:
+        stmt = stmt.where(File.id.not_in(exclude_ids))
+    return (await db.execute(
+        stmt.order_by(File.updated_at.desc(), File.id.desc()).limit(limit)
+    )).scalars().all()
+
+
+async def search_user_folders_by_romaji_alias(
+    db, user_id, queries, mode: str, limit: int, exclude_ids=(),
+):
+    """从当前用户文件夹中按拼音别名补齐常规搜索未命中的结果。"""
+    stmt = select(Folder).where(
+        Folder.user_id == user_id,
+        Folder.deleted_at.is_(None),
+        Folder.search_romaji.is_not(None),
+        _romaji_alias_condition([Folder.name], Folder.search_romaji, queries, mode),
+    )
+    if exclude_ids:
+        stmt = stmt.where(Folder.id.not_in(exclude_ids))
+    return (await db.execute(
+        stmt.order_by(Folder.created_at.desc(), Folder.id.desc()).limit(limit)
     )).scalars().all()
 
 

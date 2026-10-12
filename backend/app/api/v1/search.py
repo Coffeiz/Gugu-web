@@ -7,7 +7,7 @@ PostgreSQL ILIKE，由 pg_trgm GIN 索引加速；对话同时搜会话标题与
 共用——路由给下拉框用小 per_type，工具给模型用更大的 per_type，避免各写一套。
 """
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -25,7 +25,11 @@ from app.services.conversations import (
     search_session_titles,
 )
 from app.services.user_preferences import get_user_locale
-from app.services.files.browser import search_user_folders
+from app.services.files.browser import (
+    search_user_files_by_romaji_alias,
+    search_user_folders,
+    search_user_folders_by_romaji_alias,
+)
 from app.services.search import search_global_mcp_servers, search_global_scheduled_tasks
 from app.services.storage.folders import folder_location_subtitle, resolve_folder_chain
 
@@ -83,17 +87,6 @@ def _romaji_matches_object(obj, kind: str, queries: list[str], language: str, mo
         for query in queries
     ]
     return all(matches) if mode == "AND" else any(matches)
-
-
-def _romaji_search_condition(columns, alias_column, queries: list[str], mode: str):
-    """普通字段与拼音别名按每个关键词合并，再应用统一 AND/OR 语义。"""
-    terms = []
-    for query in queries:
-        alternatives = [column.ilike(f"%{query}%") for column in columns]
-        if is_romaji_query(query):
-            alternatives.append(alias_column.ilike(f"%{query.lower().replace(' ', '')}%"))
-        terms.append(or_(*alternatives))
-    return and_(*terms) if mode == "AND" else or_(*terms)
 
 
 def _primary_rank(column, q: str):
@@ -235,18 +228,9 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
         if use_romaji and len(rows) < per_type:
             if use_romaji:
                 seen = {f.id for f in rows}
-                alias_rows = (await db.execute(
-                    select(File).where(
-                        File.user_id == uid,
-                        File.deleted_at.is_(None),
-                        File.search_romaji.is_not(None),
-                        *([File.id.not_in(seen)] if seen else []),
-                        _romaji_search_condition(
-                            [File.display_name, File.ext], File.search_romaji, search_queries, mode,
-                        ),
-                    ).order_by(File.updated_at.desc(), File.id.desc())
-                    .limit(per_type - len(rows))
-                )).scalars().all()
+                alias_rows = await search_user_files_by_romaji_alias(
+                    db, uid, search_queries, mode, per_type - len(rows), seen,
+                )
                 rows.extend(alias_rows)
         if rows:
             items = await _file_search_items(db, uid, rows)
@@ -258,16 +242,9 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
         if use_romaji and len(rows) < per_type:
             if use_romaji:
                 seen = {fo.id for fo in rows}
-                alias_rows = (await db.execute(
-                    select(Folder).where(
-                        Folder.user_id == uid,
-                        Folder.deleted_at.is_(None),
-                        Folder.search_romaji.is_not(None),
-                        *([Folder.id.not_in(seen)] if seen else []),
-                        _romaji_search_condition([Folder.name], Folder.search_romaji, search_queries, mode),
-                    ).order_by(Folder.created_at.desc(), Folder.id.desc())
-                    .limit(per_type - len(rows))
-                )).scalars().all()
+                alias_rows = await search_user_folders_by_romaji_alias(
+                    db, uid, search_queries, mode, per_type - len(rows), seen,
+                )
                 rows.extend(alias_rows)
         if rows:
             items = await _folder_search_items(db, uid, rows)
