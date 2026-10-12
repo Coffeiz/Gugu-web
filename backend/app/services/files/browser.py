@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any, Optional
 from urllib.parse import unquote, urlsplit
 
-from sqlalchemy import Select, String, case, func, literal, literal_column, select, tuple_, type_coerce
+from sqlalchemy import String, case, func, literal, literal_column, select, tuple_, type_coerce
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import File, Folder, Project
@@ -10,42 +10,33 @@ from app.core.ownership import get_owned
 from app.search.query import keyword_condition, keyword_score, normalize_queries
 from app.services.files.pagination import apply_keyset, decode_cursor, encode_cursor
 
-def file_listing_query(
+def file_listing_conditions(
     user_id: int,
     space: Optional[str] = None,
     project_id: Optional[int] = None,
-    folder_id: Optional[int] = None,
     workspace_directory_id: Optional[int] = None,
     mind_map_id: Optional[int] = None,
     ext: Optional[str] = None,
     query: Optional[str] = None,
-) -> Select:
-    stmt = (
-        select(File, Project.name, Project.color, Folder.name)
-        .outerjoin(Project, Project.id == File.project_id)
-        .outerjoin(Folder, Folder.id == File.folder_id)
-        .where(File.user_id == user_id, File.deleted_at.is_(None))
-        .order_by(File.created_at.desc())
-    )
+) -> list:
+    """构造单个逻辑目录的 File 过滤条件，不提前关联展示实体。"""
+    conditions = [File.user_id == user_id, File.deleted_at.is_(None)]
     if space:
-        stmt = stmt.where(File.space == space)
+        conditions.append(File.space == space)
     if workspace_directory_id is not None:
-        stmt = stmt.where(File.workspace_directory_id == workspace_directory_id)
+        conditions.append(File.workspace_directory_id == workspace_directory_id)
     if project_id is not None:
-        stmt = stmt.where(File.project_id == project_id)
-    if folder_id is not None:
-        stmt = stmt.where(File.folder_id == folder_id)
-    elif project_id is not None and space == "project":
-        stmt = stmt.where(File.folder_id.is_(None))
-    elif project_id is None and space in {"personal", "workspace"}:
-        stmt = stmt.where(File.folder_id.is_(None))
+        conditions.append(File.project_id == project_id)
+    # 文件夹作用域由 list_file_page_rows 的 coalesce(folder_id, 0) key 覆盖；
+    # 不再叠加 folder_id = / IS NULL，避免 PostgreSQL generic plan 将两者
+    # 错当成独立过滤并 bitmap 扫描整目录。
     if mind_map_id is not None:
-        stmt = stmt.where(File.mind_map_id == mind_map_id)
+        conditions.append(File.mind_map_id == mind_map_id)
     if ext:
-        stmt = stmt.where(File.ext == ext.upper())
+        conditions.append(File.ext == ext.upper())
     if query:
-        stmt = stmt.where(File.display_name.ilike(f"%{query}%"))
-    return stmt
+        conditions.append(File.display_name.ilike(f"%{query}%"))
+    return conditions
 
 
 def _file_page_sort_column(sort_by: str, *, dialect_name: str, project_id=None, space=None):
@@ -146,39 +137,58 @@ async def list_file_page_rows(
     sort_column = _file_page_sort_column(
         sort_by, dialect_name=db.get_bind().dialect.name, project_id=project_id, space=space,
     )
-    stmt = file_listing_query(
-        user_id, space=space, project_id=project_id, folder_id=folder_id,
+    filters = file_listing_conditions(
+        user_id, space=space, project_id=project_id,
         workspace_directory_id=workspace_directory_id, mind_map_id=mind_map_id,
         ext=ext, query=query,
     )
     scope_id = project_id or workspace_directory_id or mind_map_id or 0
     folder_key = folder_id or 0
-    stmt = stmt.where(
+    filters.extend((
         _file_scope_key_column() == scope_id,
         func.coalesce(File.folder_id, literal_column("0")) == folder_key,
-    )
+    ))
     boundary = decode_cursor(cursor, user_id=user_id, scope=scope)
+    page_stmt = select(File.id, sort_column.label("page_sort")).where(*filters)
     if boundary:
-        stmt = apply_keyset(
-            stmt, model=File, sort_column=sort_column,
+        page_stmt = apply_keyset(
+            page_stmt, model=File, sort_column=sort_column,
             sort_value=_cursor_sort_value(sort_by, boundary[0], project_id=project_id),
             entity_id=boundary[1], direction=sort_order,
         )
     order = sort_column.asc() if sort_order == "asc" else sort_column.desc()
     id_order = File.id.asc() if sort_order == "asc" else File.id.desc()
-    rows = (await db.execute(
-        stmt.add_columns(sort_column.label("page_sort"))
-        .order_by(None)
-        .order_by(order, id_order)
-        .limit(limit + 1)
+    page_rows = (await db.execute(
+        page_stmt.order_by(order, id_order).limit(limit + 1)
     )).all()
-    has_more = len(rows) > limit
-    items = rows[:limit]
+    has_more = len(page_rows) > limit
+    page_rows = page_rows[:limit]
+    if page_rows:
+        page_ids = [row.id for row in page_rows]
+        details = (await db.execute(
+            select(File, Project.name, Project.color, Folder.name)
+            .outerjoin(Project, Project.id == File.project_id)
+            .outerjoin(Folder, Folder.id == File.folder_id)
+            # page_ids 已由上面的用户/目录条件查询确定；详情查询只重复验证所有权和
+            # 存活状态，避免优化器为作用域过滤扫描整目录的排序索引。
+            .where(
+                File.id.in_(page_ids),
+                File.user_id == user_id,
+                File.deleted_at.is_(None),
+            )
+        )).all()
+        detail_by_id = {row[0].id: row for row in details}
+        items = [
+            (*detail_by_id[row.id], row.page_sort)
+            for row in page_rows if row.id in detail_by_id
+        ]
+    else:
+        items = []
     next_cursor = None
     if has_more and items:
-        last = items[-1]
+        last = page_rows[-1]
         next_cursor = encode_cursor(
-            user_id=user_id, scope=scope, sort_value=last[4], entity_id=last[0].id,
+            user_id=user_id, scope=scope, sort_value=last.page_sort, entity_id=last.id,
         )
     return {"items": items, "next_cursor": next_cursor, "has_more": has_more}
 
