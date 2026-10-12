@@ -56,10 +56,11 @@ function togglePicker() {
 }
 watch(refQuery, async (query) => {
   const value = query.trim()
-  // ref-suggest 也搜对话（笔记 @ 引用用），画布图层节点还不支持接对话，过滤掉——
-  // 不然会出现选了却建不出节点的选项。
+  // 引用建议还包含文件夹、对话等类型；画布目前只支持项目、文件和活动节点。
   refResults.value = value
-    ? (await mindApi.refSuggest(value)).filter((it): it is CanvasRefItem => it.type !== 'conversation')
+    ? (await mindApi.refSuggest(value)).filter((it): it is CanvasRefItem =>
+      it.type === 'project' || it.type === 'file' || it.type === 'event',
+    )
     : []
 })
 function pickRef(item: CanvasRefItem) {
