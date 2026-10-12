@@ -2,7 +2,7 @@ import logging
 from datetime import datetime, timedelta
 from app.core.tz import now_utc
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,8 +14,10 @@ from app.schemas import (
     FolderResponse,
     TrashCountsResponse,
     TrashFolderContentsResponse,
+    TrashFolderContentsPageResponse,
     TrashFolderResponse,
     TrashPurgeJobResponse,
+    PageResponse,
 )
 from app.core.security import get_current_user, get_client_id
 from app.core import events
@@ -28,6 +30,9 @@ from app.services.files.trash import (
     list_top_level_deleted_folders,
     list_top_level_deleted_folders_with_counts,
     list_trash_file_rows,
+    list_trash_file_page_rows,
+    list_trash_folder_page_rows,
+    list_trash_folder_contents_page_rows,
     list_trash_folder_contents_rows,
     restore_file_by_id,
     restore_files_by_ids,
@@ -42,6 +47,75 @@ router = APIRouter(prefix="/trash", tags=["trash"])
 
 TRASH_DAYS = 30
 _log = logging.getLogger("app.api.v1.trash")
+
+
+@router.get("/page", response_model=PageResponse[FileResponse])
+async def list_trash_page(
+    limit: int = Query(default=100, ge=1, le=200),
+    cursor: str | None = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    page = await list_trash_file_page_rows(db, current_user.id, limit=limit, cursor=cursor)
+    return {
+        "items": [to_file_response(f, pname, color_value(pcolor), fname)
+                  for f, pname, pcolor, fname in page["items"]],
+        "next_cursor": page["next_cursor"],
+        "has_more": page["has_more"],
+    }
+
+
+@router.get("/folders/page", response_model=PageResponse[TrashFolderResponse])
+async def list_trash_folders_page(
+    limit: int = Query(default=100, ge=1, le=200),
+    cursor: str | None = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    page = await list_trash_folder_page_rows(db, current_user.id, limit=limit, cursor=cursor)
+    return {
+        "items": [TrashFolderResponse(
+            id=folder.id, project_id=folder.project_id, parent_id=folder.parent_id,
+            name=folder.name, file_count=count, version=folder.version,
+            deleted_at=folder.deleted_at.strftime("%Y-%m-%dT%H:%M:%S"),
+        ) for folder, count in page["items"]],
+        "next_cursor": page["next_cursor"],
+        "has_more": page["has_more"],
+    }
+
+
+@router.get("/folders/{fid}/contents/page", response_model=TrashFolderContentsPageResponse)
+async def list_trash_folder_contents_page(
+    fid: int,
+    limit: int = Query(default=100, ge=1, le=200),
+    folder_cursor: str | None = None,
+    file_cursor: str | None = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    page = await list_trash_folder_contents_page_rows(
+        db, current_user.id, fid, limit=limit,
+        folder_cursor=folder_cursor, file_cursor=file_cursor,
+    )
+    if page is None:
+        raise HTTPException(404, "文件夹不存在")
+    return {
+        "folders": {
+            "items": [TrashFolderResponse(
+                id=folder.id, project_id=folder.project_id, parent_id=folder.parent_id,
+                name=folder.name, file_count=count, version=folder.version,
+                deleted_at=folder.deleted_at.strftime("%Y-%m-%dT%H:%M:%S"),
+            ) for folder, count in page["folders"]["items"]],
+            "next_cursor": page["folders"]["next_cursor"],
+            "has_more": page["folders"]["has_more"],
+        },
+        "files": {
+            "items": [to_file_response(f, pname, color_value(pcolor), fname)
+                      for f, pname, pcolor, fname in page["files"]["items"]],
+            "next_cursor": page["files"]["next_cursor"],
+            "has_more": page["files"]["has_more"],
+        },
+    }
 
 
 @router.get("/counts", response_model=TrashCountsResponse)

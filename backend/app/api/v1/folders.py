@@ -1,15 +1,15 @@
 import io
 import zipfile
-from typing import Optional
+from typing import Literal, Optional
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.models import Folder, Project, User, WorkspaceDirectory  # orm-exempt: 模型引用随本文件遗留查询，Service 收口时一并移除
-from app.schemas import FolderCopy, FolderCreate, FolderMove, FolderRename, FolderResponse
+from app.schemas import FolderCopy, FolderCreate, FolderLocationResponse, FolderMove, FolderRename, FolderResponse, PageResponse
 from app.core.security import get_current_user, get_client_id
 from app.core.ownership import get_owned
 from app.core import events
@@ -18,12 +18,53 @@ from app.services.storage.file_service import FileService
 from app.services.files.browser import (
     file_count_for_folder,
     folder_download_rows,
+    get_folder_detail_row,
+    get_folder_path_rows,
+    list_folder_page_rows,
     list_folder_rows_with_file_counts,
 )
 from app.services.undo import UndoService
 from app.services.undo.files import folder_snapshot, operation_state, ref_for
 
 router = APIRouter(prefix="/folders", tags=["folders"])
+
+
+@router.get("/page", response_model=PageResponse[FolderResponse])
+async def list_folder_page(
+    project_id: Optional[int] = None,
+    workspace_directory_id: Optional[int] = None,
+    parent_id: Optional[int] = None,
+    limit: int = Query(default=100, ge=1, le=200),
+    cursor: Optional[str] = None,
+    sort_by: Literal["name", "type", "stage", "createdAt", "size", "id"] = "createdAt",
+    sort_order: Literal["asc", "desc"] = "desc",
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """分页读取当前逻辑目录的直属文件夹；不提供全空间树下载模式。"""
+    if project_id is not None:
+        proj = await get_owned(db, Project, project_id, current_user.id)
+        if not proj or proj.deleted_at is not None:
+            raise HTTPException(404, "项目不存在")
+    if workspace_directory_id is not None:
+        directory = await get_owned(db, WorkspaceDirectory, workspace_directory_id, current_user.id)
+        if directory is None or directory.deleted_at is not None:
+            raise HTTPException(404, "Workspace 不存在")
+    page = await list_folder_page_rows(
+        db, current_user.id, limit=limit, cursor=cursor, sort_by=sort_by,
+        sort_order=sort_order, project_id=project_id,
+        workspace_directory_id=workspace_directory_id, parent_id=parent_id,
+    )
+    return {
+        "items": [FolderResponse(
+            id=folder.id, project_id=folder.project_id,
+            workspace_directory_id=folder.workspace_directory_id,
+            parent_id=folder.parent_id, name=folder.name,
+            file_count=file_count, version=folder.version,
+        ) for folder, file_count in page["items"]],
+        "next_cursor": page["next_cursor"],
+        "has_more": page["has_more"],
+    }
 
 
 # ── GET /folders/all ─────────────────────────────────────────────────────────
@@ -75,6 +116,51 @@ async def list_folders(
                        name=f.name, file_count=file_count, version=f.version)
         for f, file_count in folder_rows
     ]
+
+
+@router.get("/{fid}", response_model=FolderResponse)
+async def get_folder(
+    fid: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    row = await get_folder_detail_row(db, current_user.id, fid)
+    if row is None:
+        raise HTTPException(404, "文件夹不存在")
+    folder, file_count = row
+    return FolderResponse(
+        id=folder.id, project_id=folder.project_id,
+        workspace_directory_id=folder.workspace_directory_id,
+        parent_id=folder.parent_id, name=folder.name,
+        file_count=file_count, version=folder.version,
+    )
+
+
+@router.get("/{fid}/location", response_model=FolderLocationResponse)
+async def get_folder_location(
+    fid: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    path_rows = await get_folder_path_rows(db, current_user.id, fid)
+    if path_rows is None:
+        raise HTTPException(404, "文件夹位置不存在")
+    folder_row = await get_folder_detail_row(db, current_user.id, fid)
+    assert folder_row is not None
+    folder, file_count = folder_row
+
+    def response(item, count=0):
+        return FolderResponse(
+            id=item.id, project_id=item.project_id,
+            workspace_directory_id=item.workspace_directory_id,
+            parent_id=item.parent_id, name=item.name,
+            file_count=count, version=item.version,
+        )
+
+    return FolderLocationResponse(
+        folder=response(folder, file_count),
+        ancestors=[response(item) for item in path_rows if item.id != folder.id],
+    )
 
 
 # ── POST /folders ─────────────────────────────────────────────────────────────

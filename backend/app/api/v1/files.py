@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, UploadFile, File as FastAPIFile, Form
 from jose import JWTError, jwt
@@ -15,12 +15,12 @@ from app.core.upload_stream import spool_upload
 from app.db.session import get_db
 from app.models import File, Folder, Project, User  # orm-exempt: 文件归档接口的模型引用随现有遗留查询，files Service 收口时一并移除
 from app.schemas import (
-    CamelModel, FileResponse, FileStreamResponse, FileSummaryResponse, FileUpdate, FileTreeResponse, ProjectTreeEntry,
+    CamelModel, FileLocationResponse, FileResponse, FileStreamResponse, FileSummaryResponse, FileUpdate, FileTreeResponse, PageResponse, ProjectTreeEntry, ResolveFilePathsRequest, ResolvedFilePath,
     BatchDeleteBody, FileCopyBody, BatchDownloadBody,
 )
 from app.services.files.browser import (
-    get_file_detail_row, get_file_summary, get_file_tree_rows, get_file_version_snapshot,
-    list_existing_file_rows, list_file_rows,
+    get_file_detail_row, get_file_summary, get_file_tree_rows, get_file_version_snapshot, get_folder_path_rows,
+    list_existing_file_rows, list_file_rows, list_file_page_rows, resolve_relative_file_paths,
 )
 from app.services.storage.quota_ledger import get_file_library_usage_snapshot
 from app.services.files.response import color_value, to_file_response, to_related_file_response
@@ -62,6 +62,37 @@ from app.services.undo import UndoService
 from app.services.undo.files import file_snapshot, operation_state, ref_for, save_content_artifacts
 
 router = APIRouter(prefix="/files", tags=["files"])
+
+
+@router.get("/page", response_model=PageResponse[FileResponse])
+async def list_file_page(
+    limit: int = Query(default=100, ge=1, le=200),
+    cursor: Optional[str] = None,
+    sort_by: Literal["name", "type", "stage", "createdAt", "size", "id"] = "createdAt",
+    sort_order: Literal["asc", "desc"] = "desc",
+    space: Optional[str] = None,
+    project_id: Optional[int] = None,
+    folder_id: Optional[int] = None,
+    workspace_directory_id: Optional[int] = None,
+    mind_map_id: Optional[int] = None,
+    ext: Optional[str] = None,
+    q: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """迁移期间提供有界读取端点；前端消费者迁完后收敛到 GET /files。"""
+    page = await list_file_page_rows(
+        db, current_user.id, limit=limit, cursor=cursor,
+        sort_by=sort_by, sort_order=sort_order,
+        space=space, project_id=project_id, folder_id=folder_id,
+        workspace_directory_id=workspace_directory_id, mind_map_id=mind_map_id,
+        ext=ext, query=q,
+    )
+    return {
+        "items": [to_file_response(row[0], row[1], color_value(row[2]), row[3]) for row in page["items"]],
+        "next_cursor": page["next_cursor"],
+        "has_more": page["has_more"],
+    }
 
 
 def _storage_limit(user: User) -> int | None:
@@ -264,6 +295,54 @@ async def get_file(
         raise HTTPException(status_code=404, detail="文件不存在")
     file, project_name, project_color, folder_name = row
     return to_file_response(file, project_name, color_value(project_color), folder_name)
+
+
+@router.get("/{fid}/location", response_model=FileLocationResponse)
+async def get_file_location(
+    fid: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """按文件 ID 读取导航所需位置与有界祖先链。"""
+    row = await get_file_detail_row(db, current_user.id, fid)
+    if row is None:
+        raise HTTPException(status_code=404, detail="文件不存在")
+    file, project_name, project_color, folder_name = row
+    folders = []
+    if file.folder_id is not None:
+        path_rows = await get_folder_path_rows(
+            db, current_user.id, file.folder_id,
+            expected_scope=(file.project_id, file.workspace_directory_id),
+        )
+        if path_rows is None:
+            raise HTTPException(status_code=404, detail="文件位置不存在")
+        folders = [
+            {"id": item.id, "project_id": item.project_id,
+             "workspace_directory_id": item.workspace_directory_id,
+             "parent_id": item.parent_id, "name": item.name,
+             "file_count": 0, "version": item.version}
+            for item in path_rows
+        ]
+    return FileLocationResponse(
+        file=to_file_response(file, project_name, color_value(project_color), folder_name),
+        folder_path=folders,
+    )
+
+
+@router.post("/{fid}/resolve-paths", response_model=list[ResolvedFilePath])
+async def resolve_file_paths(
+    fid: int,
+    body: ResolveFilePathsRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    resolved = await resolve_relative_file_paths(db, current_user.id, fid, body.paths)
+    if resolved is None:
+        raise HTTPException(status_code=404, detail="来源文件不存在")
+    return [ResolvedFilePath(
+        path=path,
+        file=to_file_response(row[0], row[1], color_value(row[2]), row[3]) if row else None,
+    ) for path, row in resolved]
 
 
 @router.post("/archive", response_model=FileResponse, status_code=201)

@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -6,6 +8,7 @@ from app.core.ownership import get_owned
 from app.models import File, Folder, Project
 from app.services.storage.folders import folder_dir_key
 from app.services.storage.trash import restore_file_storage
+from app.services.files.pagination import apply_keyset, decode_cursor, encode_cursor
 
 
 class RestoreParentTrashError(Exception):
@@ -93,6 +96,68 @@ async def list_trash_file_rows(db: AsyncSession, user_id):
     )).all()
 
 
+async def list_trash_file_page_rows(db: AsyncSession, user_id, *, limit: int, cursor: str | None):
+    scope = {"resource": "trash_files", "sort": "deletedAt_desc_id_desc"}
+    stmt = (
+        select(File, Project.name, Project.color, Folder.name)
+        .outerjoin(Project, Project.id == File.project_id)
+        .outerjoin(Folder, Folder.id == File.folder_id)
+        .where(
+            File.user_id == user_id,
+            File.deleted_at.isnot(None),
+            or_(File.folder_id.is_(None), Folder.deleted_at.is_(None)),
+        )
+    )
+    boundary = decode_cursor(cursor, user_id=user_id, scope=scope)
+    if boundary:
+        stmt = apply_keyset(
+            stmt, model=File, sort_column=File.deleted_at,
+            sort_value=datetime.fromisoformat(str(boundary[0])),
+            entity_id=boundary[1], direction="desc",
+        )
+    rows = (await db.execute(
+        stmt.order_by(File.deleted_at.desc(), File.id.desc()).limit(limit + 1)
+    )).all()
+    has_more = len(rows) > limit
+    items = rows[:limit]
+    next_cursor = encode_cursor(
+        user_id=user_id, scope=scope,
+        sort_value=items[-1][0].deleted_at.isoformat(), entity_id=items[-1][0].id,
+    ) if has_more and items else None
+    return {"items": items, "next_cursor": next_cursor, "has_more": has_more}
+
+
+async def list_trash_folder_page_rows(db: AsyncSession, user_id, *, limit: int, cursor: str | None):
+    scope = {"resource": "trash_folders", "sort": "deletedAt_desc_id_desc"}
+    stmt = top_level_deleted_folders_stmt(user_id)
+    boundary = decode_cursor(cursor, user_id=user_id, scope=scope)
+    if boundary:
+        stmt = apply_keyset(
+            stmt, model=Folder, sort_column=Folder.deleted_at,
+            sort_value=datetime.fromisoformat(str(boundary[0])),
+            entity_id=boundary[1], direction="desc",
+        )
+    folders = (await db.execute(stmt.order_by(None).order_by(
+        Folder.deleted_at.desc(), Folder.id.desc(),
+    ).limit(limit + 1))).scalars().all()
+    has_more = len(folders) > limit
+    items = folders[:limit]
+    counts = await db.execute(
+        select(File.folder_id, func.count().label("cnt")).where(
+            File.user_id == user_id,
+            File.folder_id.in_([folder.id for folder in items]),
+            File.deleted_at.isnot(None),
+        ).group_by(File.folder_id)
+    ) if items else None
+    count_map = {row.folder_id: row.cnt for row in counts} if counts else {}
+    next_cursor = encode_cursor(
+        user_id=user_id, scope=scope,
+        sort_value=items[-1].deleted_at.isoformat(), entity_id=items[-1].id,
+    ) if has_more and items else None
+    return {"items": [(folder, count_map.get(folder.id, 0)) for folder in items],
+            "next_cursor": next_cursor, "has_more": has_more}
+
+
 async def get_trash_counts(db: AsyncSession, user_id) -> tuple[int, int]:
     """只统计回收站顶层恢复单元数量，避免为根目录计数载入完整内容。"""
     file_count = (await db.execute(
@@ -143,6 +208,87 @@ async def list_trash_folder_contents_rows(db: AsyncSession, user_id, folder_id: 
     ) if child_folders else None
     count_map = {row.folder_id: row.cnt for row in counts} if counts else {}
     return folder, child_folders, direct_files, count_map
+
+
+async def list_trash_folder_contents_page_rows(
+    db: AsyncSession,
+    user_id,
+    folder_id: int,
+    *,
+    limit: int,
+    folder_cursor: str | None,
+    file_cursor: str | None,
+):
+    """分页读取某个回收站根文件夹的直属内容。"""
+    folder = await get_top_level_deleted_folder(db, user_id, folder_id)
+    if not folder:
+        return None
+
+    folder_scope = {"resource": "trash_folder_children", "folder_id": folder_id}
+    folder_stmt = select(Folder).where(
+        Folder.user_id == user_id,
+        Folder.parent_id == folder.id,
+        Folder.deleted_at.isnot(None),
+    )
+    folder_boundary = decode_cursor(folder_cursor, user_id=user_id, scope=folder_scope)
+    if folder_boundary:
+        folder_stmt = apply_keyset(
+            folder_stmt, model=Folder, sort_column=Folder.deleted_at,
+            sort_value=datetime.fromisoformat(str(folder_boundary[0])),
+            entity_id=folder_boundary[1], direction="desc",
+        )
+    child_folders = (await db.execute(folder_stmt.order_by(
+        Folder.deleted_at.desc(), Folder.id.desc(),
+    ).limit(limit + 1))).scalars().all()
+    more_folders = len(child_folders) > limit
+    child_folders = child_folders[:limit]
+
+    file_scope = {"resource": "trash_folder_files", "folder_id": folder_id}
+    file_stmt = (
+        select(File, Project.name, Project.color, Folder.name)
+        .outerjoin(Project, Project.id == File.project_id)
+        .outerjoin(Folder, Folder.id == File.folder_id)
+        .where(
+            File.user_id == user_id,
+            File.folder_id == folder.id,
+            File.deleted_at.isnot(None),
+        )
+    )
+    file_boundary = decode_cursor(file_cursor, user_id=user_id, scope=file_scope)
+    if file_boundary:
+        file_stmt = apply_keyset(
+            file_stmt, model=File, sort_column=File.deleted_at,
+            sort_value=datetime.fromisoformat(str(file_boundary[0])),
+            entity_id=file_boundary[1], direction="desc",
+        )
+    direct_files = (await db.execute(file_stmt.order_by(
+        File.deleted_at.desc(), File.id.desc(),
+    ).limit(limit + 1))).all()
+    more_files = len(direct_files) > limit
+    direct_files = direct_files[:limit]
+
+    counts = await db.execute(
+        select(File.folder_id, func.count().label("cnt")).where(
+            File.user_id == user_id,
+            File.folder_id.in_([item.id for item in child_folders]),
+            File.deleted_at.isnot(None),
+        ).group_by(File.folder_id)
+    ) if child_folders else None
+    count_map = {row.folder_id: row.cnt for row in counts} if counts else {}
+    next_folder_cursor = encode_cursor(
+        user_id=user_id, scope=folder_scope,
+        sort_value=child_folders[-1].deleted_at.isoformat(), entity_id=child_folders[-1].id,
+    ) if more_folders and child_folders else None
+    next_file_cursor = encode_cursor(
+        user_id=user_id, scope=file_scope,
+        sort_value=direct_files[-1][0].deleted_at.isoformat(), entity_id=direct_files[-1][0].id,
+    ) if more_files and direct_files else None
+    return {
+        "folder": folder,
+        "folders": {"items": [(item, count_map.get(item.id, 0)) for item in child_folders],
+                    "next_cursor": next_folder_cursor, "has_more": more_folders},
+        "files": {"items": direct_files, "next_cursor": next_file_cursor, "has_more": more_files},
+    }
 
 
 async def count_deleted_files(db: AsyncSession, user_id) -> int:

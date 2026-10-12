@@ -4,7 +4,8 @@ Pydantic v2 schemas — alias_generator=to_camel 让 API 返回 camelCase
 
 from __future__ import annotations
 from datetime import date, datetime
-from typing import Any, Literal, Optional
+from typing import Any, Generic, Literal, Optional, TypeVar
+from urllib.parse import unquote
 from uuid import UUID
 
 import re
@@ -23,6 +24,17 @@ class CamelModel(BaseModel):
         populate_by_name=True,
         from_attributes=True,
     )
+
+
+TPageItem = TypeVar("TPageItem")
+
+
+class PageResponse(CamelModel, Generic[TPageItem]):
+    """有界列表响应；cursor 只代表当前用户和筛选范围内的下一页位置。"""
+
+    items: list[TPageItem]
+    next_cursor: Optional[str] = None
+    has_more: bool = False
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
@@ -409,6 +421,41 @@ class FolderResponse(CamelModel):
     version: int = 1
 
 
+class FileLocationResponse(CamelModel):
+    file: FileResponse
+    folder_path: list[FolderResponse] = Field(default_factory=list)
+
+
+class ResolveFilePathsRequest(CamelModel):
+    paths: list[str] = Field(min_length=1, max_length=100)
+
+    @field_validator("paths")
+    @classmethod
+    def validate_logical_paths(cls, values: list[str]) -> list[str]:
+        if any(not value or len(value) > 1000 for value in values):
+            raise ValueError("路径不能为空且单条不能超过 1000 个字符")
+        segment_count = sum(
+            len([part for part in unquote(value).split("/") if part not in {"", "."}])
+            for value in values
+        )
+        if segment_count > 256 or any(
+            len([part for part in unquote(value).split("/") if part not in {"", "."}]) > 64
+            for value in values
+        ):
+            raise ValueError("批量路径最多解析 256 个片段，单条路径最多 64 个片段")
+        return values
+
+
+class ResolvedFilePath(CamelModel):
+    path: str
+    file: Optional[FileResponse] = None
+
+
+class FolderLocationResponse(CamelModel):
+    folder: FolderResponse
+    ancestors: list[FolderResponse] = Field(default_factory=list)
+
+
 class TrashFolderResponse(FolderResponse):
     """回收站里的顶层已删文件夹（P2.3）：deleted_at 供前端显示删除时间/30 天过期倒计时。"""
     deleted_at: str
@@ -424,6 +471,13 @@ class TrashFolderContentsResponse(CamelModel):
     """回收站顶层文件夹的直属内容，只读查看，不改变整体恢复单元语义。"""
     folders: list[TrashFolderResponse] = Field(default_factory=list)
     files: list[FileResponse] = Field(default_factory=list)
+
+
+class TrashFolderContentsPageResponse(CamelModel):
+    """回收站文件夹内容分别分页，避免一个列表拖垮另一个列表。"""
+
+    folders: PageResponse[TrashFolderResponse]
+    files: PageResponse[FileResponse]
 
 
 class TrashPurgeJobResponse(CamelModel):
