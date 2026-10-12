@@ -118,7 +118,7 @@
         <FilesGridView v-else-if="viewMode === 'grid'" :context="gridViewContext" />
         <!-- ── 列表视图 ── -->
         <FilesListView v-else :context="listViewContext" />
-        <div v-if="loadingMore" class="files-page-loading" role="status">正在加载更多…</div>
+        <div v-if="loadingMore" class="files-page-loading" role="status">{{ t('filesViewUi.loadingMore') }}</div>
         <div v-else-if="retentionLimitReached" class="files-page-loading" role="status">{{ t('filesViewUi.pageLimitReached') }}</div>
 
         </div>
