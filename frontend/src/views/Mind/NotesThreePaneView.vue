@@ -13,7 +13,11 @@
           @snap="onDateSnap"
         />
         <div ref="listRef" class="ntp-list-scroll scroll-surface--hidden" @scroll="onListScroll">
-          <div v-if="store.loading && !store.loaded && !store.notes.length" class="ntp-state">{{ t('common.status.loading') }}</div>
+          <div v-if="initialLoading" class="ntp-state ntp-loading ntp-loading-initial" role="status" aria-live="polite" aria-busy="true">
+            <span class="ntp-spinner" aria-hidden="true"></span>
+            <strong class="ntp-state-title">{{ t('mindThreePane.loadingNotes') }}</strong>
+            <span class="ntp-state-description">{{ t('mindThreePane.loadingHint') }}</span>
+          </div>
           <template v-else>
             <template v-for="group in store.timeline" :key="group.date">
               <div class="ntp-day-label" :data-date="group.date">
@@ -68,8 +72,15 @@
                 </div>
               </div>
             </template>
-            <div v-if="!store.timeline.length" class="ntp-state">{{ t('mind.noRecords') }}</div>
-            <div v-if="store.loadingMore" class="ntp-state">{{ t('common.status.loading') }}</div>
+            <div v-if="!store.timeline.length" class="ntp-state ntp-empty-state" role="status">
+              <span class="ntp-state-icon" aria-hidden="true"><PhNotePencil :size="22" weight="regular" /></span>
+              <strong class="ntp-state-title">{{ store.filterQ.trim() ? t('mindThreePane.noMatches') : t('mindThreePane.emptyTitle') }}</strong>
+              <span class="ntp-state-description">{{ store.filterQ.trim() ? t('mindThreePane.noMatchesHint') : t('mindThreePane.emptyHint') }}</span>
+            </div>
+            <div v-if="store.loadingMore" class="ntp-state ntp-loading ntp-loading-more" role="status" aria-live="polite" aria-busy="true">
+              <span class="ntp-spinner" aria-hidden="true"></span>
+              <span>{{ t('mindThreePane.loadingMore') }}</span>
+            </div>
           </template>
         </div>
         <!-- 新建先进入本地草稿；完成编辑后才创建服务端记录 -->
@@ -146,7 +157,18 @@
             </NoteEditor>
           </template>
         </template>
-        <div v-else class="ntp-state">{{ t('mind.noRecords') }}</div>
+        <div v-else-if="initialLoading" class="ntp-state ntp-loading ntp-detail-empty" role="status" aria-live="polite" aria-busy="true">
+          <span class="ntp-spinner" aria-hidden="true"></span>
+          <strong class="ntp-state-title">{{ t('mindThreePane.loadingNotes') }}</strong>
+          <span class="ntp-state-description">{{ t('mindThreePane.loadingHint') }}</span>
+        </div>
+        <div v-else class="ntp-state ntp-empty-state ntp-detail-empty" role="status">
+          <span class="ntp-state-icon" aria-hidden="true"><PhNotePencil :size="24" weight="regular" /></span>
+          <strong class="ntp-state-title">{{ store.timeline.length ? t('mindThreePane.chooseNote') : t('mindThreePane.detailEmptyTitle') }}</strong>
+          <span class="ntp-state-description">
+            {{ store.timeline.length ? t('mindThreePane.chooseNoteHint') : store.filterQ.trim() ? t('mindThreePane.noMatchesHint') : t('mindThreePane.detailEmptyHint') }}
+          </span>
+        </div>
       </div>
       <aside v-if="selected" class="ntp-info">
         <div class="info-sec">
@@ -179,7 +201,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { PhArrowSquareOut, PhCalendarBlank, PhCheck, PhCheckSquare, PhFile, PhPencilSimple, PhPlus, PhStack, PhTrash, PhX } from '@phosphor-icons/vue'
+import { PhArrowSquareOut, PhCalendarBlank, PhCheck, PhCheckSquare, PhFile, PhNotePencil, PhPencilSimple, PhPlus, PhStack, PhTrash, PhX } from '@phosphor-icons/vue'
 import { showAppError, showAppNotice } from '@/composables/core/useAppToast'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { MindConflictError, useMindStore } from '@/stores/mind'
@@ -205,6 +227,7 @@ const projectStore = useProjectStore()
 const filesCache = useFilesCacheStore()
 const { t } = useI18n()
 const { openMindRef } = useMindRefActions()
+const initialLoading = computed(() => store.loading && !store.loaded && !store.notes.length)
 
 const listRef = ref<HTMLElement | null>(null)
 const selectedId = ref<number | null>(null)
@@ -747,7 +770,34 @@ function onListScroll() {
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 40px, #000 calc(100% - 64px), transparent 100%);
   mask-image: linear-gradient(to bottom, transparent 0, #000 40px, #000 calc(100% - 64px), transparent 100%);
 }
-.ntp-state { padding: 28px 12px; font-size: 12.5px; color: var(--text-secondary); }
+.ntp-state { color: var(--text-secondary); }
+.ntp-empty-state,
+.ntp-loading-initial {
+  min-height: min(52vh, 360px); box-sizing: border-box;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 9px; padding: 28px 18px; text-align: center;
+}
+.ntp-list-scroll > .ntp-empty-state,
+.ntp-list-scroll > .ntp-loading-initial { min-height: calc(100% - 44px); }
+.ntp-state-icon {
+  width: 48px; height: 48px; display: grid; place-items: center; margin-bottom: 3px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 18%, transparent);
+  border-radius: 16px; background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+  color: var(--color-primary);
+}
+.ntp-state-title { color: var(--text-primary); font-size: 14px; font-weight: 650; line-height: 1.45; }
+.ntp-state-description { max-width: 220px; color: var(--text-secondary); font-size: 12.5px; line-height: 1.6; }
+.ntp-loading { display: flex; align-items: center; justify-content: center; gap: 9px; color: var(--text-secondary); font-size: 12.5px; line-height: 1.5; }
+.ntp-loading-initial { gap: 10px; }
+.ntp-loading-initial .ntp-spinner { width: 20px; height: 20px; margin-bottom: 4px; }
+.ntp-spinner {
+  width: 15px; height: 15px; flex: none; box-sizing: border-box; display: inline-block;
+  border: 2px solid color-mix(in srgb, var(--text-primary) 13%, transparent);
+  border-top-color: var(--color-primary); border-radius: 50%; animation: ntp-spin 0.8s linear infinite;
+}
+@keyframes ntp-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .ntp-spinner { animation: none; } }
+.ntp-loading-more { min-height: 38px; padding: 8px 10px 12px; }
 .ntp-day-label {
   display: flex; align-items: baseline; gap: 8px;
   padding: 14px 6px 8px; font-size: 12px; font-weight: 600; color: var(--text-secondary);
@@ -864,6 +914,9 @@ function onListScroll() {
 /* 编辑态：工具栏自带 4px 底 padding，外层留 6px，与只读态 10px 对齐。 */
 .ntp-reading.editing { overflow: hidden; padding-bottom: 6px; }
 .ntp-detail.empty .ntp-reading { display: grid; place-items: center; }
+.ntp-detail-empty { max-width: 320px; }
+.ntp-detail-empty.ntp-loading { flex-direction: column; gap: 10px; text-align: center; }
+.ntp-detail-empty .ntp-state-description { max-width: 260px; }
 .rp-title-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0; }
 /* 浏览器原生 input 的文字垂直居中与 h1 字形基线有约 1px 的差异，预览标题微调对齐编辑态。 */
 .rp-title { position: relative; top: 1px; font-size: 23px; font-weight: 700; line-height: 1.35; margin: 0; color: var(--text-primary); }
