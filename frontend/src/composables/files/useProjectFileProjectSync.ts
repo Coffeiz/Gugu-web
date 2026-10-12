@@ -82,7 +82,7 @@ export function useProjectFileProjectSync(options: {
     if (!previous || (!previous.fileHasMore && !previous.folderHasMore)) return
     const loadedCount = previous.files.length + previous.folders.length
     if (loadedCount >= 2000) {
-      limitedDirectories.value.add(directoryKey(projectId, folderId))
+      limitedDirectories.value.add(directoryKey(projectId, folderId ?? null))
       return
     }
     loadingMore.value = true
@@ -104,7 +104,7 @@ export function useProjectFileProjectSync(options: {
       options.fileCacheStore.setDirectoryPage(scope, boundedFiles as CursorPage<FileMeta>, boundedFolders as CursorPage<FolderMeta>, true)
       if (loadedCount + acceptedFiles.length + acceptedFolders.length >= 2000
           && (files.has_more || folders.has_more)) {
-        limitedDirectories.value.add(directoryKey(projectId, folderId))
+        limitedDirectories.value.add(directoryKey(projectId, folderId ?? null))
       }
     } catch {
       // 加载失败时保留旧页与 cursor，滚动后仍可重试。

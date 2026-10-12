@@ -758,5 +758,45 @@
     "productionEntry": "frontend/src/utils/imDelivery.ts",
     "keyBehavior": "即时通讯投递目标选项符合平台能力，未修改的既有目标不被重新序列化覆盖",
     "ci": "frontend-test"
+  },
+  "backend/tests/storage/files/test_file_listing_pagination.py": {
+    "domain": "file-library",
+    "layer": "L1",
+    "owner": "backend/app/api/v1/files.py",
+    "productionEntry": "backend/app/services/files/pagination.py",
+    "keyBehavior": "文件、文件夹与回收站分页稳定且游标绑定查询范围，不能跨用户复用或篡改",
+    "ci": "backend-pytest"
+  },
+  "frontend/e2e/file-library-bounded-pagination.spec.ts": {
+    "domain": "file-library",
+    "layer": "L3",
+    "owner": "frontend/e2e",
+    "productionEntry": "frontend/src/views/Files",
+    "keyBehavior": "进入个人目录仅请求有界文件页，继续滚动时使用游标加载后续页",
+    "ci": "experimental"
+  },
+  "frontend/e2e/global-search-navigation.spec.ts": {
+    "domain": "global-search",
+    "layer": "L3",
+    "owner": "frontend/e2e",
+    "productionEntry": "frontend/src/components/common/gugu-chat",
+    "keyBehavior": "全局搜索可按目标 ID 打开首屏外便签或定时任务，并正确消费路由参数",
+    "ci": "experimental"
+  },
+  "frontend/tests/mind/CanvasToolbar.test.ts": {
+    "domain": "mind-canvas",
+    "layer": "L1",
+    "owner": "frontend/mind",
+    "productionEntry": "frontend/src/views/Mind/components/CanvasToolbar.vue",
+    "keyBehavior": "画布对象选择器排除不可加入的文件夹和会话，仅将可加入对象交给画布",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/skills/composables/useMcpStatusLoader.test.ts": {
+    "domain": "skills-mcp",
+    "layer": "L1",
+    "owner": "frontend/skills/composables",
+    "productionEntry": "frontend/src/views/Skills/composables/useMcpStatusLoader.ts",
+    "keyBehavior": "启用且未加载的 MCP 状态受并发上限控制并逐项更新，取消后丢弃过期结果",
+    "ci": "frontend-test"
   }
 }
