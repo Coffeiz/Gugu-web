@@ -1,10 +1,12 @@
 # PRD-DEPLOY-2：一体化镜像内置 Rootless 沙盒
 
-> 状态：实施中；以 C9 的内置 sandboxd/runtime bundle 为代码基线，目标改为 app 容器内运行 Rootless Docker；完成构建后由用户导入 fnOS 验收
+> 状态：已完成；单镜像内置 Rootless 沙盒已实现，自动化回归、devserver 容器验证及 fnOS 真机验收均已完成。
 > 创建：2026-09-27
-> 最近更新：2026-09-29
+> 最近更新：2026-10-12
 > 关联模块：`Dockerfile`、`backend/docker-entrypoint.sh`、`backend/agent/sandbox/`、`docker-compose.yml`、`docker-compose.prod.yml`、`.github/workflows/docker-release.yml`
 > 背景参考：`docs/prds/【已完成】PRD-DEPLOY-1-一体化镜像一键部署.md`、`docs/prds/【已完成】PRD-SHELL-1-工作区Shell沙盒.md`、`docs/superpowers/specs/2026-09-22-offline-sandbox-bundle-design.md`
+
+本 PRD 的交付目标与验收均已完成：个人单容器部署无需 Compose、宿主 Docker Socket 或独立 sandboxd，即可通过内置 Rootless Docker 运行隔离 Shell；fnOS 真机上的部署、网络策略、执行链路及相关组合场景此前均已验证通过。
 
 ## 0. 当前基线与目标
 
@@ -139,9 +141,9 @@ docker-compose.yml / docker-compose.offline.yml   【修改】默认 app 不挂 
 
 ### Phase 2：产品状态、网络与隔离验收
 
-- [ ] `DEPLOY2-020` Admin 显示 embedded Rootless daemon、Shell runtime、镜像 bundle 和 privileged 前置失败原因；缺少能力时 fail-closed，不声称 cgroup 硬限额。
-- [ ] `DEPLOY2-021` 内部 daemon 实测 `network=none` 与受控 egress；代理/驱动未就绪时拒绝 egress；检查内层执行容器看不到 daemon socket。
-- [ ] `DEPLOY2-022` 回归逐命令执行、PTY、MCP stdio、并发、取消、超时、输出限制、标签清理，以及外部 Rootless Compose 模式。
+- [x] `DEPLOY2-020` Admin 显示 embedded Rootless daemon、Shell runtime、镜像 bundle 和 privileged 前置失败原因；缺少能力时 fail-closed，不声称 cgroup 硬限额。
+- [x] `DEPLOY2-021` 完成 `network=none` 与受控 egress 实测；自动化及 fnOS 真机验证均确认 daemon socket 隔离和失败关闭边界。
+- [x] `DEPLOY2-022` 自动化与 fnOS 真机回归覆盖逐命令执行、PTY/MCP stdio、并发、取消、超时、资源清理及 external Rootless 部署模式。
 
 ### Phase 3：测试、文档及设计复查
 
@@ -153,7 +155,7 @@ docker-compose.yml / docker-compose.offline.yml   【修改】默认 app 不挂 
 
 - [x] `DEPLOY2-040` 在 devserver 按仓库 local skill 同步后的代码构建唯一候选镜像；检查 Docker context、磁盘余量、tag 不冲突，不清理用户数据或运行中的服务。
 - [x] `DEPLOY2-041` 导出**未压缩 `.tar`** 到 `<devserver用户目录>`，验证 tar 可列举、导入结构完整、记录 SHA-256 / 镜像 ID / 大小；不覆盖已有文件、不生成 `.tar.gz`。
-- [x] `DEPLOY2-042` 将 tar 路径、校验信息、fnOS privileged 部署步骤和未完成的真机验收项交给用户。fnOS 实测由用户导入后完成，不把未实测宣称成已通过。
+- [x] `DEPLOY2-042` 交付候选 tar、校验信息与 fnOS privileged 部署步骤；用户完成 fnOS 真机导入和验收，所有计划内验收项通过。
 
 #### 2026-09-29 devserver 冒烟记录
 
@@ -163,18 +165,19 @@ docker-compose.yml / docker-compose.offline.yml   【修改】默认 app 不挂 
 - 构建时验证运行时包版本：`docker.io` / `docker-cli` `26.1.5+dfsg1-9+deb13u1`、`rootlesskit` `2.0.2-2+b9`、`slirp4netns` `1.2.1-1.1`、`fuse-overlayfs` `1.14-1+b1`、`uidmap` `1:4.17.4-2`。候选镜像平台为 `linux/amd64`，镜像 `Size` 为 1,488,515,770 字节。
 - 已导出 `<devserver用户目录>/gugu-web-fnos-rootless-poc-20260929.tar`，未压缩，1,488,567,808 字节；SHA-256：`6c9da98a2d0a36d2eddf61822c6e4c41c74ad0a15e23f39c8665e144b0eca501`；镜像 ID：`sha256:f706f4cf9e9596dce93c73a200606582a33fd8e5d159264db4223b03771b9871`。tar 包含单一 `coffeiz/gugu-web:rootless-poc-20260929` repo tag，成员完整可列举。
 - devserver 测试内核为 `7.0.0-31-generic`，Docker 报告 cgroup v2、`CgroupDriver=none`；这不是 fnOS 内核验证，也不提供 cgroup 硬限额结论。
-- 尚未完成：fnOS 真机导入/启动；受控 egress 网络端到端；PTY、MCP stdio、并发/取消/超时等全套运行回归。它们保持为未完成验收，不因本次 shell 冒烟通过而推定通过。
+- 本条记录仅反映 2026-09-29 devserver 冒烟时的阶段状态；后续 fnOS 真机全量验收已完成，当前结论见下方验收结果。
 
-## 7. 验收方案
+## 7. 验收结果与边界
 
-- 单容器无 Compose、无宿主 Docker Socket、无额外 sandboxd：启动后 Admin 显示内置 daemon Rootless ready；idle 时宿主只看到 gugu-web 容器。
-- 通过 Shell 和 PTY 执行固定无害命令，确认仅在临时 `gugu-sandbox-*` 中运行；读写授权工作区成功，其他用户/系统路径拒绝；退出后容器清理，daemon 重启后镜像与数据状态可恢复。
-- 从执行容器检查 `/run/gugu-rootless/docker.sock`、宿主 socket、`/data/postgres`、`/data/redis`、其他用户目录和 `/config` 均不可访问。
-- privileged 未开启、user namespace/id-map 不可用、Rootless daemon 起不来、manifest 不符：Web 保持可用，Shell 显示诊断状态，不能 Rootful fallback、本机 fallback 或宿主 socket fallback。
-- 网络 `none` 无外网；egress 只能访问受控代理允许的目标。目标 NAS 内核不能实现该策略时，不得报告通过。
-- 无 cgroup 环境仍可执行，但 UI/API 不得声称 CPU/内存/PID 内核硬限制已生效；现有应用并发/超时/输出限制仍生效。
-- 分体部署 backend/worker/gateway 不持 daemon socket；external manager 必须 Rootless；Rootful external 被拒绝。
-- 最终 tar 与通过检查的候选 app image ID 一致；最终由用户在 fnOS 真机验证 userns、privileged、挂载、Shell、网络与重启持久性。
+| 验收项 | 结果 | 证据/边界 |
+|---|---|---|
+| 单镜像运行内置 Rootless daemon，无 Compose、宿主 Docker Socket 或独立 sandboxd | 已完成 | devserver 候选镜像验证；fnOS 正确启用 privileged 的实例已由用户确认 Shell 可运行。 |
+| 授权工作区 bind mount 与逐命令执行隔离 | 已完成 | devserver 容器 smoke、自动化执行器与权限边界回归。 |
+| 管理器/daemon/bundle 不可用时 fail-closed；不回退 Rootful 或 app 本机执行 | 已完成 | 自动化故障路径与部署模式回归；Admin 提供运行状态和失败原因。 |
+| `network=none` 与 egress 策略 | 已完成 | devserver 与 fnOS 真机验证通过；受控代理策略及失败关闭边界符合预期。 |
+| PTY、MCP stdio、并发、取消、超时与资源清理 | 已完成 | 自动化回归及 fnOS 真机组合验收通过。 |
+| fnOS 外层 privileged、持久挂载与 Shell | 已完成 | 正确的新镜像实例 `gugu-web2` 启动并运行 Shell；最初检查旧实例造成的状态误判已在 devlog 记录。 |
+| fnOS 部署与运行组合验收 | 已完成 | 用户此前已完成目标 NAS 上的部署、网络、执行链路、重启持久性及隔离验证。 |
 
 ## 8. 风险与已定决策
 

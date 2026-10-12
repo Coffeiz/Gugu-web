@@ -4,7 +4,7 @@
 > 创建：2026-10-06
 > 最近更新：2026-10-06
 > 关联模块：`backend/agent/sandbox/`、`backend/app/core/config.py`、`backend/app/api/v1/sandbox_admin.py`、`frontend/src/views/Admin/Sandbox/`、`docker-compose.yml`、`docker-compose.prod.yml`
-> 背景参考：`docs/prds/【已完成】PRD-SHELL-1-工作区Shell沙盒.md`、`docs/prds/【已完成】PRD-SHELL-3-交互式PTY终端.md`、`docs/prds/PRD-DEPLOY-2-一体化镜像内置沙箱管理.md`
+> 背景参考：`docs/prds/【已完成】PRD-SHELL-1-工作区Shell沙盒.md`、`docs/prds/【已完成】PRD-SHELL-3-交互式PTY终端.md`、`docs/prds/【已完成】PRD-DEPLOY-2-一体化镜像内置沙箱管理.md`
 
 ## 0. 实际状态
 
