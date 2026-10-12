@@ -1086,7 +1086,10 @@ onBeforeUnmount(() => {
 .tv-md :deep(th) { background: var(--surface-soft); font-weight: 600; }
 .tv-md :deep(table.md-frontmatter th) { white-space: nowrap; }
 .tv-md :deep(table.md-frontmatter td) { white-space: pre-wrap; overflow-wrap: anywhere; }
-.tv-md :deep(tr:hover td) { background: var(--surface-soft-hover); }
+/* 表格行横跨较大区域，hover 染色比按钮等小控件更轻。 */
+.tv-md :deep(tr:hover td) {
+  background: color-mix(in srgb, var(--surface-soft-hover) 50%, transparent);
+}
 
 .tv-md :deep(hr) {
   /* Markdown 内容分割线统一使用内容分割 token，避免复用玻璃外框色。 */
