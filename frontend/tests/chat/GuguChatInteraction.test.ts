@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createApp, defineComponent, h } from 'vue'
+import { createApp, defineComponent, h, nextTick, reactive } from 'vue'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import GuguChatInteraction from '@/components/common/gugu-chat/GuguChatInteraction.vue'
@@ -60,7 +60,7 @@ describe('GuguChatInteraction', () => {
 
     expect(button.textContent?.trim()).toBe('确认')
     button.click()
-    await Promise.resolve()
+    await nextTick()
 
     expect(mounted.onSelect).toHaveBeenCalledWith(msg, { id: 'confirm', label: '确认', token: 'yes' })
     expect(button.disabled).toBe(true)
@@ -90,6 +90,24 @@ describe('GuguChatInteraction', () => {
 
     expect(onSecretCancel).toHaveBeenCalledWith(msg)
     expect(cancel.disabled).toBe(true)
+  })
+
+  it('secret 提交失败后解除提交态会清空密码输入框', async () => {
+    const msg = reactive(interactionMessage())
+    msg.interaction!.secretFields = [{ name: 'key', label: '服务 Key', type: 'secret' }]
+    mounted = mountInteraction(msg)
+    const input = mounted.host.querySelector('input[type="password"]') as HTMLInputElement
+    input.value = 'temporary-secret'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await Promise.resolve()
+    expect(input.value).toBe('temporary-secret')
+
+    msg.interaction!.submitting = true
+    await nextTick()
+    msg.interaction!.submitting = false
+    await nextTick()
+
+    expect(input.value).toBe('')
   })
 
   it('长选项的静态布局契约允许收缩、换行并限制在气泡宽度内', () => {

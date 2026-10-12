@@ -204,13 +204,20 @@ Web 与 IM 最终都调用 `mcp_credentials` 的同一业务提交服务：验�
 
 ### Phase 3：安全与回归验证
 
-- [ ] `MCP2-030` 行为测试：私聊输入成功、取消、超时、错误字段、多个字段、重复回调、重复 webhook 与并发提交。
-- [ ] `MCP2-031` 安全测试：群内选择/输入均不创建可消费状态；跨用户、跨 Bot、跨群/私聊、跨 server、跨 prompt 均拒绝。
-- [ ] `MCP2-032` 持久化断言：密钥明文不在 ConversationMessage、InteractionPrompt resolved result、tool result、事件/SSE、RAG、LoopScope、日志或错误响应中；密文 staging 到期后清理。
-- [ ] `MCP2-033` Web 群恢复测试：原始 prompt session 为群聊，Web 登录用户拥有该 prompt/server 时允许提交；其他用户仍拒绝。
-- [ ] `MCP2-034` 回归 ask_user：开放式回答、选择项“自定义回复”、QQ/飞书等文本降级交互保持原语义，不进入凭据 handler。
-- [ ] `MCP2-035` 运行定向 IM/MCP/交互测试和相关全量测试；测试失败按根因修复，不删低信号边界测试规避失败。
+- [ ] `MCP2-030` 行为测试：已有成功、取消、过期、错误/超长字段、多字段、重复 callback/webhook 覆盖；仍需 PostgreSQL 下的真实并发提交竞态验证（当前测试库为 SQLite，`FOR UPDATE` 不提供等价验证）。
+- [x] `MCP2-031` 安全测试：覆盖群内无成员 ID 拒绝、跨用户、跨平台/Bot/操作者、群/私聊范围、跨 server staging 绑定及跨 prompt token。
+- [x] `MCP2-032` 持久化断言：验证明文不进入 ConversationMessage、prompt 结果、交互历史或 IM 回复；密文暂存加密、完成后清除、过期后回收，并验证已消费 webhook 不回流普通聊天。
+- [x] `MCP2-033` Web 群恢复测试：群来源 prompt 的 owner 可通过独立 Web secret endpoint 提交；其他用户无法解析或提交。
+- [x] `MCP2-034` 回归 ask_user：保留并运行现有开放式回答、选择项自定义回复及 IM 交互协议测试，普通交互仍由原通用路径消费。
+- [x] `MCP2-035` 运行定向 IM/MCP/交互测试和相关前端验证；失败按根因修复。
 - [ ] `MCP2-036` 手动验证至少一个支持按钮的 IM 私聊、一个文本降级 IM 私聊、一个 IM 群拒绝和一个 Web 恢复群会话。
+
+### 5.5 Phase 3 自动化复查记录（2026-10-12）
+
+- 修复完成态 webhook 重放可能落回普通聊天的问题：短时保留的 staging 事件 ID 在新 prompt 生效期间仍优先去重，重复消息静默吞掉，不回复、不进入 Agent，也不会被下一条凭据交互误消费。
+- 补充行为与安全测试：消息 dispatch 早期截断、微信媒体下载前截断、私聊/群聊路径、跨平台/Bot/操作者/会话/prompt 作用域、Web 群 session owner 提交、越权拒绝、错误及超长字段、旧凭据不被覆盖、重复 callback/webhook。
+- 定向验证：后端相关测试 197 项通过；前端交互测试 5 项通过；前端 typecheck、`compileall -q app agent` 与 `git diff --check` 通过。`ripwire doc-drift` 对本 PRD 检查 26 个锚点，0 个漂移。
+- 尚未完成的外部验收：当前 SQLite 测试不验证 PostgreSQL 行锁下的真实并发竞争；未连接真实 IM Bot，因此 MCP2-030 的并发子项与 MCP2-036 仍待执行。代码实现和自动化回归已完成，但在上述验收完成前不将 PRD 状态改为“完成”。
 
 ## 7. 验收标准
 

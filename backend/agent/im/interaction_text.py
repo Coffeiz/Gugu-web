@@ -140,6 +140,9 @@ async def consume_mcp_secret_payload(payload: dict) -> bool:
         if found is None:
             return False
         mode, prompt, stage = found
+        if mode == "replay":
+            # 已消费过的 webhook 消息只确认吞掉，不重发状态、不进入聊天/Agent。
+            return True
         from agent.im.replies import send_text
 
         if mode == "group_blocked":

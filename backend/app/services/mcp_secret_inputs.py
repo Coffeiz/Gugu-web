@@ -120,34 +120,71 @@ async def find_im_secret_prompt(db: AsyncSession, payload: dict) -> tuple[str, I
     chat_type = str(payload.get("chat_type") or "")
     chat_id = str(payload.get("chat_id") or "") or None
     platform_user_id = str(payload.get("platform_user_id") or "")
-    if platform not in IM_SOURCES or not bot_id or not platform_user_id:
+    if platform not in IM_SOURCES or not bot_id:
         return None
     now = now_utc()
-
     if chat_type == "c2c" and chat_id is None:
-        stage = await db.scalar(select(McpSecretInput).where(
+        if not platform_user_id:
+            return None
+        return await _find_private_im_secret_prompt(
+            db, user_id=user_id, payload=payload, now=now,
+        )
+    if chat_type == "group" and chat_id:
+        return await _find_group_im_secret_prompt(
+            db, user_id=user_id, payload=payload, now=now,
+        )
+    return None
+
+
+async def _find_private_im_secret_prompt(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    payload: dict,
+    now: datetime,
+) -> tuple[str, InteractionPrompt, McpSecretInput] | None:
+    platform = str(payload.get("platform") or "")
+    bot_id = str(payload.get("channel_id") or payload.get("bot_id") or "")
+    platform_user_id = str(payload.get("platform_user_id") or "")
+    rows = (await db.execute(
+        select(McpSecretInput, InteractionPrompt)
+        .join(InteractionPrompt, InteractionPrompt.id == McpSecretInput.prompt_id)
+        .where(
             McpSecretInput.user_id == user_id,
             McpSecretInput.platform == platform,
             McpSecretInput.bot_id == bot_id,
             McpSecretInput.chat_type == "c2c",
             McpSecretInput.chat_id.is_(None),
             McpSecretInput.platform_user_id == platform_user_id,
-            McpSecretInput.status.in_(tuple(ACTIVE_STATES)),
-        ).order_by(McpSecretInput.prompt_id.desc()))
-        if stage is None:
-            return None
-        prompt = await db.scalar(select(InteractionPrompt).where(
-            InteractionPrompt.id == stage.prompt_id,
             InteractionPrompt.user_id == user_id,
-            InteractionPrompt.session_id == stage.session_id,
-        ))
-        if prompt is not None:
-            mode = "private" if prompt.status == "active" and prompt.expires_at > now else "private_ended"
-            return mode, prompt, stage
-        return None
+            InteractionPrompt.session_id == McpSecretInput.session_id,
+        ).order_by(McpSecretInput.prompt_id.desc())
+    )).all()
+    event_id = str(payload.get("message_id") or payload.get("platform_message_id") or "")
+    # 先跨同一 IM 私聊的短时 prompt 扫描重放 ID，再选择当前活动 prompt。
+    # 否则旧消息重放可能被误认为新 prompt 的第一条凭据。
+    if event_id:
+        for stage, prompt in rows:
+            if event_id in (stage.consumed_event_ids or []):
+                return "replay", prompt, stage
+    for stage, prompt in rows:
+        if stage.status not in ACTIVE_STATES:
+            continue
+        mode = "private" if prompt.status == "active" and prompt.expires_at > now else "private_ended"
+        return mode, prompt, stage
+    return None
 
-    if chat_type != "group" or not chat_id:
-        return None
+
+async def _find_group_im_secret_prompt(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    payload: dict,
+    now: datetime,
+) -> tuple[str, InteractionPrompt, None] | None:
+    platform = str(payload.get("platform") or "")
+    bot_id = str(payload.get("channel_id") or payload.get("bot_id") or "")
+    chat_id = str(payload.get("chat_id") or "")
     prompts = (await db.scalars(
         select(InteractionPrompt)
         .join(ConversationSession, ConversationSession.id == InteractionPrompt.session_id)
@@ -366,11 +403,16 @@ async def consume_mcp_secret_action(
         McpSecretInput.chat_id.is_(None),
         McpSecretInput.platform_user_id == platform_user_id,
     ).with_for_update())
+    try:
+        target_server_id = UUID(str(target.get("server_id") or "")) if isinstance(target, dict) else None
+    except (TypeError, ValueError, AttributeError):
+        target_server_id = None
     if (
         stage is None
         or chat_type != "c2c"
         or chat_id
         or prompt.session_id != stage.session_id
+        or target_server_id != stage.server_id
         or stage.status not in ACTIVE_STATES
         or stage.expires_at <= now_utc()
         or prompt.status != "active"

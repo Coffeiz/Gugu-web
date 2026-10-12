@@ -392,7 +392,7 @@ async def test_manage_mcp_servers_requires_server_id_or_name(db, user_a):
     assert result == {"error": "需要提供 server_id 或 name"}
 
 
-async def test_credentials_prompt_is_sealed_and_resolves_without_echoing_value(db, user_a):
+async def test_credentials_prompt_is_sealed_and_resolves_for_web_group_session(db, user_a, user_b):
     from app.services.interactions import create_agent_prompt, list_history
 
     created = await api.create_server(
@@ -402,7 +402,10 @@ async def test_credentials_prompt_is_sealed_and_resolves_without_echoing_value(d
         ),
         user=user_a, db=db,
     )
-    session = ConversationSession(user_id=user_a.id, title="MCP 凭据测试", source="web")
+    session = ConversationSession(
+        user_id=user_a.id, title="MCP 凭据测试", source="qq", bot_id="bot-a",
+        chat_type="group", chat_id="group-a", platform_user_id="member-a",
+    )
     db.add(session)
     await db.commit()
     prompt, actions = await create_agent_prompt(
@@ -422,6 +425,11 @@ async def test_credentials_prompt_is_sealed_and_resolves_without_echoing_value(d
     ]
 
     from app.services.mcp_credentials import consume_mcp_secret_prompt
+    with pytest.raises(HTTPException) as denied:
+        await consume_mcp_secret_prompt(
+            prompt, {"Authorization": "Bearer hidden-secret"}, user=user_b, db=db,
+        )
+    assert denied.value.status_code == 404
     result = await consume_mcp_secret_prompt(
         prompt, {"Authorization": "Bearer hidden-secret"}, user=user_a, db=db,
     )
@@ -553,6 +561,84 @@ async def test_im_secret_staging_refuses_group_and_cross_bot_scope(db, user_a):
             event_id="event-wrong-bot",
         )
     assert error.value.status_code == 404
+
+    from sqlalchemy import update
+    mismatched_schema = {
+        **private_prompt.schema_json,
+        "context": {
+            **private_prompt.schema_json["context"],
+            "secret_target": {
+                **private_prompt.schema_json["context"]["secret_target"],
+                "server_id": str(UUID(int=0)),
+            },
+        },
+    }
+    await db.execute(update(InteractionPrompt).where(
+        InteractionPrompt.id == private_prompt.id,
+    ).values(schema_json=mismatched_schema))
+    await db.commit()
+    with pytest.raises(HTTPException) as server_error:
+        await start_mcp_secret_input(
+            db,
+            binding=McpSecretBinding(
+                prompt_id=private_prompt.id, user_id=user_a.id, platform="qq",
+                bot_id="bot-a", chat_type="c2c", chat_id=None, platform_user_id="owner-a",
+            ),
+            event_id="event-wrong-server",
+        )
+    assert server_error.value.status_code == 404
+
+
+async def test_secret_validation_rejects_oversize_and_extra_fields_without_replacing_credentials(db, user_a):
+    from app.services.interactions import create_agent_prompt
+    from app.services.mcp_credentials import consume_mcp_secret_prompt
+    from app.services.mcp_secret_inputs import McpSecretBinding, consume_mcp_secret_field, start_mcp_secret_input
+
+    server = UserMcpServer(
+        user_id=user_a.id, scope="user", name="validation_secret", endpoint="https://m.example.com",
+        credential_slots=[{"id": "key", "label": "Key", "target": "header", "name": "X-Key"}],
+        encrypted_credentials="existing-ciphertext",
+    )
+    session = ConversationSession(
+        user_id=user_a.id, title="validation", source="qq", bot_id="bot-a",
+        platform_user_id="owner-a", chat_type="c2c",
+    )
+    db.add_all([server, session])
+    await db.commit()
+    payload = {
+        "_interaction": "ask_user", "kind": "form", "title": "补全凭据",
+        "secret_fields": [{"name": "key", "label": "Key", "type": "secret"}],
+        "secret_target": {"kind": "mcp_credentials", "server_id": str(server.id)},
+    }
+    prompt, _ = await create_agent_prompt(
+        user_id=user_a.id, session_id=session.id, tool_call_id="oversize-secret",
+        tool_name="manage_mcp_servers", payload=payload,
+    )
+    binding = McpSecretBinding(
+        prompt_id=prompt.id, user_id=user_a.id, platform="qq", bot_id="bot-a",
+        chat_type="c2c", chat_id=None, platform_user_id="owner-a",
+    )
+    await start_mcp_secret_input(db, binding=binding, event_id="oversize-start")
+    result = await consume_mcp_secret_field(
+        db, binding=binding, event_id="oversize-field", value="x" * 4097,
+    )
+    assert result["status"] == "failed"
+    await db.commit()
+    await db.refresh(server)
+    assert server.encrypted_credentials == "existing-ciphertext"
+
+    web_prompt, _ = await create_agent_prompt(
+        user_id=user_a.id, session_id=session.id, tool_call_id="extra-secret-field",
+        tool_name="manage_mcp_servers", payload=payload,
+    )
+    with pytest.raises(HTTPException) as error:
+        await consume_mcp_secret_prompt(
+            web_prompt, {"key": "new-value", "unexpected": "extra-value"}, user=user_a, db=db,
+        )
+    assert error.value.status_code == 400
+    await db.refresh(server)
+    assert server.encrypted_credentials == "existing-ciphertext"
+    assert web_prompt.status == "active"
 
 
 async def test_im_secret_cancel_is_idempotent_and_expiry_cleanup_removes_staging(db, user_a):
@@ -697,10 +783,31 @@ async def test_im_secret_input_is_intercepted_before_history_and_group_scope_is_
     assert "private-value-123" not in json.dumps(await list_history(
         db, user_id=user_a.id, session_id=private_session.id,
     ))
+    reply_count = len(sent)
+    assert await consume_mcp_secret_payload({
+        "platform": "qq", "channel_id": "bot-a", "owner_user_id": str(user_a.id),
+        "platform_user_id": "owner-a", "chat_type": "c2c", "message_id": "secret-event",
+        "text": "private-value-123", "attachments": [],
+    }) is True
+    assert len(sent) == reply_count
+    assert (await db.scalars(select(ConversationMessage))).all() == []
+
+    next_prompt, _ = await create_agent_prompt(
+        user_id=user_a.id, session_id=private_session.id, tool_call_id="next-secret",
+        tool_name="manage_mcp_servers", payload=secret_payload,
+    )
+    await db.commit()
+    assert await consume_mcp_secret_payload({
+        "platform": "qq", "channel_id": "bot-a", "owner_user_id": str(user_a.id),
+        "platform_user_id": "owner-a", "chat_type": "c2c", "message_id": "secret-event",
+        "text": "private-value-123", "attachments": [],
+    }) is True
+    next_stage = await db.scalar(select(McpSecretInput).where(McpSecretInput.prompt_id == next_prompt.id))
+    assert next_stage.status == "pending_choice"
 
     assert await consume_mcp_secret_payload({
         "platform": "qq", "channel_id": "bot-a", "owner_user_id": str(user_a.id),
-        "platform_user_id": "member-a", "chat_type": "group", "chat_id": "group-a",
+        "chat_type": "group", "chat_id": "group-a",
         "message_id": "group-event", "text": "maybe-secret", "attachments": [],
     }) is True
     assert "群聊不接收 MCP 凭据" in sent[-1]
@@ -740,13 +847,26 @@ async def test_im_secret_callback_is_bound_to_private_actor_and_web_can_cancel_g
     await db.commit()
     assert [item["id"] for item in actions] == ["input_credentials", "cancel"]
     assert group_actions == []
-    with pytest.raises(HTTPException) as error:
+    invalid_scopes = [
+        {"platform": "qq", "bot_id": "bot-feishu", "platform_user_id": "owner-open-id", "chat_type": "c2c", "chat_id": None},
+        {"platform": "feishu", "bot_id": "other-bot", "platform_user_id": "owner-open-id", "chat_type": "c2c", "chat_id": None},
+        {"platform": "feishu", "bot_id": "bot-feishu", "platform_user_id": "other-open-id", "chat_type": "c2c", "chat_id": None},
+        {"platform": "feishu", "bot_id": "bot-feishu", "platform_user_id": "owner-open-id", "chat_type": "group", "chat_id": "group-open-id"},
+    ]
+    for index, scope in enumerate(invalid_scopes):
+        with pytest.raises(HTTPException) as error:
+            await consume_mcp_secret_action(
+                db, user_id=user_a.id, prompt_id=private_prompt.id, token=actions[0]["token"],
+                event_id=f"wrong-scope-{index}", **scope,
+            )
+        assert error.value.status_code == 404
+    with pytest.raises(HTTPException) as cross_prompt:
         await consume_mcp_secret_action(
-            db, user_id=user_a.id, prompt_id=private_prompt.id, token=actions[0]["token"],
-            event_id="wrong-actor", platform="feishu", bot_id="bot-feishu",
-            platform_user_id="other-open-id", chat_type="c2c", chat_id=None,
+            db, user_id=user_a.id, prompt_id=group_prompt.id, token=actions[0]["token"],
+            event_id="cross-prompt", platform="feishu", bot_id="bot-feishu",
+            platform_user_id="owner-open-id", chat_type="c2c", chat_id=None,
         )
-    assert error.value.status_code == 404
+    assert cross_prompt.value.status_code == 409
 
     started = await consume_mcp_secret_action(
         db, user_id=user_a.id, prompt_id=private_prompt.id, token=actions[0]["token"],
@@ -754,6 +874,19 @@ async def test_im_secret_callback_is_bound_to_private_actor_and_web_can_cancel_g
         platform_user_id="owner-open-id", chat_type="c2c", chat_id=None,
     )
     assert started["status"] == "awaiting_secret"
+    duplicate = await consume_mcp_secret_action(
+        db, user_id=user_a.id, prompt_id=private_prompt.id, token=actions[0]["token"],
+        event_id="right-actor", platform="feishu", bot_id="bot-feishu",
+        platform_user_id="owner-open-id", chat_type="c2c", chat_id=None,
+    )
+    assert duplicate["status"] == "duplicate"
+    with pytest.raises(HTTPException) as replay:
+        await consume_mcp_secret_action(
+            db, user_id=user_a.id, prompt_id=private_prompt.id, token=actions[0]["token"],
+            event_id="different-replay", platform="feishu", bot_id="bot-feishu",
+            platform_user_id="owner-open-id", chat_type="c2c", chat_id=None,
+        )
+    assert replay.value.status_code == 409
     group_history = await list_history(db, user_id=user_a.id, session_id=group_session.id)
     assert group_history[0]["secret_fields"][0]["name"] == "key"
     assert group_history[0]["options"] == []

@@ -80,6 +80,29 @@ def test_event_identity_survives_round_trip():
     assert event["seq"] == 9
 
 
+async def test_secret_input_preflight_short_circuits_im_dispatch_before_binding_commands(monkeypatch):
+    """避免凭据文本在统一 dispatch 中落入绑定码、消息历史或 Agent 路径。"""
+    from agent.im import interaction_text
+    from agent.im.loop import dispatch_im_message
+
+    observed = []
+
+    async def consume_secret(payload):
+        observed.append(payload)
+        return True
+
+    monkeypatch.setattr(interaction_text, "consume_mcp_secret_payload", consume_secret)
+    result = await dispatch_im_message({
+        "platform": "telegram", "telegram_command": "bind", "text": "bind sensitive-value",
+        "owner_user_id": "owner", "channel_id": "bot", "platform_user_id": "user",
+        "chat_type": "c2c", "chat_id": "chat", "message_id": "event",
+    })
+
+    assert result is None
+    assert len(observed) == 1
+    assert observed[0]["text"] == "bind sensitive-value"
+
+
 def test_action_tokens_are_stored_as_one_way_hashes():
     token = "short-lived-action-token"
     assert _hash_token(token) != token
