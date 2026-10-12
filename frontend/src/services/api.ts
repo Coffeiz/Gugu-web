@@ -734,6 +734,7 @@ export interface MindCanvasNoteCreate {
 
 export const mindApi = {
   listNotes:  (limit = 50, offset = 0) => get<MindNote[]>(`/mind/notes?limit=${limit}&offset=${offset}`),
+  getNote:    (id: number) => get<MindNote>(`/mind/notes/${id}`),
   createNote: (data: MindNoteCreate)             => post<MindNote>('/mind/notes', data),
   updateNote: (id: number, data: MindNoteUpdate, meta?: RequestMeta) => patch<MindNote>(`/mind/notes/${id}`, data, meta),
   deleteNote: (id: number, meta?: RequestMeta)                       => del(`/mind/notes/${id}`, meta),
