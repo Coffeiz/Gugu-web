@@ -1,6 +1,6 @@
 # PRD-FS-8 文件库有界分页读取与缓存收敛
 
-> 状态：已完成；Phase 1–3 均已完成，代码与发布回滚检查通过，尚未部署或推送。
+> 状态：实现、测试与发布回滚检查均已完成；尚未部署或推送。
 > 创建：2026-10-11
 > 最近更新：2026-10-12
 > 关联模块：`backend/app/api/v1/files.py`、`backend/app/api/v1/folders.py`、`backend/app/api/v1/trash.py`、`backend/app/services/files/browser.py`、`backend/app/services/files/trash.py`、`frontend/src/services/api.ts`、`frontend/src/stores/filesCache.ts`、`frontend/src/composables/files/`

@@ -4,7 +4,7 @@
 > 创建：2026-10-12
 > 最近更新：2026-10-12
 > 关联模块：`frontend/src/components/common/layout/GlobalSearch.vue`、`frontend/src/router/index.ts`、`frontend/src/views/Mind/`、`frontend/src/components/common/gugu-chat/`、`frontend/src/views/Schedules/`、`frontend/src/views/Skills/`
-> 关联 PRD：`PRD-FS-8-文件库有界分页读取与缓存收敛.md`（文件/文件夹目标加载和导航路径由 FS-8 负责）
+> 关联 PRD：`【已完成】PRD-FS-8-文件库有界分页读取与缓存收敛.md`（文件/文件夹目标加载和导航路径由 FS-8 负责）
 
 ## 1. 背景与问题
 
