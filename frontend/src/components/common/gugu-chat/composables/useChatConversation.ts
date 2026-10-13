@@ -8,6 +8,7 @@ import { renderMd } from '../markdown'
 import { displayQQFaces } from '../messageDisplay'
 import { SESSION_KEY, LAST_SESSION_KEY } from '../chatConstants'
 import { ensureSessionMessageLoaded } from './sessionMessageSync'
+import { hasPendingMessageMarkdown } from './sessionScrollLayout'
 import { getSessionPendingQueueId, setPendingQueueRecoveryNeeded } from './chatPendingQueueStorage'
 import { useChatStream } from './useChatStream'
 import { useChatSessions } from './useChatSessions'
@@ -376,12 +377,15 @@ export function useChatConversation(options: {
   async function waitForStableScrollLayout() {
     let previous = ''
     let stableFrames = 0
-    for (let i = 0; i < 12; i += 1) {
+    // 首次打开会话时，当前虚拟窗口内的 MarkdownView 会异步解析 Mermaid。
+    // 这段时间列表仍隐藏；等 SVG 完成及虚拟行高度稳定后再展示，避免可见状态下滚动纠偏。
+    for (let i = 0; i < 180; i += 1) {
       await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
       await nextTick()
       const el = messagesEl.value
       const current = el ? `${el.scrollHeight}:${el.clientHeight}` : ''
-      if (current && current === previous) {
+      const markdownPending = el ? hasPendingMessageMarkdown(el) : false
+      if (!markdownPending && current && current === previous) {
         stableFrames += 1
         if (stableFrames >= 2) return
       } else {

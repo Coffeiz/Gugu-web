@@ -290,6 +290,10 @@ export function useChatSessions(options: {
       await options.scrollBottom(true)
       await options.waitForStableScrollLayout()
       if (viewGeneration !== options.getViewGeneration()) return
+      // Mermaid 完成后行高以最终 SVG 为准；仍在隐藏结算态内重新定位一次，再显示列表。
+      await options.scrollBottom(true)
+      await options.waitForStableScrollLayout()
+      if (viewGeneration !== options.getViewGeneration()) return
       options.setSessionSettling(false)
       options.restorePendingQueue(id, Array.isArray(data.pendingQueue) ? data.pendingQueue : [])
       if (shouldResume) {
