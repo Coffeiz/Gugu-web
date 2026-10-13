@@ -1,5 +1,5 @@
 <template>
-  <div ref="root" class="md-view" v-html="rendered" />
+  <div ref="root" class="md-view" :data-mermaid-ready="mermaidReady ? 'true' : 'false'" v-html="rendered" />
 </template>
 
 <script setup lang="ts">
@@ -19,8 +19,10 @@ const props = defineProps({
   chat: { type: Boolean, default: false },
 })
 const root = ref<HTMLElement | null>(null)
+const mermaidReady = ref(false)
 const { t, locale } = useI18n()
 let themeObserver: MutationObserver | null = null
+let renderGeneration = 0
 
 function mermaidLabels() {
   return {
@@ -42,8 +44,16 @@ function wrapMarkdownTables(): void {
   }
 }
 
-function renderMermaidBlocks(): Promise<void> {
-  return renderMarkdownMermaid(root.value, mermaidLabels(), wrapMarkdownTables)
+async function renderMermaidBlocks(): Promise<void> {
+  const element = root.value
+  if (!element) return
+  const generation = ++renderGeneration
+  mermaidReady.value = false
+  try {
+    await renderMarkdownMermaid(element, mermaidLabels(), wrapMarkdownTables)
+  } finally {
+    if (generation === renderGeneration && element.isConnected) mermaidReady.value = true
+  }
 }
 // html 预渲染 prop 同样不可信（来自后端/流式），也必须消毒——不能因「已是 HTML」就跳过
 const rendered = computed(() =>
@@ -60,6 +70,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  renderGeneration++
   themeObserver?.disconnect()
   themeObserver = null
   cleanupMarkdownMermaid(root.value)

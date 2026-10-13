@@ -1,3 +1,6 @@
+import { createVNode, render } from 'vue'
+import Icon from '@/components/common/icons/Icon.vue'
+import type { IconName } from '@/components/common/icons/iconRegistry'
 import { downloadMermaidPng } from '@/utils/mermaidPng'
 import { openMermaidPreview } from '@/utils/mermaidPreview'
 
@@ -19,13 +22,18 @@ const bindings = new WeakMap<HTMLElement, MermaidBinding>()
 const MIN_SCALE = 0.5
 const MAX_SCALE = 3
 
-function makeButton(action: string, icon: string, label: string): HTMLButtonElement {
+function makeButton(action: string, label: string, icon: string | { name: IconName }): HTMLButtonElement {
   const button = document.createElement('button')
   button.type = 'button'
   button.dataset.mermaidAction = action
   button.setAttribute('aria-label', label)
   button.title = label
-  button.textContent = icon
+  if (typeof icon !== 'string') {
+    button.dataset.mermaidIcon = icon.name
+    render(createVNode(Icon, { name: icon.name, size: 16 }), button)
+  } else {
+    button.textContent = icon
+  }
   return button
 }
 
@@ -68,6 +76,9 @@ class MermaidInteractionBinding implements MermaidBinding {
     container.removeEventListener('pointerup', this.onPointerUp)
     container.removeEventListener('pointercancel', this.onPointerUp)
     container.removeEventListener('dblclick', this.onDoubleClick)
+    container.querySelectorAll<HTMLButtonElement>('.md-mermaid-controls [data-mermaid-icon]').forEach(button => {
+      render(null, button)
+    })
     container.querySelector('.md-mermaid-controls')?.remove()
     container.querySelector('.md-mermaid-status')?.remove()
     this.closePreview?.()
@@ -85,11 +96,11 @@ class MermaidInteractionBinding implements MermaidBinding {
       controls = document.createElement('div')
       controls.className = 'md-mermaid-controls'
       controls.append(
-        makeButton('zoom-out', '−', this.labels.zoomOut),
-        makeButton('zoom-in', '+', this.labels.zoomIn),
-        makeButton('reset', '↺', this.labels.resetZoom),
-        makeButton('expand', '⛶', this.labels.expand),
-        makeButton('download-png', '↓', this.labels.downloadPng),
+        makeButton('zoom-out', this.labels.zoomOut, '−'),
+        makeButton('zoom-in', this.labels.zoomIn, '+'),
+        makeButton('reset', this.labels.resetZoom, '↺'),
+        makeButton('expand', this.labels.expand, '⛶'),
+        makeButton('download-png', this.labels.downloadPng, { name: 'action.download' }),
       )
       controls.addEventListener('click', this.onControlClick)
       controls.addEventListener('dblclick', event => event.stopPropagation())

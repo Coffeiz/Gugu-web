@@ -17,11 +17,15 @@ from pathlib import Path
 _FENCE_RE = re.compile(r"```mermaid[ \t]*\r?\n[\s\S]*?```", re.IGNORECASE)
 _OPEN_RE = re.compile(r"```mermaid[ \t]*\r?\n", re.IGNORECASE)
 _SOURCE_RE = re.compile(r"^```mermaid[ \t]*\r?\n([\s\S]*?)```$", re.IGNORECASE)
+_WORKER_FAILURE_RE = re.compile(
+    r"^MERMAID_RENDER_FAILURE index=(\d+) type=([a-z0-9-]+) reason=([a-z0-9_]+)$"
+)
 _RENDER_LIMIT = asyncio.Semaphore(1)
-MAX_DIAGRAMS = 3
+MAX_DIAGRAMS = 4
+DEFAULT_MAX_DIAGRAMS = 3
 MAX_SOURCE_CHARS = 20_000
 MAX_PNG_BYTES = 3 * 1024 * 1024
-RENDER_TIMEOUT_SECONDS = 10
+RENDER_TIMEOUT_SECONDS = 20
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
@@ -73,10 +77,10 @@ def _sandbox_exec(worker: str) -> None:
     node = shutil.which("node")
     if not node:
         raise RuntimeError("node_unavailable")
-    resource.setrlimit(resource.RLIMIT_CPU, (8, 8))
+    resource.setrlimit(resource.RLIMIT_CPU, (16, 16))
     resource.setrlimit(resource.RLIMIT_FSIZE, (MAX_PNG_BYTES, MAX_PNG_BYTES))
     _apply_network_seccomp()
-    os.execv(node, [node, "--max-old-space-size=192", worker])
+    os.execv(node, [node, "--max-old-space-size=256", worker])
 
 
 async def render_pngs(sources: list[str]) -> list[bytes | None]:
@@ -117,16 +121,24 @@ async def render_pngs(sources: list[str]) -> list[bytes | None]:
                 str(worker),
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
                 start_new_session=True,
             )
-            stdout, _ = await asyncio.wait_for(
+            stdout, stderr = await asyncio.wait_for(
                 process.communicate(input_bytes),
                 timeout=RENDER_TIMEOUT_SECONDS,
             )
             if process.returncode != 0:
                 diag_log_raw("agent.im.mermaid.render", "status=worker_failed")
                 return results
+            for line in stderr.decode("utf-8", errors="ignore").splitlines():
+                match = _WORKER_FAILURE_RE.fullmatch(line)
+                if match:
+                    diag_log_raw(
+                        "agent.im.mermaid.render",
+                        f"status=diagram_failed index={match.group(1)} "
+                        f"diagram_type={match.group(2)} reason={match.group(3)}",
+                    )
             rendered: list[bytes | None] = []
             offset = 0
             for _index, _source in valid:
@@ -146,9 +158,11 @@ async def render_pngs(sources: list[str]) -> list[bytes | None]:
                 rendered.append(png)
             if offset != len(stdout):
                 raise ValueError("invalid_worker_trailing_data")
+            failed = sum(png is None for png in rendered)
             diag_log_raw(
                 "agent.im.mermaid.render",
-                f"status=ok diagrams={len(valid)} bytes={len(stdout)} "
+                f"status={'partial' if failed else 'ok'} diagrams={len(valid)} "
+                f"failed={failed} bytes={len(stdout)} "
                 f"elapsed_ms={int((time.monotonic() - started) * 1000)}",
             )
             for (index, _source), png in zip(valid, rendered):
@@ -184,13 +198,16 @@ async def render_png(source: str) -> bytes | None:
     return (await render_pngs([source]))[0]
 
 
-async def render_reply(text: str) -> list[ReplyPart]:
+async def render_reply(
+    text: str, *, max_diagrams: int = DEFAULT_MAX_DIAGRAMS,
+) -> list[ReplyPart]:
     """解析完整 Mermaid fence，成功时用 PNG part 替换源码，失败时保留源码。"""
     value = text or ""
     matches = [match for match in _FENCE_RE.finditer(value) if _SOURCE_RE.match(match.group(0))]
+    max_diagrams = max(0, min(max_diagrams, MAX_DIAGRAMS))
     sources = [
         _SOURCE_RE.match(match.group(0)).group(1)
-        for match in matches[:MAX_DIAGRAMS]
+        for match in matches[:max_diagrams]
     ]
     pngs = await render_pngs(sources)
     parts: list[ReplyPart] = []
@@ -208,7 +225,7 @@ async def render_reply(text: str) -> list[ReplyPart]:
 class StreamingRenderer:
     """只暂存 Mermaid fence；普通文本继续流式发送，完整 fence 转为图片事件。"""
 
-    def __init__(self, max_diagrams: int = MAX_DIAGRAMS) -> None:
+    def __init__(self, max_diagrams: int = DEFAULT_MAX_DIAGRAMS) -> None:
         self._pending = ""
         self._opening = ""
         self._in_diagram = False
@@ -220,12 +237,18 @@ class StreamingRenderer:
         self._pending += chunk or ""
         return await self._drain()
 
-    async def finish_round(self) -> list[ReplyPart]:
+    @property
+    def has_pending_diagrams(self) -> bool:
+        return bool(self._diagrams)
+
+    async def finish_round(self, *, max_images: int | None = None) -> list[ReplyPart]:
         parts = await self._drain(final=True)
         diagrams, self._diagrams = self._diagrams, []
         if diagrams:
-            pngs = await render_pngs([body for _source, body in diagrams])
-            for (source, _body), png in zip(diagrams, pngs):
+            render_count = len(diagrams) if max_images is None else max(0, min(max_images, len(diagrams)))
+            pngs = await render_pngs([body for _source, body in diagrams[:render_count]])
+            for index, (source, _body) in enumerate(diagrams):
+                png = pngs[index] if index < len(pngs) else None
                 if png:
                     parts.append(ReplyPart(png=png, source=source, placeholder_emitted=True))
                 else:
@@ -292,58 +315,73 @@ class StreamingRenderer:
         return [part for part in parts if part.text or part.png]
 
 
-class MermaidTokenFilter:
-    """把流式 Mermaid fence 转成文本占位，并在卡片收尾后暴露待发 PNG。"""
+class ProgressiveMermaidTokenFilter:
+    """原样透传流式文本，并在 Mermaid fence 闭合后发出可替换图片事件。"""
 
-    def __init__(self) -> None:
+    def __init__(self, max_diagrams: int = DEFAULT_MAX_DIAGRAMS) -> None:
         self.images: list[tuple[bytes, str]] = []
-        self._renderer = StreamingRenderer()
-        self._raw_text = ""
-        self._visible_text = ""
+        self._pending = ""
+        self._search_from = 0
+        self._diagram_start: int | None = None
+        self._body_start = 0
+        self._diagram_count = 0
+        self._max_diagrams = max(0, min(max_diagrams, MAX_DIAGRAMS))
 
-    async def events(self, source_iter, round_end):
-        from dataclasses import replace
-
+    async def events(self, source_iter):
         async for kind, value in source_iter:
             if kind == "token":
                 chunk = str(value or "")
-                self._raw_text += chunk
-                displayed = await self._display_parts(await self._renderer.feed(chunk))
-                if displayed:
-                    yield ("token", displayed)
-                continue
-            if kind == round_end:
-                displayed = await self._display_parts(await self._renderer.finish_round())
-                if displayed:
-                    yield ("token", displayed)
-                continue
-            if kind == "final" and value is not None:
-                displayed = await self._display_parts(await self._renderer.finish_round())
-                if displayed:
-                    yield ("token", displayed)
-                final_text = str(getattr(value, "text", "") or "")
-                if final_text and final_text != self._raw_text:
-                    self.images.clear()
-                    self._visible_text = ""
-                    final_display = await self._display_parts(await render_reply(final_text))
-                else:
-                    final_display = self._visible_text
-                if hasattr(value, "text"):
-                    value = replace(value, text=final_display or final_text)
-            yield (kind, value)
+                self._pending += chunk
+                # 源码先按普通 Markdown 代码块原样显示；图片事件只负责后续原位替换。
+                yield (kind, value)
+                async for event in self._scan_completed_fences():
+                    yield event
+            else:
+                yield (kind, value)
 
-    async def _display_parts(self, parts: list[ReplyPart]) -> str:
-        output: list[str] = []
-        for part in parts:
-            if part.png is not None:
-                self.images.append((part.png, part.source))
-                if not part.placeholder_emitted:
-                    output.append(f"\n\n（图表 {len(self.images)} 见后续图片）\n\n")
-            elif part.text:
-                output.append(part.text)
-        displayed = "".join(output)
-        self._visible_text += displayed
-        return displayed
+    async def _scan_completed_fences(self):
+        while True:
+            if self._diagram_start is None:
+                opening = _OPEN_RE.search(self._pending, self._search_from)
+                if opening is None:
+                    # 保留可能跨 token 的开 fence 后缀，丢弃已确认不相关的前缀。
+                    keep = len("```mermaid\n") - 1
+                    if len(self._pending) > keep:
+                        drop = len(self._pending) - keep
+                        self._pending = self._pending[drop:]
+                    self._search_from = 0
+                    return
+                self._diagram_start = opening.start()
+                self._body_start = opening.end()
+                self._search_from = opening.end()
+
+            closing = self._pending.find("```", self._search_from)
+            if closing < 0:
+                if len(self._pending) - self._diagram_start > MAX_SOURCE_CHARS:
+                    # 超长 fence 不渲染；保留普通代码展示，并继续寻找后续 fence。
+                    self._pending = self._pending[self._diagram_start + 1:]
+                    self._diagram_start = None
+                    self._search_from = 0
+                    continue
+                self._search_from = max(self._body_start, len(self._pending) - 2)
+                return
+
+            end = closing + 3
+            source = self._pending[self._diagram_start:end]
+            body = self._pending[self._body_start:closing]
+            self._diagram_count += 1
+            diagram_index = self._diagram_count
+            self._pending = self._pending[end:]
+            self._diagram_start = None
+            self._search_from = 0
+            self._body_start = 0
+
+            if diagram_index > self._max_diagrams or len(source) > MAX_SOURCE_CHARS:
+                continue
+            png = await render_png(body)
+            if png:
+                self.images.append((png, source))
+                yield ("mermaid_image", (diagram_index, len(self.images), source, png))
 
 
 if __name__ == "__main__" and len(sys.argv) == 3 and sys.argv[1] == "--sandbox-exec":

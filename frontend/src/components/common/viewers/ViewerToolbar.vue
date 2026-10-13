@@ -55,6 +55,15 @@
         <Icon :name="fitIcon" :size="12" />
       </button>
     </template>
+    <template v-if="showDownload || showClose">
+      <span class="iv-toolbar-separator" aria-hidden="true"></span>
+      <button v-if="showDownload" class="iv-tb-btn" type="button" :title="downloadLabel" @click="$emit('download')">
+        <Icon name="action.download" :size="12" />
+      </button>
+      <button v-if="showClose" class="iv-tb-btn iv-tb-close" type="button" :title="closeLabel" @click="$emit('close')">
+        <Icon name="action.close" :size="12" />
+      </button>
+    </template>
   </div>
 </template>
 
@@ -74,6 +83,8 @@ const emit = defineEmits<{
   (e: 'zoom-in'): void
   (e: 'fit'): void
   (e: 'mode', value: string): void
+  (e: 'download'): void
+  (e: 'close'): void
 }>()
 
 const props = defineProps({
@@ -84,14 +95,18 @@ const props = defineProps({
   modeOptions: { type: Array as PropType<ToolbarMode[]>, default: () => [] },
   showFit: { type: Boolean, default: false },
   fitActive: { type: Boolean, default: false },
-  previousPageLabel: { type: String, required: true },
-  nextPageLabel: { type: String, required: true },
+  previousPageLabel: { type: String, default: '' },
+  nextPageLabel: { type: String, default: '' },
   zoomOutLabel: { type: String, required: true },
   resetZoomLabel: { type: String, required: true },
   zoomInLabel: { type: String, required: true },
   pageJumpLabel: { type: String, default: '' },
   fitLabel: { type: String, default: '' },
   fitIcon: { type: String, default: 'action.expand' },
+  showDownload: { type: Boolean, default: false },
+  downloadLabel: { type: String, default: '' },
+  showClose: { type: Boolean, default: false },
+  closeLabel: { type: String, default: '' },
 })
 
 const pageInputRef = ref<HTMLInputElement | null>(null)

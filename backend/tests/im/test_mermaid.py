@@ -129,21 +129,21 @@ async def test_streaming_renderer_batches_charts_and_caps_them_across_rounds(mon
         return [b"\x89PNG\r\n\x1a\nchart"] * len(sources)
 
     monkeypatch.setattr(mermaid, "render_pngs", render)
-    renderer = mermaid.StreamingRenderer()
-    sources = [f"```mermaid\ngraph TD; A{i}-->B{i}\n```" for i in range(4)]
+    renderer = mermaid.StreamingRenderer(max_diagrams=mermaid.MAX_DIAGRAMS)
+    sources = [f"```mermaid\ngraph TD; A{i}-->B{i}\n```" for i in range(5)]
 
-    streamed = await renderer.feed("前文\n" + "\n".join(sources[:3]) + "\n后文")
+    streamed = await renderer.feed("前文\n" + "\n".join(sources[:4]) + "\n后文")
     assert calls == []
     assert "```mermaid" not in "".join(part.text for part in streamed)
-    assert sum("图表" in part.text for part in streamed) == 3
+    assert sum("图表" in part.text for part in streamed) == 4
 
     rendered = await renderer.finish_round()
     assert len(calls) == 1
-    assert len(calls[0]) == 3
-    assert len([part for part in rendered if part.png]) == 3
+    assert len(calls[0]) == 4
+    assert len([part for part in rendered if part.png]) == 4
 
-    next_round = await renderer.feed(sources[3])
-    assert sources[3] in "".join(part.text for part in next_round)
+    next_round = await renderer.feed(sources[4])
+    assert sources[4] in "".join(part.text for part in next_round)
     assert await renderer.finish_round() == []
     assert len(calls) == 1
 
@@ -184,6 +184,44 @@ async def test_image_send_failure_falls_back_without_dropping_reply_text(monkeyp
 
     assert sent_text == ["前文\n", source, "\n后文"]
     assert result == f"前文\n{source}\n后文"
+
+
+@pytest.mark.asyncio
+async def test_completed_im_round_sends_mermaid_as_independent_image(monkeypatch):
+    from agent.im import replies, mermaid
+
+    events = []
+    png = b"\x89PNG\r\n\x1a\nchart"
+    source = "```mermaid\ngraph LR; A-->B\n```"
+
+    async def fake_render(sources):
+        assert sources == ["graph LR; A-->B\n"]
+        return [png]
+
+    async def fake_text(_payload, text):
+        events.append(("text", text))
+        return True
+
+    async def fake_image(_payload, image):
+        events.append(("image", image))
+        return True
+
+    monkeypatch.setattr(mermaid, "render_pngs", fake_render)
+    monkeypatch.setattr(replies, "send_text", fake_text)
+    monkeypatch.setattr(replies, "send_png_image", fake_image)
+
+    sent = await replies.send_completed_round(
+        {"platform": "qq", "platform_user_id": "synthetic-recipient"},
+        f"图在这里：\n{source}\n看完告诉我。",
+    )
+
+    assert sent is True
+    assert events == [
+        ("text", "图在这里：\n"),
+        ("image", png),
+        ("text", "\n看完告诉我。"),
+    ]
+    assert all(source not in value for kind, value in events if kind == "text")
 
 
 @pytest.mark.asyncio
@@ -315,7 +353,13 @@ async def test_qq_stream_holds_split_fence_and_sends_chart_after_safe_text(monke
 
 
 @pytest.mark.asyncio
-async def test_feishu_stream_hides_mermaid_source_and_sends_png_after_card(monkeypatch):
+@pytest.mark.parametrize(
+    ("upload_key", "card_update_ok"),
+    [("img_v2_test", True), ("img_v2_test", False), (None, True)],
+)
+async def test_feishu_stream_embeds_rendered_mermaid_in_final_card(
+    monkeypatch, upload_key, card_update_ok,
+):
     from agent.gateway.feishu import messages, streaming as feishu
     from agent.im import mermaid
     from agent.models import AgentResponse
@@ -334,20 +378,26 @@ async def test_feishu_stream_hides_mermaid_source_and_sends_png_after_card(monke
         return True
 
     async def update_card(_app, _secret, _card, _text, **_kwargs):
-        return True
+        events.append(("card-update", _kwargs.get("elements")))
+        return card_update_ok
 
-    async def render(sources):
-        return [b"\x89PNG\r\n\x1a\nchart"] * len(sources)
+    async def render(_source):
+        return b"\x89PNG\r\n\x1a\nchart"
 
     async def send_file(*_args, **_kwargs):
         events.append(("image", "png"))
         return True
 
+    async def upload_image(_png, _channel):
+        events.append(("upload", "png"))
+        return upload_key
+
     monkeypatch.setattr(feishu, "_do_streaming_update_text", update_text)
     monkeypatch.setattr(feishu, "_do_finalize_streaming_card", finalize)
     monkeypatch.setattr(feishu, "_do_update_card", update_card)
-    monkeypatch.setattr(mermaid, "render_pngs", render)
+    monkeypatch.setattr(mermaid, "render_png", render)
     monkeypatch.setattr(messages, "send_file", send_file)
+    monkeypatch.setattr(messages, "upload_image", upload_image)
 
     chart = "```mermaid\ngraph TD; A-->B\n```"
     full_text = f"前文\n{chart}\n后文"
@@ -363,10 +413,78 @@ async def test_feishu_stream_hides_mermaid_source_and_sends_png_after_card(monke
 
     assert ok is True
     assert response.session_id == 22
-    assert "```mermaid" not in response.text
-    assert "图表 1 见后续图片" in response.text
-    assert events[-2:] == [("finalize", "card"), ("image", "png")]
-    assert all("```mermaid" not in value for kind, value in events if kind == "update")
+    assert chart in response.text
+    assert any(kind == "upload" for kind, _value in events)
+    card_update = next(event for event in events if event[0] == "card-update")
+    if upload_key:
+        elements = card_update[1]
+        assert [element["tag"] for element in elements] == ["markdown", "img", "markdown"]
+        assert elements[1]["img_key"] == upload_key
+        assert "前文" in elements[0]["content"]
+        assert "后文" in elements[2]["content"]
+    else:
+        assert card_update[1] is None
+    assert any(kind == "image" for kind, _value in events) == (not (card_update_ok and upload_key))
+    assert any(chart in value for kind, value in events if kind == "update")
+
+
+@pytest.mark.asyncio
+async def test_feishu_tool_summary_card_keeps_mermaid_image_in_reply_order(monkeypatch):
+    from agent.gateway.feishu import messages, streaming as feishu
+    from agent.gateway.feishu.tool_summary import FeishuToolSummaryStream
+    from agent.im import mermaid
+    from agent.models import AgentResponse
+
+    final_card = {}
+    monkeypatch.setattr(feishu, "_creds_by_id", lambda _channel: _async_value(("app", "secret")))
+    monkeypatch.setattr(feishu, "_do_create_card", lambda *_args: _async_value("card-id"))
+    monkeypatch.setattr(feishu, "_do_send_card_message", lambda *_args: _async_value(True))
+
+    async def update_card(*_args, elements=None, **_kwargs):
+        final_card["elements"] = elements
+        return True
+
+    async def update_text(*_args, **_kwargs):
+        return True
+
+    async def finalize(*_args, **_kwargs):
+        return True
+
+    async def render(_source):
+        return b"\x89PNG\r\n\x1a\nchart"
+
+    async def upload_image(_png, _channel):
+        return "img_v2_summary"
+
+    async def send_file(*_args, **_kwargs):
+        pytest.fail("successfully embedded Mermaid must not be sent as a second message")
+
+    monkeypatch.setattr(feishu, "_do_update_card", update_card)
+    monkeypatch.setattr(feishu, "_do_streaming_update_text", update_text)
+    monkeypatch.setattr(feishu, "_do_finalize_streaming_card", finalize)
+    monkeypatch.setattr(mermaid, "render_png", render)
+    monkeypatch.setattr(messages, "upload_image", upload_image)
+    monkeypatch.setattr(messages, "send_file", send_file)
+
+    chart = "```mermaid\ngraph LR; A-->B\n```"
+    text = f"工具前的正文\n{chart}\n工具后的正文"
+    summary = FeishuToolSummaryStream()
+
+    async def token_iter():
+        yield ("token", text)
+        yield ("final", AgentResponse(text=text, session_id=23))
+
+    ok, response = await feishu.send_text_stream(
+        "receive", token_iter(), channel_id="channel", tool_summary=summary,
+    )
+
+    assert ok is True
+    assert response.session_id == 23
+    elements = final_card["elements"]
+    assert [element["tag"] for element in elements] == ["markdown", "img", "markdown"]
+    assert elements[1]["img_key"] == "img_v2_summary"
+    assert "工具前的正文" in elements[0]["content"]
+    assert "工具后的正文" in elements[2]["content"]
 
 
 async def _async_value(value):

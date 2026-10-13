@@ -94,6 +94,36 @@ class FeishuToolSummaryStream:
         self._active_text_id = None
         self._active_tool_group_index = None
 
+    def replace_active_text_with_image(self, source: str, image_key: str) -> bool:
+        """将已流出的 Mermaid 源码块拆成前文、图片和新的后续文本元素。"""
+        if not source or not image_key or not self._active_text_id:
+            return False
+        for index in range(len(self._blocks) - 1, -1, -1):
+            block = self._blocks[index]
+            if block.get("kind") != "assistant" or block.get("id") != self._active_text_id:
+                continue
+            text = str(block.get("text") or "")
+            source_index = text.rfind(source)
+            if source_index < 0:
+                return False
+            before, after = text[:source_index], text[source_index + len(source):]
+            replacement: list[dict] = []
+            if before:
+                replacement.append({**block, "text": before})
+            replacement.append({"kind": "image", "image_key": image_key})
+            next_id = f"markdown_{self._next_text_id}"
+            self._next_text_id += 1
+            replacement.append({
+                "kind": "assistant",
+                "id": next_id,
+                "text": after or " ",
+            })
+            self._blocks[index:index + 1] = replacement
+            self._active_text_id = next_id
+            self._active_tool_group_index = None
+            return True
+        return False
+
     async def handle_tool_event(self, event: dict) -> bool:
         """处理工具事件；未绑定卡片时返回 False 供调用方沿用文本消息回退。"""
         if self._writer is None:
@@ -204,6 +234,12 @@ class FeishuToolSummaryStream:
                 panel = self._tool_summary_panel(block["tools"])
                 if _component_count(elements) + _component_count(panel) <= _MAX_CARD_COMPONENTS:
                     elements.append(panel)
+            elif block["kind"] == "image":
+                elements.append({
+                    "tag": "img",
+                    "img_key": block["image_key"],
+                    "mode": "fit_horizontal",
+                })
             elif block["kind"] == "omitted":
                 elements.append({
                     "tag": "markdown",

@@ -1076,7 +1076,7 @@ async def dispatch_im_message(payload: dict):
     async def _show_round(text: str) -> bool:
         """立即发送已结束的正文 round，成功后从最终收尾中跳过。"""
         nonlocal immediate_round_index, immediate_round_blocked
-        from agent.im.replies import send_text
+        from agent.im.replies import send_completed_round
 
         if not str(text or "").strip():
             return True
@@ -1089,7 +1089,7 @@ async def dispatch_im_message(payload: dict):
         # 发送的 index 精确补发，避免丢失失败 round 或重复发送成功 round。
         if immediate_round_blocked:
             return False
-        sent = await send_text(payload, str(text))
+        sent = await send_completed_round(payload, str(text))
         if sent:
             sent_round_indices.add(index)
         else:
@@ -1137,7 +1137,6 @@ async def dispatch_im_message(payload: dict):
             stream_sent, resp = await feishu.send_text_stream(
                 str(receive_id or ""), _mirror_stream(token_iter),
                 channel_id=payload.get("channel_id"),
-                show_intermediate_replies=show_intermediate_replies,
                 tool_summary=feishu_tool_summary,
             )
             if resp is None and stream_sent:

@@ -23,6 +23,7 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     && pnpm install --filter gugu-web --frozen-lockfile
 
 COPY frontend/ ./frontend/
+COPY backend/ts/workers/mermaid-renderer/svg-style.mjs ./backend/ts/workers/mermaid-renderer/svg-style.mjs
 RUN cd frontend && pnpm build
 
 # ── Stage 1.5：TS RAG worker 的 Linux x64 原生运行时依赖 ─────────────────────
@@ -38,7 +39,8 @@ RUN npm install --omit=dev --ignore-scripts --no-fund --no-audit \
         @node-rs/jieba@2.0.1 \
         @node-rs/jieba-linux-x64-gnu@2.0.1 \
         @resvg/resvg-js@2.6.2 \
-        mermaid@11.17.2 \
+        mermaid@12.1.0 \
+        @mermaid-js/mermaid-zenuml@1.0.1 \
         svgdom@0.1.25 \
     && node -e "import('@node-rs/jieba').then(() => console.log('RAG Jieba runtime ready'))"
 
@@ -238,9 +240,10 @@ RUN mkdir -p ./bin
 COPY backend/bin/gugu-rag-ts-worker.mjs ./bin/gugu-rag-ts-worker.mjs
 COPY backend/bin/gugu-filesync-ts-worker.cjs ./bin/gugu-filesync-ts-worker.cjs
 COPY backend/ts/workers/mermaid-renderer/worker.mjs ./bin/gugu-mermaid-worker.mjs
+COPY backend/ts/workers/mermaid-renderer/svg-style.mjs ./bin/svg-style.mjs
 COPY --from=rag-runtime /rag/node_modules ./bin/node_modules
 RUN node bin/gugu-rag-ts-worker.mjs --version \
-    && cd bin && node -e "Promise.all([import('mermaid'), import('@resvg/resvg-js'), import('@xmldom/xmldom'), import('svgdom')]).then(() => console.log('Mermaid PNG runtime ready'))"
+    && cd bin && node -e "Promise.all([import('mermaid'), import('@mermaid-js/mermaid-zenuml'), import('@resvg/resvg-js'), import('@xmldom/xmldom'), import('svgdom')]).then(() => console.log('Mermaid PNG runtime ready'))"
 RUN python -c "import ctypes.util; assert ctypes.util.find_library('seccomp'), 'libseccomp2 runtime unavailable'"
 RUN node bin/gugu-filesync-ts-worker.cjs --version
 

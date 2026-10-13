@@ -1,10 +1,11 @@
 """飞书 CardKit 卡片流式更新、完成收尾与失败降级。"""
 from __future__ import annotations
 
-import asyncio
 import json
+import re
 import time
 import uuid
+from dataclasses import dataclass, field
 
 import httpx
 
@@ -15,8 +16,29 @@ from .messages import _creds_by_id, send_text
 _STREAM_PATCH_INTERVAL_S = 0.2
 
 _STREAM_PATCH_MIN_CHARS = 30
+_MERMAID_SOURCE_RE = re.compile(r"```mermaid[ \t]*\r?\n[\s\S]*?```", re.IGNORECASE)
 
 _tenant_token_cache: dict[str, tuple[str, float]] = {}   # app_id -> (token, expire_ts)
+
+
+@dataclass(frozen=True)
+class _MermaidCardImages:
+    images: list[tuple[bytes, str]]
+    receive_id: str
+    channel_id: str | None
+
+
+@dataclass
+class _ToolSummaryStreamState:
+    accumulated: str = ""
+    pending_final_text: str | None = None
+    final_response: object | None = None
+    stream_ok: bool = True
+    last_patch_ts: float = field(default_factory=time.monotonic)
+    last_patched_len: int = 0
+    active_element_id: str | None = None
+    embedded_image_numbers: set[int] = field(default_factory=set)
+    embedded_sources: list[str] = field(default_factory=list)
 
 
 async def _get_tenant_token(app_id: str, app_secret: str) -> str:
@@ -300,6 +322,269 @@ async def _send_queued_mermaid_images(
                 diag_log("agent.gateway.feishu.mermaid_fallback", exc)
 
 
+def _markdown_elements(text: str) -> list[dict]:
+    elements = _build_card_elements(text)
+    for element in elements:
+        element.pop("element_id", None)
+    return elements
+
+
+def _elements_with_live_mermaid_images(
+    text: str,
+    image_keys: dict[int, tuple[str, str]],
+    *,
+    keep_active_element: bool = False,
+) -> tuple[list[dict], str | None]:
+    """将已渲染的 Mermaid fence 原位换成图片，并给后续流式文本分配新元素 ID。"""
+    elements: list[dict] = []
+    cursor = 0
+    diagram_index = 0
+    for match in _MERMAID_SOURCE_RE.finditer(text or ""):
+        diagram_index += 1
+        replacement = image_keys.get(diagram_index)
+        if replacement and replacement[0] == match.group(0):
+            if match.start() > cursor:
+                elements.extend(_markdown_elements(text[cursor:match.start()]))
+            elements.append({"tag": "img", "img_key": replacement[1], "mode": "fit_horizontal"})
+            cursor = match.end()
+    if cursor < len(text or ""):
+        elements.extend(_markdown_elements(text[cursor:]))
+
+    if not elements:
+        elements = _markdown_elements(text or " ")
+
+    markdown_id = 0
+    for element in elements:
+        if element.get("tag") == "markdown":
+            markdown_id += 1
+            element["element_id"] = f"markdown_{markdown_id}"
+
+    active_element_id = None
+    if keep_active_element:
+        if not elements or elements[-1].get("tag") != "markdown":
+            markdown_id += 1
+            active_element_id = f"markdown_{markdown_id}"
+            elements.append({"tag": "markdown", "content": " ", "element_id": active_element_id})
+        else:
+            active_element_id = str(elements[-1]["element_id"])
+    return elements, active_element_id
+
+
+async def _upload_mermaid_image(png: bytes, channel_id: str | None) -> str | None:
+    from .messages import upload_image
+
+    try:
+        return await upload_image(png, channel_id)
+    except Exception as exc:
+        diag_log("agent.gateway.feishu.mermaid_upload", exc)
+        return None
+
+
+class _ProgressiveFeishuCard:
+    """管理单张飞书卡片的正文流、Mermaid 原位替换和流式收尾。"""
+
+    def __init__(self, app_id: str, app_secret: str, card_id: str, channel_id: str | None) -> None:
+        self.app_id = app_id
+        self.app_secret = app_secret
+        self.card_id = card_id
+        self.channel_id = channel_id
+        self.sequence_key = f"{card_id}:stream"
+        self.accumulated = ""
+        self.active_text = ""
+        self.active_element_id = _STREAM_TARGET_ELEMENT_ID
+        self.image_keys: dict[int, tuple[str, str]] = {}
+        self.image_numbers_by_diagram: dict[int, int] = {}
+        self.embedded_image_numbers: set[int] = set()
+        self.embedded_sources: list[str] = []
+        self.stream_ok = True
+        self.last_patch_ts = time.monotonic()
+        self.last_patched_len = 0
+
+    def _next_sequence(self) -> int:
+        _card_seq[self.sequence_key] = _card_seq.get(self.sequence_key, 0) + 1
+        return _card_seq[self.sequence_key]
+
+    async def _patch(self, text: str) -> bool:
+        try:
+            return await _do_streaming_update_text(
+                self.app_id,
+                self.app_secret,
+                self.card_id,
+                text,
+                sequence=self._next_sequence(),
+                uuid=uuid.uuid4().hex,
+                element_id=self.active_element_id,
+            )
+        except Exception as exc:
+            diag_log("agent.gateway.feishu.streaming_update_text", exc)
+            print(
+                f"[feishu] 流式更新异常: {redact(f'{type(exc).__name__}: {exc}')}",
+                flush=True,
+            )
+            return False
+
+    async def append_text(self, text: str) -> None:
+        self.accumulated += text
+        self.active_text += text
+        now = time.monotonic()
+        if (now - self.last_patch_ts >= _STREAM_PATCH_INTERVAL_S
+                or len(self.active_text) - self.last_patched_len >= _STREAM_PATCH_MIN_CHARS):
+            if self.stream_ok:
+                self.stream_ok = await self._patch(self.active_text)
+            self.last_patch_ts = now
+            self.last_patched_len = len(self.active_text)
+
+    async def replace_mermaid(self, payload) -> None:
+        diagram_index, image_number, source, png = payload
+        image_key = await _upload_mermaid_image(png, self.channel_id)
+        if not image_key:
+            return
+        candidate_keys = dict(self.image_keys)
+        candidate_keys[diagram_index] = (source, image_key)
+        elements, next_element_id = _elements_with_live_mermaid_images(
+            self.accumulated,
+            candidate_keys,
+            keep_active_element=True,
+        )
+        if not await _do_update_card(
+            self.app_id,
+            self.app_secret,
+            self.card_id,
+            "",
+            sequence=self._next_sequence(),
+            elements=elements,
+        ):
+            return
+        self.image_keys = candidate_keys
+        self.image_numbers_by_diagram[diagram_index] = image_number
+        self.embedded_image_numbers.add(image_number)
+        self.embedded_sources.append(source)
+        self.active_element_id = next_element_id or _STREAM_TARGET_ELEMENT_ID
+        self.active_text = self.accumulated.rsplit(source, 1)[-1]
+        self.last_patch_ts = time.monotonic()
+        self.last_patched_len = len(self.active_text)
+
+    async def finish(self, final_text: str) -> bool:
+        if not self.stream_ok:
+            return False
+        if final_text:
+            final_tail = (
+                final_text.rsplit(self.embedded_sources[-1], 1)[-1]
+                if self.embedded_sources and self.embedded_sources[-1] in final_text
+                else self.active_text if self.embedded_sources else final_text
+            )
+            self.stream_ok = await self._patch(final_tail)
+        if not self.stream_ok:
+            return False
+
+        if final_text:
+            finalized = await _do_finalize_streaming_card(
+                self.app_id,
+                self.app_secret,
+                self.card_id,
+                final_text,
+                sequence=self._next_sequence(),
+                uuid=uuid.uuid4().hex,
+            )
+            if not finalized:
+                print(f"[feishu] finalize_streaming_card 失败但保留已更新卡片: card_id={self.card_id}", flush=True)
+
+        elements = (
+            _elements_with_live_mermaid_images(final_text, self.image_keys)[0]
+            if self.image_keys else None
+        )
+        renamed = await _do_update_card(
+            self.app_id,
+            self.app_secret,
+            self.card_id,
+            final_text,
+            sequence=self._next_sequence(),
+            title="咕咕",
+            streaming_mode=False,
+            elements=elements,
+        )
+        if not renamed:
+            print(f"[feishu] 收尾改标题失败，保留「咕咕思考中」: card_id={self.card_id}", flush=True)
+        elif self.image_keys:
+            matches = list(_MERMAID_SOURCE_RE.finditer(final_text or ""))
+            self.embedded_image_numbers = {
+                self.image_numbers_by_diagram[index]
+                for index, (source, _image_key) in self.image_keys.items()
+                if index <= len(matches) and matches[index - 1].group(0) == source
+            }
+        return renamed
+
+    def remaining_images(self, images: list[tuple[bytes, str]]) -> list[tuple[bytes, str]]:
+        return [
+            image for image_number, image in enumerate(images, start=1)
+            if image_number not in self.embedded_image_numbers
+        ]
+
+
+async def _replace_tool_summary_mermaid(summary, channel_id: str | None, payload) -> bool:
+    _diagram_index, _image_number, source, png = payload
+    image_key = await _upload_mermaid_image(png, channel_id)
+    if not image_key or not summary.replace_active_text_with_image(source, image_key):
+        return False
+    return await summary.flush()
+
+
+async def _append_tool_summary_token(
+    app_id: str,
+    app_secret: str,
+    card_id: str,
+    summary,
+    state: _ToolSummaryStreamState,
+    payload: str,
+) -> None:
+    state.accumulated += payload
+    needs_card_update = summary.append_text(payload)
+    current_element_id = summary.active_text_id
+    if not state.stream_ok or not current_element_id:
+        return
+    if needs_card_update or current_element_id != state.active_element_id:
+        state.stream_ok = await summary.flush()
+        state.last_patch_ts = time.monotonic()
+        state.last_patched_len = len(summary.active_text)
+        state.active_element_id = current_element_id
+        return
+
+    now = time.monotonic()
+    active_text = summary.active_text
+    if (now - state.last_patch_ts >= _STREAM_PATCH_INTERVAL_S
+            or len(active_text) - state.last_patched_len >= _STREAM_PATCH_MIN_CHARS):
+        _card_seq[f"{card_id}:stream"] = _card_seq.get(f"{card_id}:stream", 0) + 1
+        state.stream_ok = await _do_streaming_update_text(
+            app_id,
+            app_secret,
+            card_id,
+            active_text,
+            sequence=_card_seq[f"{card_id}:stream"],
+            uuid=uuid.uuid4().hex,
+            element_id=current_element_id,
+        )
+        if not state.stream_ok:
+            summary.mark_failed()
+        state.last_patch_ts = now
+        state.last_patched_len = len(active_text)
+
+
+async def _handle_tool_summary_mermaid(
+    summary, state: _ToolSummaryStreamState, channel_id: str | None, payload,
+) -> None:
+    _diagram_index, image_number, source, _png = payload
+    replaced = await _replace_tool_summary_mermaid(summary, channel_id, payload)
+    if replaced:
+        state.embedded_image_numbers.add(image_number)
+        state.embedded_sources.append(source)
+        state.active_element_id = summary.active_text_id
+        state.last_patch_ts = time.monotonic()
+        state.last_patched_len = len(summary.active_text)
+    elif not summary.healthy:
+        state.stream_ok = False
+        summary.mark_failed()
+
+
 async def _send_tool_summary_stream(
     app_id: str,
     app_secret: str,
@@ -307,7 +592,7 @@ async def _send_tool_summary_stream(
     token_iter,
     summary,
     *,
-    show_intermediate_replies: bool,
+    mermaid: _MermaidCardImages,
 ) -> tuple[bool, "AgentResponse | None"]:
     """同一卡片串行呈现正文与工具摘要；只供用户主动开启摘要时使用。"""
     stream_seq_key = f"{card_id}:stream"
@@ -327,90 +612,55 @@ async def _send_tool_summary_stream(
         )
 
     summary.bind(_write_elements)
-    accumulated = ""
-    pending_final_text: str | None = None
-    final_resp = None
-    stream_ok = True
-    last_patch_ts = time.monotonic()
-    last_patched_len = 0
-    active_element_id = summary.active_text_id
+    state = _ToolSummaryStreamState(active_element_id=summary.active_text_id)
 
     try:
         async for kind, payload in token_iter:
             if not summary.healthy:
-                stream_ok = False
+                state.stream_ok = False
             if kind == "token":
-                if not show_intermediate_replies:
-                    continue
-                accumulated += payload
-                needs_card_update = summary.append_text(payload)
-                current_element_id = summary.active_text_id
-                if not stream_ok or not current_element_id:
-                    continue
-                if needs_card_update:
-                    stream_ok = await summary.flush()
-                    last_patch_ts = time.monotonic()
-                    last_patched_len = len(summary.active_text)
-                    active_element_id = current_element_id
-                    continue
-                if current_element_id != active_element_id:
-                    # 新 Markdown 元素必须先通过整卡更新创建，再调用元素级流式接口。
-                    stream_ok = await summary.flush()
-                    last_patch_ts = time.monotonic()
-                    last_patched_len = len(summary.active_text)
-                    active_element_id = current_element_id
-                    continue
-                now = time.monotonic()
-                text = summary.active_text
-                if (now - last_patch_ts >= _STREAM_PATCH_INTERVAL_S
-                        or len(text) - last_patched_len >= _STREAM_PATCH_MIN_CHARS):
-                    _card_seq[stream_seq_key] = _card_seq.get(stream_seq_key, 0) + 1
-                    stream_ok = await _do_streaming_update_text(
-                        app_id,
-                        app_secret,
-                        card_id,
-                        text,
-                        sequence=_card_seq[stream_seq_key],
-                        uuid=uuid.uuid4().hex,
-                        element_id=current_element_id,
-                    )
-                    if not stream_ok:
-                        summary.mark_failed()
-                    last_patch_ts = now
-                    last_patched_len = len(text)
+                await _append_tool_summary_token(app_id, app_secret, card_id, summary, state, payload)
             elif kind == "round_end":
                 summary.end_round()
-                active_element_id = None
+                state.active_element_id = None
+            elif kind == "mermaid_image":
+                await _handle_tool_summary_mermaid(summary, state, mermaid.channel_id, payload)
             elif kind == "final":
-                final_resp = payload
+                state.final_response = payload
                 if payload.cancelled:
                     summary.finish("", cancelled=True)
-                    pending_final_text = accumulated
+                    state.pending_final_text = state.accumulated
                 else:
-                    pending_final_text = _stream_fallback_text(
-                        payload.text or accumulated,
+                    state.pending_final_text = _stream_fallback_text(
+                        payload.text or state.accumulated,
                         bool(payload.files),
                     )
-                    summary.finish(pending_final_text)
+                    final_tail = (
+                        state.pending_final_text.rsplit(state.embedded_sources[-1], 1)[-1]
+                        if state.embedded_sources and state.embedded_sources[-1] in state.pending_final_text
+                        else summary.active_text if state.embedded_sources else state.pending_final_text
+                    )
+                    summary.finish(final_tail)
     except Exception as exc:
         diag_log("agent.gateway.feishu.tool_summary_stream_consume", exc)
         print(
             f"[feishu] 工具摘要流消费异常: {redact(f'{type(exc).__name__}: {exc}')}",
             flush=True,
         )
-        stream_ok = False
+        state.stream_ok = False
 
-    if final_resp is None and accumulated:
-        pending_final_text = accumulated
-        summary.finish(accumulated)
+    if state.final_response is None and state.accumulated:
+        state.pending_final_text = state.accumulated
+        summary.finish(state.accumulated)
 
     if summary.healthy:
-        stream_ok = await summary.flush() and stream_ok
+        state.stream_ok = await summary.flush() and state.stream_ok
     else:
-        stream_ok = False
+        state.stream_ok = False
 
-    final_text = pending_final_text or ""
-    if stream_ok:
+    final_text = state.pending_final_text or ""
+    renamed = False
+    if state.stream_ok:
         if final_text:
             _card_seq[stream_seq_key] = _card_seq.get(stream_seq_key, 0) + 1
             finalized = await _do_finalize_streaming_card(
@@ -426,6 +676,7 @@ async def _send_tool_summary_stream(
                     f"[feishu] 工具摘要卡片 finalize 失败但保留已更新卡片: card_id={card_id}",
                     flush=True,
                 )
+        elements = summary.elements()
         _card_seq[stream_seq_key] = _card_seq.get(stream_seq_key, 0) + 1
         renamed = await _do_update_card(
             app_id,
@@ -435,18 +686,22 @@ async def _send_tool_summary_stream(
             sequence=_card_seq[stream_seq_key],
             title="咕咕",
             streaming_mode=False,
-            elements=summary.elements(),
+            elements=elements,
         )
         if not renamed:
             print(f"[feishu] 工具摘要卡片收尾改标题失败: card_id={card_id}", flush=True)
+    remaining_images = [
+        image for image_number, image in enumerate(mermaid.images, start=1)
+        if image_number not in state.embedded_image_numbers
+    ]
+    await _send_queued_mermaid_images(remaining_images, mermaid.receive_id, mermaid.channel_id)
     # 占位卡片已经作为用户可见消息发送；即使后续卡片更新失败，也要阻止
     # IM Loop 再发一条重复正文。Run 仍完整消费，响应对象照常交给后续收尾。
-    return True, final_resp
+    return True, state.final_response
 
 
 async def send_text_stream(receive_id: str, token_iter, channel_id: str | None = None,
                           placeholder: str = "咕咕正在想…",
-                          show_intermediate_replies: bool = True,
                           tool_summary=None) -> tuple[bool, "AgentResponse | None"]:
     """飞书流式回复（IM 端模拟 SSE）。
 
@@ -466,13 +721,11 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
         print(f"[feishu] user_bot {channel_id} 无凭据，流式回复跳过", flush=True)
         return (False, None)
 
-    # 先在流式边界拦截 Mermaid fence，防止未闭合源码进入可见卡片；图片按稳定
-    # 的“卡片文字 + 图片消息”顺序在卡片收尾后发送，卡片中保留对应位置的提示。
-    from agent.im.mermaid import MermaidTokenFilter
-    from agent.interactions.events import ROUND_END
+    # 先原样流出 Mermaid 源码；完整 fence 渲染成功后，通过整卡更新原位替换为图片。
+    from agent.im.mermaid import ProgressiveMermaidTokenFilter
 
-    mermaid_filter = MermaidTokenFilter()
-    token_iter = mermaid_filter.events(token_iter, ROUND_END)
+    mermaid_filter = ProgressiveMermaidTokenFilter()
+    token_iter = mermaid_filter.events(token_iter)
     # 之前的 lark.Client 缓存不再使用——card API 直走 httpx（绕 SDK bug）。
     # _clients 仍保留供 send_text / react / send_file 等其他路径继续用 SDK。
 
@@ -484,7 +737,7 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
         accumulated = ""
         final_resp = None
         async for kind, payload in token_iter:
-            if kind == "token" and show_intermediate_replies:
+            if kind == "token":
                 accumulated += payload
             elif kind == "final":
                 final_resp = payload
@@ -506,7 +759,7 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
         accumulated = ""
         final_resp = None
         async for kind, payload in token_iter:
-            if kind == "token" and show_intermediate_replies:
+            if kind == "token":
                 accumulated += payload
             elif kind == "final":
                 final_resp = payload
@@ -528,61 +781,33 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
             card_id,
             token_iter,
             tool_summary,
-            show_intermediate_replies=show_intermediate_replies,
+            mermaid=_MermaidCardImages(mermaid_filter.images, receive_id, channel_id),
         )
-        await _send_queued_mermaid_images(mermaid_filter.images, receive_id, channel_id)
         return result
 
     # 3) 初始化 element 级流式更新的 sequence（sequence 从 1 开始严格递增）
-    stream_seq = 0
-
-    _stream_seq_key = f"{card_id}:stream"
-
-    async def _patch(text: str) -> bool:
-        """element 级别 streaming update 本地计数器 + 调用。
-
-        uuid 是幂等键——飞书 spec 200770 同 UUID 只生效一次，所以每次 patch 都需要新 UUID。
-        """
-        _card_seq[_stream_seq_key] = _card_seq.get(_stream_seq_key, 0) + 1
-        try:
-            return await _do_streaming_update_text(app_id, app_secret, card_id, text,
-                                                   sequence=_card_seq[_stream_seq_key],
-                                                   uuid=uuid.uuid4().hex)
-        except Exception as e:
-            diag_log("agent.gateway.feishu.streaming_update_text", e)   # 原始 → 受限诊断出口
-            print(f"[feishu] streaming_update_text 异常: {redact(f'{type(e).__name__}: {e}')}", flush=True)
-            return False
-
     # 4) 流式消费 token + 节流 patch（element 级接口，服务端自动增量渲染）
-    accumulated = ""
-    last_patch_ts = time.monotonic()
-    last_patched_len = 0
+    card_stream = _ProgressiveFeishuCard(app_id, app_secret, card_id, channel_id)
     pending_final_text: str | None = None
     final_resp = None
-    stream_ok = True
     try:
         async for kind, payload in token_iter:
             if kind == "token":
-                if not show_intermediate_replies:
-                    continue
-                accumulated += payload
-                now = time.monotonic()
-                # 节流：时间 OR 长度任一满足就 patch（保证短响应也能及时显示）
-                if (now - last_patch_ts >= _STREAM_PATCH_INTERVAL_S
-                        or len(accumulated) - last_patched_len >= _STREAM_PATCH_MIN_CHARS):
-                    if stream_ok:
-                        stream_ok = await _patch(accumulated)
-                    last_patch_ts = now
-                    last_patched_len = len(accumulated)
+                await card_stream.append_text(payload)
+            elif kind == "mermaid_image":
+                await card_stream.replace_mermaid(payload)
             elif kind == "final":
                 # final AgentResponse：text 可能比 accumulated 多（出口兜底 sanitize_outbound/strip_disallowed_emoji
                 # 在 runner 末尾做过清洗，最终版更准）；如果不同就以 final.text 为准再 patch 一次
                 final_resp = payload
                 if payload.cancelled:
                     # 用户中途取消 → 卡片保留 partial 内容（不清空，避免给用户错觉"什么都没了"）
-                    pending_final_text = accumulated
+                    pending_final_text = card_stream.accumulated
                     continue
-                pending_final_text = _stream_fallback_text(payload.text or accumulated, bool(payload.files))
+                pending_final_text = _stream_fallback_text(
+                    payload.text or card_stream.accumulated,
+                    bool(payload.files),
+                )
                 # final 先交给发送层，继续消费到生成器自然结束，确保 runner 的
                 # session gate 能执行 baseline update。
                 continue
@@ -590,28 +815,9 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
         diag_log("agent.gateway.feishu.stream_consume", e)   # 原始 → 受限诊断出口
         print(f"[feishu] 流式消费异常: {redact(f'{type(e).__name__}: {e}')}", flush=True)
 
-    # 5) 收尾：把最终版（final.text 优先；如果 final 没拿到就用 accumulated）patch 进卡片
-    final_text = pending_final_text or accumulated
-    if stream_ok and final_text and final_text != accumulated:
-        stream_ok = await _patch(final_text)
-    elif stream_ok and final_text:
-        # 已 patch 过同文本 → 不用再 patch，但仍显式结束一下（飞书端 streaming update 幂等）
-        stream_ok = await _patch(final_text)
-    if stream_ok:
-        _card_seq[_stream_seq_key] = _card_seq.get(_stream_seq_key, 0) + 1
-        finalized = await _do_finalize_streaming_card(
-            app_id, app_secret, card_id, final_text,
-            sequence=_card_seq[_stream_seq_key], uuid=uuid.uuid4().hex)
-        if not finalized:
-            print(f"[feishu] finalize_streaming_card 失败但保留已更新卡片: card_id={card_id}", flush=True)
-        # 收尾把标题从「咕咕思考中」改成「咕咕」——思考已经结束，继续挂着思考中的标题很怪。
-        # 复用同一个 _stream_seq_key 计数器继续递增（这张卡的 sequence 是跨端点共享的，
-        # 见 _do_update_card 里的踩坑记录），不能自己另起一套。
-        _card_seq[_stream_seq_key] = _card_seq.get(_stream_seq_key, 0) + 1
-        renamed = await _do_update_card(app_id, app_secret, card_id, final_text,
-                                        sequence=_card_seq[_stream_seq_key],
-                                        title="咕咕", streaming_mode=False)
-        if not renamed:
-            print(f"[feishu] 收尾改标题失败，保留「咕咕思考中」: card_id={card_id}", flush=True)
-    await _send_queued_mermaid_images(mermaid_filter.images, receive_id, channel_id)
-    return (stream_ok, final_resp)
+    # 5) 收尾；未能原位嵌入的 PNG 才作为独立图片消息回退。
+    final_text = pending_final_text or card_stream.accumulated
+    await card_stream.finish(final_text)
+    remaining_images = card_stream.remaining_images(mermaid_filter.images)
+    await _send_queued_mermaid_images(remaining_images, receive_id, channel_id)
+    return (card_stream.stream_ok, final_resp)

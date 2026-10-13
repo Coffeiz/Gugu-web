@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from agent.models import AgentResponse
-from agent.gateway.feishu_tool_summary import FeishuToolSummaryStream
+from agent.gateway.feishu.tool_summary import FeishuToolSummaryStream
 
 
 def _walk_tags(value):
@@ -215,7 +215,7 @@ async def test_feishu_tool_summary_stream_interleaves_text_and_tools_with_shared
         sequence_calls.append((sequence, title, elements))
         return True
 
-    async def update_text(*_args, sequence, element_id, content, **_kwargs):
+    async def update_text(_app, _secret, _card, content, *, sequence, element_id, **_kwargs):
         sequence_calls.append((sequence, element_id, content))
         return True
 
@@ -316,19 +316,113 @@ async def test_existing_stream_path_without_summary_keeps_plain_card_updates(mon
         return True
 
     monkeypatch.setattr(feishu, "_do_update_card", update_card)
-    monkeypatch.setattr(feishu, "_do_streaming_update_text", lambda *_args, **_kwargs: _async_value(True))
+    streamed_text = []
+
+    async def update_text(_app, _secret, _card, text, **_kwargs):
+        streamed_text.append(text)
+        return True
+
+    monkeypatch.setattr(feishu, "_do_streaming_update_text", update_text)
     monkeypatch.setattr(feishu, "_do_finalize_streaming_card", lambda *_args, **_kwargs: _async_value(True))
 
+    updated_before_final = []
+    reply_text = "飞书当前轮流式正文应持续更新。" * 8
+
     async def token_iter():
-        yield ("token", "当前回复内容保持原来的普通 Markdown 卡片。")
-        yield ("final", AgentResponse(text="当前回复内容保持原来的普通 Markdown 卡片。", session_id=20))
+        yield ("token", reply_text)
+        updated_before_final.append(bool(streamed_text))
+        yield ("final", AgentResponse(text=reply_text, session_id=20))
 
     ok, response = await feishu.send_text_stream("receive", token_iter(), channel_id="channel")
 
     assert ok is True
     assert response.session_id == 20
+    assert updated_before_final == [True]
+    assert reply_text in streamed_text
     assert len(updates) == 1
     assert updates[0][1] == "咕咕"
+
+
+@pytest.mark.asyncio
+async def test_feishu_stream_shows_mermaid_source_then_replaces_it_in_place(monkeypatch):
+    from agent.gateway.feishu import streaming as feishu
+    from agent.im import mermaid
+
+    monkeypatch.setattr(feishu, "_creds_by_id", lambda _channel_id: _async_value(("app", "secret")))
+    monkeypatch.setattr(feishu, "_do_create_card", lambda *_args: _async_value("card-id"))
+    monkeypatch.setattr(feishu, "_do_send_card_message", lambda *_args: _async_value(True))
+    monkeypatch.setattr(feishu, "_do_finalize_streaming_card", lambda *_args, **_kwargs: _async_value(True))
+    monkeypatch.setattr(feishu, "_upload_mermaid_image", lambda *_args: _async_value("image-key"))
+
+    rendered_sources = []
+
+    async def render(source):
+        rendered_sources.append(source)
+        return b"synthetic-png"
+
+    monkeypatch.setattr(mermaid, "render_png", render)
+    card_updates = []
+    stream_updates = []
+    timeline = []
+
+    async def update_card(*_args, sequence, elements=None, title=None, **_kwargs):
+        card_updates.append((sequence, elements, title))
+        if elements and any(element.get("tag") == "img" for element in elements):
+            timeline.append("image-replacement")
+        return True
+
+    async def update_text(_app, _secret, _card, content, *, sequence, element_id, **_kwargs):
+        stream_updates.append((sequence, element_id, content))
+        timeline.append(("stream", element_id, content))
+        return True
+
+    monkeypatch.setattr(feishu, "_do_update_card", update_card)
+    monkeypatch.setattr(feishu, "_do_streaming_update_text", update_text)
+
+    source = "```mermaid\ngraph LR\n  A-->B\n```"
+    prefix = "先看这张图："
+    suffix = "图后继续说明，保持在图片下方持续流式显示。" * 2
+    final_text = prefix + source + suffix
+
+    async def token_iter():
+        yield ("token", prefix + source)
+        yield ("token", suffix)
+        yield ("final", AgentResponse(text=final_text, session_id=22))
+
+    ok, response = await feishu.send_text_stream("receive", token_iter(), channel_id="channel")
+
+    assert ok is True
+    assert response.session_id == 22
+    assert rendered_sources == ["graph LR\n  A-->B\n"]
+    assert any(source in content for _sequence, _element_id, content in stream_updates)
+    assert timeline.index("image-replacement") > next(
+        index for index, event in enumerate(timeline)
+        if isinstance(event, tuple) and source in event[2]
+    )
+    assert timeline.index("image-replacement") < next(
+        index for index, event in enumerate(timeline)
+        if isinstance(event, tuple) and event[1] == "markdown_2" and suffix in event[2]
+    )
+    assert any(element_id == "markdown_2" and suffix in content
+               for _sequence, element_id, content in stream_updates)
+    final_elements = next(elements for _seq, elements, title in reversed(card_updates) if title == "咕咕")
+    assert [element["tag"] for element in final_elements] == ["markdown", "img", "markdown"]
+    assert source not in "".join(element.get("content", "") for element in final_elements)
+
+
+def test_tool_summary_can_replace_active_mermaid_source_without_losing_surrounding_text():
+    summary = FeishuToolSummaryStream()
+    source = "```mermaid\ngraph LR\n  A-->B\n```"
+    summary.append_text("图前。" + source)
+
+    assert summary.replace_active_text_with_image(source, "image-key") is True
+    summary.append_text("图后。")
+
+    elements = summary.elements()
+    assert [element["tag"] for element in elements] == ["markdown", "img", "markdown"]
+    assert elements[0]["content"] == "图前。"
+    assert elements[1]["img_key"] == "image-key"
+    assert "图后。" in elements[2]["content"]
 
 
 async def _async_value(value):

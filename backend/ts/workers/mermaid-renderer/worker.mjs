@@ -4,8 +4,8 @@ import { createHTMLWindow } from 'svgdom'
 
 const MAX_SOURCE_CHARS = 20_000
 const MAX_SVG_BYTES = 5 * 1024 * 1024
-const MAX_DIMENSION = 2_048
-const MAX_PIXELS = 2_000_000
+const MAX_DIMENSION = 4_096
+const MAX_PIXELS = 5_000_000
 const MAX_PNG_BYTES = 3 * 1024 * 1024
 const FORBIDDEN_SVG_ELEMENTS = new Set([
   'a', 'animate', 'animatemotion', 'animatetransform', 'audio', 'foreignobject',
@@ -55,6 +55,15 @@ for (const key of [
     })
   }
 }
+// svgdom 提供 parentNode，但没有实现浏览器标准的 parentElement；Mermaid Gantt
+// 会通过它读取父容器宽度。补齐 DOM 语义后，未提供 offsetWidth 时 Mermaid 会用默认宽度。
+Object.defineProperty(window.Element.prototype, 'parentElement', {
+  configurable: true,
+  get() {
+    const parent = this.parentNode
+    return parent?.nodeType === 1 ? parent : null
+  },
+})
 globalThis.CSSStyleSheet ??= class {
   cssRules = []
   insertRule(rule, index = this.cssRules.length) {
@@ -69,7 +78,11 @@ globalThis.requestAnimationFrame = (callback) => setTimeout(callback, 0)
 globalThis.cancelAnimationFrame = (handle) => clearTimeout(handle)
 globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} }
 
-const { default: mermaid } = await import('mermaid')
+const [{ default: mermaid }, { default: zenuml }] = await Promise.all([
+  import('mermaid'),
+  import('@mermaid-js/mermaid-zenuml'),
+])
+await mermaid.registerExternalDiagrams([zenuml])
 mermaid.initialize({
   startOnLoad: false,
   // 输出只会进入 Resvg，不会作为 SVG 回传浏览器；对 Mermaid loose 模式产生的
@@ -81,8 +94,10 @@ mermaid.initialize({
   maxEdges: 1_000,
   secure: [
     'secure', 'securityLevel', 'startOnLoad', 'maxTextSize', 'suppressErrorRendering',
-    'maxEdges', 'htmlLabels', 'theme', 'themeVariables', 'themeCSS', 'flowchart',
+    'maxEdges', 'htmlLabels', 'theme', 'themeVariables', 'themeCSS', 'flowchart', 'look', 'layout',
   ],
+  layout: 'dagre',
+  look: 'classic',
   theme: 'base',
   themeVariables: {
     background: '#ffffff',
@@ -96,10 +111,23 @@ mermaid.initialize({
   },
 })
 
+function diagramType(source) {
+  const body = source.replace(/^\s*---\s*\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/, '')
+  const firstLine = body.split(/\r?\n/).find((line) => line.trim()) || ''
+  const match = firstLine.trim().match(/^([a-z][a-z0-9-]*)\b/i)
+  return match?.[1].toLowerCase() || 'unknown'
+}
+
 for (let index = 0; index < sources.length; index += 1) {
   let png = Buffer.alloc(0)
+  const type = diagramType(sources[index])
   try {
-    const { svg } = await mermaid.render(`gugu-${process.pid}-${index}`, sources[index])
+    let svg
+    try {
+      ({ svg } = await mermaid.render(`gugu-${process.pid}-${index}`, sources[index]))
+    } catch {
+      throw new Error('diagram_parse_or_render_failed')
+    }
     if (Buffer.byteLength(svg, 'utf8') > MAX_SVG_BYTES) throw new Error('svg_too_large')
     const document = new DOMParser({
       errorHandler: (level) => {
@@ -153,9 +181,24 @@ for (let index = 0; index < sources.length; index += 1) {
     root.setAttribute('width', String(width))
     root.setAttribute('height', String(height))
     const validatedSvg = new XMLSerializer().serializeToString(root)
-    png = new Resvg(validatedSvg).render().asPng()
+    try {
+      png = new Resvg(validatedSvg).render().asPng()
+    } catch {
+      throw new Error('png_conversion_failed')
+    }
     if (png.byteLength > MAX_PNG_BYTES) throw new Error('png_too_large')
-  } catch {
+  } catch (error) {
+    const knownReasons = new Set([
+      'diagram_parse_or_render_failed', 'svg_too_large', 'invalid_svg',
+      'non_svg_content_rejected', 'active_svg_content_rejected',
+      'unsafe_svg_attribute_rejected', 'external_svg_reference_rejected',
+      'unsafe_svg_css_rejected', 'svg_dimensions_missing', 'pixel_limit_exceeded',
+      'png_conversion_failed', 'png_too_large',
+    ])
+    const reason = knownReasons.has(error?.message) ? error.message : 'render_failed'
+    process.stderr.write(
+      `MERMAID_RENDER_FAILURE index=${index} type=${type} reason=${reason}\n`,
+    )
     png = Buffer.alloc(0)
   }
   const header = Buffer.alloc(4)

@@ -6,13 +6,28 @@
   display: flex;
   gap: 3px;
   padding: 3px;
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--popup-border);
   border-radius: 7px;
-  background: var(--surface-card-solid);
-  box-shadow: var(--elevation-card);
+  background: var(--popup-background);
+  box-shadow: var(--popup-shadow);
+  backdrop-filter: var(--popup-blur);
+  -webkit-backdrop-filter: var(--popup-blur);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-hover-control) var(--motion-ease-standard);
 }
-.md-mermaid-controls button,
-.md-mermaid-dialog-actions button {
+.md-mermaid:hover .md-mermaid-controls,
+.md-mermaid:focus-within .md-mermaid-controls {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (hover: none), (pointer: coarse) {
+  .md-mermaid-controls {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+.md-mermaid-controls button {
   display: inline-flex;
   width: 28px;
   height: 28px;
@@ -27,8 +42,7 @@
   font: inherit;
   line-height: 1;
 }
-.md-mermaid-controls button:hover,
-.md-mermaid-dialog-actions button:hover {
+.md-mermaid-controls button:hover {
   color: var(--content-primary);
   background: var(--surface-soft-hover);
 }
@@ -52,6 +66,9 @@
   font-size: 12px;
 }
 .md-mermaid-dialog {
+  position: fixed;
+  inset: 0;
+  margin: auto;
   width: min(92vw, 1200px);
   height: min(90vh, 900px);
   max-width: 92vw;
@@ -65,27 +82,21 @@
   box-shadow: var(--elevation-window);
 }
 .md-mermaid-dialog::backdrop { background: rgb(15 14 20 / 58%); backdrop-filter: blur(3px); }
-.md-mermaid-dialog > header {
-  display: flex;
-  min-height: 48px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 8px 12px 8px 16px;
-  border-bottom: 1px solid var(--content-divider);
-}
-.md-mermaid-dialog-actions { display: flex; gap: 4px; }
 .md-mermaid-dialog-body {
   position: relative;
   display: grid;
   width: 100%;
-  height: calc(100% - 49px);
+  height: 100%;
   place-items: center;
-  overflow: auto;
-  padding: 18px;
+  overflow: hidden;
+  padding: 32px;
   box-sizing: border-box;
+  user-select: none;
+  -webkit-user-select: none;
 }
-.md-mermaid-dialog-body svg { display: block; max-width: 100%; max-height: 100%; }
+.md-mermaid-dialog-body > svg { display: block; max-width: 100%; max-height: 100%; }
+.md-mermaid-dialog-body > .iv-toolbar-host { position: absolute; inset: 0; pointer-events: none; }
+.md-mermaid-dialog-body .iv-toolbar { pointer-events: auto; }
 .md-mermaid-dialog > .md-mermaid-status {
   position: absolute;
   top: auto;
