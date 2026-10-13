@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import mimetypes
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -130,7 +131,15 @@ def _safe_storage_key(storage_root: Path, path: Path) -> str:
 
 
 def _is_sync_temporary(path: Path) -> bool:
-    return path.name.startswith(".gugu-sync-") or path.name.endswith((".gugu-part", ".gugu-tmp"))
+    name = path.name
+    # 旧版原子写入使用 ``.<目标名>.<随机串>[.tmp]``，兼容清理升级期间
+    # 已排队的事件以及此前残留的临时文件；新文件统一使用保留前缀。
+    legacy_atomic_write = re.fullmatch(r"\..+\.[a-z0-9_]{8}(?:\.tmp)?", name) is not None
+    return (
+        name.startswith(".gugu-sync-")
+        or name.endswith((".gugu-part", ".gugu-tmp"))
+        or legacy_atomic_write
+    )
 
 
 async def _binding_for(

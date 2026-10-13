@@ -368,6 +368,8 @@ async def _project_deleted_file(
     latest: dict[tuple[str, str], FileSyncJournal], summary_inout: dict,
     *, record_quota_delta: bool = False,
 ) -> None:
+    if _is_sync_temporary(Path(relative)):
+        return
     key = scope_prefix + relative
     row = (await db.execute(select(File).where(
         File.user_id == user_id, File.storage_key == key, File.deleted_at.is_(None),

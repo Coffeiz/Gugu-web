@@ -6,6 +6,7 @@ copy/stat/文件夹钩子在 P1 加入后扩这里。
 """
 import os
 import stat
+from pathlib import Path
 
 import pytest
 
@@ -69,7 +70,26 @@ async def test_failed_replace_keeps_previous_file(tmp_path, monkeypatch):
         await storage.put("u/.agent/pattern.json", b"new")
 
     assert await storage.get("u/.agent/pattern.json") == b"old"
-    assert not list((tmp_path / "u/.agent").glob(".*.tmp"))
+    assert not list((tmp_path / "u/.agent").glob(".gugu-sync-*.gugu-tmp"))
+
+
+async def test_atomic_write_uses_filesync_reserved_temporary_name(tmp_path, monkeypatch):
+    storage = LocalStorageBackend(tmp_path)
+    real_replace = storage_module.os.replace
+    names = []
+
+    def capture_temporary_name(temporary, target):
+        names.append(Path(temporary).name)
+        return real_replace(temporary, target)
+
+    monkeypatch.setattr(storage_module.os, "replace", capture_temporary_name)
+    await storage.put("u/个人文件/archive.zip", b"archive")
+
+    from app.services.filesync.reconcile import _is_sync_temporary
+
+    assert len(names) == 1
+    assert _is_sync_temporary(Path(names[0]))
+    assert await storage.get("u/个人文件/archive.zip") == b"archive"
 
 
 async def test_put_preserves_existing_file_metadata(tmp_path):
@@ -112,7 +132,7 @@ async def test_put_chown_denied_falls_back_to_replace(tmp_path, monkeypatch):
     assert await storage.get("u/workspace/box.py") == b"new"
     assert stat.S_IMODE(after.st_mode) == stat.S_IMODE(before.st_mode)
     assert after.st_uid == os.geteuid()
-    assert not list(path.parent.glob(".*.tmp"))
+    assert not list(path.parent.glob(".gugu-sync-*.gugu-tmp"))
 
 
 async def test_put_updates_existing_file_mtime(tmp_path):
@@ -149,6 +169,16 @@ async def test_delete(storage):
     assert await storage.exists("u/a/x.txt") is False
     # 删不存在的 key 不报错（幂等）
     await storage.delete("u/a/nope.txt")
+
+
+async def test_delete_keeps_parent_directory_for_missing_and_existing_files(storage):
+    await storage.ensure_folder("u/个人文件/用户目录")
+    await storage.delete("u/个人文件/用户目录/已不存在.tmp")
+    assert (storage.root / "u/个人文件/用户目录").is_dir()
+
+    await storage.put("u/个人文件/用户目录/file.txt", b"data")
+    await storage.delete("u/个人文件/用户目录/file.txt")
+    assert (storage.root / "u/个人文件/用户目录").is_dir()
 
 
 async def test_rename_file(storage):
