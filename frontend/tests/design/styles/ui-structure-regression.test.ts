@@ -122,7 +122,7 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
   })
 
   it('通知弹窗的滚动滑块跟随弹窗生命周期并位于内容表面之上', () => {
-    expect(overlayScrollbars).toContain('.chat-window, .drawer-shell, .bm-card, .notif-popup')
+    expect(overlayScrollbars).toContain('.chat-window, .drawer-shell, .bm-card, .notif-popup, .gs-panel, .nb-item')
     expect(overlayScrollbars).toContain("thumb.classList.add('overlay-scrollbar--notif')")
     expect(load('./scrollbars.css')).toContain('.overlay-scrollbar--notif')
     expect(load('../../components/common/layout/AppSidebar.vue')).toContain('<div class="notif-popup-surface">')

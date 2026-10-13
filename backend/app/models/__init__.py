@@ -51,6 +51,7 @@ class User(Base):
     is_developer:         Mapped[bool]          = mapped_column(Boolean, default=False)   # 开发者标记：数据面板可一键排除，看真实用户数据
     timezone:             Mapped[Optional[str]] = mapped_column(String(64), nullable=True, default=None)   # IANA 时区（如 Asia/Shanghai）；前端首登探测写入，日期归属/展示按它换算（见 docs/backend/时区与时钟迁移方案.md）
     email_subscribed:    Mapped[bool]          = mapped_column(Boolean, nullable=False, default=False, server_default="false", index=True)  # 是否订阅产品更新邮件
+    next_skill_sequence: Mapped[int]           = mapped_column(Integer, nullable=False, default=1, server_default="1")
 
     projects:      Mapped[list["Project"]]             = relationship(back_populates="owner", cascade="all, delete-orphan")
     files:         Mapped[list["File"]]                = relationship(back_populates="owner", cascade="all, delete-orphan")
@@ -245,7 +246,7 @@ class UserSkill(Base):
 
     id:                Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     owner_id:          Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    slug:              Mapped[str] = mapped_column(String(80))
+    skill_id:          Mapped[str] = mapped_column(String(16))
     name:              Mapped[str] = mapped_column(String(120))
     description_short: Mapped[str] = mapped_column(String(100))
     description_long:  Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
@@ -262,7 +263,7 @@ class UserSkill(Base):
     owner: Mapped["User"] = relationship(back_populates="user_skills")
 
     __table_args__ = (
-        UniqueConstraint("owner_id", "slug", name="uq_user_skill_owner_slug"),
+        UniqueConstraint("owner_id", "skill_id", name="uq_user_skill_owner_skill_id"),
     )
 
 

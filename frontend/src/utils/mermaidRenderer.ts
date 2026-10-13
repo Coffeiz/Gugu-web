@@ -2,7 +2,9 @@ import { nextTick } from 'vue'
 import { bindMermaidInteractions, cleanupMermaidInteractions, type MermaidInteractionLabels } from '@/utils/mermaidInteraction'
 import { sanitizeHtml } from '@/utils/markdown'
 import { resolveMermaidThemeColors } from '@/utils/mermaidTheme'
-import { normalizeMermaidEdgeStyles } from '../../../backend/ts/workers/mermaid-renderer/svg-style.mjs'
+import { createMermaidThemeConfig } from '../../../backend/ts/workers/mermaid-renderer/theme.mjs'
+import { prepareMermaidDiagramSource, restoreMermaidDiagramLabels } from '../../../backend/ts/workers/mermaid-renderer/diagram-source.mjs'
+import { normalizeMermaidEdgeLabelBounds, normalizeMermaidEdgeStyles, normalizeMermaidMindmapRootLabel, normalizeMermaidNodeCorners } from '../../../backend/ts/workers/mermaid-renderer/svg-style.mjs'
 
 type MermaidApi = typeof import('mermaid').default
 
@@ -28,10 +30,6 @@ async function getMermaid(): Promise<MermaidApi> {
     return mermaid
   })()
   return mermaidLoad
-}
-
-function cssToken(name: string, fallback: string): string {
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
 }
 
 function getCachedMermaidSvg(key: string): string | undefined {
@@ -127,19 +125,27 @@ function namespaceSvgIds(svg: string): string {
   return new XMLSerializer().serializeToString(parsed.documentElement)
 }
 
-function normalizeSvgEdgeStyles(svg: string, arrowheadColor: string): string {
+function normalizeSvgEdgeStyles(svg: string, arrowheadColor: string, labels: Record<string, string>): string {
   const parsed = new DOMParser().parseFromString(svg, 'image/svg+xml')
   if (parsed.querySelector('parsererror')) return svg
+  restoreMermaidDiagramLabels(parsed.documentElement, labels)
+  normalizeMermaidMindmapRootLabel(parsed.documentElement)
+  normalizeMermaidNodeCorners(parsed.documentElement)
+  normalizeMermaidEdgeLabelBounds(parsed.documentElement)
   const root = normalizeMermaidEdgeStyles(parsed.documentElement, arrowheadColor)
   return new XMLSerializer().serializeToString(root)
 }
 
 /** 所有 Markdown 入口共享 Mermaid 懒加载、主题、安全配置与 SVG 消毒。 */
 export async function renderMermaidSvg(source: string): Promise<string> {
+  const originalSource = source
+  const prepared = prepareMermaidDiagramSource(source)
+  source = prepared.source
   const dark = document.documentElement.dataset.theme === 'dark'
   const colors = resolveMermaidThemeColors(dark)
-  const fontFamily = cssToken('--font-family-sans', 'Inter, sans-serif')
-  const cacheKey = JSON.stringify([source, colors, fontFamily])
+  const fontFamily = getComputedStyle(document.body).fontFamily.trim()
+    || '"Gugu Noto Sans SC", sans-serif'
+  const cacheKey = JSON.stringify([originalSource, source, prepared.labels, colors, fontFamily])
   const cachedSvg = getCachedMermaidSvg(cacheKey)
   if (cachedSvg) return namespaceSvgIds(cachedSvg)
   const inFlight = mermaidRenderInFlight.get(cacheKey)
@@ -150,22 +156,10 @@ export async function renderMermaidSvg(source: string): Promise<string> {
     mermaid.initialize({
       startOnLoad: false,
       securityLevel: 'strict',
-      htmlLabels: false,
-      layout: 'dagre',
-      look: 'classic',
-      // themeVariables 只有 base 主题会按当前令牌完整应用；default/dark 会回落到 Mermaid 自带紫色。
-      theme: 'base',
-      themeCSS: [
-        '.node rect { rx: 12px; }',
-        `.edgeLabel .background { rx: 8px; ry: 8px; opacity: 1; fill: ${colors.edgeLabelBackground}; stroke: ${colors.primaryBorderColor}; stroke-width: 1px; }`,
-      ].join('\n'),
-      themeVariables: {
-        ...colors,
-        fontFamily,
-      },
+      ...createMermaidThemeConfig(colors, fontFamily),
     })
     const { svg } = await mermaid.render(`gugu-mermaid-${++renderSequence}`, source)
-    const sanitizedSvg = sanitizeHtml(normalizeSvgEdgeStyles(svg, colors.arrowheadColor))
+    const sanitizedSvg = sanitizeHtml(normalizeSvgEdgeStyles(svg, colors.arrowheadColor, prepared.labels))
     cacheMermaidSvg(cacheKey, sanitizedSvg)
     return sanitizedSvg
   })()

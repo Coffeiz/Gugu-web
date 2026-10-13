@@ -5,7 +5,6 @@
       <ToggleSwitch size="sm" :model-value="props.skill.enabled" :aria-label="props.skill.enabled ? t('skills.disable') : t('skills.enable')" @update:model-value="$emit('toggle', props.skill)" />
     </div>
     <div class="sc-when">
-      <span class="sc-slug">{{ props.skill.slug }}</span>
       <span class="sc-manager">{{ t(props.skill.managed_by === 'assistant' ? 'skills.managedByAssistant' : 'skills.managedByUser') }}</span>
       <span v-if="props.skill.related_tools.length">{{ t('skills.relatedTools', { count: props.skill.related_tools.length }) }}</span>
     </div>
@@ -64,7 +63,6 @@ function fmtDate(value: string | null) {
 .sc-name { min-width: 0; flex: 1; font-size: 13px; line-height: 19px; font-weight: 600; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sc-when { display: flex; gap: 10px; min-width: 0; font-size: 12px; color: var(--text-secondary); }
 .sc-when span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sc-slug { font-family: var(--font-mono); }
 .sc-manager { flex: 0 0 auto; }
 .sc-desc { margin: 0; padding: 6px 9px; border-radius: 8px; background: var(--surface-soft); font-size: 12px; line-height: 1.45; color: var(--text-secondary); overflow-wrap: anywhere; }
 .sc-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: auto; }

@@ -90,6 +90,23 @@ def _result(messages: list, changed: bool, reason: str,
     )
 
 
+def _current_provider_projection(area):
+    """只返回与当前 Area 快照及请求边界完全对应的最近 wire 投影。"""
+    from agent.context.provider_conversation import ProviderConversation
+
+    projection = area.last_provider_projection
+    if not isinstance(projection, ProviderConversation):
+        return None
+    if (
+        projection.area_revision != area.revision
+        or projection.area_digest != area.digest()
+        or projection.area_entry_count != len(area.entries)
+        or projection.fixed_prefix_size != area.fixed_prefix_size
+    ):
+        return None
+    return projection
+
+
 def _deterministic_summary(
     content_list: list[str],
     previous: str | None,
@@ -154,7 +171,19 @@ async def compact_context(
     if not isinstance(messages, MessageArea):
         raise TypeError("上下文压缩只接受 MessageArea")
     area = messages
-    messages = area.provider_projection().to_messages()
+    # 自动压缩在 Provider 返回后、把本轮 assistant/tool 结果追加到 Area 前执行。
+    # 此时最近请求投影与 Area 必须仍精确对应；复用它才能保留 wire 层恢复的
+    # Anthropic thinking/signature 等非 canonical 块。Area 已变化时安全重建。
+    projection = _current_provider_projection(area)
+    if projection is None:
+        from agent.runtime.loopscope_trace.state import record_canonical_history_fallback
+
+        record_canonical_history_fallback()
+    messages = (
+        projection.to_messages()
+        if projection is not None
+        else area.provider_projection().to_messages()
+    )
     if fixed_prefix_size == 0:
         fixed_prefix_size = area.fixed_prefix_size
     # snapshot/system-info 是固定前缀，不属于可压缩的 message history。

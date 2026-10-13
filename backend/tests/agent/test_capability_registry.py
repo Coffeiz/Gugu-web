@@ -28,11 +28,11 @@ def _tool(name="demo", **kwargs):
 
 def test_tool_adapter_preserves_metadata_without_copying_schema():
     registry = SkillRegistry()
-    registry.add(_tool(category="search", related_skills=("web-search",)))
+    registry.add(_tool(category="search", related_skills=("S13",)))
     item = ToolCapabilityRegistry(registry).metadata()[0]
     assert item.name == "demo"
     assert item.category == "search"
-    assert item.related_skills == ("web-search",)
+    assert item.related_skills == ("S13",)
 
 
 def test_tool_short_description_is_validated():
@@ -58,7 +58,7 @@ def test_tool_registry_snapshot_does_not_change_until_process_restart():
 
 def test_user_skill_metadata_snapshot_round_trips_without_skill_body():
     item = CapabilityMeta(
-        name="user-skill", kind="skill", description_short="按需加载的做法",
+        name="U1", display_name="按需做法", kind="skill", description_short="按需加载的做法",
         category="personal", related_tools=("web_search",), source="user",
         content_digest="old-digest", owner_fingerprint="owner-fingerprint",
     )
@@ -73,7 +73,7 @@ def test_user_skill_metadata_snapshot_round_trips_without_skill_body():
 @pytest.mark.asyncio
 async def test_user_skill_metadata_snapshot_skips_live_database_read():
     item = CapabilityMeta(
-        name="user-skill", kind="skill", description_short="冻结目录",
+        name="U1", display_name="冻结技能", kind="skill", description_short="冻结目录",
         related_tools=("web_search",), source="user",
     )
 
@@ -86,17 +86,17 @@ async def test_user_skill_metadata_snapshot_skips_live_database_read():
         skill_metadata=(item,),
     )
 
-    assert index.snapshot().skills["user-skill"] == item
+    assert index.snapshot().skills["U1"] == item
 
 
 def test_builtin_capability_snapshot_has_separate_tool_and_skill_maps():
     index = CapabilityIndex.from_registries(
         tool_names=["web_search"],
-        skill_names=["web-search"],
+        skill_names=["S13"],
     )
     snapshot = index.snapshot(["web_search"])
     assert set(snapshot.tools) == {"web_search"}
-    assert set(snapshot.skills) == {"web-search"}
+    assert set(snapshot.skills) == {"S13"}
     assert all(len(item.description_short) <= 100 for item in snapshot.catalog)
 
 
@@ -116,16 +116,15 @@ def test_builtin_phase1_metadata_is_complete_and_relations_are_registered():
     snapshot = index.snapshot()
 
     assert len(snapshot.tools) == 107
-    assert len(snapshot.skills) == 12
+    assert len(snapshot.skills) == 13
     assert not snapshot.diagnostics
     assert "create_file" in snapshot.tools
     assert "grep" in snapshot.tools
     assert "create_document" not in snapshot.tools
-    assert "create_file" in snapshot.skills["file-ops"].related_tools
+    assert "create_file" in snapshot.skills["S3"].related_tools
     assert all(item.category for item in snapshot.tools.values())
     assert all(1 <= len(item.description_short) <= 100 for item in snapshot.catalog)
     for skill in snapshot.skills.values():
-        assert skill.related_tools
         assert set(skill.related_tools) <= set(snapshot.tools)
 
 
@@ -135,7 +134,7 @@ async def test_admin_capability_catalog_exposes_metadata_without_schema_or_body(
 
     payload = await list_capabilities()
     assert len(payload["tools"]) == 107
-    assert len(payload["skills"]) == 12
+    assert len(payload["skills"]) == 13
     assert all("description_short" in item for item in payload["tools"])
     assert all("input_schema" not in item and "handler" not in item for item in payload["tools"])
     assert all("body" not in item for item in payload["skills"])

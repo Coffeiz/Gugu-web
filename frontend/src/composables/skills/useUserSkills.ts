@@ -32,13 +32,12 @@ export function useUserSkills() {
     }
   }
 
-  async function save(data: UserSkillWrite, editingSlug?: string) {
+  async function save(data: UserSkillWrite, editingId?: string) {
     saving.value = true
     error.value = ''
     try {
-      if (editingSlug) {
-        const { slug: _slug, ...patch } = data
-        await userSkillsApi.update(editingSlug, patch)
+      if (editingId) {
+        await userSkillsApi.update(editingId, data)
       }
       else await userSkillsApi.create(data)
       await load()
@@ -55,7 +54,7 @@ export function useUserSkills() {
     const enabled = !skill.enabled
     try {
       // 状态开关只更新当前卡片，避免整页 loading 让卡片短暂卸载。
-      await userSkillsApi.update(skill.slug, { enabled })
+      await userSkillsApi.update(skill.id, { enabled })
       skill.enabled = enabled
     } catch (err) {
       error.value = err instanceof Error ? err.message : t('skills.toggleFailed')
@@ -66,7 +65,7 @@ export function useUserSkills() {
   async function remove(skill: UserSkillItem) {
     error.value = ''
     try {
-      await userSkillsApi.delete(skill.slug)
+      await userSkillsApi.delete(skill.id)
       await load()
     } catch (err) {
       error.value = err instanceof Error ? err.message : t('skills.deleteFailed')

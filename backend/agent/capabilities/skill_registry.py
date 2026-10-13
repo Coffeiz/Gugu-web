@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-import re
-
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from agent import skills
 from agent.security.logsafe import fingerprint
@@ -13,7 +11,6 @@ from .errors import CapabilityRegistrationError
 from .models import CapabilityMeta, DESCRIPTION_SHORT_MAX_CHARS
 
 
-_SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _MAX_BODY_CHARS = 20_000
 _ALLOWED_CATEGORIES = {"personal", "productivity", "research", "creative", "other"}
 
@@ -34,6 +31,7 @@ def serialize_user_skill_metadata(items: tuple[CapabilityMeta, ...] | list[Capab
     return [
         {
             "name": item.name,
+            "display_name": item.display_name,
             "kind": item.kind,
             "description_short": item.description_short,
             "category": item.category,
@@ -59,14 +57,16 @@ def deserialize_user_skill_metadata(value) -> tuple[CapabilityMeta, ...] | None:
     for row in value:
         if not isinstance(row, dict) or row.get("kind") != "skill" or row.get("source") != "user":
             return None
-        name = str(row.get("name") or "").strip().lower()
+        name = str(row.get("name") or "").strip()
+        display_name = str(row.get("display_name") or "").strip()
         description = str(row.get("description_short") or "").strip()
-        if not name or not description:
+        if not name or not display_name or not description:
             return None
         items.append(CapabilityMeta(
             name=name,
             kind="skill",
             description_short=description,
+            display_name=display_name,
             category=str(row.get("category") or ""),
             permissions=tuple(str(item) for item in (row.get("permissions") or ()) if str(item)),
             platforms=tuple(str(item) for item in (row.get("platforms") or ()) if str(item)),
@@ -80,7 +80,7 @@ def deserialize_user_skill_metadata(value) -> tuple[CapabilityMeta, ...] | None:
     return tuple(items)
 
 
-def validate_user_skill(*, slug: str, name: str, description_short: str,
+def validate_user_skill(*, name: str, description_short: str,
                         description_long: str | None, category: str,
                         related_tools: list[str] | tuple[str, ...], body: str,
                         owner_id: object) -> dict:
@@ -88,15 +88,12 @@ def validate_user_skill(*, slug: str, name: str, description_short: str,
     if owner_id is None:
         raise CapabilityRegistrationError("用户 Skill 缺少 owner_id")
     values = {
-        "slug": str(slug or "").strip().lower(),
         "name": str(name or "").strip(),
         "description_short": str(description_short or "").strip(),
         "description_long": str(description_long or "").strip() or None,
         "category": str(category or "personal").strip().lower(),
         "body": str(body or "").strip(),
     }
-    if not _SLUG_RE.fullmatch(values["slug"]) or len(values["slug"]) > 80:
-        raise CapabilityRegistrationError("Skill slug 必须是小写字母、数字和连字符")
     if not 1 <= len(values["name"]) <= 120:
         raise CapabilityRegistrationError("Skill 名称长度必须是 1-120 个字符")
     if not 1 <= len(values["description_short"]) <= DESCRIPTION_SHORT_MAX_CHARS:
@@ -112,11 +109,6 @@ def validate_user_skill(*, slug: str, name: str, description_short: str,
     tools = tuple(dict.fromkeys(str(item).strip() for item in (related_tools or ()) if str(item).strip()))
     if len(tools) > 32:
         raise CapabilityRegistrationError("Skill 最多关联 32 个工具")
-    builtin_rows = skills.skill_metadata()
-    builtin_slugs = {row["slug"] for row in builtin_rows}
-    builtin_names = {str(row.get("name") or "").strip().casefold() for row in builtin_rows}
-    if values["slug"] in builtin_slugs or values["name"].casefold() in builtin_names:
-        raise CapabilityRegistrationError("用户 Skill 不能覆盖系统 Skill")
     return {**values, "related_tools": list(tools), "source": "user",
             "enabled": True, "content_digest": _digest(values["body"])}
 
@@ -128,13 +120,14 @@ class SkillCapabilityRegistry:
         for row in rows:
             short = (row.get("description_short") or "").strip()
             if not short:
-                short = (row.get("name") or row["slug"]).strip()
+                short = (row.get("name") or row["id"]).strip()
             if not short or len(short) > 100:
                 raise CapabilityRegistrationError(
-                    f"Skill {row['slug']} 的短描述必须是 1-100 个字符"
+                    f"Skill {row['id']} 的短描述必须是 1-100 个字符"
                 )
             out.append(CapabilityMeta(
-                name=row["slug"], kind="skill", description_short=short,
+                name=row["id"], kind="skill", description_short=short,
+                display_name=row["name"],
                 category=row.get("category", ""),
                 related_tools=tuple(row.get("related_tools", ()) or ()),
                 source=row.get("source", "builtin") or "builtin",
@@ -153,12 +146,12 @@ class SkillCapabilityRegistry:
         if enabled_only:
             query = query.where(UserSkill.enabled.is_(True))
         rows = (await db.execute(query.order_by(UserSkill.id))).scalars().all()
-        builtin_slugs = {row["slug"] for row in skills.skill_metadata()}
         return tuple(
             CapabilityMeta(
-                name=row.slug,
+                name=row.skill_id,
                 kind="skill",
                 description_short=row.description_short,
+                display_name=row.name,
                 category=row.category,
                 related_tools=tuple(row.related_tools or ()),
                 source="user",
@@ -167,19 +160,19 @@ class SkillCapabilityRegistry:
                 owner_fingerprint=fingerprint(str(owner_id)),
             )
             for row in rows
-            if row.source == "user" and row.slug not in builtin_slugs
+            if row.source == "user"
         )
 
-    async def load_user_skill(self, db, owner_id: object, name: str):
+    async def load_user_skill(self, db, owner_id: object, skill_id: str):
         """按 owner 加载启用中的用户 Skill 正文；不允许跨用户或停用 Skill。"""
         from app.models import UserSkill
 
-        value = str(name or "").strip().lower()
-        if not value:
+        value = str(skill_id or "").strip().upper()
+        if not value.startswith("U") or not value[1:].isdigit():
             return None
         return (await db.execute(select(UserSkill).where(
             UserSkill.owner_id == owner_id,
-            UserSkill.slug == value,
+            UserSkill.skill_id == value,
             UserSkill.enabled.is_(True),
             UserSkill.source == "user",
         ))).scalar_one_or_none()
@@ -200,27 +193,30 @@ class SkillCapabilityRegistry:
                    and not name.startswith("mcp_")]
         if missing:
             raise CapabilityRegistrationError(f"Skill 关联了未知工具：{', '.join(missing)}")
-        exists = await db.scalar(select(UserSkill.id).where(
-            UserSkill.owner_id == owner_id, UserSkill.slug == values["slug"],
-        ))
-        if exists is not None:
-            raise CapabilityRegistrationError("该用户已存在同 slug 的 Skill")
-        row = UserSkill(owner_id=owner_id, **values)
+        from app.models import User
+        next_value = await db.scalar(
+            update(User).where(User.id == owner_id)
+            .values(next_skill_sequence=User.next_skill_sequence + 1)
+            .returning(User.next_skill_sequence)
+        )
+        if next_value is None:
+            raise CapabilityRegistrationError("当前用户不存在，无法分配 Skill ID")
+        row = UserSkill(owner_id=owner_id, skill_id=f"U{int(next_value) - 1}", **values)
         db.add(row)
         await db.flush()
         return row
 
-    async def update_user_skill(self, db, owner_id: object, slug: str, *, dynamic_tools=(),
+    async def update_user_skill(self, db, owner_id: object, skill_id: str, *, dynamic_tools=(),
                                 enabled: bool | None = None, **payload):
-        """更新当前用户 Skill；slug 不变，正文变化时重新计算 digest。"""
+        """按 ID 更新当前用户 Skill；正文变化时重新计算 digest。"""
         from app.models import UserSkill
         row = (await db.execute(select(UserSkill).where(
-            UserSkill.owner_id == owner_id, UserSkill.slug == slug,
+            UserSkill.owner_id == owner_id, UserSkill.skill_id == skill_id,
         ))).scalar_one_or_none()
         if row is None:
             return None
         values = {
-            "slug": row.slug, "name": payload.get("name", row.name),
+            "name": payload.get("name", row.name),
             "description_short": payload.get("description_short", row.description_short),
             "description_long": payload.get("description_long", row.description_long),
             "category": payload.get("category", row.category),
@@ -247,11 +243,11 @@ class SkillCapabilityRegistry:
         await db.flush()
         return row
 
-    async def delete_user_skill(self, db, owner_id: object, slug: str) -> bool:
+    async def delete_user_skill(self, db, owner_id: object, skill_id: str) -> bool:
         """删除当前用户 Skill；系统 Skill 不经过此入口。"""
         from app.models import UserSkill
         row = (await db.execute(select(UserSkill).where(
-            UserSkill.owner_id == owner_id, UserSkill.slug == slug,
+            UserSkill.owner_id == owner_id, UserSkill.skill_id == skill_id,
         ))).scalar_one_or_none()
         if row is None:
             return False

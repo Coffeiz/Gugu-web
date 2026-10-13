@@ -1,4 +1,5 @@
 ---
+id: S12
 name: 天气
 description_short: 用户询问天气、温度、降雨、风力或出行建议时使用。
 description_long: "使用 Open-Meteo 查询全球城市的当前天气和未来预报。"

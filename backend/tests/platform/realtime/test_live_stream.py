@@ -34,6 +34,11 @@ def test_serialize_live_message_accepts_canonical_event_and_notification():
     notification = live._serialize_message(json.dumps({"notification": {"id": 1}}))
     assert notification is not None
 
+    skill_event = _event(resource="skills", operation="refresh")
+    skill_frame = live._serialize_message(json.dumps(skill_event))
+    assert skill_frame is not None
+    assert json.loads(skill_frame.removeprefix("data: ").strip()) == skill_event
+
 
 def test_serialize_live_message_accepts_valid_trash_purge_progress_only():
     event = {

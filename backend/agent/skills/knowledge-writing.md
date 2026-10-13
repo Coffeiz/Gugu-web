@@ -1,4 +1,5 @@
 ---
+id: S6
 name: Knowledge 记录
 description_short: 需要长期保存可复用事实、规则或资料摘要时使用。
 description_long: 规范主动记录 Knowledge 的触发条件、正文整理、来源可信度、去重和冲突处理。

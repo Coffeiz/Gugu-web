@@ -149,6 +149,36 @@ async def send_message(chat_id: str, text: str, *, channel_id: str,
         return False
 
 
+async def send_message_draft(
+    chat_id: str,
+    text: str,
+    *,
+    channel_id: str,
+    draft_id: int,
+) -> bool:
+    """更新 Telegram 私聊中的临时流式草稿；正式消息仍由 send_message 持久化。"""
+    try:
+        token = await _bot_token(channel_id)
+        if not token or not isinstance(draft_id, int) or isinstance(draft_id, bool) or draft_id == 0:
+            return False
+        await _call_for_chat(
+            token,
+            "sendMessageDraft",
+            {
+                "chat_id": chat_id,
+                "draft_id": draft_id,
+                "text": str(text or "")[:4096],
+            },
+            channel_id=channel_id,
+            chat_id=chat_id,
+            is_group=False,
+        )
+        return True
+    except Exception as exc:
+        diag_log("agent.gateway.telegram.send_message_draft", exc)
+        return False
+
+
 async def send_file(
     chat_id: str,
     data: bytes,

@@ -1,4 +1,5 @@
 ---
+id: S8
 name: 思维笔记
 description_short: 创建、搜索、读取和更新普通时间流笔记；画布便签请用 canvas。
 description_long: 处理普通时间流笔记和日记的创建、搜索、读取、更新与结构化编辑；搜索用 note_search，读取用 note_get，画布便签改用 canvas。

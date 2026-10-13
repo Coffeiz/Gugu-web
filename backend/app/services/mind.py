@@ -152,19 +152,19 @@ async def list_recent_reference_extras(db, user_id, *, limit: int):
 
 
 async def list_user_prompt_skills(db, user_id):
-    """列出当前用户自定义 Prompt Skill，按名称和稳定 slug 排序。"""
+    """列出当前用户自定义 Prompt Skill，按名称和稳定 ID 排序。"""
     return (await db.scalars(
         select(UserSkill).where(
             UserSkill.owner_id == user_id,
             UserSkill.source == "user",
-        ).order_by(UserSkill.name, UserSkill.slug)
+        ).order_by(UserSkill.name, UserSkill.skill_id)
     )).all()
 
 
-async def get_user_prompt_skill(db, user_id, slug):
-    """按稳定 slug 读取当前用户自定义 Prompt Skill。"""
+async def get_user_prompt_skill(db, user_id, skill_id):
+    """按稳定 ID 读取当前用户自定义 Prompt Skill。"""
     return await db.scalar(select(UserSkill).where(
         UserSkill.owner_id == user_id,
-        UserSkill.slug == slug,
+        UserSkill.skill_id == skill_id,
         UserSkill.source == "user",
     ))

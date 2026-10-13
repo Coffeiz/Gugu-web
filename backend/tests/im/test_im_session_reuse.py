@@ -7,6 +7,7 @@ from agent.im.session import (
     session_scope_filters,
     trim_session_messages,
 )
+from agent.im.loop import _ensure_im_session
 from agent.models import AgentRequest
 from app.models import ConversationMessage, ConversationSession
 
@@ -47,6 +48,22 @@ async def test_private_session_reused_for_same_peer(db, user_a):
     assert first.session.id == second.session.id
     assert first.is_new is True
     assert second.is_new is False
+
+
+async def test_web_mirror_resolves_session_when_im_route_cache_misses(db, user_a):
+    """路由缓存 miss 时，Web 镜像仍须在 run 开始前拿到既有 IM 会话 ID。"""
+    existing = await get_or_create_session(
+        db, _private_request(user_a.id, "puid-cache-miss"), user_a.id
+    )
+    await db.commit()
+
+    request = _private_request(user_a.id, "puid-cache-miss")
+    assert request.session_id is None
+
+    resolved_id = await _ensure_im_session(request)
+
+    assert resolved_id == existing.session.id
+    assert request.session_id == existing.session.id
 
 
 async def test_private_sessions_isolated_by_platform_user_id(db, user_a):

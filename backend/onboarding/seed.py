@@ -4,14 +4,13 @@
 删项目/文件都不重建。文案/命名全静态随机（content.py）。
 """
 import logging
-import uuid
 from datetime import date, timedelta
 from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Project, File, CalendarEvent
-from app.services.storage import get_storage
+from app.services.storage.file_service import FileService
 from onboarding import content, state
 
 logger = logging.getLogger("onboarding")
@@ -19,31 +18,17 @@ logger = logging.getLogger("onboarding")
 ASSETS_DIR = Path(__file__).parent / "assets"
 
 
-def _human_size(n: int) -> str:
-    for unit in ("B", "KB", "MB"):
-        if n < 1024 or unit == "MB":
-            return f"{n:.0f} {unit}" if unit == "B" else f"{n/1024:.1f} {unit}"
-        n /= 1024
-    return f"{n} B"
-
-
-def _key(user_id, ext: str) -> str:
-    return f"u/{user_id}/onboarding/{uuid.uuid4().hex}.{ext}"
-
-
-async def _put_text_file(db, user_id, *, project_id, display_name, body: str) -> File:
+async def _put_text_file(file_service: FileService, user_id, *, project_id, display_name, body: str) -> File:
     data = body.encode("utf-8")
-    key = _key(user_id, "md")
-    await get_storage().put(key, data, "text/markdown")
-    f = File(user_id=user_id, display_name=display_name, ext="md", space="project",
-             project_id=project_id, folder_id=None, stage_name="",
-             storage_key=key, size=_human_size(len(data)), size_bytes=len(data),
-             mime_type="text/markdown")
-    db.add(f)
-    return f
+    result = await file_service.create_file(
+        user_id, space="project", project_id=project_id, folder_id=None,
+        stage_name="", mind_map_id=None, display_name=display_name, ext="md",
+        mime_type="text/markdown", data=data, ledger_operation="onboarding_seed",
+    )
+    return result.file
 
 
-async def _put_surprise_mp3(db, user_id) -> File | None:
+async def _put_surprise_mp3(file_service: FileService, user_id) -> File | None:
     """个人空间根目录放一个 mp3；素材取 onboarding/assets/ 下任意 .mp3，缺则跳过。"""
     mp3s = sorted(ASSETS_DIR.glob("*.mp3")) if ASSETS_DIR.is_dir() else []
     if not mp3s:
@@ -51,14 +36,12 @@ async def _put_surprise_mp3(db, user_id) -> File | None:
         return None
     src = mp3s[0]
     data = src.read_bytes()
-    key = _key(user_id, "mp3")
-    await get_storage().put(key, data, "audio/mpeg")
-    f = File(user_id=user_id, display_name=src.stem, ext="mp3", space="personal",
-             project_id=None, folder_id=None, stage_name="",
-             storage_key=key, size=_human_size(len(data)), size_bytes=len(data),
-             mime_type="audio/mpeg")
-    db.add(f)
-    return f
+    result = await file_service.create_file(
+        user_id, space="personal", project_id=None, folder_id=None,
+        stage_name="", mind_map_id=None, display_name=src.stem, ext="mp3",
+        mime_type="audio/mpeg", data=data, ledger_operation="onboarding_seed",
+    )
+    return result.file
 
 
 def _build_stages(seed_content: dict) -> tuple[list, str]:
@@ -98,15 +81,16 @@ async def seed_for_user(db: AsyncSession, user, *, locale: str | None = None) ->
                              date=today.isoformat(), type="event", project_id=proj.id))
 
         # 2) 两个文件（归属引导项目）
+        file_service = FileService(db)
         wf = content.pick(seed["welcome_files"])
-        await _put_text_file(db, user_id, project_id=proj.id,
+        await _put_text_file(file_service, user_id, project_id=proj.id,
                              display_name=wf["title"], body=wf["body"])
-        await _put_text_file(db, user_id, project_id=proj.id,
+        await _put_text_file(file_service, user_id, project_id=proj.id,
                              display_name=seed["scratch_title"],
                              body=content.pick(seed["scratch_bodies"]))
 
         # 3) 个人空间 mp3「小惊喜」
-        await _put_surprise_mp3(db, user_id)
+        await _put_surprise_mp3(file_service, user_id)
 
         await db.commit()
 

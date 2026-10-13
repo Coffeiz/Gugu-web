@@ -15,6 +15,7 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
 
 COPY frontend/ ./frontend/
 COPY backend/ts/workers/mermaid-renderer/svg-style.mjs ./backend/ts/workers/mermaid-renderer/svg-style.mjs
+COPY backend/ts/workers/mermaid-renderer/theme.mjs backend/ts/workers/mermaid-renderer/theme.d.mts ./backend/ts/workers/mermaid-renderer/
 WORKDIR /workspace/frontend
 RUN pnpm build
 

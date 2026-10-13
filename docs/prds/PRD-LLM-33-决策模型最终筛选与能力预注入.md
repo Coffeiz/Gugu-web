@@ -153,7 +153,7 @@ RAG 与能力选择可复用 Decision Provider 请求适配、凭据解析、超
 
 在 `prepare_agent_run` 的 Run 准备边界构造一次能力候选决策。输入的候选只来自当前 `CapabilitySnapshot` 授权结果；输出需映射回既有稳定工具名/Skill slug。全量 Schema 模式和简介/固定 Adapter 模式分别适配，不重建注册系统。
 
-Active 下，简介模式把选中工具的 canonical `input_schema` 暴露给 Provider，并保持工具事件、Provider tool name 与 Registry Dispatch 一致；Skill 正文经 `load_skill` 受信路径读取后只加入当前 Run。发现入口继续可用，低置信或漏选时由现有 Agent Loop 按需补取。禁止决策模块直接调用 handler、MCP server 或危险操作。
+Active 下，简介模式把选中工具的 canonical `input_schema` 暴露给 Provider，并保持工具事件、Provider tool name 与 Registry Dispatch 一致；Skill 正文经 `load_skill` 受信路径读取后只加入当前 Run，选择和回执以稳定 Skill ID 标识。发现入口继续可用，低置信或漏选时由现有 Agent Loop 按需补取。禁止决策模块直接调用 handler、MCP server 或危险操作。
 
 ### 3.5 Shadow 与会话缓存
 

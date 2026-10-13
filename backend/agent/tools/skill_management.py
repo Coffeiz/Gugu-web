@@ -5,8 +5,6 @@
 """
 from __future__ import annotations
 
-import hashlib
-
 from agent.tools.base import BaseSkill, Tool
 
 
@@ -33,7 +31,7 @@ async def _list_skills(db, user_id, args: dict):
     rows = await list_user_prompt_skills(db, user_id)
     visible_skills = [
         {
-            "slug": row["slug"],
+            "id": row["id"],
             "name": row["name"],
             "description_short": row["description_short"],
             "category": row.get("category", ""),
@@ -45,7 +43,7 @@ async def _list_skills(db, user_id, args: dict):
     ]
     visible_skills.extend(
         {
-            "slug": row.slug,
+            "id": row.skill_id,
             "name": row.name,
             "description_short": row.description_short,
             "category": row.category,
@@ -56,7 +54,7 @@ async def _list_skills(db, user_id, args: dict):
         }
         for row in rows
     )
-    visible_skills.sort(key=lambda item: (item["name"].casefold(), item["slug"]))
+    visible_skills.sort(key=lambda item: (item["name"].casefold(), item["id"]))
     return {
         "count": len(visible_skills),
         "skills": visible_skills,
@@ -69,9 +67,6 @@ async def _create_skill(db, user_id, args: dict):
     from agent.tools import registry
 
     name = str(args.get("name") or "").strip()
-    slug = str(args.get("slug") or "").strip().lower()
-    if not slug:
-        slug = f"user-skill-{hashlib.sha256(name.encode('utf-8')).hexdigest()[:10]}"
     dynamic_tools = _skill_tool_context()
     related = [str(item).strip() for item in (args.get("related_tools") or ()) if str(item).strip()]
     tool_snapshot = registry.snapshot()
@@ -86,7 +81,7 @@ async def _create_skill(db, user_id, args: dict):
         return {"error": "Skill 管理者必须是 user 或 assistant"}
     try:
         row = await SkillCapabilityRegistry().create_user_skill(
-            db, user_id, slug=slug, name=name,
+            db, user_id, name=name,
             description_short=args.get("description_short") or "",
             description_long=args.get("description_long"),
             category=args.get("category") or "personal",
@@ -96,7 +91,7 @@ async def _create_skill(db, user_id, args: dict):
         await db.commit()
         return {
             "success": True, "skill": {
-                "slug": row.slug, "name": row.name,
+                "id": row.skill_id, "name": row.name,
                 "description_short": row.description_short,
                 "related_tools": list(row.related_tools or ()), "enabled": row.enabled,
                 "managed_by": row.managed_by,
@@ -112,12 +107,12 @@ async def _create_skill(db, user_id, args: dict):
 
 
 async def _update_skill(db, user_id, args: dict):
-    """更新当前用户的 Prompt Skill；slug 是稳定标识，不允许通过更新改名。"""
+    """按 ID 更新当前用户的 Prompt Skill；名称可以修改，ID 保持不变。"""
     from agent.capabilities.skill_registry import SkillCapabilityRegistry
 
-    slug = str(args.get("slug") or "").strip().lower()
-    if not slug:
-        return {"error": "缺少技能 slug"}
+    skill_id = str(args.get("id") or "").strip().upper()
+    if not skill_id:
+        return {"error": "缺少 Skill ID"}
     fields = {
         key: args[key]
         for key in (
@@ -131,7 +126,7 @@ async def _update_skill(db, user_id, args: dict):
     dynamic_tools = _skill_tool_context()
     try:
         row = await SkillCapabilityRegistry().update_user_skill(
-            db, user_id, slug, dynamic_tools=dynamic_tools, **fields,
+            db, user_id, skill_id, dynamic_tools=dynamic_tools, **fields,
         )
         if row is None:
             return {"error": "技能不存在或不属于当前用户"}
@@ -139,7 +134,7 @@ async def _update_skill(db, user_id, args: dict):
         return {
             "success": True,
             "skill": {
-                "slug": row.slug,
+                "id": row.skill_id,
                 "name": row.name,
                 "description_short": row.description_short,
                 "related_tools": list(row.related_tools or ()),
@@ -163,28 +158,28 @@ async def _delete_skill(db, user_id, args: dict):
     from agent.security import confirm
     from app.services.mind import get_user_prompt_skill
 
-    slug = str(args.get("slug") or "").strip().lower()
-    if not slug:
-        return {"error": "缺少技能 slug"}
-    row = await get_user_prompt_skill(db, user_id, slug)
+    skill_id = str(args.get("id") or "").strip().upper()
+    if not skill_id:
+        return {"error": "缺少 Skill ID"}
+    row = await get_user_prompt_skill(db, user_id, skill_id)
     if row is None:
         return {"error": "技能不存在或不属于当前用户"}
     managed_by = row.managed_by or "user"
     if managed_by != "assistant":
         blocked = confirm.needs_confirmation(
             args,
-            f"将删除技能「{row.name}」（{row.slug}），此操作不可恢复",
+            f"将删除技能「{row.name}」（{row.skill_id}），此操作不可恢复",
             user_id,
             purpose=confirm.ACTION,
-            identity=f"delete_user_skill:slug={row.slug}",
+            identity=f"delete_user_skill:id={row.skill_id}",
         )
         if blocked:
             return blocked
-    deleted = await SkillCapabilityRegistry().delete_user_skill(db, user_id, row.slug)
+    deleted = await SkillCapabilityRegistry().delete_user_skill(db, user_id, row.skill_id)
     if not deleted:
         return {"error": "技能不存在或不属于当前用户"}
     await db.commit()
-    result = {"success": True, "slug": row.slug, "message": "已删除这个咕咕技能。"}
+    result = {"success": True, "id": row.skill_id, "message": "已删除这个咕咕技能。"}
     if managed_by == "assistant":
         result["_confirm_gate_authorized"] = "confirmation_gate"
     return result
@@ -217,7 +212,6 @@ SKILL_MANAGEMENT_TOOLS = [
         input_schema={
             "type": "object",
             "properties": {
-                "slug": {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$", "maxLength": 80},
                 "name": {"type": "string", "minLength": 1, "maxLength": 120},
                 "description_short": {"type": "string", "minLength": 1, "maxLength": 100},
                 "description_long": {"type": "string", "maxLength": 500},
@@ -235,16 +229,16 @@ SKILL_MANAGEMENT_TOOLS = [
     Tool(
         name="update_skill",
         label="更新咕咕技能",
-        description_short="更新已有咕咕技能；slug 保持不变",
+        description_short="按稳定 Skill ID 更新技能名称或内容",
         description=(
-            "更新当前用户已有的 Prompt Skill。必须传稳定 slug，并至少传一个要修改的字段；"
+            "更新当前用户已有的 Prompt Skill。必须传稳定 Skill ID，并至少传一个要修改的字段；"
             "只能自主更新 managed_by=assistant 的 Skill；managed_by=user 仅在用户明确要求修改时更新。"
-            "不能修改 slug、注册工具或扩大权限，关联工具只表示引用，不授予调用权限。"
+            "可以修改展示名称，但不能修改 ID、注册工具或扩大权限；关联工具只表示引用，不授予调用权限。"
         ),
         input_schema={
             "type": "object",
             "properties": {
-                "slug": {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$", "maxLength": 80},
+                "id": {"type": "string", "pattern": "^U[1-9][0-9]*$"},
                 "name": {"type": "string", "minLength": 1, "maxLength": 120},
                 "description_short": {"type": "string", "minLength": 1, "maxLength": 100},
                 "description_long": {"type": ["string", "null"], "maxLength": 500},
@@ -253,7 +247,7 @@ SKILL_MANAGEMENT_TOOLS = [
                 "body": {"type": "string", "minLength": 1, "maxLength": 20000},
                 "enabled": {"type": "boolean"},
             },
-            "required": ["slug"],
+            "required": ["id"],
             "additionalProperties": False,
         },
         handler=_update_skill,
@@ -270,9 +264,9 @@ SKILL_MANAGEMENT_TOOLS = [
         input_schema={
             "type": "object",
             "properties": {
-                "slug": {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$", "maxLength": 80},
+                "id": {"type": "string", "pattern": "^U[1-9][0-9]*$"},
             },
-            "required": ["slug"],
+            "required": ["id"],
             "additionalProperties": False,
         },
         handler=_delete_skill,

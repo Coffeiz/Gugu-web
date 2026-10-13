@@ -24,6 +24,45 @@ def test_restore_trace_recreates_pending_run(monkeypatch):
         state._scope_run.reset(token)
 
 
+def test_canonical_history_fallback_probe_counts_only_active_enabled_run(monkeypatch):
+    monkeypatch.setenv("LOOPSCOPE_ENABLED", "1")
+    run = state._ScopeRun(
+        id="run-canonical-fallback", trace_id="trace-canonical-fallback",
+        session_key="gugu:web:test", external_session_id="test",
+        source="web", started_at=state._now(),
+    )
+    token = state._scope_run.set(run)
+    try:
+        state.record_canonical_history_fallback()
+        state.record_canonical_history_fallback()
+    finally:
+        state._scope_run.reset(token)
+
+    assert run.snapshot()["attributes"]["canonical_history_fallback"] == {"count": 2}
+
+
+def test_canonical_history_fallback_probe_is_noop_when_disabled_or_without_run(monkeypatch):
+    monkeypatch.setenv("LOOPSCOPE_ENABLED", "0")
+    run = state._ScopeRun(
+        id="run-canonical-fallback-disabled", trace_id="trace-canonical-fallback-disabled",
+        session_key="gugu:web:test", external_session_id="test",
+        source="web", started_at=state._now(),
+    )
+    token = state._scope_run.set(run)
+    try:
+        state.record_canonical_history_fallback()
+    finally:
+        state._scope_run.reset(token)
+    assert "canonical_history_fallback" not in run.attributes
+
+    monkeypatch.setenv("LOOPSCOPE_ENABLED", "1")
+    token = state._scope_run.set(None)
+    try:
+        state.record_canonical_history_fallback()
+    finally:
+        state._scope_run.reset(token)
+
+
 def test_tool_schema_error_span_keeps_schema_and_redacts_argument_values(monkeypatch):
     monkeypatch.setenv("LOOPSCOPE_ENABLED", "1")
     run = state._ScopeRun(

@@ -35,13 +35,14 @@ def _skills_index_block(skill_names: list[str] | None) -> str:
     lines = [
         "## 可用技能",
         "下列「技能」是带触发条件的做法剧本。命中下方场景时，**第一工具调用必须是 `use_skill` 拉取对应技能正文**；正文加载前禁止直接调用该技能负责的业务工具。",
+        "Skill ID（S/U 编号）仅用于内部工具调用和上下文管理；对用户提及技能时一律使用技能名称，不要在回答中说出或展示 S/U 编号，除非用户明确询问内部 ID。",
         "技能正文里若出现 `curl <URL>`，就用 `http_get` 工具抓那个 URL（你没有 shell，但有 `http_get`）。",
     ]
     for skill in idx:
         emoji = f"{skill['emoji']} " if skill.get("emoji") else ""
         short = skill.get("description_short") or ""
         when = f" — {short}" if short else ""
-        lines.append(f"- {emoji}**{skill['name']}**（`use_skill` 名：`{skill['slug']}`）{when}")
+        lines.append(f"- {emoji}**{skill['name']}**（Skill ID：`{skill['id']}`）{when}")
     return "\n".join(lines)
 
 

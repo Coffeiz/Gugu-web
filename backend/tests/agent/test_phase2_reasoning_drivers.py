@@ -671,7 +671,7 @@ async def test_responses_driver_replays_user_intent_after_tool_result_instead_of
         {"role": "user", "content": "搜索 Childspot 的 MV，最后告诉我校验词 ORBIT-42。"},
         {"role": "assistant", "content": [{
             "type": "tool_call", "id": "call-load-search", "name": "use_skill",
-            "arguments": '{"name":"web-search"}',
+            "arguments": '{"id":"S13"}',
         }]},
         {"role": "user", "content": [{
             "type": "tool_result", "tool_call_id": "call-load-search",

@@ -230,7 +230,7 @@ def test_last_round_conversation_replays_as_next_run_prefix_without_dynamic_tail
                 "type": "tool_call",
                 "id": "call-weather",
                 "name": "use_skill",
-                "arguments": {"name": "weather"},
+                "arguments": {"id": "S12"},
             }],
         },
         {

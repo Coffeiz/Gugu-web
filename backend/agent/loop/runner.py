@@ -174,7 +174,7 @@ async def run_loop(
         # 不把目录或用户消息复制进 driver。
         if runner.capability_context is not None:
             ctx.capability_context = runner.capability_context
-        loaded_skill_slugs = _core._loaded_skill_slugs(messages)
+        loaded_skill_ids = _core._loaded_skill_ids(messages)
         # 当前用户消息是本轮 run 的保护边界。压缩时只处理它之前的历史，
         # 工具调用/结果追加后仍通过对象身份找到同一个起点。
         _run_conversation = messages.provider_projection().to_messages()
@@ -566,7 +566,7 @@ async def run_loop(
                         round_id=round_id,
                         verify_mode=verify_mode,
                         tool_snapshot=tool_snapshot,
-                        loaded_skill_slugs=loaded_skill_slugs,
+                        loaded_skill_ids=loaded_skill_ids,
                         max_concurrency=getattr(agent_settings, "parallel_tool_max_concurrency", 5),
                         bindings=ParallelToolBindings(
                             set_tool_state=_core._im_set_tool_state,
@@ -617,7 +617,7 @@ async def run_loop(
                         round_id=round_id,
                         verify_mode=verify_mode,
                         tool_snapshot=tool_snapshot,
-                        loaded_skill_slugs=loaded_skill_slugs,
+                        loaded_skill_ids=loaded_skill_ids,
                         on_interaction=on_interaction,
                     )
                     async for emission in serial_runtime.run():
@@ -702,17 +702,15 @@ async def run_loop(
                                         add_event(tool_schema_event(tool))
                             continue
                         if resolve_error is None and resolved_name == "use_skill":
-                            skill_name = str((resolved_input or {}).get("name") or "").strip()
-                            resolved_skill = None
-                            from agent.skills import resolve_skill_slug
-                            resolved_skill = resolve_skill_slug(skill_name) or skill_name
+                            skill_id = str((resolved_input or {}).get("id") or "").strip().upper()
+                            resolved_skill = skill_id
                             skill_meta = getattr(runner.capability_context, "snapshot", None)
                             skill_meta = getattr(skill_meta, "skills", {}).get(resolved_skill)
                             if getattr(skill_meta, "kind", None) != "skill":
                                 skill_meta = None
                             related = tuple(getattr(skill_meta, "related_tools", ()) or ())
                             if related:
-                                add_event(SkillSchemaEvent(skill_name, related))
+                                add_event(SkillSchemaEvent(skill_id, related))
                                 for name in related:
                                     tool = tool_snapshot.get(name)
                                     if tool is not None:
@@ -764,7 +762,7 @@ async def run_loop(
                         round_id=round_id,
                         verify_mode=verify_mode,
                         tool_snapshot=tool_snapshot,
-                        skill_state=loaded_skill_slugs,
+                        skill_state=loaded_skill_ids,
                         next_round=run_state.round_number + 1,
                         cancel_close_text=_core._CANCEL_CLOSE_TEXT,
                         on_interaction=on_interaction,

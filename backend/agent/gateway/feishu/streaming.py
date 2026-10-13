@@ -702,7 +702,8 @@ async def _send_tool_summary_stream(
 
 async def send_text_stream(receive_id: str, token_iter, channel_id: str | None = None,
                           placeholder: str = "咕咕正在想…",
-                          tool_summary=None) -> tuple[bool, "AgentResponse | None"]:
+                          tool_summary=None,
+                          show_intermediate_replies: bool = True) -> tuple[bool, "AgentResponse | None"]:
     """飞书流式回复（IM 端模拟 SSE）。
 
     Args:
@@ -711,6 +712,7 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
         channel_id: user_bot.id
         placeholder: 占位卡片首屏文案
         tool_summary: 可选的 FeishuToolSummaryStream；仅用户开启工具展示时传入
+        show_intermediate_replies: 是否允许在缺少 final 事件时回退发送已收到的中间文本
 
     Returns: (ok, final_response)——ok 表示流式/fallback 是否成功；final_response 是 run_stream
     yield 的 AgentResponse（含 session_id），消费端需要它来续写 Redis 会话映射。如果 token_iter
@@ -742,7 +744,9 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
             elif kind == "final":
                 final_resp = payload
         final_text = _stream_fallback_text(
-            final_resp.text if final_resp is not None else accumulated,
+            final_resp.text if final_resp is not None else (
+                accumulated if show_intermediate_replies else ""
+            ),
             bool(final_resp and final_resp.files),
         )
         if final_text:
@@ -764,7 +768,9 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
             elif kind == "final":
                 final_resp = payload
         final_text = _stream_fallback_text(
-            final_resp.text if final_resp is not None else accumulated,
+            final_resp.text if final_resp is not None else (
+                accumulated if show_intermediate_replies else ""
+            ),
             bool(final_resp and final_resp.files),
         )
         if final_text:

@@ -159,15 +159,15 @@ describe('聊天业务对象卡片', () => {
 
 describe('聊天技能卡片', () => {
   it('使用独立的 open-skill 协议渲染为可点击技能卡片', () => {
-    const html = renderMd('[晨间简报](gugu://open-skill/morning-briefing)')
+    const html = renderMd('[晨间简报](gugu://open-skill/U1)')
 
     expect(html).toContain('class="chat-object-card chat-skill-card"')
-    expect(html).toContain('data-skill-slug="morning-briefing"')
+    expect(html).toContain('data-skill-id="U1"')
     expect(html).toContain('<small>技能</small>')
     expect(html).not.toContain('data-object-type=')
   })
 
-  it('拒绝不安全的技能 slug', () => {
+  it('只接受格式正确的 Skill ID', () => {
     const html = renderMd('[技能](gugu://open-skill/../../admin)')
     expect(html).not.toContain('chat-skill-card')
   })

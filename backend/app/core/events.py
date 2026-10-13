@@ -34,6 +34,8 @@ _RAG_SOURCES_BY_RESOURCE: dict[str, tuple[str, ...]] = {
 # 改动型工具 → 受影响的前端资源。只列「会变数据」的工具（list_/get_/read_ 等只读不列）。
 # 新增改动型工具时记得在这里登记，否则网页不会实时刷新。
 RESOURCE_BY_TOOL: dict[str, str] = {
+    # 用户自定义 Skill：在 Web/IM 工具执行完成后刷新浏览器里的 Skill 目录。
+    "create_skill": "skills", "update_skill": "skills", "delete_skill": "skills",
     # 项目
     "create_project": "projects", "update_project": "projects", "delete_project": "projects",
     "archive_project": "projects", "update_stage": "projects",

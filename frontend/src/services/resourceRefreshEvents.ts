@@ -10,3 +10,8 @@ export function notifyResourceChanged(resource: keyof typeof RESOURCE_REFRESH_EV
     window.dispatchEvent(new Event(RESOURCE_REFRESH_EVENTS[resource]))
   }
 }
+
+/** 将跨端实时事件桥接到依赖浏览器本地事件的资源页。 */
+export function notifyLiveResourceChanged(resource: string): void {
+  if (resource === 'skills') notifyResourceChanged('skills')
+}

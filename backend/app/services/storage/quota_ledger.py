@@ -1,9 +1,9 @@
 """用户存储空间统一账本。
 
 账本保留三类用量明细：用户持久空间、Shell 持久目录明细和 Shell 临时空间。
-Local 用户持久空间按三个文件区根目录与回收站的物理占用计量；OSS 文件库按所有
-File 记录汇总（包含回收站），Shell 持久空间仍分别限额。下载、构建和 Shell 是
-operation，不重复创建配额判断；两种后端都保留校准事件。
+Local 用户持久空间按三个文件区根目录、回收站及数据迁移导入附件的物理占用计量；
+OSS 文件库按所有 File 记录汇总（包含回收站），Shell 持久空间仍分别限额。下载、
+构建和 Shell 是 operation，不重复创建配额判断；两种后端都保留校准事件。
 """
 from __future__ import annotations
 
@@ -166,12 +166,17 @@ def _shell_root(user_id: Any) -> Path:
 
 
 def _local_quota_roots(user_id: Any) -> dict[str, Path]:
-    user_root = Path(get_settings().storage.local_path).expanduser().resolve() / str(user_id)
+    storage_root = Path(get_settings().storage.local_path).expanduser().resolve()
+    user_root = storage_root / str(user_id)
+    # 数据迁移附件的存储键使用 UUID hex（无连字符），与普通 File 根目录的
+    # UUID 文本键不同，因此必须从实际键前缀定位其物理目录。
+    imported_root = storage_root / str(user_id).replace("-", "")
     return {
         "workspace": (user_root / "workspace").resolve(),
         "personal": (user_root / "个人文件").resolve(),
         "project": (user_root / "项目文件").resolve(),
         "trash": (user_root / "trash").resolve(),
+        "imported": (imported_root / ".data-portability" / "imported").resolve(),
     }
 
 

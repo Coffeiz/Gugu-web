@@ -9,7 +9,7 @@ export type MermaidThemeColors = {
   tertiaryColor: string
 }
 
-/** 将 CSS 主题颜色解析成 Mermaid 色彩解析器支持的 rgb() 值。 */
+/** 从页面 CSS token 解析 Mermaid 配色，跟随当前主题和调色板。 */
 export function resolveMermaidThemeColors(dark: boolean): MermaidThemeColors {
   const probe = document.createElement('span')
   const canvas = document.createElement('canvas')
@@ -33,8 +33,8 @@ export function resolveMermaidThemeColors(dark: boolean): MermaidThemeColors {
   }
 
   const primaryColor = resolve(
-      'color-mix(in srgb, var(--color-primary) 15%, var(--surface-canvas-card))',
-      dark ? '#382f31' : '#eee9e8',
+    'color-mix(in srgb, var(--color-primary) 15%, var(--surface-canvas-card))',
+    dark ? '#382f31' : '#eee9e8',
   )
   const lineColor = resolve('var(--text-secondary)', dark ? '#c9c3d5' : '#67647a')
   const colors = {

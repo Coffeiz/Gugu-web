@@ -509,12 +509,15 @@ async def test_full_shell_authorization_watches_all_persistent_user_roots(db, us
 
 
 @pytest.mark.asyncio
-async def test_local_quota_reconciliation_scans_file_roots_and_trash_but_not_other_user_data(
+async def test_local_quota_reconciliation_scans_imported_assets_and_ignores_agent_data(
     db, user_a, tmp_path, monkeypatch,
 ):
     monkeypatch.setattr(quota_ledger, "get_settings", lambda: _settings(tmp_path))
     roots = quota_ledger._local_quota_roots(user_a.id)
-    for name, size in (("workspace", 3), ("personal", 5), ("project", 7), ("trash", 11)):
+    for name, size in (
+        ("workspace", 3), ("personal", 5), ("project", 7),
+        ("trash", 11), ("imported", 13),
+    ):
         roots[name].mkdir(parents=True)
         (roots[name] / "payload.bin").write_bytes(b"x" * size)
     unrelated = tmp_path / str(user_a.id) / ".agent"
@@ -529,7 +532,7 @@ async def test_local_quota_reconciliation_scans_file_roots_and_trash_but_not_oth
 
     measured = await quota_ledger.measure_user_storage_usage(db, user_a.id)
 
-    assert measured == 26
+    assert measured == 39
 
 
 @pytest.mark.asyncio

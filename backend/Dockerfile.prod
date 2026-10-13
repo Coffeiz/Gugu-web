@@ -134,7 +134,10 @@ COPY backend/scripts/runtime/sandbox_rootless_init.sh /usr/local/bin/gugu-sandbo
 COPY backend/bin/gugu-rag-ts-worker.mjs ./bin/gugu-rag-ts-worker.mjs
 COPY backend/bin/gugu-filesync-ts-worker.cjs ./bin/gugu-filesync-ts-worker.cjs
 COPY backend/ts/workers/mermaid-renderer/worker.mjs ./bin/gugu-mermaid-worker.mjs
+COPY backend/ts/workers/mermaid-renderer/diagram-source.mjs ./bin/diagram-source.mjs
 COPY backend/ts/workers/mermaid-renderer/svg-style.mjs ./bin/svg-style.mjs
+COPY backend/ts/workers/mermaid-renderer/theme.mjs ./bin/theme.mjs
+COPY frontend/public/fonts/Noto_Sans_SC/NotoSansSC-VariableFont_wght.ttf ./bin/fonts/NotoSansSC-VariableFont_wght.ttf
 COPY --from=rag-runtime /rag/node_modules ./bin/node_modules
 COPY backend/scripts/runtime/prepare_rootless_storage.py /usr/local/bin/prepare_rootless_storage.py
 RUN mkdir -p logs \
@@ -152,7 +155,7 @@ RUN mkdir -p logs \
 
 RUN node bin/gugu-rag-ts-worker.mjs --version \
     && node bin/gugu-filesync-ts-worker.cjs --version \
-    && cd /app/bin && node -e "Promise.all([import('mermaid'), import('@mermaid-js/mermaid-zenuml'), import('@resvg/resvg-js'), import('@xmldom/xmldom'), import('svgdom')]).then(() => console.log('Mermaid PNG runtime ready'))"
+    && cd /app/bin && node -e "Promise.all([import('mermaid'), import('@mermaid-js/mermaid-zenuml'), import('@resvg/resvg-js'), import('@xmldom/xmldom'), import('svgdom'), import('./theme.mjs')]).then(() => console.log('Mermaid PNG runtime ready'))"
 RUN python -c "import ctypes.util; assert ctypes.util.find_library('seccomp'), 'libseccomp2 runtime unavailable'"
 
 EXPOSE 8000

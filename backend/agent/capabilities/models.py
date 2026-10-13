@@ -26,6 +26,7 @@ class CapabilityMeta:
     content_digest: str = ""
     owner_fingerprint: str = ""
     field_signature: str = ""
+    display_name: str = ""
 
 
 @dataclass(frozen=True)

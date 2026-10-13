@@ -7,17 +7,59 @@
 
 ## [Unreleased]
 
+## [1.7.3] - 2026-10-13
+
 ### What's New
 
 #### New Features
 
-- **Mermaid diagrams**: unify rendering in chat and Markdown previews, add enlarged preview and PNG download, and send Mermaid charts as PNG images in IM replies.
+- **Telegram streaming**: show responses as they are generated.
+- **Personal skills**: create, edit, and organize user-defined skills.
+- **Mermaid charts**: preview, enlarge, and export diagrams as PNG on the web; render them as images in IM replies while preserving their position between surrounding text.
+
+#### Improvements
+
+- **Telegram replies**: show tool results without duplicate raw JSON, with status text localized to the user's language.
+- **Mermaid rendering**: align IM output with the web renderer, including fonts, node styles, labels, and arrows.
+- **Prompt caching**: preserve reusable model context across compaction and reflection requests.
+
+#### Fixes
+
+- Keep Mermaid labels within node boundaries and preserve text and diagram order in mixed IM replies.
+
+#### Contributors
+
+- None listed.
+
+#### Feedback & Issue Reporters
+
+- None listed.
 
 ### 更新内容
 
 #### 新功能
 
-- **Mermaid 图表**：统一聊天与 Markdown 预览中的渲染体验，支持放大预览和 PNG 下载，并可在 IM 回复中发送 PNG 图表。
+- **Telegram 流式回复**：逐步显示生成中的回复。
+- **个人技能**：支持创建、编辑和整理用户自定义技能。
+- **Mermaid 图表**：网页支持预览、放大和导出 PNG；IM 回复可将图表渲染为图片，并按原顺序插入上下文文字之间。
+
+#### 改进
+
+- **Telegram 回复**：只展示工具调用结果，不再重复发送原始 JSON；状态文案根据用户语言显示。
+- **Mermaid 渲染**：统一 IM 与网页的字体、节点样式、标签和箭头表现。
+- **提示词缓存**：压缩和反思请求会保留可复用的模型上下文，提升缓存复用。
+
+#### 修复
+
+- 修复 Mermaid 标签超出节点边界，以及 IM 图文混排时文字和图表顺序不正确的问题。
+
+#### 贡献者
+
+- 暂无。
+
+#### 反馈与问题报告
+
+- 暂无。
 
 ## [1.7.2] - 2026-10-13
 

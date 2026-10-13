@@ -22,7 +22,9 @@ _WORKER_FAILURE_RE = re.compile(
 )
 _RENDER_LIMIT = asyncio.Semaphore(1)
 MAX_DIAGRAMS = 4
+DEFERRED_RENDER_BATCH_SIZE = 1
 DEFAULT_MAX_DIAGRAMS = 3
+MAX_RUN_DIAGRAMS = 12
 MAX_SOURCE_CHARS = 20_000
 MAX_PNG_BYTES = 3 * 1024 * 1024
 RENDER_TIMEOUT_SECONDS = 20
@@ -83,7 +85,9 @@ def _sandbox_exec(worker: str) -> None:
     os.execv(node, [node, "--max-old-space-size=256", worker])
 
 
-async def render_pngs(sources: list[str]) -> list[bytes | None]:
+async def render_pngs(
+    sources: list[str], *, theme_preferences: dict | None = None,
+) -> list[bytes | None]:
     """在一个受限 Node 子进程中批量渲染单轮图表，避免重复冷启动。"""
     from app.core.redaction import diag_log_raw
 
@@ -106,7 +110,11 @@ async def render_pngs(sources: list[str]) -> list[bytes | None]:
         return results
     try:
         input_bytes = json.dumps(
-            [source for _index, source in valid], ensure_ascii=False
+            {
+                "sources": [source for _index, source in valid],
+                "theme": theme_preferences or {},
+            },
+            ensure_ascii=False,
         ).encode("utf-8")
     except UnicodeEncodeError:
         return results
@@ -200,6 +208,7 @@ async def render_png(source: str) -> bytes | None:
 
 async def render_reply(
     text: str, *, max_diagrams: int = DEFAULT_MAX_DIAGRAMS,
+    theme_preferences: dict | None = None,
 ) -> list[ReplyPart]:
     """解析完整 Mermaid fence，成功时用 PNG part 替换源码，失败时保留源码。"""
     value = text or ""
@@ -209,7 +218,11 @@ async def render_reply(
         _SOURCE_RE.match(match.group(0)).group(1)
         for match in matches[:max_diagrams]
     ]
-    pngs = await render_pngs(sources)
+    pngs = (
+        await render_pngs(sources)
+        if theme_preferences is None
+        else await render_pngs(sources, theme_preferences=theme_preferences)
+    )
     parts: list[ReplyPart] = []
     cursor = 0
     for index, match in enumerate(matches):
@@ -223,15 +236,28 @@ async def render_reply(
 
 
 class StreamingRenderer:
-    """只暂存 Mermaid fence；普通文本继续流式发送，完整 fence 转为图片事件。"""
+    """暂存 Mermaid fence；按需把图片结果放回其在回复中的原始位置。"""
 
-    def __init__(self, max_diagrams: int = DEFAULT_MAX_DIAGRAMS) -> None:
+    def __init__(
+        self,
+        max_diagrams: int = DEFAULT_MAX_DIAGRAMS,
+        *,
+        inline_images: bool = False,
+        defer_until_run_end: bool = False,
+        theme_preferences: dict | None = None,
+    ) -> None:
         self._pending = ""
         self._opening = ""
         self._in_diagram = False
         self._diagram_count = 0
-        self._max_diagrams = max(0, min(max_diagrams, MAX_DIAGRAMS))
+        self._max_diagrams = max(0, min(max_diagrams, MAX_RUN_DIAGRAMS))
         self._diagrams: list[tuple[str, str]] = []
+        self._deferred_diagrams: list[tuple[str, str]] = []
+        self._inline_images = inline_images
+        self._defer_until_run_end = defer_until_run_end
+        self._theme_preferences = theme_preferences
+        self._inline_deferred = False
+        self._deferred_parts: list[ReplyPart] = []
 
     async def feed(self, chunk: str) -> list[ReplyPart]:
         self._pending += chunk or ""
@@ -241,21 +267,85 @@ class StreamingRenderer:
     def has_pending_diagrams(self) -> bool:
         return bool(self._diagrams)
 
-    async def finish_round(self, *, max_images: int | None = None) -> list[ReplyPart]:
+    @property
+    def has_deferred_diagrams(self) -> bool:
+        return bool(self._deferred_diagrams)
+
+    async def finish_round(
+        self, *, max_images: int | None = None, defer_images: bool = False,
+    ) -> list[ReplyPart]:
         parts = await self._drain(final=True)
         diagrams, self._diagrams = self._diagrams, []
         if diagrams:
+            if defer_images:
+                self._deferred_diagrams.extend(diagrams)
+                diagrams = []
+        if diagrams:
             render_count = len(diagrams) if max_images is None else max(0, min(max_images, len(diagrams)))
-            pngs = await render_pngs([body for _source, body in diagrams[:render_count]])
-            for index, (source, _body) in enumerate(diagrams):
-                png = pngs[index] if index < len(pngs) else None
-                if png:
-                    parts.append(ReplyPart(png=png, source=source, placeholder_emitted=True))
-                else:
-                    parts.append(ReplyPart(text=source))
+            sources = [body for _source, body in diagrams[:render_count]]
+            pngs = (
+                await render_pngs(sources)
+                if self._theme_preferences is None
+                else await render_pngs(sources, theme_preferences=self._theme_preferences)
+            )
+            if self._inline_images:
+                diagram_index = 0
+                for part in self._deferred_parts:
+                    if part.placeholder_emitted:
+                        png = pngs[diagram_index] if diagram_index < len(pngs) else None
+                        diagram_index += 1
+                        parts.append(
+                            ReplyPart(png=png, source=part.source)
+                            if png else ReplyPart(text=part.source)
+                        )
+                    else:
+                        parts.append(part)
+            else:
+                for index, (source, _body) in enumerate(diagrams):
+                    png = pngs[index] if index < len(pngs) else None
+                    if png:
+                        parts.append(ReplyPart(png=png, source=source, placeholder_emitted=True))
+                    else:
+                        parts.append(ReplyPart(text=source))
         self._in_diagram = False
         self._opening = ""
         self._pending = ""
+        if not defer_images:
+            self._inline_deferred = False
+            self._deferred_parts = []
+        return parts
+
+    async def render_deferred_diagrams(self) -> list[ReplyPart]:
+        """在整次 run 完成后分批渲染此前排队的 Mermaid 图。"""
+        diagrams, self._deferred_diagrams = self._deferred_diagrams, []
+        parts: list[ReplyPart] = []
+        for offset in range(0, len(diagrams), DEFERRED_RENDER_BATCH_SIZE):
+            batch = diagrams[offset:offset + DEFERRED_RENDER_BATCH_SIZE]
+            sources = [body for _source, body in batch]
+            pngs = (
+                await render_pngs(sources)
+                if self._theme_preferences is None
+                else await render_pngs(sources, theme_preferences=self._theme_preferences)
+            )
+            for index, (source, _body) in enumerate(batch):
+                png = pngs[index] if index < len(pngs) else None
+                parts.append(ReplyPart(png=png, source=source) if png else ReplyPart(text=source))
+        if self._inline_images:
+            ordered_parts: list[ReplyPart] = []
+            diagram_index = 0
+            for part in self._deferred_parts:
+                if part.placeholder_emitted:
+                    rendered = parts[diagram_index] if diagram_index < len(parts) else None
+                    diagram_index += 1
+                    ordered_parts.append(
+                        rendered if rendered and rendered.png
+                        else ReplyPart(text=part.source)
+                    )
+                else:
+                    ordered_parts.append(part)
+            self._deferred_parts = []
+            self._inline_deferred = False
+            return ordered_parts
         return parts
 
     async def _drain(self, *, final: bool = False) -> list[ReplyPart]:
@@ -265,33 +355,53 @@ class StreamingRenderer:
                 match = _OPEN_RE.search(self._pending)
                 if match:
                     if match.start():
-                        parts.append(ReplyPart(text=self._pending[:match.start()]))
+                        text_part = ReplyPart(text=self._pending[:match.start()])
+                        if self._inline_deferred:
+                            self._deferred_parts.append(text_part)
+                        else:
+                            parts.append(text_part)
                     self._opening = match.group(0)
                     self._pending = self._pending[match.end():]
                     self._in_diagram = True
                     continue
                 if final:
-                    parts.append(ReplyPart(text=self._pending))
+                    text_part = ReplyPart(text=self._pending)
+                    if self._inline_deferred:
+                        self._deferred_parts.append(text_part)
+                    else:
+                        parts.append(text_part)
                     self._pending = ""
                     break
                 # 保留可能跨 token 边界的 fence 前缀，安全发出其余普通文本。
                 hold = min(len(self._pending), len("```mermaid\n") - 1)
                 safe_end = len(self._pending) - hold
                 if safe_end:
-                    parts.append(ReplyPart(text=self._pending[:safe_end]))
+                    text_part = ReplyPart(text=self._pending[:safe_end])
+                    if self._inline_deferred:
+                        self._deferred_parts.append(text_part)
+                    else:
+                        parts.append(text_part)
                     self._pending = self._pending[safe_end:]
                 break
 
             closing = self._pending.find("```")
             if closing < 0:
                 if len(self._pending) + len(self._opening) > MAX_SOURCE_CHARS:
-                    parts.append(ReplyPart(text=self._opening + self._pending))
+                    text_part = ReplyPart(text=self._opening + self._pending)
+                    if self._inline_deferred:
+                        self._deferred_parts.append(text_part)
+                    else:
+                        parts.append(text_part)
                     self._pending = ""
                     self._opening = ""
                     self._in_diagram = False
                     continue
                 if final:
-                    parts.append(ReplyPart(text=self._opening + self._pending))
+                    text_part = ReplyPart(text=self._opening + self._pending)
+                    if self._inline_deferred:
+                        self._deferred_parts.append(text_part)
+                    else:
+                        parts.append(text_part)
                     self._pending = ""
                     break
                 break
@@ -305,14 +415,28 @@ class StreamingRenderer:
             body = source[len(opening.group(0)):-3] if opening else ""
             if self._diagram_count <= self._max_diagrams and len(source) <= MAX_SOURCE_CHARS:
                 self._diagrams.append((source, body))
-                parts.append(ReplyPart(
-                    text=f"\n\n（图表 {self._diagram_count} 见后续图片）\n\n",
-                    source=source,
-                    placeholder_emitted=True,
-                ))
+                placeholder = ReplyPart(source=source, placeholder_emitted=True)
+                if self._inline_images:
+                    self._inline_deferred = True
+                    self._deferred_parts.append(placeholder)
+                    if self._defer_until_run_end:
+                        parts.append(placeholder)
+                else:
+                    parts.append(ReplyPart(
+                        text=f"\n\n（图表 {self._diagram_count} 见后续图片）\n\n",
+                        source=source,
+                        placeholder_emitted=True,
+                    ))
             else:
-                parts.append(ReplyPart(text=source))
-        return [part for part in parts if part.text or part.png]
+                text_part = ReplyPart(text=source)
+                if self._inline_deferred:
+                    self._deferred_parts.append(text_part)
+                else:
+                    parts.append(text_part)
+        return [
+            part for part in parts
+            if part.text or part.png or (self._defer_until_run_end and part.placeholder_emitted)
+        ]
 
 
 class ProgressiveMermaidTokenFilter:

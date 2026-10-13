@@ -1,4 +1,5 @@
 ---
+id: S10
 name: 定时任务
 description_short: 用户要设置独立定时任务、周期任务或到点执行时使用；日程自带提醒直接用日历工具。
 description_long: "要设定时/周期执行任务时，怎么用 *_scheduled_task 建任务、单次、cron 或精确 interval 怎么写、可选开始结束时间和渠道怎么选；并区分日历活动自带提醒。"

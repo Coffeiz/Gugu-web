@@ -1,7 +1,7 @@
 """meta 工具集：工具声明、调用与技能加载的固定入口。
 
-system prompt 里只放「可用技能」索引（每个一行 name + 何时用）；模型判断相关时调
-use_skill(name) 把该技能的正文（剧本）拉进上下文，再照着执行（可能再调 http_get 等 tool）。
+system prompt 里只放「可用技能」索引（每个一行 ID、名称和用途）；模型判断相关时调
+use_skill(id) 按固定 Skill ID 把正文（剧本）拉进上下文，再照着执行。
 
 依赖单向：tools（本模块）→ skills（加载器）。
 """
@@ -61,47 +61,53 @@ async def _get_tool_schema(db, user_id, args: dict):
 
 
 async def _use_skill(db, user_id, args: dict):
-    name = (args.get("name") or "").strip()
-    if not name:
-        return {"error": "缺少技能名"}
-    slug = _skills.resolve_skill_slug(name)
-    body = _skills.load_skill(name)
+    skill_id = str(args.get("id") or "").strip().upper()
+    if not skill_id:
+        return {"error": "缺少 Skill ID"}
+    body = _skills.load_skill(skill_id)
     source = "builtin"
+    skill_name = next(
+        (item["name"] for item in _skills.skills_index() if item["id"] == skill_id),
+        skill_id,
+    )
     owner_fingerprint = ""
+    content_digest = None
     if body is None and db is not None and user_id is not None:
         from agent.capabilities.skill_registry import SkillCapabilityRegistry
-        row = await SkillCapabilityRegistry().load_user_skill(db, user_id, name)
+        row = await SkillCapabilityRegistry().load_user_skill(db, user_id, skill_id)
         if row is not None:
-            slug = row.slug
             body = row.body
             content_digest = row.content_digest
+            skill_name = row.name
             source = "user"
             owner_fingerprint = fingerprint(str(user_id))
     if body is None:
-        avail = "、".join(s["slug"] for s in _skills.skills_index())
-        return {"error": f"没有名为「{name}」的技能", "available": avail}
-    content_digest = content_digest if source == "user" else _skills.skill_content_digest(slug or name)
+        avail = "、".join(s["id"] for s in _skills.skills_index())
+        return {"error": f"没有 Skill ID 为「{skill_id}」的技能", "available": avail}
+    content_digest = content_digest if source == "user" else _skills.skill_content_digest(skill_id)
     from agent.tools.base import current_dispatch_skill_state
     loaded_state = current_dispatch_skill_state()
     if (
         isinstance(content_digest, str)
         and content_digest
         and loaded_state is not None
-        and loaded_state.get(slug or name) == content_digest
+        and loaded_state.get(skill_id) == content_digest
     ):
         return {
-            "skill": slug or name,
+            "skill_id": skill_id,
+            "skill_name": skill_name,
             "already_loaded": True,
-            "message": "该技能正文已在当前上下文中，无需重复加载。",
+            "message": f"技能「{skill_name}」的正文已在当前上下文中，无需重复加载。",
         }
     marker = {
-        "kind": "skill", "slug": slug or name, "loaded": True,
+        "kind": "skill", "id": skill_id, "loaded": True,
         "content_digest": content_digest,
     }
     if source == "user":
         marker.update({"source": source, "owner_fingerprint": owner_fingerprint})
     return {
-        "skill": slug or name,
+        "skill_id": skill_id,
+        "skill_name": skill_name,
         "content": body,
         "_capability_usage": marker,
     }
@@ -239,15 +245,16 @@ class MetaSkill(BaseSkill):
         Tool(
             name="use_skill",
             label="调用技能",
-            description_short='读取技能正文；name 传技能标识或名字，拿到后按步骤执行',
-            description="按名称拉取一个「技能」的详细做法说明（剧本），拿到后照它执行。"
-                        "可用技能清单见系统提示里的「可用技能」。",
+            description_short='按内部 Skill ID 读取正文；对用户使用技能名称',
+            description="按固定 Skill ID 拉取一个「技能」的详细做法说明（剧本），拿到后照它执行。"
+                        "Skill ID 仅用于内部工具调用；对用户提及该技能时使用加载结果中的 skill_name，不要展示 S/U 编号，除非用户明确询问内部 ID。"
+                        "可用技能清单见系统提示里的「可用技能」或 `list_skills`。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string"},
+                    "id": {"type": "string", "pattern": "^[SU][1-9][0-9]*$"},
                 },
-                "required": ["name"],
+                "required": ["id"],
             },
             handler=_use_skill,
         ),

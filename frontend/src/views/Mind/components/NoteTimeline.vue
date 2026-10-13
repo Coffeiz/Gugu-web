@@ -26,7 +26,7 @@
             @save="md => autosave(n, md)"
             @delete="emit('delete', n)"
             @color="c => emit('color', n, c)"
-            @toggle-task="idx => emit('toggleTask', n, idx)"
+            @toggle-task="(idx: number) => emit('toggleTask', n, idx)"
           />
         </div>
       </div>

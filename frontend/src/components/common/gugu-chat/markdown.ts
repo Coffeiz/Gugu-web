@@ -45,11 +45,11 @@ marked.use({
     const renderLinkAfterObject = r.link
     r.link = function (this: unknown, token: Tokens.Link) {
       const href = String(token.href || '')
-      const match = href.match(/^gugu:\/\/open-skill\/([a-z0-9][a-z0-9-]{0,79})$/i)
+      const match = href.match(/^gugu:\/\/open-skill\/(U[1-9][0-9]*)$/i)
       if (!match) return renderLinkAfterObject.call(this, token)
-      const slug = match[1].toLowerCase()
+      const skillId = match[1].toUpperCase()
       const label = String(token.text || '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] || char))
-      return `<a class="chat-object-card chat-skill-card" href="gugu://open-skill/${slug}" data-skill-slug="${slug}" aria-label="${label}"><span class="chat-object-card-icon">${chatObjectIcon(CHAT_SKILL_ICON_PATH, 'chat-object-card-icon-svg')}</span><span class="chat-object-card-body"><strong>${label}</strong><small>${CHAT_SKILL_LABEL}</small></span><span class="chat-object-card-arrow">${chatObjectIcon(CHAT_OBJECT_LINK_PATH, 'chat-object-card-arrow-svg')}</span></a>`
+      return `<a class="chat-object-card chat-skill-card" href="gugu://open-skill/${skillId}" data-skill-id="${skillId}" aria-label="${label}"><span class="chat-object-card-icon">${chatObjectIcon(CHAT_SKILL_ICON_PATH, 'chat-object-card-icon-svg')}</span><span class="chat-object-card-body"><strong>${label}</strong><small>${CHAT_SKILL_LABEL}</small></span><span class="chat-object-card-arrow">${chatObjectIcon(CHAT_OBJECT_LINK_PATH, 'chat-object-card-arrow-svg')}</span></a>`
     }
     // 关掉删除线渲染：口语里 ~ 很常见（好的~、稍等~），~~ 叠出来会被 GFM 当删除线；
     // 伙伴语气几乎不需要真删除线，把 ~~x~~ 直接渲染成纯文本 x（保留表格等其它 GFM 能力）。

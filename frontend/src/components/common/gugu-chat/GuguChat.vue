@@ -211,7 +211,7 @@ const { refreshAfterTools, onChatActionClick } = useChatActions({
   router,
   onBindPlatform: (platform) => openChatImBind(platform),
   onOpenObject: (type, id) => { void openChatObject(type, id) },
-  onOpenSkill: (slug) => { void router.push({ path: '/skills', query: { skill: slug } }) },
+  onOpenSkill: (skillId) => { void router.push({ path: '/skills', query: { skill: skillId } }) },
 })
 const { openMindRef } = useMindRefActions()
 const fabRef        = ref<InstanceType<typeof GuguChatFab> | null>(null)

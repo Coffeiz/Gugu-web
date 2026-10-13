@@ -80,7 +80,7 @@ RECORD_SPECS = (
     RecordSpec("conversation_batch", "conversations", ConversationBatch, "session_id", "id",
         ("version", "round_id", "created_at"), (("session_id", "session", "conversation"),)),
     RecordSpec("skill", "skills", UserSkill, "owner_id", "id", (
-        "slug", "name", "description_short", "description_long", "category", "body", "related_tools", "source", "enabled"),
+        "skill_id", "name", "description_short", "description_long", "category", "body", "related_tools", "source", "enabled"),
         json_fields=("related_tools",)),
     RecordSpec("feedback", "feedback", Feedback, "user_id", "id", ("category", "content", "created_at")),
     RecordSpec("scheduled_task", "scheduled_tasks", ScheduledTask, "user_id", "id", (
@@ -355,7 +355,7 @@ async def project_record(
     updated = getattr(row, "updated_at", None)
     deleted = getattr(row, "deleted_at", None)
     return PortableEntityRecord(
-        record_schema=f"gugu.{spec.record_type}.v1", portable_id=portable_id,
+        record_schema=f"gugu.{spec.record_type}.{'v2' if spec.record_type == 'skill' else 'v1'}", portable_id=portable_id,
         source_type=spec.record_type,
         created_at=created.isoformat() if created else None,
         updated_at=updated.isoformat() if updated else None,

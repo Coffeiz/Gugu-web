@@ -28,6 +28,23 @@ def _area_from_fixture(messages, fixed_prefix_size=0):
     )
 
 
+def _area_with_native_thinking_projection(
+    thinking: str = "隐藏推理", signature: str = "签名块",
+):
+    area = _area_from_fixture(
+        [_make_msg("user", f"历史{i}" * 40) for i in range(12)]
+        + [_make_msg("assistant", "最近回复")]
+    )
+    projection = area.provider_projection()
+    wire = projection.to_messages()
+    wire[-1]["content"] = [
+        {"type": "thinking", "thinking": thinking, "signature": signature},
+        {"type": "text", "text": "最近回复"},
+    ]
+    area.last_provider_projection = projection.with_messages(wire)
+    return area
+
+
 async def compact_context(messages, *args, **kwargs):
     """测试数据工厂：生产压缩入口仍只接受 MessageArea。"""
     if not isinstance(messages, MessageArea):
@@ -1020,6 +1037,69 @@ class TestCompleteMessagesShape:
         # 末尾历史消息被打上会话内缓存断点
         tail = msgs[1]["content"]
         assert isinstance(tail, list) and tail[-1].get("cache_control")
+
+
+class TestCurrentProjectionCompaction:
+    """内联压缩只复用与当前 canonical Area 对齐的 Provider 投影。"""
+
+    def test_compaction_reuses_current_provider_projection_with_native_thinking(self, monkeypatch):
+        """当前请求的原生 thinking/signature 必须保留在摘要分支的可缓存前缀中。"""
+        captured = []
+        fallback_calls = []
+
+        async def capture_summary(items, _previous=None, **_kwargs):
+            captured.extend(items)
+            return "测试摘要"
+
+        monkeypatch.setattr(
+            "agent.context.compaction._generate_append_summary", capture_summary,
+        )
+        monkeypatch.setattr(
+            "agent.runtime.loopscope_trace.state.record_canonical_history_fallback",
+            lambda: fallback_calls.append(True),
+        )
+        area = _area_with_native_thinking_projection()
+
+        result = asyncio.get_event_loop().run_until_complete(
+            _compact_context_area(area, model_cfg=_model_cfg(60))
+        )
+
+        assert result.changed
+        assert fallback_calls == []
+        assert any(
+            block.get("type") == "thinking" and block.get("signature") == "签名块"
+            for message in captured
+            for block in message.get("content", [])
+            if isinstance(message.get("content"), list)
+        )
+
+    def test_compaction_rebuilds_when_provider_projection_is_stale(self, monkeypatch):
+        """Area 更新后不能把旧 Provider 投影当作当前摘要前缀。"""
+        captured = []
+
+        async def capture_summary(items, _previous=None, **_kwargs):
+            captured.extend(items)
+            return "测试摘要"
+
+        monkeypatch.setattr(
+            "agent.context.compaction._generate_append_summary", capture_summary,
+        )
+        area = _area_with_native_thinking_projection("过期推理", "过期签名")
+        area.append(_make_msg("user", "新追加消息"))
+        fallback_calls = []
+        monkeypatch.setattr(
+            "agent.runtime.loopscope_trace.state.record_canonical_history_fallback",
+            lambda: fallback_calls.append(True),
+        )
+
+        result = asyncio.get_event_loop().run_until_complete(
+            _compact_context_area(area, model_cfg=_model_cfg(60))
+        )
+
+        assert result.changed
+        assert fallback_calls == [True]
+        assert any(message_text(item) == "新追加消息" for item in captured)
+        assert "过期推理" not in str(captured)
 
 
 class TestBranchPrefixHistory:

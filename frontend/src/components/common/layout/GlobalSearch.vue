@@ -85,7 +85,6 @@ interface SearchItem {
   date?: string
   message_id?: number
   canvas_id?: number
-  slug?: string
   enabled?: boolean
   workspace_directory_id?: number
   workspace_directory_name?: string
@@ -196,7 +195,7 @@ function go(type: string, it: SearchItem) {
       router.push('/mind/canvases')
     }
   } else if (type === 'skill') {
-    router.push({ path: '/skills', query: { skill: it.slug || String(it.id) } })
+    router.push({ path: '/skills', query: { skill: String(it.id) } })
   } else if (type === 'mcp') {
     router.push({ path: '/mcp', query: { server: String(it.id) } })
   } else if (type === 'scheduled_task') {

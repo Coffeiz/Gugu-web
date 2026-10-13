@@ -15,6 +15,7 @@ def test_telegram_package_keeps_stable_public_outbound_imports():
 
     assert telegram.send_message is runtime.send_message
     assert telegram.send_file is runtime.send_file
+    assert telegram.send_message_draft is runtime.send_message_draft
     assert telegram.main is runtime.main
 
 

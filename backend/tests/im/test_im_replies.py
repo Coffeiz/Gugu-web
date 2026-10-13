@@ -448,6 +448,35 @@ async def test_qq_tool_status_does_not_consume_passive_reply(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_telegram_tool_event_shows_status_only_without_call_input_or_result(monkeypatch):
+    """回归：Telegram 像 QQ 一样只显示工具完成状态，不发送输入或结果正文。"""
+    from agent.im import replies
+
+    sent = []
+
+    async def fake_text(_payload, text):
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(replies, "send_text", fake_text)
+    payload = {"platform": "telegram", "locale": "zh-CN"}
+
+    assert await replies.send_tool_event(payload, {
+        "type": "tool_call", "label": "联网搜索",
+        "input": {"query": "不应展示的搜索词"},
+    }) is True
+    assert await replies.send_tool_event(payload, {
+        "type": "tool_done", "label": "联网搜索", "status": "success",
+        "result": {"results": [{"title": "结果标题", "url": "https://example.test"}]},
+    }) is True
+
+    assert len(sent) == 1
+    assert sent[0] == "✅ 联网搜索完成"
+    assert "结果标题" not in sent[0]
+    assert "不应展示的搜索词" not in sent[0]
+
+
+@pytest.mark.asyncio
 async def test_interaction_prompt_send_result_is_propagated(monkeypatch):
     from agent.im import loop
     from agent.im import replies

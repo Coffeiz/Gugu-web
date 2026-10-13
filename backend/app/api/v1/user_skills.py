@@ -23,7 +23,6 @@ _registry = SkillCapabilityRegistry()
 
 
 class UserSkillPayload(BaseModel):
-    slug: str = Field(min_length=1, max_length=80)
     name: str = Field(min_length=1, max_length=120)
     description_short: str = Field(min_length=1, max_length=100)
     description_long: str | None = Field(default=None, max_length=500)
@@ -102,7 +101,7 @@ async def _tools_for_skill_update(user_id: object, related_tools: list[str]):
 
 def _serialize(row: UserSkill) -> dict:
     return {
-        "id": row.id, "slug": row.slug, "name": row.name,
+        "id": row.skill_id, "name": row.name,
         "description_short": row.description_short,
         "description_long": row.description_long,
         "category": row.category, "related_tools": list(row.related_tools or ()),
@@ -126,27 +125,31 @@ async def _raise_registration_error(db: AsyncSession, exc: CapabilityRegistratio
 
 
 async def _write_skill(
-    db: AsyncSession, user_id: object, values: dict, *, slug: str | None = None,
+    db: AsyncSession, user_id: object, values: dict, *, skill_id: str | None = None,
 ) -> dict:
     values = dict(values)
-    enabled = values.pop("enabled", True if slug is None else None)
+    enabled = values.pop("enabled", True if skill_id is None else None)
     try:
         _, _, dynamic_tools = await _tools_for_skill_update(
             user_id, values.get("related_tools") or [],
         )
-        if slug is None:
+        if skill_id is None:
             row = await _registry.create_user_skill(
                 db, user_id, dynamic_tools=dynamic_tools, managed_by="user", **values,
             )
             row.enabled = enabled
         else:
             row = await _registry.update_user_skill(
-                db, user_id, slug, dynamic_tools=dynamic_tools,
+                db, user_id, skill_id, dynamic_tools=dynamic_tools,
                 enabled=enabled, managed_by="user", **values,
             )
             if row is None:
                 raise HTTPException(404, "Skill 不存在")
-        return await _commit_skill(db, row)
+        serialized = await _commit_skill(db, row)
+        from app.core import events
+
+        await events.publish(user_id, "skills")
+        return serialized
     except CapabilityRegistrationError as exc:
         await _raise_registration_error(db, exc)
 
@@ -185,16 +188,19 @@ async def create_skill(payload: UserSkillPayload, current_user: User = Depends(g
     )
 
 
-@router.patch("/{slug}")
-async def update_skill(slug: str, payload: UserSkillPatch, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+@router.patch("/{skill_id}")
+async def update_skill(skill_id: str, payload: UserSkillPatch, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     return await _write_skill(
-        db, current_user.id, payload.model_dump(exclude_unset=True), slug=slug,
+        db, current_user.id, payload.model_dump(exclude_unset=True), skill_id=skill_id,
     )
 
 
-@router.delete("/{slug}", status_code=204)
-async def delete_skill(slug: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    deleted = await _registry.delete_user_skill(db, current_user.id, slug)
+@router.delete("/{skill_id}", status_code=204)
+async def delete_skill(skill_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    deleted = await _registry.delete_user_skill(db, current_user.id, skill_id)
     if not deleted:
         raise HTTPException(404, "Skill 不存在")
     await db.commit()
+    from app.core import events
+
+    await events.publish(current_user.id, "skills")

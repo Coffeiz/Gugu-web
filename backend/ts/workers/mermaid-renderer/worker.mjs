@@ -1,12 +1,24 @@
+import { existsSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { Resvg } from '@resvg/resvg-js'
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom'
 import { createHTMLWindow } from 'svgdom'
+import { normalizeMermaidEdgeLabelBounds, normalizeMermaidEdgeStyles, normalizeMermaidKanbanSectionTitles, normalizeMermaidMindmapRootLabel, normalizeMermaidNodeCorners, normalizeMermaidRasterText } from './svg-style.mjs'
+import { prepareMermaidDiagramSource, restoreMermaidDiagramLabels } from './diagram-source.mjs'
+import { createMermaidThemeConfig, resolveMermaidThemeColors } from './theme.mjs'
 
 const MAX_SOURCE_CHARS = 20_000
+const MAX_DIAGRAMS = 4
 const MAX_SVG_BYTES = 5 * 1024 * 1024
 const MAX_DIMENSION = 4_096
 const MAX_PIXELS = 5_000_000
 const MAX_PNG_BYTES = 3 * 1024 * 1024
+const CJK_FONT_FILE = [
+  new URL('./fonts/NotoSansSC-VariableFont_wght.ttf', import.meta.url),
+  new URL('../../../../frontend/public/fonts/Noto_Sans_SC/NotoSansSC-VariableFont_wght.ttf', import.meta.url),
+  new URL('../../frontend/public/fonts/Noto_Sans_SC/NotoSansSC-VariableFont_wght.ttf', import.meta.url),
+].map(fileURLToPath).find(existsSync)
+if (!CJK_FONT_FILE) throw new Error('cjk_font_unavailable')
 const FORBIDDEN_SVG_ELEMENTS = new Set([
   'a', 'animate', 'animatemotion', 'animatetransform', 'audio', 'foreignobject',
   'iframe', 'image', 'script', 'set', 'video',
@@ -17,7 +29,7 @@ const input = await new Promise((resolve, reject) => {
   let size = 0
   process.stdin.on('data', (chunk) => {
     size += chunk.length
-    if (size > MAX_SOURCE_CHARS * 4 * 3 + 1024) {
+    if (size > MAX_SOURCE_CHARS * MAX_DIAGRAMS * 4 + 1024) {
       reject(new Error('input_too_large'))
       process.stdin.destroy()
       return
@@ -28,9 +40,11 @@ const input = await new Promise((resolve, reject) => {
   process.stdin.on('error', reject)
 })
 
-const sources = JSON.parse(input)
+const request = JSON.parse(input)
+const sources = Array.isArray(request) ? request : request?.sources
+const colors = resolveMermaidThemeColors(Array.isArray(request) ? {} : request?.theme)
 if (
-  !Array.isArray(sources) || sources.length > 3 ||
+  !Array.isArray(sources) || sources.length > MAX_DIAGRAMS ||
   sources.some((source) => typeof source !== 'string' || !source || source.length > MAX_SOURCE_CHARS)
 ) throw new Error('input_too_large')
 
@@ -64,6 +78,76 @@ Object.defineProperty(window.Element.prototype, 'parentElement', {
     return parent?.nodeType === 1 ? parent : null
   },
 })
+// svgdom 的 getBBox 会漏算 flowchart 多行标签的行高，也会低估中文字符宽度，导致节点过窄；
+// Resvg 再按完整字体绘制时，文字会穿出节点。测量阶段补齐行高和中文宽度，让 Mermaid 同步调整布局。
+const originalGetTextBBox = window.SVGGraphicsElement.prototype.getBBox
+const fullWidthTextCharacter = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\u3000-\u303f\uff01-\uff60]/u
+Object.defineProperty(window.SVGGraphicsElement.prototype, 'getBBox', {
+  configurable: true,
+  value() {
+    const bounds = originalGetTextBBox.call(this)
+    if (this.nodeName !== 'text') return bounds
+
+    const positionedLines = Array.from(this.childNodes || []).filter((child) =>
+      child.nodeType === 1 && child.localName === 'tspan' &&
+      (child.hasAttribute('y') || child.hasAttribute('dy')),
+    )
+    const computedFontSize = window.getComputedStyle(this).fontSize
+    const fontSize = Number.parseFloat(computedFontSize || this.style.fontSize || this.getAttribute('font-size') || '16') || 16
+    const lines = positionedLines.length
+      ? positionedLines.map(line => line.textContent || '')
+      : [this.textContent || '']
+    const containsFullWidthText = lines.some(line => [...line].some(character => fullWidthTextCharacter.test(character)))
+    const measuredWidth = containsFullWidthText
+      ? Math.max(...lines.map(line => [...line].reduce((width, character) => {
+        if (fullWidthTextCharacter.test(character)) return width + fontSize
+        if (/\s/u.test(character)) return width + fontSize * 0.33
+        if (/[ilI.,:;'|!]/u.test(character)) return width + fontSize * 0.32
+        if (/[MW@%]/u.test(character)) return width + fontSize * 0.85
+        if (character === '→') return width + fontSize * 0.95
+        return width + fontSize * 0.56
+      }, 0)))
+      : bounds.width
+    const height = positionedLines.length >= 2 ? positionedLines.length * fontSize * 1.1 : bounds.height
+    if (measuredWidth <= bounds.width && height <= bounds.height) return bounds
+    return {
+      ...bounds,
+      width: Math.max(bounds.width, measuredWidth),
+      right: Math.max(bounds.right, bounds.x + measuredWidth),
+      y: positionedLines.length >= 2 ? Math.min(bounds.y, -height / 2) : bounds.y,
+      height,
+    }
+  },
+})
+// d3-selection 的 Sankey 节点 join 依赖 compareDocumentPosition；svgdom 未实现它，
+// 这里按 DOM 祖先链补齐节点顺序关系，供光栅化器使用。
+if (window.Node?.prototype && typeof window.Node.prototype.compareDocumentPosition !== 'function') {
+  Object.defineProperty(window.Node.prototype, 'compareDocumentPosition', {
+    configurable: true,
+    value(other) {
+      if (this === other) return 0
+      const thisAncestors = []
+      const otherAncestors = []
+      for (let node = this; node; node = node.parentNode) thisAncestors.unshift(node)
+      for (let node = other; node; node = node.parentNode) otherAncestors.unshift(node)
+      if (thisAncestors[0] !== otherAncestors[0]) return 1 | 32
+
+      let commonIndex = 0
+      while (
+        commonIndex < thisAncestors.length && commonIndex < otherAncestors.length &&
+        thisAncestors[commonIndex] === otherAncestors[commonIndex]
+      ) commonIndex += 1
+      if (commonIndex === thisAncestors.length) return 4 | 16
+      if (commonIndex === otherAncestors.length) return 2 | 8
+
+      const parent = thisAncestors[commonIndex - 1]
+      const siblings = Array.from(parent.childNodes || [])
+      return siblings.indexOf(thisAncestors[commonIndex]) < siblings.indexOf(otherAncestors[commonIndex])
+        ? 4
+        : 2
+    },
+  })
+}
 globalThis.CSSStyleSheet ??= class {
   cssRules = []
   insertRule(rule, index = this.cssRules.length) {
@@ -89,26 +173,27 @@ mermaid.initialize({
   // SVG 做严格元素/属性校验，拒绝链接、脚本、动画、HTML 与外部资源。
   securityLevel: 'loose',
   htmlLabels: false,
+  // Mermaid 的 Journey 默认使用 foreignObject 包裹标签；IM 图片渲染拒绝 HTML 节点，
+  // 改用 SVG 文字，避免整张图被安全校验拒绝。
+  journey: { textPlacement: 'svg' },
+  // 时序图的 actor/message/note 有独立字体配置，themeVariables.fontFamily 和 themeCSS
+  // 不会覆盖其默认的 Trebuchet + 400；显式指定可变字体和栅格化需要的字重。
+  sequence: {
+    actorFontFamily: '"Noto Sans SC", sans-serif',
+    actorFontWeight: 600,
+    messageFontFamily: '"Noto Sans SC", sans-serif',
+    messageFontWeight: 600,
+    noteFontFamily: '"Noto Sans SC", sans-serif',
+    noteFontWeight: 600,
+  },
   suppressErrorRendering: true,
   maxTextSize: MAX_SOURCE_CHARS,
   maxEdges: 1_000,
   secure: [
     'secure', 'securityLevel', 'startOnLoad', 'maxTextSize', 'suppressErrorRendering',
-    'maxEdges', 'htmlLabels', 'theme', 'themeVariables', 'themeCSS', 'flowchart', 'look', 'layout',
+    'maxEdges', 'htmlLabels', 'theme', 'themeVariables', 'themeCSS', 'flowchart', 'journey', 'sequence', 'look', 'layout',
   ],
-  layout: 'dagre',
-  look: 'classic',
-  theme: 'base',
-  themeVariables: {
-    background: '#ffffff',
-    primaryColor: '#f3f1f5',
-    primaryTextColor: '#28242b',
-    primaryBorderColor: '#8073aa',
-    lineColor: '#8073aa',
-    secondaryColor: '#e8e3f2',
-    tertiaryColor: '#ffffff',
-    fontFamily: 'sans-serif',
-  },
+  ...createMermaidThemeConfig(colors, '"Noto Sans SC", sans-serif'),
 })
 
 function diagramType(source) {
@@ -120,11 +205,13 @@ function diagramType(source) {
 
 for (let index = 0; index < sources.length; index += 1) {
   let png = Buffer.alloc(0)
-  const type = diagramType(sources[index])
+  const prepared = prepareMermaidDiagramSource(sources[index], { forRasterizer: true })
+  const source = prepared.source
+  const type = diagramType(source)
   try {
     let svg
     try {
-      ({ svg } = await mermaid.render(`gugu-${process.pid}-${index}`, sources[index]))
+      ({ svg } = await mermaid.render(`gugu-${process.pid}-${index}`, source))
     } catch {
       throw new Error('diagram_parse_or_render_failed')
     }
@@ -138,6 +225,22 @@ for (let index = 0; index < sources.length; index += 1) {
     if (!root || root.localName.toLowerCase() !== 'svg') {
       throw new Error('invalid_svg')
     }
+    normalizeMermaidMindmapRootLabel(root)
+    restoreMermaidDiagramLabels(root, prepared.labels)
+    normalizeMermaidNodeCorners(root)
+    if (type === 'kanban') normalizeMermaidKanbanSectionTitles(root)
+    normalizeMermaidEdgeLabelBounds(root)
+    const rasterTextOptions = {
+      allText: true,
+      fontFamily: 'Noto Sans SC',
+      fontWeight: 600,
+      colorAllText: type === 'sequencediagram' || type === 'journey',
+      // Resvg 的可变字体在甘特图、饼图和 Journey 上即使设为 600 仍明显偏细；
+      // 与 flowchart 的 CJK 标签采用同样的轻描边补偿，统一所有图片的视觉字重。
+      strokeAllText: true,
+    }
+    normalizeMermaidRasterText(root, colors.primaryTextColor, rasterTextOptions)
+    normalizeMermaidEdgeStyles(root, colors.arrowheadColor)
     for (const element of document.getElementsByTagName('*')) {
       if (element.namespaceURI !== 'http://www.w3.org/2000/svg') {
         throw new Error('non_svg_content_rejected')
@@ -182,7 +285,14 @@ for (let index = 0; index < sources.length; index += 1) {
     root.setAttribute('height', String(height))
     const validatedSvg = new XMLSerializer().serializeToString(root)
     try {
-      png = new Resvg(validatedSvg).render().asPng()
+      png = new Resvg(validatedSvg, {
+        background: colors.background,
+        font: {
+          fontFiles: [CJK_FONT_FILE],
+          defaultFontFamily: 'Noto Sans SC',
+          sansSerifFamily: 'Noto Sans SC',
+        },
+      }).render().asPng()
     } catch {
       throw new Error('png_conversion_failed')
     }

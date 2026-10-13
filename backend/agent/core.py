@@ -189,7 +189,7 @@ _WRITE_PREFIXES = (
 )
 
 
-def _loaded_skill_slugs(messages) -> dict[str, str]:
+def _loaded_skill_ids(messages) -> dict[str, str]:
     """从 Skill 的结构化使用标记找出已经进入上下文的正文。
 
     不扫描正文、不做关键词匹配；只读取 provider history 中 role=tool 或 tool_result
@@ -209,10 +209,10 @@ def _loaded_skill_slugs(messages) -> dict[str, str]:
             return
         marker = value.get("_capability_usage")
         if isinstance(marker, dict) and marker.get("kind") == "skill" and marker.get("loaded"):
-            slug = marker.get("slug")
+            skill_id = marker.get("id")
             digest = marker.get("content_digest")
-            if isinstance(slug, str) and slug and isinstance(digest, str) and digest:
-                loaded[slug] = digest
+            if isinstance(skill_id, str) and skill_id and isinstance(digest, str) and digest:
+                loaded[skill_id] = digest
 
     for entry in messages.entries:
         message = entry.canonical_message

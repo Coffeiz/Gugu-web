@@ -81,6 +81,8 @@ owner 闲置反思触发的会话压缩，应先在捕获主请求快照的同�
 
 2026-10-13：真实 MiniMax-M3.1-Flash-Preview / Anthropic run 回放确认，反思分支无条件删除主请求已恢复的原生 thinking/signature 会破坏前缀。同模型 wire 分支现保留原生块，继续清理外协议 reasoning_content 和孤立工具事件；默认历史清洗与续接身份校验保持既有语义。两条真实请求恢复后的 wire digest 均与原 run 精确匹配，隔离 A/B 缓存率从 37.9%/0% 提升至 96.2%/96.6%。后台持久历史重建未改变，不保证相同提升；详见 `docs/reports/OPT-Cache-Strategy-2026-10-13.md`。
 
+2026-10-13：自动内联压缩同样必须复用与当前 Area revision/digest/entry count/固定前缀边界一致的 Provider projection，不能把 wire 消息降成 canonical history 重渲染，否则会丢失原生 thinking/signature。真实 QQ 历史隔离 A/B 的 canonical 重建与 wire 复用缓存率分别为 88.54%/99.04%；历史配置指纹不匹配时仅作为明确标记的历史回放结果，不代表当前续接状态可复用。详见 `docs/reports/2026-10-13-INVEST-内联压缩thinking缓存AB.md`。
+
 同日协议扩查：Responses 续接开/关及 Anthropic 关闭续接均通过主请求→快照→反思的 SDK payload 前缀回归；Chat Completions 的 wire 历史已含基础 system，分支不可再次无条件插入，否则会重复人格前缀。该插入问题已修复，字符串和 text block 两种形态均覆盖。Responses 原生 reasoning/function-call 项继续原样传递，协议回归不代表真实 provider 缓存率保证。
 
 **修改缓存策略前必须**：

@@ -24,6 +24,44 @@ async def im_display_preferences(user_id) -> tuple[bool, bool]:
         return True, False
 
 
+async def im_user_locale(user_id) -> str:
+    """读取用户界面语言，偏好缺失或不可用时使用简体中文。"""
+    from app.db import session as db_session
+    from app.services.user_preferences import get_user_locale
+
+    try:
+        db_session.ensure_engine()
+        if db_session._SessionLocal is None:
+            return "zh-CN"
+        async with db_session._SessionLocal() as db:
+            locale = await get_user_locale(db, user_id)
+        return locale if locale in {"zh-CN", "ja-JP", "en-US"} else "zh-CN"
+    except Exception:
+        return "zh-CN"
+
+
+async def im_mermaid_theme_preferences(user_id) -> dict[str, str]:
+    """读取 Mermaid 图片渲染需要的主题偏好；异常时使用默认浅色主题。"""
+    from sqlalchemy import select
+    from app.db import session as db_session
+    from app.models import UserPreferences
+
+    try:
+        db_session.ensure_engine()
+        if db_session._SessionLocal is None:
+            return {}
+        async with db_session._SessionLocal() as db:
+            row = await db.scalar(select(UserPreferences).where(UserPreferences.user_id == user_id))
+            data = (row.data or {}) if row else {}
+        return {
+            "theme": data.get("theme") if data.get("theme") in {"light", "dark", "system"} else "light",
+            "themeFamily": data.get("theme_family") if data.get("theme_family") in {"glass", "mono"} else "glass",
+            "palette": data.get("palette") if data.get("palette") in {"mist", "cafe", "rose", "sky", "sage"} else "mist",
+        }
+    except Exception:
+        return {}
+
+
 async def show_tool_interactions(user_id) -> bool:
     """读取用户的工具交互显示开关；缺少设置时默认开启。"""
     return (await im_display_preferences(user_id))[0]

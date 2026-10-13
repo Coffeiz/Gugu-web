@@ -115,12 +115,17 @@ async def test_replace_worker_switches_all_data_and_rollback_restores_snapshot(
     import app.services.data_portability.memories as memories
     import app.services.data_portability.worker as worker
     import app.services.storage as storage_service
+    import app.services.storage.quota_ledger as quota_ledger
     from app.api.v1.data_portability import ImportRollback, rollback_import
 
     secret = "test-portability-key"
     monkeypatch.setattr(config, "get_settings", lambda: SimpleNamespace(secret_key=secret))
     monkeypatch.setattr(crypto_stream, "get_settings", lambda: SimpleNamespace(secret_key=secret))
-    storage = LocalStorageBackend(tmp_path / "private-storage")
+    storage_root = tmp_path / "private-storage"
+    storage = LocalStorageBackend(storage_root)
+    quota_settings = quota_ledger.get_settings()
+    quota_settings.storage.local_path = str(storage_root)
+    monkeypatch.setattr(quota_ledger, "get_settings", lambda: quota_settings)
     monkeypatch.setattr(storage_service, "get_storage", lambda: storage)
     monkeypatch.setattr(worker, "get_storage", lambda: storage)
     monkeypatch.setattr(memories, "get_storage", lambda: storage)

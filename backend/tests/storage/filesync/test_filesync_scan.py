@@ -404,6 +404,16 @@ async def test_cancel_during_real_file_hash_chunk_joins_thread_and_removes_manif
 
     monkeypatch.setattr(scan.os, "fdopen", fdopen)
     stop = Event()
+    if stop_mode == "timeout":
+        # run_scan_in_thread 的超时预算从提交线程池任务后立即开始。先等待真实文件
+        # 读取进入门闩，再开始计时，避免忙碌的 xdist worker 让 5 秒预算先耗尽。
+        original_wait = asyncio.wait
+
+        async def wait_after_hash_starts(futures, *, timeout=None, **kwargs):
+            assert await asyncio.to_thread(chunk_read.wait, 30)
+            return await original_wait(futures, timeout=timeout, **kwargs)
+
+        monkeypatch.setattr(scan.asyncio, "wait", wait_after_hash_starts)
     with ThreadPoolExecutor(max_workers=1) as executor:
         task = asyncio.create_task(run_scan_in_thread(
             executor,

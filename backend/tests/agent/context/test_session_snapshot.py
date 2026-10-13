@@ -343,7 +343,7 @@ def test_initialize_snapshot_preserves_goal_control_state():
             "baseline_digest": "message-fingerprint",
         },
         "user_skill_snapshot": [{
-            "name": "saved-skill", "kind": "skill", "source": "user",
+            "name": "U4", "display_name": "saved-skill", "kind": "skill", "source": "user",
             "description_short": "已冻结的技能目录",
         }],
     }
@@ -361,7 +361,7 @@ def test_initialize_snapshot_preserves_goal_control_state():
     assert session.session_context["goal_mode"] is True
     assert session.session_context["stance_digest"] == "stable-stance"
     assert session.session_context["provider_cache_anchor"]["baseline_digest"] == "message-fingerprint"
-    assert session.session_context["user_skill_snapshot"][0]["name"] == "saved-skill"
+    assert session.session_context["user_skill_snapshot"][0]["name"] == "U4"
 
 
 def test_history_baseline_never_moves_back_from_session_watermark():

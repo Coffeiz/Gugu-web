@@ -209,7 +209,8 @@ def _validate_record_contract(record: PortableEntityRecord, category: str) -> No
     categories.update({"account": "account", "preferences": "preferences"})
     if categories.get(record.source_type) != category:
         raise ValueError("可移植记录类型与类别不匹配")
-    if record.record_schema != f"gugu.{record.source_type}.v1":
+    expected_version = "v2" if record.source_type == "skill" else "v1"
+    if record.record_schema != f"gugu.{record.source_type}.{expected_version}":
         raise ValueError("不支持的可移植记录 schema")
 
 

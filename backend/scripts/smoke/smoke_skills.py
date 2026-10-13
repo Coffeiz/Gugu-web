@@ -5,7 +5,7 @@
     cd backend && .venv/bin/python scripts/smoke/smoke_skills.py --allow-real-network
 
 覆盖：
-  · skills 加载器：frontmatter 解析、按 slug / name 取正文、未知返回 None
+  · skills 加载器：frontmatter 解析、按稳定 ID 取正文、未知返回 None
   · use_skill 工具：拉到正文 / 未知技能报 error（经真实 registry.dispatch）
   · http_get：SSRF 闸门；真实外网抓取需显式传入 --allow-real-network
   · builder：默认注入全部内置 Skill 索引，空列表可显式关闭
@@ -45,14 +45,13 @@ _UID = "00000000-0000-0000-0000-000000000000"
 
 async def main(*, allow_real_network: bool):
     print("【1】skills 加载器")
-    idx = skills.skills_index(["weather"])
+    idx = skills.skills_index(["S12"])
     name = idx[0]["name"] if idx else ""
-    check("skills_index 命中 weather", len(idx) == 1 and idx[0]["slug"] == "weather", str(idx))
-    check("frontmatter name 解析", bool(name) and name != "weather", str(idx))
-    check("frontmatter description→when 解析", idx and len(idx[0]["when"]) > 0, str(idx))
-    check("load_skill by slug", (skills.load_skill("weather") or "").find("wttr.in") >= 0)
-    check("load_skill by name", (skills.load_skill(name) or "").find("wttr.in") >= 0)
-    check("load_skill 未知返回 None", skills.load_skill("不存在的技能") is None)
+    check("skills_index 命中 S12", len(idx) == 1 and idx[0]["id"] == "S12", str(idx))
+    check("frontmatter name 解析", bool(name) and name != "S12", str(idx))
+    check("frontmatter description 解析", idx and bool(idx[0]["description_short"]), str(idx))
+    check("load_skill by ID", (skills.load_skill("S12") or "").find("wttr.in") >= 0)
+    check("load_skill 未知返回 None", skills.load_skill("S999") is None)
 
     print("【2】http_get · SSRF 闸门（纯逻辑，不联网）")
     check("公网地址放行", not is_blocked_ip(ipaddress.ip_address("93.184.216.34")))
@@ -62,10 +61,10 @@ async def main(*, allow_real_network: bool):
     check("CGNAT 地址拦截", is_blocked_ip(ipaddress.ip_address("100.64.0.1")))
 
     print("【3】builder 注入「可用技能」索引")
-    sp_on = build_prompt("default", "测试", [], [], {}, None, skills=["weather"])
+    sp_on = build_prompt("default", "测试", [], [], {}, None, skills=["S12"])
     sp_off = build_prompt("default", "测试", [], [], {}, None, skills=[])
     check("传 skills → 含『## 可用技能』", "## 可用技能" in sp_on)
-    check("索引含 weather slug", "`weather`" in sp_on)
+    check("索引含系统 Skill ID 与名称", "`S12`" in sp_on and "天气" in sp_on)
     check("不传 skills → 不注入", "## 可用技能" not in sp_off)
 
     print("【4】系统能力接线")
@@ -73,12 +72,12 @@ async def main(*, allow_real_network: bool):
     check("tool_names 含 http_get", "http_get" in names)
     check("tool_names 含 use_skill", "use_skill" in names)
     check("tool_names 含 send_email", "send_email" in names)
-    check("默认索引含 email", "`email`" in build_prompt("default", "测试", [], [], {}, None))
+    check("默认索引含系统 Skill ID", "`S2`" in build_prompt("default", "测试", [], [], {}, None))
 
     print("【5】use_skill 工具（真实 dispatch）")
-    out, _ = await registry.dispatch(_UID, "use_skill", {"name": "weather"})
+    out, _ = await registry.dispatch(_UID, "use_skill", {"id": "S12"})
     check("use_skill 拉到正文", "wttr.in" in out)
-    out2, _ = await registry.dispatch(_UID, "use_skill", {"name": "不存在"})
+    out2, _ = await registry.dispatch(_UID, "use_skill", {"id": "S999"})
     check("use_skill 未知报 error", '"error"' in out2)
 
     print("【6】http_get SSRF 拦截（不联网）")
@@ -89,7 +88,7 @@ async def main(*, allow_real_network: bool):
     names = all_system_tool_names()
     check("web_search 注册（SearXNG）", "web_search" in names)
     check("deep_research 注册（Tavily）", "deep_research" in names)
-    check("news skill 已移除", skills.load_skill("news") is None)
+    check("未知系统 Skill ID 不会加载", skills.load_skill("S999") is None)
     from app.core.config import get_settings
     if allow_real_network:
         print("已显式允许外网：执行真实 HTTP 与搜索检查")

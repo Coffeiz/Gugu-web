@@ -309,7 +309,7 @@ async def ref_suggest(
             db, current_user.id, limit=limit,
         )
         recent.extend(MindRefSuggestItem(type="skill", id=x.id, label=x.name,
-                                         subtitle=f"/{x.slug}") for x in skills)
+                                         subtitle=x.skill_id) for x in skills)
         recent.extend(MindRefSuggestItem(type="mcp", id=str(x.id), label=x.name,
                                          subtitle=x.transport) for x in mcp_servers)
         recent.extend(MindRefSuggestItem(type="scheduled_task", id=x.id, label=x.name,
