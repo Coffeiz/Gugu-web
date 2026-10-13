@@ -242,7 +242,7 @@ async def test_post_removes_web_only_gugu_links_for_qq(monkeypatch):
     monkeypatch.setattr(qq_outbound, "_qq_request", fake_request)
 
     await qq_outbound._post(
-        "bot-1", "ou_1", "文件已保存：[打开文件](gugu://open-file/123)", "msg-1", "smart"
+        "bot-1", "ou_1", "文件已保存：[打开文件](gugu://open-file/123)", "msg-1", "compat"
     )
 
     assert calls[0]["msg_type"] == 0
@@ -250,7 +250,7 @@ async def test_post_removes_web_only_gugu_links_for_qq(monkeypatch):
     assert "gugu://" not in str(calls[0])
 
 
-async def test_post_smart_mode_only_uses_markdown_for_markdown_content(monkeypatch):
+async def test_post_markdown_mode_keeps_plain_and_formatted_content_in_markdown(monkeypatch):
     monkeypatch.setattr(qq_outbound, "_next_seq", _fake_next_seq)
     calls = []
 
@@ -259,11 +259,11 @@ async def test_post_smart_mode_only_uses_markdown_for_markdown_content(monkeypat
 
     monkeypatch.setattr(qq_outbound, "_qq_request", fake_request)
 
-    await qq_outbound._post("bot-1", "ou_1", "普通文本", "msg-1", "smart")
-    await qq_outbound._post("bot-1", "ou_1", "**加粗**", "msg-2", "smart")
+    await qq_outbound._post("bot-1", "ou_1", "普通文本", "msg-1", "markdown")
+    await qq_outbound._post("bot-1", "ou_1", "**加粗**", "msg-2", "markdown")
 
-    assert calls[0]["msg_type"] == 0
-    assert calls[0]["content"] == "普通文本"
+    assert calls[0]["msg_type"] == 2
+    assert calls[0]["markdown"] == {"content": "普通文本"}
     assert calls[1]["msg_type"] == 2
     assert calls[1]["markdown"] == {"content": "**加粗**"}
 

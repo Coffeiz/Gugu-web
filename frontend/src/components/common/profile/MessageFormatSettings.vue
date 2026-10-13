@@ -20,9 +20,14 @@ const scopes = [
 ] as const
 const options = [
   { key: 'compat', labelKey: 'profileImUi.compatFormat' },
-  { key: 'smart', labelKey: 'profileImUi.smartFormat' },
-  { key: 'markdown', labelKey: 'profileImUi.forceMarkdown' },
+  { key: 'markdown', labelKey: 'profileImUi.markdownFormat' },
 ] as const
-function format(scope: 'group' | 'private'): string { return scope === 'group' ? (props.bot.group_message_format ?? 'compat') : (props.bot.private_message_format ?? 'smart') }
-function setFormat(scope: 'group' | 'private', mode: string) { emit('change', scope, mode) }
+function format(scope: 'group' | 'private'): string {
+  const value = scope === 'group' ? props.bot.group_message_format : props.bot.private_message_format
+  if (scope === 'group') return value === 'markdown' ? 'markdown' : 'compat'
+  return value === 'compat' ? 'compat' : 'markdown'
+}
+function setFormat(scope: 'group' | 'private', mode: string) {
+  emit('change', scope, mode)
+}
 </script>

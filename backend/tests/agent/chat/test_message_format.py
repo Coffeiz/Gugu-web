@@ -5,9 +5,9 @@ from agent.im.message_format import (
 )
 
 
-def test_default_message_format_keeps_groups_compatible_and_private_smart():
+def test_default_message_format_keeps_groups_compatible_and_private_markdown():
     assert default_message_format("group") == "compat"
-    assert default_message_format("c2c") == "smart"
+    assert default_message_format("c2c") == "markdown"
 
 
 def test_compatibility_mode_always_uses_plain_text():
@@ -16,13 +16,6 @@ def test_compatibility_mode_always_uses_plain_text():
 
 def test_markdown_mode_always_uses_markdown():
     assert message_type("普通文本", "markdown") == 2
-
-
-def test_smart_mode_only_uses_markdown_for_clear_signals():
-    assert message_type("普通文本", "smart") == 0
-    assert message_type("**重点**", "smart") == 2
-    assert message_type("- 第一项\n- 第二项", "smart") == 2
-    assert message_type("[链接](https://example.com)", "smart") == 2
 
 
 def test_missing_mode_preserves_legacy_markdown_behavior():

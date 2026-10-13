@@ -1487,11 +1487,11 @@ class UserBot(Base):
     group_owner_memory_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     # 群成员可用工具白名单；默认含群上下文搜索，不开放用户私有内容和写操作。
     group_allowed_tools: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=lambda: ["web_search", "http_get", "image_search", "read_file", "send_file", "group_context_search"])
-    # QQ 文本出站格式：compat=纯文本，smart=按内容选择，markdown=强制 Markdown。
+    # QQ 文本出站格式：compat=兼容纯文本，markdown=Markdown 排版。
     group_message_format: Mapped[str] = mapped_column(String(16), default="compat")
-    private_message_format: Mapped[str] = mapped_column(String(16), default="smart")
-    # QQ C2C 私聊是否使用官方 stream_messages；群聊永远不走该接口。
-    private_streaming_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    private_message_format: Mapped[str] = mapped_column(
+        String(16), default="markdown", server_default="markdown"
+    )
     # QQ/Telegram 当前 Bot 作用域内的 owner 身份；不作为跨 Bot 全局身份使用。
     owner_platform_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, default=None)
     owner_bound_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
