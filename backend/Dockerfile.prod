@@ -42,10 +42,14 @@ FROM node:22-trixie AS rag-runtime
 WORKDIR /rag
 COPY backend/ts/workers/rag/package.json ./package.json
 RUN npm install --omit=dev --ignore-scripts --no-fund --no-audit \
+        @xmldom/xmldom@0.9.12 \
         ali-oss@6.23.0 \
         @node-rs/jieba@2.0.1 \
         @node-rs/jieba-linux-x64-gnu@2.0.1 \
-    && node -e "Promise.all([import('@node-rs/jieba'), import('ali-oss')]).then(() => console.log('RAG runtime dependencies ready'))"
+        @resvg/resvg-js@2.6.2 \
+        mermaid@11.17.2 \
+        svgdom@0.1.25 \
+    && node -e "Promise.all([import('@node-rs/jieba'), import('ali-oss'), import('@resvg/resvg-js'), import('svgdom'), import('mermaid')]).then(() => console.log('Node runtime dependencies ready'))"
 
 FROM python:3.14-slim-trixie
 
@@ -127,6 +131,7 @@ COPY backend/compose_bootstrap.py ./compose_bootstrap.py
 COPY backend/scripts/runtime/sandbox_rootless_init.sh /usr/local/bin/gugu-sandbox-init.sh
 COPY backend/bin/gugu-rag-ts-worker.mjs ./bin/gugu-rag-ts-worker.mjs
 COPY backend/bin/gugu-filesync-ts-worker.cjs ./bin/gugu-filesync-ts-worker.cjs
+COPY backend/ts/workers/mermaid-renderer/worker.mjs ./bin/gugu-mermaid-worker.mjs
 COPY --from=rag-runtime /rag/node_modules ./bin/node_modules
 COPY backend/scripts/runtime/prepare_rootless_storage.py /usr/local/bin/prepare_rootless_storage.py
 RUN mkdir -p logs \
@@ -143,7 +148,8 @@ RUN mkdir -p logs \
     && ! command -v hg
 
 RUN node bin/gugu-rag-ts-worker.mjs --version \
-    && node bin/gugu-filesync-ts-worker.cjs --version
+    && node bin/gugu-filesync-ts-worker.cjs --version \
+    && cd /app/bin && node -e "Promise.all([import('mermaid'), import('@resvg/resvg-js'), import('@xmldom/xmldom'), import('svgdom')]).then(() => console.log('Mermaid PNG runtime ready'))"
 
 EXPOSE 8000
 

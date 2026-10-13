@@ -1,8 +1,8 @@
 # PRD-MERMAID-1：统一 Mermaid 图表体验与跨端 PNG 输出
 
-> 状态：Phase 0/1/2 已完成；Phase 3/4 待实施
+> 状态：Phase 0/1/2/3 已完成；Phase 4 整体复查中
 > 创建：2026-10-12
-> 最近更新：2026-10-12
+> 最近更新：2026-10-13
 > 所属层：前端内容展示、Agent 输出、IM Gateway
 > 关联模块：`frontend/src/components/common/content/MarkdownView.vue`、`frontend/src/components/common/viewers/TextViewer.vue`、`frontend/src/components/common/gugu-chat/markdown.ts`、`frontend/src/utils/markdown.ts`、`frontend/src/utils/mermaidTheme.ts`、`frontend/src/utils/mermaidInteraction.ts`、`backend/agent/prompts/persona.md`、`backend/agent/im/loop.py`、`backend/agent/im/replies.py`、`backend/agent/gateway/qq.py`、`backend/agent/gateway/feishu.py`、`backend/agent/gateway/telegram.py`、`backend/agent/gateway/wechat.py`
 > 关联文档：[[PRD-UI-4-统一弹层与模态交互架构]]、[[PRD-UI-6-前端国际化与文案归拢方案]]、[[PRD-IM-12-QQ消息格式兼容策略]]、[[PRD-IM-13-QQ私聊流式回复]]、[[PRD-IM-14-飞书工具调用摘要卡片]]
@@ -269,6 +269,13 @@ backend/
 - 交付物：QQ、飞书、Telegram、微信的 PNG 图表回复。
 - 验收：每个平台收到可打开的 PNG 图片消息；普通文本顺序正确；不发送 Mermaid 源码附件；错误图表和图片发送失败不影响正常文本和 Run 成功收尾。
 
+#### Phase 3 验证结果（2026-10-13）
+
+- 新增短生命周期 Node renderer：复用锁定的 Mermaid 版本，使用 SVGDOM 与 Resvg 输出 PNG；Python 侧限制并发、源长度、CPU/超时、文件大小和进程回收，seccomp 禁止 renderer 网络系统调用；SVG 输出通过元素、属性、命名空间和外部引用校验后才栅格化。
+- 回复处理只转换完整 Mermaid fence，限制每轮图表数；文本与图片按回复顺序发送。QQ 流式占位、飞书流式卡片收尾及各平台现有图片 Gateway 均有行为测试；渲染或发图失败保留源码/正文回退，不影响 Run 完成。
+- devserver 定向回归 37 项通过（2 项现有依赖弃用警告）；冻结锁文件安装校验通过。真实 renderer 对 flowchart、sequence、class 三类图产出有效 PNG；click 链接、HTML label 和外部 CSS URL 输入均被拒绝并回退。Node 子进程峰值 RSS 约 193 MiB。
+- 自动化验证覆盖四个平台 Gateway 的图片载荷派发，但本阶段未用真实平台账号发消息；逐平台人工收件验证及集成镜像体积复核列入 Phase 4。
+
 ### Phase 4：整体回归与发布准备
 
 - 时间：全部功能完成后。
@@ -354,9 +361,9 @@ backend/
 
 ### Phase 3：IM PNG 输出
 
-- [ ] `MERMAID-007` 新增 IM 最终回复 Mermaid 提取和服务端 PNG 渲染协调。验收：只消费完整 fence；有输入、并发、超时、像素和输出字节限制；失败与 Run 状态隔离。
-- [ ] `MERMAID-008` 将 PNG bytes 接入统一媒体出站并完成四平台适配。验收：消息顺序正确、只发 PNG、没有永久文件记录、发送失败不吞普通文本。
-- [ ] `MERMAID-009` 补齐安全、平台、回归测试和人工验收记录。验收：第 9 节全部通过；日志脱敏、渲染隔离和回滚路径复审完成。
+- [x] `MERMAID-007` 新增 IM 最终回复 Mermaid 提取和服务端 PNG 渲染协调。验收：只消费完整 fence；有输入、并发、超时、像素和输出字节限制；失败与 Run 状态隔离。
+- [x] `MERMAID-008` 将 PNG bytes 接入统一媒体出站并完成四平台适配。验收：消息顺序正确、只发 PNG、没有永久文件记录、发送失败不吞普通文本。
+- [x] `MERMAID-009` 补齐安全、平台、回归测试和自动化验收记录。真实平台账号人工收件验证未执行，留待 Phase 4；日志脱敏、渲染隔离和回滚路径已复查。
 
 ### Phase 4：总体复查
 

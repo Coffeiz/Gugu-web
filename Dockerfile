@@ -34,8 +34,12 @@ WORKDIR /rag
 
 COPY backend/ts/workers/rag/package.json ./package.json
 RUN npm install --omit=dev --ignore-scripts --no-fund --no-audit \
+        @xmldom/xmldom@0.9.12 \
         @node-rs/jieba@2.0.1 \
         @node-rs/jieba-linux-x64-gnu@2.0.1 \
+        @resvg/resvg-js@2.6.2 \
+        mermaid@11.17.2 \
+        svgdom@0.1.25 \
     && node -e "import('@node-rs/jieba').then(() => console.log('RAG Jieba runtime ready'))"
 
 # ── Stage 2：后端依赖构建（venv 与最终镜像分离） ─────────────────────────────
@@ -233,8 +237,10 @@ RUN set -eux; \
 RUN mkdir -p ./bin
 COPY backend/bin/gugu-rag-ts-worker.mjs ./bin/gugu-rag-ts-worker.mjs
 COPY backend/bin/gugu-filesync-ts-worker.cjs ./bin/gugu-filesync-ts-worker.cjs
+COPY backend/ts/workers/mermaid-renderer/worker.mjs ./bin/gugu-mermaid-worker.mjs
 COPY --from=rag-runtime /rag/node_modules ./bin/node_modules
-RUN node bin/gugu-rag-ts-worker.mjs --version
+RUN node bin/gugu-rag-ts-worker.mjs --version \
+    && cd /app/bin && node -e "Promise.all([import('mermaid'), import('@resvg/resvg-js'), import('@xmldom/xmldom'), import('svgdom')]).then(() => console.log('Mermaid PNG runtime ready'))"
 RUN node bin/gugu-filesync-ts-worker.cjs --version
 
 # ── 自更新工具链（执行器并入 app 进程，PRD-ADMIN-2 §1.1）───────────────────

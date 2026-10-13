@@ -279,6 +279,27 @@ def _stream_fallback_text(text: str, has_files: bool) -> str:
     return "给你～" if has_files else "嗯~在的，你说～"
 
 
+async def _send_queued_mermaid_images(
+    images: list[tuple[bytes, str]], receive_id: str, channel_id: str | None,
+) -> None:
+    """卡片收尾后顺序发送 Mermaid PNG；单张失败只回退该图源码。"""
+    if not images:
+        return
+    from .messages import send_file
+
+    for png, source in images:
+        try:
+            sent = await send_file(receive_id, png, "mermaid-diagram", "png", channel_id)
+        except Exception as exc:
+            diag_log("agent.gateway.feishu.mermaid_image", exc)
+            sent = False
+        if not sent and source:
+            try:
+                await send_text(receive_id, source, channel_id)
+            except Exception as exc:
+                diag_log("agent.gateway.feishu.mermaid_fallback", exc)
+
+
 async def _send_tool_summary_stream(
     app_id: str,
     app_secret: str,
@@ -444,6 +465,14 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
     if not app_id:
         print(f"[feishu] user_bot {channel_id} 无凭据，流式回复跳过", flush=True)
         return (False, None)
+
+    # 先在流式边界拦截 Mermaid fence，防止未闭合源码进入可见卡片；图片按稳定
+    # 的“卡片文字 + 图片消息”顺序在卡片收尾后发送，卡片中保留对应位置的提示。
+    from agent.im.mermaid import MermaidTokenFilter
+    from agent.interactions.events import ROUND_END
+
+    mermaid_filter = MermaidTokenFilter()
+    token_iter = mermaid_filter.events(token_iter, ROUND_END)
     # 之前的 lark.Client 缓存不再使用——card API 直走 httpx（绕 SDK bug）。
     # _clients 仍保留供 send_text / react / send_file 等其他路径继续用 SDK。
 
@@ -465,7 +494,9 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
         )
         if final_text:
             ok = await send_text(receive_id, final_text, channel_id)
+            await _send_queued_mermaid_images(mermaid_filter.images, receive_id, channel_id)
             return (ok, final_resp)
+        await _send_queued_mermaid_images(mermaid_filter.images, receive_id, channel_id)
         return (False, final_resp)
 
     # 2) 把 card_id 当一条 interactive 消息发出去——不 send，user 端永远看不到。
@@ -485,11 +516,13 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
         )
         if final_text:
             ok = await send_text(receive_id, final_text, channel_id)
+            await _send_queued_mermaid_images(mermaid_filter.images, receive_id, channel_id)
             return (ok, final_resp)
+        await _send_queued_mermaid_images(mermaid_filter.images, receive_id, channel_id)
         return (False, final_resp)
 
     if tool_summary is not None:
-        return await _send_tool_summary_stream(
+        result = await _send_tool_summary_stream(
             app_id,
             app_secret,
             card_id,
@@ -497,6 +530,8 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
             tool_summary,
             show_intermediate_replies=show_intermediate_replies,
         )
+        await _send_queued_mermaid_images(mermaid_filter.images, receive_id, channel_id)
+        return result
 
     # 3) 初始化 element 级流式更新的 sequence（sequence 从 1 开始严格递增）
     stream_seq = 0
@@ -578,4 +613,5 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
                                         title="咕咕", streaming_mode=False)
         if not renamed:
             print(f"[feishu] 收尾改标题失败，保留「咕咕思考中」: card_id={card_id}", flush=True)
+    await _send_queued_mermaid_images(mermaid_filter.images, receive_id, channel_id)
     return (stream_ok, final_resp)
