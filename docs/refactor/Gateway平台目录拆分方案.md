@@ -405,9 +405,10 @@ agent.im.replies / loop ──> 平台包公开出站 API
 
 - `docs/agent/08-CHANNELS.md` 已更新实际 Gateway 包入口、Web/SSE 与 `agent.run` 的边界，并补齐 Telegram 目录和能力说明；文档中不再引用已删除的 `qq.py`、`feishu.py`、`wechat.py`、`web.py` 实现路径。
 - 兼容导入烟测通过：12 个包入口、旧微信组件 shim、飞书工具摘要 shim、Gateway 监督器及 Agent API 均可导入；不创建平台连接或访问外部网络。跨平台入口映射未变。
-- 完整后端测试结果：`4464 passed, 3 skipped, 6 failed`。失败包括一个使用固定日期、受运行日影响的日历用例，以及五个落在当前未提交 storage/quota 改动范围内的配额/文件账本用例。将这六个用例在未叠加本次及其他工作区改动的基线提交上单独复跑，结果为 `1 failed, 5 passed`：日历用例同样因固定日期失败，其余五项通过；因此后五项由工作区中独立的 storage/quota 改动引入，与 Gateway 拆分无关。未修改这些非本任务内容。
-- 本阶段定向 AgentRun、Web/SSE 与实时流测试：`83 passed`；兼容入口烟测 12 项通过，导入和 `git diff --check` 检查通过。完整后端测试仍未全绿，PRD 完成定义中的“完整后端测试通过”尚未满足；当前阻塞来自固定日期测试与未提交的 storage/quota 改动，需在这些问题处理后复跑全量套件。
-- 阶段复审结论：Gateway 包入口、旧路径兼容、导入烟测及定向 IM/Web 测试通过；完整测试门槛仍未通过，最终总体验收保留此项限制并如实报告。
+- 全量后端测试在干净验证快照中通过：`4464 passed, 3 skipped`。快照包含 Gateway 提交和本阶段日历测试修正，不包含主工作树中其他未提交内容；测试运行时使用临时链接的本地虚拟环境、RAG worker 制品及临时安装的 npm 依赖，没有读取或改写用户运行配置。
+- 全量运行前发现 `test_phase2_project_and_calendar_reads_preserve_user_scope` 将项目和活动日期固定为 2026-10-12，导致之后运行时“即将到来的活动”计数错误。测试现按当前日期构造开始日期、未来截止日期和次日活动，独立复测通过；权限隔离及 upcoming 结果断言保持不变。
+- 本阶段定向 AgentRun、Web/SSE 与实时流测试：`83 passed`；兼容入口烟测 12 项通过，导入和 `git diff --check` 检查通过。
+- 阶段复审结论：Gateway 包入口、旧路径兼容、导入烟测、定向 IM/Web 测试和全量后端测试均通过。主工作树中另有未提交的 storage/quota、Mermaid 等用户修改，本次全量验证使用隔离快照，避免这些独立改动影响结果。
 
 ## 7. 测试与验收标准
 
