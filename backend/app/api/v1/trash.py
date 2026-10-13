@@ -37,6 +37,8 @@ from app.services.storage import get_storage
 from app.services.storage.file_service import FileService
 from app.services.storage.folders import folder_dir_key
 from app.services.files.trash_purge import enqueue_purge, get_active_job, get_owned_job
+from app.services.storage.quota_ledger import reconcile_file_library_usage
+
 router = APIRouter(prefix="/trash", tags=["trash"])
 
 TRASH_DAYS = 30
@@ -266,6 +268,7 @@ async def cleanup_expired(db: AsyncSession) -> int:
     stmt = select(File).where(File.deleted_at.isnot(None), File.deleted_at <= cutoff)
     files = (await db.execute(stmt)).scalars().all()
     fids = [f.id for f in files]
+    affected_user_ids = {f.user_id for f in files}
     for f in files:
         try:
             await storage.delete(f.storage_key)
@@ -273,6 +276,8 @@ async def cleanup_expired(db: AsyncSession) -> int:
             pass
         await db.delete(f)
     if files:
+        for user_id in affected_user_ids:
+            await reconcile_file_library_usage(db, user_id)
         await db.commit()
         for fid in fids:
             delete_thumb_cache(fid)
@@ -302,6 +307,7 @@ async def cleanup_expired(db: AsyncSession) -> int:
         Project.deleted_at.isnot(None), Project.deleted_at <= cutoff,
     ))).scalars().all()
     project_purged = 0
+    project_owner_ids = set()
     for project in expired_projects:
         folders = (await db.execute(select(Folder).where(  # orm-exempt: 回收站文件夹枚举待 TrashService 收口（1.1.2 遗留）
             Folder.user_id == project.user_id, Folder.project_id == project.id,
@@ -338,7 +344,10 @@ async def cleanup_expired(db: AsyncSession) -> int:
             await db.delete(folder)  # orm-exempt: 回收站文件夹清理写入待 TrashService 收口（1.1.2 遗留）
         await db.delete(project)  # orm-exempt: 回收站项目清理写入待 TrashService 收口（1.1.2 遗留）
         project_purged += 1
+        project_owner_ids.add(project.user_id)
     if project_purged:
+        for user_id in project_owner_ids:
+            await reconcile_file_library_usage(db, user_id)
         await db.commit()
         _log.info("项目回收站自动清理 %d 个过期项目", project_purged)
 

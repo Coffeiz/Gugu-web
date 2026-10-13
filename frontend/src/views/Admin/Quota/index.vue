@@ -92,6 +92,13 @@
       </div>
     </div>
 
+    <div class="section-wrap">
+      <div class="section-head">
+        <span class="section-label">{{ t('adminQuota.maintenance') }}</span>
+      </div>
+      <FullReconcilePanel />
+    </div>
+
     <!-- 用户配额覆盖 -->
     <div class="section-wrap">
       <div class="section-head">
@@ -209,6 +216,7 @@ import { useConfigStore } from '@/stores/config'
 import { useQuotaAdmin } from './useQuotaAdmin'
 import RefreshButton from '@/components/common/controls/RefreshButton.vue'
 import UserQuotaEditDialog from './components/UserQuotaEditDialog.vue'
+import FullReconcilePanel from './components/FullReconcilePanel.vue'
 
 const adminStore  = useAdminStore()
 const { t } = useI18n()

@@ -53,15 +53,18 @@ async def test_local_download_budget_includes_workspace_shell_usage_and_preserve
     shell_root = tmp_path / str(user_a.id) / "workspace" / "default"
     shell_root.mkdir(parents=True)
     (shell_root / "output.bin").write_bytes(b"x" * 5)
+    trash_root = tmp_path / str(user_a.id) / "trash"
+    trash_root.mkdir(parents=True)
+    (trash_root / "deleted.bin").write_bytes(b"x" * 90)
 
-    assert await quota_ledger.get_file_library_download_budget(db, user_a.id, 500) == (100, 65)
+    assert await quota_ledger.get_file_library_download_budget(db, user_a.id, 500) == (100, 5)
     user_a.storage_limit_bytes = 0
     await db.flush()
     assert await quota_ledger.get_file_library_download_budget(db, user_a.id, 500) == (0, 0)
 
 
 @pytest.mark.asyncio
-async def test_admin_file_record_usage_sums_live_rows_per_owner(db, user_a, user_b):
+async def test_admin_file_record_usage_includes_trash_rows_per_owner(db, user_a, user_b):
     db.add_all([
         File(user_id=user_a.id, display_name="第一份", ext="bin", storage_key="a-1", size_bytes=30),
         File(user_id=user_a.id, display_name="第二份", ext="bin", storage_key="a-2", size_bytes=12),
@@ -73,7 +76,7 @@ async def test_admin_file_record_usage_sums_live_rows_per_owner(db, user_a, user
 
     usage = await quota_ledger.get_file_record_usage_by_user(db)
 
-    assert usage == {str(user_a.id): 42, str(user_b.id): 7}
+    assert usage == {str(user_a.id): 132, str(user_b.id): 7}
 
 
 def _settings(tmp_path):
@@ -124,7 +127,7 @@ async def test_existing_user_ledgers_refresh_limits_without_scanning_directories
     async def unexpected_scan(*_args, **_kwargs):
         raise AssertionError("已初始化账本不应触发递归目录扫描")
 
-    monkeypatch.setattr(quota_ledger, "_measure_local_unregistered_bytes", unexpected_scan)
+    monkeypatch.setattr(quota_ledger, "_measure_local_quota_roots", unexpected_scan)
     monkeypatch.setattr(quota_ledger, "_unregistered_shell_bytes", unexpected_scan)
 
     refreshed = await quota_ledger.ensure_user_storage_space(db, user_a)
@@ -203,7 +206,7 @@ async def test_slow_quota_directory_measurement_does_not_block_event_loop(
         return 0
 
     monkeypatch.setattr(quota_ledger, "measure_directory", slow_measure)
-    scan = asyncio.create_task(quota_ledger._measure_local_unregistered_bytes(db, user_a.id))
+    scan = asyncio.create_task(quota_ledger._measure_file_library_usage(db, user_a.id))
     release_timer = Timer(0.25, release_scan.set)
     release_timer.start()
     try:
@@ -214,9 +217,7 @@ async def test_slow_quota_directory_measurement_does_not_block_event_loop(
     finally:
         release_scan.set()
         release_timer.cancel()
-    assert await scan == ({"workspace": 0, "personal": 0, "project": 0}, {
-        "workspace": 0, "personal": 0, "project": 0,
-    })
+    assert await scan == 0
 
 
 @pytest.mark.asyncio
@@ -232,7 +233,7 @@ async def test_cancelled_quota_measurement_stops_its_worker_scan(db, user_a, tmp
         raise InterruptedError("配额测量已取消")
 
     monkeypatch.setattr(quota_ledger, "measure_directory", cancellable_measure)
-    scan = asyncio.create_task(quota_ledger._measure_local_unregistered_bytes(db, user_a.id))
+    scan = asyncio.create_task(quota_ledger._measure_file_library_usage(db, user_a.id))
     assert await asyncio.to_thread(scan_started.wait, 1)
     scan.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -241,8 +242,8 @@ async def test_cancelled_quota_measurement_stops_its_worker_scan(db, user_a, tmp
 
 @pytest.mark.asyncio
 async def test_cancelled_uninterruptible_scan_returns_and_admission_stays_bounded():
-    started = [Event(), Event()]
-    finished = [Event(), Event()]
+    started = [Event() for _ in range(4)]
+    finished = [Event() for _ in range(4)]
     release = Event()
     call_count = 0
 
@@ -262,13 +263,17 @@ async def test_cancelled_uninterruptible_scan_returns_and_admission_stays_bounde
         await asyncio.wait_for(first, timeout=0.1)
     assert not finished[0].is_set()
 
-    second = asyncio.create_task(quota_ledger._run_storage_scan(blocked_scan))
-    assert await asyncio.to_thread(started[1].wait, 1)
+    remaining = [
+        asyncio.create_task(quota_ledger._run_storage_scan(blocked_scan))
+        for _ in range(3)
+    ]
+    for event in started[1:]:
+        assert await asyncio.to_thread(event.wait, 1)
     with pytest.raises(quota_ledger.StorageScanBusyError):
         await quota_ledger._run_storage_scan(blocked_scan)
 
     release.set()
-    assert await second == 1
+    assert await asyncio.gather(*remaining) == [1, 1, 1]
     assert await asyncio.to_thread(finished[0].wait, 1)
     assert await quota_ledger._run_storage_scan(lambda *, stop_event: 2) == 2
 
@@ -289,12 +294,12 @@ async def test_file_library_display_uses_ledger_without_scanning_directories(
     async def fail_if_scanned(*_args, **_kwargs):
         raise AssertionError("文件库展示用量不应遍历物理目录")
 
-    monkeypatch.setattr(quota_ledger, "_measure_local_unregistered_bytes", fail_if_scanned)
+    monkeypatch.setattr(quota_ledger, "_measure_file_library_usage", fail_if_scanned)
     assert await quota_ledger.get_file_library_usage_snapshot(db, user_a.id) == 1234
 
 
 @pytest.mark.asyncio
-async def test_file_library_display_fallback_sums_only_live_file_rows(db, user_a):
+async def test_file_library_display_fallback_includes_trash_file_rows(db, user_a):
     db.add_all([
         File(user_id=user_a.id, display_name="存活", ext="bin", storage_key="live", size_bytes=30),
         File(
@@ -304,7 +309,7 @@ async def test_file_library_display_fallback_sums_only_live_file_rows(db, user_a
     ])
     await db.flush()
 
-    assert await quota_ledger.get_file_library_usage_snapshot(db, user_a.id) == 30
+    assert await quota_ledger.get_file_library_usage_snapshot(db, user_a.id) == 120
 
 
 @pytest.mark.asyncio
@@ -378,7 +383,11 @@ async def test_periodic_reconcile_does_not_overwrite_concurrent_ledger_delta(
         return 0
 
     monkeypatch.setattr(quota_ledger, "measure_shell_persistent_usage", no_shell_usage)
-    monkeypatch.setattr(quota_ledger, "_measure_local_unregistered_bytes", update_during_measurement)
+    async def update_and_measurement(db_, user_id):
+        await update_during_measurement(db_, user_id)
+        return 0
+
+    monkeypatch.setattr(quota_ledger, "_measure_file_library_usage", update_and_measurement)
 
     await quota_ledger.reconcile_user_storage(
         db, user_a.id, preserve_concurrent_updates=True,
@@ -497,6 +506,47 @@ async def test_full_shell_authorization_watches_all_persistent_user_roots(db, us
     )
     assert limited_roots == (roots["workspace"],)
     assert limited_watch_limit == 73
+
+
+@pytest.mark.asyncio
+async def test_local_quota_reconciliation_scans_file_roots_and_trash_but_not_other_user_data(
+    db, user_a, tmp_path, monkeypatch,
+):
+    monkeypatch.setattr(quota_ledger, "get_settings", lambda: _settings(tmp_path))
+    roots = quota_ledger._local_quota_roots(user_a.id)
+    for name, size in (("workspace", 3), ("personal", 5), ("project", 7), ("trash", 11)):
+        roots[name].mkdir(parents=True)
+        (roots[name] / "payload.bin").write_bytes(b"x" * size)
+    unrelated = tmp_path / str(user_a.id) / ".agent"
+    unrelated.mkdir(parents=True)
+    (unrelated / "state.bin").write_bytes(b"x" * 100)
+    db.add(File(
+        user_id=user_a.id, display_name="回收站文件", ext="bin",
+        storage_key=f"{user_a.id}/trash/payload.bin", size_bytes=11,
+        deleted_at=datetime.now(timezone.utc),
+    ))
+    await db.flush()
+
+    measured = await quota_ledger.measure_user_storage_usage(db, user_a.id)
+
+    assert measured == 26
+
+
+@pytest.mark.asyncio
+async def test_oss_reconciliation_includes_trashed_file_rows(db, user_a, tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    settings.storage.backend = "oss"
+    monkeypatch.setattr(quota_ledger, "get_settings", lambda: settings)
+    db.add_all([
+        File(user_id=user_a.id, display_name="存活", ext="bin", storage_key="live", size_bytes=30),
+        File(user_id=user_a.id, display_name="回收", ext="bin", storage_key="trash", size_bytes=90,
+             deleted_at=datetime.now(timezone.utc)),
+    ])
+    await db.flush()
+
+    measured = await quota_ledger.reconcile_user_storage(db, user_a.id)
+
+    assert measured[quota_ledger.FILE_LIBRARY] == 120
 
 
 @pytest.mark.asyncio

@@ -6,13 +6,32 @@ from sqlalchemy.orm import aliased
 
 from app.core.ownership import get_owned
 from app.models import File, Folder, Project
-from app.services.storage.folders import folder_dir_key
-from app.services.storage.trash import restore_file_storage
 from app.services.files.pagination import apply_keyset, decode_cursor, encode_cursor
+from app.services.storage.folders import folder_dir_key
+from app.services.storage.quota_ledger import FILE_LIBRARY, record_usage
+from app.services.storage.trash import restore_file_storage
 
 
 class RestoreParentTrashError(Exception):
     """文件所属文件夹仍在回收站，不能单独恢复。"""
+
+
+async def _release_permanently_deleted_file_quota(db: AsyncSession, file: File) -> None:
+    """按文件记录增量释放配额；与删除记录同事务提交，重试不重复扣减。"""
+    size_bytes = int(file.size_bytes or 0)
+    if size_bytes <= 0:
+        return
+    await record_usage(
+        db,
+        file.user_id,
+        category=FILE_LIBRARY,
+        delta_bytes=-size_bytes,
+        operation="trash_permanent_delete",
+        resource_type="file",
+        resource_id=file.id,
+        idempotency_key=f"trash-permanent-delete:{file.id}",
+        allow_over_limit=True,
+    )
 
 
 def top_level_deleted_folders_stmt(user_id=None, deleted_before=None):
@@ -257,6 +276,8 @@ async def permanently_delete_all_files(db: AsyncSession, storage, user_id) -> li
             await storage.delete(file.storage_key)
         except Exception:
             pass
+        else:
+            await _release_permanently_deleted_file_quota(db, file)
         await db.delete(file)
     return file_ids
 
@@ -277,6 +298,8 @@ async def permanently_delete_file(
     except Exception:
         # 存储对象缺失时仍删除数据库墓碑，保持原有清理语义。
         pass
+    else:
+        await _release_permanently_deleted_file_quota(db, file)
     await db.delete(file)
     return file.id
 
@@ -360,6 +383,8 @@ async def permanently_delete_folder(
             await storage.delete(file.storage_key)
         except Exception:
             pass
+        else:
+            await _release_permanently_deleted_file_quota(db, file)
         await db.delete(file)
 
     dir_key = await folder_dir_key(db, folder.user_id, folder)

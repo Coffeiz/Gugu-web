@@ -88,6 +88,40 @@ Object.assign((messages['en-US'] as Record<string, any>).storageAuditExtra, {
   ghostCleanupProgressLabel: 'Ghost record cleanup progress',
   ghostRepairInterrupted: 'Bulk cleanup interrupted: removed {done}, failed {failed}, {remaining} not submitted. {message}',
 })
+
+Object.assign((messages['zh-CN'] as Record<string, any>).adminQuota, {
+  maintenance: '容量维护', fullReconcileTitle: '全量容量对账',
+  fullReconcileHint: '重新扫描所有用户的文件库、工作区和 Shell 持久空间，并校准配额账本。扫描期间按最多 4 个用户并行处理。',
+  fullReconcileAction: '立即全量对账', fullReconcileStarting: '启动中…',
+  fullReconcileQueued: '对账任务已排队', fullReconcileRunning: '全量对账进行中…',
+  fullReconcileProgress: '进度 {processed} / {total}',
+  fullReconcileResult: '成功 {completed} 个，失败 {failed} 个',
+  fullReconcileDone: '全量对账已完成', fullReconcileFailed: '全量对账失败',
+  fullReconcileInterrupted: '全量对账中断', fullReconcileBusy: '已有配额对账任务正在运行，请稍后再试。',
+  fullReconcileRequestFailed: '无法读取或启动对账，请稍后重试。',
+})
+Object.assign((messages['en-US'] as Record<string, any>).adminQuota, {
+  maintenance: 'Storage maintenance', fullReconcileTitle: 'Full storage reconciliation',
+  fullReconcileHint: 'Rescan every user’s file library, workspace, and persistent Shell storage, then reconcile quota ledgers. Up to four users are processed concurrently.',
+  fullReconcileAction: 'Reconcile all now', fullReconcileStarting: 'Starting…',
+  fullReconcileQueued: 'Reconciliation queued', fullReconcileRunning: 'Full reconciliation in progress…',
+  fullReconcileProgress: 'Progress {processed} / {total}',
+  fullReconcileResult: '{completed} succeeded, {failed} failed',
+  fullReconcileDone: 'Full reconciliation completed', fullReconcileFailed: 'Full reconciliation failed',
+  fullReconcileInterrupted: 'Full reconciliation interrupted', fullReconcileBusy: 'A quota reconciliation is already running. Try again later.',
+  fullReconcileRequestFailed: 'Could not read or start reconciliation. Try again later.',
+})
+Object.assign((messages['ja-JP'] as Record<string, any>).adminQuota, {
+  maintenance: 'ストレージ保守', fullReconcileTitle: '全ユーザーの容量照合',
+  fullReconcileHint: '全ユーザーのファイルライブラリ、ワークスペース、Shell 永続領域を再スキャンし、クォータ台帳を照合します。最大 4 ユーザーを並列処理します。',
+  fullReconcileAction: '今すぐ全件照合', fullReconcileStarting: '開始中…',
+  fullReconcileQueued: '照合タスクをキューに追加しました', fullReconcileRunning: '全件照合中…',
+  fullReconcileProgress: '進捗 {processed} / {total}',
+  fullReconcileResult: '成功 {completed} 件、失敗 {failed} 件',
+  fullReconcileDone: '全件照合が完了しました', fullReconcileFailed: '全件照合に失敗しました',
+  fullReconcileInterrupted: '全件照合が中断されました', fullReconcileBusy: '別のクォータ照合が実行中です。後でもう一度お試しください。',
+  fullReconcileRequestFailed: '照合状態を取得または開始できませんでした。後でもう一度お試しください。',
+})
 Object.assign(messages['zh-CN'], { sharedUi: { info: '详细信息', download: '下载', delete: '删除', rename: '重命名', cut: '剪切', copy: '复制', moveToTrash: '移到回收站', downloadZip: '下载为 ZIP', cannotOperate: '此位置不可操作', createFolder: '新建文件夹', paste: '粘贴', clipboardEmpty: '剪贴板为空', selectionMode: '多选模式', gridView: '网格视图', listView: '列表视图', folderName: '文件夹名称', confirm: '确定', addWorkspace: '添加工作区', removeWorkspace: '删除工作区', save: '保存', saving: '保存中…', saveSuccess: '保存成功', saveFailed: '保存失败', nickname: '昵称', username: '用户名', email: '邮箱', uid: 'UID', joinedAt: '加入时间', clear: '清除', today: '今天', chooseDate: '选择日期', weekdays: ['日','一','二','三','四','五','六'] } })
 Object.assign(messages['ja-JP'], { sharedUi: { info: '詳細情報', download: 'ダウンロード', delete: '削除', rename: '名前を変更', cut: '切り取り', copy: 'コピー', moveToTrash: 'ごみ箱へ移動', downloadZip: 'ZIP としてダウンロード', cannotOperate: 'この場所は操作できません', createFolder: 'フォルダーを作成', paste: '貼り付け', clipboardEmpty: 'クリップボードは空です', selectionMode: '複数選択モード', gridView: 'グリッド表示', listView: 'リスト表示', folderName: 'フォルダー名', confirm: '確認', addWorkspace: 'ワークスペースを追加', removeWorkspace: 'ワークスペースを削除', save: '保存', saving: '保存中…', saveSuccess: '保存しました', saveFailed: '保存に失敗しました', nickname: 'ニックネーム', username: 'ユーザー名', email: 'メール', uid: 'UID', joinedAt: '参加日時', clear: 'クリア', today: '今日', chooseDate: '日付を選択', weekdays: ['日','月','火','水','木','金','土'] } })
 Object.assign(messages['en-US'], { sharedUi: { info: 'Details', download: 'Download', delete: 'Delete', rename: 'Rename', cut: 'Cut', copy: 'Copy', moveToTrash: 'Move to trash', downloadZip: 'Download as ZIP', cannotOperate: 'This location cannot be modified', createFolder: 'New folder', paste: 'Paste', clipboardEmpty: 'Clipboard is empty', selectionMode: 'Multi-select mode', gridView: 'Grid view', listView: 'List view', folderName: 'Folder name', confirm: 'Confirm', addWorkspace: 'Add workspace', removeWorkspace: 'Remove workspace', save: 'Save', saving: 'Saving…', saveSuccess: 'Saved', saveFailed: 'Save failed', nickname: 'Nickname', username: 'Username', email: 'Email', uid: 'UID', joinedAt: 'Joined', clear: 'Clear', today: 'Today', chooseDate: 'Choose date', weekdays: ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'], account: 'Account', preferences: 'Preferences', guguSettings: 'Gugu settings', connectGugu: 'Connect Gugu', modelConfig: 'Model configuration', modelConfigNav: 'Models', capabilityConfig: 'Capabilities', workspaces: 'Workspaces', deleteAccount: 'Delete account', confirmDeleteAccount: 'Delete this account?', deleteAccountDescription: 'The account and all data (projects, files, calendar, chats, and Gugu memory) will be permanently deleted. This cannot be undone.', passwordConfirmation: 'Enter your password to confirm', deleting: 'Deleting…', confirmDelete: 'Confirm deletion' } })
