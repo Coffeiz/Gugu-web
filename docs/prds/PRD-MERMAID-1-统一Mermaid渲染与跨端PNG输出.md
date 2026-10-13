@@ -1,6 +1,6 @@
 # PRD-MERMAID-1：统一 Mermaid 图表体验与跨端 PNG 输出
 
-> 状态：Phase 0/1/2/3 已完成；Phase 4 自动化与镜像复核完成，等待真实 IM 客户端验收
+> 状态：Phase 0/1/2/3 已完成；Phase 4 前端、容器自动化复核完成，等待真实 IM 客户端验收
 > 创建：2026-10-12
 > 最近更新：2026-10-13
 > 所属层：前端内容展示、Agent 输出、IM Gateway
@@ -286,6 +286,7 @@ backend/
 #### Phase 4 自动化与镜像复核（2026-10-13）
 
 - 完成 PRD、前端行为测试、后端 Gateway 契约与 renderer 资源/安全边界的交叉复查；没有新增数据库 migration 或运行配置迁移。devserver 定向测试 38 项通过。
+- devserver 前端全量 Vitest 通过：150 个测试文件、769 项；Chromium 窄屏 E2E 使用真实 Mermaid renderer 和 Canvas，验证弹层边界、PNG 文件签名及 Escape 关闭/焦点恢复。
 - 复核发现容器运行时必须显式提供 `libseccomp2`，否则 Python 无法在 exec 前安装禁网过滤器；两个 Dockerfile 已显式安装，并在镜像构建时断言动态库可加载。测试也保护“隔离安装失败时绝不启动 Node”的失败关闭行为。
 - devserver 成功构建集成镜像与独立生产镜像，大小分别约 910 MB、571 MB。两种镜像均在 `--network none`、512 MiB、1 CPU 容器限制下真实渲染出 PNG；两个验收临时镜像已移除，既有构建缓存未清理。
 - 集成镜像首次构建发现 Mermaid 依赖检查用了错误工作目录，修正后复建通过。`docker build --check` 仅报告 Dockerfile 原有的空密码/密钥 `ENV` 静态警告，没有与本次新增语句相关的新警告。
