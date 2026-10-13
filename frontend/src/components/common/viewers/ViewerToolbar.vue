@@ -180,11 +180,15 @@ function submitPageEdit() {
 }
 .iv-tb-btn svg { display: block; }
 .iv-tb-mode {
+  --iv-toolbar-hover-fg: var(--iv-toolbar-pct-hover-fg);
   width: auto;
   min-width: 34px;
   padding: 0 8px;
-  border-radius: 50%;
+  border-radius: var(--radius-pill);
+  font-family: inherit;
   font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .02em;
   white-space: nowrap;
 }
 .iv-tb-mode:has(svg) { width: 26px; min-width: 26px; padding: 0; }

@@ -13,6 +13,7 @@ const MAX_SVG_BYTES = 5 * 1024 * 1024
 const MAX_DIMENSION = 4_096
 const MAX_PIXELS = 5_000_000
 const MAX_PNG_BYTES = 3 * 1024 * 1024
+const TARGET_RASTER_SCALE = 2
 const CJK_FONT_FILE = [
   new URL('./fonts/NotoSansSC-VariableFont_wght.ttf', import.meta.url),
   new URL('../../../../frontend/public/fonts/Noto_Sans_SC/NotoSansSC-VariableFont_wght.ttf', import.meta.url),
@@ -78,10 +79,52 @@ Object.defineProperty(window.Element.prototype, 'parentElement', {
     return parent?.nodeType === 1 ? parent : null
   },
 })
+// Mermaid 12.1 的 block 布局会 JSON.stringify 尺寸对象，其中保留了 D3 selection。
+// 浏览器原生 DOM 节点没有可枚举的循环引用字段；svgdom 会枚举 ownerDocument，导致循环引用异常。
+// 让 svgdom 节点按浏览器节点的 JSON 行为序列化，供 Mermaid 内部诊断字符串使用。
+if (window.Node?.prototype && typeof window.Node.prototype.toJSON !== 'function') {
+  Object.defineProperty(window.Node.prototype, 'toJSON', {
+    configurable: true,
+    value() {
+      return {}
+    },
+  })
+}
 // svgdom 的 getBBox 会漏算 flowchart 多行标签的行高，也会低估中文字符宽度，导致节点过窄；
 // Resvg 再按完整字体绘制时，文字会穿出节点。测量阶段补齐行高和中文宽度，让 Mermaid 同步调整布局。
 const originalGetTextBBox = window.SVGGraphicsElement.prototype.getBBox
 const fullWidthTextCharacter = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\u3000-\u303f\uff01-\uff60]/u
+function getIshikawaTextAnchor(element) {
+  const classes = ` ${element.getAttribute('class') || ''} `
+  if (classes.includes(' ishikawa-head-label ') || classes.includes(' ishikawa-label cause ')) return 'middle'
+  return classes.includes(' ishikawa-label ') ? 'end' : null
+}
+
+function expandTextBounds(bounds, width, textAnchor, anchorX) {
+  let x = bounds.x
+  if (Number.isFinite(anchorX)) {
+    if (textAnchor === 'middle') x = anchorX - width / 2
+    else if (textAnchor === 'end') x = anchorX - width
+    else x = anchorX
+  } else if (textAnchor === 'middle') {
+    x = bounds.x + bounds.width / 2 - width / 2
+  } else if (textAnchor === 'end') {
+    x = bounds.x + bounds.width - width
+  }
+  return { ...bounds, x, left: x, width, right: x + width }
+}
+
+function getIshikawaTextBounds(element, bounds, width) {
+  const textAnchor = getIshikawaTextAnchor(element)
+  if (!textAnchor) return null
+  const attributeAnchor = Number.parseFloat(element.getAttribute('x') || '')
+  const lineAnchor = [...element.getElementsByTagName('tspan')]
+    .map(line => Number.parseFloat(line.getAttribute('x') || ''))
+    .find(Number.isFinite)
+  const anchorX = Number.isFinite(attributeAnchor) ? attributeAnchor : lineAnchor
+  return Number.isFinite(anchorX) ? expandTextBounds(bounds, width, textAnchor, anchorX) : null
+}
+
 Object.defineProperty(window.SVGGraphicsElement.prototype, 'getBBox', {
   configurable: true,
   value() {
@@ -109,11 +152,18 @@ Object.defineProperty(window.SVGGraphicsElement.prototype, 'getBBox', {
       }, 0)))
       : bounds.width
     const height = positionedLines.length >= 2 ? positionedLines.length * fontSize * 1.1 : bounds.height
-    if (measuredWidth <= bounds.width && height <= bounds.height) return bounds
+    // 鱼骨图把 text-anchor 写在 SVG 样式表里，svgdom 的 getBBox 看不到该 CSS；
+    // 它会把居中/右对齐标签当成从 x 起绘制，错误计算鱼头位置、骨刺间距和 viewBox。
+    const width = Math.max(bounds.width, measuredWidth)
+    const ishikawaBounds = getIshikawaTextBounds(this, bounds, width)
+    if (measuredWidth <= bounds.width && height <= bounds.height && !ishikawaBounds) return bounds
     return {
-      ...bounds,
-      width: Math.max(bounds.width, measuredWidth),
-      right: Math.max(bounds.right, bounds.x + measuredWidth),
+      ...(ishikawaBounds || expandTextBounds(
+        bounds,
+        width,
+        this.getAttribute('text-anchor') || this.style?.textAnchor || 'start',
+        NaN,
+      )),
       y: positionedLines.length >= 2 ? Math.min(bounds.y, -height / 2) : bounds.y,
       height,
     }
@@ -233,7 +283,8 @@ for (let index = 0; index < sources.length; index += 1) {
     const rasterTextOptions = {
       allText: true,
       fontFamily: 'Noto Sans SC',
-      fontWeight: 600,
+      fontWeight: type === 'ishikawa-beta' ? 700 : 600,
+      strokeWidth: type === 'ishikawa-beta' ? '0.6px' : '0.4px',
       colorAllText: type === 'sequencediagram' || type === 'journey',
       // Resvg 的可变字体在甘特图、饼图和 Journey 上即使设为 600 仍明显偏细；
       // 与 flowchart 的 CJK 标签采用同样的轻描边补偿，统一所有图片的视觉字重。
@@ -281,8 +332,24 @@ for (let index = 0; index < sources.length; index += 1) {
       throw new Error('pixel_limit_exceeded')
     }
 
-    root.setAttribute('width', String(width))
-    root.setAttribute('height', String(height))
+    // 保留 viewBox 坐标系，只增大 SVG 根元素的输出尺寸，让 Resvg 直接按矢量内容
+    // 栅格化到高分辨率；倍率受最终边长和像素预算约束，不做位图二次缩放。
+    const rasterScale = Math.min(
+      TARGET_RASTER_SCALE,
+      MAX_DIMENSION / width,
+      MAX_DIMENSION / height,
+      Math.sqrt(MAX_PIXELS / (width * height)),
+    )
+    const rasterWidth = Math.max(1, Math.floor(width * rasterScale))
+    const rasterHeight = Math.max(1, Math.floor(height * rasterScale))
+    if (
+      rasterWidth > MAX_DIMENSION || rasterHeight > MAX_DIMENSION ||
+      rasterWidth * rasterHeight > MAX_PIXELS
+    ) {
+      throw new Error('pixel_limit_exceeded')
+    }
+    root.setAttribute('width', String(rasterWidth))
+    root.setAttribute('height', String(rasterHeight))
     const validatedSvg = new XMLSerializer().serializeToString(root)
     try {
       png = new Resvg(validatedSvg, {

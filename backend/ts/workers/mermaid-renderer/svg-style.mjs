@@ -226,10 +226,26 @@ export function normalizeMermaidEdgeLabelBounds(root) {
       const rectClass = rect.getAttribute('class') || ''
       if (!/(?:^|\s)(?:background|labelBkg)(?:\s|$)/.test(rectClass)) continue
       const width = Number.parseFloat(rect.getAttribute('width') || '')
-      if (!Number.isFinite(width) || width >= minimumWidth) continue
-      const x = Number.parseFloat(rect.getAttribute('x') || '0')
-      rect.setAttribute('x', String(x - (minimumWidth - width) / 2))
-      rect.setAttribute('width', String(minimumWidth))
+      if (!Number.isFinite(width)) continue
+
+      // Mermaid's SVG puts centered edge text at its anchor (usually x=0), but
+      // svgdom can return a text box whose left edge is asymmetric. Expanding
+      // the original rect around its own center preserves that error and makes
+      // the label look shifted beside the text. Center the rect on the actual
+      // middle text anchor before applying the CJK width correction.
+      const anchorXs = tspans
+        .map(tspan => Number.parseFloat(tspan.getAttribute('x') || ''))
+        .filter(Number.isFinite)
+      const textX = Number.parseFloat(text.getAttribute('x') || '')
+      const anchorX = Number.isFinite(textX) ? textX : anchorXs[0] ?? 0
+      const nextWidth = Math.max(width, minimumWidth)
+      if (text.getAttribute('text-anchor') === 'middle') {
+        rect.setAttribute('x', String(anchorX - nextWidth / 2))
+      } else if (width < minimumWidth) {
+        const x = Number.parseFloat(rect.getAttribute('x') || '0')
+        rect.setAttribute('x', String(x - (minimumWidth - width) / 2))
+      }
+      if (width < minimumWidth) rect.setAttribute('width', String(minimumWidth))
     }
   }
   return root
@@ -254,8 +270,34 @@ export function normalizeMermaidRasterText(root, textColor, options = {}) {
         if (options.colorAllText) setStyle(textPart, 'fill', textColor)
         if (options.strokeAllText) {
           setStyle(textPart, 'stroke', textColor)
-          setStyle(textPart, 'stroke-width', '0.4px')
+          setStyle(textPart, 'stroke-width', options.strokeWidth || '0.4px')
           setStyle(textPart, 'paint-order', 'stroke')
+        }
+      }
+      const classes = (text.getAttribute('class') || '').split(/\s+/)
+      if (classes.includes('ishikawa-head-label')) {
+        setStyle(text, 'dominant-baseline', 'central')
+        // 鱼头路径以本地图形坐标 y=0 为垂直中心；保留 Mermaid 的水平定位，
+        // 将文本组的垂直锚点对齐到鱼头中心，再由 central 基线居中每一行。
+        const transform = text.getAttribute('transform') || ''
+        const translated = transform.match(/translate\(\s*(-?[\d.]+)[ ,]+(-?[\d.]+)\s*\)/)
+        if (translated) {
+          text.setAttribute('transform', transform.replace(translated[0], `translate(${translated[1]} 0)`))
+        }
+      } else if (classes.includes('ishikawa-label')) {
+        const baseline = classes.includes('cause')
+          ? 'central'
+          : classes.includes('up') ? 'baseline' : classes.includes('down') ? 'hanging' : 'middle'
+        setStyle(text, 'dominant-baseline', baseline)
+        if (classes.includes('cause')) {
+          const box = [...text.parentNode.getElementsByTagName('rect')].find(rect =>
+            (rect.getAttribute('class') || '').split(/\s+/).includes('ishikawa-label-box'),
+          )
+          const y = Number.parseFloat(box?.getAttribute('y') || '')
+          const height = Number.parseFloat(box?.getAttribute('height') || '')
+          if (Number.isFinite(y) && Number.isFinite(height)) {
+            text.setAttribute('y', String(y + height / 2))
+          }
         }
       }
     }

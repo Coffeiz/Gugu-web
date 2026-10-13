@@ -8,6 +8,8 @@ export type MermaidInteractionLabels = {
   zoomOut: string
   zoomIn: string
   resetZoom: string
+  showSource: string
+  showDiagram: string
   expand: string
   downloadPng: string
   close: string
@@ -48,6 +50,9 @@ class MermaidInteractionBinding implements MermaidBinding {
   private startOffsetX = 0
   private startOffsetY = 0
   private closePreview: (() => void) | null = null
+  private sourceView: HTMLPreElement | null = null
+  private sourceVisible = false
+  private originalSvgDisplay = ''
 
   constructor(private readonly container: HTMLElement, labels: MermaidInteractionLabels) {
     this.labels = labels
@@ -79,6 +84,9 @@ class MermaidInteractionBinding implements MermaidBinding {
     container.querySelectorAll<HTMLButtonElement>('.md-mermaid-controls [data-mermaid-icon]').forEach(button => {
       render(null, button)
     })
+    this.setSourceVisible(false)
+    this.sourceView?.remove()
+    this.sourceView = null
     container.querySelector('.md-mermaid-controls')?.remove()
     container.querySelector('.md-mermaid-status')?.remove()
     this.closePreview?.()
@@ -99,6 +107,7 @@ class MermaidInteractionBinding implements MermaidBinding {
         makeButton('zoom-out', this.labels.zoomOut, '−'),
         makeButton('zoom-in', this.labels.zoomIn, '+'),
         makeButton('reset', this.labels.resetZoom, '↺'),
+        makeButton('toggle-source', this.labels.showSource, '</>'),
         makeButton('expand', this.labels.expand, '⛶'),
         makeButton('download-png', this.labels.downloadPng, { name: 'action.download' }),
       )
@@ -110,6 +119,7 @@ class MermaidInteractionBinding implements MermaidBinding {
       'zoom-out': this.labels.zoomOut,
       'zoom-in': this.labels.zoomIn,
       reset: this.labels.resetZoom,
+      'toggle-source': this.sourceVisible ? this.labels.showDiagram : this.labels.showSource,
       expand: this.labels.expand,
       'download-png': this.labels.downloadPng,
     }
@@ -118,6 +128,10 @@ class MermaidInteractionBinding implements MermaidBinding {
       if (!label) return
       button.setAttribute('aria-label', label)
       button.title = label
+      if (button.dataset.mermaidAction === 'toggle-source') {
+        button.setAttribute('aria-pressed', String(this.sourceVisible))
+        button.classList.toggle('active', this.sourceVisible)
+      }
     })
   }
 
@@ -133,6 +147,7 @@ class MermaidInteractionBinding implements MermaidBinding {
     if (action === 'zoom-out') this.scale = Math.max(MIN_SCALE, this.scale * 0.8)
     if (action === 'zoom-in') this.scale = Math.min(MAX_SCALE, this.scale * 1.25)
     if (action === 'reset') this.resetView()
+    if (action === 'toggle-source') this.setSourceVisible(!this.sourceVisible)
     if (action === 'expand') this.openPreview()
     if (action === 'download-png') {
       const svg = this.getSvg()
@@ -147,6 +162,38 @@ class MermaidInteractionBinding implements MermaidBinding {
     this.offsetY = 0
   }
 
+  private setSourceVisible(visible: boolean): void {
+    const svg = this.getSvg()
+    if (!svg) return
+    if (!this.sourceView) {
+      this.sourceView = document.createElement('pre')
+      this.sourceView.className = 'md-mermaid-source-view'
+      const code = document.createElement('code')
+      try {
+        code.textContent = decodeURIComponent(this.container.dataset.source || '')
+      } catch {
+        code.textContent = this.container.dataset.source || ''
+      }
+      this.sourceView.append(code)
+      this.sourceView.style.display = 'none'
+      this.container.append(this.sourceView)
+      this.originalSvgDisplay = svg.style.display
+    }
+    this.sourceVisible = visible
+    svg.style.display = visible ? 'none' : this.originalSvgDisplay
+    this.sourceView.style.display = visible ? 'block' : 'none'
+    const button = this.container.querySelector<HTMLButtonElement>(
+      '.md-mermaid-controls [data-mermaid-action="toggle-source"]',
+    )
+    if (button) {
+      const label = visible ? this.labels.showDiagram : this.labels.showSource
+      button.setAttribute('aria-label', label)
+      button.title = label
+      button.setAttribute('aria-pressed', String(visible))
+      button.classList.toggle('active', visible)
+    }
+  }
+
   private openPreview(): void {
     const svg = this.getSvg()
     if (!svg) return
@@ -155,7 +202,13 @@ class MermaidInteractionBinding implements MermaidBinding {
       current.focus()
       return
     }
-    this.closePreview = openMermaidPreview(svg, this.labels, (clone, dialog) => {
+    let source = ''
+    try {
+      source = decodeURIComponent(this.container.dataset.source || '')
+    } catch {
+      source = this.container.dataset.source || ''
+    }
+    this.closePreview = openMermaidPreview(svg, this.labels, source, (clone, dialog) => {
       void this.download(clone, dialog)
     })
   }
@@ -180,7 +233,11 @@ class MermaidInteractionBinding implements MermaidBinding {
   }
 
   private readonly onPointerDown = (event: PointerEvent): void => {
-    if (event.button !== 0 || this.scale <= 1 || (event.target as HTMLElement).closest('.md-mermaid-controls')) return
+    if (
+      event.button !== 0
+      || this.scale <= 1
+      || (event.target as HTMLElement).closest('.md-mermaid-controls, .md-mermaid-source-view')
+    ) return
     event.preventDefault()
     window.getSelection()?.removeAllRanges()
     this.dragging = true

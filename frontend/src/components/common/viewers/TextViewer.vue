@@ -427,6 +427,7 @@ async function renderMarkdown(text: string) {
 function mermaidLabels() {
   return {
     zoomOut: t('mermaidUi.zoomOut'), zoomIn: t('mermaidUi.zoomIn'), resetZoom: t('mermaidUi.resetZoom'),
+    showSource: t('mermaidUi.showSource'), showDiagram: t('mermaidUi.showDiagram'),
     expand: t('mermaidUi.expand'), downloadPng: t('mermaidUi.downloadPng'), close: t('mermaidUi.close'),
     previewTitle: t('mermaidUi.previewTitle'), downloadFailed: t('mermaidUi.downloadFailed'),
     pngTooLarge: t('mermaidUi.pngTooLarge'), renderFailed: t('mermaidUi.renderFailed'),

@@ -6,6 +6,7 @@ import type { MermaidInteractionLabels } from '@/utils/mermaidInteraction'
 export function openMermaidPreview(
   svg: SVGSVGElement,
   labels: MermaidInteractionLabels,
+  source: string,
   onDownload: (svg: SVGSVGElement, dialog: HTMLDialogElement) => void,
 ): () => void {
   const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
@@ -24,12 +25,20 @@ export function openMermaidPreview(
   clone.style.maxWidth = '100%'
   clone.style.maxHeight = '100%'
   body.append(clone)
+  const sourceView = document.createElement('pre')
+  sourceView.className = 'md-mermaid-source-view md-mermaid-preview-source'
+  const sourceCode = document.createElement('code')
+  sourceCode.textContent = source
+  sourceView.append(sourceCode)
+  sourceView.style.display = 'none'
+  body.append(sourceView)
   const toolbarHost = document.createElement('div')
   toolbarHost.className = 'iv-toolbar-host'
   body.append(toolbarHost)
   dialog.append(body)
 
   let scale = 1
+  let sourceVisible = false
   let offsetX = 0
   let offsetY = 0
   let dragStart: { x: number; y: number; offsetX: number; offsetY: number } | null = null
@@ -40,12 +49,19 @@ export function openMermaidPreview(
     updateView()
   }
   const updateView = () => {
+    clone.style.display = sourceVisible ? 'none' : 'block'
+    sourceView.style.display = sourceVisible ? 'block' : 'none'
     clone.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`
     clone.style.transformOrigin = 'center center'
     clone.style.cursor = dragStart ? 'grabbing' : 'grab'
     render(createVNode(ViewerToolbar, {
       ariaLabel: labels.previewTitle,
       zoomPercent: Math.round(scale * 100),
+      modeOptions: [{
+        value: 'source',
+        label: sourceVisible ? labels.showDiagram : labels.showSource,
+        active: sourceVisible,
+      }],
       zoomOutLabel: labels.zoomOut,
       resetZoomLabel: labels.resetZoom,
       zoomInLabel: labels.zoomIn,
@@ -56,8 +72,21 @@ export function openMermaidPreview(
       onZoomOut: () => setScale(Math.max(0.1, scale / 1.25)),
       onResetZoom: () => setScale(1),
       onZoomIn: () => setScale(Math.min(8, scale * 1.25)),
+      onMode: (mode: string) => {
+        if (mode === 'source') {
+          sourceVisible = !sourceVisible
+          if (sourceVisible) {
+            offsetX = 0
+            offsetY = 0
+            setScale(1)
+          } else {
+            updateView()
+          }
+        }
+      },
       onDownload: () => {
         const cleanClone = clone.cloneNode(true) as SVGSVGElement
+        cleanClone.style.display = ''
         cleanClone.style.transform = ''
         cleanClone.style.transformOrigin = ''
         onDownload(cleanClone, dialog)

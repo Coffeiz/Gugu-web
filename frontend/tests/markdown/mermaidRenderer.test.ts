@@ -14,6 +14,7 @@ vi.mock('@mermaid-js/mermaid-zenuml', () => ({ default: {} }))
 
 const labels: MermaidInteractionLabels & { renderFailed: string } = {
   zoomOut: 'Zoom out', zoomIn: 'Zoom in', resetZoom: 'Reset', expand: 'Expand',
+  showSource: 'Show source', showDiagram: 'Show diagram',
   downloadPng: 'Download PNG', close: 'Close', previewTitle: 'Diagram preview',
   downloadFailed: 'Download failed', pngTooLarge: 'Diagram too large', renderFailed: 'Render failed',
 }
