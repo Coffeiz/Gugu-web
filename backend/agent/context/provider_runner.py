@@ -11,6 +11,16 @@ from agent.providers.standalone import output_budget
 from agent.security.sanitize import strip_think_blocks
 
 
+def _history_starts_with_system(history: list[dict], system_text: str) -> bool:
+    """识别已合并的基础 system，兼容字符串与原生 text block 前缀。"""
+    if not history or history[0].get("role") != "system":
+        return False
+    content = history[0].get("content")
+    if isinstance(content, list):
+        content = next((block.get("text") for block in content[:1] if isinstance(block, dict)), None)
+    return isinstance(content, str) and content.startswith(system_text)
+
+
 def _branch_projection(sys, history, user, ai, *, api_format: str, separate_system: bool):
     """给 provider 历史追加分支增量；canonical 输入只在此处首次投影。"""
     from agent.context.provider_conversation import ProviderConversation
@@ -18,7 +28,9 @@ def _branch_projection(sys, history, user, ai, *, api_format: str, separate_syst
     if isinstance(history, ProviderConversation):
         messages = history.to_messages()
         fixed_prefix_size = history.fixed_prefix_size
-        if sys and not separate_system:
+        # Chat 主请求的 wire 快照已携带基础 system（可能已与 snapshot 合并）。
+        # 追加分支只能补缺失的基础 system，否则会在第一个消息处重复人格前缀。
+        if sys and not separate_system and not _history_starts_with_system(messages, sys):
             messages.insert(0, {"role": "system", "content": sys})
             fixed_prefix_size += 1
         messages.append({"role": "user", "content": user})

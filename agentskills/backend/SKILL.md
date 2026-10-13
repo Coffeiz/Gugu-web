@@ -79,6 +79,10 @@ owner 闲置反思触发的会话压缩，应先在捕获主请求快照的同�
 
 反思前的 90% 判定遵循上述统一口径：同进程主请求快照携带的最近一轮 provider `context_input` 优先；没有有效实际用量时才估算。压缩前缀允许纯文本字符串与单个 text block 等价，工具块和其他结构必须严格对齐；对齐成功后发送原始主请求前缀。2026-09-26 的合成 MiniMax-M3 A/B 见 `docs/reports/OPT-Cache-Strategy-2026-09-26.md`。
 
+2026-10-13：真实 MiniMax-M3.1-Flash-Preview / Anthropic run 回放确认，反思分支无条件删除主请求已恢复的原生 thinking/signature 会破坏前缀。同模型 wire 分支现保留原生块，继续清理外协议 reasoning_content 和孤立工具事件；默认历史清洗与续接身份校验保持既有语义。两条真实请求恢复后的 wire digest 均与原 run 精确匹配，隔离 A/B 缓存率从 37.9%/0% 提升至 96.2%/96.6%。后台持久历史重建未改变，不保证相同提升；详见 `docs/reports/OPT-Cache-Strategy-2026-10-13.md`。
+
+同日协议扩查：Responses 续接开/关及 Anthropic 关闭续接均通过主请求→快照→反思的 SDK payload 前缀回归；Chat Completions 的 wire 历史已含基础 system，分支不可再次无条件插入，否则会重复人格前缀。该插入问题已修复，字符串和 text block 两种形态均覆盖。Responses 原生 reasoning/function-call 项继续原样传递，协议回归不代表真实 provider 缓存率保证。
+
 **修改缓存策略前必须**：
 1. 用 `backend/scripts/diagnostics/test_cache_strategy_compare.py` 做对比测试
 2. 记录到 `docs/reports/OPT-Cache-Strategy-*.md`
