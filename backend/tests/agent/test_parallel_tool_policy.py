@@ -1,8 +1,10 @@
 """PRD-LLM-31 阶段 0：并发资格与 dispatch 上下文基线。"""
 import asyncio
 import json
+from datetime import timedelta
 from types import SimpleNamespace
 
+from app.core.tz import now_ctx
 from agent.loop.tools import (
     copy_skill_state_for_parallel,
     parallel_safe_batch,
@@ -270,19 +272,23 @@ async def test_phase2_project_and_calendar_reads_preserve_user_scope(db, user_a,
     from agent.tools.overview import _get_dashboard_stats, _get_upcoming
     from agent.tools.projects import _create_project, _get_project, _list_projects
 
+    today = now_ctx().date()
+    tomorrow = (today + timedelta(days=1)).isoformat()
+    next_week = (today + timedelta(days=7)).isoformat()
+
     project_a = await _create_project(db, user_a.id, {
         "name": "用户甲项目", "status": "active",
-        "start_date": "2026-10-02", "deadline": "2026-10-20",
+        "start_date": today.isoformat(), "deadline": next_week,
     })
     project_b = await _create_project(db, user_b.id, {
         "name": "用户乙项目", "status": "pending",
-        "start_date": "2026-10-02", "deadline": "2026-10-20",
+        "start_date": today.isoformat(), "deadline": next_week,
     })
     event_a = await _create_event(db, user_a.id, {
-        "title": "用户甲活动", "date": "2026-10-12", "all_day": True,
+        "title": "用户甲活动", "date": tomorrow, "all_day": True,
     })
     event_b = await _create_event(db, user_b.id, {
-        "title": "用户乙活动", "date": "2026-10-12", "all_day": True,
+        "title": "用户乙活动", "date": tomorrow, "all_day": True,
     })
     assert project_a["success"] and project_b["success"]
     assert event_a["success"] and event_b["success"]
