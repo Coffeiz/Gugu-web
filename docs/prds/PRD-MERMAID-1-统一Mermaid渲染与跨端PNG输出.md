@@ -1,6 +1,6 @@
 # PRD-MERMAID-1：统一 Mermaid 图表体验与跨端 PNG 输出
 
-> 状态：🔲 待评估
+> 状态：Phase 0/1 已完成；Phase 2–4 待实施
 > 创建：2026-10-12
 > 最近更新：2026-10-12
 > 所属层：前端内容展示、Agent 输出、IM Gateway
@@ -243,6 +243,13 @@ backend/
 - 交付物：GuguChat、文件预览一致的图表、弹层、PNG 下载和多语言文案。
 - 验收：四类页面/内容均渲染同一 Mermaid 样例；普通代码渲染不回归；图表开关不改变；主题切换和卸载不残留旧图或监听器；PNG 能在常见图片查看器打开。
 
+#### Phase 1 验证结果（2026-10-13）
+
+- `MarkdownView`、GuguChat 流式代码块和 `TextViewer` 共用 Mermaid 占位节点处理、懒加载渲染、安全消毒、异步代际保护及交互清理；主题与语言配置由统一模块提供。原生 DOM 弹层和 PNG 导出分别由可清理的共享模块负责。
+- PNG 使用当前主题的实色背景，按 SVG 比例导出，并限制 SVG/PNG 字节、输出像素和边长；拒绝外部 SVG 图片资源，文件名使用安全时间戳。
+- 验证在 devserver 独立前后端工作树完成（无 Compose）：Markdown/图表与样式相关 5 个测试文件 115 项通过，PNG 导出测试 3 项通过；前端 typecheck、i18n 静态扫描、生产构建通过。
+- 构建仅有现存 Vite 配置、chunk 大小及 highlight.js 动态导入提示；本阶段未修改部署配置或运行服务。
+
 ### Phase 2：架构回答提示词
 
 - 时间：Phase 1 前端契约确认后，可与 Phase 1 并行。
@@ -331,10 +338,10 @@ backend/
 
 ### Phase 1：共享前端呈现
 
-- [ ] `MERMAID-002` 新增共享 Mermaid 呈现组件/逻辑，收敛 `MarkdownView.vue` 与 `TextViewer.vue` 的重复渲染和交互生命周期。验收：主题、安全、生命周期与错误处理只有一套行为契约。
-- [ ] `MERMAID-003` 接通 GuguChat 自定义代码块 renderer 的 Mermaid 分支。验收：有效图表渲染，普通代码高亮/复制行为保持。
-- [ ] `MERMAID-004` 增加独立放大弹层和多语言操作文案。验收：弹层键盘/焦点/窄屏行为符合 UI-4 和设计约定。
-- [ ] `MERMAID-005` 增加浏览器 PNG 导出。验收：GuguChat 与文件 Markdown 均下载有效、不透明、比例正确的 PNG；超限和转换错误可恢复。
+- [x] `MERMAID-002` 新增共享 Mermaid 呈现逻辑，收敛 `MarkdownView.vue` 与 `TextViewer.vue` 的重复渲染和交互生命周期。主题、安全、代际保护、错误处理和卸载清理共用一套实现。
+- [x] `MERMAID-003` 接通 GuguChat 自定义代码块 renderer 的 Mermaid 分支；未闭合流式 fence 保持普通代码态，闭合后进入共享图表路径，普通代码高亮/复制行为保留。
+- [x] `MERMAID-004` 增加独立原生放大弹层和简/英/日操作文案；支持 Escape、关闭按钮、焦点恢复及窄屏样式。
+- [x] `MERMAID-005` 增加浏览器 PNG 导出；按比例栅格化、使用不透明主题底色，并限制 SVG/PNG 字节、像素与边长；超限、外部资源及转换错误有界失败。
 
 ### Phase 2：提示词
 

@@ -53,14 +53,13 @@ import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/icons/Icon.vue'
 import { filesApi } from '@/services/api'
 import { sanitizeHtml, splitYamlFrontmatter } from '@/utils/markdown'
-import { bindMermaidInteractions, cleanupMermaidInteractions } from '@/utils/mermaidInteraction'
-import { resolveMermaidThemeColors } from '@/utils/mermaidTheme'
+import { cleanupMarkdownMermaid, renderMarkdownMermaid } from '@/utils/mermaidRenderer'
 import type { FileMeta } from '@/stores/filesCache'
 import { usePreviewStore, isPreviewable, isTextMime, isImageExt } from '@/stores/preview'
 import { useUiStore } from '@/stores/ui'
 import { isRelativeFileLink } from '@/utils/fileLinks'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 // CodeMirror 全部延迟加载：TextViewer 从 FloatPreviewWindow 静态引入，FloatPreviewWindow
 // 又从 DefaultLayout 静态引入（基本每个登录页都会经过这条链路）——顶层 import codemirror/
@@ -95,8 +94,6 @@ const uiStore = useUiStore()
 
 const tvScroll = ref<HTMLElement | null>(null)   // .tv-scroll 滚动容器
 const mdRoot = ref<HTMLElement | null>(null)
-let mermaidApi: typeof import('mermaid').default | null = null
-let mermaidRenderSequence = 0
 let themeObserver: MutationObserver | null = null
 
 // 滚动位置持久化到 localStorage：实时刷新会把 blobUrl 置空、整组件销毁重建，内存变量留不住，
@@ -427,69 +424,17 @@ async function renderMarkdown(text: string) {
   return sanitizeHtml(_tvMarked.parse(text) as string)
 }
 
-function isDarkTheme(): boolean {
-  return document.documentElement.dataset.theme === 'dark'
-}
-
-function cssToken(name: string, fallback: string): string {
-  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
-  return value || fallback
-}
-
-async function getMermaid() {
-  if (!mermaidApi) mermaidApi = (await import('mermaid')).default
-  return mermaidApi
-}
-
-function configureMermaid(mermaid: NonNullable<typeof mermaidApi>): void {
-  const dark = isDarkTheme()
-  const colors = resolveMermaidThemeColors(dark)
-  mermaid.initialize({
-    startOnLoad: false,
-    securityLevel: 'strict',
-    htmlLabels: false,
-    theme: dark ? 'dark' : 'default',
-    themeVariables: {
-      ...colors,
-      fontFamily: cssToken('--font-family-sans', 'Inter, sans-serif'),
-    },
-  })
-}
-
-async function renderMermaidBlock(element: HTMLElement, source: string): Promise<void> {
-  const sequence = ++mermaidRenderSequence
-  element.dataset.renderSequence = String(sequence)
-  try {
-    const mermaid = await getMermaid()
-    configureMermaid(mermaid)
-    const { svg } = await mermaid.render(`tv-mermaid-${sequence}`, source)
-    if (!element.isConnected || element.dataset.renderSequence !== String(sequence)) return
-    const cleanSvg = sanitizeHtml(svg)
-    element.innerHTML = cleanSvg
-    bindMermaidInteractions(element)
-    element.classList.add('md-mermaid-ready')
-    element.classList.remove('md-mermaid-error')
-  } catch {
-    element.classList.add('md-mermaid-error')
-    element.textContent = `Mermaid 图表渲染失败\n\n${source}`
+function mermaidLabels() {
+  return {
+    zoomOut: t('mermaidUi.zoomOut'), zoomIn: t('mermaidUi.zoomIn'), resetZoom: t('mermaidUi.resetZoom'),
+    expand: t('mermaidUi.expand'), downloadPng: t('mermaidUi.downloadPng'), close: t('mermaidUi.close'),
+    previewTitle: t('mermaidUi.previewTitle'), downloadFailed: t('mermaidUi.downloadFailed'),
+    pngTooLarge: t('mermaidUi.pngTooLarge'), renderFailed: t('mermaidUi.renderFailed'),
   }
 }
 
-async function renderMermaidBlocks(): Promise<void> {
-  await nextTick()
-  if (!mdRoot.value) return
-  const sourceBlocks = Array.from(mdRoot.value.querySelectorAll<HTMLElement>('.md-mermaid-source'))
-  for (const sourceBlock of sourceBlocks) {
-    const source = sourceBlock.textContent || ''
-    const container = document.createElement('div')
-    container.className = 'md-mermaid'
-    container.dataset.source = encodeURIComponent(source)
-    sourceBlock.replaceWith(container)
-  }
-  for (const container of mdRoot.value.querySelectorAll<HTMLElement>('.md-mermaid')) {
-    const encoded = container.dataset.source
-    if (encoded) await renderMermaidBlock(container, decodeURIComponent(encoded))
-  }
+function renderMermaidBlocks(): Promise<void> {
+  return renderMarkdownMermaid(mdRoot.value, mermaidLabels())
 }
 
 // ── 任务勾选框可交互：去掉 marked 默认的 disabled、按文档顺序标 data-task（仅 md + 真实文件）──
@@ -679,6 +624,8 @@ onMounted(() => {
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-family'] })
 })
 
+watch(locale, () => renderMermaidBlocks())
+
 // 文件加载期间 .tv-scroll 被 loading 分支暂时移出 DOM；等预览节点真正出现后再渲染图表。
 // 相对路径图片的 blob 替换也必须等节点挂载（flush: 'post'）后做，processText 阶段 mdRoot 还是 null。
 watch([mdHtml, loading], ([html, isLoading]) => {
@@ -691,8 +638,7 @@ watch([mdHtml, loading], ([html, isLoading]) => {
 onBeforeUnmount(() => {
   themeObserver?.disconnect()
   themeObserver = null
-  cleanupMermaidInteractions(mdRoot.value)
-  mermaidRenderSequence += 1
+  cleanupMarkdownMermaid(mdRoot.value)
   releaseMdObjectUrls()
 })
 </script>
@@ -945,18 +891,6 @@ onBeforeUnmount(() => {
 .tv-md :deep(.md-mermaid svg) { display: block; max-width: 100%; height: auto; margin: 0 auto; }
 .tv-md :deep(.md-mermaid) { position: relative; cursor: default; touch-action: none; }
 .tv-md :deep(.md-mermaid-dragging) { cursor: grabbing; }
-.tv-md :deep(.md-mermaid-controls) {
-  position: absolute; top: 8px; right: 8px; z-index: 1;
-  display: flex; gap: 3px; padding: 3px;
-  border: 1px solid var(--border-default); border-radius: 7px;
-  background: var(--surface-card-solid); box-shadow: var(--elevation-card);
-}
-.tv-md :deep(.md-mermaid-controls button) {
-  width: 24px; height: 24px; padding: 0; border: 0; border-radius: 5px;
-  color: var(--content-secondary); background: transparent; cursor: pointer;
-  font-size: 16px; line-height: 1;
-}
-.tv-md :deep(.md-mermaid-controls button:hover) { color: var(--content-primary); background: var(--surface-soft-hover); }
 .tv-md :deep(.md-mermaid-error) {
   white-space: pre-wrap; color: var(--text-secondary, #67647a);
   font-family: var(--font-family-mono, monospace);

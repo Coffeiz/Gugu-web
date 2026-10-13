@@ -1,16 +1,11 @@
 import { Marked } from 'marked'
 import DOMPurify from 'dompurify'
+import { escapeHtml } from '@/utils/escapeHtml'
 
 // 通知/轻量场景专用的独立 marked 实例。
 // 与 GuguChat 聊天里的全局 marked 配置互不影响（那套带 hljs 代码高亮 + 复制按钮，是聊天专用）。
 // 这里只要标准 GFM + 软换行，渲染加粗/斜体/链接/列表/标题/行内代码/引用/表格等完整 markdown。
 const md = new Marked({ breaks: true, gfm: true })
-
-function escHtml(s: string): string {
-  return String(s).replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  })[c] || c)
-}
 
 // Mermaid 需要在组件挂载后异步生成 SVG；这里先保留安全的源码占位节点。
 // MarkdownView 会负责调用 mermaid，并继续经过 DOMPurify 清洗生成结果。
@@ -18,7 +13,7 @@ md.use({
   renderer: {
     code(token) {
       if (String(token.lang || '').trim().toLowerCase() !== 'mermaid') return false
-      return `<pre class="md-mermaid-source"><code>${escHtml(token.text)}</code></pre>`
+      return `<pre class="md-mermaid-source"><code>${escapeHtml(token.text)}</code></pre>`
     },
   },
 })

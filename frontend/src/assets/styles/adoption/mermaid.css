@@ -1,0 +1,99 @@
+.md-mermaid-controls {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--border-default);
+  border-radius: 7px;
+  background: var(--surface-card-solid);
+  box-shadow: var(--elevation-card);
+}
+.md-mermaid-controls button,
+.md-mermaid-dialog-actions button {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: var(--content-secondary);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  line-height: 1;
+}
+.md-mermaid-controls button:hover,
+.md-mermaid-dialog-actions button:hover {
+  color: var(--content-primary);
+  background: var(--surface-soft-hover);
+}
+.md-mermaid-controls button:focus-visible,
+.md-mermaid-dialog button:focus-visible {
+  outline: 2px solid var(--theme-focus);
+  outline-offset: 1px;
+}
+.md-mermaid-status {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 2;
+  max-width: min(360px, 80vw);
+  padding: 6px 9px;
+  border: 1px solid var(--border-default);
+  border-radius: 7px;
+  color: var(--content-primary);
+  background: var(--surface-card-solid);
+  box-shadow: var(--elevation-card);
+  font-size: 12px;
+}
+.md-mermaid-dialog {
+  width: min(92vw, 1200px);
+  height: min(90vh, 900px);
+  max-width: 92vw;
+  max-height: 90vh;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: 14px;
+  color: var(--content-primary);
+  background: var(--surface-card-solid);
+  box-shadow: var(--elevation-window);
+}
+.md-mermaid-dialog::backdrop { background: rgb(15 14 20 / 58%); backdrop-filter: blur(3px); }
+.md-mermaid-dialog > header {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px 8px 16px;
+  border-bottom: 1px solid var(--content-divider);
+}
+.md-mermaid-dialog-actions { display: flex; gap: 4px; }
+.md-mermaid-dialog-body {
+  position: relative;
+  display: grid;
+  width: 100%;
+  height: calc(100% - 49px);
+  place-items: center;
+  overflow: auto;
+  padding: 18px;
+  box-sizing: border-box;
+}
+.md-mermaid-dialog-body svg { display: block; max-width: 100%; max-height: 100%; }
+.md-mermaid-dialog > .md-mermaid-status {
+  position: absolute;
+  top: auto;
+  right: 12px;
+  bottom: 12px;
+}
+@media (max-width: 600px) {
+  .md-mermaid-controls { top: 4px; right: 4px; gap: 1px; padding: 2px; }
+  .md-mermaid-controls button { width: 24px; height: 24px; }
+  .md-mermaid-dialog { width: 96vw; height: 92vh; max-width: 96vw; max-height: 92vh; }
+}
