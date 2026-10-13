@@ -58,6 +58,13 @@ def choose_instant_reaction(text: str, has_media: bool) -> tuple[str, str]:
     return random.choice(_QUICK_DEFAULT[1]), _QUICK_DEFAULT[0]
 
 
+def _qq_private_streaming_requested(
+    platform: str, chat_type: str | None, message_format: str | None,
+) -> bool:
+    """QQ 私聊选择 Markdown 时流式发送；兼容格式和群聊维持非流式。"""
+    return platform == "qq" and chat_type == "c2c" and message_format == "markdown"
+
+
 async def display_tool_event(
     payload: dict,
     event: dict,
@@ -65,6 +72,7 @@ async def display_tool_event(
     show_tool_interactions: bool,
     publish_web_event,
     feishu_tool_summary=None,
+    completion_only: bool = False,
 ) -> None:
     """保持 Web 镜像独立，再按用户偏好选择 IM 工具状态呈现。"""
     await publish_web_event(event)
@@ -72,8 +80,15 @@ async def display_tool_event(
         return
     if feishu_tool_summary is not None and await feishu_tool_summary.handle_tool_event(event):
         return
+    if completion_only and event.get("type") == "tool_call":
+        return
     from agent.im.replies import send_tool_event
 
+    if completion_only:
+        # QQ 流式正文必须使用 Markdown，但工具交互仍只发完成摘要，避免把
+        # 输入参数和完整 JSON 结果拆成两条独立消息。
+        await send_tool_event({**payload, "message_format": "compat"}, event)
+        return
     await send_tool_event(payload, event)
 
 
@@ -1088,19 +1103,22 @@ async def dispatch_im_message(payload: dict):
     immediate_round_blocked = False
     qq_private_streaming = False
     if platform == "qq" and payload.get("chat_type") == "c2c":
-        from agent.im.message_format import resolve_private_streaming_enabled
-        qq_private_streaming = await resolve_private_streaming_enabled(route.bot_id)
-        # 交互可能在任意工具 round 中途产生。QQ 流消息在 Agent 等待交互时尚未
-        # 收尾，客户端通常不会展示另一条 Inline Keyboard；必须统一走 collect，
-        # 才能在 Runner 阻塞等待前把按钮发出去。工具状态开关不能影响这个必需交互。
-        if qq_private_streaming:
-            qq_private_streaming = False
+        message_format = payload.get("message_format")
+        if message_format not in {"compat", "markdown"}:
+            from agent.im.message_format import resolve_message_format
+            message_format = await resolve_message_format(route.bot_id, "c2c")
+        # 流式消费器会在 interaction_required 前冲刷 round_end；QQ 发送器先结束
+        # 当前流消息，再由交互回调发送确认提示，确认后续轮使用新流消息继续。
+        qq_private_streaming = _qq_private_streaming_requested(
+            platform, payload.get("chat_type"), message_format,
+        )
     tool_event_callback = partial(
         display_tool_event,
         payload,
         show_tool_interactions=show_tool_interactions,
         publish_web_event=_publish_web_event,
         feishu_tool_summary=feishu_tool_summary,
+        completion_only=qq_private_streaming,
     )
 
     async def _show_round(text: str) -> bool:
@@ -1168,6 +1186,7 @@ async def dispatch_im_message(payload: dict):
                 str(receive_id or ""), _mirror_stream(token_iter),
                 channel_id=payload.get("channel_id"),
                 tool_summary=feishu_tool_summary,
+                mermaid_theme_preferences=payload.get("mermaid_theme_preferences"),
             )
             if resp is None and stream_sent:
                 # 卡片已经可见但流没有产出最终响应；不能重新执行同一 Run。

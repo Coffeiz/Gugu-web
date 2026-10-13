@@ -204,14 +204,83 @@ async def test_run_queued_diagrams_keep_text_streaming_and_render_one_at_a_time(
     streamed.extend(await renderer.feed("现在继续输出下一段正文内容。"))
     assert calls == []
     assert "后文继续生成一些文字。" in "".join(part.text for part in streamed)
-    assert "```mermaid" not in "".join(part.text for part in streamed)
+    streamed_text = "".join(part.text for part in streamed)
+    assert all(source not in streamed_text for source in sources[:mermaid.MAX_RUN_DIAGRAMS])
+    assert all(source in streamed_text for source in sources[mermaid.MAX_RUN_DIAGRAMS:])
 
     await renderer.finish_round(defer_images=True)
     assert calls == []
     images = await renderer.render_deferred_diagrams()
 
-    assert [len(batch) for batch in calls] == [1] * 6
-    assert len([part for part in images if part.png]) == 6
+    assert [len(batch) for batch in calls] == [1] * mermaid.MAX_RUN_DIAGRAMS
+    assert len([part for part in images if part.png]) == mermaid.MAX_RUN_DIAGRAMS
+    fallback_text = "".join(part.text for part in streamed + images if part.text)
+    assert sources[4] in fallback_text
+    assert sources[5] in fallback_text
+
+
+@pytest.mark.asyncio
+async def test_progressive_mermaid_render_queue_does_not_pause_stream_tokens(monkeypatch):
+    from agent.im import mermaid
+
+    render_started = asyncio.Event()
+    release_render = asyncio.Event()
+    render_finished = asyncio.Event()
+    png = b"\x89PNG\r\n\x1a\nchart"
+
+    async def render(source):
+        render_started.set()
+        await release_render.wait()
+        render_finished.set()
+        return png
+
+    monkeypatch.setattr(mermaid, "render_png", render)
+    source = "```mermaid\ngraph LR; A-->B\n```"
+    seen = []
+
+    async def token_iter():
+        yield ("token", source)
+        await render_started.wait()
+        assert not render_finished.is_set()
+        yield ("token", "后续文字仍然继续流出。")
+        assert not render_finished.is_set()
+        release_render.set()
+        yield ("final", object())
+
+    async for event in mermaid.ProgressiveMermaidTokenFilter().events(token_iter()):
+        seen.append(event)
+
+    assert [kind for kind, _payload in seen] == ["token", "token", "mermaid_image", "final"]
+    assert seen[1][1] == "后续文字仍然继续流出。"
+    assert seen[2][1][2:] == (source, png)
+
+
+@pytest.mark.asyncio
+async def test_progressive_mermaid_queue_uses_shared_four_chart_run_budget(monkeypatch):
+    from agent.im import mermaid
+
+    rendered = []
+
+    async def render(source):
+        rendered.append(source)
+        return b"\x89PNG\r\n\x1a\nchart"
+
+    monkeypatch.setattr(mermaid, "render_png", render)
+    sources = [f"```mermaid\ngraph LR; A{index}-->B{index}\n```" for index in range(5)]
+    text = "\n".join(sources)
+
+    async def token_iter():
+        yield ("token", text)
+        yield ("final", object())
+
+    events = [
+        event async for event in mermaid.ProgressiveMermaidTokenFilter().events(token_iter())
+    ]
+
+    assert len(rendered) == mermaid.MAX_RUN_DIAGRAMS == 4
+    assert sum(kind == "mermaid_image" for kind, _payload in events) == 4
+    assert events[0] == ("token", text)
+    assert sources[4] in events[0][1]
 
 
 @pytest.mark.asyncio
@@ -353,7 +422,7 @@ async def test_qq_completed_round_keeps_trailing_text_together_after_mermaid(mon
 
 
 @pytest.mark.asyncio
-async def test_qq_completed_round_sends_six_mermaid_diagrams_as_images(monkeypatch):
+async def test_qq_completed_round_uses_shared_mermaid_run_limit(monkeypatch):
     from agent.im import mermaid, replies
 
     sent = []
@@ -371,7 +440,7 @@ async def test_qq_completed_round_sends_six_mermaid_diagrams_as_images(monkeypat
         return True
 
     async def send_text(_payload, _text):
-        sent.append("text")
+        sent.append(_text)
         return True
 
     monkeypatch.setattr(mermaid, "render_pngs", render)
@@ -389,8 +458,11 @@ async def test_qq_completed_round_sends_six_mermaid_diagrams_as_images(monkeypat
     )
 
     assert result is True
-    assert [len(batch) for batch in batches] == [1] * 6
-    assert sent == [png] * 6
+    assert [len(batch) for batch in batches] == [1] * mermaid.MAX_RUN_DIAGRAMS
+    assert sum(item == png for item in sent) == mermaid.MAX_RUN_DIAGRAMS
+    fallback_text = "".join(item for item in sent if isinstance(item, str))
+    assert sources[4] in fallback_text
+    assert sources[5] in fallback_text
 
 
 @pytest.mark.asyncio
@@ -648,7 +720,7 @@ async def test_qq_stream_preserves_text_image_text_order_after_deferred_render(m
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("show_intermediate_replies", [False, True])
-async def test_qq_stream_sends_all_run_queued_images_after_final_text(
+async def test_qq_stream_sends_run_images_with_shared_four_chart_budget(
     monkeypatch, show_intermediate_replies,
 ):
     from agent.gateway import qq
@@ -702,13 +774,15 @@ async def test_qq_stream_sends_all_run_queued_images_after_final_text(
     )
 
     assert sent is True
-    assert [len(batch) for batch in render_batches] == [1] * 6
-    assert [kind for kind, _value in events] == ["text", "image", "text"] + ["image"] * 5 + ["text"]
+    assert [len(batch) for batch in render_batches] == [1] * mermaid.MAX_RUN_DIAGRAMS
+    assert [kind for kind, _value in events] == ["text", "image", "text"] + ["image"] * 3 + ["text"]
     assert events[0][1] == "前文"
     assert events[1] == ("image", "png")
     assert events[2][1] == "中间说明"
-    assert events[-1][1] == "后文"
-    assert all("```mermaid" not in value for kind, value in events if kind == "text")
+    assert events[-1][1].endswith("后文")
+    text_output = "".join(value for kind, value in events if kind == "text")
+    assert all(source not in text_output for source in sources[:mermaid.MAX_RUN_DIAGRAMS])
+    assert all(source in text_output for source in sources[mermaid.MAX_RUN_DIAGRAMS:])
 
 
 @pytest.mark.asyncio

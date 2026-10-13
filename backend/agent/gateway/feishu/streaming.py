@@ -703,7 +703,8 @@ async def _send_tool_summary_stream(
 async def send_text_stream(receive_id: str, token_iter, channel_id: str | None = None,
                           placeholder: str = "咕咕正在想…",
                           tool_summary=None,
-                          show_intermediate_replies: bool = True) -> tuple[bool, "AgentResponse | None"]:
+                          show_intermediate_replies: bool = True,
+                          mermaid_theme_preferences: dict | None = None) -> tuple[bool, "AgentResponse | None"]:
     """飞书流式回复（IM 端模拟 SSE）。
 
     Args:
@@ -726,7 +727,10 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
     # 先原样流出 Mermaid 源码；完整 fence 渲染成功后，通过整卡更新原位替换为图片。
     from agent.im.mermaid import ProgressiveMermaidTokenFilter
 
-    mermaid_filter = ProgressiveMermaidTokenFilter()
+    mermaid_filter = ProgressiveMermaidTokenFilter(
+        theme_preferences=mermaid_theme_preferences,
+        preserve_source=True,
+    )
     token_iter = mermaid_filter.events(token_iter)
     # 之前的 lark.Client 缓存不再使用——card API 直走 httpx（绕 SDK bug）。
     # _clients 仍保留供 send_text / react / send_file 等其他路径继续用 SDK。

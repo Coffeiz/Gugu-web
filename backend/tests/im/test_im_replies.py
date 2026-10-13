@@ -553,15 +553,16 @@ async def test_interaction_uses_plain_text_for_unadapted_platforms(monkeypatch, 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("platform", "payload", "markdown"),
+    ("platform", "payload"),
     [
-        ("qq", {"chat_type": "group", "message_format": "compat"}, False),
-        ("feishu", {"chat_type": "group"}, True),
-        ("wechat", {"chat_type": "c2c"}, True),
+        ("qq", {"chat_type": "group", "message_format": "compat"}),
+        ("feishu", {"chat_type": "group"}),
+        ("wechat", {"chat_type": "c2c"}),
+        ("telegram", {"chat_type": "c2c"}),
     ],
 )
-async def test_tool_event_platform_fallbacks_keep_result_and_hide_input(monkeypatch, platform, payload, markdown):
-    """回归：QQ 群聊使用纯文本结果，飞书/微信降级为 Markdown；输入不能泄露到结果消息。"""
+async def test_tool_event_platforms_follow_display_contract(monkeypatch, platform, payload):
+    """回归：QQ 群聊、微信和 Telegram 只显示完成状态，飞书保留完整工具摘要。"""
     from agent.im import replies
 
     sent = []
@@ -581,12 +582,12 @@ async def test_tool_event_platform_fallbacks_keep_result_and_hide_input(monkeypa
          "result": {"items": ["结果"]}},
     )
 
-    assert len(sent) == 2 if markdown else 1
-    if markdown:
+    assert len(sent) == (2 if platform == "feishu" else 1)
+    if platform == "feishu":
         assert "**输入**" in sent[0]
     result_text = sent[-1]
     assert "不应出现在结果" not in result_text
-    if markdown:
+    if platform == "feishu":
         assert "**输出**" in result_text
         assert "结果" in result_text
     else:

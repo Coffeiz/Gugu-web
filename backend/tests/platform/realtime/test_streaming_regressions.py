@@ -204,6 +204,53 @@ async def test_qq_stream_drains_agent_after_transport_failure(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_qq_stream_finishes_interaction_round_before_prompt_and_resumes(monkeypatch):
+    """确认交互前先发送完成帧，确认后后续正文使用新的 QQ 流消息。"""
+    from agent.gateway.qq import outbound as qq_outbound
+
+    timeline = []
+
+    class InteractionStream:
+        def __init__(self):
+            self.text = ""
+
+        def push(self, text):
+            self.text += text
+
+        async def finish(self, text):
+            timeline.append(("stream_finished", text))
+
+        def has_sent(self):
+            return bool(self.text)
+
+    monkeypatch.setattr(
+        qq_outbound, "create_private_text_stream",
+        lambda *_args, **_kwargs: InteractionStream(),
+    )
+
+    async def token_iter():
+        yield ("token", "需要先确认")
+        yield (ROUND_END, "需要先确认")
+        # send_qq_stream_by_round 必须先消费 ROUND_END 并发完成帧，才会继续取下一事件。
+        timeline.append(("interaction_prompt", None))
+        yield ("token", "确认后继续")
+        yield ("final", AgentResponse(text="确认后继续", session_id=7))
+
+    sent, response, _last_text = await send_qq_stream_by_round(
+        {"platform_user_id": "synthetic-recipient", "channel_id": "test"},
+        token_iter(),
+    )
+
+    assert sent is True
+    assert response.session_id == 7
+    assert timeline[:2] == [
+        ("stream_finished", "需要先确认"),
+        ("interaction_prompt", None),
+    ]
+    assert timeline[-1] == ("stream_finished", "确认后继续")
+
+
+@pytest.mark.asyncio
 async def test_run_stream_releases_session_gate_after_final(monkeypatch):
     import agent.context.compress_conv as compress_conv
     from agent import runner

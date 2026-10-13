@@ -59,12 +59,12 @@ class QQPrivateTextStream:
     真正出队时读取首帧返回的 stream_msg_id，避免并发请求缺少关联 ID。
     """
 
-    def __init__(self, channel_id: str, openid: str, *, message_id: str | None,
-                 message_format: str | None):
+    def __init__(self, channel_id: str, openid: str, *, message_id: str | None):
         self.channel_id = channel_id
         self.openid = openid
         self.message_id = message_id
-        self.content_type = "markdown" if message_format == "markdown" else "text"
+        # C2C 流式消息只用于 Markdown 私聊模式。
+        self.content_type = "markdown"
         self.msg_seq: int | None = None
         self.full_text = ""
         self.last_sent_text = ""
@@ -80,6 +80,10 @@ class QQPrivateTextStream:
         if not delta or self.finished or self.error:
             return
         self.full_text += delta
+        # Mermaid fence 前可能先到换行/空格；空白不能单独启动流消息，
+        # 否则它会在图表前被切段，且无法发送可见的 DONE 帧。
+        if not self.full_text.strip():
+            return
         if self._timer is None:
             self._timer = asyncio.create_task(self._delayed_flush())
 
@@ -174,13 +178,11 @@ class QQPrivateTextStream:
     def has_sent(self) -> bool:
         return self.sent_frame_count > 0
 
-def create_private_text_stream(openid: str, *, channel_id: str, message_id: str | None = None,
-                               message_format: str | None = None) -> QQPrivateTextStream:
+def create_private_text_stream(openid: str, *, channel_id: str, message_id: str | None = None) -> QQPrivateTextStream:
     return QQPrivateTextStream(
         channel_id,
         openid,
         message_id=message_id,
-        message_format=message_format,
     )
 
 def _markdown_blocked(exc: Exception) -> bool:

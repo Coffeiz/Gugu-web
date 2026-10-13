@@ -19,6 +19,9 @@ from agent.interactions.events import ROUND_END
 from agent.models import AgentResponse
 
 _CODE_SPLIT_RE = re.compile(r'(```[\s\S]*?```|`[^`\n]*`)')
+_MERMAID_SOURCE_FENCE_RE = re.compile(
+    r"```mermaid[ \t]*\r?\n[\s\S]*?```", re.IGNORECASE,
+)
 _BOLD_LEAD_WS_RE = re.compile(r'\*\*[ \t]+([^*\n]+?)\*\*')
 _BOLD_TRAIL_WS_RE = re.compile(r'\*\*([^*\n]+?)[ \t]+\*\*')
 
@@ -76,53 +79,58 @@ class _QQMermaidRound:
 
     def __init__(self, payload: dict, *, show_intermediate_replies: bool) -> None:
         from agent.gateway import qq
-        from agent.im.mermaid import MAX_RUN_DIAGRAMS, StreamingRenderer
 
         self.payload = payload
-        self.show_intermediate_replies = show_intermediate_replies
+        # 保留参数兼容调用方，但流式传输由 QQ 私聊流开关决定。
         self.stream_kwargs = {
             "channel_id": payload.get("channel_id") or "",
             "message_id": payload.get("message_id"),
-            "message_format": payload.get("message_format"),
         }
         self._qq = qq
+        self.stream_failed = False
         self.stream = self._new_stream()
         self._stream_counted = False
-        self.renderer = StreamingRenderer(
-            max_diagrams=MAX_RUN_DIAGRAMS,
-            inline_images=True,
-            defer_until_run_end=True,
-            theme_preferences=payload.get("mermaid_theme_preferences"),
-        )
         self.stream_sent = False
         self.last_text = ""
         self.round_text = ""
         self.segment_text = ""
+        self.pending_whitespace = ""
         self.round_has_image = False
         self.trim_leading_segment = False
         self.stream_message_id: str | None = None
 
     def _new_stream(self):
         self._stream_counted = False
-        self.stream_message_id = (
-            None if _qq_passive_reply_count(self.payload) else self.payload.get("message_id")
-        )
+        # 每个文本段都是独立气泡，但仍可在 QQ 被动回复额度内关联同一条入站消息。
+        # stream_messages 没有入站 message_id 时无法开启新流；额度耗尽后退回普通主动文本。
+        if not self.payload.get("message_id") or _qq_reply_budget_exhausted(self.payload):
+            self.stream_message_id = None
+            self.stream_failed = True
+            return None
+        self.stream_message_id = self.payload.get("message_id")
         kwargs = {**self.stream_kwargs, "message_id": self.stream_message_id}
         return self._qq.create_private_text_stream(
             self.payload.get("platform_user_id") or "", **kwargs
         )
 
     async def push_token(self, token: str) -> None:
-        await self._emit_parts(await self.renderer.feed(token))
+        if token:
+            from agent.im.mermaid import ReplyPart
+            await self._emit_parts([ReplyPart(text=token)])
+
+    async def push_image(self, payload) -> None:
+        _diagram_index, _image_number, source, png = payload
+        from agent.im.mermaid import ReplyPart
+        await self._emit_parts([ReplyPart(png=png, source=source)])
 
     async def finish_round(self, final_text: str = "", *, start_next: bool = True) -> None:
-        await self._emit_parts(await self.renderer.finish_round(defer_images=True))
         final_text = _fix_loose_bold(final_text or "")
         if not self.round_text.strip() and final_text.strip() and not self.round_has_image:
             self.segment_text = final_text.strip()
             self.round_text = self.segment_text
-            if self.show_intermediate_replies and self.stream is not None:
+            if self.stream is not None:
                 self.stream.push(self.segment_text)
+        self.pending_whitespace = ""
         await self._finish_text_segment()
         self.last_text = final_text.strip() or self.round_text.strip() or self.last_text
         self._reset_round()
@@ -130,27 +138,56 @@ class _QQMermaidRound:
             self.stream = self._new_stream()
 
     async def finish_response(self, final_text: str) -> tuple[bool, str]:
-        if self.show_intermediate_replies:
-            await self.finish_round(final_text, start_next=False)
-        else:
-            await self._emit_parts(await self.renderer.feed(final_text))
-            await self._emit_parts(await self.renderer.finish_round(defer_images=True))
+        has_pending_output = bool(
+            self.round_text.strip()
+            or self.segment_text.strip()
+            or self.round_has_image
+        )
+        if has_pending_output:
             if not self.round_text.strip() and final_text.strip() and not self.round_has_image:
-                self.round_text = final_text.strip()
-                self.segment_text = self.round_text
-            await self._finish_text_segment(
-                trim_end=self.renderer.has_deferred_diagrams
+                # 防御没有 token 事件但带有 final 正文的迭代器；仍走相同的 Mermaid 解析。
+                from agent.im.mermaid import render_reply
+                parts = await render_reply(
+                    final_text,
+                    theme_preferences=self.payload.get("mermaid_theme_preferences"),
+                )
+                await self._emit_parts(parts)
+                await self._finish_text_segment(trim_end=any(part.png for part in parts))
+                self.last_text = final_text.strip()
+            else:
+                await self.finish_round(final_text, start_next=False)
+        elif not self.last_text and final_text.strip() and not self.stream_sent:
+            # 仅当流中完全没有交付内容时，才用完整响应补偿缺失的 token/ROUND_END。
+            # final_text 可能经过终态清洗而与已发送轮次略有差异；不能因此重播整轮，
+            # 否则 Mermaid 前已经发出的说明文字和图片会再次出现。
+            from agent.im.mermaid import render_reply
+            parts = await render_reply(
+                final_text,
+                theme_preferences=self.payload.get("mermaid_theme_preferences"),
             )
-            self.last_text = final_text.strip() or self.round_text.strip() or self.last_text
-        await self._send_queued_images()
+            await self._emit_parts(parts)
+            await self._finish_text_segment(trim_end=any(part.png for part in parts))
+            self.last_text = final_text.strip()
         if self.stream is not None:
             self.stream_sent = self.stream_sent or self.stream.has_sent()
         return self.stream_sent, self.last_text
 
-    async def _send_queued_images(self) -> None:
-        """整次 Agent run 结束后渲染图片，并按回复中的原始顺序发送内容。"""
-        await self._emit_parts(await self.renderer.render_deferred_diagrams())
+    def _record_stream_delivery(self) -> bool:
+        if self.stream is not None and self.stream.has_sent():
+            self.stream_sent = True
+            self._count_stream_reply()
+        return self.stream_sent
+
+    def _fail_stream(self) -> None:
+        self._record_stream_delivery()
+        self.stream_failed = True
+        self.stream = None
+
+    async def recover_after_stream_error(self) -> bool:
+        """切换到普通文字发送，继续排空已生成内容，避免重发已发出的图片。"""
+        self._fail_stream()
         await self._finish_text_segment()
+        return self.stream_sent
 
     def _count_stream_reply(self) -> None:
         if (
@@ -164,13 +201,42 @@ class _QQMermaidRound:
 
     async def _finish_text_segment(self, *, trim_end: bool = False) -> None:
         if trim_end:
-            self.segment_text = self.segment_text.rstrip()
+            # 只丢弃尚未推送的尾部空白。流式 replace 不允许回改已经展示的前缀，
+            # 直接 rstrip(segment_text) 会让 QQ 拒绝收尾帧并把气泡留在生成中。
+            self.pending_whitespace = ""
         if not self.segment_text.strip():
             self.segment_text = ""
             return
         if self.stream is None:
+            if self.stream_failed:
+                text = self.segment_text
+                self.segment_text = ""
+                try:
+                    if await send_text(self.payload, text):
+                        self.stream_sent = True
+                except Exception as exc:
+                    from app.core.redaction import diag_log
+                    diag_log("agent.im.qq_stream_text_recovery", exc)
             return
-        await self.stream.finish(self.segment_text)
+        stream = self.stream
+        text = self.segment_text
+        try:
+            await stream.finish(text)
+        except Exception:
+            # finish() 可能在内容帧已成功、仅结束帧失败时抛错。只保留尚未
+            # 确认送达的尾部给普通消息回退，不能把完整流文本再发一遍。
+            delivered = str(getattr(stream, "last_sent_text", "") or "")
+            if stream.has_sent():
+                self.stream_sent = True
+                # 即使 DONE 帧失败，已发送的流正文也已占用一次 QQ 被动回复额度。
+                # 后续 Mermaid 后的文本会开启新流，不能再次关联同一条入站消息。
+                self._count_stream_reply()
+                self.segment_text = (
+                    text[len(delivered):]
+                    if delivered and text.startswith(delivered)
+                    else ""
+                )
+            raise
         self.stream_sent = self.stream_sent or self.stream.has_sent()
         self._count_stream_reply()
         self.segment_text = ""
@@ -179,7 +245,13 @@ class _QQMermaidRound:
         for part in parts:
             if part.png is not None:
                 self.round_has_image = True
-                await self._finish_text_segment(trim_end=True)
+                try:
+                    await self._finish_text_segment(trim_end=True)
+                except Exception as exc:
+                    from app.core.redaction import diag_log
+                    diag_log("agent.im.qq_stream_transport", exc)
+                    self._fail_stream()
+                    await self._finish_text_segment(trim_end=True)
                 image_sent = await _try_send_png_image(self.payload, part.png)
                 if image_sent:
                     self.stream_sent = True
@@ -191,8 +263,7 @@ class _QQMermaidRound:
                 self.stream = self._new_stream()
             elif part.placeholder_emitted:
                 self.round_has_image = True
-                if self.show_intermediate_replies:
-                    await self._finish_text_segment(trim_end=True)
+                await self._finish_text_segment(trim_end=True)
                 self.trim_leading_segment = True
             elif part.text:
                 text = part.text
@@ -205,14 +276,19 @@ class _QQMermaidRound:
                 if not text:
                     continue
                 self.round_text += text
-                self.segment_text += text
-                if self.show_intermediate_replies and self.stream is not None:
-                    self.stream.push(text)
+                buffered = self.pending_whitespace + text
+                visible = buffered.rstrip()
+                self.pending_whitespace = buffered[len(visible):]
+                if visible:
+                    self.segment_text += visible
+                    if self.stream is not None:
+                        self.stream.push(visible)
 
     def _reset_round(self) -> None:
         self.round_text = ""
         self.round_has_image = False
         self.segment_text = ""
+        self.pending_whitespace = ""
 
 
 async def send_qq_stream_by_round(
@@ -223,6 +299,12 @@ async def send_qq_stream_by_round(
     sender = _QQMermaidRound(
         payload, show_intermediate_replies=show_intermediate_replies
     )
+    # QQ 私聊格式为 Markdown 时逐步推送；“显示中间回复”只影响兼容模式的轮次展示，
+    # 不能再让它关闭已经启用的私聊流。Mermaid 在 token 边界统一过滤并背压。
+    from agent.im.mermaid import ProgressiveMermaidTokenFilter
+    token_iter = ProgressiveMermaidTokenFilter(
+        theme_preferences=payload.get("mermaid_theme_preferences"),
+    ).events(token_iter)
     response: AgentResponse | None = None
     last_text = ""
     transport_error: Exception | None = None
@@ -231,18 +313,17 @@ async def send_qq_stream_by_round(
         if kind == "final" and isinstance(value, AgentResponse):
             response = value
             continue
-        if transport_error is not None:
-            # 平台流已经失败，但必须继续消费 Agent generator，才能完成
-            # finalize_run、历史落盘和 session baseline gate。
-            continue
         try:
-            if kind == "token" and show_intermediate_replies:
+            if kind == "token":
                 await sender.push_token(str(value or ""))
-            elif kind == ROUND_END and show_intermediate_replies:
+            elif kind == "mermaid_image":
+                await sender.push_image(value)
+            elif kind == ROUND_END:
                 await sender.finish_round(str(value or ""))
         except Exception as exc:
-            transport_error = exc
-            sender.stream = None
+            if transport_error is None:
+                transport_error = exc
+            sender._fail_stream()
 
     response = response or AgentResponse()
     last_text = _fix_loose_bold(response.text or "")
@@ -251,18 +332,17 @@ async def send_qq_stream_by_round(
     if transport_error is not None:
         from app.core.redaction import diag_log
         diag_log("agent.im.qq_stream_transport", transport_error)
-        return False, response, last_text
     try:
         stream_sent, last_text = await sender.finish_response(last_text)
     except Exception as exc:
         from app.core.redaction import diag_log
         diag_log("agent.im.qq_stream_transport", exc)
-        return False, response, last_text
+        return await sender.recover_after_stream_error(), response, last_text
     return stream_sent, response, last_text
 
 
 class _TelegramDraftRound:
-    """管理 Telegram live draft 的节流与逐轮正式收尾。"""
+    """管理 Telegram live draft，并在 Mermaid 图片边界切分正式消息。"""
 
     def __init__(self, payload: dict, *, show_intermediate_replies: bool) -> None:
         self.payload = payload
@@ -273,23 +353,107 @@ class _TelegramDraftRound:
         self.draft_enabled = True
         self.round_index = 0
         self.sent_rounds: set[int] = set()
+        self.parts = []
+        self.round_has_image = False
+        self.trim_leading_segment = False
+        self.mermaid_streaming = False
+        self.deferred_rounds: list[tuple[int, list]] = []
 
     async def push_token(self, token: str) -> None:
+        if self.trim_leading_segment:
+            token = token.lstrip()
+            if token.strip():
+                self.trim_leading_segment = False
+            if not token:
+                return
         self.round_text += token
+        if token:
+            from agent.im.mermaid import ReplyPart
+            if self.parts and self.parts[-1].text:
+                previous = self.parts[-1]
+                self.parts[-1] = ReplyPart(text=previous.text + token)
+            else:
+                self.parts.append(ReplyPart(text=token))
         await self._update_draft()
 
+    async def push_image(self, payload) -> None:
+        _diagram_index, _image_number, source, png = payload
+        from agent.im.mermaid import ReplyPart
+
+        self.round_has_image = True
+        if not self.mermaid_streaming:
+            # 第一次遇到图时，先冲刷之前被偏好设置暂存的轮次，再进入与 QQ
+            # 一致的分段流式模式，保证正文、图片和后续正文按生成顺序落消息。
+            self.mermaid_streaming = True
+            deferred, self.deferred_rounds = self.deferred_rounds, []
+            for round_index, parts in deferred:
+                if await self._flush_parts(parts):
+                    self.sent_rounds.add(round_index)
+                else:
+                    self.deferred_rounds.append((round_index, parts))
+
+        # 围栏边界的换行不属于前后两段正文，避免图片前后的气泡留空行。
+        if self.parts and self.parts[-1].text:
+            previous = self.parts[-1]
+            trimmed = previous.text.rstrip()
+            if trimmed:
+                self.parts[-1] = ReplyPart(text=trimmed)
+            else:
+                self.parts.pop()
+            self.round_text = self.round_text.rstrip()
+        self.parts.append(ReplyPart(png=png, source=source))
+
+        # Telegram 草稿只是临时预览。图片到达时，按文本 -> 图片顺序正式落消息，
+        # 随后换 draft_id，让图片后的正文开始一条新的流式预览。
+        sent = await self._flush_parts()
+        if sent:
+            self.parts = []
+            self.round_text = ""
+        else:
+            # 保留尚未成功交付的 part，round 收尾时还能再尝试一次。
+            self.draft_enabled = False
+        self.draft_id = secrets.randbits(63) or 1
+        self.last_update_at = 0.0
+        self.trim_leading_segment = True
+
     async def finish_round(self, text: str) -> None:
-        if self.show_intermediate_replies and text.strip():
+        round_has_content = bool(text.strip() or self.parts or self.round_has_image)
+        if (self.show_intermediate_replies or self.mermaid_streaming) and round_has_content:
             try:
-                if await send_completed_round(self.payload, text):
+                if await self._flush_parts():
                     self.sent_rounds.add(self.round_index)
             except Exception as exc:
                 from app.core.redaction import diag_log
                 diag_log("agent.im.telegram_stream_round", exc)
+        elif round_has_content:
+            self.deferred_rounds.append((self.round_index, self.parts))
+        if round_has_content:
             self.round_index += 1
+        if self.show_intermediate_replies or self.mermaid_streaming:
             self.draft_id = secrets.randbits(63) or 1
-        self.round_text = ""
+        self.round_has_image = False
+        self.trim_leading_segment = False
         self.last_update_at = 0.0
+        self.round_text = ""
+        self.parts = []
+
+    async def _flush_parts(self, parts=None) -> bool:
+        """按序发送当前文字/图片段，只移除已确认送达的 part。"""
+        pending = self.parts if parts is None else parts
+        while pending:
+            part = pending[0]
+            if part.png is not None:
+                sent = await _try_send_png_image(self.payload, part.png)
+                if not sent and part.source:
+                    sent = await send_text(self.payload, part.source)
+            elif part.text.strip():
+                sent = await send_completed_round(self.payload, part.text)
+            else:
+                sent = True
+            if not sent:
+                return False
+            pending.pop(0)
+        return True
 
     async def _update_draft(self) -> None:
         if not self.draft_enabled or not self.round_text.strip():
@@ -322,15 +486,32 @@ async def send_telegram_stream_by_round(
     sender = _TelegramDraftRound(
         payload, show_intermediate_replies=show_intermediate_replies,
     )
+    from agent.im.mermaid import ProgressiveMermaidTokenFilter
+    token_iter = ProgressiveMermaidTokenFilter(
+        theme_preferences=payload.get("mermaid_theme_preferences"),
+    ).events(token_iter)
     response: AgentResponse | None = None
     async for kind, value in token_iter:
         if kind == "final" and isinstance(value, AgentResponse):
             response = value
         elif kind == "token":
             await sender.push_token(str(value or ""))
+        elif kind == "mermaid_image":
+            await sender.push_image(value)
         elif kind == ROUND_END:
             await sender.finish_round(str(value or ""))
-    return response or AgentResponse(), sender.sent_rounds
+    response = response or AgentResponse()
+    if not show_intermediate_replies and sender.mermaid_streaming and not response.errored:
+        expected_rounds = len(response.round_texts or [])
+        if expected_rounds == 0 and (response.text or "").strip():
+            expected_rounds = 1
+        if expected_rounds and set(range(expected_rounds)).issubset(sender.sent_rounds):
+            # 隐藏中间回复模式的最终出口只有一个聚合文本索引 0。
+            sender.sent_rounds = {0}
+        else:
+            # 部分分段发送失败时，让最终聚合回复补齐内容。
+            sender.sent_rounds.clear()
+    return response, sender.sent_rounds
 
 
 async def send_text(payload: dict, text: str) -> bool:
@@ -536,7 +717,7 @@ async def send_tool_event(payload: dict, event: dict) -> bool:
         payload.get("platform") == "qq"
         and payload.get("message_format") != "markdown"
     )
-    is_status_only = is_qq_plain or payload.get("platform") == "telegram"
+    is_status_only = is_qq_plain or payload.get("platform") in {"telegram", "wechat"}
     text = format_tool_event(event, markdown=not is_status_only)
     if not text:
         return True
@@ -660,8 +841,10 @@ async def send_png_image(payload: dict, png: bytes) -> bool:
         target = payload.get("chat_id") if group else payload.get("platform_user_id")
         if not target:
             return False
-        # QQ 被动回复的原消息关联额度已经被前面的流式文字使用时，图片需主动发送。
-        message_id = None if _qq_passive_reply_count(payload) else payload.get("message_id")
+        # 每张图片与相邻文字是独立气泡；只在被动回复额度耗尽后改为主动发送。
+        message_id = (
+            None if _qq_reply_budget_exhausted(payload) else payload.get("message_id")
+        )
         sent = await qq.send_file(
             str(target), png, "mermaid-diagram", "png", payload.get("channel_id"),
             message_id, group=group,
@@ -809,67 +992,73 @@ async def _send_mermaid_reply_text(payload: dict, text: str) -> str | None:
     from agent.im.mermaid import render_reply
 
     if payload.get("platform") == "qq":
-        from agent.im.mermaid import MAX_RUN_DIAGRAMS, StreamingRenderer
-
-        renderer = StreamingRenderer(
-            max_diagrams=MAX_RUN_DIAGRAMS,
-            inline_images=True,
-            defer_until_run_end=True,
-            theme_preferences=payload.get("mermaid_theme_preferences"),
+        text_parts = await render_reply(
+            text, theme_preferences=payload.get("mermaid_theme_preferences")
         )
-        text_parts = await renderer.feed(text)
-        text_parts.extend(await renderer.finish_round(defer_images=True))
-        has_queued_diagrams = renderer.has_deferred_diagrams
-        text_parts.extend(await renderer.render_deferred_diagrams())
-        text_parts = [part for part in text_parts if not part.placeholder_emitted]
-        merged_parts = []
-        for part in text_parts:
-            if (
-                part.text
-                and part.png is None
-                and not part.placeholder_emitted
-                and merged_parts
-                and merged_parts[-1].text
-                and merged_parts[-1].png is None
-                and not merged_parts[-1].placeholder_emitted
-            ):
-                previous = merged_parts[-1]
-                merged_parts[-1] = type(part)(text=previous.text + part.text)
-            else:
-                merged_parts.append(part)
-        text_parts = merged_parts
-        if not has_queued_diagrams:
-            visible_text = "".join(part.text for part in text_parts if part.text)
-            if visible_text.strip() and not await _send_qq_mermaid_text(payload, visible_text):
-                return None
-            return text.strip()
         for index, part in enumerate(text_parts):
             if not part.text:
                 continue
-            previous_image = index > 0 and text_parts[index - 1].png is not None
-            next_image = index + 1 < len(text_parts) and text_parts[index + 1].png is not None
+            previous_part = text_parts[index - 1] if index > 0 else None
+            next_part = text_parts[index + 1] if index + 1 < len(text_parts) else None
+            previous_diagram = bool(
+                previous_part and (
+                    previous_part.png is not None
+                    or _MERMAID_SOURCE_FENCE_RE.fullmatch(previous_part.text)
+                )
+            )
+            next_diagram = bool(
+                next_part and (
+                    next_part.png is not None
+                    or _MERMAID_SOURCE_FENCE_RE.fullmatch(next_part.text)
+                )
+            )
             text_value = part.text
-            if previous_image:
+            if previous_diagram:
                 text_value = text_value.lstrip()
-            if next_image:
+            if next_diagram:
                 text_value = text_value.rstrip()
             text_parts[index] = type(part)(
                 text=text_value, png=part.png, source=part.source,
                 placeholder_emitted=part.placeholder_emitted,
             )
+        visible = False
         for part in text_parts:
             if part.png is not None:
+                visible = True
                 if not await _try_send_png_image(payload, part.png) and part.source:
                     if not await _send_qq_mermaid_text(payload, part.source):
                         return None
-            elif part.text.strip() and not await _send_qq_mermaid_text(payload, part.text):
-                return None
-        return text.strip()
+            elif part.text.strip():
+                visible = True
+                if not await _send_qq_mermaid_text(payload, part.text):
+                    return None
+        return text.strip() if visible else None
+
+    parts = await render_reply(
+        text, theme_preferences=payload.get("mermaid_theme_preferences")
+    )
+    if payload.get("platform") == "wechat":
+        # 微信把图和相邻文字作为独立消息发送；去掉图片边界上的围栏换行，
+        # 避免 Mermaid 前一条文字气泡底部出现空行。其他平台保持原样。
+        for index, part in enumerate(parts):
+            if not part.text:
+                continue
+            previous_image = index > 0 and parts[index - 1].png is not None
+            next_image = index + 1 < len(parts) and parts[index + 1].png is not None
+            text_value = part.text
+            if previous_image:
+                text_value = text_value.lstrip()
+            if next_image:
+                text_value = text_value.rstrip()
+            parts[index] = type(part)(
+                text=text_value,
+                png=part.png,
+                source=part.source,
+                placeholder_emitted=part.placeholder_emitted,
+            )
 
     delivered: list[str] = []
-    for part in await render_reply(
-        text, theme_preferences=payload.get("mermaid_theme_preferences")
-    ):
+    for part in parts:
         if part.png is not None:
             if not await _try_send_png_image(payload, part.png) and part.source:
                 if not await send_text(payload, part.source):
@@ -881,6 +1070,18 @@ async def _send_mermaid_reply_text(payload: dict, text: str) -> str | None:
                 return None
             delivered.append(part.text)
     return "".join(delivered).strip() or text.strip()
+
+
+async def _send_completed_parts(payload: dict, parts) -> bool:
+    """按解析顺序发送已渲染的文本与图片 part。"""
+    for part in parts:
+        if part.png is not None:
+            if not await _try_send_png_image(payload, part.png) and part.source:
+                if not await send_text(payload, part.source):
+                    return False
+        elif part.text.strip() and not await send_text(payload, part.text):
+            return False
+    return True
 
 
 async def send_completed_round(payload: dict, text: str) -> bool:

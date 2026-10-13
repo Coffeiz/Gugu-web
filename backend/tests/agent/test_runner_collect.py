@@ -377,6 +377,36 @@ async def test_web_sink_exposes_adapter_events_and_shared_outcome():
     assert all(not (kind == "event" and value.get("type") == "_usage") for kind, value in yielded)
 
 
+@pytest.mark.asyncio
+async def test_stream_flushes_pre_interaction_text_before_exposing_confirmation():
+    """交互等待前先结束当前正文轮，IM 才能安全展示确认提示并继续下一轮流。"""
+    from agent.interactions.events import ROUND_END
+    from agent.run.execution import RunOutcome, WebStreamSink, consume_agent_events
+
+    async def events():
+        yield "data: " + json.dumps({"type": "token", "content": "执行前需要确认"}) + "\n\n"
+        yield "data: " + json.dumps({
+            "type": "interaction_required", "prompt_id": 42, "kind": "confirm",
+        }) + "\n\n"
+
+    order = []
+
+    async def observe_event(event):
+        order.append(("event", event["type"]))
+
+    async for item in consume_agent_events(
+        events(), model_cfg=None, outcome=RunOutcome(),
+        sink=WebStreamSink(on_event=observe_event),
+    ):
+        order.append(item)
+
+    assert order == [
+        ("token", "执行前需要确认"),
+        (ROUND_END, "执行前需要确认"),
+        ("event", "interaction_required"),
+    ]
+
+
 async def test_collect_display_timeline_drops_empty_placeholder_for_tool_only_round():
     """纯工具轮（清洗后无正文）不落空的 assistant 占位段。"""
     from agent.run.execution import RunOutcome, consume_agent_events
