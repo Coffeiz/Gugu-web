@@ -60,6 +60,7 @@ from app.api.v1 import mcp_settings as mcp_settings_router
 from app.api.v1 import undo as undo_router
 from app.api.v1 import data_portability as data_portability_router
 from app.api.v1 import safe_egress_admin as safe_egress_admin_router
+from app.api.v1 import storage_quota_admin as storage_quota_admin_router
 from app.api.v1 import track as track_router
 from app.api.v1 import feedback as feedback_router
 from app.api.v1 import public_config as public_config_router
@@ -504,6 +505,11 @@ app.include_router(
 )
 app.include_router(
     safe_egress_admin_router.router,
+    prefix="/api/v1",
+    dependencies=[Depends(require_admin)],
+)
+app.include_router(
+    storage_quota_admin_router.router,
     prefix="/api/v1",
     dependencies=[Depends(require_admin)],
 )

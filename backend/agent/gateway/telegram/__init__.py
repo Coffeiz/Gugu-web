@@ -1,5 +1,5 @@
-"""Telegram Gateway 的稳定兼容入口。"""
+"""Telegram Gateway 的跨模块出站 API。"""
 
-from .runtime import main, send_file, send_message
+from .runtime import send_file, send_message
 
-__all__ = ["main", "send_file", "send_message"]
+__all__ = ["send_file", "send_message"]

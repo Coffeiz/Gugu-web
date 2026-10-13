@@ -30,7 +30,7 @@ from typing import Awaitable, Callable, Optional
 
 from .client import TYPING_OFF, TYPING_ON
 
-# async (status: int) -> None — status 用 wechat_client.TYPING_ON/TYPING_OFF
+# async (status: int) -> None — status 用当前包 client 模块中的 TYPING_ON/TYPING_OFF
 SendTypingFn = Callable[[int], Awaitable[None]]
 
 # 默认 keepalive 间隔（与 OpenClaw `keepaliveIntervalMs: 5000` 一致）

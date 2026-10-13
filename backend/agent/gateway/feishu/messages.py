@@ -33,15 +33,23 @@ async def react(channel_id: str, message_id: str, emoji_type: str) -> bool:
     """给飞书某条消息加表情回应（咕咕 react 工具用，按 channel 取凭据）。"""
     if not message_id or not emoji_type:
         return False
-    app_id, app_secret = await _creds_by_id(channel_id)
-    if not app_id:
+    client = await _client_for_bot(channel_id)
+    if not client:
         print(f"[feishu] react {channel_id} 无凭据，跳过", flush=True)
         return False
-    if channel_id not in _clients:
-        _clients[channel_id] = lark.Client.builder().app_id(app_id).app_secret(app_secret).build()
-    return await asyncio.to_thread(_do_react, _clients[channel_id], message_id, emoji_type)
+    return await asyncio.to_thread(
+        _do_react, client, message_id, emoji_type,
+    )
 
 _clients: dict = {}
+
+
+def _client_for(channel_id: str | None, app_id: str, app_secret: str):
+    client = _clients.get(channel_id)
+    if client is None:
+        client = lark.Client.builder().app_id(app_id).app_secret(app_secret).build()
+        _clients[channel_id] = client
+    return client
 
 
 async def _creds_by_id(bot_id: str) -> tuple[str, str]:
@@ -52,6 +60,13 @@ async def _creds_by_id(bot_id: str) -> tuple[str, str]:
     async with _sess._SessionLocal() as db:
         b = await db.get(UserBot, int(bot_id))
         return (b.app_id, b.app_secret) if b else ("", "")
+
+
+async def _client_for_bot(channel_id: str | None):
+    app_id, app_secret = await _creds_by_id(channel_id)
+    if not app_id:
+        return None
+    return _client_for(channel_id, app_id, app_secret)
 
 
 def _do_send(client, receive_id: str, text: str) -> bool:
@@ -111,13 +126,13 @@ def _do_send_interaction_card(client, receive_id: str, prompt: dict) -> bool:
 
 async def send_text(receive_id: str, text: str, channel_id: str | None = None) -> bool:
     """给指定收件人发文本（chat_id 或 open_id 都行，用该 bot 的凭据）。lark API 同步，丢线程跑。"""
-    app_id, app_secret = await _creds_by_id(channel_id)
-    if not app_id:
+    client = await _client_for_bot(channel_id)
+    if not client:
         print(f"[feishu] user_bot {channel_id} 无凭据，发送跳过", flush=True)
         return False
-    if channel_id not in _clients:
-        _clients[channel_id] = lark.Client.builder().app_id(app_id).app_secret(app_secret).build()
-    return await asyncio.to_thread(_do_send, _clients[channel_id], receive_id, text)
+    return await asyncio.to_thread(
+        _do_send, client, receive_id, text,
+    )
 
 
 def _build_link_card_payload(message: str, buttons: list[dict]) -> dict:
@@ -168,14 +183,12 @@ def _do_send_link_card(client, receive_id: str, message: str, buttons: list[dict
 async def send_link_card(receive_id: str, message: str, buttons: list[dict],
                          channel_id: str | None = None) -> bool:
     """发送链接按钮卡片；失败由统一出站层退回文本 URL。"""
-    app_id, app_secret = await _creds_by_id(channel_id)
-    if not app_id or not receive_id:
+    client = await _client_for_bot(channel_id)
+    if not client or not receive_id:
         return False
-    if channel_id not in _clients:
-        _clients[channel_id] = lark.Client.builder().app_id(app_id).app_secret(app_secret).build()
     try:
         return await asyncio.to_thread(
-            _do_send_link_card, _clients[channel_id], receive_id, message, buttons
+            _do_send_link_card, client, receive_id, message, buttons
         )
     except Exception as e:
         diag_log("agent.gateway.feishu.send_link_card", e)
@@ -186,14 +199,12 @@ async def send_link_card(receive_id: str, message: str, buttons: list[dict],
 async def send_interaction_card(receive_id: str, prompt: dict,
                                 channel_id: str | None = None) -> bool:
     """发送飞书原生交互卡片。"""
-    app_id, app_secret = await _creds_by_id(channel_id)
-    if not app_id or not receive_id:
+    client = await _client_for_bot(channel_id)
+    if not client or not receive_id:
         return False
-    if channel_id not in _clients:
-        _clients[channel_id] = lark.Client.builder().app_id(app_id).app_secret(app_secret).build()
     try:
         return await asyncio.to_thread(
-            _do_send_interaction_card, _clients[channel_id], receive_id, prompt
+            _do_send_interaction_card, client, receive_id, prompt
         )
     except Exception as e:
         diag_log("agent.gateway.feishu.send_interaction_card", e)
@@ -213,10 +224,41 @@ def _feishu_file_type(ext: str) -> str:
     return "stream"
 
 
+def _upload_image_key(client, data: bytes) -> str | None:
+    """仅上传消息图片并返回 image_key，供卡片图片组件引用。"""
+    import io
+    from lark_oapi.api.im.v1 import CreateImageRequest, CreateImageRequestBody
+
+    try:
+        response = client.im.v1.image.create(CreateImageRequest.builder().request_body(
+            CreateImageRequestBody.builder()
+            .image_type("message")
+            .image(io.BytesIO(data))
+            .build()
+        ).build())
+        if not response.success():
+            print(f"[feishu] 图片上传失败: code={response.code} msg={response.msg}", flush=True)
+            return None
+        return response.data.image_key
+    except Exception as exc:
+        diag_log("agent.gateway.feishu.upload_image", exc)
+        print(f"[feishu] 图片上传出错: {redact(f'{type(exc).__name__}: {exc}')}", flush=True)
+        return None
+
+
+async def upload_image(data: bytes, channel_id: str | None = None) -> str | None:
+    """上传飞书消息图片并返回 image_key，不额外发送图片消息。"""
+    client = await _client_for_bot(channel_id)
+    if not client:
+        return None
+    return await asyncio.to_thread(
+        _upload_image_key, client, data,
+    )
+
+
 def _do_send_file(client, chat_id: str, data: bytes, name: str, ext: str) -> bool:
     import io
     from lark_oapi.api.im.v1 import (
-        CreateImageRequest, CreateImageRequestBody,
         CreateFileRequest, CreateFileRequestBody,
         CreateMessageRequest, CreateMessageRequestBody,
     )
@@ -224,12 +266,10 @@ def _do_send_file(client, chat_id: str, data: bytes, name: str, ext: str) -> boo
     fname = f"{name}.{ext_l}" if ext_l else name
     try:
         if ext_l in _IMAGE_EXTS:
-            up = client.im.v1.image.create(CreateImageRequest.builder().request_body(
-                CreateImageRequestBody.builder().image_type("message").image(io.BytesIO(data)).build()).build())
-            if not up.success():
-                print(f"[feishu] 图片上传失败: code={up.code} msg={up.msg}", flush=True)
+            image_key = _upload_image_key(client, data)
+            if not image_key:
                 return False
-            msg_type, content = "image", json.dumps({"image_key": up.data.image_key})
+            msg_type, content = "image", json.dumps({"image_key": image_key})
         else:
             up = client.im.v1.file.create(CreateFileRequest.builder().request_body(
                 CreateFileRequestBody.builder().file_type(_feishu_file_type(ext_l)).file_name(fname)
@@ -253,9 +293,9 @@ def _do_send_file(client, chat_id: str, data: bytes, name: str, ext: str) -> boo
 
 async def send_file(chat_id: str, data: bytes, name: str, ext: str, channel_id: str | None = None) -> bool:
     """把文件字节上传到飞书并发到会话（图片走 image、其余走 file）。"""
-    app_id, app_secret = await _creds_by_id(channel_id)
-    if not app_id:
+    client = await _client_for_bot(channel_id)
+    if not client:
         return False
-    if channel_id not in _clients:
-        _clients[channel_id] = lark.Client.builder().app_id(app_id).app_secret(app_secret).build()
-    return await asyncio.to_thread(_do_send_file, _clients[channel_id], chat_id, data, name, ext)
+    return await asyncio.to_thread(
+        _do_send_file, client, chat_id, data, name, ext,
+    )

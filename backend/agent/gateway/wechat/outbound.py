@@ -148,17 +148,6 @@ async def stop_typing(ind: TypingIndicator | None) -> None:
 # 文件（item.type=4）：file_item.media.{...} + file_name + len（明文字节，字符串）
 # 注意 image_item 不带文件名，微信客户端从文件名/扩展名自己猜；file_item 必带 file_name
 
-import httpx as _httpx
-import urllib.parse as _urlparse
-from agent.gateway import wechat_media_crypto as _media
-from agent.gateway.wechat_client import (
-    MESSAGE_ITEM_TYPE_IMAGE,
-    MESSAGE_ITEM_TYPE_FILE,
-    UPLOAD_MEDIA_TYPE_IMAGE,
-    UPLOAD_MEDIA_TYPE_FILE,
-)
-
-
 class _CdnPermanentError(RuntimeError):
     """CDN 返回明确的 4xx 客户端错误——判定为永久失败，重试不会变好，不进重试循环。"""
 

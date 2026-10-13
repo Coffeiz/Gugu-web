@@ -5,21 +5,7 @@ import base64
 
 import pytest
 
-from agent.gateway import wechat, wechat_client, wechat_config_cache, wechat_media_crypto, wechat_typing
 from agent.gateway.wechat import client, config_cache, media_crypto, outbound, runtime, typing
-
-
-def test_wechat_package_and_legacy_component_paths_share_canonical_implementations():
-    assert wechat.serve is runtime.serve
-    assert wechat.send_text is outbound.send_text
-    assert wechat.send_image is outbound.send_image
-    assert wechat.send_file is outbound.send_file
-    assert wechat.start_typing is outbound.start_typing
-    assert wechat.stop_typing is outbound.stop_typing
-    assert wechat_client.ILinkClient is client.ILinkClient
-    assert wechat_config_cache.WeixinConfigManager is config_cache.WeixinConfigManager
-    assert wechat_media_crypto.encrypt_aes_ecb is media_crypto.encrypt_aes_ecb
-    assert wechat_typing.TypingIndicator is typing.TypingIndicator
 
 
 @pytest.mark.asyncio

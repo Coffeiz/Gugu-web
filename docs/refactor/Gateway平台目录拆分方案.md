@@ -1,6 +1,6 @@
 # Gateway 平台目录拆分方案
 
-> 状态：实施中。阶段 0 至阶段 6 已完成复审；阶段 7 边界收尾待执行。
+> 状态：已完成。阶段 0 至阶段 7 已完成复审；2026-10-13 完成迁移后兼容代码清理。
 > 方案基线：2026-10-12 仓库代码结构。
 
 ## 1. 背景与目标
@@ -43,7 +43,7 @@
 - Web 包结构迁移与 Web 接入 `agent/run/` 是两个独立工作切片：前者只整理文件归属，后者才处理准备/事件消费/收尾的复用与行为对齐，不在同一提交中混做。
 - 不统一 Web SSE 与 IM 平台的传输/会话生命周期；Web 的队列、租约、取消、续接和 SSE 协议仍由 Web 适配层拥有。
 - 不新增统一的 `BaseAdapter` 抽象。现有 `gateway/base.py` 的 `BaseAdapter` 没有实际消费者，不能仅因目录拆分而扩大其职责。
-- 不顺手清理历史兼容逻辑或重构 Agent Loop。
+- 初始拆分阶段不顺手清理历史兼容逻辑或重构 Agent Loop；迁移后的兼容代码清理作为独立维护任务处理。
 
 ## 2. 当前调用与运行边界
 
@@ -99,7 +99,7 @@ flowchart LR
 需要保持的现有对外边界：
 
 1. `backend/agent/gateway/gateway.py` 中 `PLATFORM_MODULE` 继续指向 `agent.gateway.qq`、`agent.gateway.feishu`、`agent.gateway.wechat`、`agent.gateway.telegram`。平台名仍可直接作为 Python 可执行模块启动。
-2. FastAPI 生命周期与 `worker.py` 都直接导入 `agent.gateway.qq` 的 HTTP session 管理函数；微信连接 API 和相关工具目前直接导入 `agent.gateway.wechat_client`。
+2. FastAPI 生命周期与 `worker.py` 都直接导入 `agent.gateway.qq` 的 HTTP session 管理函数；微信连接 API 和相关工具在拆分前直接导入 `agent.gateway.wechat_client`，现已迁移至 `agent.gateway.wechat.client`。
 3. `agent.im.replies` 按平台导入并调用出站能力；`agent.im.loop` 使用 Telegram `send_message` 和飞书 `FeishuToolSummaryStream`。
 4. 现有测试通过旧模块路径导入符号或 monkeypatch 模块属性。包迁移必须保留这些测试 seam，不能只保证生产启动成功。
 5. 平台密钥继续由现有数据库读取或环境变量注入；不得将密钥加入命令行参数、包常量、可见日志或新配置文件。
@@ -149,12 +149,12 @@ backend/agent/gateway/
     ├── __main__.py               # python -m agent.gateway.telegram 入口
     └── runtime.py                # 长轮询、去重/游标、限流和文本/文件出站
 
-# 迁移期兼容模块（在所有调用者迁移前保留；平台同名 .py 由包 __init__.py 接管）
-backend/agent/gateway/feishu_tool_summary.py  # 转为薄 re-export shim
-backend/agent/gateway/wechat_client.py        # 转为薄 re-export shim
-backend/agent/gateway/wechat_config_cache.py  # 转为薄 re-export shim
-backend/agent/gateway/wechat_media_crypto.py  # 转为薄 re-export shim
-backend/agent/gateway/wechat_typing.py        # 转为薄 re-export shim
+# 下列根路径 shim 曾在迁移期保留，已于迁移后清理中删除：
+# backend/agent/gateway/feishu_tool_summary.py
+# backend/agent/gateway/wechat_client.py
+# backend/agent/gateway/wechat_config_cache.py
+# backend/agent/gateway/wechat_media_crypto.py
+# backend/agent/gateway/wechat_typing.py
 ```
 
 > Python 不允许同一导入名同时由 `qq.py` 与 `qq/` 充当。每个平台从单文件切换到包时，应在一个完整、可运行的迁移步骤中删除同名 `.py`，并由包的 `__init__.py` 接管旧导入路径；不能先落一个不完整目录再留到后续阶段修复。
@@ -182,6 +182,8 @@ backend/agent/gateway/wechat_typing.py        # 转为薄 re-export shim
 
 QQ 拆分时需特别处理 `_qq_request` 与出站函数之间的依赖，避免 `client -> outbound -> client` 循环。请求客户端应接收显式凭据/请求上下文，或通过单向依赖暴露低层 request 函数；凭据仍按当前 user bot 读取。
 
+以下映射表描述拆分前的实现职责及其目标归属。表中旧模块名用于说明迁移来源，不表示当前仍支持旧私有导入路径。
+
 ### 4.2 飞书
 
 | 当前 `feishu.py` / `feishu_tool_summary.py` 职责 | 目标模块 |
@@ -192,7 +194,7 @@ QQ 拆分时需特别处理 `_qq_request` 与出站函数之间的依赖，避�
 | 文本、交互卡片、链接卡片和文件发送 | `feishu/messages.py` |
 | 流式卡片 create/update/finalize、节流/序号、纯文本降级 | `feishu/streaming.py` |
 | `FeishuToolSummaryStream` 及其摘要渲染 | `feishu/tool_summary.py`；摘要渲染依赖 `feishu/cards.py` |
-| 现有 `agent.gateway.feishu_tool_summary` 导入路径 | 根目录薄兼容模块；过渡期内 re-export `feishu.tool_summary` |
+| 迁移期 `agent.gateway.feishu_tool_summary` 导入路径 | 已删除；仓库消费者改用 `feishu.tool_summary` |
 
 飞书 SDK 回调当前为同步函数，内部通过常驻异步 runner 调用异步逻辑。该线程/事件循环所有权和停止时的任务清理必须整体迁移，不能拆分时顺手改为另一套并发模型。当前摘要模块从旧 `feishu.py` 导入 `_build_card_elements`、`_md_to_bold` 私有函数；迁移时应先把这类纯格式化函数收敛到 `cards.py`，避免新 `tool_summary.py` 反向依赖 runtime 或包 facade，形成循环导入。
 
@@ -207,7 +209,7 @@ QQ 拆分时需特别处理 `_qq_request` 与出站函数之间的依赖，避�
 | `wechat_typing.py` 的 `TypingIndicator` | `wechat/typing.py` |
 | `wechat.py` 的文本、typing、CDN 上传、图片和文件发送 | `wechat/outbound.py` |
 | 入站媒体下载/解密/暂存 | 继续使用 `agent.im.media_ingress_wechat`，不复制到 Gateway 包 |
-| `agent.gateway.wechat_client`（连接 API、测试等现有消费者） | 根目录薄兼容模块，re-export `wechat.client` |
+| 迁移期 `agent.gateway.wechat_client`（连接 API、测试等消费者） | 已删除；仓库消费者改用 `wechat.client` |
 
 微信拆分必须保留 `context_token` 的入站、排队和出站传递；配置缓存、typing ticket、媒体引用及其失败降级不可被当成纯结构代码删除。连接 API 继续只依赖 `ILinkClient` 的公开接口，不依赖 runtime 私有状态。
 
@@ -252,10 +254,10 @@ Web 的主要风险不是启动命令，而是 SSE 帧序列和后台任务所�
 ### 5.2 导入兼容
 
 - 平台包 `__init__.py` 显式导出 `agent.im.replies`、`agent.im.loop`、FastAPI 生命周期和现有测试依赖的稳定符号。
-- 将 `feishu_tool_summary.py`、`wechat_client.py` 及微信配套模块改为薄 re-export shim，直到仓库内 import 和维护者工具都不再依赖旧路径；`web.py` 的原导入名由 `web/__init__.py` facade 接管。
+- 迁移期间曾将 `feishu_tool_summary.py`、`wechat_client.py` 及微信配套模块保留为薄 re-export shim；消费者迁到包内实现后，这些私有组件路径已删除。`web.py` 的稳定调用入口由 `web/__init__.py` facade 接管并继续保留。
 - 在迁移前先列出根目录平台模块公开符号与测试 monkeypatch seam；不要通过 `from .runtime import *` 暴露所有实现细节。
 - 兼容 facade 仅保障导入/调用路径。若旧测试依赖给 package 属性 monkeypatch 后改变内部模块全局变量，需将测试改为注入 client/transport 或 patch 实际实现模块；不能假设 Python re-export 会自动同步模块全局变量。
-- 删除某个 shim 前，需用仓库级搜索覆盖生产代码、测试、脚本、文档和启动配置；第三方扩展是否依赖私有路径无法证明时，倾向长期保留成本很低的兼容层。
+- 删除私有组件 shim 前，需用仓库级搜索覆盖生产代码、测试、脚本、文档和启动配置；本次删除的是仓库内无消费者的实现组件旧路径。第三方扩展是否依赖这些私有路径无法证明；面向运行时调用方的包根 facade 仍保留为稳定入口。
 
 ### 5.3 依赖方向
 
@@ -401,7 +403,7 @@ agent.im.replies / loop ──> 平台包公开出站 API
 - 运行完整定向 IM/Web Gateway 测试及后端测试；再做静态导入循环、旧路径引用和包入口检查。
 - 最终 diff 必须证明该系列仅重组代码和文档，没有改变对外行为。
 
-阶段 7 复审记录（2026-10-13）：
+阶段 7 复审记录（2026-10-13，迁移收尾时）：
 
 - `docs/agent/08-CHANNELS.md` 已更新实际 Gateway 包入口、Web/SSE 与 `agent.run` 的边界，并补齐 Telegram 目录和能力说明；文档中不再引用已删除的 `qq.py`、`feishu.py`、`wechat.py`、`web.py` 实现路径。
 - 兼容导入烟测通过：12 个包入口、旧微信组件 shim、飞书工具摘要 shim、Gateway 监督器及 Agent API 均可导入；不创建平台连接或访问外部网络。跨平台入口映射未变。
@@ -409,6 +411,13 @@ agent.im.replies / loop ──> 平台包公开出站 API
 - 全量运行前发现 `test_phase2_project_and_calendar_reads_preserve_user_scope` 将项目和活动日期固定为 2026-10-12，导致之后运行时“即将到来的活动”计数错误。测试现按当前日期构造开始日期、未来截止日期和次日活动，独立复测通过；权限隔离及 upcoming 结果断言保持不变。
 - 本阶段定向 AgentRun、Web/SSE 与实时流测试：`83 passed`；兼容入口烟测 12 项通过，导入和 `git diff --check` 检查通过。
 - 阶段复审结论：Gateway 包入口、旧路径兼容、导入烟测、定向 IM/Web 测试和全量后端测试均通过。主工作树中另有未提交的 storage/quota、Mermaid 等用户修改，本次全量验证使用隔离快照，避免这些独立改动影响结果。
+
+### 迁移后兼容代码清理（2026-10-13）
+
+- 微信 API、微信出站实现、飞书摘要测试和 smoke 脚本已改用包内规范路径；删除无仓库消费者的 `feishu_tool_summary.py`、`wechat_client.py`、`wechat_config_cache.py`、`wechat_media_crypto.py` 与 `wechat_typing.py` 私有 shim。
+- 删除无调用点的 `gateway/base.py` / `BaseAdapter`。平台包根 facade 仍是运行时稳定入口，未删除。
+- 移除仅断言已删除私有 shim 与规范实现对象身份相同的结构测试；QQ/Telegram 包根 facade 的公开导出契约测试、发送、资源关闭、协议和生命周期行为测试保留。
+- 本轮清理的定向验证结果以当前任务记录为准；迁移收尾时通过旧 shim 的历史烟测不再代表当前支持的导入路径。
 
 ## 7. 测试与验收标准
 

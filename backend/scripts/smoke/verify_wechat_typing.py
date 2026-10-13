@@ -4,7 +4,7 @@
 背景（2026-07-09）：
   用户反馈 Minimax / QwenPaw 等 agent 在微信里能显示「正在输入」，Gugu-web 没做。前面调研
   （见 docs/devlog.md 2026-07-09 条目）确认 iLink Bot 协议层有 typing 接口，只是 Gugu-web 的
-  `wechat_client.py` 没接。OpenClaw 的 `@tencent-weixin/openclaw-weixin` 已经在用这套：
+  `agent.gateway.wechat.client` 当时还没接。OpenClaw 的 `@tencent-weixin/openclaw-weixin` 已经在用这套：
 
     POST /ilink/bot/getconfig   → 拿 typing_ticket（每用户缓存 24h）
     POST /ilink/bot/sendtyping  → { status: 1 } 显示 / { status: 2 } 取消
@@ -51,9 +51,9 @@ except ImportError:
     print("❌ 需要 httpx。装一下：pip install httpx", file=sys.stderr)
     sys.exit(2)
 
-# ── iLink Bot API 端点（与 wechat_client.py / OpenClaw 2.4.6 一致）──────────────
+# ── iLink Bot API 端点（与 wechat.client / OpenClaw 2.4.6 一致）──────────────────
 DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com"
-CHANNEL_VERSION = "2.0.1"   # 与 wechat_client.py 一致；OpenClaw 用 2.x 也兼容
+CHANNEL_VERSION = "2.0.1"   # 与 wechat.client 一致；OpenClaw 用 2.x 也兼容
 
 GETCONFIG_PATH = "ilink/bot/getconfig"
 SENDTYPING_PATH = "ilink/bot/sendtyping"
@@ -65,7 +65,7 @@ TYPING_OFF = 2
 DEFAULT_DURATION_S = 30
 DEFAULT_KEEPALIVE_S = 5.0
 
-# 与 wechat_client.py 一致的请求头（X-WECHAT-UIN 防重放）
+# 与 wechat.client 一致的请求头（X-WECHAT-UIN 防重放）
 def _make_headers(bot_token: str) -> dict[str, str]:
     import base64
     import secrets

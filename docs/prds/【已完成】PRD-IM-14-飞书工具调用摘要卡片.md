@@ -2,8 +2,8 @@
 
 > 状态：实现与自动化、人工验收测试均已完成。
 > 创建：2026-10-07
-> 最近更新：2026-10-12
-> 关联模块：`backend/agent/im/loop.py`、`backend/agent/im/replies.py`、`backend/agent/gateway/feishu.py`、`backend/agent/gateway/feishu_tool_summary.py`
+> 最近更新：2026-10-13
+> 关联模块：`backend/agent/im/loop.py`、`backend/agent/im/replies.py`、`backend/agent/gateway/feishu/streaming.py`、`backend/agent/gateway/feishu/tool_summary.py`
 > 背景参考：用户提供的 ZCode 飞书工具摘要卡片；[ZCode Bot Channel 文档](https://zcode.z.ai/cn/docs/bot-channel)
 
 ## 0. 实际状态
@@ -101,8 +101,8 @@ backend/
 │   │   ├── loop.py                         【修改】依据平台与设置路由工具事件；保留 Web 发布及非飞书发送
 │   │   └── replies.py                      【不改】复用现有工具事件脱敏、格式化和非飞书发送
 │   └── gateway/
-│       ├── feishu.py                       【修改】增加可选工具摘要卡片呈现及有序 CardKit 更新
-│       └── feishu_tool_summary.py          【新增】维护单轮卡片正文/工具事件顺序、摘要状态和折叠元素
+│       ├── feishu/streaming.py              【实现】增加可选工具摘要卡片呈现及有序 CardKit 更新
+│       └── feishu/tool_summary.py           【实现】维护单轮卡片正文/工具事件顺序、摘要状态和折叠元素
 └── tests/
     ├── test_feishu_tool_summary.py          【新增】飞书摘要状态、顺序、序列与安全边界行为测试
     ├── test_streaming_regressions.py        【条件】补充关闭设置时现有卡片/回退行为回归

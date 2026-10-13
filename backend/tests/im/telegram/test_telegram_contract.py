@@ -9,7 +9,7 @@ from agent.im.session import conversation_key, get_or_create_session
 from agent.models import AgentRequest
 
 
-def test_telegram_package_keeps_legacy_public_outbound_imports():
+def test_telegram_package_keeps_stable_public_outbound_imports():
     from agent.gateway import telegram
     from agent.gateway.telegram import runtime
 
