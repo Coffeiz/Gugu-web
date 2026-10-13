@@ -55,6 +55,8 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
   const filesById = shallowReactive(new Map<number, FileMeta>())
   const foldersById = shallowReactive(new Map<number, FolderMeta>())
   const directories = shallowReactive(new Map<string, DirectoryPageState>())
+  // LRU 次序不属于目录数据；保持非响应式，避免缓存读取在 computed 中改写自己的依赖。
+  const directoryAccessOrder = new Map<string, true>()
   const fileLookups = new Map<string, Promise<FileMeta | null>>()
   const folderLookups = new Map<string, Promise<FolderMeta | null>>()
 
@@ -62,8 +64,8 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
     const key = directoryKey(scope)
     const entry = directories.get(key)
     if (!entry) return null
-    directories.delete(key)
-    directories.set(key, entry)
+    directoryAccessOrder.delete(key)
+    directoryAccessOrder.set(key, true)
     return entry
   }
 
@@ -71,11 +73,16 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
     const key = directoryKey(scope)
     directories.delete(key)
     directories.set(key, entry)
+    directoryAccessOrder.delete(key)
+    directoryAccessOrder.set(key, true)
     for (const file of entry.files) touch(filesById, file.id, file)
     for (const folder of entry.folders) touch(foldersById, folder.id, folder)
     const entityCount = () => [...directories.values()].reduce((count, page) => count + page.files.length + page.folders.length, 0)
     while (directories.size > MAX_DIRECTORY_CACHES || entityCount() > MAX_CACHED_DIRECTORY_ENTITIES) {
-      directories.delete(directories.keys().next().value!)
+      const oldestKey = directoryAccessOrder.keys().next().value as string | undefined
+      if (oldestKey == null) break
+      directoryAccessOrder.delete(oldestKey)
+      directories.delete(oldestKey)
     }
   }
 
@@ -99,8 +106,14 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
   }
 
   function invalidatePages(scope?: DirectorySnapshotScope) {
-    if (scope) directories.delete(directoryKey(scope))
-    else directories.clear()
+    if (scope) {
+      const key = directoryKey(scope)
+      directories.delete(key)
+      directoryAccessOrder.delete(key)
+    } else {
+      directories.clear()
+      directoryAccessOrder.clear()
+    }
   }
 
   function getPersonalRootFiles(sortBy?: string, sortOrder?: 'asc' | 'desc') { return getDirectory({ space: 'personal', sortBy, sortOrder })?.files ?? [] }
@@ -220,7 +233,7 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
   }
 
   function resetAccountState() {
-    directories.clear(); filesById.clear(); foldersById.clear()
+    directories.clear(); directoryAccessOrder.clear(); filesById.clear(); foldersById.clear()
     fileLookups.clear(); folderLookups.clear()
   }
 

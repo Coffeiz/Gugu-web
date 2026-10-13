@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
+import { computed, nextTick, watchEffect } from 'vue'
 import { useFilesCacheStore, type FileMeta, type FolderMeta } from '@/stores/filesCache'
 import type { CursorPage } from '@/services/api'
 
@@ -55,6 +56,35 @@ describe('filesCache 有界目录页与 ID 缓存', () => {
 
     expect(store.getDirectory({ space: 'personal' })).toBeNull()
     expect(store.getFile(1)?.workspaceDirectoryId).toBe(34)
+  })
+
+  it('computed 渲染目录缓存时只因数据写入更新，不因 LRU 读取再次触发', async () => {
+    const store = useFilesCacheStore()
+    const rootFiles = computed(() => store.getProjectRootFiles(42))
+    let effectRuns = 0
+    const stop = watchEffect(() => {
+      rootFiles.value
+      effectRuns += 1
+    })
+
+    store.setDirectoryPage({ space: 'project', projectId: 42 }, page([file(42)]), page([]))
+    await nextTick()
+    stop()
+
+    expect(rootFiles.value.map(item => item.id)).toEqual([42])
+    expect(effectRuns).toBe(2)
+  })
+
+  it('读取目录仍会更新 LRU 次序，后续写入淘汰最久未访问的目录', () => {
+    const store = useFilesCacheStore()
+    for (let id = 1; id <= 8; id++) {
+      store.setDirectoryPage({ space: 'project', projectId: id }, page([]), page([]))
+    }
+    store.getDirectory({ space: 'project', projectId: 1 })
+    store.setDirectoryPage({ space: 'project', projectId: 9 }, page([]), page([]))
+
+    expect(store.getDirectory({ space: 'project', projectId: 1 })).not.toBeNull()
+    expect(store.getDirectory({ space: 'project', projectId: 2 })).toBeNull()
   })
 
   it('目录页缓存按 LRU 限制在 8 个 scope，淘汰不表示 ID 详情不存在', () => {
