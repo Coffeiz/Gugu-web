@@ -79,6 +79,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         docker-cli \
         nodejs \
         acl \
+        libseccomp2 \
     && curl -fsSL -o /tmp/gst-base.deb \
         "https://deb.debian.org/debian-security/pool/updates/main/g/gst-plugins-base1.0/${GSTREAMER_BASE_FIXED_DEB}_${TARGETARCH}.deb" \
     && apt-get install -y --no-install-recommends /tmp/gst-base.deb \
@@ -150,6 +151,7 @@ RUN mkdir -p logs \
 RUN node bin/gugu-rag-ts-worker.mjs --version \
     && node bin/gugu-filesync-ts-worker.cjs --version \
     && cd /app/bin && node -e "Promise.all([import('mermaid'), import('@resvg/resvg-js'), import('@xmldom/xmldom'), import('svgdom')]).then(() => console.log('Mermaid PNG runtime ready'))"
+RUN python -c "import ctypes.util; assert ctypes.util.find_library('seccomp'), 'libseccomp2 runtime unavailable'"
 
 EXPOSE 8000
 

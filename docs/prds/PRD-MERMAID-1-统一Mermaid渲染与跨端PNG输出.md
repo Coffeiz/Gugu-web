@@ -1,6 +1,6 @@
 # PRD-MERMAID-1：统一 Mermaid 图表体验与跨端 PNG 输出
 
-> 状态：Phase 0/1/2/3 已完成；Phase 4 整体复查中
+> 状态：Phase 0/1/2/3 已完成；Phase 4 自动化与镜像复核完成，等待真实 IM 客户端验收
 > 创建：2026-10-12
 > 最近更新：2026-10-13
 > 所属层：前端内容展示、Agent 输出、IM Gateway
@@ -273,7 +273,7 @@ backend/
 
 - 新增短生命周期 Node renderer：复用锁定的 Mermaid 版本，使用 SVGDOM 与 Resvg 输出 PNG；Python 侧限制并发、源长度、CPU/超时、文件大小和进程回收，seccomp 禁止 renderer 网络系统调用；SVG 输出通过元素、属性、命名空间和外部引用校验后才栅格化。
 - 回复处理只转换完整 Mermaid fence，限制每轮图表数；文本与图片按回复顺序发送。QQ 流式占位、飞书流式卡片收尾及各平台现有图片 Gateway 均有行为测试；渲染或发图失败保留源码/正文回退，不影响 Run 完成。
-- devserver 定向回归 37 项通过（2 项现有依赖弃用警告）；冻结锁文件安装校验通过。真实 renderer 对 flowchart、sequence、class 三类图产出有效 PNG；click 链接、HTML label 和外部 CSS URL 输入均被拒绝并回退。Node 子进程峰值 RSS 约 193 MiB。
+- devserver 定向回归 38 项通过（2 项现有依赖弃用警告）；冻结锁文件安装校验通过。真实 renderer 对 flowchart、sequence、class 三类图产出有效 PNG；click 链接、HTML label 和外部 CSS URL 输入均被拒绝并回退。Node 子进程峰值 RSS 约 193 MiB。
 - 自动化验证覆盖四个平台 Gateway 的图片载荷派发，但本阶段未用真实平台账号发消息；逐平台人工收件验证及集成镜像体积复核列入 Phase 4。
 
 ### Phase 4：整体回归与发布准备
@@ -282,6 +282,14 @@ backend/
 - 范围：执行分层自动化验证、浏览器检查、各 IM 测试账号验证和部署体积/资源复核；整理用户可见变更说明。
 - 交付物：验收记录、剩余风险和回滚说明。
 - 验收：第 9 节的 P0/P1 用例全部通过；服务端 renderer 的资源限制与日志脱敏通过；没有引入数据库迁移或用户配置迁移。
+
+#### Phase 4 自动化与镜像复核（2026-10-13）
+
+- 完成 PRD、前端行为测试、后端 Gateway 契约与 renderer 资源/安全边界的交叉复查；没有新增数据库 migration 或运行配置迁移。devserver 定向测试 38 项通过。
+- 复核发现容器运行时必须显式提供 `libseccomp2`，否则 Python 无法在 exec 前安装禁网过滤器；两个 Dockerfile 已显式安装，并在镜像构建时断言动态库可加载。测试也保护“隔离安装失败时绝不启动 Node”的失败关闭行为。
+- devserver 成功构建集成镜像与独立生产镜像，大小分别约 910 MB、571 MB。两种镜像均在 `--network none`、512 MiB、1 CPU 容器限制下真实渲染出 PNG；两个验收临时镜像已移除，既有构建缓存未清理。
+- 集成镜像首次构建发现 Mermaid 依赖检查用了错误工作目录，修正后复建通过。`docker build --check` 仅报告 Dockerfile 原有的空密码/密钥 `ENV` 静态警告，没有与本次新增语句相关的新警告。
+- 真实 IM 客户端收件、缩放预览和多段消息顺序仍需人工测试账号验证；自动化 Gateway 契约不能替代该验收，因此 `MERMAID-010` 暂不勾选。
 
 ## 8. 风险与缓解
 

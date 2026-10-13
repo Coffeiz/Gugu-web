@@ -7,6 +7,18 @@
 
 ## [Unreleased]
 
+### What's New
+
+#### New Features
+
+- **Mermaid diagrams**: unify rendering in chat and Markdown previews, add enlarged preview and PNG download, and send Mermaid charts as PNG images in IM replies.
+
+### 更新内容
+
+#### 新功能
+
+- **Mermaid 图表**：统一聊天与 Markdown 预览中的渲染体验，支持放大预览和 PNG 下载，并可在 IM 回复中发送 PNG 图表。
+
 ## [1.7.2] - 2026-10-13
 
 ### What's New

@@ -144,7 +144,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     rm -f /etc/apt/apt.conf.d/docker-clean \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
-        nginx poppler-utils fonts-noto-cjk ffmpeg curl docker.io docker-cli nodejs acl \
+        nginx poppler-utils fonts-noto-cjk ffmpeg curl docker.io docker-cli nodejs acl libseccomp2 \
         rootlesskit slirp4netns fuse-overlayfs uidmap iproute2 iptables \
         postgresql redis-server supervisor util-linux procps \
     # snakeoil 是 ssl-cert 包（postgresql 依赖）装的 Debian 全机通用示例证书，随层公开
@@ -240,7 +240,8 @@ COPY backend/bin/gugu-filesync-ts-worker.cjs ./bin/gugu-filesync-ts-worker.cjs
 COPY backend/ts/workers/mermaid-renderer/worker.mjs ./bin/gugu-mermaid-worker.mjs
 COPY --from=rag-runtime /rag/node_modules ./bin/node_modules
 RUN node bin/gugu-rag-ts-worker.mjs --version \
-    && cd /app/bin && node -e "Promise.all([import('mermaid'), import('@resvg/resvg-js'), import('@xmldom/xmldom'), import('svgdom')]).then(() => console.log('Mermaid PNG runtime ready'))"
+    && cd bin && node -e "Promise.all([import('mermaid'), import('@resvg/resvg-js'), import('@xmldom/xmldom'), import('svgdom')]).then(() => console.log('Mermaid PNG runtime ready'))"
+RUN python -c "import ctypes.util; assert ctypes.util.find_library('seccomp'), 'libseccomp2 runtime unavailable'"
 RUN node bin/gugu-filesync-ts-worker.cjs --version
 
 # ── 自更新工具链（执行器并入 app 进程，PRD-ADMIN-2 §1.1）───────────────────

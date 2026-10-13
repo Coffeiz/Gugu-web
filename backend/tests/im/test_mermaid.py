@@ -3,6 +3,25 @@ import asyncio
 import pytest
 
 
+def test_renderer_does_not_exec_node_when_network_isolation_cannot_be_installed(monkeypatch):
+    from agent.im import mermaid
+
+    exec_calls = []
+    monkeypatch.setattr(mermaid.shutil, "which", lambda _name: "/usr/bin/node")
+    monkeypatch.setattr(mermaid.resource, "setrlimit", lambda *_args: None)
+
+    def fail_closed():
+        raise RuntimeError("seccomp_unavailable")
+
+    monkeypatch.setattr(mermaid, "_apply_network_seccomp", fail_closed)
+    monkeypatch.setattr(mermaid.os, "execv", lambda *args: exec_calls.append(args))
+
+    with pytest.raises(RuntimeError, match="seccomp_unavailable"):
+        mermaid._sandbox_exec("worker.mjs")
+
+    assert exec_calls == []
+
+
 @pytest.mark.asyncio
 async def test_renderer_maps_individual_frames_and_skips_overlong_source(monkeypatch):
     from agent.im import mermaid
