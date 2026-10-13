@@ -6,6 +6,10 @@
 
 ## 按日期浏览
 
+### 2026-10-13
+
+- [PRD-MERMAID-1 Phase 0：运行时验证](./2026-10-13-PRD-MERMAID-1-Phase0运行时验证.md)
+
 ### 2026-10-12
 
 - [PRD-FS-8 Phase 1：分页 API 与 PostgreSQL 查询计划](./2026-10-12-PRD-FS-8-Phase1分页API与PostgreSQL计划.md)
