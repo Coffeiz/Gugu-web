@@ -13,6 +13,7 @@ async function cleanupFixtures(page: Page) {
   fixtureFiles.clear()
   fixtureFolders.clear()
   fixtureProjects.clear()
+  if (!names.length && !folderNames.length && !projectIds.length) return
   await page.evaluate(async ({ names, folderNames, projectIds }) => {
     const token = localStorage.getItem('user_token')
     const headers = token ? { Authorization: `Bearer ${token}` } : {}
@@ -172,6 +173,37 @@ test.describe('文件浏览阶段 2–4 冒烟', () => {
     await expect(page.locator('.project-modal-root')).toBeVisible()
     await expect(page.locator('.project-modal-root .file-browser-panel')).toBeVisible()
     await expect(page.locator('.project-modal-root .file-browser-toolbar')).toBeVisible()
+  })
+
+  test('打开空项目卡片后文件网格正常渲染且不触发递归更新', async ({ page }) => {
+    const appErrors: string[] = []
+    const loadedDirectories = new Set<string>()
+    page.on('pageerror', error => appErrors.push(error.message))
+    page.on('console', message => {
+      if (message.type() === 'error') appErrors.push(message.text())
+    })
+    page.on('response', response => {
+      const url = new URL(response.url())
+      if (url.pathname.endsWith('/api/v1/files') && url.searchParams.get('space') === 'project') {
+        loadedDirectories.add('files')
+      }
+      if (url.pathname.endsWith('/api/v1/folders') && url.searchParams.has('project_id')) {
+        loadedDirectories.add('folders')
+      }
+    })
+
+    await page.goto('/projects')
+    await createProjectFixture(page)
+
+    const projectModal = page.locator('.project-modal-root')
+    await expect(projectModal).toBeVisible()
+    await expect(projectModal.locator('.file-browser-grid')).toBeVisible()
+    await expect(projectModal.locator('.fub.grid')).toBeVisible()
+    await expect.poll(() => loadedDirectories.size).toBe(2)
+    await page.evaluate(() => new Promise<void>(resolve => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+    }))
+    expect(appErrors.join('\n')).not.toContain('Maximum recursive updates exceeded')
   })
 
   test('窄窗口下文件浏览面板不产生横向溢出', async ({ page }) => {
