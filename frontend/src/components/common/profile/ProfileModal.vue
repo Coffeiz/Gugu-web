@@ -108,7 +108,7 @@ const navItems = [
   { key: 'info', label: 'sharedUi.personalInfo', icon: 'user.default' },
   { key: 'account', label: 'sharedUi.accountSecurity', icon: 'user.security' },
   { key: 'prefs', label: 'sharedUi.preferences', icon: 'user.settings' },
-  { key: 'data', label: 'profileDataUi.nav', icon: 'user.settings' },
+  { key: 'data', label: 'profileDataUi.nav', icon: 'user.data' },
   { divider: true },
   { key: 'gugu', label: 'sharedUi.guguSettings', icon: 'user.gugu' },
   { key: 'im', label: 'sharedUi.connectGugu', icon: 'communication.chat' },

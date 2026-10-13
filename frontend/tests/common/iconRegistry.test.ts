@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
-import { RiSkipLeftFill, RiSkipRightFill } from '@remixicon/vue'
+import { RiDatabase2Line, RiSkipLeftFill, RiSkipRightFill } from '@remixicon/vue'
 import { iconRegistry, resolveIcon } from '@/components/common/icons/iconRegistry'
 
 describe('图标语义注册表', () => {
@@ -15,6 +15,7 @@ describe('图标语义注册表', () => {
       'file.folder',
       'project.month-folder',
       'status.success',
+      'user.data',
     ]))
   })
 
@@ -26,6 +27,10 @@ describe('图标语义注册表', () => {
     expect(iconRegistry['media.skip-left']).toBe(RiSkipLeftFill)
     expect(iconRegistry['media.skip-right']).toBe(RiSkipRightFill)
     expect(iconRegistry['media.skip-left']).not.toBe(iconRegistry['media.skip-right'])
+  })
+
+  it('数据与迁移使用数据库线框图标组件', () => {
+    expect(iconRegistry['user.data']).toBe(RiDatabase2Line)
   })
 
   it('未注册语义直接报错，避免静默显示错误图标', () => {
