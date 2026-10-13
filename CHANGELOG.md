@@ -7,6 +7,36 @@
 
 ## [Unreleased]
 
+## [1.7.2] - 2026-10-13
+
+### What's New
+
+#### Fixes
+
+- Fix a recursive Vue update loop when reading cached project directories, so opening a project's file area no longer hangs.
+
+#### Contributors
+
+- None listed.
+
+#### Feedback & Issue Reporters
+
+- None listed.
+
+### 更新内容
+
+#### 修复
+
+- 修复读取项目目录缓存时触发 Vue 递归更新的问题，避免打开项目文件区时页面卡死。
+
+#### 贡献者
+
+- 暂无。
+
+#### 反馈与问题报告
+
+- 暂无。
+
 ## [1.7.1] - 2026-10-12
 
 ### What's New
