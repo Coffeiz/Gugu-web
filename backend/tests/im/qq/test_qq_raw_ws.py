@@ -1,6 +1,7 @@
 import pytest
 
-from agent.gateway import qq
+from agent.gateway.qq import events as qq_events, outbound as qq_outbound, runtime as qq_runtime
+from agent.im.parsers import qq as qq_parser
 from agent.im.qq_ref_index import QQRefIndex, ref_index_key
 
 
@@ -11,8 +12,8 @@ def qq_ref_index_tmpdir(tmp_path, monkeypatch):
 
 
 def test_qq_heartbeat_ack_timeout_after_two_and_a_half_intervals():
-    assert not qq._heartbeat_ack_expired(last_ack_at=100.0, interval=45.0, now=212.4)
-    assert qq._heartbeat_ack_expired(last_ack_at=100.0, interval=45.0, now=212.5)
+    assert not qq_runtime._heartbeat_ack_expired(last_ack_at=100.0, interval=45.0, now=212.4)
+    assert qq_runtime._heartbeat_ack_expired(last_ack_at=100.0, interval=45.0, now=212.5)
 
 
 def test_qq_split_face_pending_is_fifo():
@@ -73,23 +74,23 @@ def test_qq_group_sender_prefers_user_openid_for_owner_binding(monkeypatch):
 
 
 def test_qq_message_mentions_bot_uses_at_event_and_payload_fallback():
-    assert qq._qq_message_mentions_bot(
+    assert qq_events._qq_message_mentions_bot(
         {"mentions": [{"bot": True}]}, "GROUP_AT_MESSAGE_CREATE"
     ) is True
-    assert qq._qq_message_mentions_bot(
+    assert qq_events._qq_message_mentions_bot(
         {"mentions": []}, "GROUP_AT_MESSAGE_CREATE"
     ) is True
 
 
 def test_qq_face_marker_is_normalized_without_protocol_text():
     marker = '<faceType=6,faceId="0",ext="eyJ0ZXh0IjoiIn0=">'
-    assert qq._contains_qq_face(marker)
-    assert qq._normalize_qq_faces(marker) == "[QQ表情]"
+    assert qq_parser._contains_qq_face(marker)
+    assert qq_parser._normalize_qq_faces(marker) == "[QQ表情]"
 
 
 def test_qq_face_probe_extracts_reusable_identity_without_decoding_payload():
     marker = '<faceType=6,faceId="same-face",ext="opaque">'
-    assert qq._extract_qq_faces(marker) == [{
+    assert qq_parser._extract_qq_faces(marker) == [{
         "face_type": "6",
         "face_id": "same-face",
     }]
@@ -100,7 +101,7 @@ def test_qq_face_probe_extracts_multiple_faces_in_protocol_order():
         '<faceType=6,faceId="first",ext="a">'
         '<faceType=4,faceId="second",ext="b">'
     )
-    assert [item["face_id"] for item in qq._extract_qq_faces(text)] == ["first", "second"]
+    assert [item["face_id"] for item in qq_parser._extract_qq_faces(text)] == ["first", "second"]
 
 
 def test_qq_face_marker_is_normalized_without_leaking_protocol_text():
@@ -108,7 +109,7 @@ def test_qq_face_marker_is_normalized_without_leaking_protocol_text():
     import json
 
     ext = base64.b64encode(json.dumps({"text": ""}).encode()).decode()
-    assert qq._normalize_qq_faces(
+    assert qq_parser._normalize_qq_faces(
         f"看这个 <faceType=4,faceId=\"\",ext=\"{ext}\">"
     ) == "看这个 [QQ表情]"
 
@@ -118,13 +119,13 @@ def test_qq_face_marker_uses_text_from_extension_when_available():
     import json
 
     ext = base64.b64encode(json.dumps({"text": "😀"}).encode()).decode()
-    assert qq._normalize_qq_faces(
+    assert qq_parser._normalize_qq_faces(
         f"<faceType=4,faceId=\"\",ext=\"{ext}\">"
     ) == "😀"
 
 
 def test_qq_bot_mention_id_uses_explicit_bot_mention():
-    from agent.gateway.qq import _qq_bot_mention_id
+    from agent.gateway.qq.events import _qq_bot_mention_id
 
     data = {
         "content": "<@D5A139> 看看这个",
@@ -134,7 +135,7 @@ def test_qq_bot_mention_id_uses_explicit_bot_mention():
 
 
 def test_qq_bot_mention_id_does_not_guess_unknown_mentions():
-    from agent.gateway.qq import _qq_bot_mention_id
+    from agent.gateway.qq.events import _qq_bot_mention_id
 
     data = {
         "content": "<@member-1> 看看这个",
@@ -144,7 +145,7 @@ def test_qq_bot_mention_id_does_not_guess_unknown_mentions():
 
 
 def test_qq_bot_mention_id_falls_back_only_for_at_event():
-    from agent.gateway.qq import _qq_bot_mention_id
+    from agent.gateway.qq.events import _qq_bot_mention_id
 
     data = {"content": "<@D5A139> 看看这个"}
     assert _qq_bot_mention_id(data, "GROUP_AT_MESSAGE_CREATE") == "D5A139"
@@ -169,16 +170,16 @@ def test_platform_mention_display_keeps_unknown_ids():
 
 def test_qq_group_reply_formats_current_member_mention():
     expected = '<qqbot-at-user id="member-1" /> 请看一下'
-    assert qq._format_group_mention("@member-1 请看一下", "member-1") == expected
-    assert qq._format_group_mention("<@member-1> 请看一下", "member-1") == expected
-    assert qq._format_group_mention("<@!member-1> 请看一下", "member-1") == expected
-    assert qq._format_group_mention(
+    assert qq_outbound._format_group_mention("@member-1 请看一下", "member-1") == expected
+    assert qq_outbound._format_group_mention("<@member-1> 请看一下", "member-1") == expected
+    assert qq_outbound._format_group_mention("<@!member-1> 请看一下", "member-1") == expected
+    assert qq_outbound._format_group_mention(
         "<@member-1>、<@member-2>", "member-1"
     ) == '<qqbot-at-user id="member-1" />、<qqbot-at-user id="member-2" />'
-    assert qq._format_group_mention("@other-member 普通文本", "member-1") == "@other-member 普通文本"
-    assert qq._has_qq_group_mention(expected)
-    assert not qq._has_qq_group_mention("@member-1 普通文本")
-    assert qq._split_qq_group_mention(
+    assert qq_outbound._format_group_mention("@other-member 普通文本", "member-1") == "@other-member 普通文本"
+    assert qq_outbound._has_qq_group_mention(expected)
+    assert not qq_outbound._has_qq_group_mention("@member-1 普通文本")
+    assert qq_outbound._split_qq_group_mention(
         "<@member-1> 测试一下", "member-1"
     ) == ('<qqbot-at-user id="member-1" />', "测试一下")
 
@@ -192,8 +193,8 @@ async def test_qq_group_at_event_without_mentions_reaches_agent(monkeypatch):
     async def fake_produce(_stream, payload):
         produced.append(payload)
 
-    monkeypatch.setattr(qq, "_group_settings", fake_group_settings)
-    monkeypatch.setattr(qq.R, "produce", fake_produce)
+    monkeypatch.setattr(qq_events, "_group_settings", fake_group_settings)
+    monkeypatch.setattr(qq_events.R, "produce", fake_produce)
 
     # 跟本文件其它测试一样 mock 掉 decide_im_shortcut 的底层依赖：不 mock 会真的连 Redis
     # 查取消状态——单独跑这个测试时全局 Redis 客户端在本测试的事件循环里首次建立，能用；
@@ -212,7 +213,7 @@ async def test_qq_group_at_event_without_mentions_reaches_agent(monkeypatch):
     monkeypatch.setattr(runtime_state, "get_state", fake_async_none)
     monkeypatch.setattr(runtime_state, "is_awaiting", fake_async_false)
 
-    await qq._handle_raw_qq_message(
+    await qq_events._handle_raw_qq_message(
         "GROUP_AT_MESSAGE_CREATE",
         _raw_group_event(mentions=[]),
         "bot-1",
@@ -225,7 +226,7 @@ async def test_qq_group_at_event_without_mentions_reaches_agent(monkeypatch):
 
 
 def test_qq_extracts_quoted_text_by_ref_msg_idx():
-    text, attachments = qq._extract_quoted(_raw_c2c_event())
+    text, attachments = qq_parser._extract_quoted(_raw_c2c_event())
 
     assert text == "之前那句"
     assert attachments == []
@@ -244,7 +245,7 @@ def test_qq_extracts_direct_quoted_image_from_message_reference():
         msg_elements=[],
     )
 
-    text, attachments = qq._extract_quoted(data)
+    text, attachments = qq_parser._extract_quoted(data)
 
     assert text == "看看这张图"
     assert attachments == [{
@@ -263,7 +264,7 @@ def test_qq_extracts_nested_quoted_media_url():
         msg_elements=[],
     )
 
-    text, attachments = qq._extract_quoted(data)
+    text, attachments = qq_parser._extract_quoted(data)
 
     assert text == "嵌套引用"
     assert attachments == [{
@@ -281,7 +282,7 @@ def test_qq_extracts_quoted_text_with_numeric_msg_idx():
         ],
     )
 
-    text, attachments = qq._extract_quoted(data)
+    text, attachments = qq_parser._extract_quoted(data)
 
     assert text == "数字索引引用"
     assert attachments == []
@@ -296,7 +297,7 @@ def test_qq_extracts_quoted_text_with_dict_ext():
         ],
     )
 
-    text, attachments = qq._extract_quoted(data)
+    text, attachments = qq_parser._extract_quoted(data)
 
     assert text == "字典扩展引用"
     assert attachments == []
@@ -319,7 +320,7 @@ def test_qq_extracts_quoted_image_from_nested_element():
         ],
     )
 
-    text, attachments = qq._extract_quoted(data)
+    text, attachments = qq_parser._extract_quoted(data)
 
     assert text == ""
     assert attachments == [{
@@ -332,7 +333,7 @@ def test_qq_extracts_quoted_image_from_nested_element():
 def test_qq_extract_quoted_returns_empty_without_ref_msg_idx():
     data = _raw_c2c_event(message_scene={"ext": ["msg_idx=2"]})
 
-    text, attachments = qq._extract_quoted(data)
+    text, attachments = qq_parser._extract_quoted(data)
 
     assert text == ""
     assert attachments == []
@@ -381,7 +382,7 @@ async def test_qq_raw_c2c_event_to_payload(monkeypatch):
     async def fake_produce(stream, payload):
         produced.append(payload)
 
-    monkeypatch.setattr(qq.R, "produce", fake_produce)
+    monkeypatch.setattr(qq_events.R, "produce", fake_produce)
 
     from agent import router
     from agent.runtime import runtime_state
@@ -396,7 +397,7 @@ async def test_qq_raw_c2c_event_to_payload(monkeypatch):
     monkeypatch.setattr(runtime_state, "get_state", fake_async_none)
     monkeypatch.setattr(runtime_state, "is_awaiting", fake_async_false)
 
-    await qq._handle_raw_qq_message("C2C_MESSAGE_CREATE", _raw_c2c_event(), "bot-1", "user-1", {})
+    await qq_events._handle_raw_qq_message("C2C_MESSAGE_CREATE", _raw_c2c_event(), "bot-1", "user-1", {})
 
     assert len(produced) == 1
     assert produced[0]["platform"] == "qq"
@@ -415,10 +416,10 @@ async def test_qq_message_still_reaches_stream_when_shortcut_redis_fails(monkeyp
     async def fail_state(*_args, **_kwargs):
         raise RuntimeError("redis unavailable")
 
-    monkeypatch.setattr(qq.R, "produce", fake_produce)
+    monkeypatch.setattr(qq_events.R, "produce", fake_produce)
     monkeypatch.setattr("agent.runtime.runtime_state.get_state", fail_state)
 
-    await qq._handle_raw_qq_message(
+    await qq_events._handle_raw_qq_message(
         "C2C_MESSAGE_CREATE",
         _raw_c2c_event(),
         "bot-1",
@@ -439,8 +440,8 @@ async def test_qq_raw_group_event_to_payload(monkeypatch):
     async def fake_produce(stream, payload):
         produced.append(payload)
 
-    monkeypatch.setattr(qq, "_group_settings", fake_group_settings)
-    monkeypatch.setattr(qq.R, "produce", fake_produce)
+    monkeypatch.setattr(qq_events, "_group_settings", fake_group_settings)
+    monkeypatch.setattr(qq_events.R, "produce", fake_produce)
 
     from agent import router
     from agent.runtime import runtime_state
@@ -455,7 +456,7 @@ async def test_qq_raw_group_event_to_payload(monkeypatch):
     monkeypatch.setattr(runtime_state, "get_state", fake_async_none)
     monkeypatch.setattr(runtime_state, "is_awaiting", fake_async_false)
 
-    await qq._handle_raw_qq_message("GROUP_AT_MESSAGE_CREATE", _raw_group_event(), "bot-1", "user-1", {})
+    await qq_events._handle_raw_qq_message("GROUP_AT_MESSAGE_CREATE", _raw_group_event(), "bot-1", "user-1", {})
 
     assert len(produced) == 1
     assert produced[0]["platform_user_id"] == "member_1"
@@ -472,10 +473,10 @@ async def test_qq_raw_group_disabled_drops_event(monkeypatch):
     async def fake_produce(stream, payload):
         produced.append(payload)
 
-    monkeypatch.setattr(qq, "_group_settings", fake_group_settings)
-    monkeypatch.setattr(qq.R, "produce", fake_produce)
+    monkeypatch.setattr(qq_events, "_group_settings", fake_group_settings)
+    monkeypatch.setattr(qq_events.R, "produce", fake_produce)
 
-    await qq._handle_raw_qq_message("GROUP_AT_MESSAGE_CREATE", _raw_group_event(), "bot-1", "user-1", {})
+    await qq_events._handle_raw_qq_message("GROUP_AT_MESSAGE_CREATE", _raw_group_event(), "bot-1", "user-1", {})
 
     assert produced == []
 
@@ -489,8 +490,8 @@ async def test_qq_raw_group_message_create_respects_requires_at(monkeypatch):
     async def fake_produce(stream, payload):
         produced.append(payload)
 
-    monkeypatch.setattr(qq, "_group_settings", fake_group_settings)
-    monkeypatch.setattr(qq.R, "produce", fake_produce)
+    monkeypatch.setattr(qq_events, "_group_settings", fake_group_settings)
+    monkeypatch.setattr(qq_events.R, "produce", fake_produce)
 
     from agent import router
     from agent.runtime import runtime_state
@@ -505,7 +506,7 @@ async def test_qq_raw_group_message_create_respects_requires_at(monkeypatch):
     monkeypatch.setattr(runtime_state, "get_state", fake_async_none)
     monkeypatch.setattr(runtime_state, "is_awaiting", fake_async_false)
 
-    await qq._handle_raw_qq_message("GROUP_MESSAGE_CREATE", _raw_group_event(), "bot-1", "user-1", {})
+    await qq_events._handle_raw_qq_message("GROUP_MESSAGE_CREATE", _raw_group_event(), "bot-1", "user-1", {})
 
     assert len(produced) == 1
     assert produced[0]["chat_type"] == "group"
@@ -521,10 +522,10 @@ async def test_qq_raw_group_message_create_is_received_when_at_is_required(monke
     async def fake_produce(stream, payload):
         produced.append(payload)
 
-    monkeypatch.setattr(qq, "_group_settings", fake_group_settings)
-    monkeypatch.setattr(qq.R, "produce", fake_produce)
+    monkeypatch.setattr(qq_events, "_group_settings", fake_group_settings)
+    monkeypatch.setattr(qq_events.R, "produce", fake_produce)
 
-    await qq._handle_raw_qq_message("GROUP_MESSAGE_CREATE", _raw_group_event(), "bot-1", "user-1", {})
+    await qq_events._handle_raw_qq_message("GROUP_MESSAGE_CREATE", _raw_group_event(), "bot-1", "user-1", {})
 
     assert len(produced) == 1
     assert produced[0]["group_requires_at"] is True
@@ -551,8 +552,8 @@ async def test_qq_raw_quoted_attachment_is_ingested(monkeypatch):
     async def fake_produce(stream, payload):
         produced.append(payload)
 
-    monkeypatch.setattr(qq, "_qq_ack", fake_ack)
-    monkeypatch.setattr(qq.R, "produce", fake_produce)
+    monkeypatch.setattr(qq_events, "_qq_ack", fake_ack)
+    monkeypatch.setattr(qq_events.R, "produce", fake_produce)
 
     from agent import router
     from agent.runtime import runtime_state
@@ -567,6 +568,6 @@ async def test_qq_raw_quoted_attachment_is_ingested(monkeypatch):
     monkeypatch.setattr(runtime_state, "get_state", fake_async_none)
     monkeypatch.setattr(runtime_state, "is_awaiting", fake_async_false)
 
-    await qq._handle_raw_qq_message("C2C_MESSAGE_CREATE", data, "bot-1", "user-1", {})
+    await qq_events._handle_raw_qq_message("C2C_MESSAGE_CREATE", data, "bot-1", "user-1", {})
 
     assert produced[0]["attachments"][0]["url"] == "https://example.test/a.png"

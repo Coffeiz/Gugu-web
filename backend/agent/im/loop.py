@@ -1048,7 +1048,7 @@ async def dispatch_im_message(payload: dict):
 
     feishu_tool_summary = None
     if platform == "feishu" and show_tool_interactions:
-        from agent.gateway.feishu_tool_summary import FeishuToolSummaryStream
+        from agent.gateway.feishu.tool_summary import FeishuToolSummaryStream
 
         feishu_tool_summary = FeishuToolSummaryStream()
 

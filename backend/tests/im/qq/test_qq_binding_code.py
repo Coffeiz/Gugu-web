@@ -115,7 +115,7 @@ async def test_qq_binding_code_does_not_bind_another_users_bot(db, user_a, user_
 
 
 async def test_qq_binding_command_is_consumed_before_agent_enqueue(monkeypatch):
-    from agent.gateway import qq
+    from agent.gateway.qq import events as qq_events
 
     acked = []
     produced = []
@@ -138,10 +138,10 @@ async def test_qq_binding_command_is_consumed_before_agent_enqueue(monkeypatch):
 
     monkeypatch.setattr("app.services.im_identity.consume_qq_binding_code", fake_consume)
     monkeypatch.setattr("agent.im.interaction_text.consume_mcp_secret_payload", no_secret_prompt)
-    monkeypatch.setattr(qq, "_qq_ack", fake_ack)
-    monkeypatch.setattr(qq.R, "produce", fake_produce)
+    monkeypatch.setattr(qq_events, "_qq_ack", fake_ack)
+    monkeypatch.setattr(qq_events.R, "produce", fake_produce)
 
-    await qq._handle_raw_qq_message(
+    await qq_events._handle_raw_qq_message(
         "C2C_MESSAGE_CREATE",
         {
             "id": "message-1",

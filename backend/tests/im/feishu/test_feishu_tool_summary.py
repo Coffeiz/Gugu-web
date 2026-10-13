@@ -204,7 +204,7 @@ async def test_enabled_feishu_uses_existing_tool_message_if_card_was_not_created
 
 @pytest.mark.asyncio
 async def test_feishu_tool_summary_stream_interleaves_text_and_tools_with_shared_sequence(monkeypatch):
-    from agent.gateway import feishu
+    from agent.gateway.feishu import streaming as feishu
 
     monkeypatch.setattr(feishu, "_creds_by_id", lambda _channel_id: _async_value(("app", "secret")))
     monkeypatch.setattr(feishu, "_do_create_card", lambda *_args: _async_value("card-id"))
@@ -275,7 +275,7 @@ async def test_feishu_tool_summary_stream_interleaves_text_and_tools_with_shared
 
 @pytest.mark.asyncio
 async def test_visible_card_update_failure_does_not_request_duplicate_text_fallback(monkeypatch):
-    from agent.gateway import feishu
+    from agent.gateway.feishu import streaming as feishu
 
     monkeypatch.setattr(feishu, "_creds_by_id", lambda _channel_id: _async_value(("app", "secret")))
     monkeypatch.setattr(feishu, "_do_create_card", lambda *_args: _async_value("card-id"))
@@ -304,7 +304,7 @@ async def test_visible_card_update_failure_does_not_request_duplicate_text_fallb
 
 @pytest.mark.asyncio
 async def test_existing_stream_path_without_summary_keeps_plain_card_updates(monkeypatch):
-    from agent.gateway import feishu
+    from agent.gateway.feishu import streaming as feishu
 
     monkeypatch.setattr(feishu, "_creds_by_id", lambda _channel_id: _async_value(("app", "secret")))
     monkeypatch.setattr(feishu, "_do_create_card", lambda *_args: _async_value("card-id"))

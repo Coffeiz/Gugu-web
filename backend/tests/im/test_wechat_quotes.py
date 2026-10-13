@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import httpx
 
-from agent.gateway import wechat
+from agent.gateway.wechat import runtime as wechat
 
 
 def _wechat_text_msg(**overrides):

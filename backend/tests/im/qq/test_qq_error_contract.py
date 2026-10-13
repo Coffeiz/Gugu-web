@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from agent.gateway import qq
+from agent.gateway.qq import client as qq_client, outbound as qq_outbound
 
 
 async def _fake_next_seq(msg_id):
@@ -16,43 +16,43 @@ async def _fake_next_seq(msg_id):
 # ── _qq_is_transient 分类 ──────────────────────────────────────────────────
 
 def test_transient_classifies_5xx_and_429_as_retryable():
-    assert qq._qq_is_transient(qq.QQAPIError("POST", "/x", 500, {"message": "boom"}))
-    assert qq._qq_is_transient(qq.QQAPIError("POST", "/x", 502, {}))
-    assert qq._qq_is_transient(qq.QQAPIError("POST", "/x", 429, {}))
+    assert qq_client._qq_is_transient(qq_client.QQAPIError("POST", "/x", 500, {"message": "boom"}))
+    assert qq_client._qq_is_transient(qq_client.QQAPIError("POST", "/x", 502, {}))
+    assert qq_client._qq_is_transient(qq_client.QQAPIError("POST", "/x", 429, {}))
 
 
 def test_transient_classifies_401_as_retryable():
-    assert qq._qq_is_transient(qq.QQAPIError("POST", "/x", 401, {}))
+    assert qq_client._qq_is_transient(qq_client.QQAPIError("POST", "/x", 401, {}))
 
 
 def test_transient_classifies_permanent_4xx_as_not_retryable():
-    assert not qq._qq_is_transient(qq.QQAPIError("POST", "/x", 400, {"message": "bad param"}))
-    assert not qq._qq_is_transient(qq.QQAPIError("POST", "/x", 403, {"message": "forbidden"}))
+    assert not qq_client._qq_is_transient(qq_client.QQAPIError("POST", "/x", 400, {"message": "bad param"}))
+    assert not qq_client._qq_is_transient(qq_client.QQAPIError("POST", "/x", 403, {"message": "forbidden"}))
 
 
 def test_transient_classifies_network_errors_as_retryable():
-    assert qq._qq_is_transient(asyncio.TimeoutError())
+    assert qq_client._qq_is_transient(asyncio.TimeoutError())
 
 
 def test_transient_classifies_generic_exception_as_not_retryable():
-    assert not qq._qq_is_transient(RuntimeError("some programming error, e.g. KeyError-like"))
+    assert not qq_client._qq_is_transient(RuntimeError("some programming error, e.g. KeyError-like"))
 
 
 def test_msg_id_invalid_is_only_classified_for_qq_expiry_error():
-    assert qq._qq_msg_id_invalid(qq.QQAPIError(
+    assert qq_outbound._qq_msg_id_invalid(qq_client.QQAPIError(
         "POST", "/messages", 400, {"code": 40034024, "message": "请求参数msg_id无效或越权"}
     ))
-    assert not qq._qq_msg_id_invalid(qq.QQAPIError(
+    assert not qq_outbound._qq_msg_id_invalid(qq_client.QQAPIError(
         "POST", "/messages", 400, {"code": 400, "message": "bad request"}
     ))
 
 
 def test_passive_reply_limit_is_classified_for_active_fallback():
-    assert qq._qq_passive_reply_limited(qq.QQAPIError(
+    assert qq_outbound._qq_passive_reply_limited(qq_client.QQAPIError(
         "POST", "/messages", 400,
         {"code": 40034128, "message": "回复消息失败，被动回复时间或者次数超过限制"},
     ))
-    assert not qq._qq_passive_reply_limited(qq.QQAPIError(
+    assert not qq_outbound._qq_passive_reply_limited(qq_client.QQAPIError(
         "POST", "/messages", 400, {"code": 400, "message": "bad request"}
     ))
 
@@ -60,7 +60,7 @@ def test_passive_reply_limit_is_classified_for_active_fallback():
 # ── QQAPIError 不把原始响应体拼进 str()（P2-b §5）──────────────────────────
 
 def test_qq_api_error_str_does_not_leak_raw_body():
-    exc = qq.QQAPIError("POST", "/v2/users/ou_1/messages", 400,
+    exc = qq_client.QQAPIError("POST", "/v2/users/ou_1/messages", 400,
                          {"code": 11292, "message": "token=super-secret-leaked-value"})
     s = str(exc)
     assert "super-secret-leaked-value" not in s
@@ -70,16 +70,16 @@ def test_qq_api_error_str_does_not_leak_raw_body():
 # ── send_c2c：永久错误（4xx，非 401）不重试；瞬时错误重试一次 ─────────────
 
 async def test_send_c2c_does_not_retry_permanent_4xx(monkeypatch):
-    monkeypatch.setattr(qq, "_next_seq", _fake_next_seq)
+    monkeypatch.setattr(qq_outbound, "_next_seq", _fake_next_seq)
     calls = []
 
     async def fake_post(channel_id, openid, text, msg_id):
         calls.append(1)
-        raise qq.QQAPIError("POST", "/v2/users/ou_1/messages", 400, {"message": "bad request"})
+        raise qq_client.QQAPIError("POST", "/v2/users/ou_1/messages", 400, {"message": "bad request"})
 
-    monkeypatch.setattr(qq, "_post", fake_post)
+    monkeypatch.setattr(qq_outbound, "_post", fake_post)
 
-    ok = await qq.send_c2c("ou_1", "hi", "msg-1", "bot-perm")
+    ok = await qq_outbound.send_c2c("ou_1", "hi", "msg-1", "bot-perm")
 
     assert ok is False
     assert len(calls) == 1   # 永久错误只应尝试一次，不做第二次重复发送
@@ -91,31 +91,31 @@ async def test_send_c2c_falls_back_to_active_message_when_msg_id_expired(monkeyp
     async def fake_post(channel_id, openid, text, msg_id):
         calls.append(msg_id)
         if msg_id:
-            raise qq.QQAPIError(
+            raise qq_client.QQAPIError(
                 "POST", "/messages", 400,
                 {"code": 40034024, "message": "请求参数msg_id无效或越权"},
             )
 
-    monkeypatch.setattr(qq, "_post", fake_post)
+    monkeypatch.setattr(qq_outbound, "_post", fake_post)
 
-    assert await qq.send_c2c("ou_1", "hi", "expired-msg", "bot-fallback") is True
+    assert await qq_outbound.send_c2c("ou_1", "hi", "expired-msg", "bot-fallback") is True
     assert calls == ["expired-msg", None]
 
 
 async def test_send_c2c_retries_transient_5xx(monkeypatch):
-    monkeypatch.setattr(qq, "_next_seq", _fake_next_seq)
+    monkeypatch.setattr(qq_outbound, "_next_seq", _fake_next_seq)
     calls = []
 
     async def fake_post(channel_id, openid, text, msg_id):
         calls.append(1)
         if len(calls) == 1:
-            raise qq.QQAPIError("POST", "/v2/users/ou_1/messages", 503, {"message": "upstream busy"})
+            raise qq_client.QQAPIError("POST", "/v2/users/ou_1/messages", 503, {"message": "upstream busy"})
         return None
 
-    monkeypatch.setattr(qq, "_post", fake_post)
+    monkeypatch.setattr(qq_outbound, "_post", fake_post)
     monkeypatch.setattr(asyncio, "sleep", _fake_sleep := (lambda *a, **kw: _noop()))
 
-    ok = await qq.send_c2c("ou_1", "hi", "msg-1", "bot-transient")
+    ok = await qq_outbound.send_c2c("ou_1", "hi", "msg-1", "bot-transient")
 
     assert ok is True
     assert len(calls) == 2
@@ -128,16 +128,16 @@ async def _noop():
 # ── send_group：同 send_c2c 的分类逻辑 ──────────────────────────────────────
 
 async def test_send_group_does_not_retry_permanent_4xx(monkeypatch):
-    monkeypatch.setattr(qq, "_next_seq", _fake_next_seq)
+    monkeypatch.setattr(qq_outbound, "_next_seq", _fake_next_seq)
     calls = []
 
     async def fake_post_group(channel_id, group_openid, text, msg_id, *args, **kwargs):
         calls.append(1)
-        raise qq.QQAPIError("POST", "/v2/groups/g1/messages", 403, {"message": "forbidden"})
+        raise qq_client.QQAPIError("POST", "/v2/groups/g1/messages", 403, {"message": "forbidden"})
 
-    monkeypatch.setattr(qq, "_post_group", fake_post_group)
+    monkeypatch.setattr(qq_outbound, "_post_group", fake_post_group)
 
-    ok = await qq.send_group("g1", "hi", "msg-1", "bot-perm")
+    ok = await qq_outbound.send_group("g1", "hi", "msg-1", "bot-perm")
 
     assert ok is False
     assert len(calls) == 1
@@ -149,14 +149,14 @@ async def test_send_group_falls_back_to_active_message_when_passive_limit_reache
     async def fake_post_group(channel_id, group_openid, text, msg_id, *args, **kwargs):
         calls.append(msg_id)
         if msg_id:
-            raise qq.QQAPIError(
+            raise qq_client.QQAPIError(
                 "POST", "/v2/groups/g1/messages", 400,
                 {"code": 40034128, "message": "被动回复时间或者次数超过限制"},
             )
 
-    monkeypatch.setattr(qq, "_post_group", fake_post_group)
+    monkeypatch.setattr(qq_outbound, "_post_group", fake_post_group)
 
-    assert await qq.send_group("g1", "hi", "msg-1", "bot-fallback") is True
+    assert await qq_outbound.send_group("g1", "hi", "msg-1", "bot-fallback") is True
     assert calls == ["msg-1", None]
 
 
@@ -182,15 +182,15 @@ async def test_qq_request_raises_qq_api_error_without_raw_body_in_message(monkey
         ):
             return _FakeResp()
 
-    monkeypatch.setattr(qq, "_send_token", _fake_send_token)
+    monkeypatch.setattr(qq_client, "_send_token", _fake_send_token)
 
     async def _fake_http_session():
         return _FakeSession()
 
-    monkeypatch.setattr(qq, "_get_qq_http_session", _fake_http_session)
+    monkeypatch.setattr(qq_client, "_get_qq_http_session", _fake_http_session)
 
-    with pytest.raises(qq.QQAPIError) as ei:
-        await qq._qq_request("bot-1", "POST", "/v2/users/ou_1/messages", json_body={"a": 1})
+    with pytest.raises(qq_client.QQAPIError) as ei:
+        await qq_client._qq_request("bot-1", "POST", "/v2/users/ou_1/messages", json_body={"a": 1})
 
     assert ei.value.status == 400
     assert "leaked-secret-token" not in str(ei.value)

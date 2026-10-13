@@ -1,11 +1,11 @@
-from agent.gateway import qq
+from agent.gateway.qq import client as qq_client, events as qq_events, outbound as qq_outbound, runtime as qq_runtime
 
 
 def test_qq_identify_subscribes_to_interaction_events():
-    assert qq._INTENTS & qq._INTENT_GROUP_AND_C2C
-    assert qq._INTENTS & qq._INTENT_PUBLIC_GUILD_MESSAGES
-    assert qq._INTENTS & qq._INTENT_DIRECT_MESSAGE
-    assert qq._INTENTS & qq._INTENT_INTERACTION
+    assert qq_runtime._INTENTS & qq_runtime._INTENT_GROUP_AND_C2C
+    assert qq_runtime._INTENTS & qq_runtime._INTENT_PUBLIC_GUILD_MESSAGES
+    assert qq_runtime._INTENTS & qq_runtime._INTENT_DIRECT_MESSAGE
+    assert qq_runtime._INTENTS & qq_runtime._INTENT_INTERACTION
 
 
 async def test_ack_qq_interaction_uses_official_callback_endpoint(monkeypatch):
@@ -15,13 +15,13 @@ async def test_ack_qq_interaction_uses_official_callback_endpoint(monkeypatch):
         calls.append((channel_id, method, path, json_body))
         return None
 
-    monkeypatch.setattr(qq, "_qq_request", fake_request)
+    monkeypatch.setattr(qq_events, "_qq_request", fake_request)
 
-    assert await qq._ack_qq_interaction("bot-1", "interaction-42") is True
+    assert await qq_events._ack_qq_interaction("bot-1", "interaction-42") is True
     assert calls == [("bot-1", "PUT", "/interactions/interaction-42", {"code": 0})]
 
     calls.clear()
-    assert await qq._ack_qq_interaction("bot-1", "interaction-42", code=3) is True
+    assert await qq_events._ack_qq_interaction("bot-1", "interaction-42", code=3) is True
     assert calls == [("bot-1", "PUT", "/interactions/interaction-42", {"code": 3})]
 
 
@@ -29,8 +29,8 @@ async def test_ack_qq_interaction_without_id_is_noop(monkeypatch):
     async def fail_request(*args, **kwargs):
         raise AssertionError("不应调用 QQ API")
 
-    monkeypatch.setattr(qq, "_qq_request", fail_request)
-    assert await qq._ack_qq_interaction("bot-1", "") is False
+    monkeypatch.setattr(qq_events, "_qq_request", fail_request)
+    assert await qq_events._ack_qq_interaction("bot-1", "") is False
 
 
 async def test_stale_group_interaction_is_acknowledged_in_original_group(monkeypatch):
@@ -68,10 +68,10 @@ async def test_stale_group_interaction_is_acknowledged_in_original_group(monkeyp
     monkeypatch.setattr(db_session, "_SessionLocal", _SessionFactory())
     monkeypatch.setattr(interactions, "consume_action", stale_action)
     monkeypatch.setattr("app.services.mcp_secret_inputs.consume_mcp_secret_action", no_secret_action)
-    monkeypatch.setattr(qq, "_ack_qq_interaction", fake_protocol_ack)
-    monkeypatch.setattr(qq, "_qq_ack", fake_qq_ack)
+    monkeypatch.setattr(qq_events, "_ack_qq_interaction", fake_protocol_ack)
+    monkeypatch.setattr(qq_events, "_qq_ack", fake_qq_ack)
 
-    await qq._handle_qq_interaction({
+    await qq_events._handle_qq_interaction({
         "id": "interaction-1",
         "user_openid": "user-1",
         "group_openid": "group-1",
@@ -107,15 +107,15 @@ async def _fake_next_seq(msg_id):
 
 
 async def test_post_sends_markdown(monkeypatch):
-    monkeypatch.setattr(qq, "_next_seq", _fake_next_seq)
+    monkeypatch.setattr(qq_outbound, "_next_seq", _fake_next_seq)
     calls = []
 
     async def fake_request(channel_id, method, path, json_body=None, **kw):
         calls.append((channel_id, method, path, json_body))
 
-    monkeypatch.setattr(qq, "_qq_request", fake_request)
+    monkeypatch.setattr(qq_outbound, "_qq_request", fake_request)
 
-    await qq._post("bot-1", "ou_1", "你好", "msg-1")
+    await qq_outbound._post("bot-1", "ou_1", "你好", "msg-1")
 
     assert len(calls) == 1
     channel_id, method, path, body = calls[0]
@@ -125,15 +125,15 @@ async def test_post_sends_markdown(monkeypatch):
 
 
 async def test_post_keyboard_builds_inline_keyboard_with_opaque_action(monkeypatch):
-    monkeypatch.setattr(qq, "_next_seq", _fake_next_seq)
+    monkeypatch.setattr(qq_outbound, "_next_seq", _fake_next_seq)
     calls = []
 
     async def fake_request(channel_id, method, path, json_body=None, **kw):
         calls.append((path, json_body))
 
-    monkeypatch.setattr(qq, "_qq_request", fake_request)
+    monkeypatch.setattr(qq_outbound, "_qq_request", fake_request)
 
-    await qq._post_keyboard(
+    await qq_outbound._post_keyboard(
         "bot-1", "ou_1", "请选择", "msg-1", group=False,
         prompt={
             "prompt_id": 17,
@@ -162,7 +162,7 @@ def _keyboard_rows_for_labels(labels: list) -> list:
         "platform_user_id": "ou_1",
         "options": [{"id": f"opt-{i}", "label": label, "token": f"t-{i}"} for i, label in enumerate(labels)],
     }
-    return qq._keyboard_wire_payload(prompt)["content"]["rows"]
+    return qq_outbound._keyboard_wire_payload(prompt)["content"]["rows"]
 
 
 def test_keyboard_packs_rows_by_label_width():
@@ -196,14 +196,14 @@ def test_keyboard_fits_nine_medium_labels_in_five_rows():
 
 
 async def test_post_keyboard_uses_markdown_with_keyboard(monkeypatch):
-    monkeypatch.setattr(qq, "_next_seq", _fake_next_seq)
+    monkeypatch.setattr(qq_outbound, "_next_seq", _fake_next_seq)
     calls = []
 
     async def fake_request(channel_id, method, path, json_body=None, **kw):
         calls.append(json_body)
 
-    monkeypatch.setattr(qq, "_qq_request", fake_request)
-    await qq._post_keyboard(
+    monkeypatch.setattr(qq_outbound, "_qq_request", fake_request)
+    await qq_outbound._post_keyboard(
         "bot-1", "ou_1", "请选择", "msg-1", group=False,
         prompt={"prompt_id": 17, "options": [{"id": "yes", "label": "确认", "token": "t"}]},
     )
@@ -214,15 +214,15 @@ async def test_post_keyboard_uses_markdown_with_keyboard(monkeypatch):
 
 
 async def test_post_compat_mode_sends_plain_text(monkeypatch):
-    monkeypatch.setattr(qq, "_next_seq", _fake_next_seq)
+    monkeypatch.setattr(qq_outbound, "_next_seq", _fake_next_seq)
     calls = []
 
     async def fake_request(channel_id, method, path, json_body=None, **kw):
         calls.append(json_body)
 
-    monkeypatch.setattr(qq, "_qq_request", fake_request)
+    monkeypatch.setattr(qq_outbound, "_qq_request", fake_request)
 
-    await qq._post("bot-1", "ou_1", "**不要渲染**", "msg-1", "compat")
+    await qq_outbound._post("bot-1", "ou_1", "**不要渲染**", "msg-1", "compat")
 
     assert calls == [{
         "msg_type": 0,
@@ -233,15 +233,15 @@ async def test_post_compat_mode_sends_plain_text(monkeypatch):
 
 
 async def test_post_removes_web_only_gugu_links_for_qq(monkeypatch):
-    monkeypatch.setattr(qq, "_next_seq", _fake_next_seq)
+    monkeypatch.setattr(qq_outbound, "_next_seq", _fake_next_seq)
     calls = []
 
     async def fake_request(channel_id, method, path, json_body=None, **kw):
         calls.append(json_body)
 
-    monkeypatch.setattr(qq, "_qq_request", fake_request)
+    monkeypatch.setattr(qq_outbound, "_qq_request", fake_request)
 
-    await qq._post(
+    await qq_outbound._post(
         "bot-1", "ou_1", "文件已保存：[打开文件](gugu://open-file/123)", "msg-1", "smart"
     )
 
@@ -251,16 +251,16 @@ async def test_post_removes_web_only_gugu_links_for_qq(monkeypatch):
 
 
 async def test_post_smart_mode_only_uses_markdown_for_markdown_content(monkeypatch):
-    monkeypatch.setattr(qq, "_next_seq", _fake_next_seq)
+    monkeypatch.setattr(qq_outbound, "_next_seq", _fake_next_seq)
     calls = []
 
     async def fake_request(channel_id, method, path, json_body=None, **kw):
         calls.append(json_body)
 
-    monkeypatch.setattr(qq, "_qq_request", fake_request)
+    monkeypatch.setattr(qq_outbound, "_qq_request", fake_request)
 
-    await qq._post("bot-1", "ou_1", "普通文本", "msg-1", "smart")
-    await qq._post("bot-1", "ou_1", "**加粗**", "msg-2", "smart")
+    await qq_outbound._post("bot-1", "ou_1", "普通文本", "msg-1", "smart")
+    await qq_outbound._post("bot-1", "ou_1", "**加粗**", "msg-2", "smart")
 
     assert calls[0]["msg_type"] == 0
     assert calls[0]["content"] == "普通文本"
@@ -269,7 +269,7 @@ async def test_post_smart_mode_only_uses_markdown_for_markdown_content(monkeypat
 
 
 async def test_post_falls_back_to_plain_text_when_markdown_blocked(monkeypatch):
-    monkeypatch.setattr(qq, "_next_seq", _fake_next_seq)
+    monkeypatch.setattr(qq_outbound, "_next_seq", _fake_next_seq)
     calls = []
 
     async def fake_request(channel_id, method, path, json_body=None, **kw):
@@ -277,9 +277,9 @@ async def test_post_falls_back_to_plain_text_when_markdown_blocked(monkeypatch):
         if json_body["msg_type"] == 2:
             raise RuntimeError("QQ API 失败 status=400 data={'code': 50056, 'message': 'no md perm'}")
 
-    monkeypatch.setattr(qq, "_qq_request", fake_request)
+    monkeypatch.setattr(qq_outbound, "_qq_request", fake_request)
 
-    await qq._post("bot-1", "ou_1", "你好", "msg-1")
+    await qq_outbound._post("bot-1", "ou_1", "你好", "msg-1")
 
     assert len(calls) == 2
     assert calls[0]["msg_type"] == 2
@@ -288,22 +288,22 @@ async def test_post_falls_back_to_plain_text_when_markdown_blocked(monkeypatch):
 
 
 async def test_post_reraises_non_markdown_errors(monkeypatch):
-    monkeypatch.setattr(qq, "_next_seq", _fake_next_seq)
+    monkeypatch.setattr(qq_outbound, "_next_seq", _fake_next_seq)
 
     async def fake_request(channel_id, method, path, json_body=None, **kw):
         raise RuntimeError("QQ API 失败 status=500 data={'message': 'boom'}")
 
-    monkeypatch.setattr(qq, "_qq_request", fake_request)
+    monkeypatch.setattr(qq_outbound, "_qq_request", fake_request)
 
     try:
-        await qq._post("bot-1", "ou_1", "你好", "msg-1")
+        await qq_outbound._post("bot-1", "ou_1", "你好", "msg-1")
         assert False, "should have raised"
     except RuntimeError as e:
         assert "boom" in str(e)
 
 
 async def test_send_c2c_clears_token_cache_and_retries_on_failure(monkeypatch):
-    qq._send_tokens["bot-1"] = {"token": "stale", "base": "x", "expires_at": 0}
+    qq_client._send_tokens["bot-1"] = {"token": "stale", "base": "x", "expires_at": 0}
     attempts = []
 
     async def fake_post(channel_id, openid, text, msg_id):
@@ -312,17 +312,17 @@ async def test_send_c2c_clears_token_cache_and_retries_on_failure(monkeypatch):
             raise RuntimeError("status=401")
         return None
 
-    monkeypatch.setattr(qq, "_post", fake_post)
+    monkeypatch.setattr(qq_outbound, "_post", fake_post)
 
-    ok = await qq.send_c2c("ou_1", "hi", "msg-1", "bot-1")
+    ok = await qq_outbound.send_c2c("ou_1", "hi", "msg-1", "bot-1")
 
     assert ok is True
     assert len(attempts) == 2
-    assert "bot-1" not in qq._send_tokens
+    assert "bot-1" not in qq_client._send_tokens
 
 
 async def test_send_token_uses_cache_until_expiry(monkeypatch):
-    qq._send_tokens.clear()
+    qq_client._send_tokens.clear()
     fetch_count = 0
 
     async def fake_creds(channel_id):
@@ -333,18 +333,18 @@ async def test_send_token_uses_cache_until_expiry(monkeypatch):
         fetch_count += 1
         return "tok", 7200
 
-    monkeypatch.setattr(qq, "_creds_by_id", fake_creds)
-    monkeypatch.setattr(qq, "_qq_access_token_with_ttl", fake_token_ttl)
+    monkeypatch.setattr(qq_client, "_creds_by_id", fake_creds)
+    monkeypatch.setattr(qq_client, "_qq_access_token_with_ttl", fake_token_ttl)
 
-    token1, base1 = await qq._send_token("bot-2")
-    token2, base2 = await qq._send_token("bot-2")
+    token1, base1 = await qq_client._send_token("bot-2")
+    token2, base2 = await qq_client._send_token("bot-2")
 
     assert token1 == token2 == "tok"
     assert fetch_count == 1
 
 
 async def test_send_file_base64_mode_uploads_then_sends_media(monkeypatch):
-    monkeypatch.setattr(qq, "_next_seq", _fake_next_seq)
+    monkeypatch.setattr(qq_outbound, "_next_seq", _fake_next_seq)
     calls = []
 
     async def fake_request(channel_id, method, path, json_body=None, **kw):
@@ -353,9 +353,9 @@ async def test_send_file_base64_mode_uploads_then_sends_media(monkeypatch):
             return {"file_info": "media-token-abc"}
         return {}
 
-    monkeypatch.setattr(qq, "_qq_request", fake_request)
+    monkeypatch.setattr(qq_outbound, "_qq_request", fake_request)
 
-    ok = await qq.send_file("ou_1", b"image-bytes", "photo", "png", "bot-1", "msg-1")
+    ok = await qq_outbound.send_file("ou_1", b"image-bytes", "photo", "png", "bot-1", "msg-1")
 
     assert ok is True
     assert calls[0][0] == "/v2/users/ou_1/files"
@@ -366,7 +366,7 @@ async def test_send_file_base64_mode_uploads_then_sends_media(monkeypatch):
 
 
 async def test_send_group_file_uses_group_media_endpoints(monkeypatch):
-    monkeypatch.setattr(qq, "_next_seq", _fake_next_seq)
+    monkeypatch.setattr(qq_outbound, "_next_seq", _fake_next_seq)
     calls = []
 
     async def fake_request(channel_id, method, path, json_body=None, **kw):
@@ -375,9 +375,9 @@ async def test_send_group_file_uses_group_media_endpoints(monkeypatch):
             return {"file_info": "group-media-token"}
         return {}
 
-    monkeypatch.setattr(qq, "_qq_request", fake_request)
+    monkeypatch.setattr(qq_outbound, "_qq_request", fake_request)
 
-    ok = await qq.send_file(
+    ok = await qq_outbound.send_file(
         "group-1", b"image-bytes", "photo", "png", "bot-1", "msg-1", group=True,
     )
 
@@ -389,7 +389,7 @@ async def test_send_group_file_uses_group_media_endpoints(monkeypatch):
 
 
 async def test_send_group_file_falls_back_to_active_message_when_msg_id_expired(monkeypatch):
-    monkeypatch.setattr(qq, "_next_seq", _fake_next_seq)
+    monkeypatch.setattr(qq_outbound, "_next_seq", _fake_next_seq)
     calls = []
 
     async def fake_request(channel_id, method, path, json_body=None, **kw):
@@ -397,15 +397,15 @@ async def test_send_group_file_falls_back_to_active_message_when_msg_id_expired(
         if path.endswith("/files"):
             return {"file_info": "group-media-token"}
         if json_body.get("msg_id"):
-            raise qq.QQAPIError(
+            raise qq_client.QQAPIError(
                 "POST", path, 400,
                 {"code": 40034031, "message": "msgid已经过期,不能回复"},
             )
         return {}
 
-    monkeypatch.setattr(qq, "_qq_request", fake_request)
+    monkeypatch.setattr(qq_outbound, "_qq_request", fake_request)
 
-    ok = await qq.send_file(
+    ok = await qq_outbound.send_file(
         "group-1", b"document-bytes", "report", "pdf", "bot-1", "expired-msg", group=True,
     )
 
@@ -421,7 +421,7 @@ def test_group_mention_upgrades_known_members_only():
     """群回复里的 @成员ID：发言人 + members.json 登记成员升级为平台 mention，陌生 ID 保持纯文本。"""
     known = {"45D53D7EEF624A107AA60C89C266F896"}
     text = "@45D53D7EEF624A107AA60C89C266F896 @BBFF2AB9B9062D2294CB8DAF5362F653 @EF9999 试试 @<@ABC>"
-    out = qq._format_group_mention(text, "BBFF2AB9B9062D2294CB8DAF5362F653", known)
+    out = qq_outbound._format_group_mention(text, "BBFF2AB9B9062D2294CB8DAF5362F653", known)
     assert '<qqbot-at-user id="45D53D7EEF624A107AA60C89C266F896" />' in out
     assert '<qqbot-at-user id="BBFF2AB9B9062D2294CB8DAF5362F653" />' in out   # 发言人也保留
     assert "@EF9999" in out                                                   # 陌生 ID 不转
@@ -441,10 +441,10 @@ async def test_send_group_loads_member_whitelist_from_group_scope(monkeypatch):
         captured.setdefault("known", known_member_ids)
         captured.setdefault("text", text)
 
-    monkeypatch.setattr(qq, "_known_group_member_ids", fake_members)
-    monkeypatch.setattr(qq, "_post_group", fake_post)
+    monkeypatch.setattr(qq_outbound, "_known_group_member_ids", fake_members)
+    monkeypatch.setattr(qq_outbound, "_post_group", fake_post)
 
-    ok = await qq.send_group("g1", "@45D53D7EEF624A107AA60C89C266F896 hello", None, "bot-1")
+    ok = await qq_outbound.send_group("g1", "@45D53D7EEF624A107AA60C89C266F896 hello", None, "bot-1")
     assert ok is True
     assert captured["scope"] == ("bot-1", "g1")
     assert captured["known"] == frozenset({"45D53D7EEF624A107AA60C89C266F896"})
@@ -462,8 +462,8 @@ async def test_send_group_skips_member_lookup_without_mention(monkeypatch):
     async def fake_post(*args, **kwargs):
         return None
 
-    monkeypatch.setattr(qq, "_known_group_member_ids", fake_members)
-    monkeypatch.setattr(qq, "_post_group", fake_post)
+    monkeypatch.setattr(qq_outbound, "_known_group_member_ids", fake_members)
+    monkeypatch.setattr(qq_outbound, "_post_group", fake_post)
 
-    assert await qq.send_group("g1", "普通正文", None, "bot-1") is True
+    assert await qq_outbound.send_group("g1", "普通正文", None, "bot-1") is True
     assert called == []

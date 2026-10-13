@@ -1,6 +1,6 @@
 # 渠道接入与消息协议
 
-> 本文描述 Gugu Agent 当前实际支持的 Web、QQ、微信和飞书渠道。渠道只负责平台连接、消息归一化和出站适配；身份、会话、上下文、权限、工具和 Agent Loop 由共享后端负责。具体字段和平台 API 以代码为准。
+> 本文描述 Gugu Agent 当前实际支持的 Web、QQ、微信、飞书和 Telegram 渠道。渠道只负责平台连接、消息归一化和出站适配；身份、会话、上下文、权限、工具和 Agent Loop 由共享后端负责。具体字段和平台 API 以代码为准。
 
 ## 1. 范围与当前状态
 
@@ -10,6 +10,7 @@
 | QQ | QQ Bot Gateway WebSocket | `agent.gateway.qq` -> Redis Stream -> `agent.im.loop` | QQ Bot HTTP API；文本、Markdown、文件、键盘和群成员 mention | 已接入 C2C 和群聊 |
 | 微信 | iLink HTTP long-poll (`getupdates`) | `agent.gateway.wechat` -> Redis Stream -> `agent.im.loop` | iLink HTTP API；文本和媒体，回复依赖 `context_token` | 官方 ClawBot 当前仅开放私聊；普通微信群聊受平台限制 |
 | 飞书 | Lark SDK WebSocket 事件连接 | `agent.gateway.feishu` -> Redis Stream -> `agent.im.loop` | 飞书消息 API；文本、卡片、文件和图片 | 已接入私聊、群聊、交互卡片和媒体 |
+| Telegram | Bot API long-poll | `agent.gateway.telegram` -> Redis Stream -> `agent.im.loop` | Telegram Bot API；文本和文件 | 支持 update 去重、游标持久化和私聊/群聊节流 |
 
 `backend/app/core/events.py` 的用户级 Redis Pub/Sub -> SSE 是网页资源实时更新总线，不是 IM 渠道，也不替代 QQ/微信/飞书的入站连接。终端的 PTY WebSocket 是另一套交互协议，同样不属于本文的 IM Gateway。
 
@@ -19,30 +20,30 @@
 
 下表按当前代码和测试描述能力边界：`完整` 表示有独立实现并纳入统一 Loop，`降级` 表示通过文本或其他平台通用形式实现，`不适用` 表示该能力不是该渠道的传输方式。
 
-| 功能 | Web | QQ | 微信 | 飞书 |
+| 功能 | Web | QQ | 微信 | 飞书 | Telegram |
 |---|---|---|---|---|
-| 文本入站 | 完整 | 完整 | 完整 | 完整 |
-| 文本出站 | 完整 | 完整 | 完整 | 完整 |
-| 增量 token 流 | 完整，Agent SSE | 降级为按 Round 发送 | 降级为按 Round 发送 | 降级为按 Round 发送 |
-| 多 Round 分段 | Web 事件流展示 | 完整，独立发送每个非空 Round | 完整，统一收集后发送 | 完整，统一收集后发送 |
-| 私聊 | 完整 | C2C | c2c | p2p 归一为 c2c |
-| 群聊 | 不适用 | 完整，支持 @/被动记录策略 | 不支持：官方 ClawBot/iLink 当前未开放普通微信群聊 | 完整，依赖 chat_id |
-| 引用文本 | 完整 | 完整，独立 `quoted_text` | 不支持还原文字原文；仅保留平台摘要或不支持占位 | 完整，解析回复引用 |
-| 引用附件 | Web attachment reference | 完整 | 支持识别图片/文件等引用媒体，下载/解密后暂存 | 完整，媒体适配 |
-| 图片/文件入站 | 上传附件 | 完整 | 完整，含 iLink 媒体解密 | 完整 |
-| 图片/文件出站 | Web 文件事件/下载 | 完整，有平台大小限制 | 完整，有平台大小限制 | 完整，有平台大小限制 |
-| 语音入站 | 浏览器上传/附件 | 按平台事件能力 | 完整，使用 iLink ASR 转写 | 按平台事件能力 |
-| Bot mention | Web UI 语义 | 完整，官方 `<qqbot-at-user>`；可拆成独立消息 | 依平台消息内容 | 依飞书 mention 内容 |
-| 工具进度消息 | SSE 事件 | 完整，纯文本/Markdown 适配 | 文本适配 | 文本/卡片适配 |
-| `ask_user` 交互 | Web 交互 API | Inline Keyboard，失败降级文本 | 文本选项 | 交互卡片，失败降级文本 |
-| Markdown | Web 前端渲染 | 按会话格式，失败降级纯文本 | 平台文本适配 | 转换为文本/卡片元素 |
-| 键盘/卡片交互 | Web UI | 键盘 | 降级文本 | 卡片 |
-| typing 状态 | Web 前端生成态 | 由 IM 活动状态适配 | typing ticket，失败时不阻塞 | 由平台适配能力决定 |
-| 回复关联 | session/run | QQ `msg_id` | `context_token` | 飞书消息关联 |
-| 入站连接 | HTTP/SSE | Bot Gateway WebSocket | iLink HTTP long-poll | Lark SDK WebSocket |
-| 网页资源实时更新 | 用户级 SSE | 通过后端事件反映到 Web | 通过后端事件反映到 Web | 通过后端事件反映到 Web |
+| 文本入站 | 完整 | 完整 | 完整 | 完整 | 完整 |
+| 文本出站 | 完整 | 完整 | 完整 | 完整 | 完整 |
+| 增量 token 流 | 完整，Agent SSE | 降级为按 Round 发送 | 降级为按 Round 发送 | 降级为按 Round 发送 | 降级为按 Round 发送 |
+| 多 Round 分段 | Web 事件流展示 | 完整，独立发送每个非空 Round | 完整，统一收集后发送 | 完整，统一收集后发送 | 完整，统一收集后发送 |
+| 私聊 | 完整 | C2C | c2c | p2p 归一为 c2c | 完整 |
+| 群聊 | 不适用 | 完整，支持 @/被动记录策略 | 不支持：官方 ClawBot/iLink 当前未开放普通微信群聊 | 完整，依赖 chat_id | 完整，依平台 chat 类型 |
+| 引用文本 | 完整 | 完整，独立 `quoted_text` | 不支持还原文字原文；仅保留平台摘要或不支持占位 | 完整，解析回复引用 | 按平台 update 能力 |
+| 引用附件 | Web attachment reference | 完整 | 支持识别图片/文件等引用媒体，下载/解密后暂存 | 完整，媒体适配 | 按平台 update 能力 |
+| 图片/文件入站 | 上传附件 | 完整 | 完整，含 iLink 媒体解密 | 完整 | 完整，受平台文件 API 限制 |
+| 图片/文件出站 | Web 文件事件/下载 | 完整，有平台大小限制 | 完整，有平台大小限制 | 完整，有平台大小限制 | 完整，有平台大小限制 |
+| 语音入站 | 浏览器上传/附件 | 按平台事件能力 | 完整，使用 iLink ASR 转写 | 按平台事件能力 | 按平台 update 能力 |
+| Bot mention | Web UI 语义 | 完整，官方 `<qqbot-at-user>`；可拆成独立消息 | 依平台消息内容 | 依飞书 mention 内容 | 依平台消息内容 |
+| 工具进度消息 | SSE 事件 | 完整，纯文本/Markdown 适配 | 文本适配 | 文本/卡片适配 | 文本适配 |
+| `ask_user` 交互 | Web 交互 API | Inline Keyboard，失败降级文本 | 文本选项 | 交互卡片，失败降级文本 | 文本选项 |
+| Markdown | Web 前端渲染 | 按会话格式，失败降级纯文本 | 平台文本适配 | 转换为文本/卡片元素 | 平台文本适配 |
+| 键盘/卡片交互 | Web UI | 键盘 | 降级文本 | 卡片 | 不支持，降级文本 |
+| typing 状态 | Web 前端生成态 | 由 IM 活动状态适配 | typing ticket，失败时不阻塞 | 由平台适配能力决定 | 暂无 |
+| 回复关联 | session/run | QQ `msg_id` | `context_token` | 飞书消息关联 | chat/message ID |
+| 入站连接 | HTTP/SSE | Bot Gateway WebSocket | iLink HTTP long-poll | Lark SDK WebSocket | Bot API long-poll |
+| 网页资源实时更新 | 用户级 SSE | 通过后端事件反映到 Web | 通过后端事件反映到 Web | 通过后端事件反映到 Web | 通过后端事件反映到 Web |
 
-“网页资源实时更新”指 Web 的 `live-event-v1` 用户事件流，不表示 QQ、微信或飞书收到资源变更推送；IM 渠道只有在实际发送出站消息时才会触达平台用户。平台能力不对称时，统一语义优先，展示形式由 `agent.im.replies` 和对应 Gateway 负责。
+“网页资源实时更新”指 Web 的 `live-event-v1` 用户事件流，不表示 IM 渠道收到资源变更推送；IM 渠道只有在实际发送出站消息时才会触达平台用户。平台能力不对称时，统一语义优先，展示形式由 `agent.im.replies` 和对应 Gateway 负责。
 
 微信的限制针对本项目接入的官方 ClawBot/iLink 入口：当前仅支持与 Bot 私聊，不能加入普通微信群或接收群内消息。这是平台能力边界，不是咕咕的群聊路由、权限或消息处理故障；不要通过非官方协议或客户端模拟绕过。
 
@@ -226,7 +227,7 @@ QQ 当前支持全量群消息进入网关；`group_requires_at`、`group_read_e
 
 ### 5.1 QQ
 
-实现位置：`backend/agent/gateway/qq.py`。
+实现位置：`backend/agent/gateway/qq/`；`agent.gateway.qq` 是稳定包入口，`python -m agent.gateway.qq` 启动 Gateway。
 
 - 使用 QQ Bot Gateway WebSocket 接收 C2C、`GROUP_AT_MESSAGE_CREATE` 和配置允许的群消息。
 - 优先使用 QQ 提供的 `user_openid`/`member_openid` 等稳定平台 ID；群消息保留 `group_openid`。
@@ -239,7 +240,7 @@ QQ 当前支持全量群消息进入网关；`group_requires_at`、`group_read_e
 
 ### 5.2 微信
 
-实现位置：`backend/agent/gateway/wechat.py`。
+实现位置：`backend/agent/gateway/wechat/`；`agent.gateway.wechat` 是稳定包入口，`python -m agent.gateway.wechat` 启动 Gateway。旧 `wechat_*.py` 导入路径保留薄兼容模块。
 
 - 微信 iLink 当前采用 HTTP long-poll `getupdates`，不是 WebSocket。
 - 只接受用户到 bot 的消息，跳过 bot 自己发出的回环消息。
@@ -250,7 +251,7 @@ QQ 当前支持全量群消息进入网关；`group_requires_at`、`group_read_e
 
 ### 5.3 飞书
 
-实现位置：`backend/agent/gateway/feishu.py`。
+实现位置：`backend/agent/gateway/feishu/`；`agent.gateway.feishu` 是稳定包入口，`python -m agent.gateway.feishu` 启动 Gateway。
 
 - 使用 Lark SDK WebSocket 接收事件，不把飞书 webhook 的 HTTP 事件当作当前主连接模型。
 - 校验 `app_id` 和事件新鲜度，丢弃错投或过期事件。
@@ -261,13 +262,21 @@ QQ 当前支持全量群消息进入网关；`group_requires_at`、`group_read_e
 
 ### 5.4 Web
 
-实现位置：`backend/app/api/v1/agent.py`、`backend/agent/gateway/web.py`。
+实现位置：`backend/app/api/v1/agent.py`、`backend/agent/gateway/web/`。`agent.gateway.web` 保持 `stream`、`resume` 与 `cancel_local_generation` 兼容入口；SSE 请求、生成、排队、续看与运行收口分别位于包内模块，AgentEvent 消费复用 `agent.run.execution`。
 
 - Web 对话通过 HTTP `POST /api/v1/agent/chat` 启动，响应以 SSE 流式返回；恢复、取消和会话消息由 Agent API 提供。
 - Web 使用 Gugu JWT 作为直接身份，不需要 `owner_user_id` 与平台用户 ID 的双层映射。
 - 前端资源同步使用 `GET /api/v1/live/stream`，后端从 Redis 用户频道和全局广播频道转成 `live-event-v1` SSE。
 - Web 的事件订阅只通知资源变更，例如 projects、files、mind、sessions、terminals；客户端收到事件后刷新或应用 canonical payload。
 - Web SSE 不能作为 QQ、微信或飞书的消息传输替代；IM 回复仍必须经过平台发送 API。
+
+### 5.5 Telegram
+
+实现位置：`backend/agent/gateway/telegram/`；`agent.gateway.telegram` 是稳定包入口，`python -m agent.gateway.telegram` 启动 Gateway。
+
+- 使用 Telegram Bot API long-poll 获取 update，并在入队前按 update ID 去重与持久化游标。
+- 429 响应遵循 `retry_after`；普通网络错误采用有限等待重试。
+- 私聊和群聊有各自的节流键；文本与文件通过 Bot API 出站。
 
 ## 6. 统一出站协议
 
@@ -330,6 +339,7 @@ Agent text/tool/interaction result
 | QQ Gateway、WebSocket、发送和 mention | `test_qq_raw_ws.py`、`test_qq_raw_send.py`、`test_qq_group_history.py` |
 | 飞书事件、交互和媒体 | `test_feishu_gateway_guards.py`、`test_feishu_interactions.py`、`test_feishu_media.py` |
 | 微信引用和媒体 | `test_wechat_quotes.py`、`test_im_media_ingress.py` |
+| Telegram update、游标、重试和出站 | `test_telegram_contract.py`、`test_telegram_gateway.py` |
 | 群成员/群组/私聊反思策略 | `test_im_memory_scopes.py`、`test_im_members.py` |
 
 新增渠道或平台字段时，至少补充：身份归属、私聊/群聊路由、重复事件、引用/附件、权限拒绝、出站失败和重连后的行为测试。平台差异应留在 Gateway/replies 测试；共享行为应在 `agent.im` 和 worker 测试中验证。

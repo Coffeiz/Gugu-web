@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from agent.gateway import telegram
+from agent.gateway.telegram import runtime as telegram
 
 
 @pytest.fixture(autouse=True)

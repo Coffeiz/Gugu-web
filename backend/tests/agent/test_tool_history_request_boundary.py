@@ -2,7 +2,7 @@ from agent.security.sanitize import sanitize_messages
 
 
 async def test_qq_interaction_ack_does_not_reuse_event_id(monkeypatch):
-    from agent.gateway import qq
+    from agent.gateway.qq import events as qq_events
 
     calls = []
 
@@ -12,10 +12,10 @@ async def test_qq_interaction_ack_does_not_reuse_event_id(monkeypatch):
     async def fake_post(channel_id, target_id, text, msg_id, message_format):
         calls.append((channel_id, target_id, text, msg_id, message_format))
 
-    monkeypatch.setattr(qq, "_message_format", fake_format)
-    monkeypatch.setattr(qq, "_post", fake_post)
+    monkeypatch.setattr(qq_events, "_message_format", fake_format)
+    monkeypatch.setattr(qq_events, "_post", fake_post)
 
-    await qq._qq_ack("channel", "c2c", "openid", "已确认", None)
+    await qq_events._qq_ack("channel", "c2c", "openid", "已确认", None)
 
     assert calls == [("channel", "openid", "已确认", None, "compat")]
 

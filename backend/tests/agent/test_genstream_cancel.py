@@ -264,6 +264,7 @@ async def test_subscribe_replays_done_when_broadcast_was_missed(monkeypatch):
 @pytest.mark.asyncio
 async def test_cancel_local_generation_cancels_registered_task(monkeypatch):
     from agent.gateway import web as web_gateway
+    from agent.gateway.web import run_lifecycle as web_lifecycle
 
     started = asyncio.Event()
 
@@ -273,14 +274,14 @@ async def test_cancel_local_generation_cancels_registered_task(monkeypatch):
 
     task = asyncio.create_task(_never_ends())
     await started.wait()
-    web_gateway._session_gen_tasks[499] = {"run-499": task}
+    web_lifecycle._session_gen_tasks[499] = {"run-499": task}
     try:
         # 未指定 owner 时取消该会话全部存活任务（旧行为语义）。
         assert web_gateway.cancel_local_generation(499) is True
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(asyncio.shield(task), timeout=2)
     finally:
-        web_gateway._session_gen_tasks.pop(499, None)
+        web_lifecycle._session_gen_tasks.pop(499, None)
         if not task.done():
             task.cancel()
 
@@ -293,6 +294,7 @@ async def test_cancel_local_generation_targets_owner_run_only():
     杀错成排队任务会让排队消息静默消失、真正要停的 run 继续占着门。
     """
     from agent.gateway import web as web_gateway
+    from agent.gateway.web import run_lifecycle as web_lifecycle
 
     started = asyncio.Event()
 
@@ -303,7 +305,7 @@ async def test_cancel_local_generation_targets_owner_run_only():
     running = asyncio.create_task(_never_ends())
     queued = asyncio.create_task(_never_ends())
     await started.wait()
-    web_gateway._session_gen_tasks[500] = {"run-active": running, "run-queued": queued}
+    web_lifecycle._session_gen_tasks[500] = {"run-active": running, "run-queued": queued}
     try:
         assert web_gateway.cancel_local_generation(500, "run-active") is True
         with pytest.raises(asyncio.CancelledError):
@@ -315,7 +317,7 @@ async def test_cancel_local_generation_targets_owner_run_only():
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(asyncio.shield(queued), timeout=2)
     finally:
-        web_gateway._session_gen_tasks.pop(500, None)
+        web_lifecycle._session_gen_tasks.pop(500, None)
         for task in (running, queued):
             if not task.done():
                 task.cancel()

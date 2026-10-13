@@ -1,8 +1,21 @@
 import asyncio
 import json
+from concurrent.futures import Future
 from types import SimpleNamespace
 
-from agent.gateway import feishu
+from agent.gateway.feishu import events, messages, runtime
+
+
+class _InlineRunner:
+    def run(self, coroutine):
+        return asyncio.run(coroutine)
+
+
+def _make_handler(*args, **kwargs):
+    return events._make_on_message(
+        *args[:3], events._EventServices(_InlineRunner(), messages._do_send, messages._do_react),
+        *args[3:], **kwargs,
+    )
 
 
 def _feishu_event(message_id: str = "om_test", app_id: str = "cli_expected", age_ms: int = 0):
@@ -25,20 +38,20 @@ def _feishu_event(message_id: str = "om_test", app_id: str = "cli_expected", age
 def test_feishu_drops_misrouted_app_id():
     data = _feishu_event(app_id="cli_other")
 
-    assert feishu._drop_misrouted_event(data, "cli_expected", "bot-1") is True
-    assert feishu._drop_misrouted_event(data, "cli_other", "bot-1") is False
+    assert events._drop_misrouted_event(data, "cli_expected", "bot-1") is True
+    assert events._drop_misrouted_event(data, "cli_other", "bot-1") is False
 
 
 def test_feishu_drops_stale_retry():
-    data = _feishu_event(age_ms=feishu._FEISHU_STALE_MSG_THRESHOLD_MS + 1)
+    data = _feishu_event(age_ms=events._FEISHU_STALE_MSG_THRESHOLD_MS + 1)
 
-    assert feishu._drop_stale_event(data, "bot-1", now_ms=1_800_000_000_000) is True
+    assert events._drop_stale_event(data, "bot-1", now_ms=1_800_000_000_000) is True
 
 
 def test_feishu_keeps_fresh_retry_window():
-    data = _feishu_event(age_ms=feishu._FEISHU_STALE_MSG_THRESHOLD_MS)
+    data = _feishu_event(age_ms=events._FEISHU_STALE_MSG_THRESHOLD_MS)
 
-    assert feishu._drop_stale_event(data, "bot-1", now_ms=1_800_000_000_000) is False
+    assert events._drop_stale_event(data, "bot-1", now_ms=1_800_000_000_000) is False
 
 
 def test_feishu_resolves_mention_placeholder_using_event_display_name():
@@ -47,15 +60,15 @@ def test_feishu_resolves_mention_placeholder_using_event_display_name():
         SimpleNamespace(key="@_user_2", name="小北"),
     ])
 
-    assert feishu._feishu_resolve_mention_text(
+    assert events._feishu_resolve_mention_text(
         message, "@_user_1 /help 给 @_user_2"
     ) == "@咕咕 /help 给 @小北"
 
 
 def test_feishu_group_bot_mention_is_normalized_before_slash_command(monkeypatch):
     produced: list[dict] = []
-    monkeypatch.setattr(feishu.R, "produce_sync", lambda _stream, payload: produced.append(payload))
-    monkeypatch.setattr(feishu, "_do_react", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(events.R, "produce_sync", lambda _stream, payload: produced.append(payload))
+    monkeypatch.setattr(messages, "_do_react", lambda *_args, **_kwargs: True)
 
     from agent import router
     from agent.runtime import runtime_state
@@ -73,7 +86,7 @@ def test_feishu_group_bot_mention_is_normalized_before_slash_command(monkeypatch
         "id": {"open_id": "ou_bot"},
     }]
     # 发言人 ID 与机器人 ID 不同；提及判断必须以机器人自身身份为准。
-    handler = feishu._make_on_message(
+    handler = _make_handler(
         "bot-1", "user-1", object(), "cli_expected", "ou_bot"
     )
     handler(data)
@@ -104,7 +117,43 @@ def test_feishu_reads_bot_open_id_from_bot_info_response():
         def request(_request):
             return FakeResponse()
 
-    assert feishu._feishu_bot_open_id(FakeClient()) == "ou_bot"
+    assert events._feishu_bot_open_id(FakeClient()) == "ou_bot"
+
+
+def test_feishu_card_action_is_submitted_to_injected_gateway_runner(monkeypatch):
+    from agent.interactions.feishu import encode_action_value
+
+    consumed = []
+
+    async def consume(owner, prompt_id, token, event_id, **kwargs):
+        consumed.append((owner, prompt_id, token, event_id, kwargs))
+        return {"ok": True}
+
+    class Runner:
+        def submit(self, coroutine):
+            result = asyncio.run(coroutine)
+            future = Future()
+            future.set_result(result)
+            return future
+
+    monkeypatch.setattr(events, "_consume_card_action", consume)
+    data = SimpleNamespace(
+        event=SimpleNamespace(
+            operator=SimpleNamespace(open_id="ou_operator"),
+            action=SimpleNamespace(value=encode_action_value(9, "one-time-token")),
+        ),
+        header=SimpleNamespace(event_id="evt-1"),
+    )
+
+    response = events._handle_card_action(
+        data, "owner-1", events._EventServices(Runner(), messages._do_send, messages._do_react), "bot-1"
+    )
+
+    assert response is not None
+    assert consumed == [(
+        "owner-1", 9, "one-time-token", "evt-1",
+        {"bot_id": "bot-1", "platform_user_id": "ou_operator"},
+    )]
 
 
 def test_feishu_gateway_deduplicates_message_id(monkeypatch):
@@ -122,8 +171,8 @@ def test_feishu_gateway_deduplicates_message_id(monkeypatch):
     def fake_do_react(client, message_id, emoji_type):
         return True
 
-    monkeypatch.setattr(feishu.R, "produce_sync", fake_produce_sync)
-    monkeypatch.setattr(feishu, "_do_react", fake_do_react)
+    monkeypatch.setattr(events.R, "produce_sync", fake_produce_sync)
+    monkeypatch.setattr(messages, "_do_react", fake_do_react)
 
     from agent import router
     from agent.runtime import runtime_state
@@ -132,7 +181,7 @@ def test_feishu_gateway_deduplicates_message_id(monkeypatch):
     monkeypatch.setattr(runtime_state, "get_state_sync", lambda *args, **kwargs: None)
     monkeypatch.setattr(runtime_state, "is_awaiting_sync", lambda *args, **kwargs: False)
 
-    handler = feishu._make_on_message("bot-1", "user-1", object(), expected_app_id="cli_expected")
+    handler = _make_handler("bot-1", "user-1", object(), expected_app_id="cli_expected")
     data = _feishu_event(message_id="om_duplicate")
 
     handler(data)
@@ -151,17 +200,17 @@ def test_feishu_message_still_reaches_stream_when_shortcut_redis_fails(monkeypat
     def fail_state(*_args, **_kwargs):
         raise RuntimeError("redis unavailable")
 
-    monkeypatch.setattr(feishu.R, "produce_sync", fake_produce_sync)
-    monkeypatch.setattr(feishu, "_do_react", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(events.R, "produce_sync", fake_produce_sync)
+    monkeypatch.setattr(messages, "_do_react", lambda *_args, **_kwargs: True)
     monkeypatch.setattr("agent.runtime.runtime_state.get_state_sync", fail_state)
 
-    handler = feishu._make_on_message("bot-1", "user-1", object(), expected_app_id="cli_expected")
+    handler = _make_handler("bot-1", "user-1", object(), expected_app_id="cli_expected")
     handler(_feishu_event(message_id="om_shortcut_redis_failure"))
 
     assert len(produced) == 1
     assert produced[0]["platform"] == "feishu"
 def test_feishu_gateway_async_runner_reuses_loop_for_sequential_preflights():
-    runner = feishu._GatewayAsyncRunner()
+    runner = runtime._GatewayAsyncRunner()
 
     async def loop_identity():
         return id(asyncio.get_running_loop())

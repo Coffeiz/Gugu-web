@@ -76,7 +76,8 @@ async def test_decision_guard_preference_reads_user_opt_in_and_fails_closed(monk
 
 
 def test_qq_expired_msg_id_is_treated_as_passive_reply_failure():
-    from agent.gateway.qq import QQAPIError, _qq_msg_id_invalid
+    from agent.gateway.qq import QQAPIError
+    from agent.gateway.qq.outbound import _qq_msg_id_invalid
 
     exc = QQAPIError(
         "POST",
