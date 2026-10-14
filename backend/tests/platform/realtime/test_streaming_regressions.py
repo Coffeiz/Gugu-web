@@ -206,7 +206,7 @@ async def test_qq_stream_drains_agent_after_transport_failure(monkeypatch):
 @pytest.mark.asyncio
 async def test_qq_stream_finishes_interaction_round_before_prompt_and_resumes(monkeypatch):
     """确认交互前先发送完成帧，确认后后续正文使用新的 QQ 流消息。"""
-    from agent.gateway.qq import outbound as qq_outbound
+    from agent.gateway import qq as qq_gateway
 
     timeline = []
 
@@ -224,7 +224,7 @@ async def test_qq_stream_finishes_interaction_round_before_prompt_and_resumes(mo
             return bool(self.text)
 
     monkeypatch.setattr(
-        qq_outbound, "create_private_text_stream",
+        qq_gateway, "create_private_text_stream",
         lambda *_args, **_kwargs: InteractionStream(),
     )
 
@@ -237,7 +237,10 @@ async def test_qq_stream_finishes_interaction_round_before_prompt_and_resumes(mo
         yield ("final", AgentResponse(text="确认后继续", session_id=7))
 
     sent, response, _last_text = await send_qq_stream_by_round(
-        {"platform_user_id": "synthetic-recipient", "channel_id": "test"},
+        {
+            "platform": "qq", "platform_user_id": "synthetic-recipient",
+            "channel_id": "41", "message_id": "synthetic-message",
+        },
         token_iter(),
     )
 
@@ -455,7 +458,7 @@ async def test_feishu_fallback_hides_intermediate_tokens_but_sends_final(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_qq_stream_hides_intermediate_rounds_but_sends_final(monkeypatch):
+async def test_qq_stream_delivers_each_round_when_platform_streaming_is_enabled(monkeypatch):
     from agent.gateway import qq
 
     streams: list[_FakeStream] = []
@@ -474,7 +477,10 @@ async def test_qq_stream_hides_intermediate_rounds_but_sends_final(monkeypatch):
         yield ("final", AgentResponse(text="最终回复", session_id=14))
 
     sent, response, last_text = await send_qq_stream_by_round(
-        {"platform_user_id": "user", "channel_id": "channel"},
+        {
+            "platform": "qq", "platform_user_id": "synthetic-recipient",
+            "channel_id": "41", "message_id": "synthetic-message",
+        },
         token_iter(),
         show_intermediate_replies=False,
     )
@@ -482,9 +488,8 @@ async def test_qq_stream_hides_intermediate_rounds_but_sends_final(monkeypatch):
     assert sent is True
     assert response.session_id == 14
     assert last_text == "最终回复"
-    assert len(streams) == 1
-    assert streams[0].parts == []
-    assert streams[0].sent is True
+    assert [stream.parts for stream in streams] == [["这是中间草稿"], ["最终回复"]]
+    assert all(stream.sent for stream in streams)
 
 
 async def _async_value(value):

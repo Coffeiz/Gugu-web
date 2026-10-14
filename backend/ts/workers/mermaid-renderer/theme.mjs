@@ -37,12 +37,12 @@ const PALETTE_COLORS = Object.freeze({
 
 const FAMILY_COLORS = Object.freeze({
   glass: {
-    light: { canvas: '#eef0f6', text: '#1e2028', secondaryText: '#747985' },
-    dark: { canvas: '#181b2c', text: 'rgba(255, 255, 255, 0.92)', secondaryText: 'rgba(255, 255, 255, 0.62)' },
+    light: { canvas: '#eef0f6', imageBackground: '#fcfcfd', text: '#1e2028', secondaryText: '#747985' },
+    dark: { canvas: '#181b2c', imageBackground: '#1e2133', text: 'rgba(255, 255, 255, 0.92)', secondaryText: 'rgba(255, 255, 255, 0.62)' },
   },
   mono: {
-    light: { canvas: '#f7f5f8', text: '#29262e', secondaryText: '#6f6975' },
-    dark: { canvas: '#201d25', text: '#f0edf3', secondaryText: '#aaa3af' },
+    light: { canvas: '#f7f5f8', imageBackground: '#fbfafc', text: '#29262e', secondaryText: '#6f6975' },
+    dark: { canvas: '#201d25', imageBackground: '#24212a', text: '#f0edf3', secondaryText: '#aaa3af' },
   },
 })
 
@@ -75,7 +75,9 @@ export function resolveMermaidThemeColors(preferences = {}) {
   const lineColor = familyColors.secondaryText
 
   return {
-    background: familyColors.canvas,
+    // Web 的 SVG 透明并显示在 surface-card-solid 上；IM PNG 使用同等的
+    // 近白/深色卡片底，避免把整张图铺成页面画布色。
+    background: familyColors.imageBackground,
     primaryColor,
     primaryTextColor: familyColors.text,
     primaryBorderColor: toRgba(paletteColors.primary, 0.34),

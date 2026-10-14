@@ -14,9 +14,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-_FENCE_RE = re.compile(r"```mermaid[ \t]*\r?\n[\s\S]*?```", re.IGNORECASE)
-_OPEN_RE = re.compile(r"```mermaid[ \t]*\r?\n", re.IGNORECASE)
-_SOURCE_RE = re.compile(r"^```mermaid[ \t]*\r?\n([\s\S]*?)```$", re.IGNORECASE)
+_OPEN_RE = re.compile(r"(?m)^ {0,3}```mermaid[ \t]*\r?\n", re.IGNORECASE)
+_FENCE_LINE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})([^\r\n]*)$")
 _WORKER_FAILURE_RE = re.compile(
     r"^MERMAID_RENDER_FAILURE index=(\d+) type=([a-z0-9-]+) reason=([a-z0-9_]+)$"
 )
@@ -26,11 +25,116 @@ MAX_DIAGRAMS = 4
 DEFERRED_RENDER_BATCH_SIZE = 1
 # 兼容旧调用方的显式限制值；新流式路径默认不设置 run 级上限。
 MAX_RUN_DIAGRAMS = 4
-DEFAULT_MAX_DIAGRAMS = None
+DEFAULT_MAX_DIAGRAMS = MAX_RUN_DIAGRAMS
 MAX_SOURCE_CHARS = 20_000
 MAX_PNG_BYTES = 3 * 1024 * 1024
 RENDER_TIMEOUT_SECONDS = 20
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+
+def _top_level_mermaid_fences(text: str):
+    """只找 Markdown 顶层 Mermaid 围栏，跳过其他代码围栏内部的示例。"""
+    lines = text.splitlines(keepends=True)
+    offsets = []
+    offset = 0
+    for line in lines:
+        offsets.append(offset)
+        offset += len(line)
+
+    index = 0
+    outer_fence: tuple[str, int] | None = None
+    while index < len(lines):
+        line = lines[index].rstrip("\r\n")
+        match = _FENCE_LINE_RE.fullmatch(line)
+        if not match:
+            index += 1
+            continue
+
+        marker, info = match.groups()
+        char = marker[0]
+        size = len(marker)
+        if outer_fence is not None:
+            if (
+                char == outer_fence[0]
+                and size >= outer_fence[1]
+                and not info.strip()
+            ):
+                outer_fence = None
+            index += 1
+            continue
+
+        language = info.strip().split(maxsplit=1)[0].lower() if info.strip() else ""
+        if language == "mermaid" and char == "`" and size == 3:
+            closing = index + 1
+            while closing < len(lines):
+                close_line = lines[closing].rstrip("\r\n")
+                close_match = _FENCE_LINE_RE.fullmatch(close_line)
+                if (
+                    close_match
+                    and close_match.group(1)[0] == char
+                    and len(close_match.group(1)) >= size
+                    and not close_match.group(2).strip()
+                ):
+                    start = offsets[index]
+                    body_start = start + len(lines[index])
+                    close_start = offsets[closing]
+                    end = close_start + len(close_line)
+                    yield start, end, text[body_start:close_start], text[start:end]
+                    index = closing + 1
+                    break
+                closing += 1
+            else:
+                # 没有闭合的围栏由普通 Markdown 继续展示，不做图表替换。
+                return
+            continue
+
+        outer_fence = (char, size)
+        index += 1
+
+
+class _MarkdownFenceTracker:
+    """流式追踪已透传文本中的围栏，避免识别代码示例里的 Mermaid。"""
+
+    def __init__(self) -> None:
+        self.open_fence: tuple[str, int] | None = None
+        self._line_probe = ""
+        self._line_start = True
+
+    def feed(self, text: str) -> None:
+        for char in text:
+            if char == "\n":
+                match = _FENCE_LINE_RE.fullmatch(self._line_probe.rstrip("\r"))
+                if match:
+                    marker, rest = match.groups()
+                    fence_char = marker[0]
+                    fence_size = len(marker)
+                    if self.open_fence is None:
+                        self.open_fence = (fence_char, fence_size)
+                    elif (
+                        fence_char == self.open_fence[0]
+                        and fence_size >= self.open_fence[1]
+                        and not rest.strip()
+                    ):
+                        self.open_fence = None
+                self._line_probe = ""
+                self._line_start = True
+                continue
+            if not self._line_start:
+                continue
+            self._line_probe += char
+            prefix = self._line_probe
+            spaces = len(prefix) - len(prefix.lstrip(" "))
+            remainder = prefix[spaces:]
+            possible = spaces <= 3 and (
+                not remainder or remainder[0] in "`~"
+            )
+            if remainder and remainder[0] in "`~":
+                marker_char = remainder[0]
+                marker_run = len(remainder) - len(remainder.lstrip(marker_char))
+                possible = spaces <= 3 and (marker_run < 3 or len(prefix) <= 256)
+            if not possible or len(prefix) > 256:
+                self._line_probe = ""
+                self._line_start = False
 
 
 @dataclass(frozen=True)
@@ -234,22 +338,18 @@ async def render_reply(
 ) -> list[ReplyPart]:
     """解析完整 Mermaid fence，成功时用 PNG part 替换源码，失败时保留源码。"""
     value = text or ""
-    matches = [match for match in _FENCE_RE.finditer(value) if _SOURCE_RE.match(match.group(0))]
+    matches = list(_top_level_mermaid_fences(value))
     if max_diagrams is not None:
         matches = matches[:max(0, max_diagrams)]
-    sources = [
-        _SOURCE_RE.match(match.group(0)).group(1)
-        for match in matches
-    ]
+    sources = [body for _start, _end, body, _source in matches]
     pngs = await _render_sources(sources, theme_preferences=theme_preferences)
     parts: list[ReplyPart] = []
     cursor = 0
-    for index, match in enumerate(matches):
-        source_block = match.group(0)
-        parts.append(ReplyPart(text=value[cursor:match.start()]))
+    for index, (start, end, _body, source_block) in enumerate(matches):
+        parts.append(ReplyPart(text=value[cursor:start]))
         png = pngs[index] if index < len(pngs) else None
         parts.append(ReplyPart(png=png, source=source_block) if png else ReplyPart(text=source_block))
-        cursor = match.end()
+        cursor = end
     parts.append(ReplyPart(text=value[cursor:]))
     return [part for part in parts if part.text or part.png]
 
@@ -277,6 +377,7 @@ class StreamingRenderer:
         self._theme_preferences = theme_preferences
         self._inline_deferred = False
         self._deferred_parts: list[ReplyPart] = []
+        self._fence_tracker = _MarkdownFenceTracker()
 
     async def feed(self, chunk: str) -> list[ReplyPart]:
         self._pending += chunk or ""
@@ -372,16 +473,29 @@ class StreamingRenderer:
                 match = _OPEN_RE.search(self._pending)
                 if match:
                     if match.start():
-                        text_part = ReplyPart(text=self._pending[:match.start()])
+                        prefix = self._pending[:match.start()]
+                        self._fence_tracker.feed(prefix)
+                        text_part = ReplyPart(text=prefix)
                         if self._inline_deferred:
                             self._deferred_parts.append(text_part)
                         else:
                             parts.append(text_part)
+                    if self._fence_tracker.open_fence is not None:
+                        literal = self._pending[match.start():match.end()]
+                        self._fence_tracker.feed(literal)
+                        text_part = ReplyPart(text=literal)
+                        if self._inline_deferred:
+                            self._deferred_parts.append(text_part)
+                        else:
+                            parts.append(text_part)
+                        self._pending = self._pending[match.end():]
+                        continue
                     self._opening = match.group(0)
                     self._pending = self._pending[match.end():]
                     self._in_diagram = True
                     continue
                 if final:
+                    self._fence_tracker.feed(self._pending)
                     text_part = ReplyPart(text=self._pending)
                     if self._inline_deferred:
                         self._deferred_parts.append(text_part)
@@ -393,7 +507,9 @@ class StreamingRenderer:
                 hold = min(len(self._pending), len("```mermaid\n") - 1)
                 safe_end = len(self._pending) - hold
                 if safe_end:
-                    text_part = ReplyPart(text=self._pending[:safe_end])
+                    safe_text = self._pending[:safe_end]
+                    self._fence_tracker.feed(safe_text)
+                    text_part = ReplyPart(text=safe_text)
                     if self._inline_deferred:
                         self._deferred_parts.append(text_part)
                     else:
@@ -404,7 +520,9 @@ class StreamingRenderer:
             closing = self._pending.find("```")
             if closing < 0:
                 if len(self._pending) + len(self._opening) > MAX_SOURCE_CHARS:
-                    text_part = ReplyPart(text=self._opening + self._pending)
+                    literal = self._opening + self._pending
+                    self._fence_tracker.feed(literal)
+                    text_part = ReplyPart(text=literal)
                     if self._inline_deferred:
                         self._deferred_parts.append(text_part)
                     else:
@@ -414,7 +532,9 @@ class StreamingRenderer:
                     self._in_diagram = False
                     continue
                 if final:
-                    text_part = ReplyPart(text=self._opening + self._pending)
+                    literal = self._opening + self._pending
+                    self._fence_tracker.feed(literal)
+                    text_part = ReplyPart(text=literal)
                     if self._inline_deferred:
                         self._deferred_parts.append(text_part)
                     else:
@@ -445,6 +565,7 @@ class StreamingRenderer:
                         placeholder_emitted=True,
                     ))
             else:
+                self._fence_tracker.feed(source)
                 text_part = ReplyPart(text=source)
                 if self._inline_deferred:
                     self._deferred_parts.append(text_part)
@@ -459,8 +580,8 @@ class StreamingRenderer:
 class ProgressiveMermaidTokenFilter:
     """跨 IM 共用的流式 Mermaid 解析器与背压调度器。
 
-    普通文本立即透传。完整图表源码暂存并等待渲染；图片事件（或失败时的
-    源码回退）交付后，才继续释放同一 token 块中的后续文本。
+    普通文本立即透传。完整图表源码进入后台渲染队列，解析器继续消费后续
+    token；图片完成事件携带图表序号，调用方可选择流式占位替换或有序交付。
     """
 
     def __init__(
@@ -478,24 +599,111 @@ class ProgressiveMermaidTokenFilter:
         self._in_diagram = False
         self._opening = ""
         self._pending = ""
+        self._render_tasks: dict[int, asyncio.Task] = {}
+        self._fence_tracker = _MarkdownFenceTracker()
+
+    async def ordered_events(self, source_iter):
+        """缓冲图表后的文本，按源码顺序交付图片与文本。"""
+        slots: list[tuple[str, object]] = []
+        resolved: dict[int, tuple[str, object]] = {}
+
+        async for kind, value in self.events(source_iter):
+            if kind == "mermaid_pending":
+                slots.append((kind, value))
+            elif kind in {"mermaid_image", "mermaid_error"}:
+                index = value[0] if kind == "mermaid_image" else value
+                resolved[index] = (kind, value)
+            elif slots and kind not in {"final"}:
+                slots.append((kind, value))
+            else:
+                yield kind, value
+
+            while slots:
+                slot_kind, slot_value = slots[0]
+                if slot_kind == "mermaid_pending":
+                    index, source = slot_value
+                    completion = resolved.pop(index, None)
+                    if completion is None:
+                        break
+                    slots.pop(0)
+                    if completion[0] == "mermaid_image":
+                        yield completion
+                    elif not self._preserve_source:
+                        yield "token", source
+                else:
+                    slots.pop(0)
+                    yield slot_kind, slot_value
+
+        # events() 收尾时会等待所有渲染任务，因此槽位此时都应已解决。
+        while slots:
+            slot_kind, slot_value = slots.pop(0)
+            if slot_kind == "mermaid_pending":
+                index, source = slot_value
+                completion = resolved.pop(index, None)
+                if completion and completion[0] == "mermaid_image":
+                    yield completion
+                elif not self._preserve_source:
+                    yield "token", source
+            else:
+                yield slot_kind, slot_value
+
+    async def _render(self, diagram_index: int, body: str, source: str):
+        try:
+            png = (
+                await render_png(body)
+                if self._theme_preferences is None
+                else await render_png(body, theme_preferences=self._theme_preferences)
+            )
+        except Exception as exc:
+            from app.core.redaction import diag_log
+            diag_log("agent.im.mermaid.stream_render", exc)
+            png = None
+        if png:
+            self.images.append((png, source))
+            return "mermaid_image", (diagram_index, len(self.images), source, png)
+        return "mermaid_error", diagram_index
+
+    async def _completed_render_events(self, *, wait: bool = False):
+        if wait and self._render_tasks:
+            await asyncio.gather(*self._render_tasks.values(), return_exceptions=True)
+        for index, task in list(self._render_tasks.items()):
+            if not task.done():
+                continue
+            self._render_tasks.pop(index, None)
+            try:
+                yield task.result()
+            except Exception as exc:
+                from app.core.redaction import diag_log
+                diag_log("agent.im.mermaid.stream_render_task", exc)
+                yield "mermaid_error", index
 
     async def events(self, source_iter):
         async for kind, value in source_iter:
+            # 让刚启动的渲染任务先运行；已完成的图按完成顺序交付。
+            await asyncio.sleep(0)
+            if kind != "final":
+                async for event in self._completed_render_events():
+                    yield event
             if kind == "token":
                 async for event in self._feed(str(value or "")):
                     yield event
             elif kind == "final":
                 async for event in self._feed("", final=True):
                     yield event
+                async for event in self._completed_render_events(wait=True):
+                    yield event
                 yield (kind, value)
             elif kind == "round_end" and not self._in_diagram:
                 if self._pending:
+                    self._fence_tracker.feed(self._pending)
                     yield ("token", self._pending)
                     self._pending = ""
                 yield (kind, value)
             else:
                 yield (kind, value)
         async for event in self._feed("", final=True):
+            yield event
+        async for event in self._completed_render_events(wait=True):
             yield event
 
     async def _feed(self, chunk: str, *, final: bool = False):
@@ -505,20 +713,31 @@ class ProgressiveMermaidTokenFilter:
                 opening = _OPEN_RE.search(self._pending)
                 if opening is not None:
                     if opening.start():
-                        yield ("token", self._pending[:opening.start()])
+                        prefix = self._pending[:opening.start()]
+                        self._fence_tracker.feed(prefix)
+                        yield ("token", prefix)
+                    if self._fence_tracker.open_fence is not None:
+                        literal = self._pending[opening.start():opening.end()]
+                        self._fence_tracker.feed(literal)
+                        yield ("token", literal)
+                        self._pending = self._pending[opening.end():]
+                        continue
                     self._opening = self._pending[opening.start():opening.end()]
                     self._pending = self._pending[opening.end():]
                     self._in_diagram = True
                     continue
                 if final:
                     if self._pending:
+                        self._fence_tracker.feed(self._pending)
                         yield ("token", self._pending)
                     self._pending = ""
                     return
                 hold = len("```mermaid\n") - 1
                 safe_end = max(0, len(self._pending) - hold)
                 if safe_end:
-                    yield ("token", self._pending[:safe_end])
+                    safe_text = self._pending[:safe_end]
+                    self._fence_tracker.feed(safe_text)
+                    yield ("token", safe_text)
                     self._pending = self._pending[safe_end:]
                 return
 
@@ -526,7 +745,9 @@ class ProgressiveMermaidTokenFilter:
             if closing < 0:
                 source_size = len(self._opening) + len(self._pending)
                 if source_size > MAX_SOURCE_CHARS or final:
-                    yield ("token", self._opening + self._pending)
+                    literal = self._opening + self._pending
+                    self._fence_tracker.feed(literal)
+                    yield ("token", literal)
                     self._opening = ""
                     self._pending = ""
                     self._in_diagram = False
@@ -543,25 +764,16 @@ class ProgressiveMermaidTokenFilter:
             if len(source) > MAX_SOURCE_CHARS or (
                 self._max_diagrams is not None and diagram_index > self._max_diagrams
             ):
+                self._fence_tracker.feed(source)
                 yield ("token", source)
                 continue
-            try:
-                png = (
-                    await render_png(body)
-                    if self._theme_preferences is None
-                    else await render_png(body, theme_preferences=self._theme_preferences)
-                )
-            except Exception as exc:
-                from app.core.redaction import diag_log
-                diag_log("agent.im.mermaid.stream_render", exc)
-                png = None
-            if png:
-                self.images.append((png, source))
-                if self._preserve_source:
-                    yield ("token", source)
-                yield ("mermaid_image", (diagram_index, len(self.images), source, png))
-            else:
-                yield ("token", source)
+            self._render_tasks[diagram_index] = asyncio.create_task(
+                self._render(diagram_index, body, source)
+            )
+            yield "mermaid_pending", (diagram_index, source)
+            if self._preserve_source:
+                self._fence_tracker.feed(source)
+                yield "token", source
 
 
 if __name__ == "__main__" and len(sys.argv) == 3 and sys.argv[1] == "--sandbox-exec":

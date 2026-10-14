@@ -250,9 +250,12 @@ async def test_progressive_mermaid_render_queue_does_not_pause_stream_tokens(mon
     async for event in mermaid.ProgressiveMermaidTokenFilter().events(token_iter()):
         seen.append(event)
 
-    assert [kind for kind, _payload in seen] == ["token", "token", "mermaid_image", "final"]
-    assert seen[1][1] == "后续文字仍然继续流出。"
-    assert seen[2][1][2:] == (source, png)
+    assert seen[0] == ("mermaid_pending", (1, source))
+    assert "".join(value for kind, value in seen if kind == "token") == "后续文字仍然继续流出。"
+    assert [kind for kind, _payload in seen].index("mermaid_image") < len(seen) - 1
+    image = next(value for kind, value in seen if kind == "mermaid_image")
+    assert image[2:] == (source, png)
+    assert seen[-1][0] == "final"
 
 
 @pytest.mark.asyncio
@@ -279,8 +282,8 @@ async def test_progressive_mermaid_queue_uses_shared_four_chart_run_budget(monke
 
     assert len(rendered) == mermaid.MAX_RUN_DIAGRAMS == 4
     assert sum(kind == "mermaid_image" for kind, _payload in events) == 4
-    assert events[0] == ("token", text)
-    assert sources[4] in events[0][1]
+    assert sum(kind == "mermaid_pending" for kind, _payload in events) == 4
+    assert sources[4] in "".join(value for kind, value in events if kind == "token")
 
 
 @pytest.mark.asyncio
@@ -444,7 +447,7 @@ async def test_qq_completed_round_uses_shared_mermaid_run_limit(monkeypatch):
         return True
 
     monkeypatch.setattr(mermaid, "render_pngs", render)
-    monkeypatch.setattr(replies, "send_png_image", send_image)
+    monkeypatch.setattr(replies, "_try_send_png_image", send_image)
     monkeypatch.setattr(replies, "send_text", send_text)
 
     result = await replies.send_completed_round(
@@ -458,7 +461,7 @@ async def test_qq_completed_round_uses_shared_mermaid_run_limit(monkeypatch):
     )
 
     assert result is True
-    assert [len(batch) for batch in batches] == [1] * mermaid.MAX_RUN_DIAGRAMS
+    assert [len(batch) for batch in batches] == [mermaid.MAX_RUN_DIAGRAMS]
     assert sum(item == png for item in sent) == mermaid.MAX_RUN_DIAGRAMS
     fallback_text = "".join(item for item in sent if isinstance(item, str))
     assert sources[4] in fallback_text
@@ -502,7 +505,7 @@ async def test_png_dispatch_uses_platform_image_gateway(monkeypatch, platform):
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("passive_count", "expected_message_id", "expected_count"),
-    [(0, "synthetic-message", 1), (1, None, 1), (5, None, 5)],
+    [(0, "synthetic-message", 1), (1, "synthetic-message", 2), (5, None, 5)],
 )
 async def test_qq_mermaid_image_uses_active_send_after_text_reply(
     monkeypatch, passive_count, expected_message_id, expected_count
@@ -595,8 +598,8 @@ async def test_qq_stream_mermaid_fallback_and_following_text_survive_exhausted_b
     async def reject_image(_payload, _png):
         return False
 
-    async def capture_text(payload, _text):
-        active_payloads.append(payload)
+    async def capture_text(payload, text):
+        active_payloads.append((payload, text))
         return True
 
     monkeypatch.setattr(qq, "create_private_text_stream", create_stream)
@@ -618,10 +621,11 @@ async def test_qq_stream_mermaid_fallback_and_following_text_survive_exhausted_b
     ])
     await sender._finish_text_segment()
 
-    assert len(active_payloads) == 1
-    assert active_payloads[0]["message_id"] is None
-    assert streams[-1].message_id is None
-    assert streams[-1].text == "后续正文"
+    assert len(active_payloads) == 2
+    assert all(payload["message_id"] is None for payload, _text in active_payloads)
+    assert active_payloads[0][1] == fallback_source
+    assert active_payloads[1][1] == "后续正文"
+    assert streams == []
 
 
 @pytest.mark.asyncio
@@ -686,15 +690,15 @@ async def test_qq_stream_preserves_text_image_text_order_after_deferred_render(m
 
     monkeypatch.setattr(qq, "create_private_text_stream", lambda *_args, **_kwargs: FakeStream())
 
-    async def fake_render(sources):
-        return [b"\x89PNG\r\n\x1a\nchart"] * len(sources)
+    async def fake_render(_source):
+        return b"\x89PNG\r\n\x1a\nchart"
 
     async def send_image(_payload, _png):
         events.append(("image", "png"))
         return True
 
-    monkeypatch.setattr(mermaid, "render_pngs", fake_render)
-    monkeypatch.setattr(replies, "send_png_image", send_image)
+    monkeypatch.setattr(mermaid, "render_png", fake_render)
+    monkeypatch.setattr(replies, "_try_send_png_image", send_image)
 
     chart = "```mermaid\ngraph TD; A-->B\n```"
     full_text = f"前文\n\n{chart}\n\n后文"
@@ -705,7 +709,10 @@ async def test_qq_stream_preserves_text_image_text_order_after_deferred_render(m
         yield ("final", AgentResponse(text=full_text, session_id=7))
 
     sent, response, last_text = await replies.send_qq_stream_by_round(
-        {"platform": "qq", "platform_user_id": "synthetic-recipient", "channel_id": "test"},
+        {
+            "platform": "qq", "platform_user_id": "synthetic-recipient",
+            "channel_id": "synthetic-channel", "message_id": "synthetic-message",
+        },
         token_iter(),
     )
 
@@ -719,6 +726,70 @@ async def test_qq_stream_preserves_text_image_text_order_after_deferred_render(m
 
 
 @pytest.mark.asyncio
+async def test_qq_streaming_facade_keeps_text_image_text_order(monkeypatch):
+    """保护 replies 门面与抽出的 QQ 状态机之间的实际图文发送契约。"""
+    from agent.gateway import qq
+    from agent.im import mermaid, replies
+    from agent.models import AgentResponse
+
+    events = []
+
+    class FakeStream:
+        def __init__(self):
+            self.text = ""
+
+        def push(self, text):
+            self.text += text
+
+        async def finish(self, text):
+            events.append(("text", text))
+
+        def has_sent(self):
+            return bool(self.text)
+
+    class EventPassthroughFilter:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def events(self, source):
+            async for event in source:
+                yield event
+
+        async def ordered_events(self, source):
+            async for event in source:
+                yield event
+
+    monkeypatch.setattr(qq, "create_private_text_stream", lambda *_args, **_kwargs: FakeStream())
+    monkeypatch.setattr(mermaid, "ProgressiveMermaidTokenFilter", EventPassthroughFilter)
+
+    async def send_image(_payload, _png):
+        events.append(("image", "png"))
+        return True
+
+    monkeypatch.setattr(replies, "send_png_image", send_image)
+    source = "```mermaid\ngraph LR; A-->B\n```"
+
+    async def token_iter():
+        yield ("token", "前文\n")
+        yield ("mermaid_image", (0, 1, source, b"png"))
+        yield ("token", "\n后文")
+        yield ("final", AgentResponse(text=f"前文\n{source}\n后文"))
+
+    sent, _response, _last_text = await replies.send_qq_stream_by_round(
+        {
+            "platform": "qq",
+            "platform_user_id": "synthetic-recipient",
+            "channel_id": "synthetic-channel",
+            "message_id": "synthetic-message",
+        },
+        token_iter(),
+    )
+
+    assert sent is True
+    assert events == [("text", "前文"), ("image", "png"), ("text", "后文")]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("show_intermediate_replies", [False, True])
 async def test_qq_stream_sends_run_images_with_shared_four_chart_budget(
     monkeypatch, show_intermediate_replies,
@@ -728,7 +799,7 @@ async def test_qq_stream_sends_run_images_with_shared_four_chart_budget(
     from agent.models import AgentResponse
 
     events = []
-    render_batches = []
+    rendered_sources = []
     png = b"\x89PNG\r\n\x1a\nchart"
     sources = [f"```mermaid\ngraph LR; A{index}-->B{index}\n```" for index in range(6)]
     final_text = f"前文\n{sources[0]}\n中间说明\n" + "\n".join(sources[1:]) + "\n后文"
@@ -747,17 +818,17 @@ async def test_qq_stream_sends_run_images_with_shared_four_chart_budget(
         def has_sent(self):
             return bool(self.text)
 
-    async def render(diagrams):
-        render_batches.append(diagrams)
-        return [png] * len(diagrams)
+    async def render(source):
+        rendered_sources.append(source)
+        return png
 
     async def send_image(_payload, _png):
         events.append(("image", "png"))
         return True
 
     monkeypatch.setattr(qq, "create_private_text_stream", lambda *_args, **_kwargs: FakeStream())
-    monkeypatch.setattr(mermaid, "render_pngs", render)
-    monkeypatch.setattr(replies, "send_png_image", send_image)
+    monkeypatch.setattr(mermaid, "render_png", render)
+    monkeypatch.setattr(replies, "_try_send_png_image", send_image)
 
     async def token_iter():
         yield ("token", final_text)
@@ -774,7 +845,8 @@ async def test_qq_stream_sends_run_images_with_shared_four_chart_budget(
     )
 
     assert sent is True
-    assert [len(batch) for batch in render_batches] == [1] * mermaid.MAX_RUN_DIAGRAMS
+    assert len(rendered_sources) == mermaid.MAX_RUN_DIAGRAMS
+    assert rendered_sources == [source.splitlines()[1] + "\n" for source in sources[:mermaid.MAX_RUN_DIAGRAMS]]
     assert [kind for kind, _value in events] == ["text", "image", "text"] + ["image"] * 3 + ["text"]
     assert events[0][1] == "前文"
     assert events[1] == ("image", "png")

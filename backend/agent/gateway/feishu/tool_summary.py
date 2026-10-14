@@ -9,11 +9,11 @@ _MAX_CARD_COMPONENTS = 180
 
 
 def _tool_detail_block(value: object) -> str:
-    """复用 IM 工具详情的长度与代码块格式，再处理卡片出站内容。"""
-    from agent.im.replies import _tool_code_block
+    """复用共享工具消息格式，再处理飞书卡片出站内容。"""
+    from agent.tool_messages import tool_code_block
     from agent.outbound import sanitize_outbound
 
-    code_block = _tool_code_block(value, limit=_MAX_TOOL_DETAIL_CHARS)
+    code_block = tool_code_block(value, limit=_MAX_TOOL_DETAIL_CHARS)
     fence, body = code_block.split("\n", 1)
     body = body.removesuffix("\n```").replace("```", "` ` `")
     return f"{fence}\n{sanitize_outbound(body)}\n```"

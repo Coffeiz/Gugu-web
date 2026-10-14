@@ -380,8 +380,8 @@ async def test_feishu_stream_shows_mermaid_source_then_replaces_it_in_place(monk
     monkeypatch.setattr(feishu, "_do_streaming_update_text", update_text)
 
     source = "```mermaid\ngraph LR\n  A-->B\n```"
-    prefix = "先看这张图："
-    suffix = "图后继续说明，保持在图片下方持续流式显示。" * 2
+    prefix = "先看这张图：\n"
+    suffix = "\n图后继续说明，保持在图片下方持续流式显示。" * 2
     final_text = prefix + source + suffix
 
     async def token_iter():

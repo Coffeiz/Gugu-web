@@ -107,3 +107,69 @@ async def test_telegram_stream_reuses_preview_without_persisting_hidden_rounds(m
     assert persisted_rounds == []
     assert [item[0] for item in drafts] == ["中间过程", "最终回复"]
     assert drafts[0][1] == drafts[1][1]
+
+
+@pytest.mark.asyncio
+async def test_hidden_rounds_switch_to_ordered_delivery_when_mermaid_appears(monkeypatch):
+    from agent.gateway import telegram
+    from agent.im import mermaid
+
+    drafts = []
+    persisted_text = []
+    sent_images = []
+
+    class EventPassthroughFilter:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def events(self, source):
+            async for event in source:
+                yield event
+
+        async def ordered_events(self, source):
+            async for event in source:
+                yield event
+
+    async def send_draft(chat_id, text, *, channel_id, draft_id):
+        drafts.append((chat_id, text, channel_id, draft_id))
+        return True
+
+    async def send_round(_payload, text):
+        persisted_text.append(text)
+        return True
+
+    async def send_image(_payload, png):
+        sent_images.append(png)
+        return True
+
+    monkeypatch.setattr(mermaid, "ProgressiveMermaidTokenFilter", EventPassthroughFilter)
+    monkeypatch.setattr(telegram, "send_message_draft", send_draft)
+    monkeypatch.setattr(replies, "send_completed_round", send_round)
+    monkeypatch.setattr(replies, "_try_send_png_image", send_image)
+    monkeypatch.setattr(replies, "_TELEGRAM_DRAFT_MIN_INTERVAL", 0)
+
+    async def token_iter():
+        yield "token", "前置回复"
+        yield ROUND_END, "前置回复"
+        yield "token", "图前说明\n"
+        yield "mermaid_image", (0, 1, "```mermaid\ngraph LR\nA-->B\n```", b"png")
+        yield "token", "\n图后说明"
+        yield ROUND_END, "图前说明\n图后说明"
+        yield "final", AgentResponse(
+            text="前置回复\n图前说明\n图后说明",
+            round_texts=["前置回复", "图前说明\n图后说明"],
+        )
+
+    response, sent_rounds = await replies.send_telegram_stream_by_round(
+        {"chat_id": "7001", "channel_id": "41"},
+        token_iter(),
+        show_intermediate_replies=False,
+    )
+
+    assert response.text == "前置回复\n图前说明\n图后说明"
+    assert sent_rounds == {0}, "完整图文轮次已发送后，最终聚合回复应跳过避免重复"
+    assert persisted_text == ["前置回复", "图前说明", "图后说明"]
+    assert sent_images == [b"png"]
+    assert [item[1] for item in drafts] == ["前置回复", "图前说明\n", "图后说明"]
+    assert drafts[0][3] == drafts[1][3], "同一张图之前应复用草稿 ID"
+    assert drafts[1][3] != drafts[2][3], "图片发送后应使用新草稿 ID"
