@@ -23,7 +23,7 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     && pnpm install --filter gugu-web --frozen-lockfile
 
 COPY frontend/ ./frontend/
-COPY backend/ts/workers/mermaid-renderer/svg-style.mjs ./backend/ts/workers/mermaid-renderer/svg-style.mjs
+COPY backend/ts/workers/mermaid-renderer/diagram-source.mjs backend/ts/workers/mermaid-renderer/diagram-source.d.mts backend/ts/workers/mermaid-renderer/svg-style.mjs backend/ts/workers/mermaid-renderer/theme.mjs backend/ts/workers/mermaid-renderer/theme.d.mts ./backend/ts/workers/mermaid-renderer/
 RUN cd frontend && pnpm build
 
 # ── Stage 1.5：TS RAG worker 的 Linux x64 原生运行时依赖 ─────────────────────
@@ -240,7 +240,8 @@ RUN mkdir -p ./bin
 COPY backend/bin/gugu-rag-ts-worker.mjs ./bin/gugu-rag-ts-worker.mjs
 COPY backend/bin/gugu-filesync-ts-worker.cjs ./bin/gugu-filesync-ts-worker.cjs
 COPY backend/ts/workers/mermaid-renderer/worker.mjs ./bin/gugu-mermaid-worker.mjs
-COPY backend/ts/workers/mermaid-renderer/svg-style.mjs ./bin/svg-style.mjs
+COPY backend/ts/workers/mermaid-renderer/diagram-source.mjs backend/ts/workers/mermaid-renderer/svg-style.mjs backend/ts/workers/mermaid-renderer/theme.mjs ./bin/
+COPY frontend/public/fonts/Noto_Sans_SC/NotoSansSC-VariableFont_wght.ttf ./bin/fonts/NotoSansSC-VariableFont_wght.ttf
 COPY --from=rag-runtime /rag/node_modules ./bin/node_modules
 RUN node bin/gugu-rag-ts-worker.mjs --version \
     && cd bin && node -e "Promise.all([import('mermaid'), import('@mermaid-js/mermaid-zenuml'), import('@resvg/resvg-js'), import('@xmldom/xmldom'), import('svgdom')]).then(() => console.log('Mermaid PNG runtime ready'))"

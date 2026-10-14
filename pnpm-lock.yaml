@@ -58,8 +58,8 @@ importers:
         specifier: 12.1.0
         version: 12.1.0
       svgdom:
-        specifier: 0.1.25
-        version: 0.1.25
+        specifier: 0.1.28
+        version: 0.1.28
 
   backend/ts/workers/rag:
     dependencies:
@@ -3367,9 +3367,9 @@ packages:
     resolution: {integrity: sha512-IKXpvIzjnC9XTAUbVBcMfGS0EPaIXtW6v+zr+RRp+hqULEpo0owZax6wyRwPOJbWbzjYspQwusTsfVr0ifh4uQ==}
     engines: {node: '>=0.10.0'}
 
-  image-size@1.2.1:
-    resolution: {integrity: sha512-rH+46sQJ2dlwfjfhCyNx5thzrv+dtmBIhPHk0zgRUukHzZ/kRueTJXoYYsclBaKcSMBWuGbOFXtioLpzTb5euw==}
-    engines: {node: '>=16.x'}
+  image-size@2.0.4:
+    resolution: {integrity: sha512-QRUkFFsRV/6fuESxb9Vkq+a0LkSrgKXuc2NEqfikiXxxN/G3tjWt5EVUlMaImRBZRZK/jRBEbYvpPYZL8t08Zw==}
+    engines: {node: '>=18'}
     hasBin: true
 
   immediate@3.0.6:
@@ -4027,9 +4027,6 @@ packages:
   queue-microtask@1.2.3:
     resolution: {integrity: sha512-NuaNSa6flKT5JaSYQzJok04JzTL1CA6aGhv5rfLW3PgqA+M2ChpZQnAC8h8i4ZFkBS8X5RqkDBHA7r4hej3K9A==}
 
-  queue@6.0.2:
-    resolution: {integrity: sha512-iHZWu+q3IdFZFX36ro/lKBkSvfkztY5Y7HMiPlOUjhupPcG2JMfst2KKEpu5XndviX/3UhFbRngUPNKtgvtZiA==}
-
   react-aria@3.53.1:
     resolution: {integrity: sha512-dikisyOjJd3D2fFrIDWmVWzqiLz5B86GzZv1zxs7xI4dVc0JIz/1Wa52I20gYvVL2WXeFXlygYsle/QcOMhtcg==}
     peerDependencies:
@@ -4247,8 +4244,9 @@ packages:
     resolution: {integrity: sha512-qpCAvRl9stuOHveKsn7HncJRvv501qIacKzQlO/+Lwxc9+0q2wLyv4Dfvt80/DPn2pqOBsJdDiogXGR9+OvwRw==}
     engines: {node: '>=8'}
 
-  svgdom@0.1.25:
-    resolution: {integrity: sha512-lb9WpJK2VvfTGzxUU9aceBUa/R6snLjZx/BBpjY3sOW4mqgbGQhZTXlq1lj/OZ7IY5Ee3CyH9JBXb4l9VtAaXQ==}
+  svgdom@0.1.28:
+    resolution: {integrity: sha512-TkbROcJ5Thu8f+muSo4C0C7QInMa/5J4OT2NL2HznLL8wMVRKjDt/vlSiA96/8MYbou91nAhDofjF7vZWbXqwQ==}
+    engines: {node: '>=22.13.0'}
 
   symbol-tree@3.2.4:
     resolution: {integrity: sha512-9QNk5KwDF+Bvz+PyObkmSYjI5ksVUYtjW7AU22r2NKcfLJcXp96hkDWU3+XndOsUb+AQ9QhfzfCT2O+CNWT5Tw==}
@@ -7724,9 +7722,7 @@ snapshots:
     dependencies:
       safer-buffer: 2.1.2
 
-  image-size@1.2.1:
-    dependencies:
-      queue: 6.0.2
+  image-size@2.0.4: {}
 
   immediate@3.0.6: {}
 
@@ -8335,10 +8331,6 @@ snapshots:
 
   queue-microtask@1.2.3: {}
 
-  queue@6.0.2:
-    dependencies:
-      inherits: 2.0.4
-
   react-aria@3.53.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0):
     dependencies:
       '@internationalized/date': 3.12.4
@@ -8573,10 +8565,10 @@ snapshots:
     dependencies:
       has-flag: 4.0.0
 
-  svgdom@0.1.25:
+  svgdom@0.1.28:
     dependencies:
       fontkit: 2.0.4
-      image-size: 1.2.1
+      image-size: 2.0.4
       sax: 1.6.1
 
   symbol-tree@3.2.4: {}
