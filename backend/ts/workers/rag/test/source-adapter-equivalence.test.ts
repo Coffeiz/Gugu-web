@@ -4,7 +4,6 @@ import { buildDocuments, textVersion } from "../src/adapters/base.ts";
 import { calendarAdapter } from "../src/adapters/calendar.ts";
 import { canvasAdapter } from "../src/adapters/canvas.ts";
 import { conversationAdapter } from "../src/adapters/conversations.ts";
-import { fileAdapter } from "../src/adapters/files.ts";
 import { noteAdapter } from "../src/adapters/note.ts";
 import { scheduledTaskAdapter } from "../src/adapters/scheduled-tasks.ts";
 import { buildSourceDocuments } from "../src/index-builder.ts";
@@ -14,43 +13,6 @@ const ownerScope = { scope_type: "owner", scope_id: "owner-1" };
 test("版本计算与 Python text_version 逐位一致（冻结值）", () => {
   assert.equal(textVersion("缓存", "1", "2"), "ad215db968f57716");
   assert.equal(textVersion("", ""), textVersion("", ""));
-});
-
-test("file 适配器只索引文件名并保留五字段元数据", () => {
-  const [document] = fileAdapter.toDocuments([{
-    id: 7, title: "方案.md", ext: "md", space: "项目A", stage_name: "评审",
-    content: "这是文件正文", version_parts: [7, "v3", "2026-09-09T00:00:00"],
-    updated_at: "2026-09-09T00:00:00", scope: ownerScope,
-  }]);
-  assert.equal(document.id, "file:file:7:0");
-  assert.equal(document.parent_id, "file:7");
-  assert.equal(document.content, "方案.md");
-  assert.equal(document.summary, "");
-  assert.equal(document.text, ["方案.md", "方案.md"].join("\n"));
-  assert.doesNotMatch(document.text, /这是文件正文/);
-  assert.deepEqual(document.metadata, {
-    file_id: "7", mime_type: "", project_id: "", folder_id: "", space: "项目A",
-  });
-  assert.equal(document.document_version, textVersion("方案.md", "7", "v3", "2026-09-09T00:00:00"));
-  const [minimal] = fileAdapter.toDocuments([{
-    id: 8, title: "零", version_parts: ["8"], scope: ownerScope,
-  }]);
-  assert.equal(minimal.content, "零");
-  assert.equal(minimal.text, ["零", "零"].join("\n"));
-  assert.equal(minimal.metadata.space, "");
-});
-
-test("文件忽略正文并始终只生成一个文件名 chunk", () => {
-  const long = "\u5b57".repeat(1000) + "\u{1F600}".repeat(40);
-  const documents = fileAdapter.toDocuments([{
-    id: 31, title: "长表情.md", content: long, version_parts: ["31"], scope: ownerScope,
-  }]);
-  assert.equal(documents.length, 1);
-  assert.equal(documents[0].content, "长表情.md");
-  assert.equal(documents[0].text, "长表情.md\n长表情.md");
-  assert.equal(documents[0].chunk_index, 0);
-  assert.equal(documents[0].chunk_count, 1);
-  assert.doesNotMatch(documents[0].content, /字|😀/u);
 });
 
 test("note 适配器空标题回落「便签」，content_plain 优先", () => {
@@ -151,17 +113,15 @@ test("conversation 适配器输出摘要与消息两种文档，元数据含会�
   });
 });
 
-test("统一入口按来源分发，文件只生成文件名索引", () => {
+test("统一入口分发仍启用来源并忽略退役文件索引", () => {
   const documents = buildSourceDocuments({
     files: [{ id: 1, title: "长文.txt", content: "字".repeat(3000),
               version_parts: [1], scope: ownerScope }],
     note: [{ id: 2, title: "便签", content_plain: "短文", kind: "note", version_parts: [2], scope: ownerScope }],
-  });
+  } as never);
   assert.ok(documents.every((document) => document.source_type !== undefined));
   const fileChunks = documents.filter((document) => document.source_type === "file");
-  assert.equal(fileChunks.length, 1);
-  assert.equal(fileChunks[0].content, "长文.txt");
-  assert.equal(fileChunks[0].chunk_count, 1);
+  assert.equal(fileChunks.length, 0);
   const noteDocuments = documents.filter((document) => document.source_type === "note");
   assert.equal(noteDocuments.length, 1);
 

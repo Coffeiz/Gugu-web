@@ -5,33 +5,11 @@ import { buildDocuments } from "../src/adapters/base.ts";
 
 const ownerScope = { scope_type: "owner", scope_id: "owner-1" };
 
-test("文件适配器只索引文件名，并且不写入正文或内部存储路径", () => {
-  const [document] = buildSourceDocuments({
-    files: [{
-      id: 7, title: "方案.md", ext: "md", space: "项目A", stage_name: "评审",
-      content: "这是文件正文", version_parts: [7, "v1", "2026-09-09T00:00:00"],
-      scope: ownerScope,
-    }],
-  });
-  assert.equal(document.source_type, "file");
-  assert.equal(document.parent_id, "file:7");
-  assert.equal(document.content, "方案.md");
-  assert.equal(document.text, "方案.md\n方案.md");
-  assert.doesNotMatch(document.content, /这是文件正文/);
-  assert.doesNotMatch(document.content, /storage|\/data\//);
-  // 检索索引正文 = title\nsummary\ncontent（与 Python _wire_document 一致）。
-  assert.match(document.text, /^方案\.md\n/);
-  assert.equal(document.metadata?.storage_path, undefined);
-});
-
-test("来源适配器接受数值 0 作为合法标识", () => {
-  const [document] = buildSourceDocuments({
-    files: [{
-      id: 0, title: "零号文件.md", content: "正文", version_parts: [0], scope: ownerScope,
-    }],
-  });
-  assert.equal(document.parent_id, "file:0");
-  assert.equal(document.id, "file:file:0:0");
+test("退役的文件自动索引字段不会把文件正文送入 RAG 索引", () => {
+  const documents = buildSourceDocuments({
+    files: [{ id: 7, title: "方案.md", content: "不应进入自动索引", scope: ownerScope }],
+  } as never);
+  assert.deepEqual(documents, []);
 });
 
 test("画布适配器以 id 为稳定标识并保留关系引用，不把普通时间流笔记混入", () => {
