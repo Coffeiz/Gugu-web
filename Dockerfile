@@ -41,7 +41,7 @@ RUN npm install --omit=dev --ignore-scripts --no-fund --no-audit \
         @resvg/resvg-js@2.6.2 \
         mermaid@12.1.0 \
         @mermaid-js/mermaid-zenuml@1.0.1 \
-        svgdom@0.1.25 \
+        svgdom@0.1.28 \
     && node -e "import('@node-rs/jieba').then(() => console.log('RAG Jieba runtime ready'))"
 
 # ── Stage 2：后端依赖构建（venv 与最终镜像分离） ─────────────────────────────

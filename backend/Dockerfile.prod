@@ -49,7 +49,7 @@ RUN npm install --omit=dev --ignore-scripts --no-fund --no-audit \
         @resvg/resvg-js@2.6.2 \
         mermaid@12.1.0 \
         @mermaid-js/mermaid-zenuml@1.0.1 \
-        svgdom@0.1.25 \
+        svgdom@0.1.28 \
     && node -e "Promise.all([import('@node-rs/jieba'), import('ali-oss'), import('@resvg/resvg-js'), import('svgdom'), import('mermaid'), import('@mermaid-js/mermaid-zenuml')]).then(() => console.log('Node runtime dependencies ready'))"
 
 FROM python:3.14-slim-trixie
