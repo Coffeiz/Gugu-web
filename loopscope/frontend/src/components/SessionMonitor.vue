@@ -162,7 +162,10 @@ watch(
 const selected = computed(() => props.details?.[selectedId.value] ?? props.runs.find(r => r.id === selectedId.value) ?? null)
 const selectedLoaded = computed(() => Boolean(props.details?.[selectedId.value]?.spans))
 const usage = computed<TokenUsage>(() => resolveUsage(selected.value))
-const usageSourceLabel = computed(() => hasProviderUsage(selected.value) ? 'provider reported prompt tokens' : 'local estimate')
+const usageSourceLabel = computed(() => {
+  if (hasProviderUsage(selected.value)) return 'provider reported prompt tokens'
+  return Object.keys(usage.value).length ? 'local estimate' : 'no model usage'
+})
 const cacheRatio = computed(() => usage.value.input ? Math.min((usage.value.cache_read ?? 0) / usage.value.input, 1) : 0)
 const cachePercent = computed(() => usage.value.input ? `${(cacheRatio.value * 100).toFixed(1)}%` : '—')
 const cacheMode = computed(() => (selected.value?.attributes?.cache_mode ?? 'active') as string)
@@ -200,7 +203,12 @@ const modelLabel = computed(() => {
       labels.push([reflection.provider, reflection.model])
     }
   }
-  return labels.map(parts => parts.filter(Boolean).join(' / ')).find(Boolean) || 'model unknown'
+  const label = labels.map(parts => parts.filter(Boolean).join(' / ')).find(Boolean)
+  if (label) return label
+  if (selected.value?.ended_at && !(selected.value.spans ?? []).some(span => span.kind === 'llm')) {
+    return 'no model call'
+  }
+  return 'model unknown'
 })
 const rootSpans = computed(() => (selected.value?.spans ?? []).filter(s => !s.parent_span_id))
 const injectionSpans = computed(() => (selected.value?.spans ?? []).filter((span) => {
@@ -276,16 +284,16 @@ function onRunListScroll(event: Event) {
 
 function resolveUsage(run: TraceRun | null): TokenUsage {
   if (!run) return {}
+  const spans = run.spans ?? []
+  if (!spans.some(span => span.kind === 'llm')) return {}
   const candidates = [run.usage, run.attributes?.tokens]
-  let emptyFallback: TokenUsage | undefined
   for (const candidate of candidates) {
     const normalized = normalizeUsage(candidate)
     if (!Object.keys(normalized).length) continue
     if (hasPositiveUsage(normalized)) return normalized
-    emptyFallback ??= normalized
   }
 
-  const total = (run.spans ?? []).reduce<TokenUsage>((sum, span) => {
+  const total = spans.reduce<TokenUsage>((sum, span) => {
     const usage = normalizeUsage(span.usage)
     const impact = span.token_impact ?? {}
     const hasUsage = hasPositiveUsage(usage)
@@ -306,7 +314,7 @@ function resolveUsage(run: TraceRun | null): TokenUsage {
     total.cache_ratio = total.input ? (total.cache_read ?? 0) / total.input : 0
     return total
   }
-  return emptyFallback ?? total
+  return total
 }
 
 function hasPositiveUsage(usage: TokenUsage): boolean {
