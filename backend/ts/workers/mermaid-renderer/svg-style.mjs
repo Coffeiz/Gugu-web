@@ -197,6 +197,27 @@ export function normalizeMermaidKanbanSectionTitles(root) {
   return root
 }
 
+/** svgdom 会把数据库节点标签的 SVG 组左移半个标签宽度；栅格化前移回圆柱中心。 */
+export function normalizeMermaidDatabaseLabelPosition(root) {
+  for (const node of root.getElementsByTagName('g')) {
+    if (!(node.getAttribute('class') || '').split(/\s+/).includes('node')) continue
+    const databaseShape = [...node.getElementsByTagName('path')].some(path =>
+      (path.getAttribute('class') || '').split(/\s+/).includes('outer-path'),
+    )
+    if (!databaseShape) continue
+    for (const label of node.getElementsByTagName('g')) {
+      if (!(label.getAttribute('class') || '').split(/\s+/).includes('label')) continue
+      const transform = label.getAttribute('transform') || ''
+      const translated = transform.match(/^translate\(\s*([-+\d.eE]+)[, ]+\s*([-+\d.eE]+)\s*\)$/)
+      if (translated) label.setAttribute('transform', `translate(0, ${translated[2]})`)
+      for (const text of label.getElementsByTagName('text')) {
+        text.setAttribute('text-anchor', 'middle')
+      }
+    }
+  }
+  return root
+}
+
 /** svgdom 的 CJK 文字宽度偏小，会让连线标签底色变窄并露出穿过文字的连线。 */
 export function normalizeMermaidEdgeLabelBounds(root) {
   const cjkCharacter = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u
@@ -253,6 +274,8 @@ export function normalizeMermaidEdgeLabelBounds(root) {
 
 /** Resvg 会把 svgdom 生成的 CJK 连线文字基线绘制在底色框下方；显式校正文字基线和字重。 */
 export function normalizeMermaidRasterText(root, textColor, options = {}) {
+  normalizeMermaidDatabaseLabelPosition(root)
+
   if (options.colorAllText) {
     for (const text of root.getElementsByTagName('text')) {
       // Journey 的 SVG 文本路径会在 task/section 标签上直接写 fill="#fff"；

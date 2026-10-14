@@ -2,8 +2,44 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
+import { DOMParser } from '@xmldom/xmldom'
+import { normalizeMermaidDatabaseLabelPosition } from '../svg-style.mjs'
 
 const workerPath = fileURLToPath(new URL('../worker.mjs', import.meta.url))
+
+test('IM 光栅化时数据库节点标签应回到圆柱中心', () => {
+  const document = new DOMParser().parseFromString(
+    '<svg><g class="node default"><path class="basic label-container outer-path"/>' +
+    '<g class="label" transform="translate(-60, -1)"><text><tspan>TablesDB</tspan></text></g></g>' +
+    '<g class="node default"><rect class="basic label-container"/>' +
+    '<g class="label" transform="translate(0, -10)"><text>普通节点</text></g></g>' +
+    '<g class="edgeLabel"><text>关系</text></g></svg>',
+    'image/svg+xml',
+  )
+
+  normalizeMermaidDatabaseLabelPosition(document.documentElement)
+
+  assert.equal(
+    document.getElementsByTagName('text')[0].getAttribute('text-anchor'),
+    'middle',
+    '圆柱内文字应以节点中心为水平锚点',
+  )
+  assert.equal(
+    document.getElementsByTagName('g')[1].getAttribute('transform'),
+    'translate(0, -1)',
+    '数据库节点的半标签宽度偏移应移除并保留垂直布局',
+  )
+  assert.equal(
+    document.getElementsByTagName('g')[3].getAttribute('transform'),
+    'translate(0, -10)',
+    '普通流程节点的标签布局应保持原样',
+  )
+  assert.equal(
+    document.getElementsByTagName('text')[2].hasAttribute('text-anchor'),
+    false,
+    '连线标签不应被数据库节点修正影响',
+  )
+})
 
 test('中文 Sankey 能通过图片渲染器输出 PNG', () => {
   const source = [
