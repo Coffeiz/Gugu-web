@@ -53,13 +53,13 @@ async def test_tool_call_lifecycle_updates_one_collapsed_panel_by_call_id():
     assert panels[0]["background_color"] == "grey"
     assert panels[0]["border"]["corner_radius"] == "8px"
     detail = panels[0]["elements"][0]["content"]
-    assert "联网搜索 · 已完成" in detail
-    assert "synthetic query" in detail
-    assert '"count": 2' in detail
-    assert len(updates) == 2
+    assert detail == "✅ 联网搜索完成"
+    assert "synthetic query" not in detail
+    assert '"count": 2' not in detail
+    assert len(updates) == 1
 
 
-def test_tool_detail_is_bounded_and_cannot_break_its_markdown_fence():
+def test_tool_completion_summary_omits_unbounded_result_payload():
     summary = FeishuToolSummaryStream()
     summary.bind(AsyncMock(return_value=True))
 
@@ -71,8 +71,8 @@ def test_tool_detail_is_bounded_and_cannot_break_its_markdown_fence():
         "result": "```\n" + "x" * 3000,
     })
 
-    assert "` ` `" in detail
-    assert len(detail) <= 2400
+    assert detail == "✅ 工具完成"
+    assert "x" * 100 not in detail
 
 
 @pytest.mark.asyncio
@@ -81,9 +81,12 @@ async def test_contiguous_tool_events_share_one_outer_summary_and_text_splits_gr
     summary.bind(AsyncMock(return_value=True))
     summary.append_text("先查一下。")
     await summary.handle_tool_event({"type": "tool_call", "tool_call_id": "call-a", "name": "search"})
+    await summary.handle_tool_event({"type": "tool_done", "tool_call_id": "call-a", "name": "search", "status": "success"})
     await summary.handle_tool_event({"type": "tool_call", "tool_call_id": "call-b", "name": "fetch"})
+    await summary.handle_tool_event({"type": "tool_done", "tool_call_id": "call-b", "name": "fetch", "status": "success"})
     summary.append_text("结果如下。")
     await summary.handle_tool_event({"type": "tool_call", "tool_call_id": "call-c", "name": "write"})
+    await summary.handle_tool_event({"type": "tool_done", "tool_call_id": "call-c", "name": "write", "status": "success"})
 
     panels = [node for node in _walk_tags(summary.elements()) if node.get("tag") == "collapsible_panel"]
     assert [panel["header"]["title"]["content"] for panel in panels] == [
@@ -96,7 +99,7 @@ async def test_contiguous_tool_events_share_one_outer_summary_and_text_splits_gr
 
 
 @pytest.mark.asyncio
-async def test_cancelled_running_tool_remains_inside_summary_with_stopped_status():
+async def test_cancelled_unfinished_tool_does_not_create_completion_summary():
     summary = FeishuToolSummaryStream()
     summary.bind(AsyncMock(return_value=True))
     await summary.handle_tool_event({
@@ -108,12 +111,11 @@ async def test_cancelled_running_tool_remains_inside_summary_with_stopped_status
 
     summary.finish("", cancelled=True)
 
-    panel = next(
+    panels = [
         node for node in _walk_tags(summary.elements())
         if node.get("tag") == "collapsible_panel"
-    )
-    assert panel["header"]["title"]["content"] == "🛠 工具摘要 (1)"
-    assert "已停止" in panel["elements"][0]["content"]
+    ]
+    assert panels == []
 
 
 @pytest.mark.asyncio
@@ -165,16 +167,24 @@ async def test_enabled_feishu_routes_to_card_after_it_is_bound(monkeypatch):
     async def publish(event):
         published.append(event)
 
-    event = {"type": "tool_call", "tool_call_id": "call-on"}
+    call_event = {"type": "tool_call", "tool_call_id": "call-on"}
+    done_event = {"type": "tool_done", "tool_call_id": "call-on", "status": "success"}
     await loop.display_tool_event(
         {"platform": "feishu"},
-        event,
+        call_event,
+        show_tool_interactions=True,
+        publish_web_event=publish,
+        feishu_tool_summary=summary,
+    )
+    await loop.display_tool_event(
+        {"platform": "feishu", "chat_type": "group"},
+        done_event,
         show_tool_interactions=True,
         publish_web_event=publish,
         feishu_tool_summary=summary,
     )
 
-    assert published == [event]
+    assert published == [call_event, done_event]
     send_tool_event.assert_not_awaited()
     assert len(updates) == 1
 

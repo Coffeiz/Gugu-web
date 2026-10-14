@@ -72,7 +72,6 @@ async def display_tool_event(
     show_tool_interactions: bool,
     publish_web_event,
     feishu_tool_summary=None,
-    completion_only: bool = False,
 ) -> None:
     """保持 Web 镜像独立，再按用户偏好选择 IM 工具状态呈现。"""
     await publish_web_event(event)
@@ -80,15 +79,7 @@ async def display_tool_event(
         return
     if feishu_tool_summary is not None and await feishu_tool_summary.handle_tool_event(event):
         return
-    if completion_only and event.get("type") == "tool_call":
-        return
     from agent.im.replies import send_tool_event
-
-    if completion_only:
-        # QQ 流式正文必须使用 Markdown，但工具交互仍只发完成摘要，避免把
-        # 输入参数和完整 JSON 结果拆成两条独立消息。
-        await send_tool_event({**payload, "message_format": "compat"}, event)
-        return
     await send_tool_event(payload, event)
 
 
@@ -1092,7 +1083,7 @@ async def dispatch_im_message(payload: dict):
             yield line
 
     feishu_tool_summary = None
-    if platform == "feishu" and show_tool_interactions:
+    if platform == "feishu" and payload.get("chat_type") == "group" and show_tool_interactions:
         from agent.gateway.feishu.tool_summary import FeishuToolSummaryStream
 
         feishu_tool_summary = FeishuToolSummaryStream()
@@ -1118,7 +1109,6 @@ async def dispatch_im_message(payload: dict):
         show_tool_interactions=show_tool_interactions,
         publish_web_event=_publish_web_event,
         feishu_tool_summary=feishu_tool_summary,
-        completion_only=qq_private_streaming,
     )
 
     async def _show_round(text: str) -> bool:

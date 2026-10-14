@@ -562,7 +562,7 @@ async def test_interaction_uses_plain_text_for_unadapted_platforms(monkeypatch, 
     ],
 )
 async def test_tool_event_platforms_follow_display_contract(monkeypatch, platform, payload):
-    """回归：QQ 群聊、微信和 Telegram 只显示完成状态，飞书保留完整工具摘要。"""
+    """回归：各 IM 平台只发送完成状态，不泄露调用输入或原始结果。"""
     from agent.im import replies
 
     sent = []
@@ -582,16 +582,11 @@ async def test_tool_event_platforms_follow_display_contract(monkeypatch, platfor
          "result": {"items": ["结果"]}},
     )
 
-    assert len(sent) == (2 if platform == "feishu" else 1)
-    if platform == "feishu":
-        assert "**输入**" in sent[0]
+    assert len(sent) == 1
     result_text = sent[-1]
     assert "不应出现在结果" not in result_text
-    if platform == "feishu":
-        assert "**输出**" in result_text
-        assert "结果" in result_text
-    else:
-        assert result_text == "✅ 联网搜索完成"
+    assert "结果" not in result_text
+    assert result_text == "✅ 联网搜索完成"
 
 
 

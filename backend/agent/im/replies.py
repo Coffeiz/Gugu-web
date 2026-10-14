@@ -275,14 +275,9 @@ async def send_interaction(payload: dict, prompt: dict) -> bool:
 
 
 async def send_tool_event(payload: dict, event: dict) -> bool:
-    """独立发送一条工具状态消息；显示策略由 IM Loop 在调用前决定。"""
+    """统一发送 IM 工具完成状态；不展示调用参数或原始 JSON。"""
     from agent.outbound import sanitize_outbound
-    is_qq_plain = (
-        payload.get("platform") == "qq"
-        and payload.get("message_format") != "markdown"
-    )
-    is_status_only = is_qq_plain or payload.get("platform") in {"telegram", "wechat"}
-    text = format_tool_event(event, markdown=not is_status_only)
+    text = format_tool_event(event, markdown=False)
     if not text:
         return True
     # 工具状态是过程消息，不应消耗入站消息唯一的 QQ 被动回复机会。

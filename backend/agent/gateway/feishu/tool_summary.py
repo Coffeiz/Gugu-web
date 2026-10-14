@@ -1,22 +1,10 @@
-"""飞书流式回复中的工具摘要卡片状态与元素构建。"""
+"""飞书群聊工具完成状态折叠卡片。"""
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 
 _MAX_VISIBLE_TOOL_CALLS = 24
-_MAX_TOOL_DETAIL_CHARS = 1200
 _MAX_CARD_COMPONENTS = 180
-
-
-def _tool_detail_block(value: object) -> str:
-    """复用共享工具消息格式，再处理飞书卡片出站内容。"""
-    from agent.tool_messages import tool_code_block
-    from agent.outbound import sanitize_outbound
-
-    code_block = tool_code_block(value, limit=_MAX_TOOL_DETAIL_CHARS)
-    fence, body = code_block.split("\n", 1)
-    body = body.removesuffix("\n```").replace("```", "` ` `")
-    return f"{fence}\n{sanitize_outbound(body)}\n```"
 
 
 def _component_count(value: object) -> int:
@@ -130,17 +118,15 @@ class FeishuToolSummaryStream:
             return False
 
         event_type = str(event.get("type") or "")
-        call_id = str(event.get("tool_call_id") or "").strip()
-        if event_type not in {"tool_call", "tool_done"}:
+        if event_type == "tool_call":
             return True
-
+        if event_type != "tool_done":
+            return True
+        call_id = str(event.get("tool_call_id") or "").strip()
         location = self._tool_blocks.get(call_id) if call_id else None
         if location is not None:
             group_index, tool_index = location
-            prior = self._blocks[group_index]["tools"][tool_index]
-            merged = dict(prior)
-            merged.update(event)
-            self._blocks[group_index]["tools"][tool_index] = merged
+            self._blocks[group_index]["tools"][tool_index] = dict(event)
         else:
             self._append_tool_event(event, call_id)
         await self._write()
@@ -283,30 +269,6 @@ class FeishuToolSummaryStream:
     @staticmethod
     def _tool_entry(event: dict) -> str:
         from agent.outbound import sanitize_outbound
+        from agent.tool_messages import format_tool_event
 
-        label = " ".join(str(event.get("label") or event.get("name") or "工具").split())[:80]
-        status = str(event.get("status") or "")
-        if event.get("type") == "tool_call":
-            status_label, icon = {
-                "queued": ("排队中", "⏳"),
-                "running": ("执行中", "⏳"),
-                "invalid": ("未执行", "⚠️"),
-                "cancelled": ("已停止", "⏹️"),
-            }.get(status, ("执行中", "⏳"))
-        else:
-            status_label, icon = {
-                "success": ("已完成", "✅"),
-                "ok": ("已完成", "✅"),
-                "waiting": ("等待确认", "⏸️"),
-                "cancelled": ("已停止", "⏹️"),
-            }.get(status, ("未完成", "⚠️"))
-
-        details = [f"**{icon} {label} · {status_label}**", f"**状态**：{status_label}"]
-        if "input" in event:
-            details.extend(("**输入**", _tool_detail_block(event.get("input"))))
-        if event.get("result") is not None:
-            details.extend(("**结果**", _tool_detail_block(event.get("result"))))
-        detail_text = sanitize_outbound("\n\n".join(details))
-        if len(detail_text) > _MAX_TOOL_DETAIL_CHARS * 2:
-            detail_text = detail_text[: _MAX_TOOL_DETAIL_CHARS * 2 - 1] + "…"
-        return detail_text
+        return sanitize_outbound(format_tool_event(event, markdown=False))
