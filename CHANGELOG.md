@@ -14,18 +14,23 @@
 #### New Features
 
 - **Telegram streaming**: show responses as they are generated.
+- **QQ private chat streaming**: stream private replies with configurable message formatting.
 - **Personal skills**: create, edit, and organize user-defined skills.
 - **Mermaid charts**: preview, enlarge, and export diagrams as PNG on the web; render them as images in IM replies while preserving their position between surrounding text.
 
 #### Improvements
 
 - **Telegram replies**: show tool results without duplicate raw JSON, with status text localized to the user's language.
+- **IM replies**: apply message formatting and streaming consistently across QQ and Telegram.
 - **Mermaid rendering**: align IM output with the web renderer, including fonts, node styles, labels, and arrows.
+- **Mermaid previews**: refine chart styling and preview interactions.
+- **Workspace names**: make workspace name editing easier to use.
 - **Prompt caching**: preserve reusable model context across compaction and reflection requests.
 
 #### Fixes
 
 - Keep Mermaid labels within node boundaries and preserve text and diagram order in mixed IM replies.
+- Parse fenced Markdown correctly in Telegram replies.
 
 #### Contributors
 
@@ -40,18 +45,23 @@
 #### 新功能
 
 - **Telegram 流式回复**：逐步显示生成中的回复。
+- **QQ 私聊流式回复**：支持配置消息格式并逐步显示私聊回复。
 - **个人技能**：支持创建、编辑和整理用户自定义技能。
 - **Mermaid 图表**：网页支持预览、放大和导出 PNG；IM 回复可将图表渲染为图片，并按原顺序插入上下文文字之间。
 
 #### 改进
 
 - **Telegram 回复**：只展示工具调用结果，不再重复发送原始 JSON；状态文案根据用户语言显示。
+- **IM 回复**：统一 QQ 与 Telegram 的消息格式和流式行为。
 - **Mermaid 渲染**：统一 IM 与网页的字体、节点样式、标签和箭头表现。
+- **Mermaid 预览**：优化图表样式和预览交互。
+- **工作区名称**：优化工作区名称编辑体验。
 - **提示词缓存**：压缩和反思请求会保留可复用的模型上下文，提升缓存复用。
 
 #### 修复
 
 - 修复 Mermaid 标签超出节点边界，以及 IM 图文混排时文字和图表顺序不正确的问题。
+- 修复 Telegram 回复中的 Markdown 围栏解析。
 
 #### 贡献者
 
