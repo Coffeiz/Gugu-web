@@ -1,6 +1,7 @@
 """文件正文检索语料查询：grep 工具的 ORM 边界收口在 Service 层。"""
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import PurePosixPath
 
 from sqlalchemy import and_, case, func, literal, or_, select
@@ -9,15 +10,42 @@ from app.core.ownership import get_owned
 from app.models import File, Folder, Project, WorkspaceDirectory
 
 
+@dataclass(slots=True)
+class GrepFileCandidate:
+    """grep 所需的最小文件元数据投影，避免为全量候选创建 ORM 实体。"""
+
+    id: int
+    display_name: str
+    ext: str
+    space: str
+    project_id: int | None
+    workspace_directory_id: int | None
+    folder_id: int | None
+    storage_key: str
+    size_bytes: int
+    mime_type: str | None
+
+
 async def list_grep_candidates(
     db,
     *,
     user_id: str,
     spaces: tuple[str, ...] = ("personal", "project", "workspace"),
     requested_path: str | None = None,
-) -> list[File]:
-    """按 user_id 隔离取未删除、处于可检索空间的文件元数据，最近更新优先。"""
-    stmt = select(File).where(
+) -> list[GrepFileCandidate]:
+    """按 user_id 隔离取 grep 所需的最小文件元数据，最近更新优先。"""
+    stmt = select(
+        File.id,
+        File.display_name,
+        File.ext,
+        File.space,
+        File.project_id,
+        File.workspace_directory_id,
+        File.folder_id,
+        File.storage_key,
+        File.size_bytes,
+        File.mime_type,
+    ).where(
         File.user_id == user_id,
         File.deleted_at.is_(None),
         File.space.in_(spaces),
@@ -28,8 +56,8 @@ async def list_grep_candidates(
         )
         if candidate_filter is not None:
             stmt = stmt.where(candidate_filter)
-    rows = (await db.execute(stmt.order_by(File.updated_at.desc()))).scalars().all()
-    return list(rows)
+    rows = (await db.execute(stmt.order_by(File.updated_at.desc()))).all()
+    return [GrepFileCandidate(*row) for row in rows]
 
 
 async def _grep_path_candidate_filter(db, *, user_id: str, requested_path: str):

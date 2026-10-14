@@ -394,6 +394,16 @@ async def test_grep_uses_raw_cjk_candidate_check_without_changing_casefold_or_de
         content="占位",
     )
     await storage.put(invalid_file.storage_key, b"\xff", "text/plain")
+    invalid_sequences = (b"\xc0\xaf", b"\xed\xa0\x80", b"\xf4\x90\x80\x80", b"\xe2\x82")
+    for index, invalid_bytes in enumerate(invalid_sequences):
+        malformed_file = await _create_file(
+            db,
+            user_a.id,
+            storage,
+            name=f"synthetic-invalid-{index}.txt",
+            content="占位",
+        )
+        await storage.put(malformed_file.storage_key, invalid_bytes, "text/plain")
 
     from agent.tools.files.grep import _grep_files
 
@@ -408,7 +418,7 @@ async def test_grep_uses_raw_cjk_candidate_check_without_changing_casefold_or_de
         {"line": 2, "text": "目标内容"},
         {"line": 3, "text": "K"},
     ]
-    assert cjk_result["skipped_files"] == 1
+    assert cjk_result["skipped_files"] == 5
 
     folded_result = await _grep_files(db, user_a.id, {
         "query": "k", "context_lines": 0,
