@@ -1171,6 +1171,10 @@ export function useChatStream(options: {
       if (ownsCurrentView() && /^\/goal(?:\s|$)/i.test(text)) {
         await options.fetchSessions()
       }
+      // 解除 workspace 绑定会更新会话元数据；同步会话列表，让标题栏立即移除工作区名称。
+      if (ownsCurrentView() && /^\/workspace\s+(?:unlink|off|none|unbind)\s*$/i.test(text)) {
+        await options.fetchSessions()
+      }
       // 咕咕若调用了改数据的工具，刷新对应前端视图（项目/日历/文件），免手动刷新页面
       options.refreshAfterTools(usedTools)
       // 生成期间排队的消息：取队首接着发（其自身 finally 会继续取下一条，逐条处理）。
