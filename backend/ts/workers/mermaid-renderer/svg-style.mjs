@@ -65,6 +65,23 @@ function setStyle(element, property, value) {
   element.setAttribute('style', [...declarations].map(([name, entry]) => `${name}: ${entry}`).join('; '))
 }
 
+function normalizeRasterColor(color) {
+  const hsl = color.match(/^hsl\(\s*(-?[\d.]+)[, ]+([\d.]+)%[, ]+([\d.]+)%\s*\)$/i)
+  if (!hsl) return color
+  const hue = ((Number(hsl[1]) % 360) + 360) % 360
+  const saturation = Number(hsl[2]) / 100
+  const lightness = Number(hsl[3]) / 100
+  const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation
+  const x = chroma * (1 - Math.abs((hue / 60) % 2 - 1))
+  const offset = lightness - chroma / 2
+  const channelsBySector = [
+    [chroma, x, 0], [x, chroma, 0], [0, chroma, x],
+    [0, x, chroma], [x, 0, chroma], [chroma, 0, x],
+  ]
+  const channels = channelsBySector[Math.floor(hue / 60)]
+  return `rgb(${channels.map(channel => Math.round((channel + offset) * 255)).join(', ')})`
+}
+
 function normalizeEdgePaths(root) {
   const edgeClass = /(?:^|\s)(?:flowchart-link|messageLine\S*|transition|relationshipLine|edgePath|link)(?:\s|$)/
   const edges = [...root.getElementsByTagName('path')].filter((edge) => {
@@ -193,6 +210,28 @@ export function normalizeMermaidKanbanSectionTitles(root) {
 
     text.setAttribute('text-anchor', 'middle')
     labelGroup.setAttribute('transform', `translate(${x + width / 2}, ${position[2]})`)
+  }
+  return root
+}
+
+/** Resvg 漏掉首列的 Mermaid section 样式；把列底色内联，保持图片与浏览器 SVG 一致。 */
+export function normalizeMermaidKanbanSectionColors(root) {
+  const styles = [...root.getElementsByTagName('style')]
+  for (const cluster of root.getElementsByTagName('g')) {
+    const section = (cluster.getAttribute('class') || '').split(/\s+/).find(name => /^section-\d+$/.test(name))
+    if (!section) continue
+    const pattern = new RegExp(`\\.${section}\\s+rect[^{}]*\\{[^}]*\\bfill:\\s*([^;}]+)`, 'gi')
+    let fill
+    for (const style of styles) {
+      for (const match of (style.textContent || '').matchAll(pattern)) fill = match[1].trim()
+    }
+    if (!fill) continue
+    fill = normalizeRasterColor(fill)
+    const rect = cluster.getElementsByTagName('rect')[0]
+    if (rect) {
+      setStyle(rect, 'fill', fill)
+      setStyle(rect, 'stroke', fill)
+    }
   }
   return root
 }

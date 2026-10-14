@@ -46,20 +46,37 @@ const FAMILY_COLORS = Object.freeze({
   },
 })
 
-function parseHex(color) {
-  const value = color.replace('#', '')
-  return [0, 2, 4].map(index => Number.parseInt(value.slice(index, index + 2), 16))
+function parseColor(color) {
+  const hex = color.match(/^#([\da-f]{6})$/i)
+  if (hex) {
+    const value = hex[1]
+    return {
+      channels: [0, 2, 4].map(index => Number.parseInt(value.slice(index, index + 2), 16)),
+      alpha: 1,
+    }
+  }
+  const rgb = color.match(/^rgba?\(\s*([\d.]+)[, ]+([\d.]+)[, ]+([\d.]+)(?:\s*[,/]\s*([\d.]+)%?\s*)?\)$/i)
+  if (!rgb) throw new Error('unsupported_theme_color')
+  return {
+    channels: rgb.slice(1, 4).map(Number),
+    alpha: rgb[4] === undefined ? 1 : Number(rgb[4]) / (color.includes('%') ? 100 : 1),
+  }
 }
 
 function mixColors(foreground, background, amount) {
-  const front = parseHex(foreground)
-  const back = parseHex(background)
-  const rgb = front.map((channel, index) => Math.round(channel * amount + back[index] * (1 - amount)))
-  return `rgb(${rgb.join(', ')})`
+  const front = parseColor(foreground)
+  const back = parseColor(background)
+  const frontWeight = amount * front.alpha
+  const backWeight = (1 - amount) * back.alpha
+  const alpha = frontWeight + backWeight
+  const channels = front.channels.map((channel, index) => Math.round(
+    (channel * frontWeight + back.channels[index] * backWeight) / alpha,
+  ))
+  return alpha >= 0.999 ? `rgb(${channels.join(', ')})` : `rgba(${channels.join(', ')}, ${Number(alpha.toFixed(3))})`
 }
 
 function toRgba(color, alpha) {
-  const [red, green, blue] = parseHex(color)
+  const [red, green, blue] = parseColor(color).channels
   return `rgba(${red}, ${green}, ${blue}, ${alpha})`
 }
 
@@ -71,7 +88,15 @@ export function resolveMermaidThemeColors(preferences = {}) {
   const paletteColors = palette[mode]
   const familyColors = family[mode]
   const primaryColor = mixColors(paletteColors.primary, familyColors.canvas, 0.15)
-  const clusterBackground = mixColors(paletteColors.warning, familyColors.canvas, 0.45)
+  // Web 对非 café 调色板的状态色会混入 18% 次级文字色；IM 复用同一条规则，
+  // 这样 Mermaid 自动生成的状态色阶不会比页面上的状态标记更鲜艳。
+  const successColor = preferences.palette === 'cafe'
+    ? paletteColors.success
+    : mixColors(paletteColors.success, familyColors.secondaryText, 0.82)
+  const warningColor = preferences.palette === 'cafe'
+    ? paletteColors.warning
+    : mixColors(paletteColors.warning, familyColors.secondaryText, 0.82)
+  const clusterBackground = mixColors(warningColor, familyColors.canvas, 0.45)
   const lineColor = familyColors.secondaryText
 
   return {
@@ -84,7 +109,7 @@ export function resolveMermaidThemeColors(preferences = {}) {
     lineColor,
     arrowheadColor: lineColor,
     edgeLabelBackground: primaryColor,
-    secondaryColor: mixColors(paletteColors.success, familyColors.canvas, 0.45),
+    secondaryColor: mixColors(successColor, familyColors.canvas, 0.45),
     tertiaryColor: clusterBackground,
     clusterBkg: clusterBackground,
     clusterBorder: toRgba(paletteColors.primary, 0.34),

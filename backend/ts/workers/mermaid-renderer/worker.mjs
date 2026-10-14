@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { Resvg } from '@resvg/resvg-js'
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom'
 import { createHTMLWindow } from 'svgdom'
-import { normalizeMermaidEdgeLabelBounds, normalizeMermaidEdgeStyles, normalizeMermaidKanbanSectionTitles, normalizeMermaidMindmapRootLabel, normalizeMermaidNodeCorners, normalizeMermaidRasterText } from './svg-style.mjs'
+import { normalizeMermaidEdgeLabelBounds, normalizeMermaidEdgeStyles, normalizeMermaidKanbanSectionColors, normalizeMermaidKanbanSectionTitles, normalizeMermaidMindmapRootLabel, normalizeMermaidNodeCorners, normalizeMermaidRasterText } from './svg-style.mjs'
 import { prepareMermaidDiagramSource, restoreMermaidDiagramLabels } from './diagram-source.mjs'
 import { createMermaidThemeConfig, resolveMermaidThemeColors } from './theme.mjs'
 
@@ -94,6 +94,32 @@ if (window.Node?.prototype && typeof window.Node.prototype.toJSON !== 'function'
 // Resvg 再按完整字体绘制时，文字会穿出节点。测量阶段补齐行高和中文宽度，让 Mermaid 同步调整布局。
 const originalGetTextBBox = window.SVGGraphicsElement.prototype.getBBox
 const fullWidthTextCharacter = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\u3000-\u303f\uff01-\uff60]/u
+function estimateRasterTextWidth(text, fontSize) {
+  return [...text].reduce((width, character) => {
+    if (fullWidthTextCharacter.test(character)) return width + fontSize
+    if (/\s/u.test(character)) return width + fontSize * 0.33
+    if (/[ilI.,:;'|!]/u.test(character)) return width + fontSize * 0.32
+    if (/[MW@%]/u.test(character)) return width + fontSize * 0.85
+    if (character === '→') return width + fontSize * 0.95
+    return width + fontSize * 0.56
+  }, 0)
+}
+// Mermaid Kanban 在逐词拆行时会直接测量内层 tspan。svgdom 的原始字宽不含中文字宽，
+// 导致混排项目名在计算阶段被判断为可放进单行，最终光栅化后溢出卡片。
+const textContentPrototype = window.SVGTextContentElement?.prototype
+const originalGetComputedTextLength = textContentPrototype?.getComputedTextLength
+if (textContentPrototype && typeof originalGetComputedTextLength === 'function') {
+  Object.defineProperty(textContentPrototype, 'getComputedTextLength', {
+    configurable: true,
+    value() {
+      const originalWidth = originalGetComputedTextLength.call(this)
+      const text = this.textContent || ''
+      if (![...text].some(character => fullWidthTextCharacter.test(character))) return originalWidth
+      const fontSize = Number.parseFloat(window.getComputedStyle(this).fontSize || '16') || 16
+      return Math.max(originalWidth, estimateRasterTextWidth(text, fontSize))
+    },
+  })
+}
 function getIshikawaTextAnchor(element) {
   const classes = ` ${element.getAttribute('class') || ''} `
   if (classes.includes(' ishikawa-head-label ') || classes.includes(' ishikawa-label cause ')) return 'middle'
@@ -142,14 +168,7 @@ Object.defineProperty(window.SVGGraphicsElement.prototype, 'getBBox', {
       : [this.textContent || '']
     const containsFullWidthText = lines.some(line => [...line].some(character => fullWidthTextCharacter.test(character)))
     const measuredWidth = containsFullWidthText
-      ? Math.max(...lines.map(line => [...line].reduce((width, character) => {
-        if (fullWidthTextCharacter.test(character)) return width + fontSize
-        if (/\s/u.test(character)) return width + fontSize * 0.33
-        if (/[ilI.,:;'|!]/u.test(character)) return width + fontSize * 0.32
-        if (/[MW@%]/u.test(character)) return width + fontSize * 0.85
-        if (character === '→') return width + fontSize * 0.95
-        return width + fontSize * 0.56
-      }, 0)))
+      ? Math.max(...lines.map(line => estimateRasterTextWidth(line, fontSize)))
       : bounds.width
     const height = positionedLines.length >= 2 ? positionedLines.length * fontSize * 1.1 : bounds.height
     // 鱼骨图把 text-anchor 写在 SVG 样式表里，svgdom 的 getBBox 看不到该 CSS；
@@ -278,7 +297,10 @@ for (let index = 0; index < sources.length; index += 1) {
     normalizeMermaidMindmapRootLabel(root)
     restoreMermaidDiagramLabels(root, prepared.labels)
     normalizeMermaidNodeCorners(root)
-    if (type === 'kanban') normalizeMermaidKanbanSectionTitles(root)
+    if (type === 'kanban') {
+      normalizeMermaidKanbanSectionColors(root)
+      normalizeMermaidKanbanSectionTitles(root)
+    }
     normalizeMermaidEdgeLabelBounds(root)
     const rasterTextOptions = {
       allText: true,
