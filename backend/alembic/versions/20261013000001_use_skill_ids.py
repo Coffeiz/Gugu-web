@@ -27,9 +27,14 @@ def upgrade() -> None:
     rows = connection.execute(sa.text(
         "SELECT id, owner_id FROM user_skills ORDER BY owner_id, created_at, id"
     )).all()
-    next_by_owner: dict[str, int] = {}
+    owner_id_type = (
+        sa.Uuid(as_uuid=True)
+        if connection.dialect.name == "postgresql"
+        else sa.String()
+    )
+    next_by_owner: dict[object, int] = {}
     for row in rows:
-        owner = str(row.owner_id)
+        owner = row.owner_id
         sequence = next_by_owner.get(owner, 1)
         connection.execute(
             sa.text("UPDATE user_skills SET skill_id = :skill_id WHERE id = :id"),
@@ -38,7 +43,8 @@ def upgrade() -> None:
         next_by_owner[owner] = sequence + 1
     for owner, sequence in next_by_owner.items():
         connection.execute(
-            sa.text("UPDATE users SET next_skill_sequence = :next_value WHERE id = :owner_id"),
+            sa.text("UPDATE users SET next_skill_sequence = :next_value WHERE id = :owner_id")
+            .bindparams(sa.bindparam("owner_id", type_=owner_id_type)),
             {"next_value": sequence, "owner_id": owner},
         )
 
