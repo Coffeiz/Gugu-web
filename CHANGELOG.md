@@ -29,6 +29,7 @@
 - **Workspace names**: make workspace name editing easier to use.
 - **Prompt caching**: preserve reusable model context across compaction and reflection requests.
 - **Search summaries**: include links to the sources behind key findings.
+- **LoopScope session monitor**: fill model and token usage details from model-call spans when run summaries are incomplete.
 
 #### Fixes
 
@@ -70,6 +71,7 @@
 - **工作区名称**：优化工作区名称编辑体验。
 - **提示词缓存**：压缩和反思请求会保留可复用的模型上下文，提升缓存复用。
 - **搜索汇总**：为主要结论附上实际参考的信息源链接。
+- **LoopScope 会话监视器**：Run 汇总信息不完整时，从模型调用 Span 补全模型与 token 用量。
 
 #### 修复
 
