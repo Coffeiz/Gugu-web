@@ -5,10 +5,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.core.ownership import get_owned
-from app.models import File, Folder, Project
+from app.models import File, Folder, Project, StorageQuotaLedger
 from app.services.files.pagination import apply_keyset, decode_cursor, encode_cursor
 from app.services.storage.folders import folder_dir_key
-from app.services.storage.quota_ledger import FILE_LIBRARY, record_usage
+from app.services.storage.quota_ledger import (
+    FILE_LIBRARY,
+    record_usage,
+    reconcile_file_library_usage,
+)
 from app.services.storage.trash import restore_file_storage
 
 
@@ -16,16 +20,45 @@ class RestoreParentTrashError(Exception):
     """文件所属文件夹仍在回收站，不能单独恢复。"""
 
 
+async def _prepare_permanent_file_quota_release(db: AsyncSession, file: File) -> None:
+    """物理删除前锁定并按需校准，避免旧账本在不可逆操作后触发负数。"""
+    size_bytes = int(file.size_bytes or 0)
+    if size_bytes <= 0:
+        return
+    quota = (await db.execute(select(StorageQuotaLedger).where(
+        StorageQuotaLedger.user_id == file.user_id,
+        StorageQuotaLedger.category == FILE_LIBRARY,
+    ).with_for_update().execution_options(populate_existing=True))).scalar_one()
+    # 旧版本账本可能不含回收站占用。物理对象已删除前先校准，避免负数校验
+    # 在不可逆的存储删除之后失败并造成数据库与对象存储不一致。
+    if quota.used_bytes < size_bytes:
+        await reconcile_file_library_usage(db, file.user_id)
+        quota = (await db.execute(select(StorageQuotaLedger).where(
+            StorageQuotaLedger.user_id == file.user_id,
+            StorageQuotaLedger.category == FILE_LIBRARY,
+        ).with_for_update().execution_options(populate_existing=True))).scalar_one()
+    # 持有 quota 行锁直到当前事务提交，避免并发删除同时基于同一旧余额扣减。
+
+
 async def _release_permanently_deleted_file_quota(db: AsyncSession, file: File) -> None:
     """按文件记录增量释放配额；与删除记录同事务提交，重试不重复扣减。"""
     size_bytes = int(file.size_bytes or 0)
     if size_bytes <= 0:
         return
+    quota = (await db.execute(select(StorageQuotaLedger).where(
+        StorageQuotaLedger.user_id == file.user_id,
+        StorageQuotaLedger.category == FILE_LIBRARY,
+    ).with_for_update().execution_options(populate_existing=True))).scalar_one()
+    # Local 存储按实际磁盘字节计量；若旧元数据大小大于当前实际账本，释放不超过
+    # 已记录用量，确保已经发生的物理删除不会再被负数校验阻断。
+    released_bytes = min(size_bytes, int(quota.used_bytes))
+    if released_bytes <= 0:
+        return
     await record_usage(
         db,
         file.user_id,
         category=FILE_LIBRARY,
-        delta_bytes=-size_bytes,
+        delta_bytes=-released_bytes,
         operation="trash_permanent_delete",
         resource_type="file",
         resource_id=file.id,
@@ -272,6 +305,7 @@ async def permanently_delete_all_files(db: AsyncSession, storage, user_id) -> li
     )).scalars().all()
     file_ids = [file.id for file in files]
     for file in files:
+        await _prepare_permanent_file_quota_release(db, file)
         try:
             await storage.delete(file.storage_key)
         except Exception:
@@ -293,6 +327,7 @@ async def permanently_delete_file(
     if not file or file.deleted_at is None:
         return None
 
+    await _prepare_permanent_file_quota_release(db, file)
     try:
         await storage.delete(file.storage_key)
     except Exception:
@@ -379,6 +414,7 @@ async def permanently_delete_folder(
         )
     )).scalars().all()
     for file in files:
+        await _prepare_permanent_file_quota_release(db, file)
         try:
             await storage.delete(file.storage_key)
         except Exception:

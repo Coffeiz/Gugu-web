@@ -183,9 +183,13 @@ async def test_empty_trash_removes_deleted_folder_with_its_files(db, user_a, mon
     ]
 
 
-async def test_empty_trash_releases_quota_incrementally_without_scanning_roots(db, user_a, monkeypatch):
-    """清空回收站按删除文件大小扣减账本，不为收尾扫描用户全部配额目录。"""
+async def test_empty_trash_reconciles_legacy_underreported_quota_before_delete(
+    db, user_a, monkeypatch, _storage_and_events,
+):
+    """旧账本漏记回收站占用时先对账，再删除文件并将账本安全归零。"""
+    user_id = user_a.id
     folder, file = await _mk_folder_with_file(db, user_a, "历史回收站", data=b"legacy")
+    file_id = file.id
     quota = await get_quota(db, user_a.id, FILE_LIBRARY)
     assert quota.used_bytes == len(b"legacy")
 
@@ -193,33 +197,52 @@ async def test_empty_trash_releases_quota_incrementally_without_scanning_roots(d
     stamp = now_utc()
     (await db.get(Folder, folder.id)).deleted_at = stamp
     (await db.get(File, file.id)).deleted_at = stamp
+    quota.used_bytes = 0
     await db.commit()
 
-    async def fail_if_scanned(*_args, **_kwargs):
-        raise AssertionError("清空回收站不应扫描用户配额目录")
-
-    monkeypatch.setattr(
-        "app.services.storage.quota_ledger._measure_file_library_usage",
-        fail_if_scanned,
-    )
-
     job = await trash_api.empty_trash(current_user=user_a, db=db)
+    job_id = job.id
     from app.db import session as db_session
     from app.services.files import trash_purge
 
+    # 独立 worker 复用同一个临时存储；对账边界返回该文件实际占用，模拟升级前漏记账本。
+    monkeypatch.setattr(trash_purge, "get_storage", lambda: _storage_and_events)
+
+    async def measure_existing_file(_db, _user_id):
+        return len(b"legacy")
+
+    monkeypatch.setattr(
+        "app.services.storage.quota_ledger._measure_file_library_usage",
+        measure_existing_file,
+    )
     worker_id = "test-trash-purge-legacy"
     claimed_id = await trash_purge._claim(db_session._SessionLocal, worker_id)
     assert claimed_id == job.id
     await trash_purge._process(claimed_id, worker_id, db_session._SessionLocal)
 
+    db.expire_all()
+    persisted_user = await db.get(type(user_a), user_id)
+    persisted_job = await trash_api.get_empty_trash_job(job_id, current_user=persisted_user, db=db)
+    assert persisted_job.status == "completed", persisted_job.error_code
     await db.refresh(quota)
     assert quota.used_bytes == 0
+    assert await db.get(File, file_id) is None
     event = await db.scalar(select(StorageQuotaEvent).where(
-        StorageQuotaEvent.user_id == user_a.id,
-        StorageQuotaEvent.idempotency_key == f"trash-permanent-delete:{file.id}",
+        StorageQuotaEvent.user_id == user_id,
+        StorageQuotaEvent.idempotency_key == f"trash-permanent-delete:{file_id}",
     ))
-    assert event is not None
+    events = (await db.execute(select(StorageQuotaEvent).where(
+        StorageQuotaEvent.user_id == user_id,
+    ))).scalars().all()
+    assert event is not None, [(item.operation, item.delta_bytes, item.idempotency_key) for item in events]
     assert event.delta_bytes == -len(b"legacy")
+    reconciliation = await db.scalar(select(StorageQuotaEvent).where(
+        StorageQuotaEvent.user_id == user_id,
+        StorageQuotaEvent.category == FILE_LIBRARY,
+        StorageQuotaEvent.operation == "reconcile",
+    ))
+    assert reconciliation is not None
+    assert reconciliation.delta_bytes == len(b"legacy")
 
 
 async def test_empty_trash_reuses_active_job(db, user_a):
