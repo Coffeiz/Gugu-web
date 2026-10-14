@@ -107,7 +107,7 @@ async def test_long_poll_resumes_after_last_atomically_enqueued_update(monkeypat
 
     update_calls = [payload for method, payload, _timeout in calls if method == "getUpdates"]
     assert update_calls[0].get("offset") is None
-    assert update_calls[0]["allowed_updates"] == ["message"]
+    assert update_calls[0]["allowed_updates"] == ["message", "callback_query"]
     assert update_calls[1]["offset"] == 914
     assert [item["platform_event_id"] for item in enqueued] == ["911", "912"]
     assert [item["text"] for item in enqueued] == ["先到消息", "后到消息"]

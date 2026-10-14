@@ -215,6 +215,14 @@
     "keyBehavior": "个人库根目录数量增长时文件概览查询数保持有界，工作区目录不混入个人目录",
     "ci": "backend-pytest"
   },
+  "backend/tests/agent/context/test_im_source_prompt.py": {
+    "domain": "agent-context",
+    "layer": "L1",
+    "owner": "backend/agent/context",
+    "productionEntry": "agent/context/builder.py:build_split",
+    "keyBehavior": "所有已注册 IM 来源都进入会话提示词，且连接状态显示与平台注册表保持一致",
+    "ci": "backend-pytest"
+  },
   "backend/tests/agent/providers/test_model_reasoning_policy.py": {
     "domain": "agent-reasoning",
     "layer": "L1",
