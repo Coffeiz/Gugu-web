@@ -814,5 +814,165 @@
     "productionEntry": "frontend/src/views/Skills/composables/useMcpStatusLoader.ts",
     "keyBehavior": "启用且未加载的 MCP 状态受并发上限控制并逐项更新，取消后丢弃过期结果",
     "ci": "frontend-test"
+  },
+  "backend/scripts/diagnostics/test_inline_compaction_thinking_ab.py": {
+    "domain": "agent-compaction",
+    "layer": "L2",
+    "owner": "backend/scripts/diagnostics",
+    "productionEntry": "backend/agent/context/compaction.py",
+    "keyBehavior": "诊断 inline compaction 的 thinking A/B 结果时保留真实调用上下文并避免持久化原始正文",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/context/test_branch_request_prefix.py": {
+    "domain": "agent-context",
+    "layer": "L1",
+    "owner": "backend/agent/context",
+    "productionEntry": "backend/agent/context/provider_runner.py",
+    "keyBehavior": "不同 Provider 的分支请求前缀复用已有 system 消息且不会重复注入提示内容",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/test_skill_id_migration.py": {
+    "domain": "skills-migration",
+    "layer": "L2",
+    "owner": "backend/alembic/versions",
+    "productionEntry": "backend/alembic/versions/20261013000001_use_skill_ids.py",
+    "keyBehavior": "迁移为既有技能分配稳定顺序 ID 并让后续序列从最大 ID 之后继续",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/qq/test_qq_package_facade.py": {
+    "domain": "qq-gateway",
+    "layer": "L1",
+    "owner": "backend/agent/gateway/qq",
+    "productionEntry": "backend/agent/gateway/qq/__init__.py",
+    "keyBehavior": "QQ 门面稳定导出生命周期与发送入口，并关闭自己创建的 HTTP 会话",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/telegram/test_telegram_streaming.py": {
+    "domain": "telegram-streaming",
+    "layer": "L1",
+    "owner": "backend/agent/gateway/telegram",
+    "productionEntry": "backend/agent/im/replies.py",
+    "keyBehavior": "Telegram 草稿流保留轮次顺序、隐藏轮次和 Mermaid 图消息的交付与持久化约定",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_mermaid.py": {
+    "domain": "markdown-mermaid",
+    "layer": "L1",
+    "owner": "backend/agent/im",
+    "productionEntry": "backend/agent/im/mermaid.py",
+    "keyBehavior": "Mermaid 图表渲染失败时保留可读源码，成功时替换图表并维持前后文本流式输出",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_qq_message_format_migration.py": {
+    "domain": "qq-message-format",
+    "layer": "L2",
+    "owner": "backend/alembic/versions",
+    "productionEntry": "backend/alembic/versions/20261014000001_remove_smart_qq_message_format.py",
+    "keyBehavior": "移除 smart 格式时仅迁移既有选项并保留其他偏好与数据默认值",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_qq_private_streaming.py": {
+    "domain": "qq-streaming",
+    "layer": "L1",
+    "owner": "backend/agent/im",
+    "productionEntry": "backend/agent/im/loop.py",
+    "keyBehavior": "QQ 私聊仅在支持流式的消息格式下启用增量输出",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_user_bot_message_format.py": {
+    "domain": "qq-message-format",
+    "layer": "L1",
+    "owner": "backend/app/api/v1",
+    "productionEntry": "backend/app/api/v1/user_bots.py",
+    "keyBehavior": "用户机器人消息格式设置持久化受支持模式并拒绝已移除的 smart 模式",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/wechat/test_wechat_gateway_components.py": {
+    "domain": "wechat-gateway",
+    "layer": "L1",
+    "owner": "backend/agent/gateway/wechat",
+    "productionEntry": "backend/agent/gateway/wechat/outbound.py",
+    "keyBehavior": "微信网关保留上下文令牌、媒体协议、缓存退避与长轮询取消清理约定",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/realtime/test_web_generation_contract.py": {
+    "domain": "realtime-generation",
+    "layer": "L1",
+    "owner": "backend/agent/gateway",
+    "productionEntry": "backend/agent/gateway/web/generation.py",
+    "keyBehavior": "Web 生成保持去重、时间线、用量统计及完成事件前持久化的顺序",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/realtime/test_web_resume_contract.py": {
+    "domain": "realtime-resume",
+    "layer": "L1",
+    "owner": "backend/agent/gateway",
+    "productionEntry": "backend/agent/gateway/web/resume.py",
+    "keyBehavior": "恢复实时会话时先按序重放时间线，缺少活动快照时发送空闲完成状态",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/realtime/test_web_stream_contract.py": {
+    "domain": "realtime-streaming",
+    "layer": "L1",
+    "owner": "backend/agent/gateway",
+    "productionEntry": "backend/agent/gateway/web/stream.py",
+    "keyBehavior": "Web 流先持久化用户消息再转发后台 SSE 事件",
+    "ci": "backend-pytest"
+  },
+  "frontend/e2e/mermaid.spec.ts": {
+    "domain": "markdown-mermaid",
+    "layer": "L3",
+    "owner": "frontend/e2e",
+    "productionEntry": "frontend/src/utils/mermaidRenderer.ts",
+    "keyBehavior": "浏览器验证 Mermaid 路由样式、窄屏预览与导出 PNG 的用户可见结果",
+    "ci": "frontend-e2e"
+  },
+  "frontend/tests/chat/composables/sessionScrollLayout.test.ts": {
+    "domain": "chat-rendering",
+    "layer": "L0",
+    "owner": "frontend/chat",
+    "productionEntry": "frontend/src/components/common/gugu-chat/composables/sessionScrollLayout.ts",
+    "keyBehavior": "切换会话时仅在当前虚拟窗口 Markdown 尚未稳定时阻止滚动布局计算",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/markdown/mermaidInteraction.test.ts": {
+    "domain": "markdown-mermaid",
+    "layer": "L0",
+    "owner": "frontend/utils",
+    "productionEntry": "frontend/src/utils/mermaidInteraction.ts",
+    "keyBehavior": "Mermaid 图表交互可绑定、更新和清理，避免重复监听与过期状态残留",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/markdown/mermaidPng.test.ts": {
+    "domain": "markdown-mermaid",
+    "layer": "L0",
+    "owner": "frontend/utils",
+    "productionEntry": "frontend/src/utils/mermaidPng.ts",
+    "keyBehavior": "Mermaid PNG 导出生成有效图像并在结束后释放临时资源",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/markdown/mermaidRenderer.test.ts": {
+    "domain": "markdown-mermaid",
+    "layer": "L0",
+    "owner": "frontend/utils",
+    "productionEntry": "frontend/src/utils/mermaidRenderer.ts",
+    "keyBehavior": "共享 Markdown Mermaid 渲染器更新图表且在卸载后清理 DOM 与交互资源",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/profile/MessageFormatSettings.test.ts": {
+    "domain": "qq-message-format",
+    "layer": "L1",
+    "owner": "frontend/profile",
+    "productionEntry": "frontend/src/components/common/profile/MessageFormatSettings.vue",
+    "keyBehavior": "QQ 消息格式设置展示受支持选项并提交用户选择",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/shared/resourceRefreshEvents.test.ts": {
+    "domain": "live-resource-refresh",
+    "layer": "L0",
+    "owner": "frontend/services",
+    "productionEntry": "frontend/src/services/resourceRefreshEvents.ts",
+    "keyBehavior": "跨端资源变化事件按类型通知订阅者并保持事件载荷一致",
+    "ci": "frontend-test"
   }
 }
