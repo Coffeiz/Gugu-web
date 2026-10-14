@@ -2,6 +2,7 @@
 
 import asyncio
 import threading
+from datetime import timedelta
 from pathlib import Path
 
 from sqlalchemy import event
@@ -329,7 +330,7 @@ async def test_grep_reads_files_with_bounded_concurrency_and_keeps_candidate_ord
 ):
     storage = await _wire_storage(monkeypatch, tmp_path)
     files = []
-    for index in range(20):
+    for index in range(80):
         files.append(await _create_file(
             db,
             user_a.id,
@@ -337,7 +338,7 @@ async def test_grep_reads_files_with_bounded_concurrency_and_keeps_candidate_ord
             name=f"ordered-{index}.txt",
             content="needle",
         ))
-        files[-1].updated_at = files[-1].updated_at.replace(day=index + 1)
+        files[-1].updated_at = files[0].updated_at + timedelta(seconds=index)
     await db.commit()
 
     active_reads = 0
@@ -358,11 +359,11 @@ async def test_grep_reads_files_with_bounded_concurrency_and_keeps_candidate_ord
 
     from agent.tools.files.grep import _grep_files
 
-    result = await _grep_files(db, user_a.id, {"query": "needle", "context_lines": 0, "limit": 20})
+    result = await _grep_files(db, user_a.id, {"query": "needle", "context_lines": 0, "limit": 80})
 
-    assert result["total_matches"] == 20
+    assert result["total_matches"] == 80
     assert max_active_reads > 1
-    assert max_active_reads <= 16
+    assert max_active_reads <= 64
     assert [item["file_id"] for item in result["results"]] == [
         file.id for file in reversed(files)
     ]
@@ -372,6 +373,48 @@ async def test_grep_reads_files_with_bounded_concurrency_and_keeps_candidate_ord
     )
     assert limited["total_matches"] == 1
     assert [item["file_id"] for item in limited["results"]] == [files[-1].id]
+
+
+async def test_grep_uses_raw_cjk_candidate_check_without_changing_casefold_or_decode_behavior(
+    db, user_a, tmp_path, monkeypatch,
+):
+    storage = await _wire_storage(monkeypatch, tmp_path)
+    cjk_file = await _create_file(
+        db,
+        user_a.id,
+        storage,
+        name="synthetic-cjk.txt",
+        content="前置\n目标内容\nK\nß\n末尾\n",
+    )
+    invalid_file = await _create_file(
+        db,
+        user_a.id,
+        storage,
+        name="synthetic-invalid.txt",
+        content="占位",
+    )
+    await storage.put(invalid_file.storage_key, b"\xff", "text/plain")
+
+    from agent.tools.files.grep import _grep_files
+
+    cjk_result = await _grep_files(db, user_a.id, {
+        "query": "目标", "context_lines": 1,
+    })
+    assert cjk_result["matched_files"] == 1
+    assert cjk_result["total_matches"] == 1
+    assert cjk_result["results"][0]["file_id"] == cjk_file.id
+    assert cjk_result["results"][0]["matches"][0]["context"] == [
+        {"line": 1, "text": "前置"},
+        {"line": 2, "text": "目标内容"},
+        {"line": 3, "text": "K"},
+    ]
+    assert cjk_result["skipped_files"] == 1
+
+    folded_result = await _grep_files(db, user_a.id, {
+        "query": "k", "context_lines": 0,
+    })
+    assert folded_result["total_matches"] == 1
+    assert folded_result["results"][0]["matches"][0]["text"] == "K"
 
 
 async def test_grep_streaming_preserves_unicode_casefold_line_and_context_semantics(

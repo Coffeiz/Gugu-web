@@ -22,7 +22,14 @@ _MAX_CONTEXT_LINES = 20
 _MAX_FILE_BYTES = 4 * 1024 * 1024
 _STREAM_THRESHOLD_BYTES = 1024 * 1024
 _DEFAULT_LIMIT = 50
-_READ_CONCURRENCY = 16
+_READ_CONCURRENCY = 64
+_CJK_IDEOGRAPH_RANGES = (
+    (0x3400, 0x4DBF),
+    (0x4E00, 0x9FFF),
+    (0xF900, 0xFAFF),
+    (0x20000, 0x2FA1F),
+    (0x30000, 0x323AF),
+)
 
 
 def _normalise_path(value: str | None) -> str | None:
@@ -31,6 +38,14 @@ def _normalise_path(value: str | None) -> str | None:
 
 def _path_is_under(path: str, prefix: str | None) -> bool:
     return prefix is None or path == prefix or path.startswith(prefix.rstrip("/") + "/")
+
+
+def _is_casefold_safe_ideograph_query(needle: str) -> bool:
+    """识别不会被 Unicode 大小写折叠改变的汉字查询。"""
+    return bool(needle) and all(
+        any(start <= ord(char) <= end for start, end in _CJK_IDEOGRAPH_RANGES)
+        for char in needle
+    )
 
 
 def _parse_options(args: dict) -> tuple[str, str | None, int, int, bool]:
@@ -116,11 +131,13 @@ async def _iter_candidate_lines(storage, file):
         yield pending
 
 
-def _make_line_matches(lines, needle, context_lines, limit, case_sensitive):
+def _make_line_matches(
+    lines, needle, context_lines, limit, case_sensitive, *, ideograph_query=False,
+):
     hit_indices = []
     extra_hit = False
     for index, line in enumerate(lines):
-        searchable_line = line if case_sensitive else line.casefold()
+        searchable_line = line if case_sensitive or ideograph_query else line.casefold()
         if needle in searchable_line:
             if len(hit_indices) >= limit:
                 extra_hit = True
@@ -144,17 +161,30 @@ def _make_line_matches(lines, needle, context_lines, limit, case_sensitive):
 
 
 async def _scan_buffered_candidate(storage, file, needle, context_lines, limit, case_sensitive):
+    ideograph_query = not case_sensitive and _is_casefold_safe_ideograph_query(needle)
     try:
-        text = (await storage.get(file.storage_key)).decode("utf-8")
+        raw_needle = needle.encode("utf-8") if case_sensitive or ideograph_query else None
+    except UnicodeEncodeError:
+        raw_needle = None
+    try:
+        data = await storage.get(file.storage_key)
+        raw_hit = raw_needle in data if raw_needle is not None else True
+        text = data.decode("utf-8")
     except (UnicodeDecodeError, OSError, ValueError):
         return None
     except Exception:
         # 不把底层存储异常暴露给模型；本次检索继续扫描其它文件。
         return None
-    return _make_line_matches(text.splitlines(), needle, context_lines, limit, case_sensitive)
+    if not raw_hit:
+        return [], False
+    return _make_line_matches(
+        text.splitlines(), needle, context_lines, limit, case_sensitive,
+        ideograph_query=ideograph_query,
+    )
 
 
 async def _scan_stream_candidate(storage, file, needle, context_lines, limit, case_sensitive):
+    ideograph_query = not case_sensitive and _is_casefold_safe_ideograph_query(needle)
     matches: list[dict] = []
     preceding: list[tuple[int, str]] = []
     last_selected_line = -1
@@ -167,7 +197,7 @@ async def _scan_stream_candidate(storage, file, needle, context_lines, limit, ca
                 if match["line"] < line_index <= match["line"] + context_lines:
                     match["context"].append({"line": line_index, "text": line})
 
-            searchable_line = line if case_sensitive else line.casefold()
+            searchable_line = line if case_sensitive or ideograph_query else line.casefold()
             if needle in searchable_line:
                 if len(matches) >= limit:
                     extra_hit = True
