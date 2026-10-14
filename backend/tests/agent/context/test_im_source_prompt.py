@@ -32,3 +32,5 @@ def test_connected_wechat_is_shown_during_another_im_source_session():
     )
 
     assert "微信 已连 ✅" in dynamic
+    assert "以本段系统读取的状态为准" in dynamic
+    assert "不要声称看不到 IM 状态或没有查询入口" in dynamic
