@@ -308,7 +308,7 @@ class CalendarSkill(BaseSkill):
             name="list_events",
             label="查询日历事件",
             description_short='查询日历事件；支持按日期范围和类型筛选。',
-            description="查询日历事件，可按日期范围和类型筛选；from/to 传日期字符串。每个活动都会带 reminders 数组，元素可直接用于 update_event 的完整提醒配置。",
+            description="查询日历事件，可按日期范围和类型筛选；from/to 传日期字符串。每个活动都会带 reminders 数组，元素可直接用于 update_event 的完整提醒配置。用户查看日程且结果跨至少 3 个日期并有至少 4 项活动时，首轮答复默认附 Mermaid timeline；单日或少量活动用清单，图表日期和时间必须来自查询结果。",
             input_schema={
                 "type": "object",
                 "properties": {

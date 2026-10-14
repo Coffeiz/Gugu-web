@@ -49,7 +49,7 @@ class OverviewSkill(BaseSkill):
         Tool(
             name="get_upcoming", label="近期待办",
             description_short='汇总近期项目和活动。',
-            description="汇总近期（默认 7 天内）要截止的项目与日历事件，按日期排序。用于回答「最近要忙什么」。",
+            description="汇总近期（默认 7 天内）要截止的项目与日历事件，按日期排序。用于回答「最近要忙什么」。若结果跨至少 3 个日期且有至少 4 项安排，首轮答复默认附 Mermaid timeline；只展示返回的日期和事项，不推断持续时间。",
             input_schema={
                 "type": "object",
                 "properties": {
