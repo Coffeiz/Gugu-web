@@ -43,7 +43,7 @@ def test_existing_smart_settings_become_markdown_without_changing_other_choices_
         ).all()
         assert values == [("markdown", "markdown"), ("compat", "markdown")]
         private_default = next(
-            column["dflt_value"]
+            column["default"]
             for column in sa.inspect(connection).get_columns("user_bots")
             if column["name"] == "private_message_format"
         )
@@ -56,7 +56,7 @@ def test_existing_smart_settings_become_markdown_without_changing_other_choices_
             "SELECT group_message_format, private_message_format FROM user_bots ORDER BY id"
         ).all() == values
         private_default = next(
-            column["dflt_value"]
+            column["default"]
             for column in sa.inspect(connection).get_columns("user_bots")
             if column["name"] == "private_message_format"
         )
