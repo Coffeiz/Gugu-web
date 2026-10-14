@@ -80,14 +80,30 @@ function toRgba(color, alpha) {
   return `rgba(${red}, ${green}, ${blue}, ${alpha})`
 }
 
+function resolveCanvasColor(palette, family, mode) {
+  const familyColors = FAMILY_COLORS[family]
+  if (family !== 'glass' || palette === 'mist') return familyColors[mode].canvas
+
+  // glass 的非默认配色改用 material-composition.css：面板底色由 palette-surface
+  // 派生。保持和 Web 的 --surface-canvas-card 一致，避免 Mermaid 色阶继续混入旧蓝灰底。
+  const paletteSurface = mode === 'dark'
+    ? mixColors(palette[mode].primary, '#1e2133', 0.05)
+    : mixColors(palette[mode].primary, '#ffffff', 0.05)
+  return mode === 'dark'
+    ? mixColors(paletteSurface, '#121424', 0.86)
+    : mixColors(paletteSurface, '#ffffff', 0.9)
+}
+
 /** IM 使用账号已保存的显示主题，按与 Web CSS token 相同的混色比例生成图表颜色。 */
 export function resolveMermaidThemeColors(preferences = {}) {
   const palette = PALETTE_COLORS[preferences.palette] || PALETTE_COLORS.mist
-  const family = FAMILY_COLORS[preferences.themeFamily] || FAMILY_COLORS.glass
+  const familyName = Object.hasOwn(FAMILY_COLORS, preferences.themeFamily) ? preferences.themeFamily : 'glass'
+  const family = FAMILY_COLORS[familyName]
   const mode = preferences.theme === 'dark' ? 'dark' : 'light'
   const paletteColors = palette[mode]
   const familyColors = family[mode]
-  const primaryColor = mixColors(paletteColors.primary, familyColors.canvas, 0.15)
+  const canvasColor = resolveCanvasColor(palette, familyName, mode)
+  const primaryColor = mixColors(paletteColors.primary, canvasColor, 0.15)
   // Web 对非 café 调色板的状态色会混入 18% 次级文字色；IM 复用同一条规则，
   // 这样 Mermaid 自动生成的状态色阶不会比页面上的状态标记更鲜艳。
   const successColor = preferences.palette === 'cafe'
@@ -96,7 +112,7 @@ export function resolveMermaidThemeColors(preferences = {}) {
   const warningColor = preferences.palette === 'cafe'
     ? paletteColors.warning
     : mixColors(paletteColors.warning, familyColors.secondaryText, 0.82)
-  const clusterBackground = mixColors(warningColor, familyColors.canvas, 0.45)
+  const clusterBackground = mixColors(warningColor, canvasColor, 0.45)
   const lineColor = familyColors.secondaryText
 
   return {
@@ -109,7 +125,7 @@ export function resolveMermaidThemeColors(preferences = {}) {
     lineColor,
     arrowheadColor: lineColor,
     edgeLabelBackground: primaryColor,
-    secondaryColor: mixColors(successColor, familyColors.canvas, 0.45),
+    secondaryColor: mixColors(successColor, canvasColor, 0.45),
     tertiaryColor: clusterBackground,
     clusterBkg: clusterBackground,
     clusterBorder: toRgba(paletteColors.primary, 0.34),
