@@ -149,10 +149,22 @@ async function refreshSessions() {
   if (!connected.value) return
   sessions.value = await listGuguSessions()
 }
+function runSources() {
+  const source = activeSession.value?.source || 'web'
+  return [...new Set([source, 'web'])]
+}
+async function loadSessionRuns(options: { limit?: number; before?: number } = {}) {
+  const sessionId = activeId.value
+  if (sessionId == null) return []
+  const batches = await Promise.all(
+    runSources().map(source => listRuns(sessionId, source, options).catch(() => [])),
+  )
+  const unique = new Map(batches.flat().map(run => [run.id, run]))
+  return [...unique.values()].sort((a, b) => (b.started_at - a.started_at) || b.id.localeCompare(a.id))
+}
 async function refreshRuns() {
   if (!activeId.value) { runs.value = []; return }
-  const source = activeSession.value?.source || 'web'
-  runs.value = await listRuns(activeId.value, source, { limit: 20 }).catch(() => [])
+  runs.value = (await loadSessionRuns({ limit: 20 })).slice(0, 20)
   hasOlderRuns.value = runs.value.length >= 20
 }
 async function refreshLiveRun(runId: string) {
@@ -165,8 +177,7 @@ async function refreshLiveRun(runId: string) {
   spanHasMore.value = { ...spanHasMore.value, [runId]: Boolean(page.hasMore) }
 }
 function onTraceEvent(event: { run_id: string; session_key: string; status: string }) {
-  const source = activeSession.value?.source || 'web'
-  if (!activeId.value || event.session_key !== `gugu:${source}:${activeId.value}`) return
+  if (!activeId.value || !runSources().some(source => event.session_key === `gugu:${source}:${activeId.value}`)) return
   void (async () => {
     await refreshRuns()
     if (sessionView.value !== 'monitor') return
@@ -179,8 +190,7 @@ async function loadOlderRuns() {
   const oldest = runs.value[runs.value.length - 1]
   loadingOlderRuns.value = true
   try {
-    const source = activeSession.value?.source || 'web'
-    const older = await listRuns(activeId.value, source, { limit: 20, before: oldest.started_at })
+    const older = await loadSessionRuns({ limit: 20, before: oldest.started_at })
     const existing = new Set(runs.value.map(run => run.id))
     const unique = older.filter(run => !existing.has(run.id))
     runs.value = [...runs.value, ...unique]
