@@ -26,11 +26,17 @@
 - **Mermaid previews**: refine chart styling and preview interactions.
 - **Workspace names**: make workspace name editing easier to use.
 - **Prompt caching**: preserve reusable model context across compaction and reflection requests.
+- **Search summaries**: include links to the sources behind key findings.
 
 #### Fixes
 
 - Keep Mermaid labels within node boundaries and preserve text and diagram order in mixed IM replies.
 - Parse fenced Markdown correctly in Telegram replies.
+- Preserve Markdown task checkbox state when entering and canceling edit mode.
+- Copy Markdown code blocks in browsers where the Clipboard API is unavailable.
+- Avoid reloading a file preview when a local save event reports unchanged content.
+- Restore source card controls after cross-surface drag operations.
+- Refresh the chat title after unlinking its workspace.
 - Show concise IM tool completion status without sending tool inputs or raw results.
 - Reconcile legacy file-library quota records before permanently deleting files from the trash.
 
@@ -59,11 +65,17 @@
 - **Mermaid 预览**：优化图表样式和预览交互。
 - **工作区名称**：优化工作区名称编辑体验。
 - **提示词缓存**：压缩和反思请求会保留可复用的模型上下文，提升缓存复用。
+- **搜索汇总**：为主要结论附上实际参考的信息源链接。
 
 #### 修复
 
 - 修复 Mermaid 标签超出节点边界，以及 IM 图文混排时文字和图表顺序不正确的问题。
 - 修复 Telegram 回复中的 Markdown 围栏解析。
+- Markdown 预览进入或取消编辑时保留任务框勾选状态。
+- Clipboard API 不可用时仍可复制 Markdown 代码块。
+- 本地保存事件确认内容未变时，不重复刷新文件预览。
+- 跨视图拖放后恢复源卡片操作按钮。
+- 解除工作区绑定后立即刷新会话标题。
 - IM 工具交互只展示完成状态，避免发送调用参数和原始结果。
 - 清空回收站时先校准旧配额记录，避免文件删除后清理任务失败。
 
