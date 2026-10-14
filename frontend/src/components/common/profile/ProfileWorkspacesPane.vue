@@ -39,7 +39,10 @@
           <div class="pm-workspace-main">
             <div class="pm-workspace-title-row">
               <Icon :name="item.kind === 'project' ? 'admin.folders' : 'admin.folder'" size="sm" tone="inherit" />
-              <input v-if="editingId === item.id" v-model="editingName" class="pm-workspace-input" maxlength="200" @keyup.enter="saveName(item)" @keyup.esc="cancelEdit" />
+              <span v-if="editingId === item.id" class="rename-sizer pm-workspace-rename-sizer">
+                <span class="rename-ghost">{{ editingName || ' ' }}</span>
+                <input v-model="editingName" class="rename-input-inline pm-workspace-input" :aria-label="t('sharedUi.rename')" maxlength="200" @keyup.enter="saveName(item)" @keyup.esc="cancelEdit" />
+              </span>
               <span v-else class="pm-workspace-name">{{ item.name }}</span>
               <span v-if="item.isDefault" class="pm-workspace-badge">{{ t('profileWorkspacesUi.default') }}</span>
             </div>
@@ -213,9 +216,8 @@ watch(() => liveStore.resourceEvent, (event) => {
 .pm-workspace-main { min-width: 0; }
 .pm-workspace-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--content-primary); }
 .pm-workspace-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 650; }
-.pm-workspace-input { min-width: 0; width: min(360px, 100%); box-sizing: border-box; height: var(--rename-input-height); padding: var(--rename-input-padding); border: 1px solid var(--rename-input-border); border-radius: var(--rename-input-radius); outline: none; background: var(--rename-input-bg); color: var(--rename-input-fg); font: var(--font-size-sm) var(--font-sans); line-height: var(--rename-input-height); box-shadow: var(--input-hover-shadow), 0 0 0 0 transparent; transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard); }
-.pm-workspace-input:hover { border-color: var(--input-border-hover); background: var(--input-bg-hover); box-shadow: var(--input-hover-shadow), 0 0 0 0 transparent; }
-.pm-workspace-input:focus { border-color: var(--input-border-focus); background: var(--input-bg-focus); box-shadow: var(--input-hover-shadow), var(--input-focus-shadow); }
+.pm-workspace-rename-sizer { min-width: 0; max-width: min(360px, 100%); font-size: 14px; font-weight: 650; line-height: var(--line-height-ui); }
+.pm-workspace-input { font: inherit; }
 .pm-workspace-meta { margin-top: 5px; color: var(--content-secondary); font-size: 12px; }
 .pm-workspace-badge { flex: 0 0 auto; padding: 2px 7px; border-radius: var(--radius-pill); background: var(--workspace-badge-bg); color: var(--workspace-badge-fg); font-size: 11px; }
 .pm-workspace-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; }
