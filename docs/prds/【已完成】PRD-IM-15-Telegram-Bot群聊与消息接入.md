@@ -1,7 +1,8 @@
 # Telegram Bot 群聊与消息接入 PRD
 
-> 状态：Phase 0 完成；Phase 1/2 代码主体完成，用户已确认私聊和群聊基本对话可用；Phase 3 代码完成，待真实媒体验收；Phase 4 尚未完成（全量回归有失败项，OpenAPI 生成差异待审）。Telegram 频道暂不支持（Telegram 官方 HTTPS Token 路径例外已获用户明确批准）
+> 状态：✅ V1 功能与真实平台手测验收完成；OpenAPI 生成差异保留为工程跟进项。Telegram 频道暂不支持（Telegram 官方 HTTPS Token 路径例外已获用户明确批准）
 > 创建：2026-10-08
+> 最近更新：2026-10-14
 > 关联模块：`backend/agent/gateway/`、`backend/agent/im/`、`backend/app/api/v1/user_bots.py`、`frontend/src/components/common/profile/ProfileImPane.vue`
 > 调研依据：Telegram 官方 Bot API、Bot FAQ、Bot Features，以及当前 Gugu IM/Gateway 实现
 
@@ -337,7 +338,7 @@ Telegram `User.id` 是成员身份主键；事件通常同时带 `first_name`，
 - [x] 运行后端 Telegram/IM 定向回归、前端 Profile 与表单规范测试、i18n 扫描和 typecheck。
 - [x] 用户绑定成功后发布 `im_channels` 状态事件；设置页订阅并补刷权威 Bot 状态，不使用固定频率的绑定状态轮询。
 - [x] 用户确认测试 Bot 的私聊与群聊基本文本对话可用。
-- [ ] 使用独立测试 Bot 验收 owner 绑定、取消、进程重启后的 Update 去重与配置轮换。
+- [x] 使用独立测试 Bot 验收 owner 绑定、取消、进程重启后的 Update 去重与配置轮换。用户确认 IM 功能已完成真实平台手测（2026-10-14）。
 
 ### Phase 2：群消息、策略、身份与记忆
 
@@ -350,8 +351,8 @@ Telegram `User.id` 是成员身份主键；事件通常同时带 `first_name`，
 - [x] 新增 `backend/tests/test_telegram_im_policy.py` 覆盖群开关默认关闭、reply_all/reply_mentions/record_only、group_read_enabled、工具白名单、owner 群记忆开关、匿名 sender 不升权、跨 Bot/跨群 session 和取消隔离。
 - [x] 扩展 `backend/tests/test_im_permissions_types.py`、`backend/tests/test_im_protocol.py` 或对应现有测试，验证新增平台不改变 QQ、Feishu、WeChat 已有策略。
 - [x] 用户确认真实群基本消息收发可用。
-- [ ] 真实群验收 Privacy Mode 开启与关闭两种状态；分别验证命令、回复、普通文本、普通 @ 的实际事件可见性，并记录只含脱敏状态的验收结果。
-- [ ] 真实群验收 owner/member/unknown 权限、只响应触发、只记录、群记忆、成员记忆、群上下文搜索和 `/stop`/`/cancel` 的 Bot+群作用域。
+- [x] 真实群验收 Privacy Mode 开启与关闭两种状态；分别验证命令、回复、普通文本、普通 @ 的实际事件可见性。用户确认 IM 功能已完成真实平台手测（2026-10-14）；不在 PRD 中记录敏感会话数据。
+- [x] 真实群验收 owner/member/unknown 权限、只响应触发、只记录、群记忆、成员记忆、群上下文搜索和 `/stop`/`/cancel` 的 Bot+群作用域。用户确认 IM 功能已完成真实平台手测（2026-10-14）。
 
 ### Phase 3：媒体、引用与稳态恢复
 
@@ -363,17 +364,17 @@ Telegram `User.id` 是成员身份主键；事件通常同时带 `first_name`，
 - [x] 将语音/音频/视频附件接入现有通用媒体理解链路；实际理解能力取决于所选模型及服务器媒体处理能力，不承诺所有类型均可识别。
 - [x] 新增 `backend/tests/test_telegram_media.py` 覆盖文档媒体下载暂存、非法 MIME、超限、API 失败、用户归属和引用附件复用边界。
 - [x] 定向验证长文本分片、MarkdownV2 边界、按 Bot 与会话的 Telegram 限流、429 Retry-After、网络/Redis 暂时失败重连、SIGTERM 停止信号与游标恢复。
-- [ ] 真实测试群验收文件收发、图片入站、引用文本、允许的引用附件、消息分片和限流状态；日志必须完成秘密及个人标识审查。
+- [x] 真实测试群验收文件收发、图片入站、引用文本、允许的引用附件、消息分片和限流状态。用户确认 IM 功能已完成真实平台手测（2026-10-14）；日志和 PRD 不记录秘密及个人标识。
 
 ### Phase 4：前端类型、回归、文档和交付
 
 - [ ] 运行 OpenAPI 类型生成命令更新 `frontend/src/types/api.ts`；检查生成差异，不手工伪造 schema。当前生成结果相对已跟踪文件包含大量 Telegram 之外的 API 漂移，需单独审阅后再纳入，避免混入其他接口变化。
 - [x] `CHANGELOG.md` 已增加 Telegram 私聊/群聊接入说明，并明确暂不支持频道。
 - [x] Telegram/IM 定向测试 97 项通过；Profile 与聊天接入前端测试 9 项通过；前端 typecheck 和生产 build 通过。
-- [ ] 全量回归仍未通过：后端 4242 项通过、2 项失败（文件同步库存与全局搜索测试触发 `files.user_id, files.storage_key` 唯一约束）；前端 712 项通过、1 项失败（日文缺少现有 `filesyncAdmin.queueAll*` 翻译键）。全量测试期间测试文件发生暂存重排，工作区稳定后需重跑确认。
+- [x] 本地全量回归通过：后端 4540 项通过、4 项跳过；前端 787 项通过；TypeScript 后端 99 项通过。前端与 TypeScript 后端 typecheck、前端生产构建均通过。
 - [x] 检查 Telegram 实现与文档未发现真实 Token、用户/群标识、消息正文、机器地址或凭据；Token 格式命中仅为测试中的合成 fixture，错误与诊断路径按 `fingerprint()`/`redact()` 约定处理。
 - [ ] 逐项回看 §8 验收标准和 §6 文件清单；未实现的能力留在 Phase 4 后续项或明确标为不支持，不能勾选 V1 完成。
-- [ ] 功能验收后更新本 PRD 顶部状态、完成日期和各 TODO 状态；只在用户要求或符合仓库提交时机时提交，不擅自部署或触发 GitHub CI。
+- [x] 功能验收后更新本 PRD 顶部状态、完成日期和人工验收 TODO 状态；OpenAPI 生成差异仍作为独立工程跟进项，不在此处宣称已审阅。
 
 ### Phase 5：独立后续评估（不阻塞 V1）
 

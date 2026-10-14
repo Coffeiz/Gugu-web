@@ -1,8 +1,8 @@
 # PRD-MERMAID-1：统一 Mermaid 图表体验与跨端 PNG 输出
 
-> 状态：Phase 0/1/2/3 已完成；Phase 4 前端、容器自动化复核完成，等待真实 IM 客户端验收
+> 状态：✅ 已完成（前端、容器及真实 IM 客户端手测验收完成）
 > 创建：2026-10-12
-> 最近更新：2026-10-13
+> 最近更新：2026-10-14
 > 所属层：前端内容展示、Agent 输出、IM Gateway
 > 关联模块：`frontend/src/components/common/content/MarkdownView.vue`、`frontend/src/components/common/viewers/TextViewer.vue`、`frontend/src/components/common/gugu-chat/markdown.ts`、`frontend/src/utils/markdown.ts`、`frontend/src/utils/mermaidTheme.ts`、`frontend/src/utils/mermaidInteraction.ts`、`backend/agent/prompts/persona.md`、`backend/agent/im/loop.py`、`backend/agent/im/replies.py`、`backend/agent/gateway/qq.py`、`backend/agent/gateway/feishu.py`、`backend/agent/gateway/telegram.py`、`backend/agent/gateway/wechat.py`
 > 关联文档：[[PRD-UI-4-统一弹层与模态交互架构]]、[[PRD-UI-6-前端国际化与文案归拢方案]]、[[PRD-IM-12-QQ消息格式兼容策略]]、[[PRD-IM-13-QQ私聊流式回复]]、[[PRD-IM-14-飞书工具调用摘要卡片]]
@@ -290,8 +290,8 @@ backend/
 - 复核发现容器运行时必须显式提供 `libseccomp2`，否则 Python 无法在 exec 前安装禁网过滤器；两个 Dockerfile 已显式安装，并在镜像构建时断言动态库可加载。测试也保护“隔离安装失败时绝不启动 Node”的失败关闭行为。
 - devserver 成功构建集成镜像与独立生产镜像，大小分别约 910 MB、571 MB。两种镜像均在 `--network none`、512 MiB、1 CPU 容器限制下真实渲染出 PNG；两个验收临时镜像已移除，既有构建缓存未清理。
 - 集成镜像首次构建发现 Mermaid 依赖检查用了错误工作目录，修正后复建通过。`docker build --check` 仅报告 Dockerfile 原有的空密码/密钥 `ENV` 静态警告，没有与本次新增语句相关的新警告。
-- 真实 IM 客户端收件、缩放预览和多段消息顺序仍需人工测试账号验证；自动化 Gateway 契约不能替代该验收，因此 `MERMAID-010` 暂不勾选。
-- 图表覆盖升级：前端与 IM renderer 统一锁定 Mermaid 12.1.0，并注册官方 `@mermaid-js/mermaid-zenuml` 1.0.1；运行时基线为 Node >=22.12。目标覆盖 Mermaid 12.1.0 全部内置图表类型。此项尚待构建及真实 IM 图表验收，不代表验收已通过。
+- 用户于 2026-10-14 确认 IM 与 Mermaid 已完成真实客户端手测；人工验收不再待办。具体手测结果已由用户确认，本文不记录账号、消息正文或其他敏感数据。
+- 图表覆盖升级：前端与 IM renderer 统一锁定 Mermaid 12.1.0，并注册官方 `@mermaid-js/mermaid-zenuml` 1.0.1；运行时基线为 Node >=22.12。用户确认 Mermaid 跨端手测完成。
 
 ## 8. 风险与缓解
 
@@ -377,4 +377,4 @@ backend/
 
 ### Phase 4：总体复查
 
-- [ ] `MERMAID-010` 对照本 PRD 复查全部需求、TODO、测试和部署影响。验收：无未实现的 P0/P1 需求；所有延期项和平台限制有记录；前端及 IM 的 Mermaid 版本与输出规范一致。
+- [x] `MERMAID-010` 对照本 PRD 复查全部需求、TODO、测试和部署影响。验收：无未实现的 P0/P1 需求；所有延期项和平台限制有记录；前端及 IM 的 Mermaid 版本与输出规范一致。用户确认真实 IM 客户端手测完成（2026-10-14）。

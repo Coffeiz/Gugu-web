@@ -31,6 +31,8 @@
 
 - Keep Mermaid labels within node boundaries and preserve text and diagram order in mixed IM replies.
 - Parse fenced Markdown correctly in Telegram replies.
+- Show concise IM tool completion status without sending tool inputs or raw results.
+- Reconcile legacy file-library quota records before permanently deleting files from the trash.
 
 #### Contributors
 
@@ -62,6 +64,8 @@
 
 - 修复 Mermaid 标签超出节点边界，以及 IM 图文混排时文字和图表顺序不正确的问题。
 - 修复 Telegram 回复中的 Markdown 围栏解析。
+- IM 工具交互只展示完成状态，避免发送调用参数和原始结果。
+- 清空回收站时先校准旧配额记录，避免文件删除后清理任务失败。
 
 #### 贡献者
 
