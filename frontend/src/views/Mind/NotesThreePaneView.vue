@@ -147,10 +147,10 @@
             <div class="rp-divider"></div>
             <NoteEditor ref="noteEditorRef" v-model="editMd" :autofocus="true" :expand-drawers="true" class="rp-editor" @submit="finishEdit">
               <template #foot-actions>
-                <ActionButton variant="primary" fit @click="finishEdit">
+                <ActionButton variant="primary" fit class="rp-foot-action" @click="finishEdit">
                   <PhCheck :size="14" weight="bold" /> {{ t('mindUi.editDone') }}
                 </ActionButton>
-                <ActionButton variant="secondary" fit @click="cancelEdit">
+                <ActionButton variant="secondary" fit class="rp-foot-action" @click="cancelEdit">
                   <PhX :size="14" weight="bold" /> {{ t('common.actions.cancel') }}
                 </ActionButton>
               </template>
@@ -945,7 +945,8 @@ function onListScroll() {
 .rp-body { font-size: 14px; margin-top: 14px; }
 .rp-divider ~ .rp-body-wrap .rp-body { margin-top: 0; }
 .rp-foot { flex: none; display: flex; justify-content: flex-end; align-items: center; gap: 8px; padding-top: 12px; }
-.rp-foot .app-action-button.is-secondary {
+.rp-foot .app-action-button.is-secondary,
+.rp-editor :deep(.app-action-button.is-secondary) {
   --action-secondary-bg: var(--surface-card-solid);
   --action-secondary-border: color-mix(in srgb, var(--content-primary) 24%, transparent);
   --action-secondary-border-hover: color-mix(in srgb, var(--content-primary) 40%, transparent);
