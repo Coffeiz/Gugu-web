@@ -300,6 +300,24 @@ async function doAutoSave(targetKey: string | number, content: string) {
 // 行号没有线性对应关系（标题/段落/代码块各自高度不同），只能按滚动比例（scrollTop / 可滚动
 // 距离）估算。
 let scrollFrac = 0
+let taskCheckboxStates: Map<number, boolean> | null = null
+
+function captureTaskCheckboxStates() {
+  const root = mdRoot.value
+  if (!root) return null
+  return new Map([...root.querySelectorAll<HTMLInputElement>('input[type="checkbox"][data-task]')]
+    .map(checkbox => [Number(checkbox.dataset.task), checkbox.checked] as const))
+}
+
+function restoreTaskCheckboxStates() {
+  const root = mdRoot.value
+  if (!root || !taskCheckboxStates) return
+  for (const checkbox of root.querySelectorAll<HTMLInputElement>('input[type="checkbox"][data-task]')) {
+    const checked = taskCheckboxStates.get(Number(checkbox.dataset.task))
+    if (checked !== undefined) checkbox.checked = checked
+  }
+  taskCheckboxStates = null
+}
 
 function captureScroll(el: HTMLElement | null) {
   if (!isMarkdownFile.value || !el) return
@@ -314,6 +332,7 @@ function applyScroll(el: HTMLElement | null) {
 
 async function startEdit() {
   captureScroll(tvScroll.value)
+  taskCheckboxStates = captureTaskCheckboxStates()
   editText.value = rawText.value
   saveError.value = ''
   cmView.value = null
@@ -332,7 +351,10 @@ function cancelEdit() {
   cmView.value = null
   mdEditorReady.value = false
   editing.value = false
-  nextTick(() => applyScroll(tvScroll.value))
+  nextTick(() => {
+    restoreTaskCheckboxStates()
+    applyScroll(tvScroll.value)
+  })
 }
 async function saveEdit() {
   saving.value = true
@@ -350,6 +372,7 @@ async function saveEdit() {
     mdEditorReady.value = false
     cmView.value = null
     editing.value = false
+    taskCheckboxStates = null
     await nextTick()
     applyScroll(tvScroll.value)
   } catch (e) {
@@ -469,16 +492,41 @@ async function toggleTask(idx: number, cb: HTMLInputElement) {
 }
 
 // ── md 区域点击（事件委托）：任务勾选框/复制按钮/文件库相对链接 ──
+async function copyCodeToClipboard(text: string): Promise<boolean> {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text)
+      return true
+    } catch { /* 非安全上下文或权限拒绝时尝试兼容复制 */ }
+  }
+
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', '')
+  textarea.setAttribute('aria-hidden', 'true')
+  textarea.style.cssText = 'position:fixed;top:-9999px;left:0;opacity:0'
+  document.body.appendChild(textarea)
+  try {
+    textarea.focus()
+    textarea.select()
+    return document.execCommand('copy')
+  } catch {
+    return false
+  } finally {
+    textarea.remove()
+  }
+}
+
 async function onMdClick(e: MouseEvent) {
   const cb = (e.target as HTMLElement).closest('input[type="checkbox"][data-task]') as HTMLInputElement | null
   if (cb) { toggleTask(Number(cb.dataset.task), cb); return }   // 不 preventDefault：原生勾选即时显示
   const btn = (e.target as HTMLElement).closest('.md-copy-btn') as HTMLElement | null
   if (btn) {
     const code = btn.closest('.md-pre')?.querySelector('code')?.textContent ?? ''
-    navigator.clipboard.writeText(code).then(() => {
+    if (await copyCodeToClipboard(code)) {
       btn.classList.add('md-copied')
       setTimeout(() => btn.classList.remove('md-copied'), 2000)
-    })
+    }
     return
   }
 
@@ -579,6 +627,7 @@ watch(() => [props.blobUrl, props.ext, props.sourceText], async ([url, ext, sour
   error.value     = null
   truncated.value = false
   editing.value   = false   // 切换文件/重新加载时退出编辑态，别把上一份文件的编辑框留着
+  taskCheckboxStates = null
   cmLoadSeq++
   mdEditorReady.value = false
   cmView.value    = null
