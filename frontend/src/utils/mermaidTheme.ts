@@ -7,6 +7,8 @@ export type MermaidThemeColors = {
   edgeLabelBackground: string
   secondaryColor: string
   tertiaryColor: string
+  clusterBkg: string
+  clusterBorder: string
 }
 
 /** 从页面 CSS token 解析 Mermaid 配色，跟随当前主题和调色板。 */
@@ -38,15 +40,20 @@ export function resolveMermaidThemeColors(dark: boolean): MermaidThemeColors {
     'color-mix(in srgb, var(--color-primary) 15%, var(--surface-canvas-card))',
     dark ? '#382f31' : '#eee9e8',
   )
+  const clusterBkg = resolve(
+    'color-mix(in srgb, var(--status-info) 5%, var(--surface-canvas-card))',
+    dark ? '#232a31' : '#f2f5f6',
+  )
   const lineColor = resolve('var(--text-secondary)', dark ? '#c9c3d5' : '#67647a')
+  const primaryBorderColor = resolve(
+    'var(--action-outline)',
+    dark ? 'rgba(190, 157, 152, 0.34)' : 'rgba(113, 86, 83, 0.34)',
+  )
   const colors = {
     primaryColor,
     primaryTextColor: resolve('var(--text-primary)', dark ? '#f2eff7' : '#272532'),
-    // 默认节点跟随用户当前配色的主色，而不是语义状态色或中性玻璃底色。
-    primaryBorderColor: resolve(
-      'var(--action-outline)',
-      dark ? 'rgba(190, 157, 152, 0.34)' : 'rgba(113, 86, 83, 0.34)',
-    ),
+    // 默认节点跟随主色；分组使用不同色相的辅色，避免与节点填充混淆。
+    primaryBorderColor,
     lineColor,
     arrowheadColor: lineColor,
     edgeLabelBackground: primaryColor,
@@ -58,6 +65,8 @@ export function resolveMermaidThemeColors(dark: boolean): MermaidThemeColors {
       'color-mix(in srgb, var(--status-warning) 45%, var(--surface-canvas-card))',
       dark ? '#453c31' : '#f4eee5',
     ),
+    clusterBkg,
+    clusterBorder: primaryBorderColor,
   }
 
   probe.remove()

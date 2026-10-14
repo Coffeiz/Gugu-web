@@ -14,24 +14,24 @@ const EDGE_LABEL_RADIUS_PX = 8
 
 const PALETTE_COLORS = Object.freeze({
   mist: {
-    light: { primary: '#7b7fb2', success: '#5a9e88', warning: '#b07858' },
-    dark: { primary: '#9590c4', success: '#80b4a2', warning: '#cea07f' },
+    light: { primary: '#7b7fb2', success: '#5a9e88', warning: '#b07858', info: '#6f9eaa' },
+    dark: { primary: '#9590c4', success: '#80b4a2', warning: '#cea07f', info: '#8bc7d6' },
   },
   cafe: {
-    light: { primary: '#715653', success: '#5e8877', warning: '#917451' },
-    dark: { primary: '#be9d98', success: '#92b9a7', warning: '#c5a77f' },
+    light: { primary: '#715653', success: '#5e8877', warning: '#917451', info: '#647d8a' },
+    dark: { primary: '#be9d98', success: '#92b9a7', warning: '#c5a77f', info: '#a1b9c5' },
   },
   rose: {
-    light: { primary: '#b17e86', success: '#89a58e', warning: '#b39a75' },
-    dark: { primary: '#d8aeb5', success: '#abc8b0', warning: '#d1b88d' },
+    light: { primary: '#b17e86', success: '#89a58e', warning: '#b39a75', info: '#7f9eaa' },
+    dark: { primary: '#d8aeb5', success: '#abc8b0', warning: '#d1b88d', info: '#a7c4cf' },
   },
   sky: {
-    light: { primary: '#738bb0', success: '#84a598', warning: '#ae9977' },
-    dark: { primary: '#abc0d8', success: '#a9c8b6', warning: '#cfb88e' },
+    light: { primary: '#738bb0', success: '#84a598', warning: '#ae9977', info: '#708faf' },
+    dark: { primary: '#abc0d8', success: '#a9c8b6', warning: '#cfb88e', info: '#a3c5da' },
   },
   sage: {
-    light: { primary: '#74968b', success: '#789d8c', warning: '#ad9977' },
-    dark: { primary: '#aacabd', success: '#a6c9b5', warning: '#ceb88e' },
+    light: { primary: '#74968b', success: '#789d8c', warning: '#ad9977', info: '#709da4' },
+    dark: { primary: '#aacabd', success: '#a6c9b5', warning: '#ceb88e', info: '#9fcfd0' },
   },
 })
 
@@ -112,7 +112,9 @@ export function resolveMermaidThemeColors(preferences = {}) {
   const warningColor = preferences.palette === 'cafe'
     ? paletteColors.warning
     : mixColors(paletteColors.warning, familyColors.secondaryText, 0.82)
-  const clusterBackground = mixColors(warningColor, canvasColor, 0.45)
+  // Mermaid 分组底色属于结构层级，使用不同色相的浅辅色；警告色留给状态和第三色阶。
+  const clusterBackground = mixColors(paletteColors.info, canvasColor, 0.05)
+  const tertiaryBackground = mixColors(warningColor, canvasColor, 0.45)
   const lineColor = familyColors.secondaryText
 
   return {
@@ -126,7 +128,7 @@ export function resolveMermaidThemeColors(preferences = {}) {
     arrowheadColor: lineColor,
     edgeLabelBackground: primaryColor,
     secondaryColor: mixColors(successColor, canvasColor, 0.45),
-    tertiaryColor: clusterBackground,
+    tertiaryColor: tertiaryBackground,
     clusterBkg: clusterBackground,
     clusterBorder: toRgba(paletteColors.primary, 0.34),
   }
