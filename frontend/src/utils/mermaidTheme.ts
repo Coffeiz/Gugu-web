@@ -13,7 +13,9 @@ export type MermaidThemeColors = {
 export function resolveMermaidThemeColors(dark: boolean): MermaidThemeColors {
   const probe = document.createElement('span')
   const canvas = document.createElement('canvas')
-  const context = canvas.getContext('2d')
+  // 这里只把少量 CSS 颜色绘制到 1×1 画布并连续读回，启用读回优化以避免
+  // Chromium 对频繁 getImageData 的性能警告和不必要的 GPU readback 开销。
+  const context = canvas.getContext('2d', { willReadFrequently: true })
   probe.style.position = 'absolute'
   probe.style.visibility = 'hidden'
   document.body.append(probe)
