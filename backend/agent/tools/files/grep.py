@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import codecs
 
 from app.services.files.corpus import (
     list_grep_candidates,
@@ -19,8 +20,9 @@ _SEARCH_SPACES = ("personal", "project", "workspace")
 _MAX_QUERY_CHARS = 500
 _MAX_CONTEXT_LINES = 20
 _MAX_FILE_BYTES = 4 * 1024 * 1024
+_STREAM_THRESHOLD_BYTES = 1024 * 1024
 _DEFAULT_LIMIT = 50
-_READ_CONCURRENCY = 8
+_READ_CONCURRENCY = 16
 
 
 def _normalise_path(value: str | None) -> str | None:
@@ -75,52 +77,134 @@ def _prepare_candidates(rows, logical_paths: dict[int, str | None], requested_pa
         candidates.append((file, logical_path))
     return candidates, scanned_files, skipped_files
 
-async def _read_candidate_text(storage, file) -> str | None:
+async def _iter_candidate_lines(storage, file):
+    """按 UTF-8 增量解码并保留 ``str.splitlines()`` 的分隔符语义。"""
+    decoder = codecs.getincrementaldecoder("utf-8")()
+    pending = ""
+    line_endings = ("\r\n", "\n", "\r", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029")
+
+    def emit_complete_lines(text: str, *, final: bool):
+        pieces = text.splitlines(keepends=True)
+        if not pieces:
+            return [], ""
+        incomplete = ""
+        if not final:
+            last = pieces[-1]
+            # A trailing CR may pair with LF in the next byte chunk.
+            if not last.endswith(line_endings) or last.endswith("\r"):
+                incomplete = pieces.pop()
+        lines = []
+        for piece in pieces:
+            for ending in line_endings:
+                if piece.endswith(ending):
+                    piece = piece[:-len(ending)]
+                    break
+            lines.append(piece)
+        return lines, incomplete
+
+    async for chunk in storage.iter_chunks(file.storage_key, chunk_size=64 * 1024):
+        decoded = decoder.decode(chunk)
+        lines, pending = emit_complete_lines(pending + decoded, final=False)
+        for line in lines:
+            yield line
+
+    tail = decoder.decode(b"", final=True)
+    lines, pending = emit_complete_lines(pending + tail, final=True)
+    for line in lines:
+        yield line
+    if pending:
+        yield pending
+
+
+def _make_line_matches(lines, needle, context_lines, limit, case_sensitive):
+    hit_indices = []
+    extra_hit = False
+    for index, line in enumerate(lines):
+        searchable_line = line if case_sensitive else line.casefold()
+        if needle in searchable_line:
+            if len(hit_indices) >= limit:
+                extra_hit = True
+                break
+            hit_indices.append(index)
+    matches = [
+        {
+            "line": index + 1,
+            "text": lines[index],
+            "context": [
+                {"line": context_index + 1, "text": lines[context_index]}
+                for context_index in range(
+                    max(0, index - context_lines),
+                    min(len(lines), index + context_lines + 1),
+                )
+            ],
+        }
+        for index in hit_indices
+    ]
+    return matches, extra_hit
+
+
+async def _scan_buffered_candidate(storage, file, needle, context_lines, limit, case_sensitive):
     try:
-        return (await storage.get(file.storage_key)).decode("utf-8")
+        text = (await storage.get(file.storage_key)).decode("utf-8")
     except (UnicodeDecodeError, OSError, ValueError):
         return None
     except Exception:
         # 不把底层存储异常暴露给模型；本次检索继续扫描其它文件。
         return None
+    return _make_line_matches(text.splitlines(), needle, context_lines, limit, case_sensitive)
 
 
-def _matching_lines(lines: list[str], needle: str, case_sensitive: bool, remaining: int) -> list[int]:
-    """最多找出剩余预算 + 1 个命中，足以判断截断且避免收集整篇所有命中行。"""
-    hits = []
-    for index, line in enumerate(lines):
-        searchable_line = line if case_sensitive else line.casefold()
-        if needle in searchable_line:
-            hits.append(index)
-            if len(hits) > remaining:
+async def _scan_stream_candidate(storage, file, needle, context_lines, limit, case_sensitive):
+    matches: list[dict] = []
+    preceding: list[tuple[int, str]] = []
+    last_selected_line = -1
+    extra_hit = False
+    line_index = 0
+    try:
+        async for line in _iter_candidate_lines(storage, file):
+            line_index += 1
+            for match in matches:
+                if match["line"] < line_index <= match["line"] + context_lines:
+                    match["context"].append({"line": line_index, "text": line})
+
+            searchable_line = line if case_sensitive else line.casefold()
+            if needle in searchable_line:
+                if len(matches) >= limit:
+                    extra_hit = True
+                else:
+                    preceding_rows = [
+                        {"line": index, "text": text}
+                        for index, text in preceding
+                        if index >= line_index - context_lines
+                    ]
+                    matches.append({
+                        "line": line_index,
+                        "text": line,
+                        "context": preceding_rows + [{"line": line_index, "text": line}],
+                    })
+                    last_selected_line = line_index
+
+            if context_lines:
+                preceding.append((line_index, line))
+                if len(preceding) > context_lines:
+                    preceding.pop(0)
+
+            if extra_hit and line_index >= last_selected_line + context_lines:
                 break
-    return hits
+    except (UnicodeDecodeError, OSError, ValueError):
+        return None
+    except Exception:
+        # 不把底层存储异常暴露给模型；本次检索继续扫描其它文件。
+        return None
+    return matches, extra_hit
 
 
-def _format_result(file, logical_path: str, lines: list[str], hits: list[int], context_lines: int) -> dict:
-    return {
-        "file_id": file.id,
-        "name": f"{file.display_name}.{file.ext}" if file.ext else file.display_name,
-        "space": file.space,
-        "path": logical_path,
-        "project_id": file.project_id,
-        "folder_id": file.folder_id,
-        "workspace_directory_id": file.workspace_directory_id,
-        "matches": [
-            {
-                "line": index + 1,
-                "text": lines[index],
-                "context": [
-                    {"line": context_index + 1, "text": lines[context_index]}
-                    for context_index in range(
-                        max(0, index - context_lines),
-                        min(len(lines), index + context_lines + 1),
-                    )
-                ],
-            }
-            for index in hits
-        ],
-    }
+async def _scan_one_candidate(storage, file, needle, context_lines, limit, case_sensitive):
+    if (file.size_bytes or 0) <= _STREAM_THRESHOLD_BYTES:
+        return await _scan_buffered_candidate(
+            storage, file, needle, context_lines, limit, case_sensitive,
+        )
+    return await _scan_stream_candidate(storage, file, needle, context_lines, limit, case_sensitive)
 
 
 async def _scan_candidates(candidates, storage, needle, context_lines, limit, case_sensitive):
@@ -129,34 +213,34 @@ async def _scan_candidates(candidates, storage, needle, context_lines, limit, ca
     truncated = False
     for offset in range(0, len(candidates), _READ_CONCURRENCY):
         batch = candidates[offset:offset + _READ_CONCURRENCY]
-        texts = await asyncio.gather(*(
-            _read_candidate_text(storage, file)
+        results = await asyncio.gather(*(
+            _scan_one_candidate(storage, file, needle, context_lines, limit, case_sensitive)
             for file, _ in batch
         ))
-        for (file, logical_path), text in zip(batch, texts):
-            if text is None:
+        for (file, logical_path), scan_result in zip(batch, results):
+            if scan_result is None:
                 skipped_files += 1
                 continue
-
-            lines = text.splitlines()
-            hits = _matching_lines(lines, needle, case_sensitive, limit - total_matches)
-            if not hits:
-                continue
-
+            matches, extra_hit = scan_result
             available = limit - total_matches
-            selected_hits = hits[:available]
-            total_matches += len(selected_hits)
-            truncated = truncated or len(selected_hits) < len(hits)
-            if not selected_hits:
-                break
-
-            grouped.append(_format_result(file, logical_path, lines, selected_hits, context_lines))
+            selected_matches = matches[:available]
+            total_matches += len(selected_matches)
+            truncated = truncated or len(selected_matches) < len(matches) or extra_hit
+            if selected_matches:
+                grouped.append({
+                    "file_id": file.id,
+                    "name": f"{file.display_name}.{file.ext}" if file.ext else file.display_name,
+                    "space": file.space,
+                    "path": logical_path,
+                    "project_id": file.project_id,
+                    "folder_id": file.folder_id,
+                    "workspace_directory_id": file.workspace_directory_id,
+                    "matches": selected_matches,
+                })
             if total_matches >= limit:
                 break
-
         if total_matches >= limit:
             break
-
     return grouped, skipped_files, total_matches, truncated
 
 
@@ -168,7 +252,9 @@ async def _grep_files(db, user_id, args: dict):
 
     # 默认覆盖三个用户文件空间；显式 path 至少先在 SQL 层收窄到对应空间。
     spaces = (requested_path.split("/")[1],) if requested_path else _SEARCH_SPACES
-    rows = await list_grep_candidates(db, user_id=user_id, spaces=spaces)
+    rows = await list_grep_candidates(
+        db, user_id=user_id, spaces=spaces, requested_path=requested_path,
+    )
     logical_paths = await resolve_grep_candidate_paths(db, user_id=user_id, files=rows)
     candidates, scanned_files, skipped_files = _prepare_candidates(
         rows, logical_paths, requested_path,
