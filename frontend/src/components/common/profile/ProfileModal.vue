@@ -346,6 +346,7 @@ async function doDeleteAccount() {
 .pm-bot-item { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; padding: 9px 12px; border-radius: var(--radius-sm); background: var(--subpanel-bg); border: 1px solid var(--subpanel-border); }
 .pm-bot-item-top { display: flex; align-items: center; gap: 10px; }
 .pm-bot-group-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--panel-divider); }
+.pm-bot-item > .pm-bot-group-row { margin-top: 0; }
 .pm-bot-group-row .pm-field-desc { flex: 1; min-width: 0; }
 .pm-bot-tools-row { align-items: center; }
 .pm-tool-options { justify-content: flex-end; flex-wrap: wrap; max-width: 58%; }
