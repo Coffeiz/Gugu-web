@@ -4,6 +4,7 @@ import pytest
 
 from agent.context import builder
 from agent.im.context_policy import IM_SOURCES
+from agent.context import loaders
 from app.services.im_platforms import IM_PLATFORMS
 
 ALL_IM_SOURCES = tuple(dict.fromkeys((*IM_SOURCES, *IM_PLATFORMS)))
@@ -21,6 +22,7 @@ def test_every_registered_im_source_is_named_in_dynamic_prompt(source):
 
     assert f"本次对话来自：**{display_name}**" in dynamic
     assert f"你当前正在通过{display_name}与用户实时聊天。" in dynamic
+    assert f"{display_name}：已连 ✅" in dynamic
 
 
 def test_connected_wechat_is_shown_during_another_im_source_session():
@@ -31,6 +33,31 @@ def test_connected_wechat_is_shown_during_another_im_source_session():
         im_channels={"wechat": True},
     )
 
-    assert "微信 已连 ✅" in dynamic
+    assert "微信：已连 ✅" in dynamic
     assert "以本段系统读取的状态为准" in dynamic
     assert "不要声称看不到 IM 状态或没有查询入口" in dynamic
+
+
+@pytest.mark.asyncio
+async def test_loader_returns_state_for_every_registered_im_platform(monkeypatch):
+    """新增平台进入统一注册表后，加载器必须把连接状态交给提示词。"""
+    class Result:
+        def scalars(self):
+            return self
+
+        def all(self):
+            return list(IM_PLATFORMS)
+
+    class Db:
+        async def execute(self, _statement):
+            return Result()
+
+    async def no_reach(_user_id, _platform):
+        return None
+
+    monkeypatch.setattr("app.services.im_platforms.is_im_platform_enabled", lambda _platform: True)
+    monkeypatch.setattr("app.scheduled_tasks.get_imreach", no_reach)
+
+    channels = await loaders.load_im_channels(Db(), "synthetic-user")
+
+    assert channels == {platform: True for platform in IM_PLATFORMS}

@@ -179,19 +179,19 @@ async def load_dynamic_memory(user_id) -> dict:
 async def load_im_channels(db, user_id) -> dict:
     """读取已连接或已有可触达地址的 IM 渠道，供提示词说明连接情况。"""
     from app.models import UserBot
-    from app.services.im_platforms import is_im_platform_enabled
+    from app.services.im_platforms import IM_PLATFORMS, is_im_platform_enabled
     from app.scheduled_tasks import get_imreach
 
     result = await db.execute(
         select(UserBot.platform).where(
             UserBot.user_id == user_id,
             UserBot.enabled == True,
-            UserBot.platform.in_(("qq", "feishu", "wechat")),
+            UserBot.platform.in_(IM_PLATFORMS),
         )
     )
     connected_bots = set(result.scalars().all())
     channels = {}
-    for platform in ("qq", "feishu", "wechat"):
+    for platform in IM_PLATFORMS:
         if not is_im_platform_enabled(platform):
             channels[platform] = False
             continue
