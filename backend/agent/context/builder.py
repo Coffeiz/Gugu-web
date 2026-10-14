@@ -204,7 +204,13 @@ def stance_block(memory: dict | None = None) -> str:
     return stance
 
 
-_SOURCE_NAME = {"qq": "QQ", "feishu": "飞书", "wechat": "微信", "web": "网页"}
+_SOURCE_NAME = {
+    "qq": "QQ",
+    "feishu": "飞书",
+    "wechat": "微信",
+    "telegram": "Telegram",
+    "web": "网页",
+}
 
 
 def _source_block(source: str | None, im_channels: dict | None) -> str:
@@ -214,7 +220,7 @@ def _source_block(source: str | None, im_channels: dict | None) -> str:
     ch = im_channels or {}
     qq_on = bool(ch.get("qq")) or source == "qq"
     fs_on = bool(ch.get("feishu")) or source == "feishu"
-    wc_on = source == "wechat"
+    wc_on = bool(ch.get("wechat")) or source == "wechat"
     lines = []
     if name:
         lines.append(f"本次对话来自：**{name}**。你当前正在通过{name}与用户实时聊天。")

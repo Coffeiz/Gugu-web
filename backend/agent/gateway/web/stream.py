@@ -83,7 +83,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             memory = await loaders.load_memory(
                 user_id, req.message, prefer_recent=True,
             ) if SYSTEM_MEMORY_ENABLED else {}
-            im_channels = await loaders.load_im_channels(user_id)
+            im_channels = await loaders.load_im_channels(db, user_id)
             knowledge = await loaders.load_knowledge_overview(user_id)
             static_prompt, snapshot_context, _ = builder.build_split(
                 DEFAULT_PROMPT_NAME, req.user_name,
