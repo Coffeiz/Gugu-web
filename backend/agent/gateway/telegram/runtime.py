@@ -128,6 +128,22 @@ async def _bot_token(channel_id: str) -> str | None:
 async def send_message(chat_id: str, text: str, *, channel_id: str,
                        reply_to_message_id: str | None = None) -> bool:
     """通过数据库取凭据发送文本；异常只进入受限诊断，不泄露 URL。"""
+    return await _send_chat_message(
+        chat_id, text, channel_id=channel_id,
+        reply_to_message_id=reply_to_message_id,
+        diagnostic_operation="agent.gateway.telegram.send_message",
+    )
+
+
+async def _send_chat_message(
+    chat_id: str,
+    text: str,
+    *,
+    channel_id: str,
+    reply_to_message_id: str | None = None,
+    prompt: dict | None = None,
+    diagnostic_operation: str,
+) -> bool:
     try:
         token = await _bot_token(channel_id)
         if not token:
@@ -135,18 +151,245 @@ async def send_message(chat_id: str, text: str, *, channel_id: str,
         from agent.im.telegram_format import split_markdown_v2
 
         chunks = split_markdown_v2(text)
+        if not chunks:
+            return False
+        reply_markup = None
+        if prompt is not None:
+            from agent.interactions.telegram import build_inline_keyboard
+
+            reply_markup = build_inline_keyboard(prompt)
         for index, chunk in enumerate(chunks):
             body = {"chat_id": chat_id, "text": chunk, "parse_mode": "MarkdownV2"}
             if index == 0 and reply_to_message_id:
                 body["reply_to_message_id"] = int(reply_to_message_id)
+            if index == len(chunks) - 1 and reply_markup:
+                body["reply_markup"] = reply_markup
             await _call_for_chat(
                 token, "sendMessage", body, channel_id=channel_id, chat_id=chat_id,
                 is_group=chat_id.startswith("-"),
             )
         return True
     except Exception as exc:
-        diag_log("agent.gateway.telegram.send_message", exc)
+        diag_log(diagnostic_operation, exc)
         return False
+
+
+async def send_interaction_message(
+    chat_id: str,
+    text: str,
+    prompt: dict,
+    *,
+    channel_id: str,
+) -> bool:
+    """发送带 Inline Keyboard 的统一交互 Prompt。"""
+    return await _send_chat_message(
+        chat_id,
+        text,
+        channel_id=channel_id,
+        prompt=prompt,
+        diagnostic_operation="agent.gateway.telegram.send_interaction_message",
+    )
+
+
+async def _answer_callback_query(token: str, callback_query_id: str, *,
+                                 text: str | None = None, show_alert: bool = False) -> None:
+    if not callback_query_id:
+        return
+    payload: dict[str, object] = {"callback_query_id": callback_query_id}
+    if text:
+        payload["text"] = str(text)[:200]
+    if show_alert:
+        payload["show_alert"] = True
+    try:
+        await call(token, "answerCallbackQuery", payload=payload, timeout=5)
+    except Exception as exc:
+        diag_log("agent.gateway.telegram.answer_callback_query", exc)
+
+
+async def _remove_callback_keyboard(
+    token: str, bot_id: str, chat_id: str, message_id: int,
+) -> None:
+    try:
+        await _call_for_chat(
+            token,
+            "editMessageReplyMarkup",
+            {"chat_id": chat_id, "message_id": message_id, "reply_markup": {"inline_keyboard": []}},
+            channel_id=bot_id,
+            chat_id=chat_id,
+            is_group=chat_id.startswith("-"),
+        )
+    except Exception as exc:
+        diag_log("agent.gateway.telegram.remove_interaction_keyboard", exc)
+
+
+async def _handle_callback_query(
+    callback_query: dict,
+    *,
+    token: str,
+    bot_id: str,
+    owner_id: str,
+) -> bool:
+    """由 owner 身份校验后消费统一 Action，并恢复等待中的 Agent Run。"""
+    from agent.interactions.telegram import decode_action_data
+
+    query_id = str(callback_query.get("id") or "")
+    actor = callback_query.get("from")
+    message = callback_query.get("message")
+    chat = message.get("chat") if isinstance(message, dict) else None
+    if not query_id or not isinstance(actor, dict) or not isinstance(chat, dict):
+        await _answer_callback_query(token, query_id, text="这个按钮无效。", show_alert=True)
+        return True
+    try:
+        prompt_id, action_token = decode_action_data(str(callback_query.get("data") or ""))
+    except (TypeError, ValueError):
+        await _answer_callback_query(token, query_id, text="这个按钮无效。", show_alert=True)
+        return True
+
+    actor_id = str(actor.get("id") or "")
+    chat_id = str(chat.get("id") or "")
+    chat_kind = str(chat.get("type") or "")
+    if not actor_id or not chat_id or chat_kind not in {"private", "group", "supergroup"}:
+        await _answer_callback_query(token, query_id, text="无法识别操作者或会话。", show_alert=True)
+        return True
+    chat_type = "c2c" if chat_kind == "private" else "group"
+
+    try:
+        from uuid import UUID
+        import app.db.session as db_session
+        from app.models import UserBot
+        from app.services.interactions import consume_action
+        from app.services.mcp_secret_inputs import consume_mcp_secret_action
+        from sqlalchemy import select
+
+        if db_session._engine is None:
+            db_session._build_engine()
+        if db_session._SessionLocal is None:
+            raise RuntimeError("数据库不可用")
+        user_id = UUID(str(owner_id))
+        async with db_session._SessionLocal() as db:
+            bot = (await db.execute(select(UserBot).where(
+                UserBot.id == int(bot_id),
+                UserBot.user_id == user_id,
+                UserBot.platform == "telegram",
+                UserBot.enabled.is_(True),
+                UserBot.owner_platform_user_id == actor_id,
+            ))).scalars().first()
+            if bot is None:
+                await _answer_callback_query(
+                    token, query_id, text="只有 Bot 绑定的所有者可以使用这些按钮。", show_alert=True,
+                )
+                return True
+            result = await consume_mcp_secret_action(
+                db,
+                user_id=user_id,
+                prompt_id=prompt_id,
+                token=action_token,
+                event_id=query_id,
+                platform="telegram",
+                bot_id=bot_id,
+                platform_user_id=actor_id,
+                chat_type=chat_type,
+                chat_id=chat_id if chat_type == "group" else None,
+            )
+            if result is None:
+                result = await consume_action(
+                    db,
+                    user_id=user_id,
+                    prompt_id=prompt_id,
+                    token=action_token,
+                    event_id=query_id,
+                )
+    except (LookupError, ValueError) as exc:
+        await _answer_callback_query(token, query_id, text="这个选项已过期或已经处理过了。", show_alert=True)
+        diag_log("agent.gateway.telegram.interaction_expired", exc)
+        return True
+    except Exception as exc:
+        if getattr(exc, "status_code", None) in {404, 409}:
+            await _answer_callback_query(token, query_id, text="这个选项已过期或已经处理过了。", show_alert=True)
+            return True
+        diag_log("agent.gateway.telegram.interaction", exc)
+        await _answer_callback_query(token, query_id, text="暂时无法处理这个选项，请稍后重试。", show_alert=True)
+        return False
+
+    await _answer_callback_query(token, query_id)
+    message_id = message.get("message_id")
+    if isinstance(message_id, int) and not isinstance(message_id, bool):
+        await _remove_callback_keyboard(token, bot_id, chat_id, message_id)
+
+    from agent.gateway.telegram import send_message as send_chat_message
+
+    result_payload = result.get("result") if isinstance(result.get("result"), dict) else {}
+    option_id = str(result.get("option_id") or "")
+    if result_payload.get("status") == "awaiting_text":
+        response = "请直接发送你的回复，咕咕会继续处理。"
+    elif result.get("status") == "awaiting_secret":
+        response = "请在当前私聊发送凭据字段值；回复“取消”可终止。"
+    elif result.get("status") == "cancelled":
+        response = "已取消。"
+    elif result.get("status") == "duplicate":
+        response = "这个操作已经处理过了。"
+    elif option_id == "confirm":
+        response = "已确认，任务继续执行。"
+    elif option_id == "cancel":
+        response = "已取消。"
+    else:
+        selected_text = str(result_payload.get("text") or option_id or "已选择")
+        response = f"已选择：{selected_text}，继续处理。"
+    await send_chat_message(chat_id, response, channel_id=bot_id)
+    return True
+
+
+async def _handle_callback_update(
+    update: dict,
+    *,
+    bot_id: str,
+    owner_id: str,
+    token: str,
+    update_id: int,
+) -> bool:
+    processed = await _handle_callback_query(
+        update["callback_query"], token=token, bot_id=bot_id, owner_id=owner_id,
+    )
+    if processed:
+        await _persist_update(bot_id, update_id, None)
+    return processed
+
+
+async def _process_update(
+    update: dict,
+    *,
+    bot_id: str,
+    owner_id: str,
+    bot_username: str,
+    bot_platform_id: str,
+    token: str,
+) -> bool:
+    update_id = update.get("update_id")
+    if not isinstance(update_id, int):
+        return True
+    if isinstance(update.get("callback_query"), dict):
+        return await _handle_callback_update(
+            update,
+            bot_id=bot_id,
+            owner_id=owner_id,
+            token=token,
+            update_id=update_id,
+        )
+    if not _is_new_message_update(update):
+        await _persist_update(bot_id, update_id, None)
+        return True
+    normalized = normalize_message(
+        update,
+        bot_id=bot_id,
+        owner_id=owner_id,
+        bot_username=bot_username,
+        bot_platform_id=bot_platform_id,
+    )
+    if normalized is not None:
+        normalized["platform_event_id"] = str(update_id)
+        normalized["message_id"] = str(normalized.get("message_id") or "")
+    await _persist_update(bot_id, update_id, normalized)
+    return True
 
 
 async def send_message_draft(
@@ -245,7 +488,10 @@ async def _run() -> None:
     while not _STOP.is_set():
         try:
             cursor = await redis.get(_cursor_key(bot_id))
-            payload: dict[str, object] = {"timeout": 50, "allowed_updates": ["message"]}
+            payload: dict[str, object] = {
+                "timeout": 50,
+                "allowed_updates": ["message", "callback_query"],
+            }
             if cursor is not None:
                 payload["offset"] = int(cursor) + 1
             updates = await call(token, "getUpdates", payload=payload, timeout=60)
@@ -253,24 +499,18 @@ async def _run() -> None:
                 raise TelegramBotApiError("getUpdates")
             backoff = 1.0
             for update in sorted((item for item in updates if isinstance(item, dict)), key=lambda item: int(item.get("update_id", -1))):
-                update_id = update.get("update_id")
-                if not isinstance(update_id, int):
-                    continue
-                if not _is_new_message_update(update):
-                    await _persist_update(bot_id, update_id, None)
-                    continue
-                normalized = normalize_message(
+                processed = await _process_update(
                     update,
                     bot_id=bot_id,
                     owner_id=owner_id,
                     bot_username=bot_username,
                     bot_platform_id=bot_platform_id,
+                    token=token,
                 )
-                if normalized is not None:
-                    normalized["platform_event_id"] = str(update_id)
-                    normalized["message_id"] = str(normalized.get("message_id") or "")
-                # 只有 Redis Lua 同时确认入队/标记后才推进 offset；无文本更新也写幂等标记。
-                await _persist_update(bot_id, update_id, normalized)
+                if not processed:
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2, 60)
+                    break
         except TelegramBotApiError as exc:
             delay = max(1, min(exc.retry_after or int(backoff), 300))
             _log.warning("Telegram API 暂不可用 method=%s status=%s retry=%ss", exc.operation, exc.status_code, delay)

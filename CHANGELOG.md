@@ -13,6 +13,7 @@
 
 #### New Features
 
+- **Telegram interactions**: respond to Agent prompts with native inline buttons.
 - **Telegram streaming**: show responses as they are generated.
 - **QQ private chat streaming**: stream private replies with configurable message formatting.
 - **Personal skills**: create, edit, and organize user-defined skills.
@@ -52,6 +53,7 @@
 
 #### 新功能
 
+- **Telegram 交互**：可通过原生内联按钮回应咕咕的交互提示。
 - **Telegram 流式回复**：逐步显示生成中的回复。
 - **QQ 私聊流式回复**：支持配置消息格式并逐步显示私聊回复。
 - **个人技能**：支持创建、编辑和整理用户自定义技能。

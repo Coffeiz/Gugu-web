@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Set
+from collections.abc import Callable, Set
 from typing import AsyncIterator, Tuple
 
 from agent.im.models import PlatformReply
@@ -226,7 +226,7 @@ async def send_link_button_message(payload: dict, message: str, buttons: list[di
 async def send_interaction(payload: dict, prompt: dict) -> bool:
     """统一发送交互提示。
 
-    QQ 使用 Keyboard，飞书使用交互卡片；两者失败后都复用同一份文本降级。
+    QQ/Telegram 使用原生按钮，飞书使用交互卡片；原生交互失败后复用文本降级。
     """
     from agent.interactions.qq import format_text_fallback
 
@@ -242,6 +242,8 @@ async def send_interaction(payload: dict, prompt: dict) -> bool:
         ):
             return True
         return await send_text(payload, format_text_fallback(prompt, platform="feishu"))
+    if platform == "telegram" and prompt.get("options"):
+        return await _send_telegram_interaction(payload, prompt, format_text_fallback)
     if platform != "qq":
         return await send_text(payload, format_text_fallback(prompt, platform=platform))
 
@@ -272,6 +274,28 @@ async def send_interaction(payload: dict, prompt: dict) -> bool:
         ):
             return True
     return await send_text(interaction_payload, text)
+
+
+async def _send_telegram_interaction(
+    payload: dict,
+    prompt: dict,
+    format_fallback: Callable[..., str],
+) -> bool:
+    from agent.gateway import telegram
+
+    target_id = payload.get("chat_id") or payload.get("platform_user_id")
+    interaction_prompt = {**prompt, "native_keyboard": True}
+    if prompt.get("secret_fields") and payload.get("chat_type") == "group":
+        interaction_prompt.update(options=[], group_secret_blocked=True)
+    elif target_id and await telegram.send_interaction_message(
+        target_id,
+        format_fallback(interaction_prompt, platform="telegram"),
+        interaction_prompt,
+        channel_id=payload.get("channel_id") or "",
+    ):
+        return True
+    fallback_prompt = {**interaction_prompt, "native_keyboard": False}
+    return await send_text(payload, format_fallback(fallback_prompt, platform="telegram"))
 
 
 async def send_tool_event(payload: dict, event: dict) -> bool:
