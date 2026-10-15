@@ -245,7 +245,7 @@ function darkenHex(hex, amount = 0.60) {
 ### 导航结构
 
 ```
-侧边栏（220px）
+侧边栏（200px）
 ├── Logo
 ├── 工作台
 │   ├── 总览（默认页）

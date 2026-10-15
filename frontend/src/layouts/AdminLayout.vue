@@ -197,7 +197,7 @@ async function handleLogout() {
 
 /* ── 侧边栏 ── */
 .admin-sidebar {
-  width: 220px;
+  width: var(--sidebar-width);
   flex-shrink: 0;
   background: var(--sidebar-bg);
   backdrop-filter: var(--popup-blur);

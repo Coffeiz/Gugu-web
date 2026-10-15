@@ -530,7 +530,7 @@ onBeforeUnmount(() => {
 // 中心（侧栏右侧那块的正中），才能和上方胶囊/滑杆的居中对齐。
 // 「当前」= 中心离内容区中线最近的列。判定要随每个滚动像素连续变化，超出 IntersectionObserver
 // 的能力（只在进出边界回调），改用 rAF 节流的 scroll 手算（几十列一次遍历微不足道）。
-const SIDEBAR_W = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sidebar-width')) || 220
+const SIDEBAR_W = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sidebar-width')) || 200
 // store 保持「最新优先」，展示层改为时间正序：左侧是过往，右侧是后来的日期。
 const timelineGroups = computed(() => [...store.timeline].reverse())
 const indexGroups = computed(() => timelineGroups.value.map(g => ({ date: g.date, count: g.items.length })))
