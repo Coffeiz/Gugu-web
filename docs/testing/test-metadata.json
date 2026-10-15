@@ -63,6 +63,14 @@
     "keyBehavior": "播放或加载过期签名视频时刷新地址并恢复；切源竞态不串用播放进度；主动暂停中断 play 请求不会变成播放器错误",
     "ci": "frontend-test"
   },
+  "frontend/tests/preview/htmlPreview.test.ts": {
+    "domain": "file-preview",
+    "layer": "L0",
+    "owner": "frontend/utils",
+    "productionEntry": "frontend/src/utils/htmlPreview.ts",
+    "keyBehavior": "HTML 预览中的同页锚点保持在隔离文档内，不解析到宿主应用路由",
+    "ci": "frontend-test"
+  },
   "frontend/tests/design/consoleBanner.test.ts": {
     "domain": "frontend-ui",
     "layer": "L0",
@@ -277,6 +285,14 @@
     "owner": "backend/alembic",
     "productionEntry": "backend/alembic/versions/20261016000001_rename_client_columns_to_contact_name.py",
     "keyBehavior": "项目与日历活动联系人列重命名保留既有值且可降级恢复",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/auth/test_auth_token_revocation.py": {
+    "domain": "authentication",
+    "layer": "L1",
+    "owner": "backend/app/api/v1",
+    "productionEntry": "backend/app/api/v1/auth.py",
+    "keyBehavior": "用户登出、密码重置和管理员登出会使旧令牌失效并保留新版本令牌有效",
     "ci": "backend-pytest"
   },
   "backend/tests/platform/realtime/test_live_stream.py": {
