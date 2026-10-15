@@ -8,6 +8,43 @@
       <Icon name="status.warning" :size="28" style="opacity:.5" />
       <span>{{ error }}</span>
     </div>
+    <template v-else-if="isHtmlFile">
+      <div class="tv-html-toolbar">
+        <div class="tv-html-tabs" role="tablist">
+          <button class="tv-html-tab" :class="{ active: htmlMode === 'preview' }" role="tab" :aria-selected="htmlMode === 'preview'" @click="htmlMode = 'preview'">{{ t('viewerUi.preview') }}</button>
+          <button class="tv-html-tab" :class="{ active: htmlMode === 'source' }" role="tab" :aria-selected="htmlMode === 'source'" @click="htmlMode = 'source'">{{ t('viewerUi.source') }}</button>
+        </div>
+        <div class="tv-html-actions">
+          <span v-if="truncated" class="tv-html-truncated">{{ t('viewerUi.truncated') }}</span>
+        </div>
+      </div>
+      <div v-if="htmlMode === 'preview'" ref="htmlPreview" class="tv-html-preview">
+        <div v-if="htmlCanvas" class="tv-html-canvas-fit" :style="htmlCanvasFitStyle">
+          <iframe
+            class="tv-html-frame tv-html-frame-canvas"
+            sandbox="allow-scripts allow-forms"
+            :srcdoc="htmlPreviewDocument"
+            :style="htmlCanvasFrameStyle"
+            referrerpolicy="no-referrer"
+            :title="t('viewerUi.htmlPreview')"
+          />
+        </div>
+        <iframe
+          v-else
+          class="tv-html-frame"
+          sandbox="allow-scripts allow-forms"
+          :srcdoc="htmlPreviewDocument"
+          referrerpolicy="no-referrer"
+          :title="t('viewerUi.htmlPreview')"
+        />
+      </div>
+      <div v-else class="tv-edit-cm-wrap">
+        <Codemirror
+          v-model="editText" :extensions="cmExtensions" :disabled="!canEditContent" :indent-with-tab="true"
+          @ready="onCmReady" @change="scheduleAutoSave"
+        />
+      </div>
+    </template>
     <!-- 代码类扩展名：直接就是 CodeMirror，没有单独的只读预览态——它本身就能当预览用
          （虚拟滚动+增量分词，大文件不卡）。真实文件可编辑，改动自动保存（防抖）；聊天附件等
          非真实文件只读（:disabled，CodeMirror 自己处理成 editable:false + readOnly:true）。 -->
@@ -126,7 +163,7 @@ const LANG_LOADERS: Record<string, () => Promise<any>> = {
 // 常见扩展名保留语法高亮；未知但被后端标为 text/* 的自定义文件也走同样的文本编辑能力。
 const EDITABLE_EXTS = new Set([
   'md', 'txt', 'json', 'csv', 'yaml', 'yml', 'log', 'py', 'js', 'ts', 'tsx', 'jsx',
-  'vue', 'html', 'css', 'scss', 'java', 'go', 'rs', 'c', 'cpp', 'h', 'hpp', 'sh',
+  'vue', 'html', 'htm', 'css', 'scss', 'java', 'go', 'rs', 'c', 'cpp', 'h', 'hpp', 'sh',
   'sql', 'xml', 'toml', 'ini', 'conf', 'env', 'tex', 'lrc', 'srt', 'ass', 'ssa', 'vtt',
   'sub', 'sbv', 'smi', 'ttml', 'dfxp', 'scc', 'cue', 'm3u', 'm3u8', 'pls',
 ])
@@ -150,6 +187,7 @@ const CM_LANG_LOADERS: Record<string, (source?: string) => Promise<any>> = {
   CSS:  () => import('@codemirror/lang-css').then(m => m.css()),
   SCSS: () => import('@codemirror/lang-css').then(m => m.css()),
   HTML: () => import('@codemirror/lang-html').then(m => m.html()),
+  HTM:  () => import('@codemirror/lang-html').then(m => m.html()),
   VUE:  () => import('@codemirror/lang-html').then(m => m.html()),   // 没有成熟的 vue SFC 语言包，html 近似
   JSON: () => import('@codemirror/lang-json').then(m => m.json()),
   YAML: () => import('@codemirror/lang-yaml').then(m => m.yaml()),
@@ -211,6 +249,49 @@ const isTextDocument = computed(() =>
   EDITABLE_EXTS.has((props.ext || '').toLowerCase()) || isTextMime(props.fileContext?.mimeType))
 const editable = computed(() => isTextDocument.value && canEditContent.value)
 const isMarkdownFile = computed(() => /^(md|markdown)$/i.test(props.ext || ''))
+const isHtmlFile = computed(() => /^(html|htm)$/i.test(props.ext || ''))
+const htmlMode = ref<'preview' | 'source'>('preview')
+const htmlPreview = ref<HTMLElement | null>(null)
+const htmlPreviewSize = ref({ width: 0, height: 0 })
+let htmlPreviewObserver: ResizeObserver | null = null
+const htmlCanvas = computed(() => {
+  // 固定尺寸画布常用 50% 定位后由脚本缩放。脚本在安全预览里禁用，因此识别这种
+  // CSS 约定并由预览器接管适配；普通响应式页面继续使用 iframe 的实际视口尺寸。
+  const rule = editText.value.match(/#stage\s*\{([^}]*)\}/i)?.[1]
+  if (!rule || !/position\s*:\s*absolute\b/i.test(rule)
+    || !/left\s*:\s*50%\s*;?/i.test(rule) || !/top\s*:\s*50%\s*;?/i.test(rule)
+    || !/transform-origin\s*:\s*center\s+center\b/i.test(rule)) return null
+  const width = Number(rule.match(/\bwidth\s*:\s*(\d+(?:\.\d+)?)px\b/i)?.[1])
+  const height = Number(rule.match(/\bheight\s*:\s*(\d+(?:\.\d+)?)px\b/i)?.[1])
+  return width > 0 && height > 0 && width <= 8192 && height <= 8192 ? { width, height } : null
+})
+const htmlCanvasScale = computed(() => {
+  const canvas = htmlCanvas.value
+  if (!canvas || !htmlPreviewSize.value.width || !htmlPreviewSize.value.height) return 1
+  return Math.min(htmlPreviewSize.value.width / canvas.width, htmlPreviewSize.value.height / canvas.height)
+})
+const htmlCanvasFitStyle = computed(() => {
+  const canvas = htmlCanvas.value
+  if (!canvas) return undefined
+  return {
+    width: `${canvas.width * htmlCanvasScale.value}px`,
+    height: `${canvas.height * htmlCanvasScale.value}px`,
+  }
+})
+const htmlCanvasFrameStyle = computed(() => {
+  const canvas = htmlCanvas.value
+  if (!canvas) return undefined
+  return {
+    width: `${canvas.width}px`,
+    height: `${canvas.height}px`,
+    transform: `scale(${htmlCanvasScale.value})`,
+  }
+})
+const htmlPreviewDocument = computed(() => {
+  // 预览按普通网页运行脚本和资源；sandbox 不含 allow-same-origin，隔离咕咕页面与登录态。
+  const policy = "default-src data: blob: http: https:; script-src 'unsafe-inline' 'unsafe-eval' data: blob: http: https:; connect-src http: https: ws: wss:; object-src 'none'; frame-src data: blob: http: https:; form-action http: https:; base-uri 'none'; img-src data: blob: http: https:; style-src 'unsafe-inline' data: blob: http: https:; font-src data: blob: http: https:; media-src data: blob: http: https:"
+  return `<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${policy}">${editText.value}`
+})
 // 代码/纯文本扩展名（txt 并入 CodeMirror 路径，见 2026-09-03：txt 没有预览价值，还顺带拿到
 // 行号、撤销栈和自动保存）：不分真实文件/聊天附件、不分编辑/预览，一律直接显示 CodeMirror。
 // 只有 md 保留「渲染预览 + 编辑」双视图——渲染后的排版本身就是预览价值。
@@ -594,8 +675,7 @@ async function resolveMdRelativeImages() {
   if (!localImages.length) return
   if (mdRoot.value !== root) return   // 等待期间文件已切走
   const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
-  const token    = localStorage.getItem('user_token') ?? ''
-  const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
+  const headers: Record<string, string> = {}
   releaseMdObjectUrls()
   let resolved: Awaited<ReturnType<typeof filesApi.resolvePaths>> = []
   try {
@@ -627,6 +707,7 @@ watch(() => [props.blobUrl, props.ext, props.sourceText], async ([url, ext, sour
   error.value     = null
   truncated.value = false
   editing.value   = false   // 切换文件/重新加载时退出编辑态，别把上一份文件的编辑框留着
+  htmlMode.value  = 'preview'
   taskCheckboxStates = null
   cmLoadSeq++
   mdEditorReady.value = false
@@ -667,6 +748,22 @@ watch(() => [props.blobUrl, props.ext, props.sourceText], async ([url, ext, sour
   }
 }, { immediate: true })
 
+watch([htmlMode, loading], async ([mode, isLoading]) => {
+  htmlPreviewObserver?.disconnect()
+  htmlPreviewObserver = null
+  if (mode !== 'preview' || isLoading) return
+  await nextTick()
+  const element = htmlPreview.value
+  if (!element) return
+  const updateSize = () => {
+    const rect = element.getBoundingClientRect()
+    htmlPreviewSize.value = { width: rect.width, height: rect.height }
+  }
+  updateSize()
+  htmlPreviewObserver = new ResizeObserver(updateSize)
+  htmlPreviewObserver.observe(element)
+}, { flush: 'post' })
+
 onMounted(() => {
   // 首次文件加载可能发生在组件挂载前，此时 mdRoot 尚未存在；挂载后补一次 Mermaid 渲染。
   renderMermaidBlocks()
@@ -686,6 +783,8 @@ watch([mdHtml, loading], ([html, isLoading]) => {
 }, { flush: 'post' })
 
 onBeforeUnmount(() => {
+  htmlPreviewObserver?.disconnect()
+  htmlPreviewObserver = null
   themeObserver?.disconnect()
   themeObserver = null
   cleanupMarkdownMermaid(mdRoot.value)
@@ -712,6 +811,36 @@ onBeforeUnmount(() => {
   user-select: text;            /* 覆盖预览弹窗容器的 user-select:none，让正文可选/复制 */
   -webkit-user-select: text;
 }
+
+.tv-html-toolbar {
+  min-height: 42px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--content-divider);
+  background: var(--surface-raised);
+}
+.tv-html-tabs { display: flex; align-items: center; gap: 3px; }
+.tv-html-actions { display: flex; align-items: center; gap: 8px; }
+.tv-html-tab {
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 11px;
+  background: transparent;
+  color: var(--content-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.tv-html-tab:hover { background: var(--surface-soft-hover); color: var(--content-primary); }
+.tv-html-tab.active { background: var(--action-soft); color: var(--action-primary); font-weight: 600; }
+.tv-html-truncated { color: var(--status-warning); font-size: 11px; }
+.tv-html-preview { flex: 1; min-height: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; background: #fff; }
+.tv-html-frame { display: block; width: 100%; height: 100%; border: 0; background: #fff; }
+.tv-html-canvas-fit { position: relative; flex: 0 0 auto; overflow: hidden; }
+.tv-html-frame-canvas { position: absolute; top: 0; left: 0; transform-origin: top left; }
 
 .tv-notice {
   font-size: 11px;
