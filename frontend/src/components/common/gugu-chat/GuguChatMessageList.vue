@@ -94,11 +94,11 @@ const virtualizer = useVirtualizer({
   estimateSize: () => 96,
   // 前后各多挂载 10 条，覆盖快速滚动时的缓冲区；Mermaid 首次计算会由共享 LRU 缓存复用。
   overscan: 10,
-  // 高度缓存必须跟随真实消息身份，而不是跟随数组索引；不同会话的第 N 条消息
-  // 内容高度通常完全不同，按 index 复用会先套用旧会话高度，再在下一帧跳动。
+  // 虚拟行 key 必须唯一对应一个展示气泡。一个持久化助手消息可能展开为多个
+  // timeline 气泡，共享 dbId；优先使用前端气泡 id，避免 key 冲突和测量高度串行。
   getItemKey: (index) => {
     const message = props.messages[index]
-    return message?.dbId ?? message?.id ?? `${props.sessionId ?? 'new'}:${index}`
+    return message?.id ?? message?.dbId ?? `${props.sessionId ?? 'new'}:${index}`
   },
 })
 // 尺寸过渡由窗口域维护视口底部锚点，避免虚拟列表同时按顶部纠偏。

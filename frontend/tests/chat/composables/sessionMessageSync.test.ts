@@ -40,11 +40,12 @@ describe('mergeSessionMessageDelta', () => {
   it('reconciles a recovered timeline reply with its later incremental event', () => {
     const data = {
       messages: [],
-      timelineEvents: [{ id: '250810:0', kind: 'assistant', text: 'persisted final reply',
+      timelineEvents: [{ id: '250810:0', messageId: 250810, kind: 'assistant', text: 'persisted final reply',
+        runId: 'run-current', roundId: 'round-current',
         createdAt: '2026-10-15T03:17:00Z', timelineOrder: 250810000 }],
     }
-    const recovered = findLatestPersistedAssistant(data)
-    expect(recovered?.syncKey).toBe('timeline:250810:0')
+    const recovered = findLatestPersistedAssistant(data, 'run-current')
+    expect(recovered?.syncKey).toBe('assistant-round:run-current:round-current')
 
     const current: ChatMessage[] = [{
       id: 1, dbId: 250810, role: 'ai', text: recovered!.text, time: '',
@@ -57,14 +58,124 @@ describe('mergeSessionMessageDelta', () => {
     expect(merged[0]).toMatchObject({ id: 1, dbId: 250810, text: 'persisted final reply' })
   })
 
-  it('does not recover an old persisted assistant reply as the current turn', () => {
+  it('实时回复与同一回合持久化副本合并为一个气泡并保留流式正文', () => {
+    const current: ChatMessage[] = [{
+      id: 1, role: 'ai', text: '实时回答正文', time: '', streaming: true,
+      runId: 'core-run-1', roundId: 'round-2', _syncKey: 'assistant-round:core-run-1:round-2',
+    }]
+    const incoming = mapSessionMessageDelta({
+      messages: [{ id: 91, role: 'assistant', content: '已持久化回答正文', createdAt: '2026-10-15T03:17:00Z',
+        runId: 'core-run-1', roundId: 'round-2' }],
+      timelineEvents: [], toolEvents: [],
+    }, () => 2, role => ({ role: role === 'assistant' ? 'ai' : role }))
+
+    const merged = mergeSessionMessageDelta(current, incoming)
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toMatchObject({
+      id: 1, dbId: 91, text: '实时回答正文', streaming: true,
+      _syncKey: 'assistant-round:core-run-1:round-2',
+    })
+  })
+
+  it('持久化的正文和时间线事件使用相同的回合身份', () => {
+    const incoming = mapSessionMessageDelta({ messages: [
+      { id: 91, role: 'assistant', content: '已有回答', createdAt: '', runId: 'run-a', roundId: 'r1' },
+    ], timelineEvents: [{ id: 'timeline-91', kind: 'assistant', text: '已有回答', createdAt: '',
+      runId: 'run-a', roundId: 'r1' }] }, () => 2, role => ({ role: role === 'assistant' ? 'ai' : role }))
+    expect(incoming).toHaveLength(2)
+    expect(incoming[0]?._syncKey).toBe('assistant-round:run-a:r1')
+    expect(incoming[1]?._syncKey).toBe('assistant-round:run-a:r1')
+  })
+
+  it('首屏历史与增量恢复对同一持久化事件生成相同身份键', () => {
+    const history = {
+      messages: [{ id: 91, role: 'assistant', content: '已有回答', createdAt: '', runId: 'run-a', roundId: 'r1' }],
+      timelineEvents: [{ id: 'timeline-91:0', messageId: 91, kind: 'assistant', text: '已有回答',
+        createdAt: '', runId: 'run-a', roundId: 'r1' }],
+      toolEvents: [{ id: 'tool:call-1', toolCallId: 'call-1', runId: 'run-a', roundId: 'r1', createdAt: '' }],
+    }
+    const initial = mapSessionMessageDelta(history, () => 1, role => ({ role: role === 'assistant' ? 'ai' : role }))
+    const refreshed = mapSessionMessageDelta(history, () => 2, role => ({ role: role === 'assistant' ? 'ai' : role }))
+
+    expect(initial.map(item => item._syncKey)).toEqual(refreshed.map(item => item._syncKey))
+    expect(initial.map(item => item._syncKey)).toEqual([
+      'assistant-round:run-a:r1', 'assistant-round:run-a:r1', 'tool-call:["run-a","r1","call-1"]',
+    ])
+  })
+
+  it('历史加载后恢复 SSE，再增量刷新同一回复仍只有一个气泡', () => {
+    const history = {
+      messages: [{ id: 91, role: 'assistant', content: '已完成的回复', createdAt: '2026-10-15T03:17:00Z',
+        runId: 'run-a', roundId: 'r1' }],
+      timelineEvents: [], toolEvents: [],
+    }
+    const resolveSpeaker = (role: string) => ({ role: role === 'assistant' ? 'ai' : role })
+    const loaded = mapSessionMessageDelta(history, () => 1, resolveSpeaker)
+    const recovered = findLatestPersistedAssistant(history, 'run-a')
+    expect(recovered).not.toBeNull()
+
+    const afterStreamRecovery = mergeSessionMessageDelta(loaded, [{
+      id: 2, dbId: recovered!.item.id, role: 'ai', text: recovered!.text, time: '',
+      runId: recovered!.item.runId, roundId: recovered!.item.roundId, _syncKey: recovered!.syncKey,
+    }])
+    const incremental = mapSessionMessageDelta(history, () => 3, resolveSpeaker)
+    const afterRefresh = mergeSessionMessageDelta(afterStreamRecovery, incremental)
+
+    expect(afterRefresh.filter(item => item.role === 'ai')).toHaveLength(1)
+    expect(afterRefresh[0]).toMatchObject({
+      id: 1, dbId: 91, text: '已完成的回复', _syncKey: 'assistant-round:run-a:r1',
+    })
+  })
+
+  it('工具调用键包含 run 和 round，旧事件则使用持久化事件 ID', () => {
+    const incoming = mapSessionMessageDelta({
+      messages: [], timelineEvents: [],
+      toolEvents: [
+        { id: 'event-a', toolCallId: 'call-1', runId: 'run-a', roundId: 'r1', createdAt: '' },
+        { id: 'event-b', toolCallId: 'call-1', runId: 'run-b', roundId: 'r1', createdAt: '' },
+        { id: 'legacy-a', toolCallId: 'call-1', createdAt: '' },
+        { id: 'legacy-b', toolCallId: 'call-1', createdAt: '' },
+      ],
+    }, () => 1, role => ({ role }))
+
+    expect(incoming.map(item => item._syncKey)).toEqual([
+      'tool-call:["run-a","r1","call-1"]', 'tool-call:["run-b","r1","call-1"]',
+      'tool:legacy-a', 'tool:legacy-b',
+    ])
+    expect(mergeSessionMessageDelta([], incoming)).toHaveLength(4)
+  })
+
+  it('保留不同 run/round 中正文相同的合法回答', () => {
+    const current: ChatMessage[] = [{
+      id: 1, role: 'ai', text: '收到', time: '', runId: 'run-1', roundId: 'round-1',
+      _syncKey: 'assistant-round:run-1:round-1',
+    }]
+    const incoming = mapSessionMessageDelta({
+      messages: [{ id: 92, role: 'assistant', content: '收到', createdAt: '2026-10-15T03:17:00Z',
+        runId: 'run-2', roundId: 'round-1' }],
+      timelineEvents: [], toolEvents: [],
+    }, () => 2, role => ({ role: role === 'assistant' ? 'ai' : role }))
+
+    expect(mergeSessionMessageDelta(current, incoming)).toHaveLength(2)
+  })
+
+  it('不按时间猜测归属：排除上一轮及队列下一轮的回复', () => {
     const result = findLatestPersistedAssistant({
       messages: [],
       timelineEvents: [{ id: 'old', kind: 'assistant', text: 'old reply',
-        createdAt: '2026-10-14T03:17:00Z' }],
-    }, Date.parse('2026-10-15T03:00:00Z'))
+        runId: 'run-old', createdAt: '2026-10-15T03:17:00Z' },
+        { id: 'next', kind: 'assistant', text: 'next reply', runId: 'run-next', createdAt: '2026-10-15T03:18:00Z' }],
+    }, 'run-current')
 
     expect(result).toBeNull()
+  })
+
+  it('当前 run 的恢复不会选中时间更新的队列 run', () => {
+    const result = findLatestPersistedAssistant({ timelineEvents: [
+      { id: '302:0', kind: 'assistant', text: '当前回答', runId: 'run-current', createdAt: '2026-10-15T08:42:01Z' },
+      { id: '305:0', kind: 'assistant', text: '下一轮回答', runId: 'run-next', createdAt: '2026-10-15T08:42:06Z' },
+    ] }, 'run-current')
+    expect(result?.text).toBe('当前回答')
   })
 })
 

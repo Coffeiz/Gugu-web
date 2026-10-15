@@ -1116,6 +1116,8 @@ async def get_session_messages(
              "platformUserName": m.platform_user_name,
              "platformBotUserId": m.platform_bot_user_id,
              "runOutcome": m.run_outcome,
+             "runId": m.run_id,
+             "roundId": m.round_id,
              "createdAt": iso_utc(m.created_at)}
             for m in msgs
             if not (m.role == "assistant" and m.display_timeline)
@@ -1123,6 +1125,7 @@ async def get_session_messages(
         "timelineEvents": [
             {**item,
              "id": f"{m.id}:{index}",
+             "messageId": m.id,
              "timelineOrder": item.get("timelineOrder") or m.id * 1000 + index + 1,
              "createdAt": iso_utc(m.created_at)}
             for m in msgs
@@ -1149,7 +1152,11 @@ async def get_message_location(
     row = (await db.execute(
         select(ConversationMessage, ConversationSession.user_id)
         .join(ConversationSession, ConversationMessage.session_id == ConversationSession.id)
-        .where(ConversationMessage.id == message_id)
+        .where(
+            ConversationMessage.id == message_id,
+            ConversationMessage.content_json.is_(None),
+            ConversationMessage.role != "summary",
+        )
     )).first()
     if not row or row[1] != current_user.id:
         raise HTTPException(404, "消息不存在")

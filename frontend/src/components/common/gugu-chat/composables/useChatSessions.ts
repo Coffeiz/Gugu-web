@@ -1,59 +1,10 @@
 import { nextTick, computed, onScopeDispose, type Ref } from 'vue'
 import { i18n } from '@/i18n'
 import { agentApi } from '@/services/api'
-import type { ChatMessage, ChatFile, ChatSession, ChatReference, QueuedMessagePayload } from '../chatTypes'
-import { displayQQFaces } from '../messageDisplay'
+import type { ChatMessage, ChatSession, QueuedMessagePayload } from '../chatTypes'
 import type GuguChatComposer from '../GuguChatComposer.vue'
 import { effectiveTimezone } from '@/utils/userTimezone'
-import { createSessionMessageSynchronizer, sortSessionTimelineMessages } from './sessionMessageSync'
-
-interface RawSessionMessage {
-  id: number
-  timelineOrder?: number
-  role: string
-  content: string
-  files?: ChatFile[]
-  references?: ChatReference[]
-  quotedText?: string
-  platformUserId?: string | null
-  platformUserName?: string | null
-  createdAt: string
-  runId?: string
-  roundId?: string
-  runOutcome?: ChatMessage['runOutcome']
-}
-
-interface RawToolEvent {
-  id: string
-  toolCallId: string
-  toolName: string
-  toolLabel?: string
-  timelineOrder?: number
-  toolInput?: unknown
-  toolResult?: unknown
-  toolStatus?: ChatMessage['toolStatus']
-  toolDurationMs?: number
-  createdAt: string
-}
-
-interface RawTimelineEvent {
-  id: string
-  kind: 'assistant' | 'tool'
-  text?: string
-  files?: ChatFile[]
-  linkButtons?: ChatMessage['linkButtons']
-  runId?: string
-  roundId?: string
-  toolCallId?: string
-  toolName?: string
-  toolLabel?: string
-  toolInput?: unknown
-  toolResult?: unknown
-  toolStatus?: ChatMessage['toolStatus']
-  toolDurationMs?: number
-  timelineOrder: number
-  createdAt: string
-}
+import { createSessionMessageSynchronizer, mapSessionMessageDelta, sortSessionTimelineMessages } from './sessionMessageSync'
 
 /**
  * 会话切换操作的唯一所有权：loadSession/newSession/deleteSession，以及从
@@ -180,58 +131,8 @@ export function useChatSessions(options: {
       options.ownerPlatformUserId.value = data.session?.ownerPlatformUserId ?? null
       options.isGroupSession.value = data.session?.chatType === 'group'
       options.clearStatus()   // 切会话先清掉上个会话残留的状态指示（active 会话下面 resumeStream 会重置）
-      // html 先留空、不在这一步就把整个历史都跑一遍 marked.parse——只有真正挂进虚拟列表
-      // 视口的那些消息才会被 watch(virtualRows, ...) 补上，减轻长会话打开时的一次性 CPU 尖峰。
-      const loadedMessages = data.messages.map((m: RawSessionMessage) => {
-        const speaker = options.resolveSpeaker(m.role, m.platformUserId, m.platformUserName)
-        return {
-          id: mkid(),
-          dbId: m.id,
-          _syncKey: `message:${m.id}`,
-          role: speaker.role,
-          speakerLabel: speaker.speakerLabel,
-          platformUserId: m.platformUserId || null,
-          text: displayQQFaces(m.content),
-          html: null,
-          files: m.files && m.files.length ? m.files : undefined,
-          references: m.references && m.references.length ? m.references : undefined,
-          quotedText: m.quotedText || undefined,
-              time: new Date(m.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit', timeZone: effectiveTimezone() }),
-          _createdAt: m.createdAt,
-          _timelineOrder: m.timelineOrder ?? m.id,
-          runId: m.runId,
-          roundId: m.roundId,
-          runOutcome: m.runOutcome,
-        }
-      })
-      const loadedTools = ((data.toolEvents || []) as RawToolEvent[]).map((event) => ({
-        id: mkid(), role: 'tool', text: '', _syncKey: `tool:${event.id}`, time: new Date(event.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit', timeZone: effectiveTimezone() }),
-        toolCallId: event.toolCallId, toolName: event.toolName,
-        toolLabel: event.toolLabel,
-        _timelineOrder: event.timelineOrder,
-        toolStatus: event.toolStatus || (event.toolResult !== undefined ? 'success' : 'running'),
-        toolInput: event.toolInput, toolResult: event.toolResult, toolDurationMs: event.toolDurationMs, _createdAt: event.createdAt,
-      }))
-      const loadedTimeline = ((data.timelineEvents || []) as RawTimelineEvent[]).map((event) =>
-        event.kind === 'assistant'
-          ? {
-              id: mkid(), role: 'ai', text: displayQQFaces(event.text || ''), html: null, _syncKey: `timeline:${event.id}`,
-              files: event.files && event.files.length ? event.files : undefined,
-              linkButtons: event.linkButtons,
-              time: new Date(event.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit', timeZone: effectiveTimezone() }),
-              runId: event.runId, roundId: event.roundId,
-              _timelineOrder: event.timelineOrder, _createdAt: event.createdAt,
-            }
-          : {
-              id: mkid(), role: 'tool', text: '', _syncKey: `timeline:${event.id}`,
-              toolCallId: event.toolCallId, toolName: event.toolName, toolLabel: event.toolLabel,
-              toolStatus: event.toolStatus || (event.toolResult !== undefined ? 'success' : 'running'),
-              toolInput: event.toolInput, toolResult: event.toolResult,
-              toolDurationMs: event.toolDurationMs,
-              time: new Date(event.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit', timeZone: effectiveTimezone() }),
-              _timelineOrder: event.timelineOrder, _createdAt: event.createdAt,
-            },
-      )
+      // 历史首屏和增量刷新共用同一映射，防止同一持久化消息在不同加载路径获得不同身份键。
+      const loadedTimelineMessages = mapSessionMessageDelta(data, mkid, options.resolveSpeaker)
       const loadedInteractions: ChatMessage[] = []
       // 刷新/切回会话时恢复尚未过期的交互按钮；服务端会轮换 pending action token，
       // 因而前端不需要、也不会持久化旧 token。
@@ -260,9 +161,7 @@ export function useChatSessions(options: {
         }
       } catch { /* 交互恢复失败不阻断历史会话加载 */ }
       messages.value = sortSessionTimelineMessages([
-        ...loadedMessages,
-        ...loadedTimeline,
-        ...loadedTools,
+        ...loadedTimelineMessages,
         ...loadedInteractions,
       ])
       messageSync.setCursor(id, data.pagination?.newestId)

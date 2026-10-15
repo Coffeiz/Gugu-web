@@ -201,6 +201,23 @@ def unwrap_arguments_wrapper(schema: dict[str, Any], instance: dict[str, Any]) -
     return inner, True
 
 
+def unwrap_matching_tool_envelope(
+    tool_name: str, schema: dict[str, Any], instance: dict[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    """只解开工具名匹配且形状完整的 call_tool 外层协议包装。"""
+    properties = schema.get("properties")
+    if (
+        schema.get("additionalProperties") is not False
+        or not isinstance(properties, dict)
+        or "tool_name" in properties or "arguments" in properties
+        or set(instance) != {"tool_name", "arguments"}
+        or normalize_tool_name(instance.get("tool_name")) != tool_name
+        or not isinstance(instance.get("arguments"), dict)
+    ):
+        return instance, False
+    return instance["arguments"], True
+
+
 def normalize_input_by_schema(
     schema: dict[str, Any],
     instance: dict[str, Any],
@@ -568,8 +585,13 @@ def normalize_and_validate_tool_input(tool_name: str, instance: Any, tool) -> tu
     """执行 dispatch 共用的纯输入归一与 Schema 校验，不运行 handler 或权限副作用。"""
     if not isinstance(instance, dict):
         return instance, [{"path": "$", "rule": "type", "message": "工具输入必须是 object"}], [], []
+    instance, envelope_unwrapped = unwrap_matching_tool_envelope(
+        tool_name, tool.input_schema, instance,
+    )
     instance, _ = unwrap_arguments_wrapper(tool.input_schema, instance)
     instance, legacy_adaptations = normalize_legacy_input(tool_name, instance)
+    if envelope_unwrapped:
+        legacy_adaptations.insert(0, "call_tool_envelope:unwrapped")
     if tool._input_validator is None:
         tool._input_validator = build_validator(tool.input_schema)
     instance, type_adaptations = normalize_input_by_schema(

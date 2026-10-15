@@ -4,14 +4,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { i18n } from '@/i18n'
 import { agentApi, trackApi } from '@/services/api'
 import { useChatStream } from '@/components/common/gugu-chat/composables/useChatStream'
+import { mapSessionMessageDelta, mergeSessionMessageDelta } from '@/components/common/gugu-chat/composables/sessionMessageSync'
 import type { ChatMessage } from '@/components/common/gugu-chat/chatTypes'
 
 vi.mock('@/services/sfx', () => ({ playGuguSfx: vi.fn() }))
 
 function createOptions(messages: ChatMessage[], sessionId = ref<number | null>(42)) {
+  let nextId = 100
   return {
     messages: ref(messages),
-    mkid: () => 100,
+    mkid: () => nextId++,
     now: () => '12:00',
     inputText: ref(''),
     inputReferences: ref([]),
@@ -40,6 +42,32 @@ describe('useChatStream 停止 run', () => {
     vi.unstubAllGlobals()
   })
 
+  it('SSE owner run 与核心 run 不同时，持久化副本仍合并到实时回复气泡', async () => {
+    const options = createOptions([])
+    const stream = useChatStream(options)
+    const events = [
+      { type: 'round_start', run_id: 'owner-run', core_run_id: 'core-run', round_id: 'round-2' },
+      { type: 'token', run_id: 'owner-run', core_run_id: 'core-run', round_id: 'round-2', content: '实时回答正文' },
+      { type: 'done', run_id: 'owner-run', core_run_id: 'core-run' },
+    ]
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(events.map(event => `data: ${JSON.stringify(event)}\n\n`).join('')))
+        controller.close()
+      },
+    }))))
+    await stream.resumeStream(42)
+    const persisted = mapSessionMessageDelta({ messages: [{ id: 91, role: 'assistant',
+      content: '已持久化回答正文', runId: 'core-run', roundId: 'round-2', createdAt: '' }],
+    timelineEvents: [], toolEvents: [] }, () => 200, role => ({ role: role === 'assistant' ? 'ai' : role }))
+    const merged = mergeSessionMessageDelta(options.messages.value, persisted)
+    expect(merged.filter(item => item.role === 'ai')).toHaveLength(1)
+    expect(merged.find(item => item.role === 'ai')).toMatchObject({
+      id: options.messages.value.find(item => item.role === 'ai')?.id,
+      dbId: 91, runId: 'core-run', roundId: 'round-2', text: '已持久化回答正文',
+    })
+  })
+
   it('同一工具调用从排队中更新为进行中且只保留一张卡片', async () => {
     const options = createOptions([])
     const stream = useChatStream(options)
@@ -62,6 +90,33 @@ describe('useChatStream 停止 run', () => {
 
     expect(options.messages.value).toHaveLength(1)
     expect(options.messages.value[0]?.toolStatus).toBe('success')
+  })
+
+  it('不同回合复用相同 toolCallId 时仍分别更新各自的工具卡', async () => {
+    const options = createOptions([])
+    const stream = useChatStream(options)
+    let sseController!: ReadableStreamDefaultController<Uint8Array>
+    const body = new ReadableStream<Uint8Array>({ start(controller) { sseController = controller } })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(body)))
+
+    const consuming = stream.resumeStream(42)
+    const send = (value: object) => sseController.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(value)}\n\n`))
+    send({ type: 'round_start', core_run_id: 'run-a', round_id: 'r1' })
+    send({ type: 'tool_call', core_run_id: 'run-a', round_id: 'r1', tool_call_id: 'call-1', name: 'search', status: 'running' })
+    send({ type: 'tool_done', core_run_id: 'run-a', round_id: 'r1', tool_call_id: 'call-1', name: 'search', status: 'success' })
+    send({ type: 'round_start', core_run_id: 'run-a', round_id: 'r2' })
+    send({ type: 'tool_call', core_run_id: 'run-a', round_id: 'r2', tool_call_id: 'call-1', name: 'search', status: 'running' })
+    send({ type: 'tool_done', core_run_id: 'run-a', round_id: 'r2', tool_call_id: 'call-1', name: 'search', status: 'error' })
+    send({ type: 'done', core_run_id: 'run-a' })
+    sseController.close()
+    await consuming
+
+    const tools = options.messages.value.filter(message => message.role === 'tool')
+    expect(tools).toHaveLength(2)
+    expect(tools.map(({ runId, roundId, toolStatus, _syncKey }) => ({ runId, roundId, toolStatus, _syncKey }))).toEqual([
+      { runId: 'run-a', roundId: 'r1', toolStatus: 'success', _syncKey: 'tool-call:["run-a","r1","call-1"]' },
+      { runId: 'run-a', roundId: 'r2', toolStatus: 'error', _syncKey: 'tool-call:["run-a","r2","call-1"]' },
+    ])
   })
 
   it('失败终态更新原用户消息且不伪造 assistant 错误消息', async () => {

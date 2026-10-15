@@ -75,7 +75,7 @@ const resolved = ref(Boolean(props.msg.interaction?.resolved))
 const submitting = ref(Boolean(props.msg.interaction?.submitting))
 const initiallyExpired = Boolean(
   props.msg.interaction?.expired
-  || (!props.msg.interaction?.selectedOptionId
+  || (!resolved.value && !submitting.value && !props.msg.interaction?.selectedOptionId
     && props.msg.interaction?.expiresAt
     && new Date(props.msg.interaction.expiresAt).getTime() <= Date.now()),
 )
@@ -153,7 +153,7 @@ function activateOpenQuestion() {
   if (!hasRealOptions) interaction.customInputActive = true
 }
 function markExpired() {
-  if (resolved.value) return
+  if (resolved.value || submitting.value) return
   expired.value = true
   resolved.value = true
   if (props.msg.interaction) {
@@ -164,7 +164,7 @@ function markExpired() {
 function scheduleExpiry() {
   if (expiryTimer) clearTimeout(expiryTimer)
   const value = props.msg.interaction?.expiresAt
-  if (!value || resolved.value) return
+  if (!value || resolved.value || submitting.value) return
   const remaining = new Date(value).getTime() - Date.now()
   if (remaining <= 0) { markExpired(); return }
   expiryTimer = setTimeout(markExpired, remaining)
@@ -176,6 +176,7 @@ watch(() => props.msg.interaction?.resolved, (value) => {
 watch(() => props.msg.interaction?.submitting, (value, previous) => {
   submitting.value = Boolean(value)
   if (previous && !value) secretValues.value = {}
+  scheduleExpiry()
 })
 watch(() => props.msg.interaction?.resolved, (value) => {
   if (value) secretValues.value = {}

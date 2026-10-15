@@ -45,6 +45,18 @@ async def test_get_session_messages_404_for_foreign_or_missing_session(db, user_
     assert missing.value.status_code == 404
 
 
+async def test_get_session_messages_preserves_run_identity_for_plain_replies(db, user_a):
+    """普通正文也暴露已存 run 身份，浏览器恢复不能误取下一条队列 run。"""
+    session = await _mk_session(db, user_a)
+    await _mk_message(db, session.id, "user", "合成问题", run_id="run-current", round_id="round-1")
+    reply = await _mk_message(db, session.id, "assistant", "合成回复", run_id="run-current", round_id="round-2")
+    await db.commit()
+    payload = await agent_api.get_session_messages(session.id, current_user=user_a, db=db)
+    result = next(item for item in payload["messages"] if item["id"] == reply.id)
+    assert result["runId"] == "run-current"
+    assert result["roundId"] == "round-2"
+
+
 async def test_web_secret_link_and_submit_are_owner_scoped_for_group_session(db, user_a, user_b):
     from app.api.v1.agent import SecretInteractionRequest
     from app.services.interactions import create_agent_prompt
