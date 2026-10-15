@@ -94,7 +94,7 @@
                       @commit="commitRename" @cancel="cancelRename" />
                     <template v-else>{{ file.displayName }}</template>
                   </template>
-                  <template #meta>{{ file.stageName ? file.stageName + ' · ' : '' }}{{ file.size }}</template>
+                  <template #meta>{{ file.stageName ? file.stageName + ' · ' : '' }}{{ fmtBytes(file.sizeBytes) }}</template>
 
                   <div class="fc-hover-actions" v-show="!pmInSelectionMode">
                     <button class="file-card-btn" :title="renamingFileId === file.id ? t('filesViewUi.confirm') : t('filesViewUi.rename')"
@@ -196,7 +196,7 @@
                     </span>
                   </span>
                   <span class="lr-text">{{ file.stageName || '—' }}</span>
-                  <span class="lr-text">{{ file.size }}</span>
+                  <span class="lr-text">{{ fmtBytes(file.sizeBytes) }}</span>
                   <span class="lr-text">{{ formatFileCreatedDate(file.createdAt) }}</span>
                   <span class="lr-actions">
                     <Transition name="sel-cb">
@@ -283,6 +283,7 @@ import ProjectFileToolbar from '@/views/Projects/components/ProjectFileToolbar.v
 import { vLazyThumb as vLazySrc } from '@/composables/shared/useLazyThumb'
 import { useFileLibraryFolderPresentation } from '@/composables/files/useFileLibraryFolderPresentation'
 import { formatFileCreatedDate } from '@/utils/fileDate'
+import { fmtBytes } from '@/utils/fileSize'
 
 const props = defineProps({ context: { type: Object as PropType<Record<string, any>>, required: true } })
 const { t } = useI18n()
