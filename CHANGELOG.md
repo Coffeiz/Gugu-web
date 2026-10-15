@@ -18,6 +18,7 @@
 - **QQ private chat streaming**: stream private replies with configurable message formatting.
 - **Personal skills**: create, edit, and organize user-defined skills.
 - **Mermaid charts**: preview, enlarge, and export diagrams as PNG on the web; render them as images in IM replies while preserving their position between surrounding text.
+- **Mind notes**: edit a note's record date using date-only precision.
 
 #### Improvements
 
@@ -31,9 +32,11 @@
 - **Prompt caching**: preserve reusable model context across compaction and reflection requests.
 - **Search summaries**: include links to the sources behind key findings.
 - **LoopScope session monitor**: fill model and token usage details from model-call spans when run summaries are incomplete.
+- **Project cards**: maintain project file counts incrementally for project lists and cards.
 - **Canvas navigation**: search the current canvas and center the view on a selected card without changing its saved layout or zoom.
 - **Agent tool inputs**: use clearer resource-specific parameter names while retaining compatibility with known older calls.
 - **Form controls**: improve scheduled-task channel option wrapping and keep input fill colors stable on focus.
+- **Chat recovery**: restore persisted assistant replies and link buttons when a streaming update needs recovery.
 - **Canvas navigation**: search the current canvas and center the view on a selected card without changing its saved layout or zoom.
 - **Agent tool inputs**: use clearer resource-specific parameter names while retaining compatibility with known older calls.
 - **Form controls**: improve scheduled-task channel option wrapping and keep input fill colors stable on focus.
@@ -50,6 +53,8 @@
 - Show concise IM tool completion status without sending tool inputs or raw results.
 - Reconcile legacy file-library quota records before permanently deleting files from the trash.
 - Recover malformed MiniMax streaming responses and retry empty replies after successful tool progress.
+- Preserve repeated follow-up messages and completed tool outcomes when rebuilding conversation context.
+- Prevent the account email from being clipped in the profile panel.
 - Recover malformed MiniMax streaming responses and retry empty replies after successful tool progress.
 
 #### Contributors
@@ -69,6 +74,7 @@
 - **QQ 私聊流式回复**：支持配置消息格式并逐步显示私聊回复。
 - **个人技能**：支持创建、编辑和整理用户自定义技能。
 - **Mermaid 图表**：网页支持预览、放大和导出 PNG；IM 回复可将图表渲染为图片，并按原顺序插入上下文文字之间。
+- **思维笔记**：支持按日期修改笔记记录日期，不要求填写具体时间。
 
 #### 改进
 
@@ -82,9 +88,11 @@
 - **提示词缓存**：压缩和反思请求会保留可复用的模型上下文，提升缓存复用。
 - **搜索汇总**：为主要结论附上实际参考的信息源链接。
 - **LoopScope 会话监视器**：Run 汇总信息不完整时，从模型调用 Span 补全模型与 token 用量。
+- **项目卡片**：增量维护项目文件数，供项目列表和卡片读取。
 - **画布定位**：搜索当前画布并将视野居中到选中的卡片，不改变已保存的布局或缩放比例。
 - **Agent 工具参数**：使用更明确的资源专属参数名，同时兼容已知的旧调用格式。
 - **表单控件**：优化定时任务渠道选项的换行布局，并保持输入框聚焦时的填充色稳定。
+- **聊天恢复**：流式更新需要恢复时，从已保存的消息中恢复助手回复和链接按钮。
 - **画布定位**：搜索当前画布并将视野居中到选中的卡片，不改变已保存的布局或缩放比例。
 - **Agent 工具参数**：使用更明确的资源专属参数名，同时兼容已知的旧调用格式。
 - **表单控件**：优化定时任务渠道选项的换行布局，并保持输入框聚焦时的填充色稳定。
@@ -101,6 +109,8 @@
 - IM 工具交互只展示完成状态，避免发送调用参数和原始结果。
 - 清空回收站时先校准旧配额记录，避免文件删除后清理任务失败。
 - 修复 MiniMax 异常流式响应恢复，以及成功执行工具后最终答复为空时的重试机会。
+- 重建对话上下文时保留重复的继续消息和已完成的工具结果。
+- 修复个人信息面板中的邮箱文字被裁切。
 - 修复 MiniMax 异常流式响应恢复，以及成功执行工具后最终答复为空时的重试机会。
 
 #### 贡献者
