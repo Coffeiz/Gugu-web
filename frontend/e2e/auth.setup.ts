@@ -40,9 +40,9 @@ setup('使用测试账号登录', async ({ page }) => {
 
   // 终端入口同时受管理员总开关和用户级偏好控制；E2E 测试账号需要显式打开
   // 用户级工作区 Shell，不能依赖账号之前是否手动配置过该偏好。
-  const token = await page.evaluate(() => localStorage.getItem('user_token'))
+  const csrfToken = await page.evaluate(() => decodeURIComponent(document.cookie.split('; ').find(item => item.startsWith('gugu_user_csrf_token='))?.split('=').slice(1).join('=') ?? ''))
   const shellPreferenceResponse = await page.request.patch('/api/v1/preferences', {
-    headers: { Authorization: `Bearer ${token ?? ''}` },
+    headers: { 'X-CSRF-Token': csrfToken },
     data: { shellEnabled: true },
   })
   expect(

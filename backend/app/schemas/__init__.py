@@ -139,7 +139,7 @@ class DeleteAccount(CamelModel):
 
 
 class TokenResponse(CamelModel):
-    access_token: str
+    access_token: Optional[str] = None
     token_type: str = "bearer"
     user: UserResponse
 

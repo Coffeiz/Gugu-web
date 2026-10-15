@@ -10,21 +10,26 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Depends
 from fastapi.responses import StreamingResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 
 from app.core.config import get_settings
+from app.core.security import ADMIN_ACCESS_COOKIE, ADMIN_CSRF_COOKIE, request_auth_token
 settings = get_settings()
 
 router = APIRouter(prefix="/admin/debug", tags=["admin"])
+bearer = HTTPBearer(auto_error=False)
 
 
-def _verify_admin_token(token: str) -> None:
+async def _verify_admin_token(token: str) -> None:
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
         if payload.get("role") not in ("superadmin", "admin"):
             raise HTTPException(403, "权限不足")
+        from app.api.v1.admin_auth import ensure_admin_token_current
+        await ensure_admin_token_current(payload)
     except JWTError:
         raise HTTPException(401, "Token 无效")
 
@@ -220,10 +225,10 @@ async def tail_logs(
 async def stream_logs(
     request: Request,
     source: Optional[str] = None,
-    token: Optional[str] = Query(default=None),
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
 ):
-    if token:
-        _verify_admin_token(token)
+    token = request_auth_token(request, credentials, access_cookie=ADMIN_ACCESS_COOKIE, csrf_cookie=ADMIN_CSRF_COOKIE)
+    await _verify_admin_token(token)
     sources = {k: _resolve(k) for k in LOG_FILES if not source or k == source}
 
     async def generator():
@@ -234,6 +239,10 @@ async def stream_logs(
             carried[name] = _EPOCH
 
         while not await request.is_disconnected():
+            try:
+                await _verify_admin_token(token)
+            except HTTPException:
+                return
             for name, path in sources.items():
                 if not path.exists():
                     continue

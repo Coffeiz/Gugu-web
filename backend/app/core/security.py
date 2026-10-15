@@ -104,7 +104,7 @@ def account_is_active(user) -> bool:
     )
 
 
-async def is_user_active(user_id: UUID) -> bool:
+async def is_user_active(user_id: UUID, security_version: int | None = None) -> bool:
     """使用短生命周期独立会话检查账户，适用于 SSE/WS 轮询。"""
     from app.db import session as db_session
     from app.models import User
@@ -113,7 +113,10 @@ async def is_user_active(user_id: UUID) -> bool:
     if db_session._SessionLocal is None:
         return False
     async with db_session._SessionLocal() as db:
-        return account_is_active(await db.get(User, user_id))
+        user = await db.get(User, user_id)
+        return account_is_active(user) and (
+            security_version is None or int(getattr(user, "security_version", 1) or 1) == security_version
+        )
 
 
 def hash_password(plain: str) -> str:
@@ -124,33 +127,33 @@ def verify_password(plain: str, hashed: str) -> bool:
     return _bcrypt.checkpw(plain.encode(), hashed.encode())
 
 
-def create_stream_token(file_id: int, user_id: UUID, expires_minutes: int = 10) -> str:
+def create_stream_token(file_id: int, user_id: UUID, expires_minutes: int = 10, security_version: int = 1) -> str:
     settings = get_settings()
     expire = now_utc() + timedelta(minutes=expires_minutes)
     return jwt.encode(
-        {"sub": str(user_id), "fid": file_id, "role": "stream", "exp": expire},
+        {"sub": str(user_id), "fid": file_id, "role": "stream", "sv": security_version, "exp": expire},
         settings.secret_key,
         algorithm="HS256",
     )
 
 
-def verify_stream_token(token: str) -> tuple[int, UUID]:
-    """Returns (file_id, user_id). Raises HTTPException on invalid/expired token."""
+def verify_stream_token(token: str) -> tuple[int, UUID, int]:
+    """Returns (file_id, user_id, security_version). Raises on invalid/expired token."""
     settings = get_settings()
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
         if payload.get("role") != "stream":
             raise ValueError
-        return int(payload["fid"]), UUID(payload["sub"])
-    except (JWTError, KeyError, ValueError):
+        return int(payload["fid"]), UUID(payload["sub"]), int(payload.get("sv", 1))
+    except (JWTError, KeyError, ValueError, TypeError):
         raise HTTPException(status_code=401, detail="stream token 无效或已过期")
 
 
-def create_user_token(user_id: UUID) -> str:
+def create_user_token(user_id: UUID, security_version: int = 1) -> str:
     settings = get_settings()
     expire = now_utc() + timedelta(minutes=settings.access_token_expire_minutes)
     return jwt.encode(
-        {"sub": str(user_id), "role": "user", "exp": expire},
+        {"sub": str(user_id), "role": "user", "sv": security_version, "exp": expire},
         settings.secret_key,
         algorithm="HS256",
     )
@@ -174,12 +177,14 @@ async def get_current_user_id(
         if payload.get("role") != "user":
             raise ValueError
         user_id = UUID(payload["sub"])
-        if not await is_user_active(user_id):
+        token_version = int(payload.get("sv", 1))
+        if not await is_user_active(user_id, token_version):
             raise HTTPException(status_code=401, detail="用户不存在或已停用")
+        request.state.user_security_version = token_version
         from app.security.risk_policy import enforce_user_throttle
         await enforce_user_throttle(user_id)
         return user_id
-    except (JWTError, KeyError, ValueError):
+    except (JWTError, KeyError, ValueError, TypeError):
         raise HTTPException(status_code=401, detail="Token 无效或已过期")
 
 
@@ -210,8 +215,20 @@ def decode_user_token(token: str) -> UUID:
         if payload.get("role") != "user":
             raise ValueError
         return UUID(payload["sub"])
-    except (JWTError, KeyError, ValueError):
+    except (JWTError, KeyError, ValueError, TypeError):
         raise HTTPException(status_code=401, detail="Token 无效或已过期")
+
+
+def decode_user_token_security_version(token: str) -> int:
+    """读取 JWT 中的用户安全版本；兼容尚未带版本号的旧令牌。"""
+    settings = get_settings()
+    try:
+        payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
+        if payload.get("role") != "user":
+            raise ValueError
+        return int(payload.get("sv", 1))
+    except (JWTError, ValueError, TypeError):
+        raise HTTPException(status_code=401, detail="Token 无效或已过期") from None
 
 
 async def get_current_user(
@@ -228,11 +245,12 @@ async def get_current_user(
         if payload.get("role") != "user":
             raise ValueError("not a user token")
         user_id = UUID(payload["sub"])
-    except (JWTError, KeyError, ValueError):
+        token_version = int(payload.get("sv", 1))
+    except (JWTError, KeyError, ValueError, TypeError):
         raise HTTPException(status_code=401, detail="Token 无效或已过期")
 
     user = await db.get(User, user_id)
-    if not account_is_active(user):
+    if not account_is_active(user) or int(getattr(user, "security_version", 1) or 1) != token_version:
         raise HTTPException(status_code=401, detail="用户不存在或已停用")
     await ensure_data_replacement_allows_write(request, db, user_id)
     from app.security.risk_policy import enforce_user_throttle

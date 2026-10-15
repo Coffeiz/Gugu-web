@@ -14,8 +14,8 @@ test.afterEach(async ({ page }) => {
   createdProjectIds.clear()
   if (!names.length && !projectIds.length) return
   await page.evaluate(async ({ targetNames, projectIds }) => {
-    const token = localStorage.getItem('user_token')
-    const headers = token ? { Authorization: `Bearer ${token}` } : {}
+    const csrfToken = decodeURIComponent(document.cookie.split('; ').find(item => item.startsWith('gugu_user_csrf_token='))?.split('=').slice(1).join('=') ?? '')
+    const headers = { 'X-CSRF-Token': csrfToken }
     const matches = new Set(targetNames)
     if (targetNames.length) {
       const allFiles = await fetch('/api/v1/files/all', { headers }).then(response => response.ok ? response.json() : [])
@@ -67,10 +67,10 @@ async function openFixtureProject(page: Page): Promise<{ root: Locator; name: st
   await page.goto('/projects')
   const name = `e2e-drag-project-${Date.now()}-${Math.random().toString(16).slice(2)}`
   const projectId = await page.evaluate(async projectName => {
-    const token = localStorage.getItem('user_token')
+    const csrfToken = decodeURIComponent(document.cookie.split('; ').find(item => item.startsWith('gugu_user_csrf_token='))?.split('=').slice(1).join('=') ?? '')
     const response = await fetch('/api/v1/projects', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
       body: JSON.stringify({ name: projectName }),
     })
     if (!response.ok) throw new Error(`创建拖拽测试项目失败：${response.status}`)
@@ -98,14 +98,14 @@ async function reopenFixtureProject(page: Page, name: string): Promise<Locator> 
 
 async function createProjectFile(page: Page, projectId: number, name: string) {
   const created = await page.evaluate(async ({ projectId, name }) => {
-    const token = localStorage.getItem('user_token')
+    const csrfToken = decodeURIComponent(document.cookie.split('; ').find(item => item.startsWith('gugu_user_csrf_token='))?.split('=').slice(1).join('=') ?? '')
     const form = new FormData()
     form.append('file', new File(['drag e2e fixture'], `${name}.txt`, { type: 'text/plain' }))
     form.append('space', 'project')
     form.append('project_id', String(projectId))
     const response = await fetch('/api/v1/files', {
       method: 'POST',
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      headers: { 'X-CSRF-Token': csrfToken },
       body: form,
     })
     if (!response.ok) throw new Error(`创建拖拽测试文件失败：${response.status} ${await response.text()}`)
@@ -117,8 +117,8 @@ async function createProjectFile(page: Page, projectId: number, name: string) {
 
 async function waitForProjectFiles(page: Page, projectId: number, folderId: number, ...names: string[]) {
   await expect.poll(async () => page.evaluate(async ({ projectId, folderId, names }) => {
-    const token = localStorage.getItem('user_token')
-    const headers = token ? { Authorization: `Bearer ${token}` } : {}
+    const csrfToken = decodeURIComponent(document.cookie.split('; ').find(item => item.startsWith('gugu_user_csrf_token='))?.split('=').slice(1).join('=') ?? '')
+    const headers = { 'X-CSRF-Token': csrfToken }
     const files = await fetch('/api/v1/files/all', { headers }).then(response => response.ok ? response.json() : [])
     return names.every(name => files.some((file: { displayName?: string; projectId?: number | null; folderId?: number | null }) =>
       file.displayName === name && file.projectId === projectId && file.folderId === folderId,

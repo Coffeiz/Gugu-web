@@ -6,6 +6,7 @@ import asyncio
 import base64
 import json
 import logging
+from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
@@ -14,7 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import account_is_active, decode_user_token, get_current_user, get_current_user_id, is_user_active
+from app.core.security import account_is_active, decode_user_token, decode_user_token_security_version, get_current_user, get_current_user_id, is_user_active, USER_ACCESS_COOKIE
 from app.core.redaction import redact
 from app.core.tz import now_utc
 from app.core import events
@@ -107,6 +108,14 @@ def _websocket_token(websocket: WebSocket) -> str:
         value = protocol.strip()
         if value.startswith("gugu-auth."):
             return value[len("gugu-auth."):]
+    cookie_token = websocket.cookies.get(USER_ACCESS_COOKIE, "")
+    if cookie_token:
+        # Cookie 鉴权的 WebSocket 必须具备同源 Origin，避免跨站 WebSocket 劫持。
+        origin = urlsplit(websocket.headers.get("origin", ""))
+        expected_scheme = "https" if websocket.url.scheme == "wss" else "http"
+        if not origin.netloc or origin.netloc != websocket.url.netloc or origin.scheme != expected_scheme:
+            raise HTTPException(status_code=403, detail="WebSocket 来源校验失败")
+        return cookie_token
     return ""
 
 
@@ -217,13 +226,18 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket):
     attached = False
     row_id = terminal_id
     try:
-        user_id = decode_user_token(_websocket_token(websocket))
+        raw_token = _websocket_token(websocket)
+        user_id = decode_user_token(raw_token)
+        token_version = decode_user_token_security_version(raw_token)
         from app.security.risk_policy import enforce_user_throttle
         await enforce_user_throttle(user_id)
         db_session.ensure_engine()
         async with db_session._SessionLocal() as auth_db:
             user = await auth_db.get(User, user_id)  # orm-exempt: user_id 已由 WebSocket token 解码
-            row = await get_terminal(auth_db, user_id, terminal_id) if account_is_active(user) else None
+            row = await get_terminal(auth_db, user_id, terminal_id) if (
+                account_is_active(user)
+                and int(getattr(user, "security_version", 1) or 1) == token_version
+            ) else None
             if row is None or row.mode != "interactive-pty":
                 raise HTTPException(status_code=404, detail="交互式终端不存在")
             access = await authorize_operation(
@@ -344,7 +358,7 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket):
 
     receive_task = asyncio.create_task(websocket.receive_json())
     output_task = asyncio.create_task(queue.get())
-    status_task = asyncio.create_task(_wait_for_account_suspend(user_id))
+    status_task = asyncio.create_task(_wait_for_account_suspend(user_id, token_version))
     try:
         while True:
             done, _ = await asyncio.wait(
@@ -355,6 +369,9 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket):
                     await websocket.close(code=4403, reason="账号暂时不可用")
                 break
             if output_task in done:
+                if not await is_user_active(user_id, token_version):
+                    await websocket.close(code=4403, reason="登录已失效")
+                    break
                 chunk = output_task.result()
                 if chunk is None:
                     # 用户主动停止时，记录的 terminated 优先于 PTY 的退出回调，
@@ -385,6 +402,9 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket):
                 })
                 output_task = asyncio.create_task(queue.get())
             if receive_task in done:
+                if not await is_user_active(user_id, token_version):
+                    await websocket.close(code=4403, reason="登录已失效")
+                    break
                 value = receive_task.result()
                 message = PtyClientMessage.from_dict(value)
                 if message.type == "input":
@@ -413,12 +433,12 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket):
         await _cleanup_terminal_websocket_resources(manager, row_id, queue, attached)
 
 
-async def _wait_for_account_suspend(user_id):
-    """轮询账户安全状态，避免已建立的终端连接绕过冻结。"""
+async def _wait_for_account_suspend(user_id, token_version: int):
+    """轮询账户状态和令牌版本，避免已建立的终端连接绕过撤销。"""
     while True:
-        await asyncio.sleep(5)
+        await asyncio.sleep(1)
         try:
-            active = await is_user_active(user_id)
+            active = await is_user_active(user_id, token_version)
         except Exception:
             # 已建立连接遇到一次数据库抖动时保留连接，下一轮继续检查。
             logger.warning("terminal_pty account_status_check_failed")

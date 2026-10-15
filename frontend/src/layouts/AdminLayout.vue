@@ -141,6 +141,7 @@ import { useAdminStore } from '@/stores/admin'
 import Brand from '@/components/common/layout/Brand.vue'
 import { useI18n } from 'vue-i18n'
 import { getLocale, localeOptions, setLocale, type SupportedLocale } from '@/i18n'
+import { showAppError } from '@/composables/core/useAppToast'
 
 const route = useRoute()
 const router = useRouter()
@@ -177,9 +178,12 @@ function goHash(to: string, hash: string) {
   }
 }
 
-function handleLogout() {
-  adminStore.logout()
-  router.push('/login')
+async function handleLogout() {
+  if (!await adminStore.logout()) {
+    showAppError(t('errors.requestFailed'))
+    return
+  }
+  await router.push('/login')
 }
 </script>
 

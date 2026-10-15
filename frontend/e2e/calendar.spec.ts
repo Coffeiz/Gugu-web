@@ -304,10 +304,10 @@ test('浮动活动编辑窗内选择日期不会被 Teleport 弹层误关', asyn
   const title = `E2E 活动 ${Date.now()}`
   await page.goto('/calendar')
   const created = await page.evaluate(async ({ title: eventTitle, date }) => {
-    const token = localStorage.getItem('user_token')
+    const csrfToken = decodeURIComponent(document.cookie.split('; ').find(item => item.startsWith('gugu_user_csrf_token='))?.split('=').slice(1).join('=') ?? '')
     const response = await fetch('/api/v1/events', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token ?? ''}` },
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
       body: JSON.stringify({ title: eventTitle, date, type: 'event' }),
     })
     return { ok: response.ok, body: await response.json() }
@@ -337,10 +337,10 @@ test('浮动活动编辑窗内选择日期不会被 Teleport 弹层误关', asyn
     await expect(editModal.locator('.dp-input')).toContainText(`${now.getMonth() + 1}/${Number(nextDayNumber)}`)
   } finally {
     await page.evaluate(async (eventId) => {
-      const token = localStorage.getItem('user_token')
+      const csrfToken = decodeURIComponent(document.cookie.split('; ').find(item => item.startsWith('gugu_user_csrf_token='))?.split('=').slice(1).join('=') ?? '')
       await fetch(`/api/v1/events/${eventId}`, {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${token ?? ''}` },
+        headers: { 'X-CSRF-Token': csrfToken },
       })
     }, created.body.id)
   }

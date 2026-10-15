@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useAudioStore } from './audio'
 import { authApi } from '@/services/api'
+import { getCsrfHeaders } from '@/services/api'
 import { getAuthDeviceId } from '@/utils/authDevice'
 import type { components } from '@/types/api'
 import { getLocale } from '@/i18n'
@@ -24,7 +25,6 @@ type UserResponse = components['schemas']['UserResponse']
 type UserWithTimezone = UserResponse & { timezone?: string | null; emailSubscribed?: boolean }
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
-const TOKEN_KEY = 'user_token'
 
 function resetAccountState() {
   beginAccountBoundary()
@@ -43,15 +43,10 @@ function resetAccountState() {
 }
 
 export const useAuthStore = defineStore('auth', () => {
-  const token = ref(localStorage.getItem(TOKEN_KEY) ?? '')
   const user  = ref<UserWithTimezone | null>(null)
+  const sessionChecked = ref(false)
 
-  const isLoggedIn = computed(() => !!token.value)
-
-  function _saveToken(t: string) {
-    token.value = t
-    localStorage.setItem(TOKEN_KEY, t)
-  }
+  const isLoggedIn = computed(() => !!user.value)
 
   function _setUser(u: UserWithTimezone | null) {
     user.value = u
@@ -69,48 +64,55 @@ export const useAuthStore = defineStore('auth', () => {
   async function register(username: string, email: string, password: string, emailSubscribed = false, verificationCode?: string) {
     const res = await fetch(`${BASE_URL}/auth/register`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Device-ID': getAuthDeviceId() },
+      headers: { 'Content-Type': 'application/json', 'X-Device-ID': getAuthDeviceId(), 'X-Auth-Transport': 'cookie' },
       credentials: 'include',
       body: JSON.stringify({ username, email, password, locale: getLocale(), emailSubscribed, verificationCode }),
     })
     const body = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(_extractDetail(body, '注册失败'))
     resetAccountState()
-    _saveToken(body.accessToken)
     _setUser(body.user)
+    sessionChecked.value = true
   }
 
   async function login(username: string, password: string) {
     const res = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Auth-Transport': 'cookie' },
       credentials: 'include',
       body: JSON.stringify({ username, password }),
     })
     const body = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(_extractDetail(body, '登录失败'))
     resetAccountState()
-    _saveToken(body.accessToken)
     _setUser(body.user)
+    sessionChecked.value = true
   }
 
   async function fetchMe() {
-    if (!token.value) return
+    if (sessionChecked.value && user.value) return true
     try {
       const res = await fetch(`${BASE_URL}/auth/me`, {
         credentials: 'include',
-        headers: { Authorization: `Bearer ${token.value}` },
       })
       // 只有明确的 401 才代表 token 失效。后端短暂 5xx、锁等待或网络中断
       // 不应清掉本地登录态，否则一次服务抖动会把用户误登出。
-      if (res.status === 401) { logout(); return }
-      if (!res.ok) return
+      if (res.status === 401) {
+        user.value = null
+        sessionChecked.value = true
+        setUserTimezone(null)
+        return false
+      }
+      if (!res.ok) return null
       const nextUser = await res.json() as UserWithTimezone
       user.value = nextUser
+      sessionChecked.value = true
       setUserTimezone(nextUser.timezone)
       _syncTimezone()
+      return true
     } catch {
-      // 保留 token，等待下一次请求或用户主动重试。
+      // 网络异常不清空可能有效的 HttpOnly 会话；允许后续路由再次探测。
+      return null
     }
   }
 
@@ -159,15 +161,24 @@ export const useAuthStore = defineStore('auth', () => {
     return updated
   }
 
-  function logout() {
-    void fetch(`${BASE_URL}/auth/logout`, { method: 'POST', credentials: 'include' }).catch(() => {})
+  async function logout(): Promise<boolean> {
+    let response: Response
+    try {
+      response = await fetch(`${BASE_URL}/auth/logout`, {
+        method: 'POST', credentials: 'include', headers: getCsrfHeaders(), keepalive: true,
+      })
+    } catch {
+      return false
+    }
+    // 401 表示当前 Cookie 已失效/账号已删除，服务端已不再接受该会话。
+    if (!response.ok && response.status !== 401) return false
     useAudioStore().stop()
     resetAccountState()
-    token.value = ''
     user.value  = null
+    sessionChecked.value = true
     setUserTimezone(null)
-    localStorage.removeItem(TOKEN_KEY)
+    return true
   }
 
-  return { token, user, isLoggedIn, register, login, fetchMe, updateProfile, updateProfilePreference, uploadAvatar, logout }
+  return { user, isLoggedIn, sessionChecked, register, login, fetchMe, updateProfile, updateProfilePreference, uploadAvatar, logout }
 })

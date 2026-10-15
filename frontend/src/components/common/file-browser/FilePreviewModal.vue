@@ -229,8 +229,7 @@ async function load(file: Partial<FileMeta>, refresh = false) {
   extColor.value   = EXT_COLORS[(file.ext ?? '').toUpperCase()] ?? '#7b7fb2'
 
   const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
-  const token    = localStorage.getItem('user_token') ?? ''
-  const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
+  const headers: Record<string, string> = {}
 
   try {
     if (isVideoExt(file.ext)) {
@@ -309,10 +308,8 @@ async function handleDownload() {
     const filename = `${file.displayName}.${file.ext?.toLowerCase()}`
     if (file.attach_id) {
       const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
-      const token = localStorage.getItem('user_token') ?? ''
       const res = await fetch(`${BASE_URL}/agent/attachment/${file.attach_id}/download`, {
         credentials: 'include',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
       })
       if (isUnauthorizedResponse(res)) return
       if (!res.ok) throw new Error(`HTTP ${res.status}`)

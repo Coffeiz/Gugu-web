@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { sanitizeHtml, sanitizeChatHtml, renderMarkdown } from '@/utils/markdown'
-import { renderMdStream } from '@/components/common/gugu-chat/markdown'
+import { markdownToSafePlainText, renderMdStream } from '@/components/common/gugu-chat/markdown'
 
 // P0 XSS 回归（见 docs/security/代码审查-GPT复审核实版-2026-07-10.md）。
 // 全站 Markdown 直出经 sanitizeHtml；这里钉死「危险载荷被中和 + 正常渲染无损」两面，
@@ -118,5 +118,28 @@ describe('sanitizeChatHtml — 聊天路径只额外放行 gugu://', () => {
     const div = document.createElement('div')
     div.innerHTML = renderMarkdown('[连接 QQ](gugu://bind-im/qq)')
     expect(div.querySelector('a')?.getAttribute('href') ?? '').not.toContain('gugu://')
+  })
+})
+
+describe('聊天复制纯文本提取', () => {
+  it('解析恶意聊天 HTML 前净化事件处理器与危险元素，同时保留可读正文和动作文案', () => {
+    const text = markdownToSafePlainText(
+      '<p>正常内容</p><img src=x onerror="window.__copyXss = true"><svg onload="window.__copyXss = true"></svg><script>window.__copyXss = true</script><a href="gugu://open-file/1">打开文件</a>',
+    )
+
+    expect(text).toContain('正常内容')
+    expect(text).toContain('打开文件')
+    expect(text).not.toContain('window.__copyXss')
+    const parsed = document.createElement('div')
+    parsed.innerHTML = sanitizeChatHtml(
+      '<img src=x onerror="window.__copyXss = true"><svg onload="window.__copyXss = true"></svg><script>window.__copyXss = true</script>',
+    )
+    expect(parsed.querySelector('[onerror], [onload], script')).toBeNull()
+  })
+
+  it('正常 Markdown 仍提取为纯文本', () => {
+    const copied = markdownToSafePlainText('<p><strong>标题</strong></p><ul><li>条目</li></ul>')
+    expect(copied).toContain('标题')
+    expect(copied).toContain('条目')
   })
 })

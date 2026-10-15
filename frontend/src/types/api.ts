@@ -6646,7 +6646,7 @@ export interface components {
         /** TokenResponse */
         TokenResponse: {
             /** Accesstoken */
-            accessToken: string;
+            accessToken: string | null;
             /**
              * Tokentype
              * @default bearer

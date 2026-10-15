@@ -9,7 +9,7 @@
  */
 import { defineStore } from 'pinia'
 import { reactive, ref } from 'vue'
-import { getToken } from '@/services/api'
+import { getCookieValue } from '@/services/api'
 import { useUiStore } from '@/stores/ui'
 import {
   isAgentRunChangedEvent,
@@ -90,12 +90,12 @@ export const useLiveStore = defineStore('live', () => {
 
   async function _loop() {
     while (running) {
-      const token = getToken()
-      if (!token) { await _sleep(1000); continue }
+      const sessionKey = getCookieValue('gugu_user_csrf_token')
+      if (!sessionKey) { await _sleep(1000); continue }
       abort = new AbortController()
       try {
         const res = await fetch(LIVE_URL, {
-          headers: { Authorization: `Bearer ${token}` },
+          credentials: 'include',
           signal: abort.signal,
         })
         if (isUnauthorizedResponse(res)) {

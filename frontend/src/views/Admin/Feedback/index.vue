@@ -71,10 +71,6 @@ function categoryLabel(cat: string) {
   return { bug: 'Bug', suggestion: t('adminFeedback.suggestion'), other: t('adminFeedback.other') }[cat] ?? cat
 }
 
-function adminToken() {
-  return localStorage.getItem('admin_token') ?? ''
-}
-
 async function load() {
   loading.value = true
   refreshing.value = true
@@ -83,7 +79,7 @@ async function load() {
     const params = new URLSearchParams({ page: String(page.value), page_size: String(pageSize) })
     if (filter.value) params.set('category', filter.value)
     const res = await fetch(`/api/v1/admin/feedback?${params}`, {
-      headers: { Authorization: `Bearer ${adminToken()}` },
+      credentials: 'include',
     })
     if (isUnauthorizedResponse(res, 'admin')) return
     const data = await res.json()

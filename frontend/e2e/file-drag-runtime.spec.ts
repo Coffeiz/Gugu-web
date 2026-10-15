@@ -29,8 +29,8 @@ test.afterEach(async ({ page }) => {
   createdFolderIds.clear()
   if (!fileIds.length && !folderIds.length) return
   await page.evaluate(async ({ fileIds, folderIds }) => {
-    const token = localStorage.getItem('user_token')
-    const headers = token ? { Authorization: `Bearer ${token}` } : {}
+    const csrfToken = decodeURIComponent(document.cookie.split('; ').find(item => item.startsWith('gugu_user_csrf_token='))?.split('=').slice(1).join('=') ?? '')
+    const headers = { 'X-CSRF-Token': csrfToken }
     for (const fileId of fileIds) {
       await fetch(`/api/v1/files/${fileId}`, { method: 'DELETE', headers })
     }
@@ -99,8 +99,8 @@ async function waitForMovedFiles(page: Page, fileIds: number[], targetFolderId: 
   // 避免依赖已移除的全量 /files/all、/folders/all 端点。
   await page.reload()
   await expect.poll(async () => page.evaluate(async ({ fileIds, targetFolderId }) => {
-    const token = localStorage.getItem('user_token')
-    const headers = token ? { Authorization: `Bearer ${token}` } : {}
+    const csrfToken = decodeURIComponent(document.cookie.split('; ').find(item => item.startsWith('gugu_user_csrf_token='))?.split('=').slice(1).join('=') ?? '')
+    const headers = { 'X-CSRF-Token': csrfToken }
     const files = await Promise.all(fileIds.map(async fileId => {
       const response = await fetch(`/api/v1/files/${fileId}`, { headers })
       return response.ok ? response.json() : null
@@ -368,8 +368,8 @@ test.describe('文件库：Runtime 多选拖拽', () => {
     await expect(target).toContainText('0 项', { timeout: 10000 })
     await page.reload()
     const persisted = await page.evaluate(async ({ fileIds, sourceFolderId, targetFolderId }) => {
-      const token = localStorage.getItem('user_token')
-      const headers = token ? { Authorization: `Bearer ${token}` } : {}
+      const csrfToken = decodeURIComponent(document.cookie.split('; ').find(item => item.startsWith('gugu_user_csrf_token='))?.split('=').slice(1).join('=') ?? '')
+      const headers = { 'X-CSRF-Token': csrfToken }
       const [targetResponse, ...fileResponses] = await Promise.all([
         fetch(`/api/v1/folders/${targetFolderId}`, { headers }),
         ...fileIds.map(fileId => fetch(`/api/v1/files/${fileId}`, { headers })),

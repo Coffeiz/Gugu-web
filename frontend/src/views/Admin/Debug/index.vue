@@ -264,14 +264,13 @@ async function startSSE() {
   streamAbort?.abort()
   const controller = new AbortController()
   streamAbort = controller
-  const token = localStorage.getItem('admin_token')
 
   try {
     const res = await fetch('/api/v1/admin/debug/logs/stream', {
       headers: {
         Accept: 'text/event-stream',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
+      credentials: 'include',
       signal: controller.signal,
     })
     if (isUnauthorizedResponse(res, 'admin')) return

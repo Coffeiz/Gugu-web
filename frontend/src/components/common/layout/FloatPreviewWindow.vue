@@ -499,8 +499,7 @@ async function load(f: Partial<FileMeta>, refresh = false) {
     const vs = isVector.value ? vectorWindowScale(f.imgWidth, f.imgHeight) : 1
     fitWindow(Math.round(f.imgWidth * vs), Math.round(f.imgHeight * vs))
   }
-  const token   = localStorage.getItem('user_token') ?? ''
-  const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
+  const headers: Record<string, string> = {}
   previewBlobCache.rememberFile(f, undefined, accountEpoch)
   let initialStreamUrl = props.win.streamUrl
   props.win.streamUrl = undefined
@@ -641,8 +640,7 @@ async function load(f: Partial<FileMeta>, refresh = false) {
       if (isImg.value && !_SVG_EXTS.has((f.ext ?? '').toUpperCase())) {
         if (f.attach_id) {
           // 聊天附件：占位图走附件缩略图端点
-          const token = localStorage.getItem('user_token') ?? ''
-          const h: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
+          const h: Record<string, string> = {}
           fetch(`${BASE_URL}/agent/attachment/${f.attach_id}/thumb?size=card`, { headers: h })
             .then(r => {
               if (isUnauthorizedResponse(r)) return null
@@ -729,8 +727,7 @@ async function matchesRecentlySavedText(fileId: string, content: string): Promis
   if (!Number.isSafeInteger(id) || id <= 0) return false
   try {
     const stream = await filesApi.getStreamUrl(id)
-    const token = localStorage.getItem('user_token') ?? ''
-    const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
+    const headers: Record<string, string> = {}
     const response = await fetch(stream.url, { headers, credentials: 'include', cache: 'no-store' })
     if (!response.ok || isUnauthorizedResponse(response)) return false
     const normalized = await normalizeTextBlob(await response.blob())
@@ -763,9 +760,8 @@ async function handleDownload() {
     const file = props.win.file
     const filename = `${file.displayName}.${file.ext?.toLowerCase()}`
     if (file.attach_id) {
-      const token = localStorage.getItem('user_token') ?? ''
       const res = await fetch(`${BASE_URL}/agent/attachment/${file.attach_id}/download`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        credentials: 'include',
       })
       if (isUnauthorizedResponse(res)) return
       if (!res.ok) throw new Error(`HTTP ${res.status}`)

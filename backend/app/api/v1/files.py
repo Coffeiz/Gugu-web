@@ -1,7 +1,6 @@
 from typing import Literal, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, UploadFile, File as FastAPIFile, Form
-from jose import JWTError, jwt
 from pydantic import Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import events
 from app.core.config import get_settings
 from app.core.ownership import get_owned
-from app.core.security import get_client_id, get_current_user, verify_stream_token
+from app.core.security import get_client_id, get_current_user, is_user_active, verify_stream_token
 from app.core.tz import now_utc
 from app.core.upload_stream import spool_upload
 from app.db.session import get_db
@@ -139,7 +138,7 @@ def _parse_range_header(value: str | None, size: int) -> tuple[int, int, bool] |
     return start, min(end, size - 1), True
 
 
-def _iter_local_file(path, start: int, end: int):
+def _iter_local_file(path, start: int, end: int, access_check=None):
     async def body():
         import asyncio
         remaining = end - start + 1
@@ -148,6 +147,8 @@ def _iter_local_file(path, start: int, end: int):
             await asyncio.to_thread(source.seek, start)
             while remaining > 0:
                 chunk = await asyncio.to_thread(source.read, min(1024 * 1024, remaining))
+                if access_check is not None and not await access_check():
+                    raise HTTPException(401, "文件流令牌已失效")
                 if not chunk:
                     break
                 remaining -= len(chunk)
@@ -832,31 +833,17 @@ async def batch_download_files(
 
 
 # ── GET /files/{fid}/thumb ────────────────────────────────────────────────────
-# 供 <img src="..."> 使用，通过 query param 传 JWT（与 stream 端点一致）
+# 供 <img src="..."> 使用；浏览器通过 HttpOnly Cookie 会话鉴权。
 
 @router.get("/{fid}/thumb")
 async def get_thumb(
-    request: Request,
     fid: int,
     size: str = Query("full"),   # "tiny" | "card" | "full"
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     from fastapi.responses import Response as FastAPIResponse
-    settings = get_settings()
-    auth = request.headers.get("Authorization", "")
-    token = auth.removeprefix("Bearer ").strip()
-    if not token:
-        raise HTTPException(401, "Token 无效")
-    try:
-        from uuid import UUID as _UUID
-        payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
-        if payload.get("role") != "user":
-            raise ValueError("not user")
-        user_id = _UUID(payload["sub"])
-    except (JWTError, KeyError, ValueError):
-        raise HTTPException(401, "Token 无效")
-
-    f = await get_owned(db, File, fid, user_id)
+    f = await get_owned(db, File, fid, current_user.id)
     if not f or f.deleted_at is not None:
         raise HTTPException(404, "文件不存在")
 
@@ -986,6 +973,7 @@ async def get_stream_url(
             storage_key=f.storage_key,
             file_id=fid,
             user_id=current_user.id,
+            security_version=current_user.security_version or 1,
         )
     }
 
@@ -1003,9 +991,11 @@ async def stream_file(
     from fastapi.responses import StreamingResponse
     from urllib.parse import quote
 
-    token_fid, user_id = verify_stream_token(token)
+    token_fid, user_id, token_version = verify_stream_token(token)
     if token_fid != fid:
         raise HTTPException(401, "token 与文件不符")
+    if not await is_user_active(user_id, token_version):
+        raise HTTPException(401, "文件流令牌已失效")
 
     try:
         result = await resolve_local_file_stream(db, get_storage(), user_id, fid)
@@ -1034,7 +1024,10 @@ async def stream_file(
     if partial:
         headers["Content-Range"] = f"bytes {start}-{end}/{size}"
     return StreamingResponse(
-        _iter_local_file(result.path, start, end),
+        _iter_local_file(
+            result.path, start, end,
+            access_check=lambda: is_user_active(user_id, token_version),
+        ),
         status_code=206 if partial else 200,
         media_type=result.file.mime_type or "application/octet-stream",
         headers=headers,

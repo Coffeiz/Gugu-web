@@ -152,8 +152,11 @@ function cycleTheme() {
 }
 
 // 登出带上当前页 redirect，重新登录后回到退出前的页面（如 /skills/mcp）。
-function handleLogout() {
-  authStore.logout()
+async function handleLogout() {
+  if (!await authStore.logout()) {
+    showAppError(t('errors.requestFailed'))
+    return
+  }
   void router.push({ path: '/login', query: { redirect: router.currentRoute.value.fullPath } })
 }
 

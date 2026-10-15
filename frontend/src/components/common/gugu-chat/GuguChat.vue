@@ -138,7 +138,7 @@ import type { AudioTrack } from '@/stores/audio'
 import { useUiStore } from '@/stores/ui'
 import { usePreferencesStore } from '@/stores/preferences'
 import { usePreviewStore } from '@/stores/preview'
-import { agentApi, filesApi, trackApi, authApi, getToken, workspacesApi } from '@/services/api'
+import { agentApi, filesApi, trackApi, authApi, getCsrfHeaders, workspacesApi } from '@/services/api'
 import { isUnauthorizedResponse } from '@/services/authSession'
 import { prefetchGreeting } from '@/composables/shared/useGreeting'
 import GuguChatFab from './GuguChatFab.vue'
@@ -149,7 +149,7 @@ import GuguChatWindow from './GuguChatWindow.vue'
 import FilesystemAuthorizationDialog from '@/components/common/filesystem/FilesystemAuthorizationDialog.vue'
 import { CUSTOM_REPLY_OPTION_ID, findPendingTextInteractionId, type ChatMessage, type ChatFile, type ChatReference, type ImPlatformKey } from './chatTypes'
 import { API_BASE } from './chatConstants'
-import { renderMd } from './markdown'
+import { markdownToSafePlainText, renderMd } from './markdown'
 import { canPreview, fmtSize } from './messageDisplay'
 import { useChatAudio } from './composables/useChatAudio'
 import { useChatAttachments } from './composables/useChatAttachments'
@@ -558,10 +558,10 @@ async function onInteractionSelect(_msg: ChatMessage, option: { id: string; labe
   if (option.id === CUSTOM_REPLY_OPTION_ID) {
     if (!_msg.interaction?.allowTextInput || _msg.interaction.kind === 'confirm') return
     try {
-      const token = getToken()
       const res = await fetch(`${API_BASE}/agent/interactions/${promptId}/respond`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
         body: JSON.stringify({ token: option.token }),
       })
       if (isUnauthorizedResponse(res)) return
@@ -587,13 +587,13 @@ async function onInteractionSelect(_msg: ChatMessage, option: { id: string; labe
     _msg.interaction.submitting = true
   }
   try {
-    const token = getToken()
     const endpoint = _msg.interaction?.toolCallId
       ? `${API_BASE}/agent/interactions/${promptId}/resume`
       : `${API_BASE}/agent/interactions/${promptId}/respond`
     const res = await fetch(endpoint, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
       body: JSON.stringify({ token: option.token }),
     })
     if (isUnauthorizedResponse(res)) return
@@ -634,10 +634,10 @@ async function onSecretSubmit(_msg: ChatMessage, values: Record<string, string>)
   const promptId = _msg.interaction?.promptId
   if (!promptId || !_msg.interaction?.secretFields?.length) return
   try {
-    const token = getToken()
     const res = await fetch(`${API_BASE}/agent/interactions/${promptId}/secrets`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
       body: JSON.stringify({ values }),
     })
     if (isUnauthorizedResponse(res)) return
@@ -661,10 +661,10 @@ async function onSecretCancel(_msg: ChatMessage) {
   const promptId = _msg.interaction?.promptId
   if (!promptId || !_msg.interaction?.secretFields?.length) return
   try {
-    const token = getToken()
     const res = await fetch(`${API_BASE}/agent/interactions/${promptId}/secrets/cancel`, {
       method: 'POST',
-      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      credentials: 'include',
+      headers: getCsrfHeaders(),
     })
     if (isUnauthorizedResponse(res)) return
     if (!res.ok) {
@@ -693,10 +693,10 @@ async function onInteractionTextSubmit(message: ChatMessage, text: string) {
     return
   }
   try {
-    const token = getToken()
     const res = await fetch(`${API_BASE}/agent/interactions/${promptId}/resume-text`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
       body: JSON.stringify({ text: answer }),
     })
     if (isUnauthorizedResponse(res)) {
@@ -771,9 +771,8 @@ const copiedId = ref<number | null>(null)
 async function downloadFile(f: ChatFile) {
   if (f.attach_id) {
     // 聊天上传的暂存附件：走 /agent/attachment/{id}/download
-    const token = getToken()
     const res = await fetch(`${API_BASE}/agent/attachment/${f.attach_id}/download`,
-      { credentials: 'include', headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      { credentials: 'include' })
     if (isUnauthorizedResponse(res)) return
     if (!res.ok) { console.error('附件下载失败', res.status); return }
     const blob = await res.blob()
@@ -812,9 +811,7 @@ async function copyMsg(msg: ChatMessage) {
   // AI 消息取渲染后的纯文本，用户消息直接取原文
   let text = msg.text
   if (msg.role === 'ai' && msg.text) {
-    const tmp = document.createElement('div')
-    tmp.innerHTML = renderMd(msg.text)
-    text = tmp.innerText || tmp.textContent || msg.text
+    text = markdownToSafePlainText(renderMd(msg.text)) || msg.text
   }
   const copied = await copyTextToClipboard(text)
   if (!copied) {

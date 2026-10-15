@@ -10,7 +10,6 @@ import { onActivated, onMounted, onUnmounted, onDeactivated, ref, watch } from '
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from 'xterm'
 import 'xterm/css/xterm.css'
-import { getToken } from '@/services/api'
 import { handleUnauthorized } from '@/services/authSession'
 import { useI18n } from 'vue-i18n'
 
@@ -60,8 +59,7 @@ function connect(forcePromptRecovery = false) {
   const generation = ++socketGeneration
   const previous = socket
   if (previous && previous.readyState !== WebSocket.CLOSED) previous.close()
-  const token = getToken()
-  const current = new WebSocket(socketUrl(props.terminalId), token ? [`gugu-auth.${token}`] : [])
+  const current = new WebSocket(socketUrl(props.terminalId))
   socket = current
   const isCurrent = () => socket === current && socketGeneration === generation
   current.onopen = () => {

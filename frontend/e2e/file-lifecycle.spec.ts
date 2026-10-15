@@ -70,8 +70,8 @@ test('文件库：文本保存后关闭并重开仍显示最新内容', async ({
     const closeButton = page.locator('.fpw-title .fpw-close')
     if (await closeButton.count()) await closeButton.click().catch(() => undefined)
     await page.evaluate(async targetName => {
-      const token = localStorage.getItem('user_token')
-      const headers = token ? { Authorization: `Bearer ${token}` } : {}
+      const csrfToken = decodeURIComponent(document.cookie.split('; ').find(item => item.startsWith('gugu_user_csrf_token='))?.split('=').slice(1).join('=') ?? '')
+      const headers = { 'X-CSRF-Token': csrfToken }
       const files = await fetch('/api/v1/files/all', { headers }).then(response => response.ok ? response.json() : [])
       for (const file of files.filter((item: { displayName?: string }) => item.displayName === targetName)) {
         await fetch(`/api/v1/files/${file.id}`, { method: 'DELETE', headers })

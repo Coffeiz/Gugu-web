@@ -2,7 +2,6 @@ import type { ChatMessage, GuguSession } from '../types'
 
 export interface GuguBootstrap {
   apiBase: string
-  token: string
 }
 
 const KEY = 'loopscope:gugu-bootstrap'
@@ -29,31 +28,29 @@ function apiBase(cfg: GuguBootstrap) {
 }
 
 export function saveBootstrap(value: GuguBootstrap) {
-  sessionStorage.setItem(KEY, JSON.stringify({ ...value, apiBase: normalizeBase(value.apiBase) }))
+  sessionStorage.setItem(KEY, JSON.stringify({ apiBase: normalizeBase(value.apiBase) }))
   window.dispatchEvent(new CustomEvent('loopscope:bootstrap'))
 }
 
 export function loadBootstrap(): GuguBootstrap | null {
   try {
     const raw = sessionStorage.getItem(KEY)
-    return raw ? JSON.parse(raw) : null
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as { apiBase?: unknown }
+    if (typeof parsed.apiBase !== 'string') return null
+    const safeConfig = { apiBase: normalizeBase(parsed.apiBase) }
+    // 清理旧版曾在当前标签 sessionStorage 保存的 Gugu Bearer JWT。
+    sessionStorage.setItem(KEY, JSON.stringify(safeConfig))
+    return safeConfig
   } catch {
     return null
-  }
-}
-
-function authHeaders(extra: HeadersInit = {}): HeadersInit {
-  const cfg = loadBootstrap()
-  return {
-    ...extra,
-    ...(cfg?.token ? { Authorization: `Bearer ${cfg.token}` } : {}),
   }
 }
 
 export async function listGuguSessions(): Promise<GuguSession[]> {
   const cfg = loadBootstrap()
   if (!cfg) return []
-  const r = await fetch(`${apiBase(cfg)}/agent/sessions`, { headers: authHeaders() })
+  const r = await fetch(`${apiBase(cfg)}/agent/sessions`, { credentials: 'include' })
   if (!r.ok) throw new Error(`Gugu sessions ${r.status}`)
   return r.json()
 }
@@ -76,7 +73,7 @@ export async function loadMessagePage(
   if (options.beforeId !== undefined) query.set('before_id', String(options.beforeId))
   if (options.afterId !== undefined) query.set('after_id', String(options.afterId))
   const suffix = query.toString() ? `?${query.toString()}` : ''
-  const r = await fetch(`${apiBase(cfg)}/agent/sessions/${sessionId}/messages${suffix}`, { headers: authHeaders() })
+  const r = await fetch(`${apiBase(cfg)}/agent/sessions/${sessionId}/messages${suffix}`, { credentials: 'include' })
   if (!r.ok) throw new Error(`Gugu messages ${r.status}`)
   const data = await r.json()
   const page = data.pagination ?? {}

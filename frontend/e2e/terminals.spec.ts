@@ -3,10 +3,10 @@ import { test, expect } from '@playwright/test'
 test('交互式终端可以创建、连接、输入并删除', async ({ page }) => {
   await page.goto('/')
   const terminalId = await page.evaluate(async () => {
-    const token = localStorage.getItem('user_token')
+    const csrfToken = decodeURIComponent(document.cookie.split('; ').find(item => item.startsWith('gugu_user_csrf_token='))?.split('=').slice(1).join('=') ?? '')
     const response = await fetch('/api/v1/terminals', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token ?? ''}` },
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
       body: JSON.stringify({ name: `E2E 终端 ${Date.now()}`, mode: 'interactive-pty' }),
     })
     if (!response.ok) throw new Error(`创建终端失败：${response.status}`)
@@ -31,10 +31,10 @@ test('交互式终端可以创建、连接、输入并删除', async ({ page }) 
     await expect(page.locator('.terminal-delete-action')).toHaveCount(0)
   } finally {
     await page.evaluate(async (id) => {
-      const token = localStorage.getItem('user_token')
+      const csrfToken = decodeURIComponent(document.cookie.split('; ').find(item => item.startsWith('gugu_user_csrf_token='))?.split('=').slice(1).join('=') ?? '')
       await fetch(`/api/v1/terminals/${encodeURIComponent(id)}`, {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${token ?? ''}` },
+        headers: { 'X-CSRF-Token': csrfToken },
       })
     }, terminalId)
   }

@@ -86,7 +86,7 @@ export const privacyPolicy = {
 
 ## 七、Token、Cookie 与本地存储
 
-咕咕不使用 Cookie 做广告或跨站追踪。登录状态使用服务端配置有效期的 JWT；浏览器优先使用 HttpOnly、SameSite Cookie，同时保留 localStorage 兼容令牌。Token 只包含认证所需的用户 ID 和角色，不含密码或 API Key。
+咕咕不使用 Cookie 做广告或跨站追踪。浏览器登录状态使用服务端配置有效期的 HttpOnly、SameSite Cookie，并通过 CSRF Token 保护写操作；浏览器不在 localStorage 保存登录令牌。登出或修改密码后，已签发的用户登录令牌会立即失效。Token 只包含认证所需的用户 ID 和角色，不含密码或 API Key。
 
 ## 八、未成年人
 
@@ -156,7 +156,7 @@ Passwords use bcrypt hashes, IM secrets use AES-256-GCM encryption, traffic uses
 
 ## 7. Tokens, Cookies, and Local Storage
 
-Gugu does not use cookies for advertising or cross-site tracking. Login uses a server-configured JWT lifetime, preferably in HttpOnly and SameSite cookies, with a local-storage compatibility token. Tokens contain only the user ID and role needed for authentication, never passwords or API keys.
+Gugu does not use cookies for advertising or cross-site tracking. Browser login uses HttpOnly, SameSite cookies with a server-configured JWT lifetime, and write requests are protected by a CSRF token. Browser login tokens are not stored in local storage. Logging out or changing the password immediately revokes previously issued user login tokens. Tokens contain only the user ID and role needed for authentication, never passwords or API keys.
 
 ## 8. Children
 
@@ -208,7 +208,7 @@ Gugu は会話後にメモリを非同期で整理します。メモリはアカ
 
 ## 7. トークン、Cookie、ローカルストレージ
 
-広告やサイト横断追跡のために Cookie を使いません。ログインにはサーバー設定の有効期限を持つ JWT を使用し、HttpOnly・SameSite Cookie を優先します。互換性のため localStorage のトークンも使用しますが、パスワードや API Key は含みません。
+広告やサイト横断追跡のために Cookie を使いません。ブラウザーのログインにはサーバー設定の有効期限を持つ HttpOnly・SameSite Cookie を使用し、書き込みリクエストは CSRF トークンで保護します。ログイン用トークンは localStorage に保存しません。ログアウトまたはパスワード変更後、発行済みのユーザーログイン用トークンは直ちに無効になります。トークンには認証に必要なユーザー ID とロールのみを含み、パスワードや API キーは含みません。
 
 ## 8. 未成年者
 
