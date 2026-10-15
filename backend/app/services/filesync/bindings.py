@@ -512,21 +512,32 @@ async def resolve_sync_conflict(
             raise ValueError("找不到对应的活动文件记录，无法确认删除")
         now = now_utc()
         size_bytes = int(file.size_bytes or 0)
-        from app.services.storage.quota_ledger import FILE_LIBRARY, get_quota, record_usage
+        from app.services.storage.quota_ledger import (
+            FILE_LIBRARY, StorageQuotaLedger, get_quota, record_usage,
+        )
 
+        quota_preexisted = (await db.scalar(select(StorageQuotaLedger.id).where(
+            StorageQuotaLedger.user_id == user_id,
+            StorageQuotaLedger.category == FILE_LIBRARY,
+        ))) is not None
+        quota = None
         if size_bytes:
-            # 先以文件仍处于活动状态时的 DB/磁盘事实建立账本基线，再扣除这条
-            # 记录。若先软删除，首次建账会漏掉它，随后负增量会把用量扣成负数。
-            await get_quota(db, user_id, FILE_LIBRARY)
+            # 首次建账会直接测量已删文件之后的物理状态，不应再扣一次该记录；
+            # 已有账本则应用删除增量，并以账本现值为上限避免产生负用量。
+            quota = await get_quota(db, user_id, FILE_LIBRARY)
         file.deleted_at = now
         file.version = int(file.version or 1) + 1
         file.updated_at = now
         from app.services.files.previews import delete_thumb_cache
 
         delete_thumb_cache(file.id, Path(get_settings().storage.local_path).expanduser().resolve())
-        if size_bytes:
+        if size_bytes and quota_preexisted and quota is not None:
+            delta_bytes = -min(size_bytes, max(int(quota.used_bytes), 0))
+        else:
+            delta_bytes = 0
+        if delta_bytes:
             await record_usage(
-                db, user_id, category=FILE_LIBRARY, delta_bytes=-size_bytes,
+                db, user_id, category=FILE_LIBRARY, delta_bytes=delta_bytes,
                 operation="filesync_confirm_delete", resource_type="file", resource_id=file.id,
                 idempotency_key=f"filesync-confirm-delete:{conflict.id}",
                 allow_over_limit=True,

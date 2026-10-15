@@ -1,7 +1,7 @@
 import json
 from types import SimpleNamespace
 
-from agent.gateway import feishu
+from agent.gateway.feishu import events as feishu
 
 
 def _msg(message_type: str, content: dict, message_id: str = "om_1"):

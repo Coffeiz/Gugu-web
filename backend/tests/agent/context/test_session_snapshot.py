@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 from agent.context.session_snapshot import (
     DEFAULT_IDLE_TTL,
+    SNAPSHOT_CONTEXT_VERSION,
     digest,
     is_expired,
     message_hash,
@@ -100,11 +101,49 @@ def test_snapshot_revision_is_pending_metadata_not_hit_gate():
         "system_prompt": "system",
         "session_info": {"v": 1},
         "context_revision": 4,
+        "snapshot_context_version": SNAPSHOT_CONTEXT_VERSION,
     }
     session.snapshot_expires_at = datetime(2026, 8, 22, tzinfo=timezone.utc)
     now = datetime(2026, 8, 21, tzinfo=timezone.utc)
     assert snapshot_is_usable(session, now)
     assert snapshot_is_usable(session, now)
+
+
+@pytest.mark.asyncio
+async def test_ensure_snapshot_rebuilds_context_without_current_prompt_version(monkeypatch):
+    calls = 0
+
+    async def revision(_user_id):
+        return 7
+
+    monkeypatch.setattr("app.core.events.get_context_revision", revision)
+
+    async def load():
+        nonlocal calls
+        calls += 1
+        return {
+            "system_prompt": "system",
+            "snapshot_context": "微信已连接",
+            "session_info": {"source": "telegram"},
+        }
+
+    session = _Session()
+    session.session_context = {
+        "system_prompt": "system",
+        "snapshot_context": "微信未连接",
+        "session_info": {"source": "telegram"},
+        "context_revision": 6,
+    }
+    session.snapshot_expires_at = datetime(2026, 8, 22, tzinfo=timezone.utc)
+
+    context = await ensure_snapshot(
+        _Db(), session, load_context=load,
+        now=datetime(2026, 8, 21, tzinfo=timezone.utc),
+    )
+
+    assert calls == 1
+    assert "微信已连接" in context["snapshot_context"]
+    assert session.session_context["snapshot_context_version"] == SNAPSHOT_CONTEXT_VERSION
 
 
 def test_zero_snapshot_revision_is_a_valid_rag_version():
@@ -343,7 +382,7 @@ def test_initialize_snapshot_preserves_goal_control_state():
             "baseline_digest": "message-fingerprint",
         },
         "user_skill_snapshot": [{
-            "name": "saved-skill", "kind": "skill", "source": "user",
+            "name": "U4", "display_name": "saved-skill", "kind": "skill", "source": "user",
             "description_short": "已冻结的技能目录",
         }],
     }
@@ -361,7 +400,7 @@ def test_initialize_snapshot_preserves_goal_control_state():
     assert session.session_context["goal_mode"] is True
     assert session.session_context["stance_digest"] == "stable-stance"
     assert session.session_context["provider_cache_anchor"]["baseline_digest"] == "message-fingerprint"
-    assert session.session_context["user_skill_snapshot"][0]["name"] == "saved-skill"
+    assert session.session_context["user_skill_snapshot"][0]["name"] == "U4"
 
 
 def test_history_baseline_never_moves_back_from_session_watermark():

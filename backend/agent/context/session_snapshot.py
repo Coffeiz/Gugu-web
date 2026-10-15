@@ -9,6 +9,8 @@ from typing import Any, Awaitable, Callable
 from app.core.tz import now_utc, resolve_tz, LOCAL_TZ
 
 DEFAULT_IDLE_TTL = timedelta(minutes=30)
+# 动态提示词格式升级时递增，让既有滑动快照在下一轮自动重建。
+SNAPSHOT_CONTEXT_VERSION = 2
 _SNAPSHOT_KEY_UNSET = object()
 _WORKSPACE_BINDING_FIELDS = (
     "workspace_id",
@@ -145,6 +147,7 @@ def snapshot_is_usable(
         isinstance(context, dict)
         and context.get("system_prompt") is not None
         and context.get("session_info") is not None
+        and context.get("snapshot_context_version") == SNAPSHOT_CONTEXT_VERSION
         and not is_expired(session, now)
         and (locale is None or context.get("locale", "zh-CN") == locale)
         and (
@@ -290,6 +293,7 @@ def initialize_snapshot(
         "memory_summary_hash": memory_summary_hash,
         "locale": locale,
         "snapshot_context_hash": digest(snapshot_context),
+        "snapshot_context_version": SNAPSHOT_CONTEXT_VERSION,
         "history_baseline_message_id": int(getattr(session, "baseline_message_id", 0) or 0),
         "workspace_binding": workspace_binding_key(workspace_binding),
         **preserved_control,

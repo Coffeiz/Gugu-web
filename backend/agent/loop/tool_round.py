@@ -55,7 +55,7 @@ class ParallelToolBatchRuntime:
     round_id: str
     verify_mode: bool
     tool_snapshot: Any
-    loaded_skill_slugs: dict[str, str]
+    loaded_skill_ids: dict[str, str]
     max_concurrency: int
     bindings: ParallelToolBindings
 
@@ -126,7 +126,7 @@ class ParallelToolBatchRuntime:
                     session=self.session,
                     run_id=self.run_id,
                     tool_snapshot=self.tool_snapshot,
-                    skill_state=self.bindings.copy_skill_state(self.loaded_skill_slugs),
+                    skill_state=self.bindings.copy_skill_state(self.loaded_skill_ids),
                 )
 
         async def dispatch_batch():
@@ -299,7 +299,7 @@ class SerialToolBatchRuntime:
     round_id: str
     verify_mode: bool
     tool_snapshot: Any
-    loaded_skill_slugs: dict[str, str]
+    loaded_skill_ids: dict[str, str]
     on_interaction: Any = None
 
     async def run(self) -> AsyncGenerator[ToolRoundEmission, None]:
@@ -369,37 +369,36 @@ class SerialToolBatchRuntime:
                 verify=self.verify_mode, status="running",
             )
 
-            skill_slug = None
+            skill_id = None
             if effective_name == "use_skill":
-                from agent.skills import resolve_skill_slug
-
-                requested = str((dispatch_input or {}).get("name") or "")
-                skill_slug = resolve_skill_slug(requested) or requested.strip().lower()
+                skill_id = str((dispatch_input or {}).get("id") or "").strip().upper()
             current_digest = None
             capability = self.runner.capability_context
-            if skill_slug:
+            if skill_id:
                 if capability is not None:
-                    current_digest = capability.skill_digest(skill_slug)
+                    current_digest = capability.skill_digest(skill_id)
                 if not current_digest:
                     from agent.skills import skill_content_digest
 
-                    current_digest = skill_content_digest(skill_slug)
-            skill_meta = capability.skill_meta(skill_slug) if skill_slug and capability is not None else None
+                    current_digest = skill_content_digest(skill_id)
+            skill_meta = capability.skill_meta(skill_id) if skill_id and capability is not None else None
             is_user_skill = bool(skill_meta and skill_meta.source == "user")
-            if skill_slug and current_digest and self.loaded_skill_slugs.get(skill_slug) == current_digest and not is_user_skill:
+            if skill_id and current_digest and self.loaded_skill_ids.get(skill_id) == current_digest and not is_user_skill:
+                skill_name = (skill_meta.display_name or skill_id) if skill_meta else skill_id
                 result = self.bindings.json_dumps({
-                    "skill": skill_slug,
+                    "skill_id": skill_id,
+                    "skill_name": skill_name,
                     "already_loaded": True,
-                    "message": "该技能正文已在当前上下文中，无需重复加载。",
+                    "message": f"技能「{skill_name}」的正文已在当前上下文中，无需重复加载。",
                 }, ensure_ascii=False)
                 artifact = None
             else:
                 result, artifact = await self.bindings.dispatch_in_session(
                     self.user_id, dispatch_target, dispatch_input,
                     session_id=self.session_id, session=self.session, run_id=self.run_id,
-                    tool_snapshot=self.tool_snapshot, skill_state=self.loaded_skill_slugs,
+                    tool_snapshot=self.tool_snapshot, skill_state=self.loaded_skill_ids,
                 )
-                if skill_slug and self.bindings.is_successful_result(result):
+                if skill_id and self.bindings.is_successful_result(result):
                     try:
                         payload = self.bindings.json_loads(result) if isinstance(result, str) else result
                     except (TypeError, ValueError):
@@ -407,9 +406,9 @@ class SerialToolBatchRuntime:
                     marker = payload.get("_capability_usage") if isinstance(payload, dict) else None
                     digest = marker.get("content_digest") if isinstance(marker, dict) else None
                     if isinstance(digest, str) and digest:
-                        self.loaded_skill_slugs[skill_slug] = digest
+                        self.loaded_skill_ids[skill_id] = digest
                     elif current_digest:
-                        self.loaded_skill_slugs[skill_slug] = current_digest
+                        self.loaded_skill_ids[skill_id] = current_digest
 
             if effective_name in {"ask_user", "manage_mcp_servers"}:
                 try:

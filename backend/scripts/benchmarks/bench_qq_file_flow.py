@@ -134,9 +134,9 @@ async def run_one(args: argparse.Namespace) -> None:
         raise SystemExit("群聊 --send 必须提供本次入站消息的 --message-id")
 
     os.environ["QQ_FILE_TIMING"] = "1"
-    from agent.gateway import qq
+    from agent.gateway.qq import outbound as qq_outbound
 
-    original_request = qq._qq_request
+    original_request = qq_outbound._qq_request
 
     async def timed_request(channel_id, method, path, json_body=None, **kwargs):
         request_timer = Timer.start()
@@ -151,10 +151,10 @@ async def run_one(args: argparse.Namespace) -> None:
                 stage = "qq-auth-or-other"
             report(stage, request_timer.ms())
 
-    qq._qq_request = timed_request
+    qq_outbound._qq_request = timed_request
     try:
         timer = Timer.start()
-        ok = await qq.send_file(
+        ok = await qq_outbound.send_file(
             args.target_id,
             data,
             name,
@@ -165,7 +165,7 @@ async def run_one(args: argparse.Namespace) -> None:
         )
         report("qq-send-total", timer.ms(), ok=ok, target_kind="group" if args.group else "c2c")
     finally:
-        qq._qq_request = original_request
+        qq_outbound._qq_request = original_request
 
 
 async def run(args: argparse.Namespace) -> None:

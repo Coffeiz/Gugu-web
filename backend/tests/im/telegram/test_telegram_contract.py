@@ -9,6 +9,16 @@ from agent.im.session import conversation_key, get_or_create_session
 from agent.models import AgentRequest
 
 
+def test_telegram_package_keeps_stable_public_outbound_imports():
+    from agent.gateway import telegram
+    from agent.gateway.telegram import runtime
+
+    assert telegram.send_message is runtime.send_message
+    assert telegram.send_file is runtime.send_file
+    assert telegram.send_message_draft is runtime.send_message_draft
+    assert telegram.main is runtime.main
+
+
 def test_telegram_private_and_supergroup_types_map_to_shared_im_protocol():
     private = PlatformMessage.from_payload({
         "platform": "telegram",

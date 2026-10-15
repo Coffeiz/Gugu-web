@@ -1,4 +1,5 @@
 ---
+id: S9
 name: 项目规划
 description_short: 用户要规划多步骤事项、项目阶段或待办时使用。
 description_long: "要建项目、或提到「多天/要准备/好几件事」的事(旅游·办展·装修·搬家·毕设·开公司等)时，当规划伙伴帮他拟阶段+待办。场景：create_project/set_stages/update_stage 怎么用得当、阶段怎么分、要不要做成项目。"

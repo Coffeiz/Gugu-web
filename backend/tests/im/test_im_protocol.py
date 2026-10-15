@@ -60,7 +60,7 @@ def test_payload_semantic_text_uses_canonical_bot_mention_flag():
 def test_feishu_mention_normalization_only_accepts_current_bot():
     from types import SimpleNamespace
 
-    from agent.gateway.feishu import _feishu_mentions_current_bot
+    from agent.gateway.feishu.events import _feishu_mentions_current_bot
 
     assert _feishu_mentions_current_bot(
         SimpleNamespace(mentions=[{"id": {"open_id": "ou-bot"}}]), "ou-bot"

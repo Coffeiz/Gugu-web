@@ -72,6 +72,7 @@ class CollectSink:
 
     on_tool_event: Callable | None = None
     on_round: Callable | None = None
+    on_event: Callable | None = None
     yield_tokens: bool = False
     yield_round_ends: bool = False
 
@@ -82,6 +83,7 @@ class WebStreamSink:
 
     on_tool_event: Callable | None = None
     on_round: Callable | None = None
+    on_event: Callable | None = None
     yield_tokens: bool = True
     yield_round_ends: bool = True
 
@@ -130,7 +132,10 @@ async def consume_agent_events(
         会滞留到下一轮，IM 会先看到选择卡、选完后才看到这段说明。
         """
         nonlocal cur, san
-        cur += san.flush()
+        tail = san.flush()
+        cur += tail
+        if tail and sink.yield_tokens:
+            yield (EVENT_TOKEN, tail)
         rounds.append(cur)
         completed = cur.strip()
         cur = ""
@@ -163,8 +168,10 @@ async def consume_agent_events(
                 async for _ in flush_current_round():
                     yield _
                 continuation_pending = True
+                await _notify_event(sink.on_event, evt)
             elif t == "round_start":
                 continuation_pending = False
+                await _notify_event(sink.on_event, evt)
             elif t == "_usage":
                 outcome.tokens_in = evt.get("input", 0)
                 outcome.context_input = max(
@@ -182,8 +189,10 @@ async def consume_agent_events(
                     )
                     if key in evt
                 })
+                await _notify_event(sink.on_event, evt)
             elif t == "_context_compaction":
                 outcome.compaction_applied = bool(evt.get("applied")) or outcome.compaction_applied
+                await _notify_event(sink.on_event, evt)
             elif t == "token":
                 token = san.feed(evt.get("content", ""))
                 if token:
@@ -206,6 +215,16 @@ async def consume_agent_events(
                     "text": "",
                     "files": [file],
                 })
+                await _notify_event(sink.on_event, evt)
+            elif t == "link_buttons" and evt.get("link_buttons"):
+                outcome.display_timeline_items.append({
+                    "kind": "assistant",
+                    "runId": evt.get("run_id"),
+                    "roundId": evt.get("round_id"),
+                    "text": "",
+                    "linkButtons": evt["link_buttons"],
+                })
+                await _notify_event(sink.on_event, evt)
             elif t in {"tool_call", "tool_done"}:
                 tool_event = dict(evt)
                 call_id = str(evt.get("tool_call_id") or "")
@@ -250,6 +269,7 @@ async def consume_agent_events(
                             if "duration_ms" in tool_event:
                                 item["toolDurationMs"] = tool_event["duration_ms"]
                             break
+                await _notify_event(sink.on_event, tool_event)
             elif t == "interaction_required":
                 # ask_user 的交互回调会在生成器产出此事件后展示选择卡，并等待用户输入。
                 # 若不先冲刷当前轮，前置说明会一直留在 cur，直到用户选择后核心循环才发
@@ -262,16 +282,21 @@ async def consume_agent_events(
                     for key in ("prompt_id", "kind", "title", "body", "options", "allow_text_input", "custom_input_active", "expires_at", "round_id", "tool_call_id", "force_display")
                     if key in evt
                 })
+                await _notify_event(sink.on_event, evt)
             elif t == "_cancelled":
                 outcome.cancelled = True   # 用户中途「算了」：停止收集，网关已回「先不继续」，worker 不再补发
                 interrupted = True
+                await _notify_event(sink.on_event, evt)
                 break
             elif t == "error":
                 outcome.error_info = LLMErrorPresentation.from_event(evt)
                 outcome.errored_text = evt.get("message") or evt.get("detail") or "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
                 outcome.errored = True
                 interrupted = True
+                await _notify_event(sink.on_event, evt)
                 break
+            else:
+                await _notify_event(sink.on_event, evt)
     except BaseException:
         # 生成器异常（含外层提前关闭的 GeneratorExit）：标记后原样向上抛，
         # 绝不吞掉——吞掉会把异常伪装成正常终态。
@@ -304,7 +329,10 @@ async def consume_agent_events(
         outcome.round_texts = [r.strip() for r in rounds if r.strip()]
         outcome.text = outcome.errored_text
         return
-    cur += san.flush()
+    tail = san.flush()
+    cur += tail
+    if tail and sink.yield_tokens:
+        yield (EVENT_TOKEN, tail)
     rounds.append(cur)
     _close_active_seg(cur.strip())
     outcome.round_texts = [r.strip() for r in rounds if r.strip()]
@@ -325,6 +353,12 @@ async def _notify_tool_event(callback, event: dict) -> None:
     except Exception as exc:
         from app.core.redaction import diag_log
         diag_log("agent.im.tool_event_display", exc)
+
+
+async def _notify_event(callback, event: dict) -> None:
+    """把已解析的渠道事件交给适配层；没有订阅者时不增加传输行为。"""
+    if callback is not None:
+        await callback(event)
 
 
 async def _notify_round(callback, text: str) -> bool:

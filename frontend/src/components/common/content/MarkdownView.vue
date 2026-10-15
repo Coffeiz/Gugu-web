@@ -1,12 +1,12 @@
 <template>
-  <div ref="root" class="md-view" v-html="rendered" />
+  <div ref="root" class="md-view" :data-mermaid-ready="mermaidReady ? 'true' : 'false'" v-html="rendered" />
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { renderMarkdown, sanitizeHtml, sanitizeChatHtml } from '@/utils/markdown'
-import { bindMermaidInteractions, cleanupMermaidInteractions } from '@/utils/mermaidInteraction'
-import { resolveMermaidThemeColors } from '@/utils/mermaidTheme'
+import { cleanupMarkdownMermaid, renderMarkdownMermaid } from '@/utils/mermaidRenderer'
 
 // 全站通用的 markdown 展示组件，统一 GuguChat 聊天 / 通知气泡 / 侧边栏通知中心的 md 输出样式。
 // - text：原始 markdown 文本，用轻量 renderMarkdown 渲染；
@@ -19,56 +19,18 @@ const props = defineProps({
   chat: { type: Boolean, default: false },
 })
 const root = ref<HTMLElement | null>(null)
-let renderSequence = 0
+const mermaidReady = ref(false)
+const { t, locale } = useI18n()
 let themeObserver: MutationObserver | null = null
-type MermaidApi = typeof import('mermaid').default
-let mermaidApi: MermaidApi | null = null
+let renderGeneration = 0
 
-async function getMermaid(): Promise<MermaidApi> {
-  if (!mermaidApi) mermaidApi = (await import('mermaid')).default
-  return mermaidApi
-}
-
-function isDarkTheme(): boolean {
-  return document.documentElement.dataset.theme === 'dark'
-}
-
-function cssToken(name: string, fallback: string): string {
-  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
-  return value || fallback
-}
-
-function configureMermaid(mermaid: MermaidApi): void {
-  const dark = isDarkTheme()
-  const colors = resolveMermaidThemeColors(dark)
-  mermaid.initialize({
-    startOnLoad: false,
-    securityLevel: 'strict',
-    htmlLabels: false,
-    theme: dark ? 'dark' : 'default',
-    themeVariables: {
-      ...colors,
-      fontFamily: cssToken('--font-family-sans', 'Inter, sans-serif'),
-    },
-  })
-}
-
-async function renderMermaidBlock(element: HTMLElement, source: string): Promise<void> {
-  const sequence = ++renderSequence
-  element.dataset.renderSequence = String(sequence)
-  try {
-    const mermaid = await getMermaid()
-    configureMermaid(mermaid)
-    const { svg } = await mermaid.render(`md-mermaid-${sequence}`, source)
-    if (!element.isConnected || element.dataset.renderSequence !== String(sequence)) return
-    element.innerHTML = sanitizeHtml(svg)
-    bindMermaidInteractions(element)
-    element.classList.add('md-mermaid-ready')
-    element.classList.remove('md-mermaid-error')
-  } catch {
-    // 保留源码，避免无效图表把用户内容静默吞掉。
-    element.classList.add('md-mermaid-error')
-    element.textContent = `Mermaid 图表渲染失败\n\n${source}`
+function mermaidLabels() {
+  return {
+    zoomOut: t('mermaidUi.zoomOut'), zoomIn: t('mermaidUi.zoomIn'), resetZoom: t('mermaidUi.resetZoom'),
+    showSource: t('mermaidUi.showSource'), showDiagram: t('mermaidUi.showDiagram'),
+    expand: t('mermaidUi.expand'), downloadPng: t('mermaidUi.downloadPng'), close: t('mermaidUi.close'),
+    previewTitle: t('mermaidUi.previewTitle'), downloadFailed: t('mermaidUi.downloadFailed'),
+    pngTooLarge: t('mermaidUi.pngTooLarge'), renderFailed: t('mermaidUi.renderFailed'),
   }
 }
 
@@ -84,22 +46,14 @@ function wrapMarkdownTables(): void {
 }
 
 async function renderMermaidBlocks(): Promise<void> {
-  await nextTick()
-  if (!root.value) return
-  wrapMarkdownTables()
-  const sourceBlocks = Array.from(root.value.querySelectorAll<HTMLElement>('.md-mermaid-source'))
-  for (const sourceBlock of sourceBlocks) {
-    const source = sourceBlock.textContent || ''
-    const container = document.createElement('div')
-    container.className = 'md-mermaid'
-    container.dataset.source = encodeURIComponent(source)
-    sourceBlock.replaceWith(container)
-  }
-
-  // 主题切换时保留源码并重画，避免 Mermaid 使用旧的亮/暗色配置。
-  for (const container of root.value.querySelectorAll<HTMLElement>('.md-mermaid')) {
-    const encoded = container.dataset.source
-    if (encoded) await renderMermaidBlock(container, decodeURIComponent(encoded))
+  const element = root.value
+  if (!element) return
+  const generation = ++renderGeneration
+  mermaidReady.value = false
+  try {
+    await renderMarkdownMermaid(element, mermaidLabels(), wrapMarkdownTables)
+  } finally {
+    if (generation === renderGeneration && element.isConnected) mermaidReady.value = true
   }
 }
 // html 预渲染 prop 同样不可信（来自后端/流式），也必须消毒——不能因「已是 HTML」就跳过
@@ -108,7 +62,7 @@ const rendered = computed(() =>
     ? (props.chat ? sanitizeChatHtml(props.html) : sanitizeHtml(props.html))
     : renderMarkdown(props.text))
 
-watch(rendered, renderMermaidBlocks, { flush: 'post' })
+watch([rendered, locale], renderMermaidBlocks, { flush: 'post' })
 
 onMounted(() => {
   renderMermaidBlocks()
@@ -117,10 +71,10 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  renderGeneration++
   themeObserver?.disconnect()
   themeObserver = null
-  cleanupMermaidInteractions(root.value)
-  renderSequence += 1
+  cleanupMarkdownMermaid(root.value)
 })
 </script>
 
@@ -192,18 +146,6 @@ onBeforeUnmount(() => {
 .md-view :deep(.md-mermaid svg) { display: block; max-width: 100%; height: auto; margin: 0 auto; }
 .md-view :deep(.md-mermaid) { position: relative; cursor: default; touch-action: none; }
 .md-view :deep(.md-mermaid-dragging) { cursor: grabbing; }
-.md-view :deep(.md-mermaid-controls) {
-  position: absolute; top: 8px; right: 8px; z-index: 1;
-  display: flex; gap: 3px; padding: 3px;
-  border: 1px solid var(--border-default); border-radius: 7px;
-  background: var(--surface-card-solid); box-shadow: var(--elevation-card);
-}
-.md-view :deep(.md-mermaid-controls button) {
-  width: 24px; height: 24px; padding: 0; border: 0; border-radius: 5px;
-  color: var(--content-secondary); background: transparent; cursor: pointer;
-  font-size: 16px; line-height: 1;
-}
-.md-view :deep(.md-mermaid-controls button:hover) { color: var(--content-primary); background: var(--surface-soft-hover); }
 .md-view :deep(.md-mermaid-error) {
   white-space: pre-wrap; color: var(--text-secondary); font-family: var(--font-family-mono, monospace);
 }

@@ -119,6 +119,18 @@ def record_canonical_event_stats(run: "_ScopeRun", stats: dict[str, Any]) -> Non
     bucket["schema_digests"] = sorted({str(item) for item in stats.get("schema_digests") or () if item})
 
 
+def record_canonical_history_fallback() -> None:
+    """统计本次 run 中压缩回退到 canonical history 的次数。"""
+    if not _enabled():
+        return
+    run = _scope_run.get()
+    if run is None or run.ended_at is not None:
+        return
+    bucket = _diagnostic_bucket(run, "canonical_history_fallback", {"count": 0})
+    previous = bucket.get("count", 0)
+    bucket["count"] = min(1_000_000, previous + 1) if isinstance(previous, int) else 1
+
+
 def message_area_diagnostics(area: Any = None, projection: Any = None) -> dict[str, Any]:
     """生成 Area 与 Provider projection 的身份摘要，不复制消息正文。"""
     snapshot = area.snapshot() if callable(getattr(area, "snapshot", None)) else None

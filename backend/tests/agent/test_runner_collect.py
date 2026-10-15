@@ -317,6 +317,96 @@ async def test_collect_builds_display_timeline_with_tools_in_stream_order():
     assert items[2]["text"] == "看完了，结果如下"
 
 
+@pytest.mark.asyncio
+async def test_web_sink_exposes_adapter_events_and_shared_outcome():
+    """Web adapter 收到公共消费器已解析事件；内部用量不泄漏，时间线保持有序。"""
+    from agent.run.execution import (
+        EVENT_TOKEN, RunOutcome, WebStreamSink, consume_agent_events,
+    )
+
+    async def stream():
+        frames = [
+            {"type": "round_start", "run_id": "inner-run", "round_id": "r1"},
+            {"type": "token", "content": "先检查"},
+            {"type": "_usage", "input": 17, "context_input": 12, "output": 3},
+            {"type": "tool_call", "tool_call_id": "c1", "name": "shell", "status": "running"},
+            {"type": "tool_done", "tool_call_id": "c1", "name": "shell", "status": "success"},
+            {"type": "_new_round", "next_round": 2},
+            {"type": "round_start", "run_id": "inner-run", "round_id": "r2"},
+            {"type": "token", "content": "完成"},
+            {"type": "file", "file": {"name": "结果.png"}},
+            {"type": "link_buttons", "link_buttons": [{"label": "查看", "url": "/files"}]},
+            {"type": "_context_compaction", "applied": True},
+            {"type": "_provider_usage", "run_id": "inner-run", "round_id": "r2", "input": 12},
+        ]
+        for frame in frames:
+            yield "data: " + json.dumps(frame, ensure_ascii=False) + "\n\n"
+
+    outcome = RunOutcome()
+    yielded = []
+
+    async def capture_event(event):
+        yielded.append(("event", event))
+
+    async for item in consume_agent_events(
+        stream(), model_cfg=None, outcome=outcome,
+        sink=WebStreamSink(yield_round_ends=False, on_event=capture_event),
+    ):
+        yielded.append(item)
+
+    assert [(kind, value.get("type") if kind == "event" else value) for kind, value in yielded] == [
+        ("event", "round_start"),
+        (EVENT_TOKEN, "先检查"),
+        ("event", "tool_call"),
+        ("event", "tool_done"),
+        ("event", "_new_round"),
+        ("event", "round_start"),
+        (EVENT_TOKEN, "完成"),
+        ("event", "file"),
+        ("event", "link_buttons"),
+        ("event", "_context_compaction"),
+        ("event", "_provider_usage"),
+    ]
+    assert outcome.tokens_in == 17 and outcome.context_input == 12 and outcome.tokens_out == 3
+    assert outcome.compaction_applied is True
+    assert outcome.files == [{"name": "结果.png"}]
+    assert [item["kind"] for item in outcome.display_timeline_items] == [
+        "assistant", "tool", "assistant", "assistant", "assistant",
+    ]
+    assert outcome.display_timeline_items[-1]["linkButtons"][0]["label"] == "查看"
+    assert all(not (kind == "event" and value.get("type") == "_usage") for kind, value in yielded)
+
+
+@pytest.mark.asyncio
+async def test_stream_flushes_pre_interaction_text_before_exposing_confirmation():
+    """交互等待前先结束当前正文轮，IM 才能安全展示确认提示并继续下一轮流。"""
+    from agent.interactions.events import ROUND_END
+    from agent.run.execution import RunOutcome, WebStreamSink, consume_agent_events
+
+    async def events():
+        yield "data: " + json.dumps({"type": "token", "content": "执行前需要确认"}) + "\n\n"
+        yield "data: " + json.dumps({
+            "type": "interaction_required", "prompt_id": 42, "kind": "confirm",
+        }) + "\n\n"
+
+    order = []
+
+    async def observe_event(event):
+        order.append(("event", event["type"]))
+
+    async for item in consume_agent_events(
+        events(), model_cfg=None, outcome=RunOutcome(),
+        sink=WebStreamSink(on_event=observe_event),
+    ):
+        order.append(item)
+
+    assert order == [
+        ("token", "执行前需要确认"),
+        (ROUND_END, "执行前需要确认"),
+        ("event", "interaction_required"),
+    ]
+
+
 async def test_collect_display_timeline_drops_empty_placeholder_for_tool_only_round():
     """纯工具轮（清洗后无正文）不落空的 assistant 占位段。"""
     from agent.run.execution import RunOutcome, consume_agent_events

@@ -5,6 +5,7 @@
 
 ```markdown
 ---
+id: S1
 name: 资料搜索
 description_short: 用户需要联网查找、核对或比较资料时使用。
 category: search
@@ -15,5 +16,5 @@ source: builtin
 这里写只在 `use_skill` 显式加载后注入的完整操作说明。
 ```
 
-`description_short` 为 1-100 个 Unicode 字符；`description_long` 保存较完整的触发说明；正文不是首轮目录，
+系统 Skill 必须有固定且唯一的 `S#` ID；文件名只用于组织，不参与运行时身份解析。`description_short` 为 1-100 个 Unicode 字符；`description_long` 保存较完整的触发说明；正文不是首轮目录，
 不要把完整工具 Schema 复制进正文。旧 `description`/`when` 只作为迁移兼容字段，新文件禁止使用。

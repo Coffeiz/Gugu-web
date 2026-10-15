@@ -7,6 +7,94 @@
 
 ## [Unreleased]
 
+## [1.7.3] - 2026-10-13
+
+### What's New
+
+#### New Features
+
+- **Telegram interactions**: respond to Agent prompts with native inline buttons.
+- **Telegram streaming**: show responses as they are generated.
+- **QQ private chat streaming**: stream private replies with configurable message formatting.
+- **Personal skills**: create, edit, and organize user-defined skills.
+- **Mermaid charts**: preview, enlarge, and export diagrams as PNG on the web; render them as images in IM replies while preserving their position between surrounding text.
+
+#### Improvements
+
+- **Telegram replies**: show tool results without duplicate raw JSON, with status text localized to the user's language.
+- **Telegram formatting**: preserve list and fenced-code formatting when splitting long replies.
+- **Telegram buttons**: arrange inline buttons by label length to keep longer choices readable.
+- **IM replies**: apply message formatting and streaming consistently across QQ and Telegram.
+- **Mermaid rendering**: align IM output with the web renderer, including fonts, node styles, labels, and arrows.
+- **Mermaid previews**: refine chart styling and preview interactions.
+- **Workspace names**: make workspace name editing easier to use.
+- **Prompt caching**: preserve reusable model context across compaction and reflection requests.
+- **Search summaries**: include links to the sources behind key findings.
+- **LoopScope session monitor**: fill model and token usage details from model-call spans when run summaries are incomplete.
+
+#### Fixes
+
+- Keep Mermaid labels within node boundaries and preserve text and diagram order in mixed IM replies.
+- Parse fenced Markdown correctly in Telegram replies.
+- Preserve Markdown task checkbox state when entering and canceling edit mode.
+- Copy Markdown code blocks in browsers where the Clipboard API is unavailable.
+- Avoid reloading a file preview when a local save event reports unchanged content.
+- Restore source card controls after cross-surface drag operations.
+- Refresh the chat title after unlinking its workspace.
+- Show concise IM tool completion status without sending tool inputs or raw results.
+- Reconcile legacy file-library quota records before permanently deleting files from the trash.
+
+#### Contributors
+
+- None listed.
+
+#### Feedback & Issue Reporters
+
+- None listed.
+
+### 更新内容
+
+#### 新功能
+
+- **Telegram 交互**：可通过原生内联按钮回应咕咕的交互提示。
+- **Telegram 流式回复**：逐步显示生成中的回复。
+- **QQ 私聊流式回复**：支持配置消息格式并逐步显示私聊回复。
+- **个人技能**：支持创建、编辑和整理用户自定义技能。
+- **Mermaid 图表**：网页支持预览、放大和导出 PNG；IM 回复可将图表渲染为图片，并按原顺序插入上下文文字之间。
+
+#### 改进
+
+- **Telegram 回复**：只展示工具调用结果，不再重复发送原始 JSON；状态文案根据用户语言显示。
+- **Telegram 格式**：长回复分段发送时保留列表和围栏代码格式。
+- **Telegram 按钮**：根据选项文字长度自适应排列内联按钮，提升长选项的可读性。
+- **IM 回复**：统一 QQ 与 Telegram 的消息格式和流式行为。
+- **Mermaid 渲染**：统一 IM 与网页的字体、节点样式、标签和箭头表现。
+- **Mermaid 预览**：优化图表样式和预览交互。
+- **工作区名称**：优化工作区名称编辑体验。
+- **提示词缓存**：压缩和反思请求会保留可复用的模型上下文，提升缓存复用。
+- **搜索汇总**：为主要结论附上实际参考的信息源链接。
+- **LoopScope 会话监视器**：Run 汇总信息不完整时，从模型调用 Span 补全模型与 token 用量。
+
+#### 修复
+
+- 修复 Mermaid 标签超出节点边界，以及 IM 图文混排时文字和图表顺序不正确的问题。
+- 修复 Telegram 回复中的 Markdown 围栏解析。
+- Markdown 预览进入或取消编辑时保留任务框勾选状态。
+- Clipboard API 不可用时仍可复制 Markdown 代码块。
+- 本地保存事件确认内容未变时，不重复刷新文件预览。
+- 跨视图拖放后恢复源卡片操作按钮。
+- 解除工作区绑定后立即刷新会话标题。
+- IM 工具交互只展示完成状态，避免发送调用参数和原始结果。
+- 清空回收站时先校准旧配额记录，避免文件删除后清理任务失败。
+
+#### 贡献者
+
+- 暂无。
+
+#### 反馈与问题报告
+
+- 暂无。
+
 ## [1.7.2] - 2026-10-13
 
 ### What's New

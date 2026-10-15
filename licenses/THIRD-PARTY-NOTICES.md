@@ -565,7 +565,8 @@
 | math-intrinsics | 1.1.0 | MIT | https://github.com/es-shims/math-intrinsics#readme · git+https://github.com/es-shims/math-intrinsics.git |
 | mdn-data | 2.27.1 | CC0-1.0 | https://developer.mozilla.org · https://github.com/mdn/data.git |
 | merge2 | 1.4.1 | MIT | https://github.com/teambition/merge2 · git@github.com:teambition/merge2.git |
-| mermaid | 11.17.2 | MIT | https://github.com/mermaid-js/mermaid |
+| @mermaid-js/mermaid-zenuml | 1.0.1 | MIT | https://github.com/mermaid-js/mermaid/tree/develop/packages/mermaid-zenuml |
+| mermaid | 12.1.0 | MIT | https://github.com/mermaid-js/mermaid |
 | micromatch | 4.0.8 | MIT | https://github.com/micromatch/micromatch · micromatch/micromatch |
 | mime-db | 1.52.0 | MIT | jshttp/mime-db |
 | mime-types | 2.1.35 | MIT | jshttp/mime-types |
@@ -878,4 +879,3 @@
 | xxhash | 3.7.0 | BSD | https://github.com/ifduyue/python-xxhash |
 | yarl | 1.24.2 | Apache-2.0 | https://github.com/aio-libs/yarl |
 | zstandard | 0.25.0 | BSD-3-Clause | https://github.com/indygreg/python-zstandard |
-

@@ -7,14 +7,14 @@
       <section class="skill-group" aria-labelledby="user-skills-heading">
         <h2 id="user-skills-heading" class="skill-group-title">{{ t('skills.managedByUser') }}</h2>
         <div v-if="userSkills.length" class="skill-group-grid">
-          <SkillCard v-for="skill in userSkills" :key="skill.slug" :skill="skill" @toggle="toggleSkill" @edit="openEdit" @remove="removeSkill" />
+          <SkillCard v-for="skill in userSkills" :key="skill.id" :skill="skill" @toggle="toggleSkill" @edit="openEdit" @remove="removeSkill" />
         </div>
         <p v-else class="skill-group-empty">{{ t('skills.userManagedEmpty') }}</p>
       </section>
       <section class="skill-group" aria-labelledby="assistant-skills-heading">
         <h2 id="assistant-skills-heading" class="skill-group-title">{{ t('skills.managedByAssistant') }}</h2>
         <div v-if="assistantSkills.length" class="skill-group-grid">
-          <SkillCard v-for="skill in assistantSkills" :key="skill.slug" :skill="skill" @toggle="toggleSkill" @edit="openEdit" @remove="removeSkill" />
+          <SkillCard v-for="skill in assistantSkills" :key="skill.id" :skill="skill" @toggle="toggleSkill" @edit="openEdit" @remove="removeSkill" />
         </div>
         <p v-else class="skill-group-empty">{{ t('skills.assistantManagedEmpty') }}</p>
       </section>
@@ -73,9 +73,9 @@ watch(() => props.createRequest, (request, previous) => {
 })
 
 async function openRequestedSkill() {
-  const slug = typeof route.query.skill === 'string' ? route.query.skill : ''
-  if (!slug) return
-  const target = skills.value.find(skill => skill.slug === slug || String(skill.id) === slug)
+  const skillId = typeof route.query.skill === 'string' ? route.query.skill.toUpperCase() : ''
+  if (!skillId) return
+  const target = skills.value.find(skill => skill.id === skillId)
   if (!target) {
     if (!error.value) showAppError(t('skills.targetMissing'))
     await router.replace({ query: { ...route.query, skill: undefined } })
@@ -94,7 +94,7 @@ watch(() => route.query.skill, () => { void openRequestedSkill() })
 function openCreate() { editing.value = null; formKey.value++; formOpen.value = true }
 function openChatSetup() { uiStore.pendingChatPrefill = t('skills.configureWithChat') }
 function openEdit(skill: UserSkillItem) { editing.value = skill; formKey.value++; formOpen.value = true }
-async function saveForm(data: UserSkillWrite) { await save(data, editing.value?.slug); formOpen.value = false }
+async function saveForm(data: UserSkillWrite) { await save(data, editing.value?.id); formOpen.value = false }
 async function toggleSkill(skill: UserSkillItem) { try { await toggle(skill) } catch { /* composable 已写入页面错误 */ } }
 async function removeSkill(skill: UserSkillItem) {
   if (await confirmDialog({ title: t('skills.deleteTitle'), message: t('skills.deleteMessage', { name: skill.name }), tone: 'danger', confirmText: t('skills.deleteConfirm') })) {

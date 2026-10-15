@@ -75,15 +75,16 @@ def prepare_session(session: Any, ai: Any) -> tuple[ProviderHistoryState, bool]:
     return current, changed
 
 
-def strip_thinking_blocks(value: Any) -> Any:
-    """复制并删除 thinking/reasoning 块，不修改数据库对象或原始 canonical history。"""
+def strip_thinking_blocks(value: Any, *, preserve_native_thinking: bool = False) -> Any:
+    """清理推理块；同路由 wire 分支可保留原生签名，切换模型时仍默认全部清理。"""
+    removed_types = {"reasoning_content"} if preserve_native_thinking else {"thinking", "reasoning_content"}
     if isinstance(value, list):
         return [item for item in value if not (
             isinstance(item, dict)
-            and item.get("type") in {"thinking", "reasoning_content"}
+            and item.get("type") in removed_types
         )]
     if isinstance(value, dict):
-        if value.get("type") in {"thinking", "reasoning_content"}:
+        if value.get("type") in removed_types:
             return None
         return dict(value)
     return value
@@ -124,28 +125,29 @@ def _has_unpaired_anthropic_tool_events(messages: list[dict]) -> bool:
 def sanitize_anthropic_branch_history(messages):
     """清洗不可变 Anthropic projection，不改调用方持有的 Area 或原 projection。
 
-    持久化历史可能包含 OpenAI 专属 reasoning_content，也可能因历史窗口裁剪
-    留下孤立 tool_result 或未完成 tool_use。主对话在 Anthropic driver 入口做
-    同类配对清洗；reflection/compaction 的追加分支也必须在请求边界执行。
+    只清除 OpenAI 专属 reasoning_content，并修复窗口裁剪留下的孤立工具事件。
+    同模型 wire 快照中已恢复的原生 thinking/signature 必须保留；删除这些块会
+    让反思与主请求从第一处推理块开始失配。Provider/格式切换的历史清理和
+    推理续接状态的模型身份校验仍由既有边界执行，分支不能再次无条件删除原生块。
     """
     from agent.context.provider_conversation import ProviderConversation
     if not isinstance(messages, ProviderConversation):
         raise TypeError("Anthropic branch sanitizer 只接受 ProviderConversation")
-    without_thinking = []
+    cleaned = []
     for message in messages.to_messages():
         cloned = dict(message)
-        cloned["content"] = strip_thinking_blocks(cloned.get("content"))
+        cloned["content"] = strip_thinking_blocks(cloned.get("content"), preserve_native_thinking=True)
         if cloned["content"] is None or cloned["content"] == []:
             continue
-        without_thinking.append(cloned)
+        cleaned.append(cloned)
 
     # 常见历史无需经过通用 sanitizer，避免把合法字符串 content 重写成 text block，
     # 造成缓存前缀变化。只有存在未配对工具事件时才走主对话使用的完整归一化器。
-    if _has_unpaired_anthropic_tool_events(without_thinking):
+    if _has_unpaired_anthropic_tool_events(cleaned):
         from agent.security.sanitize import sanitize_messages
 
-        without_thinking = sanitize_messages(without_thinking)
-    return messages.with_messages(without_thinking)
+        cleaned = sanitize_messages(cleaned)
+    return messages.with_messages(cleaned)
 
 
 def clean_persisted_history(messages: list[Any]) -> int:

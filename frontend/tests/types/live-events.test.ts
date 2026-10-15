@@ -15,6 +15,18 @@ describe('live-event-v1', () => {
       created_at: '2026-09-12T00:00:00Z',
     })).toBe(true)
   })
+
+  it('接受 Skill 目录变更事件，使跨端创建能触发页面刷新', () => {
+    expect(isLiveEventPayload({
+      protocol_version: 'live-event-v1',
+      event_id: 'evt-skill-created',
+      type: 'resource.changed',
+      resource: 'skills',
+      operation: 'refresh',
+      revision: 1,
+      created_at: '2026-10-13T00:00:00Z',
+    })).toBe(true)
+  })
 })
 
 describe('回收站清理进度事件', () => {

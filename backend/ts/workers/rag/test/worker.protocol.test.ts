@@ -921,8 +921,8 @@ test("Phase 4：并发 patch/replace/search 串行原子生效，检索不出现
 test("Phase 5：unified_query 与 batch_search+hybrid_fuse+rank 三段管线逐位一致", async (t) => {
   const { request, readResponse, closed, child } = spawnWorker(t);
   const docs = [
-    { id: "file:1:0", text: "缓存文件的部署结论", source_type: "file", scope_type: "owner", scope_id: "o1", document_version: "1" },
-    { id: "file:2:0", text: "缓存文件的架构说明", source_type: "file", scope_type: "owner", scope_id: "o1", document_version: "1" },
+    { id: "knowledge:1:0", text: "缓存知识的部署结论", source_type: "knowledge", scope_type: "owner", scope_id: "o1", document_version: "1" },
+    { id: "knowledge:2:0", text: "缓存知识的架构说明", source_type: "knowledge", scope_type: "owner", scope_id: "o1", document_version: "1" },
     { id: "conv:4:0", text: "会话里的缓存方案", source_type: "conversation", scope_type: "owner", scope_id: "o1", document_version: "m4", metadata: { kind: "message", message_id: 4 } },
     { id: "conv:5:0", text: "水位之后的缓存方案", source_type: "conversation", scope_type: "owner", scope_id: "o1", document_version: "m5", metadata: { kind: "message", message_id: 5 } },
   ];
@@ -938,13 +938,13 @@ test("Phase 5：unified_query 与 batch_search+hybrid_fuse+rank 三段管线逐�
 
   // ── 三段参考管线：batch_search + TS 融合 + rank_candidates ──
   request({ op: "batch_search", revision: "r1", transient_revision: "t1", query: "缓存", searches: [
-    { id: "0", source_types: ["file"], limit: 20 },
+    { id: "0", source_types: ["knowledge"], limit: 20 },
     { id: "1", source_types: ["conversation"], limit: 20 },
     { id: "2", source_types: ["memory"], corpus: "transient", limit: 20 },
   ] });
   const batched = await readResponse();
   const bySource: Record<string, Array<{ id: string; score: number }>> = {};
-  const specSources = ["file", "conversation", "memory"];
+  const specSources = ["knowledge", "conversation", "memory"];
   (batched.batches as Array<{ results: Array<{ id: string; score: number }> }>).forEach((part, index) => {
     bySource[specSources[index]] = part.results;
   });
@@ -960,9 +960,9 @@ test("Phase 5：unified_query 与 batch_search+hybrid_fuse+rank 三段管线逐�
   const fusedScores = new Map((fused.results as Array<{ chunk_id: string; score: number }>).map((row) => [row.chunk_id, row.score]));
   const keyById = new Map<string, string>();
   const candidates = [
-    ...bySource.file.map((hit) => {
+    ...bySource.knowledge.map((hit) => {
       keyById.set(hit.id, hit.id);
-      return { id: hit.id, source_type: "file", raw_score: hit.score, fusion: "bm25", fused_score: null as number | null, document: docs.find((doc) => doc.id === hit.id) };
+      return { id: hit.id, source_type: "knowledge", raw_score: hit.score, fusion: "bm25", fused_score: null as number | null, document: docs.find((doc) => doc.id === hit.id) };
     }),
     // 水位在排序前生效：conv:5:0 不进入参考候选（与统一查询同口径）。
     ...bySource.conversation.filter((hit) => hit.id !== "conv:5:0").map((hit) => {
@@ -986,7 +986,7 @@ test("Phase 5：unified_query 与 batch_search+hybrid_fuse+rank 三段管线逐�
   request({ op: "unified_query", revision: "r1", transient_revision: "t1", query: "缓存",
     query_vector: [1, 0], before_message_id: 5, source_order: ["memory", "knowledge", "project", "file", "canvas", "note", "conversation"],
     searches: [
-      { id: "0", source_types: ["file"], limit: 20 },
+      { id: "0", source_types: ["knowledge"], limit: 20 },
       { id: "1", source_types: ["conversation"], limit: 20 },
       { id: "2", source_types: ["memory"], corpus: "transient", limit: 20 },
     ], candidate_limit: 20,
@@ -1016,8 +1016,8 @@ test("Phase 5：unified_query 与 batch_search+hybrid_fuse+rank 三段管线逐�
   const unifiedKeys = unifiedRows.map((row) => row.document_key);
   assert.ok(!unifiedKeys.includes("conv:5:0"));
   assert.equal(
-    unifiedRows.find((row) => row.document_key === "file:1:0")?.document?.text,
-    "缓存文件的部署结论",
+    unifiedRows.find((row) => row.document_key === "knowledge:1:0")?.document?.text,
+    "缓存知识的部署结论",
     "冷恢复查询需把命中文档随结果返回，供 Python 做 scope 二次授权",
   );
   // 与参考管线（同水位口径）选中序列与 confidence 全等。

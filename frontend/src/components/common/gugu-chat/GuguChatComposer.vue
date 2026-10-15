@@ -196,6 +196,15 @@ function animateSourceReturn(objectId: string) {
   if (!element) return
   const tryAnimate = () => {
     if (runtime.isControlled(objectId)) { requestAnimationFrame(tryAnimate); return }
+    // 跨 Surface 投放可能在 Runtime 的落地/取消收尾中只恢复源节点样式，
+    // 没有把源卡 affordance 子树恢复到 idle。必须等控制权释放后再归一源卡视觉状态，
+    // 清除操作按钮上残留的 runtime-affordances-hidden，再播放归位动画。
+    runtime.applyVisualState(objectId, element, {
+      phase: 'idle',
+      hovered: element.matches(':hover'),
+      selected: element.classList.contains('is-selected'),
+      grabbed: false,
+    })
     element.animate(
       [
         { opacity: 0, transform: 'scale(0.72)' },

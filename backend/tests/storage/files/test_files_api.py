@@ -315,7 +315,7 @@ async def test_upload_capacity_uses_quota_ledger_without_scanning_directories(
     async def unexpected_scan(*_args, **_kwargs):
         pytest.fail("已有配额账本时上传容量检查不应递归扫描目录")
 
-    monkeypatch.setattr(quota_ledger, "_measure_local_unregistered_bytes", unexpected_scan)
+    monkeypatch.setattr(quota_ledger, "_measure_local_quota_roots", unexpected_scan)
     limit, available = await files_api._upload_capacity(db, user_a, "keep_both", None)
 
     assert limit == 100

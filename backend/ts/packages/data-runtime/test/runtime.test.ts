@@ -191,7 +191,7 @@ test("Data Runtime 在同一数据库快照装载 RAG 文档和 revision", async
   assert.deepEqual(queries[0]!.values, ["owner-1"]);
   assert.equal(
     result.revision,
-    "ts-jieba-words-v3:rag-projection-v4:conversation:2026-09-12T08:30:00.000Z;knowledge:2026-09-12T08:00:00.000Z;memory:2026-09-12T08:00:00.000Z",
+    "ts-jieba-words-v3:rag-projection-v5:conversation:2026-09-12T08:30:00.000Z;knowledge:2026-09-12T08:00:00.000Z;memory:2026-09-12T08:00:00.000Z",
   );
   assert.equal(result.snapshot.documents.length, 4);
   assert.equal(result.snapshot.documents[0]?.id, "knowledge:7:1");

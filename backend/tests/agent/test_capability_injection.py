@@ -6,8 +6,8 @@ import pytest
 from agent.capabilities.injector import catalog_block
 from agent.capabilities.index import CapabilityIndex
 from agent.capabilities.models import CapabilityMeta, CapabilitySnapshot
-from agent.core import LLMRunner, _loaded_skill_slugs, _resolve_adapter_arguments
-from agent.skills import skill_content_digest
+from agent.core import LLMRunner, _loaded_skill_ids, _resolve_adapter_arguments
+from agent.skills import skill_content_digest, skills_index
 from agent.tools.meta import _use_skill
 from agent.capabilities.diagnostics import capability_injection_diagnostics
 from agent.runtime.loopscope_trace.hooks import _skill_result_metadata
@@ -55,8 +55,8 @@ def test_catalog_keeps_user_skill_in_separate_skill_section():
     snapshot = CapabilitySnapshot(
         generation=1,
         tools={"search": CapabilityMeta("search", "tool", "搜索资料。")},
-        skills={"user-skill": CapabilityMeta(
-            "user-skill", "skill", "用户定义的做法。", source="user"
+        skills={"U1": CapabilityMeta(
+            "U1", "skill", "用户定义的做法。", source="user"
         )},
     )
 
@@ -91,8 +91,8 @@ def test_skill_metadata_context_does_not_take_over_provider_tools():
         CapabilitySnapshot(
             generation=1,
             tools={"search": CapabilityMeta("search", "tool", "搜索资料。")},
-            skills={"user-skill": CapabilityMeta(
-                "user-skill", "skill", "用户定义的做法。", source="user"
+                skills={"U1": CapabilityMeta(
+                    "U1", "skill", "用户定义的做法。", source="user"
             )},
         ),
         RegistryCapabilitySelector(),
@@ -106,7 +106,7 @@ def test_skill_metadata_context_does_not_take_over_provider_tools():
     assert "### 工具" not in skill_catalog
     assert "### Skill" in skill_catalog
     assert "固定 Adapter 模式" not in skill_catalog
-    assert "user-skill：用户定义的做法" in skill_catalog
+    assert "U1：用户定义的做法" in skill_catalog
 
 
 def test_capability_catalog_injection_places_description_tools_in_system():
@@ -118,8 +118,8 @@ def test_capability_catalog_injection_places_description_tools_in_system():
         CapabilitySnapshot(
             generation=1,
             tools={"search": CapabilityMeta("search", "tool", "搜索资料。")},
-            skills={"user-skill": CapabilityMeta(
-                "user-skill", "skill", "用户定义的做法。", source="user"
+                skills={"U1": CapabilityMeta(
+                    "U1", "skill", "用户定义的做法。", source="user"
             )},
         ),
         RegistryCapabilitySelector(),
@@ -131,7 +131,7 @@ def test_capability_catalog_injection_places_description_tools_in_system():
 
     assert "search：搜索资料" in system
     assert "search：搜索资料" not in snapshot
-    assert "user-skill：用户定义的做法" in snapshot
+    assert "U1：用户定义的做法" in snapshot
 
 
 def test_capability_catalog_injection_omits_tool_description_for_full_schema():
@@ -143,8 +143,8 @@ def test_capability_catalog_injection_omits_tool_description_for_full_schema():
         CapabilitySnapshot(
             generation=1,
             tools={"search": CapabilityMeta("search", "tool", "搜索资料。")},
-            skills={"user-skill": CapabilityMeta(
-                "user-skill", "skill", "用户定义的做法。", source="user"
+                skills={"U1": CapabilityMeta(
+                    "U1", "skill", "用户定义的做法。", source="user"
             )},
         ),
         RegistryCapabilitySelector(),
@@ -156,7 +156,7 @@ def test_capability_catalog_injection_omits_tool_description_for_full_schema():
 
     assert "search：搜索资料" not in system
     assert "search：搜索资料" not in snapshot
-    assert "user-skill：用户定义的做法" in snapshot
+    assert "U1：用户定义的做法" in snapshot
 
 
 def test_skill_lookup_rejects_tool_metadata_in_skill_map():
@@ -253,7 +253,7 @@ def test_default_capabilities_include_registered_system_tools_and_builtin_skill_
     assert "send_email" in resident_tools
     assert resident_tools <= registered_tools
     assert not {"list_skills", "create_skill", "update_skill", "delete_skill"} & resident_tools
-    assert "email" in static
+    assert "S2" in static
     assert "邮件" in static
 
 
@@ -468,8 +468,8 @@ def test_capability_diagnostics_marks_metadata_only_skill_catalog():
         CapabilitySnapshot(
             generation=1,
             tools={"search": CapabilityMeta("search", "tool", "搜索资料。")},
-            skills={"user-skill": CapabilityMeta(
-                "user-skill", "skill", "用户定义的做法。", source="user"
+            skills={"U1": CapabilityMeta(
+                "U1", "skill", "用户定义的做法。", source="user"
             )},
         ),
         RegistryCapabilitySelector(),
@@ -480,7 +480,7 @@ def test_capability_diagnostics_marks_metadata_only_skill_catalog():
     assert result["metadata_only"] is True
     assert result["catalog_kind"] == "skill_snapshot"
     assert result["catalog_count"] == 1
-    assert result["skill_names"] == ["user-skill"]
+    assert result["skill_names"] == ["U1"]
 
 
 @pytest.mark.anyio
@@ -546,31 +546,32 @@ def test_llm_runner_accepts_dynamic_capability_context_without_changing_default_
 
 def test_loaded_skill_is_detected_from_history_and_can_be_reloaded_after_compaction():
     from agent.context.assembly import MessageArea
-    digest = skill_content_digest("weather")
+    digest = skill_content_digest("S12")
     messages = MessageArea.from_canonical_messages([{
         "role": "tool",
-        "content": '{"skill":"weather","content":"天气技能正文","_capability_usage":{"kind":"skill","slug":"weather","loaded":true,"content_digest":"%s"}}' % digest,
+        "content": '{"skill_id":"S12","content":"天气技能正文","_capability_usage":{"kind":"skill","id":"S12","loaded":true,"content_digest":"%s"}}' % digest,
     }])
-    assert _loaded_skill_slugs(messages) == {"weather": digest}
-    assert _loaded_skill_slugs(MessageArea.from_canonical_messages([{
+    assert _loaded_skill_ids(messages) == {"S12": digest}
+    assert _loaded_skill_ids(MessageArea.from_canonical_messages([{
         "role": "tool",
-        "content": '{"_capability_usage":{"kind":"skill","slug":"weather","loaded":true}}',
+        "content": '{"_capability_usage":{"kind":"skill","id":"S12","loaded":true}}',
     }])) == {}
-    assert _loaded_skill_slugs(MessageArea()) == {}
+    assert _loaded_skill_ids(MessageArea()) == {}
 
 
 @pytest.mark.anyio
 async def test_use_skill_result_contains_structured_usage_marker():
-    result = await _use_skill(None, None, {"name": "weather"})
+    result = await _use_skill(None, None, {"id": "S12"})
+    assert result["skill_name"] == next(item["name"] for item in skills_index() if item["id"] == "S12")
     assert result["_capability_usage"] == {
-        "kind": "skill", "slug": "weather", "loaded": True,
-        "content_digest": skill_content_digest("weather"),
+        "kind": "skill", "id": "S12", "loaded": True,
+        "content_digest": skill_content_digest("S12"),
     }
 
 
 def test_skill_trace_metadata_does_not_copy_skill_body():
-    metadata = _skill_result_metadata({"skill": "weather", "content": "技能正文"})
-    assert metadata["skill"] == "weather"
+    metadata = _skill_result_metadata({"skill_id": "S12", "content": "技能正文"})
+    assert metadata["skill"] == "S12"
     assert metadata["content_chars"] == 4
     assert "技能正文" not in repr(metadata)
     assert metadata["content_digest"]
@@ -612,7 +613,7 @@ def test_invalid_tool_input_requests_schema_recovery():
 def test_scheduled_tasks_skill_documents_channel_array_shape():
     from agent.skills import load_skill
 
-    content = load_skill("scheduled-tasks")
+    content = load_skill("S10")
     assert content is not None
     assert 'channels=["qq"]' in content
     assert 'channels={"item":"qq"}' in content
@@ -622,7 +623,7 @@ def test_scheduled_tasks_skill_documents_channel_array_shape():
 def test_scheduled_tasks_skill_routes_calendar_reminders_to_event():
     from agent.skills import load_skill
 
-    content = load_skill("scheduled-tasks")
+    content = load_skill("S10")
     assert content is not None
     assert "create_event" in content
     assert "update_event" in content
@@ -635,7 +636,7 @@ def test_scheduled_tasks_skill_marks_removed_context_selection_as_unsupported():
     from agent.skills import load_skill
     from agent.tools import registry
 
-    content = load_skill("scheduled-tasks")
+    content = load_skill("S10")
     assert content is not None
     assert "不要传 `tool_groups` 或 `context_config`" in content
     assert "完整工具集和完整业务上下文" in content
@@ -653,7 +654,7 @@ def test_scheduled_tasks_skill_documents_interval_window_semantics():
     from agent.skills import load_skill
     from agent.tools import registry
 
-    content = load_skill("scheduled-tasks")
+    content = load_skill("S10")
     assert content is not None
     assert "间隔从 `start_at` 锚定" in content
     assert "只设置其中一个" in content
@@ -669,7 +670,7 @@ def test_scheduled_tasks_skill_documents_interval_window_semantics():
 def test_web_search_skill_contains_freshness_verification_protocol():
     from agent.skills import load_skill
 
-    content = load_skill("web-search")
+    content = load_skill("S13")
     assert content is not None
     assert "事实准确性与时效核验" in content
     assert "未来事件" in content

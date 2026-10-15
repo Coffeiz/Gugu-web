@@ -6,6 +6,14 @@ class _Head:
     content_type = "image/png"
 
 
+def _use_oss_storage_settings(monkeypatch):
+    """这些确认用例模拟 OSS 直传，容量应按 File 记录聚合而非本地目录测量。"""
+    import app.core.config as config
+
+    monkeypatch.setenv("STORAGE__BACKEND", "oss")
+    config.invalidate_settings_cache()
+
+
 @pytest.mark.asyncio
 async def test_validate_oss_upload_uses_server_metadata(monkeypatch):
     from app.services.files.upload import validate_oss_upload
@@ -91,9 +99,11 @@ async def test_confirm_rejects_actual_size_over_single_file_limit(db, user_a):
 
 
 @pytest.mark.asyncio
-async def test_confirm_overwrite_rechecks_quota_with_actual_size(db, user_a):
+async def test_confirm_overwrite_rechecks_quota_with_actual_size(db, user_a, monkeypatch):
     from app.models import File
     from app.services.files.upload import UploadTargetError, confirm_oss_upload
+
+    _use_oss_storage_settings(monkeypatch)
 
     existing = File(
         user_id=user_a.id,
@@ -135,6 +145,8 @@ async def test_confirm_new_file_rechecks_quota_with_actual_size(db, user_a, monk
     from app.models import File
     from app.services.files.upload import UploadTargetError, confirm_oss_upload
 
+    _use_oss_storage_settings(monkeypatch)
+
     monkeypatch.setattr(upload, "_build_key", lambda **kwargs: "expected-key")
 
     db.add(File(
@@ -174,6 +186,8 @@ async def test_confirm_locks_user_before_quota_read(db, user_a, monkeypatch):
     """配额读取前必须锁用户行，覆盖确认不能并发突破配额。"""
     from app.services.files import upload
     from app.models import File
+
+    _use_oss_storage_settings(monkeypatch)
 
     statements = []
     original_execute = db.execute

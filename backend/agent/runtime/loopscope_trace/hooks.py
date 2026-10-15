@@ -190,10 +190,11 @@ def _skill_result_metadata(value: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return {}
     body = payload.get("content")
+    skill_id = str(payload.get("skill_id") or "")
     if not isinstance(body, str):
-        return {"skill": str(payload.get("skill") or "")}
+        return {"skill": skill_id}
     return {
-        "skill": str(payload.get("skill") or ""),
+        "skill": skill_id,
         "content_chars": len(body),
         "content_digest": hashlib.sha256(body.encode("utf-8")).hexdigest()[:16],
         "content_tokens_estimate": _estimate_tokens(body),

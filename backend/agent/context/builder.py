@@ -5,6 +5,7 @@ system prompt 的组装位于 ``session_system.py``；本模块只组装项目�
 """
 from agent.context.dynamic_tail import current_date_text, current_time_text
 from agent.context.session_system import NON_STREAMING_BLOCK, build_static_prompt
+from app.services.im_platforms import IM_PLATFORMS
 from app.services.project_context import project_context_metadata
 
 
@@ -204,7 +205,13 @@ def stance_block(memory: dict | None = None) -> str:
     return stance
 
 
-_SOURCE_NAME = {"qq": "QQ", "feishu": "飞书", "wechat": "微信", "web": "网页"}
+_SOURCE_NAME = {
+    "qq": "QQ",
+    "feishu": "飞书",
+    "wechat": "微信",
+    "telegram": "Telegram",
+    "web": "网页",
+}
 
 
 def _source_block(source: str | None, im_channels: dict | None) -> str:
@@ -212,18 +219,25 @@ def _source_block(source: str | None, im_channels: dict | None) -> str:
     当前来源平台必然可达（用户正用它说话），强制标记已连，别再让 TA 绑。"""
     name = _SOURCE_NAME.get(source or "")
     ch = im_channels or {}
-    qq_on = bool(ch.get("qq")) or source == "qq"
-    fs_on = bool(ch.get("feishu")) or source == "feishu"
-    wc_on = source == "wechat"
     lines = []
     if name:
         lines.append(f"本次对话来自：**{name}**。你当前正在通过{name}与用户实时聊天。")
-    lines.append(f"主动通知渠道：站内通知（始终可用）；QQ {'已连 ✅' if qq_on else '未连 ❌'}；"
-                 f"飞书 {'已连 ✅' if fs_on else '未连 ❌'}；微信 {'已连 ✅' if wc_on else '未连 ❌'}。")
-    if source in ("qq", "feishu", "wechat"):
+    channel_states = []
+    for platform in IM_PLATFORMS:
+        platform_name = _SOURCE_NAME.get(platform, platform)
+        connected = bool(ch.get(platform)) or source == platform
+        channel_states.append(f"{platform_name}：{'已连 ✅' if connected else '未连 ❌'}")
+    lines.append(
+        "当前 IM 状态：站内通知：可用（始终开）；" + "；".join(channel_states) + "。"
+    )
+    lines.append(
+        "- 回答渠道连接状态时，以本段系统读取的状态为准；不要声称看不到 IM 状态或没有查询入口，"
+        "也不要用历史回复中的旧状态覆盖这里的状态。"
+    )
+    if source in IM_PLATFORMS:
         lines.append(f"- 用户**正用 {name} 跟你说话** → {name} 必然已连接：设提醒/通知走 {name} 渠道时"
                      f"**无需再绑定、绝不让 TA 扫码**（说『没绑』就错了）。")
-    lines.append("- 设 qq/feishu 通知渠道前看这里：已连(✅)的直接用；只有未连(❌)才提示用户去「设置 → 连接 IM」绑定。")
+    lines.append("- 设置 IM 通知前看上面的连接状态：已连(✅)的直接用；只有未连(❌)才提示用户去「设置 → 连接 IM」绑定。")
     return "## 当前对话来源 / 通知渠道\n\n" + "\n".join(lines)
 
 

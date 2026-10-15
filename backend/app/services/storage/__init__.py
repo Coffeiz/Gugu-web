@@ -251,7 +251,9 @@ class LocalStorageBackend(StorageBackend):
             pass
         # 直接 write_bytes 会先截断目标文件；进程在写入期间退出时会留下 0 字节文件。
         # 记忆档案、配置快照等覆盖写必须先写同目录临时文件，再原子替换目标。
-        fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+        # watcher 只投影真实文件。使用保留前缀，避免大文件写入期间把临时文件
+        # 当成用户文件入库；原子替换产生的临时文件删除事件也会被同步器忽略。
+        fd, temporary = tempfile.mkstemp(prefix=".gugu-sync-", suffix=".gugu-tmp", dir=path.parent)
         try:
             if existing_stat is None:
                 # 默认 ACL 会在创建临时文件时从父目录继承；fchmod 只调整权限掩码，
@@ -314,12 +316,6 @@ class LocalStorageBackend(StorageBackend):
     async def delete(self, key: str) -> None:
         path = self.root / key
         path.unlink(missing_ok=True)
-        try:
-            parent = path.parent
-            if parent != self.root and parent.exists():
-                parent.rmdir()  # 只有空目录才会成功，非空静默忽略
-        except OSError:
-            pass
 
     async def rename_file(self, old_key: str, new_key: str) -> None:
         old = self.root / old_key

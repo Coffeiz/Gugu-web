@@ -7,13 +7,13 @@
 """
 from __future__ import annotations
 
-import json
 import re
-from collections.abc import Set
+from collections.abc import Callable, Set
 from typing import AsyncIterator, Tuple
 
 from agent.im.models import PlatformReply
-from agent.interactions.events import ROUND_END
+from agent.im.streaming.qq import QQMermaidRound
+from agent.tool_messages import format_tool_event, tool_code_block as _tool_code_block
 from agent.models import AgentResponse
 
 _CODE_SPLIT_RE = re.compile(r'(```[\s\S]*?```|`[^`\n]*`)')
@@ -25,20 +25,36 @@ _FEISHU_IMAGE_MAX = 10 * 1024 * 1024
 _FEISHU_FILE_MAX = 30 * 1024 * 1024
 _WECHAT_FILE_MAX = 30 * 1024 * 1024
 _QQ_FILE_MAX = 10 * 1024 * 1024
-_QQ_PASSIVE_REPLY_USED = "_qq_passive_reply_used"
+_QQ_PASSIVE_REPLY_COUNT = "_qq_passive_reply_count"
+_QQ_PASSIVE_REPLY_LIMIT = 5
+_TELEGRAM_DRAFT_MIN_INTERVAL = 1.0
+
+
+def _qq_passive_reply_count(payload: dict) -> int:
+    return int(payload.get(_QQ_PASSIVE_REPLY_COUNT) or 0)
+
+
+def _qq_reply_budget_exhausted(payload: dict) -> bool:
+    return (
+        payload.get("platform") == "qq"
+        and bool(payload.get("message_id"))
+        and _qq_passive_reply_count(payload) >= _QQ_PASSIVE_REPLY_LIMIT
+    )
 
 
 def _qq_reply_message_id(payload: dict, reply: PlatformReply) -> str | None:
-    """按一次入站消息的出站预算决定是否继续使用 QQ 被动回复。"""
-    if payload.get("platform") != "qq" or payload.get(_QQ_PASSIVE_REPLY_USED):
+    """在 QQ 被动回复额度内关联原始入站消息。"""
+    if payload.get("platform") != "qq" or _qq_reply_budget_exhausted(payload):
         return None
     return reply.reply_to_message_id
 
 
 def _mark_qq_passive_reply_used(payload: dict, message_id: str | None) -> None:
-    """记录本次入站消息已经消费过唯一的 QQ 被动回复机会。"""
+    """记录一次已成功发送的 QQ 被动回复。"""
     if payload.get("platform") == "qq" and message_id:
-        payload[_QQ_PASSIVE_REPLY_USED] = True
+        payload[_QQ_PASSIVE_REPLY_COUNT] = min(
+            _qq_passive_reply_count(payload) + 1, _QQ_PASSIVE_REPLY_LIMIT
+        )
 
 
 async def _close_async_iterator(iterator) -> None:
@@ -53,68 +69,73 @@ async def _close_async_iterator(iterator) -> None:
         pass
 
 
+class _QQMermaidRound(QQMermaidRound):
+    """旧测试/调用路径的适配器，绑定 replies 门面的可替换发送接缝。"""
+
+    def __init__(self, payload: dict, *, show_intermediate_replies: bool) -> None:
+        super().__init__(
+            payload,
+            show_intermediate_replies=show_intermediate_replies,
+            reply_budget_exhausted=_qq_reply_budget_exhausted,
+            mark_passive_reply_used=_mark_qq_passive_reply_used,
+            send_text=send_text,
+            try_send_png_image=_try_send_png_image,
+            send_mermaid_text=_send_qq_mermaid_text,
+            fix_loose_bold=_fix_loose_bold,
+        )
+
+
 async def send_qq_stream_by_round(
     payload: dict, token_iter: AsyncIterator[tuple[str, object]], *,
     show_intermediate_replies: bool = True,
 ) -> Tuple[bool, AgentResponse, str]:
-    """QQ 私聊按 round 流式发送：每个 round 结束当前流消息，再开始下一条。"""
-    from agent.gateway import qq
+    """QQ 私聊按 round 流式发送；Mermaid 源码暂存，图表以图片消息补发。"""
+    from agent.im.streaming.qq import send_qq_stream_by_round as run_stream
 
-    stream_kwargs = {
-        "channel_id": payload.get("channel_id") or "",
-        "message_id": payload.get("message_id"),
-        "message_format": payload.get("message_format"),
-    }
-    stream = qq.create_private_text_stream(
-        payload.get("platform_user_id") or "", **stream_kwargs
+    def sender_factory(sender_payload: dict, *, show_intermediate_replies: bool):
+        return _QQMermaidRound(
+            sender_payload, show_intermediate_replies=show_intermediate_replies,
+        )
+
+    return await run_stream(
+        payload,
+        token_iter,
+        show_intermediate_replies=show_intermediate_replies,
+        sender_factory=sender_factory,
+        fix_loose_bold=_fix_loose_bold,
     )
-    response: AgentResponse | None = None
-    stream_sent = False
-    last_text = ""
-    transport_error: Exception | None = None
-    async for kind, value in token_iter:
-        if kind == "final" and isinstance(value, AgentResponse):
-            response = value
-            continue
-        if transport_error is not None:
-            # 平台流已经失败，但必须继续消费 Agent generator，才能完成
-            # finalize_run、历史落盘和 session baseline gate。
-            continue
-        try:
-            if kind == "token" and show_intermediate_replies:
-                stream.push(str(value or ""))
-            elif kind == ROUND_END and show_intermediate_replies:
-                round_text = _fix_loose_bold(str(value or "")).strip()
-                if round_text:
-                    await stream.finish(round_text)
-                    stream_sent = stream_sent or stream.has_sent()
-                stream = qq.create_private_text_stream(
-                    payload.get("platform_user_id") or "", **stream_kwargs
-                )
-        except Exception as exc:
-            transport_error = exc
-            stream = None
 
-    response = response or AgentResponse()
-    last_text = _fix_loose_bold(response.text or "")
-    if not last_text.strip():
-        last_text = "给你～" if response.files else "嗯~在的，你说～"
-    if transport_error is not None:
-        from app.core.redaction import diag_log
-        diag_log("agent.im.qq_stream_transport", transport_error)
-        return False, response, last_text
-    try:
-        await stream.finish(last_text)
-    except Exception as exc:
-        from app.core.redaction import diag_log
-        diag_log("agent.im.qq_stream_transport", exc)
-        return False, response, last_text
-    stream_sent = stream_sent or stream.has_sent()
-    return stream_sent, response, last_text
+
+async def send_telegram_stream_by_round(
+    payload: dict,
+    token_iter: AsyncIterator[tuple[str, object]],
+    *,
+    show_intermediate_replies: bool,
+) -> tuple[AgentResponse, set[int]]:
+    """私聊用 Telegram 临时草稿预览生成过程，正式文本仍走统一回复出口。"""
+    from agent.im.streaming.telegram import send_telegram_stream_by_round as run_stream
+
+    return await run_stream(
+        payload,
+        token_iter,
+        show_intermediate_replies=show_intermediate_replies,
+        send_text=send_text,
+        send_completed_round=send_completed_round,
+        try_send_png_image=_try_send_png_image,
+        draft_min_interval=_TELEGRAM_DRAFT_MIN_INTERVAL,
+    )
+
 
 async def send_text(payload: dict, text: str) -> bool:
     """构造并发送一条平台无关的文本回复。"""
     return await send_reply(payload, PlatformReply.from_text(payload, text))
+
+
+async def _send_qq_mermaid_text(payload: dict, text: str) -> bool:
+    """QQ 被动回复额度耗尽后，Mermaid 文本与降级内容改用主动消息发送。"""
+    if _qq_reply_budget_exhausted(payload):
+        payload = {**payload, "message_id": None}
+    return await send_text(payload, text)
 
 
 def _link_buttons_text(message: str, buttons: list[dict]) -> str:
@@ -205,7 +226,7 @@ async def send_link_button_message(payload: dict, message: str, buttons: list[di
 async def send_interaction(payload: dict, prompt: dict) -> bool:
     """统一发送交互提示。
 
-    QQ 使用 Keyboard，飞书使用交互卡片；两者失败后都复用同一份文本降级。
+    QQ/Telegram 使用原生按钮，飞书使用交互卡片；原生交互失败后复用文本降级。
     """
     from agent.interactions.qq import format_text_fallback
 
@@ -221,6 +242,8 @@ async def send_interaction(payload: dict, prompt: dict) -> bool:
         ):
             return True
         return await send_text(payload, format_text_fallback(prompt, platform="feishu"))
+    if platform == "telegram" and prompt.get("options"):
+        return await _send_telegram_interaction(payload, prompt, format_text_fallback)
     if platform != "qq":
         return await send_text(payload, format_text_fallback(prompt, platform=platform))
 
@@ -253,73 +276,32 @@ async def send_interaction(payload: dict, prompt: dict) -> bool:
     return await send_text(interaction_payload, text)
 
 
-def _tool_result_summary(result: object, limit: int = 320) -> str:
-    """生成适合 IM 展示的短结果摘要，不把工具参数或内部结构直接发给用户。"""
-    if result is None:
-        return ""
-    if isinstance(result, str):
-        text = result
-    else:
-        try:
-            text = json.dumps(result, ensure_ascii=False)
-        except (TypeError, ValueError):
-            text = str(result)
-    text = " ".join(text.split())
-    return text if len(text) <= limit else text[:limit - 1] + "…"
+async def _send_telegram_interaction(
+    payload: dict,
+    prompt: dict,
+    format_fallback: Callable[..., str],
+) -> bool:
+    from agent.gateway import telegram
 
-
-def _tool_code_block(value: object, *, language: str = "json", limit: int = 1600) -> str:
-    """把工具输入/输出放入有限长度的代码块，避免结构化内容破坏消息排版。"""
-    if isinstance(value, str):
-        text = value
-        language = "text"
-    else:
-        try:
-            text = json.dumps(value, ensure_ascii=False, indent=2)
-        except (TypeError, ValueError):
-            text = str(value)
-    if len(text) > limit:
-        text = text[:limit - 1] + "…"
-    return f"```{language}\n{text}\n```"
-
-
-def format_tool_event(event: dict, *, markdown: bool = True) -> str:
-    """把工具事件转换成统一语义块，再按平台能力渲染。"""
-    label = str(event.get("label") or event.get("name") or "工具").strip()
-    event_type = str(event.get("type") or "")
-    status = str(event.get("status") or "")
-    if not markdown:
-        if event_type == "tool_call":
-            return ""
-        if status in {"success", "ok"}:
-            return f"✅ {label}完成"
-        if status == "waiting":
-            return f"⏸️ {label}：任务已暂停，等待确认"
-        return f"⚠️ {label}未完成"
-
-    title = f"### 🔧 {label}"
-    if event_type == "tool_call":
-        body = [title, "**状态**：执行中"]
-        if "input" in event:
-            body.extend(("**输入**", _tool_code_block(event.get("input"))))
-        return "\n\n".join(body)
-    if status == "waiting":
-        return f"{title}\n\n**状态**：任务已暂停，等待确认"
-    status_text = "已完成" if status in {"success", "ok"} else "未完成"
-    body = [title, f"**状态**：{status_text}"]
-    if event.get("result") is not None:
-        body.extend(("**输出**", _tool_code_block(event.get("result"))))
-    return "\n\n".join(body)
+    target_id = payload.get("chat_id") or payload.get("platform_user_id")
+    interaction_prompt = {**prompt, "native_keyboard": True}
+    if prompt.get("secret_fields") and payload.get("chat_type") == "group":
+        interaction_prompt.update(options=[], group_secret_blocked=True)
+    elif target_id and await telegram.send_interaction_message(
+        target_id,
+        format_fallback(interaction_prompt, platform="telegram"),
+        interaction_prompt,
+        channel_id=payload.get("channel_id") or "",
+    ):
+        return True
+    fallback_prompt = {**interaction_prompt, "native_keyboard": False}
+    return await send_text(payload, format_fallback(fallback_prompt, platform="telegram"))
 
 
 async def send_tool_event(payload: dict, event: dict) -> bool:
-    """独立发送一条工具状态消息；显示策略由 IM Loop 在调用前决定。"""
+    """统一发送 IM 工具完成状态；不展示调用参数或原始 JSON。"""
     from agent.outbound import sanitize_outbound
-    is_qq_plain = (
-        payload.get("platform") == "qq"
-        and payload.get("message_format") != "markdown"
-    )
-    text = format_tool_event(event, markdown=not is_qq_plain)
+    text = format_tool_event(event, markdown=False)
     if not text:
         return True
     # 工具状态是过程消息，不应消耗入站消息唯一的 QQ 被动回复机会。
@@ -351,6 +333,8 @@ async def send_reply(payload: dict, reply: PlatformReply) -> bool:
         return result is not False
     elif platform == "qq" and reply.target.id:
         from agent.gateway import qq
+        if _qq_reply_budget_exhausted(payload):
+            return False
         reply_message_id = _qq_reply_message_id(payload, reply)
         if reply.target.type == "group":
             mention_user_id = payload.get("platform_user_id")
@@ -421,6 +405,67 @@ async def send_file(payload: dict, *, storage_key: str, ext: str, display_name: 
     if platform == "telegram":
         return await _send_file_telegram(payload, storage_key, fname)
     return False
+
+
+async def send_png_image(payload: dict, png: bytes) -> bool:
+    """通过现有 Gateway 图片接口发送短期内存 PNG，不创建文件库记录。"""
+    if not png or len(png) > 3 * 1024 * 1024:
+        return False
+    platform = payload.get("platform")
+    if platform == "feishu":
+        from agent.gateway import feishu
+        target = payload.get("chat_id") or payload.get("platform_user_id")
+        return bool(target) and await feishu.send_file(
+            str(target), png, "mermaid-diagram", "png", payload.get("channel_id")
+        )
+    if platform == "qq":
+        from agent.gateway import qq
+        group = payload.get("chat_type") == "group"
+        target = payload.get("chat_id") if group else payload.get("platform_user_id")
+        if not target:
+            return False
+        # 每张图片与相邻文字是独立气泡；只在被动回复额度耗尽后改为主动发送。
+        message_id = (
+            None if _qq_reply_budget_exhausted(payload) else payload.get("message_id")
+        )
+        sent = await qq.send_file(
+            str(target), png, "mermaid-diagram", "png", payload.get("channel_id"),
+            message_id, group=group,
+        )
+        if sent:
+            _mark_qq_passive_reply_used(payload, message_id)
+        return bool(sent)
+    if platform == "wechat":
+        from agent.gateway import wechat
+        target = payload.get("platform_user_id")
+        return bool(target) and await wechat.send_image(
+            str(target), png, payload.get("context_token", ""), payload.get("channel_id")
+        )
+    if platform == "telegram":
+        from agent.gateway import telegram
+        target = payload.get("chat_id") if payload.get("chat_type") == "group" else payload.get("platform_user_id")
+        return bool(target) and await telegram.send_file(
+            str(target), png, "mermaid-diagram.png",
+            channel_id=str(payload.get("channel_id") or ""),
+            reply_to_message_id=str(payload.get("message_id") or "") or None,
+        )
+    return False
+
+
+async def _try_send_png_image(payload: dict, png: bytes) -> bool:
+    """媒体 Gateway 异常只降级当前 Mermaid 图，不中断 Agent Run。"""
+    try:
+        sent = await send_png_image(payload, png)
+        if not sent:
+            from app.core.redaction import diag_log_raw
+
+            diag_log_raw("agent.im.mermaid.send_image", "status=delivery_failed")
+        return sent
+    except Exception as exc:
+        from app.core.redaction import diag_log
+
+        diag_log("agent.im.mermaid.send_image", exc)
+        return False
 
 
 async def _send_file_telegram(payload: dict, storage_key: str, fname: str) -> bool:
@@ -500,11 +545,13 @@ async def _send_file_qq(
     openid = payload.get("chat_id") if is_group else payload.get("platform_user_id")
     if not openid:
         return False
+    if _qq_reply_budget_exhausted(payload):
+        return False
     storage = get_storage()
     data = await storage.get(storage_key)
     if len(data) > _QQ_FILE_MAX:
         return False
-    file_message_id = None if payload.get(_QQ_PASSIVE_REPLY_USED) else payload.get("message_id")
+    file_message_id = payload.get("message_id")
     ok = await qq.send_file(
         openid, data, display_name, ext, payload.get("channel_id"),
         file_message_id, group=is_group,
@@ -521,6 +568,33 @@ def _fix_loose_bold(text: str) -> str:
         parts[i] = _BOLD_LEAD_WS_RE.sub(r'**\1**', parts[i])
         parts[i] = _BOLD_TRAIL_WS_RE.sub(r'**\1**', parts[i])
     return ''.join(parts)
+
+
+async def _send_mermaid_reply_text(payload: dict, text: str) -> str | None:
+    """发送一段含 Mermaid 的文本，图像失败时降级回原始 fence。"""
+    from agent.im.mermaid_delivery import send_mermaid_reply_text
+
+    return await send_mermaid_reply_text(
+        payload,
+        text,
+        send_text=send_text,
+        try_send_png_image=_try_send_png_image,
+        send_qq_mermaid_text=_send_qq_mermaid_text,
+    )
+
+
+async def _send_completed_parts(payload: dict, parts) -> bool:
+    """按解析顺序发送已渲染的文本与图片 part。"""
+    from agent.im.mermaid_delivery import send_completed_parts
+
+    return await send_completed_parts(
+        payload, parts, send_text=send_text, try_send_png_image=_try_send_png_image,
+    )
+
+
+async def send_completed_round(payload: dict, text: str) -> bool:
+    """发送已完成的 IM 回复轮次，并把 Mermaid 图表作为独立图片消息发送。"""
+    return await _send_mermaid_reply_text(payload, text) is not None
 
 
 async def send_agent_response(
@@ -560,8 +634,8 @@ async def send_agent_response(
                 [response_text] if response_text else (["给你～"] if response.files else ["嗯~在的，你说～"])
             )
 
-    # 每个 round 独立发送；返回值仍使用最后一条，供 trace/日志兼容。
-    last_text = texts[-1] if texts else ""
+    # 每个 round 独立发送；图表按文本位置发送，失败时回退为原始 fence。
+    last_text = ""
     if isinstance(already_sent_rounds, int):
         sent_indices = set(range(max(0, already_sent_rounds)))
     else:
@@ -569,16 +643,16 @@ async def send_agent_response(
     for index, text in enumerate(texts):
         if index in sent_indices:
             continue
-        if not await send_text(payload, text):
+        delivered_text = await _send_mermaid_reply_text(payload, text)
+        if delivered_text is None:
             return None
+        last_text = delivered_text or response_text or last_text
 
     # 生成失败时，response.text 是新的错误提示，而 round_texts 只是失败前已经
     # 生成的正文。它们属于两个不同的出站消息域：即使所有正文 round 都已发送，
     # 也必须单独把错误提示发出去，不能被 round 去重吞掉。
     if response.errored:
         if response_text and response_text != last_text:
-            if not await send_text(payload, response_text):
-                return None
-            return response_text
+            return response_text if await _send_mermaid_reply_text(payload, response_text) is not None else None
         return response_text or last_text or None
-    return last_text
+    return response_text or last_text

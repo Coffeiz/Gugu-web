@@ -230,7 +230,7 @@ async def test_file_write_uses_ledger_without_scanning_user_directories(
     async def unexpected_scan(*_args, **_kwargs):
         pytest.fail("正常文件写入不应扫描用户目录")
 
-    monkeypatch.setattr(quota_ledger, "_measure_local_unregistered_bytes", unexpected_scan)
+    monkeypatch.setattr(quota_ledger, "_measure_local_quota_roots", unexpected_scan)
     svc = _svc(db, tmp_path)
     await _create(svc, user_a.id, "incremental", "TXT", data=b"1234")
     await db.flush()

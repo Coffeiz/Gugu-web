@@ -14,7 +14,7 @@ from app.services.data_portability.schema import PortableArchiveEntry, PortableA
 async def test_preflight_reports_direct_owner_unique_collision_without_exposing_values(db, user_a):
     db.add(UserSkill(
         owner_id=user_a.id,
-        slug="fixture-skill",
+        skill_id="U1",
         name="目标技能",
         description_short="测试",
         description_long="",
@@ -28,10 +28,10 @@ async def test_preflight_reports_direct_owner_unique_collision_without_exposing_
     await db.flush()
     origin_id = uuid4()
     record = {
-        "record_schema": "gugu.skill.v1",
+        "record_schema": "gugu.skill.v2",
         "portable_id": "source-skill-1",
         "source_type": "skill",
-        "fields": {"slug": "fixture-skill", "name": "来源技能"},
+        "fields": {"skill_id": "U1", "name": "来源技能"},
         "relations": [],
     }
     data = (json.dumps(record) + "\n").encode()
@@ -56,10 +56,10 @@ async def test_preflight_reports_direct_owner_unique_collision_without_exposing_
     assert conflicts == [{
         "source_type": "skill",
         "portable_id": "source-skill-1",
-        "fields": ["slug"],
+        "fields": ["skill_id"],
         "kind": "target_conflict",
     }]
-    assert "fixture-skill" not in json.dumps(conflicts)
+    assert "U1" not in json.dumps(conflicts)
 
 
 @pytest.mark.asyncio

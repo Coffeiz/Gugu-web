@@ -210,6 +210,13 @@ async def apply_incremental_archive(
                     row = spec.model(**values)
                     db.add(row)
                     await db.flush()
+                    if record_type == "skill":
+                        skill_id = str(values.get("skill_id") or "")
+                        if skill_id.startswith("U") and skill_id[1:].isdigit():
+                            user.next_skill_sequence = max(
+                                int(user.next_skill_sequence or 1), int(skill_id[1:]) + 1,
+                            )
+                            await db.flush()
                     if record_type == "workspace_directory":
                         row.directory_name = "default" if row.is_default else f"workspace-{row.id}"
                         await db.flush()

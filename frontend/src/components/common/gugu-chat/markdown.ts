@@ -1,4 +1,5 @@
 import { marked, type Tokens } from 'marked'
+import { escapeHtml } from '@/utils/escapeHtml'
 import hljs from 'highlight.js'
 import { i18n } from '@/i18n'
 import { MIND_REF_TYPE_ICON_PATH } from '@/composables/mind/useMindEditor'
@@ -44,16 +45,19 @@ marked.use({
     const renderLinkAfterObject = r.link
     r.link = function (this: unknown, token: Tokens.Link) {
       const href = String(token.href || '')
-      const match = href.match(/^gugu:\/\/open-skill\/([a-z0-9][a-z0-9-]{0,79})$/i)
+      const match = href.match(/^gugu:\/\/open-skill\/(U[1-9][0-9]*)$/i)
       if (!match) return renderLinkAfterObject.call(this, token)
-      const slug = match[1].toLowerCase()
+      const skillId = match[1].toUpperCase()
       const label = String(token.text || '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] || char))
-      return `<a class="chat-object-card chat-skill-card" href="gugu://open-skill/${slug}" data-skill-slug="${slug}" aria-label="${label}"><span class="chat-object-card-icon">${chatObjectIcon(CHAT_SKILL_ICON_PATH, 'chat-object-card-icon-svg')}</span><span class="chat-object-card-body"><strong>${label}</strong><small>${CHAT_SKILL_LABEL}</small></span><span class="chat-object-card-arrow">${chatObjectIcon(CHAT_OBJECT_LINK_PATH, 'chat-object-card-arrow-svg')}</span></a>`
+      return `<a class="chat-object-card chat-skill-card" href="gugu://open-skill/${skillId}" data-skill-id="${skillId}" aria-label="${label}"><span class="chat-object-card-icon">${chatObjectIcon(CHAT_SKILL_ICON_PATH, 'chat-object-card-icon-svg')}</span><span class="chat-object-card-body"><strong>${label}</strong><small>${CHAT_SKILL_LABEL}</small></span><span class="chat-object-card-arrow">${chatObjectIcon(CHAT_OBJECT_LINK_PATH, 'chat-object-card-arrow-svg')}</span></a>`
     }
     // 关掉删除线渲染：口语里 ~ 很常见（好的~、稍等~），~~ 叠出来会被 GFM 当删除线；
     // 伙伴语气几乎不需要真删除线，把 ~~x~~ 直接渲染成纯文本 x（保留表格等其它 GFM 能力）。
     r.del = (t: Tokens.Del) => (t && t.text) || ''
     r.code = ({ text, lang }: Tokens.Code) => {
+      if (String(lang || '').trim().toLowerCase() === 'mermaid') {
+        return `<pre class="md-mermaid-source"><code>${escapeHtml(text)}</code></pre>`
+      }
       // 没写语言或语言未注册时自动探测，而不是直接按 plaintext 放弃高亮；
       // 探测失败 hljs 内部会退回纯文本，不会抛错。
       // highlightAuto 是全语言扫描的主线程同步操作，超长代码块直接放弃探测，
@@ -174,9 +178,27 @@ let _mdStreamCache: { text: string; html: string } | null = null
 export function renderMdStream(text: string) {
   if (!text) return ''
   if (_mdStreamCache?.text === text) return _mdStreamCache.html
-  const fences = (text.match(/^```/gm) || []).length
-  const patched = fences % 2 === 1 ? text + '\n```' : text
-  const html = marked.parse(prepareMarkdown(patched)) as string
+  const lines = text.split('\n')
+  let openFence: { char: string; size: number; line: number; info: string } | null = null
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(lines[index])
+    if (!match) continue
+    const marker = match[1]
+    if (!openFence) {
+      openFence = { char: marker[0], size: marker.length, line: index, info: match[2].trim() }
+    } else if (marker[0] === openFence.char && marker.length >= openFence.size && !match[2].trim()) {
+      openFence = null
+    }
+  }
+
+  if (openFence) {
+    if (openFence.info.split(/\s+/)[0]?.toLowerCase() === 'mermaid') {
+      const opening = /^( {0,3})(`{3,}|~{3,})(.*)$/.exec(lines[openFence.line])
+      if (opening) lines[openFence.line] = `${opening[1]}${opening[2]}text`
+    }
+    lines.push(`${openFence.char.repeat(openFence.size)}`)
+  }
+  const html = marked.parse(prepareMarkdown(lines.join('\n'))) as string
   _mdStreamCache = { text, html }
   return html
 }

@@ -2,27 +2,18 @@
 
 from __future__ import annotations
 
-import re
-
-MESSAGE_FORMATS = frozenset({"compat", "smart", "markdown"})
+MESSAGE_FORMATS = frozenset({"compat", "markdown"})
 DEFAULT_GROUP_FORMAT = "compat"
-DEFAULT_PRIVATE_FORMAT = "smart"
-_MD_SIGNAL_RE = re.compile(
-    r"(^|\n)\s*(?:#{1,6}\s|[-*+]\s|>\s|```)|\*\*[^*\n]+\*\*|`[^`\n]+`|\[[^\]]+\]\([^\n)]+\)"
-)
+DEFAULT_PRIVATE_FORMAT = "markdown"
 
 
 def default_message_format(chat_type: str | None) -> str:
     return DEFAULT_GROUP_FORMAT if chat_type == "group" else DEFAULT_PRIVATE_FORMAT
 
 
-def message_type(text: str, mode: str | None) -> int:
+def message_type(_text: str, mode: str | None) -> int:
     """返回 QQ 文本消息类型；未传策略时保留旧调用的 Markdown 行为。"""
-    if mode is None or mode == "markdown":
-        return 2
-    if mode == "smart" and _MD_SIGNAL_RE.search(text or ""):
-        return 2
-    return 0
+    return 0 if mode == "compat" else 2
 
 
 def compatibility_prompt() -> str:
@@ -52,19 +43,3 @@ async def resolve_message_format(bot_id: str, chat_type: str | None) -> str:
         return fallback
     value = bot.group_message_format if chat_type == "group" else bot.private_message_format
     return value if value in MESSAGE_FORMATS else fallback
-
-
-async def resolve_private_streaming_enabled(bot_id: str) -> bool:
-    """读取 QQ C2C 流式开关；查不到配置时保持默认关闭。"""
-    import app.db.session as db_session
-    from app.models import UserBot
-
-    if db_session._engine is None:
-        db_session._build_engine()
-    try:
-        bot_db_id = int(bot_id)
-    except (TypeError, ValueError):
-        return False
-    async with db_session._SessionLocal() as db:
-        bot = await db.get(UserBot, bot_db_id)
-    return False if bot is None else bool(getattr(bot, "private_streaming_enabled", False))

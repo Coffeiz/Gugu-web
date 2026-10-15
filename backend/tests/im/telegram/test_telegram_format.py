@@ -39,3 +39,19 @@ def test_emoji_message_is_split_by_telegram_utf16_length_not_python_character_co
 
 def test_escape_is_idempotent_for_plain_telegram_specials():
     assert escape_markdown_v2("_[]()~`>#+-=|{}.!\\") == "\\_\\[\\]\\(\\)\\~\\`\\>\\#\\+\\-\\=\\|\\{\\}\\.\\!\\\\"
+
+
+def test_markdown_lists_render_as_readable_telegram_list_items():
+    formatted = markdown_v2("- 普通项\n1) 有序项\n- [x] 完成\n- [ ] 未完成")
+
+    assert formatted == "• 普通项\n1\\. 有序项\n☑ 完成\n☐ 未完成"
+
+
+def test_long_fenced_code_is_split_into_valid_blocks_without_losing_content():
+    content = "a_b😀" * 400 + "\n"
+    chunks = split_markdown_v2(f"```python\n{content}```", limit=512)
+
+    assert len(chunks) > 1
+    assert all(chunk.startswith("```python\n") and chunk.endswith("```") for chunk in chunks)
+    assert all(len(chunk.encode("utf-16-le")) // 2 <= 512 for chunk in chunks)
+    assert "".join(chunk.removeprefix("```python\n").removesuffix("```") for chunk in chunks) == content

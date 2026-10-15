@@ -58,6 +58,13 @@ def choose_instant_reaction(text: str, has_media: bool) -> tuple[str, str]:
     return random.choice(_QUICK_DEFAULT[1]), _QUICK_DEFAULT[0]
 
 
+def _qq_private_streaming_requested(
+    platform: str, chat_type: str | None, message_format: str | None,
+) -> bool:
+    """QQ 私聊选择 Markdown 时流式发送；兼容格式和群聊维持非流式。"""
+    return platform == "qq" and chat_type == "c2c" and message_format == "markdown"
+
+
 async def display_tool_event(
     payload: dict,
     event: dict,
@@ -73,7 +80,6 @@ async def display_tool_event(
     if feishu_tool_summary is not None and await feishu_tool_summary.handle_tool_event(event):
         return
     from agent.im.replies import send_tool_event
-
     await send_tool_event(payload, event)
 
 
@@ -737,6 +743,27 @@ def _should_observe_private_member_activity(request: AgentRequest) -> bool:
     )
 
 
+async def _ensure_im_session(request: AgentRequest) -> int:
+    """在 IM run 启动前解析会话，保证 Web 镜像有稳定的 session id。
+
+    Redis 路由缓存可能过期；Runner 虽会在持久化阶段从数据库复用会话，
+    但那时 Web 的 genstream 已经错过 begin 和 running 通知。
+    """
+    if request.session_id:
+        return int(request.session_id)
+
+    import app.db.session as db_session
+    from agent.im.session import get_or_create_session
+
+    if db_session._engine is None:
+        db_session._build_engine()
+    async with db_session._SessionLocal() as db:
+        state = await get_or_create_session(db, request, request.user_id)
+        await db.commit()
+    request.session_id = int(state.session.id)
+    return request.session_id
+
+
 async def dispatch_im_message(payload: dict):
     """处理一条已入队 IM 消息的完整业务编排。
 
@@ -1001,10 +1028,19 @@ async def dispatch_im_message(payload: dict):
         req.message = f"请立即开始执行目标任务：{goal_text}"
 
     show_tool_interactions, show_intermediate_replies = await _im_display_preferences(req.user_id)
+    if platform == "telegram":
+        from agent.interactions.preferences import im_user_locale
+        payload["locale"] = await im_user_locale(req.user_id)
+    from agent.interactions.preferences import im_mermaid_theme_preferences
+    payload["mermaid_theme_preferences"] = await im_mermaid_theme_preferences(req.user_id)
     bind_im_context(req, payload, show_tool_interactions=show_tool_interactions)
     await remember_im_reach(user_id, platform, payload, puid)
     activity = await start_im_activity(payload, platform, puid)
     agent_loop = select_loop(req)
+    # Redis 路由 session 缓存 miss/过期时，Runner 会稍后自行从数据库复用会话；
+    # 先在这里补齐 ID，才能从消息入站起向 Web 广播消息、run 状态及生成流。
+    await _ensure_im_session(req)
+    trace.bind_im_run(req.session_id, platform)
     # IM 运行同时镜像到 Web 的 genstream：Web 可以观察同一条 IM 会话的实时
     # token、工具和交互状态，但不重复持久化消息，也不改变平台发送逻辑。
     from agent.llm import genstream
@@ -1047,8 +1083,8 @@ async def dispatch_im_message(payload: dict):
             yield line
 
     feishu_tool_summary = None
-    if platform == "feishu" and show_tool_interactions:
-        from agent.gateway.feishu_tool_summary import FeishuToolSummaryStream
+    if platform == "feishu" and payload.get("chat_type") == "group" and show_tool_interactions:
+        from agent.gateway.feishu.tool_summary import FeishuToolSummaryStream
 
         feishu_tool_summary = FeishuToolSummaryStream()
 
@@ -1058,13 +1094,15 @@ async def dispatch_im_message(payload: dict):
     immediate_round_blocked = False
     qq_private_streaming = False
     if platform == "qq" and payload.get("chat_type") == "c2c":
-        from agent.im.message_format import resolve_private_streaming_enabled
-        qq_private_streaming = await resolve_private_streaming_enabled(route.bot_id)
-        # 交互可能在任意工具 round 中途产生。QQ 流消息在 Agent 等待交互时尚未
-        # 收尾，客户端通常不会展示另一条 Inline Keyboard；必须统一走 collect，
-        # 才能在 Runner 阻塞等待前把按钮发出去。工具状态开关不能影响这个必需交互。
-        if qq_private_streaming:
-            qq_private_streaming = False
+        message_format = payload.get("message_format")
+        if message_format not in {"compat", "markdown"}:
+            from agent.im.message_format import resolve_message_format
+            message_format = await resolve_message_format(route.bot_id, "c2c")
+        # 流式消费器会在 interaction_required 前冲刷 round_end；QQ 发送器先结束
+        # 当前流消息，再由交互回调发送确认提示，确认后续轮使用新流消息继续。
+        qq_private_streaming = _qq_private_streaming_requested(
+            platform, payload.get("chat_type"), message_format,
+        )
     tool_event_callback = partial(
         display_tool_event,
         payload,
@@ -1076,7 +1114,7 @@ async def dispatch_im_message(payload: dict):
     async def _show_round(text: str) -> bool:
         """立即发送已结束的正文 round，成功后从最终收尾中跳过。"""
         nonlocal immediate_round_index, immediate_round_blocked
-        from agent.im.replies import send_text
+        from agent.im.replies import send_completed_round
 
         if not str(text or "").strip():
             return True
@@ -1089,7 +1127,7 @@ async def dispatch_im_message(payload: dict):
         # 发送的 index 精确补发，避免丢失失败 round 或重复发送成功 round。
         if immediate_round_blocked:
             return False
-        sent = await send_text(payload, str(text))
+        sent = await send_completed_round(payload, str(text))
         if sent:
             sent_round_indices.add(index)
         else:
@@ -1123,7 +1161,7 @@ async def dispatch_im_message(payload: dict):
         if prompt_id is not None:
             shown_interaction_ids.add(int(prompt_id))
 
-    # 飞书使用 CardKit 原地更新同一张卡片；其他平台继续按 round 收集后逐条发送。
+    # 飞书使用 CardKit、Telegram 私聊使用 live draft 流式预览；其余平台按 round 收集发送。
     stream_sent = False
     try:
         if platform == "feishu":
@@ -1137,8 +1175,8 @@ async def dispatch_im_message(payload: dict):
             stream_sent, resp = await feishu.send_text_stream(
                 str(receive_id or ""), _mirror_stream(token_iter),
                 channel_id=payload.get("channel_id"),
-                show_intermediate_replies=show_intermediate_replies,
                 tool_summary=feishu_tool_summary,
+                mermaid_theme_preferences=payload.get("mermaid_theme_preferences"),
             )
             if resp is None and stream_sent:
                 # 卡片已经可见但流没有产出最终响应；不能重新执行同一 Run。
@@ -1164,6 +1202,20 @@ async def dispatch_im_message(payload: dict):
                 payload, _mirror_stream(token_iter),
                 show_intermediate_replies=show_intermediate_replies,
             )
+        elif platform == "telegram" and payload.get("chat_type") == "c2c":
+            from agent.im.replies import send_telegram_stream_by_round
+            token_iter = agent_loop.run_stream(
+                req,
+                on_interaction=_show_im_interaction,
+                on_tool_event=tool_event_callback,
+            )
+            resp, telegram_sent_rounds = await send_telegram_stream_by_round(
+                payload,
+                _mirror_stream(token_iter),
+                show_intermediate_replies=show_intermediate_replies,
+            )
+            sent_round_indices.update(telegram_sent_rounds)
+            reply_text = ""
         else:
             resp = await agent_loop.run_collect(
                 req,

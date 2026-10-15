@@ -23,6 +23,7 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     && pnpm install --filter gugu-web --frozen-lockfile
 
 COPY frontend/ ./frontend/
+COPY backend/ts/workers/mermaid-renderer/diagram-source.mjs backend/ts/workers/mermaid-renderer/diagram-source.d.mts backend/ts/workers/mermaid-renderer/svg-style.mjs backend/ts/workers/mermaid-renderer/theme.mjs backend/ts/workers/mermaid-renderer/theme.d.mts ./backend/ts/workers/mermaid-renderer/
 RUN cd frontend && pnpm build
 
 # ── Stage 1.5：TS RAG worker 的 Linux x64 原生运行时依赖 ─────────────────────
@@ -34,8 +35,13 @@ WORKDIR /rag
 
 COPY backend/ts/workers/rag/package.json ./package.json
 RUN npm install --omit=dev --ignore-scripts --no-fund --no-audit \
+        @xmldom/xmldom@0.9.12 \
         @node-rs/jieba@2.0.1 \
         @node-rs/jieba-linux-x64-gnu@2.0.1 \
+        @resvg/resvg-js@2.6.2 \
+        mermaid@12.1.0 \
+        @mermaid-js/mermaid-zenuml@1.0.1 \
+        svgdom@0.1.28 \
     && node -e "import('@node-rs/jieba').then(() => console.log('RAG Jieba runtime ready'))"
 
 # ── Stage 2：后端依赖构建（venv 与最终镜像分离） ─────────────────────────────
@@ -140,7 +146,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     rm -f /etc/apt/apt.conf.d/docker-clean \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
-        nginx poppler-utils fonts-noto-cjk ffmpeg curl docker.io docker-cli nodejs acl \
+        nginx poppler-utils fonts-noto-cjk ffmpeg curl docker.io docker-cli nodejs acl libseccomp2 \
         rootlesskit slirp4netns fuse-overlayfs uidmap iproute2 iptables \
         postgresql redis-server supervisor util-linux procps \
     # snakeoil 是 ssl-cert 包（postgresql 依赖）装的 Debian 全机通用示例证书，随层公开
@@ -185,6 +191,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         -e "s|${APT_MIRROR}/debian-security|https://deb.debian.org/debian-security|g" \
         -e "s|${APT_MIRROR}/debian|https://deb.debian.org/debian|g" \
         /etc/apt/sources.list.d/debian.sources \
+    && rm -rf /var/lib/apt/lists/* \
     && apt-get update \
     && apt-get upgrade -y
 
@@ -233,8 +240,13 @@ RUN set -eux; \
 RUN mkdir -p ./bin
 COPY backend/bin/gugu-rag-ts-worker.mjs ./bin/gugu-rag-ts-worker.mjs
 COPY backend/bin/gugu-filesync-ts-worker.cjs ./bin/gugu-filesync-ts-worker.cjs
+COPY backend/ts/workers/mermaid-renderer/worker.mjs ./bin/gugu-mermaid-worker.mjs
+COPY backend/ts/workers/mermaid-renderer/diagram-source.mjs backend/ts/workers/mermaid-renderer/svg-style.mjs backend/ts/workers/mermaid-renderer/theme.mjs ./bin/
+COPY frontend/public/fonts/Noto_Sans_SC/NotoSansSC-VariableFont_wght.ttf ./bin/fonts/NotoSansSC-VariableFont_wght.ttf
 COPY --from=rag-runtime /rag/node_modules ./bin/node_modules
-RUN node bin/gugu-rag-ts-worker.mjs --version
+RUN node bin/gugu-rag-ts-worker.mjs --version \
+    && cd bin && node -e "Promise.all([import('mermaid'), import('@mermaid-js/mermaid-zenuml'), import('@resvg/resvg-js'), import('@xmldom/xmldom'), import('svgdom')]).then(() => console.log('Mermaid PNG runtime ready'))"
+RUN python -c "import ctypes.util; assert ctypes.util.find_library('seccomp'), 'libseccomp2 runtime unavailable'"
 RUN node bin/gugu-filesync-ts-worker.cjs --version
 
 # ── 自更新工具链（执行器并入 app 进程，PRD-ADMIN-2 §1.1）───────────────────

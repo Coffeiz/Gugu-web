@@ -12,7 +12,7 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.tz import now_utc
@@ -52,8 +52,17 @@ async def multi_session_filesync_db(tmp_path, user_a):
     """并发 Worker 屏障使用文件 SQLite，避免 StaticPool 把独立 session 合并成一条连接。"""
     engine = create_async_engine(
         f"sqlite+aiosqlite:///{tmp_path / 'filesync-runner.sqlite'}",
-        connect_args={"check_same_thread": False},
+        connect_args={"check_same_thread": False, "timeout": 30},
     )
+    @event.listens_for(engine.sync_engine, "connect")
+    def configure_concurrent_sqlite(connection, _record):
+        cursor = connection.cursor()
+        try:
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA busy_timeout=30000")
+        finally:
+            cursor.close()
+
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
     sessions = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -80,6 +89,13 @@ async def multi_session_filesync_db(tmp_path, user_a):
         db_session._SessionLocal = original_session_factory
         db_session._engine_loop = original_engine_loop
         await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def filesync_runner_db(multi_session_filesync_db):
+    """runner 用例需用多连接测试库，避免 monitor 与测试 session 共用 StaticPool 连接。"""
+    async with multi_session_filesync_db() as session:
+        yield session
 
 
 def test_user_root_reconcile_only_projects_canonical_library_folders(
@@ -1382,12 +1398,13 @@ def test_mirror_out_partial_export_failure_has_failed_terminal_state():
 @pytest.mark.parametrize("ledger_preexists", [True, False])
 @pytest.mark.asyncio
 async def test_confirmed_repair_hashes_same_stat_update_and_applies_missing_file_delete(
-    db, user_a, monkeypatch, ledger_preexists,
+    filesync_runner_db, user_a, monkeypatch, ledger_preexists,
 ):
     import app.services.filesync.runner as runner
     import app.services.filesync.targeted as targeted
     from app.services.filesync.reconcile import SyncSummary
 
+    db = filesync_runner_db
     storage_root = Path(runner.get_settings().storage.local_path).expanduser().resolve()
     root = storage_root / str(user_a.id)
     personal = root / "个人文件"

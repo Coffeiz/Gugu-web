@@ -31,7 +31,7 @@ export function useChatActions(options: {
   router: Router
   onBindPlatform: (platform: string) => void
   onOpenObject: (type: string, id: number) => void
-  onOpenSkill: (slug: string) => void
+  onOpenSkill: (skillId: string) => void
 }) {
   const projectStore = useProjectStore()
   const liveStore = useLiveStore()
@@ -130,8 +130,8 @@ export function useChatActions(options: {
     }
     const mObject = href.match(/^gugu:\/\/open-object\/(project|event|canvas|note|scheduled-task)\/(\d+)$/i)
     if (mObject) options.onOpenObject(mObject[1].toLowerCase(), Number(mObject[2]))
-    const mSkill = href.match(/^gugu:\/\/open-skill\/([a-z0-9][a-z0-9-]{0,79})$/i)
-    if (mSkill) options.onOpenSkill(mSkill[1].toLowerCase())
+    const mSkill = href.match(/^gugu:\/\/open-skill\/(U[1-9][0-9]*)$/i)
+    if (mSkill) options.onOpenSkill(mSkill[1].toUpperCase())
   }
 
   return { refreshAfterTools, onChatActionClick }

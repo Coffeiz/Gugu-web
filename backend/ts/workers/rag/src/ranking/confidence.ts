@@ -18,6 +18,7 @@ export const V4_SOURCE_QUALITY_VERSION = "v4-20260910";
 
 export const SOURCE_QUALITY_V4: Record<string, number> = {
   knowledge: 1.0,
+  file: 0.8,
   memory: 0.8,
   project: 0.8,
   journal: 0.8,

@@ -25,7 +25,7 @@ async def test_preflight_retains_archive_stream_through_conflict_preview(db, use
         lambda: SimpleNamespace(secret_key="test-only-data-portability-key"),
     )
     db.add(UserSkill(
-        owner_id=user_a.id, slug="preflight-collision", name="目标技能",
+        owner_id=user_a.id, skill_id="U1", name="目标技能",
         description_short="测试", description_long="", category="custom",
         body="合成内容", related_tools=[], source="user", enabled=True,
         content_digest="b" * 64,
@@ -33,10 +33,10 @@ async def test_preflight_retains_archive_stream_through_conflict_preview(db, use
     await db.flush()
 
     record_bytes = (json.dumps({
-        "record_schema": "gugu.skill.v1",
+        "record_schema": "gugu.skill.v2",
         "portable_id": "source-skill-1",
         "source_type": "skill",
-        "fields": {"slug": "preflight-collision", "name": "来源技能"},
+        "fields": {"skill_id": "U1", "name": "来源技能"},
         "relations": [],
     }, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
 
@@ -94,5 +94,5 @@ async def test_preflight_retains_archive_stream_through_conflict_preview(db, use
     await db.refresh(job)
     assert job.status == "preview_ready"
     assert job.preview["conflicts"]["total"] == 1
-    assert job.preview["conflicts"]["items"][0]["fields"] == ["slug"]
+    assert job.preview["conflicts"]["items"][0]["fields"] == ["skill_id"]
     assert job.preview["compatibility"]["mind_refs_as_notes"] == 1

@@ -69,7 +69,7 @@ const toolsExpanded = ref(false)
 const descriptionRef = ref<HTMLTextAreaElement | null>(null)
 const bodyRef = ref<HTMLTextAreaElement | null>(null)
 const form = reactive({
-  slug: props.skill?.slug ?? '', name: props.skill?.name ?? '',
+  name: props.skill?.name ?? '',
   description_short: props.skill?.description_short ?? '', description_long: props.skill?.description_long ?? '',
   category: props.skill?.category ?? 'personal', related_tools: [...(props.skill?.related_tools ?? [])],
   body: props.skill?.body ?? '', enabled: props.skill?.enabled ?? true,
@@ -81,8 +81,7 @@ function submit() {
     error.value = t('skills.fillRequired')
     return
   }
-  const slug = form.slug || `user-skill-${Date.now().toString(36)}`
-  emit('save', { ...form, slug, description_long: props.skill?.description_long ?? null })
+  emit('save', { ...form, description_long: props.skill?.description_long ?? null })
 }
 
 function resizeTextarea(textarea: HTMLTextAreaElement, maxHeight: number, minHeight: number) {

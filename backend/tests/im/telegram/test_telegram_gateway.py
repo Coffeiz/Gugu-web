@@ -6,8 +6,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy import select
 
-from agent.gateway import telegram
+from agent.gateway.telegram import runtime as telegram
 
 
 @pytest.fixture(autouse=True)
@@ -16,6 +17,273 @@ def reset_chat_rate_state():
     telegram._CHAT_NEXT_SEND.clear()
     telegram._BOT_LOCKS.clear()
     telegram._BOT_NEXT_SEND.clear()
+
+
+def _capture_callback_outputs(monkeypatch):
+    answers = []
+    removed_keyboards = []
+    sent_messages = []
+
+    async def answer(_token, query_id, *, text=None, show_alert=False):
+        answers.append((query_id, text, show_alert))
+
+    async def remove_keyboard(_token, bot_id, chat_id, message_id):
+        removed_keyboards.append((bot_id, chat_id, message_id))
+
+    async def send_message(chat_id, text, *, channel_id=None):
+        sent_messages.append((chat_id, text, channel_id))
+        return True
+
+    monkeypatch.setattr(telegram, "_answer_callback_query", answer)
+    monkeypatch.setattr(telegram, "_remove_callback_keyboard", remove_keyboard)
+    monkeypatch.setattr("agent.gateway.telegram.send_message", send_message)
+    return answers, removed_keyboards, sent_messages
+
+
+async def _make_telegram_action(db, user, *, mcp_secret=False):
+    """创建绑定 Telegram owner 的真实交互和一次性按钮。"""
+    from app.models import ConversationSession, UserBot
+    from app.services.interactions import create_prompt
+
+    bot = UserBot(
+        user_id=user.id,
+        platform="telegram",
+        app_id="9001",
+        app_secret="123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef0123456789",
+        owner_platform_user_id="7001",
+    )
+    db.add(bot)
+    await db.commit()
+    await db.refresh(bot)
+    session = ConversationSession(
+        user_id=user.id,
+        title="Telegram 回调回归",
+        source="telegram",
+        bot_id=str(bot.id),
+        platform_user_id="7001",
+        chat_type="c2c",
+    )
+    db.add(session)
+    await db.commit()
+
+    if mcp_secret:
+        from app.models import UserMcpServer
+        from app.services.interactions import create_agent_prompt
+
+        server = UserMcpServer(
+            user_id=user.id,
+            scope="user",
+            name="callback_secret",
+            endpoint="https://mcp.example.test",
+            credential_slots=[{
+                "id": "key", "label": "Key", "target": "header", "name": "X-Key",
+            }],
+        )
+        db.add(server)
+        await db.commit()
+        prompt, actions = await create_agent_prompt(
+            user_id=user.id,
+            session_id=session.id,
+            tool_call_id="telegram-secret-callback",
+            tool_name="manage_mcp_servers",
+            payload={
+                "_interaction": "ask_user",
+                "kind": "form",
+                "title": "补全凭据",
+                "secret_fields": [{"name": "key", "label": "Key", "type": "secret"}],
+                "secret_target": {"kind": "mcp_credentials", "server_id": str(server.id)},
+            },
+        )
+        await db.commit()
+        action = next(item for item in actions if item["id"] == "input_credentials")
+        return bot, session, prompt, {**action, "prompt_id": prompt.id}
+
+    prompt, actions = await create_prompt(
+        db,
+        user_id=user.id,
+        session_id=session.id,
+        kind="choice",
+        title="确认操作",
+        body="请选择操作",
+        options=[
+            {"id": "confirm", "label": "确认"},
+            {"id": "cancel", "label": "取消"},
+        ],
+        source="agent",
+    )
+    await db.commit()
+    return bot, session, prompt, {**actions[0], "prompt_id": prompt.id}
+
+
+def _callback(action, *, query_id="callback-1", actor_id="7001", chat_type="private", chat_id=7001):
+    from agent.interactions.telegram import encode_action_data
+
+    return {
+        "id": query_id,
+        "from": {"id": actor_id},
+        "message": {
+            "message_id": 81,
+            "chat": {"id": chat_id, "type": chat_type},
+        },
+        "data": encode_action_data(action["prompt_id"], action["token"]),
+    }
+
+
+def test_telegram_inline_keyboard_packs_short_and_long_labels_into_adaptive_rows():
+    """短标签可并排，超长标签独占一行，且按钮顺序和回调数据保持不变。"""
+    from agent.interactions.telegram import build_inline_keyboard, decode_action_data
+
+    labels = ["A", "短", "中等长度按钮", "这是一个明显更长的按钮标签，用于验证是否独占一行", "完成"]
+    keyboard = build_inline_keyboard({
+        "prompt_id": 17,
+        "options": [
+            {"id": f"option-{index}", "label": label, "token": f"token-{index}"}
+            for index, label in enumerate(labels)
+        ],
+    })
+
+    rows = keyboard["inline_keyboard"]
+    assert [[button["text"] for button in row] for row in rows] == [
+        labels[:3], [labels[3]], [labels[4]],
+    ]
+    assert [decode_action_data(button["callback_data"]) for row in rows for button in row] == [
+        (17, f"token-{index}") for index in range(len(labels))
+    ]
+
+
+def test_telegram_inline_keyboard_limits_short_buttons_per_row():
+    from agent.interactions.telegram import build_inline_keyboard
+
+    keyboard = build_inline_keyboard({
+        "prompt_id": 18,
+        "options": [
+            {"id": label, "label": label, "token": f"token-{index}"}
+            for index, label in enumerate("ABCDEF")
+        ],
+    })
+
+    assert [len(row) for row in keyboard["inline_keyboard"]] == [4, 2]
+
+
+@pytest.mark.asyncio
+async def test_telegram_owner_callback_resolves_waiting_agent_prompt(db, user_a, monkeypatch):
+    """Bot owner 点确认后，按钮结果持久化并可被等待中的 Agent 取回。"""
+    from app.services.interactions import wait_for_resolution
+
+    bot, _session, prompt, action = await _make_telegram_action(db, user_a)
+    answers, removed_keyboards, sent_messages = _capture_callback_outputs(monkeypatch)
+
+    processed = await telegram._handle_callback_query(
+        _callback(action), token="test-token", bot_id=str(bot.id), owner_id=str(user_a.id),
+    )
+
+    assert processed is True
+    assert answers == [("callback-1", None, False)]
+    assert removed_keyboards == [(str(bot.id), "7001", 81)]
+    assert sent_messages == [("7001", "已确认，任务继续执行。", str(bot.id))]
+    resolved = await wait_for_resolution(user_id=user_a.id, prompt_id=prompt.id, timeout_seconds=1)
+    assert resolved == {
+        "kind": "choice", "status": "selected", "prompt_id": prompt.id,
+        "option_id": "confirm", "value": "confirm", "text": "确认",
+    }
+    stored_prompt = await db.get(type(prompt), prompt.id)
+    await db.refresh(stored_prompt)
+    assert stored_prompt.status == "resolved"
+    assert stored_prompt.schema_json["resolved_result"] == resolved
+
+
+@pytest.mark.asyncio
+async def test_telegram_non_owner_callback_is_rejected_without_consuming_action(db, user_a, monkeypatch):
+    """非 owner 点击按钮时拒绝回调，等待中的 Agent 交互仍保持活动。"""
+    from app.models import InteractionRequest
+
+    bot, _session, prompt, action = await _make_telegram_action(db, user_a)
+    answers, removed_keyboards, sent_messages = _capture_callback_outputs(monkeypatch)
+
+    processed = await telegram._handle_callback_query(
+        _callback(action, actor_id="8002"),
+        token="test-token", bot_id=str(bot.id), owner_id=str(user_a.id),
+    )
+
+    assert processed is True
+    assert answers == [("callback-1", "只有 Bot 绑定的所有者可以使用这些按钮。", True)]
+    assert removed_keyboards == []
+    assert sent_messages == []
+    stored_prompt = await db.get(InteractionRequest, prompt.id)
+    assert stored_prompt.status == "active"
+    assert "resolved_result" not in stored_prompt.schema_json
+
+
+@pytest.mark.asyncio
+async def test_telegram_duplicate_callback_does_not_resolve_agent_action_twice(db, user_a, monkeypatch):
+    """同一按钮的重复投递只写入一次结果，重放不会再次执行动作。"""
+    from app.models import InteractionAction, InteractionRequest
+    from app.services.interactions import _hash_token, wait_for_resolution
+
+    bot, _session, prompt, action = await _make_telegram_action(db, user_a)
+    answers, removed_keyboards, sent_messages = _capture_callback_outputs(monkeypatch)
+
+    for query_id in ("callback-first", "callback-replay"):
+        processed = await telegram._handle_callback_query(
+            _callback(action, query_id=query_id),
+            token="test-token", bot_id=str(bot.id), owner_id=str(user_a.id),
+        )
+        assert processed is True
+
+    assert answers == [
+        ("callback-first", None, False),
+        ("callback-replay", "这个选项已过期或已经处理过了。", True),
+    ]
+    assert removed_keyboards == [(str(bot.id), "7001", 81)]
+    assert sent_messages == [("7001", "已确认，任务继续执行。", str(bot.id))]
+    stored_prompt = await db.get(InteractionRequest, prompt.id)
+    stored_action = await db.scalar(select(InteractionAction).where(
+        InteractionAction.prompt_id == prompt.id,
+        InteractionAction.token_hash == _hash_token(action["token"]),
+    ))
+    await db.refresh(stored_prompt)
+    await db.refresh(stored_action)
+    assert stored_prompt.status == "resolved"
+    assert stored_action.status == "consumed"
+    assert stored_action.consumed_event_id == "callback-first"
+    assert await wait_for_resolution(
+        user_id=user_a.id, prompt_id=prompt.id, timeout_seconds=1,
+    ) == stored_prompt.schema_json["resolved_result"]
+
+
+@pytest.mark.asyncio
+async def test_telegram_mcp_credential_button_requires_private_chat(db, user_a, monkeypatch):
+    """MCP 凭据按钮在群聊被拒且不消费，回到 owner 私聊后才能启动输入。"""
+    from app.models import InteractionRequest, McpSecretInput
+
+    bot, _session, prompt, action = await _make_telegram_action(db, user_a, mcp_secret=True)
+    answers, removed_keyboards, sent_messages = _capture_callback_outputs(monkeypatch)
+
+    group_processed = await telegram._handle_callback_query(
+        _callback(action, query_id="group-click", chat_type="group", chat_id="-1007002"),
+        token="test-token", bot_id=str(bot.id), owner_id=str(user_a.id),
+    )
+    stage = await db.scalar(select(McpSecretInput).where(McpSecretInput.prompt_id == prompt.id))
+    assert group_processed is True
+    assert stage.status == "pending_choice"
+    assert (await db.get(InteractionRequest, prompt.id)).status == "active"
+    assert answers == [("group-click", "这个选项已过期或已经处理过了。", True)]
+    assert removed_keyboards == []
+    assert sent_messages == []
+
+    private_processed = await telegram._handle_callback_query(
+        _callback(action, query_id="private-click"),
+        token="test-token", bot_id=str(bot.id), owner_id=str(user_a.id),
+    )
+    await db.refresh(stage)
+    assert private_processed is True
+    assert stage.status == "awaiting_secret"
+    assert (await db.get(InteractionRequest, prompt.id)).status == "active"
+    assert answers[-1] == ("private-click", None, False)
+    assert removed_keyboards[-1] == (str(bot.id), "7001", 81)
+    assert sent_messages[-1] == (
+        "7001", "请在当前私聊发送凭据字段值；回复“取消”可终止。", str(bot.id),
+    )
 
 
 @pytest.mark.asyncio
@@ -107,7 +375,7 @@ async def test_long_poll_resumes_after_last_atomically_enqueued_update(monkeypat
 
     update_calls = [payload for method, payload, _timeout in calls if method == "getUpdates"]
     assert update_calls[0].get("offset") is None
-    assert update_calls[0]["allowed_updates"] == ["message"]
+    assert update_calls[0]["allowed_updates"] == ["message", "callback_query"]
     assert update_calls[1]["offset"] == 914
     assert [item["platform_event_id"] for item in enqueued] == ["911", "912"]
     assert [item["text"] for item in enqueued] == ["先到消息", "后到消息"]

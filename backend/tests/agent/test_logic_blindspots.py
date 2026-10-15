@@ -4,7 +4,6 @@
 只锚定当前真实行为（回归保护），不改变任何实现。
 """
 
-from agent.im.replies import _tool_result_summary
 from agent.memory.lens import _similar
 from agent.memory.longterm_compaction import _pattern_strength
 from agent.memory.reflection import _misperc_regex
@@ -101,21 +100,6 @@ def test_misperc_regex_matches_correction_markers_only_in_head():
     assert _misperc_regex("u", "今天天气不错") is None
     assert _misperc_regex("u", "") is None
     assert _misperc_regex("u", "这" * 20 + "不对，") is None
-
-
-def test_tool_result_summary_compacts_whitespace_and_truncates():
-    assert _tool_result_summary(None) == ""
-    assert _tool_result_summary("  多行\n文本\t折叠  ") == "多行 文本 折叠"
-    assert _tool_result_summary({"b": 2, "a": 1}) == '{"b": 2, "a": 1}'
-    assert _tool_result_summary("x" * 400) == "x" * 319 + "…"
-
-
-def test_tool_result_summary_falls_back_to_str_for_unserializable():
-    class _Unserializable:
-        def __str__(self):
-            return "原始字符串"
-
-    assert _tool_result_summary(_Unserializable()) == "原始字符串"
 
 
 def test_lens_similar_uses_trigger_as_stable_key():

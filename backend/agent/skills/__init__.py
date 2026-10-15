@@ -1,8 +1,8 @@
 """Prompt skills 加载层（渐进式按需披露）。
 
 每个 skill 一个 `.md`：frontmatter（`name` / `description_short` / `description_long`）+ 正文（做法说明，可指挥模型调若干 tool）。
-- `skills_index(names)` → `[{slug, name, description_short, description_long}]`，供 builder 注入「可用技能」索引。
-- `load_skill(key)`   → 正文（去掉 frontmatter），供 `use_skill` 工具按名拉取。
+- `skills_index(ids)` → `[{id, name, description_short, description_long}]`，供 builder 注入「可用技能」索引。
+- `load_skill(skill_id)` → 正文（去掉 frontmatter），供 `use_skill` 工具按 ID 拉取。
 
 与 `agent/tools/`（函数调用工具）的关系：skill 是「带触发条件的剧本」，跑在 tool 之上。
 依赖单向：tools（use_skill）→ skills（本模块）。
@@ -45,18 +45,21 @@ def _load_all() -> dict[str, dict]:
             meta, body = _parse(p.read_text(encoding="utf-8"))
         except Exception:
             continue
-        slug = p.stem
         def _clean(v: str) -> str:
             return (v or "").strip().strip('"').strip("'")
+        skill_id = _clean(meta.get("id"))
+        if not skill_id.startswith("S") or not skill_id[1:].isdigit():
+            continue
         # emoji 可能嵌在 metadata: 下（扁平解析仍能取到 emoji 行）
-        out[slug] = {
-            "slug": slug,
-            "name": _clean(meta.get("name", slug)),
+        out[skill_id] = {
+            "id": skill_id,
+            "name": _clean(meta.get("name", skill_id)),
             "description_short": _clean(meta.get("description_short")),
             "category": _clean(meta.get("category")),
             "source": _clean(meta.get("source", "builtin")) or "builtin",
             "related_tools": tuple(
-                item.strip() for item in _clean(meta.get("related_tools")).split(",") if item.strip()
+                item.strip() for item in _clean(meta.get("related_tools")).strip("[]").split(",")
+                if item.strip()
             ),
             "description_long": _clean(meta.get("description_long")),
             "emoji": _clean(meta.get("emoji")),
@@ -80,22 +83,18 @@ def skills_index(names: list[str] | None = None) -> list[dict]:
     alls = _load_all()
     keys = names if names is not None else list(alls)
     return [
-        {"slug": alls[k]["slug"], "name": alls[k]["name"],
+        {"id": alls[k]["id"], "name": alls[k]["name"],
          "description_short": alls[k]["description_short"],
          "description_long": alls[k]["description_long"], "emoji": alls[k]["emoji"]}
         for k in keys if k in alls
     ]
 
 
-def load_skill(key: str) -> str | None:
-    """按 slug（文件名）或 name 取正文；找不到返回 None。"""
+def load_skill(skill_id: str) -> str | None:
+    """按固定 Skill ID 取正文；找不到返回 None。"""
     alls = _load_all()
-    if key in alls:
-        return alls[key]["body"]
-    for v in alls.values():
-        if v["name"] == key:
-            return v["body"]
-    return None
+    item = alls.get(str(skill_id or "").strip().upper())
+    return item["body"] if item else None
 
 
 def skill_content_digest(key: str) -> str | None:
@@ -106,25 +105,13 @@ def skill_content_digest(key: str) -> str | None:
     return hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
 
 
-def resolve_skill_slug(key: str) -> str | None:
-    """把 slug 或展示名归一为稳定 slug，供 Run 内正文去重。"""
-    key = (key or "").strip()
-    alls = _load_all()
-    if key in alls:
-        return key
-    for item in alls.values():
-        if item["name"] == key:
-            return item["slug"]
-    return None
-
-
 def skill_diagnostics(names: list[str] | None = None) -> tuple[str, ...]:
     """校验 Skill 注册 metadata。"""
     rows = skill_metadata(names)
     diagnostics = []
     for row in rows:
         if not row.get("description_short"):
-            diagnostics.append(f"Skill {row['slug']} 缺少 description_short")
+            diagnostics.append(f"Skill {row['id']} 缺少 description_short")
         if not row.get("description_long"):
-            diagnostics.append(f"Skill {row['slug']} 缺少 description_long")
+            diagnostics.append(f"Skill {row['id']} 缺少 description_long")
     return tuple(diagnostics)

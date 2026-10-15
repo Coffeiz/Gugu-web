@@ -51,7 +51,7 @@ ROMAJI_FIELDS = {
     "canvas_note": ("title", "content_plain"),
     "conversation": ("title",),
     "message": ("content",),
-    "skill": ("name", "slug", "description_short", "description_long"),
+    "skill": ("name", "skill_id", "description_short", "description_long"),
 }
 
 
@@ -315,12 +315,12 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
             select(UserSkill).where(
                 UserSkill.owner_id == uid,
                 keyword_condition([
-                    UserSkill.name, UserSkill.slug,
+                    UserSkill.name, UserSkill.skill_id,
                     UserSkill.description_short, UserSkill.description_long,
                 ], search_queries, mode),
             ).order_by(
                 keyword_score([
-                    UserSkill.name, UserSkill.slug,
+                    UserSkill.name, UserSkill.skill_id,
                     UserSkill.description_short, UserSkill.description_long,
                 ], search_queries).desc(),
                 _primary_rank(UserSkill.name, q), UserSkill.updated_at.desc(),
@@ -340,10 +340,9 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
         if rows:
             groups.append({"type": "skill", "label": "技能", "items": [
                 {
-                    "id": skill.id,
+                    "id": skill.skill_id,
                     "title": skill.name,
-                    "subtitle": f"/{skill.slug} · {skill.description_short}".strip(" ·"),
-                    "slug": skill.slug,
+                    "subtitle": skill.description_short,
                     "enabled": bool(skill.enabled),
                 }
                 for skill in rows

@@ -45,7 +45,7 @@ class GlobalSearchSkill(BaseSkill):
         Tool(
             name="global_search", label="站内全局搜索",
             description_short='跨项目、文件、日程、笔记和用户 Skill 搜索。',
-            description="跨项目、文件、日程、客户、对话、便签和当前用户 Skill 按关键词搜索；明确范围时用专用工具。Skill 结果只返回名称、slug 和描述，不返回正文或关联权限。",
+            description="跨项目、文件、日程、客户、对话、便签和当前用户 Skill 按关键词搜索；明确范围时用专用工具。Skill 结果只返回 ID、名称和描述，不返回正文或关联权限。",
             input_schema={
                 "type": "object",
                 "properties": {

@@ -595,7 +595,7 @@ class ProjectsSkill(BaseSkill):
             name="list_projects",
             label="查询项目列表",
             description_short="查询项目；支持按状态和归档状态筛选。",
-            description="查询项目列表，可按状态筛选；默认不含归档项目，返回阶段进度和截止日期。",
+            description="查询项目列表，可按状态筛选；默认不含归档项目，返回阶段进度和截止日期。用于项目总览时，若返回至少 5 个项目，或多个状态并存且有逾期/状态不一致，首轮答复默认附 Mermaid kanban，按真实项目状态（中文）分列；每个项目只出现一次，并在原卡片标注逾期。不要仅凭截止日期推断工期、进度、依赖或关键路径。",
             input_schema={
                 "type": "object",
                 "properties": {

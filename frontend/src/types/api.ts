@@ -4252,7 +4252,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/skills/{slug}": {
+    "/api/v1/skills/{skill_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -4263,11 +4263,11 @@ export interface paths {
         put?: never;
         post?: never;
         /** Delete Skill */
-        delete: operations["delete_skill_api_v1_skills__slug__delete"];
+        delete: operations["delete_skill_api_v1_skills__skill_id__delete"];
         options?: never;
         head?: never;
         /** Update Skill */
-        patch: operations["update_skill_api_v1_skills__slug__patch"];
+        patch: operations["update_skill_api_v1_skills__skill_id__patch"];
         trace?: never;
     };
     "/api/v1/byok": {
@@ -4620,8 +4620,6 @@ export interface components {
             group_message_format?: string | null;
             /** Private Message Format */
             private_message_format?: string | null;
-            /** Private Streaming Enabled */
-            private_streaming_enabled?: boolean | null;
         };
         /** BroadcastRequest */
         BroadcastRequest: {
@@ -6812,8 +6810,6 @@ export interface components {
         };
         /** UserSkillPayload */
         UserSkillPayload: {
-            /** Slug */
-            slug: string;
             /** Name */
             name: string;
             /** Description Short */
@@ -14929,12 +14925,12 @@ export interface operations {
             };
         };
     };
-    delete_skill_api_v1_skills__slug__delete: {
+    delete_skill_api_v1_skills__skill_id__delete: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                slug: string;
+                skill_id: string;
             };
             cookie?: never;
         };
@@ -14958,12 +14954,12 @@ export interface operations {
             };
         };
     };
-    update_skill_api_v1_skills__slug__patch: {
+    update_skill_api_v1_skills__skill_id__patch: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                slug: string;
+                skill_id: string;
             };
             cookie?: never;
         };

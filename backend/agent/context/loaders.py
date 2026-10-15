@@ -176,17 +176,31 @@ async def load_dynamic_memory(user_id) -> dict:
     return await store.read_dynamic_memory(user_id)
 
 
-async def load_im_channels(user_id) -> dict:
-    """已连接的 IM 通知渠道（imreach 有记录＝该平台可主动触达）。返回 {qq: bool, feishu: bool}。
-    供 builder 注入「通知渠道连接情况」，让咕咕据实判断能否走某 IM 渠道、别瞎让用户绑。"""
+async def load_im_channels(db, user_id) -> dict:
+    """读取已连接或已有可触达地址的 IM 渠道，供提示词说明连接情况。"""
+    from app.models import UserBot
+    from app.services.im_platforms import IM_PLATFORMS, is_im_platform_enabled
     from app.scheduled_tasks import get_imreach
-    out = {}
-    for ch, plat in (("qq", "qq"), ("feishu", "feishu")):
-        try:
-            out[ch] = bool(await get_imreach(user_id, plat))
-        except Exception:
-            out[ch] = False
-    return out
+
+    result = await db.execute(
+        select(UserBot.platform).where(
+            UserBot.user_id == user_id,
+            UserBot.enabled == True,
+            UserBot.platform.in_(IM_PLATFORMS),
+        )
+    )
+    connected_bots = set(result.scalars().all())
+    channels = {}
+    for platform in IM_PLATFORMS:
+        if not is_im_platform_enabled(platform):
+            channels[platform] = False
+            continue
+        has_bot = platform in connected_bots
+        has_reach = bool(await get_imreach(user_id, platform))
+        # 与 /me 的连接判据兼容，并保留已有可触达地址：已连接的微信不能只在
+        # Telegram 会话中被标成未连接，已有可触达地址也不能退化成未连接。
+        channels[platform] = has_bot or has_reach
+    return channels
 
 
 async def load_style_prefs(db, user_id) -> dict:

@@ -2,7 +2,7 @@
 
 > 状态：代码与自动化回归已完成，真实 QQ 客户端验证待完成
 > 创建：2026-08-21
-> 最近更新：2026-08-29
+> 最近更新：2026-10-14
 > 关联模块：`backend/agent/gateway/qq.py`、`backend/agent/im/loop.py`、`backend/agent/im/replies.py`、`backend/agent/runner.py`
 > 背景参考：本地 `dsh-qqchat/docs/STREAMING.md` 及其 `stream_messages` 实现
 
@@ -16,6 +16,12 @@
 | IM 路由接入 | ✅ 已完成 | C2C 私聊按配置使用流式；群聊和关闭开关时保持现有路径。 |
 | 自动化测试 | ✅ 已完成 | 覆盖协议帧、序列、失败降级和普通回复不重复发送。 |
 | 真实 QQ 验证 | 🔲 待做 | 手机 QQ 与桌面 QQ 分别验证可见性、限流和异常恢复。 |
+
+### 2026-10-14 行为调整
+
+私聊的消息格式现在直接决定发送方式：选择 Markdown 时使用 QQ 官方流式接口；选择兼容格式时使用非流式纯文本。私聊流式行为不再单独设置，群聊格式和发送路径保持原样。升级时会把旧流式开关已开启的 Bot 迁移为 Markdown 格式，再删除旧开关字段。
+
+本节覆盖下方原有关于独立 `private_streaming_enabled` 开关、Markdown 流式内容类型以及关闭开关回退方式的描述。
 
 ## 1. 背景与目标
 

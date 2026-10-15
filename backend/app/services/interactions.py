@@ -332,7 +332,9 @@ async def consume_action(
     )
     if prompt is None:
         raise LookupError("交互不存在")
-    if prompt.status != "active" or prompt.expires_at <= now:
+    if prompt.status != "active":
+        raise ValueError("交互已结束")
+    if prompt.expires_at <= now:
         prompt.status = "expired"
         prompt.resolved_at = now
         await db.commit()

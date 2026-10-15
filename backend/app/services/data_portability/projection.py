@@ -80,7 +80,7 @@ RECORD_SPECS = (
     RecordSpec("conversation_batch", "conversations", ConversationBatch, "session_id", "id",
         ("version", "round_id", "created_at"), (("session_id", "session", "conversation"),)),
     RecordSpec("skill", "skills", UserSkill, "owner_id", "id", (
-        "slug", "name", "description_short", "description_long", "category", "body", "related_tools", "source", "enabled"),
+        "skill_id", "name", "description_short", "description_long", "category", "body", "related_tools", "source", "enabled"),
         json_fields=("related_tools",)),
     RecordSpec("feedback", "feedback", Feedback, "user_id", "id", ("category", "content", "created_at")),
     RecordSpec("scheduled_task", "scheduled_tasks", ScheduledTask, "user_id", "id", (
@@ -105,7 +105,7 @@ RECORD_SPECS = (
     RecordSpec("bot_config", "connections", UserBot, "user_id", "id", (
         "platform", "name", "app_id", "sandbox", "group_chat_enabled", "feishu_group_chat_enabled", "group_requires_at",
         "group_read_enabled", "group_memory_enabled", "member_memory_enabled", "group_message_format",
-        "private_message_format", "private_streaming_enabled", "created_at"), sanitize="bot"),
+        "private_message_format", "created_at"), sanitize="bot"),
     RecordSpec("mcp_config", "connections", UserMcpServer, "user_id", "id", (
         "name", "transport", "endpoint", "timeout_seconds", "created_at", "updated_at"), sanitize="mcp"),
 )
@@ -355,7 +355,7 @@ async def project_record(
     updated = getattr(row, "updated_at", None)
     deleted = getattr(row, "deleted_at", None)
     return PortableEntityRecord(
-        record_schema=f"gugu.{spec.record_type}.v1", portable_id=portable_id,
+        record_schema=f"gugu.{spec.record_type}.{'v2' if spec.record_type == 'skill' else 'v1'}", portable_id=portable_id,
         source_type=spec.record_type,
         created_at=created.isoformat() if created else None,
         updated_at=updated.isoformat() if updated else None,

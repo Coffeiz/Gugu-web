@@ -29,9 +29,9 @@ async def test_ref_suggest_folder_search_via_global_types(db, user_a):
 
 async def test_ref_suggest_recent_includes_skill_mcp_and_active_task(db, user_a, user_b):
     db.add_all([
-        UserSkill(owner_id=user_a.id, slug="owned-skill", name="个人技能", description_short="描述",
+        UserSkill(owner_id=user_a.id, skill_id="U1", name="个人技能", description_short="描述",
                   body="正文", related_tools=[], content_digest="owned"),
-        UserSkill(owner_id=user_b.id, slug="other-skill", name="他人技能", description_short="描述",
+        UserSkill(owner_id=user_b.id, skill_id="U1", name="他人技能", description_short="描述",
                   body="正文", related_tools=[], content_digest="other"),
         UserMcpServer(user_id=user_a.id, scope="user", name="个人服务", endpoint="https://example.test"),
         UserMcpServer(user_id=user_b.id, scope="user", name="他人服务", endpoint="https://example.test"),

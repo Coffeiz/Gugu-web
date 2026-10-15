@@ -180,6 +180,8 @@ const { t } = useI18n()
 const previewStore = usePreviewStore()
 const previewBlobCache = usePreviewBlobCache()
 const mountAccountEpoch = getAccountBoundaryEpoch()
+let recentlySavedText: { fileId: string; content: string; savedAt: number } | null = null
+let checkingLocalDirectoryEcho = false
 watch(accountBoundaryEpoch, () => {
   loadSequence += 1
   previewBlobCache.release(currentCacheKey.value, blobUrl.value)
@@ -717,13 +719,42 @@ function onTextContentSaved(content: string, fileKey: string | number | null) {
   if (fileKey == null || currentFileKey == null || String(fileKey) !== String(currentFileKey)) return
   const key = previewBlobCache.keyOf(props.win.file)
   if (!key || props.win.file.attach_id) return
+  recentlySavedText = { fileId: String(currentFileKey), content, savedAt: Date.now() }
   const url = URL.createObjectURL(new Blob([content], { type: 'text/plain;charset=utf-8' }))
   previewBlobCache.put(key, url)
 }
 
+async function matchesRecentlySavedText(fileId: string, content: string): Promise<boolean> {
+  const id = Number(fileId)
+  if (!Number.isSafeInteger(id) || id <= 0) return false
+  try {
+    const stream = await filesApi.getStreamUrl(id)
+    const token = localStorage.getItem('user_token') ?? ''
+    const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
+    const response = await fetch(stream.url, { headers, credentials: 'include', cache: 'no-store' })
+    if (!response.ok || isUnauthorizedResponse(response)) return false
+    const normalized = await normalizeTextBlob(await response.blob())
+    return normalized !== null && await normalized.text() === content
+  } catch {
+    return false
+  }
+}
+
 const liveStore = useLiveStore()
-watch(() => liveStore.resourceEvent, (event) => {
+watch(() => liveStore.resourceEvent, async (event) => {
   if (event?.origin === CLIENT_ID || !isPreviewAffectedByFileEvent(props.win.file.id, event)) return
+  const currentFileId = props.win.file.id == null ? '' : String(props.win.file.id)
+  const savedText = recentlySavedText
+  if (event?.source === 'local_directory' && savedText?.fileId === currentFileId
+    && Date.now() - savedText.savedAt < 5_000) {
+    if (checkingLocalDirectoryEcho) return
+    checkingLocalDirectoryEcho = true
+    const unchanged = await matchesRecentlySavedText(savedText.fileId, savedText.content)
+    checkingLocalDirectoryEcho = false
+    if (savedText !== recentlySavedText) return
+    if (unchanged) return
+  }
+  recentlySavedText = null
   if (!props.win.file.attach_id) load(props.win.file, true)
 })
 

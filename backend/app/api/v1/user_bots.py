@@ -46,9 +46,12 @@ def _out(b: UserBot) -> dict:
         "member_memory_enabled": b.member_memory_enabled,
         "group_response_mode": response_mode,
         "group_allowed_tools": normalize_group_allowed_tools(b.group_allowed_tools),
-        "group_message_format": b.group_message_format or "compat",
-        "private_message_format": b.private_message_format or "smart",
-        "private_streaming_enabled": bool(b.private_streaming_enabled),
+        "group_message_format": (
+            b.group_message_format if b.group_message_format in {"compat", "markdown"} else "compat"
+        ),
+        "private_message_format": (
+            b.private_message_format if b.private_message_format in {"compat", "markdown"} else "markdown"
+        ),
         "owner_bound": bool(b.owner_platform_user_id),
     }
 
@@ -149,7 +152,6 @@ class BotUpdate(BaseModel):
     group_allowed_tools: list[str] | None = None
     group_message_format: str | None = None
     private_message_format: str | None = None
-    private_streaming_enabled: bool | None = None
 
 
 def _apply_group_chat_toggle(bot: UserBot, body: BotUpdate) -> None:
@@ -212,11 +214,9 @@ async def update_my_bot(
     for field in ("group_message_format", "private_message_format"):
         value = getattr(body, field)
         if value is not None:
-            if value not in {"compat", "smart", "markdown"}:
+            if value not in {"compat", "markdown"}:
                 raise HTTPException(400, "无效的 QQ 消息格式")
             setattr(bot, field, value)
-    if body.private_streaming_enabled is not None:
-        bot.private_streaming_enabled = body.private_streaming_enabled
     await db.commit()
     await db.refresh(bot)
     from app.core import events

@@ -71,7 +71,7 @@ async def run_scheduled_once(
                 events = await loaders.load_events(db, user_id, tz=user_tz)
                 files_overview = await loaders.load_files_overview(db, user_id)
                 memory = await loaders.load_memory(user_id) if SYSTEM_MEMORY_ENABLED else {}
-                im_channels = await loaders.load_im_channels(user_id)
+                im_channels = await loaders.load_im_channels(db, user_id)
                 style_prefs = await loaders.load_style_prefs(db, user_id)
                 knowledge = await loaders.load_knowledge_overview(user_id)
 

@@ -89,7 +89,8 @@ const virtualizer = useVirtualizer({
   get count() { return props.messages.length },
   getScrollElement: () => messagesEl.value,
   estimateSize: () => 96,
-  overscan: 6,
+  // 前后各多挂载 10 条，覆盖快速滚动时的缓冲区；Mermaid 首次计算会由共享 LRU 缓存复用。
+  overscan: 10,
   // 高度缓存必须跟随真实消息身份，而不是跟随数组索引；不同会话的第 N 条消息
   // 内容高度通常完全不同，按 index 复用会先套用旧会话高度，再在下一帧跳动。
   getItemKey: (index) => {

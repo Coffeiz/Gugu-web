@@ -10,7 +10,7 @@ import json
 
 import pytest
 
-from agent.gateway import web
+from agent.gateway.web import queued as web_queued
 from agent.llm import genstream
 
 
@@ -82,7 +82,7 @@ def _write_snapshot(redis: _LiveRedis, sid: int, **state) -> None:
 
 async def _consume(sid: int, task: asyncio.Task, pubsub) -> list[str]:
     lines = []
-    async for line in web._stream_queued_run(sid, "run-B", task, pubsub):
+    async for line in web_queued._stream_queued_run(sid, "run-B", task, pubsub):
         lines.append(line)
         if '"type": "done"' in line:
             break
@@ -95,7 +95,7 @@ async def test_queued_stream_filters_old_run_and_forwards_own_run(monkeypatch):
     带它 run_id 的事件起全数转发到终态。"""
     redis = _LiveRedis()
     monkeypatch.setattr(genstream, "get_redis", lambda: redis)
-    monkeypatch.setattr(web, "_QUEUED_RUN_POLL_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(web_queued, "_QUEUED_RUN_POLL_INTERVAL_SECONDS", 0.01)
 
     sid = 601
     await genstream.begin(sid, owner_run_id="run-A")
@@ -105,7 +105,7 @@ async def test_queued_stream_filters_old_run_and_forwards_own_run(monkeypatch):
 
     async def consume():
         lines = []
-        async for line in web._stream_queued_run(sid, "run-B", task, pubsub):
+        async for line in web_queued._stream_queued_run(sid, "run-B", task, pubsub):
             lines.append(line)
         return lines
 
@@ -137,7 +137,7 @@ async def test_queued_stream_forwards_events_published_before_takeover(monkeypat
     很快的排队回复会「已落库但界面没有内容」。"""
     redis = _LiveRedis()
     monkeypatch.setattr(genstream, "get_redis", lambda: redis)
-    monkeypatch.setattr(web, "_QUEUED_RUN_POLL_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(web_queued, "_QUEUED_RUN_POLL_INTERVAL_SECONDS", 0.01)
 
     sid = 603
     await genstream.begin(sid, owner_run_id="run-A")
@@ -166,7 +166,7 @@ async def test_queued_stream_reports_idle_when_task_ends_without_owning_snapshot
     """后台任务结束但快照从未归属本 run（排队中被取消/preflight 失败）：补 idle done 收口。"""
     redis = _LiveRedis()
     monkeypatch.setattr(genstream, "get_redis", lambda: redis)
-    monkeypatch.setattr(web, "_QUEUED_RUN_POLL_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(web_queued, "_QUEUED_RUN_POLL_INTERVAL_SECONDS", 0.01)
 
     sid = 602
     await genstream.begin(sid, owner_run_id="run-A")
@@ -184,7 +184,7 @@ async def test_queued_stream_replays_done_from_snapshot_when_event_missed(monkey
     """兜底：已接管但终态事件丢失（Redis 抖动），按快照补发 replayed done。"""
     redis = _LiveRedis()
     monkeypatch.setattr(genstream, "get_redis", lambda: redis)
-    monkeypatch.setattr(web, "_QUEUED_RUN_POLL_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(web_queued, "_QUEUED_RUN_POLL_INTERVAL_SECONDS", 0.01)
 
     sid = 604
     await genstream.begin(sid, owner_run_id="run-A")
@@ -211,7 +211,7 @@ async def test_queued_run_ended_before_events_yields_done_from_snapshot(monkeypa
     补发终态让前端收口。"""
     redis = _LiveRedis()
     monkeypatch.setattr(genstream, "get_redis", lambda: redis)
-    monkeypatch.setattr(web, "_QUEUED_RUN_POLL_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(web_queued, "_QUEUED_RUN_POLL_INTERVAL_SECONDS", 0.01)
 
     sid = 605
     await genstream.begin(sid, owner_run_id="run-A")
@@ -231,6 +231,6 @@ async def test_queued_run_ended_before_events_yields_done_from_snapshot(monkeypa
 
 def test_queued_stream_poll_constants_sane():
     """轮询/上限常量保持可用的量级：轮询要快过 run 切换，上限兜底不能是无限等。"""
-    assert 0 < web._QUEUED_RUN_POLL_INTERVAL_SECONDS <= 2
-    assert web._QUEUED_RUN_PING_INTERVAL_SECONDS >= web._QUEUED_RUN_POLL_INTERVAL_SECONDS
-    assert web._QUEUED_RUN_MAX_WAIT_SECONDS >= 60
+    assert 0 < web_queued._QUEUED_RUN_POLL_INTERVAL_SECONDS <= 2
+    assert web_queued._QUEUED_RUN_PING_INTERVAL_SECONDS >= web_queued._QUEUED_RUN_POLL_INTERVAL_SECONDS
+    assert web_queued._QUEUED_RUN_MAX_WAIT_SECONDS >= 60

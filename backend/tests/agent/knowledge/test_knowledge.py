@@ -768,7 +768,7 @@ def test_knowledge_writing_skill_covers_description():
     """写入规范正文必须跟着 description 字段走，防止工具与技能文档漂移。"""
     from agent.skills import load_skill
 
-    body = load_skill("knowledge-writing")
+    body = load_skill("S6")
     assert "`description`" in body
     assert "150" in body
     assert "触发式描述" in body

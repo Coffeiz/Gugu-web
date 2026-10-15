@@ -585,8 +585,7 @@ export const filesApi = {
 
 // ── 咕咕 Skills ─────────────────────────────────────────────────────────────
 export interface UserSkillItem {
-  id: number
-  slug: string
+  id: string
   name: string
   description_short: string
   description_long: string | null
@@ -602,7 +601,6 @@ export interface UserSkillItem {
 }
 
 export interface UserSkillWrite {
-  slug: string
   name: string
   description_short: string
   description_long?: string | null
@@ -623,8 +621,8 @@ export const userSkillsApi = {
   list: () => get<{ skills: UserSkillItem[] }>('/skills?include_tools=false'),
   tools: () => get<{ tools: SkillToolItem[] }>('/skills/tools'),
   create: (data: UserSkillWrite) => post<UserSkillItem>('/skills', data),
-  update: (slug: string, data: Partial<Omit<UserSkillWrite, 'slug'>>) => patch<UserSkillItem>(`/skills/${encodeURIComponent(slug)}`, data),
-  delete: (slug: string) => del(`/skills/${encodeURIComponent(slug)}`),
+  update: (skillId: string, data: Partial<UserSkillWrite>) => patch<UserSkillItem>(`/skills/${encodeURIComponent(skillId)}`, data),
+  delete: (skillId: string) => del(`/skills/${encodeURIComponent(skillId)}`),
 }
 
 // ── Events ────────────────────────────────────────────────────────────────────

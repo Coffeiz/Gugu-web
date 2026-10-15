@@ -6,6 +6,13 @@
 
 ## 按日期浏览
 
+### 2026-10-13
+
+- [QQ Mermaid 图后正文末尾 10 字符被拆成单独消息](./2026-10-13-QQ-Mermaid图后正文末尾10字符被拆分.md)
+- [内联压缩复用原生 thinking 前缀](./2026-10-13-内联压缩复用原生thinking前缀.md)
+- [记忆反思原生推理前缀缓存修复](./2026-10-13-记忆反思原生推理前缀缓存修复.md)
+- [PRD-MERMAID-1 Phase 0：运行时验证](./2026-10-13-PRD-MERMAID-1-Phase0运行时验证.md)
+
 ### 2026-10-12
 
 - [PRD-FS-8 Phase 1：分页 API 与 PostgreSQL 查询计划](./2026-10-12-PRD-FS-8-Phase1分页API与PostgreSQL计划.md)

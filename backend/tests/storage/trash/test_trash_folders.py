@@ -8,15 +8,19 @@ from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import select
 
 from app.api.v1 import folders as folders_api
 from app.api.v1 import trash as trash_api
 from app.core.errors import NotFound
 from app.core.tz import now_utc
-from app.models import File, Folder
+from app.models import File, Folder, StorageQuotaEvent
 from app.schemas import FolderCreate
 from app.services.storage import LocalStorageBackend
 from app.services.storage.file_service import FileService
+from app.services.storage.quota_ledger import FILE_LIBRARY, get_quota
+from app.services.files.trash import restore_file_by_id
+from app.services.files.selection import move_file_to_trash_by_id
 
 
 @pytest.fixture(autouse=True)
@@ -141,7 +145,10 @@ async def test_empty_trash_removes_deleted_folder_with_its_files(db, user_a, mon
     folder, f = await _mk_folder_with_file(db, user_a, "待清空")
     file_id = f.id
     user_id = user_a.id
+    quota = await get_quota(db, user_a.id, FILE_LIBRARY)
+    assert quota.used_bytes == 1
     await folders_api.delete_folder(folder.id, current_user=user_a, origin=None, db=db)
+    assert quota.used_bytes == 1
 
     job = await trash_api.empty_trash(current_user=user_a, db=db)
     job_id = job.id
@@ -169,9 +176,73 @@ async def test_empty_trash_removes_deleted_folder_with_its_files(db, user_a, mon
     persisted = await trash_api.get_empty_trash_job(job_id, current_user=persisted_user, db=db)
     assert persisted.status == "completed"
     assert persisted.progress_current == persisted.progress_total == 1
+    await db.refresh(quota)
+    assert quota.used_bytes == 0
     assert [(event[1]["status"], event[1]["progress_current"]) for event in progress_events] == [
         ("running", 1), ("completed", 1),
     ]
+
+
+async def test_empty_trash_reconciles_legacy_underreported_quota_before_delete(
+    db, user_a, monkeypatch, _storage_and_events,
+):
+    """旧账本漏记回收站占用时先对账，再删除文件并将账本安全归零。"""
+    user_id = user_a.id
+    folder, file = await _mk_folder_with_file(db, user_a, "历史回收站", data=b"legacy")
+    file_id = file.id
+    quota = await get_quota(db, user_a.id, FILE_LIBRARY)
+    assert quota.used_bytes == len(b"legacy")
+
+    # 模拟旧版本只写 deleted_at，没有写配额事件的回收站记录。
+    stamp = now_utc()
+    (await db.get(Folder, folder.id)).deleted_at = stamp
+    (await db.get(File, file.id)).deleted_at = stamp
+    quota.used_bytes = 0
+    await db.commit()
+
+    job = await trash_api.empty_trash(current_user=user_a, db=db)
+    job_id = job.id
+    from app.db import session as db_session
+    from app.services.files import trash_purge
+
+    # 独立 worker 复用同一个临时存储；对账边界返回该文件实际占用，模拟升级前漏记账本。
+    monkeypatch.setattr(trash_purge, "get_storage", lambda: _storage_and_events)
+
+    async def measure_existing_file(_db, _user_id):
+        return len(b"legacy")
+
+    monkeypatch.setattr(
+        "app.services.storage.quota_ledger._measure_file_library_usage",
+        measure_existing_file,
+    )
+    worker_id = "test-trash-purge-legacy"
+    claimed_id = await trash_purge._claim(db_session._SessionLocal, worker_id)
+    assert claimed_id == job.id
+    await trash_purge._process(claimed_id, worker_id, db_session._SessionLocal)
+
+    db.expire_all()
+    persisted_user = await db.get(type(user_a), user_id)
+    persisted_job = await trash_api.get_empty_trash_job(job_id, current_user=persisted_user, db=db)
+    assert persisted_job.status == "completed", persisted_job.error_code
+    await db.refresh(quota)
+    assert quota.used_bytes == 0
+    assert await db.get(File, file_id) is None
+    event = await db.scalar(select(StorageQuotaEvent).where(
+        StorageQuotaEvent.user_id == user_id,
+        StorageQuotaEvent.idempotency_key == f"trash-permanent-delete:{file_id}",
+    ))
+    events = (await db.execute(select(StorageQuotaEvent).where(
+        StorageQuotaEvent.user_id == user_id,
+    ))).scalars().all()
+    assert event is not None, [(item.operation, item.delta_bytes, item.idempotency_key) for item in events]
+    assert event.delta_bytes == -len(b"legacy")
+    reconciliation = await db.scalar(select(StorageQuotaEvent).where(
+        StorageQuotaEvent.user_id == user_id,
+        StorageQuotaEvent.category == FILE_LIBRARY,
+        StorageQuotaEvent.operation == "reconcile",
+    ))
+    assert reconciliation is not None
+    assert reconciliation.delta_bytes == len(b"legacy")
 
 
 async def test_empty_trash_reuses_active_job(db, user_a):
@@ -204,9 +275,15 @@ async def test_hard_delete_trash_folder_removes_its_subtree(db, user_a):
 
 async def test_restore_folder_endpoint_round_trip(db, user_a):
     folder, f = await _mk_folder_with_file(db, user_a, "资料", data=b"body")
+    quota = await get_quota(db, user_a.id, FILE_LIBRARY)
+    assert quota.used_bytes == len(b"body")
+
     await folders_api.delete_folder(folder.id, current_user=user_a, origin=None, db=db)
+    assert quota.used_bytes == len(b"body")
+
     resp = await trash_api.restore_folder(folder.id, current_user=user_a, origin=None, db=db)
     assert resp.id == folder.id
+    assert quota.used_bytes == len(b"body")
 
     row = await db.get(Folder, folder.id)
     assert row.deleted_at is None
@@ -215,6 +292,26 @@ async def test_restore_folder_endpoint_round_trip(db, user_a):
     kids = await folders_api.list_folder_page(project_id=None, parent_id=None, limit=100, cursor=None,
         sort_by='createdAt', sort_order='desc', current_user=user_a, db=db)
     assert folder.id in {k.id for k in kids['items']}
+
+
+async def test_file_trash_round_trip_keeps_quota_until_permanent_deletion(db, user_a, _storage_and_events):
+    storage = _storage_and_events
+    result = await FileService(db, storage=storage).create_file(
+        user_a.id, space="personal", project_id=None, folder_id=None, stage_name="",
+        mind_map_id=None, display_name="单文件", ext="TXT", mime_type="text/plain",
+        data=b"payload",
+    )
+    await db.commit()
+    quota = await get_quota(db, user_a.id, FILE_LIBRARY)
+    assert quota.used_bytes == len(b"payload")
+
+    assert await move_file_to_trash_by_id(
+        db, storage, user_a.id, result.file.id, now_utc(),
+    )
+    assert quota.used_bytes == len(b"payload")
+
+    assert await restore_file_by_id(db, storage, user_a.id, result.file.id)
+    assert quota.used_bytes == len(b"payload")
 
 
 async def test_restore_folder_endpoint_not_found_when_live(db, user_a):

@@ -198,7 +198,7 @@ async def load_context_data(
     memory = await loaders.load_memory(
         user_id, query, prefer_recent=True,
     ) if memory_enabled else {}
-    im_channels = await loaders.load_im_channels(user_id)
+    im_channels = await loaders.load_im_channels(db, user_id)
     im_memory = await load_im_memory(request)
     knowledge = await loaders.load_knowledge_overview(user_id)
     return ContextData(

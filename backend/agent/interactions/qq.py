@@ -104,7 +104,12 @@ def format_text_fallback(prompt: dict[str, Any], *, platform: str | None = None)
         if prompt.get("native_keyboard"):
             instruction = "请点击下方按钮；若未显示按钮，可回复选项序号或选项文字。"
         if prompt.get("allow_text_input"):
-            instruction = "请点击选项；如需其他回答，请点击“自定义回复”后直接发送内容。"
+            instruction = (
+                "请点击下方按钮；如需其他回答，请点击“自定义回复”后发送内容；"
+                "若按钮未显示，可回复选项序号或文字。"
+                if prompt.get("native_keyboard")
+                else "请回复选项序号或选项文字；如需其他回答，请回复“自定义回复”后发送内容。"
+            )
         prefix = "⏸️ 任务已暂停，等待确认。\n" if paused else ""
         return f"{prefix}{title}\n{body}\n{choices}\n{instruction}"
     if prompt.get("secret_fields"):

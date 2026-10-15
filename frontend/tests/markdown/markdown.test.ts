@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { sanitizeHtml, sanitizeChatHtml, renderMarkdown } from '@/utils/markdown'
+import { renderMdStream } from '@/components/common/gugu-chat/markdown'
 
 // P0 XSS 回归（见 docs/security/代码审查-GPT复审核实版-2026-07-10.md）。
 // 全站 Markdown 直出经 sanitizeHtml；这里钉死「危险载荷被中和 + 正常渲染无损」两面，
@@ -69,6 +70,19 @@ describe('renderMarkdown — marked → 消毒 一体', () => {
     expect(out).toContain('<strong>粗</strong>')
     expect(out).toMatch(/<code>码<\/code>/)
     expect(out).toMatch(/<li>/)
+  })
+})
+
+describe('GuguChat 流式 Mermaid fence', () => {
+  it('未闭合图表保持代码态，闭合后才进入 Mermaid 渲染路径', () => {
+    const streaming = document.createElement('div')
+    streaming.innerHTML = renderMdStream('架构图：\n```mermaid\nflowchart LR\n  A-->B')
+    expect(streaming.querySelector('.md-mermaid-source')).toBeNull()
+    expect(streaming.querySelector('pre code')?.textContent).toContain('flowchart LR')
+
+    const completed = document.createElement('div')
+    completed.innerHTML = renderMdStream('架构图：\n```mermaid\nflowchart LR\n  A-->B\n```')
+    expect(completed.querySelector('.md-mermaid-source code')?.textContent).toContain('flowchart LR')
   })
 })
 

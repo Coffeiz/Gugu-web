@@ -76,7 +76,8 @@ async def test_decision_guard_preference_reads_user_opt_in_and_fails_closed(monk
 
 
 def test_qq_expired_msg_id_is_treated_as_passive_reply_failure():
-    from agent.gateway.qq import QQAPIError, _qq_msg_id_invalid
+    from agent.gateway.qq import QQAPIError
+    from agent.gateway.qq.outbound import _qq_msg_id_invalid
 
     exc = QQAPIError(
         "POST",
@@ -400,7 +401,7 @@ async def test_qq_group_interaction_text_fallback_is_also_active(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_qq_passive_reply_is_consumed_once_per_inbound_message(monkeypatch):
+async def test_qq_passive_replies_use_official_five_reply_budget(monkeypatch):
     from agent.gateway import qq
     from agent.im.replies import send_text
 
@@ -416,9 +417,10 @@ async def test_qq_passive_reply_is_consumed_once_per_inbound_message(monkeypatch
         "platform_user_id": "member-1", "channel_id": "bot-1", "message_id": "msg-1",
     }
 
-    assert await send_text(payload, "第一段") is True
-    assert await send_text(payload, "第二段") is True
-    assert message_ids == ["msg-1", None]
+    results = [await send_text(payload, f"第{i}段") for i in range(1, 7)]
+
+    assert results == [True, True, True, True, True, False]
+    assert message_ids == ["msg-1"] * 5
 
 
 @pytest.mark.asyncio
@@ -443,6 +445,35 @@ async def test_qq_tool_status_does_not_consume_passive_reply(monkeypatch):
 
     assert len(payloads) == 1
     assert payloads[0]["message_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_telegram_tool_event_shows_status_only_without_call_input_or_result(monkeypatch):
+    """回归：Telegram 像 QQ 一样只显示工具完成状态，不发送输入或结果正文。"""
+    from agent.im import replies
+
+    sent = []
+
+    async def fake_text(_payload, text):
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(replies, "send_text", fake_text)
+    payload = {"platform": "telegram", "locale": "zh-CN"}
+
+    assert await replies.send_tool_event(payload, {
+        "type": "tool_call", "label": "联网搜索",
+        "input": {"query": "不应展示的搜索词"},
+    }) is True
+    assert await replies.send_tool_event(payload, {
+        "type": "tool_done", "label": "联网搜索", "status": "success",
+        "result": {"results": [{"title": "结果标题", "url": "https://example.test"}]},
+    }) is True
+
+    assert len(sent) == 1
+    assert sent[0] == "✅ 联网搜索完成"
+    assert "结果标题" not in sent[0]
+    assert "不应展示的搜索词" not in sent[0]
 
 
 @pytest.mark.asyncio
@@ -522,15 +553,16 @@ async def test_interaction_uses_plain_text_for_unadapted_platforms(monkeypatch, 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("platform", "payload", "markdown"),
+    ("platform", "payload"),
     [
-        ("qq", {"chat_type": "group", "message_format": "compat"}, False),
-        ("feishu", {"chat_type": "group"}, True),
-        ("wechat", {"chat_type": "c2c"}, True),
+        ("qq", {"chat_type": "group", "message_format": "compat"}),
+        ("feishu", {"chat_type": "group"}),
+        ("wechat", {"chat_type": "c2c"}),
+        ("telegram", {"chat_type": "c2c"}),
     ],
 )
-async def test_tool_event_platform_fallbacks_keep_result_and_hide_input(monkeypatch, platform, payload, markdown):
-    """回归：QQ 群聊使用纯文本结果，飞书/微信降级为 Markdown；输入不能泄露到结果消息。"""
+async def test_tool_event_platforms_follow_display_contract(monkeypatch, platform, payload):
+    """回归：各 IM 平台只发送完成状态，不泄露调用输入或原始结果。"""
     from agent.im import replies
 
     sent = []
@@ -550,16 +582,11 @@ async def test_tool_event_platform_fallbacks_keep_result_and_hide_input(monkeypa
          "result": {"items": ["结果"]}},
     )
 
-    assert len(sent) == 2 if markdown else 1
-    if markdown:
-        assert "**输入**" in sent[0]
+    assert len(sent) == 1
     result_text = sent[-1]
     assert "不应出现在结果" not in result_text
-    if markdown:
-        assert "**输出**" in result_text
-        assert "结果" in result_text
-    else:
-        assert result_text == "✅ 联网搜索完成"
+    assert "结果" not in result_text
+    assert result_text == "✅ 联网搜索完成"
 
 
 

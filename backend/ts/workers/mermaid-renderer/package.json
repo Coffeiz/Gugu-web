@@ -1,0 +1,15 @@
+{
+  "name": "@gugu/mermaid-renderer",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "dependencies": {
+    "@mermaid-js/mermaid-zenuml": "1.0.1",
+    "@resvg/resvg-js": "2.6.2",
+    "@xmldom/xmldom": "0.9.12",
+    "mermaid": "12.1.0",
+    "svgdom": "0.1.28"
+  }
+}

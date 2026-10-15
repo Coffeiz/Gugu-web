@@ -1,4 +1,5 @@
 ---
+id: S11
 name: 工作区 Shell
 description_short: 用户要在已授权 Shell 范围运行检查、构建或整理命令时使用。
 description_long: 用户要求运行命令且系统提供 Shell 工具时使用

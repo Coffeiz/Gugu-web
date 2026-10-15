@@ -4,6 +4,7 @@
 入口脚本在 /data 落于 overlay 可写层时必须拒绝启动（持久化守卫）。
 """
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -19,6 +20,45 @@ def test_unified_image_defaults_to_embedded_deps():
     for package in ("postgresql", "redis-server", "supervisor"):
         assert package in dockerfile, f"镜像必须安装内置依赖 {package}"
     assert "/data" in dockerfile and "VOLUME" in dockerfile, "必须声明 /data 卷兜底持久化"
+
+
+def test_production_dockerfiles_copy_mermaid_build_and_worker_dependencies():
+    """Mermaid 的静态导入在前端构建和一体化 Worker 运行时都必须随镜像存在。"""
+    worker = (REPO_ROOT / "backend/ts/workers/mermaid-renderer/worker.mjs").read_text(encoding="utf-8")
+    worker_modules = re.findall(r"from ['\"]\./([^'\"]+)['\"]", worker)
+    browser_renderer = (REPO_ROOT / "frontend/src/utils/mermaidRenderer.ts").read_text(encoding="utf-8")
+    browser_modules = re.findall(
+        r"from ['\"][^'\"]*backend/ts/workers/mermaid-renderer/([^'\"]+)['\"]",
+        browser_renderer,
+    )
+    unified = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    standalone_frontend = (REPO_ROOT / "frontend/Dockerfile.prod").read_text(encoding="utf-8")
+    standalone_backend = (REPO_ROOT / "backend/Dockerfile.prod").read_text(encoding="utf-8")
+
+    def has_copy(dockerfile, source, destination):
+        return any(
+            line.startswith("COPY ") and source in line and destination in line
+            for line in dockerfile.splitlines()
+        )
+
+    for module in browser_modules:
+        source = f"backend/ts/workers/mermaid-renderer/{module}"
+        destination = "./backend/ts/workers/mermaid-renderer/"
+        assert has_copy(unified, source, destination)
+        assert has_copy(standalone_frontend, source, destination)
+    for module in worker_modules:
+        source = f"backend/ts/workers/mermaid-renderer/{module}"
+        assert has_copy(unified, source, "./bin/")
+        assert has_copy(standalone_backend, source, "./bin/")
+    worker_source = "backend/ts/workers/mermaid-renderer/worker.mjs"
+    assert has_copy(unified, worker_source, "./bin/")
+    assert has_copy(standalone_backend, worker_source, "./bin/")
+
+    assert has_copy(
+        unified,
+        "frontend/public/fonts/Noto_Sans_SC/NotoSansSC-VariableFont_wght.ttf",
+        "./bin/fonts/",
+    )
 
 
 def test_integrated_compose_uses_embedded_deps():

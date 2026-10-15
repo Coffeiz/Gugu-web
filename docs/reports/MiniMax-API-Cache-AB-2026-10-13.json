@@ -1,0 +1,1210 @@
+{
+  "main": {
+    "model": "MiniMax-M3.1-Flash-Preview",
+    "source": {
+      "messages": 172,
+      "source_wire_digest": "c4abac2b70a0171f",
+      "wire_exact": true,
+      "repaired_tool_inputs": 1
+    },
+    "results": [
+      {
+        "api": "anthropic",
+        "requested_continuation": "off",
+        "driver_continuation_available": true,
+        "effective_continuation": false,
+        "samples": [
+          {
+            "trial": 1,
+            "arm": "baseline",
+            "usage": {
+              "total_input": 92883,
+              "fresh_input": 3825,
+              "cache_read": 89058,
+              "cache_write": 0,
+              "output": 582,
+              "cache_ratio": 0.958819,
+              "seconds": 5.741
+            },
+            "warm_usage": {
+              "total_input": 89058,
+              "fresh_input": 88870,
+              "cache_read": 188,
+              "cache_write": 0,
+              "output": 4,
+              "cache_ratio": 0.002111,
+              "seconds": 3.651
+            },
+            "prefix_equal": true,
+            "first_difference": null,
+            "native_items_in_main": 0,
+            "native_items_in_branch": 0,
+            "tools_equal": true,
+            "system_equal": true,
+            "reasoning_params_equal": true,
+            "cache_key_equal": true
+          },
+          {
+            "trial": 1,
+            "arm": "fixed",
+            "usage": {
+              "total_input": 92878,
+              "fresh_input": 4302,
+              "cache_read": 88576,
+              "cache_write": 0,
+              "output": 463,
+              "cache_ratio": 0.953681,
+              "seconds": 5.92
+            },
+            "warm_usage": {
+              "total_input": 89054,
+              "fresh_input": 89054,
+              "cache_read": 0,
+              "cache_write": 0,
+              "output": 3,
+              "cache_ratio": 0.0,
+              "seconds": 6.368
+            },
+            "prefix_equal": true,
+            "first_difference": null,
+            "native_items_in_main": 0,
+            "native_items_in_branch": 0,
+            "tools_equal": true,
+            "system_equal": true,
+            "reasoning_params_equal": true,
+            "cache_key_equal": true
+          },
+          {
+            "trial": 2,
+            "arm": "fixed",
+            "usage": {
+              "total_input": 92882,
+              "fresh_input": 3825,
+              "cache_read": 89057,
+              "cache_write": 0,
+              "output": 441,
+              "cache_ratio": 0.958819,
+              "seconds": 5.732
+            },
+            "warm_usage": {
+              "total_input": 89057,
+              "fresh_input": 88869,
+              "cache_read": 188,
+              "cache_write": 0,
+              "output": 4,
+              "cache_ratio": 0.002111,
+              "seconds": 2.968
+            },
+            "prefix_equal": true,
+            "first_difference": null,
+            "native_items_in_main": 0,
+            "native_items_in_branch": 0,
+            "tools_equal": true,
+            "system_equal": true,
+            "reasoning_params_equal": true,
+            "cache_key_equal": true
+          },
+          {
+            "trial": 2,
+            "arm": "baseline",
+            "usage": {
+              "total_input": 92879,
+              "fresh_input": 4303,
+              "cache_read": 88576,
+              "cache_write": 0,
+              "output": 455,
+              "cache_ratio": 0.953671,
+              "seconds": 4.569
+            },
+            "warm_usage": {
+              "total_input": 89054,
+              "fresh_input": 89054,
+              "cache_read": 0,
+              "cache_write": 0,
+              "output": 4,
+              "cache_ratio": 0.0,
+              "seconds": 5.524
+            },
+            "prefix_equal": true,
+            "first_difference": null,
+            "native_items_in_main": 0,
+            "native_items_in_branch": 0,
+            "tools_equal": true,
+            "system_equal": true,
+            "reasoning_params_equal": true,
+            "cache_key_equal": true
+          }
+        ],
+        "sdk_call_count": 8
+      },
+      {
+        "api": "anthropic",
+        "requested_continuation": "continuation",
+        "driver_continuation_available": true,
+        "effective_continuation": true,
+        "samples": [
+          {
+            "trial": 1,
+            "arm": "baseline",
+            "usage": {
+              "total_input": 92879,
+              "fresh_input": 57703,
+              "cache_read": 35176,
+              "cache_write": 0,
+              "output": 575,
+              "cache_ratio": 0.378729,
+              "seconds": 6.534
+            },
+            "warm_usage": {
+              "total_input": 96107,
+              "fresh_input": 95919,
+              "cache_read": 188,
+              "cache_write": 0,
+              "output": 4,
+              "cache_ratio": 0.001956,
+              "seconds": 3.365
+            },
+            "prefix_equal": false,
+            "first_difference": 6,
+            "native_items_in_main": 30,
+            "native_items_in_branch": 0,
+            "tools_equal": true,
+            "system_equal": true,
+            "reasoning_params_equal": true,
+            "cache_key_equal": true
+          },
+          {
+            "trial": 1,
+            "arm": "fixed",
+            "usage": {
+              "total_input": 99932,
+              "fresh_input": 3824,
+              "cache_read": 96108,
+              "cache_write": 0,
+              "output": 376,
+              "cache_ratio": 0.961734,
+              "seconds": 3.656
+            },
+            "warm_usage": {
+              "total_input": 96108,
+              "fresh_input": 95920,
+              "cache_read": 188,
+              "cache_write": 0,
+              "output": 3,
+              "cache_ratio": 0.001956,
+              "seconds": 4.217
+            },
+            "prefix_equal": true,
+            "first_difference": null,
+            "native_items_in_main": 30,
+            "native_items_in_branch": 30,
+            "tools_equal": true,
+            "system_equal": true,
+            "reasoning_params_equal": true,
+            "cache_key_equal": true
+          },
+          {
+            "trial": 2,
+            "arm": "fixed",
+            "usage": {
+              "total_input": 99938,
+              "fresh_input": 3938,
+              "cache_read": 96000,
+              "cache_write": 0,
+              "output": 364,
+              "cache_ratio": 0.960596,
+              "seconds": 4.116
+            },
+            "warm_usage": {
+              "total_input": 96113,
+              "fresh_input": 95985,
+              "cache_read": 128,
+              "cache_write": 0,
+              "output": 4,
+              "cache_ratio": 0.001332,
+              "seconds": 2.448
+            },
+            "prefix_equal": true,
+            "first_difference": null,
+            "native_items_in_main": 30,
+            "native_items_in_branch": 30,
+            "tools_equal": true,
+            "system_equal": true,
+            "reasoning_params_equal": true,
+            "cache_key_equal": true
+          },
+          {
+            "trial": 2,
+            "arm": "baseline",
+            "usage": {
+              "total_input": 92879,
+              "fresh_input": 58063,
+              "cache_read": 34816,
+              "cache_write": 0,
+              "output": 382,
+              "cache_ratio": 0.374853,
+              "seconds": 6.879
+            },
+            "warm_usage": {
+              "total_input": 96107,
+              "fresh_input": 96107,
+              "cache_read": 0,
+              "cache_write": 0,
+              "output": 4,
+              "cache_ratio": 0.0,
+              "seconds": 9.235
+            },
+            "prefix_equal": false,
+            "first_difference": 6,
+            "native_items_in_main": 30,
+            "native_items_in_branch": 0,
+            "tools_equal": true,
+            "system_equal": true,
+            "reasoning_params_equal": true,
+            "cache_key_equal": true
+          }
+        ],
+        "sdk_call_count": 8
+      },
+      {
+        "api": "openai",
+        "requested_continuation": "off",
+        "driver_continuation_available": false,
+        "effective_continuation": false,
+        "samples": [
+          {
+            "trial": 1,
+            "arm": "baseline",
+            "usage": {
+              "total_input": 112475,
+              "fresh_input": 112347,
+              "cache_read": 128,
+              "cache_write": 0,
+              "output": 147,
+              "cache_ratio": 0.001138,
+              "seconds": 6.305
+            },
+            "warm_usage": {
+              "total_input": 89073,
+              "fresh_input": 88945,
+              "cache_read": 128,
+              "cache_write": 0,
+              "output": 2,
+              "cache_ratio": 0.001437,
+              "seconds": 4.664
+            },
+            "prefix_equal": false,
+            "first_difference": 0,
+            "native_items_in_main": 0,
+            "native_items_in_branch": 0,
+            "tools_equal": true,
+            "system_equal": true,
+            "reasoning_params_equal": true,
+            "cache_key_equal": true
+          },
+          {
+            "trial": 1,
+            "arm": "fixed",
+            "usage": {
+              "total_input": 92895,
+              "fresh_input": 3825,
+              "cache_read": 89070,
+              "cache_write": 0,
+              "output": 112,
+              "cache_ratio": 0.958824,
+              "seconds": 2.117
+            },
+            "warm_usage": {
+              "total_input": 89070,
+              "fresh_input": 88882,
+              "cache_read": 188,
+              "cache_write": 0,
+              "output": 4,
+              "cache_ratio": 0.002111,
+              "seconds": 2.828
+            },
+            "prefix_equal": true,
+            "first_difference": null,
+            "native_items_in_main": 0,
+            "native_items_in_branch": 0,
+            "tools_equal": true,
+            "system_equal": true,
+            "reasoning_params_equal": true,
+            "cache_key_equal": true
+          },
+          {
+            "trial": 2,
+            "arm": "fixed",
+            "usage": {
+              "total_input": 92894,
+              "fresh_input": 3934,
+              "cache_read": 88960,
+              "cache_write": 0,
+              "output": 460,
+              "cache_ratio": 0.957651,
+              "seconds": 5.14
+            },
+            "warm_usage": {
+              "total_input": 89070,
+              "fresh_input": 88942,
+              "cache_read": 128,
+              "cache_write": 0,
+              "output": 3,
+              "cache_ratio": 0.001437,
+              "seconds": 2.748
+            },
+            "prefix_equal": true,
+            "first_difference": null,
+            "native_items_in_main": 0,
+            "native_items_in_branch": 0,
+            "tools_equal": true,
+            "system_equal": true,
+            "reasoning_params_equal": true,
+            "cache_key_equal": true
+          },
+          {
+            "trial": 2,
+            "arm": "baseline",
+            "usage": {
+              "total_input": 112470,
+              "fresh_input": 112342,
+              "cache_read": 128,
+              "cache_write": 0,
+              "output": 569,
+              "cache_ratio": 0.001138,
+              "seconds": 9.398
+            },
+            "warm_usage": {
+              "total_input": 89070,
+              "fresh_input": 88882,
+              "cache_read": 188,
+              "cache_write": 0,
+              "output": 4,
+              "cache_ratio": 0.002111,
+              "seconds": 3.003
+            },
+            "prefix_equal": false,
+            "first_difference": 0,
+            "native_items_in_main": 0,
+            "native_items_in_branch": 0,
+            "tools_equal": true,
+            "system_equal": true,
+            "reasoning_params_equal": true,
+            "cache_key_equal": true
+          }
+        ],
+        "sdk_call_count": 8
+      },
+      {
+        "api": "openai",
+        "requested_continuation": "continuation",
+        "driver_continuation_available": false,
+        "effective_continuation": false,
+        "samples": [
+          {
+            "trial": 1,
+            "arm": "baseline",
+            "usage": {
+              "total_input": 112467,
+              "fresh_input": 112279,
+              "cache_read": 188,
+              "cache_write": 0,
+              "output": 112,
+              "cache_ratio": 0.001672,
+              "seconds": 13.231
+            },
+            "warm_usage": {
+              "total_input": 89069,
+              "fresh_input": 88881,
+              "cache_read": 188,
+              "cache_write": 0,
+              "output": 3,
+              "cache_ratio": 0.002111,
+              "seconds": 3.151
+            },
+            "prefix_equal": false,
+            "first_difference": 0,
+            "native_items_in_main": 0,
+            "native_items_in_branch": 0,
+            "tools_equal": true,
+            "system_equal": true,
+            "reasoning_params_equal": true,
+            "cache_key_equal": true
+          },
+          {
+            "trial": 1,
+            "arm": "fixed",
+            "usage": {
+              "total_input": 92898,
+              "fresh_input": 3825,
+              "cache_read": 89073,
+              "cache_write": 0,
+              "output": 363,
+              "cache_ratio": 0.958826,
+              "seconds": 3.419
+            },
+            "warm_usage": {
+              "total_input": 89073,
+              "fresh_input": 88885,
+              "cache_read": 188,
+              "cache_write": 0,
+              "output": 4,
+              "cache_ratio": 0.002111,
+              "seconds": 3.25
+            },
+            "prefix_equal": true,
+            "first_difference": null,
+            "native_items_in_main": 0,
+            "native_items_in_branch": 0,
+            "tools_equal": true,
+            "system_equal": true,
+            "reasoning_params_equal": true,
+            "cache_key_equal": true
+          },
+          {
+            "trial": 2,
+            "arm": "fixed",
+            "usage": {
+              "total_input": 92895,
+              "fresh_input": 92895,
+              "cache_read": 0,
+              "cache_write": 0,
+              "output": 406,
+              "cache_ratio": 0.0,
+              "seconds": 7.641
+            },
+            "warm_usage": {
+              "total_input": 89090,
+              "fresh_input": 88904,
+              "cache_read": 186,
+              "cache_write": 0,
+              "output": 3,
+              "cache_ratio": 0.002088,
+              "seconds": 1.695
+            },
+            "prefix_equal": true,
+            "first_difference": null,
+            "native_items_in_main": 0,
+            "native_items_in_branch": 0,
+            "tools_equal": true,
+            "system_equal": true,
+            "reasoning_params_equal": true,
+            "cache_key_equal": true
+          },
+          {
+            "trial": 2,
+            "arm": "baseline",
+            "usage": {
+              "total_input": 112468,
+              "fresh_input": 112280,
+              "cache_read": 188,
+              "cache_write": 0,
+              "output": 447,
+              "cache_ratio": 0.001672,
+              "seconds": 6.275
+            },
+            "warm_usage": {
+              "total_input": 89069,
+              "fresh_input": 88881,
+              "cache_read": 188,
+              "cache_write": 0,
+              "output": 4,
+              "cache_ratio": 0.002111,
+              "seconds": 3.512
+            },
+            "prefix_equal": false,
+            "first_difference": 0,
+            "native_items_in_main": 0,
+            "native_items_in_branch": 0,
+            "tools_equal": true,
+            "system_equal": true,
+            "reasoning_params_equal": true,
+            "cache_key_equal": true
+          }
+        ],
+        "sdk_call_count": 8
+      },
+      {
+        "api": "responses",
+        "requested_continuation": "off",
+        "driver_continuation_available": true,
+        "effective_continuation": false,
+        "samples": [
+          {
+            "trial": 1,
+            "arm": "baseline",
+            "usage": {
+              "total_input": 93300,
+              "fresh_input": 3825,
+              "cache_read": 89475,
+              "cache_write": 0,
+              "output": 438,
+              "cache_ratio": 0.959003,
+              "seconds": 4.427
+            },
+            "warm_usage": {
+              "total_input": 89475,
+              "fresh_input": 89287,
+              "cache_read": 188,
+              "cache_write": 0,
+              "output": 4,
+              "cache_ratio": 0.002101,
+              "seconds": 4.367
+            },
+            "prefix_equal": true,
+            "first_difference": null,
+            "native_items_in_main": 0,
+            "native_items_in_branch": 0,
+            "tools_equal": true,
+            "system_equal": true,
+            "reasoning_params_equal": true,
+            "cache_key_equal": true
+          },
+          {
+            "trial": 1,
+            "arm": "fixed",
+            "usage": {
+              "total_input": 93305,
+              "fresh_input": 3825,
+              "cache_read": 89480,
+              "cache_write": 0,
+              "output": 351,
+              "cache_ratio": 0.959005,
+              "seconds": 3.877
+            },
+            "warm_usage": {
+              "total_input": 89480,
+              "fresh_input": 89292,
+              "cache_read": 188,
+              "cache_write": 0,
+              "output": 4,
+              "cache_ratio": 0.002101,
+              "seconds": 4.237
+            },
+            "prefix_equal": true,
+            "first_difference": null,
+            "native_items_in_main": 0,
+            "native_items_in_branch": 0,
+            "tools_equal": true,
+            "system_equal": true,
+            "reasoning_params_equal": true,
+            "cache_key_equal": true
+          },
+          {
+            "trial": 2,
+            "arm": "fixed",
+            "usage": {
+              "total_input": 93301,
+              "fresh_input": 3825,
+              "cache_read": 89476,
+              "cache_write": 0,
+              "output": 181,
+              "cache_ratio": 0.959004,
+              "seconds": 3.304
+            },
+            "warm_usage": {
+              "total_input": 89476,
+              "fresh_input": 89288,
+              "cache_read": 188,
+              "cache_write": 0,
+              "output": 4,
+              "cache_ratio": 0.002101,
+              "seconds": 3.168
+            },
+            "prefix_equal": true,
+            "first_difference": null,
+            "native_items_in_main": 0,
+            "native_items_in_branch": 0,
+            "tools_equal": true,
+            "system_equal": true,
+            "reasoning_params_equal": true,
+            "cache_key_equal": true
+          },
+          {
+            "trial": 2,
+            "arm": "baseline",
+            "usage": {
+              "total_input": 93299,
+              "fresh_input": 4211,
+              "cache_read": 89088,
+              "cache_write": 0,
+              "output": 494,
+              "cache_ratio": 0.954866,
+              "seconds": 5.24
+            },
+            "warm_usage": {
+              "total_input": 89475,
+              "fresh_input": 89475,
+              "cache_read": 0,
+              "cache_write": 0,
+              "output": 3,
+              "cache_ratio": 0.0,
+              "seconds": 6.496
+            },
+            "prefix_equal": true,
+            "first_difference": null,
+            "native_items_in_main": 0,
+            "native_items_in_branch": 0,
+            "tools_equal": true,
+            "system_equal": true,
+            "reasoning_params_equal": true,
+            "cache_key_equal": true
+          }
+        ],
+        "sdk_call_count": 8
+      },
+      {
+        "api": "responses",
+        "requested_continuation": "continuation",
+        "driver_continuation_available": true,
+        "effective_continuation": false,
+        "samples": [
+          {
+            "trial": 1,
+            "arm": "baseline",
+            "usage": {
+              "total_input": 93350,
+              "fresh_input": 93350,
+              "cache_read": 0,
+              "cache_write": 0,
+              "output": 420,
+              "cache_ratio": 0.0,
+              "seconds": 10.908
+            },
+            "warm_usage": {
+              "total_input": 89545,
+              "fresh_input": 89356,
+              "cache_read": 189,
+              "cache_write": 0,
+              "output": 3,
+              "cache_ratio": 0.002111,
+              "seconds": 1.752
+            },
+            "prefix_equal": true,
+            "first_difference": null,
+            "native_items_in_main": 0,
+            "native_items_in_branch": 0,
+            "tools_equal": true,
+            "system_equal": true,
+            "reasoning_params_equal": true,
+            "cache_key_equal": true
+          },
+          {
+            "trial": 1,
+            "arm": "fixed",
+            "usage": {
+              "total_input": 93348,
+              "fresh_input": 4260,
+              "cache_read": 89088,
+              "cache_write": 0,
+              "output": 373,
+              "cache_ratio": 0.954364,
+              "seconds": 5.879
+            },
+            "warm_usage": {
+              "total_input": 89524,
+              "fresh_input": 89524,
+              "cache_read": 0,
+              "cache_write": 0,
+              "output": 3,
+              "cache_ratio": 0.0,
+              "seconds": 5.495
+            },
+            "prefix_equal": true,
+            "first_difference": null,
+            "native_items_in_main": 0,
+            "native_items_in_branch": 0,
+            "tools_equal": true,
+            "system_equal": true,
+            "reasoning_params_equal": true,
+            "cache_key_equal": true
+          },
+          {
+            "trial": 2,
+            "arm": "fixed",
+            "usage": {
+              "total_input": 93348,
+              "fresh_input": 4260,
+              "cache_read": 89088,
+              "cache_write": 0,
+              "output": 588,
+              "cache_ratio": 0.954364,
+              "seconds": 7.852
+            },
+            "warm_usage": {
+              "total_input": 89523,
+              "fresh_input": 89523,
+              "cache_read": 0,
+              "cache_write": 0,
+              "output": 4,
+              "cache_ratio": 0.0,
+              "seconds": 6.989
+            },
+            "prefix_equal": true,
+            "first_difference": null,
+            "native_items_in_main": 0,
+            "native_items_in_branch": 0,
+            "tools_equal": true,
+            "system_equal": true,
+            "reasoning_params_equal": true,
+            "cache_key_equal": true
+          },
+          {
+            "trial": 2,
+            "arm": "baseline",
+            "usage": {
+              "total_input": 93349,
+              "fresh_input": 3825,
+              "cache_read": 89524,
+              "cache_write": 0,
+              "output": 356,
+              "cache_ratio": 0.959025,
+              "seconds": 4.18
+            },
+            "warm_usage": {
+              "total_input": 89524,
+              "fresh_input": 89336,
+              "cache_read": 188,
+              "cache_write": 0,
+              "output": 4,
+              "cache_ratio": 0.0021,
+              "seconds": 3.349
+            },
+            "prefix_equal": true,
+            "first_difference": null,
+            "native_items_in_main": 0,
+            "native_items_in_branch": 0,
+            "tools_equal": true,
+            "system_equal": true,
+            "reasoning_params_equal": true,
+            "cache_key_equal": true
+          }
+        ],
+        "seed_usage": {
+          "total_input": 89475,
+          "fresh_input": 89475,
+          "cache_read": 0,
+          "cache_write": 0,
+          "output": 35,
+          "cache_ratio": 0.0,
+          "seconds": 7.552
+        },
+        "seed_reasoning_items": 0,
+        "continuation_unavailable_reason": "provider_returned_no_reasoning_item",
+        "sdk_call_count": 9
+      }
+    ],
+    "business_writes": false,
+    "tools_executed": false
+  },
+  "strict_chat": {
+    "api": "openai",
+    "requested_continuation": "continuation",
+    "driver_continuation_available": false,
+    "effective_continuation": false,
+    "samples": [
+      {
+        "trial": 1,
+        "arm": "baseline",
+        "usage": {
+          "total_input": 112468,
+          "fresh_input": 112280,
+          "cache_read": 188,
+          "cache_write": 0,
+          "output": 457,
+          "cache_ratio": 0.001672,
+          "seconds": 10.722
+        },
+        "warm_usage": {
+          "total_input": 89069,
+          "fresh_input": 89069,
+          "cache_read": 0,
+          "cache_write": 0,
+          "output": 4,
+          "cache_ratio": 0.0,
+          "seconds": 8.025
+        },
+        "prefix_equal": false,
+        "first_difference": 0,
+        "native_items_in_main": 0,
+        "native_items_in_branch": 0,
+        "tools_equal": true,
+        "system_equal": true,
+        "reasoning_params_equal": true,
+        "cache_key_equal": true
+      },
+      {
+        "trial": 1,
+        "arm": "fixed",
+        "usage": {
+          "total_input": 92896,
+          "fresh_input": 3825,
+          "cache_read": 89071,
+          "cache_write": 0,
+          "output": 432,
+          "cache_ratio": 0.958825,
+          "seconds": 6.49
+        },
+        "warm_usage": {
+          "total_input": 89071,
+          "fresh_input": 88883,
+          "cache_read": 188,
+          "cache_write": 0,
+          "output": 4,
+          "cache_ratio": 0.002111,
+          "seconds": 3.045
+        },
+        "prefix_equal": true,
+        "first_difference": null,
+        "native_items_in_main": 0,
+        "native_items_in_branch": 0,
+        "tools_equal": true,
+        "system_equal": true,
+        "reasoning_params_equal": true,
+        "cache_key_equal": true
+      }
+    ],
+    "sdk_call_count": 6,
+    "wire_checks": [
+      {
+        "strict_prefix_equal": false,
+        "first_strict_difference": 0,
+        "first_message_equal": false,
+        "request_reasoning_and_budget_equal": true,
+        "main_param_keys": [
+          "max_tokens"
+        ],
+        "branch_param_keys": [
+          "max_tokens"
+        ],
+        "content_type_pair": [
+          "list",
+          "list"
+        ],
+        "identical_branch_repeat": {
+          "total_input": 112468,
+          "fresh_input": 1,
+          "cache_read": 112467,
+          "cache_write": 0,
+          "output": 410,
+          "cache_ratio": 0.999991,
+          "seconds": 3.36
+        }
+      },
+      {
+        "strict_prefix_equal": false,
+        "first_strict_difference": 168,
+        "first_message_equal": true,
+        "request_reasoning_and_budget_equal": true,
+        "main_param_keys": [
+          "max_tokens"
+        ],
+        "branch_param_keys": [
+          "max_tokens"
+        ],
+        "content_type_pair": [
+          "list",
+          "str"
+        ],
+        "identical_branch_repeat": {
+          "total_input": 92896,
+          "fresh_input": 1,
+          "cache_read": 92895,
+          "cache_write": 0,
+          "output": 454,
+          "cache_ratio": 0.999989,
+          "seconds": 3.255
+        }
+      }
+    ]
+  },
+  "explicit_low_without_state": {
+    "api": "responses",
+    "requested_continuation": "continuation",
+    "driver_continuation_available": true,
+    "effective_continuation": false,
+    "samples": [
+      {
+        "trial": 1,
+        "arm": "baseline",
+        "usage": {
+          "total_input": 93496,
+          "fresh_input": 3825,
+          "cache_read": 89671,
+          "cache_write": 0,
+          "output": 469,
+          "cache_ratio": 0.959089,
+          "seconds": 4.204
+        },
+        "warm_usage": {
+          "total_input": 89671,
+          "fresh_input": 89483,
+          "cache_read": 188,
+          "cache_write": 0,
+          "output": 4,
+          "cache_ratio": 0.002097,
+          "seconds": 2.916
+        },
+        "prefix_equal": true,
+        "first_difference": null,
+        "native_items_in_main": 0,
+        "native_items_in_branch": 0,
+        "tools_equal": true,
+        "system_equal": true,
+        "reasoning_params_equal": true,
+        "cache_key_equal": true
+      },
+      {
+        "trial": 1,
+        "arm": "fixed",
+        "usage": {
+          "total_input": 93495,
+          "fresh_input": 3825,
+          "cache_read": 89670,
+          "cache_write": 0,
+          "output": 376,
+          "cache_ratio": 0.959089,
+          "seconds": 2.74
+        },
+        "warm_usage": {
+          "total_input": 89670,
+          "fresh_input": 89492,
+          "cache_read": 178,
+          "cache_write": 0,
+          "output": 4,
+          "cache_ratio": 0.001985,
+          "seconds": 3.012
+        },
+        "prefix_equal": true,
+        "first_difference": null,
+        "native_items_in_main": 0,
+        "native_items_in_branch": 0,
+        "tools_equal": true,
+        "system_equal": true,
+        "reasoning_params_equal": true,
+        "cache_key_equal": true
+      },
+      {
+        "trial": 2,
+        "arm": "fixed",
+        "usage": {
+          "total_input": 93495,
+          "fresh_input": 3895,
+          "cache_read": 89600,
+          "cache_write": 0,
+          "output": 458,
+          "cache_ratio": 0.95834,
+          "seconds": 8.224
+        },
+        "warm_usage": {
+          "total_input": 89670,
+          "fresh_input": 89542,
+          "cache_read": 128,
+          "cache_write": 0,
+          "output": 3,
+          "cache_ratio": 0.001427,
+          "seconds": 6.244
+        },
+        "prefix_equal": true,
+        "first_difference": null,
+        "native_items_in_main": 0,
+        "native_items_in_branch": 0,
+        "tools_equal": true,
+        "system_equal": true,
+        "reasoning_params_equal": true,
+        "cache_key_equal": true
+      },
+      {
+        "trial": 2,
+        "arm": "baseline",
+        "usage": {
+          "total_input": 93500,
+          "fresh_input": 4156,
+          "cache_read": 89344,
+          "cache_write": 0,
+          "output": 606,
+          "cache_ratio": 0.955551,
+          "seconds": 7.106
+        },
+        "warm_usage": {
+          "total_input": 89675,
+          "fresh_input": 89675,
+          "cache_read": 0,
+          "cache_write": 0,
+          "output": 4,
+          "cache_ratio": 0.0,
+          "seconds": 7.256
+        },
+        "prefix_equal": true,
+        "first_difference": null,
+        "native_items_in_main": 0,
+        "native_items_in_branch": 0,
+        "tools_equal": true,
+        "system_equal": true,
+        "reasoning_params_equal": true,
+        "cache_key_equal": true
+      }
+    ],
+    "seed_usage": {
+      "total_input": 89475,
+      "fresh_input": 89475,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 182,
+      "cache_ratio": 0.0,
+      "seconds": 9.897
+    },
+    "seed_reasoning_items": 0,
+    "continuation_unavailable_reason": "provider_returned_no_reasoning_item",
+    "sdk_call_count": 9,
+    "wire_checks": [],
+    "supplemental_reasoning_override": {
+      "thinking": "adaptive",
+      "reasoning_effort": "low"
+    }
+  },
+  "native_responses": {
+    "api": "responses",
+    "requested_continuation": "continuation",
+    "driver_continuation_available": true,
+    "effective_continuation": true,
+    "samples": [
+      {
+        "trial": 1,
+        "arm": "baseline",
+        "usage": {
+          "total_input": 93375,
+          "fresh_input": 3824,
+          "cache_read": 89551,
+          "cache_write": 0,
+          "output": 392,
+          "cache_ratio": 0.959047,
+          "seconds": 4.051
+        },
+        "warm_usage": {
+          "total_input": 89551,
+          "fresh_input": 89373,
+          "cache_read": 178,
+          "cache_write": 0,
+          "output": 3,
+          "cache_ratio": 0.001988,
+          "seconds": 3.598
+        },
+        "prefix_equal": true,
+        "first_difference": null,
+        "native_items_in_main": 1,
+        "native_items_in_branch": 1,
+        "tools_equal": true,
+        "system_equal": true,
+        "reasoning_params_equal": true,
+        "cache_key_equal": true
+      },
+      {
+        "trial": 1,
+        "arm": "fixed",
+        "usage": {
+          "total_input": 93375,
+          "fresh_input": 3825,
+          "cache_read": 89550,
+          "cache_write": 0,
+          "output": 557,
+          "cache_ratio": 0.959036,
+          "seconds": 4.349
+        },
+        "warm_usage": {
+          "total_input": 89550,
+          "fresh_input": 89362,
+          "cache_read": 188,
+          "cache_write": 0,
+          "output": 4,
+          "cache_ratio": 0.002099,
+          "seconds": 3.054
+        },
+        "prefix_equal": true,
+        "first_difference": null,
+        "native_items_in_main": 1,
+        "native_items_in_branch": 1,
+        "tools_equal": true,
+        "system_equal": true,
+        "reasoning_params_equal": true,
+        "cache_key_equal": true
+      },
+      {
+        "trial": 2,
+        "arm": "fixed",
+        "usage": {
+          "total_input": 93372,
+          "fresh_input": 93244,
+          "cache_read": 128,
+          "cache_write": 0,
+          "output": 409,
+          "cache_ratio": 0.001371,
+          "seconds": 26.417
+        },
+        "warm_usage": {
+          "total_input": 89548,
+          "fresh_input": 89420,
+          "cache_read": 128,
+          "cache_write": 0,
+          "output": 2,
+          "cache_ratio": 0.001429,
+          "seconds": 3.908
+        },
+        "prefix_equal": true,
+        "first_difference": null,
+        "native_items_in_main": 1,
+        "native_items_in_branch": 1,
+        "tools_equal": true,
+        "system_equal": true,
+        "reasoning_params_equal": true,
+        "cache_key_equal": true
+      },
+      {
+        "trial": 2,
+        "arm": "baseline",
+        "usage": {
+          "total_input": 93374,
+          "fresh_input": 3824,
+          "cache_read": 89550,
+          "cache_write": 0,
+          "output": 779,
+          "cache_ratio": 0.959046,
+          "seconds": 8.116
+        },
+        "warm_usage": {
+          "total_input": 89550,
+          "fresh_input": 89362,
+          "cache_read": 188,
+          "cache_write": 0,
+          "output": 3,
+          "cache_ratio": 0.002099,
+          "seconds": 3.218
+        },
+        "prefix_equal": true,
+        "first_difference": null,
+        "native_items_in_main": 1,
+        "native_items_in_branch": 1,
+        "tools_equal": true,
+        "system_equal": true,
+        "reasoning_params_equal": true,
+        "cache_key_equal": true
+      }
+    ],
+    "seed_output_types": [
+      "reasoning",
+      "message"
+    ],
+    "seed_usage": {
+      "total_input": 214,
+      "fresh_input": 214,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 61,
+      "cache_ratio": 0.0,
+      "seconds": 2.774
+    },
+    "seed_reasoning_items": 1,
+    "sdk_call_count": 9,
+    "wire_checks": []
+  }
+}

@@ -21,10 +21,11 @@ import {
 } from '@/types/live-events'
 import { usePreviewStore } from '@/stores/preview'
 import { isUnauthorizedResponse } from '@/services/authSession'
+import { notifyLiveResourceChanged } from '@/services/resourceRefreshEvents'
 
 // live 事件与业务 API 使用同一 FastAPI owner，避免回退到已移除的 TS Live 服务。
 const LIVE_URL = '/api/v1/live/stream'
-const RESOURCES = ['projects', 'calendar', 'files', 'clients', 'sessions', 'scheduled_tasks', 'mind', 'terminals', 'im_channels']
+const RESOURCES = ['projects', 'calendar', 'files', 'clients', 'sessions', 'scheduled_tasks', 'mind', 'terminals', 'im_channels', 'skills']
 
 export const useLiveStore = defineStore('live', () => {
   // 每个资源一个递增计数，视图 watch 它来触发 refetch
@@ -83,6 +84,7 @@ export const useLiveStore = defineStore('live', () => {
     _catchUpTimers.forEach(clearTimeout)   // 短时间多次重连不叠加
     _catchUpTimers = RESOURCES.map((r, i) => setTimeout(() => {
       bump(r)
+      notifyLiveResourceChanged(r)
     }, 300 + i * 250))
   }
 
@@ -154,6 +156,7 @@ export const useLiveStore = defineStore('live', () => {
                 lastCanonicalRevision.set(canonical.resource, canonical.revision)
                 resourceEvent.value = { ...canonical, _t: ++_seq }
                 bump(canonical.resource)
+                notifyLiveResourceChanged(canonical.resource)
               }
               if (evt.notification) {
                 uiStore.pushNotification(evt.notification)

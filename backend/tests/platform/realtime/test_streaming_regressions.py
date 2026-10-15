@@ -35,7 +35,7 @@ class _FakeStream:
 @pytest.mark.asyncio
 async def test_qq_stream_sequence_uses_a_cross_process_counter(monkeypatch):
     """QQ 流式消息必须使用独立于普通回复的 Redis 序号。"""
-    import agent.gateway.qq as qq
+    from agent.gateway.qq import outbound as qq_outbound
 
     class _Redis:
         def __init__(self):
@@ -50,10 +50,10 @@ async def test_qq_stream_sequence_uses_a_cross_process_counter(monkeypatch):
             self.expired.append((key, seconds))
 
     redis = _Redis()
-    monkeypatch.setattr(qq.R, "get_redis", lambda: redis)
+    monkeypatch.setattr(qq_outbound.R, "get_redis", lambda: redis)
 
-    assert await qq._next_stream_seq("channel-1") == 1
-    assert await qq._next_stream_seq("channel-1") == 2
+    assert await qq_outbound._next_stream_seq("channel-1") == 1
+    assert await qq_outbound._next_stream_seq("channel-1") == 2
     assert redis.expired == [("qqstreamseq:channel-1", 600)]
 
 
@@ -179,8 +179,8 @@ async def test_qq_stream_drains_agent_after_transport_failure(monkeypatch):
         streams.append(stream)
         return stream
 
-    import agent.gateway.qq as qq
-    monkeypatch.setattr(qq, "create_private_text_stream", make_stream)
+    from agent.gateway.qq import outbound as qq_outbound
+    monkeypatch.setattr(qq_outbound, "create_private_text_stream", make_stream)
 
     consumed: list[str] = []
 
@@ -201,6 +201,56 @@ async def test_qq_stream_drains_agent_after_transport_failure(monkeypatch):
     assert response.session_id == 7
     assert last_text == "收尾"
     assert consumed == ["round-1", "round-2", "done"]
+
+
+@pytest.mark.asyncio
+async def test_qq_stream_finishes_interaction_round_before_prompt_and_resumes(monkeypatch):
+    """确认交互前先发送完成帧，确认后后续正文使用新的 QQ 流消息。"""
+    from agent.gateway import qq as qq_gateway
+
+    timeline = []
+
+    class InteractionStream:
+        def __init__(self):
+            self.text = ""
+
+        def push(self, text):
+            self.text += text
+
+        async def finish(self, text):
+            timeline.append(("stream_finished", text))
+
+        def has_sent(self):
+            return bool(self.text)
+
+    monkeypatch.setattr(
+        qq_gateway, "create_private_text_stream",
+        lambda *_args, **_kwargs: InteractionStream(),
+    )
+
+    async def token_iter():
+        yield ("token", "需要先确认")
+        yield (ROUND_END, "需要先确认")
+        # send_qq_stream_by_round 必须先消费 ROUND_END 并发完成帧，才会继续取下一事件。
+        timeline.append(("interaction_prompt", None))
+        yield ("token", "确认后继续")
+        yield ("final", AgentResponse(text="确认后继续", session_id=7))
+
+    sent, response, _last_text = await send_qq_stream_by_round(
+        {
+            "platform": "qq", "platform_user_id": "synthetic-recipient",
+            "channel_id": "41", "message_id": "synthetic-message",
+        },
+        token_iter(),
+    )
+
+    assert sent is True
+    assert response.session_id == 7
+    assert timeline[:2] == [
+        ("stream_finished", "需要先确认"),
+        ("interaction_prompt", None),
+    ]
+    assert timeline[-1] == ("stream_finished", "确认后继续")
 
 
 @pytest.mark.asyncio
@@ -259,7 +309,7 @@ async def test_run_collect_waits_for_baseline_before_releasing_session_gate(monk
 
 @pytest.mark.asyncio
 async def test_web_generate_finalizes_preflight_failure_instead_of_sticking(monkeypatch):
-    from agent.gateway import web
+    from agent.gateway.web import run_lifecycle as web_lifecycle
     from agent.context import compress_conv
 
     events = []
@@ -292,17 +342,17 @@ async def test_web_generate_finalizes_preflight_failure_instead_of_sticking(monk
     async def _idle_state(_session_id):
         return None
     monkeypatch.setattr(compress_conv, "_read_execution_state", _idle_state)
-    monkeypatch.setattr(web, "_refresh_generation_history", fail_refresh)
-    monkeypatch.setattr(web.genstream, "snapshot", snapshot)
-    monkeypatch.setattr(web.genstream, "publish", publish)
-    monkeypatch.setattr(web.genstream, "end", end)
+    monkeypatch.setattr(web_lifecycle, "_refresh_generation_history", fail_refresh)
+    monkeypatch.setattr(web_lifecycle.genstream, "snapshot", snapshot)
+    monkeypatch.setattr(web_lifecycle.genstream, "publish", publish)
+    monkeypatch.setattr(web_lifecycle.genstream, "end", end)
     monkeypatch.setattr(
         "agent.llm.llm_select.release", lambda model: released.append(model),
     )
 
     model = object()
     # req 需要带 user_id：preflight 失败收口会发会话排队队列变更事件。
-    await web._generate(SimpleNamespace(user_id=77), 669, {}, [], False, model_cfg=model)
+    await web_lifecycle._generate(SimpleNamespace(user_id=77), 669, {}, [], False, model_cfg=model)
 
     assert ("publish", 669, "error") in events
     assert ("end", 669) in events
@@ -312,7 +362,7 @@ async def test_web_generate_finalizes_preflight_failure_instead_of_sticking(monk
 
 @pytest.mark.asyncio
 async def test_web_generate_preserves_resolved_reasoning_policy_for_background_task(monkeypatch):
-    from agent.gateway import web
+    from agent.gateway.web import run_lifecycle as web_lifecycle
     from agent.context import compress_conv
 
     class _Gate:
@@ -338,12 +388,12 @@ async def test_web_generate_preserves_resolved_reasoning_policy_for_background_t
 
     monkeypatch.setattr(compress_conv, "session_run_gate", lambda *_args, **_kwargs: _Gate())
     monkeypatch.setattr(compress_conv, "_read_execution_state", idle_state)
-    monkeypatch.setattr(web, "_refresh_generation_history", no_refresh)
-    monkeypatch.setattr(web, "_generate_unlocked", capture_unlocked)
-    monkeypatch.setattr(web.genstream, "is_cancelled", not_cancelled)
+    monkeypatch.setattr(web_lifecycle, "_refresh_generation_history", no_refresh)
+    monkeypatch.setattr(web_lifecycle, "_generate_unlocked", capture_unlocked)
+    monkeypatch.setattr(web_lifecycle.genstream, "is_cancelled", not_cancelled)
 
     run_config = SimpleNamespace(reasoning_persistence="continuation")
-    await web._generate(
+    await web_lifecycle._generate(
         SimpleNamespace(user_id=77), 670, {}, [], False,
         model_cfg=SimpleNamespace(), run_config=run_config,
     )
@@ -353,7 +403,7 @@ async def test_web_generate_preserves_resolved_reasoning_policy_for_background_t
 
 @pytest.mark.asyncio
 async def test_feishu_fallback_drains_agent_after_final(monkeypatch):
-    from agent.gateway import feishu
+    from agent.gateway.feishu import streaming as feishu
 
     monkeypatch.setattr(feishu, "_creds_by_id", lambda _channel_id: _async_value(("app", "secret")))
     monkeypatch.setattr(feishu, "_do_create_card", lambda *_args: _async_value(None))
@@ -380,7 +430,7 @@ async def test_feishu_fallback_drains_agent_after_final(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_feishu_fallback_hides_intermediate_tokens_but_sends_final(monkeypatch):
-    from agent.gateway import feishu
+    from agent.gateway.feishu import streaming as feishu
 
     monkeypatch.setattr(feishu, "_creds_by_id", lambda _channel_id: _async_value(("app", "secret")))
     monkeypatch.setattr(feishu, "_do_create_card", lambda *_args: _async_value(None))
@@ -408,7 +458,7 @@ async def test_feishu_fallback_hides_intermediate_tokens_but_sends_final(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_qq_stream_hides_intermediate_rounds_but_sends_final(monkeypatch):
+async def test_qq_stream_delivers_each_round_when_platform_streaming_is_enabled(monkeypatch):
     from agent.gateway import qq
 
     streams: list[_FakeStream] = []
@@ -427,7 +477,10 @@ async def test_qq_stream_hides_intermediate_rounds_but_sends_final(monkeypatch):
         yield ("final", AgentResponse(text="最终回复", session_id=14))
 
     sent, response, last_text = await send_qq_stream_by_round(
-        {"platform_user_id": "user", "channel_id": "channel"},
+        {
+            "platform": "qq", "platform_user_id": "synthetic-recipient",
+            "channel_id": "41", "message_id": "synthetic-message",
+        },
         token_iter(),
         show_intermediate_replies=False,
     )
@@ -435,9 +488,8 @@ async def test_qq_stream_hides_intermediate_rounds_but_sends_final(monkeypatch):
     assert sent is True
     assert response.session_id == 14
     assert last_text == "最终回复"
-    assert len(streams) == 1
-    assert streams[0].parts == []
-    assert streams[0].sent is True
+    assert [stream.parts for stream in streams] == [["这是中间草稿"], ["最终回复"]]
+    assert all(stream.sent for stream in streams)
 
 
 async def _async_value(value):

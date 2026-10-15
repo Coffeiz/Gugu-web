@@ -1,6 +1,7 @@
 # PRD-MCP-2：IM 凭据输入与会话安全边界
 
-> 状态：实施中
+> 状态：实现与 IM/Web 手动验收完成；PostgreSQL 并发提交验证仍待完成
+> 最近更新：2026-10-14
 > 创建：2026-10-11
 > 关联模块：`backend/agent/im/`、`backend/agent/interactions/`、`backend/agent/tools/mcp.py`、`backend/app/services/interactions.py`、`backend/app/services/mcp_credentials.py`、`backend/app/api/v1/agent.py`、`frontend/src/components/common/gugu-chat/`
 > 前置能力：`docs/prds/PRD-MCP-1-MCP工具接入.md` 中的用户级 MCP server、凭据槽位和 secret prompt
@@ -210,14 +211,14 @@ Web 与 IM 最终都调用 `mcp_credentials` 的同一业务提交服务：验�
 - [x] `MCP2-033` Web 群恢复测试：群来源 prompt 的 owner 可通过独立 Web secret endpoint 提交；其他用户无法解析或提交。
 - [x] `MCP2-034` 回归 ask_user：保留并运行现有开放式回答、选择项自定义回复及 IM 交互协议测试，普通交互仍由原通用路径消费。
 - [x] `MCP2-035` 运行定向 IM/MCP/交互测试和相关前端验证；失败按根因修复。
-- [ ] `MCP2-036` 手动验证至少一个支持按钮的 IM 私聊、一个文本降级 IM 私聊、一个 IM 群拒绝和一个 Web 恢复群会话。
+- [x] `MCP2-036` 手动验证至少一个支持按钮的 IM 私聊、一个文本降级 IM 私聊、一个 IM 群拒绝和一个 Web 恢复群会话。用户确认 IM 功能已完成真实平台手测（2026-10-14）。
 
 ### 5.5 Phase 3 自动化复查记录（2026-10-12）
 
 - 修复完成态 webhook 重放可能落回普通聊天的问题：短时保留的 staging 事件 ID 在新 prompt 生效期间仍优先去重，重复消息静默吞掉，不回复、不进入 Agent，也不会被下一条凭据交互误消费。
 - 补充行为与安全测试：消息 dispatch 早期截断、微信媒体下载前截断、私聊/群聊路径、跨平台/Bot/操作者/会话/prompt 作用域、Web 群 session owner 提交、越权拒绝、错误及超长字段、旧凭据不被覆盖、重复 callback/webhook。
 - 定向验证：后端相关测试 197 项通过；前端交互测试 5 项通过；前端 typecheck、`compileall -q app agent` 与 `git diff --check` 通过。`ripwire doc-drift` 对本 PRD 检查 26 个锚点，0 个漂移。
-- 尚未完成的外部验收：当前 SQLite 测试不验证 PostgreSQL 行锁下的真实并发竞争；未连接真实 IM Bot，因此 MCP2-030 的并发子项与 MCP2-036 仍待执行。代码实现和自动化回归已完成，但在上述验收完成前不将 PRD 状态改为“完成”。
+- 尚未完成的验证：当前 SQLite 测试不验证 PostgreSQL 行锁下的真实并发竞争，`MCP2-030` 的 PostgreSQL 并发子项仍待执行。用户已确认真实 IM 手动验收完成，`MCP2-036` 已关闭。
 
 ## 7. 验收标准
 

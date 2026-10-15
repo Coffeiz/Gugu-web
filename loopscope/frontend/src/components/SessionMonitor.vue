@@ -162,7 +162,10 @@ watch(
 const selected = computed(() => props.details?.[selectedId.value] ?? props.runs.find(r => r.id === selectedId.value) ?? null)
 const selectedLoaded = computed(() => Boolean(props.details?.[selectedId.value]?.spans))
 const usage = computed<TokenUsage>(() => resolveUsage(selected.value))
-const usageSourceLabel = computed(() => hasProviderUsage(selected.value) ? 'provider reported prompt tokens' : 'local estimate')
+const usageSourceLabel = computed(() => {
+  if (hasProviderUsage(selected.value)) return 'provider reported prompt tokens'
+  return Object.keys(usage.value).length ? 'local estimate' : 'no model usage'
+})
 const cacheRatio = computed(() => usage.value.input ? Math.min((usage.value.cache_read ?? 0) / usage.value.input, 1) : 0)
 const cachePercent = computed(() => usage.value.input ? `${(cacheRatio.value * 100).toFixed(1)}%` : '—')
 const cacheMode = computed(() => (selected.value?.attributes?.cache_mode ?? 'active') as string)
@@ -188,7 +191,24 @@ const adapterCallSummary = computed(() => {
 })
 const modelLabel = computed(() => {
   const a = selected.value?.attributes ?? {}
-  return [a.provider, a.model].filter(Boolean).join(' / ') || 'model unknown'
+  const labels = [[a.provider, a.model]]
+  for (const span of selected.value?.spans ?? []) {
+    if (span.kind !== 'llm') continue
+    labels.push([span.attributes?.provider, span.attributes?.model])
+    const input = span.input && typeof span.input === 'object'
+      ? span.input as Record<string, any>
+      : {}
+    const reflection = input.reflection_cache_probe
+    if (reflection && typeof reflection === 'object') {
+      labels.push([reflection.provider, reflection.model])
+    }
+  }
+  const label = labels.map(parts => parts.filter(Boolean).join(' / ')).find(Boolean)
+  if (label) return label
+  if (selected.value?.ended_at && !(selected.value.spans ?? []).some(span => span.kind === 'llm')) {
+    return 'no model call'
+  }
+  return 'model unknown'
 })
 const rootSpans = computed(() => (selected.value?.spans ?? []).filter(s => !s.parent_span_id))
 const injectionSpans = computed(() => (selected.value?.spans ?? []).filter((span) => {
@@ -264,17 +284,26 @@ function onRunListScroll(event: Event) {
 
 function resolveUsage(run: TraceRun | null): TokenUsage {
   if (!run) return {}
+  const spans = run.spans ?? []
+  if (!spans.some(span => span.kind === 'llm')) return {}
   const candidates = [run.usage, run.attributes?.tokens]
   for (const candidate of candidates) {
     const normalized = normalizeUsage(candidate)
-    if (Object.keys(normalized).length) return normalized
+    if (!Object.keys(normalized).length) continue
+    if (hasPositiveUsage(normalized)) return normalized
   }
 
-  const total = (run.spans ?? []).reduce<TokenUsage>((sum, span) => {
+  const total = spans.reduce<TokenUsage>((sum, span) => {
     const usage = normalizeUsage(span.usage)
     const impact = span.token_impact ?? {}
-    sum.input = (sum.input ?? 0) + (usage.input ?? Number(impact.prompt_tokens_estimate ?? impact.estimated_input_tokens ?? 0))
-    sum.output = (sum.output ?? 0) + (usage.output ?? Number(impact.output_tokens_estimate ?? 0))
+    const hasUsage = hasPositiveUsage(usage)
+    const measuredInput = hasUsage ? usage.input ?? (
+      usage.fresh_input !== undefined || usage.cache_read !== undefined || usage.cache_write !== undefined
+        ? Number(usage.fresh_input ?? 0) + Number(usage.cache_read ?? 0) + Number(usage.cache_write ?? 0)
+        : undefined
+    ) : undefined
+    sum.input = (sum.input ?? 0) + (measuredInput ?? Number(impact.prompt_tokens_estimate ?? impact.estimated_input_tokens ?? 0))
+    sum.output = (sum.output ?? 0) + ((hasUsage ? usage.output : undefined) ?? Number(impact.output_tokens_estimate ?? 0))
     sum.cache_read = (sum.cache_read ?? 0) + (usage.cache_read ?? 0)
     sum.cache_write = (sum.cache_write ?? 0) + (usage.cache_write ?? 0)
     return sum
@@ -283,8 +312,14 @@ function resolveUsage(run: TraceRun | null): TokenUsage {
     total.fresh_input = Math.max((total.input ?? 0) - (total.cache_read ?? 0), 0)
     total.total = (total.input ?? 0) + (total.output ?? 0)
     total.cache_ratio = total.input ? (total.cache_read ?? 0) / total.input : 0
+    return total
   }
   return total
+}
+
+function hasPositiveUsage(usage: TokenUsage): boolean {
+  return [usage.input, usage.output, usage.cache_read, usage.cache_write, usage.total]
+    .some(value => typeof value === 'number' && value > 0)
 }
 
 function hasProviderUsage(run: TraceRun | null): boolean {

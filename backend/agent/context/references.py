@@ -144,9 +144,9 @@ async def build_reference_context(db, user_id, references: Iterable[dict] | None
         elif kind == "skill":
             obj = await db.get(UserSkill, resource_id) if isinstance(resource_id, int) else None
             if obj is not None and getattr(obj, "owner_id", None) == user_id:
-                # 咕咕拿到 slug 即可 use_skill(skill_slug) 装载正文，不需要引用带正文。
+                # 咕咕拿到公开 Skill ID 即可按需装载正文，不需要引用带正文。
                 detail = (
-                    f"技能 id：{obj.id}\n名称：{obj.name}\n标识：/{obj.slug}\n"
+                    f"技能 ID：{obj.skill_id}\n名称：{obj.name}\n"
                     f"状态：{'已启用' if obj.enabled else '已停用'}\n"
                     f"简介：{obj.description_short or '无'}"
                 )

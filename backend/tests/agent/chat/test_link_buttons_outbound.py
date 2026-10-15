@@ -236,7 +236,7 @@ async def test_send_double_failure_is_failed(monkeypatch):
 
 def test_qq_link_keyboard_wire_uses_jump_action_with_raw_url():
     """§8.2/§14.2：QQ 跳转按钮 action.type=0，data 就是原始 URL，不带 opaque token。"""
-    from agent.gateway.qq import _link_keyboard_wire_payload
+    from agent.gateway.qq.outbound import _link_keyboard_wire_payload
     payload = _link_keyboard_wire_payload(GOOD_BUTTONS)
     rows = payload["content"]["rows"]
     wire_buttons = [b for row in rows for b in row["buttons"]]
@@ -251,7 +251,7 @@ def test_qq_link_keyboard_wire_uses_jump_action_with_raw_url():
 
 def test_qq_ask_user_keyboard_keeps_callback_action_type():
     """§8.2：现有 ask_user 回调按钮仍是 type=1 + encoded action_data，互不污染。"""
-    from agent.gateway.qq import _keyboard_wire_payload
+    from agent.gateway.qq.outbound import _keyboard_wire_payload
     prompt = {"prompt_id": 7, "options": [
         {"id": "confirm", "label": "确认", "token": "tok-1"},
         {"id": "cancel", "label": "取消", "token": "tok-2"},
@@ -265,7 +265,7 @@ def test_qq_ask_user_keyboard_keeps_callback_action_type():
 
 def test_feishu_link_card_uses_open_url_without_callback():
     """§8.3/§14.2：飞书卡片按钮用 open_url behavior，不生成 card.action.trigger token。"""
-    from agent.gateway.feishu import _build_link_card_payload
+    from agent.gateway.feishu.messages import _build_link_card_payload
     card = _build_link_card_payload("相关入口：", GOOD_BUTTONS)
     actions = next(el for el in card["elements"] if el.get("tag") == "action")["actions"]
     assert len(actions) == 2
