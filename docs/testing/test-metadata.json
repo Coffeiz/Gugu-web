@@ -428,7 +428,7 @@
     "layer": "L1",
     "owner": "backend/agent/gateway/telegram.py",
     "productionEntry": "backend/agent/gateway/telegram.py",
-    "keyBehavior": "Telegram 回调仅允许 Bot owner 消费；重复点击不覆盖已恢复的 Agent 结果，MCP 凭据按钮仅能从私聊启动；长轮询游标和出站行为符合契约",
+    "keyBehavior": "Telegram 按钮按标签长度自适应分行；回调仅允许 Bot owner 消费，重复点击不覆盖 Agent 结果，MCP 凭据按钮仅能从私聊启动；长轮询和出站行为符合契约",
     "ci": "backend-pytest"
   },
   "backend/tests/im/telegram/test_telegram_im_policy.py": {

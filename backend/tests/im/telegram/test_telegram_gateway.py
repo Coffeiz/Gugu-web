@@ -129,6 +129,42 @@ def _callback(action, *, query_id="callback-1", actor_id="7001", chat_type="priv
     }
 
 
+def test_telegram_inline_keyboard_packs_short_and_long_labels_into_adaptive_rows():
+    """短标签可并排，超长标签独占一行，且按钮顺序和回调数据保持不变。"""
+    from agent.interactions.telegram import build_inline_keyboard, decode_action_data
+
+    labels = ["A", "短", "中等长度按钮", "这是一个明显更长的按钮标签，用于验证是否独占一行", "完成"]
+    keyboard = build_inline_keyboard({
+        "prompt_id": 17,
+        "options": [
+            {"id": f"option-{index}", "label": label, "token": f"token-{index}"}
+            for index, label in enumerate(labels)
+        ],
+    })
+
+    rows = keyboard["inline_keyboard"]
+    assert [[button["text"] for button in row] for row in rows] == [
+        labels[:3], [labels[3]], [labels[4]],
+    ]
+    assert [decode_action_data(button["callback_data"]) for row in rows for button in row] == [
+        (17, f"token-{index}") for index in range(len(labels))
+    ]
+
+
+def test_telegram_inline_keyboard_limits_short_buttons_per_row():
+    from agent.interactions.telegram import build_inline_keyboard
+
+    keyboard = build_inline_keyboard({
+        "prompt_id": 18,
+        "options": [
+            {"id": label, "label": label, "token": f"token-{index}"}
+            for index, label in enumerate("ABCDEF")
+        ],
+    })
+
+    assert [len(row) for row in keyboard["inline_keyboard"]] == [4, 2]
+
+
 @pytest.mark.asyncio
 async def test_telegram_owner_callback_resolves_waiting_agent_prompt(db, user_a, monkeypatch):
     """Bot owner 点确认后，按钮结果持久化并可被等待中的 Agent 取回。"""

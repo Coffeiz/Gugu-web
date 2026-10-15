@@ -23,6 +23,7 @@
 
 - **Telegram replies**: show tool results without duplicate raw JSON, with status text localized to the user's language.
 - **Telegram formatting**: preserve list and fenced-code formatting when splitting long replies.
+- **Telegram buttons**: arrange inline buttons by label length to keep longer choices readable.
 - **IM replies**: apply message formatting and streaming consistently across QQ and Telegram.
 - **Mermaid rendering**: align IM output with the web renderer, including fonts, node styles, labels, and arrows.
 - **Mermaid previews**: refine chart styling and preview interactions.
@@ -65,6 +66,7 @@
 
 - **Telegram 回复**：只展示工具调用结果，不再重复发送原始 JSON；状态文案根据用户语言显示。
 - **Telegram 格式**：长回复分段发送时保留列表和围栏代码格式。
+- **Telegram 按钮**：根据选项文字长度自适应排列内联按钮，提升长选项的可读性。
 - **IM 回复**：统一 QQ 与 Telegram 的消息格式和流式行为。
 - **Mermaid 渲染**：统一 IM 与网页的字体、节点样式、标签和箭头表现。
 - **Mermaid 预览**：优化图表样式和预览交互。
