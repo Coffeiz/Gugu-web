@@ -1116,6 +1116,8 @@ async def get_session_messages(
              "platformUserName": m.platform_user_name,
              "platformBotUserId": m.platform_bot_user_id,
              "runOutcome": m.run_outcome,
+             "runId": m.run_id,
+             "roundId": m.round_id,
              "createdAt": iso_utc(m.created_at)}
             for m in msgs
             if not (m.role == "assistant" and m.display_timeline)

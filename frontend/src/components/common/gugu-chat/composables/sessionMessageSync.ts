@@ -1,4 +1,4 @@
-import { assistantMessageSyncKey, type ChatFile, type ChatMessage, type ChatReference } from '../chatTypes'
+import type { ChatFile, ChatMessage, ChatReference } from '../chatTypes'
 import { displayQQFaces } from '../messageDisplay'
 import { effectiveTimezone } from '@/utils/userTimezone'
 import { nextTick, type Ref } from 'vue'
@@ -16,9 +16,23 @@ function displayTime(createdAt: string) {
   })
 }
 
-function persistedMessageSyncKey(item: any, resolvedRole: string) {
-  return (resolvedRole === 'ai' && assistantMessageSyncKey(item.runId, item.roundId))
+function persistedMessageSyncKey(item: { id: number; runId?: string; roundId?: string }, resolvedRole: string) {
+  return (resolvedRole === 'ai' && timelineSyncKey({ role: 'ai', runId: item.runId, roundId: item.roundId }))
     || `message:${item.id}`
+}
+
+/** 实时流与持久时间线共用的身份键；不依赖正文内容或本地临时消息 ID。 */
+export function timelineSyncKey(message: {
+  role: string
+  runId?: string
+  roundId?: string
+  toolCallId?: string
+}) {
+  if (message.role === 'tool' && message.toolCallId) return `tool-call:${message.toolCallId}`
+  if (message.role === 'ai' && message.runId && message.roundId) {
+    return `assistant-round:${message.runId}:${message.roundId}`
+  }
+  return undefined
 }
 
 export function sortSessionTimelineMessages(items: ChatMessage[]) {
@@ -47,7 +61,7 @@ export function mapSessionMessageDelta(
     const roundId = item.roundId || undefined
     return {
       id: mkid(), dbId: item.id,
-      _syncKey: persistedMessageSyncKey({ ...item, runId, roundId }, speaker.role),
+      _syncKey: persistedMessageSyncKey({ id: item.id, runId, roundId }, speaker.role),
       role: speaker.role, speakerLabel: speaker.speakerLabel,
       platformUserId: item.platformUserId || null,
       text: displayQQFaces(item.content), html: null,
@@ -67,21 +81,26 @@ export function mapSessionMessageDelta(
         linkButtons: event.linkButtons, time: displayTime(event.createdAt),
         runId: event.runId, roundId: event.roundId,
         _timelineOrder: event.timelineOrder, _createdAt: event.createdAt,
-        _syncKey: assistantMessageSyncKey(event.runId, event.roundId) || `timeline:${event.id}`,
+        _syncKey: timelineSyncKey({ role: 'ai', runId: event.runId, roundId: event.roundId })
+          || `timeline:${event.id}`,
       }
     : {
         id: mkid(), role: 'tool', text: '', toolCallId: event.toolCallId,
         toolName: event.toolName, toolLabel: event.toolLabel,
+        runId: event.runId, roundId: event.roundId,
         toolStatus: event.toolStatus || (event.toolResult !== undefined ? 'success' : 'running'),
         toolInput: event.toolInput, toolResult: event.toolResult,
         toolDurationMs: event.toolDurationMs,
         time: displayTime(event.createdAt), _timelineOrder: event.timelineOrder,
-        _createdAt: event.createdAt, _syncKey: `timeline:${event.id}`,
+        _createdAt: event.createdAt,
+        _syncKey: timelineSyncKey({ role: 'tool', toolCallId: event.toolCallId }) || `timeline:${event.id}`,
       })
   const tools: ChatMessage[] = (data.toolEvents || []).map((event: any) => ({
-    id: mkid(), role: 'tool', text: '', _syncKey: `tool:${event.id}`,
+    id: mkid(), role: 'tool', text: '',
+    _syncKey: timelineSyncKey({ role: 'tool', toolCallId: event.toolCallId }) || `tool:${event.id}`,
     time: displayTime(event.createdAt), toolCallId: event.toolCallId,
     toolName: event.toolName, toolLabel: event.toolLabel,
+    runId: event.runId, roundId: event.roundId,
     _timelineOrder: event.timelineOrder,
     toolStatus: event.toolStatus || (event.toolResult !== undefined ? 'success' : 'running'),
     toolInput: event.toolInput, toolResult: event.toolResult,
@@ -90,19 +109,20 @@ export function mapSessionMessageDelta(
   return [...messages, ...timeline, ...tools]
 }
 
-/** 从消息快照或逐轮时间线中找出最近一条已持久化的助手回复。 */
-export function findLatestPersistedAssistant(data: any, notBefore = 0) {
+/** 只恢复当前 run 的已持久化回复；队列下一轮的回复不能被旧流提前消费。 */
+export function findLatestPersistedAssistant(data: any, runId: string) {
   const candidates = [
     ...(data.messages || []).flatMap((item: any) => item.role === 'assistant'
-      ? [{ item, syncKey: assistantMessageSyncKey(item.runId, item.roundId) || `message:${item.id}`, text: item.content || '' }]
+      ? [{ item, syncKey: timelineSyncKey({ role: 'ai', runId: item.runId, roundId: item.roundId })
+        || `message:${item.id}`, text: item.content || '' }]
       : []),
     ...(data.timelineEvents || []).flatMap((item: any) => item.kind === 'assistant'
-      ? [{ item, syncKey: assistantMessageSyncKey(item.runId, item.roundId) || `timeline:${item.id}`, text: item.text || '' }]
+      ? [{ item, syncKey: timelineSyncKey({ role: 'ai', runId: item.runId, roundId: item.roundId })
+        || `timeline:${item.id}`, text: item.text || '' }]
       : []),
   ].filter(({ item, text }) => {
     const hasContent = Boolean(text?.trim() || item.files?.length)
-    const createdAt = Date.parse(item.createdAt || '')
-    return hasContent && (!Number.isFinite(createdAt) || createdAt >= notBefore)
+    return hasContent && Boolean(runId) && item.runId === runId
   })
   .sort((a, b) => Date.parse(b.item.createdAt || '') - Date.parse(a.item.createdAt || ''))
 
@@ -132,7 +152,13 @@ export function mergeSessionMessageDelta(
       result.push(message)
       continue
     }
-    result[index] = { ...result[index], ...message, id: result[index].id }
+    const existing = result[index]
+    result[index] = {
+      ...existing,
+      ...message,
+      id: existing.id,
+      ...(existing.streaming ? { text: existing.text, streaming: true } : {}),
+    }
   }
   return result
 }

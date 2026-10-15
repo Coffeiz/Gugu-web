@@ -91,6 +91,10 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
         await genstream.publish(session_id, {
             **event,
             "run_id": owner_run_id,
+            # run_id 是 Web Gateway 的 owner 身份，供排队 SSE 做归属过滤；展示
+            # 时间线持久化的是核心循环 run_id。两者分开传递，避免前端无法把
+            # 实时气泡与同一 round 的持久记录关联起来。
+            "core_run_id": event.get("run_id") or current_run_id or None,
             "user_message_id": getattr(user_message, "id", None),
         })
 

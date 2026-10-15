@@ -12,9 +12,7 @@ import { notifyResourceChanged } from '@/services/resourceRefreshEvents'
 import type GuguChatComposer from '../GuguChatComposer.vue'
 import { createPendingQueueKey, getDraftPendingQueueId, getSessionPendingQueueId, setPendingQueueRecoveryNeeded } from './chatPendingQueueStorage'
 import { dispatchPendingQueueItem } from './chatPendingQueueDispatch'
-import { recordStreamDiagnostic } from './chatStreamDiagnostics'
-import { findLatestPersistedAssistant } from './sessionMessageSync'
-import { assistantMessageSyncKey } from '../chatTypes'
+import { findLatestPersistedAssistant, timelineSyncKey } from './sessionMessageSync'
 
 interface StatusItem { kind: 'text' | 'dots' | 'hide'; label?: string }
 
@@ -378,7 +376,6 @@ export function useChatStream(options: {
     onSessionId?: (id: number, timelineOrder: number, userMessageId?: number) => void,
     runController?: AbortController,
   ) {
-    const streamStartedAt = Date.now()
     const decoder = new TextDecoder()
     let buf = '', aiIdx = -1, aiMessageId: number | null = null, aborted = false, interactionPaused = false
     // token 到达速度由 Provider 决定；滚动只是展示副作用，不能让每个 token 等待一次
@@ -466,13 +463,6 @@ export function useChatStream(options: {
           if (!line.startsWith('data: ')) continue
           const raw = line.slice(6).trim(); if (!raw) continue
           let evt; try { evt = JSON.parse(raw) } catch { continue }
-          if (['round_start', 'tool_call', 'tool_done', 'done', 'error', 'interaction_required'].includes(evt.type)) {
-            recordStreamDiagnostic({ session: sid, sequence: Number(evt.diagnostic_seq) || null,
-              detached, viewChanged: viewGeneration !== options.getViewGeneration(),
-              controllerChanged: Boolean(runController && abortCtrl.value !== runController),
-              sessionChanged: sessionId.value !== (sid ?? ownerSid),
-            }, `收到_${evt.type}`)
-          }
           const eventUserMessageId = Number(evt.user_message_id)
           if (Number.isInteger(eventUserMessageId) && eventUserMessageId > 0) {
             outcomeMessageDbId = eventUserMessageId
@@ -505,12 +495,12 @@ export function useChatStream(options: {
             }
           } else if (evt.type === 'round_start') {
             finishRoundMessage()
-            currentRunId = String(evt.run_id || currentRunId)
+            currentRunId = String(evt.core_run_id || evt.run_id || currentRunId)
             currentRoundId = String(evt.round_id || `round-${toolMessageIds.size + 1}`)
           } else if (evt.type === '_new_round') {
             // 兼容旧事件：新版 round_start 已先建立身份，旧客户端只看到这里也不会报错。
             finishRoundMessage()
-            currentRunId = String(evt.run_id || currentRunId)
+            currentRunId = String(evt.core_run_id || evt.run_id || currentRunId)
             if (evt.round_id) currentRoundId = String(evt.round_id)
           } else if (evt.type === 'tool_call') {
             if (evt.name && !evt.name.startsWith('_')) usedTools.add(evt.name)
@@ -522,7 +512,7 @@ export function useChatStream(options: {
                 : messages.value.findIndex(item => item.id === existingId)
               if (existingIndex >= 0 && messages.value[existingIndex]) {
                 const existing = messages.value[existingIndex]
-                existing.runId = evt.run_id || existing.runId
+                existing.runId = evt.core_run_id || currentRunId || existing.runId
                 existing.roundId = evt.round_id || existing.roundId
                 existing.toolName = evt.name || existing.toolName
                 existing.toolLabel = evt.label || existing.toolLabel
@@ -537,9 +527,11 @@ export function useChatStream(options: {
                 messages.value.push({
                   id: messageId, role: 'tool', text: '', time: now(),
                   _timelineOrder: nextTimelineOrder(),
-                  runId: evt.run_id, roundId: evt.round_id || currentRoundId,
+                  runId: evt.core_run_id || currentRunId || evt.run_id,
+                  roundId: evt.round_id || currentRoundId,
                   toolCallId, toolName: evt.name, toolLabel: evt.label,
                   toolStatus: evt.status || 'running', toolInput: evt.input,
+                  _syncKey: timelineSyncKey({ role: 'tool', toolCallId }),
                   ...(evt.status === 'queued' ? {} : { _toolStartedAt: Date.now() }),
                 })
                 sortLiveTimeline()
@@ -576,8 +568,6 @@ export function useChatStream(options: {
               )
             }
             if (toolIndex >= 0 && messages.value[toolIndex]) {
-              recordStreamDiagnostic({ session: sid, sequence: Number(evt.diagnostic_seq) || null,
-                matched: true, succeeded: !evt.status || evt.status === 'success' }, '工具终态匹配')
               messages.value[toolIndex].toolStatus = evt.status || 'success'
               if (evt.result !== undefined) messages.value[toolIndex].toolResult = evt.result
               const startedAt = (messages.value[toolIndex] as ChatMessage & { _toolStartedAt?: number })._toolStartedAt
@@ -588,16 +578,15 @@ export function useChatStream(options: {
                 messages.value[toolIndex].toolDurationMs = Math.max(0, Date.now() - startedAt)
               }
             } else if (live() && evt.name) {
-              recordStreamDiagnostic({ session: sid, sequence: Number(evt.diagnostic_seq) || null,
-                matched: false }, '工具终态补建')
               // tool_done 先于 tool_call 到达时也要落一张终态卡，不能等刷新才补齐。
               const messageId = mkid()
               messages.value.push({
                 id: messageId, role: 'tool', text: '', time: now(),
-                _timelineOrder: nextTimelineOrder(), runId: evt.run_id,
+                _timelineOrder: nextTimelineOrder(), runId: evt.core_run_id || currentRunId || evt.run_id,
                 roundId: evt.round_id || currentRoundId, toolCallId: toolCallId || undefined,
                 toolName: evt.name, toolLabel: evt.label, toolStatus: evt.status || 'success',
                 toolResult: evt.result,
+                _syncKey: toolCallId ? timelineSyncKey({ role: 'tool', toolCallId }) : undefined,
               })
               if (toolCallId) toolMessageIds.set(toolCallId, messageId)
               sortLiveTimeline()
@@ -620,7 +609,7 @@ export function useChatStream(options: {
               if (existing?.interaction) {
                 // loadSession 先恢复历史、resumeStream 再收到快照时会命中这里；
                 // 合并而不是追加，避免刷新后同一个交互出现两张卡。
-                existing.runId = evt.run_id
+                existing.runId = evt.core_run_id || currentRunId || existing.runId
                 existing.roundId = evt.round_id
                 existing.interaction.toolCallId = evt.tool_call_id ? String(evt.tool_call_id) : existing.interaction.toolCallId
                 existing.interaction.title = String(evt.title || existing.interaction.title || i18n.global.t('chatUi.confirmRequired'))
@@ -635,7 +624,7 @@ export function useChatStream(options: {
                 messages.value.push({
                   id: mkid(), role: 'interaction', text: '', time: now(),
                   _timelineOrder: nextTimelineOrder(),
-                  runId: evt.run_id, roundId: evt.round_id,
+                  runId: evt.core_run_id || currentRunId || evt.run_id, roundId: evt.round_id || currentRoundId,
                   interaction: {
                     promptId, kind: String(evt.kind || 'confirm'),
                     toolCallId: evt.tool_call_id ? String(evt.tool_call_id) : null,
@@ -707,9 +696,9 @@ export function useChatStream(options: {
                 const messageId = mkid()
                 messages.value.push({
                   id: messageId, role: 'ai', text: '', time: now(), streaming: true,
-                  runId: evt.run_id || currentRunId || undefined,
+                  runId: evt.core_run_id || currentRunId || evt.run_id || undefined,
                   roundId: evt.round_id || currentRoundId || undefined,
-                  _syncKey: assistantMessageSyncKey(evt.run_id || currentRunId, evt.round_id || currentRoundId) || undefined,
+                  _syncKey: timelineSyncKey({ role: 'ai', runId: evt.core_run_id || currentRunId || evt.run_id, roundId: evt.round_id || currentRoundId }),
                   _timelineOrder: nextTimelineOrder(),
                 })
                 sortLiveTimeline()
@@ -718,8 +707,6 @@ export function useChatStream(options: {
               }
               messages.value[aiIdx].text += tokenContent
               if (messages.value[aiIdx].text.length === tokenContent.length) {
-                recordStreamDiagnostic({ session: sid, sequence: Number(evt.diagnostic_seq) || null,
-                  chars: tokenContent.length, messageId: messages.value[aiIdx].id }, '正文首段写入')
               }
               scheduleStreamScroll()
             }
@@ -733,9 +720,9 @@ export function useChatStream(options: {
                 const messageId = mkid()
                 messages.value.push({
                   id: messageId, role: 'ai', text: '', time: now(), streaming: true,
-                  runId: evt.run_id || currentRunId || undefined,
+                  runId: evt.core_run_id || currentRunId || evt.run_id || undefined,
                   roundId: evt.round_id || currentRoundId || undefined,
-                  _syncKey: assistantMessageSyncKey(evt.run_id || currentRunId, evt.round_id || currentRoundId) || undefined,
+                  _syncKey: timelineSyncKey({ role: 'ai', runId: evt.core_run_id || currentRunId || evt.run_id, roundId: evt.round_id || currentRoundId }),
                   _timelineOrder: nextTimelineOrder(),
                 })
                 sortLiveTimeline()
@@ -757,9 +744,9 @@ export function useChatStream(options: {
                 const messageId = mkid()
                 messages.value.push({
                   id: messageId, role: 'ai', text: '', time: now(), streaming: true,
-                  runId: evt.run_id || currentRunId || undefined,
+                  runId: evt.core_run_id || currentRunId || evt.run_id || undefined,
                   roundId: evt.round_id || currentRoundId || undefined,
-                  _syncKey: assistantMessageSyncKey(evt.run_id || currentRunId, evt.round_id || currentRoundId) || undefined,
+                  _syncKey: timelineSyncKey({ role: 'ai', runId: evt.core_run_id || currentRunId || evt.run_id, roundId: evt.round_id || currentRoundId }),
                   _timelineOrder: nextTimelineOrder(),
                 })
                 sortLiveTimeline()
@@ -836,17 +823,17 @@ export function useChatStream(options: {
     // 工具执行成功后，后端可能已经持久化最终 assistant 消息，但最后一段 SSE
     // 正文在连接收尾竞态中没有被浏览器消费到。此时不能直接显示“没有回复”，
     // 先用本轮工具执行期间创建的最新 assistant 消息恢复视图。
-    if (aiIdx === -1 && usedTools.size && sid != null && !detached && !aborted && !interactionPaused
+    if (aiIdx === -1 && currentRunId && usedTools.size && sid != null && !detached && !aborted && !interactionPaused
         && viewGeneration === options.getViewGeneration()) {
       try {
         const recovered = await agentApi.getMessages(String(sid))
-        const latest = findLatestPersistedAssistant(recovered, streamStartedAt - 60_000)
+        const latest = findLatestPersistedAssistant(recovered, currentRunId)
         if (latest && live()) {
           const item = latest.item
           const messageId = mkid()
           messages.value.push({
             id: messageId,
-            dbId: item.id,
+            dbId: item.messageId ?? (typeof item.id === 'number' ? item.id : undefined),
             role: 'ai',
             text: latest.text,
             html: latest.text ? renderMd(latest.text) : null,
@@ -857,6 +844,8 @@ export function useChatStream(options: {
             _createdAt: item.createdAt,
             _timelineOrder: item.timelineOrder ?? item.id,
             _syncKey: latest.syncKey,
+            runId: item.runId,
+            roundId: item.roundId,
           })
           sortLiveTimeline()
           aiIdx = messages.value.findIndex(item => item.id === messageId)
@@ -864,12 +853,6 @@ export function useChatStream(options: {
         }
       } catch { /* 恢复失败再由调用方决定是否显示兜底提示 */ }
     }
-    recordStreamDiagnostic({ session: sid, detached, aborted, interactionPaused,
-      receivedAssistantContent, pendingTools: messages.value.filter(item =>
-        item.role === 'tool' && toolMessageIds.has(item.toolCallId || '')
-        && ['queued', 'running', 'waiting'].includes(item.toolStatus || '')).length,
-      emptyBubbles: messages.value.filter(item => item.role === 'ai' && !item.text?.trim() && !item.files?.length).length,
-    }, '流收尾')
     return { aiIdx, usedTools, detached, sid, aborted, interactionPaused, receivedAssistantContent }
   }
 
@@ -1103,7 +1086,10 @@ export function useChatStream(options: {
 
       let receivedSessionIdEvent = false
       const r = await consumeStream(res.body.getReader(), ownerSid, viewGeneration, '', (_acceptedSessionId, timelineOrder, userMessageId) => {
-        if (optimisticUserMessage && userMessageId) optimisticUserMessage.dbId = userMessageId
+        if (optimisticUserMessage && userMessageId) {
+          optimisticUserMessage.dbId = userMessageId
+          optimisticUserMessage._syncKey = `message:${userMessageId}`
+        }
         runSessionIds.set(requestController, _acceptedSessionId)
         if (stopWaitingForSessionId.has(requestController)) {
           stopWaitingForSessionId.delete(requestController)
@@ -1115,6 +1101,7 @@ export function useChatStream(options: {
         optimisticUserMessage = {
           id: mkid(), role: 'user', text, time: now(),
           dbId: userMessageId,
+          _syncKey: userMessageId ? `message:${userMessageId}` : undefined,
           references: refs.length ? refs : undefined,
           files: atts.length ? atts.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, attach_id: a.attach_id, kind: a.kind, duration: a.duration, upload: true, _thumbUrl: a._thumbUrl, img_width: a.img_width, img_height: a.img_height })) : undefined,
           _timelineOrder: timelineOrder,

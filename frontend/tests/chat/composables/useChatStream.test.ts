@@ -10,9 +10,10 @@ import type { ChatMessage } from '@/components/common/gugu-chat/chatTypes'
 vi.mock('@/services/sfx', () => ({ playGuguSfx: vi.fn() }))
 
 function createOptions(messages: ChatMessage[], sessionId = ref<number | null>(42)) {
+  let nextId = 100
   return {
     messages: ref(messages),
-    mkid: () => 100,
+    mkid: () => nextId++,
     now: () => '12:00',
     inputText: ref(''),
     inputReferences: ref([]),
@@ -41,35 +42,30 @@ describe('useChatStream 停止 run', () => {
     vi.unstubAllGlobals()
   })
 
-  it('流式回答与同一 run/round 的持久化回答合并为同一条气泡', async () => {
+  it('SSE owner run 与核心 run 不同时，持久化副本仍合并到实时回复气泡', async () => {
     const options = createOptions([])
     const stream = useChatStream(options)
-    let sseController!: ReadableStreamDefaultController<Uint8Array>
-    const body = new ReadableStream<Uint8Array>({
-      start(controller) { sseController = controller },
-    })
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(body)))
-
-    const consuming = stream.resumeStream(42)
-    const send = (value: object) => sseController.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(value)}\n\n`))
-    send({ type: 'round_start', run_id: 'run-1', round_id: 'round-2' })
-    send({ type: 'token', run_id: 'run-1', round_id: 'round-2', content: '同一轮的回答' })
-    send({ type: 'done', run_id: 'run-1' })
-    sseController.close()
-    await consuming
-
-    const persisted = mapSessionMessageDelta({
-      messages: [{ id: 91, role: 'assistant', content: '同一轮的回答', createdAt: '2026-10-15T03:17:00Z',
-        runId: 'run-1', roundId: 'round-2' }],
-      timelineEvents: [], toolEvents: [],
-    }, () => 101, role => ({ role: role === 'assistant' ? 'ai' : role }))
+    const events = [
+      { type: 'round_start', run_id: 'owner-run', core_run_id: 'core-run', round_id: 'round-2' },
+      { type: 'token', run_id: 'owner-run', core_run_id: 'core-run', round_id: 'round-2', content: '实时回答正文' },
+      { type: 'done', run_id: 'owner-run', core_run_id: 'core-run' },
+    ]
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(events.map(event => `data: ${JSON.stringify(event)}\n\n`).join('')))
+        controller.close()
+      },
+    }))))
+    await stream.resumeStream(42)
+    const persisted = mapSessionMessageDelta({ messages: [{ id: 91, role: 'assistant',
+      content: '已持久化回答正文', runId: 'core-run', roundId: 'round-2', createdAt: '' }],
+    timelineEvents: [], toolEvents: [] }, () => 200, role => ({ role: role === 'assistant' ? 'ai' : role }))
     const merged = mergeSessionMessageDelta(options.messages.value, persisted)
-
-    expect(options.messages.value[0]).toMatchObject({
-      role: 'ai', text: '同一轮的回答', _syncKey: 'assistant:run-1:round-2',
+    expect(merged.filter(item => item.role === 'ai')).toHaveLength(1)
+    expect(merged.find(item => item.role === 'ai')).toMatchObject({
+      id: options.messages.value.find(item => item.role === 'ai')?.id,
+      dbId: 91, runId: 'core-run', roundId: 'round-2', text: '已持久化回答正文',
     })
-    expect(merged).toHaveLength(1)
-    expect(merged[0]).toMatchObject({ dbId: 91, text: '同一轮的回答' })
   })
 
   it('同一工具调用从排队中更新为进行中且只保留一张卡片', async () => {
