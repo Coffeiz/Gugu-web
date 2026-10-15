@@ -105,66 +105,97 @@ def _display_tool_result_name(block: dict) -> str:
     return tool_name
 
 
+def _tool_event_identity(call_id: str, message) -> tuple[str, str | None, str | None, str]:
+    run_id = getattr(message, "run_id", None)
+    round_id = getattr(message, "round_id", None)
+    if run_id and round_id:
+        identity = json.dumps([str(run_id), str(round_id), call_id], ensure_ascii=False, separators=(",", ":"))
+        stable_id = f"tool:{identity}"
+    else:
+        identity = call_id
+        stable_id = f"tool:{call_id}"
+    return identity, str(run_id) if run_id else None, str(round_id) if round_id else None, stable_id
+
+
+def _new_chat_tool_call_event(call_id: str, block: dict, message) -> tuple[str, dict]:
+    identity, run_id, round_id, stable_id = _tool_event_identity(call_id, message)
+    tool_name, tool_input = _display_tool_call(block)
+    event = {
+        "id": stable_id,
+        "toolCallId": call_id,
+        **({"runId": run_id, "roundId": round_id} if run_id and round_id else {}),
+        "timelineOrder": message.id,
+        "toolName": tool_name,
+        "toolLabel": _tool_label(tool_name),
+        "toolInput": tool_input,
+        "toolStatus": "running",
+        "createdAt": message.created_at,
+    }
+    batch_id = getattr(message, "canonical_batch_id", None)
+    if batch_id is not None:
+        event["canonicalBatchId"] = int(batch_id)
+    return identity, event
+
+
+def _new_chat_tool_result_event(call_id: str, block: dict, message) -> tuple[str, dict]:
+    identity, run_id, round_id, stable_id = _tool_event_identity(call_id, message)
+    tool_name = _display_tool_result_name(block) or "工具调用"
+    return identity, {
+        "id": stable_id,
+        "toolCallId": call_id,
+        **({"runId": run_id, "roundId": round_id} if run_id and round_id else {}),
+        "timelineOrder": message.id,
+        "toolName": tool_name,
+        "toolLabel": _tool_label(tool_name) if tool_name != "工具调用" else "工具调用",
+        "toolStatus": "running",
+        "createdAt": message.created_at,
+    }
+
+
+def _apply_chat_tool_result(event: dict, block: dict, message) -> None:
+    event["toolResult"] = block.get("content", "")
+    event["toolStatus"] = "error" if _tool_result_is_error(block) else "success"
+    # 工具调用和结果可能跨过消息分页窗口。以结果所在消息作为时间线位置，
+    # 这样恢复当前窗口时仍能保留前面已经配对的工具名称和输入。
+    event["timelineOrder"] = message.id
+    event["updatedAt"] = message.created_at
+    event["toolDurationMs"] = max(
+        0, int((message.created_at - event["createdAt"]).total_seconds() * 1000)
+    )
+    batch_id = getattr(message, "canonical_batch_id", None)
+    if batch_id is not None:
+        event["canonicalBatchId"] = int(batch_id)
+
+
 def build_chat_tool_events(messages: Iterable) -> list[dict]:
     """把持久化的 canonical tool turn 聚合成聊天 UI 的工具气泡。"""
     # 不假设数据库中的块顺序永远是 call -> result。旧数据、跨 provider
     # 持久化或事务边界都可能让 result 先被扫描到；先收集调用，再合并结果，
     # 避免先创建「工具调用」占位事件后丢失真实工具名。
     events: dict[str, dict] = {}
-    pending_results: list[tuple[str, dict, object]] = []
+    pending_results: list[tuple[str, str, dict, object]] = []
     for message in messages:
         content_json = getattr(message, "content_json", None)
         for index, block in enumerate(_blocks(content_json)):
             block_type = block.get("type")
             if block_type in ("tool_call", "tool_use"):
                 call_id = str(block.get("id") or f"message-{message.id}-{index}")
-                tool_name, tool_input = _display_tool_call(block)
-                events[call_id] = {
-                    "id": f"tool:{call_id}",
-                    "toolCallId": call_id,
-                    "timelineOrder": message.id,
-                    "toolName": tool_name,
-                    "toolLabel": _tool_label(tool_name),
-                    "toolInput": tool_input,
-                    "toolStatus": "running",
-                    "createdAt": message.created_at,
-                }
-                batch_id = getattr(message, "canonical_batch_id", None)
-                if batch_id is not None:
-                    events[call_id]["canonicalBatchId"] = int(batch_id)
+                identity, event = _new_chat_tool_call_event(call_id, block, message)
+                events[identity] = event
             elif block_type == "tool_result":
                 call_id = str(block.get("tool_call_id") or block.get("tool_use_id") or "")
                 if not call_id:
                     continue
-                pending_results.append((call_id, block, message))
+                identity, _, _, _ = _tool_event_identity(call_id, message)
+                pending_results.append((identity, call_id, block, message))
 
-    for call_id, block, message in pending_results:
-        event = events.get(call_id)
+    for identity, call_id, block, message in pending_results:
+        event = events.get(identity)
         if event is None:
             # 兼容历史中只保存结果块的异常记录；若结果带有 tool_name，
             # 仍可恢复具体名称，否则才退化为通用文案。
-            tool_name = _display_tool_result_name(block) or "工具调用"
-            event = events.setdefault(call_id, {
-                "id": f"tool:{call_id}",
-                "toolCallId": call_id,
-                "timelineOrder": message.id,
-                "toolName": tool_name,
-                "toolLabel": _tool_label(tool_name) if tool_name != "工具调用" else "工具调用",
-                "toolStatus": "running",
-                "createdAt": message.created_at,
-            })
-        event["toolResult"] = block.get("content", "")
-        event["toolStatus"] = "error" if _tool_result_is_error(block) else "success"
-        # 工具调用和结果可能跨过消息分页窗口。以结果所在消息作为时间线位置，
-        # 这样恢复当前窗口时仍能保留前面已经配对的工具名称和输入。
-        event["timelineOrder"] = message.id
-        event["updatedAt"] = message.created_at
-        event["toolDurationMs"] = max(
-            0, int((message.created_at - event["createdAt"]).total_seconds() * 1000)
-        )
-        batch_id = getattr(message, "canonical_batch_id", None)
-        if batch_id is not None:
-            event["canonicalBatchId"] = int(batch_id)
+            event = events.setdefault(identity, _new_chat_tool_result_event(call_id, block, message)[1])
+        _apply_chat_tool_result(event, block, message)
     return sorted(events.values(), key=lambda item: (item["createdAt"], item["id"]))
 
 

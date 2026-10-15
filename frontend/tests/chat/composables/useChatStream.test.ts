@@ -92,6 +92,33 @@ describe('useChatStream 停止 run', () => {
     expect(options.messages.value[0]?.toolStatus).toBe('success')
   })
 
+  it('不同回合复用相同 toolCallId 时仍分别更新各自的工具卡', async () => {
+    const options = createOptions([])
+    const stream = useChatStream(options)
+    let sseController!: ReadableStreamDefaultController<Uint8Array>
+    const body = new ReadableStream<Uint8Array>({ start(controller) { sseController = controller } })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(body)))
+
+    const consuming = stream.resumeStream(42)
+    const send = (value: object) => sseController.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(value)}\n\n`))
+    send({ type: 'round_start', core_run_id: 'run-a', round_id: 'r1' })
+    send({ type: 'tool_call', core_run_id: 'run-a', round_id: 'r1', tool_call_id: 'call-1', name: 'search', status: 'running' })
+    send({ type: 'tool_done', core_run_id: 'run-a', round_id: 'r1', tool_call_id: 'call-1', name: 'search', status: 'success' })
+    send({ type: 'round_start', core_run_id: 'run-a', round_id: 'r2' })
+    send({ type: 'tool_call', core_run_id: 'run-a', round_id: 'r2', tool_call_id: 'call-1', name: 'search', status: 'running' })
+    send({ type: 'tool_done', core_run_id: 'run-a', round_id: 'r2', tool_call_id: 'call-1', name: 'search', status: 'error' })
+    send({ type: 'done', core_run_id: 'run-a' })
+    sseController.close()
+    await consuming
+
+    const tools = options.messages.value.filter(message => message.role === 'tool')
+    expect(tools).toHaveLength(2)
+    expect(tools.map(({ runId, roundId, toolStatus, _syncKey }) => ({ runId, roundId, toolStatus, _syncKey }))).toEqual([
+      { runId: 'run-a', roundId: 'r1', toolStatus: 'success', _syncKey: 'tool-call:["run-a","r1","call-1"]' },
+      { runId: 'run-a', roundId: 'r2', toolStatus: 'error', _syncKey: 'tool-call:["run-a","r2","call-1"]' },
+    ])
+  })
+
   it('失败终态更新原用户消息且不伪造 assistant 错误消息', async () => {
     const userMessage: ChatMessage = { id: 7, dbId: 42, role: 'user', text: '测试请求', time: '12:00' }
     const options = createOptions([userMessage])

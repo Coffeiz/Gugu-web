@@ -87,6 +87,40 @@ describe('mergeSessionMessageDelta', () => {
     expect(incoming[1]?._syncKey).toBe('assistant-round:run-a:r1')
   })
 
+  it('首屏历史与增量恢复对同一持久化事件生成相同身份键', () => {
+    const history = {
+      messages: [{ id: 91, role: 'assistant', content: '已有回答', createdAt: '', runId: 'run-a', roundId: 'r1' }],
+      timelineEvents: [{ id: 'timeline-91:0', messageId: 91, kind: 'assistant', text: '已有回答',
+        createdAt: '', runId: 'run-a', roundId: 'r1' }],
+      toolEvents: [{ id: 'tool:call-1', toolCallId: 'call-1', runId: 'run-a', roundId: 'r1', createdAt: '' }],
+    }
+    const initial = mapSessionMessageDelta(history, () => 1, role => ({ role: role === 'assistant' ? 'ai' : role }))
+    const refreshed = mapSessionMessageDelta(history, () => 2, role => ({ role: role === 'assistant' ? 'ai' : role }))
+
+    expect(initial.map(item => item._syncKey)).toEqual(refreshed.map(item => item._syncKey))
+    expect(initial.map(item => item._syncKey)).toEqual([
+      'assistant-round:run-a:r1', 'assistant-round:run-a:r1', 'tool-call:["run-a","r1","call-1"]',
+    ])
+  })
+
+  it('工具调用键包含 run 和 round，旧事件则使用持久化事件 ID', () => {
+    const incoming = mapSessionMessageDelta({
+      messages: [], timelineEvents: [],
+      toolEvents: [
+        { id: 'event-a', toolCallId: 'call-1', runId: 'run-a', roundId: 'r1', createdAt: '' },
+        { id: 'event-b', toolCallId: 'call-1', runId: 'run-b', roundId: 'r1', createdAt: '' },
+        { id: 'legacy-a', toolCallId: 'call-1', createdAt: '' },
+        { id: 'legacy-b', toolCallId: 'call-1', createdAt: '' },
+      ],
+    }, () => 1, role => ({ role }))
+
+    expect(incoming.map(item => item._syncKey)).toEqual([
+      'tool-call:["run-a","r1","call-1"]', 'tool-call:["run-b","r1","call-1"]',
+      'tool:legacy-a', 'tool:legacy-b',
+    ])
+    expect(mergeSessionMessageDelta([], incoming)).toHaveLength(4)
+  })
+
   it('保留不同 run/round 中正文相同的合法回答', () => {
     const current: ChatMessage[] = [{
       id: 1, role: 'ai', text: '收到', time: '', runId: 'run-1', roundId: 'round-1',

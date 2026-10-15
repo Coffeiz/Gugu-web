@@ -505,15 +505,20 @@ export function useChatStream(options: {
           } else if (evt.type === 'tool_call') {
             if (evt.name && !evt.name.startsWith('_')) usedTools.add(evt.name)
             const toolCallId = String(evt.tool_call_id || `${evt.round_id || currentRoundId || 'round'}-tool-${toolMessageIds.size + 1}`)
+            const runId = String(evt.core_run_id || currentRunId || evt.run_id || '')
+            const roundId = String(evt.round_id || currentRoundId || '')
+            const lookupKey = JSON.stringify([runId, roundId, toolCallId])
+            const syncKey = timelineSyncKey({ role: 'tool', runId, roundId, toolCallId })
             if (live() && !evt.name?.startsWith('_')) {
-              const existingId = toolMessageIds.get(toolCallId)
+              const existingId = toolMessageIds.get(lookupKey)
               const existingIndex = existingId == null
-                ? messages.value.findIndex(item => item.role === 'tool' && item.toolCallId === toolCallId)
+                ? messages.value.findIndex(item => item.role === 'tool' && item.toolCallId === toolCallId
+                  && (!runId || item.runId === runId) && (!roundId || item.roundId === roundId))
                 : messages.value.findIndex(item => item.id === existingId)
               if (existingIndex >= 0 && messages.value[existingIndex]) {
                 const existing = messages.value[existingIndex]
-                existing.runId = evt.core_run_id || currentRunId || existing.runId
-                existing.roundId = evt.round_id || existing.roundId
+                existing.runId = runId || existing.runId
+                existing.roundId = roundId || existing.roundId
                 existing.toolName = evt.name || existing.toolName
                 existing.toolLabel = evt.label || existing.toolLabel
                 if (evt.status === 'running' && existing.toolStatus !== 'running') {
@@ -521,21 +526,21 @@ export function useChatStream(options: {
                 }
                 existing.toolStatus = evt.status || existing.toolStatus || 'running'
                 if (evt.input !== undefined) existing.toolInput = evt.input
-                toolMessageIds.set(toolCallId, existing.id)
+                toolMessageIds.set(lookupKey, existing.id)
               } else {
                 const messageId = mkid()
                 messages.value.push({
                   id: messageId, role: 'tool', text: '', time: now(),
                   _timelineOrder: nextTimelineOrder(),
-                  runId: evt.core_run_id || currentRunId || evt.run_id,
-                  roundId: evt.round_id || currentRoundId,
+                  runId: runId || undefined,
+                  roundId: roundId || undefined,
                   toolCallId, toolName: evt.name, toolLabel: evt.label,
                   toolStatus: evt.status || 'running', toolInput: evt.input,
-                  _syncKey: timelineSyncKey({ role: 'tool', toolCallId }),
+                  _syncKey: syncKey,
                   ...(evt.status === 'queued' ? {} : { _toolStartedAt: Date.now() }),
                 })
                 sortLiveTimeline()
-                toolMessageIds.set(toolCallId, messageId)
+                toolMessageIds.set(lookupKey, messageId)
                 await options.scrollBottom()
               }
             }
@@ -551,10 +556,17 @@ export function useChatStream(options: {
               else if (MCP_TOOLS.has(evt.name)) notifyResourceChanged('mcp')
             }
             const toolCallId = evt.tool_call_id ? String(evt.tool_call_id) : ''
-            const mappedMessageId = toolCallId ? toolMessageIds.get(toolCallId) : undefined
+            const runId = String(evt.core_run_id || currentRunId || evt.run_id || '')
+            const roundId = String(evt.round_id || currentRoundId || '')
+            const lookupKey = JSON.stringify([runId, roundId, toolCallId])
+            const syncKey = toolCallId
+              ? timelineSyncKey({ role: 'tool', runId, roundId, toolCallId })
+              : undefined
+            const mappedMessageId = toolCallId ? toolMessageIds.get(lookupKey) : undefined
             let toolIndex = mappedMessageId == null
               ? (toolCallId
-                ? messages.value.findIndex(item => item.role === 'tool' && item.toolCallId === toolCallId)
+                ? messages.value.findIndex(item => item.role === 'tool' && item.toolCallId === toolCallId
+                  && (!runId || item.runId === runId) && (!roundId || item.roundId === roundId))
                 : -1)
               : messages.value.findIndex(item => item.id === mappedMessageId)
             // 兼容极少数旧/代理事件缺少 tool_call_id 的情况：按当前 round 和工具名
@@ -563,7 +575,8 @@ export function useChatStream(options: {
               toolIndex = messages.value.findLastIndex(item =>
                 item.role === 'tool'
                 && (item.toolStatus === 'running' || item.toolStatus === 'queued')
-                && (!evt.round_id || item.roundId === evt.round_id)
+                && (!roundId || item.roundId === roundId)
+                && (!runId || item.runId === runId)
                 && (!item.toolName || item.toolName === evt.name),
               )
             }
@@ -582,13 +595,13 @@ export function useChatStream(options: {
               const messageId = mkid()
               messages.value.push({
                 id: messageId, role: 'tool', text: '', time: now(),
-                _timelineOrder: nextTimelineOrder(), runId: evt.core_run_id || currentRunId || evt.run_id,
-                roundId: evt.round_id || currentRoundId, toolCallId: toolCallId || undefined,
+                _timelineOrder: nextTimelineOrder(), runId: runId || undefined,
+                roundId: roundId || undefined, toolCallId: toolCallId || undefined,
                 toolName: evt.name, toolLabel: evt.label, toolStatus: evt.status || 'success',
                 toolResult: evt.result,
-                _syncKey: toolCallId ? timelineSyncKey({ role: 'tool', toolCallId }) : undefined,
+                _syncKey: syncKey,
               })
-              if (toolCallId) toolMessageIds.set(toolCallId, messageId)
+              if (toolCallId) toolMessageIds.set(lookupKey, messageId)
               sortLiveTimeline()
               await options.scrollBottom()
             }

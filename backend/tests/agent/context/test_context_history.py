@@ -273,6 +273,34 @@ def test_chat_tool_events_restore_call_and_result_as_one_bubble():
     }]
 
 
+def test_chat_tool_events_scope_reused_provider_ids_to_run_and_round():
+    from datetime import datetime, timezone
+
+    first_created = datetime(2026, 8, 22, 7, 0, tzinfo=timezone.utc)
+    second_created = datetime(2026, 8, 22, 7, 1, tzinfo=timezone.utc)
+    first_result_at = datetime(2026, 8, 22, 7, 0, 1, tzinfo=timezone.utc)
+    second_result_at = datetime(2026, 8, 22, 7, 1, 1, tzinfo=timezone.utc)
+    rows = [
+        SimpleNamespace(id=10, created_at=first_created, run_id="run-a", round_id="r1",
+            content_json=[{"type": "tool_call", "id": "call-1", "name": "search", "arguments": {}}]),
+        SimpleNamespace(id=11, created_at=first_result_at, run_id="run-a", round_id="r1",
+            content_json=[{"type": "tool_result", "tool_call_id": "call-1", "content": "first"}]),
+        SimpleNamespace(id=20, created_at=second_created, run_id="run-b", round_id="r1",
+            content_json=[{"type": "tool_call", "id": "call-1", "name": "search", "arguments": {}}]),
+        SimpleNamespace(id=21, created_at=second_result_at, run_id="run-b", round_id="r1",
+            content_json=[{"type": "tool_result", "tool_call_id": "call-1", "content": "second"}]),
+    ]
+
+    events = build_chat_tool_events(rows)
+
+    assert [(event["runId"], event["roundId"], event["toolCallId"], event["toolResult"])
+            for event in events] == [
+        ("run-a", "r1", "call-1", "first"),
+        ("run-b", "r1", "call-1", "second"),
+    ]
+    assert events[0]["id"] != events[1]["id"]
+
+
 def test_chat_tool_events_restore_name_when_result_is_scanned_before_call():
     """历史块顺序异常时也不能把具体工具名退化成通用「工具调用」。"""
     from datetime import datetime, timezone

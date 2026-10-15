@@ -24,15 +24,19 @@ function persistedMessageSyncKey(item: { id: number; runId?: string; roundId?: s
 /** 实时流与持久时间线共用的身份键；不依赖正文内容或本地临时消息 ID。 */
 export function timelineSyncKey(message: {
   role: string
+  id?: string | number
   runId?: string
   roundId?: string
   toolCallId?: string
+  fallback?: string
 }) {
-  if (message.role === 'tool' && message.toolCallId) return `tool-call:${message.toolCallId}`
+  if (message.role === 'tool' && message.toolCallId && message.runId && message.roundId) {
+    return `tool-call:${JSON.stringify([message.runId, message.roundId, message.toolCallId])}`
+  }
   if (message.role === 'ai' && message.runId && message.roundId) {
     return `assistant-round:${message.runId}:${message.roundId}`
   }
-  return undefined
+  return message.fallback || (message.id == null ? undefined : `timeline:${message.id}`)
 }
 
 export function sortSessionTimelineMessages(items: ChatMessage[]) {
@@ -81,8 +85,8 @@ export function mapSessionMessageDelta(
         linkButtons: event.linkButtons, time: displayTime(event.createdAt),
         runId: event.runId, roundId: event.roundId,
         _timelineOrder: event.timelineOrder, _createdAt: event.createdAt,
-        _syncKey: timelineSyncKey({ role: 'ai', runId: event.runId, roundId: event.roundId })
-          || `timeline:${event.id}`,
+        _syncKey: timelineSyncKey({ role: 'ai', runId: event.runId, roundId: event.roundId,
+          fallback: `timeline:${event.id}` }),
       }
     : {
         id: mkid(), role: 'tool', text: '', toolCallId: event.toolCallId,
@@ -93,11 +97,13 @@ export function mapSessionMessageDelta(
         toolDurationMs: event.toolDurationMs,
         time: displayTime(event.createdAt), _timelineOrder: event.timelineOrder,
         _createdAt: event.createdAt,
-        _syncKey: timelineSyncKey({ role: 'tool', toolCallId: event.toolCallId }) || `timeline:${event.id}`,
+        _syncKey: timelineSyncKey({ role: 'tool', runId: event.runId, roundId: event.roundId,
+          toolCallId: event.toolCallId, fallback: `timeline:${event.id}` }),
       })
   const tools: ChatMessage[] = (data.toolEvents || []).map((event: any) => ({
     id: mkid(), role: 'tool', text: '',
-    _syncKey: timelineSyncKey({ role: 'tool', toolCallId: event.toolCallId }) || `tool:${event.id}`,
+    _syncKey: timelineSyncKey({ role: 'tool', runId: event.runId, roundId: event.roundId,
+      toolCallId: event.toolCallId, fallback: `tool:${event.id}` }),
     time: displayTime(event.createdAt), toolCallId: event.toolCallId,
     toolName: event.toolName, toolLabel: event.toolLabel,
     runId: event.runId, roundId: event.roundId,
@@ -113,12 +119,11 @@ export function mapSessionMessageDelta(
 export function findLatestPersistedAssistant(data: any, runId: string) {
   const candidates = [
     ...(data.messages || []).flatMap((item: any) => item.role === 'assistant'
-      ? [{ item, syncKey: timelineSyncKey({ role: 'ai', runId: item.runId, roundId: item.roundId })
-        || `message:${item.id}`, text: item.content || '' }]
+      ? [{ item, syncKey: persistedMessageSyncKey({ id: item.id, runId: item.runId, roundId: item.roundId }, 'ai'), text: item.content || '' }]
       : []),
     ...(data.timelineEvents || []).flatMap((item: any) => item.kind === 'assistant'
-      ? [{ item, syncKey: timelineSyncKey({ role: 'ai', runId: item.runId, roundId: item.roundId })
-        || `timeline:${item.id}`, text: item.text || '' }]
+      ? [{ item, syncKey: timelineSyncKey({ role: 'ai', runId: item.runId, roundId: item.roundId,
+        fallback: `timeline:${item.id}` }), text: item.text || '' }]
       : []),
   ].filter(({ item, text }) => {
     const hasContent = Boolean(text?.trim() || item.files?.length)
