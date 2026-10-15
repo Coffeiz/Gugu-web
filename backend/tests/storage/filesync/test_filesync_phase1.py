@@ -220,7 +220,7 @@ async def test_known_workspace_file_is_reconciled_into_its_folder(db, user_a, mo
     monkeypatch.setattr(workspaces, "get_settings", lambda: settings)
 
     directory = WorkspaceDirectory(
-        user_id=user_a.id, name="默认工作区", directory_name="workspace",
+        user_id=user_a.id, name="默认工作区", directory_name="default",
         is_default=True, is_system=True,
     )
     db.add(directory)
