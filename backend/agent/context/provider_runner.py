@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 
+from agent.providers.cache_probe import finish_usage_probe, start_request_probe
 from agent.providers.standalone import output_budget
 from agent.security.sanitize import strip_think_blocks
 
@@ -78,6 +79,7 @@ async def complete_messages(
     json_mode: bool = False,
     tools: list | None = None,
     usage_sink: list | None = None,
+    probe_sink: list | None = None,
     read_timeout: float | None = None,
 ) -> str:
     """追加式分支：复用不可变 ProviderConversation，delta 只追加一次。
@@ -104,18 +106,20 @@ async def complete_messages(
         text = await _anthropic(sys, user, ai, max_tokens,
                                 settings=settings, history=history, tools=tools,
                                 align_with_main_run=True, usage_sink=usage_sink,
+                                probe_sink=probe_sink,
                                 read_timeout=read_timeout)
         return _parse_json(text) if json_mode else text
     text = await _non_anthropic(sys, user, ai, max_tokens, json_mode=json_mode,
                          thinking=thinking, settings=settings, history=history,
                          tools=tools, usage_sink=usage_sink,
+                         probe_sink=probe_sink,
                          read_timeout=read_timeout)
     return _parse_json(text) if json_mode else text
 
 
 async def _non_anthropic(sys, user, ai, max_tokens, *, json_mode=False,
                          thinking=None, settings=None, history=None, tools=None,
-                         usage_sink=None, read_timeout=None):
+                         usage_sink=None, probe_sink=None, read_timeout=None):
     """文本、JSON、追加分支共用协议路由，不载入主对话的推理状态。"""
     from agent import providers
 
@@ -133,11 +137,13 @@ async def _non_anthropic(sys, user, ai, max_tokens, *, json_mode=False,
             tools=tools,
             json_mode=json_mode,
             usage_sink=usage_sink,
+            probe_sink=probe_sink,
             read_timeout=read_timeout,
         ))
     return await _openai(sys, user, ai, max_tokens, json_mode=json_mode,
                          thinking=thinking, settings=settings, history=history,
                          tools=tools, usage_sink=usage_sink,
+                         probe_sink=probe_sink,
                          read_timeout=read_timeout)
 
 
@@ -182,6 +188,7 @@ async def _anthropic(
     tools: list | None = None,
     align_with_main_run: bool = False,
     usage_sink: list | None = None,
+    probe_sink: list | None = None,
     read_timeout: float | None = None,
 ) -> str:
     import httpx
@@ -241,10 +248,12 @@ async def _anthropic(
         kwargs.update(adapter.build_anthropic_generation_params(ai))
     elif thinking is not None:
         kwargs.update(providers.adapter_for(ai).build_anthropic_thinking_params(ai, thinking=thinking))
+    probe = start_request_probe(probe_sink, kwargs)
     resp = await client.messages.create(**kwargs)
     usage = getattr(resp, "usage", None)
     from agent.usage import normalize_anthropic_usage
     usage = normalize_anthropic_usage(usage)
+    finish_usage_probe(probe, getattr(resp, "usage", None), usage)
     if usage_sink is not None:
         usage_sink.append(usage)
     await _record_usage(settings, ai, usage)
@@ -283,6 +292,7 @@ async def _openai(
     history: list | None = None,
     tools: list | None = None,
     usage_sink: list | None = None,
+    probe_sink: list | None = None,
     read_timeout: float | None = None,
 ) -> str:
     import httpx
@@ -324,10 +334,12 @@ async def _openai(
         if thinking_params:
             kwargs.update(thinking_params)
     kwargs["messages"] = kwargs["messages"].to_messages()
+    probe = start_request_probe(probe_sink, kwargs)
     resp = await client.chat.completions.create(**kwargs)
     usage = getattr(resp, "usage", None)
     from agent.usage import normalize_openai_usage
     usage = normalize_openai_usage(usage)
+    finish_usage_probe(probe, getattr(resp, "usage", None), usage)
     if usage_sink is not None:
         usage_sink.append(usage)
     await _record_usage(settings, ai, usage)

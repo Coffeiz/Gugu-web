@@ -60,6 +60,12 @@ class ContextBranch:
         # 经旁路收集，成功后喂 cache_capability 纯观测记账（白名单已废止，观测
         # 只记录不拦截）；不改返回契约。
         usage_sink: list = []
+        probe_sink: list = []
+        if policy.name == "compaction":
+            from agent.runtime.loopscope_trace import state as _trace_state
+
+            if not _trace_state._enabled():
+                probe_sink = None
         try:
             for attempts in range(1, max(0, policy.max_retries) + 2):
                 if attempts > 1:
@@ -78,6 +84,7 @@ class ContextBranch:
                             json_mode=policy.output_mode != "text",
                             tools=list(branch_input.tools) or None,
                             usage_sink=usage_sink,
+                            probe_sink=probe_sink,
                             read_timeout=policy.provider_read_timeout_seconds,
                         )
                         ok = bool(str(output or "").strip()) and (
@@ -132,6 +139,11 @@ class ContextBranch:
                 _modelctx.set_usage_context(
                     _prev_usage_ctx.user_id, _prev_usage_ctx.session_id,
                     scenario=_prev_usage_ctx.scenario)
+
+        if policy.name == "compaction" and probe_sink:
+            from agent.runtime.loopscope_trace.cache_probe import record_compaction_probe
+
+            record_compaction_probe(branch_input, settings, probe_sink)
 
         output_fp = _fingerprint(output) if output else None
         if branch_input.branch_mode == "append_reuse" and usage_sink:

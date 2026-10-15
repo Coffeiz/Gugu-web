@@ -11,6 +11,7 @@ from typing import Any
 from agent.context.budget import is_context_overflow_error
 from agent.context.canonical_context import digest
 from agent.providers.base import ResponsesInputCapabilities
+from agent.providers.cache_probe import finish_usage_probe, start_request_probe
 from agent.providers.message_utils import _openai_tool_result, render_provider_history
 from app.core.errors import Invalid
 
@@ -412,6 +413,7 @@ async def complete_branch(
     tools: list[dict] | None = None,
     json_mode: bool = False,
     usage_sink: list | None = None,
+    probe_sink: list | None = None,
     read_timeout: float | None = None,
 ) -> str:
     """以完整历史执行独立 Responses 只读分支，不接入主 run 的状态。"""
@@ -492,6 +494,7 @@ async def complete_branch(
     if prompt_cache_key:
         request["prompt_cache_key"] = prompt_cache_key
 
+    probe = start_request_probe(probe_sink, request)
     response = await client.responses.create(**request)
     usage = getattr(response, "usage", None)
     if usage is None and isinstance(response, dict):
@@ -499,6 +502,7 @@ async def complete_branch(
     from agent.usage import normalize_responses_usage, record_current_usage
 
     normalized_usage = normalize_responses_usage(usage)
+    finish_usage_probe(probe, usage, normalized_usage)
     if usage_sink is not None:
         usage_sink.append(normalized_usage)
     await record_current_usage(settings, ai, normalized_usage)

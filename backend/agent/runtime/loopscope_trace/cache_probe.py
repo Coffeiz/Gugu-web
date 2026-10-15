@@ -315,6 +315,122 @@ def record_reflection_usage(
         diag_log("agent.runtime.loopscope_trace.reflection_cache_probe", exc)
 
 
+def record_compaction_probe(
+    branch_input: Any, settings: Any, attempts: list[dict[str, Any]],
+) -> None:
+    """将压缩分支真实请求体和 provider 原始 usage 保存到受控 LoopScope trace。"""
+    from . import state
+
+    if not attempts or not state._enabled():
+        return
+    try:
+        from agent import providers
+        from agent.llm.modelctx import effective_ai
+
+        ai = effective_ai(settings)
+        adapter = providers.adapter_for(ai)
+        model = _safe_label(getattr(ai, "model", ""))
+        provider = _safe_label(getattr(adapter, "name", "unknown"))
+        api_format = _safe_label(adapter.protocol_format(ai))
+        run = state._scope_run.get()
+        detached = run is None or run.ended_at is not None
+        if detached:
+            trace_id = uuid.uuid4().hex[:12]
+            session_text = str(branch_input.session_id) if branch_input.session_id is not None else "unknown"
+            run = state._ScopeRun(
+                id=f"run-{trace_id}-{uuid.uuid4().hex[:6]}",
+                trace_id=trace_id,
+                session_key=f"gugu:compaction:{session_text}",
+                external_session_id=session_text,
+                source="compaction",
+                started_at=state._now(),
+            )
+            run.attributes["scenario"] = "compaction"
+            if branch_input.run_id:
+                run.attributes["origin_run_id"] = _safe_label(branch_input.run_id)
+
+        observations = run.attributes.setdefault("compaction_probe", {
+            "schema_version": 1, "attempt_count": 0, "attempts": [],
+        })
+        for index, attempt in enumerate(attempts, start=1):
+            raw_usage = attempt.get("raw_usage")
+            normalized = attempt.get("normalized_usage") or {}
+            cache_fields = _cache_usage_fields(raw_usage)
+            request = attempt.get("request")
+            summary = {
+                "attempt_index": index,
+                "provider": provider,
+                "model": model,
+                "api_format": api_format,
+                "request_captured": isinstance(request, dict),
+                "raw_usage_captured": raw_usage is not None,
+                "cache_usage_fields": cache_fields,
+                "normalized_usage": normalized,
+            }
+            span = run.span(
+                "llm",
+                "Compaction provider cache probe",
+                {"scenario": "compaction", **summary, "provider_request": request or {}},
+                token_impact={
+                    "prompt_tokens_actual": _nonnegative_int(normalized.get("input")),
+                    "cache_read_tokens": _nonnegative_int(normalized.get("cache_read")),
+                    "cache_write_tokens": _nonnegative_int(normalized.get("cache_write")),
+                },
+                scenario="compaction",
+                provider=provider,
+                model=model,
+                api_format=api_format,
+                attempt_index=index,
+            )
+            span.usage = dict(normalized) if isinstance(normalized, dict) else {}
+            span.finish({
+                "raw_provider_usage": raw_usage,
+                "normalized_usage": normalized,
+                "cache_usage_fields": cache_fields,
+            }, status="success" if raw_usage is not None else "error")
+            observations["attempt_count"] = int(observations.get("attempt_count", 0) or 0) + 1
+            observations.setdefault("attempts", []).append(summary)
+        del observations["attempts"][:-10]
+        if detached:
+            for attempt in attempts:
+                usage = attempt.get("normalized_usage")
+                if isinstance(usage, dict):
+                    run.add_usage(usage)
+            state._finish_run(
+                run,
+                "success" if any(attempt.get("raw_usage") is not None for attempt in attempts)
+                else "error",
+            )
+    except Exception as exc:
+        from app.core.redaction import diag_log
+
+        diag_log("agent.runtime.loopscope_trace.compaction_probe", exc)
+
+
+def _cache_usage_fields(raw_usage: Any) -> dict[str, Any]:
+    """返回原始 usage 中所有 cache 字段；空对象表示 provider 未上报相关字段。"""
+    if hasattr(raw_usage, "model_dump"):
+        try:
+            raw_usage = raw_usage.model_dump(exclude_none=False)
+        except Exception:
+            pass
+    elif hasattr(raw_usage, "__dict__") and not isinstance(raw_usage, dict):
+        raw_usage = vars(raw_usage)
+    found: dict[str, Any] = {}
+
+    def visit(value: Any, prefix: str = "") -> None:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                path = f"{prefix}.{key}" if prefix else str(key)
+                if "cache" in str(key).lower():
+                    found[path] = item
+                if isinstance(item, dict):
+                    visit(item, path)
+
+    visit(raw_usage)
+    return found
+
+
 def record_reflection_sample(
     observation: dict[str, Any], *, session_id: int | None,
 ) -> None:
