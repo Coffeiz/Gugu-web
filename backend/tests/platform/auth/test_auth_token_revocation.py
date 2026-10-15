@@ -13,7 +13,7 @@ async def test_logout_revokes_old_user_jwt_but_new_version_remains_valid(db, use
     old_token = create_user_token(user_a.id, previous_version)
     file_token = create_stream_token(17, user_a.id, security_version=previous_version)
 
-    await auth.logout(Response(), user_a.id, db)
+    await auth.logout(Response(), user_a, db)
 
     assert user_a.security_version == previous_version + 1
     assert not await is_user_active(user_a.id, previous_version)

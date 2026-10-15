@@ -227,11 +227,8 @@ async def login(body: UserLogin, request: Request, response: Response, db: Async
 
 
 @router.post("/logout")
-async def logout(response: Response, user_id: UUID = Depends(get_current_user_id), db: AsyncSession = Depends(get_db)):
+async def logout(response: Response, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     # 用户级版本撤销此前签发的全部 JWT（包括其他浏览器和长连接）。
-    current_user = await db.get(User, user_id)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="用户不存在或已停用")
     current_user.security_version = (current_user.security_version or 0) + 1
     await db.commit()
     clear_auth_cookies(response, USER_ACCESS_COOKIE, USER_CSRF_COOKIE)
