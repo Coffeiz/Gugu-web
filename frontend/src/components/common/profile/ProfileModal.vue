@@ -224,7 +224,7 @@ async function doDeleteAccount() {
 @keyframes spin { to { transform: rotate(360deg); } }
 .pm-user-info { min-width: 0; }
 .pm-name { font-size: 13px; font-weight: 700; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pm-email { font-size: 11px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pm-email { font-size: 11px; line-height: 1.5; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pm-nav-divider { height: 1px; background: var(--divider-line); margin: 6px 4px; }
 .pm-nav-item {
   display: flex; align-items: center; gap: 9px; width: 100%; padding: 10px 12px;

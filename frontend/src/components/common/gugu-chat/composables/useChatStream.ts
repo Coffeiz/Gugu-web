@@ -13,6 +13,7 @@ import type GuguChatComposer from '../GuguChatComposer.vue'
 import { createPendingQueueKey, getDraftPendingQueueId, getSessionPendingQueueId, setPendingQueueRecoveryNeeded } from './chatPendingQueueStorage'
 import { dispatchPendingQueueItem } from './chatPendingQueueDispatch'
 import { recordStreamDiagnostic } from './chatStreamDiagnostics'
+import { findLatestPersistedAssistant } from './sessionMessageSync'
 
 interface StatusItem { kind: 'text' | 'dots' | 'hide'; label?: string }
 
@@ -835,24 +836,23 @@ export function useChatStream(options: {
         && viewGeneration === options.getViewGeneration()) {
       try {
         const recovered = await agentApi.getMessages(String(sid))
-        const latest = [...(recovered.messages || [])].reverse().find((item: any) =>
-          item.role === 'assistant' &&
-          (item.content?.trim() || item.files?.length) &&
-          (!item.createdAt || Date.parse(item.createdAt) >= streamStartedAt - 60_000),
-        )
+        const latest = findLatestPersistedAssistant(recovered, streamStartedAt - 60_000)
         if (latest && live()) {
+          const item = latest.item
           const messageId = mkid()
           messages.value.push({
             id: messageId,
-            dbId: latest.id,
+            dbId: item.id,
             role: 'ai',
-            text: latest.content || '',
-            html: latest.content ? renderMd(latest.content) : null,
-            files: latest.files?.length ? latest.files : undefined,
-            quotedText: latest.quotedText || undefined,
-            time: new Date(latest.createdAt || Date.now()).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
-            _createdAt: latest.createdAt,
-            _timelineOrder: latest.timelineOrder ?? latest.id,
+            text: latest.text,
+            html: latest.text ? renderMd(latest.text) : null,
+            files: item.files?.length ? item.files : undefined,
+            linkButtons: item.linkButtons,
+            quotedText: item.quotedText || undefined,
+            time: new Date(item.createdAt || Date.now()).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
+            _createdAt: item.createdAt,
+            _timelineOrder: item.timelineOrder ?? item.id,
+            _syncKey: latest.syncKey,
           })
           sortLiveTimeline()
           aiIdx = messages.value.findIndex(item => item.id === messageId)

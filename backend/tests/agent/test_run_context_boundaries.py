@@ -79,6 +79,118 @@ async def test_prepare_run_reuses_rag_context_started_during_mcp_discovery(monke
     assert prepared.rag_context is precomputed
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_anthropic", [True, False])
+async def test_prepare_run_preserves_repeated_continue_turns_and_tool_outcomes(
+    monkeypatch, use_anthropic,
+):
+    """跨 Run 回放不能合并相同用户文本、丢工具错误，或重复追加当前消息。"""
+    monkeypatch.setattr(audit, "context_layout_audit", lambda **kwargs: None)
+
+    def row(ident, role, blocks):
+        return SimpleNamespace(
+            id=ident, role=role, content="", content_json=blocks, sent_at=None,
+            chat_type=None, platform_user_id=None, platform_user_name=None,
+            files=None, quoted_text=None, references_json=None,
+            canonical_batch_id=None, run_id=None, round_id=None,
+        )
+
+    fallback = "这轮没有接住请求，请换种说法。"
+    history = [
+        row(1, "user", [{"type": "text", "text": "创建日历事件并记一条笔记"}]),
+        row(2, "assistant", [{
+            "type": "tool_call", "id": "event-call", "name": "create_event",
+            "arguments": {"title": "合成事件"},
+        }]),
+        row(3, "user", [{
+            "type": "tool_result", "tool_call_id": "event-call",
+            "tool_name": "create_event", "content": "{\"ok\":true}",
+        }]),
+        row(4, "assistant", [{
+            "type": "tool_call", "id": "note-call", "name": "note_create",
+            "arguments": {"title": "合成笔记"},
+        }]),
+        row(5, "user", [{
+            "type": "tool_result", "tool_call_id": "note-call",
+            "tool_name": "note_create", "content": "{\"error\":\"合成失败\"}",
+            "is_error": True,
+        }]),
+        row(6, "assistant", [{"type": "text", "text": fallback}]),
+        row(7, "user", [{"type": "text", "text": "继续"}]),
+        row(8, "assistant", [{"type": "text", "text": fallback}]),
+        row(9, "user", [{"type": "text", "text": "继续"}]),
+        row(10, "assistant", [{"type": "text", "text": fallback}]),
+        # 当前请求已先写入数据库；组装时必须按 ID 排除这一行，再追加完整本轮消息。
+        row(11, "user", [{"type": "text", "text": "换句话说明后继续"}]),
+    ]
+
+    async def empty_rag(*_args, **_kwargs):
+        return {"tail": []}
+
+    monkeypatch.setattr("agent.rag.injection.build_automatic_rag_context", empty_rag)
+    prepared = await run_context.prepare_run(
+        system_prompt="固定规则", snapshot_context="快照", history=history,
+        req=SimpleNamespace(
+            message="换句话说明后继续", reference_context=None, chat_id=None,
+        ),
+        user_tz=timezone.utc, strip_thinking=False, use_anthropic=use_anthropic,
+        current_text="换句话说明后继续", images=[], media=[],
+        model_cfg=SimpleNamespace(
+            image_detail="auto", api_format="anthropic" if use_anthropic else "openai",
+        ),
+        stance_text=None, snapshot_injection=None,
+        user_message=SimpleNamespace(id=11, sent_at=None),
+    )
+
+    provider_messages = prepared.message_area.provider_projection().to_messages()
+    serialized = str(provider_messages)
+    from agent.context.tokens import message_text
+
+    visible_text = [message_text(message) for message in provider_messages]
+    assert visible_text.count("继续") == 2
+    assert visible_text.count("换句话说明后继续") == 1
+    assert visible_text.count(fallback) == 3
+    assert "event-call" in serialized and "note-call" in serialized
+    assert "合成失败" in serialized
+
+    # 工具调用只作为已完成历史传给模型；上下文组装不会再次派发它们。
+    block_call_ids = [
+        block.get("id")
+        for message in provider_messages
+        for block in (message.get("content") if isinstance(message.get("content"), list) else [])
+        if isinstance(block, dict) and block.get("type") in {"tool_use", "tool_call"}
+    ]
+    openai_call_ids = [
+        call.get("id")
+        for message in provider_messages
+        for call in message.get("tool_calls", [])
+    ]
+    assert block_call_ids + openai_call_ids == ["event-call", "note-call"]
+
+    block_result_ids = [
+        block.get("tool_use_id") or block.get("tool_call_id")
+        for message in provider_messages
+        for block in (message.get("content") if isinstance(message.get("content"), list) else [])
+        if isinstance(block, dict) and block.get("type") == "tool_result"
+    ]
+    openai_result_ids = [
+        message.get("tool_call_id")
+        for message in provider_messages
+        if message.get("role") == "tool"
+    ]
+    assert block_result_ids + openai_result_ids == ["event-call", "note-call"]
+    if use_anthropic:
+        error_result = next(
+            block
+            for message in provider_messages
+            for block in (message.get("content") if isinstance(message.get("content"), list) else [])
+            if isinstance(block, dict)
+            and block.get("type") == "tool_result"
+            and block.get("tool_use_id") == "note-call"
+        )
+        assert error_result.get("is_error") is True
+
+
 def test_message_time_reminder_uses_message_timestamp_and_user_timezone():
     from zoneinfo import ZoneInfo
 
