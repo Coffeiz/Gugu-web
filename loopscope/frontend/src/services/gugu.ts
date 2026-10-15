@@ -151,7 +151,8 @@ export async function sendMessage(
   if (!cfg) throw new Error('尚未连接 Gugu。请从 Gugu /dev 打开 LoopScope，或在 Settings 配置。')
   const r = await fetch(`${apiBase(cfg)}/agent/chat`, {
     method: 'POST',
-    headers: authHeaders({ 'Content-Type': 'application/json' }),
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
     body: JSON.stringify({ message, session_id: sessionId }),
   })
   if (!r.ok || !r.body) throw new Error(`Gugu chat ${r.status}`)
