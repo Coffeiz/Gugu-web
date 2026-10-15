@@ -115,11 +115,12 @@ def test_builtin_phase1_metadata_is_complete_and_relations_are_registered():
     index = CapabilityIndex.from_registries()
     snapshot = index.snapshot()
 
-    assert len(snapshot.tools) == 107
+    assert len(snapshot.tools) == 108
     assert len(snapshot.skills) == 13
     assert not snapshot.diagnostics
     assert "create_file" in snapshot.tools
     assert "grep" in snapshot.tools
+    assert "canvas_focus_node" in snapshot.tools
     assert "create_document" not in snapshot.tools
     assert "create_file" in snapshot.skills["S3"].related_tools
     assert all(item.category for item in snapshot.tools.values())
@@ -133,7 +134,7 @@ async def test_admin_capability_catalog_exposes_metadata_without_schema_or_body(
     from app.api.v1.agent_admin import list_capabilities
 
     payload = await list_capabilities()
-    assert len(payload["tools"]) == 107
+    assert len(payload["tools"]) == 108
     assert len(payload["skills"]) == 13
     assert all("description_short" in item for item in payload["tools"])
     assert all("input_schema" not in item and "handler" not in item for item in payload["tools"])

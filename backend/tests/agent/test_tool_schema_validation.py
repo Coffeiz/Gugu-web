@@ -432,7 +432,7 @@ def test_project_stage_arrays_accept_provider_item_wrappers_then_validate_canoni
         },
     }
     raw.update(
-        {"name": "测试项目", "start_date": "2026-01-01", "deadline": "2026-01-02"}
+        {"project_name": "测试项目", "start_date": "2026-01-01", "deadline": "2026-01-02"}
         if tool_name == "create_project" else {"project_id": 1}
     )
     normalized, adaptations = normalize_input_by_schema(
@@ -886,7 +886,10 @@ async def test_unknown_tool_error_separates_name_from_arguments_and_bad_channels
                 "instruction": {"type": "string"},
                 "schedule_kind": {"type": "string", "enum": ["cron"]},
                 "cron": {"type": "string"},
-                "channels": {"type": "array", "items": {"type": "string"}},
+                "channels": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": ["qq", "feishu"]},
+                },
                 "delivery_mode": {"type": "string"},
             },
             "required": ["schedule_name", "instruction", "schedule_kind"],
@@ -916,12 +919,12 @@ async def test_unknown_tool_error_separates_name_from_arguments_and_bad_channels
         "instruction": "发送当天计划",
         "schedule_kind": "cron",
         "cron": "0 12 * * 1,3,5",
-        "channels": {"item": "qq"},
+        "channels": {"item": 7},
         "delivery_mode": "owner_private",
     })
     invalid = json.loads(invalid_raw)
     assert invalid["error"] == "tool_input_invalid"
-    assert any(issue["path"] == "channels" for issue in invalid["issues"])
+    assert any(issue["path"].startswith("channels") for issue in invalid["issues"])
     assert called is False
 
 

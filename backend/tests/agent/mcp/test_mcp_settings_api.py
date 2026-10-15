@@ -397,7 +397,7 @@ async def test_manage_mcp_servers_requires_server_id_or_name(db, user_a):
     from agent.tools.mcp import _manage_mcp_servers
 
     result = await _manage_mcp_servers(db, user_a.id, {"action": "test_connection"})
-    assert result == {"error": "需要提供 server_id 或 name"}
+    assert result == {"error": "需要提供 server_id 或 server_name"}
 
 
 async def test_credentials_prompt_is_sealed_and_resolves_for_web_group_session(db, user_a, user_b):
