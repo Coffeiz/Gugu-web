@@ -224,6 +224,7 @@ def _deliver(*, host: str, port: int, user: str, password: str,
 
 def send_email_with_status(subject: str, body: str, *, to_addr: str | None = None,
                            html: str | None = None, smtp_config=None,
+                           format_mode: str = "template",
                            template: str = "notification", title: str | None = None,
                            preheader: str | None = None, sections=None, actions=None,
                            theme: str = "light", palette: str = "mist",
@@ -238,9 +239,17 @@ def send_email_with_status(subject: str, body: str, *, to_addr: str | None = Non
     if not cfg.host or not to:
         _record_email("failed", started_at, "smtp_not_configured")
         return {"status": "failed", "error_code": "smtp_not_configured", "message": "SMTP 未配置"}
+    if format_mode not in {"plain", "template", "html"}:
+        _record_email("failed", started_at, "email_format_invalid")
+        return {"status": "failed", "error_code": "email_format_invalid", "message": "邮件格式无效"}
+    if format_mode == "html" and html is None:
+        _record_email("failed", started_at, "email_html_missing")
+        return {"status": "failed", "error_code": "email_html_missing", "message": "自定义 HTML 邮件缺少 HTML 正文"}
     from_name, from_addr = _resolve_from(cfg.from_addr, cfg.user)
     inline_images: tuple[EmailInlineImage, ...] = ()
-    if html is None:
+    if format_mode == "plain":
+        html = None
+    elif html is None:
         try:
             content = render_email(
                 template=template, subject=subject, body=body, title=title,
@@ -272,13 +281,14 @@ def send_email_with_status(subject: str, body: str, *, to_addr: str | None = Non
 
 
 def send_email(subject: str, body: str, *, to_addr: str | None = None, html: str | None = None,
-               smtp_config=None, template: str = "notification", title: str | None = None,
+               smtp_config=None, format_mode: str = "template", template: str = "notification", title: str | None = None,
                preheader: str | None = None, sections=None, actions=None,
                theme: str = "light", palette: str = "mist",
                attachments: tuple[EmailAttachment, ...] = ()) -> bool:
     """兼容旧调用方：只返回是否已被 SMTP 接受。"""
     return send_email_with_status(
         subject, body, to_addr=to_addr, html=html, smtp_config=smtp_config,
+        format_mode=format_mode,
         template=template, title=title, preheader=preheader, sections=sections, actions=actions,
         theme=theme, palette=palette, attachments=attachments,
     ).get("status") == "sent"

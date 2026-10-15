@@ -42,7 +42,7 @@ emoji: ⏰
 
 - `channels` 必须是字符串数组，例如 `channels=["email"]`、`channels=["qq"]` 或 `channels=["web", "email", "qq"]`；不要传字符串、对象或额外的 `item` 字段。
 - 错误示例：不要传 `channels="qq"` 或 `channels={"item":"qq"}`。
-- `email` 发送到用户注册邮箱并使用 `reminder` 模板；默认 `web` 站内通知最稳。
+- `email` 发送到用户注册邮箱；提醒和报告使用 `send_email(format="template", template="reminder" 或 "report")`，简单原文投递才使用纯文本。默认 `web` 站内通知最稳。
 - 定时任务不支持工具组或上下文裁剪配置；不要传 `tool_groups` 或 `context_config`。所有任务统一使用完整工具集和完整业务上下文。需要预先授权的自动工具只通过 `authorized_tools` 设置，目前仅支持 `send_email`。
 - 定时任务中的 Shell 始终运行在任务绑定的 workspace 和沙盒边界内；不支持交互式确认，需要确认的危险命令不得执行。
 - 使用 `feishu` / `qq` / `wechat` 前，先确认对应 IM 已绑定，否则不要创建一个无法投递的任务。

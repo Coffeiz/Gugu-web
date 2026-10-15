@@ -36,10 +36,10 @@ def _mask_email(value: str) -> str:
     return f"{masked}@{domain}"
 
 
-def _confirmation_identity(*, recipient, subject, body, html, template, title,
+def _confirmation_identity(*, recipient, subject, body, format, html, template, title,
                            preheader, sections, actions, theme, palette, attachments) -> str:
     payload = {
-        "recipient": recipient, "subject": subject, "body": body, "html": html,
+        "recipient": recipient, "subject": subject, "body": body, "format": format, "html": html,
         "template": template, "title": title, "preheader": preheader,
         "sections": sections, "actions": actions, "theme": theme, "palette": palette,
         "attachments": attachments,
@@ -52,6 +52,15 @@ async def _send_email(db, user_id, args: dict):
     subject = str(args.get("subject") or "").strip()
     body = str(args.get("body") or "").strip()
     html = str(args.get("html") or "").strip() or None
+    requested_format = str(args.get("format") or "").strip().lower()
+    # 历史定时任务没有 format：保留旧的模板默认和自定义 HTML 行为。
+    email_format = requested_format or ("html" if html is not None else "template")
+    if email_format not in {"plain", "template", "html"}:
+        return {"error": "不支持的邮件格式，仅支持 plain、template 或 html"}
+    if email_format == "html" and html is None:
+        return {"error": "html 格式必须提供 html 正文和纯文本 body"}
+    if email_format != "html" and html is not None:
+        return {"error": "只有 format=html 时才能提供 html 正文"}
     template = str(args.get("template") or "notification").strip()
     if template not in TEMPLATES:
         return {"error": "不支持的邮件模板，仅支持 notification、reminder、report、security 或 test"}
@@ -105,7 +114,11 @@ async def _send_email(db, user_id, args: dict):
     except EmailAttachmentError as exc:
         return {"error": str(exc)}
 
-    format_label = "咕咕标准 HTML + 纯文本" if not html else "纯文本 + HTML"
+    format_label = {
+        "plain": "纯文本",
+        "template": "咕咕标准 HTML + 纯文本",
+        "html": "自定义 HTML + 纯文本",
+    }[email_format]
     summary = f"将发送{format_label}邮件至 {_mask_email(recipient)}（{recipient_source}），主题：{subject}。正文共 {len(body)} 个字符。"
     if attachments:
         names = "、".join(attachment.filename for attachment in attachments)
@@ -119,7 +132,7 @@ async def _send_email(db, user_id, args: dict):
             args, summary, user_id,
             purpose=confirm.ACTION,
             identity=_confirmation_identity(
-                recipient=recipient, subject=subject, body=body, html=html,
+                recipient=recipient, subject=subject, body=body, format=email_format, html=html,
                 template=template, title=title, preheader=preheader,
                 sections=sections, actions=actions, theme=theme, palette=palette,
                 attachments=[{
@@ -137,11 +150,16 @@ async def _send_email(db, user_id, args: dict):
     smtp_config = await get_enabled_user_smtp(db, user_id)
     try:
         send_kwargs = {"to_addr": recipient, "smtp_config": smtp_config}
+        if requested_format:
+            send_kwargs["format_mode"] = email_format
         if attachments:
             send_kwargs["attachments"] = attachments
-        if html is not None:
+        if email_format == "html":
             send_kwargs["html"] = html
-        elif any(key in args for key in ("template", "title", "preheader", "sections", "actions", "theme", "palette")) or theme != "light" or palette != "mist":
+        elif email_format == "template" and (
+            any(key in args for key in ("template", "title", "preheader", "sections", "actions", "theme", "palette"))
+            or theme != "light" or palette != "mist"
+        ):
             send_kwargs.update(
                 template=template, title=title, preheader=preheader,
                 sections=sections, actions=actions, theme=theme, palette=palette,
@@ -175,7 +193,7 @@ class EmailSkill(BaseSkill):
     tools = [
         Tool(
             name="send_email", label="发送邮件",
-            description="发送邮件。subject 和 body 必填，body 是所有客户端的纯文本降级内容。可用 file_ids 附加当前用户文件库中的文件（最多 5 个，单个不超过 10MB，总计不超过 25MB），不要传宿主机路径。默认使用 notification 模板，由服务端生成咕咕标准排版；可用 notification、reminder、report、security 或 test 模板，并用 title、preheader、sections（heading/text 数组）和 actions（label/url 数组）表达结构化内容。theme 和 palette 默认 auto，跟随用户偏好；也可分别指定 light/dark 和 mist/cafe/rose/sky/sage。用户明确要求自定义邮件排版时，也可以传 html，但必须同时提供完整 body；html 只能使用基础邮件标签（a、b、blockquote、br、code、div、em、h1-h3、hr、i、img、li、ol、p、pre、span、strong、table、tbody、td、th、thead、tr、u、ul）、允许的内联样式和 http/https/mailto 链接，不要使用 script、style、事件属性、表单、iframe、svg、外部资源、flex/grid 或复杂定位。服务端会再次清洗 HTML，不能依赖被清洗的内容；html 最多 40000 个字符。test 仅用于 SMTP 测试场景。用户说‘发我邮箱’、‘发到我的邮箱’或未指定收件人时，必须省略 to，工具会自动发送到当前用户注册邮箱；不要向用户索要邮箱地址。可用 to 指定其他邮箱，或用 client_id 发给当前用户的客户邮箱。交互式发送前必须确认；已由用户授权的定时任务执行时不要再次请求确认。",
+            description="发送邮件。subject 和 body 必填，body 始终是纯文本正文；新调用必须指定 format，按场景选择：plain 用于普通邮件交流，只发送 text/plain；template 用于定时提醒、周期报告、状态通知和安全通知，发送咕咕标准 HTML + 纯文本；html 仅用于用户明确要求复杂排版、图表或品牌样式，必须同时提供自定义 html 和完整纯文本 body。普通交流默认 plain；定时提醒/报告默认 template。旧调用省略 format 时兼容原模板行为。可用 file_ids 附加当前用户文件库中的文件（最多 5 个，单个不超过 10MB，总计不超过 25MB），不要传宿主机路径。template 模式可用 notification、reminder、report、security 或 test 模板，并用 title、preheader、sections（heading/text 数组）和 actions（label/url 数组）表达结构化内容；test 仅用于 SMTP 测试。theme 和 palette 默认 auto，跟随用户偏好；也可分别指定 light/dark 和 mist/cafe/rose/sky/sage。html 仅允许基础邮件标签（a、b、blockquote、br、code、div、em、h1-h3、hr、i、img、li、ol、p、pre、span、strong、table、tbody、td、th、thead、tr、u、ul）、允许的内联样式和 http/https/mailto 链接；不要使用 script、style、事件属性、表单、iframe、svg、外部资源、flex/grid 或复杂定位。服务端会再次清洗 HTML，不能依赖被清洗的内容；html 最多 40000 个字符。用户说‘发我邮箱’、‘发到我的邮箱’或未指定收件人时，必须省略 to，工具会自动发送到当前用户注册邮箱；不要向用户索要邮箱地址。可用 to 指定其他邮箱，或用 client_id 发给当前用户的客户邮箱。交互式发送前必须确认；已由用户授权的定时任务执行时不要再次请求确认。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -183,6 +201,7 @@ class EmailSkill(BaseSkill):
                     "client_id": {"type": "integer"},
                     "subject": {"type": "string", "minLength": 1, "maxLength": _MAX_SUBJECT_LENGTH},
                     "body": {"type": "string", "minLength": 1, "maxLength": _MAX_BODY_LENGTH},
+                    "format": {"type": "string", "enum": ["plain", "template", "html"], "description": "邮件格式：plain 普通文字交流；template 定时提醒/报告/通知；html 用户明确要求复杂排版。"},
                     "template": {"type": "string", "enum": list(_SUPPORTED_TEMPLATES)},
                     "title": {"type": "string", "maxLength": 200},
                     "preheader": {"type": "string", "maxLength": 180},
