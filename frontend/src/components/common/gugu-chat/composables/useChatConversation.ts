@@ -8,6 +8,7 @@ import { renderMd } from '../markdown'
 import { displayQQFaces } from '../messageDisplay'
 import { SESSION_KEY, LAST_SESSION_KEY } from '../chatConstants'
 import { ensureSessionMessageLoaded } from './sessionMessageSync'
+import { waitForSessionSettlement } from './sessionReadiness'
 import { hasPendingMessageMarkdown } from './sessionScrollLayout'
 import { getSessionPendingQueueId, setPendingQueueRecoveryNeeded } from './chatPendingQueueStorage'
 import { useChatStream } from './useChatStream'
@@ -259,9 +260,9 @@ export function useChatConversation(options: {
       }
       idx = messages.value.findIndex(m => m.dbId === dbId)
     }
-    if (idx === -1) return false
+    if (idx === -1 || !options.messageListRef.value) return false
     stick.value = false   // 跳去的多半是历史消息，不该被当成「回到底部」处理
-    options.messageListRef.value?.scrollToIndex(idx, { align: 'center', behavior: 'auto' })
+    options.messageListRef.value.scrollToIndex(idx, { align: 'center', behavior: 'auto' })
     await nextTick()
     return true
   }
@@ -442,6 +443,8 @@ export function useChatConversation(options: {
     onCaptureBaseScrollH: options.onCaptureBaseScrollH,
     scrollBottom,
     waitForStableScrollLayout,
+    waitForSessionSettlement: (id) => waitForSessionSettlement(sessionId, sessionSettling, id),
+    shouldFollowBottom: () => stick.value,
     setSessionSettling: (value: boolean) => { sessionSettling.value = value },
   })
   const { webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName, currentSessionGoalActive, currentSessionGoalStatus, currentSessionFilesystemAuthorized, currentSessionFilesystemAuthorizationEnabled, loadSession, newSession, deleteSession, renameSession, refreshSessionMessages } = sessionsApi
@@ -546,6 +549,8 @@ export function useChatConversation(options: {
     pendingQueue, removeQueued, restorePendingQueueForDraft,
     restorePendingQueueForSession, drainPendingQueue,
     waitForPendingQueueWrites,
+    waitForSessionSettlement: (id: number) => waitForSessionSettlement(sessionId, sessionSettling, id),
+    waitForStableScrollLayout,
     scrollBottom, onMsgScroll,
     animateGreeting, _revealMessage, _flashChatMessage,
     clearStatus,
