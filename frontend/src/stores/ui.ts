@@ -40,16 +40,49 @@ export const useUiStore = defineStore('ui', () => {
   const calendarActiveRange = ref<{ start: string; end: string } | null>(null)
   const openProfile = ref(false)
   const profileInitialNav = ref<string | null>(null)
-  const pendingChatSession   = ref<unknown>(null)
+  const pendingChatNavigation = ref<{ requestId: number; sessionId: number; messageId: number | null } | null>(null)
+  let chatNavigationSequence = 0
   const pendingChatPrefill   = ref<string | null>(null)
   const pendingFileTarget    = ref<FileLibraryNavigationTarget | null>(null)
-  const pendingChatMessageId = ref<number | null>(null)   // 对话搜索命中消息时，跳转后滚到该消息
   const pendingCalendarEvent = ref<{ id: number; date?: string } | null>(null)   // { id, date } 日程搜索跳转
   const pendingNoteId = ref<number | null>(null)   // 思维笔记搜索跳转后打开对应便签的编辑态
   const pendingCanvasTarget = ref<{ canvasId: number; nodeId: number } | null>(null)
   const pendingCalendarDate  = ref<string | null>(null)   // 仪表盘小日历点某天 → 跳日历定位到该日（不高亮具体活动）
   const pendingProjectHighlight = ref<number | null>(null)   // 项目搜索跳转后高亮项目卡（不打开编辑弹窗）
   const pendingProjectHighlightMs = ref<number | null>(null) // 高亮时长(ms)：缺省 1800；新手引导用 5000（设 id 前先设它）
+
+  function beginChatNavigation() {
+    const requestId = ++chatNavigationSequence
+    pendingChatNavigation.value = null
+    return requestId
+  }
+
+  function publishChatNavigation(requestId: number, sessionId: number, messageId: number | null) {
+    if (requestId !== chatNavigationSequence) return false
+    pendingChatNavigation.value = { requestId, sessionId, messageId }
+    return true
+  }
+
+  function requestChatNavigation(sessionId: number, messageId: number | null) {
+    const requestId = beginChatNavigation()
+    publishChatNavigation(requestId, sessionId, messageId)
+    return requestId
+  }
+
+  function isCurrentChatNavigation(requestId: number) {
+    return requestId === chatNavigationSequence
+  }
+
+  function clearChatNavigation(requestId: number) {
+    if (!isCurrentChatNavigation(requestId) || pendingChatNavigation.value?.requestId !== requestId) return false
+    pendingChatNavigation.value = null
+    return true
+  }
+
+  function cancelChatNavigation() {
+    chatNavigationSequence += 1
+    pendingChatNavigation.value = null
+  }
 
   // 通知气泡锚点：距视口底部的 px。GuguChat 按小窗/播放器是否展开实时更新，
   // 让通知气泡始终浮在「聊天窗/音乐播放器」上方而不重叠。
@@ -125,10 +158,9 @@ export const useUiStore = defineStore('ui', () => {
     _liveSeq = 0
     // pending 导航信号属于当前账号；登录/登出边界必须一起失效，避免旧页面的
     // 延迟监听在新账号页面挂载后误消费，或覆盖新账号自己的高光请求。
-    pendingChatSession.value = null
+    cancelChatNavigation()
     pendingChatPrefill.value = null
     pendingFileTarget.value = null
-    pendingChatMessageId.value = null
     pendingCalendarEvent.value = null
     pendingNoteId.value = null
     pendingCanvasTarget.value = null
@@ -164,8 +196,10 @@ export const useUiStore = defineStore('ui', () => {
     notifCount, notifications, liveNotification, fetchNotifications, checkLoginBubble,
     pushNotification, markAllRead, markRead, clearNotifications, resetAccountState,
     openNewProject, newProjectInitStatus, openProfile, profileInitialNav, sidebarCollapsed, newProjectRange,
-    calendarActiveRange, pendingChatSession, pendingChatPrefill, pendingFileTarget, chatNotifyAnchor, chatNotifyOrigin,
-    pendingChatMessageId, pendingCalendarEvent, pendingCalendarDate, pendingProjectHighlight, pendingProjectHighlightMs,
+    calendarActiveRange, pendingChatNavigation, beginChatNavigation, publishChatNavigation,
+    requestChatNavigation, isCurrentChatNavigation, clearChatNavigation, cancelChatNavigation,
+    pendingChatPrefill, pendingFileTarget, chatNotifyAnchor, chatNotifyOrigin,
+    pendingCalendarEvent, pendingCalendarDate, pendingProjectHighlight, pendingProjectHighlightMs,
     pendingNoteId,
     pendingCanvasTarget,
   }

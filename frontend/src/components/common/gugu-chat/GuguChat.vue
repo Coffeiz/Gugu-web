@@ -156,6 +156,8 @@ import { useChatAttachments } from './composables/useChatAttachments'
 import { useChatActions } from './composables/useChatActions'
 import { copyTextToClipboard } from './composables/copyTextToClipboard'
 import { useChatConversation } from './composables/useChatConversation'
+import { runChatNavigation } from './composables/chatNavigation'
+import { restoreStartupSession } from './composables/startupSessionRestore'
 import { useChatImConnect } from './composables/useChatImConnect'
 import { useChatWindow } from './composables/useChatWindow'
 import { useMindRefActions } from '@/composables/mind/useMindRefActions'
@@ -196,17 +198,22 @@ async function toggleAutomaticMode() {
 // 不强制展开大窗——默认保持小窗，用户已经开着大窗才维持大窗；对话引用现在锚定的是
 // 具体一条消息（见 useMindRefActions.ts），靠 _flashChatMessage 在消息列表里定位闪烁，
 // 小窗一样看得见，不需要靠「大窗侧边栏 .active 高亮」这条路。
-watch(() => uiStore.pendingChatSession, async (id) => {
-  if (!id) return
-  open.value = true
-  await conversation.loadSession(id as number)
-  const msgId = uiStore.pendingChatMessageId
-  uiStore.pendingChatSession = null
-  uiStore.pendingChatMessageId = null
-  if (msgId) {
-    if (await conversation._revealMessage(msgId)) conversation._flashChatMessage(msgId)
-    else showAppError(t('chatUi.messageUnavailable'))
-  }
+watch(() => uiStore.pendingChatNavigation, (request) => {
+  if (!request) return
+  void runChatNavigation(request, {
+    isCurrent: uiStore.isCurrentChatNavigation,
+    open: () => { open.value = true },
+    // 窗口使用 v-if；首次打开时先等消息列表挂载，再等待可能进行中的启动恢复结算。
+    mount: () => nextTick(),
+    loadSession: (id) => conversation.loadSession(id),
+    waitForSessionSettlement: (id) => conversation.waitForSessionSettlement(id),
+    waitForStableScrollLayout: () => conversation.waitForStableScrollLayout(),
+    currentSessionId: () => sessionId.value,
+    clear: uiStore.clearChatNavigation,
+    reveal: (id) => conversation._revealMessage(id),
+    flash: (id) => conversation._flashChatMessage(id),
+    showUnavailable: () => showAppError(t('chatUi.messageUnavailable')),
+  })
 })
 
 // gugu:// 协议链接（复制代码/绑定 IM/打开文件）+ 工具完成后的前端刷新通知，收在 useChatActions。
@@ -374,14 +381,15 @@ onMounted(() => {
               || (reopenResume.value ? localStorage.getItem(LAST_SESSION_KEY) : null)
   if (saved) {
     messages.value = []   // 续聊：立刻清掉默认问候占位，避免 loadSession 异步加载期间 animateGreeting 闪问候
-    loadSession(Number(saved), true).then(() => {
-      if (sessionId.value !== Number(saved)) {   // 那段会话没了（删了/无权限）→ 清存档、恢复问候、当新对话
+    void restoreStartupSession({
+      loadSession: () => loadSession(Number(saved), true),
+      onUnavailable: () => {
         sessionStorage.removeItem(SESSION_KEY)
         localStorage.removeItem(LAST_SESSION_KEY)
         messages.value = [{ id: mkid(), role: 'ai', text: '', html: '', time: now(), _greeting: true }]
         prefetchGreeting()
-        return
-      }
+      },
+      onFailure: () => showAppError(t('chatUi.networkError')),
     })
   } else {
     void recoverPendingQueue()

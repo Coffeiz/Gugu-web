@@ -182,8 +182,7 @@ function go(type: string, it: SearchItem) {
     uiStore.pendingCalendarEvent = { id: numericId, date: it.date }
     router.push('/calendar')
   } else if (type === 'conversation') {
-    uiStore.pendingChatMessageId = it.message_id || null
-    uiStore.pendingChatSession = numericId   // GuguChat 监听后打开、切到会话、滚到匹配消息
+    uiStore.requestChatNavigation(numericId, it.message_id || null)
   } else if (type === 'client') {
     Message.info('客户页面还在开发中，先在项目里看吧～')
   } else if (type === 'note') {

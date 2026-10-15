@@ -97,12 +97,12 @@ export function useMindRefActions() {
 
   // 对话引用存的 refId 是消息 id（锚定的是"准确的聊天位置"，不是整个会话），先反查它
   // 属于哪个会话，再走跟顶栏全局搜索命中消息完全一样的跳转机制（GuguChat.vue 的
-  // pendingChatSession/pendingChatMessageId watch：打开面板、切会话、滚到并高亮这条消息）。
+  // pendingChatNavigation：打开面板、切会话、滚到并高亮这条消息）。
   async function openConversationMessage(messageId: number) {
+    const requestId = uiStore.beginChatNavigation()
     try {
       const loc = await agentApi.getMessageLocation(messageId)
-      uiStore.pendingChatMessageId = messageId
-      uiStore.pendingChatSession = loc.sessionId
+      uiStore.publishChatNavigation(requestId, loc.sessionId, messageId)
     } catch { /* 消息已被删除/不可见：静默忽略，不弹错误打扰阅读 */ }
   }
 

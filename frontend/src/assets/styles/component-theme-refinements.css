@@ -105,7 +105,9 @@ html[data-theme][data-family] .cal-page .month-cell.is-today.is-weekend {
 }
 html[data-theme][data-family] .cal-page .month-cell.is-selected.is-weekend,
 html[data-theme][data-family] .cal-page .month-cell.in-range.is-weekend,
-html[data-theme][data-family] .cal-page .wv-ad-sel.weekend {
+html[data-theme][data-family] .cal-page .wv-dhead.selected.weekend::before,
+html[data-theme][data-family] .cal-page .wv-ad-sel.weekend,
+html[data-theme][data-family] .cal-page .wv-col.weekend .wv-selected {
   background: var(--calendar-weekend-selected-bg) !important;
 }
 html[data-theme][data-family] .cal-page .month-cell.range-start.is-weekend,

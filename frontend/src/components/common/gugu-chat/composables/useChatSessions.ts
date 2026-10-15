@@ -6,6 +6,8 @@ import type GuguChatComposer from '../GuguChatComposer.vue'
 import { effectiveTimezone } from '@/utils/userTimezone'
 import { createSessionMessageSynchronizer, mapSessionMessageDelta, sortSessionTimelineMessages } from './sessionMessageSync'
 
+export type SessionLoadOutcome = 'loaded' | 'superseded' | 'unavailable' | 'failed'
+
 /**
  * 会话切换操作的唯一所有权：loadSession/newSession/deleteSession，以及从
  * sessions 派生的 webSessions/imSessions/currentSessionTitle。
@@ -48,6 +50,8 @@ export function useChatSessions(options: {
   onCaptureBaseScrollH: () => void
   scrollBottom: (force?: boolean) => Promise<void>
   waitForStableScrollLayout: () => Promise<void>
+  waitForSessionSettlement: (id: number) => Promise<void>
+  shouldFollowBottom: () => boolean
   setSessionSettling: (value: boolean) => void
 }) {
   const { messages, mkid, sessionId, sessions } = options
@@ -106,12 +110,16 @@ export function useChatSessions(options: {
     !sessionId.value ? false : Boolean(sessions.value.find(s => s.id === sessionId.value)?.filesystemAuthorizationEnabled)
   )
 
-  async function loadSession(id: number, force = false) {
+  async function loadSession(id: number, force = false): Promise<SessionLoadOutcome> {
     // 刷新恢复时 sessionId 会先从 sessionStorage 恢复；即使 id 相同，消息内存仍是空的，
     // 必须继续请求历史。普通侧栏重复点击仍保持无操作。
-    if (!force && id === sessionId.value) return
+    if (!force && id === sessionId.value) {
+      await options.waitForSessionSettlement(id)
+      return sessionId.value === id ? 'loaded' : 'superseded'
+    }
     const viewGeneration = options.bumpViewGeneration()
     const previousMessages = messages.value
+    let loadingHistory = true
     options.setSessionSettling(true)
     options.abortCtrl.value?.abort()        // 停掉当前会话的流式消费（后端生成不受影响、继续跑）
     options.streaming.value = false
@@ -122,7 +130,8 @@ export function useChatSessions(options: {
     options.onContentReset()
     try {
       const data = await agentApi.getMessages(String(id))
-      if (viewGeneration !== options.getViewGeneration()) return   // 等待期间又切换/新建了会话，丢弃这次结果
+      loadingHistory = false
+      if (viewGeneration !== options.getViewGeneration()) return 'superseded'   // 等待期间又切换/新建了会话，丢弃这次结果
       sessionId.value = id
       const loadedSession = sessions.value.find(s => s.id === id)
       if (loadedSession && data.session?.workspaceName !== undefined) loadedSession.workspaceName = data.session.workspaceName
@@ -160,6 +169,7 @@ export function useChatSessions(options: {
           })
         }
       } catch { /* 交互恢复失败不阻断历史会话加载 */ }
+      if (viewGeneration !== options.getViewGeneration()) return 'superseded'
       messages.value = sortSessionTimelineMessages([
         ...loadedTimelineMessages,
         ...loadedInteractions,
@@ -188,11 +198,11 @@ export function useChatSessions(options: {
       // 会话位置跳动。这个隐藏阶段只覆盖历史快照，不能覆盖后面的流式续接。
       await options.scrollBottom(true)
       await options.waitForStableScrollLayout()
-      if (viewGeneration !== options.getViewGeneration()) return
+      if (viewGeneration !== options.getViewGeneration()) return 'superseded'
       // Mermaid 完成后行高以最终 SVG 为准；仍在隐藏结算态内重新定位一次，再显示列表。
       await options.scrollBottom(true)
       await options.waitForStableScrollLayout()
-      if (viewGeneration !== options.getViewGeneration()) return
+      if (viewGeneration !== options.getViewGeneration()) return 'superseded'
       options.setSessionSettling(false)
       options.restorePendingQueue(id, Array.isArray(data.pendingQueue) ? data.pendingQueue : [])
       if (shouldResume) {
@@ -202,11 +212,16 @@ export function useChatSessions(options: {
         // 发送错误由 send 自己显示为网络错误；这里避免启动恢复链路产生未处理拒绝。
         void options.drainPendingQueue().catch(() => {})
       }
-      if (viewGeneration !== options.getViewGeneration()) return
-      await options.scrollBottom(true)
-    } catch {
-      if (viewGeneration === options.getViewGeneration()) messages.value = previousMessages
-      if (viewGeneration === options.getViewGeneration()) options.setSessionSettling(false)
+      if (viewGeneration !== options.getViewGeneration()) return 'superseded'
+      // 恢复收尾时如果用户已跳到历史消息或主动上滚，不再强制把视图拉回底部。
+      if (options.shouldFollowBottom()) await options.scrollBottom()
+      return viewGeneration === options.getViewGeneration() ? 'loaded' : 'superseded'
+    } catch (error) {
+      if (viewGeneration !== options.getViewGeneration()) return 'superseded'
+      messages.value = previousMessages
+      options.setSessionSettling(false)
+      const status = (error as { status?: number } | undefined)?.status
+      return loadingHistory && (status === 403 || status === 404) ? 'unavailable' : 'failed'
     }
   }
 

@@ -178,7 +178,7 @@ html[data-theme][data-family] .cal-page .month-cell.in-range { background: var(-
 html[data-theme][data-family] .cal-page .wv-aco.today { background: var(--color-accent-faint); }
 html[data-theme][data-family] .cal-page .wv-dhead.selected::before,
 html[data-theme][data-family] .cal-page .wv-ad-sel,
-html[data-theme][data-family] .cal-page .wv-selected { background: var(--selection-bg); }
+html[data-theme][data-family] .cal-page .wv-selected { background: var(--calendar-selected-cell-bg); }
 html[data-theme][data-family] .cal-page .month-cell.in-range.range-start,
 html[data-theme][data-family] .cal-page .month-cell.in-range.range-end { background: var(--calendar-range-edge-bg); }
 html[data-theme][data-family] .cal-page .month-cell.is-weekend,
