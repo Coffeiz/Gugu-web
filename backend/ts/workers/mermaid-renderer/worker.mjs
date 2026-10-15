@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { Resvg } from '@resvg/resvg-js'
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom'
 import { createHTMLWindow } from 'svgdom'
-import { normalizeMermaidEdgeLabelBounds, normalizeMermaidEdgeStyles, normalizeMermaidKanbanSectionColors, normalizeMermaidKanbanSectionTitles, normalizeMermaidMindmapRootLabel, normalizeMermaidNodeCorners, normalizeMermaidRasterText } from './svg-style.mjs'
+import { normalizeMermaidEdgeLabelBounds, normalizeMermaidEdgeStyles, normalizeMermaidKanbanSectionColors, normalizeMermaidKanbanSectionTitles, normalizeMermaidMindmapRootLabel, normalizeMermaidNodeCorners, normalizeMermaidRasterText, normalizeMermaidTimelineSectionColors } from './svg-style.mjs'
 import { prepareMermaidDiagramSource, restoreMermaidDiagramLabels } from './diagram-source.mjs'
 import { createMermaidThemeConfig, resolveMermaidThemeColors } from './theme.mjs'
 
@@ -301,6 +301,7 @@ for (let index = 0; index < sources.length; index += 1) {
       normalizeMermaidKanbanSectionColors(root)
       normalizeMermaidKanbanSectionTitles(root)
     }
+    if (type === 'timeline' || type === 'timeline-beta') normalizeMermaidTimelineSectionColors(root)
     normalizeMermaidEdgeLabelBounds(root)
     const rasterTextOptions = {
       allText: true,
