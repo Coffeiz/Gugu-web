@@ -1,5 +1,5 @@
 <template>
-  <div class="event-form-body">
+  <div class="event-form-body" :class="{ 'shared-event-popup': surface }">
     <div class="popup-header">
       <span class="popup-title">{{ title }}</span>
       <button class="popup-close-btn" @click="emit('close')" :title="t('common.actions.close')">
@@ -30,7 +30,8 @@ withDefaults(defineProps<{
   showDelete?: boolean
   autofocus?: boolean
   saving?: boolean
-}>(), { title: '编辑活动', showDelete: false })
+  surface?: boolean
+}>(), { title: '编辑活动', showDelete: false, surface: false })
 
 const emit = defineEmits<{
   save: []
@@ -42,6 +43,16 @@ const emit = defineEmits<{
 
 <style scoped>
 .event-form-body { display: flex; flex-direction: column; gap: 9px; padding: 16px; color: var(--content-primary); }
+.event-form-body.shared-event-popup {
+  box-sizing: border-box;
+  padding: var(--space-md);
+  border: 1px solid var(--popup-surface-border);
+  border-radius: var(--event-popup-radius);
+  background: var(--popup-surface-bg);
+  box-shadow: inset 0 1px 0 var(--popup-surface-highlight), var(--popup-surface-shadow);
+  backdrop-filter: var(--popup-surface-blur);
+  -webkit-backdrop-filter: var(--popup-surface-blur);
+}
 .popup-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
 .popup-title { font-size: 13px; font-weight: 700; color: var(--content-primary); }
 .popup-close-btn {
