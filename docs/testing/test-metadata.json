@@ -967,6 +967,14 @@
     "keyBehavior": "同会话首次恢复结算期间等待后再定位，会话切换时解除过期等待",
     "ci": "frontend-test"
   },
+  "frontend/tests/chat/composables/chatNavigation.test.ts": {
+    "domain": "chat-navigation",
+    "layer": "L0",
+    "owner": "frontend/components/common/gugu-chat",
+    "productionEntry": "frontend/src/components/common/gugu-chat/composables/chatNavigation.ts",
+    "keyBehavior": "旧会话导航等待期间发起新导航后，旧请求不清除或定位新请求，最终定位最新目标",
+    "ci": "frontend-test"
+  },
   "frontend/tests/markdown/mermaidInteraction.test.ts": {
     "domain": "markdown-mermaid",
     "layer": "L0",
