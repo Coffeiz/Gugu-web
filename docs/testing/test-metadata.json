@@ -471,6 +471,22 @@
     "keyBehavior": "Telegram 连接入口跳转到个人设置并展示已有 Telegram 会话",
     "ci": "frontend-test"
   },
+  "frontend/tests/chat/TelegramTokenDialog.test.ts": {
+    "domain": "im",
+    "layer": "L1",
+    "owner": "frontend/components/common/gugu-chat",
+    "productionEntry": "frontend/src/components/common/gugu-chat/TelegramTokenDialog.vue",
+    "keyBehavior": "连接弹窗按钮按文案自然撑开，避免固定窄按钮裁切文字",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/chat/chatInteractionState.test.ts": {
+    "domain": "chat-interactions",
+    "layer": "L0",
+    "owner": "frontend/components/common/gugu-chat",
+    "productionEntry": "frontend/src/components/common/gugu-chat/chatTypes.ts",
+    "keyBehavior": "恢复开放提问后自定义回答路由到原交互，不进入普通发送队列",
+    "ci": "frontend-test"
+  },
   "frontend/tests/files/composables/useFileLibraryNavigation.test.ts": {
     "domain": "file-library",
     "layer": "L1",
