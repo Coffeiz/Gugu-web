@@ -1,9 +1,9 @@
 <!-- 全局的活动编辑弹窗：笔记页、日历页和其他活动引用卡片共用。
      字段/提醒逻辑只有一份，页面只负责通过 eventModal store 打开活动。 -->
 <template>
-  <PopupMenu ref="floatingPopup" :show="show && isFloating" :style="floatingStyle" popup-class="eem-popup"
+  <PopupMenu ref="floatingPopup" :show="show && isFloating" :style="floatingStyle" popup-class="eem-popup" :transparent="true"
              @after-leave="onFloatingLeave">
-    <EventFormPanel v-if="event" :event="event" :form="form" :is-past-date="isPastDate" :saving="form.saving.value" show-delete autofocus
+    <EventFormPanel v-if="event" :event="event" :form="form" :is-past-date="isPastDate" :saving="form.saving.value" show-delete autofocus surface
                     @save="onSave" @close="close" @delete="onDelete" @test-reminder="onTestReminder" />
   </PopupMenu>
   <BaseModal v-if="!isFloating" :show="show" width="300px" background="var(--modal-card-bg)" @close="close">

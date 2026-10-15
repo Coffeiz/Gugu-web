@@ -118,8 +118,8 @@
   <!-- 添加事件弹窗 -->
   <Teleport to="body">
     <Transition name="form-pop">
-      <div v-if="showAddForm" class="add-event-popup shared-event-popup" ref="addFormRef" :style="addFormStyle">
-        <EventFormPanel :event="newEvent" :form="eventForm" :is-past-date="isPastDate" :title="t('calendarUi.addEvent')" :saving="saving" autofocus
+      <div v-if="showAddForm" class="add-event-popup" ref="addFormRef" :style="addFormStyle">
+        <EventFormPanel :event="newEvent" :form="eventForm" :is-past-date="isPastDate" :title="t('calendarUi.addEvent')" :saving="saving" autofocus surface
                         @save="saveEvent" @close="showAddForm = false"
                         @test-reminder="testReminderChannels(newEvent.name)" />
       </div>
@@ -1388,8 +1388,7 @@ watch([projectTimelines, dragOverRange], () => _weekBarsCache.clear())
 .upcoming-item { display: flex; align-items: center; margin-bottom: 7px; }
 .upcoming-item:last-child { margin-bottom: 0; }
 
-.add-event-popup { background: rgba(255,255,255,0.72); backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur); border: 1px solid rgba(255,255,255,0.75); border-radius: var(--event-popup-radius); box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 8px 32px rgba(60,70,100,0.12); padding: 16px; display: flex; flex-direction: column; gap: 9px; max-height: calc(100vh - 24px); overflow-y: auto; overscroll-behavior: contain; }
-.add-event-popup.shared-event-popup { padding: 0; }
+.add-event-popup { background: transparent; border: 0; border-radius: 0; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; padding: 0; display: flex; flex-direction: column; max-height: calc(100vh - 24px); overflow-y: auto; overscroll-behavior: contain; }
 .popup-textarea:focus { border-color: rgba(123,127,178,0.4); box-shadow: 0 0 0 3px rgba(123,127,178,0.1); background: rgba(255,255,255,0.85); }
 .popup-actions { display: flex; gap: 6px; justify-content: flex-end; align-items: center; margin-top: 2px; }
 .popup-delete { padding: 5px 12px; border-radius: 8px; border: 1px solid rgba(176,120,88,0.3); background: rgba(176,120,88,0.08); font-size: 12px; cursor: pointer; color: #b07858; font-family: var(--font-family-ui); font-weight: 600; transition: background 0.12s, border-color 0.12s; }
