@@ -19,7 +19,7 @@
 #### Improvements
 
 - **Email skill**: explain when to use each email format, including ordinary correspondence, scheduled messages, and custom visual content.
-- **Session security**: keep user authentication tokens in HttpOnly cookies and revoke previously issued tokens after logout or password reset.
+- **Session security**: keep user authentication tokens in HttpOnly cookies and revoke previously issued tokens after logout, password change, or password reset.
 
 #### Fixes
 
@@ -39,7 +39,7 @@
 #### 改进
 
 - **邮件技能**：说明普通沟通、定时发送和自定义图文内容分别适合使用哪种格式。
-- **会话安全**：使用 HttpOnly Cookie 保存用户认证，并在退出登录或重置密码后撤销旧令牌。
+- **会话安全**：使用 HttpOnly Cookie 保存认证令牌，并在退出登录、修改密码或重置密码后撤销旧令牌。
 
 #### 修复
 
