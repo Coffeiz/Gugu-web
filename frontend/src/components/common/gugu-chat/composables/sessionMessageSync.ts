@@ -62,7 +62,7 @@ export function mapSessionMessageDelta(
   })
   const timeline: ChatMessage[] = (data.timelineEvents || []).map((event: any) => event.kind === 'assistant'
     ? {
-        id: mkid(), role: 'ai', text: displayQQFaces(event.text || ''), html: null,
+        id: mkid(), dbId: event.messageId, role: 'ai', text: displayQQFaces(event.text || ''), html: null,
         files: event.files?.length ? event.files as ChatFile[] : undefined,
         linkButtons: event.linkButtons, time: displayTime(event.createdAt),
         runId: event.runId, roundId: event.roundId,
@@ -150,8 +150,8 @@ export async function ensureSessionMessageLoaded(options: {
   if (options.isCurrent && !options.isCurrent()) return false
   const data = await agentApi.getMessagesBefore(String(options.sessionId), options.messageId + 1, 200)
   if (options.isCurrent && !options.isCurrent()) return false
-  if (!(data.messages || []).some((message: { id: number }) => Number(message.id) === options.messageId)) return false
   const incoming = mapSessionMessageDelta(data, options.mkid, options.resolveSpeaker)
+  if (!incoming.some(message => message.dbId === options.messageId)) return false
   options.messages.value = sortSessionTimelineMessages(
     mergeSessionMessageDelta(options.messages.value, incoming),
   )

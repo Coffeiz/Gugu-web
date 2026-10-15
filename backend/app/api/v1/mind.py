@@ -329,7 +329,12 @@ async def ref_suggest(
     msg_rows = (await db.execute(
         select(ConversationMessage, ConversationSession.title)
         .join(ConversationSession, ConversationMessage.session_id == ConversationSession.id)
-        .where(ConversationSession.user_id == current_user.id, ConversationMessage.content.ilike(like))
+        .where(
+            ConversationSession.user_id == current_user.id,
+            ConversationMessage.content_json.is_(None),
+            ConversationMessage.role != "summary",
+            ConversationMessage.content.ilike(like),
+        )
         .order_by(ConversationMessage.created_at.desc())
         .limit(limit)
     )).all()

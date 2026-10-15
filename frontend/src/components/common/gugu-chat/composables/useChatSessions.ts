@@ -38,6 +38,7 @@ interface RawToolEvent {
 
 interface RawTimelineEvent {
   id: string
+  messageId?: number
   kind: 'assistant' | 'tool'
   text?: string
   files?: ChatFile[]
@@ -215,7 +216,7 @@ export function useChatSessions(options: {
       const loadedTimeline = ((data.timelineEvents || []) as RawTimelineEvent[]).map((event) =>
         event.kind === 'assistant'
           ? {
-              id: mkid(), role: 'ai', text: displayQQFaces(event.text || ''), html: null, _syncKey: `timeline:${event.id}`,
+              id: mkid(), dbId: event.messageId, role: 'ai', text: displayQQFaces(event.text || ''), html: null, _syncKey: `timeline:${event.id}`,
               files: event.files && event.files.length ? event.files : undefined,
               linkButtons: event.linkButtons,
               time: new Date(event.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit', timeZone: effectiveTimezone() }),
