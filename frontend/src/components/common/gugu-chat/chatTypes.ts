@@ -1,5 +1,6 @@
 /** Agent ask_user 选择卡的协议保留 ID；系统确认卡不会生成这个选项。 */
 export const CUSTOM_REPLY_OPTION_ID = '__custom_reply__'
+export type InteractionAnswerMode = 'inline' | 'composer'
 
 // 聊天气泡的完整字段集合（TS 转换新增）：字段来自不同代码路径按需附加（默认问候/流式回复/
 // 历史消息回填/用户发送各自只带自己用得上的那几个），松散 interface 如实反映这个既有形状，
@@ -68,6 +69,27 @@ export interface ChatMessage {
     expiresAt?: string
     expired?: boolean
   }
+}
+
+/** 当前会话里可由聊天输入框直接回答的最新待处理 Agent 交互。 */
+export function findPendingTextInteractionId(
+  messages: readonly ChatMessage[],
+  answerMode: InteractionAnswerMode = 'composer',
+): number | null {
+  if (answerMode === 'inline') return null
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const interaction = messages[index].interaction
+    if (
+      !interaction
+      || interaction.resolved
+      || interaction.expired
+      || !interaction.allowTextInput
+      || interaction.kind === 'confirm'
+    ) continue
+    const hasRealOptions = interaction.options.some(option => option.id !== CUSTOM_REPLY_OPTION_ID)
+    if (interaction.customInputActive || !hasRealOptions) return interaction.promptId
+  }
+  return null
 }
 
 // 聊天附件（暂存上传 attach_id / 已落库 file_id 两种来源共用的松散形状，字段来自不同

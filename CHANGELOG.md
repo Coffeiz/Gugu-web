@@ -22,6 +22,8 @@
 
 #### Improvements
 
+- **Telegram setup**: connect a BotFather bot directly from chat by entering its token.
+- **Agent questions**: show open-ended and custom-answer inputs inside Web prompt cards; IM replies continue to use the chat composer.
 - **Telegram replies**: show tool results without duplicate raw JSON, with status text localized to the user's language.
 - **Telegram formatting**: preserve list and fenced-code formatting when splitting long replies.
 - **Telegram buttons**: arrange inline buttons by label length to keep longer choices readable.
@@ -79,6 +81,8 @@
 
 #### 改进
 
+- **Telegram 连接**：可直接在聊天侧栏输入 Bot Token 绑定机器人。
+- **Agent 询问**：网页端在问题卡片内直接显示开放回答和自定义回答输入框；IM 仍通过聊天输入框回复。
 - **Telegram 回复**：只展示工具调用结果，不再重复发送原始 JSON；状态文案根据用户语言显示。
 - **Telegram 格式**：长回复分段发送时保留列表和围栏代码格式。
 - **Telegram 按钮**：根据选项文字长度自适应排列内联按钮，提升长选项的可读性。

@@ -1,6 +1,6 @@
 import { ref, reactive, computed, nextTick, onUnmounted, type Ref, type ComponentPublicInstance } from 'vue'
 import QRCode from 'qrcode'
-import { userBotsApi, qqConnectApi, feishuConnectApi, wechatConnectApi } from '@/services/api'
+import { userBotsApi, qqConnectApi, feishuConnectApi, wechatConnectApi, telegramConnectApi } from '@/services/api'
 import { i18n } from '@/i18n'
 import type { ImPlatformKey } from '../chatTypes'
 import type GuguChatSidebar from '../GuguChatSidebar.vue'
@@ -44,6 +44,9 @@ export function useChatImConnect(options: {
     { key: 'telegram', label: 'Telegram', api: null },
   ]
   const bots   = ref<Bot[]>([])
+  const telegramTokenDialogOpen = ref(false)
+  const telegramConnecting = ref(false)
+  const telegramConnectError = ref('')
   const supportedPlatforms = ref<ImPlatformKey[]>(IM_PLATFORMS.map(platform => platform.key))
   const imOpen = reactive<Record<ImPlatformKey, boolean>>({ feishu: false, qq: false, wechat: false, telegram: false })
   // Sidebar 只需要 key/label 展示，api 对象（feishuConnectApi 等）留在这里，
@@ -61,6 +64,32 @@ export function useChatImConnect(options: {
     } catch {}
   }
   function toggleImPlatform(key: ImPlatformKey) { imOpen[key] = !imOpen[key] }
+
+  function openTelegramTokenDialog() {
+    telegramConnectError.value = ''
+    telegramTokenDialogOpen.value = true
+  }
+  function closeTelegramTokenDialog() {
+    if (telegramConnecting.value) return
+    telegramTokenDialogOpen.value = false
+  }
+  async function submitTelegramToken(token: string) {
+    const normalized = token.trim()
+    if (!normalized || telegramConnecting.value) return
+    telegramConnecting.value = true
+    telegramConnectError.value = ''
+    try {
+      await telegramConnectApi.connect(normalized)
+      telegramTokenDialogOpen.value = false
+      await loadBots()
+      await options.fetchSessions()
+    } catch {
+      // API 错误可能携带服务端细节；不把原始异常直接显示在聊天 UI。
+      telegramConnectError.value = t('chatUi.telegramConnectFailed')
+    } finally {
+      telegramConnecting.value = false
+    }
+  }
 
   // 离线状态被点击：展开大窗 → 摊开各 IM 抽屉露出「扫码连接」→ 高亮 IM 区一下（暗示式引导，不强推）
   async function promptConnectIM() {
@@ -172,6 +201,8 @@ export function useChatImConnect(options: {
   return {
     bots, imOpen, imPlatformOptions, imOnline, botsOf, imHighlight,
     loadBots, toggleImPlatform, promptConnectIM,
+    telegramTokenDialogOpen, telegramConnecting, telegramConnectError,
+    openTelegramTokenDialog, closeTelegramTokenDialog, submitTelegramToken,
     connecting, connect, connectHint, connectErr, setConnectCanvas,
     startImConnect, cancelImConnect,
     chatBind, openChatImBind, closeChatBind,
