@@ -471,7 +471,7 @@ export const filesApi = {
   },
   location: (id: number) => get<{
     file: Schemas['FileResponse']
-    folder_path: Array<Schemas['FolderResponse']>
+    folderPath: Array<Schemas['FolderResponse']>
   }>(`/files/${id}/location`),
   resolvePaths: (id: number, paths: string[]) => post<Array<{
     path: string

@@ -49,7 +49,7 @@ describe('文件库全局搜索定位', () => {
     }
     vi.mocked(filesApi.location).mockResolvedValue({
       file: { projectId: null, workspaceDirectoryId: 12 } as never,
-      folder_path: [{ id: 34, name: '源码' }, { id: 56, name: '前端' }] as never,
+      folderPath: [{ id: 34, name: '源码' }, { id: 56, name: '前端' }] as never,
     } as never)
     vi.mocked(foldersApi.location).mockResolvedValue({
       folder: { id: 73, name: '目标', projectId: null, workspaceDirectoryId: 12 } as never,
@@ -74,6 +74,34 @@ describe('文件库全局搜索定位', () => {
         },
       ])
       expect(kind === 'file' ? filesApi.location : foldersApi.location).toHaveBeenCalledWith(target.id)
+      expect(mounted.loadContents).toHaveBeenCalledOnce()
+      expect(mounted.saveNav).toHaveBeenCalledOnce()
+      expect(mounted.clearSelection).toHaveBeenCalledOnce()
+    } finally {
+      mounted.app.unmount()
+      mounted.host.remove()
+    }
+  })
+
+  it('项目空间文件命中时使用接口返回的 folderPath 跳到所属项目目录', async () => {
+    const mounted = mountNavigation()
+    vi.mocked(filesApi.location).mockResolvedValue({
+      file: { projectId: 308, workspaceDirectoryId: null } as never,
+      folderPath: [
+        { id: 4381, projectId: 308, name: 'coffeiz-speedraw' },
+        { id: 4570, projectId: 308, name: 'reference' },
+      ] as never,
+    } as never)
+
+    try {
+      await mounted.navigation.jumpToTarget({ kind: 'file', id: 21183 })
+
+      expect(mounted.navPath.value).toEqual([
+        { type: 'projects', name: '项目文件', color: null },
+        { type: 'project', id: 308, name: '项目', color: null },
+        { type: 'folder', folderId: 4381, name: 'coffeiz-speedraw', projectId: 308, color: null },
+        { type: 'folder', folderId: 4570, name: 'reference', projectId: 308, color: null },
+      ])
       expect(mounted.loadContents).toHaveBeenCalledOnce()
       expect(mounted.saveNav).toHaveBeenCalledOnce()
       expect(mounted.clearSelection).toHaveBeenCalledOnce()
