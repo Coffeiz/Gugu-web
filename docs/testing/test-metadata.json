@@ -982,5 +982,29 @@
     "productionEntry": "frontend/src/services/resourceRefreshEvents.ts",
     "keyBehavior": "跨端资源变化事件按类型通知订阅者并保持事件载荷一致",
     "ci": "frontend-test"
+  },
+  "backend/tests/agent/providers/test_anthropic_stream_recovery.py": {
+    "domain": "agent-stream-recovery",
+    "layer": "L2",
+    "owner": "backend/agent/providers",
+    "productionEntry": "backend/agent/loop/provider.py:stream_round",
+    "keyBehavior": "Anthropic 坏流恢复只重放未输出正文的请求，保留请求内容并防止工具重复执行",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/providers/test_sdk_compat_streaming.py": {
+    "domain": "provider-sdk-compat",
+    "layer": "L1",
+    "owner": "backend/agent/providers",
+    "productionEntry": "backend/agent/providers/__init__.py:build_openai_client",
+    "keyBehavior": "真实 OpenAI 与 Anthropic SDK 在兼容传输上支持流式工具调用、超时分类和超时转换",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/test_project_file_counts_postgres.py": {
+    "domain": "project-file-counts",
+    "layer": "L2",
+    "owner": "backend/app/db",
+    "productionEntry": "backend/app/db/project_file_counts.py:PROJECT_FILE_COUNT_PROJECTION_SQL",
+    "keyBehavior": "PostgreSQL 触发器在文件创建、移动、软删/恢复和批量删除后保持计数，并可通过重建与源表对账",
+    "ci": "手动启用 PostgreSQL 集成测试"
   }
 }
