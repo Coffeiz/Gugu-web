@@ -34,6 +34,43 @@ test('日历月视图与周视图可以切换', async ({ page }) => {
   await expect(page.locator('.month-body')).toBeVisible()
 })
 
+test('周视图选中时段的底色与月视图选中日期一致', async ({ page }) => {
+  await page.goto('/calendar')
+  await page.locator('.view-toggle button').filter({ hasText: '周' }).click()
+  await expect(page.locator('.week-view')).toBeVisible()
+  await page.addStyleTag({ content: '.wv-selected { transition: none !important; }' })
+
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate((selectedTheme) => {
+      document.documentElement.dataset.theme = selectedTheme
+      document.documentElement.dataset.family = 'glass'
+      document.documentElement.dataset.palette = 'mist'
+    }, theme)
+
+    for (const weekend of [false, true]) {
+      const column = page.locator(weekend ? '.wv-col.weekend' : '.wv-col:not(.weekend)').first()
+      const box = await column.boundingBox()
+      expect(box).not.toBeNull()
+      await page.mouse.click(box!.x + box!.width / 2, box!.y + 3 * (box!.height / 24) + 2)
+      const selection = column.locator('.wv-selected')
+      await expect(selection).toBeVisible()
+
+      const colors = await selection.evaluate((node, isWeekend) => {
+        const calendar = document.querySelector('.cal-page')
+        if (!calendar) throw new Error('日历页面未挂载')
+        const referenceCell = document.createElement('div')
+        referenceCell.className = `month-cell is-selected${isWeekend ? ' is-weekend' : ''}`
+        referenceCell.style.cssText = 'position: absolute; visibility: hidden; pointer-events: none'
+        calendar.append(referenceCell)
+        const reference = getComputedStyle(referenceCell).backgroundColor
+        referenceCell.remove()
+        return { actual: getComputedStyle(node).backgroundColor, reference }
+      }, weekend)
+      expect(colors.actual, `${theme} 模式周${weekend ? '末' : '间'}时段选色`).toBe(colors.reference)
+    }
+  }
+})
+
 test('框选日期后可以从侧栏创建带日期范围的项目', async ({ page }) => {
   await page.goto('/calendar')
   await expect(page.locator('.month-body')).toBeVisible()

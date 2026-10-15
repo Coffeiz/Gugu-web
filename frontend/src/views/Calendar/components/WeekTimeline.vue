@@ -133,12 +133,12 @@ const emit = defineEmits<{
 .wv-dhead { flex: 1; position: relative; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 7px 0; cursor: pointer; }
 .wv-dhead > span { position: relative; z-index: 1; }
 .wv-dhead::before, .wv-dhead::after { content: ''; position: absolute; inset: 2px 4px; border-radius: 7px; opacity: 0; transition: opacity 0.12s; pointer-events: none; }
-.wv-dhead::before { background: rgba(123,127,178,0.10); }
-.wv-dhead::after { background: rgba(123,127,178,0.06); }
+.wv-dhead::before { background: var(--calendar-selected-cell-bg); }
+.wv-dhead::after { background: var(--calendar-cell-hover-bg); }
 .wv-dhead.selected::before { opacity: 1; }
 .wv-dhead:hover::after { opacity: 1; }
-.wv-dhead.weekend::before { background: rgba(195,90,90,0.09); }
-.wv-dhead.weekend::after { background: rgba(195,90,90,0.06); }
+.wv-dhead.weekend::before { background: var(--calendar-weekend-selected-bg); }
+.wv-dhead.weekend::after { background: var(--calendar-weekend-hover-bg); }
 .wv-dhead.weekend .wv-dow { color: #b06a78; }
 .wv-dow { font-size: 11px; font-weight: 600; color: #8a8fa8; }
 .wv-dnum { width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 50%; font-size: 15px; font-weight: 600; color: #3a3d52; line-height: 1; }
@@ -152,10 +152,10 @@ const emit = defineEmits<{
 .wv-aco { position: absolute; top: 0; bottom: 0; width: 14.2857%; box-sizing: border-box; border-left: 1px solid rgba(123,127,178,0.1); pointer-events: none; }
 .wv-aco.today { background: rgba(123,127,178,0.06); }
 .wv-aco.weekend { background: rgba(195,90,90,0.028); }
-.wv-ad-sel { position: absolute; top: 0; bottom: 0; width: 14.2857%; background: rgba(123,127,178,0.08); pointer-events: none; z-index: 0; }
-.wv-ad-sel.weekend { background: rgba(195,90,90,0.07); }
-.wv-ad-hover { position: absolute; top: 0; bottom: 0; width: 14.2857%; background: rgba(123,127,178,0.06); pointer-events: none; z-index: 0; }
-.wv-ad-hover.weekend { background: rgba(195,90,90,0.06); }
+.wv-ad-sel { position: absolute; top: 0; bottom: 0; width: 14.2857%; background: var(--calendar-selected-cell-bg); pointer-events: none; z-index: 0; }
+.wv-ad-sel.weekend { background: var(--calendar-weekend-selected-bg); }
+.wv-ad-hover { position: absolute; top: 0; bottom: 0; width: 14.2857%; background: var(--calendar-cell-hover-bg); pointer-events: none; z-index: 0; }
+.wv-ad-hover.weekend { background: var(--calendar-weekend-hover-bg); }
 .wv-pbar, .wv-allday-ev { position: absolute; height: 18px; box-sizing: border-box; display: flex; align-items: center; gap: 3px; padding: 0 6px; border: 1px solid; font-size: 11px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; z-index: 1; }
 .wv-allday-ev { padding-right: 8px; border-radius: 99px; }
 .wv-pbar.bar-start { border-radius: 99px 0 0 99px; }
@@ -172,12 +172,12 @@ const emit = defineEmits<{
 .wv-col { flex: 1; position: relative; border-left: 1px solid rgba(123,127,178,0.1); background-image: linear-gradient(to bottom, rgba(123,127,178,0.13) 1px, transparent 1px); background-repeat: repeat-y; cursor: pointer; }
 .wv-col.today { background-color: rgba(123,127,178,0.045); }
 .wv-col.weekend { background-color: rgba(195,90,90,0.028); }
-.wv-hover { position: absolute; left: 0; right: 0; background: rgba(123,127,178,0.06); pointer-events: none; z-index: 2; }
-.wv-col.weekend .wv-hover { background: rgba(195,90,90,0.07); }
+.wv-hover { position: absolute; left: 0; right: 0; background: var(--calendar-cell-hover-bg); pointer-events: none; z-index: 2; }
+.wv-col.weekend .wv-hover { background: var(--calendar-weekend-hover-bg); }
 .cal-fade-enter-active, .cal-fade-leave-active { transition: opacity 0.12s ease; }
 .cal-fade-enter-from, .cal-fade-leave-to { opacity: 0; }
-.wv-selected { position: absolute; left: 0; right: 0; background: rgba(123,127,178,0.1); pointer-events: none; z-index: 1; }
-.wv-col.weekend .wv-selected { background: rgba(195,90,90,0.1); }
+.wv-selected { position: absolute; left: 0; right: 0; background: var(--calendar-selected-cell-bg); pointer-events: none; z-index: 1; }
+.wv-col.weekend .wv-selected { background: var(--calendar-weekend-selected-bg); }
 .wv-now { position: absolute; left: 0; right: 0; height: 0; border-top: 2px solid #e5484d; z-index: 6; pointer-events: none; }
 .wv-now::before { content: ''; position: absolute; left: -3px; top: -4px; width: 7px; height: 7px; border-radius: 50%; background: #e5484d; }
 .wv-ev { position: absolute; box-sizing: border-box; border: 1px solid; border-radius: 6px; padding: 1px 5px; overflow: hidden; cursor: pointer; display: flex; flex-direction: column; line-height: 1.25; z-index: 3; }
