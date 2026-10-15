@@ -236,6 +236,31 @@ export function normalizeMermaidKanbanSectionColors(root) {
   return root
 }
 
+/** Resvg 未能稳定解析 Mermaid 时间线的 HSL 色阶，内联转换后的色值避免整段变黑。 */
+export function normalizeMermaidTimelineSectionColors(root) {
+  const styles = [...root.getElementsByTagName('style')]
+  const fills = new Map()
+  for (const style of styles) {
+    const css = style.textContent || ''
+    for (const match of css.matchAll(/\.section-(-?\d+)\s+(?:rect|path|circle)[^{]*\{([^}]*)\}/gi)) {
+      const fill = match[2].match(/\bfill\s*:\s*([^;}]+)/i)?.[1]?.trim()
+      if (fill) fills.set(`section-${match[1]}`, normalizeRasterColor(fill))
+    }
+  }
+
+  for (const group of root.getElementsByTagName('g')) {
+    const classes = (group.getAttribute('class') || '').split(/\s+/)
+    if (!classes.includes('timeline-node')) continue
+    const section = classes.find(name => /^section--?\d+$/.test(name))
+    const fill = section ? fills.get(section) : undefined
+    if (!fill) continue
+    for (const shapeName of ['rect', 'path', 'circle']) {
+      for (const shape of group.getElementsByTagName(shapeName)) setStyle(shape, 'fill', fill)
+    }
+  }
+  return root
+}
+
 /** svgdom 会把数据库节点标签的 SVG 组左移半个标签宽度；栅格化前移回圆柱中心。 */
 export function normalizeMermaidDatabaseLabelPosition(root) {
   for (const node of root.getElementsByTagName('g')) {
