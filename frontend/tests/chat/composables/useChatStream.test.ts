@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { i18n } from '@/i18n'
 import { agentApi, trackApi } from '@/services/api'
 import { useChatStream } from '@/components/common/gugu-chat/composables/useChatStream'
+import { mapSessionMessageDelta, mergeSessionMessageDelta } from '@/components/common/gugu-chat/composables/sessionMessageSync'
 import type { ChatMessage } from '@/components/common/gugu-chat/chatTypes'
 
 vi.mock('@/services/sfx', () => ({ playGuguSfx: vi.fn() }))
@@ -38,6 +39,37 @@ describe('useChatStream 停止 run', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+  })
+
+  it('流式回答与同一 run/round 的持久化回答合并为同一条气泡', async () => {
+    const options = createOptions([])
+    const stream = useChatStream(options)
+    let sseController!: ReadableStreamDefaultController<Uint8Array>
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) { sseController = controller },
+    })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(body)))
+
+    const consuming = stream.resumeStream(42)
+    const send = (value: object) => sseController.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(value)}\n\n`))
+    send({ type: 'round_start', run_id: 'run-1', round_id: 'round-2' })
+    send({ type: 'token', run_id: 'run-1', round_id: 'round-2', content: '同一轮的回答' })
+    send({ type: 'done', run_id: 'run-1' })
+    sseController.close()
+    await consuming
+
+    const persisted = mapSessionMessageDelta({
+      messages: [{ id: 91, role: 'assistant', content: '同一轮的回答', createdAt: '2026-10-15T03:17:00Z',
+        runId: 'run-1', roundId: 'round-2' }],
+      timelineEvents: [], toolEvents: [],
+    }, () => 101, role => ({ role: role === 'assistant' ? 'ai' : role }))
+    const merged = mergeSessionMessageDelta(options.messages.value, persisted)
+
+    expect(options.messages.value[0]).toMatchObject({
+      role: 'ai', text: '同一轮的回答', _syncKey: 'assistant:run-1:round-2',
+    })
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toMatchObject({ dbId: 91, text: '同一轮的回答' })
   })
 
   it('同一工具调用从排队中更新为进行中且只保留一张卡片', async () => {

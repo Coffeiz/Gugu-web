@@ -2,6 +2,11 @@
 export const CUSTOM_REPLY_OPTION_ID = '__custom_reply__'
 export type InteractionAnswerMode = 'inline' | 'composer'
 
+/** 同一 Agent 回合的实时气泡与持久化消息共享稳定身份。 */
+export function assistantMessageSyncKey(runId?: string | null, roundId?: string | null) {
+  return runId && roundId ? `assistant:${runId}:${roundId}` : null
+}
+
 // 聊天气泡的完整字段集合（TS 转换新增）：字段来自不同代码路径按需附加（默认问候/流式回复/
 // 历史消息回填/用户发送各自只带自己用得上的那几个），松散 interface 如实反映这个既有形状，
 // 不强行收紧成必填。

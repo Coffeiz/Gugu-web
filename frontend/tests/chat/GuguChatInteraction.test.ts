@@ -48,6 +48,7 @@ afterEach(() => {
   mounted?.app.unmount()
   mounted?.host.remove()
   mounted = undefined
+  vi.useRealTimers()
 })
 
 describe('GuguChatInteraction', () => {
@@ -165,6 +166,30 @@ describe('GuguChatInteraction', () => {
     await nextTick()
 
     expect(input.value).toBe('')
+  })
+
+  it('不会在自定义回答请求进行中把交互卡自动标记为过期', async () => {
+    vi.useFakeTimers()
+    const expiresAt = new Date(Date.now() + 1000).toISOString()
+    const msg = reactive(interactionMessage())
+    msg.interaction!.kind = 'question'
+    msg.interaction!.allowTextInput = true
+    msg.interaction!.customInputActive = true
+    msg.interaction!.submitting = true
+    msg.interaction!.expiresAt = expiresAt
+    mounted = mountInteraction(msg)
+
+    await vi.advanceTimersByTimeAsync(1500)
+    await nextTick()
+    expect(msg.interaction!.expired).toBeUndefined()
+    expect(mounted.host.querySelector('.interaction-resolved')?.textContent)
+      .toContain('chatUi.confirmationSubmitting')
+
+    msg.interaction!.submitting = false
+    await nextTick()
+    expect(msg.interaction!.expired).toBe(true)
+    expect(mounted.host.querySelector('.interaction-resolved')?.textContent)
+      .toContain('chatUi.expired')
   })
 
   it('长选项的静态布局契约允许收缩、换行并限制在气泡宽度内', () => {

@@ -57,6 +57,36 @@ describe('mergeSessionMessageDelta', () => {
     expect(merged[0]).toMatchObject({ id: 1, dbId: 250810, text: 'persisted final reply' })
   })
 
+  it('reconciles the live reply with its persisted copy by run and round identity', () => {
+    const current: ChatMessage[] = [{
+      id: 1, role: 'ai', text: '同一轮的回答', time: '', streaming: false,
+      runId: 'run-1', roundId: 'round-2', _syncKey: 'assistant:run-1:round-2',
+    }]
+    const incoming = mapSessionMessageDelta({
+      messages: [{ id: 91, role: 'assistant', content: '同一轮的回答', createdAt: '2026-10-15T03:17:00Z',
+        runId: 'run-1', roundId: 'round-2' }],
+      timelineEvents: [], toolEvents: [],
+    }, () => 2, role => ({ role: role === 'assistant' ? 'ai' : role }))
+
+    const merged = mergeSessionMessageDelta(current, incoming)
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toMatchObject({ id: 1, dbId: 91, text: '同一轮的回答', _syncKey: 'assistant:run-1:round-2' })
+  })
+
+  it('保留不同 run/round 中正文相同的合法回答', () => {
+    const current: ChatMessage[] = [{
+      id: 1, role: 'ai', text: '收到', time: '', runId: 'run-1', roundId: 'round-1',
+      _syncKey: 'assistant:run-1:round-1',
+    }]
+    const incoming = mapSessionMessageDelta({
+      messages: [{ id: 92, role: 'assistant', content: '收到', createdAt: '2026-10-15T03:17:00Z',
+        runId: 'run-2', roundId: 'round-1' }],
+      timelineEvents: [], toolEvents: [],
+    }, () => 2, role => ({ role: role === 'assistant' ? 'ai' : role }))
+
+    expect(mergeSessionMessageDelta(current, incoming)).toHaveLength(2)
+  })
+
   it('does not recover an old persisted assistant reply as the current turn', () => {
     const result = findLatestPersistedAssistant({
       messages: [],

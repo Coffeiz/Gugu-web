@@ -1,5 +1,4 @@
-import type { ChatMessage } from '../chatTypes'
-import type { ChatFile, ChatReference } from '../chatTypes'
+import { assistantMessageSyncKey, type ChatFile, type ChatMessage, type ChatReference } from '../chatTypes'
 import { displayQQFaces } from '../messageDisplay'
 import { effectiveTimezone } from '@/utils/userTimezone'
 import { nextTick, type Ref } from 'vue'
@@ -15,6 +14,11 @@ function displayTime(createdAt: string) {
   return new Date(createdAt).toLocaleTimeString('zh', {
     hour: '2-digit', minute: '2-digit', timeZone: effectiveTimezone(),
   })
+}
+
+function persistedMessageSyncKey(item: any, resolvedRole: string) {
+  return (resolvedRole === 'ai' && assistantMessageSyncKey(item.runId, item.roundId))
+    || `message:${item.id}`
 }
 
 export function sortSessionTimelineMessages(items: ChatMessage[]) {
@@ -39,8 +43,11 @@ export function mapSessionMessageDelta(
 ): ChatMessage[] {
   const messages: ChatMessage[] = (data.messages || []).map((item: any) => {
     const speaker = resolveSpeaker(item.role, item.platformUserId, item.platformUserName)
+    const runId = item.runId || undefined
+    const roundId = item.roundId || undefined
     return {
-      id: mkid(), dbId: item.id, _syncKey: `message:${item.id}`,
+      id: mkid(), dbId: item.id,
+      _syncKey: persistedMessageSyncKey({ ...item, runId, roundId }, speaker.role),
       role: speaker.role, speakerLabel: speaker.speakerLabel,
       platformUserId: item.platformUserId || null,
       text: displayQQFaces(item.content), html: null,
@@ -49,7 +56,7 @@ export function mapSessionMessageDelta(
       quotedText: item.quotedText || undefined,
       time: displayTime(item.createdAt), _createdAt: item.createdAt,
       _timelineOrder: item.timelineOrder ?? item.id,
-      runId: item.runId, roundId: item.roundId,
+      runId, roundId,
       runOutcome: item.runOutcome,
     }
   })
@@ -60,7 +67,7 @@ export function mapSessionMessageDelta(
         linkButtons: event.linkButtons, time: displayTime(event.createdAt),
         runId: event.runId, roundId: event.roundId,
         _timelineOrder: event.timelineOrder, _createdAt: event.createdAt,
-        _syncKey: `timeline:${event.id}`,
+        _syncKey: assistantMessageSyncKey(event.runId, event.roundId) || `timeline:${event.id}`,
       }
     : {
         id: mkid(), role: 'tool', text: '', toolCallId: event.toolCallId,
@@ -87,10 +94,10 @@ export function mapSessionMessageDelta(
 export function findLatestPersistedAssistant(data: any, notBefore = 0) {
   const candidates = [
     ...(data.messages || []).flatMap((item: any) => item.role === 'assistant'
-      ? [{ item, syncKey: `message:${item.id}`, text: item.content || '' }]
+      ? [{ item, syncKey: assistantMessageSyncKey(item.runId, item.roundId) || `message:${item.id}`, text: item.content || '' }]
       : []),
     ...(data.timelineEvents || []).flatMap((item: any) => item.kind === 'assistant'
-      ? [{ item, syncKey: `timeline:${item.id}`, text: item.text || '' }]
+      ? [{ item, syncKey: assistantMessageSyncKey(item.runId, item.roundId) || `timeline:${item.id}`, text: item.text || '' }]
       : []),
   ].filter(({ item, text }) => {
     const hasContent = Boolean(text?.trim() || item.files?.length)

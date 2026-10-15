@@ -14,6 +14,7 @@ import { createPendingQueueKey, getDraftPendingQueueId, getSessionPendingQueueId
 import { dispatchPendingQueueItem } from './chatPendingQueueDispatch'
 import { recordStreamDiagnostic } from './chatStreamDiagnostics'
 import { findLatestPersistedAssistant } from './sessionMessageSync'
+import { assistantMessageSyncKey } from '../chatTypes'
 
 interface StatusItem { kind: 'text' | 'dots' | 'hide'; label?: string }
 
@@ -708,6 +709,7 @@ export function useChatStream(options: {
                   id: messageId, role: 'ai', text: '', time: now(), streaming: true,
                   runId: evt.run_id || currentRunId || undefined,
                   roundId: evt.round_id || currentRoundId || undefined,
+                  _syncKey: assistantMessageSyncKey(evt.run_id || currentRunId, evt.round_id || currentRoundId) || undefined,
                   _timelineOrder: nextTimelineOrder(),
                 })
                 sortLiveTimeline()
@@ -733,6 +735,7 @@ export function useChatStream(options: {
                   id: messageId, role: 'ai', text: '', time: now(), streaming: true,
                   runId: evt.run_id || currentRunId || undefined,
                   roundId: evt.round_id || currentRoundId || undefined,
+                  _syncKey: assistantMessageSyncKey(evt.run_id || currentRunId, evt.round_id || currentRoundId) || undefined,
                   _timelineOrder: nextTimelineOrder(),
                 })
                 sortLiveTimeline()
@@ -756,6 +759,7 @@ export function useChatStream(options: {
                   id: messageId, role: 'ai', text: '', time: now(), streaming: true,
                   runId: evt.run_id || currentRunId || undefined,
                   roundId: evt.round_id || currentRoundId || undefined,
+                  _syncKey: assistantMessageSyncKey(evt.run_id || currentRunId, evt.round_id || currentRoundId) || undefined,
                   _timelineOrder: nextTimelineOrder(),
                 })
                 sortLiveTimeline()
