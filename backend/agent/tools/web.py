@@ -302,7 +302,7 @@ async def _web_download(db, user_id, args: dict):
         return {"error": f"下载失败：远端返回 HTTP {status}"}
     content_type = (headers.get("content-type") or "application/octet-stream").split(";", 1)[0].strip().lower()
     name, ext = _download_filename(
-        args.get("name") or _content_disposition_name(headers.get("content-disposition")),
+        args.get("file_name") or _content_disposition_name(headers.get("content-disposition")),
         normalized_url,
         content_type,
     )
@@ -384,7 +384,7 @@ class WebSkill(BaseSkill):
                 "type": "object",
                 "properties": {
                     "url": {"type": "string", "minLength": 1},
-                    "name": {"type": ["string", "null"]},
+                    "file_name": {"type": ["string", "null"]},
                     "space": {"type": ["string", "null"], "enum": ["project", "workspace", "personal", None]},
                     "project_id": {"type": ["integer", "null"]},
                     "folder_id": {"type": ["integer", "null"]},

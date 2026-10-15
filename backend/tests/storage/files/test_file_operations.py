@@ -48,19 +48,19 @@ async def test_create_file_batch_validations_and_isolation(db, user_a, storage):
     assert "files 数组" in bad_args["error"]
     bad_args = await _create_file(db, user_a.id, {"files": []})
     assert "files 数组" in bad_args["error"]
-    bad_args = await _create_file(db, user_a.id, {"files": [{"name": "a.md", "content": "x"}] * 21})
+    bad_args = await _create_file(db, user_a.id, {"files": [{"file_name": "a.md", "content": "x"}] * 21})
     assert "最多创建 20 个" in bad_args["error"]
-    bad_args = await _create_file(db, user_a.id, {"files": [{"name": "a.md", "content": "x"}], "target": "x"})
+    bad_args = await _create_file(db, user_a.id, {"files": [{"file_name": "a.md", "content": "x"}], "target": "x"})
     assert "target 必须是对象" in bad_args["error"]
 
     result = await _create_file(db, user_a.id, {"files": [
-        {"name": "好文件.md", "content": "# 标题"},
+        {"file_name": "好文件.md", "content": "# 标题"},
         "不是对象",
-        {"name": "无扩展名", "content": "x"},
-        {"name": "内容.md", "content": 123},
-        {"name": "文档.pdf", "content": "x"},
-        {"name": "超大.md", "content": "字" * (256 * 1024 + 1)},
-        {"name": "围栏.md", "content": "x", "space": "workspace"},   # 未绑定工作区 → 落点被拒
+        {"file_name": "无扩展名", "content": "x"},
+        {"file_name": "内容.md", "content": 123},
+        {"file_name": "文档.pdf", "content": "x"},
+        {"file_name": "超大.md", "content": "字" * (256 * 1024 + 1)},
+        {"file_name": "围栏.md", "content": "x", "space": "workspace"},   # 未绑定工作区 → 落点被拒
     ]})
     assert result["created_count"] == 1 and result["failed_count"] == 6
     by_index = {f["index"]: f for f in result["failed"]}

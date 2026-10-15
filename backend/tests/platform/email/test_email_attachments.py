@@ -180,7 +180,7 @@ async def test_scheduled_task_persists_owned_email_file_ids(db, user_a):
     await db.refresh(file_row)
 
     result = await _create_scheduled_task(db, user_a.id, {
-        "name": "邮件报告", "instruction": "发送报告", "schedule_kind": "cron",
+        "schedule_name": "邮件报告", "instruction": "发送报告", "schedule_kind": "cron",
         "cron": "0 9 * * *", "channels": ["email"],
         "email_attachment_file_ids": [file_row.id],
     })

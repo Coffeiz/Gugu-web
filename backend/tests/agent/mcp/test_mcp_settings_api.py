@@ -327,7 +327,7 @@ async def test_manage_mcp_servers_can_resolve_actions_by_name(db, user_a):
     result = await _manage_mcp_servers(
         db,
         user_a.id,
-        {"action": "enable", "name": created["name"]},
+        {"action": "enable", "server_name": created["name"]},
     )
     assert result["success"] is True
     assert result["server"]["id"] == created["id"]
@@ -366,10 +366,10 @@ async def test_manage_mcp_servers_uses_generic_secret_prompt_for_slots(db, user_
     monkeypatch.setattr("agent.interactions.confirmations.needs_confirmation", lambda *args, **kwargs: None)
     result = await _manage_mcp_servers(db, user_a.id, {
         "action": "add",
-        "name": "generic_auth",
+        "server_name": "generic_auth",
         "endpoint": "https://m.example.com/mcp?key={{secret:key}}",
         "credential_slots": [
-            {"id": "key", "label": "服务 Key", "target": "query", "name": "key"},
+            {"id": "key", "label": "服务 Key", "target": "query", "parameter_name": "key"},
         ],
     })
     assert result["_interaction"] == "ask_user"
@@ -1111,6 +1111,8 @@ def test_manage_mcp_servers_schema_accepts_credential_slots():
     slots = tool.input_schema["properties"]["credential_slots"]
     assert slots["type"] == "array"
     assert slots["items"]["properties"]["target"]["enum"] == ["header", "query"]
+    assert "parameter_name" in slots["items"]["properties"]
+    assert "name" not in slots["items"]["properties"]
 
 
 async def test_agent_tool_results_never_leak_credentials(db, user_a, monkeypatch):

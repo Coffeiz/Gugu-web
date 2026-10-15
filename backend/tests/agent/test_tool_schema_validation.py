@@ -265,9 +265,11 @@ def test_all_date_fields_share_canonical_normalization_before_schema_validation(
 
     assert event["date"] == "2026-08-23"
     assert event_adaptations == ["create_event.date:normalized_date"]
+    assert project["project_name"] == "项目"
     assert project["start_date"] == "2026-08-20"
     assert project["deadline"] == "2026-08-23"
     assert project_adaptations == [
+        "create_project.name:renamed_to_project_name",
         "create_project.start_date:normalized_date",
         "create_project.deadline:normalized_date",
     ]
@@ -861,6 +863,65 @@ async def test_mutating_tool_invalid_input_never_runs_handler():
     raw, _ = await reg.dispatch("not-a-uuid", "schema_test_tool", {"project_id": "not-an-id"})
 
     assert json.loads(raw)["error"] == "tool_input_invalid"
+    assert called is False
+
+
+async def test_unknown_tool_error_separates_name_from_arguments_and_bad_channels_are_rejected():
+    """未知名称返回通用纠错；正确工具名下非法参数仍被拦截且不执行 handler。"""
+    called = False
+
+    async def handler(db, user_id, args):
+        nonlocal called
+        called = True
+        return {"success": True}
+
+    reg = SkillRegistry()
+    reg.add(Tool(
+        name="create_scheduled_task",
+        description="创建定时任务",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "schedule_name": {"type": "string"},
+                "instruction": {"type": "string"},
+                "schedule_kind": {"type": "string", "enum": ["cron"]},
+                "cron": {"type": "string"},
+                "channels": {"type": "array", "items": {"type": "string"}},
+                "delivery_mode": {"type": "string"},
+            },
+            "required": ["schedule_name", "instruction", "schedule_kind"],
+        },
+        handler=handler,
+        mutates=True,
+    ))
+
+    unknown_raw, _ = await reg.dispatch("not-a-uuid", "工作日午间提醒", {
+        "channels": {"item": "qq"},
+        "cron": "0 12 * * 1,3,5",
+        "delivery_mode": "owner_private",
+    })
+    unknown = json.loads(unknown_raw)
+    assert unknown["tool"] == "工作日午间提醒"
+    assert "工具列表" in unknown["next_action"]
+    assert "业务参数" in unknown["next_action"]
+    assert "create_scheduled_task" not in unknown["next_action"]
+
+    mcp_unknown = tool_base.enrich_tool_error(
+        "missing_mcp_tool", {"error": "未知工具: missing_mcp_tool"},
+    )
+    assert mcp_unknown["next_action"] == unknown["next_action"]
+
+    invalid_raw, _ = await reg.dispatch("not-a-uuid", "create_scheduled_task", {
+        "schedule_name": "工作日午间提醒",
+        "instruction": "发送当天计划",
+        "schedule_kind": "cron",
+        "cron": "0 12 * * 1,3,5",
+        "channels": {"item": "qq"},
+        "delivery_mode": "owner_private",
+    })
+    invalid = json.loads(invalid_raw)
+    assert invalid["error"] == "tool_input_invalid"
+    assert any(issue["path"] == "channels" for issue in invalid["issues"])
     assert called is False
 
 

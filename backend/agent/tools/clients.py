@@ -26,10 +26,10 @@ async def _list_clients(db, user_id, args: dict):
 
 
 async def _create_client(db, user_id, args: dict):
-    if not args.get("name"):
+    if not args.get("client_name"):
         return json.dumps({"error": "客户名称必填"})
     c = await create_client(
-        db, user_id, name=args["name"], contact=args.get("contact"),
+        db, user_id, name=args["client_name"], contact=args.get("contact"),
         email=args.get("email"), phone=args.get("phone"),
         notes=args.get("notes", ""),
     )
@@ -61,10 +61,13 @@ async def _update_client(db, user_id, args: dict):
     c, _err = await _resolve_client(db, user_id, args)
     if _err:
         return _err
-    fields = ("name", "contact", "email", "phone", "notes")
+    fields = ("client_name", "contact", "email", "phone", "notes")
     if not any(fld in args for fld in fields):   # 没给任何要改的字段 → 别假成功（防咕咕误报"已更新"）
-        return json.dumps({"error": "没提供要修改的字段（name/contact/email/phone/notes），未改动。"})
-    await update_client(db, c, {field: args[field] for field in fields if field in args})
+        return json.dumps({"error": "没提供要修改的字段（client_name/contact/email/phone/notes），未改动。"})
+    changes = {field: args[field] for field in fields if field in args}
+    if "client_name" in changes:
+        changes["name"] = changes.pop("client_name")
+    await update_client(db, c, changes)
     return {"success": True, "client_id": c.id, "name": c.name}
 
 
@@ -132,13 +135,13 @@ class ClientsSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string"},
+                    "client_name": {"type": "string"},
                     "contact": {"type": "string"},
                     "email": {"type": "string"},
                     "phone": {"type": "string"},
                     "notes": {"type": "string"},
                 },
-                "required": ["name"],
+                "required": ["client_name"],
             },
             handler=_create_client,
             mutates=True,
@@ -153,7 +156,7 @@ class ClientsSkill(BaseSkill):
                     "client_id": {"type": "integer"},
                     "client": {"type": "string"},
                     "client_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50, "uniqueItems": True},
-                    "name": {"type": "string"},
+                    "client_name": {"type": "string"},
                     "contact": {"type": "string"},
                     "email": {"type": "string"},
                     "phone": {"type": "string"},

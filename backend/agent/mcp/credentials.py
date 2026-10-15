@@ -34,7 +34,8 @@ def normalize_slots(raw) -> list[dict[str, str]]:
         slot_id = str(item.get("id") or "").strip()
         label = str(item.get("label") or slot_id).strip()
         target = str(item.get("target") or "").strip().lower()
-        name = str(item.get("name") or "").strip()
+        # 新输入叫 parameter_name，保存结构仍使用 name 保持现有凭据注入协议兼容。
+        name = str(item.get("parameter_name") or item.get("name") or "").strip()
         prefix = str(item.get("prefix") or "")
         if not _SLOT_ID.fullmatch(slot_id) or slot_id in seen_ids:
             raise ValueError("凭据槽位 id 无效或重复")

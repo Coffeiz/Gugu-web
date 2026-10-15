@@ -25,7 +25,7 @@ def _noop_events(monkeypatch):
 
 
 async def _create(db, user_id, name, **overrides):
-    args = {"name": name, "deadline": "2026-12-01", "start_date": "2026-11-01"}
+    args = {"project_name": name, "deadline": "2026-12-01", "start_date": "2026-11-01"}
     args.update(overrides)
     result = await projects_tools._create_project(db, user_id, args)
     assert result["success"] is True
@@ -57,7 +57,7 @@ async def test_create_project_custom_stages_and_invalid_priority(db, user_a):
 
 async def test_create_project_rejects_wrapped_stage_without_creating_project(db, user_a):
     result = await projects_tools._create_project(db, user_a.id, {
-        "name": "阶段格式回归",
+        "project_name": "阶段格式回归",
         "deadline": "2026-12-01",
         "start_date": "2026-11-01",
         "stages": [{"item": {"label": "准备", "todos": ["整理需求"]}}],
@@ -102,7 +102,7 @@ async def test_update_project_renames_and_normalizes_priority(db, user_a):
     created = await _create(db, user_a.id, "旧名")
 
     result = await projects_tools._update_project(db, user_a.id, {
-        "project_id": created["project_id"], "name": "新名", "priority": "LOW", "client": "某客户",
+        "project_id": created["project_id"], "project_name": "新名", "priority": "LOW", "client": "某客户",
     })
 
     assert result["success"] is True
@@ -137,7 +137,7 @@ async def test_update_project_done_auto_completes_todos(db, user_a):
 
 
 async def test_update_project_missing_returns_error(db, user_a):
-    result = await projects_tools._update_project(db, user_a.id, {"project_id": 987654, "name": "x"})
+    result = await projects_tools._update_project(db, user_a.id, {"project_id": 987654, "project_name": "x"})
     assert "error" in result
 
 

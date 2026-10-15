@@ -66,7 +66,7 @@ async def _create_skill(db, user_id, args: dict):
     from agent.capabilities.skill_registry import SkillCapabilityRegistry
     from agent.tools import registry
 
-    name = str(args.get("name") or "").strip()
+    name = str(args.get("skill_name") or "").strip()
     dynamic_tools = _skill_tool_context()
     related = [str(item).strip() for item in (args.get("related_tools") or ()) if str(item).strip()]
     tool_snapshot = registry.snapshot()
@@ -116,13 +116,15 @@ async def _update_skill(db, user_id, args: dict):
     fields = {
         key: args[key]
         for key in (
-            "name", "description_short", "description_long", "category",
+            "skill_name", "description_short", "description_long", "category",
             "related_tools", "body", "enabled",
         )
         if key in args
     }
     if not fields:
         return {"error": "至少提供一个要更新的字段"}
+    if "skill_name" in fields:
+        fields["name"] = fields.pop("skill_name")
     dynamic_tools = _skill_tool_context()
     try:
         row = await SkillCapabilityRegistry().update_user_skill(
@@ -206,13 +208,13 @@ SKILL_MANAGEMENT_TOOLS = [
         label="创建咕咕技能",
         description_short="创建用户自定义技能并保存可复用做法。",
         description=(
-            "创建可复用的 Prompt Skill；不是项目，也不是调用已有技能。需要 name、description_short、body、related_tools 和 managed_by；"
+            "创建可复用的 Prompt Skill；不是项目，也不是调用已有技能。需要 skill_name、description_short、body、related_tools 和 managed_by；"
             "明确按用户要求创建时 managed_by=user，从稳定重复流程中自主提炼时 managed_by=assistant。不能注册工具或扩大权限。"
         ),
         input_schema={
             "type": "object",
             "properties": {
-                "name": {"type": "string", "minLength": 1, "maxLength": 120},
+                "skill_name": {"type": "string", "minLength": 1, "maxLength": 120},
                 "description_short": {"type": "string", "minLength": 1, "maxLength": 100},
                 "description_long": {"type": "string", "maxLength": 500},
                 "category": {"type": "string", "enum": ["personal", "productivity", "research", "creative", "other"]},
@@ -220,7 +222,7 @@ SKILL_MANAGEMENT_TOOLS = [
                 "body": {"type": "string", "minLength": 1, "maxLength": 20000},
                 "managed_by": {"type": "string", "enum": ["user", "assistant"]},
             },
-            "required": ["name", "description_short", "body", "related_tools", "managed_by"],
+            "required": ["skill_name", "description_short", "body", "related_tools", "managed_by"],
             "additionalProperties": False,
         },
         handler=_create_skill,
@@ -239,7 +241,7 @@ SKILL_MANAGEMENT_TOOLS = [
             "type": "object",
             "properties": {
                 "id": {"type": "string", "pattern": "^U[1-9][0-9]*$"},
-                "name": {"type": "string", "minLength": 1, "maxLength": 120},
+                "skill_name": {"type": "string", "minLength": 1, "maxLength": 120},
                 "description_short": {"type": "string", "minLength": 1, "maxLength": 100},
                 "description_long": {"type": ["string", "null"], "maxLength": 500},
                 "category": {"type": "string", "enum": ["personal", "productivity", "research", "creative", "other"]},

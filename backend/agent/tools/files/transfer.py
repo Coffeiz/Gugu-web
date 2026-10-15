@@ -35,7 +35,7 @@ async def _compress_files(db, user_id, args: dict):
     try:
         archive = await compress_files(
             db, user_id, file_ids=file_ids, folder_ids=folder_ids,
-            name=args.get("name"), folder_id=args.get("folder_id"),
+            name=args.get("archive_name"), folder_id=args.get("folder_id"),
             use_source_folder="folder_id" not in args,
         )
     except AppError as error:

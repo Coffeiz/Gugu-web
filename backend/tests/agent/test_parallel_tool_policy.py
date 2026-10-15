@@ -277,11 +277,11 @@ async def test_phase2_project_and_calendar_reads_preserve_user_scope(db, user_a,
     next_week = (today + timedelta(days=7)).isoformat()
 
     project_a = await _create_project(db, user_a.id, {
-        "name": "用户甲项目", "status": "active",
+        "project_name": "用户甲项目", "status": "active",
         "start_date": today.isoformat(), "deadline": next_week,
     })
     project_b = await _create_project(db, user_b.id, {
-        "name": "用户乙项目", "status": "pending",
+        "project_name": "用户乙项目", "status": "pending",
         "start_date": today.isoformat(), "deadline": next_week,
     })
     event_a = await _create_event(db, user_a.id, {

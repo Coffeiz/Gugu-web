@@ -302,7 +302,7 @@ async def _create_folder(db, user_id, args: dict):
                 return {"error": "目标父文件夹不属于当前工作区"}
     try:
         fo = await FileService(db).create_folder(
-            user_id, name=args["name"], parent_id=parent_id,
+            user_id, name=args["folder_name"], parent_id=parent_id,
             project_id=project_id, workspace_directory_id=workspace_directory_id,
         )
     except Exception as e:
@@ -341,7 +341,7 @@ async def _find_folder(db, user_id, args: dict):
         if not fo:
             return json.dumps({"error": "文件夹不存在"})
         return fo
-    name = args.get("name") or args.get("folder")
+    name = args.get("folder_name") or args.get("folder")
     if name:
         # 把调用方传来的项目上下文透传进去，防止跨项目同名文件夹被误操作
         pid = args.get("project_id")
@@ -360,7 +360,7 @@ async def _find_folder(db, user_id, args: dict):
             db, user_id, name, space, pid, workspace_directory_id,
         )
         return err if err else fo
-    return json.dumps({"error": "需提供 folder_id 或文件夹名 name"})
+    return json.dumps({"error": "需提供 folder_id 或 folder_name"})
 
 
 async def _rename_folder(db, user_id, args: dict):
@@ -369,7 +369,7 @@ async def _rename_folder(db, user_id, args: dict):
         return fo
     try:
         fo = await FileService(db).rename_folder(
-            user_id, fo.id, args["new_name"], client_version=fo.version,
+            user_id, fo.id, args["new_folder_name"], client_version=fo.version,
         )
         await db.commit()
     except Exception as e:

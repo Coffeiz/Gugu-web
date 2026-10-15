@@ -140,7 +140,7 @@ async def test_project_file_scopes_distinguish_root_recursive_and_folder(db, use
 @pytest.mark.asyncio
 async def test_agent_can_set_summary_when_creating_project(db, user_a):
     created = await _create_project(db, user_a.id, {
-        "name": "新项目摘要测试",
+        "project_name": "新项目摘要测试",
         "start_date": "2026-10-01",
         "deadline": "2026-10-31",
         "summary": "已完成素材盘点，接下来撰写方案。",

@@ -65,7 +65,7 @@ async def test_delete_and_rename_workspace_folder_in_bound_session(db, user_a):
     token = set_dispatch_session(session.id, session, "test-folder-ws-rw")
     try:
         renamed = await _rename_folder(db, user_a.id, {
-            "folder_id": folder.id, "new_name": "已改名",
+            "folder_id": folder.id, "new_folder_name": "已改名",
         })
         await db.commit()
         assert renamed.get("success") is True, renamed

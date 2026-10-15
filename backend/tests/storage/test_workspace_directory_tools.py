@@ -52,7 +52,7 @@ async def test_agent_creates_and_lists_directories_as_workspace_targets(db, user
     tools = _tools_by_name()
 
     created = await tools["create_workspace"].handler(db, user_a.id, {
-        "name": "资料区", "kind": "directory",
+        "workspace_name": "资料区", "kind": "directory",
     })
     assert created["success"] is True
     item = created["workspace"]
@@ -84,12 +84,12 @@ async def test_agent_renames_directory_workspace_and_physical_display_name_toget
     _local_storage(monkeypatch, tmp_path)
     tools = _tools_by_name()
     created = await tools["create_workspace"].handler(db, user_a.id, {
-        "name": "旧名称", "kind": "directory",
+        "workspace_name": "旧名称", "kind": "directory",
     })
 
     result = await tools["update_workspace"].handler(db, user_a.id, {
         "workspace_id": created["workspace"]["workspace_id"],
-        "name": "新名称",
+        "workspace_name": "新名称",
     })
 
     assert result["workspace"]["name"] == "新名称"

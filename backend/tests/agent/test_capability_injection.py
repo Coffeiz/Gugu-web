@@ -405,7 +405,7 @@ def test_invalid_tool_call_payload_supports_required_arguments():
 
 
 def test_invalid_tool_call_payload_explains_missing_business_tool_shape():
-    payload = invalid_tool_call_payload(path="name", rule="type", reason="call_tool.name 必须是字符串")
+    payload = invalid_tool_call_payload(path="tool_name", rule="type", reason="call_tool.tool_name 必须是字符串")
 
     assert "目标业务工具名字符串" in payload["next_action"]
     assert "arguments 对象" in payload["next_action"]
@@ -417,10 +417,10 @@ def test_tool_name_protocol_does_not_stringify_business_objects():
     assert normalize_tool_name("  canvas_create  ") == "canvas_create"
     assert normalize_tool_name({"canvas_id": 161, "relation_id": 837}) is None
     assert normalize_tool_name(["canvas_create"]) is None
-    payload = invalid_tool_call_payload(reason="call_tool.name 必须是字符串")
+    payload = invalid_tool_call_payload(reason="call_tool.tool_name 必须是字符串")
     assert payload["error"] == "tool_call_invalid"
     assert payload["issues"] == [{
-        "path": "name", "rule": "type", "message": "call_tool.name 必须是字符串"
+        "path": "tool_name", "rule": "type", "message": "call_tool.tool_name 必须是字符串"
     }]
     assert "canvas_id" not in str(payload)
 

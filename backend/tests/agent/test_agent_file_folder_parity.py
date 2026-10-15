@@ -23,13 +23,13 @@ async def _wire_agent_storage(monkeypatch, root: Path):
 async def test_agent_folder_create_rename_delete_matches_service(db, user_a, tmp_path, monkeypatch):
     agent_files, storage = await _wire_agent_storage(monkeypatch, tmp_path)
 
-    created = await agent_files._create_folder(db, user_a.id, {"name": "资料"})
+    created = await agent_files._create_folder(db, user_a.id, {"folder_name": "资料"})
     assert created["success"] is True
     folder_id = created["folder_id"]
     assert (storage.root / f"{user_a.id}/个人文件/资料").is_dir()
 
     renamed = await agent_files._rename_folder(
-        db, user_a.id, {"folder_id": folder_id, "new_name": "归档"}
+        db, user_a.id, {"folder_id": folder_id, "new_folder_name": "归档"}
     )
     assert renamed["success"] is True
     assert (storage.root / f"{user_a.id}/个人文件/归档").is_dir()
@@ -56,19 +56,19 @@ async def test_create_folder_reports_and_enforces_explicit_space(db, user_a, tmp
     await db.refresh(project)
 
     personal = await agent_files._create_folder(
-        db, user_a.id, {"name": "个人目录", "space": "personal"},
+        db, user_a.id, {"folder_name": "个人目录", "space": "personal"},
     )
     assert personal["success"] is True
     assert personal["space"] == "personal"
     assert personal["project_id"] is None
 
     rejected = await agent_files._create_folder(
-        db, user_a.id, {"name": "错误目录", "space": "personal", "project_id": project.id},
+        db, user_a.id, {"folder_name": "错误目录", "space": "personal", "project_id": project.id},
     )
     assert "不能提供 project_id" in rejected["error"]
 
     project_folder = await agent_files._create_folder(
-        db, user_a.id, {"name": "项目目录", "space": "project", "project_id": project.id},
+        db, user_a.id, {"folder_name": "项目目录", "space": "project", "project_id": project.id},
     )
     assert project_folder["success"] is True
     assert project_folder["space"] == "project"
@@ -83,7 +83,7 @@ def test_create_folder_schema_allows_explicit_personal_null():
     schema = registry.get("create_folder").input_schema
     assert schema["properties"]["space"]["enum"] == ["personal", "project", "workspace"]
     assert validate_input(
-        build_validator(schema), {"name": "个人目录", "space": "personal", "project_id": None},
+        build_validator(schema), {"folder_name": "个人目录", "space": "personal", "project_id": None},
     ) == []
 
 
@@ -312,9 +312,9 @@ async def test_agent_create_file_supports_batch_custom_extensions_and_partial_re
 
     result = await agent_files._create_file(db, user_a.id, {
         "files": [
-            {"name": "script.py", "content": "print('ok')"},
-            {"name": "panel.custom", "content": "自定义文本"},
-            {"name": "无后缀", "content": "这一项应失败"},
+            {"file_name": "script.py", "content": "print('ok')"},
+            {"file_name": "panel.custom", "content": "自定义文本"},
+            {"file_name": "无后缀", "content": "这一项应失败"},
         ],
     })
 
@@ -427,7 +427,7 @@ async def test_agent_create_file_svg_stores_image_mime_and_stays_readable(db, us
     agent_files, storage = await _wire_agent_storage(monkeypatch, tmp_path)
 
     result = await agent_files._create_file(db, user_a.id, {
-        "files": [{"name": "chart.svg", "content": "<svg xmlns=\"http://www.w3.org/2000/svg\"/>"}],
+        "files": [{"file_name": "chart.svg", "content": "<svg xmlns=\"http://www.w3.org/2000/svg\"/>"}],
     })
     assert result["success"] is True
     created = result["created"][0]

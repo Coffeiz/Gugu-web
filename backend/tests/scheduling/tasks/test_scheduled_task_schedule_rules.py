@@ -303,19 +303,21 @@ async def test_scheduled_task_tool_creates_and_updates_precise_window(db, user_a
     from agent.tools.scheduled_tasks import _create_scheduled_task, _update_scheduled_task
 
     created = await _create_scheduled_task(db, user_a.id, {
-        "name": "精确窗口", "instruction": "执行任务", "schedule_kind": "interval",
+        "schedule_name": "精确窗口", "instruction": "执行任务", "schedule_kind": "interval",
         "interval_minutes": 10, "start_at": "2026-09-05T18:30:00",
         "end_at": "2099-09-05T19:30:00", "channels": ["web"],
     })
     assert created["success"] is True
+    assert created["name"] == "精确窗口"
     assert created["schedule_kind"] == "interval"
     assert created["schedule_status"] == "active"
     assert created["start_at"].endswith("Z")
 
     updated = await _update_scheduled_task(db, user_a.id, {
-        "task_id": created["task_id"], "start_at": None,
+        "task_id": created["task_id"], "schedule_name": "更新后的窗口", "start_at": None,
     })
     assert updated["success"] is True
+    assert updated["name"] == "更新后的窗口"
     assert updated["start_at"] is None
     assert updated["end_at"].endswith("Z")
 
@@ -325,7 +327,7 @@ async def test_scheduled_task_tool_creates_independent_once_task(db, user_a):
     from agent.tools.scheduled_tasks import _create_scheduled_task
 
     created = await _create_scheduled_task(db, user_a.id, {
-        "name": "工具单次任务", "instruction": "单次执行", "schedule_kind": "once",
+        "schedule_name": "工具单次任务", "instruction": "单次执行", "schedule_kind": "once",
         "start_at": "2099-09-05T18:30:00", "channels": ["web"],
     })
     assert created["success"] is True
@@ -342,7 +344,11 @@ def test_scheduled_task_tool_schema_exposes_schedule_contract():
     assert create is not None and update is not None
     create_props = create.input_schema["properties"]
     update_props = update.input_schema["properties"]
-    assert create.input_schema["required"] == ["name", "instruction", "schedule_kind"]
+    assert create.input_schema["required"] == ["schedule_name", "instruction", "schedule_kind"]
+    assert "schedule_name" in create.input_schema["properties"]
+    assert "name" not in create.input_schema["properties"]
+    assert "schedule_name" in update.input_schema["properties"]
+    assert "name" not in update.input_schema["properties"]
     assert create_props["schedule_kind"]["enum"] == ["cron", "interval", "once"]
     assert create_props["interval_minutes"]["minimum"] == 1
     assert create_props["interval_minutes"]["maximum"] == 60
