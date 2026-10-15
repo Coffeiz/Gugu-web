@@ -20,6 +20,7 @@
 
 - **Email skill**: explain when to use each email format, including ordinary correspondence, scheduled messages, and custom visual content.
 - **Session security**: keep user authentication tokens in HttpOnly cookies and revoke previously issued tokens after logout, password change, or password reset.
+- **Docker builds**: forward proxy settings to the Cosign toolchain build stage for reliable builds in proxy environments.
 
 #### Fixes
 
@@ -40,6 +41,7 @@
 
 - **邮件技能**：说明普通沟通、定时发送和自定义图文内容分别适合使用哪种格式。
 - **会话安全**：使用 HttpOnly Cookie 保存认证令牌，并在退出登录、修改密码或重置密码后撤销旧令牌。
+- **Docker 构建**：向 Cosign 工具链构建阶段传递代理配置，避免代理网络下依赖下载超时。
 
 #### 修复
 
