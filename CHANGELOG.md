@@ -7,6 +7,48 @@
 
 ## [Unreleased]
 
+## [1.7.4] - 2026-10-16
+
+### What's New
+
+#### New Features
+
+- **HTML files**: preview uploaded HTML documents in the file viewer, with source editing and interactive page controls.
+- **Email delivery**: choose plain text, reusable templates, or custom HTML for different email scenarios.
+
+#### Improvements
+
+- **Email skill**: explain when to use each email format, including ordinary correspondence, scheduled messages, and custom visual content.
+- **Session security**: keep user authentication tokens in HttpOnly cookies and revoke previously issued tokens after logout or password reset.
+
+#### Fixes
+
+- Keep same-page HTML links within the preview document.
+- Preserve numbering when QQ replies mix text and images.
+- Correct project file sizes and locate search results in the file library.
+- Use the selected local date when editing a note record date across UTC-positive time zones.
+- Include credentials when LoopScope sends chat requests to Gugu.
+
+### 更新内容
+
+#### 新功能
+
+- **HTML 文件**：文件预览器支持预览上传的 HTML 文档、编辑源码和操作页面控件。
+- **邮件发送**：可按场景选择纯文本、模板或自定义 HTML 格式。
+
+#### 改进
+
+- **邮件技能**：说明普通沟通、定时发送和自定义图文内容分别适合使用哪种格式。
+- **会话安全**：使用 HttpOnly Cookie 保存用户认证，并在退出登录或重置密码后撤销旧令牌。
+
+#### 修复
+
+- HTML 预览中的同页链接继续定位到预览文档。
+- QQ 图文混排回复保留正确的序号。
+- 修复项目文件大小显示和文件库搜索结果定位。
+- 在 UTC 正时区修改笔记日期时使用用户选定的日期。
+- LoopScope 向咕咕发送聊天请求时携带会话凭据。
+
 ## [1.7.3] - 2026-10-13
 
 ### What's New
