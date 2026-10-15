@@ -28,7 +28,7 @@ TRANSFER_TOOLS = [
                         },
                     },
                     "folder_id": {"type": "integer", "minimum": 1},
-                    "name": {"type": "string", "maxLength": 300},
+                    "archive_name": {"type": "string", "maxLength": 300},
                 },
                 "required": ["entries"],
                 "additionalProperties": False,

@@ -1,7 +1,8 @@
 <template>
   <GuguChatToolBubble v-if="msg.role === 'tool'" :msg="msg" />
-  <GuguChatInteraction v-else-if="msg.role === 'interaction'" :msg="msg"
+  <GuguChatInteraction v-else-if="msg.role === 'interaction'" :msg="msg" :answer-mode="interactionAnswerMode"
     @select="(selectedMsg, option) => $emit('interactionSelect', selectedMsg, option)"
+    @text-submit="(selectedMsg, text) => $emit('interactionTextSubmit', selectedMsg, text)"
     @secret-submit="(selectedMsg, values) => $emit('secretSubmit', selectedMsg, values)"
     @secret-cancel="selectedMsg => $emit('secretCancel', selectedMsg)" />
   <!-- 群聊左侧消息标发言人：ai 标"咕咕"，群成员标 platformUserName。只在
@@ -98,7 +99,7 @@ import { translateAgentError } from '@/i18n'
 import MarkdownView from '@/components/common/content/MarkdownView.vue'
 import GuguChatToolBubble from './GuguChatToolBubble.vue'
 import GuguChatInteraction from './GuguChatInteraction.vue'
-import type { ChatMessage, ChatFile, ChatReference } from './chatTypes'
+import type { ChatMessage, ChatFile, ChatReference, InteractionAnswerMode } from './chatTypes'
 import { renderMdStream, renderChatMd } from './markdown'
 import {
   isImageFile, isAnimatedImageFile, canPreview,
@@ -108,6 +109,7 @@ import { makeLazyThumbDirective } from './lazyThumbDirective'
 const props = defineProps<{
   msg: ChatMessage
   isGroupSession: boolean
+  interactionAnswerMode: InteractionAnswerMode
   copiedId: number | null
   voicePlayingId: string | null
 }>()
@@ -125,6 +127,7 @@ const emit = defineEmits<{
   download: [file: ChatFile]
   actionClick: [e: MouseEvent]
   interactionSelect: [msg: ChatMessage, option: { id: string; label: string; token: string }]
+  interactionTextSubmit: [msg: ChatMessage, text: string]
   secretSubmit: [msg: ChatMessage, values: Record<string, string>]
   secretCancel: [msg: ChatMessage]
   referenceClick: [reference: ChatReference]

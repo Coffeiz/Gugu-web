@@ -173,7 +173,7 @@ async def _call_tool(db, user_id, args: dict):
     主循环会在这里之前执行一次自己的 UI/确认编排；直接 dispatch 时保留同一套
     registry、权限与 Schema 校验，避免 Adapter 形成第二套执行器。
     """
-    name = normalize_tool_name(args.get("name"))
+    name = normalize_tool_name(args.get("tool_name", args.get("name")))
     arguments = args.get("arguments")
     if not name:
         return {"error": "缺少业务工具名"}
@@ -213,10 +213,10 @@ class MetaSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string", "minLength": 1, "maxLength": 80},
+                    "tool_name": {"type": "string", "minLength": 1, "maxLength": 80},
                     "arguments": {"type": "object"},
                 },
-                "required": ["name", "arguments"],
+                "required": ["tool_name", "arguments"],
                 "additionalProperties": False,
             },
             handler=_call_tool,
@@ -277,6 +277,8 @@ class MetaSkill(BaseSkill):
                     "authorization": {"type": "string", "enum": ["user_sandbox"]},
                     "options": {
                         "type": "array",
+                        "description": "可选预设按钮数组；无预设选项时省略，元素格式为 [{\"id\":\"...\",\"label\":\"...\"}]。",
+                        "x-empty-string": "empty-array",
                         "minItems": 0,
                         "maxItems": 8,
                         "items": {
@@ -290,7 +292,7 @@ class MetaSkill(BaseSkill):
                         },
                     },
                 },
-                "required": ["kind", "title", "body", "options"],
+                "required": ["kind", "title", "body"],
                 "additionalProperties": False,
             },
             handler=_ask_user,

@@ -61,6 +61,7 @@ const noteCard = load('../../views/Mind/components/NoteCard.vue')
 const captureBar = load('../../views/Mind/components/CaptureBar.vue')
 const referenceSuggestMenu = load('../../components/common/content/ReferenceSuggestMenu.vue')
 const chatComposer = load('../../components/common/gugu-chat/GuguChatComposer.vue')
+const chatInteraction = load('../../components/common/gugu-chat/GuguChatInteraction.vue')
 const chatWindow = load('../../components/common/gugu-chat/GuguChatWindow.vue')
 const guguChat = load('../../components/common/gugu-chat/GuguChat.vue')
 const eventEditModal = load('../../components/events/EventEditModal.vue')
@@ -434,6 +435,11 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(mcpFormModal).not.toContain('<label>{{ t(\'skillsMcpUi.name\') }}<input')
     expect(mcpView).toContain('<McpServerFormModal\n      :key="formKey"')
     expect(mcpView).not.toContain('<McpServerFormModal\n      v-if="editor"')
+  })
+
+  it('聊天交互答案框使用公共 resize 手柄样式，不在组件内覆盖', () => {
+    expect(chatInteraction).toContain('class="form-input control-resizable interaction-answer-input"')
+    expect(chatInteraction).not.toContain('resize:vertical;')
   })
 
   it('技能与 MCP 的空状态通过 GuguChat 预填配置请求，页签同行提供新建操作', () => {

@@ -88,12 +88,14 @@
       <GuguChatMessageList
         ref="messageListRef"
         :messages="messages" :session-id="sessionId" :is-group-session="isGroupSession"
+        :interaction-answer-mode="interactionAnswerMode"
         :copied-id="copiedId" :voice-playing-id="voicePlayingId"
         :expanded="expanded" :resizing="resizing" :status-kind="statusKind" :status-typed="statusTyped"
         :session-settling="sessionSettling"
         @copy="onCopy" @toggle-voice="onToggleVoice"
         @open-file="onOpenFile" @download="onDownload" @action-click="onActionClick"
-        @interaction-select="onInteractionSelect" @secret-submit="onSecretSubmit" @secret-cancel="onSecretCancel" @reference-click="onReferenceClick"
+        @interaction-select="onInteractionSelect" @interaction-text-submit="onInteractionTextSubmit"
+        @secret-submit="onSecretSubmit" @secret-cancel="onSecretCancel" @reference-click="onReferenceClick"
       />
 
       <!-- 排队条：生成中发出的消息不进对话流，在这里排队展示（可单条移除）；
@@ -150,7 +152,7 @@ import Icon from '@/components/common/icons/Icon.vue'
 import GuguChatMessageList from './GuguChatMessageList.vue'
 import GuguChatComposer from './GuguChatComposer.vue'
 import SessionTitleEdit from './SessionTitleEdit.vue'
-import type { ChatMessage, ChatFile, ChatReference } from './chatTypes'
+import type { ChatMessage, ChatFile, ChatReference, InteractionAnswerMode } from './chatTypes'
 import { CHAT_REF_ACCEPTS, CHAT_REF_SURFACE_ID } from './chatTypes'
 import { runtime } from '@/interaction/runtime'
 import type { QueuedMessage } from './composables/useChatStream'
@@ -174,6 +176,7 @@ const props = defineProps<{
   filesystemAuthorized: boolean
   filesystemAuthorizationEnabled: boolean
   sessionId: number | null
+  interactionAnswerMode: InteractionAnswerMode
   presenceKind: string
   presenceText: string
   presenceTitle: string
@@ -210,6 +213,7 @@ const props = defineProps<{
   onDownload: (file: ChatFile) => void
   onActionClick: (e: MouseEvent) => void
   onInteractionSelect: (msg: ChatMessage, option: { id: string; label: string; token: string }) => void
+  onInteractionTextSubmit: (msg: ChatMessage, text: string) => void
   onSecretSubmit: (msg: ChatMessage, values: Record<string, string>) => void
   onSecretCancel: (msg: ChatMessage) => void
   onReferenceClick: (reference: ChatReference) => void

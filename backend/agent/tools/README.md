@@ -1,14 +1,20 @@
-# Tool 目录职责
+# Agent 工具开发规范
+
+本文说明 `backend/agent/tools/` 的模块边界、工具注册契约和新增工具时必须遵守的规则。工具 Schema 是模型可见输入与 Runtime 校验的共同契约；旧调用兼容只在统一输入归一化层处理。
+
+## 目录职责
 
 `backend/agent/tools/` 只放 Agent 可调用的业务工具定义和执行适配器；工具通过
 `Tool` / `BaseSkill` 注册到全局 registry。职责按资源边界拆分，避免把多个领域的
 数据库读写和工具 Schema 堆进一个文件。
 
-## 文件职责
+### 文件职责
 
 | 文件 | 职责 | 不负责 |
 | --- | --- | --- |
 | `base.py` | `Tool`、`BaseSkill`、registry、Schema 校验、统一 dispatch | 具体业务和资源查询 |
+| `tool_contract.py` | Schema 注册期检查、输入归一化与实例校验 | 工具业务处理、权限判断 |
+| `input_name_aliases.py` | 已知历史 `name` 入参到当前对象专属字段的兼容映射 | 定义新工具 Schema、持久化/API 字段重命名 |
 | `meta.py` | 固定 Adapter（`call_tool`、`get_tool_schema`）、Skill 正文加载（`use_skill`）和元能力组合 | 用户 Skill 的创建、更新、删除实现 |
 | `link_buttons.py` | 链接按钮工具；通过固定 Adapter 按需获取 Schema 后发送 Web/AppLink 入口 | 不负责等待点击、接收点击结果或执行按钮对应的业务动作 |
 | `skill_management.py` | 用户 Prompt Skill 的创建、更新、删除工具；以独立的按需工具组注册，复用 Skill 注册服务、权限校验和确认门 | Skill 正文加载、普通业务工具注册 |
@@ -35,7 +41,7 @@ skill_management.py ───┼─> SkillCapabilityRegistry
 Skill 时，先通过常驻的 `get_tool_schema` 获取对应 Schema，再通过 `call_tool` 调用，仍然只走
 同一套 registry、权限校验、参数校验和确认门。
 
-# Tool 注册格式
+## 工具注册与能力描述
 
 工具仍由 `Tool` 和 `BaseSkill` 注册，执行、Schema 校验、确认门和权限检查不变。
 能力发现 metadata 直接写在工具定义上：
@@ -51,7 +57,30 @@ Tool(
 )
 ```
 
-## 工具名称与 i18n
+### 参数命名与旧调用兼容
+
+Schema 字段使用能直接说明业务对象和用途的名称，避免用通用 `name` 让模型混淆工具协议名与业务名称。工具的机器标识仍由 `Tool.name` 表示；调用 `call_tool` 时，实际工具标识使用 `tool_name`。
+
+推荐使用对象专属字段：
+
+| 场景 | Schema 字段示例 |
+| --- | --- |
+| 创建或重命名定时任务 | `schedule_name` |
+| 创建或重命名项目 | `project_name` |
+| 创建或重命名工作区 | `workspace_name` |
+| 创建或重命名文件夹 | `folder_name`、`new_folder_name` |
+| 调用固定 Adapter `call_tool` | `tool_name` |
+| 文件数组中的文件名 | `files[].file_name` |
+
+规则：
+
+- 新增或调整工具 Schema 时，优先使用资源专属名；不要为方便而新增通用 `name`、`new_name` 字段。
+- 字段命名要贯穿 Schema、handler 入参和工具说明；持久化/API 模型已有的 `name` 字段可在边界处映射，不能因此把通用字段暴露给模型。
+- `input_name_aliases.py` 只集中处理已知旧调用的兼容映射；`tool_contract.py` 在 Schema 校验前调用它。不要在各 handler 内分别兼容，也不要把该模块当作新字段定义表。
+- 仅为确有历史调用的旧字段添加精确映射，并补充兼容测试；不要猜测未知 `name` 的含义。旧字段与规范字段同时出现时，不应依赖优先级来消歧。
+- 兼容映射仅作用于 Agent 工具输入，不会重命名数据库字段、API 响应、工具结果或其他持久化数据。
+
+### 工具名称与 i18n
 
 工具名称分为三层，不能混用：
 
@@ -63,7 +92,7 @@ Tool(
 
 工具的 `description` 和 `description_short` 是模型能力说明，不是界面标题，也不应当作为工具气泡的显示名。不要把翻译文案写入工具注册表、动态 Prompt、工具返回值或持久化历史；历史事件只保存稳定的工具名，界面按当前语言重新渲染。
 
-固定 Adapter `call_tool` 只负责转发实际工具调用。前端遇到 `call_tool` 事件时，必须优先读取其参数中的实际工具名（例如 `toolInput.name`），再使用 `toolNames.<实际工具名>` 翻译，不能把 `call_tool` 直接显示给用户。
+固定 Adapter `call_tool` 的输入 Schema 使用 `tool_name` 转发实际工具调用。工具事件投影到前端后，实际工具名位于 `toolInput.name`；前端应使用该值查找 `toolNames.<实际工具名>`，不能把 `call_tool` 直接显示给用户。Schema 入参与事件展示模型属于不同边界，字段名不要求相同。
 
 新增工具时按以下顺序完成：
 
@@ -83,7 +112,7 @@ Tool(
 
 Schema 的默认规范是：用类型、枚举、必填、互斥、`oneOf`、`anyOf`、`allOf`、`if/then` 和边界约束表达机器可校验事实；字段级 `description`、`title`、`default`、`example/examples` 默认不写。只有日期格式、清空语义、资源边界等无法可靠结构化表达的信息，才保留一句短说明。注册期 lint 负责拒绝不合规范的新增定义，不在运行时悄悄删除字段说明。
 
-### 可选字段规则
+#### 可选字段规则
 
 可选字段不是越多越灵活，只有在“不传”本身有独立业务意义时才保留。新增可选字段必须满足至少一项：
 

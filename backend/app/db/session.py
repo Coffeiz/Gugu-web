@@ -212,6 +212,7 @@ async def create_all_tables():
     if _engine is None:
         _build_engine()
     from app.db.base import Base
+    from app.db.project_file_counts import PROJECT_FILE_COUNT_PROJECTION_SQL
     import app.models  # noqa: F401 — 导入模型让 Base 发现所有 table
     async with _engine.begin() as conn:
         # Web 多 worker、worker 进程和 Admin 初始化入口都可能同时触发这里。
@@ -230,3 +231,6 @@ async def create_all_tables():
         await conn.run_sync(Base.metadata.create_all)
         for sql in _MIGRATIONS:
             await conn.execute(text(sql))
+        if conn.dialect.name == "postgresql":
+            for sql in PROJECT_FILE_COUNT_PROJECTION_SQL:
+                await conn.execute(text(sql))

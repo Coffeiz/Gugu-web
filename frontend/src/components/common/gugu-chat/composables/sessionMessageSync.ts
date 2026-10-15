@@ -83,6 +83,27 @@ export function mapSessionMessageDelta(
   return [...messages, ...timeline, ...tools]
 }
 
+/** 从消息快照或逐轮时间线中找出最近一条已持久化的助手回复。 */
+export function findLatestPersistedAssistant(data: any, notBefore = 0) {
+  const candidates = [
+    ...(data.messages || []).flatMap((item: any) => item.role === 'assistant'
+      ? [{ item, syncKey: `message:${item.id}`, text: item.content || '' }]
+      : []),
+    ...(data.timelineEvents || []).flatMap((item: any) => item.kind === 'assistant'
+      ? [{ item, syncKey: `timeline:${item.id}`, text: item.text || '' }]
+      : []),
+  ].filter(({ item, text }) => {
+    const hasContent = Boolean(text?.trim() || item.files?.length)
+    const createdAt = Date.parse(item.createdAt || '')
+    return hasContent && (!Number.isFinite(createdAt) || createdAt >= notBefore)
+  })
+  .sort((a, b) => Date.parse(b.item.createdAt || '') - Date.parse(a.item.createdAt || ''))
+
+  const latest = candidates[0]
+  if (!latest) return null
+  return { item: latest.item, text: latest.text, syncKey: latest.syncKey }
+}
+
 /** 合并从持久化会话增量恢复的消息；重复事件更新内容但不重复创建气泡。 */
 export function mergeSessionMessageDelta(
   current: ChatMessage[],

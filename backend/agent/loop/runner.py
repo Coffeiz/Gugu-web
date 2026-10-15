@@ -630,6 +630,13 @@ async def run_loop(
                         elif emission.kind == "complete":
                             dispatched.extend(emission.value.dispatched)
 
+                # 只有工具实际成功才算取得进展：失败/等待确认的回执不能重置空回复额度。
+                if any(
+                    _core._is_successful_tool_result(tool_result)
+                    for _tool_call, tool_result in dispatched
+                ):
+                    reply_state.tool_round_succeeded()
+
                 from agent.context.assembly import MessageBatch
                 from agent.context.canonical_tool_history import canonical_tool_round
 
@@ -768,10 +775,13 @@ async def run_loop(
                         on_interaction=on_interaction,
                     )
                     interaction_action = None
+                    interaction_tool_succeeded = False
                     async for emission in interaction_runtime.resolve_pending():
                         if emission.kind == "event":
                             payload = emission.value
                             event_type = payload.pop("type", "tool_done")
+                            if event_type == "tool_done" and payload.get("status") == "success":
+                                interaction_tool_succeeded = True
                             event_payload = {key: value for key, value in payload.items() if key != "type"}
                             yield stream_event(event_type, **event_payload)
                         elif emission.kind == "raw":
@@ -783,6 +793,8 @@ async def run_loop(
                     if interaction_action == "return":
                         return
                     if interaction_action == "continue":
+                        if interaction_tool_succeeded:
+                            reply_state.tool_round_succeeded()
                         continue
                 # 工具结果已经入历史，直接进入下一轮。增删改工具不再自动注入复查提示；
                 # 工具意图和失败回执守卫仍在本轮及下一轮生效。

@@ -200,7 +200,7 @@ async def test_use_skill_loads_owned_body_and_refreshes_digest(db, user_a):
 @pytest.mark.asyncio
 async def test_create_skill_adapter_uses_registry_and_returns_structured_result(db, user_a):
     args = {
-        "name": "夜间复盘",
+        "skill_name": "夜间复盘",
         "description_short": "把当天事项整理成复盘清单",
         "related_tools": [],
         "body": "按完成、阻塞和下一步三个部分输出。",
@@ -242,7 +242,7 @@ async def test_skill_tool_dispatch_publishes_directory_change_for_other_clients(
 @pytest.mark.asyncio
 async def test_create_skill_adapter_rejects_unknown_tool_reference(db, user_a):
     result = await _create_skill(db, user_a.id, {
-        "name": "受限技能",
+        "skill_name": "受限技能",
         "description_short": "不应关联未授权工具",
         "related_tools": ["does-not-exist"],
         "body": "只是一段指导文本。",
@@ -451,7 +451,7 @@ async def test_agent_skill_creation_can_reference_mcp_tools_without_permission_g
     token = set_dispatch_session(None, tool_snapshot=snapshot)
     try:
         args = {
-            "name": "MCP 技能",
+            "skill_name": "MCP 技能",
             "description_short": "通过 MCP 搜索笔记",
             "related_tools": [tool.name], "body": "搜索相关笔记并总结。",
             "managed_by": "assistant",

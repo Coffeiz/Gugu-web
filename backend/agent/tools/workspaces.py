@@ -82,7 +82,7 @@ async def _create_directory_workspace(
 
 
 async def _create_workspace(db, user_id, args: dict):
-    name = str(args.get("name") or "").strip()
+    name = str(args.get("workspace_name") or "").strip()
     kind = args.get("kind")
     if not name:
         return {"error": "工作区名称不能为空"}
@@ -93,7 +93,7 @@ async def _create_workspace(db, user_id, args: dict):
     try:
         if kind == "directory":
             if args.get("folder_id") is not None or args.get("project_id") is not None:
-                return {"error": "kind=directory 只填写 name，不接受 folder_id 或 project_id"}
+                return {"error": "kind=directory 只填写 workspace_name，不接受 folder_id 或 project_id"}
             row = await _create_directory_workspace(
                 db, user_id, name=name, enabled=args.get("enabled", True),
             )
@@ -109,12 +109,12 @@ async def _create_workspace(db, user_id, args: dict):
 
 
 async def _update_workspace(db, user_id, args: dict):
-    if args.get("name") is None and args.get("enabled") is None:
-        return {"error": "至少提供 name 或 enabled 一个要修改的字段"}
+    if args.get("workspace_name") is None and args.get("enabled") is None:
+        return {"error": "至少提供 workspace_name 或 enabled 一个要修改的字段"}
     try:
         row = await update_workspace(
             db, user_id, args["workspace_id"],
-            name=args.get("name"), enabled=args.get("enabled"),
+            name=args.get("workspace_name"), enabled=args.get("enabled"),
         )
     except (LookupError, ValueError) as exc:
         return {"error": str(exc)}
@@ -171,15 +171,15 @@ class WorkspacesSkill(BaseSkill):
         Tool(
             name="create_workspace", label="新建工作区",
             description_short="创建顶层目录，或将文件夹/项目绑定为工作区",
-            description="创建工作区目标：kind=directory 用 name 创建顶层物理目录及其唯一工作区，不传 directory_id/folder_id/project_id；kind=project 用 project_id，kind=folder 用 folder_id，二者不可混用。可用 enabled 指定新绑定状态。顶层目录与文件库中的普通 folder 是不同类型。",
+            description="创建工作区目标：kind=directory 用 workspace_name 创建顶层物理目录及其唯一工作区，不传 directory_id/folder_id/project_id；kind=project 用 project_id，kind=folder 用 folder_id，二者不可混用。可用 enabled 指定新绑定状态。顶层目录与文件库中的普通 folder 是不同类型。",
             input_schema={
                 "type": "object", "properties": {
-                    "name": {"type": "string", "minLength": 1, "maxLength": 200},
+                    "workspace_name": {"type": "string", "minLength": 1, "maxLength": 200},
                     "kind": {"type": "string", "enum": ["project", "folder", "directory"]},
                     "project_id": {"type": "integer"},
                     "folder_id": {"type": "integer"},
                     "enabled": {"type": "boolean"},
-                }, "required": ["name", "kind"], "additionalProperties": False,
+                }, "required": ["workspace_name", "kind"], "additionalProperties": False,
                 "allOf": [
                     {"if": {"properties": {"kind": {"const": "project"}}},
                      "then": {"required": ["project_id"], "not": {"required": ["folder_id"]}}},
@@ -195,11 +195,11 @@ class WorkspacesSkill(BaseSkill):
         Tool(
             name="update_workspace", label="更新工作区",
             description_short="更新工作区。",
-            description="修改工作区名称或启用状态，不改变项目/文件夹绑定。kind=directory 的名称修改会同步更新顶层工作区目录显示名，但不改变物理路径。",
+            description="修改工作区 workspace_name 或启用状态，不改变项目/文件夹绑定。kind=directory 的名称修改会同步更新顶层工作区目录显示名，但不改变物理路径。",
             input_schema={
                 "type": "object", "properties": {
                     "workspace_id": {"type": "integer"},
-                    "name": {"type": "string", "maxLength": 200},
+                    "workspace_name": {"type": "string", "maxLength": 200},
                     "enabled": {"type": "boolean"},
                 }, "required": ["workspace_id"], "additionalProperties": False,
             }, handler=_update_workspace, mutates=True,

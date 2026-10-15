@@ -24,7 +24,7 @@ afterEach(() => {
 })
 
 describe('GuguChat Telegram channel', () => {
-  it('shows Telegram, routes setup to personal settings, and lists its existing sessions', async () => {
+  it('opens the Telegram token flow and lists its existing sessions', async () => {
     const telegramBots = ref<unknown[]>([])
     const telegramSessions = ref([{ id: 42, title: 'Telegram chat', source: 'telegram' }])
     const openSettings = vi.fn()
@@ -42,8 +42,13 @@ describe('GuguChat Telegram channel', () => {
       connectHint: '',
       connectErr: '',
       connecting: '',
+      telegramTokenDialogOpen: false,
+      telegramConnecting: false,
+      telegramConnectError: '',
       formatSessionTime: () => '',
-      onOpenTelegramSettings: openSettings,
+      onOpenTelegramTokenDialog: openSettings,
+      onCloseTelegramTokenDialog: vi.fn(),
+      onSubmitTelegramToken: vi.fn(),
       onTogglePlatform: vi.fn(),
       onSetConnectCanvas: vi.fn(),
       onStartImConnect: vi.fn(),
@@ -56,8 +61,8 @@ describe('GuguChat Telegram channel', () => {
     await nextTick()
 
     expect(host.textContent).toContain('chatUi.telegram')
-    expect(host.textContent).toContain('chatUi.telegramSetupHint')
-    expect(host.querySelector('.im-connect-btn')?.textContent).toContain('chatUi.openTelegramSettings')
+    expect(host.textContent).not.toContain('chatUi.telegramSetupHint')
+    expect(host.querySelector('.im-connect-btn')?.textContent).toContain('chatUi.connectTelegramBot')
     expect(host.querySelector('.im-qr-box')).toBeNull()
     ;(host.querySelector('.im-connect-btn') as HTMLButtonElement).click()
     expect(openSettings).toHaveBeenCalledOnce()

@@ -356,7 +356,7 @@ async def test_project_resolve_owner_ok(db, user_b):
 async def test_project_update_tool_persists_name(db, user_a):
     project = await _mk(db, Project(user_id=user_a.id, name="原项目", stages_json="[]"))
 
-    result = await _update_project(db, user_a.id, {"project_id": project.id, "name": "新项目"})
+    result = await _update_project(db, user_a.id, {"project_id": project.id, "project_name": "新项目"})
 
     assert result["success"] is True
     await db.refresh(project)

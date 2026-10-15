@@ -80,9 +80,11 @@ async def _update_project(db, user_id, args: dict):
     if "priority" in args:
         pr = (args.get("priority") or "").strip().lower()
         fields["priority"] = pr if pr in ("high", "medium", "low") else None
-    for field in ("deadline", "start_date", "client", "name"):
+    for field in ("deadline", "start_date", "client"):
         if field in args:
             fields[field] = args[field]
+    if "project_name" in args:
+        fields["name"] = args["project_name"]
     if "summary" in args:
         fields["summary"] = args["summary"]
     error = await _commit_project_intent(db, p, user_id, fields)
@@ -142,7 +144,7 @@ async def _create_project(db, user_id, args: dict):
             else [dict(s) for s in _DEFAULT_STAGES]
         )
         p = build_project(user_id, {
-            "name": args["name"],
+            "name": args["project_name"],
             "summary": args.get("summary"),
             "client": args.get("client"),
             "status": args.get("status", "pending"),
@@ -615,7 +617,7 @@ class ProjectsSkill(BaseSkill):
             name="update_project",
             label="更新项目",
             description_short="修改项目；可调整优先级，none 清除优先级。",
-            description="修改项目的状态、截止日期、开始日期、客户名称、优先级或项目摘要；summary 是给咕咕维护的项目近况，最多 200 个字符，传空字符串或 null 清空；它不替代 status、阶段或日期。start_date/deadline 传日期字符串，系统统一归一为 YYYY-MM-DD。",
+            description="使用 project_name 修改项目名称；也可修改状态、截止日期、开始日期、客户名称、优先级或项目摘要。summary 是给咕咕维护的项目近况，最多 200 个字符，传空字符串或 null 清空；它不替代 status、阶段或日期。start_date/deadline 传日期字符串，系统统一归一为 YYYY-MM-DD。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -625,7 +627,7 @@ class ProjectsSkill(BaseSkill):
                     "deadline":   {"type": "string", "pattern": r"^\d{4}-\d{2}-\d{2}$"},
                     "start_date": {"type": "string", "pattern": r"^\d{4}-\d{2}-\d{2}$"},
                     "client":     {"type": "string"},
-                    "name":       {"type": "string"},
+                    "project_name": {"type": "string"},
                     "summary":   {"type": ["string", "null"], "maxLength": 200},
                     "priority":   {"type": "string", "enum": ["high", "medium", "low", "none"]},
                 },
@@ -638,11 +640,11 @@ class ProjectsSkill(BaseSkill):
             name="create_project",
             label="新建项目",
             description_short='创建项目；stages 可用名称数组 ["开发","上线"]，也可用带待办的对象数组；省略时使用默认阶段',
-            description="创建项目，必须填写开始日期和截止日期（YYYY-MM-DD），可设置颜色、优先级、阶段和最多 200 字符的项目摘要。summary 是给咕咕维护的近况，不替代项目状态或阶段。stages 必须是非空数组，可用名称简写 [\"开发\",\"上线\"]，或对象 {label: 阶段名, todos: [待办文本]}，例如 [{\"label\":\"设计\",\"todos\":[\"整理需求\"]}]；省略 stages 时使用默认阶段。color 只能传语义色名 amber、sage、teal、sky、indigo、lavender、rose、sunset；不要传 CSS、十六进制或视觉描述。",
+            description="创建项目，使用 project_name 填项目名称；必须填写开始日期和截止日期（YYYY-MM-DD），可设置颜色、优先级、阶段和最多 200 字符的项目摘要。summary 是给咕咕维护的近况，不替代项目状态或阶段。stages 必须是非空数组，可用名称简写 [\"开发\",\"上线\"]，或对象 {label: 阶段名, todos: [待办文本]}，例如 [{\"label\":\"设计\",\"todos\":[\"整理需求\"]}]；省略 stages 时使用默认阶段。color 只能传语义色名 amber、sage、teal、sky、indigo、lavender、rose、sunset；不要传 CSS、十六进制或视觉描述。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "name":       {"type": "string"},
+                    "project_name": {"type": "string"},
                     "client":     {"type": "string"},
                     "summary":    {"type": ["string", "null"], "maxLength": 200},
                     "status":     {"type": "string", "enum": ["pending", "active", "done"]},
@@ -652,7 +654,7 @@ class ProjectsSkill(BaseSkill):
                     "priority":   {"type": "string", "enum": ["high", "medium", "low"]},
                     "stages": _STAGES_INPUT_SCHEMA,
                 },
-                "required": ["name", "start_date", "deadline"],
+                "required": ["project_name", "start_date", "deadline"],
                 "additionalProperties": False,
             },
             handler=_create_project,

@@ -27,14 +27,19 @@ function interactionMessage(options: NonNullable<ChatMessage['interaction']>['op
   }
 }
 
-function mountInteraction(msg: ChatMessage, onSelect = vi.fn()) {
+function mountInteraction(
+  msg: ChatMessage,
+  onSelect = vi.fn(),
+  answerMode: 'inline' | 'composer' = 'composer',
+  onTextSubmit = vi.fn(),
+) {
   const host = document.createElement('div')
   document.body.appendChild(host)
   const app = createApp(defineComponent({
-    setup: () => () => h(GuguChatInteraction, { msg, onSelect }),
+    setup: () => () => h(GuguChatInteraction, { msg, onSelect, answerMode, onTextSubmit }),
   }))
   app.mount(host)
-  return { app, host, onSelect }
+  return { app, host, onSelect, onTextSubmit }
 }
 
 let mounted: ReturnType<typeof mountInteraction> | undefined
@@ -67,6 +72,58 @@ describe('GuguChatInteraction', () => {
     expect(mounted.host.querySelector('.interaction-resolved')?.textContent).toContain('chatUi.confirmationSubmitting')
   })
 
+  it('开放问题仅有自定义回复入口时直接激活输入，不再发起按钮提交', async () => {
+    const msg = reactive(interactionMessage([
+      { id: '__custom_reply__', label: '自定义回复', token: 'fresh-token' },
+    ]))
+    msg.interaction!.kind = 'question'
+    msg.interaction!.allowTextInput = true
+    mounted = mountInteraction(msg)
+    await nextTick()
+
+    expect(msg.interaction!.customInputActive).toBe(true)
+    expect(mounted.onSelect).not.toHaveBeenCalled()
+    expect(mounted.host.querySelector('.interaction-option')).toBeNull()
+    expect(mounted.host.querySelector('.interaction-custom-hint')?.textContent).toBe('chatUi.customReplyHint')
+  })
+
+  it('Web 开放问题在卡片内显示输入框，按 Enter 直接提交答案', async () => {
+    const msg = reactive(interactionMessage())
+    msg.interaction!.kind = 'question'
+    msg.interaction!.allowTextInput = true
+    mounted = mountInteraction(msg, vi.fn(), 'inline')
+    await nextTick()
+
+    const input = mounted.host.querySelector('textarea.interaction-answer-input') as HTMLTextAreaElement
+    expect(input).not.toBeNull()
+    expect(mounted.host.querySelector('.interaction-custom-hint')).toBeNull()
+    input.value = '周六延期'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+
+    expect(mounted.onTextSubmit).toHaveBeenCalledWith(msg, '周六延期')
+    expect(msg.interaction!.submitting).toBe(true)
+  })
+
+  it('无选项问题回复完成后隐藏自定义回复入口和输入提示', async () => {
+    const msg = reactive(interactionMessage([
+      { id: '__custom_reply__', label: '自定义回复', token: 'fresh-token' },
+    ]))
+    msg.interaction!.kind = 'question'
+    msg.interaction!.allowTextInput = true
+    msg.interaction!.customInputActive = true
+    msg.interaction!.resolved = true
+    msg.interaction!.responseText = '测试'
+    mounted = mountInteraction(msg)
+    await nextTick()
+
+    expect(mounted.host.querySelector('.interaction-option')).toBeNull()
+    expect(mounted.host.querySelector('.interaction-custom-hint')).toBeNull()
+    expect(mounted.host.querySelector('.interaction-response')?.textContent).toBe('测试')
+    expect(mounted.host.querySelector('.interaction-resolved')?.textContent).toContain('chatUi.submitted')
+  })
+
   it('MCP 密码表单不展示通用交互 token，并提供专用取消事件', async () => {
     const msg = interactionMessage([
       { id: 'input_credentials', label: '输入凭据', token: 'input-token' },
@@ -80,7 +137,7 @@ describe('GuguChatInteraction', () => {
       setup: () => () => h(GuguChatInteraction, { msg, onSecretCancel }),
     }))
     app.mount(host)
-    mounted = { app, host, onSelect: vi.fn() }
+    mounted = { app, host, onSelect: vi.fn(), onTextSubmit: vi.fn() }
 
     expect(host.querySelector('.interaction-actions')).toBeNull()
     expect(host.querySelector('input[type="password"]')).not.toBeNull()

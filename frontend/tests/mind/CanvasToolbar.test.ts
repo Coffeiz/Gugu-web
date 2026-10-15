@@ -5,7 +5,10 @@ import { createApp, defineComponent, h, nextTick } from 'vue'
 const { refSuggest } = vi.hoisted(() => ({ refSuggest: vi.fn() }))
 
 vi.mock('@/services/api', () => ({ mindApi: { refSuggest } }))
-vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
+vi.mock('vue-i18n', async importOriginal => ({
+  ...await importOriginal<typeof import('vue-i18n')>(),
+  useI18n: () => ({ t: (key: string) => key }),
+}))
 vi.mock('@/components/common/overlays/PopupMenu.vue', () => ({
   default: defineComponent({
     props: ['show'],
@@ -23,7 +26,7 @@ let host: HTMLDivElement | undefined
 function mountToolbar(onAddRef: (item: unknown) => void) {
   host = document.createElement('div')
   document.body.append(host)
-  app = createApp(CanvasToolbar, { scale: 1, onAddRef })
+  app = createApp(CanvasToolbar, { scale: 1, items: [], onAddRef })
   app.mount(host)
   return host
 }

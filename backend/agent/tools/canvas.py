@@ -431,6 +431,33 @@ async def _canvas_search(db, user_id, args: dict):
     }
 
 
+async def _canvas_focus_node(db, user_id, args: dict):
+    """生成用户可点击的画布卡片定位入口，不改节点位置或保存的视口。"""
+    canvas_id, item_id = args.get("canvas_id"), args.get("item_id")
+    if not isinstance(canvas_id, int) or isinstance(canvas_id, bool):
+        return {"error": "需要提供 canvas_id"}
+    if not isinstance(item_id, int) or isinstance(item_id, bool):
+        return {"error": "需要提供 item_id"}
+    if await get_owned_canvas(db, user_id, canvas_id) is None:
+        return {"error": "画布不存在"}
+    item = await get_canvas_item(db, user_id, canvas_id, item_id)
+    if item is None:
+        return {"error": "画布节点不存在"}
+    node = await get_canvas_node(db, user_id, item.node_id, deleted=False)
+    if node is None or not (
+        node.kind == "canvas_note"
+        or (node.kind == "ref" and node.ref_type in _PLACEABLE_TYPES)
+    ):
+        return {"error": "画布节点不存在"}
+    return {
+        "canvas_id": canvas_id,
+        "item_id": item.id,
+        "node_id": node.id,
+        "title": node.title,
+        "focus_link": f"gugu://focus-canvas/{canvas_id}/{node.id}",
+    }
+
+
 def _placeable_summary(entity, ref_node: Any, item: Any, ref_type: str) -> dict[str, Any]:
     title = getattr(entity, "name", None) or getattr(entity, "display_name", None) or getattr(entity, "title", "")
     return {
@@ -1038,6 +1065,25 @@ class CanvasSkill(BaseSkill):
                 "required": ["canvas_id"],
             },
             handler=_canvas_search,
+        ),
+        Tool(
+            name="canvas_focus_node", label="定位画布卡片",
+            description_short="为指定画布卡片生成精确定位入口，不改布局。",
+            description=(
+                "为指定画布中的一张现有卡片生成精确定位链接。canvas_id 和 item_id 必须来自本轮 "
+                "canvas_get/canvas_search 结果或用户明确提供。成功后将 focus_link 原样放进 Markdown 链接返回用户；"
+                "用户点击后会打开对应画布并把视野居中到该卡片。本工具只生成定位入口，不移动卡片、不修改已保存视口。"
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "canvas_id": {"type": "integer"},
+                    "item_id": {"type": "integer"},
+                },
+                "required": ["canvas_id", "item_id"],
+                "additionalProperties": False,
+            },
+            handler=_canvas_focus_node,
         ),
         Tool(
             name="canvas_search_placeable", label="搜索可放置画布节点",

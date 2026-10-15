@@ -5,6 +5,9 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 
+MAX_EMPTY_REPLY_RETRIES = 2
+
+
 @dataclass(frozen=True)
 class ReplyDecisionBindings:
     """注入主循环的语言策略，避免重复实现既有守卫规则。"""
@@ -38,6 +41,10 @@ class ReplyState:
             self.guard_retry_pending = False
             self.colon_retry_pending = False
             self.guard_retry_buf.clear()
+
+    def tool_round_succeeded(self) -> None:
+        """成功工具带来实际进展后，允许最终答复阶段重新获得空回复重试机会。"""
+        self.empty_retry = 0
 
 
 @dataclass(frozen=True)
@@ -89,7 +96,7 @@ class ReplyRuntime:
             return ReplyDecision("complete_after_guard", visible_text=visible_text)
 
         if not final_text.strip() and not verify_mode:
-            if state.empty_retry < 1:
+            if state.empty_retry < MAX_EMPTY_REPLY_RETRIES:
                 state.empty_retry += 1
                 return ReplyDecision("retry", retry_kind="empty")
             return ReplyDecision(

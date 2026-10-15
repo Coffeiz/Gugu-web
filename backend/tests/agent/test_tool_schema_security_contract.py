@@ -157,20 +157,20 @@ def test_canvas_mutation_schemas_require_explicit_shape_and_types():
 
 def test_phase3_project_requires_explicit_date_range():
     assert _issues("create_project", {
-        "name": "项目",
+        "project_name": "项目",
         "start_date": "2026-08-29",
         "deadline": "2026-09-05",
     }) == []
-    assert _issues("create_project", {"name": "项目"})
+    assert _issues("create_project", {"project_name": "项目"})
 
 
 def test_create_workspace_directory_kind_rejects_folder_and_project_ids():
-    assert _issues("create_workspace", {"name": "资料区", "kind": "directory"}) == []
+    assert _issues("create_workspace", {"workspace_name": "资料区", "kind": "directory"}) == []
     assert _issues("create_workspace", {
-        "name": "资料区", "kind": "directory", "folder_id": 3,
+        "workspace_name": "资料区", "kind": "directory", "folder_id": 3,
     })
     assert _issues("create_workspace", {
-        "name": "资料区", "kind": "directory", "project_id": 4,
+        "workspace_name": "资料区", "kind": "directory", "project_id": 4,
     })
 
 
@@ -226,10 +226,10 @@ def test_phase8_compactor_keeps_reserved_parameter_names():
 
 def test_phase8_date_and_time_constraints_are_structural():
     assert _issues("create_project", {
-        "name": "项目", "start_date": "2026-08-29", "deadline": "2026-09-05",
+        "project_name": "项目", "start_date": "2026-08-29", "deadline": "2026-09-05",
     }) == []
     assert _issues("create_project", {
-        "name": "项目", "start_date": "2026/08/29", "deadline": "2026-09-05",
+        "project_name": "项目", "start_date": "2026/08/29", "deadline": "2026-09-05",
     })
     assert _issues("create_event", {
         "title": "评审", "date": "2026-09-03", "all_day": False, "time": "14:30",
@@ -241,24 +241,24 @@ def test_phase8_date_and_time_constraints_are_structural():
 
 def test_phase8_workspace_binding_is_structural():
     assert _issues("create_workspace", {
-        "name": "项目工作区", "kind": "project", "project_id": 1,
+        "workspace_name": "项目工作区", "kind": "project", "project_id": 1,
     }) == []
     assert _issues("create_workspace", {
-        "name": "文件夹工作区", "kind": "folder", "folder_id": 2,
+        "workspace_name": "文件夹工作区", "kind": "folder", "folder_id": 2,
     }) == []
     assert _issues("create_workspace", {
-        "name": "错误工作区", "kind": "project", "folder_id": 2,
+        "workspace_name": "错误工作区", "kind": "project", "folder_id": 2,
     })
     assert _issues("create_workspace", {
-        "name": "错误工作区", "kind": "folder", "project_id": 1,
+        "workspace_name": "错误工作区", "kind": "folder", "project_id": 1,
     })
 
 
 def test_phase8_file_batch_and_project_location_are_structural():
-    base = {"files": [{"name": "说明.md", "content": "正文"}]}
+    base = {"files": [{"file_name": "说明.md", "content": "正文"}]}
     assert _issues("create_file", base) == []
-    assert _issues("create_file", {"files": [{"name": "说明.md", "content": "正文", "space": "project"}]})
-    assert _issues("create_file", {"files": [{"name": "说明.md", "content": "正文", "space": "project", "project_id": 1}]}) == []
+    assert _issues("create_file", {"files": [{"file_name": "说明.md", "content": "正文", "space": "project"}]})
+    assert _issues("create_file", {"files": [{"file_name": "说明.md", "content": "正文", "space": "project", "project_id": 1}]}) == []
 
 
 def test_phase8_edit_modes_are_structural():
@@ -315,8 +315,8 @@ def test_phase3_legacy_event_adapter_is_explicit_and_value_preserving():
     assert adaptations == ["create_event.all_day_inferred"]
 
     normalized, adaptations = normalize_legacy_input("create_project", {"name": "项目"})
-    assert normalized == {"name": "项目"}
-    assert adaptations == []
+    assert normalized == {"project_name": "项目"}
+    assert adaptations == ["create_project.name:renamed_to_project_name"]
 
 
 def test_phase4_schema_errors_are_aggregated_without_argument_values(monkeypatch):

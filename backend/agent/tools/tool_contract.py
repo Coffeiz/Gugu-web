@@ -51,8 +51,9 @@ def _decode_json_array(value: Any) -> list[Any] | None:
 
 def normalize_legacy_input(tool_name: str, instance: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """把已知旧调用转换为当前契约，禁止猜测业务数据。"""
-    normalized = dict(instance)
-    adaptations: list[str] = []
+    from agent.tools.input_name_aliases import normalize_name_aliases
+
+    normalized, adaptations = normalize_name_aliases(tool_name, instance)
     if tool_name == "edit_file" and isinstance(normalized.get("edits"), list):
         # 同一文件的批量局部编辑常把 file_id/mode 放在顶层；将这些明确声明的
         # 默认值补到各项，避免与单项编辑字段混淆。条目显式值优先。
@@ -736,15 +737,15 @@ def invalid_input_payload(
 
 
 def invalid_tool_call_payload(
-    *, path: str = "name", reason: str = "工具名必须是字符串", rule: str = "type"
+    *, path: str = "tool_name", reason: str = "工具名必须是字符串", rule: str = "type"
 ) -> dict[str, Any]:
     """返回工具调用外层协议错误，不回显模型传入的实际值。"""
-    next_action = "请按工具 Schema 重新组织调用，不要把业务参数对象放到 name 字段。"
-    if path == "name":
+    next_action = "请按工具 Schema 重新组织调用，区分工具名与业务对象名称字段。"
+    if path in {"name", "tool_name"}:
         next_action = (
             "call_tool 必须提供目标业务工具名字符串和 arguments 对象；"
-            "name 填工具名（如 update_knowledge），arguments 填该工具的业务参数。"
-            "不要提交空对象，也不要把业务参数对象放进 name。"
+            "tool_name 填工具名（如 update_knowledge），arguments 填该工具的业务参数。"
+            "不要提交空对象，也不要把业务参数对象放进 tool_name。"
         )
     elif path == "arguments" and rule == "required":
         next_action = "请先获取目标工具的完整 Schema，再通过 arguments 传入全部业务参数。"
@@ -779,6 +780,18 @@ def enrich_tool_error(tool_name: str, result: Any) -> Any:
             return payload
         out = dict(payload)
         out.setdefault("tool", tool_name)
+        error = out.get("error")
+        if isinstance(error, str) and (error.startswith("未知工具") or error == "unknown_tool"):
+            out.setdefault(
+                "usage_hint",
+                "工具名是调用协议标识，必须来自本轮提供的工具列表；业务名称应放在工具参数中。",
+            )
+            out.setdefault(
+                "next_action",
+                "请按本轮工具列表选择已声明的工具名，并依据该工具 Schema 将业务参数放入 arguments；"
+                "不要把任务名、对象名称或参数对象当作工具名，也不要原样重试。",
+            )
+            return out
         out.setdefault(
             "usage_hint",
             "工具执行失败。先根据错误信息判断下一步；需要用户补充信息时先询问，不要重复提交相同参数。",
@@ -837,11 +850,11 @@ def resolve_tool_call(raw_name: Any, raw_input: Any) -> tuple[str, Any, dict | N
             return "invalid_tool_call", {}, invalid_tool_call_payload(
                 path="arguments", reason="call_tool.arguments 必须是 JSON object"
             )
-        raw_target_name = tool_input.get("name")
+        raw_target_name = tool_input.get("tool_name", tool_input.get("name"))
         target_name = normalize_tool_name(raw_target_name)
         if target_name is None:
             return "invalid_tool_call", {}, invalid_tool_call_payload(
-                reason="call_tool.name 必须是字符串"
+                reason="call_tool.tool_name 必须是字符串"
             )
 
         if "arguments" in tool_input:
@@ -851,7 +864,10 @@ def resolve_tool_call(raw_name: Any, raw_input: Any) -> tuple[str, Any, dict | N
                 )
             tool_input = tool_input["arguments"]
         else:
-            flattened = {key: value for key, value in tool_input.items() if key != "name"}
+            flattened = {
+                key: value for key, value in tool_input.items()
+                if key not in {"tool_name", "name"}
+            }
             if not flattened:
                 return "invalid_tool_call", {}, invalid_tool_call_payload(
                     path="arguments", rule="required",
@@ -874,4 +890,4 @@ def resolve_adapter_arguments(tool_input: Any) -> dict[str, Any]:
     arguments = tool_input.get("arguments")
     if isinstance(arguments, dict):
         return arguments
-    return {key: value for key, value in tool_input.items() if key != "name"}
+    return {key: value for key, value in tool_input.items() if key not in {"tool_name", "name"}}

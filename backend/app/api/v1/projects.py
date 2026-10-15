@@ -10,6 +10,7 @@ from app.core.ownership import get_owned
 from app.core.projects import build_project, update_project_atomic
 from app.core.security import get_current_user
 from app.core.tz import now_utc
+from app.db.project_file_counts import get_project_file_counts
 from app.db.session import get_db
 from app.models import CalendarEvent, File, Folder, Project, ScheduledTask, User  # orm-exempt: 模型引用随本文件遗留查询，Service 收口时一并移除
 from app.schemas import ProjectCreate, ProjectResponse, ProjectUpdate
@@ -67,9 +68,18 @@ async def list_projects(
 ):
     if archived and deleted:
         raise HTTPException(400, "archived 和 deleted 不能同时为 true")
-    # 只计根目录文件（folder_id IS NULL），和项目文件视图保持一致；文件夹内文件通过文件夹 UI 展示
-    return [_to_resp(p) for p in await list_project_rows(
-        db, current_user.id, archived=archived, deleted=deleted)]
+    projects = await list_project_rows(db, current_user.id, archived=archived, deleted=deleted)
+    counts = await get_project_file_counts(db, current_user.id, [project.id for project in projects])
+    return [_to_resp(project, counts.get(project.id, 0)) for project in projects]
+
+
+@router.get("/file-counts", response_model=list[dict[str, int]])
+async def list_project_file_counts(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    counts = await get_project_file_counts(db, current_user.id)
+    return [{"projectId": project_id, "fileCount": file_count} for project_id, file_count in counts.items()]
 
 
 @router.post("", response_model=ProjectResponse, status_code=201)
@@ -95,7 +105,7 @@ async def create_project(
     )
     await db.commit()
     await db.refresh(p)
-    response = _to_resp(p)
+    response = _to_resp(p, 0)
     await events.publish(current_user.id, "projects", origin=request.headers.get("X-Client-Id"),
                          operation="create", entity_id=p.id, event_payload=response.model_dump(mode="json", by_alias=True))
     return response
@@ -110,7 +120,8 @@ async def get_project(
     row = await get_project_row(db, current_user.id, pid)
     if not row or row.deleted_at is not None:
         raise HTTPException(404, "项目不存在")
-    return _to_resp(row)
+    counts = await get_project_file_counts(db, current_user.id, [row.id])
+    return _to_resp(row, counts.get(row.id, 0))
 
 
 @router.patch("/{pid}", response_model=ProjectResponse)
@@ -131,7 +142,8 @@ async def update_project(
     if client_version is None:
         raise HTTPException(422, "更新项目必须提供 version")
     if not data:
-        return _to_resp(p)
+        counts = await get_project_file_counts(db, current_user.id, [p.id])
+        return _to_resp(p, counts.get(p.id, 0))
     before = project_snapshot(p)
 
     # 项目改名时同步重命名存储目录
@@ -175,7 +187,8 @@ async def update_project(
     )
     await db.commit()
     await db.refresh(p)
-    response = _to_resp(p)
+    counts = await get_project_file_counts(db, current_user.id, [p.id])
+    response = _to_resp(p, counts.get(p.id, 0))
     await events.publish(current_user.id, "projects", origin=request.headers.get("X-Client-Id"),
                          operation="update", entity_id=p.id, event_payload=response.model_dump(mode="json", by_alias=True))
 
@@ -317,7 +330,8 @@ async def restore_project(
     await db.commit()
     await db.refresh(p)
 
-    response = _to_resp(p)
+    counts = await get_project_file_counts(db, current_user.id, [p.id])
+    response = _to_resp(p, counts.get(p.id, 0))
     origin = request.headers.get("X-Client-Id")
     await events.publish(current_user.id, "projects", origin=origin, operation="create",
                          entity_id=pid, event_payload=response.model_dump(mode="json", by_alias=True))

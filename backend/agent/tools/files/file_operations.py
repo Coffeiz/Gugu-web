@@ -437,7 +437,7 @@ async def _create_file(db, user_id, args: dict):
     """批量创建 UTF-8 文本文件；每项独立校验、写入和提交。"""
     items = args.get("files")
     if not isinstance(items, list) or not items:
-        return {"error": "需要 files 数组；每项填写 name（含自定义扩展名）和 content"}
+        return {"error": "需要 files 数组；每项填写 file_name（含自定义扩展名）和 content"}
     if len(items) > 20:
         return {"error": "一次最多创建 20 个文件"}
     defaults = args.get("target")
@@ -452,7 +452,7 @@ async def _create_file(db, user_id, args: dict):
         if not isinstance(item, dict):
             failed.append({"index": index, "error": "每项必须是对象"})
             continue
-        name = str(item.get("name") or "").strip()
+        name = str(item.get("file_name") or "").strip()
         display_name, ext, name_error = _split_create_name(name)
         if name_error:
             failed.append({"index": index, "name": name, "error": name_error})

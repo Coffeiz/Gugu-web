@@ -84,7 +84,7 @@ async def _manage_mcp_servers(db, user_id, args: dict):
     server = None
     if action not in {"list", "add"}:
         server_id_value = str(args.get("server_id") or "").strip()
-        server_name = str(args.get("name") or "").strip()
+        server_name = str(args.get("server_name") or "").strip()
         if server_id_value:
             try:
                 server_id = _server_id(server_id_value)
@@ -92,14 +92,13 @@ async def _manage_mcp_servers(db, user_id, args: dict):
                 return {"error": str(exc)}
             server = await get_user_mcp_server(db, user_id, server_id=server_id)
         elif server_name:
-            # list 返回的 id 是最可靠的定位方式，但名称在用户范围内唯一；
-            # 接受名称可以让模型直接复用刚刚列出的结果，避免把 name 误塞进 UUID。
+            # list 返回的 id 是最可靠的定位方式，但 server_name 在用户范围内唯一。
             server = await get_user_mcp_server(db, user_id, name=server_name)
         else:
-            return {"error": "需要提供 server_id 或 name"}
+            return {"error": "需要提供 server_id 或 server_name"}
 
     if action == "add":
-        name = _validate_name(str(args.get("name") or ""))
+        name = _validate_name(str(args.get("server_name") or ""))
         transport = str(args.get("transport") or "http")
         endpoint = _check_endpoint(str(args.get("endpoint") or "")) if transport == "http" else ""
         command = str(args.get("command") or "").strip() if transport == "stdio" else ""
@@ -158,8 +157,8 @@ async def _manage_mcp_servers(db, user_id, args: dict):
     if action == "update":
         settings = get_settings()
         fields = {}
-        if "name" in args and args.get("name") and str(args["name"]).strip() != server.name:
-            new_name = _validate_name(str(args["name"]))
+        if "new_server_name" in args and args.get("new_server_name") and str(args["new_server_name"]).strip() != server.name:
+            new_name = _validate_name(str(args["new_server_name"]))
             if await user_mcp_server_name_exists(db, user_id, new_name, exclude_id=server.id):
                 return {"error": f"名称 {new_name} 已存在"}
             fields["name"] = new_name
@@ -286,8 +285,8 @@ class McpSkill(BaseSkill):
         description_short="管理当前账号的 MCP server 配置",
         description=(
             "管理当前账号自己的 MCP server。支持 list、add、update、enable、disable、remove、test_connection。"
-            "除 list/add 外的动作优先使用 server_id；也可以使用 list 返回的唯一 name 定位服务。"
-            "HTTP 服务通过 credential_slots 描述凭据注入位置（header 或 query）；"
+            "除 list/add 外的动作优先使用 server_id；也可以把 list 返回项中的 name 值传入 server_name 定位服务。add 使用 server_name，新名称修改使用 new_server_name。"
+            "HTTP 服务通过 credential_slots 描述凭据注入位置（target 为 header/query，parameter_name 为 Header 或查询参数名）；"
             "凭据值不会出现在工具参数中，而是在需要时通过通用加密输入交互收集。"
             "服务名支持中文、字母、数字、下划线和连字符，长度 1-64；HTTP endpoint 必须是实际可达的 MCP Streamable HTTP 地址，不要使用 example.com 或 mock 域名。"
             "HTTP Header 凭据必须为 ASCII；Bearer 前缀请包含所需空格，例如 'Bearer '。"
@@ -299,8 +298,10 @@ class McpSkill(BaseSkill):
             "properties": {
                 "action": {"type": "string", "enum": ["list", "add", "update", "enable", "disable", "remove", "test_connection"]},
                 "server_id": {"type": "string", "maxLength": 64},
-                "name": {"type": "string", "minLength": 1, "maxLength": 64,
+                "server_name": {"type": "string", "minLength": 1, "maxLength": 64,
                          "description": "支持中文、字母、数字、下划线和连字符，例如 mock_mcp 或 mock-mcp。"},
+                "new_server_name": {"type": "string", "minLength": 1, "maxLength": 64,
+                         "description": "update 时设置新的 server_name。"},
                 "endpoint": {"type": "string", "maxLength": 1000,
                              "description": "实际 MCP Streamable HTTP endpoint；不要填 example.com、mock.test 等占位域名。"},
                 "transport": {"type": "string", "enum": ["http", "stdio"]},
@@ -313,11 +314,11 @@ class McpSkill(BaseSkill):
                             "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"},
                             "label": {"type": "string", "maxLength": 120},
                             "target": {"type": "string", "enum": ["header", "query"]},
-                            "name": {"type": "string", "maxLength": 256},
+                            "parameter_name": {"type": "string", "maxLength": 256},
                             "prefix": {"type": "string", "maxLength": 120,
                                        "description": "按原样拼接在凭据前；Bearer 认证请写 'Bearer ' 并保留尾随空格。"},
                         },
-                        "required": ["id", "label", "target", "name"],
+                        "required": ["id", "label", "target", "parameter_name"],
                     },
                 },
                 "enabled": {"type": "boolean"},

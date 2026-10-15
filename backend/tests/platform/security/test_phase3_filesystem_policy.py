@@ -60,7 +60,7 @@ async def test_agent_file_create_defaults_to_workspace_without_full_sandbox_gran
     token = set_dispatch_session(session.id, session, "phase3-test")
     try:
         result = await agent_files._create_file(
-            db, user_a.id, {"files": [{"name": "默认工作区.md", "content": "正文"}]},
+            db, user_a.id, {"files": [{"file_name": "默认工作区.md", "content": "正文"}]},
         )
         assert result["created_count"] == 1
         assert result["failed_count"] == 0
@@ -70,7 +70,7 @@ async def test_agent_file_create_defaults_to_workspace_without_full_sandbox_gran
         assert created.workspace_directory_id == default_directory.id
 
         folder_result = await agent_files._create_folder(
-            db, user_a.id, {"name": "默认目录"},
+            db, user_a.id, {"folder_name": "默认目录"},
         )
         assert folder_result["success"] is True
         folder = await db.get(Folder, folder_result["folder_id"])
@@ -80,7 +80,7 @@ async def test_agent_file_create_defaults_to_workspace_without_full_sandbox_gran
         assert any(item["id"] == folder.id for item in listed["folders"])
 
         explicit_workspace = await agent_files._create_folder(
-            db, user_a.id, {"name": "显式工作区目录", "space": "workspace"},
+            db, user_a.id, {"folder_name": "显式工作区目录", "space": "workspace"},
         )
         assert explicit_workspace["success"] is True
         assert explicit_workspace["space"] == "workspace"

@@ -75,6 +75,7 @@ def describe_llm_error(
 ) -> LLMErrorPresentation:
     """按统一口径生成 LLM 失败描述。"""
     from agent.providers.errors import (
+        anthropic_stream_protocol_details,
         is_provider_http_error,
         upstream_status_code,
         upstream_status_tag,
@@ -118,6 +119,13 @@ def describe_llm_error(
             message_key="chatUi.networkError",
             message_params=params,
             text="咕咕网络不太好 📡 可以再发一遍吗？",
+        )
+    if not provider_error and anthropic_stream_protocol_details(error) is not None:
+        return LLMErrorPresentation(
+            code="provider_stream_error",
+            message_key="chatUi.providerStreamError",
+            message_params={"diagnostic_id": diagnostic_id},
+            text=f"模型服务返回了异常的流式响应（诊断编号 {diagnostic_id}）。请重试。",
         )
     if status_code == 429:
         suffix = f"，{retried}仍未恢复" if attempts else ""

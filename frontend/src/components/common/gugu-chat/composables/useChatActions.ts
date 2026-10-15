@@ -128,6 +128,12 @@ export function useChatActions(options: {
       await openFileFromLink(parseInt(mFile[1]))
       return
     }
+    const mCanvasFocus = href.match(/^gugu:\/\/focus-canvas\/(\d+)\/(\d+)$/i)
+    if (mCanvasFocus) {
+      uiStore.pendingCanvasTarget = { canvasId: Number(mCanvasFocus[1]), nodeId: Number(mCanvasFocus[2]) }
+      await options.router.push('/mind/canvases')
+      return
+    }
     const mObject = href.match(/^gugu:\/\/open-object\/(project|event|canvas|note|scheduled-task)\/(\d+)$/i)
     if (mObject) options.onOpenObject(mObject[1].toLowerCase(), Number(mObject[2]))
     const mSkill = href.match(/^gugu:\/\/open-skill\/(U[1-9][0-9]*)$/i)

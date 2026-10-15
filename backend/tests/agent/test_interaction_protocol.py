@@ -120,6 +120,8 @@ def test_ask_user_tool_is_registered_with_bounded_schema():
     assert tool is not None
     assert tool.input_schema["additionalProperties"] is False
     assert tool.input_schema["properties"]["options"]["maxItems"] == 8
+    assert tool.input_schema["properties"]["options"]["x-empty-string"] == "empty-array"
+    assert "options" not in tool.input_schema["required"]
     assert "allow_text_input" not in tool.input_schema["properties"]
     assert "title" in tool.input_schema["required"]
 

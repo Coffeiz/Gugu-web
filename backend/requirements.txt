@@ -17,12 +17,12 @@ aiohttp>=3.9.0
 apscheduler>=3.10.0
 jsonschema>=4.23.0,<5.0.0
 # AI
-openai>=1.30.0
-anthropic>=0.111.0
+openai>=3.31.0,<4.0.0
+anthropic>=1.14.0,<2.0.0
 # OSS
 oss2>=2.18.0
 # IM 平台接入（飞书 WebSocket 长连 + API）
-lark-oapi>=1.7.3,<2.0.0
+lark-oapi>=1.7.4,<2.0.0
 # QQ 官方机器人接收/发送均为自建 raw WebSocket + raw HTTP，不再依赖 qq-botpy
 # Utils
 # 固定安全版本，避免基础镜像残留旧元数据被生产扫描识别。

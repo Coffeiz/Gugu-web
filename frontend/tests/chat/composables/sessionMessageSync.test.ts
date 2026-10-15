@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
 import type { ChatMessage } from '@/components/common/gugu-chat/chatTypes'
 import { agentApi } from '@/services/api'
-import { createSessionMessageSynchronizer, ensureSessionMessageLoaded, mergeSessionMessageDelta } from '@/components/common/gugu-chat/composables/sessionMessageSync'
+import { createSessionMessageSynchronizer, ensureSessionMessageLoaded, findLatestPersistedAssistant, mapSessionMessageDelta, mergeSessionMessageDelta } from '@/components/common/gugu-chat/composables/sessionMessageSync'
 
 vi.mock('@/services/api', () => ({ agentApi: { getMessages: vi.fn(), getMessagesBefore: vi.fn() } }))
 
@@ -35,6 +35,36 @@ describe('mergeSessionMessageDelta', () => {
     const ephemeral = message(1, '', 'streaming')
     const merged = mergeSessionMessageDelta([ephemeral], [message(2, 'message:2', 'saved')])
     expect(merged).toEqual([ephemeral, message(2, 'message:2', 'saved')])
+  })
+
+  it('reconciles a recovered timeline reply with its later incremental event', () => {
+    const data = {
+      messages: [],
+      timelineEvents: [{ id: '250810:0', kind: 'assistant', text: 'persisted final reply',
+        createdAt: '2026-10-15T03:17:00Z', timelineOrder: 250810000 }],
+    }
+    const recovered = findLatestPersistedAssistant(data)
+    expect(recovered?.syncKey).toBe('timeline:250810:0')
+
+    const current: ChatMessage[] = [{
+      id: 1, dbId: 250810, role: 'ai', text: recovered!.text, time: '',
+      _syncKey: recovered!.syncKey,
+    }]
+    const incoming = mapSessionMessageDelta(data, () => 2, role => ({ role }))
+    const merged = mergeSessionMessageDelta(current, incoming)
+
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toMatchObject({ id: 1, dbId: 250810, text: 'persisted final reply' })
+  })
+
+  it('does not recover an old persisted assistant reply as the current turn', () => {
+    const result = findLatestPersistedAssistant({
+      messages: [],
+      timelineEvents: [{ id: 'old', kind: 'assistant', text: 'old reply',
+        createdAt: '2026-10-14T03:17:00Z' }],
+    }, Date.parse('2026-10-15T03:00:00Z'))
+
+    expect(result).toBeNull()
   })
 })
 

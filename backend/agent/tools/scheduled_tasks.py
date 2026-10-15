@@ -229,9 +229,9 @@ async def _list_scheduled_tasks(db, user_id, args: dict):
 
 
 async def _create_scheduled_task(db, user_id, args: dict):
-    name = (args.get("name") or "").strip()
+    name = (args.get("schedule_name") or "").strip()
     if not name:
-        return json.dumps({"error": "需提供任务名 name"}, ensure_ascii=False)
+        return json.dumps({"error": "需提供任务名 schedule_name"}, ensure_ascii=False)
     if args.get("filesystem_authorized") is True:
         from app.services.filesystem_authorization import filesystem_authorization_enabled
         if not filesystem_authorization_enabled():
@@ -455,7 +455,7 @@ async def _update_scheduled_task(db, user_id, args: dict):
     else:
         active_grant = None
     if args.get("filesystem_authorized") is True and active_grant is None:
-        requested_name = str(args.get("name") or t.name).strip()
+        requested_name = str(args.get("schedule_name") or t.name).strip()
         summary = f"允许定时任务「{requested_name}」读写整个用户沙箱（包含 /workspace、/personal、/project）"
         blocked = confirm.needs_confirmation(
             args, summary, user_id,
@@ -491,8 +491,8 @@ async def _update_scheduled_task(db, user_id, args: dict):
             "start_at": spec.start_at,
             "end_at": spec.end_at,
         })
-    if args.get("name") is not None:
-        fields["name"] = str(args["name"]).strip()
+    if args.get("schedule_name") is not None:
+        fields["name"] = str(args["schedule_name"]).strip()
     if args.get("instruction") is not None:
         fields["payload"] = str(args["instruction"]).strip()
     if args.get("channels") is not None or args.get("delivery_mode") is not None:
@@ -585,18 +585,18 @@ class ScheduledTasksSkill(BaseSkill):
         Tool(
             name="create_scheduled_task", label="新建定时任务",
             description_short='创建定时任务；支持邮件、站内通知和 QQ 私聊或群聊投递。',
-            description="创建独立定时任务并按渠道投递。要投递到 QQ 群：delivery_mode=\"current_group\"（在群聊中创建时），channels 缺 qq 会自动补上；要私聊提醒用 delivery_mode=\"owner_private\"。schedule_kind=once 时只传 start_at，在指定时间执行一次，成功投递后自动移除；schedule_kind=cron 时传合法 cron（Asia/Shanghai）；schedule_kind=interval 时只传 interval_minutes（1-60），间隔从 start_at 锚定，不按整点重新对齐。cron/interval 的 start_at/end_at 可分别省略，也可传 ISO 日期时间；end_at 含边界，任务到期后自动停用。email_attachment_file_ids 可配置当前用户文件库中的附件（最多 5 个，单个不超过 10MB，总计不超过 25MB），只在 email 渠道发送，不要传路径。任务本轮调用 send_file 生成的文件也会自动附到 email。可选 workspace_id 绑定用户自己的工作区；绑定后任务从 workspace 根目录执行并可读写整个 workspace。filesystem_authorized=true 会单独请求确认，确认后任务才可读写 /personal 和 /project；不要传目录级授权参数。只有用户明确授权时才传 authorized_tools=[send_email]，否则到点调用邮件工具仍需确认。日历活动提醒请放在 create_event/reminders 或 update_event/reminders 字段中。工具成功回执中的 task_id、schedule_status 才是事实来源。",
+            description="创建独立定时任务并按渠道投递。调用时工具名必须是 create_scheduled_task；任务标题填入参数 schedule_name，不要把标题当作工具名。channels 是字符串数组，例如 [\"qq\"]，不要包装成 {\"item\":\"qq\"}。要投递到 QQ 群：delivery_mode=\"current_group\"（在群聊中创建时），channels 缺 qq 会自动补上；要私聊提醒用 delivery_mode=\"owner_private\"。schedule_kind=once 时只传 start_at，在指定时间执行一次，成功投递后自动移除；schedule_kind=cron 时传合法 cron（Asia/Shanghai）；schedule_kind=interval 时只传 interval_minutes（1-60），间隔从 start_at 锚定，不按整点重新对齐。cron/interval 的 start_at/end_at 可分别省略，也可传 ISO 日期时间；end_at 含边界，任务到期后自动停用。email_attachment_file_ids 可配置当前用户文件库中的附件（最多 5 个，单个不超过 10MB，总计不超过 25MB），只在 email 渠道发送，不要传路径。任务本轮调用 send_file 生成的文件也会自动附到 email。可选 workspace_id 绑定用户自己的工作区；绑定后任务从 workspace 根目录执行并可读写整个 workspace。filesystem_authorized=true 会单独请求确认，确认后任务才可读写 /personal 和 /project；不要传目录级授权参数。只有用户明确授权时才传 authorized_tools=[send_email]，否则到点调用邮件工具仍需确认。日历活动提醒请放在 create_event/reminders 或 update_event/reminders 字段中。工具成功回执中的 task_id、schedule_status 才是事实来源。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "name":        {"type": "string"},
-                    "instruction": {"type": "string"},
-                    "schedule_kind": {"type": "string", "enum": ["cron", "interval", "once"]},
+                    "schedule_name": {"type": "string", "description": "定时任务标题。"},
+                    "instruction": {"type": "string", "description": "任务触发时交给 Agent 执行的指令。"},
+                    "schedule_kind": {"type": "string", "enum": ["cron", "interval", "once"], "description": "调度类型；周期提醒使用 cron。"},
                     "cron":        {"type": ["string", "null"]},
                     "interval_minutes": {"type": ["integer", "null"], "minimum": 1, "maximum": 60},
                     "start_at": {"type": ["string", "null"], "format": "date-time"},
                     "end_at": {"type": ["string", "null"], "format": "date-time"},
-                    "channels":    {"type": "array", "items": {"type": "string", "enum": ["web", "email", "feishu", "qq"]},
+                    "channels":    {"type": "array", "description": "投递渠道字符串数组，例如 [\"qq\"]。", "items": {"type": "string", "enum": ["web", "email", "feishu", "qq"]},
                                     "minItems": 1, "uniqueItems": True},
                     "enabled":     {"type": "boolean"},
                     "delivery_mode": {"type": "string", "enum": ["owner_private", "current_group"]},
@@ -605,7 +605,7 @@ class ScheduledTasksSkill(BaseSkill):
                     "workspace_id": {"type": ["integer", "null"]},
                     "filesystem_authorized": {"type": "boolean"},
                 },
-                "required": ["name", "instruction", "schedule_kind"],
+                "required": ["schedule_name", "instruction", "schedule_kind"],
             },
             handler=_create_scheduled_task,
             mutates=True,
@@ -621,7 +621,7 @@ class ScheduledTasksSkill(BaseSkill):
                     "task_id":     {"type": "integer"},
                     "task":        {"type": "string"},
                     "task_ids":    {"type": "array", "items": {"type": "integer", "minimum": 1}, "minItems": 1, "maxItems": 50, "uniqueItems": True},
-                    "name":        {"type": "string"},
+                    "schedule_name": {"type": "string", "description": "更新后的定时任务标题。"},
                     "instruction": {"type": "string"},
                     "schedule_kind": {"type": ["string", "null"], "enum": ["cron", "interval", "once", None]},
                     "cron":        {"type": ["string", "null"]},
@@ -653,7 +653,7 @@ class ScheduledTasksSkill(BaseSkill):
                             {"required": ["task_id"]},
                             {"required": ["task"]},
                             *[{"required": [field]} for field in (
-                                "name", "instruction", "schedule_kind", "cron", "interval_minutes",
+                                "schedule_name", "instruction", "schedule_kind", "cron", "interval_minutes",
                                 "start_at", "end_at", "channels", "enabled", "delivery_mode",
                                 "authorized_tools", "email_attachment_file_ids", "workspace_id",
                             )],

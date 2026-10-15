@@ -173,6 +173,18 @@
       <aside v-if="selected" class="ntp-info">
         <div class="info-sec">
           <div class="info-title">{{ t('mindThreePane.info') }}</div>
+          <div class="kv kv-record-date">
+            <span class="k">{{ t('mindThreePane.recordDate') }}</span>
+            <div class="record-date-value">
+              <DatePicker
+                :model-value="selectedRecordDate"
+                :max="todayKey"
+                :show-clear="false"
+                :placeholder="t('mind.chooseDateShort')"
+                @update:model-value="onRecordDateChange"
+              />
+            </div>
+          </div>
           <div class="kv"><span class="k">{{ t('mindThreePane.created') }}</span><span class="v">{{ fullTime(selected, 'createdAt') }}</span></div>
           <div class="kv"><span class="k">{{ t('mindThreePane.updated') }}</span><span class="v">{{ fullTime(selected, 'updatedAt') }}</span></div>
           <div class="kv"><span class="k">{{ t('mindThreePane.words') }}</span><span class="v">{{ wordCount }}</span></div>
@@ -212,12 +224,13 @@ import { useMindRefActions } from '@/composables/mind/useMindRefActions'
 import { canLeaveNoteEditor, commitNoteEdit } from '@/composables/mind/noteEditCommit'
 import { mdToPreviewHtml, splitMindTitleBody, toggleTaskInMd, combineTitleBody } from '@/composables/mind/useMindEditor'
 import { vMindPreview } from './directives/mindPreview'
-import { localDayKey, parseUtc } from '@/utils/dateAttribution'
+import { localDateTimeToUtcIso, localDayKey, parseUtc } from '@/utils/dateAttribution'
 import type { MindNote } from '@/services/api'
 import { persistMindNoteDraft } from './utils/noteDraft'
 import NoteEditor from './components/NoteEditor.vue'
 import DateIndex from './components/DateIndex.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
+import DatePicker from '@/components/common/controls/DatePicker.vue'
 
 const store = useMindStore()
 const liveStore = useLiveStore()
@@ -259,6 +272,8 @@ onBeforeUnmount(() => {
 // 当前选中的便签。数据刷新（勾待办 / 其他端改动）后 store.notes 是同引用替换，
 // 这里按 id 重新 find，保证读到的是最新字段。
 const selected = computed(() => store.notes.find(n => n.id === selectedId.value) ?? null)
+const selectedRecordDate = computed(() => selected.value ? localDayKey(parseUtc(selected.value.capturedAt)) : '')
+const recordDateSaving = ref(false)
 
 // 聊天跳转可通过 query 首次进入，也可在本页重复点击时通过 gugu:open-object 事件触发。
 async function openRequestedNote(requestedId = Number(route.query.object_id)) {
@@ -651,6 +666,29 @@ function fullTime(note: MindNote, field: 'capturedAt' | 'createdAt' | 'updatedAt
 }
 const todayKey = localDayKey(new Date())
 const yesterdayKey = localDayKey(new Date(Date.now() - 86400e3))
+async function onRecordDateChange(date: string) {
+  const note = selected.value
+  if (!note || !date || date === selectedRecordDate.value || recordDateSaving.value) return
+  const capturedAt = localDateTimeToUtcIso(date)
+  if (note.id < 0) {
+    // 新建草稿和样例笔记只改前端记录日期；新建草稿提交时会带上该值。
+    store.notes = store.notes.map(item => item.id === note.id ? { ...item, capturedAt } : item)
+    return
+  }
+  recordDateSaving.value = true
+  try {
+    await store.updateNote(note.id, { capturedAt, version: note.version })
+  } catch (e) {
+    if (e instanceof MindConflictError) {
+      await store.fetchNotes()
+      showAppNotice(t('mind.updatedElsewhere'))
+    } else {
+      showAppError(t('mind.saveFailed'))
+    }
+  } finally {
+    recordDateSaving.value = false
+  }
+}
 function dayLabel(date: string) {
   if (date === todayKey) return t('calendar.today')
   if (date === yesterdayKey) return t('mindThreePane.yesterday')
@@ -1007,6 +1045,9 @@ function onListScroll() {
 .kv { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 4px 0; }
 .kv .k { font-size: 12px; color: var(--text-secondary); opacity: 0.8; flex: none; }
 .kv .v { font-size: 12.5px; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.record-date-value { display: flex; align-items: center; justify-content: flex-end; width: 98px; flex: 0 0 98px; min-width: 0; }
+.record-date-value :deep(.dp-wrap) { width: 100%; }
+.record-date-value :deep(.dp-input) { min-height: 30px; padding: 5px 8px; box-sizing: border-box; font-size: 12px; }
 .info-empty { font-size: 12px; color: var(--text-secondary); opacity: 0.75; line-height: 1.6; }
 </style>
 <!-- 只读正文的排版结构（np-tasks / np-quote / 代码块…）是全局样式，NoteCard.vue 用同一份；

@@ -66,6 +66,7 @@
       :filesystem-authorized="sessionFilesystemAuthorized"
       :filesystem-authorization-enabled="currentSessionFilesystemAuthorizationEnabled"
       :session-id="sessionId"
+      :interaction-answer-mode="interactionAnswerMode"
       :presence-kind="presenceKind" :presence-text="presenceText" :presence-title="presenceTitle"
       :messages="messages" :is-group-session="isGroupSession"
       :copied-id="copiedId" :voice-playing-id="voicePlayingId"
@@ -83,6 +84,7 @@
       :on-copy="copyMsg" :on-toggle-voice="toggleVoice"
       :on-open-file="openFileFromChat" :on-download="downloadFile" :on-action-click="onChatActionClick"
       :on-interaction-select="onInteractionSelect"
+      :on-interaction-text-submit="onInteractionTextSubmit"
       :on-secret-submit="onSecretSubmit"
       :on-secret-cancel="onSecretCancel"
       :on-reference-click="onReferenceClick"
@@ -111,7 +113,12 @@
           :bots-of="botsOf" :im-sessions-of="imSessionsOf"
           :web-sessions="webSessions" :session-id="sessionId"
           :connect="connect" :connect-hint="connectHint" :connect-err="connectErr" :connecting="connecting"
-          :on-open-telegram-settings="onOpenTelegramSettings"
+          :telegram-token-dialog-open="telegramTokenDialogOpen"
+          :telegram-connecting="telegramConnecting"
+          :telegram-connect-error="telegramConnectError"
+          :on-open-telegram-token-dialog="openTelegramTokenDialog"
+          :on-close-telegram-token-dialog="closeTelegramTokenDialog"
+          :on-submit-telegram-token="submitTelegramToken"
           :on-toggle-platform="toggleImPlatform" :on-set-connect-canvas="setConnectCanvas"
           :on-start-im-connect="startImConnect" :on-cancel-im-connect="cancelImConnect"
           :on-load-session="loadSession" :on-delete-session="deleteSession" :on-new-session="newSession"
@@ -140,7 +147,7 @@ import GuguChatSidebar from './GuguChatSidebar.vue'
 import GuguChatBindDialog from './GuguChatBindDialog.vue'
 import GuguChatWindow from './GuguChatWindow.vue'
 import FilesystemAuthorizationDialog from '@/components/common/filesystem/FilesystemAuthorizationDialog.vue'
-import { CUSTOM_REPLY_OPTION_ID, type ChatMessage, type ChatFile, type ChatReference, type ImPlatformKey } from './chatTypes'
+import { CUSTOM_REPLY_OPTION_ID, findPendingTextInteractionId, type ChatMessage, type ChatFile, type ChatReference, type ImPlatformKey } from './chatTypes'
 import { API_BASE } from './chatConstants'
 import { renderMd } from './markdown'
 import { canPreview, fmtSize } from './messageDisplay'
@@ -166,10 +173,6 @@ interface QuotaInfo {
 
 const audioStore    = useAudioStore()
 const uiStore       = useUiStore()
-function onOpenTelegramSettings() {
-  uiStore.profileInitialNav = 'im'
-  uiStore.openProfile = true
-}
 const preferencesStore = usePreferencesStore()
 const router        = useRouter()
 const automaticModeGlobalEnabled = ref(false)
@@ -534,10 +537,12 @@ async function confirmSessionAuthorization() {
   }
 }
 
-const pendingCustomPromptId = ref<number | null>(null)
-watch(sessionId, () => {
-  pendingCustomPromptId.value = null
+const interactionAnswerMode = computed(() => {
+  if (!sessionId.value) return 'inline' as const
+  const activeSession = sessions.value.find(session => session.id === sessionId.value)
+  return activeSession && (!activeSession.source || activeSession.source === 'web') ? 'inline' as const : 'composer' as const
 })
+const pendingCustomPromptId = computed(() => findPendingTextInteractionId(messages.value, interactionAnswerMode.value))
 
 async function onInteractionSelect(_msg: ChatMessage, option: { id: string; label: string; token: string }) {
   const promptId = _msg.interaction?.promptId
@@ -557,19 +562,18 @@ async function onInteractionSelect(_msg: ChatMessage, option: { id: string; labe
         _chatTip(t('chatUi.interactionSubmitFailed'))
         return
       }
-      pendingCustomPromptId.value = promptId
       _msg.interaction.customInputActive = true
       _msg.interaction.submitting = false
-      inputText.value = ''
-      await nextTick()
-      composerRef.value?.focus?.()
+      if (interactionAnswerMode.value === 'composer') {
+        await nextTick()
+        composerRef.value?.focus?.()
+      }
     } catch {
       if (_msg.interaction) _msg.interaction.submitting = false
       _chatTip(t('chatUi.interactionSubmitFailed'))
     }
     return
   }
-  pendingCustomPromptId.value = null
   if (_msg.interaction) {
     _msg.interaction.customInputActive = false
     _msg.interaction.submitting = true
@@ -672,6 +676,43 @@ async function onSecretCancel(_msg: ChatMessage) {
   }
 }
 
+async function onInteractionTextSubmit(message: ChatMessage, text: string) {
+  const interaction = message.interaction
+  const promptId = interaction?.promptId
+  const answer = text.trim()
+  if (!promptId || !sessionId.value || !interaction?.allowTextInput || interaction.kind === 'confirm' || !answer) {
+    if (interaction) interaction.submitting = false
+    return
+  }
+  try {
+    const token = getToken()
+    const res = await fetch(`${API_BASE}/agent/interactions/${promptId}/resume-text`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({ text: answer }),
+    })
+    if (isUnauthorizedResponse(res)) {
+      interaction.submitting = false
+      return
+    }
+    if (!res.ok) {
+      interaction.submitting = false
+      _chatTip(t('chatUi.interactionSubmitFailed'))
+      return
+    }
+    interaction.resolved = true
+    interaction.submitting = false
+    interaction.selectedOptionId = CUSTOM_REPLY_OPTION_ID
+    interaction.responseText = answer
+    interaction.customInputActive = false
+    await nextTick()
+    await scrollBottom()
+  } catch {
+    interaction.submitting = false
+    _chatTip(t('chatUi.interactionSubmitFailed'))
+  }
+}
+
 async function onChatSend() {
   const promptId = pendingCustomPromptId.value
   if (!promptId) {
@@ -681,29 +722,10 @@ async function onChatSend() {
   const message = messages.value.find(item => item.interaction?.promptId === promptId)
   const text = inputText.value.trim()
   if (!message?.interaction?.allowTextInput || message.interaction.kind === 'confirm' || !text) return
-  try {
-    const token = getToken()
-    const res = await fetch(`${API_BASE}/agent/interactions/${promptId}/resume-text`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-      body: JSON.stringify({ text }),
-    })
-    if (isUnauthorizedResponse(res)) return
-    if (!res.ok) {
-      _chatTip(t('chatUi.interactionSubmitFailed'))
-      return
-    }
-    message.interaction.resolved = true
-    message.interaction.selectedOptionId = CUSTOM_REPLY_OPTION_ID
-    message.interaction.responseText = text
-    message.interaction.customInputActive = false
+  await onInteractionTextSubmit(message, text)
+  if (message.interaction.resolved) {
     inputText.value = ''
-    pendingCustomPromptId.value = null
     composerRef.value?.resetHeight()
-    await nextTick()
-    await scrollBottom()
-  } catch {
-    _chatTip(t('chatUi.interactionSubmitFailed'))
   }
 }
 
@@ -808,6 +830,8 @@ const bindDialogRef = ref<InstanceType<typeof GuguChatBindDialog> | null>(null)
 const {
   bots, imOpen, imPlatformOptions, imOnline, botsOf, imHighlight,
   loadBots, toggleImPlatform, promptConnectIM,
+  telegramTokenDialogOpen, telegramConnecting, telegramConnectError,
+  openTelegramTokenDialog, closeTelegramTokenDialog, submitTelegramToken,
   connecting, connect, connectHint, connectErr, setConnectCanvas,
   startImConnect, cancelImConnect,
   chatBind, openChatImBind, closeChatBind,

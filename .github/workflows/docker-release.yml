@@ -254,6 +254,8 @@ jobs:
       # skip-files：pip 自带 vendored SBOM（bom.cdx.json），记录的是 pip 内部依赖
       # （msgpack 1.1.2/setuptools 70.3.0），并非应用实际安装的包（1.2.2/84.0.0，
       # 构建断言保证）。trivy 会把它当语言专用清单解析成 python-pkg 目标并误报漏洞。
+      # Anthropic SDK 的 beta managed-agents 生成类型文档包含类似密钥的占位符，
+      # 被 Trivy secret 扫描误判为 GCP 服务账号密钥；仅排除扫描日志命中的这些 SDK 文件。
       - name: Scan ${{ matrix.name }} image
         uses: aquasecurity/trivy-action@v0.36.0
         with:
@@ -262,7 +264,7 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: '1'
-          skip-files: ${{ (matrix.name == 'backend' || matrix.name == 'app') && '/opt/venv/lib/python3.14/site-packages/pip/_vendor/bom.cdx.json,/usr/local/lib/python3.14/site-packages/pip/_vendor/bom.cdx.json' || '' }}
+          skip-files: ${{ (matrix.name == 'backend' || matrix.name == 'app') && '/opt/venv/lib/python3.14/site-packages/pip/_vendor/bom.cdx.json,/usr/local/lib/python3.14/site-packages/pip/_vendor/bom.cdx.json,/opt/venv/lib/python3.14/site-packages/anthropic/resources/beta/agents/__pycache__/agents.cpython-314.pyc,/opt/venv/lib/python3.14/site-packages/anthropic/resources/beta/agents/agents.py,/opt/venv/lib/python3.14/site-packages/anthropic/types/beta/agent_create_params.py,/opt/venv/lib/python3.14/site-packages/anthropic/types/beta/agent_update_params.py,/opt/venv/lib/python3.14/site-packages/anthropic/types/beta/beta_managed_agents_agent.py,/opt/venv/lib/python3.14/site-packages/anthropic/types/beta/beta_managed_agents_session_agent.py,/opt/venv/lib/python3.14/site-packages/anthropic/types/beta/beta_managed_agents_session_thread_agent.py' || '' }}
 
       - name: Package standalone app bundle
         if: matrix.name == 'app' && startsWith(github.ref, 'refs/tags/v')

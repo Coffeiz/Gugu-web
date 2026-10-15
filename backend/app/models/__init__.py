@@ -583,6 +583,18 @@ class Project(Base):
         self.stages_json = json.dumps(value, ensure_ascii=False)
 
 
+class ProjectFileCount(Base):
+    """项目根目录活动文件数的事务内投影。"""
+
+    __tablename__ = "project_file_counts"
+    __table_args__ = (CheckConstraint("file_count > 0", name="ck_project_file_counts_positive"),)
+
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    file_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+
 # ── File ─────────────────────────────────────────────────────────────────────
 
 class File(Base):

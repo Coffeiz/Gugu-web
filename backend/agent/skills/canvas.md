@@ -4,7 +4,7 @@ name: 思维画布
 description_long: "用户要查看、搜索、创建、摆放、整理、连接、删除、调整便签尺寸或批量编排思维画布节点时使用。"
 description_short: 用户要管理画布节点、连接或便签尺寸时使用。
 category: canvas
-related_tools: canvas_list, canvas_get, canvas_search, canvas_search_placeable, canvas_create, canvas_delete, canvas_create_note, canvas_add_node, canvas_update_node, canvas_remove_node, canvas_update_note, canvas_delete_note, canvas_connect, canvas_update_anchor, canvas_disconnect, canvas_batch
+related_tools: canvas_list, canvas_get, canvas_search, canvas_focus_node, canvas_search_placeable, canvas_create, canvas_delete, canvas_create_note, canvas_add_node, canvas_update_node, canvas_remove_node, canvas_update_note, canvas_delete_note, canvas_connect, canvas_update_anchor, canvas_disconnect, canvas_batch
 emoji: 🧠
 ---
 
@@ -21,6 +21,7 @@ emoji: 🧠
 ## 工具路由
 
 - 搜索画布中已经存在的节点用 `canvas_search`。
+- 用户希望找回画布中的具体卡片时，先用 `canvas_get` / `canvas_search` 确认目标，再用 `canvas_focus_node` 生成定位链接，并将链接提供给用户点击；该操作不移动卡片，也不改保存的视口。
 - 搜索可以放入画布的项目、文件、活动用 `canvas_search_placeable`。
 - 普通时间流 `note` 不能放入画布；画布便签必须使用 `canvas_create_note`。
 - 创建、放置、更新、移除和删除工具都支持单项或数组调用；数组一次最多 20 项。

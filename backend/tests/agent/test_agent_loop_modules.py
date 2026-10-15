@@ -155,7 +155,7 @@ def test_reply_runtime_allows_completed_colon_retry_but_tool_round_clears_pendin
     assert state.guard_retry_buf == []
 
 
-def test_reply_runtime_empty_reply_has_one_retry_before_fallback():
+def test_reply_runtime_empty_reply_allows_two_retries_before_fallback():
     runtime, _state = _reply_runtime()
     result = SimpleNamespace()
     args = dict(
@@ -164,9 +164,27 @@ def test_reply_runtime_empty_reply_has_one_retry_before_fallback():
         locale="en", decision_guard_enabled=False,
     )
     assert runtime.decide(**args).retry_kind == "empty"
+    assert runtime.decide(**args).retry_kind == "empty"
     fallback = runtime.decide(**args)
     assert fallback.action == "continue_checks"
     assert fallback.visible_text
+
+
+def test_reply_runtime_successful_tool_progress_reopens_empty_retry_budget():
+    runtime, state = _reply_runtime()
+    result = SimpleNamespace()
+    args = dict(
+        final_text="", result=result, round_tool_called=False,
+        verify_mode=False, requires_tools=False, user_request="hello",
+        locale="en", decision_guard_enabled=False,
+    )
+
+    assert runtime.decide(**args).retry_kind == "empty"
+    assert runtime.decide(**args).retry_kind == "empty"
+    assert runtime.decide(**args).action == "continue_checks"
+
+    state.tool_round_succeeded()
+    assert runtime.decide(**args).retry_kind == "empty"
 
 
 # ── events ────────────────────────────────────────────────────────────────────

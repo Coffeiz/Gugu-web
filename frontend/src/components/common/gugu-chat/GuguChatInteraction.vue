@@ -9,6 +9,24 @@
         {{ option.label }}
       </ActionButton>
     </div>
+    <form v-if="answerMode === 'inline' && customInputActive && msg.interaction?.allowTextInput && !resolved && !expired && !secretFields.length"
+          class="interaction-answer" @submit.prevent="submitText">
+      <textarea
+        ref="answerInput"
+        v-model="answerText"
+        class="form-input control-resizable interaction-answer-input"
+        rows="3"
+        :aria-label="t('chatUi.interactionAnswerPlaceholder')"
+        :placeholder="t('chatUi.interactionAnswerPlaceholder')"
+        :disabled="submitting"
+        @keydown="onAnswerKeydown"
+      />
+      <div class="interaction-answer-actions">
+        <ActionButton type="submit" fit :disabled="submitting || !answerText.trim()">
+          {{ t('chatUi.interactionAnswerSubmit') }}
+        </ActionButton>
+      </div>
+    </form>
     <form v-if="secretFields.length && !resolved" class="interaction-secrets" @submit.prevent="submitSecrets">
       <div v-for="field in secretFields" :key="field.name" class="interaction-secret-field">
         <span>{{ field.label }}</span>
@@ -27,7 +45,7 @@
         </ActionButton>
       </div>
     </form>
-    <div v-if="customInputActive" class="interaction-custom-hint">{{ t('chatUi.customReplyHint') }}</div>
+    <div v-if="answerMode === 'composer' && customInputActive && !resolved && !expired" class="interaction-custom-hint">{{ t('chatUi.customReplyHint') }}</div>
     <div v-if="resolved && msg.interaction?.responseText" class="interaction-response">
       {{ msg.interaction.responseText }}
     </div>
@@ -46,11 +64,13 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
-import { CUSTOM_REPLY_OPTION_ID, type ChatMessage } from './chatTypes'
+import { CUSTOM_REPLY_OPTION_ID, type ChatMessage, type InteractionAnswerMode } from './chatTypes'
 
-const props = defineProps<{ msg: ChatMessage }>()
+const props = withDefaults(defineProps<{ msg: ChatMessage; answerMode?: InteractionAnswerMode }>(), {
+  answerMode: 'composer',
+})
 const resolved = ref(Boolean(props.msg.interaction?.resolved))
 const submitting = ref(Boolean(props.msg.interaction?.submitting))
 const initiallyExpired = Boolean(
@@ -68,17 +88,20 @@ const isPausedConfirmation = computed(() => Boolean(
 ))
 const displayOptions = computed(() => (props.msg.interaction?.options || [])
   .filter(() => !secretFields.value.length)
-  .filter(option => !(option.id === CUSTOM_REPLY_OPTION_ID && customInputActive.value))
+  .filter(option => !(option.id === CUSTOM_REPLY_OPTION_ID && (customInputActive.value || resolved.value || expired.value)))
   .map(option => option.id === CUSTOM_REPLY_OPTION_ID
     ? { ...option, label: t('chatUi.customReply') }
     : option))
 const secretFields = computed(() => (props.msg.interaction?.secretFields || [])
   .filter(field => field && field.name))
 const secretValues = ref<Record<string, string>>({})
+const answerText = ref('')
+const answerInput = ref<HTMLTextAreaElement | null>(null)
 const secretsReady = computed(() => secretFields.value.length > 0
   && secretFields.value.every(field => Boolean(secretValues.value[field.name]?.trim())))
 const emit = defineEmits<{
   select: [msg: ChatMessage, option: { id: string; label: string; token: string }]
+  textSubmit: [msg: ChatMessage, text: string]
   secretSubmit: [msg: ChatMessage, values: Record<string, string>]
   secretCancel: [msg: ChatMessage]
 }>()
@@ -101,6 +124,33 @@ function selectOption(option: { id: string; label: string; token: string }) {
   submitting.value = true
   if (props.msg.interaction) props.msg.interaction.submitting = true
   emit('select', props.msg, option)
+}
+function submitText() {
+  const text = answerText.value.trim()
+  if (!text || resolved.value || submitting.value || expired.value) return
+  submitting.value = true
+  if (props.msg.interaction) props.msg.interaction.submitting = true
+  emit('textSubmit', props.msg, text)
+}
+function onAnswerKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return
+  event.preventDefault()
+  submitText()
+}
+function activateOpenQuestion() {
+  const interaction = props.msg.interaction
+  const options = interaction?.options || []
+  if (
+    !interaction
+    || interaction.kind !== 'question'
+    || !interaction.allowTextInput
+    || interaction.customInputActive
+    || resolved.value
+    || expired.value
+    || secretFields.value.length
+  ) return
+  const hasRealOptions = options.some(option => option.id !== CUSTOM_REPLY_OPTION_ID)
+  if (!hasRealOptions) interaction.customInputActive = true
 }
 function markExpired() {
   if (resolved.value) return
@@ -131,7 +181,16 @@ watch(() => props.msg.interaction?.resolved, (value) => {
   if (value) secretValues.value = {}
 })
 watch(() => props.msg.interaction?.expiresAt, scheduleExpiry)
-onMounted(scheduleExpiry)
+watch(customInputActive, async (active) => {
+  if (active && props.answerMode === 'inline' && !resolved.value && !expired.value) {
+    await nextTick()
+    answerInput.value?.focus()
+  }
+})
+onMounted(() => {
+  scheduleExpiry()
+  activateOpenQuestion()
+})
 onBeforeUnmount(() => { if (expiryTimer) clearTimeout(expiryTimer) })
 </script>
 
@@ -159,6 +218,9 @@ onBeforeUnmount(() => { if (expiryTimer) clearTimeout(expiryTimer) })
   overflow-wrap: anywhere;
 }
 .interaction-custom-hint { margin-top: 8px; color: var(--content-secondary); font-size: var(--font-size-xs); }
+.interaction-answer { display:flex; flex-direction:column; gap:var(--space-sm); margin-top:13px; padding-top:11px; border-top:1px solid var(--content-divider); }
+.interaction-answer-input { box-sizing:border-box; width:100%; min-height:72px; line-height:var(--line-height-body); }
+.interaction-answer-actions { display:flex; justify-content:flex-end; }
 .interaction-secrets { display: grid; gap: 9px; margin-top: 13px; padding-top: 11px; border-top: 1px solid var(--content-divider); }
 .interaction-secret-field { display: grid; gap: 5px; color: var(--content-secondary); font-size: var(--font-size-xs); }
 .interaction-secret-field input { width: 100%; box-sizing: border-box; min-height: 34px; padding: 7px 9px; border: 1px solid var(--input-border); border-radius: var(--control-radius); background: var(--surface-input); color: var(--content-primary); }
