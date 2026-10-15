@@ -103,6 +103,30 @@ describe('mergeSessionMessageDelta', () => {
     ])
   })
 
+  it('历史加载后恢复 SSE，再增量刷新同一回复仍只有一个气泡', () => {
+    const history = {
+      messages: [{ id: 91, role: 'assistant', content: '已完成的回复', createdAt: '2026-10-15T03:17:00Z',
+        runId: 'run-a', roundId: 'r1' }],
+      timelineEvents: [], toolEvents: [],
+    }
+    const resolveSpeaker = (role: string) => ({ role: role === 'assistant' ? 'ai' : role })
+    const loaded = mapSessionMessageDelta(history, () => 1, resolveSpeaker)
+    const recovered = findLatestPersistedAssistant(history, 'run-a')
+    expect(recovered).not.toBeNull()
+
+    const afterStreamRecovery = mergeSessionMessageDelta(loaded, [{
+      id: 2, dbId: recovered!.item.id, role: 'ai', text: recovered!.text, time: '',
+      runId: recovered!.item.runId, roundId: recovered!.item.roundId, _syncKey: recovered!.syncKey,
+    }])
+    const incremental = mapSessionMessageDelta(history, () => 3, resolveSpeaker)
+    const afterRefresh = mergeSessionMessageDelta(afterStreamRecovery, incremental)
+
+    expect(afterRefresh.filter(item => item.role === 'ai')).toHaveLength(1)
+    expect(afterRefresh[0]).toMatchObject({
+      id: 1, dbId: 91, text: '已完成的回复', _syncKey: 'assistant-round:run-a:r1',
+    })
+  })
+
   it('工具调用键包含 run 和 round，旧事件则使用持久化事件 ID', () => {
     const incoming = mapSessionMessageDelta({
       messages: [], timelineEvents: [],
