@@ -48,6 +48,8 @@ export function useChatSessions(options: {
   onCaptureBaseScrollH: () => void
   scrollBottom: (force?: boolean) => Promise<void>
   waitForStableScrollLayout: () => Promise<void>
+  waitForSessionSettlement: (id: number) => Promise<void>
+  shouldFollowBottom: () => boolean
   setSessionSettling: (value: boolean) => void
 }) {
   const { messages, mkid, sessionId, sessions } = options
@@ -109,7 +111,10 @@ export function useChatSessions(options: {
   async function loadSession(id: number, force = false) {
     // 刷新恢复时 sessionId 会先从 sessionStorage 恢复；即使 id 相同，消息内存仍是空的，
     // 必须继续请求历史。普通侧栏重复点击仍保持无操作。
-    if (!force && id === sessionId.value) return
+    if (!force && id === sessionId.value) {
+      await options.waitForSessionSettlement(id)
+      return
+    }
     const viewGeneration = options.bumpViewGeneration()
     const previousMessages = messages.value
     options.setSessionSettling(true)
@@ -203,7 +208,8 @@ export function useChatSessions(options: {
         void options.drainPendingQueue().catch(() => {})
       }
       if (viewGeneration !== options.getViewGeneration()) return
-      await options.scrollBottom(true)
+      // 恢复收尾时如果用户已跳到历史消息或主动上滚，不再强制把视图拉回底部。
+      if (options.shouldFollowBottom()) await options.scrollBottom()
     } catch {
       if (viewGeneration === options.getViewGeneration()) messages.value = previousMessages
       if (viewGeneration === options.getViewGeneration()) options.setSessionSettling(false)

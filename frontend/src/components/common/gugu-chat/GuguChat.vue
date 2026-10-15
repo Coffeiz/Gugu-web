@@ -199,12 +199,23 @@ async function toggleAutomaticMode() {
 watch(() => uiStore.pendingChatSession, async (id) => {
   if (!id) return
   open.value = true
+  // 窗口使用 v-if；首次打开时先等消息列表挂载，再等待可能进行中的启动恢复结算。
+  await nextTick()
   await conversation.loadSession(id as number)
+  await conversation.waitForSessionSettlement(Number(id))
+  await conversation.waitForStableScrollLayout()
   const msgId = uiStore.pendingChatMessageId
+  if (sessionId.value !== Number(id)) {
+    uiStore.pendingChatSession = null
+    uiStore.pendingChatMessageId = null
+    if (msgId) showAppError(t('chatUi.messageUnavailable'))
+    return
+  }
   uiStore.pendingChatSession = null
   uiStore.pendingChatMessageId = null
   if (msgId) {
-    if (await conversation._revealMessage(msgId)) conversation._flashChatMessage(msgId)
+    const revealed = await conversation._revealMessage(msgId)
+    if (revealed) conversation._flashChatMessage(msgId)
     else showAppError(t('chatUi.messageUnavailable'))
   }
 })

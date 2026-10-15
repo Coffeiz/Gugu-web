@@ -59,6 +59,7 @@
 - Prevent the account email from being clipped in the profile panel.
 - Keep the selected note record date correct in UTC-positive time zones when editing dates.
 - Recover malformed MiniMax streaming responses and retry empty replies after successful tool progress.
+- Wait for chat history and virtual-list layout to settle before navigating to a referenced assistant message.
 
 #### Contributors
 
@@ -118,6 +119,7 @@
 - 修复个人信息面板中的邮箱文字被裁切。
 - 修复在 UTC 正时区修改笔记记录日期时，显示日期可能偏移一天的问题。
 - 修复 MiniMax 异常流式响应恢复，以及成功执行工具后最终答复为空时的重试机会。
+- 修复首次打开聊天时点击笔记中的助手消息引用未能跳转到对应消息的问题。
 
 #### 贡献者
 

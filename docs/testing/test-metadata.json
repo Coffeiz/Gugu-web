@@ -959,6 +959,14 @@
     "keyBehavior": "切换会话时仅在当前虚拟窗口 Markdown 尚未稳定时阻止滚动布局计算",
     "ci": "frontend-test"
   },
+  "frontend/tests/chat/composables/sessionReadiness.test.ts": {
+    "domain": "chat-navigation",
+    "layer": "L0",
+    "owner": "frontend/components/common/gugu-chat",
+    "productionEntry": "frontend/src/components/common/gugu-chat/composables/sessionReadiness.ts",
+    "keyBehavior": "同会话首次恢复结算期间等待后再定位，会话切换时解除过期等待",
+    "ci": "frontend-test"
+  },
   "frontend/tests/markdown/mermaidInteraction.test.ts": {
     "domain": "markdown-mermaid",
     "layer": "L0",
