@@ -95,6 +95,7 @@ import type { FileMeta } from '@/stores/filesCache'
 import { usePreviewStore, isPreviewable, isTextMime, isImageExt } from '@/stores/preview'
 import { useUiStore } from '@/stores/ui'
 import { isRelativeFileLink } from '@/utils/fileLinks'
+import { createHtmlPreviewDocument } from '@/utils/htmlPreview'
 
 const { t, locale } = useI18n()
 
@@ -287,11 +288,7 @@ const htmlCanvasFrameStyle = computed(() => {
     transform: `scale(${htmlCanvasScale.value})`,
   }
 })
-const htmlPreviewDocument = computed(() => {
-  // 预览按普通网页运行脚本和资源；sandbox 不含 allow-same-origin，隔离咕咕页面与登录态。
-  const policy = "default-src data: blob: http: https:; script-src 'unsafe-inline' 'unsafe-eval' data: blob: http: https:; connect-src http: https: ws: wss:; object-src 'none'; frame-src data: blob: http: https:; form-action http: https:; base-uri 'none'; img-src data: blob: http: https:; style-src 'unsafe-inline' data: blob: http: https:; font-src data: blob: http: https:; media-src data: blob: http: https:"
-  return `<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${policy}">${editText.value}`
-})
+const htmlPreviewDocument = computed(() => createHtmlPreviewDocument(editText.value))
 // 代码/纯文本扩展名（txt 并入 CodeMirror 路径，见 2026-09-03：txt 没有预览价值，还顺带拿到
 // 行号、撤销栈和自动保存）：不分真实文件/聊天附件、不分编辑/预览，一律直接显示 CodeMirror。
 // 只有 md 保留「渲染预览 + 编辑」双视图——渲染后的排版本身就是预览价值。
