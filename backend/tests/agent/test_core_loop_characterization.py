@@ -751,7 +751,7 @@ async def test_mcp_confirm_replay_enters_credential_prompt_without_loop(monkeypa
     monkeypatch.setattr("app.services.interactions.wait_for_resolution", fake_wait_for_resolution)
 
     patch_anthropic(monkeypatch, [
-        msg([TU("manage_mcp_servers", "call-mcp-1", {"action": "add", "name": "飞猪"})]),
+        msg([TU("manage_mcp_servers", "call-mcp-1", {"action": "add", "server_name": "飞猪"})]),
         msg([TX("MCP 服务已添加，请继续填写凭据。")]),
     ])
     messages = [{"role": "user", "content": "帮我添加飞猪 MCP 服务"}]
@@ -1287,18 +1287,40 @@ async def test_decision_dodge_guard_is_disabled_without_user_opt_in(monkeypatch,
     assert ev["_usage"] == 1 and ev["error"] == 0
 
 
-async def test_empty_reply_falls_back_after_one_retry(monkeypatch, dispatched):
-    """整轮无正文、没动工具、不在核实阶段 → 先追一轮要正文；仍空则给句得体兜底，不能裸露空气泡。"""
+async def test_empty_reply_falls_back_after_two_retries(monkeypatch, dispatched):
+    """无进展时允许两次空回复重试，连续仍空则给兜底，不能裸露空气泡。"""
     patch_anthropic(monkeypatch, [
         msg([TX("")]),   # R1 空正文
-        msg([TX("")]),   # R2 追问后仍空 → 触发兜底文案
+        msg([TX("")]),   # R2 第一次追问后仍空
+        msg([TX("")]),   # R3 第二次追问后仍空 → 触发兜底文案
     ])
     messages = MessageArea.from_canonical_messages([{"role": "user", "content": "你好"}])
     ev, text, _errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
     retry_prompts = [m for m in canonical_messages(messages)
                       if m.get("content") == "（把要回复用户的话直接说出来就好，别只在心里想。）"]
-    assert len(retry_prompts) == 1, "空回复应该只追问一次"
+    assert len(retry_prompts) == 2, "无进展时空回复最多追问两次"
     assert "没太接住" in text or "换个说法" in text, f"应该吐出兜底文案，实际：{text!r}"
+    assert ev["_usage"] == 1 and ev["error"] == 0
+
+
+async def test_successful_tool_progress_reopens_empty_reply_retry(monkeypatch, dispatched):
+    """保护多轮状态序列：空答被重试后工具成功，即便最终答复再次为空也应有重试机会。"""
+    patch_anthropic(monkeypatch, [
+        msg([TX("")]),
+        msg([TU("get_project", "call-project", {"project_id": 7})]),
+        msg([TX("")]),
+        msg([TX("项目查询完成")]),
+    ])
+    messages = MessageArea.from_canonical_messages([{"role": "user", "content": "查一下项目"}])
+
+    ev, text, errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
+
+    retry_prompts = [m for m in canonical_messages(messages)
+                     if m.get("content") == "（把要回复用户的话直接说出来就好，别只在心里想。）"]
+    assert dispatched == ["get_project"]
+    assert len(retry_prompts) == 2, "成功工具进展后应重新获得一次空回复重试额度"
+    assert text == "项目查询完成"
+    assert errors == []
     assert ev["_usage"] == 1 and ev["error"] == 0
 
 

@@ -1,6 +1,6 @@
 """Provider 错误来源判断。
 
-这里只判断异常是否带有上游 HTTP 响应，不解释供应商返回的具体错误码，
+判断异常是否来自上游 HTTP 或已确认的流协议错误，不解释供应商返回的具体错误码，
 避免把 provider 的业务错误映射成一套脆弱的本地错误枚举。
 """
 from __future__ import annotations
@@ -16,6 +16,33 @@ def _exception_chain(error: BaseException) -> Iterator[BaseException]:
         seen.add(id(current))
         yield current
         current = current.__cause__ or current.__context__
+
+
+def anthropic_stream_protocol_details(error: BaseException) -> dict[str, str | int] | None:
+    """识别 SDK 累积事件时引用不存在的内容块，只提取类型与索引。
+
+    SDK 当前会把这个协议错误抛成 IndexError。通过实际失败帧及其结构确认来源，
+    避免把应用代码的 IndexError 或其他 SDK 编程错误误认成可恢复的上游坏流。
+    """
+    for current in _exception_chain(error):
+        if not isinstance(current, IndexError):
+            continue
+        trace = current.__traceback__
+        while trace is not None:
+            frame = trace.tb_frame
+            if (frame.f_globals.get("__name__") == "anthropic.lib.streaming._messages"
+                    and frame.f_code.co_name == "accumulate_event"):
+                event = frame.f_locals.get("event")
+                snapshot = frame.f_locals.get("current_snapshot")
+                event_type = getattr(event, "type", None)
+                index = getattr(event, "index", None)
+                content = getattr(snapshot, "content", None)
+                if (event_type in {"content_block_stop", "content_block_delta"}
+                        and type(index) is int and isinstance(content, list)
+                        and not 0 <= index < len(content)):
+                    return {"event_type": event_type, "index": index, "block_count": len(content)}
+            trace = trace.tb_next
+    return None
 
 
 def is_provider_http_error(error: BaseException) -> bool:

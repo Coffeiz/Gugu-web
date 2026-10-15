@@ -221,6 +221,7 @@ def build_anthropic_client(ai, timeout):
 
 def build_openai_client(ai, timeout):
     import httpx
+    import httpx2
     from openai import AsyncOpenAI
 
     adapter = adapter_for(ai)
@@ -229,6 +230,15 @@ def build_openai_client(ai, timeout):
         getattr(ai, "api_key", "") or ("ollama" if adapter.name == "ollama" else "dummy"),
         label="模型 API Key",
     )
+    # OpenAI SDK 3.x 使用 httpx2，不能接收应用侧的 httpx.Timeout 对象。
+    # 转换时保留各阶段的超时配置，避免升级后请求超时语义变化。
+    if isinstance(timeout, httpx.Timeout):
+        timeout = httpx2.Timeout(
+            connect=timeout.connect,
+            read=timeout.read,
+            write=timeout.write,
+            pool=timeout.pool,
+        )
     # 同上：SDK 内建重试收零，节奏统一在 app/core/retry.py
     return AsyncOpenAI(
         api_key=api_key,
