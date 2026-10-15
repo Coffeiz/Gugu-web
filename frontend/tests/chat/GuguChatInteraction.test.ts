@@ -192,6 +192,17 @@ describe('GuguChatInteraction', () => {
       .toContain('chatUi.expired')
   })
 
+  it('已回答的无选项问题在期限过后仍显示已提交', () => {
+    const msg = interactionMessage()
+    Object.assign(msg.interaction!, {
+      kind: 'question', allowTextInput: true, resolved: true, responseText: '测试回答',
+      selectedOptionId: null, expiresAt: new Date(Date.now() - 1000).toISOString(),
+    })
+    mounted = mountInteraction(msg, vi.fn(), 'inline')
+    expect(mounted.host.querySelector('.interaction-response')?.textContent).toBe('测试回答')
+    expect(mounted.host.querySelector('.interaction-resolved')?.textContent).toBe('chatUi.submitted')
+  })
+
   it('长选项的静态布局契约允许收缩、换行并限制在气泡宽度内', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/components/common/gugu-chat/GuguChatInteraction.vue'), 'utf8')
     const style = source.match(/<style scoped>([\s\S]*?)<\/style>/)?.[1] ?? ''

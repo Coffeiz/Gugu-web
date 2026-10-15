@@ -75,7 +75,7 @@ const resolved = ref(Boolean(props.msg.interaction?.resolved))
 const submitting = ref(Boolean(props.msg.interaction?.submitting))
 const initiallyExpired = Boolean(
   props.msg.interaction?.expired
-  || (!submitting.value && !props.msg.interaction?.selectedOptionId
+  || (!resolved.value && !submitting.value && !props.msg.interaction?.selectedOptionId
     && props.msg.interaction?.expiresAt
     && new Date(props.msg.interaction.expiresAt).getTime() <= Date.now()),
 )
