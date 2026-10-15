@@ -1,4 +1,4 @@
-"""客户领域技能：list_clients / create_client。
+"""联系人领域技能：list_clients / create_client。
 
 逻辑对应后端 `/clients` API（`Client` 模型 CRUD），带 user_id 隔离。
 """
@@ -27,7 +27,7 @@ async def _list_clients(db, user_id, args: dict):
 
 async def _create_client(db, user_id, args: dict):
     if not args.get("client_name"):
-        return json.dumps({"error": "客户名称必填"})
+        return json.dumps({"error": "联系人名称必填"})
     c = await create_client(
         db, user_id, name=args["client_name"], contact=args.get("contact"),
         email=args.get("email"), phone=args.get("phone"),
@@ -37,24 +37,24 @@ async def _create_client(db, user_id, args: dict):
 
 
 async def _resolve_client(db, user_id, args):
-    """按 client_id 或客户名 client 定位；返回 (Client|None, 错误JSON|None)。"""
+    """按 client_id 或联系人名 client 定位；返回 (Client|None, 错误JSON|None)。"""
     cid = args.get("client_id")
     if cid:
         c = await get_client(db, user_id, cid)
         if not c:
-            return None, json.dumps({"error": "客户不存在"})
+            return None, json.dumps({"error": "联系人不存在"})
         return c, None
     name = args.get("client")
     if name:
         name = str(name).strip()
         rows = await find_clients_by_name(db, user_id, name)
         if not rows:
-            return None, json.dumps({"error": f"未找到客户「{name}」"})
+            return None, json.dumps({"error": f"未找到联系人「{name}」"})
         if len(rows) > 1:
-            return None, json.dumps({"error": f"有多个匹配「{name}」的客户，请指明",
+            return None, json.dumps({"error": f"有多个匹配「{name}」的联系人，请指明",
                                      "candidates": [{"id": c.id, "name": c.name} for c in rows[:10]]})
         return rows[0], None
-    return None, json.dumps({"error": "需提供 client_id 或客户名 client"})
+    return None, json.dumps({"error": "需提供 client_id 或联系人名 client"})
 
 
 async def _update_client(db, user_id, args: dict):
@@ -75,12 +75,12 @@ async def _delete_client(db, user_id, args: dict):
     client_ids = args.get("client_ids")
     if client_ids is not None:
         if not isinstance(client_ids, list) or not client_ids or len(client_ids) > 50:
-            return json.dumps({"error": "client_ids 必须是 1-50 个客户 id"})
+            return json.dumps({"error": "client_ids 必须是 1-50 个联系人 id"})
         clients = []
         for cid in client_ids:
             client = await get_client(db, user_id, cid)
             if client is None:
-                return json.dumps({"error": f"客户 {cid} 不存在"})
+                return json.dumps({"error": f"联系人 {cid} 不存在"})
             clients.append(client)
         clients.sort(key=lambda client: client.id)
         names = "、".join(c.name for c in clients[:10])
@@ -88,7 +88,7 @@ async def _delete_client(db, user_id, args: dict):
             names += f"等 {len(clients)} 个"
         blocked = confirm.needs_target_confirmation(
             args,
-            f"将删除客户：{names}，共 {len(clients)} 个，此操作不可恢复",
+            f"将删除联系人：{names}，共 {len(clients)} 个，此操作不可恢复",
             user_id,
             purpose=confirm.ACTION,
             action="delete_client",
@@ -105,7 +105,7 @@ async def _delete_client(db, user_id, args: dict):
     c, _err = await _resolve_client(db, user_id, args)
     if _err:
         return _err
-    summary = f"将删除客户「{c.name}」，此操作不可恢复"
+    summary = f"将删除联系人「{c.name}」，此操作不可恢复"
     blocked = confirm.needs_target_confirmation(
         args, summary, user_id,
         purpose=confirm.ACTION,
@@ -122,16 +122,16 @@ class ClientsSkill(BaseSkill):
     name = "clients"
     tools = [
         Tool(
-            name="list_clients", label="查询客户",
-            description_short='查询当前用户的客户列表；无需参数',
-            description="列出当前用户的所有客户。",
+            name="list_clients", label="查询联系人",
+            description_short='查询当前用户的联系人列表；无需参数',
+            description="列出当前用户的所有联系人。",
             input_schema={"type": "object", "properties": {}},
             handler=_list_clients,
         ),
         Tool(
-            name="create_client", label="新建客户",
-            description_short='新建客户。',
-            description="新建客户，记录联系人、邮箱、电话、备注。",
+            name="create_client", label="新建联系人",
+            description_short='新建联系人。',
+            description="新建联系人，记录联系人、邮箱、电话、备注。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -147,9 +147,9 @@ class ClientsSkill(BaseSkill):
             mutates=True,
         ),
         Tool(
-            name="update_client", label="更新客户",
-            description_short='更新客户。',
-            description="修改客户信息（名称/联系人/邮箱/电话/备注）。",
+            name="update_client", label="更新联系人",
+            description_short='更新联系人。',
+            description="修改联系人信息（名称/联系人/邮箱/电话/备注）。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -168,9 +168,9 @@ class ClientsSkill(BaseSkill):
             mutates=True,
         ),
         Tool(
-            name="delete_client", label="删除客户",
-            description_short='删除客户，执行前确认。',
-            description="删除一个或多个客户（不可恢复）。单项传 client_id/client，批量传 client_ids。批量目标一次确认，禁止逐项重复确认。",
+            name="delete_client", label="删除联系人",
+            description_short='删除联系人，执行前确认。',
+            description="删除一个或多个联系人（不可恢复）。单项传 client_id/client，批量传 client_ids。批量目标一次确认，禁止逐项重复确认。",
             input_schema={
                 "type": "object",
                 "properties": {

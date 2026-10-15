@@ -50,6 +50,6 @@ async def delete_client(
 ):
     c = await get_client(db, current_user.id, cid)
     if not c:
-        raise HTTPException(404, "客户不存在")
+        raise HTTPException(404, "联系人不存在")
     await delete_client_service(db, c)
     await db.commit()

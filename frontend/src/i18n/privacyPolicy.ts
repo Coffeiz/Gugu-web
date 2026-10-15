@@ -18,7 +18,7 @@ export const privacyPolicy = {
 - **密码**：仅保存 bcrypt 哈希，无法还原明文
 
 ### 使用过程中
-- **工作区数据**：项目、阶段、待办、日历事件、提醒、客户信息、笔记和画布
+- **工作区数据**：项目、阶段、待办、日历事件、提醒、联系人信息、笔记和画布
 - **文件**：上传文件及文件名、大小、类型等元数据
 - **对话记录**：网页和已接入 IM 中的消息及工具调用记录
 - **AI 记忆**：从对话中提炼的稳定事实、近期记忆、长期沉淀、当前状态和解读先验
@@ -116,7 +116,7 @@ This policy explains what Gugu collects, how it is used, who may receive it, and
 - **Password**, stored only as a bcrypt hash
 
 ### While you use Gugu
-- **Workspace data**: projects, stages, todos, calendar events, reminders, customers, notes, and canvases
+- **Workspace data**: projects, stages, todos, calendar events, reminders, contacts, notes, and canvases
 - **Files** and metadata such as names, sizes, and types
 - **Conversation history**, including messages and tool-call records
 - **AI memory**: stable facts, recent memories, long-term summaries, current state, and interpretation hints extracted from conversations
@@ -180,7 +180,7 @@ Material changes will update the effective date and be announced on the site or 
 ## 1. 収集する情報
 
 - **アカウント**：ユーザー名、メールアドレス、bcrypt ハッシュ化したパスワード
-- **ワークスペース**：プロジェクト、ステージ、タスク、予定、リマインダー、顧客、ノート、キャンバス、ファイルとメタデータ
+- **ワークスペース**：プロジェクト、ステージ、タスク、予定、リマインダー、連絡先、ノート、キャンバス、ファイルとメタデータ
 - **会話と記憶**：Web と接続した IM のメッセージ、ツール呼び出し、会話から非同期に抽出した安定した事実・最近の記憶・長期要約・現在の状態・解釈ヒント
 - **設定**：アバター、言語、タイムゾーン、テーマ、返信設定、モデル、通知設定
 - **IM 接続情報**：App Secret と WeChat iLink bot token は AES-256-GCM で暗号化し、App ID など公開識別子は平文で保存

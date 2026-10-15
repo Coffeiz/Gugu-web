@@ -184,7 +184,7 @@ function go(type: string, it: SearchItem) {
   } else if (type === 'conversation') {
     uiStore.requestChatNavigation(numericId, it.message_id || null)
   } else if (type === 'client') {
-    Message.info('客户页面还在开发中，先在项目里看吧～')
+    Message.info('联系人页面还在开发中，先在项目里看吧～')
   } else if (type === 'note') {
     router.push({ path: '/mind/notes', query: { object_id: String(numericId) } })
   } else if (type === 'canvas_note') {

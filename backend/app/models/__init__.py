@@ -551,7 +551,7 @@ class Project(Base):
     user_id:       Mapped[UUID]          = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     name:          Mapped[str]           = mapped_column(String(200))
     summary:       Mapped[Optional[str]] = mapped_column(String(200), nullable=True, default=None)
-    client:        Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    client:        Mapped[Optional[str]] = mapped_column("contact_name", String(200), nullable=True)
     status:        Mapped[str]           = mapped_column(String(20),  default="pending")
     start_date:    Mapped[Optional[str]] = mapped_column(String(10),  nullable=True)
     deadline:      Mapped[Optional[str]] = mapped_column(String(10),  nullable=True)
@@ -898,7 +898,7 @@ class CalendarEvent(Base):
     time:        Mapped[Optional[str]] = mapped_column(String(5), nullable=True)   # 开始时间 HH:MM，可选；空=全天
     end_time:    Mapped[Optional[str]] = mapped_column(String(5), nullable=True)   # 结束时间 HH:MM，可选
     type:        Mapped[str]           = mapped_column(String(50),  default="event")
-    client:      Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    client:      Mapped[Optional[str]] = mapped_column("contact_name", String(200), nullable=True)
     project_id:  Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     version:     Mapped[int]           = mapped_column(Integer, default=1)

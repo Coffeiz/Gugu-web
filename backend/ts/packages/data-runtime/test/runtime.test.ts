@@ -79,6 +79,22 @@ test("Data Runtime 拒绝非法分页游标", async () => {
   );
 });
 
+test("Data Runtime 从联系人物理列读取项目并维持上下文内容", async () => {
+  let query = "";
+  const sql = ((strings: TemplateStringsArray) => {
+    query = strings.join(" ");
+    return Promise.resolve([{
+      id: 9, name: "示例项目", client: "某联系人", status: "active", progress: 25,
+      version: 1, updated_at: "2026-10-16T00:00:00.000Z",
+    }]);
+  }) as never;
+  const runtime = new DataRuntime(sql);
+  const result = await runtime.loadProjects({ ownerId: "owner-1" });
+
+  assert.match(query, /contact_name AS client/);
+  assert.match(result.records[0]?.content ?? "", /联系人：某联系人/);
+});
+
 test("Data Runtime 读取 Knowledge 和 Canvas 时保留 owner 边界", async () => {
   const sql = ((strings: TemplateStringsArray) => {
     const query = strings.join(" ");

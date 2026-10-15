@@ -75,7 +75,7 @@ async def build_reference_context(db, user_id, references: Iterable[dict] | None
         if kind == "project":
             obj = await get_owned(db, Project, resource_id, user_id)
             if obj:
-                detail = f"项目 id：{obj.id}\n名称：{obj.name}\n状态：{obj.status}\n客户：{obj.client or '未设置'}\n进度：{obj.progress}%\n当前阶段：{obj.current_stage or '未设置'}"
+                detail = f"项目 id：{obj.id}\n名称：{obj.name}\n状态：{obj.status}\n联系人：{obj.client or '未设置'}\n进度：{obj.progress}%\n当前阶段：{obj.current_stage or '未设置'}"
                 blocks.append(f"[项目]\n{detail}")
         elif kind == "file":
             obj = await get_owned(db, File, resource_id, user_id)

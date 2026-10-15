@@ -1,10 +1,10 @@
-"""跨项目/文件/文件夹/日程/客户/对话/思维便签/用户 Skill 的站内全局搜索，供咕咕定位「东西在哪」用。
+"""跨项目/文件/文件夹/日程/联系人/对话/思维便签/用户 Skill 的站内全局搜索，供咕咕定位「东西在哪」用。
 
 复用 `app/api/v1/search.py`（顶栏全局搜索框同一套查询逻辑，支持多关键词 OR/AND 的 ILIKE 子串匹配，
 天然不分大小写）。网页下拉框每类只给 6 条方便展示；这里给模型用，每类给更多条
 （20），并支持按 types 缩小范围，减少无关噪音。
 
-绝大多数类型只匹配名称/标题/客户名等字段，**不搜文件内容**——找到候选后要读内容/看详情/
+绝大多数类型只匹配名称/标题/联系人名等字段，**不搜文件内容**——找到候选后要读内容/看详情/
 发文件，仍需调用对应专用工具（read_file / send_file 等）。
 例外：思维便签（note）正文短，直接搜正文（`content_plain`），能按内容召回。
 """
@@ -33,7 +33,7 @@ async def _global_search(db, user_id, args: dict):
         db, user_id, q, per_type=_TOOL_PER_TYPE, types=types, queries=queries, mode=mode,
     )
     if result["total"] == 0:
-        result["note"] = ("没搜到任何匹配——除思维便签(note)搜正文外，其余类型只按名称/标题/客户名等"
+        result["note"] = ("没搜到任何匹配——除思维便签(note)搜正文外，其余类型只按名称/标题/联系人名等"
                           "字段匹配，不搜文件内容；搜不到不代表数据库里真的没有相关内容，"
                           "只是名字/标题对不上关键词")
     return result
@@ -45,7 +45,7 @@ class GlobalSearchSkill(BaseSkill):
         Tool(
             name="global_search", label="站内全局搜索",
             description_short='跨项目、文件、日程、笔记和用户 Skill 搜索。',
-            description="跨项目、文件、日程、客户、对话、便签和当前用户 Skill 按关键词搜索；明确范围时用专用工具。Skill 结果只返回 ID、名称和描述，不返回正文或关联权限。",
+            description="跨项目、文件、日程、联系人、对话、便签和当前用户 Skill 按关键词搜索；明确范围时用专用工具。Skill 结果只返回 ID、名称和描述，不返回正文或关联权限。",
             input_schema={
                 "type": "object",
                 "properties": {

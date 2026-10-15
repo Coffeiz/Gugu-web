@@ -80,7 +80,7 @@
               <div class="sample-divider" />
               <span class="sample-nav-label">资源</span>
               <button class="sample-nav-item"><PhFolder :size="14" weight="bold" />文件库</button>
-              <button class="sample-nav-item muted"><PhAddressBook :size="14" weight="bold" />客户<span class="soon">咕了</span></button>
+              <button class="sample-nav-item muted"><PhAddressBook :size="14" weight="bold" />联系人<span class="soon">咕了</span></button>
             </nav>
             <div class="sample-user"><span class="sample-avatar">C</span><div><strong>Coffeiz</strong><small>创作者</small></div></div>
           </aside>
@@ -88,7 +88,7 @@
           <div class="sample-main">
             <header class="sample-topbar topbar glass-card">
               <div class="sample-title"><h1>项目</h1><p>8月15日 · 星期六</p></div>
-              <div class="sample-search"><PhMagnifyingGlass :size="14" /><span>搜索项目、文件、日程、客户…</span><kbd>⌘ K</kbd></div>
+              <div class="sample-search"><PhMagnifyingGlass :size="14" /><span>搜索项目、文件、日程、联系人…</span><kbd>⌘ K</kbd></div>
               <div class="sample-top-actions">
                 <button class="sample-ghost"><PhUploadSimple :size="13" weight="bold" />上传文件</button>
                 <button class="sample-primary"><PhPlus :size="13" weight="bold" />新建项目</button>

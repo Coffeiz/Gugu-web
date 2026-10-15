@@ -617,7 +617,7 @@ class ProjectsSkill(BaseSkill):
             name="update_project",
             label="更新项目",
             description_short="修改项目；可调整优先级，none 清除优先级。",
-            description="使用 project_name 修改项目名称；也可修改状态、截止日期、开始日期、客户名称、优先级或项目摘要。summary 是给咕咕维护的项目近况，最多 200 个字符，传空字符串或 null 清空；它不替代 status、阶段或日期。start_date/deadline 传日期字符串，系统统一归一为 YYYY-MM-DD。",
+            description="使用 project_name 修改项目名称；也可修改状态、截止日期、开始日期、联系人名称、优先级或项目摘要。summary 是给咕咕维护的项目近况，最多 200 个字符，传空字符串或 null 清空；它不替代 status、阶段或日期。start_date/deadline 传日期字符串，系统统一归一为 YYYY-MM-DD。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -715,7 +715,7 @@ class ProjectsSkill(BaseSkill):
         Tool(
             name="get_project", label="项目详情",
             description_short="读取项目结构。",
-            description="获取单个项目的完整结构：状态、日期、客户、当前阶段、summary（咕咕维护的项目近况）、项目文件概览（总文件数、根层文件数、目录数），以及每个阶段（含 key/label）下的待办列表（含 id/text/done）。文件概览只给数量；查看文件明细时用 list_dir(space=project, project_id=项目ID, scope=project_root)，不要把项目 ID 当 folder_id。管理阶段或待办前先用它看清结构。",
+            description="获取单个项目的完整结构：状态、日期、联系人、当前阶段、summary（咕咕维护的项目近况）、项目文件概览（总文件数、根层文件数、目录数），以及每个阶段（含 key/label）下的待办列表（含 id/text/done）。文件概览只给数量；查看文件明细时用 list_dir(space=project, project_id=项目ID, scope=project_root)，不要把项目 ID 当 folder_id。管理阶段或待办前先用它看清结构。",
             input_schema={
                 "type": "object",
                 "properties": {

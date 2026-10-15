@@ -102,14 +102,14 @@ async def test_update_project_renames_and_normalizes_priority(db, user_a):
     created = await _create(db, user_a.id, "旧名")
 
     result = await projects_tools._update_project(db, user_a.id, {
-        "project_id": created["project_id"], "project_name": "新名", "priority": "LOW", "client": "某客户",
+        "project_id": created["project_id"], "project_name": "新名", "priority": "LOW", "client": "某联系人",
     })
 
     assert result["success"] is True
     detail = await projects_tools._get_project(db, user_a.id, {"project_id": created["project_id"]})
     assert detail["name"] == "新名"
     assert detail["priority"] == "low"
-    assert detail["client"] == "某客户"
+    assert detail["client"] == "某联系人"
 
 
 async def test_update_project_done_auto_completes_todos(db, user_a):

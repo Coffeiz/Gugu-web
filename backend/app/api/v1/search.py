@@ -1,4 +1,4 @@
-"""站内全局搜索：一个或多个关键词跨项目/文件/文件夹/日程/客户/对话/Skill 检索（按 user_id 隔离）。
+"""站内全局搜索：一个或多个关键词跨项目/文件/文件夹/日程/联系人/对话/Skill 检索（按 user_id 隔离）。
 
 各类型各取前 N 条，分组返回，供顶栏全局搜索框下拉展示 + 点击跳转。文本子串查询统一使用
 PostgreSQL ILIKE，由 pg_trgm GIN 索引加速；对话同时搜会话标题与消息正文。
@@ -188,7 +188,7 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
     groups: list = []
     use_romaji = any(is_romaji_query(query) for query in search_queries)
 
-    # ── 项目：名/客户/当前阶段 ──
+    # ── 项目：名/联系人/当前阶段 ──
     if wanted is None or "project" in wanted:
         rows = list((await db.execute(
             select(Project).where(
@@ -250,7 +250,7 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
             items = await _folder_search_items(db, uid, rows)
             groups.append({"type": "folder", "label": "文件夹", "items": items})
 
-    # ── 日程/事件：标题/描述/客户 ──
+    # ── 日程/事件：标题/描述/联系人 ──
     if wanted is None or "event" in wanted:
         rows = list((await db.execute(
             select(CalendarEvent).where(
@@ -280,7 +280,7 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
                 for e in rows
             ]})
 
-    # ── 客户：名/联系人/邮箱/电话/备注 ──
+    # ── 联系人：名/联系人/邮箱/电话/备注 ──
     if wanted is None or "client" in wanted:
         rows = list((await db.execute(
             select(Client).where(
@@ -303,7 +303,7 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
                     if len(rows) >= per_type:
                         break
         if rows:
-            groups.append({"type": "client", "label": "客户", "items": [
+            groups.append({"type": "client", "label": "联系人", "items": [
                 {"id": c.id, "title": c.name,
                  "subtitle": " · ".join(filter(None, [c.contact, c.email, c.phone]))}
                 for c in rows

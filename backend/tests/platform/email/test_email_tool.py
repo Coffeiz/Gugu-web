@@ -210,7 +210,7 @@ async def test_send_email_rejects_other_users_client(db, user_a, user_b):
 
     result = await _send_email(db, user_a.id, {"client_id": client.id, "subject": "测试", "body": "正文"})
 
-    assert result == {"error": "客户不存在"}
+    assert result == {"error": "联系人不存在"}
 
 
 @pytest.mark.asyncio

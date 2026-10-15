@@ -1,4 +1,4 @@
-"""客户领域的查询与写入边界。"""
+"""联系人资料的查询与写入边界。"""
 from sqlalchemy import select
 
 from app.core.ownership import get_owned
