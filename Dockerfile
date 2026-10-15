@@ -224,7 +224,6 @@ COPY backend/scripts/runtime/prepare_rootless_storage.py /usr/local/bin/prepare_
 COPY backend/scripts/runtime/ensure_embedded_pg_hba.py /usr/local/bin/ensure_embedded_pg_hba.py
 COPY backend/scripts/runtime/wait_embedded_postgres.sh /usr/local/bin/gugu-wait-embedded-postgres.sh
 COPY backend/scripts/runtime/wait_embedded_redis.sh /usr/local/bin/gugu-wait-embedded-redis.sh
-COPY backend/scripts/runtime/offline_migration.sh /usr/local/bin/gugu-offline-migration.sh
 RUN mkdir -p /opt/gugu \
     && cp /opt/gugu/image-app/updater/app_bundle_runtime.py /opt/gugu/app_bundle_runtime.py \
     && chmod 0555 /opt/gugu/app_bundle_runtime.py

@@ -263,12 +263,12 @@
     "keyBehavior": "内置 runtime 只从校验过的离线归档导入并核对镜像身份",
     "ci": "backend-pytest"
   },
-  "backend/tests/platform/deployment/test_offline_migration_postgres.py": {
+  "backend/tests/platform/deployment/test_postgres_migrations.py": {
     "domain": "database-migrations",
     "layer": "L2",
     "owner": "backend/alembic",
     "productionEntry": "alembic/env.py:_bootstrap_empty_database",
-    "keyBehavior": "全新 PostgreSQL 经 ORM 建表和 Alembic 初始化后仍具有自定义 collation 与分页索引；离线迁移从真实 schema 基线完成工作区升级和备份恢复",
+    "keyBehavior": "全新 PostgreSQL 经 ORM 建表和 Alembic 初始化后仍具有自定义 collation 与分页索引",
     "ci": "experimental"
   },
   "backend/tests/platform/realtime/test_live_stream.py": {

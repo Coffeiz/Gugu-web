@@ -27,8 +27,8 @@ usage() {
   EXTERNAL_SANDBOX_CONTROL / EXTERNAL_SANDBOX_DOCKER_HOST
                        分体部署使用外置 Sandbox 时必填
 
-此入口会校验发布镜像签名，依次拉取镜像、停止业务与 Sandbox、备份数据库和 users、
-执行离线迁移并验证，然后才启动新版本。普通 Compose/NAS“拉取并重建”按钮不能替代此流程。
+此入口会校验发布镜像签名，依次拉取镜像、停止业务与 Sandbox、备份数据库、
+执行 Alembic 并验证，然后才启动新版本。普通 Compose/NAS“拉取并重建”按钮不能替代此流程。
 EOF
 }
 
@@ -185,7 +185,7 @@ ROLLBACK_ARMED=false
 rollback_on_exit() {
   local exit_code=$?
   if [[ "$exit_code" != 0 && "$ROLLBACK_ARMED" == true ]]; then
-    echo '离线更新失败：业务保持停服/新镜像状态，禁止只降级镜像；请用完整数据库与 users 备份人工恢复。' >&2
+    echo '更新失败：业务保持停服/新镜像状态，禁止只降级镜像；请用完整数据库备份人工恢复。' >&2
     printf 'manual-recovery\n' > "$BACKUP_DIR/recovery-required"
   fi
   exit "$exit_code"
@@ -219,12 +219,9 @@ done <<<"$SANDBOX_IDS"
 "${COMPOSE[@]}" exec -T postgres pg_dumpall -U "$DB_USER" > "$BACKUP_DIR/postgres.sql"
 chmod 600 "$BACKUP_DIR/postgres.sql"
 [[ -s "$BACKUP_DIR/postgres.sql" ]] || { echo '数据库备份为空，拒绝迁移' >&2; exit 1; }
-"${COMPOSE[@]}" run --rm --no-deps --entrypoint tar backend -C /data -cpf - users > "$BACKUP_DIR/users.tar"
-chmod 600 "$BACKUP_DIR/users.tar"
-tar -tf "$BACKUP_DIR/users.tar" >/dev/null
-echo '独立执行数据库与工作区离线迁移'
+echo '独立执行数据库迁移与校验'
 "${COMPOSE[@]}" run --rm --no-deps --entrypoint bash backend -ec \
-  'alembic upgrade head && PYTHONPATH=. python scripts/backfill_global_search_romaji.py --batch-size 500 && python -m scripts.migrations.migrate_workspace_layout --allow-real-data --apply --services-stopped'
+  'alembic upgrade head && PYTHONPATH=. python scripts/backfill_global_search_romaji.py --batch-size 500'
 "${COMPOSE[@]}" run --rm --no-deps --entrypoint python backend -m updater.database_check
 echo '重新创建分体 backend'
 "${COMPOSE[@]}" up -d --no-deps --force-recreate backend
