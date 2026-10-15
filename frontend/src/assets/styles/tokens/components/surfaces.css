@@ -185,9 +185,9 @@
   /* Inputs are controls, not glass panel edges. Aero light intentionally gives panels a white
      border; deriving field borders from content/action semantics keeps the old neutral outline. */
   --input-bg: var(--surface-raised);
-  /* 输入框悬停只强调边框；填充色保持静止态，避免控件内部随主题/配色闪变。 */
+  /* 输入框悬停和聚焦只强调边框/光晕；填充色始终保持静止态。 */
   --input-bg-hover: var(--input-bg);
-  --input-bg-focus: var(--surface-floating);
+  --input-bg-focus: var(--input-bg);
   --input-fg: var(--content-primary);
   /* 输入光标使用主题强调色，与正文前景区分，并随主题配色自动反转明暗。 */
   --input-caret-color: var(--action-primary);

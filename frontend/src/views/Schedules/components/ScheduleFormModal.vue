@@ -111,7 +111,10 @@
             <Checkbox v-if="channel.value === 'web' || channel.value === 'email' || props.imChannels.includes(channel.value) || form.channels.includes(channel.value)"
               :model-value="form.channels.includes(channel.value)"
               @update:model-value="toggleChannel(channel.value, $event)">
-              {{ channel.label }}<template v-if="form.channels.includes(channel.value) && !props.imChannels.includes(channel.value)">（{{ t('scheduleUi.channelUnavailablePreserved') }}）</template>
+              <span>{{ channel.label }}</span>
+              <span v-if="form.channels.includes(channel.value) && channel.value !== 'web' && channel.value !== 'email' && !props.imChannels.includes(channel.value)" class="channel-unavailable-note">
+                {{ t('scheduleUi.channelUnavailablePreserved') }}
+              </span>
             </Checkbox>
           </template>
         </div>
@@ -474,7 +477,8 @@ function submit() {
 .interval-preset.on { color: var(--content-on-accent); border-color: transparent; background: var(--action-primary-bg); }
 .chans { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px; }
 .chans :deep(.app-checkbox) { min-width: 0; }
-.chans :deep(.app-checkbox__label) { min-width: 0; white-space: nowrap; }
+.chans :deep(.app-checkbox__label) { min-width: 0; white-space: normal; flex-wrap: wrap; }
+.channel-unavailable-note { flex: 1 1 100%; min-width: 0; color: var(--content-tertiary); font-size: 10px; line-height: 1.3; }
 .qq-delivery-field {
   display: flex; flex-direction: column; gap: 4px; min-width: 0; margin-top: 8px;
   color: var(--content-secondary); font-size: 12px; line-height: 1.45;
