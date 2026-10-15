@@ -271,6 +271,14 @@
     "keyBehavior": "全新 PostgreSQL 经 ORM 建表和 Alembic 初始化后仍具有自定义 collation 与分页索引",
     "ci": "experimental"
   },
+  "backend/tests/platform/test_contact_name_column_migration.py": {
+    "domain": "contact-name-migration",
+    "layer": "L1",
+    "owner": "backend/alembic",
+    "productionEntry": "backend/alembic/versions/20261016000001_rename_client_columns_to_contact_name.py",
+    "keyBehavior": "项目与日历活动联系人列重命名保留既有值且可降级恢复",
+    "ci": "backend-pytest"
+  },
   "backend/tests/platform/realtime/test_live_stream.py": {
     "domain": "filesync-live-events",
     "layer": "L1",
@@ -861,6 +869,14 @@
     "owner": "backend/alembic/versions",
     "productionEntry": "backend/alembic/versions/20261013000001_use_skill_ids.py",
     "keyBehavior": "迁移为既有技能分配稳定顺序 ID 并让后续序列从最大 ID 之后继续",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/qq/test_qq_reply_sequences.py": {
+    "domain": "qq-streaming",
+    "layer": "L2",
+    "owner": "backend/agent/gateway/qq",
+    "productionEntry": "backend/agent/gateway/qq/outbound.py",
+    "keyBehavior": "同一条 QQ 入站消息的流式文字、图片和普通文本共享序号，冷计数与并发发送不被重复去重，同一流各帧保持相同序号",
     "ci": "backend-pytest"
   },
   "backend/tests/im/qq/test_qq_package_facade.py": {
