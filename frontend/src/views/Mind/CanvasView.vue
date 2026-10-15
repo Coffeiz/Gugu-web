@@ -39,8 +39,10 @@
 
       <CanvasToolbar
         :scale="canvasRef?.camera.scale ?? 1"
+        :items="store.canvasItems"
         @create-note="createCanvasNote"
         @add-ref="addRef"
+        @locate-card="locateCanvasCard"
         @zoom="delta => canvasRef?.zoomAtCenter(delta)"
         @reset-view="resetView"
       />
@@ -480,6 +482,11 @@ async function linkNodes(
 function openRef(item: MindCanvasItem) {
   if (item.node.kind !== 'ref' || !item.node.refType || item.node.refId == null) return
   openMindRef(item.node.refType, item.node.refId)
+}
+function locateCanvasCard(nodeId: number) {
+  const canvasId = activeCanvasId.value
+  if (canvasId == null) return
+  uiStore.pendingCanvasTarget = { canvasId, nodeId }
 }
 
 function centerOfViewport() {

@@ -33,6 +33,13 @@ marked.use({
     const renderLink = r.link
     r.link = function (this: unknown, token: Tokens.Link) {
       const href = String(token.href || '')
+      const focusMatch = href.match(/^gugu:\/\/focus-canvas\/(\d+)\/(\d+)$/i)
+      if (focusMatch) {
+        const [, canvasId, nodeId] = focusMatch
+        const label = String(token.text || '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] || char))
+        const typeLabel = i18n.global.t('chatUi.focusCanvasItem')
+        return `<a class="chat-object-card chat-canvas-focus-card" href="gugu://focus-canvas/${canvasId}/${nodeId}" aria-label="${label}"><span class="chat-object-card-icon">${chatObjectIcon(CHAT_OBJECT_ICON_PATH.canvas, 'chat-object-card-icon-svg')}</span><span class="chat-object-card-body"><strong>${label}</strong><small>${typeLabel}</small></span><span class="chat-object-card-arrow">${chatObjectIcon(CHAT_OBJECT_LINK_PATH, 'chat-object-card-arrow-svg')}</span></a>`
+      }
       const match = href.match(/^gugu:\/\/open-object\/(project|event|canvas|note|scheduled-task)\/(\d+)$/i)
       if (!match) return renderLink.call(this, token)
       const type = match[1].toLowerCase()

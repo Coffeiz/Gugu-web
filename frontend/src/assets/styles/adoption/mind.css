@@ -193,7 +193,6 @@ html[data-theme][data-family] .np-search:focus {
   border-color: var(--input-border-focus);
   box-shadow: var(--input-hover-shadow), var(--input-focus-shadow);
 }
-html[data-theme][data-family] .np-note:hover { background: var(--control-bg-hover); }
 html[data-theme][data-family] .canvas-create-card {
   color: var(--content-secondary);
   background: var(--inline-action-bg);

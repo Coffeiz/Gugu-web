@@ -583,9 +583,8 @@ function centerViewAndEmit() {
 function centerOn(worldX: number, worldY: number) {
   const viewport = viewportRef.value
   if (!viewport) return
-  camera.scale = 1
-  camera.x = viewport.clientWidth / 2 - worldX
-  camera.y = viewport.clientHeight / 2 - worldY
+  camera.x = viewport.clientWidth / 2 - worldX * camera.scale
+  camera.y = viewport.clientHeight / 2 - worldY * camera.scale
   emitViewChange()
 }
 function viewportCenter() {
