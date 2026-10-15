@@ -277,6 +277,8 @@ class MetaSkill(BaseSkill):
                     "authorization": {"type": "string", "enum": ["user_sandbox"]},
                     "options": {
                         "type": "array",
+                        "description": "可选预设按钮数组；无预设选项时省略，元素格式为 [{\"id\":\"...\",\"label\":\"...\"}]。",
+                        "x-empty-string": "empty-array",
                         "minItems": 0,
                         "maxItems": 8,
                         "items": {
@@ -290,7 +292,7 @@ class MetaSkill(BaseSkill):
                         },
                     },
                 },
-                "required": ["kind", "title", "body", "options"],
+                "required": ["kind", "title", "body"],
                 "additionalProperties": False,
             },
             handler=_ask_user,
