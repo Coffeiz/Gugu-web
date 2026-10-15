@@ -31,6 +31,12 @@
 - **Prompt caching**: preserve reusable model context across compaction and reflection requests.
 - **Search summaries**: include links to the sources behind key findings.
 - **LoopScope session monitor**: fill model and token usage details from model-call spans when run summaries are incomplete.
+- **Canvas navigation**: search the current canvas and center the view on a selected card without changing its saved layout or zoom.
+- **Agent tool inputs**: use clearer resource-specific parameter names while retaining compatibility with known older calls.
+- **Form controls**: improve scheduled-task channel option wrapping and keep input fill colors stable on focus.
+- **Canvas navigation**: search the current canvas and center the view on a selected card without changing its saved layout or zoom.
+- **Agent tool inputs**: use clearer resource-specific parameter names while retaining compatibility with known older calls.
+- **Form controls**: improve scheduled-task channel option wrapping and keep input fill colors stable on focus.
 
 #### Fixes
 
@@ -43,6 +49,8 @@
 - Refresh the chat title after unlinking its workspace.
 - Show concise IM tool completion status without sending tool inputs or raw results.
 - Reconcile legacy file-library quota records before permanently deleting files from the trash.
+- Recover malformed MiniMax streaming responses and retry empty replies after successful tool progress.
+- Recover malformed MiniMax streaming responses and retry empty replies after successful tool progress.
 
 #### Contributors
 
@@ -74,6 +82,12 @@
 - **提示词缓存**：压缩和反思请求会保留可复用的模型上下文，提升缓存复用。
 - **搜索汇总**：为主要结论附上实际参考的信息源链接。
 - **LoopScope 会话监视器**：Run 汇总信息不完整时，从模型调用 Span 补全模型与 token 用量。
+- **画布定位**：搜索当前画布并将视野居中到选中的卡片，不改变已保存的布局或缩放比例。
+- **Agent 工具参数**：使用更明确的资源专属参数名，同时兼容已知的旧调用格式。
+- **表单控件**：优化定时任务渠道选项的换行布局，并保持输入框聚焦时的填充色稳定。
+- **画布定位**：搜索当前画布并将视野居中到选中的卡片，不改变已保存的布局或缩放比例。
+- **Agent 工具参数**：使用更明确的资源专属参数名，同时兼容已知的旧调用格式。
+- **表单控件**：优化定时任务渠道选项的换行布局，并保持输入框聚焦时的填充色稳定。
 
 #### 修复
 
@@ -86,6 +100,8 @@
 - 解除工作区绑定后立即刷新会话标题。
 - IM 工具交互只展示完成状态，避免发送调用参数和原始结果。
 - 清空回收站时先校准旧配额记录，避免文件删除后清理任务失败。
+- 修复 MiniMax 异常流式响应恢复，以及成功执行工具后最终答复为空时的重试机会。
+- 修复 MiniMax 异常流式响应恢复，以及成功执行工具后最终答复为空时的重试机会。
 
 #### 贡献者
 
