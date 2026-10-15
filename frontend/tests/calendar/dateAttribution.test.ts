@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest'
-import { parseUtc, localDayKey, isSameLocalDay, isToday, isThisWeek, fmtLocalDateTime } from '@/utils/dateAttribution'
+import { parseUtc, localDayKey, localDateTimeToUtcIso, isSameLocalDay, isToday, isThisWeek, fmtLocalDateTime } from '@/utils/dateAttribution'
 
 // 全程显式传 tz + 注入 now，不依赖测试机时区，保证确定性。
 
@@ -32,6 +32,26 @@ describe('localDayKey — 跨午夜按时区归属，不按 UTC', () => {
   })
   it('UTC 下即 UTC 日', () => {
     expect(localDayKey(new Date('2026-07-11T08:00:00Z'), 'UTC')).toBe('2026-07-11')
+  })
+})
+
+describe('localDateTimeToUtcIso — 编辑记录日期时保留所选本地日', () => {
+  it.each(['Asia/Tokyo', 'Pacific/Auckland', 'Pacific/Kiritimati'])(
+    '%s 的本地中午换算后仍归属所选日期', (tz) => {
+      const iso = localDateTimeToUtcIso('2026-10-15', tz)
+      expect(iso).toMatch(/Z$/)
+      expect(localDayKey(parseUtc(iso), tz)).toBe('2026-10-15')
+    },
+  )
+
+  it('使用本地中午，且拒绝不存在的日历日期', () => {
+    const iso = localDateTimeToUtcIso('2026-10-15', 'Pacific/Auckland')
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Pacific/Auckland', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    }).formatToParts(parseUtc(iso))
+    expect(parts.find(part => part.type === 'hour')?.value).toBe('12')
+    expect(parts.find(part => part.type === 'minute')?.value).toBe('00')
+    expect(() => localDateTimeToUtcIso('2026-02-30', 'UTC')).toThrow(RangeError)
   })
 })
 

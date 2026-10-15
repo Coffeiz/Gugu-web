@@ -55,6 +55,7 @@
 - Recover malformed MiniMax streaming responses and retry empty replies after successful tool progress.
 - Preserve repeated follow-up messages and completed tool outcomes when rebuilding conversation context.
 - Prevent the account email from being clipped in the profile panel.
+- Keep the selected note record date correct in UTC-positive time zones when editing dates.
 - Recover malformed MiniMax streaming responses and retry empty replies after successful tool progress.
 
 #### Contributors
@@ -111,6 +112,7 @@
 - 修复 MiniMax 异常流式响应恢复，以及成功执行工具后最终答复为空时的重试机会。
 - 重建对话上下文时保留重复的继续消息和已完成的工具结果。
 - 修复个人信息面板中的邮箱文字被裁切。
+- 修复在 UTC 正时区修改笔记记录日期时，显示日期可能偏移一天的问题。
 - 修复 MiniMax 异常流式响应恢复，以及成功执行工具后最终答复为空时的重试机会。
 
 #### 贡献者

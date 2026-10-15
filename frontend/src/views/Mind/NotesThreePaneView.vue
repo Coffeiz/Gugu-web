@@ -224,7 +224,7 @@ import { useMindRefActions } from '@/composables/mind/useMindRefActions'
 import { canLeaveNoteEditor, commitNoteEdit } from '@/composables/mind/noteEditCommit'
 import { mdToPreviewHtml, splitMindTitleBody, toggleTaskInMd, combineTitleBody } from '@/composables/mind/useMindEditor'
 import { vMindPreview } from './directives/mindPreview'
-import { localDayKey, parseUtc } from '@/utils/dateAttribution'
+import { localDateTimeToUtcIso, localDayKey, parseUtc } from '@/utils/dateAttribution'
 import type { MindNote } from '@/services/api'
 import { persistMindNoteDraft } from './utils/noteDraft'
 import NoteEditor from './components/NoteEditor.vue'
@@ -669,7 +669,7 @@ const yesterdayKey = localDayKey(new Date(Date.now() - 86400e3))
 async function onRecordDateChange(date: string) {
   const note = selected.value
   if (!note || !date || date === selectedRecordDate.value || recordDateSaving.value) return
-  const capturedAt = `${date}T12:00:00`
+  const capturedAt = localDateTimeToUtcIso(date)
   if (note.id < 0) {
     // 新建草稿和样例笔记只改前端记录日期；新建草稿提交时会带上该值。
     store.notes = store.notes.map(item => item.id === note.id ? { ...item, capturedAt } : item)

@@ -34,6 +34,49 @@ export function localDayKey(instant: Date, tz: string = effectiveTimezone()): st
   }).format(instant)
 }
 
+/** 把用户时区里的日期/时间转换为明确的 UTC ISO 时间。默认取当天本地中午，适合只编辑日期的记录。 */
+export function localDateTimeToUtcIso(
+  dayKey: string,
+  tz: string = effectiveTimezone(),
+  hour = 12,
+  minute = 0,
+): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dayKey)
+  if (!match || !Number.isInteger(hour) || hour < 0 || hour > 23 || !Number.isInteger(minute) || minute < 0 || minute > 59) {
+    throw new RangeError('无效的本地日期或时间')
+  }
+  const [, yearText, monthText, dayText] = match
+  const year = Number(yearText)
+  const month = Number(monthText)
+  const day = Number(dayText)
+  const wantedWallTime = Date.UTC(year, month - 1, day, hour, minute)
+  const calendarCheck = new Date(wantedWallTime)
+  if (calendarCheck.getUTCFullYear() !== year || calendarCheck.getUTCMonth() !== month - 1 || calendarCheck.getUTCDate() !== day) {
+    throw new RangeError('无效的本地日期或时间')
+  }
+
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+  })
+  let instant = wantedWallTime
+  // 根据目标时区实际呈现的墙上时间反复校正 UTC 瞬间；中午避开常见 DST 跳时/重叠区间。
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const parts = Object.fromEntries(formatter.formatToParts(new Date(instant)).map(part => [part.type, part.value]))
+    const renderedWallTime = Date.UTC(
+      Number(parts.year), Number(parts.month) - 1, Number(parts.day),
+      Number(parts.hour), Number(parts.minute), Number(parts.second),
+    )
+    const correction = wantedWallTime - renderedWallTime
+    if (correction === 0) return new Date(instant).toISOString()
+    instant += correction
+  }
+
+  // 对午夜跳时等罕见历史时区变更，无法构造精确本地中午时明确失败，避免悄悄存错日期。
+  throw new RangeError('无法在指定时区构造本地日期时间')
+}
+
 /** 两个时刻在 tz 下是否同一本地天。 */
 export function isSameLocalDay(a: Date, b: Date, tz: string = effectiveTimezone()): boolean {
   return localDayKey(a, tz) === localDayKey(b, tz)
