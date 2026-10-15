@@ -975,6 +975,22 @@
     "keyBehavior": "旧会话导航等待期间发起新导航后，旧请求不清除或定位新请求，最终定位最新目标",
     "ci": "frontend-test"
   },
+  "frontend/tests/chat/composables/startupSessionRestore.test.ts": {
+    "domain": "chat-navigation",
+    "layer": "L0",
+    "owner": "frontend/components/common/gugu-chat",
+    "productionEntry": "frontend/src/components/common/gugu-chat/composables/startupSessionRestore.ts",
+    "keyBehavior": "启动恢复被新导航取代时不重置新会话；仅明确的会话不可用清除恢复记录，临时失败保留记录",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/chat/composables/useChatSessions.test.ts": {
+    "domain": "chat-navigation",
+    "layer": "L0",
+    "owner": "frontend/components/common/gugu-chat",
+    "productionEntry": "frontend/src/components/common/gugu-chat/composables/useChatSessions.ts",
+    "keyBehavior": "旧会话加载等待交互卡片恢复时发生会话切换，旧响应不得覆盖新会话消息",
+    "ci": "frontend-test"
+  },
   "frontend/tests/markdown/mermaidInteraction.test.ts": {
     "domain": "markdown-mermaid",
     "layer": "L0",
