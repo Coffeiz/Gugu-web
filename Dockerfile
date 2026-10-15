@@ -79,6 +79,10 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # 保持官方签名版本与固定源码提交，只更新已修复的 Go 依赖并使用修复版工具链。
 FROM golang:1.26.9-trixie AS cosign-build
 
+ARG HTTPS_PROXY
+ENV HTTPS_PROXY=${HTTPS_PROXY} \
+    https_proxy=${HTTPS_PROXY}
+
 WORKDIR /src
 
 ADD --checksum=sha256:3a718446bac51466efff6853639e1ca108b456ecbf07cd92938f548715d22d6b \
