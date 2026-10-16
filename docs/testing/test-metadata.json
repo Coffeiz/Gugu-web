@@ -303,6 +303,14 @@
     "keyBehavior": "文件同步失效事件只发布到 Admin 频道、只携带安全标识并按任务合并进度；SSE 过滤拒绝畸形事件并剔除路径详情",
     "ci": "backend-pytest"
   },
+  "backend/tests/platform/realtime/test_websocket_cookie_origin.py": {
+    "domain": "websocket-auth",
+    "layer": "L1",
+    "owner": "backend/app/api/v1",
+    "productionEntry": "backend/app/api/v1/terminals.py:_websocket_token",
+    "keyBehavior": "Cookie 鉴权的终端 WebSocket 仅接受与 Host 同源的 Origin，并保留非标准端口",
+    "ci": "backend-pytest"
+  },
   "backend/tests/scheduling/tasks/test_scheduled_task_schedule_rules.py": {
     "domain": "scheduled-tasks",
     "layer": "L1",
@@ -1061,6 +1069,14 @@
     "owner": "frontend/services",
     "productionEntry": "frontend/src/services/resourceRefreshEvents.ts",
     "keyBehavior": "跨端资源变化事件按类型通知订阅者并保持事件载荷一致",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/loopscope/guguCsrf.test.ts": {
+    "domain": "loopscope-auth",
+    "layer": "L0",
+    "owner": "loopscope/frontend/src/services",
+    "productionEntry": "loopscope/frontend/src/services/gugu.ts:sendMessage",
+    "keyBehavior": "Cookie 认证发送消息时将 CSRF Cookie 解码后放入请求头并携带认证凭据",
     "ci": "frontend-test"
   },
   "backend/tests/agent/providers/test_anthropic_stream_recovery.py": {
