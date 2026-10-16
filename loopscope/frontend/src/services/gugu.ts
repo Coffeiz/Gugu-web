@@ -47,6 +47,14 @@ export function loadBootstrap(): GuguBootstrap | null {
   }
 }
 
+function guguCsrfHeaders(): Record<string, string> {
+  const cookie = document.cookie
+    .split('; ')
+    .find(value => value.startsWith('gugu_user_csrf_token='))
+  const token = cookie?.slice('gugu_user_csrf_token='.length)
+  return token ? { 'X-CSRF-Token': decodeURIComponent(token) } : {}
+}
+
 export async function listGuguSessions(): Promise<GuguSession[]> {
   const cfg = loadBootstrap()
   if (!cfg) return []
@@ -151,7 +159,10 @@ export async function sendMessage(
   if (!cfg) throw new Error('尚未连接 Gugu。请从 Gugu /dev 打开 LoopScope，或在 Settings 配置。')
   const r = await fetch(`${apiBase(cfg)}/agent/chat`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...guguCsrfHeaders(),
+    },
     credentials: 'include',
     body: JSON.stringify({ message, session_id: sessionId }),
   })
