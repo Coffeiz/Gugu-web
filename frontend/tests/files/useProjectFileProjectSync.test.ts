@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { effectScope, ref, type EffectScope } from 'vue'
 import { filesApi, foldersApi, type CursorPage } from '@/services/api'
+import { useLiveStore } from '@/stores/live'
 import type { DirectoryPageState, FileMeta, FolderMeta } from '@/stores/filesCache'
 import { useProjectFileProjectSync } from '@/composables/files/useProjectFileProjectSync'
 import type { Project } from '@/types/project'
@@ -9,6 +10,11 @@ vi.mock('@/services/api', () => ({
   filesApi: { page: vi.fn() },
   foldersApi: { page: vi.fn() },
 }))
+vi.mock('@/stores/live', async () => {
+  const { reactive } = await import('vue')
+  const live = reactive({ rev: { files: 0 } })
+  return { useLiveStore: () => live }
+})
 
 const cursorPage = <T>(items: T[]): CursorPage<T> => ({ items, next_cursor: null, has_more: false })
 
@@ -18,6 +24,7 @@ describe('项目文件目录按需分页', () => {
     vi.clearAllMocks()
     vi.mocked(filesApi.page).mockResolvedValue(cursorPage<FileMeta>([]) as never)
     vi.mocked(foldersApi.page).mockResolvedValue(cursorPage<FolderMeta>([]) as never)
+    useLiveStore().rev.files = 0
     scope = effectScope()
   })
   afterEach(() => scope.stop())
@@ -67,5 +74,28 @@ describe('项目文件目录按需分页', () => {
     expect(filesApi.page).not.toHaveBeenCalled()
     expect(foldersApi.page).not.toHaveBeenCalled()
     expect(setDirectoryPage).not.toHaveBeenCalled()
+  })
+
+  it('项目弹窗打开时文件版本变化会刷新当前目录', async () => {
+    const project = ref({ id: 41 } as Project | null)
+    const setDirectoryPage = vi.fn()
+    const getDirectory = vi.fn(() => null as DirectoryPageState | null)
+    const invalidatePages = vi.fn()
+    scope.run(() => {
+      useProjectFileProjectSync({
+        project: () => project.value, openFolders: ref(new Set<number>()), folderStack: ref<FolderMeta[]>([]),
+        resetNavigation: vi.fn(), showNewFolder: ref(false), resetDraft: vi.fn(),
+        sortBy: () => 'createdAt', sortOrder: () => 'desc',
+        fileCacheStore: { getDirectory, setDirectoryPage, invalidatePages },
+      })
+    })
+    await vi.waitFor(() => expect(setDirectoryPage).toHaveBeenCalledOnce())
+
+    useLiveStore().rev.files++
+
+    await vi.waitFor(() => expect(setDirectoryPage).toHaveBeenCalledTimes(2), { timeout: 1000 })
+    expect(invalidatePages).toHaveBeenCalledWith({ space: 'project', projectId: 41, sortBy: 'createdAt', sortOrder: 'desc' })
+    expect(filesApi.page).toHaveBeenCalledTimes(2)
+    expect(foldersApi.page).toHaveBeenCalledTimes(2)
   })
 })

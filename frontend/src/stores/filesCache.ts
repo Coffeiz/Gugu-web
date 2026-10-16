@@ -285,6 +285,10 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
     if (event?.resource === 'files') applyCanonicalEvent(event)
   }, { immediate: true })
 
+  // Agent 本地流在 tool_done/回合完成时会 bump rev.files 作为确定性刷新信号，
+  // 但该路径不一定伴随 canonical resourceEvent。目录页必须同时失效，避免重开面板命中旧快照。
+  watch(() => useLiveStore().rev.files, () => invalidatePages())
+
   return {
     directories, getDirectory, getDirectorySnapshot, setDirectoryPage, invalidatePages,
     getPersonalRootFiles, getProjectRootFiles, getFolderFiles, getWorkspaceFiles,

@@ -1,5 +1,6 @@
-import { nextTick, ref, watch, type Ref } from 'vue'
+import { nextTick, onScopeDispose, ref, watch, type Ref } from 'vue'
 import { filesApi, foldersApi, type CursorPage } from '@/services/api'
+import { useLiveStore } from '@/stores/live'
 import type { DirectoryPageState, DirectorySnapshotScope, FileMeta, FolderMeta } from '@/stores/filesCache'
 import type { Project } from '@/types/project'
 
@@ -25,6 +26,7 @@ export function useProjectFileProjectSync(options: {
   const loadedDirectories = new Set<string>()
   const directoryScopes = new Map<string, DirectorySnapshotScope>()
   const pendingDirectories = new Map<string, Promise<void>>()
+  let refreshTimer: ReturnType<typeof setTimeout> | null = null
   const loadingMore = ref(false)
   const limitedDirectories = ref(new Set<string>())
   const sortBy = () => options.sortBy?.() ?? 'createdAt'
@@ -166,6 +168,21 @@ export function useProjectFileProjectSync(options: {
     for (const key of loadedDirectories) if (!key.startsWith(`${id}:`)) loadedDirectories.delete(key)
     void ensureDirectoryLoaded(id, null)
   }, { immediate: true })
+
+  const liveStore = useLiveStore()
+  watch(() => liveStore.rev.files, () => {
+    const projectId = options.project()?.id
+    if (projectId == null) return
+    invalidateProjectDirectories(projectId)
+    if (refreshTimer) clearTimeout(refreshTimer)
+    refreshTimer = setTimeout(() => {
+      refreshTimer = null
+      void ensureDirectoryLoaded(projectId, options.folderStack.value.at(-1)?.id ?? null)
+    }, 180)
+  })
+  onScopeDispose(() => {
+    if (refreshTimer) clearTimeout(refreshTimer)
+  })
 
   return { initializing, ensureDirectoryLoaded, isDirectoryLoaded, invalidateProjectDirectories,
     loadMoreDirectory, directoryHasMore, directoryLimitReached, loadingMore }
