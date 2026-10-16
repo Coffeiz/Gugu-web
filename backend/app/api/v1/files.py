@@ -138,7 +138,7 @@ def _parse_range_header(value: str | None, size: int) -> tuple[int, int, bool] |
     return start, min(end, size - 1), True
 
 
-def _iter_local_file(path, start: int, end: int, access_check=None):
+def _iter_local_file(path, start: int, end: int):
     async def body():
         import asyncio
         remaining = end - start + 1
@@ -147,8 +147,6 @@ def _iter_local_file(path, start: int, end: int, access_check=None):
             await asyncio.to_thread(source.seek, start)
             while remaining > 0:
                 chunk = await asyncio.to_thread(source.read, min(1024 * 1024, remaining))
-                if access_check is not None and not await access_check():
-                    raise HTTPException(401, "文件流令牌已失效")
                 if not chunk:
                     break
                 remaining -= len(chunk)
@@ -1024,10 +1022,7 @@ async def stream_file(
     if partial:
         headers["Content-Range"] = f"bytes {start}-{end}/{size}"
     return StreamingResponse(
-        _iter_local_file(
-            result.path, start, end,
-            access_check=lambda: is_user_active(user_id, token_version),
-        ),
+        _iter_local_file(result.path, start, end),
         status_code=206 if partial else 200,
         media_type=result.file.mime_type or "application/octet-stream",
         headers=headers,

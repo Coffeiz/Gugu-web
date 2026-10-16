@@ -3,9 +3,7 @@
 同 test_folders_api：直接调路由函数（current_user/db/origin 显式传），不起 TestClient。
 FileService(db) 内部走 get_storage()，用 monkeypatch 指向 tmp_path 本地后端；事件广播 noop。
 """
-import asyncio
 import io
-import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -266,65 +264,31 @@ async def test_stream_endpoint_serves_http_range_without_reading_whole_file(db, 
     assert body == b"3456"
 
 
-async def test_stream_stops_sending_chunks_after_session_revocation(db, user_a, monkeypatch):
+async def test_stream_checks_revocation_at_request_start_only(db, user_a, monkeypatch):
     uploaded = await _do_upload(db, user_a, b"x" * (1024 * 1024 + 10), "large.bin")
     monkeypatch.setattr(files_api, "verify_stream_token", lambda token: (uploaded.id, user_a.id, user_a.security_version))
-    checks = 0
+    state = {"active": True, "checks": 0}
 
-    async def active_until_second_chunk(user_id, token_version):
-        nonlocal checks
-        checks += 1
-        return checks < 3  # 请求校验 + 第一块通过，第二块前模拟登出/改密
+    async def active_until_revoked(user_id, token_version):
+        state["checks"] += 1
+        return state["active"]
 
-    monkeypatch.setattr(files_api, "is_user_active", active_until_second_chunk)
+    monkeypatch.setattr(files_api, "is_user_active", active_until_revoked)
     response = await files_api.stream_file(
         uploaded.id, token="stream-token", request=None, db=db,
     )
 
-    first_chunk = await response.body_iterator.__anext__()
-    assert len(first_chunk) == 1024 * 1024
-    with pytest.raises(HTTPException) as exc:
-        await response.body_iterator.__anext__()
-    assert exc.value.status_code == 401
-
-
-async def test_local_stream_rechecks_session_after_blocking_chunk_read():
-    read_started = threading.Event()
-    release_read = threading.Event()
-    state = {"active": True}
-
-    class BlockingSource:
-        closed = False
-
-        def seek(self, _offset):
-            pass
-
-        def read(self, _size):
-            read_started.set()
-            release_read.wait(timeout=2)
-            return b"secret"
-
-        def close(self):
-            self.closed = True
-
-    source = BlockingSource()
-    fake_path = SimpleNamespace(open=lambda _mode: source)
-
-    async def is_active():
-        return state["active"]
-
-    iterator = files_api._iter_local_file(fake_path, 0, 5, access_check=is_active)
-    pending_chunk = asyncio.create_task(iterator.__anext__())
-    try:
-        assert await asyncio.to_thread(read_started.wait, 2)
-        state["active"] = False
-    finally:
-        release_read.set()
+    state["active"] = False  # 请求开始后撤销会话，不中断已经建立的响应流
+    chunks = [chunk async for chunk in response.body_iterator]
+    assert len(chunks) == 2
+    assert sum(map(len, chunks)) == 1024 * 1024 + 10
+    assert state["checks"] == 1
 
     with pytest.raises(HTTPException) as exc:
-        await pending_chunk
+        await files_api.stream_file(
+            uploaded.id, token="stream-token", request=None, db=db,
+        )
     assert exc.value.status_code == 401
-    assert source.closed
 
 
 async def test_stream_empty_file_returns_zero_length_body(db, user_a, monkeypatch):
