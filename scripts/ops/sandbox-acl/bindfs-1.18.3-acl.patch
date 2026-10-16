@@ -1,0 +1,80 @@
+--- a/src/bindfs.c
++++ b/src/bindfs.c
+@@ -709,6 +709,16 @@
+ {
+     (void) conn;
+     #ifdef HAVE_FUSE_3
++    // 实验仅用于无 UID/GID/权限变换的透明转接，不启用 bindfs 映射功能。
++    if (getenv("GUGU_BINDFS_ACL_PASSTHROUGH") != NULL) {
++        if (!(conn->capable & FUSE_CAP_POSIX_ACL)) {
++            fprintf(stderr, "内核未提供 POSIX ACL 能力，拒绝启动实验转接\n");
++            bindfs_init_failed = true;
++            fuse_exit(fuse_get_context()->fuse);
++            return NULL;
++        }
++        conn->want |= FUSE_CAP_POSIX_ACL | FUSE_CAP_DONT_MASK;
++    }
+     cfg->use_ino = 1;
+ 
+     // Disable caches so changes in base FS are visible immediately.
+@@ -949,6 +959,9 @@
+ 
+     mode = permchain_apply(settings.create_permchain, mode);
+ 
++    // 单线程实验模式：由底层文件系统按调用者 umask 和默认 ACL 决定权限。
++    mode_t saved_umask = umask(getenv("GUGU_BINDFS_ACL_PASSTHROUGH")
++                              ? fuse_get_context()->umask : 0);
+     if (S_ISFIFO(mode)) {
+         res = mkfifo(real_path, mode);
+ #if defined(__APPLE__) || defined(__FreeBSD__)
+@@ -979,6 +992,7 @@
+         res = mknod(real_path, mode, rdev);
+     }
+ 
++    umask(saved_umask);
+     if (res == -1) {
+         free(real_path);
+         return -errno;
+@@ -1004,7 +1018,10 @@
+     mode |= S_IFDIR; /* tell permchain_apply this is a directory */
+     mode = permchain_apply(settings.create_permchain, mode);
+ 
++    mode_t saved_umask = umask(getenv("GUGU_BINDFS_ACL_PASSTHROUGH")
++                              ? fuse_get_context()->umask : 0);
+     res = mkdir(real_path, mode & 0777);
++    umask(saved_umask);
+     if (res == -1) {
+         free(real_path);
+         return -errno;
+@@ -1350,7 +1367,10 @@
+     }
+ #endif
+ 
++    mode_t saved_umask = umask(getenv("GUGU_BINDFS_ACL_PASSTHROUGH")
++                              ? fuse_get_context()->umask : 0);
+     fd = open(real_path, flags, mode & 0777);
++    umask(saved_umask);
+     if (fd == -1) {
+         free(real_path);
+         return -errno;
+@@ -2858,6 +2878,20 @@
+     }
+ 
+ 
++    if (getenv("GUGU_BINDFS_ACL_PASSTHROUGH")) {
++#ifndef HAVE_FUSE_3
++        fprintf(stderr, "ACL 实验模式必须使用 FUSE 3\n");
++        return 1;
++#endif
++        // 只允许透明、单线程转接，拒绝 UID/GID/权限变换及多线程选项。
++        for (int i = 1; i < argc; ++i) {
++            if (argv[i][0] == '-' && strcmp(argv[i], "-r") != 0
++                && strcmp(argv[i], "-f") != 0) {
++                fprintf(stderr, "ACL 实验模式仅允许 -r/-f 和来源、目标路径\n");
++                return 1;
++            }
++        }
++    }
+     /* Single-threaded mode by default */
+     if (!od.multithreaded) {
+         fuse_opt_add_arg(&args, "-s");

@@ -35,6 +35,7 @@
 | 搞清楚要跑哪些进程                                      | §1 架构总览                                   |
 | 第一次在本地把咕咕跑起来                                   | §2 环境要求 → §3 开发环境部署                       |
 | 上线到生产服务器                                       | §4 生产环境部署（nginx + systemd + HTTPS）        |
+| 生产沙箱 Rootless 启动、路径隐私与迁移验收 | [沙箱路径隐私部署规范](./sandbox-path-privacy.md) |
 | 接入飞书 / QQ / 微信                                 | §5 接入 IM 频道                               |
 | **改了代码，该重启哪个进程？**（最常踩）                         | **§6.1 重启决策表**                            |
 | 启停 / 重启 backend·worker·gateway·sandboxd              | §6.2 / §6.3                               |
@@ -106,6 +107,8 @@ python3 backend/scripts/checks/check_pdf_fonts.py
 `Noto Sans` 或显示「未匹配到」，不要上线 PDF 生成功能。
 
 启用生产 Shell 沙盒时，还要确认运行用户的 Rootless Docker 已可用，并准备 `uidmap`、`rootlesskit`、`slirp4netns`、`fuse-overlayfs` 和 user lingering。沙盒默认使用 `network=none`，不需要开放 Docker TCP socket。固定镜像必须预先加载，运行时使用 `--pull=never`；Docker、Rootless daemon 或固定镜像未就绪时，Shell 应失败，不会回退到宿主机执行。
+
+后续生产沙箱部署、重建和迁移统一遵循[Rootless 启动与路径隐私规范](./sandbox-path-privacy.md)：使用版本匹配的官方 `dockerd-rootless.sh`，不手工省略 Rootless 初始化；存储驱动迁移使用独立新数据目录并保留回滚点。路径隐私方案必须经真实容器及应用入口验收后切换，不能仅因 fuse-overlayfs 能启动就声称完成。
 
 Docker 日志必须启用轮转，避免 `json-file` 日志占满系统盘。仓库提供的开发/生产 Compose
 服务统一使用 `50m × 3`；Rootless Docker 主机还应在
