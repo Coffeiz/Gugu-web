@@ -30,6 +30,14 @@
 - Use the selected local date when editing a note record date across UTC-positive time zones.
 - Include credentials when LoopScope sends chat requests to Gugu.
 
+#### Contributors
+
+- Thank you to [@Coffeiz](https://github.com/Coffeiz) for PR #102.
+
+#### Feedback & Issue Reporters
+
+- None for this release.
+
 ### 更新内容
 
 #### 新功能
@@ -50,6 +58,14 @@
 - 修复项目文件大小显示和文件库搜索结果定位。
 - 在 UTC 正时区修改笔记日期时使用用户选定的日期。
 - LoopScope 向咕咕发送聊天请求时携带会话凭据。
+
+#### 贡献者
+
+- 感谢 [@Coffeiz](https://github.com/Coffeiz) 提交 PR #102。
+
+#### 反馈与问题报告
+
+- 暂无。
 
 ## [1.7.3] - 2026-10-13
 
