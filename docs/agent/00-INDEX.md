@@ -11,7 +11,7 @@
 5. [05-TOOLS-AND-SKILLS.md](./05-TOOLS-AND-SKILLS.md)：工具、Skill、能力索引、Schema 和执行边界。
 6. [06-RAG-AND-KNOWLEDGE.md](./06-RAG-AND-KNOWLEDGE.md)：RAG、Knowledge、索引、scope 和上下文注入。
 7. [07-MEMORY-AND-REFLECTION.md](./07-MEMORY-AND-REFLECTION.md)：Memory、Knowledge 生命周期、反思触发和长期信息维护。
-8. [08-CHANNELS.md](./08-CHANNELS.md)：Web、QQ、微信和飞书接入、身份、会话和出站协议。
+8. [08-CHANNELS.md](./08-CHANNELS.md)：Web、QQ、微信、飞书和 Telegram 接入、身份、会话和出站协议。
 9. [09-MESSAGE-PROTOCOL.md](./09-MESSAGE-PROTOCOL.md)：流式事件、工具消息、交互、附件、引用和 canonical history。
 10. [10-RELIABILITY.md](./10-RELIABILITY.md)：重试、取消、压缩失败、并发、关闭和恢复。
 11. [11-LoopScope.md](./11-LOOPSCOPE.md)：开发观测、Context Provenance、Prefix Diff 和 cache 排障。
@@ -42,6 +42,7 @@ English companions for the current documents are kept in `en/` with the same fil
 按具体业务域补充实现细节（当前目录中的专题仍以代码为准）：
 
 - 画布、文件、Shell 沙盒和定时任务：见 `backend/agent/tools/`、`backend/agent/sandbox/` 及对应测试。
+- Mermaid 跨端渲染：见[统一 Mermaid 渲染与跨端 PNG 输出](../prds/【已完成】PRD-MERMAID-1-统一Mermaid渲染与跨端PNG输出.md)。
 
 ## 运维文档
 
