@@ -6,6 +6,7 @@ const KEEP = [
   'gugu_mini_pinned',  // 偏好：球钉住
   'gugu_audio_volume', // 偏好：音量
   'gugu_video_volume', // 偏好：视频音量
+  'gugu-document-font-size', // 偏好：文档预览字号
 ]
 
 export function runClientVersionGate() {

@@ -24,9 +24,9 @@
           @click.stop="toggleCsvView"
         >{{ csvTextMode ? t('viewerUi.csvShowTable') : t('viewerUi.csvShowText') }}</button>
         <template v-if="isText && (!isCsv || csvTextMode)">
-          <button class="fpw-btn" :title="t('sharedUi.decreaseFontSize')" @click.stop="textFontSize = Math.max(10, textFontSize - 1)"><Icon name="action.subtract" :size="12" /></button>
+          <button class="fpw-btn" :title="t('sharedUi.decreaseFontSize')" @click.stop="changeTextFontSize(-1)"><Icon name="action.subtract" :size="12" /></button>
           <span class="fpw-font-size">{{ textFontSize }}</span>
-          <button class="fpw-btn" :title="t('sharedUi.increaseFontSize')" @click.stop="textFontSize = Math.min(24, textFontSize + 1)"><Icon name="action.add" :size="12" /></button>
+          <button class="fpw-btn" :title="t('sharedUi.increaseFontSize')" @click.stop="changeTextFontSize(1)"><Icon name="action.add" :size="12" /></button>
         </template>
         <button ref="infoBtnRef" class="fpw-btn" :class="{ active: showInfo }" :title="t('files.info')" @click.stop="openInfo">
           <Icon name="status.info" :size="13" />
@@ -173,6 +173,7 @@ import { useLiveStore } from '@/stores/live'
 import { registerEsc, registerArrowNav } from '@/composables/core/windowz'
 import { formatFileCreatedDate } from '@/utils/fileDate'
 import { accountBoundaryEpoch, getAccountBoundaryEpoch } from '@/utils/accountBoundary'
+import { readDocumentFontSize, saveDocumentFontSize } from '@/utils/documentFontSizePreference'
 
 // 类型见下
 const props = defineProps({ win: { type: Object as PropType<PreviewWindow>, required: true } })
@@ -239,7 +240,10 @@ const _unregArrowNav = registerArrowNav({
   next: () => { if (canNav.value) goNext() },
 })
 
-const textFontSize = ref(13)
+const textFontSize = ref(readDocumentFontSize())
+function changeTextFontSize(delta: number) {
+  textFontSize.value = saveDocumentFontSize(textFontSize.value + delta)
+}
 
 const EXT_COLORS: Record<string, string> = {
   JPG: '#4caf7d', JPEG: '#4caf7d', PNG: '#4caf7d', WEBP: '#4caf7d',

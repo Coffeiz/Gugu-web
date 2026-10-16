@@ -65,7 +65,7 @@
       :reset-zoom-label="t('viewerUi.resetZoom')"
       :zoom-in-label="t('viewerUi.zoomIn')"
       @zoom-out="changeSheetZoom(-10)"
-      @reset-zoom="sheetZoom = 100"
+      @reset-zoom="resetSheetZoom"
       @zoom-in="changeSheetZoom(10)"
     />
     <div class="office-container">
@@ -84,6 +84,7 @@ import { computed, nextTick, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { PptxViewer } from '@aiden0z/pptx-renderer'
 import { filesApi } from '@/services/api'
+import { readSpreadsheetZoom, saveSpreadsheetZoom } from '@/utils/spreadsheetZoomPreference'
 import ViewerToolbar from './ViewerToolbar.vue'
 
 const props = defineProps<{ blobUrl?: string; ext: string; fileId?: number; fileVersion?: number }>()
@@ -97,7 +98,7 @@ const containerRef = ref<HTMLDivElement | null>(null)
 const pptxContainerRef = ref<HTMLDivElement | null>(null)
 const sheetTabs = ref<string[]>([])
 const activeSheet = ref('')
-const sheetZoom = ref(100)
+const sheetZoom = ref(readSpreadsheetZoom())
 const notice = ref('')
 const DOCX_VIEW_MODE_KEY = 'gugu-docx-view-mode'
 type DocxViewMode = 'fit-width' | 'fit-page' | 'actual'
@@ -445,7 +446,11 @@ const isCsv = computed(() => props.ext.toLowerCase() === 'csv')
 const isSpreadsheet = computed(() => ['csv', 'xls', 'xlsx'].includes(props.ext.toLowerCase()))
 
 function changeSheetZoom(delta: number) {
-  sheetZoom.value = Math.max(25, Math.min(300, sheetZoom.value + delta))
+  sheetZoom.value = saveSpreadsheetZoom(sheetZoom.value + delta)
+}
+
+function resetSheetZoom() {
+  sheetZoom.value = saveSpreadsheetZoom(100)
 }
 
 async function renderXlsx(buffer: ArrayBuffer | null, container: HTMLElement) {
@@ -920,7 +925,6 @@ async function render() {
 
 // immediate watch 在挂载前触发时 containerRef 还是 null；挂载后再渲染一次。
 watch(() => [props.blobUrl, props.ext] as const, () => {
-  sheetZoom.value = 100
   void render()
 })
 onMounted(() => { void render() })
