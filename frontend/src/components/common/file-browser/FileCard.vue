@@ -39,8 +39,8 @@
  * 不再各画各的近似样式。
  *
  * 缩略图和名称/元信息文案两处差异较大（懒加载指令 vs 手动 blob 缓存、size+createdAt vs
- * project+size），走具名插槽让各调用方自己决定内容；选中/预选/拖拽/剪切等状态样式收成
- * props 由本组件统一画，不用调用方再用跨组件 scoped selector 接管内部 paint。
+ * project+size），走具名插槽让各调用方自己决定内容；选中/预选/剪切状态通过 props 传入，
+ * 卡片状态外观由共享 files.css 维护，调用方不再重复绘制。
  */
 import { ref, type PropType } from 'vue'
 import { fileIconColor, fileListIcon } from '@/utils/fileTypes'
@@ -116,8 +116,6 @@ const props = defineProps({
 }
 .fc-card.selected .fc-thumb-area::after { background: var(--file-card-selection-thumb-overlay); }
 .fc-card.pre-selected:not(.selected) .fc-thumb-area::after { background: var(--file-card-preselection-thumb-overlay); }
-.fc-card.cut { opacity: 0.45; }
-
 .fc-ext-badge {
   position: absolute; top: 10px; left: 10px; z-index: 2;
   font-size: 8px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase;
