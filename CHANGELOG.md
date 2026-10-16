@@ -7,6 +7,24 @@
 
 ## [Unreleased]
 
+### Improvements
+
+- Speed up large file copies by streaming data through storage backends.
+
+### Fixes
+
+- Hide email-change controls when system email is unavailable and refresh the capability when account settings open.
+- Show a loading state while an HTML preview finishes loading.
+
+### 改进
+
+- 优化大文件复制，按流处理存储数据，减少应用内存占用。
+
+### 修复
+
+- 系统邮件不可用时隐藏邮箱变更入口，并在打开账号设置时刷新可用状态。
+- HTML 预览加载完成前显示加载状态。
+
 ## [1.7.4] - 2026-10-16
 
 ### What's New
