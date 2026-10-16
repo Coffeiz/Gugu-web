@@ -10,20 +10,26 @@
 ### Improvements
 
 - Speed up large file copies by streaming data through storage backends.
+- Remember the selected calendar view and document or spreadsheet preview size between visits.
+- Show the selected choice on the completed Feishu interaction card without a separate tool-status message.
 
 ### Fixes
 
 - Hide email-change controls when system email is unavailable and refresh the capability when account settings open.
 - Show a loading state while an HTML preview finishes loading.
+- Keep the previous project-folder contents visible while refreshed directory data is loading.
 
 ### 改进
 
 - 优化大文件复制，按流处理存储数据，减少应用内存占用。
+- 记住用户上次选择的日历视图，以及文档字号和表格缩放比例。
+- 飞书交互完成后在原卡片显示已选择的选项，不再额外发送工具状态消息。
 
 ### 修复
 
 - 系统邮件不可用时隐藏邮箱变更入口，并在打开账号设置时刷新可用状态。
 - HTML 预览加载完成前显示加载状态。
+- 项目文件目录刷新时保留上次内容，避免加载期间文件区闪成空白。
 
 ## [1.7.4] - 2026-10-16
 
