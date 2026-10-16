@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import logging
 import os
 import shutil
@@ -7,7 +8,7 @@ import tempfile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import BinaryIO, Callable, TypeVar
 
 from app.core.errors import RetryableError
 from app.core.redaction import diag_log
@@ -17,6 +18,7 @@ _log = logging.getLogger("app.services.storage")
 # Rootless Shell workspace 会通过目录默认 ACL 给容器用户授权。新文件不能继续使用
 # mkstemp 的 0600 作为最终权限；显式使用共享文件权限，同时保留目录继承的 ACL。
 _LOCAL_NEW_FILE_MODE = 0o660
+_WriteResult = TypeVar("_WriteResult")
 
 
 def _inherit_storage_access(path: Path) -> None:
@@ -190,6 +192,12 @@ class StorageBackend(ABC):
         data = await self.get(src_key)
         await self.put(dst_key, data)
 
+    async def copy_with_fingerprint(self, src_key: str, dst_key: str) -> str:
+        """复制对象并返回内容 SHA-256，供本地文件同步 journal 使用。"""
+        data = await self.get(src_key)
+        await self.put(dst_key, data)
+        return hashlib.sha256(data).hexdigest()
+
     async def stat(self, key: str) -> "StorageObjectInfo | None":
         """对象元信息（size/mtime/checksum）；不存在→None。默认 exists+get（低效，迁移校验用；
         Local/OSS 各自覆盖成高效实现）。"""
@@ -238,7 +246,9 @@ class LocalStorageBackend(StorageBackend):
             shutil.copyfileobj(source, dest, length=self._STREAM_CHUNK)
         await asyncio.to_thread(self._atomic_write, self.root / key, key, _copy)
 
-    def _atomic_write(self, path: Path, key: str, write) -> None:
+    def _atomic_write(
+        self, path: Path, key: str, write: Callable[[BinaryIO], _WriteResult],
+    ) -> _WriteResult:
         """阻塞的原子写入：write(dest) 把内容写进临时流，最后原子替换目标。
         大文件写入在线程池执行（调用方 to_thread），不冻结事件循环。"""
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -260,7 +270,7 @@ class LocalStorageBackend(StorageBackend):
                 # 不会丢掉 ACL 条目。没有 ACL 的普通目录也至少保留共享读写权限。
                 os.fchmod(fd, _LOCAL_NEW_FILE_MODE)
             with os.fdopen(fd, "wb") as stream:
-                write(stream)
+                write_result = write(stream)
                 stream.flush()
                 os.fsync(stream.fileno())
             if existing_stat is not None:
@@ -298,6 +308,7 @@ class LocalStorageBackend(StorageBackend):
             except OSError:
                 # 文件替换已经完成；部分平台不支持目录 fsync，不影响写入结果。
                 pass
+            return write_result
         finally:
             if os.path.exists(temporary):
                 os.unlink(temporary)
@@ -473,6 +484,21 @@ class LocalStorageBackend(StorageBackend):
             _inherit_storage_access(dst)
         await asyncio.to_thread(_cp)
 
+    async def copy_with_fingerprint(self, src_key: str, dst_key: str) -> str:
+        source_path = self.root / src_key
+        digest = hashlib.sha256()
+
+        def _copy(destination) -> str:
+            with source_path.open("rb") as source:
+                while chunk := source.read(self._STREAM_CHUNK):
+                    destination.write(chunk)
+                    digest.update(chunk)
+            return digest.hexdigest()
+
+        return await asyncio.to_thread(
+            self._atomic_write, self.root / dst_key, dst_key, _copy,
+        )
+
     async def stat(self, key: str) -> StorageObjectInfo | None:
         def _st():
             p = self.root / key
@@ -575,6 +601,20 @@ class OSSStorageBackend(StorageBackend):
             close = getattr(result, "close", None)
             if close is not None:
                 await asyncio.to_thread(close)
+
+    async def copy(self, src_key: str, dst_key: str) -> None:
+        await _oss_retry(
+            "storage.oss.copy", "oss.copy_timeout", "文件复制失败，请稍后重试",
+            self.bucket.copy_object, self.bucket.bucket_name,
+            self.pfx + src_key, self.pfx + dst_key,
+        )
+
+    async def copy_with_fingerprint(self, src_key: str, dst_key: str) -> str:
+        digest = hashlib.sha256()
+        async for chunk in self.iter_chunks(src_key):
+            digest.update(chunk)
+        await self.copy(src_key, dst_key)
+        return digest.hexdigest()
 
     async def delete(self, key: str) -> None:
         # 幂等：删除不存在的 key，OSS 仍返回成功（不报错）——安全重试。

@@ -321,8 +321,6 @@ class FileOps:
             folder_msg="目标文件夹不存在，或不属于目标项目/个人空间",
             project_msg="目标项目不存在")
 
-        data = await self.storage.get(f.storage_key)
-
         if on_conflict == "overwrite" and overwrite_file_id is not None:
             existing = await get_owned(self.db, File, overwrite_file_id, user_id)
             if not existing or existing.deleted_at:
@@ -343,7 +341,7 @@ class FileOps:
                 operation="file_copy_overwrite", resource_type="file", resource_id=existing.id,
                 idempotency_key=f"file-copy-overwrite:{existing.id}:{next_version}",
             )
-            await self.storage.put(existing.storage_key, data, f.mime_type)
+            fingerprint = await self.storage.copy_with_fingerprint(f.storage_key, existing.storage_key)
             existing.size = f.size
             existing.size_bytes = f.size_bytes
             existing.mime_type = f.mime_type
@@ -355,7 +353,7 @@ class FileOps:
             await self.db.flush()
             await record_canonical_file_change(
                 self.db, user_id=user_id, storage_key=existing.storage_key,
-                observed_fingerprint=hashlib.sha256(data).hexdigest(),
+                observed_fingerprint=fingerprint,
             )
             return FileResult(existing, project, folder_name or None, was_overwrite=True)
 
@@ -385,9 +383,9 @@ class FileOps:
             operation="file_copy", resource_type="file", resource_id=new_file.id,
             idempotency_key=f"file-copy:{new_file.id}",
         )
-        await self.storage.put(new_key, data, f.mime_type)
+        fingerprint = await self.storage.copy_with_fingerprint(f.storage_key, new_key)
         await record_canonical_file_change(
             self.db, user_id=user_id, storage_key=new_file.storage_key,
-            observed_fingerprint=hashlib.sha256(data).hexdigest(),
+            observed_fingerprint=fingerprint,
         )
         return FileResult(new_file, project, folder_name or None)
