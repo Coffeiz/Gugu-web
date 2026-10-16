@@ -7,7 +7,15 @@
 
 ## [Unreleased]
 
-### Improvements
+## [1.7.5] - 2026-10-16
+
+### What's New
+
+#### New Features
+
+- None for this release.
+
+#### Improvements
 
 - Keep cut files and folders visibly consistent between the file library and project editor, with shared card action styling.
 - Use compact inline rename and todo fields in the project editor.
@@ -24,7 +32,21 @@
 - Show a loading state while an HTML preview finishes loading.
 - Keep the previous project-folder contents visible while refreshed directory data is loading.
 
-### 改进
+### Contributors
+
+- Thank you to [@Coffeiz](https://github.com/Coffeiz) for PR #103.
+
+### Feedback & Issue Reporters
+
+- None for this release.
+
+### 更新内容
+
+#### 新功能
+
+- 本次无新增功能。
+
+#### 改进
 
 - 统一文件库与项目编辑器中文件和文件夹的剪切状态及卡片操作样式。
 - 调整项目编辑器内联重命名和待办输入框高度，使其更紧凑。
@@ -40,6 +62,14 @@
 - 系统邮件不可用时隐藏邮箱变更入口，并在打开账号设置时刷新可用状态。
 - HTML 预览加载完成前显示加载状态。
 - 项目文件目录刷新时保留上次内容，避免加载期间文件区闪成空白。
+
+#### 贡献者
+
+- 感谢 [@Coffeiz](https://github.com/Coffeiz) 提交 PR #103。
+
+#### 反馈与问题报告
+
+- 暂无。
 
 ## [1.7.4] - 2026-10-16
 
