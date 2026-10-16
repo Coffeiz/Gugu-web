@@ -79,8 +79,8 @@ const emit = defineEmits<{
 }
 .todo-check.checked { background: var(--status-success); border-color: var(--status-success); color: var(--content-on-accent); }
 .todo-input {
-  flex: 1; min-width: 0; padding: 0 5px; box-sizing: border-box;
-  font: 12px var(--font-sans); color: var(--input-fg); background: transparent;
+  flex: 1; min-width: 0; height: var(--input-control-height-compact); padding: 0 5px; box-sizing: border-box;
+  font: 12px var(--font-sans); line-height: var(--line-height-ui); color: var(--input-fg); background: transparent;
   border: 1.5px solid transparent; border-radius: var(--radius-xs); outline: none;
   transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard);
 }
