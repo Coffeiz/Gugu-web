@@ -89,6 +89,7 @@ describe('账号安全入口', () => {
     mocks.preferences.emailChangeEnabled = true
     mocks.preferences.loaded = true
     const root = mountPane()
+    await nextTick()
 
     expect(mocks.preferences.fetch).not.toHaveBeenCalled()
     expect(root.querySelector('.email-change-section')).not.toBeNull()
@@ -130,6 +131,7 @@ describe('账号安全入口', () => {
     mocks.preferences.loaded = true
     mocks.requestEmailChange.mockRejectedValueOnce(new Error('邮箱地址不可用'))
     const root = mountPane()
+    await nextTick()
 
     const email = root.querySelector('input[type="email"]') as HTMLInputElement
     const password = root.querySelector('.email-change-section input[type="password"]') as HTMLInputElement
