@@ -178,7 +178,11 @@ async def _consume_card_action(owner: str, prompt_id: int, token: str,
 def _handle_card_action(data, owner: str, services: _EventServices, bot_id: str = ""):
     """处理飞书 card.action.trigger；在 SDK 当前 event loop 调度消费任务。"""
     from lark_oapi.event.callback.model.p2_card_action_trigger import P2CardActionTriggerResponse
-    from agent.interactions.feishu import decode_action_value, build_completed_card_payload
+    from agent.interactions.feishu import (
+        action_presentation,
+        build_completed_card_payload,
+        decode_action_value,
+    )
 
     event = getattr(data, "event", None)
     operator = getattr(event, "operator", None)
@@ -188,6 +192,7 @@ def _handle_card_action(data, owner: str, services: _EventServices, bot_id: str 
     completed_card = None
     try:
         prompt_id, token = decode_action_value(value)
+        option_id, option_label = action_presentation(value)
         header = getattr(data, "header", None)
         event_id = getattr(header, "event_id", None)
         coroutine = _consume_card_action(
@@ -203,8 +208,17 @@ def _handle_card_action(data, owner: str, services: _EventServices, bot_id: str 
                 diag_log("agent.gateway.feishu.interaction", exc)
 
         future.add_done_callback(_report_card_action_failure)
-        message = "已收到操作；如已开启凭据输入，请在当前私聊逐项发送字段值，回复“取消”可终止。"
-        completed_card = build_completed_card_payload(message)
+        message = "已收到选择。"
+        if option_id == "input_credentials":
+            completed_message = "已选择凭据输入；请在当前私聊逐项发送字段值，回复“取消”可终止。"
+        elif option_id == "cancel":
+            completed_message = "已取消。"
+        elif option_label:
+            completed_message = f"✅ 已选择「{option_label}」"
+        else:
+            # 兼容部署前已发出的旧交互卡片，它们没有携带展示用选项文本。
+            completed_message = "✅ 已收到选择，咕咕正在继续处理。"
+        completed_card = build_completed_card_payload(completed_message)
     except (LookupError, ValueError):
         message = "这个选项已过期或已经处理过了。"
     except Exception as exc:

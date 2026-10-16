@@ -75,6 +75,10 @@ async def display_tool_event(
 ) -> None:
     """保持 Web 镜像独立，再按用户偏好选择 IM 工具状态呈现。"""
     await publish_web_event(event)
+    # 飞书 ask_user 已由交互卡片承载等待与完成状态；再把 tool_done
+    # 当普通工具消息发出会产生“暂停/完成”两条额外消息。Web 事件仍照常镜像。
+    if payload.get("platform") == "feishu" and event.get("name") == "ask_user":
+        return
     if not show_tool_interactions:
         return
     if feishu_tool_summary is not None and await feishu_tool_summary.handle_tool_event(event):

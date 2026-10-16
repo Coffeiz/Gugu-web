@@ -28,7 +28,12 @@ def test_feishu_card_contains_only_action_tokens():
         "options": [{"id": "a", "label": "方案 A", "token": "secret-token"}],
     })
     action = card["elements"][1]["actions"][0]
-    assert action["value"] == {"prompt_id": 7, "token": "secret-token"}
+    assert action["value"] == {
+        "prompt_id": 7,
+        "token": "secret-token",
+        "option_id": "a",
+        "label": "方案 A",
+    }
     assert "session_id" not in action["value"]
 
 
