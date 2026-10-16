@@ -12,8 +12,8 @@
     </div>
   </div>
 
-  <div v-if="prefsStore.emailChangeEnabled" class="pm-sep email-change-divider" />
-  <div v-if="prefsStore.emailChangeEnabled" class="pm-section email-change-section">
+  <div v-if="emailCapabilityReady && prefsStore.emailChangeEnabled" class="pm-sep email-change-divider" />
+  <div v-if="emailCapabilityReady && prefsStore.emailChangeEnabled" class="pm-section email-change-section">
     <div class="pm-section-label">{{ t('emailChangeUi.title') }}</div>
     <div class="pm-field"><label>{{ t('emailChangeUi.newEmail') }}</label><input v-model="newEmail" type="email" class="form-input" :placeholder="t('emailChangeUi.newEmailPlaceholder')" autocomplete="email" :disabled="emailSaving" /></div>
     <div class="pm-field"><label>{{ t('emailChangeUi.currentPassword') }}</label><input v-model="emailCurrentPwd" type="password" class="form-input" :placeholder="t('emailChangeUi.currentPasswordPlaceholder')" autocomplete="current-password" :disabled="emailSaving" /></div>
@@ -32,7 +32,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onActivated, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
 import { usePreferencesStore } from '@/stores/preferences'
@@ -53,10 +53,34 @@ const emailSaving = ref(false)
 const emailPending = ref(false)
 const emailMsg = ref('')
 const emailMsgType = ref('ok')
+const emailCapabilityReady = ref(false)
+let emailCapabilityRefresh: Promise<void> | null = null
 
-onMounted(() => {
-  if (!prefsStore.loaded) prefsStore.fetch()
-})
+function refreshEmailCapability() {
+  if (emailCapabilityRefresh) return emailCapabilityRefresh
+  emailCapabilityReady.value = false
+  if (prefsStore.loaded && typeof prefsStore.refreshEmailChangeEnabled !== 'function') {
+    emailCapabilityReady.value = true
+    return Promise.resolve()
+  }
+  emailCapabilityRefresh = (async () => {
+    try {
+      if (!prefsStore.loaded) {
+        prefsStore.emailChangeEnabled = false
+        await prefsStore.fetch()
+      } else if (typeof prefsStore.refreshEmailChangeEnabled === 'function') {
+        await prefsStore.refreshEmailChangeEnabled()
+      }
+    } finally {
+      emailCapabilityReady.value = true
+      emailCapabilityRefresh = null
+    }
+  })()
+  return emailCapabilityRefresh
+}
+
+onMounted(() => { void refreshEmailCapability() })
+onActivated(() => { void refreshEmailCapability() })
 
 async function save() {
   msg.value = ''

@@ -82,6 +82,16 @@ export const usePreferencesStore = defineStore('preferences', () => {
     } catch {}
   }
 
+  async function refreshEmailChangeEnabled() {
+    try {
+      const data = await preferencesApi.get()
+      emailChangeEnabled.value = data.emailChangeEnabled ?? false
+    } catch {
+      // 无法确认系统邮件能力时按不可用处理，避免展示无法提交的邮箱变更入口。
+      emailChangeEnabled.value = false
+    }
+  }
+
   async function saveLocale(value: SupportedLocale) {
     const previous = locale.value
     const rollback = () => {
@@ -198,6 +208,6 @@ export const usePreferencesStore = defineStore('preferences', () => {
 
   return {
     lastStages, stageTemplates, replyTone, replyLength, pmStagesExpanded, calendarWeekStart, calendarDoneMode, defaultView, shellEnabled, shellSystemEnabled, shellDangerousEnabled, automaticModeEnabled, decisionGuardEnabled, showToolInteractions, showIntermediateReplies, toolInjectionMode, personalityPreference, personalityPreferenceEnabled, personalityPreferenceAvailable, personalityPreferenceRevision, emailChangeEnabled, locale,
-    loaded, fetch, saveLocale, saveLastStages, saveTemplates, saveStyle, savePmStagesExpanded, saveCalendarWeekStart, saveCalendarDoneMode, saveDefaultView, saveShellEnabled, saveShellSystemEnabled, saveShellDangerousEnabled, saveAutomaticModeEnabled, saveDecisionGuardEnabled, saveShowToolInteractions, saveShowIntermediateReplies, saveToolInjectionMode, savePersonalityPreference, uploadPersonalityFile,
+    loaded, fetch, refreshEmailChangeEnabled, saveLocale, saveLastStages, saveTemplates, saveStyle, savePmStagesExpanded, saveCalendarWeekStart, saveCalendarDoneMode, saveDefaultView, saveShellEnabled, saveShellSystemEnabled, saveShellDangerousEnabled, saveAutomaticModeEnabled, saveDecisionGuardEnabled, saveShowToolInteractions, saveShowIntermediateReplies, saveToolInjectionMode, savePersonalityPreference, uploadPersonalityFile,
   }
 })
