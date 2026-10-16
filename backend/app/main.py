@@ -368,12 +368,14 @@ async def _security_headers(request: Request, call_next):
         reset_request_context(context_token)
 
 
-def require_admin(request: Request, credentials: HTTPAuthorizationCredentials | None = Depends(bearer)):
+async def require_admin(request: Request, credentials: HTTPAuthorizationCredentials | None = Depends(bearer)):
     try:
         token = request_auth_token(request, credentials, access_cookie=ADMIN_ACCESS_COOKIE, csrf_cookie=ADMIN_CSRF_COOKIE)
         payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
         if payload.get("role") not in ("superadmin", "admin"):
             raise HTTPException(status_code=403, detail="权限不足")
+        from app.api.v1.admin_auth import ensure_admin_token_current
+        await ensure_admin_token_current(payload)
         # 审计归因：把真实管理员用户名落到 request.state，供 write_log 读取（否则多管理员时恒记字面量 "admin"）
         request.state.admin_username = payload.get("sub") or "admin"
         return payload

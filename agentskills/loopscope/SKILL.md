@@ -13,7 +13,7 @@ LoopScope 是 Gugu 的开发、回归和运行排障工具，不是普通业务�
 ## 凭据边界
 
 - Gugu 登录 Token、Cookie、Provider API Key、工具认证信息和数据库密码绝不能进入 trace payload、LoopScope SQLite、日志或 URL。
-- LoopScope 前端通过 Gugu `/dev` 的 `postMessage` bootstrap 获取登录 Token，Token 只保存在当前浏览器 `sessionStorage`，请求 Gugu API 时放在 `Authorization: Bearer` 请求头中。
+- LoopScope 前端通过 Gugu `/dev` 的 `postMessage` bootstrap 获取 API 地址，不接收或保存登录 Token；请求 Gugu API 时使用同站 HttpOnly Cookie。
 - Gugu bridge 上报 trace 到 Collector 不需要把 Gugu 登录 Token 写入每条 Run。
 - Collector 默认绑定 `127.0.0.1`。如果部署到非本机网络，必须在部署层增加独立认证、来源限制和网络访问控制。
 

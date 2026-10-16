@@ -134,6 +134,13 @@ export default defineConfig({
     // 通过自定义域名/内网穿透访问 dev server 时，需把域名加入白名单，否则 Vite 拦截 Host 头
     allowedHosts: ['myhome.coffeiz.space'],
     proxy: {
+      // Cookie 鉴权的终端 WebSocket 会校验 Origin 与 Host 同源。
+      // 单独代理终端路径并保留浏览器 Host，避免 changeOrigin 改成 backend:8000 后握手被拒绝。
+      '^/api/v1/terminals/': {
+        target: process.env.VITE_API_PROXY_TARGET || 'http://localhost:8000',
+        changeOrigin: false,
+        ws: true,
+      },
       // 本地非容器开发默认代理到 localhost:8000；docker compose 里前后端是两个独立容器，
       // "localhost" 指向前端容器自己，不是后端，因此 docker-compose.yml 给 frontend 服务
       // 传了 VITE_API_PROXY_TARGET=http://backend:8000（Docker 内网 DNS 按服务名解析）。

@@ -19,7 +19,7 @@
 
       <!-- 主体：单列 -->
       <div class="modal-body">
-        <!-- 客户 & 项目周期 同行 -->
+        <!-- 联系人 & 项目周期 同行 -->
         <div class="section-row">
           <div class="field">
             <label>{{ t('projects.client') }}</label>

@@ -79,6 +79,10 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # 保持官方签名版本与固定源码提交，只更新已修复的 Go 依赖并使用修复版工具链。
 FROM golang:1.26.9-trixie AS cosign-build
 
+ARG HTTPS_PROXY
+ENV HTTPS_PROXY=${HTTPS_PROXY} \
+    https_proxy=${HTTPS_PROXY}
+
 WORKDIR /src
 
 ADD --checksum=sha256:3a718446bac51466efff6853639e1ca108b456ecbf07cd92938f548715d22d6b \
@@ -224,7 +228,6 @@ COPY backend/scripts/runtime/prepare_rootless_storage.py /usr/local/bin/prepare_
 COPY backend/scripts/runtime/ensure_embedded_pg_hba.py /usr/local/bin/ensure_embedded_pg_hba.py
 COPY backend/scripts/runtime/wait_embedded_postgres.sh /usr/local/bin/gugu-wait-embedded-postgres.sh
 COPY backend/scripts/runtime/wait_embedded_redis.sh /usr/local/bin/gugu-wait-embedded-redis.sh
-COPY backend/scripts/runtime/offline_migration.sh /usr/local/bin/gugu-offline-migration.sh
 RUN mkdir -p /opt/gugu \
     && cp /opt/gugu/image-app/updater/app_bundle_runtime.py /opt/gugu/app_bundle_runtime.py \
     && chmod 0555 /opt/gugu/app_bundle_runtime.py

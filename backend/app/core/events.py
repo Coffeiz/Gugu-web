@@ -1,6 +1,6 @@
 """用户级实时事件总线：Redis pub/sub → SSE。
 
-咕咕通过工具改了数据（项目/日历/文件/客户），或 IM（飞书/QQ）来了新消息后，
+咕咕通过工具改了数据（项目/日历/文件/联系人），或 IM（飞书/QQ）来了新消息后，
 往该用户的频道 publish 一条「资源变了」事件；网页端开一条 SSE 订阅该频道，
 收到就刷新对应的 store。这样 **web 聊天和 IM 触发的改动都能实时反映到网页**。
 
@@ -49,7 +49,7 @@ RESOURCE_BY_TOOL: dict[str, str] = {
     "delete_file": "files", "rename_folder": "files", "delete_folder": "files",
     "save_uploaded_file": "files",
     "compress_files": "files", "extract_files": "files",
-    # 客户
+    # 联系人
     "create_client": "clients", "update_client": "clients", "delete_client": "clients",
     # 定时任务（咕咕建/改/删 → 网页定时面板实时刷）
     "create_scheduled_task": "scheduled_tasks", "update_scheduled_task": "scheduled_tasks",

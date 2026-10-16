@@ -45,7 +45,6 @@ function openExternal(tool: DevToolEntry) {
   const target = window.open(tool.href, '_blank')
   if (!target) return
   const expectedOrigin = new URL(tool.href).origin
-  const token = localStorage.getItem('user_token') ?? ''
   let timer: number | undefined
 
   const onMessage = (event: MessageEvent) => {
@@ -54,7 +53,7 @@ function openExternal(tool: DevToolEntry) {
     target.postMessage({
       type: 'loopscope:gugu-bootstrap',
       apiBase: absoluteApiBase(),
-      token,
+      cookieAuth: true,
     }, expectedOrigin)
     window.removeEventListener('message', onMessage)
     if (timer !== undefined) window.clearInterval(timer)

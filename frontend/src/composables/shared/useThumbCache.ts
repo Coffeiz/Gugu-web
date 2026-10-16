@@ -36,7 +36,6 @@ export function getThumb(id: number | string, size = 'card', revision?: ThumbRev
   const existing = pending.get(key)
   if (existing) return existing
 
-  const token = localStorage.getItem('user_token') ?? ''
   const p = thumbLimit(() => {
     // ⚠️ 必须带超时：fetch 默认永不超时，卡住的请求会一直占着并发槽（pLimit 只 6 个）→
     //   批量改名/上传时一波请求里只要有几个卡住，后面的缩略图就永远排不上 → 永久没缩略图。
@@ -45,7 +44,7 @@ export function getThumb(id: number | string, size = 'card', revision?: ThumbRev
     const timer = setTimeout(() => ctrl.abort(), 15000)
     const revisionQuery = revision == null ? '' : `&revision=${encodeURIComponent(String(revision))}`
     return fetch(`${BASE}/files/${id}/thumb?size=${size}${revisionQuery}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      credentials: 'include',
       cache: 'no-cache',
       signal: ctrl.signal,
     })
@@ -79,12 +78,11 @@ export function getThumbUrl(key: string, url: string) {
   const existing = pending.get(key)
   if (existing) return existing
 
-  const token = localStorage.getItem('user_token') ?? ''
   const p = thumbLimit(() => {
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), 15000)   // 同 getThumb：卡住的请求别永久占并发槽
     return fetch(url, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      credentials: 'include',
       cache: 'no-cache',
       signal: ctrl.signal,
     })

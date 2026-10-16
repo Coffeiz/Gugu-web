@@ -71,7 +71,7 @@ from app.schemas import (
 router = APIRouter(prefix="/mind", tags=["mind"])
 
 # `[[` 补全在这几类里找：项目 / 文件 / 日历活动 走公共站内搜索（run_global_search）；
-# 对话（客户不作为便签引用对象）单独查——@ 一段对话锚定的是具体某条消息（"准确的聊天
+# 对话（联系人不作为便签引用对象）单独查——@ 一段对话锚定的是具体某条消息（"准确的聊天
 # 位置"），不是整个会话，run_global_search 那边按 session 去重的逻辑在这里不适用，
 # 得自己按消息为粒度查，见 ref_suggest 下半段。
 _REF_TYPES = ["project", "file", "folder", "event", "canvas_note", "skill", "mcp", "scheduled_task"]

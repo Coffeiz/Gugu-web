@@ -161,7 +161,7 @@ def _record_builder_sources(context_builder: Any, original_build: Any, bound: in
                 prog = f"{done_cnt}/{len(stages)}阶段" if stages else "无阶段"
                 lines.append(
                     f"- [id={p.id}] [{status_zh.get(p.status, p.status)}] {p.name}"
-                    f"（{prog}，{deadline}，客户：{getattr(p, 'client', None) or '无'}）"
+                    f"（{prog}，{deadline}，联系人：{getattr(p, 'client', None) or '无'}）"
                 )
             block = "\n".join(lines) if lines else "暂无项目"
             record_context_source(

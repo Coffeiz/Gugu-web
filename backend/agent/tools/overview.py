@@ -1,6 +1,6 @@
 """聚合查询技能：get_upcoming / get_dashboard_stats。
 
-跨项目 + 日历 + 文件 + 客户的只读聚合，让咕咕能回答「最近要忙什么」「手头
+跨项目 + 日历 + 文件 + 联系人的只读聚合，让咕咕能回答「最近要忙什么」「手头
 多少项目」这类问题，也是未来主动触达的基础。日期字段为 YYYY-MM-DD 字符串，
 可直接字典序比较。
 """
@@ -61,8 +61,8 @@ class OverviewSkill(BaseSkill):
         ),
         Tool(
             name="get_dashboard_stats", label="总览统计",
-            description_short='汇总项目、事件、文件和客户数量；无需参数',
-            description="返回项目（按状态）、近期事件、文件、客户的数量统计。用于回答「我手头有多少项目」这类总览问题。",
+            description_short='汇总项目、事件、文件和联系人数量；无需参数',
+            description="返回项目（按状态）、近期事件、文件、联系人的数量统计。用于回答「我手头有多少项目」这类总览问题。",
             input_schema={"type": "object", "properties": {}},
             handler=_get_dashboard_stats,
             parallel_safe=True,

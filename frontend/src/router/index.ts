@@ -205,26 +205,14 @@ const router = createRouter({
 })
 
 router.beforeEach(async (to) => {
-  const userToken = localStorage.getItem('user_token')
-
-  if (to.meta.requiresAuth && !userToken) {
-    return { path: '/login', query: { redirect: to.fullPath } }
-  }
-
-  if (to.meta.authPublic && userToken) {
+  if (to.meta.requiresAuth || to.meta.authPublic) {
     const authStore = useAuthStore()
-    if (!authStore.user) await authStore.fetchMe()
-    if (authStore.isLoggedIn && authStore.user) return { path: '/projects' }
-  }
-
-  if (to.meta.requiresAuth && userToken) {
-    const authStore = useAuthStore()
-    if (!authStore.user) {
-      await authStore.fetchMe()
-      if (!authStore.isLoggedIn) {
-        return { path: '/login', query: { redirect: to.fullPath } }
-      }
+    const valid = authStore.user ? true : await authStore.fetchMe()
+    if (to.meta.authPublic && valid === true) return { path: '/projects' }
+    if (to.meta.requiresAuth && valid === false) {
+      return { path: '/login', query: { redirect: to.fullPath } }
     }
+    if (to.meta.requiresAuth && valid === null) return false
   }
 })
 

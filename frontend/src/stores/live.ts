@@ -2,14 +2,14 @@
  * 实时事件 store：开一条 SSE 订阅 FastAPI `/api/v1/live/stream`，
  * 收到「资源变了」就递增对应 rev 计数，各视图/store watch 自己的 rev 重新拉数据。
  *
- * 这样咕咕在 web 聊天或 IM（飞书/QQ）里改了项目/日历/文件/客户、或 IM 来了新消息，
+ * 这样咕咕在 web 聊天或 IM（飞书/QQ）里改了项目/日历/文件/联系人、或 IM 来了新消息，
  * 网页都能实时刷新，无需手动刷新页面。
  *
  * 用 fetch streaming（非 EventSource）以便带 Authorization 头；断线自动重连（指数退避）。
  */
 import { defineStore } from 'pinia'
 import { reactive, ref } from 'vue'
-import { getToken } from '@/services/api'
+import { getCookieValue } from '@/services/api'
 import { useUiStore } from '@/stores/ui'
 import {
   isAgentRunChangedEvent,
@@ -90,12 +90,12 @@ export const useLiveStore = defineStore('live', () => {
 
   async function _loop() {
     while (running) {
-      const token = getToken()
-      if (!token) { await _sleep(1000); continue }
+      const sessionKey = getCookieValue('gugu_user_csrf_token')
+      if (!sessionKey) { await _sleep(1000); continue }
       abort = new AbortController()
       try {
         const res = await fetch(LIVE_URL, {
-          headers: { Authorization: `Bearer ${token}` },
+          credentials: 'include',
           signal: abort.signal,
         })
         if (isUnauthorizedResponse(res)) {

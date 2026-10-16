@@ -4,6 +4,7 @@ import hljs from 'highlight.js'
 import { i18n } from '@/i18n'
 import { MIND_REF_TYPE_ICON_PATH } from '@/composables/mind/useMindEditor'
 import type { ChatReference } from './chatTypes'
+import { sanitizeChatHtml } from '@/utils/markdown'
 
 // Markdown 渲染器输出的是 HTML 字符串，不能直接挂载 Vue 图标组件；这里复用
 // Remix Icon 的 path 数据，保持对象卡片和应用内 Icon 的视觉语义一致。
@@ -158,6 +159,13 @@ function prepareMarkdown(text: string) {
 }
 
 export function renderMd(text: string) { return text ? marked.parse(prepareMarkdown(text)) as string : '' }
+
+/** 从聊天专用 Markdown 中提取复制文本；HTML 解析前必须经过聊天白名单净化。 */
+export function markdownToSafePlainText(html: string): string {
+  const tmp = document.createElement('div')
+  tmp.innerHTML = sanitizeChatHtml(html)
+  return tmp.innerText || tmp.textContent || ''
+}
 
 function renderChatReference(reference: ChatReference, safeLabel: string) {
   const iconPath = MIND_REF_TYPE_ICON_PATH[reference.type] ?? ''

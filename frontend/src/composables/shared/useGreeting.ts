@@ -3,7 +3,7 @@
 // 由 GuguChat onMounted 据 SESSION_KEY 决定——刷新停在老会话时不生成（问候那时根本不显示）。
 // 打开对话框时以打字机动画显示；生成没好/失败 → 从兜底池随机取一条（兜底同样走打字机）。文案不自我介绍、不报菜单。
 import { ref } from 'vue'
-import { agentApi, getToken } from '@/services/api'
+import { agentApi, getCookieValue } from '@/services/api'
 import { i18n } from '@/i18n'
 
 function pickFallback() {
@@ -31,15 +31,15 @@ export function clearGreeting() {
 
 // 挂载时后台预取一次（fire-and-forget，不阻塞）
 export async function prefetchGreeting() {
-  const token = getToken()
-  if (!token) {
+  const sessionKey = getCookieValue('gugu_user_csrf_token')
+  if (!sessionKey) {
     clearGreeting()
     return
   }
-  if (greetingOwnerToken !== token) {
+  if (greetingOwnerToken !== sessionKey) {
     greeting.value = ''
     greetingEnabled.value = true
-    greetingOwnerToken = token
+    greetingOwnerToken = sessionKey
     greetingRequestVersion += 1
     greetingLoaded = false
   }
@@ -49,7 +49,7 @@ export async function prefetchGreeting() {
   const currentRequest = greetingRequest = (async () => {
     try {
       const response = await agentApi.greeting()
-      if (getToken() !== token || greetingRequestVersion !== requestVersion) return
+      if (getCookieValue('gugu_user_csrf_token') !== sessionKey || greetingRequestVersion !== requestVersion) return
       greetingEnabled.value = response.enabled !== false
       greetingLoaded = true
       if (!greetingEnabled.value) {
@@ -60,7 +60,7 @@ export async function prefetchGreeting() {
       if (t) greeting.value = t
     } catch {
       // 后端不可用时保留静态兜底，但不覆盖服务端明确下发的关闭状态。
-      if (getToken() === token && greetingRequestVersion === requestVersion) {
+      if (getCookieValue('gugu_user_csrf_token') === sessionKey && greetingRequestVersion === requestVersion) {
         greetingEnabled.value = true
         greetingLoaded = true
       }

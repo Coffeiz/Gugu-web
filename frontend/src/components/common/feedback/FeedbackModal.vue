@@ -57,19 +57,20 @@ import CloseButton from '@/components/common/overlays/CloseButton.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import { useI18n } from 'vue-i18n'
 import { isUnauthorizedResponse } from '@/services/authSession'
+import { getCsrfHeaders } from '@/services/api'
 
 const props = defineProps({ show: Boolean })
 const emit = defineEmits(['close'])
 const { t } = useI18n()
 
 async function apiFeedback(category: string, content: string) {
-  const token = localStorage.getItem('user_token')
   const res = await fetch('/api/v1/feedback', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...getCsrfHeaders(),
     },
+    credentials: 'include',
     body: JSON.stringify({ category, content }),
   })
   if (isUnauthorizedResponse(res)) return

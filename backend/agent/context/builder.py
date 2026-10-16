@@ -119,7 +119,7 @@ def build_split(prompt_name: str, user_name: str, projects: list, events: list,
             file_overview = project_context["files"]
             proj_lines.append(
                 f"- [id={p.id}] [{_STATUS_ZH.get(p.status, p.status)}] {p.name}"
-                f"（{prog}，{deadline}，客户：{p.client or '无'}，根层文件夹：{roots}）"
+                f"（{prog}，{deadline}，联系人：{p.client or '无'}，根层文件夹：{roots}）"
             )
             proj_lines.append(
                 f"  文件概览：共 {file_overview['total_file_count']} 个文件，"

@@ -864,21 +864,21 @@ const filePanelContext = {
 
 /* 信息区版面由 info-expanded 驱动，与列宽同时切换。
    版面1：竖排，每行之间横向分割线（沿用 .col-divider）。
-   版面2：2×2 网格，十字分割线——客户|周期、看板|颜色 竖线，上下两行之间横线（用 section 的 border 画）*/
+   版面2：2×2 网格，十字分割线——联系人|周期、看板|颜色 竖线，上下两行之间横线（用 section 的 border 画）*/
 .info-block { display: flex; flex-direction: column; }
 .modal.info-expanded .info-block {
   display: grid; grid-template-columns: 1fr 1fr; gap: 0; align-items: stretch;
 }
 .modal.info-expanded .info-block > .col-divider { display: none; }
 .modal.info-expanded .info-block > .section { padding: 11px 16px; position: relative; min-height: 56px; }
-/* 3 区块：客户 | 周期 同一行，颜色独占整行 */
+/* 3 区块：联系人 | 周期 同一行，颜色独占整行 */
 .modal.info-expanded .info-block > .section:nth-of-type(3) { grid-column: 1 / -1; }
-/* 横线：客户/周期 与 颜色 之间，整条独立 */
+/* 横线：联系人/周期 与 颜色 之间，整条独立 */
 .modal.info-expanded .info-block > .section:nth-of-type(1),
 .modal.info-expanded .info-block > .section:nth-of-type(2) {
   border-bottom: 1px solid rgba(0,0,0,0.07);
 }
-/* 竖线：仅 客户|周期 一条独立短线——固定 28px、居中，与横线不相交 */
+/* 竖线：仅 联系人|周期 一条独立短线——固定 28px、居中，与横线不相交 */
 .modal.info-expanded .info-block > .section:nth-of-type(1)::after {
   content: ''; position: absolute; right: 0; top: 50%; transform: translateY(-50%);
   width: 1px; height: 28px; background: rgba(0,0,0,0.07);

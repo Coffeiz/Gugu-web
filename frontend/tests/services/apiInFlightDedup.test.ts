@@ -14,12 +14,13 @@ function jsonResponse(value: unknown): Response {
 
 afterEach(() => {
   localStorage.clear()
+  document.cookie = 'gugu_user_csrf_token=; Max-Age=0; path=/'
   vi.unstubAllGlobals()
 })
 
 describe('API 并发 GET 合并', () => {
   it('A/B 对比：两个页面同时读取项目列表时只保留一条网络请求', async () => {
-    localStorage.setItem('user_token', 'synthetic-ab-token')
+    document.cookie = 'gugu_user_csrf_token=synthetic-ab-session; path=/'
     const payload = [{ id: 7, name: '合成项目' }]
     const baselineFetch = vi.fn(async () => jsonResponse(payload))
     vi.stubGlobal('fetch', baselineFetch)
@@ -42,7 +43,7 @@ describe('API 并发 GET 合并', () => {
   })
 
   it('同一 token 和路径的并发读取只发一个请求，结果互不共享，完成后刷新会重新请求', async () => {
-    localStorage.setItem('user_token', 'synthetic-user-token')
+    document.cookie = 'gugu_user_csrf_token=synthetic-user-session; path=/'
     const response = deferred<Response>()
     const fetchMock = vi.fn(() => response.promise)
     vi.stubGlobal('fetch', fetchMock)
@@ -61,7 +62,7 @@ describe('API 并发 GET 合并', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
-  it('不同 token 或不同查询参数的读取不会合并', async () => {
+  it('不同 Cookie 会话或不同查询参数的读取不会合并', async () => {
     const responses = [deferred<Response>(), deferred<Response>(), deferred<Response>()]
     const fetchMock = vi.fn()
       .mockImplementationOnce(() => responses[0].promise)
@@ -69,9 +70,9 @@ describe('API 并发 GET 合并', () => {
       .mockImplementationOnce(() => responses[2].promise)
     vi.stubGlobal('fetch', fetchMock)
 
-    localStorage.setItem('user_token', 'synthetic-user-a')
+    document.cookie = 'gugu_user_csrf_token=synthetic-session-a; path=/'
     const userA = projectsApi.list()
-    localStorage.setItem('user_token', 'synthetic-user-b')
+    document.cookie = 'gugu_user_csrf_token=synthetic-session-b; path=/'
     const userB = projectsApi.list()
     const archived = projectsApi.list(true)
     expect(fetchMock).toHaveBeenCalledTimes(3)

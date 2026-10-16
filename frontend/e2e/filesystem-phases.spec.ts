@@ -15,8 +15,8 @@ async function cleanupFixtures(page: Page) {
   fixtureProjects.clear()
   if (!names.length && !folderNames.length && !projectIds.length) return
   await page.evaluate(async ({ names, folderNames, projectIds }) => {
-    const token = localStorage.getItem('user_token')
-    const headers = token ? { Authorization: `Bearer ${token}` } : {}
+    const csrfToken = decodeURIComponent(document.cookie.split('; ').find(item => item.startsWith('gugu_user_csrf_token='))?.split('=').slice(1).join('=') ?? '')
+    const headers = { 'X-CSRF-Token': csrfToken }
     if (names.length) {
       const files = await fetch('/api/v1/files/all', { headers }).then(response => response.ok ? response.json() : [])
       for (const file of files.filter((item: { displayName?: string }) => names.includes(item.displayName))) {
@@ -83,10 +83,10 @@ async function uploadFixtureFile(page: Page) {
 async function createProjectFixture(page: Page) {
   const name = `e2e-phase-project-${Date.now()}-${Math.random().toString(16).slice(2)}`
   const id = await page.evaluate(async projectName => {
-    const token = localStorage.getItem('user_token')
+    const csrfToken = decodeURIComponent(document.cookie.split('; ').find(item => item.startsWith('gugu_user_csrf_token='))?.split('=').slice(1).join('=') ?? '')
     const response = await fetch('/api/v1/projects', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
       body: JSON.stringify({ name: projectName }),
     })
     if (!response.ok) throw new Error(`创建 E2E 项目失败：${response.status}`)

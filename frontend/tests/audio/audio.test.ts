@@ -10,7 +10,6 @@ vi.mock('@/services/api', () => ({
     all: vi.fn(async () => []),
     getStreamUrl: vi.fn(async (id: number) => ({ url: `/audio/${id}` })),
   },
-  getToken: vi.fn(() => null),
 }))
 
 vi.mock('@/utils/accountBoundary', () => ({ getAccountBoundaryEpoch: () => 0 }))

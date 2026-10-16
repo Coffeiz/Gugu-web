@@ -33,8 +33,8 @@ class _FakeStream:
 
 
 @pytest.mark.asyncio
-async def test_qq_stream_sequence_uses_a_cross_process_counter(monkeypatch):
-    """QQ 流式消息必须使用独立于普通回复的 Redis 序号。"""
+async def test_qq_unassociated_stream_sequence_uses_a_cross_process_counter(monkeypatch):
+    """未关联入站消息的流仍使用跨进程共享的频道计数器。"""
     from agent.gateway.qq import outbound as qq_outbound
 
     class _Redis:

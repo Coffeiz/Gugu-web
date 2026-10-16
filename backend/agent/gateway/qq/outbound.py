@@ -111,7 +111,12 @@ class QQPrivateTextStream:
             if previous is not None:
                 await previous
             if self.msg_seq is None:
-                self.msg_seq = await _next_stream_seq(self.channel_id)
+                # QQ 在流式与普通消息接口间共同按 msg_id + msg_seq 去重。
+                # 关联入站消息时共享文字/图片计数；同一条流的后续帧仍复用该序号。
+                if self.message_id:
+                    self.msg_seq = await _next_seq(self.message_id)
+                else:
+                    self.msg_seq = await _next_stream_seq(self.channel_id)
             body = {
                 "input_mode": "replace",
                 "input_state": input_state,

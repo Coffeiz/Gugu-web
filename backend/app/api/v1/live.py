@@ -169,13 +169,13 @@ async def _event_stream(
         await pubsub.subscribe(*channels)
         yield ": connected\n\n"
         while not await request.is_disconnected():
+            message = await pubsub.get_message(
+                ignore_subscribe_messages=True,
+                timeout=1.0,
+            )
             if active_check is not None and not await active_check(active_user_id):
                 yield "event: account_suspended\ndata: {\"message\":\"账号暂时不可用\"}\n\n"
                 return
-            message = await pubsub.get_message(
-                ignore_subscribe_messages=True,
-                timeout=5.0,
-            )
             if message:
                 frame = _serialize_message(message.get("data"))
                 if frame:
@@ -224,9 +224,12 @@ async def stream_live_events(
     user_id=Depends(get_current_user_id),
 ) -> StreamingResponse:
     """订阅当前用户的资源事件和全局通知，不创建或持有数据库连接。"""
+    async def active_check(user_id):
+        return await is_user_active(user_id, request.state.user_security_version)
+
     return event_stream_response(
         request,
         channels=(f"events:{user_id}", BROADCAST_CHANNEL),
-        active_check=is_user_active,
+        active_check=active_check,
         active_user_id=user_id,
     )

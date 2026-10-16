@@ -66,7 +66,6 @@ case "$command_name" in
     if [[ "$*" == *'postgres pg_dumpall'* ]]; then echo '-- PostgreSQL database cluster dump'; fi
     ;;
   run)
-    if [[ "$*" == *'--entrypoint tar'* ]]; then tar -C "$MOCK_STORAGE_DIR" -cpf - users; fi
     if [[ "$*" == *'--entrypoint bash'* && "${'${MOCK_FAIL_MIGRATION:-false}'}" == true ]]; then exit 42; fi
     ;;
   *) ;;
@@ -93,8 +92,6 @@ case "$1" in
   start) printf running > "$MANAGER_STATE" ;;
 esac
 `, { mode: 0o755 })
-  fs.mkdirSync(path.join(root, 'storage', 'users'), { recursive: true })
-  fs.writeFileSync(path.join(root, 'storage', 'users', 'sentinel'), 'preserved')
   fs.writeFileSync(path.join(root, 'manifest.json'), JSON.stringify({
     schema_version: 3, version: 'v1.2.2', channel: 'stable', minimum_version: 'v1.2.1',
     app_image: `docker.io/coffeiz/gugu-web@sha256:${'a'.repeat(64)}`,
@@ -112,7 +109,6 @@ function run(f, extraEnv = {}, args = [path.join(f.root, 'manifest.json')]) {
       COMPOSE_PROJECT_DIR: f.root, COMPOSE_FILE: path.join(f.root, 'docker-compose.prod.yml'),
       BACKUP_ROOT: path.join(f.root, 'backup'), UPDATE_VALIDATOR: validator,
       UPDATE_SCHEMA: path.resolve(releaseDir, '../../deploy/update-manifest.schema.json'),
-      MOCK_STORAGE_DIR: path.join(f.root, 'storage'),
       MANAGER_STATE: path.join(f.root, 'manager.state'),
       ...extraEnv,
     },
@@ -149,9 +145,8 @@ test('分体更新备份配置与数据库，验证迁移后按固定服务顺�
     assert.match(log, /up -d --no-deps --force-recreate worker gateway frontend/)
     const stopped = log.indexOf('stop backend worker gateway sandboxd')
     const databaseBackup = log.indexOf('postgres pg_dumpall')
-    const storageBackup = log.indexOf('--entrypoint tar')
     const migration = log.indexOf('--entrypoint bash')
-    assert.ok(stopped >= 0 && stopped < databaseBackup && databaseBackup < storageBackup && storageBackup < migration)
+    assert.ok(stopped >= 0 && stopped < databaseBackup && databaseBackup < migration)
     assert.ok(migration < log.indexOf('up -d --no-deps --force-recreate backend'))
     assert.doesNotMatch(log, /down -v|system prune/)
     const backupRoot = path.join(f.root, 'backup')
@@ -160,9 +155,7 @@ test('分体更新备份配置与数据库，验证迁移后按固定服务顺�
     const backup = path.join(backupRoot, backupName)
     assert.equal(fs.readFileSync(path.join(backup, 'backend.env'), 'utf8'), 'ADMIN_PASSWORD=synthetic\n')
     assert.match(fs.readFileSync(path.join(backup, 'postgres.sql'), 'utf8'), /PostgreSQL database cluster dump/)
-    const archive = spawnSync('tar', ['-tf', path.join(backup, 'users.tar')], { encoding: 'utf8' })
-    assert.equal(archive.status, 0)
-    assert.match(archive.stdout, /users\/sentinel/)
+    assert.doesNotMatch(log, /users\.tar|--entrypoint tar/)
   } finally {
     fs.rmSync(f.root, { recursive: true, force: true })
   }

@@ -72,7 +72,7 @@ class ProjectAdapter:
         """只拼接用于检索的项目事实，避免把业务 JSON 原样送进索引。"""
         lines = [f"项目：{project.name or '未命名项目'}"]
         if project.client:
-            lines.append(f"客户：{project.client}")
+            lines.append(f"联系人：{project.client}")
         if project.status:
             lines.append(f"状态：{project.status}")
         if project.priority:

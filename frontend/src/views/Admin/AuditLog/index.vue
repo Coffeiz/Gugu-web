@@ -179,7 +179,6 @@ const auditTabs = computed(() => [
 ])
 
 const BASE  = import.meta.env.VITE_API_URL ?? '/api/v1'
-const token = localStorage.getItem('admin_token')
 
 const loading   = ref(false)
 const refreshing = ref(false)
@@ -232,7 +231,7 @@ async function load(manual = false) {
   loading.value = true
   try {
     const res  = await fetch(`${BASE}/admin/audit-log`, {
-      headers: { Authorization: `Bearer ${token}` },
+      credentials: 'include',
     })
     if (isUnauthorizedResponse(res, 'admin')) return
     const data = await res.json().catch(() => ({}))
@@ -254,7 +253,7 @@ async function loadSecurity() {
     if (securityFilter.value.action) params.set('action', securityFilter.value.action)
     if (securityFilter.value.eventType) params.set('event_type', securityFilter.value.eventType)
     const res = await fetch(`${BASE}/admin/audit-log/security-events?${params}`, {
-      headers: { Authorization: `Bearer ${token}` },
+      credentials: 'include',
     })
     if (isUnauthorizedResponse(res, 'admin')) return
     securityRows.value = (await res.json().catch(() => ({}))).items ?? []

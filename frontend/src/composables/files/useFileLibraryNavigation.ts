@@ -44,10 +44,10 @@ async function resolveTargetPath(target: FileLibraryNavigationTarget, deps: Targ
     return [...deps.basePath(folder.projectId), ...chain.map(deps.folderSegment)]
   }
 
-  const { file: rawFile, folder_path } = await filesApi.location(target.id)
+  const { file: rawFile, folderPath } = await filesApi.location(target.id)
   const file = rawFile as FileMeta
   const workspaceId = file.workspaceDirectoryId ?? target.workspaceDirectoryId
-  const chain = folder_path as FolderMeta[]
+  const chain = folderPath as FolderMeta[]
   if (workspaceId != null) return [
     { type: 'workspace', name: target.workspaceDirectoryName || '工作区', color: null, space: 'workspace', workspaceDirectoryId: workspaceId },
     ...chain.map(item => ({ type: 'folder', folderId: item.id, name: item.name, color: null, space: 'workspace', workspaceDirectoryId: workspaceId })),

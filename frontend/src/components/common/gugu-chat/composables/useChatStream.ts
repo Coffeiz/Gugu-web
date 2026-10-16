@@ -1,6 +1,6 @@
 import { ref, type Ref } from 'vue'
 import { getLocale, i18n, translateAgentError } from '@/i18n'
-import { trackApi, agentApi, CLIENT_ID, getToken } from '@/services/api'
+import { trackApi, agentApi, CLIENT_ID, getCsrfHeaders } from '@/services/api'
 import { isUnauthorizedResponse } from '@/services/authSession'
 import { useLiveStore } from '@/stores/live'
 import { playGuguSfx } from '@/services/sfx'
@@ -873,14 +873,13 @@ export function useChatStream(options: {
   async function resumeStream(id: number) {
     if (streaming.value) return            // 本地正在发/看，不重复连
     const viewGeneration = options.getViewGeneration()
-    const token = getToken()
     const controller = new AbortController()
     runSessionIds.set(controller, id)
     abortCtrl.value = controller             // 让下次切会话能 abort 掉这条续看
     streaming.value = true; options.clearStatus(); options.setStatus(options.thinkingItem())
     try {
       const res = await fetch(`${API_BASE}/agent/sessions/${id}/stream`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        credentials: 'include',
         signal: controller.signal,
       })
       if (isUnauthorizedResponse(res)) return
@@ -937,10 +936,10 @@ export function useChatStream(options: {
     queueId: string,
     claimToken: string | null,
   ) {
-    const token = getToken()
     const res = await fetch(`${API_BASE}/agent/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Client-Id': CLIENT_ID, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', 'X-Client-Id': CLIENT_ID, ...getCsrfHeaders() },
       body: JSON.stringify({
         message: text, locale: getLocale(), session_id: sessionId,
         pending_queue_id: queueId, pending_queue_item_key: itemKey,
@@ -1070,7 +1069,6 @@ export function useChatStream(options: {
       }
       return
     }
-    const token = getToken()
     const ownerSid = targetSessionId   // 队列项显式归属的 session；普通发送取当前会话
     runSessionIds.set(requestController, ownerSid)
     let resolvedSid = ownerSid         // 流里 session_id 事件后回填成真实 id
@@ -1085,7 +1083,8 @@ export function useChatStream(options: {
     try {
       const res = await fetch(`${API_BASE}/agent/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Client-Id': CLIENT_ID, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-Client-Id': CLIENT_ID, ...getCsrfHeaders() },
         body: JSON.stringify({ message: text, locale: getLocale(), session_id: ownerSid, pending_queue_id: queueId,
                                ...(queuedItemKey !== undefined ? { pending_queue_item_key: queuedItemKey } : {}),
                                ...(queuedClaimToken ? { pending_queue_claim_token: queuedClaimToken } : {}),

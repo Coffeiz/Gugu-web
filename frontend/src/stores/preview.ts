@@ -46,7 +46,7 @@ export function isPreviewAffectedByFileEvent(
 
 const IMAGE_EXTS  = new Set(['JPG', 'JPEG', 'PNG', 'GIF', 'WEBP', 'SVG', 'BMP'])
 const TEXT_EXTS   = new Set([
-  'TXT', 'MD', 'JSON', 'CSV', 'JS', 'TS', 'CSS', 'HTML', 'PY', 'YAML', 'XML', 'SH',
+  'TXT', 'MD', 'JSON', 'CSV', 'JS', 'TS', 'CSS', 'HTML', 'HTM', 'PY', 'YAML', 'XML', 'SH',
   'LRC', 'SRT', 'ASS', 'SSA', 'VTT', 'SUB', 'SBV', 'SMI', 'TTML', 'DFXP', 'SCC',
   'CUE', 'M3U', 'M3U8', 'PLS',
 ])

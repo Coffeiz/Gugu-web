@@ -200,13 +200,12 @@ async def test_oss_does_not_expose_or_bind_workspace(db, user_a, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_migrated_known_workspace_file_is_reconciled_into_its_folder(db, user_a, monkeypatch, tmp_path):
-    """迁移后按已有 storage_key 重新投影，修复旧记录漏掉的文件夹归属。"""
+async def test_known_workspace_file_is_reconciled_into_its_folder(db, user_a, monkeypatch, tmp_path):
+    """已有工作区文件按 storage_key 重新投影，修复遗漏的文件夹归属。"""
     from app.models import Folder, WorkspaceDirectory
     import app.services.filesync.reconcile as reconcile
     import app.services.filesync.protocol as protocol
     import app.services.workspaces as workspaces
-    from scripts.migrations.migrate_workspace_layout import migrate
 
     monkeypatch.setattr(reconcile, "is_file_sync_enabled", lambda: True)
     monkeypatch.setattr(protocol, "is_file_sync_enabled", lambda: True)
@@ -221,7 +220,7 @@ async def test_migrated_known_workspace_file_is_reconciled_into_its_folder(db, u
     monkeypatch.setattr(workspaces, "get_settings", lambda: settings)
 
     directory = WorkspaceDirectory(
-        user_id=user_a.id, name="默认工作区", directory_name="workspace",
+        user_id=user_a.id, name="默认工作区", directory_name="default",
         is_default=True, is_system=True,
     )
     db.add(directory)
@@ -236,22 +235,18 @@ async def test_migrated_known_workspace_file_is_reconciled_into_its_folder(db, u
     db.add_all([workspace, folder])
     await db.flush()
 
-    old_root = tmp_path / str(user_a.id) / "workspace"
-    package = old_root / "package"
+    package = tmp_path / str(user_a.id) / "workspace" / "default" / "package"
     package.mkdir(parents=True)
     (package / "__init__.py").write_text("# probe", encoding="utf-8")
     row = File(
         user_id=user_a.id, display_name="__init__", ext="py", space="workspace",
         workspace_directory_id=directory.id, folder_id=None,
-        storage_key=f"{user_a.id}/workspace/package/__init__.py",
+        storage_key=f"{user_a.id}/workspace/default/package/__init__.py",
         size="7", size_bytes=7, storage_backend="local",
     )
     db.add(row)
     await db.commit()
 
-    migration = await migrate(db, tmp_path, apply=True)
-    assert migration["status"] == "completed"
-    assert row.storage_key == f"{user_a.id}/workspace/default/package/__init__.py"
     assert row.folder_id is None
 
     summary = await reconcile.reconcile_local_directory(

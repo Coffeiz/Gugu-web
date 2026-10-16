@@ -162,7 +162,7 @@ if blocked is not None:
 | --- | --- | --- |
 | `delete_project` | `project_ids` | 所有项目及其文件 |
 | `delete_event` | `event_ids` | 所有活动及其提醒 |
-| `delete_client` | `client_ids` | 所有客户 |
+| `delete_client` | `client_ids` | 所有联系人 |
 | `permanent_delete` | `file_ids`、`folder_ids` 或 `all=true` | 确认时的完整回收站目标快照 |
 | `delete_scheduled_task` | `task_ids` | 所有指定定时任务 |
 | `update_scheduled_task` | `task_ids` + `filesystem_authorized` | 一次确认，逐任务授予/撤销；不支持同批混入其他更新字段 |

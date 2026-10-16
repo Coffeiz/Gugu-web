@@ -19,6 +19,7 @@ from app.core.security import (
     clear_auth_cookies,
     create_user_token,
     get_current_user,
+    get_current_user_id,
     hash_password,
     set_auth_cookies,
     verify_password,
@@ -144,10 +145,10 @@ async def register(body: UserRegister, request: Request, response: Response, db:
     from onboarding.seed import seed_for_user
     await seed_for_user(db, user, locale=body.locale)
 
-    token = create_user_token(user.id)
+    token = create_user_token(user.id, user.security_version or 1)
     set_auth_cookies(response, token, USER_ACCESS_COOKIE, USER_CSRF_COOKIE, request)
     return TokenResponse(
-        access_token=token,
+        access_token=None if request.headers.get("X-Auth-Transport") == "cookie" else token,
         user=UserResponse.from_user(user),
     )
 
@@ -217,16 +218,19 @@ async def login(body: UserLogin, request: Request, response: Response, db: Async
     db.add(FrontendEvent(user_id=user.id, event="web_login"))
     await db.commit()
 
-    token = create_user_token(user.id)
+    token = create_user_token(user.id, user.security_version or 1)
     set_auth_cookies(response, token, USER_ACCESS_COOKIE, USER_CSRF_COOKIE, request)
     return TokenResponse(
-        access_token=token,
+        access_token=None if request.headers.get("X-Auth-Transport") == "cookie" else token,
         user=UserResponse.from_user(user),
     )
 
 
 @router.post("/logout")
-async def logout(response: Response):
+async def logout(response: Response, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    # 用户级版本撤销此前签发的全部 JWT（包括其他浏览器和长连接）。
+    current_user.security_version = (current_user.security_version or 0) + 1
+    await db.commit()
     clear_auth_cookies(response, USER_ACCESS_COOKIE, USER_CSRF_COOKIE)
     return {"ok": True}
 
@@ -296,7 +300,7 @@ async def forgot_password(body: ForgotPassword, request: Request, db: AsyncSessi
 
 
 @router.post("/reset-password")
-async def reset_password(body: ResetPassword, db: AsyncSession = Depends(get_db)):
+async def reset_password(body: ResetPassword, response: Response, db: AsyncSession = Depends(get_db)):
     """凭一次性 token 设新密码：校验 token + 密码长度 → 改密 → 删 token（一次性）。"""
     token = (body.token or "").strip()
     pw = body.new_password or ""
@@ -312,8 +316,10 @@ async def reset_password(body: ResetPassword, db: AsyncSession = Depends(get_db)
     if not user:
         raise HTTPException(400, "账号不存在")
     user.hashed_password = hash_password(pw)
+    user.security_version = (user.security_version or 0) + 1
     await db.commit()
     await r.delete(f"pwdreset:tok:{token}")   # 一次性：用完即焚
+    clear_auth_cookies(response, USER_ACCESS_COOKIE, USER_CSRF_COOKIE)
     return {"ok": True}
 
 
@@ -486,6 +492,8 @@ async def me(current_user: User = Depends(get_current_user), db: AsyncSession = 
 @router.patch("/profile", response_model=UserResponse)
 async def update_profile(
     body: UpdateProfile,
+    request: Request,
+    response: Response,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -515,12 +523,20 @@ async def update_profile(
         if not verify_password(body.current_password, current_user.hashed_password):
             raise HTTPException(400, "当前密码错误")
         current_user.hashed_password = hash_password(body.new_password)
+        current_user.security_version = (current_user.security_version or 0) + 1
+        password_changed = True
+    else:
+        password_changed = False
 
     await db.commit()
     if timezone_changed:
         from app.core import events
         await events.bump_context_revision(current_user.id, "timezone")
     await db.refresh(current_user)
+    if password_changed:
+        # 本设备继续登录，其他已签发的用户 JWT 因版本递增立即失效。
+        token = create_user_token(current_user.id, current_user.security_version or 1)
+        set_auth_cookies(response, token, USER_ACCESS_COOKIE, USER_CSRF_COOKIE, request)
     return UserResponse.from_user(current_user)
 
 

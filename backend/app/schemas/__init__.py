@@ -139,7 +139,7 @@ class DeleteAccount(CamelModel):
 
 
 class TokenResponse(CamelModel):
-    access_token: str
+    access_token: Optional[str] = None
     token_type: str = "bearer"
     user: UserResponse
 
@@ -541,7 +541,7 @@ class MindNodeResponse(CamelModel):
     ref_type: Optional[str] = None
     ref_id: Optional[int] = None
     # 项目引用创建时缓存的极简快照（client/status/startDate/deadline/doneAt）：项目被删后
-    # ProjectRefCard 拿不到活的 Project 记录，靠这份快照仍能显示客户/日期，不止显示名字和颜色。
+    # ProjectRefCard 拿不到活的 Project 记录，靠这份快照仍能显示联系人/日期，不止显示名字和颜色。
     # 只在创建那一刻拍照，之后项目改这些字段不会回填——跟 title/color 快照同一套语义。
     ref_snapshot: Optional[dict] = None
 

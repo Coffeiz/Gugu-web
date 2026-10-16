@@ -151,7 +151,7 @@
   --radius-xl: var(--radius-lg);
 
   /* Raw geometry. Components should prefer semantic/component aliases. */
-  --sidebar-width: 220px;
+  --sidebar-width: 200px;
   --floating-edge: 28px;
   --canvas-toolbar-height: 50px;
   --control-height-xs: 22px;

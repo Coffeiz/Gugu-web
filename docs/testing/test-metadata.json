@@ -63,6 +63,14 @@
     "keyBehavior": "播放或加载过期签名视频时刷新地址并恢复；切源竞态不串用播放进度；主动暂停中断 play 请求不会变成播放器错误",
     "ci": "frontend-test"
   },
+  "frontend/tests/preview/htmlPreview.test.ts": {
+    "domain": "file-preview",
+    "layer": "L0",
+    "owner": "frontend/utils",
+    "productionEntry": "frontend/src/utils/htmlPreview.ts",
+    "keyBehavior": "HTML 预览中的同页锚点保持在隔离文档内，不解析到宿主应用路由",
+    "ci": "frontend-test"
+  },
   "frontend/tests/design/consoleBanner.test.ts": {
     "domain": "frontend-ui",
     "layer": "L0",
@@ -263,13 +271,29 @@
     "keyBehavior": "内置 runtime 只从校验过的离线归档导入并核对镜像身份",
     "ci": "backend-pytest"
   },
-  "backend/tests/platform/deployment/test_offline_migration_postgres.py": {
+  "backend/tests/platform/deployment/test_postgres_migrations.py": {
     "domain": "database-migrations",
     "layer": "L2",
     "owner": "backend/alembic",
     "productionEntry": "alembic/env.py:_bootstrap_empty_database",
-    "keyBehavior": "全新 PostgreSQL 经 ORM 建表和 Alembic 初始化后仍具有自定义 collation 与分页索引；离线迁移从真实 schema 基线完成工作区升级和备份恢复",
+    "keyBehavior": "全新 PostgreSQL 经 ORM 建表和 Alembic 初始化后仍具有自定义 collation 与分页索引",
     "ci": "experimental"
+  },
+  "backend/tests/platform/test_contact_name_column_migration.py": {
+    "domain": "contact-name-migration",
+    "layer": "L1",
+    "owner": "backend/alembic",
+    "productionEntry": "backend/alembic/versions/20261016000001_rename_client_columns_to_contact_name.py",
+    "keyBehavior": "项目与日历活动联系人列重命名保留既有值且可降级恢复",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/auth/test_auth_token_revocation.py": {
+    "domain": "authentication",
+    "layer": "L1",
+    "owner": "backend/app/api/v1",
+    "productionEntry": "backend/app/api/v1/auth.py",
+    "keyBehavior": "用户登出、密码重置和管理员登出会使旧令牌失效并保留新版本令牌有效",
+    "ci": "backend-pytest"
   },
   "backend/tests/platform/realtime/test_live_stream.py": {
     "domain": "filesync-live-events",
@@ -277,6 +301,14 @@
     "owner": "backend/app/api/v1/live.py",
     "productionEntry": "backend/app/core/events.py:publish_filesync_run_changed",
     "keyBehavior": "文件同步失效事件只发布到 Admin 频道、只携带安全标识并按任务合并进度；SSE 过滤拒绝畸形事件并剔除路径详情",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/realtime/test_websocket_cookie_origin.py": {
+    "domain": "websocket-auth",
+    "layer": "L1",
+    "owner": "backend/app/api/v1",
+    "productionEntry": "backend/app/api/v1/terminals.py:_websocket_token",
+    "keyBehavior": "Cookie 鉴权的终端 WebSocket 仅接受与 Host 同源的 Origin，并保留非标准端口",
     "ci": "backend-pytest"
   },
   "backend/tests/scheduling/tasks/test_scheduled_task_schedule_rules.py": {
@@ -863,6 +895,14 @@
     "keyBehavior": "迁移为既有技能分配稳定顺序 ID 并让后续序列从最大 ID 之后继续",
     "ci": "backend-pytest"
   },
+  "backend/tests/im/qq/test_qq_reply_sequences.py": {
+    "domain": "qq-streaming",
+    "layer": "L2",
+    "owner": "backend/agent/gateway/qq",
+    "productionEntry": "backend/agent/gateway/qq/outbound.py",
+    "keyBehavior": "同一条 QQ 入站消息的流式文字、图片和普通文本共享序号，冷计数与并发发送不被重复去重，同一流各帧保持相同序号",
+    "ci": "backend-pytest"
+  },
   "backend/tests/im/qq/test_qq_package_facade.py": {
     "domain": "qq-gateway",
     "layer": "L1",
@@ -1029,6 +1069,14 @@
     "owner": "frontend/services",
     "productionEntry": "frontend/src/services/resourceRefreshEvents.ts",
     "keyBehavior": "跨端资源变化事件按类型通知订阅者并保持事件载荷一致",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/loopscope/guguCsrf.test.ts": {
+    "domain": "loopscope-auth",
+    "layer": "L0",
+    "owner": "loopscope/frontend/src/services",
+    "productionEntry": "loopscope/frontend/src/services/gugu.ts:sendMessage",
+    "keyBehavior": "Cookie 认证发送消息时将 CSRF Cookie 解码后放入请求头并携带认证凭据",
     "ci": "frontend-test"
   },
   "backend/tests/agent/providers/test_anthropic_stream_recovery.py": {

@@ -99,13 +99,13 @@ async def update_file_content(
     return file
 
 
-async def build_stream_url(storage, *, storage_key: str, file_id: int, user_id: int) -> str:
+async def build_stream_url(storage, *, storage_key: str, file_id: int, user_id: int, security_version: int = 1) -> str:
     """为已归属校验的文件生成 OSS 签名地址或本地 stream 地址。"""
     if isinstance(storage, OSSStorageBackend):
         return await asyncio.to_thread(
             storage.bucket.sign_url, "GET", storage.pfx + storage_key, 600
         )
-    token = create_stream_token(file_id, user_id, expires_minutes=10)
+    token = create_stream_token(file_id, user_id, expires_minutes=10, security_version=security_version)
     return f"/api/v1/files/{file_id}/stream?token={token}"
 
 

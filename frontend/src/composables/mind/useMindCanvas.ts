@@ -156,7 +156,7 @@ export function useMindCanvas(viewportRef: Ref<HTMLElement | null>) {
   function workspaceCenter() {
     const viewport = viewportRef.value
     if (!viewport) return { x: 0, y: 0 }
-    const sidebarWidth = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--sidebar-width')) || 220
+    const sidebarWidth = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--sidebar-width')) || 200
     return { x: (viewport.clientWidth + sidebarWidth) / 2, y: viewport.clientHeight / 2 }
   }
   function zoomAtCenter(delta: number) {

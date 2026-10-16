@@ -194,7 +194,7 @@ export class DataRuntime {
     const limit = limitOf(options.limit);
     const afterId = afterIdOf(options.afterId);
     const rows = await this.query(() => this.sql`
-      SELECT id, name, client, status, start_date, deadline, progress,
+      SELECT id, name, contact_name AS client, status, start_date, deadline, progress,
              current_stage, priority, version, updated_at
       FROM projects
       WHERE user_id = ${ownerId} AND archived = FALSE AND id > ${afterId}
@@ -208,7 +208,7 @@ export class DataRuntime {
       title: String(row.name || "未命名项目"),
       content: [
         `项目：${row.name || "未命名项目"}`,
-        row.client ? `客户：${row.client}` : "",
+        row.client ? `联系人：${row.client}` : "",
         row.status ? `状态：${row.status}` : "",
         row.progress != null ? `进度：${row.progress}%` : "",
         row.current_stage ? `当前阶段：${row.current_stage}` : "",

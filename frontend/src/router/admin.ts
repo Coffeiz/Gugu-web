@@ -143,22 +143,14 @@ const router = createRouter({
 })
 
 router.beforeEach(async (to) => {
-  const adminToken = localStorage.getItem('admin_token')
-
-  if (to.meta.requiresAdmin && !adminToken) {
-    return { path: '/login', query: { redirect: to.fullPath } }
-  }
-  if (to.meta.adminPublic && adminToken) {
+  if (to.meta.requiresAdmin || to.meta.adminPublic) {
     const adminStore = useAdminStore()
-    if (!adminStore.adminUser && (await adminStore.validateSession()) === true) {
-      return { path: '/config' }
-    }
-  }
-  if (to.meta.requiresAdmin && adminToken) {
-    const adminStore = useAdminStore()
-    if (!adminStore.adminUser && (await adminStore.validateSession()) === false) {
+    const valid = adminStore.adminUser ? true : await adminStore.validateSession()
+    if (to.meta.adminPublic && valid === true) return { path: '/config' }
+    if (to.meta.requiresAdmin && valid === false) {
       return { path: '/login', query: { redirect: to.fullPath } }
     }
+    if (to.meta.requiresAdmin && valid === null) return false
   }
 })
 

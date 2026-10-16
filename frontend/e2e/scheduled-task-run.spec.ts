@@ -7,8 +7,8 @@ test.afterEach(async ({ page }) => {
   createdTaskNames.clear()
   if (!names.length) return
   await page.evaluate(async (targetNames) => {
-    const token = localStorage.getItem('user_token')
-    const headers = token ? { Authorization: `Bearer ${token}` } : {}
+    const csrfToken = decodeURIComponent(document.cookie.split('; ').find(item => item.startsWith('gugu_user_csrf_token='))?.split('=').slice(1).join('=') ?? '')
+    const headers = { 'X-CSRF-Token': csrfToken }
     const response = await fetch('/api/v1/scheduled-tasks', { headers })
     if (!response.ok) return
     const data = await response.json()

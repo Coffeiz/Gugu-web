@@ -1,6 +1,6 @@
 /**
  * 咕咕 API 客户端
- * 所有请求统一走这里，自动附加 user Bearer token
+ * 浏览器请求统一依赖 HttpOnly 会话 Cookie；写请求附带 CSRF token。
  */
 import type { components } from '@/types/api'
 import { getLocale, i18n, type SupportedLocale } from '@/i18n'
@@ -28,10 +28,6 @@ export async function fetchSiteConfig(): Promise<SiteConfig> {
   const response = await fetch(`${BASE_URL}/site-config`, { credentials: 'same-origin' })
   if (!response.ok) throw new Error(`HTTP ${response.status}`)
   return response.json() as Promise<SiteConfig>
-}
-
-export function getToken(): string {
-  return localStorage.getItem('user_token') ?? ''
 }
 
 export function getCookieValue(name: string): string {
@@ -78,19 +74,18 @@ const inFlightGetRequests = new Map<string, Promise<unknown>>()
 // 标注了 <T> 的端点拿到精确类型。逐步把更多端点标上类型即可收紧。
 async function request<T = any>(method: string, path: string, body: any = null, isForm = false,
                                 signal?: AbortSignal, meta?: RequestMeta): Promise<T> {
-  const token = getToken()
-  // 不合并无 bearer token 的请求（可能依赖不可见的 HttpOnly 会话 Cookie），也不合并
-  // 带取消信号或调用方自定义头的请求，避免改变其身份或取消语义。
-  const canDeduplicate = method.toUpperCase() === 'GET' && !!token && !signal && !meta && body === null
-  if (!canDeduplicate) return performRequest<T>(method, path, body, isForm, signal, meta, token)
+  const sessionKey = getCookieValue('gugu_user_csrf_token')
+  // CSRF cookie 为每次登录随机生成，可区分共享同源的不同账号会话。
+  const canDeduplicate = method.toUpperCase() === 'GET' && !!sessionKey && !signal && !meta && body === null
+  if (!canDeduplicate) return performRequest<T>(method, path, body, isForm, signal, meta)
 
-  const key = JSON.stringify([token, path])
+  const key = JSON.stringify([sessionKey, path])
   const cloneResult = (value: T): T =>
     value === null || value === undefined || typeof value !== 'object' ? value : JSON.parse(JSON.stringify(value)) as T
   const existing = inFlightGetRequests.get(key)
   if (existing) return (existing as Promise<T>).then(cloneResult)
 
-  const pending = performRequest<T>(method, path, body, isForm, signal, meta, token)
+  const pending = performRequest<T>(method, path, body, isForm, signal, meta)
   inFlightGetRequests.set(key, pending)
   const clearPending = () => {
     if (inFlightGetRequests.get(key) === pending) inFlightGetRequests.delete(key)
@@ -100,7 +95,7 @@ async function request<T = any>(method: string, path: string, body: any = null, 
 }
 
 async function performRequest<T>(method: string, path: string, body: any, isForm: boolean,
-                                 signal: AbortSignal | undefined, meta: RequestMeta | undefined, token: string): Promise<T> {
+                                 signal: AbortSignal | undefined, meta: RequestMeta | undefined): Promise<T> {
   const headers: Record<string, string> = {
     'X-Client-Id': CLIENT_ID,
     ...(['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase())
@@ -110,7 +105,6 @@ async function performRequest<T>(method: string, path: string, body: any, isForm
   if (meta?.mutationId) headers['X-Mutation-Id'] = meta.mutationId
   if (meta?.undoGroupId) headers['X-Undo-Group-ID'] = meta.undoGroupId
   if (meta?.headers) Object.assign(headers, meta.headers)
-  if (token) headers['Authorization'] = `Bearer ${token}`
 
   const opts: RequestInit = { method, headers, signal, credentials: 'include' }
   if (body !== null) {
@@ -161,8 +155,6 @@ export function uploadWithProgress(path: string, form: FormData, onProgress: (p:
     const xhr = new XMLHttpRequest()
     xhr.open('POST', `${BASE_URL}${path}`)
     xhr.withCredentials = true
-    const token = getToken()
-    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
     xhr.setRequestHeader('X-Client-Id', CLIENT_ID)   // 上传也带 client-id，供后端回声抑制
     xhr.setRequestHeader('X-Undo-Context-ID', UNDO_CONTEXT_ID)
     const csrf = getCsrfHeaders()
@@ -267,8 +259,6 @@ export const dataPortabilityApi = {
       ...getCsrfHeaders(),
       'X-Undo-Context-ID': UNDO_CONTEXT_ID,
     }
-    const token = getToken()
-    if (token) headers.Authorization = `Bearer ${token}`
     const response = await fetch(`${BASE_URL}/data-portability/imports/preflight`, {
       method: 'POST', body: file, headers, credentials: 'include', cache: 'no-store',
     })
@@ -293,8 +283,6 @@ export const dataPortabilityApi = {
   recoverImport: (jobId: string) => post<DataImportJob>(`/data-portability/imports/${encodeURIComponent(jobId)}/recover`),
   async downloadExport(jobId: string): Promise<Response> {
     const headers: Record<string, string> = {}
-    const token = getToken()
-    if (token) headers.Authorization = `Bearer ${token}`
     const response = await fetch(`${BASE_URL}/data-portability/exports/${encodeURIComponent(jobId)}/download`, {
       headers, credentials: 'include', cache: 'no-store',
     })
@@ -483,7 +471,7 @@ export const filesApi = {
   },
   location: (id: number) => get<{
     file: Schemas['FileResponse']
-    folder_path: Array<Schemas['FolderResponse']>
+    folderPath: Array<Schemas['FolderResponse']>
   }>(`/files/${id}/location`),
   resolvePaths: (id: number, paths: string[]) => post<Array<{
     path: string
@@ -512,14 +500,12 @@ export const filesApi = {
   batchDelete: (ids: number[], meta?: RequestMeta)  => post('/files/batch-delete', { ids }, meta),
   copy: (id: number, body: Schemas['FileCopyBody'] & { workspaceDirectoryId?: number | null }) => post<Schemas['FileResponse']>(`/files/${id}/copy`, body),
   batchDownload: async (ids: number[], folderIds: number[] = [], filename = 'files.zip') => {
-    const token = getToken()
     const res = await fetch(`${BASE_URL}/files/batch-download`, {
       method: 'POST',
       credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
         ...getCsrfHeaders(),
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify({ ids, folderIds }),
     })
@@ -557,20 +543,18 @@ export const filesApi = {
     }>
   }>(`/files/${id}/xlsx-preview`),
   xlsxPreviewImage: async (id: number, imageId: number, version: number) => {
-    const token = getToken()
     const res = await fetch(`${BASE_URL}/files/${id}/xlsx-preview-image/${imageId}?v=${encodeURIComponent(version)}`, {
       credentials: 'include',
-      headers: { ...getCsrfHeaders(), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      headers: getCsrfHeaders(),
     })
     if (isUnauthorizedResponse(res)) throw new Error(i18n.global.t('errors.loginRequired'))
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     return res.blob()
   },
   download: async (id: number, filename: string) => {
-    const token = getToken()
     const res = await fetch(`${BASE_URL}/files/${id}/download`, {
       credentials: 'include',
-      headers: { ...getCsrfHeaders(), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      headers: getCsrfHeaders(),
     })
     if (isUnauthorizedResponse(res)) throw new Error(i18n.global.t('errors.loginRequired'))
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -821,10 +805,9 @@ export const foldersApi = {
       return
     }
 
-    const token = getToken()
     const res = await fetch(downloadUrl.href, {
       credentials: 'include',
-      headers: { ...getCsrfHeaders(), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      headers: getCsrfHeaders(),
     })
     if (isUnauthorizedResponse(res)) throw new Error(i18n.global.t('errors.loginRequired'))
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -975,9 +958,7 @@ export const terminalsApi = {
   create: (data: { name?: string; sessionId?: number; workspaceId?: number; mode?: TerminalItem['mode'] }) => post<TerminalItem>('/terminals', data),
   detail: (id: string) => get<TerminalItem>(`/terminals/${encodeURIComponent(id)}`),
   events: async (id: string, after = 0, signal?: AbortSignal, onEvent?: (event: TerminalEventItem) => void): Promise<void> => {
-    const token = getToken()
     const headers: Record<string, string> = { 'X-Client-Id': CLIENT_ID }
-    if (token) headers.Authorization = `Bearer ${token}`
     const res = await fetch(`${BASE_URL}/terminals/${encodeURIComponent(id)}/events?after=${after}`, { headers, signal })
     if (isUnauthorizedResponse(res)) return
     if (!res.ok) throw new Error(`HTTP ${res.status}`)

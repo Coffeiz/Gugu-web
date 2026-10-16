@@ -1,6 +1,5 @@
 import { ref, computed, watch } from 'vue'
 import { useAudioStore } from '@/stores/audio'
-import { getToken } from '@/services/api'
 import { API_BASE } from '../chatConstants'
 import type { ChatFile } from '../chatTypes'
 import { i18n } from '@/i18n'
@@ -140,9 +139,8 @@ export function useChatAudio(options: {
     try {
       let url = _voiceUrls[id]
       if (!url) {
-        const token = getToken()
         const res = await fetch(`${API_BASE}/agent/attachment/${id}/download`,
-          { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+          { credentials: 'include' })
         if (isUnauthorizedResponse(res)) return
         if (!res.ok) { options.onTip(res.status === 404 ? i18n.global.t('chatUi.voiceExpired') : i18n.global.t('chatUi.voiceLoadFailed')); return }
         url = URL.createObjectURL(await res.blob()); _voiceUrls[id] = url

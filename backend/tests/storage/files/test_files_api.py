@@ -236,7 +236,7 @@ async def test_stream_deleted_file_returns_404(db, user_a, monkeypatch):
     row = (await db.execute(select(File).where(File.id == uploaded.id))).scalar_one()
     row.deleted_at = datetime.now(tz=timezone.utc)
     await db.commit()
-    monkeypatch.setattr(files_api, "verify_stream_token", lambda token: (uploaded.id, user_a.id))
+    monkeypatch.setattr(files_api, "verify_stream_token", lambda token: (uploaded.id, user_a.id, user_a.security_version))
     with pytest.raises(HTTPException) as exc:
         await files_api.stream_file(uploaded.id, token="stream-token", request=None, db=db)
     assert exc.value.status_code == 404
@@ -244,7 +244,7 @@ async def test_stream_deleted_file_returns_404(db, user_a, monkeypatch):
 
 async def test_stream_dl_serves_attachment_disposition(db, user_a, monkeypatch):
     uploaded = await _do_upload(db, user_a, b"0123456789", "audio.mp3", content_type="audio/mpeg")
-    monkeypatch.setattr(files_api, "verify_stream_token", lambda token: (uploaded.id, user_a.id))
+    monkeypatch.setattr(files_api, "verify_stream_token", lambda token: (uploaded.id, user_a.id, user_a.security_version))
     response = await files_api.stream_file(
         uploaded.id, token="stream-token", dl=1, request=None, db=db,
     )
@@ -253,7 +253,7 @@ async def test_stream_dl_serves_attachment_disposition(db, user_a, monkeypatch):
 
 async def test_stream_endpoint_serves_http_range_without_reading_whole_file(db, user_a, monkeypatch):
     uploaded = await _do_upload(db, user_a, b"0123456789", "audio.mp3", content_type="audio/mpeg")
-    monkeypatch.setattr(files_api, "verify_stream_token", lambda token: (uploaded.id, user_a.id))
+    monkeypatch.setattr(files_api, "verify_stream_token", lambda token: (uploaded.id, user_a.id, user_a.security_version))
     request = SimpleNamespace(headers={"range": "bytes=3-6"})
     response = await files_api.stream_file(
         uploaded.id, token="stream-token", request=request, db=db,
@@ -264,9 +264,36 @@ async def test_stream_endpoint_serves_http_range_without_reading_whole_file(db, 
     assert body == b"3456"
 
 
+async def test_stream_checks_revocation_at_request_start_only(db, user_a, monkeypatch):
+    uploaded = await _do_upload(db, user_a, b"x" * (1024 * 1024 + 10), "large.bin")
+    monkeypatch.setattr(files_api, "verify_stream_token", lambda token: (uploaded.id, user_a.id, user_a.security_version))
+    state = {"active": True, "checks": 0}
+
+    async def active_until_revoked(user_id, token_version):
+        state["checks"] += 1
+        return state["active"]
+
+    monkeypatch.setattr(files_api, "is_user_active", active_until_revoked)
+    response = await files_api.stream_file(
+        uploaded.id, token="stream-token", request=None, db=db,
+    )
+
+    state["active"] = False  # 请求开始后撤销会话，不中断已经建立的响应流
+    chunks = [chunk async for chunk in response.body_iterator]
+    assert len(chunks) == 2
+    assert sum(map(len, chunks)) == 1024 * 1024 + 10
+    assert state["checks"] == 1
+
+    with pytest.raises(HTTPException) as exc:
+        await files_api.stream_file(
+            uploaded.id, token="stream-token", request=None, db=db,
+        )
+    assert exc.value.status_code == 401
+
+
 async def test_stream_empty_file_returns_zero_length_body(db, user_a, monkeypatch):
     uploaded = await _do_upload(db, user_a, b"", "empty.txt")
-    monkeypatch.setattr(files_api, "verify_stream_token", lambda token: (uploaded.id, user_a.id))
+    monkeypatch.setattr(files_api, "verify_stream_token", lambda token: (uploaded.id, user_a.id, user_a.security_version))
 
     response = await files_api.stream_file(
         uploaded.id, token="stream-token", request=None, db=db,
