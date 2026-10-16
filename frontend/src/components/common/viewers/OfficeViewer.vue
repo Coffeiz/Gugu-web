@@ -754,20 +754,78 @@ function releasePptxNavigationTarget() {
   }, 500)
 }
 
+function normalizePptxRoundRectAdjustments(parts: Array<Map<string, string>>) {
+  const drawingMlNamespace = 'http://schemas.openxmlformats.org/drawingml/2006/main'
+  const parser = new DOMParser()
+  const serializer = new XMLSerializer()
+
+  for (const part of parts) {
+    for (const [path, xml] of part) {
+      const document = parser.parseFromString(xml, 'application/xml')
+      if (document.getElementsByTagName('parsererror').length) continue
+
+      let changed = false
+      for (const geometry of Array.from(document.getElementsByTagNameNS(drawingMlNamespace, 'prstGeom'))) {
+        if (geometry.getAttribute('prst') !== 'roundRect') continue
+        for (const guide of Array.from(geometry.getElementsByTagNameNS(drawingMlNamespace, 'gd'))) {
+          if (guide.getAttribute('name') !== 'adj') continue
+          const formula = guide.getAttribute('fmla') ?? ''
+          const match = /^val\s+(-?\d+)$/.exec(formula)
+          if (!match) continue
+
+          // OOXML adjustment values for roundRect are in 0..50000. Some generators
+          // write pixel-like values (for example 3996000); the renderer treats that
+          // as a multiplier and draws giant arcs across the slide.
+          const value = Number(match[1])
+          const normalized = Math.max(0, Math.min(50_000, value))
+          if (normalized !== value) {
+            guide.setAttribute('fmla', `val ${normalized}`)
+            changed = true
+          }
+        }
+      }
+
+      if (changed) part.set(path, serializer.serializeToString(document))
+    }
+  }
+}
+
 // PPTX 由渲染器监听容器宽度并自动重绘；这里只在首次打开时上报窗口的自然比例，
 // 后续外部缩放由渲染器自己适配，避免再次触发窗口尺寸振荡。
 async function renderPptx(buffer: ArrayBuffer, container: HTMLElement, scrollContainer: HTMLElement) {
   container.innerHTML = ''
-  const { PptxViewer, RECOMMENDED_ZIP_LIMITS } = await import('@aiden0z/pptx-renderer')
-  pptxViewer = await PptxViewer.open(buffer, container, {
+  const [{ PptxViewer, RECOMMENDED_ZIP_LIMITS, parseZipLazyMedia, buildPresentation }, JSZipModule] = await Promise.all([
+    import('@aiden0z/pptx-renderer'),
+    import('jszip'),
+  ])
+  const zipLimits = RECOMMENDED_ZIP_LIMITS
+  const files = await parseZipLazyMedia(buffer, zipLimits)
+  const zip = await JSZipModule.default.loadAsync(buffer)
+
+  // 部分演示文稿生成器将图片存到 ppt/slides/media/，并在 slide rels 中用
+  // media/<文件名> 引用。渲染库按 OOXML 常见布局只查找 ppt/media/，因此
+  // 将这些资源补入标准查找路径，避免显示 “Image not found”。
+  const slideMediaPrefix = 'ppt/slides/media/'
+  const slideMediaEntries = Object.values(zip.files).filter(file => !file.dir && file.name.startsWith(slideMediaPrefix))
+  await Promise.all(slideMediaEntries.map(async file => {
+    const fileName = file.name.slice(slideMediaPrefix.length)
+    const canonicalPath = `ppt/media/${fileName}`
+    if (!files.media.has(canonicalPath)) {
+      files.media.set(canonicalPath, await file.async('uint8array'))
+    }
+  }))
+
+  normalizePptxRoundRectAdjustments([files.slides, files.slideLayouts, files.slideMasters])
+
+  pptxViewer = new PptxViewer(container, {
     fitMode: 'contain',
     scrollContainer,
-    zipLimits: RECOMMENDED_ZIP_LIMITS,
+    zipLimits,
     lazyMedia: true,
     lazySlides: true,
-    renderMode: 'list',
-    listOptions: { windowed: true, initialSlides: 4, batchSize: 4 },
   })
+  pptxViewer.load(buildPresentation(files, { lazySlides: true }))
+  await pptxViewer.renderList({ windowed: true, initialSlides: 4, batchSize: 4 })
   pptxViewer.on('slidechange', onPptxSlideChange)
   pptxSlideCount.value = pptxViewer.slideCount
   pptxSlideIndex.value = pptxViewer.currentSlideIndex

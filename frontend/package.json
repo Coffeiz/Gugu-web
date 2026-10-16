@@ -70,6 +70,7 @@
     "dompurify": "^3.4.11",
     "gugu-interaction-runtime": "^3.0.7",
     "highlight.js": "^11.11.1",
+    "jszip": "^3.10.2",
     "lowlight": "^3.3.0",
     "marked": "^18.0.5",
     "mermaid": "12.1.0",
