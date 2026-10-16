@@ -17,6 +17,9 @@
 
 ### Fixes
 
+- Preserve calendar and spreadsheet preferences across frontend updates, along with the DOCX viewing mode.
+- Retry project-directory reads when a file changes during an in-flight request, avoiding a stale snapshot.
+- Keep OSS copy fingerprints matched to the copied source version when the source changes concurrently.
 - Hide email-change controls when system email is unavailable and refresh the capability when account settings open.
 - Show a loading state while an HTML preview finishes loading.
 - Keep the previous project-folder contents visible while refreshed directory data is loading.
@@ -31,6 +34,9 @@
 
 ### 修复
 
+- 前端更新后保留日历、表格偏好及 DOCX 页面适配模式。
+- 文件在项目目录请求期间发生变化时重新读取，避免缓存旧目录内容。
+- OSS 源文件并发变化时校验复制版本，确保内容指纹与复制结果一致。
 - 系统邮件不可用时隐藏邮箱变更入口，并在打开账号设置时刷新可用状态。
 - HTML 预览加载完成前显示加载状态。
 - 项目文件目录刷新时保留上次内容，避免加载期间文件区闪成空白。

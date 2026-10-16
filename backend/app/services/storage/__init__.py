@@ -610,11 +610,40 @@ class OSSStorageBackend(StorageBackend):
         )
 
     async def copy_with_fingerprint(self, src_key: str, dst_key: str) -> str:
-        digest = hashlib.sha256()
-        async for chunk in self.iter_chunks(src_key):
-            digest.update(chunk)
-        await self.copy(src_key, dst_key)
-        return digest.hexdigest()
+        import oss2.exceptions as oss_exc
+
+        for attempt in range(3):
+            source = await _oss_retry(
+                "storage.oss.get_stream", "oss.get_timeout", "文件读取失败，请稍后重试",
+                self.bucket.get_object, self.pfx + src_key,
+            )
+            digest = hashlib.sha256()
+            try:
+                etag = source.etag
+                if not etag:
+                    raise RuntimeError("OSS 源对象缺少 ETag，无法校验复制内容")
+                while chunk := await asyncio.to_thread(source.read, 1024 * 1024):
+                    digest.update(chunk)
+            finally:
+                close = getattr(source, "close", None)
+                if close is not None:
+                    await asyncio.to_thread(close)
+
+            try:
+                await _oss_retry(
+                    "storage.oss.copy", "oss.copy_timeout", "文件复制失败，请稍后重试",
+                    self.bucket.copy_object, self.bucket.bucket_name,
+                    self.pfx + src_key, self.pfx + dst_key,
+                    headers={"x-oss-copy-source-if-match": etag},
+                )
+            except oss_exc.PreconditionFailed:
+                # 源对象在计算摘要后发生变化时，条件复制会以 412 拒绝；
+                # 重新读取并计算新版本，避免把旧摘要记到新内容上。
+                if attempt == 2:
+                    raise
+                continue
+            return digest.hexdigest()
+        raise RuntimeError("OSS 源对象持续变化，复制未完成")
 
     async def delete(self, key: str) -> None:
         # 幂等：删除不存在的 key，OSS 仍返回成功（不报错）——安全重试。

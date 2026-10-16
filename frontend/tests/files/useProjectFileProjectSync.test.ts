@@ -98,4 +98,44 @@ describe('项目文件目录按需分页', () => {
     expect(filesApi.page).toHaveBeenCalledTimes(2)
     expect(foldersApi.page).toHaveBeenCalledTimes(2)
   })
+
+  it('目录请求进行中收到文件变更时丢弃旧结果并重新读取', async () => {
+    const project = ref({ id: 41 } as Project | null)
+    let resolveInitialFiles!: (page: CursorPage<FileMeta>) => void
+    let resolveInitialFolders!: (page: CursorPage<FolderMeta>) => void
+    const staleFile = { id: 1, name: '旧快照' } as FileMeta
+    const freshFile = { id: 2, name: '新快照' } as FileMeta
+    vi.mocked(filesApi.page).mockResolvedValue(cursorPage([freshFile]) as never)
+    vi.mocked(foldersApi.page).mockResolvedValue(cursorPage<FolderMeta>([]) as never)
+    vi.mocked(filesApi.page).mockImplementationOnce(() => new Promise(resolve => {
+      resolveInitialFiles = resolve as (page: CursorPage<FileMeta>) => void
+    }) as never)
+    vi.mocked(foldersApi.page).mockImplementationOnce(() => new Promise(resolve => {
+      resolveInitialFolders = resolve as (page: CursorPage<FolderMeta>) => void
+    }) as never)
+    const setDirectoryPage = vi.fn()
+    let sync!: ReturnType<typeof useProjectFileProjectSync>
+    scope.run(() => {
+      sync = useProjectFileProjectSync({
+        project: () => project.value, openFolders: ref(new Set<number>()), folderStack: ref<FolderMeta[]>([]),
+        resetNavigation: vi.fn(), showNewFolder: ref(false), resetDraft: vi.fn(),
+        sortBy: () => 'createdAt', sortOrder: () => 'desc',
+        fileCacheStore: { getDirectory: () => null, setDirectoryPage, invalidatePages: vi.fn() },
+      })
+    })
+    await vi.waitFor(() => expect(filesApi.page).toHaveBeenCalledOnce())
+
+    useLiveStore().rev.files++
+    await new Promise(resolve => setTimeout(resolve, 200))
+    resolveInitialFiles(cursorPage([staleFile]) as CursorPage<FileMeta>)
+    resolveInitialFolders(cursorPage<FolderMeta>([]))
+
+    await vi.waitFor(() => expect(setDirectoryPage).toHaveBeenCalledOnce())
+    expect(filesApi.page).toHaveBeenCalledTimes(2)
+    const [loadedScope, loadedFiles, loadedFolders] = setDirectoryPage.mock.calls[0]
+    expect(loadedScope).toEqual({ space: 'project', projectId: 41, sortBy: 'createdAt', sortOrder: 'desc' })
+    expect(loadedFiles.items).toEqual([freshFile])
+    expect(loadedFolders.items).toEqual([])
+    expect(sync.isDirectoryLoaded(41, null)).toBe(true)
+  })
 })
