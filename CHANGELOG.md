@@ -9,6 +9,8 @@
 
 ### Improvements
 
+- Keep cut files and folders visibly consistent between the file library and project editor, with shared card action styling.
+- Use compact inline rename and todo fields in the project editor.
 - Speed up large file copies by streaming data through storage backends.
 - Remember the selected calendar view and document or spreadsheet preview size between visits.
 - Show the selected choice on the completed Feishu interaction card without a separate tool-status message.
@@ -21,6 +23,8 @@
 
 ### 改进
 
+- 统一文件库与项目编辑器中文件和文件夹的剪切状态及卡片操作样式。
+- 调整项目编辑器内联重命名和待办输入框高度，使其更紧凑。
 - 优化大文件复制，按流处理存储数据，减少应用内存占用。
 - 记住用户上次选择的日历视图，以及文档字号和表格缩放比例。
 - 飞书交互完成后在原卡片显示已选择的选项，不再额外发送工具状态消息。
