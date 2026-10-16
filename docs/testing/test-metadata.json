@@ -1102,5 +1102,37 @@
     "productionEntry": "backend/app/db/project_file_counts.py:PROJECT_FILE_COUNT_PROJECTION_SQL",
     "keyBehavior": "PostgreSQL 触发器在文件创建、移动、软删/恢复和批量删除后保持计数，并可通过重建与源表对账",
     "ci": "手动启用 PostgreSQL 集成测试"
+  },
+  "backend/tests/storage/test_oss_copy_fingerprint.py": {
+    "domain": "storage",
+    "layer": "L2",
+    "owner": "backend/app/services/storage",
+    "productionEntry": "backend/app/services/storage/__init__.py:OSSStorageBackend.copy_with_fingerprint",
+    "keyBehavior": "OSS 源对象在摘要读取与复制之间变化时使用 ETag 条件复制并重试，确保目标内容与返回指纹一致",
+    "ci": "backend-pytest"
+  },
+  "frontend/tests/calendar/useCalendarNav.test.ts": {
+    "domain": "calendar",
+    "layer": "L0",
+    "owner": "frontend/composables/calendar",
+    "productionEntry": "frontend/src/composables/calendar/useCalendarNav.ts",
+    "keyBehavior": "月/周视图选择可跨页面实例持久化恢复，非法存储值回退到月视图",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/utils/clientVersionGate.test.ts": {
+    "domain": "frontend-preferences",
+    "layer": "L0",
+    "owner": "frontend/utils",
+    "productionEntry": "frontend/src/utils/clientVersionGate.ts",
+    "keyBehavior": "前端构建版本变化时保留用户界面偏好并清理旧认证与临时状态",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/utils/spreadsheetZoomPreference.test.ts": {
+    "domain": "file-preview",
+    "layer": "L0",
+    "owner": "frontend/utils",
+    "productionEntry": "frontend/src/utils/spreadsheetZoomPreference.ts",
+    "keyBehavior": "表格预览缩放值可持久化恢复、限制在支持范围内，并在浏览器存储不可用时继续使用",
+    "ci": "frontend-test"
   }
 }
