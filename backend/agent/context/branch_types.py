@@ -72,3 +72,4 @@ class BranchResult:
     input_fingerprint: str = ""
     output_fingerprint: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    provider_error_code: str | None = None

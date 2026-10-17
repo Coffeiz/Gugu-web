@@ -348,10 +348,13 @@ async def _messages_for_job(db, job):
 
 
 async def _mark_failure(db, job, exc: BaseException) -> None:
+    from agent.providers.errors import ProviderInputRejected
+
     now = now_utc()
     job.retry_count += 1
-    job.last_error_code = type(exc).__name__[:100]
-    if job.retry_count >= MAX_RETRIES:
+    rejected = isinstance(exc, ProviderInputRejected)
+    job.last_error_code = "input_sensitive" if rejected else type(exc).__name__[:100]
+    if rejected or job.retry_count >= MAX_RETRIES:
         job.status = "dead"
         job.dead_at = now
         job.next_attempt_at = None
@@ -571,6 +574,10 @@ async def _execute_job_locked(job_id: int, settings, *, snapshot=None) -> bool:
             )
             out = branch.output if branch.ok and isinstance(branch.output, dict) else {}
             if branch.return_reason == "provider_error":
+                if branch.provider_error_code == "input_sensitive":
+                    from agent.providers.errors import ProviderInputRejected
+
+                    raise ProviderInputRejected()
                 raise RuntimeError("memory_reflection_provider_error")
             if not out and messages:
                 raise RuntimeError("memory_reflection_empty_result")

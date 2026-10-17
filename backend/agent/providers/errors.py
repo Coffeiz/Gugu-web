@@ -1,11 +1,32 @@
 """Provider 错误来源判断。
 
-判断异常是否来自上游 HTTP 或已确认的流协议错误，不解释供应商返回的具体错误码，
-避免把 provider 的业务错误映射成一套脆弱的本地错误枚举。
+判断上游 HTTP/流协议错误，并识别已经验证的不可重试输入拒绝。
+不复制供应商错误码全集，不通过异常正文的模糊匹配决定重试。
 """
 from __future__ import annotations
 
 from collections.abc import Iterator
+
+
+class ProviderInputRejected(RuntimeError):
+    """上游明确拒绝输入；异常仅携带固定标签，不包含请求或响应正文。"""
+
+    def __init__(self):
+        super().__init__("input_sensitive")
+
+
+def is_provider_input_rejected(error: BaseException) -> bool:
+    """识别 MiniMax 兼容协议已验证的 1026 响应，包括被包装的 SDK 异常。"""
+    for current in _exception_chain(error):
+        body = getattr(current, "body", None)
+        if not isinstance(body, dict):
+            continue
+        detail = body.get("error")
+        if (isinstance(detail, dict)
+                and detail.get("message") == "input new_sensitive (1026)"
+                and is_provider_http_error(current)):
+            return True
+    return False
 
 
 def _exception_chain(error: BaseException) -> Iterator[BaseException]:
