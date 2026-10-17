@@ -15,10 +15,7 @@
 
 #### Improvements
 
-- Stop sending idle SSE heartbeat frames and reduce idle polling while preserving immediate event delivery and periodic account-status checks.
-- Refresh IM connection status in already-open chat windows after a bot is connected, updated, unbound, or removed.
-- Open `present_file` results only in the browser that initiated the chat request, avoiding unintended playback or previews in other tabs.
-- Recognize M3U/M3U8 playlists as text files and avoid revalidating an unchanged extension during file moves or renames.
+- None.
 
 #### Fixes
 
@@ -32,16 +29,13 @@
 
 #### 改进
 
-- 移除 SSE 空闲心跳并降低空闲轮询频率，同时保留业务事件即时推送和账号状态定期校验。
-- IM Bot 绑定、更新、解绑或删除后，已打开的聊天窗口会同步刷新接入状态。
-- `present_file` 仅在发起对话的浏览器中打开，避免其他标签页意外播放或展示文件。
-- 将 M3U/M3U8 播放列表识别为文本文件；移动或改名但未更改后缀时不再重复校验文件类型。
+- 暂无。
 
 #### 修复
 
 - 暂无。
 
-## [1.7.5] - 2026-10-16
+## [1.7.5] - 2026-10-17
 
 ### What's New
 
@@ -56,6 +50,12 @@
 - Speed up large file copies by streaming data through storage backends.
 - Remember the selected calendar view and document or spreadsheet preview size between visits.
 - Show the selected choice on the completed Feishu interaction card without a separate tool-status message.
+- Stop sending idle SSE heartbeat frames and reduce idle polling while preserving immediate event delivery and periodic account-status checks.
+- Refresh IM connection status in already-open chat windows after a bot is connected, updated, unbound, or removed.
+- Open `present_file` results only in the browser that initiated the chat request, avoiding unintended playback or previews in other tabs.
+- Recognize M3U/M3U8 playlists as text files and avoid revalidating an unchanged extension during file moves or renames.
+- Keep calendar overflow items current after events are edited or deleted, and adapt project status counts to the selected theme.
+- Keep popup scrollbars inside their animated surfaces and allow project todo lists to scroll without closing the editor.
 
 ### Fixes
 
@@ -65,6 +65,9 @@
 - Hide email-change controls when system email is unavailable and refresh the capability when account settings open.
 - Show a loading state while an HTML preview finishes loading.
 - Keep the previous project-folder contents visible while refreshed directory data is loading.
+- Allow fresh database bootstrap to skip search indexes for columns no longer present in the current schema.
+- Keep the calendar all-day separator aligned across the week view.
+- Accept text input when completing sandbox authorization prompts.
 
 ### Contributors
 
@@ -87,6 +90,12 @@
 - 优化大文件复制，按流处理存储数据，减少应用内存占用。
 - 记住用户上次选择的日历视图，以及文档字号和表格缩放比例。
 - 飞书交互完成后在原卡片显示已选择的选项，不再额外发送工具状态消息。
+- 移除 SSE 空闲心跳并降低空闲轮询频率，同时保留业务事件即时推送和账号状态定期校验。
+- IM Bot 绑定、更新、解绑或删除后，已打开的聊天窗口会同步刷新接入状态。
+- `present_file` 仅在发起对话的浏览器中打开，避免其他标签页意外播放或展示文件。
+- 将 M3U/M3U8 播放列表识别为文本文件；移动或改名但未更改后缀时不再重复校验文件类型。
+- 日历“更多”列表会同步活动的最新信息；项目看板数量徽标适配用户主题配色。
+- 弹层滚动条随弹层动画显示，项目待办列表滚动时不会关闭编辑器。
 
 ### 修复
 
@@ -96,6 +105,9 @@
 - 系统邮件不可用时隐藏邮箱变更入口，并在打开账号设置时刷新可用状态。
 - HTML 预览加载完成前显示加载状态。
 - 项目文件目录刷新时保留上次内容，避免加载期间文件区闪成空白。
+- 全新数据库初始化时跳过当前 schema 中已不存在字段的搜索索引，避免初始化失败。
+- 修正周视图全天区域分隔线的显示。
+- 沙盒授权询问支持直接输入文本完成授权。
 
 #### 贡献者
 
