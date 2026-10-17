@@ -19,7 +19,8 @@
 
 #### Fixes
 
-- None.
+- Stop retrying background memory reflection for deleted conversations and clean up their pending buffers.
+- Stop automatically retrying IM memory reflection when the model provider explicitly rejects the input, while preserving retries for temporary failures.
 
 ### 更新内容
 
@@ -35,6 +36,8 @@
 
 - 修复文件同步在文件被删除或原子替换时整批重试及记录过期指纹的问题。
 - 修复模型上游流式失败被误报为内部错误的问题，统一 Web 与 IM 的错误提示和诊断编号。
+- 修复已删除会话的后台记忆反思持续重试问题，并清理对应待处理缓冲。
+- 修复 IM 记忆反思在模型明确拒绝输入后仍自动重试的问题，暂时性故障继续正常退避重试。
 
 ## [1.7.5] - 2026-10-17
 
@@ -69,8 +72,6 @@
 - Allow fresh database bootstrap to skip search indexes for columns no longer present in the current schema.
 - Keep the calendar all-day separator aligned across the week view.
 - Accept text input when completing sandbox authorization prompts.
-- Stop retrying background memory reflection for deleted conversations and clean up their pending buffers.
-- Stop automatically retrying IM memory reflection when the model provider explicitly rejects the input, while preserving retries for temporary failures.
 
 ### Contributors
 
@@ -111,8 +112,6 @@
 - 全新数据库初始化时跳过当前 schema 中已不存在字段的搜索索引，避免初始化失败。
 - 修正周视图全天区域分隔线的显示。
 - 沙盒授权询问支持直接输入文本完成授权。
-- 修复已删除会话的后台记忆反思持续重试问题，并清理对应待处理缓冲。
-- 修复 IM 记忆反思在模型明确拒绝输入后仍自动重试的问题，暂时性故障继续正常退避重试。
 
 #### 贡献者
 
