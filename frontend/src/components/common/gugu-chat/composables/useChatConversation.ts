@@ -516,7 +516,11 @@ export function useChatConversation(options: {
   })
 
   watch(() => liveStore.agentRunEvent, (event) => {
-    if (!event || event.status !== 'running' || sessionId.value !== event.session_id || streaming.value) return
+    if (!event || event.status !== 'running') return
+    // IM 首条消息会先在服务端创建并提交 session，再发布 run=running；列表刷新不应
+    // 等待助手回复后的 sessions 事件，否则新 IM 会话在生成期间或回复失败时不可见。
+    if (!sessions.value.some(item => item.id === event.session_id)) void fetchSessions()
+    if (sessionId.value !== event.session_id || streaming.value) return
     // IM run 开始时通过用户级 live 事件通知；只续接当前正在看的会话。
     void resumeStream(event.session_id)
   })
