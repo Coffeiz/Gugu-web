@@ -5,6 +5,7 @@ Revises: 20261010000001
 Create Date: 2026-10-12
 """
 from alembic import op
+from sqlalchemy import inspect
 
 
 revision = "20261012000001"
@@ -26,7 +27,14 @@ _INDEXES = (
 
 def upgrade():
     op.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+    connection = op.get_bind()
     for name, table, column in _INDEXES:
+        # 空库 bootstrap 使用当前 ORM schema，而不是逐个重放完整历史迁移。
+        # 某些字段（例如后续已删除的 user_skills.slug）在该 schema 中不存在，
+        # 因此只为当前仍存在的列创建索引。正常历史升级到此处时仍会建立 slug 索引。
+        columns = {item["name"] for item in inspect(connection).get_columns(table)}
+        if column not in columns:
+            continue
         op.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {table} USING gin ({column} gin_trgm_ops)")
     op.execute("""
         CREATE INDEX IF NOT EXISTS ix_search_canvas_notes_plain_trgm
