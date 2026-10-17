@@ -1,4 +1,12 @@
 {
+  "backend/tests/storage/filesync/test_filesync_phase1.py": {
+    "domain": "filesync",
+    "layer": "L1",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "app/services/filesync/targeted.py 与 watcher.py",
+    "keyBehavior": "实时文件投影在删除和原子替换竞态后不提交过期指纹且后续事件收敛；扫描证据失效与权限故障仍保留拒绝，未知异常只在受限日志记录堆栈",
+    "ci": "backend-pytest"
+  },
   "backend/tests/agent/test_error_presentation.py": {
     "domain": "agent-provider-errors",
     "layer": "L0",
@@ -372,7 +380,7 @@
     "layer": "L2",
     "owner": "backend/app/services/filesync/watcher.py",
     "productionEntry": "backend/app/services/filesync/targeted.py:project_path_events",
-    "keyBehavior": "临时根目录真实 Shell 创建、等长覆盖、删除依次即时更新 File 与 journal，不依赖手动整树核对",
+    "keyBehavior": "临时目录真实 Shell 创建、等长覆盖、原子替换与短命文件删除后，File 和 journal 收敛到最终事实，不依赖手动整树核对",
     "ci": "backend-pytest"
   },
   "backend/tests/storage/filesync/test_filesync_periodic.py": {

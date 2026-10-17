@@ -1751,6 +1751,7 @@ async def test_watcher_projection_retries_only_path_and_marks_manual_gap(db, use
     await db.commit()
 
     calls = 0
+    diagnostics = []
 
     async def failed_projection(*args, **kwargs):
         nonlocal calls
@@ -1758,6 +1759,7 @@ async def test_watcher_projection_retries_only_path_and_marks_manual_gap(db, use
         raise OSError("synthetic targeted failure")
 
     monkeypatch.setattr(watcher, "project_path_events", failed_projection)
+    monkeypatch.setattr(watcher, "diag_log", lambda where, error: diagnostics.append((where, error)))
     manager = watcher.FileSyncWatcherManager(sidecar=SimpleNamespace())
     manager._binding_roots[binding.id] = (user_a.id, root, "bidirectional")
     manager._queue_path_event({
@@ -1771,6 +1773,8 @@ async def test_watcher_projection_retries_only_path_and_marks_manual_gap(db, use
         await manager._project_pending()
 
     assert calls == manager.MAX_PATH_RETRIES
+    assert len(diagnostics) == calls
+    assert all(isinstance(error, OSError) for _, error in diagnostics)
     assert manager._path_events == {}
     unrelated = await db.scalar(select(File.id).where(
         File.user_id == user_a.id,
@@ -1918,3 +1922,197 @@ async def test_live_filesync_applies_quota_deltas_once(db, user_a, monkeypatch, 
     await db.commit()
     await db.refresh(ledger)
     assert ledger.used_bytes == 4
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["create", "update", "move"])
+@pytest.mark.parametrize("change", ["delete", "replace"])
+async def test_file_changes_after_hash_do_not_project_stale_metadata(
+    db, user_a, monkeypatch, tmp_path, operation, change,
+):
+    """文件完成哈希后消失或被原子替换，不能崩溃或提交旧指纹与新正文的混合状态。"""
+    import os
+
+    _, targeted, root, binding = await _prepare_targeted_personal_binding(
+        db, user_a, monkeypatch, tmp_path,
+    )
+    # 按此处的绑定根建立单路径基线，确保 move 分支可以复用旧文件身份。
+    await targeted.project_path_events(
+        db, user_a.id, binding, root, targeted.PathEventBatch(changed={"base.txt"}),
+    )
+    await db.commit()
+    base = (await db.scalars(select(File).where(
+        File.user_id == user_a.id, File.storage_key.endswith("/个人文件/base.txt"),
+    ))).one()
+    before = (base.storage_key, base.version, base.size_bytes)
+    path = root / ("base.txt" if operation == "update" else "a-changing.txt")
+    if operation == "move":
+        (root / "base.txt").rename(path)
+    else:
+        path.write_text("1111", encoding="utf-8")
+    baseline_journals = len((await db.scalars(select(FileSyncJournal.id).where(
+        FileSyncJournal.binding_id == binding.id,
+    ))).all())
+    fingerprint = targeted._stable_fingerprint
+    changed = False
+
+    def change_after_hash(target):
+        nonlocal changed
+        digest = fingerprint(target)
+        if target == path and not changed:
+            changed = True
+            stat = target.stat()
+            if change == "delete":
+                target.unlink()
+            else:
+                replacement = root / ".atomic-replacement.tmp"
+                replacement.write_text("2222", encoding="utf-8")
+                os.utime(replacement, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+                replacement.replace(target)
+        return digest
+
+    with monkeypatch.context() as race:
+        race.setattr(targeted, "_stable_fingerprint", change_after_hash)
+        result = await targeted.project_path_events(
+            db, user_a.id, binding, root,
+            targeted.PathEventBatch(changed={path.name}),
+        )
+    await db.commit()
+    await db.refresh(base)
+    assert changed
+    assert (result.created, result.updated, result.moved, result.rejected) == (0, 0, 0, 0)
+    assert (base.storage_key, base.version, base.size_bytes) == before
+    assert len((await db.scalars(select(FileSyncJournal.id).where(
+        FileSyncJournal.binding_id == binding.id,
+    ))).all()) == baseline_journals
+
+    # 后续真实事件必须收敛，不能靠忽略异常留下永久丢失的变更。
+    final = await targeted.project_path_events(
+        db, user_a.id, binding, root,
+        targeted.PathEventBatch(
+            changed={path.name} if change == "replace" else set(),
+            deleted=({path.name} if change == "delete" else set())
+                    | ({"base.txt"} if operation == "move" else set()),
+        ),
+    )
+    await db.commit()
+    active = list((await db.scalars(select(File).where(
+        File.user_id == user_a.id, File.deleted_at.is_(None),
+    ))).all())
+    matching = [row for row in active if row.storage_key.endswith("/" + path.name)]
+    if change == "delete":
+        assert not matching
+    else:
+        assert len(matching) == 1 and matching[0].size_bytes == 4
+        journal = await db.scalar(select(FileSyncJournal).where(
+            FileSyncJournal.binding_id == binding.id,
+            FileSyncJournal.relative_path == path.name,
+        ).order_by(FileSyncJournal.id.desc()))
+        assert journal.observed_fingerprint == hashlib.sha256(b"2222").hexdigest()
+        assert final.created + final.updated == 1
+    if operation == "move":
+        assert all(not row.storage_key.endswith("/base.txt") for row in active)
+
+
+@pytest.mark.asyncio
+async def test_disappearing_file_does_not_abort_other_paths_in_batch(db, user_a, monkeypatch, tmp_path):
+    """一个文件的过期事件不能拖住同批仍存在的文件。"""
+    _, targeted, root, binding = await _prepare_targeted_personal_binding(
+        db, user_a, monkeypatch, tmp_path,
+    )
+    disappearing = root / "a-changing.txt"
+    disappearing.write_text("temporary", encoding="utf-8")
+    (root / "z-stable.txt").write_text("healthy", encoding="utf-8")
+    fingerprint = targeted._stable_fingerprint
+
+    def delete_after_hash(path):
+        digest = fingerprint(path)
+        if path == disappearing:
+            path.unlink()
+        return digest
+
+    monkeypatch.setattr(targeted, "_stable_fingerprint", delete_after_hash)
+    result = await targeted.project_path_events(
+        db, user_a.id, binding, root,
+        targeted.PathEventBatch(changed={"a-changing.txt", "z-stable.txt"}),
+    )
+    await db.commit()
+    assert result.created == 1 and result.rejected == 0
+    assert await db.scalar(select(File.id).where(
+        File.user_id == user_a.id, File.storage_key.endswith("/z-stable.txt"),
+        File.deleted_at.is_(None),
+    )) is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["delete", "replace"])
+async def test_verified_file_changed_during_lookup_keeps_scan_gap(
+    db, user_a, monkeypatch, tmp_path, change,
+):
+    """手动扫描证据在数据库查询时失效，必须拒绝该覆盖项，不能伪装成功清除缺口。"""
+    _, targeted, root, binding = await _prepare_targeted_personal_binding(
+        db, user_a, monkeypatch, tmp_path,
+    )
+    path = root / "verified.txt"
+    path.write_text("1111", encoding="utf-8")
+    stat = path.stat()
+    verified = (stat.st_size, stat.st_mtime_ns, stat.st_ino, hashlib.sha256(b"1111").hexdigest())
+    lookup = targeted._find_move_source
+
+    async def change_during_lookup(*args, **kwargs):
+        result = await lookup(*args, **kwargs)
+        if change == "delete":
+            path.unlink()
+        else:
+            replacement = root / ".verified-replacement.tmp"
+            replacement.write_text("2222", encoding="utf-8")
+            replacement.replace(path)
+        return result
+
+    with monkeypatch.context() as race:
+        race.setattr(targeted, "_find_move_source", change_during_lookup)
+        result = await targeted.project_path_events(
+            db, user_a.id, binding, root, targeted.PathEventBatch(changed={path.name}),
+            options=targeted.PathProjectionOptions(verified_files={path.name: verified}),
+        )
+    await db.commit()
+    assert result.created == 0 and result.rejected == 1
+    assert dict(result.rejection_reasons) == {"file_io": 1}
+    assert await db.scalar(select(File.id).where(
+        File.user_id == user_a.id, File.storage_key.endswith("/verified.txt"),
+    )) is None
+
+
+def test_projection_recheck_preserves_permission_rejection(monkeypatch, tmp_path):
+    """权限错误不同于过期事件：保留拒绝原因，不能静默跳过。"""
+    from unittest.mock import Mock
+    from app.services.filesync import targeted
+
+    path = tmp_path / "protected.txt"
+    path.write_text("1111", encoding="utf-8")
+    before = path.stat()
+    summary = {"rejected": 0, "rejection_reasons": {}}
+    with monkeypatch.context() as permissions:
+        permissions.setattr(Path, "stat", Mock(side_effect=PermissionError("合成的权限变化")))
+        result = targeted._recheck_file_observation(path, before, summary, verified=False)
+    assert result is None
+    assert summary == {"rejected": 1, "rejection_reasons": {"file_unavailable": 1}}
+
+
+@pytest.mark.asyncio
+async def test_live_projection_keeps_in_root_symlink_target_size(db, user_a, monkeypatch, tmp_path):
+    """实时投影保留既有根内链接语义，不能把链接本身长度当成目标文件大小。"""
+    _, targeted, root, binding = await _prepare_targeted_personal_binding(
+        db, user_a, monkeypatch, tmp_path,
+    )
+    path = root / "alias.txt"
+    path.symlink_to("base.txt")
+    result = await targeted.project_path_events(
+        db, user_a.id, binding, root, targeted.PathEventBatch(changed={path.name}),
+    )
+    await db.commit()
+    row = await db.scalar(select(File).where(
+        File.user_id == user_a.id, File.storage_key.endswith("/alias.txt"),
+    ))
+    assert result.created == 1 and result.rejected == 0
+    assert row.size_bytes == (root / "base.txt").stat().st_size == 4

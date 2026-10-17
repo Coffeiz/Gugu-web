@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import mimetypes
 from dataclasses import dataclass, field
+from os import stat_result
 from pathlib import Path
 
 from sqlalchemy import func, select
@@ -187,6 +188,26 @@ async def _find_move_source(
     return missing[0] if len(missing) == 1 else None
 
 
+def _recheck_file_observation(
+    path: Path, before: stat_result, summary: dict, *, verified: bool,
+) -> stat_result | None:
+    """数据库等待后重验同一份文件事实；失效的实时事件由后续路径事件收敛。"""
+    try:
+        after = path.stat(follow_symlinks=not verified)
+        if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (
+            after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns,
+        ):
+            raise FileChangedDuringRead("文件在投影期间发生变化")
+        return after
+    except (FileNotFoundError, FileChangedDuringRead):
+        if verified:
+            _record_rejection(summary, "file_io")
+        return None
+    except OSError as exc:
+        _record_rejection(summary, _path_rejection_reason(exc, object_type="file"))
+        return None
+
+
 async def _project_changed_file(
     db: AsyncSession,
     user_id,
@@ -230,10 +251,10 @@ async def _project_changed_file(
         space, project_id, folder_id, display_name, ext, file_ws_dir_id = classification
         # 精确事件与手动扫描都必须核对正文；手动扫描可传入线程内刚复核的指纹，
         # 避免把大文件哈希放回事件循环。
+        current = path.stat(follow_symlinks=verified_file is None)
         if verified_file is None:
             observed = _stable_fingerprint(path)
         else:
-            current = path.stat(follow_symlinks=False)
             if (current.st_size, current.st_mtime_ns, current.st_ino) != verified_file[:3]:
                 raise FileChangedDuringRead("文件在扫描后发生变化")
             observed = verified_file[3]
@@ -257,9 +278,14 @@ async def _project_changed_file(
     else:
         source = None
 
+    stat = _recheck_file_observation(
+        path, current, summary_inout, verified=verified_file is not None,
+    )
+    if stat is None:
+        return 0
+
     if row is not None and source is None:
         previous = latest.get(("file", relative))
-        stat = path.stat()
         expected_mime_type = mimetypes.guess_type(path.name)[0]
         if previous is not None and previous.observed_fingerprint == observed and (
             row.size_bytes == stat.st_size
@@ -294,7 +320,7 @@ async def _project_changed_file(
         baseline = previous.observed_fingerprint if previous else None
     elif source is not None:
         row = source
-        size_delta = path.stat().st_size - int(row.size_bytes or 0)
+        size_delta = stat.st_size - int(row.size_bytes or 0)
         if enforce_quota and size_delta > quota_headroom and not observed_external_change:
             _record_rejection(summary_inout, "quota_exceeded")
             return 0
@@ -306,8 +332,8 @@ async def _project_changed_file(
         row.project_id = project_id
         row.folder_id = folder_id
         row.workspace_directory_id = file_ws_dir_id
-        row.size_bytes = path.stat().st_size
-        row.size = str(path.stat().st_size)
+        row.size_bytes = stat.st_size
+        row.size = str(stat.st_size)
         row.mime_type = mimetypes.guess_type(path.name)[0]
         row.version = int(row.version or 1) + 1
         row.updated_at = now_utc()
@@ -316,11 +342,10 @@ async def _project_changed_file(
         old_journal = latest.get(("file", old_key.removeprefix(scope_prefix)))
         baseline = old_journal.observed_fingerprint if old_journal else None
     else:
-        size_delta = path.stat().st_size if created_event or not observed_external_change else 0
+        size_delta = stat.st_size if created_event or not observed_external_change else 0
         if enforce_quota and size_delta > quota_headroom and not observed_external_change:
             _record_rejection(summary_inout, "quota_exceeded")
             return 0
-        stat = path.stat()
         row = File(
             user_id=user_id, display_name=display_name, ext=ext, space=space,
             project_id=project_id, folder_id=folder_id,
