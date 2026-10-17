@@ -45,6 +45,7 @@ export function useChatConversation(options: {
   onContentReset: () => void          // 窗口高度回到 SMALL_H 基线
   onCaptureBaseScrollH: () => void    // 记录当前内容高度为新的增高基线
   onSyncSmallH: () => void            // 按内容真实高度重新计算窗口高
+  onPresentFile?: (file: { file_id: number; name?: string; ext?: string }) => void
 }) {
   const liveStore = useLiveStore()
   const messagesEl = computed(() => options.messageListRef.value?.el ?? null)
@@ -422,6 +423,7 @@ export function useChatConversation(options: {
     onQueuePersistenceError: options.onQueuePersistenceError,
     onQueueDispatchError: options.onQueueDispatchError,
     onContentReset: options.onContentReset,
+    onPresentFile: options.onPresentFile,
   })
   const {
     streaming, abortCtrl, pendingQueue, removeQueued, resetSessionTurn, clearPendingQueue,

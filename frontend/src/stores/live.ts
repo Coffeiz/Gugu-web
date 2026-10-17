@@ -19,7 +19,6 @@ import {
   type LiveEventPayload,
   type TrashPurgeProgressEvent,
 } from '@/types/live-events'
-import { usePreviewStore } from '@/stores/preview'
 import { isUnauthorizedResponse } from '@/services/authSession'
 import { notifyLiveResourceChanged } from '@/services/resourceRefreshEvents'
 
@@ -60,21 +59,6 @@ export const useLiveStore = defineStore('live', () => {
       if (typeof oldest === 'string') seenEventIds.delete(oldest)
     }
     return true
-  }
-
-  // 咕咕 present_file 推送：可见标签页直接打开全局预览；后台标签页只弹通知，不抢焦点。
-  const previewStore = usePreviewStore()
-  function presentFromLive(p: { file_id: number; name?: string; ext?: string }) {
-    const name = p.name || `文件 #${p.file_id}`
-    if (document.visibilityState !== 'visible') {
-      uiStore.pushNotification({ title: '咕咕展示了文件', content: name, persist: false, bubble: true })
-      return
-    }
-    previewStore.open({
-      id: p.file_id,
-      ext: (p.ext || '').toUpperCase(),
-      displayName: name,
-    })
   }
 
   // 重连补刷：错峰逐个 bump，别在回到前台那一帧挤爆主线程（见 _loop 注释）。
@@ -160,11 +144,6 @@ export const useLiveStore = defineStore('live', () => {
               }
               if (evt.notification) {
                 uiStore.pushNotification(evt.notification)
-              }
-              // present_file：咕咕把文件推到当前页面。载荷只有 file_id/name/ext（见 PRD-FS-2），
-              // 内容仍由预览组件走 /files/{id}/download 端点取数并校验属主。
-              if (evt.present && Number.isInteger(evt.present.file_id) && evt.present.file_id > 0) {
-                presentFromLive(evt.present)
               }
             } catch { /* 忽略坏行 */ }
             sseEvent = ''

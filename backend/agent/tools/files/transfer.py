@@ -408,10 +408,10 @@ async def _send_file(db, user_id, args: dict):
 
 
 async def _present_file(db, user_id, args: dict):
-    """把文件直接推到用户当前网页上打开（全局预览窗口）。只读、不改数据。
+    """返回文件展示指令，由发起本次网页对话的浏览器打开。只读、不改数据。
 
-    复用 events:{user_id} 实时频道：载荷只含 file_id/name/ext 三个展示必需字段，
-    取数由前端预览组件走既有 /files/{id}/download 端点（端点自身校验属主）。
+    不向用户级实时频道广播展示动作，避免同一账号的多个浏览器都响应，导致音频在
+    非当前浏览器播放。文件内容仍由前端预览组件走既有下载端点并校验属主。
     IM 会话里禁用——用户不在网页上，推了也看不到。
     """
     from agent.im import imctx
@@ -421,13 +421,13 @@ async def _present_file(db, user_id, args: dict):
     f, err = await _resolve_file(db, user_id, args)
     if err:
         return err
-    from app.core.redis import get_redis
-    payload = {"present": {"file_id": f.id, "name": f.display_name, "ext": f.ext}}
-    try:
-        await get_redis().publish(f"events:{user_id}", json.dumps(payload, ensure_ascii=False))
-    except Exception as exc:
-        return json.dumps({"error": f"推送失败：{redact(str(exc))}"}, ensure_ascii=False)
-    return {"ok": True, "message": f"已在用户当前页面打开《{f.display_name}.{f.ext}》。", "file_id": f.id}
+    return {
+        "ok": True,
+        "message": f"已在当前浏览器打开《{f.display_name}.{f.ext}》。",
+        "file_id": f.id,
+        "name": f.display_name,
+        "ext": f.ext,
+    }
 
 # 对外使用稳定名称；files.py 继续导出旧的下划线名称，兼容现有调用方。
 normalize_send_path = _normalize_send_path

@@ -90,8 +90,8 @@ TRANSFER_TOOLS = [
         ),
         Tool(
             name="present_file", label="在网页展示文件",
-            description_short='把文件直接推到用户当前网页上打开预览。',
-            description="把文件库里的文件推到网页端打开预览（图片/音频/视频/文档立即展示；音频会交给网页播放器播放）。"
+            description_short='在发起当前对话的网页打开文件预览。',
+            description="把文件库里的文件交给发起当前对话的网页打开预览（图片/音频/视频/文档立即展示；音频会交给该网页的播放器播放）。"
                         "file/file_id 可使用 list_dir/grep 返回的逻辑路径或 file_id，路径仅定位已登记文件。"
                         "用户明确要求打开、展示文件或播放文件库音频时调用；不产生聊天附件。",
             input_schema={
