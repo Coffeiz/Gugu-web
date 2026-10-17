@@ -2,7 +2,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { i18n } from '@/i18n'
-import { agentApi, trackApi } from '@/services/api'
+import { agentApi, CLIENT_ID, trackApi } from '@/services/api'
 import { useChatStream } from '@/components/common/gugu-chat/composables/useChatStream'
 import { mapSessionMessageDelta, mergeSessionMessageDelta } from '@/components/common/gugu-chat/composables/sessionMessageSync'
 import type { ChatMessage } from '@/components/common/gugu-chat/chatTypes'
@@ -100,7 +100,8 @@ describe('useChatStream 停止 run', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(new ReadableStream({
       start(controller) {
         controller.enqueue(new TextEncoder().encode([
-          { type: 'tool_done', name: 'present_file', status: 'success', result: { ok: true, file_id: 17, name: '设计稿', ext: 'png' } },
+          { type: 'tool_done', name: 'present_file', status: 'success', origin_client_id: CLIENT_ID, result: { ok: true, file_id: 17, name: '设计稿', ext: 'png' } },
+          { type: 'tool_done', name: 'present_file', status: 'success', origin_client_id: 'another-tab', result: { ok: true, file_id: 18, name: '其他标签页文件', ext: 'png' } },
           { type: 'done', run_id: 'run-1' },
         ].map(event => `data: ${JSON.stringify(event)}\n\n`).join('')))
         controller.close()
