@@ -107,7 +107,7 @@
     </div>
   </div>
 
-  <CalendarMorePopup ref="morePopupRef" :open="morePopup.open" :items="morePopup.items" :date-label="morePopup.dateLabel" :style="morePopup.style"
+  <CalendarMorePopup ref="morePopupRef" :open="morePopup.open" :items="morePopupItems" :date-label="morePopup.dateLabel" :style="morePopup.style"
                      @open-project="onMoreProject" @edit-event="onMoreEditEvent" @drag-item="onMoreDragItem" />
 
   <Teleport to="body">
@@ -161,6 +161,7 @@ import { useCalendarDrag, type CalendarDragState } from '@/composables/calendar/
 import { useCalendarData } from '@/composables/calendar/useCalendarData'
 import { useCalendarWeekInteraction } from '@/composables/calendar/useCalendarWeekInteraction'
 import { useCalendarEventForm } from '@/composables/calendar/useCalendarEventForm'
+import { resolveCalendarMoreItems } from './utils/calendarMoreItems'
 import type { CalendarContext } from './domain/calendarContext'
 import type { CalendarHourHover, CalendarMonthDay, CalendarRenderItem, CalendarTimeSelection, CalendarWeekDay } from './domain/calendarTypes'
 import { canResize, getDisplayColor } from './domain/calendarRules'
@@ -529,6 +530,10 @@ const pickerRef       = ref<InstanceType<typeof YearMonthPicker> | null>(null)
 
 const morePopup    = ref<{ open: boolean; items: CalItem[]; dateLabel: string; style: Record<string, string | number | undefined> }>({ open: false, items: [], dateLabel: '', style: {} })
 const morePopupRef = ref<InstanceType<typeof CalendarMorePopup> | null>(null)
+const morePopupItems = computed(() => resolveCalendarMoreItems(
+  morePopup.value.items,
+  [...extraEvents.value, ...nextMonthEvents.value, ...spilloverEvents.value],
+))
 const morePopupAnchor = ref<HTMLElement | null>(null)
 let morePopupOpenTimer: ReturnType<typeof setTimeout> | null = null
 function closeMorePopup() {
