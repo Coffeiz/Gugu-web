@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useAudioStore } from './audio'
 import { authApi } from '@/services/api'
 import { getCsrfHeaders } from '@/services/api'
@@ -7,7 +7,7 @@ import { getAuthDeviceId } from '@/utils/authDevice'
 import type { components } from '@/types/api'
 import { getLocale } from '@/i18n'
 import { clearGreeting } from '@/composables/shared/useGreeting'
-import { beginAccountBoundary } from '@/utils/accountBoundary'
+import { beginAccountBoundary, getAccountBoundaryEpoch } from '@/utils/accountBoundary'
 import { useUiStore } from './ui'
 import { useLiveStore } from './live'
 import { useFilesCacheStore } from './filesCache'
@@ -45,12 +45,28 @@ function resetAccountState() {
 export const useAuthStore = defineStore('auth', () => {
   const user  = ref<UserWithTimezone | null>(null)
   const sessionChecked = ref(false)
+  const liveStore = useLiveStore()
+
+  // IM 绑定变化通过 live 资源事件通知；重新读取 /auth/me 才能取得后端计算的
+  // imChannels，避免页面继续使用登录响应里的空列表。
+  watch(() => liveStore.rev.im_channels, revision => {
+    if (revision > 0 && user.value) void fetchMe(true)
+  })
 
   const isLoggedIn = computed(() => !!user.value)
 
   function _setUser(u: UserWithTimezone | null) {
     user.value = u
     setUserTimezone(u?.timezone)
+  }
+
+  function _applyUserUpdate(updated: UserWithTimezone) {
+    const current = user.value
+    // profile/avatar 接口不会计算动态的 imChannels，保留同一账号当前值；
+    // 解绑等渠道变化由 /auth/me 的实时刷新负责清空或替换。
+    user.value = current?.id === updated.id
+      ? { ...updated, imChannels: current.imChannels }
+      : updated
   }
 
   function _extractDetail(body: { detail?: unknown } | null | undefined, fallback: string) {
@@ -87,14 +103,18 @@ export const useAuthStore = defineStore('auth', () => {
     resetAccountState()
     _setUser(body.user)
     sessionChecked.value = true
+    await fetchMe(true)
   }
 
-  async function fetchMe() {
-    if (sessionChecked.value && user.value) return true
+  async function fetchMe(force = false) {
+    if (!force && sessionChecked.value && user.value) return true
+    const requestEpoch = getAccountBoundaryEpoch()
     try {
       const res = await fetch(`${BASE_URL}/auth/me`, {
         credentials: 'include',
       })
+      // 账号切换后，旧请求的成功和 401 都不能改动新账号的登录态。
+      if (requestEpoch !== getAccountBoundaryEpoch()) return null
       // 只有明确的 401 才代表 token 失效。后端短暂 5xx、锁等待或网络中断
       // 不应清掉本地登录态，否则一次服务抖动会把用户误登出。
       if (res.status === 401) {
@@ -105,6 +125,7 @@ export const useAuthStore = defineStore('auth', () => {
       }
       if (!res.ok) return null
       const nextUser = await res.json() as UserWithTimezone
+      if (requestEpoch !== getAccountBoundaryEpoch()) return null
       user.value = nextUser
       sessionChecked.value = true
       setUserTimezone(nextUser.timezone)
@@ -129,7 +150,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function updateProfile(fields: Record<string, unknown>) {
     const updated = await authApi.updateProfile(fields)
-    user.value = updated
+    _applyUserUpdate(updated)
     setUserTimezone(updated.timezone)
     return updated
   }
@@ -146,7 +167,7 @@ export const useAuthStore = defineStore('auth', () => {
         rollback: () => { user.value = previous },
         request: () => authApi.updateProfile(fields),
         onCommit: updated => {
-          user.value = updated
+          _applyUserUpdate(updated)
           setUserTimezone(updated.timezone)
         },
       })
@@ -157,7 +178,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function uploadAvatar(file: File) {
     const updated = await authApi.uploadAvatar(file)
-    user.value = updated
+    _applyUserUpdate(updated)
     return updated
   }
 

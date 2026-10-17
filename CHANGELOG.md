@@ -7,6 +7,121 @@
 
 ## [Unreleased]
 
+### What's New
+
+#### New Features
+
+- None.
+
+#### Improvements
+
+- None.
+
+#### Fixes
+
+- None.
+
+### 更新内容
+
+#### 新功能
+
+- 暂无。
+
+#### 改进
+
+- 暂无。
+
+#### 修复
+
+- 修复文件同步在文件被删除或原子替换时整批重试及记录过期指纹的问题。
+- 修复模型上游流式失败被误报为内部错误的问题，统一 Web 与 IM 的错误提示和诊断编号。
+
+## [1.7.5] - 2026-10-17
+
+### What's New
+
+#### New Features
+
+- None for this release.
+
+#### Improvements
+
+- Keep cut files and folders visibly consistent between the file library and project editor, with shared card action styling.
+- Use compact inline rename and todo fields in the project editor.
+- Speed up large file copies by streaming data through storage backends.
+- Remember the selected calendar view and document or spreadsheet preview size between visits.
+- Show the selected choice on the completed Feishu interaction card without a separate tool-status message.
+- Stop sending idle SSE heartbeat frames and reduce idle polling while preserving immediate event delivery and periodic account-status checks.
+- Refresh IM connection status in already-open chat windows after a bot is connected, updated, unbound, or removed.
+- Open `present_file` results only in the browser that initiated the chat request, avoiding unintended playback or previews in other tabs.
+- Recognize M3U/M3U8 playlists as text files and avoid revalidating an unchanged extension during file moves or renames.
+- Keep calendar overflow items current after events are edited or deleted, and adapt project status counts to the selected theme.
+- Keep popup scrollbars inside their animated surfaces and allow project todo lists to scroll without closing the editor.
+
+### Fixes
+
+- Preserve calendar and spreadsheet preferences across frontend updates, along with the DOCX viewing mode.
+- Retry project-directory reads when a file changes during an in-flight request, avoiding a stale snapshot.
+- Keep OSS copy fingerprints matched to the copied source version when the source changes concurrently.
+- Hide email-change controls when system email is unavailable and refresh the capability when account settings open.
+- Show a loading state while an HTML preview finishes loading.
+- Keep the previous project-folder contents visible while refreshed directory data is loading.
+- Allow fresh database bootstrap to skip search indexes for columns no longer present in the current schema.
+- Keep the calendar all-day separator aligned across the week view.
+- Accept text input when completing sandbox authorization prompts.
+- Stop retrying background memory reflection for deleted conversations and clean up their pending buffers.
+- Stop automatically retrying IM memory reflection when the model provider explicitly rejects the input, while preserving retries for temporary failures.
+
+### Contributors
+
+- Thank you to [@Coffeiz](https://github.com/Coffeiz) for PR #103.
+
+### Feedback & Issue Reporters
+
+- None for this release.
+
+### 更新内容
+
+#### 新功能
+
+- 本次无新增功能。
+
+#### 改进
+
+- 统一文件库与项目编辑器中文件和文件夹的剪切状态及卡片操作样式。
+- 调整项目编辑器内联重命名和待办输入框高度，使其更紧凑。
+- 优化大文件复制，按流处理存储数据，减少应用内存占用。
+- 记住用户上次选择的日历视图，以及文档字号和表格缩放比例。
+- 飞书交互完成后在原卡片显示已选择的选项，不再额外发送工具状态消息。
+- 移除 SSE 空闲心跳并降低空闲轮询频率，同时保留业务事件即时推送和账号状态定期校验。
+- IM Bot 绑定、更新、解绑或删除后，已打开的聊天窗口会同步刷新接入状态。
+- `present_file` 仅在发起对话的浏览器中打开，避免其他标签页意外播放或展示文件。
+- 将 M3U/M3U8 播放列表识别为文本文件；移动或改名但未更改后缀时不再重复校验文件类型。
+- 日历“更多”列表会同步活动的最新信息；项目看板数量徽标适配用户主题配色。
+- 弹层滚动条随弹层动画显示，项目待办列表滚动时不会关闭编辑器。
+
+### 修复
+
+- 前端更新后保留日历、表格偏好及 DOCX 页面适配模式。
+- 文件在项目目录请求期间发生变化时重新读取，避免缓存旧目录内容。
+- OSS 源文件并发变化时校验复制版本，确保内容指纹与复制结果一致。
+- 系统邮件不可用时隐藏邮箱变更入口，并在打开账号设置时刷新可用状态。
+- HTML 预览加载完成前显示加载状态。
+- 项目文件目录刷新时保留上次内容，避免加载期间文件区闪成空白。
+- 全新数据库初始化时跳过当前 schema 中已不存在字段的搜索索引，避免初始化失败。
+- 修正周视图全天区域分隔线的显示。
+- 沙盒授权询问支持直接输入文本完成授权。
+- 修复已删除会话的后台记忆反思持续重试问题，并清理对应待处理缓冲。
+- 修复 IM 记忆反思在模型明确拒绝输入后仍自动重试的问题，暂时性故障继续正常退避重试。
+
+#### 贡献者
+
+- 感谢 [@Coffeiz](https://github.com/Coffeiz) 提交 PR #103。
+
+#### 反馈与问题报告
+
+- 暂无。
+
 ## [1.7.4] - 2026-10-16
 
 ### What's New

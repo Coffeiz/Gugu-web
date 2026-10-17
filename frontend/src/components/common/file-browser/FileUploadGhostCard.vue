@@ -9,7 +9,7 @@
     <span v-if="!isFolder" class="fc-ext-badge">{{ ext || '—' }}</span>
     <div class="fc-icon-area">
       <PhFolder v-if="isFolder" class="fc-big-icon" :size="86" />
-      <component v-else :is="fileListIcon(ext)" class="fc-big-icon" :size="86" />
+      <component v-else :is="fileListIcon(ext)" class="fc-big-icon" size="86" />
     </div>
     <div class="fc-label">
       <div class="fc-name" :title="name">{{ name }}</div>

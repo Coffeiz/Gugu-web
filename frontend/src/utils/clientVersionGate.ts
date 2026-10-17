@@ -6,6 +6,10 @@ const KEEP = [
   'gugu_mini_pinned',  // 偏好：球钉住
   'gugu_audio_volume', // 偏好：音量
   'gugu_video_volume', // 偏好：视频音量
+  'gugu-document-font-size', // 偏好：文档预览字号
+  'gugu-calendar-view-mode', // 偏好：日历视图
+  'gugu-spreadsheet-zoom', // 偏好：表格预览缩放
+  'gugu-docx-view-mode', // 偏好：DOCX 页面适配模式
 ]
 
 export function runClientVersionGate() {

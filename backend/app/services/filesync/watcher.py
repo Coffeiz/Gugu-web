@@ -11,6 +11,7 @@ from sqlalchemy import select
 logger = logging.getLogger(__name__)
 
 from app.core.config import get_settings
+from app.core.redaction import diag_log
 from app.core.tz import now_utc
 from app.db import session as db_session
 from app.models import FileSyncBinding, User, Workspace
@@ -487,6 +488,7 @@ class FileSyncWatcherManager:
                 self._restore_batch(binding_id, batch)
                 raise
             except Exception as exc:
+                diag_log(f"filesync.watcher.project_pending binding={binding_id}", exc)
                 retry = self._retry_count.get(binding_id, 0) + 1
                 self._retry_count[binding_id] = retry
                 if retry < self.MAX_PATH_RETRIES:

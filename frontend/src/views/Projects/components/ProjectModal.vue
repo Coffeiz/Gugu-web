@@ -576,16 +576,6 @@ watch([pmSortKey, pmSortDir], () => {
   void loadCurrentProjectDirectory()
 })
 
-let projectDirectoryRefreshTimer: number | null = null
-watch(() => liveStore.resourceEvent, event => {
-  const projectId = props.project?.id
-  if (event?.resource !== 'files' || projectId == null) return
-  invalidateProjectDirectories(projectId)
-  window.clearTimeout(projectDirectoryRefreshTimer ?? undefined)
-  projectDirectoryRefreshTimer = window.setTimeout(loadCurrentProjectDirectory, 180)
-})
-onUnmounted(() => window.clearTimeout(projectDirectoryRefreshTimer ?? undefined))
-
 // 外部（Agent/IM）修改项目时实时同步进打开中的草稿：store 的 live 事件会整体
 // 替换 projects 里的对象，props.project 引用随之更新；按字段合并，用户已编辑的
 // 字段不被覆盖（见 useProjectDraft.syncExternal）。

@@ -3,6 +3,7 @@ from fastapi import HTTPException
 from starlette.responses import Response
 
 from app.api.v1 import auth
+from app.core import events
 from app.core.security import create_stream_token, create_user_token, is_user_active, verify_stream_token
 from app.schemas import ResetPassword
 
@@ -29,6 +30,7 @@ async def test_password_reset_advances_security_version_and_revokes_old_jwt(db, 
     previous_version = user_a.security_version or 1
     old_token = create_user_token(user_a.id, previous_version)
     reset_store = {}
+    published = []
 
     class FakeRedis:
         async def get(self, key):
@@ -37,7 +39,12 @@ async def test_password_reset_advances_security_version_and_revokes_old_jwt(db, 
         async def delete(self, key):
             reset_store.pop(key, None)
 
+        async def publish(self, channel, raw):
+            assert not await is_user_active(user_a.id, previous_version)
+            published.append(channel)
+
     monkeypatch.setattr(auth, "get_redis", lambda: FakeRedis())
+    monkeypatch.setattr(events, "get_redis", lambda: FakeRedis())
     reset_store["pwdreset:tok:synthetic-reset-token"] = str(user_a.id)
 
     await auth.reset_password(
@@ -50,6 +57,58 @@ async def test_password_reset_advances_security_version_and_revokes_old_jwt(db, 
     assert not await is_user_active(user_a.id, previous_version)
     assert await is_user_active(user_a.id, user_a.security_version)
     assert old_token != create_user_token(user_a.id, user_a.security_version)
+    assert published == [f"events:{user_a.id}"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["profile_password", "email_change"])
+async def test_credential_changes_notify_only_after_old_version_is_revoked(db, user_a, monkeypatch, operation):
+    from starlette.requests import Request
+
+    from app.core.security import hash_password
+    from app.schemas import EmailChangeVerify, UpdateProfile
+    from app.services.email.email_change import create_email_change_request
+
+    previous_version = user_a.security_version
+    notified = []
+
+    async def notify(user_id):
+        assert not await is_user_active(user_id, previous_version)
+        notified.append(user_id)
+
+    monkeypatch.setattr(events, "publish_auth_state_changed", notify)
+    if operation == "profile_password":
+        user_a.hashed_password = hash_password("old-test-password")
+        await db.commit()
+        await auth.update_profile(
+            UpdateProfile(current_password="old-test-password", new_password="new-test-password"),
+            Request({"type": "http", "scheme": "https", "path": "/api/v1/auth/profile", "headers": []}),
+            Response(), user_a, db,
+        )
+    else:
+        _, token = await create_email_change_request(db, user_a, "new@example.test")
+        await db.commit()
+
+        async def theme(*_args):
+            return "light", "mist"
+
+        monkeypatch.setattr(auth, "_email_preference_theme", theme)
+        monkeypatch.setattr(auth.email_svc, "send_email_change_notice", lambda **_kwargs: None)
+        await auth.verify_email_change(EmailChangeVerify(token=token), db)
+    assert notified == [user_a.id]
+
+
+@pytest.mark.asyncio
+async def test_logout_remains_revoked_when_notification_publish_fails(db, user_a, monkeypatch):
+    previous_version = user_a.security_version
+
+    class UnavailableRedis:
+        async def publish(self, *_args):
+            raise ConnectionError("测试 Redis 不可用")
+
+    monkeypatch.setattr(events, "get_redis", lambda: UnavailableRedis())
+    assert await auth.logout(Response(), user_a, db) == {"ok": True}
+    assert not await is_user_active(user_a.id, previous_version)
 
 
 @pytest.mark.asyncio

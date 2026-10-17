@@ -56,6 +56,7 @@ class ContextBranch:
         error_type = "-"
         error_status = "-"
         context_overflow = False
+        provider_error_code = None
         # append_reuse 的实际缓存观测（PRD-LLM-27 §6.7）：provider 归一化 usage
         # 经旁路收集，成功后喂 cache_capability 纯观测记账（白名单已废止，观测
         # 只记录不拦截）；不改返回契约。
@@ -103,6 +104,8 @@ class ContextBranch:
                         )
                         ok = isinstance(output, dict) and bool(output)
                 except Exception as exc:
+                    from agent.providers.errors import is_provider_input_rejected
+
                     output = None
                     ok = False
                     call_failed = True
@@ -111,6 +114,8 @@ class ContextBranch:
                     from .budget import is_context_overflow_error
 
                     context_overflow = is_context_overflow_error(exc)
+                    if is_provider_input_rejected(exc):
+                        provider_error_code = "input_sensitive"
                     response = getattr(exc, "response", None)
                     status = getattr(exc, "status_code", None) or getattr(response, "status_code", None)
                     error_status = str(status) if isinstance(status, int) else "-"
@@ -122,6 +127,9 @@ class ContextBranch:
                         exc,
                     )
                 validated_ok = ok
+                if provider_error_code is not None:
+                    # 相同输入的审核拒绝不能按普通 500 重打，也不自动切换模型。
+                    break
                 if ok:
                     reason = "completed"
                     break
@@ -170,6 +178,7 @@ class ContextBranch:
             output_fingerprint=output_fp,
             provider_usage=(usage_sink[-1] if usage_sink else None),
             context_overflow=context_overflow,
+            provider_error_code=provider_error_code,
             metadata={
                 "branch": policy.name,
                 "branch_mode": branch_input.branch_mode,

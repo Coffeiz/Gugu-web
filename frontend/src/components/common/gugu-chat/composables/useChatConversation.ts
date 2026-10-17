@@ -45,6 +45,7 @@ export function useChatConversation(options: {
   onContentReset: () => void          // 窗口高度回到 SMALL_H 基线
   onCaptureBaseScrollH: () => void    // 记录当前内容高度为新的增高基线
   onSyncSmallH: () => void            // 按内容真实高度重新计算窗口高
+  onPresentFile?: (file: { file_id: number; name?: string; ext?: string }) => void
 }) {
   const liveStore = useLiveStore()
   const messagesEl = computed(() => options.messageListRef.value?.el ?? null)
@@ -422,6 +423,7 @@ export function useChatConversation(options: {
     onQueuePersistenceError: options.onQueuePersistenceError,
     onQueueDispatchError: options.onQueueDispatchError,
     onContentReset: options.onContentReset,
+    onPresentFile: options.onPresentFile,
   })
   const {
     streaming, abortCtrl, pendingQueue, removeQueued, resetSessionTurn, clearPendingQueue,
@@ -516,7 +518,11 @@ export function useChatConversation(options: {
   })
 
   watch(() => liveStore.agentRunEvent, (event) => {
-    if (!event || event.status !== 'running' || sessionId.value !== event.session_id || streaming.value) return
+    if (!event || event.status !== 'running') return
+    // IM 首条消息会先在服务端创建并提交 session，再发布 run=running；列表刷新不应
+    // 等待助手回复后的 sessions 事件，否则新 IM 会话在生成期间或回复失败时不可见。
+    if (!sessions.value.some(item => item.id === event.session_id)) void fetchSessions()
+    if (sessionId.value !== event.session_id || streaming.value) return
     // IM run 开始时通过用户级 live 事件通知；只续接当前正在看的会话。
     void resumeStream(event.session_id)
   })

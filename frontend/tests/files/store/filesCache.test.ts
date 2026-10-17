@@ -1,7 +1,8 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import { computed, nextTick, watchEffect } from 'vue'
+import { computed, nextTick, reactive, watchEffect } from 'vue'
+import { useLiveStore } from '@/stores/live'
 import { useFilesCacheStore, type FileMeta, type FolderMeta } from '@/stores/filesCache'
 import type { CursorPage } from '@/services/api'
 
@@ -9,7 +10,11 @@ vi.mock('@/services/api', () => ({
   filesApi: { get: vi.fn() },
   foldersApi: { get: vi.fn() },
 }))
-vi.mock('@/stores/live', () => ({ useLiveStore: () => ({ resourceEvent: null }) }))
+vi.mock('@/stores/live', async () => {
+  const { reactive } = await import('vue')
+  const live = reactive({ resourceEvent: null, rev: { files: 0 } })
+  return { useLiveStore: () => live }
+})
 vi.mock('@/utils/accountBoundary', () => ({ getAccountBoundaryEpoch: () => 0 }))
 
 function file(id: number, overrides: Partial<FileMeta> = {}): FileMeta {
@@ -28,7 +33,12 @@ function folder(id: number, overrides: Partial<FolderMeta> = {}): FolderMeta {
 const page = <T>(items: T[]): CursorPage<T> => ({ items, next_cursor: null, has_more: false })
 
 describe('filesCache 有界目录页与 ID 缓存', () => {
-  beforeEach(() => setActivePinia(createPinia()))
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    const live = useLiveStore()
+    live.resourceEvent = null
+    live.rev.files = 0
+  })
 
   it('目录页按 personal/project/workspace 与父目录隔离', () => {
     const store = useFilesCacheStore()
@@ -56,6 +66,24 @@ describe('filesCache 有界目录页与 ID 缓存', () => {
 
     expect(store.getDirectory({ space: 'personal' })).toBeNull()
     expect(store.getFile(1)?.workspaceDirectoryId).toBe(34)
+  })
+
+  it('文件版本变化会使缓存目录失效，并在重新读取前保留旧快照', async () => {
+    const store = useFilesCacheStore()
+    const scope = { space: 'project' as const, projectId: 42 }
+    const previous = file(42, { space: 'project', projectId: 42 })
+    store.setDirectoryPage(scope, page([previous]), page([]))
+
+    const live = useLiveStore()
+    live.rev.files++
+    await nextTick()
+
+    expect(store.getDirectory(scope)).toBeNull()
+    expect(store.getDirectorySnapshot(scope)?.files).toEqual([previous])
+
+    const created = file(43, { space: 'project', projectId: 42 })
+    store.setDirectoryPage(scope, page([previous, created]), page([]))
+    expect(store.getDirectorySnapshot(scope)?.files).toEqual([previous, created])
   })
 
   it('computed 渲染目录缓存时只因数据写入更新，不因 LRU 读取再次触发', async () => {

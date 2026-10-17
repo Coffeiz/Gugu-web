@@ -15,7 +15,10 @@ export const useClipboardStore = defineStore('clipboard', () => {
   function clear() {
     type.value = null; fileIds.value = []; folderIds.value = []
   }
+  function isCut(kind: 'file' | 'folder', id: number) {
+    return type.value === 'cut' && (kind === 'file' ? fileIds.value : folderIds.value).includes(id)
+  }
   const hasContent = () => fileIds.value.length > 0 || folderIds.value.length > 0
 
-  return { type, fileIds, folderIds, cut, copy, clear, hasContent }
+  return { type, fileIds, folderIds, cut, copy, clear, isCut, hasContent }
 })

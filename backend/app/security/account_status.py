@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Any
 
+from app.core import events
 from app.core.tz import now_utc
 
 
@@ -15,6 +16,7 @@ async def suspend_user(db, user, *, duration_seconds: int, reason: str) -> None:
     user.security_version = (user.security_version or 0) + 1
     user.is_active = False
     await db.commit()
+    await events.publish_auth_state_changed(user.id)
 
 async def unsuspend_user(db, user) -> None:
     """解封用户；不恢复已经断开的连接。"""
@@ -24,3 +26,4 @@ async def unsuspend_user(db, user) -> None:
     user.security_version = (user.security_version or 0) + 1
     user.is_active = True
     await db.commit()
+    await events.publish_auth_state_changed(user.id)

@@ -138,7 +138,7 @@ async def poll(
             except Exception:
                 pass
         from app.core import events
-        await events.bump_context_revision(current_user.id, "im_channels")
+        await events.publish(current_user.id, "im_channels", operation="refresh")
         await R.get_redis().delete(_rk(poll_id))
         try:
             await R.get_redis().publish("im:gateway:reload", "1")

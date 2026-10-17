@@ -2,7 +2,15 @@
 
 ## Supported Channels
 
-Web, QQ, WeChat, Feishu, and scheduled jobs use different transport and presentation adapters but share sessions, context assembly, Agent Runs, tools, interactions, and canonical history.
+Web, QQ, WeChat, Feishu, Telegram, and scheduled jobs use different transport and presentation adapters but share sessions, context assembly, Agent Runs, tools, interactions, and canonical history.
+
+## Telegram
+
+Telegram uses the Bot API long-polling Gateway and shares the same Agent Loop, identity checks, sessions, and tool permissions as other channels. It supports direct and group chats, text, files, inline keyboard interactions, and live draft previews in direct chats. Group delivery and available updates remain subject to the bot's Telegram privacy settings and platform rules.
+
+## Mermaid Diagrams
+
+The Web chat and Markdown file viewer render Mermaid code blocks as interactive diagrams with zoom, expanded viewing, and PNG export. IM replies on QQ, WeChat, Feishu, and Telegram render complete Mermaid blocks as PNG and preserve their order relative to surrounding text. Feishu can place diagrams in cards; other channels deliver adjacent image messages. Rendering failures preserve a readable text fallback and do not fail the ordinary reply. See the [Mermaid rendering PRD](../../prds/【已完成】PRD-MERMAID-1-统一Mermaid渲染与跨端PNG输出.md) for implementation constraints and acceptance criteria.
 
 ## Adapter Responsibilities
 

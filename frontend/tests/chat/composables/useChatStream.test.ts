@@ -92,6 +92,27 @@ describe('useChatStream 停止 run', () => {
     expect(options.messages.value[0]?.toolStatus).toBe('success')
   })
 
+  it('当前网页对话成功调用 present_file 时将文件交给该网页预览', async () => {
+    const options = createOptions([])
+    const onPresentFile = vi.fn()
+    options.onPresentFile = onPresentFile
+    const stream = useChatStream(options)
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode([
+          { type: 'tool_done', name: 'present_file', status: 'success', result: { ok: true, file_id: 17, name: '设计稿', ext: 'png' } },
+          { type: 'done', run_id: 'run-1' },
+        ].map(event => `data: ${JSON.stringify(event)}\n\n`).join('')))
+        controller.close()
+      },
+    }))))
+
+    await stream.resumeStream(42)
+
+    expect(onPresentFile).toHaveBeenCalledWith({ file_id: 17, name: '设计稿', ext: 'png' })
+    expect(onPresentFile).toHaveBeenCalledTimes(1)
+  })
+
   it('不同回合复用相同 toolCallId 时仍分别更新各自的工具卡', async () => {
     const options = createOptions([])
     const stream = useChatStream(options)

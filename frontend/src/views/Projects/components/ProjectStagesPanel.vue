@@ -365,8 +365,9 @@ function handleToggleTodo(todo: ProjectTodo) {
 .stage-node.active .node-label { font-weight: 600; }
 .todo-count { font-size: 10px; color: var(--content-tertiary); white-space: nowrap; }
 .stage-input {
-  width: 110px; padding: 1px 6px; border-radius: var(--radius-xs); outline: none;
-  font: 13px var(--font-sans); color: var(--input-fg); background: var(--input-bg);
+  width: 110px; height: var(--input-control-height-compact); box-sizing: border-box;
+  padding: 0 4px; border-radius: var(--radius-xs); outline: none;
+  font: 13px var(--font-sans); line-height: var(--line-height-ui); color: var(--input-fg); background: var(--input-bg);
   border: 1px solid var(--input-border); box-shadow: var(--input-hover-shadow), 0 0 0 0 transparent;
   transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard);
 }

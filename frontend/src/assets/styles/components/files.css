@@ -32,6 +32,17 @@
 .fc-card:active:not(:has(:active)) { transform: translateY(1px); opacity: 0.93; }
 .folder-card:active:not(:has(:active)) { transform: translateY(1px); opacity: 0.93; }
 
+/* 文件/文件夹卡片与列表行共用剪切中的半透明状态。 */
+.fc-card.cut, .folder-card.cut, .list-row.cut { opacity: 0.45; }
+
+/* 文件与文件夹卡片共用悬浮操作区，调用方只提供按钮内容。 */
+.file-card-hover-actions {
+  position: absolute; top: 8px; right: 8px; z-index: 3;
+  display: flex; gap: 3px; opacity: 0; pointer-events: none;
+  transition: opacity 0.15s;
+}
+:is(.fc-card, .folder-card):hover .file-card-hover-actions { opacity: 1; pointer-events: auto; }
+
 /* 重命名输入框使用名称栏的可用宽度，供文件卡、文件夹和项目模板共用。 */
 .rename-sizer {
   display: inline-block; position: relative;

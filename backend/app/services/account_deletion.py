@@ -6,6 +6,7 @@ DB 表里，级联碰不到；不清就违背隐私政策「注销后从数据�
 """
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import events
 from app.models import User
 
 
@@ -41,6 +42,8 @@ async def delete_account(db: AsyncSession, user: User) -> int:
         pass
 
     # ④ DB 行（cascade 级联清 projects/files/folders/events/clients/conversations 等）
+    user_id = user.id
     await db.delete(user)
     await db.commit()
+    await events.publish_auth_state_changed(user_id)
     return removed

@@ -975,3 +975,61 @@ def test_responses_driver_keeps_tool_images_as_input_image_items():
             {"type": "input_image", "image_url": "data:image/png;base64,AAAA", "detail": "auto"},
         ],
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event_kind", ["response.failed", "error"])
+@pytest.mark.parametrize("after_output", [False, True])
+async def test_responses_failure_never_becomes_success_or_replays_tools(monkeypatch, event_kind, after_output):
+    """上游终态失败须关闭流、保留受限诊断，不产生 done 或重放已返回的工具调用。"""
+    from agent.errors import describe_llm_error
+    from agent.providers.errors import ResponsesStreamError
+    import app.core.redaction as redaction
+
+    raw_logs = []
+    monkeypatch.setattr(redaction, "diag_log_raw", lambda where, value: raw_logs.append((where, value)))
+    detail = {"code": "internal_error", "type": "provider_error", "message": "合成私有错误正文"}
+    response = {"id": "resp-synthetic-failed", "status": "failed", "error": detail}
+    failure = (
+        SimpleNamespace(type=event_kind, response=SimpleNamespace(model_dump=lambda: response))
+        if event_kind == "response.failed" else SimpleNamespace(**{**detail, "type": "error"})
+    )
+    events = []
+    if after_output:
+        events.extend([
+            SimpleNamespace(type="response.output_text.delta", delta="已有正文"),
+            SimpleNamespace(type="response.output_item.done", item={
+                "type": "function_call", "id": "fc-synthetic", "call_id": "call-synthetic",
+                "name": "call_tool", "arguments": '{"tool_name":"shell","arguments":{}}',
+            }),
+        ])
+    stream = _FakeResponsesStream([*events, failure])
+    closed = []
+
+    async def close():
+        closed.append(True)
+
+    stream.close = close
+    requests = []
+
+    async def create(**request):
+        requests.append(request)
+        return stream
+
+    ai = SimpleNamespace(model="gpt-test", max_tokens=100, reasoning_effort="")
+    ctx = _ResponsesCtx([], 100, "gpt-test", "system", _responses_adapter(), ai)
+    emitted = []
+    with pytest.raises(ResponsesStreamError) as caught:
+        async for event in OpenAIResponsesDriver().run_round(
+            SimpleNamespace(responses=SimpleNamespace(create=create)), ctx,
+            MessageArea.from_canonical_messages([{"role": "user", "content": "合成请求"}]),
+        ):
+            emitted.append(event)
+
+    assert not any(kind == "done" for kind, _ in emitted)
+    assert emitted == ([("token", "已有正文")] if after_output else [])
+    assert len(requests) == 1 and closed == [True]
+    assert "internal_error" in str(caught.value)
+    assert "合成私有错误正文" not in str(caught.value)
+    assert "合成私有错误正文" in raw_logs[0][1]
+    assert describe_llm_error(caught.value).code == "provider_stream_error"

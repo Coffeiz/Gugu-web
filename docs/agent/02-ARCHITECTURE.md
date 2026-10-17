@@ -4,7 +4,7 @@
 
 ## 1. 架构原则
 
-1. 渠道适配与 Agent 编排分离。Web、QQ、微信、飞书和定时任务可以有不同的输入输出协议，但共用同一套 run/round、上下文、工具和持久化逻辑。
+1. 渠道适配与 Agent 编排分离。Web、QQ、微信、飞书、Telegram 和定时任务可以有不同的输入输出协议，但共用同一套 run/round、上下文、工具和持久化逻辑。
 2. Canonical history 是工具调用、工具结果和交互状态的语义事实源。Provider 或渠道只能转换展示格式，不能重新定义消息语义；Provider 私有推理续接状态单独存储，不能写入 canonical history。
 3. 权限由后端代码决定。提示词可以说明稳定的行为规则，但不能替代注册过滤、用户设置、会话状态和 dispatch 校验。
 4. 上下文组装集中管理。Snapshot、History、RAG、Memory、Knowledge 和当前消息按固定顺序组装，渠道层不自行拼接第二套上下文。
@@ -13,7 +13,7 @@
 ## 2. 总体分层
 
 ```text
-Web / QQ / 微信 / 飞书 / 定时任务
+Web / QQ / 微信 / 飞书 / Telegram / 定时任务
                 |
           Gateway / Router
                 |
@@ -55,7 +55,7 @@ FastAPI 业务服务，提供用户态和 Admin API，同时承载 Web Agent 请
 
 ### 3.3 `gugu-gateway`
 
-根据用户机器人配置管理 QQ、飞书、微信等 IM 网关进程或连接生命周期。它负责连接和进程管理，不负责重新实现 Agent 推理。
+根据用户机器人配置管理 QQ、飞书、微信、Telegram 等 IM 网关进程或连接生命周期。它负责连接和进程管理，不负责重新实现 Agent 推理。
 
 ### 3.4 TypeScript services
 

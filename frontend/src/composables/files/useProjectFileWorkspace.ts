@@ -3,6 +3,13 @@ import type { FileMeta, FolderMeta } from '@/stores/filesCache'
 import { useFolderNavigation } from '@/composables/files/useFolderNavigation'
 
 interface ProjectFileCache {
+  getDirectorySnapshot(scope: {
+    space: 'project'
+    projectId: number
+    folderId?: number
+    sortBy?: string
+    sortOrder?: 'asc' | 'desc'
+  }): { files: FileMeta[]; folders: FolderMeta[] } | null
   getProjectRootFolders(projectId: number, sortBy?: string, sortOrder?: 'asc' | 'desc'): FolderMeta[]
   getSubFolders(parentId: number, sortBy?: string, sortOrder?: 'asc' | 'desc'): FolderMeta[]
   getProjectRootFiles(projectId: number, sortBy?: string, sortOrder?: 'asc' | 'desc'): FileMeta[]
@@ -42,16 +49,20 @@ export function useProjectFileWorkspace(options: {
 
   const currentFolders = computed(() => {
     const pid = projectId() ?? -1
-    if (!folderStack.value.length) return fileCacheStore.getProjectRootFolders(pid, sortBy(), sortOrder())
-    const parentId = folderStack.value[folderStack.value.length - 1].id
-    return fileCacheStore.getSubFolders(parentId, sortBy(), sortOrder())
+    const folderId = folderStack.value.at(-1)?.id
+    return fileCacheStore.getDirectorySnapshot({
+      space: 'project', projectId: pid, ...(folderId != null ? { folderId } : {}),
+      sortBy: sortBy(), sortOrder: sortOrder(),
+    })?.folders ?? []
   })
 
   const currentFiles = computed(() => {
     const pid = projectId() ?? -1
-    if (!folderStack.value.length) return fileCacheStore.getProjectRootFiles(pid, sortBy(), sortOrder())
-    const folderId = folderStack.value[folderStack.value.length - 1].id
-    return fileCacheStore.getFolderFiles(folderId, sortBy(), sortOrder())
+    const folderId = folderStack.value.at(-1)?.id
+    return fileCacheStore.getDirectorySnapshot({
+      space: 'project', projectId: pid, ...(folderId != null ? { folderId } : {}),
+      sortBy: sortBy(), sortOrder: sortOrder(),
+    })?.files ?? []
   })
 
   const currentFolder = computed(() =>

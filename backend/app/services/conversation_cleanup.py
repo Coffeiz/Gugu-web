@@ -60,6 +60,7 @@ async def cleanup_storage_refs(refs: Iterable[StorageRef]) -> None:
 
 async def remove_session_with_attachments(db, session) -> None:
     """在一个 DB 事务内删除 session、消息 ownership 和消息记录。"""
+    user_id, session_id = session.user_id, session.id
     message_ids = list(
         (await db.execute(
             select(ConversationMessage.id).where(
@@ -80,3 +81,12 @@ async def remove_session_with_attachments(db, session) -> None:
     await db.delete(session)
     await db.commit()
     await cleanup_storage_refs(refs)
+    try:
+        from agent.memory.reflection import clear_session_reflection
+
+        await clear_session_reflection(user_id, session_id)
+    except Exception as exc:
+        # 数据库已经提交；Redis 不可用时由消费端的会话存在性检查收束残留。
+        from app.core.redaction import diag_log
+
+        diag_log("conversation_cleanup.reflection", exc)

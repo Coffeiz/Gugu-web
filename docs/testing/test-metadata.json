@@ -1,4 +1,20 @@
 {
+  "backend/tests/storage/filesync/test_filesync_phase1.py": {
+    "domain": "filesync",
+    "layer": "L1",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "app/services/filesync/targeted.py 与 watcher.py",
+    "keyBehavior": "实时文件投影在删除和原子替换竞态后不提交过期指纹且后续事件收敛；扫描证据失效与权限故障仍保留拒绝，未知异常只在受限日志记录堆栈",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/test_error_presentation.py": {
+    "domain": "agent-provider-errors",
+    "layer": "L0",
+    "owner": "backend/agent",
+    "productionEntry": "backend/agent/errors.py",
+    "keyBehavior": "上游 Responses 流失败与内部异常分开分类，Web 与 IM 错误一致且不泄露原始诊断正文",
+    "ci": "backend-pytest"
+  },
   "frontend/tests/services/apiInFlightDedup.test.ts": {
     "domain": "frontend-api",
     "layer": "L0",
@@ -180,7 +196,7 @@
     "layer": "L1",
     "owner": "backend/agent",
     "productionEntry": "agent/loop_drivers.py",
-    "keyBehavior": "Provider 推理状态提取、恢复与 Responses 链路保持一致",
+    "keyBehavior": "Provider 推理状态提取、恢复与 Responses 链路保持一致；流失败不伪装成功或重放已返回的工具调用",
     "ci": "backend-pytest"
   },
   "backend/tests/agent/test_reasoning_state.py": {
@@ -292,7 +308,7 @@
     "layer": "L1",
     "owner": "backend/app/api/v1",
     "productionEntry": "backend/app/api/v1/auth.py",
-    "keyBehavior": "用户登出、密码重置和管理员登出会使旧令牌失效并保留新版本令牌有效",
+    "keyBehavior": "登出、改密和换邮箱在旧令牌失效提交后通知长连接，通知失败不撤销数据库结果；管理员登出撤销旧令牌",
     "ci": "backend-pytest"
   },
   "backend/tests/platform/realtime/test_live_stream.py": {
@@ -300,7 +316,15 @@
     "layer": "L1",
     "owner": "backend/app/api/v1/live.py",
     "productionEntry": "backend/app/core/events.py:publish_filesync_run_changed",
-    "keyBehavior": "文件同步失效事件只发布到 Admin 频道、只携带安全标识并按任务合并进度；SSE 过滤拒绝畸形事件并剔除路径详情",
+    "keyBehavior": "SSE 空闲阻塞且撤销事件唤醒鉴权，发送前拦截失效会话并在客户端断开时清理订阅；文件同步通知仅含安全标识并按任务合并进度",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_user_bot_live_events.py": {
+    "domain": "im-platform-settings",
+    "layer": "L1",
+    "owner": "backend/app/api/v1/user_bots.py",
+    "productionEntry": "backend/app/api/v1/user_bots.py:delete_my_bot",
+    "keyBehavior": "删除 Bot 提交后发布 IM 渠道刷新事件，使其他已打开客户端读取权威状态",
     "ci": "backend-pytest"
   },
   "backend/tests/platform/realtime/test_websocket_cookie_origin.py": {
@@ -309,6 +333,14 @@
     "owner": "backend/app/api/v1",
     "productionEntry": "backend/app/api/v1/terminals.py:_websocket_token",
     "keyBehavior": "Cookie 鉴权的终端 WebSocket 仅接受与 Host 同源的 Origin，并保留非标准端口",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/admin/test_admin_host_access.py": {
+    "domain": "admin-access",
+    "layer": "L1",
+    "owner": "backend/app/core",
+    "productionEntry": "backend/app/core/admin_access.py:is_admin_api_host_allowed",
+    "keyBehavior": "管理员 API 只接受配置的精确主机名，普通用户 API 不受限且运行时配置不能覆盖环境变量",
     "ci": "backend-pytest"
   },
   "backend/tests/scheduling/tasks/test_scheduled_task_schedule_rules.py": {
@@ -348,7 +380,7 @@
     "layer": "L2",
     "owner": "backend/app/services/filesync/watcher.py",
     "productionEntry": "backend/app/services/filesync/targeted.py:project_path_events",
-    "keyBehavior": "临时根目录真实 Shell 创建、等长覆盖、删除依次即时更新 File 与 journal，不依赖手动整树核对",
+    "keyBehavior": "临时目录真实 Shell 创建、等长覆盖、原子替换与短命文件删除后，File 和 journal 收敛到最终事实，不依赖手动整树核对",
     "ci": "backend-pytest"
   },
   "backend/tests/storage/filesync/test_filesync_periodic.py": {
@@ -501,6 +533,14 @@
     "owner": "frontend/components/common/gugu-chat",
     "productionEntry": "frontend/src/components/common/gugu-chat/GuguChatImConnect.vue",
     "keyBehavior": "Telegram 连接入口跳转到个人设置并展示已有 Telegram 会话",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/chat/composables/useChatImConnect.test.ts": {
+    "domain": "im-platform-settings",
+    "layer": "L1",
+    "owner": "frontend/components/common/gugu-chat/composables",
+    "productionEntry": "frontend/src/components/common/gugu-chat/composables/useChatImConnect.ts",
+    "keyBehavior": "个人设置变更 IM 绑定后已打开的聊天侧栏重新读取 Bot 状态",
     "ci": "frontend-test"
   },
   "frontend/tests/chat/TelegramTokenDialog.test.ts": {
@@ -1102,5 +1142,37 @@
     "productionEntry": "backend/app/db/project_file_counts.py:PROJECT_FILE_COUNT_PROJECTION_SQL",
     "keyBehavior": "PostgreSQL 触发器在文件创建、移动、软删/恢复和批量删除后保持计数，并可通过重建与源表对账",
     "ci": "手动启用 PostgreSQL 集成测试"
+  },
+  "backend/tests/storage/test_oss_copy_fingerprint.py": {
+    "domain": "storage",
+    "layer": "L2",
+    "owner": "backend/app/services/storage",
+    "productionEntry": "backend/app/services/storage/__init__.py:OSSStorageBackend.copy_with_fingerprint",
+    "keyBehavior": "OSS 源对象在摘要读取与复制之间变化时使用 ETag 条件复制并重试，确保目标内容与返回指纹一致",
+    "ci": "backend-pytest"
+  },
+  "frontend/tests/calendar/useCalendarNav.test.ts": {
+    "domain": "calendar",
+    "layer": "L0",
+    "owner": "frontend/composables/calendar",
+    "productionEntry": "frontend/src/composables/calendar/useCalendarNav.ts",
+    "keyBehavior": "月/周视图选择可跨页面实例持久化恢复，非法存储值回退到月视图",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/utils/clientVersionGate.test.ts": {
+    "domain": "frontend-preferences",
+    "layer": "L0",
+    "owner": "frontend/utils",
+    "productionEntry": "frontend/src/utils/clientVersionGate.ts",
+    "keyBehavior": "前端构建版本变化时保留用户界面偏好并清理旧认证与临时状态",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/utils/spreadsheetZoomPreference.test.ts": {
+    "domain": "file-preview",
+    "layer": "L0",
+    "owner": "frontend/utils",
+    "productionEntry": "frontend/src/utils/spreadsheetZoomPreference.ts",
+    "keyBehavior": "表格预览缩放值可持久化恢复、限制在支持范围内，并在浏览器存储不可用时继续使用",
+    "ci": "frontend-test"
   }
 }

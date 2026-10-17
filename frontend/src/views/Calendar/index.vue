@@ -107,7 +107,7 @@
     </div>
   </div>
 
-  <CalendarMorePopup ref="morePopupRef" :open="morePopup.open" :items="morePopup.items" :date-label="morePopup.dateLabel" :style="morePopup.style"
+  <CalendarMorePopup ref="morePopupRef" :open="morePopup.open" :items="morePopupItems" :date-label="morePopup.dateLabel" :style="morePopup.style"
                      @open-project="onMoreProject" @edit-event="onMoreEditEvent" @drag-item="onMoreDragItem" />
 
   <Teleport to="body">
@@ -161,6 +161,7 @@ import { useCalendarDrag, type CalendarDragState } from '@/composables/calendar/
 import { useCalendarData } from '@/composables/calendar/useCalendarData'
 import { useCalendarWeekInteraction } from '@/composables/calendar/useCalendarWeekInteraction'
 import { useCalendarEventForm } from '@/composables/calendar/useCalendarEventForm'
+import { resolveCalendarMoreItems } from './utils/calendarMoreItems'
 import type { CalendarContext } from './domain/calendarContext'
 import type { CalendarHourHover, CalendarMonthDay, CalendarRenderItem, CalendarTimeSelection, CalendarWeekDay } from './domain/calendarTypes'
 import { canResize, getDisplayColor } from './domain/calendarRules'
@@ -527,8 +528,13 @@ async function commitDrag() {
 
 const pickerRef       = ref<InstanceType<typeof YearMonthPicker> | null>(null)
 
-const morePopup    = ref<{ open: boolean; items: CalItem[]; dateLabel: string; style: Record<string, string | number | undefined> }>({ open: false, items: [], dateLabel: '', style: {} })
+const morePopup    = ref<{ open: boolean; items: CalItem[]; date: string; dateLabel: string; style: Record<string, string | number | undefined> }>({ open: false, items: [], date: '', dateLabel: '', style: {} })
 const morePopupRef = ref<InstanceType<typeof CalendarMorePopup> | null>(null)
+const morePopupItems = computed(() => resolveCalendarMoreItems(
+  morePopup.value.items,
+  [...extraEvents.value, ...nextMonthEvents.value, ...spilloverEvents.value],
+  morePopup.value.date,
+))
 const morePopupAnchor = ref<HTMLElement | null>(null)
 let morePopupOpenTimer: ReturnType<typeof setTimeout> | null = null
 function closeMorePopup() {
@@ -641,14 +647,14 @@ function showMore(e: MouseEvent, iso: string, items: CalItem[]) {
     : { position: 'fixed', top: (rect.bottom + gap) + 'px',                      left: left + 'px', width: w + 'px', zIndex: 2000, transformOrigin: 'top' }
 
   if (morePopup.value.open) {
-    morePopup.value = { open: false, items, dateLabel: label, style }
+    morePopup.value = { open: false, items, date: iso, dateLabel: label, style }
     morePopupAnchor.value = anchor
     morePopupOpenTimer = setTimeout(() => {
       if (morePopupAnchor.value === anchor) morePopup.value.open = true
       morePopupOpenTimer = null
     }, 140)
   } else {
-    morePopup.value = { open: true, items, dateLabel: label, style }
+    morePopup.value = { open: true, items, date: iso, dateLabel: label, style }
     morePopupAnchor.value = anchor
   }
 }

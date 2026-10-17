@@ -450,6 +450,11 @@ const conversation = useChatConversation({
   onContentReset, onCaptureBaseScrollH, onSyncSmallH,
   onQueuePersistenceError: () => showAppError(t('chatUi.pendingQueuePersistFailed')),
   onQueueDispatchError: () => showAppError(t('chatUi.networkError')),
+  onPresentFile: (file) => previewStore.open({
+    id: file.file_id,
+    ext: (file.ext || '').toUpperCase(),
+    displayName: file.name || `文件 #${file.file_id}`,
+  }),
 })
 const {
   messages, mkid, now, sessionSettling,

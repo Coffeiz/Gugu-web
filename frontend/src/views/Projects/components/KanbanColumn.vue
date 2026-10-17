@@ -99,8 +99,8 @@ const colColor  = colColors[props.column.key] ?? '#9e9fc4'
 .col-title { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; color: var(--text-primary); }
 .col-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 .col-count {
-  font-size: 11px; font-weight: 700; color: #fff;
-  background: rgba(123,127,178,0.42); border-radius: 20px;
+  font-size: 11px; font-weight: 700; color: var(--action-primary);
+  background: var(--action-soft); border-radius: 20px;
   padding: 1px 7px; min-width: 22px; text-align: center;
 }
 .col-body {

@@ -11,8 +11,27 @@ interface CalendarNavOptions {
   locale: Ref<string>
 }
 
+const CALENDAR_VIEW_MODE_KEY = 'gugu-calendar-view-mode'
+
+function readSavedViewMode(): 'month' | 'week' {
+  try {
+    const saved = localStorage.getItem(CALENDAR_VIEW_MODE_KEY)
+    return saved === 'week' ? 'week' : 'month'
+  } catch {
+    return 'month'
+  }
+}
+
+function saveViewMode(mode: 'month' | 'week') {
+  try {
+    localStorage.setItem(CALENDAR_VIEW_MODE_KEY, mode)
+  } catch {
+    // 偏好存储不可用时，仍允许本次页面内切换视图。
+  }
+}
+
 export function useCalendarNav({ cursor, selectedDate, todayIso, weekRef, weekDays, locale }: CalendarNavOptions) {
-  const viewMode = ref<'month' | 'week'>('month')
+  const viewMode = ref<'month' | 'week'>(readSavedViewMode())
   const pickerOpen = ref(false)
   const pickerYear = ref(new Date().getFullYear())
   const pickerAnchorRef = ref<HTMLElement | null>(null)
@@ -66,6 +85,7 @@ export function useCalendarNav({ cursor, selectedDate, todayIso, weekRef, weekDa
     if (mode === 'week') weekRef.value = new Date((selectedDate.value || todayIso.value) + 'T00:00:00')
     else cursor.value = new Date(weekRef.value.getFullYear(), weekRef.value.getMonth(), 1)
     viewMode.value = mode
+    saveViewMode(mode)
   }
 
   function togglePicker(anchor: HTMLElement | null = null) {

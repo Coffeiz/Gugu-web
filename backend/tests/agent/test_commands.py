@@ -299,7 +299,7 @@ async def test_workspace_revoke_restores_read_only_library_policy(db, user_a, en
 @pytest.mark.asyncio
 async def test_ask_user_can_request_fixed_filesystem_authorization(db, user_a, enable_filesystem_authorization):
     from agent.tools.meta import _ask_user
-    from app.services.interactions import create_agent_prompt, consume_action
+    from app.services.interactions import create_agent_prompt, consume_action, consume_text
     from app.models import FilesystemAuthorizationGrant
 
     session = ConversationSession(user_id=user_a.id, title="askuser 授权测试", source="web")
@@ -311,6 +311,12 @@ async def test_ask_user_can_request_fixed_filesystem_authorization(db, user_a, e
         user_id=user_a.id, session_id=session.id, tool_call_id="tool-1",
         tool_name="ask_user", payload=payload,
     )
+    assert [item["id"] for item in actions] == ["confirm", "cancel"]
+    assert prompt.schema_json["allow_text_input"] is False
+    with pytest.raises(ValueError, match="不接受文本回答"):
+        await consume_text(
+            db, user_id=user_a.id, prompt_id=prompt.id, text="授权",
+        )
     result = await consume_action(
         db, user_id=user_a.id, prompt_id=prompt.id,
         token=next(item["token"] for item in actions if item["id"] == "confirm"),

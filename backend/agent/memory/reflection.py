@@ -648,6 +648,33 @@ async def _restore_reflection_rows(redis, key, idle_key, member, rows) -> None:
     await reflection_idle.defer(redis, idle_key, member)
 
 
+async def clear_session_reflection(user_id, session_id) -> None:
+    """会话删除后清理所属缓冲；重复清理安全，不触及其他会话或用户。"""
+    from app.core.redis import get_redis
+
+    redis = get_redis()
+    member = _owner_idle_member(user_id, session_id)
+    for key, idle_key in (
+        (_owner_reflection_buffer_key(user_id, session_id), reflection_idle.OWNER_IDLE_KEY),
+        (_owner_group_buffer_key(user_id, session_id), _GROUP_OWNER_IDLE_KEY),
+    ):
+        await redis.delete(key)
+        await reflection_idle.clear_active(redis, idle_key, member)
+
+
+async def _reflection_session_exists(user_id, session_id) -> bool:
+    from sqlalchemy import select
+    from app.db import session as db_session
+    from app.models import ConversationSession
+
+    db_session.ensure_engine()
+    async with db_session._SessionLocal() as db:
+        return (await db.scalar(select(ConversationSession.id).where(
+            ConversationSession.id == session_id,
+            ConversationSession.user_id == user_id,
+        ))) is not None
+
+
 async def _release_reflection_lock(lock) -> None:
     try:
         await lock.release()
@@ -719,6 +746,11 @@ async def _drain_reflection_buffer(
         member = _owner_idle_member(user_id, session_id)
         await redis.delete(key)
         await reflection_idle.clear_active(redis, idle_key, member)
+        if allow_rebuild and not await _reflection_session_exists(user_id, session_id):
+            # Redis 不随数据库外键级联删除；失去归属的旧缓冲不能永久回队。
+            # 先取走缓冲再查库，查库异常时才不会把原列表重复回填。
+            await clear_session_reflection(user_id, session_id)
+            return
         try:
             from agent.context.reflection_snapshot import peek_reflection_snapshot
             snapshot = peek_reflection_snapshot(user_id, session_id)

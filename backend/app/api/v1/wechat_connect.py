@@ -117,7 +117,7 @@ async def poll(
     await db.refresh(bot)
     await R.get_redis().delete(_redis_key(task_id))
     from app.core import events
-    await events.bump_context_revision(current_user.id, "im_channels")
+    await events.publish(current_user.id, "im_channels", operation="refresh")
 
     try:
         await R.get_redis().publish("im:gateway:reload", "1")

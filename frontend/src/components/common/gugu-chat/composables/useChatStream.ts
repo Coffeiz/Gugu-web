@@ -16,6 +16,28 @@ import { findLatestPersistedAssistant, timelineSyncKey } from './sessionMessageS
 
 interface StatusItem { kind: 'text' | 'dots' | 'hide'; label?: string }
 
+interface PresentedFile {
+  file_id: number
+  name?: string
+  ext?: string
+}
+
+function parsePresentedFileResult(result: unknown): PresentedFile | null {
+  let value = result
+  if (typeof value === 'string') {
+    try { value = JSON.parse(value) } catch { return null }
+  }
+  if (!value || typeof value !== 'object') return null
+  const candidate = value as Record<string, unknown>
+  const fileId = Number(candidate.file_id)
+  if (!Number.isSafeInteger(fileId) || fileId <= 0 || candidate.ok !== true) return null
+  return {
+    file_id: fileId,
+    ...(typeof candidate.name === 'string' ? { name: candidate.name } : {}),
+    ...(typeof candidate.ext === 'string' ? { ext: candidate.ext } : {}),
+  }
+}
+
 function localizedToolStatusLabel(event: { name?: string; label?: string; input?: unknown }): string {
   let toolName = event.name || ''
   // call_tool 是固定 Adapter，实际工具名在 input.name 中，和完成后的工具卡片保持一致。
@@ -72,6 +94,7 @@ export function useChatStream(options: {
   onQueuePersistenceError?: (error: unknown) => void
   onQueueDispatchError?: (error: unknown) => void
   onContentReset?: () => void
+  onPresentFile?: (file: PresentedFile) => void
 }) {
   const liveStore = useLiveStore()
   const { messages, mkid, now, sessionId, sessions } = options
@@ -547,6 +570,14 @@ export function useChatStream(options: {
             // 活动气泡与完成后的工具卡片都按稳定工具名翻译；服务端 label 仅作未知工具的 fallback。
             if (live()) options.setStatus({ kind: 'text', label: localizedToolStatusLabel(evt) })
           } else if (evt.type === 'tool_done') {
+            if (evt.name === 'present_file' && evt.status === 'success') {
+              const presentedFile = parsePresentedFileResult(evt.result)
+              // 只在流仍属于当前展示视图、且 run 由本标签页发起时打开文件。
+              // 同会话续看会收到相同 SSE，但不能在另一标签页抢开原标签页的文件。
+              if (presentedFile && live() && evt.origin_client_id === CLIENT_ID) {
+                options.onPresentFile?.(presentedFile)
+              }
+            }
             // 改动类工具一完成就即时 bump 对应资源（走已连好的对话流，不等回合末、不靠 best-effort
             // 的 events SSE）→ 文件预览 / 项目卡 / 日历当场刷新。视图是全局的，切走也该刷，故不受 live() 限制。
             if (evt.name) {

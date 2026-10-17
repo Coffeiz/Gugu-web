@@ -11,7 +11,7 @@ This directory documents the current Gugu Agent architecture, execution paths, a
 5. 05-TOOLS-AND-SKILLS.md: capability registry, schemas, skills, and dispatch.
 6. 06-RAG-AND-KNOWLEDGE.md: retrieval, scopes, indexes, and injection.
 7. 07-MEMORY-AND-REFLECTION.md: long-term memory and reflection lifecycle.
-8. 08-CHANNELS.md: Web, QQ, WeChat, and Feishu adapters.
+8. 08-CHANNELS.md: Web, QQ, WeChat, Feishu, and Telegram adapters.
 9. 09-MESSAGE-PROTOCOL.md: streaming events, tools, attachments, and history.
 10. 10-RELIABILITY.md: retry, cancellation, concurrency, shutdown, and recovery.
 11. 11-LOOPSCOPE.md: development observability and trace diagnosis.

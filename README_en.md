@@ -32,7 +32,8 @@ This is a *Vibe Coding project*. Issues and pull requests are welcome.
 | Sandbox execution | Run Shell commands in an isolated environment with working-directory and resource boundaries |
 | Multi-user and tenancy | User accounts, account-level data isolation, and independent configuration |
 | Permissions and security | Identity, resource ownership, session permissions, an admin console, and confirmation gates for dangerous operations |
-| Messaging | QQ, WeChat, and Feishu integrations; direct-message and group-chat availability varies by platform |
+| Messaging | QQ, WeChat, Feishu, and Telegram integrations; direct-message and group-chat availability varies by platform |
+| Markdown diagrams | Render Mermaid diagrams in chat and Markdown files, with expanded viewing and PNG export; IM replies can deliver diagram images |
 | Admin console | Models, BYOK, search, mail notifications and subscription publishing, file storage, logs, and system services; users can also configure personal SMTP for proactive mail and scheduled-task reports |
 | Internationalization | Chinese, English, and Japanese UI support with centralized frontend translations |
 | Observability | LoopScope views for Agent Loops, tokens, cache, tool calls, and performance diagnostics |
@@ -126,7 +127,7 @@ Gugu's tools are organized by capability groups. The Agent selects the appropria
 | Search and information | Search the web and workspace, and extract webpage content | “Look up the latest documentation for this library” |
 | Canvas and relationships | Create notes and organize relationships between projects, files, and events | “Turn these ideas into a relationship map” |
 | Scheduled tasks | Run recurring work on a schedule and report the results | “Send me a project progress email every Monday” |
-| Messaging | Talk through QQ, WeChat, Feishu, and other channels; group-chat availability depends on the platform | “Check the project status on a platform that supports group chats” |
+| Messaging | Talk and receive notifications through QQ, WeChat, Feishu, and Telegram; group-chat availability depends on the platform | “Check the project status on a platform that supports group chats” |
 | Email | Send proactive mail through personal SMTP and deliver scheduled-task reports | “Email this summary to the client” |
 | Shell and sandbox | Run commands, process files, and execute scripts within permission and resource boundaries | “Check the build and generate a report” |
 | Images and media | Analyze images and work with visual information | “Find the issue in this screenshot” |
@@ -187,7 +188,7 @@ The README keeps configuration at index level. See the [Deployment Guide](docs/q
 | LLM / BYOK | Model providers and personal API keys |
 | Search | Bundled SearXNG web search and in-app search |
 | Mail | Admin system SMTP and personal SMTP; proactive Agent email and scheduled-task reports; Admin templates, previews, test sends, and Chinese/Japanese/English update emails with subscription controls |
-| IM | QQ, WeChat, and Feishu connections |
+| IM | QQ, WeChat, Feishu, and Telegram connections |
 | LoopScope | Agent traces and performance observability |
 | Sandbox | Shell execution environment and network egress |
 
@@ -250,27 +251,31 @@ The same Agent Loop can be entered from the Web and messaging channels. Channels
 
 > **QQ is currently the most extensively adapted channel.** It has the broadest support for group chats, message quotes, streaming replies, file handling, and interactive controls.
 
-| Feature | Web | QQ | WeChat | Feishu |
-| --- | --- | --- | --- | --- |
-| Text conversation | Supported | Supported | Supported | Supported |
-| Streaming output | Token streaming | C2C streaming; round-based in groups | Round-based | Streaming card updates |
-| Direct messages | Supported | C2C | Supported | Supported |
-| Group chats | N/A | @ mentions and group policies | Not supported: official ClawBot currently supports direct chats only | Supported |
-| Message quotes | Supported | Text and attachment quotes | Media quotes; limited raw text | Reply quotes |
-| Mention Gugu | Supported | Supported | Platform-dependent | Supported |
-| Files and images | Supported | Supported | Supported | Supported |
-| Voice input | Browser upload | Platform-dependent | Transcription | Platform-dependent |
-| Interactive replies | Web UI | Inline Keyboard | Text options | Interactive cards |
+| Feature | Web | QQ | WeChat | Feishu | Telegram |
+| --- | --- | --- | --- | --- | --- |
+| Text conversation | Supported | Supported | Supported | Supported | Supported |
+| Streaming output | Token streaming | C2C streaming; round-based in groups | Round-based | Streaming card updates | Live draft previews in direct chats |
+| Direct messages | Supported | C2C | Supported | Supported | Supported |
+| Group chats | N/A | @ mentions and group policies | Not supported: official ClawBot currently supports direct chats only | Supported | Supported, subject to Bot privacy and platform delivery rules |
+| Message quotes | Supported | Text and attachment quotes | Media quotes; limited raw text | Reply quotes | Depends on Telegram updates |
+| Mention Gugu | Supported | Supported | Platform-dependent | Supported | Platform-dependent |
+| Files and images | Supported | Supported | Supported | Supported | Supported, subject to platform limits |
+| Voice input | Browser upload | Platform-dependent | Transcription | Platform-dependent | Depends on Telegram updates |
+| Interactive replies | Web UI | Inline Keyboard | Text options | Interactive cards | Inline Keyboard |
 
 > The WeChat column refers to the currently integrated official ClawBot/iLink entry point. It does not currently expose ordinary WeChat group chats. This is a platform capability limitation, not a Gugu group-chat handling bug; integration can be reevaluated if the platform opens group access.
 
+### Mermaid Diagrams
+
+Mermaid code blocks in chat replies and Markdown files are rendered as diagrams. The Web UI supports expanded viewing, zoom, and PNG downloads. IM replies on QQ, WeChat, Feishu, and Telegram render diagrams as PNG and deliver them in the original reply order; platforms without inline text-and-image support receive adjacent image messages. See the [cross-platform Mermaid rendering specification](docs/prds/【已完成】PRD-MERMAID-1-统一Mermaid渲染与跨端PNG输出.md) for implementation details and boundaries.
+
 ### Agent Loop
 
-The Runtime coordinates context, model rounds, tool selection, execution, and controlled follow-up rounds. It supports tool calling, web search, scheduled tasks, streaming responses, and messaging entry points. See the [Agent docs](docs/agent/00-INDEX.md) and [Agent Loop](docs/agent/03-AGENT-LOOP.md).
+The Runtime coordinates context, model rounds, tool selection, execution, and controlled follow-up rounds. It supports tool calling, web search, scheduled tasks, streaming responses, and messaging entry points including QQ, WeChat, Feishu, and Telegram. See the [Agent docs](docs/agent/00-INDEX.md) and [Agent Loop](docs/agent/03-AGENT-LOOP.md).
 
 ```mermaid
 flowchart LR
-    C[Web / QQ / WeChat / Feishu] --> A[Agent Loop]
+    C[Web / QQ / WeChat / Feishu / Telegram] --> A[Agent Loop]
     A --> X[Context Engineering]
     X --> L[LLM Provider]
     L --> A
@@ -399,7 +404,7 @@ Because Gugu's Agent can read and modify real projects, files, calendars, and ex
 
 - Business resources use a centralized ownership check. Missing resources and resources owned by another user have the same external response to reduce enumeration risk.
 - Projects, files, notes, memories, Knowledge / RAG, and workspaces are isolated by user and workspace.
-- Platforms that support group chats (such as QQ and Feishu) preserve platform user, group, and sender identity. Group memory, knowledge, tool permissions, and workspace access are further restricted by group and member scope. The official WeChat ClawBot currently supports direct chats only.
+- Platforms that support group chats (such as QQ, Feishu, and Telegram) preserve platform user, group, and sender identity. Group memory, knowledge, tool permissions, and workspace access are further restricted by group and member scope. The official WeChat ClawBot currently supports direct chats only.
 
 ### Agent Tool Security
 

@@ -112,7 +112,7 @@ async def create_my_bot(
     await db.commit()
     await db.refresh(bot)
     from app.core import events
-    await events.bump_context_revision(current_user.id, "im_channels")
+    await events.publish(current_user.id, "im_channels", operation="refresh")
     await _touch_gateway()
     return _out(bot)
 
@@ -220,7 +220,7 @@ async def update_my_bot(
     await db.commit()
     await db.refresh(bot)
     from app.core import events
-    await events.bump_context_revision(current_user.id, "im_channels")
+    await events.publish(current_user.id, "im_channels", operation="refresh")
     await _touch_gateway()
     return _out(bot)
 
@@ -239,7 +239,7 @@ async def unbind_qq_identity(
     bot.owner_bound_at = None
     await db.commit()
     from app.core import events
-    await events.bump_context_revision(current_user.id, "im_channels")
+    await events.publish(current_user.id, "im_channels", operation="refresh")
 
 
 @router.delete("/{bot_id}", status_code=204)
@@ -261,5 +261,5 @@ async def delete_my_bot(
     except Exception:
         pass
     from app.core import events
-    await events.bump_context_revision(current_user.id, "im_channels")
+    await events.publish(current_user.id, "im_channels", operation="refresh")
     await _touch_gateway()

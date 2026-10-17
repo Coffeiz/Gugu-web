@@ -29,7 +29,7 @@ global.css
 - `variables.css` 是全局唯一样式入口；组件覆盖和 bridge 不得被页面直接重复引入。
 - `components/index.css` 负责最终组件 paint 的编排，日历工具栏、GuguChat 和文件工具栏的主题覆盖先保持原文件 owner。
 - `components/calendar.css` 负责日历页与 Dashboard 共用的近期节点胶囊和条目 hover；日历 Teleport 内容主题归 `EventFormPanel.vue` 等业务组件。
-- `components/files.css` 负责文件卡、文件夹卡和行内重命名控件的共享结构样式。
+- `components/files.css` 负责文件卡、文件夹卡和行内重命名控件的共享结构样式，以及 `.file-card-hover-actions` 和剪切半透明状态；列表/网格消费同一 `.cut` paint，不得在页面 scoped CSS 里重复定义。
 - `components/card-actions.css` 负责卡片悬浮/行内操作按钮的跨域契约（`.file-card-btn` /
   `.file-list-btn` / 页脚文字操作 `.card-link-btn`，类名保留 file- 前缀仅为兼容）。文件库、
   Dashboard、ProjectModal 直接用类；画布卡片经 `CardAffordances.vue` 的 `:deep(button)` 复用
