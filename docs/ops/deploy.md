@@ -179,6 +179,54 @@ REDIS__PORT=6379
 
 > 根目录 `.env`、`backend/.env` 和 `config.override.json` 都已 gitignore，不入库。AI key、飞书凭据等敏感配置**优先用 Admin 面板**填。
 
+### Admin 独立域名与入口限制
+
+可将管理页面放在独立域名（例如 `admin.example.com`），并在根目录 `.env` 配置：
+
+```dotenv
+GUGU_ADMIN_ALLOWED_HOSTS=admin.example.com
+GUGU_HTTP_BIND=127.0.0.1
+```
+
+分体 Compose 同样在根目录 `.env` 设置 `GUGU_ADMIN_ALLOWED_HOSTS`；裸机/systemd 部署则在 `backend/.env` 设置 `ADMIN_ALLOWED_HOSTS=admin.example.com`。白名单对 `/api/v1/admin/...` 生效，精确匹配 Host（不带协议和端口）；留空时保持旧行为，且不会被 Admin 的运行配置覆盖。Compose 的 `GUGU_HTTP_BIND=127.0.0.1` 会把发布端口限制在本机，适用于同机反向代理，避免外网绕过入口规则直连。若反向代理不在同一台机器，需将其网络地址作为绑定/防火墙策略的一部分，不能照抄 loopback 配置。
+
+Host 白名单是后端纵深防护，不代替入口代理规则：外层反向代理应只允许管理域名访问 Admin 页面和 API，并在管理域名配置 VPN、可信网段白名单或 Zero Trust；主站域名应拒绝 `/admin`、`/admin/` 与 `/api/v1/admin/...`。不要只靠难猜的域名或 Admin 密码作为网络入口限制。示意 Nginx 规则（将域名、上游和测试网段换成自己的值）：
+
+```nginx
+# 主站 vhost：普通用户仍走原有静态站点/API 规则，但不给 Admin 入口。
+location = /admin { return 404; }
+location ^~ /admin/ { return 404; }
+location = /api/v1/admin { return 404; }
+location ^~ /api/v1/admin/ { return 404; }
+
+# 独立 Admin vhost；此 server 级限制会同时覆盖页面、登录和后续管理 API。
+server {
+    listen 443 ssl;
+    server_name admin.example.com;
+    ssl_certificate /etc/letsencrypt/live/admin.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/admin.example.com/privkey.pem;
+
+    allow 198.51.100.0/24; # 示例网段：替换为 VPN/办公出口网段
+    deny all;
+
+    location / {
+        proxy_pass http://127.0.0.1:9595;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Connection '';
+        proxy_buffering off;
+        proxy_read_timeout 3600s;
+    }
+}
+```
+
+配置后重建/重启对应 Compose 服务，并用 `docker compose config` 检查 `ADMIN_ALLOWED_HOSTS` 与端口绑定。外层代理必须保留浏览器 Host；不要让后端端口直接暴露在公网。只设置后端 Host 白名单时，Admin 静态 HTML 仍可能被下载，但管理 API 会拒绝非白名单 Host，因此要隐藏页面入口仍需代理同步拦截。
+
+若站点前还有 CDN/其他代理，示例里的来源 IP 白名单看到的可能是代理节点地址；应优先在该入口启用 Access/WAF 策略，或仅信任官方代理网段恢复真实客户端地址，不要直接信任任意请求传入的 `X-Forwarded-For`。
+
 ### 3.4 数据库
 
 建库 + 用户（与上面 `.env` 对应）：

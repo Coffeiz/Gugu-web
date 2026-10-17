@@ -584,6 +584,9 @@ class AppSettings(BaseSettings):
     access_token_expire_minutes: int = Field(10080, description="Token 有效期（分钟）")
     admin_username: str = Field("admin", description="后台管理员用户名（env ADMIN_USERNAME）")
     admin_password: str = Field("", description="后台管理员密码（env ADMIN_PASSWORD，必须显式配置）")
+    admin_allowed_hosts: str = Field(
+        "", description="允许访问 Admin API 的 Host 白名单，逗号分隔；为空时不限制"
+    )
 
     db: DatabaseSettings = Field(default_factory=DatabaseSettings)
     redis: RedisSettings = Field(default_factory=RedisSettings)
@@ -789,7 +792,11 @@ class AppSettings(BaseSettings):
                 )
 
             # 顶层字段（secret_key、debug 等）
-            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search", "state_labels", "smtp", "security", "im", "voice", "embedding", "sandbox", "filesync", "byok", "mcp", "safe_egress"}
+            top_fields = set(AppSettings.model_fields) - {
+                "db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search",
+                "state_labels", "smtp", "security", "im", "voice", "embedding", "sandbox",
+                "filesync", "byok", "mcp", "safe_egress", "admin_allowed_hosts",
+            }
             for k in top_fields:
                 if k in override:
                     updates[k] = override[k]

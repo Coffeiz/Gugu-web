@@ -13,6 +13,7 @@ from jose import jwt, JWTError
 from fastapi import HTTPException
 from pathlib import Path
 
+from app.core.admin_access import is_admin_api_host_allowed
 from app.core.config import get_settings
 from app.core.security import ADMIN_ACCESS_COOKIE, ADMIN_CSRF_COOKIE, request_auth_token
 from app.core.logging import setup_logging, flush_log_queue
@@ -291,6 +292,17 @@ async def lifespan(app: FastAPI):
 
 # docs_url=None：默认 /docs 引用 swagger-ui-dist@5 浮动 tag，会被下方自定义路由替代。
 app = FastAPI(title=settings.app_name, debug=settings.debug, lifespan=lifespan, docs_url=None)
+
+
+@app.middleware("http")
+async def _admin_host_guard(request: Request, call_next):
+    if not is_admin_api_host_allowed(
+        request.url.path,
+        request.url.hostname,
+        settings.admin_allowed_hosts,
+    ):
+        return JSONResponse(status_code=404, content={"detail": "Not Found"})
+    return await call_next(request)
 
 
 @app.get(app.swagger_ui_oauth2_redirect_url, include_in_schema=False)
