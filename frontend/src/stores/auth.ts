@@ -7,7 +7,7 @@ import { getAuthDeviceId } from '@/utils/authDevice'
 import type { components } from '@/types/api'
 import { getLocale } from '@/i18n'
 import { clearGreeting } from '@/composables/shared/useGreeting'
-import { beginAccountBoundary } from '@/utils/accountBoundary'
+import { beginAccountBoundary, getAccountBoundaryEpoch } from '@/utils/accountBoundary'
 import { useUiStore } from './ui'
 import { useLiveStore } from './live'
 import { useFilesCacheStore } from './filesCache'
@@ -108,10 +108,13 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function fetchMe(force = false) {
     if (!force && sessionChecked.value && user.value) return true
+    const requestEpoch = getAccountBoundaryEpoch()
     try {
       const res = await fetch(`${BASE_URL}/auth/me`, {
         credentials: 'include',
       })
+      // 账号切换后，旧请求的成功和 401 都不能改动新账号的登录态。
+      if (requestEpoch !== getAccountBoundaryEpoch()) return null
       // 只有明确的 401 才代表 token 失效。后端短暂 5xx、锁等待或网络中断
       // 不应清掉本地登录态，否则一次服务抖动会把用户误登出。
       if (res.status === 401) {
@@ -122,6 +125,7 @@ export const useAuthStore = defineStore('auth', () => {
       }
       if (!res.ok) return null
       const nextUser = await res.json() as UserWithTimezone
+      if (requestEpoch !== getAccountBoundaryEpoch()) return null
       user.value = nextUser
       sessionChecked.value = true
       setUserTimezone(nextUser.timezone)

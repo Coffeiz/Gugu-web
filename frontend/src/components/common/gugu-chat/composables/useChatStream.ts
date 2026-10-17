@@ -572,7 +572,11 @@ export function useChatStream(options: {
           } else if (evt.type === 'tool_done') {
             if (evt.name === 'present_file' && evt.status === 'success') {
               const presentedFile = parsePresentedFileResult(evt.result)
-              if (presentedFile) options.onPresentFile?.(presentedFile)
+              // 只在流仍属于当前展示视图、且 run 由本标签页发起时打开文件。
+              // 同会话续看会收到相同 SSE，但不能在另一标签页抢开原标签页的文件。
+              if (presentedFile && live() && evt.origin_client_id === CLIENT_ID) {
+                options.onPresentFile?.(presentedFile)
+              }
             }
             // 改动类工具一完成就即时 bump 对应资源（走已连好的对话流，不等回合末、不靠 best-effort
             // 的 events SSE）→ 文件预览 / 项目卡 / 日历当场刷新。视图是全局的，切走也该刷，故不受 live() 限制。

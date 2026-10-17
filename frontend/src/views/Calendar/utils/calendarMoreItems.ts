@@ -4,6 +4,7 @@ import type { CalendarRenderItem } from '../domain/calendarTypes'
 export function resolveCalendarMoreItems(
   items: CalendarRenderItem[],
   currentEvents: CalendarRenderItem[],
+  date?: string,
 ): CalendarRenderItem[] {
   const eventsById = new Map(
     currentEvents
@@ -14,6 +15,6 @@ export function resolveCalendarMoreItems(
   return items.flatMap(item => {
     if (item.calendarType !== 'event') return [item]
     const current = eventsById.get(String(item.id))
-    return current ? [current] : []
+    return current && (!date || current.date === date) ? [current] : []
   })
 }

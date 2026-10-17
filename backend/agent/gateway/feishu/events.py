@@ -176,7 +176,8 @@ async def _consume_card_action(owner: str, prompt_id: int, token: str,
 
 
 def _handle_card_action(data, owner: str, services: _EventServices, bot_id: str = ""):
-    """处理飞书 card.action.trigger；在 SDK 当前 event loop 调度消费任务。"""
+    """处理飞书 card.action.trigger；等待有界时间，只有消费成功才确认完成态。"""
+    from concurrent.futures import TimeoutError as FutureTimeoutError
     from lark_oapi.event.callback.model.p2_card_action_trigger import P2CardActionTriggerResponse
     from agent.interactions.feishu import (
         action_presentation,
@@ -200,25 +201,44 @@ def _handle_card_action(data, owner: str, services: _EventServices, bot_id: str 
             platform_user_id=operator_id,
         )
         future = services.runner.submit(coroutine)
+        try:
+            consumed = future.result(timeout=2)
+        except FutureTimeoutError:
+            def _report_late_failure(done_task) -> None:
+                try:
+                    done_task.result()
+                except Exception as exc:
+                    diag_log("agent.gateway.feishu.interaction", exc)
 
-        def _report_card_action_failure(done_task) -> None:
-            try:
-                done_task.result()
-            except Exception as exc:
-                diag_log("agent.gateway.feishu.interaction", exc)
+            future.add_done_callback(_report_late_failure)
+            # 不替换原卡片，保留用户重试入口；不能把尚未确认的动作显示为完成。
+            message = "已收到操作，仍在处理中；请稍后查看，暂勿重复点击。"
+            return P2CardActionTriggerResponse({"toast": {"type": "info", "content": message}})
+        except Exception as exc:
+            diag_log("agent.gateway.feishu.interaction", exc)
+            message = "操作未能完成，请稍后重试。"
+            return P2CardActionTriggerResponse({"toast": {"type": "error", "content": message}})
 
-        future.add_done_callback(_report_card_action_failure)
-        message = "已收到选择。"
+        result = consumed.get("result") if isinstance(consumed, dict) else None
+        status = result.get("status") if isinstance(result, dict) else None
+        if status is None and isinstance(consumed, dict):
+            status = consumed.get("status")
+        if status == "error":
+            message = "操作未能完成。"
+            completed_card = build_completed_card_payload("操作未能完成，请重新发起该操作。")
+        else:
+            message = "已收到选择。"
         if option_id == "input_credentials":
-            completed_message = "已选择凭据输入；请在当前私聊逐项发送字段值，回复“取消”可终止。"
+            completed_message = "已确认凭据输入；请在当前私聊逐项发送字段值，回复“取消”可终止。"
         elif option_id == "cancel":
-            completed_message = "已取消。"
+            completed_message = "已确认取消。"
         elif option_label:
-            completed_message = f"✅ 已选择「{option_label}」"
+            completed_message = f"✅ 已确认选择「{option_label}」"
         else:
             # 兼容部署前已发出的旧交互卡片，它们没有携带展示用选项文本。
-            completed_message = "✅ 已收到选择，咕咕正在继续处理。"
-        completed_card = build_completed_card_payload(completed_message)
+            completed_message = "✅ 已确认收到选择，咕咕正在继续处理。"
+        if completed_card is None:
+            completed_card = build_completed_card_payload(completed_message)
     except (LookupError, ValueError):
         message = "这个选项已过期或已经处理过了。"
     except Exception as exc:
