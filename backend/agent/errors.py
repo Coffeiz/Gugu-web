@@ -77,6 +77,7 @@ def describe_llm_error(
     from agent.providers.errors import (
         anthropic_stream_protocol_details,
         is_provider_http_error,
+        is_responses_stream_error,
         upstream_status_code,
         upstream_status_tag,
     )
@@ -113,19 +114,21 @@ def describe_llm_error(
                   f"MiniMax 请求 ID：{request_id}"),
         )
 
+    if is_responses_stream_error(error) or (
+        not provider_error and anthropic_stream_protocol_details(error) is not None
+    ):
+        return LLMErrorPresentation(
+            code="provider_stream_error",
+            message_key="chatUi.providerStreamError",
+            message_params={"diagnostic_id": diagnostic_id},
+            text=f"模型服务返回了异常的流式响应（诊断编号 {diagnostic_id}）。请重试。",
+        )
     if is_network_error(error):
         return LLMErrorPresentation(
             code="network_error",
             message_key="chatUi.networkError",
             message_params=params,
             text="咕咕网络不太好 📡 可以再发一遍吗？",
-        )
-    if not provider_error and anthropic_stream_protocol_details(error) is not None:
-        return LLMErrorPresentation(
-            code="provider_stream_error",
-            message_key="chatUi.providerStreamError",
-            message_params={"diagnostic_id": diagnostic_id},
-            text=f"模型服务返回了异常的流式响应（诊断编号 {diagnostic_id}）。请重试。",
         )
     if status_code == 429:
         suffix = f"，{retried}仍未恢复" if attempts else ""

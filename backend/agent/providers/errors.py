@@ -15,6 +15,15 @@ class ProviderInputRejected(RuntimeError):
         super().__init__("input_sensitive")
 
 
+class ResponsesStreamError(RuntimeError):
+    """Responses 已建立连接后返回失败事件；消息只携带白名单诊断字段。"""
+
+
+def is_responses_stream_error(error: BaseException) -> bool:
+    """按异常类型识别上游失败事件，兼容主循环包装，避免误判内部异常。"""
+    return any(isinstance(current, ResponsesStreamError) for current in _exception_chain(error))
+
+
 def is_provider_input_rejected(error: BaseException) -> bool:
     """识别 MiniMax 兼容协议已验证的 1026 响应，包括被包装的 SDK 异常。"""
     for current in _exception_chain(error):

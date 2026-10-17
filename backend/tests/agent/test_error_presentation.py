@@ -54,3 +54,25 @@ def test_describe_llm_error_classifies_remote_protocol_error_and_records_context
     assert len(captured) == 1 and captured[0][1] is error
     assert "agent.llm.call" in captured[0][0]
     assert "budget=10" in captured[0][0]
+
+
+def test_responses_failed_event_has_same_safe_error_for_web_and_im(monkeypatch):
+    """Responses 上游失败与内部异常分开，包装后仍保留跨渠道一致分类。"""
+    import agent.errors as errors
+    from agent.providers.errors import ResponsesStreamError
+
+    captured = []
+    monkeypatch.setattr(errors, "diag_log", lambda where, error: captured.append((where, error)))
+    provider_error = ResponsesStreamError('合成诊断 network_error 私有内容')
+    wrapped = RuntimeError("调用失败")
+    wrapped.__cause__ = provider_error
+    info = describe_llm_error(wrapped)
+
+    assert info.code == "provider_stream_error"
+    assert info.message_key == "chatUi.providerStreamError"
+    assert set(info.message_params) == {"diagnostic_id"}
+    assert LLMErrorPresentation.from_event(info.as_event()) == info
+    assert "network_error" not in str(info.as_event())
+    assert "私有内容" not in str(info.as_event())
+    assert captured[0][1] is wrapped
+    assert describe_llm_error(RuntimeError("Responses API returned a failed response")).code == "internal_error"

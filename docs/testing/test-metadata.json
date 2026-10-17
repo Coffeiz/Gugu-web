@@ -1,4 +1,12 @@
 {
+  "backend/tests/agent/test_error_presentation.py": {
+    "domain": "agent-provider-errors",
+    "layer": "L0",
+    "owner": "backend/agent",
+    "productionEntry": "backend/agent/errors.py",
+    "keyBehavior": "上游 Responses 流失败与内部异常分开分类，Web 与 IM 错误一致且不泄露原始诊断正文",
+    "ci": "backend-pytest"
+  },
   "frontend/tests/services/apiInFlightDedup.test.ts": {
     "domain": "frontend-api",
     "layer": "L0",
@@ -180,7 +188,7 @@
     "layer": "L1",
     "owner": "backend/agent",
     "productionEntry": "agent/loop_drivers.py",
-    "keyBehavior": "Provider 推理状态提取、恢复与 Responses 链路保持一致",
+    "keyBehavior": "Provider 推理状态提取、恢复与 Responses 链路保持一致；流失败不伪装成功或重放已返回的工具调用",
     "ci": "backend-pytest"
   },
   "backend/tests/agent/test_reasoning_state.py": {
