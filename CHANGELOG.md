@@ -7,6 +7,40 @@
 
 ## [Unreleased]
 
+### What's New
+
+#### New Features
+
+- None.
+
+#### Improvements
+
+- Stop sending idle SSE heartbeat frames and reduce idle polling while preserving immediate event delivery and periodic account-status checks.
+- Refresh IM connection status in already-open chat windows after a bot is connected, updated, unbound, or removed.
+- Open `present_file` results only in the browser that initiated the chat request, avoiding unintended playback or previews in other tabs.
+- Recognize M3U/M3U8 playlists as text files and avoid revalidating an unchanged extension during file moves or renames.
+
+#### Fixes
+
+- None.
+
+### 更新内容
+
+#### 新功能
+
+- 暂无。
+
+#### 改进
+
+- 移除 SSE 空闲心跳并降低空闲轮询频率，同时保留业务事件即时推送和账号状态定期校验。
+- IM Bot 绑定、更新、解绑或删除后，已打开的聊天窗口会同步刷新接入状态。
+- `present_file` 仅在发起对话的浏览器中打开，避免其他标签页意外播放或展示文件。
+- 将 M3U/M3U8 播放列表识别为文本文件；移动或改名但未更改后缀时不再重复校验文件类型。
+
+#### 修复
+
+- 暂无。
+
 ## [1.7.5] - 2026-10-16
 
 ### What's New

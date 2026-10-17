@@ -303,12 +303,28 @@
     "keyBehavior": "文件同步失效事件只发布到 Admin 频道、只携带安全标识并按任务合并进度；SSE 过滤拒绝畸形事件并剔除路径详情",
     "ci": "backend-pytest"
   },
+  "backend/tests/im/test_user_bot_live_events.py": {
+    "domain": "im-platform-settings",
+    "layer": "L1",
+    "owner": "backend/app/api/v1/user_bots.py",
+    "productionEntry": "backend/app/api/v1/user_bots.py:delete_my_bot",
+    "keyBehavior": "删除 Bot 提交后发布 IM 渠道刷新事件，使其他已打开客户端读取权威状态",
+    "ci": "backend-pytest"
+  },
   "backend/tests/platform/realtime/test_websocket_cookie_origin.py": {
     "domain": "websocket-auth",
     "layer": "L1",
     "owner": "backend/app/api/v1",
     "productionEntry": "backend/app/api/v1/terminals.py:_websocket_token",
     "keyBehavior": "Cookie 鉴权的终端 WebSocket 仅接受与 Host 同源的 Origin，并保留非标准端口",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/admin/test_admin_host_access.py": {
+    "domain": "admin-access",
+    "layer": "L1",
+    "owner": "backend/app/core",
+    "productionEntry": "backend/app/core/admin_access.py:is_admin_api_host_allowed",
+    "keyBehavior": "管理员 API 只接受配置的精确主机名，普通用户 API 不受限且运行时配置不能覆盖环境变量",
     "ci": "backend-pytest"
   },
   "backend/tests/scheduling/tasks/test_scheduled_task_schedule_rules.py": {
@@ -501,6 +517,14 @@
     "owner": "frontend/components/common/gugu-chat",
     "productionEntry": "frontend/src/components/common/gugu-chat/GuguChatImConnect.vue",
     "keyBehavior": "Telegram 连接入口跳转到个人设置并展示已有 Telegram 会话",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/chat/composables/useChatImConnect.test.ts": {
+    "domain": "im-platform-settings",
+    "layer": "L1",
+    "owner": "frontend/components/common/gugu-chat/composables",
+    "productionEntry": "frontend/src/components/common/gugu-chat/composables/useChatImConnect.ts",
+    "keyBehavior": "个人设置变更 IM 绑定后已打开的聊天侧栏重新读取 Bot 状态",
     "ci": "frontend-test"
   },
   "frontend/tests/chat/TelegramTokenDialog.test.ts": {
