@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import time
 
 from dataclasses import dataclass
@@ -22,6 +23,44 @@ class ResponsesCompatibilityError(RuntimeError):
     def __init__(self, status_code: int):
         self.status_code = int(status_code)
         super().__init__(f"Responses 协议不兼容：HTTP {self.status_code}")
+
+
+def _responses_failure_diagnostic(event: Any, response_data: dict) -> str:
+    """只返回 Responses 失败事件的白名单元数据，不记录上游 message 或响应正文。"""
+    response = getattr(event, "response", None)
+    error = response_data.get("error")
+    if not isinstance(error, dict):
+        error_dump = getattr(error, "model_dump", None)
+        error = error_dump() if callable(error_dump) else {}
+    if not isinstance(error, dict):
+        error = {}
+
+    event_error = getattr(event, "error", None)
+    if not error and event_error is not None:
+        error_dump = getattr(event_error, "model_dump", None)
+        event_error = error_dump() if callable(error_dump) else event_error
+        error = event_error if isinstance(event_error, dict) else {}
+
+    def safe_token(value: Any) -> str | None:
+        if value is None or isinstance(value, (dict, list, bool)):
+            return None
+        token = re.sub(r"[^A-Za-z0-9_.:-]", "", str(value))[:80]
+        return token or None
+
+    diagnostic = {
+        "event": safe_token(getattr(event, "type", None)),
+        "status": safe_token(response_data.get("status")),
+        "error_code": safe_token(error.get("code")),
+        "error_type": safe_token(error.get("type")),
+        "error_param": safe_token(error.get("param")),
+        "response_id": safe_token(response_data.get("id")),
+        "request_id": safe_token(
+            getattr(event, "_request_id", None)
+            or getattr(response, "_request_id", None)
+            or response_data.get("_request_id")
+        ),
+    }
+    return json.dumps(diagnostic, ensure_ascii=True, separators=(",", ":"))
 
 
 def _raise_if_responses_compatibility_error(exc: Exception) -> None:
@@ -635,6 +674,7 @@ class OpenAIResponsesDriver:
         usage_in = usage_out = cache_read = cache_write = 0
         response_status = None
         incomplete_reason = None
+        failure_diagnostic = None
         try:
             async for event in stream:
                 event_type = str(getattr(event, "type", "") or "")
@@ -681,6 +721,14 @@ class OpenAIResponsesDriver:
                             if isinstance(item, dict):
                                 key = str(item.get("id") or item.get("call_id") or len(output_items))
                                 output_items[key] = copy.deepcopy(item)
+                    if event_type == "response.failed":
+                        # 异常会由共享错误描述器写入受限诊断日志，并带上 run/round
+                        # 关联信息。这里只把白名单字段放进异常，绝不附带 message/正文。
+                        response_status = "failed"
+                        incomplete_reason = "provider_failed"
+                        failure_diagnostic = _responses_failure_diagnostic(
+                            event, response_data if isinstance(response_data, dict) else {},
+                        )
         except Exception as exc:
             _raise_if_responses_compatibility_error(exc)
             raise
@@ -691,8 +739,9 @@ class OpenAIResponsesDriver:
                 pass
 
         if response_status == "failed":
-            # 不把失败事件伪装成空的正常轮次；异常由共享 Agent 层按统一路径记录。
-            raise RuntimeError("Responses API returned a failed response")
+            # 不把失败事件伪装成空的正常轮次；共享错误描述器负责受限日志记录。
+            details = failure_diagnostic or "{}"
+            raise RuntimeError(f"Responses API returned a failed response {details}")
 
         ordered = list(output_items.values())
         tool_payload = []
