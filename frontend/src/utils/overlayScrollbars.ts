@@ -99,7 +99,7 @@ function bind(element: HTMLElement) {
   }
   // 独立浮层作为滚动宿主时，把滑块挂在宿主内部以共享层级并跟随其动画；
   // 否则滑块会挂到 body，可能被浮层遮挡或在浮层淡出后残留。
-  const owner = element.closest<HTMLElement>('.chat-window, .drawer-shell, .bm-card, .notif-popup, .gs-panel, .nb-item')
+  const owner = element.closest<HTMLElement>('.chat-window, .drawer-shell, .bm-card, .notif-popup, .gs-panel, .nb-item, .popup-menu-host')
   if (owner) thumb.classList.add('overlay-scrollbar--owner')
   if (element.closest('.drawer-shell')) thumb.classList.add('overlay-scrollbar--drawer')
   if (element.closest('.notif-popup')) thumb.classList.add('overlay-scrollbar--notif')
