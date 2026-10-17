@@ -32,7 +32,7 @@
         <div v-if="['qq', 'feishu', 'telegram'].includes(platform.key) && groupChatEnabled(bot)" class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.memberTools') }}</span><span class="pm-field-hint">{{ t('profileImUi.memberToolsHint') }}</span></div><div class="pm-style-group pm-tool-options"><button v-for="option in groupToolOptions" :key="option.key" type="button" class="pm-style-chip" :class="{ active: hasGroupTool(bot, option) }" @click="toggleGroupTool(bot, option)">{{ t(`profileImUi.${option.key === 'web_search' ? 'webSearchTools' : 'groupContextSearch'}`) }}</button></div></div>
       </div>
       <form v-if="platform.key === 'telegram' && telegramFormBotId !== null" class="pm-telegram-connect" @submit.prevent="submitTelegramToken"><span class="pm-field-name">{{ t('profileImUi.telegramTokenLabel') }}</span><div class="pm-telegram-token-controls"><input id="telegram-bot-token" v-model="telegramToken" class="form-input" type="password" autocomplete="new-password" :aria-label="t('profileImUi.telegramTokenLabel')" :placeholder="t('profileImUi.telegramTokenPlaceholder')" :disabled="connecting === 'telegram'" /><button class="pm-style-chip" type="submit" :disabled="connecting === 'telegram' || !telegramToken.trim()">{{ connecting === 'telegram' ? t('profileImUi.connectingTelegram') : t(telegramFormBotId ? 'profileImUi.replaceTelegramToken' : 'profileImUi.connectTelegram') }}</button><button class="pm-style-chip" type="button" :disabled="connecting === 'telegram'" @click="closeTelegramForm">{{ t('profileImUi.cancel') }}</button></div><p class="pm-field-hint">{{ t('profileImUi.telegramTokenSecurityHint') }}</p></form>
-      <div v-if="connect?.platform === platform.key" :ref="el => setConnectPanelRef(platform.key, el)" class="pm-qr-box"><canvas ref="connectCanvas" class="pm-qr-canvas"></canvas><div class="pm-qr-hint">{{ connectHint }}</div><button class="pm-qr-cancel" @click="cancelConnect">{{ t('profileImUi.cancel') }}</button></div>
+      <div v-if="connect?.platform === platform.key" :ref="el => setConnectPanelRef(platform.key, el)" class="pm-qr-box"><canvas :ref="setConnectCanvasRef" class="pm-qr-canvas"></canvas><div class="pm-qr-hint">{{ connectHint }}</div><button class="pm-qr-cancel" @click="cancelConnect">{{ t('profileImUi.cancel') }}</button></div>
       </div>
     </template>
     <div v-if="connectErr" class="pm-qr-err">{{ connectErr }}</div>
@@ -104,6 +104,11 @@ const connecting = ref(''); const connect = ref<{ platform: string; id: string }
 const connectPanels = ref<Record<string, HTMLElement | null>>({})
 function setConnectPanelRef(platform: string, element: unknown) {
   connectPanels.value[platform] = element instanceof HTMLElement ? element : null
+}
+function setConnectCanvasRef(element: unknown) {
+  // canvas 位于 v-for 的平台区块中，字符串 ref 会被 Vue 收集成数组；QRCode.toCanvas
+  // 需要真实 HTMLCanvasElement，否则重绑时会因数组没有 getContext 而失败。
+  connectCanvas.value = element instanceof HTMLCanvasElement ? element : null
 }
 
 // 「接入咕咕」设置全部走同一套 latest-intent 乐观事务：apply 永远同步发生，
