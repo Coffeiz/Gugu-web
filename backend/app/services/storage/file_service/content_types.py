@@ -9,7 +9,7 @@ TEXT_EXTS = frozenset({
     "md", "markdown", "txt", "text", "json", "csv", "tsv", "yaml", "yml",
     "xml", "html", "htm", "css", "js", "ts", "jsx", "tsx", "py", "java",
     "c", "cpp", "h", "hpp", "go", "rs", "rb", "php", "sh", "bash", "sql",
-    "ini", "toml", "conf", "log", "vue", "svg", "env",
+    "ini", "toml", "conf", "log", "vue", "svg", "env", "m3u", "m3u8",
 })
 
 _TEXT_APPLICATION_MIMES = frozenset({

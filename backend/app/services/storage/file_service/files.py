@@ -246,7 +246,10 @@ class FileOps:
         if not f:
             raise NotFound("file.not_found", "文件不存在")
         new_display = display_name if display_name is not None else f.display_name
-        new_ext = validated_rename_extension(f, ext if ext is not None else f.ext)
+        # 移动请求不修改后缀；仅大小写不同也视为后缀未变。只有真正更改后缀时
+        # 才校验文本/二进制类别，避免 MIME 与扩展名分类差异误拦移动或改名。
+        new_ext = f.ext if ext is None or ext.lower() == f.ext.lower() \
+            else validated_rename_extension(f, ext)
         new_stage = stage_name if stage_name is not None else f.stage_name
         # 仅显式提供 folder_id/project_id（含 null）时移动；纯改名不能隐式移回个人空间。
         new_fid = folder_id if folder_set else f.folder_id
