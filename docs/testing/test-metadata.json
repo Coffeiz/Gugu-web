@@ -767,6 +767,14 @@
     "keyBehavior": "记忆提示词保留有回顾价值的日常事实并区分计划候选与实际结果",
     "ci": "backend-pytest"
   },
+  "backend/tests/agent/context/test_reflection_failure_lifecycle.py": {
+    "domain": "agent-reflection",
+    "layer": "L1",
+    "owner": "backend/agent/memory",
+    "productionEntry": "agent/memory/reflection.py、agent/memory/im_reflection.py 与 app/services/conversation_cleanup.py",
+    "keyBehavior": "模型拒绝输入时反思任务终止而暂时故障可重试；已删除会话的缓冲清理不影响其他用户",
+    "ci": "backend-pytest"
+  },
   "backend/tests/agent/test_run_preparation_parallel.py": {
     "domain": "agent-run-preparation",
     "layer": "L1",
@@ -1157,6 +1165,14 @@
     "owner": "frontend/composables/calendar",
     "productionEntry": "frontend/src/composables/calendar/useCalendarNav.ts",
     "keyBehavior": "月/周视图选择可跨页面实例持久化恢复，非法存储值回退到月视图",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/calendar/utils/calendarMoreItems.test.ts": {
+    "domain": "calendar",
+    "layer": "L0",
+    "owner": "frontend/views/Calendar",
+    "productionEntry": "frontend/src/views/Calendar/utils/calendarMoreItems.ts",
+    "keyBehavior": "日历更多列表使用更新后的活动数据并移除已删除活动，同时保留项目项",
     "ci": "frontend-test"
   },
   "frontend/tests/utils/clientVersionGate.test.ts": {
