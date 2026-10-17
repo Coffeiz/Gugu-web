@@ -10,6 +10,7 @@ from sqlalchemy import and_, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
+from app.core import events
 from app.core.config import get_settings
 from app.core.ratelimit import rate_limit
 from app.core.redis import get_redis
@@ -231,6 +232,7 @@ async def logout(response: Response, current_user: User = Depends(get_current_us
     # 用户级版本撤销此前签发的全部 JWT（包括其他浏览器和长连接）。
     current_user.security_version = (current_user.security_version or 0) + 1
     await db.commit()
+    await events.publish_auth_state_changed(current_user.id)
     clear_auth_cookies(response, USER_ACCESS_COOKIE, USER_CSRF_COOKIE)
     return {"ok": True}
 
@@ -318,6 +320,7 @@ async def reset_password(body: ResetPassword, response: Response, db: AsyncSessi
     user.hashed_password = hash_password(pw)
     user.security_version = (user.security_version or 0) + 1
     await db.commit()
+    await events.publish_auth_state_changed(user.id)
     await r.delete(f"pwdreset:tok:{token}")   # 一次性：用完即焚
     clear_auth_cookies(response, USER_ACCESS_COOKIE, USER_CSRF_COOKIE)
     return {"ok": True}
@@ -435,6 +438,7 @@ async def verify_email_change(body: EmailChangeVerify, db: AsyncSession = Depend
     row.used_at = now_utc()
     await revoke_other_email_changes(db, user.id, row.id, now_utc())
     await db.commit()
+    await events.publish_auth_state_changed(user.id)
     theme, palette = await _email_preference_theme(db, user.id)
     try:
         await run_in_threadpool(email_svc.send_email_change_notice, to_addr=row.new_email, username=user.display_name or user.username, kind="completed", theme=theme, palette=palette)
@@ -530,10 +534,10 @@ async def update_profile(
 
     await db.commit()
     if timezone_changed:
-        from app.core import events
         await events.bump_context_revision(current_user.id, "timezone")
     await db.refresh(current_user)
     if password_changed:
+        await events.publish_auth_state_changed(current_user.id)
         # 本设备继续登录，其他已签发的用户 JWT 因版本递增立即失效。
         token = create_user_token(current_user.id, current_user.security_version or 1)
         set_auth_cookies(response, token, USER_ACCESS_COOKIE, USER_CSRF_COOKIE, request)

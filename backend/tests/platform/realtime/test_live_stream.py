@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import pytest
@@ -108,9 +109,11 @@ class _PubSub:
         return None
 
     async def unsubscribe(self, *channels):
+        await asyncio.sleep(0)
         self.unsubscribed = channels
 
     async def aclose(self):
+        await asyncio.sleep(0)
         self.closed = True
 
 
@@ -139,7 +142,7 @@ async def test_event_stream_uses_user_and_broadcast_channels_and_closes_pubsub(m
     assert frames[0] == ": connected\n\n"
     assert frames[1].startswith("data: ")
     assert ": ping" not in "".join(frames)
-    assert pubsub.timeouts[0] == pytest.approx(live.ACCOUNT_STATUS_RECHECK_SECONDS, abs=0.1)
+    assert pubsub.timeouts[0] is None
     assert pubsub.subscribed == channels
     assert pubsub.unsubscribed == pubsub.subscribed
     assert pubsub.closed is True
@@ -162,34 +165,154 @@ async def test_event_stream_stops_after_account_is_suspended(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_event_stream_rechecks_account_after_idle_wait(monkeypatch):
+async def test_event_stream_blocks_business_event_when_revocation_notice_is_missing(monkeypatch):
     request = _Request()
-    now = [100.0]
-
-    class IdlePubSub(_PubSub):
-        async def get_message(self, **kwargs):
-            assert kwargs["timeout"] == pytest.approx(
-                live.ACCOUNT_STATUS_RECHECK_SECONDS,
-            )
-            now[0] += kwargs["timeout"]
-            return None
-
-    pubsub = IdlePubSub(request)
+    pubsub = _PubSub(request)
     monkeypatch.setattr(live, "get_redis", lambda: _Redis(pubsub))
-    monkeypatch.setattr(live.time, "monotonic", lambda: now[0])
     checks = []
 
     async def inactive(_user_id):
-        checks.append(now[0])
+        checks.append(_user_id)
         return len(checks) == 1
 
     frames = [frame async for frame in live._event_stream(
         request, ("events:user-1",), active_check=inactive, active_user_id="user-1",
     )]
 
-    assert checks == [100.0, 100.0 + live.ACCOUNT_STATUS_RECHECK_SECONDS]
+    assert checks == ["user-1", "user-1"]
     assert frames == [": connected\n\n", "event: account_suspended\ndata: {\"message\":\"账号暂时不可用\"}\n\n"]
     assert pubsub.closed is True
+
+
+class _WaitingPubSub(_PubSub):
+    def __init__(self, request):
+        super().__init__(request)
+        self.queue = asyncio.Queue()
+        self.waiting = asyncio.Event()
+
+    async def get_message(self, **kwargs):
+        assert kwargs["timeout"] is None
+        self.waiting.set()
+        return await self.queue.get()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["logout", "suspend"])
+async def test_committed_revocation_wakes_idle_stream_without_business_event(
+    monkeypatch, db, user_a, operation,
+):
+    from starlette.responses import Response
+
+    from app.api.v1 import auth
+    from app.core.security import is_user_active
+    from app.security.account_status import suspend_user
+
+    request = _Request()
+    pubsub = _WaitingPubSub(request)
+
+    class Redis(_Redis):
+        async def publish(self, channel, raw):
+            assert channel == f"events:{user_a.id}"
+            await pubsub.queue.put({"data": raw})
+
+    redis = Redis(pubsub)
+    monkeypatch.setattr(live, "get_redis", lambda: redis)
+    monkeypatch.setattr(events, "get_redis", lambda: redis)
+    previous_version = user_a.security_version
+    checks = []
+
+    async def active_check(user_id):
+        checks.append(user_id)
+        return await is_user_active(user_id, previous_version)
+
+    stream = live._event_stream(
+        request, (f"events:{user_a.id}",), active_check, user_a.id,
+    )
+    assert await anext(stream) == ": connected\n\n"
+    pending = asyncio.create_task(anext(stream))
+    try:
+        await asyncio.wait_for(pubsub.waiting.wait(), timeout=1)
+        assert checks == [user_a.id]
+        assert not pending.done()
+        if operation == "logout":
+            await auth.logout(Response(), user_a, db)
+        else:
+            await suspend_user(db, user_a, duration_seconds=60, reason="测试冻结")
+        assert "event: account_suspended" in await asyncio.wait_for(pending, timeout=1)
+        with pytest.raises(StopAsyncIteration):
+            await anext(stream)
+        assert pubsub.closed
+    finally:
+        pending.cancel()
+        await asyncio.gather(pending, return_exceptions=True)
+        await stream.aclose()
+
+
+@pytest.mark.asyncio
+async def test_idle_stream_cancellation_releases_subscription_without_polling(monkeypatch):
+    request = _Request()
+    pubsub = _WaitingPubSub(request)
+    monkeypatch.setattr(live, "get_redis", lambda: _Redis(pubsub))
+    stream = live._event_stream(request, ("events:user-1",))
+    assert await anext(stream) == ": connected\n\n"
+    pending = asyncio.create_task(anext(stream))
+    try:
+        await asyncio.wait_for(pubsub.waiting.wait(), timeout=1)
+        pending.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+        assert pubsub.closed
+        assert pubsub.unsubscribed == pubsub.subscribed
+    finally:
+        pending.cancel()
+        await asyncio.gather(pending, return_exceptions=True)
+        await stream.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("asgi_version", ["2.3", "2.4"])
+async def test_idle_http_disconnect_closes_redis_subscription(monkeypatch, asgi_version):
+    request = _Request()
+    pubsub = _WaitingPubSub(request)
+    monkeypatch.setattr(live, "get_redis", lambda: _Redis(pubsub))
+    incoming = asyncio.Queue()
+    sent = []
+
+    async def send(message):
+        sent.append(message)
+
+    response = live.event_stream_response(request, channels=("events:user-1",))
+    task = asyncio.create_task(response(
+        {"type": "http", "asgi": {"spec_version": asgi_version}},
+        incoming.get, send,
+    ))
+    try:
+        await asyncio.wait_for(pubsub.waiting.wait(), timeout=1)
+        assert any(item.get("body") == b": connected\n\n" for item in sent)
+        await incoming.put({"type": "http.disconnect"})
+        await asyncio.wait_for(task, timeout=1)
+        assert pubsub.closed
+        assert pubsub.unsubscribed == ("events:user-1",)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_auth_notification_does_not_close_current_version_or_leak_control_payload(monkeypatch):
+    request = _Request()
+    pubsub = _PubSub(request)
+    pubsub.messages.insert(0, {"data": json.dumps({"type": "auth.state.changed"})})
+    monkeypatch.setattr(live, "get_redis", lambda: _Redis(pubsub))
+
+    async def active_check(_user_id):
+        return True
+
+    frames = [frame async for frame in live._event_stream(
+        request, ("events:user-1",), active_check, "user-1",
+    )]
+    assert len(frames) == 2
+    assert json.loads(frames[1].removeprefix("data: ").strip()) == _event()
 
 
 @pytest.mark.asyncio

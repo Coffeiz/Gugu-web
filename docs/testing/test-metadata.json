@@ -292,7 +292,7 @@
     "layer": "L1",
     "owner": "backend/app/api/v1",
     "productionEntry": "backend/app/api/v1/auth.py",
-    "keyBehavior": "用户登出、密码重置和管理员登出会使旧令牌失效并保留新版本令牌有效",
+    "keyBehavior": "登出、改密和换邮箱在旧令牌失效提交后通知长连接，通知失败不撤销数据库结果；管理员登出撤销旧令牌",
     "ci": "backend-pytest"
   },
   "backend/tests/platform/realtime/test_live_stream.py": {
@@ -300,7 +300,7 @@
     "layer": "L1",
     "owner": "backend/app/api/v1/live.py",
     "productionEntry": "backend/app/core/events.py:publish_filesync_run_changed",
-    "keyBehavior": "文件同步失效事件只发布到 Admin 频道、只携带安全标识并按任务合并进度；SSE 过滤拒绝畸形事件并剔除路径详情",
+    "keyBehavior": "SSE 空闲阻塞且撤销事件唤醒鉴权，发送前拦截失效会话并在客户端断开时清理订阅；文件同步通知仅含安全标识并按任务合并进度",
     "ci": "backend-pytest"
   },
   "backend/tests/im/test_user_bot_live_events.py": {
