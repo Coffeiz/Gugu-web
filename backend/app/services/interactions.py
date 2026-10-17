@@ -232,9 +232,13 @@ async def create_agent_prompt(
             options=normalized,
             context=context,
             secret_fields=secret_fields,
-            # 凭据表单只能通过独立安全接口提交，不能退化为普通聊天文本；
-            # 普通 ask_user 仍保留自定义回答入口。
-            allow_text_input=not bool(secret_fields),
+            # 凭据表单只能通过独立安全接口提交；权限授权也必须由固定确认按钮完成，
+            # 不接受自由文本。普通 ask_user 默认允许自定义回答，但尊重工具明确关闭。
+            allow_text_input=(
+                bool(payload.get("allow_text_input", True))
+                and not bool(secret_fields)
+                and authorization != "user_sandbox"
+            ),
             source="agent",
         )
         from app.services.mcp_secret_inputs import stage_prompt_if_private_mcp
