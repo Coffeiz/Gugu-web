@@ -95,11 +95,13 @@ class _PubSub:
         self.unsubscribed = None
         self.closed = False
         self.messages = [{"data": json.dumps(_event())}]
+        self.timeouts = []
 
     async def subscribe(self, *channels):
         self.subscribed = channels
 
-    async def get_message(self, **_kwargs):
+    async def get_message(self, **kwargs):
+        self.timeouts.append(kwargs.get("timeout"))
         if self.messages:
             return self.messages.pop(0)
         self.request.disconnected = True
@@ -136,6 +138,8 @@ async def test_event_stream_uses_user_and_broadcast_channels_and_closes_pubsub(m
 
     assert frames[0] == ": connected\n\n"
     assert frames[1].startswith("data: ")
+    assert ": ping" not in "".join(frames)
+    assert pubsub.timeouts[0] == pytest.approx(live.ACCOUNT_STATUS_RECHECK_SECONDS, abs=0.1)
     assert pubsub.subscribed == channels
     assert pubsub.unsubscribed == pubsub.subscribed
     assert pubsub.closed is True
@@ -153,6 +157,37 @@ async def test_event_stream_stops_after_account_is_suspended(monkeypatch):
     frames = [frame async for frame in live._event_stream(
         request, ("events:user-1",), active_check=inactive, active_user_id="user-1",
     )]
+    assert frames == [": connected\n\n", "event: account_suspended\ndata: {\"message\":\"账号暂时不可用\"}\n\n"]
+    assert pubsub.closed is True
+
+
+@pytest.mark.asyncio
+async def test_event_stream_rechecks_account_after_idle_wait(monkeypatch):
+    request = _Request()
+    now = [100.0]
+
+    class IdlePubSub(_PubSub):
+        async def get_message(self, **kwargs):
+            assert kwargs["timeout"] == pytest.approx(
+                live.ACCOUNT_STATUS_RECHECK_SECONDS,
+            )
+            now[0] += kwargs["timeout"]
+            return None
+
+    pubsub = IdlePubSub(request)
+    monkeypatch.setattr(live, "get_redis", lambda: _Redis(pubsub))
+    monkeypatch.setattr(live.time, "monotonic", lambda: now[0])
+    checks = []
+
+    async def inactive(_user_id):
+        checks.append(now[0])
+        return len(checks) == 1
+
+    frames = [frame async for frame in live._event_stream(
+        request, ("events:user-1",), active_check=inactive, active_user_id="user-1",
+    )]
+
+    assert checks == [100.0, 100.0 + live.ACCOUNT_STATUS_RECHECK_SECONDS]
     assert frames == [": connected\n\n", "event: account_suspended\ndata: {\"message\":\"账号暂时不可用\"}\n\n"]
     assert pubsub.closed is True
 

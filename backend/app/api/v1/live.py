@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import AsyncIterator
 from datetime import datetime
 from typing import Any
@@ -28,6 +29,7 @@ LIVE_RESOURCES = {
     "clients", "im_channels", "terminals", "pending_queues", "skills",
 }
 LIVE_OPERATIONS = {"create", "update", "delete", "move", "append", "refresh"}
+ACCOUNT_STATUS_RECHECK_SECONDS = 30
 
 
 def _is_live_event(value: Any) -> bool:
@@ -168,20 +170,25 @@ async def _event_stream(
     try:
         await pubsub.subscribe(*channels)
         yield ": connected\n\n"
+        if active_check is not None and not await active_check(active_user_id):
+            yield "event: account_suspended\ndata: {\"message\":\"账号暂时不可用\"}\n\n"
+            return
+        next_status_check = time.monotonic() + ACCOUNT_STATUS_RECHECK_SECONDS
         while not await request.is_disconnected():
+            timeout = max(0.0, next_status_check - time.monotonic())
             message = await pubsub.get_message(
                 ignore_subscribe_messages=True,
-                timeout=1.0,
+                timeout=timeout,
             )
-            if active_check is not None and not await active_check(active_user_id):
-                yield "event: account_suspended\ndata: {\"message\":\"账号暂时不可用\"}\n\n"
-                return
+            if time.monotonic() >= next_status_check:
+                if active_check is not None and not await active_check(active_user_id):
+                    yield "event: account_suspended\ndata: {\"message\":\"账号暂时不可用\"}\n\n"
+                    return
+                next_status_check = time.monotonic() + ACCOUNT_STATUS_RECHECK_SECONDS
             if message:
                 frame = _serialize_message(message.get("data"))
                 if frame:
                     yield frame
-            else:
-                yield ": ping\n\n"
     except (RedisConnectionError, RedisTimeoutError):
         # Redis 重启或网络抖动会使 Pub/Sub 长连接失效；结束当前 SSE，前端会按退避策略重连。
         if not await request.is_disconnected():
