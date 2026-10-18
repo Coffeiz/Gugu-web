@@ -786,6 +786,23 @@ async def get_ui_labels(current_user: User = Depends(get_current_user)):
     }
 
 
+@router.get("/voice-availability")
+async def get_voice_availability(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """返回当前用户实际生效的语音转写模型是否可用，不暴露凭据。"""
+    from app.core.config import get_settings
+    from app.byok.service import resolve_capability_settings
+    from agent.voice import supports_configured_voice_model
+
+    settings = get_settings()
+    voice = await resolve_capability_settings(
+        db, current_user.id, "speech_to_text", settings.voice,
+    )
+    return {"available": supports_configured_voice_model(voice)}
+
+
 @router.get("/commands")
 async def get_commands(current_user: User = Depends(get_current_user)):
     """返回聊天输入框使用的规范斜杠命令菜单。"""
