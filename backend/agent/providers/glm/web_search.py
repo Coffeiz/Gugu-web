@@ -8,6 +8,7 @@ import httpx
 
 from app.core.pinned_http import PinnedHTTPTransport
 from app.core.url_security import resolve_pinned_ip
+from ..search_http import read_search_response
 
 _ENDPOINT = "https://open.bigmodel.cn/api/paas/v4/web_search"
 
@@ -56,19 +57,11 @@ async def search(model_cfg, args: dict) -> dict:
         transport=PinnedHTTPTransport(ip), timeout=30.0,
         follow_redirects=False, trust_env=False,
     ) as client:
-        response = await client.post(
+        async with client.stream(
+            "POST",
             _ENDPOINT,
             headers={"Authorization": f"Bearer {model_cfg.api_key}", "Content-Type": "application/json"},
             json=args,
-        )
-    if response.is_error:
-        return {"error": f"智谱网络搜索返回 HTTP {response.status_code}"}
-    try:
-        data = response.json()
-    except ValueError:
-        return {"error": "智谱网络搜索返回了无法识别的数据"}
-    if not isinstance(data, dict):
-        return {"error": "智谱网络搜索返回了无法识别的数据"}
-    if "error" in data:
-        return {"error": "智谱网络搜索请求未成功，请检查账户权限或稍后重试"}
+        ) as response:
+            data = await read_search_response(response, label="智谱网络搜索")
     return data

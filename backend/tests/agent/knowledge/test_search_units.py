@@ -87,7 +87,7 @@ def test_normalize_failure_reason_tokens():
 
 # ── _xng_search：网页搜索状态机 ──────────────────────────────────────────
 
-async def test_xng_search_guards_and_fallback(db, user_a, monkeypatch):
+async def test_xng_search_guards_without_paid_fallback(db, user_a, monkeypatch):
     monkeypatch.setattr(search_mod, "get_settings",
                         lambda: _settings(searxng_url=""))
     assert "尚未配置 XNG Search" in (await search_mod._xng_search(db, user_a.id, {"q": "x"}))["error"]
@@ -104,15 +104,15 @@ async def test_xng_search_guards_and_fallback(db, user_a, monkeypatch):
     _wire_http(monkeypatch, response=httpx.Response(200, text="not-json"))
     assert "无法解析" in (await search_mod._xng_search(db, user_a.id, {"query": "x"}))["error"]
 
-    # 网络异常 → 直接切 deep_research 兜底
+    # 网络异常不得隐式消耗已配置的付费研究额度。
     _wire_http(monkeypatch, raise_first=httpx.ConnectError("boom"))
 
     async def fake_deep(db, user_id, args):
-        return {"fallback": args["query"]}
+        raise AssertionError("免费搜索不得自动调用付费研究")
 
     monkeypatch.setattr(search_mod, "_deep_research", fake_deep)
     result = await search_mod._xng_search(db, user_a.id, {"query": "天气"})
-    assert result == {"fallback": "天气"}
+    assert "XNG Search 暂时不可用" in result["error"]
 
     data = {"results": [
         {"title": "结果一", "url": "https://a", "content": "长" * 400},

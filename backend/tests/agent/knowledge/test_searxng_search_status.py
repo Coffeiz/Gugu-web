@@ -190,7 +190,7 @@ async def test_xng_web_search_surfaces_all_engine_failure_as_unavailable(monkeyp
     assert "这不代表没有相关结果" in result["note"]
 
 
-async def test_xng_web_search_timeout_switches_to_configured_deep_research(monkeypatch):
+async def test_xng_web_search_timeout_does_not_call_configured_paid_research(monkeypatch):
     monkeypatch.setattr(search_tools, "get_settings", lambda: _settings())
 
     class _TimeoutClient:
@@ -204,8 +204,7 @@ async def test_xng_web_search_timeout_switches_to_configured_deep_research(monke
             raise httpx.ReadTimeout("SearXNG read timeout")
 
     async def _fallback(db, user_id, args):
-        assert args == {"query": "北京天气", "max_results": 5}
-        return {"source": "deep_research", "results": []}
+        raise AssertionError("免费搜索不得自动调用付费研究")
 
     async def _configured(name, **kwargs):
         return name == "deep_research"
@@ -216,7 +215,7 @@ async def test_xng_web_search_timeout_switches_to_configured_deep_research(monke
 
     result = await search_tools._xng_search(None, 7, {"query": "北京天气"})
 
-    assert result == {"source": "deep_research", "results": []}
+    assert "XNG Search 暂时不可用" in result["error"]
 
 
 async def test_xng_image_mode_reuses_status_and_keeps_results_when_degraded(monkeypatch):

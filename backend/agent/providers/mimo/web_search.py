@@ -42,7 +42,7 @@ def input_schema(model_cfg=None) -> dict:
                     "required": ["type"], "additionalProperties": False,
                 },
             },
-            "max_completion_tokens": {"type": "integer", "minimum": 1},
+            "max_completion_tokens": {"type": "integer", "minimum": 1, "maximum": 2048, "default": 1024},
         },
         "required": ["messages", "tools"], "additionalProperties": False,
     }
@@ -53,6 +53,6 @@ async def search(model_cfg, args: dict) -> dict:
         return {"error": "当前 MiMo 模型或 API 地址不支持官方联网搜索"}
     return await post_search(
         _ENDPOINT, model_cfg.api_key,
-        {**args, "model": model_cfg.model, "stream": False, "thinking": {"type": "disabled"}},
+        {**args, "max_completion_tokens": min(args.get("max_completion_tokens", 1024), 2048), "model": model_cfg.model, "stream": False, "thinking": {"type": "disabled"}},
         label="MiMo 联网搜索", auth_header="api-key",
     )

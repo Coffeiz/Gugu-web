@@ -3,11 +3,36 @@ from __future__ import annotations
 
 from urllib.parse import urlsplit
 import asyncio
+import json
 
 import httpx
 
 from app.core.pinned_http import PinnedHTTPTransport
 from app.core.url_security import resolve_pinned_ip
+from .search_limits import MAX_RESPONSE_BYTES, limit_search_result
+
+
+async def read_search_response(response: httpx.Response, *, label: str) -> dict:
+    """流式限制解压后的响应大小，再解析并限制模型可见结果。"""
+    if response.status_code != 200:
+        return {"error": f"{label}返回 HTTP {response.status_code}"}
+    length = response.headers.get("content-length", "")
+    if length.isdigit() and int(length) > MAX_RESPONSE_BYTES:
+        return {"error": f"{label}响应超过大小限制，请缩小查询范围或减少正文返回"}
+    raw = bytearray()
+    async for chunk in response.aiter_bytes():
+        if len(raw) + len(chunk) > MAX_RESPONSE_BYTES:
+            return {"error": f"{label}响应超过大小限制，请缩小查询范围或减少正文返回"}
+        raw.extend(chunk)
+    try:
+        data = json.loads(raw)
+    except (ValueError, UnicodeDecodeError):
+        return {"error": f"{label}返回了无法识别的数据"}
+    if not isinstance(data, dict):
+        return {"error": f"{label}返回了无法识别的数据"}
+    if "error" in data:
+        return {"error": f"{label}请求未成功，请检查账户权限或模型支持范围"}
+    return limit_search_result(data)
 
 
 def official_host(base_url: str, default_url: str, hosts: frozenset[str]) -> str | None:
@@ -37,17 +62,7 @@ async def post_search(endpoint: str, api_key: str, payload: dict, *, label: str,
         transport=PinnedHTTPTransport(ip), timeout=httpx.Timeout(connect=10, read=60, write=10, pool=5),
         follow_redirects=False, trust_env=False,
     ) as client:
-        response = await client.post(
-            endpoint, headers={auth_header: authorization, "Content-Type": "application/json"}, json=payload,
-        )
-    if response.status_code != 200:
-        return {"error": f"{label}返回 HTTP {response.status_code}"}
-    try:
-        data = response.json()
-    except ValueError:
-        return {"error": f"{label}返回了无法识别的数据"}
-    if not isinstance(data, dict):
-        return {"error": f"{label}返回了无法识别的数据"}
-    if "error" in data:
-        return {"error": f"{label}请求未成功，请检查账户权限或模型支持范围"}
-    return data
+        async with client.stream(
+            "POST", endpoint, headers={auth_header: authorization, "Content-Type": "application/json"}, json=payload,
+        ) as response:
+            return await read_search_response(response, label=label)

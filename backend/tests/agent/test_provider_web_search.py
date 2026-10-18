@@ -213,3 +213,52 @@ async def test_search_http_does_not_follow_redirect_or_expose_upstream_errors(mo
     assert "synthetic-private-diagnostic" not in str(result)
     assert "synthetic-test-key" not in str(result)
     assert len(requests) == 1
+
+
+@pytest.mark.parametrize("provider,api_format,args", [
+    ("minimax", "openai", {"query": "测试"}),
+    ("glm", "openai", {"search_query": "测试", "search_engine": "search_std", "search_intent": False}),
+    ("qwen", "openai", {"messages": [{"role": "user", "content": "测试"}]}),
+    ("qwen", "responses", {"input": "测试"}),
+    ("deepseek", "openai", {"query": "测试", "count": 50, "need_content": True}),
+    ("mimo", "openai", {"messages": [{"role": "user", "content": "测试"}], "tools": [{"type": "web_search"}]}),
+    ("ollama", "native", {"query": "测试"}),
+])
+async def test_every_provider_bounds_actual_http_results(monkeypatch, provider, api_format, args):
+    from agent.providers import search_http
+    from agent.providers.search_limits import MAX_RESULT_BYTES
+
+    cfg = config(provider, api_format)
+    adapter = web_search._adapter(cfg)
+    transport_owner = adapter if provider in {"minimax", "glm", "qwen"} else search_http
+    payload = {"results": [{"content": "长正文" * 4000, "url": "https://example.com/page"} for _ in range(40)]}
+    monkeypatch.setattr(transport_owner, "resolve_pinned_ip", lambda _: ("93.184.216.34", None))
+    monkeypatch.setattr(transport_owner, "PinnedHTTPTransport", lambda _: httpx.MockTransport(lambda request: httpx.Response(200, json=payload)))
+    result = await web_search.search(cfg, args)
+    assert len(json.dumps(result, ensure_ascii=False).encode()) <= MAX_RESULT_BYTES
+    assert result["_gugu_search_limits"]["truncated"]
+
+
+@pytest.mark.parametrize("provider,api_format,field,args,default", [
+    ("mimo", "openai", "max_completion_tokens", {"messages": [{"role": "user", "content": "测试"}], "tools": [{"type": "web_search"}]}, 1024),
+    ("qwen", "responses", "max_output_tokens", {"input": "测试"}, 1200),
+])
+async def test_model_search_output_budget_has_default_and_ceiling(monkeypatch, provider, api_format, field, args, default):
+    from agent.providers import search_http
+
+    cfg = config(provider, api_format)
+    owner = web_search._adapter(cfg) if provider == "qwen" else search_http
+    requests = []
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": []})
+
+    monkeypatch.setattr(owner, "resolve_pinned_ip", lambda _: ("93.184.216.34", None))
+    monkeypatch.setattr(owner, "PinnedHTTPTransport", lambda _: httpx.MockTransport(respond))
+    await web_search.search(cfg, args)
+    assert requests[-1][field] == default
+    await web_search.search(cfg, {**args, field: 100000})
+    assert requests[-1][field] == 2048
+    tool = registry.snapshot_with_extras(model_cfg=cfg).get("web_search")
+    assert validate_input(tool._input_validator, {**args, field: 100000})

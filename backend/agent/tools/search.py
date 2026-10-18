@@ -322,8 +322,6 @@ async def _xng_search(db, user_id, args: dict):
         ) as client:
             resp = await client.get(request_url)
     except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError):
-        if mode == "web" and await search_tool_is_configured("deep_research", db=db, user_id=user_id, settings=settings):
-            return await _deep_research(db, user_id, {"query": query, "max_results": max_results})
         return {"error": "XNG Search 暂时不可用，请稍后重试"}
     except Exception as e:
         return {"error": f"XNG Search 暂时失败（{type(e).__name__}）"}

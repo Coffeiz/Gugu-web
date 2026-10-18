@@ -8,6 +8,7 @@ import httpx
 
 from app.core.pinned_http import PinnedHTTPTransport
 from app.core.url_security import resolve_pinned_ip
+from ..search_http import read_search_response
 
 _DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 _ALLOWED_HOSTS = {"dashscope.aliyuncs.com", "dashscope-intl.aliyuncs.com"}
@@ -54,7 +55,7 @@ def input_schema(model_cfg) -> dict:
             "type": "object",
             "properties": {
                 "input": {"type": "string", "minLength": 1, "description": "需要联网检索的问题。"},
-                "max_output_tokens": {"type": "integer", "minimum": 1, "description": "限制本次搜索回答的输出 token 数。"},
+                "max_output_tokens": {"type": "integer", "minimum": 1, "maximum": 2048, "default": 1200, "description": "限制本次搜索回答的输出 token 数。"},
             },
             "required": ["input"], "additionalProperties": False,
         }
@@ -102,11 +103,11 @@ async def search(model_cfg, args: dict) -> dict:
         return {"error": "百炼搜索服务地址校验失败"}
     if api_format == "responses":
         payload = {
-            **args, "model": model, "tools": [{"type": "web_search"}], "store": False,
+            **args, "max_output_tokens": min(args.get("max_output_tokens", 1200), 2048), "model": model, "tools": [{"type": "web_search"}], "store": False,
         }
     else:
         payload = {
-            **args, "model": model, "enable_search": True, "include_tool_usage": True,
+            **args, "max_tokens": 1200, "model": model, "enable_search": True, "include_tool_usage": True,
             "search_options": {"forced_search": True, **args.get("search_options", {})},
         }
 
@@ -117,20 +118,11 @@ async def search(model_cfg, args: dict) -> dict:
         follow_redirects=False,
         trust_env=False,
     ) as client:
-        response = await client.post(
+        async with client.stream(
+            "POST",
             endpoint,
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
             json=payload,
-        )
-    if response.is_error:
-        return {"error": f"百炼联网搜索返回 HTTP {response.status_code}"}
-    try:
-        data = response.json()
-    except ValueError:
-        return {"error": "百炼联网搜索返回了无法识别的数据"}
-    if not isinstance(data, dict):
-        return {"error": "百炼联网搜索返回了无法识别的数据"}
-
-    if "error" in data:
-        return {"error": "百炼联网搜索请求未成功，请检查模型支持范围或账户权限"}
+        ) as response:
+            data = await read_search_response(response, label="百炼联网搜索")
     return data
