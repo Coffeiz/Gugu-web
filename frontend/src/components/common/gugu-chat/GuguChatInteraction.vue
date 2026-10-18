@@ -5,6 +5,8 @@
     <!-- 空 options 的存量提问（兜底按钮上线前创建的）不渲染空按钮区，避免悬空分隔线 -->
     <div v-if="displayOptions.length" class="interaction-actions">
       <ActionButton v-for="option in displayOptions" :key="option.id" class="interaction-option" fit
+                    :class="{ 'is-selected': msg.interaction?.selectedOptionId === option.id }"
+                    :aria-pressed="msg.interaction?.selectedOptionId === option.id"
                     :disabled="resolved || submitting || expired" @click="selectOption(option)">
         {{ option.label }}
       </ActionButton>
@@ -210,6 +212,12 @@ onBeforeUnmount(() => { if (expiryTimer) clearTimeout(expiryTimer) })
   word-break: normal;
   overflow-wrap: anywhere;
   line-height: var(--line-height-body);
+}
+.interaction-actions :deep(.interaction-option.is-selected) {
+  opacity: 1;
+  color: var(--content-on-accent);
+  background: var(--action-primary-bg);
+  box-shadow: inset 0 0 0 2px var(--border-focus);
 }
 .interaction-actions :deep(.interaction-option .app-action-button-content) {
   display: block;

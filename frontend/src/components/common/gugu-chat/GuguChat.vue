@@ -632,6 +632,7 @@ async function onInteractionSelect(_msg: ChatMessage, option: { id: string; labe
     _msg.interaction.submitting = false
     _msg.interaction.resolved = true
     _msg.interaction.selectedOptionId = option.id
+    _msg.interaction.responseText = option.label
   }
 }
 
