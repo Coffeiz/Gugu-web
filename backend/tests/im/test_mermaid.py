@@ -504,11 +504,11 @@ async def test_png_dispatch_uses_platform_image_gateway(monkeypatch, platform):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("passive_count", "expected_message_id", "expected_count"),
-    [(0, "synthetic-message", 1), (1, "synthetic-message", 2), (5, None, 5)],
+    "passive_count",
+    [0, 1, 5],
 )
-async def test_qq_mermaid_image_uses_active_send_after_text_reply(
-    monkeypatch, passive_count, expected_message_id, expected_count
+async def test_qq_mermaid_image_always_uses_active_send_without_consuming_passive_quota(
+    monkeypatch, passive_count
 ):
     from agent.im import replies
 
@@ -529,8 +529,8 @@ async def test_qq_mermaid_image_uses_active_send_after_text_reply(
     }
 
     assert await replies.send_png_image(payload, b"png") is True
-    assert calls[0][0][5] == expected_message_id
-    assert payload[replies._QQ_PASSIVE_REPLY_COUNT] == expected_count
+    assert calls[0][0][5] is None
+    assert payload[replies._QQ_PASSIVE_REPLY_COUNT] == passive_count
 
 
 @pytest.mark.asyncio

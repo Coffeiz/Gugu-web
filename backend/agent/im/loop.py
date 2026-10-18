@@ -1325,6 +1325,22 @@ async def dispatch_im_message(payload: dict):
             file_result = await send_files(payload, resp.files)
             reply_text = resp.text or "给你～"
             if file_result.failed:
+                from agent.im.replies import _qq_outbound_payload, send_text
+
+                notice_payload = (
+                    _qq_outbound_payload(payload)
+                    if platform == "qq"
+                    else payload
+                )
+                notice = file_result.reason or "附件没有成功发出，你可以去网页或文件库查看。"
+                notice_sent = await send_text(notice_payload, notice)
+                if not notice_sent:
+                    from app.core.redaction import diag_log_raw
+
+                    diag_log_raw(
+                        "agent.im.file_attachment_delivery",
+                        f"platform={platform} status=notice_failed",
+                    )
                 trace.finish_run("error")
                 await finalize_im_response(platform, puid, False, "")
                 return resp

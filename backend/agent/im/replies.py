@@ -42,6 +42,13 @@ def _qq_reply_budget_exhausted(payload: dict) -> bool:
     )
 
 
+def _qq_outbound_payload(payload: dict) -> dict:
+    """被动回复额度耗尽时，给主动发送路径去掉原消息关联。"""
+    if _qq_reply_budget_exhausted(payload):
+        return {**payload, "message_id": None}
+    return payload
+
+
 def _qq_reply_message_id(payload: dict, reply: PlatformReply) -> str | None:
     """在 QQ 被动回复额度内关联原始入站消息。"""
     if payload.get("platform") != "qq" or _qq_reply_budget_exhausted(payload):
@@ -133,9 +140,7 @@ async def send_text(payload: dict, text: str) -> bool:
 
 async def _send_qq_mermaid_text(payload: dict, text: str) -> bool:
     """QQ 被动回复额度耗尽后，Mermaid 文本与降级内容改用主动消息发送。"""
-    if _qq_reply_budget_exhausted(payload):
-        payload = {**payload, "message_id": None}
-    return await send_text(payload, text)
+    return await send_text(_qq_outbound_payload(payload), text)
 
 
 def _link_buttons_text(message: str, buttons: list[dict]) -> str:
@@ -424,16 +429,11 @@ async def send_png_image(payload: dict, png: bytes) -> bool:
         target = payload.get("chat_id") if group else payload.get("platform_user_id")
         if not target:
             return False
-        # 每张图片与相邻文字是独立气泡；只在被动回复额度耗尽后改为主动发送。
-        message_id = (
-            None if _qq_reply_budget_exhausted(payload) else payload.get("message_id")
-        )
+        # 图片始终作为主动消息发送，不消耗触发本轮任务的被动回复次数。
         sent = await qq.send_file(
             str(target), png, "mermaid-diagram", "png", payload.get("channel_id"),
-            message_id, group=group,
+            None, group=group,
         )
-        if sent:
-            _mark_qq_passive_reply_used(payload, message_id)
         return bool(sent)
     if platform == "wechat":
         from agent.gateway import wechat
@@ -545,19 +545,15 @@ async def _send_file_qq(
     openid = payload.get("chat_id") if is_group else payload.get("platform_user_id")
     if not openid:
         return False
-    if _qq_reply_budget_exhausted(payload):
-        return False
     storage = get_storage()
     data = await storage.get(storage_key)
     if len(data) > _QQ_FILE_MAX:
         return False
-    file_message_id = payload.get("message_id")
+    # 文件始终主动发送，不消耗触发本轮任务的被动回复次数。
     ok = await qq.send_file(
         openid, data, display_name, ext, payload.get("channel_id"),
-        file_message_id, group=is_group,
+        None, group=is_group,
     )
-    if ok:
-        _mark_qq_passive_reply_used(payload, file_message_id)
     return ok
 
 

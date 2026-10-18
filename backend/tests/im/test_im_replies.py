@@ -642,7 +642,13 @@ def test_platform_reply_infers_keyboard_capability_from_parts():
 
 
 @pytest.mark.asyncio
-async def test_qq_group_file_result_is_returned_to_worker(monkeypatch):
+@pytest.mark.parametrize(
+    ("chat_type", "expected_group"),
+    [("group", True), ("c2c", False)],
+)
+async def test_qq_file_result_uses_active_message_for_private_and_group_chats(
+    monkeypatch, chat_type, expected_group
+):
     from agent.im import replies
 
     class FakeStorage:
@@ -658,13 +664,15 @@ async def test_qq_group_file_result_is_returned_to_worker(monkeypatch):
     monkeypatch.setattr("agent.gateway.qq.send_file", fake_send_file)
     result = await replies._send_file_qq({
         "platform": "qq",
-        "chat_type": "group",
+        "chat_type": chat_type,
         "chat_id": "group-1",
+        "platform_user_id": "user-1",
         "message_id": "msg-1",
     }, "storage-key", "png", "阿罗娜", "阿罗娜.png")
 
     assert result is True
-    assert calls[0][1]["group"] is True
+    assert calls[0][1]["group"] is expected_group
+    assert calls[0][0][5] is None
 
 
 @pytest.mark.asyncio
@@ -683,13 +691,15 @@ async def test_qq_group_file_reads_local_storage_bytes(monkeypatch):
 
     monkeypatch.setattr("app.services.storage.get_storage", lambda: FakeStorage())
     monkeypatch.setattr("agent.gateway.qq.send_file", fake_send_file)
+    payload = {
+        "platform": "qq",
+        "chat_type": "group",
+        "chat_id": "group-1",
+        "message_id": "msg-1",
+        replies._QQ_PASSIVE_REPLY_COUNT: replies._QQ_PASSIVE_REPLY_LIMIT,
+    }
     result = await replies._send_file_qq(
-        {
-            "platform": "qq",
-            "chat_type": "group",
-            "chat_id": "group-1",
-            "message_id": "msg-1",
-        },
+        payload,
         "storage-key",
         "png",
         "阿罗娜",
@@ -698,6 +708,8 @@ async def test_qq_group_file_reads_local_storage_bytes(monkeypatch):
 
     assert result is True
     assert calls[0][1]["group"] is True
+    assert calls[0][0][5] is None
+    assert payload[replies._QQ_PASSIVE_REPLY_COUNT] == replies._QQ_PASSIVE_REPLY_LIMIT
 
 
 @pytest.mark.asyncio
