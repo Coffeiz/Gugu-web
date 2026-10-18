@@ -216,7 +216,9 @@ class NativeWatcher:
             self.emit({"kind": "event", "event": "needs_reconcile", "code": "kernel_event_queue_overflow"})
             return
         if mask & _IGNORED:
-            self.watches.pop(descriptor, None)
+            # 主动解除时已移除映射；仍有订阅表示意外失效，需重建监听并记录缺口。
+            for binding_id in self.watches.pop(descriptor, {}):
+                self.event(binding_id, "error", code="watcher_watch_lost")
             return
         for binding_id, directory in list(self.watches.get(descriptor, {}).items()):
             if not name:

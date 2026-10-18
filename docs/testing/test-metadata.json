@@ -124,7 +124,7 @@
     "layer": "L0",
     "owner": "frontend/composables/onboarding",
     "productionEntry": "frontend/src/composables/onboarding/progressSaver.ts",
-    "keyBehavior": "引导步骤快速切换时进度写入合并且串行；退出时立即冲刷；相同模拟延迟的对照测试验证请求数和等待时间下降",
+    "keyBehavior": "引导步骤快速切换时进度写入合并且串行；旧响应不覆盖更新的本地进度和已完成步骤；退出时立即冲刷；相同模拟延迟的对照测试验证请求数和等待时间下降",
     "ci": "frontend-test"
   },
   "frontend/tests/agent-configuration/llmThinkingOptions.test.ts": {
@@ -1316,7 +1316,7 @@
     "layer": "L2",
     "owner": "backend/app/services/filesync",
     "productionEntry": "app/services/filesync/linux_watcher.py、health.py、periodic.py",
-    "keyBehavior": "原生内核溢出必须上报缺口；ready保留溢出原因；仅根身份已记录且匹配时允许周期删除补偿；递归事件不跟随符号链接",
+    "keyBehavior": "原生内核溢出必须上报缺口；ready保留溢出原因；仅根身份已记录且匹配时允许周期删除补偿；递归事件不跟随符号链接；意外失效的内核监听报告缺口并触发重建，主动解除保持静默",
     "ci": "backend-pytest"
   }
 }

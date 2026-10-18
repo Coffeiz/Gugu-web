@@ -11,11 +11,13 @@ export function createOnboardingProgressSaver(
   delayMs = 250,
 ) {
   let pending: GuidePatch = {}
+  let revision = 0
   let timer: ReturnType<typeof setTimeout> | null = null
   let inFlight: Promise<unknown> | null = null
 
   function enqueue(patch: GuidePatch) {
     pending = { ...pending, ...patch }
+    revision += 1
     if (timer) clearTimeout(timer)
     timer = setTimeout(() => {
       timer = null
@@ -24,7 +26,10 @@ export function createOnboardingProgressSaver(
   }
 
   async function flush(patch?: GuidePatch): Promise<unknown> {
-    if (patch) pending = { ...pending, ...patch }
+    if (patch) {
+      pending = { ...pending, ...patch }
+      revision += 1
+    }
     if (timer) {
       clearTimeout(timer)
       timer = null
@@ -35,13 +40,15 @@ export function createOnboardingProgressSaver(
     }
     if (!Object.keys(pending).length) return undefined
 
+    const savedRevision = revision
     const current = pending
     pending = {}
     const request = update(current)
     inFlight = request
     try {
       const response = await request
-      onSaved(response)
+      // 已有更新的本地操作时，旧响应不得覆盖尚未保存的进度。
+      if (savedRevision === revision) onSaved(response)
       return response
     } finally {
       inFlight = null

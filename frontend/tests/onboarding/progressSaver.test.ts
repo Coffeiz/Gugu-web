@@ -69,6 +69,37 @@ describe('新手引导进度保存', () => {
     })
   })
 
+  it('旧响应到达后继续导航不会回退本地进度或丢失已完成步骤', async () => {
+    vi.useFakeTimers()
+    let state = { current_step: 'features', completed_steps: ['locale'] }
+    const responses: Array<(response: unknown) => void> = []
+    const update = vi.fn((_patch: Record<string, unknown>) => new Promise(resolve => { responses.push(resolve) }))
+    const saver = createOnboardingProgressSaver(update, response => {
+      state = (response as { guide: typeof state }).guide
+    })
+    saver.enqueue(state)
+    const saving = saver.flush()
+    state = { current_step: 'style', completed_steps: ['locale', 'features'] }
+    saver.enqueue(state)
+
+    responses[0]({ guide: { current_step: 'features', completed_steps: ['locale'] } })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(state.current_step).toBe('style')
+    expect(state.completed_steps).toEqual(['locale', 'features'])
+
+    state = { current_step: 'model', completed_steps: [...state.completed_steps, 'style'] }
+    saver.enqueue(state)
+    responses[1]({ guide: { current_step: 'style', completed_steps: ['locale', 'features'] } })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(state.current_step).toBe('model')
+    responses[2]({ guide: state })
+    await saving
+    expect(update.mock.calls.at(-1)).toEqual([{
+      current_step: 'model', completed_steps: ['locale', 'features', 'style'],
+    }])
+    expect(state.completed_steps).toEqual(['locale', 'features', 'style'])
+  })
+
   it('A/B 对照：同样的 250ms API 延迟下，快速连续操作由多次等待变为一次合并保存', async () => {
     vi.useFakeTimers()
     const steps = ['features', 'style', 'model', 'im']

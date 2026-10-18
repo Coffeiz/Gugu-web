@@ -168,3 +168,58 @@ def test_permission_gap_is_coalesced_but_new_kernel_overflows_remain_visible(mon
         ]
     finally:
         os.close(watcher.fd)
+
+
+def test_unexpected_kernel_watch_removal_reports_each_active_binding(tmp_path, monkeypatch):
+    root = tmp_path / "root"
+    root.mkdir()
+    watcher = NativeWatcher()
+    messages = []
+    monkeypatch.setattr(watcher, "emit", messages.append)
+    try:
+        for binding_id in (1, 2):
+            watcher.watch({"binding_id": binding_id, "root": str(root)})
+        while watcher.pending:
+            watcher.scan_step()
+        messages.clear()
+        descriptor = next(iter(watcher.watches))
+        # 直接让内核移除 watch，保留订阅映射，模拟意外失效而非主动 unwatch。
+        assert watcher.library.inotify_rm_watch(watcher.fd, descriptor) == 0
+        watcher.drain()
+        assert {(item["binding_id"], item["event"], item["code"]) for item in messages} == {
+            (1, "error", "watcher_watch_lost"), (2, "error", "watcher_watch_lost"),
+        }
+        assert descriptor not in watcher.watches
+        messages.clear()
+        for binding_id in (1, 2):
+            watcher.unwatch(binding_id)
+            watcher.watch({"binding_id": binding_id, "root": str(root)})
+        while watcher.pending:
+            watcher.scan_step()
+        messages.clear()
+        (root / "after.txt").write_text("恢复后", encoding="utf-8")
+        watcher.drain()
+        assert {item["binding_id"] for item in messages if item.get("event") == "change"} == {1, 2}
+        messages.clear()
+        watcher.unwatch(1)
+        watcher.unwatch(2)
+        watcher.drain()
+        assert messages == []
+    finally:
+        os.close(watcher.fd)
+
+
+@pytest.mark.asyncio
+async def test_lost_watch_marks_health_gap_and_requests_rebuild(tmp_path, monkeypatch):
+    from unittest.mock import AsyncMock
+    from app.services.filesync.watcher import FileSyncWatcherManager
+
+    manager = FileSyncWatcherManager()
+    manager._binding_roots[1] = ("synthetic-user", tmp_path, "bidirectional")
+    health = AsyncMock()
+    monkeypatch.setattr(manager, "_health", health)
+    await manager._handle_event({
+        "binding_id": 1, "event": "error", "code": "watcher_watch_lost",
+    })
+    health.assert_awaited_once_with(1, "degraded", code="watcher_watch_lost", gap=True)
+    assert 1 in manager._rebuild_bindings
