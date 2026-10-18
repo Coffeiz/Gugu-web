@@ -17,6 +17,7 @@
 
 - Share group reflection memory prefixes and show cold requests and cache rates excluding cold requests in usage statistics.
 - Add Telegram to onboarding, simplify IM platform names and use compact cards in two columns.
+- Allow selecting and copying Mermaid source in the fullscreen preview.
 
 - Improve search routing, cross-source verification and fact checking for uncertain names, attributes and references.
 - Combine web and image search in XNG Search and hide search tools that have no usable configuration.
@@ -24,7 +25,10 @@
 #### Fixes
 
 - Send QQ file attachments and Mermaid images as proactive messages so media delivery does not consume the inbound message's passive-reply allowance.
+- Let QQ passive replies rely on platform responses instead of switching to proactive delivery after a locally hard-coded reply count; render all Mermaid charts in bounded batches.
 - Improve Mermaid label contrast when diagrams define dark node fills without an explicit readable text color.
+- Center Mermaid state diagram labels and preserve Mermaid colors and contrast in rendered images.
+- Keep the cache-ratio chart scale within its defined 0–100% range.
 - Push trash cleanup progress after each item and apply completion events without periodic polling.
 
 - Keep failed XNG searches from automatically consuming paid research and bound Provider search responses and generated output.
@@ -41,6 +45,7 @@
 #### 改进
 
 - 新手引导补充 Telegram 接入，IM 卡片改为两列；引导与个人设置统一显示简洁平台名。
+- Mermaid 全屏预览源码支持鼠标选择和复制。
 
 - 群组与成员记忆反思复用共同资料前缀；用量场景表新增冷请求次数和排除冷请求后的缓存率。
 - 优化搜索工具分工与复杂任务混合检索，补充多来源比对和具体实体、属性、引用的真实性核验指引。
@@ -49,7 +54,10 @@
 #### 修复
 
 - QQ 文件和 Mermaid 图片改用主动消息发送，不再消耗触发本轮任务的被动回复次数。
+- QQ 被动回复限制交由平台响应处理，不再按本地固定条数提前切换主动发送；Mermaid 图表按有界批次处理且不限制单次总数。
 - Mermaid 图表使用深色节点填充且未指定文字颜色时，自动提高标签对比度。
+- 居中 Mermaid 状态图节点文字，并修正渲染图片的 Mermaid 颜色和文字对比度。
+- 用量统计中的缓存率图表固定在 0–100% 范围内。
 - 回收站逐项推送清理进度，及时应用完成事件，不再等待定时补查。
 
 - 免费 XNG 搜索失败不再自动调用付费深度研究；限制 Provider 联网搜索响应体、结果及生成输出大小。
