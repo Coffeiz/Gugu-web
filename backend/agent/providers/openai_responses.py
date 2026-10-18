@@ -666,11 +666,15 @@ class OpenAIResponsesDriver:
             except Exception as exc:
                 from agent.providers.errors import openai_transient_error, openai_error_kind
                 if not openai_transient_error(exc):
-                    record_failed_responses_request(wire_request, failure_kind="create_rejected", ai=ctx.ai)
+                    record_failed_responses_request(
+                        wire_request, failure_kind="create_rejected", ai=ctx.ai, error=exc,
+                    )
                     _raise_if_responses_compatibility_error(exc)
                     raise
                 if not LLM_RETRY.should_retry(retries_done, started_at):
-                    record_failed_responses_request(wire_request, failure_kind="create_exhausted", ai=ctx.ai)
+                    record_failed_responses_request(
+                        wire_request, failure_kind="create_exhausted", ai=ctx.ai, error=exc,
+                    )
                     raise RetryableError("llm.stream_exhausted", "LLM 调用重试后仍失败",
                                           cause=exc, attempt=retries_done) from exc
                 retries_done += 1
@@ -743,7 +747,9 @@ class OpenAIResponsesDriver:
                             event, response_data if isinstance(response_data, dict) else {},
                         )
         except Exception as exc:
-            record_failed_responses_request(wire_request, failure_kind="stream_exception", ai=ctx.ai)
+            record_failed_responses_request(
+                wire_request, failure_kind="stream_exception", ai=ctx.ai, error=exc,
+            )
             _raise_if_responses_compatibility_error(exc)
             raise
         finally:

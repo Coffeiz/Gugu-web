@@ -117,6 +117,36 @@ def test_sensitive_request_is_explicitly_unavailable_instead_of_redacted_replay(
                        "replayable": False, "unavailable_reason": "credential_detected"}
 
 
+def test_create_failure_capture_keeps_error_classification_without_exception_text(traced_round):
+    run, _ = traced_round
+
+    class SyntheticProviderError(RuntimeError):
+        status_code = 503
+        code = "internal_error"
+        request_id = "req-synthetic-503"
+
+    try:
+        try:
+            raise TimeoutError("synthetic-private-response-body")
+        except TimeoutError as cause:
+            raise SyntheticProviderError("synthetic-private-error-message") from cause
+    except SyntheticProviderError as error:
+        record_failed_responses_request(
+            {"model": "synthetic-model", "input": []}, failure_kind="create_exhausted",
+            ai=SimpleNamespace(api_key=""), error=error,
+        )
+
+    capture = run.spans[-1].input["provider_request_capture"]
+    assert capture["exception_chain"] == [
+        {"type": "SyntheticProviderError", "status_code": 503,
+         "code": "internal_error", "request_id": "req-synthetic-503"},
+        {"type": "TimeoutError"},
+    ]
+    serialized = json.dumps(capture)
+    assert "synthetic-private-error-message" not in serialized
+    assert "synthetic-private-response-body" not in serialized
+
+
 @pytest.mark.parametrize("damage", [None, "tampered", "missing"])
 def test_capture_can_roundtrip_through_trace_database_without_provider_call(traced_round, tmp_path, monkeypatch, capsys, damage):
     from scripts.diagnostics.probe_saved_provider_request import main

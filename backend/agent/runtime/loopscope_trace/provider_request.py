@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 from typing import Any
 
 
@@ -34,7 +35,33 @@ def _has_credentials(value: Any) -> bool:
     return False
 
 
-def record_failed_responses_request(request: dict, *, failure_kind: str, ai: Any) -> None:
+def _exception_metadata(error: BaseException) -> dict[str, Any]:
+    """只提取可用于分类上游故障的字段，不读取异常正文、请求或响应正文。"""
+    chain: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen and len(chain) < 6:
+        seen.add(id(current))
+        item: dict[str, Any] = {"type": type(current).__name__}
+        status = getattr(current, "status_code", None)
+        response = getattr(current, "response", None)
+        if status is None and response is not None:
+            status = getattr(response, "status_code", None)
+        if isinstance(status, int) and 100 <= status <= 599:
+            item["status_code"] = status
+        for key in ("code", "type", "param", "request_id"):
+            value = getattr(current, key, None)
+            if isinstance(value, str) and value and len(value) <= 128 \
+                    and re.fullmatch(r"[A-Za-z0-9_.:-]+", value):
+                item[key] = value
+        chain.append(item)
+        current = current.__cause__ or current.__context__
+    return {"exception_chain": chain}
+
+
+def record_failed_responses_request(
+    request: dict, *, failure_kind: str, ai: Any, error: BaseException | None = None,
+) -> None:
     """保留实际 SDK body；不能安全保留时明确标记不可重放，不篡改请求。"""
     from . import state
 
@@ -44,6 +71,12 @@ def record_failed_responses_request(request: dict, *, failure_kind: str, ai: Any
     if span is None or span.ended_at is not None or span.run is None:
         return
     capture = {"protocol": "responses", "failure_kind": failure_kind, "replayable": False}
+    if error is not None:
+        try:
+            capture.update(_exception_metadata(error))
+        except Exception:
+            # 诊断字段提取失败不能遮蔽原始 Provider 错误。
+            capture["exception_metadata_unavailable"] = True
     try:
         snapshot = copy.deepcopy(request)
         serialized = json.dumps(snapshot, ensure_ascii=False, sort_keys=True,
