@@ -696,7 +696,6 @@ async def test_qq_group_file_reads_local_storage_bytes(monkeypatch):
         "chat_type": "group",
         "chat_id": "group-1",
         "message_id": "msg-1",
-        replies._QQ_PASSIVE_REPLY_COUNT: replies._QQ_PASSIVE_REPLY_LIMIT,
     }
     result = await replies._send_file_qq(
         payload,
@@ -709,7 +708,6 @@ async def test_qq_group_file_reads_local_storage_bytes(monkeypatch):
     assert result is True
     assert calls[0][1]["group"] is True
     assert calls[0][0][5] is None
-    assert payload[replies._QQ_PASSIVE_REPLY_COUNT] == replies._QQ_PASSIVE_REPLY_LIMIT
 
 
 @pytest.mark.asyncio

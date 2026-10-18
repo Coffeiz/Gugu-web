@@ -25,43 +25,14 @@ _FEISHU_IMAGE_MAX = 10 * 1024 * 1024
 _FEISHU_FILE_MAX = 30 * 1024 * 1024
 _WECHAT_FILE_MAX = 30 * 1024 * 1024
 _QQ_FILE_MAX = 10 * 1024 * 1024
-_QQ_PASSIVE_REPLY_COUNT = "_qq_passive_reply_count"
-_QQ_PASSIVE_REPLY_LIMIT = 5
 _TELEGRAM_DRAFT_MIN_INTERVAL = 1.0
 
 
-def _qq_passive_reply_count(payload: dict) -> int:
-    return int(payload.get(_QQ_PASSIVE_REPLY_COUNT) or 0)
-
-
-def _qq_reply_budget_exhausted(payload: dict) -> bool:
-    return (
-        payload.get("platform") == "qq"
-        and bool(payload.get("message_id"))
-        and _qq_passive_reply_count(payload) >= _QQ_PASSIVE_REPLY_LIMIT
-    )
-
-
-def _qq_outbound_payload(payload: dict) -> dict:
-    """被动回复额度耗尽时，给主动发送路径去掉原消息关联。"""
-    if _qq_reply_budget_exhausted(payload):
-        return {**payload, "message_id": None}
-    return payload
-
-
 def _qq_reply_message_id(payload: dict, reply: PlatformReply) -> str | None:
-    """在 QQ 被动回复额度内关联原始入站消息。"""
-    if payload.get("platform") != "qq" or _qq_reply_budget_exhausted(payload):
+    """文本回复关联入站消息；平台拒绝后由网关按错误结果回退主动发送。"""
+    if payload.get("platform") != "qq":
         return None
     return reply.reply_to_message_id
-
-
-def _mark_qq_passive_reply_used(payload: dict, message_id: str | None) -> None:
-    """记录一次已成功发送的 QQ 被动回复。"""
-    if payload.get("platform") == "qq" and message_id:
-        payload[_QQ_PASSIVE_REPLY_COUNT] = min(
-            _qq_passive_reply_count(payload) + 1, _QQ_PASSIVE_REPLY_LIMIT
-        )
 
 
 async def _close_async_iterator(iterator) -> None:
@@ -83,8 +54,6 @@ class _QQMermaidRound(QQMermaidRound):
         super().__init__(
             payload,
             show_intermediate_replies=show_intermediate_replies,
-            reply_budget_exhausted=_qq_reply_budget_exhausted,
-            mark_passive_reply_used=_mark_qq_passive_reply_used,
             send_text=send_text,
             try_send_png_image=_try_send_png_image,
             send_mermaid_text=_send_qq_mermaid_text,
@@ -139,8 +108,8 @@ async def send_text(payload: dict, text: str) -> bool:
 
 
 async def _send_qq_mermaid_text(payload: dict, text: str) -> bool:
-    """QQ 被动回复额度耗尽后，Mermaid 文本与降级内容改用主动消息发送。"""
-    return await send_text(_qq_outbound_payload(payload), text)
+    """Mermaid 降级文本沿普通 QQ 文本路径发送；平台限额由网关处理。"""
+    return await send_text(payload, text)
 
 
 def _link_buttons_text(message: str, buttons: list[dict]) -> str:
@@ -338,8 +307,6 @@ async def send_reply(payload: dict, reply: PlatformReply) -> bool:
         return result is not False
     elif platform == "qq" and reply.target.id:
         from agent.gateway import qq
-        if _qq_reply_budget_exhausted(payload):
-            return False
         reply_message_id = _qq_reply_message_id(payload, reply)
         if reply.target.type == "group":
             mention_user_id = payload.get("platform_user_id")
@@ -362,8 +329,6 @@ async def send_reply(payload: dict, reply: PlatformReply) -> bool:
                 payload.get("channel_id"),
                 payload.get("message_format"),
             )
-        if result:
-            _mark_qq_passive_reply_used(payload, reply_message_id)
         return result
     elif platform == "wechat" and reply.target.id:
         from agent.gateway import wechat
