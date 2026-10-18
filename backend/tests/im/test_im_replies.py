@@ -401,7 +401,7 @@ async def test_qq_group_interaction_text_fallback_is_also_active(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_qq_passive_replies_use_official_five_reply_budget(monkeypatch):
+async def test_qq_passive_replies_do_not_use_local_count_limit(monkeypatch):
     from agent.gateway import qq
     from agent.im.replies import send_text
 
@@ -417,10 +417,10 @@ async def test_qq_passive_replies_use_official_five_reply_budget(monkeypatch):
         "platform_user_id": "member-1", "channel_id": "bot-1", "message_id": "msg-1",
     }
 
-    results = [await send_text(payload, f"第{i}段") for i in range(1, 7)]
+    results = [await send_text(payload, f"第{i}段") for i in range(1, 11)]
 
-    assert results == [True, True, True, True, True, False]
-    assert message_ids == ["msg-1"] * 5
+    assert results == [True] * 10
+    assert message_ids == ["msg-1"] * 10
 
 
 @pytest.mark.asyncio

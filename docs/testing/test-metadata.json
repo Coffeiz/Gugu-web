@@ -1007,6 +1007,14 @@
     "keyBehavior": "Mermaid 图表渲染失败时保留可读源码，成功时替换图表并维持前后文本流式输出",
     "ci": "backend-pytest"
   },
+  "backend/tests/im/test_im_replies.py": {
+    "domain": "im-replies",
+    "layer": "L1",
+    "owner": "backend/agent/im",
+    "productionEntry": "backend/agent/im/replies.py",
+    "keyBehavior": "QQ 被动文本回复不施加应用层条数上限，按入站消息关联并由平台响应决定交付结果",
+    "ci": "backend-pytest"
+  },
   "backend/tests/im/test_qq_message_format_migration.py": {
     "domain": "qq-message-format",
     "layer": "L2",
