@@ -16,6 +16,8 @@ import { findLatestPersistedAssistant, timelineSyncKey } from './sessionMessageS
 
 interface StatusItem { kind: 'text' | 'dots' | 'hide'; label?: string }
 
+const RESUMED_HISTORY_EVENTS = new Set(['tool_call', 'tool_done', 'token', 'file', 'link_buttons', 'interaction_required'])
+
 interface PresentedFile {
   file_id: number
   name?: string
@@ -88,6 +90,7 @@ export function useChatStream(options: {
   contextCompactingItem: () => StatusItem
   scrollBottom: (force?: boolean) => Promise<void>
   fetchSessions: () => Promise<void>
+  syncResumedHistory?: (id: number) => Promise<void>
   refreshAfterTools: (usedTools: Set<string>) => Promise<void>
   loadQuota: () => void
   playIncomingMessageSfx: () => void
@@ -418,6 +421,7 @@ export function useChatStream(options: {
     let outcomeMessageDbId: number | null = null
     let detached = false         // 一旦用户切到别的会话，本流永久脱离、不再污染当前视图
     let replaySuppressed = false
+    let resumedHistoryReady = Boolean(onSessionId)
     const displayedGreeting = ownerSid == null
       ? (messages.value.find(m => m._greeting)?._greetFull || '').trim()
       : ''
@@ -431,7 +435,13 @@ export function useChatStream(options: {
       (max, message) => Math.max(max, message._timelineOrder ?? 0),
       0,
     )
-    const nextTimelineOrder = () => ++timelineOrder
+    const nextTimelineOrder = () => {
+      // 跨端用户消息可能在连接建立后才补入；不能沿用连接开始时的旧序号。
+      timelineOrder = messages.value.reduce(
+        (max, message) => Math.max(max, message._timelineOrder ?? 0), timelineOrder,
+      )
+      return ++timelineOrder
+    }
     const applyRunOutcome = (outcome: ChatMessage['runOutcome']) => {
       if (!outcome || !outcomeMessageDbId) return
       const target = messages.value.find(message => message.dbId === outcomeMessageDbId)
@@ -486,6 +496,12 @@ export function useChatStream(options: {
           if (!line.startsWith('data: ')) continue
           const raw = line.slice(6).trim(); if (!raw) continue
           let evt; try { evt = JSON.parse(raw) } catch { continue }
+          if (!resumedHistoryReady && sid != null && live() && RESUMED_HISTORY_EVENTS.has(evt.type)) {
+            // IM 的 running 通知可能早于用户消息提交。等首个可见事件再补取历史，
+            // 此时执行器已提交用户消息，重放工具卡才能排在它之后；整条续看只同步一次。
+            await options.syncResumedHistory?.(sid)
+            resumedHistoryReady = true
+          }
           const eventUserMessageId = Number(evt.user_message_id)
           if (Number.isInteger(eventUserMessageId) && eventUserMessageId > 0) {
             outcomeMessageDbId = eventUserMessageId

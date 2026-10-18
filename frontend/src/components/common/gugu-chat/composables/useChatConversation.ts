@@ -417,6 +417,7 @@ export function useChatConversation(options: {
     composerRef: options.composerRef,
     setStatus, clearStatus, thinkingItem: _thinkingItem, contextCompactingItem: _contextCompactingItem,
     scrollBottom, fetchSessions,
+    syncResumedHistory: (id) => sessionsApi.refreshSessionMessages(id),
     refreshAfterTools: options.refreshAfterTools,
     loadQuota: options.loadQuota,
     playIncomingMessageSfx: options.playIncomingMessageSfx,
