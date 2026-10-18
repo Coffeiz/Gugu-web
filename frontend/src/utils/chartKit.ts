@@ -31,6 +31,8 @@ export function cssVar(name: string, fallback: string): string {
 export type LineChartOptionsInput = {
   /** Y 轴刻度用 token 缩略（fmtTok）；false 时显示原始数字。 */
   isTok?: boolean
+  /** 固定 Y 轴上限；适用于百分比等有明确范围的指标。 */
+  yMax?: number
   /** 自定义 tooltip 每行文案；缺省按 dataset 原始值输出。 */
   tooltipLabel?: (ctx: any) => string
   /** tooltip 主体之后的附加行（如输入/输出拆分）。 */
@@ -90,8 +92,8 @@ export function lineChartOptions(input: LineChartOptionsInput = {}) {
           callback: isTok ? (v: any) => fmtTok(v) : undefined,
         },
         beginAtZero: true,
-        // 顶部留 5% 余量：峰值不贴顶。
-        grace: '5%',
+        // 无界指标留 5% 余量；有界指标遵守调用方给定的上限，不扩展刻度。
+        ...(input.yMax == null ? { grace: '5%' } : { max: input.yMax }),
       },
     },
   }
