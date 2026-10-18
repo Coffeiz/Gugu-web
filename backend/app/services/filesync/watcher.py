@@ -1,4 +1,4 @@
-"""本地文件事实源的 TS watcher supervisor；缺口修复交给持久化任务队列。"""
+"""本地文件事实源的 watcher supervisor；缺口修复交给持久化任务队列。"""
 from __future__ import annotations
 
 import asyncio
@@ -14,9 +14,9 @@ from app.core.config import get_settings
 from app.core.redaction import diag_log
 from app.core.tz import now_utc
 from app.db import session as db_session
-from app.models import FileSyncBinding, User, Workspace
+from app.models import FileSyncBinding, FileSyncReconcileRun, User, Workspace
 from app.services.filesync.bindings import resolve_local_binding_root
-from app.services.filesync.jobs import ReconcileRunError, enqueue_reconcile_run
+from app.services.filesync.jobs import RECONCILABLE_OVERFLOW_CODES, ReconcileRunError, enqueue_reconcile_run
 from app.services.filesync.outbox import deliver_file_event, enqueue_file_event
 from app.services.filesync.health import update_binding_health
 from app.services.filesync.inotify_limit_client import InotifyLimitUnavailable, request_limit_agent
@@ -137,6 +137,7 @@ class FileSyncWatcherManager:
         self.refresh_interval = refresh_interval
         self._sidecar = sidecar or FileSyncSidecar()
         self._binding_roots: dict[int, tuple[object, Path, str]] = {}
+        self._binding_root_identities: dict[int, tuple[int, int]] = {}
         self._binding_scopes: dict[int, tuple[str, ...] | None] = {}
         self._path_events: dict[int, PathEventBatch] = {}
         self._retry_count: dict[int, int] = {}
@@ -157,7 +158,7 @@ class FileSyncWatcherManager:
             )
 
     async def _enqueue_gap_repair(self, binding_id: int) -> None:
-        """把监听缺口转成持久化的、禁止自动删除的修复任务。"""
+        """内核或协议溢出允许经完整扫描验证的删除；其他缺口仍需人工确认。"""
         async with db_session._SessionLocal() as db:
             binding = await db.scalar(select(FileSyncBinding).where(
                 FileSyncBinding.id == binding_id,
@@ -167,16 +168,29 @@ class FileSyncWatcherManager:
             if binding is None:
                 return
             try:
+                identity = self._binding_root_identities.get(binding_id)
                 await enqueue_reconcile_run(
                     db,
                     user_id=binding.user_id,
                     binding_id=binding.id,
                     action="repair",
-                    allow_delete=False,
+                    allow_delete=identity is not None and binding.health_error_code in RECONCILABLE_OVERFLOW_CODES,
+                    root_identity=identity,
                 )
-            except (LookupError, ReconcileRunError):
+            except LookupError:
                 await db.rollback()
                 return
+            except ReconcileRunError:
+                # 当前任务不能升级删除权限；保存监听根身份，供任务结束后的周期补偿复用。
+                active = await db.scalar(select(FileSyncReconcileRun).where(
+                    FileSyncReconcileRun.binding_id == binding_id,
+                    FileSyncReconcileRun.status.in_(("queued", "running", "cancelling")),
+                ).with_for_update())
+                if active is not None and identity is not None:
+                    metadata = dict(active.result_counts or {})
+                    metadata.setdefault("rootDevice", identity[0])
+                    metadata.setdefault("rootInode", identity[1])
+                    active.result_counts = metadata
             await db.commit()
 
     async def _prepare_filesync_access(self, root: Path) -> None:
@@ -257,6 +271,7 @@ class FileSyncWatcherManager:
             if not is_file_sync_enabled() or not workspace_shell_supported():
                 await self._sidecar.close()
                 self._binding_roots.clear()
+                self._binding_root_identities.clear()
                 self._binding_scopes.clear()
                 self._ready_bindings.clear()
                 await self._wait(stop_event)
@@ -294,6 +309,7 @@ class FileSyncWatcherManager:
                     for binding_id in set(self._binding_roots) - set(current):
                         await self._sidecar.unwatch(binding_id)
                         self._binding_roots.pop(binding_id, None)
+                        self._binding_root_identities.pop(binding_id, None)
                         self._binding_scopes.pop(binding_id, None)
                         self._ready_bindings.discard(binding_id)
                         self._discard_buffered_batch(binding_id)
@@ -308,6 +324,7 @@ class FileSyncWatcherManager:
                     for binding_id in set(self._binding_roots) - watch_ids:
                         await self._sidecar.unwatch(binding_id)
                         self._binding_roots.pop(binding_id, None)
+                        self._binding_root_identities.pop(binding_id, None)
                         self._binding_scopes.pop(binding_id, None)
                         self._ready_bindings.discard(binding_id)
                         self._discard_buffered_batch(binding_id)
@@ -331,6 +348,8 @@ class FileSyncWatcherManager:
                         if rebuilding and self._rebuild_attempts.get(binding_id, 0) >= self.MAX_PATH_RETRIES:
                             continue
                         if previous != (user_id, root, mode) or previous_scope != scope or rebuilding:
+                            root_stat = root.stat()
+                            self._binding_root_identities[binding_id] = (root_stat.st_dev, root_stat.st_ino)
                             self._ready_bindings.discard(binding_id)
                             if rebuilding:
                                 await self._sidecar.unwatch(binding_id)
@@ -352,6 +371,7 @@ class FileSyncWatcherManager:
                     await self._health(binding_id, "failed", code="sidecar_unavailable", gap=True)
                 await self._sidecar.close()
                 self._binding_roots.clear()
+                self._binding_root_identities.clear()
                 self._binding_scopes.clear()
                 self._ready_bindings.clear()
             except Exception as exc:
