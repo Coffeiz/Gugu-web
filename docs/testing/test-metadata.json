@@ -1215,6 +1215,14 @@
     "keyBehavior": "前端构建版本变化时保留用户界面偏好并清理旧认证与临时状态",
     "ci": "frontend-test"
   },
+  "frontend/tests/utils/providerWebSearch.test.ts": {
+    "domain": "provider-web-search",
+    "layer": "L0",
+    "owner": "frontend/utils",
+    "productionEntry": "frontend/src/utils/providerWebSearch.ts",
+    "keyBehavior": "根据 Provider、协议、模型和凭据来源决定是否展示原生联网搜索能力",
+    "ci": "frontend-test"
+  },
   "frontend/tests/utils/spreadsheetZoomPreference.test.ts": {
     "domain": "file-preview",
     "layer": "L0",
