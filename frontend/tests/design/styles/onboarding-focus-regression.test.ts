@@ -99,7 +99,7 @@ describe('onboarding 与重命名 focus 视觉回归', () => {
   })
 
   it('onboarding 模型页只展示添加入口与工作区卡片', () => {
-    expect(onboarding).toContain('class="content-options onboarding-model-pane"')
+    expect(onboarding).toMatch(/<div v-show="step === 'model'" class="content-options onboarding-model-pane">\s*<ProfileByokPane\b/)
     expect(onboarding).toContain('onboarding')
     expect(profileByokPane).toContain("'profile-byok-pane--onboarding': onboarding")
     expect(profileByokPane).toContain('v-if="!onboarding"')
@@ -120,7 +120,7 @@ describe('onboarding 与重命名 focus 视觉回归', () => {
   })
 
   it('onboarding IM 使用独立平台卡片，不复用个人设置面板', () => {
-    expect(onboarding).toContain('OnboardingImSetup')
+    expect(onboarding).toMatch(/<div v-show="step === 'im'" class="content-options">\s*<OnboardingImSetup\s*\/>\s*<\/div>/)
     expect(onboarding).toContain('onboarding')
     expect(onboarding).not.toContain('ProfileImPane')
     expect(onboardingImSetup).toContain('bots.value = result.items || []')

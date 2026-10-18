@@ -119,6 +119,14 @@
     "keyBehavior": "主题切换不重复追加控制台横幅",
     "ci": "frontend-test"
   },
+  "frontend/tests/onboarding/progressSaver.test.ts": {
+    "domain": "onboarding",
+    "layer": "L0",
+    "owner": "frontend/composables/onboarding",
+    "productionEntry": "frontend/src/composables/onboarding/progressSaver.ts",
+    "keyBehavior": "引导步骤快速切换时进度写入合并且串行；退出时立即冲刷；相同模拟延迟的对照测试验证请求数和等待时间下降",
+    "ci": "frontend-test"
+  },
   "frontend/tests/agent-configuration/llmThinkingOptions.test.ts": {
     "domain": "agent-configuration",
     "layer": "L0",
