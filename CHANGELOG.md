@@ -11,10 +11,12 @@
 
 #### New Features
 
+- Preview and confirm missing file-library records in batches from the sync conflict list.
 - Add Provider-native web search for MiniMax, GLM, Qwen, DeepSeek, MiMo and Ollama Cloud, with per-model switches and billing notices.
 
 #### Improvements
 
+- Use muted red and green text with matching backgrounds for diff code blocks.
 - Keep cut files and folders visibly consistent between the file library and project editor, with shared card action styling.
 - Use compact inline rename and todo fields in the project editor.
 - Speed up large file copies by streaming data through storage backends.
@@ -34,6 +36,8 @@
 
 ### Fixes
 
+- Show selected Web chat answers immediately without requiring a refresh.
+- Detect Linux file-watcher queue overflow and reconcile missed deletions when the original directory is still intact.
 - Preserve calendar and spreadsheet preferences across frontend updates, along with the DOCX viewing mode.
 - Retry project-directory reads when a file changes during an in-flight request, avoiding a stale snapshot.
 - Keep OSS copy fingerprints matched to the copied source version when the source changes concurrently.
@@ -65,10 +69,12 @@
 
 #### 新功能
 
+- 文件同步冲突列表支持预览并分批确认本地缺失记录。
 - 新增 MiniMax、GLM、百炼、DeepSeek、MiMo 和 Ollama Cloud 原生联网搜索，支持按模型启用并提示可能产生的费用。
 
 #### 改进
 
+- diff 代码块使用低饱和红绿文字和对应底色，便于识别增删内容。
 - 统一文件库与项目编辑器中文件和文件夹的剪切状态及卡片操作样式。
 - 调整项目编辑器内联重命名和待办输入框高度，使其更紧凑。
 - 优化大文件复制，按流处理存储数据，减少应用内存占用。
@@ -88,6 +94,8 @@
 
 ### 修复
 
+- Web 聊天选择答案后立即显示选择结果，无需刷新。
+- 检测 Linux 文件监听队列溢出，在原目录身份未变化时核对并补偿遗漏的删除。
 - 前端更新后保留日历、表格偏好及 DOCX 页面适配模式。
 - 文件在项目目录请求期间发生变化时重新读取，避免缓存旧目录内容。
 - OSS 源文件并发变化时校验复制版本，确保内容指纹与复制结果一致。

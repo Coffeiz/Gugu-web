@@ -1294,5 +1294,29 @@
     "productionEntry": "agent/tools/search.py",
     "keyBehavior": "空结果、引擎故障和超时不隐式调用付费研究",
     "ci": "backend-pytest"
+  },
+  "backend/tests/storage/filesync/test_missing_batch.py": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "app/services/filesync/missing_batch.py",
+    "keyBehavior": "批量缺失预览仅限绑定；恢复文件、版本变化、根目录替换与跨用户预览不得删除；未确认不修改记录",
+    "ci": "backend-pytest"
+  },
+  "frontend/tests/admin/filesync/FileSyncMissingBatch.test.ts": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "frontend/components/filesync",
+    "productionEntry": "frontend/src/components/filesync/FileSyncMissingBatch.vue",
+    "keyBehavior": "缺失记录按绑定预览后确认，取消不提交，按25项分批并展示跳过项",
+    "ci": "frontend-test"
+  },
+  "backend/tests/storage/filesync/test_linux_watcher.py": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "app/services/filesync/linux_watcher.py、health.py、periodic.py",
+    "keyBehavior": "原生内核溢出必须上报缺口；ready保留溢出原因；仅根身份已记录且匹配时允许周期删除补偿；递归事件不跟随符号链接",
+    "ci": "backend-pytest"
   }
 }
