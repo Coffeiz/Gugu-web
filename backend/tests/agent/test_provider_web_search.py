@@ -109,6 +109,39 @@ def test_foreign_api_host_cannot_receive_provider_credentials(provider):
     assert not web_search.supports_web_search(config(provider, base_url="https://example.com/v1"))
 
 
+def test_provider_switch_refreshes_restored_schema_without_rewriting_history():
+    """MiniMax→GLM→百炼→MiniMax，含持久化重载及同 Provider 切协议。"""
+    from agent.context.assembly.area import MessageArea
+    from agent.context.canonical_tool_history import (
+        append_event, refresh_model_tool_schemas, render_events_for_provider, tool_schema_event,
+    )
+
+    configs = [config("minimax"), config("glm"), config("qwen"), config("qwen", "responses"), config("deepseek"), config("mimo"), config("ollama"), config("minimax")]
+    snapshots = [registry.snapshot_with_extras(model_cfg=cfg) for cfg in configs]
+    history = []
+    append_event(history, tool_schema_event(snapshots[0].get("web_search")))
+    history.extend([
+        {"role": "assistant", "content": [{"type": "tool_call", "id": "past-call", "name": "web_search", "arguments": {"query": "旧查询"}}]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_call_id": "past-call", "content": "旧结果"}]},
+    ])
+    for snapshot in snapshots[1:]:
+        persisted = json.loads(json.dumps(history))
+        area = MessageArea.from_canonical_messages(persisted)
+        refresh_model_tool_schemas(area, snapshot, ["web_search"])
+        current = tool_schema_event(snapshot.get("web_search"))
+        assert area.entries[-1].canonical_message["content"][-1] == current.to_block()
+        assert [entry.canonical_message for entry in area.entries[:-1]] == persisted
+        assert area.persistence_delta(outcome="success").entries == ()
+        rendered = render_events_for_provider(area.provider_projection()).to_messages()
+        schema_text = json.dumps(current.schema, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        assert schema_text in rendered[-1]["content"][-1]["text"]
+        before = len(area.entries)
+        refresh_model_tool_schemas(area, snapshot, ["web_search"])
+        assert len(area.entries) == before
+        # 模拟本轮 get_tool_schema 的声明落库，下一轮从持久化历史重建。
+        append_event(history, current)
+        assert history[-1]["content"][-1] == current.to_block()
+    assert len([block for message in history for block in message["content"] if block.get("type") == "tool-schema"]) == len(configs)
 
 
 @pytest.mark.asyncio

@@ -271,13 +271,31 @@ def tool_schema_event(tool) -> ToolSchemaEvent:
     )
 
 
+def _latest_tool_schema(messages: list[dict], tool_name: str) -> dict | None:
+    for message in reversed(messages):
+        content = message.get("content") if isinstance(message, dict) else None
+        for block in reversed(content if isinstance(content, list) else []):
+            if isinstance(block, dict) and block.get("type") == "tool-schema" and block.get("tool_name") == tool_name:
+                return block
+    return None
+
+
 def append_event(messages: list[dict], event) -> None:
-    """追加一个可重放的 canonical event；相同版本/digest 不重复追加。"""
+    """追加 canonical event；工具声明仅与同名工具的最近声明去重。"""
     block = event.to_block()
     key = (
         block.get("type"), block.get("tool_name"), block.get("schema_digest"),
         block.get("implementation_digest"), block.get("skill_name"),
     )
+    if block.get("type") == "tool-schema":
+        previous = _latest_tool_schema(messages, block.get("tool_name", ""))
+        if previous is not None and (
+            previous.get("schema_digest") == block.get("schema_digest")
+            and previous.get("implementation_digest") == block.get("implementation_digest")
+        ):
+            return
+        messages.append({"role": "user", "content": [block]})
+        return
     for message in messages:
         content = message.get("content") if isinstance(message, dict) else None
         blocks = content if isinstance(content, list) else []
@@ -292,6 +310,26 @@ def append_event(messages: list[dict], event) -> None:
             if existing_key == key:
                 return
     messages.append({"role": "user", "content": [block]})
+
+
+def refresh_model_tool_schemas(area, tool_snapshot, tool_names) -> None:
+    """为 Provider 相关工具补充本轮声明，保持历史调用和持久化记录不变。"""
+    history = [entry.canonical_message for entry in area.entries]
+    for name in tool_names:
+        tool = tool_snapshot.get(name)
+        if tool is None or tool.input_schema_factory is None:
+            continue
+        previous = _latest_tool_schema(history, name)
+        if previous is None:
+            continue
+        event = tool_schema_event(tool)
+        if previous.get("schema_digest") == event.schema_digest and previous.get("implementation_digest") == event.implementation_digest:
+            continue
+        # 使用 request-only entry，不改写已持久化历史，也不将旧调用重新解释成新参数。
+        area.append({"role": "user", "content": [
+            {"type": "text", "text": "当前请求使用下面的最新工具参数契约；更早的同名 Schema 仅用于解释历史调用。"},
+            event.to_block(),
+        ]})
 
 
 def event_text(block: dict) -> str:

@@ -19,6 +19,7 @@
 
 #### Fixes
 
+- Refresh Provider-specific web search parameters when switching models in an existing conversation, including switching back to a previously used Provider.
 - Stop retrying background memory reflection for deleted conversations and clean up their pending buffers.
 - Stop automatically retrying IM memory reflection when the model provider explicitly rejects the input, while preserving retries for temporary failures.
 
@@ -34,6 +35,7 @@
 
 #### 修复
 
+- 修复会话中切换 Provider 后联网搜索参数声明沿用历史版本的问题，支持切回原 Provider。
 - 修复文件同步在文件被删除或原子替换时整批重试及记录过期指纹的问题。
 - 修复模型上游流式失败被误报为内部错误的问题，统一 Web 与 IM 的错误提示和诊断编号。
 - 修复已删除会话的后台记忆反思持续重试问题，并清理对应待处理缓冲。
