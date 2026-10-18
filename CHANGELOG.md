@@ -15,6 +15,7 @@
 
 #### Improvements
 
+- Improve search routing, cross-source verification and fact checking for uncertain names, attributes and references.
 - Combine web and image search in XNG Search and hide search tools that have no usable configuration.
 
 #### Fixes
@@ -31,6 +32,7 @@
 
 #### 改进
 
+- 优化搜索工具分工与复杂任务混合检索，补充多来源比对和具体实体、属性、引用的真实性核验指引。
 - XNG Search 统一网页、图像及混合搜索；未配置的搜索能力不再展示给模型。
 
 #### 修复

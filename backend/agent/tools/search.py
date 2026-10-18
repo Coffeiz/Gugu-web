@@ -8,7 +8,7 @@
   默认只返回候选（标题+来源页+图片直链），**不会自动读取或发送**；需要视觉分析时用 `read_file(items=[...])` 批量读取选中的图片。
   真要把图发进对话/IM，接着调 `files.py` 的 `send_file(url=候选的 img_src)`。
 
-成本梯队（见 `agent/skills/web-search.md`）：专有技能 → 已启用时优先 Provider 原生 web_search，否则 xng_search(SearXNG) → deep_research（Admin 选择的 Provider）。
+成本梯队（见 `agent/skills/web-search.md`）：专有技能 → 简单任务优先免费 xng_search(SearXNG) → 大部分信息检索用 Provider 原生 web_search → 复杂任务混合普通搜索、原文阅读与 deep_research 聚合分析（Admin 选择的 Provider）。
 SearXNG 部署在后端同机（127.0.0.1），由 settings.search.searxng_url 配；国内服务器只有
 sogou/quark/360search 可达，固定带 engines 避开会超时的 google/bing 等。图片搜索能用的引擎不一定
 是同一批（`settings.search.searxng_image_engines`，留空回退文本引擎列表）。
@@ -570,8 +570,8 @@ class SearchSkill(BaseSkill):
     tools = [
         Tool(
             name="web_search", label="联网搜索",
-            description_short="由当前模型 Provider 提供的联网搜索，调用可能收费。",
-            description="联网搜索工具由当前模型 Provider 提供，使用当前模型配置的 API Key，调用可能产生搜索服务和模型费用，按 Provider 规则计费。参数遵循该 Provider 的原生 Schema。适合查找近期网页信息和事实核查。",
+            description_short="适合大部分信息检索的 Provider 联网搜索，调用可能收费。",
+            description="联网搜索工具由当前模型 Provider 提供，使用当前模型配置的 API Key，调用可能产生搜索服务和模型费用，按 Provider 规则计费。参数遵循该 Provider 的原生 Schema。适合大部分信息检索、近期动态和多条件事实核验；简单查找优先使用免费的 xng_search。",
             input_schema={"type": "object", "properties": {}, "additionalProperties": False},
             input_schema_factory=_provider_web_search_schema,
             handler=_web_search,
@@ -580,8 +580,8 @@ class SearchSkill(BaseSkill):
         ),
         Tool(
             name="xng_search", label="XNG 搜索",
-            description_short='搜索网页、图像或同时搜索两类内容。',
-            description="使用 XNG 搜索公网网页或图像。mode=web 搜网页，mode=images 搜图像，mode=both 同时搜索两类；返回图像候选，不会自动读取或发送。需要读正文或深度研究时分别使用 http_get 或 deep_research。",
+            description_short='免费搜索引擎，简单查找和关键词搜图优先使用。',
+            description="免费的 XNG 搜索引擎，简单查找、官网/文档定位和关键词搜图优先使用；大部分信息检索与较复杂的事实核验使用 web_search。mode=web 搜网页，mode=images 搜图像，mode=both 同时搜索两类；返回图像候选，不会自动读取或发送。单篇正文用 http_get；跨来源聚合分析用 deep_research，关键事实应比较独立来源。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -618,7 +618,7 @@ class SearchSkill(BaseSkill):
         Tool(
             name="deep_research", label="深度研究",
             description_short='对指定主题进行深度研究。',
-            description="阅读和研究外部资料，返回总结或引用；普通网页或图像搜索用 xng_search。",
+            description="阅读和研究外部资料，返回总结或引用；简单查找优先免费 xng_search，大部分信息检索用 web_search；复杂任务应结合普通搜索与原文阅读，使用本工具聚合分析，再对关键结论和分歧补充独立来源核验。",
             input_schema={
                 "type": "object",
                 "properties": {
