@@ -19,7 +19,8 @@ WORKDIR /workspace/frontend
 RUN pnpm build
 
 FROM nginx:alpine
-RUN apk upgrade --no-cache
+ARG PACKAGE_REFRESH=local
+RUN test -n "${PACKAGE_REFRESH}" && apk upgrade --no-cache
 # 显式刷新基础镜像中的运行时库，避免复用旧构建层继续携带已修复的 Alpine 漏洞。
 RUN apk add --no-cache --upgrade libuuid 'tiff>=4.7.2-r0'
 COPY --from=build /workspace/frontend/dist /usr/share/nginx/html
