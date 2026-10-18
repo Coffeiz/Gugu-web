@@ -1215,6 +1215,14 @@
     "keyBehavior": "前端构建版本变化时保留用户界面偏好并清理旧认证与临时状态",
     "ci": "frontend-test"
   },
+  "frontend/tests/utils/chartKit.test.ts": {
+    "domain": "admin-usage",
+    "layer": "L0",
+    "owner": "frontend/utils",
+    "productionEntry": "frontend/src/utils/chartKit.ts:lineChartOptions",
+    "keyBehavior": "百分比折线图固定数值轴上限且无界指标仍使用自动刻度留白",
+    "ci": "frontend-test"
+  },
   "frontend/tests/utils/providerWebSearch.test.ts": {
     "domain": "provider-web-search",
     "layer": "L0",
