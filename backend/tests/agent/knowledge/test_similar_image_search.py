@@ -158,70 +158,43 @@ async def test_baidu_provider_classifies_auth_failure(monkeypatch):
     assert "bad-key" not in str(result)
 
 
-def test_image_search_is_the_only_registered_image_search_tool():
+def test_search_tools_have_canonical_names_without_legacy_aliases():
     from agent.tools.base import registry
 
-    assert registry.get("image_search") is not None
+    assert registry.get("xng_search") is not None
+    assert registry.get("similar_image_search") is not None
+    assert registry.get("web_search") is not None
+    assert registry.get("web_search").handler is not registry.get("xng_search").handler
+    assert registry.get("image_search") is None
     assert registry.get("search_similar_images") is None
 
 
-@pytest.mark.asyncio
-async def test_image_search_dispatches_reverse_image_mode(monkeypatch):
-    async def fake_reverse_search(db, user_id, args):
-        return {"mode": "image", "max_results": args["max_results"]}
-
-    monkeypatch.setattr(search_tools, "_image_search_by_image", fake_reverse_search)
-
-    result = await search_tools._image_search(None, "user-a", {
-        "mode": "image",
-        "attach_id": "attach-1",
-        "max_results": 7,
-    })
-
-    assert result == {"mode": "image", "max_results": 7}
-
-
-@pytest.mark.asyncio
-async def test_image_search_infers_legacy_reverse_image_mode(monkeypatch):
-    async def fake_reverse_search(db, user_id, args):
-        return {"mode": "image", "attach_id": args["attach_id"]}
-
-    monkeypatch.setattr(search_tools, "_image_search_by_image", fake_reverse_search)
-
-    result = await search_tools._image_search(None, "user-a", {"attach_id": "attach-1"})
-
-    assert result == {"mode": "image", "attach_id": "attach-1"}
-
-
-@pytest.mark.asyncio
-async def test_image_search_rejects_mode_without_required_input():
-    assert await search_tools._image_search(None, "user-a", {"mode": "text"}) == {
-        "error": "mode=text 时需要提供搜索关键词 query"
-    }
-    assert await search_tools._image_search(None, "user-a", {"mode": "image"}) == {
-        "error": "mode=image 时需要提供 attach_id 或 image_url"
-    }
-
-
-def test_image_search_schema_uses_flat_compatible_input():
+def test_similar_image_tool_uses_reverse_image_handler():
     from agent.tools.base import registry
 
-    schema = registry.get("image_search").input_schema
-    assert "oneOf" not in schema
-    assert schema["properties"]["mode"]["enum"] == ["text", "image"]
-    assert "query" in schema["properties"]
-    assert "attach_id" in schema["properties"]
-    assert "image_url" in schema["properties"]
-    assert schema.get("required") is None
+    assert registry.get("similar_image_search").handler is search_tools._similar_image_search
 
 
-def test_image_search_accepts_numeric_string_result_count_after_normalization():
+def test_xng_and_similar_image_schemas_have_distinct_contracts():
+    from agent.tools.base import registry
+
+    xng_schema = registry.get("xng_search").input_schema
+    assert xng_schema["properties"]["mode"]["enum"] == ["web", "images", "both"]
+    assert xng_schema["required"] == ["query"]
+    similar_schema = registry.get("similar_image_search").input_schema
+    assert "query" not in similar_schema["properties"]
+    assert "attach_id" in similar_schema["properties"]
+    assert "image_url" in similar_schema["properties"]
+    assert len(similar_schema["anyOf"]) == 2
+
+
+def test_similar_image_search_accepts_numeric_string_result_count_after_normalization():
     from agent.tools.base import registry
     from agent.tools.tool_contract import normalize_and_validate_tool_input
 
-    args = {"mode": "image", "attach_id": "attach-1", "max_results": "5"}
+    args = {"attach_id": "attach-1", "max_results": "5"}
     args, issues, _, _ = normalize_and_validate_tool_input(
-        "image_search", args, registry.get("image_search")
+        "similar_image_search", args, registry.get("similar_image_search")
     )
 
     assert args["max_results"] == 5

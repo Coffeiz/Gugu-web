@@ -178,7 +178,7 @@ describe('个人设置中的 IM 群权限', () => {
   it('Telegram 群开关启用后显示独立回应、记忆与成员工具策略并写回 Bot 设置', async () => {
     mocks.list.mockResolvedValue({ items: [{
       id: 7, platform: 'telegram', enabled: true, group_chat_enabled: false,
-      group_allowed_tools: ['web_search', 'http_get', 'image_search', 'read_file', 'send_file'],
+      group_allowed_tools: ['xng_search', 'http_get', 'similar_image_search', 'read_file', 'send_file'],
     }] })
     mocks.update.mockResolvedValue({})
     host = document.createElement('div')
@@ -210,7 +210,7 @@ describe('个人设置中的 IM 群权限', () => {
     contextTool.click()
     await flushUi()
     expect(mocks.update).toHaveBeenCalledWith(7, {
-      group_allowed_tools: ['web_search', 'http_get', 'image_search', 'read_file', 'send_file', 'group_context_search'],
+      group_allowed_tools: ['xng_search', 'http_get', 'similar_image_search', 'read_file', 'send_file', 'group_context_search'],
     })
   })
 

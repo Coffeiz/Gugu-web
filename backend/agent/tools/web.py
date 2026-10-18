@@ -135,7 +135,7 @@ async def _http_get_one(db, user_id, url: str, max_chars: int):
             return {"status": status_code, "url": url,
                     "error": "抓到了但没读出正文——可能是空页/错误页，也可能是纯 JS 渲染页面（HTTP 抓不到"
                              "客户端渲染的内容）。先看 status 是否正常；status 正常但读不到正文的话，"
-                             "换 web_search/deep_research 查这个主题，或换个来源"}
+                             "换 xng_search/deep_research 查这个主题，或换个来源"}
         return {"status": status_code, "url": url, "content_type": content_type,
                 "body": extracted[:max_chars], "truncated": len(extracted) > max_chars,
                 "total_chars": len(extracted)}

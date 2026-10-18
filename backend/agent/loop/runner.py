@@ -144,7 +144,7 @@ async def run_loop(
                 else:
                     messages.insert(0, {"role": "system", "content": _core._GOAL_POLICY.strip()})
         from agent.tools import registry as tool_registry
-        tool_snapshot = tool_registry.snapshot_with_extras(tuple(runner.dynamic_tools.values()))
+        tool_snapshot = tool_registry.snapshot_with_extras(tuple(runner.dynamic_tools.values()), model_cfg=ai)
         initial_tool_names = runner.tool_names
         if (
             runner.capability_context is not None

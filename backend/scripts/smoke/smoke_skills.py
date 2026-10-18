@@ -84,9 +84,9 @@ async def main(*, allow_real_network: bool):
     bad, _ = await registry.dispatch(_UID, "http_get", {"url": "http://192.168.1.50:6379"})
     check("http_get 内网被拦", '"error"' in bad, bad[:120])
 
-    print("【7】搜索工具：web_search(SearXNG) / deep_research(Tavily)")
+    print("【7】搜索工具：xng_search(SearXNG) / deep_research(Tavily)")
     names = all_system_tool_names()
-    check("web_search 注册（SearXNG）", "web_search" in names)
+    check("xng_search 注册（SearXNG）", "xng_search" in names)
     check("deep_research 注册（Tavily）", "deep_research" in names)
     check("未知系统 Skill ID 不会加载", skills.load_skill("S999") is None)
     from app.core.config import get_settings
@@ -98,16 +98,16 @@ async def main(*, allow_real_network: bool):
         cn, _ = await registry.dispatch(_UID, "http_get", {"url": "https://wttr.in/北京?format=3"})
         cnd = json.loads(cn)
         check("http_get 中文城市 URL", cnd.get("status") == 200 and bool(cnd.get("body")), cn[:120])
-        ws, _ = await registry.dispatch(_UID, "web_search", {"query": "Vue3 文档"})
+        ws, _ = await registry.dispatch(_UID, "xng_search", {"query": "Vue3 文档"})
         wsd = ws if isinstance(ws, dict) else json.loads(ws)
         if get_settings().search.searxng_url:
-            check("web_search 实搜有结果", bool(wsd.get("results")), str(wsd)[:120])
+            check("xng_search 实搜有结果", bool(wsd.get("results")), str(wsd)[:120])
         else:
-            check("web_search 未配置时友好降级到 deep_research", "deep_research" in (wsd.get("error", "")), str(wsd)[:120])
+            check("xng_search 未配置时返回配置提示", "XNG Search" in (wsd.get("error", "")), str(wsd)[:120])
     elif not get_settings().search.searxng_url:
-        ws, _ = await registry.dispatch(_UID, "web_search", {"query": "Vue3 文档"})
+        ws, _ = await registry.dispatch(_UID, "xng_search", {"query": "Vue3 文档"})
         wsd = ws if isinstance(ws, dict) else json.loads(ws)
-        check("web_search 未配置时友好降级到 deep_research", "deep_research" in (wsd.get("error", "")), str(wsd)[:120])
+        check("xng_search 未配置时返回配置提示", "XNG Search" in (wsd.get("error", "")), str(wsd)[:120])
     else:
         print("跳过真实搜索（需显式传入 --allow-real-network）")
 

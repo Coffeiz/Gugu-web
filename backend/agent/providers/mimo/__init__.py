@@ -1,4 +1,4 @@
-from .base import (
+from ..base import (
     ProviderAdapter, ProviderCapabilities, ReasoningCapabilities,
     ResponsesInputCapabilities, configured_responses_input_capabilities,
 )

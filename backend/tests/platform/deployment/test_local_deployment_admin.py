@@ -79,5 +79,5 @@ def test_local_without_tool_capability_does_not_send_tool_schemas(monkeypatch):
     ai = SimpleNamespace(
         provider="local", local_runtime="vllm", base_url="http://127.0.0.1:8000/v1",
         model="demo", max_tokens=32)
-    _, context = OpenAIDriver().prepare(["web_search"], ai, [], None)
+    _, context = OpenAIDriver().prepare(["xng_search"], ai, [], None)
     assert context.tools == []

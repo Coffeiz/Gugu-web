@@ -20,6 +20,9 @@ async def _get_tool_schema(db, user_id, args: dict):
     from agent.im.permissions import can_use_tool
     from agent.tools import registry
     from agent.tools.base import current_dispatch_tool_snapshot
+    from agent.tools.search import search_tool_is_configured
+    from agent.llm import modelctx
+    from app.core.config import get_settings
 
     requested = args.get("tools")
     if not isinstance(requested, list) or not requested:
@@ -45,6 +48,11 @@ async def _get_tool_schema(db, user_id, args: dict):
         accepted = False
         for name in candidates:
             if name in declared or len(declared) >= 12:
+                continue
+            if not await search_tool_is_configured(
+                name, db=db, user_id=user_id, settings=get_settings(),
+                model_cfg=modelctx.get_model_cfg(),
+            ):
                 continue
             if tool_snapshot.get(name) is None or not can_use_tool(
                 name, allowed, im_role=im_role,

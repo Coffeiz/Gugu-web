@@ -36,6 +36,7 @@ from app.db.session import get_db
 from app.models import AgentUsage, User, UserMcpServer
 from app.services import multimodal_probe, provider_reasoning_state
 from app.byok.schemas import ProviderCapabilityPreview
+from app.byok.policy import provider_web_search_supported
 
 # 2026-09-03 19:15（北京时间）前的 OpenAI 兼容流仍把 cache_read 计入
 # tokens_in；Anthropic/MiniMax 始终使用拆分口径。表结构没有保存口径版本，
@@ -835,11 +836,11 @@ async def set_llm_strategy(body: StrategyUpdate, db: AsyncSession = Depends(get_
 # 漏一个字段，active 模型就拿不到 → 表现为「面板保存了却不生效」。新增模型字段时只改这里。
 _AI_SYNC_KEYS = ("provider", "api_key", "base_url", "model", "max_tokens",
                  "context_tokens", "thinking", "reasoning_effort", "reasoning_persistence", "image", "video",
-                 "image_detail", "audio", "api_format", "ollama_mode", "ollama_api_mode", "ollama_keep_alive",
+                 "image_detail", "audio", "web_search_enabled", "api_format", "ollama_mode", "ollama_api_mode", "ollama_keep_alive",
                  "deployment_mode", "local_runtime", "capability_overrides", "capability_checked_at", "capability_fingerprint")
 _AI_DEFAULTS = {"max_tokens": 8000, "context_tokens": 128000,
                 "thinking": "", "reasoning_effort": "", "reasoning_persistence": "off", "image": False,
-                "image_detail": "auto", "video": False, "audio": False, "api_format": "",
+                "image_detail": "auto", "video": False, "audio": False, "web_search_enabled": False, "api_format": "",
                 "ollama_mode": "local", "ollama_api_mode": "native", "ollama_keep_alive": "5m",
                 "deployment_mode": "cloud", "local_runtime": "other", "capability_overrides": {},
                 "capability_checked_at": "", "capability_fingerprint": ""}
@@ -865,6 +866,7 @@ class PresetCreate(BaseModel):
     image_detail: str = "auto"
     video: bool = False
     audio: bool = False
+    web_search_enabled: bool = False
     api_format: str = ""
     ollama_mode: str = "local"
     ollama_api_mode: str = "native"
@@ -880,6 +882,8 @@ class PresetCreate(BaseModel):
 async def create_llm_preset(body: PresetCreate, db: AsyncSession = Depends(get_db)):
     if body.max_tokens >= body.context_tokens:
         raise HTTPException(422, "最大输出 token 数必须小于模型总上下文窗口")
+    if body.web_search_enabled and not provider_web_search_supported(body.provider, body.api_format):
+        raise HTTPException(422, "当前 Provider 或 API 格式不支持联网搜索")
     new_id = f"p_{_uuid.uuid4().hex[:8]}"
     item = {
         "id": new_id,
@@ -897,6 +901,7 @@ async def create_llm_preset(body: PresetCreate, db: AsyncSession = Depends(get_d
         "image_detail": body.image_detail if body.image_detail in ("auto", "low", "high", "original") else "auto",
         "video": body.video,
         "audio": body.audio,
+        "web_search_enabled": body.web_search_enabled if provider_web_search_supported(body.provider, body.api_format) else False,
         "api_format": body.api_format,
         "ollama_mode": body.ollama_mode,
         "ollama_api_mode": body.ollama_api_mode,
@@ -933,6 +938,7 @@ class PresetUpdate(BaseModel):
     image_detail: str | None = None
     video: bool | None = None
     audio: bool | None = None
+    web_search_enabled: bool | None = None
     api_format: str | None = None
     ollama_mode: str | None = None
     ollama_api_mode: str | None = None
@@ -949,6 +955,10 @@ async def update_llm_preset(preset_id: str, body: PresetUpdate, db: AsyncSession
         item = next((it for it in presets["items"] if it["id"] == preset_id), None)
         if not item:
             raise HTTPException(404, "预设不存在")
+        effective_provider = body.provider if body.provider is not None else str(item.get("provider") or "")
+        effective_api_format = body.api_format if body.api_format is not None else str(item.get("api_format") or "")
+        if body.web_search_enabled is True and not provider_web_search_supported(effective_provider, effective_api_format):
+            raise HTTPException(422, "当前 Provider 或 API 格式不支持联网搜索")
         next_max_tokens = body.max_tokens if body.max_tokens is not None else int(item.get("max_tokens", 8000))
         next_context_tokens = body.context_tokens if body.context_tokens is not None else int(item.get("context_tokens", 128000))
         if next_max_tokens >= next_context_tokens:
@@ -956,7 +966,7 @@ async def update_llm_preset(preset_id: str, body: PresetUpdate, db: AsyncSession
         for field in (
             "name", "provider", "base_url", "model", "max_tokens", "context_tokens",
             "thinking", "reasoning_effort", "reasoning_persistence", "image", "video",
-            "audio", "image_detail", "api_format", "ollama_mode", "ollama_api_mode",
+            "audio", "web_search_enabled", "image_detail", "api_format", "ollama_mode", "ollama_api_mode",
             "ollama_keep_alive", "deployment_mode", "local_runtime", "in_pool",
         ):
             value = getattr(body, field)
@@ -964,6 +974,10 @@ async def update_llm_preset(preset_id: str, body: PresetUpdate, db: AsyncSession
                 if field == "image_detail" and value not in ("auto", "low", "high", "original"):
                     value = "auto"
                 item[field] = value
+        if not provider_web_search_supported(
+            str(item.get("provider") or ""), str(item.get("api_format") or ""),
+        ):
+            item["web_search_enabled"] = False
         if body.api_key:
             item["api_key"] = body.api_key
         if body.capability_overrides is not None:

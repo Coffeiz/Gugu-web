@@ -2,7 +2,7 @@ import re
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
-from .base import MediaLimits, ProviderAdapter, ProviderCapabilities, ReasoningCapabilities
+from ..base import MediaLimits, ProviderAdapter, ProviderCapabilities, ReasoningCapabilities
 
 
 _ERROR_MESSAGES = {

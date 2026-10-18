@@ -9,7 +9,7 @@ id: S1
 name: 资料搜索
 description_short: 用户需要联网查找、核对或比较资料时使用。
 category: search
-related_tools: web_search, image_search
+related_tools: xng_search, similar_image_search
 source: builtin
 ---
 

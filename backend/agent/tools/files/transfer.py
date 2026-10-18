@@ -213,7 +213,7 @@ async def _list_recent_attachments(db, user_id, args: dict):
 
 
 async def _send_file_from_url(user_id, url: str, title: str, *, stage: bool = True, max_bytes: int | None = None):
-    """下载一张网络图片（如 image_search 结果的 img_src）暂存为聊天附件，返回 _artifact（attach_id 版）。
+    """下载一张网络图片（如 xng_search / similar_image_search 结果的 img_src）暂存为聊天附件，返回 _artifact（attach_id 版）。
 
     下载用 streaming + 累计限流：不把整个响应读进内存再判大小（否则群成员给一个
     Content-Length 2GB 的 URL 会先把 2GB 全读进 RAM 才触发 15MB 检查，是 DoS 面）。
@@ -330,7 +330,7 @@ def _apply_title(artifact: dict, title: str | None) -> dict:
 
 async def _send_file(db, user_id, args: dict):
     """把文件发到对话窗口（前端渲染可下载卡片）：文件库里的文件用 file_id/file；
-    网络图片（如 image_search 搜到的）用 url——下载后暂存成聊天附件，同一套 _artifact 机制；
+    网络图片（如 xng_search / similar_image_search 搜到的）用 url——下载后暂存成聊天附件，同一套 _artifact 机制；
     之前收到/发过、还在暂存区的附件用 attach_id——直接重发，不重新下载、不进文件库。
     返回 _artifact，core 据此推一个 file 事件给前端；普通字段回给 LLM。
 

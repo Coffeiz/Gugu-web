@@ -210,6 +210,7 @@ async def resolve_run_config_for_user(settings, db, user_id, ctx=None) -> ModelR
     updates["thinking"] = getattr(row, "thinking", None)
     updates["reasoning_effort"] = getattr(row, "reasoning_effort", None) or ""
     updates["reasoning_persistence"] = getattr(row, "reasoning_persistence", "off")
+    updates["web_search_enabled"] = bool(getattr(row, "web_search_enabled", False))
     model = base.model_copy(update=updates) if hasattr(base, "model_copy") else base
     from agent.providers import filter_reasoning_config
     model = filter_reasoning_config(model)

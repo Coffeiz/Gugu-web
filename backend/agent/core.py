@@ -271,7 +271,7 @@ async def _im_cancelled(session_id: int | None = None) -> bool:
 
 
 async def _im_set_tool_state(tool_name: str) -> None:
-    """据工具名打细粒度状态（web_search→SEARCHING、create_file→GENERATING），
+    """据工具名打细粒度状态（xng_search→SEARCHING、create_file→GENERATING），
     让网关「还在吗」答得更准。web 路无 imctx 时 no-op。"""
     from agent.im import imctx
     from agent.runtime import runtime_state as rt

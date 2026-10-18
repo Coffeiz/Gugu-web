@@ -61,7 +61,7 @@ async def test_scheduled_tools_run_delivers_final_response(monkeypatch, db, user
 
     execution = AsyncMock(return_value=(
         "## 本周速览\n\n### 科技\n- 结果一\n\n### 影视\n- 结果二",
-        False, {"tool_names": ["web_search"], "mutated": False},
+        False, {"tool_names": ["xng_search"], "mutated": False},
     ))
     monkeypatch.setattr("agent.scheduled_execution.run_scheduled_execution", execution)
 

@@ -11,7 +11,7 @@ from app.core.security import get_current_user
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.models import User, UserProviderCredential
-from app.byok.policy import require_byok_enabled
+from app.byok.policy import provider_web_search_supported, require_byok_enabled
 from app.byok.schemas import CredentialCreate, CredentialModelsPreview, CredentialPatch, CredentialTestPreview, MediaCapabilityProbe, ProviderCapabilityPreview
 from app.byok.service import credential_view, decrypt_value, encrypt_value, get_owned_credential, list_credentials, master_key_status_for_credentials
 from app.services import multimodal_probe
@@ -200,6 +200,11 @@ def resolve_preview_key(row: UserProviderCredential | None, *, supplied_key: str
 @router.post("", status_code=201)
 async def create_credential(body: CredentialCreate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     _gate()
+    if body.web_search_enabled and (
+        body.capability != "llm"
+        or not provider_web_search_supported(body.provider, body.api_format)
+    ):
+        raise HTTPException(status_code=422, detail="当前 Provider 或 API 格式不支持联网搜索")
     existing = (await db.execute(select(UserProviderCredential).where(
         UserProviderCredential.user_id == user.id,
         UserProviderCredential.capability == body.capability,
@@ -225,6 +230,11 @@ async def create_credential(body: CredentialCreate, user: User = Depends(get_cur
         context_tokens=body.context_tokens,
         thinking=body.thinking, reasoning_effort=body.reasoning_effort,
         reasoning_persistence=body.reasoning_persistence,
+        web_search_enabled=(
+            body.web_search_enabled
+            if body.capability == "llm" and provider_web_search_supported(body.provider, body.api_format)
+            else False
+        ),
         image=body.image,
         video=body.video, audio=body.audio,
         image_detail=body.image_detail,
@@ -358,10 +368,21 @@ async def patch_credential(credential_id: int, body: CredentialPatch, user: User
         ))).scalars().all()
         for item in siblings:
             item.enabled = False
-    for field in ("provider", "api_format", "base_url", "model", "dimensions", "max_tokens", "context_tokens", "thinking", "reasoning_effort", "reasoning_persistence", "image", "video", "audio", "image_detail", "enabled"):
+    effective_provider = body.provider or row.provider
+    effective_api_format = body.api_format if body.api_format is not None else row.api_format
+    if body.web_search_enabled is True and (
+        row.capability != "llm"
+        or not provider_web_search_supported(effective_provider, effective_api_format)
+    ):
+        raise HTTPException(status_code=422, detail="当前 Provider 或 API 格式不支持联网搜索")
+    for field in ("provider", "api_format", "base_url", "model", "dimensions", "max_tokens", "context_tokens", "thinking", "reasoning_effort", "reasoning_persistence", "web_search_enabled", "image", "video", "audio", "image_detail", "enabled"):
         value = getattr(body, field)
         if value is not None:
+            if field == "web_search_enabled" and row.capability != "llm":
+                raise HTTPException(status_code=422, detail="联网搜索开关只适用于 LLM 凭据")
             setattr(row, field, value)
+    if not provider_web_search_supported(effective_provider, effective_api_format):
+        row.web_search_enabled = False
     if new_key_material is not None:
         encrypted, nonce, wrapped = new_key_material
         row.encrypted_value, row.nonce, row.encrypted_data_key = encrypted, nonce, wrapped

@@ -181,6 +181,7 @@ class AISettings(BaseModel):
     capability_overrides: dict[str, bool] = Field(default_factory=dict, description="模型能力人工覆盖")
     capability_checked_at: str = Field("", description="最近一次能力检测时间")
     capability_fingerprint: str = Field("", description="能力检测绑定的地址/模型指纹")
+    web_search_enabled: bool = Field(False, description="是否允许当前模型提供方调用原生联网搜索")
     # 内部运行时标记：resolve_run_config_for_user 在每轮 run 开始时注入到模型副本上，
     # 随 run 落到 agent_usage.is_byok。exclude=True 保证不会序列化进配置文件或 API 响应。
     is_byok: bool = Field(False, exclude=True, description="内部标记：本轮是否使用用户 BYOK 凭据")
@@ -333,6 +334,7 @@ class AIPresetItem(BaseModel):
     capability_overrides: dict[str, bool] = Field(default_factory=dict)
     capability_checked_at: str = ""
     capability_fingerprint: str = ""
+    web_search_enabled: bool = False
 
     in_pool: bool = False        # 是否加入「多 key 分流」池（strategy=pool 时随机挑这些）
     # 内部运行时标记（同 AISettings.is_byok）：resolve_run_config_for_user 每轮注入，exclude 不落盘。
@@ -425,12 +427,12 @@ class SearchSettings(BaseModel):
     tavily_api_key: str = Field("", description="Tavily API Key（空=禁用 deep_research 深度研究）")
     deep_research_baidu_api_key: str = Field("", description="百度普通搜索 API Key")
     deep_research_you_api_key: str = Field("", description="You.com Research API Key")
-    searxng_url:    str = Field("", description="自建 SearXNG 实例地址（空=禁用 web_search 通用搜索），如 http://127.0.0.1:8888")
+    searxng_url:    str = Field("", description="自建 SearXNG 实例地址（空=禁用 xng_search 通用搜索），如 http://127.0.0.1:8888")
     searxng_engines: str = Field(
         "baidu,sogou,quark,360search,yandex,duckduckgo web,mwmbl,gabanza,reloado,searchch,privacywall,gmx,zapmeta,google",
         description="SearXNG 启用的通用网页搜索引擎（逗号分隔）",
     )
-    searxng_image_engines: str = Field("", description="SearXNG 图片搜索（image_search）启用的引擎（逗号分隔）；留空则回退复用 searxng_engines。图片分类能连通的引擎不一定和文本分类是同一批，需部署后用「测试」按钮实测调整")
+    searxng_image_engines: str = Field("", description="SearXNG XNG 搜索 mode=images 启用的引擎（逗号分隔）；留空则回退复用 searxng_engines。图片分类能连通的引擎不一定和文本分类是同一批，需部署后用「测试」按钮实测调整")
     max_results:    int = Field(5, description="默认返回结果数")
     ts_sidecar_command: str = Field("", description="TypeScript RAG worker 命令；为空则使用项目内置构建物")
     ts_index_sync_mode: Literal["incremental", "full"] = Field(
@@ -463,7 +465,7 @@ class SearchSettings(BaseModel):
 
 
 class StateLabelSettings(BaseModel):
-    """对话里「状态指示」的自定义命名。key=工具名（web_search…）或特殊状态键（_thinking/_preparing/
+    """对话里「状态指示」的自定义命名。key=工具名（xng_search…）或特殊状态键（_thinking/_preparing/
     _verify_prefix），value=自定义显示名；未设的 key 自动回退到代码默认（工具的 label / 内置默认）。
     后台「状态命名」面板写入，core/前端热读。"""
     overrides: dict[str, str] = Field(default_factory=dict, description="状态显示名覆盖表（key→自定义名）")

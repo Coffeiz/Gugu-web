@@ -11,11 +11,11 @@
 
 #### New Features
 
-- None.
+- Add Provider-native web search for MiniMax, GLM, Qwen, DeepSeek, MiMo and Ollama Cloud, with per-model switches and billing notices.
 
 #### Improvements
 
-- None.
+- Combine web and image search in XNG Search and hide search tools that have no usable configuration.
 
 #### Fixes
 
@@ -26,11 +26,11 @@
 
 #### 新功能
 
-- 暂无。
+- 新增 MiniMax、GLM、百炼、DeepSeek、MiMo 和 Ollama Cloud 原生联网搜索，支持按模型启用并提示可能产生的费用。
 
 #### 改进
 
-- 暂无。
+- XNG Search 统一网页、图像及混合搜索；未配置的搜索能力不再展示给模型。
 
 #### 修复
 

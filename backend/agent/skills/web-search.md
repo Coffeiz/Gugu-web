@@ -4,46 +4,47 @@ name: 联网搜索
 description_short: 用户要查资料、新闻、官网事实或搜索图片时使用。
 description_long: "决定怎么获取外部信息：普通查找 / 深度研究 / 图片搜索。使用场景：用户要查资料、找官网文档事实新闻、要研究总结比较某件事、要找一张图/配图，或要根据已有图片找同款和相似图片。"
 category: search
-related_tools: web_search, image_search, read_file, deep_research
+related_tools: web_search, xng_search, similar_image_search, read_file, deep_research
 emoji: 🔎
 ---
 
 # 联网搜索技能
 
-三个工具、各管一段，别死按顺序，按「任务性质」选：
+按可用工具和任务性质选择搜索路径：
 
 | 工具 | 用途 | 成本 |
 |---|---|---|
-| `web_search` | 自建 SearXNG 通用网页搜索：找官网/文档/GitHub/某个事实/新闻标题/下载地址 | 免费、无配额 |
+| `web_search` | 当前模型 Provider 的原生网页搜索；支持 MiniMax、GLM、Qwen 百炼、DeepSeek、MiMo 与 Ollama Cloud | 工具由 Provider 提供，使用当前模型凭据；调用可能产生搜索服务和模型费用，按 Provider 规则计费 |
+| `xng_search` | 自建 SearXNG 搜索网页、图像或两类内容：`mode=web` / `images` / `both` | 免费、无配额 |
 | `deep_research` | 管理员选择的 Tavily / 百度搜索 / You.com：Tavily/You.com 返回研究答案，百度返回普通搜索引用，适合"读+总结/比较/研究/给引用" | 有每日次数配额（`SearchUsage`） |
-| `image_search` | 统一图片搜索：`mode=text` 按关键词找图，`mode=image` 以图搜图找同款/相似图 | 文字模式免费；图片模式按独立日额度限制 |
+| `similar_image_search` | 根据已有图片以图搜图，找同款/相似图 | 按独立日额度限制 |
 | `read_file` | 读取文件、历史附件或图片搜索选中的网络图片；支持混合批量并交给多模态模型分析 | `items` 最多 20 项、源文件总量最多 64 MiB；网络 URL 仅限图片 |
 
 需要判断或比较图片内容时，详细的分析维度和输出规范见 [`image-analysis.md`](image-analysis.md)；本技能只负责搜索、选图和调用工具。
 
 ## 怎么选
 
-1. **普通查找**（找官网/文档/GitHub/某个事实/新闻/下载地址，**绝大多数联网都属此类**）→ `web_search`，返回标题+链接+摘要。
-2. **需要读网页正文并总结/比较/研究/给引用**（"帮我研究…""总结这件事""比较 A 和 B""最近发生了什么"）→ 直接 `deep_research`，**这类别绕 web_search**，直接上更省事。
-3. **已有图片要以图搜图**（也称反向搜图；“搜图”“搜搜这个”“用这张图找同款/相似图/来源”）→ 先加载 `image-analysis` 技能；技能正文加载后，第一个业务工具调用 `image_search(mode="image")`。使用当前图片的 `attach_id` 或网络图片的 `image_url`。不要先把图片外观改写成文字去调用 `web_search`。它返回相似候选，不代表确认是同一张图。
-4. **按文字关键词找图片**（找图/配图/找参考图/看看某样东西长什么样）→ `image_search(mode="text")`；它是关键词图片搜索，不是相似度搜索，也不能读取用户图片来反向搜索。
-5. **查文字资料**（角色背景、作品出处、购买信息、事实核实）→ `web_search`；它不能替代已有图片的以图搜图。
-6. **兜底**：`web_search` 搜索设施不可用、结果覆盖明显不足，或宽搜后仍无法满足任务时，转 `deep_research`。
+1. **普通网页查找**（找官网/文档/GitHub/某个事实/新闻/下载地址）→ 如果 `web_search` 出现在本轮可用工具中，优先使用它；否则用 `xng_search`。MiniMax 与 GLM 返回原生搜索结果；Qwen Responses 返回检索回答和来源，Chat Completions 返回联网答案但不提供结构化来源。参数按当前 Provider 原生 Schema 填写：MiniMax 用 `query`；GLM 用 `search_query`、`search_engine`、`search_intent` 及官方筛选字段；Qwen Responses 用 `input`，Chat Completions 用 `messages`、`search_options`。DeepSeek 用 `query`、`count`、`ori_question`、`localization`、`need_content`；MiMo 用 `messages`、`tools=[{type:"web_search", ...}]`；Ollama 用 `query`、`max_results`（最多 10）。不要跨 Provider 套用字段。MiMo 需在控制台开通联网服务插件并选择官方支持模型；Ollama 搜索由官方云端提供，需 Ollama Cloud API Key，不能使用本地服务的鉴权密钥。
+2. **需要读网页正文并总结/比较/研究/给引用**（"帮我研究…""总结这件事""比较 A 和 B""最近发生了什么"）→ 直接 `deep_research`，**这类别绕 xng_search**，直接上更省事。
+3. **已有图片要以图搜图**（也称反向搜图；“搜图”“搜搜这个”“用这张图找同款/相似图/来源”）→ 先加载 `image-analysis` 技能；技能正文加载后，第一个业务工具调用 `similar_image_search`。使用当前图片的 `attach_id` 或网络图片的 `image_url`。不要先把图片外观改写成文字去调用 `xng_search`。它返回相似候选，不代表确认是同一张图。
+4. **按文字关键词找图片**（找图/配图/找参考图/看看某样东西长什么样）→ `xng_search(mode="images")`；它是关键词图片搜索，不是相似度搜索，也不能读取用户图片来反向搜索。
+5. **查文字资料**（角色背景、作品出处、购买信息、事实核实）→ `xng_search`；它不能替代已有图片的以图搜图。
+6. **兜底**：`xng_search` 搜索设施不可用、结果覆盖明显不足，或宽搜后仍无法满足任务时，转 `deep_research`。
 
 ### 图片路由优先级
 
 消息带图片时，按以下顺序判断：
 
-1. 识别、找角色、找出处、找同款或相似图：先 `image_search(mode="image")`。
-2. 候选需要核对文字事实：再用 `web_search` 查来源页和作品资料。
+1. 识别、找角色、找出处、找同款或相似图：先 `similar_image_search`。
+2. 候选需要核对文字事实：再用 `xng_search` 查来源页和作品资料。
 3. 用户只要描述当前图片：直接视觉分析，不强制搜索。
-4. 用户明确要求关键词找图，且没有要分析的图片：`image_search(mode="text")`。
+4. 用户明确要求关键词找图，且没有要分析的图片：`xng_search(mode="images")`。
 
-“以图搜图没有结果”时，可以补一次 `web_search`，但应使用用户明确提供的作品名、角色名等文字线索，不要把模型猜测的外观描述当成事实反复搜索。
+“以图搜图没有结果”时，可以补一次 `xng_search`，但应使用用户明确提供的作品名、角色名等文字线索，不要把模型猜测的外观描述当成事实反复搜索。
 
 ## query 怎么写
 
-`web_search` / `image_search` 面向传统搜索引擎，第一次调用优先把用户问题提炼成**实体 + 关键术语**的短关键词组合：
+`xng_search` 面向传统搜索引擎，第一次调用优先把用户问题提炼成**实体 + 关键术语**的短关键词组合：
 
 - 保留人名、组织名、项目名、产品名、版本号、年份/日期、关键技术术语。
 - 不要把用户完整自然语言问题原样复制成一大句。
@@ -54,7 +55,7 @@ emoji: 🔎
 
 下面这些在没有其它限定时都不是可执行的搜索范围：`新闻`、`国际新闻`、`最新消息`、`看看有什么`、`随便搜搜`。遇到完全没有主题、对象/地区或时间范围的请求时：
 
-- **禁止调用 `web_search`、`deep_research` 或其它搜索工具**；
+- **禁止调用 `xng_search`、`deep_research` 或其它搜索工具**；
 - **禁止先输出“我去搜搜看”“我先查一下”再调用工具**；
 - 先向用户追问一个最小限定，至少明确具体主题、对象/地区或时间范围中的一项；
 - 用户补充了明确地区或对象（例如“欧美的”）后，视为已经足够收敛：默认搜索最近 24 小时，按科技、经济、体育、文化等安全类别分组，每类只取少量结果；不要继续追问“具体想看哪一类”；
@@ -76,7 +77,7 @@ emoji: 🔎
 - 如果结果包含明显敏感片段，跳过该片段，只保留安全元数据和必要的中性概括；
 - 提供商拒绝时不要原样重试同一批结果，也不要为了绕过限制而隐晦改写。
 
-例：用户问“最近 Anthropic 发布了什么新模型”时，`web_search.query` 优先类似 `Anthropic 新模型 2026`，而不是把整句问题原样传入。
+例：用户问“最近 Anthropic 发布了什么新模型”时，`xng_search.query` 优先类似 `Anthropic 新模型 2026`，而不是把整句问题原样传入。
 
 ## 事实准确性与时效核验
 
@@ -93,7 +94,7 @@ emoji: 🔎
 
 - 用户要总结、梳理、比较或研究联网资料时，最终答复必须附上实际支撑结论的来源链接。优先把 Markdown 链接放在对应结论附近；长总结可在末尾增加简短“来源”列表。
 - 选择与结论直接相关、内容确实读过或核验过的页面；能找到时优先使用官方公告、产品文档、论文原文等一手来源。多个来源支持不同结论时，分别标明，不能把来源拼成一个笼统背书。
-- 链接必须原样来自 `web_search` / `deep_research` 等工具的真实结果。只有标题没有 URL 时，不要猜 URL；来源不足以支撑结论时，收窄或标注该结论，不要靠加链接制造可信感。
+- 链接必须原样来自 `xng_search` / `deep_research` 等工具的真实结果。只有标题没有 URL 时，不要猜 URL；来源不足以支撑结论时，收窄或标注该结论，不要靠加链接制造可信感。
 - 简单查找可以直接列出“标题 + 链接 + 简短说明”；无需重复列出大量相似结果，通常保留最相关的少量来源即可。
 
 ## 看 `search_status` 决定下一步
@@ -109,33 +110,33 @@ SearXNG 搜索结果会带 `search_status.state`，不要把所有 `results=[]` 
 
 ## 成本与预算
 
-- 只有 `deep_research`（按 Admin 选择的提供商）和 `image_search(mode="image")` 计费/有每日次数——能用免费的 `web_search`/`image_search(mode="text")` 搞定就别动它；文字搜图走自建搜索，**免费，放开用**，只是别为同一个已知答案反复搜。
+- `web_search` 使用当前模型 Provider 的凭据和计费规则；`deep_research`（按 Admin 选择的提供商）与 `similar_image_search` 有独立每日次数。若当前轮没有 `web_search`，可用免费的 `xng_search`/`xng_search(mode="images")`；文字搜图走自建搜索，**免费，放开用**，只是别为同一个已知答案反复搜。
 - **先做一次宽搜**；只有「结果不够/缺关键事实/用户要穷尽/要某份具体文档」才再搜一轮，别为措辞更顺、想多凑点料而反复搜同一件事——够答就停。
 - `empty` 才优先考虑改关键词；`unavailable` 是观测手段失效，不是内容不存在，直接走兜底。
 
-## image_search 搜到图后怎么发
+## 搜索到图后怎么发
 
-`image_search` 只返回候选列表（标题+来源页+图片直链 `img_src`+缩略图），**不会自动发送**。
+`xng_search(mode="images")` 和 `similar_image_search` 都只返回候选列表（标题+来源页+图片直链 `img_src`+缩略图），**不会自动发送**。
 
 用户明确要看图/要一张图时——找图本身就是要看/要发，没有额外的"保存"步骤——搜到后**同一轮直接接着调 `send_file(url=选中候选的 img_src, title=简短描述)`** 把图发进对话/IM，不用再问一句"要不要发"。
 
 多个候选且用户没指定要哪张时，挑最匹配关键词的第一条发；用户明确想多看几张再多发几张（IM 端一次发太多张会很吵，建议 1~3 张为宜）。
 
-如果用户要求快速辨认、比较或核对搜索到的图片，先调用 `image_search(mode="text")` 或
-`image_search(mode="image")`，再单独调用 `read_file(items=[...])`。关键词搜图候选在 item 中填写
+如果用户要求快速辨认、比较或核对搜索到的图片，先按来源调用 `xng_search(mode="images")` 或
+`similar_image_search`，再单独调用 `read_file(items=[...])`。关键词搜图候选在 item 中填写
 `url: img_src`、`result_id`、`title`；以图搜图候选填写 `url: image_url`、`result_id`、
 `title`；文件库图片填写 `file_id`，聊天附件填写 `attach_id`。一轮对话最多发起 3 次含网络图片的读取，每批最多 20 项且源文件总量不超过 64 MiB；文件库图片和历史附件不占网络图片额度。不需要看图时不要读取，避免额外下载和视觉输入成本。
 
-## image_search(mode="image") 找同款后怎么处理
+## similar_image_search 找同款后怎么处理
 
 用户说“找同款”“找相似图”“这张图还有哪些类似图片”时，调用
-`image_search(mode="image")`。当前消息图片填写上下文中的 `attach_id`；如果目标是网络图片，填写可靠的
+`similar_image_search`。当前消息图片填写上下文中的 `attach_id`；如果目标是网络图片，填写可靠的
 `image_url`。工具返回的是相似候选列表；用户还要求辨认角色、核对同款或比较候选内容时，必须从候选中挑选 2～5 张调用 `read_file(items=[{url: image_url, title, result_id}, ...])`，结合图像内容判断，不能只按 similarity、标题或来源下结论。
 
-相似图结果返回后，优先用候选标题、来源页 URL、页面正文线索和实体关键词调用 `web_search`，检查候选是否包含有效角色名、作品名、出处或商品信息；再按需要调用 `read_file(items=[...])` 比较候选图像细节。不要把上一轮对话中的猜测直接当作当前图片搜索结论，也不要把图片直链本身当作搜索词。
+相似图结果返回后，优先用候选标题、来源页 URL、页面正文线索和实体关键词调用 `xng_search`，检查候选是否包含有效角色名、作品名、出处或商品信息；再按需要调用 `read_file(items=[...])` 比较候选图像细节。不要把上一轮对话中的猜测直接当作当前图片搜索结论，也不要把图片直链本身当作搜索词。
 
-`image_search(mode="image")` 的 `similarity` / `score` 仅用于服务端排序，不能当成百分比、置信度或“相似度 X/5”。`score >= 2` 的候选应作为重要参考，但仍需通过网页内容或图像细节核对；不要因分值较低就主动否定候选。用户只要结果时，直接列出标题、来源和 URL，不读取候选图。
+`similar_image_search` 的 `similarity` / `score` 仅用于服务端排序，不能当成百分比、置信度或“相似度 X/5”。`score >= 2` 的候选应作为重要参考，但仍需通过网页内容或图像细节核对；不要因分值较低就主动否定候选。用户只要结果时，直接列出标题、来源和 URL，不读取候选图。
 
-如果管理员未配置或额度用尽，直接说明 `image_search(mode="image")` 当前不可用；需要按关键词找其他图片时，改用 `image_search(mode="text")`。
+如果管理员未配置或额度用尽，直接说明 `similar_image_search` 当前不可用；需要按关键词找其他图片时，改用 `xng_search(mode="images")`。
 
 注意：这条和 `文件操作` 技能里"`send_file` 只在用户明说「发给我」时才调（保存≠发送）"针对的是**文件库文件**——库文件有"生成/保存"和"发送"两个独立动作，不能默认发送；网络图片没有保存这一步，两者不冲突。

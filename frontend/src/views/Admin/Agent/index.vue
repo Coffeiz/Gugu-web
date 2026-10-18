@@ -711,6 +711,7 @@ interface LlmPresetDraft extends Partial<LlmPresetRecord> {
   context_tokens: number
   thinking: string
   reasoning_persistence: 'off' | 'continuation'
+  web_search_enabled: boolean
   image: boolean
   video: boolean
   audio: boolean
@@ -750,7 +751,7 @@ async function togglePool(p: LlmPresetRecord) {
 function openNewPreset() {
   editClosing.value = false
   editIsNew.value  = true
-  editTarget.value = { name: '', provider: 'openai', api_key: '', base_url: PROVIDERS.value[0].base_url, model: PROVIDERS.value[0].model, max_tokens: 8000, context_tokens: 128000, thinking: '', reasoning_effort: '', reasoning_persistence: 'off', image: false, image_detail: 'auto', video: false, audio: false, api_format: '', ollama_mode: 'local', ollama_api_mode: 'native', ollama_keep_alive: '5m', deployment_mode: 'cloud', local_runtime: 'other', capability_overrides: {} }
+  editTarget.value = { name: '', provider: 'openai', api_key: '', base_url: PROVIDERS.value[0].base_url, model: PROVIDERS.value[0].model, max_tokens: 8000, context_tokens: 128000, thinking: '', reasoning_effort: '', reasoning_persistence: 'off', web_search_enabled: false, image: false, image_detail: 'auto', video: false, audio: false, api_format: '', ollama_mode: 'local', ollama_api_mode: 'native', ollama_keep_alive: '5m', deployment_mode: 'cloud', local_runtime: 'other', capability_overrides: {} }
   editError.value  = ''
   modelOptions.value = []
   modelListError.value = ''
@@ -761,7 +762,7 @@ function openNewPreset() {
 function openEditPreset(p: LlmPresetRecord) {
   editClosing.value = false
   editIsNew.value  = false
-  editTarget.value = { ...p, api_key: '', max_tokens: p.max_tokens ?? 8000, context_tokens: p.context_tokens ?? 128000, reasoning_persistence: p.reasoning_persistence === 'continuation' ? 'continuation' : 'off', image_detail: p.image_detail || 'auto', ollama_mode: p.ollama_mode || 'local', ollama_api_mode: p.ollama_api_mode || 'native', ollama_keep_alive: p.ollama_keep_alive || '5m', deployment_mode: p.deployment_mode || (p.provider === 'local' ? 'local' : 'cloud'), local_runtime: p.local_runtime || 'other', capability_overrides: p.capability_overrides || {} } as unknown as LlmPresetDraft
+  editTarget.value = { ...p, api_key: '', max_tokens: p.max_tokens ?? 8000, context_tokens: p.context_tokens ?? 128000, reasoning_persistence: p.reasoning_persistence === 'continuation' ? 'continuation' : 'off', web_search_enabled: Boolean(p.web_search_enabled), image_detail: p.image_detail || 'auto', ollama_mode: p.ollama_mode || 'local', ollama_api_mode: p.ollama_api_mode || 'native', ollama_keep_alive: p.ollama_keep_alive || '5m', deployment_mode: p.deployment_mode || (p.provider === 'local' ? 'local' : 'cloud'), local_runtime: p.local_runtime || 'other', capability_overrides: p.capability_overrides || {} } as unknown as LlmPresetDraft
   editError.value  = ''
   modelOptions.value = []
   modelListError.value = ''

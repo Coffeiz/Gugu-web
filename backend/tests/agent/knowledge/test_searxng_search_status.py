@@ -168,7 +168,7 @@ def _settings(*, engines="sogou,quark,360search", image_engines=""):
     ))
 
 
-async def test_web_search_surfaces_all_engine_failure_as_unavailable(monkeypatch):
+async def test_xng_web_search_surfaces_all_engine_failure_as_unavailable(monkeypatch):
     payload = {
         "results": [],
         "unresponsive_engines": [
@@ -182,7 +182,7 @@ async def test_web_search_surfaces_all_engine_failure_as_unavailable(monkeypatch
         search_tools.httpx, "AsyncClient", lambda **kwargs: _FakeClient(payload)
     )
 
-    result = await search_tools._searxng_search(None, None, {"query": "SGLang founder interview"})
+    result = await search_tools._xng_search(None, None, {"query": "SGLang founder interview"})
 
     assert result["results"] == []
     assert result["search_status"]["state"] == "unavailable"
@@ -190,7 +190,7 @@ async def test_web_search_surfaces_all_engine_failure_as_unavailable(monkeypatch
     assert "这不代表没有相关结果" in result["note"]
 
 
-async def test_web_search_timeout_switches_to_deep_research(monkeypatch):
+async def test_xng_web_search_timeout_switches_to_configured_deep_research(monkeypatch):
     monkeypatch.setattr(search_tools, "get_settings", lambda: _settings())
 
     class _TimeoutClient:
@@ -207,15 +207,19 @@ async def test_web_search_timeout_switches_to_deep_research(monkeypatch):
         assert args == {"query": "北京天气", "max_results": 5}
         return {"source": "deep_research", "results": []}
 
+    async def _configured(name, **kwargs):
+        return name == "deep_research"
+
     monkeypatch.setattr(search_tools.httpx, "AsyncClient", lambda **kwargs: _TimeoutClient())
     monkeypatch.setattr(search_tools, "_deep_research", _fallback)
+    monkeypatch.setattr(search_tools, "search_tool_is_configured", _configured)
 
-    result = await search_tools._searxng_search(None, 7, {"query": "北京天气"})
+    result = await search_tools._xng_search(None, 7, {"query": "北京天气"})
 
     assert result == {"source": "deep_research", "results": []}
 
 
-async def test_image_search_reuses_status_and_keeps_results_when_degraded(monkeypatch):
+async def test_xng_image_mode_reuses_status_and_keeps_results_when_degraded(monkeypatch):
     payload = {
         "results": [{
             "title": "cat",
@@ -232,7 +236,7 @@ async def test_image_search_reuses_status_and_keeps_results_when_degraded(monkey
         search_tools.httpx, "AsyncClient", lambda **kwargs: _FakeClient(payload)
     )
 
-    result = await search_tools._searxng_image_search(None, None, {"query": "orange cat"})
+    result = await search_tools._xng_search(None, None, {"query": "orange cat", "mode": "images"})
 
     assert len(result["results"]) == 1
     assert result["search_status"]["state"] == "degraded"
@@ -240,12 +244,12 @@ async def test_image_search_reuses_status_and_keeps_results_when_degraded(monkey
     assert result["search_status"]["working_engine_count"] == 1
 
 
-async def test_image_search_only_returns_candidates_without_visual_inspection(monkeypatch):
+async def test_xng_image_mode_only_returns_candidates_without_visual_inspection(monkeypatch):
     payload = {"results": [{"title": "cat", "img_src": "https://example.com/cat.jpg"}]}
     monkeypatch.setattr(search_tools, "get_settings", lambda: _settings())
     monkeypatch.setattr(search_tools.httpx, "AsyncClient", lambda **kwargs: _FakeClient(payload))
 
-    result = await search_tools._searxng_image_search(None, None, {"query": "cat"})
+    result = await search_tools._xng_search(None, None, {"query": "cat", "mode": "images"})
 
     assert "_image_blocks" not in result
     assert result["results"][0]["img_src"] == "https://example.com/cat.jpg"
@@ -254,17 +258,16 @@ async def test_image_search_only_returns_candidates_without_visual_inspection(mo
 def test_search_tool_schemas_expose_query_contract_and_max_results_bounds():
     tools = {tool.name: tool for tool in search_tools.SearchSkill.tools}
 
-    query = tools["web_search"].input_schema["properties"]["query"]
-    max_results = tools["web_search"].input_schema["properties"]["max_results"]
+    query = tools["xng_search"].input_schema["properties"]["query"]
+    max_results = tools["xng_search"].input_schema["properties"]["max_results"]
     assert "不要复制完整问题" in query["description"]
     assert max_results["minimum"] == 1
     assert max_results["maximum"] == 20
 
-    image_schema = tools["image_search"].input_schema
-    image_properties = image_schema["properties"]
-    assert image_properties["mode"]["enum"] == ["text", "image"]
-    assert image_properties["max_results"]["minimum"] == 1
-    assert image_properties["max_results"]["maximum"] == 20
+    assert tools["xng_search"].input_schema["properties"]["mode"]["enum"] == ["web", "images", "both"]
+    similar_schema = tools["similar_image_search"].input_schema
+    assert similar_schema["properties"]["max_results"]["minimum"] == 1
+    assert similar_schema["properties"]["max_results"]["maximum"] == 20
     assert "inspect_images" not in tools
 
     from agent.tools.files import FilesSkill

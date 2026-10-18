@@ -694,7 +694,7 @@ async def prepare_request(
 ) -> PreparedImRequest:
     """解析 IM 权限并构造共享 AgentRequest。
 
-    权限解析失败时固定降级为 unknown + web_search，绝不因异常把当前发言人
+    权限解析失败时固定降级为 unknown + xng_search/web_search，绝不因异常把当前发言人
     升级成 owner。显示名仍由 identity 门面按角色裁剪后传入。
     """
     route = session_route or resolve_route(platform_message, payload)

@@ -1,5 +1,5 @@
 """智谱 GLM 的 OpenAI 兼容接口适配。"""
-from .base import ProviderAdapter, ProviderCapabilities, ReasoningCapabilities
+from ..base import ProviderAdapter, ProviderCapabilities, ReasoningCapabilities
 
 
 _GLM53_RESPONSES_REASONING = ReasoningCapabilities(

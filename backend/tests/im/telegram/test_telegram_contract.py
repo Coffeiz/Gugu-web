@@ -293,7 +293,7 @@ async def test_telegram_anonymous_sender_and_unbound_private_sender_fail_closed(
         platform="telegram",
         user_id="owner-1",
         owner_platform_user_id="7001",
-        group_allowed_tools=["web_search"],
+        group_allowed_tools=["xng_search"],
     )
 
     class Session:

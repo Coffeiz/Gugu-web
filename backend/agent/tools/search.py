@@ -1,21 +1,20 @@
 """联网搜索工具集：
 
-- `web_search`：通用网页搜索，走自建 **SearXNG**（免费、快）。返回标题+链接+摘要，
-  适合找官网/文档/GitHub/某个事实/新闻标题/下载地址等"普通查找"。无配额。
+- `xng_search`：通用网页、图像或混合搜索，走自建 **SearXNG**（免费、快）。
+- `web_search`：使用当前启用的模型 Provider 原生联网搜索；支持 MiniMax、GLM、Qwen 百炼、DeepSeek、MiMo 与 Ollama Cloud。
 - `deep_research`：按 Admin 选择的 Provider 查询外部资料。Tavily / You.com 返回研究答案；百度使用普通百度搜索并返回网页引用，适合
   需要"读内容并总结/比较/研究/给引用"的任务。有每日次数配额（SearchUsage）。
-- `image_search`：统一图片搜索入口。`mode=text` 按关键词走 SearXNG，`mode=image` 根据已有图片以图搜图，返回相似候选。
+- `similar_image_search`：根据已有图片以图搜图，返回相似候选。
   默认只返回候选（标题+来源页+图片直链），**不会自动读取或发送**；需要视觉分析时用 `read_file(items=[...])` 批量读取选中的图片。
   真要把图发进对话/IM，接着调 `files.py` 的 `send_file(url=候选的 img_src)`。
 
-成本梯队（见 `agent/skills/web-search.md`）：专有技能 → web_search(SearXNG) → deep_research（Admin 选择的 Provider）。
+成本梯队（见 `agent/skills/web-search.md`）：专有技能 → 已启用时优先 Provider 原生 web_search，否则 xng_search(SearXNG) → deep_research（Admin 选择的 Provider）。
 SearXNG 部署在后端同机（127.0.0.1），由 settings.search.searxng_url 配；国内服务器只有
 sogou/quark/360search 可达，固定带 engines 避开会超时的 google/bing 等。图片搜索能用的引擎不一定
 是同一批（`settings.search.searxng_image_engines`，留空回退文本引擎列表）。
 """
 from datetime import datetime
 
-import asyncio
 import base64
 from collections import Counter
 import io
@@ -38,6 +37,7 @@ from app.services.search import (
     record_search_usage,
     record_similar_image_usage,
 )
+from agent.providers.web_search import input_schema as _provider_web_search_schema
 from agent.tools.base import BaseSkill, Tool
 
 _search_log = logging.getLogger("agent.search")
@@ -45,6 +45,67 @@ _search_log = logging.getLogger("agent.search")
 _SEARCH_QUERY_DESCRIPTION = (
     "简短检索词；保留实体名、产品名、版本号、日期和关键术语，不要复制完整问题。"
 )
+
+SEARCH_TOOL_NAMES = frozenset({"xng_search", "web_search", "deep_research", "similar_image_search"})
+
+
+async def _deep_research_config(db, user_id, settings):
+    """按执行时相同的优先级解析深度研究凭据。"""
+    user_credential = (
+        await get_active_credential(db, user_id, "deep_research")
+        if db is not None and user_id is not None else None
+    )
+    provider = user_credential.provider if user_credential else settings.search.deep_research_provider
+    keys = {
+        "tavily": settings.search.tavily_api_key,
+        "baidu": settings.search.deep_research_baidu_api_key,
+        "you": settings.search.deep_research_you_api_key,
+    }
+    key = decrypt_value(user_credential) if user_credential else keys.get(provider, "")
+    return provider, key
+
+
+async def search_tool_is_configured(name: str, *, db=None, user_id=None, settings=None, model_cfg=None) -> bool:
+    """只按当前用户可实际使用的配置判断搜索工具是否应暴露。"""
+    settings = settings or get_settings()
+    if name == "xng_search":
+        return bool((settings.search.searxng_url or "").strip())
+    if name == "deep_research":
+        _, key = await _deep_research_config(db, user_id, settings)
+        return bool(key)
+    if name == "web_search":
+        from agent.llm import modelctx
+        cfg = model_cfg or modelctx.get_model_cfg()
+        from agent.providers.web_search import supports_web_search
+        return bool(
+            cfg
+            and supports_web_search(cfg)
+            and bool(getattr(cfg, "web_search_enabled", False))
+            and str(getattr(cfg, "api_key", "") or "").strip()
+        )
+    if name == "similar_image_search":
+        if settings.search.similar_image_provider != "baidu_qianfan":
+            return False
+        user_credential = (
+            await get_active_credential(db, user_id, "similar_image_search")
+            if db is not None and user_id is not None else None
+        )
+        if user_credential is not None:
+            return bool(decrypt_value(user_credential))
+        return bool(settings.search.baidu_qianfan_api_key)
+    return True
+
+
+async def filter_configured_search_tools(tool_names, *, db=None, user_id=None, settings=None, model_cfg=None):
+    """从本轮可见工具中移除没有有效配置的搜索能力。"""
+    settings = settings or get_settings()
+    configured = []
+    for name in tool_names:
+        if name not in SEARCH_TOOL_NAMES or await search_tool_is_configured(
+            name, db=db, user_id=user_id, settings=settings, model_cfg=model_cfg,
+        ):
+            configured.append(name)
+    return configured
 
 
 def _parse_requested_engines(raw: str | None) -> list[str]:
@@ -228,119 +289,95 @@ def _build_search_response(
     return payload
 
 
-# ── web_search：SearXNG（通用、免费、无配额）────────────────────────────────
-async def _searxng_search(db, user_id, args: dict):
+# ── xng_search：SearXNG 网页/图像搜索────────────────────────────────────────
+async def _xng_search(db, user_id, args: dict):
     settings = get_settings()
     base = (settings.search.searxng_url or "").rstrip("/")
     if not base:
-        return {"error": "管理员尚未配置通用搜索（SearXNG）；要查外部信息可改用 deep_research"}
+        return {"error": "管理员尚未配置 XNG Search"}
     query = (args.get("query") or "").strip()
     if not query:
         return {"error": "需要提供搜索关键词 query"}
 
+    mode = str(args.get("mode") or "web").strip().lower()
+    if mode not in {"web", "images", "both"}:
+        return {"error": "mode 必须是 web、images 或 both"}
     max_results = args.get("max_results") or settings.search.max_results
-    # 不用 categories：国内服务器上 news/it/science 等类别的引擎（google/bing news 等）全被墙，
-    # 传了只会挂一堆死引擎、拖慢甚至超时；通用引擎 sogou/quark/360 本就覆盖新闻等查询。
-    engines = settings.search.searxng_engines
-    params = {"q": query, "format": "json", "engines": engines}
+    web_engines = settings.search.searxng_engines
+    image_engines = settings.search.searxng_image_engines or web_engines
+    if mode == "web":
+        engines = web_engines
+        categories = "general"
+    elif mode == "images":
+        engines = image_engines
+        categories = "images"
+    else:
+        engines = ",".join(_parse_requested_engines(f"{web_engines},{image_engines}"))
+        categories = "general,images"
+    params = {"q": query, "format": "json", "categories": categories, "engines": engines}
     request_url = _build_searxng_search_url(base, params)
     try:
         async with httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0)
+            timeout=httpx.Timeout(connect=5.0, read=20.0, write=5.0, pool=5.0)
         ) as client:
             resp = await client.get(request_url)
     except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError):
-        # SearXNG 已明确不可用时直接切换深度研究，避免模型在同一轮里重复调用
-        # 已超时的 web_search。deep_research 自己负责配额和错误回执。
-        return await _deep_research(db, user_id, {
-            "query": query,
-            "max_results": max_results,
-        })
+        if mode == "web" and await search_tool_is_configured("deep_research", db=db, user_id=user_id, settings=settings):
+            return await _deep_research(db, user_id, {"query": query, "max_results": max_results})
+        return {"error": "XNG Search 暂时不可用，请稍后重试"}
     except Exception as e:
-        return {"error": f"通用搜索暂时失败（{type(e).__name__}）；可改用 deep_research 深度研究兜底"}
+        return {"error": f"XNG Search 暂时失败（{type(e).__name__}）"}
     if resp.status_code == 403:
-        return {"error": "通用搜索（SearXNG）返回 403：未开启 JSON 输出，需管理员在 settings.yml 加 search.formats: json；本次改用 deep_research"}
+        return {"error": "XNG Search 返回 403：实例未启用 JSON 输出格式"}
     if resp.status_code != 200:
-        return {"error": f"通用搜索失败（HTTP {resp.status_code}）；可改用 deep_research 兜底"}
+        return {"error": f"XNG Search 失败（HTTP {resp.status_code}）"}
     try:
         data = resp.json()
     except Exception:
-        return {"error": "通用搜索返回的不是 JSON（多半未开启 json 格式）；可改用 deep_research 兜底"}
+        return {"error": "XNG Search 返回了无法解析的响应"}
 
-    results = [
-        {"title": r.get("title"), "url": r.get("url"), "content": (r.get("content") or "")[:300]}
-        for r in (data.get("results") or [])[:max_results]
-    ]
-    return _build_search_response(query, results, engines, data, kind="web")
-
-
-# ── image_search：关键词搜图（SearXNG，通用、免费、无配额）───────────────
-async def _searxng_image_search(db, user_id, args: dict):
-    settings = get_settings()
-    base = (settings.search.searxng_url or "").rstrip("/")
-    if not base:
-        return {"error": "管理员尚未配置通用搜索（SearXNG）；图片搜索也用不了"}
-    query = (args.get("query") or "").strip()
-    if not query:
-        return {"error": "需要提供搜索关键词 query"}
-
-    max_results = args.get("max_results") or settings.search.max_results
-    # 图片分类能用的引擎不一定和文本分类（sogou/quark/360search）是同一批；留空则先复用
-    # 文本引擎列表兜底，管理员实测后可在后台单独配 searxng_image_engines。
-    engines = settings.search.searxng_image_engines or settings.search.searxng_engines
-    params = {"q": query, "format": "json", "categories": "images", "engines": engines}
-    request_url = _build_searxng_search_url(base, params)
-    resp = None
-    for attempt in range(2):
-        try:
-            async with httpx.AsyncClient(
-                timeout=httpx.Timeout(connect=5.0, read=20.0, write=5.0, pool=5.0)
-            ) as client:
-                resp = await client.get(request_url)
-            break
-        except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as e:
-            if attempt == 1:
-                return {"error": f"图片搜索暂时失败（{type(e).__name__}），请稍后再试"}
-            await asyncio.sleep(0.3)
-        except Exception as e:
-            return {"error": f"图片搜索暂时失败（{type(e).__name__}）"}
-    if resp.status_code == 403:
-        return {"error": "图片搜索（SearXNG）返回 403：未开启 JSON 输出，需管理员在 settings.yml 加 search.formats: json"}
-    if resp.status_code != 200:
-        return {"error": f"图片搜索失败（HTTP {resp.status_code}）；可换个关键词重试，或提醒管理员检查 searxng_image_engines 配置"}
-    try:
-        data = resp.json()
-    except Exception:
-        return {"error": "图片搜索返回的不是 JSON（多半未开启 json 格式）"}
-
-    results = [
+    raw_results = data.get("results") or []
+    web_results = [
+        {"title": item.get("title"), "url": item.get("url"), "content": (item.get("content") or "")[:300]}
+        for item in raw_results if isinstance(item, dict) and not item.get("img_src")
+    ][:max_results]
+    image_results = [
         {
             "result_id": f"image-{index}",
-            "title": r.get("title"),
-            "url": r.get("url"),                              # 来源页（供了解出处）
-            "img_src": r.get("img_src"),                       # 图片直链——发图/展示用这个
-            "thumbnail": r.get("thumbnail_src") or r.get("thumbnail"),
+            "title": item.get("title"),
+            "url": item.get("url"),
+            "img_src": item.get("img_src"),
+            "thumbnail": item.get("thumbnail_src") or item.get("thumbnail"),
         }
-        for index, r in enumerate((data.get("results") or [])[:max_results], start=1)
-        if r.get("img_src")
-    ]
-    response = _build_search_response(query, results, engines, data, kind="image")
-    return response
+        for index, item in enumerate(raw_results, start=1)
+        if isinstance(item, dict) and item.get("img_src")
+    ][:max_results]
+
+    if mode == "both":
+        web_payload = _build_search_response(query, web_results, web_engines, data, kind="web")
+        image_payload = _build_search_response(query, image_results, image_engines, data, kind="image")
+        return {
+            "query": query,
+            "mode": mode,
+            "web_results": web_payload["results"],
+            "image_results": image_payload["results"],
+            "search_status": {
+                "web": web_payload["search_status"],
+                "images": image_payload["search_status"],
+            },
+            **({"notes": [note for note in (web_payload.get("note"), image_payload.get("note")) if note]}),
+        }
+    if mode == "web":
+        return _build_search_response(query, web_results, engines, data, kind="web")
+    return _build_search_response(query, image_results, engines, data, kind="image")
 
 
 # ── deep_research：可配置 Provider（深度、有配额）────────────────────────────
 async def _deep_research(db, user_id, args: dict):
     settings = get_settings()
-    user_credential = await get_active_credential(db, user_id, "deep_research")
-    provider = user_credential.provider if user_credential else settings.search.deep_research_provider
-    keys = {
-        "tavily": settings.search.tavily_api_key,
-        "baidu": settings.search.deep_research_baidu_api_key,
-        "you": settings.search.deep_research_you_api_key,
-    }
-    key = decrypt_value(user_credential) if user_credential else keys.get(provider, "")
+    provider, key = await _deep_research_config(db, user_id, settings)
     if not key:
-        return json.dumps({"error": f"管理员尚未配置深度研究（{provider} API Key）；普通查找可用 web_search"})
+        return json.dumps({"error": f"尚未配置深度研究（{provider} API Key）"})
 
     query = (args.get("query") or "").strip()
     if not query:
@@ -354,7 +391,7 @@ async def _deep_research(db, user_id, args: dict):
         day_start = local_day_start_utc()
         used = await count_daily_search_usage(db, user_id, day_start)
         if used >= limit:
-            return json.dumps({"error": f"今天的深度研究次数已用完（上限 {limit} 次/天）；普通查找仍可用 web_search"})
+            return json.dumps({"error": f"今天的深度研究次数已用完（上限 {limit} 次/天）；普通查找可用 xng_search"})
 
     max_results = args.get("max_results") or settings.search.max_results
     try:
@@ -478,7 +515,7 @@ async def _call_baidu_similar_image(raw: bytes, api_key: str, count: int, timeou
     }
 
 
-async def _image_search_by_image(db, user_id, args: dict):
+async def _similar_image_search(db, user_id, args: dict):
     settings = get_settings()
     cfg = settings.search
     user_credential = await get_active_credential(db, user_id, "similar_image_search")
@@ -513,72 +550,75 @@ async def _image_search_by_image(db, user_id, args: dict):
     return result
 
 
-async def _image_search(db, user_id, args: dict):
-    """统一图片搜索入口，按 mode 分派到关键词或反向图片搜索实现。"""
-    raw_mode = args.get("mode")
-    if raw_mode is None or not str(raw_mode).strip():
-        # IM 端可能仍使用旧的 image_search 参数形态。没有 mode 时，只有图片输入
-        # 而没有 query 才按反向搜索处理；其余情况保持关键词搜索的默认语义。
-        mode = "image" if (args.get("attach_id") or args.get("image_url")) and not args.get("query") else "text"
-    else:
-        mode = str(raw_mode).strip().lower()
-    if mode == "text":
-        if not str(args.get("query") or "").strip():
-            return {"error": "mode=text 时需要提供搜索关键词 query"}
-        return await _searxng_image_search(db, user_id, args)
-    if mode == "image":
-        if not args.get("attach_id") and not args.get("image_url"):
-            return {"error": "mode=image 时需要提供 attach_id 或 image_url"}
-        return await _image_search_by_image(db, user_id, args)
-    return {"error": "mode 必须是 text 或 image"}
+async def _web_search(db, user_id, args: dict):
+    """使用本轮 Provider 凭据调用其原生联网搜索 API。"""
+    from agent.llm import modelctx
+    from agent.providers.web_search import search
+
+    cfg = modelctx.get_model_cfg()
+    if not await search_tool_is_configured("web_search", db=db, user_id=user_id, model_cfg=cfg):
+        return {"error": "当前模型未启用联网搜索，或缺少有效凭据"}
+    try:
+        return await search(cfg, args)
+    except Exception as exc:
+        _search_log.warning("Provider 联网搜索失败: %s", type(exc).__name__)
+        return {"error": "联网搜索暂时不可用，请稍后重试"}
 
 
 class SearchSkill(BaseSkill):
-    name = "web_search"   # 与站内 global_search 区分
+    name = "xng_search"
     tools = [
         Tool(
             name="web_search", label="联网搜索",
-            description_short='搜索公网网页。',
-            description="搜索公网网页，返回标题、链接和摘要；需要读正文或深入研究时用 deep_research。",
+            description_short="由当前模型 Provider 提供的联网搜索，调用可能收费。",
+            description="联网搜索工具由当前模型 Provider 提供，使用当前模型配置的 API Key，调用可能产生搜索服务和模型费用，按 Provider 规则计费。参数遵循该 Provider 的原生 Schema。适合查找近期网页信息和事实核查。",
+            input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+            input_schema_factory=_provider_web_search_schema,
+            handler=_web_search,
+            start_message=lambda args: random.choice(["我用当前模型的联网搜索查一下。", "我查一下最新网页资料。"]),
+            parallel_safe=True,
+        ),
+        Tool(
+            name="xng_search", label="XNG 搜索",
+            description_short='搜索网页、图像或同时搜索两类内容。',
+            description="使用 XNG 搜索公网网页或图像。mode=web 搜网页，mode=images 搜图像，mode=both 同时搜索两类；返回图像候选，不会自动读取或发送。需要读正文或深度研究时分别使用 http_get 或 deep_research。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": _SEARCH_QUERY_DESCRIPTION},
+                    "mode": {"type": "string", "enum": ["web", "images", "both"], "default": "web"},
                     "max_results": {
                         "type": "integer", "minimum": 1, "maximum": 20,
                     },
                 },
                 "required": ["query"],
             },
-            handler=_searxng_search,
+            handler=_xng_search,
             start_message=lambda args: random.choice(["我去查一下。", "我搜一下最新的资料。", "我确认一下这个。"]),
             parallel_safe=True,
         ),
         Tool(
-            name="image_search", label="图片搜索",
-            description_short='搜索图片候选；支持文字搜索和以图搜图。',
-            description="搜索图片或以图搜图，只返回候选；需要分析时用 read_file 的 items 批量读取图片 URL，需要发送时用 send_file。",
+            name="similar_image_search", label="以图搜图",
+            description_short='根据已有图片寻找相似图像。',
+            description="以图搜图，只返回相似候选；使用已有图片附件或图片 URL，不用于按关键词搜索图片。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "mode": {
-                        "type": "string", "enum": ["text", "image"],
-                    },
-                    "query": {"type": "string"},
                     "attach_id": {"type": "string"},
                     "image_url": {"type": "string"},
                     "max_results": {
                         "type": "integer", "minimum": 1, "maximum": 20,
                     },
                 },
+                "anyOf": [{"required": ["attach_id"]}, {"required": ["image_url"]}],
             },
-            handler=_image_search,
-            start_message=lambda args: random.choice(["我去找张图。", "我搜搜看有没有合适的图。"]),
+            handler=_similar_image_search,
+            start_message=lambda args: random.choice(["我找找相似图片。", "我用这张图找找相似图片。"]),
         ),
         Tool(
             name="deep_research", label="深度研究",
             description_short='对指定主题进行深度研究。',
-            description="阅读和研究外部资料，返回总结或引用；普通网页查找用 web_search。",
+            description="阅读和研究外部资料，返回总结或引用；普通网页或图像搜索用 xng_search。",
             input_schema={
                 "type": "object",
                 "properties": {

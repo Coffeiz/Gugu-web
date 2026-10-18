@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 
-DEFAULT_GROUP_TOOLS = ["web_search", "http_get", "image_search", "read_file", "send_file"]
+DEFAULT_GROUP_TOOLS = ["xng_search", "http_get", "similar_image_search", "read_file", "send_file"]
 
 # 纯时间查询不读取用户数据，也不产生外部副作用；它属于系统 utility，
 # 不应因为群成员的业务工具白名单而无法发现或执行。

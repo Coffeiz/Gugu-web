@@ -64,6 +64,7 @@ def credential_view(row: UserProviderCredential) -> dict:
             "thinking": getattr(row, "thinking", None),
             "reasoning_effort": getattr(row, "reasoning_effort", None),
             "reasoning_persistence": getattr(row, "reasoning_persistence", "off"),
+            "web_search_enabled": bool(getattr(row, "web_search_enabled", False)),
             "video": row.video, "audio": row.audio,
             "image_detail": row.image_detail, "enabled": row.enabled,
             "has_value": bool(row.encrypted_value), "last_verified_at": row.last_verified_at,

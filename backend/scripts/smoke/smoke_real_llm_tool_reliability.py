@@ -6,7 +6,7 @@
     cd backend
     .venv/bin/python scripts/smoke/smoke_real_llm_tool_reliability.py --allow-real-llm
 
-默认只启用只读的 ``web_search``，不会创建、修改或删除任何业务数据。
+默认只启用只读的 ``xng_search``，不会创建、修改或删除任何业务数据。
 没有显式传 ``--allow-real-llm`` 时直接退出，避免本地测试或 CI 意外产生模型费用。
 """
 from __future__ import annotations
@@ -80,12 +80,12 @@ async def _consume_real_call(query: str, expected_max_results: int, timeout: flo
     )
     system_prompt += (
         "\n\n## 本次可靠性测试约束\n"
-        "你必须调用一次 web_search，且只能调用这个工具。"
+        "你必须调用一次 xng_search，且只能调用这个工具。"
         f"工具参数必须是 query={query!r}、max_results={expected_max_results}。"
         "工具返回后只用一句简短中文确认已完成，不要调用其它工具。"
     )
 
-    runner = LLMRunner(["web_search"], settings)
+    runner = LLMRunner(["xng_search"], settings)
     anthropic = use_anthropic_for(model_cfg)
     if anthropic:
         messages = [{"role": "user", "content": query}]
@@ -126,20 +126,20 @@ async def _consume_real_call(query: str, expected_max_results: int, timeout: flo
 def _validate_result(result: dict[str, Any], query: str, expected_max_results: int) -> list[str]:
     failures: list[str] = []
     calls = result["calls"]
-    web_calls = [call for call in calls if call["name"] == "web_search"]
+    web_calls = [call for call in calls if call["name"] == "xng_search"]
     if not web_calls:
-        failures.append("真实 LLM 没有调用 web_search")
-    if any(call["name"] != "web_search" for call in calls):
+        failures.append("真实 LLM 没有调用 xng_search")
+    if any(call["name"] != "xng_search" for call in calls):
         failures.append("真实 LLM 调用了未授权工具")
     for call in web_calls:
         payload = call["input"]
         if not isinstance(payload, dict):
-            failures.append("web_search 参数不是 object")
+            failures.append("xng_search 参数不是 object")
             continue
         if payload.get("query") != query:
-            failures.append("web_search 的 query 未按测试约束生成")
+            failures.append("xng_search 的 query 未按测试约束生成")
         if payload.get("max_results") != expected_max_results:
-            failures.append("web_search 的 max_results 未按测试约束生成")
+            failures.append("xng_search 的 max_results 未按测试约束生成")
     if result["errors"]:
         failures.append("LLM 流程返回错误事件")
     return failures
@@ -159,7 +159,7 @@ async def _run_contract_matrix() -> list[str]:
     failures: list[str] = []
     print("【契约矩阵】不联网检查非法输入")
     for label, payload, expected_rule in cases:
-        raw, artifact = await registry.dispatch(_UID, "web_search", payload)
+        raw, artifact = await registry.dispatch(_UID, "xng_search", payload)
         try:
             result = json.loads(raw) if isinstance(raw, str) else raw
         except json.JSONDecodeError:

@@ -186,10 +186,10 @@ def test_reviewed_read_tools_and_parallel_shell_inputs_enter_the_batch():
         [_call("list_projects"), _call("get_upcoming")], snapshot,
     )
     assert not snapshot.get("read_file").parallel_safe
-    assert snapshot.get("web_search").parallel_safe
+    assert snapshot.get("xng_search").parallel_safe
     assert snapshot.get("http_get").parallel_safe
     assert parallel_safe_batch(
-        [_call("web_search", {"query": "合成查询"}), _call("http_get", {"url": "https://example.invalid"})],
+        [_call("xng_search", {"query": "合成查询"}), _call("http_get", {"url": "https://example.invalid"})],
         snapshot,
     ), "只读联网搜索和受 SSRF/超时策略保护的 HTTP GET 应可同轮并行"
     shell = snapshot.get("shell")
@@ -198,11 +198,11 @@ def test_reviewed_read_tools_and_parallel_shell_inputs_enter_the_batch():
     assert shell.parallel_safe_for_input({"command": "printf ok > result.txt"}) is False
     assert shell.parallel_safe_for_input({"command": "rm -rf result.txt"}) is False
     assert parallel_safe_batch(
-        [_call("shell", {"command": "pwd"}), _call("web_search", {"query": "合成查询"})],
+        [_call("shell", {"command": "pwd"}), _call("xng_search", {"query": "合成查询"})],
         snapshot,
     ), "符合确认策略的 Shell 调用应能与同批联网搜索并行"
     assert not parallel_safe_batch(
-        [_call("shell", {"command": "rm -rf result.txt"}), _call("web_search", {"query": "合成查询"})],
+        [_call("shell", {"command": "rm -rf result.txt"}), _call("xng_search", {"query": "合成查询"})],
         snapshot,
     ), "需要确认的危险 Shell 命令必须保留原串行确认流程"
     assert not parallel_safe_batch(
