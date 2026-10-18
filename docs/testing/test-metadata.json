@@ -815,6 +815,14 @@
     "keyBehavior": "跨进程 trace 恢复、工具参数脱敏以及上下文准备阶段耗时归属保持正确",
     "ci": "backend-pytest"
   },
+  "backend/tests/platform/observability/test_responses_request_capture.py": {
+    "domain": "loopscope-observability",
+    "layer": "L1",
+    "owner": "backend/agent/runtime/loopscope_trace",
+    "productionEntry": "agent/runtime/loopscope_trace/provider_request.py 与 agent/providers/openai_responses.py",
+    "keyBehavior": "仅失败轮捕获含原生 reasoning 的最终请求，拒绝保存凭据，深层 Schema 经 trace 数据库往返后摘要不变且只读回放不调用模型",
+    "ci": "backend-pytest"
+  },
   "backend/tests/platform/test_im_platform_settings.py": {
     "domain": "im-platform-settings",
     "layer": "L1",

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -40,6 +40,43 @@ async function request(base: string, pathname: string, init?: RequestInit) {
   const body = await response.json() as unknown
   return { response, body }
 }
+
+test('失败请求经 Collector 和 SQLite 往返后完整保留原生推理与深层 Schema', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'loopscope-capture-'))
+  const store = new TraceStore(path.join(directory, 'trace.db'))
+  const server = createCollectorServer(store).listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const address = server.address()
+  assert.ok(address && typeof address === 'object')
+  const base = `http://127.0.0.1:${address.port}`
+  const requestJson = JSON.stringify({
+    model: 'synthetic-model',
+    input: [{ type: 'reasoning', summary: [], content: [{ type: 'reasoning_text', text: '合成推理' }] }],
+    tools: [{ parameters: { properties: { nested: { items: { properties: { value: { enum: ['合成选项'] } } } } } } }],
+  })
+  const capture = { protocol: 'responses', replayable: true, request_json: requestJson }
+  const parent = { ...payload.spans[0]!, kind: 'llm', name: 'LLM round 2' }
+  const child = {
+    ...payload.spans[1]!, kind: 'context', name: 'Responses 失败请求',
+    parent_span_id: parent.id, input: { provider_request_capture: capture },
+  }
+  try {
+    const ingest = await request(base, '/api/collector/runs', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...payload, spans: [parent, child] }),
+    })
+    assert.equal(ingest.response.status, 200)
+    const loaded = await request(base, `/api/runs/${payload.id}/spans`)
+    assert.equal(loaded.response.status, 200)
+    const spans = (loaded.body as { items: Array<Record<string, unknown>> }).items
+    assert.equal(spans[1]?.parent_span_id, parent.id)
+    assert.deepEqual(spans[1]?.input, { provider_request_capture: capture })
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()))
+    store.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
 
 test('Collector HTTP API ingests and paginates traces', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'loopscope-collector-'))

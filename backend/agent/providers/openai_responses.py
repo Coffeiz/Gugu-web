@@ -655,6 +655,7 @@ class OpenAIResponsesDriver:
         # 落在 create；流式消费阶段的断流仍按原样抛出，避免重复执行同一轮请求。
         from app.core.errors import RetryableError
         from app.core.retry import LLM_RETRY
+        from agent.runtime.loopscope_trace.provider_request import record_failed_responses_request
 
         started_at = time.monotonic()
         retries_done = 0
@@ -665,9 +666,11 @@ class OpenAIResponsesDriver:
             except Exception as exc:
                 from agent.providers.errors import openai_transient_error, openai_error_kind
                 if not openai_transient_error(exc):
+                    record_failed_responses_request(wire_request, failure_kind="create_rejected", ai=ctx.ai)
                     _raise_if_responses_compatibility_error(exc)
                     raise
                 if not LLM_RETRY.should_retry(retries_done, started_at):
+                    record_failed_responses_request(wire_request, failure_kind="create_exhausted", ai=ctx.ai)
                     raise RetryableError("llm.stream_exhausted", "LLM 调用重试后仍失败",
                                           cause=exc, attempt=retries_done) from exc
                 retries_done += 1
@@ -740,6 +743,7 @@ class OpenAIResponsesDriver:
                             event, response_data if isinstance(response_data, dict) else {},
                         )
         except Exception as exc:
+            record_failed_responses_request(wire_request, failure_kind="stream_exception", ai=ctx.ai)
             _raise_if_responses_compatibility_error(exc)
             raise
         finally:
@@ -749,6 +753,7 @@ class OpenAIResponsesDriver:
                 pass
 
         if response_status == "failed":
+            record_failed_responses_request(wire_request, failure_kind="response_failed", ai=ctx.ai)
             # 不把失败事件伪装成空的正常轮次；共享错误描述器负责受限日志记录。
             details = failure_diagnostic or "{}"
             raise ResponsesStreamError(f"Responses API returned a failed response {details}")
