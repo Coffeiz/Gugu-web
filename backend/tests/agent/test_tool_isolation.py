@@ -191,6 +191,42 @@ async def test_list_dir_shown_total_reveals_truncation(db, user_a):
     assert full["total"] == 3 and full["shown"] == 3
 
 
+async def test_list_dir_workspace_total_is_scoped_by_directory_id(db, user_a):
+    """space=workspace 汇总所有工作区；具名工作区筛选应只计该目录并返回归属 ID。"""
+    default = await _mk(db, WorkspaceDirectory(
+        user_id=user_a.id, name="默认工作区", directory_name="default", is_default=True,
+    ))
+    qq = await _mk(db, WorkspaceDirectory(
+        user_id=user_a.id, name="QQ", directory_name="qq",
+    ))
+    default_folder = await _mk(db, Folder(
+        user_id=user_a.id, workspace_directory_id=default.id, name="资料",
+    ))
+    qq_folder = await _mk(db, Folder(
+        user_id=user_a.id, workspace_directory_id=qq.id, name="资料",
+    ))
+    await _mk(db, File(
+        user_id=user_a.id, space="workspace", workspace_directory_id=default.id,
+        folder_id=default_folder.id, display_name="默认文件", ext="md", storage_key="default-file",
+    ))
+    qq_file = await _mk(db, File(
+        user_id=user_a.id, space="workspace", workspace_directory_id=qq.id,
+        folder_id=qq_folder.id, display_name="QQ 文件", ext="md", storage_key="qq-file",
+    ))
+
+    aggregated = await _list_dir(db, user_a.id, {"kind": "both", "space": "workspace"})
+    assert aggregated["total"] == 2
+    assert {item["workspace_directory_id"] for item in aggregated["files"]} == {default.id, qq.id}
+    assert {item["workspace_directory_id"] for item in aggregated["folders"]} == {default.id, qq.id}
+
+    scoped = await _list_dir(db, user_a.id, {
+        "kind": "file", "space": "workspace", "workspace_directory_id": qq.id,
+    })
+    assert scoped["total"] == 1
+    assert [item["id"] for item in scoped["files"]] == [qq_file.id]
+    assert scoped["files"][0]["workspace_directory_id"] == qq.id
+
+
 async def test_list_dir_offset_pagination_covers_all(db, user_a):
     """offset+sort=name 翻页：任意大目录都能确定性拉全，且页间不漏不重。"""
     folder = await _mk(db, Folder(user_id=user_a.id, name="大目录"))
