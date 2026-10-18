@@ -23,6 +23,8 @@
 
 #### Fixes
 
+- Send QQ file attachments and Mermaid images as proactive messages so media delivery does not consume the inbound message's passive-reply allowance.
+- Improve Mermaid label contrast when diagrams define dark node fills without an explicit readable text color.
 - Push trash cleanup progress after each item and apply completion events without periodic polling.
 
 - Keep failed XNG searches from automatically consuming paid research and bound Provider search responses and generated output.
@@ -46,6 +48,8 @@
 
 #### 修复
 
+- QQ 文件和 Mermaid 图片改用主动消息发送，不再消耗触发本轮任务的被动回复次数。
+- Mermaid 图表使用深色节点填充且未指定文字颜色时，自动提高标签对比度。
 - 回收站逐项推送清理进度，及时应用完成事件，不再等待定时补查。
 
 - 免费 XNG 搜索失败不再自动调用付费深度研究；限制 Provider 联网搜索响应体、结果及生成输出大小。
