@@ -64,16 +64,16 @@ Object.assign(filesyncAdminUiBase['en-US'], {
   noManualReconcileNeeded: 'No known watcher gaps',
 })
 Object.assign(filesyncAdminUiBase['zh-CN'], {
-  missingLocalConflictHint: '本地文件缺失：保留云端会尝试从文件库恢复到绑定目录；取消冲突会保留文件库记录并关闭此冲突。若要删除文件库记录，请在存储对账中单独确认。',
-  bulkMissingLocalDisabled: '含本地文件缺失项：请逐项处理，批量操作已禁用。',
+  missingLocalConflictHint: '本地文件缺失：保留云端会尝试从文件库恢复到绑定目录；取消冲突会保留文件库记录并关闭此冲突。可在上方按绑定预览并批量确认删除文件库记录。',
+  bulkMissingLocalDisabled: '含本地缺失项：可用“确认缺失记录”按绑定预览并批量处理。',
 })
 Object.assign(filesyncAdminUiBase['ja-JP'], {
   missingLocalConflictHint: 'ローカルファイルがありません。「リモートを保持」はファイルライブラリからバインド先への復元を試みます。「競合をキャンセル」はライブラリの記録を残して競合を閉じます。記録を削除する場合は、ストレージ照合で個別に確認してください。',
-  bulkMissingLocalDisabled: 'ローカルファイルがない項目が含まれています。個別に処理してください。一括操作は無効です。',
+  bulkMissingLocalDisabled: 'ローカル欠落項目は、バインドごとのプレビューから一括確認できます。',
 })
 Object.assign(filesyncAdminUiBase['en-US'], {
   missingLocalConflictHint: 'The local file is missing. “Keep remote” attempts to restore it from the file library to the bound directory; “Cancel conflict” keeps the library record and closes this conflict. To delete the library record, confirm it individually in Storage Reconciliation.',
-  bulkMissingLocalDisabled: 'Some conflicts have no local file. Handle them individually; bulk actions are disabled.',
+  bulkMissingLocalDisabled: 'Some local files are missing. Use the binding preview action to confirm missing records in bulk.',
 })
 
 Object.assign(filesyncAdminUiBase['zh-CN'], {
@@ -211,3 +211,28 @@ export const filesyncUserUi = {
     stageName: { unknown: 'Waiting', scanning: 'Scanning', comparing: 'Comparing', projecting: 'Applying', finished: 'Finished', failed: 'Finished', cancelled: 'Finished' },
   },
 } as const
+
+Object.assign(filesyncAdminUiBase['zh-CN'], {
+  missingBatchTitle: '批量同步本地缺失记录',
+  missingBatchHint: '按绑定预览仍然缺失的文件；确认后分批移入回收站，不删除物理文件。',
+  missingBatchPreview: '确认缺失记录 · #{binding}（{count}）',
+  missingBatchEmpty: '没有可确认的缺失文件，可能已恢复或已处理。',
+  missingBatchConfirm: '绑定 #{binding} 当前确认缺失 {count} 个文件记录。确认后移入回收站；已恢复或版本变化的项将跳过。前 5 项：\n{paths}\n取消处理中任务只会停止后续批次，已完成的批次会保留。',
+  missingBatchResult: '完成 {completed} 条，跳过 {skipped} 条，未处理 {remaining} 条。',
+})
+Object.assign(filesyncAdminUiBase['en-US'], {
+  missingBatchTitle: 'Sync missing local records in bulk',
+  missingBatchHint: 'Preview missing files by binding, then move records to trash in batches. Physical files are not deleted.',
+  missingBatchPreview: 'Preview binding #{binding} (listed: {count})',
+  missingBatchEmpty: 'No eligible missing files remain.',
+  missingBatchConfirm: 'Binding #{binding}: {count} missing file records will move to trash. Restored or changed records are skipped. First 5:\n{paths}\nCancellation stops future batches; completed batches remain applied.',
+  missingBatchResult: 'Completed {completed}, skipped {skipped}, remaining {remaining}.',
+})
+Object.assign(filesyncAdminUiBase['ja-JP'], {
+  missingBatchTitle: 'ローカル欠落記録を一括同期',
+  missingBatchHint: 'バインドごとに欠落ファイルを確認し、記録をバッチでゴミ箱に移します。物理ファイルは削除しません。',
+  missingBatchPreview: 'バインド #{binding} をプレビュー（表示中 {count} 件）',
+  missingBatchEmpty: '処理できる欠落ファイルはありません。',
+  missingBatchConfirm: 'バインド #{binding} の欠落記録 {count} 件をゴミ箱に移します。復元済み・変更済みの項目はスキップします。先頭5件：\n{paths}\nキャンセルは後続バッチのみ停止し、完了分は保持します。',
+  missingBatchResult: '完了 {completed} 件、スキップ {skipped} 件、未処理 {remaining} 件。',
+})

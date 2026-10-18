@@ -371,7 +371,7 @@ describe('FileSyncAdminPanel 批量处理冲突', () => {
     expect(mocks.resolveConflict).not.toHaveBeenCalled()
   })
 
-  it('本地文件缺失时仅提供适用的单项操作并禁用批量处理', async () => {
+  it('本地文件缺失时保留适用单项操作并在同一按钮栏提供缺失预览', async () => {
     const missing = { ...conflict(31), hasLocal: false, hasRemote: true }
     mocks.status.mockResolvedValue(status([missing]))
     mocks.runs.mockResolvedValue([])
@@ -380,8 +380,10 @@ describe('FileSyncAdminPanel 批量处理冲突', () => {
     await flushUi()
 
     const bulkButtons = [...root.querySelectorAll<HTMLButtonElement>('.fs-bulk-actions button')]
-    expect(bulkButtons).toHaveLength(4)
-    expect(bulkButtons.every((button) => button.disabled)).toBe(true)
+    expect(bulkButtons).toHaveLength(5)
+    expect(bulkButtons.slice(0, 4).every((button) => button.disabled)).toBe(true)
+    expect(bulkButtons[4].disabled).toBe(false)
+    expect(bulkButtons[4].textContent).toContain('filesyncAdmin.missingBatchPreview')
     expect(root.querySelector('.fs-block-head + .fs-note')?.textContent).toContain('filesyncAdmin.bulkMissingLocalDisabled')
     expect(root.querySelector('.fs-row-main small')?.textContent).toContain('filesyncAdmin.missingLocalConflictHint')
     const conflictButtons = [...root.querySelectorAll<HTMLButtonElement>('.fs-row .fs-actions button')]

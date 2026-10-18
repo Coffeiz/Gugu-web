@@ -124,7 +124,22 @@ async function read<T>(request: Promise<Response>): Promise<T> {
   return data as T
 }
 
+export interface MissingPreviewItem {
+  conflictId: number
+  fileId: number
+  fileVersion: number
+  conflictRevision: string
+  relativePath: string
+}
+export interface MissingPreview {
+  bindingId: number
+  rootFingerprint: string
+  items: MissingPreviewItem[]
+}
+
 export const filesyncAdminApi = {
+  previewMissing: (fetcher: AdminFetch, bindingId: number) => read<MissingPreview>(fetcher(`/api/v1/admin/filesync/bindings/${bindingId}/missing-preview`, { method: 'POST' })),
+  applyMissing: (fetcher: AdminFetch, preview: MissingPreview, items: MissingPreviewItem[]) => read<{ results: Array<{ id: number; status: 'completed' | 'skipped'; reason?: string }> }>(fetcher(`/api/v1/admin/filesync/bindings/${preview.bindingId}/missing-apply`, { method: 'POST', body: JSON.stringify({ confirm: true, rootFingerprint: preview.rootFingerprint, items }) })),
   status: (fetcher: AdminFetch, conflictLimit = 5000) => read<FileSyncAdminStatus>(fetcher(`/api/v1/admin/filesync/status?conflict_limit=${conflictLimit}`)),
   runs: (fetcher: AdminFetch, limit = 50) => read<FileSyncRunStatus[]>(fetcher(`/api/v1/admin/filesync/runs?limit=${limit}`)),
   cancelRun: (fetcher: AdminFetch, runId: string) => read<FileSyncRunStatus>(fetcher(`/api/v1/admin/filesync/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' })),

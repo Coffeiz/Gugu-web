@@ -134,7 +134,7 @@
         </div>
       </div>
 
-      <div v-if="status.conflicts.length" class="fs-block">
+      <div v-if="status.conflicts.length || actionKey === 'missing-batch'" class="fs-block">
         <div class="fs-block-head">
           <div class="fs-block-title">{{ t('filesyncAdmin.conflictList') }} · {{ status.conflicts.length }} / {{ status.totals.pendingConflicts }}</div>
           <div class="fs-actions fs-bulk-actions">
@@ -146,6 +146,8 @@
                 ? t('filesyncAdmin.bulkProgress', { done: bulkProgress.completed, total: bulkProgress.total })
                 : t('filesyncAdmin.bulkResolve', { resolution: t(resolution.label), count: status.totals.pendingConflicts }) }}
             </ActionButton>
+            <FileSyncMissingBatch :conflicts="status.conflicts" :disabled="Boolean(actionKey) || Boolean(bulkProgress)"
+                                  @busy="actionKey = $event ? 'missing-batch' : ''" @changed="load" />
           </div>
         </div>
         <p v-if="status.conflicts.length !== status.totals.pendingConflicts" class="fs-note">
@@ -191,6 +193,7 @@ import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { filesyncAdminApi, type FileSyncAdminStatus, type FileSyncConflictResolution, type FileSyncRunStatus } from '@/api/filesync'
 import { useFileSyncAdminEvents } from '@/composables/filesync/useFileSyncAdminEvents'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
+import FileSyncMissingBatch from './FileSyncMissingBatch.vue'
 import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
 import Icon from '@/components/common/icons/Icon.vue'
 

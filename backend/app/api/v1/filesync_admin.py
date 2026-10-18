@@ -4,11 +4,12 @@ from __future__ import annotations
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
 
 from app.db.session import get_db
+from app.schemas import CamelModel
 from app.core.config import get_settings
 from app.services.filesync.admin import (
     admin_resolve_conflict,
@@ -261,3 +262,39 @@ async def conflict_resolve(
         "status": row.status,
         "resolution": row.resolution,
     }
+
+
+class MissingPreviewItem(CamelModel):
+    conflict_id: int
+    file_id: int
+    file_version: int
+    conflict_revision: str
+
+
+class MissingBatchRequest(CamelModel):
+    confirm: bool = False
+    root_fingerprint: str
+    items: list[MissingPreviewItem] = Field(min_length=1, max_length=25)
+
+
+@router.post("/bindings/{binding_id}/missing-preview")
+async def missing_preview(binding_id: int, db: AsyncSession = Depends(get_db)):
+    from app.services.filesync.missing_batch import preview_missing
+
+    try:
+        return await preview_missing(db, binding_id)
+    except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail="缺失预览失败，请检查绑定目录状态") from exc
+
+
+@router.post("/bindings/{binding_id}/missing-apply")
+async def missing_apply(binding_id: int, body: MissingBatchRequest, db: AsyncSession = Depends(get_db)):
+    from app.services.filesync.missing_batch import apply_missing
+
+    if not body.confirm:
+        raise HTTPException(status_code=400, detail="批量删除记录必须显式确认")
+    try:
+        return await apply_missing(db, binding_id, body.root_fingerprint,
+                                   [item.model_dump(by_alias=True) for item in body.items])
+    except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail="绑定目录或预览已变化，请重新核对") from exc
