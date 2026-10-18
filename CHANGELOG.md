@@ -5,75 +5,13 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [1.7.5] - 2026-10-18
 
 ### What's New
 
 #### New Features
 
 - Add Provider-native web search for MiniMax, GLM, Qwen, DeepSeek, MiMo and Ollama Cloud, with per-model switches and billing notices.
-
-#### Improvements
-
-- Share group reflection memory prefixes and show cold requests and cache rates excluding cold requests in usage statistics.
-- Add Telegram to onboarding, simplify IM platform names and use compact cards in two columns.
-- Allow selecting and copying Mermaid source in the fullscreen preview.
-
-- Improve search routing, cross-source verification and fact checking for uncertain names, attributes and references.
-- Combine web and image search in XNG Search and hide search tools that have no usable configuration.
-
-#### Fixes
-
-- Send QQ file attachments and Mermaid images as proactive messages so media delivery does not consume the inbound message's passive-reply allowance.
-- Let QQ passive replies rely on platform responses instead of switching to proactive delivery after a locally hard-coded reply count; render all Mermaid charts in bounded batches.
-- Improve Mermaid label contrast when diagrams define dark node fills without an explicit readable text color.
-- Center Mermaid state diagram labels and preserve Mermaid colors and contrast in rendered images.
-- Keep the cache-ratio chart scale within its defined 0–100% range.
-- Push trash cleanup progress after each item and apply completion events without periodic polling.
-
-- Keep failed XNG searches from automatically consuming paid research and bound Provider search responses and generated output.
-- Refresh Provider-specific web search parameters when switching models in an existing conversation, including switching back to a previously used Provider.
-- Stop retrying background memory reflection for deleted conversations and clean up their pending buffers.
-- Stop automatically retrying IM memory reflection when the model provider explicitly rejects the input, while preserving retries for temporary failures.
-
-### 更新内容
-
-#### 新功能
-
-- 新增 MiniMax、GLM、百炼、DeepSeek、MiMo 和 Ollama Cloud 原生联网搜索，支持按模型启用并提示可能产生的费用。
-
-#### 改进
-
-- 新手引导补充 Telegram 接入，IM 卡片改为两列；引导与个人设置统一显示简洁平台名。
-- Mermaid 全屏预览源码支持鼠标选择和复制。
-
-- 群组与成员记忆反思复用共同资料前缀；用量场景表新增冷请求次数和排除冷请求后的缓存率。
-- 优化搜索工具分工与复杂任务混合检索，补充多来源比对和具体实体、属性、引用的真实性核验指引。
-- XNG Search 统一网页、图像及混合搜索；未配置的搜索能力不再展示给模型。
-
-#### 修复
-
-- QQ 文件和 Mermaid 图片改用主动消息发送，不再消耗触发本轮任务的被动回复次数。
-- QQ 被动回复限制交由平台响应处理，不再按本地固定条数提前切换主动发送；Mermaid 图表按有界批次处理且不限制单次总数。
-- Mermaid 图表使用深色节点填充且未指定文字颜色时，自动提高标签对比度。
-- 居中 Mermaid 状态图节点文字，并修正渲染图片的 Mermaid 颜色和文字对比度。
-- 用量统计中的缓存率图表固定在 0–100% 范围内。
-- 回收站逐项推送清理进度，及时应用完成事件，不再等待定时补查。
-
-- 免费 XNG 搜索失败不再自动调用付费深度研究；限制 Provider 联网搜索响应体、结果及生成输出大小。
-- 修复会话中切换 Provider 后联网搜索参数声明沿用历史版本的问题，支持切回原 Provider。
-- 修复文件同步在文件被删除或原子替换时整批重试及记录过期指纹的问题。
-- 修复模型上游流式失败被误报为内部错误的问题，统一 Web 与 IM 的错误提示和诊断编号。
-- 修复已删除会话的后台记忆反思持续重试问题，并清理对应待处理缓冲。
-- 修复 IM 记忆反思在模型明确拒绝输入后仍自动重试的问题，暂时性故障继续正常退避重试。
-
-## [1.7.5] - 2026-10-17
-
-### What's New
-
-#### New Features
-
-- None for this release.
 
 #### Improvements
 
@@ -88,6 +26,11 @@
 - Recognize M3U/M3U8 playlists as text files and avoid revalidating an unchanged extension during file moves or renames.
 - Keep calendar overflow items current after events are edited or deleted, and adapt project status counts to the selected theme.
 - Keep popup scrollbars inside their animated surfaces and allow project todo lists to scroll without closing the editor.
+- Share group reflection memory prefixes and show cold requests and cache rates excluding cold requests in usage statistics.
+- Add Telegram to onboarding, simplify IM platform names and use compact cards in two columns.
+- Allow selecting and copying Mermaid source in the fullscreen preview.
+- Improve search routing, cross-source verification and fact checking for uncertain names, attributes and references.
+- Combine web and image search in XNG Search and hide search tools that have no usable configuration.
 
 ### Fixes
 
@@ -100,6 +43,15 @@
 - Allow fresh database bootstrap to skip search indexes for columns no longer present in the current schema.
 - Keep the calendar all-day separator aligned across the week view.
 - Accept text input when completing sandbox authorization prompts.
+- Send QQ file attachments and Mermaid images as proactive messages so media delivery does not consume the inbound message's passive-reply allowance.
+- Let QQ passive replies rely on platform responses instead of switching to proactive delivery after a locally hard-coded reply count; render all Mermaid charts in bounded batches.
+- Center Mermaid state diagram labels, preserve raster colors, and improve text contrast for dark nodes in rendered diagrams.
+- Keep the cache-ratio chart scale within its defined 0–100% range.
+- Push trash cleanup progress after each item and apply completion events without periodic polling.
+- Keep failed XNG searches from automatically consuming paid research and bound Provider search responses and generated output.
+- Refresh Provider-specific web search parameters when switching models in an existing conversation, including switching back to a previously used Provider.
+- Stop retrying background memory reflection for deleted conversations and clean up their pending buffers.
+- Stop automatically retrying IM memory reflection when the model provider explicitly rejects the input, while preserving retries for temporary failures.
 
 ### Contributors
 
@@ -113,7 +65,7 @@
 
 #### 新功能
 
-- 本次无新增功能。
+- 新增 MiniMax、GLM、百炼、DeepSeek、MiMo 和 Ollama Cloud 原生联网搜索，支持按模型启用并提示可能产生的费用。
 
 #### 改进
 
@@ -128,6 +80,11 @@
 - 将 M3U/M3U8 播放列表识别为文本文件；移动或改名但未更改后缀时不再重复校验文件类型。
 - 日历“更多”列表会同步活动的最新信息；项目看板数量徽标适配用户主题配色。
 - 弹层滚动条随弹层动画显示，项目待办列表滚动时不会关闭编辑器。
+- 群组与成员记忆反思复用共同资料前缀；用量场景表新增冷请求次数和排除冷请求后的缓存率。
+- 新手引导补充 Telegram 接入，IM 卡片改为两列；引导与个人设置统一显示简洁平台名。
+- Mermaid 全屏预览源码支持鼠标选择和复制。
+- 优化搜索工具分工与复杂任务混合检索，补充多来源比对和具体实体、属性、引用的真实性核验指引。
+- XNG Search 统一网页、图像及混合搜索；未配置的搜索能力不再展示给模型。
 
 ### 修复
 
@@ -140,6 +97,17 @@
 - 全新数据库初始化时跳过当前 schema 中已不存在字段的搜索索引，避免初始化失败。
 - 修正周视图全天区域分隔线的显示。
 - 沙盒授权询问支持直接输入文本完成授权。
+- QQ 文件和 Mermaid 图片改用主动消息发送，不再消耗触发本轮任务的被动回复次数。
+- QQ 被动回复限制交由平台响应处理，不再按本地固定条数提前切换主动发送；Mermaid 图表按有界批次处理且不限制单次总数。
+- 居中 Mermaid 状态图节点文字，保留栅格图颜色并提高深色节点的文字对比度。
+- 用量统计中的缓存率图表固定在 0–100% 范围内。
+- 回收站逐项推送清理进度，及时应用完成事件，不再等待定时补查。
+- 免费 XNG 搜索失败不再自动调用付费深度研究；限制 Provider 联网搜索响应体、结果及生成输出大小。
+- 修复会话中切换 Provider 后联网搜索参数声明沿用历史版本的问题，支持切回原 Provider。
+- 修复文件同步在文件被删除或原子替换时整批重试及记录过期指纹的问题。
+- 修复模型上游流式失败被误报为内部错误的问题，统一 Web 与 IM 的错误提示和诊断编号。
+- 修复已删除会话的后台记忆反思持续重试问题，并清理对应待处理缓冲。
+- 修复 IM 记忆反思在模型明确拒绝输入后仍自动重试的问题，暂时性故障继续正常退避重试。
 
 #### 贡献者
 
