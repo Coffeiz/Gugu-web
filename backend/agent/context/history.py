@@ -16,6 +16,8 @@ from .canonical_context import (
 from .provider_history import strip_thinking_blocks
 from .summary_format import format_compacted_summary
 
+_LEGACY_TOOL_LABELS = {"image_search": "图片搜索"}
+
 _TIME_CONTEXT_RE = re.compile(
     r"^\[system-reminder\]\n(?:当前时间：)?[^\n]+\n\[/system-reminder\]$"
 )
@@ -61,10 +63,10 @@ def _tool_label(tool_name: str) -> str:
     try:
         from agent.tools import registry
         tool = registry.snapshot().get(tool_name)
-        return str(tool.label if tool else tool_name)
+        return str(tool.label if tool else _LEGACY_TOOL_LABELS.get(tool_name, tool_name))
     except Exception:
         # 历史数据可能包含已移除的旧工具；名称仍比丢失整条时间线更有用。
-        return tool_name
+        return _LEGACY_TOOL_LABELS.get(tool_name, tool_name)
 
 
 def _display_tool_call(block: dict) -> tuple[str, object]:

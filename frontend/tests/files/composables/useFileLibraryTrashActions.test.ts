@@ -136,7 +136,7 @@ describe('回收站后台清空任务', () => {
       failed_count: 0, created_at: '2026-10-06T00:00:01Z', _t: 2,
     }
     await vi.waitFor(() => expect(mounted.actions.emptyTrashBusy.value).toBe(false))
-    expect(showAppSuccess).toHaveBeenCalledOnce()
+    await vi.waitFor(() => expect(showAppSuccess).toHaveBeenCalledOnce())
 
     mounted.app.unmount()
     mounted.host.remove()
