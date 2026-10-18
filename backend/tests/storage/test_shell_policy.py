@@ -160,6 +160,24 @@ async def test_dynamic_shell_prompt_reports_disabled_dangerous_state(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_disabled_user_shell_blocks_system_scope_even_when_scope_is_enabled(monkeypatch):
+    """主 Shell 开关关闭后，旧 Schema 也不能继续调用 system 范围。"""
+    db = _PolicyDB()
+    settings = _settings(shell=True)
+    settings.agent.shell_system_enabled = True
+    monkeypatch.setattr(shell_policy, "get_settings", lambda: settings)
+    monkeypatch.setattr(shell_policy, "effective_shell_enabled", lambda *_: _false())
+    monkeypatch.setattr(shell_policy, "effective_shell_system_enabled", lambda *_: _true())
+
+    decision = await shell_policy.evaluate(
+        db, "user-1", 1, "pwd", requested_scope="system", session=db.session,
+    )
+
+    assert not decision.allowed
+    assert decision.reason == "用户未开启 Shell"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("admin_enabled,user_enabled", [(False, True), (True, False), (True, True)])
 async def test_system_environment_hint_requires_both_permission_gates(monkeypatch, admin_enabled, user_enabled):
     """只在两侧放行后说明 system 调用方法，不改变省略 scope 的沙盒默认值。"""
@@ -420,6 +438,7 @@ async def test_legacy_personal_scope_is_ignored(monkeypatch):
     settings = _settings(shell=True)
     settings.agent.shell_system_enabled = True
     monkeypatch.setattr(shell_policy, "get_settings", lambda: settings)
+    monkeypatch.setattr(shell_policy, "effective_shell_enabled", lambda *_: _true())
     monkeypatch.setattr(shell_policy, "effective_shell_system_enabled", lambda *_: _true())
     decision = await shell_policy.evaluate(db, "user-1", 1, "pwd", requested_scope="system")
     assert decision.allowed
@@ -433,6 +452,7 @@ async def test_unbound_session_uses_system_scope(monkeypatch):
     settings = _settings(shell=True)
     settings.agent.shell_system_enabled = True
     monkeypatch.setattr(shell_policy, "get_settings", lambda: settings)
+    monkeypatch.setattr(shell_policy, "effective_shell_enabled", lambda *_: _true())
     monkeypatch.setattr(shell_policy, "effective_shell_system_enabled", lambda *_: _true())
     decision = await shell_policy.evaluate(db, "user-1", 1, "pwd", requested_scope="system")
     assert decision.allowed
@@ -510,6 +530,7 @@ async def test_system_scope_ignores_workspace_binding(monkeypatch):
     settings = _settings(shell=True)
     settings.agent.shell_system_enabled = True
     monkeypatch.setattr(shell_policy, "get_settings", lambda: settings)
+    monkeypatch.setattr(shell_policy, "effective_shell_enabled", lambda *_: _true())
     monkeypatch.setattr(shell_policy, "effective_shell_system_enabled", lambda *_: _true())
 
     decision = await shell_policy.evaluate(db, "user-1", 1, "pwd", requested_scope="system")
@@ -525,6 +546,7 @@ async def test_system_scope_does_not_require_sandbox(monkeypatch):
     settings.agent.shell_system_enabled = True
     settings.sandbox = SimpleNamespace(enabled=False)
     monkeypatch.setattr(shell_policy, "get_settings", lambda: settings)
+    monkeypatch.setattr(shell_policy, "effective_shell_enabled", lambda *_: _true())
     monkeypatch.setattr(shell_policy, "effective_shell_system_enabled", lambda *_: _true())
 
     decision = await shell_policy.evaluate(db, "user-1", 1, "pwd", requested_scope="system")
