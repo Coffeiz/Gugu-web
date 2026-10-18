@@ -87,14 +87,6 @@ export const useLiveStore = defineStore('live', () => {
           return
         }
         if (!res.ok || !res.body) throw new Error(`live stream ${res.status}`)
-        connected.value = true
-        retry = 0
-        // 重连成功 → 补上断线期间漏掉的变更（SSE 不补发历史事件；后端 reload / 网络抖动 / 久置标签页
-        // 断开期间咕咕改的文件等，靠这步刷出来）。**但错峰 + 延后**：久置标签页回到前台那一下，若 5 个
-        // 资源同时 refetch + 替换大数组 + 重渲染，会卡住主线程约 1 秒。逐个延迟 bump，把这波刷新摊开、
-        // 让出主线程，回来就不卡了（总量不变、只是不挤在一帧）。
-        if (everConnected) _catchUp()
-        everConnected = true
         const reader = res.body.getReader()
         const decoder = new TextDecoder()
         let buf = ''
@@ -102,6 +94,18 @@ export const useLiveStore = defineStore('live', () => {
         while (running) {
           const { value, done } = await reader.read()
           if (done) break
+          // 收到服务端首帧后才算订阅就绪；响应头可能早于 Redis subscribe。
+          // 重连补读必须发生在订阅之后，避免查询与订阅之间再次漏事件。
+          if (!connected.value) {
+            connected.value = true
+            retry = 0
+            // 重连成功 → 补上断线期间漏掉的变更（SSE 不补发历史事件；后端 reload / 网络抖动 / 久置标签页
+            // 断开期间咕咕改的文件等，靠这步刷出来）。**但错峰 + 延后**：久置标签页回到前台那一下，若 5 个
+            // 资源同时 refetch + 替换大数组 + 重渲染，会卡住主线程约 1 秒。逐个延迟 bump，把这波刷新摊开、
+            // 让出主线程，回来就不卡了（总量不变、只是不挤在一帧）。
+            if (everConnected) _catchUp()
+            everConnected = true
+          }
           buf += decoder.decode(value, { stream: true })
           const lines = buf.split('\n'); buf = lines.pop() ?? ''
           for (const line of lines) {
