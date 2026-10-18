@@ -1,4 +1,28 @@
 {
+  "backend/tests/im/test_im_memory_scopes.py": {
+    "domain": "im-memory",
+    "layer": "L1",
+    "owner": "backend/agent/memory",
+    "productionEntry": "agent/memory/im_reflection.py 与 reflection_jobs.py",
+    "keyBehavior": "IM 记忆按用户平台机器人群与成员隔离；群与成员反思完整共享资料前缀，保留快照工具和各自规则，私聊范围不重复正文",
+    "ci": "backend-pytest"
+  },
+  "frontend/tests/admin/agent/UsageScenarioTable.test.ts": {
+    "domain": "admin-usage",
+    "layer": "L1",
+    "owner": "frontend/views/Admin/Agent",
+    "productionEntry": "frontend/src/views/Admin/Agent/observability/components/UsageScenarioTable.vue",
+    "keyBehavior": "场景表展示冷请求和服务端加权非冷缓存率，周期数据变化后更新，无非冷样本显示横线而非零",
+    "ci": "frontend-test"
+  },
+  "backend/tests/platform/usage/test_usage_cold_cache.py": {
+    "domain": "agent-usage",
+    "layer": "L1",
+    "owner": "backend/app/api/v1",
+    "productionEntry": "app/api/v1/agent_admin.py:_scenario_usage",
+    "keyBehavior": "按场景统计零缓存冷请求和非冷请求的完整输入加权缓存率；保留日期、BYOK、开发者筛选和历史输入口径，零输入工具计数不计冷请求",
+    "ci": "backend-pytest"
+  },
   "backend/tests/storage/filesync/test_filesync_phase1.py": {
     "domain": "filesync",
     "layer": "L1",
@@ -1190,5 +1214,45 @@
     "productionEntry": "frontend/src/utils/spreadsheetZoomPreference.ts",
     "keyBehavior": "表格预览缩放值可持久化恢复、限制在支持范围内，并在浏览器存储不可用时继续使用",
     "ci": "frontend-test"
+  },
+  "backend/tests/agent/test_search_limits.py": {
+    "domain": "search",
+    "layer": "L0",
+    "owner": "backend/agent/providers",
+    "productionEntry": "agent/providers/search_limits.py 与 search_http.py",
+    "keyBehavior": "限制响应流和结果大小，截断显式标记，保留完整链接与错误状态",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/test_provider_web_search.py": {
+    "domain": "search",
+    "layer": "L1",
+    "owner": "backend/agent/providers",
+    "productionEntry": "agent/providers/web_search.py",
+    "keyBehavior": "原生参数、运行快照隔离、模型切换与实际 HTTP 响应边界",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/knowledge/test_search_tool_migration.py": {
+    "domain": "search",
+    "layer": "L0",
+    "owner": "backend/alembic",
+    "productionEntry": "alembic/versions/20261018000001_migrate_search_tool_references.py",
+    "keyBehavior": "旧搜索工具授权和快照转换保留无关字段",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/knowledge/test_search_tool_migration_postgres.py": {
+    "domain": "search",
+    "layer": "L1",
+    "owner": "backend/alembic",
+    "productionEntry": "alembic/versions/20261018000001_migrate_search_tool_references.py",
+    "keyBehavior": "真实 PostgreSQL 临时 schema 验证列约束、默认值和迁移升降级",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/knowledge/test_searxng_search_status.py": {
+    "domain": "search",
+    "layer": "L0",
+    "owner": "backend/agent/tools",
+    "productionEntry": "agent/tools/search.py",
+    "keyBehavior": "空结果、引擎故障和超时不隐式调用付费研究",
+    "ci": "backend-pytest"
   }
 }

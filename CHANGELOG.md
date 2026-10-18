@@ -15,11 +15,17 @@
 
 #### Improvements
 
+- Share group reflection memory prefixes and show cold requests and cache rates excluding cold requests in usage statistics.
+- Add Telegram to onboarding, simplify IM platform names and use compact cards in two columns.
+
 - Improve search routing, cross-source verification and fact checking for uncertain names, attributes and references.
 - Combine web and image search in XNG Search and hide search tools that have no usable configuration.
 
 #### Fixes
 
+- Push trash cleanup progress after each item and apply completion events without periodic polling.
+
+- Keep failed XNG searches from automatically consuming paid research and bound Provider search responses and generated output.
 - Refresh Provider-specific web search parameters when switching models in an existing conversation, including switching back to a previously used Provider.
 - Stop retrying background memory reflection for deleted conversations and clean up their pending buffers.
 - Stop automatically retrying IM memory reflection when the model provider explicitly rejects the input, while preserving retries for temporary failures.
@@ -32,11 +38,17 @@
 
 #### 改进
 
+- 新手引导补充 Telegram 接入，IM 卡片改为两列；引导与个人设置统一显示简洁平台名。
+
+- 群组与成员记忆反思复用共同资料前缀；用量场景表新增冷请求次数和排除冷请求后的缓存率。
 - 优化搜索工具分工与复杂任务混合检索，补充多来源比对和具体实体、属性、引用的真实性核验指引。
 - XNG Search 统一网页、图像及混合搜索；未配置的搜索能力不再展示给模型。
 
 #### 修复
 
+- 回收站逐项推送清理进度，及时应用完成事件，不再等待定时补查。
+
+- 免费 XNG 搜索失败不再自动调用付费深度研究；限制 Provider 联网搜索响应体、结果及生成输出大小。
 - 修复会话中切换 Provider 后联网搜索参数声明沿用历史版本的问题，支持切回原 Provider。
 - 修复文件同步在文件被删除或原子替换时整批重试及记录过期指纹的问题。
 - 修复模型上游流式失败被误报为内部错误的问题，统一 Web 与 IM 的错误提示和诊断编号。
