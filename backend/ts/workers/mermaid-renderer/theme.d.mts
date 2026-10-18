@@ -29,5 +29,9 @@ export function createMermaidThemeConfig(
   theme: 'base'
   htmlLabels: false
   themeCSS: string
-  themeVariables: MermaidThemeColors & { fontFamily: string }
+  themeVariables: MermaidThemeColors & {
+    fontFamily: string
+    nodeTextColor: string
+    textColor: string
+  }
 }

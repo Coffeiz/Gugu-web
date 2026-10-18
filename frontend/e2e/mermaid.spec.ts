@@ -78,7 +78,7 @@ test('浏览器真实渲染 Mermaid，在窄屏预览并导出有效 PNG', async
     const { renderMarkdownMermaid } = await import('/src/utils/mermaidRenderer.ts')
     const root = document.createElement('main')
     root.id = 'mermaid-e2e-fixture'
-    root.innerHTML = '<pre class="md-mermaid-source"><code>graph LR\n  A[Start] --&gt; B[Finish]</code></pre>'
+    root.innerHTML = '<pre class="md-mermaid-source"><code>graph LR\n  A[Start] --&gt; B[Finish]\n  classDef dark fill:#202638,stroke:#ef4444\n  class A dark</code></pre>'
     document.body.append(root)
     await renderMarkdownMermaid(root, {
       zoomOut: 'Zoom out',
@@ -100,6 +100,21 @@ test('浏览器真实渲染 Mermaid，在窄屏预览并导出有效 PNG', async
   await expect(diagram).toBeVisible()
   await expect(diagram).toContainText('Start')
   await expect(diagram).toContainText('Finish')
+  const nodeTextContrast = await chart.locator('.node.dark').evaluate((node) => {
+    const parseRgb = (color: string) => color.match(/^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/)?.slice(1).map(Number)
+    const shape = node.querySelector('rect, polygon, ellipse, circle, path')
+    const text = node.querySelector('text')
+    const background = shape ? parseRgb(getComputedStyle(shape).fill) : null
+    const foreground = text ? parseRgb(getComputedStyle(text).fill) : null
+    if (!background || !foreground) return 0
+    const luminance = ([red, green, blue]: number[]) => [red, green, blue]
+      .map(value => value / 255)
+      .map(value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4)
+      .reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0)
+    const [bright, dark] = [luminance(background), luminance(foreground)].sort((a, b) => b - a)
+    return (bright + 0.05) / (dark + 0.05)
+  })
+  expect(nodeTextContrast).toBeGreaterThanOrEqual(4.5)
 
   const controls = chart.locator('.md-mermaid-controls')
   const controlOpacity = () => controls.evaluate(element => Number(getComputedStyle(element).opacity))
