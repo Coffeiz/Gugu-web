@@ -135,7 +135,7 @@ import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
 import PopupMenu from '@/components/common/overlays/PopupMenu.vue'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { useI18n } from 'vue-i18n'
-import { apiFormatsForProvider, apiFormatsFromSnapshot, defaultApiFormatFromSnapshot, defaultApiFormatForProvider, defaultBaseUrlFromSnapshot, MODEL_PROVIDERS, retainApiFormatFromSnapshot, type ModelProvider } from '@/utils/modelProviders'
+import { apiFormatsForProvider, defaultApiFormatFromSnapshot, defaultApiFormatForProvider, defaultBaseUrlFromSnapshot, MODEL_PROVIDERS, retainApiFormatFromSnapshot, type ModelProvider } from '@/utils/modelProviders'
 import { buildThinkingOptionsForIdentity } from '@/utils/llmThinkingOptions'
 import { providerWebSearchAvailable } from '@/utils/providerWebSearch'
 
@@ -181,10 +181,9 @@ function capabilityIdentityFor(draft: Pick<Editor, 'provider' | 'model' | 'ollam
 }
 function interfaceOptionsFor(draft: Pick<Editor, 'capability' | 'provider' | 'model' | 'api_format' | 'base_url' | 'ollama_mode' | 'ollama_api_mode' | 'local_runtime'> | null) {
   if (!draft) return []
-  const snapshot = capabilitySnapshotIdentity.value === capabilityIdentityFor(draft) ? capabilitySnapshot.value : null
-  const formats = draft.capability === 'llm'
-    ? apiFormatsFromSnapshot(snapshot, draft.provider)
-    : apiFormatsForProvider(draft.provider, draft.base_url, draft.model)
+  // 接口格式是 Provider/接入类型的配置项，不依赖按模型异步刷新的能力快照。
+  // 否则输入模型名时，短暂的空/单项快照会让 InterfaceTypeSelect 被 v-if 卸载。
+  const formats = apiFormatsForProvider(draft.provider, draft.base_url)
   const options = formats.map((key: string) => ({ key, label: t(apiFormatLabels[key] || key) }))
   return draft.provider === 'ollama' && !options.some(option => option.key === 'native')
     ? [{ key: 'native', label: t(apiFormatLabels.native) }, ...options]
