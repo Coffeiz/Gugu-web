@@ -9,7 +9,9 @@ import {
   PhImage, PhFilmStrip, PhMusicNote, PhTable,
   PhPresentationChart, PhArchive, PhCode, PhFileText,
 } from '@phosphor-icons/vue'
-import { RiGlobalLine } from '@remixicon/vue'
+import {
+  RiFileExcel2Line, RiFilePdf2Line, RiFilePpt2Line, RiFileTextLine, RiFileWord2Line, RiGlobalLine,
+} from '@remixicon/vue'
 
 /** 将用户编辑的文件后缀标准化；空值表示保留无后缀文件的 FILE 哨兵。 */
 export function normalizeEditableExtension(value: string): string | null {
@@ -59,6 +61,11 @@ export function fileIconColor(ext: string | null | undefined): string {
 export function fileListIcon(ext: string | null | undefined) {
   const normalizedExt = (ext || '').toLowerCase()
   if (normalizedExt === 'html' || normalizedExt === 'htm') return RiGlobalLine
+  if (normalizedExt === 'md') return RiFileTextLine
+  if (normalizedExt === 'pdf') return RiFilePdf2Line
+  if (['doc', 'docx'].includes(normalizedExt)) return RiFileWord2Line
+  if (['ppt', 'pptx'].includes(normalizedExt)) return RiFilePpt2Line
+  if (['xls', 'xlsx'].includes(normalizedExt)) return RiFileExcel2Line
   const cat = fileExtCategory(ext)
   if (cat === 'image')   return PhImage
   if (cat === 'video')   return PhFilmStrip

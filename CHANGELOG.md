@@ -16,6 +16,7 @@
 
 #### Improvements
 
+- Use distinct file icons for Markdown, Word, PDF, PowerPoint and Excel files.
 - Use muted red and green text with matching backgrounds for diff code blocks.
 - Keep cut files and folders visibly consistent between the file library and project editor, with shared card action styling.
 - Use compact inline rename and todo fields in the project editor.
@@ -74,6 +75,7 @@
 
 #### 改进
 
+- 文件卡片按 Markdown、Word、PDF、PPT 和 Excel 类型显示对应图标。
 - diff 代码块使用低饱和红绿文字和对应底色，便于识别增删内容。
 - 统一文件库与项目编辑器中文件和文件夹的剪切状态及卡片操作样式。
 - 调整项目编辑器内联重命名和待办输入框高度，使其更紧凑。
