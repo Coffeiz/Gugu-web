@@ -4,7 +4,7 @@ import { sanitizeHtml } from '@/utils/markdown'
 import { resolveMermaidThemeColors } from '@/utils/mermaidTheme'
 import { createMermaidThemeConfig } from '../../../backend/ts/workers/mermaid-renderer/theme.mjs'
 import { prepareMermaidDiagramSource, restoreMermaidDiagramLabels } from '../../../backend/ts/workers/mermaid-renderer/diagram-source.mjs'
-import { normalizeMermaidEdgeLabelBounds, normalizeMermaidEdgeStyles, normalizeMermaidMindmapRootLabel, normalizeMermaidNodeCorners } from '../../../backend/ts/workers/mermaid-renderer/svg-style.mjs'
+import { normalizeMermaidEdgeLabelBounds, normalizeMermaidEdgeStyles, normalizeMermaidMindmapRootLabel, normalizeMermaidNodeCorners, normalizeMermaidStateDiagramLabelAlignment } from '../../../backend/ts/workers/mermaid-renderer/svg-style.mjs'
 
 type MermaidApi = typeof import('mermaid').default
 
@@ -160,6 +160,7 @@ function normalizeSvgNodeTextContrast(svg: string): string {
   const parsed = new DOMParser().parseFromString(svg, 'image/svg+xml')
   const root = parsed.documentElement
   if (parsed.querySelector('parsererror') || root.localName.toLowerCase() !== 'svg') return svg
+  normalizeMermaidStateDiagramLabelAlignment(root)
 
   const measurementHost = document.createElement('div')
   measurementHost.style.cssText = 'position:fixed;left:-10000px;top:0;visibility:hidden;pointer-events:none;'

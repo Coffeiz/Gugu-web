@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { Resvg } from '@resvg/resvg-js'
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom'
 import { createHTMLWindow } from 'svgdom'
-import { normalizeMermaidEdgeLabelBounds, normalizeMermaidEdgeStyles, normalizeMermaidKanbanSectionColors, normalizeMermaidKanbanSectionTitles, normalizeMermaidMindmapRootLabel, normalizeMermaidNodeCorners, normalizeMermaidRasterText, normalizeMermaidTimelineSectionColors } from './svg-style.mjs'
+import { normalizeMermaidEdgeLabelBounds, normalizeMermaidEdgeStyles, normalizeMermaidKanbanSectionColors, normalizeMermaidKanbanSectionTitles, normalizeMermaidMindmapRootLabel, normalizeMermaidNodeCorners, normalizeMermaidRasterColors, normalizeMermaidRasterText, normalizeMermaidRasterTextContrast, normalizeMermaidStateDiagramLabelAlignment, normalizeMermaidTimelineSectionColors } from './svg-style.mjs'
 import { prepareMermaidDiagramSource, restoreMermaidDiagramLabels } from './diagram-source.mjs'
 import { createMermaidThemeConfig, resolveMermaidThemeColors } from './theme.mjs'
 
@@ -294,6 +294,7 @@ for (let index = 0; index < sources.length; index += 1) {
     if (!root || root.localName.toLowerCase() !== 'svg') {
       throw new Error('invalid_svg')
     }
+    normalizeMermaidStateDiagramLabelAlignment(root)
     normalizeMermaidMindmapRootLabel(root)
     restoreMermaidDiagramLabels(root, prepared.labels)
     normalizeMermaidNodeCorners(root)
@@ -303,6 +304,7 @@ for (let index = 0; index < sources.length; index += 1) {
     }
     if (type === 'timeline' || type === 'timeline-beta') normalizeMermaidTimelineSectionColors(root)
     normalizeMermaidEdgeLabelBounds(root)
+    normalizeMermaidRasterColors(root)
     const rasterTextOptions = {
       allText: true,
       fontFamily: 'Noto Sans SC',
@@ -314,6 +316,7 @@ for (let index = 0; index < sources.length; index += 1) {
       strokeAllText: true,
     }
     normalizeMermaidRasterText(root, colors.primaryTextColor, rasterTextOptions)
+    normalizeMermaidRasterTextContrast(root, colors.primaryTextColor)
     normalizeMermaidEdgeStyles(root, colors.arrowheadColor)
     for (const element of document.getElementsByTagName('*')) {
       if (element.namespaceURI !== 'http://www.w3.org/2000/svg') {
