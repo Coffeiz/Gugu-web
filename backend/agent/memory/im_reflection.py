@@ -102,9 +102,11 @@ def _build_append_branch_input(scope: MemoryScope, job, task_type: str,
         "user_message_count": sum(1 for message in messages if message.role == "user"),
         "senders": target_senders,
     }
-    delta = (
-        f"{_scope_prompt(scope, task_type=task_type)}\n\n"
-        f"已有群组/用户记忆：\n{json.dumps(reflection_current, ensure_ascii=False)}\n\n"
+    rules = f"{_scope_prompt(scope, task_type=task_type)}\n\n"
+    shared_memory = f"已有群组/用户记忆：\n{json.dumps(reflection_current, ensure_ascii=False)}\n\n"
+    # 群与成员任务先共享完整资料，再追加各自规则，避免相同资料因指令分叉重复计费。
+    prefix = rules + shared_memory if task_type == "private-owner" else shared_memory + rules
+    delta = prefix + (
         f"【本批反思范围】\n{json.dumps(target_scope, ensure_ascii=False)}\n\n"
         f"本批正文已在追加历史中，共 {target_scope['user_message_count']} 条用户消息；"
         "只从追加历史末尾与本批范围对应的用户消息提取新增记忆，不要在任务中寻找重复正文，"
