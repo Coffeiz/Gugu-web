@@ -99,3 +99,59 @@ PYTHONPATH=. .venv/bin/python scripts/diagnostics/probe_saved_provider_request.p
 - 本轮新增测试元数据以 HEAD 为基线校验通过；全分支默认基线校验另有既存 `providerWebSearch.test.ts` 元数据缺项，不在本次范围内修改。
 - 经用户确认重启 devserver 四个后台服务，服务均恢复运行，后端健康检查正常，Worker 已开启 LoopScope。没有切换模型预设；只对后续实际走 Responses 的失败轮生效。
 - 这些是合成回归与服务健康验证，没有再次调用真实模型、执行 Shell 工具或发送 IM 消息，也没有取得新的线上失败样本。根因仍待真实捕获对照确认；定位完成后应清理临时捕获接入。
+
+## 再次失败：精确请求回放
+
+晚间再次发生 QQ Shell 续答失败。本次已从失败轮最终发送边界取得完整 SDK body，摘要校验通过；以下实验使用该捕获，不再重建历史。
+
+- 故障发生在第 3 轮模型调用。前两次 Shell 均 `exit_code=0`、`timed_out=false`，耗时约 10.3 秒和 80 毫秒。
+- 上游终态为 `response.failed`，错误码 `internal_error`，原始错误信息为 `Internal server error. Please retry your request.`；不是本地 Shell 异常或 SDK 无法解析事件。
+- 捕获 body 为 731,397 字节，含 436 项输入、121 组完整配对的工具调用及结果，没有重复调用 ID、非法参数 JSON、空消息或未注册工具名。
+- 请求包含 0 个原生 reasoning 项，输出预算为 16,000 token。这次失败不能用“原生 reasoning 项回放错误”解释。
+- 流式请求的规范化 SHA-256 为 `3e895c7b7422f9ce0164793d690c9d065f000b1c46e8dff54ce9d96dee618a93`。
+
+| 对照 | 改变量 | 结果 | 用时 |
+| --- | --- | --- | --- |
+| 原始 SSE 流式 | 同一捕获 body，绕过 SDK 事件模型解析 | `response.completed` | 9.14 秒 |
+| SDK 流式 | 同一捕获 body，经过 OpenAI SDK 事件解析 | `response.completed` | 7.93 秒 |
+| 非流式 | 同一捕获 body，仅将 `stream` 改为 `false` | `completed` | 3.95 秒 |
+
+上述三次最初使用服务器模型预设凭据，将协议在诊断进程内改为 Responses。服务器预设与用户 BYOK 是不同配置来源，不能据此推断用户已切换协议，也不能称为恢复了原 BYOK 的全部客户端条件。后续按会话归属只读解析有效 BYOK，并完成同一 body 的直接 HTTP 回放，见下节。
+
+三次回放均返回 189,079 输入 token，并正常产生后续工具调用；返回的工具均未执行。SDK 流式与非流式回放分别命中 188,672 缓存 token，因此本次成功也不能简单归因于“回放没有命中缓存”。非流式的单次耗时较短，不构成性能结论。
+
+当前只能确认错误事件由上游生成，以及同一请求并非固定失败。尚未复现供应商在原时刻的内部失败条件，不能以三次成功声称请求兼容问题已被完全排除，也不能将大上下文或 Shell 工具本身定为根因。
+
+本地驱动的瞬时错误重试只覆盖 `client.responses.create()` 阶段；HTTP 请求建立后收到 `response.failed` 会直接抛出 `ResponsesStreamError`，因此没有利用该错误提示中的重试建议。若后续增加恢复，应以本轮是否已提交文本、工具调用和其他副作用为边界，单独设计并验证，不能无条件重跑 Shell 或整个业务轮次。本次没有修改重试、业务驱动或运行配置。
+
+原始请求、SSE、SDK 事件及非流式结果保存在 `<devserver临时目录>/gugu-responses-20261018-2253-<随机后缀>/` 的受控目录中，目录权限为 0700，不进入 Git。实验使用 Python 3.12.3、OpenAI SDK 3.31.0、httpx 0.28.1；当前配置仅在诊断进程内读取，没有写入用户配置、业务数据库或发送 IM 消息。
+
+## 续接开启但没有 reasoning：BYOK 与驱动隔离对照
+
+只读解析故障会话所属用户的有效 BYOK，确认协议确为 `responses`、思考模式为 `adaptive`、深度为 `medium`、推理持久化为 `continuation`，解析出的目的地为 MiniMax 官方 `/v1/responses`。服务器预设的 Anthropic 设置没有覆盖这份 BYOK。凭据只在诊断进程内解密并用于认证，不输出、不导出、不写入诊断文件。
+
+先使用服务器预设凭据完成 6 次合成小请求对照，再使用有效 BYOK 完成 3 次合成对照及 1 次原故障 body 回放；所有请求均直接通过 httpx 发送到官方接口，保存原始 SSE/JSON，绕过咕咕驱动和 SDK 响应解析。合成查询工具只返回人工构造的数值，没有执行真实工具。
+
+| 输入及传输方式 | 服务器预设凭据 | 有效 BYOK |
+| --- | --- | --- |
+| 普通成本推导，流式 | 1 个 reasoning 项 | 1 个 reasoning 项 |
+| 同一成本推导，非流式 | 1 个 reasoning 项 | 未运行 |
+| 发起查询工具调用，流式 | 0 个 reasoning 项，reasoning token 为 1 | 0 个 reasoning 项，reasoning token 为 1 |
+| 同一查询工具调用，非流式 | 0 个 reasoning 项，reasoning token 为 1 | 未运行 |
+| 传回合成工具结果，流式续答 | 1 个 reasoning 项 | 1 个 reasoning 项 |
+| 工具调用仅将 effort 改为 max，流式 | 0 个 reasoning 项，reasoning token 为 1 | 未运行 |
+| 原故障精确 body，流式 | 见前节 | 正常完成；0 个 reasoning 项，189,079 输入 token |
+
+全部 10 次网络实验正常完成。结果证明：在本组输入下，官方接口在发起工具调用的轮次不返回 reasoning 项，即使开启推理、续接配置或将 effort 调到 max；收到工具结果后的回答可以再次返回 reasoning。这是可重复观察到的服务端输出行为，不是咕咕把原始响应中的 reasoning 删除。该结果不代表所有工具调用轮均如此，也不足以将服务端的这种输出策略定性为漏洞。
+
+随后将 BYOK 三组原始 SSE 通过 `httpx.MockTransport` 离线喂给真实 OpenAI SDK 和 `OpenAIResponsesDriver`，验证提取、恢复及下一轮请求插入：
+
+- 普通推导：原始 1 项 → 驱动提取 1 项 → 下一轮回传 1 项，content 完整一致。
+- 工具调用：原始 0 项 → 驱动提取 0 项 → 下一轮回传 0 项。
+- 工具结果续答：原始 1 项 → 驱动提取 1 项 → 下一轮回传 1 项，content 完整一致。
+
+这些离线验证没有发起网络请求，也没有执行工具。最初尝试用 Pydantic 严格校验事件因官方响应的空字段不满足 SDK 静态类型而拒绝，未作为产品缺陷；正式验证使用 SDK 实际的响应构造路径，避免人为引入不同解析行为。
+
+另有独立的应用观测问题：`extract_provider_state()` 会把 `{"reasoning_items": []}` 返回为有效状态，状态协调器标记 `captured`，恢复空列表也返回成功，从而出现 `reused=true`、`state_block_count=0`、payload 大小 22 字节。续接开关确实生效，但“已复用”的摘要未区分是否真正存在推理块；此标签不能作为实际推理续接成功的证据。
+
+本轮没有复现 `internal_error`，也没有证据证明空 reasoning 是该错误的原因。关于失败来源与重试边界的结论维持前节；本次没有修改业务代码、续接策略或运行配置。
