@@ -18,6 +18,10 @@ async def update_binding_health(
     binding = await db.scalar(select(FileSyncBinding).where(FileSyncBinding.id == binding_id))
     if binding is None:
         return False
+    from app.services.filesync.jobs import RECONCILABLE_OVERFLOW_CODES
+
+    if status == "ready" and binding.needs_reconcile and binding.health_error_code in RECONCILABLE_OVERFLOW_CODES:
+        status, error_code = "degraded", binding.health_error_code
     changed = binding.watcher_status != status or binding.health_error_code != error_code
     if changed:
         binding.watcher_status = status

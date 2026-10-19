@@ -30,7 +30,7 @@
           {{ f.project }} · {{ f.size }}
         </template>
 
-        <div class="fc-hover-actions">
+        <div class="file-card-hover-actions">
           <button class="file-card-btn" :title="renamingId === f.id ? t('sharedUi.confirm') : t('sharedUi.rename')"
             @mousedown.prevent @click.stop="renamingId === f.id ? commitRename(f) : startRename(f)">
             <Icon name="status.success" v-if="renamingId === f.id" :size="11" />
@@ -355,12 +355,6 @@ const files = computed(() =>
   background: rgba(123,127,178,0.04);
 }
 .fc-upload-text { font-size: 10px; font-weight: 600; }
-
-.fc-hover-actions {
-  position: absolute; top: 8px; right: 8px; z-index: 3;
-  display: flex; gap: 3px; opacity: 0; transition: opacity 0.15s;
-}
-.fc-card:hover .fc-hover-actions { opacity: 1; }
 
 /* .rename-sizer / .rename-ghost / .rename-input-inline 已提到 global.css（全站重命名输入框共用） */
 </style>

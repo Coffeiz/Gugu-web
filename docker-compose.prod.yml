@@ -136,6 +136,7 @@ services:
       <<: *inotify-limit-environment
       GUGU_UPDATE_DEPLOYMENT_MODE: split_compose
       PUBLIC_APP_URL: ${GUGU_PUBLIC_APP_URL:-http://localhost:9595}
+      ADMIN_ALLOWED_HOSTS: ${GUGU_ADMIN_ALLOWED_HOSTS:-}
       GUGU_LOG_FILE: /app/logs/gugu.log
       DB__HOST: ${GUGU_DB_HOST:-postgres}
       DB__PORT: ${GUGU_DB_PORT:-5432}
@@ -280,7 +281,7 @@ services:
     logging: *json-file-logging
     image: nginx:alpine
     ports:
-      - "${GUGU_HTTP_PORT:-9595}:80"
+      - "${GUGU_HTTP_BIND:-0.0.0.0}:${GUGU_HTTP_PORT:-9595}:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:

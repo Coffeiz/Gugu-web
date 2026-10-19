@@ -114,7 +114,11 @@ export function openMermaidPreview(
     close()
   }
   const onPointerDown = (event: PointerEvent) => {
-    if (event.button !== 0 || (event.target as HTMLElement).closest('.iv-toolbar')) return
+    if (
+      event.button !== 0
+      || (event.target as HTMLElement).closest('.iv-toolbar')
+      || (event.target instanceof Node && sourceView.contains(event.target))
+    ) return
     event.preventDefault()
     window.getSelection()?.removeAllRanges()
     dragStart = { x: event.clientX, y: event.clientY, offsetX, offsetY }
@@ -134,6 +138,8 @@ export function openMermaidPreview(
     updateView()
   }
   const onWheel = (event: WheelEvent) => {
+    // 源码模式由浏览器处理文本选择和滚动，不要把滚轮事件当成图表缩放。
+    if (event.target instanceof Node && sourceView.contains(event.target)) return
     event.preventDefault()
     setScale(Math.min(8, Math.max(0.1, scale * (event.deltaY > 0 ? 0.9 : 1.1))))
   }

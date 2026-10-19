@@ -2,7 +2,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { i18n } from '@/i18n'
-import { agentApi, trackApi } from '@/services/api'
+import { agentApi, CLIENT_ID, trackApi } from '@/services/api'
 import { useChatStream } from '@/components/common/gugu-chat/composables/useChatStream'
 import { mapSessionMessageDelta, mergeSessionMessageDelta } from '@/components/common/gugu-chat/composables/sessionMessageSync'
 import type { ChatMessage } from '@/components/common/gugu-chat/chatTypes'
@@ -90,6 +90,28 @@ describe('useChatStream 停止 run', () => {
 
     expect(options.messages.value).toHaveLength(1)
     expect(options.messages.value[0]?.toolStatus).toBe('success')
+  })
+
+  it('当前网页对话成功调用 present_file 时将文件交给该网页预览', async () => {
+    const options = createOptions([])
+    const onPresentFile = vi.fn()
+    options.onPresentFile = onPresentFile
+    const stream = useChatStream(options)
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode([
+          { type: 'tool_done', name: 'present_file', status: 'success', origin_client_id: CLIENT_ID, result: { ok: true, file_id: 17, name: '设计稿', ext: 'png' } },
+          { type: 'tool_done', name: 'present_file', status: 'success', origin_client_id: 'another-tab', result: { ok: true, file_id: 18, name: '其他标签页文件', ext: 'png' } },
+          { type: 'done', run_id: 'run-1' },
+        ].map(event => `data: ${JSON.stringify(event)}\n\n`).join('')))
+        controller.close()
+      },
+    }))))
+
+    await stream.resumeStream(42)
+
+    expect(onPresentFile).toHaveBeenCalledWith({ file_id: 17, name: '设计稿', ext: 'png' })
+    expect(onPresentFile).toHaveBeenCalledTimes(1)
   })
 
   it('不同回合复用相同 toolCallId 时仍分别更新各自的工具卡', async () => {

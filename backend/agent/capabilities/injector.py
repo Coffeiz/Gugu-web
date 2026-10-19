@@ -26,9 +26,10 @@ def _tool_field_signature(name: str) -> str:
     """从唯一工具注册表生成字段签名，避免 description_short 再维护一份字段文案。"""
     try:
         from agent.tools import registry
+        from agent.llm import modelctx
 
         tool = registry.snapshot().get(name)
-        schema = getattr(tool, "input_schema", None)
+        schema = tool.input_schema_for(modelctx.get_model_cfg()) if tool is not None else None
     except Exception:
         schema = None
     if not isinstance(schema, dict):

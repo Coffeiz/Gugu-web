@@ -246,7 +246,10 @@ class FileOps:
         if not f:
             raise NotFound("file.not_found", "文件不存在")
         new_display = display_name if display_name is not None else f.display_name
-        new_ext = validated_rename_extension(f, ext if ext is not None else f.ext)
+        # 移动请求不修改后缀；仅大小写不同也视为后缀未变。只有真正更改后缀时
+        # 才校验文本/二进制类别，避免 MIME 与扩展名分类差异误拦移动或改名。
+        new_ext = f.ext if ext is None or ext.lower() == f.ext.lower() \
+            else validated_rename_extension(f, ext)
         new_stage = stage_name if stage_name is not None else f.stage_name
         # 仅显式提供 folder_id/project_id（含 null）时移动；纯改名不能隐式移回个人空间。
         new_fid = folder_id if folder_set else f.folder_id
@@ -321,8 +324,6 @@ class FileOps:
             folder_msg="目标文件夹不存在，或不属于目标项目/个人空间",
             project_msg="目标项目不存在")
 
-        data = await self.storage.get(f.storage_key)
-
         if on_conflict == "overwrite" and overwrite_file_id is not None:
             existing = await get_owned(self.db, File, overwrite_file_id, user_id)
             if not existing or existing.deleted_at:
@@ -343,7 +344,7 @@ class FileOps:
                 operation="file_copy_overwrite", resource_type="file", resource_id=existing.id,
                 idempotency_key=f"file-copy-overwrite:{existing.id}:{next_version}",
             )
-            await self.storage.put(existing.storage_key, data, f.mime_type)
+            fingerprint = await self.storage.copy_with_fingerprint(f.storage_key, existing.storage_key)
             existing.size = f.size
             existing.size_bytes = f.size_bytes
             existing.mime_type = f.mime_type
@@ -355,7 +356,7 @@ class FileOps:
             await self.db.flush()
             await record_canonical_file_change(
                 self.db, user_id=user_id, storage_key=existing.storage_key,
-                observed_fingerprint=hashlib.sha256(data).hexdigest(),
+                observed_fingerprint=fingerprint,
             )
             return FileResult(existing, project, folder_name or None, was_overwrite=True)
 
@@ -385,9 +386,9 @@ class FileOps:
             operation="file_copy", resource_type="file", resource_id=new_file.id,
             idempotency_key=f"file-copy:{new_file.id}",
         )
-        await self.storage.put(new_key, data, f.mime_type)
+        fingerprint = await self.storage.copy_with_fingerprint(f.storage_key, new_key)
         await record_canonical_file_change(
             self.db, user_id=user_id, storage_key=new_file.storage_key,
-            observed_fingerprint=hashlib.sha256(data).hexdigest(),
+            observed_fingerprint=fingerprint,
         )
         return FileResult(new_file, project, folder_name or None)

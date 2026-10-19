@@ -185,22 +185,13 @@ docker restart gugu-web-main-nginx-1
 
 ### Shell 沙盒前置（首次部署或迁移时）
 
-沙盒容器由 backend 通过 docker.sock 作为**兄弟容器**启动，`--mount src=.../users/<uid>/shell`
-由**宿主机 daemon** 解析，所以宿主机需要看到与容器内一致的 `Gugu-data` 路径。Compose
-会把 `GUGU_DATA_HOST_DIR` 直接 bind 到容器的 `/data`，未设置时按 Compose 文件目录解析为
-`Gugu-data`，首次启动会自动创建。启用 `sandbox` profile 时，`sandboxd` 会在启动前自动为每个用户的
-`shell`、`个人文件`、`项目文件` 根目录及已有子目录
-设置 Rootless UID/GID ACL，并用真实沙盒 UID 做写入探针；不需要手工 chmod/chown：
+后续部署统一按[Rootless 启动、路径隐私与切换规范](./sandbox-path-privacy.md)核对官方启动脚本、独立存储目录、备份、验收和回滚。FUSE 根挂载冒烟不代表完整目录转接已部署；在目标环境全部验收前不得直接切换现有 daemon 的存储驱动。
 
-```bash
-mkdir -p Gugu-data && chown 1001:1001 Gugu-data   # 1001 = rootless docker 用户的 uid
-docker -H unix:///run/user/1001/docker.sock pull debian@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
-```
+沙盒容器由 sandbox manager 经独立 Rootless daemon 创建，backend/worker 通过受限 sandbox socket 请求执行，不直接获取 Docker Socket。路径由目标 daemon 解析，必须核对应用逻辑存储目录、manager 可见目录与 daemon 来源目录的映射；不能要求它们简单使用相同字符串，更不能用目录改名代替路径隐私。
 
-- 沙盒镜像 `--pull=never`，必须提前拉进 rootless daemon 的镜像库，否则报 image not found。
-- rootless 下沙盒进程使用目标 daemon 的 subordinate UID/GID 映射；sandboxd 启动前会从宿主机的
-  `/etc/passwd`、`/etc/subuid`、`/etc/subgid` 读取映射并写入 ACL。若探针失败，bootstrap
-  会失败并在日志中给出权限错误，不能等到用户第一次执行 Shell 才发现。
+- 新版生产分体 Compose 使用外部 manager；一体化镜像使用内置 manager。历史含 sandboxd 的 Compose override 需按现场实际文件检查，不把旧的 `sandbox` profile 命令套到所有部署。
+- 沙盒镜像 `--pull=never`，必须提前将与发布匹配的固定摘要镜像导入目标 Rootless daemon；不能只在运行业务容器的 rootful daemon 中检查镜像。
+- 专用运行用户及 subordinate UID/GID 从目标环境解析，不硬编码另一台机器的 UID，也不对用户目录整树 chown。按对应部署入口显式准备最小 ACL，并以真实执行 UID 验证读写和跨用户拒绝；失败时保持沙盒不可用，不回退到宿主执行。
 - 从旧单容器升级：必须先执行 `scripts/migrate-single-container-to-compose.sh` 完成一次数据库、
   用户文件和配置迁移；已经迁移到 Compose 持久化卷后，正式更新脚本不再执行旧的 named volume
   文件迁移。

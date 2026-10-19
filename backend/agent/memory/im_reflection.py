@@ -102,9 +102,11 @@ def _build_append_branch_input(scope: MemoryScope, job, task_type: str,
         "user_message_count": sum(1 for message in messages if message.role == "user"),
         "senders": target_senders,
     }
-    delta = (
-        f"{_scope_prompt(scope, task_type=task_type)}\n\n"
-        f"已有群组/用户记忆：\n{json.dumps(reflection_current, ensure_ascii=False)}\n\n"
+    rules = f"{_scope_prompt(scope, task_type=task_type)}\n\n"
+    shared_memory = f"已有群组/用户记忆：\n{json.dumps(reflection_current, ensure_ascii=False)}\n\n"
+    # 群与成员任务先共享完整资料，再追加各自规则，避免相同资料因指令分叉重复计费。
+    prefix = rules + shared_memory if task_type == "private-owner" else shared_memory + rules
+    delta = prefix + (
         f"【本批反思范围】\n{json.dumps(target_scope, ensure_ascii=False)}\n\n"
         f"本批正文已在追加历史中，共 {target_scope['user_message_count']} 条用户消息；"
         "只从追加历史末尾与本批范围对应的用户消息提取新增记忆，不要在任务中寻找重复正文，"
@@ -348,10 +350,13 @@ async def _messages_for_job(db, job):
 
 
 async def _mark_failure(db, job, exc: BaseException) -> None:
+    from agent.providers.errors import ProviderInputRejected
+
     now = now_utc()
     job.retry_count += 1
-    job.last_error_code = type(exc).__name__[:100]
-    if job.retry_count >= MAX_RETRIES:
+    rejected = isinstance(exc, ProviderInputRejected)
+    job.last_error_code = "input_sensitive" if rejected else type(exc).__name__[:100]
+    if rejected or job.retry_count >= MAX_RETRIES:
         job.status = "dead"
         job.dead_at = now
         job.next_attempt_at = None
@@ -571,6 +576,10 @@ async def _execute_job_locked(job_id: int, settings, *, snapshot=None) -> bool:
             )
             out = branch.output if branch.ok and isinstance(branch.output, dict) else {}
             if branch.return_reason == "provider_error":
+                if branch.provider_error_code == "input_sensitive":
+                    from agent.providers.errors import ProviderInputRejected
+
+                    raise ProviderInputRejected()
                 raise RuntimeError("memory_reflection_provider_error")
             if not out and messages:
                 raise RuntimeError("memory_reflection_empty_result")

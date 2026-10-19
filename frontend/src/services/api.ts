@@ -1013,6 +1013,7 @@ export const agentApi = {
   listSessions:    ()                  => get('/agent/sessions'),
   listCommands:    ()                  => get<{ commands: Array<{ command: string; label: string; description: string; insert: string }> }>('/agent/commands'),
   getUiLabels:     ()                  => get<{ thinking?: string[]; contextCompacting?: string[] }>('/agent/ui-labels'),
+  getVoiceAvailability: ()             => get<{ available: boolean }>('/agent/voice-availability'),
   greeting:        (locale: SupportedLocale = getLocale()) => get<{ text?: string; enabled?: boolean }>(`/agent/greeting?locale=${encodeURIComponent(locale)}`), // 对话框默认问候（咕咕据近期记忆生成）
   getMessages:     (sessionId: string, afterId?: number, limit?: number) => {
     const params = new URLSearchParams()

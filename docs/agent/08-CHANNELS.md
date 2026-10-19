@@ -24,7 +24,7 @@
 |---|---|---|---|---|
 | 文本入站 | 完整 | 完整 | 完整 | 完整 | 完整 |
 | 文本出站 | 完整 | 完整 | 完整 | 完整 | 完整 |
-| 增量 token 流 | 完整，Agent SSE | 降级为按 Round 发送 | 降级为按 Round 发送 | 降级为按 Round 发送 | 降级为按 Round 发送 |
+| 增量 token 流 | 完整，Agent SSE | 降级为按 Round 发送 | 降级为按 Round 发送 | 降级为按 Round 发送 | 私聊以 live draft 节流预览，正式回复仍按消息发送 |
 | 多 Round 分段 | Web 事件流展示 | 完整，独立发送每个非空 Round | 完整，统一收集后发送 | 完整，统一收集后发送 | 完整，统一收集后发送 |
 | 私聊 | 完整 | C2C | c2c | p2p 归一为 c2c | 完整 |
 | 群聊 | 不适用 | 完整，支持 @/被动记录策略 | 不支持：官方 ClawBot/iLink 当前未开放普通微信群聊 | 完整，依赖 chat_id | 完整，依平台 chat 类型 |
@@ -37,6 +37,7 @@
 | 工具进度消息 | SSE 事件 | 完整，纯文本/Markdown 适配 | 文本适配 | 文本/卡片适配 | 文本适配 |
 | `ask_user` 交互 | Web 交互 API | Inline Keyboard，失败降级文本 | 文本选项 | 交互卡片，失败降级文本 | 文本选项 |
 | Markdown | Web 前端渲染 | 按会话格式，失败降级纯文本 | 平台文本适配 | 转换为文本/卡片元素 | 平台文本适配 |
+| Mermaid 图表 | SVG 渲染、交互查看和 PNG 下载 | 渲染为 PNG，按文本顺序发送 | 渲染为 PNG，按文本顺序发送 | 渲染为 PNG，可在卡片中呈现 | 渲染为 PNG，按文本顺序发送 |
 | 键盘/卡片交互 | Web UI | 键盘 | 降级文本 | 卡片 | 不支持，降级文本 |
 | typing 状态 | Web 前端生成态 | 由 IM 活动状态适配 | typing ticket，失败时不阻塞 | 由平台适配能力决定 | 暂无 |
 | 回复关联 | session/run | QQ `msg_id` | `context_token` | 飞书消息关联 | chat/message ID |
@@ -51,13 +52,13 @@
 
 ```mermaid
 flowchart LR
-    IN[渠道入站<br/>Web / QQ / 微信 / 飞书]
+    IN[渠道入站<br/>Web / QQ / 微信 / 飞书 / Telegram]
     MSG[统一消息<br/>PlatformMessage / AgentRequest]
     AGENT[Agent Loop<br/>Run / Round / Tool / Context]
     OUT[出站适配<br/>PlatformReply / Agent SSE]
     HISTORY[(Canonical History)]
     EVENTS[资源实时事件<br/>live-event-v1]
-    CHANNELS[渠道出口<br/>Web / QQ / 微信 / 飞书]
+    CHANNELS[渠道出口<br/>Web / QQ / 微信 / 飞书 / Telegram]
     WEBUI[Web 页面状态]
 
     IN --> MSG --> AGENT --> OUT --> CHANNELS
@@ -70,7 +71,7 @@ flowchart LR
 
 1. 所有渠道先进入统一消息入口，Agent Loop 是唯一的共享处理层；平台连接和展示差异留在入口/出口适配器。
 2. Agent Loop 内部虽然包含 Run、Round、Tool 和 Context，但在渠道架构中只抽象为一个处理层，不为每个平台复制一套。
-3. 出口回到原渠道：Web 使用 Agent SSE，QQ、微信、飞书使用各自的发送 API；这不是把平台原始消息重新交给 Agent。
+3. 出口回到原渠道：Web 使用 Agent SSE，QQ、微信、飞书和 Telegram 使用各自的发送 API；这不是把平台原始消息重新交给 Agent。
 4. canonical history 是持久事实源，Agent stream event 和 `live-event-v1` 是实时事件，PlatformReply 是出站适配结构；平台气泡如何拆分不能反向改变历史语义。
 
 ## 消息处理主链路
@@ -79,7 +80,7 @@ flowchart LR
 
 ```text
 1. 平台收到消息
-   Web / QQ / 微信 / 飞书
+   Web / QQ / 微信 / 飞书 / Telegram
         |
 2. 入站适配
    解析正文、发送者、owner、群/私聊、引用、附件、mention
@@ -268,7 +269,7 @@ QQ 当前支持全量群消息进入网关；`group_requires_at`、`group_read_e
 - Web 使用 Gugu JWT 作为直接身份，不需要 `owner_user_id` 与平台用户 ID 的双层映射。
 - 前端资源同步使用 `GET /api/v1/live/stream`，后端从 Redis 用户频道和全局广播频道转成 `live-event-v1` SSE。
 - Web 的事件订阅只通知资源变更，例如 projects、files、mind、sessions、terminals；客户端收到事件后刷新或应用 canonical payload。
-- Web SSE 不能作为 QQ、微信或飞书的消息传输替代；IM 回复仍必须经过平台发送 API。
+- Web SSE 不能作为 QQ、微信、飞书或 Telegram 的消息传输替代；IM 回复仍必须经过平台发送 API。
 
 ### 5.5 Telegram
 
@@ -277,6 +278,14 @@ QQ 当前支持全量群消息进入网关；`group_requires_at`、`group_read_e
 - 使用 Telegram Bot API long-poll 获取 update，并在入队前按 update ID 去重与持久化游标。
 - 429 响应遵循 `retry_after`；普通网络错误采用有限等待重试。
 - 私聊和群聊有各自的节流键；文本与文件通过 Bot API 出站。
+- 私聊可以使用 Telegram live draft 预览生成进度；正式回复按消息发送，遇到 Mermaid 时按文本和图片生成顺序交付。
+- 支持 Telegram Inline Keyboard 选项交互；平台不支持的交互形式会降级为文本。
+
+## Mermaid 图表回复
+
+- Web 聊天和 Markdown 文件预览复用前端 Mermaid 呈现能力；图表可放大查看、缩放，并可导出 PNG。
+- IM 回复中的完整 Mermaid 代码块由服务端渲染为 PNG，按原回复顺序与普通文本交付。飞书可在卡片内呈现图片；其他渠道通过相邻消息保持顺序。
+- 图表失败时保留可读文本回退，不影响普通回复收尾。渲染器使用受限的短生命周期运行时；限制和验收见[Mermaid 跨端渲染 PRD](../prds/【已完成】PRD-MERMAID-1-统一Mermaid渲染与跨端PNG输出.md)。
 
 ## 6. 统一出站协议
 

@@ -16,6 +16,30 @@ import { findLatestPersistedAssistant, timelineSyncKey } from './sessionMessageS
 
 interface StatusItem { kind: 'text' | 'dots' | 'hide'; label?: string }
 
+const RESUMED_HISTORY_EVENTS = new Set(['tool_call', 'tool_done', 'token', 'file', 'link_buttons', 'interaction_required'])
+
+interface PresentedFile {
+  file_id: number
+  name?: string
+  ext?: string
+}
+
+function parsePresentedFileResult(result: unknown): PresentedFile | null {
+  let value = result
+  if (typeof value === 'string') {
+    try { value = JSON.parse(value) } catch { return null }
+  }
+  if (!value || typeof value !== 'object') return null
+  const candidate = value as Record<string, unknown>
+  const fileId = Number(candidate.file_id)
+  if (!Number.isSafeInteger(fileId) || fileId <= 0 || candidate.ok !== true) return null
+  return {
+    file_id: fileId,
+    ...(typeof candidate.name === 'string' ? { name: candidate.name } : {}),
+    ...(typeof candidate.ext === 'string' ? { ext: candidate.ext } : {}),
+  }
+}
+
 function localizedToolStatusLabel(event: { name?: string; label?: string; input?: unknown }): string {
   let toolName = event.name || ''
   // call_tool 是固定 Adapter，实际工具名在 input.name 中，和完成后的工具卡片保持一致。
@@ -66,12 +90,14 @@ export function useChatStream(options: {
   contextCompactingItem: () => StatusItem
   scrollBottom: (force?: boolean) => Promise<void>
   fetchSessions: () => Promise<void>
+  syncResumedHistory?: (id: number) => Promise<void>
   refreshAfterTools: (usedTools: Set<string>) => Promise<void>
   loadQuota: () => void
   playIncomingMessageSfx: () => void
   onQueuePersistenceError?: (error: unknown) => void
   onQueueDispatchError?: (error: unknown) => void
   onContentReset?: () => void
+  onPresentFile?: (file: PresentedFile) => void
 }) {
   const liveStore = useLiveStore()
   const { messages, mkid, now, sessionId, sessions } = options
@@ -395,6 +421,7 @@ export function useChatStream(options: {
     let outcomeMessageDbId: number | null = null
     let detached = false         // 一旦用户切到别的会话，本流永久脱离、不再污染当前视图
     let replaySuppressed = false
+    let resumedHistoryReady = Boolean(onSessionId)
     const displayedGreeting = ownerSid == null
       ? (messages.value.find(m => m._greeting)?._greetFull || '').trim()
       : ''
@@ -408,7 +435,13 @@ export function useChatStream(options: {
       (max, message) => Math.max(max, message._timelineOrder ?? 0),
       0,
     )
-    const nextTimelineOrder = () => ++timelineOrder
+    const nextTimelineOrder = () => {
+      // 跨端用户消息可能在连接建立后才补入；不能沿用连接开始时的旧序号。
+      timelineOrder = messages.value.reduce(
+        (max, message) => Math.max(max, message._timelineOrder ?? 0), timelineOrder,
+      )
+      return ++timelineOrder
+    }
     const applyRunOutcome = (outcome: ChatMessage['runOutcome']) => {
       if (!outcome || !outcomeMessageDbId) return
       const target = messages.value.find(message => message.dbId === outcomeMessageDbId)
@@ -463,6 +496,12 @@ export function useChatStream(options: {
           if (!line.startsWith('data: ')) continue
           const raw = line.slice(6).trim(); if (!raw) continue
           let evt; try { evt = JSON.parse(raw) } catch { continue }
+          if (!resumedHistoryReady && sid != null && live() && RESUMED_HISTORY_EVENTS.has(evt.type)) {
+            // IM 的 running 通知可能早于用户消息提交。等首个可见事件再补取历史，
+            // 此时执行器已提交用户消息，重放工具卡才能排在它之后；整条续看只同步一次。
+            await options.syncResumedHistory?.(sid)
+            resumedHistoryReady = true
+          }
           const eventUserMessageId = Number(evt.user_message_id)
           if (Number.isInteger(eventUserMessageId) && eventUserMessageId > 0) {
             outcomeMessageDbId = eventUserMessageId
@@ -547,6 +586,14 @@ export function useChatStream(options: {
             // 活动气泡与完成后的工具卡片都按稳定工具名翻译；服务端 label 仅作未知工具的 fallback。
             if (live()) options.setStatus({ kind: 'text', label: localizedToolStatusLabel(evt) })
           } else if (evt.type === 'tool_done') {
+            if (evt.name === 'present_file' && evt.status === 'success') {
+              const presentedFile = parsePresentedFileResult(evt.result)
+              // 只在流仍属于当前展示视图、且 run 由本标签页发起时打开文件。
+              // 同会话续看会收到相同 SSE，但不能在另一标签页抢开原标签页的文件。
+              if (presentedFile && live() && evt.origin_client_id === CLIENT_ID) {
+                options.onPresentFile?.(presentedFile)
+              }
+            }
             // 改动类工具一完成就即时 bump 对应资源（走已连好的对话流，不等回合末、不靠 best-effort
             // 的 events SSE）→ 文件预览 / 项目卡 / 日历当场刷新。视图是全局的，切走也该刷，故不受 live() 限制。
             if (evt.name) {

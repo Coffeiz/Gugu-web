@@ -15,6 +15,7 @@ from app.models import FileSyncBinding, FileSyncReconcileRun
 ACTIVE_BINDING_STATUSES = ("queued", "running", "cancelling")
 RUNNING_STATUSES = ("running", "cancelling")
 RECONCILABLE_OVERFLOW_CODES = {
+    "kernel_event_queue_overflow", "output_overflow", "watcher_event_buffer_overflow",
     "python_event_queue_overflow",
     "event_buffer_overflow",
 }
@@ -62,6 +63,7 @@ async def enqueue_reconcile_run(
     binding_id: int,
     action: str,
     allow_delete: bool = False,
+    root_identity: tuple[int, int] | None = None,
 ) -> FileSyncReconcileRun:
     if action not in {"dry_run", "repair", "initialize", "mirror_out"}:
         raise ReconcileRunError("对账任务类型无效")
@@ -94,6 +96,8 @@ async def enqueue_reconcile_run(
         root_fingerprint=binding.root_fingerprint,
         result_counts=dict(_EMPTY_RESULT_COUNTS),
     )
+    if root_identity is not None:
+        row.result_counts = {**row.result_counts, "rootDevice": root_identity[0], "rootInode": root_identity[1]}
     db.add(row)
     await db.flush()
     return row
@@ -409,6 +413,12 @@ def serialize_reconcile_run(row: FileSyncReconcileRun) -> dict:
     }
 
 
+def merge_run_counts(previous: dict | None, counts: dict) -> dict:
+    """进度更新保留入队时捕获的根目录身份，不把它降成普通计数覆盖。"""
+    return {**{key: value for key, value in (previous or {}).items()
+               if key in {"rootDevice", "rootInode"}}, **counts}
+
+
 async def update_run_progress(
     db: AsyncSession,
     run_id: UUID,
@@ -422,7 +432,10 @@ async def update_run_progress(
     if scanned_count is not None:
         values["scanned_count"] = scanned_count
     if result_counts is not None:
-        values["result_counts"] = result_counts
+        previous = await db.scalar(select(FileSyncReconcileRun.result_counts).where(
+            FileSyncReconcileRun.id == run_id,
+        ).with_for_update())
+        values["result_counts"] = merge_run_counts(previous, result_counts)
     result = await db.execute(update(FileSyncReconcileRun).where(
         FileSyncReconcileRun.id == run_id,
         FileSyncReconcileRun.lease_owner == worker_id,

@@ -1,12 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import {
   apiFormatsFromSnapshot,
+  apiFormatsForProvider,
   defaultApiFormatFromSnapshot,
   defaultBaseUrlFromSnapshot,
   retainApiFormatFromSnapshot,
 } from '@/utils/modelProviders'
 
 describe('Provider API 能力快照', () => {
+  it('MiniMax 的接口格式不随模型名输入变化，避免配置项因能力刷新而闪退', () => {
+    expect(apiFormatsForProvider('minimax', '', 'MiniMax-M3.1-Flash-Preview')).toEqual(['openai', 'responses', 'anthropic'])
+    expect(apiFormatsForProvider('minimax', '', 'MiniMax-M3.1-Flash-PreviewX')).toEqual(['openai', 'responses', 'anthropic'])
+  })
+
   it('按后端当前模型能力渲染协议，并在模型切换后纠正失效协议', () => {
     const qwenMax = {
       supported_api_formats: ['openai', 'responses'],

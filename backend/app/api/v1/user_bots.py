@@ -112,7 +112,7 @@ async def create_my_bot(
     await db.commit()
     await db.refresh(bot)
     from app.core import events
-    await events.bump_context_revision(current_user.id, "im_channels")
+    await events.publish(current_user.id, "im_channels", operation="refresh")
     await _touch_gateway()
     return _out(bot)
 
@@ -206,7 +206,7 @@ async def update_my_bot(
     if bot.group_requires_at is False and body.group_response_mode is None:
         bot.group_read_enabled = False
     if body.group_allowed_tools is not None:
-        unsupported = set(body.group_allowed_tools) - {"web_search", "http_get", "image_search", "read_file", "inspect_images", "send_file", "group_context_search"}
+        unsupported = set(body.group_allowed_tools) - {"xng_search", "similar_image_search", "http_get", "read_file", "inspect_images", "send_file", "group_context_search"}
         if unsupported:
             raise HTTPException(400, "当前群成员只支持网页搜索、网页阅读、图片搜索、发网络图片和当前群上下文搜索")
         from app.services.im_identity import normalize_group_allowed_tools
@@ -220,7 +220,7 @@ async def update_my_bot(
     await db.commit()
     await db.refresh(bot)
     from app.core import events
-    await events.bump_context_revision(current_user.id, "im_channels")
+    await events.publish(current_user.id, "im_channels", operation="refresh")
     await _touch_gateway()
     return _out(bot)
 
@@ -239,7 +239,7 @@ async def unbind_qq_identity(
     bot.owner_bound_at = None
     await db.commit()
     from app.core import events
-    await events.bump_context_revision(current_user.id, "im_channels")
+    await events.publish(current_user.id, "im_channels", operation="refresh")
 
 
 @router.delete("/{bot_id}", status_code=204)
@@ -261,5 +261,5 @@ async def delete_my_bot(
     except Exception:
         pass
     from app.core import events
-    await events.bump_context_revision(current_user.id, "im_channels")
+    await events.publish(current_user.id, "im_channels", operation="refresh")
     await _touch_gateway()

@@ -85,6 +85,8 @@ owner 闲置反思触发的会话压缩，应先在捕获主请求快照的同�
 
 同日协议扩查：Responses 续接开/关及 Anthropic 关闭续接均通过主请求→快照→反思的 SDK payload 前缀回归；Chat Completions 的 wire 历史已含基础 system，分支不可再次无条件插入，否则会重复人格前缀。该插入问题已修复，字符串和 text block 两种形态均覆盖。Responses 原生 reasoning/function-call 项继续原样传递，协议回归不代表真实 provider 缓存率保证。
 
+2026-10-18：群组与成员反思的任务增量先放共同的已有记忆资料，再放专用任务指令，避免相同资料因首段规则不同重复读取；私聊任务与 owner 快照路径保持原顺序。真实 MiniMax Responses 对照中成员反思由约 65% 提升到约 98%；首次冷重建单独统计，不保证命中。用量场景统计新增冷请求次数（有输入且 cache_read 为 0）和排除冷请求后的输入 token 加权缓存率；微量命中仍计入。详见 `docs/reports/2026-10-18-INVEST-记忆反思缓存率与群分支资料顺序.md`。
+
 **修改缓存策略前必须**：
 1. 用 `backend/scripts/diagnostics/test_cache_strategy_compare.py` 做对比测试
 2. 记录到 `docs/reports/OPT-Cache-Strategy-*.md`

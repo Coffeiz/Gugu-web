@@ -213,7 +213,7 @@ async def _list_recent_attachments(db, user_id, args: dict):
 
 
 async def _send_file_from_url(user_id, url: str, title: str, *, stage: bool = True, max_bytes: int | None = None):
-    """下载一张网络图片（如 image_search 结果的 img_src）暂存为聊天附件，返回 _artifact（attach_id 版）。
+    """下载一张网络图片（如 xng_search / similar_image_search 结果的 img_src）暂存为聊天附件，返回 _artifact（attach_id 版）。
 
     下载用 streaming + 累计限流：不把整个响应读进内存再判大小（否则群成员给一个
     Content-Length 2GB 的 URL 会先把 2GB 全读进 RAM 才触发 15MB 检查，是 DoS 面）。
@@ -330,7 +330,7 @@ def _apply_title(artifact: dict, title: str | None) -> dict:
 
 async def _send_file(db, user_id, args: dict):
     """把文件发到对话窗口（前端渲染可下载卡片）：文件库里的文件用 file_id/file；
-    网络图片（如 image_search 搜到的）用 url——下载后暂存成聊天附件，同一套 _artifact 机制；
+    网络图片（如 xng_search / similar_image_search 搜到的）用 url——下载后暂存成聊天附件，同一套 _artifact 机制；
     之前收到/发过、还在暂存区的附件用 attach_id——直接重发，不重新下载、不进文件库。
     返回 _artifact，core 据此推一个 file 事件给前端；普通字段回给 LLM。
 
@@ -408,10 +408,10 @@ async def _send_file(db, user_id, args: dict):
 
 
 async def _present_file(db, user_id, args: dict):
-    """把文件直接推到用户当前网页上打开（全局预览窗口）。只读、不改数据。
+    """返回文件展示指令，由发起本次网页对话的浏览器打开。只读、不改数据。
 
-    复用 events:{user_id} 实时频道：载荷只含 file_id/name/ext 三个展示必需字段，
-    取数由前端预览组件走既有 /files/{id}/download 端点（端点自身校验属主）。
+    不向用户级实时频道广播展示动作，避免同一账号的多个浏览器都响应，导致音频在
+    非当前浏览器播放。文件内容仍由前端预览组件走既有下载端点并校验属主。
     IM 会话里禁用——用户不在网页上，推了也看不到。
     """
     from agent.im import imctx
@@ -421,13 +421,13 @@ async def _present_file(db, user_id, args: dict):
     f, err = await _resolve_file(db, user_id, args)
     if err:
         return err
-    from app.core.redis import get_redis
-    payload = {"present": {"file_id": f.id, "name": f.display_name, "ext": f.ext}}
-    try:
-        await get_redis().publish(f"events:{user_id}", json.dumps(payload, ensure_ascii=False))
-    except Exception as exc:
-        return json.dumps({"error": f"推送失败：{redact(str(exc))}"}, ensure_ascii=False)
-    return {"ok": True, "message": f"已在用户当前页面打开《{f.display_name}.{f.ext}》。", "file_id": f.id}
+    return {
+        "ok": True,
+        "message": f"已在当前浏览器打开《{f.display_name}.{f.ext}》。",
+        "file_id": f.id,
+        "name": f.display_name,
+        "ext": f.ext,
+    }
 
 # 对外使用稳定名称；files.py 继续导出旧的下划线名称，兼容现有调用方。
 normalize_send_path = _normalize_send_path

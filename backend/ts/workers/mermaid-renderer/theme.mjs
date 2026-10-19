@@ -148,6 +148,10 @@ export function createMermaidThemeConfig(colors, fontFamily) {
     ].join('\n'),
     themeVariables: {
       ...colors,
+      // Flowchart 节点使用 nodeTextColor，而不是所有图表都直接读取 primaryTextColor。
+      // 显式同步可避免自定义 classDef 节点回退到 Mermaid 默认深色文字。
+      nodeTextColor: colors.primaryTextColor,
+      textColor: colors.primaryTextColor,
       fontFamily,
     },
   }

@@ -82,6 +82,168 @@ function normalizeRasterColor(color) {
   return `rgb(${channels.map(channel => Math.round((channel + offset) * 255)).join(', ')})`
 }
 
+/** Resvg 对部分 Mermaid 生成的 HSL 色值会回退成黑色；统一转换 SVG 中的色值。 */
+export function normalizeMermaidRasterColors(root) {
+  const hslColor = /hsl\(\s*-?[\d.]+(?:deg)?[, ]+\s*[\d.]+%[, ]+\s*[\d.]+%\s*\)/gi
+  const normalize = value => value.replace(hslColor, color => normalizeRasterColor(color))
+  for (const element of root.getElementsByTagName('*')) {
+    for (const attribute of [...element.attributes]) {
+      const value = normalize(attribute.value)
+      if (value !== attribute.value) element.setAttribute(attribute.name, value)
+    }
+  }
+  for (const style of root.getElementsByTagName('style')) {
+    const css = style.textContent || ''
+    const nextCss = normalize(css)
+    if (nextCss !== css) style.textContent = nextCss
+  }
+  return root
+}
+
+function styleDeclarations(element) {
+  return new Map((element.getAttribute('style') || '').split(';').flatMap((entry) => {
+    const separator = entry.indexOf(':')
+    return separator < 0 ? [] : [[entry.slice(0, separator).trim(), entry.slice(separator + 1).trim()]]
+  }))
+}
+
+/** 按 State Diagram 节点矩形中心设置标签锚点，覆盖 Mermaid 默认左对齐的行坐标。 */
+export function normalizeMermaidStateDiagramLabelAlignment(root) {
+  for (const node of root.getElementsByTagName('g')) {
+    if (!(node.getAttribute('class') || '').split(/\s+/).includes('statediagram-state')) continue
+    const box = [...node.getElementsByTagName('rect')].find(rect =>
+      (rect.getAttribute('class') || '').split(/\s+/).includes('basic'),
+    )
+    const boxX = Number.parseFloat(box?.getAttribute('x') || '')
+    const boxY = Number.parseFloat(box?.getAttribute('y') || '')
+    const boxWidth = Number.parseFloat(box?.getAttribute('width') || '')
+    const boxHeight = Number.parseFloat(box?.getAttribute('height') || '')
+    if (![boxX, boxY, boxWidth, boxHeight].every(Number.isFinite)) continue
+    const centerX = boxX + boxWidth / 2
+    const centerY = boxY + boxHeight / 2
+
+    for (const label of node.getElementsByTagName('g')) {
+      if (!(label.getAttribute('class') || '').split(/\s+/).includes('label')) continue
+      const translate = label.getAttribute('transform')?.match(/translate\(\s*(-?[\d.]+)(?:[ ,]+(-?[\d.]+))?\s*\)/)
+      const labelOffsetX = Number.parseFloat(translate?.[1] || '0')
+      const labelOffsetY = Number.parseFloat(translate?.[2] || '0')
+      const textX = String(centerX - labelOffsetX)
+      const textY = String(centerY - labelOffsetY)
+      for (const text of label.getElementsByTagName('text')) {
+        setStyle(text, 'text-anchor', 'middle')
+        setStyle(text, 'dominant-baseline', 'central')
+        text.setAttribute('x', textX)
+        text.setAttribute('y', textY)
+
+        const spans = [...text.getElementsByTagName('tspan')]
+        const rows = spans.filter(line => (line.getAttribute('class') || '').split(/\s+/).includes('row'))
+        for (const [index, row] of rows.entries()) {
+          row.setAttribute('x', textX)
+          row.removeAttribute('y')
+          row.setAttribute('dy', index === 0 ? `${-0.55 * (rows.length - 1)}em` : '1.1em')
+        }
+      }
+    }
+  }
+  return root
+}
+
+function matchesSimpleSelector(element, selector) {
+  if (!element || element.nodeType !== 1) return false
+  const simple = selector.replace(/:[\w-]+(?:\([^)]*\))?/g, '').trim()
+  const tag = simple.match(/^[a-z][\w-]*/i)?.[0]
+  if (tag && element.localName.toLowerCase() !== tag.toLowerCase()) return false
+  const classes = new Set((element.getAttribute('class') || '').split(/\s+/).filter(Boolean))
+  return [...simple.matchAll(/\.([\w-]+)/g)].every((match) => classes.has(match[1]))
+}
+
+function matchingCssFill(element, root) {
+  let resolved = ''
+  let bestSpecificity = -1
+  let bestOrder = -1
+  let order = 0
+  for (const style of root.getElementsByTagName('style')) {
+    for (const rule of (style.textContent || '').matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const fill = rule[2].match(/(?:^|;)\s*fill\s*:\s*([^;!]+)(?:;|$)/i)?.[1]?.trim()
+      if (!fill) continue
+      for (const selector of rule[1].split(',')) {
+        const parts = selector.trim().replace(/>/g, ' ').split(/\s+/).filter(Boolean)
+        let candidate = element
+        let matches = true
+        for (let index = parts.length - 1; index >= 0; index -= 1) {
+          while (candidate && !matchesSimpleSelector(candidate, parts[index])) candidate = candidate.parentNode
+          if (!candidate || candidate.nodeType !== 1) {
+            matches = false
+            break
+          }
+          candidate = candidate.parentNode
+        }
+        if (!matches) continue
+        const specificity = (selector.match(/[.#\[]/g) || []).length
+        if (specificity > bestSpecificity || (specificity === bestSpecificity && order >= bestOrder)) {
+          resolved = fill
+          bestSpecificity = specificity
+          bestOrder = order
+        }
+      }
+      order += 1
+    }
+  }
+  return resolved
+}
+
+function svgColor(color) {
+  const normalized = normalizeRasterColor(color.trim())
+  const hex = normalized.match(/^#([\da-f]{6})$/i)
+  if (hex) return [0, 2, 4].map(index => Number.parseInt(hex[1].slice(index, index + 2), 16))
+  const rgb = normalized.match(/^rgba?\(\s*([\d.]+)[, ]+\s*([\d.]+)[, ]+\s*([\d.]+)(?:\s*[,/]\s*([\d.]+))?\s*\)$/i)
+  if (!rgb || (rgb[4] !== undefined && Number(rgb[4]) < 0.99)) return null
+  return rgb.slice(1, 4).map(Number)
+}
+
+function svgContrast(first, second) {
+  const luminance = channels => channels.map((channel) => {
+    const value = channel / 255
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
+  }).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0)
+  const [high, low] = [luminance(first), luminance(second)].sort((a, b) => b - a)
+  return (high + 0.05) / (low + 0.05)
+}
+
+/** 为自定义深色节点和实体表格修正低对比文字，保留本身已可读的自定义颜色。 */
+export function normalizeMermaidRasterTextContrast(root, defaultTextColor) {
+  const black = [0, 0, 0]
+  const white = [255, 255, 255]
+  const textElements = [...root.getElementsByTagName('text'), ...root.getElementsByTagName('tspan')]
+  for (const text of textElements) {
+    let container = text.parentNode
+    let background = null
+    while (container && container !== root) {
+      if (container.nodeType === 1 && container.localName === 'g') {
+        const shapes = ['rect', 'polygon', 'ellipse', 'circle', 'path']
+          .flatMap(name => [...container.getElementsByTagName(name)])
+        const shape = shapes.find(item => item !== text && item.getAttribute('fill') !== 'none')
+        if (shape) {
+          const fill = styleDeclarations(shape).get('fill') || matchingCssFill(shape, root) || shape.getAttribute('fill')
+          background = fill ? svgColor(fill) : null
+          if (background) break
+        }
+      }
+      container = container.parentNode
+    }
+    if (!background) continue
+
+    const declarations = styleDeclarations(text)
+    const foregroundValue = declarations.get('fill') || matchingCssFill(text, root) || text.getAttribute('fill') || defaultTextColor
+    const foreground = svgColor(foregroundValue)
+    if (!foreground || svgContrast(background, foreground) >= 4.5) continue
+    const readable = svgContrast(background, white) >= svgContrast(background, black) ? '#ffffff' : '#000000'
+    setStyle(text, 'fill', readable)
+    setStyle(text, 'stroke', readable)
+  }
+  return root
+}
+
 function normalizeEdgePaths(root) {
   const edgeClass = /(?:^|\s)(?:flowchart-link|messageLine\S*|transition|relationshipLine|edgePath|link)(?:\s|$)/
   const edges = [...root.getElementsByTagName('path')].filter((edge) => {

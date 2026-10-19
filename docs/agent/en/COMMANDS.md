@@ -1,6 +1,6 @@
 # Agent Commands
 
-This document describes the shared slash-command behavior. Commands use either ASCII / or full-width ／, and command names are case-insensitive across Web, QQ, WeChat, and Feishu.
+This document describes the shared slash-command behavior. Commands use either ASCII / or full-width ／, and command names are case-insensitive across Web, QQ, WeChat, Feishu, and Telegram.
 
 ## Command Groups
 

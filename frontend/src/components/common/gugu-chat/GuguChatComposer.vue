@@ -39,7 +39,7 @@
     <button v-if="!recording" class="att-btn" @click="fileInput?.click()" :title="t('chat.addAttachment')" :aria-label="t('chat.addAttachment')">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 7l-5.5 5.5a2.5 2.5 0 0 1-3.5-3.5L9 3.5a1.5 1.5 0 0 1 2 2L5.5 11"/></svg>
     </button>
-    <button v-if="!recording" class="att-btn" @click="onStartRecord" :title="t('chat.voiceInput')" :aria-label="t('chat.voiceInput')">
+    <button v-if="voiceInputAvailable && !recording" class="att-btn" @click="onStartRecord" :title="t('chat.voiceInput')" :aria-label="t('chat.voiceInput')">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="1.5" width="4" height="8" rx="2"/><path d="M3.5 7a4.5 4.5 0 0 0 9 0M8 11.5V14M5.5 14h5"/></svg>
     </button>
     <button
@@ -106,6 +106,7 @@ const props = defineProps<{
   pendingAtt: ChatFile[]
   attUploading: boolean
   recording: boolean
+  voiceInputAvailable: boolean
   recordSecs: number
   expanded: boolean
   ownerZ: number

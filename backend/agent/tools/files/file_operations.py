@@ -300,6 +300,7 @@ async def _list_dir(db, user_id, args: dict):
             out_files.append({
                 "id": file.id, "name": f"{file.display_name}.{file.ext}", "ext": file.ext,
                 "space": file.space, "size": file.size, "project_id": file.project_id,
+                "workspace_directory_id": file.workspace_directory_id,
                 "folder_id": file.folder_id, "folder_path": folder_path,
             })
 
@@ -326,6 +327,7 @@ async def _list_dir(db, user_id, args: dict):
             out_folders.append({
                 "id": folder.id, "name": folder.name, "path": path,
                 "project_id": folder.project_id, "parent_id": folder.parent_id,
+                "workspace_directory_id": folder.workspace_directory_id,
                 "depth": path.count("/"),
                 "file_count": counts.get(folder.id, 0),
             })

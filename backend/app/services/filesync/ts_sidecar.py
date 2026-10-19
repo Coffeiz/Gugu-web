@@ -1,12 +1,13 @@
-"""文件同步 TS watcher sidecar 的最小进程桥接。
+"""文件同步事件源的最小进程桥接。
 
-TS 进程只负责接收目录事件；Python 仍是同步 supervisor、权限校验和 DB 投影的唯一入口。
+子进程只负责接收目录事件；Python 仍是同步 supervisor、权限校验和 DB 投影的唯一入口。
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -15,11 +16,11 @@ FILESYNC_PROTOCOL_VERSION = 1
 
 
 class FileSyncSidecarUnavailable(RuntimeError):
-    """TS watcher 未启动、已退出或协议通信失败。"""
+    """文件监听进程未启动、已退出或协议通信失败。"""
 
 
 class FileSyncSidecar:
-    """单个 worker 进程内唯一的 TS watcher sidecar。"""
+    """单个 worker 进程内唯一的文件监听 sidecar。"""
 
     def __init__(self, *, command: list[str] | None = None):
         self.command = command or self._default_command()
@@ -33,6 +34,8 @@ class FileSyncSidecar:
 
     @staticmethod
     def _default_command() -> list[str]:
+        if sys.platform == "linux":
+            return [sys.executable, str(Path(__file__).with_name("linux_watcher.py"))]
         artifact = Path(__file__).resolve().parents[3] / "bin" / "gugu-filesync-ts-worker.cjs"
         return ["node", str(artifact)]
 
@@ -47,7 +50,7 @@ class FileSyncSidecar:
         if self.running:
             return
         if not self.command or not Path(self.command[-1]).exists():
-            raise FileSyncSidecarUnavailable("TS 文件监听制品不可用")
+            raise FileSyncSidecarUnavailable("文件监听制品不可用")
         async with self._lock:
             if self.running:
                 return
@@ -77,7 +80,7 @@ class FileSyncSidecar:
             )
             self._reader_task = asyncio.create_task(self._read_loop())
         except OSError as exc:
-            raise FileSyncSidecarUnavailable("TS 文件监听进程启动失败") from exc
+            raise FileSyncSidecarUnavailable("文件监听进程启动失败") from exc
 
     async def watch(
         self, binding_id: int, root: Path, *, included_root_entries: tuple[str, ...] | None = None,
@@ -113,7 +116,7 @@ class FileSyncSidecar:
         self._reader_task = None
         for future in self._pending.values():
             if not future.done():
-                future.set_exception(FileSyncSidecarUnavailable("TS 文件监听已关闭"))
+                future.set_exception(FileSyncSidecarUnavailable("文件监听已关闭"))
         self._pending.clear()
         if reader is not None:
             reader.cancel()
@@ -132,7 +135,7 @@ class FileSyncSidecar:
         async with self._lock:
             if not self.running:
                 if not self.command or not Path(self.command[-1]).exists():
-                    raise FileSyncSidecarUnavailable("TS 文件监听制品不可用")
+                    raise FileSyncSidecarUnavailable("文件监听制品不可用")
                 await self.close()
                 await self._start_process()
                 await self._request_unlocked("ping")
@@ -140,7 +143,7 @@ class FileSyncSidecar:
 
     async def _request_unlocked(self, op: str, **payload: Any) -> dict[str, Any]:
         if self._process is None or self._process.stdin is None:
-            raise FileSyncSidecarUnavailable("TS 文件监听未运行")
+            raise FileSyncSidecarUnavailable("文件监听未运行")
         self._sequence += 1
         request_id = f"fs-{self._sequence}"
         future: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
@@ -156,11 +159,11 @@ class FileSyncSidecar:
             await self._process.stdin.drain()
             response = await asyncio.wait_for(future, timeout=10)
         except (BrokenPipeError, ConnectionError, asyncio.TimeoutError) as exc:
-            raise FileSyncSidecarUnavailable("TS 文件监听通信失败") from exc
+            raise FileSyncSidecarUnavailable("文件监听通信失败") from exc
         finally:
             self._pending.pop(request_id, None)
         if response.get("status") != "ok":
-            raise FileSyncSidecarUnavailable("TS 文件监听请求失败")
+            raise FileSyncSidecarUnavailable("文件监听请求失败")
         return response
 
     async def _read_loop(self) -> None:
@@ -189,7 +192,7 @@ class FileSyncSidecar:
                         # 该标记只表示需显式核对，不代表自动触发整树扫描。
                         self._overflow_pending = True
         finally:
-            error = FileSyncSidecarUnavailable("TS 文件监听进程已退出")
+            error = FileSyncSidecarUnavailable("文件监听进程已退出")
             for future in self._pending.values():
                 if not future.done():
                     future.set_exception(error)

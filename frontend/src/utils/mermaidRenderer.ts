@@ -4,7 +4,7 @@ import { sanitizeHtml } from '@/utils/markdown'
 import { resolveMermaidThemeColors } from '@/utils/mermaidTheme'
 import { createMermaidThemeConfig } from '../../../backend/ts/workers/mermaid-renderer/theme.mjs'
 import { prepareMermaidDiagramSource, restoreMermaidDiagramLabels } from '../../../backend/ts/workers/mermaid-renderer/diagram-source.mjs'
-import { normalizeMermaidEdgeLabelBounds, normalizeMermaidEdgeStyles, normalizeMermaidMindmapRootLabel, normalizeMermaidNodeCorners } from '../../../backend/ts/workers/mermaid-renderer/svg-style.mjs'
+import { normalizeMermaidEdgeLabelBounds, normalizeMermaidEdgeStyles, normalizeMermaidMindmapRootLabel, normalizeMermaidNodeCorners, normalizeMermaidStateDiagramLabelAlignment } from '../../../backend/ts/workers/mermaid-renderer/svg-style.mjs'
 
 type MermaidApi = typeof import('mermaid').default
 
@@ -136,6 +136,71 @@ function normalizeSvgEdgeStyles(svg: string, arrowheadColor: string, labels: Rec
   return new XMLSerializer().serializeToString(root)
 }
 
+function parseRgbColor(color: string): [number, number, number] | null {
+  const match = color.match(/^rgba?\(\s*(\d+(?:\.\d+)?)[, ]+\s*(\d+(?:\.\d+)?)[, ]+\s*(\d+(?:\.\d+)?)(?:\s*[,/]\s*([\d.]+))?\s*\)$/i)
+  if (!match || (match[4] !== undefined && Number(match[4]) < 1)) return null
+  return [Number(match[1]), Number(match[2]), Number(match[3])]
+}
+
+function relativeLuminance([red, green, blue]: [number, number, number]): number {
+  const linear = [red, green, blue].map((channel) => {
+    const normalized = channel / 255
+    return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4
+  })
+  return linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722
+}
+
+function contrastRatio(first: [number, number, number], second: [number, number, number]): number {
+  const luminances = [relativeLuminance(first), relativeLuminance(second)].sort((a, b) => b - a)
+  return (luminances[0] + 0.05) / (luminances[1] + 0.05)
+}
+
+/** Mermaid classDef 可单独指定深色节点底，但省略文字色；修正低对比标签并保留可读的自定义颜色。 */
+function normalizeSvgNodeTextContrast(svg: string): string {
+  const parsed = new DOMParser().parseFromString(svg, 'image/svg+xml')
+  const root = parsed.documentElement
+  if (parsed.querySelector('parsererror') || root.localName.toLowerCase() !== 'svg') return svg
+  normalizeMermaidStateDiagramLabelAlignment(root)
+
+  const measurementHost = document.createElement('div')
+  measurementHost.style.cssText = 'position:fixed;left:-10000px;top:0;visibility:hidden;pointer-events:none;'
+  const measuredSvg = document.importNode(root, true)
+  measurementHost.append(measuredSvg)
+  document.body.append(measurementHost)
+
+  try {
+    for (const node of measuredSvg.querySelectorAll<SVGGElement>('.node')) {
+      const shape = node.querySelector<SVGGraphicsElement>('rect, polygon, ellipse, circle, path')
+      const textElements = [...node.querySelectorAll<SVGTextElement>('text, tspan')]
+      if (!shape || textElements.length === 0) continue
+
+      const background = parseRgbColor(getComputedStyle(shape).fill)
+      if (!background) continue
+
+      const black: [number, number, number] = [0, 0, 0]
+      const white: [number, number, number] = [255, 255, 255]
+      for (const text of textElements) {
+        const textColor = parseRgbColor(getComputedStyle(text).fill)
+        if (!textColor || contrastRatio(background, textColor) >= 4.5) continue
+        const readableColor = contrastRatio(background, white) >= contrastRatio(background, black) ? '#ffffff' : '#000000'
+        const declarations = new Map<string, string>()
+        for (const item of (text.getAttribute('style') || '').split(';')) {
+          const separator = item.indexOf(':')
+          if (separator < 0) continue
+          const name = item.slice(0, separator).trim()
+          if (name) declarations.set(name, item.slice(separator + 1).trim())
+        }
+        declarations.set('fill', readableColor)
+        text.setAttribute('style', [...declarations].map(([name, value]) => `${name}: ${value}`).join('; '))
+      }
+    }
+  } finally {
+    measurementHost.remove()
+  }
+
+  return new XMLSerializer().serializeToString(measuredSvg)
+}
+
 /** 所有 Markdown 入口共享 Mermaid 懒加载、主题、安全配置与 SVG 消毒。 */
 export async function renderMermaidSvg(source: string): Promise<string> {
   const originalSource = source
@@ -160,8 +225,9 @@ export async function renderMermaidSvg(source: string): Promise<string> {
     })
     const { svg } = await mermaid.render(`gugu-mermaid-${++renderSequence}`, source)
     const sanitizedSvg = sanitizeHtml(normalizeSvgEdgeStyles(svg, colors.arrowheadColor, prepared.labels))
-    cacheMermaidSvg(cacheKey, sanitizedSvg)
-    return sanitizedSvg
+    const readableSvg = normalizeSvgNodeTextContrast(sanitizedSvg)
+    cacheMermaidSvg(cacheKey, readableSvg)
+    return readableSvg
   })()
   mermaidRenderInFlight.set(cacheKey, rendering)
   try {

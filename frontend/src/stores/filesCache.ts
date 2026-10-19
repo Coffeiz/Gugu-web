@@ -55,6 +55,8 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
   const filesById = shallowReactive(new Map<number, FileMeta>())
   const foldersById = shallowReactive(new Map<number, FolderMeta>())
   const directories = shallowReactive(new Map<string, DirectoryPageState>())
+  // 目录重新验证期间保留上一次页面，避免实体变更触发失效时文件区闪成空白。
+  const staleDirectories = shallowReactive(new Map<string, DirectoryPageState>())
   // LRU 次序不属于目录数据；保持非响应式，避免缓存读取在 computed 中改写自己的依赖。
   const directoryAccessOrder = new Map<string, true>()
   const fileLookups = new Map<string, Promise<FileMeta | null>>()
@@ -69,8 +71,13 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
     return entry
   }
 
+  function getDirectorySnapshot(scope: DirectorySnapshotScope): DirectoryPageState | null {
+    return getDirectory(scope) ?? staleDirectories.get(directoryKey(scope)) ?? null
+  }
+
   function rememberDirectory(scope: DirectorySnapshotScope, entry: DirectoryPageState) {
     const key = directoryKey(scope)
+    staleDirectories.delete(key)
     directories.delete(key)
     directories.set(key, entry)
     directoryAccessOrder.delete(key)
@@ -108,11 +115,23 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
   function invalidatePages(scope?: DirectorySnapshotScope) {
     if (scope) {
       const key = directoryKey(scope)
+      const previous = directories.get(key)
+      if (previous) {
+        staleDirectories.delete(key)
+        staleDirectories.set(key, previous)
+      }
       directories.delete(key)
       directoryAccessOrder.delete(key)
     } else {
+      for (const [key, previous] of directories) {
+        staleDirectories.delete(key)
+        staleDirectories.set(key, previous)
+      }
       directories.clear()
       directoryAccessOrder.clear()
+    }
+    while (staleDirectories.size > MAX_DIRECTORY_CACHES) {
+      staleDirectories.delete(staleDirectories.keys().next().value!)
     }
   }
 
@@ -233,7 +252,7 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
   }
 
   function resetAccountState() {
-    directories.clear(); directoryAccessOrder.clear(); filesById.clear(); foldersById.clear()
+    directories.clear(); staleDirectories.clear(); directoryAccessOrder.clear(); filesById.clear(); foldersById.clear()
     fileLookups.clear(); folderLookups.clear()
   }
 
@@ -266,8 +285,12 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
     if (event?.resource === 'files') applyCanonicalEvent(event)
   }, { immediate: true })
 
+  // Agent 本地流在 tool_done/回合完成时会 bump rev.files 作为确定性刷新信号，
+  // 但该路径不一定伴随 canonical resourceEvent。目录页必须同时失效，避免重开面板命中旧快照。
+  watch(() => useLiveStore().rev.files, () => invalidatePages())
+
   return {
-    directories, getDirectory, setDirectoryPage, invalidatePages,
+    directories, getDirectory, getDirectorySnapshot, setDirectoryPage, invalidatePages,
     getPersonalRootFiles, getProjectRootFiles, getFolderFiles, getWorkspaceFiles,
     getProjectRootFolders, getSubFolders, getWorkspaceFolders,
     addFile, removeFile, removeFiles, updateFile, getFile, ensureFile,

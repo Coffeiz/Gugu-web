@@ -54,6 +54,7 @@ x-app-environment: &app-environment
   SECRET_KEY: ${SECRET_KEY:-}
   ADMIN_USERNAME: ${ADMIN_USERNAME:-}
   ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+  ADMIN_ALLOWED_HOSTS: ${GUGU_ADMIN_ALLOWED_HOSTS:-}
   GUGU_DB_PASSWORD: ${GUGU_DB_PASSWORD:-}
   DB__PASSWORD: ${GUGU_DB_PASSWORD:-}
   DB__HOST: 127.0.0.1
@@ -102,7 +103,7 @@ services:
     privileged: true
     group_add: [*inotify-limit-group]
     ports:
-      - "${GUGU_HTTP_PORT:-9595}:9595"
+      - "${GUGU_HTTP_BIND:-0.0.0.0}:${GUGU_HTTP_PORT:-9595}:9595"
     # 首次启动生成的密钥、数据库密码和管理员密码保存到 Gugu-data/.env。
     # Admin 不执行 Compose 镜像更新；沙箱 manager 使用 app 内的受限执行接口。
     environment:

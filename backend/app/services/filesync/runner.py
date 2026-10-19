@@ -39,6 +39,7 @@ from app.services.filesync.jobs import (
 )
 from app.services.filesync.outbox import deliver_file_event, enqueue_file_event
 from app.services.filesync.protocol import FileSyncSource
+from app.services.filesync.jobs import merge_run_counts
 from app.services.filesync.reconcile import _parse_directory_path, _root_fingerprint
 from app.services.filesync.snapshots import snapshot_fingerprint
 from app.services.filesync.scan import (
@@ -88,6 +89,8 @@ class _RunScope:
     gap_revision: int
     action: str
     allow_delete: bool
+    root_identity: tuple[int, int] | None = None
+    guarded_root_identity: tuple[int, int] | None = None
 
 
 @dataclass
@@ -314,6 +317,26 @@ async def _is_canonical_existing_workspace_root(
     return workspace is not None
 
 
+def _assert_root_identity(root: Path, identity: tuple[int, int] | None) -> None:
+    if identity is None:
+        return
+    try:
+        stat = root.stat()
+    except OSError as exc:
+        raise _BindingRootUnavailable("监听根目录不可访问，禁止应用补偿删除") from exc
+    if root.is_symlink() or not root.is_dir() or (stat.st_dev, stat.st_ino) != identity:
+        raise _BindingRootUnavailable("监听时的根目录身份已变化，禁止应用补偿删除")
+
+
+def _queued_root_identity(root: Path, metadata: dict | None) -> tuple[int, int] | None:
+    guard = metadata or {}
+    if "rootDevice" not in guard or "rootInode" not in guard:
+        return None
+    identity = (int(guard["rootDevice"]), int(guard["rootInode"]))
+    _assert_root_identity(root, identity)
+    return identity
+
+
 async def _load_scope(session_factory, run_id: UUID) -> _RunScope:
     from app.services.filesync.watcher import _binding_root
 
@@ -331,6 +354,7 @@ async def _load_scope(session_factory, run_id: UUID) -> _RunScope:
         root = await _binding_root(db, binding)
         if root is None:
             raise _BindingRootUnavailable("同步绑定没有有效的工作区根目录")
+        guarded_identity = _queued_root_identity(root, run.result_counts)
         current_fingerprint = _root_fingerprint(root)
         if (
             (not root.is_dir() or current_fingerprint != run.root_fingerprint)
@@ -371,6 +395,8 @@ async def _load_scope(session_factory, run_id: UUID) -> _RunScope:
             gap_revision=run.gap_revision,
             action=run.action,
             allow_delete=run.allow_delete,
+            root_identity=(root.stat().st_dev, root.stat().st_ino),
+            guarded_root_identity=guarded_identity,
         )
         await db.rollback()
         return scope
@@ -444,7 +470,9 @@ async def _check_scope_before_batch(session_factory, scope: _RunScope, stop: Eve
         if binding is None or binding.root_fingerprint != scope.root_fingerprint:
             raise ScanIncomplete("同步绑定已变化", code="binding_changed")
         current_root = await _binding_root(db, binding)
-        if current_root is None or _root_fingerprint(current_root) != scope.root_fingerprint:
+        if (current_root is None or _root_fingerprint(current_root) != scope.root_fingerprint
+                or (scope.root_identity is not None
+                    and (current_root.stat().st_dev, current_root.stat().st_ino) != scope.root_identity)):
             raise _BindingRootUnavailable("同步根目录不存在、不可访问或身份已变化")
         await db.rollback()
     return _manifest_path_prefix(scope.root)
@@ -595,6 +623,7 @@ async def _project_batch(
         if run is None or binding is None or binding.root_fingerprint != scope.root_fingerprint:
             await db.rollback()
             return False
+        _assert_root_identity(scope.root, scope.root_identity)
         pending_conflicts = await _current_path_conflicts(
             db, scope.binding_id, [item.relative_path for item in candidates],
         )
@@ -745,7 +774,7 @@ async def _project_batch(
         updated = dict(counts)
         for key, value in transaction_counts.items():
             updated[key] = int(updated.get(key, 0)) + value
-        run.result_counts = updated
+        run.result_counts = merge_run_counts(run.result_counts, updated)
         run.revision += 1
         run.updated_at = now_utc()
         await db.commit()
@@ -789,6 +818,8 @@ async def _execute_scope(
     temp_directory = Path(tempfile.mkdtemp(prefix=f"{_SCAN_TEMP_PREFIX}{scope.run_id}-"))
     manifest: ScanManifest | None = None
     counts = _empty_counts()
+    if scope.guarded_root_identity is not None:
+        counts.update(rootDevice=scope.guarded_root_identity[0], rootInode=scope.guarded_root_identity[1])
     try:
         if scope.mode == "mirror_out":
             return await _execute_mirror_out(
@@ -860,11 +891,13 @@ async def _execute_scope(
             )
         # 空目录无法证明“过去登记的文件确实应该全部删除”。仍允许进入差异处理，
         # 但本轮强制关闭自动删除，让缺失文件进入人工冲突处置，而不是任务直接失败。
-        allow_delete_for_scan = scope.allow_delete and not (
+        allow_delete_for_scan = (scope.allow_delete and not manifest.permission_excluded_count and not (
             manifest.scanned_count == 0 and file_count + folder_count > 0
-        )
+        ))
         storage_prefix = await _check_scope_before_batch(session_factory, scope, signals.stop)
         counts = _empty_counts()
+        if scope.guarded_root_identity is not None:
+            counts.update(rootDevice=scope.guarded_root_identity[0], rootInode=scope.guarded_root_identity[1])
         counts["permissionSkipped"] = manifest.permission_excluded_count
         async with session_factory() as db:
             run = await db.get(FileSyncReconcileRun, scope.run_id)
@@ -872,7 +905,7 @@ async def _execute_scope(
                 raise InterruptedError("任务执行权已失效")
             run.stage = "comparing"
             run.scanned_count = manifest.scanned_count
-            run.result_counts = counts
+            run.result_counts = merge_run_counts(run.result_counts, counts)
             run.revision += 1
             await db.commit()
             await notify_run_changed(run, coalesce=True)
@@ -918,7 +951,7 @@ async def _execute_scope(
                         1 for item in candidates
                         if item.operation == "delete" or item.operation == "update"
                     )
-                    run.result_counts = counts
+                    run.result_counts = merge_run_counts(run.result_counts, counts)
                     run.revision += 1
                     run.updated_at = now_utc()
                     await db.commit()
@@ -944,7 +977,7 @@ async def _execute_scope(
                 if run is None or run.lease_owner != worker_id:
                     raise InterruptedError("任务执行权已失效")
                 run.stage = "projecting" if scope.action != "dry_run" else "comparing"
-                run.result_counts = counts
+                run.result_counts = merge_run_counts(run.result_counts, counts)
                 run.revision += 1
                 run.updated_at = now_utc()
                 await db.commit()
@@ -1209,7 +1242,7 @@ async def _run_claimed(
                 FileSyncReconcileRun.lease_owner == worker_id,
             ).with_for_update())
             if current is not None:
-                current.result_counts = counts
+                current.result_counts = merge_run_counts(current.result_counts, counts)
                 current.revision += 1
                 current.updated_at = now_utc()
                 await db.commit()

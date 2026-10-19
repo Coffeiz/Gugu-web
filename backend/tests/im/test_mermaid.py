@@ -153,7 +153,7 @@ async def test_incomplete_or_failed_chart_keeps_readable_source(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_streaming_renderer_batches_charts_and_caps_them_across_rounds(monkeypatch):
+async def test_streaming_renderer_batches_more_than_one_batch_across_rounds(monkeypatch):
     from agent.im import mermaid
 
     calls = []
@@ -163,7 +163,7 @@ async def test_streaming_renderer_batches_charts_and_caps_them_across_rounds(mon
         return [b"\x89PNG\r\n\x1a\nchart"] * len(sources)
 
     monkeypatch.setattr(mermaid, "render_pngs", render)
-    renderer = mermaid.StreamingRenderer(max_diagrams=mermaid.MAX_DIAGRAMS)
+    renderer = mermaid.StreamingRenderer(max_diagrams=None)
     sources = [f"```mermaid\ngraph TD; A{i}-->B{i}\n```" for i in range(5)]
 
     streamed = await renderer.feed("前文\n" + "\n".join(sources[:4]) + "\n后文")
@@ -177,9 +177,11 @@ async def test_streaming_renderer_batches_charts_and_caps_them_across_rounds(mon
     assert len([part for part in rendered if part.png]) == 4
 
     next_round = await renderer.feed(sources[4])
-    assert sources[4] in "".join(part.text for part in next_round)
-    assert await renderer.finish_round() == []
-    assert len(calls) == 1
+    assert sources[4] not in "".join(part.text for part in next_round)
+    next_rendered = await renderer.finish_round()
+    assert len(calls) == 2
+    assert [len(batch) for batch in calls] == [4, 1]
+    assert len([part for part in next_rendered if part.png]) == 1
 
 
 @pytest.mark.asyncio
@@ -194,10 +196,7 @@ async def test_run_queued_diagrams_keep_text_streaming_and_render_one_at_a_time(
         return [png] * len(sources)
 
     monkeypatch.setattr(mermaid, "render_pngs", render)
-    renderer = mermaid.StreamingRenderer(
-        max_diagrams=mermaid.MAX_RUN_DIAGRAMS,
-        inline_images=False,
-    )
+    renderer = mermaid.StreamingRenderer(max_diagrams=None, inline_images=False)
     sources = [f"```mermaid\ngraph LR; A{index}-->B{index}\n```" for index in range(6)]
 
     streamed = await renderer.feed("前文\n" + "\n".join(sources) + "\n后文继续生成一些文字。")
@@ -205,18 +204,16 @@ async def test_run_queued_diagrams_keep_text_streaming_and_render_one_at_a_time(
     assert calls == []
     assert "后文继续生成一些文字。" in "".join(part.text for part in streamed)
     streamed_text = "".join(part.text for part in streamed)
-    assert all(source not in streamed_text for source in sources[:mermaid.MAX_RUN_DIAGRAMS])
-    assert all(source in streamed_text for source in sources[mermaid.MAX_RUN_DIAGRAMS:])
+    assert all(source not in streamed_text for source in sources)
 
     await renderer.finish_round(defer_images=True)
     assert calls == []
     images = await renderer.render_deferred_diagrams()
 
-    assert [len(batch) for batch in calls] == [1] * mermaid.MAX_RUN_DIAGRAMS
-    assert len([part for part in images if part.png]) == mermaid.MAX_RUN_DIAGRAMS
+    assert [len(batch) for batch in calls] == [1] * len(sources)
+    assert len([part for part in images if part.png]) == len(sources)
     fallback_text = "".join(part.text for part in streamed + images if part.text)
-    assert sources[4] in fallback_text
-    assert sources[5] in fallback_text
+    assert not any(source in fallback_text for source in sources)
 
 
 @pytest.mark.asyncio
@@ -259,7 +256,7 @@ async def test_progressive_mermaid_render_queue_does_not_pause_stream_tokens(mon
 
 
 @pytest.mark.asyncio
-async def test_progressive_mermaid_queue_uses_shared_four_chart_run_budget(monkeypatch):
+async def test_progressive_mermaid_queue_has_no_total_chart_limit(monkeypatch):
     from agent.im import mermaid
 
     rendered = []
@@ -280,10 +277,10 @@ async def test_progressive_mermaid_queue_uses_shared_four_chart_run_budget(monke
         event async for event in mermaid.ProgressiveMermaidTokenFilter().events(token_iter())
     ]
 
-    assert len(rendered) == mermaid.MAX_RUN_DIAGRAMS == 4
-    assert sum(kind == "mermaid_image" for kind, _payload in events) == 4
-    assert sum(kind == "mermaid_pending" for kind, _payload in events) == 4
-    assert sources[4] in "".join(value for kind, value in events if kind == "token")
+    assert len(rendered) == len(sources)
+    assert sum(kind == "mermaid_image" for kind, _payload in events) == len(sources)
+    assert sum(kind == "mermaid_pending" for kind, _payload in events) == len(sources)
+    assert not any(source in "".join(value for kind, value in events if kind == "token") for source in sources)
 
 
 @pytest.mark.asyncio
@@ -425,7 +422,7 @@ async def test_qq_completed_round_keeps_trailing_text_together_after_mermaid(mon
 
 
 @pytest.mark.asyncio
-async def test_qq_completed_round_uses_shared_mermaid_run_limit(monkeypatch):
+async def test_qq_completed_round_sends_all_rendered_charts(monkeypatch):
     from agent.im import mermaid, replies
 
     sent = []
@@ -455,17 +452,15 @@ async def test_qq_completed_round_uses_shared_mermaid_run_limit(monkeypatch):
             "platform": "qq",
             "platform_user_id": "synthetic-recipient",
             "message_id": "synthetic-message",
-            replies._QQ_PASSIVE_REPLY_COUNT: 1,
         },
         "\n".join(sources),
     )
 
     assert result is True
-    assert [len(batch) for batch in batches] == [mermaid.MAX_RUN_DIAGRAMS]
-    assert sum(item == png for item in sent) == mermaid.MAX_RUN_DIAGRAMS
+    assert [len(batch) for batch in batches] == [4, 2]
+    assert sum(item == png for item in sent) == len(sources)
     fallback_text = "".join(item for item in sent if isinstance(item, str))
-    assert sources[4] in fallback_text
-    assert sources[5] in fallback_text
+    assert not any(source in fallback_text for source in sources)
 
 
 @pytest.mark.asyncio
@@ -503,13 +498,7 @@ async def test_png_dispatch_uses_platform_image_gateway(monkeypatch, platform):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("passive_count", "expected_message_id", "expected_count"),
-    [(0, "synthetic-message", 1), (1, "synthetic-message", 2), (5, None, 5)],
-)
-async def test_qq_mermaid_image_uses_active_send_after_text_reply(
-    monkeypatch, passive_count, expected_message_id, expected_count
-):
+async def test_qq_mermaid_image_always_uses_active_send(monkeypatch):
     from agent.im import replies
 
     calls = []
@@ -525,16 +514,14 @@ async def test_qq_mermaid_image_uses_active_send_after_text_reply(
         "platform_user_id": "synthetic-recipient",
         "channel_id": "synthetic-channel",
         "message_id": "synthetic-message",
-        replies._QQ_PASSIVE_REPLY_COUNT: passive_count,
     }
 
     assert await replies.send_png_image(payload, b"png") is True
-    assert calls[0][0][5] == expected_message_id
-    assert payload[replies._QQ_PASSIVE_REPLY_COUNT] == expected_count
+    assert calls[0][0][5] is None
 
 
 @pytest.mark.asyncio
-async def test_qq_completed_mermaid_text_continues_as_active_after_passive_budget(
+async def test_qq_completed_mermaid_text_without_inbound_message_uses_active_send(
     monkeypatch,
 ):
     from agent.im import mermaid, replies
@@ -555,8 +542,7 @@ async def test_qq_completed_mermaid_text_continues_as_active_after_passive_budge
     payload = {
         "platform": "qq",
         "platform_user_id": "synthetic-recipient",
-        "message_id": "synthetic-message",
-        replies._QQ_PASSIVE_REPLY_COUNT: replies._QQ_PASSIVE_REPLY_LIMIT,
+        "message_id": None,
     }
 
     assert await replies.send_completed_round(payload, text) is True
@@ -567,7 +553,7 @@ async def test_qq_completed_mermaid_text_continues_as_active_after_passive_budge
 
 
 @pytest.mark.asyncio
-async def test_qq_stream_mermaid_fallback_and_following_text_survive_exhausted_budget(
+async def test_qq_stream_mermaid_fallback_and_following_text_survive_without_message_id(
     monkeypatch,
 ):
     from agent.gateway import qq
@@ -609,8 +595,7 @@ async def test_qq_stream_mermaid_fallback_and_following_text_survive_exhausted_b
         "platform": "qq",
         "platform_user_id": "synthetic-recipient",
         "channel_id": "synthetic-channel",
-        "message_id": "synthetic-message",
-        replies._QQ_PASSIVE_REPLY_COUNT: replies._QQ_PASSIVE_REPLY_LIMIT,
+        "message_id": None,
     }
     sender = replies._QQMermaidRound(payload, show_intermediate_replies=True)
     fallback_source = "```mermaid\ngraph TD; A-->B\n```"
@@ -791,7 +776,7 @@ async def test_qq_streaming_facade_keeps_text_image_text_order(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("show_intermediate_replies", [False, True])
-async def test_qq_stream_sends_run_images_with_shared_four_chart_budget(
+async def test_qq_stream_sends_all_run_images_without_total_chart_cap(
     monkeypatch, show_intermediate_replies,
 ):
     from agent.gateway import qq
@@ -845,16 +830,15 @@ async def test_qq_stream_sends_run_images_with_shared_four_chart_budget(
     )
 
     assert sent is True
-    assert len(rendered_sources) == mermaid.MAX_RUN_DIAGRAMS
-    assert rendered_sources == [source.splitlines()[1] + "\n" for source in sources[:mermaid.MAX_RUN_DIAGRAMS]]
-    assert [kind for kind, _value in events] == ["text", "image", "text"] + ["image"] * 3 + ["text"]
+    assert len(rendered_sources) == len(sources)
+    assert rendered_sources == [source.splitlines()[1] + "\n" for source in sources]
+    assert [kind for kind, _value in events] == ["text", "image", "text"] + ["image"] * 5 + ["text"]
     assert events[0][1] == "前文"
     assert events[1] == ("image", "png")
     assert events[2][1] == "中间说明"
     assert events[-1][1].endswith("后文")
     text_output = "".join(value for kind, value in events if kind == "text")
-    assert all(source not in text_output for source in sources[:mermaid.MAX_RUN_DIAGRAMS])
-    assert all(source in text_output for source in sources[mermaid.MAX_RUN_DIAGRAMS:])
+    assert not any(source in text_output for source in sources)
 
 
 @pytest.mark.asyncio

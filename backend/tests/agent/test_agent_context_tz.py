@@ -33,7 +33,7 @@ def test_build_split_includes_default_profile_policy_in_static_prompt():
     assert "## 召回与外部信息使用规则" in static
     assert "已有 RAG 能够直接回答时，优先基于召回内容回答" in static
     assert "近期、明确、正向且可核验" in static
-    assert "必须调用 `web_search` 重新核实" in static
+    assert "必须按联网搜索技能使用 `xng_search` / `web_search` 重新核实" in static
     assert "外部事实硬门槛" in static
     assert '先 `use_skill({id: "S13"})`' in static
     assert "不要因为「感觉应该知道」就跳过核实" in static

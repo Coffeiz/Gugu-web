@@ -1700,3 +1700,102 @@ async def test_stale_scan_artifact_cleanup_preserves_active_runs_and_progress_is
     _publish_latest_progress(progress, 20, 2000)
     assert progress.qsize() == 1
     assert progress.get_nowait() == (20, 2000)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("variant", ["baseline", "fixed", "fixed-root-replaced"])
+async def test_overflow_recovery_ab_converges_without_deleting_replaced_root(
+    filesync_runner_db, user_a, monkeypatch, variant,
+):
+    """同样的漏事件删除，A 留下冲突，B 经持久队列收敛；根替换则停止。"""
+    import app.services.filesync.runner as runner
+    import app.services.filesync.targeted as targeted
+    from app.services.filesync.health import update_binding_health
+    from app.services.filesync.watcher import FileSyncWatcherManager
+
+    db = filesync_runner_db
+    root = Path(runner.get_settings().storage.local_path).resolve() / str(user_a.id)
+    personal = root / "个人文件"
+    personal.mkdir(parents=True)
+    for index in range(64):
+        (personal / f"sample-{index:03d}.txt").write_text("隔离样本", encoding="utf-8")
+    (personal / "keep.txt").write_text("保留样本", encoding="utf-8")
+    monkeypatch.setattr(runner, "workspace_shell_supported", lambda: True)
+    monkeypatch.setattr(targeted, "workspace_shell_supported", lambda: True)
+    monkeypatch.setattr(targeted, "is_file_sync_enabled", lambda: True)
+    binding = FileSyncBinding(user_id=user_a.id, source="local_directory", mode="bidirectional",
+                              status="active", root_path=".", root_fingerprint=_root_fingerprint(root))
+    db.add(binding)
+    await db.commit()
+    binding_id, user_id = binding.id, user_a.id
+    await enqueue_reconcile_run(db, user_id=user_id, binding_id=binding_id, action="initialize")
+    await db.commit()
+    initial = await claim_next_run(db, "ab-initialize", now=now_utc())
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        await _run_claimed(db_session._SessionLocal, executor, initial, "ab-initialize", asyncio.Event())
+    for path in personal.glob("sample-*.txt"):
+        path.unlink()
+    # 刻意不提交精确删除事件，验证缺口补偿而非实时删除成功的路径。
+    if variant == "baseline":
+        await enqueue_reconcile_run(db, user_id=user_id, binding_id=binding_id, action="repair", allow_delete=False)
+        await db.commit()
+    else:
+        await update_binding_health(db, binding_id, status="degraded", error_code="kernel_event_queue_overflow", gap_detected=True)
+        manager = FileSyncWatcherManager()
+        stat = root.stat()
+        manager._binding_root_identities[binding_id] = (stat.st_dev, stat.st_ino)
+        await manager._enqueue_gap_repair(binding_id)
+    if variant == "fixed-root-replaced":
+        root.rename(root.with_name(root.name + "-previous"))
+        personal.mkdir(parents=True)
+        (personal / "replacement.txt").write_text("替换根目录", encoding="utf-8")
+    claimed = await claim_next_run(db, "ab-repair", now=now_utc())
+    assert claimed is not None
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        await _run_claimed(db_session._SessionLocal, executor, claimed, "ab-repair", asyncio.Event())
+    async with db_session._SessionLocal() as check:
+        rows = (await check.scalars(select(File).where(File.user_id == user_id, File.display_name.like("sample-%")))).all()
+        run = await check.get(FileSyncReconcileRun, claimed.id)
+        state = await check.get(FileSyncBinding, binding_id)
+    deleted = sum(row.deleted_at is not None for row in rows)
+    assert len(rows) == 64
+    if variant == "fixed":
+        assert deleted == 64
+        assert run.status == "succeeded"
+        assert not state.needs_reconcile
+        assert (personal / "keep.txt").exists()
+    elif variant == "baseline":
+        assert deleted == 0
+        assert run.result_counts["conflicts"] == 64
+    else:
+        assert deleted == 0
+        assert run.status == "failed" and run.error_code == "binding_root_unavailable"
+        assert (personal / "replacement.txt").exists()
+    print(f"隔离AB variant={variant} total=64 deleted={deleted} status={run.status}")
+
+
+@pytest.mark.asyncio
+async def test_root_replacement_is_rejected_at_each_projection_transaction(
+    filesync_runner_db, user_a,
+):
+    import app.services.filesync.runner as runner
+
+    db = filesync_runner_db
+    root = Path(runner.get_settings().storage.local_path).resolve() / str(user_a.id)
+    root.mkdir(parents=True)
+    binding = FileSyncBinding(user_id=user_a.id, source="local_directory", mode="bidirectional",
+                              status="active", root_path=".", root_fingerprint=_root_fingerprint(root))
+    db.add(binding)
+    await db.commit()
+    await enqueue_reconcile_run(db, user_id=user_a.id, binding_id=binding.id, action="repair", allow_delete=True)
+    await db.commit()
+    claimed = await claim_next_run(db, "root-check", now=now_utc())
+    scope = await runner._load_scope(db_session._SessionLocal, claimed.id)
+    root.rename(root.with_name(root.name + "-previous"))
+    root.mkdir()
+    with pytest.raises(runner._BindingRootUnavailable):
+        await runner._project_batch(
+            db_session._SessionLocal, scope, "root-check", [],
+            storage_prefix=f"{user_a.id}/", verified_files={}, missing_paths=set(),
+            counts=runner._empty_counts(), stop=Event(),
+        )

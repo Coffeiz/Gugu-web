@@ -115,6 +115,7 @@ async def run_scheduled_once(
                 query=prompt, dynamic_tools=mcp_tools,
                 subject_type=str(subject.get("subject_type") or "session"),
                 subject_id=subject.get("subject_id"), workspace_id=subject.get("workspace_id"),
+                model_cfg=model_cfg,
             )
 
         from agent.scheduled import ScheduledLLMRunner

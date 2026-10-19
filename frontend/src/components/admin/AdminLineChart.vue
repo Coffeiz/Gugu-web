@@ -17,6 +17,7 @@ const props = withDefaults(defineProps<{
   values?: Array<number | null>
   datasets?: ChartDataset[]
   unit?: string
+  yMax?: number
 }>(), { unit: '' })
 
 // 线条色走令牌（主色），透明填充在 canvas 里用 color-mix 派生。
@@ -53,6 +54,7 @@ const data = computed(() => ({
 }))
 const options = computed(() => lineChartOptions({
   isTok: true,
+  yMax: props.yMax,
   showLegend: Boolean(props.datasets?.length && props.datasets.length > 1),
   tooltipLabel: (ctx: any) => `${ctx.dataset.label ? `${ctx.dataset.label}: ` : ''}${fmtTok(Number(ctx.raw) || 0)}${props.unit}`,
 }))</script>

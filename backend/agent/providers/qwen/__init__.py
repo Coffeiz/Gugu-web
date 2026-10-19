@@ -1,4 +1,4 @@
-from .base import ProviderAdapter, ProviderCapabilities, ReasoningCapabilities
+from ..base import ProviderAdapter, ProviderCapabilities, ReasoningCapabilities
 
 
 _ANTHROPIC_MODEL_PREFIXES = (

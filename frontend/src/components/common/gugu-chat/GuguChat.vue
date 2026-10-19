@@ -77,6 +77,7 @@
       :references="inputReferences" @update:references="inputReferences = $event"
       :pending-att="pendingAtt" :att-uploading="attUploading"
       :recording="recording" :record-secs="recordSecs" :vw="vw"
+      :voice-input-available="voiceInputAvailable"
       :on-remove-att="removeAtt"
       :on-start-record="startRecord" :on-cancel-record="cancelRecord" :on-stop-record="stopRecord"
       :on-file-picked="onFilePicked" :on-paste="onPaste"
@@ -450,6 +451,11 @@ const conversation = useChatConversation({
   onContentReset, onCaptureBaseScrollH, onSyncSmallH,
   onQueuePersistenceError: () => showAppError(t('chatUi.pendingQueuePersistFailed')),
   onQueueDispatchError: () => showAppError(t('chatUi.networkError')),
+  onPresentFile: (file) => previewStore.open({
+    id: file.file_id,
+    ext: (file.ext || '').toUpperCase(),
+    displayName: file.name || `文件 #${file.file_id}`,
+  }),
 })
 const {
   messages, mkid, now, sessionSettling,
@@ -627,6 +633,7 @@ async function onInteractionSelect(_msg: ChatMessage, option: { id: string; labe
     _msg.interaction.submitting = false
     _msg.interaction.resolved = true
     _msg.interaction.selectedOptionId = option.id
+    _msg.interaction.responseText = option.label
   }
 }
 
@@ -824,7 +831,7 @@ async function copyMsg(msg: ChatMessage) {
 
 // 任何打开路径（FAB / 通知点开 / 展开）都触发一次
 watch(open, (v) => {
-  if (v) { animateGreeting(); loadBots(); loadQuota(); pickOfflineLabel() }
+  if (v) { animateGreeting(); loadBots(); loadQuota(); loadVoiceAvailability(); pickOfflineLabel() }
 })
 
 // ── 展开/收起 ────────────────────────────────────────────
@@ -850,7 +857,16 @@ const imSessionsOf = (platform: ImPlatformKey) => imSessions.value.filter(s => s
 // ── 顶部状态：休息中（精力耗尽）> 在线（任意 IM 启用）> 随机离线 ──
 const quota = ref<QuotaInfo | null>(null)
 async function loadQuota() { try { quota.value = await authApi.getQuota() } catch {} }
-function onQuotaChanged() { loadQuota() }
+const voiceInputAvailable = ref(false)
+async function loadVoiceAvailability() {
+  try {
+    const result = await agentApi.getVoiceAvailability()
+    voiceInputAvailable.value = result?.available === true
+  } catch {
+    voiceInputAvailable.value = false
+  }
+}
+function onQuotaChanged() { loadQuota(); loadVoiceAvailability() }
 const energyExhausted = computed(() => {
   const q = quota.value
   if (!q) return false

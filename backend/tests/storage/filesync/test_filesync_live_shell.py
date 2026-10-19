@@ -41,6 +41,39 @@ async def isolated_filesync_session(tmp_path, monkeypatch):
     await engine.dispose()
 
 
+async def _assert_shell_churn_converges(shell, file_snapshot, session_factory, binding, user_id):
+    """等待快速文件变更的最终正文与删除状态一致。"""
+    # 同一目录快速原子替换并删除短命文件，验证监听链路最终收敛而非依赖手动扫描。
+    await shell(
+        "for value in 1 2 3 4 5 6 7 8 9 10 11 12; do "
+        "printf '%s' \"$value\" > '个人文件/.轮换.tmp'; "
+        "mv '个人文件/.轮换.tmp' '个人文件/轮换.txt'; "
+        "printf transient > '个人文件/短命.txt'; rm '个人文件/短命.txt'; "
+        "done; printf settled > '个人文件/轮换.txt'"
+    )
+    expected_fingerprint = hashlib.sha256(b"settled").hexdigest()
+    for _ in range(100):
+        settled = await file_snapshot("轮换.txt")
+        async with session_factory() as session:
+            journal = await session.scalar(select(FileSyncJournal).where(
+                FileSyncJournal.binding_id == binding.id,
+                FileSyncJournal.relative_path == "个人文件/轮换.txt",
+            ).order_by(FileSyncJournal.id.desc()))
+            transient_id = await session.scalar(select(File.id).where(
+                File.user_id == user_id,
+                File.storage_key == f"{user_id}/个人文件/短命.txt",
+                File.deleted_at.is_(None),
+            ))
+        if (settled is not None and settled.size_bytes == 7
+                and journal is not None and journal.observed_fingerprint == expected_fingerprint
+                and transient_id is None):
+            break
+        await asyncio.sleep(0.05)
+    assert settled is not None and settled.size_bytes == 7
+    assert journal is not None and journal.observed_fingerprint == expected_fingerprint
+    assert transient_id is None
+
+
 @pytest.mark.asyncio
 async def test_shell_create_equal_size_update_and_delete_project_without_manual_scan(
     isolated_filesync_session, monkeypatch,
@@ -123,11 +156,11 @@ async def test_shell_create_equal_size_update_and_delete_project_without_manual_
         _stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=5)
         assert process.returncode == 0, stderr.decode("utf-8", errors="replace")
 
-    async def file_snapshot():
+    async def file_snapshot(name="探针.txt"):
         async with db_session._SessionLocal() as session:
             row = await session.scalar(select(File).where(
                 File.user_id == user_id,
-                File.storage_key == f"{user_id}/个人文件/探针.txt",
+                File.storage_key == f"{user_id}/个人文件/{name}",
             ))
             if row is not None:
                 await session.refresh(row)
@@ -212,6 +245,11 @@ async def test_shell_create_equal_size_update_and_delete_project_without_manual_
         ), "等长 Shell 修改未即时投影"
         assert updated.size_bytes == 5
         metrics["equal_size_update_ms"] = round((time.perf_counter() - started_at) * 1000, 1)
+
+        await _assert_shell_churn_converges(
+            shell, file_snapshot, db_session._SessionLocal, binding, user_id,
+        )
+        assert not projection_errors, "快速文件变更不应导致整批投影异常"
 
         started_at = time.perf_counter()
         await shell("rm '个人文件/探针.txt'")

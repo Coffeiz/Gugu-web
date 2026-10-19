@@ -1,7 +1,8 @@
-import { ref, reactive, computed, nextTick, onUnmounted, type Ref, type ComponentPublicInstance } from 'vue'
+import { ref, reactive, computed, nextTick, onUnmounted, watch, type Ref, type ComponentPublicInstance } from 'vue'
 import QRCode from 'qrcode'
 import { userBotsApi, qqConnectApi, feishuConnectApi, wechatConnectApi, telegramConnectApi } from '@/services/api'
 import { i18n } from '@/i18n'
+import { useLiveStore } from '@/stores/live'
 import type { ImPlatformKey } from '../chatTypes'
 import type GuguChatSidebar from '../GuguChatSidebar.vue'
 import type GuguChatBindDialog from '../GuguChatBindDialog.vue'
@@ -36,6 +37,7 @@ export function useChatImConnect(options: {
   fetchSessions: () => Promise<void>
 }) {
   const t = i18n.global.t
+  const liveStore = useLiveStore()
   const platformLabel = (key: ImPlatformKey) => key === 'feishu' ? t('chatUi.feishu') : key === 'wechat' ? t('chatUi.wechat') : key === 'telegram' ? t('chatUi.telegram') : 'QQ'
   const IM_PLATFORMS: ImPlatform[] = [
     { key: 'feishu',  label: 'Feishu', api: feishuConnectApi },
@@ -44,6 +46,7 @@ export function useChatImConnect(options: {
     { key: 'telegram', label: 'Telegram', api: null },
   ]
   const bots   = ref<Bot[]>([])
+  let botsLoadSeq = 0
   const telegramTokenDialogOpen = ref(false)
   const telegramConnecting = ref(false)
   const telegramConnectError = ref('')
@@ -57,12 +60,15 @@ export function useChatImConnect(options: {
   const botsOf = (platform: ImPlatformKey) => bots.value.filter(b => b.platform === platform)
 
   async function loadBots() {
+    const seq = ++botsLoadSeq
     try {
       const r = await userBotsApi.list()
+      if (seq !== botsLoadSeq) return
       bots.value = r.items || []
       if (Array.isArray(r.supported_platforms)) supportedPlatforms.value = r.supported_platforms
     } catch {}
   }
+  watch(() => liveStore.rev.im_channels, () => { void loadBots() })
   function toggleImPlatform(key: ImPlatformKey) { imOpen[key] = !imOpen[key] }
 
   function openTelegramTokenDialog() {

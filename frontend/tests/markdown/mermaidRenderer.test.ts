@@ -59,8 +59,16 @@ describe('共享 Mermaid 渲染', () => {
     expect(imTheme.themeVariables).toMatchObject({
       background: '#ffffff',
       primaryTextColor: '#272532',
+      nodeTextColor: '#272532',
+      textColor: '#272532',
       lineColor: '#67647a',
     })
+    const darkTheme = createMermaidThemeConfig({
+      ...MERMAID_NEUTRAL_THEME_COLORS,
+      primaryTextColor: '#f0edf3',
+    }, 'Inter, sans-serif')
+    expect(darkTheme.themeVariables.nodeTextColor).toBe('#f0edf3')
+    expect(darkTheme.themeVariables.textColor).toBe('#f0edf3')
     expect(rendered.querySelector('svg')).not.toBeNull()
     expect(rendered.querySelector('[onload]')).toBeNull()
   })
@@ -87,6 +95,20 @@ describe('共享 Mermaid 渲染', () => {
     await renderMermaidSvg('xychart-beta\n  title 咕咕对话量\n  bar [2, 3]')
 
     expect(mermaidMock.render.mock.calls[0][1]).toContain('title "咕咕对话量"')
+  })
+
+  it('深色节点填充下修正低对比标签，同时保留已可读的自定义标签色', async () => {
+    mermaidMock.render.mockResolvedValueOnce({
+      svg: '<svg xmlns="http://www.w3.org/2000/svg"><g class="node dark"><rect fill="#202638" /><text fill="#272532">低对比<tspan>标签</tspan></text></g><g class="node readable"><rect fill="#202638" /><text fill="#ffffff">可读标签</text></g></svg>',
+    })
+
+    const svg = await renderMermaidSvg('flowchart TD; A-->B;')
+    const rendered = new DOMParser().parseFromString(svg, 'image/svg+xml')
+    const labels = [...rendered.querySelectorAll('.node text, .node tspan')]
+
+    expect(labels[0].getAttribute('style')).toContain('fill: #ffffff')
+    expect(labels[1].getAttribute('fill')).toBeNull()
+    expect(labels[2].getAttribute('fill')).toBe('#ffffff')
   })
 
   it('将 mindmap 圆形根节点的文字以节点中心为锚点，且不改其他图表', async () => {

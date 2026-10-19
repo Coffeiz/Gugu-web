@@ -36,6 +36,7 @@ from app.db.session import get_db
 from app.models import AgentUsage, User, UserMcpServer
 from app.services import multimodal_probe, provider_reasoning_state
 from app.byok.schemas import ProviderCapabilityPreview
+from app.byok.policy import provider_web_search_supported
 
 # 2026-09-03 19:15（北京时间）前的 OpenAI 兼容流仍把 cache_read 计入
 # tokens_in；Anthropic/MiniMax 始终使用拆分口径。表结构没有保存口径版本，
@@ -499,6 +500,32 @@ def _usage_local_hour(created_at: datetime, user_tz) -> int:
     return created_at.astimezone(user_tz).hour
 
 
+async def _scenario_usage(db, since, until, filters: list) -> list[dict]:
+    """按场景统计冷请求及非冷请求的加权缓存率，复用既有完整输入口径。"""
+    full_input = _effective_input_expr()
+    cold = (full_input > 0) & (func.coalesce(AgentUsage.cache_read, 0) == 0)
+    warm_input = case((AgentUsage.cache_read > 0, full_input), else_=0)
+    rows = await db.execute(select(  # orm-exempt: Admin 跨用户用量聚合，沿用现有筛选与鉴权边界
+        AgentUsage.scenario,
+        func.count(AgentUsage.id),
+        func.coalesce(func.sum(full_input), 0),
+        func.coalesce(func.sum(AgentUsage.tokens_out), 0),
+        func.coalesce(func.sum(AgentUsage.cache_read), 0),
+        func.coalesce(func.sum(AgentUsage.cache_write), 0),
+        func.coalesce(func.sum(case((cold, 1), else_=0)), 0),
+        func.coalesce(func.sum(warm_input), 0),
+    ).where(
+        AgentUsage.created_at >= since, AgentUsage.created_at < until, *filters,
+    ).group_by(AgentUsage.scenario).order_by(func.count(AgentUsage.id).desc()))
+    return [{
+        "scenario": row[0] or "chat", "calls": row[1], "tokens_in": row[2],
+        "tokens_out": row[3], "cache_read": row[4], "cache_write": row[5],
+        "cache_ratio": round(row[4] / row[2], 6) if row[2] else 0,
+        "cold_calls": row[6], "warm_tokens_in": row[7],
+        "warm_cache_ratio": round(row[4] / row[7], 6) if row[7] else None,
+    } for row in rows.all()]
+
+
 @router.get("/usage")
 async def get_usage(month: str | None = None, model: str | None = None,
                     exclude_dev: bool = Query(False), include_byok: bool = Query(False),
@@ -567,41 +594,16 @@ async def get_usage(month: str | None = None, model: str | None = None,
     # 按场景分组（chat=主对话 / reflection=记忆反思 / compaction=压缩 / knowledge=知识反思）；
     # 2026-09-10 之前的存量行没有 scenario 标记，全部落在 chat 里。
     # 返回日、周、月三套日历聚合，前端跟随右上角视图切换展示。
-    async def _scenario_aggregate(since, until=None):
-        bounds = [AgentUsage.created_at >= since, *_usage_filters(include_byok=include_byok, exclude_dev=exclude_dev)]
-        if until is not None:
-            bounds.append(AgentUsage.created_at < until)
-        rows = await db.execute(  # orm-exempt: 用量场景统计读取待 Service 收口（1.1.2 新增）
-            select(  # orm-exempt: 同上，scenario 聚合查询待 Service 收口
-                AgentUsage.scenario,
-                func.count(AgentUsage.id),
-                func.coalesce(func.sum(_effective_input_expr()), 0),
-                func.coalesce(func.sum(AgentUsage.tokens_out), 0),
-                func.coalesce(func.sum(AgentUsage.cache_read), 0),
-                func.coalesce(func.sum(AgentUsage.cache_write), 0),
-            ).where(*bounds)
-            .group_by(AgentUsage.scenario)
-            .order_by(func.count(AgentUsage.id).desc())
-        )
-        return [
-            {
-                "scenario": r[0] or "chat",
-                "calls": r[1], "tokens_in": r[2], "tokens_out": r[3],
-                "cache_read": r[4], "cache_write": r[5],
-                "cache_ratio": round(r[4] / r[2], 6) if r[2] else 0,
-            }
-            for r in rows.all()
-        ]
-
     day_end_local = today_start_local + timedelta(days=1)
     week_start_date = today - timedelta(days=today.weekday())
     week_start_local = datetime(week_start_date.year, week_start_date.month, week_start_date.day, tzinfo=user_tz)
     week_end_local = week_start_local + timedelta(days=7)
     month_start_local = datetime(today.year, today.month, 1, tzinfo=user_tz)
     month_end_local = month_start_local + timedelta(days=cal.monthrange(today.year, today.month)[1])
-    by_scenario = await _scenario_aggregate(today_start, today_end)
-    by_scenario_week = await _scenario_aggregate(_utc_aware(week_start_local), _utc_aware(week_end_local))
-    by_scenario_month = await _scenario_aggregate(_utc_aware(month_start_local), _utc_aware(month_end_local))
+    scenario_filters = _usage_filters(include_byok=include_byok, exclude_dev=exclude_dev)
+    by_scenario = await _scenario_usage(db, today_start, today_end, scenario_filters)
+    by_scenario_week = await _scenario_usage(db, _utc_aware(week_start_local), _utc_aware(week_end_local), scenario_filters)
+    by_scenario_month = await _scenario_usage(db, _utc_aware(month_start_local), _utc_aware(month_end_local), scenario_filters)
 
     # 只返回全平台聚合数字，不暴露用户配置、server 名称或凭据。
     mcp_server_row = await db.execute(  # orm-exempt: Admin 概览的 MCP 聚合统计（只读 count），沿用本文件既有聚合查询口径待 Service 收口
@@ -835,11 +837,11 @@ async def set_llm_strategy(body: StrategyUpdate, db: AsyncSession = Depends(get_
 # 漏一个字段，active 模型就拿不到 → 表现为「面板保存了却不生效」。新增模型字段时只改这里。
 _AI_SYNC_KEYS = ("provider", "api_key", "base_url", "model", "max_tokens",
                  "context_tokens", "thinking", "reasoning_effort", "reasoning_persistence", "image", "video",
-                 "image_detail", "audio", "api_format", "ollama_mode", "ollama_api_mode", "ollama_keep_alive",
+                 "image_detail", "audio", "web_search_enabled", "api_format", "ollama_mode", "ollama_api_mode", "ollama_keep_alive",
                  "deployment_mode", "local_runtime", "capability_overrides", "capability_checked_at", "capability_fingerprint")
 _AI_DEFAULTS = {"max_tokens": 8000, "context_tokens": 128000,
                 "thinking": "", "reasoning_effort": "", "reasoning_persistence": "off", "image": False,
-                "image_detail": "auto", "video": False, "audio": False, "api_format": "",
+                "image_detail": "auto", "video": False, "audio": False, "web_search_enabled": False, "api_format": "",
                 "ollama_mode": "local", "ollama_api_mode": "native", "ollama_keep_alive": "5m",
                 "deployment_mode": "cloud", "local_runtime": "other", "capability_overrides": {},
                 "capability_checked_at": "", "capability_fingerprint": ""}
@@ -865,6 +867,7 @@ class PresetCreate(BaseModel):
     image_detail: str = "auto"
     video: bool = False
     audio: bool = False
+    web_search_enabled: bool = False
     api_format: str = ""
     ollama_mode: str = "local"
     ollama_api_mode: str = "native"
@@ -880,6 +883,8 @@ class PresetCreate(BaseModel):
 async def create_llm_preset(body: PresetCreate, db: AsyncSession = Depends(get_db)):
     if body.max_tokens >= body.context_tokens:
         raise HTTPException(422, "最大输出 token 数必须小于模型总上下文窗口")
+    if body.web_search_enabled and not provider_web_search_supported(body.provider, body.api_format):
+        raise HTTPException(422, "当前 Provider 或 API 格式不支持联网搜索")
     new_id = f"p_{_uuid.uuid4().hex[:8]}"
     item = {
         "id": new_id,
@@ -897,6 +902,7 @@ async def create_llm_preset(body: PresetCreate, db: AsyncSession = Depends(get_d
         "image_detail": body.image_detail if body.image_detail in ("auto", "low", "high", "original") else "auto",
         "video": body.video,
         "audio": body.audio,
+        "web_search_enabled": body.web_search_enabled if provider_web_search_supported(body.provider, body.api_format) else False,
         "api_format": body.api_format,
         "ollama_mode": body.ollama_mode,
         "ollama_api_mode": body.ollama_api_mode,
@@ -933,6 +939,7 @@ class PresetUpdate(BaseModel):
     image_detail: str | None = None
     video: bool | None = None
     audio: bool | None = None
+    web_search_enabled: bool | None = None
     api_format: str | None = None
     ollama_mode: str | None = None
     ollama_api_mode: str | None = None
@@ -949,6 +956,10 @@ async def update_llm_preset(preset_id: str, body: PresetUpdate, db: AsyncSession
         item = next((it for it in presets["items"] if it["id"] == preset_id), None)
         if not item:
             raise HTTPException(404, "预设不存在")
+        effective_provider = body.provider if body.provider is not None else str(item.get("provider") or "")
+        effective_api_format = body.api_format if body.api_format is not None else str(item.get("api_format") or "")
+        if body.web_search_enabled is True and not provider_web_search_supported(effective_provider, effective_api_format):
+            raise HTTPException(422, "当前 Provider 或 API 格式不支持联网搜索")
         next_max_tokens = body.max_tokens if body.max_tokens is not None else int(item.get("max_tokens", 8000))
         next_context_tokens = body.context_tokens if body.context_tokens is not None else int(item.get("context_tokens", 128000))
         if next_max_tokens >= next_context_tokens:
@@ -956,7 +967,7 @@ async def update_llm_preset(preset_id: str, body: PresetUpdate, db: AsyncSession
         for field in (
             "name", "provider", "base_url", "model", "max_tokens", "context_tokens",
             "thinking", "reasoning_effort", "reasoning_persistence", "image", "video",
-            "audio", "image_detail", "api_format", "ollama_mode", "ollama_api_mode",
+            "audio", "web_search_enabled", "image_detail", "api_format", "ollama_mode", "ollama_api_mode",
             "ollama_keep_alive", "deployment_mode", "local_runtime", "in_pool",
         ):
             value = getattr(body, field)
@@ -964,6 +975,10 @@ async def update_llm_preset(preset_id: str, body: PresetUpdate, db: AsyncSession
                 if field == "image_detail" and value not in ("auto", "low", "high", "original"):
                     value = "auto"
                 item[field] = value
+        if not provider_web_search_supported(
+            str(item.get("provider") or ""), str(item.get("api_format") or ""),
+        ):
+            item["web_search_enabled"] = False
         if body.api_key:
             item["api_key"] = body.api_key
         if body.capability_overrides is not None:

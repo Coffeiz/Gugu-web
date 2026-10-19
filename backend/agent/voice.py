@@ -120,6 +120,17 @@ def is_configured(settings) -> bool:
     return bool(vm and (getattr(vm, "model", "") or "").strip())
 
 
+def supports_configured_voice_model(vm) -> bool:
+    """判断语音配置是否使用当前转写器支持的接口格式与产品线。"""
+    if not vm or not (getattr(vm, "model", "") or "").strip():
+        return False
+    api_format = (getattr(vm, "api_format", "openai") or "openai").strip().lower()
+    if api_format == "dashscope":
+        service = (getattr(vm, "dashscope_service", "qwen3-asr") or "qwen3-asr").strip().lower()
+        return service in _DASHSCOPE_SERVICES
+    return api_format == "openai"
+
+
 def _log_transcription_error(context: str, error: BaseException, *, defer_minimax: bool = False) -> bool:
     details = minimax_error_details(error)
     if details is None:

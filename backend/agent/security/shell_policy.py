@@ -155,6 +155,10 @@ async def evaluate(
     if scope is ShellScope.SANDBOX:
         if sandbox is not None and not getattr(sandbox, "enabled", False):
             return ShellDecision(False, "Shell 沙盒未开启", risk)
+    # 主 Shell 开关适用于所有执行范围。Schema 可能在本轮开始时已经注入，
+    # 因此每次实际执行都必须重新检查，不能让 system 范围绕过用户关闭状态。
+    if not await effective_shell_enabled(db, user_id):
+        return ShellDecision(False, "用户未开启 Shell", risk)
     if subject_id is None and subject_type == SUBJECT_SESSION:
         subject_id = session_id
     if session_id and session is None:
@@ -182,8 +186,6 @@ async def evaluate(
     elif subject_type == SUBJECT_SCHEDULED_TASK:
         if scope is ShellScope.SYSTEM:
             return ShellDecision(False, "定时任务只能在 sandbox 范围执行", risk, scope=scope)
-        if not await effective_shell_enabled(db, user_id):
-            return ShellDecision(False, "用户未开启 Shell", risk, scope=scope)
         try:
             filesystem_policy = await resolve_filesystem_policy(
                 db, user_id, subject_type=subject_type, subject_id=subject_id,
@@ -207,20 +209,13 @@ async def evaluate(
         if scope is ShellScope.SYSTEM:
             return ShellDecision(False, "绑定工作区只能在 sandbox 范围执行", risk, scope=scope)
         workspace_id = session.workspace_id
-        if not await effective_shell_enabled(db, user_id):
-            return ShellDecision(False, "用户未开启 Shell", risk, scope=scope)
         workspace = await db.get(Workspace, workspace_id)
         if not workspace or workspace.user_id != user_id or not workspace.enabled:
             return ShellDecision(False, "工作区不存在或已停用", risk, scope=scope)
     elif workspace_id is not None:
-        if not await effective_shell_enabled(db, user_id):
-            return ShellDecision(False, "用户未开启 Shell", risk, scope=scope)
         workspace = await db.get(Workspace, workspace_id)
         if not workspace or workspace.user_id != user_id or not workspace.enabled:
             return ShellDecision(False, "工作区不存在或已停用", risk, scope=scope)
-    elif not await effective_shell_enabled(db, user_id):
-        return ShellDecision(False, "用户未开启 Shell", risk, scope=scope)
-
     # sandbox 是容器唯一执行后端；system 是明确授权的本机可信执行器。
     if scope is ShellScope.SANDBOX:
         sandbox = getattr(settings, "sandbox", None)

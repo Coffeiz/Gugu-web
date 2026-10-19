@@ -91,6 +91,9 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
         await genstream.publish(session_id, {
             **event,
             "run_id": owner_run_id,
+            # present_file 是发起网页标签页的展示副作用；续看同一会话的其他标签页
+            # 也会收到该 SSE，因此显式携带发起端身份供前端定向处理。
+            "origin_client_id": getattr(req, "origin", None),
             # run_id 是 Web Gateway 的 owner 身份，供排队 SSE 做归属过滤；展示
             # 时间线持久化的是核心循环 run_id。两者分开传递，避免前端无法把
             # 实时气泡与同一 round 的持久记录关联起来。
@@ -150,6 +153,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             db, user_id, session_id, all_system_tool_names(), settings, system_prompt, snapshot_context,
             session=session, query=req.message,
             user_skill_metadata=user_skill_metadata, dynamic_tools=mcp_tools, source=req.source,
+            model_cfg=model_cfg,
         )
     if capability_context is not None:
         if _pin_session_user_skill_metadata(session, capability_context):

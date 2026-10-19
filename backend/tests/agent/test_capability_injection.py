@@ -580,15 +580,15 @@ def test_skill_trace_metadata_does_not_copy_skill_body():
 def test_loopscope_tool_schema_names_fall_back_to_provider_payload():
     assert _tool_names_from_schemas([
         {"type": "function", "function": {"name": "ask_user"}},
-        {"name": "image_search"},
+        {"name": "similar_image_search"},
         {"type": "function", "function": {"name": "ask_user"}},
-    ]) == ["ask_user", "image_search"]
+    ]) == ["ask_user", "similar_image_search"]
 
 
 def test_fixed_adapter_context_only_exposes_stable_provider_tools():
     from agent.capabilities.injector import build_fixed_adapter_context
 
-    context = build_fixed_adapter_context(["image_search"])
+    context = build_fixed_adapter_context(["similar_image_search"])
     assert context.fixed_adapter is True
     assert context.select_for_messages([]).tool_names == ("call_tool", "get_tool_schema", "use_skill", "ask_user")
 
@@ -596,9 +596,9 @@ def test_fixed_adapter_context_only_exposes_stable_provider_tools():
 def test_fixed_adapter_catalog_contains_all_authorized_tool_signatures():
     from agent.capabilities.injector import build_fixed_adapter_context
 
-    context = build_fixed_adapter_context(["image_search"])
+    context = build_fixed_adapter_context(["similar_image_search"])
     block = catalog_block(context.snapshot, tool_order=context.snapshot.tools)
-    assert "image_search" in block
+    assert "similar_image_search" in block
     assert "字段：" in block
     assert "call_tool" in block
 
@@ -667,7 +667,7 @@ def test_scheduled_tasks_skill_documents_interval_window_semantics():
     assert "修改调度类型时必须同时提供新类型所需字段" in update.description
 
 
-def test_web_search_skill_contains_freshness_verification_protocol():
+def test_xng_search_skill_contains_freshness_verification_protocol():
     from agent.skills import load_skill
 
     content = load_skill("S13")

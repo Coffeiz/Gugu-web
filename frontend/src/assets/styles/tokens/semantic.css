@@ -99,6 +99,13 @@
   --status-danger-bg: color-mix(in srgb, var(--status-danger) 14%, transparent);
   --status-info-bg: color-mix(in srgb, var(--status-info) 14%, transparent);
 
+  /* Diff 用固定红绿语义，避免状态色随用户色板偏向青色或橙色。 */
+  --diff-addition-fg: #47794f;
+  --diff-deletion-fg: #a65359;
+  --diff-addition-bg: color-mix(in srgb, var(--diff-addition-fg) 11%, transparent);
+  --diff-deletion-bg: color-mix(in srgb, var(--diff-deletion-fg) 10%, transparent);
+  --diff-code-bg: color-mix(in srgb, var(--content-primary) 3%, var(--surface-card-solid));
+
   /* Public color vocabulary.
      Keep palette/iris/pearl as implementation details; pages and docs use these names. */
   --color-bg: var(--surface-page);
@@ -165,6 +172,8 @@
    让主题底色影响导航，保持它与页面背景的层次关系。 */
 :root[data-theme='dark'] {
   --surface-sidebar: color-mix(in srgb, var(--theme-sidebar) 96%, #fff 4%);
+  --diff-addition-fg: #9bc4a1;
+  --diff-deletion-fg: #dca0a4;
 }
 
 /* Glass 的暗色导航也直接复用卡片表面，避免独立灰黑底色破坏玻璃层次。 */

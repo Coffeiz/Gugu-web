@@ -134,6 +134,18 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(popovers).toContain('backdrop-filter: var(--popup-surface-blur);')
   })
 
+  it('通用菜单弹层内的滚动滑块跟随弹层动画并保持在弹层层级内', () => {
+    expect(overlayScrollbars).toContain('.nb-item, .popup-menu-host')
+    expect(load('./scrollbars.css')).toContain('[data-overlay-scrollbar-thumb].overlay-scrollbar--owner')
+  })
+
+  it('项目待办列表滚动时不关闭弹层，且滑块避开待办行的 hover 区', () => {
+    expect(projectCard).toContain('window.addEventListener(\'scroll\', onStagePopupScroll, true)')
+    expect(projectCard).toMatch(/function onStagePopupScroll\(event: Event\)[\s\S]*?stagePopRef\.value\?\.contains\(event\.target as Node\)/)
+    expect(projectCard).toContain('window.removeEventListener(\'scroll\', onStagePopupScroll, true)')
+    expect(projectCard).toMatch(/\.tp-list\s*\{[^}]*--scrollbar-overlay-right-offset:\s*4px;/)
+  })
+
   it('连续通知各自完成气泡打字，避免新通知抢占旧通知的播放 timer', () => {
     expect(notificationBubble).toContain('const _typeTimers = new Map<number, TypingTimer>()')
     expect(notificationBubble).toContain('function clearTypingTimer(id: number)')

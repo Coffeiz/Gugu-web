@@ -120,7 +120,7 @@
         :owner-z="props.ownerZ"
         :references="props.references" @update:references="emit('update:references', $event)"
         :pending-att="pendingAtt" :att-uploading="attUploading"
-        :recording="recording" :record-secs="recordSecs"
+        :recording="recording" :record-secs="recordSecs" :voice-input-available="voiceInputAvailable"
         :expanded="expanded" :streaming="streaming" :vw="vw"
         :automatic-mode-enabled="automaticModeEnabled"
         :automatic-mode-available="automaticModeAvailable"
@@ -196,6 +196,7 @@ const props = defineProps<{
   pendingAtt: ChatFile[]
   attUploading: boolean
   recording: boolean
+  voiceInputAvailable: boolean
   recordSecs: number
   vw: number
   // 回调

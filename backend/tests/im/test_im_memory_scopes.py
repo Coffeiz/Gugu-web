@@ -904,3 +904,39 @@ def test_private_reflection_snapshot_keeps_batch_body_only_in_history():
     assert marker not in branch_input.delta
     assert "共 1 条用户消息" in branch_input.delta
     assert "platform_user_id" not in branch_input.delta
+
+
+@pytest.mark.parametrize("platform", ["qq", "wechat", "feishu", "telegram"])
+def test_group_member_share_complete_memory_before_task_rules(platform):
+    """共同资料在分支指令前，避免成员反思重复读取同一群记忆。"""
+    import json
+    from agent.context.provider_conversation import ProviderConversation
+    from agent.memory.im_reflection import _build_append_branch_input, _scope_prompt
+    from agent.memory.scopes import MemoryScope
+
+    scope = MemoryScope("owner-demo", platform, "bot-demo", "group", "group-demo")
+    snapshot = SimpleNamespace(
+        history=ProviderConversation([{"role": "user", "content": "本批合成发言"}]),
+        ai=SimpleNamespace(provider="minimax", model="MiniMax-M3", api_format="responses"),
+        system_prompt="冻结的系统前缀", tools=({"type": "function", "name": "synthetic_tool"},),
+        session_id=77, run_id="synthetic-main-run",
+    )
+    current = {"profile": [{"text": "长期公开项目"}], "summary": "群当前状态",
+               "daily": "近期协作事件", "memory": "长期事件", "members": {"excluded": "成员名单"}}
+    shared = "已有群组/用户记忆：\n" + json.dumps(
+        {key: value for key, value in current.items() if key != "members"}, ensure_ascii=False,
+    ) + "\n\n"
+    branches = []
+    for task in ("group", "member-batch"):
+        branch = _build_append_branch_input(
+            scope, SimpleNamespace(idempotency_key="synthetic-job"), task, current, [], snapshot=snapshot,
+        )
+        assert branch.delta.startswith(shared)
+        assert branch.delta[len(shared):].startswith(_scope_prompt(scope, task_type=task))
+        assert "成员名单" not in branch.delta
+        assert branch.history_messages == snapshot.history
+        assert branch.stable_system == snapshot.system_prompt
+        assert branch.tools == snapshot.tools
+        branches.append(branch)
+    assert branches[0].scope == "group"
+    assert branches[1].scope == "group-member-reflection"

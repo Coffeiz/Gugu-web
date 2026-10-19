@@ -217,6 +217,7 @@ jobs:
           build-args: |
             APT_MIRROR=${{ matrix.apt_mirror }}
             PIP_INDEX_URL=https://pypi.org/simple
+            PACKAGE_REFRESH=${{ github.run_id }}
             GUGU_VERSION=${{ github.ref_type == 'tag' && github.ref_name || '0.0.0-ci' }}
             GUGU_REVISION=${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.cache-scope }}

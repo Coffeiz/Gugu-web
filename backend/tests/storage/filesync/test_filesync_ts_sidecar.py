@@ -1,6 +1,7 @@
 import asyncio
 import json
 import shutil
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -11,7 +12,9 @@ from app.services.filesync.ts_sidecar import FileSyncSidecar
 
 def test_ts_sidecar_default_artifact_is_in_backend_bin():
     sidecar = FileSyncSidecar()
-    assert Path(sidecar.command[-1]) == Path(__file__).parents[3] / "bin/gugu-filesync-ts-worker.cjs"
+    expected = (Path(__file__).parents[3] / "app/services/filesync/linux_watcher.py"
+                if sys.platform == "linux" else Path(__file__).parents[3] / "bin/gugu-filesync-ts-worker.cjs")
+    assert Path(sidecar.command[-1]) == expected
 
 
 @pytest.mark.asyncio

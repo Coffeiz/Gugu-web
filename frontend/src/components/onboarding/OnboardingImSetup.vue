@@ -5,14 +5,16 @@
         <span class="onboarding-im-icon">
           <RiChat1Fill v-if="platform.key === 'feishu'" />
           <RiQqFill v-else-if="platform.key === 'qq'" />
+          <RiTelegramFill v-else-if="platform.key === 'telegram'" />
           <RiWechatFill v-else />
         </span>
-        <div class="onboarding-im-copy"><strong>{{ t(platform.labelKey) }}</strong><small>{{ botsOf(platform.key).length ? t('profileImUi.connectedRebind') : t(platform.hintKey) }}</small></div>
+        <div class="onboarding-im-copy"><strong>{{ platformName(platform.key) }}</strong></div>
         <button v-if="!botsOf(platform.key).length" type="button" class="onboarding-im-connect" :disabled="connecting === platform.key" @click="startConnect(platform)">{{ connecting === platform.key ? t('profileImUi.generating') : t('profileImUi.scanToConnect') }}</button>
         <span v-else class="onboarding-im-connected-label">{{ t('profileImUi.enabled') }}</span>
       </div>
     </article>
   </div>
+  <TelegramTokenDialog :show="telegramDialogOpen" :busy="connecting === 'telegram'" :error="telegramError" @close="telegramDialogOpen = false" @submit="submitTelegramToken" />
   <BaseModal :show="modalVisible" width="420px" background="var(--surface-card-solid)" teleport-to="body" @close="cancelConnect">
     <div v-if="modalPlatform" class="onboarding-im-modal">
       <div class="onboarding-im-modal-head">
@@ -21,7 +23,7 @@
           <RiQqFill v-else-if="modalPlatform.key === 'qq'" />
           <RiWechatFill v-else />
         </span>
-        <div class="onboarding-im-copy"><strong>{{ t(modalPlatform.labelKey) }}</strong><small>{{ t('profileImUi.scanToConnect') }}</small></div>
+        <div class="onboarding-im-copy"><strong>{{ platformName(modalPlatform.key) }}</strong><small>{{ t('profileImUi.scanToConnect') }}</small></div>
       </div>
       <div class="onboarding-im-modal-body" role="status">
         <canvas ref="connectCanvas" class="onboarding-im-qr-canvas"></canvas>
@@ -35,25 +37,29 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import QRCode from 'qrcode'
-import { RiChat1Fill, RiQqFill, RiWechatFill } from '@remixicon/vue'
+import { RiChat1Fill, RiQqFill, RiWechatFill, RiTelegramFill } from '@remixicon/vue'
 import BaseModal from '@/components/common/overlays/BaseModal.vue'
-import Icon from '@/components/common/icons/Icon.vue'
-import { feishuConnectApi, qqConnectApi, userBotsApi, wechatConnectApi } from '@/services/api'
+import TelegramTokenDialog from '@/components/common/gugu-chat/TelegramTokenDialog.vue'
+import { feishuConnectApi, qqConnectApi, telegramConnectApi, userBotsApi, wechatConnectApi } from '@/services/api'
 import { useI18n } from 'vue-i18n'
 
 defineOptions({ inheritAttrs: false })
 
 interface Bot { id: number; platform: string }
-type Platform = { key: string; labelKey: string; hintKey: string; api: typeof feishuConnectApi }
+type Platform = { key: string; api: typeof feishuConnectApi | null }
 
 const { t } = useI18n()
 const platforms: Platform[] = [
-  { key: 'feishu', labelKey: 'profileImUi.feishu', hintKey: 'profileImUi.feishuHint', api: feishuConnectApi },
-  { key: 'qq', labelKey: 'profileImUi.qq', hintKey: 'profileImUi.qqHint', api: qqConnectApi },
-  { key: 'wechat', labelKey: 'profileImUi.wechat', hintKey: 'profileImUi.wechatHint', api: wechatConnectApi },
+  { key: 'feishu', api: feishuConnectApi },
+  { key: 'qq', api: qqConnectApi },
+  { key: 'wechat', api: wechatConnectApi },
+  { key: 'telegram', api: null },
 ]
+const platformName = (key: string) => key === 'qq' ? 'QQ' : t(`chatUi.${key}`)
 const bots = ref<Bot[]>([])
 const connecting = ref('')
+const telegramDialogOpen = ref(false)
+const telegramError = ref('')
 const connect = ref<{ platform: string; id: string } | null>(null)
 const modalPlatform = ref<Platform | null>(null)
 const modalVisible = ref(false)
@@ -73,6 +79,12 @@ async function loadBots() {
 async function startConnect(platform: Platform) {
   // 已连接的 IM 不允许从新手引导重新生成二维码；解绑/换绑统一在个人设置中完成。
   if (botsOf(platform.key).length) return
+  if (platform.key === 'telegram') {
+    telegramError.value = ''
+    telegramDialogOpen.value = true
+    return
+  }
+  if (!platform.api) return
   connecting.value = platform.key; connectErr.value = ''
   try {
     if (closeTimer) { clearTimeout(closeTimer); closeTimer = null }
@@ -82,12 +94,28 @@ async function startConnect(platform: Platform) {
   } catch (error) { connectErr.value = error instanceof Error ? error.message : t('profileImUi.qrGenerateFailed'); connect.value = null }
   finally { connecting.value = '' }
 }
+async function submitTelegramToken(token: string) {
+  if (connecting.value === 'telegram') return
+  connecting.value = 'telegram'
+  telegramError.value = ''
+  try {
+    await telegramConnectApi.connect(token)
+    telegramDialogOpen.value = false
+    await loadBots()
+  } catch {
+    telegramError.value = t('chatUi.telegramConnectFailed')
+  } finally {
+    connecting.value = ''
+  }
+}
 function startPoll(platform: Platform) {
+  const api = platform.api
+  if (!api) return
   stopPoll(); let tries = 0
   poll = setInterval(async () => {
     tries++; if (!connect.value) return
     try {
-      const result = await platform.api.poll(connect.value.id)
+      const result = await api.poll(connect.value.id)
       if (result.status === 'success') { cancelConnect(); await loadBots() }
       else if (result.status === 'expired') { connectErr.value = t('profileImUi.qrExpired'); cancelConnect() }
       else if (result.status === 'fail') { connectErr.value = t('profileImUi.connectionFailedWithReason', { reason: result.reason || t('profileImUi.unknownError') }); cancelConnect() }
@@ -109,15 +137,15 @@ onBeforeUnmount(() => { stopPoll(); if (closeTimer) clearTimeout(closeTimer) })
 </script>
 
 <style scoped>
-.onboarding-im-setup { align-self: center; display: grid; gap: var(--space-sm); width: 100%; min-width: 0; }
+.onboarding-im-setup { align-self: center; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-sm); width: 100%; min-width: 0; }
 .onboarding-im-card { min-width: 0; padding: var(--space-md); border: 1px solid var(--workspace-card-border); border-radius: var(--card-radius); background: var(--workspace-card-bg); box-shadow: var(--workspace-card-shadow); transition: border-color var(--motion-hover-control), box-shadow var(--motion-hover-control); }
 .onboarding-im-card:hover, .onboarding-im-card.is-open { border-color: var(--workspace-card-border-hover); }
 .onboarding-im-card.is-open { border-color: var(--workspace-card-border-hover); }
-.onboarding-im-card-head { display: flex; align-items: center; gap: var(--space-sm); min-width: 0; }
+.onboarding-im-card-head { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: var(--space-sm); min-width: 0; }
 .onboarding-im-icon { flex: 0 0 34px; width: 34px; height: 34px; display: grid; place-items: center; border-radius: var(--control-radius); background: var(--action-soft); color: var(--action-primary); }
 .onboarding-im-icon > svg { width: 16px; height: 16px; }
 .onboarding-im-copy { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 3px; }
-.onboarding-im-copy strong { color: var(--content-primary); font-size: var(--font-size-sm); }
+.onboarding-im-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--content-primary); font-size: var(--font-size-sm); }
 .onboarding-im-copy small { overflow: hidden; color: var(--content-tertiary); font-size: var(--font-size-xs); text-overflow: ellipsis; white-space: nowrap; }
 .onboarding-im-connected-label { flex: 0 0 auto; color: var(--status-success); font-size: var(--font-size-xs); }
 .onboarding-im-connect, .onboarding-im-cancel {
@@ -139,4 +167,7 @@ onBeforeUnmount(() => { stopPoll(); if (closeTimer) clearTimeout(closeTimer) })
 .onboarding-im-modal-body { display: flex; flex-direction: column; align-items: center; gap: var(--space-md); padding: var(--space-lg) 0; text-align: center; }
 .onboarding-im-modal-body .onboarding-im-qr-copy { max-width: 280px; }
 .onboarding-im-modal-actions { display: flex; justify-content: flex-end; padding-top: var(--space-sm); border-top: 1px solid var(--panel-divider); }
+@media (max-width: 420px) {
+  .onboarding-im-setup { grid-template-columns: minmax(0, 1fr); }
+}
 </style>

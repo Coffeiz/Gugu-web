@@ -11,10 +11,12 @@ from collections.abc import AsyncIterator
 from datetime import datetime
 from typing import Any
 
+import anyio
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import TimeoutError as RedisTimeoutError
+from starlette.types import Receive, Scope, Send
 
 from app.core.redis import get_redis
 from app.core.security import get_current_user_id, is_user_active
@@ -168,20 +170,23 @@ async def _event_stream(
     try:
         await pubsub.subscribe(*channels)
         yield ": connected\n\n"
+        if active_check is not None and not await active_check(active_user_id):
+            yield "event: account_suspended\ndata: {\"message\":\"账号暂时不可用\"}\n\n"
+            return
         while not await request.is_disconnected():
             message = await pubsub.get_message(
                 ignore_subscribe_messages=True,
-                timeout=1.0,
+                timeout=None,
             )
-            if active_check is not None and not await active_check(active_user_id):
-                yield "event: account_suspended\ndata: {\"message\":\"账号暂时不可用\"}\n\n"
-                return
             if message:
+                # 撤销通知唤醒空闲连接；业务消息也逐条检查，防止通知丢失后继续泄露数据。
+                # 先订阅后校验覆盖建连竞态，空闲时阻塞等待，不定时查库或发送心跳。
+                if active_check is not None and not await active_check(active_user_id):
+                    yield "event: account_suspended\ndata: {\"message\":\"账号暂时不可用\"}\n\n"
+                    return
                 frame = _serialize_message(message.get("data"))
                 if frame:
                     yield frame
-            else:
-                yield ": ping\n\n"
     except (RedisConnectionError, RedisTimeoutError):
         # Redis 重启或网络抖动会使 Pub/Sub 长连接失效；结束当前 SSE，前端会按退避策略重连。
         if not await request.is_disconnected():
@@ -190,13 +195,37 @@ async def _event_stream(
         return
     finally:
         try:
-            await pubsub.unsubscribe(*channels)
+            # ASGI 断开会取消整个响应任务组，清理仍需允许网络操作完成。
+            with anyio.move_on_after(3, shield=True):
+                await pubsub.unsubscribe(*channels)
         except (RedisConnectionError, RedisTimeoutError):
             pass
         finally:
             close = getattr(pubsub, "aclose", None)
             if close is not None:
-                await close()
+                with anyio.move_on_after(3, shield=True):
+                    await close()
+
+
+class _LiveStreamingResponse(StreamingResponse):
+    """空闲流也监听客户端断开，避免阻塞的 Redis 订阅随连接泄漏。"""
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        # ASGI 2.4 下基类只在发送时检测断开；无心跳的空闲流需要独立等待 disconnect。
+        async with anyio.create_task_group() as group:
+            async def stream() -> None:
+                try:
+                    await self.stream_response(send)
+                except OSError:
+                    pass  # 客户端断开时 send 可能先于 receive 报错。
+                finally:
+                    group.cancel_scope.cancel()
+
+            group.start_soon(stream)
+            await self.listen_for_disconnect(receive)
+            group.cancel_scope.cancel()
+        if self.background is not None:
+            await self.background()
 
 
 def event_stream_response(
@@ -207,7 +236,7 @@ def event_stream_response(
     active_user_id: Any = None,
 ) -> StreamingResponse:
     """为已认证路由复用 SSE 传输；调用方必须先限定订阅频道。"""
-    return StreamingResponse(
+    return _LiveStreamingResponse(
         _event_stream(request, channels, active_check, active_user_id),
         media_type="text/event-stream",
         headers={

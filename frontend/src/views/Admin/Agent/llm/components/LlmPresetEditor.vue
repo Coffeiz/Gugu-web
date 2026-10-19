@@ -148,6 +148,19 @@
               />
             </div>
 
+            <div v-if="providerWebSearchAvailable(draft)" class="modal-field">
+              <div class="setting-choice-row">
+                <div class="setting-choice-row__copy">
+                  <span class="setting-choice-row__title">{{ t('llmExtraUi.webSearch') }}</span>
+                  <span class="thinking-hint">{{ t('llmExtraUi.webSearchHint') }}</span>
+                </div>
+                <div class="setting-choice-row__options">
+                  <ToggleSwitch :model-value="draft.web_search_enabled"
+                    :aria-label="t('llmExtraUi.webSearch')"
+                    @update:model-value="draft.web_search_enabled = $event" />
+                </div>
+              </div>
+            </div>
             <MultimodalCapabilities :model="draft" :dims="mediaDimensions" variant="admin" :probing="probingDim" :probe-label="t('adminLlmUi.detect')" :probing-label="t('adminLlmUi.detecting')" :title="t('adminLlmUi.capabilities')" :hint="t('llmExtraUi.multimodalHint')" @probe="$emit('probe-media', draft.id, $event)" />
             <div class="modal-actions">
               <span class="save-hint" :class="{ error: !!error }">{{ error }}</span>
@@ -171,18 +184,21 @@ import InterfaceTypeSelect from '../../components/InterfaceTypeSelect.vue'
 import { apiFormatsFromSnapshot, defaultApiFormatFromSnapshot, defaultApiFormatForProvider, defaultBaseUrlFromSnapshot, retainApiFormatFromSnapshot, type ProviderApiFormatSnapshot } from '@/utils/modelProviders'
 import LocalCapabilityOverrides from '../../components/LocalCapabilityOverrides.vue'
 import MultimodalCapabilities from '@/components/common/controls/MultimodalCapabilities.vue'
+import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
 import AdminSelect from '@/components/AdminSelect.vue'
 import { buildThinkingOptionsForIdentity } from '@/utils/llmThinkingOptions'
+import { providerWebSearchAvailable } from '@/utils/providerWebSearch'
 
 interface Provider { key: string; label: string; base_url: string; model: string }
 interface Option { key: string; label: string; hint?: string }
 interface LlmPresetDraft {
   id?: string | number; name: string; provider: string; api_key: string; base_url: string; model: string
-  max_tokens: number; context_tokens: number; thinking: string; reasoning_persistence: 'off' | 'continuation'
+  max_tokens: number; context_tokens: number; thinking: string; reasoning_persistence: 'off' | 'continuation'; web_search_enabled: boolean
   image: boolean; video: boolean; audio: boolean
   capability_checked_at?: string
   [key: string]: unknown
 }
+
 const props = defineProps<{
   draft: LlmPresetDraft | null; visible: boolean; isNew: boolean; saving: boolean; error: string
   providers: Provider[]; imageDetailLevels: Option[]; mediaDimensions: Option[]

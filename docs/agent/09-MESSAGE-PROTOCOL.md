@@ -27,7 +27,7 @@ stream event 是一次 Run/生成期间的实时事件。Web 前端用它增量�
 
 ### PlatformReply
 
-`PlatformReply` 是出站适配前的平台无关回复，包含目标、parts、回复关联 ID 和能力声明。QQ、微信、飞书根据各自能力把它转换为平台消息；平台消息的分段、卡片和 mention 语法不改变 canonical history。
+`PlatformReply` 是出站适配前的平台无关回复，包含目标、parts、回复关联 ID 和能力声明。QQ、微信、飞书、Telegram 根据各自能力把它转换为平台消息；平台消息的分段、卡片和 mention 语法不改变 canonical history。
 
 ## 2. 入站消息
 
@@ -35,7 +35,7 @@ stream event 是一次 Run/生成期间的实时事件。Web 前端用它增量�
 
 | 字段 | 语义 |
 |---|---|
-| `platform` | `qq`、`wechat` 或 `feishu` |
+| `platform` | `qq`、`wechat`、`feishu` 或 `telegram` |
 | `bot_id` | 当前 bot/渠道配置 ID |
 | `message_id` | 平台消息或事件 ID；微信兼容使用 `context_token` |
 | `chat` | `ChatTarget(id, type)`，内部 type 为 `group` 或 `c2c` |

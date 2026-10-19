@@ -73,6 +73,19 @@ def _channel(user_id) -> str:
     return f"events:{user_id}"
 
 
+async def publish_auth_state_changed(user_id) -> bool:
+    """账户安全状态提交后唤醒长连接重新鉴权；内部通知不转发给客户端。"""
+    try:
+        await get_redis().publish(
+            _channel(user_id), json.dumps({"type": "auth.state.changed"}),
+        )
+    except Exception as exc:
+        from app.core.redaction import diag_log
+        diag_log("auth.state_changed.publish", exc)
+        return False
+    return True
+
+
 async def publish_agent_run_changed(user_id, *, session_id: int, status: str) -> bool:
     """通知用户级 live 流某会话的 Agent run 状态变化，不触发资源失效副作用。"""
     if status not in {"running", "completed", "failed"}:

@@ -5,6 +5,7 @@ rename 单/批量（含 format 修双后缀）、save_uploaded_file 暂存附件
 DB 走 conftest 内存库，storage 用 LocalStorageBackend 多点接线（先例 test_grep_tool）。
 """
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -17,6 +18,16 @@ from agent.tools.files.file_operations import (
 )
 from app.services.storage import LocalStorageBackend
 from app.services.storage.file_service import FileService
+from app.services.storage.file_service.content_types import is_binary_extension, is_text_file_record
+
+
+@pytest.mark.parametrize("ext", ["m3u", "m3u8"])
+def test_playlist_records_are_text_for_read_and_rename_validation(ext):
+    """播放列表即使被存成非 text MIME，也应按文本处理并允许同类改名。"""
+    file = SimpleNamespace(ext=ext, mime_type="application/vnd.apple.mpegurl")
+
+    assert is_text_file_record(file)
+    assert not is_binary_extension(ext)
 
 
 @pytest.fixture

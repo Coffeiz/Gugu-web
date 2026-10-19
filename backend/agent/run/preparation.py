@@ -200,7 +200,7 @@ def _apply_capability_context(system_prompt: str, snapshot_context: str, context
 async def prepare_run_capabilities(
     db, user_id, session_id, tool_names, settings, system_prompt, snapshot_context,
     *, session=None, query="", user_skill_metadata=None, dynamic_tools=(),
-    subject_type="session", subject_id=None, workspace_id=None, source="web",
+    subject_type="session", subject_id=None, workspace_id=None, source="web", model_cfg=None,
 ):
     """统一组装本轮工具与提示词；入口只提供会话或任务授权主体。
 
@@ -217,6 +217,10 @@ async def prepare_run_capabilities(
     subject = dict(session=session, subject_type=subject_type,
                    subject_id=subject_id, workspace_id=workspace_id)
     tool_names = await _filter_shell_tool(db, user_id, session_id, tool_names, **subject)
+    from agent.tools.search import filter_configured_search_tools
+    tool_names = await filter_configured_search_tools(
+        tool_names, db=db, user_id=user_id, settings=settings, model_cfg=model_cfg,
+    )
     shell_prompt = None
     if "shell" in tool_names:
         shell_prompt = await build_dynamic_prompt(db, user_id, session_id, **subject)
@@ -539,6 +543,7 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
             tool_db, user_id, session_id, tool_names, settings, system_prompt, snapshot_context,
             session=session, query=aug_text,
             user_skill_metadata=user_skill_metadata, dynamic_tools=mcp_tools, source=req.source,
+            model_cfg=model_cfg,
         )
     if capability_context is not None:
         _pin_session_user_skill_metadata(session, capability_context)

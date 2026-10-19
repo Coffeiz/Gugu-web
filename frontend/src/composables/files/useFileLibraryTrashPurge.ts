@@ -31,14 +31,8 @@ interface PurgeController {
   mounted: boolean
   jobId: number | null
   finishedJobId: number | null
-  recoveryTimer: ReturnType<typeof setTimeout> | null
-}
-
-const RECOVERY_SYNC_MS = 30_000
-
-function stopRecoverySync(controller: PurgeController) {
-  if (controller.recoveryTimer !== null) clearTimeout(controller.recoveryTimer)
-  controller.recoveryTimer = null
+  requestVersion: number
+  latestEvent: ReturnType<typeof useLiveStore>['trashPurgeEvent']
 }
 
 function acceptJob(controller: PurgeController, job: TrashPurgeJob) {
@@ -59,7 +53,6 @@ async function finish(controller: PurgeController, job: TrashPurgeJob) {
   if (controller.finishedJobId === job.id) return
   controller.finishedJobId = job.id
   controller.jobId = null
-  stopRecoverySync(controller)
   controller.busy.value = false
   controller.progress.value = null
   controller.options.loadContents()
@@ -76,27 +69,25 @@ async function syncJob(controller: PurgeController, jobId: number) {
   try {
     const job = await controller.options.api.getEmptyJob(jobId)
     if (!controller.mounted || controller.jobId !== jobId) return
-    acceptJob(controller, job)
-    if (job.status === 'completed' || job.status === 'failed') {
-      await finish(controller, job)
-      return
-    }
+    await applySnapshot(controller, job)
   } catch (error) {
     console.error('[Files] 获取回收站清理进度失败:', error instanceof Error ? error.message : String(error))
   }
-  scheduleRecoverySync(controller)
 }
 
-function scheduleRecoverySync(controller: PurgeController) {
-  stopRecoverySync(controller)
-  if (!controller.mounted || controller.jobId === null) return
-  controller.recoveryTimer = setTimeout(
-    () => void syncJob(controller, controller.jobId!), RECOVERY_SYNC_MS,
-  )
+async function applySnapshot(controller: PurgeController, job: TrashPurgeJob) {
+  if (controller.finishedJobId === job.id) return
+  acceptJob(controller, job)
+  // HTTP 返回前事件可能已到达；登记任务后立即消费，避免丢失快速任务终态。
+  await applyProgressEvent(controller, controller.latestEvent)
+  if (controller.finishedJobId === job.id) return
+  if (job.status === 'completed' || job.status === 'failed') await finish(controller, job)
 }
 
-function applyProgressEvent(controller: PurgeController, event: ReturnType<typeof useLiveStore>['trashPurgeEvent']) {
-  if (!event || event.task_id !== controller.jobId) return
+async function applyProgressEvent(controller: PurgeController, event: ReturnType<typeof useLiveStore>['trashPurgeEvent']) {
+  if (!event) return
+  controller.latestEvent = event
+  if (event.task_id !== controller.jobId) return
   const job: TrashPurgeJob = {
     id: event.task_id,
     status: event.status,
@@ -106,19 +97,18 @@ function applyProgressEvent(controller: PurgeController, event: ReturnType<typeo
   }
   acceptJob(controller, job)
   if (job.status === 'completed' || job.status === 'failed') {
-    void finish(controller, job)
-  } else {
-    scheduleRecoverySync(controller)
+    await finish(controller, job)
   }
 }
 
 async function resume(controller: PurgeController) {
+  const version = controller.requestVersion
   try {
     const job = await controller.options.api.activeEmpty()
-    if (!job || !controller.mounted) return
-    acceptJob(controller, job)
+    if (!job || !controller.mounted || version !== controller.requestVersion) return
+    if (controller.jobId !== null && controller.jobId !== job.id) return
+    await applySnapshot(controller, job)
     if (controller.jobId !== null) void syncJob(controller, job.id)
-    else if (job.status === 'completed' || job.status === 'failed') await finish(controller, job)
   } catch (error) {
     console.error('[Files] 恢复回收站清理进度失败:', error instanceof Error ? error.message : String(error))
   }
@@ -132,10 +122,11 @@ async function empty(controller: PurgeController) {
     confirmText: i18n.global.t('filesViewUi.permanentDelete'),
   })) return
   try {
+    ++controller.requestVersion
     const job = await controller.options.api.startEmpty()
-    acceptJob(controller, job)
-    if (job.status === 'completed' || job.status === 'failed') await finish(controller, job)
-    else void syncJob(controller, job.id)
+    if (!controller.mounted) return
+    await applySnapshot(controller, job)
+    if (controller.jobId !== null) void syncJob(controller, job.id)
   } catch (error) {
     console.error('[Files] 清空回收站失败:', error instanceof Error ? error.message : String(error))
     showAppError(i18n.global.t('filesViewUi.emptyTrashFailed'))
@@ -151,9 +142,10 @@ export function useFileLibraryTrashPurge(options: TrashPurgeOptions) {
     mounted: false,
     jobId: null,
     finishedJobId: null,
-    recoveryTimer: null,
+    latestEvent: null,
+    requestVersion: 0,
   }
-  watch(() => live.trashPurgeEvent, event => applyProgressEvent(controller, event), { immediate: true })
+  watch(() => live.trashPurgeEvent, event => applyProgressEvent(controller, event), { immediate: true, flush: 'sync' })
   watch(() => live.connected, (connected, wasConnected) => {
     if (connected && !wasConnected && controller.jobId !== null) {
       void syncJob(controller, controller.jobId)
@@ -172,7 +164,6 @@ export function useFileLibraryTrashPurge(options: TrashPurgeOptions) {
   onBeforeUnmount(() => {
     controller.mounted = false
     document.removeEventListener('visibilitychange', onVisibilityChange)
-    stopRecoverySync(controller)
   })
 
   return {

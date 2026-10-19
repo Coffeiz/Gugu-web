@@ -13,6 +13,7 @@ FILE_TOOLS = [
             name="list_dir", label="浏览目录",
             description_short='浏览目录：可显式查项目根层、项目递归清单或具体文件夹。',
             description="列出文件与当前层直属子文件夹，可按空间、项目、工作区或目录筛选；文件仍按传入条件过滤，不传位置条件时覆盖当前用户所有可访问空间。"
+                        "space=workspace 单独使用会汇总该用户的所有顶层工作区；若用户指定了某个具名工作区，先用 list_workspaces 将名称解析为 kind=directory 的 directory_id，再传 workspace_directory_id 精确筛选。不要混用 workspace_id 与 directory_id，也不要把未限定工作区的汇总数量归到某个单独工作区。"
                         "项目查询优先显式指定 scope：scope=project_root + space=project + project_id 只查项目根层；"
                         "scope=project_recursive + 相同项目参数列出项目全部层级的文件与文件夹；"
                         "scope=folder 必须搭配真实 folder_id 查具体目录。项目本身不是 folder，不能把 project_id 填进 folder_id。"
@@ -21,7 +22,7 @@ FILE_TOOLS = [
                         "folders 只返回当前层的直属子目录，不递归展开；未传目录时只返回各空间根目录下的文件夹。需要深入时，再对目标子目录传 folder_id 调用。"
                         "返回 {shown, total, files, folders}：total/shown 只统计文件——shown<total 说明未取完，"
                         "加大 limit、加 offset 翻页或改用更精确的过滤条件，不能把部分结果当全量下结论；确认「全部/清空/还剩几个」类问题时务必核对 total。"
-                        "limit 只约束 files（上限 200）；folders 恒全量，每项带 file_count（直属文件数）。kind=file/folder 可只看其中一种。"
+                        "文件和文件夹结果会带 workspace_directory_id，便于识别跨工作区汇总中的归属。limit 只约束 files（上限 200）；folders 恒全量，每项带 file_count（直属文件数）。kind=file/folder 可只看其中一种。"
                         "超大目录看全量：sort=\"name\" + limit=200 + offset 递增分页拉完（名字序翻页稳定不漏重）。"
                         "按关键词找文件时优先一次传 queries（默认 OR）；决定新文件落点时先看当前层，需要确认更深位置时对候选子目录继续浏览。",
             input_schema={
@@ -33,7 +34,10 @@ FILE_TOOLS = [
                         "type": "string",
                         "enum": ["project_root", "project_recursive", "folder"],
                     },
-                    "workspace_directory_id": {"type": "integer"},
+                    "workspace_directory_id": {
+                        "type": "integer",
+                        "description": "顶层工作区目录 ID；space=workspace 不传此参数时会汇总所有顶层工作区。",
+                    },
                     "folder": {"type": "string"},
                     "folder_id": {"type": "integer"},
                     "parent_id": {"type": "integer"},

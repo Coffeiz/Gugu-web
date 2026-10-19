@@ -10,7 +10,7 @@
 
 ## Layers
 
-Web / QQ / WeChat / Feishu / scheduled jobs
+Web / QQ / WeChat / Feishu / Telegram / scheduled jobs
   -> Gateway / Router
   -> ConversationSession
   -> Agent orchestration: Run -> Round -> Tool loop

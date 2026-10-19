@@ -23,9 +23,8 @@ _RENDER_LIMIT = asyncio.Semaphore(1)
 # 单个 worker 请求的批大小上限；不是每轮/每次回复的图表上限。
 MAX_DIAGRAMS = 4
 DEFERRED_RENDER_BATCH_SIZE = 1
-# 兼容旧调用方的显式限制值；新流式路径默认不设置 run 级上限。
-MAX_RUN_DIAGRAMS = 4
-DEFAULT_MAX_DIAGRAMS = MAX_RUN_DIAGRAMS
+# 总图表数不设上限；单批大小与全局并发分别由 MAX_DIAGRAMS 和 _RENDER_LIMIT 控制。
+DEFAULT_MAX_DIAGRAMS: int | None = None
 MAX_SOURCE_CHARS = 20_000
 MAX_PNG_BYTES = 3 * 1024 * 1024
 RENDER_TIMEOUT_SECONDS = 20

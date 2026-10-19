@@ -208,6 +208,7 @@ class UserProviderCredential(Base):
     thinking: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     reasoning_effort: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     reasoning_persistence: Mapped[str] = mapped_column(String(20), default="off", server_default="off", nullable=False)
+    web_search_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
     image: Mapped[bool] = mapped_column(Boolean, default=False)
     video: Mapped[bool] = mapped_column(Boolean, default=False)
     audio: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -1458,7 +1459,7 @@ class AgentUsage(Base):
 
 class SearchUsage(Base):
     """深度研究用量：每次 deep_research（Tavily）记一行，用于每日次数配额统计。
-    （web_search 走自建 SearXNG、免费，不计配额。）"""
+    （xng_search 走自建 SearXNG、免费，不计配额。）"""
     __tablename__ = "search_usage"
 
     id:         Mapped[int]      = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -1498,7 +1499,11 @@ class UserBot(Base):
     member_memory_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     group_owner_memory_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     # 群成员可用工具白名单；默认含群上下文搜索，不开放用户私有内容和写操作。
-    group_allowed_tools: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=lambda: ["web_search", "http_get", "image_search", "read_file", "send_file", "group_context_search"])
+    group_allowed_tools: Mapped[Optional[list]] = mapped_column(
+        JSON, nullable=True,
+        default=lambda: ["xng_search", "http_get", "similar_image_search", "read_file", "send_file", "group_context_search"],
+        server_default='["xng_search"]',
+    )
     # QQ 文本出站格式：compat=兼容纯文本，markdown=Markdown 排版。
     group_message_format: Mapped[str] = mapped_column(String(16), default="compat")
     private_message_format: Mapped[str] = mapped_column(

@@ -85,60 +85,55 @@ def test_normalize_failure_reason_tokens():
     assert _normalize_failure_reason("weird failure") == "unknown"
 
 
-# ── _searxng_search：通用搜索状态机 ───────────────────────────────────────
+# ── _xng_search：网页搜索状态机 ──────────────────────────────────────────
 
-async def test_searxng_search_guards_and_fallback(db, user_a, monkeypatch):
+async def test_xng_search_guards_without_paid_fallback(db, user_a, monkeypatch):
     monkeypatch.setattr(search_mod, "get_settings",
                         lambda: _settings(searxng_url=""))
-    assert "尚未配置通用搜索" in (await search_mod._searxng_search(db, user_a.id, {"q": "x"}))["error"]
+    assert "尚未配置 XNG Search" in (await search_mod._xng_search(db, user_a.id, {"q": "x"}))["error"]
 
     monkeypatch.setattr(search_mod, "get_settings", lambda: _settings())
-    assert "需要提供搜索关键词" in (await search_mod._searxng_search(db, user_a.id, {}))["error"]
+    assert "需要提供搜索关键词" in (await search_mod._xng_search(db, user_a.id, {}))["error"]
 
     _wire_http(monkeypatch, response=httpx.Response(403))
-    assert "403" in (await search_mod._searxng_search(db, user_a.id, {"query": "x"}))["error"]
+    assert "403" in (await search_mod._xng_search(db, user_a.id, {"query": "x"}))["error"]
 
     _wire_http(monkeypatch, response=httpx.Response(500))
-    assert "HTTP 500" in (await search_mod._searxng_search(db, user_a.id, {"query": "x"}))["error"]
+    assert "HTTP 500" in (await search_mod._xng_search(db, user_a.id, {"query": "x"}))["error"]
 
     _wire_http(monkeypatch, response=httpx.Response(200, text="not-json"))
-    assert "不是 JSON" in (await search_mod._searxng_search(db, user_a.id, {"query": "x"}))["error"]
+    assert "无法解析" in (await search_mod._xng_search(db, user_a.id, {"query": "x"}))["error"]
 
-    # 网络异常 → 直接切 deep_research 兜底
+    # 网络异常不得隐式消耗已配置的付费研究额度。
     _wire_http(monkeypatch, raise_first=httpx.ConnectError("boom"))
 
     async def fake_deep(db, user_id, args):
-        return {"fallback": args["query"]}
+        raise AssertionError("免费搜索不得自动调用付费研究")
 
     monkeypatch.setattr(search_mod, "_deep_research", fake_deep)
-    result = await search_mod._searxng_search(db, user_a.id, {"query": "天气"})
-    assert result == {"fallback": "天气"}
+    result = await search_mod._xng_search(db, user_a.id, {"query": "天气"})
+    assert "XNG Search 暂时不可用" in result["error"]
 
     data = {"results": [
         {"title": "结果一", "url": "https://a", "content": "长" * 400},
         {"title": "无正文", "url": "https://b"},
     ]}
     _wire_http(monkeypatch, response=httpx.Response(200, json=data))
-    payload = await search_mod._searxng_search(db, user_a.id, {"query": "天气"})
+    payload = await search_mod._xng_search(db, user_a.id, {"query": "天气"})
     assert payload["results"][0]["content"] == "长" * 300                # 摘要截断 300
     assert payload["results"][1]["content"] == ""
     assert payload["search_status"]["state"] == "ok"
 
 
-# ── _searxng_image_search：图片搜索重试与结果整形 ─────────────────────────
+# ── _xng_search(mode=images)：图像结果整形 ────────────────────────────────
 
-async def test_searxng_image_search_retry_and_shaping(db, user_a, monkeypatch):
+async def test_xng_image_search_shapes_results(db, user_a, monkeypatch):
     monkeypatch.setattr(search_mod, "get_settings", lambda: _settings())
-    assert "需要提供搜索关键词" in (await search_mod._searxng_image_search(db, user_a.id, {}))["error"]
-
-    _wire_http(monkeypatch, raise_first=httpx.ConnectError("down"),
-               response=httpx.Response(200, json={"results": []}))
-    payload = await search_mod._searxng_image_search(db, user_a.id, {"query": "猫"})   # 首挂重试成
-    assert payload["results"] == []
+    assert "需要提供搜索关键词" in (await search_mod._xng_search(db, user_a.id, {"mode": "images"}))["error"]
 
     _wire_http(monkeypatch, raise_always=httpx.ConnectError("down"))
-    payload = await search_mod._searxng_image_search(db, user_a.id, {"query": "猫"})
-    assert "图片搜索暂时失败" in payload["error"]                       # 两次都挂 → 报错
+    payload = await search_mod._xng_search(db, user_a.id, {"query": "猫", "mode": "images"})
+    assert "XNG Search 暂时不可用" in payload["error"]
 
     _wire_http(monkeypatch, response=httpx.Response(200, json={"results": [
         {"title": "有图", "url": "https://page", "img_src": "https://img/1.jpg"},
@@ -146,7 +141,7 @@ async def test_searxng_image_search_retry_and_shaping(db, user_a, monkeypatch):
         {"title": "缩略图", "url": "https://p3", "img_src": "https://img/3",
          "thumbnail": "https://thumb/3"},
     ]}))
-    payload = await search_mod._searxng_image_search(db, user_a.id, {"query": "猫"})
+    payload = await search_mod._xng_search(db, user_a.id, {"query": "猫", "mode": "images"})
     # result_id 是源顺序索引（含被过滤项），过滤后不重排
     assert [r["result_id"] for r in payload["results"]] == ["image-1", "image-3"]
     assert payload["results"][1]["thumbnail"] == "https://thumb/3"
@@ -225,26 +220,26 @@ async def test_resolve_similar_image_guards_and_happy(user_a, monkeypatch):
     assert "下载失败" in error
 
 
-# ── _image_search_by_image：配置守卫、配额与记录 ──────────────────────────
+# ── _similar_image_search：配置守卫、配额与记录 ──────────────────────────
 
-async def test_image_search_by_image_guards_and_happy(db, user_a, monkeypatch):
+async def test_similar_image_search_guards_and_happy(db, user_a, monkeypatch):
     monkeypatch.setattr(search_mod, "get_settings",
                         lambda: _settings(similar_image_provider="disabled"))
-    assert "尚未配置或未启用" in (await search_mod._image_search_by_image(
+    assert "尚未配置或未启用" in (await search_mod._similar_image_search(
         db, user_a.id, {"attach_id": "a"}))["error"]
 
     monkeypatch.setattr(search_mod, "get_settings",
                         lambda: _settings(baidu_qianfan_api_key=""))
-    assert "尚未配置或未启用" in (await search_mod._image_search_by_image(
+    assert "尚未配置或未启用" in (await search_mod._similar_image_search(
         db, user_a.id, {"attach_id": "a"}))["error"]
 
     monkeypatch.setattr(search_mod, "get_settings", lambda: _settings())
-    assert "max_results 必须是" in (await search_mod._image_search_by_image(
+    assert "max_results 必须是" in (await search_mod._similar_image_search(
         db, user_a.id, {"attach_id": "a", "max_results": "abc"}))["error"]
 
     monkeypatch.setattr(search_mod, "get_user_daily_search_limit", async_none_limit)
     monkeypatch.setattr(search_mod, "count_similar_image_usage", async_hit(99))
-    assert "已用完" in (await search_mod._image_search_by_image(
+    assert "已用完" in (await search_mod._similar_image_search(
         db, user_a.id, {"attach_id": "a"}))["error"]
 
     recorded = []
@@ -256,12 +251,12 @@ async def test_image_search_by_image_guards_and_happy(db, user_a, monkeypatch):
     monkeypatch.setattr(search_mod, "_resolve_similar_image", _async((b"img", None)))
     monkeypatch.setattr(search_mod, "_call_baidu_similar_image",
                         _async({"results": [{"title": "相似"}]}))
-    result = await search_mod._image_search_by_image(db, user_a.id, {"attach_id": "a"})
+    result = await search_mod._similar_image_search(db, user_a.id, {"attach_id": "a"})
     assert result["results"] == [{"title": "相似"}] and "note" not in result
     assert recorded == [1]
 
     monkeypatch.setattr(search_mod, "_call_baidu_similar_image", _async({"results": []}))
-    result = await search_mod._image_search_by_image(db, user_a.id, {"attach_id": "a"})
+    result = await search_mod._similar_image_search(db, user_a.id, {"attach_id": "a"})
     assert result["note"] == "没有找到相似结果"
 
 

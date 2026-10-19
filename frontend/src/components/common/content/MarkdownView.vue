@@ -181,4 +181,20 @@ html[data-theme='dark'] .md-view:deep(.md-code-block) { border-color: rgba(255,2
 .md-view :deep(.hljs-variable), .md-view :deep(.hljs-template-variable) { color: var(--content-primary); }
 .md-view :deep(.hljs-emphasis) { font-style: italic; }
 .md-view :deep(.hljs-strong) { font-weight: 700; }
+/* Diff/patch 保持整行淡底色，长行横向滚动时底色也覆盖完整代码宽度。 */
+.md-view :deep(pre:has(> code:is(.language-diff, .language-patch))) {
+  background: var(--diff-code-bg);
+}
+.md-view :deep(code:is(.language-diff, .language-patch)) {
+  display: block; width: max-content; min-width: 100%;
+}
+.md-view :deep(code:is(.language-diff, .language-patch) :is(.hljs-addition, .hljs-deletion)) {
+  display: inline-block; min-width: 100%; box-sizing: border-box;
+}
+.md-view :deep(code:is(.language-diff, .language-patch) .hljs-addition) {
+  color: var(--diff-addition-fg); background: var(--diff-addition-bg);
+}
+.md-view :deep(code:is(.language-diff, .language-patch) .hljs-deletion) {
+  color: var(--diff-deletion-fg); background: var(--diff-deletion-bg);
+}
 </style>

@@ -15,22 +15,24 @@ from app.core.config import get_settings
 from app.core.tz import now_utc
 from app.models import UserBot
 
-DEFAULT_GROUP_ALLOWED_TOOLS: List[str] = ["web_search", "http_get", "image_search", "read_file", "send_file", "group_context_search"]
+DEFAULT_GROUP_ALLOWED_TOOLS: List[str] = ["xng_search", "http_get", "similar_image_search", "read_file", "send_file", "group_context_search"]
 
 
 def normalize_group_allowed_tools(configured: object) -> List[str]:
-    """兼容旧群白名单，并把旧图片读取授权映射到受限 read_file。"""
+    """规范化群白名单，并把图片读取授权映射到受限 read_file。"""
     if not isinstance(configured, list):
         return list(DEFAULT_GROUP_ALLOWED_TOOLS)
     allowed = ["read_file" if name == "inspect_images" else name
                for name in configured if isinstance(name, str)]
     allowed = list(dict.fromkeys(allowed))
+    if "xng_search" in allowed and "http_get" not in allowed:
+        allowed.insert(allowed.index("xng_search") + 1, "http_get")
     if "web_search" in allowed and "http_get" not in allowed:
         allowed.insert(allowed.index("web_search") + 1, "http_get")
-    # 图片读取是图片搜索的子能力；旧白名单只授权 image_search 时自动补上 read_file。
+    # 图片读取是搜图能力的子能力；read_file 仍会按群成员身份限制为图片。
     # documents._read_file 仍会按群成员身份限制为图片，不开放私人文本/音视频读取。
-    if "image_search" in allowed and "read_file" not in allowed:
-        allowed.insert(allowed.index("image_search") + 1, "read_file")
+    if "similar_image_search" in allowed and "read_file" not in allowed:
+        allowed.insert(allowed.index("similar_image_search") + 1, "read_file")
     return allowed
 QQ_BINDING_CODE_TTL = 600
 QQ_BINDING_CODE_MAX_ATTEMPTS = 5

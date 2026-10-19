@@ -1,5 +1,6 @@
-import { nextTick, ref, watch, type Ref } from 'vue'
+import { nextTick, onScopeDispose, ref, watch, type Ref } from 'vue'
 import { filesApi, foldersApi, type CursorPage } from '@/services/api'
+import { useLiveStore } from '@/stores/live'
 import type { DirectoryPageState, DirectorySnapshotScope, FileMeta, FolderMeta } from '@/stores/filesCache'
 import type { Project } from '@/types/project'
 
@@ -25,6 +26,9 @@ export function useProjectFileProjectSync(options: {
   const loadedDirectories = new Set<string>()
   const directoryScopes = new Map<string, DirectorySnapshotScope>()
   const pendingDirectories = new Map<string, Promise<void>>()
+  // 每个项目的目录数据版本用于丢弃实时变更前启动的目录与分页响应。
+  const projectDataRevisions = new Map<number, number>()
+  let refreshTimer: ReturnType<typeof setTimeout> | null = null
   const loadingMore = ref(false)
   const limitedDirectories = ref(new Set<string>())
   const sortBy = () => options.sortBy?.() ?? 'createdAt'
@@ -47,24 +51,32 @@ export function useProjectFileProjectSync(options: {
     const pending = pendingDirectories.get(key)
     if (pending) return pending
 
-    const request = Promise.all([
-      filesApi.page({ space: 'project', projectId, folderId: folderId ?? undefined,
-        sortBy: sortBy(), sortOrder: sortOrder() }),
-      foldersApi.page({ projectId, parentId: folderId ?? undefined,
-        sortBy: sortBy(), sortOrder: sortOrder() }),
-    ]).then(([files, folders]) => {
-      if (options.project()?.id !== projectId) return
-      options.fileCacheStore.setDirectoryPage(
-        scope,
-        files as CursorPage<FileMeta>, folders as CursorPage<FolderMeta>,
-      )
-      loadedDirectories.add(key)
-      directoryScopes.set(key, scope)
-    }).catch(() => {
-      // 加载失败时不标记目录，重新进入时允许重试。
-    }).finally(() => {
-      pendingDirectories.delete(key)
-    })
+    const request = (async () => {
+      try {
+        while (options.project()?.id === projectId) {
+          const revision = projectDataRevisions.get(projectId) ?? 0
+          const [files, folders] = await Promise.all([
+            filesApi.page({ space: 'project', projectId, folderId: folderId ?? undefined,
+              sortBy: sortBy(), sortOrder: sortOrder() }),
+            foldersApi.page({ projectId, parentId: folderId ?? undefined,
+              sortBy: sortBy(), sortOrder: sortOrder() }),
+          ])
+          if (options.project()?.id !== projectId) return
+          if (revision !== (projectDataRevisions.get(projectId) ?? 0)) continue
+          options.fileCacheStore.setDirectoryPage(
+            scope,
+            files as CursorPage<FileMeta>, folders as CursorPage<FolderMeta>,
+          )
+          loadedDirectories.add(key)
+          directoryScopes.set(key, scope)
+          return
+        }
+      } catch {
+        // 加载失败时不标记目录，重新进入时允许重试。
+      } finally {
+        pendingDirectories.delete(key)
+      }
+    })()
 
     pendingDirectories.set(key, request)
     return request
@@ -86,6 +98,7 @@ export function useProjectFileProjectSync(options: {
       return
     }
     loadingMore.value = true
+    const revision = projectDataRevisions.get(projectId) ?? 0
     try {
       const [files, folders] = await Promise.all([
         previous.fileHasMore ? filesApi.page({ space: 'project', projectId, folderId,
@@ -96,6 +109,10 @@ export function useProjectFileProjectSync(options: {
           : Promise.resolve({ items: [], next_cursor: null, has_more: false } as CursorPage<FolderMeta>),
       ])
       if (options.project()?.id !== projectId || options.folderStack.value.at(-1)?.id !== folderId) return
+      if (revision !== (projectDataRevisions.get(projectId) ?? 0)) {
+        void ensureDirectoryLoaded(projectId, folderId ?? null)
+        return
+      }
       const remaining = 2000 - loadedCount
       const acceptedFiles = files.items.slice(0, remaining)
       const acceptedFolders = folders.items.slice(0, Math.max(0, remaining - acceptedFiles.length))
@@ -137,6 +154,7 @@ export function useProjectFileProjectSync(options: {
   }
 
   function invalidateProjectDirectories(projectId: number): void {
+    projectDataRevisions.set(projectId, (projectDataRevisions.get(projectId) ?? 0) + 1)
     for (const [key, scope] of directoryScopes) {
       if (!key.startsWith(`${projectId}:`)) continue
       options.fileCacheStore.invalidatePages(scope)
@@ -166,6 +184,21 @@ export function useProjectFileProjectSync(options: {
     for (const key of loadedDirectories) if (!key.startsWith(`${id}:`)) loadedDirectories.delete(key)
     void ensureDirectoryLoaded(id, null)
   }, { immediate: true })
+
+  const liveStore = useLiveStore()
+  watch(() => liveStore.rev.files, () => {
+    const projectId = options.project()?.id
+    if (projectId == null) return
+    invalidateProjectDirectories(projectId)
+    if (refreshTimer) clearTimeout(refreshTimer)
+    refreshTimer = setTimeout(() => {
+      refreshTimer = null
+      void ensureDirectoryLoaded(projectId, options.folderStack.value.at(-1)?.id ?? null)
+    }, 180)
+  })
+  onScopeDispose(() => {
+    if (refreshTimer) clearTimeout(refreshTimer)
+  })
 
   return { initializing, ensureDirectoryLoaded, isDirectoryLoaded, invalidateProjectDirectories,
     loadMoreDirectory, directoryHasMore, directoryLimitReached, loadingMore }

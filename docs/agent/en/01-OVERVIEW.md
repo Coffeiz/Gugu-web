@@ -1,6 +1,6 @@
 # Agent System Overview
 
-Gugu Agent is the unified conversation execution layer. It accepts requests from Web, QQ, WeChat, Feishu, and scheduled jobs, loads user and session context, selects model capabilities, executes tools when needed, persists structured results, and returns channel-specific output.
+Gugu Agent is the unified conversation execution layer. It accepts requests from Web, QQ, WeChat, Feishu, Telegram, and scheduled jobs, loads user and session context, selects model capabilities, executes tools when needed, persists structured results, and returns channel-specific output.
 
 The web UI and IM gateways are input/output adapters, not the Agent itself. Model providers are execution adapters. The Agent core owns context, tools, skills, task loops, interaction state, and persistence.
 

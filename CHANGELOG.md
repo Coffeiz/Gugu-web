@@ -5,7 +5,127 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [1.7.5] - 2026-10-18
+
+### What's New
+
+#### New Features
+
+- Preview and confirm missing file-library records in batches from the sync conflict list.
+- Add Provider-native web search for MiniMax, GLM, Qwen, DeepSeek, MiMo and Ollama Cloud, with per-model switches and billing notices.
+
+#### Improvements
+
+- Use distinct file icons for Markdown, Word, PDF, PowerPoint and Excel files.
+- Use muted red and green text with matching backgrounds for diff code blocks.
+- Keep cut files and folders visibly consistent between the file library and project editor, with shared card action styling.
+- Use compact inline rename and todo fields in the project editor.
+- Speed up large file copies by streaming data through storage backends.
+- Remember the selected calendar view and document or spreadsheet preview size between visits.
+- Show the selected choice on the completed Feishu interaction card without a separate tool-status message.
+- Stop sending idle SSE heartbeat frames and reduce idle polling while preserving immediate event delivery and periodic account-status checks.
+- Refresh IM connection status in already-open chat windows after a bot is connected, updated, unbound, or removed.
+- Open `present_file` results only in the browser that initiated the chat request, avoiding unintended playback or previews in other tabs.
+- Recognize M3U/M3U8 playlists as text files and avoid revalidating an unchanged extension during file moves or renames.
+- Keep calendar overflow items current after events are edited or deleted, and adapt project status counts to the selected theme.
+- Keep popup scrollbars inside their animated surfaces and allow project todo lists to scroll without closing the editor.
+- Share group reflection memory prefixes and show cold requests and cache rates excluding cold requests in usage statistics.
+- Add Telegram to onboarding, simplify IM platform names and use compact cards in two columns.
+- Allow selecting and copying Mermaid source in the fullscreen preview.
+- Improve search routing, cross-source verification and fact checking for uncertain names, attributes and references.
+- Combine web and image search in XNG Search and hide search tools that have no usable configuration.
+
+### Fixes
+
+- Show selected Web chat answers immediately without requiring a refresh.
+- Detect Linux file-watcher queue overflow and reconcile missed deletions when the original directory is still intact.
+- Preserve calendar and spreadsheet preferences across frontend updates, along with the DOCX viewing mode.
+- Retry project-directory reads when a file changes during an in-flight request, avoiding a stale snapshot.
+- Keep OSS copy fingerprints matched to the copied source version when the source changes concurrently.
+- Hide email-change controls when system email is unavailable and refresh the capability when account settings open.
+- Show a loading state while an HTML preview finishes loading.
+- Keep the previous project-folder contents visible while refreshed directory data is loading.
+- Allow fresh database bootstrap to skip search indexes for columns no longer present in the current schema.
+- Keep the calendar all-day separator aligned across the week view.
+- Accept text input when completing sandbox authorization prompts.
+- Send QQ file attachments and Mermaid images as proactive messages so media delivery does not consume the inbound message's passive-reply allowance.
+- Let QQ passive replies rely on platform responses instead of switching to proactive delivery after a locally hard-coded reply count; render all Mermaid charts in bounded batches.
+- Center Mermaid state diagram labels, preserve raster colors, and improve text contrast for dark nodes in rendered diagrams.
+- Keep the cache-ratio chart scale within its defined 0–100% range.
+- Push trash cleanup progress after each item and apply completion events without periodic polling.
+- Keep failed XNG searches from automatically consuming paid research and bound Provider search responses and generated output.
+- Refresh Provider-specific web search parameters when switching models in an existing conversation, including switching back to a previously used Provider.
+- Stop retrying background memory reflection for deleted conversations and clean up their pending buffers.
+- Stop automatically retrying IM memory reflection when the model provider explicitly rejects the input, while preserving retries for temporary failures.
+
+### Contributors
+
+- Thank you to [@Coffeiz](https://github.com/Coffeiz) for PR #103.
+
+### Feedback & Issue Reporters
+
+- None for this release.
+
+### 更新内容
+
+#### 新功能
+
+- 文件同步冲突列表支持预览并分批确认本地缺失记录。
+- 新增 MiniMax、GLM、百炼、DeepSeek、MiMo 和 Ollama Cloud 原生联网搜索，支持按模型启用并提示可能产生的费用。
+
+#### 改进
+
+- 文件卡片按 Markdown、Word、PDF、PPT 和 Excel 类型显示对应图标。
+- diff 代码块使用低饱和红绿文字和对应底色，便于识别增删内容。
+- 统一文件库与项目编辑器中文件和文件夹的剪切状态及卡片操作样式。
+- 调整项目编辑器内联重命名和待办输入框高度，使其更紧凑。
+- 优化大文件复制，按流处理存储数据，减少应用内存占用。
+- 记住用户上次选择的日历视图，以及文档字号和表格缩放比例。
+- 飞书交互完成后在原卡片显示已选择的选项，不再额外发送工具状态消息。
+- 移除 SSE 空闲心跳并降低空闲轮询频率，同时保留业务事件即时推送和账号状态定期校验。
+- IM Bot 绑定、更新、解绑或删除后，已打开的聊天窗口会同步刷新接入状态。
+- `present_file` 仅在发起对话的浏览器中打开，避免其他标签页意外播放或展示文件。
+- 将 M3U/M3U8 播放列表识别为文本文件；移动或改名但未更改后缀时不再重复校验文件类型。
+- 日历“更多”列表会同步活动的最新信息；项目看板数量徽标适配用户主题配色。
+- 弹层滚动条随弹层动画显示，项目待办列表滚动时不会关闭编辑器。
+- 群组与成员记忆反思复用共同资料前缀；用量场景表新增冷请求次数和排除冷请求后的缓存率。
+- 新手引导补充 Telegram 接入，IM 卡片改为两列；引导与个人设置统一显示简洁平台名。
+- Mermaid 全屏预览源码支持鼠标选择和复制。
+- 优化搜索工具分工与复杂任务混合检索，补充多来源比对和具体实体、属性、引用的真实性核验指引。
+- XNG Search 统一网页、图像及混合搜索；未配置的搜索能力不再展示给模型。
+
+### 修复
+
+- Web 聊天选择答案后立即显示选择结果，无需刷新。
+- 检测 Linux 文件监听队列溢出，在原目录身份未变化时核对并补偿遗漏的删除。
+- 前端更新后保留日历、表格偏好及 DOCX 页面适配模式。
+- 文件在项目目录请求期间发生变化时重新读取，避免缓存旧目录内容。
+- OSS 源文件并发变化时校验复制版本，确保内容指纹与复制结果一致。
+- 系统邮件不可用时隐藏邮箱变更入口，并在打开账号设置时刷新可用状态。
+- HTML 预览加载完成前显示加载状态。
+- 项目文件目录刷新时保留上次内容，避免加载期间文件区闪成空白。
+- 全新数据库初始化时跳过当前 schema 中已不存在字段的搜索索引，避免初始化失败。
+- 修正周视图全天区域分隔线的显示。
+- 沙盒授权询问支持直接输入文本完成授权。
+- QQ 文件和 Mermaid 图片改用主动消息发送，不再消耗触发本轮任务的被动回复次数。
+- QQ 被动回复限制交由平台响应处理，不再按本地固定条数提前切换主动发送；Mermaid 图表按有界批次处理且不限制单次总数。
+- 居中 Mermaid 状态图节点文字，保留栅格图颜色并提高深色节点的文字对比度。
+- 用量统计中的缓存率图表固定在 0–100% 范围内。
+- 回收站逐项推送清理进度，及时应用完成事件，不再等待定时补查。
+- 免费 XNG 搜索失败不再自动调用付费深度研究；限制 Provider 联网搜索响应体、结果及生成输出大小。
+- 修复会话中切换 Provider 后联网搜索参数声明沿用历史版本的问题，支持切回原 Provider。
+- 修复文件同步在文件被删除或原子替换时整批重试及记录过期指纹的问题。
+- 修复模型上游流式失败被误报为内部错误的问题，统一 Web 与 IM 的错误提示和诊断编号。
+- 修复已删除会话的后台记忆反思持续重试问题，并清理对应待处理缓冲。
+- 修复 IM 记忆反思在模型明确拒绝输入后仍自动重试的问题，暂时性故障继续正常退避重试。
+
+#### 贡献者
+
+- 感谢 [@Coffeiz](https://github.com/Coffeiz) 提交 PR #103。
+
+#### 反馈与问题报告
+
+- 暂无。
 
 ## [1.7.4] - 2026-10-16
 

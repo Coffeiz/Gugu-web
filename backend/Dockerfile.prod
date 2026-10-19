@@ -91,9 +91,11 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # （2026-09-12 docker-release trivy 门连败根因，29 HIGH/CRITICAL）。逐包追 deb 是
 # 无底洞，这里把源切回官方 security pool 做一次完整 upgrade，自动覆盖后续 CVE；
 # 镜像源同步追平后可把 sed 段去掉。
+ARG PACKAGE_REFRESH=local
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    rm -f /etc/apt/apt.conf.d/docker-clean \
+    test -n "${PACKAGE_REFRESH}" \
+    && rm -f /etc/apt/apt.conf.d/docker-clean \
     && sed -i \
         -e "s|${APT_MIRROR}/debian-security|https://deb.debian.org/debian-security|g" \
         -e "s|${APT_MIRROR}/debian|https://deb.debian.org/debian|g" \

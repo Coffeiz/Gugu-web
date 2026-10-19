@@ -9,15 +9,13 @@ from agent.models import AgentResponse
 
 
 class QQMermaidRound:
-    """维护 QQ 私聊流、被动回复额度及图文分段回退。"""
+    """维护 QQ 私聊流及图文分段回退。"""
 
     def __init__(
         self,
         payload: dict,
         *,
         show_intermediate_replies: bool,
-        reply_budget_exhausted: Callable[[dict], bool],
-        mark_passive_reply_used: Callable[[dict, str | None], None],
         send_text: Callable,
         try_send_png_image: Callable,
         send_mermaid_text: Callable,
@@ -26,8 +24,6 @@ class QQMermaidRound:
         from agent.gateway import qq
 
         self.payload = payload
-        self._reply_budget_exhausted = reply_budget_exhausted
-        self._mark_passive_reply_used = mark_passive_reply_used
         self._send_text = send_text
         self._try_send_png_image = try_send_png_image
         self._send_mermaid_text = send_mermaid_text
@@ -40,7 +36,6 @@ class QQMermaidRound:
         self._qq = qq
         self.stream_failed = False
         self.stream = self._new_stream()
-        self._stream_counted = False
         self.stream_sent = False
         self.last_text = ""
         self.round_text = ""
@@ -51,10 +46,8 @@ class QQMermaidRound:
         self.stream_message_id: str | None = None
 
     def _new_stream(self):
-        self._stream_counted = False
-        # 每个文本段都是独立气泡，但仍可在 QQ 被动回复额度内关联同一条入站消息。
-        # stream_messages 没有入站 message_id 时无法开启新流；额度耗尽后退回主动文本。
-        if not self.payload.get("message_id") or self._reply_budget_exhausted(self.payload):
+        # 每个文本段是独立气泡；被动回复窗口/次数由 QQ 响应决定，触发限制时网关回退主动发送。
+        if not self.payload.get("message_id"):
             self.stream_message_id = None
             self.stream_failed = True
             return None
@@ -126,7 +119,6 @@ class QQMermaidRound:
     def _record_stream_delivery(self) -> bool:
         if self.stream is not None and self.stream.has_sent():
             self.stream_sent = True
-            self._count_stream_reply()
         return self.stream_sent
 
     def _fail_stream(self) -> None:
@@ -140,16 +132,6 @@ class QQMermaidRound:
         await self._finish_text_segment()
         return self.stream_sent
 
-    def _count_stream_reply(self) -> None:
-        if (
-            self.stream is not None
-            and self.stream.has_sent()
-            and self.stream_message_id
-            and not self._stream_counted
-        ):
-            self._mark_passive_reply_used(self.payload, self.stream_message_id)
-            self._stream_counted = True
-
     async def _finish_text_segment(self, *, trim_end: bool = False) -> None:
         if trim_end:
             # 已展示的流式前缀不可回改；只丢弃还未推送的尾部空白。
@@ -162,11 +144,7 @@ class QQMermaidRound:
                 text = self.segment_text
                 self.segment_text = ""
                 try:
-                    payload = (
-                        {**self.payload, "message_id": None}
-                        if self._reply_budget_exhausted(self.payload)
-                        else self.payload
-                    )
+                    payload = self.payload
                     if await self._send_text(payload, text):
                         self.stream_sent = True
                 except Exception as exc:
@@ -183,7 +161,6 @@ class QQMermaidRound:
             delivered = str(getattr(stream, "last_sent_text", "") or "")
             if stream.has_sent():
                 self.stream_sent = True
-                self._count_stream_reply()
                 self.segment_text = (
                     text[len(delivered):]
                     if delivered and text.startswith(delivered)
@@ -191,7 +168,6 @@ class QQMermaidRound:
                 )
             raise
         self.stream_sent = self.stream_sent or self.stream.has_sent()
-        self._count_stream_reply()
         self.segment_text = ""
 
     async def _emit_parts(self, parts) -> None:

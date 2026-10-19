@@ -1361,7 +1361,7 @@ async def test_multi_tool_round_keeps_serial_dispatch_and_model_order(monkeypatc
         openai_schemas=lambda _names: [],
         labels=lambda: {},
     )
-    monkeypatch.setattr(registry, "snapshot_with_extras", lambda _extras: snapshot)
+    monkeypatch.setattr(registry, "snapshot_with_extras", lambda _extras, *, model_cfg=None: snapshot)
 
     events = []
     async for chunk in make_runner()._run_anthropic(
@@ -1408,7 +1408,7 @@ async def test_enabled_parallel_round_overlaps_but_emits_and_persists_in_model_o
         openai_schemas=lambda _names: [],
         labels=lambda: {},
     )
-    monkeypatch.setattr(registry, "snapshot_with_extras", lambda _extras: snapshot)
+    monkeypatch.setattr(registry, "snapshot_with_extras", lambda _extras, *, model_cfg=None: snapshot)
 
     active = 0
     max_active = 0
@@ -1513,7 +1513,7 @@ async def test_invalid_protocol_call_does_not_serialize_five_safe_shell_calls(mo
         openai_schemas=lambda _names: [],
         labels=lambda: {},
     )
-    monkeypatch.setattr(registry, "snapshot_with_extras", lambda _extras: snapshot)
+    monkeypatch.setattr(registry, "snapshot_with_extras", lambda _extras, *, model_cfg=None: snapshot)
 
     active = 0
     max_active = 0
@@ -1604,7 +1604,7 @@ async def test_parallel_round_uses_admin_configured_concurrency_limit(monkeypatc
         openai_schemas=lambda _names: [],
         labels=lambda: {},
     )
-    monkeypatch.setattr(registry, "snapshot_with_extras", lambda _extras: snapshot)
+    monkeypatch.setattr(registry, "snapshot_with_extras", lambda _extras, *, model_cfg=None: snapshot)
     monkeypatch.setattr(
         registry, "dispatch",
         lambda _user, name, _args: asyncio.sleep(0, result=(json.dumps({"result": name}), None)),
@@ -1654,7 +1654,7 @@ async def test_parallel_tool_events_distinguish_queued_from_running(monkeypatch)
         openai_schemas=lambda _names: [],
         labels=lambda: {},
     )
-    monkeypatch.setattr(registry, "snapshot_with_extras", lambda _extras: snapshot)
+    monkeypatch.setattr(registry, "snapshot_with_extras", lambda _extras, *, model_cfg=None: snapshot)
     started = []
     release = asyncio.Event()
     two_started = asyncio.Event()
@@ -1732,7 +1732,7 @@ async def test_parallel_cancellation_preserves_finished_result_and_closes_batch(
         openai_schemas=lambda _names: [],
         labels=lambda: {},
     )
-    monkeypatch.setattr(registry, "snapshot_with_extras", lambda _extras: snapshot)
+    monkeypatch.setattr(registry, "snapshot_with_extras", lambda _extras, *, model_cfg=None: snapshot)
 
     all_started = asyncio.Event()
     alpha_completed = asyncio.Event()
@@ -1834,7 +1834,7 @@ async def test_parallel_enabled_mixed_batch_remains_strictly_serial(monkeypatch)
         openai_schemas=lambda _names: [],
         labels=lambda: {},
     )
-    monkeypatch.setattr(registry, "snapshot_with_extras", lambda _extras: snapshot)
+    monkeypatch.setattr(registry, "snapshot_with_extras", lambda _extras, *, model_cfg=None: snapshot)
 
     first_started = asyncio.Event()
     release_first = asyncio.Event()
@@ -1902,7 +1902,7 @@ async def test_parallel_dispatch_exception_is_isolated_and_not_exposed(monkeypat
         openai_schemas=lambda _names: [],
         labels=lambda: {},
     )
-    monkeypatch.setattr(registry, "snapshot_with_extras", lambda _extras: snapshot)
+    monkeypatch.setattr(registry, "snapshot_with_extras", lambda _extras, *, model_cfg=None: snapshot)
 
     async def fake_dispatch(_user_id, name, _arguments):
         if name == "safe_broken":

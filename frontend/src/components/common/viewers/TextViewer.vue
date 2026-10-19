@@ -18,13 +18,14 @@
           <span v-if="truncated" class="tv-html-truncated">{{ t('viewerUi.truncated') }}</span>
         </div>
       </div>
-      <div v-if="htmlMode === 'preview'" ref="htmlPreview" class="tv-html-preview">
+      <div v-if="htmlMode === 'preview'" ref="htmlPreview" class="tv-html-preview" :class="{ 'is-loading': !htmlPreviewLoaded }">
         <div v-if="htmlCanvas" class="tv-html-canvas-fit" :style="htmlCanvasFitStyle">
           <iframe
             class="tv-html-frame tv-html-frame-canvas"
             sandbox="allow-scripts allow-forms"
             :srcdoc="htmlPreviewDocument"
             :style="htmlCanvasFrameStyle"
+            @load="onHtmlPreviewLoad"
             referrerpolicy="no-referrer"
             :title="t('viewerUi.htmlPreview')"
           />
@@ -34,9 +35,14 @@
           class="tv-html-frame"
           sandbox="allow-scripts allow-forms"
           :srcdoc="htmlPreviewDocument"
+          @load="onHtmlPreviewLoad"
           referrerpolicy="no-referrer"
           :title="t('viewerUi.htmlPreview')"
         />
+        <div v-if="!htmlPreviewLoaded" class="tv-html-loading" role="status" aria-live="polite">
+          <div class="tv-spinner" />
+          <span>{{ t('viewerUi.loading') }}</span>
+        </div>
       </div>
       <div v-else class="tv-edit-cm-wrap">
         <Codemirror
@@ -252,6 +258,7 @@ const editable = computed(() => isTextDocument.value && canEditContent.value)
 const isMarkdownFile = computed(() => /^(md|markdown)$/i.test(props.ext || ''))
 const isHtmlFile = computed(() => /^(html|htm)$/i.test(props.ext || ''))
 const htmlMode = ref<'preview' | 'source'>('preview')
+const htmlPreviewLoaded = ref(false)
 const htmlPreview = ref<HTMLElement | null>(null)
 const htmlPreviewSize = ref({ width: 0, height: 0 })
 let htmlPreviewObserver: ResizeObserver | null = null
@@ -289,6 +296,9 @@ const htmlCanvasFrameStyle = computed(() => {
   }
 })
 const htmlPreviewDocument = computed(() => createHtmlPreviewDocument(editText.value))
+function onHtmlPreviewLoad() {
+  htmlPreviewLoaded.value = true
+}
 // 代码/纯文本扩展名（txt 并入 CodeMirror 路径，见 2026-09-03：txt 没有预览价值，还顺带拿到
 // 行号、撤销栈和自动保存）：不分真实文件/聊天附件、不分编辑/预览，一律直接显示 CodeMirror。
 // 只有 md 保留「渲染预览 + 编辑」双视图——渲染后的排版本身就是预览价值。
@@ -701,6 +711,7 @@ async function resolveMdRelativeImages() {
 watch(() => [props.blobUrl, props.ext, props.sourceText], async ([url, ext, sourceText]) => {
   if (!url && sourceText === null) return
   loading.value   = true
+  htmlPreviewLoaded.value = false
   error.value     = null
   truncated.value = false
   editing.value   = false   // 切换文件/重新加载时退出编辑态，别把上一份文件的编辑框留着
@@ -749,6 +760,7 @@ watch([htmlMode, loading], async ([mode, isLoading]) => {
   htmlPreviewObserver?.disconnect()
   htmlPreviewObserver = null
   if (mode !== 'preview' || isLoading) return
+  htmlPreviewLoaded.value = false
   await nextTick()
   const element = htmlPreview.value
   if (!element) return
@@ -834,8 +846,10 @@ onBeforeUnmount(() => {
 .tv-html-tab:hover { background: var(--surface-soft-hover); color: var(--content-primary); }
 .tv-html-tab.active { background: var(--action-soft); color: var(--action-primary); font-weight: 600; }
 .tv-html-truncated { color: var(--status-warning); font-size: 11px; }
-.tv-html-preview { flex: 1; min-height: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; background: #fff; }
+.tv-html-preview { position: relative; flex: 1; min-height: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; background: #fff; }
 .tv-html-frame { display: block; width: 100%; height: 100%; border: 0; background: #fff; }
+.tv-html-preview.is-loading .tv-html-frame { opacity: 0; }
+.tv-html-loading { position: absolute; inset: 0; z-index: 1; display: flex; align-items: center; justify-content: center; gap: 10px; background: #fff; color: var(--content-secondary); font-size: 13px; }
 .tv-html-canvas-fit { position: relative; flex: 0 0 auto; overflow: hidden; }
 .tv-html-frame-canvas { position: absolute; top: 0; left: 0; transform-origin: top left; }
 

@@ -9,22 +9,15 @@
     <div class="onboarding-modal">
       <main class="onboarding-main">
         <section class="onboarding-step">
-          <div
-            class="onboarding-visual"
-          >
+          <div class="onboarding-visual">
             <Transition name="onboarding-step-fade">
-              <div
-                :key="step"
-                class="onboarding-visual-stage"
-                :class="{
-                  'theme-visual-stage': step === 'style',
-                  'complete-visual-stage': step === 'complete',
-                }"
-              >
-                <OnboardingThemePreview v-if="step === 'complete'" class="complete-preview-host" />
-                <OnboardingThemePreview v-else-if="step === 'style'" class="theme-preview-host" />
-                <OnboardingLanguagePreview v-else-if="step === 'locale'" class="language-preview-host" />
-                <div v-else-if="step === 'features' || step === 'im'" class="feature-media-stage" aria-live="polite">
+              <div v-show="step === 'locale'" class="onboarding-visual-stage">
+                <OnboardingLanguagePreview class="language-preview-host" />
+              </div>
+            </Transition>
+            <Transition name="onboarding-step-fade">
+              <div v-show="step === 'features' || step === 'im'" class="onboarding-visual-stage">
+                <div class="feature-media-stage" aria-live="polite">
                   <img
                     v-if="featureMediaPrevious"
                     class="onboarding-media feature-media feature-media-previous"
@@ -39,7 +32,16 @@
                     :alt="mediaAlt"
                   />
                 </div>
-                <div v-else-if="step === 'model'" class="feature-media-stage" aria-live="polite">
+              </div>
+            </Transition>
+            <Transition name="onboarding-step-fade">
+              <div v-show="step === 'style'" class="onboarding-visual-stage theme-visual-stage">
+                <OnboardingThemePreview class="theme-preview-host" />
+              </div>
+            </Transition>
+            <Transition name="onboarding-step-fade">
+              <div v-show="step === 'model'" class="onboarding-visual-stage">
+                <div class="feature-media-stage" aria-live="polite">
                   <img
                     v-if="modelMediaPrevious"
                     class="onboarding-media feature-media feature-media-previous"
@@ -56,6 +58,11 @@
                 </div>
               </div>
             </Transition>
+            <Transition name="onboarding-step-fade">
+              <div v-show="step === 'complete'" class="onboarding-visual-stage complete-visual-stage">
+                <OnboardingThemePreview class="complete-preview-host" />
+              </div>
+            </Transition>
           </div>
 
           <div class="onboarding-content">
@@ -66,7 +73,7 @@
             </div>
 
             <div class="content-panel">
-              <div v-if="step === 'locale'" class="locale-options content-options">
+              <div v-show="step === 'locale'" class="locale-options content-options">
                 <button
                   v-for="option in localeOptions"
                   :key="option.value"
@@ -84,7 +91,7 @@
                 </button>
               </div>
 
-              <div v-else-if="step === 'features'" class="feature-options content-options">
+              <div v-show="step === 'features'" class="feature-options content-options">
                   <button
                     v-for="item in featureItems"
                     :key="item.key"
@@ -104,7 +111,7 @@
                 </button>
               </div>
 
-              <div v-else-if="step === 'style'" class="theme-options content-options">
+              <div v-show="step === 'style'" class="theme-options content-options">
                 <ThemeSwitcher
                   :model-value="preference"
                   :family="family"
@@ -115,17 +122,15 @@
                 />
               </div>
 
-              <ProfileByokPane
-                v-else-if="step === 'model'"
-                compact
-                onboarding
-                capability="llm"
-                class="content-options onboarding-model-pane"
-              />
+              <div v-show="step === 'model'" class="content-options onboarding-model-pane">
+                <ProfileByokPane compact onboarding capability="llm" />
+              </div>
 
-              <OnboardingImSetup v-else-if="step === 'im'" class="content-options" />
+              <div v-show="step === 'im'" class="content-options">
+                <OnboardingImSetup />
+              </div>
 
-              <div v-else class="complete-options content-options">
+              <div v-show="step === 'complete'" class="complete-options content-options">
                 <div class="complete-option-row">
                   <span class="complete-option-mark"><RiCheckFill /></span>
                   <div><b>{{ t('onboardingUi.steps.locale') }}</b><small>{{ localeLabel }}</small></div>
@@ -200,7 +205,12 @@ import ThemeSwitcher from '@/views/Design/components/ThemeSwitcher.vue'
 import { usePreferencesStore } from '@/stores/preferences'
 import { getLocale, type SupportedLocale } from '@/i18n'
 import { useTheme } from '@/composables/core/useTheme'
-import { onboardingGuideState, updateOnboardingGuide } from '@/composables/onboarding/useOnboardingGuide'
+import {
+  flushOnboardingGuideProgress,
+  onboardingGuideState,
+  queueOnboardingGuideProgress,
+  setOnboardingGuideState,
+} from '@/composables/onboarding/useOnboardingGuide'
 
 const props = defineProps<{ show: boolean }>()
 const emit = defineEmits<{ (event: 'close'): void }>()
@@ -390,74 +400,74 @@ function isDone(item: Step) {
   return steps.indexOf(item) < index.value
 }
 
-async function selectLocale(value: SupportedLocale) {
+function selectLocale(value: SupportedLocale) {
   if (locale.value === value) return
   locale.value = value
-  await preferences.saveLocale(value)
+  void preferences.saveLocale(value)
 }
 
 async function later() {
   if (saving.value) return
+  saving.value = true
   try {
-    await updateOnboardingGuide({ dismissed: true })
+    await flushOnboardingGuideProgress({
+      current_step: steps[index.value],
+      completed_steps: onboardingGuideState.value?.completed_steps || [],
+      dismissed: true,
+    })
   } catch {
     // 关闭引导不应阻塞用户进入主应用。
+  } finally {
+    saving.value = false
   }
   emit('close')
 }
 
-async function previous() {
+function previous() {
   if (saving.value || index.value <= 0) return
-  const fromIndex = index.value
-  const targetIndex = fromIndex - 1
-  saving.value = true
+  const targetIndex = index.value - 1
   index.value = targetIndex
-  try {
-    await updateOnboardingGuide({ current_step: steps[targetIndex], dismissed: false })
-  } catch {
-    index.value = fromIndex
-  } finally {
-    saving.value = false
+  const patch = { current_step: steps[targetIndex], dismissed: false }
+  if (onboardingGuideState.value) {
+    setOnboardingGuideState({ ...onboardingGuideState.value, ...patch })
   }
+  queueOnboardingGuideProgress(patch)
 }
 
 async function next() {
   if (saving.value) return
-  saving.value = true
-
   const fromIndex = index.value
   const currentStep = steps[fromIndex]
   const completed = new Set(onboardingGuideState.value?.completed_steps || [])
   completed.add(currentStep)
 
-  try {
-    if (currentStep === 'locale') await preferences.saveLocale(locale.value)
-
-    if (currentStep === 'complete') {
-      await updateOnboardingGuide({
+  if (currentStep === 'complete') {
+    saving.value = true
+    try {
+      await flushOnboardingGuideProgress({
+        current_step: currentStep,
         completed_steps: [...completed],
         completed_at: new Date().toISOString(),
         dismissed: false,
       })
       emit('close')
-      return
+    } finally {
+      saving.value = false
     }
-
-    const targetIndex = fromIndex + 1
-    index.value = targetIndex
-    try {
-      await updateOnboardingGuide({
-        current_step: steps[targetIndex],
-        completed_steps: [...completed],
-        dismissed: false,
-      })
-    } catch (error) {
-      index.value = fromIndex
-      throw error
-    }
-  } finally {
-    saving.value = false
+    return
   }
+
+  const targetIndex = fromIndex + 1
+  index.value = targetIndex
+  const patch = {
+    current_step: steps[targetIndex],
+    completed_steps: [...completed],
+    dismissed: false,
+  }
+  if (onboardingGuideState.value) {
+    setOnboardingGuideState({ ...onboardingGuideState.value, ...patch })
+  }
+  queueOnboardingGuideProgress(patch)
 }
 </script>
 
@@ -492,10 +502,12 @@ async function next() {
   z-index: 4;
   min-height: 0;
   overflow: hidden;
+  display: grid;
   background: transparent;
 }
 .onboarding-visual-stage {
   position: relative;
+  grid-area: 1 / 1;
   width: 100%;
   height: 100%;
 }

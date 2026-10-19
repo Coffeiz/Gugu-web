@@ -335,10 +335,12 @@ class Tool:
                  batch_confirmation: bool = False,
                  strict_array_fields: tuple[str, ...] = (),
                  parallel_safe: bool = False,
-                 parallel_safe_for_input: Callable[[dict], bool] | None = None):
+                 parallel_safe_for_input: Callable[[dict], bool] | None = None,
+                 input_schema_factory: Callable[[object], dict] | None = None):
         self.name = name
         self.description = description
         self.input_schema = input_schema
+        self.input_schema_factory = input_schema_factory
         self.handler = handler          # async (db, user_id, args) -> dict | list
         self.label = label or name
         self.destructive = destructive  # 不可逆操作，handler 内走 confirm.gate
@@ -396,6 +398,10 @@ class Tool:
         # 注册时由 SkillRegistry.add() 完成 schema 自检并缓存；未注册 Tool 不允许直接 dispatch。
         self._input_validator = None
 
+    def input_schema_for(self, model_cfg) -> dict:
+        """按本轮模型解析声明，不修改全局工具定义。"""
+        return self.input_schema_factory(model_cfg) if self.input_schema_factory else self.input_schema
+
     def to_anthropic(self) -> dict:
         return {
             "name": self.name,
@@ -422,12 +428,16 @@ class ToolRegistrySnapshot:
     backend 重启；测试或运行时扩展若要生效也必须重新创建进程。
     """
 
-    def __init__(self, source: "SkillRegistry", extra_tools: list[Tool] | tuple[Tool, ...] = ()):
+    def __init__(self, source: "SkillRegistry", extra_tools: list[Tool] | tuple[Tool, ...] = (), *, model_cfg=None):
         self._source = source
         tools = {}
         for name, tool in source._tools.items():
             frozen = copy.copy(tool)
-            frozen.input_schema = copy.deepcopy(tool.input_schema)
+            frozen.input_schema = copy.deepcopy(
+                tool.input_schema_for(model_cfg) if model_cfg is not None else tool.input_schema
+            )
+            if model_cfg is not None and tool.input_schema_factory:
+                frozen._input_validator = build_validator(frozen.input_schema)
             tools[name] = frozen
         # 动态工具只属于当前 run 的派生快照，不能写回 source._tools，也不能改变
         # source.snapshot() 的进程级冻结语义。重名时以内置工具为准，调用方应在装载
@@ -515,14 +525,15 @@ class SkillRegistry:
             self._snapshot = ToolRegistrySnapshot(self)
         return self._snapshot
 
-    def snapshot_with_extras(self, extra_tools: list[Tool] | tuple[Tool, ...] = ()) -> ToolRegistrySnapshot:
+    def snapshot_with_extras(self, extra_tools: list[Tool] | tuple[Tool, ...] = (), *, model_cfg=None) -> ToolRegistrySnapshot:
         """返回不修改全局注册表的本轮派生快照。
 
         MCP 工具按用户动态发现，不能进入进程级 registry snapshot；provider 声明、
         固定 Adapter 和 dispatch 又必须看到同一份工具集合，因此在 run 边界合并一份
         只读快照。``extra_tools`` 只保留非空且不覆盖 builtin 的工具。
+        依赖 Provider 的字段在这里按 model_cfg 冻结，声明与 dispatch 校验共用同一 Schema。
         """
-        return ToolRegistrySnapshot(self, extra_tools)
+        return ToolRegistrySnapshot(self, extra_tools, model_cfg=model_cfg)
 
     def add(self, tool: Tool) -> None:
         # P4 · 注册期契约校验（fail-fast）：定义错在这里就炸，不留到运行时静默失效

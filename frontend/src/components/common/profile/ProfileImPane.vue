@@ -29,10 +29,10 @@
           <div class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.groupMemory') }}</span><span class="pm-field-hint">{{ t('profileImUi.groupMemoryHint') }}</span></div><span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="bot.group_memory_enabled !== false" :aria-label="t('profileImUi.toggleGroupMemory')" @update:model-value="toggleMemory(bot, 'group_memory_enabled')" /><span class="pm-switch-label" :class="{ on: bot.group_memory_enabled !== false }">{{ bot.group_memory_enabled !== false ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span></div>
           <div class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.memberMemory') }}</span><span class="pm-field-hint">{{ t('profileImUi.memberMemoryHint') }}</span></div><span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="bot.member_memory_enabled !== false" :aria-label="t('profileImUi.toggleMemberMemory')" @update:model-value="toggleMemory(bot, 'member_memory_enabled')" /><span class="pm-switch-label" :class="{ on: bot.member_memory_enabled !== false }">{{ bot.member_memory_enabled !== false ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span></div>
         </template>
-        <div v-if="['qq', 'feishu', 'telegram'].includes(platform.key) && groupChatEnabled(bot)" class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.memberTools') }}</span><span class="pm-field-hint">{{ t('profileImUi.memberToolsHint') }}</span></div><div class="pm-style-group pm-tool-options"><button v-for="option in groupToolOptions" :key="option.key" type="button" class="pm-style-chip" :class="{ active: hasGroupTool(bot, option) }" @click="toggleGroupTool(bot, option)">{{ t(`profileImUi.${option.key === 'web_search' ? 'webSearchTools' : 'groupContextSearch'}`) }}</button></div></div>
+        <div v-if="['qq', 'feishu', 'telegram'].includes(platform.key) && groupChatEnabled(bot)" class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.memberTools') }}</span><span class="pm-field-hint">{{ t('profileImUi.memberToolsHint') }}</span></div><div class="pm-style-group pm-tool-options"><button v-for="option in groupToolOptions" :key="option.key" type="button" class="pm-style-chip" :class="{ active: hasGroupTool(bot, option) }" @click="toggleGroupTool(bot, option)">{{ t(`profileImUi.${option.key === 'xng_search' ? 'webSearchTools' : 'groupContextSearch'}`) }}</button></div></div>
       </div>
       <form v-if="platform.key === 'telegram' && telegramFormBotId !== null" class="pm-telegram-connect" @submit.prevent="submitTelegramToken"><span class="pm-field-name">{{ t('profileImUi.telegramTokenLabel') }}</span><div class="pm-telegram-token-controls"><input id="telegram-bot-token" v-model="telegramToken" class="form-input" type="password" autocomplete="new-password" :aria-label="t('profileImUi.telegramTokenLabel')" :placeholder="t('profileImUi.telegramTokenPlaceholder')" :disabled="connecting === 'telegram'" /><button class="pm-style-chip" type="submit" :disabled="connecting === 'telegram' || !telegramToken.trim()">{{ connecting === 'telegram' ? t('profileImUi.connectingTelegram') : t(telegramFormBotId ? 'profileImUi.replaceTelegramToken' : 'profileImUi.connectTelegram') }}</button><button class="pm-style-chip" type="button" :disabled="connecting === 'telegram'" @click="closeTelegramForm">{{ t('profileImUi.cancel') }}</button></div><p class="pm-field-hint">{{ t('profileImUi.telegramTokenSecurityHint') }}</p></form>
-      <div v-if="connect?.platform === platform.key" :ref="el => setConnectPanelRef(platform.key, el)" class="pm-qr-box"><canvas ref="connectCanvas" class="pm-qr-canvas"></canvas><div class="pm-qr-hint">{{ connectHint }}</div><button class="pm-qr-cancel" @click="cancelConnect">{{ t('profileImUi.cancel') }}</button></div>
+      <div v-if="connect?.platform === platform.key" :ref="el => setConnectPanelRef(platform.key, el)" class="pm-qr-box"><canvas :ref="setConnectCanvasRef" class="pm-qr-canvas"></canvas><div class="pm-qr-hint">{{ connectHint }}</div><button class="pm-qr-cancel" @click="cancelConnect">{{ t('profileImUi.cancel') }}</button></div>
       </div>
     </template>
     <div v-if="connectErr" class="pm-qr-err">{{ connectErr }}</div>
@@ -68,7 +68,7 @@ const groupResponseOptions = [
   { key: 'record_only', label: '静默记录' },
 ] as const
 const groupToolOptions = [
-  { key: 'web_search', label: '联网搜索 + 网页阅读 + 搜图/图片核验/发图', tools: ['web_search', 'http_get', 'image_search', 'read_file', 'send_file'] },
+  { key: 'xng_search', label: '网页/图像搜索 + 以图搜图 + 网页阅读/图片核验/发图', tools: ['xng_search', 'http_get', 'similar_image_search', 'read_file', 'send_file'] },
   { key: 'group_context_search', label: '群上下文搜索', tools: ['group_context_search'] },
 ] as const
 const preferences = usePreferencesStore()
@@ -104,6 +104,11 @@ const connecting = ref(''); const connect = ref<{ platform: string; id: string }
 const connectPanels = ref<Record<string, HTMLElement | null>>({})
 function setConnectPanelRef(platform: string, element: unknown) {
   connectPanels.value[platform] = element instanceof HTMLElement ? element : null
+}
+function setConnectCanvasRef(element: unknown) {
+  // canvas 位于 v-for 的平台区块中，字符串 ref 会被 Vue 收集成数组；QRCode.toCanvas
+  // 需要真实 HTMLCanvasElement，否则重绑时会因数组没有 getContext 而失败。
+  connectCanvas.value = element instanceof HTMLCanvasElement ? element : null
 }
 
 // 「接入咕咕」设置全部走同一套 latest-intent 乐观事务：apply 永远同步发生，
@@ -282,7 +287,7 @@ function toggleMemory(bot: Bot, field: 'group_memory_enabled' | 'member_memory_e
 }
 function groupResponseMode(bot: Bot): string { return bot.group_response_mode ?? (bot.group_read_enabled ? 'record_only' : (bot.group_requires_at ?? true) ? 'reply_mentions' : 'reply_all') }
 function setGroupResponseMode(bot: Bot, mode: string) { void updateBotSetting(bot.id, { group_response_mode: mode }, '群聊回应方式设置失败') }
-function groupTools(bot: Bot): string[] { return bot.group_allowed_tools?.map(name => name === 'inspect_images' ? 'read_file' : name) ?? ['web_search', 'http_get', 'image_search', 'read_file', 'send_file', 'group_context_search'] }
+function groupTools(bot: Bot): string[] { return bot.group_allowed_tools?.map(name => name === 'inspect_images' ? 'read_file' : name) ?? ['xng_search', 'http_get', 'similar_image_search', 'read_file', 'send_file', 'group_context_search'] }
 function hasGroupTool(bot: Bot, option: (typeof groupToolOptions)[number]): boolean { return option.tools.every(t => groupTools(bot).includes(t)) }
 function toggleGroupTool(bot: Bot, option: (typeof groupToolOptions)[number]) {
   const current = botById(bot.id)

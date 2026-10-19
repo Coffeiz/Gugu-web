@@ -31,7 +31,7 @@
               <FileBrowserGrid :layout-collection="layoutCollection" @empty-context="openPmCtx('empty', null, $event)">
                 <!-- 文件夹卡片（当前层） -->
                 <RuntimeFolderCard v-for="folder in sortedCurrentFolders" :key="folder.id"
-                  :card-props="{ displayName: folder.name, countLabel: t('filesUi.itemCount', { count: pmFolderCount(folder.id) }), accentColor: folderAccentColor({ type: 'folder' }), selected: pmSelectedFolderIds.has(folder.id), preSelected: pmPreviewFolderIds.has(folder.id), selectionMode: pmInSelectionMode }"
+                  :card-props="{ displayName: folder.name, countLabel: t('filesUi.itemCount', { count: pmFolderCount(folder.id) }), accentColor: folderAccentColor({ type: 'folder' }), selected: pmSelectedFolderIds.has(folder.id), preSelected: pmPreviewFolderIds.has(folder.id), cut: pmCbStore.isCut('folder', folder.id), selectionMode: pmInSelectionMode }"
                   :runtime-id="fileObjectId(runtimeScope, 'folder', folder.id)"
                   :runtime-surface-id="browserSurfaceId(runtimeScope)"
                   :runtime-selected="pmSelectedFolderIds.has(folder.id)"
@@ -70,7 +70,7 @@
                      悬浮操作按钮走 props 和默认插槽。 -->
                 <RuntimeFileCard
                   v-for="file in sortedCurrentFiles" :key="file.id"
-                  :card-props="{ ext: file.ext, displayName: file.displayName, hasThumb: isPmImageExt(file.ext), selected: pmSelectedFileIds.has(file.id), preSelected: pmPreviewFileIds.has(file.id), cut: pmCbStore.type === 'cut' && pmCbStore.fileIds.includes(file.id), selectionMode: pmInSelectionMode }"
+                  :card-props="{ ext: file.ext, displayName: file.displayName, hasThumb: isPmImageExt(file.ext), selected: pmSelectedFileIds.has(file.id), preSelected: pmPreviewFileIds.has(file.id), cut: pmCbStore.isCut('file', file.id), selectionMode: pmInSelectionMode }"
                   :runtime-id="fileObjectId(runtimeScope, 'file', file.id)"
                   :runtime-surface-id="browserSurfaceId(runtimeScope)"
                   :runtime-selected="pmSelectedFileIds.has(file.id)"
@@ -96,7 +96,7 @@
                   </template>
                   <template #meta>{{ file.stageName ? file.stageName + ' · ' : '' }}{{ fmtBytes(file.sizeBytes) }}</template>
 
-                  <div class="fc-hover-actions" v-show="!pmInSelectionMode">
+                  <div class="file-card-hover-actions" v-show="!pmInSelectionMode">
                     <button class="file-card-btn" :title="renamingFileId === file.id ? t('filesViewUi.confirm') : t('filesViewUi.rename')"
                       @mousedown.prevent @click.stop="renamingFileId === file.id ? commitRename() : startRename(file)">
                       <Icon name="status.success" v-if="renamingFileId === file.id" :size="10" />
@@ -137,7 +137,7 @@
                   :runtime-selected="pmSelectedFolderIds.has(folder.id)"
                   :runtime-target="{ surfaceId: folderSurfaceId(runtimeScope, folder.id), accepts: ['pm-file-item', 'pm-folder-item'], priority: 2 }"
                   class="list-row folder-list-row"
-                  :class="{ selected: pmSelectedFolderIds.has(folder.id), 'pre-selected': pmPreviewFolderIds.has(folder.id) }"
+                  :class="{ selected: pmSelectedFolderIds.has(folder.id), 'pre-selected': pmPreviewFolderIds.has(folder.id), cut: pmCbStore.isCut('folder', folder.id) }"
                   :data-pm-folder-id="folder.id"
                   data-list-columns="5"
                   data-layout-role="card" :data-layout-key="folderLayoutKey(folder)"
@@ -180,7 +180,7 @@
                   :runtime-selected="pmSelectedFileIds.has(file.id)"
                   :runtime-abilities="['move']"
                   class="list-row"
-                  :class="{ selected: pmSelectedFileIds.has(file.id), 'pre-selected': pmPreviewFileIds.has(file.id), cut: pmCbStore.type === 'cut' && pmCbStore.fileIds.includes(file.id) }"
+                  :class="{ selected: pmSelectedFileIds.has(file.id), 'pre-selected': pmPreviewFileIds.has(file.id), cut: pmCbStore.isCut('file', file.id) }"
                   :data-pm-file-id="file.id"
                   data-list-columns="5"
                   data-layout-role="card" :data-layout-key="fileLayoutKey(file)"
@@ -396,10 +396,6 @@ function onPmScroll(event: Event) {
 .fc-thumb-tiny { filter: blur(10px); transform: scale(1.15); z-index: 1; }
 .fc-thumb-full { z-index: 2; opacity: 0; transition: opacity 0.4s ease; }
 .fc-thumb-full.fc-loaded { opacity: 1; }
-
-/* 卡片操作按钮（文件卡） */
-.fc-hover-actions { position: absolute; top: 8px; right: 8px; z-index: 3; display: flex; gap: 3px; opacity: 0; transition: opacity 0.15s; }
-.fc-card:hover .fc-hover-actions { opacity: 1; }
 
 /* ── 框选矩形 ── */
 	.pm-selection-rect {

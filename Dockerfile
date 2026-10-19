@@ -187,9 +187,11 @@ RUN if [ -n "${HTTPS_PROXY:-}" ]; then export http_proxy="${HTTPS_PROXY}" https_
 # 会停在带 CVE 的旧版（2026-09-12 docker-release trivy 门失败根因）。逐包追 deb
 # 是无底洞，切回官方 security pool 做整段 upgrade 自动覆盖后续 CVE；
 # 镜像源同步追平后可移除本段。
+ARG PACKAGE_REFRESH=local
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    rm -f /etc/apt/apt.conf.d/docker-clean \
+    test -n "${PACKAGE_REFRESH}" \
+    && rm -f /etc/apt/apt.conf.d/docker-clean \
     && if [ -n "${HTTPS_PROXY:-}" ]; then export http_proxy="${HTTPS_PROXY}" https_proxy="${HTTPS_PROXY}"; fi \
     && sed -i \
         -e "s|${APT_MIRROR}/debian-security|https://deb.debian.org/debian-security|g" \

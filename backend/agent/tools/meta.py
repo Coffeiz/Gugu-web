@@ -20,6 +20,9 @@ async def _get_tool_schema(db, user_id, args: dict):
     from agent.im.permissions import can_use_tool
     from agent.tools import registry
     from agent.tools.base import current_dispatch_tool_snapshot
+    from agent.tools.search import search_tool_is_configured
+    from agent.llm import modelctx
+    from app.core.config import get_settings
 
     requested = args.get("tools")
     if not isinstance(requested, list) or not requested:
@@ -45,6 +48,11 @@ async def _get_tool_schema(db, user_id, args: dict):
         accepted = False
         for name in candidates:
             if name in declared or len(declared) >= 12:
+                continue
+            if not await search_tool_is_configured(
+                name, db=db, user_id=user_id, settings=get_settings(),
+                model_cfg=modelctx.get_model_cfg(),
+            ):
                 continue
             if tool_snapshot.get(name) is None or not can_use_tool(
                 name, allowed, im_role=im_role,
@@ -161,8 +169,7 @@ async def _ask_user(db, user_id, args: dict):
         "title": args.get("title", "需要你的选择"),
         "body": args.get("body", ""),
         "options": args.get("options", []),
-        # ask_user 是咕咕主动发起的澄清交互，选择卡统一附带自定义回答入口；
-        # 系统确认卡不经过此工具，不能获得该能力。
+        # 普通 ask_user 是澄清交互，选择卡附带自定义回答入口；固定权限授权卡例外。
         "allow_text_input": True,
     }
 
@@ -264,7 +271,8 @@ class MetaSkill(BaseSkill):
             description_short='向用户展示选项或澄清问题；不执行业务操作',
             description=(
                 "当下一步存在多个合理选择，或缺少继续任务所必需的信息时，向用户展示结构化问题。"
-                "choice 选择卡会自动附带“自定义回复”，用户可在原聊天输入框补充回答。"
+                "普通 choice 选择卡会自动附带“自定义回复”，用户可在原聊天输入框补充回答；"
+                "固定权限授权卡只允许点击确认或取消，不接受自定义回复。"
                 "只用于澄清，不直接执行普通业务操作；权限、删除、覆盖等破坏性确认必须使用工具自己的确认门。"
                 "如确需申请当前会话的完整用户沙箱读写权限，使用 authorization=user_sandbox；系统会展示固定授权范围和确认按钮。"
             ),

@@ -273,8 +273,13 @@ function openStagePop() {
     stagePopStyle.value = { position: 'fixed', left: left + 'px', top: top + 'px', width: popW + 'px' }
     document.addEventListener('mousedown', onDocDown)
     document.addEventListener('keydown', onKey)
-    window.addEventListener('scroll', closeStagePop, true)
+    window.addEventListener('scroll', onStagePopupScroll, true)
   })
+}
+function onStagePopupScroll(event: Event) {
+  // 弹层内部列表滚动不应触发“页面滚动关闭”；滚动弹层外部时仍收起，避免锚点脱离。
+  if (stagePopRef.value?.contains(event.target as Node)) return
+  closeStagePop()
 }
 function closeStagePop() {
   if (!stagePopOpen.value) return
@@ -282,7 +287,7 @@ function closeStagePop() {
   todoDraftStages.value = []
   document.removeEventListener('mousedown', onDocDown)
   document.removeEventListener('keydown', onKey)
-  window.removeEventListener('scroll', closeStagePop, true)
+  window.removeEventListener('scroll', onStagePopupScroll, true)
 }
 function onDocDown(e: MouseEvent) {
   if (stagePopRef.value && !stagePopRef.value.contains(e.target as Node) &&
@@ -566,7 +571,7 @@ async function setPriority(n: number) {
 }
 .tp-title { font-size: 13px; font-weight: 700; color: var(--content-primary); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tp-count { font-size: 11px; color: var(--text-secondary); flex-shrink: 0; font-variant-numeric: tabular-nums; }
-.tp-list { display: flex; flex-direction: column; gap: 2px; max-height: 220px; overflow-y: auto; }
+.tp-list { display: flex; flex-direction: column; gap: 2px; max-height: 220px; overflow-y: auto; --scrollbar-overlay-right-offset: 4px; }
 .tp-item { display: flex; align-items: center; gap: 7px; padding: 3px 4px; border-radius: 8px; }
 .tp-item:hover { background: var(--surface-soft-hover); }
 .tp-name { flex: 1; min-width: 0; font-size: 12px; color: var(--text-primary); padding: 2px 0; cursor: grab; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

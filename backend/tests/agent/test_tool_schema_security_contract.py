@@ -190,7 +190,7 @@ def test_migrated_tools_preserve_provider_schema_constraints():
         "canvas_create_note", "canvas_update_note", "canvas_batch",
         "create_file",
         "update_stage", "rename_file", "edit_file", "search_memory", "save_knowledge", "update_knowledge", "remember",
-        "image_search", "move_items", "archive_project", "use_skill", "call_tool",
+        "similar_image_search", "move_items", "archive_project", "use_skill", "call_tool",
     ):
         tool = registry.get(name)
         # 内部兼容注解不属于供应商 JSON Schema；其他结构约束必须保持原样。

@@ -75,6 +75,10 @@ async def display_tool_event(
 ) -> None:
     """保持 Web 镜像独立，再按用户偏好选择 IM 工具状态呈现。"""
     await publish_web_event(event)
+    # 飞书 ask_user 已由交互卡片承载等待与完成状态；再把 tool_done
+    # 当普通工具消息发出会产生“暂停/完成”两条额外消息。Web 事件仍照常镜像。
+    if payload.get("platform") == "feishu" and event.get("name") == "ask_user":
+        return
     if not show_tool_interactions:
         return
     if feishu_tool_summary is not None and await feishu_tool_summary.handle_tool_event(event):
@@ -690,7 +694,7 @@ async def prepare_request(
 ) -> PreparedImRequest:
     """解析 IM 权限并构造共享 AgentRequest。
 
-    权限解析失败时固定降级为 unknown + web_search，绝不因异常把当前发言人
+    权限解析失败时固定降级为 unknown + xng_search/web_search，绝不因异常把当前发言人
     升级成 owner。显示名仍由 identity 门面按角色裁剪后传入。
     """
     route = session_route or resolve_route(platform_message, payload)
@@ -1321,6 +1325,17 @@ async def dispatch_im_message(payload: dict):
             file_result = await send_files(payload, resp.files)
             reply_text = resp.text or "给你～"
             if file_result.failed:
+                from agent.im.replies import send_text
+
+                notice = file_result.reason or "附件没有成功发出，你可以去网页或文件库查看。"
+                notice_sent = await send_text(payload, notice)
+                if not notice_sent:
+                    from app.core.redaction import diag_log_raw
+
+                    diag_log_raw(
+                        "agent.im.file_attachment_delivery",
+                        f"platform={platform} status=notice_failed",
+                    )
                 trace.finish_run("error")
                 await finalize_im_response(platform, puid, False, "")
                 return resp
