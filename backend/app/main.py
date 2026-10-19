@@ -60,6 +60,7 @@ from app.api.v1 import byok as byok_router
 from app.api.v1 import mcp_settings as mcp_settings_router
 from app.api.v1 import undo as undo_router
 from app.api.v1 import data_portability as data_portability_router
+from app.api.v1 import loopscope as loopscope_router
 from app.api.v1 import safe_egress_admin as safe_egress_admin_router
 from app.api.v1 import storage_quota_admin as storage_quota_admin_router
 from app.api.v1 import track as track_router
@@ -533,6 +534,7 @@ app.include_router(byok_router.router, prefix="/api/v1")
 app.include_router(mcp_settings_router.router, prefix="/api/v1")
 app.include_router(undo_router.router, prefix="/api/v1")
 app.include_router(data_portability_router.router, prefix="/api/v1")
+app.include_router(loopscope_router.router, prefix="/api/v1")
 
 
 @app.exception_handler(RequestValidationError)

@@ -8,7 +8,7 @@ services:
       LOOPSCOPE_PORT: 4320
       LOOPSCOPE_DB_PATH: /data/loopscope.db
     ports:
-      - "4320:4320"
+      - "127.0.0.1:4320:4320"
     volumes:
       - loopscope-data:/data
     healthcheck:
@@ -20,9 +20,11 @@ services:
   frontend:
     build: ./frontend
     environment:
-      VITE_LOOPSCOPE_API_URL: http://127.0.0.1:4320/api
+      GUGU_API_TARGET: "${GUGU_API_TARGET:-http://host.docker.internal:8000}"
     ports:
       - "4319:4319"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       backend:
         condition: service_healthy

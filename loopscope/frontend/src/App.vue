@@ -28,7 +28,13 @@
         </div>
       </div>
     </aside>
-    <main class="page"><RouterView /></main>
+    <main class="page">
+      <section v-if="authRequired" class="auth-required ls-card" role="alert">
+        <strong>{{ t('nav.authRequired') }}</strong>
+        <span>{{ t('nav.accountDisconnected') }}</span>
+      </section>
+      <RouterView v-else />
+    </main>
   </div>
 </template>
 
@@ -45,15 +51,19 @@ const update = () => {
 const accountName = computed(() => bootstrap.value?.accountName ?? '')
 const accountInitial = computed(() => accountName.value.trim().slice(0, 1).toLocaleUpperCase() || 'G')
 const { locale, t } = useLoopScopeI18n()
+const authRequired = ref(false)
 const localeButtonTitle = computed(() => `${t('nav.language')}: ${t(locale.value === 'zh-CN' ? 'locale.chinese' : 'locale.english')}`)
 function cycleLocale() {
   setLocale(locale.value === 'zh-CN' ? 'en-US' : 'zh-CN')
 }
+function onAuthRequired() { authRequired.value = true }
 onMounted(() => {
   window.addEventListener('loopscope:bootstrap', update)
+  window.addEventListener('loopscope:auth-required', onAuthRequired)
 })
 onUnmounted(() => {
   window.removeEventListener('loopscope:bootstrap', update)
+  window.removeEventListener('loopscope:auth-required', onAuthRequired)
 })
 </script>
 
@@ -77,5 +87,8 @@ onUnmounted(() => {
 .locale-btn { min-width:28px; height:28px; padding:0 5px; border:1px solid var(--border-subtle); border-radius:7px; background:var(--surface-raised); color:var(--content-secondary); font:inherit; font-size:10px; font-weight:var(--font-weight-semibold); cursor:pointer; transition:color var(--motion-fast),background var(--motion-fast),border-color var(--motion-fast); }
 .locale-btn:hover,.locale-btn:focus-visible { color:var(--content-primary); background:var(--surface-list-option-hover); border-color:var(--border-default); }
 .page { min-width:0; min-height:100vh; }
+.auth-required{max-width:560px;margin:12vh auto;padding:28px;display:grid;gap:10px;text-align:center}
+.auth-required strong{font-size:var(--font-size-lg)}
+.auth-required span{color:var(--content-secondary);font-size:var(--font-size-sm)}
 @media (max-width: 760px) { .shell { grid-template-columns:1fr; } .rail { position:static; height:auto; flex-direction:row; align-items:center; overflow:visible; } .nav { display:flex; } .rail-footer { margin:0 0 0 auto; } .account-info small { display:none; } }
 </style>

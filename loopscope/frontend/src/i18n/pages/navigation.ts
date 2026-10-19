@@ -11,6 +11,7 @@ export const en = {
   'nav.unknownAccount': 'Unknown account',
   'nav.accountHint': 'Signed-in Gugu account',
   'nav.accountDisconnected': 'Connect from Gugu /dev',
+  'nav.authRequired': 'Log in to Gugu to view LoopScope data',
 }
 export const zh = {
   'nav.conversation': '对话',
@@ -25,4 +26,5 @@ export const zh = {
   'nav.unknownAccount': '未识别账号',
   'nav.accountHint': '当前登录的咕咕账号',
   'nav.accountDisconnected': '请从咕咕 /dev 进入',
+  'nav.authRequired': '登录咕咕后才能查看 LoopScope 数据',
 }
