@@ -87,6 +87,15 @@ def describe_llm_error(
     # 用户事件只保留脱敏分类。调用方可附带 run/provider/model/预算等非内容关联字段。
     diagnostic_id = secrets.token_hex(8).upper()
     diag_log(f"{diagnostic_context} diagnostic_id={diagnostic_id}", error)
+    from agent.gateway.qq.client import QQStreamDeliveryError
+
+    if isinstance(error, QQStreamDeliveryError):
+        return LLMErrorPresentation(
+            code="qq_content_rejected",
+            message_key="chatUi.qqContentRejected",
+            message_params={"diagnostic_id": diagnostic_id},
+            text=f"QQ 拒绝了部分回复内容，已结束当前消息；完整回复可在 Web 查看（诊断编号 {diagnostic_id}）。",
+        )
     provider_error = is_provider_http_error(error)
     tag = upstream_status_tag(error) if provider_error else ""
     status_code = upstream_status_code(error) if provider_error else None

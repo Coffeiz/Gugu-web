@@ -20,12 +20,38 @@ def tool_code_block(value: object, *, language: str = "json", limit: int = 1600)
     return f"```{language}\n{text}\n```"
 
 
+def _link_button_delivery_status(event: dict) -> str | None:
+    """工具执行成功不等于按钮原生投递成功，状态消息采用实际投递回执。"""
+    if event.get("name") != "send_link_buttons" or event.get("type") == "tool_call":
+        return None
+    result = event.get("result")
+    if isinstance(result, str):
+        try:
+            result = json.loads(result)
+        except (ValueError, TypeError):
+            return None
+    if not isinstance(result, dict) or result.get("platform") != "qq":
+        return None
+    if result.get("delivery") == "text":
+        return "⚠️ 链接按钮未发送，已改为文字"
+    if result.get("delivery") == "native":
+        if result.get("unsupported_button_ids"):
+            return "⚠️ 已发送支持的链接按钮，其他入口已单独提示"
+        return "✅ 链接按钮已发送"
+    if result.get("delivery") == "none":
+        return "⚠️ 链接按钮发送失败"
+    return None
+
+
 def format_tool_event(event: dict, *, markdown: bool = True) -> str:
     """将工具事件转为统一状态消息，不负责选择发送平台。"""
     label = str(event.get("label") or event.get("name") or "工具").strip()
     event_type = str(event.get("type") or "")
     status = str(event.get("status") or "")
     if not markdown:
+        delivery_status = _link_button_delivery_status(event)
+        if delivery_status:
+            return delivery_status
         if event_type == "tool_call":
             return ""
         if status in {"success", "ok"}:

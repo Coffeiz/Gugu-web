@@ -559,4 +559,8 @@ Object.assign((messages['en-US'] as Record<string, any>).profileImUi, {
   telegramBindingHint: 'Generate a code, then send the /bind command below to your Bot in a private chat.',
   sendTelegramToBot: 'Copy and send to Telegram Bot',
 })
+
+Object.assign((messages['zh-CN'] as Record<string, any>).chatUi, { qqContentRejected: 'QQ 拒绝了部分回复内容，已结束当前消息；完整回复可在 Web 查看（诊断编号 {diagnostic_id}）。' })
+Object.assign((messages['ja-JP'] as Record<string, any>).chatUi, { qqContentRejected: 'QQ が返信の一部を拒否したため、現在のメッセージを終了しました。返信全文は Web で確認できます（診断 ID: {diagnostic_id}）。' })
+Object.assign((messages['en-US'] as Record<string, any>).chatUi, { qqContentRejected: 'QQ rejected part of the reply. The current message has been closed; view the full reply on the Web (diagnostic ID {diagnostic_id}).' })
 }

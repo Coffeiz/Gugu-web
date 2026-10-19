@@ -219,6 +219,10 @@ class QQStreamFinalizationError(RuntimeError):
     """已有可见正文的流未获关闭确认，不能作为成功交付处理。"""
 
 
+class QQStreamDeliveryError(QQStreamFinalizationError):
+    """流虽已关闭，但正文未完整交付；沿用流失败路径，不报告发送成功。"""
+
+
 class QQAPIError(Exception):
     """QQ Bot API 返回非 2xx。status 是 HTTP 状态码，供上层判定瞬时/永久（P2-b §1/§6）；
     body 是原始响应体，只用于内部判定（如 markdown 权限被拒的错误码）和受限诊断出口，

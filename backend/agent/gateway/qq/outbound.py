@@ -11,11 +11,12 @@ from typing import Any, Dict
 
 from app.core import redis as R
 from app.core.redaction import diag_log, redact
-from agent.outbound import sanitize_im_links
+from .text import prepare_qq_text, prepare_qq_link_buttons
 from agent.im.message_format import message_type as _message_type
 from .client import (
     QQAPIError,
     QQStreamFinalizationError,
+    QQStreamDeliveryError,
     _qq_error_summary,
     _qq_is_transient,
     _qq_request,
@@ -69,6 +70,7 @@ class QQPrivateTextStream:
         self.msg_seq: int | None = None
         self.full_text = ""
         self.last_sent_text = ""
+        self.last_sent_content = ""
         self.stream_msg_id: str | None = None
         self.frame_index = 0
         self.sent_frame_count = 0
@@ -101,7 +103,7 @@ class QQPrivateTextStream:
         finally:
             self._timer = None
 
-    async def _flush(self, input_state: int = 1) -> None:
+    async def _flush(self, input_state: int = 1, *, content_override: str | None = None) -> None:
         if self.error is not None:
             raise self.error
         if not self.full_text or (input_state != 10 and self.full_text == self.last_sent_text):
@@ -123,7 +125,9 @@ class QQPrivateTextStream:
                 "input_mode": "replace",
                 "input_state": input_state,
                 "content_type": self.content_type,
-                "content_raw": sanitize_im_links(sent_text),
+                "content_raw": content_override if content_override is not None else prepare_qq_text(
+                    sent_text, final=input_state == 10,
+                ),
                 "msg_seq": self.msg_seq,
                 "index": self.frame_index,
             }
@@ -141,12 +145,7 @@ class QQPrivateTextStream:
                         f"/v2/users/{self.openid}/stream_messages",
                         json_body=body,
                     )
-                    self.sent_frame_count += 1
-                    if not self.stream_msg_id and isinstance(result, dict):
-                        candidate = result.get("stream_msg_id") or result.get("id")
-                        if isinstance(candidate, str) and candidate:
-                            self.stream_msg_id = candidate
-                    self.last_sent_text = sent_text
+                    self._record_sent_frame(result, sent_text, body, original_content=content_override is None)
                     return
                 except Exception as exc:
                     rate_limited = isinstance(exc, QQAPIError) and (
@@ -190,9 +189,36 @@ class QQPrivateTextStream:
         try:
             await self._flush(10)
         except Exception as exc:
-            raise QQStreamFinalizationError("QQ 流式消息关闭未获确认") from exc
+            await self._close_rejected_content(exc)
         if self._chain is not None:
             await self._chain
+
+    def _record_sent_frame(self, result: Any, text: str, body: dict, *, original_content: bool) -> None:
+        """分开记录原始分片与实际送达正文；关闭受拒内容不能冒充原文已送达。"""
+        self.sent_frame_count += 1
+        if not self.stream_msg_id and isinstance(result, dict):
+            candidate = result.get("stream_msg_id") or result.get("id")
+            if isinstance(candidate, str) and candidate:
+                self.stream_msg_id = candidate
+        if original_content:
+            self.last_sent_text = text
+        self.last_sent_content = body["content_raw"]
+
+    async def _close_rejected_content(self, error: Exception) -> None:
+        """内容被拒后只关闭已送达正文，失败状态始终交给调用方处理。"""
+        body = error.body if isinstance(error, QQAPIError) else None
+        rejected = isinstance(body, dict) and str(body.get("code") or body.get("err_code")) == "40034028"
+        if not rejected or not self.stream_msg_id or not self.last_sent_content:
+            raise QQStreamFinalizationError("QQ 流式消息关闭未获确认") from error
+        delivered_content = self.last_sent_content
+        self.error = None
+        self._chain = None
+        try:
+            await self._flush(10, content_override=delivered_content)
+        except Exception as close_error:
+            diag_log("agent.gateway.qq.stream_rejected_content", error)
+            raise QQStreamFinalizationError("QQ 流式消息关闭未获确认") from close_error
+        raise QQStreamDeliveryError("QQ 部分正文被拒绝，已关闭最后送达的内容") from error
 
     def has_sent(self) -> bool:
         return self.sent_frame_count > 0
@@ -299,7 +325,7 @@ async def _post(channel_id: str, openid: str, text: str, msg_id: str | None,
                 message_format: str | None = None):
     """按会话格式发送 QQ 文本；Markdown 被拒时回退纯文本。"""
     path = f"/v2/users/{openid}/messages"
-    text = sanitize_im_links(text)
+    text = prepare_qq_text(text)
     msg_type = _message_type(text, message_format)
     body = {"msg_type": msg_type, "msg_seq": await _next_seq(msg_id)}
     if msg_type == 2:
@@ -325,7 +351,7 @@ async def _post_group(channel_id: str, group_openid: str, text: str, msg_id: str
     """群聊版文本发送：按会话格式选择纯文本或 Markdown。"""
     path = f"/v2/groups/{group_openid}/messages"
     text = _format_group_mention(text, mention_user_id, known_member_ids)
-    text = sanitize_im_links(text)
+    text = prepare_qq_text(text)
     msg_type = _message_type(text, message_format)
     # compat 默认是纯文本，但 QQ 只会在可解析的富文本消息中渲染 mention 标签。
     # 仅对明确包含 mention 的群消息升级，不改变普通兼容模式的输出约束。
@@ -479,6 +505,10 @@ async def send_link_keyboard(target_id: str, text: str, buttons: list[dict[str, 
                              channel_id: str, msg_id: str | None = None,
                              group: bool = False) -> bool:
     """发送带链接跳转 Keyboard 的 Markdown 消息；失败返回 False 由出站层文本降级。"""
+    buttons, unsupported = prepare_qq_link_buttons(buttons)
+    if unsupported or not buttons:
+        return False
+    text = prepare_qq_text(text)
     target = "groups" if group else "users"
     path = f"/v2/{target}/{target_id}/messages"
     body = {
