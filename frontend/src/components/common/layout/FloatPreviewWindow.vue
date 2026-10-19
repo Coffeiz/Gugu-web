@@ -167,7 +167,7 @@ import ImageViewer from '@/components/common/viewers/ImageViewer.vue'
 import VideoViewer from '@/components/common/viewers/VideoViewer.vue'
 import TextViewer  from '@/components/common/viewers/TextViewer.vue'
 import OfficeViewer from '@/components/common/viewers/OfficeViewer.vue'
-import { CLIENT_ID, filesApi } from '@/services/api'
+import { CLIENT_ID, filesApi, workspaceDirectoriesApi } from '@/services/api'
 import { isUnauthorizedResponse } from '@/services/authSession'
 import { isImageExt, isVideoExt, isTextExt, isOfficeExt, isCsvExt, isPreviewReloadRequested, isPreviewAffectedByFileEvent, isTextFallbackCandidate, normalizeTextBlob, usePreviewStore } from '@/stores/preview'
 import { getCachedThumb, getThumb } from '@/composables/shared/useThumbCache'
@@ -190,6 +190,7 @@ const previewBlobCache = usePreviewBlobCache()
 const mountAccountEpoch = getAccountBoundaryEpoch()
 const infoDetails = ref<FileMeta | null>(null)
 const infoFolderPath = ref<FolderMeta[]>([])
+const infoWorkspaceName = ref('')
 const infoPathLoading = ref(false)
 const infoDetailsLoadedForId = ref<number | null>(null)
 let infoLoadSequence = 0
@@ -199,7 +200,7 @@ const infoFile = computed(() => infoDetails.value && String(infoDetails.value.id
 const infoPath = computed(() => {
   if (infoFile.value.attach_id) return ''
   const root = infoFile.value.projectName
-    || (infoFile.value.workspaceDirectoryId != null ? t('files.workspace') : t('files.all'))
+    || (infoFile.value.workspaceDirectoryId != null ? (infoWorkspaceName.value || t('files.workspace')) : t('files.all'))
   const folders = infoFolderPath.value.map(folder => folder.name)
   if (!folders.length && infoFile.value.folderName) folders.push(infoFile.value.folderName)
   return [root, ...folders].filter(Boolean).join(' / ')
@@ -210,6 +211,7 @@ watch(accountBoundaryEpoch, () => {
   infoLoadSequence++
   infoDetails.value = null
   infoFolderPath.value = []
+  infoWorkspaceName.value = ''
   infoDetailsLoadedForId.value = null
   infoPathLoading.value = false
   loadSequence += 1
@@ -376,6 +378,12 @@ async function loadInfoDetails() {
     if (sequence !== infoLoadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
     infoDetails.value = location.file as FileMeta
     infoFolderPath.value = location.folderPath as FolderMeta[]
+    const workspaceDirectoryId = infoDetails.value.workspaceDirectoryId
+    if (workspaceDirectoryId != null) {
+      const directories = await workspaceDirectoriesApi.list()
+      if (sequence !== infoLoadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
+      infoWorkspaceName.value = directories.find(directory => directory.id === workspaceDirectoryId)?.name || ''
+    }
     infoDetailsLoadedForId.value = fileId
   } catch {
     // 文件预览也可能来自仅有部分元数据的入口；定位信息失败时保留已有字段。
@@ -391,7 +399,10 @@ function navigateToFileDirectory() {
     kind: 'file',
     id: fileId,
     ...(infoFile.value.workspaceDirectoryId != null
-      ? { workspaceDirectoryId: infoFile.value.workspaceDirectoryId }
+      ? {
+          workspaceDirectoryId: infoFile.value.workspaceDirectoryId,
+          ...(infoWorkspaceName.value ? { workspaceDirectoryName: infoWorkspaceName.value } : {}),
+        }
       : {}),
   }
   void router.push('/files')
