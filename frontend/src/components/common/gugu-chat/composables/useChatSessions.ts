@@ -52,6 +52,8 @@ export function useChatSessions(options: {
   waitForStableScrollLayout: () => Promise<void>
   waitForSessionSettlement: (id: number) => Promise<void>
   shouldFollowBottom: () => boolean
+  onHistoryReset?: () => void
+  onHistoryLoaded?: (page: { hasMore?: boolean; oldestId?: number | null }) => void
   setSessionSettling: (value: boolean) => void
 }) {
   const { messages, mkid, sessionId, sessions } = options
@@ -133,6 +135,7 @@ export function useChatSessions(options: {
       loadingHistory = false
       if (viewGeneration !== options.getViewGeneration()) return 'superseded'   // 等待期间又切换/新建了会话，丢弃这次结果
       sessionId.value = id
+      options.onHistoryLoaded?.(data.pagination || {})
       const loadedSession = sessions.value.find(s => s.id === id)
       if (loadedSession && data.session?.workspaceName !== undefined) loadedSession.workspaceName = data.session.workspaceName
       if (loadedSession && data.session?.goalActive !== undefined) loadedSession.goalActive = Boolean(data.session.goalActive)
@@ -226,6 +229,7 @@ export function useChatSessions(options: {
   }
 
   async function newSession() {
+    options.onHistoryReset?.()
     options.bumpViewGeneration()
     options.setSessionSettling(false)
     options.abortCtrl.value?.abort()

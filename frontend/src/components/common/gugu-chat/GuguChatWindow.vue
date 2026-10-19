@@ -92,6 +92,7 @@
         :copied-id="copiedId" :voice-playing-id="voicePlayingId"
         :expanded="expanded" :resizing="resizing" :status-kind="statusKind" :status-typed="statusTyped"
         :session-settling="sessionSettling"
+        :history-state="historyState" :on-load-history="onLoadHistory"
         @copy="onCopy" @toggle-voice="onToggleVoice"
         @open-file="onOpenFile" @download="onDownload" @action-click="onActionClick"
         @interaction-select="onInteractionSelect" @interaction-text-submit="onInteractionTextSubmit"
@@ -136,6 +137,7 @@
 </template>
 
 <script setup lang="ts">
+import type { ChatHistoryState } from './composables/useChatHistoryPagination'
 import { ref, computed, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/icons/Icon.vue'
@@ -187,6 +189,8 @@ const props = defineProps<{
   voicePlayingId: string | null
   statusKind: string
   statusTyped: string
+  historyState?: ChatHistoryState
+  onLoadHistory?: () => void
   sessionSettling: boolean
   // 排队条：生成中发出的消息在输入框上方排队，排水发送时才落入对话
   pendingQueue: QueuedMessage[]

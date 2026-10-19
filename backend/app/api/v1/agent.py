@@ -34,6 +34,7 @@ from agent.llm import genstream
 from agent.gateway import web as web_adapter
 from agent.im.models import replace_mention_ids
 from agent.models import AgentRequest
+from agent.context.display_timeline import merge_tool_timeline_items
 from agent.context.history import build_chat_tool_events
 
 router = APIRouter(prefix="/agent", tags=["agent"])
@@ -1008,7 +1009,8 @@ async def get_session_messages(
     statement = statement.limit(limit)
     res = await db.execute(statement)
     msgs = list(res.scalars().all())
-    if before_id is None and after_id is None:
+    # 所有方向都返回时间正序，分页游标始终对应真实最旧/最新记录。
+    if before_id is not None or after_id is None:
         msgs.reverse()
 
     has_more = False
@@ -1041,7 +1043,7 @@ async def get_session_messages(
         first_id, last_id = min(message_ids), max(message_ids)
         tool_events = [
             event for event in tool_events
-            if first_id <= int(event.get("timelineOrder") or 0) <= last_id
+            if first_id <= int(event.get("timelineOrder") or 0) <= (before_id - 1 if before_id is not None else last_id)
         ]
     else:
         tool_events = []
@@ -1082,7 +1084,7 @@ async def get_session_messages(
         # 只有已转入时间线的助手行需要补附件，否则会生成虚假的助手回声。
         if message.role != "assistant" or not message.display_timeline:
             return []
-        items = list(message.display_timeline or [])
+        items = merge_tool_timeline_items(message.display_timeline or [])
         if message.files and not any(
             isinstance(item, dict) and item.get("files") for item in items
         ):

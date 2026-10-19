@@ -3,6 +3,11 @@
        内的消息 DOM，其余用下面这段按测量/估算高度撑出来的占位空间代替，滚动条始终代表
        整个会话的真实长度。messagesEl 是真实可滚动容器，虚拟列表只管它内部挂多少 DOM。 -->
   <div class="chat-messages" :class="{ 'is-session-settling': sessionSettling }" ref="messagesEl">
+    <div v-if="historyState?.hasMore && nearHistoryTop && !sessionSettling" class="chat-history-status">
+      <button type="button" :disabled="historyState.loading" @click="onLoadHistory?.()">
+        {{ t(historyState.loading ? 'chatUi.loadingEarlier' : historyState.error ? 'chatUi.loadEarlierFailed' : 'chatUi.loadEarlier') }}
+      </button>
+    </div>
     <div class="msg-virtual-spacer" :style="{ height: virtualTotalSize + 'px' }">
       <!-- v-memo：同一帧内其它消息在变（比如正在流式输出的那条）时，跳过这一行没变的
            子树重新生成——虚拟列表已经把同时挂载的行数摁在个位数附近，这里收益比之前小，
@@ -51,7 +56,9 @@
  * virtualizer 的 scrollToIndex（流式跟随滚动、切会话定位、搜索跳转高亮），
  * 通过 defineExpose 暴露 el 和 scrollToIndex，不把这些操作重新实现一遍。
  */
+import type { ChatHistoryState } from './composables/useChatHistoryPagination'
 import { ref, computed, watch, watchEffect, nextTick, type ComponentPublicInstance } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useVirtualizer } from '@tanstack/vue-virtual'
 import GuguChatMessageRow from './GuguChatMessageRow.vue'
 import type { ChatMessage, ChatFile, ChatReference, InteractionAnswerMode } from './chatTypes'
@@ -68,6 +75,8 @@ const props = defineProps<{
   resizing: boolean
   statusKind: string
   statusTyped: string
+  historyState?: ChatHistoryState
+  onLoadHistory?: () => void
   sessionSettling: boolean
 }>()
 
@@ -84,6 +93,7 @@ defineEmits<{
   referenceClick: [reference: ChatReference]
 }>()
 
+const { t } = useI18n()
 const messagesEl = ref<HTMLElement | null>(null)
 
 // 消息高度不定长（纯文本/代码块/文件卡片/语音条差异很大），measureElement 首次挂载
@@ -92,6 +102,9 @@ const msgsPadTop = computed(() => props.expanded ? 20 : 12)
 const virtualizer = useVirtualizer({
   get paddingStart() { return msgsPadTop.value },
   get count() { return props.messages.length },
+  // 复用虚拟库的稳定 key 锚定，插入旧页时保留当前消息及其视口内偏移。
+  get anchorTo() { return props.resizing ? 'start' as const : 'end' as const },
+  followOnAppend: false,
   getScrollElement: () => messagesEl.value,
   estimateSize: () => 96,
   // 前后各多挂载 10 条，覆盖快速滚动时的缓冲区；Mermaid 首次计算会由共享 LRU 缓存复用。
@@ -110,6 +123,7 @@ watchEffect(() => {
   virtualizer.value.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) =>
     !props.resizing && item.end <= (instance.scrollElement?.scrollTop ?? instance.scrollOffset ?? 0)
 })
+const nearHistoryTop = computed(() => (virtualizer.value.scrollOffset ?? 0) < 240)
 const virtualRows = computed(() => virtualizer.value.getVirtualItems())
 // 绝对定位的子元素不会跟着祖先的 padding 走（top:0/left:0 是相对祖先的边框盒，不是内容盒），
 // 顶部留白交给 virtualizer 的 paddingStart，让测量、滚动定位和视觉位置使用同一坐标。
@@ -145,4 +159,6 @@ defineExpose({
 <style scoped>
 /* 高度修正仅由虚拟列表负责，避免浏览器自动锚定再次补偿同一变化。 */
 .chat-messages { overflow-anchor: none; }
+.chat-history-status { position: sticky; top: 0; height: 0; z-index: 1; text-align: center; }
+.chat-history-status button { position: relative; margin-top: var(--space-xs); padding: var(--space-xs) var(--space-sm); border: 1px solid var(--input-border); border-radius: var(--radius-md); background: var(--surface-base); color: var(--text-secondary); font: inherit; cursor: pointer; }
 </style>

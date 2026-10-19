@@ -1,4 +1,12 @@
 {
+  "backend/tests/im/test_group_reflection_policy.py": {
+    "domain": "im-memory",
+    "layer": "L1",
+    "owner": "backend/agent/memory",
+    "productionEntry": "backend/agent/im/loop.py:record_passive_im_message、backend/agent/memory/group_pressure.py、reflection_jobs.py",
+    "keyBehavior": "群被动消息不登记或续期闲置，主动 run 完成后计时且保留较新水位；不足50条达到90%压力仍入队两类反思，重建旧快照后先压缩再反思，压缩被阻止则持久延后",
+    "ci": "backend-test"
+  },
   "frontend/tests/admin/agent/useAgentRuntimeConfig.test.ts": {
     "domain": "agent-runtime-config",
     "layer": "L1",
@@ -1366,5 +1374,13 @@
     "productionEntry": "app/services/filesync/linux_watcher.py、health.py、periodic.py",
     "keyBehavior": "原生内核溢出必须上报缺口；ready保留溢出原因；仅根身份已记录且匹配时允许周期删除补偿；递归事件不跟随符号链接；意外失效的内核监听报告缺口并触发重建，主动解除保持静默",
     "ci": "backend-pytest"
+  },
+  "frontend/tests/chat/composables/useChatHistoryPagination.test.ts": {
+    "domain": "chat-history",
+    "layer": "L1",
+    "owner": "frontend/components/common/gugu-chat/composables",
+    "productionEntry": "frontend/src/components/common/gugu-chat/composables/useChatHistoryPagination.ts",
+    "keyBehavior": "历史游标逐页前进，时间线去重保持身份；请求去重、失败手动重试、空页停止、会话切换和卸载隔离迟到响应",
+    "ci": "frontend-test"
   }
 }

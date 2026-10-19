@@ -124,20 +124,19 @@ async def test_get_session_messages_window_filters_and_has_more(db, user_a):
     assert payload["executionState"] == session.execution_state
 
 
-async def test_get_session_messages_before_id_page_is_newest_first(db, user_a):
+async def test_get_session_messages_before_id_page_is_oldest_first(db, user_a):
     session = await _mk_session(db, user_a)
     for index in range(3):
         await _mk_message(db, session.id, "user", f"m{index}")
     await db.commit()
 
-    # before_id 是「已加载窗口的最旧 id」：返回 id 更小的最新一页，保持新→旧顺序
+    # before_id 是已加载窗口最旧 id；取更早的最近一页，并统一按旧→新返回。
     payload = await agent_api.get_session_messages(
         session.id, limit=10, before_id=3, current_user=user_a, db=db)
 
-    assert [item["content"] for item in payload["messages"]] == ["m1", "m0"]
-    # hasMore 探针 = 「存在比本页第一条更旧的消息」；limit 未用满时 m0 同页也照报 True
-    assert payload["pagination"]["hasMore"] is True
-    # oldestId/newestId 固定取 msgs[0]/msgs[-1]：before 页保持新→旧，字段名按默认口径
+    assert [item["content"] for item in payload["messages"]] == ["m0", "m1"]
+    # 同页消息不能被误判成下一页；游标名称与实际 ID 顺序一致。
+    assert payload["pagination"]["hasMore"] is False
     assert payload["pagination"]["oldestId"] == payload["messages"][0]["id"]
     assert payload["pagination"]["newestId"] == payload["messages"][1]["id"]
 
@@ -251,3 +250,46 @@ async def test_get_session_messages_pairs_tool_events_within_window(db, user_a):
     assert event["toolCallId"] == "call-1"
     # 配对后时间线位置取「结果所在消息」，恢复窗口时才不会把工具气泡排到结果之前
     assert event["timelineOrder"] == result_message.id * 1000
+
+
+async def test_older_message_pages_walk_to_start_without_duplicates(db, user_a):
+    session = await _mk_session(db, user_a)
+    for index in range(7):
+        await _mk_message(db, session.id, "user", f"page-{index}")
+    await db.commit()
+    cursor = None
+    collected = []
+    for _ in range(4):
+        payload = await agent_api.get_session_messages(
+            session.id, limit=2, before_id=cursor, current_user=user_a, db=db,
+        )
+        ids = [item["id"] for item in payload["messages"]]
+        assert ids == sorted(ids)
+        assert not set(ids).intersection(collected)
+        collected.extend(ids)
+        if not payload["pagination"]["hasMore"]:
+            break
+        next_cursor = payload["pagination"]["oldestId"]
+        assert cursor is None or next_cursor < cursor
+        cursor = next_cursor
+    assert len(collected) == 7
+    assert payload["pagination"]["hasMore"] is False
+
+
+async def test_older_page_keeps_tools_between_last_body_and_next_page(db, user_a):
+    session = await _mk_session(db, user_a)
+    await _mk_message(db, session.id, "user", "旧页正文")
+    await _mk_message(db, session.id, "assistant", "", content_json=[{
+        "type": "tool_use", "id": "page-tool", "name": "http_get", "input": {"url": "https://example.com"},
+    }])
+    await _mk_message(db, session.id, "user", "", content_json=[{
+        "type": "tool_result", "tool_call_id": "page-tool", "content": "ok",
+    }])
+    newer = await _mk_message(db, session.id, "assistant", "新页正文")
+    await db.commit()
+    payload = await agent_api.get_session_messages(
+        session.id, limit=1, before_id=newer.id, current_user=user_a, db=db,
+    )
+    assert [item['content'] for item in payload['messages']] == ['旧页正文']
+    assert [event['toolName'] for event in payload['toolEvents']] == ['http_get']
+    assert payload['toolEvents'][0]['toolStatus'] == 'success'

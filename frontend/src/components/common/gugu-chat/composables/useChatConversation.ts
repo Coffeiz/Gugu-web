@@ -12,6 +12,7 @@ import { hasPendingMessageMarkdown } from './sessionScrollLayout'
 import { getSessionPendingQueueId, setPendingQueueRecoveryNeeded } from './chatPendingQueueStorage'
 import { useChatStream } from './useChatStream'
 import { useChatSessions } from './useChatSessions'
+import { useChatHistoryPagination } from './useChatHistoryPagination'
 import type GuguChatComposer from '../GuguChatComposer.vue'
 import type GuguChatMessageList from '../GuguChatMessageList.vue'
 
@@ -331,6 +332,10 @@ export function useChatConversation(options: {
 
   // streaming 跟随意图：只有用户主动上翻才取消，回到底部附近恢复。
   const stick = ref(true)
+  const historyPagination = useChatHistoryPagination({
+    messages, sessionId, settling: sessionSettling, mkid, resolveSpeaker, getViewGeneration,
+    beforeMerge: () => { stick.value = false; invalidateScrollRequests() },
+  })
 
   // streaming 用即时滚动跟随，避免 smooth 叠加追不上。用虚拟列表的 scrollToIndex 而不是
   // 直接写 scrollTop——最后一条消息的高度可能还只是估算值（还没被 measureElement 量过），
@@ -347,6 +352,7 @@ export function useChatConversation(options: {
     const el = messagesEl.value; if (!el) return
     const dist = el.scrollHeight - el.scrollTop - el.clientHeight
     stick.value = dist < 40
+    if (el.scrollTop < 200) void historyPagination.loadOlder()
   }
 
   // 用户发送时强制即时跳到底（大窗用 smooth 会被随后出现的 thinking 气泡/内容打断，看着没到底）；
@@ -448,6 +454,8 @@ export function useChatConversation(options: {
     waitForSessionSettlement: (id) => waitForSessionSettlement(sessionId, sessionSettling, id),
     shouldFollowBottom: () => stick.value,
     setSessionSettling: (value: boolean) => { sessionSettling.value = value },
+    onHistoryReset: () => historyPagination.reset(),
+    onHistoryLoaded: page => historyPagination.reset(page),
   })
   const { webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName, currentSessionGoalActive, currentSessionGoalStatus, currentSessionFilesystemAuthorized, currentSessionFilesystemAuthorizationEnabled, loadSession, newSession, deleteSession, renameSession, refreshSessionMessages } = sessionsApi
 
@@ -544,6 +552,7 @@ export function useChatConversation(options: {
 
   return {
     messages, mkid, now, sessionSettling,
+    historyState: historyPagination.state, loadOlderHistory: () => historyPagination.loadOlder(true),
     inputText, inputReferences, thinkingLabels, contextCompactingLabels, streaming, statusKind, statusTyped,
     isTypingText: computed(() => streaming.value && !statusKind.value),
     sessionId, ownerPlatformUserId, isGroupSession,

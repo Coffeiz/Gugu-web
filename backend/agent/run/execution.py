@@ -20,6 +20,7 @@ import time
 from dataclasses import dataclass, field
 from typing import AsyncIterator, Callable
 
+from agent.context.display_timeline import upsert_tool_timeline_item
 from agent.errors import LLMErrorPresentation
 from agent.security import sanitize
 from agent.models import AgentResponse
@@ -243,7 +244,7 @@ async def consume_agent_events(
                         outcome.tool_names.append(name)
                     # 展示时间线：tool 项按流式顺序插入（语义对齐 gateway/web.py）
                     if name and not name.startswith("_"):
-                        outcome.display_timeline_items.append({
+                        upsert_tool_timeline_item(outcome.display_timeline_items, {
                             "kind": "tool",
                             "toolCallId": str(evt.get("tool_call_id") or ""),
                             "toolName": name,

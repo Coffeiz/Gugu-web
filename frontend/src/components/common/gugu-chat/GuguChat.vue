@@ -72,6 +72,7 @@
       :copied-id="copiedId" :voice-playing-id="voicePlayingId"
       :status-kind="statusKind" :status-typed="statusTyped"
       :session-settling="sessionSettling"
+      :history-state="historyState" :on-load-history="loadOlderHistory"
       :pending-queue="visiblePendingQueue" @remove-queued="removeQueued"
       v-model:input-text="inputText"
       :references="inputReferences" @update:references="inputReferences = $event"
@@ -458,7 +459,7 @@ const conversation = useChatConversation({
   }),
 })
 const {
-  messages, mkid, now, sessionSettling,
+  messages, mkid, now, sessionSettling, historyState, loadOlderHistory,
   inputText, inputReferences, thinkingLabels, contextCompactingLabels, streaming, statusKind, statusTyped, isTypingText,
   sessionId, isGroupSession,
   sessions, webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName, currentSessionGoalActive, currentSessionGoalStatus,
