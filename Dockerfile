@@ -269,13 +269,14 @@ RUN cd /opt/gugu/image-app && python3 -c "import updater.daemon, updater.client"
 # 前端静态产物：由 Nginx 直接托管，API/SSE/WebSocket 反代到容器内 Uvicorn。
 COPY --from=frontend-build /workspace/frontend/dist ./static/
 COPY nginx/compose.conf /etc/nginx/nginx.conf
+COPY nginx/prepare-admin-entry.sh /usr/local/bin/prepare-admin-entry.sh
 RUN mkdir -p logs \
     && GUGU_IMAGE_VERSION="$GUGU_VERSION" GUGU_RUNTIME_CONTRACT="$GUGU_APP_RUNTIME_CONTRACT" python3 -c 'import json, os; from pathlib import Path; Path(".gugu-app-release.json").write_text(json.dumps({"version": os.environ["GUGU_IMAGE_VERSION"], "runtime_contract": os.environ["GUGU_RUNTIME_CONTRACT"]}, separators=(",", ":")) + "\n", encoding="utf-8")' \
     && ln -s /opt/gugu/image-app /app \
     && find /opt/gugu/image-app -type f -name '._*' -delete \
     && find ./static -type d -exec chmod 755 {} + \
     && find ./static -type f -exec chmod 644 {} + \
-    && chmod 755 docker-entrypoint.sh compose_bootstrap.py /usr/local/bin/gugu-sandbox-init.sh /usr/local/bin/prepare_rootless_storage.py /usr/local/bin/gugu-wait-embedded-postgres.sh /usr/local/bin/gugu-wait-embedded-redis.sh \
+    && chmod 755 docker-entrypoint.sh compose_bootstrap.py /usr/local/bin/prepare-admin-entry.sh /usr/local/bin/gugu-sandbox-init.sh /usr/local/bin/prepare_rootless_storage.py /usr/local/bin/gugu-wait-embedded-postgres.sh /usr/local/bin/gugu-wait-embedded-redis.sh \
     && test ! -e /app/.venv \
     && test ! -e /app/ts \
     && test ! -e /app/tests \

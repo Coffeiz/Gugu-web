@@ -281,6 +281,7 @@ services:
     logging: *json-file-logging
     image: nginx:alpine
     environment:
+      GUGU_ADMIN_ALLOWED_HOSTS: ${GUGU_ADMIN_ALLOWED_HOSTS:-}
       GUGU_ADMIN_ENTRY_PATH: ${GUGU_ADMIN_ENTRY_PATH:-}
     command: ["/bin/sh", "-c", "/usr/local/bin/prepare-admin-entry.sh && exec nginx -g 'daemon off;'"]
     ports:
