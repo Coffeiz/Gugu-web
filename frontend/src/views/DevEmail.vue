@@ -122,9 +122,9 @@ watch([template, theme, palette], loadPreview)
 
 <style scoped>
 .email-lab { --glass-card-background: var(--column-bg); --glass-card-background-hover: var(--column-bg); --glass-card-border: var(--border-default); --glass-card-border-hover: var(--border-default); --glass-card-shadow: var(--elevation-card); --glass-card-shadow-hover: var(--elevation-card-hover); width:100%; min-height:100%; margin:0; padding:22px 24px; box-sizing:border-box; overflow:auto; color:var(--content-primary); scrollbar-width:thin; scrollbar-color:var(--border-default) var(--surface-raised); }
-:global(html[data-theme='dark']) .email-lab::-webkit-scrollbar { width:10px; height:10px; }
-:global(html[data-theme='dark']) .email-lab::-webkit-scrollbar-track { background:var(--surface-raised); }
-:global(html[data-theme='dark']) .email-lab::-webkit-scrollbar-thumb { background:var(--border-default); border-radius:5px; }
+.email-lab::-webkit-scrollbar { width:10px; height:10px; }
+.email-lab::-webkit-scrollbar-track { background:var(--surface-raised); }
+.email-lab::-webkit-scrollbar-thumb { background:var(--border-default); border-radius:5px; }
 .section-label { color:var(--content-tertiary); font-size:11px; font-weight:700; letter-spacing:.12em; }
 .lab-layout { display:grid; grid-template-columns:300px minmax(0,1fr); gap:18px; margin-top:22px; }.lab-controls { padding:18px; background:var(--surface-glass); border:1px solid var(--border-default); border-radius:var(--radius-md); }.control-section { padding-bottom:18px; margin-bottom:18px; border-bottom:1px solid var(--content-divider); }.control-section:last-child { padding-bottom:0; margin-bottom:0; border-bottom:0; }.section-label { display:block; margin-bottom:10px; letter-spacing:.04em; }
 .choice-row { width:100%; display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px; border:1px solid transparent; border-radius:var(--radius-sm); color:var(--content-primary); background:transparent; text-align:left; cursor:pointer; transition:background .16s ease,border-color .16s ease; }.choice-row:hover { background:var(--surface-raised); }.choice-row.active { border-color:var(--action-outline); background:var(--action-soft); }.choice-row strong,.choice-row small { display:block; }.choice-row strong { font-size:13px; }.choice-row small { margin-top:3px; color:var(--content-tertiary); font-size:11px; }.choice-dot,.state-dot { width:7px; height:7px; flex:none; border-radius:50%; background:var(--content-tertiary); }.active .choice-dot,.state-ok .state-dot { background:var(--status-success); }.choice-pills { display:flex; gap:7px; }.choice-pills button,.palette { border:1px solid var(--border-subtle); border-radius:var(--radius-sm); background:var(--surface-raised); color:var(--content-secondary); padding:7px 12px; cursor:pointer; }.choice-pills button.active { border-color:var(--action-outline); color:var(--action-primary); background:var(--action-soft); }.palette-grid { display:grid; grid-template-columns:repeat(5,1fr); gap:6px; }.palette { padding:7px 3px 5px; font-size:10px; }.palette span { display:block; width:18px; height:18px; margin:0 auto 4px; border-radius:50%; background:var(--swatch); }.palette.active { outline:2px solid var(--action-primary); outline-offset:1px; }.palette-mist { --swatch:#898cc0; }.palette-cafe { --swatch:#a77e63; }.palette-rose { --swatch:#c887a6; }.palette-sky { --swatch:#72a6c2; }.palette-sage { --swatch:#83a58b; }
@@ -138,10 +138,6 @@ watch([template, theme, palette], loadPreview)
 .email-preview-frame.is-dark::-webkit-scrollbar { width:10px; height:10px; }
 .email-preview-frame.is-dark::-webkit-scrollbar-track { background:var(--surface-raised); }
 .email-preview-frame.is-dark::-webkit-scrollbar-thumb { background:var(--border-default); border-radius:5px; }
-:global(html[data-theme='dark']) .email-preview-frame { color-scheme:dark; scrollbar-color:var(--border-default) var(--surface-raised); }
-:global(html[data-theme='dark']) .email-preview-frame::-webkit-scrollbar { width:10px; height:10px; }
-:global(html[data-theme='dark']) .email-preview-frame::-webkit-scrollbar-track { background:var(--surface-raised); }
-:global(html[data-theme='dark']) .email-preview-frame::-webkit-scrollbar-thumb { background:var(--border-default); border-radius:5px; }
 .email-preview-loading { display:grid; place-items:center; min-height:620px; color:var(--content-tertiary); font-size:12px; }
 @media (max-width:820px) { .lab-layout { grid-template-columns:1fr; }.lab-controls { order:2; }.email-preview { min-height:500px; padding:24px 12px; } }
 </style>
