@@ -427,7 +427,7 @@
           </div>
           <div class="behavior-item" style="grid-column: 1 / -1;">
             <div class="behavior-label"><span>{{ t('agentConfigUi.baseUrl') }}</span><span class="behavior-desc">{{ t('agentConfigUi.voiceBaseUrlHint') }}</span></div>
-            <input type="text" class="behavior-input" style="width:280px" v-model="voiceDraft.base_url" placeholder="https://…/api/v1/services/aigc/multimodal-generation/generation" />
+            <input type="text" class="behavior-input" style="width:280px" v-model="voiceDraft.base_url" :placeholder="voiceDraft.api_format === 'minimax-asr' ? 'https://api.minimax.cn' : 'https://…/api/v1/services/aigc/multimodal-generation/generation'" />
           </div>
           <div v-if="voiceDraft.api_format === 'dashscope'" class="behavior-item" style="grid-column: 1 / -1;">
             <div class="behavior-label"><span>{{ t('agentConfigUi.dashscope') }}</span><span class="behavior-desc">{{ t('agentConfigUi.dashscopeHint') }}</span></div>
@@ -440,7 +440,7 @@
             <div style="display:flex;gap:8px;justify-content:flex-end;align-items:center;">
               <button v-for="af in VOICE_API_FORMATS" :key="af.value" type="button" class="btn-ghost"
                       :style="voiceDraft.api_format === af.value ? 'border-color:var(--color-primary);color:var(--color-primary)' : ''"
-                      @click="voiceDraft.api_format = af.value">{{ af.label }}</button>
+                      @click="setVoiceApiFormat(af.value)">{{ af.label }}</button>
             </div>
           </div>
           <div class="behavior-item" style="grid-column: 1 / -1;">
@@ -520,7 +520,7 @@ function setUsagePeriod(value: string) {
   }
 }
 const runtimeConfig = useAgentRuntimeConfig()
-const { agentDraft, behaviorSaving, behaviorSaved, behaviorError, resetBehavior, saveBehavior, generalSearchDraft, ragIndexTtlDays, deepResearchDraft, similarImageDraft, generalSearchSaving, generalSearchSaved, generalSearchError, deepResearchSaving, deepResearchSaved, deepResearchError, deepResearchTest, similarImageSaving, similarImageSaved, similarImageError, resetGeneralSearch, resetDeepResearch, resetSimilarImageSearch, voiceDraft, voiceSaving, voiceSaved, voiceError, voiceTesting, voiceTestMsg, VOICE_API_FORMATS, VOICE_DASHSCOPE_SERVICES, resetVoice, setDashscopeService, saveVoice, testVoice, searchTest, testSearch, testDeepResearch, saveDeepResearch, saveSearch } = runtimeConfig
+const { agentDraft, behaviorSaving, behaviorSaved, behaviorError, resetBehavior, saveBehavior, generalSearchDraft, ragIndexTtlDays, deepResearchDraft, similarImageDraft, generalSearchSaving, generalSearchSaved, generalSearchError, deepResearchSaving, deepResearchSaved, deepResearchError, deepResearchTest, similarImageSaving, similarImageSaved, similarImageError, resetGeneralSearch, resetDeepResearch, resetSimilarImageSearch, voiceDraft, voiceSaving, voiceSaved, voiceError, voiceTesting, voiceTestMsg, VOICE_API_FORMATS, VOICE_DASHSCOPE_SERVICES, resetVoice, setDashscopeService, setVoiceApiFormat, saveVoice, testVoice, searchTest, testSearch, testDeepResearch, saveDeepResearch, saveSearch } = runtimeConfig
 const llmPresets = useLlmPresets(adminStore, configStore, agentDraft)
 const { presets, activePresetId, strategy, poolMode, presetsLoading, llmMsg, llmMsgParts, llmMsgError, testingId, activatingId, probingId, probingDim, showMsg, showMsgParts, fetchPresets, setStrategy, setPoolMode, saveConcurrency, activatePreset, deletePreset, testPreset } = llmPresets
 const byokDraft = reactive({ ...configStore.cfg.byok })

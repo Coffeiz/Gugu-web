@@ -91,6 +91,7 @@ VIDEO_EXTS = {"mp4", "mov", "avi", "wmv", "mkv"}
 # 非 mimo 原生的音频（IM 语音 / 浏览器录音常见）：算「音频」但要先转 mp3 才能喂 mimo（需服务器装 ffmpeg）
 TRANSCODE_AUDIO_EXTS = {"amr", "silk", "sil", "slk", "opus", "aac", "wma", "webm", "3gp", "3gpp"}
 MEDIA_RAW_MAX = 36 * 1024 * 1024   # 原始字节上限：base64 后约 <50MB（mimo base64 限制）
+MINIMAX_ASR_FILE_MAX = 50 * 1024 * 1024   # MiniMax 独立 multipart ASR 官方文件上限
 _MEDIA_MIME = {
     "mp3": "audio/mpeg", "wav": "audio/wav", "flac": "audio/flac", "m4a": "audio/mp4", "ogg": "audio/ogg",
     "mp4": "video/mp4", "mov": "video/quicktime", "avi": "video/x-msvideo", "wmv": "video/x-ms-wmv",
@@ -1311,7 +1312,7 @@ def media_item_to_content_block(m: dict, *, use_anthropic: bool) -> dict | None:
 
 
 def _voice_recognition_enabled() -> bool:
-    """是否配了独立「语音识别模型」（settings.voice）。配了就该为音频/语音构建 media base64
+    """是否配了独立「语音识别模型」（settings.voice）。配了就构建转写用的音频 media
     交给 agent.voice.transcribe 转写——**不管主模型支不支持音视频**（解耦的关键）。"""
     try:
         from app.core.config import get_settings
@@ -1319,6 +1320,33 @@ def _voice_recognition_enabled() -> bool:
         return _voice.is_configured(get_settings())
     except Exception:
         return False
+
+
+async def _voice_recognition_profile(user_id) -> tuple[bool, bool]:
+    """返回语音识别是否可用，以及是否走 MiniMax ASR（含用户 BYOK 配置）。"""
+    try:
+        from app.core.config import get_settings
+        from agent import voice as voice_agent
+        settings = get_settings()
+        if user_id is not None:
+            from app.byok.policy import byok_enabled
+            if byok_enabled():
+                import app.db.session as db_session
+                if db_session._engine is None:
+                    db_session._build_engine()
+                from app.byok.service import get_active_credential
+                async with db_session._SessionLocal() as db:
+                    credential = await get_active_credential(db, user_id, "speech_to_text")
+                if credential is not None:
+                    enabled = bool(credential.model)
+                    minimax_asr = bool(enabled and credential.provider == "minimax" and credential.api_format == "minimax-asr")
+                    return enabled, minimax_asr
+        if voice_agent.is_configured(settings):
+            voice = settings.voice
+            return True, (getattr(voice, "api_format", "") or "").strip().lower() == "minimax-asr"
+        return False, False
+    except Exception:
+        return False, False
 
 
 def _fit_image(raw: bytes, ext: str):
@@ -1451,7 +1479,8 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
         image = _image_enabled()
         video_ok = _video_enabled()
         audio_ok = _audio_enabled()
-    voice_ok = _voice_recognition_enabled()   # 配了独立语音识别模型 → 音频/语音也构建 media 交 transcribe
+    voice_ok, minimax_voice_ok = await _voice_recognition_profile(user_id)
+    audio_raw_max = MINIMAX_ASR_FILE_MAX if minimax_voice_ok and not audio_ok else MEDIA_RAW_MAX
     parts = [base_message] if base_message else []
     cards = []
     images: list = []   # [{media_type, b64}]，仅 image 能力开启时填
@@ -1539,7 +1568,7 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
                     # （视频 500MB / 音频 36MB，均为读前拦截，code review 两轮指出）。
                     if is_video and meta["size"] > VIDEO_SOURCE_MAX:
                         raise ValueError("这条视频太大（超过 500MB 处理上限），没法直接看")
-                    if not is_video and meta["size"] > MEDIA_RAW_MAX:
+                    if not is_video and meta["size"] > audio_raw_max:
                         raise ValueError("这条音频太大（超过上限），没法直接听")
                     raw = await read_bytes(meta)
                     if is_video:
@@ -1557,9 +1586,14 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
                             raw, mime, meta.get("name") or "video.mp4", video_cfg,
                         ))
                     else:
-                        # 音频/语音：仅 ≤MEDIA_RAW_MAX 走 base64（超限已在 read_bytes 前拦截）
-                        media.append({"type": "audio", "mode": "base64", "mime": mime,
-                                      "b64": base64.b64encode(raw).decode()})
+                        # MiniMax ASR 使用 multipart 原始字节，可走官方 50 MiB 上限；
+                        # 其他路径继续使用原有 base64 字节门槛。
+                        audio_item = {"type": "audio", "mode": "base64", "mime": mime, "ext": ext}
+                        if len(raw) <= MEDIA_RAW_MAX:
+                            audio_item["b64"] = base64.b64encode(raw).decode()
+                        else:
+                            audio_item["raw"] = raw
+                        media.append(audio_item)
                     if is_voice:
                         # 语音是「对话里说的话」，不是要存的文件——明确叫咕咕直接听内容回应，别问存不存。
                         parts.append(f"\n\n🎤 用户给你发来一条语音{tag}（已随附）。请**直接听里面说了什么并自然回应**——"

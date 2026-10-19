@@ -196,11 +196,11 @@ class AISettings(BaseModel):
 class VoiceSettings(BaseModel):
     """语音 / 音视频识别（转写）模型——独立于主模型。把语音转成文字后交主模型处理，主模型不再被强切。
     **model 为空 = 未配置**：收到语音/音视频时咕咕直接回「不支持」，不再强切 mimo。
-    `api_format=openai` 走 OpenAI 兼容接口，`api_format=dashscope` 走百炼原生多模态接口。"""
+    `api_format=openai` 走 OpenAI 兼容接口，`dashscope` 走百炼原生接口，`minimax-asr` 走 MiniMax 独立语音识别 API。"""
     api_key: str = Field("", description="语音模型 API Key")
     base_url: str = Field("", description="语音模型 Base URL")
     model: str = Field("", description="语音/识别模型名（空=未配置→收到语音回不支持）")
-    api_format: str = Field("openai", description="语音接口格式: openai | dashscope")
+    api_format: str = Field("openai", description="语音接口格式: openai | dashscope | minimax-asr")
     dashscope_service: str = Field(
         "qwen3-asr",
         description="DashScope 产品线: qwen3-asr | qwen-audio | fun-asr",

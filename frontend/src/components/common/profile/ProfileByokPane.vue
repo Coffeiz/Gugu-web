@@ -39,9 +39,9 @@
                 <ProviderSelect v-if="childProviderOptionsFor(editors[item.id]).length" :model-value="childSelectionFor(editors[item.id])" :providers="childProviderOptionsFor(editors[item.id])" :placeholder="t('profileByokUi.selectChild')" @update:model-value="applyProviderChild(editors[item.id], $event)" />
               </div>
               <InterfaceTypeSelect v-if="interfaceOptionsFor(editors[item.id]).length" :label="t('profileByokUi.interfaceFormat')" :model-value="editors[item.id].api_format || defaultInterfaceFor(editors[item.id].provider)" :options="interfaceOptionsFor(editors[item.id])" :hint="interfaceHintFor(editors[item.id])" @update:model-value="applyInterface(editors[item.id], String($event))" />
-              <input v-model="editors[item.id].base_url" class="form-input" :placeholder="t('profileByokUi.baseUrlOptional')" />
+              <input v-model="editors[item.id].base_url" class="form-input" :placeholder="isMinimaxAsr(editors[item.id]) ? 'https://api.minimax.cn' : t('profileByokUi.baseUrlOptional')" />
               <input v-model="editors[item.id].value" class="form-input" type="password" autocomplete="new-password" :placeholder="t('profileByokUi.apiKeyKeep')" />
-              <div class="model-picker" :ref="el => setModelPickerRef(item.id, el)"><div class="model-picker-row"><input v-model="editors[item.id].model" class="form-input" :placeholder="group.value === 'speech_to_text' ? t('profileByokUi.speechModelOptional') : t('profileByokUi.modelOptional')" /><button type="button" class="pm-style-chip" :disabled="modelLoading" @click="fetchModels($event)">{{ modelLoading ? t('profileByokUi.gettingModels') : t('profileByokUi.getModels') }}</button></div><PopupMenu :show="modelMenuOpen && editor?.id === item.id" :anchor="modelAnchor" popup-class="model-options"><div v-if="modelError" class="model-option-hint err">{{ modelError }}</div><div v-else-if="!modelOptions.length" class="model-option-hint">{{ t('profileByokUi.noModels') }}</div><div v-else-if="!filteredModelOptions.length" class="model-option-hint">{{ t('profileByokUi.noModelsMatch', { kw: modelFilterKeyword }) }}</div><button v-for="model in filteredModelOptions" :key="model" type="button" class="model-option" @click="selectModel(model)">{{ model }}</button></PopupMenu></div>
+              <div class="model-picker" :ref="el => setModelPickerRef(item.id, el)"><div class="model-picker-row"><input v-model="editors[item.id].model" class="form-input" :placeholder="isMinimaxAsr(editors[item.id]) ? 'asr-1.0' : group.value === 'speech_to_text' ? t('profileByokUi.speechModelOptional') : t('profileByokUi.modelOptional')" /><button v-if="!isMinimaxAsr(editors[item.id])" type="button" class="pm-style-chip" :disabled="modelLoading" @click="fetchModels($event)">{{ modelLoading ? t('profileByokUi.gettingModels') : t('profileByokUi.getModels') }}</button></div><PopupMenu :show="modelMenuOpen && editor?.id === item.id" :anchor="modelAnchor" popup-class="model-options"><div v-if="modelError" class="model-option-hint err">{{ modelError }}</div><div v-else-if="!modelOptions.length" class="model-option-hint">{{ t('profileByokUi.noModels') }}</div><div v-else-if="!filteredModelOptions.length" class="model-option-hint">{{ t('profileByokUi.noModelsMatch', { kw: modelFilterKeyword }) }}</div><button v-for="model in filteredModelOptions" :key="model" type="button" class="model-option" @click="selectModel(model)">{{ model }}</button></PopupMenu></div>
               <input v-if="editors[item.id].capability === 'embedding'" v-model.number="editors[item.id].dimensions" class="form-input" type="number" min="0" step="1" :placeholder="t('profileByokUi.dimensionsOptional')" />
               <template v-if="editors[item.id].capability === 'llm'"><div class="byok-subsection"><div class="byok-subsection-title">{{ t('profileByokUi.thinkingIntensity') }}</div><AdminSelect v-model="editors[item.id].thinking_mode" :options="thinkingOptionsFor(editors[item.id])" :placeholder="t('profileByokUi.thinkingPlaceholder')" @update:model-value="applyThinkingOption(editors[item.id], $event)" /><div v-if="usesGenericThinkingToggle(editors[item.id])" class="byok-subsection-hint">{{ t('profileByokUi.genericThinkingHint') }}</div></div><div v-if="supportsReasoningPersistence(editors[item.id])" class="byok-subsection"><div class="setting-choice-row"><div class="setting-choice-row__copy"><div class="byok-subsection-title">{{ t('llmExtraUi.reasoningPersistence') }}</div><div class="byok-subsection-hint">{{ t('llmExtraUi.reasoningPersistenceHint') }}</div></div><div class="setting-choice-row__options pm-style-group"><button v-for="option in reasoningPersistenceOptions" :key="option.key" type="button" class="pm-style-chip" :class="{ active: editors[item.id].reasoning_persistence === option.key }" @click="editors[item.id].reasoning_persistence = option.key">{{ option.label }}</button></div></div></div><div class="byok-subsection"><div class="byok-subsection-title">{{ t('profileByokUi.contextBudget') }}</div><div class="byok-budget-grid"><input v-model.number="editors[item.id].context_tokens" class="form-input" type="number" step="500" :placeholder="t('profileByokUi.inputTokens')" /><input v-model.number="editors[item.id].max_tokens" class="form-input" type="number" step="100" :placeholder="t('profileByokUi.outputTokens')" /></div></div></template>
               <div v-if="providerWebSearchAvailable(editors[item.id])" class="byok-subsection"><div class="setting-choice-row"><div class="setting-choice-row__copy"><div class="byok-subsection-title">{{ t('llmExtraUi.webSearch') }}</div><div class="byok-subsection-hint">{{ t('llmExtraUi.webSearchHint') }}</div></div><div class="setting-choice-row__options"><ToggleSwitch :model-value="editors[item.id].web_search_enabled" :aria-label="t('llmExtraUi.webSearch')" @update:model-value="editors[item.id].web_search_enabled = $event" /></div></div></div>
@@ -65,9 +65,9 @@
                 <ProviderSelect v-if="childProviderOptionsFor(newEditor).length" :model-value="childSelectionFor(newEditor)" :providers="childProviderOptionsFor(newEditor)" :placeholder="t('profileByokUi.selectChild')" :popup-class="onboarding ? 'onboarding-provider-popup' : ''" @update:model-value="applyProviderChild(newEditor, $event)" />
               </div>
               <InterfaceTypeSelect v-if="interfaceOptionsFor(newEditor).length" :label="t('profileByokUi.interfaceFormat')" :model-value="newEditor.api_format || defaultInterfaceFor(newEditor.provider)" :options="interfaceOptionsFor(newEditor)" :hint="interfaceHintFor(newEditor)" @update:model-value="applyInterface(newEditor, String($event))" />
-              <input v-model="newEditor.base_url" class="form-input" :placeholder="t('profileByokUi.baseUrlOptional')" />
+              <input v-model="newEditor.base_url" class="form-input" :placeholder="isMinimaxAsr(newEditor) ? 'https://api.minimax.cn' : t('profileByokUi.baseUrlOptional')" />
               <input v-model="newEditor.value" class="form-input" type="password" autocomplete="new-password" :placeholder="t('profileByokUi.apiKey')" />
-              <div class="model-picker"><div class="model-picker-row"><input v-model="newEditor.model" class="form-input" :placeholder="t('profileByokUi.modelOptional')" /><button type="button" class="pm-style-chip" :disabled="modelLoading" @mousedown.prevent @click="fetchModels($event)">{{ modelLoading ? t('profileByokUi.gettingModels') : t('profileByokUi.getModels') }}</button></div><PopupMenu :show="modelMenuOpen && newEditor !== null" :anchor="modelAnchor" :popup-class="onboarding ? 'model-options onboarding-model-popup' : 'model-options'"><div v-if="modelError" class="model-option-hint err">{{ modelError }}</div><div v-else-if="!modelOptions.length" class="model-option-hint">{{ t('profileByokUi.noModels') }}</div><div v-else-if="!filteredModelOptions.length" class="model-option-hint">{{ t('profileByokUi.noModelsMatch', { kw: modelFilterKeyword }) }}</div><button v-for="model in filteredModelOptions" :key="model" type="button" class="model-option" @click="selectModel(model)">{{ model }}</button></PopupMenu></div>
+              <div class="model-picker"><div class="model-picker-row"><input v-model="newEditor.model" class="form-input" :placeholder="isMinimaxAsr(newEditor) ? 'asr-1.0' : t('profileByokUi.modelOptional')" /><button v-if="!isMinimaxAsr(newEditor)" type="button" class="pm-style-chip" :disabled="modelLoading" @mousedown.prevent @click="fetchModels($event)">{{ modelLoading ? t('profileByokUi.gettingModels') : t('profileByokUi.getModels') }}</button></div><PopupMenu :show="modelMenuOpen && newEditor !== null" :anchor="modelAnchor" :popup-class="onboarding ? 'model-options onboarding-model-popup' : 'model-options'"><div v-if="modelError" class="model-option-hint err">{{ modelError }}</div><div v-else-if="!modelOptions.length" class="model-option-hint">{{ t('profileByokUi.noModels') }}</div><div v-else-if="!filteredModelOptions.length" class="model-option-hint">{{ t('profileByokUi.noModelsMatch', { kw: modelFilterKeyword }) }}</div><button v-for="model in filteredModelOptions" :key="model" type="button" class="model-option" @click="selectModel(model)">{{ model }}</button></PopupMenu></div>
               <input v-if="newEditor.capability === 'embedding'" v-model.number="newEditor.dimensions" class="form-input" type="number" min="0" step="1" :placeholder="t('profileByokUi.dimensionsOptional')" />
               <template v-if="newEditor.capability === 'llm'">
                 <div class="byok-subsection">
@@ -168,6 +168,7 @@ const apiFormatLabels: Record<string, string> = {
   openai: 'profileByokUi.chatCompletions',
   responses: 'profileByokUi.responses',
   native: 'profileByokUi.ollamaNative',
+  'minimax-asr': 'profileByokUi.minimaxAsr',
 }
 const openaiProtocolProviders = new Set(['openai', 'qwen', 'glm', 'glm-coding', 'deepseek', 'mimo', 'ollama', 'local'])
 const capabilitySnapshot = ref<Record<string, any> | null>(null)
@@ -181,6 +182,9 @@ function capabilityIdentityFor(draft: Pick<Editor, 'provider' | 'model' | 'ollam
 }
 function interfaceOptionsFor(draft: Pick<Editor, 'capability' | 'provider' | 'model' | 'api_format' | 'base_url' | 'ollama_mode' | 'ollama_api_mode' | 'local_runtime'> | null) {
   if (!draft) return []
+  if (draft.capability === 'speech_to_text' && draft.provider === 'minimax') {
+    return [{ key: 'minimax-asr', label: t(apiFormatLabels['minimax-asr']) }]
+  }
   // 接口格式是 Provider/接入类型的配置项，不依赖按模型异步刷新的能力快照。
   // 否则输入模型名时，短暂的空/单项快照会让 InterfaceTypeSelect 被 v-if 卸载。
   const formats = apiFormatsForProvider(draft.provider, draft.base_url)
@@ -191,6 +195,7 @@ function interfaceOptionsFor(draft: Pick<Editor, 'capability' | 'provider' | 'mo
 }
 function defaultInterfaceFor(provider: string) {
   const draft = activeCapabilityDraft.value
+  if (draft?.capability === 'speech_to_text' && provider === 'minimax') return 'minimax-asr'
   if (draft?.provider === provider && draft.capability === 'llm' && capabilitySnapshotIdentity.value === capabilityIdentityFor(draft)) {
     return defaultApiFormatFromSnapshot(capabilitySnapshot.value, provider) || draft.api_format || ''
   }
@@ -198,6 +203,7 @@ function defaultInterfaceFor(provider: string) {
   return defaultApiFormatForProvider(provider)
 }
 function interfaceHintFor(draft: Pick<Editor, 'provider' | 'api_format'>) {
+  if (draft.provider === 'minimax' && draft.api_format === 'minimax-asr') return 'POST /v1/speech_to_text · 500 秒 · 50 MB'
   if (draft.provider === 'local') return t('llmExtraUi.localApiFormatHint')
   if (draft.provider === 'ollama') return t('llmExtraUi.ollamaApiFormatHint')
   if (draft.provider === 'mimo') return t('profileByokUi.anthropicHint')
@@ -205,6 +211,7 @@ function interfaceHintFor(draft: Pick<Editor, 'provider' | 'api_format'>) {
   return undefined
 }
 function displayInterfaceFor(item: Pick<Item, 'provider' | 'api_format'>) {
+  if (item.api_format === 'minimax-asr') return t('profileByokUi.minimaxAsr')
   if (item.api_format) return item.api_format
   if (item.provider === 'anthropic' || item.provider === 'minimax') return 'anthropic'
   if (item.provider === 'ollama') return 'native'
@@ -294,7 +301,7 @@ function setModelPickerRef(id: number, element: Element | null | unknown) { mode
 function itemsFor(capability: string) { return items.value.filter(item => item.capability === capability) }
 const embeddingProviders = ['openai', 'qwen', 'glm', 'ollama', 'local']
 function providersFor(capability: string): readonly ProviderOption[] {
-  if (capability === 'speech_to_text') return modelProviders.filter(item => ['openai', 'qwen', 'local'].includes(item.value))
+  if (capability === 'speech_to_text') return modelProviders.filter(item => ['openai', 'qwen', 'minimax', 'local'].includes(item.value))
   if (capability === 'embedding') return modelProviders.filter(item => embeddingProviders.includes(item.value))
   return modelProviders
 }
@@ -326,6 +333,9 @@ function applyThinkingOption(draft: Editor, value: ThinkingMode) {
 function providerOptionsFor(capability: string) {
   return providersFor(capability).map(provider => ({ key: provider.value, label: t(provider.labelKey) }))
 }
+function isMinimaxAsr(draft: Pick<Editor, 'capability' | 'provider'>) {
+  return draft.capability === 'speech_to_text' && draft.provider === 'minimax'
+}
 function providerLabel(value: string) {
   const provider = modelProviders.find(item => item.value === (value === 'glm-coding' ? 'glm' : value))
   return provider ? t(provider.labelKey) : value
@@ -348,12 +358,12 @@ function applyProvider(draft: Editor, value: string) {
   draft.provider = value
   const provider = modelProviders.find(item => item.value === value)
   if (!provider) return
-  draft.base_url = ''
+  draft.base_url = draft.capability === 'speech_to_text' && value === 'minimax' ? 'https://api.minimax.cn' : ''
   if (value === 'ollama') draft.ollama_api_mode = 'native'
-  draft.model = draft.capability === 'embedding'
+  draft.model = draft.capability === 'speech_to_text' && value === 'minimax' ? 'asr-1.0' : draft.capability === 'embedding'
     ? (embeddingModelSeeds[value] ?? '')
     : provider.model
-  draft.api_format = value === 'ollama' ? 'native' : ''
+  draft.api_format = draft.capability === 'speech_to_text' && value === 'minimax' ? 'minimax-asr' : value === 'ollama' ? 'native' : ''
   if (!supportsReasoningPersistence(draft)) draft.reasoning_persistence = 'off'
   if (!thinkingOptionsFor(draft).some(option => option.value === draft.thinking_mode)) applyThinkingOption(draft, 'default')
 }

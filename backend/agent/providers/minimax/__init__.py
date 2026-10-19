@@ -172,7 +172,7 @@ class MiniMaxAdapter(ProviderAdapter):
         if api_format not in self.supported_api_formats(ai):
             return ReasoningCapabilities()
         model = (getattr(ai, "model", "") or "").strip().lower()
-        if model.startswith("minimax-m3.1-flash-preview"):
+        if model.startswith("minimax-m3.1-flash"):
             return ReasoningCapabilities(
                 modes=("adaptive",),
                 efforts=("low", "medium", "high", "xhigh", "max"),
@@ -198,7 +198,7 @@ class MiniMaxAdapter(ProviderAdapter):
             return {}
         model = (getattr(ai, "model", "") or "").strip().lower()
         value = getattr(ai, "thinking", None)
-        if model.startswith("minimax-m3") and not model.startswith("minimax-m3.1-flash-preview"):
+        if model.startswith("minimax-m3") and not model.startswith("minimax-m3.1-flash"):
             if value == "adaptive":
                 # 官方说明 M3 的任意非 none effort 只负责开启推理，不控制深度。
                 return {"reasoning": {"effort": "high"}}

@@ -961,10 +961,12 @@ async def test_voice(body: VoiceTestRequest):
     base_url = (body.base_url or cfg.base_url or "").strip()
     api_key = body.api_key if body.api_key and body.api_key != "****" else cfg.api_key
     api_format = (body.api_format or cfg.api_format or "openai").strip().lower()
-    if not model or not base_url:
+    if not model or (not base_url and api_format != "minimax-asr"):
         return {"ok": False, "message": "请先填写模型名和 Base URL"}
-    if api_format not in {"openai", "dashscope"}:
-        return {"ok": False, "message": "API 格式只支持 OpenAI 兼容或百炼 DashScope"}
+    if api_format not in {"openai", "dashscope", "minimax-asr"}:
+        return {"ok": False, "message": "语音 API 格式暂不支持"}
+    if api_format == "minimax-asr" and model != "asr-1.0":
+        return {"ok": False, "message": "MiniMax ASR 当前只支持 asr-1.0"}
     dashscope_service = (body.dashscope_service or getattr(cfg, "dashscope_service", "qwen3-asr") or "qwen3-asr").strip().lower()
     if api_format == "dashscope" and dashscope_service not in {"qwen3-asr", "qwen-audio", "fun-asr"}:
         return {"ok": False, "message": "百炼产品线只支持 Qwen3 ASR、Qwen-Audio 3.0 或 Fun-ASR"}
@@ -976,7 +978,7 @@ async def test_voice(body: VoiceTestRequest):
             [{"type": "audio", "mime": "audio/wav", "b64": audio}],
             {"voice": {
                 "api_key": api_key,
-                "base_url": base_url,
+                "base_url": base_url or ("https://api.minimax.cn" if api_format == "minimax-asr" else ""),
                 "model": model,
                 "api_format": api_format,
                 "dashscope_service": dashscope_service,

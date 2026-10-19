@@ -41,9 +41,19 @@ export function useAgentRuntimeConfig() {
   function resetSimilarImageSearch() { Object.assign(similarImageDraft, { similar_image_provider: configStore.cfg.search.similar_image_provider || 'baidu_qianfan', baidu_qianfan_api_key: configStore.cfg.search.baidu_qianfan_api_key, similar_image_default_count: configStore.cfg.search.similar_image_default_count, similar_image_timeout_seconds: configStore.cfg.search.similar_image_timeout_seconds, similar_image_limit_daily: configStore.cfg.search.similar_image_limit_daily }) }
   function resetDeepResearch() { Object.assign(deepResearchDraft, { deep_research_provider: configStore.cfg.search.deep_research_provider || 'tavily', tavily_api_key: configStore.cfg.search.tavily_api_key, deep_research_baidu_api_key: configStore.cfg.search.deep_research_baidu_api_key, deep_research_you_api_key: configStore.cfg.search.deep_research_you_api_key }) }
   const voiceDraft = reactive({ ...configStore.cfg.voice }); const voiceSaving = ref(false); const voiceSaved = ref(false); const voiceError = ref(''); const voiceTesting = ref(false); const voiceTestMsg = ref('')
-  const VOICE_API_FORMATS = [{ value: 'openai', label: t('adminRuntimeUi.openaiCompatible') }, { value: 'dashscope', label: t('adminRuntimeUi.dashscope') }]
+  const VOICE_API_FORMATS = [{ value: 'openai', label: t('adminRuntimeUi.openaiCompatible') }, { value: 'dashscope', label: t('adminRuntimeUi.dashscope') }, { value: 'minimax-asr', label: 'MiniMax ASR' }]
   const VOICE_DASHSCOPE_SERVICES = [{ value: 'qwen3-asr', label: 'Qwen3 ASR · qwen3-asr-flash' }, { value: 'qwen-audio', label: 'Qwen-Audio 3.0 · qwen-audio-3.0-asr-flash' }, { value: 'fun-asr', label: 'Fun-ASR · fun-asr-flash-2026-06-15' }]
   function resetVoice() { Object.assign(voiceDraft, configStore.cfg.voice) }
+  function setVoiceApiFormat(value: string) {
+    const previous = voiceDraft.api_format
+    voiceDraft.api_format = value
+    if (value === 'minimax-asr') {
+      voiceDraft.model = 'asr-1.0'
+      voiceDraft.base_url = 'https://api.minimax.cn'
+    } else if (previous === 'minimax-asr') {
+      voiceDraft.base_url = ''
+    }
+  }
   function setDashscopeService(value: string) { voiceDraft.dashscope_service = value; voiceDraft.model = ({ 'qwen3-asr': 'qwen3-asr-flash', 'qwen-audio': 'qwen-audio-3.0-asr-flash', 'fun-asr': 'fun-asr-flash-2026-06-15' } as Record<string, string>)[value] || '' }
   async function saveVoice() {
     await saveSection(() => configStore.saveConfig({ voice: { ...voiceDraft } }), { saving: voiceSaving, saved: voiceSaved, error: voiceError },
@@ -66,5 +76,5 @@ export function useAgentRuntimeConfig() {
       error: similar ? similarImageError : generalSearchError,
     }, () => { if (similar) resetSimilarImageSearch(); else resetGeneralSearch() })
   }
-  return { configStore, agentDraft, behaviorSaving, behaviorSaved, behaviorError, resetBehavior, saveBehavior, generalSearchDraft, ragIndexTtlDays, deepResearchDraft, similarImageDraft, generalSearchSaving, generalSearchSaved, generalSearchError, deepResearchSaving, deepResearchSaved, deepResearchError, deepResearchTest, similarImageSaving, similarImageSaved, similarImageError, resetGeneralSearch, resetDeepResearch, resetSimilarImageSearch, voiceDraft, voiceSaving, voiceSaved, voiceError, voiceTesting, voiceTestMsg, VOICE_API_FORMATS, VOICE_DASHSCOPE_SERVICES, resetVoice, setDashscopeService, saveVoice, testVoice, searchTest, testSearch, testDeepResearch, saveDeepResearch, saveSearch }
+  return { configStore, agentDraft, behaviorSaving, behaviorSaved, behaviorError, resetBehavior, saveBehavior, generalSearchDraft, ragIndexTtlDays, deepResearchDraft, similarImageDraft, generalSearchSaving, generalSearchSaved, generalSearchError, deepResearchSaving, deepResearchSaved, deepResearchError, deepResearchTest, similarImageSaving, similarImageSaved, similarImageError, resetGeneralSearch, resetDeepResearch, resetSimilarImageSearch, voiceDraft, voiceSaving, voiceSaved, voiceError, voiceTesting, voiceTestMsg, VOICE_API_FORMATS, VOICE_DASHSCOPE_SERVICES, resetVoice, setDashscopeService, setVoiceApiFormat, saveVoice, testVoice, searchTest, testSearch, testDeepResearch, saveDeepResearch, saveSearch }
 }

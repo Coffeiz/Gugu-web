@@ -47,8 +47,8 @@ def _ffprobe_bin() -> str | None:
     return None
 
 
-def probe_duration(data: bytes, ext: str | None) -> float | None:
-    """探测音频时长（秒，1 位小数）。没 ffprobe / 失败 → None（前端按未知时长显示）。"""
+def probe_duration(data: bytes, ext: str | None, *, precision: int = 1) -> float | None:
+    """探测媒体时长（秒）。没 ffprobe / 失败 → None（前端按未知时长显示）。"""
     ff = _ffprobe_bin()
     if not ff:
         return None
@@ -60,7 +60,7 @@ def probe_duration(data: bytes, ext: str | None) -> float | None:
         r = subprocess.run([ff, "-v", "quiet", "-show_entries", "format=duration",
                             "-of", "default=nk=1:nw=1", src], capture_output=True, timeout=30)
         out = (r.stdout or b"").decode().strip()
-        return round(float(out), 1) if (r.returncode == 0 and out) else None
+        return round(float(out), precision) if (r.returncode == 0 and out) else None
     except Exception:
         return None
     finally:

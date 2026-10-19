@@ -89,9 +89,9 @@ async def read_stored_image(storage_key: str, ext: str, *, max_source_bytes: int
     return build_image_block(raw, ext)
 
 
-async def _transcribe_audio(raw: bytes, mime: str) -> str:
+async def _transcribe_audio(raw: bytes, mime: str, ext: str = "") -> str:
     from agent.voice import transcribe
-    media = [{"type": "audio", "mime": mime, "b64": base64.b64encode(raw).decode()}]
+    media = [{"type": "audio", "mime": mime, "ext": ext, "b64": base64.b64encode(raw).decode()}]
     return (await transcribe(media, get_settings())) or ""
 
 
@@ -146,7 +146,7 @@ async def read_audio(file, *, max_source_bytes: int | None = None) -> dict:
                 "_source_size_bytes": len(data),
                 "note": f"已读取音频《{file.display_name}.{file.ext}》，请直接结合音频内容回答。",
             }
-        text = await _transcribe_audio(data, f"audio/{file.ext.lower()}")
+        text = await _transcribe_audio(data, f"audio/{file.ext.lower()}", file.ext.lower())
     except Exception as error:
         diag_log(f"agent.tools.media_reader.read_audio.file_id={file.id}", error)
         return {"error": "音频读取失败"}
