@@ -185,8 +185,12 @@ REDIS__PORT=6379
 
 ```dotenv
 GUGU_ADMIN_ALLOWED_HOSTS=admin.example.com
+# 可选；不设置时入口保持 /admin。启用自定义入口时填写不带前导斜杠的路径
+# GUGU_ADMIN_ENTRY_PATH=my-private-admin
 GUGU_HTTP_BIND=127.0.0.1
 ```
+
+`GUGU_ADMIN_ENTRY_PATH` 用于增加安全入口：访问 `https://admin.example.com/<自定义入口>` 后，网关会设置 HttpOnly、Secure、SameSite Cookie 并跳转到 Admin；直接访问 `/admin` 或 `/api/v1/admin` 会返回 404。入口由部署者自行填写，不强制最低长度；只允许字母、数字、下划线和连字符，最多 128 个字符。短入口更容易被猜到，生产环境建议用 `python3 -c "import secrets; print(secrets.token_urlsafe(32))"` 生成高熵随机值，只保存到服务器 `.env`，不要写入文档、聊天记录或 Git。入口 URL 仍可能被浏览器历史和外层反向代理访问日志记录，应限制日志访问与留存，避免把它嵌入第三方页面。修改后仅需重建/重启 nginx 服务。未配置时默认仍通过 `/admin` 访问，且不启用入口门禁。
 
 分体 Compose 同样在根目录 `.env` 设置 `GUGU_ADMIN_ALLOWED_HOSTS`；裸机/systemd 部署则在 `backend/.env` 设置 `ADMIN_ALLOWED_HOSTS=admin.example.com`。白名单对 `/api/v1/admin/...` 生效，精确匹配 Host（不带协议和端口）；留空时保持旧行为，且不会被 Admin 的运行配置覆盖。Compose 的 `GUGU_HTTP_BIND=127.0.0.1` 会把发布端口限制在本机，适用于同机反向代理，避免外网绕过入口规则直连。若反向代理不在同一台机器，需将其网络地址作为绑定/防火墙策略的一部分，不能照抄 loopback 配置。
 

@@ -280,10 +280,14 @@ services:
   nginx:
     logging: *json-file-logging
     image: nginx:alpine
+    environment:
+      GUGU_ADMIN_ENTRY_PATH: ${GUGU_ADMIN_ENTRY_PATH:-}
+    command: ["/bin/sh", "-c", "/usr/local/bin/prepare-admin-entry.sh && exec nginx -g 'daemon off;'"]
     ports:
       - "${GUGU_HTTP_BIND:-0.0.0.0}:${GUGU_HTTP_PORT:-9595}:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/prepare-admin-entry.sh:/usr/local/bin/prepare-admin-entry.sh:ro
     depends_on:
       - frontend
       - backend
