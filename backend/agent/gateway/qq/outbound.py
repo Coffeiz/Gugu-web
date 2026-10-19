@@ -15,6 +15,7 @@ from agent.outbound import sanitize_im_links
 from agent.im.message_format import message_type as _message_type
 from .client import (
     QQAPIError,
+    QQStreamFinalizationError,
     _qq_error_summary,
     _qq_is_transient,
     _qq_request,
@@ -117,11 +118,12 @@ class QQPrivateTextStream:
                     self.msg_seq = await _next_seq(self.message_id)
                 else:
                     self.msg_seq = await _next_stream_seq(self.channel_id)
+            sent_text = self.full_text
             body = {
                 "input_mode": "replace",
                 "input_state": input_state,
                 "content_type": self.content_type,
-                "content_raw": sanitize_im_links(self.full_text),
+                "content_raw": sanitize_im_links(sent_text),
                 "msg_seq": self.msg_seq,
                 "index": self.frame_index,
             }
@@ -144,7 +146,7 @@ class QQPrivateTextStream:
                         candidate = result.get("stream_msg_id") or result.get("id")
                         if isinstance(candidate, str) and candidate:
                             self.stream_msg_id = candidate
-                    self.last_sent_text = self.full_text
+                    self.last_sent_text = sent_text
                     return
                 except Exception as exc:
                     rate_limited = isinstance(exc, QQAPIError) and (
@@ -173,10 +175,22 @@ class QQPrivateTextStream:
         self.full_text = final_text or self.full_text
         if not self.full_text.strip():
             return
-        await self._flush(1)
-        if self._chain is not None:
-            await self._chain
-        await self._flush(10)
+        try:
+            await self._flush(1)
+            if self._chain is not None:
+                await self._chain
+        except Exception as exc:
+            if not self.stream_msg_id:
+                raise
+            # 已创建的流即使中间刷新失败，也要尝试用完整正文发送 DONE。
+            # 失败的串行任务不能继续挂在链头，否则关闭帧还未请求就会再次抛错。
+            diag_log("agent.gateway.qq.stream_update_before_finish", exc)
+            self.error = None
+            self._chain = None
+        try:
+            await self._flush(10)
+        except Exception as exc:
+            raise QQStreamFinalizationError("QQ 流式消息关闭未获确认") from exc
         if self._chain is not None:
             await self._chain
 

@@ -988,7 +988,7 @@
     "layer": "L2",
     "owner": "backend/agent/gateway/qq",
     "productionEntry": "backend/agent/gateway/qq/outbound.py",
-    "keyBehavior": "同一条 QQ 入站消息的流式文字、图片和普通文本共享序号，冷计数与并发发送不被重复去重，同一流各帧保持相同序号",
+    "keyBehavior": "QQ 图文共用被动回复序号；中间刷新失败后仍关闭已创建的流；回执只确认实际发送的文字，关闭失败向调用方报告",
     "ci": "backend-pytest"
   },
   "backend/tests/im/qq/test_qq_package_facade.py": {

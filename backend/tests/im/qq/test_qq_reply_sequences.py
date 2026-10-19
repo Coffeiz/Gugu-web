@@ -7,7 +7,7 @@ from collections import defaultdict
 import pytest
 
 from agent.gateway.qq import outbound
-from agent.gateway.qq.client import QQAPIError
+from agent.gateway.qq.client import QQAPIError, QQStreamFinalizationError
 
 
 @pytest.fixture
@@ -104,3 +104,112 @@ async def test_concurrent_stream_and_image_replies_do_not_collide(qq_reply_trans
     )
     assert image_sent is True
     assert stream.has_sent()
+
+
+async def test_stream_finishes_after_transient_intermediate_update_failure(monkeypatch):
+    """中间刷新失败不能跳过 DONE，让已可见的 QQ 消息一直显示生成中。"""
+    delivered = []
+
+    async def request(_channel, _method, _path, *, json_body):
+        if len(delivered) == 1 and json_body["input_state"] == 1:
+            raise TimeoutError("合成中间帧超时")
+        delivered.append(dict(json_body))
+        return {"stream_msg_id": "synthetic-stream"}
+
+    monkeypatch.setattr(outbound, "_qq_request", request)
+    monkeypatch.setattr(outbound, "_next_seq", lambda _id: _sequence())
+    stream = outbound.create_private_text_stream(
+        "synthetic-user", channel_id="synthetic-bot", message_id="inbound-1",
+    )
+    stream.push("前缀")
+    await stream._timer
+    stream.push("后缀_STATE")
+    await stream._timer
+    await stream.finish("前缀后缀_STATE")
+    assert delivered[-1]["input_state"] == 10
+    assert delivered[-1]["content_raw"] == "前缀后缀_STATE"
+    assert delivered[-1]["stream_msg_id"] == "synthetic-stream"
+
+
+async def _sequence():
+    return 1
+
+
+async def test_inflight_frame_acknowledges_only_its_sent_text(monkeypatch):
+    """HTTP 请求期间到达的 token 仍须发送，不能被旧帧的回执提前确认。"""
+    started = asyncio.Event()
+    release = asyncio.Event()
+    frames = []
+
+    async def request(_channel, _method, _path, *, json_body):
+        frames.append(dict(json_body))
+        if len(frames) == 1:
+            started.set()
+            await release.wait()
+        return {"stream_msg_id": "synthetic-stream"}
+
+    monkeypatch.setattr(outbound, "_qq_request", request)
+    monkeypatch.setattr(outbound, "_next_seq", lambda _id: _sequence())
+    stream = outbound.create_private_text_stream(
+        "synthetic-user", channel_id="synthetic-bot", message_id="inbound-2",
+    )
+    stream.push("前缀")
+    await asyncio.wait_for(started.wait(), timeout=3)
+    stream.push("新文字")
+    release.set()
+    await stream._timer
+    assert stream.last_sent_text == "前缀"
+    await stream.finish("前缀新文字")
+    assert [frame["input_state"] for frame in frames] == [1, 1, 10]
+    assert frames[-1]["content_raw"] == "前缀新文字"
+
+
+async def test_failed_done_frame_remains_a_delivery_error(monkeypatch):
+    """已经显示正文不等于关闭成功，DONE 拒绝必须向调用方报告失败。"""
+    async def request(_channel, _method, _path, *, json_body):
+        if json_body["input_state"] == 10:
+            raise TimeoutError("合成关闭失败")
+        return {"stream_msg_id": "synthetic-stream"}
+
+    monkeypatch.setattr(outbound, "_qq_request", request)
+    monkeypatch.setattr(outbound, "_next_seq", lambda _id: _sequence())
+    stream = outbound.create_private_text_stream(
+        "synthetic-user", channel_id="synthetic-bot", message_id="inbound-3",
+    )
+    with pytest.raises(QQStreamFinalizationError):
+        await stream.finish("合成完整正文")
+
+
+@pytest.mark.parametrize("round_end", [False, True])
+async def test_im_stream_does_not_report_success_when_closure_fails(monkeypatch, round_end):
+    """关闭失败须传回 IM 编排层，且模型最终响应仍被完整消费以完成持久化。"""
+    from unittest.mock import AsyncMock
+
+    from agent.im import replies
+    from agent.models import AgentResponse
+
+    async def request(_channel, _method, _path, *, json_body):
+        if json_body["input_state"] == 10:
+            raise TimeoutError("合成关闭失败")
+        return {"stream_msg_id": "synthetic-stream"}
+
+    monkeypatch.setattr(outbound, "_qq_request", request)
+    monkeypatch.setattr(outbound, "_next_seq", lambda _id: _sequence())
+    fallback = AsyncMock(return_value=True)
+    monkeypatch.setattr(replies, "send_text", fallback)
+    consumed = []
+
+    async def events():
+        yield "token", "合成完整正文"
+        if round_end:
+            yield "round_end", "合成完整正文"
+        yield "final", AgentResponse(text="合成完整正文", session_id=42)
+        consumed.append(True)
+
+    with pytest.raises(QQStreamFinalizationError):
+        await replies.send_qq_stream_by_round({
+            "platform": "qq", "platform_user_id": "synthetic-user",
+            "channel_id": "synthetic-bot", "message_id": "inbound-4",
+        }, events())
+    assert consumed == [True]
+    fallback.assert_not_awaited()

@@ -111,6 +111,8 @@ export class TraceStore {
       }).onConflictDoUpdate({
         target: runs.id,
         set: {
+          sessionKey: payload.session_key,
+          traceId: payload.trace_id,
           status: payload.status,
           endedAt: ended,
           durationMs: payload.duration_ms ?? null,

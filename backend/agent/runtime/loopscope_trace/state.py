@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import time
+import urllib.error
 import urllib.request
 import uuid
 from contextvars import ContextVar
@@ -1083,10 +1084,27 @@ async def _post_snapshot(snapshot: dict[str, Any]) -> None:
         with urllib.request.urlopen(req, timeout=0.8) as resp:
             resp.read(32)
 
-    try:
-        await asyncio.to_thread(_send)
-    except Exception:
-        pass
+    terminal = snapshot.get("ended_at") is not None
+    retry_delays = (0, 0.1, 0.2) if terminal else (0,)
+    failure: Exception | None = None
+    for delay in retry_delays:
+        if delay:
+            # 重试只发生在独立上报任务内，不阻塞 Agent 或增加空闲轮询。
+            await asyncio.sleep(delay)
+        try:
+            await asyncio.to_thread(_send)
+            return
+        except OSError as exc:
+            failure = exc
+            if isinstance(exc, urllib.error.HTTPError) and exc.code < 500 and exc.code not in {408, 429}:
+                break
+        except Exception as exc:
+            failure = exc
+            break
+    if terminal and failure is not None:
+        from app.core.redaction import diag_log
+
+        diag_log("agent.loopscope.final_snapshot", failure)
 
 def _finish_run(run: _ScopeRun, status: str) -> None:
     if run.ended_at is not None:
@@ -1105,6 +1123,7 @@ def _finish_run(run: _ScopeRun, status: str) -> None:
                 if isinstance(draft, str) and draft.strip():
                     final_text = draft
                     break
+        run.output_text = final_text
         if final_span is not None:
             recorded_text = (
                 final_span.output.get("text")

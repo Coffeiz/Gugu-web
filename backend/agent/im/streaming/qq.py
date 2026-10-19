@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Callable
 from typing import Tuple
 
+from agent.gateway.qq.client import QQStreamFinalizationError
 from agent.interactions.events import ROUND_END
 from agent.models import AgentResponse
 
@@ -176,6 +177,8 @@ class QQMermaidRound:
                 self.round_has_image = True
                 try:
                     await self._finish_text_segment(trim_end=True)
+                except QQStreamFinalizationError:
+                    raise
                 except Exception as exc:
                     from app.core.redaction import diag_log
 
@@ -241,6 +244,9 @@ async def send_qq_stream_by_round(
         if kind == "final" and isinstance(value, AgentResponse):
             response = value
             continue
+        if isinstance(transport_error, QQStreamFinalizationError):
+            # 继续消费模型终态以完成持久化，但关闭失败后不再发送其他分段。
+            continue
         try:
             if kind == "token":
                 await sender.push_token(str(value or ""))
@@ -249,7 +255,7 @@ async def send_qq_stream_by_round(
             elif kind == ROUND_END:
                 await sender.finish_round(str(value or ""))
         except Exception as exc:
-            if transport_error is None:
+            if transport_error is None or isinstance(exc, QQStreamFinalizationError):
                 transport_error = exc
             sender._fail_stream()
 
@@ -261,8 +267,13 @@ async def send_qq_stream_by_round(
         from app.core.redaction import diag_log
 
         diag_log("agent.im.qq_stream_transport", transport_error)
+        if isinstance(transport_error, QQStreamFinalizationError):
+            raise transport_error
     try:
         stream_sent, last_text = await sender.finish_response(last_text)
+    except QQStreamFinalizationError:
+        # 可见前缀不代表流已关闭；不能回退后把该 Run 标记为成功送达。
+        raise
     except Exception as exc:
         from app.core.redaction import diag_log
 

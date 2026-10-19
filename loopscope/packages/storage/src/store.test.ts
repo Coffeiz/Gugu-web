@@ -5,6 +5,27 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { TraceStore } from './store.js'
 
+test('TraceStore 后续快照纠正平台后，run 应出现在正确的会话列表', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'loopscope-routing-'))
+  const store = new TraceStore(path.join(directory, 'trace.db'))
+  const base = {
+    id: 'run-mirror', trace_id: 'trace-mirror', external_session_id: '42',
+    status: 'running', started_at: 100, spans: [],
+  }
+  try {
+    store.ingestRun({ ...base, source: 'web', session_key: 'gugu:web:42' })
+    store.ingestRun({ ...base, source: 'qq', session_key: 'gugu:qq:42',
+      status: 'success', ended_at: 110, output: { text: '合成回复' } })
+    assert.equal(store.getRun('run-mirror')?.session_key, 'gugu:qq:42')
+    assert.equal(store.listRuns('gugu:qq:42').length, 1)
+    assert.equal(store.listRuns('gugu:web:42').length, 0)
+    assert.equal(store.getRun('run-mirror')?.status, 'success')
+  } finally {
+    store.close()
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test('TraceStore 对重复 run 上报保持幂等并可读回 spans', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'loopscope-storage-'))
   const store = new TraceStore(path.join(directory, 'loopscope.db'))

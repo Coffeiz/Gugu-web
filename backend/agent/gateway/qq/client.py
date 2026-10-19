@@ -215,6 +215,10 @@ async def _send_token(channel_id: str) -> tuple[str, str]:
     _send_tokens[channel_id] = {"token": token, "base": base, "expires_at": now + expires_in}
     return token, base
 
+class QQStreamFinalizationError(RuntimeError):
+    """已有可见正文的流未获关闭确认，不能作为成功交付处理。"""
+
+
 class QQAPIError(Exception):
     """QQ Bot API 返回非 2xx。status 是 HTTP 状态码，供上层判定瞬时/永久（P2-b §1/§6）；
     body 是原始响应体，只用于内部判定（如 markdown 权限被拒的错误码）和受限诊断出口，

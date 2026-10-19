@@ -7,6 +7,9 @@ import asyncio
 import json
 import logging
 import time
+from contextlib import nullcontext
+from types import SimpleNamespace
+from urllib.error import HTTPError
 
 import pytest
 
@@ -14,6 +17,56 @@ from agent.runtime.loopscope_trace.state import _ScopeRun, _now, _scope_run
 from agent.runtime.loopscope_trace import state as trace_state
 from agent.runtime import trace
 from app.core import opsmetrics
+
+
+@pytest.mark.asyncio
+async def test_terminal_snapshot_retries_transient_collector_failure(monkeypatch):
+    """Collector 短暂不可用后终态仍须送达，不能永远停留在 running。"""
+    attempts = []
+
+    def open_request(request, **_kwargs):
+        attempts.append(json.loads(request.data))
+        if len(attempts) == 1:
+            raise TimeoutError("合成 Collector 短暂超时")
+        return nullcontext(SimpleNamespace(read=lambda _size: b"ok"))
+
+    monkeypatch.setattr(trace_state.urllib.request, "urlopen", open_request)
+    await trace_state._post_snapshot({"id": "run-terminal", "status": "success", "ended_at": 2})
+    assert len(attempts) == 2
+    assert attempts[-1]["status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_running_snapshot_does_not_retry_or_block_on_collector_failure(monkeypatch):
+    """运行中快照保持 best-effort，不能因旁路故障积压主运行。"""
+    attempts = []
+
+    def open_request(_request, **_kwargs):
+        attempts.append(True)
+        raise TimeoutError("合成 Collector 不可用")
+
+    monkeypatch.setattr(trace_state.urllib.request, "urlopen", open_request)
+    await trace_state._post_snapshot({"id": "run-active", "status": "running", "ended_at": None})
+    assert len(attempts) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status, expected_attempts", [(503, 3), (400, 1)])
+async def test_terminal_snapshot_failure_is_bounded_and_diagnosed(monkeypatch, status, expected_attempts):
+    """终态故障重试有上限；无效请求不重复，原始错误仅走受限诊断。"""
+    attempts = []
+    diagnosed = []
+
+    def open_request(_request, **_kwargs):
+        attempts.append(True)
+        raise HTTPError("http://collector.invalid", status, "合成错误", {}, None)
+
+    monkeypatch.setattr(trace_state.urllib.request, "urlopen", open_request)
+    monkeypatch.setattr("app.core.redaction.diag_log", lambda *args: diagnosed.append(args))
+    await trace_state._post_snapshot({"id": "run-failed", "status": "error", "ended_at": 2})
+    assert len(attempts) == expected_attempts
+    assert len(diagnosed) == 1
+    assert isinstance(diagnosed[0][1], HTTPError)
 
 
 def test_new_trace_sets_and_returns():
@@ -116,6 +169,7 @@ async def test_finish_run_restores_final_response_from_last_llm_draft(monkeypatc
 
     final = next(item for item in run.spans if item.name == "Final response")
     assert final.output == {"text": "最终回复"}
+    assert run.output_text == "最终回复"
     await asyncio.gather(*list(trace_state._send_tasks), return_exceptions=True)
 
 

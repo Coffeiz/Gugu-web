@@ -238,9 +238,11 @@ def ensure_hooks() -> None:
                 )
             else:
                 run.trace_id = trace_id
-                run.session_key = f"gugu:web:{session_id}"
                 run.external_session_id = str(session_id)
-                run.source = "web"
+                # IM 也会 begin 一个 Web 镜像流；已绑定的平台归属不能被镜像覆盖。
+                if run.source == "unknown" or run.session_key.startswith("pending:"):
+                    run.source = "web"
+                run.session_key = f"gugu:{run.source}:{session_id}"
             _scope_run.set(run)
         except Exception:
             pass
