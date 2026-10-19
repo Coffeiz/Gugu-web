@@ -162,7 +162,7 @@ class AISettings(BaseModel):
         description="API Base URL",
     )
     model: str = Field("qwen-max", description="使用模型")
-    max_tokens: int = Field(8000, gt=0, description="最大输出 token 数")
+    max_tokens: int = Field(25600, gt=0, description="最大输出 token 数")
     context_tokens: int = Field(128000, gt=1, description="模型总上下文窗口 token 数；服务商上限需按模型规格手动确认")
     thinking: str = Field("", description="思考控制: 空=跟随端点默认 | disabled | adaptive")
     reasoning_effort: str = Field("", description="思考强度（仅 DeepSeek、思考开时生效）: 空=跟随模型默认 | low | high | max")
@@ -316,7 +316,7 @@ class AIPresetItem(BaseModel):
     api_key: str = ""
     base_url: str = ""
     model: str = ""
-    max_tokens: int = Field(8000, gt=0)
+    max_tokens: int = Field(25600, gt=0)
     context_tokens: int = Field(128000, gt=1, description="模型总上下文窗口 token 数；服务商上限需按模型规格手动确认")
     thinking: str = ""
     reasoning_effort: str = ""   # 思考强度（仅 DeepSeek、思考开时生效）：空=默认 | low | high | max

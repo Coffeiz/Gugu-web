@@ -839,7 +839,7 @@ _AI_SYNC_KEYS = ("provider", "api_key", "base_url", "model", "max_tokens",
                  "context_tokens", "thinking", "reasoning_effort", "reasoning_persistence", "image", "video",
                  "image_detail", "audio", "web_search_enabled", "api_format", "ollama_mode", "ollama_api_mode", "ollama_keep_alive",
                  "deployment_mode", "local_runtime", "capability_overrides", "capability_checked_at", "capability_fingerprint")
-_AI_DEFAULTS = {"max_tokens": 8000, "context_tokens": 128000,
+_AI_DEFAULTS = {"max_tokens": 25600, "context_tokens": 128000,
                 "thinking": "", "reasoning_effort": "", "reasoning_persistence": "off", "image": False,
                 "image_detail": "auto", "video": False, "audio": False, "web_search_enabled": False, "api_format": "",
                 "ollama_mode": "local", "ollama_api_mode": "native", "ollama_keep_alive": "5m",
@@ -858,7 +858,7 @@ class PresetCreate(BaseModel):
     api_key: str = ""
     base_url: str = ""
     model: str = ""
-    max_tokens: int = Field(8000, gt=0)
+    max_tokens: int = Field(25600, gt=0)
     context_tokens: int = Field(128000, gt=1)
     thinking: str = ""
     reasoning_effort: str = ""
@@ -960,7 +960,7 @@ async def update_llm_preset(preset_id: str, body: PresetUpdate, db: AsyncSession
         effective_api_format = body.api_format if body.api_format is not None else str(item.get("api_format") or "")
         if body.web_search_enabled is True and not provider_web_search_supported(effective_provider, effective_api_format):
             raise HTTPException(422, "当前 Provider 或 API 格式不支持联网搜索")
-        next_max_tokens = body.max_tokens if body.max_tokens is not None else int(item.get("max_tokens", 8000))
+        next_max_tokens = body.max_tokens if body.max_tokens is not None else int(item.get("max_tokens", 25600))
         next_context_tokens = body.context_tokens if body.context_tokens is not None else int(item.get("context_tokens", 128000))
         if next_max_tokens >= next_context_tokens:
             raise HTTPException(422, "最大输出 token 数必须小于模型总上下文窗口")
