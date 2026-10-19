@@ -175,12 +175,12 @@ async def test_group_owner_uses_group_threshold_not_private_threshold(monkeypatc
 
     for index in range(1, 51):
         await reflection._schedule_group_owner(
-            "owner-2", "小北", f"群主消息{index}", "", settings, 7,
+            "owner-2", "小北", f"群主消息{index}", "", settings, 7, passive=True,
         )
     assert drained == []
 
     await reflection._schedule_group_owner(
-        "owner-2", "小北", "群主消息51", "", settings, 7, flush_now=True,
+        "owner-2", "小北", "群主消息51", "", settings, 7, flush_now=True, passive=True,
     )
     assert drained == [("owner-2", settings, 7)]
 

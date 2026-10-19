@@ -497,6 +497,11 @@ async def _execute_job_locked(job_id: int, settings, *, snapshot=None) -> bool:
                 from agent.context.reflection_snapshot import model_identity, peek_reflection_snapshot
 
                 candidate = resolved_snapshot or peek_reflection_snapshot(scope.owner_user_id, session_id)
+                if job.reason == "context-pressure" or (
+                    scope.scope_type == "group" and getattr(messages[-1], "run_id", None) is None
+                ):
+                    # 压力由旧 run 之后的被动增量产生，不能复用旧 usage 或已压缩标志。
+                    candidate = None
                 if (candidate and candidate.user_id == str(scope.owner_user_id)
                         and candidate.session_id == session_id
                         and model_identity(candidate.ai) == model_identity(run_config.model)):

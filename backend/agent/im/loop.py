@@ -572,6 +572,12 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
                     message_row.created_at,
                 )
                 group_threshold_reached = group_job_id is not None
+                if not group_threshold_reached:
+                    from agent.memory.group_pressure import observe_passive_context_pressure
+
+                    group_threshold_reached = await observe_passive_context_pressure(
+                        group_scope, recorded_session_id,
+                    )
             if request.im_role == "owner":
                 from app.core.config import get_settings
                 from agent.memory import reflection
@@ -585,6 +591,7 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
                     group_mode=True,
                     session_id=recorded_session_id,
                     flush_now=group_threshold_reached,
+                    passive=True,
                 )
             elif group_threshold_reached:
                 from app.core.config import get_settings
@@ -593,9 +600,11 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
                 reflection.flush_group_owner_buffer(
                     request.user_id, get_settings(), recorded_session_id,
                 )
-        except Exception:
+        except Exception as exc:
             # 记忆调度不能阻断消息落库和网页会话同步。
-            pass
+            from app.core.redaction import diag_log
+
+            diag_log("agent.im.loop.passive_reflection_schedule", exc)
     return recorded_session_id
 
 

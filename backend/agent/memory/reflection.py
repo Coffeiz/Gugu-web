@@ -474,6 +474,23 @@ def _schedule_local_idle_drain(user_id, settings, session_id, *, group_mode: boo
     task.add_done_callback(_bg_tasks.discard)
 
 
+async def shutdown_local_idle_drains() -> None:
+    """Worker 正常退出时收尾本进程的 idle drain。
+
+    尚在 idle 等待的任务取消后会在 finally 中清掉本机快照标记；反思缓冲仍保存在
+    Redis，由下次 Worker 的 idle 收束流程接管。已经开始 drain 的任务则等待完成，
+    避免退出时中断其取走/写回流程。
+    """
+    scheduled = list(_local_idle_tasks.items())
+    for key, task in scheduled:
+        if not task.done() and not _local_idle_draining.get(key):
+            task.cancel()
+    if scheduled:
+        await asyncio.gather(
+            *(task for _, task in scheduled), return_exceptions=True,
+        )
+
+
 async def _arm_local_idle_drain(redis, user_id, settings, session_id, *, group_mode: bool) -> bool:
     """只有当前进程仍持有快照时才预约本机 drain；标记仅作 worker 协调。"""
     if session_id is None:
@@ -864,7 +881,7 @@ async def flush_due_owner_reflections(settings, *, now: float | None = None, lim
 
 
 def schedule(user_id, user_name, user_msg, assistant_reply, settings, used_tools=None, session_id=None,
-             group_mode: bool = False, flush_now: bool = False) -> None:
+             group_mode: bool = False, flush_now: bool = False, passive: bool = False) -> None:
     """非阻塞累计 owner 反思回合；达到 admin 配置阈值后批量反思（工具与否不影响时机）。
 
     琐碎应答（嗯/好的/谢谢…）不入缓冲省一次计数——除非这轮咕咕用了工具
@@ -877,7 +894,7 @@ def schedule(user_id, user_name, user_msg, assistant_reply, settings, used_tools
     if group_mode:
         task = asyncio.create_task(_schedule_group_owner(
             user_id, user_name, user_msg, assistant_reply, settings,
-            session_id, flush_now=flush_now,
+            session_id, flush_now=flush_now, passive=passive,
         ))
         _bg_tasks.add(task)
         task.add_done_callback(_bg_tasks.discard)
@@ -891,7 +908,7 @@ def schedule(user_id, user_name, user_msg, assistant_reply, settings, used_tools
 
 
 async def _schedule_group_owner(user_id, user_name, user_msg, assistant_reply, settings,
-                                session_id=None, *, flush_now: bool = False) -> None:
+                                session_id=None, *, flush_now: bool = False, passive: bool = False) -> None:
     from app.core import redis as R
 
     redis = R.get_redis()
@@ -906,7 +923,7 @@ async def _schedule_group_owner(user_id, user_name, user_msg, assistant_reply, s
     await lock.acquire()
     try:
         await redis.rpush(key, json.dumps(row, ensure_ascii=False))
-        if session_id is not None:
+        if session_id is not None and not passive:
             await reflection_idle.mark_active(
                 redis, _GROUP_OWNER_IDLE_KEY, _owner_idle_member(user_id, session_id),
             )
@@ -917,7 +934,7 @@ async def _schedule_group_owner(user_id, user_name, user_msg, assistant_reply, s
             redis, user_id, session_id, group_mode=True,
         )
         await _drain_group_owner_buffer(user_id, settings, session_id)
-    else:
+    elif not passive:
         await _arm_local_idle_drain(
             redis, user_id, settings, session_id, group_mode=True,
         )

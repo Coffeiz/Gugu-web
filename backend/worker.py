@@ -608,11 +608,14 @@ async def _serve():
     # 核对 Worker 通过共享 stop event 让扫描线程/当前事务协作退出；不要取消协程，
     # 否则 asyncio Future 取消后底层线程仍可能运行并与下一进程重叠。
     await filesync_reconcile_task
+    from agent.memory.reflection import shutdown_local_idle_drains
+    await shutdown_local_idle_drains()
     from agent.rag.injection import shutdown_background_recall_tasks
     await shutdown_background_recall_tasks()
     sched.shutdown()
     await R.reset()
-    from agent.rag.ts_sidecar import close_rank_clients
+    from agent.rag.ts_sidecar import close_lexical_clients, close_rank_clients
+    await close_lexical_clients()
     await close_rank_clients()
     from app.db.session import dispose_engine
     await dispose_engine()
@@ -730,7 +733,8 @@ async def _emergency_shutdown(*, tasks=None) -> None:
         print(f"[worker] 异常退出释放 Redis 失败: {type(exc).__name__}: {exc}", flush=True)
 
     try:
-        from agent.rag.ts_sidecar import close_rank_clients
+        from agent.rag.ts_sidecar import close_lexical_clients, close_rank_clients
+        await close_lexical_clients()
         await close_rank_clients()
     except Exception as exc:
         print(f"[worker] 异常退出释放 RAG sidecar 失败: {type(exc).__name__}: {exc}", flush=True)

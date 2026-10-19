@@ -5,7 +5,7 @@ import asyncio
 from datetime import timedelta
 from typing import Any, List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from app.core import redis as R
@@ -150,7 +150,7 @@ async def observe_group_message(
     now=None,
     member_batch: bool = True,
 ) -> Optional[int]:
-    """推进群级游标；群级和群友记忆都由群消息累计 50 条触发。"""
+    """累计被动消息；只有已完成的主动 run 才登记群闲置窗口。"""
     from app.models import MemoryReflectionCursor
     from agent.memory.scope_lifecycle import is_tombstoned
 
@@ -172,11 +172,12 @@ async def observe_group_message(
                 bot_id=scope.bot_id,
                 scope_type=scope.scope_type,
                 scope_id=scope.scope_id,
-                active_started_at=message_at or now,
+                active_started_at=None if member_batch else now,
                 last_message_at=message_at or now,
                 last_message_id=message_id,
                 scope_version=1,
                 pending_passive_count=1 if member_batch else 0,
+                pending_agent_count=0 if member_batch else 1,
                 created_at=now,
                 updated_at=now,
             )
@@ -196,13 +197,14 @@ async def observe_group_message(
                 if cursor is None:
                     raise
 
-        if cursor.settled_at is not None:
+        if not member_batch:
+            # 群游标的 agent 计数表示尚未收束的主动回合。被动消息不能重置时钟。
+            cursor.pending_agent_count += 1
             cursor.settled_at = None
-            cursor.active_started_at = message_at or now
-        elif cursor.active_started_at is None:
-            cursor.active_started_at = message_at or now
-        cursor.last_message_id = message_id
-        cursor.last_message_at = message_at or now
+            cursor.active_started_at = now
+        if message_id >= (cursor.last_message_id or 0):
+            cursor.last_message_id = message_id
+            cursor.last_message_at = message_at or now
         cursor.scope_version += 1
         if member_batch:
             cursor.pending_passive_count += 1
@@ -214,7 +216,6 @@ async def observe_group_message(
         last = cursor.last_message_id
         should_group = should_threshold
         if should_group or should_threshold:
-            cursor.active_started_at = message_at or now
             if should_threshold:
                 cursor.pending_passive_count = 0
             cursor.updated_at = now
@@ -239,8 +240,25 @@ async def observe_group_message(
     return job_ids[0] if job_ids else None
 
 
+def _idle_scope_predicate(cutoff):
+    """群必须有主动回合；私聊仍以末条消息为闲置起点。"""
+    from app.models import MemoryReflectionCursor
+
+    return or_(
+        and_(
+            MemoryReflectionCursor.scope_type == "group",
+            MemoryReflectionCursor.pending_agent_count > 0,
+            MemoryReflectionCursor.active_started_at <= cutoff,
+        ),
+        and_(
+            MemoryReflectionCursor.scope_type != "group",
+            MemoryReflectionCursor.last_message_at <= cutoff,
+        ),
+    )
+
+
 async def settle_idle_scopes(*, now=None, limit: int = 100) -> int:
-    """扫描 4 分 30 秒无新消息且未收束的 scope，每轮只投递一次。"""
+    """群按主动 run 完成时间收束；私聊保留原消息闲置规则。"""
     from app.models import MemoryReflectionCursor
 
     now = now or now_utc()
@@ -249,7 +267,7 @@ async def settle_idle_scopes(*, now=None, limit: int = 100) -> int:
         rows = (await db.execute(
             select(MemoryReflectionCursor)
             .where(
-                MemoryReflectionCursor.last_message_at <= cutoff,
+                _idle_scope_predicate(cutoff),
                 MemoryReflectionCursor.settled_at.is_(None),
             )
             .order_by(MemoryReflectionCursor.last_message_at)
@@ -261,10 +279,10 @@ async def settle_idle_scopes(*, now=None, limit: int = 100) -> int:
                 cursor.owner_user_id, cursor.platform, cursor.bot_id,
                 cursor.scope_type, cursor.scope_id,
             )
-            pending.append((scope, cursor, cursor.id))
+            pending.append((scope, cursor, cursor.id, cursor.active_started_at, cursor.scope_version))
         await db.commit()
     settled = 0
-    for scope, cursor, cursor_id in pending:
+    for scope, cursor, cursor_id, active_started_at, version in pending:
         last = cursor.last_message_id
         jobs = []
         group_first = (cursor.last_reflected_message_id or 0) + 1
@@ -283,14 +301,17 @@ async def settle_idle_scopes(*, now=None, limit: int = 100) -> int:
                 ))
         except Exception:
             continue
-        if not any(job_id is not None for job_id in jobs):
+        already_reflected = scope.scope_type == "group" and group_first > last and member_first > last
+        if not already_reflected and not any(job_id is not None for job_id in jobs):
             continue
         async with await _db_session() as db:
             cursor = await db.get(MemoryReflectionCursor, cursor_id)
-            if cursor and cursor.last_message_id == last and cursor.settled_at is None:
+            if (cursor and cursor.last_message_id == last and cursor.settled_at is None
+                    and cursor.active_started_at == active_started_at and cursor.scope_version == version):
                 cursor.settled_at = now
                 if scope.scope_type == "group":
                     cursor.pending_passive_count = 0
+                    cursor.pending_agent_count = 0
                 elif scope.scope_type == "platform-user":
                     cursor.pending_agent_count = 0
                 cursor.updated_at = now
