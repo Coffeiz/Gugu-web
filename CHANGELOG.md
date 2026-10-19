@@ -13,6 +13,8 @@
 
 - Preview and confirm missing file-library records in batches from the sync conflict list.
 - Add Provider-native web search for MiniMax, GLM, Qwen, DeepSeek, MiMo and Ollama Cloud, with per-model switches and billing notices.
+- Add MiniMax ASR as a speech-recognition option for Admin and BYOK credentials.
+- Add paginated loading of older messages in Web chat and a dedicated LoopScope reflections view.
 
 #### Improvements
 
@@ -34,6 +36,13 @@
 - Allow selecting and copying Mermaid source in the fullscreen preview.
 - Improve search routing, cross-source verification and fact checking for uncertain names, attributes and references.
 - Combine web and image search in XNG Search and hide search tools that have no usable configuration.
+- Add Chinese and English translations to LoopScope and show the connected account in its navigation rail.
+- Trigger group-memory reflection from completed active-run idle windows or estimated context pressure, without extending the idle timer for passive messages.
+- Record reflection request timing, cache-prefix structure and usage probes in LoopScope without storing request text.
+- Keep tool results attached to the correct Web chat history page and preserve the reading position while loading older messages.
+- Add a calendar context-menu action for creating an activity on a single selected day.
+- Preserve confirmed tool outcomes and relevant object names when compressing task and memory context.
+- Show the workspace directory name in file preview location details and carry it into file-library navigation.
 
 ### Fixes
 
@@ -72,6 +81,8 @@
 
 - 文件同步冲突列表支持预览并分批确认本地缺失记录。
 - 新增 MiniMax、GLM、百炼、DeepSeek、MiMo 和 Ollama Cloud 原生联网搜索，支持按模型启用并提示可能产生的费用。
+- Admin 和 BYOK 语音识别配置新增 MiniMax ASR。
+- Web 聊天支持分页加载更早消息，LoopScope 新增反思观测页面。
 
 #### 改进
 
@@ -93,6 +104,13 @@
 - Mermaid 全屏预览源码支持鼠标选择和复制。
 - 优化搜索工具分工与复杂任务混合检索，补充多来源比对和具体实体、属性、引用的真实性核验指引。
 - XNG Search 统一网页、图像及混合搜索；未配置的搜索能力不再展示给模型。
+- LoopScope 导航支持中英文切换，并显示已连接账号。
+- 群记忆反思根据主动 run 完成后的闲置窗口或估算的上下文压力触发；被动消息不再延长闲置计时。
+- LoopScope 记录反思请求时间、缓存前缀结构和用量探针，不保存请求正文。
+- Web 聊天加载旧页时保持阅读位置，并将工具结果归入正确的历史分页。
+- 日历单日右键菜单支持添加活动。
+- 压缩任务和记忆上下文时保留工具回执确认的结果及继续工作所需的对象名称。
+- 文件预览位置显示工作区目录名，并在跳转文件库时保留该目录信息。
 
 ### 修复
 
