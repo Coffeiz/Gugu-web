@@ -9,7 +9,7 @@
            但仍能省掉一趟不必要的 vnode diff。 -->
       <div v-for="{ row, msg } in rowsWithMsg" :key="String(row.key)" :data-index="row.index" :ref="measureRow"
            :class="['msg-virtual-row', { 'is-tool-row': msg.role === 'tool', 'is-interaction-row': msg.role === 'interaction' }]"
-           :style="{ transform: `translateY(${row.start + msgsPadTop}px)` }">
+           :style="{ transform: `translateY(${row.start}px)` }">
         <div :class="['msg', msg.role]" :data-db-id="msg.dbId || ''"
            v-memo="[msg.role, msg.speakerLabel, msg.text, msg.html, msg.streaming, msg.references, msg.roundId, msg.toolCallId, msg.toolStatus, msg.toolDurationMs, msg.toolInput, msg.toolResult, msg.linkButtons, msg.interaction?.resolved, msg.interaction?.selectedOptionId, msg.interaction?.allowTextInput, msg.interaction?.customInputActive, msg.interaction?.taskPaused, msg.interaction?.submitting, msg.interaction?.responseText, msg.interaction?.secretFields, interactionAnswerMode, msg.files?.length, msg.files?.map(f => `${f.file_id ?? ''}:${f.attach_id ?? ''}:${f.ext ?? ''}`).join(','), msg.quotedText, copiedId === msg.id, voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId)]">
           <GuguChatMessageRow
@@ -88,7 +88,9 @@ const messagesEl = ref<HTMLElement | null>(null)
 
 // 消息高度不定长（纯文本/代码块/文件卡片/语音条差异很大），measureElement 首次挂载
 // 后用真实高度回填、并自带 ResizeObserver 持续纠偏（图片/缩略图迟一拍加载导致变高也能跟上）。
+const msgsPadTop = computed(() => props.expanded ? 20 : 12)
 const virtualizer = useVirtualizer({
+  get paddingStart() { return msgsPadTop.value },
   get count() { return props.messages.length },
   getScrollElement: () => messagesEl.value,
   estimateSize: () => 96,
@@ -101,17 +103,18 @@ const virtualizer = useVirtualizer({
     return message?.id ?? message?.dbId ?? `${props.sessionId ?? 'new'}:${index}`
   },
 })
-// 尺寸过渡由窗口域维护视口底部锚点，避免虚拟列表同时按顶部纠偏。
+// 只补偿完全位于视口上方的行；跨越顶部的长消息变高不应推动正在阅读的内容。
+// 上翻时新挂载行与 Markdown 异步变高共用此规则，避免首次测量按整条高度误补偿。
+// 尺寸过渡由窗口域维护视口底部锚点，避免虚拟列表同时纠偏。
 watchEffect(() => {
-  virtualizer.value.shouldAdjustScrollPositionOnItemSizeChange = props.resizing ? () => false : undefined
+  virtualizer.value.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) =>
+    !props.resizing && item.end <= (instance.scrollElement?.scrollTop ?? instance.scrollOffset ?? 0)
 })
 const virtualRows = computed(() => virtualizer.value.getVirtualItems())
 // 绝对定位的子元素不会跟着祖先的 padding 走（top:0/left:0 是相对祖先的边框盒，不是内容盒），
-// 所以顶部留白只能自己在 translateY 里加、不能指望 .msg-virtual-spacer 的 padding-top 生效；
-// 水平方向的留白则放在每一行自己的左右 padding 上（CSS，见下）。
-const msgsPadTop = computed(() => props.expanded ? 20 : 12)
-// 占位容器总高度 = 虚拟列表算出的内容高度 + 顶部留白（底部留白由最后一行自带的 padding-bottom 覆盖）
-const virtualTotalSize = computed(() => virtualizer.value.getTotalSize() + msgsPadTop.value)
+// 顶部留白交给 virtualizer 的 paddingStart，让测量、滚动定位和视觉位置使用同一坐标。
+// 水平方向留白仍由每一行负责。
+const virtualTotalSize = computed(() => virtualizer.value.getTotalSize())
 // v-for 需要同时拿到虚拟行的定位信息（row）和它对应的消息（msg），zip 成一个数组，
 // 这样消息行内部的模板完全不用改，照样按 msg.xxx 取值。
 const rowsWithMsg = computed(() => virtualRows.value.map(row => ({ row, msg: props.messages[row.index] })))
@@ -138,3 +141,8 @@ defineExpose({
     virtualizer.value.scrollToIndex(idx, opts),
 })
 </script>
+
+<style scoped>
+/* 高度修正仅由虚拟列表负责，避免浏览器自动锚定再次补偿同一变化。 */
+.chat-messages { overflow-anchor: none; }
+</style>
