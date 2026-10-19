@@ -56,7 +56,7 @@
 | provider 缓存适配 | 按 provider/model 判断自动前缀缓存、显式 cache control、单锚点能力 | 已落地；DeepSeek、MiniMax 等行为不同，不能统一假设 |
 | 工具 Schema 注入 | 支持全量模式与简介模式，当前默认简介模式；简介模式为 `description_short + 紧凑字段签名` | 已落地；效果以 `docs/reports/schema-probes/` 和具体 A/B 报告为准 |
 | 上下文读取限额 | 项目、事件、最近笔记、个人文件、RAG 结果均有数量/字符上限 | 已落地；控制 prompt 体积，也避免单条大数据拖慢请求 |
-| 会话历史限制 | 历史消息有 `HISTORY_MAX_MSGS=500`，上下文压缩有分支输入和摘要字符/token上限 | 已落地；压缩仍会产生一次额外 LLM 请求 |
+| 会话历史限制 | 无 baseline 时数据库最多读取 100 条（摘要计入总数）；有 baseline 时沿用最多 500 条增量窗口 | 已落地；数据库查询直接限量，压缩和反思触发策略独立 |
 | 并行上下文加载 | 多来源 RAG、动态上下文等通过 `asyncio.gather` 并行读取 | 已落地；并行度和数据库连接池压力需要一起评估 |
 | 运行时观测 | LoopScope 记录 schema token、cache read/write、fresh input、digest 和缓存锚点诊断 | 已落地；只记录脱敏诊断，不记录聊天正文、工具参数和密钥 |
 

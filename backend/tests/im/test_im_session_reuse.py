@@ -159,7 +159,7 @@ async def test_trim_session_messages_trims_above_threshold(db, user_a):
     await db.flush()
     db.add_all([
         ConversationMessage(session_id=session.id, role="user", content=f"消息 {index}")
-        for index in range(605)
+        for index in range(2005)
     ])
     await db.commit()
 
@@ -170,7 +170,46 @@ async def test_trim_session_messages_trims_above_threshold(db, user_a):
             ConversationMessage.session_id == session.id,
         )
     )
-    assert count == 500
+    newest = await db.scalar(
+        select(ConversationMessage.content)
+        .where(ConversationMessage.session_id == session.id)
+        .order_by(ConversationMessage.created_at.desc(), ConversationMessage.id.desc())
+        .limit(1)
+    )
+    assert count == 2000
+    assert newest == "消息 2004"
+
+
+async def test_trim_session_messages_removes_excess_in_bounded_batches(db, user_a, monkeypatch):
+    """超限清理每批最多处理 500 条，最后只保留最近 2000 条。"""
+    from app.services import conversation_retention
+
+    session = ConversationSession(user_id=user_a.id, title="私聊", source="qq")
+    db.add(session)
+    await db.flush()
+    db.add_all([
+        ConversationMessage(session_id=session.id, role="user", content=f"消息 {index}")
+        for index in range(2601)
+    ])
+    await db.commit()
+
+    original_remove = conversation_retention.remove_messages_with_attachments
+    batch_sizes = []
+
+    async def record_batch(db_session, message_ids):
+        batch_sizes.append(len(message_ids))
+        return await original_remove(db_session, message_ids)
+
+    monkeypatch.setattr(conversation_retention, "remove_messages_with_attachments", record_batch)
+    await conversation_retention.trim_session_messages(session.id)
+
+    count = await db.scalar(
+        select(func.count()).select_from(ConversationMessage).where(
+            ConversationMessage.session_id == session.id,
+        )
+    )
+    assert batch_sizes == [500, 101]
+    assert count == 2000
 
 
 async def test_trim_session_messages_cleans_attachment_storage(db, user_a, monkeypatch, tmp_path):

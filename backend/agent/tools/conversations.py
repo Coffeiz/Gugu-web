@@ -27,6 +27,16 @@ def _positive_int(value: object) -> int | None:
     return number if number > 0 else None
 
 
+def _split_search_terms(values: list[str]) -> list[str]:
+    """历史搜索将空格分隔的输入作为独立关键词。"""
+    terms: list[str] = []
+    for value in values:
+        terms.extend(str(value).split())
+        if len(terms) >= 8:
+            break
+    return normalize_queries(queries=terms)
+
+
 async def _resolve_conversation_session_id(db, user_id, item: dict) -> int | None:
     """把 RAG 结果解析为已归属当前用户的会话 ID。
 
@@ -57,7 +67,9 @@ async def _resolve_conversation_session_id(db, user_id, item: dict) -> int | Non
 async def _search_conversations(db, user_id, args: dict):
     keyword = (args.get("query") or args.get("keyword") or "").strip()
     queries = args.get("queries") if isinstance(args.get("queries"), list) else None
-    search_queries = normalize_queries(keyword, queries)
+    search_queries = _split_search_terms(
+        [str(value) for value in queries] if queries else ([keyword] if keyword else [])
+    )
     mode = normalize_mode(args.get("mode"))
     limit = max(1, min(int(args.get("limit", 6) or 6), 20))
 
@@ -174,7 +186,10 @@ class ConversationsSkill(BaseSkill):
         Tool(
             name="search_conversations", label="搜历史对话",
             description_short='搜索历史对话；省略关键词时列出最近对话。',
-            description="搜索用户过去的其他对话；可按关键词查找，不传关键词则列最近对话。",
+            description=(
+                "搜索用户过去的其他对话；空格分开的词分别检索，默认 OR 并优先返回命中词更多的消息；"
+                "mode=AND 要求全部关键词命中。不传关键词则列最近对话。"
+            ),
             input_schema={
                 "type": "object",
                 "properties": {

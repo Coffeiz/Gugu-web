@@ -202,10 +202,9 @@ async def test_message_area_delta_commit_is_ordered_and_idempotent(db, user_a):
 
 @pytest.mark.asyncio
 async def test_twenty_isolated_tool_runs_keep_area_restore_and_provider_wire_aligned(db, user_a):
-    """连续工具 run 每轮 reload 后，新 Area 投影必须与旧 history renderer 等价。"""
+    """连续工具 run 重载后，canonical Area 恢复结果保持稳定。"""
     from agent.context.context_diagnostics import first_diff_index
     from agent.context.assembly import MessageSource, PersistencePolicy
-    from agent.context.history import render_canonical_area_snapshot
     from agent.context.message_area_repository import commit_delta, restore_entries
     from agent.context.assembly import MessageArea
 
@@ -217,7 +216,7 @@ async def test_twenty_isolated_tool_runs_keep_area_restore_and_provider_wire_ali
     expected_restored_wire = None
 
     for run_number in range(20):
-        history = await load_session_history(db, session.id, max_messages=200)
+        history = await load_session_history(db, session.id)
         area = restore_entries(history)
 
         area.configure_request(fixed_prefix=(), render_options={
@@ -267,14 +266,14 @@ async def test_twenty_isolated_tool_runs_keep_area_restore_and_provider_wire_ali
         await db.commit()
         observed.append((area.revision, area.digest(), delta.digest))
         expected_restored_area = restore_entries(
-            await load_session_history(db, session.id, max_messages=200),
+            await load_session_history(db, session.id),
         )
         expected_restored_area.configure_request(fixed_prefix=(), render_options={
             "api_format": "openai", "user_tz": timezone.utc,
         })
         expected_restored_wire = expected_restored_area.provider_projection().to_messages()
 
-    restored = restore_entries(await load_session_history(db, session.id, max_messages=200))
+    restored = restore_entries(await load_session_history(db, session.id))
     assert len(observed) == 20
     assert len(restored.entries) == 20 * 4
     assert restored.entries[-1].canonical_message["content"] == "完成 19"

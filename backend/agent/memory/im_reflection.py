@@ -661,7 +661,7 @@ async def _aggregate_members(db, scope: MemoryScope) -> dict[str, dict]:
     """按 chat_id 全量聚合群成员：platform_user_id → {name, last_seen_at, message_count}。
 
     数据源是 ConversationMessage 表按 chat_id 聚合。群聊消息受 MESSAGE_RETENTION_LIMIT
-    （500）/MESSAGE_TRIM_THRESHOLD（600）限制，message_count 天然是"保留窗口内"的计数
+    （2000）限制，message_count 天然是"保留窗口内"的计数
     而非全量历史，语义上贴近"近期活跃度"。
     这里刻意不用 execute_job 本批 messages 累加——会漏掉窗口内、不在本批范围的历史，
     也没法正确反映消息裁剪后的实际计数；全量聚合成本很低，每次都查一遍。
@@ -733,7 +733,7 @@ def _merge_members(current: Any, aggregated: dict[str, dict]) -> dict[str, dict]
     members.json 每条必须挂在具体 platform_user_id 下才有意义，这是两个文件
     唯一但关键的设计分歧点，不要"修正"掉。
 
-    `aggregated` 只覆盖 ConversationMessage **保留窗口**（500~600 条）内还能看到的
+    `aggregated` 只覆盖 ConversationMessage **保留窗口**（最近 2000 条）内还能看到的
     成员——不活跃太久的成员会整个从这次聚合结果里消失。早期实现直接 `out = {}` 只填
     aggregated 里的 pid，等于把这些沉默成员的 aliases/nicknames 也一起从 members.json
     删掉了（code review 发现的真实数据生命周期问题：这些字段本来就是为了在成员长期

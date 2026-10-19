@@ -405,7 +405,7 @@ def test_merge_members_preserves_existing_nicknames():
 
 def test_merge_members_keeps_stale_member_out_of_aggregation_window():
     """code review 发现的真实数据生命周期 bug：aggregated 只覆盖 ConversationMessage
-    保留窗口（500~600 条）内还能看到的成员，早期实现是 `out = {}` 只填 aggregated 里
+    保留窗口内还能看到的成员，早期实现是 `out = {}` 只填 aggregated 里
     的 pid，等于成员一旦沉默太久、消息被裁出窗口，就连他的 aliases/nicknames 也被
     一起删掉了——这些字段本来就是为了在成员长期不活跃后依然能被找到而设计的，结果
     反而在成员本身被裁出窗口时先丢了。修复后：本轮聚合看不到的旧成员应该原样保留
