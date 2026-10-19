@@ -1,8 +1,8 @@
 """上下文压缩模块。
 
-正常路径由 provider 的实际响应决定是否发生溢出；溢出后压缩旧 history 并重试当前
-round。run 收尾时，provider 实际输入达到模型预算的压缩触发线才异步更新 baseline，避免
-用本地估算提前改变上下文。压缩只保留最近一段完整 history，其余旧 history
+每个 provider round 返回后，实际输入达到 90% 时压缩较早 history；明确溢出时
+压缩并重试当前 round，避免用本地估算提前改变上下文。压力压缩也处理当前 run
+已完成的旧执行轮，保留用户最后原文及最近完整执行轮，其余旧 history
 一次生成摘要；只有 provider 明确报告上下文超限时，才先清空工具输入、
 再裁切旧历史重试。
 固定前缀、当前 run 的用户原文和最近完整执行轮保留。
@@ -155,7 +155,7 @@ async def compact_context(
 
     策略：
     1. 保留固定前缀（不压缩）
-    2. 保留最近已完成 run 的 10 个完整 round，以及当前 run 的 10 个完整 round
+    2. 按调用方保护边界保留完整 round；运行中压力压缩保留最近一个已完成 round
     3. 将更老的消息一次压缩成一条摘要；明确超限时裁切最旧的完整消息单元
     4. 返回压缩后的 messages，确保前缀一致
     """
@@ -179,11 +179,9 @@ async def compact_context(
         from agent.runtime.loopscope_trace.state import record_canonical_history_fallback
 
         record_canonical_history_fallback()
-    messages = (
-        projection.to_messages()
-        if projection is not None
-        else area.provider_projection().to_messages()
-    )
+    # 保护索引来自 Area 的常规投影。Provider wire 可能删除孤儿工具消息或合并
+    # system，不能拿常规投影下标切 wire；wire 只用于摘要分支的缓存前缀复用。
+    messages = area.provider_projection().to_messages()
     if fixed_prefix_size == 0:
         fixed_prefix_size = area.fixed_prefix_size
     # snapshot/system-info 是固定前缀，不属于可压缩的 message history。
@@ -327,7 +325,7 @@ async def compact_context(
     logger.info("[compaction] 调用 LLM 生成摘要（追加式），compressible=%d 条", len(compressible_msgs))
     compact_summary = await _generate_append_summary(
         _branch_prefix_history(messages, fixed_prefix_size, message_history, compressible_msgs,
-                               model_cfg, include_recent=True),
+                               model_cfg, include_recent=True, provider_projection=projection),
         summary_msg.get("content", "") if summary_msg else None,
         model_cfg=model_cfg,
         append_system=append_system,
@@ -605,6 +603,7 @@ def _branch_prefix_history(
     model_cfg,
     *,
     include_recent: bool = False,
+    provider_projection=None,
 ):
     """给追加式压缩构造「从对话头开始」的连续前缀，而不是只给待压缩的中间片段。
 
@@ -642,6 +641,8 @@ def _branch_prefix_history(
     from .prefix_history import render_branch_prefix
     from .provider_conversation import ProviderConversation
 
+    if include_recent and provider_projection is not None:
+        return render_branch_prefix(provider_projection, model_cfg)
     # compact_context 已投影过 Area；保持 wire 类型，禁止再次当作 canonical 渲染。
     return render_branch_prefix(ProviderConversation(prefix, fixed_prefix_size=fixed_prefix_size), model_cfg)
 

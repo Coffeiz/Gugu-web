@@ -327,7 +327,7 @@ async def _openai(
         from agent.providers.message_utils import _with_system_cache_control
         kwargs["messages"] = _with_system_cache_control(kwargs["messages"])
     if json_mode:
-        kwargs.update(adapter.build_structured_output(ai))
+        kwargs.update(adapter.build_branch_structured_output(ai, has_history=bool(history)))
     if thinking is not None:
         thinking_params = adapter.build_openai_thinking_kwargs(
             ai, thinking=thinking)

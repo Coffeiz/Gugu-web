@@ -358,6 +358,10 @@ class ProviderAdapter:
         """返回结构化输出参数；默认不改变调用方行为。"""
         return {}
 
+    def build_branch_structured_output(self, ai, *, has_history: bool) -> dict:
+        """追加历史时沿用主对话参数，由任务指令和解析校验约束 JSON。"""
+        return {} if has_history else self.build_structured_output(ai)
+
     def build_tool_params(self, ai, tools: list[dict]) -> dict:
         """返回工具调用参数；默认使用现有 OpenAI 兼容参数。"""
         return {"tools": tools, "tool_choice": "auto"} if tools else {}

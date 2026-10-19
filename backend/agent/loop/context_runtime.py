@@ -18,6 +18,8 @@ from agent.loop.rounds import usage_compaction_due as is_usage_compaction_due
 from agent.runtime.cancellation import RunCancellation, RunCancellationRequested
 
 _log = logging.getLogger("agent.core")
+# 仅在实际用量达阈值或明确溢出后缩小保留窗口；普通历史恢复仍保留十轮。
+_PRESSURE_KEEP_ROUNDS = 1
 
 
 @dataclass
@@ -36,15 +38,19 @@ class ContextRuntime:
     provider_compacted: bool = False
     pending_event: dict[str, Any] | None = field(default=None, init=False)
 
-    def _protected_from(self) -> int:
+    def _protected_from(self, keep_rounds: int = _PRESSURE_KEEP_ROUNDS) -> int:
         index = rolling_compaction_start_index(
             self.run_state.round_start_indices,
             self.run_state.round_number,
+            keep_rounds=keep_rounds,
         )
         return self.run_start_index if index is None else index
 
-    async def compact_now(self) -> bool:
-        """请求摘要压缩并把压缩后的 baseline 原子写回 MessageArea。"""
+    async def compact_now(
+        self, *, keep_rounds: int = _PRESSURE_KEEP_ROUNDS,
+        preserve_previous_run: bool = False,
+    ) -> bool:
+        """摘要较早执行轮，原样保留用户锚点和最近完整轮，再原子更新 Area。"""
         from agent.llm import genstream
 
         async def keep_generation_alive() -> None:
@@ -65,7 +71,7 @@ class ContextRuntime:
             item for item in conversation
             if isinstance(item, dict) and "<compacted-summary>" in str(item.get("content") or "")
         ]
-        protected_from = self._protected_from()
+        protected_from = self._protected_from(keep_rounds)
         area_revision = self.messages.revision
         try:
             try:
@@ -76,7 +82,9 @@ class ContextRuntime:
                         fixed_prefix_size=self.messages.fixed_prefix_size,
                         protected_from=protected_from,
                         protected_anchor_index=self.run_start_index,
-                        protected_previous_from=self.messages.protected_history_start,
+                        protected_previous_from=(
+                            self.messages.protected_history_start if preserve_previous_run else None
+                        ),
                         model_cfg=self.ai,
                         system_text=self.system_text,
                         branch_tools=self.branch_tools,
@@ -89,7 +97,7 @@ class ContextRuntime:
                 from app.core.redaction import diag_log
 
                 diag_log("agent.context.compaction.summary", exc)
-                _log.warning("上下文压缩失败，继续使用确定性截断：%s", type(exc).__name__)
+                _log.warning("上下文压缩失败，本次不替换历史：%s", type(exc).__name__)
                 return False
         finally:
             heartbeat.cancel()
@@ -128,6 +136,9 @@ class ContextRuntime:
 
         self.provider_compacted = True
         self.messages.replace_request_baseline(compacted_messages, expected_revision=area_revision)
+        # 这些位置属于压缩前的投影；上一 run 的保护窗口也必须随 baseline 迁移，
+        # 否则下一轮会把仍需保留的历史重新摘要，并再次改变缓存前缀。
+        self.messages.protected_history_start = getattr(result, "previous_protected_start_index", None)
         anchor_index = getattr(result, "anchor_index", None)
         if anchor_index is not None:
             self.run_start_index = anchor_index
@@ -166,6 +177,7 @@ class ContextRuntime:
             return False
 
         self.provider_compacted = True
+        self.messages.protected_history_start = result.previous_protected_start_index
         anchor_index = getattr(result, "anchor_index", None)
         if anchor_index is not None:
             self.run_start_index = anchor_index
@@ -199,16 +211,13 @@ class ContextRuntime:
         )
 
     async def compact_after_usage_threshold(self) -> bool:
-        """达到实际 provider usage 阈值时执行摘要或确定性裁切。"""
+        """达到实际用量阈值时摘要旧历史；硬裁切只允许用于明确的上游溢出。"""
         if not self.usage_compaction_due():
             return False
         if await self.compact_now():
             return True
-        if await self.apply_deterministic_fallback("usage_threshold_fallback"):
-            _log.warning("provider usage 达到 90% 但摘要压缩未生效，执行确定性裁切")
-            return True
         self.last_no_progress_length = len(self.messages.provider_projection())
-        _log.error("provider usage 达到 90%，摘要和确定性裁切均未生效")
+        _log.info("provider usage 达到 90%，本次摘要未应用，保留当前历史窗口")
         return False
 
     def take_event(self) -> dict[str, Any] | None:

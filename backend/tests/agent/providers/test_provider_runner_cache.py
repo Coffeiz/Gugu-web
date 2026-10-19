@@ -28,8 +28,9 @@ class _FakeAnthropic:
 
 
 class _FakeOpenAI:
-    def __init__(self):
+    def __init__(self, content='{"ok": 1}'):
         self.kwargs = None
+        self.content = content
 
     @property
     def chat(self):
@@ -42,8 +43,80 @@ class _FakeOpenAI:
     async def create(self, **kwargs):
         self.kwargs = kwargs
         return SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content='{"ok": 1}'))],
+            choices=[SimpleNamespace(message=SimpleNamespace(content=self.content))],
             usage=None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider,model,has_history,expected_format", [
+    ("deepseek", "deepseek-flash", True, None),
+    ("deepseek", "deepseek-flash", False, {"type": "json_object"}),
+    ("qwen", "qwen3-max", True, None),
+    ("qwen", "qwen3-max", False, {"type": "json_object"}),
+    ("glm", "glm-4.6", True, None),
+    ("glm", "glm-4.6", False, {"type": "json_object"}),
+    ("mimo", "mimo-v2-flash", True, None),
+    ("mimo", "mimo-v2-flash", False, {"type": "json_object"}),
+    ("ollama", "qwen3", True, None),
+    ("ollama", "qwen3", False, {"type": "json_object"}),
+    ("minimax", "MiniMax-M3.1-Flash-Preview", True, None),
+    ("minimax", "MiniMax-M3.1-Flash-Preview", False, None),
+])
+async def test_append_json_keeps_provider_cache_policy_and_json_validation(
+    monkeypatch, provider, model, has_history, expected_format,
+):
+    """所有 Provider 追加反思不切换 JSON 模式，独立请求保留各自能力。"""
+    from agent.context.assembly import MessageArea
+    from agent.llm import modelctx
+
+    fake = _FakeOpenAI()
+    ai = SimpleNamespace(provider=provider, model=model, api_format="openai", thinking="disabled")
+    history = MessageArea.from_canonical_messages([
+        {"role": "user", "content": "用户问题"}, {"role": "assistant", "content": "历史回答"},
+    ]).provider_projection() if has_history else []
+    monkeypatch.setattr(providers, "build_openai_client", lambda ai, timeout: fake)
+    previous = modelctx.get_model_cfg()
+    modelctx.set_model_cfg(ai)
+    try:
+        output = await provider_runner.complete_messages(
+            "固定规则", history, "返回 JSON 对象", SimpleNamespace(ai=ai), json_mode=True,
+        )
+    finally:
+        modelctx.set_model_cfg(previous)
+
+    assert output == {"ok": 1}
+    assert fake.kwargs.get("response_format") == expected_format
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider,model", [
+    ("deepseek", "deepseek-flash"), ("qwen", "qwen3-max"),
+    ("glm", "glm-4.6"), ("mimo", "mimo-v2-flash"),
+    ("ollama", "qwen3"), ("minimax", "MiniMax-M3.1-Flash-Preview"),
+])
+async def test_append_rejects_non_json_output(monkeypatch, provider, model):
+    """省去上游 JSON 模式后，无效输出仍不能成为可应用的反思结果。"""
+    from agent.context.branch import ContextBranch
+    from agent.context.branch_types import BranchInput, BranchPolicy
+    from agent.context.assembly import MessageArea
+    from agent.llm import modelctx
+
+    ai = SimpleNamespace(provider=provider, model=model, api_format="openai", thinking="disabled")
+    monkeypatch.setattr(providers, "build_openai_client", lambda ai, timeout: _FakeOpenAI(content="无法生成 JSON"))
+    previous = modelctx.get_model_cfg()
+    modelctx.set_model_cfg(ai)
+    try:
+        result = await ContextBranch().run(
+            BranchInput(stable_system="固定规则", delta="返回 JSON 对象", history_messages=MessageArea.from_canonical_messages([
+                {"role": "user", "content": "用户问题"},
+            ]).provider_projection()),
+            BranchPolicy(name="reflection", output_mode="json", max_retries=0),
+            SimpleNamespace(ai=ai),
+        )
+    finally:
+        modelctx.set_model_cfg(previous)
+    assert not result.ok
+    assert result.output is None
 
 
 def _anthropic_ai():

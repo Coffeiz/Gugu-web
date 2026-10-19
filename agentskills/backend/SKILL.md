@@ -87,7 +87,10 @@ owner 闲置反思触发的会话压缩，应先在捕获主请求快照的同�
 
 2026-10-18：群组与成员反思的任务增量先放共同的已有记忆资料，再放专用任务指令，避免相同资料因首段规则不同重复读取；私聊任务与 owner 快照路径保持原顺序。真实 MiniMax Responses 对照中成员反思由约 65% 提升到约 98%；首次冷重建单独统计，不保证命中。用量场景统计新增冷请求次数（有输入且 cache_read 为 0）和排除冷请求后的输入 token 加权缓存率；微量命中仍计入。详见 `docs/reports/2026-10-18-INVEST-记忆反思缓存率与群分支资料顺序.md`。
 
+2026-10-19：实际输入达到 90% 的运行中压力压缩保留用户最后原文和最近一个完整执行轮，允许摘要本 run 的较早执行轮；普通恢复仍沿用十轮窗口。保护位置在压缩后同步更新，摘要分支复用真实 wire，压缩范围使用 Area 投影坐标。所有 Provider 的 Chat 追加 JSON 分支统一不额外发送 `response_format`，保留任务 JSON 指令、统一解析与业务校验；独立 JSON 请求保留各 Provider 原有参数。DeepSeek 实测可改善缓存，MiniMax 未发现缓存退化；这不代表所有模型输出可靠性都经过真实验证。真实 A/B 中三次后续主请求未命中输入减少 64.25%，同输入 JSON 分支命中率 29.94% → 99.89%；794 项回归通过。详见 `docs/reports/OPT-Cache-Strategy-2026-10-19.md` 与对应 devlog。
+
 **修改缓存策略前必须**：
+
 1. 用 `backend/scripts/diagnostics/test_cache_strategy_compare.py` 做对比测试
 2. 记录到 `docs/reports/OPT-Cache-Strategy-*.md`
 3. 更新 devlog 和本节
