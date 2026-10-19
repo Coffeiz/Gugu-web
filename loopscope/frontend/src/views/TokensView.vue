@@ -26,10 +26,12 @@
         <button class="list-trigger" :aria-expanded="listOpen" @click="listOpen = !listOpen">
           {{ t('tokens.sampleOption') }} <FlipChevron :open="listOpen" :size="10" />
         </button>
-        <div class="list-overlay-demo" :class="{ open: listOpen }">
-          <button class="list-option" @click="listOpen = false">{{ t('tokens.sampleOption') }} <FlipChevron :open="false" :size="10" /></button>
-          <button class="list-option selected" @click="listOpen = false">{{ t('tokens.sampleOptionSelected') }} <span>✓</span></button>
-        </div>
+        <Transition name="list-demo">
+          <div v-if="listOpen" class="list-overlay-demo">
+            <button class="list-option" @click="listOpen = false">{{ t('tokens.sampleOption') }} <FlipChevron :open="false" :size="10" /></button>
+            <button class="list-option selected" @click="listOpen = false">{{ t('tokens.sampleOptionSelected') }} <span>✓</span></button>
+          </div>
+        </Transition>
       </div>
     </section>
 
@@ -87,10 +89,11 @@ const radii=['--radius-xs','--radius-sm','--radius-md','--radius-lg','--radius-p
 .tokens{max-width:1060px;margin:0 auto;padding:42px 36px 80px}.eyebrow{font-size:9px;letter-spacing:.13em;color:var(--content-tertiary)}header h1{margin:4px 0;font-size:26px}header p{color:var(--content-secondary);font-size:12px}
 section{margin-top:38px}h2{font-size:12px;margin:0 0 12px;text-transform:uppercase;letter-spacing:.08em;color:var(--content-secondary)}
 .section-note{margin:-4px 0 14px;color:var(--content-secondary);font-size:11px}
-.list-demo-wrap{position:relative;min-height:118px;padding:10px 0}
+.list-demo-wrap{position:relative;padding:10px 0}
 .list-trigger{min-width:190px;display:flex;align-items:center;justify-content:space-between;padding:9px 11px;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:var(--surface-raised);color:var(--content-primary);font-size:11px}
-.list-overlay-demo{width:190px;margin-top:6px;padding:5px;border:1px solid var(--border-list-overlay);border-radius:var(--radius-list-overlay);background:var(--surface-list-overlay);box-shadow:var(--elevation-list-overlay);transition:opacity var(--motion-fast),transform var(--motion-fast);transform-origin:top;}
-.list-overlay-demo:not(.open){opacity:.55;transform:scaleY(.94)}
+.list-overlay-demo{position:absolute;top:calc(100% - 10px);left:0;z-index:5;width:190px;margin-top:6px;padding:5px;border:1px solid var(--border-list-overlay);border-radius:var(--radius-list-overlay);background:var(--surface-list-overlay);box-shadow:var(--elevation-list-overlay);transform-origin:top;}
+.list-demo-enter-active,.list-demo-leave-active{transition:opacity var(--motion-fast),transform var(--motion-fast)}
+.list-demo-enter-from,.list-demo-leave-to{opacity:0;transform:scaleY(.94)}
 .list-option{width:100%;min-height:32px;display:flex;align-items:center;justify-content:space-between;padding:0 9px;border:0;border-radius:var(--radius-xs);background:transparent;color:var(--content-secondary);text-align:left;font-size:11px}
 .list-option:hover,.list-option.selected{background:var(--surface-list-option-hover);color:var(--content-primary)}
 .list-option.selected>span{color:var(--action-primary)}
