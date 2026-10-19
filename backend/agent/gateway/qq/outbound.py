@@ -11,7 +11,7 @@ from typing import Any, Dict
 
 from app.core import redis as R
 from app.core.redaction import diag_log, redact
-from .text import prepare_qq_text, prepare_qq_link_buttons
+from .text import complete_qq_lines, prepare_qq_text, prepare_qq_link_buttons
 from agent.im.message_format import message_type as _message_type
 from .client import (
     QQAPIError,
@@ -113,6 +113,10 @@ class QQPrivateTextStream:
         async def send_one() -> None:
             if previous is not None:
                 await previous
+            frame = self._prepare_frame_text(input_state, content_override)
+            if frame is None:
+                return
+            sent_text, content = frame
             if self.msg_seq is None:
                 # QQ 在流式与普通消息接口间共同按 msg_id + msg_seq 去重。
                 # 关联入站消息时共享文字/图片计数；同一条流的后续帧仍复用该序号。
@@ -120,14 +124,11 @@ class QQPrivateTextStream:
                     self.msg_seq = await _next_seq(self.message_id)
                 else:
                     self.msg_seq = await _next_stream_seq(self.channel_id)
-            sent_text = self.full_text
             body = {
                 "input_mode": "replace",
                 "input_state": input_state,
                 "content_type": self.content_type,
-                "content_raw": content_override if content_override is not None else prepare_qq_text(
-                    sent_text, final=input_state == 10,
-                ),
+                "content_raw": content,
                 "msg_seq": self.msg_seq,
                 "index": self.frame_index,
             }
@@ -164,6 +165,16 @@ class QQPrivateTextStream:
             self.error = exc
             raise
 
+    def _prepare_frame_text(self, input_state: int, override: str | None) -> tuple[str, str] | None:
+        """只生成稳定的追加正文；读取排队后的最新状态，不提前确认缓冲尾行。"""
+        raw = self.full_text if self.finished or input_state == 10 else complete_qq_lines(self.full_text)
+        content = override if override is not None else prepare_qq_text(raw)
+        if not content.strip() or (input_state != 10 and content == self.last_sent_content):
+            return None
+        if not content.startswith(self.last_sent_content):
+            raise ValueError("QQ 流式正文改写已发送前缀，已阻止出站")
+        return raw, content
+
     async def finish(self, final_text: str) -> None:
         self.finished = True
         if self._timer is not None:
@@ -171,7 +182,11 @@ class QQPrivateTextStream:
             with suppress(asyncio.CancelledError):
                 await self._timer
             self._timer = None
-        self.full_text = final_text or self.full_text
+        # Mermaid 分段结束会去掉尾部留白；已发出的换行属于不可修改前缀，收尾保留原样。
+        final_text = final_text or self.full_text
+        if self.full_text.startswith(final_text) and not self.full_text[len(final_text):].strip():
+            final_text = self.full_text
+        self.full_text = final_text
         if not self.full_text.strip():
             return
         try:

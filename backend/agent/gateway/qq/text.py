@@ -30,14 +30,19 @@ def _web_target(target: str) -> str | None:
     return None
 
 
+def complete_qq_lines(text: str) -> str:
+    """只提交完整行，未完成 URI/Markdown 所在行不得进入不可修改的流前缀。"""
+    return text[:text.rfind("\n") + 1]
+
+
 def prepare_qq_text(text: str, *, final: bool = True) -> str:
-    """共享普通/流式正文规则；未闭合的链接在流中只显示标签，避免发送半截地址。"""
+    """共享正文转换；流中只转换完整行，结束时再提交尾行，避免改写已发送前缀。"""
+    if not final:
+        text = complete_qq_lines(text)
     text = sanitize_im_links(text)
 
     def markdown_link(match: re.Match) -> str:
-        label, target, closed = match.groups()
-        if not closed and not final:
-            return label
+        label, target, _closed = match.groups()
         replacement = _web_target(target)
         if replacement:
             return f"[{label}]({replacement})"
@@ -48,8 +53,7 @@ def prepare_qq_text(text: str, *, final: bool = True) -> str:
     def bare_uri(match: re.Match) -> str:
         if match.group(1).lower() in {"http", "https"}:
             return match.group(0)
-        # 未完成的裸 URI 无法判断参数是否到齐；流中不把半截 POI 转成另一个地址。
-        return (_web_target(match.group(0)) if final else None) or _UNSUPPORTED
+        return _web_target(match.group(0)) or _UNSUPPORTED
 
     return _CUSTOM_URI.sub(bare_uri, text)
 

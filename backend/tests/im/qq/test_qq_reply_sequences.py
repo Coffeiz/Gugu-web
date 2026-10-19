@@ -121,13 +121,13 @@ async def test_stream_finishes_after_transient_intermediate_update_failure(monke
     stream = outbound.create_private_text_stream(
         "synthetic-user", channel_id="synthetic-bot", message_id="inbound-1",
     )
-    stream.push("前缀")
+    stream.push("前缀\n")
     await stream._timer
     stream.push("后缀_STATE")
     await stream._timer
-    await stream.finish("前缀后缀_STATE")
+    await stream.finish("前缀\n后缀_STATE")
     assert delivered[-1]["input_state"] == 10
-    assert delivered[-1]["content_raw"] == "前缀后缀_STATE"
+    assert delivered[-1]["content_raw"] == "前缀\n后缀_STATE"
     assert delivered[-1]["stream_msg_id"] == "synthetic-stream"
 
 
@@ -153,15 +153,15 @@ async def test_inflight_frame_acknowledges_only_its_sent_text(monkeypatch):
     stream = outbound.create_private_text_stream(
         "synthetic-user", channel_id="synthetic-bot", message_id="inbound-2",
     )
-    stream.push("前缀")
+    stream.push("前缀\n")
     await asyncio.wait_for(started.wait(), timeout=3)
     stream.push("新文字")
     release.set()
     await stream._timer
-    assert stream.last_sent_text == "前缀"
-    await stream.finish("前缀新文字")
+    assert stream.last_sent_text == "前缀\n"
+    await stream.finish("前缀\n新文字")
     assert [frame["input_state"] for frame in frames] == [1, 1, 10]
-    assert frames[-1]["content_raw"] == "前缀新文字"
+    assert frames[-1]["content_raw"] == "前缀\n新文字"
 
 
 async def test_failed_done_frame_remains_a_delivery_error(monkeypatch):

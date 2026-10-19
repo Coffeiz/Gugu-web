@@ -81,15 +81,15 @@ async def test_rejected_content_closes_exact_last_acknowledged_body_and_still_fa
     monkeypatch.setattr(outbound, '_qq_request', request)
     monkeypatch.setattr(outbound, '_next_seq', AsyncMock(return_value=1))
     stream = outbound.create_private_text_stream('synthetic-user', channel_id='synthetic-bot', message_id='synthetic-message')
-    stream.push('已送达前缀')
+    stream.push('已送达前缀\n')
     await stream._timer
     expected_error = QQStreamFinalizationError if close_fails else QQStreamDeliveryError
     with pytest.raises(expected_error):
-        await stream.finish('已送达前缀，拒绝的尾部')
+        await stream.finish('已送达前缀\n拒绝的尾部')
     assert frames[-1]['input_state'] == 10
     assert frames[-1]['stream_msg_id'] == 'synthetic-stream'
-    assert frames[-1]['content_raw'] == '已送达前缀'
-    assert stream.last_sent_text == '已送达前缀'
+    assert frames[-1]['content_raw'] == '已送达前缀\n'
+    assert stream.last_sent_text == '已送达前缀\n'
 
 
 def test_rejected_content_has_safe_platform_specific_error():
@@ -170,3 +170,73 @@ def test_qq_tool_notice_reports_actual_delivery(delivery, unsupported, expected)
         'platform': 'qq', 'delivery': delivery, 'unsupported_button_ids': unsupported,
     }}
     assert format_tool_event(event, markdown=False) == expected
+
+
+@pytest.mark.parametrize('text', [
+    '说明：\n- `baidumap://` 能转换，`demoapp://` 不支持\n结尾',
+    '开头\n' + MAP_LINK + '\n' + '[未知](demoapp://map/detail)' + '\n末行',
+    '首行\nbaidumap://map/place/detail?uid=synthetic_poi\n尾行',
+    '开头\n[gugu](gugu://project/1)\n末行',
+    '开头\n[未完成](demoapp://map\n下一行',
+])
+def test_stream_conversion_only_appends_and_final_tail_matches_regular_output(text):
+    """安全不能只检查非法协议，还必须保证任意分片都不改写已发前缀。"""
+    previous = ''
+    for end in range(len(text) + 1):
+        current = prepare_qq_text(text[:end], final=False)
+        assert current.startswith(previous)
+        previous = current
+    assert prepare_qq_text(text).startswith(previous)
+
+
+async def test_real_transport_accepts_every_character_split_without_prefix_rewrite(monkeypatch):
+    frames = []
+
+    async def request(*args, json_body):
+        if frames:
+            assert json_body['content_raw'].startswith(frames[-1]['content_raw'])
+        frames.append(dict(json_body))
+        return {'stream_msg_id': 'synthetic-stream'}
+
+    monkeypatch.setattr(outbound, '_qq_request', request)
+    monkeypatch.setattr(outbound, '_next_seq', AsyncMock(return_value=1))
+    stream = outbound.create_private_text_stream('synthetic-user', channel_id='synthetic-bot', message_id='synthetic-message')
+    text = '开始\n- `baidumap://` 可转换\n' + MAP_LINK + '\n末行'
+    for char in text:
+        stream.push(char)
+        await stream._flush()
+    assert frames and '末行' not in frames[-1]['content_raw']
+    await stream.finish(text)
+    assert frames[-1]['input_state'] == 10
+    assert frames[-1]['content_raw'] == prepare_qq_text(text)
+
+
+async def test_stream_rejects_prefix_edit_before_sending_invalid_frame(monkeypatch):
+    request = AsyncMock(return_value={'stream_msg_id': 'synthetic-stream'})
+    monkeypatch.setattr(outbound, '_qq_request', request)
+    monkeypatch.setattr(outbound, '_next_seq', AsyncMock(return_value=1))
+    stream = outbound.create_private_text_stream('synthetic-user', channel_id='synthetic-bot', message_id='synthetic-message')
+    stream.push('已发送\n')
+    await stream._flush()
+    with pytest.raises(QQStreamFinalizationError):
+        await stream.finish('被改写\n')
+    assert request.await_count == 1
+
+
+async def test_segment_closure_keeps_acknowledged_newline(monkeypatch):
+    frames = []
+
+    async def request(*args, json_body):
+        if frames:
+            assert json_body['content_raw'].startswith(frames[-1]['content_raw'])
+        frames.append(dict(json_body))
+        return {'stream_msg_id': 'synthetic-stream'}
+
+    monkeypatch.setattr(outbound, '_qq_request', request)
+    monkeypatch.setattr(outbound, '_next_seq', AsyncMock(return_value=1))
+    stream = outbound.create_private_text_stream('synthetic-user', channel_id='synthetic-bot', message_id='synthetic-message')
+    stream.push('图表前说明\n')
+    await stream._flush()
+    await stream.finish('图表前说明')
+    assert frames[-1]['input_state'] == 10
+    assert frames[-1]['content_raw'] == '图表前说明\n'
