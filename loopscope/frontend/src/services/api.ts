@@ -10,6 +10,16 @@ export async function listTraceSessions() {
   return r.json()
 }
 
+export async function listReflectionRuns(options: { limit?: number; before?: number } = {}): Promise<TraceRun[]> {
+  const query = new URLSearchParams()
+  if (options.limit !== undefined) query.set('limit', String(options.limit))
+  if (options.before !== undefined) query.set('before', String(options.before))
+  const suffix = query.toString() ? `?${query.toString()}` : ''
+  const r = await fetch(`${BASE}/reflections${suffix}`)
+  if (!r.ok) throw new Error(`LoopScope reflections ${r.status}`)
+  return r.json()
+}
+
 export async function listRuns(
   sessionId: number | string,
   source = 'web',

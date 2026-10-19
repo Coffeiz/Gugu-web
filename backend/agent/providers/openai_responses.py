@@ -544,7 +544,13 @@ async def complete_branch(
         request["prompt_cache_key"] = prompt_cache_key
 
     probe = start_request_probe(probe_sink, request)
-    response = await client.responses.create(**request)
+    try:
+        response = await client.responses.create(**request)
+    except Exception as exc:
+        from agent.providers.cache_probe import fail_request_probe
+
+        fail_request_probe(probe, exc)
+        raise
     usage = getattr(response, "usage", None)
     if usage is None and isinstance(response, dict):
         usage = response.get("usage")

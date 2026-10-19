@@ -249,7 +249,13 @@ async def _anthropic(
     elif thinking is not None:
         kwargs.update(providers.adapter_for(ai).build_anthropic_thinking_params(ai, thinking=thinking))
     probe = start_request_probe(probe_sink, kwargs)
-    resp = await client.messages.create(**kwargs)
+    try:
+        resp = await client.messages.create(**kwargs)
+    except Exception as exc:
+        from agent.providers.cache_probe import fail_request_probe
+
+        fail_request_probe(probe, exc)
+        raise
     usage = getattr(resp, "usage", None)
     from agent.usage import normalize_anthropic_usage
     usage = normalize_anthropic_usage(usage)
@@ -335,7 +341,13 @@ async def _openai(
             kwargs.update(thinking_params)
     kwargs["messages"] = kwargs["messages"].to_messages()
     probe = start_request_probe(probe_sink, kwargs)
-    resp = await client.chat.completions.create(**kwargs)
+    try:
+        resp = await client.chat.completions.create(**kwargs)
+    except Exception as exc:
+        from agent.providers.cache_probe import fail_request_probe
+
+        fail_request_probe(probe, exc)
+        raise
     usage = getattr(resp, "usage", None)
     from agent.usage import normalize_openai_usage
     usage = normalize_openai_usage(usage)

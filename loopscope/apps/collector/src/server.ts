@@ -99,6 +99,14 @@ export function createCollectorServer(store: TraceStore) {
       sendJson(res, 200, store.listSessions())
       return
     }
+    if (req.method === 'GET' && pathname === '/api/reflections') {
+      const limit = integerParam(url, 'limit', 50, 1, 100)
+      const beforeRaw = url.searchParams.get('before')
+      const before = beforeRaw == null || beforeRaw === '' ? undefined : Number(beforeRaw)
+      if (before !== undefined && !Number.isFinite(before)) throw new Error('invalid before')
+      sendJson(res, 200, store.listReflectionRuns({ limit, before }))
+      return
+    }
     const sessionMatch = pathname.match(/^\/api\/sessions\/(.+)\/runs$/)
     if (req.method === 'GET' && sessionMatch) {
       const limit = integerParam(url, 'limit', 20, 1, 100)

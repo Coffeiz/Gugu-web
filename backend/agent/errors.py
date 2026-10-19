@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import json
 import secrets
 from dataclasses import dataclass, field
 from typing import Any
@@ -76,6 +77,7 @@ def describe_llm_error(
     """按统一口径生成 LLM 失败描述。"""
     from agent.providers.errors import (
         anthropic_stream_protocol_details,
+        diagnostic_metadata,
         is_provider_http_error,
         is_responses_stream_error,
         upstream_status_code,
@@ -86,7 +88,8 @@ def describe_llm_error(
     # 所有 provider 失败（包括连接中断/协议错误）都进入受限诊断出口；常规日志和
     # 用户事件只保留脱敏分类。调用方可附带 run/provider/model/预算等非内容关联字段。
     diagnostic_id = secrets.token_hex(8).upper()
-    diag_log(f"{diagnostic_context} diagnostic_id={diagnostic_id}", error)
+    metadata = json.dumps(diagnostic_metadata(error), ensure_ascii=True, sort_keys=True)
+    diag_log(f"{diagnostic_context} diagnostic_id={diagnostic_id} metadata={metadata}", error)
     from agent.gateway.qq.client import QQStreamDeliveryError
 
     if isinstance(error, QQStreamDeliveryError):

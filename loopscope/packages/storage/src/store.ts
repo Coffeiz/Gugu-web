@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { and, asc, count, desc, eq, lt, sql } from 'drizzle-orm'
+import { and, asc, count, desc, eq, inArray, lt, sql } from 'drizzle-orm'
 import { TraceRunInputSchema, type TokenUsage, type TraceRunInput } from '@loopscope/contracts'
 import { artifacts, contextFragments, openDatabase, runs, sessions, spans, usage } from '@loopscope/db'
 
@@ -237,6 +237,39 @@ export class TraceStore {
       .orderBy(desc(runs.startedAt)).limit(limit).all()
     // Run 列表统一按最新到最旧返回，前端默认展示最新 Run，向上滚动再加载历史。
     return rows.map(row => this.runApi(row))
+  }
+
+  listReflectionRuns(options: { limit?: number; before?: number } = {}) {
+    const limit = Math.min(Math.max(Math.trunc(options.limit ?? 50), 1), 100)
+    const conditions = [eq(sessions.source, 'reflection')]
+    if (options.before != null) conditions.push(lt(runs.startedAt, options.before))
+    const rows = this.connection.db.select({ run: runs })
+      .from(runs)
+      .innerJoin(sessions, eq(runs.sessionKey, sessions.sessionKey))
+      .where(and(...conditions))
+      .orderBy(desc(runs.startedAt))
+      .limit(limit)
+      .all()
+    const ids = rows.map(row => row.run.id)
+    const reflectionInputs = ids.length
+      ? this.connection.db.select({ runId: spans.runId, input: spans.inputJson })
+        .from(spans).where(inArray(spans.runId, ids)).all()
+      : []
+    const sampleByRun = new Map<string, Record<string, unknown>>()
+    for (const item of reflectionInputs) {
+      const sample = record(item.input).reflection_cache_probe
+      if (sample && typeof sample === 'object' && !Array.isArray(sample)) {
+        sampleByRun.set(item.runId, sample as Record<string, unknown>)
+      }
+    }
+    return rows.map(row => {
+      const api = this.runApi(row.run)
+      const attributes = record(api.attributes)
+      if (!attributes.reflection_cache_probe && sampleByRun.has(row.run.id)) {
+        return { ...api, attributes: { ...attributes, reflection_cache_probe: sampleByRun.get(row.run.id) } }
+      }
+      return api
+    })
   }
 
   getRun(runId: string, includeSpans = true) {

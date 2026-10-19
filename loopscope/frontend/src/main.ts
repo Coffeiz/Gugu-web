@@ -15,7 +15,10 @@ window.addEventListener('message', (event) => {
   }
   if (data.type !== 'loopscope:gugu-bootstrap') return
   if (typeof data.apiBase !== 'string') return
-  saveBootstrap({ apiBase: data.apiBase })
+  saveBootstrap({
+    apiBase: data.apiBase,
+    accountName: typeof data.accountName === 'string' ? data.accountName : undefined,
+  })
 })
 
 if (window.opener) {

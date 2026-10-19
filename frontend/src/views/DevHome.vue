@@ -26,8 +26,10 @@
 import { devToolRegistry, type DevToolEntry } from './devRegistry'
 import Icon from '@/components/common/icons/Icon.vue'
 import { useI18n } from 'vue-i18n'
+import { useAuthStore } from '@/stores/auth'
 
 const { t } = useI18n()
+const authStore = useAuthStore()
 
 function absoluteApiBase() {
   // 让 LoopScope 通过自己的 Vite 代理访问 Gugu，避免 4319 -> 5173/8000 的跨源 CORS。
@@ -53,6 +55,7 @@ function openExternal(tool: DevToolEntry) {
     target.postMessage({
       type: 'loopscope:gugu-bootstrap',
       apiBase: absoluteApiBase(),
+      accountName: authStore.user?.displayName || authStore.user?.username || undefined,
       cookieAuth: true,
     }, expectedOrigin)
     window.removeEventListener('message', onMessage)
