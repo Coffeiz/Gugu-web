@@ -2,7 +2,8 @@ import { computed, ref, watch, type ComputedRef } from 'vue'
 import { eventsApi } from '@/services/api'
 import { calendarSignal } from '@/services/cache'
 import { projectProgress } from '@/utils/projectProgress'
-import { extractAccent } from '@/views/Calendar/utils/calendarColors'
+import { browserDayKey as toIso } from '@/utils/dateAttribution'
+import { extractProjectAccent } from '@/utils/projectColors'
 import { normalizeEvent, normalizeProjectTimeline, toRenderItem } from '@/views/Calendar/domain/calendarNormalizer'
 import type { CalendarRenderItem } from '@/views/Calendar/domain/calendarTypes'
 import type { Project } from '@/types/project'
@@ -19,10 +20,6 @@ interface CalendarDataOptions {
   cursor: ComputedRef<Date> | { value: Date }
   projects: () => readonly Project[]
   doneMode: () => string
-}
-
-function toIso(date: Date) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
 function monthKey(date: Date) {
@@ -142,7 +139,7 @@ export function useCalendarData({ cursor, projects, doneMode }: CalendarDataOpti
           client: project.client,
           startDate,
           endDate,
-          accent: extractAccent(project.color),
+          accent: extractProjectAccent(project.color),
           status: project.status,
           currentStage: project.stages?.find(stage => stage.key === project.currentStage)?.label ?? null,
           priority: project.priority ?? null,

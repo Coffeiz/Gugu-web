@@ -3,7 +3,7 @@
        没便签的日期不出列——时间轴压缩，不摆空列。列内溢出自己竖滚。
        每列一块玻璃底板（同定时任务 .panel.glass-card 的轻玻璃，背后是静态页面背景，安全）。 -->
   <div ref="root" class="timeline-cols">
-    <section v-for="(g, i) in groups" :key="g.date" v-memo="[timelineColumnMemoKey(g.items, highlightId, editingId, conflict)]" class="tl-col glass-card" :data-date="g.date">
+    <section v-for="g in groups" :key="g.date" v-memo="[timelineColumnMemoKey(g.items, highlightId, editingId, conflict)]" class="tl-col glass-card" :data-date="g.date">
       <div class="tl-col-head">
         <span class="tl-day" :class="{ today: g.date === todayIso }">{{ +g.date.slice(8, 10) }}</span>
         <span class="tl-day-side">
@@ -45,7 +45,7 @@ import { localDayKey } from '@/utils/dateAttribution'
 import { timelineColumnMemoKey } from '../utils/timelineMemo'
 import NoteCard from './NoteCard.vue'
 
-const props = defineProps<{
+defineProps<{
   groups: { date: string; items: MindNote[] }[]
   highlightId: number | null
   filtered: boolean

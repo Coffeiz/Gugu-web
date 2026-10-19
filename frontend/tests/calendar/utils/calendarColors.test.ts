@@ -1,11 +1,13 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
-import { capBg, darkenHex, extractAccent, hexAlpha } from '@/views/Calendar/utils/calendarColors'
+import { capBg, darkenHex, hexAlpha } from '@/utils/calendarColors'
+import { extractProjectAccent } from '@/utils/projectColors'
 
 describe('calendarColors', () => {
   it('提取合法六位颜色并为非法值提供稳定默认色', () => {
-    expect(extractAccent('linear-gradient(#123456, #ffffff)')).toBe('#123456')
-    expect(extractAccent(undefined)).toBe('#7b7fb2')
+    expect(extractProjectAccent('linear-gradient(#123456, #ffffff)')).toBe('#123456')
+    expect(extractProjectAccent(undefined)).toBe('#7b7fb2')
+    expect(extractProjectAccent(null)).toBe('#7b7fb2')
   })
 
   it('生成颜色透明度、进度背景和加深色', () => {

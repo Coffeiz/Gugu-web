@@ -50,7 +50,7 @@ function createFileSelectionCoordinator(options: FileSelectionOptions) {
     return fileSelection.selectRangeIn(flatSelectableItems.value, lastAnchorIndex.value, index)
   }
   function clearSelection() {
-    fileSelection.clearSelection(); box.clearSelection(); selectionModeForced.value = false; lastAnchorIndex.value = -1
+    box.clearSelection(); selectionModeForced.value = false; lastAnchorIndex.value = -1
   }
   function toggleSelectionMode() { if (inSelectionMode.value) clearSelection(); else selectionModeForced.value = true }
   function onContentClick() { if (inSelectionMode.value) clearSelection() }

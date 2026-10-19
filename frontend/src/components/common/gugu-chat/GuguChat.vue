@@ -298,7 +298,7 @@ const windowElRef   = computed(() => windowRef.value?.el ?? null)
 
 const {
   open, expanded, resizing, chatClosing, chatZ, fabZ,
-  vw, vh,
+  vw,
   windowStyle, miniPlayerStyle,
   miniPinned, reopenResume,
   raiseChat, closeChat, markResizing, playIncomingMessageSfx,
@@ -432,8 +432,8 @@ function _chatTip(text: string) { messages.value.push({ id: mkid(), role: 'ai', 
 // 附件（选择/拖拽/粘贴/暂存上传）与语音录制的唯一状态所有权在 useChatAttachments；
 // 这里单次实例化，因为 send() 仍需要直接读 pendingAtt 来拼发送 payload。
 const {
-  pendingAtt, attUploading, uploadAttachFiles, onFilePicked,
-  chatDrag, isChatDragging, onChatDragEnter, onChatDragOver, onChatDragLeave, onChatDrop, onPaste,
+  pendingAtt, attUploading, onFilePicked,
+  isChatDragging, onChatDragEnter, onChatDragOver, onChatDragLeave, onChatDrop, onPaste,
   removeAtt,
   recording, recordSecs, startRecord, stopRecord, cancelRecord,
 } = useChatAttachments({
@@ -460,17 +460,16 @@ const conversation = useChatConversation({
 const {
   messages, mkid, now, sessionSettling,
   inputText, inputReferences, thinkingLabels, contextCompactingLabels, streaming, statusKind, statusTyped, isTypingText,
-  sessionId, ownerPlatformUserId, isGroupSession,
+  sessionId, isGroupSession,
   sessions, webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName, currentSessionGoalActive, currentSessionGoalStatus,
   currentSessionFilesystemAuthorized, currentSessionFilesystemAuthorizationEnabled,
-  restorePendingQueueForDraft, restorePendingQueueForSession,
-  drainPendingQueue,
+  restorePendingQueueForDraft,
   stick,
   fetchSessions, loadSession, newSession, deleteSession, renameSession,
   send, stopStreaming,
   pendingQueue, removeQueued,
-  scrollBottom, onMsgScroll,
-  animateGreeting, clearStatus,
+  scrollBottom,
+  animateGreeting,
 } = conversation
 
 // 业务空状态可以请求打开聊天并预填一条配置指令；只消费一次，绝不自动发送。
@@ -840,7 +839,7 @@ watch(open, (v) => {
 const sidebarRef    = ref<InstanceType<typeof GuguChatSidebar> | null>(null)
 const bindDialogRef = ref<InstanceType<typeof GuguChatBindDialog> | null>(null)
 const {
-  bots, imOpen, imPlatformOptions, imOnline, botsOf, imHighlight,
+  imOpen, imPlatformOptions, imOnline, botsOf, imHighlight,
   loadBots, toggleImPlatform, promptConnectIM,
   telegramTokenDialogOpen, telegramConnecting, telegramConnectError,
   openTelegramTokenDialog, closeTelegramTokenDialog, submitTelegramToken,

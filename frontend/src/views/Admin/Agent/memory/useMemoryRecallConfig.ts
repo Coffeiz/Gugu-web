@@ -52,32 +52,6 @@ export function useMemoryRecallConfig() {
     resetRag()
   }
 
-  async function saveEmbedding() {
-    embeddingSaving.value = true
-    embeddingSaved.value = false
-    embeddingError.value = ''
-    try {
-      await configStore.saveConfig({ embedding: { ...embeddingDraft } })
-      embeddingSaved.value = true
-      Object.assign(embeddingDraft, configStore.cfg.embedding)
-      setTimeout(() => { embeddingSaved.value = false }, 3000)
-    } catch (e) { embeddingError.value = e instanceof Error ? e.message : String(e) }
-    finally { embeddingSaving.value = false }
-  }
-
-  async function saveRag() {
-    ragSaving.value = true
-    ragSaved.value = false
-    ragError.value = ''
-    try {
-      await configStore.saveConfig({ search: { rag_enabled: ragEnabled.value, rag_auto_sources: [...ragAutoSources.value] } })
-      ragSaved.value = true
-      resetRag()
-      setTimeout(() => { ragSaved.value = false }, 3000)
-    } catch (e) { ragError.value = e instanceof Error ? e.message : String(e) }
-    finally { ragSaving.value = false }
-  }
-
   async function saveAll() {
     ragSaving.value = true
     embeddingSaving.value = true
@@ -135,6 +109,6 @@ export function useMemoryRecallConfig() {
     configStore, embeddingDraft, ragEnabled, ragAutoSources, capabilityRagEnabled, capabilityRagShadow, capabilityRagLimit,
     embeddingSaving, embeddingSaved, embeddingError,
     ragSaving, ragSaved, ragError, embTest, rebuild, pollRebuild, startRebuild,
-    resetEmbedding, resetRag, toggleRagSource, syncFromStore, saveEmbedding, saveRag, saveAll, testEmbedding,
+    resetEmbedding, resetRag, toggleRagSource, syncFromStore, saveAll, testEmbedding,
   }
 }

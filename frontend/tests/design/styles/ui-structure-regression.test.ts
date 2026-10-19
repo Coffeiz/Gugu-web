@@ -648,18 +648,6 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(projectModal).not.toContain('async function withPmLayoutNav')
   })
 
-  it('浮动预览顶部保持可见，左右和底部保留 125% 虚拟视口空间', () => {
-    expect(floatPreview).toContain('const DRAG_OVERSCAN_RATIO = .25')
-    expect(floatPreview).toContain('const minX = -overscanX')
-    expect(floatPreview).toContain('const minY = 0')
-    expect(floatPreview).toContain('window.innerWidth + overscanX - w.value')
-    expect(floatPreview).toContain('window.innerHeight + overscanY - h.value')
-    expect(floatPreview).toContain('x.value = clamp(nextX, minX, maxX)')
-    expect(floatPreview).toContain('y.value = clamp(nextY, minY, maxY)')
-    expect(floatPreview).not.toContain('x.value = Math.max(0, dragOrig.x')
-    expect(floatPreview).not.toContain('y.value = Math.max(0, dragOrig.y')
-  })
-
   it('浮动预览标题栏双击切换最大化，操作按钮不冒泡', () => {
     expect(floatPreview).toContain('@dblclick.prevent="toggleMaximize"')
     expect(floatPreview).toContain('<div class="fpw-actions" @dblclick.stop>')

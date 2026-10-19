@@ -1,4 +1,52 @@
 {
+  "frontend/tests/admin/agent/useAgentRuntimeConfig.test.ts": {
+    "domain": "agent-runtime-config",
+    "layer": "L1",
+    "owner": "frontend/views/Admin/Agent/runtime-config",
+    "productionEntry": "frontend/src/views/Admin/Agent/runtime-config/useAgentRuntimeConfig.ts",
+    "keyBehavior": "五个配置分区只提交各自草案，保留在途状态、三秒成功提示、失败反馈与草案以及服务端归一化回填",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/files/composables/useFilePasteCore.test.ts": {
+    "domain": "file-copy",
+    "layer": "L0",
+    "owner": "frontend/composables/files",
+    "productionEntry": "frontend/src/composables/files/useFilePasteCore.ts:findFileCopyConflicts",
+    "keyBehavior": "文件库和项目目录复制按同名同后缀严格判定冲突，保留选择顺序与目标 ID，跳过缺失源和非目标目录文件",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/preview/FloatPreviewWindowDrag.test.ts": {
+    "domain": "file-preview",
+    "layer": "L1",
+    "owner": "frontend/components/common/layout",
+    "productionEntry": "frontend/src/components/common/layout/FloatPreviewWindow.vue",
+    "keyBehavior": "真实预览组件拖动保持顶部可见、左右与底部 25% 额外视口边界，最大化禁止拖动并可恢复；用隔离虚拟文本避免网络",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/common/useWindowDrag.test.ts": {
+    "domain": "window-interaction",
+    "layer": "L1",
+    "owner": "frontend/composables/core",
+    "productionEntry": "frontend/src/composables/core/useWindowDrag.ts",
+    "keyBehavior": "预览窗和信息弹层保留主键拖动、独立偏移和动态边界，松开或卸载停止监听且不干扰其他窗口",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/files/runtimeFileObjects.test.ts": {
+    "domain": "file-runtime",
+    "layer": "L1",
+    "owner": "frontend/composables/files",
+    "productionEntry": "frontend/src/components/common/file-browser/RuntimeFileCard.vue 与 RuntimeFolderCard.vue、RuntimeListRow.vue、文件库 Runtime 列表行",
+    "keyBehavior": "五种文件包装器挂载绑定 DOM、同步选择和能力、卸载释放当前对象；旧 generation 不得更新或注销新对象与 surface",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/files/thumbCache.test.ts": {
+    "domain": "files",
+    "layer": "L0",
+    "owner": "frontend/composables/shared",
+    "productionEntry": "frontend/src/composables/shared/useThumbCache.ts",
+    "keyBehavior": "文件和附件缩略图保持缓存与并发去重、Cookie 鉴权、失败重试、超时释放以及按文件回收 URL 和加载标记",
+    "ci": "frontend-test"
+  },
   "backend/tests/im/test_im_memory_scopes.py": {
     "domain": "im-memory",
     "layer": "L1",

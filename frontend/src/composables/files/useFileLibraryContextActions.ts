@@ -2,14 +2,14 @@ import { useFileContextMenu } from './useFileContextMenu'
 
 export type FileLibraryContextType = 'file' | 'multi-file' | 'folder' | 'empty'
 
-export interface FileLibraryContextActionsOptions<TTarget extends { id?: string | number }> {
+export interface FileLibraryContextActionsOptions {
   selectedFileIds: { value: Set<number> }
   selectedFolderKeys: { value: Set<string | number> }
   actions: Record<string, () => unknown>
 }
 
 /** 文件库右键目标判定与动作分发；具体文件副作用由页面回调注入。 */
-export function useFileLibraryContextActions<TTarget extends { id?: string | number }>(options: FileLibraryContextActionsOptions<TTarget>) {
+export function useFileLibraryContextActions<TTarget extends { id?: string | number }>(options: FileLibraryContextActionsOptions) {
   const { state, open, close } = useFileContextMenu<FileLibraryContextType, TTarget>()
 
   function openContext(type: Exclude<FileLibraryContextType, 'multi-file'>, target: TTarget | null, event: MouseEvent) {

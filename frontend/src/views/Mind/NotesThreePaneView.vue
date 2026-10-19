@@ -213,7 +213,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { PhArrowSquareOut, PhCalendarBlank, PhCheck, PhCheckSquare, PhFile, PhNotePencil, PhPencilSimple, PhPlus, PhStack, PhTrash, PhX } from '@phosphor-icons/vue'
+import { PhCalendarBlank, PhCheck, PhCheckSquare, PhFile, PhNotePencil, PhPencilSimple, PhPlus, PhStack, PhTrash, PhX } from '@phosphor-icons/vue'
 import { showAppError, showAppNotice } from '@/composables/core/useAppToast'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { MindConflictError, useMindStore } from '@/stores/mind'

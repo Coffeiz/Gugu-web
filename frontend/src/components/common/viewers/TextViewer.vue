@@ -96,7 +96,7 @@ import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/icons/Icon.vue'
 import { filesApi } from '@/services/api'
 import { sanitizeHtml, splitYamlFrontmatter } from '@/utils/markdown'
-import { cleanupMarkdownMermaid, renderMarkdownMermaid } from '@/utils/mermaidRenderer'
+import { cleanupMarkdownMermaid, createMermaidRenderLabels, renderMarkdownMermaid } from '@/utils/mermaidRenderer'
 import type { FileMeta } from '@/stores/filesCache'
 import { usePreviewStore, isPreviewable, isTextMime, isImageExt } from '@/stores/preview'
 import { useUiStore } from '@/stores/ui'
@@ -303,7 +303,6 @@ function onHtmlPreviewLoad() {
 // 行号、撤销栈和自动保存）：不分真实文件/聊天附件、不分编辑/预览，一律直接显示 CodeMirror。
 // 只有 md 保留「渲染预览 + 编辑」双视图——渲染后的排版本身就是预览价值。
 const isCodeExt = computed(() => {
-  const e = (props.ext || '').toLowerCase()
   return isTextDocument.value && !isMarkdownFile.value
 })
 const loading     = ref(false)
@@ -535,18 +534,8 @@ async function renderMarkdown(text: string) {
   return sanitizeHtml(_tvMarked.parse(text) as string)
 }
 
-function mermaidLabels() {
-  return {
-    zoomOut: t('mermaidUi.zoomOut'), zoomIn: t('mermaidUi.zoomIn'), resetZoom: t('mermaidUi.resetZoom'),
-    showSource: t('mermaidUi.showSource'), showDiagram: t('mermaidUi.showDiagram'),
-    expand: t('mermaidUi.expand'), downloadPng: t('mermaidUi.downloadPng'), close: t('mermaidUi.close'),
-    previewTitle: t('mermaidUi.previewTitle'), downloadFailed: t('mermaidUi.downloadFailed'),
-    pngTooLarge: t('mermaidUi.pngTooLarge'), renderFailed: t('mermaidUi.renderFailed'),
-  }
-}
-
 function renderMermaidBlocks(): Promise<void> {
-  return renderMarkdownMermaid(mdRoot.value, mermaidLabels())
+  return renderMarkdownMermaid(mdRoot.value, createMermaidRenderLabels(t))
 }
 
 // ── 任务勾选框可交互：去掉 marked 默认的 disabled、按文档顺序标 data-task（仅 md + 真实文件）──

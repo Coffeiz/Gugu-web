@@ -80,7 +80,6 @@ function openProject(p: any) { projectStore.openModal(p) }
 function statusLabel(s: string) { return ({ pending: t('dashboardUi.pending'), active: t('dashboardUi.inProgress'), done: t('dashboardUi.completed') } as Record<string, string>)[s] ?? s }
 
 // ── 排序：进行中 > 待开始 > 已完成，组内按优先级↓→开始日↑→截止日↑→创建日↑ ──
-const STATUS_ORDER = { active: 0, pending: 1, done: 2 }
 const PRIO_MAP: Record<string, number>     = { high: 3, medium: 2, low: 1 }
 const PRIO_LABELS = computed<Record<number, string>>(() => ({ 1: t('dashboardUi.lowPriority'), 2: t('dashboardUi.mediumPriority'), 3: t('dashboardUi.highPriority') }))
 const PRIO_KEYS    = [null, 'low', 'medium', 'high']

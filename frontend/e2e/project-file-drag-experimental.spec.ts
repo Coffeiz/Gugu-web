@@ -1,4 +1,5 @@
 import { test, expect, type Page, type Locator } from '@playwright/test'
+import { dragOnto } from './fixtures/runtimeDrag'
 
 // 项目文件区 Runtime 拖拽仍需验证真实指针交互与落点生命周期，暂不列入稳定 CI。
 test.describe.configure({ mode: 'serial' })
@@ -32,24 +33,6 @@ test.afterEach(async ({ page }) => {
   }, { targetNames: names, projectIds })
 })
 
-async function dragOnto(page: Page, source: Locator, target: Locator, edgeOffset?: { x: number; y: number }) {
-  await source.scrollIntoViewIfNeeded()
-  await target.scrollIntoViewIfNeeded()
-  const from = await source.boundingBox()
-  const to = await target.boundingBox()
-  if (!from || !to) throw new Error('drag source/target 没有可见的 bounding box')
-  const startX = from.x + from.width / 2
-  const startY = from.y + from.height / 2
-  const endX = edgeOffset ? to.x + edgeOffset.x : to.x + to.width / 2
-  const endY = edgeOffset ? to.y + edgeOffset.y : to.y + to.height / 2
-  await page.mouse.move(startX, startY)
-  await page.mouse.down()
-  await page.mouse.move(startX + 20, startY + 20, { steps: 5 })
-  await page.mouse.move(endX, endY, { steps: 15 })
-  await expect(page.locator('[data-runtime-proxy-content="true"]').first()).toBeAttached({ timeout: 5000 })
-  await page.mouse.up()
-  await page.mouse.move(0, 0)
-}
 
 async function createFolder(root: Locator, name: string) {
   await root.locator('button', { hasText: '新建文件夹' }).click()

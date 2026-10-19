@@ -20,6 +20,17 @@ let mermaidRenderCacheChars = 0
 
 export type MermaidRenderLabels = MermaidInteractionLabels & { renderFailed: string }
 
+/** 每次渲染使用当前翻译器，语言切换后不复用旧文案。 */
+export function createMermaidRenderLabels(t: (key: string) => string): MermaidRenderLabels {
+  return {
+    zoomOut: t('mermaidUi.zoomOut'), zoomIn: t('mermaidUi.zoomIn'), resetZoom: t('mermaidUi.resetZoom'),
+    showSource: t('mermaidUi.showSource'), showDiagram: t('mermaidUi.showDiagram'),
+    expand: t('mermaidUi.expand'), downloadPng: t('mermaidUi.downloadPng'), close: t('mermaidUi.close'),
+    previewTitle: t('mermaidUi.previewTitle'), downloadFailed: t('mermaidUi.downloadFailed'),
+    pngTooLarge: t('mermaidUi.pngTooLarge'), renderFailed: t('mermaidUi.renderFailed'),
+  }
+}
+
 async function getMermaid(): Promise<MermaidApi> {
   mermaidLoad ??= (async () => {
     const [{ default: mermaid }, { default: zenuml }] = await Promise.all([

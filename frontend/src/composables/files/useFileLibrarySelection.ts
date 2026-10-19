@@ -98,7 +98,7 @@ export function useFileLibrarySelection(options: FileLibrarySelectionOptions) {
   function doClear() {
     restoringSelection = true
     selectionExiting.value = false
-    state.clearSelection(); box.clearSelection(); selectedTrashFolderIds.value = new Set(); lastAnchorIndex.value = -1
+    box.clearSelection(); lastAnchorIndex.value = -1
     nextTick(() => { restoringSelection = false })
   }
   function beginExit() {

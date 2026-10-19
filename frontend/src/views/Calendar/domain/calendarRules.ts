@@ -16,8 +16,7 @@ export function canDrag(item: CalendarRuleItem) {
 }
 
 export function canResize(item: CalendarRuleItem) {
-  if ('status' in item && item.status === 'done') return false
-  return item.type === 'event' || item.type === 'project' || ('calendarType' in item && (item.calendarType === 'event' || item.calendarType === 'project'))
+  return canDrag(item)
 }
 
 export function getDisplayColor(item: CalendarRuleItem) {

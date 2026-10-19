@@ -318,7 +318,6 @@ watch(
     const draft = props.draft
     const requestId = ++capabilityRequestId
     const previousSnapshot = capabilitySnapshot.value
-    const identity = capabilityIdentityFor(draft)
     if (capabilitySnapshot.value?.provider !== draft?.provider) {
       capabilitySnapshot.value = null
       capabilitySnapshotIdentity.value = ''

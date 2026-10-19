@@ -114,6 +114,41 @@ beforeEach(() => {
 })
 
 describe('看板项目乐观写入', () => {
+  it.each(['状态切换', '阶段切换', '待办保存'])('%s 进入完成区记录完成时间，退出时清除并持久化完整状态', async entry => {
+    const completedStages = [{ key: 'draft', label: '草稿', todos: [{ id: 'todo-1', text: '草稿', done: true }] }]
+    mocks.projectsApi.list.mockResolvedValueOnce([project({ stages: completedStages })])
+    const store = useProjectStore()
+    await store.fetchProjects()
+    const response = deferred<Project>()
+    mocks.projectsApi.update.mockReturnValueOnce(response.promise)
+    const completion = entry === '状态切换' ? store.moveProject(7, 'done')
+      : entry === '阶段切换' ? store.setStage(7, 'draft', 100)
+        : store.saveTodos(7, completedStages, 100)
+    expect(store.projects[0]).toMatchObject({ status: 'done', progress: 100, currentStage: 'draft', _stageBeforeDone: 'draft' })
+    expect(store.projects[0].doneAt).toEqual(expect.any(String))
+    await vi.waitFor(() => expect(mocks.projectsApi.update).toHaveBeenCalledOnce())
+    const payload = mocks.projectsApi.update.mock.calls[0][1]
+    expect(payload).toMatchObject({ status: 'done', currentStage: 'draft', progress: 100, stages: completedStages, version: 1 })
+    response.resolve(project({ ...payload, version: 2, doneAt: '2026-09-30T10:00:00Z' }))
+    await completion
+
+    const nextResponse = deferred<Project>()
+    mocks.projectsApi.update.mockReturnValueOnce(nextResponse.promise)
+    const incompleteStages = [{ ...completedStages[0], todos: [{ ...completedStages[0].todos[0], done: false }] }]
+    const reopening = entry === '状态切换' ? store.moveProject(7, 'active')
+      : entry === '阶段切换' ? store.setStage(7, 'draft', 0)
+        : store.saveTodos(7, incompleteStages, 0)
+    expect(store.projects[0]).toMatchObject({ status: 'active', doneAt: null })
+    await vi.waitFor(() => expect(mocks.projectsApi.update).toHaveBeenCalledTimes(2))
+    const nextPayload = mocks.projectsApi.update.mock.calls[1][1]
+    expect(nextPayload).toMatchObject({ status: 'active', currentStage: 'draft', version: 2 })
+    expect(nextPayload).toHaveProperty('stages')
+    expect(nextPayload).toHaveProperty('progress')
+    nextResponse.resolve(project({ ...nextPayload, version: 3, doneAt: null }))
+    await reopening
+    expect(store.projects[0].doneAt).toBeNull()
+  })
+
   it('快速拖回时旧响应不覆盖最新状态，并把已确认版本传给排队请求', async () => {
     const store = useProjectStore()
     await store.fetchProjects()
@@ -165,6 +200,22 @@ describe('看板项目乐观写入', () => {
 })
 
 describe('Mind 画布抽屉卡片乐观 regrab', () => {
+  it.each(['便签', '引用'])('新增%s 返回已有条目时替换原条目，不重复插入画布', async source => {
+    const store = useMindStore()
+    store.activeCanvasId = 3
+    store.canvasItems = [canvasItem(77, 10, 20)]
+    const node = refNode()
+    mocks.mindApi.createRefNode.mockResolvedValue(node)
+    const updated = canvasItem(77, 50, 60, node)
+    mocks.mindApi.addCanvasItem.mockResolvedValue(updated)
+    const item = source === '便签'
+      ? await store.addNoteToCanvas(3, node, 50, 60)
+      : await store.addRefToCanvas(3, 'project', 5, 50, 60)
+    expect(item).toEqual(updated)
+    expect(mocks.mindApi.addCanvasItem).toHaveBeenCalledWith(3, { nodeId: node.id, x: 50, y: 60, z: expect.any(Number) })
+    expect(store.canvasItems).toEqual([updated])
+  })
+
   it('创建未完成时的连续 regrab 只持久化正 id，并最终保存最新位置且保持对象身份', async () => {
     const store = useMindStore()
     store.activeCanvasId = 3

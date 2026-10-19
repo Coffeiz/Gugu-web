@@ -1,8 +1,3 @@
-export function extractAccent(colorStr: string | null | undefined) {
-  const match = colorStr?.match(/#[0-9a-fA-F]{6}/)
-  return match ? match[0] : '#7b7fb2'
-}
-
 export function hexAlpha(hex: string, alpha: number) {
   const r = parseInt(hex.slice(1, 3), 16)
   const g = parseInt(hex.slice(3, 5), 16)

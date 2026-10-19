@@ -3,7 +3,7 @@ import type { FileMeta, FolderMeta } from '@/stores/filesCache'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { useClipboardStore } from '@/stores/clipboard'
 import { useFileContextMenu } from './useFileContextMenu'
-import { useFilePasteCore } from './useFilePasteCore'
+import { findFileCopyConflicts, useFilePasteCore } from './useFilePasteCore'
 import type { useFileActions } from './useFileActions'
 import type { ConflictDecision, ConflictItem } from '@/components/common/overlays/UploadConflictDialog.vue'
 import { clearThumbCache } from '@/composables/shared/useThumbCache'
@@ -61,14 +61,7 @@ export function useProjectFileContextActions(options: ProjectFileContextOptions)
       options.clipboardStore.clear()
       options.fileCacheStore.invalidatePages()
     },
-    getCopyConflicts: fileIds => {
-      const destinationFiles = options.getFiles()
-      return fileIds.map(id => options.fileCacheStore.getFile(id)).filter((source): source is FileMeta => source != null)
-        .map(source => {
-          const existing = destinationFiles.find(target => target.displayName === source.displayName && target.ext === source.ext)
-          return existing ? { filename: `${source.displayName}.${source.ext}`, existingFile: { id: existing.id } } : null
-        }).filter(item => item != null) as ConflictItem[]
-    },
+    getCopyConflicts: fileIds => findFileCopyConflicts(fileIds, id => options.fileCacheStore.getFile(id), options.getFiles()),
     showConflicts: conflicts => (/* 由 ProjectModal 通过 showConflicts 注入 */
       options.showConflicts?.(conflicts) ?? Promise.resolve(new Map<string, ConflictDecision>())),
     onCopy: async (fileIds, folderIds, destination, decisions) => {

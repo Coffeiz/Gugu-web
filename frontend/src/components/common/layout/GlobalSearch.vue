@@ -53,7 +53,6 @@ import { Message } from '@arco-design/web-vue'
 import Icon from '@/components/common/icons/Icon.vue'
 import SearchInput from '@/components/common/controls/SearchInput.vue'
 import { searchApi } from '@/services/api'
-import { useProjectStore } from '@/stores/projects'
 import { useUiStore } from '@/stores/ui'
 import { useI18n } from 'vue-i18n'
 import type { FileLibraryNavigationTarget } from '@/utils/filesNav'
@@ -74,7 +73,6 @@ const TYPE_ICON = {
 }
 
 const router       = useRouter()
-const projectStore = useProjectStore()
 const uiStore      = useUiStore()
 const { t } = useI18n()
 

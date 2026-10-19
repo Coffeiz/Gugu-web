@@ -25,7 +25,7 @@ import type { Project } from '@/types/project'
 import DoneLayout from './done/DoneLayout.vue'
 import { useI18n } from 'vue-i18n'
 
-const props = defineProps({
+defineProps({
   projects: { type: Array as PropType<Project[]>, default: () => [] },
   ownershipVersionFor: { type: Function as PropType<(projects: Project[]) => number>, required: true },
   isProjectDetached: { type: Function as PropType<(projectId: string) => boolean>, required: true },

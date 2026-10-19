@@ -76,7 +76,7 @@ import Icon from '@/components/common/icons/Icon.vue'
 import FolderCard from '@/components/common/file-browser/FolderCard.vue'
 import RenameInput from '@/components/common/file-browser/RenameInput.vue'
 
-const emit = defineEmits<{ open: [item: WorkspaceDirectory] }>()
+defineEmits<{ open: [item: WorkspaceDirectory] }>()
 const { t } = useI18n()
 const { sortedItems, items, loading, error, refresh, create, rename, remove } = useWorkspaceDirectories()
 const showCreate = ref(false)

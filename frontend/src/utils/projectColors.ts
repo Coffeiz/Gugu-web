@@ -17,7 +17,7 @@ export const PROJECT_COLOR_PRESETS: readonly string[] = [
 export const DEFAULT_PROJECT_COLOR: string = PROJECT_COLOR_PRESETS[5]
 
 /** 从渐变或普通颜色配置中提取项目 accent 色。 */
-export function extractProjectAccent(color: string | undefined): string {
+export function extractProjectAccent(color: string | null | undefined): string {
   const match = color?.match(/#[0-9a-fA-F]{6}/)
   return match ? match[0] : '#7b7fb2'
 }

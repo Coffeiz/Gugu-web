@@ -72,7 +72,7 @@ function resetSheetZoom() {
   sheetZoom.value = saveSpreadsheetZoom(100)
 }
 
-async function renderXlsx(buffer: ArrayBuffer | null, container: HTMLElement) {
+async function renderXlsx(buffer: ArrayBuffer | null) {
   const cacheKey = `${props.ext.toLowerCase()}:${props.fileId != null ? `file:${props.fileId}:${props.fileVersion ?? 0}` : props.blobUrl}`
   const cached = xlsxRenderCache.get(cacheKey)
   if (cached) {
@@ -363,7 +363,7 @@ async function render() {
   container.replaceChildren()
   const ext = props.ext.toLowerCase()
   try {
-    await renderXlsx(props.fileId != null && ext !== 'csv' ? null : await fetchBuffer(), container)
+    await renderXlsx(props.fileId != null && ext !== 'csv' ? null : await fetchBuffer())
     if (ext === 'csv') sheetTabs.value = []
     renderSheet(activeSheet.value, container)
   } catch (cause) {

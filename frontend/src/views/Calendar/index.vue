@@ -134,6 +134,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { browserDayKey as toIso, buildCalendarMonthDays } from '@/utils/dateAttribution'
 import { useProjectStore } from '@/stores/projects'
 import { useUiStore } from '@/stores/ui'
 import { useLiveStore } from '@/stores/live'
@@ -163,9 +164,9 @@ import { useCalendarWeekInteraction } from '@/composables/calendar/useCalendarWe
 import { useCalendarEventForm } from '@/composables/calendar/useCalendarEventForm'
 import { resolveCalendarMoreItems } from './utils/calendarMoreItems'
 import type { CalendarContext } from './domain/calendarContext'
-import type { CalendarHourHover, CalendarMonthDay, CalendarRenderItem, CalendarTimeSelection, CalendarWeekDay } from './domain/calendarTypes'
+import type { CalendarMonthDay, CalendarRenderItem, CalendarTimeSelection, CalendarWeekDay } from './domain/calendarTypes'
 import { canResize, getDisplayColor } from './domain/calendarRules'
-import { capBg, hexAlpha, darkenHex } from './utils/calendarColors'
+import { capBg, darkenHex } from '@/utils/calendarColors'
 import {
   maxSlots as calculateMaxSlots,
   weekBars as calculateWeekBars,
@@ -174,7 +175,6 @@ import {
   timedLayoutFor as calculateTimedLayout,
   type CalendarLayoutConstants,
 } from './utils/calendarLayout'
-import Icon from '@/components/common/icons/Icon.vue'
 // ── 本文件统一的"日历条目"形状 ──────────────────────────────────────────────
 // 月视图 chip、周视图条目、侧栏、"更多"弹窗、拖拽 item 都在「用户活动」与「项目时间线」
 // 渲染层暂时保留 CalendarRenderItem，布局回填字段和旧模板字段不会进入领域模型。
@@ -186,7 +186,6 @@ type MonthDayCell = CalendarMonthDay
 
 type WeekViewDay = CalendarWeekDay
 type WvSelectedSlot = CalendarTimeSelection
-type WvHover = CalendarHourHover
 
 const projectStore = useProjectStore()
 const uiStore = useUiStore()
@@ -302,7 +301,7 @@ const cellCtx = ref<CalendarContext | null>(null)
 const cellCtxPosition = reactive({ x: 0, y: 0 })
 const cellCtxRef = ref<InstanceType<typeof CalendarContextMenu> | null>(null)
 
-function onWeekContextMenu(e: MouseEvent, week: MonthDayCell[]) {
+function onWeekContextMenu(e: MouseEvent) {
   if ((e.target as HTMLElement).closest('.event-chip,.chip-more-btn,.project-bar')) return
   const iso = isoFromPoint(e.clientX, e.clientY)
   if (!iso) return
@@ -460,11 +459,6 @@ function isoFromPoint(x: number, y: number): string | null {
   }
   return null
 }
-function isInDragRange(iso: string) {
-  const r = dragOverRange.value
-  return r ? iso >= r.start && iso <= r.end : false
-}
-
 const {
   startEventDrag,
   startProjectChipDrag: startProjChipDrag,
@@ -576,7 +570,7 @@ function setupRO() {
     })
     weekHeights.value = next
   })
-  Object.entries(weekRowElMap).forEach(([wi, el]) => {
+  Object.entries(weekRowElMap).forEach(([, el]) => {
     if (el) ro!.observe(el)
   })
 }
@@ -678,9 +672,6 @@ const weekdays = computed(() => {
   return prefsStore.calendarWeekStart === 'sunday' ? labels : [...labels.slice(1), labels[0]]
 })
 
-function toIso(d: Date) {
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
-}
 function displayColor(item: CalItem) { return getDisplayColor(item) }
 const {
   extraEvents,
@@ -728,30 +719,9 @@ const effectiveExtraEvents = computed<CalItem[]>(() => {
   )
 })
 
-const monthDays = computed<MonthDayCell[]>(() => {
-  const y = cursor.value.getFullYear()
-  const m = cursor.value.getMonth()
-  const first    = new Date(y, m, 1)
-  const last     = new Date(y, m + 1, 0)
-  const weekStart = prefsStore.calendarWeekStart === 'sunday' ? 0 : 1
-  const startDow = (first.getDay() - weekStart + 7) % 7
-  const days: MonthDayCell[]     = []
-  for (let i = startDow - 1; i >= 0; i--) {
-    const d = new Date(y, m, -i)
-    days.push({ key: `p${i}`, date: d.getDate(), iso: toIso(d), other: true, isToday: false, dow: (d.getDay()+6)%7 })
-  }
-  for (let i = 1; i <= last.getDate(); i++) {
-    const d   = new Date(y, m, i)
-    const iso = toIso(d)
-    days.push({ key: iso, date: i, iso, other: false, isToday: iso === todayIso.value, dow: (d.getDay()+6)%7 })
-  }
-  const rem = 7 - (days.length % 7)
-  if (rem < 7) for (let i = 1; i <= rem; i++) {
-    const d = new Date(y, m + 1, i)
-    days.push({ key: `n${i}`, date: i, iso: toIso(d), other: true, isToday: false, dow: (d.getDay()+6)%7 })
-  }
-  return days
-})
+const monthDays = computed<MonthDayCell[]>(() => buildCalendarMonthDays(
+  cursor.value, prefsStore.calendarWeekStart === 'sunday' ? 0 : 1,
+).map(day => ({ ...day, isToday: !day.other && day.iso === todayIso.value })))
 
 const monthWeeks = computed(() => {
   const w: MonthDayCell[][] = []
@@ -792,7 +762,7 @@ const {
 const { upcomingList, refresh: refreshUpcoming } = useCalendarUpcoming()
 
 const {
-  wvAllDayGridRef, wvSelCols, wvAdHover, wvHover, wvDragging, wvSelectedSlot,
+  wvSelCols, wvAdHover, wvHover, wvDragging, wvSelectedSlot,
   setAllDayGridRef, isoFromAllDayX, hourAt, wvDaySelected,
   onAllDayDown, onAllDayHover, onAllDayLeave, onColDown, onColMove, onColLeave,
 } = useCalendarWeekInteraction({

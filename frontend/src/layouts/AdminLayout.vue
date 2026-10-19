@@ -169,15 +169,6 @@ const isActive = (to: string) => route.path === to || route.path.startsWith(to +
 function go(to: string) {
   if (route.path !== to) router.push(to)
 }
-function goHash(to: string, hash: string) {
-  if (route.path !== to) {
-    router.push({ path: to, hash })
-  } else {
-    const el = document.querySelector(hash)
-    if (el) el.scrollIntoView({ behavior: 'smooth' })
-  }
-}
-
 async function handleLogout() {
   if (!await adminStore.logout()) {
     showAppError(t('errors.requestFailed'))

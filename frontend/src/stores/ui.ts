@@ -177,7 +177,6 @@ export const useUiStore = defineStore('ui', () => {
     } catch { /* 落库失败不影响本地态 */ }
   }
   function markAllRead() {
-    const ids = notifications.value.filter(n => n.unread && n.id != null).map(n => n.id)
     notifications.value.forEach(n => { n.unread = false })
     _persistRead(null)   // 全部已读
   }

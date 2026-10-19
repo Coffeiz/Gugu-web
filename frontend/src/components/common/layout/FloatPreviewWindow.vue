@@ -114,11 +114,11 @@
         <div class="fpw-info-body">
           <div class="fpw-info-row">
             <span class="fpw-info-label">{{ t('files.name') }}</span>
-            <span class="fpw-info-val">{{ win.file.displayName }}.{{ win.file.ext?.toLowerCase() }}</span>
+            <span class="fpw-info-val">{{ infoFile.displayName }}.{{ infoFile.ext?.toLowerCase() }}</span>
           </div>
           <div class="fpw-info-row">
             <span class="fpw-info-label">{{ t('files.format') }}</span>
-            <span class="fpw-info-val">{{ win.file.ext?.toUpperCase() }}</span>
+            <span class="fpw-info-val">{{ infoFile.ext?.toUpperCase() }}</span>
           </div>
           <div v-if="contentSize" class="fpw-info-row">
             <span class="fpw-info-label">{{ t('sharedUi.resolution') }}</span>
@@ -126,27 +126,29 @@
           </div>
           <div class="fpw-info-row">
             <span class="fpw-info-label">{{ t('files.size') }}</span>
-            <span class="fpw-info-val">{{ win.file.size }}</span>
+            <span class="fpw-info-val">{{ infoFile.size }}</span>
           </div>
           <div class="fpw-info-row">
             <span class="fpw-info-label">{{ t('files.createdAt') }}</span>
-            <span class="fpw-info-val">{{ formatFileCreatedDate(win.file.createdAt) }}</span>
+            <span class="fpw-info-val">{{ formatFileCreatedDate(infoFile.createdAt) || '—' }}</span>
           </div>
-          <div v-if="win.file.projectName" class="fpw-info-row">
-            <span class="fpw-info-label">{{ t('files.project') }}</span>
-            <span class="fpw-info-val">{{ win.file.projectName }}</span>
-          </div>
-          <div v-if="win.file.folderName" class="fpw-info-row">
+          <div class="fpw-info-row">
             <span class="fpw-info-label">{{ t('files.folderLocation') }}</span>
-            <span class="fpw-info-val">{{ win.file.folderName }}</span>
+            <button class="fpw-info-path" :disabled="!win.file.id || !!win.file.attach_id" @click="navigateToFileDirectory">
+              {{ infoPath || (infoPathLoading ? t('files.loading') : '—') }}
+            </button>
           </div>
-          <div v-if="win.file.stageName" class="fpw-info-row">
+          <div v-if="infoFile.projectName" class="fpw-info-row">
+            <span class="fpw-info-label">{{ t('files.project') }}</span>
+            <span class="fpw-info-val">{{ infoFile.projectName }}</span>
+          </div>
+          <div v-if="infoFile.stageName" class="fpw-info-row">
             <span class="fpw-info-label">{{ t('files.stage') }}</span>
-            <span class="fpw-info-val">{{ win.file.stageName }}</span>
+            <span class="fpw-info-val">{{ infoFile.stageName }}</span>
           </div>
-          <div v-if="win.file.mimeType" class="fpw-info-row">
+          <div v-if="infoFile.mimeType" class="fpw-info-row">
             <span class="fpw-info-label">MIME</span>
-            <span class="fpw-info-val fpw-info-mono">{{ win.file.mimeType }}</span>
+            <span class="fpw-info-val fpw-info-mono">{{ infoFile.mimeType }}</span>
           </div>
         </div>
       </div>
@@ -157,9 +159,10 @@
 <script setup lang="ts">
 import { ref, computed, watch, onUnmounted , type PropType} from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import Icon from '@/components/common/icons/Icon.vue'
 import type { PreviewWindow } from '@/stores/preview'
-import type { FileMeta } from '@/stores/filesCache'
+import type { FileMeta, FolderMeta } from '@/stores/filesCache'
 import ImageViewer from '@/components/common/viewers/ImageViewer.vue'
 import VideoViewer from '@/components/common/viewers/VideoViewer.vue'
 import TextViewer  from '@/components/common/viewers/TextViewer.vue'
@@ -168,8 +171,10 @@ import { CLIENT_ID, filesApi } from '@/services/api'
 import { isUnauthorizedResponse } from '@/services/authSession'
 import { isImageExt, isVideoExt, isTextExt, isOfficeExt, isCsvExt, isPreviewReloadRequested, isPreviewAffectedByFileEvent, isTextFallbackCandidate, normalizeTextBlob, usePreviewStore } from '@/stores/preview'
 import { getCachedThumb, getThumb } from '@/composables/shared/useThumbCache'
-import { usePreviewBlobCache } from '@/composables/shared/usePreviewBlobCache'
+import { usePreviewBlobCache, withPreviewCacheBust as withCacheBust } from '@/composables/shared/usePreviewBlobCache'
+import { useWindowDrag } from '@/composables/core/useWindowDrag'
 import { useLiveStore } from '@/stores/live'
+import { useUiStore } from '@/stores/ui'
 import { registerEsc, registerArrowNav } from '@/composables/core/windowz'
 import { formatFileCreatedDate } from '@/utils/fileDate'
 import { accountBoundaryEpoch, getAccountBoundaryEpoch } from '@/utils/accountBoundary'
@@ -178,12 +183,35 @@ import { readDocumentFontSize, saveDocumentFontSize } from '@/utils/documentFont
 // 类型见下
 const props = defineProps({ win: { type: Object as PropType<PreviewWindow>, required: true } })
 const { t } = useI18n()
+const router = useRouter()
 const previewStore = usePreviewStore()
+const uiStore = useUiStore()
 const previewBlobCache = usePreviewBlobCache()
 const mountAccountEpoch = getAccountBoundaryEpoch()
+const infoDetails = ref<FileMeta | null>(null)
+const infoFolderPath = ref<FolderMeta[]>([])
+const infoPathLoading = ref(false)
+const infoDetailsLoadedForId = ref<number | null>(null)
+let infoLoadSequence = 0
+const infoFile = computed(() => infoDetails.value && String(infoDetails.value.id) === String(props.win.file.id)
+  ? { ...props.win.file, ...infoDetails.value }
+  : props.win.file)
+const infoPath = computed(() => {
+  if (infoFile.value.attach_id) return ''
+  const root = infoFile.value.projectName
+    || (infoFile.value.workspaceDirectoryId != null ? t('files.workspace') : t('files.all'))
+  const folders = infoFolderPath.value.map(folder => folder.name)
+  if (!folders.length && infoFile.value.folderName) folders.push(infoFile.value.folderName)
+  return [root, ...folders].filter(Boolean).join(' / ')
+})
 let recentlySavedText: { fileId: string; content: string; savedAt: number } | null = null
 let checkingLocalDirectoryEcho = false
 watch(accountBoundaryEpoch, () => {
+  infoLoadSequence++
+  infoDetails.value = null
+  infoFolderPath.value = []
+  infoDetailsLoadedForId.value = null
+  infoPathLoading.value = false
   loadSequence += 1
   previewBlobCache.release(currentCacheKey.value, blobUrl.value)
   currentCacheKey.value = ''
@@ -314,34 +342,62 @@ const infoOffsetY  = ref(0)
 const infoX = computed(() => x.value + infoOffsetX.value)
 const infoY = computed(() => y.value + infoOffsetY.value)
 
+watch(() => props.win.file.id, () => {
+  infoLoadSequence++
+  infoDetails.value = null
+  infoFolderPath.value = []
+  infoDetailsLoadedForId.value = null
+  if (showInfo.value) void loadInfoDetails()
+})
+
 function openInfo() {
-  if (!showInfo.value && infoBtnRef.value) {
+  const opening = !showInfo.value
+  if (opening && infoBtnRef.value) {
     const r   = infoBtnRef.value.getBoundingClientRect()
     const absX = r.left + r.width / 2 - 110   // 弹窗宽 220，居中对齐按钮
     const absY = r.bottom + 6
     infoOffsetX.value = absX - x.value
     infoOffsetY.value = absY - y.value
   }
-  showInfo.value = !showInfo.value
+  showInfo.value = opening
+  if (opening) void loadInfoDetails()
+  else infoLoadSequence++
 }
 
-let infoDragOrig: { mx: number; my: number; ox: number; oy: number } | null = null
-function startInfoDrag(e: MouseEvent) {
-  if (e.button !== 0) return
-  infoDragOrig = { mx: e.clientX, my: e.clientY, ox: infoOffsetX.value, oy: infoOffsetY.value }
-  window.addEventListener('mousemove', onInfoDragMove)
-  window.addEventListener('mouseup',   onInfoDragUp)
+async function loadInfoDetails() {
+  const fileId = Number(props.win.file.id)
+  if (!Number.isSafeInteger(fileId) || fileId <= 0 || props.win.file.attach_id) return
+  if (infoDetailsLoadedForId.value === fileId) return
+  const sequence = ++infoLoadSequence
+  const accountEpoch = getAccountBoundaryEpoch()
+  infoPathLoading.value = true
+  try {
+    const location = await filesApi.location(fileId)
+    if (sequence !== infoLoadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
+    infoDetails.value = location.file as FileMeta
+    infoFolderPath.value = location.folderPath as FolderMeta[]
+    infoDetailsLoadedForId.value = fileId
+  } catch {
+    // 文件预览也可能来自仅有部分元数据的入口；定位信息失败时保留已有字段。
+  } finally {
+    if (sequence === infoLoadSequence) infoPathLoading.value = false
+  }
 }
-function onInfoDragMove(e: MouseEvent) {
-  if (!infoDragOrig) return
-  infoOffsetX.value = infoDragOrig.ox + e.clientX - infoDragOrig.mx
-  infoOffsetY.value = infoDragOrig.oy + e.clientY - infoDragOrig.my
+
+function navigateToFileDirectory() {
+  const fileId = Number(props.win.file.id)
+  if (!Number.isSafeInteger(fileId) || fileId <= 0 || props.win.file.attach_id) return
+  uiStore.pendingFileTarget = {
+    kind: 'file',
+    id: fileId,
+    ...(infoFile.value.workspaceDirectoryId != null
+      ? { workspaceDirectoryId: infoFile.value.workspaceDirectoryId }
+      : {}),
+  }
+  void router.push('/files')
 }
-function onInfoDragUp() {
-  infoDragOrig = null
-  window.removeEventListener('mousemove', onInfoDragMove)
-  window.removeEventListener('mouseup',   onInfoDragUp)
-}
+
+const { startDrag: startInfoDrag } = useWindowDrag(infoOffsetX, infoOffsetY)
 
 // 矢量图（无尺寸 SVG 的 natural 只是浏览器折算的默认对象尺寸，如 300×150）开窗时
 // 按比例放大到「恰好 contain 进视口舒适区」，只放大不缩小（大尺寸 SVG 仍按原逻辑
@@ -466,11 +522,6 @@ function onPlaceholderLoad(e: Event) {
     fitWindow(nw, nh)
   }
   placeholderReady.value = true
-}
-
-function withCacheBust(url: string, refresh: boolean): string {
-  if (!refresh) return url
-  return `${url}${url.includes('?') ? '&' : '?'}_t=${Date.now()}`
 }
 
 async function load(f: Partial<FileMeta>, refresh = false) {
@@ -784,7 +835,6 @@ async function handleDownload() {
 }
 
 // ── 拖拽标题栏移动 ───────────────────────────────────────────────────────────
-let dragOrig: { mx: number; my: number; x: number; y: number } | null = null
 const DRAG_OVERSCAN_RATIO = .25
 
 function previewDragBounds() {
@@ -804,27 +854,10 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value))
 }
 
-function startDrag(e: MouseEvent) {
-  if (e.button !== 0) return
-  dragOrig = { mx: e.clientX, my: e.clientY, x: x.value, y: y.value }
-  window.addEventListener('mousemove', onDragMove)
-  window.addEventListener('mouseup',   onDragUp)
-}
-
-function onDragMove(e: MouseEvent) {
-  if (!dragOrig) return
-  const nextX = dragOrig.x + e.clientX - dragOrig.mx
-  const nextY = dragOrig.y + e.clientY - dragOrig.my
+const { startDrag } = useWindowDrag(x, y, (nextX, nextY) => {
   const { minX, maxX, minY, maxY } = previewDragBounds()
-  x.value = clamp(nextX, minX, maxX)
-  y.value = clamp(nextY, minY, maxY)
-}
-
-function onDragUp() {
-  dragOrig = null
-  window.removeEventListener('mousemove', onDragMove)
-  window.removeEventListener('mouseup',   onDragUp)
-}
+  return { x: clamp(nextX, minX, maxX), y: clamp(nextY, minY, maxY) }
+})
 
 // ── 四角 resize（可见手柄只留右下角，其余三角只是能拖、没有图标）────────────────
 let resizeOrig: { mx: number; my: number; w: number; h: number; x: number; y: number; dir: string } | null = null
@@ -875,12 +908,8 @@ onUnmounted(() => {
   _unregEsc()
   _unregArrowNav()
   previewBlobCache.release(currentCacheKey.value, blobUrl.value)
-  window.removeEventListener('mousemove', onDragMove)
-  window.removeEventListener('mouseup',   onDragUp)
   window.removeEventListener('mousemove', onResizeMove)
   window.removeEventListener('mouseup',   onResizeUp)
-  window.removeEventListener('mousemove', onInfoDragMove)
-  window.removeEventListener('mouseup',   onInfoDragUp)
 })
 </script>
 
@@ -1113,6 +1142,23 @@ onUnmounted(() => {
   font-size: 12px; color: var(--text-primary);
   word-break: break-all; line-height: 1.4;
 }
+.fpw-info-path {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.fpw-info-path:disabled { color: var(--text-secondary); cursor: default; text-decoration: none; }
 .fpw-info-mono { font-family: var(--font-family-mono); font-size: 11px; }
 
 /* ── 弹窗动画 ── */

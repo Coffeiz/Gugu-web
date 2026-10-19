@@ -1,14 +1,36 @@
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, type Ref } from 'vue'
 import { useConfigStore } from '@/stores/config'
 import { useAdminStore } from '@/stores/admin'
 import { i18n, translateAgentError } from '@/i18n'
+
+async function saveSection(
+  save: () => Promise<unknown>,
+  state: { saving: Ref<boolean>; saved: Ref<boolean>; error: Ref<string> },
+  afterSave?: () => void,
+) {
+  state.saving.value = true
+  state.saved.value = false
+  state.error.value = ''
+  try {
+    await save()
+    state.saved.value = true
+    afterSave?.()
+    setTimeout(() => { state.saved.value = false }, 3000)
+  } catch (error) {
+    state.error.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    state.saving.value = false
+  }
+}
 
 export function useAgentRuntimeConfig() {
   const t = i18n.global.t
   const configStore = useConfigStore(); const adminStore = useAdminStore()
   const agentDraft = reactive({ ...configStore.cfg.agent }); const behaviorSaving = ref(false); const behaviorSaved = ref(false); const behaviorError = ref('')
   function resetBehavior() { Object.assign(agentDraft, configStore.cfg.agent) }
-  async function saveBehavior() { behaviorSaving.value = true; behaviorSaved.value = false; behaviorError.value = ''; try { await configStore.saveConfig({ agent: { ...agentDraft } }); behaviorSaved.value = true; setTimeout(() => { behaviorSaved.value = false }, 3000) } catch (e) { behaviorError.value = e instanceof Error ? e.message : String(e) } finally { behaviorSaving.value = false } }
+  async function saveBehavior() {
+    await saveSection(() => configStore.saveConfig({ agent: { ...agentDraft } }), { saving: behaviorSaving, saved: behaviorSaved, error: behaviorError })
+  }
   const generalSearchDraft = reactive({ tavily_api_key: configStore.cfg.search.tavily_api_key, searxng_url: configStore.cfg.search.searxng_url, searxng_engines: configStore.cfg.search.searxng_engines, searxng_image_engines: configStore.cfg.search.searxng_image_engines, max_results: configStore.cfg.search.max_results, ts_sidecar_index_ttl_seconds: configStore.cfg.search.ts_sidecar_index_ttl_seconds })
   const ragIndexTtlDays = computed({ get: () => Math.round(generalSearchDraft.ts_sidecar_index_ttl_seconds / 86400), set: (value: number) => { generalSearchDraft.ts_sidecar_index_ttl_seconds = Math.max(7, Math.min(365, Number(value) || 30)) * 86400 } })
   const deepResearchDraft = reactive({ deep_research_provider: configStore.cfg.search.deep_research_provider || 'tavily', tavily_api_key: configStore.cfg.search.tavily_api_key, deep_research_baidu_api_key: configStore.cfg.search.deep_research_baidu_api_key, deep_research_you_api_key: configStore.cfg.search.deep_research_you_api_key })
@@ -23,17 +45,26 @@ export function useAgentRuntimeConfig() {
   const VOICE_DASHSCOPE_SERVICES = [{ value: 'qwen3-asr', label: 'Qwen3 ASR · qwen3-asr-flash' }, { value: 'qwen-audio', label: 'Qwen-Audio 3.0 · qwen-audio-3.0-asr-flash' }, { value: 'fun-asr', label: 'Fun-ASR · fun-asr-flash-2026-06-15' }]
   function resetVoice() { Object.assign(voiceDraft, configStore.cfg.voice) }
   function setDashscopeService(value: string) { voiceDraft.dashscope_service = value; voiceDraft.model = ({ 'qwen3-asr': 'qwen3-asr-flash', 'qwen-audio': 'qwen-audio-3.0-asr-flash', 'fun-asr': 'fun-asr-flash-2026-06-15' } as Record<string, string>)[value] || '' }
-  async function saveVoice() { voiceSaving.value = true; voiceSaved.value = false; voiceError.value = ''; try { await configStore.saveConfig({ voice: { ...voiceDraft } }); voiceSaved.value = true; Object.assign(voiceDraft, configStore.cfg.voice); setTimeout(() => { voiceSaved.value = false }, 3000) } catch (e) { voiceError.value = e instanceof Error ? e.message : String(e) } finally { voiceSaving.value = false } }
+  async function saveVoice() {
+    await saveSection(() => configStore.saveConfig({ voice: { ...voiceDraft } }), { saving: voiceSaving, saved: voiceSaved, error: voiceError },
+      () => { Object.assign(voiceDraft, configStore.cfg.voice) })
+  }
   async function testVoice() { voiceTesting.value = true; voiceError.value = ''; voiceTestMsg.value = ''; try { const res = await adminStore.authFetch('/api/v1/admin/config/test-voice', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ api_format: voiceDraft.api_format, dashscope_service: voiceDraft.dashscope_service, base_url: voiceDraft.base_url, api_key: voiceDraft.api_key, model: voiceDraft.model }) }); const data = await res.json().catch(() => ({})); const messageKey = typeof data.message_key === 'string' ? data.message_key : ''; const messageParams = data.message_params && typeof data.message_params === 'object' ? data.message_params : undefined; const message = messageKey ? translateAgentError(messageKey, messageParams) : data.message; if (!res.ok || !data.ok) throw new Error(message || t('adminRuntimeUi.testFailed', { status: res.status })); voiceTestMsg.value = message || t('adminRuntimeUi.voiceConnected') } catch (e) { voiceError.value = e instanceof Error ? e.message : String(e) } finally { voiceTesting.value = false } }
-  const embeddingDraft = reactive({ ...configStore.cfg.embedding }); const embeddingSaving = ref(false); const embeddingSaved = ref(false); const embeddingError = ref(''); const embTest = reactive({ loading: false, ok: false, msg: '' })
-  function resetEmbedding() { Object.assign(embeddingDraft, configStore.cfg.embedding) }
-  async function saveEmbedding() { embeddingSaving.value = true; embeddingSaved.value = false; embeddingError.value = ''; try { await configStore.saveConfig({ embedding: { ...embeddingDraft } }); embeddingSaved.value = true; Object.assign(embeddingDraft, configStore.cfg.embedding); setTimeout(() => { embeddingSaved.value = false }, 3000) } catch (e) { embeddingError.value = e instanceof Error ? e.message : String(e) } finally { embeddingSaving.value = false } }
-  async function testEmbedding() { embTest.loading = true; embTest.msg = ''; try { const res = await adminStore.authFetch('/api/v1/admin/config/test-embedding', { method: 'POST', body: JSON.stringify({ provider: embeddingDraft.provider || '', multimodal: !!embeddingDraft.multimodal, base_url: embeddingDraft.base_url || '', api_key: embeddingDraft.api_key || '', model: embeddingDraft.model || '', dimensions: embeddingDraft.dimensions || 0 }) }); const data = await res.json(); embTest.ok = !!data.ok; embTest.msg = data.message || (data.ok ? 'OK' : t('adminRuntimeUi.failed')) } catch (e) { embTest.ok = false; embTest.msg = t('adminRuntimeUi.requestFailed', { message: e instanceof Error ? e.message : String(e) }) } finally { embTest.loading = false } }
   const searchTest = reactive({ searxng: { loading: false, ok: false, msg: '' }, searxng_images: { loading: false, ok: false, msg: '' }, tavily: { loading: false, ok: false, msg: '' }, deep_research: { loading: false, ok: false, msg: '' }, baidu_similar_images: { loading: false, ok: false, msg: '' } })
   const deepResearchTest = searchTest.deep_research
   async function testSearch(target: keyof typeof searchTest) { const state = searchTest[target]; state.loading = true; state.msg = ''; try { const payload = target === 'deep_research' ? { target, ...deepResearchDraft } : target === 'tavily' ? { target, tavily_api_key: generalSearchDraft.tavily_api_key || '' } : target === 'baidu_similar_images' ? { target, baidu_qianfan_api_key: similarImageDraft.baidu_qianfan_api_key || '' } : target === 'searxng_images' ? { target, searxng_url: generalSearchDraft.searxng_url || '', searxng_image_engines: generalSearchDraft.searxng_image_engines || '' } : { target, searxng_url: generalSearchDraft.searxng_url || '', searxng_engines: generalSearchDraft.searxng_engines || '' }; const res = await adminStore.authFetch('/api/v1/admin/config/test-search', { method: 'POST', body: JSON.stringify(payload) }); const data = await res.json(); state.ok = !!data.ok; state.msg = data.message || (data.ok ? 'OK' : t('adminRuntimeUi.failed')) } catch (e) { state.ok = false; state.msg = t('adminRuntimeUi.requestFailed', { message: e instanceof Error ? e.message : String(e) }) } finally { state.loading = false } }
   async function testDeepResearch() { await testSearch('deep_research') }
-  async function saveDeepResearch() { deepResearchSaving.value = true; deepResearchSaved.value = false; deepResearchError.value = ''; try { await configStore.saveConfig({ search: { ...deepResearchDraft } }); deepResearchSaved.value = true; resetDeepResearch(); setTimeout(() => { deepResearchSaved.value = false }, 3000) } catch (e) { deepResearchError.value = e instanceof Error ? e.message : String(e) } finally { deepResearchSaving.value = false } }
-  async function saveSearch(source: 'general' | 'similar') { const similar = source === 'similar'; const saving = similar ? similarImageSaving : generalSearchSaving; const saved = similar ? similarImageSaved : generalSearchSaved; const error = similar ? similarImageError : generalSearchError; saving.value = true; saved.value = false; error.value = ''; try { await configStore.saveConfig({ search: similar ? { ...similarImageDraft } : { ...generalSearchDraft } }); saved.value = true; if (similar) resetSimilarImageSearch(); else resetGeneralSearch(); setTimeout(() => { saved.value = false }, 3000) } catch (e) { error.value = e instanceof Error ? e.message : String(e) } finally { saving.value = false } }
-  return { configStore, agentDraft, behaviorSaving, behaviorSaved, behaviorError, resetBehavior, saveBehavior, generalSearchDraft, ragIndexTtlDays, deepResearchDraft, similarImageDraft, generalSearchSaving, generalSearchSaved, generalSearchError, deepResearchSaving, deepResearchSaved, deepResearchError, deepResearchTest, similarImageSaving, similarImageSaved, similarImageError, resetGeneralSearch, resetDeepResearch, resetSimilarImageSearch, voiceDraft, voiceSaving, voiceSaved, voiceError, voiceTesting, voiceTestMsg, VOICE_API_FORMATS, VOICE_DASHSCOPE_SERVICES, resetVoice, setDashscopeService, saveVoice, testVoice, embeddingDraft, embeddingSaving, embeddingSaved, embeddingError, embTest, resetEmbedding, saveEmbedding, testEmbedding, searchTest, testSearch, testDeepResearch, saveDeepResearch, saveSearch }
+  async function saveDeepResearch() {
+    await saveSection(() => configStore.saveConfig({ search: { ...deepResearchDraft } }),
+      { saving: deepResearchSaving, saved: deepResearchSaved, error: deepResearchError }, resetDeepResearch)
+  }
+  async function saveSearch(source: 'general' | 'similar') {
+    const similar = source === 'similar'
+    await saveSection(() => configStore.saveConfig({ search: similar ? { ...similarImageDraft } : { ...generalSearchDraft } }), {
+      saving: similar ? similarImageSaving : generalSearchSaving,
+      saved: similar ? similarImageSaved : generalSearchSaved,
+      error: similar ? similarImageError : generalSearchError,
+    }, () => { if (similar) resetSimilarImageSearch(); else resetGeneralSearch() })
+  }
+  return { configStore, agentDraft, behaviorSaving, behaviorSaved, behaviorError, resetBehavior, saveBehavior, generalSearchDraft, ragIndexTtlDays, deepResearchDraft, similarImageDraft, generalSearchSaving, generalSearchSaved, generalSearchError, deepResearchSaving, deepResearchSaved, deepResearchError, deepResearchTest, similarImageSaving, similarImageSaved, similarImageError, resetGeneralSearch, resetDeepResearch, resetSimilarImageSearch, voiceDraft, voiceSaving, voiceSaved, voiceError, voiceTesting, voiceTestMsg, VOICE_API_FORMATS, VOICE_DASHSCOPE_SERVICES, resetVoice, setDashscopeService, saveVoice, testVoice, searchTest, testSearch, testDeepResearch, saveDeepResearch, saveSearch }
 }

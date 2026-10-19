@@ -96,6 +96,7 @@ import { createPressOutsideGuard } from '@/composables/shared/pressOutsideClose'
 import { nextZ, registerPopover } from '@/composables/core/windowz'
 import PopupMenu from '@/components/common/overlays/PopupMenu.vue'
 import { useI18n } from 'vue-i18n'
+import { browserDayKey as toIso, buildCalendarMonthDays } from '@/utils/dateAttribution'
 
 const { t, tm, locale } = useI18n()
 const weekDays = computed(() => {
@@ -144,10 +145,6 @@ function periodLabel(date: Date) {
 
 const yearStart = ref(Math.floor(cursor.value.getFullYear() / 12) * 12)
 
-function toIso(d: Date) {
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
-}
-
 // 本年度不显示年份（跟全站其它日期展示一致的「同年只显月日」规则），跨年才带上年份
 const displayValue = computed(() => {
   if (!props.modelValue) return ''
@@ -155,28 +152,7 @@ const displayValue = computed(() => {
   return d.getFullYear() === todayYear ? `${d.getMonth()+1}/${d.getDate()}` : `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}`
 })
 
-const calDays = computed(() => {
-  const y = cursor.value.getFullYear()
-  const m = cursor.value.getMonth()
-  const first = new Date(y, m, 1)
-  const last  = new Date(y, m + 1, 0)
-  const startDow = (first.getDay() + 6) % 7
-  const days = []
-  for (let i = startDow - 1; i >= 0; i--) {
-    const d = new Date(y, m, -i)
-    days.push({ key: `p${i}`, date: d.getDate(), iso: toIso(d), other: true, dow: (d.getDay()+6)%7 })
-  }
-  for (let i = 1; i <= last.getDate(); i++) {
-    const d = new Date(y, m, i)
-    days.push({ key: toIso(d), date: i, iso: toIso(d), other: false, dow: (d.getDay()+6)%7 })
-  }
-  const rem = 7 - (days.length % 7)
-  if (rem < 7) for (let i = 1; i <= rem; i++) {
-    const d = new Date(y, m + 1, i)
-    days.push({ key: `n${i}`, date: i, iso: toIso(d), other: true, dow: (d.getDay()+6)%7 })
-  }
-  return days
-})
+const calDays = computed(() => buildCalendarMonthDays(cursor.value))
 
 function prevMonth() {
   const d = new Date(cursor.value)

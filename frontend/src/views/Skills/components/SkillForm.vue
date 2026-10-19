@@ -45,7 +45,6 @@ import BaseModal from '@/components/common/overlays/BaseModal.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import Checkbox from '@/components/common/controls/Checkbox.vue'
 import CloseButton from '@/components/common/overlays/CloseButton.vue'
-import Icon from '@/components/common/icons/Icon.vue'
 import type { SkillToolItem, UserSkillItem, UserSkillWrite } from '@/services/api'
 
 const props = defineProps<{

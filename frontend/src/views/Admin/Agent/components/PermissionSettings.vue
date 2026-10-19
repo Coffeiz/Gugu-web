@@ -102,7 +102,7 @@ const props = defineProps({
   error: { type: String, default: '' },
 })
 
-const emit = defineEmits<{
+defineEmits<{
   save: []
   reset: []
 }>()

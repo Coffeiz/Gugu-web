@@ -51,7 +51,8 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
-import { ref, watch, nextTick, onUnmounted } from 'vue'
+import { ref, watch, nextTick } from 'vue'
+import { useWindowDrag } from '@/composables/core/useWindowDrag'
 import { nextZ } from '@/composables/core/windowz'
 import CloseButton from '@/components/common/overlays/CloseButton.vue'
 import { fmtBytes } from '@/utils/fileSize'
@@ -85,27 +86,7 @@ watch(() => [props.show, props.x, props.y], async ([v]) => {
 }, { immediate: false })
 
 // ── 拖动 ──────────────────────────────────────────────
-let dragOrig: { mx: number; my: number; x: number; y: number } | null = null
-function startDrag(e: MouseEvent) {
-  if (e.button !== 0) return
-  dragOrig = { mx: e.clientX, my: e.clientY, x: posX.value, y: posY.value }
-  window.addEventListener('mousemove', onDragMove)
-  window.addEventListener('mouseup',   onDragUp)
-}
-function onDragMove(e: MouseEvent) {
-  if (!dragOrig) return
-  posX.value = Math.max(0, dragOrig.x + e.clientX - dragOrig.mx)
-  posY.value = Math.max(0, dragOrig.y + e.clientY - dragOrig.my)
-}
-function onDragUp() {
-  dragOrig = null
-  window.removeEventListener('mousemove', onDragMove)
-  window.removeEventListener('mouseup',   onDragUp)
-}
-onUnmounted(() => {
-  window.removeEventListener('mousemove', onDragMove)
-  window.removeEventListener('mouseup',   onDragUp)
-})
+const { startDrag } = useWindowDrag(posX, posY, (x, y) => ({ x: Math.max(0, x), y: Math.max(0, y) }))
 </script>
 
 <style scoped>

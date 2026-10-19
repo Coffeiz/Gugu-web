@@ -110,9 +110,10 @@ import { formatFileCreatedDate } from '@/utils/fileDate'
 
 import { CLIENT_ID, filesApi } from '@/services/api'
 import { isUnauthorizedResponse } from '@/services/authSession'
-import { isImageExt, isTextExt, isVideoExt, isAudioExt, isPreviewAffectedByFileEvent } from '@/stores/preview'
+import { isImageExt, isTextExt, isVideoExt, isPreviewAffectedByFileEvent } from '@/stores/preview'
 import { nextZ, registerEsc } from '@/composables/core/windowz'
-import { usePreviewBlobCache } from '@/composables/shared/usePreviewBlobCache'
+import { usePreviewBlobCache, withPreviewCacheBust as withCacheBust } from '@/composables/shared/usePreviewBlobCache'
+import { useWindowDrag } from '@/composables/core/useWindowDrag'
 import { useI18n } from 'vue-i18n'
 import { fmtBytes } from '@/utils/fileSize'
 import { accountBoundaryEpoch, getAccountBoundaryEpoch } from '@/utils/accountBoundary'
@@ -177,7 +178,6 @@ watch(blobUrl, url => {
 const isText   = computed(() => isTextExt(props.file?.ext, props.file?.mimeType))
 const isVideo  = computed(() => isVideoExt(props.file?.ext))
 const isPdf    = computed(() => props.file?.ext?.toUpperCase() === 'PDF')
-const isAudio  = computed(() => isAudioExt(props.file?.ext))
 
 const EXT_COLORS: Record<string, string> = {
   PDF: '#e05555',
@@ -197,11 +197,6 @@ function revoke() {
   blobUrl.value = null
   videoSrc.value = null
   currentCacheKey.value = ''
-}
-
-function withCacheBust(url: string, refresh: boolean): string {
-  if (!refresh) return url
-  return `${url}${url.includes('?') ? '&' : '?'}_t=${Date.now()}`
 }
 
 let loadSequence = 0
@@ -332,8 +327,6 @@ async function handleDownload() {
 onUnmounted(() => {
   revoke()
   _unregEsc?.()
-  window.removeEventListener('mousemove', onInfoDragMove)
-  window.removeEventListener('mouseup',   onInfoDragUp)
 })
 
 // ── 文件信息弹窗 ─────────────────────────────────────────────────────────────
@@ -352,23 +345,7 @@ async function openInfo() {
   showInfo.value = !showInfo.value
 }
 
-let infoDragOrig: { mx: number; my: number; x: number; y: number } | null = null
-function startInfoDrag(e: MouseEvent) {
-  if (e.button !== 0) return
-  infoDragOrig = { mx: e.clientX, my: e.clientY, x: infoX.value, y: infoY.value }
-  window.addEventListener('mousemove', onInfoDragMove)
-  window.addEventListener('mouseup',   onInfoDragUp)
-}
-function onInfoDragMove(e: MouseEvent) {
-  if (!infoDragOrig) return
-  infoX.value = Math.max(0, infoDragOrig.x + e.clientX - infoDragOrig.mx)
-  infoY.value = Math.max(0, infoDragOrig.y + e.clientY - infoDragOrig.my)
-}
-function onInfoDragUp() {
-  infoDragOrig = null
-  window.removeEventListener('mousemove', onInfoDragMove)
-  window.removeEventListener('mouseup',   onInfoDragUp)
-}
+const { startDrag: startInfoDrag } = useWindowDrag(infoX, infoY, (x, y) => ({ x: Math.max(0, x), y: Math.max(0, y) }))
 
 // 关闭抽屉时同步关闭信息弹窗
 watch(() => props.show, v => { if (!v) showInfo.value = false })

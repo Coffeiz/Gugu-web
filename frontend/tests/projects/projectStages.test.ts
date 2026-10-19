@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   autoCompleteTodos, restoreTodos, toggleTodoDone,
-  nextStatus, stageProgressByIndex, projectTodoProgress, normalizeStages, firstIncompleteStageIdx, allTodosDone,
+  nextStatus, stageProgressByIndex, normalizeStages, firstIncompleteStageIdx, allTodosDone,
   transitionProjectStage, transitionProjectStatus, transitionProjectTodos,
 } from '@/utils/projectStages'
 import type { ProjectStage, ProjectTodo } from '@/types/project'
@@ -92,20 +92,6 @@ describe('stageProgressByIndex — 按阶段位置算进度', () => {
   it('越界/空阶段返回 0', () => {
     expect(stageProgressByIndex(-1, 3)).toBe(0)
     expect(stageProgressByIndex(0, 0)).toBe(0)
-  })
-})
-
-describe('projectTodoProgress — 项目待办进度', () => {
-  it('有待办时按全部待办的完成比例计算', () => {
-    const stages = [
-      { key: 's0', label: '计划', todos: [td({ done: true }), td({ done: false })] },
-      { key: 's1', label: '交付', todos: [td({ done: true })] },
-    ]
-    expect(projectTodoProgress(stages, 's0')).toBe(67)
-  })
-  it('无待办时按当前阶段位置计算', () => {
-    const stages = [{ key: 's0', label: '计划', todos: [] }, { key: 's1', label: '交付', todos: [] }]
-    expect(projectTodoProgress(stages, 's1')).toBe(100)
   })
 })
 

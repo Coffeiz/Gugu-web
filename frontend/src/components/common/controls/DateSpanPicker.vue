@@ -101,6 +101,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { createPressOutsideGuard } from '@/composables/shared/pressOutsideClose'
 import { useI18n } from 'vue-i18n'
+import { browserDayKey as toIso, buildCalendarMonthDays } from '@/utils/dateAttribution'
 
 const { t, tm, locale } = useI18n()
 const weekDays = computed(() => tm('sharedUi.weekdays') as string[])
@@ -140,10 +141,6 @@ function periodLabel(date: Date) {
 }
 const yearStart = ref(Math.floor(cursor.value.getFullYear() / 12) * 12)
 
-function toIso(d: Date) {
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
-}
-
 function fmt(iso: string) {
   if (!iso) return ''
   const d = new Date(iso + 'T00:00:00')
@@ -151,28 +148,7 @@ function fmt(iso: string) {
   return d.getFullYear() !== todayYear ? `${d.getFullYear()}/${base}` : base
 }
 
-const calDays = computed(() => {
-  const y = cursor.value.getFullYear()
-  const m = cursor.value.getMonth()
-  const first = new Date(y, m, 1)
-  const last  = new Date(y, m + 1, 0)
-  const startDow = (first.getDay() + 6) % 7
-  const days = []
-  for (let i = startDow - 1; i >= 0; i--) {
-    const d = new Date(y, m, -i)
-    days.push({ key: `p${i}`, date: d.getDate(), iso: toIso(d), other: true, dow: (d.getDay()+6)%7 })
-  }
-  for (let i = 1; i <= last.getDate(); i++) {
-    const d = new Date(y, m, i)
-    days.push({ key: toIso(d), date: i, iso: toIso(d), other: false, dow: (d.getDay()+6)%7 })
-  }
-  const rem = 7 - (days.length % 7)
-  if (rem < 7) for (let i = 1; i <= rem; i++) {
-    const d = new Date(y, m + 1, i)
-    days.push({ key: `n${i}`, date: i, iso: toIso(d), other: true, dow: (d.getDay()+6)%7 })
-  }
-  return days
-})
+const calDays = computed(() => buildCalendarMonthDays(cursor.value))
 
 const effectiveEnd = computed(() =>
   phase.value === 'end' ? (hovered.value || props.endDate) : props.endDate

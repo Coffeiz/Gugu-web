@@ -1,4 +1,4 @@
-import { computed, ref, type Ref } from 'vue'
+import { computed, ref } from 'vue'
 import type { FileMeta, FolderMeta } from '@/stores/filesCache'
 import { useFolderNavigation } from '@/composables/files/useFolderNavigation'
 

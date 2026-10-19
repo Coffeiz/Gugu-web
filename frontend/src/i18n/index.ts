@@ -1,5 +1,5 @@
 import { createI18n } from 'vue-i18n'
-import { detectBrowserLocale, isSupportedLocale, localeOptions, type SupportedLocale } from './types'
+import { detectBrowserLocale, isSupportedLocale, type SupportedLocale } from './types'
 import { localeRegistry } from './registry'
 
 const LOCALE_KEY = 'gugu-locale'

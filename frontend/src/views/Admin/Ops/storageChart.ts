@@ -11,7 +11,7 @@ export function snapshotDateKey(value: string): string {
 }
 
 export function formatSnapshotDate(key: string): string {
-  const [year, month, day] = key.split('-').map(Number)
+  const [, month, day] = key.split('-').map(Number)
   return `${month}/${day}`
 }
 

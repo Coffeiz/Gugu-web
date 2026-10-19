@@ -1143,7 +1143,6 @@ export function useChatStream(options: {
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       if (!res.body) throw new Error('empty response body')
 
-      let receivedSessionIdEvent = false
       const r = await consumeStream(res.body.getReader(), ownerSid, viewGeneration, '', (_acceptedSessionId, timelineOrder, userMessageId) => {
         if (optimisticUserMessage && userMessageId) {
           optimisticUserMessage.dbId = userMessageId
@@ -1154,7 +1153,6 @@ export function useChatStream(options: {
           stopWaitingForSessionId.delete(requestController)
           requestRunCancellation(_acceptedSessionId, requestController)
         }
-        receivedSessionIdEvent = true
         if (queuedItemKey === undefined || ownerSid !== sessionId.value || viewGeneration !== options.getViewGeneration()) return
         pendingQueue.value = pendingQueue.value.filter(item => queueIdentity(item) !== queuedIdentity)
         optimisticUserMessage = {

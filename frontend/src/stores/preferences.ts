@@ -31,7 +31,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
   const locale = ref<SupportedLocale | null>(null)
   const loaded            = ref(false)
 
-  async function saveOptimistically<T>(key: string, payload: Record<string, unknown>, apply: () => void, rollback: () => void): Promise<void> {
+  async function saveOptimistically(key: string, payload: Record<string, unknown>, apply: () => void, rollback: () => void): Promise<void> {
     try {
       await InteractionSync.execute({
         scope: 'profile.preference.update',

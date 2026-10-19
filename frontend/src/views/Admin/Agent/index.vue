@@ -115,7 +115,7 @@
               </div>
               <div class="preset-card-meta">
                 <span class="preset-model">{{ p.model }}</span>
-                <span class="preset-meta-item">out {{ p.max_tokens ?? 8000 }}</span>
+                <span class="preset-meta-item">out {{ p.max_tokens ?? 25600 }}</span>
                 <span class="preset-meta-item">ctx {{ p.context_tokens ?? 128000 }}</span>
                                 <span v-if="p.thinking === 'adaptive'" class="preset-meta-item preset-meta-think"><Icon name="admin.brain" size="xs" />{{ t('agent.thinking') }}</span>
                 <span v-if="p.reasoning_persistence === 'continuation'" class="preset-meta-item">{{ t('llmExtraUi.reasoningContinuation') }}</span>
@@ -467,105 +467,6 @@
         </div>
       </section>
 
-      <!-- 记忆召回已迁移至独立的 Agent 记忆页面。 -->
-      <!--
-        <div class="card-head">
-          <div class="card-icon" style="--ic:rgba(123,127,178,0.15);--stroke:#7b7fb2">
-            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"
-              stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="5" cy="6" r="2"/><circle cx="15" cy="6" r="2"/><circle cx="10" cy="14" r="2"/>
-              <path d="M6.5 7.3l2.2 5.4M13.5 7.3l-2.2 5.4M7 6h6"/>
-            </svg>
-          </div>
-          <div class="card-title-block">
-            <h3>向量 Embedding 模型</h3>
-            <p>独立于聊天/语音模型，<b>单独 pin 一个</b>——换它会作废所有已存向量、需重建，故意不进模型轮换。用于记忆的语义检索（pattern 超量时按语义挑，而非词法）。<b>关闭 = 退回词法检索</b>，零副作用。支持文本和百炼多模态 Embedding；多模态调用需由业务传入已完成安全校验的图片/视频 URL 或 Base64。</p>
-          </div>
-        </div>
-
-        <div class="behavior-grid">
-          <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label">
-              <span>启用向量检索</span>
-              <span class="behavior-desc">关闭＝退回词法相关性（bigram），零副作用；改完记得下方保存</span>
-            </div>
-            <ToggleSwitch :model-value="embeddingDraft.enabled" aria-label="切换向量检索" @update:model-value="embeddingDraft.enabled = $event" />
-          </div>
-          <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label"><span>多模态 Embedding</span><span class="behavior-desc">百炼填写 <code>qwen3-vl-embedding</code>；开启后供图片/视频向量调用使用，不改变现有文本记忆索引</span></div>
-            <ToggleSwitch :model-value="embeddingDraft.multimodal" aria-label="切换多模态 Embedding" @update:model-value="embeddingDraft.multimodal = $event" />
-          </div>
-          <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label"><span>提供商</span><span class="behavior-desc">选择提供商；通用兼容用于其他 OpenAI 兼容端点</span></div>
-            <AdminSelect
-              :model-value="embeddingDraft.provider"
-              :options="[
-                { value: 'bailian', label: '百炼（Bailian）' },
-                { value: 'openai', label: 'OpenAI' },
-                { value: 'ollama', label: 'Ollama' },
-                { value: '', label: '通用 OpenAI 兼容' },
-              ]"
-              @update:model-value="embeddingDraft.provider = $event"
-            />
-          </div>
-          <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label"><span>模型名 model</span><span class="behavior-desc">百炼填 <code>text-embedding-v4</code>；Ollama 填 <code>qwen3-embedding:0.6b</code></span></div>
-            <input type="text" class="behavior-input" style="width:280px" v-model="embeddingDraft.model" placeholder="qwen3-embedding:0.6b" />
-          </div>
-          <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label"><span>Base URL</span><span class="behavior-desc">百炼可留空；自定义百炼空间或 Ollama 填到 /v1 那层（不含 /embeddings）</span></div>
-            <input type="text" class="behavior-input" style="width:280px" v-model="embeddingDraft.base_url" placeholder="http://…:11434/v1" />
-          </div>
-          <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label"><span>API Key<span v-if="configStore.secretSet.embeddingApiKey" style="margin-left:6px;color:var(--color-primary);font-size:11px;font-weight:600">· 已配置 ✓</span></span><span class="behavior-desc"><b>Ollama 无需鉴权、可留空</b>；用 dashscope / OpenAI 才需填。已存的 Key 不回显，留空＝保留不变</span></div>
-            <input type="password" class="behavior-input" style="width:280px" v-model="embeddingDraft.api_key" autocomplete="new-password"
-                   :placeholder="configStore.secretSet.embeddingApiKey ? '已配置，留空＝不修改' : 'Ollama 可留空；dashscope/OpenAI 才填'" />
-          </div>
-          <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label"><span>维度 dimensions</span><span class="behavior-desc">0＝用模型默认（qwen3-embedding:0.6b 默认 1024）；部分模型支持指定降维。<b>改了维度＝换模型，需重建向量</b></span></div>
-            <input type="number" class="behavior-input number-input" v-model.number="embeddingDraft.dimensions" placeholder="0（模型默认）" />
-          </div>
-          <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label"><span>连通测试</span><span class="behavior-desc">用上面填的参数发一次 embed，看通不通、返回几维（改完先保存再测更准，测试用的是当前输入值）</span></div>
-            <div style="display:flex;gap:10px;align-items:center;justify-content:flex-end;min-width:0;">
-              <span v-if="embTest.msg" :title="embTest.msg"
-                    :style="{ color: embTest.ok ? '#4caf7d' : '#e07070', fontSize:'12px', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', minWidth:0 }">
-                {{ embTest.msg }}
-              </span>
-              <button class="btn-ghost" style="flex-shrink:0;" :disabled="embTest.loading" @click="testEmbedding">
-                {{ embTest.loading ? '测试中…' : '测试' }}
-              </button>
-            </div>
-          </div>
-          <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label"><span>重建向量</span><span class="behavior-desc">换了模型/维度后点一次，给所有用户的 pattern + 长期记忆用新模型重算向量（后台跑，期间检索自动退回词法）。日常不用点</span></div>
-            <div style="display:flex;gap:10px;align-items:center;justify-content:flex-end;min-width:0;">
-              <span v-if="rebuild.msg" :title="rebuild.msg"
-                    :style="{ color: rebuild.error ? '#e07070' : '#4caf7d', fontSize:'12px', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', minWidth:0 }">
-                {{ rebuild.msg }}
-              </span>
-              <button class="btn-ghost" style="flex-shrink:0;" :disabled="rebuild.running" @click="startRebuild">
-                {{ rebuild.running ? `重建中… ${rebuild.done}/${rebuild.total}` : '重建向量' }}
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div class="card-actions">
-          <span class="save-hint" :class="{ error: !!embeddingError }">
-            <template v-if="embeddingSaved"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 6l2.5 2.5 5.5-5"/></svg>{{ t('agent.saved') }}</template>
-            <template v-else-if="embeddingError">{{ embeddingError }}</template>
-          </span>
-          <button class="btn-ghost" @click="resetEmbedding">撤销修改</button>
-          <button class="btn-primary" :class="{ loading: embeddingSaving }" :disabled="embeddingSaving" @click="saveEmbedding">
-            <svg v-if="embeddingSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
-            {{ embeddingSaving ? '保存中…' : '保存' }}
-          </button>
-        </div>
-      </section>
-
-      -->
-
       <!-- ── 状态命名 ── -->
       <StateLabelsPanel v-if="activeTab === 'behavior' && behaviorTab === 'labels'" />
 
@@ -580,7 +481,6 @@
 import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
 import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
 import { useRoute } from 'vue-router'
-import LocalCapabilityOverrides from './components/LocalCapabilityOverrides.vue'
 import PermissionSettings from './components/PermissionSettings.vue'
 import CapabilityCatalogPanel from './capabilities/components/CapabilityCatalogPanel.vue'
 import UsagePanel from './observability/components/UsagePanel.vue'
@@ -591,7 +491,6 @@ import { useLlmPresets, type LlmMessagePart } from './llm/useLlmPresets'
 import AdminSelect from '@/components/AdminSelect.vue'
 import { useConfigStore } from '@/stores/config'
 import { useAdminStore } from '@/stores/admin'
-import ConfigField from '../Config/components/ConfigField.vue'
 import SegmentedTabs from '@/components/common/controls/SegmentedTabs.vue'
 import Checkbox from '@/components/common/controls/Checkbox.vue'
 import LlmPresetEditor from './llm/components/LlmPresetEditor.vue'
@@ -623,7 +522,7 @@ function setUsagePeriod(value: string) {
 const runtimeConfig = useAgentRuntimeConfig()
 const { agentDraft, behaviorSaving, behaviorSaved, behaviorError, resetBehavior, saveBehavior, generalSearchDraft, ragIndexTtlDays, deepResearchDraft, similarImageDraft, generalSearchSaving, generalSearchSaved, generalSearchError, deepResearchSaving, deepResearchSaved, deepResearchError, deepResearchTest, similarImageSaving, similarImageSaved, similarImageError, resetGeneralSearch, resetDeepResearch, resetSimilarImageSearch, voiceDraft, voiceSaving, voiceSaved, voiceError, voiceTesting, voiceTestMsg, VOICE_API_FORMATS, VOICE_DASHSCOPE_SERVICES, resetVoice, setDashscopeService, saveVoice, testVoice, searchTest, testSearch, testDeepResearch, saveDeepResearch, saveSearch } = runtimeConfig
 const llmPresets = useLlmPresets(adminStore, configStore, agentDraft)
-const { presets, activePresetId, strategy, poolMode, presetsLoading, llmMsg, llmMsgParts, llmMsgError, llmMsgSuccess, testingId, activatingId, probingId, probingDim, showMsg, showMsgParts, fetchPresets, setStrategy, setPoolMode, saveConcurrency, activatePreset, deletePreset, testPreset } = llmPresets
+const { presets, activePresetId, strategy, poolMode, presetsLoading, llmMsg, llmMsgParts, llmMsgError, testingId, activatingId, probingId, probingDim, showMsg, showMsgParts, fetchPresets, setStrategy, setPoolMode, saveConcurrency, activatePreset, deletePreset, testPreset } = llmPresets
 const byokDraft = reactive({ ...configStore.cfg.byok })
 const permissionSaving = ref(false)
 const permissionSaved = ref(false)
@@ -722,7 +621,6 @@ const editClosing  = ref(false)
 const editIsNew    = ref(false)
 const editSaving   = ref(false)
 const editError    = ref('')
-const editMaskDown = ref(false)
 const modelOptions = ref<string[]>([])
 const modelListLoading = ref(false)
 const modelListError = ref('')
@@ -751,7 +649,7 @@ async function togglePool(p: LlmPresetRecord) {
 function openNewPreset() {
   editClosing.value = false
   editIsNew.value  = true
-  editTarget.value = { name: '', provider: 'openai', api_key: '', base_url: PROVIDERS.value[0].base_url, model: PROVIDERS.value[0].model, max_tokens: 8000, context_tokens: 128000, thinking: '', reasoning_effort: '', reasoning_persistence: 'off', web_search_enabled: false, image: false, image_detail: 'auto', video: false, audio: false, api_format: '', ollama_mode: 'local', ollama_api_mode: 'native', ollama_keep_alive: '5m', deployment_mode: 'cloud', local_runtime: 'other', capability_overrides: {} }
+  editTarget.value = { name: '', provider: 'openai', api_key: '', base_url: PROVIDERS.value[0].base_url, model: PROVIDERS.value[0].model, max_tokens: 25600, context_tokens: 128000, thinking: '', reasoning_effort: '', reasoning_persistence: 'off', web_search_enabled: false, image: false, image_detail: 'auto', video: false, audio: false, api_format: '', ollama_mode: 'local', ollama_api_mode: 'native', ollama_keep_alive: '5m', deployment_mode: 'cloud', local_runtime: 'other', capability_overrides: {} }
   editError.value  = ''
   modelOptions.value = []
   modelListError.value = ''
@@ -762,7 +660,7 @@ function openNewPreset() {
 function openEditPreset(p: LlmPresetRecord) {
   editClosing.value = false
   editIsNew.value  = false
-  editTarget.value = { ...p, api_key: '', max_tokens: p.max_tokens ?? 8000, context_tokens: p.context_tokens ?? 128000, reasoning_persistence: p.reasoning_persistence === 'continuation' ? 'continuation' : 'off', web_search_enabled: Boolean(p.web_search_enabled), image_detail: p.image_detail || 'auto', ollama_mode: p.ollama_mode || 'local', ollama_api_mode: p.ollama_api_mode || 'native', ollama_keep_alive: p.ollama_keep_alive || '5m', deployment_mode: p.deployment_mode || (p.provider === 'local' ? 'local' : 'cloud'), local_runtime: p.local_runtime || 'other', capability_overrides: p.capability_overrides || {} } as unknown as LlmPresetDraft
+  editTarget.value = { ...p, api_key: '', max_tokens: p.max_tokens ?? 25600, context_tokens: p.context_tokens ?? 128000, reasoning_persistence: p.reasoning_persistence === 'continuation' ? 'continuation' : 'off', web_search_enabled: Boolean(p.web_search_enabled), image_detail: p.image_detail || 'auto', ollama_mode: p.ollama_mode || 'local', ollama_api_mode: p.ollama_api_mode || 'native', ollama_keep_alive: p.ollama_keep_alive || '5m', deployment_mode: p.deployment_mode || (p.provider === 'local' ? 'local' : 'cloud'), local_runtime: p.local_runtime || 'other', capability_overrides: p.capability_overrides || {} } as unknown as LlmPresetDraft
   editError.value  = ''
   modelOptions.value = []
   modelListError.value = ''

@@ -96,20 +96,6 @@ export function stageProgressByIndex(idx: number, total: number): number {
   return Math.round(((idx + 1) / total) * 100)
 }
 
-/** 所有待办的完成比例；无待办时按当前阶段位置计算。 */
-export function projectTodoProgress(stages: ProjectStage[], currentStage: string | null): number {
-  if (!stages.length) return 0
-  let done = 0
-  let total = 0
-  for (const stage of stages) {
-    const todos = stage.todos ?? []
-    done += todos.filter(todo => todo.done).length
-    total += todos.length
-  }
-  if (total) return Math.round(done / total * 100)
-  return stageProgressByIndex(stages.findIndex(stage => stage.key === currentStage), stages.length)
-}
-
 /**
  * 处理看板状态切换。完成项目会收尾全部待办，退出完成区时只还原自动勾选过的待办。
  * 这是 Store、卡片和弹窗共用的唯一状态转换，不包含网络或 Vue 响应式操作。

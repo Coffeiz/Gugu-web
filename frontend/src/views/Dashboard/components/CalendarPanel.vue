@@ -108,6 +108,8 @@ import { useRouter } from 'vue-router'
 import DatePicker from '@/components/common/controls/DatePicker.vue'
 import { useHolidays } from '@/composables/shared/useHolidays'
 import { projectProgress } from '@/utils/projectProgress'
+import { capBg, hexAlpha, darkenHex } from '@/utils/calendarColors'
+import { browserDayKey as localIso } from '@/utils/dateAttribution'
 
 
 const projectStore = useProjectStore()
@@ -307,10 +309,6 @@ const calDays = computed(() => {
 })
 
 
-function localIso(d: Date) {
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
-}
-
 // 近期节点：合并日历事件 + 项目截止日，未来 15 天内，按日期排序
 const visibleEvents = computed(() => {
   const now      = new Date()
@@ -376,26 +374,6 @@ function openProject(e: any) {
   if (proj) projectStore.openModal(proj)
 }
 
-function capBg(hex: string, progress = 0) {
-  const base = hexAlpha(hex, 0.1)
-  if (!progress) return base
-  const fill = hexAlpha(hex, 0.32)
-  return `linear-gradient(to right, ${fill} 0%, ${fill} ${progress}%, ${base} ${progress}%, ${base} 100%)`
-}
-
-function hexAlpha(hex: string, a: number) {
-  const r = parseInt(hex.slice(1,3),16)
-  const g = parseInt(hex.slice(3,5),16)
-  const b = parseInt(hex.slice(5,7),16)
-  return `rgba(${r},${g},${b},${a})`
-}
-
-function darkenHex(hex: string, amount = 0.60) {
-  const r = Math.round(parseInt(hex.slice(1,3),16) * amount)
-  const g = Math.round(parseInt(hex.slice(3,5),16) * amount)
-  const b = Math.round(parseInt(hex.slice(5,7),16) * amount)
-  return `rgb(${r},${g},${b})`
-}
 </script>
 
 <style scoped>

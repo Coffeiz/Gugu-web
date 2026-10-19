@@ -1,7 +1,7 @@
 import { nextTick, onUnmounted, type Ref } from 'vue'
 import type { Project } from '@/types/project'
 import type { FileMeta, FolderMeta } from '@/stores/filesCache'
-import type { FileLibraryNavigationTarget, NavSeg, FolderCard as FolderCardMeta } from '@/utils/filesNav'
+import type { FileLibraryNavigationTarget, NavSeg } from '@/utils/filesNav'
 import { doneYear, doneMonth } from '@/utils/fileParse'
 import { filesApi, foldersApi } from '@/services/api'
 

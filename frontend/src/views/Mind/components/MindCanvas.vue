@@ -46,7 +46,7 @@
 
 <script setup lang="ts">
 /** 无限画布：相机负责平移/缩放；对象拖拽统一走 interaction runtime；这里编排关系拖拽。 */
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch, type PropType } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, type PropType } from 'vue'
 import type { MindCanvasItem, MindRelation } from '@/services/api'
 import { runtime, type MoveAction, type NodeConnectionEndpoint, type RuntimeEvent } from '@/interaction/runtime'
 import { MIND_CANVAS_OBJECT_TYPES, MIND_CANVAS_OBJECT_TYPE, MIND_CANVAS_SURFACE_ID, MIND_PROJECT_DRAWER_SURFACE_ID, mindCanvasObjectId, registerMindLandingTargetResolver } from '@/interaction/runtime/canvas'

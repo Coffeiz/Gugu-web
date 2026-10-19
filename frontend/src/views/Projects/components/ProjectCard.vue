@@ -178,7 +178,8 @@ import CloseButton from '@/components/common/overlays/CloseButton.vue'
 import PopupMenu from '@/components/common/overlays/PopupMenu.vue'
 import { filesApi, uploadWithProgress, uploadDirectWithProgress } from '@/services/api'
 import SegBar from '@/components/common/controls/SegBar.vue'
-import { cloneProjectStages, firstIncompleteStageIdx, projectTodoProgress } from '@/utils/projectStages'
+import { cloneProjectStages, firstIncompleteStageIdx } from '@/utils/projectStages'
+import { projectProgress } from '@/utils/projectProgress'
 import { useProjectCardBasics } from '@/composables/shared/useProjectCardBasics'
 
 defineOptions({ inheritAttrs: false })
@@ -299,7 +300,7 @@ function persistTodos(advanceTo?: string) {
   projectStore.saveTodos(
     props.project.id,
     cloneProjectStages(todoDraftStages.value),
-    projectTodoProgress(todoDraftStages.value, props.project.currentStage),
+    projectProgress({ stages: todoDraftStages.value, currentStage: props.project.currentStage }),
     advanceTo,
   )
 }
