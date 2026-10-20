@@ -16,10 +16,10 @@
            :class="['msg-virtual-row', { 'is-tool-row': msg.role === 'tool', 'is-interaction-row': msg.role === 'interaction' }]"
            :style="{ transform: `translateY(${row.start}px)` }">
         <div :class="['msg', msg.role]" :data-db-id="msg.dbId || ''"
-           v-memo="[msg.role, msg.speakerLabel, msg.text, msg.html, msg.streaming, msg.references, msg.roundId, msg.toolCallId, msg.toolStatus, msg.toolDurationMs, msg.toolInput, msg.toolResult, msg.linkButtons, msg.interaction?.resolved, msg.interaction?.selectedOptionId, msg.interaction?.allowTextInput, msg.interaction?.customInputActive, msg.interaction?.taskPaused, msg.interaction?.submitting, msg.interaction?.responseText, msg.interaction?.secretFields, interactionAnswerMode, msg.files?.length, msg.files?.map(f => `${f.file_id ?? ''}:${f.attach_id ?? ''}:${f.ext ?? ''}`).join(','), msg.quotedText, copiedId === msg.id, voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId)]">
+           v-memo="[msg.role, msg.speakerLabel, msg.text, msg.html, msg.streaming, msg.references, msg.roundId, msg.toolCallId, msg.toolStatus, msg.toolDurationMs, msg.toolInput, msg.toolResult, msg.linkButtons, msg.interaction?.resolved, msg.interaction?.selectedOptionId, msg.interaction?.allowTextInput, msg.interaction?.customInputActive, msg.interaction?.taskPaused, msg.interaction?.submitting, msg.interaction?.responseText, msg.interaction?.secretFields, interactionAnswerMode, msg.files?.length, msg.files?.map(f => `${f.file_id ?? ''}:${f.attach_id ?? ''}:${f.ext ?? ''}`).join(','), msg.quotedText, copiedId === msg.id, voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId), voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId) ? voiceBars.join(',') : '']">
           <GuguChatMessageRow
             :msg="msg" :is-group-session="isGroupSession" :interaction-answer-mode="interactionAnswerMode"
-            :copied-id="copiedId" :voice-playing-id="voicePlayingId"
+            :copied-id="copiedId" :voice-playing-id="voicePlayingId" :voice-bars="voiceBars"
             @copy="$emit('copy', $event)" @toggle-voice="$emit('toggleVoice', $event)"
             @open-file="$emit('openFile', $event)" @download="$emit('download', $event)" @action-click="$emit('actionClick', $event)"
             @interaction-select="(selectedMsg, option) => $emit('interactionSelect', selectedMsg, option)"
@@ -71,6 +71,7 @@ const props = defineProps<{
   interactionAnswerMode: InteractionAnswerMode
   copiedId: number | null
   voicePlayingId: string | null
+  voiceBars: number[]
   expanded: boolean
   resizing: boolean
   statusKind: string

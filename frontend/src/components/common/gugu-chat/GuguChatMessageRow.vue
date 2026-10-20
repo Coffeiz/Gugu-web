@@ -49,9 +49,9 @@
          @click="$emit('toggleVoice', f)" :title="t('chat.clickPlayVoice')">
       <span class="mv-btn">
         <Icon name="media.pause" v-if="voicePlayingId === f.attach_id" :size="13" />
-        <Icon name="media.play"  v-else :size="13" />
+        <Icon name="media.play-fill" v-else :size="13" />
       </span>
-      <span class="mv-wave"><i v-for="n in 13" :key="n" :style="{ height: voiceBar(n) }" /></span>
+      <span class="mv-wave"><i v-for="n in 13" :key="n" :style="{ height: `${voiceBars[n - 1]}%` }" /></span>
       <span class="mv-dur">{{ fmtDur(f.duration) }}</span>
     </div>
     <div v-else-if="f.qq_face" class="msg-face-image-wrap" @click="$emit('openFile', f)" :title="t('chat.viewEmoji')">
@@ -103,7 +103,7 @@ import type { ChatMessage, ChatFile, ChatReference, InteractionAnswerMode } from
 import { renderMdStream, renderChatMd } from './markdown'
 import {
   isImageFile, isAnimatedImageFile, canPreview,
-  fmtSize, fmtDur, voiceBar, displayQQFaces,
+  fmtSize, fmtDur, displayQQFaces,
 } from './messageDisplay'
 import { makeLazyThumbDirective } from './lazyThumbDirective'
 const props = defineProps<{
@@ -112,6 +112,7 @@ const props = defineProps<{
   interactionAnswerMode: InteractionAnswerMode
   copiedId: number | null
   voicePlayingId: string | null
+  voiceBars: number[]
 }>()
 const { t } = useI18n()
 const runOutcomeDetail = computed(() => {

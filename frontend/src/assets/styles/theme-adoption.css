@@ -338,7 +338,7 @@ html[data-theme='dark'][data-family] .mini-player {
 }
 html[data-theme='dark'][data-family] .mini-player .mp-bars i,
 html[data-theme='dark'][data-family] .mini-player .mp-track {
-  background: var(--surface-soft-hover);
+  background: var(--gugu-chat-voice-wave);
 }
 html[data-theme='dark'][data-family] .mini-player .mp-fill,
 html[data-theme='dark'][data-family] .mini-player .mp-thumb {

@@ -1,4 +1,4 @@
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import { useAudioStore } from '@/stores/audio'
 import { API_BASE } from '../chatConstants'
 import type { ChatFile } from '../chatTypes'
@@ -24,6 +24,87 @@ export function useChatAudio(options: {
   const audioPlaying  = ref(false)
   const audioCurrent  = ref(0)
   const audioDuration = ref(0)
+  const audioIdleBars = [12, 12, 12, 12]
+  const idleVoiceBars = Array(13).fill(12)
+  const audioBars = ref([...audioIdleBars])
+  const voiceBars = ref([...idleVoiceBars])
+  type WaveTarget = { analyser: AnalyserNode; bars: typeof audioBars }
+  let audioContext: AudioContext | null = null
+  let samplingFrame = 0
+  const analyzers = new WeakMap<HTMLAudioElement, AnalyserNode>()
+  const waveTargets = new Map<HTMLAudioElement, WaveTarget>()
+
+  function ensureAudioContext(): AudioContext | null {
+    if (audioContext) return audioContext
+    if (typeof window === 'undefined' || !window.AudioContext) return null
+    try { audioContext = new window.AudioContext(); return audioContext }
+    catch { return null }
+  }
+
+  function ensureAnalyser(element: HTMLAudioElement): AnalyserNode | null {
+    const existing = analyzers.get(element)
+    if (existing) return existing
+    const context = ensureAudioContext()
+    if (!context || context.state !== 'running') return null
+    try {
+      const source = context.createMediaElementSource(element)
+      const analyser = context.createAnalyser()
+      analyser.fftSize = 256
+      analyser.smoothingTimeConstant = 0.72
+      source.connect(analyser)
+      analyser.connect(context.destination)
+      analyzers.set(element, analyser)
+      return analyser
+    } catch {
+      // 分析器不可用时仍保留 HTMLAudioElement 原有播放能力。
+      return null
+    }
+  }
+
+  function sampleWave(analyser: AnalyserNode, count: number): number[] {
+    const spectrum = new Uint8Array(analyser.frequencyBinCount)
+    analyser.getByteFrequencyData(spectrum)
+    return Array.from({ length: count }, (_, index) => {
+      const start = Math.max(1, Math.floor(index * spectrum.length / count))
+      const end = Math.max(start + 1, Math.floor((index + 1) * spectrum.length / count))
+      let total = 0
+      for (let bin = start; bin < Math.min(end, spectrum.length); bin++) total += spectrum[bin]
+      const average = total / Math.max(1, Math.min(end, spectrum.length) - start)
+      return Math.max(12, Math.min(100, Math.round(Math.sqrt(average / 255) * 100)))
+    })
+  }
+
+  function sampleWaves() {
+    samplingFrame = 0
+    let hasPlayingTarget = false
+    for (const [element, target] of waveTargets) {
+      if (element.paused || element.ended) { waveTargets.delete(element); continue }
+      hasPlayingTarget = true
+      target.bars.value = sampleWave(target.analyser, target.bars.value.length)
+    }
+    if (hasPlayingTarget) samplingFrame = requestAnimationFrame(sampleWaves)
+  }
+
+  function onMediaPlay(element: HTMLAudioElement, bars: typeof audioBars) {
+    const context = ensureAudioContext()
+    if (!context) return
+    void context.resume().then(() => {
+      if (element.paused) return
+      const analyser = ensureAnalyser(element)
+      if (!analyser) return
+      waveTargets.set(element, { analyser, bars })
+      if (!samplingFrame) samplingFrame = requestAnimationFrame(sampleWaves)
+    }).catch(() => {})
+  }
+
+  function onMediaPause(element: HTMLAudioElement, bars: typeof audioBars, idle: number[]) {
+    waveTargets.delete(element)
+    bars.value = idle
+    if (!waveTargets.size && samplingFrame) {
+      cancelAnimationFrame(samplingFrame)
+      samplingFrame = 0
+    }
+  }
 
   function onAudioDurationChange() {
     const duration = audioEl.value?.duration || 0
@@ -67,14 +148,23 @@ export function useChatAudio(options: {
     void element.play().catch(() => { audioPlaying.value = false })
   }
 
+  function onAudioPlay() {
+    audioPlaying.value = true
+    if (audioEl.value) onMediaPlay(audioEl.value, audioBars)
+  }
+
   function onCanPlay() {
     if (!audioEl.value) return
     audioEl.value.volume = audioVolume.value
     if (needsRestore.value) { needsRestore.value = false; restoreProgress() }
     playMainAudio()
   }
-  function onAudioPause() { audioPlaying.value = false }
+  function onAudioPause() {
+    audioPlaying.value = false
+    if (audioEl.value) onMediaPause(audioEl.value, audioBars, audioIdleBars)
+  }
   function onAudioEnded() {
+    if (audioEl.value) onMediaPause(audioEl.value, audioBars, audioIdleBars)
     audioPlaying.value = false
     const key = progKey(); if (key) localStorage.removeItem(key)
     const action = audioStore.handleTrackEnded()
@@ -146,16 +236,30 @@ export function useChatAudio(options: {
         url = URL.createObjectURL(await res.blob()); _voiceUrls[id] = url
       }
       const a = new Audio(url); _voiceAudio = a; voicePlayingId.value = id
-      a.onended = a.onpause = () => { if (voicePlayingId.value === id) voicePlayingId.value = null }
+      a.onplay = () => onMediaPlay(a, voiceBars)
+      a.onended = a.onpause = () => {
+        onMediaPause(a, voiceBars, idleVoiceBars)
+        if (voicePlayingId.value === id) voicePlayingId.value = null
+      }
       await a.play()
     } catch (e) { voicePlayingId.value = null; options.onTip(i18n.global.t('chatUi.voicePlayFailed')) }
   }
 
+  onUnmounted(() => {
+    for (const element of waveTargets.keys()) element.pause()
+    waveTargets.clear()
+    if (samplingFrame) cancelAnimationFrame(samplingFrame)
+    samplingFrame = 0
+    _voiceAudio?.pause()
+    Object.values(_voiceUrls).forEach((url) => URL.revokeObjectURL(url))
+    if (audioContext && audioContext.state !== 'closed') void audioContext.close()
+  })
+
   return {
-    audioEl, audioPlaying, audioCurrent, audioDuration, audioSeekPct,
+    audioEl, audioPlaying, audioCurrent, audioDuration, audioSeekPct, audioBars,
     onAudioDurationChange,
-    saveProgress, onCanPlay, onAudioPause, onAudioEnded, audioToggle, audioStop,
+    saveProgress, onCanPlay, onAudioPlay, onAudioPause, onAudioEnded, audioToggle, audioStop,
     audioVolume, audioMuted, audioSetVolume, audioToggleMute, audioStartDrag, fmtTime,
-    voicePlayingId, toggleVoice,
+    voicePlayingId, voiceBars, toggleVoice,
   }
 }

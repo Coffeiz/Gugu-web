@@ -89,7 +89,7 @@
         ref="messageListRef"
         :messages="messages" :session-id="sessionId" :is-group-session="isGroupSession"
         :interaction-answer-mode="interactionAnswerMode"
-        :copied-id="copiedId" :voice-playing-id="voicePlayingId"
+        :copied-id="copiedId" :voice-playing-id="voicePlayingId" :voice-bars="voiceBars"
         :expanded="expanded" :resizing="resizing" :status-kind="statusKind" :status-typed="statusTyped"
         :session-settling="sessionSettling"
         :history-state="historyState" :on-load-history="onLoadHistory"
@@ -187,6 +187,7 @@ const props = defineProps<{
   isGroupSession: boolean
   copiedId: number | null
   voicePlayingId: string | null
+  voiceBars: number[]
   statusKind: string
   statusTyped: string
   historyState?: ChatHistoryState

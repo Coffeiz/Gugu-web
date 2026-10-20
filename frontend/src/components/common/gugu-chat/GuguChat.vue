@@ -1,9 +1,8 @@
 <template>
   <!-- 迷你播放器 -->
   <GuguChatMiniPlayer
-    ref="miniPlayerRef"
     :visible="!!audioStore.file && (miniPinned || open)"
-    :style="miniPlayerStyle" :bars-playing="barsPlaying"
+    :style="miniPlayerStyle" :bars-playing="audioPlaying" :wave-bars="audioBars"
     :file-name="audioStore.file ? `${audioStore.file.displayName}.${audioStore.file.ext?.toLowerCase()}` : ''"
     :playlist="audioStore.playlist" :current-track-id="audioStore.file?.id ?? null"
     :pinned="miniPinned" @update:pinned="miniPinned = $event"
@@ -21,7 +20,7 @@
     :src="audioStore.blobUrl ?? undefined"
     @timeupdate="audioCurrent = audioEl?.currentTime ?? 0"
     @durationchange="onAudioDurationChange"
-    @play="audioPlaying = true"
+    @play="onAudioPlay"
     @pause="onAudioPause"
     @ended="onAudioEnded"
     @canplay="onCanPlay"
@@ -69,7 +68,7 @@
       :interaction-answer-mode="interactionAnswerMode"
       :presence-kind="presenceKind" :presence-text="presenceText" :presence-title="presenceTitle"
       :messages="messages" :is-group-session="isGroupSession"
-      :copied-id="copiedId" :voice-playing-id="voicePlayingId"
+      :copied-id="copiedId" :voice-playing-id="voicePlayingId" :voice-bars="voiceBars"
       :status-kind="statusKind" :status-typed="statusTyped"
       :session-settling="sessionSettling"
       :history-state="historyState" :on-load-history="loadOlderHistory"
@@ -227,20 +226,18 @@ const { refreshAfterTools, onChatActionClick } = useChatActions({
 })
 const { openMindRef } = useMindRefActions()
 const fabRef        = ref<InstanceType<typeof GuguChatFab> | null>(null)
-const miniPlayerRef = ref<InstanceType<typeof GuguChatMiniPlayer> | null>(null)
 const rippleActive  = ref(false)
-const barsPlaying   = ref(false)
 const spinningBack = ref(false)
 let rippleTimeout: ReturnType<typeof setTimeout> | null = null
 
 // 悬浮球转场动画在 audioStore.file 清空前触发（拿最后角度做转回归位动画）；
 // 播放器机制（暂停/进度/音量/语音条播放）全部收在 useChatAudio。
 const {
-  audioEl, audioPlaying, audioCurrent, audioDuration, audioSeekPct,
-  saveProgress, onCanPlay, onAudioPause, onAudioEnded, audioToggle, audioStop,
+  audioEl, audioPlaying, audioCurrent, audioDuration, audioSeekPct, audioBars,
+  saveProgress, onCanPlay, onAudioPlay, onAudioPause, onAudioEnded, audioToggle, audioStop,
   onAudioDurationChange,
   audioVolume, audioMuted, audioSetVolume, audioToggleMute, audioStartDrag, fmtTime,
-  voicePlayingId, toggleVoice,
+  voicePlayingId, voiceBars, toggleVoice,
 } = useChatAudio({
   onTip: (text) => _chatTip(text),
   onBeforeStop: () => {
@@ -263,21 +260,6 @@ const {
 function selectAudioTrack(track: AudioTrack) {
   void audioStore.play(track)
 }
-
-watch(audioPlaying, (playing) => {
-  if (playing) {
-    miniPlayerRef.value?.barsEl?.querySelectorAll('i').forEach((b) => { (b as HTMLElement).style.cssText = '' })
-    barsPlaying.value = true
-  } else {
-    const bars = miniPlayerRef.value?.barsEl?.querySelectorAll('i') ?? []
-    bars.forEach((b) => { (b as HTMLElement).style.height = getComputedStyle(b).height; (b as HTMLElement).style.transition = 'none' })
-    barsPlaying.value = false
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      bars.forEach((b) => { (b as HTMLElement).style.transition = 'height 0.45s ease-out'; (b as HTMLElement).style.height = '4px' })
-    }))
-    setTimeout(() => bars.forEach((b) => { (b as HTMLElement).style.cssText = '' }), 500)
-  }
-})
 
 watch(audioPlaying, (playing) => {
   if (playing) { if (rippleTimeout) clearTimeout(rippleTimeout); rippleActive.value = true }
@@ -1170,11 +1152,8 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
   background: var(--gugu-chat-voice-button-bg); box-shadow: var(--elevation-card);
 }
 :deep(.msg-voice .mv-wave) { display: flex; align-items: center; gap: 2px; height: 18px; }
-:deep(.msg-voice .mv-wave i) { width: 2.5px; border-radius: 2px; background: var(--gugu-chat-voice-wave); transition: background 0.2s; }
-:deep(.msg-voice.playing .mv-wave i) { background: var(--gugu-chat-voice-wave-playing); animation: mv-pulse 0.9s ease-in-out infinite; }
-:deep(.msg-voice .mv-wave i:nth-child(even)) { animation-delay: 0.15s; }
-:deep(.msg-voice .mv-wave i:nth-child(3n)) { animation-delay: 0.3s; }
-@keyframes mv-pulse { 0%,100% { transform: scaleY(0.6); } 50% { transform: scaleY(1); } }
+:deep(.msg-voice .mv-wave i) { width: 2.5px; border-radius: 2px; background: var(--gugu-chat-voice-wave); transition: height 320ms ease-out, background 0.2s; }
+:deep(.msg-voice.playing .mv-wave i) { transition: height 70ms linear, background 0.2s; }
 :deep(.msg-voice .mv-dur) { font-size: 12.5px; color: var(--gugu-chat-voice-duration); font-variant-numeric: tabular-nums; flex-shrink: 0; }
 /* 用户(右侧)发的附件卡：气泡尾巴翻到右下、左下回正常圆角、容器右对齐 */
 :deep(.msg.user .msg-files) { align-items: flex-end; }

@@ -2,7 +2,7 @@
   <Transition name="mini-player">
     <div v-if="visible" class="mini-player" :style="style">
       <div class="mp-info">
-        <span class="mp-bars" :class="{ 'mp-bars--playing': barsPlaying }" ref="barsEl"><i v-for="n in 4" :key="n" /></span>
+        <span class="mp-bars" :class="{ 'mp-bars--playing': barsPlaying }"><i v-for="n in 4" :key="n" :style="{ height: `${waveBars[n - 1]}%` }" /></span>
         <span class="mp-name">{{ fileName }}</span>
         <div class="btn-group">
           <button class="mp-btn mp-btn--pin" :class="{ 'mp-btn--pinned': pinned }"
@@ -109,9 +109,7 @@ import type { AudioPlaybackMode, AudioTrack } from '@/stores/audio'
 /**
  * 迷你播放器卡片：纯展示 + 交互转发。真正的 <audio> 元素和播放机制仍在
  * GuguChat.vue（useChatAudio 的 audioEl 需要在同一处声明模板 ref 才能绑定
- * 到真实 DOM），这里只是外壳。barsEl 通过 defineExpose 暴露——播放态切换时
- * 的等宽条动画重置（audioPlaying watcher）需要直接操作这些 DOM 节点的
- * style，那段是一次性的动画序列，不适合抽成响应式状态。
+ * 到真实 DOM），这里只是外壳。波形高度由 useChatAudio 的音频分析结果驱动。
  */
 const {
   visible,
@@ -142,6 +140,7 @@ const {
   visible: boolean
   style: Record<string, string | number>
   barsPlaying: boolean
+  waveBars: number[]
   fileName: string
   playlist: AudioTrack[]
   currentTrackId: number | null
@@ -203,8 +202,6 @@ function trackName(track: AudioTrack) {
   return track.ext ? `${track.displayName ?? ''}.${track.ext.toLowerCase()}` : track.displayName ?? ''
 }
 
-const barsEl = ref<HTMLElement | null>(null)
-defineExpose({ barsEl: computed(() => barsEl.value) })
 </script>
 
 <style scoped>
@@ -219,13 +216,8 @@ defineExpose({ barsEl: computed(() => barsEl.value) })
 .mp-info { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .mp-name { font-size: 12px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
 .mp-bars { display: flex; align-items: flex-end; gap: 2px; height: 14px; flex-shrink: 0; }
-.mp-bars i { display: block; width: 2.5px; border-radius: 99px; background: color-mix(in srgb, var(--action-primary) 58%, transparent); height: 4px; }
-.mp-bars--playing i { animation: mp-eq 0.55s ease-in-out infinite alternate; }
-.mp-bars--playing i:nth-child(1) { animation-duration: 0.55s; }
-.mp-bars--playing i:nth-child(2) { animation-duration: 0.42s; animation-delay: 0.1s; }
-.mp-bars--playing i:nth-child(3) { animation-duration: 0.65s; animation-delay: 0.05s; }
-.mp-bars--playing i:nth-child(4) { animation-duration: 0.48s; animation-delay: 0.15s; }
-@keyframes mp-eq { from { height: 3px; } to { height: 13px; } }
+.mp-bars i { display: block; width: 2.5px; border-radius: 99px; background: var(--gugu-chat-voice-wave); height: 4px; transition: height 320ms ease-out; }
+.mp-bars--playing i { transition: height 70ms linear; }
 .mp-seek-row { display: flex; align-items: center; gap: 6px; }
 .mp-time { font-size: 10px; color: var(--text-secondary); font-variant-numeric: tabular-nums; flex-shrink: 0; }
 /* 视觉轨道保持 3px，透明命中区上下各扩 5px，不改变进度行布局。 */
