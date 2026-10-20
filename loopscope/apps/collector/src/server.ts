@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ZodError } from 'zod'
-import { TraceRunInputSchema } from '@loopscope/contracts'
+import { TraceRunFinishSchema, TraceRunInputSchema } from '@loopscope/contracts'
 import { TraceStore } from '@loopscope/storage'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
@@ -83,6 +83,26 @@ export function createCollectorServer(store: TraceStore) {
     if (req.method === 'POST' && pathname === '/api/collector/runs') {
       const payload = TraceRunInputSchema.parse(await readJson(req))
       const result = store.ingestRun(payload)
+      const event = JSON.stringify({
+        type: 'run.changed',
+        run_id: payload.id,
+        session_key: payload.session_key,
+        status: payload.status,
+      })
+      for (const client of runEventClients) {
+        if (client.writable) client.write(`data: ${event}\n\n`)
+      }
+      sendJson(res, 200, result)
+      return
+    }
+    const finishMatch = pathname.match(/^\/api\/collector\/runs\/([^/]+)\/finish$/)
+    if (req.method === 'POST' && finishMatch) {
+      const payload = TraceRunFinishSchema.parse(await readJson(req, 16 * 1024))
+      if (decodeURIComponent(finishMatch[1]!) !== payload.id) {
+        sendJson(res, 400, { error: 'run id mismatch' })
+        return
+      }
+      const result = store.finishRun(payload)
       const event = JSON.stringify({
         type: 'run.changed',
         run_id: payload.id,

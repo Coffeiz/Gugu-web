@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { and, asc, count, desc, eq, inArray, lt, sql } from 'drizzle-orm'
-import { TraceRunInputSchema, type TokenUsage, type TraceRunInput } from '@loopscope/contracts'
+import { TraceRunFinishSchema, TraceRunInputSchema, type TokenUsage, type TraceRunInput } from '@loopscope/contracts'
 import { artifacts, contextFragments, openDatabase, runs, sessions, spans, usage } from '@loopscope/db'
 
 function record(value: unknown): Record<string, unknown> {
@@ -90,7 +90,7 @@ export class TraceStore {
         set: {
           externalSessionId: payload.external_session_id,
           source: payload.source,
-          updatedAt: ended ?? payload.started_at,
+          updatedAt: sql`max(${sessions.updatedAt}, excluded.updated_at)`,
           title: sql`CASE WHEN ${sessions.title} LIKE 'Session %' OR ${sessions.title} = 'Untitled session' THEN excluded.title ELSE ${sessions.title} END`,
         },
       }).run()
@@ -113,9 +113,10 @@ export class TraceStore {
         set: {
           sessionKey: payload.session_key,
           traceId: payload.trace_id,
-          status: payload.status,
-          endedAt: ended,
-          durationMs: payload.duration_ms ?? null,
+          // 允许迟到的运行中快照更新正文，但不能把已经提交的终态改回 running。
+          status: sql`CASE WHEN ${runs.endedAt} IS NOT NULL AND excluded.ended_at IS NULL THEN ${runs.status} ELSE excluded.status END`,
+          endedAt: sql`CASE WHEN ${runs.endedAt} IS NOT NULL AND excluded.ended_at IS NULL THEN ${runs.endedAt} ELSE excluded.ended_at END`,
+          durationMs: sql`CASE WHEN ${runs.endedAt} IS NOT NULL AND excluded.ended_at IS NULL THEN ${runs.durationMs} ELSE excluded.duration_ms END`,
           inputJson: payload.input,
           outputJson: payload.output,
           attributesJson: payload.attributes,
@@ -199,6 +200,57 @@ export class TraceStore {
     return { ok: true, run_id: payload.id, spans: payload.spans.length }
   }
 
+  finishRun(raw: unknown) {
+    const payload = TraceRunFinishSchema.parse(raw)
+    const { db } = this.connection
+    const durationMs = payload.duration_ms
+
+    db.transaction(tx => {
+      tx.insert(sessions).values({
+        sessionKey: payload.session_key,
+        externalSessionId: payload.external_session_id,
+        source: payload.source,
+        title: `Session ${payload.external_session_id || payload.session_key}`,
+        createdAt: payload.started_at,
+        updatedAt: payload.ended_at,
+      }).onConflictDoUpdate({
+        target: sessions.sessionKey,
+        set: {
+          externalSessionId: payload.external_session_id,
+          source: payload.source,
+          updatedAt: sql`max(${sessions.updatedAt}, excluded.updated_at)`,
+        },
+      }).run()
+
+      // 正常情况下首个运行快照已经建好 run。这个轻量占位行也覆盖“首个大快照
+      // 尚未写完就结束”的竞态，之后完整快照会补齐正文与 spans。
+      tx.insert(runs).values({
+        id: payload.id,
+        sessionKey: payload.session_key,
+        traceId: null,
+        status: payload.status,
+        startedAt: payload.started_at,
+        endedAt: payload.ended_at,
+        durationMs,
+        inputJson: {},
+        outputJson: {},
+        attributesJson: {},
+        usageJson: {},
+        rawJson: payload,
+      }).onConflictDoUpdate({
+        target: runs.id,
+        set: {
+          sessionKey: payload.session_key,
+          status: sql`CASE WHEN ${runs.endedAt} IS NULL THEN excluded.status ELSE ${runs.status} END`,
+          endedAt: sql`coalesce(${runs.endedAt}, excluded.ended_at)`,
+          durationMs: sql`coalesce(${runs.durationMs}, excluded.duration_ms)`,
+        },
+      }).run()
+    })
+
+    return { ok: true, run_id: payload.id }
+  }
+
   listSessions() {
     const rows = this.connection.db
       .select({
@@ -233,7 +285,20 @@ export class TraceStore {
     const condition = options.before == null
       ? eq(runs.sessionKey, sessionKey)
       : and(eq(runs.sessionKey, sessionKey), lt(runs.startedAt, options.before))
-    const rows = this.connection.db.select().from(runs).where(condition)
+    // 原始载荷可能远大于摘要字段；列表响应不会返回 raw_json，因此查询时也不要读取它。
+    const rows = this.connection.db.select({
+      id: runs.id,
+      sessionKey: runs.sessionKey,
+      traceId: runs.traceId,
+      status: runs.status,
+      startedAt: runs.startedAt,
+      endedAt: runs.endedAt,
+      durationMs: runs.durationMs,
+      inputJson: runs.inputJson,
+      outputJson: runs.outputJson,
+      attributesJson: runs.attributesJson,
+      usageJson: runs.usageJson,
+    }).from(runs).where(condition)
       .orderBy(desc(runs.startedAt)).limit(limit).all()
     // Run 列表统一按最新到最旧返回，前端默认展示最新 Run，向上滚动再加载历史。
     return rows.map(row => this.runApi(row))
@@ -243,7 +308,21 @@ export class TraceStore {
     const limit = Math.min(Math.max(Math.trunc(options.limit ?? 50), 1), 100)
     const conditions = [eq(sessions.source, 'reflection')]
     if (options.before != null) conditions.push(lt(runs.startedAt, options.before))
-    const rows = this.connection.db.select({ run: runs })
+    const rows = this.connection.db.select({
+      run: {
+        id: runs.id,
+        sessionKey: runs.sessionKey,
+        traceId: runs.traceId,
+        status: runs.status,
+        startedAt: runs.startedAt,
+        endedAt: runs.endedAt,
+        durationMs: runs.durationMs,
+        inputJson: runs.inputJson,
+        outputJson: runs.outputJson,
+        attributesJson: runs.attributesJson,
+        usageJson: runs.usageJson,
+      },
+    })
       .from(runs)
       .innerJoin(sessions, eq(runs.sessionKey, sessions.sessionKey))
       .where(and(...conditions))
@@ -312,7 +391,9 @@ export class TraceStore {
     }))
   }
 
-  private runApi(row: typeof runs.$inferSelect) {
+  private runApi(row: Pick<typeof runs.$inferSelect,
+    'id' | 'sessionKey' | 'traceId' | 'status' | 'startedAt' | 'endedAt' | 'durationMs'
+    | 'inputJson' | 'outputJson' | 'attributesJson' | 'usageJson'>) {
     return {
       id: row.id,
       session_key: row.sessionKey,

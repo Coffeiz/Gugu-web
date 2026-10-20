@@ -883,7 +883,7 @@ async def _flush_due_owner_reflection_member(redis, settings, idle_key, member, 
 
 
 async def flush_due_owner_reflections(settings, *, now: float | None = None, limit: int = 100) -> int:
-    """收束 owner 私聊/群聊中连续闲置 4 分 30 秒的反思缓冲。"""
+    """收束 owner 私聊/群聊中连续闲置 4 分钟的反思缓冲。"""
     from app.core import redis as R
 
     redis = R.get_redis()
