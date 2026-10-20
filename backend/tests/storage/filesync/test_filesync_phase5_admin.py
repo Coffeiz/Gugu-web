@@ -145,6 +145,9 @@ async def test_admin_reconcile_issues_only_enqueues_anomalous_active_regular_loc
 
     monkeypatch.setattr(config, "get_settings", lambda: _local_settings(tmp_path))
     monkeypatch.setattr(filesync_admin, "workspace_shell_supported", lambda: True)
+    async def capture_root(*_args):
+        return (1, 2)
+    monkeypatch.setattr(filesync_admin, "capture_binding_root_identity", capture_root)
     monkeypatch.setattr(filesync_admin_service, "get_settings", lambda: _local_settings(tmp_path))
     monkeypatch.setattr(filesync_admin_service, "workspace_shell_supported", lambda: True)
     eligible_a = FileSyncBinding(
@@ -176,7 +179,7 @@ async def test_admin_reconcile_issues_only_enqueues_anomalous_active_regular_loc
     await db.flush()
     queued = FileSyncReconcileRun(
         user_id=user_a.id, binding_id=eligible_a.id, action="repair",
-        allow_delete=False, status="queued", root_fingerprint=eligible_a.root_fingerprint,
+        allow_delete=True, status="queued", root_fingerprint=eligible_a.root_fingerprint,
     )
     running = FileSyncReconcileRun(
         user_id=user_a.id, binding_id=busy_a.id, action="repair",
@@ -196,7 +199,7 @@ async def test_admin_reconcile_issues_only_enqueues_anomalous_active_regular_loc
     rows = list((await db.scalars(
         select(FileSyncReconcileRun).where(FileSyncReconcileRun.action == "repair")
     )).all())
-    assert all(row.allow_delete is False for row in rows)
+    assert all(row.allow_delete is True for row in rows if row.binding_id != busy_a.id)
     assert {row.binding_id for row in rows} == {eligible_a.id, busy_a.id, eligible_b.id}
 @pytest.mark.asyncio
 async def test_admin_conflict_resolution_honors_feature_flag(db, user_a, monkeypatch):

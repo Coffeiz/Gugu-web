@@ -597,7 +597,7 @@ def verify_changed_file_candidates(
     for candidate in candidates:
         if stop_event.is_set():
             raise InterruptedError("扫描已取消")
-        if candidate.object_type != "file" or candidate.operation not in {"create", "update"}:
+        if candidate.object_type != "file" or candidate.operation not in {"create", "update", "conflict"}:
             continue
         path = root / candidate.relative_path
         try:

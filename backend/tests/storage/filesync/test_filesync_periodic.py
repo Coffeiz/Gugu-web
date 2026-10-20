@@ -1,4 +1,4 @@
-"""保护每周完整核对的活跃范围、幂等排队与非破坏性默认值。"""
+"""保护每周完整核对的活跃范围、幂等排队与根目录身份守卫。"""
 from datetime import timedelta
 from types import SimpleNamespace
 
@@ -43,6 +43,9 @@ async def test_weekly_scheduler_enqueues_only_due_active_user_bindings(
     monkeypatch.setattr(periodic, "get_settings", lambda: SimpleNamespace(
         filesync=SimpleNamespace(enabled=True, active_window_days=7),
     ))
+    async def capture_current_root(*_args):
+        return (1, 2)
+    monkeypatch.setattr(periodic, "_repair_root_identity", capture_current_root)
 
     first_count = await enqueue_due_weekly_reconciles(db, now=timestamp)
     second_count = await enqueue_due_weekly_reconciles(db, now=timestamp)
@@ -55,7 +58,7 @@ async def test_weekly_scheduler_enqueues_only_due_active_user_bindings(
     assert total == 1
     assert len(runs) == 1
     assert runs[0].action == "repair"
-    assert runs[0].allow_delete is False
+    assert runs[0].allow_delete is True
     assert await db.scalar(select(FileSyncReconcileRun.id).where(
         FileSyncReconcileRun.binding_id.in_((inactive.id, recently_checked.id)),
     )) is None

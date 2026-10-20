@@ -16,7 +16,7 @@ from app.core.tz import now_utc
 from app.db import session as db_session
 from app.models import FileSyncBinding, FileSyncReconcileRun, User, Workspace
 from app.services.filesync.bindings import resolve_local_binding_root
-from app.services.filesync.jobs import RECONCILABLE_OVERFLOW_CODES, ReconcileRunError, enqueue_reconcile_run
+from app.services.filesync.jobs import ReconcileRunError, enqueue_reconcile_run
 from app.services.filesync.outbox import deliver_file_event, enqueue_file_event
 from app.services.filesync.health import update_binding_health
 from app.services.filesync.inotify_limit_client import InotifyLimitUnavailable, request_limit_agent
@@ -158,7 +158,7 @@ class FileSyncWatcherManager:
             )
 
     async def _enqueue_gap_repair(self, binding_id: int) -> None:
-        """内核或协议溢出允许经完整扫描验证的删除；其他缺口仍需人工确认。"""
+        """有原始根目录身份守卫时排入完整修复；不完整扫描由 runner 拒绝删除。"""
         async with db_session._SessionLocal() as db:
             binding = await db.scalar(select(FileSyncBinding).where(
                 FileSyncBinding.id == binding_id,
@@ -174,7 +174,7 @@ class FileSyncWatcherManager:
                     user_id=binding.user_id,
                     binding_id=binding.id,
                     action="repair",
-                    allow_delete=identity is not None and binding.health_error_code in RECONCILABLE_OVERFLOW_CODES,
+                    allow_delete=identity is not None,
                     root_identity=identity,
                 )
             except LookupError:

@@ -130,8 +130,10 @@ async def test_periodic_overflow_deletion_requires_original_root_identity(
     if guard_state == "replaced":
         root.rename(tmp_path / "previous-root")
         root.mkdir()
+    from app.services.filesync.reconcile import _root_fingerprint
+
     binding = FileSyncBinding(user_id=user_a.id, source="local_directory", mode="bidirectional",
-                              status="active", root_path=".", root_fingerprint="a" * 64,
+                              status="active", root_path=".", root_fingerprint=_root_fingerprint(root),
                               needs_reconcile=True, gap_revision=1,
                               health_error_code="kernel_event_queue_overflow")
     db.add(binding)

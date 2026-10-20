@@ -1,8 +1,7 @@
 """文件夹目录对账后台入口（P1.5）。挂 require_admin（main.py include 时注入）。
 
 - GET  /admin/folder-doctor/scan   ：只读扫描，返回缺失目录/孤儿目录/位置不一致文件报告（不改盘）。
-- POST /admin/folder-doctor/repair ：补缺失目录（总是安全）；remove_orphans=true 才清孤儿目录；
-  relocate_files=true 才把位置不一致的文件搬到当前归属应在的物理位置。
+- POST /admin/folder-doctor/repair ：只补缺失目录；孤儿目录和位置不一致文件只报告。
 
 **安全**：repair 在服务端重新扫描、只对服务端计算的列表动作——不接受调用方传入待删/待搬路径。
 """
@@ -37,7 +36,10 @@ class RepairRequest(BaseModel):
 
 @router.post("/repair")
 async def repair_dirs(body: RepairRequest, db: AsyncSession = Depends(get_db)):
+    if body.remove_orphans or body.relocate_files:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=400, detail="目录对账只补齐缺失目录，不删除目录或搬迁文件")
     report = await folder_doctor.repair(
-        db, get_storage(), user_id=body.user_id,
-        remove_orphans=body.remove_orphans, relocate_files=body.relocate_files)
+        db, get_storage(), user_id=body.user_id)
     return report.to_dict()

@@ -1,5 +1,7 @@
-"""P1.5 folder_doctor —— 目录对账：报缺失/孤儿、补缺失、确认后清孤儿、忽略结构目录。"""
+"""P1.5 folder_doctor —— 目录对账：补缺失目录，报告孤儿/错位项目但不删除或搬迁。"""
 from pathlib import Path
+
+import pytest
 
 from app.api.v1 import folder_doctor_admin as doctor_api
 from app.models import File, Folder
@@ -58,15 +60,15 @@ async def test_repair_creates_missing(db, user_a, tmp_path):
     assert (storage.root / f"{user_a.id}/个人文件/补").is_dir()
 
 
-async def test_repair_removes_orphan_only_with_flag(db, user_a, tmp_path):
+async def test_repair_never_removes_orphan_directory(db, user_a, tmp_path):
     storage = _storage(tmp_path)
     await storage.ensure_folder(f"{user_a.id}/个人文件/ghost")
     r1 = await folder_doctor.repair(db, storage, user_id=user_a.id)   # 默认不删
     assert r1.removed == 0
     assert (storage.root / f"{user_a.id}/个人文件/ghost").is_dir()
     r2 = await folder_doctor.repair(db, storage, user_id=user_a.id, remove_orphans=True)
-    assert r2.removed == 1
-    assert not (storage.root / f"{user_a.id}/个人文件/ghost").exists()
+    assert r2.removed == 0
+    assert (storage.root / f"{user_a.id}/个人文件/ghost").is_dir()
 
 
 async def test_scan_healthy_after_create(db, user_a, tmp_path):
@@ -119,7 +121,7 @@ async def test_scan_detects_misplaced_file(db, user_a, tmp_path):
     assert report.to_dict()["healthy"] is False
 
 
-async def test_repair_relocates_file_only_with_flag(db, user_a, tmp_path):
+async def test_repair_never_relocates_misplaced_file(db, user_a, tmp_path):
     storage = _storage(tmp_path)
     parent = await _folder_row(db, user_a, "咕咕开发")
     child = await _folder_row(db, user_a, "ADR", parent_id=parent.id)
@@ -135,18 +137,13 @@ async def test_repair_relocates_file_only_with_flag(db, user_a, tmp_path):
     assert await storage.exists(stale_key)
 
     r2 = await folder_doctor.repair(db, storage, user_id=user_a.id, relocate_files=True)
-    assert r2.relocated == 1
+    assert r2.relocated == 0
     expected_key = f"{user_a.id}/个人文件/咕咕开发/ADR/ADR-002.md"
-    assert await storage.exists(expected_key)
-    assert not await storage.exists(stale_key)
+    assert not await storage.exists(expected_key)
+    assert await storage.exists(stale_key)
     await db.refresh(f)
-    assert f.storage_key == expected_key
-    assert r2.misplaced_files == []                       # 不再有位置不一致的文件
-    # 文件搬空后，陈旧的根级 "ADR" 目录变成了普通空壳孤儿——这正是两个检查组合起来
-    # 完整解决真实 bug 的方式：先搬文件内容，再清空壳（remove_orphans）才到 healthy。
-    assert f"{user_a.id}/个人文件/ADR" in r2.orphan_dirs
-    r3 = await folder_doctor.repair(db, storage, user_id=user_a.id, remove_orphans=True)
-    assert r3.to_dict()["healthy"] is True
+    assert f.storage_key == stale_key
+    assert len(r2.misplaced_files) == 1
 
 
 async def test_misplaced_file_skips_missing_physical_object(db, user_a, tmp_path):
@@ -217,7 +214,7 @@ async def test_scan_marks_misplaced_report_truncated(db, user_a, tmp_path):
     assert report.truncated is True
 
 
-async def test_repair_relocate_resolves_conflict(db, user_a, tmp_path):
+async def test_directory_repair_does_not_move_conflicting_file(db, user_a, tmp_path):
     storage = _storage(tmp_path)
     folder = await _folder_row(db, user_a, "资料")
     # 目标位置已经有一个同名文件占着
@@ -229,12 +226,11 @@ async def test_repair_relocate_resolves_conflict(db, user_a, tmp_path):
     await db.commit()
 
     report = await folder_doctor.repair(db, storage, user_id=user_a.id, relocate_files=True)
-    assert report.relocated == 1
+    assert report.relocated == 0
     await db.refresh(f)
-    assert f.display_name == "note(1)"                          # 冲突改名，不覆盖已有文件
-    assert f.storage_key == f"{user_a.id}/个人文件/资料/note(1).md"
-    assert await storage.get(f.storage_key) == b"incoming"
-    assert await storage.get(f"{user_a.id}/个人文件/资料/note.md") == b"existing"   # 原文件未被覆盖
+    assert f.storage_key == stale_key
+    assert await storage.get(stale_key) == b"incoming"
+    assert await storage.get(f"{user_a.id}/个人文件/资料/note.md") == b"existing"
 
 
 # ── admin 端点：relocate_files 透传 ──────────────────────────────────────────
@@ -249,6 +245,10 @@ async def test_repair_endpoint_relocate_files(db, user_a, tmp_path, monkeypatch)
     db.add(f)
     await db.commit()
 
-    out = await doctor_api.repair_dirs(
-        doctor_api.RepairRequest(user_id=user_a.id, relocate_files=True), db=db)
-    assert out["relocated"] == 1
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as error:
+        await doctor_api.repair_dirs(
+            doctor_api.RepairRequest(user_id=user_a.id, relocate_files=True), db=db)
+    assert error.value.status_code == 400
+    assert await storage.exists(stale_key)

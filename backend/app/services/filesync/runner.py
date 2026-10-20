@@ -66,7 +66,7 @@ from app.services.storage.folders import folder_dir_key
 from app.services.workspaces import workspace_shell_supported
 
 _COUNTER_KEYS = (
-    "created", "updated", "moved", "deleted", "skipped", "conflicts", "failed",
+    "created", "updated", "moved", "deleted", "skipped", "conflicts", "failed", "foldersDeferred",
     "foldersCreated", "foldersUpdated", "foldersDeleted", "plannedCreated", "plannedUpdated",
     "plannedDeleted", "exported", "permissionSkipped",
 )
@@ -355,6 +355,15 @@ async def _load_scope(session_factory, run_id: UUID) -> _RunScope:
         if root is None:
             raise _BindingRootUnavailable("同步绑定没有有效的工作区根目录")
         guarded_identity = _queued_root_identity(root, run.result_counts)
+        if guarded_identity is None and run.action == "repair" and root.exists():
+            # 兼容升级前排入且未保存 rootDevice/rootInode 的修复任务；从执行起点开始固定目录身份。
+            root_stat = root.stat()
+            guarded_identity = (root_stat.st_dev, root_stat.st_ino)
+            run.result_counts = {
+                **(run.result_counts or {}),
+                "rootDevice": root_stat.st_dev,
+                "rootInode": root_stat.st_ino,
+            }
         current_fingerprint = _root_fingerprint(root)
         if (
             (not root.is_dir() or current_fingerprint != run.root_fingerprint)
@@ -384,6 +393,16 @@ async def _load_scope(session_factory, run_id: UUID) -> _RunScope:
             await notify_run_changed(run, coalesce=True)
         if not root.is_dir() or root.is_symlink() or current_fingerprint != run.root_fingerprint:
             raise _BindingRootUnavailable("同步根目录不存在、不可访问或身份已变化")
+        if guarded_identity is None and run.action == "repair":
+            # 仅在空工作区根目录已通过恢复校验后捕获身份；有历史记录的缺失根仍会先被拒绝。
+            root_stat = root.stat()
+            guarded_identity = (root_stat.st_dev, root_stat.st_ino)
+            run.result_counts = {
+                **(run.result_counts or {}),
+                "rootDevice": root_stat.st_dev,
+                "rootInode": root_stat.st_ino,
+            }
+            await db.commit()
         scope = _RunScope(
             run_id=run.id,
             user_id=run.user_id,
@@ -589,7 +608,7 @@ def _count_plans(counts: dict[str, int], candidates: list[ReconcileCandidate]) -
             counts["plannedUpdated"] += 1
         elif candidate.operation == "delete":
             counts["plannedDeleted"] += 1
-        elif candidate.operation in {"ambiguous", "conflict"}:
+        elif candidate.operation == "ambiguous":
             counts["conflicts"] += 1
 
 
@@ -624,9 +643,6 @@ async def _project_batch(
             await db.rollback()
             return False
         _assert_root_identity(scope.root, scope.root_identity)
-        pending_conflicts = await _current_path_conflicts(
-            db, scope.binding_id, [item.relative_path for item in candidates],
-        )
         current_candidates = await _current_candidates(
             db, scope, candidates, storage_prefix,
         )
@@ -649,68 +665,38 @@ async def _project_batch(
                 continue
             if candidate.operation == "ambiguous":
                 continue
-            if candidate.relative_path in pending_conflicts:
-                if candidate.operation != "conflict":
-                    transaction_counts["conflicts"] = transaction_counts.get("conflicts", 0) + 1
-                continue
-            if candidate.operation == "conflict":
-                if index not in current_candidates:
-                    transaction_counts["skipped"] = transaction_counts.get("skipped", 0) + 1
-                    continue
-                db.add(FileSyncConflict(
-                    binding_id=scope.binding_id,
-                    user_id=scope.user_id,
-                    relative_path=candidate.relative_path,
-                    source=FileSyncSource.LOCAL_DIRECTORY,
-                    baseline_fingerprint=candidate.baseline_fingerprint,
-                    local_fingerprint=candidate.observed_fingerprint,
-                    remote_fingerprint=(
-                        snapshot_fingerprint(
-                            scope.user_id, scope.binding_id, candidate.relative_path,
-                        ) or candidate.baseline_fingerprint
-                    ),
-                    status="pending",
-                ))
-                continue
             if scope.action == "initialize" and candidate.operation == "update":
                 transaction_counts["skipped"] = transaction_counts.get("skipped", 0) + 1
                 continue
-            if candidate.operation in {"create", "update"} and candidate.object_type == "file":
+            if candidate.operation in {"create", "update", "conflict"} and candidate.object_type == "file":
                 verified = verified_files.get(candidate.relative_path)
                 if verified is None:
+                    transaction_counts["failed"] = transaction_counts.get("failed", 0) + 1
                     transaction_counts["skipped"] = transaction_counts.get("skipped", 0) + 1
                     continue
             else:
                 verified = None
             if candidate.operation == "delete" and candidate.relative_path not in missing_paths:
+                transaction_counts["failed"] = transaction_counts.get("failed", 0) + 1
                 transaction_counts["skipped"] = transaction_counts.get("skipped", 0) + 1
                 continue
             if index not in current_candidates:
                 transaction_counts["skipped"] = transaction_counts.get("skipped", 0) + 1
                 continue
+            if candidate.object_type == "folder" and candidate.operation == "delete":
+                # 普通文件修复不因目录暂时为空而删除目录记录；目录结构由目录补修单独处理。
+                transaction_counts["skipped"] = transaction_counts.get("skipped", 0) + 1
+                transaction_counts["foldersDeferred"] = transaction_counts.get("foldersDeferred", 0) + 1
+                continue
             if candidate.operation == "delete" and (
                 scope.action != "repair" or not allow_delete
             ):
                 if candidate.object_type == "file":
-                    db.add(FileSyncConflict(
-                        binding_id=scope.binding_id,
-                        user_id=scope.user_id,
-                        relative_path=candidate.relative_path,
-                        source=FileSyncSource.LOCAL_DIRECTORY,
-                        baseline_fingerprint=candidate.baseline_fingerprint,
-                        local_fingerprint=None,
-                        remote_fingerprint=(
-                            snapshot_fingerprint(
-                                scope.user_id, scope.binding_id, candidate.relative_path,
-                            ) or candidate.baseline_fingerprint
-                        ),
-                        status="pending",
-                    ))
                     transaction_counts["conflicts"] = transaction_counts.get("conflicts", 0) + 1
                 else:
                     transaction_counts["skipped"] = transaction_counts.get("skipped", 0) + 1
                 continue
-            if candidate.object_type == "file" and candidate.operation in {"create", "update"}:
+            if candidate.object_type == "file" and candidate.operation in {"create", "update", "conflict"}:
                 batch.changed.add(candidate.relative_path)
                 if candidate.operation == "create":
                     batch.created_files.add(candidate.relative_path)
@@ -755,6 +741,23 @@ async def _project_batch(
                 transaction_counts[f"rejected_{reason}"] = count
             if summary.rejected:
                 transaction_counts["skipped"] = transaction_counts.get("skipped", 0) + summary.rejected
+            if not summary.rejected:
+                resolved_paths = set(batch.changed) | set(batch.deleted)
+                if resolved_paths:
+                    pending_rows = (await db.scalars(select(FileSyncConflict).where(
+                        FileSyncConflict.binding_id == scope.binding_id,
+                        FileSyncConflict.user_id == scope.user_id,
+                        FileSyncConflict.relative_path.in_(resolved_paths),
+                        FileSyncConflict.status == "pending",
+                    ).with_for_update())).all()
+                    resolved_at = now_utc()
+                    for conflict in pending_rows:
+                        conflict.status = "resolved"
+                        conflict.resolution = (
+                            "confirm_delete" if conflict.relative_path in batch.deleted else "keep_local"
+                        )
+                        conflict.resolved_at = resolved_at
+                        conflict.updated_at = resolved_at
             if summary.entity_ids or summary.conflicts:
                 outbox = await enqueue_file_event(
                     db,
@@ -891,9 +894,11 @@ async def _execute_scope(
             )
         # 空目录无法证明“过去登记的文件确实应该全部删除”。仍允许进入差异处理，
         # 但本轮强制关闭自动删除，让缺失文件进入人工冲突处置，而不是任务直接失败。
-        allow_delete_for_scan = (scope.allow_delete and not manifest.permission_excluded_count and not (
-            manifest.scanned_count == 0 and file_count + folder_count > 0
-        ))
+        allow_delete_for_scan = (
+            scope.action == "repair"
+            and scope.allow_delete
+            and not manifest.permission_excluded_count
+        )
         storage_prefix = await _check_scope_before_batch(session_factory, scope, signals.stop)
         counts = _empty_counts()
         if scope.guarded_root_identity is not None:
@@ -1001,6 +1006,8 @@ async def _execute_scope(
         if counts["permissionSkipped"]:
             # 可读范围的投影可以保留，但未覆盖权限受限子树不能声明完整核对成功。
             return "failed", "scan_permission_denied", counts
+        if counts["conflicts"]:
+            return "failed", "unresolved_conflicts", counts
         if counts["failed"]:
             return "failed", "path_projection_failed", counts
         if scope.action == "repair":

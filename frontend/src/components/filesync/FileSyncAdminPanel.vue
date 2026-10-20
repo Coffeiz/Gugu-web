@@ -457,6 +457,7 @@ function resultSummary(run: FileSyncRunStatus) {
     deleted: values.deleted ?? 0, skipped: values.skipped ?? 0,
     conflicts: values.conflicts ?? 0, failed: values.failed ?? 0,
     permissionSkipped: values.permissionSkipped ?? 0,
+    foldersDeferred: values.foldersDeferred ?? 0,
   })
 }
 

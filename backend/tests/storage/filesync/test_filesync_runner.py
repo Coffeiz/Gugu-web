@@ -568,7 +568,7 @@ async def test_repair_refreshes_stale_fingerprint_for_canonical_nonempty_workspa
     db.add(binding)
     await db.flush()
     run = await enqueue_reconcile_run(
-        db, user_id=user_a.id, binding_id=binding.id, action="repair", allow_delete=False,
+        db, user_id=user_a.id, binding_id=binding.id, action="repair",
     )
     await db.commit()
 
@@ -729,10 +729,10 @@ async def test_repair_does_not_recreate_missing_root_when_old_records_exist(
 
 
 @pytest.mark.asyncio
-async def test_empty_scan_without_history_creates_reviewable_conflict(
+async def test_complete_empty_scan_soft_deletes_missing_file_record(
     db, user_a, monkeypatch,
 ):
-    """空根不自动删除 DB 文件，但应把缺失状态交给管理端逐项确认。"""
+    """根目录身份有效且完整扫描确认文件缺失时，自动软删除对应 File 记录。"""
     import app.services.filesync.runner as runner
     import app.services.filesync.targeted as targeted
 
@@ -794,10 +794,10 @@ async def test_empty_scan_without_history_creates_reviewable_conflict(
         ))
 
     assert stored_run is not None and stored_run.status == "succeeded"
-    assert stored_run.result_counts["conflicts"] == 1
-    assert conflict is not None and conflict.local_fingerprint is None
-    assert stored_file is not None and stored_file.deleted_at is None
-    assert stored_file.version == 3
+    assert stored_run.result_counts["deleted"] == 1
+    assert conflict is None
+    assert stored_file is not None and stored_file.deleted_at is not None
+    assert stored_file.version == 4
 
 
 @pytest.mark.asyncio
@@ -1275,7 +1275,7 @@ async def test_live_write_after_scan_verification_is_not_projected_from_stale_fi
         root_fingerprint=binding.root_fingerprint,
         gap_revision=binding.gap_revision,
         action="repair",
-        allow_delete=False,
+        allow_delete=True,
     )
     candidate = ReconcileCandidate(
         "个人文件/复核后写入.txt",
@@ -1575,7 +1575,7 @@ async def test_confirmed_repair_hashes_same_stat_update_and_applies_missing_file
 
 
 @pytest.mark.asyncio
-async def test_non_deleting_repair_persists_missing_file_as_actionable_conflict(
+async def test_complete_repair_soft_deletes_verified_missing_file(
     db, user_a,
 ):
     import app.services.filesync.runner as runner
@@ -1606,7 +1606,7 @@ async def test_non_deleting_repair_persists_missing_file_as_actionable_conflict(
     db.add_all([binding, row])
     await db.flush()
     run = await enqueue_reconcile_run(
-        db, user_id=user_a.id, binding_id=binding.id, action="repair", allow_delete=False,
+        db, user_id=user_a.id, binding_id=binding.id, action="repair", allow_delete=True,
     )
     await db.commit()
     claimed = await claim_next_run(db, "conflict-test", now=now_utc())
@@ -1622,7 +1622,7 @@ async def test_non_deleting_repair_persists_missing_file_as_actionable_conflict(
         root_fingerprint=binding.root_fingerprint,
         gap_revision=claimed.gap_revision,
         action="repair",
-        allow_delete=False,
+        allow_delete=True,
     )
     candidate = ReconcileCandidate(
         relative_path="个人文件/已离线删除.txt",
@@ -1650,11 +1650,10 @@ async def test_non_deleting_repair_persists_missing_file_as_actionable_conflict(
         FileSyncConflict.relative_path == candidate.relative_path,
         FileSyncConflict.status == "pending",
     ))
-    assert pending is not None and pending.local_fingerprint is None
-    assert pending.remote_fingerprint == candidate.baseline_fingerprint
-    assert counts["conflicts"] == 1
+    assert pending is None
+    assert counts["conflicts"] == 0
     await db.refresh(row)
-    assert row.deleted_at is None
+    assert row.deleted_at is not None
 
 
 @pytest.mark.asyncio
@@ -1703,11 +1702,11 @@ async def test_stale_scan_artifact_cleanup_preserves_active_runs_and_progress_is
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("variant", ["baseline", "fixed", "fixed-root-replaced"])
+@pytest.mark.parametrize("variant", ["baseline", "fixed", "fixed-other-gap", "fixed-root-replaced"])
 async def test_overflow_recovery_ab_converges_without_deleting_replaced_root(
     filesync_runner_db, user_a, monkeypatch, variant,
 ):
-    """同样的漏事件删除，A 留下冲突，B 经持久队列收敛；根替换则停止。"""
+    """完整扫描可跨不同 watcher 缺口收敛；绑定根目录被替换时停止。"""
     import app.services.filesync.runner as runner
     import app.services.filesync.targeted as targeted
     from app.services.filesync.health import update_binding_health
@@ -1740,7 +1739,8 @@ async def test_overflow_recovery_ab_converges_without_deleting_replaced_root(
         await enqueue_reconcile_run(db, user_id=user_id, binding_id=binding_id, action="repair", allow_delete=False)
         await db.commit()
     else:
-        await update_binding_health(db, binding_id, status="degraded", error_code="kernel_event_queue_overflow", gap_detected=True)
+        code = "watcher_gap" if variant == "fixed-other-gap" else "kernel_event_queue_overflow"
+        await update_binding_health(db, binding_id, status="degraded", error_code=code, gap_detected=True)
         manager = FileSyncWatcherManager()
         stat = root.stat()
         manager._binding_root_identities[binding_id] = (stat.st_dev, stat.st_ino)
@@ -1759,7 +1759,7 @@ async def test_overflow_recovery_ab_converges_without_deleting_replaced_root(
         state = await check.get(FileSyncBinding, binding_id)
     deleted = sum(row.deleted_at is not None for row in rows)
     assert len(rows) == 64
-    if variant == "fixed":
+    if variant in {"fixed", "fixed-other-gap"}:
         assert deleted == 64
         assert run.status == "succeeded"
         assert not state.needs_reconcile

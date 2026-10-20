@@ -23,6 +23,7 @@ from app.services.filesync.inotify_limit_client import (
 )
 from app.services.filesync.jobs import (
     ReconcileRunError,
+    capture_binding_root_identity,
     enqueue_reconcile_run,
     get_reconcile_run,
     list_reconcile_runs,
@@ -111,14 +112,14 @@ async def binding_reconcile(
 ):
     if not body.confirm:
         raise HTTPException(status_code=400, detail="对账执行必须显式确认")
-    if body.allow_delete:
-        raise HTTPException(status_code=400, detail="删除同步对象请使用逐项恢复入口")
     try:
         binding = await get_admin_binding(db, binding_id)
         if binding is None:
             raise LookupError("同步绑定不存在")
         run = await enqueue_reconcile_run(
             db, user_id=binding.user_id, binding_id=binding.id, action="repair",
+            allow_delete=True,
+            root_identity=await capture_binding_root_identity(db, binding),
         )
         await db.commit()
         await notify_run_changed(run)
@@ -136,13 +137,11 @@ async def reconcile_issue_bindings(
     body: BindingActionRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """批量排入非破坏性修复核对。"""
+    """批量排入完整修复核对。"""
     from app.core.config import get_settings
 
     if not body.confirm:
         raise HTTPException(status_code=400, detail="批量对账必须显式确认")
-    if body.allow_delete:
-        raise HTTPException(status_code=400, detail="批量对账不允许删除文件库记录")
     if get_settings().storage.backend != "local" or not workspace_shell_supported():
         raise HTTPException(status_code=400, detail="当前存储模式不支持本地文件同步")
 
@@ -171,7 +170,8 @@ async def reconcile_issue_bindings(
                 user_id=binding.user_id,
                 binding_id=binding.id,
                 action="repair",
-                allow_delete=False,
+                allow_delete=True,
+                root_identity=await capture_binding_root_identity(db, binding),
             )
         except LookupError:
             result["skipped"] += 1

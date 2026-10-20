@@ -654,7 +654,7 @@ async def test_phase3_mirror_out_copies_db_objects_to_bound_directory(db, user_a
 
 
 @pytest.mark.asyncio
-async def test_phase3_bidirectional_changes_after_baseline_create_conflict(db, user_a, monkeypatch, tmp_path):
+async def test_phase3_bidirectional_changes_project_physical_file(db, user_a, monkeypatch, tmp_path):
     import app.services.filesync.bindings as bindings
     import app.services.filesync.reconcile as reconcile
     import app.services.filesync.protocol as protocol
@@ -685,18 +685,13 @@ async def test_phase3_bidirectional_changes_after_baseline_create_conflict(db, u
         db, user_a.id, root_path="个人文件", mode="bidirectional",
     )
     await db.commit()
-    assert result.summary.conflicts == 1
-    assert result.summary.updated == 0
-    conflict = (await db.scalars(select(FileSyncConflict))).one()
-    assert conflict.status == "pending"
-    await resolve_sync_conflict(db, user_a.id, conflict.id, "keep_local")
-    await db.commit()
-    assert conflict.status == "resolved"
+    assert result.summary.conflicts == 0
+    assert result.summary.updated == 1
     assert path.read_text(encoding="utf-8") == "local change"
 
 
 @pytest.mark.asyncio
-async def test_keep_local_advances_baseline_when_watcher_already_journaled_same_fingerprint(
+async def test_physical_file_wins_when_database_and_disk_both_changed(
     db, user_a, monkeypatch, tmp_path,
 ):
     """保留本地必须新增冲突决策基线，避免复用旧 watcher journal 后原冲突重现。"""
@@ -755,22 +750,17 @@ async def test_keep_local_advances_baseline_when_watcher_already_journaled_same_
 
     conflict_ids = await bindings._pending_conflicts(db, user_a.id, binding, root)
     await db.commit()
-    assert len(conflict_ids) == 1
-    conflict = await db.get(FileSyncConflict, conflict_ids[0])
-    assert conflict is not None
+    assert conflict_ids == ()
 
-    await resolve_sync_conflict(db, user_a.id, conflict.id, "keep_local")
+    result = await sync_local_binding(
+        db, user_a.id, root_path="个人文件", mode="bidirectional", allow_delete=False,
+    )
     await db.commit()
+    assert result.summary.updated == 1
 
     recreated = await bindings._pending_conflicts(db, user_a.id, binding, root)
     assert recreated == ()
-    journals = (await db.scalars(select(FileSyncJournal).where(
-        FileSyncJournal.binding_id == binding.id,
-        FileSyncJournal.relative_path == "conflict.txt",
-        FileSyncJournal.status == "synced",
-    ).order_by(FileSyncJournal.id.desc()))).all()
-    assert journals[0].observed_fingerprint == local_fingerprint
-    assert journals[0].id != journals[-1].id
+    assert snapshots.snapshot_fingerprint(user_a.id, binding.id, "conflict.txt") == local_fingerprint
 
 
 @pytest.mark.asyncio
@@ -864,7 +854,7 @@ async def test_keep_local_uses_workspace_root_and_prevents_reconcile_conflict_re
 
 
 @pytest.mark.asyncio
-async def test_phase3_conflict_keep_remote_and_keep_both_apply_snapshot(db, user_a, monkeypatch, tmp_path):
+async def test_phase3_physical_file_wins_without_manual_conflict(db, user_a, monkeypatch, tmp_path):
     import app.services.filesync.bindings as bindings
     import app.services.filesync.reconcile as reconcile
     import app.services.filesync.protocol as protocol
@@ -892,22 +882,13 @@ async def test_phase3_conflict_keep_remote_and_keep_both_apply_snapshot(db, user
     await db.flush()
     result = await sync_local_binding(db, user_a.id, root_path="个人文件", mode="bidirectional")
     await db.commit()
-    conflict = (await db.scalars(select(FileSyncConflict))).one()
-    assert result.summary.conflicts == 1
-
-    await resolve_sync_conflict(db, user_a.id, conflict.id, "keep_remote")
-    await db.commit()
-    assert path.read_text(encoding="utf-8") == "baseline"
-
-    path.write_text("local second", encoding="utf-8")
-    row.updated_at = __import__("app.core.tz", fromlist=["now_utc"]).now_utc()
-    await db.flush()
-    await sync_local_binding(db, user_a.id, root_path="个人文件", mode="bidirectional")
-    await db.commit()
-    conflict = (await db.scalars(select(FileSyncConflict).where(FileSyncConflict.status == "pending"))).one()
-    await resolve_sync_conflict(db, user_a.id, conflict.id, "keep_both")
-    await db.commit()
-    assert (root / "conflict (remote).txt").read_text(encoding="utf-8") == "baseline"
+    pending = (await db.scalars(select(FileSyncConflict).where(
+        FileSyncConflict.status == "pending",
+    ))).all()
+    assert result.summary.conflicts == 0
+    assert result.summary.updated == 1
+    assert pending == []
+    assert path.read_text(encoding="utf-8") == "local change"
 
 
 @pytest.mark.asyncio
