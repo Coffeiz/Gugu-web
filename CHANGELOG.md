@@ -5,22 +5,73 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [1.7.6] - 2026-10-21
 
-### Improvements
+### What's New
 
-- Let users undo Gugu's project, calendar, file, and folder deletions from the same conversation; keep these actions separate from the Web undo stack.
-- Make project and calendar creation safe to replay with explicit idempotency keys.
-- Add independent-session concurrency regression coverage for project, note, canvas note, folder, and file updates.
-- Reject stale Web undo when a later Agent edit changed the resource, rather than overwriting newer data.
+#### New Features
 
-### 改进
+- Undo Agent deletions of projects, calendar events, files and folders from the originating conversation.
+- Add MiniMax ASR, a LoopScope reflection diagnostics view, and a calendar action for adding an event to a selected day.
 
-- 将反思闲置收束窗口从 4 分 30 秒缩短到 4 分钟。
-- 支持在原对话撤销咕咕删除的项目、日程、文件和文件夹，且与网页撤销栈隔离。
-- 项目和日程创建支持显式幂等键，重复投递不会重复创建。
-- 补充项目、笔记、画布便签、文件夹和文件的跨 Session 并发回归测试。
-- 网页撤销遇到咕咕后续修改时会报告冲突并拒绝覆盖新数据。
+#### Improvements
+
+- Retain up to 2,000 messages per session and improve historical conversation search; keep reflection and compression windows independent.
+- Set the default model output limit to 25,600 tokens.
+- Set the group-reflection idle window to four minutes, prevent passive messages from extending it, and reuse captured prefixes only when restored Provider history matches.
+- Keep chat reading position stable while loading older messages and attach tool results to the correct history page.
+- Make project and calendar creation idempotent, and reject stale undo when a later Agent edit changed the resource.
+- Improve QQ and Telegram streaming around Mermaid images, tool results and message completion; route Telegram attachment downloads through the configured backend egress proxy.
+- Improve file-sync recovery and reconciliation after watcher event loss, and add safer batch handling for missing records.
+- Improve LoopScope localization and account display, QQ voice attachment handling, audio playback controls, calendar selection colors and file-preview location details.
+
+#### Fixes
+
+- Roll back parent-folder deletion when deleting a nested folder fails.
+- Fix QQ streaming duplicate prefixes and missing Markdown rendering, and preserve stable text around Mermaid images.
+- Correct reflection timing and prevent stale or mismatched history from being appended to a captured prefix.
+- Fix chat pagination position, mail-preview style leakage and file-sync recovery edge cases.
+
+#### Contributors
+
+- Thank you to [@Coffeiz](https://github.com/Coffeiz) for PR #104.
+
+#### Feedback & Issue Reporters
+
+- None for this release.
+
+### 更新内容
+
+#### 新功能
+
+- 支持在原对话中撤销咕咕删除的项目、日程、文件和文件夹。
+- 新增 MiniMax ASR、LoopScope 反思诊断页面，以及为选中日期添加日程的操作。
+
+#### 改进
+
+- 每个会话最多保留 2,000 条消息并改进历史对话搜索；反思和压缩的窗口策略保持独立。
+- 默认模型输出上限调整为 25,600 tokens。
+- 群反思闲置收束窗口缩短为 4 分钟，被动消息不再延长窗口；只有恢复后的 Provider 历史匹配时才复用已捕获前缀。
+- 加载更早聊天记录时保持阅读位置，并将工具结果放在对应的历史分页中。
+- 项目和日程创建支持幂等；咕咕后续修改对象后，网页撤销会检测冲突并拒绝覆盖。
+- 优化 QQ 和 Telegram 中 Mermaid 图片、工具结果与流式收尾的发送顺序；Telegram 附件下载使用配置的后端出站代理。
+- 改进文件监听事件丢失后的恢复和对账，并完善缺失记录的批量处理安全性。
+- 改进 LoopScope 多语言与账号显示、QQ 语音附件读取、音频播放控件、日历选区颜色和文件预览路径信息。
+
+#### 修复
+
+- 删除嵌套文件夹失败时回滚父文件夹删除，避免留下部分删除状态。
+- 修复 QQ 流式回复重复发送前缀、Markdown 渲染缺失及 Mermaid 图文衔接问题。
+- 修正反思触发时序；历史前缀不一致时不再追加到已捕获快照。
+- 修复聊天历史分页位置、邮件预览样式泄漏及文件同步恢复边界问题。
+
+#### 贡献者
+
+- 感谢 [@Coffeiz](https://github.com/Coffeiz) 提交 PR #104。
+
+#### 反馈与问题报告
+
+- 暂无。
 
 ## [1.7.5] - 2026-10-18
 
@@ -30,8 +81,6 @@
 
 - Preview and confirm missing file-library records in batches from the sync conflict list.
 - Add Provider-native web search for MiniMax, GLM, Qwen, DeepSeek, MiMo and Ollama Cloud, with per-model switches and billing notices.
-- Add MiniMax ASR as a speech-recognition option for Admin and BYOK credentials.
-- Add paginated loading of older messages in Web chat and a dedicated LoopScope reflections view.
 
 #### Improvements
 
@@ -53,13 +102,6 @@
 - Allow selecting and copying Mermaid source in the fullscreen preview.
 - Improve search routing, cross-source verification and fact checking for uncertain names, attributes and references.
 - Combine web and image search in XNG Search and hide search tools that have no usable configuration.
-- Add Chinese and English translations to LoopScope and show the connected account in its navigation rail.
-- Trigger group-memory reflection from completed active-run idle windows or estimated context pressure, without extending the idle timer for passive messages.
-- Record reflection request timing, cache-prefix structure and usage probes in LoopScope without storing request text.
-- Keep tool results attached to the correct Web chat history page and preserve the reading position while loading older messages.
-- Add a calendar context-menu action for creating an activity on a single selected day.
-- Preserve confirmed tool outcomes and relevant object names when compressing task and memory context.
-- Show the workspace directory name in file preview location details and carry it into file-library navigation.
 
 ### Fixes
 
@@ -98,8 +140,6 @@
 
 - 文件同步冲突列表支持预览并分批确认本地缺失记录。
 - 新增 MiniMax、GLM、百炼、DeepSeek、MiMo 和 Ollama Cloud 原生联网搜索，支持按模型启用并提示可能产生的费用。
-- Admin 和 BYOK 语音识别配置新增 MiniMax ASR。
-- Web 聊天支持分页加载更早消息，LoopScope 新增反思观测页面。
 
 #### 改进
 
@@ -121,13 +161,6 @@
 - Mermaid 全屏预览源码支持鼠标选择和复制。
 - 优化搜索工具分工与复杂任务混合检索，补充多来源比对和具体实体、属性、引用的真实性核验指引。
 - XNG Search 统一网页、图像及混合搜索；未配置的搜索能力不再展示给模型。
-- LoopScope 导航支持中英文切换，并显示已连接账号。
-- 群记忆反思根据主动 run 完成后的闲置窗口或估算的上下文压力触发；被动消息不再延长闲置计时。
-- LoopScope 记录反思请求时间、缓存前缀结构和用量探针，不保存请求正文。
-- Web 聊天加载旧页时保持阅读位置，并将工具结果归入正确的历史分页。
-- 日历单日右键菜单支持添加活动。
-- 压缩任务和记忆上下文时保留工具回执确认的结果及继续工作所需的对象名称。
-- 文件预览位置显示工作区目录名，并在跳转文件库时保留该目录信息。
 
 ### 修复
 

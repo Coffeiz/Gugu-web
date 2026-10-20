@@ -1,6 +1,6 @@
 {
   "name": "gugu-web",
-  "version": "1.7.5",
+  "version": "1.7.6",
   "private": true,
   "license": "Apache-2.0",
   "scripts": {
