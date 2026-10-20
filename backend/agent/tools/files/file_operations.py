@@ -1,6 +1,6 @@
 """文件操作工具实现：目录列表、文本编辑与文件创建、上传和管理。
 
-改名、创建、复制复用 FileService；其他文档操作使用 `_fmt_size`/`color_value`、
+改名、创建、复制复用 FileService；文本正文写入复用 files actions 服务，其他操作使用 `color_value`、
 `app.services.storage.trash`（`move_file_to_trash`）与
 存储层 `get_storage()`，整理类工具复刻 `update_file` 的 key 重建逻辑，不自己拼路径。
 
@@ -10,7 +10,7 @@
 import json
 import re
 
-from app.core.errors import Invalid
+from app.core.errors import Conflict, Invalid
 from app.core.redaction import redact
 from app.core.tz import now_utc
 from app.services.storage.folders import resolve_folder_path
@@ -26,12 +26,15 @@ from app.services.files.browser import (
     file_counts_for_folders,
     search_user_files,
 )
-from app.services.storage.file_service.files import _fmt_size
+from app.services.files.actions import FileContentError, update_file_content as update_file_content_service
 from app.services.storage.file_service.content_types import (
     TEXT_EXTS, is_text_file_record as _is_text_file_record,
 )
 from app.services.files.actions import delete_file as delete_file_action
+from app.services.undo.agent import record_agent_forward
+from app.services.undo.files import file_snapshot, operation_state, ref_for
 from app.services.storage.file_service import FileService
+from agent.tools.base import current_dispatch_session_id
 from app.search.query import normalize_queries
 from agent.tools.text_edit import apply_line_edits
 from .locations import (
@@ -341,6 +344,18 @@ async def _list_dir(db, user_id, args: dict):
     return result
 
 
+async def _save_agent_file_content(db, storage, user_id, file, content: str):
+    try:
+        updated_file = await update_file_content_service(
+            db, storage, user_id, file.id, content, int(file.version or 1),
+        )
+    except Conflict:
+        return None, "文件已被其他端修改，请重新读取后重试"
+    except FileContentError as error:
+        return None, error.detail
+    return updated_file, None
+
+
 async def _edit_one(db, user_id, f, spec: dict) -> dict:
     """对已解析的 File f 应用一次编辑（mode + content/find/replace），各自 commit。返回结果 dict。
     供单个与批量 edit 共用。"""
@@ -385,13 +400,13 @@ async def _edit_one(db, user_id, f, spec: dict) -> dict:
     data = new.encode("utf-8")
     if len(data) > READ_MAX_BYTES:
         return {"error": "修改后文件过大，单文件上限 256KB", "name": nm}
-    await storage.put(f.storage_key, data, f.mime_type)
-    f.size_bytes = len(data)
-    f.size = _fmt_size(len(data))
-    f.version = int(f.version or 1) + 1
-    f.updated_at = now_utc()
+    updated_file, save_error = await _save_agent_file_content(db, storage, user_id, f, new)
+    if save_error:
+        return {"error": save_error, "name": nm}
+    if updated_file is None:
+        return {"error": "文件不存在或已被删除", "name": nm}
     await db.commit()
-    result = {"success": True, "file_id": f.id, "name": nm, "new_size": f.size, "change": change}
+    result = {"success": True, "file_id": f.id, "name": nm, "new_size": updated_file.size, "change": change}
     # 内容骤降告警：行级整体替换也可能误删正文，改后显著变短时确定性提示模型核对。
     # 不全靠它自己「读回来发现」（配合 skills.md「改正文必须 read_file 读回比对」铁律）。
     if len(old) >= 200 and len(new) < len(old) * 0.5:
@@ -630,8 +645,11 @@ async def _rename_one(db, user_id, f, new_name: str, new_fmt: str | None = None)
             display_name=new_display, ext=new_ext, stage_name=None,
             folder_id=None, project_id=None, folder_set=False, project_set=False,
             workspace_directory_id=None, workspace_directory_set=False,
+            client_version=int(f.version or 1),
         )
         await db.commit()
+    except Conflict as error:
+        return {"error": error.public_message, "name": old_name}
     except Invalid as error:
         return {"error": error.public_message, "name": old_name}
     except ValueError as error:
@@ -688,18 +706,39 @@ async def _delete_file(db, user_id, args: dict):
                 return error
             files.append(file)
         results = []
+        before_items = {ref_for("file", file.id): file_snapshot(file) for file in files}
         for file in files:
             await delete_file_action(db, get_storage(), user_id, file.id, now_utc())
             results.append({"file_id": file.id, "name": f"{file.display_name}.{file.ext}",
                             "note": "已移入回收站，30 天内可还原",
                             "_file_op": {"op": "remove", "kind": "file", "id": file.id}})
+        await db.flush()
+        after_items = {ref_for("file", file.id): file_snapshot(file) for file in files}
+        await record_agent_forward(
+            db, user_id=user_id, session_id=current_dispatch_session_id(),
+            resource="files", action="delete",
+            target_refs=[{"kind": "file", "id": file.id} for file in files],
+            before_state=operation_state(before_items), after_state=operation_state(after_items),
+            base_versions={ref: {"version": state.get("version", 0)}
+                           for ref, state in before_items.items()},
+        )
         await db.commit()
         return {"success": True, "deleted_count": len(results), "results": results}
     f, _err = await _resolve_file(db, user_id, args)
     if _err:
         return _err
     fid = f.id; fname = f"{f.display_name}.{f.ext}"
+    before = file_snapshot(f)
     await delete_file_action(db, get_storage(), user_id, f.id, now_utc())
+    await db.flush()
+    after = file_snapshot(f)
+    ref = ref_for("file", fid)
+    await record_agent_forward(
+        db, user_id=user_id, session_id=current_dispatch_session_id(),
+        resource="files", action="delete", target_refs=[{"kind": "file", "id": fid}],
+        before_state=operation_state({ref: before}), after_state=operation_state({ref: after}),
+        base_versions={ref: {"version": before.get("version", 0)}},
+    )
     await db.commit()
     return {"success": True, "file_id": fid, "name": fname,
             "note": "已移入回收站，30 天内可还原",

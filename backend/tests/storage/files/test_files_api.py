@@ -15,7 +15,7 @@ from sqlalchemy import select
 from starlette.datastructures import Headers
 
 from app.api.v1 import files as files_api
-from app.core.errors import Invalid, NotFound
+from app.core.errors import Conflict, Invalid, NotFound
 from app.models import File, Folder, Project, StorageQuotaLedger, UndoOperation
 from app.schemas import FileCopyBody, FileUpdate
 from app.services.storage import LocalStorageBackend
@@ -155,7 +155,7 @@ async def test_file_summary_returns_only_requested_recent_rows(db, user_a):
 
 async def test_patch_rename_endpoint(db, user_a):
     up = await _do_upload(db, user_a, b"1", "old.txt")
-    r = await files_api.update_file(up.id, FileUpdate(display_name="new"),
+    r = await files_api.update_file(up.id, FileUpdate(version=up.version, display_name="new"),
                                     current_user=user_a, origin=None, db=db)
     assert r.display_name == "new"
 
@@ -163,7 +163,7 @@ async def test_patch_rename_endpoint(db, user_a):
 async def test_patch_extension_endpoint_updates_suffix_only(db, user_a):
     up = await _do_upload(db, user_a, b"unchanged", "notes.txt")
     file_row = await db.get(File, up.id)
-    r = await files_api.update_file(up.id, FileUpdate(ext="md"),
+    r = await files_api.update_file(up.id, FileUpdate(version=up.version, ext="md"),
                                     current_user=user_a, origin=None, db=db)
     assert r.ext == "MD"
     assert r.display_name == "notes"
@@ -172,15 +172,40 @@ async def test_patch_extension_endpoint_updates_suffix_only(db, user_a):
     assert await files_api.get_storage().get(file_row.storage_key) == b"unchanged"
 
 
+async def test_text_content_endpoint_rejects_stale_version_without_overwriting(db, user_a):
+    uploaded = await _do_upload(db, user_a, b"original", "notes.md")
+    stale_version = uploaded.version
+    first = await files_api.update_file_content(
+        uploaded.id, SimpleNamespace(content="first update", version=stale_version),
+        current_user=user_a, origin=None, db=db,
+    )
+    assert first.version == stale_version + 1
+
+    with pytest.raises(Conflict):
+        await files_api.update_file_content(
+            uploaded.id, SimpleNamespace(content="stale overwrite", version=stale_version),
+            current_user=user_a, origin=None, db=db,
+        )
+
+    saved_file = await db.get(File, uploaded.id)
+    assert saved_file.version == stale_version + 1
+    assert await files_api.get_storage().get(saved_file.storage_key) == b"first update"
+
+
 @pytest.mark.parametrize("extension", ["", "FILE", "waytoolonggg", "bad.ext", "坏"])
 def test_file_update_rejects_invalid_extension(extension):
     with pytest.raises(ValidationError):
-        FileUpdate(ext=extension)
+        FileUpdate(version=1, ext=extension)
+
+
+def test_file_update_requires_version():
+    with pytest.raises(ValidationError):
+        FileUpdate(display_name="新名称")
 
 
 async def test_patch_not_found(db, user_a):
     with pytest.raises(NotFound):
-        await files_api.update_file(999, FileUpdate(display_name="x"),
+        await files_api.update_file(999, FileUpdate(version=1, display_name="x"),
                                     current_user=user_a, origin=None, db=db)
 
 

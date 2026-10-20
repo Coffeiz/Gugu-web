@@ -650,6 +650,7 @@ async def update_file(
         project_set='project_id' in body.model_fields_set,
         workspace_directory_id=body.workspace_directory_id,
         workspace_directory_set='workspace_directory_id' in body.model_fields_set,
+        client_version=body.version,
     )
     await UndoService.record_forward(
         db, user_id=current_user.id, context_id=request.headers.get("X-Undo-Context-ID") if request else None,
@@ -670,6 +671,7 @@ async def update_file(
 
 class _FileContentBody(_BaseModel):
     content: str
+    version: int
 
 
 @router.put("/{fid}/content", response_model=FileResponse)
@@ -687,7 +689,7 @@ async def update_file_content(
     before_content = await get_storage().get(previous.storage_key) if previous else None
     try:
         f = await update_file_content_service(
-            db, get_storage(), current_user.id, fid, body.content
+            db, get_storage(), current_user.id, fid, body.content, body.version
         )
     except FileContentError as error:
         raise HTTPException(error.status_code, error.detail) from error

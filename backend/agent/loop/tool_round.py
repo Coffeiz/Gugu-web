@@ -127,6 +127,7 @@ class ParallelToolBatchRuntime:
                     run_id=self.run_id,
                     tool_snapshot=self.tool_snapshot,
                     skill_state=self.bindings.copy_skill_state(self.loaded_skill_ids),
+                    tool_call_id=meta[6],
                 )
 
         async def dispatch_batch():
@@ -397,6 +398,7 @@ class SerialToolBatchRuntime:
                     self.user_id, dispatch_target, dispatch_input,
                     session_id=self.session_id, session=self.session, run_id=self.run_id,
                     tool_snapshot=self.tool_snapshot, skill_state=self.loaded_skill_ids,
+                    tool_call_id=tool_call_id,
                 )
                 if skill_id and self.bindings.is_successful_result(result):
                     try:

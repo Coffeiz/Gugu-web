@@ -42,6 +42,7 @@ _log = logging.getLogger("agent.tools")
 _dispatch_session_id: ContextVar[int | None] = ContextVar("agent_dispatch_session_id", default=None)
 _dispatch_session: ContextVar[object | None] = ContextVar("agent_dispatch_session", default=None)
 _dispatch_run_id: ContextVar[str | None] = ContextVar("agent_dispatch_run_id", default=None)
+_dispatch_tool_call_id: ContextVar[str | None] = ContextVar("agent_dispatch_tool_call_id", default=None)
 _dispatch_tool_snapshot: ContextVar[object | None] = ContextVar(
     "agent_dispatch_tool_snapshot", default=None
 )
@@ -67,21 +68,24 @@ def reset_dispatch_session_id(token) -> None:
 
 
 def set_dispatch_session(session_id: int | None, session=None, run_id: str | None = None,
-                         tool_snapshot=None, skill_state: dict[str, str] | None = None):
+                         tool_snapshot=None, skill_state: dict[str, str] | None = None,
+                         tool_call_id: str | None = None):
     """绑定本轮真实会话；工具复核优先使用对象，避免 IM 映射短暂过期。"""
     id_token = _dispatch_session_id.set(session_id)
     session_token = _dispatch_session.set(session)
     run_token = _dispatch_run_id.set(run_id)
+    call_token = _dispatch_tool_call_id.set(tool_call_id)
     snapshot_token = _dispatch_tool_snapshot.set(tool_snapshot)
     skill_token = _dispatch_skill_state.set(skill_state)
-    return id_token, session_token, run_token, snapshot_token, skill_token
+    return id_token, session_token, run_token, call_token, snapshot_token, skill_token
 
 
 def reset_dispatch_session(token) -> None:
-    id_token, session_token, run_token, snapshot_token, skill_token = token
+    id_token, session_token, run_token, call_token, snapshot_token, skill_token = token
     _dispatch_session_id.reset(id_token)
     _dispatch_session.reset(session_token)
     _dispatch_run_id.reset(run_token)
+    _dispatch_tool_call_id.reset(call_token)
     _dispatch_tool_snapshot.reset(snapshot_token)
     _dispatch_skill_state.reset(skill_token)
 
@@ -96,6 +100,10 @@ def current_dispatch_session():
 
 def current_dispatch_run_id() -> str | None:
     return _dispatch_run_id.get()
+
+
+def current_dispatch_tool_call_id() -> str | None:
+    return _dispatch_tool_call_id.get()
 
 
 def current_dispatch_tool_snapshot():

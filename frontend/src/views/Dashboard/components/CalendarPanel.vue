@@ -110,6 +110,7 @@ import { useHolidays } from '@/composables/shared/useHolidays'
 import { projectProgress } from '@/utils/projectProgress'
 import { capBg, hexAlpha, darkenHex } from '@/utils/calendarColors'
 import { browserDayKey as localIso } from '@/utils/dateAttribution'
+import { showAppError } from '@/composables/core/useAppToast'
 
 
 const projectStore = useProjectStore()
@@ -196,7 +197,7 @@ function openEditForm(ev: any, nativeEv: MouseEvent) {
   const left = Math.max(8, Math.min(rect.left + rect.width / 2 - w / 2, window.innerWidth - w - 8))
   const top  = Math.min(rect.bottom + 6, window.innerHeight - 260)
   editFormStyle.value = { position: 'fixed', top: top + 'px', left: left + 'px', width: w + 'px', zIndex: 2100 }
-  editingEvent.value = { id: ev.rawId, name: ev.name, date: ev.iso, description: ev.description || '' }
+  editingEvent.value = { id: ev.rawId, name: ev.name, date: ev.iso, description: ev.description || '', version: ev.version }
   showEditForm.value = true
 }
 
@@ -220,9 +221,30 @@ async function saveEditForm() {
         _eventsCache.set(`${year.value}-${month.value}`, events.value)
         if (raw && rawPrevious) Object.assign(raw, rawPrevious)
       },
-      request: mutation => eventsApi.update(ev.id, { title: ev.name, date: ev.date, description: ev.description || undefined }, { mutationId: mutation.mutationId }),
+      request: mutation => eventsApi.update(ev.id, {
+        title: ev.name, date: ev.date, description: ev.description || undefined, version: ev.version,
+      }, { mutationId: mutation.mutationId }),
+      onCommit: updated => {
+        if (!updated) return
+        events.value = events.value.map(item => item.id === ev.id ? { ...item, version: updated.version } : item)
+        _eventsCache.set(`${year.value}-${month.value}`, events.value)
+        if (raw) raw.version = updated.version
+      },
+      onError: async error => {
+        if ((error as { status?: number })?.status !== 409) return
+        showAppError('活动已被其他端修改，本次编辑未保存，请重新打开后重试')
+        const key = `${year.value}-${month.value}`
+        const [eventsResult] = await Promise.allSettled([
+          eventsApi.list(year.value, month.value),
+          projectStore.fetchUpcomingCalEvents(),
+        ])
+        if (eventsResult.status === 'fulfilled') {
+          events.value = eventsResult.value
+          _eventsCache.set(key, eventsResult.value)
+        }
+      },
     })
-  } catch { /* 统一事务已回滚 */ }
+  } catch { /* 冲突已由事务错误回调提示；其他请求沿用统一回滚 */ }
 }
 
 function handleClickOutside(e: MouseEvent) {
@@ -327,6 +349,7 @@ const visibleEvents = computed(() => {
         color:       TYPE_COLOR[e.type as keyof typeof TYPE_COLOR] ?? '#9590c4',
         iso:         e.date,
         description: e.description ?? '',
+        version:     e.version,
         daysLeft:    dl,
         daysLabel:   dl === 0 ? '今天' : dl === 1 ? '明天' : dl + '天后',
       })

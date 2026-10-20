@@ -353,6 +353,7 @@ class FileCopyBody(CamelModel):
 
 
 class FileUpdate(CamelModel):
+    version: int
     display_name: Optional[str] = None
     ext: Optional[str] = None
     stage_name: Optional[str] = None
@@ -683,7 +684,7 @@ class EventUpdate(CamelModel):
     client: Optional[str] = None
     project_id: Optional[int] = None
     description: Optional[str] = None
-    version: Optional[int] = None
+    version: int
 
 
 class EventResponse(CamelModel):

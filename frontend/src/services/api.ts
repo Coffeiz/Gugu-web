@@ -317,7 +317,9 @@ export const projectsApi = {
   list:   (archived = false, deleted = false)      => get<Schemas['ProjectResponse'][]>(`/projects${archived ? '?archived=true' : deleted ? '?deleted=true' : ''}`),
   fileCounts: ()                            => get<{ projectId: number; fileCount: number }[]>('/projects/file-counts'),
   get:    (id: number)                             => get<Schemas['ProjectResponse']>(`/projects/${id}`),
-  create: (data: Schemas['ProjectCreate'])         => post<Schemas['ProjectResponse']>('/projects', data),
+  create: (data: Schemas['ProjectCreate'], idempotencyKey?: string) => post<Schemas['ProjectResponse']>(
+    '/projects', data, idempotencyKey ? { headers: { 'Idempotency-Key': idempotencyKey } } : undefined,
+  ),
   update: (id: number, data: Schemas['ProjectUpdate'], meta?: RequestMeta) => patch<Schemas['ProjectResponse']>(`/projects/${id}`, data, meta),
   delete: (id: number)                             => del(`/projects/${id}`),
   restore: (id: number)                             => post<Schemas['ProjectResponse']>(`/projects/${id}/restore`),
@@ -495,7 +497,7 @@ export const filesApi = {
     }>('/files/unarchive', data),
   // workspaceDirectoryId：后端 schema 已支持，旧 OpenAPI 类型生成未覆盖，先由领域类型承接。
   update: (id: number, data: Schemas['FileUpdate'] & { workspaceDirectoryId?: number | null }, meta?: RequestMeta) => patch<Schemas['FileResponse']>(`/files/${id}`, data, meta),
-  saveContent: (id: number, content: string) => put<Schemas['FileResponse']>(`/files/${id}/content`, { content }),   // 改文本正文（md 勾选框等）
+  saveContent: (id: number, content: string, version: number) => put<Schemas['FileResponse']>(`/files/${id}/content`, { content, version }),   // 改文本正文（md 勾选框等）
   delete:      (id: number, meta?: RequestMeta)   => del(`/files/${id}`, meta),
   batchDelete: (ids: number[], meta?: RequestMeta)  => post('/files/batch-delete', { ids }, meta),
   copy: (id: number, body: Schemas['FileCopyBody'] & { workspaceDirectoryId?: number | null }) => post<Schemas['FileResponse']>(`/files/${id}/copy`, body),
@@ -614,9 +616,11 @@ export const userSkillsApi = {
 export const eventsApi = {
   list:   (year: number, month: number) => get<Schemas['EventResponse'][]>(`/events?year=${year}&month=${month}`),
   get:    (id: number) => get<Schemas['EventResponse']>(`/events/${id}`),
-  create: (data: Schemas['EventCreate']) => post<Schemas['EventResponse']>('/events', data),
+  create: (data: Schemas['EventCreate'], idempotencyKey?: string) => post<Schemas['EventResponse']>(
+    '/events', data, idempotencyKey ? { headers: { 'Idempotency-Key': idempotencyKey } } : undefined,
+  ),
   update: (id: number, data: Schemas['EventUpdate'], meta?: RequestMeta) => patch<Schemas['EventResponse']>(`/events/${id}`, data, meta),
-  delete: (id: number, meta?: RequestMeta)          => del(`/events/${id}`, meta),
+  delete: (id: number, version: number, meta?: RequestMeta) => del(`/events/${id}?version=${version}`, meta),
 }
 
 // ── Mind（思维面板 · 记录）─────────────────────────────────────────────────────

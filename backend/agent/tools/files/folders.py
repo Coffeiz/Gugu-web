@@ -12,6 +12,9 @@ from app.services.files.browser import (
     get_user_folder,
 )
 from app.services.storage.file_service import FileService
+from app.services.undo.agent import record_agent_forward
+from app.services.undo.files import folder_snapshot, operation_state, ref_for
+from agent.tools.base import current_dispatch_session_id
 from .locations import (
     _bound_workspace_target, _coerce_loc, _folder_by_name,
     _norm_target, _resolve_file, _target_loc,
@@ -70,6 +73,7 @@ async def _move_one(db, user_id, f, target: dict) -> dict:
             workspace_directory_set=True,
             folder_set=True,
             project_set=True,
+            client_version=int(f.version or 1),
         )
     except Exception as e:
         return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
@@ -389,11 +393,22 @@ async def _delete_folder(db, user_id, args: dict):
                 return folder
             folders.append(folder)
         results = []
+        before_items = {ref_for("folder", folder.id): folder_snapshot(folder) for folder in folders}
         try:
             for folder in folders:
-                await FileService(db).delete_folder(user_id, folder.id)
+                deleted = await FileService(db).delete_folder(user_id, folder.id)
+                await db.refresh(deleted)
                 results.append({"deleted_folder_id": folder.id, "name": folder.name,
                                 "_file_op": {"op": "remove", "kind": "folder", "id": folder.id}})
+            after_items = {ref_for("folder", folder.id): folder_snapshot(folder) for folder in folders}
+            await record_agent_forward(
+                db, user_id=user_id, session_id=current_dispatch_session_id(),
+                resource="files", action="delete",
+                target_refs=[{"kind": "folder", "id": folder.id} for folder in folders],
+                before_state=operation_state(before_items), after_state=operation_state(after_items),
+                base_versions={ref: {"version": state.get("version", 0)}
+                               for ref, state in before_items.items()},
+            )
             await db.commit()
         except Exception as e:
             return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
@@ -404,7 +419,17 @@ async def _delete_folder(db, user_id, args: dict):
     fid = fo.id
     fname = fo.name
     try:
-        await FileService(db).delete_folder(user_id, fo.id)
+        before = folder_snapshot(fo)
+        deleted = await FileService(db).delete_folder(user_id, fo.id)
+        await db.refresh(deleted)
+        after = folder_snapshot(deleted)
+        ref = ref_for("folder", fid)
+        await record_agent_forward(
+            db, user_id=user_id, session_id=current_dispatch_session_id(),
+            resource="files", action="delete", target_refs=[{"kind": "folder", "id": fid}],
+            before_state=operation_state({ref: before}), after_state=operation_state({ref: after}),
+            base_versions={ref: {"version": before.get("version", 0)}},
+        )
         await db.commit()
     except Exception as e:
         return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})

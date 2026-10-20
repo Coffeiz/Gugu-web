@@ -9,12 +9,15 @@ from app.services.storage import LocalStorageBackend
 from app.services.storage.file_service import FileService
 from app.services.storage.trash import move_file_to_trash
 from app.models import Folder, Project, WorkspaceDirectory
+from agent.tools.base import reset_dispatch_session, set_dispatch_session
+from app.services.undo.agent import undo_latest_agent_action
 
 
 async def _wire_agent_storage(monkeypatch, root: Path):
     storage = LocalStorageBackend(root)
     monkeypatch.setattr("app.services.storage.file_service.get_storage", lambda: storage)
     monkeypatch.setattr("app.services.storage.folders.get_storage", lambda: storage)
+    monkeypatch.setattr("app.services.undo.files.get_storage", lambda: storage)
     import agent.tools.files as agent_files
     monkeypatch.setattr(agent_files, "get_storage", lambda: storage)
     return agent_files, storage
@@ -361,6 +364,49 @@ async def test_agent_delete_file_moves_file_to_trash(db, user_a, tmp_path, monke
     await db.refresh(file)
     assert file.deleted_at is not None
     assert file.storage_key != original_key
+
+
+async def test_agent_file_delete_can_be_undone_in_same_conversation(db, user_a, tmp_path, monkeypatch):
+    agent_files, storage = await _wire_agent_storage(monkeypatch, tmp_path)
+    result = await FileService(db, storage=storage).create_file(
+        user_a.id, space="personal", project_id=None, folder_id=None, stage_name="",
+        mind_map_id=None, display_name="可撤销文件", ext="txt", mime_type="text/plain", data=b"content",
+    )
+    file = result.file
+    await db.commit()
+    token = set_dispatch_session(920, run_id="run-920", tool_call_id="delete-file")
+    try:
+        deleted = await agent_files._delete_file(db, user_a.id, {"file_id": file.id})
+    finally:
+        reset_dispatch_session(token)
+    assert deleted["success"] is True
+    await db.refresh(file)
+    assert file.deleted_at is not None
+
+    undone = await undo_latest_agent_action(db, user_id=user_a.id, session_id=920)
+    assert undone["success"] is True
+    await db.refresh(file)
+    assert file.deleted_at is None
+    assert await storage.get(file.storage_key) == b"content"
+
+
+async def test_agent_folder_delete_can_be_undone_in_same_conversation(db, user_a, tmp_path, monkeypatch):
+    agent_files, storage = await _wire_agent_storage(monkeypatch, tmp_path)
+    created = await agent_files._create_folder(db, user_a.id, {"folder_name": "可撤销目录"})
+    folder_id = created["folder_id"]
+    await db.commit()
+    token = set_dispatch_session(921, run_id="run-921", tool_call_id="delete-folder")
+    try:
+        deleted = await agent_files._delete_folder(db, user_a.id, {"folder_id": folder_id})
+    finally:
+        reset_dispatch_session(token)
+    assert deleted["success"] is True
+    assert await FileService(db, storage=storage).folder_tree.get(user_a.id, folder_id) is None
+
+    undone = await undo_latest_agent_action(db, user_id=user_a.id, session_id=921)
+    assert undone["success"] is True
+    restored = await FileService(db, storage=storage).folder_tree.get(user_a.id, folder_id)
+    assert restored is not None and restored.name == "可撤销目录"
 
 
 async def test_agent_bulk_delete_moves_every_file_to_trash(db, user_a, tmp_path, monkeypatch):

@@ -131,7 +131,10 @@ export const useProjectStore = defineStore('projects', () => {
       deadline:     fields.deadline  || null,
       color:        fields.color || DEFAULT_PROJECT_COLOR,
     }
-    const created = mapProjectResponse(await projectsApi.create(payload))
+    const idempotencyKey = typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `project-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const created = mapProjectResponse(await projectsApi.create(payload, idempotencyKey))
     projects.value.unshift(created)
     rememberConfirmed(created)
     return created

@@ -185,6 +185,7 @@ def pending_tool_signal(status: str, result, pending, *, verify: bool) -> dict:
 
 async def dispatch_in_session(
     user_id, target, dispatch_input, *, session_id, session, run_id, tool_snapshot, skill_state,
+    tool_call_id=None,
 ):
     """带 dispatch 会话上下文执行一次工具调用（原 core._dispatch_in_session）。
 
@@ -198,6 +199,7 @@ async def dispatch_in_session(
         session_id, session, run_id,
         tool_snapshot=tool_snapshot,
         skill_state=skill_state,
+        tool_call_id=tool_call_id,
     )
     try:
         return await registry.dispatch(user_id, target, dispatch_input)

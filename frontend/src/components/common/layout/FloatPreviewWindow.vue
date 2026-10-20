@@ -162,7 +162,7 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import Icon from '@/components/common/icons/Icon.vue'
 import type { PreviewWindow } from '@/stores/preview'
-import type { FileMeta, FolderMeta } from '@/stores/filesCache'
+import { useFilesCacheStore, type FileMeta, type FolderMeta } from '@/stores/filesCache'
 import ImageViewer from '@/components/common/viewers/ImageViewer.vue'
 import VideoViewer from '@/components/common/viewers/VideoViewer.vue'
 import TextViewer  from '@/components/common/viewers/TextViewer.vue'
@@ -185,6 +185,7 @@ const props = defineProps({ win: { type: Object as PropType<PreviewWindow>, requ
 const { t } = useI18n()
 const router = useRouter()
 const previewStore = usePreviewStore()
+const filesCache = useFilesCacheStore()
 const uiStore = useUiStore()
 const previewBlobCache = usePreviewBlobCache()
 const mountAccountEpoch = getAccountBoundaryEpoch()
@@ -775,12 +776,16 @@ watch(
   { immediate: true },
 )
 
-function onTextContentSaved(content: string, fileKey: string | number | null) {
+function onTextContentSaved(content: string, fileKey: string | number | null, version?: number) {
   // 保存成功后当前 TextViewer 已经持有最新文本；这里只替换会话 cache，避免把新的
   // blobUrl 回传给编辑器，导致每次自动保存都重新加载并打断光标/撤销栈。
   if (getAccountBoundaryEpoch() !== mountAccountEpoch) return
   const currentFileKey = props.win.file.id ?? props.win.file.attach_id ?? null
   if (fileKey == null || currentFileKey == null || String(fileKey) !== String(currentFileKey)) return
+  if (version != null && typeof props.win.file.id === 'number') {
+    props.win.file.version = version
+    filesCache.updateFile(props.win.file.id, { version })
+  }
   const key = previewBlobCache.keyOf(props.win.file)
   if (!key || props.win.file.attach_id) return
   recentlySavedText = { fileId: String(currentFileKey), content, savedAt: Date.now() }

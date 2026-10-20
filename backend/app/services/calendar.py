@@ -2,7 +2,7 @@
 from datetime import timedelta, timezone
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 
 from app.core.ownership import get_owned
 from app.core.schedule_rules import SCHEDULE_TZ
@@ -10,9 +10,45 @@ from app.core.tz import local_now
 from app.models import CalendarEvent, Project, ScheduledTask
 
 _REMINDER_CHANNELS = {"web", "feishu", "qq", "wechat", "telegram"}
+_EVENT_UPDATE_FIELDS = {"title", "date", "time", "end_time", "type", "client", "project_id", "description"}
 
 
-async def create_event(db, user_id, *, title, date, time, end_time, event_type, project_id):
+def _event_version_conditions(event_id: int, user_id, version: int):
+    return (
+        CalendarEvent.id == event_id,
+        CalendarEvent.user_id == user_id,
+        CalendarEvent.deleted_at.is_(None),
+        CalendarEvent.version == version,
+    )
+
+
+async def update_event_atomic(db, event_id: int, user_id, client_version: int, fields: dict) -> bool:
+    """按归属、未删除与版本原子更新；提醒仅在成功后同步，由调用方统一提交/回滚。"""
+    if fields.keys() - _EVENT_UPDATE_FIELDS:
+        raise ValueError("不支持的日历更新字段")
+    # 调用方不能先修改 ORM 对象，否则 autoflush 会在版本比较之前写入活动。
+    with db.no_autoflush:
+        result = await db.execute(
+            update(CalendarEvent).where(*_event_version_conditions(event_id, user_id, client_version))
+            .values(**fields, version=CalendarEvent.version + 1)
+            .execution_options(synchronize_session=False)
+        )
+    return result.rowcount == 1
+
+
+async def soft_delete_event_atomic(db, event_id: int, user_id, client_version: int, deleted_at) -> bool:
+    """按归属与版本原子软删除事件，并推进版本。"""
+    with db.no_autoflush:
+        result = await db.execute(
+            update(CalendarEvent).where(*_event_version_conditions(event_id, user_id, client_version))
+            .values(deleted_at=deleted_at, version=CalendarEvent.version + 1)
+            .execution_options(synchronize_session=False)
+        )
+    return result.rowcount == 1
+
+
+async def create_event(db, user_id, *, title, date, time, end_time, event_type, project_id,
+                       idempotency_key=None, idempotency_fingerprint=None):
     project = await get_owned(db, Project, project_id, user_id) if project_id is not None else None
     if project_id is not None and (project is None or project.deleted_at is not None):
         return None
@@ -24,6 +60,8 @@ async def create_event(db, user_id, *, title, date, time, end_time, event_type, 
         end_time=end_time,
         type=event_type,
         project_id=project_id,
+        idempotency_key=idempotency_key,
+        idempotency_fingerprint=idempotency_fingerprint,
     )
     db.add(event)
     await db.flush()
@@ -264,12 +302,22 @@ async def sync_event_reminders_after_update(
     return existing, None
 
 
-async def delete_event_with_reminders(db, user_id, event, *, commit=False):
-    """删除事件及其提醒；默认只 flush，由 API/任务边界提交。"""
+async def delete_event_with_reminders(db, user_id, event, *, expected_version: int, commit=False):
+    """按读取版本硬删除事件及提醒；冲突返回 None，提交仍由调用方负责。"""
     reminders = await list_event_reminders(db, user_id, event.id)
+    with db.no_autoflush:
+        result = await db.execute(
+            delete(CalendarEvent).where(
+                CalendarEvent.id == event.id,
+                CalendarEvent.user_id == user_id,
+                CalendarEvent.deleted_at.is_(None),
+                CalendarEvent.version == expected_version,
+            ).execution_options(synchronize_session=False)
+        )
+    if result.rowcount != 1:
+        return None
     for reminder in reminders:
         await db.delete(reminder)
-    await db.delete(event)
     if commit:
         await db.commit()
     else:

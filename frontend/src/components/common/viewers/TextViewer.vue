@@ -97,7 +97,7 @@ import Icon from '@/components/common/icons/Icon.vue'
 import { filesApi } from '@/services/api'
 import { sanitizeHtml, splitYamlFrontmatter } from '@/utils/markdown'
 import { cleanupMarkdownMermaid, createMermaidRenderLabels, renderMarkdownMermaid } from '@/utils/mermaidRenderer'
-import type { FileMeta } from '@/stores/filesCache'
+import { useFilesCacheStore, type FileMeta } from '@/stores/filesCache'
 import { usePreviewStore, isPreviewable, isTextMime, isImageExt } from '@/stores/preview'
 import { useUiStore } from '@/stores/ui'
 import { isRelativeFileLink } from '@/utils/fileLinks'
@@ -129,12 +129,38 @@ const props = defineProps({
 })
 
 const emit = defineEmits<{
-  'content-saved': [content: string, fileKey: string | number | null]
+  'content-saved': [content: string, fileKey: string | number | null, version?: number]
 }>()
+
+const contentVersions = new Map<number, number>()
+const contentSaveQueues = new Map<number, Promise<void>>()
+function initialContentVersion(id: number): number {
+  const cached = contentVersions.get(id)
+  if (cached != null) return cached
+  if (Number(props.fileContext?.id) === id && props.fileContext?.version != null) {
+    contentVersions.set(id, props.fileContext.version)
+    return props.fileContext.version
+  }
+  throw new Error('缺少文件版本，请重新打开文件后再保存')
+}
+function saveFileContent(id: number, content: string) {
+  initialContentVersion(id)
+  const previous = contentSaveQueues.get(id) ?? Promise.resolve()
+  const request = previous.then(async () => {
+    const saved = await filesApi.saveContent(id, content, initialContentVersion(id))
+    contentVersions.set(id, saved.version)
+    filesCache.updateFile(id, saved)
+    emit('content-saved', content, id, saved.version)
+    return saved
+  })
+  contentSaveQueues.set(id, request.then(() => undefined, () => undefined))
+  return request
+}
 
 const router = useRouter()
 const previewStore = usePreviewStore()
 const uiStore = useUiStore()
+const filesCache = useFilesCacheStore()
 
 const tvScroll = ref<HTMLElement | null>(null)   // .tv-scroll 滚动容器
 const mdRoot = ref<HTMLElement | null>(null)
@@ -375,9 +401,8 @@ function scheduleAutoSave(content = editText.value) {
 }
 async function doAutoSave(targetKey: string | number, content: string) {
   try {
-    await filesApi.saveContent(Number(targetKey), content)
+    await saveFileContent(Number(targetKey), content)
     rawText.value = content
-    emit('content-saved', content, targetKey)
   } catch (e) {
     console.error('[TextViewer] 自动保存失败:', e)  // eslint
   }
@@ -451,8 +476,7 @@ async function saveEdit() {
     if (isVirtualDocument.value) {
       await props.saveSource?.(editText.value)
     } else {
-      await filesApi.saveContent(Number(props.fileKey), editText.value)
-      emit('content-saved', editText.value, props.fileKey)
+      await saveFileContent(Number(props.fileKey), editText.value)
     }
     await processText(editText.value, props.ext)
     cmLoadSeq++
@@ -560,8 +584,7 @@ async function toggleTask(idx: number, cb: HTMLInputElement) {
   ls[hit] = ls[hit].replace(/\[[ xX]\]/, cb.checked ? '[x]' : '[ ]')
   rawText.value = ls.join('\n')
   try {
-    await filesApi.saveContent(Number(props.fileKey), rawText.value)
-    emit('content-saved', rawText.value, props.fileKey)
+    await saveFileContent(Number(props.fileKey), rawText.value)
   } catch {
     rawText.value = before          // 存失败 → 回滚源 + 视觉
     cb.checked = !cb.checked

@@ -17,7 +17,9 @@ from dataclasses import dataclass
 import hashlib
 from uuid import uuid4
 
-from app.core.errors import Invalid, NotFound
+from sqlalchemy import func, update
+
+from app.core.errors import Conflict, Invalid, NotFound
 from app.core.ownership import get_owned
 from app.core.tz import now_utc
 from app.models import File, Project, WorkspaceDirectory
@@ -27,6 +29,22 @@ from app.services.storage.keys import compose_logical_path
 from app.services.storage.quota_ledger import FILE_LIBRARY, get_quota, record_usage
 from app.services.filesync.protocol import lock_file_sync_paths, record_canonical_file_change
 from app.services.storage.file_service.content_types import validated_rename_extension
+
+
+async def advance_file_version_atomic(db, *, user_id: int, file_id: int, client_version: int) -> bool:
+    """以 CAS 方式占用一次文件写入版本；兼容历史 NULL 版本按 1 处理。"""
+    result = await db.execute(
+        update(File)
+        .where(
+            File.id == file_id,
+            File.user_id == user_id,
+            File.deleted_at.is_(None),
+            func.coalesce(File.version, 1) == client_version,
+        )
+        .values(version=func.coalesce(File.version, 1) + 1, updated_at=now_utc())
+        .execution_options(synchronize_session=False)
+    )
+    return result.rowcount == 1
 
 
 def _fmt_size(size_bytes: int) -> str:
@@ -241,7 +259,7 @@ class FileOps:
     async def update_file(self, user_id, fid, *, display_name, stage_name,
                           folder_id, project_id, folder_set, project_set,
                           workspace_directory_id=None, workspace_directory_set=False,
-                          ext=None) -> FileResult:
+                          ext=None, client_version: int) -> FileResult:
         f = await get_owned(self.db, File, fid, user_id)
         if not f:
             raise NotFound("file.not_found", "文件不存在")
@@ -297,6 +315,14 @@ class FileOps:
             resolved = await self.key_strategy.resolve_conflict(self.storage, new_key, new_display, new_ext)
             new_key, new_display = resolved.key, resolved.name
             await lock_file_sync_paths(self.db, user_id, [new_key])
+
+        if not await advance_file_version_atomic(
+            self.db, user_id=user_id, file_id=f.id, client_version=client_version,
+        ):
+            raise Conflict("file.version_mismatch", "文件已被其他端修改，请刷新后重试")
+        await self.db.refresh(f)
+
+        if new_key != f.storage_key:
             await self.storage.rename_file(f.storage_key, new_key)
             f.storage_key = new_key
             # 不清旧祖先：源文件夹仍存活，其空目录须持久（P1.2）；孤儿由文件夹级清理 + 对账工具兜底
@@ -307,7 +333,6 @@ class FileOps:
         f.project_id = new_pid
         f.space = new_space
         f.workspace_directory_id = new_wid
-        f.version = int(f.version or 1) + 1
         f.updated_at = now_utc()
         await self.db.flush()
         return FileResult(f, project, folder_name or None)

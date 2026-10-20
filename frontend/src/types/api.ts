@@ -5228,7 +5228,7 @@ export interface components {
             /** Description */
             description?: string | null;
             /** Version */
-            version?: number | null;
+            version: number;
         };
         /** FeedbackCreate */
         FeedbackCreate: {
@@ -5301,6 +5301,8 @@ export interface components {
         };
         /** FileUpdate */
         FileUpdate: {
+            /** Version */
+            version: number;
             /** Displayname */
             displayName?: string | null;
             /** Ext */
@@ -8634,7 +8636,9 @@ export interface operations {
     };
     delete_event_api_v1_events__eid__delete: {
         parameters: {
-            query?: never;
+            query: {
+                version: number;
+            };
             header?: never;
             path: {
                 eid: number;

@@ -13,14 +13,15 @@ import asyncio
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.chat_attach import TEXT_EXTS
 from app.core.ownership import get_owned
 from app.core.security import create_stream_token
 from app.core.tz import now_utc
 from app.models import File
 from app.services.files.selection import move_file_to_trash_by_id, move_files_to_trash
 from app.services.storage import LocalStorageBackend, OSSStorageBackend
-from app.services.storage.file_service.files import _fmt_size
+from app.services.storage.file_service.files import _fmt_size, advance_file_version_atomic
+from app.core.errors import Conflict
+from app.services.storage.file_service.content_types import is_text_file_record
 from app.services.filesync.protocol import lock_file_sync_paths, record_canonical_file_change
 
 
@@ -74,12 +75,13 @@ async def update_file_content(
     user_id: int,
     file_id: int,
     content: str,
+    client_version: int,
 ) -> File | None:
     """更新当前用户文本文件正文；路由层负责提交事务和响应组装。"""
     file = await get_owned(db, File, file_id, user_id)
     if file is None:
         return None
-    if (file.ext or "").lower() not in TEXT_EXTS:
+    if not is_text_file_record(file):
         raise FileContentError(400, "仅文本类文件可改内容")
 
     data = content.encode("utf-8")
@@ -87,10 +89,14 @@ async def update_file_content(
         raise FileContentError(400, "内容过大（上限 1MB）")
 
     await lock_file_sync_paths(db, user_id, [file.storage_key])
+    if not await advance_file_version_atomic(
+        db, user_id=user_id, file_id=file.id, client_version=client_version,
+    ):
+        raise Conflict("file.version_mismatch", "文件已被其他端修改，请刷新后重试")
+    await db.refresh(file)
     await storage.put(file.storage_key, data, file.mime_type or "text/markdown")
     file.size_bytes = len(data)
     file.size = _fmt_size(len(data))
-    file.version = int(file.version or 1) + 1
     file.updated_at = now_utc()
     await record_canonical_file_change(
         db, user_id=user_id, storage_key=file.storage_key,

@@ -211,7 +211,15 @@ async function commitRename(f: any) {
       scope: 'file.dashboard-rename', entityKey: `file:${f.id}`,
       apply: () => store.updateFile(f.id, { displayName: name, ext: nextExtension }),
       rollback: () => store.updateFile(f.id, { displayName: snapshot.displayName, ext: snapshot.ext }),
-      request: mutation => filesApi.update(f.id, { displayName: name, ...(extension ? { ext: extension } : {}) }, { mutationId: mutation.mutationId }),
+      request: async mutation => {
+        const updated = await filesApi.update(f.id, {
+          version: snapshot.version,
+          displayName: name,
+          ...(extension ? { ext: extension } : {}),
+        }, { mutationId: mutation.mutationId })
+        store.updateFile(f.id, updated)
+        return updated
+      },
     })
     emit('refresh')
   } catch { /* 统一事务已回滚 */ }

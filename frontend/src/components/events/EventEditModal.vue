@@ -156,8 +156,18 @@ async function onSave() {
 }
 async function onDelete() {
   if (!event.value) return
-  await form.deleteEvent(event.value.id)
-  close()
+  const eventId = event.value.id as number
+  try {
+    const deleted = await form.deleteEvent(eventId, event.value.version)
+    if (deleted) close()
+    else {
+      showAppError('活动已被其他端修改，已刷新最新数据')
+      await load(eventId)
+      liveStore.bump('calendar')
+    }
+  } catch {
+    showAppError('删除活动失败，请稍后重试')
+  }
 }
 
 async function onTestReminder() {

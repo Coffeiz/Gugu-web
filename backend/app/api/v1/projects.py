@@ -1,9 +1,10 @@
 from datetime import datetime
 import re
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 
 from app.core import events
 from app.core.ownership import get_owned
@@ -25,6 +26,9 @@ from app.services.projects import (
     get_project_row,
     list_project_rows,
     project_trash_cutoff,
+)
+from app.services.idempotency import (
+    IdempotencyConflict, attach_idempotency, find_idempotent,
 )
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -86,14 +90,36 @@ async def list_project_file_counts(
 async def create_project(
     request: Request,
     body: ProjectCreate,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    payload = body.model_dump(by_alias=False)
     try:
-        p = build_project(current_user.id, body.model_dump(by_alias=False))
+        existing = await find_idempotent(db, Project, current_user.id, idempotency_key, payload)
+    except IdempotencyConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if existing is not None:
+        return _to_resp(existing, 0)
+    try:
+        p = build_project(current_user.id, payload)
     except ValueError as exc:
         raise HTTPException(422, str(exc))
-    await add_project(db, p)
+    attach_idempotency(p, idempotency_key, payload)
+    try:
+        async with db.begin_nested():
+            await add_project(db, p)
+    except IntegrityError:
+        # 并发请求可能同时通过前置查询；唯一约束决定胜者，败者读取并返回同一资源。
+        try:
+            existing = await find_idempotent(db, Project, current_user.id, idempotency_key, payload)
+        except IdempotencyConflict as exc:
+            raise HTTPException(409, str(exc)) from exc
+        if existing is None:
+            raise
+        return _to_resp(existing, 0)
     await UndoService.record_forward(
         db, user_id=current_user.id,
         context_id=request.headers.get("X-Undo-Context-ID") if request else None,

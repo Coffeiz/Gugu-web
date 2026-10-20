@@ -194,6 +194,7 @@ class FileUndoAdapter:
             project_set=True,
             workspace_directory_id=snapshot.get("workspace_directory_id"),
             workspace_directory_set=True,
+            client_version=int(row.version or 1),
         )
         row.version = int(result.file.version or 1)
 

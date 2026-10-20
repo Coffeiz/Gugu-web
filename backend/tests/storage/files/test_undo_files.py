@@ -157,6 +157,7 @@ async def test_file_extension_snapshot_restores_storage_key_for_undo_and_redo(db
     changed = await FileService(db, storage=storage).update_file(
         user_a.id, file.id, display_name=None, ext="MD", stage_name=None,
         folder_id=None, project_id=None, folder_set=False, project_set=False,
+        client_version=int(file.version or 1),
     )
     await db.commit()
     after = file_snapshot(changed.file)

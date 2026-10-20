@@ -3,9 +3,20 @@
 逻辑迁自原 agent.py 的 `_exec_tool`，一字不改（含 project 归属校验）。
 """
 import json
+from sqlalchemy.exc import IntegrityError
 
 from agent.security import confirm
-from agent.tools.base import BaseSkill, Tool
+from agent.tools.base import (
+    BaseSkill, Tool, current_dispatch_session_id, current_dispatch_tool_call_id,
+)
+from app.core.tz import now_utc
+from app.models import CalendarEvent
+from app.services.undo.agent import record_agent_forward
+from app.services.idempotency import (
+    IdempotencyConflict, agent_create_key, find_idempotent,
+    idempotency_values,
+)
+from app.services.undo.domains import domain_ref, domain_state, event_snapshot, task_snapshot
 from app.services.calendar import (
     create_event,
     event_base_datetime,
@@ -13,12 +24,13 @@ from app.services.calendar import (
     find_events_by_title,
     get_event,
     get_project,
-    delete_event_with_reminders,
     list_event_reminders,
     list_events_with_reminders,
     normalize_reminder_channels,
     replace_event_reminders,
+    soft_delete_event_atomic,
     sync_event_reminders_after_update,
+    update_event_atomic,
 )
 
 _DATE_PATTERN = r"^\d{4}-\d{2}-\d{2}$"
@@ -42,27 +54,59 @@ _REMINDER_SCHEMA = {
 
 
 async def _create_event(db, user_id, args: dict):
+    idempotency_key = agent_create_key(
+        "create_event", session_id=current_dispatch_session_id(),
+        tool_call_id=current_dispatch_tool_call_id(),
+    )
+    try:
+        existing = await find_idempotent(db, CalendarEvent, user_id, idempotency_key, args)
+    except IdempotencyConflict as exc:
+        return {"error": str(exc)}
+    if existing is not None:
+        rows = await list_event_reminders(db, user_id, existing.id)
+        return {"success": True, "event_id": existing.id, "title": existing.title,
+                "date": existing.date, "time": existing.time, "end_time": existing.end_time,
+                "reminders": [_reminder_brief(task, event_base_datetime(existing)) for task in rows],
+                "idempotent_replay": True}
     pid = args.get("project_id")
     all_day = bool(args.get("all_day"))
     reminders, error = await _resolve_reminder_specs(db, user_id, args.get("reminders", []))
     if error:
         return {"error": error}
-    ev = await create_event(
-        db, user_id,
-        title=args["title"],
-        date=args["date"],
-        time=None if all_day else (args.get("time") or None),
-        end_time=None if all_day else (args.get("end_time") or None),
-        event_type=args.get("type", "event"),
-        project_id=pid,
-    )
+    payload = dict(args)
+    values = idempotency_values(idempotency_key, payload)
+    try:
+        async with db.begin_nested():
+            ev = await create_event(
+                db, user_id,
+                title=args["title"],
+                date=args["date"],
+                time=None if all_day else (args.get("time") or None),
+                end_time=None if all_day else (args.get("end_time") or None),
+                event_type=args.get("type", "event"),
+                project_id=pid,
+                idempotency_key=values[0] if values else None,
+                idempotency_fingerprint=values[1] if values else None,
+            )
+            if ev is not None:
+                rows, error = await replace_event_reminders(db, user_id, ev, reminders)
+                if error:
+                    raise ValueError(error)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    except IntegrityError:
+        existing = await find_idempotent(db, CalendarEvent, user_id, idempotency_key, payload)
+        if existing is None:
+            raise
+        rows = await list_event_reminders(db, user_id, existing.id)
+        return {"success": True, "event_id": existing.id, "title": existing.title,
+                "date": existing.date, "time": existing.time, "end_time": existing.end_time,
+                "reminders": [_reminder_brief(task, event_base_datetime(existing)) for task in rows],
+                "idempotent_replay": True}
     if ev is None:
         return {"error": "项目不存在"}
     resp = {"success": True, "event_id": ev.id, "title": ev.title, "date": ev.date,
             "time": ev.time, "end_time": ev.end_time}
-    rows, error = await replace_event_reminders(db, user_id, ev, reminders)
-    if error:
-        return {"error": error}
     resp["reminders"] = [_reminder_brief(task, event_base_datetime(ev)) for task in rows]
     return resp
 
@@ -136,11 +180,10 @@ async def _update_event(db, user_id, args: dict):
     timing_changed = "date" in args or "time" in args
     metadata_changed = any(field in args for field in ("title", "date", "time"))
 
-    for field in fields:
-        if field == "reminders":
-            continue
-        if field in args:
-            setattr(e, field, args[field])
+    updates = {field: args[field] for field in fields if field != "reminders" and field in args}
+    if not await update_event_atomic(db, e.id, user_id, e.version, updates):
+        return {"error": "事件刚被其他端修改，请重试"}
+    await db.refresh(e)
 
     rows, error = await sync_event_reminders_after_update(
         db, user_id, e, previous_base=old_base,
@@ -174,7 +217,7 @@ async def _delete_event(db, user_id, args: dict):
         reminder_count = sum(len(items) for items in reminders)
         blocked = confirm.needs_target_confirmation(
             args,
-            f"将删除日历事件：{names}，共 {len(events)} 个，并连带删除 {reminder_count} 条提醒，且无法恢复",
+            f"将删除日历事件：{names}，共 {len(events)} 个，并停用 {reminder_count} 条提醒；之后可在当前对话撤销",
             user_id,
             purpose=confirm.ACTION,
             action="delete_calendar_event",
@@ -183,11 +226,33 @@ async def _delete_event(db, user_id, args: dict):
         if blocked is not None:
             return blocked
         results = []
+        before_items = {}
+        after_items = {}
         for event, event_reminders in zip(events, reminders):
-            await delete_event_with_reminders(db, user_id, event)
+            event_ref = domain_ref("event", event.id)
+            before_items[event_ref] = event_snapshot(event)
+            before_items.update({domain_ref("task", task.id): task_snapshot(task)
+                                 for task in event_reminders})
+            if not await soft_delete_event_atomic(db, event.id, user_id, event.version, now_utc()):
+                return {"error": "事件刚被其他端修改，未删除，请重试"}
+            await db.refresh(event)
+            for reminder in event_reminders:
+                reminder.enabled = False
+            await db.flush()
+            after_items[event_ref] = event_snapshot(event)
+            after_items.update({domain_ref("task", task.id): task_snapshot(task)
+                                for task in event_reminders})
             results.append({"deleted_event_id": event.id, "title": event.title,
                             "deleted_reminders": len(event_reminders)})
-        await db.commit()
+        await record_agent_forward(
+            db, user_id=user_id, session_id=current_dispatch_session_id(),
+            resource="calendar", action="delete",
+            target_refs=[{"kind": ref.split(":", 1)[0], "id": int(ref.split(":", 1)[1])}
+                         for ref in after_items],
+            before_state=domain_state(before_items), after_state=domain_state(after_items),
+            base_versions={ref: {"version": state.get("version", 0)}
+                           for ref, state in before_items.items()},
+        )
         return {"success": True, "deleted_count": len(results), "results": results}
     e, _err = await _resolve_event(db, user_id, args)
     if _err:
@@ -198,9 +263,9 @@ async def _delete_event(db, user_id, args: dict):
     # 先点清提醒数量，好在二次确认里如实告知用户「连带删 N 条提醒」。
     reminders = await list_event_reminders(db, user_id, eid)
 
-    # 事件无回收站 → 不可逆 → 删除二次确认保底
+    # 日历事件没有单独的回收站；保留软删除记录，支持当前对话内撤销。
     _r = f"及其 {len(reminders)} 条提醒" if reminders else ""
-    summary = f"将删除日历事件「{etitle}」（{e.date}）{_r}，事件无回收站，删除后不可恢复"
+    summary = f"将删除日历事件「{etitle}」（{e.date}）{_r}，之后可在当前对话撤销"
     blocked = confirm.needs_target_confirmation(
         args, summary, user_id,
         purpose=confirm.ACTION,
@@ -210,7 +275,27 @@ async def _delete_event(db, user_id, args: dict):
     if blocked is not None:
         return blocked
 
-    await delete_event_with_reminders(db, user_id, e)
+    event_ref = domain_ref("event", eid)
+    before_items = {event_ref: event_snapshot(e)}
+    before_items.update({domain_ref("task", task.id): task_snapshot(task) for task in reminders})
+    if not await soft_delete_event_atomic(db, user_id=user_id, event_id=eid,
+                                          client_version=e.version, deleted_at=now_utc()):
+        return {"error": "事件刚被其他端修改，未删除，请重试"}
+    await db.refresh(e)
+    for reminder in reminders:
+        reminder.enabled = False
+    await db.flush()
+    after_items = {event_ref: event_snapshot(e)}
+    after_items.update({domain_ref("task", task.id): task_snapshot(task) for task in reminders})
+    await record_agent_forward(
+        db, user_id=user_id, session_id=current_dispatch_session_id(),
+        resource="calendar", action="delete",
+        target_refs=[{"kind": ref.split(":", 1)[0], "id": int(ref.split(":", 1)[1])}
+                     for ref in after_items],
+        before_state=domain_state(before_items), after_state=domain_state(after_items),
+        base_versions={ref: {"version": state.get("version", 0)}
+                       for ref, state in before_items.items()},
+    )
     return {"success": True, "deleted_event_id": eid, "title": etitle, "deleted_reminders": len(reminders)}
 
 
@@ -364,7 +449,7 @@ class CalendarSkill(BaseSkill):
             name="delete_event",
             label="删除日历事件",
             description_short='删除日历事件。',
-            description="删除一个或多个日历事件/活动（无回收站，不可恢复，会连带删除活动提醒）。单项传 event_id/event，批量传 event_ids；批量目标一次确认。",
+            description="软删除一个或多个日历事件/活动，提醒会停用；可用 undo_last_action 在当前对话撤销。单项传 event_id/event，批量传 event_ids；批量目标一次确认。",
             input_schema={
                 "type": "object",
                 "properties": {

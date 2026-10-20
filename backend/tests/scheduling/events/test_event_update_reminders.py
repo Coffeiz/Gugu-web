@@ -35,7 +35,7 @@ async def test_web_event_update_reschedules_reminders_and_undo_redo_restores_the
 
     await update_event(
         event.id,
-        EventUpdate(title="新标题", time="12:00"),
+        EventUpdate(title="新标题", time="12:00", version=1),
         user_a,
         db,
         request,

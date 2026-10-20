@@ -112,6 +112,7 @@ class InteractionRuntime:
                     run_id=self.run_id,
                     tool_snapshot=self.tool_snapshot,
                     skill_state=self.skill_state,
+                    tool_call_id=pending.tool_call_id,
                 )
             except Exception as exc:
                 self.bindings.diag_log("agent.core.confirm_replay", exc)

@@ -163,7 +163,8 @@ async def test_delete_event_single_blocked_then_confirmed(db, user_a, monkeypatc
     monkeypatch.setattr(cal.confirm, "needs_target_confirmation", lambda *a, **k: None)
     result = await cal._delete_event(db, user_a.id, {"event_id": e.id})
     assert result["success"] and result["deleted_reminders"] == 1
-    assert await list_event_reminders(db, user_a.id, e.id) == []      # 提醒连带删除
+    remaining = await list_event_reminders(db, user_a.id, e.id)
+    assert len(remaining) == 1 and remaining[0].enabled is False  # 软删除提醒以支持撤销
 
 
 async def test_delete_event_batch_validation_and_confirmed(db, user_a, monkeypatch):

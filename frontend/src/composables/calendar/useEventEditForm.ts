@@ -21,7 +21,7 @@ export interface EventDraft {
 export interface EditingEvent extends EventDraft {
   _uid?: string
   id: string | number
-  version?: number
+  version: number
 }
 
 export interface Reminder { id?: number | null; leadMin: number }
@@ -207,13 +207,19 @@ export function useEventEditForm() {
     }
   }
 
-  async function deleteEvent(id: string | number) {
-    await InteractionSync.execute({
-      scope: 'calendar.event.delete', entityKey: `calendar-event:${id}`,
-      apply: () => {}, rollback: () => {},
-      request: mutation => eventsApi.delete(id as unknown as number, { mutationId: mutation.mutationId }),
-      onCommit: () => liveStore.bump('calendar'),
-    })
+  async function deleteEvent(id: string | number, version: number): Promise<boolean> {
+    try {
+      await InteractionSync.execute({
+        scope: 'calendar.event.delete', entityKey: `calendar-event:${id}`,
+        apply: () => {}, rollback: () => {},
+        request: mutation => eventsApi.delete(id as unknown as number, version, { mutationId: mutation.mutationId }),
+        onCommit: () => liveStore.bump('calendar'),
+      })
+      return true
+    } catch (error) {
+      if ((error as { status?: number })?.status !== 409) throw error
+      return false
+    }
   }
 
   return {
