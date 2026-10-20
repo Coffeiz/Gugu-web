@@ -572,7 +572,9 @@ def _safe_reflection_observation(value: dict[str, Any]) -> dict[str, Any]:
     safe["reflection_scope"] = scope if scope in _REFLECTION_SCOPES else "unknown"
     snapshot_source = safe.get("snapshot_source")
     safe["snapshot_source"] = (
-        snapshot_source if snapshot_source in {"in_memory", "persisted_history", "unavailable"}
+        snapshot_source if snapshot_source in {
+            "in_memory", "in_memory_extended", "persisted_history", "unavailable",
+        }
         else "other"
     )
     for key in (

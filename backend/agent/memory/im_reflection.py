@@ -123,6 +123,7 @@ def _build_append_branch_input(scope: MemoryScope, job, task_type: str,
         "reflection_scope": reflection_scope,
         "origin_run_id": snapshot.run_id,
         "trigger_source": "session_snapshot",
+        "snapshot_source": getattr(snapshot, "source", "unavailable"),
     }
     return BranchInput(
         stable_system=snapshot.system_prompt,
@@ -210,6 +211,41 @@ async def _rebuild_session_snapshot(db, scope: MemoryScope, session_id: int, mod
         ai=model_cfg,
         tools=(),
         history=tuple(history_parts),
+        source="persisted_history",
+    )
+
+
+def _extend_snapshot_with_persisted_tail(snapshot, persisted_snapshot):
+    """只在 DB 历史严格以原始 Provider 前缀开头时，保留原始请求并追加新消息。
+
+    persisted_snapshot 只用于核对持久化消息序列；静态 system 与工具声明继续取自
+    实际发给 Provider 的主 run 快照，避免按被动消息发言人重建 prompt 后误判前缀。
+    """
+    from dataclasses import replace
+
+    from agent.context.canonical_context import digest
+    from agent.context.provider_conversation import ProviderConversation
+
+    original = getattr(snapshot, "history", None)
+    persisted = getattr(persisted_snapshot, "history", None)
+    if not isinstance(original, ProviderConversation) or not isinstance(persisted, (list, tuple)):
+        return None
+    original_messages = original.to_messages()
+    persisted_messages = list(persisted)
+    if len(persisted_messages) < len(original_messages):
+        return None
+    if persisted_messages[:len(original_messages)] != original_messages:
+        return None
+
+    merged = original.with_messages(
+        [*original_messages, *persisted_messages[len(original_messages):]],
+        dynamic_tail_size=0,
+    )
+    return replace(
+        snapshot,
+        history=merged,
+        revision=digest({"history": merged.to_messages()}),
+        source="in_memory_extended",
     )
 
 
@@ -497,11 +533,24 @@ async def _execute_job_locked(job_id: int, settings, *, snapshot=None) -> bool:
                 from agent.context.reflection_snapshot import model_identity, peek_reflection_snapshot
 
                 candidate = resolved_snapshot or peek_reflection_snapshot(scope.owner_user_id, session_id)
-                if job.reason == "context-pressure" or (
-                    scope.scope_type == "group" and getattr(messages[-1], "run_id", None) is None
-                ):
+                passive_group_tail = (
+                    scope.scope_type == "group"
+                    and getattr(messages[-1], "run_id", None) is None
+                )
+                if job.reason == "context-pressure":
                     # 压力由旧 run 之后的被动增量产生，不能复用旧 usage 或已压缩标志。
                     candidate = None
+                elif passive_group_tail:
+                    # 保留原始 wire 前缀，只把 DB 历史中严格追加的新尾部接上；
+                    # 对齐失败就继续使用完整重建，不能遗漏被动消息。
+                    persisted_snapshot = await _rebuild_session_snapshot(
+                        db, scope, session_id, run_config.model, messages,
+                    )
+                    candidate = (
+                        _extend_snapshot_with_persisted_tail(candidate, persisted_snapshot)
+                        if candidate is not None and persisted_snapshot is not None
+                        else None
+                    ) or persisted_snapshot
                 if (candidate and candidate.user_id == str(scope.owner_user_id)
                         and candidate.session_id == session_id
                         and model_identity(candidate.ai) == model_identity(run_config.model)):
