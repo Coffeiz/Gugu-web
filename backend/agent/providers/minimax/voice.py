@@ -92,12 +92,13 @@ async def transcribe(media: list, vm, *, to_wav, raise_errors: bool = False) -> 
     api_key = normalize_ascii_api_key(vm.api_key, label="语音模型 API Key")
     transcripts: list[str] = []
     for item in media:
-        if item.get("type") != "audio" or not item.get("b64"):
+        raw = item.get("raw")
+        encoded = item.get("b64")
+        if item.get("type") != "audio" or (not isinstance(raw, bytes) and not encoded):
             continue
         try:
-            raw = item.get("raw")
             if not isinstance(raw, bytes):
-                raw = base64.b64decode(item["b64"], validate=True)
+                raw = base64.b64decode(encoded, validate=True)
         except Exception as exc:
             raise ValueError("音频数据编码无效") from exc
         if len(raw) > _MAX_BYTES:

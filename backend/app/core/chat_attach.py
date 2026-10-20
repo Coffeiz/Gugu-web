@@ -706,6 +706,36 @@ async def list_staged(user_id) -> list[dict]:
     return [_row_to_meta(r) for r in rows]
 
 
+async def list_session_attachments(user_id, session_id: int, limit: int = 20) -> list[dict]:
+    """列出指定会话中已挂载的近期附件，供 Agent 按 attach_id 重读历史媒体。
+
+    会话与附件都校验 user_id，避免工具调用上下文异常时跨用户枚举附件。
+    """
+    from app.models import ChatAttachment, ConversationMessage, ConversationSession
+    from sqlalchemy import select
+    import app.db.session as db_session
+
+    if not session_id:
+        return []
+    db_session.ensure_engine()
+    async with db_session._SessionLocal() as db:
+        rows = (await db.execute(
+            select(ChatAttachment).join(
+                ConversationMessage, ChatAttachment.message_id == ConversationMessage.id,
+            ).join(
+                ConversationSession, ConversationMessage.session_id == ConversationSession.id,
+            ).where(
+                ChatAttachment.user_id == user_id,
+                ChatAttachment.state == "attached",
+                ConversationSession.id == session_id,
+                ConversationSession.user_id == user_id,
+            ).order_by(
+                ChatAttachment.attached_at.desc(), ChatAttachment.created_at.desc(),
+            ).limit(max(1, min(int(limit), 50)))
+        )).scalars().all()
+    return [_row_to_meta(row) for row in rows]
+
+
 async def clear_staged(user_id) -> int:
     """删除该用户所有草稿态暂存附件（字节 + DB 行），返回删除数量；同时尽力清一遍
     v3 上线前遗留、只存在 Redis 里的旧暂存记录（DB 里查不到但 Redis 还有）。"""

@@ -25,7 +25,7 @@ def _decode_extensionless_text(data: bytes) -> str | None:
     return text
 
 
-async def _read_history_media(user_id, attach_id: str, *, restricted: bool = False,
+async def _read_history_media(db, user_id, attach_id: str, *, restricted: bool = False,
                               max_source_bytes: int | None = None):
     from app.core import chat_attach
     from agent.tools.media_reader import AUDIO_EXTS, IMAGE_EXTS, VIDEO_EXTS, read_media, read_stored_image
@@ -54,7 +54,7 @@ async def _read_history_media(user_id, attach_id: str, *, restricted: bool = Fal
         id=attach_id, user_id=user_id, storage_key=meta["storage_key"], ext=ext,
         display_name=name,
     )
-    return await read_media(file, max_source_bytes=max_source_bytes)
+    return await read_media(file, max_source_bytes=max_source_bytes, db=db, user_id=user_id)
 
 
 def _restricted_file_reader() -> bool:
@@ -97,7 +97,7 @@ async def _read_file_single(db, user_id, args: dict, *, restricted: bool = False
                     ensure_ascii=False,
                 )
         return await _read_history_media(
-            user_id, attach_id, restricted=restricted, max_source_bytes=max_source_bytes,
+            db, user_id, attach_id, restricted=restricted, max_source_bytes=max_source_bytes,
         )
     if restricted and args.get("file_id") is not None:
         return json.dumps(
@@ -117,7 +117,7 @@ async def _read_file_single(db, user_id, args: dict, *, restricted: bool = False
     if restricted and ext not in IMAGE_EXTS:
         return json.dumps({"error": "群聊成员和未识别身份只能读取图片文件"}, ensure_ascii=False)
     if ext in MEDIA_EXTS:
-        result = await read_media(f, max_source_bytes=max_source_bytes)
+        result = await read_media(f, max_source_bytes=max_source_bytes, db=db, user_id=user_id)
         if result.get("error"):
             return json.dumps(result, ensure_ascii=False)
         if ext in IMAGE_EXTS:

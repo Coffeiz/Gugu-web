@@ -52,11 +52,14 @@ async def stage_voice(
     *,
     duration: float | None,
     platform: str,
+    platform_message_id: str | None = None,
+    attachment_index: int | None = None,
 ) -> dict:
     from app.core import chat_attach
 
     return await chat_attach.stage_voice(
-        owner, name, ext, mime, data, duration=duration, platform=platform
+        owner, name, ext, mime, data, duration=duration, platform=platform,
+        platform_message_id=platform_message_id, attachment_index=attachment_index,
     )
 
 

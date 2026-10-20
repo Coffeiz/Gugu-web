@@ -204,6 +204,7 @@ async def ingest_qq_media(
                 from app.core import media_transcode
                 from app.core.config import get_settings
                 from agent import providers
+                from agent.im import files as im_attachments
 
                 is_voice = False
                 data = None
