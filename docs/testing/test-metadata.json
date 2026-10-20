@@ -1,4 +1,52 @@
 {
+  "backend/tests/agent/test_agent_delete_undo.py": {
+    "domain": "agent-undo",
+    "layer": "L1",
+    "owner": "backend/app/services/undo",
+    "productionEntry": "backend/agent/tools/undo.py 与 backend/app/services/undo/agent.py",
+    "keyBehavior": "Agent 项目和日历软删除可从原会话撤销，日历提醒状态一并恢复，Agent 操作不进入 Web 撤销栈",
+    "ci": "backend-test"
+  },
+  "backend/tests/api/test_create_idempotency.py": {
+    "domain": "create-idempotency",
+    "layer": "L1",
+    "owner": "backend/app/services/idempotency.py",
+    "productionEntry": "backend/app/api/v1/projects.py、backend/app/api/v1/events.py 与 Agent 创建工具",
+    "keyBehavior": "Web 与 Agent 项目和日历创建对相同请求键返回同一资源，同键不同内容明确冲突",
+    "ci": "backend-test"
+  },
+  "backend/tests/concurrency/test_cross_session_version_guards.py": {
+    "domain": "cross-session-concurrency",
+    "layer": "L1",
+    "owner": "backend/app/core 与 backend/app/services/storage",
+    "productionEntry": "项目、笔记、画布便签、文件夹和文件版本保护入口",
+    "keyBehavior": "五类资源在独立 Session 交错写入时拒绝旧版本覆盖并保留胜出写入",
+    "ci": "backend-test"
+  },
+  "backend/tests/scheduling/events/test_event_atomic_update.py": {
+    "domain": "calendar",
+    "layer": "L1",
+    "owner": "backend/app/services/calendar",
+    "productionEntry": "backend/app/api/v1/events.py 与 backend/agent/tools/calendar.py",
+    "keyBehavior": "Web 与 Agent 并发更新拒绝旧版本覆盖；事件软删除与提醒停用使用版本保护",
+    "ci": "backend-test"
+  },
+  "frontend/tests/files/fileActionsVersion.test.ts": {
+    "domain": "files",
+    "layer": "L1",
+    "owner": "frontend/composables/files",
+    "productionEntry": "frontend/src/composables/files/useFileActions.ts",
+    "keyBehavior": "改名与移动提交缓存中的文件版本，成功后回填服务端新版本，避免后续操作继续使用旧版本",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/calendar/DashboardCalendarPanel.test.ts": {
+    "domain": "calendar",
+    "layer": "L1",
+    "owner": "frontend/views/Dashboard",
+    "productionEntry": "frontend/src/views/Dashboard/components/CalendarPanel.vue",
+    "keyBehavior": "快捷编辑提交打开时捕获的事件版本；服务端拒绝并发旧草稿后恢复乐观状态、展示冲突提示并刷新缓存",
+    "ci": "frontend-test"
+  },
   "backend/tests/im/test_group_reflection_policy.py": {
     "domain": "im-memory",
     "layer": "L1",

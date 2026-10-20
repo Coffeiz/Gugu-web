@@ -5,6 +5,23 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### Improvements
+
+- Let users undo Gugu's project, calendar, file, and folder deletions from the same conversation; keep these actions separate from the Web undo stack.
+- Make project and calendar creation safe to replay with explicit idempotency keys.
+- Add independent-session concurrency regression coverage for project, note, canvas note, folder, and file updates.
+- Reject stale Web undo when a later Agent edit changed the resource, rather than overwriting newer data.
+
+### 改进
+
+- 将反思闲置收束窗口从 4 分 30 秒缩短到 4 分钟。
+- 支持在原对话撤销咕咕删除的项目、日程、文件和文件夹，且与网页撤销栈隔离。
+- 项目和日程创建支持显式幂等键，重复投递不会重复创建。
+- 补充项目、笔记、画布便签、文件夹和文件的跨 Session 并发回归测试。
+- 网页撤销遇到咕咕后续修改时会报告冲突并拒绝覆盖新数据。
+
 ## [1.7.5] - 2026-10-18
 
 ### What's New
