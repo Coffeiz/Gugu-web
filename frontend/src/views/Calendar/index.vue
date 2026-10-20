@@ -502,7 +502,7 @@ async function commitDrag() {
         refreshUpcoming(projectTimelines.value, [...extraEvents.value, ...nextMonthEvents.value])
         cacheMonth(cursor.value, [...extraEvents.value])
       },
-      request: mutation => eventsApi.update(ev.id as unknown as number, { title: ev.name, date: range.start, description: ev.description || undefined, version: ev.version }, { mutationId: mutation.mutationId }),
+      request: mutation => eventsApi.update(ev.id as unknown as number, { title: ev.name, date: range.start, description: ev.description || undefined, version: ev.version ?? 1 }, { mutationId: mutation.mutationId }),
       onCommit: updated => {
         const applyVer = (list: CalItem[]) => { const i = list.findIndex(e => e.id === ev.id); if (i !== -1 && updated?.version) list[i] = { ...list[i], version: updated.version } }
         applyVer(extraEvents.value); applyVer(nextMonthEvents.value); applyVer(spilloverEvents.value)
@@ -933,7 +933,7 @@ async function _persistEvent(s: EvDragState) {
     entityKey: `calendar-event:${s.id}`,
     apply: () => {},
     rollback: () => {},
-    request: mutation => eventsApi.update(s.id as unknown as number, { title: s.name, date: s.date, time: s.time || null, endTime: s.endTime || null, description: s.description || undefined, version: s.version }, { mutationId: mutation.mutationId }),
+    request: mutation => eventsApi.update(s.id as unknown as number, { title: s.name, date: s.date, time: s.time || null, endTime: s.endTime || null, description: s.description || undefined, version: s.version ?? 1 }, { mutationId: mutation.mutationId }),
     onCommit: updated => { if (updated?.version) _setEventLocal(s.id, { version: updated.version }) },
     onError: async (e: any) => { if (e?.status === 409) { showAppError('活动已被其他用户修改，已刷新页面'); await fetchEvents() } },
   })
