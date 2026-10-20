@@ -281,6 +281,7 @@ def build_reflection_sample(
         "trigger_source": source,
         "origin_run_id": _safe_label(trigger_context.get("origin_run_id")),
         "origin_gap_seconds": gap_seconds,
+        "snapshot_source": trigger_context.get("snapshot_source", "unavailable"),
         "probe_eligible": eligible,
         "cache_low_hit": (
             eligible and ratio <= MAX_CURRENT_HIT_RATIO
@@ -519,6 +520,7 @@ def record_reflection_sample(
     samples.append({key: safe[key] for key in (
         "provider", "model", "api_format", "cache_hit_ratio",
         "stable_prefix_tokens_estimate", "reflection_scope", "trigger_source",
+        "snapshot_source",
         "origin_gap_seconds", "cache_low_hit", "request_started_at",
         "request_duration_ms", "wire_prefix_digest", "wire_prefix_row_count",
         "wire_prefix_text_char_count",
@@ -552,7 +554,7 @@ def _safe_reflection_observation(value: dict[str, Any]) -> dict[str, Any]:
         "cache_write_tokens", "cache_hit_ratio", "stable_prefix_tokens_estimate",
         "stable_prefix_digest", "system_digest", "tool_schema_digest",
         "history_message_count", "tool_count", "reflection_scope", "trigger_source", "origin_run_id",
-        "origin_gap_seconds", "probe_eligible", "cache_low_hit", "attempt_index",
+        "origin_gap_seconds", "snapshot_source", "probe_eligible", "cache_low_hit", "attempt_index",
         "request_started_at", "response_received_at", "request_duration_ms",
         "wire_prefix", "raw_usage_probe", "request_outcome", "request_error_type",
         "request_error_status", "request_error_code",
@@ -568,6 +570,11 @@ def _safe_reflection_observation(value: dict[str, Any]) -> dict[str, Any]:
     safe["trigger_source"] = source if source in _REFLECTION_TRIGGER_SOURCES else "unknown"
     scope = safe.get("reflection_scope")
     safe["reflection_scope"] = scope if scope in _REFLECTION_SCOPES else "unknown"
+    snapshot_source = safe.get("snapshot_source")
+    safe["snapshot_source"] = (
+        snapshot_source if snapshot_source in {"in_memory", "persisted_history", "unavailable"}
+        else "other"
+    )
     for key in (
         "schema_version", "input_tokens", "fresh_input_tokens", "cache_read_tokens",
         "cache_write_tokens", "stable_prefix_tokens_estimate", "history_message_count",

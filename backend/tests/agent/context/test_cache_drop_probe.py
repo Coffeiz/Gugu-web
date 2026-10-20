@@ -39,6 +39,7 @@ def _reflection_observation_input(*, supported=True, prefix="stable"):
             "trigger_source": "idle",
             "origin_run_id": "run-origin-123",
             "origin_gap_seconds": 180.0,
+            "snapshot_source": "persisted_history",
         },
     )
     ai = SimpleNamespace(model="MiniMax-M3")
@@ -179,6 +180,7 @@ def test_reflection_cache_observation_records_usage_and_only_prefix_fingerprints
     assert observation["trigger_source"] == "idle"
     assert observation["origin_run_id"] == "run-origin-123"
     assert observation["origin_gap_seconds"] == 180.0
+    assert observation["snapshot_source"] == "persisted_history"
     assert observation["cache_hit_ratio"] == 0.85
     assert observation["cache_read_tokens"] == 17_000
     assert observation["stable_prefix_tokens_estimate"] > 0

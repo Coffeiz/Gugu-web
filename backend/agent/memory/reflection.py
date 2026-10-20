@@ -705,7 +705,22 @@ def _reflection_probe_context(snapshot, trigger_source, *, only_if_missing=False
     """通过 task-local 上下文传递来源，避免扩大反思公共调用签名。"""
     current = _reflection_probe_context_var.get()
     if only_if_missing and current is not None:
-        yield current
+        # idle drain 会先以 None 建立触发上下文；若 reflect 随后从持久历史
+        # 重建快照，沿用旧 context 会把 origin_run_id 留空，导致 LoopScope
+        # 无法关联真实来源。保留原触发类型，只用有效快照补齐来源字段。
+        if snapshot is None:
+            yield current
+            return
+        merged = dict(current)
+        refreshed = _reflection_probe_metadata(
+            snapshot, current.get("trigger_source") or trigger_source,
+        )
+        merged.update(refreshed)
+        token = _reflection_probe_context_var.set(merged)
+        try:
+            yield merged
+        finally:
+            _reflection_probe_context_var.reset(token)
         return
     token = _reflection_probe_context_var.set(
         _reflection_probe_metadata(snapshot, trigger_source),
@@ -722,11 +737,15 @@ def _reflection_probe_metadata(snapshot, trigger_source):
         created_at = getattr(snapshot, "created_at", None)
         if isinstance(created_at, (int, float)):
             gap = max(time.monotonic() - created_at, 0.0)
+    source = getattr(snapshot, "source", None) if snapshot is not None else None
+    if source not in {"persisted_history", "in_memory"}:
+        source = "in_memory" if snapshot is not None else "unavailable"
     return {
         "reflection_scope": "owner",
         "trigger_source": trigger_source,
         "origin_run_id": getattr(snapshot, "run_id", "") if snapshot else "",
         "origin_gap_seconds": gap,
+        "snapshot_source": source,
     }
 
 
@@ -1003,6 +1022,10 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
                 user_id, session_id, user_name, bound_model,
             )
             rebuilt = snapshot is not None
+            if rebuilt:
+                # DB 重建快照的 run_id/source 用于诊断其与主请求的前缀差异；
+                # 即使它不是原始快照，也不能让探针错误显示为“无来源”。
+                probe_snapshot = snapshot
         if snapshot is not None and session_id is not None:
             # 静默群消息/延迟 owner 反思没有普通 run 的 provider usage 事件，
             # 这里先按全局 context_tokens 做预检；超阈值时只走正式 baseline
