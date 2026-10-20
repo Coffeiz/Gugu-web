@@ -91,6 +91,8 @@ owner 闲置反思触发的会话压缩，应先在捕获主请求快照的同�
 
 2026-10-19：实际输入达到 90% 的运行中压力压缩保留用户最后原文和最近一个完整执行轮，允许摘要本 run 的较早执行轮；普通恢复仍沿用十轮窗口。保护位置在压缩后同步更新，摘要分支复用真实 wire，压缩范围使用 Area 投影坐标。所有 Provider 的 Chat 追加 JSON 分支统一不额外发送 `response_format`，保留任务 JSON 指令、统一解析与业务校验；独立 JSON 请求保留各 Provider 原有参数。DeepSeek 实测可改善缓存，MiniMax 未发现缓存退化；这不代表所有模型输出可靠性都经过真实验证。真实 A/B 中三次后续主请求未命中输入减少 64.25%，同输入 JSON 分支命中率 29.94% → 99.89%；794 项回归通过。详见 `docs/reports/OPT-Cache-Strategy-2026-10-19.md` 与对应 devlog。
 
+2026-10-20：群闲置反思在仍持有主 run 快照的进程内收束；Redis 仅保存 worker 协调标记。被动消息追加必须逐条匹配持久化历史尾部，成功时保留原始 Provider wire、system 和工具声明；否则回退数据库重建。真实 DeepSeek Chat A/B 使用合成历史，持久历史重建 cache read 为 0，原始前缀追加读取率为 90.59%/91.09%；第二轮由正式 `ContextBranch` 写入隔离 LoopScope trace。MiniMax M3.1 Flash Preview 的三轮真实 Anthropic 对照中，历史投影缓存率为 2.05%–2.25%，原始前缀追加为 99.57%–99.65%；该对照未经过正式 `ContextBranch`。实验不证明真实群历史必然匹配，线上还需按 `snapshot_source` 与 cache ratio 观察。详见 `docs/reports/2026-10-20-INVEST-群反思原始前缀复用真实模型AB.md`。
+
 **修改缓存策略前必须**：
 
 1. 用 `backend/scripts/diagnostics/test_cache_strategy_compare.py` 做对比测试
