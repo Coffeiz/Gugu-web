@@ -90,6 +90,34 @@ async def test_idle_closes_already_reflected_window_without_repeating_jobs(db, u
 
 
 @pytest.mark.asyncio
+async def test_worker_takes_over_group_idle_after_local_snapshot_marker_expires(
+    db, user_a, monkeypatch,
+):
+    """本地快照标记存续时 worker 避让；标记失效后 worker 收束同一闲置批次。"""
+    from app.core.redis import get_redis
+
+    scope = MemoryScope(user_a.id, "qq", "bot-synthetic", "group", "group-handoff")
+    now = now_utc()
+    await reflection_jobs.observe_group_message(scope, 10, now, now=now, member_batch=False)
+    redis = get_redis()
+    marker = reflection_jobs._local_idle_snapshot_marker(scope)
+    await redis.set(marker, "snapshot-token", ex=90)
+    enqueue = AsyncMock(return_value=1)
+    monkeypatch.setattr(reflection_jobs, "enqueue_scope", enqueue)
+    due_at = now + reflection_jobs.IDLE_WINDOW
+
+    assert await reflection_jobs.settle_idle_scopes(now=due_at) == 0
+    enqueue.assert_not_awaited()
+
+    await redis.delete(marker)
+    assert await reflection_jobs.settle_idle_scopes(now=due_at) == 1
+    assert enqueue.await_count == 2
+    assert [call.kwargs.get("task_type", "group") for call in enqueue.await_args_list] == [
+        "group", "member-batch",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_owner_passive_buffer_neither_arms_nor_extends_idle(monkeypatch):
     from agent.memory import reflection, reflection_idle
     from app.core.redis import get_redis

@@ -28,6 +28,7 @@ _LOCAL_IDLE_SNAPSHOT_DRAINING: set[str] = set()
 _LOCAL_IDLE_SNAPSHOT_MARKER_PREFIX = "memory:reflection:local-idle-snapshot:"
 _LOCAL_IDLE_SNAPSHOT_MARKER_GRACE_SECONDS = 90
 _LOCAL_IDLE_SNAPSHOT_MARKER_REFRESH_SECONDS = 30
+_async_sleep = asyncio.sleep
 
 
 def _scope_filters(model, scope: MemoryScope) -> List[Any]:
@@ -82,11 +83,11 @@ async def _arm_local_idle_snapshot(scope: MemoryScope, session_id: int, settings
     async def run_local_idle_snapshot() -> None:
         marker_task = None
         try:
-            await asyncio.sleep(IDLE_WINDOW.total_seconds())
+            await _async_sleep(IDLE_WINDOW.total_seconds())
 
             async def refresh_marker() -> None:
                 while True:
-                    await asyncio.sleep(_LOCAL_IDLE_SNAPSHOT_MARKER_REFRESH_SECONDS)
+                    await _async_sleep(_LOCAL_IDLE_SNAPSHOT_MARKER_REFRESH_SECONDS)
                     current_marker = await redis.get(marker)
                     if isinstance(current_marker, bytes):
                         current_marker = current_marker.decode("utf-8", errors="replace")
