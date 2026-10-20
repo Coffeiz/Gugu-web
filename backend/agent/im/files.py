@@ -34,10 +34,16 @@ async def stage(
     *,
     platform: str,
     kind: str | None = None,
+    platform_message_id: str | None = None,
+    attachment_index: int | None = None,
 ) -> dict:
     from app.core import chat_attach
 
-    kwargs = {"platform": platform}
+    kwargs = {
+        "platform": platform,
+        "platform_message_id": platform_message_id,
+        "attachment_index": attachment_index,
+    }
     if kind is not None:
         kwargs["kind"] = kind
     return await chat_attach.stage(owner, name, ext, mime, data, **kwargs)

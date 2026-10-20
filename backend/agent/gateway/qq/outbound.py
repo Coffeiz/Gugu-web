@@ -76,6 +76,7 @@ class QQPrivateTextStream:
         self.sent_frame_count = 0
         self.finished = False
         self.error: Exception | None = None
+        self._flush_interval = 0.5
         self._timer: asyncio.Task | None = None
         self._chain: asyncio.Task | None = None
 
@@ -92,7 +93,7 @@ class QQPrivateTextStream:
 
     async def _delayed_flush(self) -> None:
         try:
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(self._flush_interval)
             # finish() 会取消这个节流任务，但不能连带取消已经开始的 HTTP
             # 刷新链；否则收尾时的 DONE 帧可能永远发不出去，客户端会一直显示生成中。
             await asyncio.shield(self._flush())
@@ -132,12 +133,11 @@ class QQPrivateTextStream:
                 "msg_seq": self.msg_seq,
                 "index": self.frame_index,
             }
-            self.frame_index += 1
             if self.message_id:
                 body.update({"msg_id": self.message_id, "event_id": self.message_id})
             if self.stream_msg_id:
                 body["stream_msg_id"] = self.stream_msg_id
-            attempts = 0
+            retries = 0
             while True:
                 try:
                     result = await _qq_request(
@@ -147,15 +147,39 @@ class QQPrivateTextStream:
                         json_body=body,
                     )
                     self._record_sent_frame(result, sent_text, body, original_content=content_override is None)
+                    # 只有收到 QQ 对该分片的成功响应后才推进序号。失败重试和后续
+                    # DONE 都复用这个序号，避免未确认的帧造成 index 跳号。
+                    self.frame_index += 1
                     return
                 except Exception as exc:
-                    rate_limited = isinstance(exc, QQAPIError) and (
-                        exc.status == 429 or "50002" in str(exc.body)
+                    error_code = None
+                    if isinstance(exc, QQAPIError) and isinstance(exc.body, dict):
+                        error_code = str(exc.body.get("code") or exc.body.get("err_code") or "")
+                    rate_limited = (
+                        error_code == "50002"
+                        or isinstance(exc, QQAPIError) and exc.status == 429
                     )
-                    if not rate_limited or attempts >= 2:
+                    # 首帧超时是结果不确定：服务端可能已创建流，但响应里的
+                    # stream_msg_id 丢失。此时重发可能再开一条流，不能盲目重试。
+                    # 已拿到 stream_msg_id 后，才对网络/5xx 瞬时错误重放同一分片。
+                    transport_retryable = (
+                        self.stream_msg_id is not None and _qq_is_transient(exc)
+                    )
+                    retryable = (
+                        rate_limited
+                        or error_code == "50001"
+                        or transport_retryable
+                    )
+                    if not retryable or retries >= 3:
                         raise
-                    await asyncio.sleep(1.0 * (2 ** attempts))
-                    attempts += 1
+                    if rate_limited:
+                        # 官方建议降低频率；本条请求退避后，也放慢后续增量刷新。
+                        self._flush_interval = min(max(self._flush_interval, 1.0), 2.0)
+                        delay = min(1.0 * (2 ** retries), 4.0)
+                    else:
+                        delay = min(0.5 * (2 ** retries), 2.0)
+                    await asyncio.sleep(delay)
+                    retries += 1
 
         task = asyncio.create_task(send_one())
         self._chain = task

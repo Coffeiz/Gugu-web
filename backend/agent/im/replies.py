@@ -276,10 +276,15 @@ async def _send_telegram_interaction(
     return await send_text(payload, format_fallback(fallback_prompt, platform="telegram"))
 
 
-async def send_tool_event(payload: dict, event: dict) -> bool:
-    """统一发送 IM 工具完成状态；不展示调用参数或原始 JSON。"""
+async def send_tool_event(
+    payload: dict,
+    event: dict,
+    *,
+    include_details: bool = False,
+) -> bool:
+    """发送独立工具消息；详情仅由明确选择详情样式的调用方开启。"""
     from agent.outbound import sanitize_outbound
-    text = format_tool_event(event, markdown=False)
+    text = format_tool_event(event, markdown=include_details)
     if not text:
         return True
     # 工具状态是过程消息，不应消耗入站消息唯一的 QQ 被动回复机会。

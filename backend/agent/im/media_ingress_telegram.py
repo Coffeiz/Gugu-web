@@ -11,6 +11,7 @@ MAX_TELEGRAM_DOWNLOAD_BYTES = 20_000_000
 _MIME_RE = re.compile(r"^[A-Za-z0-9.+-]{1,127}/[A-Za-z0-9.+-]{1,127}$")
 _SIZE_LIMIT_NOTICE = "Telegram 单个附件下载上限为 20 MB，超限附件未接收。"
 _DOWNLOAD_FAILURE_NOTICE = "有附件暂时无法从 Telegram 下载，请稍后重试或重新发送。"
+_STAGING_FAILURE_NOTICE = "有附件已从 Telegram 下载，但保存失败，请稍后重试或重新发送。"
 
 
 def _safe_filename(value: object, media_type: str) -> tuple[str, str]:
@@ -123,6 +124,7 @@ async def ingest_telegram_media(
 
     size_limit_exceeded = False
     failed_count = 0
+    staging_failed_count = 0
     total_bytes = 0
     for item_index, item in enumerate(raw_items):
         file_id = item.get("file_id")
@@ -134,6 +136,7 @@ async def ingest_telegram_media(
             size_limit_exceeded = True
             continue
 
+        downloaded = False
         try:
             file_info = await call(token, "getFile", payload={"file_id": file_id})
             if not isinstance(file_info, dict):
@@ -159,6 +162,7 @@ async def ingest_telegram_media(
                 size_limit_exceeded = True
                 continue
 
+            downloaded = True
             name, ext = _safe_filename(item.get("file_name"), str(item.get("media_type") or ""))
             media_type = str(item.get("media_type") or "")
             mime = _mime_type(item, ext, media_type)
@@ -200,14 +204,20 @@ async def ingest_telegram_media(
             else:
                 failed_count += 1
         except Exception as exc:
-            diag_log("agent.im.media_ingress_telegram.stage", exc)
-            failed_count += 1
+            if downloaded:
+                diag_log("agent.im.media_ingress_telegram.stage", exc)
+                staging_failed_count += 1
+            else:
+                diag_log("agent.im.media_ingress_telegram.download", exc)
+                failed_count += 1
 
     notice_parts = []
     if size_limit_exceeded:
         notice_parts.append(_SIZE_LIMIT_NOTICE)
     if failed_count:
         notice_parts.append(_DOWNLOAD_FAILURE_NOTICE)
+    if staging_failed_count:
+        notice_parts.append(_STAGING_FAILURE_NOTICE)
     return MediaIngressResult(
         attachment_ids,
         size_limit_exceeded=size_limit_exceeded,

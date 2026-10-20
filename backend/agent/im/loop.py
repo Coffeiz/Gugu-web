@@ -6,6 +6,7 @@ worker 仍负责 Redis 消费、被动群消息、命令/intent shortcut 的执�
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import random
 from dataclasses import dataclass
@@ -72,6 +73,7 @@ async def display_tool_event(
     show_tool_interactions: bool,
     publish_web_event,
     feishu_tool_summary=None,
+    stream_tool_events=None,
 ) -> None:
     """保持 Web 镜像独立，再按用户偏好选择 IM 工具状态呈现。"""
     await publish_web_event(event)
@@ -83,8 +85,28 @@ async def display_tool_event(
         return
     if feishu_tool_summary is not None and await feishu_tool_summary.handle_tool_event(event):
         return
+    if stream_tool_events is not None:
+        if payload.get("platform") == "telegram" and event.get("type") == "tool_done":
+            await stream_tool_events.put(("tool", dict(event)))
+        return
     from agent.im.replies import send_tool_event
-    await send_tool_event(payload, event)
+    if (
+        payload.get("platform") == "feishu"
+        and payload.get("chat_type") != "group"
+        and feishu_tool_summary is not None
+        and feishu_tool_summary.include_tool_details
+    ):
+        await send_tool_event(payload, event, include_details=True)
+    else:
+        await send_tool_event(payload, event)
+
+
+def _create_feishu_tool_summary(platform: str, chat_type: str | None, enabled: bool):
+    if platform != "feishu" or not enabled:
+        return None
+    from agent.gateway.feishu.tool_summary import FeishuToolSummaryStream
+
+    return FeishuToolSummaryStream(include_tool_details=chat_type != "group")
 
 
 @dataclass(frozen=True)
@@ -1079,27 +1101,62 @@ async def dispatch_im_message(payload: dict):
         mirrored.setdefault("source", platform)
         await genstream.publish(web_stream_session_id, mirrored)
 
-    async def _mirror_stream(source):
+    async def _mirror_stream(source, stream_tool_events=None):
         """转发 IM 流，同时把可展示事件复制到 Web genstream。"""
-        async for line in source:
-            if isinstance(line, str) and line.startswith("data: "):
-                try:
-                    event = json.loads(line[6:])
-                except (TypeError, ValueError):
-                    event = None
-                # 工具与交互事件由 runner 回调镜像，避免流包装器和回调各发一份，
-                # 导致 Web 重复创建工具气泡。
-                if isinstance(event, dict) and event.get("type") not in {
-                    "done", "error", "tool_call", "tool_done", "interaction_required",
-                }:
-                    await _publish_web_event(event)
-            yield line
+        async def mirrored_lines():
+            async for line in source:
+                if isinstance(line, str) and line.startswith("data: "):
+                    try:
+                        event = json.loads(line[6:])
+                    except (TypeError, ValueError):
+                        event = None
+                    # 工具与交互事件由 runner 回调镜像，避免流包装器和回调各发一份，
+                    # 导致 Web 重复创建工具气泡。
+                    if isinstance(event, dict) and event.get("type") not in {
+                        "done", "error", "tool_call", "tool_done", "interaction_required",
+                    }:
+                        await _publish_web_event(event)
+                yield line
 
-    feishu_tool_summary = None
-    if platform == "feishu" and payload.get("chat_type") == "group" and show_tool_interactions:
-        from agent.gateway.feishu.tool_summary import FeishuToolSummaryStream
+        if stream_tool_events is None:
+            async for line in mirrored_lines():
+                yield line
+            return
 
-        feishu_tool_summary = FeishuToolSummaryStream()
+        async def pump_source():
+            try:
+                async for line in mirrored_lines():
+                    await stream_tool_events.put(("stream", line))
+            except BaseException as exc:
+                await stream_tool_events.put(("error", exc))
+            finally:
+                await stream_tool_events.put(("end", None))
+
+        producer = asyncio.create_task(pump_source())
+        try:
+            while True:
+                kind, value = await stream_tool_events.get()
+                if kind == "end":
+                    break
+                if kind == "error":
+                    raise value
+                if kind == "tool":
+                    yield ("tool_event", value)
+                else:
+                    yield value
+        finally:
+            if not producer.done():
+                producer.cancel()
+            try:
+                await producer
+            except asyncio.CancelledError:
+                pass
+
+    feishu_tool_summary = _create_feishu_tool_summary(
+        platform,
+        payload.get("chat_type"),
+        show_tool_interactions,
+    )
 
     shown_interaction_ids: set[int] = set()
     sent_round_indices: set[int] = set()
@@ -1116,12 +1173,16 @@ async def dispatch_im_message(payload: dict):
         qq_private_streaming = _qq_private_streaming_requested(
             platform, payload.get("chat_type"), message_format,
         )
+    telegram_stream_tool_events = asyncio.Queue() if (
+        platform == "telegram" and payload.get("chat_type") == "c2c"
+    ) else None
     tool_event_callback = partial(
         display_tool_event,
         payload,
         show_tool_interactions=show_tool_interactions,
         publish_web_event=_publish_web_event,
         feishu_tool_summary=feishu_tool_summary,
+        stream_tool_events=telegram_stream_tool_events,
     )
 
     async def _show_round(text: str) -> bool:
@@ -1224,7 +1285,7 @@ async def dispatch_im_message(payload: dict):
             )
             resp, telegram_sent_rounds = await send_telegram_stream_by_round(
                 payload,
-                _mirror_stream(token_iter),
+                _mirror_stream(token_iter, telegram_stream_tool_events),
                 show_intermediate_replies=show_intermediate_replies,
             )
             sent_round_indices.update(telegram_sent_rounds)

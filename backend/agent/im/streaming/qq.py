@@ -261,7 +261,10 @@ async def send_qq_stream_by_round(
 
     response = response or AgentResponse()
     last_text = fix_loose_bold(response.text or "")
-    if not last_text.strip():
+    if response.cancelled:
+        # 取消终态正文为空是有意设计；结束已输出的流，不要补发普通空回复兜底。
+        last_text = ""
+    elif not last_text.strip():
         last_text = "给你～" if response.files else "嗯~在的，你说～"
     if transport_error is not None:
         from app.core.redaction import diag_log
