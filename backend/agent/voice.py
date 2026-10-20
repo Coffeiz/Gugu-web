@@ -16,7 +16,7 @@ import logging
 import os
 import tempfile
 from types import SimpleNamespace
-from urllib.parse import urlunsplit
+from urllib.parse import urlsplit, urlunsplit
 
 from agent.security.logsafe import fingerprint
 from app.core.credentials import normalize_ascii_api_key

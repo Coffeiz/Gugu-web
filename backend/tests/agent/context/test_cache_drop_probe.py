@@ -292,10 +292,12 @@ def test_reflection_probe_counts_full_provider_prefix_without_trace_truncation()
     assert content not in repr(observation)
 
 
-def test_reflection_cache_observation_is_attached_to_an_active_trace(monkeypatch):
+def test_reflection_cache_observation_uses_a_dedicated_trace(monkeypatch):
     from agent.runtime.loopscope_trace import state
 
+    reflection_runs = []
     monkeypatch.setenv("LOOPSCOPE_ENABLED", "1")
+    monkeypatch.setattr(state, "_finish_run", lambda reflection_run, _status: reflection_runs.append(reflection_run))
     run = state._ScopeRun(
         id="run-active",
         trace_id="trace-active",
@@ -325,7 +327,11 @@ def test_reflection_cache_observation_is_attached_to_an_active_trace(monkeypatch
     finally:
         state._scope_run.reset(token)
 
-    span = run.spans[-1]
+    assert run.spans == []
+    assert len(reflection_runs) == 1
+    reflection_run = reflection_runs[0]
+    assert reflection_run.source == "reflection"
+    span = reflection_run.spans[-1]
     assert span.name == "Reflection cache observation"
     assert span.attributes["scenario"] == "reflection"
     assert span.attributes["reflection_scope"] == "unknown"

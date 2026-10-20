@@ -31,8 +31,12 @@ async def test_terminal_snapshot_retries_transient_collector_failure(monkeypatch
         return nullcontext(SimpleNamespace(read=lambda _size: b"ok"))
 
     monkeypatch.setattr(trace_state.urllib.request, "urlopen", open_request)
-    await trace_state._post_snapshot({"id": "run-terminal", "status": "success", "ended_at": 2})
-    assert len(attempts) == 2
+    await trace_state._post_snapshot({
+        "id": "run-terminal", "session_key": "gugu:web:1", "external_session_id": "1",
+        "source": "web", "started_at": 1, "status": "success", "ended_at": 2,
+        "duration_ms": 1000,
+    })
+    assert len(attempts) == 3  # finish 成功后还要提交完整终态快照
     assert attempts[-1]["status"] == "success"
 
 
@@ -46,7 +50,11 @@ async def test_running_snapshot_does_not_retry_or_block_on_collector_failure(mon
         raise TimeoutError("合成 Collector 不可用")
 
     monkeypatch.setattr(trace_state.urllib.request, "urlopen", open_request)
-    await trace_state._post_snapshot({"id": "run-active", "status": "running", "ended_at": None})
+    await trace_state._post_snapshot({
+        "id": "run-active", "session_key": "gugu:web:1", "external_session_id": "1",
+        "source": "web", "started_at": 1, "status": "running", "ended_at": None,
+        "duration_ms": 1000,
+    })
     assert len(attempts) == 1
 
 
@@ -54,19 +62,28 @@ async def test_running_snapshot_does_not_retry_or_block_on_collector_failure(mon
 @pytest.mark.parametrize("status, expected_attempts", [(503, 3), (400, 1)])
 async def test_terminal_snapshot_failure_is_bounded_and_diagnosed(monkeypatch, status, expected_attempts):
     """终态故障重试有上限；无效请求不重复，原始错误仅走受限诊断。"""
-    attempts = []
+    finish_attempts = []
+    snapshot_attempts = []
     diagnosed = []
 
-    def open_request(_request, **_kwargs):
+    def open_request(request, **_kwargs):
+        attempts = finish_attempts if request.full_url.endswith("/finish") else snapshot_attempts
         attempts.append(True)
         raise HTTPError("http://collector.invalid", status, "合成错误", {}, None)
 
     monkeypatch.setattr(trace_state.urllib.request, "urlopen", open_request)
     monkeypatch.setattr("app.core.redaction.diag_log", lambda *args: diagnosed.append(args))
-    await trace_state._post_snapshot({"id": "run-failed", "status": "error", "ended_at": 2})
-    assert len(attempts) == expected_attempts
-    assert len(diagnosed) == 1
-    assert isinstance(diagnosed[0][1], HTTPError)
+    await trace_state._post_snapshot({
+        "id": "run-failed", "session_key": "gugu:web:1", "external_session_id": "1",
+        "source": "web", "started_at": 1, "status": "error", "ended_at": 2,
+        "duration_ms": 1000,
+    })
+    assert len(finish_attempts) == (4 if status == 503 else 1)
+    assert len(snapshot_attempts) == expected_attempts
+    assert [entry[0] for entry in diagnosed] == [
+        "agent.loopscope.final_status", "agent.loopscope.final_snapshot",
+    ]
+    assert all(isinstance(entry[1], HTTPError) for entry in diagnosed)
 
 
 def test_new_trace_sets_and_returns():

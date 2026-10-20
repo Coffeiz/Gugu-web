@@ -56,6 +56,10 @@ async def test_overflow_ready_keeps_reason_and_scheduler_allows_verified_deletio
     assert binding.needs_reconcile
     root = tmp_path / "watched"
     root.mkdir()
+    from app.services.filesync.reconcile import _root_fingerprint
+
+    binding.root_fingerprint = _root_fingerprint(root)
+    await db.commit()
     async def binding_root(*args):
         return root
     monkeypatch.setattr("app.services.filesync.watcher._binding_root", binding_root)

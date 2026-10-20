@@ -95,8 +95,6 @@ async def enqueue_reconcile_run(
         raise LookupError("同步绑定不存在")
     if (action == "mirror_out") != (binding.mode == "mirror_out"):
         raise ReconcileRunError("任务类型与同步方向不匹配")
-    if action == "dry_run" and allow_delete:
-        raise ReconcileRunError("预检任务不能应用删除")
     existing = await db.scalar(select(FileSyncReconcileRun).where(
         FileSyncReconcileRun.binding_id == binding.id,
         FileSyncReconcileRun.status.in_(ACTIVE_BINDING_STATUSES),

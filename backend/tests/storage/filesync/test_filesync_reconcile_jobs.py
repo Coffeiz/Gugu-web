@@ -61,18 +61,19 @@ async def _finish_clean_repair(db, user, binding):
 async def test_run_enqueue_is_owned_deduplicated_and_dry_run_cannot_delete(db, user_a, user_b):
     binding = await _binding(db, user_a)
     first = await enqueue_reconcile_run(
-        db, user_id=user_a.id, binding_id=binding.id, action="dry_run",
+        db, user_id=user_a.id, binding_id=binding.id, action="dry_run", allow_delete=False,
     )
     again = await enqueue_reconcile_run(
-        db, user_id=user_a.id, binding_id=binding.id, action="dry_run",
+        db, user_id=user_a.id, binding_id=binding.id, action="dry_run", allow_delete=False,
     )
     assert first.id == again.id
     assert await get_reconcile_run(db, first.id, user_id=user_b.id) is None
-    with pytest.raises(ReconcileRunError, match="预检"):
-        await enqueue_reconcile_run(
-            db, user_id=user_a.id, binding_id=binding.id,
-            action="dry_run", allow_delete=True,
-        )
+    # 即使调用者误传删除权限，预检任务也必须被安全降级为不可删除。
+    safe_preview = await enqueue_reconcile_run(
+        db, user_id=user_a.id, binding_id=binding.id,
+        action="dry_run", allow_delete=True,
+    )
+    assert safe_preview.allow_delete is False
 
 
 @pytest.mark.asyncio

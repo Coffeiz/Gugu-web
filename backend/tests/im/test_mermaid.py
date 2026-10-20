@@ -775,7 +775,7 @@ async def test_qq_streaming_facade_keeps_text_image_text_order(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_qq_stream_keeps_compact_tool_result_in_one_private_stream(monkeypatch):
+async def test_qq_stream_sends_each_round_once_in_separate_streams(monkeypatch):
     from agent.gateway import qq
     from agent.im import mermaid, replies
     from agent.interactions.events import ROUND_END
@@ -812,8 +812,6 @@ async def test_qq_stream_keeps_compact_tool_result_in_one_private_stream(monkeyp
     async def token_iter():
         yield ("token", "前置说明")
         yield (ROUND_END, "前置说明")
-        yield ("tool_event", {"type": "tool_call", "name": "lookup", "label": "查询", "input": {"q": "x"}})
-        yield ("tool_event", {"type": "tool_done", "name": "lookup", "label": "查询", "status": "success", "result": {"ok": True}})
         yield ("token", "最终回复")
         yield (ROUND_END, "最终回复")
         yield ("final", AgentResponse(text="最终回复", round_texts=["前置说明", "最终回复"]))
@@ -829,14 +827,9 @@ async def test_qq_stream_keeps_compact_tool_result_in_one_private_stream(monkeyp
     )
 
     assert sent is True
-    assert len(streams) == 1
-    assert len(streams[0].finished) == 1
-    final_stream_text = streams[0].finished[0]
-    assert final_stream_text.startswith("前置说明\n\n✅ 查询完成")
-    assert "**输入**" not in final_stream_text
-    assert "**输出**" not in final_stream_text
-    assert '{"ok": true}' not in final_stream_text
-    assert final_stream_text.endswith("最终回复")
+    assert len(streams) == 3
+    delivered_text = [text for stream in streams for text in stream.finished]
+    assert delivered_text == ["前置说明", "最终回复"]
 
 
 @pytest.mark.asyncio

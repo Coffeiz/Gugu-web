@@ -270,7 +270,7 @@ async def test_read_audio_falls_back_to_asr_when_native_audio_is_disabled(monkey
                          audio=False)
     monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
     monkeypatch.setattr(file_readers, "get_settings", lambda: SimpleNamespace(ai=ai))
-    async def transcribe(*_):
+    async def transcribe(*_, **__):
         return "转写内容"
 
     monkeypatch.setattr(file_readers, "_transcribe_audio", transcribe)
@@ -290,7 +290,7 @@ async def test_read_audio_falls_back_when_protocol_or_format_is_unsupported(monk
                          audio=True, api_format=api_format)
     monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
     monkeypatch.setattr(file_readers, "get_settings", lambda: SimpleNamespace(ai=ai))
-    async def transcribe(*_):
+    async def transcribe(*_, **__):
         return "转写内容"
 
     monkeypatch.setattr(file_readers, "_transcribe_audio", transcribe)
