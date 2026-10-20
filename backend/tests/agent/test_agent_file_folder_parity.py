@@ -3,13 +3,13 @@ from pathlib import Path
 import json
 import pytest
 
+from agent.tools.base import registry, reset_dispatch_session, set_dispatch_session
 from agent.tools.files.file_operations import _valid_file_ids
 from app.core.tz import now_utc
+from app.models import Folder, Project, WorkspaceDirectory
 from app.services.storage import LocalStorageBackend
 from app.services.storage.file_service import FileService
 from app.services.storage.trash import move_file_to_trash
-from app.models import Folder, Project, WorkspaceDirectory
-from agent.tools.base import reset_dispatch_session, set_dispatch_session
 from app.services.undo.agent import undo_latest_agent_action
 
 
@@ -407,6 +407,41 @@ async def test_agent_folder_delete_can_be_undone_in_same_conversation(db, user_a
     assert undone["success"] is True
     restored = await FileService(db, storage=storage).folder_tree.get(user_a.id, folder_id)
     assert restored is not None and restored.name == "可撤销目录"
+
+
+async def test_agent_bulk_delete_parent_and_child_rolls_back_as_one_operation(
+    db, user_a, tmp_path, monkeypatch,
+):
+    """父目录级联软删子目录后，重复删除子目录失败时必须回滚整批事务。"""
+    _agent_files, storage = await _wire_agent_storage(monkeypatch, tmp_path)
+    service = FileService(db, storage=storage)
+    parent = await service.create_folder(
+        user_a.id, name="批量删除父目录", parent_id=None, project_id=None,
+    )
+    child = await service.create_folder(
+        user_a.id, name="批量删除子目录", parent_id=parent.id, project_id=None,
+    )
+    await db.commit()
+
+    token = set_dispatch_session(922, run_id="run-922", tool_call_id="bulk-delete-folders")
+    try:
+        raw, artifact = await registry.dispatch(
+            user_a.id, "delete_folder", {"folder_ids": [parent.id, child.id]},
+        )
+    finally:
+        reset_dispatch_session(token)
+
+    result = json.loads(raw)
+    assert artifact is None
+    assert result.get("error")
+
+    await db.refresh(parent)
+    await db.refresh(child)
+    assert parent.deleted_at is None
+    assert child.deleted_at is None
+    assert (await undo_latest_agent_action(db, user_id=user_a.id, session_id=922))["error"] == (
+        "当前对话没有可撤销的咕咕操作"
+    )
 
 
 async def test_agent_bulk_delete_moves_every_file_to_trash(db, user_a, tmp_path, monkeypatch):

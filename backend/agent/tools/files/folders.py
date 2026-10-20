@@ -411,7 +411,7 @@ async def _delete_folder(db, user_id, args: dict):
             )
             await db.commit()
         except Exception as e:
-            return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
+            return {"error": redact(f"{type(e).__name__}: {e}")}
         return {"success": True, "deleted_count": len(results), "results": results}
     fo = await _find_folder(db, user_id, args)
     if isinstance(fo, str):
@@ -432,7 +432,7 @@ async def _delete_folder(db, user_id, args: dict):
         )
         await db.commit()
     except Exception as e:
-        return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
+        return {"error": redact(f"{type(e).__name__}: {e}")}
     note = f"文件夹「{fname}」已删除，其中的文件已移入回收站（30 天内可恢复）"
     return {"success": True, "deleted_folder_id": fid, "note": note,
             "_file_op": {"op": "remove", "kind": "folder", "id": fid}}

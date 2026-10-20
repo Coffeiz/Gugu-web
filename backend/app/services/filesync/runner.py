@@ -892,8 +892,9 @@ async def _execute_scope(
                 "符号链接遮蔽了文件库记录；为保护旧记录未应用本次扫描",
                 code="scan_unsupported_symlink",
             )
-        # 空目录无法证明“过去登记的文件确实应该全部删除”。仍允许进入差异处理，
-        # 但本轮强制关闭自动删除，让缺失文件进入人工冲突处置，而不是任务直接失败。
+        # 根身份、扫描完整性和路径边界已在上游校验；空清单也能证明绑定范围内当前无文件。
+        # 仅 repair 且明确允许删除时，才按完整扫描确认的缺失事实软删除历史 File 记录；
+        # 权限排除意味着扫描不完整，因此必须关闭自动删除并保留旧记录。
         allow_delete_for_scan = (
             scope.action == "repair"
             and scope.allow_delete
