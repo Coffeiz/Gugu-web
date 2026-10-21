@@ -102,7 +102,9 @@ const { t } = useI18n()
 .similar-image-card .behavior-input { border-radius:8px; padding:6px 10px; font-size:13px; font-weight:600; text-align:center; outline:none; }
 .similar-image-card .test-message { max-width:40%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
 .test-message.success { color:#4caf7d; }.test-message.error { color:#e07070; }
-.similar-image-card .card-actions { display:flex; align-items:center; gap:10px; margin-top:18px; padding-top:16px; border-top:1px solid var(--panel-divider); }
+.similar-image-card .card-actions { display:flex; align-items:center; gap:10px; margin-top:0; padding-top:14px; border-top:1px solid var(--panel-divider); }
+.similar-image-card .card-actions > .btn-ghost,
+.similar-image-card .card-actions > .btn-primary { min-height:34px; box-sizing:border-box; }
 .similar-image-card .save-hint { flex:1; font-size:12px; color:#5ab899; }.similar-image-card .save-hint.error { color:#e07878; }
 .similar-image-card .btn-ghost,.similar-image-card .btn-primary { padding:6px 14px; border-radius:9px; font-size:13px; cursor:pointer; }
 .similar-image-card .btn-ghost { border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.06); color:rgba(255,255,255,0.45); }

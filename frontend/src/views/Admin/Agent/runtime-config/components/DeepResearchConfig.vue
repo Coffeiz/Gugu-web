@@ -22,12 +22,17 @@
         <div class="behavior-item"><div class="behavior-label"><span>{{ t('searchConfigUi.searchKey') }}</span><span class="behavior-desc">{{ t('searchConfigUi.keyHint') }}</span></div><input v-model="draft.deep_research_baidu_api_key" type="password" class="behavior-input deep-research-input" placeholder="API Key" autocomplete="new-password" /></div>
       </template>
       <div v-else class="behavior-item"><div class="behavior-label"><span>You.com API Key</span><span class="behavior-desc">{{ t('searchConfigUi.youApiHint') }}</span></div><input v-model="draft.deep_research_you_api_key" type="password" class="behavior-input deep-research-input" :placeholder="t('searchConfigUi.youApiPlaceholder')" autocomplete="new-password" /></div>
-      <div class="behavior-item deep-research-test-row">
-        <span v-if="test.msg" class="deep-research-test-message" :class="{ success: test.ok, error: !test.ok }">{{ test.msg }}</span>
-        <button class="btn-ghost" :disabled="test.loading" @click="$emit('test')">{{ test.loading ? t('agentConfigUi.testing') : t('searchConfigUi.testConnection') }}</button>
-      </div>
     </div>
-    <div class="card-actions"><span class="save-hint" :class="{ error: !!error }"><template v-if="saved">{{ t('searchConfigUi.saved') }}</template><template v-else-if="error">{{ error }}</template></span><button class="btn-ghost" @click="$emit('reset')">{{ t('searchConfigUi.undo') }}</button><button class="btn-primary" :disabled="saving" @click="$emit('save')">{{ saving ? t('searchConfigUi.saving') : t('searchConfigUi.save') }}</button></div>
+    <div class="card-actions">
+      <span v-if="saved || error" class="save-hint" :class="{ error: !!error }">
+        <template v-if="saved">{{ t('searchConfigUi.saved') }}</template>
+        <template v-else-if="error">{{ error }}</template>
+      </span>
+      <span v-if="test.msg" class="deep-research-test-message" :class="{ success: test.ok, error: !test.ok }" role="status" aria-live="polite">{{ test.msg }}</span>
+      <button class="btn-ghost" :disabled="test.loading" @click="$emit('test')">{{ test.loading ? t('agentConfigUi.testing') : t('searchConfigUi.testConnection') }}</button>
+      <button class="btn-ghost" @click="$emit('reset')">{{ t('searchConfigUi.undo') }}</button>
+      <button class="btn-primary" :disabled="saving" @click="$emit('save')">{{ saving ? t('searchConfigUi.saving') : t('searchConfigUi.save') }}</button>
+    </div>
   </section>
 </template>
 <script setup lang="ts">
@@ -61,11 +66,12 @@ const { t } = useI18n()
 .deep-research-card .behavior-desc { font-size:12px; line-height:1.45; color:rgba(255,255,255,0.3); }
 .deep-research-input { width:280px; flex:0 0 280px; }
 .deep-research-card .behavior-input { border-radius:8px; padding:6px 10px; font-size:13px; font-weight:600; text-align:center; outline:none; }
-.deep-research-test-row { justify-content:flex-end !important; }
-.deep-research-test-message { max-width:55%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
-.deep-research-test-message.success { color:#4caf7d; }
-.deep-research-test-message.error { color:#e07070; }
-.deep-research-card .card-actions { display:flex; align-items:center; gap:10px; margin-top:18px; padding-top:16px; border-top:1px solid var(--panel-divider); }
+.deep-research-test-message { flex:1 1 0; min-width:0; overflow-wrap:anywhere; white-space:normal; font-size:12px; line-height:1.45; }
+.deep-research-test-message.success { color:var(--status-success); }
+.deep-research-test-message.error { color:var(--status-danger); }
+.deep-research-card .card-actions { display:flex; align-items:center; gap:10px; margin-top:0; padding-top:14px; border-top:1px solid var(--panel-divider); }
+.deep-research-card .card-actions > .btn-ghost,
+.deep-research-card .card-actions > .btn-primary { min-height:34px; box-sizing:border-box; }
 .deep-research-card .save-hint { flex:1; font-size:12px; color:#5ab899; display:flex; align-items:center; gap:5px; }
 .deep-research-card .save-hint.error { color:#e07878; }
 .deep-research-card .btn-ghost { padding:6px 14px; border-radius:9px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.06); color:rgba(255,255,255,0.45); font-size:13px; cursor:pointer; transition:all .15s; }
@@ -76,8 +82,9 @@ const { t } = useI18n()
 @media (max-width: 760px) {
   .deep-research-card .behavior-item { align-items:flex-start; flex-direction:column; }
   .deep-research-input { width:100%; flex-basis:auto; }
-  .deep-research-test-row { align-items:center !important; flex-direction:row !important; }
-  .deep-research-test-message { max-width:calc(100% - 92px); }
+  .deep-research-card .card-actions { flex-wrap:wrap; }
+  .deep-research-card .save-hint { flex-basis:100%; }
+  .deep-research-test-message { flex-basis:100%; }
 }
 </style>
 <style scoped>
