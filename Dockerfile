@@ -75,9 +75,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     && /opt/venv/bin/python -c "from importlib.metadata import version; assert version('msgpack') == '1.2.2'; assert version('setuptools') == '84.0.0'"
 
 # ── Stage 2.5：从固定上游源码构建修复版 Cosign ───────────────────────────────
-# Cosign v3.1.3 官方镜像内的 Go 依赖已被 Trivy 标记为高危漏洞。
-# 保持官方签名版本与固定源码提交，只更新已修复的 Go 依赖并使用修复版工具链。
-FROM golang:1.26.9-trixie AS cosign-build
+# 保持官方签名版本与固定源码提交，使用已修复的 Go 工具链和压缩依赖。
+FROM golang:1.26.10-trixie AS cosign-build
 
 ARG HTTPS_PROXY
 ENV HTTPS_PROXY=${HTTPS_PROXY} \
@@ -93,6 +92,7 @@ RUN mkdir -p /out \
     && tar -xzf /tmp/cosign.tar.gz --strip-components=1 -C /src \
     && rm /tmp/cosign.tar.gz \
     && go mod edit \
+        -require=github.com/klauspost/compress@v1.18.7 \
         -require=golang.org/x/crypto@v0.55.0 \
         -require=golang.org/x/mod@v0.40.0 \
         -require=golang.org/x/net@v0.60.0 \
@@ -105,9 +105,8 @@ RUN mkdir -p /out \
         -o /out/cosign ./cmd/cosign \
     && /out/cosign version
 
-# Compose v5.6.0 上游二进制由 Go 1.26.8 构建，仍含已修复的 Go 标准库和 x/net 漏洞。
-# 从固定上游提交重建，使用修复版工具链与 x/net，避免把漏洞二进制带入应用镜像。
-FROM golang:1.26.9-trixie AS compose-build
+# Compose v5.6.0 从固定上游提交重建，更新 Go 标准库与压缩依赖的安全修复。
+FROM golang:1.26.10-trixie AS compose-build
 
 ARG HTTPS_PROXY
 ENV HTTPS_PROXY=${HTTPS_PROXY} \
@@ -122,7 +121,9 @@ ADD --checksum=sha256:ad5c45235d360b43c7ad630dc9257ff2f3b1419b9cae26c1572bb80164
 RUN mkdir -p /src /out \
     && tar -xzf /tmp/compose.tar.gz --strip-components=1 -C /src \
     && rm /tmp/compose.tar.gz \
-    && go mod edit -require=golang.org/x/net@v0.60.0 \
+    && go mod edit \
+        -require=github.com/klauspost/compress@v1.18.7 \
+        -require=golang.org/x/net@v0.60.0 \
     && go mod tidy \
     && go mod verify \
     && CGO_ENABLED=0 go build -trimpath -tags=e2e \
