@@ -5,6 +5,12 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### Improvements
+
+- Preserve Markdown formatting when copying chat messages.
+
 ## [1.7.6] - 2026-10-21
 
 ### What's New

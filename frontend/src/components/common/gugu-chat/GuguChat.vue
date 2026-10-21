@@ -150,7 +150,6 @@ import GuguChatWindow from './GuguChatWindow.vue'
 import FilesystemAuthorizationDialog from '@/components/common/filesystem/FilesystemAuthorizationDialog.vue'
 import { CUSTOM_REPLY_OPTION_ID, findPendingTextInteractionId, type ChatMessage, type ChatFile, type ChatReference, type ImPlatformKey } from './chatTypes'
 import { API_BASE } from './chatConstants'
-import { markdownToSafePlainText, renderMd } from './markdown'
 import { canPreview, fmtSize } from './messageDisplay'
 import { useChatAudio } from './composables/useChatAudio'
 import { useChatAttachments } from './composables/useChatAttachments'
@@ -797,12 +796,8 @@ function openFileFromChat(f: ChatFile) {
 }
 
 async function copyMsg(msg: ChatMessage) {
-  // AI 消息取渲染后的纯文本，用户消息直接取原文
-  let text = msg.text
-  if (msg.role === 'ai' && msg.text) {
-    text = markdownToSafePlainText(renderMd(msg.text)) || msg.text
-  }
-  const copied = await copyTextToClipboard(text)
+  // 复制消息源 Markdown，保留标题、列表、围栏代码块等语法；渲染后的纯文本会把这些结构压平。
+  const copied = await copyTextToClipboard(msg.text)
   if (!copied) {
     showAppError(t('chatUi.copyFailed'))
     return
