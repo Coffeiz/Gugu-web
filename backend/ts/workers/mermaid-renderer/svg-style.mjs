@@ -444,7 +444,7 @@ export function normalizeMermaidDatabaseLabelPosition(root) {
   return root
 }
 
-/** svgdom 的 CJK 文字宽度偏小，会让连线标签底色变窄并露出穿过文字的连线。 */
+/** svgdom 的文字宽度可能偏小，会让连线标签底色变窄并露出穿过文字的连线。 */
 export function normalizeMermaidEdgeLabelBounds(root) {
   const cjkCharacter = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u
   for (const group of root.getElementsByTagName('g')) {
@@ -459,8 +459,6 @@ export function normalizeMermaidEdgeLabelBounds(root) {
     if (!text) continue
     const tspans = [...text.getElementsByTagName('tspan')]
     const lines = tspans.length ? tspans.map(tspan => tspan.textContent || '') : [text.textContent || '']
-    if (!lines.some(line => [...line].some(character => cjkCharacter.test(character)))) continue
-
     const fontSizeValue = text.getAttribute('font-size') || text.getAttribute('style')?.match(/font-size\s*:\s*([\d.]+)px?/)?.[1]
     const fontSize = Number.parseFloat(fontSizeValue || '') || 16
     const textWidth = Math.max(...lines.map(line => [...line].reduce(
