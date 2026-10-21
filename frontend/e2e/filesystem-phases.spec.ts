@@ -102,7 +102,8 @@ async function createProjectFixture(page: Page, populated = false) {
   await page.reload()
   const project = page.locator('.proj-card').filter({ hasText: name })
   await expect(project).toBeVisible()
-  await project.click()
+  // 卡片中心可能落在当前阶段的交互按钮上；点击标题以稳定触发打开项目。
+  await project.locator('.proj-name').click()
   return name
 }
 
