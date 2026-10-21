@@ -99,13 +99,19 @@ def describe_llm_error(
             message_params={"diagnostic_id": diagnostic_id},
             text=f"QQ 拒绝了部分回复内容，已结束当前消息；完整回复可在 Web 查看（诊断编号 {diagnostic_id}）。",
         )
-    provider_error = is_provider_http_error(error)
-    tag = upstream_status_tag(error) if provider_error else ""
-    status_code = upstream_status_code(error) if provider_error else None
+    minimax_details = minimax_error_details(error)
+    provider_http_error = is_provider_http_error(error)
+    # MiniMax Anthropic SSE 可能用 HTTP 200 包装 error 事件；SDK 会抛
+    # APIStatusError，但其 status_code 不是 HTTP 失败码，需按已校验的 MiniMax
+    # 响应体识别供应商错误，避免对用户只显示无法定位的通用内部错误。
+    provider_error = provider_http_error or minimax_details is not None
+    tag = upstream_status_tag(error) if provider_http_error else (
+        type(error).__name__ if minimax_details is not None else ""
+    )
+    status_code = upstream_status_code(error) if provider_http_error else None
     params = {"tag": tag, "attempts": attempts}
     retried = f"已自动重试 {attempts} 次"
 
-    minimax_details = minimax_error_details(error)
     if provider_error and minimax_details is not None:
         error_type = minimax_details.error_type or "-"
         request_id = minimax_details.request_id or "-"

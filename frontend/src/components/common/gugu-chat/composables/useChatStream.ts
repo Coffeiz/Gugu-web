@@ -16,7 +16,9 @@ import { findLatestPersistedAssistant, timelineSyncKey } from './sessionMessageS
 
 interface StatusItem { kind: 'text' | 'dots' | 'hide'; label?: string }
 
-const RESUMED_HISTORY_EVENTS = new Set(['tool_call', 'tool_done', 'token', 'file', 'link_buttons', 'interaction_required'])
+const RESUMED_HISTORY_EVENTS = new Set([
+  'tool_call', 'tool_done', 'token', 'file', 'link_buttons', 'interaction_required', 'error',
+])
 
 interface PresentedFile {
   file_id: number
@@ -442,9 +444,12 @@ export function useChatStream(options: {
       )
       return ++timelineOrder
     }
-    const applyRunOutcome = (outcome: ChatMessage['runOutcome']) => {
-      if (!outcome || !outcomeMessageDbId) return
-      const target = messages.value.find(message => message.dbId === outcomeMessageDbId)
+    const applyRunOutcome = (
+      outcome: ChatMessage['runOutcome'],
+      targetUserMessageId = outcomeMessageDbId,
+    ) => {
+      if (!outcome || !targetUserMessageId) return
+      const target = messages.value.find(message => message.dbId === targetUserMessageId)
       if (target?.role === 'user') target.runOutcome = outcome
     }
     const syncAiIndex = () => {
@@ -827,7 +832,9 @@ export function useChatStream(options: {
                 aborted = true // 取消是正常终态，不应再补「没有收到回复」兜底气泡。
                 applyRunOutcome(evt.run_outcome || {
                   status: 'interrupted', runId: String(evt.run_id || currentRunId || ''),
-                })
+                }, Number.isInteger(eventUserMessageId) && eventUserMessageId > 0
+                  ? eventUserMessageId
+                  : undefined)
                 for (const messageId of toolMessageIds.values()) {
                   const item = messages.value.find(message => message.id === messageId)
                   if (item?.role === 'tool' && (item.toolStatus === 'queued' || item.toolStatus === 'running' || item.toolStatus === 'waiting')) {
@@ -841,7 +848,12 @@ export function useChatStream(options: {
               options.clearStatus()
               playGuguSfx('error')
               if (evt.run_outcome && typeof evt.run_outcome === 'object') {
-                applyRunOutcome(evt.run_outcome as ChatMessage['runOutcome'])
+                applyRunOutcome(
+                  evt.run_outcome as ChatMessage['runOutcome'],
+                  Number.isInteger(eventUserMessageId) && eventUserMessageId > 0
+                    ? eventUserMessageId
+                    : undefined,
+                )
                 await options.scrollBottom()
                 continue
               }

@@ -42,6 +42,10 @@ _HTTP_ERROR_MESSAGES = {
     "500": "MiniMax 服务端错误，请稍后重试",
 }
 
+# MiniMax 官方错误码中明确建议稍后重试的暂时性错误。仅在 Anthropic 流尚未
+# 向调用方输出正文时使用；其余错误（鉴权、参数、余额、内容审核等）不重试。
+_RETRYABLE_ERROR_CODES = frozenset({"1000", "1001", "1002", "1024", "1033"})
+
 
 @dataclass(frozen=True)
 class MiniMaxErrorDetails:
@@ -137,6 +141,16 @@ def minimax_error_details(error: BaseException) -> MiniMaxErrorDetails | None:
             ),
         )
     return None
+
+
+def is_retryable_error(error: BaseException) -> bool:
+    """识别 MiniMax 返回体中的暂时性错误，包括 HTTP 200 携带的 SSE error。"""
+    details = minimax_error_details(error)
+    return bool(
+        details
+        and details.error_type == "api_error"
+        and details.code in _RETRYABLE_ERROR_CODES
+    )
 
 
 class MiniMaxAdapter(ProviderAdapter):

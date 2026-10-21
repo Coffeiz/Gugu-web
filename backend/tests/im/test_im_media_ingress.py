@@ -348,7 +348,7 @@ async def test_qq_large_media_uses_stream_staging_without_materializing(monkeypa
 
 @pytest.mark.asyncio
 async def test_im_loop_reports_oversized_only_attachment_without_sending_empty_agent_reply(monkeypatch):
-    from agent.im.loop import dispatch_im_message
+    from agent.im.dispatch import dispatch_im_message
     from agent.im.media_ingress import MediaIngressResult
 
     sent = []

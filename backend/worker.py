@@ -7,7 +7,7 @@
 消息体（由网关 produce，step 6 补平台用户→咕咕用户映射）：
     {platform, platform_user_id, user_id, user_name, text, session_id?}
 
-身份、权限、Agent 执行和平台回复由 ``agent.im.loop`` 统一编排。
+身份、权限、Agent 执行和平台回复由 ``agent.im`` 的职责模块编排。
 """
 from __future__ import annotations
 
@@ -201,8 +201,8 @@ def _stop_message_lease(msg_id: str) -> None:
 
 
 async def handle(msg_id: str, payload: dict):
-    """队列条目的业务处理入口，实际编排由 IM Loop 负责。"""
-    from agent.im.loop import dispatch_im_message
+    """队列条目的业务处理入口，实际编排由 IM 分发模块负责。"""
+    from agent.im.dispatch import dispatch_im_message
 
     return await dispatch_im_message(payload)
 

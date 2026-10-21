@@ -160,7 +160,7 @@ async def test_private_feishu_keeps_each_tool_in_its_own_collapsible_block():
 
 
 def test_feishu_tool_detail_policy_keeps_details_private_and_summary_only_in_groups():
-    from agent.im.loop import _create_feishu_tool_summary
+    from agent.im.presentation import _create_feishu_tool_summary
 
     private = _create_feishu_tool_summary("feishu", "p2p", True)
     group = _create_feishu_tool_summary("feishu", "group", True)
@@ -173,7 +173,7 @@ def test_feishu_tool_detail_policy_keeps_details_private_and_summary_only_in_gro
 
 @pytest.mark.asyncio
 async def test_private_feishu_keeps_detailed_fallback_if_stream_card_is_unavailable(monkeypatch):
-    from agent.im import loop
+    from agent.im import presentation
 
     send_tool_event = AsyncMock()
     monkeypatch.setattr("agent.im.replies.send_tool_event", send_tool_event, raising=False)
@@ -183,7 +183,7 @@ async def test_private_feishu_keeps_detailed_fallback_if_stream_card_is_unavaila
         return None
 
     event = {"type": "tool_call", "tool_call_id": "call-fallback"}
-    await loop.display_tool_event(
+    await presentation.display_tool_event(
         {"platform": "feishu", "chat_type": "p2p"},
         event,
         show_tool_interactions=True,
@@ -250,7 +250,7 @@ async def test_unbound_summary_allows_existing_tool_message_fallback():
 
 @pytest.mark.asyncio
 async def test_tool_display_off_still_mirrors_web_without_sending_im_message(monkeypatch):
-    from agent.im import loop
+    from agent.im import presentation
 
     send_tool_event = AsyncMock()
     monkeypatch.setattr("agent.im.replies.send_tool_event", send_tool_event, raising=False)
@@ -260,7 +260,7 @@ async def test_tool_display_off_still_mirrors_web_without_sending_im_message(mon
         published.append(event)
 
     event = {"type": "tool_call", "tool_call_id": "call-off"}
-    await loop.display_tool_event(
+    await presentation.display_tool_event(
         {"platform": "feishu"},
         event,
         show_tool_interactions=False,
@@ -273,7 +273,7 @@ async def test_tool_display_off_still_mirrors_web_without_sending_im_message(mon
 
 @pytest.mark.asyncio
 async def test_enabled_feishu_routes_to_card_after_it_is_bound(monkeypatch):
-    from agent.im import loop
+    from agent.im import presentation
 
     send_tool_event = AsyncMock()
     monkeypatch.setattr("agent.im.replies.send_tool_event", send_tool_event, raising=False)
@@ -292,14 +292,14 @@ async def test_enabled_feishu_routes_to_card_after_it_is_bound(monkeypatch):
 
     call_event = {"type": "tool_call", "tool_call_id": "call-on"}
     done_event = {"type": "tool_done", "tool_call_id": "call-on", "status": "success"}
-    await loop.display_tool_event(
+    await presentation.display_tool_event(
         {"platform": "feishu", "chat_type": "p2p"},
         call_event,
         show_tool_interactions=True,
         publish_web_event=publish,
         feishu_tool_summary=summary,
     )
-    await loop.display_tool_event(
+    await presentation.display_tool_event(
         {"platform": "feishu", "chat_type": "p2p"},
         done_event,
         show_tool_interactions=True,
@@ -314,7 +314,7 @@ async def test_enabled_feishu_routes_to_card_after_it_is_bound(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_enabled_feishu_uses_existing_tool_message_if_card_was_not_created(monkeypatch):
-    from agent.im import loop
+    from agent.im import presentation
 
     send_tool_event = AsyncMock()
     monkeypatch.setattr("agent.im.replies.send_tool_event", send_tool_event, raising=False)
@@ -324,7 +324,7 @@ async def test_enabled_feishu_uses_existing_tool_message_if_card_was_not_created
         return None
 
     event = {"type": "tool_call", "tool_call_id": "call-fallback"}
-    await loop.display_tool_event(
+    await presentation.display_tool_event(
         {"platform": "feishu"},
         event,
         show_tool_interactions=True,

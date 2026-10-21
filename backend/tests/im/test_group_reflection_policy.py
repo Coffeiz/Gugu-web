@@ -236,7 +236,7 @@ async def test_pressure_job_rebuilds_stale_run_then_compacts_before_reflecting(d
 @pytest.mark.parametrize("body_length,job_count", [(500, 0), (2000, 2)])
 async def test_passive_recording_dispatches_pressure_jobs_without_waiting_for_fifty(db, user_a, monkeypatch, body_length, job_count):
     """从真实被动入库入口经过真实预算估算，长消息立即产生持久任务，不调用模型。"""
-    from agent.im import loop
+    from agent.im import conversation
     from agent.memory import im_reflection, reflection
 
     request = SimpleNamespace(
@@ -254,7 +254,7 @@ async def test_passive_recording_dispatches_pressure_jobs_without_waiting_for_fi
     monkeypatch.setattr(reflection, "flush_group_owner_buffer", lambda *a: None)
     dispatch = AsyncMock()
     monkeypatch.setattr(reflection_jobs, "_dispatch_job", dispatch)
-    session_id = await loop.record_passive_im_message(request)
+    session_id = await conversation.record_passive_im_message(request)
     jobs = (await db.execute(select(MemoryReflectionJob))).scalars().all()
     assert len(jobs) == job_count
     assert all(job.reason == "context-pressure" for job in jobs)

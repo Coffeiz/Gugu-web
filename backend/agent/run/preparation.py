@@ -423,6 +423,7 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
                                            chat_type="group" if req.chat_id else "c2c" if req.source in IM_SOURCES else None)
         db.add(user_message)
         await db.flush()
+        req.user_message_id = user_message.id
         # 消息 + 所有附件 claim 是同一个事务（PRD-STORAGE-1 不变量 3），同网页路
         try:
             await chat_attach.claim_attachments(

@@ -389,7 +389,7 @@ async def _process_update(
         normalized["platform_event_id"] = str(update_id)
         normalized["message_id"] = str(normalized.get("message_id") or "")
         if not normalized.get("attachments"):
-            from agent.im.loop import apply_im_shortcut_cancel, decide_im_shortcut
+            from agent.im.shortcuts import apply_im_shortcut_cancel, decide_im_shortcut
 
             platform_user_id = str(normalized.get("platform_user_id") or "")
             dec = await decide_im_shortcut(

@@ -370,7 +370,7 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
     # 取消是实时控制信号：必须在 Gateway 侧立刻写入 Redis，不能等同用户锁的
     # worker 轮到这条消息；普通 reply/drop shortcut 仍交给 worker 决策。
     if not all_attachments:
-        from agent.im.loop import apply_im_shortcut_cancel, decide_im_shortcut
+        from agent.im.shortcuts import apply_im_shortcut_cancel, decide_im_shortcut
         dec = await decide_im_shortcut(
             "qq", sender_id, text,
             bot_id=channel_id,

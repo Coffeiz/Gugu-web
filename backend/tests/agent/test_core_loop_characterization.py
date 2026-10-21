@@ -177,7 +177,7 @@ async def test_final_reply_compacts_at_provider_threshold(monkeypatch):
 async def test_long_compaction_keeps_qq_busy_and_stops_without_error(monkeypatch, command):
     """压缩跨过活跃 TTL 后仍能即时取消，不继续工具、不生成错误气泡。"""
     from agent.im import imctx
-    from agent.im.loop import decide_im_shortcut, apply_im_shortcut_cancel
+    from agent.im.shortcuts import decide_im_shortcut, apply_im_shortcut_cancel
     from agent.runtime import runtime_state
 
     started, stopped = asyncio.Event(), asyncio.Event()

@@ -1,7 +1,7 @@
 import pytest
 
 from agent.im.models import ChatTarget, PlatformMessage, PlatformReply, normalize_payload
-from agent.im.loop import should_record_passive_group
+from agent.im.conversation import should_record_passive_group
 from agent.models import AgentRequest
 from worker import _is_passive_group_payload
 

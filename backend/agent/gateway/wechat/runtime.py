@@ -142,7 +142,7 @@ async def _handle_msg(msg: dict, channel_id: str, owner: str, client) -> None:
     if not text and not attachments:   # 只有不支持的媒体、啥也没取到 → 不入队（agent 无内容）
         return
     if text.strip() and not attachments:
-        from agent.im.loop import apply_im_shortcut_cancel, decide_im_shortcut
+        from agent.im.shortcuts import apply_im_shortcut_cancel, decide_im_shortcut
 
         scope_id = group_id or from_user
         dec = await decide_im_shortcut(

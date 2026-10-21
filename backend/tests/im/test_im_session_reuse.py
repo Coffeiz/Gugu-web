@@ -7,7 +7,7 @@ from agent.im.session import (
     session_scope_filters,
     trim_session_messages,
 )
-from agent.im.loop import _ensure_im_session
+from agent.im.request_preparation import _ensure_im_session
 from agent.models import AgentRequest
 from app.models import ConversationMessage, ConversationSession
 

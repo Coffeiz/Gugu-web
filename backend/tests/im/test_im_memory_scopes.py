@@ -30,7 +30,7 @@ def test_admin_im_preview_maps_scope_to_reflection_task_type():
 
 def test_private_platform_user_reflection_is_not_scheduled_for_owner():
     """owner 私聊保留统一 owner 反思，不重复进入成员私聊记忆任务。"""
-    from agent.im.loop import _should_observe_private_member_activity
+    from agent.im.request_preparation import _should_observe_private_member_activity
     from agent.models import AgentRequest
 
     def request(role, *, enabled=True, chat_id=None):
@@ -365,7 +365,7 @@ async def test_group_reflection_threshold_is_fifty(db, user_a, monkeypatch):
 @pytest.mark.asyncio
 async def test_group_threshold_event_flushes_group_owner_buffer(db, user_a, monkeypatch, im_role):
     from app.models import ConversationSession
-    from agent.im import loop
+    from agent.im import conversation
     from agent.memory import reflection, reflection_jobs
 
     settings = SimpleNamespace(agent=SimpleNamespace(web_private_reflection_threshold=10))
@@ -382,7 +382,7 @@ async def test_group_threshold_event_flushes_group_owner_buffer(db, user_a, monk
 
     monkeypatch.setattr(reflection_jobs, "observe_group_message", fake_observe)
     monkeypatch.setattr("app.core.events.publish", fake_publish)
-    monkeypatch.setattr(loop, "trim_session_messages", fake_trim)
+    monkeypatch.setattr(conversation, "trim_session_messages", fake_trim)
     scheduled = []
     flushed = []
 
@@ -419,7 +419,7 @@ async def test_group_threshold_event_flushes_group_owner_buffer(db, user_a, monk
         user_name="小北",
     )
 
-    assert await loop.record_passive_im_message(request, session.id) == session.id
+    assert await conversation.record_passive_im_message(request, session.id) == session.id
     if im_role == "owner":
         assert scheduled == [{"group_mode": True, "session_id": session.id, "flush_now": True, "passive": True}]
         assert flushed == []

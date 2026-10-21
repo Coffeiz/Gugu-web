@@ -83,7 +83,7 @@ def test_event_identity_survives_round_trip():
 async def test_secret_input_preflight_short_circuits_im_dispatch_before_binding_commands(monkeypatch):
     """避免凭据文本在统一 dispatch 中落入绑定码、消息历史或 Agent 路径。"""
     from agent.im import interaction_text
-    from agent.im.loop import dispatch_im_message
+    from agent.im.dispatch import dispatch_im_message
 
     observed = []
 

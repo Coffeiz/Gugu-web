@@ -84,7 +84,7 @@ async def test_qq_telegram_and_feishu_group_toggles_are_platform_scoped(db, user
 
 @pytest.mark.asyncio
 async def test_im_request_reads_database_setting_not_payload(db, user_a):
-    from agent.im.loop import prepare_request
+    from agent.im.request_preparation import prepare_request
     from agent.im.models import ChatTarget, PlatformMessage, PlatformSender
     bot = UserBot(user_id=user_a.id, platform='feishu', app_id='test',
                   owner_platform_user_id='owner-speaker')

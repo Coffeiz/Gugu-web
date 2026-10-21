@@ -478,14 +478,14 @@ async def test_telegram_tool_event_shows_status_only_without_call_input_or_resul
 
 @pytest.mark.asyncio
 async def test_interaction_prompt_send_result_is_propagated(monkeypatch):
-    from agent.im import loop
+    from agent.im import presentation
     from agent.im import replies
 
     async def fake_send(_payload, prompt):
         return prompt["prompt_id"] == 21
 
     monkeypatch.setattr(replies, "send_interaction", fake_send)
-    assert await loop._send_interaction_prompts(
+    assert await presentation._send_interaction_prompts(
         {"platform": "qq"},
         [{"prompt_id": 21}, {"prompt_id": 22}],
     ) is False
