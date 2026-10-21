@@ -286,14 +286,18 @@ async def test_global_search_and_requires_every_keyword(db, user_a):
 
 
 async def test_global_search_romaji_and_requires_every_alias_keyword(db, user_a):
-    await _mk(db, File(
+    first = await _mk(db, File(
         user_id=user_a.id, display_name="第一份素材", ext="png",
-        search_romaji="xingchen", storage_key="romaji-one", size=10,
+        storage_key="romaji-one", size=10,
     ))
-    await _mk(db, File(
+    second = await _mk(db, File(
         user_id=user_a.id, display_name="第二份素材", ext="png",
-        search_romaji="xingchen beijing", storage_key="romaji-both", size=10,
+        storage_key="romaji-both", size=10,
     ))
+    # ORM before_flush 会按名称生成正式别名；这里在插入后覆写为合成测试别名。
+    first.search_romaji = "xingchen"
+    second.search_romaji = "xingchen beijing"
+    await db.commit()
 
     result = await run_global_search(
         db, user_a.id, "", queries=["xingchen", "beijing"], types=["file"], mode="AND",
