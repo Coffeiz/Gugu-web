@@ -159,7 +159,7 @@ async def test_run_agent_group_injects_group_memory(monkeypatch, db, user_a):
     # 抓取 execution 阶段收到的 prompt
     captured_prompts = {}
 
-    async def fake_execution(user_id, user_name, prompt):
+    async def fake_execution(user_id, user_name, prompt, **kwargs):
         captured_prompts["execution"] = prompt
         return ("执行结果", False, {"tool_names": [], "mutated": False})
 
@@ -225,7 +225,7 @@ async def test_run_agent_no_group_memory_when_no_target(monkeypatch, db, user_a)
 
     captured_prompts = {}
 
-    async def fake_execution(user_id, user_name, prompt):
+    async def fake_execution(user_id, user_name, prompt, **kwargs):
         captured_prompts["execution"] = prompt
         return ("ok", False, {"tool_names": [], "mutated": False})
 
@@ -271,7 +271,7 @@ async def test_run_agent_group_missing_bot_id_skips_memory(monkeypatch, db, user
 
     captured_prompts = {}
 
-    async def fake_execution(user_id, user_name, prompt):
+    async def fake_execution(user_id, user_name, prompt, **kwargs):
         captured_prompts["execution"] = prompt
         return ("ok", False, {"tool_names": [], "mutated": False})
 
