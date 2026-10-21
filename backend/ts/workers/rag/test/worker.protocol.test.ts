@@ -42,6 +42,72 @@ test("RAG worker 遵守 JSONL ping 与 replace/search contract", async (t) => {
   await once(child, "close");
 });
 
+test("相同 Memory revision 重复准备时复用瞬态索引且保持文档可用", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "gugu-rag-memory-reuse-"));
+  const ownerId = "synthetic-memory-reuse-owner";
+  const memoryDir = join(root, ownerId, ".agent", "rag", "memory");
+  await mkdir(memoryDir, { recursive: true });
+  await writeFile(join(memoryDir, "index.json"), JSON.stringify({
+    schema_version: 1,
+    documents: [{
+      document_id: "memory:profile:0:0", parent_document_id: "memory:profile:0",
+      chunk_index: 0, chunk_count: 1, source_type: "memory", source_id: "profile",
+      title: "合成偏好", summary: "稳定偏好", content: "喜欢简洁的发布说明",
+      version: "profile-v1",
+      scope: { owner_user_id: ownerId, scope_type: "owner", scope_id: "", platform: "", bot_id: "", group_id: "" },
+      metadata: {},
+    }],
+  }));
+  const { request, readResponse, child } = spawnWorker(t, {
+    GUGU_RAG_OWNER_ID: ownerId,
+    GUGU_STORAGE_BACKEND: "local",
+    GUGU_STORAGE_ROOT: root,
+    // owner scope 不访问数据库；使用不可连接的合成地址仅满足 worker 初始化契约。
+    GUGU_DATABASE_URL: "postgres://synthetic:synthetic@127.0.0.1:1/synthetic",
+  });
+  t.after(async () => {
+    child.kill();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const prepare = () => request({
+    op: "prepare_memory", owner_id: ownerId,
+    scopes: [{ type: "owner", id: ownerId, ownerId }],
+    source_filter: "all", snapshot_revision: "snapshot-v1",
+    snapshot_text: "", vector_version: "",
+  });
+  prepare();
+  const first = await readResponse();
+  assert.equal(first.status, "ok");
+  assert.equal(first.document_count, 1);
+  const firstRevision = first.transient_revision;
+
+  prepare();
+  const second = await readResponse();
+  assert.equal(second.status, "ok");
+  assert.equal(second.transient_revision, firstRevision);
+  assert.equal(second.document_count, 1);
+  assert.equal(
+    (second.probe as { stage_ms: Record<string, number> }).stage_ms.transient_index_install,
+    0,
+  );
+
+  request({
+    op: "batch_search", revision: "", transient_revision: firstRevision,
+    query: "简洁 发布说明",
+    searches: [{ id: "memory", source_types: ["memory"], corpus: "transient", limit: 5 }],
+  });
+  const search = await readResponse();
+  assert.equal(search.status, "ok");
+  assert.equal(
+    ((search.batches as Array<{ results: unknown[] }>)[0]?.results ?? []).length,
+    1,
+  );
+
+  child.stdin.end();
+  await once(child, "close");
+});
+
 test("RAG worker 在 replace/patch 同一操作内按 owner 装载向量缓存", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "gugu-rag-storage-"));
   const ownerId = "worker-storage-owner";
