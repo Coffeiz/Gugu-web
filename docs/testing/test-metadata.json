@@ -255,6 +255,54 @@
     "keyBehavior": "Provider API 协议选项与默认值符合端点能力且保留有效选择",
     "ci": "frontend-test"
   },
+  "frontend/tests/agent-configuration/ModelPicker.test.ts": {
+    "domain": "agent-configuration",
+    "layer": "L1",
+    "owner": "frontend/components/common/models",
+    "productionEntry": "frontend/src/components/common/models/ModelPicker.vue",
+    "keyBehavior": "模型列表和错误反馈始终显示在当前模型输入行下方，不脱离编辑器弹出",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/agent-configuration/SpeechModelFields.test.ts": {
+    "domain": "agent-configuration",
+    "layer": "L1",
+    "owner": "frontend/components/common/models",
+    "productionEntry": "frontend/src/components/common/models/SpeechModelFields.vue",
+    "keyBehavior": "语音服务商切换同步协议与默认值、清除不适用于新目的地的草稿密钥，并忽略过期模型列表",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/agent-configuration/VoiceModelConfig.test.ts": {
+    "domain": "agent-configuration",
+    "layer": "L1",
+    "owner": "frontend/views/Admin/Agent/runtime-config",
+    "productionEntry": "frontend/src/views/Admin/Agent/runtime-config/components/VoiceModelConfig.vue",
+    "keyBehavior": "关闭语音转写仅在用户确认后执行停用",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/agent-configuration/useMultimodalProbe.test.ts": {
+    "domain": "agent-configuration",
+    "layer": "L1",
+    "owner": "frontend/views/Admin/Agent/llm",
+    "productionEntry": "frontend/src/views/Admin/Agent/llm/useMultimodalProbe.ts",
+    "keyBehavior": "模型检测反馈留在当前编辑器，且旧模型检测结果不会覆盖后续草稿",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/agent-configuration/useVoicePresets.test.ts": {
+    "domain": "agent-configuration",
+    "layer": "L1",
+    "owner": "frontend/views/Admin/Agent/runtime-config",
+    "productionEntry": "frontend/src/views/Admin/Agent/runtime-config/useVoicePresets.ts",
+    "keyBehavior": "保存后以服务端列表和启用项为准；失败时保留草稿并显示错误",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/agent-configuration/voiceActivationRefresh.test.ts": {
+    "domain": "agent-configuration",
+    "layer": "L1",
+    "owner": "frontend/views/Admin/Agent/runtime-config",
+    "productionEntry": "frontend/src/views/Admin/Agent/runtime-config/components/VoiceModelConfig.vue",
+    "keyBehavior": "语音模型启停期间保留原卡片实例，异步刷新结束后才更新启用状态",
+    "ci": "frontend-test"
+  },
   "frontend/tests/forms/field-label-focus.test.ts": {
     "domain": "frontend-accessibility",
     "layer": "L0",
@@ -397,6 +445,22 @@
     "owner": "backend/agent",
     "productionEntry": "agent/llm/llm_select.py",
     "keyBehavior": "模型配置决定推理持久化策略，缺省值安全关闭",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/providers/test_admin_voice_presets.py": {
+    "domain": "agent-voice",
+    "layer": "L1",
+    "owner": "backend/app/api/v1/agent_admin.py",
+    "productionEntry": "backend/app/api/v1/agent_admin.py 与 backend/app/api/v1/byok.py",
+    "keyBehavior": "语音预设密钥只对原服务商和地址复用；测试、模型列表与运行配置使用一致的语音产品线",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/providers/test_minimax_voice_audio.py": {
+    "domain": "agent-voice",
+    "layer": "L0",
+    "owner": "backend/agent/providers/minimax",
+    "productionEntry": "backend/agent/providers/minimax/voice.py",
+    "keyBehavior": "语音容器扩展名与 MIME 类型匹配，未知或超时长音频在发起请求前被拒绝",
     "ci": "backend-pytest"
   },
   "backend/tests/platform/security/test_phase3_filesystem_policy.py": {
