@@ -80,14 +80,17 @@ defineProps({
 }
 .folder-card.selected {
   border-color: var(--folder-card-border-selected);
-  background: var(--folder-card-bg-selected);
   box-shadow: var(--folder-card-shadow-selected);
 }
-.folder-card.selected::before {
+/* 选择态只叠主题色遮罩；常驻伪元素确保移除 selected 后仍可淡出。 */
+.folder-card::before {
   content: ''; position: absolute; inset: 0; z-index: 2;
   pointer-events: none; border-radius: inherit;
   background: var(--folder-card-selection-overlay);
+  opacity: 0;
+  transition: opacity 0.2s ease;
 }
+.folder-card.selected::before { opacity: 1; }
 .folder-card.pre-selected:not(.selected) {
   border-color: var(--folder-card-border-preselected);
   background: var(--folder-card-bg-preselected);

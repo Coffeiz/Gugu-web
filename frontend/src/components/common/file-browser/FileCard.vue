@@ -66,7 +66,7 @@ defineProps({
 
 <style scoped>
 /* global.css 继续唯一拥有 fc-card 的结构、transition/transform 和 hover ::after 高光；
-   这里唯一拥有文件卡 paint 与文件专属状态。亮色 file-card token 明确锁定 v0.20.4。 */
+   这里唯一拥有文件卡 paint 与文件专属状态；选择态保持普通底色，仅叠主题色遮罩。 */
 .fc-card {
   background: var(--file-card-bg);
   border: 1px solid var(--file-card-border);
@@ -91,7 +91,6 @@ defineProps({
   background: var(--surface-canvas-card);
 }
 .fc-card.selected {
-  background: var(--file-card-bg-selected);
   border-color: var(--file-card-border-selected);
   box-shadow: var(--file-card-shadow-selected);
 }
@@ -103,19 +102,28 @@ defineProps({
 }
 /* Dashboard 最近文件面板：只要阴影变化，不要上浮位移。 */
 .fc-card.no-lift:hover { transform: none; }
-/* 0.20.4 的选中层级：::before 覆盖整张卡，图片缩略图区再叠一层更深的 ::after。 */
-.fc-card.selected::before {
+/* 选择态只叠主题色遮罩，底色沿用普通卡片，避免取消选择时暴露近白底色。 */
+.fc-card::before {
   content: ''; position: absolute; inset: 0; z-index: 2;
   pointer-events: none; border-radius: inherit;
   background: var(--file-card-selection-overlay);
+  opacity: 0;
+  transition: opacity 0.2s ease;
 }
-.fc-card.selected .fc-thumb-area::after,
-.fc-card.pre-selected:not(.selected) .fc-thumb-area::after {
+.fc-card.selected::before { opacity: 1; }
+/* 缩略图遮罩常驻，取消选择时只淡出透明度，避免直接移除绘制层。 */
+.fc-thumb-area::after {
   content: ''; position: absolute; inset: 0; z-index: 2;
   pointer-events: none;
+  background: var(--file-card-selection-thumb-overlay);
+  opacity: 0;
+  transition: opacity 0.2s ease;
 }
-.fc-card.selected .fc-thumb-area::after { background: var(--file-card-selection-thumb-overlay); }
-.fc-card.pre-selected:not(.selected) .fc-thumb-area::after { background: var(--file-card-preselection-thumb-overlay); }
+.fc-card.selected .fc-thumb-area::after { opacity: 1; }
+.fc-card.pre-selected:not(.selected) .fc-thumb-area::after {
+  background: var(--file-card-preselection-thumb-overlay);
+  opacity: 1;
+}
 .fc-ext-badge {
   position: absolute; top: 10px; left: 10px; z-index: 2;
   font-size: 8px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase;
