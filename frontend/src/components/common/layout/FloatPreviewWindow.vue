@@ -782,6 +782,8 @@ function onTextContentSaved(content: string, fileKey: string | number | null, ve
   if (getAccountBoundaryEpoch() !== mountAccountEpoch) return
   const currentFileKey = props.win.file.id ?? props.win.file.attach_id ?? null
   if (fileKey == null || currentFileKey == null || String(fileKey) !== String(currentFileKey)) return
+  const staleKey = previewBlobCache.keyOf(props.win.file)
+  if (staleKey) previewBlobCache.discard(staleKey)
   if (version != null && typeof props.win.file.id === 'number') {
     props.win.file.version = version
     filesCache.updateFile(props.win.file.id, { version })

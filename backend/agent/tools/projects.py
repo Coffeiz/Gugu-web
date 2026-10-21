@@ -478,7 +478,9 @@ async def _soft_delete_projects_for_agent(db, user_id, projects):
         kind, raw_id = ref.split(":", 1)
         model = {"project": Project, "file": File, "folder": Folder,
                  "event": CalendarEvent, "task": ScheduledTask}.get(kind)
-        row = await db.get(model, int(raw_id))
+        row = await db.scalar(select(model).where(
+            model.id == int(raw_id), model.user_id == user_id,
+        ))
         if row is None:
             continue
         snapshot = {
