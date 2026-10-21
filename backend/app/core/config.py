@@ -194,9 +194,7 @@ class AISettings(BaseModel):
 
 
 class VoiceSettings(BaseModel):
-    """语音 / 音视频识别（转写）模型——独立于主模型。把语音转成文字后交主模型处理，主模型不再被强切。
-    **model 为空 = 未配置**：收到语音/音视频时咕咕直接回「不支持」，不再强切 mimo。
-    `api_format=openai` 走 OpenAI 兼容接口，`dashscope` 走百炼原生接口，`minimax-asr` 走 MiniMax 独立语音识别 API。"""
+    """运行时使用的语音模型配置，由启用的语音模型预设生成。"""
     api_key: str = Field("", description="语音模型 API Key")
     base_url: str = Field("", description="语音模型 Base URL")
     model: str = Field("", description="语音/识别模型名（空=未配置→收到语音回不支持）")
@@ -205,6 +203,21 @@ class VoiceSettings(BaseModel):
         "qwen3-asr",
         description="DashScope 产品线: qwen3-asr | qwen-audio | fun-asr",
     )
+
+
+class VoicePresetItem(BaseModel):
+    id: str = ""
+    name: str = Field(min_length=1, max_length=80)
+    provider: Literal["openai", "qwen", "minimax", "local"] = "openai"
+    api_key: str = ""
+    base_url: str = ""
+    model: str = Field(min_length=1, max_length=200)
+    api_format: Literal["openai", "dashscope", "minimax-asr"] = "openai"
+    dashscope_service: Literal["qwen3-asr", "qwen-audio", "fun-asr"] = "qwen3-asr"
+
+class VoicePresets(BaseModel):
+    active_id: str = ""
+    items: list[VoicePresetItem] = Field(default_factory=list)
 
 
 class SandboxSettings(BaseModel):
@@ -594,7 +607,7 @@ class AppSettings(BaseSettings):
     redis: RedisSettings = Field(default_factory=RedisSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
     ai: AISettings = Field(default_factory=AISettings)
-    voice: VoiceSettings = Field(default_factory=VoiceSettings)   # 独立语音识别模型（空=不支持语音）
+    voice_presets: VoicePresets = Field(default_factory=VoicePresets)
     embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)   # 独立向量模型（disabled=退回词法检索）
     sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
     filesync: FileSyncSettings = Field(default_factory=FileSyncSettings)
@@ -681,12 +694,8 @@ class AppSettings(BaseSettings):
                 }}
                 updates["ai"] = AISettings.model_construct(**merged)
 
-            if "voice" in override:
-                merged = {**self.voice.model_dump(), **{
-                    k: v for k, v in override["voice"].items()
-                    if k in VoiceSettings.model_fields
-                }}
-                updates["voice"] = VoiceSettings.model_construct(**merged)
+            if "voice_presets" in override:
+                updates["voice_presets"] = VoicePresets.model_validate(override["voice_presets"] or {})
 
             if "embedding" in override:
                 merged = {**self.embedding.model_dump(), **{
@@ -796,7 +805,7 @@ class AppSettings(BaseSettings):
             # 顶层字段（secret_key、debug 等）
             top_fields = set(AppSettings.model_fields) - {
                 "db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search",
-                "state_labels", "smtp", "security", "im", "voice", "embedding", "sandbox",
+                "state_labels", "smtp", "security", "im", "voice_presets", "embedding", "sandbox",
                 "filesync", "byok", "mcp", "safe_egress", "admin_allowed_hosts",
             }
             for k in top_fields:
@@ -810,6 +819,23 @@ class AppSettings(BaseSettings):
         except Exception as e:
             print(f"[config] override 加载失败: {e}")
             return self
+
+    @property
+    def voice(self) -> VoiceSettings:
+        """运行时快捷入口，返回当前启用模型；空 active_id 表示未配置。"""
+        active = next(
+            (item for item in self.voice_presets.items if item.id == self.voice_presets.active_id),
+            None,
+        )
+        if active is None:
+            return VoiceSettings()
+        return VoiceSettings(
+            api_key=active.api_key,
+            base_url=active.base_url,
+            model=active.model,
+            api_format=active.api_format,
+            dashscope_service=active.dashscope_service,
+        )
 
 
 def _merge_agent_override(base: dict, raw_agent: object) -> dict:

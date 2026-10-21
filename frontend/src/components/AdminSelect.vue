@@ -4,6 +4,7 @@
     :options="options"
     :placeholder="placeholder"
     :disabled="disabled"
+    :aria-label="ariaLabel"
     :style="{ minWidth: triggerMinW + 'px' }"
     trigger-class="asel-trigger"
     popup-class="asel-popup popup-menu-dark asel-popup--model-list"
@@ -20,6 +21,7 @@ const props = defineProps({
   options:    { type: Array as PropType<{ value: any; label: string }[]>, default: () => [] },
   placeholder:{ type: String, default: '请选择' },
   disabled:   { type: Boolean, default: false },
+  ariaLabel:  { type: String, default: '' },
 })
 const emit = defineEmits<{ 'update:modelValue': [value: any] }>()
 

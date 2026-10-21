@@ -1,7 +1,7 @@
-import { computed, reactive, ref, type Ref } from 'vue'
+import { reactive, ref, type Ref } from 'vue'
 import { useConfigStore } from '@/stores/config'
 import { useAdminStore } from '@/stores/admin'
-import { i18n, translateAgentError } from '@/i18n'
+import { i18n } from '@/i18n'
 
 async function saveSection(
   save: () => Promise<unknown>,
@@ -31,35 +31,14 @@ export function useAgentRuntimeConfig() {
   async function saveBehavior() {
     await saveSection(() => configStore.saveConfig({ agent: { ...agentDraft } }), { saving: behaviorSaving, saved: behaviorSaved, error: behaviorError })
   }
-  const generalSearchDraft = reactive({ tavily_api_key: configStore.cfg.search.tavily_api_key, searxng_url: configStore.cfg.search.searxng_url, searxng_engines: configStore.cfg.search.searxng_engines, searxng_image_engines: configStore.cfg.search.searxng_image_engines, max_results: configStore.cfg.search.max_results, ts_sidecar_index_ttl_seconds: configStore.cfg.search.ts_sidecar_index_ttl_seconds })
-  const ragIndexTtlDays = computed({ get: () => Math.round(generalSearchDraft.ts_sidecar_index_ttl_seconds / 86400), set: (value: number) => { generalSearchDraft.ts_sidecar_index_ttl_seconds = Math.max(7, Math.min(365, Number(value) || 30)) * 86400 } })
+  const generalSearchDraft = reactive({ tavily_api_key: configStore.cfg.search.tavily_api_key, searxng_url: configStore.cfg.search.searxng_url, searxng_engines: configStore.cfg.search.searxng_engines, searxng_image_engines: configStore.cfg.search.searxng_image_engines, max_results: configStore.cfg.search.max_results })
   const deepResearchDraft = reactive({ deep_research_provider: configStore.cfg.search.deep_research_provider || 'tavily', tavily_api_key: configStore.cfg.search.tavily_api_key, deep_research_baidu_api_key: configStore.cfg.search.deep_research_baidu_api_key, deep_research_you_api_key: configStore.cfg.search.deep_research_you_api_key })
   const similarImageDraft = reactive({ similar_image_provider: configStore.cfg.search.similar_image_provider || 'baidu_qianfan', baidu_qianfan_api_key: configStore.cfg.search.baidu_qianfan_api_key, similar_image_default_count: configStore.cfg.search.similar_image_default_count, similar_image_timeout_seconds: configStore.cfg.search.similar_image_timeout_seconds, similar_image_limit_daily: configStore.cfg.search.similar_image_limit_daily })
   const generalSearchSaving = ref(false); const generalSearchSaved = ref(false); const generalSearchError = ref(''); const similarImageSaving = ref(false); const similarImageSaved = ref(false); const similarImageError = ref('')
   const deepResearchSaving = ref(false); const deepResearchSaved = ref(false); const deepResearchError = ref('')
-  function resetGeneralSearch() { Object.assign(generalSearchDraft, { tavily_api_key: configStore.cfg.search.tavily_api_key, searxng_url: configStore.cfg.search.searxng_url, searxng_engines: configStore.cfg.search.searxng_engines, searxng_image_engines: configStore.cfg.search.searxng_image_engines, max_results: configStore.cfg.search.max_results, ts_sidecar_index_ttl_seconds: configStore.cfg.search.ts_sidecar_index_ttl_seconds }) }
+  function resetGeneralSearch() { Object.assign(generalSearchDraft, { tavily_api_key: configStore.cfg.search.tavily_api_key, searxng_url: configStore.cfg.search.searxng_url, searxng_engines: configStore.cfg.search.searxng_engines, searxng_image_engines: configStore.cfg.search.searxng_image_engines, max_results: configStore.cfg.search.max_results }) }
   function resetSimilarImageSearch() { Object.assign(similarImageDraft, { similar_image_provider: configStore.cfg.search.similar_image_provider || 'baidu_qianfan', baidu_qianfan_api_key: configStore.cfg.search.baidu_qianfan_api_key, similar_image_default_count: configStore.cfg.search.similar_image_default_count, similar_image_timeout_seconds: configStore.cfg.search.similar_image_timeout_seconds, similar_image_limit_daily: configStore.cfg.search.similar_image_limit_daily }) }
   function resetDeepResearch() { Object.assign(deepResearchDraft, { deep_research_provider: configStore.cfg.search.deep_research_provider || 'tavily', tavily_api_key: configStore.cfg.search.tavily_api_key, deep_research_baidu_api_key: configStore.cfg.search.deep_research_baidu_api_key, deep_research_you_api_key: configStore.cfg.search.deep_research_you_api_key }) }
-  const voiceDraft = reactive({ ...configStore.cfg.voice }); const voiceSaving = ref(false); const voiceSaved = ref(false); const voiceError = ref(''); const voiceTesting = ref(false); const voiceTestMsg = ref('')
-  const VOICE_API_FORMATS = [{ value: 'openai', label: t('adminRuntimeUi.openaiCompatible') }, { value: 'dashscope', label: t('adminRuntimeUi.dashscope') }, { value: 'minimax-asr', label: 'MiniMax ASR' }]
-  const VOICE_DASHSCOPE_SERVICES = [{ value: 'qwen3-asr', label: 'Qwen3 ASR · qwen3-asr-flash' }, { value: 'qwen-audio', label: 'Qwen-Audio 3.0 · qwen-audio-3.0-asr-flash' }, { value: 'fun-asr', label: 'Fun-ASR · fun-asr-flash-2026-06-15' }]
-  function resetVoice() { Object.assign(voiceDraft, configStore.cfg.voice) }
-  function setVoiceApiFormat(value: string) {
-    const previous = voiceDraft.api_format
-    voiceDraft.api_format = value
-    if (value === 'minimax-asr') {
-      voiceDraft.model = 'asr-1.0'
-      voiceDraft.base_url = 'https://api.minimax.cn'
-    } else if (previous === 'minimax-asr') {
-      voiceDraft.base_url = ''
-    }
-  }
-  function setDashscopeService(value: string) { voiceDraft.dashscope_service = value; voiceDraft.model = ({ 'qwen3-asr': 'qwen3-asr-flash', 'qwen-audio': 'qwen-audio-3.0-asr-flash', 'fun-asr': 'fun-asr-flash-2026-06-15' } as Record<string, string>)[value] || '' }
-  async function saveVoice() {
-    await saveSection(() => configStore.saveConfig({ voice: { ...voiceDraft } }), { saving: voiceSaving, saved: voiceSaved, error: voiceError },
-      () => { Object.assign(voiceDraft, configStore.cfg.voice) })
-  }
-  async function testVoice() { voiceTesting.value = true; voiceError.value = ''; voiceTestMsg.value = ''; try { const res = await adminStore.authFetch('/api/v1/admin/config/test-voice', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ api_format: voiceDraft.api_format, dashscope_service: voiceDraft.dashscope_service, base_url: voiceDraft.base_url, api_key: voiceDraft.api_key, model: voiceDraft.model }) }); const data = await res.json().catch(() => ({})); const messageKey = typeof data.message_key === 'string' ? data.message_key : ''; const messageParams = data.message_params && typeof data.message_params === 'object' ? data.message_params : undefined; const message = messageKey ? translateAgentError(messageKey, messageParams) : data.message; if (!res.ok || !data.ok) throw new Error(message || t('adminRuntimeUi.testFailed', { status: res.status })); voiceTestMsg.value = message || t('adminRuntimeUi.voiceConnected') } catch (e) { voiceError.value = e instanceof Error ? e.message : String(e) } finally { voiceTesting.value = false } }
   const searchTest = reactive({ searxng: { loading: false, ok: false, msg: '' }, searxng_images: { loading: false, ok: false, msg: '' }, tavily: { loading: false, ok: false, msg: '' }, deep_research: { loading: false, ok: false, msg: '' }, baidu_similar_images: { loading: false, ok: false, msg: '' } })
   const deepResearchTest = searchTest.deep_research
   async function testSearch(target: keyof typeof searchTest) { const state = searchTest[target]; state.loading = true; state.msg = ''; try { const payload = target === 'deep_research' ? { target, ...deepResearchDraft } : target === 'tavily' ? { target, tavily_api_key: generalSearchDraft.tavily_api_key || '' } : target === 'baidu_similar_images' ? { target, baidu_qianfan_api_key: similarImageDraft.baidu_qianfan_api_key || '' } : target === 'searxng_images' ? { target, searxng_url: generalSearchDraft.searxng_url || '', searxng_image_engines: generalSearchDraft.searxng_image_engines || '' } : { target, searxng_url: generalSearchDraft.searxng_url || '', searxng_engines: generalSearchDraft.searxng_engines || '' }; const res = await adminStore.authFetch('/api/v1/admin/config/test-search', { method: 'POST', body: JSON.stringify(payload) }); const data = await res.json(); state.ok = !!data.ok; state.msg = data.message || (data.ok ? 'OK' : t('adminRuntimeUi.failed')) } catch (e) { state.ok = false; state.msg = t('adminRuntimeUi.requestFailed', { message: e instanceof Error ? e.message : String(e) }) } finally { state.loading = false } }
@@ -76,5 +55,5 @@ export function useAgentRuntimeConfig() {
       error: similar ? similarImageError : generalSearchError,
     }, () => { if (similar) resetSimilarImageSearch(); else resetGeneralSearch() })
   }
-  return { configStore, agentDraft, behaviorSaving, behaviorSaved, behaviorError, resetBehavior, saveBehavior, generalSearchDraft, ragIndexTtlDays, deepResearchDraft, similarImageDraft, generalSearchSaving, generalSearchSaved, generalSearchError, deepResearchSaving, deepResearchSaved, deepResearchError, deepResearchTest, similarImageSaving, similarImageSaved, similarImageError, resetGeneralSearch, resetDeepResearch, resetSimilarImageSearch, voiceDraft, voiceSaving, voiceSaved, voiceError, voiceTesting, voiceTestMsg, VOICE_API_FORMATS, VOICE_DASHSCOPE_SERVICES, resetVoice, setDashscopeService, setVoiceApiFormat, saveVoice, testVoice, searchTest, testSearch, testDeepResearch, saveDeepResearch, saveSearch }
+  return { configStore, agentDraft, behaviorSaving, behaviorSaved, behaviorError, resetBehavior, saveBehavior, generalSearchDraft, deepResearchDraft, similarImageDraft, generalSearchSaving, generalSearchSaved, generalSearchError, deepResearchSaving, deepResearchSaved, deepResearchError, deepResearchTest, similarImageSaving, similarImageSaved, similarImageError, resetGeneralSearch, resetDeepResearch, resetSimilarImageSearch, searchTest, testSearch, testDeepResearch, saveDeepResearch, saveSearch }
 }

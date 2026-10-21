@@ -474,8 +474,17 @@ async def _test_minimax_asr_credential(*, api_key: str, base_url: str, model: st
                 "message": redact(f"MiniMax ASR 测试失败：{type(exc).__name__}: {exc}")}
 
 
-async def _test_minimax_asr_if_needed(*, capability: str, provider: str, api_format: str,
+async def _test_native_voice_if_needed(*, capability: str, provider: str, api_format: str,
                                       api_key: str, base_url: str, model: str) -> dict | None:
+    if capability == "speech_to_text" and api_format == "dashscope":
+        from agent.voice_config import dashscope_service_for_model
+        from app.api.v1.config import VoiceTestRequest, test_voice
+        try:
+            service = dashscope_service_for_model(model)
+        except ValueError as exc:
+            return {"ok": False, "status": 0, "message": str(exc)}
+        return await test_voice(VoiceTestRequest(api_format=api_format, dashscope_service=service,
+                                                api_key=api_key, base_url=base_url, model=model, use_config=False))
     if capability != "speech_to_text" or provider != "minimax":
         return None
     if api_format != "minimax-asr":
@@ -538,11 +547,11 @@ async def test_credential_preview(body: CredentialTestPreview, user: User = Depe
             return {"ok": False, "status": 0, "message": "Embedding 测试需要填写 Base URL 和模型名"}
         return await _test_embedding_credential(api_key=api_key, base_url=body.base_url,
                                                 model=body.model, dimensions=body.dimensions)
-    minimax_asr_result = await _test_minimax_asr_if_needed(
+    voice_result = await _test_native_voice_if_needed(
         capability=body.capability, provider=body.provider, api_format=body.api_format,
         api_key=api_key, base_url=body.base_url, model=body.model)
-    if minimax_asr_result is not None:
-        return minimax_asr_result
+    if voice_result is not None:
+        return voice_result
     if body.capability in ("llm", "speech_to_text"):
         from app.services.provider_diagnostics import test_provider_credential
         result = await test_provider_credential(provider=body.provider, api_key=api_key,
@@ -572,11 +581,11 @@ async def test_credential(credential_id: int, user: User = Depends(get_current_u
             return {"ok": False, "status": 0, "message": "请先填写 Base URL 和模型名再测试"}
         return await _test_embedding_credential(api_key=api_key, base_url=row.base_url,
                                                 model=row.model, dimensions=row.dimensions)
-    minimax_asr_result = await _test_minimax_asr_if_needed(
+    voice_result = await _test_native_voice_if_needed(
         capability=row.capability, provider=row.provider, api_format=row.api_format,
         api_key=api_key, base_url=row.base_url, model=row.model)
-    if minimax_asr_result is not None:
-        return minimax_asr_result
+    if voice_result is not None:
+        return voice_result
     if row.capability in ("llm", "speech_to_text"):
         from app.services.provider_diagnostics import test_provider_credential
         result = await test_provider_credential(provider=row.provider, api_key=api_key,

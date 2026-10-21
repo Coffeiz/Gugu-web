@@ -29,7 +29,7 @@ export const useConfigStore = defineStore('config', () => {
   const saveError = ref('')
   // 后端把已存的密钥脱敏成 ****、前端又清空显示，导致「已存」无任何痕迹 → 看着像没保存。
   // 这里记录各保密字段后端当前是否已有值，供 UI 显示「已配置」指示。
-  const secretSet = reactive({ voiceApiKey: false, embeddingApiKey: false, smtpPassword: false })
+  const secretSet = reactive({ embeddingApiKey: false, smtpPassword: false })
 
   const cfg = reactive({
     db: {
@@ -58,13 +58,6 @@ export const useConfigStore = defineStore('config', () => {
       api_key: '',
       base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
       model: 'qwen-max',
-    },
-    voice: {
-      api_key: '',
-      base_url: '',
-      model: '',
-      api_format: 'openai',
-      dashscope_service: 'qwen3-asr',
     },
     embedding: {
       enabled: true,
@@ -181,7 +174,6 @@ export const useConfigStore = defineStore('config', () => {
       if (data.redis)   Object.assign(cfg.redis,   sanitizeForEdit(data.redis))
       if (data.storage) Object.assign(cfg.storage, sanitizeForEdit(data.storage))
       if (data.ai)      Object.assign(cfg.ai,      sanitizeForEdit(data.ai))
-      if (data.voice) { secretSet.voiceApiKey = data.voice.api_key === '****'; Object.assign(cfg.voice, sanitizeForEdit(data.voice)) }
       if (data.embedding) { secretSet.embeddingApiKey = data.embedding.api_key === '****'; Object.assign(cfg.embedding, sanitizeForEdit(data.embedding)) }
       if (data.sandbox) Object.assign(cfg.sandbox, data.sandbox)
       if (data.filesync) Object.assign(cfg.filesync, data.filesync)
@@ -225,7 +217,6 @@ export const useConfigStore = defineStore('config', () => {
         const target = (cfg as Record<string, Record<string, unknown>>)[section]
         if (target) Object.assign(target, vals)
       }
-      if (cleanPatch.voice?.api_key) secretSet.voiceApiKey = true   // 这次确实写了新 key
       if (cleanPatch.embedding?.api_key) secretSet.embeddingApiKey = true
       if (cleanPatch.smtp?.password) secretSet.smtpPassword = true
       saved.value = true

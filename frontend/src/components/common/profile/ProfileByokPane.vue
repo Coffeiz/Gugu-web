@@ -34,6 +34,8 @@
             <div v-if="editors[item.id]" :key="item.id" class="byok-editor byok-editor--expanded" @click="setActiveEditor(item.id)">
             <div class="byok-editor-title">{{ t('profileByokUi.editTitle') }}</div>
             <div class="byok-form-grid">
+              <SpeechModelFields v-if="editors[item.id].capability === 'speech_to_text'" :draft="editors[item.id]" v-model:api-key="editors[item.id].value" :keep-key="true" :load-models="() => loadSpeechModels(editors[item.id])" />
+              <template v-else>
               <div class="provider-selection-row" :class="{ 'provider-selection-row--single': !childProviderOptionsFor(editors[item.id]).length }">
                 <ProviderSelect :model-value="editors[item.id].provider === 'glm-coding' ? 'glm' : editors[item.id].provider" :providers="providerOptionsFor(editors[item.id].capability)" @update:model-value="applyProvider(editors[item.id], $event)" />
                 <ProviderSelect v-if="childProviderOptionsFor(editors[item.id]).length" :model-value="childSelectionFor(editors[item.id])" :providers="childProviderOptionsFor(editors[item.id])" :placeholder="t('profileByokUi.selectChild')" @update:model-value="applyProviderChild(editors[item.id], $event)" />
@@ -41,7 +43,8 @@
               <InterfaceTypeSelect v-if="interfaceOptionsFor(editors[item.id]).length" :label="t('profileByokUi.interfaceFormat')" :model-value="editors[item.id].api_format || defaultInterfaceFor(editors[item.id].provider)" :options="interfaceOptionsFor(editors[item.id])" :hint="interfaceHintFor(editors[item.id])" @update:model-value="applyInterface(editors[item.id], String($event))" />
               <input v-model="editors[item.id].base_url" class="form-input" :placeholder="isMinimaxAsr(editors[item.id]) ? 'https://api.minimax.cn' : t('profileByokUi.baseUrlOptional')" />
               <input v-model="editors[item.id].value" class="form-input" type="password" autocomplete="new-password" :placeholder="t('profileByokUi.apiKeyKeep')" />
-              <div class="model-picker" :ref="el => setModelPickerRef(item.id, el)"><div class="model-picker-row"><input v-model="editors[item.id].model" class="form-input" :placeholder="isMinimaxAsr(editors[item.id]) ? 'asr-1.0' : group.value === 'speech_to_text' ? t('profileByokUi.speechModelOptional') : t('profileByokUi.modelOptional')" /><button v-if="!isMinimaxAsr(editors[item.id])" type="button" class="pm-style-chip" :disabled="modelLoading" @click="fetchModels($event)">{{ modelLoading ? t('profileByokUi.gettingModels') : t('profileByokUi.getModels') }}</button></div><PopupMenu :show="modelMenuOpen && editor?.id === item.id" :anchor="modelAnchor" popup-class="model-options"><div v-if="modelError" class="model-option-hint err">{{ modelError }}</div><div v-else-if="!modelOptions.length" class="model-option-hint">{{ t('profileByokUi.noModels') }}</div><div v-else-if="!filteredModelOptions.length" class="model-option-hint">{{ t('profileByokUi.noModelsMatch', { kw: modelFilterKeyword }) }}</div><button v-for="model in filteredModelOptions" :key="model" type="button" class="model-option" @click="selectModel(model)">{{ model }}</button></PopupMenu></div>
+              <ModelPicker v-model="editors[item.id].model" :models="modelOptions" :open="modelMenuOpen && editor?.id === item.id" :loading="modelLoading" :error="modelError" :placeholder="t('profileByokUi.modelOptional')" @fetch="setActiveEditor(item.id); fetchModels()" @close="modelMenuOpen = false" @select="selectModel" />
+              </template>
               <input v-if="editors[item.id].capability === 'embedding'" v-model.number="editors[item.id].dimensions" class="form-input" type="number" min="0" step="1" :placeholder="t('profileByokUi.dimensionsOptional')" />
               <template v-if="editors[item.id].capability === 'llm'"><div class="byok-subsection"><div class="byok-subsection-title">{{ t('profileByokUi.thinkingIntensity') }}</div><AdminSelect v-model="editors[item.id].thinking_mode" :options="thinkingOptionsFor(editors[item.id])" :placeholder="t('profileByokUi.thinkingPlaceholder')" @update:model-value="applyThinkingOption(editors[item.id], $event)" /><div v-if="usesGenericThinkingToggle(editors[item.id])" class="byok-subsection-hint">{{ t('profileByokUi.genericThinkingHint') }}</div></div><div v-if="supportsReasoningPersistence(editors[item.id])" class="byok-subsection"><div class="setting-choice-row"><div class="setting-choice-row__copy"><div class="byok-subsection-title">{{ t('llmExtraUi.reasoningPersistence') }}</div><div class="byok-subsection-hint">{{ t('llmExtraUi.reasoningPersistenceHint') }}</div></div><div class="setting-choice-row__options pm-style-group"><button v-for="option in reasoningPersistenceOptions" :key="option.key" type="button" class="pm-style-chip" :class="{ active: editors[item.id].reasoning_persistence === option.key }" @click="editors[item.id].reasoning_persistence = option.key">{{ option.label }}</button></div></div></div><div class="byok-subsection"><div class="byok-subsection-title">{{ t('profileByokUi.contextBudget') }}</div><div class="byok-budget-grid"><input v-model.number="editors[item.id].context_tokens" class="form-input" type="number" step="500" :placeholder="t('profileByokUi.inputTokens')" /><input v-model.number="editors[item.id].max_tokens" class="form-input" type="number" step="100" :placeholder="t('profileByokUi.outputTokens')" /></div></div></template>
               <div v-if="providerWebSearchAvailable(editors[item.id])" class="byok-subsection"><div class="setting-choice-row"><div class="setting-choice-row__copy"><div class="byok-subsection-title">{{ t('llmExtraUi.webSearch') }}</div><div class="byok-subsection-hint">{{ t('llmExtraUi.webSearchHint') }}</div></div><div class="setting-choice-row__options"><ToggleSwitch :model-value="editors[item.id].web_search_enabled" :aria-label="t('llmExtraUi.webSearch')" @update:model-value="editors[item.id].web_search_enabled = $event" /></div></div></div>
@@ -60,6 +63,8 @@
           <div v-if="newEditor && newEditor.capability === group.value" class="byok-editor byok-editor--new" :class="{ 'onboarding-model-editor': onboarding }" @click.self="onboarding && closeNewEditor()">
             <div class="byok-editor-title">{{ t('profileByokUi.addConfig', { label: t(group.labelKey) }) }}</div>
             <div class="byok-form-grid">
+              <SpeechModelFields v-if="newEditor.capability === 'speech_to_text'" :draft="newEditor" v-model:api-key="newEditor.value" :popup-class="onboarding ? 'onboarding-provider-popup' : ''" :load-models="() => loadSpeechModels(newEditor)" />
+              <template v-else>
               <div class="provider-selection-row" :class="{ 'provider-selection-row--single': !childProviderOptionsFor(newEditor).length }">
                 <ProviderSelect :model-value="newEditor.provider === 'glm-coding' ? 'glm' : newEditor.provider" :providers="providerOptionsFor(newEditor.capability)" :popup-class="onboarding ? 'onboarding-provider-popup' : ''" @update:model-value="applyProviderTo(newEditor, $event)" />
                 <ProviderSelect v-if="childProviderOptionsFor(newEditor).length" :model-value="childSelectionFor(newEditor)" :providers="childProviderOptionsFor(newEditor)" :placeholder="t('profileByokUi.selectChild')" :popup-class="onboarding ? 'onboarding-provider-popup' : ''" @update:model-value="applyProviderChild(newEditor, $event)" />
@@ -67,7 +72,8 @@
               <InterfaceTypeSelect v-if="interfaceOptionsFor(newEditor).length" :label="t('profileByokUi.interfaceFormat')" :model-value="newEditor.api_format || defaultInterfaceFor(newEditor.provider)" :options="interfaceOptionsFor(newEditor)" :hint="interfaceHintFor(newEditor)" @update:model-value="applyInterface(newEditor, String($event))" />
               <input v-model="newEditor.base_url" class="form-input" :placeholder="isMinimaxAsr(newEditor) ? 'https://api.minimax.cn' : t('profileByokUi.baseUrlOptional')" />
               <input v-model="newEditor.value" class="form-input" type="password" autocomplete="new-password" :placeholder="t('profileByokUi.apiKey')" />
-              <div class="model-picker"><div class="model-picker-row"><input v-model="newEditor.model" class="form-input" :placeholder="isMinimaxAsr(newEditor) ? 'asr-1.0' : t('profileByokUi.modelOptional')" /><button v-if="!isMinimaxAsr(newEditor)" type="button" class="pm-style-chip" :disabled="modelLoading" @mousedown.prevent @click="fetchModels($event)">{{ modelLoading ? t('profileByokUi.gettingModels') : t('profileByokUi.getModels') }}</button></div><PopupMenu :show="modelMenuOpen && newEditor !== null" :anchor="modelAnchor" :popup-class="onboarding ? 'model-options onboarding-model-popup' : 'model-options'"><div v-if="modelError" class="model-option-hint err">{{ modelError }}</div><div v-else-if="!modelOptions.length" class="model-option-hint">{{ t('profileByokUi.noModels') }}</div><div v-else-if="!filteredModelOptions.length" class="model-option-hint">{{ t('profileByokUi.noModelsMatch', { kw: modelFilterKeyword }) }}</div><button v-for="model in filteredModelOptions" :key="model" type="button" class="model-option" @click="selectModel(model)">{{ model }}</button></PopupMenu></div>
+              <ModelPicker v-model="newEditor.model" :models="modelOptions" :open="modelMenuOpen && newEditor !== null" :loading="modelLoading" :error="modelError" :placeholder="t('profileByokUi.modelOptional')" @fetch="fetchModels()" @close="modelMenuOpen = false" @select="selectModel" />
+              </template>
               <input v-if="newEditor.capability === 'embedding'" v-model.number="newEditor.dimensions" class="form-input" type="number" min="0" step="1" :placeholder="t('profileByokUi.dimensionsOptional')" />
               <template v-if="newEditor.capability === 'llm'">
                 <div class="byok-subsection">
@@ -128,11 +134,12 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { byokApi } from '@/services/api'
 import AdminSelect from '@/components/AdminSelect.vue'
+import SpeechModelFields from '@/components/common/models/SpeechModelFields.vue'
 import ProviderSelect from '@/views/Admin/Agent/components/ProviderSelect.vue'
 import InterfaceTypeSelect from '@/views/Admin/Agent/components/InterfaceTypeSelect.vue'
 import MultimodalCapabilities from '@/components/common/controls/MultimodalCapabilities.vue'
 import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
-import PopupMenu from '@/components/common/overlays/PopupMenu.vue'
+import ModelPicker from '@/components/common/models/ModelPicker.vue'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { useI18n } from 'vue-i18n'
 import { apiFormatsForProvider, defaultApiFormatFromSnapshot, defaultApiFormatForProvider, defaultBaseUrlFromSnapshot, MODEL_PROVIDERS, retainApiFormatFromSnapshot, type ModelProvider } from '@/utils/modelProviders'
@@ -243,7 +250,7 @@ const props = defineProps({
 const visibleGroups = computed(() => props.capability ? groups.filter(group => group.value === props.capability) : groups)
 const localizedMediaDimensions = computed(() => mediaDimensions.map(dim => ({ ...dim, label: t(dim.labelKey) })))
 type MediaProbeResult = { key: string; label: string; text: string; status: 'supported' | 'unsupported' | 'unknown' }
-const items = ref<Item[]>([]); const loading = ref(false); const saving = ref(false); const testing = ref<number | null>(null); const mediaTesting = ref<string | null>(null); const mediaFeedback = ref(''); const mediaFeedbackType = ref<'ok' | 'err'>('ok'); const mediaFeedbackTarget = ref<string | null>(null); const needsReconfigure = ref(false); const error = ref(''); const message = ref(''); const messageParts = ref<MediaProbeResult[]>([]); const messageCapability = ref(''); const messageType = ref('ok'); const editor = ref<Editor | null>(null); const editors = ref<Record<number, Editor>>({}); const closingEditors = ref(new Set<number>()); const newEditor = ref<Editor | null>(null); const lastEditorWasExisting = ref(false); const modelLoading = ref(false); const modelError = ref(''); const modelOptions = ref<string[]>([]); const modelMenuOpen = ref(false); const modelPickerRefs = ref<Record<number, HTMLElement | null>>({}); const modelAnchor = ref<HTMLElement | null>(null)
+const items = ref<Item[]>([]); const loading = ref(false); const saving = ref(false); const testing = ref<number | null>(null); const mediaTesting = ref<string | null>(null); const mediaFeedback = ref(''); const mediaFeedbackType = ref<'ok' | 'err'>('ok'); const mediaFeedbackTarget = ref<string | null>(null); const needsReconfigure = ref(false); const error = ref(''); const message = ref(''); const messageParts = ref<MediaProbeResult[]>([]); const messageCapability = ref(''); const messageType = ref('ok'); const editor = ref<Editor | null>(null); const editors = ref<Record<number, Editor>>({}); const closingEditors = ref(new Set<number>()); const newEditor = ref<Editor | null>(null); const lastEditorWasExisting = ref(false); const modelLoading = ref(false); const modelError = ref(''); const modelOptions = ref<string[]>([]); const modelMenuOpen = ref(false);
 let capabilityRequestId = 0
 const activeCapabilityDraft = computed(() => newEditor.value || editor.value)
 watch(() => {
@@ -297,7 +304,10 @@ watch(() => {
   }
 })
 const rebuildRunning = ref(false); let rebuildTimer: ReturnType<typeof setInterval> | null = null
-function setModelPickerRef(id: number, element: Element | null | unknown) { modelPickerRefs.value[id] = element instanceof HTMLElement ? element : null }
+async function loadSpeechModels(draft: Editor): Promise<string[]> {
+  const result = await byokApi.modelsPreview({ provider: draft.provider, base_url: draft.base_url, api_format: draft.api_format, api_key: draft.value, credential_id: draft.id })
+  return result.models || []
+}
 function itemsFor(capability: string) { return items.value.filter(item => item.capability === capability) }
 const embeddingProviders = ['openai', 'qwen', 'glm', 'ollama', 'local']
 function providersFor(capability: string): readonly ProviderOption[] {
@@ -389,8 +399,7 @@ function keyRequiredFor(draft: Pick<Editor, 'capability' | 'provider' | 'base_ur
   if (draft.provider === 'ollama') return childSelectionFor(draft) === 'cloud'
   return true
 }
-async function fetchModels(event?: MouseEvent) {
-  if (event?.currentTarget instanceof HTMLElement) modelAnchor.value = event.currentTarget.closest('.model-picker') as HTMLElement | null
+async function fetchModels() {
   const draft = editor.value || newEditor.value
   if (!draft || !draft.provider) return
   if (modelMenuOpen.value && !modelLoading.value) { modelMenuOpen.value = false; return }
@@ -403,14 +412,6 @@ async function fetchModels(event?: MouseEvent) {
   finally { modelLoading.value = false }
 }
 function selectModel(model: string) { const draft = editor.value || newEditor.value; if (draft) draft.model = model; modelMenuOpen.value = false }
-// 「获取列表」结果按模型输入框的预填内容过滤（类似搜索）：预填 qwen 就只看得到含 qwen 的项；
-// 关键词取自当前展开的编辑草稿，输入变化实时生效。清空输入恢复完整列表。
-const filteredModelOptions = computed(() => {
-  const kw = (editor.value?.model || newEditor.value?.model || '').trim().toLowerCase()
-  if (!kw) return modelOptions.value
-  return modelOptions.value.filter(model => model.toLowerCase().includes(kw))
-})
-const modelFilterKeyword = computed(() => (editor.value?.model || newEditor.value?.model || '').trim())
 function stripStatusMarks(value: string) { return value.replace(/\s*[✅✔☑]\s*$/gu, '').trim() }
 async function probeMedia(dim: string) {
   const draft = editor.value
@@ -550,12 +551,8 @@ async function remove(item: Item) {
     messageType.value = 'err'
   }
 }
-function closeModelMenuOnOutside(event: MouseEvent) {
-  const target = event.target
-  if (modelMenuOpen.value && (!(target instanceof Element) || !target.closest('.model-picker'))) modelMenuOpen.value = false
-}
-onMounted(() => { load(); void refreshRebuildStatus(); document.addEventListener('mousedown', closeModelMenuOnOutside) })
-onBeforeUnmount(() => { stopRebuildPolling(); document.removeEventListener('mousedown', closeModelMenuOnOutside) })
+onMounted(() => { load(); void refreshRebuildStatus() })
+onBeforeUnmount(() => { stopRebuildPolling() })
 </script>
 
 <style scoped>
@@ -649,13 +646,6 @@ onBeforeUnmount(() => { stopRebuildPolling(); document.removeEventListener('mous
 .byok-editor-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .byok-editor-feedback { flex: 1 1 auto; min-width: 0; margin-right: auto; overflow-wrap: anywhere; font-size: 11px; line-height: 1.35; }
 .byok-editor-actions > button { flex: 0 0 auto; white-space: nowrap; }
-.model-picker { position: relative; min-width: 0; }
-.model-picker-row { display: flex; gap: 6px; }
-.model-picker-row .form-input { min-width: 0; flex: 1; }
-.model-options { position: absolute; z-index: 20; left: 0; right: 0; top: calc(100% + 4px); max-height: 180px; overflow-y: auto; padding: var(--popup-surface-padding); border: 1px solid var(--popup-surface-border); border-radius: var(--popup-surface-radius); background: var(--popup-surface-bg); box-shadow: var(--popup-surface-shadow), inset 0 1px 0 var(--popup-surface-highlight); backdrop-filter: var(--popup-surface-blur); -webkit-backdrop-filter: var(--popup-surface-blur); }
-.model-option { display: block; width: 100%; padding: 7px 9px; border: 0; border-radius: var(--popup-item-radius); background: none; color: var(--popup-item-fg); text-align: left; cursor: pointer; }
-.model-option:hover { background: var(--popup-item-bg-hover); }
-.model-option-hint { padding: 7px 9px; color: var(--popup-item-fg-muted); font-size: 12px; }
 .api-format-field { grid-column: 1 / -1; }
 :deep(.byok-editor .multimodal-capabilities) { grid-column: 1 / -1; width: 100%; }
 .byok-editor .multimodal-capability-row { max-width: 360px; }

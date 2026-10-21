@@ -30,7 +30,7 @@ from sqlalchemy import case, select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import (
-    get_settings, mutate_override_json, read_override_document, write_override_json,
+    VoicePresetItem, get_settings, mutate_override_json, read_override_document, write_override_json,
 )
 from app.db.session import get_db
 from app.models import AgentUsage, User, UserMcpServer
@@ -104,6 +104,198 @@ def _mask_key(key: str) -> str:
     return key[:3] + "•" * (len(key) - 7) + key[-4:]
 
 
+router = APIRouter(prefix="/admin/agent", tags=["admin"])
+
+
+class VoicePresetPayload(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    provider: Literal["openai", "qwen", "minimax", "local"]
+    api_key: str = ""
+    base_url: str = ""
+    model: str = Field(min_length=1, max_length=200)
+    api_format: Literal["openai", "dashscope", "minimax-asr"] = "openai"
+    dashscope_service: Literal["qwen3-asr", "qwen-audio", "fun-asr"] = "qwen3-asr"
+
+
+class VoicePresetUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    provider: Literal["openai", "qwen", "minimax", "local"] | None = None
+    api_key: str | None = None
+    base_url: str | None = None
+    model: str | None = Field(default=None, min_length=1, max_length=200)
+    api_format: Literal["openai", "dashscope", "minimax-asr"] | None = None
+    dashscope_service: Literal["qwen3-asr", "qwen-audio", "fun-asr"] | None = None
+
+
+class VoicePresetTestPayload(VoicePresetPayload):
+    preset_id: str = ""
+
+
+def _validate_voice_provider_format(provider: str, api_format: str) -> None:
+    expected = {"qwen": {"dashscope", "openai"}, "minimax": {"minimax-asr"}}.get(provider, {"openai"})
+    if api_format not in expected:
+        raise HTTPException(422, "语音服务商与 API 格式不匹配")
+
+
+def _voice_dashscope_service(model: str) -> str:
+    from agent.voice_config import dashscope_service_for_model
+    try:
+        return dashscope_service_for_model(model)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+def _validate_voice_key_destination(item: dict, provider: str, base_url: str) -> None:
+    if item.get("api_key") and (item["provider"] != provider or item["base_url"].rstrip("/") != base_url.rstrip("/")):
+        raise HTTPException(422, "服务商或地址已变更，请重新填写 API Key")
+
+
+def _voice_preview_key(provider: str, base_url: str, supplied_key: str, preset_id: str) -> str:
+    if supplied_key or not preset_id:
+        return supplied_key
+    presets = _ensure_voice_presets(_read_override())
+    item = next((row for row in presets["items"] if row["id"] == preset_id), None)
+    if item is None:
+        raise HTTPException(404, "语音模型配置不存在")
+    _validate_voice_key_destination(item, provider, base_url)
+    return item["api_key"]
+
+
+def _validate_voice_preset_name(name: str) -> str:
+    normalized = name.strip()
+    if not normalized:
+        raise HTTPException(422, "语音模型名称不能为空")
+    return normalized
+
+
+def _ensure_voice_presets(override: dict) -> dict:
+    """返回语音模型集合；不从旧版单模型配置导入。"""
+    presets = override.get("voice_presets")
+    if isinstance(presets, dict) and isinstance(presets.get("items"), list):
+        return presets
+    presets = {"active_id": "", "items": []}
+    override["voice_presets"] = presets
+    return presets
+
+
+def _voice_preset_response(item: dict, active_id: str) -> dict:
+    return {
+        **item,
+        "api_key": _mask_key(str(item.get("api_key") or "")),
+        "has_api_key": bool(item.get("api_key")),
+        "active": str(item.get("id") or "") == active_id,
+    }
+
+
+@router.get("/voice-presets")
+async def list_voice_presets():
+    override = _read_override()
+    presets = _ensure_voice_presets(override)
+    active_id = str(presets.get("active_id") or "")
+    items = [
+        _voice_preset_response(item, active_id)
+        for item in presets.get("items", []) if isinstance(item, dict)
+    ]
+    return {"active_id": active_id, "items": items}
+
+
+@router.post("/voice-presets")
+async def create_voice_preset(body: VoicePresetPayload):
+    _validate_voice_provider_format(body.provider, body.api_format)
+    if body.api_format == "dashscope":
+        body.dashscope_service = _voice_dashscope_service(body.model)
+    preset_id = f"v_{_uuid.uuid4().hex[:8]}"
+    item = VoicePresetItem.model_validate({"id": preset_id, **body.model_dump(), "name": _validate_voice_preset_name(body.name)}).model_dump()
+
+    def create(override: dict) -> dict:
+        presets = _ensure_voice_presets(override)
+        presets["items"].append(item)
+        if not presets.get("active_id"):
+            presets["active_id"] = preset_id
+        return {"active_id": presets["active_id"], "item": _voice_preset_response(item, presets["active_id"])}
+
+    return _mutate_override(create)
+
+
+@router.put("/voice-presets/{preset_id}")
+async def update_voice_preset(preset_id: str, body: VoicePresetUpdate):
+    def update(override: dict) -> dict:
+        presets = _ensure_voice_presets(override)
+        item = next((row for row in presets["items"] if str(row.get("id")) == preset_id), None)
+        if item is None:
+            raise HTTPException(404, "语音模型配置不存在")
+        if item.get("api_key") and not body.api_key:
+            _validate_voice_key_destination(item, body.provider or item["provider"], body.base_url if body.base_url is not None else item["base_url"])
+        for key, value in body.model_dump(exclude_unset=True).items():
+            if key == "api_key" and not value:
+                continue
+            if value is not None:
+                item[key] = value
+        _validate_voice_provider_format(str(item.get("provider") or ""), str(item.get("api_format") or ""))
+        if item["api_format"] == "dashscope":
+            item["dashscope_service"] = _voice_dashscope_service(item["model"])
+        item["name"] = _validate_voice_preset_name(str(item.get("name") or ""))
+        validated = VoicePresetItem.model_validate(item).model_dump()
+        item.clear()
+        item.update(validated)
+        return {"active_id": presets.get("active_id", ""), "item": _voice_preset_response(item, presets.get("active_id", ""))}
+
+    return _mutate_override(update)
+
+
+@router.delete("/voice-presets/{preset_id}")
+async def delete_voice_preset(preset_id: str):
+    def delete(override: dict) -> dict:
+        presets = _ensure_voice_presets(override)
+        item = next((row for row in presets["items"] if str(row.get("id")) == preset_id), None)
+        if item is None:
+            raise HTTPException(404, "语音模型配置不存在")
+        presets["items"] = [row for row in presets["items"] if str(row.get("id")) != preset_id]
+        if str(presets.get("active_id") or "") == preset_id:
+            presets["active_id"] = ""
+        return {"deleted": preset_id, "active_id": presets.get("active_id", "")}
+
+    return _mutate_override(delete)
+
+
+@router.post("/voice-presets/{preset_id}/activate")
+async def activate_voice_preset(preset_id: str):
+    def activate(override: dict) -> dict:
+        presets = _ensure_voice_presets(override)
+        if not any(str(row.get("id")) == preset_id for row in presets["items"]):
+            raise HTTPException(404, "语音模型配置不存在")
+        presets["active_id"] = preset_id
+        return {"active_id": preset_id}
+
+    return _mutate_override(activate)
+
+
+@router.post("/voice-presets/deactivate")
+async def deactivate_voice_preset():
+    def deactivate(override: dict) -> dict:
+        presets = _ensure_voice_presets(override)
+        presets["active_id"] = ""
+        return {"active_id": ""}
+
+    return _mutate_override(deactivate)
+
+
+@router.post("/voice-presets/test")
+async def test_voice_preset(body: VoicePresetTestPayload):
+    _validate_voice_provider_format(body.provider, body.api_format)
+    api_key = _voice_preview_key(body.provider, body.base_url, body.api_key, body.preset_id)
+    from app.api.v1.config import VoiceTestRequest, test_voice
+
+    return await test_voice(VoiceTestRequest(
+        api_format=body.api_format,
+        dashscope_service=_voice_dashscope_service(body.model) if body.api_format == "dashscope" else body.dashscope_service,
+        base_url=body.base_url,
+        api_key=api_key,
+        model=body.model,
+        use_config=False,
+    ))
+
+
 def _effective_input_expr():
     """返回兼容历史记录的完整输入 token 表达式。"""
     full_input = AgentUsage.tokens_in + AgentUsage.cache_read + AgentUsage.cache_write
@@ -149,8 +341,6 @@ def _ensure_presets(override: dict) -> dict:
     presets = {"active_id": "default", "items": [item]}
     override["ai_presets"] = presets
     return presets
-
-router = APIRouter(prefix="/admin/agent", tags=["admin"])
 
 _DEV_USER_SQ = select(User.id).where(User.is_developer == True)  # orm-exempt: 管理员统计跨用户筛选，Service 收口随 Admin 统计迁移
 
@@ -1180,6 +1370,11 @@ async def _fetch_provider_models(base_url: str, provider: str, api_key: str, api
     from types import SimpleNamespace
 
     base_url = (base_url or "").rstrip("/")
+    if provider == "qwen" and api_format == "dashscope":
+        # 官方原生语音端点不提供 /models；模型目录使用同域的兼容接口。
+        if base_url == "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation":
+            base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        api_format = "openai"
     _ns = SimpleNamespace(provider=provider, base_url=base_url, api_format=api_format, api_key=api_key)
     from agent import providers
     adapter = providers.adapter_for(_ns)
@@ -1229,6 +1424,19 @@ class ModelsPreview(BaseModel):
     api_key: str = ""
     api_format: str = ""
     local_runtime: str = "other"
+
+
+class VoiceModelsPreview(ModelsPreview):
+    preset_id: str = ""
+
+
+@router.post("/voice-presets/models-preview")
+async def preview_voice_preset_models(body: VoiceModelsPreview):
+    api_key = _voice_preview_key(body.provider, body.base_url, body.api_key, body.preset_id)
+    if not api_key and body.provider != "local":
+        raise HTTPException(422, "请先填写 API Key 或选择已保存的语音配置")
+    models = await _fetch_provider_models(body.base_url, body.provider, api_key, body.api_format)
+    return {"models": models, "source": "provider"}
 
 
 @router.post("/llm-presets/models-preview")

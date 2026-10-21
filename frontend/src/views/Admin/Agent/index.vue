@@ -151,7 +151,7 @@
           </div>
         </div>
 
-        <div v-if="llmMsg" class="llm-msg" :class="{ 'llm-msg--error': llmMsgError }">
+        <div v-if="llmMsg && !editTarget" class="llm-msg" :class="{ 'llm-msg--error': llmMsgError }">
           <span v-if="!llmMsgParts.length" class="llm-msg__dot" :class="llmMsgError ? 'is-error' : 'is-success'" aria-hidden="true"></span>
           <template v-if="llmMsgParts.length">
             <template v-for="(part, index) in llmMsgParts" :key="part.key">
@@ -169,6 +169,7 @@
         :is-new="editIsNew"
         :saving="editSaving"
         :error="editError"
+        :probe-feedback="editorFeedback"
         :providers="PROVIDERS"
         :image-detail-levels="IMAGE_DETAIL_LEVELS"
         :media-dimensions="mediaDimensions"
@@ -178,13 +179,13 @@
         :model-error="modelListError"
         :model-menu-open="modelMenuOpen"
         :model-options="modelOptions"
-        :filtered-models="filteredModelOptions"
         :probing-dim="probingDim"
         @close="closePresetEditor"
         @after-close="finishPresetClose"
         @save="savePreset"
         @set-provider="setEditProviderSelection"
         @open-model-menu="modelMenuOpen = true"
+        @close-model-menu="modelMenuOpen = false"
         @fetch-model-list="fetchModelList"
         @select-model="selectModel"
         @pick-api-format="pickApiFormat"
@@ -349,22 +350,6 @@
             />
           </div>
 
-          <div class="behavior-item">
-            <div class="behavior-label">
-              <span>{{ t('agentConfigUi.indexTtl') }}</span>
-              <span class="behavior-desc">{{ t('agentConfigUi.indexTtlHint') }}</span>
-            </div>
-            <div style="display:flex; align-items:center; gap:8px;">
-              <input
-                type="number"
-                class="behavior-input number-input"
-                v-model.number="ragIndexTtlDays"
-                min="7" max="365"
-              />
-              <span class="behavior-desc">{{ t('agentConfigUi.days') }}</span>
-            </div>
-          </div>
-
         </div>
 
         <div class="card-actions">
@@ -404,68 +389,9 @@
         @save="saveSearch('similar')"
       />
 
-      <!-- ── 语音识别模型 ── -->
-      <section v-if="activeTab === 'behavior' && behaviorTab === 'voice'" class="config-card">
-        <div class="card-head">
-          <div class="card-icon" style="--ic:rgba(123,127,178,0.15);--stroke:#7b7fb2">
-            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"
-              stroke-linecap="round" stroke-linejoin="round">
-              <rect x="7.5" y="2" width="5" height="10" rx="2.5"/>
-              <path d="M5 9a5 5 0 0 0 10 0M10 14.5V18M7 18h6"/>
-            </svg>
-          </div>
-          <div class="card-title-block">
-            <h3>{{ t('agent.voiceTitle') }}</h3>
-            <p>{{ t('agentConfigUi.voiceHint') }}</p>
-          </div>
-        </div>
-
-        <div class="behavior-grid">
-          <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label"><span>{{ t('agentConfigUi.model') }}</span><span class="behavior-desc">{{ t('agentConfigUi.voiceModelHint') }}</span></div>
-            <input type="text" class="behavior-input" style="width:280px" v-model="voiceDraft.model" :placeholder="t('agentConfigUi.voiceModelPlaceholder')" />
-          </div>
-          <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label"><span>{{ t('agentConfigUi.baseUrl') }}</span><span class="behavior-desc">{{ t('agentConfigUi.voiceBaseUrlHint') }}</span></div>
-            <input type="text" class="behavior-input" style="width:280px" v-model="voiceDraft.base_url" :placeholder="voiceDraft.api_format === 'minimax-asr' ? 'https://api.minimax.cn' : 'https://…/api/v1/services/aigc/multimodal-generation/generation'" />
-          </div>
-          <div v-if="voiceDraft.api_format === 'dashscope'" class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label"><span>{{ t('agentConfigUi.dashscope') }}</span><span class="behavior-desc">{{ t('agentConfigUi.dashscopeHint') }}</span></div>
-            <AdminSelect :model-value="voiceDraft.dashscope_service || 'qwen3-asr'"
-                         :options="VOICE_DASHSCOPE_SERVICES"
-                         @update:model-value="setDashscopeService" />
-          </div>
-          <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label"><span>{{ t('agentConfigUi.apiFormat') }}</span><span class="behavior-desc">{{ t('agentConfigUi.apiFormatHint') }}</span></div>
-            <div style="display:flex;gap:8px;justify-content:flex-end;align-items:center;">
-              <button v-for="af in VOICE_API_FORMATS" :key="af.value" type="button" class="btn-ghost"
-                      :style="voiceDraft.api_format === af.value ? 'border-color:var(--color-primary);color:var(--color-primary)' : ''"
-                      @click="setVoiceApiFormat(af.value)">{{ af.label }}</button>
-            </div>
-          </div>
-          <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label"><span>{{ t('agentConfigUi.apiKey') }}<span v-if="configStore.secretSet.voiceApiKey" style="margin-left:6px;color:var(--color-primary);font-size:11px;font-weight:600">· {{ t('agentConfigUi.configured') }} ✓</span></span><span class="behavior-desc">{{ t('agentConfigUi.apiKeyHint') }}</span></div>
-            <input type="password" class="behavior-input" style="width:280px" v-model="voiceDraft.api_key"
-                   :placeholder="configStore.secretSet.voiceApiKey ? t('llmExtraUi.keepUnchanged') : t('agentConfigUi.apiKeyPlaceholder')" />
-          </div>
-        </div>
-
-        <div class="card-actions">
-          <span class="save-hint" :class="{ error: !!voiceError }">
-            <template v-if="voiceSaved"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 6l2.5 2.5 5.5-5"/></svg>{{ t('agent.saved') }}</template>
-            <template v-else-if="voiceError">{{ voiceError }}</template>
-            <template v-else-if="voiceTestMsg">{{ voiceTestMsg }}</template>
-          </span>
-          <button class="btn-ghost" @click="resetVoice">{{ t('agentConfigUi.undo') }}</button>
-          <button class="btn-ghost" :class="{ loading: voiceTesting }" :disabled="voiceTesting" @click="testVoice">
-            {{ voiceTesting ? t('agent.testing') : t('agent.testConnection') }}
-          </button>
-          <button class="btn-primary" :class="{ loading: voiceSaving }" :disabled="voiceSaving" @click="saveVoice">
-            <svg v-if="voiceSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
-            {{ voiceSaving ? t('agent.saving') : t('agent.save') }}
-          </button>
-        </div>
-      </section>
+      <VoiceModelConfig
+        v-if="activeTab === 'voice'"
+      />
 
       <!-- ── 状态命名 ── -->
       <StateLabelsPanel v-if="activeTab === 'behavior' && behaviorTab === 'labels'" />
@@ -478,7 +404,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
 import { useRoute } from 'vue-router'
 import PermissionSettings from './components/PermissionSettings.vue'
@@ -497,6 +423,8 @@ import LlmPresetEditor from './llm/components/LlmPresetEditor.vue'
 import DeepResearchConfig from './runtime-config/components/DeepResearchConfig.vue'
 import ParallelToolExecutionControl from './runtime-config/components/ParallelToolExecutionControl.vue'
 import SimilarImageConfig from './runtime-config/components/SimilarImageConfig.vue'
+import { useMultimodalProbe } from './llm/useMultimodalProbe'
+import VoiceModelConfig from './runtime-config/components/VoiceModelConfig.vue'
 import { useI18n } from 'vue-i18n'
 import { MODEL_PROVIDERS } from '@/utils/modelProviders'
 import { RESOURCE_REFRESH_EVENTS } from '@/services/resourceRefreshEvents'
@@ -520,7 +448,7 @@ function setUsagePeriod(value: string) {
   }
 }
 const runtimeConfig = useAgentRuntimeConfig()
-const { agentDraft, behaviorSaving, behaviorSaved, behaviorError, resetBehavior, saveBehavior, generalSearchDraft, ragIndexTtlDays, deepResearchDraft, similarImageDraft, generalSearchSaving, generalSearchSaved, generalSearchError, deepResearchSaving, deepResearchSaved, deepResearchError, deepResearchTest, similarImageSaving, similarImageSaved, similarImageError, resetGeneralSearch, resetDeepResearch, resetSimilarImageSearch, voiceDraft, voiceSaving, voiceSaved, voiceError, voiceTesting, voiceTestMsg, VOICE_API_FORMATS, VOICE_DASHSCOPE_SERVICES, resetVoice, setDashscopeService, setVoiceApiFormat, saveVoice, testVoice, searchTest, testSearch, testDeepResearch, saveDeepResearch, saveSearch } = runtimeConfig
+const { agentDraft, behaviorSaving, behaviorSaved, behaviorError, resetBehavior, saveBehavior, generalSearchDraft, deepResearchDraft, similarImageDraft, generalSearchSaving, generalSearchSaved, generalSearchError, deepResearchSaving, deepResearchSaved, deepResearchError, deepResearchTest, similarImageSaving, similarImageSaved, similarImageError, resetGeneralSearch, resetDeepResearch, resetSimilarImageSearch, searchTest, testSearch, testDeepResearch, saveDeepResearch, saveSearch } = runtimeConfig
 const llmPresets = useLlmPresets(adminStore, configStore, agentDraft)
 const { presets, activePresetId, strategy, poolMode, presetsLoading, llmMsg, llmMsgParts, llmMsgError, testingId, activatingId, probingId, probingDim, showMsg, showMsgParts, fetchPresets, setStrategy, setPoolMode, saveConcurrency, activatePreset, deletePreset, testPreset } = llmPresets
 const byokDraft = reactive({ ...configStore.cfg.byok })
@@ -533,6 +461,7 @@ const mcpSaved = ref(false)
 const mcpError = ref('')
 const tabs = computed(() => [
   { key: 'llm',      label: t('agent.llm') },
+  { key: 'voice',    label: t('admin.voiceModel') },
   { key: 'permissions', label: t('agent.permissions') },
   { key: 'prompts',  label: t('agent.prompts') },
 ])
@@ -540,7 +469,6 @@ const activeTab = ref(standaloneMode.value || 'llm')
 const behaviorTabs = computed(() => [
   { key: 'runtime', label: t('agent.runtime') },
   { key: 'search', label: t('agent.search') },
-  { key: 'voice', label: t('agent.voice') },
   { key: 'capabilities', label: t('agent.capabilities') },
   { key: 'labels', label: t('agent.labels') },
 ])
@@ -625,11 +553,7 @@ const modelOptions = ref<string[]>([])
 const modelListLoading = ref(false)
 const modelListError = ref('')
 const modelMenuOpen = ref(false)
-const filteredModelOptions = computed(() => {
-  const query = String(editTarget.value?.model || '').trim().toLowerCase()
-  if (!query) return modelOptions.value
-  return modelOptions.value.filter(model => model.toLowerCase().includes(query))
-})
+
 
 
 async function togglePool(p: LlmPresetRecord) {
@@ -677,12 +601,6 @@ function finishPresetClose() {
   editTarget.value = null
   editClosing.value = false
   modelMenuOpen.value = false
-}
-
-// 点外立即关（与 BYOK 面板同一模式）：旧的 focusout + 120ms 延迟会让点空白也要白等一拍。
-// 选项按钮自己 mousedown.prevent 不会转移焦点，不需要延迟保险。
-function closeModelMenuOnOutside(event: MouseEvent) {
-  if (modelMenuOpen.value && (!(event.target instanceof Element) || !event.target.closest('.model-picker'))) modelMenuOpen.value = false
 }
 
 function setCapabilityOverride(key: string, enabled: boolean) {
@@ -857,76 +775,15 @@ async function savePreset() {
 }
 
 
-// 多模态探测：发极小媒体给该预设模型，按响应判定是否支持对应维度，结论自动写回。
-// 卡片按钮不传 dim → 依次测图片/视频/音频三维度；弹窗内按钮传 dim → 只测单维度。
-async function probeMedia(id: string | number | undefined, dim?: string) {
-  const target = editTarget.value
-  if (dim && !target) return
-  if (dim) {
-    probingDim.value = dim
-  } else {
-    probingId.value = id === undefined ? null : id
-  }
-  try {
-    const isDraft = Boolean(dim && !id && target)
-    const url = isDraft
-      ? `/api/v1/admin/agent/llm-presets/probe-media-preview?dim=${dim}`
-      : `/api/v1/admin/agent/llm-presets/${id}/probe-media` + (dim ? `?dim=${dim}` : '')
-    const res = await adminStore.authFetch(url, {
-      method: 'POST',
-      ...(isDraft ? {
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          provider: target!.provider,
-          api_key: target!.api_key,
-          base_url: target!.base_url,
-          model: target!.model,
-          api_format: target!.api_format || '',
-        }),
-      } : {}),
-    })
-    const data = await res.json()
-    if (dim) {
-      // 单维度（弹窗内）
-      const label = mediaDimensions.value.find(d => d.key === dim)?.label || dim
-      if (data.supported === true)       showMsg(t('adminAgentUi.dimensionSupported', { label }), false, true)
-      else if (data.supported === false) showMsg(t('adminAgentUi.dimensionUnsupported', { label, detail: data.detail }), true)
-      else                               showMsg(t('adminAgentUi.dimensionUnknown', { label, detail: data.detail }), true)
-      if (data.supported === true || data.supported === false) {
-        target![dim] = data.supported
-      }
-    } else {
-      // 全维度（卡片）
-      const results = data.results || {}
-      const probeParts: LlmMessagePart[] = []
-      for (const d of mediaDimensions.value) {
-        const r = results[d.key]
-        if (!r) continue
-        if (r.supported === true || r.supported === false) {
-          const preset = presets.value.find(item => String(item.id) === String(id))
-          if (preset) preset[d.key] = r.supported
-        }
-        probeParts.push({
-          key: d.key,
-          label: d.label,
-          text: r.supported === true ? t('profileByokUi.statusSupported') : r.supported === false ? t('profileByokUi.statusUnsupported') : t('profileByokUi.statusUnknown'),
-          status: r.supported === true ? 'supported' : r.supported === false ? 'unsupported' : 'unknown',
-        })
-      }
-      if (probeParts.length) showMsgParts(t('adminAgentUi.probeCompleteLabel'), probeParts)
-      else showMsg(t('adminAgentUi.probeNoResult'))
-    }
-  } catch (e) {
-    showMsg(t('adminAgentUi.probeFailed', { message: e instanceof Error ? e.message : String(e) }), true)
-  } finally {
-    probingId.value = null
-    probingDim.value = null
-  }
-}
+const { editorFeedback, probeMedia } = useMultimodalProbe({
+  authFetch: adminStore.authFetch,
+  target: () => editClosing.value ? null : editTarget.value,
+  presets: () => presets.value,
+  dimensions: () => mediaDimensions.value,
+  probingId, probingDim, showMsg, showMsgParts,
+})
 
-// ── 初始化 ────────────────────────────────────────────────────────────────
 onMounted(async () => {
-  document.addEventListener('mousedown', closeModelMenuOnOutside)
   await configStore.fetchConfig()
   const sandboxResponse = await adminStore.authFetch('/api/v1/admin/sandbox/status')
   if (sandboxResponse.ok) {
@@ -937,10 +794,9 @@ onMounted(async () => {
   Object.assign(byokDraft, configStore.cfg.byok)
   resetGeneralSearch()
   resetSimilarImageSearch()
-  Object.assign(voiceDraft, configStore.cfg.voice)
   fetchPresets()
 })
-onBeforeUnmount(() => { document.removeEventListener('mousedown', closeModelMenuOnOutside) })
+
 
 async function savePermissions() {
   permissionSaving.value = true
@@ -1018,32 +874,17 @@ function resetPermissions() {
 /* ── 操作栏 ── */
 .card-actions {
   display: flex; align-items: center; gap: 10px;
-  margin-top: 18px; padding-top: 16px;
+  margin-top: 0; padding-top: 14px;
   border-top: 1px solid var(--panel-divider);
 }
+.card-actions > .btn-ghost,
+.card-actions > .btn-primary { min-height: 34px; box-sizing: border-box; }
 .save-hint {
   flex: 1; font-size: 12px; color: #5ab899;
   display: flex; align-items: center; gap: 5px;
 }
 .save-hint.muted { color: rgba(255,255,255,0.28); }
 .save-hint.error { color: #e07878; }
-
-.btn-ghost {
-  padding: 6px 14px; border-radius: 9px;
-  border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.06);
-  color: rgba(255,255,255,0.45); font-size: 13px; cursor: pointer; transition: all 0.15s;
-}
-.btn-ghost:hover { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.7); }
-.btn-primary {
-  display: flex; align-items: center; gap: 6px;
-  padding: 6px 16px; border-radius: 9px; border: none;
-  background: var(--action-primary-bg);
-  color: white; font-size: 13px; font-weight: 600;
-  cursor: pointer; transition: opacity 0.15s;
-  box-shadow: none;
-}
-.btn-primary:hover:not(:disabled) { opacity: 0.88; }
-.btn-primary:disabled { opacity: 0.5; cursor: default; }
 
 /* ── 行为配置 ── */
 .behavior-grid {
@@ -1071,108 +912,6 @@ function resetPermissions() {
 @keyframes spin { to { transform: rotate(360deg); } }
 .spin-icon { animation: spin 0.8s linear infinite; }
 
-/* ── LLM 预设 ── */
-.presets-header {
-  display: flex; align-items: flex-start; justify-content: space-between;
-  margin-bottom: 16px;
-}
-.presets-title { font-size: 16px; font-weight: 700; color: rgba(255,255,255,0.88); }
-.presets-desc  { font-size: 12px; color: rgba(255,255,255,0.35); margin-top: 4px; }
-.presets-header-right { display: flex; align-items: center; gap: 10px; }
-.presets-header-right > .btn-primary { min-height: 34px; box-sizing: border-box; }
-.strategy-select { display: flex; align-items: center; gap: 6px; min-height: 34px; font-size: 12px; color: rgba(255,255,255,0.5); }
-.pca-btn--pool-on { background: rgba(123,127,178,0.22); color: rgba(180,176,224,1); }
-.conc-input {
-  width: 52px; height: 34px; box-sizing: border-box;
-  border-radius: 8px; font-size: 12px; padding: 5px 8px; outline: none; text-align: center;
-}
-.presets-loading { padding: 40px 0; text-align: center; font-size: 13px; color: rgba(255,255,255,0.25); }
-
-.preset-list { display: flex; flex-direction: column; gap: 8px; }
-
-.preset-card {
-  display: flex; align-items: center; gap: 14px;
-  background: rgba(255,255,255,0.04);
-  border: 1px solid rgba(255,255,255,0.08); border-radius: 14px;
-  padding: 14px 16px;
-  transition: border-color 0.2s, background 0.2s;
-}
-.preset-card--active {
-  background: rgba(123,127,178,0.1);
-  border-color: rgba(123,127,178,0.3);
-}
-
-.preset-card-left { flex-shrink: 0; }
-.provider-dot {
-  display: block; width: 10px; height: 10px; border-radius: 50%;
-  flex-shrink: 0;
-}
-.dot-openai    { background: #74c69d; }
-.dot-anthropic { background: #e08060; }
-.dot-qwen      { background: #60aedb; }
-.dot-deepseek  { background: #6090d8; }
-.dot-minimax   { background: #9590c4; }
-.dot-mimo      { background: #ff6a00; }
-.dot-glm       { background: #3f6af5; }
-.preset-card-body { flex: 1; min-width: 0; }
-.preset-card-top  { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-.preset-name { font-size: 14px; font-weight: 600; color: rgba(255,255,255,0.88); }
-.active-badge {
-  font-size: 10px; font-weight: 700; letter-spacing: 0.05em;
-  padding: 1px 7px; border-radius: 20px;
-  background: rgba(123,127,178,0.25); color: rgba(169,164,216,0.9);
-  border: 1px solid rgba(123,127,178,0.35);
-}
-.provider-label {
-  font-size: 11px; color: rgba(255,255,255,0.28);
-  background: rgba(255,255,255,0.06); border-radius: 5px; padding: 1px 6px;
-}
-.preset-card-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 12px; min-width: 0; }
-.preset-model { font-size: 12px; color: rgba(255,255,255,0.55); white-space: nowrap; }
-.preset-meta-item { font-size: 12px; color: rgba(255,255,255,0.35); white-space: nowrap; flex-shrink: 0; }
-.preset-meta-think, .preset-meta-media { display: inline-flex; align-items: center; gap: 3px; }
-.preset-meta-think { color: rgba(149,144,196,0.85); background: rgba(149,144,196,0.1); padding: 1px 6px; border-radius: 4px; }
-.preset-meta-media { color: rgba(122,184,200,0.95); background: rgba(122,184,200,0.12); padding: 1px 6px; border-radius: 4px; }
-/* key 独占整行、过长截断带省略号（悬停看全文），不再撑破页面宽度 */
-.preset-key   { flex: 1 1 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: 11px; color: rgba(255,255,255,0.28); font-family: var(--font-family-mono); }
-
-.preset-card-actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
-.pca-btn {
-  padding: 5px 12px; border-radius: 8px; font-size: 12px; font-weight: 500;
-  border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05);
-  color: rgba(255,255,255,0.5); cursor: pointer; transition: all 0.15s;
-}
-.pca-btn:hover { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.75); }
-.pca-btn--sm { padding: 4px 10px; font-size: 11px; }
-.pca-btn:disabled { opacity: 0.5; cursor: default; }
-
-.pca-btn--activate {
-  border-color: rgba(123,127,178,0.3); background: rgba(123,127,178,0.1);
-  color: rgba(169,164,216,0.85);
-}
-.pca-btn--activate:hover { background: rgba(123,127,178,0.2); color: rgba(169,164,216,1); }
-.pca-btn--del { color: rgba(200,100,100,0.7); }
-.pca-btn--del:hover { background: rgba(200,80,80,0.12); color: rgba(220,100,100,0.9); }
-.pca-btn--testing, .pca-btn--activating { opacity: 0.6; cursor: default; }
-
-.llm-msg {
-  display: flex; align-items: center; gap: 4px;
-  margin-top: 12px; padding: 10px 14px; border-radius: 10px;
-  font-size: 13px; color: #5ab899;
-  background: rgba(90,184,153,0.1); border: 1px solid rgba(90,184,153,0.2);
-}
-.llm-msg__icon { width: 1em; height: 1em; flex: 0 0 auto; }
-.llm-msg__part { color: var(--text-secondary, #8f95aa); }
-.llm-msg__part.is-supported { color: var(--status-success, #5ab899); }
-.llm-msg__part.is-unsupported { color: var(--status-danger, #e07878); }
-.llm-msg__part.is-unknown { color: var(--status-warning, #c89b56); }
-.llm-msg__separator { color: var(--text-secondary, #8f95aa); margin: 0 8px; }
-.llm-msg__dot { display: inline-block; width: 6px; height: 6px; margin: 0 5px 1px 0; border-radius: 50%; background: currentColor; }
-.llm-msg--error {
-  color: #e07878;
-  background: rgba(220,100,100,0.1); border-color: rgba(220,100,100,0.2);
-}
-
-
 </style>
+
+<style scoped src="./components/model-presets.css"></style>

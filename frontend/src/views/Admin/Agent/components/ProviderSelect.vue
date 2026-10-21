@@ -5,6 +5,7 @@
     :model-value="modelValue"
     :selected-label="selectedLabel"
     :placeholder="placeholder"
+    :aria-label="ariaLabel"
     trigger-class="provider-trigger"
     :popup-class="popupClass ? `provider-popup ${popupClass}` : 'provider-popup'"
   >
@@ -48,6 +49,7 @@ const props = defineProps({
   modelValue: { type: String, default: '' },
   providers: { type: Array as PropType<ProviderOption[]>, default: () => [] },
   placeholder: { type: String, default: '' },
+  ariaLabel: { type: String, default: '' },
   popupClass: { type: String, default: '' },
 })
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()

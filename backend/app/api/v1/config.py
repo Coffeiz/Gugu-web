@@ -61,6 +61,7 @@ def _mask(d: dict) -> dict:
 async def read_config():
     cfg = get_settings()
     raw = cfg.model_dump()
+    raw.pop("voice_presets", None)
     return {"data": _mask(raw)}
 
 
@@ -951,23 +952,29 @@ class VoiceTestRequest(BaseModel):
     base_url: str = ""
     api_key: str = ""
     model: str = ""
+    use_config: bool = True
 
 
 @router.post("/test-voice")
 async def test_voice(body: VoiceTestRequest):
     """按当前输入测试语音模型，不保存配置、不写聊天记录。"""
-    cfg = get_settings().voice
-    model = (body.model or cfg.model or "").strip()
-    base_url = (body.base_url or cfg.base_url or "").strip()
-    api_key = body.api_key if body.api_key and body.api_key != "****" else cfg.api_key
-    api_format = (body.api_format or cfg.api_format or "openai").strip().lower()
+    cfg = get_settings().voice if body.use_config else None
+    model = (body.model or (cfg.model if cfg else "") or "").strip()
+    base_url = (body.base_url or (cfg.base_url if cfg else "") or "").strip()
+    api_key = (
+        body.api_key if body.api_key and body.api_key != "****"
+        else (cfg.api_key if cfg else "")
+    )
+    api_format = (body.api_format or (cfg.api_format if cfg else "openai") or "openai").strip().lower()
     if not model or (not base_url and api_format != "minimax-asr"):
         return {"ok": False, "message": "请先填写模型名和 Base URL"}
     if api_format not in {"openai", "dashscope", "minimax-asr"}:
         return {"ok": False, "message": "语音 API 格式暂不支持"}
     if api_format == "minimax-asr" and model != "asr-1.0":
         return {"ok": False, "message": "MiniMax ASR 当前只支持 asr-1.0"}
-    dashscope_service = (body.dashscope_service or getattr(cfg, "dashscope_service", "qwen3-asr") or "qwen3-asr").strip().lower()
+    dashscope_service = (
+        body.dashscope_service or getattr(cfg, "dashscope_service", "qwen3-asr") or "qwen3-asr"
+    ).strip().lower()
     if api_format == "dashscope" and dashscope_service not in {"qwen3-asr", "qwen-audio", "fun-asr"}:
         return {"ok": False, "message": "百炼产品线只支持 Qwen3 ASR、Qwen-Audio 3.0 或 Fun-ASR"}
     try:

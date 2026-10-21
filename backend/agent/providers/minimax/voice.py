@@ -18,11 +18,11 @@ logger = logging.getLogger("agent.providers.minimax.voice")
 _MAX_BYTES = 50 * 1024 * 1024
 _MAX_SECONDS = 500.0
 _EXT_MIME = {
-    "wav": ("audio/wav", "audio/wav"), "aiff": ("audio/aiff", "audio/aiff"),
-    "aif": ("audio/aiff", "audio/aiff"), "flac": ("audio/flac", "audio/flac"),
-    "m4a": ("audio/mp4", "audio/mp4"), "mp3": ("audio/mpeg", "audio/mpeg"),
-    "aac": ("audio/aac", "audio/aac"), "opus": ("audio/opus", "audio/opus"),
-    "ogg": ("audio/ogg", "audio/ogg"),
+    "wav": ("wav", "audio/wav"), "aiff": ("aiff", "audio/aiff"),
+    "aif": ("aif", "audio/aiff"), "flac": ("flac", "audio/flac"),
+    "m4a": ("m4a", "audio/mp4"), "mp3": ("mp3", "audio/mpeg"),
+    "aac": ("aac", "audio/aac"), "opus": ("opus", "audio/opus"),
+    "ogg": ("ogg", "audio/ogg"),
 }
 
 
