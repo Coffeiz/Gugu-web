@@ -15,7 +15,7 @@ import re
 import uuid as _uuid
 from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.core.redaction import diag_log, redact
 from app.core.schedule_rules import (
@@ -27,6 +27,7 @@ from app.core.tz import local_now, now_utc
 
 _synced: dict[str, str] = {}   # job_id -> 上次同步用的 updated_at，变了才重挂
 logger = logging.getLogger(__name__)
+_UNSET_EMAIL_RECIPIENT = object()
 
 _CRONTAB_WEEKDAY_NAMES = ("sun", "mon", "tue", "wed", "thu", "fri", "sat")
 _CRONTAB_WEEKDAY_NUMBERS = {name: day for day, name in enumerate(_CRONTAB_WEEKDAY_NAMES)}
@@ -368,6 +369,7 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
         import app.db.session as ss
         from app.models import ScheduledTask
         result: dict = {}
+        stop_context = {"requested_state": {"requested": False}, "task_id": task_id}
         async with ss._SessionLocal() as db:
             t = await db.get(ScheduledTask, task_id)
             if not t or not t.enabled:
@@ -399,6 +401,10 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
                 or get_settings().storage.backend == "oss"
             )
             is_once = task_schedule_kind(t) == "once"
+            target_map, stop_context, allow_stop_recurring = await _prepare_stop_context(
+                db, t, task_id, name, chans, target_map,
+                stop_context["requested_state"], is_trial,
+            )
             if is_task_ended(t):
                 return {"错误": "任务已结束"}
             # last_run_failed=True：上次触发过但失败了，允许再触发一次；只有"已经成功"
@@ -410,6 +416,7 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
                 if is_once:
                     t.last_run_failed = False   # 先乐观清掉，失败了 except/失败分支会重新标
             await db.commit()
+            await _capture_stop_task_version(db, t, stop_context)
         try:
             now_str = local_now().strftime("%Y-%m-%d %H:%M")
             target_description = _scheduled_delivery_targets(chans)
@@ -439,11 +446,15 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
                     if allow_shell else None
                 ),
                 allow_shell=allow_shell,
+                stop_context=stop_context,
             )
             delivery_kwargs = {"files": files, "status": status}
+            if allow_stop_recurring:
+                delivery_kwargs["delivery_snapshot"] = stop_context["delivery_snapshot"]
             if email_attachment_file_ids:
                 delivery_kwargs["email_attachment_file_ids"] = email_attachment_file_ids
             result = await deliver_to_channels(uid, name, text, chans, target_map, **delivery_kwargs)
+            await _finish_recurring_stop(stop_context, status, result, is_trial)
             if not is_trial and is_once:
                 if _delivery_succeeded(result):
                     await _delete_completed_once(task_id, uid)
@@ -472,6 +483,162 @@ def _delivery_succeeded(result: dict) -> bool:
     """一次性任务只有在所有选定渠道确认结果已送达或已持久化后才删除。"""
     successful = {"已发送", "已保存（实时提示失败）"}
     return not result or all(value in successful for value in result.values())
+
+
+def _can_stop_recurring(task, is_trial: bool) -> bool:
+    return (
+        not is_trial
+        and task.user_id is not None
+        and task.event_id is None
+        and task_schedule_kind(task) in {"cron", "interval"}
+    )
+
+
+async def _prepare_stop_context(db, task, task_id, name, channels, targets, state, is_trial):
+    eligible = _can_stop_recurring(task, is_trial)
+    snapshot_targets = targets
+    email_recipient = None
+    if eligible:
+        snapshot_targets = await _freeze_delivery_targets(task.user_id, channels, targets)
+        if "email" in channels:
+            from app.models import User
+
+            recipient = await db.get(User, task.user_id)
+            email_recipient = recipient.email if recipient else None
+    snapshot = {"im_targets": snapshot_targets, "email_recipient": email_recipient}
+    context = {
+        "eligible": eligible,
+        "requested_state": state,
+        "task_id": task_id,
+        "user_id": task.user_id,
+        "name": name,
+        "channels": channels,
+        "delivery_snapshot": snapshot,
+    }
+    return snapshot_targets, context, eligible
+
+
+async def _capture_stop_task_version(db, task, context: dict) -> None:
+    if context.get("eligible"):
+        await db.refresh(task, attribute_names=["updated_at"])
+        context["expected_updated_at"] = task.updated_at
+
+
+async def _finish_recurring_stop(
+    context: dict, status: str, delivery_result: dict, is_trial: bool,
+) -> None:
+    if (
+        is_trial
+        or not context.get("eligible")
+        or not context["requested_state"].get("requested")
+        or status != "success"
+        or not _all_configured_deliveries_succeeded(context["channels"], delivery_result)
+    ):
+        return
+    expected_updated_at = context.get("expected_updated_at")
+    if expected_updated_at is None:
+        return
+    stopped = await _disable_recurring_task_after_run(
+        context["task_id"], context["user_id"], expected_updated_at,
+    )
+    if stopped:
+        await _send_recurring_stop_notice(
+            context["user_id"], context["name"], context["channels"],
+            context["delivery_snapshot"],
+        )
+
+
+def _expected_delivery_labels(channels: set[str]) -> set[str]:
+    expected: set[str] = set()
+    if "email" in channels:
+        expected.add("邮件")
+    if {"web", "chat"} & channels:
+        expected.add("web 通知")
+    platforms = {_CHAN_PLATFORM[channel] for channel in channels if channel in _CHAN_PLATFORM}
+    if "im" in channels:
+        platforms.update(_CHAN_PLATFORM.values())
+    expected.update(_PLAT_LABEL[platform] for platform in platforms)
+    return expected
+
+
+def _all_configured_deliveries_succeeded(channels: set[str], result: dict) -> bool:
+    """停止周期任务要求至少一个渠道且每个配置渠道都有明确成功回执。"""
+    expected = _expected_delivery_labels(channels)
+    recognized = {"email", "web", "chat", "im", *_CHAN_PLATFORM}
+    successful = {"已发送", "已保存（实时提示失败）"}
+    return (
+        bool(expected)
+        and channels.issubset(recognized)
+        and "错误" not in result
+        and all(result.get(label) in successful for label in expected)
+    )
+
+
+async def _freeze_delivery_targets(uid, channels: set[str], targets: dict) -> dict:
+    """提前解析旧任务的私聊兼容目标，使本轮结果与关闭通知使用同一目标快照。"""
+    frozen = dict(targets or {})
+    platforms = {_CHAN_PLATFORM[channel] for channel in channels if channel in _CHAN_PLATFORM}
+    if "im" in channels:
+        platforms.update(_CHAN_PLATFORM.values())
+    for platform in platforms:
+        channel = next(key for key, value in _CHAN_PLATFORM.items() if value == platform)
+        if channel not in frozen:
+            try:
+                frozen[channel] = await _legacy_private_target(uid, platform)
+            except Exception as exc:
+                diag_log("app.scheduled_tasks.snapshot_im_target", exc)
+                frozen[channel] = None
+    return frozen
+
+
+async def _disable_recurring_task_after_run(task_id: int, user_id, expected_updated_at) -> bool:
+    """以更新时间做 CAS；状态停用和文件系统授权撤销共用一个数据库事务。"""
+    import app.db.session as ss
+    from app.models import ScheduledTask
+
+    async with ss._SessionLocal() as db:
+        changed = await db.execute(
+            update(ScheduledTask)
+            .where(
+                ScheduledTask.id == task_id,
+                ScheduledTask.user_id == user_id,
+                ScheduledTask.enabled.is_(True),
+                ScheduledTask.event_id.is_(None),
+                ScheduledTask.schedule_kind.in_(("cron", "interval")),
+                ScheduledTask.updated_at == expected_updated_at,
+            )
+            .values(enabled=False)
+        )
+        if changed.rowcount != 1:
+            await db.rollback()
+            return False
+        from app.services.filesystem_authorization import revoke_scheduled_task_filesystem_access
+
+        await revoke_scheduled_task_filesystem_access(db, user_id, task_id)
+        await db.commit()
+    await _notify_tasks_changed([user_id])
+    return True
+
+
+async def _send_recurring_stop_notice(
+    uid, name: str, channels: set[str], delivery_snapshot: dict,
+) -> None:
+    """停用提交后单独通知原渠道；通知失败不恢复已停用任务。"""
+    message = (
+        f"⏹️ 周期定时任务「{name}」已停用，后续不会自动执行。"
+        "任务记录未被立即删除；如需删除，可在定时任务页面手动删除，或直接告诉咕咕。"
+    )
+    try:
+        result = await deliver_to_channels(
+            uid, f"{name}（已停用）", message, channels,
+            delivery_snapshot=delivery_snapshot,
+        )
+        if not _all_configured_deliveries_succeeded(channels, result):
+            logger.warning("[scheduled-stop] 任务已停用，但关闭通知投递未全成功 channel_count=%s",
+                           len(_expected_delivery_labels(channels)))
+    except Exception as exc:
+        diag_log("app.scheduled_tasks.stop_notice", exc)
+        logger.warning("[scheduled-stop] 任务已停用，但关闭通知投递异常：%s", redact(type(exc).__name__))
 
 
 async def _delete_completed_once(task_id: int, user_id) -> None:
@@ -514,6 +681,7 @@ async def deliver_to_channels(
     files: list | None = None,
     status: str = "success",
     email_attachment_file_ids: list[int] | None = None,
+    delivery_snapshot: dict | None = None,
 ) -> dict:
     """把 text（+ 可选 files，execution 阶段 send_file 产出的 _artifact 列表）投递到选定渠道，
     返回 {渠道: 状态}。供定时任务执行 / 提醒测试复用。
@@ -525,15 +693,21 @@ async def deliver_to_channels(
     title = f"{name}{_STATUS_PREFIX.get(status, '')}"
     if "email" in chans:
         try:
+            email_kwargs = {}
             if email_attachment_file_ids or files:
-                _sent, email_status = await _deliver_email(
-                    uid, title, text,
+                email_kwargs.update(
                     file_ids=email_attachment_file_ids,
                     generated_files=files,
                 )
+            if delivery_snapshot is not None:
+                email_kwargs["recipient"] = delivery_snapshot.get("email_recipient")
+            if email_kwargs:
+                _sent, email_status = await _deliver_email(uid, title, text, **email_kwargs)
             else:
                 # 保持无附件的旧调用形态，便于外部集成和测试替身兼容。
-                _sent, email_status = await _deliver_email(uid, title, text)
+                _sent, email_status = await _deliver_email(
+                    uid, title, text,
+                )
             result["邮件"] = email_status
         except Exception as e:
             result["邮件"] = f"发送失败（{type(e).__name__}）"
@@ -548,7 +722,11 @@ async def deliver_to_channels(
     im_targets = {_CHAN_PLATFORM[c] for c in chans if c in _CHAN_PLATFORM}
     if "im" in chans:
         im_targets.update(_CHAN_PLATFORM.values())
-    targets = delivery_targets if isinstance(delivery_targets, dict) else {}
+    targets = (
+        delivery_snapshot.get("im_targets", {})
+        if isinstance(delivery_snapshot, dict)
+        else delivery_targets if isinstance(delivery_targets, dict) else {}
+    )
     for platform in im_targets:
         lbl = _PLAT_LABEL.get(platform, platform)
         channel = next(
@@ -556,7 +734,7 @@ async def deliver_to_channels(
             platform,
         )
         target = targets.get(channel)
-        if target is None:
+        if channel not in targets and delivery_snapshot is None:
             # 旧任务没有保存 delivery_targets。不能再把最近一次群聊地址当成
             # 私聊提醒目标，否则用户在群里聊天后，历史任务会误发到该群。
             target = await _legacy_private_target(uid, platform)
@@ -826,6 +1004,7 @@ async def _run_agent(
     authorized_tools: list[str] | None = None,
     filesystem_subject: dict | None = None,
     allow_shell: bool = False,
+    stop_context: dict | None = None,
 ) -> tuple[str, list, str]:
     """执行定时任务并直接返回 Agent 最后一轮最终回复。
 
@@ -855,6 +1034,7 @@ async def _run_agent(
         return await _run_agent_execution(
             user_id, uname, prompt, trial, authorized_tools or [],
             filesystem_subject=filesystem_subject, allow_shell=allow_shell,
+            stop_context=stop_context,
         )
     finally:
         # 群定时任务 set_im 过：本轮 execution 结束后清理 imctx，避免 ContextVar 残留
@@ -873,10 +1053,10 @@ async def _run_agent_execution(
     *,
     filesystem_subject: dict | None = None,
     allow_shell: bool = False,
+    stop_context: dict | None = None,
 ) -> tuple[str, list, str]:
     """_run_agent 的 execution 主体（独立函数便于 try/finally 清理 imctx）。"""
     from agent.security import sanitize
-    from agent.scheduled_execution import run_scheduled_execution
 
     max_rounds = 2
     last_text = "咕咕这次没有产出内容"
@@ -887,16 +1067,9 @@ async def _run_agent_execution(
             "[scheduled-phase] %s",
             json.dumps({"event": "execution-start", "round": round_no, "trial": trial}, ensure_ascii=False),
         )
-        execution_kwargs = {}
-        if authorized_tools:
-            execution_kwargs["allowed_tools"] = authorized_tools
-        if filesystem_subject is not None or allow_shell:
-            execution_kwargs.update(
-                filesystem_subject=filesystem_subject,
-                allow_shell=allow_shell,
-            )
-        execution_text, execution_failed, meta = await run_scheduled_execution(
-            user_id, uname, prompt, **execution_kwargs,
+        execution_text, execution_failed, meta = await _run_scheduled_attempt(
+            user_id, uname, prompt, authorized_tools, filesystem_subject, allow_shell,
+            stop_context,
         )
         meta = meta or {}
         last_text = execution_text or last_text
@@ -917,6 +1090,8 @@ async def _run_agent_execution(
             ),
         )
         if execution_failed:
+            if stop_context is not None:
+                stop_context["requested_state"]["requested"] = False
             if mutated or round_no >= max_rounds:
                 return sanitize.strip_disallowed_emoji(last_text), files, "failed"
             logger.info(
@@ -926,9 +1101,36 @@ async def _run_agent_execution(
             continue
 
         # 直接投递 AgentLoop 最后一轮最终回复，避免 schema 约束改写用户要求的格式。
+        if stop_context is not None:
+            stop_context["requested_state"]["requested"] = bool(meta.get("stop_requested"))
         return sanitize.strip_disallowed_emoji(execution_text or last_text), files, "success"
 
     return sanitize.strip_disallowed_emoji(last_text), files, "failed"
+
+
+async def _run_scheduled_attempt(
+    user_id, uname: str, prompt: str, authorized_tools: list[str],
+    filesystem_subject: dict | None, allow_shell: bool, stop_context: dict | None,
+) -> tuple[str, bool, dict]:
+    """组装单次调度执行的授权和停止意图；每次重试使用独立状态。"""
+    from agent.scheduled_execution import run_scheduled_execution
+
+    execution_kwargs = {}
+    if authorized_tools:
+        execution_kwargs["allowed_tools"] = authorized_tools
+    if filesystem_subject is not None or allow_shell:
+        execution_kwargs.update(filesystem_subject=filesystem_subject, allow_shell=allow_shell)
+    attempt_context = None
+    if stop_context is not None:
+        attempt_context = {
+            "eligible": bool(stop_context.get("eligible")),
+            "requested_state": {"requested": False},
+        }
+    return await run_scheduled_execution(
+        user_id, uname, prompt,
+        stop_context=attempt_context,
+        **execution_kwargs,
+    )
 
 
 # 渠道 → IM 平台标识（worker 里 QQ 的 platform 是 "qq"）
@@ -1129,6 +1331,7 @@ async def _deliver_email(
     *,
     file_ids: list[int] | None = None,
     generated_files: list | None = None,
+    recipient=_UNSET_EMAIL_RECIPIENT,
 ) -> tuple[bool, str]:
     """把定时任务正文投递到用户注册邮箱。
 
@@ -1140,7 +1343,10 @@ async def _deliver_email(
     from app.services.email.attachments import EmailAttachmentError, resolve_email_attachments
     async with ss._SessionLocal() as db:
         user = await db.get(User, _as_uuid(user_id))
-        if user is None or not user.email:
+        if user is None:
+            return False, "收件人邮箱不存在"
+        to_addr = user.email if recipient is _UNSET_EMAIL_RECIPIENT else recipient
+        if not to_addr:
             return False, "收件人邮箱不存在"
         smtp = await db.scalar(select(UserSmtpConfig).where(
             UserSmtpConfig.user_id == user.id, UserSmtpConfig.enabled.is_(True),
@@ -1160,7 +1366,7 @@ async def _deliver_email(
         send_email_with_status,
         subject,
         text,
-        to_addr=user.email,
+        to_addr=to_addr,
         smtp_config=smtp,
         template="reminder",
         title=name,
