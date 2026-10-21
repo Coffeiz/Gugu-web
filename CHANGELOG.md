@@ -24,11 +24,14 @@
 - Improve QQ and Telegram streaming around Mermaid images, tool results and message completion; route Telegram attachment downloads through the configured backend egress proxy.
 - Improve file-sync recovery and reconciliation after watcher event loss, and add safer batch handling for missing records.
 - Improve LoopScope localization and account display, QQ voice attachment handling, audio playback controls, calendar selection colors and file-preview location details.
+- Reuse unchanged transient memory indexes to reduce repeated RAG context preparation work.
 
 #### Fixes
 
 - Roll back parent-folder deletion when deleting a nested folder fails.
 - Fix QQ streaming duplicate prefixes and missing Markdown rendering, and preserve stable text around Mermaid images.
+- Retry eligible transient MiniMax streaming errors and retain failed IM run outcomes in Web chat.
+- Prevent English edge labels from overflowing Mermaid flowcharts.
 - Correct reflection timing and prevent stale or mismatched history from being appended to a captured prefix.
 - Fix chat pagination position, mail-preview style leakage and file-sync recovery edge cases.
 
@@ -57,11 +60,14 @@
 - 优化 QQ 和 Telegram 中 Mermaid 图片、工具结果与流式收尾的发送顺序；Telegram 附件下载使用配置的后端出站代理。
 - 改进文件监听事件丢失后的恢复和对账，并完善缺失记录的批量处理安全性。
 - 改进 LoopScope 多语言与账号显示、QQ 语音附件读取、音频播放控件、日历选区颜色和文件预览路径信息。
+- 复用内容未变化的瞬态记忆索引，减少多轮上下文准备的重复开销。
 
 #### 修复
 
 - 删除嵌套文件夹失败时回滚父文件夹删除，避免留下部分删除状态。
 - 修复 QQ 流式回复重复发送前缀、Markdown 渲染缺失及 Mermaid 图文衔接问题。
+- 对可重试的 MiniMax 暂时性流式错误执行重试，并在 Web 聊天中保留 IM 运行失败状态。
+- 修复 Mermaid 流程图英文连线标签溢出。
 - 修正反思触发时序；历史前缀不一致时不再追加到已捕获快照。
 - 修复聊天历史分页位置、邮件预览样式泄漏及文件同步恢复边界问题。
 
