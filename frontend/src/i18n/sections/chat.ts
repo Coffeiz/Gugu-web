@@ -7,7 +7,7 @@ export const chatUi = {
 Object.assign(chatUi['zh-CN'], {
   minimaxProviderError: 'MiniMax 请求失败（上游 {tag}，错误码 {minimax_code} / {minimax_error_type}：{minimax_message}）。诊断编号 {diagnostic_id}；MiniMax 请求 ID：{minimax_request_id}',
   minimaxErrorCodes: {
-    unknown: '服务商未返回已收录的错误码，请使用诊断编号排查。',
+    unknown: '提供商未返回已收录的错误码，请使用诊断编号排查。',
     code1000: '未知或系统默认错误，请稍后再试。',
     code1001: '请求超时，请稍后再试。',
     code1002: '请求频率超限，请稍后再试。',
