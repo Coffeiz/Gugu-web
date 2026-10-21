@@ -5,12 +5,6 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
-
-### Improvements
-
-- Preserve Markdown formatting when copying chat messages.
-
 ## [1.7.6] - 2026-10-21
 
 ### What's New
@@ -24,6 +18,7 @@
 
 - Retain up to 2,000 messages per session and improve historical conversation search; keep reflection and compression windows independent.
 - Set the default model output limit to 25,600 tokens.
+- Preserve Markdown formatting when copying chat messages.
 - Set the group-reflection idle window to four minutes, prevent passive messages from extending it, and reuse captured prefixes only when restored Provider history matches.
 - Keep chat reading position stable while loading older messages and attach tool results to the correct history page.
 - Make project and calendar creation idempotent, and reject stale undo when a later Agent edit changed the resource.
