@@ -487,6 +487,21 @@ class SerialToolBatchRuntime:
                 )
                 break
 
+            # 确认载荷只有成功创建交互事件后才能作为“等待用户确认”返回给模型。
+            # 后台定时任务没有交互 session，或确认桥接未能创建事件时，原样返回
+            # needs_confirm 会让模型误以为用户已收到确认按钮。工具确认门此时尚未
+            # 执行操作，因此改为明确失败结果，让模型和后续投递都知道需要用户在
+            # 有效的 Web/IM 会话中重新发起。
+            if confirmation_payload(result) is not None:
+                result = self.bindings.json_dumps({
+                    "error": (
+                        "该操作需要用户确认，但系统未能创建可交互的确认请求，"
+                        "当前定时任务无法向任何对话会话发起确认，操作未执行。"
+                        "请告知用户由用户本人在 Web 或 IM 对话中重新发起。"
+                    ),
+                    "confirmation_unavailable": True,
+                }, ensure_ascii=False)
+
             dispatched.append((tool_call, result))
             yield emit(
                 "tool_done", round_id=self.round_id, tool_call_id=tool_call_id,
