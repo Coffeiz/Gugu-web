@@ -225,7 +225,7 @@ test.describe('文件浏览阶段 2–4 冒烟', () => {
     await expect(projectModal).toBeHidden()
     const editedProject = page.locator('.proj-card').filter({ hasText: editedName })
     await expect(editedProject).toBeVisible()
-    await editedProject.click()
+    await editedProject.locator('.proj-name').click()
     await expect(projectModal).toBeVisible()
     await expect(projectModal.locator('.header-name-input')).toHaveValue(editedName)
     await expect(projectModal.locator('.file-browser-grid')).toBeVisible()
