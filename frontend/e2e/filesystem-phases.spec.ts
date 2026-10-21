@@ -80,18 +80,24 @@ async function uploadFixtureFile(page: Page) {
   return name
 }
 
-async function createProjectFixture(page: Page) {
+async function createProjectFixture(page: Page, populated = false) {
   const name = `e2e-phase-project-${Date.now()}-${Math.random().toString(16).slice(2)}`
-  const id = await page.evaluate(async projectName => {
+  const id = await page.evaluate(async ({ projectName, withDetails }) => {
     const csrfToken = decodeURIComponent(document.cookie.split('; ').find(item => item.startsWith('gugu_user_csrf_token='))?.split('=').slice(1).join('=') ?? '')
     const response = await fetch('/api/v1/projects', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-      body: JSON.stringify({ name: projectName }),
+      body: JSON.stringify({
+        name: projectName,
+        ...(withDetails ? {
+          current_stage: 'e2e-planning',
+          stages: [{ key: 'e2e-planning', label: 'E2E 计划阶段', todos: [{ id: `${projectName}-todo`, text: 'E2E 阶段任务', done: false }] }],
+        } : {}),
+      }),
     })
     if (!response.ok) throw new Error(`创建 E2E 项目失败：${response.status}`)
     return (await response.json()).id as number
-  }, name)
+  }, { projectName: name, withDetails: populated })
   fixtureProjects.add(id)
   await page.reload()
   const project = page.locator('.proj-card').filter({ hasText: name })
@@ -175,7 +181,7 @@ test.describe('文件浏览阶段 2–4 冒烟', () => {
     await expect(page.locator('.project-modal-root .file-browser-toolbar')).toBeVisible()
   })
 
-  test('打开空项目卡片后文件网格正常渲染且不触发递归更新', async ({ page }) => {
+  test('项目编辑卡打开后可编辑、关闭并重开，文件区就绪且不触发递归更新', async ({ page }) => {
     const appErrors: string[] = []
     const loadedDirectories = new Set<string>()
     page.on('pageerror', error => appErrors.push(error.message))
@@ -184,22 +190,45 @@ test.describe('文件浏览阶段 2–4 冒烟', () => {
     })
     page.on('response', response => {
       const url = new URL(response.url())
-      if (url.pathname.endsWith('/api/v1/files') && url.searchParams.get('space') === 'project') {
+      if (response.ok() && url.pathname.endsWith('/api/v1/files') && url.searchParams.get('space') === 'project') {
         loadedDirectories.add('files')
       }
-      if (url.pathname.endsWith('/api/v1/folders') && url.searchParams.has('project_id')) {
+      if (response.ok() && url.pathname.endsWith('/api/v1/folders') && url.searchParams.has('project_id')) {
         loadedDirectories.add('folders')
       }
     })
 
     await page.goto('/projects')
-    await createProjectFixture(page)
+    await createProjectFixture(page, true)
 
     const projectModal = page.locator('.project-modal-root')
     await expect(projectModal).toBeVisible()
     await expect(projectModal.locator('.file-browser-grid')).toBeVisible()
     await expect(projectModal.locator('.fub.grid')).toBeVisible()
+    await expect(projectModal).toContainText('E2E 阶段任务')
     await expect.poll(() => loadedDirectories.size).toBe(2)
+
+    const nameInput = projectModal.locator('.header-name-input')
+    await expect(nameInput).toBeVisible()
+    const editedName = `e2e-edited-${Date.now()}`
+    const updateResponse = page.waitForResponse(response =>
+      response.request().method() === 'PATCH'
+      && new URL(response.url()).pathname.startsWith('/api/v1/projects/'),
+    )
+    await nameInput.fill(editedName)
+    await nameInput.blur()
+    expect((await updateResponse).ok()).toBe(true)
+    await expect(nameInput).toHaveValue(editedName)
+
+    await projectModal.locator('.save-float-btn').click()
+    await expect(projectModal).toBeHidden()
+    const editedProject = page.locator('.proj-card').filter({ hasText: editedName })
+    await expect(editedProject).toBeVisible()
+    await editedProject.click()
+    await expect(projectModal).toBeVisible()
+    await expect(projectModal.locator('.header-name-input')).toHaveValue(editedName)
+    await expect(projectModal.locator('.file-browser-grid')).toBeVisible()
+
     await page.evaluate(() => new Promise<void>(resolve => {
       requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
     }))
