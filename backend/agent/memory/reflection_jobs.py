@@ -28,6 +28,19 @@ _LOCAL_IDLE_SNAPSHOT_DRAINING: set[str] = set()
 _LOCAL_IDLE_SNAPSHOT_MARKER_PREFIX = "memory:reflection:local-idle-snapshot:"
 _LOCAL_IDLE_SNAPSHOT_MARKER_GRACE_SECONDS = 90
 _LOCAL_IDLE_SNAPSHOT_MARKER_REFRESH_SECONDS = 30
+_REFRESH_LOCAL_IDLE_SNAPSHOT_MARKER_LUA = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+  return 1
+end
+return 0
+"""
+_DELETE_LOCAL_IDLE_SNAPSHOT_MARKER_LUA = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('DEL', KEYS[1])
+end
+return 0
+"""
 _async_sleep = asyncio.sleep
 
 
@@ -55,6 +68,25 @@ async def _db_session():
 
 def _local_idle_snapshot_marker(scope: MemoryScope) -> str:
     return f"{_LOCAL_IDLE_SNAPSHOT_MARKER_PREFIX}{scope.prefix}"
+
+
+async def _refresh_local_idle_snapshot_marker(redis, marker: str, token: str) -> bool:
+    return bool(await redis.eval(
+        _REFRESH_LOCAL_IDLE_SNAPSHOT_MARKER_LUA,
+        1,
+        marker,
+        token,
+        str(_LOCAL_IDLE_SNAPSHOT_MARKER_REFRESH_SECONDS * 3),
+    ))
+
+
+async def _delete_local_idle_snapshot_marker(redis, marker: str, token: str) -> bool:
+    return bool(await redis.eval(
+        _DELETE_LOCAL_IDLE_SNAPSHOT_MARKER_LUA,
+        1,
+        marker,
+        token,
+    ))
 
 
 async def _arm_local_idle_snapshot(scope: MemoryScope, session_id: int, settings, snapshot) -> bool:
@@ -88,15 +120,8 @@ async def _arm_local_idle_snapshot(scope: MemoryScope, session_id: int, settings
             async def refresh_marker() -> None:
                 while True:
                     await _async_sleep(_LOCAL_IDLE_SNAPSHOT_MARKER_REFRESH_SECONDS)
-                    current_marker = await redis.get(marker)
-                    if isinstance(current_marker, bytes):
-                        current_marker = current_marker.decode("utf-8", errors="replace")
-                    if current_marker != token:
+                    if not await _refresh_local_idle_snapshot_marker(redis, marker, token):
                         return
-                    await redis.set(
-                        marker, token,
-                        ex=_LOCAL_IDLE_SNAPSHOT_MARKER_REFRESH_SECONDS * 3,
-                    )
 
             marker_task = asyncio.create_task(refresh_marker())
             _LOCAL_IDLE_SNAPSHOT_DRAINING.add(task_key)
@@ -117,11 +142,7 @@ async def _arm_local_idle_snapshot(scope: MemoryScope, session_id: int, settings
                 except asyncio.CancelledError:
                     pass
             try:
-                current_marker = await redis.get(marker)
-                if isinstance(current_marker, bytes):
-                    current_marker = current_marker.decode("utf-8", errors="replace")
-                if current_marker == token:
-                    await redis.delete(marker)
+                await _delete_local_idle_snapshot_marker(redis, marker, token)
             except Exception:
                 pass
             if _LOCAL_IDLE_SNAPSHOT_TASKS.get(task_key) is asyncio.current_task():

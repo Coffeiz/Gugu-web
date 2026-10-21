@@ -190,18 +190,28 @@ async def test_rearming_group_local_idle_snapshot_cancels_old_timer_without_dele
     class Redis:
         def __init__(self):
             self.values = {}
+            self.expiries = []
             self.deleted = []
 
         async def set(self, key, value, ex):
             self.values[key] = value
             return True
 
-        async def get(self, key):
-            return self.values.get(key)
-
-        async def delete(self, key):
-            self.deleted.append(key)
-            self.values.pop(key, None)
+        async def eval(self, script, numkeys, key, token, *args):
+            assert numkeys == 1
+            if script == reflection_jobs._REFRESH_LOCAL_IDLE_SNAPSHOT_MARKER_LUA:
+                if self.values.get(key) != token:
+                    return 0
+                self.values[key] = token
+                self.expiries.append(int(args[0]))
+                return 1
+            if script == reflection_jobs._DELETE_LOCAL_IDLE_SNAPSHOT_MARKER_LUA:
+                if self.values.get(key) != token:
+                    return 0
+                self.deleted.append(key)
+                self.values.pop(key, None)
+                return 1
+            raise AssertionError("收到未知 Redis Lua 脚本")
 
     redis = Redis()
     scope = MemoryScope("owner-synthetic", "qq", "bot-synthetic", "group", "group-synthetic")
@@ -267,12 +277,23 @@ async def test_group_local_idle_marker_refreshes_during_drain(monkeypatch):
                 refreshed.set()
             return True
 
-        async def get(self, key):
-            return self.values.get(key)
-
-        async def delete(self, key):
-            self.deleted.append(key)
-            self.values.pop(key, None)
+        async def eval(self, script, numkeys, key, token, *args):
+            assert numkeys == 1
+            if script == reflection_jobs._REFRESH_LOCAL_IDLE_SNAPSHOT_MARKER_LUA:
+                if self.values.get(key) != token:
+                    return 0
+                self.values[key] = token
+                self.expiries.append(int(args[0]))
+                if int(args[0]) == reflection_jobs._LOCAL_IDLE_SNAPSHOT_MARKER_REFRESH_SECONDS * 3:
+                    refreshed.set()
+                return 1
+            if script == reflection_jobs._DELETE_LOCAL_IDLE_SNAPSHOT_MARKER_LUA:
+                if self.values.get(key) != token:
+                    return 0
+                self.deleted.append(key)
+                self.values.pop(key, None)
+                return 1
+            raise AssertionError("收到未知 Redis Lua 脚本")
 
     redis = Redis()
     scope = MemoryScope("owner-synthetic", "qq", "bot-synthetic", "group", "group-drain")
@@ -301,3 +322,56 @@ async def test_group_local_idle_marker_refreshes_during_drain(monkeypatch):
     finish_drain.set()
     await asyncio.wait_for(task, timeout=1)
     assert redis.values == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["refresh", "delete"])
+async def test_old_idle_snapshot_marker_operation_cannot_mutate_replacement_token(operation):
+    """旧心跳续期或清理排队时若新 run 换了 token，原子比较必须保留新标记。"""
+
+    class InterleavedRedis:
+        def __init__(self):
+            self.values = {"marker": "old-token"}
+            self.eval_started = asyncio.Event()
+            self.allow_eval = asyncio.Event()
+            self.expiries = []
+
+        async def set(self, key, value, ex):
+            self.values[key] = value
+            self.expiries.append(ex)
+
+        async def eval(self, script, numkeys, key, token, *args):
+            assert numkeys == 1
+            self.eval_started.set()
+            # 模拟旧任务的 Lua 命令到达 Redis 前，新 run 已登记新 token。
+            await self.allow_eval.wait()
+            if script == reflection_jobs._REFRESH_LOCAL_IDLE_SNAPSHOT_MARKER_LUA:
+                if self.values.get(key) != token:
+                    return 0
+                self.values[key] = token
+                self.expiries.append(int(args[0]))
+                return 1
+            if script == reflection_jobs._DELETE_LOCAL_IDLE_SNAPSHOT_MARKER_LUA:
+                if self.values.get(key) != token:
+                    return 0
+                self.values.pop(key, None)
+                return 1
+            raise AssertionError("收到未知 Redis Lua 脚本")
+
+    redis = InterleavedRedis()
+    if operation == "refresh":
+        old_operation = reflection_jobs._refresh_local_idle_snapshot_marker(
+            redis, "marker", "old-token"
+        )
+    else:
+        old_operation = reflection_jobs._delete_local_idle_snapshot_marker(
+            redis, "marker", "old-token"
+        )
+    task = asyncio.create_task(old_operation)
+    await redis.eval_started.wait()
+    await redis.set("marker", "new-token", ex=600)
+    redis.allow_eval.set()
+
+    assert await task is False
+    assert redis.values["marker"] == "new-token"
+    assert redis.expiries == [600]
