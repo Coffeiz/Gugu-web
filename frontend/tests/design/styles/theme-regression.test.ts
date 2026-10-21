@@ -48,6 +48,7 @@ const runtimeCss = load('./adoption/runtime.css')
 const componentCss = load('./tokens/components.css')
 const componentSurfacesCss = load('./tokens/components/surfaces.css')
 const fileCardVue = load('../../components/common/file-browser/FileCard.vue')
+const folderCardVue = load('../../components/common/file-browser/FolderCard.vue')
 const fileSelectionToolbarVue = load('../../components/common/file-browser/FileSelectionToolbar.vue')
 const filesViewVue = load('../../views/Files/index.vue')
 const projectFilesPanelVue = load('../../views/Projects/components/ProjectFilesPanel.vue')
@@ -484,31 +485,40 @@ describe('主题 CSS 回归契约', () => {
     expect(modalRightBlock).toContain('position: relative')
   })
 
-  it('文件卡亮色保持 0.20.4 多选层级，暗色只重映射 token 且没有 adoption paint 竞争', () => {
-    // 0.20.4 light baseline：普通文件整卡 .14；图片在整卡层之上再加 .28 缩略图层。
+  it('文件与文件夹选择态保持原底色并淡出主题遮罩，暗色不产生重复 paint', () => {
+    // 选择态不能切换成另一套近白底色，否则取消选择时会先闪亮再淡出。
     expect(componentSurfacesCss).toContain('--file-card-bg: rgba(255,255,255,.75);')
     expect(componentSurfacesCss).toContain('--file-card-bg-hover: rgba(255,255,255,.86);')
-    expect(componentSurfacesCss).toContain('--file-card-bg-selected: rgba(255,255,255,.92);')
+    expect(componentSurfacesCss).not.toContain('--file-card-bg-selected:')
+    expect(componentSurfacesCss).not.toContain('--folder-card-bg-selected:')
     expect(componentSurfacesCss).toContain('--file-card-border-selected: rgba(123,127,178,.55);')
     expect(componentSurfacesCss).toContain('--file-card-selection-overlay: rgba(123,127,178,.14);')
     expect(componentSurfacesCss).toContain('--file-card-selection-thumb-overlay: rgba(123,127,178,.28);')
     expect(componentSurfacesCss).toContain('--file-card-preselection-thumb-overlay: rgba(123,127,178,.16);')
 
-    // FileCard 是唯一实体 paint owner；普通文件和图片文件继续消费不同层级的选中 token。
+    // 两种卡片的选择状态由透明遮罩表达，取消 selected 时可复用同一层淡出。
     expect(fileCardVue).toContain('background: var(--file-card-bg);')
-    expect(fileCardVue).toContain('background: var(--file-card-bg-selected);')
+    expect(fileCardVue).not.toContain('background: var(--file-card-bg-selected);')
     expect(fileCardVue).toContain('background: var(--file-card-selection-overlay);')
     expect(fileCardVue).toContain('background: var(--file-card-selection-thumb-overlay);')
+    expect(cssBlock(fileCardVue, '.fc-card::before')).toContain('opacity: 0;')
+    expect(cssBlock(fileCardVue, '.fc-card.selected::before')).toContain('opacity: 1;')
+    expect(cssBlock(fileCardVue, '.fc-thumb-area::after')).toContain('opacity: 0;')
+    expect(cssBlock(fileCardVue, '.fc-card.selected .fc-thumb-area::after')).toContain('opacity: 1;')
     expect(fileCardVue).not.toMatch(/background:\s*rgba\(123,127,178/i)
     expect(fileCardVue).not.toContain('!important')
+    expect(folderCardVue).toContain('background: var(--folder-card-bg);')
+    expect(folderCardVue).toContain('background: var(--folder-card-selection-overlay);')
+    expect(cssBlock(folderCardVue, '.folder-card::before')).toContain('opacity: 0;')
+    expect(cssBlock(folderCardVue, '.folder-card.selected::before')).toContain('opacity: 1;')
 
-    // 暗色保持同一状态结构，只替换 surface / edge / overlay 语义，不复制一份 selector。
+    // 暗色沿用同一状态结构，只映射 surface / edge / overlay 令牌。
     const darkTokens = cssBlock(componentSurfacesCss, "html[data-theme='dark'][data-family]")
     expect(darkTokens).toContain('--file-card-bg: var(--surface-card-solid);')
-    expect(darkTokens).toContain('--file-card-bg-selected: var(--surface-raised);')
     expect(darkTokens).toContain('--file-card-border-selected: var(--action-outline);')
     expect(darkTokens).toContain('--file-card-selection-overlay: color-mix(in srgb,var(--action-primary) 8%,transparent);')
     expect(darkTokens).toContain('--file-card-selection-thumb-overlay: color-mix(in srgb,var(--action-primary) 28%,transparent);')
+    expect(darkTokens).toContain('--folder-card-selection-overlay: color-mix(in srgb,var(--action-primary) 8%,transparent);')
 
     // Legacy bridge / Mono adoption 不得重新获得 fc-card paint 或 border ownership。
     expect(themeAdoptionCss).not.toMatch(/html\[data-theme[^\n]*\.fc-card/)
