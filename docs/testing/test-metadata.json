@@ -47,6 +47,14 @@
     "keyBehavior": "快捷编辑提交打开时捕获的事件版本；服务端拒绝并发旧草稿后恢复乐观状态、展示冲突提示并刷新缓存",
     "ci": "frontend-test"
   },
+  "backend/tests/im/test_group_reflection_snapshot_reuse.py": {
+    "domain": "im-memory",
+    "layer": "L1",
+    "owner": "backend/agent/memory",
+    "productionEntry": "backend/agent/context/reflection_snapshot.py 与 backend/agent/memory/reflection_jobs.py",
+    "keyBehavior": "数据库历史恢复后仅在消息序列严格匹配时复用原始 Provider 前缀；闲置调度可刷新、取消并在 worker 接管",
+    "ci": "backend-pytest"
+  },
   "backend/tests/im/test_group_reflection_policy.py": {
     "domain": "im-memory",
     "layer": "L1",
@@ -413,6 +421,14 @@
     "owner": "backend/agent/tools/files",
     "productionEntry": "agent/tools/files/read.py",
     "keyBehavior": "群聊成员只能读取当前消息明确提供的图片附件，不能按 Owner 文件 ID 或历史附件探测私人文件",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/deployment/test_admin_entry_gate.py": {
+    "domain": "admin-entry-security",
+    "layer": "L1",
+    "owner": "nginx",
+    "productionEntry": "nginx/prepare-admin-entry.sh",
+    "keyBehavior": "Admin 入口配置生成正确限制令牌路径与主机白名单，并拒绝不安全配置",
     "ci": "backend-pytest"
   },
   "backend/tests/platform/deployment/test_bundle_runtime.py": {
@@ -1071,6 +1087,14 @@
     "keyBehavior": "诊断 inline compaction 的 thinking A/B 结果时保留真实调用上下文并避免持久化原始正文",
     "ci": "backend-pytest"
   },
+  "backend/tests/agent/context/test_inline_compaction_progress.py": {
+    "domain": "agent-compaction",
+    "layer": "L1",
+    "owner": "backend/agent/loop",
+    "productionEntry": "backend/agent/loop/context_runtime.py 与 backend/agent/context/compaction.py",
+    "keyBehavior": "压力压缩保护前一 run 窗口和当前用户原文，仅摘要较早执行轮并保留最新工具往返",
+    "ci": "backend-pytest"
+  },
   "backend/tests/agent/context/test_branch_request_prefix.py": {
     "domain": "agent-context",
     "layer": "L1",
@@ -1085,6 +1109,14 @@
     "owner": "backend/alembic/versions",
     "productionEntry": "backend/alembic/versions/20261013000001_use_skill_ids.py",
     "keyBehavior": "迁移为既有技能分配稳定顺序 ID 并让后续序列从最大 ID 之后继续",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/qq/test_qq_text.py": {
+    "domain": "qq-streaming",
+    "layer": "L1",
+    "owner": "backend/agent/gateway/qq",
+    "productionEntry": "backend/agent/gateway/qq/text.py",
+    "keyBehavior": "QQ 输出安全转换地图链接，流式任意前缀不截断且不泄露不支持的自定义协议",
     "ci": "backend-pytest"
   },
   "backend/tests/im/qq/test_qq_reply_sequences.py": {
