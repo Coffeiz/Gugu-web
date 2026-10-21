@@ -45,15 +45,28 @@
   <div v-if="msg.files && msg.files.length" class="msg-files">
     <template v-for="f in msg.files.filter(f => !f.quoted)" :key="f.file_id || f.attach_id">
     <!-- 语音条：点一下播放（带鉴权拉 blob），不是文件卡 -->
-    <div v-if="f.kind === 'voice'" class="msg-voice" :class="{ playing: voicePlayingId === f.attach_id }"
-         @click="$emit('toggleVoice', f)" :title="t('chat.clickPlayVoice')">
-      <span class="mv-btn">
-        <Icon name="media.pause" v-if="voicePlayingId === f.attach_id" :size="13" />
-        <Icon name="media.play-fill" v-else :size="13" />
-      </span>
-      <span class="mv-wave"><i v-for="n in 13" :key="n" :style="{ height: `${voiceBars[n - 1]}%` }" /></span>
-      <span class="mv-dur">{{ fmtDur(f.duration) }}</span>
+    <template v-if="f.kind === 'voice'">
+    <div class="msg-voice-wrap">
+      <div class="msg-voice" :class="{ playing: voicePlayingId === f.attach_id }"
+           @click="$emit('toggleVoice', f)" :title="t('chat.clickPlayVoice')">
+        <span class="mv-btn">
+          <Icon name="media.pause" v-if="voicePlayingId === f.attach_id" :size="13" />
+          <Icon name="media.play-fill" v-else :size="13" />
+        </span>
+        <span class="mv-wave"><i v-for="n in 13" :key="n" :style="{ height: `${voiceBars[n - 1]}%` }" /></span>
+        <span class="mv-dur">{{ fmtDur(f.duration) }}</span>
+        <button v-if="f.transcript || f.transcript_status" class="msg-voice-transcript-toggle"
+                type="button" @click.stop="toggleTranscript(f)"
+                :aria-expanded="isTranscriptOpen(f)"
+                :aria-label="f.transcript_status === 'failed' ? t('chat.transcriptionFailed') : (isTranscriptOpen(f) ? t('chat.hideTranscription') : t('chat.showTranscription'))"
+                :title="f.transcript_status === 'failed' ? t('chat.transcriptionFailed') : (isTranscriptOpen(f) ? t('chat.hideTranscription') : t('chat.showTranscription'))">
+          {{ f.transcript_status === 'failed' ? '!' : (isTranscriptOpen(f) ? '−' : '文') }}
+        </button>
+      </div>
     </div>
+    <div v-if="f.transcript && isTranscriptOpen(f)" class="msg-voice-transcript">{{ f.transcript }}</div>
+    <div v-else-if="f.transcript_status === 'empty' && isTranscriptOpen(f)" class="msg-voice-transcript">{{ t('chat.transcriptionEmpty') }}</div>
+    </template>
     <div v-else-if="f.qq_face" class="msg-face-image-wrap" @click="$emit('openFile', f)" :title="t('chat.viewEmoji')">
       <img class="msg-face-image" v-lazy-face="f.file_id || f.attach_id" draggable="false" :alt="t('chat.viewEmoji')" />
     </div>
@@ -88,7 +101,7 @@
 import Icon from '@/components/common/icons/Icon.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import { useI18n } from 'vue-i18n'
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { translateAgentError } from '@/i18n'
 /**
  * 单条消息展示：只接收消息对象和展示回调，不直接读取全局 Store、不直接修改会话数组。
@@ -115,6 +128,20 @@ const props = defineProps<{
   voiceBars: number[]
 }>()
 const { t } = useI18n()
+const openTranscripts = ref(new Set<string>())
+function transcriptKey(file: ChatFile) {
+  return String(file.attach_id || file.file_id || file.name || 'voice')
+}
+function isTranscriptOpen(file: ChatFile) {
+  return openTranscripts.value.has(transcriptKey(file))
+}
+function toggleTranscript(file: ChatFile) {
+  const key = transcriptKey(file)
+  const next = new Set(openTranscripts.value)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  openTranscripts.value = next
+}
 const runOutcomeDetail = computed(() => {
   const outcome = props.msg.runOutcome
   if (outcome?.status !== 'failed' || !outcome.messageKey) return ''
@@ -151,6 +178,44 @@ function onBodyClick(event: MouseEvent) {
 </script>
 
 <style scoped>
+.msg-voice-wrap {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+}
+
+.msg-voice-transcript-toggle {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  margin-left: 1px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  color: inherit;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.82;
+}
+
+.msg-voice-transcript-toggle:hover { opacity: 1; background: color-mix(in srgb, currentColor 20%, transparent); }
+
+.msg-voice-transcript {
+  max-width: min(34rem, 80vw);
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: var(--surface-glass);
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .msg-run-outcome {
   display: flex;
   flex-wrap: wrap;

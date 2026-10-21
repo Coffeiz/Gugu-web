@@ -541,6 +541,11 @@ export function useChatConversation(options: {
     const payload = event.payload && typeof event.payload === 'object' ? event.payload as Record<string, any> : {}
     const e = { ...payload, session_id: event.entity_id, origin: event.origin } as any
     const matchesCurrentSession = sessionId.value != null && String(event.entity_id) === String(sessionId.value)
+    if (matchesCurrentSession && e.message_update && typeof e.message_update === 'object') {
+      const update = e.message_update as { message_id?: number; files?: ChatFile[] }
+      const target = messages.value.find(message => message.dbId === Number(update.message_id))
+      if (target && Array.isArray(update.files)) target.files = update.files
+    }
     const appendedCount = Array.isArray(e.appended) ? e.appended.length : 0
     const isOwnOrigin = Boolean(e.origin && e.origin === CLIENT_ID)
     if (!matchesCurrentSession) return

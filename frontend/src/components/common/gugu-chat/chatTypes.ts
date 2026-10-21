@@ -106,6 +106,9 @@ export interface ChatFile {
   qq_face?: boolean
   quoted?: boolean
   duration?: number
+  transcript?: string
+  transcript_status?: 'completed' | 'empty' | 'failed'
+  transcript_scope?: 'message'
   upload?: boolean
   _thumbUrl?: string
   img_width?: number

@@ -1618,7 +1618,11 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
                     else:
                         # MiniMax ASR 使用 multipart 原始字节，可走官方 50 MiB 上限；
                         # 其他路径继续使用原有 base64 字节门槛。
-                        audio_item = {"type": "audio", "mode": "base64", "mime": mime, "ext": ext}
+                        audio_item = {
+                            "type": "audio", "mode": "base64", "mime": mime,
+                            "ext": ext, "attach_id": meta["attach_id"],
+                            "kind": meta["kind"], "voice_recognition_enabled": voice_ok,
+                        }
                         if len(raw) <= MEDIA_RAW_MAX:
                             audio_item["b64"] = base64.b64encode(raw).decode()
                         else:
