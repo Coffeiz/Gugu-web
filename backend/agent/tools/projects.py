@@ -19,7 +19,7 @@ from app.core.projects import (
     normalize_project_stages, replace_project_stages, update_project_atomic,
 )
 from app.core.tz import now_utc
-from app.models import CalendarEvent, File, Folder, Project, ScheduledTask
+from app.models import CalendarEvent, File, Folder, Project, ScheduledTask  # orm-exempt: 项目删除快照需读取级联对象，待迁移到项目 Service
 from app.services.projects import (
     add_project,
     count_project_files,
@@ -444,24 +444,24 @@ async def _soft_delete_projects_for_agent(db, user_id, projects):
     deleted_at = now_utc()
     for project in projects:
         pid, name = project.id, project.name
-        folders = (await db.execute(select(Folder).where(
+        folders = (await db.execute(select(Folder).where(  # orm-exempt: 删除前收集项目文件夹快照，待迁移到项目 Service
             Folder.user_id == user_id, Folder.project_id == pid, Folder.deleted_at.is_(None),
         ))).scalars().all()
         folder_ids = [folder.id for folder in folders]
         file_scope = [File.project_id == pid]
         if folder_ids:
             file_scope.append(File.folder_id.in_(folder_ids))
-        files = (await db.execute(select(File).where(
+        files = (await db.execute(select(File).where(  # orm-exempt: 删除前收集项目文件快照，待迁移到项目 Service
             File.user_id == user_id, File.deleted_at.is_(None), or_(*file_scope),
         ))).scalars().all()
-        calendar_events = (await db.execute(select(CalendarEvent).where(
+        calendar_events = (await db.execute(select(CalendarEvent).where(  # orm-exempt: 删除前收集关联日程快照，待迁移到项目 Service
             CalendarEvent.user_id == user_id, CalendarEvent.project_id == pid,
             CalendarEvent.deleted_at.is_(None),
         ))).scalars().all()
         event_ids = [event.id for event in calendar_events]
         tasks = []
         if event_ids:
-            tasks = (await db.execute(select(ScheduledTask).where(
+            tasks = (await db.execute(select(ScheduledTask).where(  # orm-exempt: 删除前收集关联提醒快照，待迁移到项目 Service
                 ScheduledTask.user_id == user_id, ScheduledTask.event_id.in_(event_ids),
             ))).scalars().all()
         before_items[domain_ref("project", pid)] = project_snapshot(project)
@@ -478,7 +478,7 @@ async def _soft_delete_projects_for_agent(db, user_id, projects):
         kind, raw_id = ref.split(":", 1)
         model = {"project": Project, "file": File, "folder": Folder,
                  "event": CalendarEvent, "task": ScheduledTask}.get(kind)
-        row = await db.scalar(select(model).where(
+        row = await db.scalar(select(model).where(  # orm-exempt: 删除后生成撤销快照并限定用户归属，待迁移到撤销 Service
             model.id == int(raw_id), model.user_id == user_id,
         ))
         if row is None:

@@ -98,7 +98,7 @@ async def create_event(
     attach_idempotency(e, idempotency_key, payload)
     try:
         async with db.begin_nested():
-            db.add(e)
+            db.add(e)  # orm-exempt: 幂等创建需在保存点内原子写入事件，待迁移到日历 Service
             await db.flush()
     except IntegrityError:
         try:
