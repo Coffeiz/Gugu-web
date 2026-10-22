@@ -10,6 +10,7 @@ import json
 from agent.providers.cache_probe import finish_usage_probe, start_request_probe
 from agent.providers.standalone import output_budget
 from agent.security.sanitize import strip_think_blocks
+from app.core.retry import llm_provider_timeout
 
 
 def _history_starts_with_system(history: list[dict], system_text: str) -> bool:
@@ -80,7 +81,6 @@ async def complete_messages(
     tools: list | None = None,
     usage_sink: list | None = None,
     probe_sink: list | None = None,
-    read_timeout: float | None = None,
 ) -> str:
     """追加式分支：复用不可变 ProviderConversation，delta 只追加一次。
 
@@ -106,20 +106,18 @@ async def complete_messages(
         text = await _anthropic(sys, user, ai, max_tokens,
                                 settings=settings, history=history, tools=tools,
                                 align_with_main_run=True, usage_sink=usage_sink,
-                                probe_sink=probe_sink,
-                                read_timeout=read_timeout)
+                                probe_sink=probe_sink)
         return _parse_json(text) if json_mode else text
     text = await _non_anthropic(sys, user, ai, max_tokens, json_mode=json_mode,
                          thinking=thinking, settings=settings, history=history,
                          tools=tools, usage_sink=usage_sink,
-                         probe_sink=probe_sink,
-                         read_timeout=read_timeout)
+                         probe_sink=probe_sink)
     return _parse_json(text) if json_mode else text
 
 
 async def _non_anthropic(sys, user, ai, max_tokens, *, json_mode=False,
                          thinking=None, settings=None, history=None, tools=None,
-                         usage_sink=None, probe_sink=None, read_timeout=None):
+                         usage_sink=None, probe_sink=None):
     """文本、JSON、追加分支共用协议路由，不载入主对话的推理状态。"""
     from agent import providers
 
@@ -138,13 +136,11 @@ async def _non_anthropic(sys, user, ai, max_tokens, *, json_mode=False,
             json_mode=json_mode,
             usage_sink=usage_sink,
             probe_sink=probe_sink,
-            read_timeout=read_timeout,
         ))
     return await _openai(sys, user, ai, max_tokens, json_mode=json_mode,
                          thinking=thinking, settings=settings, history=history,
                          tools=tools, usage_sink=usage_sink,
-                         probe_sink=probe_sink,
-                         read_timeout=read_timeout)
+                         probe_sink=probe_sink)
 
 
 async def complete_json(
@@ -153,7 +149,6 @@ async def complete_json(
     settings,
     max_tokens: int | None = 1500,
     thinking: str | None = None,
-    read_timeout: float | None = None,
 ) -> dict:
     from agent.llm.llm_select import use_anthropic_for
     from agent.llm.modelctx import effective_ai
@@ -167,12 +162,11 @@ async def complete_json(
     text = (
         await _anthropic(
             sys, user, ai, max_tokens, thinking=effective_thinking,
-            settings=settings, read_timeout=read_timeout,
+            settings=settings,
         )
         if use_anthropic
         else await _non_anthropic(sys, user, ai, max_tokens, json_mode=True,
-                           thinking=effective_thinking, settings=settings,
-                           read_timeout=read_timeout)
+                           thinking=effective_thinking, settings=settings)
     )
     return _parse_json(text)
 
@@ -189,15 +183,10 @@ async def _anthropic(
     align_with_main_run: bool = False,
     usage_sink: list | None = None,
     probe_sink: list | None = None,
-    read_timeout: float | None = None,
 ) -> str:
-    import httpx
     from agent import providers
 
-    client = providers.build_anthropic_client(
-        ai, httpx.Timeout(
-            connect=10.0, read=read_timeout or 40.0, write=10.0, pool=5.0,
-        ))
+    client = providers.build_anthropic_client(ai, llm_provider_timeout())
     # Anthropic API 必填 max_tokens，无法真正不限；None 时给高预算。
     if max_tokens is None:
         max_tokens = 32768
@@ -267,14 +256,51 @@ async def _anthropic(
 
 
 def _with_trailing_cache_anchor(messages):
-    """在不可变 projection 的稳定历史末尾放置缓存断点，不触碰 dynamic tail。"""
+    """继承主请求历史断点，并在追加分支末尾放置新断点。"""
     from agent.context.provider_conversation import ProviderConversation
     if not isinstance(messages, ProviderConversation):
         raise TypeError("分支缓存断点只接受 ProviderConversation")
-    values = messages.to_messages()
-    index = messages.conversation_count - 1
+    conversation_count = messages.conversation_count
+    index = conversation_count - 1
     if index < 0:
         return messages
+
+    previous_plan = messages.cache_plan
+    if previous_plan is not None:
+        # 主请求的 latest anchor 是分支开始前最后一个完整前缀；保留它才能命中
+        # 主请求已建立的缓存。再给快照追加的 assistant 收尾放新断点。
+        previous_state = previous_plan.next_state
+        previous_prefix_count = getattr(previous_state, "projection_entry_count", 0)
+        prefix_matches = (
+            isinstance(previous_prefix_count, int)
+            and 0 < previous_prefix_count <= conversation_count
+            and bool(getattr(previous_state, "projection_prefix_digest", ""))
+            and messages.projection_prefix_digest(previous_prefix_count)
+            == previous_state.projection_prefix_digest
+        )
+        anchors = set()
+        if prefix_matches:
+            anchors = {
+                anchor for anchor in previous_plan.anchor_indices
+                if isinstance(anchor, int) and 0 <= anchor < conversation_count
+            }
+        anchors.add(index)
+        from agent.context.cache_state import CachePlan
+        from agent.providers.message_utils import _apply_history_cache
+
+        branch_plan = CachePlan(
+            stable_limit=conversation_count,
+            anchor_indices=tuple(sorted(anchors)),
+            baseline_digest=previous_plan.baseline_digest,
+            latest_digest=previous_plan.latest_digest,
+            next_state=previous_plan.next_state,
+        )
+        cached, _ = _apply_history_cache(
+            messages, branch_plan, single_anchor=False,
+        )
+        return cached
+
+    values = messages.to_messages()
     clone = dict(values[index])
     content = clone.get("content")
     if isinstance(content, list) and content:
@@ -299,15 +325,10 @@ async def _openai(
     tools: list | None = None,
     usage_sink: list | None = None,
     probe_sink: list | None = None,
-    read_timeout: float | None = None,
 ) -> str:
-    import httpx
     from agent import providers
 
-    client = providers.build_openai_client(
-        ai, httpx.Timeout(
-            connect=10.0, read=read_timeout or 40.0, write=10.0, pool=5.0,
-        ))
+    client = providers.build_openai_client(ai, llm_provider_timeout())
     # max_tokens 为 None 表示不限制输出预算，交给 provider 使用模型默认上限。
     # 追加式历史只读来自 Area 的 projection；system 与 delta 都是本次请求专属内容。
     projection = _branch_projection(

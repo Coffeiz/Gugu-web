@@ -8,14 +8,18 @@ from __future__ import annotations
 import base64
 from contextvars import ContextVar
 
+from agent.media import gates, images, video
+from agent.media.constants import IMAGE_READ_MAX, MEDIA_MIME, VISION_MIME
+from agent.voice_config import voice_recognition_profile
 from app.core import chat_attach
+from app.core.chat_attach.file_types import IMAGE_EXTS as ATTACHMENT_IMAGE_EXTS
 from app.core.config import get_settings
 from app.core.redaction import diag_log
 from app.services import storage as storage_service
 
 VIDEO_EXTS = frozenset({"mp4", "mov", "avi", "mkv", "webm", "wmv", "m4v"})
 AUDIO_EXTS = frozenset({"mp3", "wav", "flac", "m4a", "ogg", "aac", "amr", "opus", "wma"})
-IMAGE_EXTS = frozenset(chat_attach.IMAGE_EXTS)
+IMAGE_EXTS = frozenset(ATTACHMENT_IMAGE_EXTS)
 MEDIA_EXTS = IMAGE_EXTS | AUDIO_EXTS | VIDEO_EXTS
 MEDIA_READ_MAX_BYTES = 36 * 1024 * 1024
 MEDIA_BATCH_MAX_ITEMS = 20
@@ -45,12 +49,24 @@ def reserve_remote_image_read() -> bool:
 
 def image_capability_error(ext: str | None = None, size: int | None = None) -> str | None:
     """统一检查视觉能力、格式与图片读取体积上限。"""
-    if not chat_attach.image_ready():
+    if not images.image_ready():
         return "当前模型/通道无法识别图像内容"
     normalized_ext = str(ext or "").lower().lstrip(".")
-    if ext is not None and normalized_ext not in chat_attach.IMAGE_EXTS:
+    if ext is not None and normalized_ext not in ATTACHMENT_IMAGE_EXTS:
         return f"图片格式 {normalized_ext or '未知'} 暂不支持识别"
-    if size is not None and size > chat_attach.IMAGE_READ_MAX:
+    if ext is not None:
+        provider_image_limits = gates.media_limits_for(_active_model_cfg())
+        mime = VISION_MIME.get(normalized_ext)
+        if (provider_image_limits.image_extensions
+                and normalized_ext not in provider_image_limits.image_extensions):
+            return "当前 Provider 不支持这种图片格式"
+        if provider_image_limits.image_mimes and mime not in provider_image_limits.image_mimes:
+            return "当前 Provider 不支持这种图片格式"
+    if size is not None:
+        provider_limit = gates.media_limits_for(_active_model_cfg()).image_max_bytes
+        if provider_limit is not None and size > provider_limit:
+            return f"图片超过当前 Provider 的单图上限（{provider_limit // 1_000_000}MB）"
+    if size is not None and size > IMAGE_READ_MAX:
         return "图片过大，超出可看上限"
     return None
 
@@ -60,7 +76,7 @@ def build_image_block(raw: bytes, ext: str) -> dict:
     error = image_capability_error(ext, len(raw))
     if error:
         return {"error": error}
-    block = chat_attach.image_block(raw, ext)
+    block = images.image_block(raw, ext, model_cfg=_active_model_cfg())
     return ({"block": block, "_source_size_bytes": len(raw)}
             if block else {"error": "图片无法解析"})
 
@@ -91,18 +107,19 @@ async def read_stored_image(storage_key: str, ext: str, *, max_source_bytes: int
 
 async def _transcribe_audio(raw: bytes, mime: str, ext: str = "", *, db=None, user_id=None) -> str:
     from agent.voice import transcribe
-    media = [{"type": "audio", "mime": mime, "ext": ext, "b64": base64.b64encode(raw).decode()}]
-    return (await transcribe(media, get_settings(), db=db, user_id=user_id)) or ""
+    audio_media = [{"type": "audio", "mime": mime, "ext": ext, "b64": base64.b64encode(raw).decode()}]
+    return (await transcribe(audio_media, get_settings(), db=db, user_id=user_id)) or ""
 
 
-async def _media_size_error(file, max_source_bytes: int | None = None) -> dict | None:
+async def _media_size_error(file, max_source_bytes: int | None = None,
+                            provider_limit_bytes: int = MEDIA_READ_MAX_BYTES) -> dict | None:
     """以物理对象大小为准，避免历史 size_bytes=0 绕过内存门禁。"""
     info = await get_storage().stat(file.storage_key)
     if info is None:
         return {"error": "媒体文件不存在，无法读取"}
     if max_source_bytes is not None and info.size > max_source_bytes:
         return {"error": "本批次剩余容量不足，未读取该媒体"}
-    if info.size > MEDIA_READ_MAX_BYTES:
+    if info.size > provider_limit_bytes:
         return {"error": f"媒体过大（{info.size} bytes），超出读取上限"}
     return None
 
@@ -118,7 +135,7 @@ def _active_model_cfg():
 
 def _native_audio_enabled(ai, ext: str) -> bool:
     """当前主模型及其实际协议支持该音频格式时，才把原音频交给主模型。"""
-    if not chat_attach._audio_enabled(ai):
+    if not gates.audio_enabled(ai):
         return False
     from agent import providers
     adapter = providers.adapter_for(ai)
@@ -127,18 +144,25 @@ def _native_audio_enabled(ai, ext: str) -> bool:
 
 async def read_audio(file, *, max_source_bytes: int | None = None, db=None, user_id=None) -> dict:
     try:
-        error = await _media_size_error(file, max_source_bytes)
+        ai = _active_model_cfg()
+        if _native_audio_enabled(ai, file.ext):
+            provider_limit = gates.media_limits_for(ai).audio_max_bytes
+        else:
+            voice_ok, voice_limit = await voice_recognition_profile(
+                user_id or getattr(file, "user_id", None),
+            )
+            provider_limit = voice_limit if voice_ok else MEDIA_READ_MAX_BYTES
+        error = await _media_size_error(file, max_source_bytes, provider_limit)
         if error:
             return error
         data = await get_storage().get(file.storage_key)
-        ai = _active_model_cfg()
         if _native_audio_enabled(ai, file.ext):
-            mime = chat_attach._MEDIA_MIME.get(file.ext.lower()) or f"audio/{file.ext.lower()}"
+            mime = MEDIA_MIME.get(file.ext.lower()) or f"audio/{file.ext.lower()}"
             media_item = {
                 "type": "audio", "mime": mime,
                 "b64": base64.b64encode(data).decode(),
             }
-            block = chat_attach.media_item_to_content_block(media_item, use_anthropic=False)
+            block = video.media_item_to_content_block(media_item, use_anthropic=False)
             if not block:
                 return {"error": "当前模型无法接收此音频格式"}
             return {
@@ -164,7 +188,7 @@ async def read_audio(file, *, max_source_bytes: int | None = None, db=None, user
 async def read_video(file, *, max_source_bytes: int | None = None) -> dict:
     """按本轮主模型已启用的原生视频能力读取；压缩与 provider payload 共用附件逻辑。"""
     ai = _active_model_cfg()
-    transport = chat_attach.video_transport_for(ai)
+    transport = gates.video_transport_for(ai)
     if not getattr(ai, "video", False) or transport == "none":
         return {"error": "当前模型或 API 协议未开启原生视频理解，请切换到支持视频输入的模型"}
 
@@ -175,15 +199,24 @@ async def read_video(file, *, max_source_bytes: int | None = None) -> dict:
             return {"error": "媒体文件不存在，无法读取"}
         if max_source_bytes is not None and info.size > max_source_bytes:
             return {"error": "本批次剩余容量不足，未读取该视频"}
-        # 源文件超过处理上限时用 stat() 已经拿到的物理大小直接拒绝，不要先把整个
-        # 文件读进内存再交给 prepare_video_media 判断。
-        if info.size > chat_attach.VIDEO_SOURCE_MAX:
-            return {"error": "这条视频太大（超过 500MB 处理上限），没法直接看"}
+        mime = MEDIA_MIME.get(ext) or f"video/{ext}"
+        # 依据同一份 Provider 规格在读入文件前检查大小和媒体类型。
+        video.validate_video_source(info.size, mime, ai)
+        # 时长闸门前置到「读字节之前」：按存储路径探测（ffprobe 按需 seek，IO 量是
+        # KB 级），超限直接拒——不用为了拒绝一个 235MB 的视频先把整份读进内存、
+        # 再落一份临时文件才换来一句"太长了"。探测结果直接透传给
+        # prepare_video_media，避免它再探一次。
+        limits = gates.media_limits_for(ai)
+        probe = None
+        if limits.transcode_video or limits.max_duration_s is not None:
+            probe = await video.probe_video_at(file.storage_key)
+        if probe is not None:
+            video.check_video_duration(probe.get("duration"), ai)
         raw = await get_storage().get(file.storage_key)
-        mime = chat_attach._MEDIA_MIME.get(ext) or f"video/{ext}"
-        media_item = await chat_attach.prepare_video_media(
+        media_item = await video.prepare_video_media(
             raw, mime, f"{file.display_name}.{file.ext}", ai,
             storage_key=file.storage_key, user_id=file.user_id,
+            duration=(probe or {}).get("duration"), probe=probe,
         )
     except ValueError as error:
         return {"error": str(error)}
@@ -191,9 +224,9 @@ async def read_video(file, *, max_source_bytes: int | None = None) -> dict:
         diag_log(f"agent.tools.media_reader.read_video.file_id={file.id}", error)
         return {"error": "视频读取失败"}
 
-    block = (chat_attach.video_media_to_anthropic_block(media_item)
+    block = (video.video_media_to_anthropic_block(media_item)
              if transport == "anthropic"
-             else chat_attach.video_media_to_openai_block(media_item))
+             else video.video_media_to_openai_block(media_item))
     if not block:
         return {"error": "视频读取失败"}
     return {

@@ -3,7 +3,7 @@
 节奏：固定 5s 间隔、最多 5 次重试。主对话重试准入预算为 900s，分支仍为
 90s，次数与墙钟先到为准。准入预算不强制中断正在进行的请求。固定间隔取代旧的
 1/2/4s 指数退避——过载窗口里 1s 的首次重试几乎必败，等于浪费配额；5s 起
-步直接对准「秒级尖峰」的恢复节奏。主对话预算允许 120s 读取超时后继续重试，
+步直接对准「秒级尖峰」的恢复节奏。主对话预算允许 300s 读取超时后继续重试，
 避免首次超时即耗尽旧的 90s 预算；已输出正文时仍禁止重试。
 
 分支约定：
@@ -23,6 +23,22 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
+
+# 所有模型推理统一等待上游数据；这是读取空闲超时，不是整个 Run 的时限。
+LLM_READ_TIMEOUT_SECONDS = 300.0
+
+
+def llm_provider_timeout():
+    """构造所有模型推理请求共用的连接/读取超时。读取超时是空闲间隔，不是 Run 总时限。"""
+    import httpx
+
+    return httpx.Timeout(
+        connect=10.0,
+        read=LLM_READ_TIMEOUT_SECONDS,
+        write=10.0,
+        pool=5.0,
+    )
+
 
 RETRY_INTERVAL_SECONDS = 5.0
 RETRY_MAX_RETRIES = 5

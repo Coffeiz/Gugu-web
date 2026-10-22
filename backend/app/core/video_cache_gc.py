@@ -3,7 +3,7 @@
 租约驱动），独立组织实现——不塞进 `app/core/attachment_gc.py` 那个按状态判断
 的扫描逻辑，只共享底层 `list_keys`/`stat`/`delete`/分布式锁这类基础设施。
 
-判断依据是 `chat_attach._video_cache_alive_key()` 这个 Redis "存活标记"：命中
+判断依据是 `agent.media.video.video_cache_alive_key()` 这个 Redis "存活标记"：命中
 时由 `_video_cache_try_read()` 用 `SET ... EX` 续期（不是 `EXPIRE`——Redis 整体
 丢失后 marker 不存在，`EXPIRE` 对不存在的 key 是空操作，续不上）。marker 还在
 就跳过；marker 不在（自然过期，或 Redis 丢失过）就按物理年龄清理——物理年龄
@@ -37,7 +37,7 @@ def _parse_video_cache_path(key: str) -> tuple[str | None, str | None]:
 
 
 async def _sweep_locked() -> int:
-    from app.core import chat_attach
+    from agent.media.video import video_cache_alive_key
     from app.services.storage import get_storage
     storage = get_storage()
     redis = R.get_redis()
@@ -49,7 +49,7 @@ async def _sweep_locked() -> int:
         user_id, cache_key = _parse_video_cache_path(key)
         if not user_id or not cache_key:
             continue
-        alive_key = chat_attach._video_cache_alive_key(user_id, cache_key)
+        alive_key = video_cache_alive_key(user_id, cache_key)
         try:
             marker = await redis.get(alive_key)
         except Exception:

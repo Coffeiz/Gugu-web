@@ -2,7 +2,14 @@ import re
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
-from ..base import MediaLimits, ProviderAdapter, ProviderCapabilities, ReasoningCapabilities
+from ..base import (
+    ProviderAdapter,
+    ProviderCapabilities,
+    ReasoningCapabilities,
+    ResponsesInputCapabilities,
+)
+from ..media import MediaLimits
+from . import media as minimax_media
 
 
 _ERROR_MESSAGES = {
@@ -167,8 +174,8 @@ class MiniMaxAdapter(ProviderAdapter):
         thinking = model_l.startswith(("minimax-m2", "minimax-m3"))
         return ProviderCapabilities(api_format="anthropic", cache_mode="active" if cache else "none",
                                     thinking=thinking, tools=True,
-                                    image=model_l.startswith("minimax-m3"),
-                                    video=model_l.startswith("minimax-m3"))
+                                    image=minimax_media.supports_image_model(model_l),
+                                    video=minimax_media.supports_video_model(model_l))
 
     def supported_api_formats(self, ai):
         # 官方提供 Anthropic、Chat Completions 与 Responses；Anthropic 仍为默认协议。
@@ -248,8 +255,7 @@ class MiniMaxAdapter(ProviderAdapter):
         return self.capabilities(model).cache_mode == "active"
 
     def supports_video(self, model: str = "") -> bool:
-        # 兼容当前配置中 MiniMax M3 的多种模型 ID（如 abab-m3）。
-        return "m3" in (model or "").lower()
+        return minimax_media.supports_video_model(model)
 
     def stream_sanitize_markers(self) -> tuple[str, ...]:
         return self._MARKERS
@@ -259,5 +265,16 @@ class MiniMaxAdapter(ProviderAdapter):
         # 顶层 temperature，模型一律用 provider 默认采样）。
         return {}
 
-    def video_limits(self) -> MediaLimits:
-        return MediaLimits()
+    def media_limits(self, model: str = "") -> MediaLimits:
+        return minimax_media.media_limits(model)
+
+    async def upload_media_file(self, raw: bytes, name: str, ai, *, mime: str = "",
+                                purpose: str = "") -> str | None:
+        return await minimax_media.upload_video_file(
+            raw, name, mime=mime, purpose=purpose,
+            api_key=getattr(ai, "api_key", "") or "",
+            base_url=getattr(ai, "base_url", "") or "",
+        )
+
+    def responses_input_capabilities(self, ai) -> ResponsesInputCapabilities:
+        return minimax_media.responses_input_capabilities(ai)

@@ -9,11 +9,12 @@ from copy import copy
 
 from .anthropic import AnthropicAdapter
 from .base import (
-    MediaLimits, ProviderAdapter, ProviderCapabilities, ReasoningCapabilities,
+    ProviderAdapter, ProviderCapabilities, ReasoningCapabilities,
     generic_thinking_params, generic_thinking_toggle_supported,
 )
 from .deepseek import DeepSeekAdapter
 from .glm import GlmAdapter, GlmCodingAdapter
+from .media import MediaLimits
 from .mimo import MimoAdapter
 from .minimax import MiniMaxAdapter
 from .openai import OpenAIAdapter

@@ -127,18 +127,18 @@ def supports_configured_voice_model(vm) -> bool:
         service = (getattr(vm, "dashscope_service", "qwen3-asr") or "qwen3-asr").strip().lower()
         return service in _DASHSCOPE_SERVICES
     if api_format == "minimax-asr":
-        from agent.providers.minimax.voice import supports_model
+        from agent.providers.minimax.asr import supports_model
         return supports_model(getattr(vm, "model", ""))
     return api_format == "openai"
 
 
 def _is_minimax_error(error: BaseException) -> bool:
-    from agent.providers.minimax.voice import is_minimax_error
+    from agent.providers.minimax.asr import is_minimax_error
     return is_minimax_error(error)
 
 
 def _log_transcription_error(context: str, error: BaseException, *, defer_minimax: bool = False) -> bool:
-    from agent.providers.minimax.voice import log_transcription_error
+    from agent.providers.minimax.asr import log_transcription_error
     handled = log_transcription_error(context, error, defer=defer_minimax)
     if handled is not None:
         return handled
@@ -161,7 +161,7 @@ async def transcribe(
     api_format = (getattr(vm, "api_format", "openai") or "openai").strip().lower()
     if api_format == "minimax-asr":
         try:
-            from agent.providers.minimax.voice import transcribe as minimax_transcribe
+            from agent.providers.minimax.asr import transcribe as minimax_transcribe
             return await minimax_transcribe(media or [], vm, to_wav=_to_wav, raise_errors=raise_errors)
         except Exception as exc:
             if raise_minimax_errors and _is_minimax_error(exc):
@@ -193,6 +193,7 @@ async def transcribe(
     from agent import providers
     import httpx
     import openai as _openai
+    from app.core.retry import llm_provider_timeout
     # 窄白名单：只有连接级/超时/5xx/429 算瞬时，安全重试（读操作，天然幂等）；
     # 鉴权失败/参数错/模型不存在等 4xx（openai.APIStatusError 但非 5xx/429）不在白名单内，
     # 会落进下面的 except Exception 分支直接回空串——不重试。
@@ -203,7 +204,7 @@ async def transcribe(
     dashscope_service = (getattr(vm, "dashscope_service", "qwen3-asr") or "qwen3-asr").strip().lower()
     if native_dashscope and dashscope_service not in _DASHSCOPE_SERVICES:
         raise ValueError("DashScope 语音产品线未选择或暂不支持")
-    client = None if native_dashscope else providers.build_openai_client(vm, httpx.Timeout(60.0))
+    client = None if native_dashscope else providers.build_openai_client(vm, llm_provider_timeout())
     for i in range(len(_ASR_RETRY_BACKOFF) + 1):
         try:
             if native_dashscope:
@@ -229,7 +230,7 @@ async def transcribe(
                     "Content-Type": "application/json",
                     "X-DashScope-SSE": "disable",
                 }
-                async with httpx.AsyncClient(timeout=60.0) as http:
+                async with httpx.AsyncClient(timeout=llm_provider_timeout()) as http:
                     response = await http.post(_dashscope_generation_url(vm.base_url),
                                                headers=headers, json=data)
                     response.raise_for_status()

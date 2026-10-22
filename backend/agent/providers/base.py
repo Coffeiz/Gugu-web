@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from typing import Literal
 from urllib.parse import urlparse
 
+from .media import DEFAULT_MEDIA_LIMITS, MediaLimits
+
 
 ApiFormat = Literal["anthropic", "openai", "responses"]
 
@@ -301,6 +303,10 @@ class ProviderAdapter:
     def supports_audio(self, model: str = "") -> bool:
         return self.capabilities(model).audio
 
+    def media_limits(self, model: str = "") -> MediaLimits:
+        """返回当前 Provider 的媒体输入限制；未声明专属策略时沿用公共默认值。"""
+        return DEFAULT_MEDIA_LIMITS
+
     def protocol_format(self, ai) -> Literal["anthropic", "openai", "responses"]:
         """解析本次请求使用的协议格式，集中处理显式配置和地址兼容规则。"""
         configured = (getattr(ai, "api_format", "") or "").lower()
@@ -324,6 +330,16 @@ class ProviderAdapter:
         if not self.supports_video(model):
             return "none"
         return "anthropic" if self.capabilities(model).api_format == "anthropic" else "openai"
+
+    async def upload_media_file(self, raw: bytes, name: str, ai, *, mime: str = "",
+                                purpose: str = "") -> str | None:
+        """把媒体文件上传到 Provider 的文件接口，返回可引用的 file_id。
+
+        默认不支持（返回 None）——只有声明了「大文件走文件上传」通道的 Provider
+        （如 MiniMax Files API）才覆盖这个方法。通用媒体层只负责决定「要不要
+        走文件上传」，具体怎么传由各 Provider 自己实现，规格跟随 Provider。
+        """
+        return None
 
     def build_thinking_params(self, ai, *, thinking: str | None = None) -> dict:
         """返回供应商需要附加到请求的 thinking 参数；默认不附加。"""
@@ -365,13 +381,3 @@ class ProviderAdapter:
     def build_tool_params(self, ai, tools: list[dict]) -> dict:
         """返回工具调用参数；默认使用现有 OpenAI 兼容参数。"""
         return {"tools": tools, "tool_choice": "auto"} if tools else {}
-
-
-@dataclass(frozen=True)
-class MediaLimits:
-    max_duration_s: int = 120
-    max_size_bytes: int = 90 * 1024 * 1024
-    compress_max_dim: int = 1920
-    compress_bitrate: str = "5M"
-    compress_trigger_bitrate: int = 16 * 1024 * 1024
-    base64_max: int = 45 * 1024 * 1024

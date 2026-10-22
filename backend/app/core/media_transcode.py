@@ -1,6 +1,6 @@
 """音频转码：把 IM 语音（QQ=SILK、飞书=opus 等）转成 mimo 能吃的格式（mp3）。
 
-mimo 音频理解只收 mp3/wav/flac/m4a/ogg（见 chat_attach.AUDIO_EXTS）；而 IM 语音多是
+mimo 音频理解只收 mp3/wav/flac/m4a/ogg（见 app.core.chat_attach.file_types.AUDIO_EXTS）；而 IM 语音多是
 SILK / opus / amr 这类，必须先转码。本件**优雅降级**：缺 ffmpeg / pilk 时一律返回 None，
 调用方退回文字提示，绝不报错、不阻塞网关。
 
