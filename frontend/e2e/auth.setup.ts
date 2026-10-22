@@ -10,9 +10,9 @@ setup('使用测试账号登录', async ({ page }) => {
     throw new Error('请设置 PLAYWRIGHT_USERNAME 和 PLAYWRIGHT_PASSWORD 后运行 E2E 测试')
   }
 
-  // 冷启动时只等文档可交互，再由登录按钮的可见性等待确认页面挂载；不要求
-  // 所有请求都空闲，避免遥测/轮询等后台请求拖住认证 setup。
-  await page.goto('/login', { waitUntil: 'domcontentloaded', timeout: 90000 })
+  // Vite 冷启动需要加载较大的模块图，DOMContentLoaded 可能被延迟；先等首个
+  // 文档响应提交，再由登录按钮可见性确认应用已挂载，不等待整张模块图完成。
+  await page.goto('/login', { waitUntil: 'commit', timeout: 90000 })
   const loginButton = page.locator('button[type="submit"]')
   await expect(loginButton).toBeVisible({ timeout: 60000 })
   const usernameInput = page.locator('input[autocomplete="username"]')

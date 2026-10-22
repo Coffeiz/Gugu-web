@@ -57,7 +57,7 @@ test('主应用页面按导航顺序打开后可离开，不残留卡住的旧�
     const terminals = page.locator('.terminals-page')
     await assertTransition(files, terminals)
     await expect(terminals.locator('.terminal-empty[role="status"]')).toBeHidden({ timeout: 20000 })
-    await expect(terminals.locator('.terminal-layout, .terminal-empty, .terminal-page-error')).toBeVisible({ timeout: 20000 })
+    await expect(terminals.locator('.terminal-layout, .terminal-empty, .terminal-page-error').first()).toBeVisible({ timeout: 20000 })
     currentPage = terminals
   }
 

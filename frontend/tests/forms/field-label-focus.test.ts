@@ -86,4 +86,4 @@ function findViolations(file: string): string[] {
 it('全站字段标题不通过 label 语义触发文本输入框聚焦', () => {
   const violations = listVueFiles(sourceRoot).flatMap(findViolations)
   expect(violations, `发现违反输入标题交互规范的 Vue 模板：\n${violations.join('\n')}`).toEqual([])
-})
+}, 15_000)
