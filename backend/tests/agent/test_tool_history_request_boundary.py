@@ -15,7 +15,7 @@ async def test_qq_interaction_ack_does_not_reuse_event_id(monkeypatch):
     monkeypatch.setattr(qq_events, "_message_format", fake_format)
     monkeypatch.setattr(qq_events, "_post", fake_post)
 
-    await qq_events._qq_ack("channel", "c2c", "openid", "已确认", None)
+    await qq_events._qq_reply("channel", "c2c", "openid", "已确认", None)
 
     assert calls == [("channel", "openid", "已确认", None, "compat")]
 

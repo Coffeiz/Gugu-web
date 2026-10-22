@@ -237,14 +237,6 @@
             <ToggleSwitch :model-value="agentDraft.greeting_enabled" :aria-label="t('adminRuntimeUi.toggleGreeting')" @update:model-value="agentDraft.greeting_enabled = $event; saveBehavior()" />
           </div>
 
-          <div v-if="behaviorTab === 'runtime'" class="behavior-item">
-            <div class="behavior-label">
-                <span>{{ t('adminRuntimeUi.progressTitle') }}</span>
-                <span class="behavior-desc">{{ t('adminRuntimeUi.progressHint') }}</span>
-            </div>
-            <ToggleSwitch :model-value="agentDraft.im_progress_announce_enabled" :aria-label="t('adminRuntimeUi.toggleProgress')" @update:model-value="agentDraft.im_progress_announce_enabled = $event; saveBehavior()" />
-          </div>
-
         </div>
 
         <div class="card-actions">

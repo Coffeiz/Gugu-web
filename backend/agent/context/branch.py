@@ -86,7 +86,6 @@ class ContextBranch:
                             tools=list(branch_input.tools) or None,
                             usage_sink=usage_sink,
                             probe_sink=probe_sink,
-                            read_timeout=policy.provider_read_timeout_seconds,
                         )
                         ok = bool(str(output or "").strip()) and (
                             not isinstance(output, dict) or bool(output))

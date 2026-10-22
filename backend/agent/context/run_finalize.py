@@ -140,7 +140,14 @@ async def finalize_run(
                 user_message=user_message,
                 interrupted=interrupted,
             )
-            persisted_timeline = display_timeline or None
+            if display_timeline:
+                # 聊天展示时间线不承担模型上下文职责。媒体块（尤其是视频帧
+                # base64）只留占位说明，避免把整段媒体副本写入会话记录。
+                from agent.media.images import strip_image_for_history
+
+                persisted_timeline = strip_image_for_history(display_timeline)
+            else:
+                persisted_timeline = None
             if persisted_timeline and user_message_id:
                 # 展示时间线可能在取消收尾时才落库，而下一条用户消息已先提交。
                 # 用发起本 run 的用户消息锚定其顺序，避免刷新后按 assistant 行的

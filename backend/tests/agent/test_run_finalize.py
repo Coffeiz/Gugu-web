@@ -325,7 +325,10 @@ async def test_finalize_run_uses_one_canonical_persistence_contract(monkeypatch)
         message_area=area,
         text="reply",
         display_timeline=[
-            {"kind": "tool", "toolCallId": "call-1", "toolName": "project_details"},
+            {
+                "kind": "tool", "toolCallId": "call-1", "toolName": "read_file",
+                "toolResult": [{"type": "video", "source": {"type": "base64", "data": "synthetic-media-payload"}}],
+            },
             {"kind": "assistant", "text": "已查到项目详情"},
         ],
         files=[],
@@ -351,6 +354,9 @@ async def test_finalize_run_uses_one_canonical_persistence_contract(monkeypatch)
         if isinstance(item, ConversationMessage) and item.role == "assistant" and item.display_timeline
     )
     assert [item["timelineOrder"] for item in assistant_row.display_timeline] == [321001, 321002]
+    assert assistant_row.display_timeline[0]["toolResult"] == [
+        {"type": "text", "text": "[视频已查看]"},
+    ]
     assert trim_calls == [7]
     assert baseline_calls == [(
         (7, "user-test", settings),

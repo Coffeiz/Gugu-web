@@ -14,6 +14,14 @@ from agent.loop_drivers import AnthropicDriver
 from agent.providers.openai_responses import OpenAIResponsesDriver
 
 
+def _cache_anchor_indices(messages):
+    return {
+        index for index, row in enumerate(messages)
+        if any(block.get("cache_control") for block in row.get("content", [])
+               if isinstance(block, dict))
+    }
+
+
 @pytest.mark.parametrize("block_system", [False, True])
 @pytest.mark.asyncio
 async def test_chat_completions_snapshot_does_not_duplicate_existing_system(monkeypatch, block_system):
@@ -149,8 +157,24 @@ async def test_anthropic_without_continuation_keeps_main_request_prefix(monkeypa
     await provider_runner.complete_messages("基础系统", snapshot.history, "只做反思", SimpleNamespace(ai=ai), tools=list(snapshot.tools))
     main, branch = requests
     assert _without_cache_control(branch["messages"][:len(main["messages"])]) == _without_cache_control(main["messages"])
+    main_anchors = _cache_anchor_indices(main["messages"])
+    branch_anchors = _cache_anchor_indices(branch["messages"])
+    assert main_anchors
+    assert main_anchors <= branch_anchors
+    assert len(branch["messages"]) - 2 in branch_anchors  # 快照 assistant 收尾
+    assert len(branch["messages"]) - 1 not in branch_anchors  # 追加指令属于 dynamic tail
     assert branch["system"] == main["system"]
     assert branch["tools"] == main["tools"]
     assert branch.get("thinking") == main.get("thinking")
     assert not any(block.get("type") == "thinking" for row in branch["messages"]
                    for block in row["content"] if isinstance(block, dict))
+
+    changed_history = snapshot.history.to_messages()
+    changed_history[0] = {**changed_history[0], "content": "不同的历史前缀"}
+    stale_snapshot = snapshot.history.with_messages(
+        [*changed_history, {"role": "user", "content": "只做反思"}],
+        dynamic_tail_size=1,
+    )
+    stale_branch = provider_runner._with_trailing_cache_anchor(stale_snapshot).to_messages()
+    stale_anchors = _cache_anchor_indices(stale_branch)
+    assert stale_anchors == {len(stale_branch) - 2}

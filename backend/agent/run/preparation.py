@@ -16,11 +16,13 @@ from __future__ import annotations
 
 import asyncio
 
-from app.core.chat_attach import image_ready
 from app.core.config import get_settings
 from app.core.tz import set_ctx_tz
 
 from agent import quota
+from agent.chat.attachments import build_user_content, resolve_for_message
+from agent.media import gates
+from agent.media.images import image_ready
 from agent.context import builder, dynamic_tail, loaders, run_context, session_snapshot, session_history, session_system
 from agent.context.provider_history import clean_persisted_history, prepare_session
 from agent.core import LLMRunner
@@ -241,7 +243,6 @@ async def prepare_run_capabilities(
 
 def prepare_scheduled_context(system_prompt, snapshot_context, user_tz, prompt, memory, *, use_anthropic):
     """任务无会话历史；复用公共消息布局，不引入交互式 RAG 或会话持久化。"""
-    from app.core.chat_attach import build_user_content
 
     fixed_parts = [session_snapshot.snapshot_message(snapshot_context)] if snapshot_context else []
     area, batch = run_context.assemble_run_area(
@@ -406,7 +407,7 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
         # 附件（IM 收到的文件）：文本读内容注入给模型，卡片随用户消息持久化（和网页同一套）
         from app.core import chat_attach
         llm_text = with_quoted_context(req.message, getattr(req, "quoted_text", None))
-        aug_text, attach_cards, aug_images, aug_media = await chat_attach.resolve_for_message(
+        aug_text, attach_cards, aug_images, aug_media = await resolve_for_message(
             user_id, getattr(req, "attachments", None) or [], llm_text, model_cfg=model_cfg)
         if getattr(req, "attachments", None):   # 诊断：带附件时记 kind/ext/media 数，排查语音为何没转写
             import logging as _lg
@@ -474,7 +475,7 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
     # 主模型支持音频时直接保留音频块；否则才用独立配置的「语音识别模型」
     # 转成文字交给主模型。两者都不可用时，resolve_for_message 已留下不支持提示。
     _transcribe_media = [m for m in aug_media if m.get("type") != "video"]
-    _audio_fallback = chat_attach.should_transcribe_audio(model_cfg)
+    _audio_fallback = gates.should_transcribe_audio(model_cfg)
     _persist_transcript = any(
         m.get("voice_recognition_enabled") and m.get("kind") == "voice"
         for m in _transcribe_media

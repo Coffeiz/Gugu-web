@@ -85,7 +85,7 @@ async def commit_delta(
     interrupted: bool,
 ) -> dict[str, Any]:
     """按 Area 顺序原子提交 delta；相同 run 的重复 finalize 由 batch digest 去重。"""
-    from app.core import chat_attach
+    from agent import media
     from app.models import ConversationMessage
 
     entries = tuple(delta.entries)
@@ -130,7 +130,7 @@ async def commit_delta(
                 "round_id": entry.round_id or default_round_id,
             }
             if not isinstance(message.get("content"), str):
-                values["content_json"] = chat_attach.strip_image_for_history(message.get("content"))
+                values["content_json"] = media.images.strip_image_for_history(message.get("content"))
             if user_message is not None and user_sequence is not None:
                 if entry.sequence < user_sequence:
                     values["created_at"] = user_message.created_at - timedelta(

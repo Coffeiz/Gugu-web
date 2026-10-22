@@ -267,17 +267,13 @@ async def _maybe_announce_progress(tool: "Tool", args: dict) -> None:
     if not payload:             # web 路径：imctx 没 set 过，压根不在 IM 上下文里
         return
     im = imctx.get_im()
-    if im and im.get("show_tool_interactions"):
-        # 已有独立工具气泡时，慢进度声明会重复描述同一件事。
+    if im and im.get("tool_display_mode", "all") == "off":
         return
     if not payload.get("message_id"):  # 定时任务等无具体触发消息的路径：不发进度声明
         return
     if imctx.was_announced():  # 本 Busy Session 已经发过声明，不重复发
         return
     try:
-        from app.core.config import get_settings
-        if not get_settings().agent.im_progress_announce_enabled:
-            return
         # 用户已取消：不再发进度声明。取消是实时控制信号，声明会误导用户以为还在执行
         # （实测：取消后仍看到「我搜搜看有没有合适的图」这类 start_message）。
         im = imctx.get_im()

@@ -689,7 +689,6 @@ async def _generate_append_summary(
     from app.core.config import get_settings
     from agent.context.branch import ContextBranch
     from agent.context.branch_types import (
-        LONG_RUNNING_PROVIDER_READ_TIMEOUT_SECONDS,
         BranchInput,
         BranchPolicy,
     )
@@ -708,8 +707,7 @@ async def _generate_append_summary(
             BranchInput(stable_system=append_system, delta=task,
                         history_messages=history, tools=tuple(tools or ())),
             BranchPolicy(name="compaction", output_mode="text",
-                         max_tokens=limits.output_tokens, max_retries=1,
-                         provider_read_timeout_seconds=LONG_RUNNING_PROVIDER_READ_TIMEOUT_SECONDS),
+                         max_tokens=limits.output_tokens, max_retries=1),
             settings,
         )
 

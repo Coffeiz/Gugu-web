@@ -26,7 +26,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) 
 
 from agent.im import imctx
 from agent.tools.base import Tool, _maybe_announce_progress
-from app.core.config import get_settings
 
 PASS, FAIL = [], []
 
@@ -49,10 +48,6 @@ async def _fake_send_text(payload, text):
 
 
 async def main():
-    settings = get_settings()
-    _orig_enabled = settings.agent.im_progress_announce_enabled
-    settings.agent.im_progress_announce_enabled = True
-
     tool_with_msg = Tool(
         name="_smoke_slow_tool", description="测试用慢工具", input_schema={"type": "object", "properties": {}},
         handler=lambda db, uid, args: None, start_message="我去查一下。",
@@ -68,9 +63,8 @@ async def main():
 
     global should_raise
     with patch("agent.im.replies.send_text", _fake_send_text):
-        await _run_cases(settings, tool_with_msg, tool_with_callable_msg, tool_no_msg)
+        await _run_cases(tool_with_msg, tool_with_callable_msg, tool_no_msg)
 
-    settings.agent.im_progress_announce_enabled = _orig_enabled
     imctx.clear()
 
     print(f"\n{len(PASS)} 通过，{len(FAIL)} 失败")
@@ -81,7 +75,7 @@ async def main():
     return 0 if not FAIL else 1
 
 
-async def _run_cases(settings, tool_with_msg, tool_with_callable_msg, tool_no_msg):
+async def _run_cases(tool_with_msg, tool_with_callable_msg, tool_no_msg):
     global should_raise
     print("【1】没有 start_message 的工具：任何路径都不发声明")
     imctx.clear()
@@ -138,13 +132,11 @@ async def _run_cases(settings, tool_with_msg, tool_with_callable_msg, tool_no_ms
     await _maybe_announce_progress(tool_with_msg, {})
     check("新 session 里能再发 1 条", len(sent) == 2)
 
-    print("【6】全局开关关闭：即使在 IM 路径也不发")
-    imctx.set_im("qq", "m1", "c1", "g1", "u1")
-    settings.agent.im_progress_announce_enabled = False
+    print("【6】用户关闭偏好：即使在 IM 路径也不发")
+    imctx.set_im("qq", "m1", "c1", "g1", "u1", tool_display_mode="off")
     sent.clear()
     await _maybe_announce_progress(tool_with_msg, {})
     check("开关关闭 → 不发", len(sent) == 0)
-    settings.agent.im_progress_announce_enabled = True
 
     print("【7】发送失败：不抛出、不影响工具本身（fire-and-forget）")
     imctx.set_im("qq", "m1", "c1", "g1", "u1")

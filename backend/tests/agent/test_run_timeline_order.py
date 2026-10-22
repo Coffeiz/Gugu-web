@@ -12,7 +12,7 @@ async def test_late_cancelled_run_timeline_stays_before_continue_after_reload(db
         return None
 
     monkeypatch.setattr("agent.context.compress_conv.recover_orphaned_session", noop)
-    monkeypatch.setattr(agent_api, "filesystem_authorization_enabled", lambda: False)
+    monkeypatch.setattr("app.api.v1.agent_routes.sessions.filesystem_authorization_enabled", lambda: False)
 
     session = ConversationSession(user_id=user_a.id)
     db.add(session)

@@ -109,7 +109,6 @@ export const useConfigStore = defineStore('config', () => {
       web_private_reflection_threshold: 10,
       worker_concurrency: 16,
       conv_compress_enabled: true,
-      im_progress_announce_enabled: false,
     },
     quota: {
       default_token_limit_6h: null,

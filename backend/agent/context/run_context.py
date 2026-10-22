@@ -12,7 +12,8 @@ from agent.context import audit, compress_conv, assembly, session_history
 from agent.context import dynamic_tail, session_snapshot
 from agent.context.history import build_history_parts
 from agent.context.references import prepend_reference_context
-from app.core.chat_attach import build_user_content, image_ready
+from agent.chat.attachments import build_user_content
+from agent.media.images import image_ready
 
 
 @dataclass

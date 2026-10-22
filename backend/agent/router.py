@@ -121,7 +121,6 @@ _PROGRESS_REPLY = {
     st.IDLE:            "在的，你说～",
 }
 _EMOTION_BUSY = "马上好啦，我加把劲儿～"
-_ACK_REPLY    = "嗯嗯～"
 _CANCEL_REPLY = "好的，那这个先不继续啦～"
 
 

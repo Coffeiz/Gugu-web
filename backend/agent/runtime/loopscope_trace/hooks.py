@@ -263,7 +263,18 @@ def ensure_hooks() -> None:
                         token_impact={"output_tokens_estimate": _estimate_tokens(run.output_text)},
                     )
                     out.finish({"text": run.output_text})
-                    _finish_run(run, "success")
+                    # IM 的 done 只代表模型生成结束，平台投递仍在
+                    # dispatch_finalization 中进行。保留 run 到投递结果确定后，
+                    # 否则失败的最终回复会被提前记成 success。
+                    from agent.im.imctx import get_im
+
+                    im_context = get_im() or {}
+                    active_platform = str(im_context.get("platform") or "")
+                    is_im_delivery = bool(
+                        active_platform and active_platform == run.source
+                    )
+                    if not is_im_delivery:
+                        _finish_run(run, "success")
                 elif etype == "error":
                     err = run.span("output", "Agent error", {}, code=_code_ref(original_publish))
                     err.finish(event, status="error")
