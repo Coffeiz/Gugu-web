@@ -118,6 +118,38 @@ def test_native_tracks_nested_delete_without_following_symlink(tmp_path, monkeyp
         os.close(watcher.fd)
 
 
+def test_deleting_watched_nested_directory_is_not_reported_as_lost(tmp_path, monkeypatch):
+    root = tmp_path / "root"
+    nested = root / "nested"
+    nested.mkdir(parents=True)
+    watcher = NativeWatcher()
+    messages = []
+    monkeypatch.setattr(watcher, "emit", messages.append)
+    try:
+        watcher.watch({"binding_id": 1, "root": str(root)})
+        while watcher.pending:
+            watcher.scan_step()
+        messages.clear()
+
+        nested.rmdir()
+        watcher.drain()
+
+        assert any(
+            item.get("event") == "change"
+            and item.get("operation") == "delete"
+            and item.get("relative_path") == "nested"
+            and item.get("object_type") == "folder"
+            for item in messages
+        )
+        assert not any(
+            item.get("event") == "error" and item.get("code") == "watcher_watch_lost"
+            for item in messages
+        )
+    finally:
+        watcher.unwatch(1)
+        os.close(watcher.fd)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("guard_state", ["absent", "replaced", "deferred"])
 async def test_periodic_overflow_deletion_requires_original_root_identity(
