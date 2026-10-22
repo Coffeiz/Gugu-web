@@ -182,6 +182,23 @@ Tool schema
 
 文件、项目、日历、画布、通知、联网和 Shell 等工具共享这条校验和结果链路，不能由单个渠道直接调用底层服务伪造成功结果。
 
+### 4.8 附件与媒体
+
+聊天附件与文件库媒体分成三块，依赖方向单向（`agent` → `app`），`app` 层不再反向依赖 `agent`：
+
+| 层 | 位置 | 负责 |
+|---|---|---|
+| 附件所有权 | `backend/app/core/chat_attach/` | 暂存写入、`chat_attachments` 表所有权、claim、引用复用、物理删除唯一入口、按 attach_id 查询 |
+| 通用媒体准备 | `backend/agent/media/` | 能力门（看图/听音/看视频）、Provider 媒体限制、图片压缩、视频探测/转码/缓存、内容块构造 |
+| 附件装配 | `backend/agent/chat/attachments.py` | 把附件解析成增广文本 + 前端卡片 + 媒体块，装配进本轮消息 |
+
+分工要点：
+
+- **文件类型分型留在附件域**（`file_types.py`）。分型只回答「这是什么文件」，与「当前 Provider 能不能直接吃这个格式」分开，暂存侧因此不必依赖 Provider 适配层。
+- **厂商专属行为留在 Provider**。大视频走文件上传是 MiniMax Files API 的通道，实现在 `backend/agent/providers/minimax/media.py`；通用媒体层只负责决定「要不要走文件上传」，由 `ProviderAdapter.upload_media_file()` 承接，默认适配器不支持文件上传。
+- **媒体规格跟随 Provider**。源文件上限、时长上限、转码阈值、原生音频格式集都来自 `ProviderAdapter` 声明，通用层不硬编码厂商数字。
+- **装配层是唯一同时依赖两侧的地方**。`resolve_for_message` 需要附件元数据（附件域）与内容块构造（媒体域）；`agent/context/assembly/` 负责上下文装配，与附件装配是两件事，不要混淆。
+
 ## 5. 一次请求的数据流
 
 ```text

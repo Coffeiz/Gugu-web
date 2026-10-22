@@ -5,6 +5,30 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### What's New
+
+#### New Features
+
+- Add configurable IM tool-detail display modes and load chat tool details only when opened.
+
+#### Improvements
+
+- Load conversation history by visible page and reuse cached sessions to make switching and scrolling faster.
+- Allow main-model requests to wait up to five minutes for long-running multimodal responses.
+
+### 更新内容
+
+#### 新功能
+
+- IM 支持配置工具详情的展示模式；聊天工具详情改为展开时再读取。
+
+#### 改进
+
+- 按可见分页加载会话历史并复用会话缓存，提升切换会话和滚动加载的速度。
+- 主模型请求最长可等待五分钟，以完成耗时较长的多模态响应。
+
 ## [1.7.6] - 2026-10-21
 
 ### What's New
