@@ -1,12 +1,22 @@
-import { nextTick, computed, onScopeDispose, type Ref } from 'vue'
+import { nextTick, computed, onScopeDispose, watch, type Ref } from 'vue'
 import { i18n } from '@/i18n'
 import { agentApi } from '@/services/api'
+import { accountBoundaryEpoch, getAccountBoundaryEpoch } from '@/utils/accountBoundary'
 import type { ChatMessage, ChatSession, QueuedMessagePayload } from '../chatTypes'
 import type GuguChatComposer from '../GuguChatComposer.vue'
 import { effectiveTimezone } from '@/utils/userTimezone'
 import { createSessionMessageSynchronizer, mapSessionMessageDelta, sortSessionTimelineMessages } from './sessionMessageSync'
 
 export type SessionLoadOutcome = 'loaded' | 'superseded' | 'unavailable' | 'failed'
+
+interface CachedSessionSnapshot {
+  messages: ChatMessage[]
+  ownerPlatformUserId: string | null
+  isGroupSession: boolean
+  pagination: { hasMore?: boolean; oldestId?: number | null }
+  accountEpoch: number
+  savedAt: number
+}
 
 /**
  * 会话切换操作的唯一所有权：loadSession/newSession/deleteSession，以及从
@@ -52,11 +62,58 @@ export function useChatSessions(options: {
   waitForStableScrollLayout: () => Promise<void>
   waitForSessionSettlement: (id: number) => Promise<void>
   shouldFollowBottom: () => boolean
+  setCachedHistoryVisible: (value: boolean) => void
   onHistoryReset?: () => void
   onHistoryLoaded?: (page: { hasMore?: boolean; oldestId?: number | null }) => void
+  getHistoryPage?: () => { hasMore?: boolean; oldestId?: number | null }
   setSessionSettling: (value: boolean) => void
 }) {
   const { messages, mkid, sessionId, sessions } = options
+
+  // 切回近期会话时先显示内存快照，权威消息仍由后台接口刷新。只保留少量会话，
+  // 并排除一次性交互 token 与未完成流，避免恢复过期操作或把半条回复当成事实。
+  const sessionSnapshots = new Map<number, CachedSessionSnapshot>()
+  const snapshotTtlMs = 5 * 60_000
+  const maxSessionSnapshots = 4
+  watch(accountBoundaryEpoch, () => sessionSnapshots.clear())
+
+  function cacheSessionSnapshot(
+    id: number,
+    items: ChatMessage[],
+    pagination: CachedSessionSnapshot['pagination'],
+  ) {
+    const stableMessages = items
+      .filter(message => !message.interaction && !message.streaming && (message.dbId != null || message._timelineOrder != null))
+      .map(message => ({ ...message }))
+    if (!stableMessages.length) return
+    sessionSnapshots.delete(id)
+    sessionSnapshots.set(id, {
+      messages: stableMessages,
+      ownerPlatformUserId: options.ownerPlatformUserId.value,
+      isGroupSession: options.isGroupSession.value,
+      pagination: { ...pagination },
+      accountEpoch: getAccountBoundaryEpoch(),
+      savedAt: Date.now(),
+    })
+    while (sessionSnapshots.size > maxSessionSnapshots) {
+      const oldest = sessionSnapshots.keys().next().value
+      if (oldest == null) break
+      sessionSnapshots.delete(oldest)
+    }
+  }
+
+  function getCachedSessionSnapshot(id: number) {
+    const snapshot = sessionSnapshots.get(id)
+    if (!snapshot) return null
+    if (snapshot.accountEpoch !== getAccountBoundaryEpoch() || Date.now() - snapshot.savedAt > snapshotTtlMs) {
+      sessionSnapshots.delete(id)
+      return null
+    }
+    // Map 的插入顺序作为 LRU 次序。
+    sessionSnapshots.delete(id)
+    sessionSnapshots.set(id, snapshot)
+    return snapshot
+  }
 
   let baselinePollTimer: ReturnType<typeof setTimeout> | null = null
   const messageSync = createSessionMessageSynchronizer({
@@ -120,9 +177,23 @@ export function useChatSessions(options: {
       return sessionId.value === id ? 'loaded' : 'superseded'
     }
     const viewGeneration = options.bumpViewGeneration()
+    const accountEpoch = getAccountBoundaryEpoch()
+    const previousSessionId = sessionId.value
     const previousMessages = messages.value
+    const previousOwnerPlatformUserId = options.ownerPlatformUserId.value
+    const previousIsGroupSession = options.isGroupSession.value
+    if (previousSessionId != null && previousMessages.length) {
+      cacheSessionSnapshot(
+        previousSessionId,
+        previousMessages,
+        options.getHistoryPage?.() || sessionSnapshots.get(previousSessionId)?.pagination || {},
+      )
+    }
+    const cachedSnapshot = force ? null : getCachedSessionSnapshot(id)
+    let showingCachedSnapshot = false
     let loadingHistory = true
     options.setSessionSettling(true)
+    options.setCachedHistoryVisible(false)
     options.abortCtrl.value?.abort()        // 停掉当前会话的流式消费（后端生成不受影响、继续跑）
     options.streaming.value = false
     // 待发消息按 session_id 归属；切换只更改展示状态，恢复和排水时按目标会话筛选。
@@ -130,10 +201,24 @@ export function useChatSessions(options: {
     messages.value = []
     options.clearStatus()
     options.onContentReset()
+    if (cachedSnapshot) {
+      sessionId.value = id
+      messages.value = [...cachedSnapshot.messages]
+      options.ownerPlatformUserId.value = cachedSnapshot.ownerPlatformUserId
+      options.isGroupSession.value = cachedSnapshot.isGroupSession
+      options.onHistoryLoaded?.(cachedSnapshot.pagination)
+      options.setCachedHistoryVisible(true)
+      showingCachedSnapshot = true
+      await nextTick()
+      if (viewGeneration !== options.getViewGeneration() || accountEpoch !== getAccountBoundaryEpoch()) return 'superseded'
+      await options.scrollBottom(true)
+      if (accountEpoch !== getAccountBoundaryEpoch()) return 'superseded'
+      options.onCaptureBaseScrollH()
+    }
     try {
       const data = await agentApi.getMessages(String(id))
       loadingHistory = false
-      if (viewGeneration !== options.getViewGeneration()) return 'superseded'   // 等待期间又切换/新建了会话，丢弃这次结果
+      if (viewGeneration !== options.getViewGeneration() || accountEpoch !== getAccountBoundaryEpoch()) return 'superseded'   // 等待期间又切换/新建了会话，丢弃这次结果
       sessionId.value = id
       options.onHistoryLoaded?.(data.pagination || {})
       const loadedSession = sessions.value.find(s => s.id === id)
@@ -172,15 +257,16 @@ export function useChatSessions(options: {
           })
         }
       } catch { /* 交互恢复失败不阻断历史会话加载 */ }
-      if (viewGeneration !== options.getViewGeneration()) return 'superseded'
+      if (viewGeneration !== options.getViewGeneration() || accountEpoch !== getAccountBoundaryEpoch()) return 'superseded'
       messages.value = sortSessionTimelineMessages([
         ...loadedTimelineMessages,
         ...loadedInteractions,
       ])
+      cacheSessionSnapshot(id, messages.value, data.pagination || {})
       messageSync.setCursor(id, data.pagination?.newestId)
       options.onContentReset(); options.resetSessionTurn()
       await nextTick()
-      options.onCaptureBaseScrollH()   // 基线 = 切入会话的历史高度
+      if (!showingCachedSnapshot) options.onCaptureBaseScrollH()   // 基线 = 切入会话的历史高度
       // DB 持久化和 genstream.end() 不是同一个事务：生成刚完成时，接口可能短暂同时返回
       // 「最后一条是完整 assistant」和 active=true。此时不能把已完成回复再次 resume，
       // 否则 Redis 快照会被渲染成第二个生成气泡。只有最后一条可见消息不是完整 assistant
@@ -199,14 +285,19 @@ export function useChatSessions(options: {
       // 初始历史消息结算期间列表保持不可见。虚拟列表需要先滚到底部挂载目标行，
       // 再等待其真实高度连续稳定；否则估算高度会在解除隐藏后的下一帧被修正，造成
       // 会话位置跳动。这个隐藏阶段只覆盖历史快照，不能覆盖后面的流式续接。
-      await options.scrollBottom(true)
-      await options.waitForStableScrollLayout()
-      if (viewGeneration !== options.getViewGeneration()) return 'superseded'
-      // Mermaid 完成后行高以最终 SVG 为准；仍在隐藏结算态内重新定位一次，再显示列表。
-      await options.scrollBottom(true)
-      await options.waitForStableScrollLayout()
-      if (viewGeneration !== options.getViewGeneration()) return 'superseded'
+      if (!showingCachedSnapshot) {
+        await options.scrollBottom(true)
+        await options.waitForStableScrollLayout()
+        if (viewGeneration !== options.getViewGeneration() || accountEpoch !== getAccountBoundaryEpoch()) return 'superseded'
+        // Mermaid 完成后行高以最终 SVG 为准；仍在隐藏结算态内重新定位一次，再显示列表。
+        await options.scrollBottom(true)
+        await options.waitForStableScrollLayout()
+        if (viewGeneration !== options.getViewGeneration() || accountEpoch !== getAccountBoundaryEpoch()) return 'superseded'
+      } else if (options.shouldFollowBottom()) {
+        await options.scrollBottom(true)
+      }
       options.setSessionSettling(false)
+      options.setCachedHistoryVisible(false)
       options.restorePendingQueue(id, Array.isArray(data.pendingQueue) ? data.pendingQueue : [])
       if (shouldResume) {
         await options.resumeStream(id)
@@ -215,23 +306,46 @@ export function useChatSessions(options: {
         // 发送错误由 send 自己显示为网络错误；这里避免启动恢复链路产生未处理拒绝。
         void options.drainPendingQueue().catch(() => {})
       }
-      if (viewGeneration !== options.getViewGeneration()) return 'superseded'
+      if (viewGeneration !== options.getViewGeneration() || accountEpoch !== getAccountBoundaryEpoch()) return 'superseded'
       // 恢复收尾时如果用户已跳到历史消息或主动上滚，不再强制把视图拉回底部。
       if (options.shouldFollowBottom()) await options.scrollBottom()
       return viewGeneration === options.getViewGeneration() ? 'loaded' : 'superseded'
     } catch (error) {
-      if (viewGeneration !== options.getViewGeneration()) return 'superseded'
-      messages.value = previousMessages
-      options.setSessionSettling(false)
+      if (viewGeneration !== options.getViewGeneration() || accountEpoch !== getAccountBoundaryEpoch()) return 'superseded'
       const status = (error as { status?: number } | undefined)?.status
+      if (status === 403 || status === 404) {
+        sessionSnapshots.delete(id)
+        messages.value = previousMessages
+        sessionId.value = previousSessionId
+        options.ownerPlatformUserId.value = previousOwnerPlatformUserId
+        options.isGroupSession.value = previousIsGroupSession
+        if (previousSessionId != null) {
+          options.onHistoryLoaded?.(sessionSnapshots.get(previousSessionId)?.pagination || {})
+        }
+      } else if (cachedSnapshot) {
+        messages.value = [...cachedSnapshot.messages]
+        sessionId.value = id
+      } else {
+        messages.value = previousMessages
+      }
+      options.setSessionSettling(false)
+      options.setCachedHistoryVisible(false)
       return loadingHistory && (status === 403 || status === 404) ? 'unavailable' : 'failed'
     }
   }
 
   async function newSession() {
+    if (sessionId.value != null && messages.value.length) {
+      cacheSessionSnapshot(
+        sessionId.value,
+        messages.value,
+        options.getHistoryPage?.() || sessionSnapshots.get(sessionId.value)?.pagination || {},
+      )
+    }
     options.onHistoryReset?.()
     options.bumpViewGeneration()
     options.setSessionSettling(false)
+    options.setCachedHistoryVisible(false)
     options.abortCtrl.value?.abort()
     options.streaming.value = false
     options.clearPendingQueue(true)   // 新对话不继承任何会话的待发队列
@@ -246,8 +360,12 @@ export function useChatSessions(options: {
   async function deleteSession(id: number) {
     try {
       await agentApi.deleteSession(String(id))
+      sessionSnapshots.delete(id)
       sessions.value = sessions.value.filter(s => s.id !== id)
-      if (sessionId.value === id) await newSession()
+      if (sessionId.value === id) {
+        await newSession()
+        sessionSnapshots.delete(id)
+      }
     } catch {}
   }
 

@@ -1,6 +1,6 @@
 <template>
   <div class="tool-event-bubble">
-    <button class="tool-event-head" type="button" :aria-expanded="expanded" @click="expanded = !expanded">
+    <button class="tool-event-head" type="button" :aria-expanded="expanded" @click="toggleExpanded">
       <span class="tool-event-state" :class="`is-${msg.toolStatus || 'running'}`" aria-hidden="true" />
       <span class="tool-event-label" :title="toolLabel">{{ toolLabel }}</span>
       <span class="tool-event-meta">{{ statusText }}</span>
@@ -20,6 +20,11 @@
     >
       <div v-if="expanded" class="tool-detail-shell">
         <div class="tool-event-detail">
+          <div v-if="detailsLoading" class="tool-details-state" role="status">{{ t('chatUi.loadingToolDetails') }}</div>
+          <div v-else-if="detailsError" class="tool-details-state is-error" role="alert">
+            <span>{{ t('chatUi.loadToolDetailsFailed') }}</span>
+            <button type="button" @click="loadDetails">{{ t('chatUi.retryToolDetails') }}</button>
+          </div>
           <div v-if="msg.toolInput !== undefined" class="tool-event-section">
             <span class="tool-event-caption">{{ t('chatUi.input') }}</span>
             <pre>{{ formatValue(msg.toolInput) }}</pre>
@@ -43,9 +48,12 @@ const { t, te } = useI18n()
 import { computed, ref } from 'vue'
 import FlipChevron from '@/components/common/controls/FlipChevron.vue'
 import type { ChatMessage } from './chatTypes'
+import { agentApi } from '@/services/api'
 
-const props = defineProps<{ msg: ChatMessage }>()
+const props = defineProps<{ msg: ChatMessage; sessionId: number | null }>()
 const expanded = ref(false)
+const detailsLoading = ref(false)
+const detailsError = ref(false)
 const OUTPUT_DISPLAY_LIMIT = 32_000
 const resolvedToolName = computed(() => {
   if (props.msg.toolName !== 'call_tool' || !props.msg.toolInput || typeof props.msg.toolInput !== 'object') {
@@ -82,6 +90,30 @@ const resultDisplayTruncated = computed(() => formattedResult.value.length > OUT
 const displayResult = computed(() => resultDisplayTruncated.value
   ? `${formattedResult.value.slice(0, OUTPUT_DISPLAY_LIMIT)}\n…`
   : formattedResult.value)
+
+function toggleExpanded() {
+  expanded.value = !expanded.value
+  if (expanded.value) void loadDetails()
+}
+
+async function loadDetails() {
+  const { msg, sessionId } = props
+  const source = msg._toolDetailsSource
+  if (!msg.toolDetailsAvailable || msg._toolDetailsLoaded || msg.toolInput !== undefined || msg.toolResult !== undefined) return
+  if (!source || sessionId == null || detailsLoading.value) return
+  detailsLoading.value = true
+  detailsError.value = false
+  try {
+    const details = await agentApi.getToolEventDetails(sessionId, source)
+    if (Object.prototype.hasOwnProperty.call(details, 'toolInput')) msg.toolInput = details.toolInput
+    if (Object.prototype.hasOwnProperty.call(details, 'toolResult')) msg.toolResult = details.toolResult
+    msg._toolDetailsLoaded = true
+  } catch {
+    detailsError.value = true
+  } finally {
+    detailsLoading.value = false
+  }
+}
 
 const detailTransition = 'height var(--motion-hover-card) var(--motion-ease-emphasis)'
 const detailTransitionCleanups = new WeakMap<HTMLElement, () => void>()
@@ -187,5 +219,8 @@ function cleanupDetailTransition(element: Element) {
 pre { max-height: 180px; margin: 0; overflow: auto; color: var(--content-primary); white-space: pre-wrap; word-break: break-word; font: var(--font-size-xs)/var(--line-height-body) var(--font-family-mono); }
 .tool-detail-shell { min-height: 0; overflow: hidden; }
 .tool-detail-shell > .tool-event-detail { min-height: 0; overflow: hidden; }
+.tool-details-state { display: flex; align-items: center; gap: 10px; color: var(--content-secondary); font-size: var(--font-size-xs); }
+.tool-details-state.is-error { color: var(--status-danger); }
+.tool-details-state button { border: 0; padding: 0; background: transparent; color: var(--action-primary); font: inherit; cursor: pointer; }
 @keyframes tool-pulse { 50% { opacity: .35; } }
 </style>

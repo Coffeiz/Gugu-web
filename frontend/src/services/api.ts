@@ -1028,6 +1028,18 @@ export const agentApi = {
   },
   getMessagesBefore: (sessionId: string, beforeId: number, limit = 200) =>
     get(`/agent/sessions/${sessionId}/messages?before_id=${encodeURIComponent(String(beforeId))}&limit=${encodeURIComponent(String(limit))}`),
+  getToolEventDetails: (sessionId: number, source: { kind: 'timeline'; messageId: number; index: number } | { kind: 'canonical'; runId: string; roundId: string; toolCallId: string }) => {
+    const params = new URLSearchParams({ source: source.kind })
+    if (source.kind === 'timeline') {
+      params.set('message_id', String(source.messageId))
+      params.set('timeline_index', String(source.index))
+    } else {
+      params.set('run_id', source.runId)
+      params.set('round_id', source.roundId)
+      params.set('tool_call_id', source.toolCallId)
+    }
+    return get<{ toolInput?: unknown; toolResult?: unknown }>(`/agent/sessions/${sessionId}/tool-event-details?${params.toString()}`)
+  },
   listSessionInteractions: (sessionId: string) => get<{ items: Array<Record<string, any>> }>(`/agent/sessions/${sessionId}/interactions`),
   getInteractionSession: (promptId: number) => get<{ session_id: number }>(`/agent/interactions/${promptId}/session`),
   getPendingQueue: (queueId: string) => get<{ sessionId: number | null; items: Array<{ key: number; queue_id: string; session_id: number | null; claimed: boolean; text: string; attachments: any[]; references: any[] }> }>(`/agent/pending-queues/${encodeURIComponent(queueId)}`),

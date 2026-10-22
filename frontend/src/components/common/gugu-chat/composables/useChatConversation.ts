@@ -50,6 +50,7 @@ export function useChatConversation(options: {
   const liveStore = useLiveStore()
   const messagesEl = computed(() => options.messageListRef.value?.el ?? null)
   const sessionSettling = ref(false)
+  const cachedHistoryVisible = ref(false)
   // 所有滚动请求共用一个代次与 rAF。切会话、流式 token、工具事件可能同时请求到底部，
   // 旧请求必须失效，否则它会在新消息布局完成后再次改写 scrollTop。
   let scrollRequest = 0
@@ -352,7 +353,11 @@ export function useChatConversation(options: {
     const el = messagesEl.value; if (!el) return
     const dist = el.scrollHeight - el.scrollTop - el.clientHeight
     stick.value = dist < 40
-    if (el.scrollTop < 200) void historyPagination.loadOlder()
+    // 跟随虚拟列表的实际范围预取：首个挂载行进入 overscan 区时开始取上一页，
+    // 给网络和长消息布局留出缓冲，避免滚到最顶端才发请求。
+    if ((options.messageListRef.value?.getVirtualRangeStart() ?? 0) <= 10) {
+      void historyPagination.loadOlder()
+    }
   }
 
   // 用户发送时强制即时跳到底（大窗用 smooth 会被随后出现的 thinking 气泡/内容打断，看着没到底）；
@@ -453,9 +458,11 @@ export function useChatConversation(options: {
     waitForStableScrollLayout,
     waitForSessionSettlement: (id) => waitForSessionSettlement(sessionId, sessionSettling, id),
     shouldFollowBottom: () => stick.value,
+    setCachedHistoryVisible: (value) => { cachedHistoryVisible.value = value },
     setSessionSettling: (value: boolean) => { sessionSettling.value = value },
     onHistoryReset: () => historyPagination.reset(),
     onHistoryLoaded: page => historyPagination.reset(page),
+    getHistoryPage: historyPagination.currentPage,
   })
   const { webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName, currentSessionGoalActive, currentSessionGoalStatus, currentSessionFilesystemAuthorized, currentSessionFilesystemAuthorizationEnabled, loadSession, newSession, deleteSession, renameSession, refreshSessionMessages } = sessionsApi
 
@@ -494,7 +501,7 @@ export function useChatConversation(options: {
   watch(() => liveStore.connected, (connected) => {
     if (connected) {
       void refreshSessionPendingQueue()
-      if (sessionId.value != null) {
+      if (sessionId.value != null && !sessionSettling.value) {
         const activeSessionId = sessionId.value
         void refreshSessionMessages(activeSessionId).then(async () => {
           const state = await agentApi.getSessionState(String(activeSessionId))
@@ -530,9 +537,17 @@ export function useChatConversation(options: {
     // IM 首条消息会先在服务端创建并提交 session，再发布 run=running；列表刷新不应
     // 等待助手回复后的 sessions 事件，否则新 IM 会话在生成期间或回复失败时不可见。
     if (!sessions.value.some(item => item.id === event.session_id)) void fetchSessions()
-    if (sessionId.value !== event.session_id || streaming.value) return
+    if (sessionId.value !== event.session_id || streaming.value || sessionSettling.value) return
     // IM run 开始时通过用户级 live 事件通知；只续接当前正在看的会话。
     void resumeStream(event.session_id)
+  })
+
+  const deferredSessionRefresh = new Set<number>()
+  watch(sessionSettling, (settling) => {
+    if (settling || sessionId.value == null) return
+    const id = sessionId.value
+    if (!deferredSessionRefresh.delete(id)) return
+    void refreshSessionMessages(id)
   })
 
   // 跨端事件只作为失效通知；正文从数据库按 after_id 拉取，避免漏回放和重复追加。
@@ -552,11 +567,15 @@ export function useChatConversation(options: {
     const session = sessions.value.find(item => item.id === Number(e.session_id))
     if (session && e.title) session.title = e.title
     if (!appendedCount || isOwnOrigin) return
+    if (sessionSettling.value) {
+      deferredSessionRefresh.add(Number(e.session_id))
+      return
+    }
     void refreshSessionMessages(Number(e.session_id))
   })
 
   return {
-    messages, mkid, now, sessionSettling,
+    messages, mkid, now, sessionSettling, cachedHistoryVisible,
     historyState: historyPagination.state, loadOlderHistory: () => historyPagination.loadOlder(true),
     inputText, inputReferences, thinkingLabels, contextCompactingLabels, streaming, statusKind, statusTyped,
     isTypingText: computed(() => streaming.value && !statusKind.value),

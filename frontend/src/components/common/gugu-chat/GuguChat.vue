@@ -71,6 +71,7 @@
       :copied-id="copiedId" :voice-playing-id="voicePlayingId" :voice-bars="voiceBars"
       :status-kind="statusKind" :status-typed="statusTyped"
       :session-settling="sessionSettling"
+      :cached-history-visible="cachedHistoryVisible"
       :history-state="historyState" :on-load-history="loadOlderHistory"
       :pending-queue="visiblePendingQueue" @remove-queued="removeQueued"
       v-model:input-text="inputText"
@@ -440,7 +441,7 @@ const conversation = useChatConversation({
   }),
 })
 const {
-  messages, mkid, now, sessionSettling, historyState, loadOlderHistory,
+  messages, mkid, now, sessionSettling, cachedHistoryVisible, historyState, loadOlderHistory,
   inputText, inputReferences, thinkingLabels, contextCompactingLabels, streaming, statusKind, statusTyped, isTypingText,
   sessionId, isGroupSession,
   sessions, webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName, currentSessionGoalActive, currentSessionGoalStatus,
@@ -710,6 +711,7 @@ async function onInteractionTextSubmit(message: ChatMessage, text: string) {
 }
 
 async function onChatSend() {
+  if (sessionSettling.value) return
   const promptId = pendingCustomPromptId.value
   if (!promptId) {
     await send()

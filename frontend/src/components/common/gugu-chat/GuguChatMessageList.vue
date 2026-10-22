@@ -2,7 +2,7 @@
   <!-- 单一消息列表：真虚拟列表（@tanstack/vue-virtual），任何时刻只挂载视口 ± overscan
        内的消息 DOM，其余用下面这段按测量/估算高度撑出来的占位空间代替，滚动条始终代表
        整个会话的真实长度。messagesEl 是真实可滚动容器，虚拟列表只管它内部挂多少 DOM。 -->
-  <div class="chat-messages" :class="{ 'is-session-settling': sessionSettling }" ref="messagesEl">
+  <div class="chat-messages" :class="{ 'is-session-settling': sessionSettling, 'is-cache-visible': cachedHistoryVisible }" ref="messagesEl">
     <div v-if="historyState?.hasMore && nearHistoryTop && !sessionSettling" class="chat-history-status">
       <button type="button" :disabled="historyState.loading" @click="onLoadHistory?.()">
         {{ t(historyState.loading ? 'chatUi.loadingEarlier' : historyState.error ? 'chatUi.loadEarlierFailed' : 'chatUi.loadEarlier') }}
@@ -18,7 +18,7 @@
         <div :class="['msg', msg.role]" :data-db-id="msg.dbId || ''"
            v-memo="[msg.role, msg.speakerLabel, msg.text, msg.html, msg.streaming, msg.references, msg.roundId, msg.toolCallId, msg.toolStatus, msg.toolDurationMs, msg.toolInput, msg.toolResult, msg.linkButtons, msg.interaction?.resolved, msg.interaction?.selectedOptionId, msg.interaction?.allowTextInput, msg.interaction?.customInputActive, msg.interaction?.taskPaused, msg.interaction?.submitting, msg.interaction?.responseText, msg.interaction?.secretFields, interactionAnswerMode, msg.files?.length, msg.files?.map(f => `${f.file_id ?? ''}:${f.attach_id ?? ''}:${f.ext ?? ''}`).join(','), msg.quotedText, copiedId === msg.id, voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId), voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId) ? voiceBars.join(',') : '']">
           <GuguChatMessageRow
-            :msg="msg" :is-group-session="isGroupSession" :interaction-answer-mode="interactionAnswerMode"
+            :msg="msg" :session-id="sessionId" :is-group-session="isGroupSession" :interaction-answer-mode="interactionAnswerMode"
             :copied-id="copiedId" :voice-playing-id="voicePlayingId" :voice-bars="voiceBars"
             @copy="$emit('copy', $event)" @toggle-voice="$emit('toggleVoice', $event)"
             @open-file="$emit('openFile', $event)" @download="$emit('download', $event)" @action-click="$emit('actionClick', $event)"
@@ -79,6 +79,7 @@ const props = defineProps<{
   historyState?: ChatHistoryState
   onLoadHistory?: () => void
   sessionSettling: boolean
+  cachedHistoryVisible: boolean
 }>()
 
 defineEmits<{
@@ -124,8 +125,8 @@ watchEffect(() => {
   virtualizer.value.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) =>
     !props.resizing && item.end <= (instance.scrollElement?.scrollTop ?? instance.scrollOffset ?? 0)
 })
-const nearHistoryTop = computed(() => (virtualizer.value.scrollOffset ?? 0) < 240)
 const virtualRows = computed(() => virtualizer.value.getVirtualItems())
+const nearHistoryTop = computed(() => (virtualRows.value[0]?.index ?? 0) <= 10)
 // 绝对定位的子元素不会跟着祖先的 padding 走（top:0/left:0 是相对祖先的边框盒，不是内容盒），
 // 顶部留白交给 virtualizer 的 paddingStart，让测量、滚动定位和视觉位置使用同一坐标。
 // 水平方向留白仍由每一行负责。
@@ -152,6 +153,7 @@ watch(virtualRows, (rows) => {
 
 defineExpose({
   el: computed(() => messagesEl.value),
+  getVirtualRangeStart: () => virtualRows.value[0]?.index ?? 0,
   scrollToIndex: (idx: number, opts: Parameters<ReturnType<typeof useVirtualizer>['value']['scrollToIndex']>[1]) =>
     virtualizer.value.scrollToIndex(idx, opts),
 })

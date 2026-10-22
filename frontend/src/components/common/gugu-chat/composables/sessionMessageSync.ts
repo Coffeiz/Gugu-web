@@ -94,6 +94,8 @@ export function mapSessionMessageDelta(
         runId: event.runId, roundId: event.roundId,
         toolStatus: event.toolStatus || (event.toolResult !== undefined ? 'success' : 'running'),
         toolInput: event.toolInput, toolResult: event.toolResult,
+        toolDetailsAvailable: event.detailsAvailable,
+        _toolDetailsSource: event.detailSource,
         toolDurationMs: event.toolDurationMs,
         time: displayTime(event.createdAt), _timelineOrder: event.timelineOrder,
         _createdAt: event.createdAt,
@@ -110,6 +112,8 @@ export function mapSessionMessageDelta(
     _timelineOrder: event.timelineOrder,
     toolStatus: event.toolStatus || (event.toolResult !== undefined ? 'success' : 'running'),
     toolInput: event.toolInput, toolResult: event.toolResult,
+    toolDetailsAvailable: event.detailsAvailable,
+    _toolDetailsSource: event.detailSource,
     toolDurationMs: event.toolDurationMs, _createdAt: event.createdAt,
   }))
   return [...messages, ...timeline, ...tools]
@@ -162,6 +166,11 @@ export function mergeSessionMessageDelta(
       ...existing,
       ...message,
       id: existing.id,
+      ...(existing._toolDetailsLoaded ? {
+        toolInput: existing.toolInput,
+        toolResult: existing.toolResult,
+        _toolDetailsLoaded: true,
+      } : {}),
       ...(existing.streaming ? { text: existing.text, streaming: true } : {}),
     }
   }
@@ -233,7 +242,7 @@ export function createSessionMessageSynchronizer(options: {
             if (!newestIdAdvanced) break
             cursor = nextCursor
             cursors.set(sessionId, cursor)
-            if ((data.messages || []).length < 200) break
+            if (!data.pagination?.hasNewer) break
           }
         } catch {
           /* 失败不推进游标，后续通知或 SSE 重连会再次尝试 */

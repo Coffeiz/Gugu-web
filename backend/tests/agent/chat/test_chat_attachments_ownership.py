@@ -5,11 +5,13 @@ DB 优先查询 + IDOR、delete_session 级联清理（含共享 storage_key 隔
 用 `LocalStorageBackend` + `tmp_path`，`db`/`user_a`/`user_b` 复用 conftest 里
 的通用 SQLite 测试基座。
 """
+from agent.media import gates as media_gates
 from datetime import timedelta
 
 import pytest
 from sqlalchemy import select
 
+from agent.chat.attachments import resolve_for_message
 from app.core import chat_attach
 from app.core.tz import now_utc
 from app.models import ChatAttachment, ConversationMessage, ConversationSession
@@ -20,7 +22,7 @@ from app.services.storage import LocalStorageBackend
 def storage(tmp_path, monkeypatch):
     backend = LocalStorageBackend(tmp_path)
     monkeypatch.setattr("app.services.storage.get_storage", lambda: backend)
-    monkeypatch.setattr(chat_attach, "get_storage", lambda: backend)
+    monkeypatch.setattr("app.services.storage.get_storage", lambda: backend)
     return backend
 
 
@@ -38,7 +40,7 @@ async def _mk_session(db, user, **kw):
 async def _mk_message(db, session, **kw):
     msg = ConversationMessage(session_id=session.id, role="user", content="hi", **kw)
     db.add(msg)
-    # commit 而非 flush：chat_attach.stage() 的 _record_draft 用独立 session，
+    # commit 而非 flush：chat_attach.stage() 的 record_draft 用独立 session，
     # 在 StaticPool 单连接内存库上 close 时会回滚共享连接上未提交的事务。
     await db.commit()
     return msg
@@ -159,7 +161,7 @@ async def test_reuse_attachment_isolated_by_user(db, user_a, user_b, storage):
 async def test_stage_rolls_back_storage_when_db_insert_fails(db, user_a, storage, monkeypatch):
     async def _boom(*a, **kw):
         raise RuntimeError("db insert failed")
-    monkeypatch.setattr(chat_attach, "_record_draft", _boom)
+    monkeypatch.setattr("app.core.chat_attach.records.record_draft", _boom)
 
     with pytest.raises(RuntimeError):
         await chat_attach.stage(user_a.id, "a.png", "png", "image/png", b"hello")
@@ -248,7 +250,7 @@ async def test_get_meta_falls_back_to_legacy_redis_when_db_misses(db, user_a, st
             return json.dumps({"attach_id": "legacy1", "name": "old.png",
                                "storage_key": "legacy/key.png", "kind": "image"})
 
-    monkeypatch.setattr(chat_attach, "get_redis", lambda: _FakeRedisClient())
+    monkeypatch.setattr("app.core.redis.get_redis", lambda: _FakeRedisClient())
     got = await chat_attach.get_meta(user_a.id, "legacy1")
     assert got is not None
     assert got["storage_key"] == "legacy/key.png"
@@ -485,7 +487,7 @@ async def test_try_delete_check_logic_does_not_use_stale_result(db, user_a, stor
 async def test_stage_insert_failure_with_rollback_failure_still_raises_original(db, user_a, storage, monkeypatch):
     async def _boom_insert(*a, **kw):
         raise RuntimeError("original db insert error")
-    monkeypatch.setattr(chat_attach, "_record_draft", _boom_insert)
+    monkeypatch.setattr("app.core.chat_attach.records.record_draft", _boom_insert)
 
     async def _boom_rollback(key):
         raise RuntimeError("storage delete also failed")
@@ -752,12 +754,12 @@ async def test_resolve_oversized_audio_gates_before_read(db, user_a, storage, mo
 
     monkeypatch.setattr(chat_attach, "get_meta", _big_meta)
     monkeypatch.setattr(chat_attach, "read_bytes", _must_not_read)
-    monkeypatch.setattr(chat_attach, "_image_enabled", lambda *a, **k: False)
-    monkeypatch.setattr(chat_attach, "_video_enabled", lambda *a, **k: False)
-    monkeypatch.setattr(chat_attach, "_audio_enabled", lambda *a, **k: True)
-    monkeypatch.setattr(chat_attach, "_voice_recognition_enabled", lambda *a, **k: False)
+    monkeypatch.setattr(media_gates, "image_enabled", lambda *a, **k: False)
+    monkeypatch.setattr(media_gates, "video_enabled", lambda *a, **k: False)
+    monkeypatch.setattr(media_gates, "audio_enabled", lambda *a, **k: True)
+    monkeypatch.setattr("agent.voice_config.voice_recognition_enabled", lambda *a, **k: False)
 
-    parts, _cards, _images, media = await chat_attach.resolve_for_message(
+    parts, _cards, _images, media = await resolve_for_message(
         user_a.id, [meta["attach_id"]], "你好")
     assert "太大" in parts
     assert media == []
@@ -776,12 +778,12 @@ async def test_resolve_oversized_image_gates_before_read(db, user_a, storage, mo
 
     monkeypatch.setattr(chat_attach, "get_meta", _big_meta)
     monkeypatch.setattr(chat_attach, "read_bytes", _must_not_read)
-    monkeypatch.setattr(chat_attach, "_image_enabled", lambda *a, **k: True)
-    monkeypatch.setattr(chat_attach, "_video_enabled", lambda *a, **k: False)
-    monkeypatch.setattr(chat_attach, "_audio_enabled", lambda *a, **k: False)
-    monkeypatch.setattr(chat_attach, "_voice_recognition_enabled", lambda *a, **k: False)
+    monkeypatch.setattr(media_gates, "image_enabled", lambda *a, **k: True)
+    monkeypatch.setattr(media_gates, "video_enabled", lambda *a, **k: False)
+    monkeypatch.setattr(media_gates, "audio_enabled", lambda *a, **k: False)
+    monkeypatch.setattr("agent.voice_config.voice_recognition_enabled", lambda *a, **k: False)
 
-    parts, _cards, images, media = await chat_attach.resolve_for_message(
+    parts, _cards, images, media = await resolve_for_message(
         user_a.id, [meta["attach_id"]], "你好")
     assert images == [] and media == []
     assert "没法直接看" in parts
@@ -790,6 +792,7 @@ async def test_resolve_oversized_image_gates_before_read(db, user_a, storage, mo
 
 @pytest.mark.asyncio
 async def test_resolve_oversized_text_gates_before_read(db, user_a, storage, monkeypatch):
+    from agent.chat.attachments import resolve_for_message
     """500MB 的 .txt / 可提取 PDF 不得在发送消息时整包读进内存再截断。"""
     meta = await chat_attach.stage(user_a.id, "大文档", "txt", "text/plain", b"tiny-text")
 
@@ -801,12 +804,12 @@ async def test_resolve_oversized_text_gates_before_read(db, user_a, storage, mon
 
     monkeypatch.setattr(chat_attach, "get_meta", _big_meta)
     monkeypatch.setattr(chat_attach, "read_bytes", _must_not_read)
-    monkeypatch.setattr(chat_attach, "_image_enabled", lambda *a, **k: False)
-    monkeypatch.setattr(chat_attach, "_video_enabled", lambda *a, **k: False)
-    monkeypatch.setattr(chat_attach, "_audio_enabled", lambda *a, **k: False)
-    monkeypatch.setattr(chat_attach, "_voice_recognition_enabled", lambda *a, **k: False)
+    monkeypatch.setattr(media_gates, "image_enabled", lambda *a, **k: False)
+    monkeypatch.setattr(media_gates, "video_enabled", lambda *a, **k: False)
+    monkeypatch.setattr(media_gates, "audio_enabled", lambda *a, **k: False)
+    monkeypatch.setattr("agent.voice_config.voice_recognition_enabled", lambda *a, **k: False)
 
-    parts, _cards, _images, _media = await chat_attach.resolve_for_message(
+    parts, _cards, _images, _media = await resolve_for_message(
         user_a.id, [meta["attach_id"]], "你好")
     assert "未直接读取" in parts and "read_file 读取" not in parts   # 不再承诺 read_file 能读到全文
     assert "```" not in parts   # 没有把任何正文注入上下文

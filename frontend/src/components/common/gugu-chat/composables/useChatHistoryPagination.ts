@@ -60,6 +60,7 @@ export function useChatHistoryPagination(options: {
 
   return {
     state: computed<ChatHistoryState>(() => ({ hasMore: hasMore.value, loading: loading.value, error: error.value })),
+    currentPage: () => ({ hasMore: hasMore.value, oldestId }),
     reset, loadOlder,
   }
 }

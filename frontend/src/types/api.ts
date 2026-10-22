@@ -5888,11 +5888,7 @@ export interface components {
             automaticModeEnabled: boolean;
             /** Decisionguardenabled */
             decisionGuardEnabled: boolean;
-            /**
-             * Showtoolinteractions
-             * @default false
-             */
-            showToolInteractions: boolean;
+            imToolDisplayMode: "off" | "all" | "slow_only";
             /**
              * Showintermediatereplies
              * @default true
@@ -5964,8 +5960,7 @@ export interface components {
             automaticModeEnabled?: boolean | null;
             /** Decisionguardenabled */
             decisionGuardEnabled?: boolean | null;
-            /** Showtoolinteractions */
-            showToolInteractions?: boolean | null;
+            imToolDisplayMode?: ("off" | "all" | "slow_only") | null;
             showIntermediateReplies?: boolean | null;
             /** Toolinjectionmode */
             toolInjectionMode?: string | null;

@@ -18,7 +18,7 @@ def _api_env(monkeypatch):
         return None
 
     monkeypatch.setattr("agent.context.compress_conv.recover_orphaned_session", _noop)
-    monkeypatch.setattr(agent_api, "filesystem_authorization_enabled", lambda: False)
+    monkeypatch.setattr("app.api.v1.agent_routes.sessions.filesystem_authorization_enabled", lambda: False)
 
 
 async def _mk_session(db, user) -> ConversationSession:
@@ -114,10 +114,11 @@ async def test_get_session_messages_window_filters_and_has_more(db, user_a):
 
     payload = await agent_api.get_session_messages(session.id, limit=2, current_user=user_a, db=db)
 
-    assert [item["content"] for item in payload["messages"]] == ["m2", "m3"]
+    # limit 覆盖统一时间线记录，工具中间行也消耗窗口；摘要行被排除。
+    assert [item["content"] for item in payload["messages"]] == ["m3"]
     assert payload["pagination"] == {
-        "limit": 2, "hasMore": True,
-        "oldestId": payload["messages"][0]["id"], "newestId": payload["messages"][1]["id"],
+        "limit": 2, "hasMore": True, "hasNewer": False,
+        "oldestId": payload["messages"][0]["id"], "newestId": payload["messages"][0]["id"] + 2,
     }
     assert payload["session"]["id"] == session.id
     assert payload["active"] is False
@@ -169,6 +170,32 @@ async def test_get_session_messages_emits_timeline_and_suppresses_tool_events(db
     assert events[0]["timelineOrder"] == timeline_message.id * 1000 + 1
     assert events[2]["linkButtons"]["buttons"][0]["url"] == "https://example.com/docs"
     assert payload["toolEvents"] == []       # timeline 已含工具项，抑制兼容 toolEvents
+
+
+async def test_get_session_messages_replaces_legacy_timeline_media_payload(db, user_a):
+    """历史工具详情按需读取，且展开时仍清理旧时间线中的媒体载荷。"""
+    session = await _mk_session(db, user_a)
+    await _mk_message(db, session.id, "user", "查看视频")
+    await _mk_message(db, session.id, "assistant", "", display_timeline=[
+        {
+            "kind": "tool", "toolName": "read_file", "toolCallId": "video-call",
+            "toolResult": [{"type": "video", "source": {"type": "base64", "data": "synthetic-media-payload"}}],
+        },
+    ])
+    await db.commit()
+
+    payload = await agent_api.get_session_messages(session.id, current_user=user_a, db=db)
+
+    event = payload["timelineEvents"][0]
+    assert event["toolName"] == "read_file"
+    assert event["detailsAvailable"] is True
+    assert "toolResult" not in event
+    details = await agent_api.get_session_tool_event_details(
+        session.id, source="timeline", message_id=event["messageId"], timeline_index=0,
+        run_id=None, round_id=None, tool_call_id=None,
+        current_user=user_a, db=db,
+    )
+    assert details["toolResult"] == [{"type": "text", "text": "[视频已查看]"}]
 
 
 async def test_get_session_messages_backfills_legacy_timeline_files(db, user_a):
@@ -234,10 +261,13 @@ async def test_get_session_messages_pairs_tool_events_within_window(db, user_a):
     await _mk_message(db, session.id, "user", "帮我抓个网页")
     await _mk_message(
         db, session.id, "assistant", "",
-        content_json=[{"type": "tool_use", "id": "call-1", "name": "http_get", "input": {"url": "https://x"}}])
+        content_json=[{"type": "tool_use", "id": "call-1", "name": "http_get", "input": {"url": "https://x"}}],
+        run_id="run-1", round_id="round-1")
     result_message = await _mk_message(
         db, session.id, "tool", "",
-        content_json=[{"type": "tool_result", "tool_call_id": "call-1", "content": "ok"}])
+        content_json=[{"type": "tool_result", "tool_call_id": "call-1", "content": [
+            {"type": "video", "source": {"type": "base64", "data": "synthetic-media-payload"}},
+        ]}], run_id="run-1", round_id="round-1")
     await _mk_message(db, session.id, "assistant", "抓到了")
     await db.commit()
 
@@ -248,6 +278,14 @@ async def test_get_session_messages_pairs_tool_events_within_window(db, user_a):
     assert len(payload["toolEvents"]) == 1
     event = payload["toolEvents"][0]
     assert event["toolCallId"] == "call-1"
+    assert event["detailsAvailable"] is True
+    assert "toolInput" not in event and "toolResult" not in event
+    details = await agent_api.get_session_tool_event_details(
+        session.id, source="canonical", run_id="run-1", round_id="round-1", tool_call_id="call-1",
+        message_id=None, timeline_index=None,
+        current_user=user_a, db=db,
+    )
+    assert details["toolResult"] == [{"type": "text", "text": "[视频已查看]"}]
     # 配对后时间线位置取「结果所在消息」，恢复窗口时才不会把工具气泡排到结果之前
     assert event["timelineOrder"] == result_message.id * 1000
 
@@ -288,8 +326,18 @@ async def test_older_page_keeps_tools_between_last_body_and_next_page(db, user_a
     newer = await _mk_message(db, session.id, "assistant", "新页正文")
     await db.commit()
     payload = await agent_api.get_session_messages(
-        session.id, limit=1, before_id=newer.id, current_user=user_a, db=db,
+        session.id, limit=3, before_id=newer.id, current_user=user_a, db=db,
     )
     assert [item['content'] for item in payload['messages']] == ['旧页正文']
     assert [event['toolName'] for event in payload['toolEvents']] == ['http_get']
     assert payload['toolEvents'][0]['toolStatus'] == 'success'
+
+
+async def test_tool_event_details_require_owned_session(db, user_a, user_b):
+    session = await _mk_session(db, user_b)
+    with pytest.raises(HTTPException) as denied:
+        await agent_api.get_session_tool_event_details(
+            session.id, source="timeline", message_id=1, timeline_index=0,
+            current_user=user_a, db=db,
+        )
+    assert denied.value.status_code == 404

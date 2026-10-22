@@ -49,6 +49,12 @@ export interface ChatMessage {
   toolStatus?: 'queued' | 'running' | 'waiting' | 'success' | 'error' | 'skipped' | 'cancelled'
   toolInput?: unknown
   toolResult?: unknown
+  /** 历史工具详情在首次展开时由服务端按归属读取。 */
+  toolDetailsAvailable?: boolean
+  _toolDetailsLoaded?: boolean
+  _toolDetailsSource?:
+    | { kind: 'timeline'; messageId: number; index: number }
+    | { kind: 'canonical'; runId: string; roundId: string; toolCallId: string }
   toolDurationMs?: number
   _toolStartedAt?: number
   interaction?: {

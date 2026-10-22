@@ -50,6 +50,7 @@ function createSessionManager() {
       waitForStableScrollLayout: async () => {},
       waitForSessionSettlement: async () => {},
       shouldFollowBottom: () => false,
+      setCachedHistoryVisible: () => {},
       setSessionSettling: () => {},
     })
   })!
