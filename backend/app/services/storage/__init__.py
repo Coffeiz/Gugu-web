@@ -205,6 +205,15 @@ class StorageBackend(ABC):
             return None
         return StorageObjectInfo(size=len(await self.get(key)))
 
+    def local_path(self, key: str) -> "Path | None":
+        """该 key 的本地可读路径；对象存储没有本地副本 → None。
+
+        媒体域用它做「按路径探测」：ffprobe 直接对文件跑（按需 seek，IO 量是 KB 级），
+        比「把字节落成临时文件再探测」省掉一整份 N 字节的写+读，也省掉把整段视频
+        读进内存。只读用途，调用方别指望能改它。
+        """
+        return None
+
     # ── 文件夹生命周期钩子（P1.1）──────────────────────────────────────────────
     # Local 真 mkdir/mv/rm/清祖先；**对象存储无「空目录」概念、目录由 key 隐含 → 默认 no-op**，
     # 因此 FileService 直接调这些钩子、不写 `if isinstance(storage, Local)`（物理动作由 backend 自决）。
@@ -232,6 +241,10 @@ class LocalStorageBackend(StorageBackend):
 
     def __init__(self, root: Path):
         self.root = root
+
+    def local_path(self, key: str) -> Path:
+        """本地后端：key 就是 root 下的相对路径，直接给出可读路径。"""
+        return self.root / key
 
     async def put(self, key: str, data: bytes, mime_type: str | None = None) -> None:
         await asyncio.to_thread(

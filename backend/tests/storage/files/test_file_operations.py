@@ -4,6 +4,7 @@
 rename 单/批量（含 format 修双后缀）、save_uploaded_file 暂存附件入库。
 DB 走 conftest 内存库，storage 用 LocalStorageBackend 多点接线（先例 test_grep_tool）。
 """
+from agent.media import images as media_images
 import json
 from types import SimpleNamespace
 
@@ -118,12 +119,12 @@ async def test_read_file_image_and_media_branches(db, user_a, storage, monkeypat
 
     png = await _mk_file(db, user_a, storage, name="图.png", content="\x89PNG",
                          mime_type="image/png")
-    monkeypatch.setattr(chat_attach, "image_ready", lambda *a: False)
+    monkeypatch.setattr(media_images, "image_ready", lambda *a: False)
     no_vision = json.loads(await file_operations._read_file(db, user_a.id, {"file_id": png.id}))
     assert "无法识别图像内容" in no_vision["error"]
 
-    monkeypatch.setattr(chat_attach, "image_ready", lambda *a: True)
-    monkeypatch.setattr(chat_attach, "image_block", lambda data, ext: {"type": "image"})
+    monkeypatch.setattr(media_images, "image_ready", lambda *a: True)
+    monkeypatch.setattr(media_images, "image_block", lambda data, ext, model_cfg=None: {"type": "image"})
     block = await file_operations._read_file(db, user_a.id, {"file_id": png.id})
     assert block["_image_block"] == {"type": "image"} and "已打开图片" in block["note"]
 

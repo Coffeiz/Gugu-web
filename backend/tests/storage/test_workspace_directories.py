@@ -88,6 +88,78 @@ async def test_workspace_directory_crud_is_owned_and_removes_only_its_physical_r
 
 
 @pytest.mark.asyncio
+async def test_workspace_directory_list_aggregates_counts_in_constant_queries(
+    db, user_a, tmp_path, monkeypatch,
+):
+    """根目录工作区数量增加时，卡片计数仍按批次查询且只统计存活的本用户条目。"""
+    from sqlalchemy import event
+
+    from app.core.config import get_settings
+    from app.core.tz import now_utc
+    from app.models import ConversationSession, File, Folder, ScheduledTask
+    from app.services.workspaces import (
+        get_workspace_by_directory, workspace_directory_card_payloads,
+        workspace_directory_payload,
+    )
+
+    settings = get_settings()
+    monkeypatch.setattr(settings.storage, "backend", "local")
+    monkeypatch.setattr(settings.storage, "local_path", str(tmp_path))
+
+    default = await ensure_default_workspace_directory(db, user_a.id)
+    second = await create_workspace_directory(db, user_a.id, name="第二工作区")
+    default_binding = await get_workspace_by_directory(db, user_a.id, default.id)
+    default_folder = Folder(user_id=user_a.id, name="默认子目录", workspace_directory_id=default.id)
+    nested_folder = Folder(
+        user_id=user_a.id, name="嵌套目录", workspace_directory_id=default.id,
+        parent=default_folder,
+    )
+    db.add_all([
+        File(user_id=user_a.id, display_name="a", ext="txt", storage_key="a.txt",
+             space="workspace", workspace_directory_id=default.id),
+        File(user_id=user_a.id, display_name="nested", ext="txt", storage_key="nested.txt",
+             space="workspace", workspace_directory_id=default.id, folder=default_folder),
+        File(user_id=user_a.id, display_name="b", ext="txt", storage_key="b.txt",
+             space="workspace", workspace_directory_id=second.id),
+        File(user_id=user_a.id, display_name="deleted", ext="txt", storage_key="deleted.txt",
+             space="workspace", workspace_directory_id=default.id, deleted_at=now_utc()),
+        default_folder,
+        nested_folder,
+        Folder(user_id=user_a.id, name="第二子目录", workspace_directory_id=second.id),
+        Folder(user_id=user_a.id, name="已删除目录", workspace_directory_id=second.id,
+               deleted_at=now_utc()),
+        ConversationSession(user_id=user_a.id, workspace_id=default_binding.id, title="测试会话"),
+        ScheduledTask(user_id=user_a.id, workspace_id=default_binding.id, name="测试任务",
+                      cron="* * * * *"),
+    ])
+    await db.commit()
+
+    query_counts: list[int] = [0]
+
+    def count_selects(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if statement.lstrip().upper().startswith("SELECT"):
+            query_counts[0] += 1
+
+    engine = db.sync_session.bind
+    event.listen(engine, "before_cursor_execute", count_selects)
+    try:
+        one = await workspace_directory_card_payloads(db, user_a.id, [default])
+        one_query_count = query_counts[0]
+        query_counts[0] = 0
+        many = await workspace_directory_card_payloads(db, user_a.id, [default, second])
+        many_query_count = query_counts[0]
+    finally:
+        event.remove(engine, "before_cursor_execute", count_selects)
+
+    assert one_query_count == many_query_count
+    assert one[0]["file_count"] == 1 and one[0]["folder_count"] == 1
+    assert one[0]["bound_session_count"] == 1 and one[0]["bound_task_count"] == 1
+    assert [(item["file_count"], item["folder_count"]) for item in many] == [(1, 1), (1, 1)]
+    deletion_preview = await workspace_directory_payload(db, user_a.id, default)
+    assert deletion_preview["file_count"] == 2 and deletion_preview["folder_count"] == 2
+
+
+@pytest.mark.asyncio
 async def test_shell_workspace_namespace_is_owner_scoped_and_binding_only_selects_default_cwd(
     db, user_a, user_b, tmp_path, monkeypatch,
 ):

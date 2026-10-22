@@ -57,7 +57,7 @@ FILE_TOOLS = [
         Tool(
             name="read_file", label="读取文件",
             description_short='读取文件库、附件或图片；Shell 路径支持逻辑路径或 file_id。',
-            description="读取文件库、聊天附件或图片 URL；单个来源使用 file_id/file/attach_id/url，多个来源放在 items 数组，一次最多 20 项、源文件总量最多 64 MiB。文件库引用可用 list_dir/grep 返回的 /personal、/project、/workspace 逻辑路径或 file_id；路径仅映射已登记的文件记录，不是宿主机路径。URL 仅允许网络图片，并执行安全校验与下载限制；文件库支持文本、文档、图片、音频和视频，历史聊天附件支持图片/音频/视频，其他附件先保存到文件库再读。媒体按当前模型能力交付原生内容或音频转写。图片共用格式白名单、视觉能力、大小限制与图像处理策略；SVG 按源码文本读取。每个 items 项只能指定一种来源，可选 title/result_id 标记结果；某项失败不影响其他项。文本/文档可用 target_lines 按原始物理行读取，支持 all、8、8-11、8,11，默认 all。不接受 file:/// URI。",
+            description="读取文件库、聊天附件或图片 URL；单个来源使用 file_id/file/attach_id/url，多个来源放在 items 数组，一次最多 20 项、源文件总量最多 64 MiB。文件库引用可用 list_dir/grep 返回的 /personal、/project、/workspace 逻辑路径或 file_id；路径仅映射已登记的文件记录，不是宿主机路径。URL 仅允许网络图片，并执行安全校验与下载限制；文件库支持文本、文档、图片、音频和视频，历史聊天附件支持图片/音频/视频，其他附件先保存到文件库再读。用户要求理解或总结视频时，直接传视频的 attach_id/file_id 读取原生视频；不要先用 Shell/ffmpeg 抽帧代替，除非用户明确要求抽帧或逐帧分析。媒体按当前模型能力交付原生内容或音频转写。图片共用格式白名单、视觉能力、大小限制与图像处理策略；SVG 按源码文本读取。每个 items 项只能指定一种来源，可选 title/result_id 标记结果；某项失败不影响其他项。文本/文档可用 target_lines 按原始物理行读取，支持 all、8、8-11、8,11，默认 all。不接受 file:/// URI。",
             input_schema={
                 "type": "object",
                 "properties": {

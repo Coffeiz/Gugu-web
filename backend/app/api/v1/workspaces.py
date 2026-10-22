@@ -28,6 +28,7 @@ from app.services.workspaces import (
     update_workspace,
     update_workspace_directory,
     list_workspace_directories,
+    workspace_directory_card_payloads,
     workspace_directory_payload,
     workspace_shell_supported,
 )
@@ -46,7 +47,7 @@ async def list_workspace_directory_view(
     user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
 ):
     rows = await list_workspace_directories(db, user.id)
-    return [await workspace_directory_payload(db, user.id, row) for row in rows]
+    return await workspace_directory_card_payloads(db, user.id, rows)
 
 
 @workspace_directories_router.post("", response_model=WorkspaceDirectoryResponse, status_code=201)
@@ -59,7 +60,7 @@ async def create_workspace_directory_view(
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     await db.commit()
-    return await workspace_directory_payload(db, user.id, row)
+    return (await workspace_directory_card_payloads(db, user.id, [row]))[0]
 
 
 @workspace_directories_router.patch("/{directory_id}", response_model=WorkspaceDirectoryResponse)
@@ -74,7 +75,7 @@ async def update_workspace_directory_view(
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     await db.commit()
-    return await workspace_directory_payload(db, user.id, row)
+    return (await workspace_directory_card_payloads(db, user.id, [row]))[0]
 
 
 @workspace_directories_router.get("/{directory_id}/delete-preview")

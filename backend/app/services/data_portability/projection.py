@@ -322,7 +322,8 @@ async def project_record(
         allowed = {
             "locale", "theme", "theme_family", "palette", "last_stages", "stage_templates",
             "reply_tone", "reply_length", "pm_stages_expanded", "calendar_week_start",
-            "default_view", "show_tool_interactions", "show_intermediate_replies", "tool_injection_mode",
+            "default_view", "im_tool_display_mode", "show_intermediate_replies",
+            "tool_injection_mode",
         }
         fields["data"] = {key: value for key, value in (preferences or {}).items() if key in allowed}
     elif spec.record_type == "provider_config":
