@@ -20,7 +20,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
   const shellDangerousEnabled = ref(true)
   const automaticModeEnabled = ref(false)
   const decisionGuardEnabled = ref(false)
-  const showToolInteractions = ref(true)
+  const imToolDisplayMode = ref<'off' | 'all' | 'slow_only'>('all')
   const showIntermediateReplies = ref(false)
   const toolInjectionMode = ref<'description' | 'full'>('description')
   const personalityPreference = ref('')
@@ -66,7 +66,8 @@ export const usePreferencesStore = defineStore('preferences', () => {
       shellDangerousEnabled.value = (data as any).shellDangerousEnabled ?? true
       automaticModeEnabled.value = (data as any).automaticModeEnabled === true
       decisionGuardEnabled.value = (data as any).decisionGuardEnabled === true
-      showToolInteractions.value = (data as any).showToolInteractions ?? true
+      const displayMode = (data as any).imToolDisplayMode
+      imToolDisplayMode.value = ['off', 'all', 'slow_only'].includes(displayMode) ? displayMode : 'all'
       showIntermediateReplies.value = (data as any).showIntermediateReplies ?? false
       toolInjectionMode.value = (data as any).toolInjectionMode === 'full' ? 'full' : 'description'
       personalityPreference.value = data.personalityPreference ?? ''
@@ -149,12 +150,17 @@ export const usePreferencesStore = defineStore('preferences', () => {
     await savePreferenceValue('decisionGuardEnabled', decisionGuardEnabled, v)
   }
 
-  async function saveShowToolInteractions(v: boolean) {
-    await savePreferenceValue('showToolInteractions', showToolInteractions, v)
-  }
-
   async function saveShowIntermediateReplies(v: boolean) {
     await savePreferenceValue('showIntermediateReplies', showIntermediateReplies, v)
+  }
+
+  async function saveImToolDisplayMode(value: 'off' | 'all' | 'slow_only') {
+    const previous = imToolDisplayMode.value
+    await saveOptimistically('imToolDisplayMode', { imToolDisplayMode: value }, () => {
+      imToolDisplayMode.value = value
+    }, () => {
+      imToolDisplayMode.value = previous
+    })
   }
 
   async function saveToolInjectionMode(v: 'description' | 'full') {
@@ -207,7 +213,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
   }
 
   return {
-    lastStages, stageTemplates, replyTone, replyLength, pmStagesExpanded, calendarWeekStart, calendarDoneMode, defaultView, shellEnabled, shellSystemEnabled, shellDangerousEnabled, automaticModeEnabled, decisionGuardEnabled, showToolInteractions, showIntermediateReplies, toolInjectionMode, personalityPreference, personalityPreferenceEnabled, personalityPreferenceAvailable, personalityPreferenceRevision, emailChangeEnabled, locale,
-    loaded, fetch, refreshEmailChangeEnabled, saveLocale, saveLastStages, saveTemplates, saveStyle, savePmStagesExpanded, saveCalendarWeekStart, saveCalendarDoneMode, saveDefaultView, saveShellEnabled, saveShellSystemEnabled, saveShellDangerousEnabled, saveAutomaticModeEnabled, saveDecisionGuardEnabled, saveShowToolInteractions, saveShowIntermediateReplies, saveToolInjectionMode, savePersonalityPreference, uploadPersonalityFile,
+    lastStages, stageTemplates, replyTone, replyLength, pmStagesExpanded, calendarWeekStart, calendarDoneMode, defaultView, shellEnabled, shellSystemEnabled, shellDangerousEnabled, automaticModeEnabled, decisionGuardEnabled, imToolDisplayMode, showIntermediateReplies, toolInjectionMode, personalityPreference, personalityPreferenceEnabled, personalityPreferenceAvailable, personalityPreferenceRevision, emailChangeEnabled, locale,
+    loaded, fetch, refreshEmailChangeEnabled, saveLocale, saveLastStages, saveTemplates, saveStyle, savePmStagesExpanded, saveCalendarWeekStart, saveCalendarDoneMode, saveDefaultView, saveShellEnabled, saveShellSystemEnabled, saveShellDangerousEnabled, saveAutomaticModeEnabled, saveDecisionGuardEnabled, saveImToolDisplayMode, saveShowIntermediateReplies, saveToolInjectionMode, savePersonalityPreference, uploadPersonalityFile,
   }
 })

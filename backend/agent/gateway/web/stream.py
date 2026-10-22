@@ -5,8 +5,10 @@ import json
 import logging
 from typing import AsyncGenerator
 from sqlalchemy import select
-from app.core.config import get_settings
+from agent.media import gates
+from agent.chat.attachments import resolve_for_message
 from app.core import chat_attach
+from app.core.config import get_settings
 from app.core.tz import set_ctx_tz
 from app.models import ConversationMessage, ConversationSession
 from agent.errors import describe_llm_error
@@ -129,7 +131,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             strip_thinking = False
 
         # 聊天附件：文本读内容注入给模型，图片/二进制给提示；卡片随用户消息持久化
-        aug_text, attach_cards, aug_images, aug_media = await chat_attach.resolve_for_message(
+        aug_text, attach_cards, aug_images, aug_media = await resolve_for_message(
             user_id, req.attachments, req.message, model_cfg=model_cfg)
         from agent.context.references import build_reference_context, reference_context_block
         reference_text = await build_reference_context(db, user_id, req.references)
@@ -248,7 +250,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     # 主模型支持音频时直接保留音频块；否则才用独立「语音识别模型」转文字。
     # 两者都不可用时，resolve_for_message 已在 aug_text 中留下不支持提示。
     _transcribe_media = [m for m in aug_media if m.get("type") != "video"]
-    _audio_fallback = chat_attach.should_transcribe_audio(model_cfg)
+    _audio_fallback = gates.should_transcribe_audio(model_cfg)
     _persist_transcript = any(
         m.get("voice_recognition_enabled") and m.get("kind") == "voice"
         for m in _transcribe_media

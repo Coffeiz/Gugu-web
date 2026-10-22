@@ -301,13 +301,17 @@ async def dispatch_im_message(payload: dict):
         # 命令已写入 session_context；本轮继续进入 runner，让 /goal 本身就开始执行。
         req.message = f"请立即开始执行目标任务：{goal_text}"
 
-    show_tool_interactions, show_intermediate_replies = await _im_display_preferences(req.user_id)
+    tool_display_mode, show_intermediate_replies = await _im_display_preferences(req.user_id)
     if platform == "telegram":
         from agent.interactions.preferences import im_user_locale
         payload["locale"] = await im_user_locale(req.user_id)
     from agent.interactions.preferences import im_mermaid_theme_preferences
     payload["mermaid_theme_preferences"] = await im_mermaid_theme_preferences(req.user_id)
-    bind_im_context(req, payload, show_tool_interactions=show_tool_interactions)
+    bind_im_context(
+        req,
+        payload,
+        tool_display_mode=tool_display_mode,
+    )
     await remember_im_reach(user_id, platform, payload, puid)
     activity = await start_im_activity(payload, platform, puid)
     # Redis 路由 session 缓存 miss/过期时，Runner 会稍后自行从数据库复用会话；
@@ -322,7 +326,7 @@ async def dispatch_im_message(payload: dict):
     feishu_tool_summary = _create_feishu_tool_summary(
         platform,
         payload.get("chat_type"),
-        show_tool_interactions,
+        tool_display_mode == "all",
     )
 
     shown_interaction_ids: set[int] = set()
@@ -346,7 +350,7 @@ async def dispatch_im_message(payload: dict):
     tool_event_callback = partial(
         display_tool_event,
         payload,
-        show_tool_interactions=show_tool_interactions,
+        tool_display_mode=tool_display_mode,
         publish_web_event=stream_bridge.publish,
         feishu_tool_summary=feishu_tool_summary,
         stream_tool_events=telegram_stream_tool_events,

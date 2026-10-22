@@ -556,5 +556,5 @@ def test_group_search_permissions_include_restricted_image_reading():
     from app.services.im_identity import normalize_group_allowed_tools
 
     assert normalize_group_allowed_tools([
-        "xng_search", "similar_image_search", "inspect_images", "send_file",
+        "xng_search", "similar_image_search", "read_file", "send_file",
     ]) == ["xng_search", "http_get", "similar_image_search", "read_file", "send_file"]

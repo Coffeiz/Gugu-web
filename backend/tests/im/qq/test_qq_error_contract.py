@@ -42,6 +42,14 @@ def test_msg_id_invalid_is_only_classified_for_qq_expiry_error():
     assert qq_outbound._qq_msg_id_invalid(qq_client.QQAPIError(
         "POST", "/messages", 400, {"code": 40034024, "message": "请求参数msg_id无效或越权"}
     ))
+    assert qq_outbound._qq_msg_id_invalid(qq_client.QQAPIError(
+        "POST", "/messages", 400,
+        {"code": 40034005, "message": "回复消息msg_id已过期"},
+    ))
+    assert qq_outbound._qq_msg_id_invalid(qq_client.QQAPIError(
+        "POST", "/messages", 400,
+        {"code": 49999999, "message": "回复消息msg_id已过期"},
+    ))
     assert not qq_outbound._qq_msg_id_invalid(qq_client.QQAPIError(
         "POST", "/messages", 400, {"code": 400, "message": "bad request"}
     ))
@@ -143,7 +151,13 @@ async def test_send_group_does_not_retry_permanent_4xx(monkeypatch):
     assert len(calls) == 1
 
 
-async def test_send_group_falls_back_to_active_message_when_passive_limit_reached(monkeypatch):
+@pytest.mark.parametrize("error_body", [
+    {"code": 40034128, "message": "被动回复时间或者次数超过限制"},
+    {"code": 40034005, "message": "回复消息msg_id已过期"},
+])
+async def test_send_group_falls_back_to_active_message_when_passive_reply_expires(
+    monkeypatch, error_body,
+):
     calls = []
 
     async def fake_post_group(channel_id, group_openid, text, msg_id, *args, **kwargs):
@@ -151,7 +165,7 @@ async def test_send_group_falls_back_to_active_message_when_passive_limit_reache
         if msg_id:
             raise qq_client.QQAPIError(
                 "POST", "/v2/groups/g1/messages", 400,
-                {"code": 40034128, "message": "被动回复时间或者次数超过限制"},
+                error_body,
             )
 
     monkeypatch.setattr(qq_outbound, "_post_group", fake_post_group)

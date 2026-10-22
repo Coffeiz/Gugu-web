@@ -218,7 +218,6 @@ async def test_qq_group_at_event_without_mentions_reaches_agent(monkeypatch):
         _raw_group_event(mentions=[]),
         "bot-1",
         "user-1",
-        {},
     )
 
     assert len(produced) == 1
@@ -397,7 +396,7 @@ async def test_qq_raw_c2c_event_to_payload(monkeypatch):
     monkeypatch.setattr(runtime_state, "get_state", fake_async_none)
     monkeypatch.setattr(runtime_state, "is_awaiting", fake_async_false)
 
-    await qq_events._handle_raw_qq_message("C2C_MESSAGE_CREATE", _raw_c2c_event(), "bot-1", "user-1", {})
+    await qq_events._handle_raw_qq_message("C2C_MESSAGE_CREATE", _raw_c2c_event(), "bot-1", "user-1")
 
     assert len(produced) == 1
     assert produced[0]["platform"] == "qq"
@@ -424,7 +423,6 @@ async def test_qq_message_still_reaches_stream_when_shortcut_redis_fails(monkeyp
         _raw_c2c_event(),
         "bot-1",
         "user-1",
-        {},
     )
 
     assert len(produced) == 1
@@ -456,7 +454,7 @@ async def test_qq_raw_group_event_to_payload(monkeypatch):
     monkeypatch.setattr(runtime_state, "get_state", fake_async_none)
     monkeypatch.setattr(runtime_state, "is_awaiting", fake_async_false)
 
-    await qq_events._handle_raw_qq_message("GROUP_AT_MESSAGE_CREATE", _raw_group_event(), "bot-1", "user-1", {})
+    await qq_events._handle_raw_qq_message("GROUP_AT_MESSAGE_CREATE", _raw_group_event(), "bot-1", "user-1")
 
     assert len(produced) == 1
     assert produced[0]["platform_user_id"] == "member_1"
@@ -476,7 +474,7 @@ async def test_qq_raw_group_disabled_drops_event(monkeypatch):
     monkeypatch.setattr(qq_events, "_group_settings", fake_group_settings)
     monkeypatch.setattr(qq_events.R, "produce", fake_produce)
 
-    await qq_events._handle_raw_qq_message("GROUP_AT_MESSAGE_CREATE", _raw_group_event(), "bot-1", "user-1", {})
+    await qq_events._handle_raw_qq_message("GROUP_AT_MESSAGE_CREATE", _raw_group_event(), "bot-1", "user-1")
 
     assert produced == []
 
@@ -506,7 +504,7 @@ async def test_qq_raw_group_message_create_respects_requires_at(monkeypatch):
     monkeypatch.setattr(runtime_state, "get_state", fake_async_none)
     monkeypatch.setattr(runtime_state, "is_awaiting", fake_async_false)
 
-    await qq_events._handle_raw_qq_message("GROUP_MESSAGE_CREATE", _raw_group_event(), "bot-1", "user-1", {})
+    await qq_events._handle_raw_qq_message("GROUP_MESSAGE_CREATE", _raw_group_event(), "bot-1", "user-1")
 
     assert len(produced) == 1
     assert produced[0]["chat_type"] == "group"
@@ -525,7 +523,7 @@ async def test_qq_raw_group_message_create_is_received_when_at_is_required(monke
     monkeypatch.setattr(qq_events, "_group_settings", fake_group_settings)
     monkeypatch.setattr(qq_events.R, "produce", fake_produce)
 
-    await qq_events._handle_raw_qq_message("GROUP_MESSAGE_CREATE", _raw_group_event(), "bot-1", "user-1", {})
+    await qq_events._handle_raw_qq_message("GROUP_MESSAGE_CREATE", _raw_group_event(), "bot-1", "user-1")
 
     assert len(produced) == 1
     assert produced[0]["group_requires_at"] is True
@@ -552,7 +550,7 @@ async def test_qq_raw_quoted_attachment_is_ingested(monkeypatch):
     async def fake_produce(stream, payload):
         produced.append(payload)
 
-    monkeypatch.setattr(qq_events, "_qq_ack", fake_ack)
+    monkeypatch.setattr(qq_events, "_qq_reply", fake_ack)
     monkeypatch.setattr(qq_events.R, "produce", fake_produce)
 
     from agent import router
@@ -568,6 +566,6 @@ async def test_qq_raw_quoted_attachment_is_ingested(monkeypatch):
     monkeypatch.setattr(runtime_state, "get_state", fake_async_none)
     monkeypatch.setattr(runtime_state, "is_awaiting", fake_async_false)
 
-    await qq_events._handle_raw_qq_message("C2C_MESSAGE_CREATE", data, "bot-1", "user-1", {})
+    await qq_events._handle_raw_qq_message("C2C_MESSAGE_CREATE", data, "bot-1", "user-1")
 
     assert produced[0]["attachments"][0]["url"] == "https://example.test/a.png"

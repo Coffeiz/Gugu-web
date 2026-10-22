@@ -1,33 +1,5 @@
-"""IM 即时反馈、shortcut 判断与取消控制。"""
+"""IM shortcut 判断与取消控制。"""
 from __future__ import annotations
-
-import random
-
-
-# 即时反馈只负责体验层，不决定是否进入 Agent、身份和权限。
-_QUICK_REACTION_RULES = [
-    ("LAUGH", ("哈哈", "草", "笑死了", "哈哈哈"), ("哈哈", "23333", "笑死", "草", "lol", "hhh", "😂", "🤣")),
-    ("THANKS", ("客气啦~", "嗨这没事", "应该的~"), ("谢谢", "多谢", "感谢", "辛苦", "thx", "thanks", "🙏")),
-    ("DONE", ("漂亮~", "棒", "搞定收工"), ("搞定", "完成", "好了", "弄好", "done", "成了", "通过了")),
-    ("WOW", ("哇厉害", "牛啊", "可以的~"), ("厉害", "牛", "强", "哇", "wow", "卧槽", "666", "绝了")),
-    ("CRY", ("唉别难过", "抱抱", "心疼一下"), ("难过", "可惜", "唉", "崩溃", "麻了", "心疼", "emo", "😭", "😢")),
-    ("PARTY", ("恭喜恭喜!", "庆祝一下~", "太棒了!"), ("恭喜", "庆祝", "上线", "发布", "纪念", "🎉")),
-    ("OnIt", ("嗨~", "在呢", "诶到~"), ("你好", "在吗", "在不在", "早", "晚上好", "中午好", "hi", "hello")),
-    ("THINKING", ("让我想想哈~", "我看看哈", "稍等想一下"), ("为什么", "怎么", "如何", "?", "？", "吗", "呢", "请问", "能不能", "可不可以")),
-]
-_QUICK_DEFAULT = ("OnIt", ("在看~", "收到,马上", "看看哈~", "嗯嗯我瞧瞧"))
-_QUICK_MEDIA = ("收到,我看看~", "文件到了,瞅瞅", "收到啦~")
-
-
-def choose_instant_reaction(text: str, has_media: bool) -> tuple[str, str]:
-    """选择体验层即时反馈；不触发 Agent，也不参与权限和业务决策。"""
-    if has_media:
-        return random.choice(_QUICK_MEDIA), "OnIt"
-    normalized = (text or "").lower()
-    for emoji, replies, keywords in _QUICK_REACTION_RULES:
-        if any(keyword in normalized for keyword in keywords):
-            return random.choice(replies), emoji
-    return random.choice(_QUICK_DEFAULT[1]), _QUICK_DEFAULT[0]
 
 
 def _qq_private_streaming_requested(

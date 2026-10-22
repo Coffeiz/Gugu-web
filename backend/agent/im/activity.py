@@ -85,7 +85,12 @@ async def remember_im_reach(
         pass
 
 
-def bind_im_context(request: AgentRequest, payload: dict, *, show_tool_interactions: bool = False) -> None:
+def bind_im_context(
+    request: AgentRequest,
+    payload: dict,
+    *,
+    tool_display_mode: str = "all",
+) -> None:
     """把当前请求的 IM 路由和权限快照绑定到工具侧 ContextVar。"""
     from agent.im import imctx
 
@@ -99,8 +104,8 @@ def bind_im_context(request: AgentRequest, payload: dict, *, show_tool_interacti
         payload.get("context_token", ""),
         request.allowed_tool_names,
         request.im_role,
-        show_tool_interactions,
         [str(item) for item in (request.attachments or [])],
+        tool_display_mode=tool_display_mode,
     )
 
 

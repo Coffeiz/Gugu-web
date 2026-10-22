@@ -5,10 +5,10 @@ import ProfileImPane from '@/components/common/profile/ProfileImPane.vue'
 
 const mocks = vi.hoisted(() => ({
   preferences: {
-    showToolInteractions: true,
+    imToolDisplayMode: 'all',
     showIntermediateReplies: false,
     fetch: vi.fn(),
-    saveShowToolInteractions: vi.fn(),
+    saveImToolDisplayMode: vi.fn(),
     saveShowIntermediateReplies: vi.fn(),
   },
   list: vi.fn(),
@@ -82,7 +82,7 @@ afterEach(() => {
 })
 
 describe('个人设置中的 IM 群权限', () => {
-  it('IM 展示偏好默认显示工具调用并隐藏中间回复', async () => {
+  it('IM 展示偏好默认选择全部工具信息并隐藏中间回复', async () => {
     mocks.list.mockResolvedValue({ items: [] })
     host = document.createElement('div')
     document.body.appendChild(host)
@@ -90,7 +90,7 @@ describe('个人设置中的 IM 群权限', () => {
     app.mount(host)
     await flushUi()
 
-    expect(host.querySelector('.toggle-switch[aria-label="profileImUi.toggleToolInteractions"]')?.getAttribute('aria-pressed')).toBe('true')
+    expect(host.querySelector('.pm-tool-display-options button[aria-pressed="true"]')?.textContent).toBe('profileImUi.toolDisplayAll')
     expect(host.querySelector('.toggle-switch[aria-label="profileImUi.toggleIntermediateReplies"]')?.getAttribute('aria-pressed')).toBe('false')
   })
 
@@ -211,6 +211,37 @@ describe('个人设置中的 IM 群权限', () => {
     await flushUi()
     expect(mocks.update).toHaveBeenCalledWith(7, {
       group_allowed_tools: ['xng_search', 'http_get', 'similar_image_search', 'read_file', 'send_file', 'group_context_search'],
+    })
+  })
+
+  it('群成员的 Provider 联网搜索单独授权，切换其他工具不会丢失该权限', async () => {
+    mocks.list.mockResolvedValue({ items: [{
+      id: 12, platform: 'qq', enabled: true, group_chat_enabled: true,
+      group_allowed_tools: ['xng_search', 'http_get', 'web_search', 'group_context_search'],
+    }] })
+    mocks.update.mockResolvedValue({})
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    app = createApp(ProfileImPane)
+    app.mount(host)
+    await flushUi()
+
+    const botRow = host.querySelector('[data-platform="qq"] .pm-bot-item') as HTMLElement
+    const providerSearch = botRow.querySelector('[data-tool-option="web_search"]') as HTMLButtonElement
+    const contextSearch = botRow.querySelector('[data-tool-option="group_context_search"]') as HTMLButtonElement
+    expect(providerSearch.textContent).toBe('profileImUi.providerWebSearch')
+    expect(providerSearch.classList.contains('active')).toBe(true)
+
+    contextSearch.click()
+    await flushUi()
+    expect(mocks.update).toHaveBeenLastCalledWith(12, {
+      group_allowed_tools: ['xng_search', 'http_get', 'web_search'],
+    })
+
+    providerSearch.click()
+    await flushUi()
+    expect(mocks.update).toHaveBeenLastCalledWith(12, {
+      group_allowed_tools: ['xng_search', 'http_get'],
     })
   })
 

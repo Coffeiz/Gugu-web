@@ -18,6 +18,7 @@ from agent.memory.store import MEMORY_INJECT_CHARS
 
 
 IM_MEMORY_ENTRY_INJECT_MAX = 50  # 每个 profile/pattern 来源的直注入条数；其余由 RAG 召回
+_VIDEO_ATTACHMENT_EXTS = {"mp4", "mov", "avi", "mkv", "webm", "wmv", "m4v"}
 
 
 def _memory_value_text(value: Any) -> str:
@@ -61,7 +62,7 @@ def _bounded_memory_parts(parts: list[tuple[str, Any]], budget: int = MEMORY_INJ
 def format_attachment_refs(message) -> str:
     """为历史消息保留轻量附件引用，不把附件内容重新塞进上下文。
 
-    图片走 read_file 回读通道；其余文件必须保留 attach_id +
+    图片和视频走 read_file 回读通道；其它文件保留 attach_id +
     save_uploaded_file 转存指引——附件正文只在到达那一轮注入过一次，
     历史回放若不给引用，文字/二进制附件从下一轮起就从模型上下文里
     彻底消失（QQ 引用文件消息「没法回读」的根因）。语音是对话内容，
@@ -70,6 +71,7 @@ def format_attachment_refs(message) -> str:
     if not isinstance(files, list):
         return ""
     image_refs: list[str] = []
+    video_refs: list[str] = []
     file_refs: list[str] = []
     for item in files:
         if not isinstance(item, dict) or not item.get("attach_id"):
@@ -77,16 +79,20 @@ def format_attachment_refs(message) -> str:
         kind = str(item.get("kind") or "").lower()
         ext = str(item.get("ext") or "").lower()
         name = str(item.get("name") or "")
+        label = f"{name}.{ext}" if name and ext else (name or ext or "未命名")
         if kind == "image" or ext in {"png", "jpg", "jpeg", "gif", "webp", "bmp", "heic", "heif", "tiff", "tif"}:
             image_refs.append(f"attach_id={item['attach_id']}" + (f"，名称={name}" if name else ""))
+        elif kind == "video" or ext in _VIDEO_ATTACHMENT_EXTS:
+            video_refs.append(f"attach_id={item['attach_id']}，文件={label}")
         elif kind != "voice":
-            label = f"{name}.{ext}" if name and ext else (name or ext or "未命名")
             file_refs.append(f"attach_id={item['attach_id']}，文件={label}")
-    if not image_refs and not file_refs:
+    if not image_refs and not video_refs and not file_refs:
         return ""
     parts = []
     if image_refs:
         parts.append("[历史图片附件，仅在用户要求回看/分析时调用 read_file(items=[{attach_id: ...}]) 读取：" + "；".join(image_refs) + "]")
+    if video_refs:
+        parts.append("[历史视频附件，仅在用户要求理解/总结视频时直接调用 read_file(attach_id=...) 原生读取；不要先 save_uploaded_file 或用 Shell/ffmpeg 抽帧，除非用户明确要求抽帧/逐帧分析：" + "；".join(video_refs) + "]")
     if file_refs:
         parts.append("[历史文件附件，仅在用户要求回看/读取内容时，先调用 save_uploaded_file(attach_id) "
                      "把附件转存进文件库再读：" + "；".join(file_refs) + "]")

@@ -186,7 +186,7 @@ async def test_private_feishu_keeps_detailed_fallback_if_stream_card_is_unavaila
     await presentation.display_tool_event(
         {"platform": "feishu", "chat_type": "p2p"},
         event,
-        show_tool_interactions=True,
+        tool_display_mode="all",
         publish_web_event=publish,
         feishu_tool_summary=summary,
     )
@@ -263,7 +263,7 @@ async def test_tool_display_off_still_mirrors_web_without_sending_im_message(mon
     await presentation.display_tool_event(
         {"platform": "feishu"},
         event,
-        show_tool_interactions=False,
+        tool_display_mode="off",
         publish_web_event=publish,
     )
 
@@ -295,14 +295,14 @@ async def test_enabled_feishu_routes_to_card_after_it_is_bound(monkeypatch):
     await presentation.display_tool_event(
         {"platform": "feishu", "chat_type": "p2p"},
         call_event,
-        show_tool_interactions=True,
+        tool_display_mode="all",
         publish_web_event=publish,
         feishu_tool_summary=summary,
     )
     await presentation.display_tool_event(
         {"platform": "feishu", "chat_type": "p2p"},
         done_event,
-        show_tool_interactions=True,
+        tool_display_mode="all",
         publish_web_event=publish,
         feishu_tool_summary=summary,
     )
@@ -327,7 +327,7 @@ async def test_enabled_feishu_uses_existing_tool_message_if_card_was_not_created
     await presentation.display_tool_event(
         {"platform": "feishu"},
         event,
-        show_tool_interactions=True,
+        tool_display_mode="all",
         publish_web_event=publish,
         feishu_tool_summary=summary,
     )

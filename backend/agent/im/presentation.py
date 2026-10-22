@@ -6,7 +6,7 @@ async def display_tool_event(
     payload: dict,
     event: dict,
     *,
-    show_tool_interactions: bool,
+    tool_display_mode: str,
     publish_web_event,
     feishu_tool_summary=None,
     stream_tool_events=None,
@@ -17,7 +17,7 @@ async def display_tool_event(
     # 当普通工具消息发出会产生“暂停/完成”两条额外消息。Web 事件仍照常镜像。
     if payload.get("platform") == "feishu" and event.get("name") == "ask_user":
         return
-    if not show_tool_interactions:
+    if tool_display_mode != "all":
         return
     if feishu_tool_summary is not None and await feishu_tool_summary.handle_tool_event(event):
         return
@@ -55,6 +55,6 @@ async def _send_interaction_prompts(payload: dict, interactions: list[dict]) -> 
     return sent
 
 
-async def _im_display_preferences(user_id) -> tuple[bool, bool]:
+async def _im_display_preferences(user_id) -> tuple[str, bool]:
     from agent.interactions.preferences import im_display_preferences
     return await im_display_preferences(user_id)

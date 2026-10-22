@@ -146,7 +146,7 @@ async def test_im_cancel_persists_partial_assistant_message_for_followup(db, use
     monkeypatch.setattr("agent.im.dispatch.handle_im_command", lambda *_args, **_kwargs: _async_value(None))
     monkeypatch.setattr(
         "agent.im.dispatch._im_display_preferences",
-        lambda *_args: _async_value((False, False)),
+        lambda *_args: _async_value(("slow_only", False)),
     )
     monkeypatch.setattr("agent.im.dispatch.bind_im_context", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("agent.im.dispatch.remember_im_reach", lambda *_args: _async_value(None))

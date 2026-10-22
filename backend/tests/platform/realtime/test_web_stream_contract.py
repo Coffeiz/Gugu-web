@@ -91,7 +91,7 @@ async def test_stream_persists_user_message_then_forwards_background_sse(monkeyp
     async def claim_attachments(*_args, **_kwargs): return None
     async def bind_pending(*_args, **_kwargs): return None
     async def publish_append(*_args, **_kwargs): return None
-    monkeypatch.setattr(stream_module.chat_attach, "resolve_for_message", resolve_attachments)
+    monkeypatch.setattr(stream_module, "resolve_for_message", resolve_attachments)
     monkeypatch.setattr(stream_module.chat_attach, "claim_attachments", claim_attachments)
     monkeypatch.setattr(references, "build_reference_context", reference_context)
     monkeypatch.setattr(conversation_pending_queue, "bind_pending_queue", bind_pending)

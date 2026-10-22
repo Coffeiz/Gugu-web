@@ -219,7 +219,7 @@ async def test_trim_session_messages_cleans_attachment_storage(db, user_a, monke
     from app.services.storage import LocalStorageBackend
 
     storage = LocalStorageBackend(tmp_path)
-    monkeypatch.setattr(chat_attach, "get_storage", lambda: storage)
+    monkeypatch.setattr("app.services.storage.get_storage", lambda: storage)
     monkeypatch.setattr("app.services.storage.get_storage", lambda: storage)
 
     session = ConversationSession(user_id=user_a.id, title="私聊", source="qq")
@@ -260,7 +260,7 @@ async def test_session_eviction_cleans_attachment_storage(db, user_a, monkeypatc
     from app.services.storage import LocalStorageBackend
 
     storage = LocalStorageBackend(tmp_path)
-    monkeypatch.setattr(chat_attach, "get_storage", lambda: storage)
+    monkeypatch.setattr("app.services.storage.get_storage", lambda: storage)
     monkeypatch.setattr("app.services.storage.get_storage", lambda: storage)
 
     oldest = ConversationSession(

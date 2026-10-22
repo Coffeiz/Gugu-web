@@ -286,14 +286,21 @@ def _qq_msg_id_invalid(exc: Exception) -> bool:
     """QQ 被动回复窗口过期或 msg_id 越权时，允许降级为主动消息。"""
     body = getattr(exc, "body", None)
     if isinstance(body, dict):
-        if body.get("code") in (40034024, 40034031) or body.get("err_code") in (40034024, 40034031):
+        expired_codes = (40034005, 40034024, 40034031)
+        if body.get("code") in expired_codes or body.get("err_code") in expired_codes:
             return True
         message = str(body.get("message") or "")
-        return "msg_id无效或越权" in message or "msgid已经过期" in message
+        return (
+            "回复消息msg_id已过期" in message
+            or "msg_id无效或越权" in message
+            or "msgid已经过期" in message
+        )
     text = str(body) if body is not None else str(exc)
     return (
-        "40034024" in text
+        "40034005" in text
+        or "40034024" in text
         or "40034031" in text
+        or "回复消息msg_id已过期" in text
         or "msg_id无效或越权" in text
         or "msgid已经过期" in text
     )

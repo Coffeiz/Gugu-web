@@ -9,6 +9,14 @@ from sqlalchemy import select
 from app.models import UserPreferences
 
 
+IM_TOOL_DISPLAY_MODES = frozenset({"off", "all", "slow_only"})
+
+
+def normalize_im_tool_display_mode(value: object) -> str:
+    """规范化三档 IM 工具展示模式；无效值采用默认的全部展示。"""
+    return value if isinstance(value, str) and value in IM_TOOL_DISPLAY_MODES else "all"
+
+
 async def read_user_preference_data(db, user_id) -> dict:
     data_json = await db.scalar(
         select(UserPreferences.data_json).where(UserPreferences.user_id == user_id)

@@ -272,8 +272,11 @@ async def send_qq_stream_by_round(
         diag_log("agent.im.qq_stream_transport", transport_error)
         if isinstance(transport_error, QQStreamFinalizationError):
             raise transport_error
+    # 错误终态由 dispatch_finalization 作为普通消息发送。若把 response.text
+    # 也交给流式 sender，终态错误会先进入流，再由失败收尾路径发送第二次。
+    stream_final_text = "" if response.errored else last_text
     try:
-        stream_sent, last_text = await sender.finish_response(last_text)
+        stream_sent, last_text = await sender.finish_response(stream_final_text)
     except QQStreamFinalizationError:
         # 可见前缀不代表流已关闭；不能回退后把该 Run 标记为成功送达。
         raise

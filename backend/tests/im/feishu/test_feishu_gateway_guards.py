@@ -13,7 +13,7 @@ class _InlineRunner:
 
 def _make_handler(*args, **kwargs):
     return events._make_on_message(
-        *args[:3], events._EventServices(_InlineRunner(), messages._do_send, messages._do_react),
+        *args[:3], events._EventServices(_InlineRunner(), messages._do_send),
         *args[3:], **kwargs,
     )
 
@@ -68,7 +68,6 @@ def test_feishu_resolves_mention_placeholder_using_event_display_name():
 def test_feishu_group_bot_mention_is_normalized_before_slash_command(monkeypatch):
     produced: list[dict] = []
     monkeypatch.setattr(events.R, "produce_sync", lambda _stream, payload: produced.append(payload))
-    monkeypatch.setattr(messages, "_do_react", lambda *_args, **_kwargs: True)
 
     from agent import router
     from agent.runtime import runtime_state
@@ -146,7 +145,7 @@ def test_feishu_card_action_is_submitted_to_injected_gateway_runner(monkeypatch)
     )
 
     response = events._handle_card_action(
-        data, "owner-1", events._EventServices(Runner(), messages._do_send, messages._do_react), "bot-1"
+        data, "owner-1", events._EventServices(Runner(), messages._do_send), "bot-1"
     )
 
     assert response is not None
@@ -168,11 +167,7 @@ def test_feishu_gateway_deduplicates_message_id(monkeypatch):
         _seen.add(payload["message_id"])
         produced.append(payload)
 
-    def fake_do_react(client, message_id, emoji_type):
-        return True
-
     monkeypatch.setattr(events.R, "produce_sync", fake_produce_sync)
-    monkeypatch.setattr(messages, "_do_react", fake_do_react)
 
     from agent import router
     from agent.runtime import runtime_state
@@ -201,7 +196,6 @@ def test_feishu_message_still_reaches_stream_when_shortcut_redis_fails(monkeypat
         raise RuntimeError("redis unavailable")
 
     monkeypatch.setattr(events.R, "produce_sync", fake_produce_sync)
-    monkeypatch.setattr(messages, "_do_react", lambda *_args, **_kwargs: True)
     monkeypatch.setattr("agent.runtime.runtime_state.get_state_sync", fail_state)
 
     handler = _make_handler("bot-1", "user-1", object(), expected_app_id="cli_expected")

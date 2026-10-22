@@ -79,7 +79,7 @@ async def finalize_im_dispatch(
         await finalize_im_response(platform, puid, True, "")
         return response
 
-    # 工具状态消息仍受 show_tool_interactions 控制；交互提示是恢复 Runner 所必需
+    # 工具状态消息仍受工具展示模式控制；交互提示是恢复 Runner 所必需
     # 的用户输入，不能因关闭工具状态展示而被吞掉。
     if response.interactions:
         pending_interactions = [
@@ -100,8 +100,8 @@ async def finalize_im_dispatch(
     if platform in {"feishu", "qq"} and stream_sent:
         # CardKit 已经发送正文；附件仍由统一附件出口发送，避免文本重复。
         if platform == "qq" and response.errored:
-            # QQ token 流不承载 error 事件；部分正文已流出时仍需另发错误提示。
-            reply_text = stream_reply_text if await send_text(payload, stream_reply_text) else None
+            # QQ 流只收束已产生的正文；错误终态由普通消息出口发送一次。
+            reply_text = response.text if response.text and await send_text(payload, response.text) else None
         elif response.files:
             from agent.im.files import send_files
 
