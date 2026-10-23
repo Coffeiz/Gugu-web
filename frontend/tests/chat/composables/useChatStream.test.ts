@@ -35,110 +35,113 @@ function createOptions(messages: ChatMessage[], sessionId = ref<number | null>(4
   } as unknown as Parameters<typeof useChatStream>[0]
 }
 
-describe('useChatStream 停止 run', () => {
-  beforeEach(() => setActivePinia(createPinia()))
+
+function item(eventId: string, kind: string, sequence: number, extra: Record<string, unknown> = {}) {
+  return { eventId, kind, sequence, anchorMessageId: 42, timelineOrder: 42000000 + sequence,
+    runId: 'run-a', roundId: 'r1', text: '', createdAt: '2026-01-01T01:02:00Z', updatedAt: '2026-01-01T01:02:00Z', ...extra }
+}
+
+function sseResponse(events: object[]) {
+  return new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(events.map(event => `data: ${JSON.stringify(event)}\n\n`).join('')))
+      controller.close()
+    },
+  }))
+}
+
+describe('useChatStream 展示事件与生命周期', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.spyOn(agentApi, 'getRunMessages').mockRejectedValue(new Error('合成断网'))
+  })
   afterEach(() => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
   })
 
-  it('SSE owner run 与核心 run 不同时，持久化副本仍合并到实时回复气泡', async () => {
-    const options = createOptions([])
+
+  it('同一事件快照重复到达仍保持时间、位置，正文按版本替换而非累加', async () => {
+    const first = item('text-a', 'assistant', 1, { text: '已生成', roundId: 'r1' })
+    const tool = item('tool-a', 'tool', 2, { toolCallId: 'c1', toolName: 'shell', toolStatus: 'success' })
+    const options = createOptions(mapSessionMessageDelta({ timelineEvents: [first, tool] }, (() => { let id = 1; return () => id++ })(), role => ({ role })))
+    const before = options.messages.value.map(message => [message.id, message.time, message._timelineOrder])
     const stream = useChatStream(options)
-    const events = [
-      { type: 'round_start', run_id: 'owner-run', core_run_id: 'core-run', round_id: 'round-2' },
-      { type: 'token', run_id: 'owner-run', core_run_id: 'core-run', round_id: 'round-2', content: '实时回答正文' },
-      { type: 'done', run_id: 'owner-run', core_run_id: 'core-run' },
-    ]
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(new ReadableStream({
-      start(controller) {
-        controller.enqueue(new TextEncoder().encode(events.map(event => `data: ${JSON.stringify(event)}\n\n`).join('')))
-        controller.close()
-      },
-    }))))
+    vi.stubGlobal('fetch', vi.fn(async () => sseResponse([
+      { type: 'display_event', item: first }, { type: 'display_event', item: first },
+      { type: 'display_event', item: { ...first, text: '已生成完整正文', updatedAt: '2026-01-01T01:03:00Z' } },
+      { type: 'done' },
+    ])))
     await stream.resumeStream(42)
-    const persisted = mapSessionMessageDelta({ messages: [{ id: 91, role: 'assistant',
-      content: '已持久化回答正文', runId: 'core-run', roundId: 'round-2', createdAt: '' }],
-    timelineEvents: [], toolEvents: [] }, () => 200, role => ({ role: role === 'assistant' ? 'ai' : role }))
-    const merged = mergeSessionMessageDelta(options.messages.value, persisted)
-    expect(merged.filter(item => item.role === 'ai')).toHaveLength(1)
-    expect(merged.find(item => item.role === 'ai')).toMatchObject({
-      id: options.messages.value.find(item => item.role === 'ai')?.id,
-      dbId: 91, runId: 'core-run', roundId: 'round-2', text: '已持久化回答正文',
-    })
+    expect(options.messages.value.map(message => [message.id, message.time, message._timelineOrder])).toEqual(before)
+    expect(options.messages.value[0].text).toBe('已生成完整正文')
+    expect(options.messages.value).toHaveLength(2)
   })
 
-  it('同一工具调用从排队中更新为进行中且只保留一张卡片', async () => {
-    const options = createOptions([])
-    const stream = useChatStream(options)
-    let sseController!: ReadableStreamDefaultController<Uint8Array>
-    const body = new ReadableStream<Uint8Array>({
-      start(controller) { sseController = controller },
-    })
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(body)))
-
-    const consuming = stream.resumeStream(42)
-    const send = (value: object) => sseController.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(value)}\n\n`))
-    send({ type: 'tool_call', run_id: 'run-1', round_id: 'round-1', tool_call_id: 'call-1', name: 'shell', status: 'queued' })
-    await vi.waitFor(() => expect(options.messages.value[0]?.toolStatus).toBe('queued'))
-    send({ type: 'tool_call', run_id: 'run-1', round_id: 'round-1', tool_call_id: 'call-1', name: 'shell', status: 'running' })
-    await vi.waitFor(() => expect(options.messages.value[0]?.toolStatus).toBe('running'))
-    send({ type: 'tool_done', run_id: 'run-1', round_id: 'round-1', tool_call_id: 'call-1', name: 'shell', status: 'success' })
-    send({ type: 'done', run_id: 'run-1' })
-    sseController.close()
-    await consuming
-
-    expect(options.messages.value).toHaveLength(1)
-    expect(options.messages.value[0]?.toolStatus).toBe('success')
-  })
-
-  it('当前网页对话成功调用 present_file 时将文件交给该网页预览', async () => {
-    const options = createOptions([])
-    const onPresentFile = vi.fn()
-    options.onPresentFile = onPresentFile
-    const stream = useChatStream(options)
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(new ReadableStream({
-      start(controller) {
-        controller.enqueue(new TextEncoder().encode([
-          { type: 'tool_done', name: 'present_file', status: 'success', origin_client_id: CLIENT_ID, result: { ok: true, file_id: 17, name: '设计稿', ext: 'png' } },
-          { type: 'tool_done', name: 'present_file', status: 'success', origin_client_id: 'another-tab', result: { ok: true, file_id: 18, name: '其他标签页文件', ext: 'png' } },
-          { type: 'done', run_id: 'run-1' },
-        ].map(event => `data: ${JSON.stringify(event)}\n\n`).join('')))
-        controller.close()
-      },
-    }))))
-
-    await stream.resumeStream(42)
-
-    expect(onPresentFile).toHaveBeenCalledWith({ file_id: 17, name: '设计稿', ext: 'png' })
-    expect(onPresentFile).toHaveBeenCalledTimes(1)
-  })
-
-  it('不同回合复用相同 toolCallId 时仍分别更新各自的工具卡', async () => {
-    const options = createOptions([])
-    const stream = useChatStream(options)
-    let sseController!: ReadableStreamDefaultController<Uint8Array>
-    const body = new ReadableStream<Uint8Array>({ start(controller) { sseController = controller } })
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(body)))
-
-    const consuming = stream.resumeStream(42)
-    const send = (value: object) => sseController.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(value)}\n\n`))
-    send({ type: 'round_start', core_run_id: 'run-a', round_id: 'r1' })
-    send({ type: 'tool_call', core_run_id: 'run-a', round_id: 'r1', tool_call_id: 'call-1', name: 'search', status: 'running' })
-    send({ type: 'tool_done', core_run_id: 'run-a', round_id: 'r1', tool_call_id: 'call-1', name: 'search', status: 'success' })
-    send({ type: 'round_start', core_run_id: 'run-a', round_id: 'r2' })
-    send({ type: 'tool_call', core_run_id: 'run-a', round_id: 'r2', tool_call_id: 'call-1', name: 'search', status: 'running' })
-    send({ type: 'tool_done', core_run_id: 'run-a', round_id: 'r2', tool_call_id: 'call-1', name: 'search', status: 'error' })
-    send({ type: 'done', core_run_id: 'run-a' })
-    sseController.close()
-    await consuming
-
-    const tools = options.messages.value.filter(message => message.role === 'tool')
-    expect(tools).toHaveLength(2)
-    expect(tools.map(({ runId, roundId, toolStatus, _syncKey }) => ({ runId, roundId, toolStatus, _syncKey }))).toEqual([
-      { runId: 'run-a', roundId: 'r1', toolStatus: 'success', _syncKey: 'tool-call:["run-a","r1","call-1"]' },
-      { runId: 'run-a', roundId: 'r2', toolStatus: 'error', _syncKey: 'tool-call:["run-a","r2","call-1"]' },
+  it('完成通知按 run 接替历史，删除临时段并保留其他 run 和下一条用户消息', async () => {
+    const old = item('text-a', 'assistant', 1, { text: '临时内容' })
+    const saved = item('text-a', 'assistant', 1, { text: '最终内容' })
+    const options = createOptions([
+      { id: 1, role: 'user', text: '下一条消息', time: '10:00', _timelineOrder: 99000000 },
+      { id: 2, role: 'ai', text: '其他 run', runId: 'run-other', time: '09:00', _timelineOrder: 1 },
     ])
+    const history = vi.spyOn(agentApi, 'getRunMessages').mockResolvedValue({ timelineEvents: [saved] } as never)
+    vi.stubGlobal('fetch', vi.fn(async () => sseResponse([
+      { type: 'display_event', item: old },
+      { type: 'display_event', item: item('temporary', 'assistant', 2, { text: '临时多余段' }) },
+      { type: 'done' }, { type: 'done' },
+    ])))
+    await useChatStream(options).resumeStream(42)
+    expect(history).toHaveBeenCalledWith(42, 'run-a')
+    expect(options.messages.value.map(message => message.text)).toEqual(['其他 run', '最终内容', '下一条消息'])
+  })
+
+  it('并行工具各自更新同一事件，不重置首次时间和顺序', async () => {
+    const events = [
+      item('tool-a', 'tool', 1, { toolName: 'shell', toolCallId: 'a', toolStatus: 'running' }),
+      item('tool-b', 'tool', 2, { toolName: 'shell', toolCallId: 'b', toolStatus: 'running' }),
+      item('tool-b', 'tool', 2, { toolName: 'shell', toolCallId: 'b', toolStatus: 'success', toolDurationMs: 12 }),
+      item('tool-a', 'tool', 1, { toolName: 'shell', toolCallId: 'a', toolStatus: 'error', toolDurationMs: 20 }),
+    ]
+    const options = createOptions([])
+    vi.stubGlobal('fetch', vi.fn(async () => sseResponse([...events.map(item => ({ type: 'display_event', item })), { type: 'done' }])))
+    await useChatStream(options).resumeStream(42)
+    expect(options.messages.value.map(message => [message.toolCallId, message.toolStatus, message.toolDurationMs])).toEqual([['a', 'error', 20], ['b', 'success', 12]])
+  })
+
+  it('同一附件事件重复重放不产生第二张文件卡', async () => {
+    const file = item('file-a', 'assistant', 1, { files: [{ file_id: 19 }] })
+    const options = createOptions([])
+    vi.stubGlobal('fetch', vi.fn(async () => sseResponse([
+      { type: 'display_event', item: file }, { type: 'display_event', item: file }, { type: 'done' },
+    ])))
+    await useChatStream(options).resumeStream(42)
+    expect(options.messages.value).toHaveLength(1)
+    expect(options.messages.value[0].files).toEqual([{ file_id: 19 }])
+  })
+
+  it('网页 present_file 副作用仍仅交给发起标签页', async () => {
+    const options = createOptions([])
+    options.onPresentFile = vi.fn()
+    vi.stubGlobal('fetch', vi.fn(async () => sseResponse([
+      { type: 'tool_done', name: 'present_file', status: 'success', origin_client_id: CLIENT_ID, result: { ok: true, file_id: 17, name: '设计稿', ext: 'png' } },
+      { type: 'tool_done', name: 'present_file', status: 'success', origin_client_id: 'another-tab', result: { ok: true, file_id: 18, name: '其他文件', ext: 'png' } },
+      { type: 'done' },
+    ])))
+    await useChatStream(options).resumeStream(42)
+    expect(options.onPresentFile).toHaveBeenCalledOnce()
+    expect(options.onPresentFile).toHaveBeenCalledWith({ file_id: 17, name: '设计稿', ext: 'png' })
+  })
+
+  it('自动模式命令完成后刷新偏好，避免聊天开关与服务端设置脱节', async () => {
+    const options = createOptions([])
+    options.inputText.value = '/auto on'
+    options.onAutomaticModeCommand = vi.fn(async () => {})
+    vi.stubGlobal('fetch', vi.fn(async () => sseResponse([{ type: 'done' }])))
+
+    await useChatStream(options).send()
+
+    expect(options.onAutomaticModeCommand).toHaveBeenCalledOnce()
   })
 
   it('失败终态更新原用户消息且不伪造 assistant 错误消息', async () => {
@@ -194,7 +197,7 @@ describe('useChatStream 停止 run', () => {
     expect(controller?.signal.aborted).toBe(false)
 
     sseController.enqueue(new TextEncoder().encode(
-      'data: {"type":"tool_call","run_id":"run-current","tool_call_id":"call-current","name":"shell","status":"running"}\n\n'
+      'data: {"type":"round_start","run_id":"run-current","tool_call_id":"call-current","name":"shell","status":"running"}\n\n'
       + 'data: {"type":"done","run_id":"run-current","cancelled":true}\n\n',
     ))
     sseController.close()
@@ -239,7 +242,7 @@ describe('useChatStream 停止 run', () => {
 
     sseController.enqueue(new TextEncoder().encode(
       'data: {"type":"session_id","session_id":42,"user_message_id":73}\n\n'
-      + 'data: {"type":"tool_call","run_id":"run-current","tool_call_id":"call-current","name":"shell","status":"running"}\n\n'
+      + 'data: {"type":"round_start","run_id":"run-current","tool_call_id":"call-current","name":"shell","status":"running"}\n\n'
       + 'data: {"type":"done","cancelled":true,"user_message_id":73,"run_outcome":{"status":"interrupted","errorCode":"cancelled"}}\n\n',
     ))
     sseController.close()
@@ -289,7 +292,7 @@ describe('useChatStream 停止 run', () => {
     let notifyOldSessionIdProcessed!: () => void
     const toolCallStarted = new Promise<void>(resolve => { notifyToolCallStarted = resolve })
     const oldSessionIdProcessed = new Promise<void>(resolve => { notifyOldSessionIdProcessed = resolve })
-    options.scrollBottom = vi.fn(() => new Promise<void>(resolve => {
+    options.syncResumedHistory = vi.fn(() => new Promise<void>(resolve => {
       releaseToolCall = resolve
       notifyToolCallStarted()
     }))
@@ -304,7 +307,7 @@ describe('useChatStream 停止 run', () => {
     const oldRun = stream.resumeStream(42)
     const oldController = stream.abortCtrl.value
     streamControllers[0].enqueue(new TextEncoder().encode(
-      'data: {"type":"tool_call","run_id":"old-run","tool_call_id":"old-call","name":"shell","status":"running"}\n\n'
+      'data: {"type":"display_event","item":{"eventId":"old-event","kind":"tool","runId":"old-run","roundId":"r1","timelineOrder":1,"createdAt":"2026-01-01T01:00:00Z"},"run_id":"old-run","tool_call_id":"old-call","name":"shell","status":"running"}\n\n'
       + 'data: {"type":"session_id","session_id":42}\n\n',
     ))
     await toolCallStarted

@@ -5,12 +5,13 @@ import { accountBoundaryEpoch, getAccountBoundaryEpoch } from '@/utils/accountBo
 import type { ChatMessage, ChatSession, QueuedMessagePayload } from '../chatTypes'
 import type GuguChatComposer from '../GuguChatComposer.vue'
 import { effectiveTimezone } from '@/utils/userTimezone'
-import { createSessionMessageSynchronizer, mapSessionMessageDelta, sortSessionTimelineMessages } from './sessionMessageSync'
+import { createSessionMessageSynchronizer, mapSessionMessageDelta, mergeSessionMessageDelta, sortSessionTimelineMessages } from './sessionMessageSync'
 
 export type SessionLoadOutcome = 'loaded' | 'superseded' | 'unavailable' | 'failed'
 
 interface CachedSessionSnapshot {
   messages: ChatMessage[]
+  wasRunning: boolean
   ownerPlatformUserId: string | null
   isGroupSession: boolean
   pagination: { hasMore?: boolean; oldestId?: number | null }
@@ -55,6 +56,7 @@ export function useChatSessions(options: {
   drainPendingQueue: () => Promise<void>
   clearStatus: () => void
   setStatus: (item: { kind: 'text' | 'dots' | 'hide'; label?: string }) => void
+  thinkingItem: () => { kind: 'text' | 'dots' | 'hide'; label?: string }
   contextCompactingItem: () => { kind: 'text' | 'dots' | 'hide'; label?: string }
   onContentReset: () => void
   onCaptureBaseScrollH: () => void
@@ -71,7 +73,7 @@ export function useChatSessions(options: {
   const { messages, mkid, sessionId, sessions } = options
 
   // 切回近期会话时先显示内存快照，权威消息仍由后台接口刷新。只保留少量会话，
-  // 并排除一次性交互 token 与未完成流，避免恢复过期操作或把半条回复当成事实。
+  // 排除一次性交互 token；带稳定事件身份的流中消息也缓存，供 resumeStream 接续前恢复画面。
   const sessionSnapshots = new Map<number, CachedSessionSnapshot>()
   const snapshotTtlMs = 5 * 60_000
   const maxSessionSnapshots = 4
@@ -83,12 +85,13 @@ export function useChatSessions(options: {
     pagination: CachedSessionSnapshot['pagination'],
   ) {
     const stableMessages = items
-      .filter(message => !message.interaction && !message.streaming && (message.dbId != null || message._timelineOrder != null))
+      .filter(message => !message.interaction && (message.dbId != null || message._timelineOrder != null))
       .map(message => ({ ...message }))
     if (!stableMessages.length) return
     sessionSnapshots.delete(id)
     sessionSnapshots.set(id, {
       messages: stableMessages,
+      wasRunning: options.streaming.value,
       ownerPlatformUserId: options.ownerPlatformUserId.value,
       isGroupSession: options.isGroupSession.value,
       pagination: { ...pagination },
@@ -227,7 +230,8 @@ export function useChatSessions(options: {
       if (loadedSession && data.session?.goalStatus !== undefined) loadedSession.goalStatus = data.session.goalStatus
       options.ownerPlatformUserId.value = data.session?.ownerPlatformUserId ?? null
       options.isGroupSession.value = data.session?.chatType === 'group'
-      options.clearStatus()   // 切会话先清掉上个会话残留的状态指示（active 会话下面 resumeStream 会重置）
+      if (cachedSnapshot?.wasRunning) options.setStatus(options.thinkingItem())
+      else options.clearStatus()   // 切会话先清掉上个会话残留的状态指示
       // 历史首屏和增量刷新共用同一映射，防止同一持久化消息在不同加载路径获得不同身份键。
       const loadedTimelineMessages = mapSessionMessageDelta(data, mkid, options.resolveSpeaker)
       const loadedInteractions: ChatMessage[] = []
@@ -258,8 +262,13 @@ export function useChatSessions(options: {
         }
       } catch { /* 交互恢复失败不阻断历史会话加载 */ }
       if (viewGeneration !== options.getViewGeneration() || accountEpoch !== getAccountBoundaryEpoch()) return 'superseded'
+      // 切回时先展示缓存，服务端首屏只负责校准内容。按稳定事件 ID 合并，
+      // 避免历史请求返回时把缓存中的部分回复/工具卡片整体卸载后再由续流重建。
+      const restoredTimelineMessages = showingCachedSnapshot && cachedSnapshot
+        ? mergeSessionMessageDelta(cachedSnapshot.messages, loadedTimelineMessages)
+        : loadedTimelineMessages
       messages.value = sortSessionTimelineMessages([
-        ...loadedTimelineMessages,
+        ...restoredTimelineMessages,
         ...loadedInteractions,
       ])
       cacheSessionSnapshot(id, messages.value, data.pagination || {})
@@ -267,15 +276,14 @@ export function useChatSessions(options: {
       options.onContentReset(); options.resetSessionTurn()
       await nextTick()
       if (!showingCachedSnapshot) options.onCaptureBaseScrollH()   // 基线 = 切入会话的历史高度
-      // DB 持久化和 genstream.end() 不是同一个事务：生成刚完成时，接口可能短暂同时返回
-      // 「最后一条是完整 assistant」和 active=true。此时不能把已完成回复再次 resume，
-      // 否则 Redis 快照会被渲染成第二个生成气泡。只有最后一条可见消息不是完整 assistant
-      // 时，active 才代表真正尚未落库的中断生成。
-      const lastVisible = data.messages[data.messages.length - 1]
-      const staleActive = Boolean(
-        data.active && lastVisible?.role === 'assistant' && Boolean(lastVisible.content?.trim()),
-      )
-      const shouldResume = Boolean(data.active && !staleActive)
+      // 服务端活跃标记是续接的权威状态。历史中存在助手消息不能证明当前 run 已结束
+      // （例如 IM run 或多轮工具过程）；/stream 会按稳定事件 ID 重放，完成后由历史收尾。
+      // 本地缓存也保留切走前的运行态，覆盖活跃标记短暂缺失的窗口。
+      const cachedRunPending = Boolean(cachedSnapshot?.wasRunning || cachedSnapshot?.messages.some(message =>
+        message.streaming || (message.role === 'tool'
+          && ['queued', 'running', 'waiting'].includes(message.toolStatus || '')),
+      ))
+      const shouldResume = Boolean(data.active || cachedRunPending)
       // 基线整理是持久状态：刷新或切回会话时 SSE 已结束、没有可续看的流，
       // 从会话行状态恢复「正在整理上下文」提示，否则用户看到的就是静默卡死。
       if (!shouldResume && data.executionState === 'baseline_updating') {

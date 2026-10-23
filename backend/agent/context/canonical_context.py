@@ -19,7 +19,12 @@ def stable_json(value: Any) -> str:
 
 
 def digest(value: Any, *, length: int = 16) -> str:
-    return hashlib.sha256(stable_json(value).encode("utf-8")).hexdigest()[:length]
+    # 保持原 canonical JSON 字节契约，避免同时分配整份 JSON 字符串和 bytes。
+    encoder = json.JSONEncoder(ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    result = hashlib.sha256()
+    for chunk in encoder.iterencode(value):
+        result.update(chunk.encode("utf-8"))
+    return result.hexdigest()[:length]
 
 
 @dataclass(frozen=True)

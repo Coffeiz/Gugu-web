@@ -1117,7 +1117,11 @@ async def _post_snapshot(snapshot: dict[str, Any]) -> None:
 
             diag_log("agent.loopscope.final_status", finish_failure)
 
-    data = json.dumps(snapshot, ensure_ascii=False).encode("utf-8")
+    # 全量开发正文保持原样；序列化放在线程中，避免旁路抢占租约心跳事件循环。
+    def _encode_snapshot() -> bytes:
+        return json.dumps(snapshot, ensure_ascii=False).encode("utf-8")
+
+    data = await asyncio.to_thread(_encode_snapshot)
 
     def _send() -> None:
         req = urllib.request.Request(

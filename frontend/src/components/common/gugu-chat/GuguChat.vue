@@ -114,6 +114,7 @@
           :im-platforms="imPlatformOptions" :im-open="imOpen" :im-highlight="imHighlight"
           :bots-of="botsOf" :im-sessions-of="imSessionsOf"
           :web-sessions="webSessions" :session-id="sessionId"
+          :session-badges="webSessionBadges"
           :connect="connect" :connect-hint="connectHint" :connect-err="connectErr" :connecting="connecting"
           :telegram-token-dialog-open="telegramTokenDialogOpen"
           :telegram-connecting="telegramConnecting"
@@ -157,6 +158,8 @@ import { useChatAttachments } from './composables/useChatAttachments'
 import { useChatActions } from './composables/useChatActions'
 import { copyTextToClipboard } from './composables/copyTextToClipboard'
 import { useChatConversation } from './composables/useChatConversation'
+import { useWebSessionBadges } from './composables/useWebSessionBadges'
+import { useAuthStore } from '@/stores/auth'
 import { runChatNavigation } from './composables/chatNavigation'
 import { restoreStartupSession } from './composables/startupSessionRestore'
 import { useChatImConnect } from './composables/useChatImConnect'
@@ -430,6 +433,10 @@ const {
 const conversation = useChatConversation({
   composerRef, messageListRef, pendingAtt,
   refreshAfterTools, loadQuota: () => loadQuota(),
+  onAutomaticModeCommand: async () => {
+    const refreshed = await preferencesStore.refreshAutomaticModeEnabled()
+    if (refreshed) preferencesStore.notifyAutomaticModeChanged()
+  },
   playIncomingMessageSfx: () => playIncomingMessageSfx(),
   onContentReset, onCaptureBaseScrollH, onSyncSmallH,
   onQueuePersistenceError: () => showAppError(t('chatUi.pendingQueuePersistFailed')),
@@ -454,6 +461,12 @@ const {
   scrollBottom,
   animateGreeting,
 } = conversation
+
+const badgeAuth = useAuthStore()
+const webSessionBadges = useWebSessionBadges({
+  sessions, sessionId, visible: open,
+  accountId: computed(() => badgeAuth.user?.id ?? null),
+})
 
 // 业务空状态可以请求打开聊天并预填一条配置指令；只消费一次，绝不自动发送。
 watch(() => uiStore.pendingChatPrefill, async (prompt) => {
@@ -886,7 +899,7 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
 :deep(.chat-messages) {
   flex: 1; overflow-y: auto; overflow-x: hidden; position: relative;
 }
-.chat-main.is-expanded :deep(.chat-messages .msg-bubble) { max-width: 72%; font-size: 14px; }
+.chat-main.is-expanded :deep(.chat-messages .msg.ai .msg-bubble) { max-width: 90%; font-size: 14px; }
 .chat-main.is-expanded :deep(.chat-messages .msg-quoted) { max-width: 72%; font-size: 13.5px; }
 /* 虚拟列表占位容器：高度由 JS 撑出来（虚拟内容高度 + 顶部留白），撑出的空间给绝对定位的消息行腾地方 */
 :deep(.msg-virtual-spacer) { position: relative; width: 100%; }

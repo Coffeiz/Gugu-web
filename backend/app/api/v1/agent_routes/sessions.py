@@ -7,10 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import Text, and_, case, cast, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import defer, load_only
+from sqlalchemy.orm import defer
 
-from agent.context.display_timeline import merge_tool_timeline_items
-from agent.context.history import build_chat_tool_events
 from agent.im.models import replace_mention_ids
 from agent.llm import genstream
 from app.core.ownership import get_owned
@@ -88,6 +86,20 @@ async def list_sessions(
             if str(subject_id).isdigit()
         }
 
+    web_ids = [s.id for s, _ in sessions if not s.source or s.source == "web"]
+    running = await genstream.active_statuses([s.id for s, _ in sessions])
+    # 仅已完成、可见的正文推进未读版本；工具历史与空检查点不参与。
+    replies = dict((await db.execute(
+        select(ConversationMessage.session_id, func.max(ConversationMessage.id))
+        .where(ConversationMessage.session_id.in_(web_ids),
+               ConversationMessage.role == "assistant",
+               ConversationMessage.content_json.is_(None),
+               or_(ConversationMessage.content != "",
+                   and_(ConversationMessage.files.is_not(None),
+                        cast(ConversationMessage.files, Text).notin_(["[]", "null"]))))
+        .group_by(ConversationMessage.session_id)
+    )).all()) if web_ids else {}
+
     return [
         {
             "id": s.id,
@@ -101,6 +113,9 @@ async def list_sessions(
             "filesystemAuthorizationEnabled": filesystem_auth_enabled,
             "updatedAt": iso_utc(s.updated_at),
             "createdAt": iso_utc(s.created_at),
+            "isRunning": running.get(s.id),
+            **({"lastAssistantId": replies.get(s.id, 0)}
+               if s.id in web_ids else {}),
         }
         for s, workspace_name in sessions
     ]
@@ -215,13 +230,14 @@ async def get_session_messages(
     limit: int = 50,
     before_id: Optional[int] = None,
     after_id: Optional[int] = None,
+    run_id: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     session = await get_owned(db, ConversationSession, session_id, current_user.id)
     if not session:
         raise HTTPException(404, "对话不存在")
-    # 兼容旧展示时间线：媒体块只用于模型输入，不随聊天气泡历史重复传输。
+    # 媒体块只用于模型输入，不随聊天气泡历史重复传输。
     from agent.media.images import strip_image_for_history
 
     # 刷新/重新进入会话时顺便收口 worker 重启留下的 running 状态，避免
@@ -233,14 +249,24 @@ async def get_session_messages(
     # 再读取整个会话的工具记录；工具密集的会话首屏仍会传输完整工具时间线。
     row_filters = (
         ConversationMessage.session_id == session_id,
-        ConversationMessage.role != "summary",  # 摘要注入 system prompt，不进入聊天时间线
+        ConversationMessage.role != "summary",  # 摘要仅用于模型上下文
+        or_(ConversationMessage.content_json.is_(None),
+            and_(ConversationMessage.display_timeline.is_not(None),
+                 cast(ConversationMessage.display_timeline, Text) != "null")),
     )
     # 历史上 display_timeline 可能含视频帧 Base64。先延迟这个列，再用数据库侧
     # 尺寸门槛投影正常时间线；超大旧记录走正文消息回退，避免把百 MB JSON 拉进
     # Python 后才清理媒体。新写入路径已在持久化前清理媒体块。
-    statement = select(ConversationMessage).options(
+    statement = select(
+        ConversationMessage,
+        ConversationMessage.content_json.is_(None).label("is_display_body"),
+    ).options(
         defer(ConversationMessage.display_timeline),
+        defer(ConversationMessage.content_json),
     ).where(*row_filters)
+    if run_id is not None:
+        statement = statement.where(or_(ConversationMessage.run_id == run_id,
+            ConversationMessage.display_timeline[0]["runId"].as_string() == run_id))
     if before_id is not None:
         statement = statement.where(ConversationMessage.id < before_id).order_by(
             desc(ConversationMessage.id)
@@ -253,28 +279,29 @@ async def get_session_messages(
         statement = statement.order_by(desc(ConversationMessage.id))
     statement = statement.limit(limit)
     res = await db.execute(statement)
-    page_rows = list(res.scalars().all())
+    fetched_rows = res.all()
+    page_rows = [row[0] for row in fetched_rows]
+    display_body_ids = {row[0].id for row in fetched_rows if row.is_display_body}
     # 所有方向都返回时间正序，分页游标覆盖本页实际读取的所有记录。
     if before_id is not None or after_id is None:
         page_rows.reverse()
 
-    # 工具中间记录参与分页游标，但沿用既有展示契约：只有正文行和 display_timeline
-    # 会作为普通消息/时间线消息返回。
-    msgs = [message for message in page_rows if message.content_json is None]
+    # canonical-only 上下文不参与展示分页；历史工具已经一次性迁入展示列。
+    msgs = page_rows
 
     display_timeline_by_id: dict[int, list | None] = {}
     oversized_timeline_ids: set[int] = set()
     message_ids = [message.id for message in msgs]
+    timeline_column = ConversationMessage.display_timeline
+    if db.get_bind().dialect.name == "postgresql":
+        stored_size = func.pg_column_size(timeline_column)
+    else:
+        stored_size = func.length(cast(timeline_column, Text))
+    timeline_projection = case(
+        (stored_size > 1024 * 1024, None),
+        else_=timeline_column,
+    )
     if message_ids:
-        timeline_column = ConversationMessage.display_timeline
-        if db.get_bind().dialect.name == "postgresql":
-            stored_size = func.pg_column_size(timeline_column)
-        else:
-            stored_size = func.length(cast(timeline_column, Text))
-        timeline_projection = case(
-            (stored_size > 1024 * 1024, None),
-            else_=timeline_column,
-        )
         timeline_rows = (await db.execute(
             select(
                 ConversationMessage.id,
@@ -308,54 +335,6 @@ async def get_session_messages(
         for message in msgs
         if message.platform_user_id and message.platform_user_name
     }
-    # 同一 run/round 中补齐窗口内工具记录的配对另一端，避免窗口边界刚好拆开
-    # tool_call/tool_result 时丢失工具名称；不再扫描整个会话的工具正文。
-    page_tool_rows = [row for row in page_rows if row.content_json is not None]
-    run_rounds = {
-        (str(row.run_id), str(row.round_id))
-        for row in page_tool_rows
-        if row.run_id and row.round_id
-    }
-    tool_rows = list(page_tool_rows)
-    if run_rounds:
-        companion_filters = [
-            and_(ConversationMessage.run_id == run_id, ConversationMessage.round_id == round_id)
-            for run_id, round_id in run_rounds
-        ]
-        companions = (await db.execute(
-            select(ConversationMessage).options(load_only(
-                ConversationMessage.id,
-                ConversationMessage.session_id,
-                ConversationMessage.content_json,
-                ConversationMessage.run_id,
-                ConversationMessage.round_id,
-                ConversationMessage.canonical_batch_id,
-                ConversationMessage.created_at,
-            )).where(
-                ConversationMessage.session_id == session_id,
-                ConversationMessage.content_json.is_not(None),
-                or_(*companion_filters),
-            ).order_by(ConversationMessage.id)
-        )).scalars().all()
-        seen_tool_ids = {row.id for row in tool_rows}
-        tool_rows.extend(row for row in companions if row.id not in seen_tool_ids)
-        tool_rows.sort(key=lambda row: row.id)
-    tool_events = build_chat_tool_events(tool_rows)
-    page_tool_ids = {row.id for row in page_tool_rows}
-    tool_events = [event for event in tool_events if int(event.get("timelineOrder") or 0) in page_tool_ids]
-    tool_events = [strip_image_for_history(event) for event in tool_events]
-    # 仅抑制已由 display_timeline 展示的同一工具调用，避免一条 timeline 工具
-    # 把本页其它 canonical 工具事件一并隐藏。
-    timeline_tool_keys = {
-        (str(item.get("runId") or ""), str(item.get("roundId") or ""), str(item.get("toolCallId") or ""))
-        for message in msgs
-        for item in (display_timeline_by_id.get(message.id) or [])
-        if isinstance(item, dict) and item.get("kind") == "tool" and item.get("toolCallId")
-    }
-    tool_events = [
-        event for event in tool_events
-        if (str(event.get("runId") or ""), str(event.get("roundId") or ""), str(event.get("toolCallId") or "")) not in timeline_tool_keys
-    ]
     for message in msgs:
         if message.platform_bot_user_id:
             mention_names[message.platform_bot_user_id] = "咕咕"
@@ -382,38 +361,7 @@ async def get_session_messages(
         return replace_mention_ids(text, mention_names)
 
     def timeline_items(message: ConversationMessage) -> list[dict]:
-        """兼容旧消息：把未写入时间线的 assistant 附件补成展示事件。"""
-        # 用户附件由 messages 展示；没有时间线的助手消息也保留在 messages。
-        # 只有已转入时间线的助手行需要补附件，否则会生成虚假的助手回声。
-        display_timeline = display_timeline_by_id.get(message.id)
-        if message.role != "assistant" or not display_timeline:
-            return []
-        items = merge_tool_timeline_items(display_timeline)
-        if message.files and not any(
-            isinstance(item, dict) and item.get("files") for item in items
-        ):
-            items.append({"kind": "assistant", "text": "", "files": message.files})
-        return items
-
-    def serialize_tool_event(event: dict) -> dict:
-        can_load_details = bool(event.get("runId") and event.get("roundId") and event.get("toolCallId"))
-        payload = {
-            key: value for key, value in event.items()
-            if not (can_load_details and key in {"toolInput", "toolResult"})
-        }
-        if can_load_details:
-            payload["detailsAvailable"] = "toolInput" in event or "toolResult" in event
-            payload["detailSource"] = {
-                "kind": "canonical",
-                "runId": event["runId"],
-                "roundId": event["roundId"],
-                "toolCallId": event["toolCallId"],
-            }
-        payload["timelineOrder"] = int(event.get("timelineOrder") or 0) * 1000
-        payload["createdAt"] = iso_utc(event["createdAt"])
-        if event.get("updatedAt"):
-            payload["updatedAt"] = iso_utc(event["updatedAt"])
-        return payload
+        return display_timeline_by_id.get(message.id) or []
 
     workspace = await get_owned(db, Workspace, session.workspace_id, current_user.id) if session.workspace_id else None
     session_context = session.session_context if isinstance(session.session_context, dict) else {}
@@ -451,7 +399,7 @@ async def get_session_messages(
         },
         "messages": [
             {"id": m.id, "role": m.role,
-             "timelineOrder": m.id * 1000,
+             "timelineOrder": m.id * 1_000_000,
              "content": render_content(m.content),
              "files": m.files or [],
              "references": m.references_json or [],
@@ -465,35 +413,28 @@ async def get_session_messages(
              **({"timelineOmitted": True} if m.id in oversized_timeline_ids else {}),
              "createdAt": iso_utc(m.created_at)}
             for m in msgs
-            if not (m.role == "assistant" and display_timeline_by_id.get(m.id))
+            if m.id in display_body_ids and display_timeline_by_id.get(m.id) is None
         ],
         "timelineEvents": [
             {**{key: value for key, value in strip_image_for_history(item).items()
                 if not (item.get("kind") == "tool" and key in {"toolInput", "toolResult"})},
              "id": f"{m.id}:{index}",
              "messageId": m.id,
-             "timelineOrder": item.get("timelineOrder") or m.id * 1000 + index + 1,
-             "createdAt": iso_utc(m.created_at)}
+             "timelineOrder": item["timelineOrder"],
+             "createdAt": item["createdAt"]}
              | ({"detailsAvailable": True, "detailSource": {"kind": "timeline", "messageId": m.id, "index": index}}
                 if item.get("kind") == "tool" and ("toolInput" in item or "toolResult" in item) else {})
             for m in msgs
             for index, item in enumerate(timeline_items(m))
-        ],
-        "toolEvents": [
-            serialize_tool_event(event)
-            for event in tool_events
         ],
     }
 
 @router.get("/sessions/{session_id}/tool-event-details")
 async def get_session_tool_event_details(
     session_id: int,
-    source: Literal["timeline", "canonical"],
+    source: Literal["timeline"],
     message_id: Optional[int] = None,
     timeline_index: Optional[int] = Query(default=None, ge=0),
-    run_id: Optional[str] = Query(default=None, min_length=1, max_length=128),
-    round_id: Optional[str] = Query(default=None, min_length=1, max_length=128),
-    tool_call_id: Optional[str] = Query(default=None, min_length=1, max_length=256),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -504,49 +445,24 @@ async def get_session_tool_event_details(
     if not session:
         raise HTTPException(404, "对话不存在")
 
-    if source == "timeline":
-        if message_id is None or timeline_index is None or any((run_id, round_id, tool_call_id)):
-            raise HTTPException(400, "工具事件标识无效")
-        timeline_column = ConversationMessage.display_timeline
-        if db.get_bind().dialect.name == "postgresql":
-            stored_size = func.pg_column_size(timeline_column)
-        else:
-            stored_size = func.length(cast(timeline_column, Text))
-        timeline_projection = case((stored_size > 1024 * 1024, None), else_=timeline_column)
-        row = (await db.execute(
-            select(timeline_projection).where(
-                ConversationMessage.id == message_id,
-                ConversationMessage.session_id == session_id,
-                ConversationMessage.content_json.is_(None),
-            )
-        )).scalar_one_or_none()
-        items = merge_tool_timeline_items(row) if isinstance(row, list) else []
-        if timeline_index >= len(items) or items[timeline_index].get("kind") != "tool":
-            raise HTTPException(404, "工具事件不存在")
-        event = items[timeline_index]
-        return strip_image_for_history({key: event[key] for key in ("toolInput", "toolResult") if key in event})
-
-    if not run_id or not round_id or not tool_call_id or message_id is not None or timeline_index is not None:
+    if message_id is None or timeline_index is None:
         raise HTTPException(400, "工具事件标识无效")
-    rows = (await db.execute(
-        select(ConversationMessage).options(load_only(
-            ConversationMessage.id,
-            ConversationMessage.session_id,
-            ConversationMessage.content_json,
-            ConversationMessage.run_id,
-            ConversationMessage.round_id,
-            ConversationMessage.canonical_batch_id,
-            ConversationMessage.created_at,
-        )).where(
+    timeline_column = ConversationMessage.display_timeline
+    if db.get_bind().dialect.name == "postgresql":
+        stored_size = func.pg_column_size(timeline_column)
+    else:
+        stored_size = func.length(cast(timeline_column, Text))
+    timeline_projection = case((stored_size > 1024 * 1024, None), else_=timeline_column)
+    row = (await db.execute(
+        select(timeline_projection).where(
+            ConversationMessage.id == message_id,
             ConversationMessage.session_id == session_id,
-            ConversationMessage.content_json.is_not(None),
-            ConversationMessage.run_id == run_id,
-            ConversationMessage.round_id == round_id,
-        ).order_by(ConversationMessage.id)
-    )).scalars().all()
-    event = next((item for item in build_chat_tool_events(rows) if item.get("toolCallId") == tool_call_id), None)
-    if event is None:
+        )
+    )).scalar_one_or_none()
+    items = row if isinstance(row, list) else []
+    if timeline_index >= len(items) or items[timeline_index].get("kind") != "tool":
         raise HTTPException(404, "工具事件不存在")
+    event = items[timeline_index]
     return strip_image_for_history({key: event[key] for key in ("toolInput", "toolResult") if key in event})
 
 @router.get("/messages/{message_id}")

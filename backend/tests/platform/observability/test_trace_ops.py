@@ -20,6 +20,41 @@ from app.core import opsmetrics
 
 
 @pytest.mark.asyncio
+async def test_snapshot_encoding_does_not_block_event_loop_or_drop_body(monkeypatch):
+    """大正文快照编码期间事件循环仍可调度，提交正文与输入保持一致。"""
+    import threading
+
+    entered = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    payload = {"id": "synthetic-run", "ended_at": None, "input": "合成完整正文" * 100}
+    encode = json.dumps
+    received = []
+
+    def slow_encode(value, **kwargs):
+        if value is payload:
+            entered.set()
+            release.wait(timeout=2)
+            finished.set()
+        return encode(value, **kwargs)
+
+    def open_request(request, **_kwargs):
+        received.append(json.loads(request.data))
+        return nullcontext(SimpleNamespace(read=lambda _size: b"ok"))
+
+    monkeypatch.setattr(trace_state.json, "dumps", slow_encode)
+    monkeypatch.setattr(trace_state.urllib.request, "urlopen", open_request)
+    task = asyncio.create_task(trace_state._post_snapshot(payload))
+    try:
+        assert await asyncio.to_thread(entered.wait, 1)
+        assert not finished.is_set()
+    finally:
+        release.set()
+        await task
+    assert received == [payload]
+
+
+@pytest.mark.asyncio
 async def test_terminal_snapshot_retries_transient_collector_failure(monkeypatch):
     """Collector 短暂不可用后终态仍须送达，不能永远停留在 running。"""
     attempts = []

@@ -463,7 +463,7 @@ defineExpose({
   flex: 1; overflow-y: auto; overflow-x: hidden; position: relative;
 }
 :deep(.chat-messages.is-session-settling:not(.is-cache-visible)) { visibility: hidden; }
-.chat-main.is-expanded :deep(.chat-messages .msg-bubble) { max-width: 72%; font-size: 14px; }
+.chat-main.is-expanded :deep(.chat-messages .msg.ai .msg-bubble) { max-width: 90%; font-size: 14px; }
 .chat-main.is-expanded :deep(.chat-messages .msg-quoted) { max-width: 72%; font-size: 13.5px; }
 :deep(.msg-virtual-spacer) { position: relative; width: 100%; }
 :deep(.msg-virtual-row) { position: absolute; top: 0; left: 0; width: 100%; box-sizing: border-box; padding: 0 13px 8px; }

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
 import type { ChatMessage } from '@/components/common/gugu-chat/chatTypes'
 import { agentApi } from '@/services/api'
-import { createSessionMessageSynchronizer, ensureSessionMessageLoaded, findLatestPersistedAssistant, mapSessionMessageDelta, mergeSessionMessageDelta } from '@/components/common/gugu-chat/composables/sessionMessageSync'
+import { createSessionMessageSynchronizer, ensureSessionMessageLoaded, mapSessionMessageDelta, mergeSessionMessageDelta, replaceRunHistory } from '@/components/common/gugu-chat/composables/sessionMessageSync'
 
 vi.mock('@/services/api', () => ({ agentApi: { getMessages: vi.fn(), getMessagesBefore: vi.fn() } }))
 
@@ -37,146 +37,32 @@ describe('mergeSessionMessageDelta', () => {
     expect(merged).toEqual([ephemeral, message(2, 'message:2', 'saved')])
   })
 
-  it('reconciles a recovered timeline reply with its later incremental event', () => {
-    const data = {
-      messages: [],
-      timelineEvents: [{ id: '250810:0', messageId: 250810, kind: 'assistant', text: 'persisted final reply',
-        runId: 'run-current', roundId: 'round-current',
-        createdAt: '2026-10-15T03:17:00Z', timelineOrder: 250810000 }],
-    }
-    const recovered = findLatestPersistedAssistant(data, 'run-current')
-    expect(recovered?.syncKey).toBe('assistant-round:run-current:round-current')
 
-    const current: ChatMessage[] = [{
-      id: 1, dbId: 250810, role: 'ai', text: recovered!.text, time: '',
-      _syncKey: recovered!.syncKey,
-    }]
-    const incoming = mapSessionMessageDelta(data, () => 2, role => ({ role }))
-    const merged = mergeSessionMessageDelta(current, incoming)
-
-    expect(merged).toHaveLength(1)
-    expect(merged[0]).toMatchObject({ id: 1, dbId: 250810, text: 'persisted final reply' })
+  it('展示身份只由 eventId 决定，相同正文不同事件不会合并', () => {
+    const events = ['a', 'b'].map(eventId => ({ eventId, kind: 'assistant', text: '收到', runId: 'run-a', roundId: 'r1', createdAt: '2026-01-01T01:00:00Z' }))
+    const loaded = mapSessionMessageDelta({ timelineEvents: events }, (() => { let id = 1; return () => id++ })(), role => ({ role }))
+    expect(loaded.map(message => message._syncKey)).toEqual(['event:a', 'event:b'])
+    expect(mergeSessionMessageDelta(loaded, loaded)).toHaveLength(2)
   })
 
-  it('实时回复与同一回合持久化副本合并为一个气泡并保留流式正文', () => {
-    const current: ChatMessage[] = [{
-      id: 1, role: 'ai', text: '实时回答正文', time: '', streaming: true,
-      runId: 'core-run-1', roundId: 'round-2', _syncKey: 'assistant-round:core-run-1:round-2',
-    }]
-    const incoming = mapSessionMessageDelta({
-      messages: [{ id: 91, role: 'assistant', content: '已持久化回答正文', createdAt: '2026-10-15T03:17:00Z',
-        runId: 'core-run-1', roundId: 'round-2' }],
-      timelineEvents: [], toolEvents: [],
-    }, () => 2, role => ({ role: role === 'assistant' ? 'ai' : role }))
-
-    const merged = mergeSessionMessageDelta(current, incoming)
-    expect(merged).toHaveLength(1)
-    expect(merged[0]).toMatchObject({
-      id: 1, dbId: 91, text: '实时回答正文', streaming: true,
-      _syncKey: 'assistant-round:core-run-1:round-2',
-    })
+  it('迟到的旧检查点不能覆盖较新的实时事件', () => {
+    const current = [{ ...message(1, 'event:a', '新正文'), _updatedAt: '2026-01-01T01:02:00Z' }]
+    const incoming = [{ ...message(2, 'event:a', '旧正文'), _updatedAt: '2026-01-01T01:01:00Z' }]
+    expect(mergeSessionMessageDelta(current, incoming)[0].text).toBe('新正文')
   })
 
-  it('持久化的正文和时间线事件使用相同的回合身份', () => {
-    const incoming = mapSessionMessageDelta({ messages: [
-      { id: 91, role: 'assistant', content: '已有回答', createdAt: '', runId: 'run-a', roundId: 'r1' },
-    ], timelineEvents: [{ id: 'timeline-91', kind: 'assistant', text: '已有回答', createdAt: '',
-      runId: 'run-a', roundId: 'r1' }] }, () => 2, role => ({ role: role === 'assistant' ? 'ai' : role }))
-    expect(incoming).toHaveLength(2)
-    expect(incoming[0]?._syncKey).toBe('assistant-round:run-a:r1')
-    expect(incoming[1]?._syncKey).toBe('assistant-round:run-a:r1')
+  it('run 交接幂等且不会删掉下一轮或无关消息', () => {
+    const current = [
+      { ...message(1, 'event:a', '实时'), runId: 'run-a', _timelineOrder: 1 },
+      { ...message(2, 'event:orphan', '临时'), runId: 'run-a', _timelineOrder: 2 },
+      { ...message(3, 'event:b', '下一轮'), runId: 'run-b', _timelineOrder: 3 },
+    ]
+    const incoming = [{ ...message(9, 'event:a', '历史'), runId: 'run-a', _timelineOrder: 1 }]
+    const once = replaceRunHistory(current, incoming, 'run-a')
+    expect(replaceRunHistory(once, incoming, 'run-a')).toEqual(once)
+    expect(once.map(message => [message.id, message.text])).toEqual([[1, '历史'], [3, '下一轮']])
   })
 
-  it('首屏历史与增量恢复对同一持久化事件生成相同身份键', () => {
-    const history = {
-      messages: [{ id: 91, role: 'assistant', content: '已有回答', createdAt: '', runId: 'run-a', roundId: 'r1' }],
-      timelineEvents: [{ id: 'timeline-91:0', messageId: 91, kind: 'assistant', text: '已有回答',
-        createdAt: '', runId: 'run-a', roundId: 'r1' }],
-      toolEvents: [{ id: 'tool:call-1', toolCallId: 'call-1', runId: 'run-a', roundId: 'r1', createdAt: '' }],
-    }
-    const initial = mapSessionMessageDelta(history, () => 1, role => ({ role: role === 'assistant' ? 'ai' : role }))
-    const refreshed = mapSessionMessageDelta(history, () => 2, role => ({ role: role === 'assistant' ? 'ai' : role }))
-
-    expect(initial.map(item => item._syncKey)).toEqual(refreshed.map(item => item._syncKey))
-    expect(initial.map(item => item._syncKey)).toEqual([
-      'assistant-round:run-a:r1', 'assistant-round:run-a:r1', 'tool-call:["run-a","r1","call-1"]',
-    ])
-  })
-
-  it('历史加载后恢复 SSE，再增量刷新同一回复仍只有一个气泡', () => {
-    const history = {
-      messages: [{ id: 91, role: 'assistant', content: '已完成的回复', createdAt: '2026-10-15T03:17:00Z',
-        runId: 'run-a', roundId: 'r1' }],
-      timelineEvents: [], toolEvents: [],
-    }
-    const resolveSpeaker = (role: string) => ({ role: role === 'assistant' ? 'ai' : role })
-    const loaded = mapSessionMessageDelta(history, () => 1, resolveSpeaker)
-    const recovered = findLatestPersistedAssistant(history, 'run-a')
-    expect(recovered).not.toBeNull()
-
-    const afterStreamRecovery = mergeSessionMessageDelta(loaded, [{
-      id: 2, dbId: recovered!.item.id, role: 'ai', text: recovered!.text, time: '',
-      runId: recovered!.item.runId, roundId: recovered!.item.roundId, _syncKey: recovered!.syncKey,
-    }])
-    const incremental = mapSessionMessageDelta(history, () => 3, resolveSpeaker)
-    const afterRefresh = mergeSessionMessageDelta(afterStreamRecovery, incremental)
-
-    expect(afterRefresh.filter(item => item.role === 'ai')).toHaveLength(1)
-    expect(afterRefresh[0]).toMatchObject({
-      id: 1, dbId: 91, text: '已完成的回复', _syncKey: 'assistant-round:run-a:r1',
-    })
-  })
-
-  it('工具调用键包含 run 和 round，旧事件则使用持久化事件 ID', () => {
-    const incoming = mapSessionMessageDelta({
-      messages: [], timelineEvents: [],
-      toolEvents: [
-        { id: 'event-a', toolCallId: 'call-1', runId: 'run-a', roundId: 'r1', createdAt: '' },
-        { id: 'event-b', toolCallId: 'call-1', runId: 'run-b', roundId: 'r1', createdAt: '' },
-        { id: 'legacy-a', toolCallId: 'call-1', createdAt: '' },
-        { id: 'legacy-b', toolCallId: 'call-1', createdAt: '' },
-      ],
-    }, () => 1, role => ({ role }))
-
-    expect(incoming.map(item => item._syncKey)).toEqual([
-      'tool-call:["run-a","r1","call-1"]', 'tool-call:["run-b","r1","call-1"]',
-      'tool:legacy-a', 'tool:legacy-b',
-    ])
-    expect(mergeSessionMessageDelta([], incoming)).toHaveLength(4)
-  })
-
-  it('保留不同 run/round 中正文相同的合法回答', () => {
-    const current: ChatMessage[] = [{
-      id: 1, role: 'ai', text: '收到', time: '', runId: 'run-1', roundId: 'round-1',
-      _syncKey: 'assistant-round:run-1:round-1',
-    }]
-    const incoming = mapSessionMessageDelta({
-      messages: [{ id: 92, role: 'assistant', content: '收到', createdAt: '2026-10-15T03:17:00Z',
-        runId: 'run-2', roundId: 'round-1' }],
-      timelineEvents: [], toolEvents: [],
-    }, () => 2, role => ({ role: role === 'assistant' ? 'ai' : role }))
-
-    expect(mergeSessionMessageDelta(current, incoming)).toHaveLength(2)
-  })
-
-  it('不按时间猜测归属：排除上一轮及队列下一轮的回复', () => {
-    const result = findLatestPersistedAssistant({
-      messages: [],
-      timelineEvents: [{ id: 'old', kind: 'assistant', text: 'old reply',
-        runId: 'run-old', createdAt: '2026-10-15T03:17:00Z' },
-        { id: 'next', kind: 'assistant', text: 'next reply', runId: 'run-next', createdAt: '2026-10-15T03:18:00Z' }],
-    }, 'run-current')
-
-    expect(result).toBeNull()
-  })
-
-  it('当前 run 的恢复不会选中时间更新的队列 run', () => {
-    const result = findLatestPersistedAssistant({ timelineEvents: [
-      { id: '302:0', kind: 'assistant', text: '当前回答', runId: 'run-current', createdAt: '2026-10-15T08:42:01Z' },
-      { id: '305:0', kind: 'assistant', text: '下一轮回答', runId: 'run-next', createdAt: '2026-10-15T08:42:06Z' },
-    ] }, 'run-current')
-    expect(result?.text).toBe('当前回答')
-  })
 })
 
 describe('session message refresh', () => {
@@ -185,14 +71,14 @@ describe('session message refresh', () => {
     vi.mocked(agentApi.getMessagesBefore).mockReset()
   })
 
-  it('maps persisted ids into stable keys and fetches only after the current cursor', async () => {
+  it('原位更新的检查点与自增消息增量一起校准', async () => {
     const sessionId = ref<number | null>(12)
     const messages = ref<ChatMessage[]>([message(1, 'message:40', 'already shown')])
     vi.mocked(agentApi.getMessages).mockResolvedValue({
       messages: [{ id: 40, role: 'user', content: 'already shown', createdAt: '2026-09-21T00:00:00Z',
         runOutcome: { status: 'interrupted', errorCode: 'cancelled' } },
         { id: 41, role: 'user', content: 'new', createdAt: '2026-09-21T00:01:00Z' }],
-      timelineEvents: [], toolEvents: [], pagination: { newestId: 41 },
+      timelineEvents: [], pagination: { newestId: 41 },
     } as any)
     const sync = createSessionMessageSynchronizer({
       messages, sessionId, mkid: (() => { let id = 10; return () => id++ })(),
@@ -233,7 +119,7 @@ describe('search result message loading', () => {
     }])
     vi.mocked(agentApi.getMessagesBefore).mockResolvedValue({
       messages: [{ id: 17, role: 'user', content: 'older hit', createdAt: '2026-09-01T00:00:00Z' }],
-      timelineEvents: [], toolEvents: [],
+      timelineEvents: [],
     } as any)
 
     const found = await ensureSessionMessageLoaded({
@@ -252,7 +138,7 @@ describe('search result message loading', () => {
 
   it('does not claim a search hit was loaded when it is outside the owned session page', async () => {
     const messages = ref<ChatMessage[]>([])
-    vi.mocked(agentApi.getMessagesBefore).mockResolvedValue({ messages: [], timelineEvents: [], toolEvents: [] } as any)
+    vi.mocked(agentApi.getMessagesBefore).mockResolvedValue({ messages: [], timelineEvents: [] } as any)
 
     const found = await ensureSessionMessageLoaded({
       sessionId: 12,
@@ -282,7 +168,7 @@ describe('search result message loading', () => {
     activeSession.value = 13
     finish({
       messages: [{ id: 17, role: 'user', content: 'stale session hit', createdAt: '2026-09-01T00:00:00Z' }],
-      timelineEvents: [], toolEvents: [],
+      timelineEvents: [],
     })
 
     await expect(loading).resolves.toBe(false)

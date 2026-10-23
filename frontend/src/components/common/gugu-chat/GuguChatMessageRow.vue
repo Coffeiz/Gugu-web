@@ -1,5 +1,11 @@
 <template>
-  <GuguChatToolBubble v-if="msg.role === 'tool'" :msg="msg" :session-id="sessionId" />
+  <GuguChatToolBubble
+    v-if="msg.role === 'tool'"
+    :msg="msg"
+    :session-id="sessionId"
+    :expanded="toolExpanded"
+    @update:expanded="$emit('toolExpandedChange', msg, $event)"
+  />
   <GuguChatInteraction v-else-if="msg.role === 'interaction'" :msg="msg" :answer-mode="interactionAnswerMode"
     @select="(selectedMsg, option) => $emit('interactionSelect', selectedMsg, option)"
     @text-submit="(selectedMsg, text) => $emit('interactionTextSubmit', selectedMsg, text)"
@@ -122,6 +128,7 @@ import { makeLazyThumbDirective } from './lazyThumbDirective'
 const props = defineProps<{
   msg: ChatMessage
   sessionId: number | null
+  toolExpanded: boolean
   isGroupSession: boolean
   interactionAnswerMode: InteractionAnswerMode
   copiedId: number | null
@@ -160,6 +167,7 @@ const emit = defineEmits<{
   secretSubmit: [msg: ChatMessage, values: Record<string, string>]
   secretCancel: [msg: ChatMessage]
   referenceClick: [reference: ChatReference]
+  toolExpandedChange: [msg: ChatMessage, expanded: boolean]
 }>()
 
 const vLazyThumb = makeLazyThumbDirective('card')

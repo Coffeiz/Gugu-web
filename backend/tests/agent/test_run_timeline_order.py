@@ -4,6 +4,7 @@ import pytest
 
 from app.api.v1 import agent as agent_api
 from app.models import ConversationMessage, ConversationSession
+from agent.context.display_timeline import stamp_display_item
 
 
 @pytest.mark.asyncio
@@ -28,12 +29,11 @@ async def test_late_cancelled_run_timeline_stays_before_continue_after_reload(db
         session_id=session.id,
         role="assistant",
         content="",
-        display_timeline=[{
+        display_timeline=[stamp_display_item({
             "kind": "tool",
             "toolCallId": "project-details-1",
             "toolName": "project_details",
-            "timelineOrder": first_message.id * 1000 + 1,
-        }],
+        }, sequence=1, user_message_id=first_message.id)],
     )
     db.add(late_timeline)
     await db.commit()
@@ -42,5 +42,5 @@ async def test_late_cancelled_run_timeline_stays_before_continue_after_reload(db
 
     tool_event = payload["timelineEvents"][0]
     assert late_timeline.id > continuation.id
-    assert tool_event["timelineOrder"] == first_message.id * 1000 + 1
-    assert tool_event["timelineOrder"] < continuation.id * 1000
+    assert tool_event["timelineOrder"] == first_message.id * 1_000_000 + 1
+    assert tool_event["timelineOrder"] < continuation.id * 1_000_000

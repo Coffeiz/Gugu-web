@@ -1,4 +1,19 @@
-"""工具展示时间线按调用身份更新，兼容历史重复状态项。"""
+"""展示事件写入时按调用身份更新。"""
+from uuid import uuid4
+
+from app.core.tz import now_utc
+
+
+def stamp_display_item(item: dict, *, sequence: int, user_message_id: int) -> dict:
+    """首次产生即固定身份、时间和位置；后续状态更新不改变这些字段。"""
+    timestamp = now_utc().isoformat()
+    item.setdefault("eventId", uuid4().hex)
+    item.setdefault("sequence", sequence)
+    item.setdefault("anchorMessageId", user_message_id)
+    item.setdefault("createdAt", timestamp)
+    item["updatedAt"] = timestamp
+    item["timelineOrder"] = item["anchorMessageId"] * 1_000_000 + item["sequence"]
+    return item
 
 
 def upsert_tool_timeline_item(items: list[dict], incoming: dict) -> None:
@@ -14,14 +29,18 @@ def upsert_tool_timeline_item(items: list[dict], incoming: dict) -> None:
                 if item.get("toolStatus") in {"success", "error", "skipped", "cancelled", "stopped"}:
                     if incoming.get("toolStatus") in {"queued", "running", "waiting"}:
                         return
+                metadata = {key: item[key] for key in ("eventId", "createdAt", "sequence", "anchorMessageId", "timelineOrder") if key in item}
                 item.update(incoming)
+                item.update(metadata)
                 return
     items.append(dict(incoming))
 
 
-def merge_tool_timeline_items(items: list[dict]) -> list[dict]:
-    """读取时合并旧记录，不修改数据库中的原始时间线。"""
-    merged: list[dict] = []
-    for item in items:
-        upsert_tool_timeline_item(merged, item)
-    return merged
+def finalize_display_timeline(items: list[dict]) -> list[dict]:
+    """只封存终态，不在收尾阶段补造事件身份或重排列表。"""
+    timeline = [dict(item) for item in items]
+    for item in timeline:
+        if item.get("kind") == "tool" and item.get("toolStatus") in {"queued", "running"}:
+            item["toolStatus"] = "stopped"
+            item["updatedAt"] = now_utc().isoformat()
+    return timeline

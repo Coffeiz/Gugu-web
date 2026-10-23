@@ -12,7 +12,7 @@
             class="exp-session-item" :class="{ active: s.id === sessionId }" @click="onLoadSession(s.id)">
             <span v-if="s.chatType === 'group'" class="exp-session-tag" :title="t('chatUi.groupChat')">{{ t('chatUi.group') }}</span>
             <div class="exp-session-copy">
-              <SessionTitleEdit :title="s.title" :on-rename="(t) => onRenameSession(s.id, t)" />
+              <SessionTitleEdit :title="s.title" :running="s.isRunning === true" :on-rename="(t) => onRenameSession(s.id, t)" />
               <span v-if="formatSessionTime(s.updatedAt)" class="exp-session-time">{{ formatSessionTime(s.updatedAt) }}</span>
             </div>
             <button class="exp-session-del" @click.stop="onDeleteSession(s.id)" :title="t('common.actions.delete')"><Icon name="action.delete" :size="12" /></button>

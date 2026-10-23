@@ -10,6 +10,8 @@ from fastapi import HTTPException
 
 from app.api.v1 import agent as agent_api
 from app.models import ConversationMessage, ConversationSession, UserMcpServer
+from app.db.migrations.chat_timeline import migrate_session_timeline
+from sqlalchemy import select
 
 
 @pytest.fixture(autouse=True)
@@ -19,6 +21,19 @@ def _api_env(monkeypatch):
 
     monkeypatch.setattr("agent.context.compress_conv.recover_orphaned_session", _noop)
     monkeypatch.setattr("app.api.v1.agent_routes.sessions.filesystem_authorization_enabled", lambda: False)
+
+
+async def _upgrade_timeline(db, session_id):
+    rows = list((await db.execute(select(ConversationMessage).where(
+        ConversationMessage.session_id == session_id).order_by(ConversationMessage.id))).scalars())
+    updates = migrate_session_timeline(rows)
+    for row in rows:
+        if row.id in updates:
+            row.display_timeline = updates[row.id]
+    from app.db.migrations.display_events import migrate_display_events
+    for message_id, timeline in migrate_display_events(rows).items():
+        next(row for row in rows if row.id == message_id).display_timeline = timeline
+    await db.commit()
 
 
 async def _mk_session(db, user) -> ConversationSession:
@@ -32,6 +47,11 @@ async def _mk_message(db, session_id: int, role: str, content: str, **kwargs) ->
     message = ConversationMessage(session_id=session_id, role=role, content=content, **kwargs)
     db.add(message)
     await db.flush()
+    if message.display_timeline:
+        from app.db.migrations.display_events import migrate_display_events
+        updates = migrate_display_events([message])
+        if message.id in updates:
+            message.display_timeline = updates[message.id]
     return message
 
 
@@ -45,6 +65,8 @@ async def test_get_session_messages_404_for_foreign_or_missing_session(db, user_
     assert missing.value.status_code == 404
 
 
+
+
 async def test_get_session_messages_preserves_run_identity_for_plain_replies(db, user_a):
     """普通正文也暴露已存 run 身份，浏览器恢复不能误取下一条队列 run。"""
     session = await _mk_session(db, user_a)
@@ -55,6 +77,17 @@ async def test_get_session_messages_preserves_run_identity_for_plain_replies(db,
     result = next(item for item in payload["messages"] if item["id"] == reply.id)
     assert result["runId"] == "run-current"
     assert result["roundId"] == "round-2"
+
+
+async def test_run_history_query_returns_only_target_run_after_commit(db, user_a):
+    session = await _mk_session(db, user_a)
+    for run_id in ('run-target', 'run-next'):
+        await _mk_message(db, session.id, 'assistant', '合成回复', run_id=run_id, display_timeline=[
+            {'kind': 'assistant', 'text': run_id, 'runId': run_id, 'roundId': 'r1'}])
+    await db.commit()
+    payload = await agent_api.get_session_messages(session.id, current_user=user_a, db=db, run_id='run-target')
+    assert [item['runId'] for item in payload['timelineEvents']] == ['run-target']
+    assert payload['timelineEvents'][0]['eventId']
 
 
 async def test_web_secret_link_and_submit_are_owner_scoped_for_group_session(db, user_a, user_b):
@@ -114,11 +147,11 @@ async def test_get_session_messages_window_filters_and_has_more(db, user_a):
 
     payload = await agent_api.get_session_messages(session.id, limit=2, current_user=user_a, db=db)
 
-    # limit 覆盖统一时间线记录，工具中间行也消耗窗口；摘要行被排除。
-    assert [item["content"] for item in payload["messages"]] == ["m3"]
+    # 分页只消耗展示行，canonical 上下文和摘要均不占窗口。
+    assert [item["content"] for item in payload["messages"]] == ["m2", "m3"]
     assert payload["pagination"] == {
         "limit": 2, "hasMore": True, "hasNewer": False,
-        "oldestId": payload["messages"][0]["id"], "newestId": payload["messages"][0]["id"] + 2,
+        "oldestId": payload["messages"][0]["id"], "newestId": payload["messages"][-1]["id"],
     }
     assert payload["session"]["id"] == session.id
     assert payload["active"] is False
@@ -167,9 +200,9 @@ async def test_get_session_messages_emits_timeline_and_suppresses_tool_events(db
     assert all(not (m["role"] == "assistant" and m["content"] == "") for m in payload["messages"])
     events = payload["timelineEvents"]
     assert [event["kind"] for event in events] == ["tool", "assistant", "assistant"]
-    assert events[0]["timelineOrder"] == timeline_message.id * 1000 + 1
+    assert events[0]["timelineOrder"] == timeline_message.id * 1_000_000 + 1
     assert events[2]["linkButtons"]["buttons"][0]["url"] == "https://example.com/docs"
-    assert payload["toolEvents"] == []       # timeline 已含工具项，抑制兼容 toolEvents
+    assert "toolEvents" not in payload  # 不再暴露第二套工具展示协议
 
 
 async def test_get_session_messages_replaces_legacy_timeline_media_payload(db, user_a):
@@ -192,13 +225,12 @@ async def test_get_session_messages_replaces_legacy_timeline_media_payload(db, u
     assert "toolResult" not in event
     details = await agent_api.get_session_tool_event_details(
         session.id, source="timeline", message_id=event["messageId"], timeline_index=0,
-        run_id=None, round_id=None, tool_call_id=None,
         current_user=user_a, db=db,
     )
     assert details["toolResult"] == [{"type": "text", "text": "[视频已查看]"}]
 
 
-async def test_get_session_messages_backfills_legacy_timeline_files(db, user_a):
+async def test_migrated_session_timeline_preserves_legacy_files(db, user_a):
     """旧版只写 assistant.files 的消息也要在时间线中恢复附件卡。"""
     session = await _mk_session(db, user_a)
     await _mk_message(db, session.id, "user", "发图")
@@ -211,6 +243,7 @@ async def test_get_session_messages_backfills_legacy_timeline_files(db, user_a):
         }])
     await db.commit()
 
+    await _upgrade_timeline(db, session.id)
     payload = await agent_api.get_session_messages(session.id, current_user=user_a, db=db)
 
     assert payload["timelineEvents"][-1]["files"][0]["attach_id"] == "attachment-1"
@@ -271,23 +304,24 @@ async def test_get_session_messages_pairs_tool_events_within_window(db, user_a):
     await _mk_message(db, session.id, "assistant", "抓到了")
     await db.commit()
 
+    await _upgrade_timeline(db, session.id)
     payload = await agent_api.get_session_messages(session.id, current_user=user_a, db=db)
 
-    # 正文只含 user/assistant 文本轮；工具气泡经配对进入 toolEvents，且只保留窗口内的
-    assert [item["content"] for item in payload["messages"]] == ["帮我抓个网页", "抓到了"]
-    assert len(payload["toolEvents"]) == 1
-    event = payload["toolEvents"][0]
+    # 升级后工具展示和详情均来自持久时间线，canonical 正文保留但不参与显示。
+    assert [item["content"] for item in payload["messages"]] == ["帮我抓个网页"]
+    assert len(payload["timelineEvents"]) == 2
+    event = payload["timelineEvents"][0]
     assert event["toolCallId"] == "call-1"
     assert event["detailsAvailable"] is True
     assert "toolInput" not in event and "toolResult" not in event
     details = await agent_api.get_session_tool_event_details(
-        session.id, source="canonical", run_id="run-1", round_id="round-1", tool_call_id="call-1",
-        message_id=None, timeline_index=None,
+        session.id, source="timeline", message_id=event["messageId"], timeline_index=0,
         current_user=user_a, db=db,
     )
     assert details["toolResult"] == [{"type": "text", "text": "[视频已查看]"}]
     # 配对后时间线位置取「结果所在消息」，恢复窗口时才不会把工具气泡排到结果之前
-    assert event["timelineOrder"] == result_message.id * 1000
+    assert event["timelineOrder"] < payload['timelineEvents'][1]['timelineOrder']
+    assert payload['timelineEvents'][1]['text'] == '抓到了'
 
 
 async def test_older_message_pages_walk_to_start_without_duplicates(db, user_a):
@@ -325,12 +359,13 @@ async def test_older_page_keeps_tools_between_last_body_and_next_page(db, user_a
     }])
     newer = await _mk_message(db, session.id, "assistant", "新页正文")
     await db.commit()
+    await _upgrade_timeline(db, session.id)
     payload = await agent_api.get_session_messages(
         session.id, limit=3, before_id=newer.id, current_user=user_a, db=db,
     )
     assert [item['content'] for item in payload['messages']] == ['旧页正文']
-    assert [event['toolName'] for event in payload['toolEvents']] == ['http_get']
-    assert payload['toolEvents'][0]['toolStatus'] == 'success'
+    assert [event['toolName'] for event in payload['timelineEvents']] == ['http_get']
+    assert payload['timelineEvents'][0]['toolStatus'] == 'success'
 
 
 async def test_tool_event_details_require_owned_session(db, user_a, user_b):

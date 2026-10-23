@@ -49,6 +49,7 @@ class AgentRequest:
     interaction_token: Optional[str] = None         # 仅由交互恢复入口消费，不进入模型上下文
     interaction_event_id: Optional[str] = None
     user_message_id: Optional[int] = None            # 本次触发消息的持久化 ID，用于 IM 失败终态回写
+    inbound_batch_key: Optional[str] = None         # Worker 固定的入站批次身份，不进入模型输入
 
 
 @dataclass

@@ -64,7 +64,7 @@ describe('会话加载代次', () => {
     const interactions = deferred<{ items: [] }>()
     const response = (content: string) => ({
       messages: [{ id: 1, role: 'user', content, createdAt: '2026-10-15T00:00:00Z' }],
-      timelineEvents: [], toolEvents: [], pagination: { newestId: 1 }, active: false,
+      timelineEvents: [], pagination: { newestId: 1 }, active: false,
     } as any)
     vi.mocked(agentApi.getMessages).mockImplementation(async (id) => response(`会话 ${id === '101' ? 'A' : 'B'}`))
     vi.mocked(agentApi.listSessionInteractions).mockImplementation((id) =>

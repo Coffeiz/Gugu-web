@@ -65,37 +65,9 @@ class InteractionRuntime:
             cancel_check=lambda: self.bindings.is_cancelled(self.session_id),
         )
         answer_status = self.bindings.classify_answer(answer)
-        if answer_status == "user_cancelled":
-            self.bindings.replace_tool_result(
-                self.messages, tool_call_id=pending.tool_call_id, result=answer,
-            )
-            yield InteractionEmission("event", self.bindings.pending_tool_signal(
-                "cancelled", answer, pending, verify=self.verify_mode,
-            ))
-            for frame in self.bindings.closing_frames(
-                self.cancel_close_text, next_round=self.next_round,
-            ):
-                yield InteractionEmission("raw", frame)
-            self.run_state.pending = None
-            yield InteractionEmission("action", "return")
-            return
-        if answer_status == "aborted":
-            yield InteractionEmission("event", self.bindings.pending_tool_signal(
-                "cancelled", None, pending, verify=self.verify_mode,
-            ))
-            yield InteractionEmission("raw", self._raw_event({"type": "_cancelled"}))
-            self.run_state.pending = None
-            yield InteractionEmission("action", "return")
-            return
-        if answer_status == "expired":
-            yield InteractionEmission("event", self.bindings.pending_tool_signal(
-                "error", None, pending, verify=self.verify_mode,
-            ))
-            yield InteractionEmission("raw", self._raw_event({
-                "type": "error", "detail": "这次交互已过期，请重新告诉我你的选择。",
-            }))
-            self.run_state.pending = None
-            yield InteractionEmission("action", "return")
+        if answer_status in {"user_cancelled", "aborted", "expired"}:
+            async for emission in self._terminate_pending(pending, answer, answer_status):
+                yield emission
             return
 
         replay = pending.replay
@@ -126,14 +98,15 @@ class InteractionRuntime:
             replay_payload = self.bindings.tool_result_payload(executed)
 
             if isinstance(replay_payload, dict) and replay_payload.get("_interaction") == "ask_user":
-                from app.services.interactions import create_agent_prompt
+                from app.services.interactions import create_tool_interaction
 
-                followup = await create_agent_prompt(
+                followup = await create_tool_interaction(
                     user_id=self.user_id,
                     session_id=self.session_id,
                     tool_call_id=pending.tool_call_id,
                     tool_name=replay["name"],
-                    payload=replay_payload,
+                    result=replay_payload,
+                    kind="ask_user",
                 )
                 if followup is None:
                     self.bindings.diag_log(
@@ -145,11 +118,8 @@ class InteractionRuntime:
                         "text": "确认后需要补充的信息无法建立，请重新发起操作。",
                     }
                 else:
-                    prompt, actions = followup
-                    schema = prompt.schema_json or {}
-                    secret_fields = list(schema.get("secret_fields") or [])
                     waiting_payload = json.dumps({
-                        "status": "waiting_input", "prompt_id": prompt.id,
+                        "status": "waiting_input", "prompt_id": followup["prompt_id"],
                     }, ensure_ascii=False)
                     self.bindings.replace_tool_result(
                         self.messages,
@@ -163,16 +133,9 @@ class InteractionRuntime:
                         "status": "waiting", "result": waiting_payload,
                     })
                     interaction_payload = {
+                        **followup,
                         "round_id": self.round_id,
                         "tool_call_id": pending.tool_call_id,
-                        "prompt_id": prompt.id,
-                        "kind": prompt.kind,
-                        "title": prompt.title,
-                        "body": prompt.body,
-                        "options": actions,
-                        "allow_text_input": bool(schema.get("allow_text_input", False)),
-                        "secret_fields": secret_fields,
-                        "expires_at": prompt.expires_at.isoformat(),
                     }
                     yield InteractionEmission("event", {
                         "type": "interaction_required", **interaction_payload,
@@ -182,32 +145,28 @@ class InteractionRuntime:
 
                     followup_answer = await wait_for_resolution(
                         user_id=self.user_id,
-                        prompt_id=prompt.id,
+                        prompt_id=followup["prompt_id"],
                         heartbeat=lambda: genstream.touch(self.session_id),
                         cancel_check=lambda: self.bindings.is_cancelled(self.session_id),
                     )
                     followup_status = self.bindings.classify_answer(followup_answer)
-                    if followup_status in {"user_cancelled", "aborted"}:
+                    if followup_status in {"user_cancelled", "aborted", "expired"}:
+                        expired = followup_status == "expired"
                         yield InteractionEmission("event", {
                             "type": "tool_done", "round_id": self.round_id,
                             "tool_call_id": pending.tool_call_id, "name": replay["name"],
                             "label": replay["label"], "verify": self.verify_mode,
-                            "status": "cancelled",
+                            "status": "error" if expired else "cancelled",
                         })
-                        yield InteractionEmission("raw", self._raw_event({"type": "_cancelled"}))
-                        self.run_state.pending = None
-                        yield InteractionEmission("action", "return")
-                        return
-                    if followup_status == "expired":
-                        yield InteractionEmission("event", {
-                            "type": "tool_done", "round_id": self.round_id,
-                            "tool_call_id": pending.tool_call_id, "name": replay["name"],
-                            "label": replay["label"], "verify": self.verify_mode,
-                            "status": "error",
-                        })
-                        yield InteractionEmission("raw", self._raw_event({
-                            "type": "error", "detail": "凭据输入已过期，请重新发起操作。",
-                        }))
+                        if expired:
+                            yield InteractionEmission("raw", self._raw_event({
+                                "type": "error", "detail": "凭据输入已过期，请重新发起操作。",
+                            }))
+                        else:
+                            yield InteractionEmission("raw", self._raw_event({"type": "_cancelled"}))
+                        reason = "前一项确认已过期" if expired else "用户取消了前一项确认"
+                        for emission in self._discard_queued_tool_interactions(reason):
+                            yield emission
                         self.run_state.pending = None
                         yield InteractionEmission("action", "return")
                         return
@@ -227,6 +186,8 @@ class InteractionRuntime:
                         ),
                     })
                     self.run_state.pending = None
+                    for emission in await self._activate_next_tool_interaction():
+                        yield emission
                     yield InteractionEmission("event", {
                         "type": "_new_round", "round_id": self.round_id,
                         "next_round": self.next_round,
@@ -251,6 +212,8 @@ class InteractionRuntime:
             if artifact:
                 yield InteractionEmission("artifact", artifact)
             self.run_state.pending = None
+            for emission in await self._activate_next_tool_interaction():
+                yield emission
             yield InteractionEmission("event", {
                 "type": "_new_round", "round_id": self.round_id,
                 "next_round": self.next_round,
@@ -272,6 +235,8 @@ class InteractionRuntime:
                 "type": "error", "detail": "这次确认状态已失效，请重新发起操作。",
             }))
             self.run_state.pending = None
+            for emission in self._discard_queued_tool_interactions("交互状态已失效"):
+                yield emission
             yield InteractionEmission("action", "return")
             return
 
@@ -282,11 +247,133 @@ class InteractionRuntime:
             "status": "success", "verify": self.verify_mode,
         })
         self.run_state.pending = None
+        for emission in await self._activate_next_tool_interaction():
+            yield emission
         yield InteractionEmission("event", {
             "type": "_new_round", "round_id": self.round_id,
             "next_round": self.next_round,
         })
         yield InteractionEmission("action", "continue")
+
+    async def _activate_next_tool_interaction(self) -> list[InteractionEmission]:
+        """上一个交互完成后再创建下一项提示，避免同时挂出多个等待门。"""
+        from agent.loop.models import PendingInteraction
+        from app.services.interactions import create_tool_interaction
+
+        emissions: list[InteractionEmission] = []
+        while self.run_state.pending_tool_interactions:
+            item = self.run_state.pending_tool_interactions.pop(0)
+            interaction = await create_tool_interaction(
+                user_id=self.user_id,
+                session_id=self.session_id,
+                tool_name=item["tool_name"],
+                tool_call_id=item["tool_call_id"],
+                result=item["result"],
+                kind=item["kind"],
+            )
+            if interaction is None:
+                result = json.dumps({
+                    "error": (
+                        "该工具需要用户交互，但系统未能创建交互请求；本次操作未继续。"
+                        "请在有效的 Web 或 IM 对话中重新发起。"
+                    ),
+                    "interaction_unavailable": True,
+                }, ensure_ascii=False)
+                self.bindings.replace_tool_result(
+                    self.messages, tool_call_id=item["tool_call_id"], result=result,
+                )
+                emissions.append(InteractionEmission("event", {
+                    "type": "tool_done", "round_id": item["round_id"],
+                    "tool_call_id": item["tool_call_id"], "name": item["tool_name"],
+                    "label": item["label"], "verify": item["verify"],
+                    "status": "error", "result": result,
+                }))
+                continue
+
+            self.run_state.pending = PendingInteraction(
+                interaction["prompt_id"], item["tool_call_id"], item["tool_name"],
+                ({
+                    "name": item["tool_name"], "label": item["label"],
+                    "target": item["target"], "input": item["input"],
+                } if item["kind"] == "confirmation" else None),
+            )
+            if item["kind"] == "ask_user":
+                waiting_result = json.dumps({
+                    "status": "waiting_input", "prompt_id": interaction["prompt_id"],
+                }, ensure_ascii=False)
+                self.bindings.replace_tool_result(
+                    self.messages, tool_call_id=item["tool_call_id"], result=waiting_result,
+                )
+                emissions.append(InteractionEmission("event", {
+                    "type": "tool_done", "round_id": item["round_id"],
+                    "tool_call_id": item["tool_call_id"], "name": item["tool_name"],
+                    "label": item["label"], "verify": item["verify"],
+                    "status": "waiting", "result": waiting_result,
+                }))
+            payload = {
+                **interaction,
+                "round_id": item["round_id"],
+                "tool_call_id": item["tool_call_id"],
+            }
+            emissions.append(InteractionEmission("event", {
+                "type": "interaction_required", **payload,
+            }))
+            if self.on_interaction is not None:
+                await self.on_interaction(payload)
+            break
+        return emissions
+
+    def _discard_queued_tool_interactions(self, reason: str) -> list[InteractionEmission]:
+        """结束尚未展示的确认，避免会话结束后留下永久 waiting 工具气泡。"""
+        emissions: list[InteractionEmission] = []
+        queued, self.run_state.pending_tool_interactions = self.run_state.pending_tool_interactions, []
+        for item in queued:
+            result = json.dumps({"status": "cancelled", "reason": reason}, ensure_ascii=False)
+            self.bindings.replace_tool_result(
+                self.messages, tool_call_id=item["tool_call_id"], result=result,
+            )
+            emissions.append(InteractionEmission("event", {
+                "type": "tool_done", "round_id": item["round_id"],
+                "tool_call_id": item["tool_call_id"], "name": item["tool_name"],
+                "label": item["label"], "verify": item["verify"],
+                "status": "cancelled", "result": result,
+            }))
+        return emissions
+
+    async def _terminate_pending(
+        self, pending: PendingInteraction, answer: Any, status: str,
+    ) -> AsyncGenerator[InteractionEmission, None]:
+        if status == "user_cancelled":
+            self.bindings.replace_tool_result(
+                self.messages, tool_call_id=pending.tool_call_id, result=answer,
+            )
+            yield InteractionEmission("event", self.bindings.pending_tool_signal(
+                "cancelled", answer, pending, verify=self.verify_mode,
+            ))
+            reason = "用户取消了前一项确认"
+        elif status == "aborted":
+            yield InteractionEmission("event", self.bindings.pending_tool_signal(
+                "cancelled", None, pending, verify=self.verify_mode,
+            ))
+            yield InteractionEmission("raw", self._raw_event({"type": "_cancelled"}))
+            reason = "当前任务已取消"
+        else:
+            yield InteractionEmission("event", self.bindings.pending_tool_signal(
+                "error", None, pending, verify=self.verify_mode,
+            ))
+            yield InteractionEmission("raw", self._raw_event({
+                "type": "error", "detail": "这次交互已过期，请重新告诉我你的选择。",
+            }))
+            reason = "前一项确认已过期"
+        for emission in self._discard_queued_tool_interactions(reason):
+            yield emission
+        if status == "user_cancelled":
+            for frame in self.bindings.closing_frames(
+                self.cancel_close_text, next_round=self.next_round,
+            ):
+                yield InteractionEmission("raw", frame)
+        self.run_state.pending = None
+        yield InteractionEmission("action", "return")
 
     @staticmethod
     def _raw_event(payload: dict[str, Any]) -> str:

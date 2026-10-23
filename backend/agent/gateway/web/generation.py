@@ -7,7 +7,6 @@ from app.core.config import get_settings
 from app.core.tz import set_ctx_tz
 from app.models import ConversationMessage, ConversationSession
 from agent.errors import describe_llm_error
-from agent.security import sanitize
 from agent.llm import genstream
 from agent.context import builder, dynamic_tail, loaders, session_snapshot, session_history, run_context, session_system
 from agent.conversation.session_metadata import generate_title, schedule_summary
@@ -178,7 +177,6 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
     canonical_reply = ""
     display_timeline = outcome.display_timeline_items
     tool_started_at: dict[str, float] = {}
-    active_segment: dict | None = None
     current_run_id = ""
     current_round_id = ""
     # ``input`` 是整个 run 多轮累计用量，供计费使用；``context_input`` 是
@@ -194,6 +192,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
     run_completed = False
     cancelled = False
     generation_failed = False
+    failure_event = None
     rag_context: dict | None = None
     stance_to_persist: str | None = None
     message_area = None
@@ -209,8 +208,9 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             "cache_write": outcome.cache_write,
         })
         used_tools[:] = [name for name in outcome.tool_names if name and not name.startswith("_")]
-        nonlocal compaction_applied
+        nonlocal compaction_applied, canonical_reply
         compaction_applied = outcome.compaction_applied
+        canonical_reply = outcome.text or next((item.get("text", "") for item in reversed(display_timeline) if item.get("text")), "")
 
     async def persist_interrupted_run() -> None:
         """保存中止前已完成的历史；不把当前未提交工具批次写成完整往返。"""
@@ -295,73 +295,13 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             state_session_factory=_sess._SessionLocal,
         )
 
-        # 跨轮去重（流式版的 _collect 去重）：MiniMax 多轮工具调用常把上一轮文本整段重述，
-        # 流式直接追加会重复显示（口语 ~ 叠成 ~~ 还会被 GFM 渲染成删除线）。这里按住本轮开头与
-        # 上一轮匹配的前缀，只吐真正新增的部分。
-        last_round = ""    # 上一轮模型产出的完整文本
-        round_buf  = ""    # 本轮累计（含被跳过的重复前缀），供下一轮比对
-        dedup      = False
-        displayed_segment_text = ""
-
-        async def emit_clean(text: str):
-            nonlocal full_reply, canonical_reply, round_buf, dedup, active_segment, displayed_segment_text
-            if not text:
-                return
-            if dedup:
-                round_buf += text
-                if len(round_buf) < len(last_round):
-                    if last_round.startswith(round_buf):
-                        return                  # 仍是上一轮前缀，继续观望、先不发
-                    out = round_buf             # 提前偏离 → 不是重述，整段发
-                else:
-                    # 达到/超过上一轮长度：完整匹配=重述，跳过重复部分；否则整段发
-                    out = round_buf[len(last_round):] if round_buf.startswith(last_round) else round_buf
-                dedup = False
-            else:
-                round_buf += text
-                out = text
-            out = sanitize.strip_disallowed_emoji(out)   # 出口兜底删白名单外 emoji（prompt 压不住）
-            if round_buf:
-                canonical_reply = sanitize.strip_disallowed_emoji(round_buf)
-            if active_segment is None:
-                candidate = display_timeline[-1] if display_timeline else None
-                if (
-                    candidate is None
-                    or candidate.get("kind") != "assistant"
-                    or candidate.get("files")
-                    or candidate.get("linkButtons")
-                ):
-                    candidate = {"kind": "assistant", "text": ""}
-                    display_timeline.append(candidate)
-                active_segment = candidate
-                active_segment["runId"] = current_run_id or None
-                active_segment["roundId"] = current_round_id or None
-                displayed_segment_text = ""
-            if out:
-                full_reply += out
-                displayed_segment_text += out
-                await _pub({"type": "token", "content": out})
-            active_segment["text"] = displayed_segment_text
-
         async def handle_agent_event(value: dict) -> None:
-            nonlocal active_segment, current_run_id, current_round_id, last_round
-            nonlocal round_buf, dedup, displayed_segment_text, cancelled, generation_failed
+            nonlocal current_run_id, current_round_id, cancelled, generation_failed, failure_event
             evt = dict(value)
             etype = evt.get("type")
             if etype == "round_start":
                 current_run_id = str(evt.get("run_id") or current_run_id)
                 current_round_id = str(evt.get("round_id") or current_round_id)
-                if active_segment:
-                    active_segment = None
-                    displayed_segment_text = ""
-            elif etype == "_new_round":
-                last_round = round_buf
-                round_buf = ""
-                dedup = bool(last_round)
-                if active_segment:
-                    active_segment["text"] = displayed_segment_text
-                active_segment = None
-                displayed_segment_text = ""
             elif etype == "tool_call":
                 call_id = str(evt.get("tool_call_id") or "")
                 if call_id and evt.get("status") != "queued":
@@ -382,20 +322,35 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                 cancelled = True
             elif etype == "error":
                 generation_failed = True
+                failure_event = evt
+                return
             await _pub(evt)
 
-        from agent.run.execution import EVENT_TOKEN, WebStreamSink, consume_agent_events
+        async def display_changed(item: dict) -> None:
+            nonlocal full_reply
+            full_reply = "\n\n".join(entry.get("text", "") for entry in display_timeline if entry.get("kind") == "assistant" and entry.get("text"))
+            await _pub({"type": "display_event", "item": item})
+
+        from agent.context.display_checkpoint import save_checkpoint
+
+        async def checkpoint(items):
+            await save_checkpoint(_sess._SessionLocal, session_id, items, user_message.id)
+
+        from agent.run.execution import WebStreamSink, consume_agent_events
         async for kind, value in consume_agent_events(
             gen,
             model_cfg=model_cfg,
             outcome=outcome,
             sink=WebStreamSink(
                 on_event=handle_agent_event,
+                on_display=display_changed,
+                on_checkpoint=checkpoint,
+                user_message_id=user_message.id,
                 yield_round_ends=False,
+                yield_tokens=False,
             ),
         ):
-            if kind == EVENT_TOKEN:
-                await emit_clean(value)
+            pass
 
         sync_run_outcome()
 
@@ -418,6 +373,10 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                 except Exception:
                     logger.exception("取消路径的部分历史持久化失败 session=%s", session_id)
                 await _pub({"type": "done", "cancelled": True})
+            elif failure_event:
+                from agent.context.display_checkpoint import seal_checkpoint
+                await seal_checkpoint(_sess._SessionLocal, session_id, user_message.id)
+                await _pub(failure_event)
             return
 
         # ── 持久化：工具调用中间消息 + AI 最终回复 + 用量 ──
@@ -512,6 +471,9 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
         raise
     except BaseException as e:
         generation_failed = True
+        from agent.context.display_checkpoint import seal_checkpoint
+        if user_message is not None:
+            await seal_checkpoint(_sess._SessionLocal, session_id, user_message.id)
         logger.exception("agent generate error for user %s: %s", req.user_id, e)
         presentation = describe_llm_error(e)
         from app.services.conversation_run_outcomes import build_run_outcome

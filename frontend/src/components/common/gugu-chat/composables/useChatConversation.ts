@@ -2,6 +2,7 @@ import { ref, computed, nextTick, onUnmounted, watch, type Ref } from 'vue'
 import { CLIENT_ID, agentApi } from '@/services/api'
 import { i18n } from '@/i18n'
 import { useLiveStore } from '@/stores/live'
+import { getAccountBoundaryEpoch } from '@/utils/accountBoundary'
 import { getGreeting, prefetchGreeting } from '@/composables/shared/useGreeting'
 import type { ChatMessage, ChatFile, ChatSession, ChatReference } from '../chatTypes'
 import { renderMd } from '../markdown'
@@ -42,6 +43,7 @@ export function useChatConversation(options: {
   playIncomingMessageSfx: () => void
   onQueuePersistenceError?: (error: unknown) => void
   onQueueDispatchError?: (error: unknown) => void
+  onAutomaticModeCommand?: () => Promise<void>
   onContentReset: () => void          // 窗口高度回到 SMALL_H 基线
   onCaptureBaseScrollH: () => void    // 记录当前内容高度为新的增高基线
   onSyncSmallH: () => void            // 按内容真实高度重新计算窗口高
@@ -183,8 +185,14 @@ export function useChatConversation(options: {
     return ++_chatViewGeneration
   }
 
+  let sessionsFetchVersion = 0
   async function fetchSessions() {
-    try { sessions.value = await agentApi.listSessions() } catch {}
+    const version = ++sessionsFetchVersion
+    const epoch = getAccountBoundaryEpoch()
+    try {
+      const result = await agentApi.listSessions()
+      if (version === sessionsFetchVersion && epoch === getAccountBoundaryEpoch()) sessions.value = result
+    } catch {}
   }
 
   // role/platformUserId → 气泡归属 + 群成员发言人标注。三态：
@@ -433,6 +441,7 @@ export function useChatConversation(options: {
     playIncomingMessageSfx: options.playIncomingMessageSfx,
     onQueuePersistenceError: options.onQueuePersistenceError,
     onQueueDispatchError: options.onQueueDispatchError,
+    onAutomaticModeCommand: options.onAutomaticModeCommand,
     onContentReset: options.onContentReset,
     onPresentFile: options.onPresentFile,
   })
@@ -451,7 +460,7 @@ export function useChatConversation(options: {
     abortCtrl, streaming, resumeStream, resetSessionTurn, clearPendingQueue,
     restorePendingQueue: restorePendingQueueForSession,
     drainPendingQueue,
-    clearStatus, setStatus, contextCompactingItem: _contextCompactingItem,
+    clearStatus, setStatus, thinkingItem: _thinkingItem, contextCompactingItem: _contextCompactingItem,
     onContentReset: options.onContentReset,
     onCaptureBaseScrollH: options.onCaptureBaseScrollH,
     scrollBottom,
@@ -533,18 +542,25 @@ export function useChatConversation(options: {
   })
 
   watch(() => liveStore.agentRunEvent, (event) => {
-    if (!event || event.status !== 'running') return
+    if (!event) return
+    void fetchSessions()
+    if (event.status === 'completed' || event.status === 'failed') {
+      if (sessionId.value !== event.session_id) return
+      if (sessionSettling.value || streaming.value) deferredSessionRefresh.add(event.session_id)
+      else void refreshSessionMessages(event.session_id)
+      return
+    }
+    if (event.status !== 'running') return
     // IM 首条消息会先在服务端创建并提交 session，再发布 run=running；列表刷新不应
     // 等待助手回复后的 sessions 事件，否则新 IM 会话在生成期间或回复失败时不可见。
-    if (!sessions.value.some(item => item.id === event.session_id)) void fetchSessions()
     if (sessionId.value !== event.session_id || streaming.value || sessionSettling.value) return
     // IM run 开始时通过用户级 live 事件通知；只续接当前正在看的会话。
     void resumeStream(event.session_id)
   })
 
   const deferredSessionRefresh = new Set<number>()
-  watch(sessionSettling, (settling) => {
-    if (settling || sessionId.value == null) return
+  watch([sessionSettling, streaming], ([settling, active]) => {
+    if (settling || active || sessionId.value == null) return
     const id = sessionId.value
     if (!deferredSessionRefresh.delete(id)) return
     void refreshSessionMessages(id)

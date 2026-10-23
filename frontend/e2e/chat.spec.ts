@@ -26,10 +26,12 @@ import { test, expect } from '@playwright/test'
 
 const AI_REPLY = '.msg-virtual-row .msg.ai .msg-bubble'
 const remoteE2e = Boolean(process.env.PLAYWRIGHT_BASE_URL && !/localhost|127\.0\.0\.1/.test(process.env.PLAYWRIGHT_BASE_URL))
-const aiReplyTimeout = remoteE2e ? 60000 : 15000
+const aiReplyTimeout = remoteE2e ? 300000 : 15000
 
 test.describe('GuguChat 悬浮窗', () => {
-  test.describe.configure({ timeout: remoteE2e ? 90000 : 30000 })
+  // devserver 使用当前配置的真实模型，慢响应时队列用例需要等待两轮回复。
+  // CI 指向固定回复的 mock 服务，仍保留较短预算。
+  test.describe.configure({ timeout: remoteE2e ? 360000 : 30000 })
   test('发消息收到回复，刷新页面后会话内容还在', async ({ page }) => {
     await page.goto('/')
 
@@ -51,7 +53,7 @@ test.describe('GuguChat 悬浮窗', () => {
     await page.reload()
     await expect(page.locator('.ai-fab')).toBeVisible()
     await page.locator('.ai-fab').click()
-    await expect(page.locator('.chat-window .msg.user .msg-bubble', { hasText: text })).toBeVisible()
+    await expect(page.locator('.chat-window .msg.user .msg-bubble', { hasText: text })).toBeVisible({ timeout: remoteE2e ? 30000 : 15000 })
     await expect(page.locator('.chat-window').locator(AI_REPLY).last()).not.toBeEmpty()
   })
 
@@ -115,7 +117,7 @@ test.describe('GuguChat 悬浮窗', () => {
     // toHaveText 轮询等待，间接保证 PM 文档已同步。
     await expect(textarea).toHaveText(queuedText)
     await textarea.press('Enter')
-    await expect(chatWindow.locator('.msg.user .msg-bubble', { hasText: queuedText })).toBeVisible()
+    await expect(chatWindow.locator('.chat-pending-item .chat-pending-text', { hasText: queuedText })).toBeVisible()
 
     // 在排队消息还没被接力发送之前就切到一个全新会话。
     await chatWindow.locator('.popup-icon-btn[title="展开"]').click()
@@ -197,9 +199,11 @@ test.describe('GuguChat 悬浮窗', () => {
       releaseFirstRequest()
 
       // 关键断言：不切会话，两条消息都收到回复；旧缺陷会留下第二条 user 气泡但不产生回复。
-      await expect(chatWindow.locator('.msg.user .msg-bubble')).toHaveCount(2, { timeout: 15000 })
+      // 第二条只有在第一轮模型回复完成后才会从队列发出；devserver 使用真实模型，
+      // 因此该气泡可能要等到第一轮长响应结束后才出现。
+      await expect(chatWindow.locator('.msg.user .msg-bubble')).toHaveCount(2, { timeout: aiReplyTimeout + 15000 })
       const aiBubbles = chatWindow.locator(AI_REPLY)
-      await expect(aiBubbles).toHaveCount(2, { timeout: aiReplyTimeout * 2 })
+      await expect(aiBubbles).toHaveCount(2, { timeout: aiReplyTimeout })
       await expect(aiBubbles.nth(0)).not.toBeEmpty()
       await expect(aiBubbles.nth(1)).not.toBeEmpty()
       // AI 回复可能复述用户输入；这里只核对 user 气泡，避免同名回复造成误计。
@@ -215,10 +219,39 @@ test.describe('GuguChat 悬浮窗', () => {
     // 回归 PR #9 引入的 bug：SessionTitleEdit 侧边栏模式外层曾用 @click.stop 阻止冒泡，
     // 导致点击会话标题区域（占 session item 大部分宽度）无法触发 onLoadSession 切换会话，
     // 只有点标题外的空白边缘才能切。修复后点击标题区域应正常切换。
-    //
-    // 不假设账号此时正好只有两个 session（同文件前面的测试已创建并持久化多个会话，
-    // 后端测试用户状态共享）——发完消息后当前激活的 session 就在侧栏，直接取 active item
-    // 的 data-session-id 定向点击，避免 toHaveCount(2)/nth(1) 在并行或重跑时不稳定。
+
+    // 会话切换不依赖模型回复。devserver 配置真实模型时，普通测试文本也可能触发多轮
+    // 工具调用；这会让纯 UI 回归测试超时，并可能对测试账号数据产生副作用。合成会话
+    // 历史只隔离网络数据，标题点击、loadSession 和消息区更新仍在真实浏览器组件中验证。
+    const sessions = [
+      { id: 880002, title: 'e2e-session-b', source: 'web', chatType: 'private', workspaceName: null,
+        goalActive: false, goalStatus: null, filesystemAuthorized: false,
+        filesystemAuthorizationEnabled: false, updatedAt: '2026-10-22T10:02:00Z', createdAt: '2026-10-22T10:02:00Z' },
+      { id: 880001, title: 'e2e-session-a', source: 'web', chatType: 'private', workspaceName: null,
+        goalActive: false, goalStatus: null, filesystemAuthorized: false,
+        filesystemAuthorizationEnabled: false, updatedAt: '2026-10-22T10:01:00Z', createdAt: '2026-10-22T10:01:00Z' },
+    ]
+    await page.route('**/api/v1/agent/sessions', route => route.fulfill({ json: sessions }))
+    await page.route('**/api/v1/agent/sessions/*/messages*', route => {
+      const sessionId = Number(new URL(route.request().url()).pathname.split('/').at(-2))
+      const isA = sessionId === 880001
+      const createdAt = isA ? '2026-10-22T10:01:00Z' : '2026-10-22T10:02:00Z'
+      const userText = isA ? '会话 A 的测试消息' : '会话 B 的测试消息'
+      return route.fulfill({ json: {
+        session: { id: sessionId, title: isA ? 'e2e-session-a' : 'e2e-session-b', chatType: 'private' },
+        active: false,
+        executionState: 'idle',
+        pendingMessageCount: 0,
+        pendingQueue: [],
+        pagination: { limit: 50, hasMore: false, hasNewer: false, oldestId: sessionId, newestId: sessionId },
+        messages: [{ id: sessionId, role: 'user', content: userText, files: [], references: [],
+          createdAt, timelineOrder: sessionId * 1000 }],
+        timelineEvents: [],
+        toolEvents: [],
+      } })
+    })
+    await page.route('**/api/v1/agent/sessions/*/interactions', route => route.fulfill({ json: { items: [] } }))
+
     await page.goto('/')
     await page.locator('.ai-fab').click()
     const chatWindow = page.locator('.chat-window')
@@ -229,47 +262,143 @@ test.describe('GuguChat 悬浮窗', () => {
     const sidebar = page.locator('.exp-sidebar')
     await expect(sidebar).toBeVisible()
 
-    const textarea = chatWindow.locator('.chat-input-editor .ProseMirror')
-    const sendBtn = chatWindow.locator('.send-btn')
+    const sessionAItem = sidebar.locator('.exp-session-item[data-session-id="880001"]')
+    const sessionBItem = sidebar.locator('.exp-session-item[data-session-id="880002"]')
+    await expect(sessionAItem).toBeVisible()
+    await expect(sessionBItem).toBeVisible()
 
-    // 会话 A：新建 + 发消息 + 等回复，记录 A 的 session id
-    const textA = `e2e-switch-a-${Date.now()}`
-    await sidebar.locator('.exp-new-session-btn').click()
-    await expect(chatWindow.locator('.msg')).toHaveCount(0)
-    await textarea.fill(textA)
-    await sendBtn.click()
-    await expect(chatWindow.locator('.msg.user .msg-bubble', { hasText: textA })).toBeVisible()
-    await expect(chatWindow.locator(AI_REPLY)).toHaveCount(1, { timeout: aiReplyTimeout })
-    // 发完 A 后当前激活的就是 A，直接从侧栏 active item 取 session id（不依赖后端 API）
-    await expect(sidebar.locator('.exp-session-item.active')).toHaveAttribute('data-session-id', /^\d+$/, { timeout: 10000 })
-    const sessionAId = await sidebar.locator('.exp-session-item.active').getAttribute('data-session-id')
-    expect(sessionAId).toMatch(/^\d+$/)
-
-    // 会话 B：新建 + 发消息 + 等回复，记录 B 的 session id
-    const textB = `e2e-switch-b-${Date.now()}`
-    await sidebar.locator('.exp-new-session-btn').click()
-    await expect(chatWindow.locator('.msg')).toHaveCount(0)
-    await textarea.fill(textB)
-    await sendBtn.click()
-    await expect(chatWindow.locator('.msg.user .msg-bubble', { hasText: textB })).toBeVisible()
-    await expect(chatWindow.locator(AI_REPLY)).toHaveCount(1, { timeout: aiReplyTimeout })
-    // 发完 B 后当前激活的就是 B
-    await expect(sidebar.locator('.exp-session-item.active')).toHaveAttribute('data-session-id', /^\d+$/, { timeout: 10000 })
-    const sessionBId = await sidebar.locator('.exp-session-item.active').getAttribute('data-session-id')
-    expect(sessionBId).toMatch(/^\d+$/)
-    expect(sessionBId).not.toBe(sessionAId)
-
-    // 当前激活的是 B（后端按 updated_at 倒序，B 最新在前）
-    const sessionAItem = sidebar.locator(`.exp-session-item[data-session-id="${sessionAId}"]`)
-    const sessionBItem = sidebar.locator(`.exp-session-item[data-session-id="${sessionBId}"]`)
+    // 先切到 B，再点击 A 的标题区域；两条合成历史具有不同正文，能验证切换结果。
+    await sessionBItem.locator('.exp-session-title').click()
+    await expect(chatWindow.locator('.msg.user .msg-bubble', { hasText: '会话 B 的测试消息' })).toBeVisible()
     await expect(sessionBItem).toHaveClass(/active/)
 
     // 点击会话 A 的标题区域（.exp-session-title，占 item 大部分宽度）——修复前这里被
     // @click.stop 拦截无法切换；修复后应切回 A，消息区显示 A 的消息。
-    await expect(sessionAItem).toBeVisible()
     await sessionAItem.locator('.exp-session-title').click()
-    await expect(chatWindow.locator('.msg.user .msg-bubble', { hasText: textA })).toBeVisible()
-    await expect(chatWindow.locator('.msg.user .msg-bubble', { hasText: textB })).toHaveCount(0)
+    await expect(chatWindow.locator('.msg.user .msg-bubble', { hasText: '会话 A 的测试消息' })).toBeVisible()
+    await expect(chatWindow.locator('.msg.user .msg-bubble', { hasText: '会话 B 的测试消息' })).toHaveCount(0)
     await expect(sessionAItem).toHaveClass(/active/)
+  })
+
+  test('滚动选中文字时保留跨屏消息，工具卡片滚出视口后仍保持展开', async ({ page }) => {
+    const sessionId = 880003
+    const createdAt = '2026-10-22T10:00:00Z'
+    const messages = Array.from({ length: 80 }, (_, index) => ({
+      id: 890000 + index,
+      role: 'user',
+      content: `可选消息-${index}：跨屏选择回归内容。`,
+      files: [],
+      references: [],
+      createdAt: new Date(Date.parse(createdAt) + index * 1000).toISOString(),
+      timelineOrder: index * 1000 + 1,
+    }))
+    const timelineEvents = [{
+      kind: 'tool',
+      id: 890100,
+      messageId: 890040,
+      timelineOrder: 40 * 1000 + 2,
+      runId: 'e2e-selection-run',
+      roundId: '1',
+      toolCallId: 'e2e-selection-tool',
+      toolName: 'shell',
+      toolLabel: '执行测试命令',
+      toolStatus: 'success',
+      toolInput: { command: 'printf test' },
+      toolResult: 'test 完成',
+      detailsAvailable: true,
+      createdAt: new Date(Date.parse(createdAt) + 40_500).toISOString(),
+    }]
+    await page.route('**/api/v1/agent/sessions', route => route.fulfill({ json: [
+      { id: sessionId, title: 'e2e-virtual-selection', source: 'web', chatType: 'private', workspaceName: null,
+        goalActive: false, goalStatus: null, filesystemAuthorized: false,
+        filesystemAuthorizationEnabled: false, updatedAt: createdAt, createdAt },
+    ] }))
+    await page.route(`**/api/v1/agent/sessions/${sessionId}/messages*`, route => route.fulfill({ json: {
+      session: { id: sessionId, title: 'e2e-virtual-selection', chatType: 'private' },
+      active: false,
+      executionState: 'idle',
+      pendingMessageCount: 0,
+      pendingQueue: [],
+      pagination: { limit: 200, hasMore: false, hasNewer: false, oldestId: messages[0].id, newestId: messages.at(-1)?.id },
+      messages,
+      timelineEvents,
+    } }))
+    await page.route(`**/api/v1/agent/sessions/${sessionId}/interactions`, route => route.fulfill({ json: { items: [] } }))
+
+    await page.goto('/')
+    await page.locator('.ai-fab').click()
+    const chatWindow = page.locator('.chat-window')
+    await chatWindow.locator('.popup-icon-btn[title="展开"]').click()
+    const sessionItem = page.locator(`.exp-session-item[data-session-id="${sessionId}"]`)
+    await expect(sessionItem).toBeVisible()
+    await sessionItem.locator('.exp-session-title').click()
+
+    const scrollContainer = chatWindow.locator('.chat-messages')
+    const firstRow = chatWindow.locator('.msg-virtual-row[data-index="0"]')
+    await scrollContainer.evaluate(element => { element.scrollTop = 0 })
+    await expect(firstRow).toBeVisible()
+    await page.evaluate(() => {
+      const firstBubble = document.querySelector('.msg-virtual-row[data-index="0"] .msg-bubble')
+      firstBubble?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, isPrimary: true }))
+    })
+    // 给 Vue 一帧应用锚点行固定，再开始滚动。真实指针事件会在浏览器任务间让出渲染；
+    // 把 pointerdown 和 scroll 塞进同一个 evaluate 会跳过该时序，造成非真实的竞态。
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())))
+    await page.evaluate(async () => {
+      const container = document.querySelector('.chat-messages')
+      if (!container) return
+      // 首屏只测量了虚拟窗口内的行；逐帧跟随更新后的总高度滚到底，确保末行已挂载。
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        container.scrollTop = container.scrollHeight
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+      }
+    })
+    // 周期消息中间插入一条工具事件，所以末条消息的展示行索引为 80。
+    await expect(chatWindow.locator('.msg-virtual-row[data-index="80"] .msg-bubble')).toBeVisible()
+    await expect(firstRow).toBeAttached()
+    const selectionState = await page.evaluate(() => {
+      const textNode = (element: Element): Text | null => {
+        const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+        let node = walker.nextNode()
+        while (node && !node.textContent?.trim()) node = walker.nextNode()
+        return node as Text | null
+      }
+      const first = document.querySelector('.msg-virtual-row[data-index="0"] .msg-bubble')
+      const last = document.querySelector('.msg-virtual-row[data-index="80"] .msg-bubble')
+      const firstText = first && textNode(first)
+      const lastText = last && textNode(last)
+      if (!firstText || !lastText) return ''
+      document.getSelection()?.setBaseAndExtent(firstText, 0, lastText, lastText.length)
+      return document.getSelection()?.toString() || ''
+    })
+    const selectedText = selectionState
+    expect(selectedText).toContain('可选消息-0')
+    expect(selectedText).toContain('可选消息-79')
+    await page.evaluate(() => window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0, isPrimary: true })))
+
+    await page.evaluate(() => {
+      document.getSelection()?.removeAllRanges()
+      document.dispatchEvent(new Event('selectionchange'))
+    })
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())))
+    await scrollContainer.evaluate(element => {
+      element.scrollTop = 0
+    })
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())))
+    await scrollContainer.evaluate(element => {
+      element.scrollTop = element.scrollHeight
+    })
+    await expect(firstRow).toHaveCount(0)
+
+    await scrollContainer.evaluate(element => { element.scrollTop = element.scrollHeight / 2 })
+    const toolHead = chatWindow.locator('.msg-virtual-row.is-tool-row .tool-event-head')
+    await expect(toolHead).toBeVisible()
+    await toolHead.click()
+    await expect(toolHead).toHaveAttribute('aria-expanded', 'true')
+
+    await scrollContainer.evaluate(element => { element.scrollTop = element.scrollHeight })
+    await expect(chatWindow.locator('.msg-virtual-row.is-tool-row')).toHaveCount(0)
+    await scrollContainer.evaluate(element => { element.scrollTop = element.scrollHeight / 2 })
+    await expect(chatWindow.locator('.msg-virtual-row.is-tool-row .tool-event-head')).toHaveAttribute('aria-expanded', 'true')
   })
 })

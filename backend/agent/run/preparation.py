@@ -423,6 +423,9 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
                                            platform_bot_user_id=req.platform_bot_user_id,
                                            chat_type="group" if req.chat_id else "c2c" if req.source in IM_SOURCES else None)
         db.add(user_message)
+        if req.inbound_batch_key:
+            from agent.im.inbound_recovery import user_run_key
+            user_message.run_id = user_run_key(req.inbound_batch_key)
         await db.flush()
         req.user_message_id = user_message.id
         # 消息 + 所有附件 claim 是同一个事务（PRD-STORAGE-1 不变量 3），同网页路
