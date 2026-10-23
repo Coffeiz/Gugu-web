@@ -2,7 +2,6 @@
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, File as FastAPIFile
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import chat_attach
@@ -166,27 +165,14 @@ async def delete_draft_attachment(
     一律拒绝。HTTP 响应丢失/超时不等于请求真的失败——消息可能已经在服务端
     提交成功、附件已经被 claim 成 `attached`；没有这层守卫，客户端一次误判的
     "发送失败"会把已经生效的正常附件删掉。"""
-    from app.models import ChatAttachment
-    from sqlalchemy import delete as sa_delete, select
-    row = (await db.execute(
-        select(ChatAttachment).where(
-            ChatAttachment.user_id == current_user.id,
-            ChatAttachment.attach_id == attach_id,
-        )
-    )).scalars().first()
-    if row is None:
-        raise HTTPException(404, "附件不存在")
-    storage_key = row.storage_key
-    result = await db.execute(
-        sa_delete(ChatAttachment).where(
-            ChatAttachment.attach_id == attach_id,
-            ChatAttachment.user_id == current_user.id,
-            ChatAttachment.state == "draft",
-        )
+    from app.services.chat_attachments import (
+        DraftAttachmentAlreadyUsed, DraftAttachmentNotFound,
+        delete_draft_attachment as remove_draft_attachment,
     )
-    if result.rowcount != 1:
-        await db.rollback()
+    try:
+        await remove_draft_attachment(db, current_user.id, attach_id)
+    except DraftAttachmentNotFound:
+        raise HTTPException(404, "附件不存在")
+    except DraftAttachmentAlreadyUsed:
         raise HTTPException(409, "附件已被使用，无法删除")
-    await db.commit()
-    await chat_attach.try_delete_storage_if_unreferenced(current_user.id, storage_key)
     return {"deleted": True}

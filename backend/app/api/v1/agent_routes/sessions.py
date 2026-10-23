@@ -5,18 +5,16 @@ from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import Text, and_, case, cast, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import defer
 
 from agent.im.models import replace_mention_ids
 from agent.llm import genstream
 from app.core.ownership import get_owned
 from app.core.security import get_current_user
-from app.core.tz import iso_utc, now_utc
+from app.core.tz import iso_utc
 from app.db.session import get_db
-from app.models import ConversationMessage, ConversationSession, FilesystemAuthorizationGrant, User, UserBot, Workspace  # orm-exempt: Agent 会话域遗留查询，待 Service 收口时迁移
-from app.services import conversation_pending_queue
+from app.models import ConversationMessage, ConversationSession, User, Workspace
+from app.services import conversation_pending_queue, conversations
 from app.services.filesystem_authorization import SUBJECT_SESSION, filesystem_authorization_enabled, get_active_grant
 from app.services.workspaces import workspace_shell_supported
 
@@ -28,34 +26,7 @@ async def list_sessions(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    # 网页会话增长很快，不能用一个总量窗口把低频 IM 会话全部挤掉。
-    # 两类会话分别保留窗口，再合并排序，保证 QQ/微信/飞书始终可见。
-    web_res = await db.execute(
-        select(ConversationSession, Workspace.name)
-        .outerjoin(Workspace, Workspace.id == ConversationSession.workspace_id)
-        .where(
-            ConversationSession.user_id == current_user.id,
-            or_(ConversationSession.source.is_(None), ConversationSession.source == "web"),
-        )
-        .order_by(desc(ConversationSession.updated_at))
-        .limit(50)
-    )
-    im_res = await db.execute(
-        select(ConversationSession, Workspace.name)
-        .outerjoin(Workspace, Workspace.id == ConversationSession.workspace_id)
-        .where(
-            ConversationSession.user_id == current_user.id,
-            ConversationSession.source.is_not(None),
-            ConversationSession.source != "web",
-        )
-        .order_by(desc(ConversationSession.updated_at))
-        .limit(50)
-    )
-    sessions = sorted(
-        [*web_res.all(), *im_res.all()],
-        key=lambda item: item[0].updated_at,
-        reverse=True,
-    )
+    sessions = await conversations.list_agent_sessions(db, current_user.id)
     def goal_active(session: ConversationSession) -> bool:
         context = session.session_context if isinstance(session.session_context, dict) else {}
         return bool(context.get("goal_mode") and context.get("goal_text"))
@@ -70,35 +41,14 @@ async def list_sessions(
     filesystem_auth_enabled = filesystem_authorization_enabled()
     authorized_session_ids: set[int] = set()
     if filesystem_auth_enabled:
-        active_grants = await db.scalars(
-            select(FilesystemAuthorizationGrant.subject_id).where(
-                FilesystemAuthorizationGrant.user_id == current_user.id,
-                FilesystemAuthorizationGrant.subject_type == "session",
-                FilesystemAuthorizationGrant.revoked_at.is_(None),
-                or_(
-                    FilesystemAuthorizationGrant.expires_at.is_(None),
-                    FilesystemAuthorizationGrant.expires_at > now_utc(),
-                ),
-            )
+        authorized_session_ids = await conversations.list_active_session_authorization_ids(
+            db, current_user.id,
         )
-        authorized_session_ids = {
-            int(subject_id) for subject_id in active_grants
-            if str(subject_id).isdigit()
-        }
 
     web_ids = [s.id for s, _ in sessions if not s.source or s.source == "web"]
     running = await genstream.active_statuses([s.id for s, _ in sessions])
     # 仅已完成、可见的正文推进未读版本；工具历史与空检查点不参与。
-    replies = dict((await db.execute(
-        select(ConversationMessage.session_id, func.max(ConversationMessage.id))
-        .where(ConversationMessage.session_id.in_(web_ids),
-               ConversationMessage.role == "assistant",
-               ConversationMessage.content_json.is_(None),
-               or_(ConversationMessage.content != "",
-                   and_(ConversationMessage.files.is_not(None),
-                        cast(ConversationMessage.files, Text).notin_(["[]", "null"]))))
-        .group_by(ConversationMessage.session_id)
-    )).all()) if web_ids else {}
+    replies = await conversations.latest_visible_assistant_message_ids(db, web_ids)
 
     return [
         {
@@ -245,91 +195,19 @@ async def get_session_messages(
     from agent.context.compress_conv import recover_orphaned_session
     await recover_orphaned_session(session_id, user_id=current_user.id)
     limit = min(max(limit, 1), 200)
-    # 分页游标覆盖消息正文和工具记录组成的统一时间线。此前只按正文消息分页，
-    # 再读取整个会话的工具记录；工具密集的会话首屏仍会传输完整工具时间线。
-    row_filters = (
-        ConversationMessage.session_id == session_id,
-        ConversationMessage.role != "summary",  # 摘要仅用于模型上下文
-        or_(ConversationMessage.content_json.is_(None),
-            and_(ConversationMessage.display_timeline.is_not(None),
-                 cast(ConversationMessage.display_timeline, Text) != "null")),
+    # 分页包含正文与工具时间线；数据库在 Service 层延迟大 JSON 并限制投影尺寸。
+    page = await conversations.load_display_message_page(
+        db,
+        session_id,
+        limit,
+        before_id=before_id,
+        after_id=after_id,
+        run_id=run_id,
     )
-    # 历史上 display_timeline 可能含视频帧 Base64。先延迟这个列，再用数据库侧
-    # 尺寸门槛投影正常时间线；超大旧记录走正文消息回退，避免把百 MB JSON 拉进
-    # Python 后才清理媒体。新写入路径已在持久化前清理媒体块。
-    statement = select(
-        ConversationMessage,
-        ConversationMessage.content_json.is_(None).label("is_display_body"),
-    ).options(
-        defer(ConversationMessage.display_timeline),
-        defer(ConversationMessage.content_json),
-    ).where(*row_filters)
-    if run_id is not None:
-        statement = statement.where(or_(ConversationMessage.run_id == run_id,
-            ConversationMessage.display_timeline[0]["runId"].as_string() == run_id))
-    if before_id is not None:
-        statement = statement.where(ConversationMessage.id < before_id).order_by(
-            desc(ConversationMessage.id)
-        )
-    elif after_id is not None:
-        statement = statement.where(ConversationMessage.id > after_id).order_by(
-            ConversationMessage.id
-        )
-    else:
-        statement = statement.order_by(desc(ConversationMessage.id))
-    statement = statement.limit(limit)
-    res = await db.execute(statement)
-    fetched_rows = res.all()
-    page_rows = [row[0] for row in fetched_rows]
-    display_body_ids = {row[0].id for row in fetched_rows if row.is_display_body}
-    # 所有方向都返回时间正序，分页游标覆盖本页实际读取的所有记录。
-    if before_id is not None or after_id is None:
-        page_rows.reverse()
-
-    # canonical-only 上下文不参与展示分页；历史工具已经一次性迁入展示列。
-    msgs = page_rows
-
-    display_timeline_by_id: dict[int, list | None] = {}
-    oversized_timeline_ids: set[int] = set()
-    message_ids = [message.id for message in msgs]
-    timeline_column = ConversationMessage.display_timeline
-    if db.get_bind().dialect.name == "postgresql":
-        stored_size = func.pg_column_size(timeline_column)
-    else:
-        stored_size = func.length(cast(timeline_column, Text))
-    timeline_projection = case(
-        (stored_size > 1024 * 1024, None),
-        else_=timeline_column,
-    )
-    if message_ids:
-        timeline_rows = (await db.execute(
-            select(
-                ConversationMessage.id,
-                timeline_projection.label("display_timeline"),
-                timeline_column.is_not(None).label("has_display_timeline"),
-            ).where(ConversationMessage.id.in_(message_ids))
-        )).all()
-        for row in timeline_rows:
-            display_timeline_by_id[row.id] = row.display_timeline
-            if row.has_display_timeline and row.display_timeline is None:
-                oversized_timeline_ids.add(row.id)
-
-    has_more = False
-    has_newer = False
-    if page_rows:
-        older_probe = await db.execute(
-            select(ConversationMessage.id)
-            .where(*row_filters, ConversationMessage.id < page_rows[0].id)
-            .limit(1)
-        )
-        has_more = older_probe.first() is not None
-        if after_id is not None and len(page_rows) == limit:
-            newer_probe = await db.execute(
-                select(ConversationMessage.id)
-                .where(*row_filters, ConversationMessage.id > page_rows[-1].id)
-                .limit(1)
-            )
-            has_newer = newer_probe.first() is not None
+    msgs = page["messages"]
+    display_body_ids = page["display_body_ids"]
+    display_timeline_by_id = page["timelines"]
+    oversized_timeline_ids = page["oversized_timeline_ids"]
     mention_names = {
         str(message.platform_user_id): message.platform_user_name
         for message in msgs
@@ -343,16 +221,11 @@ async def get_session_messages(
     # 归到左侧、标发言人 username，而不是误判成 owner 自己发的）。
     owner_platform_user_id = None
     if session.source:
-        bot_query = select(UserBot).where(
-            UserBot.user_id == current_user.id,
-            UserBot.platform == session.source,
+        owner_platform_user_id, bot_platform_user_id = await conversations.get_session_owner_platform_ids(
+            db, current_user.id, session.source, session.bot_id,
         )
-        if session.bot_id:
-            bot_query = bot_query.where(UserBot.id == int(session.bot_id))
-        bot = (await db.execute(bot_query)).scalars().first()
-        owner_platform_user_id = bot.owner_platform_user_id if bot else None
-        if bot and bot.bot_platform_user_id:
-            mention_names[bot.bot_platform_user_id] = "咕咕"
+        if bot_platform_user_id:
+            mention_names[bot_platform_user_id] = "咕咕"
 
     def render_content(text: str) -> str:
         if session.chat_type != "group":
@@ -392,10 +265,10 @@ async def get_session_messages(
         "pendingQueue": pending_queue,
         "pagination": {
             "limit": limit,
-            "hasMore": has_more,
-            "hasNewer": has_newer,
-            "oldestId": page_rows[0].id if page_rows else None,
-            "newestId": page_rows[-1].id if page_rows else None,
+            "hasMore": page["has_more"],
+            "hasNewer": page["has_newer"],
+            "oldestId": msgs[0].id if msgs else None,
+            "newestId": msgs[-1].id if msgs else None,
         },
         "messages": [
             {"id": m.id, "role": m.role,
@@ -447,18 +320,7 @@ async def get_session_tool_event_details(
 
     if message_id is None or timeline_index is None:
         raise HTTPException(400, "工具事件标识无效")
-    timeline_column = ConversationMessage.display_timeline
-    if db.get_bind().dialect.name == "postgresql":
-        stored_size = func.pg_column_size(timeline_column)
-    else:
-        stored_size = func.length(cast(timeline_column, Text))
-    timeline_projection = case((stored_size > 1024 * 1024, None), else_=timeline_column)
-    row = (await db.execute(
-        select(timeline_projection).where(
-            ConversationMessage.id == message_id,
-            ConversationMessage.session_id == session_id,
-        )
-    )).scalar_one_or_none()
+    row = await conversations.get_display_timeline_item(db, session_id, message_id)
     items = row if isinstance(row, list) else []
     if timeline_index >= len(items) or items[timeline_index].get("kind") != "tool":
         raise HTTPException(404, "工具事件不存在")
@@ -474,19 +336,10 @@ async def get_message_location(
     """按消息 id 反查它所在的会话——笔记里的「@对话」引用锚定的是具体一条消息（不是整个
     会话），点开时得先知道这条消息属于哪个会话才能 loadSession + 定位滚动。
     ConversationMessage 本身没有 user_id，要通过 session 判归属。"""
-    row = (await db.execute(
-        select(ConversationMessage, ConversationSession.user_id)
-        .join(ConversationSession, ConversationMessage.session_id == ConversationSession.id)
-        .where(
-            ConversationMessage.id == message_id,
-            ConversationMessage.content_json.is_(None),
-            ConversationMessage.role != "summary",
-        )
-    )).first()
-    if not row or row[1] != current_user.id:
+    row = await conversations.resolve_display_message_location(db, current_user.id, message_id)
+    if row is None:
         raise HTTPException(404, "消息不存在")
-    m = row[0]
-    return {"id": m.id, "sessionId": m.session_id}
+    return {"id": row[0], "sessionId": row[1]}
 
 @router.delete("/sessions/{session_id}", status_code=204)
 async def delete_session(
