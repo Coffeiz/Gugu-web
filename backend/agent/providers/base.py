@@ -341,6 +341,11 @@ class ProviderAdapter:
         """
         return None
 
+    async def upload_media_path(self, path, name: str, ai, *, mime: str = "",
+                                purpose: str = "") -> str | None:
+        """支持原文件上传的 Provider 显式实现流式入口。"""
+        raise NotImplementedError("当前 Provider 未实现按路径上传媒体")
+
     def build_thinking_params(self, ai, *, thinking: str | None = None) -> dict:
         """返回供应商需要附加到请求的 thinking 参数；默认不附加。"""
         return {}

@@ -164,55 +164,22 @@ async def test_subscribe_reaps_zombie_snapshot_and_finishes(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_snapshot_keeps_tool_timeline_for_refresh_resume(monkeypatch):
+async def test_snapshot_upserts_display_events_by_id_without_moving_them(monkeypatch):
     redis = _FakeRedis()
     monkeypatch.setattr(genstream, "get_redis", lambda: redis)
-
     await genstream.begin(479)
-    await genstream.publish(479, {
-        "type": "round_start", "run_id": "run-1", "round_id": "round-2",
-    })
-    await genstream.publish(479, {
-        "type": "tool_call", "run_id": "run-1", "round_id": "round-2",
-        "tool_call_id": "call-1", "name": "shell", "label": "执行 Shell 命令",
-        "input": {"command": "pwd"}, "status": "running",
-    })
-    await genstream.publish(479, {
-        "type": "token", "content": "工具之后的回复",
-    })
-    await genstream.publish(479, {
-        "type": "token", "content": "，继续输出",
-    })
-
-    snap = await genstream.snapshot(479)
-    assert snap["run_id"] == "run-1"
-    assert snap["round_id"] == "round-2"
-    assert snap["tools"] == [{
-        "run_id": "run-1", "round_id": "round-2", "tool_call_id": "call-1",
-        "name": "shell", "label": "执行 Shell 命令",
-        "input": {"command": "pwd"}, "status": "running",
-    }]
-    assert [item["type"] for item in snap["timeline"]] == ["round_start", "tool_call", "token"]
-    assert snap["timeline"][-1]["content"] == "工具之后的回复，继续输出"
-
-
-@pytest.mark.asyncio
-async def test_snapshot_preserves_queued_tool_status_as_nonterminal(monkeypatch):
-    """刷新/重连时排队中的工具不能被快照误判为已经终结。"""
-    redis = _FakeRedis()
-    monkeypatch.setattr(genstream, "get_redis", lambda: redis)
-
-    await genstream.begin(484)
-    await genstream.publish(484, {
-        "type": "tool_call", "run_id": "run-1", "round_id": "round-1",
-        "tool_call_id": "call-queued", "name": "shell", "status": "queued",
-    })
-
-    snap = await genstream.snapshot(484)
-    assert snap["tools"] == [{
-        "run_id": "run-1", "round_id": "round-1", "tool_call_id": "call-queued",
-        "name": "shell", "label": "shell", "input": None, "status": "queued",
-    }]
+    tool = {"eventId": "tool-a", "kind": "tool", "sequence": 1, "createdAt": "2026-01-01T01:00:00Z",
+            "runId": "run-a", "roundId": "r1", "toolStatus": "queued"}
+    text = {"eventId": "text-a", "kind": "assistant", "sequence": 2, "createdAt": "2026-01-01T01:01:00Z", "text": "答复"}
+    await genstream.publish(479, {"type": "display_event", "item": tool})
+    await genstream.publish(479, {"type": "display_event", "item": text})
+    await genstream.publish(479, {"type": "display_event", "item": {**tool, "toolStatus": "success", "toolResult": {"ok": True}}})
+    snapshot = await genstream.snapshot(479)
+    items = [event["item"] for event in snapshot["timeline"]]
+    assert [item["eventId"] for item in items] == ["tool-a", "text-a"]
+    assert items[0]["createdAt"] == tool["createdAt"]
+    assert items[0]["toolStatus"] == "success"
+    assert items[1] == text
 
 
 @pytest.mark.asyncio

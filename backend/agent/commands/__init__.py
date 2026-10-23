@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+from agent.commands.automatic_mode import handle as handle_automatic_mode
 from agent.commands.compact import handle as handle_compact
 from agent.commands.help import all_help_text, command_help, is_help_arg
 from agent.commands.goal import handle as handle_goal
@@ -23,6 +24,7 @@ _COMMANDS: dict[str, str] = {
     "goal": "goal",
     "new": "new",
     "workspace": "workspace",
+    "auto": "auto",
     "help": "help", "h": "help",
 }
 
@@ -72,4 +74,6 @@ async def handle(user_id, text: str, *, session_id: int | None = None,
         return await handle_new(user_id, session_id, arg, locale)
     if name == "workspace":
         return await handle_workspace(user_id, session_id, arg, locale)
+    if name == "auto":
+        return await handle_automatic_mode(user_id, arg, locale)
     return None

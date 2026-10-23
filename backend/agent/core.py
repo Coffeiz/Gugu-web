@@ -52,7 +52,7 @@ from agent.loop.tools import (
     copy_skill_state_for_parallel as _copy_skill_state_for_parallel,
     dispatch_in_session as _dispatch_in_session,
     is_read_tool as _is_read_tool,
-    prepare_parallel_batch as _prepare_parallel_batch,
+    partition_tool_calls as _partition_tool_calls,
     pending_tool_signal as _pending_tool_signal,
     tool_result_payload as _tool_result_payload,
 )

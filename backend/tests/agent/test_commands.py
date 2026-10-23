@@ -23,7 +23,7 @@ async def test_immediate_stream_emits_one_complete_token():
 def test_help_lists_all_commands():
     result = router.decide("/help", "idle")
     assert result["action"] == "reply"
-    for command in ("/stop", "/status", "/compact", "/new", "/memory", "/forget", "/workspace"):
+    for command in ("/stop", "/status", "/compact", "/new", "/memory", "/forget", "/workspace", "/auto"):
         assert command in result["reply"]
     assert "/unlimited" not in result["reply"]
 
@@ -96,12 +96,70 @@ async def test_compact_without_session_is_deterministic():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("text", [
-    "/compact help", "/new help", "/memory help", "/forget help", "/workspace help",
+    "/compact help", "/new help", "/memory help", "/forget help", "/workspace help", "/auto help",
 ])
 async def test_each_command_supports_help(text):
     result = await commands.handle("user-1", text)
     assert "/help 查看全部命令" not in result  # 详细 help 不应回退总目录
     assert "/" in result
+
+
+def test_automatic_mode_command_is_registered_and_documented():
+    from agent.commands.help import command_help, command_menu
+
+    assert commands.parse("/auto on") == ("auto", "on")
+    assert "/auto on　开启自动模式" in command_help("auto")
+    assert any(item["command"] == "/auto" for item in command_menu())
+
+
+@pytest.mark.asyncio
+async def test_automatic_mode_command_reads_and_persists_user_preference(db, user_a, monkeypatch):
+    import json
+    from types import SimpleNamespace
+
+    from app.models import UserPreferences
+
+    monkeypatch.setattr(
+        "app.core.config.get_settings",
+        lambda: SimpleNamespace(agent=SimpleNamespace(automatic_mode_enabled=True)),
+    )
+    preferences = UserPreferences(
+        user_id=user_a.id,
+        data_json=json.dumps({"locale": "zh-CN", "reply_tone": "formal"}),
+    )
+    db.add(preferences)
+    await db.commit()
+
+    assert "已开启" in await commands.handle(user_a.id, "/auto on")
+    await db.refresh(preferences)
+    assert json.loads(preferences.data_json) == {
+        "locale": "zh-CN", "reply_tone": "formal", "automatic_mode_enabled": True,
+    }
+    assert "已开启" in await commands.handle(user_a.id, "/auto status")
+    assert "已关闭" in await commands.handle(user_a.id, "/auto off")
+    await db.refresh(preferences)
+    assert json.loads(preferences.data_json)["automatic_mode_enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_automatic_mode_command_cannot_enable_when_admin_disables_it(db, user_a, monkeypatch):
+    import json
+    from types import SimpleNamespace
+
+    from app.models import UserPreferences
+
+    monkeypatch.setattr(
+        "app.core.config.get_settings",
+        lambda: SimpleNamespace(agent=SimpleNamespace(automatic_mode_enabled=False)),
+    )
+    preferences = UserPreferences(user_id=user_a.id, data_json='{"reply_tone":"formal"}')
+    db.add(preferences)
+    await db.commit()
+
+    assert "管理员" in await commands.handle(user_a.id, "/auto on")
+    await db.refresh(preferences)
+    assert json.loads(preferences.data_json) == {"reply_tone": "formal"}
+    assert "关闭" in await commands.handle(user_a.id, "/auto off")
 
 
 @pytest.mark.asyncio

@@ -285,8 +285,8 @@ def test_tool_event_waiting_explains_that_the_task_is_paused():
 async def test_collect_builds_display_timeline_with_tools_in_stream_order():
     """IM/定时收尾的 display_timeline 必须含 tool 项且按流式顺序交错——
 
-    只存正文轮次会让刷新后的工具气泡退化到兼容 toolEvents 通道（按 canonical
-    行 id 排序，整体跳到该轮正文前面）。
+    展示历史只读取持久时间线；遗漏工具项会让刷新后的执行过程丢失，
+    不能再依赖 canonical 上下文重建补齐。
     """
     from agent.run.execution import RunOutcome, consume_agent_events
 
@@ -374,6 +374,9 @@ async def test_web_sink_exposes_adapter_events_and_shared_outcome():
         "assistant", "tool", "assistant", "assistant", "assistant",
     ]
     assert outcome.display_timeline_items[-1]["linkButtons"][0]["label"] == "查看"
+    text_segments = [item for item in outcome.display_timeline_items if item.get('text')]
+    assert [(item['runId'], item['roundId']) for item in text_segments] == [('inner-run', 'r1'), ('inner-run', 'r2')]
+    assert all(item.get('createdAt') for item in text_segments)
     assert all(not (kind == "event" and value.get("type") == "_usage") for kind, value in yielded)
 
 
@@ -450,7 +453,7 @@ async def test_collect_persists_file_events_in_display_timeline():
         pass
 
     assert outcome.files == [attachment]
-    assert outcome.display_timeline_items == [{
+    assert [{key: item[key] for key in ('kind', 'runId', 'roundId', 'text', 'files')} for item in outcome.display_timeline_items] == [{
         "kind": "assistant",
         "runId": "run-1",
         "roundId": "round-1",

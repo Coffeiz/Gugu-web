@@ -95,8 +95,8 @@ async def begin(session_id, owner_run_id: str | None = None) -> None:
     """开始一轮生成：初始化空快照 + 标记活跃。"""
     owner_run_id = str(owner_run_id or "")
     state = {
-        "text": "", "files": [], "done": False, "error": None,
-        "run_id": "", "round_id": "", "tools": [], "timeline": [],
+        "done": False, "error": None,
+        "run_id": "", "round_id": "", "timeline": [],
         "owner_run_id": owner_run_id,
     }
     try:
@@ -176,8 +176,8 @@ async def publish(session_id, event: dict) -> None:
     try:
         raw = await r.get(_state_key(session_id))
         st = json.loads(raw) if raw else {
-            "text": "", "files": [], "done": False, "error": None,
-            "run_id": "", "round_id": "", "tools": [], "timeline": [],
+            "done": False, "error": None,
+            "run_id": "", "round_id": "", "timeline": [],
             "owner_run_id": "",
         }
         st.setdefault("timeline", [])
@@ -189,58 +189,14 @@ async def publish(session_id, event: dict) -> None:
             st["run_id"] = event["run_id"]
         if event.get("round_id"):
             st["round_id"] = event["round_id"]
-        if et == "token":
-            st["text"] += event.get("content", "")
-            timeline = st["timeline"]
-            event_run_id = event.get("run_id") or st.get("run_id") or ""
-            event_round_id = event.get("round_id") or st.get("round_id") or ""
-            if (timeline and timeline[-1].get("type") == "token"
-                    and timeline[-1].get("run_id") == event_run_id
-                    and timeline[-1].get("round_id") == event_round_id):
-                timeline[-1]["content"] += event.get("content", "")
+        if et == "display_event":
+            item = event["item"]
+            for index, saved in enumerate(st["timeline"]):
+                if saved.get("item", {}).get("eventId") == item["eventId"]:
+                    st["timeline"][index] = event
+                    break
             else:
-                timeline.append({
-                    "type": "token", "content": event.get("content", ""),
-                    "run_id": event_run_id,
-                    "round_id": event_round_id,
-                })
-        elif et in ("round_start", "_new_round"):
-            st["timeline"].append({
-                key: event.get(key) or st.get(key) or ""
-                for key in ("type", "run_id", "round_id")
-            })
-        elif et == "tool_call":
-            # 保存完整调用，而不是只保存展示标签；刷新恢复必须能重建真实工具气泡。
-            tool_call = {
-                "run_id": event.get("run_id") or st.get("run_id") or "",
-                "round_id": event.get("round_id") or st.get("round_id") or "",
-                "tool_call_id": event.get("tool_call_id") or "",
-                "name": event.get("name") or "",
-                "label": event.get("label") or event.get("name") or "",
-                "input": event.get("input"),
-                "status": event.get("status") or "running",
-            }
-            st.setdefault("tools", []).append(tool_call)
-            st["timeline"].append({"type": "tool_call", **tool_call})
-        elif et == "tool_done":
-            call_id = str(event.get("tool_call_id") or "")
-            for tool_call in reversed(st.setdefault("tools", [])):
-                if call_id and str(tool_call.get("tool_call_id") or "") == call_id:
-                    tool_call["status"] = event.get("status") or "success"
-                    if "result" in event:
-                        tool_call["result"] = event["result"]
-                    break
-            for timeline_item in reversed(st["timeline"]):
-                if (timeline_item.get("type") == "tool_call"
-                        and call_id
-                        and str(timeline_item.get("tool_call_id") or "") == call_id):
-                    timeline_item["status"] = event.get("status") or "success"
-                    if "result" in event:
-                        timeline_item["result"] = event["result"]
-                    break
-        elif et == "file" and event.get("file"):
-            st["files"].append(event["file"])
-            st["timeline"].append({"type": "file", "file": event["file"]})
+                st["timeline"].append(event)
         elif et == "notice" and event.get("message"):
             st["timeline"].append({
                 "type": "notice",
@@ -452,6 +408,21 @@ async def is_active(session_id) -> bool:
     # 生成状态以快照终态为准；lease 只表示后台任务的进程所有权，不能作为
     # 前端续看或取消的业务事实，否则任务刚启动时会出现 false inactive。
     return bool(snap) and not snap.get("done")
+
+
+async def active_statuses(session_ids: list[int]) -> dict[int, bool]:
+    """列表一次补读生成快照；故障返回未知，不把 Redis 故障冒充已完成。"""
+    if not session_ids:
+        return {}
+    try:
+        rows = await get_redis().mget([_state_key(sid) for sid in session_ids])
+        return {sid: bool(raw) and not json.loads(raw).get("done")
+                for sid, raw in zip(session_ids, rows)}
+    except Exception as exc:
+        from app.core.redaction import diag_log
+
+        diag_log("agent.genstream.active_statuses", exc)
+        return {}
 
 
 async def open_subscription(session_id):

@@ -12,9 +12,8 @@ from typing import NamedTuple
 class PendingInteraction(NamedTuple):
     """等待用户交互时暂存的调用现场。
 
-    ``replay`` 只有破坏性工具的确认门会填：用户在界面上确认后，服务端按原参数
-    重投这次调用，模型不必也不应重新调用一次。提问、预算弹窗恢复后交给模型
-    继续走，没有需要重投的调用现场。
+    ``replay`` 只有需要授权确认的工具会填：用户在界面上确认后，服务端按原参数
+    重投这次调用，模型不必也不应重新调用一次。提问恢复后直接把答案交给模型继续走。
     """
     prompt_id: int
     tool_call_id: str
@@ -49,8 +48,9 @@ class RunState:
     total_cache_read: int = 0
     total_cache_write: int = 0
 
-    # ── 交互现场（同一时刻至多一个 pending）──────────────────────────────
+    # ── 交互现场（单个活动交互，后续工具确认按序排队）──────────────────
     pending: PendingInteraction | None = None
+    pending_tool_interactions: list[dict] = field(default_factory=list)
 
     # ── 事件序号（events.EventSequencer 持有权威值，这里镜像用于诊断）────
     event_seq: int = 0

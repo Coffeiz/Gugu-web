@@ -2,13 +2,13 @@
 
 > 状态：✅ 主体完成（Phase 0–5）；全量测试有 13 个非本阶段失败，见 Phase 4 记录
 > 创建：2026-10-01
-> 最近更新：2026-10-02
+> 最近更新：2026-10-23（并行调度决策更新见 §10）
 > 关联模块：backend/agent/loop/machine.py、backend/agent/loop/tools.py、backend/agent/tools/base.py、backend/agent/providers/
 > 背景参考：docs/prds/PRD-LLM-29-统一Canonical消息区域与持久化增量.md、docs/prds/PRD-LLM-30-Provider思考深度与API格式能力配置.md
 
 ## 0. 原始代码调查基线（Phase 0）
 
-以下表格记录实施前的基线，不代表当前状态。当前已由同一 Round 有界并行调度器处理满足显式安全授权的整批调用；默认关闭，可在 Admin 快速回退。Phase 5 已将网络搜索、HTTP GET 和符合 Shell 确认策略的命令纳入并行范围，并开放可配置并行上限。
+以下表格记录实施前的基线，不代表当前状态。旧版以白名单和整批预检限制并行；2026-10-23 起的执行策略以 §10 为准。
 
 | 项目 | 实施前状态 | 对并行的影响 |
 |---|---|---|
@@ -271,3 +271,14 @@
 - 并行 dispatch 首次事件按原顺序标记 `queued`；调度器启动单项后发同一 `tool_call_id` 的 `running` 更新。实时卡片和数据库时间线均按调用 ID 原位更新，刷新快照也不会把 queued 状态误发为终态。
 - queued 卡片不显示运行耗时；转为 running 才开始计时。取消时排队中和执行中的卡片均收敛到 cancelled。
 - 验证：Loop 并行策略与取消、快照恢复相关后端测试 96 passed；前端 composable 用例 6 passed、typecheck 与 production build 通过。构建仍有仓库既有的大 chunk 和 highlight.js 导入告警。
+
+## 10. 2026-10-23 并行调度决策更新
+
+本节更新当前执行策略；§0–9 的资格白名单、整批回退和写操作冲突预检仅保留为历史实施记录，不再代表当前策略。
+
+- Agent 在同一模型响应中提出多个调用，即表达这些普通调用可并发执行；依赖前序结果的调用应由 Agent 放到后续 Round。执行器不根据 `mutates`、文件/外部服务操作或 `parallel_safe` 元数据猜测调用之间是否冲突。
+- 每个普通调用仍独立经过 dispatch 的 Schema、权限、归属、错误处理和事务流程。Admin 并行开关及每 Round 并发上限仍有效。
+- 必须等待用户回答的工具、MCP 调用（其确认要求可能在动态 handler 返回时才确定）和危险 Shell 命令单独进入交互通道；它们不应让同轮普通调用退回串行。一个交互挂起时，同批其余交互调用收到明确 deferred 回执，待 Agent 恢复后再安排。
+- 每个 Shell 调用分别判定是否必须等待危险命令确认；不使用 Shell 风险标签推断普通同轮工具间存在数据冲突。仅精确匹配的 `python --version`、`node -V` 等运行时版本查询视为安全查询；命令拼接和脚本执行仍按原规则确认。
+- 事件与 Provider 历史仍按模型原始索引回填；dispatch 可并发完成，但不能改变工具结果与 tool id 的配对顺序。
+- 对照：Anthropic 文档建议将互相独立的工具调用并发提出，有依赖时按顺序分轮；OpenAI Agents SDK 将模型是否能生成多个工具调用与执行器并发上限分开配置。Gugu 采用同样的职责分界：Agent 决定调用批次，执行器负责有界执行与每调用的安全门。参考：[Anthropic 提示工程文档](https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/prompt-templates-and-variables)、[OpenAI Agents SDK：Running agents](https://openai.github.io/openai-agents-python/running_agents/)。

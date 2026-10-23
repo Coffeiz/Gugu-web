@@ -1566,7 +1566,7 @@ async def test_invalid_protocol_call_does_not_serialize_five_safe_shell_calls(mo
     assert all(calls_by_id[f"shell-{index}"] == ["queued", "running"] for index in range(5))
     assert [event.get("tool_call_id") for event in tool_events if event["type"] == "tool_done"] == [
         "bad-call", "shell-0", "shell-1", "shell-2", "shell-3", "shell-4",
-    ]
+    ], "终态事件与 canonical history 都按原始调用顺序配对"
     invalid_result = next(
         event["result"] for event in tool_events
         if event["type"] == "tool_done" and event.get("tool_call_id") == "bad-call"
@@ -1806,8 +1806,8 @@ async def test_parallel_cancellation_preserves_finished_result_and_closes_batch(
     assert not any(event.get("type") == "error" for event in events)
 
 
-async def test_parallel_enabled_mixed_batch_remains_strictly_serial(monkeypatch):
-    """无效调用不能掩盖同批真实不安全工具，真实混合批次仍必须整批串行。"""
+async def test_parallel_enabled_mixed_batch_runs_normal_calls_concurrently(monkeypatch):
+    """无效调用独立回执，不会把同 Round 的普通工具强制串行。"""
     from agent.tools.base import Tool
 
     calls = [
@@ -1836,18 +1836,25 @@ async def test_parallel_enabled_mixed_batch_remains_strictly_serial(monkeypatch)
     )
     monkeypatch.setattr(registry, "snapshot_with_extras", lambda _extras, *, model_cfg=None: snapshot)
 
-    first_started = asyncio.Event()
-    release_first = asyncio.Event()
+    both_started = asyncio.Event()
+    release_both = asyncio.Event()
     calls_started = []
+    active = 0
+    max_active = 0
 
     async def fake_dispatch(_user_id, name, _arguments):
+        nonlocal active, max_active
+        assert name in {"safe_alpha", "ordinary_beta"}
         calls_started.append(name)
-        if name == "safe_alpha":
-            first_started.set()
-            await release_first.wait()
+        active += 1
+        max_active = max(max_active, active)
+        if len(calls_started) == 2:
+            both_started.set()
+        try:
+            await release_both.wait()
             return json.dumps({"result": name}), None
-        assert release_first.is_set(), "第二项不能在第一项完成前启动"
-        return json.dumps({"result": name}), None
+        finally:
+            active -= 1
 
     monkeypatch.setattr(registry, "dispatch", fake_dispatch)
     settings = SimpleNamespace(
@@ -1867,18 +1874,14 @@ async def test_parallel_enabled_mixed_batch_remains_strictly_serial(monkeypatch)
                 continue
 
     task = asyncio.create_task(consume())
-    await asyncio.wait_for(first_started.wait(), timeout=1)
-    release_first.set()
+    await asyncio.wait_for(both_started.wait(), timeout=1)
+    release_both.set()
     await asyncio.wait_for(task, timeout=1)
 
-    assert calls_started == ["safe_alpha", "ordinary_beta"]
-    assert [
-        (event["type"], event.get("tool_call_id"))
-        for event in events if event.get("type") in {"tool_call", "tool_done"}
-    ] == [
-        ("tool_call", "call-a"), ("tool_done", "call-a"),
-        ("tool_call", "bad-call"), ("tool_done", "bad-call"),
-        ("tool_call", "call-b"), ("tool_done", "call-b"),
+    assert set(calls_started) == {"safe_alpha", "ordinary_beta"}
+    assert max_active == 2
+    assert [event.get("tool_call_id") for event in events if event.get("type") == "tool_done"] == [
+        "call-a", "bad-call", "call-b",
     ]
 
 
@@ -1927,7 +1930,7 @@ async def test_parallel_dispatch_exception_is_isolated_and_not_exposed(monkeypat
     tool_done = [event for event in events if event.get("type") == "tool_done"]
     assert [event.get("status") for event in tool_done] == ["error", "success"]
     assert "private diagnostic sentinel" not in json.dumps(events, ensure_ascii=False)
-    assert "只读工具执行失败" in tool_done[0]["result"]
+    assert "工具执行失败" in tool_done[0]["result"]
     canonical = json.dumps(canonical_messages(messages), ensure_ascii=False)
     assert "private diagnostic sentinel" not in canonical
 

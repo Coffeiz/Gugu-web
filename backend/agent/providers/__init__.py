@@ -205,25 +205,38 @@ def build_anthropic_client(ai, timeout):
     from anthropic import AsyncAnthropic
 
     from app.core.credentials import normalize_ascii_api_key
+    from .client_pool import config_key, provider_client_pool
     # 生产环境的新版 SDK 使用 httpx2；不能直接接收由 httpx 创建的
     # Timeout 对象，否则请求阶段会出现 float 与 Timeout 相加的 TypeError。
     if timeout is not None and not isinstance(timeout, (int, float)):
         timeout = getattr(timeout, "read", timeout)
     # max_retries=0：SDK 内建的立即重试收掉，退避节奏统一交给 app/core/retry.py
     # （否则应用层每次尝试内部还会偷偷打 3 发，过载窗口里全是无效请求）
-    return AsyncAnthropic(
-        api_key=normalize_ascii_api_key(getattr(ai, "api_key", "") or "dummy", label="模型 API Key"),
-        base_url=adapter_for(ai).resolve_base_url(ai),
-        timeout=timeout,
-        max_retries=0,
-        default_headers=adapter_for(ai).auth_headers(ai),
-    )
+    api_key = normalize_ascii_api_key(getattr(ai, "api_key", "") or "dummy", label="模型 API Key")
+    base_url = adapter_for(ai).resolve_base_url(ai)
+    headers = adapter_for(ai).auth_headers(ai)
+    key = config_key("anthropic", base_url=base_url, api_key=api_key, headers=headers, timeout=timeout)
+
+    def create_client(http_client=None):
+        kwargs = dict(
+            api_key=api_key,
+            base_url=base_url,
+            timeout=timeout,
+            max_retries=0,
+            default_headers=headers,
+        )
+        if http_client is not None:
+            kwargs["http_client"] = http_client
+        return AsyncAnthropic(**kwargs)
+
+    return provider_client_pool.get_sdk_client(key, timeout, create_client)
 
 
 def build_openai_client(ai, timeout):
     import httpx
     import httpx2
     from openai import AsyncOpenAI
+    from .client_pool import config_key, provider_client_pool
 
     adapter = adapter_for(ai)
     from app.core.credentials import normalize_ascii_api_key
@@ -241,13 +254,23 @@ def build_openai_client(ai, timeout):
             pool=timeout.pool,
         )
     # 同上：SDK 内建重试收零，节奏统一在 app/core/retry.py
-    return AsyncOpenAI(
-        api_key=api_key,
-        base_url=adapter.resolve_base_url(ai),
-        timeout=timeout,
-        max_retries=0,
-        default_headers=adapter.auth_headers(ai),
-    )
+    base_url = adapter.resolve_base_url(ai)
+    headers = adapter.auth_headers(ai)
+    key = config_key("openai", base_url=base_url, api_key=api_key, headers=headers, timeout=timeout)
+
+    def create_client(http_client=None):
+        kwargs = dict(
+            api_key=api_key,
+            base_url=base_url,
+            timeout=timeout,
+            max_retries=0,
+            default_headers=headers,
+        )
+        if http_client is not None:
+            kwargs["http_client"] = http_client
+        return AsyncOpenAI(**kwargs)
+
+    return provider_client_pool.get_sdk_client(key, timeout, create_client)
 
 
 def build_ollama_client(ai, timeout):

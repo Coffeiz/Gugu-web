@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+from functools import wraps
 import asyncio
 import json
 import logging
@@ -97,6 +98,32 @@ def _record_provider_round_diagnostic(
             "tool_call_count": len(result.tool_calls or []),
         }, ensure_ascii=False, separators=(",", ":")),
     )
+
+
+def _with_provider_client_scope(run_func):
+    """在流式生成器每次推进时绑定同一 run scope，兼容跨 Task 消费。"""
+    @wraps(run_func)
+    async def wrapped(*args, **kwargs):
+        from agent.providers.client_pool import provider_client_pool
+
+        scope = provider_client_pool.new_run_scope()
+        inner = run_func(*args, **kwargs)
+        try:
+            while True:
+                try:
+                    with provider_client_pool.activate(scope):
+                        event = await inner.__anext__()
+                except StopAsyncIteration:
+                    break
+                yield event
+        finally:
+            try:
+                with provider_client_pool.activate(scope):
+                    await inner.aclose()
+            finally:
+                provider_client_pool.finish_run_scope(scope)
+
+    return wrapped
 
 
 async def run_loop(
@@ -504,62 +531,44 @@ async def run_loop(
                 dispatched = []
                 run_state.pending = None
                 agent_settings = getattr(getattr(runner, "settings", None), "agent", None)
-                parallel_batch = None
-                parallel_protocol_errors = {}
                 parallel_cancelled = False
-                if getattr(agent_settings, "parallel_tool_execution_enabled", False):
-                    parallel_batch = _core._prepare_parallel_batch(result.tool_calls, tool_snapshot)
-                    # 协议无效或 JSON 截断的调用不会 dispatch，也没有副作用；它们不应
-                    # 单独阻塞同 Round 中其余安全调用。真实工具仍必须整批通过预检。
-                    if parallel_batch is None and len(result.tool_calls) > 2:
-                        executable_calls = []
-                        candidate_errors = {}
-                        for original_index, call in enumerate(result.tool_calls):
-                            target, _arguments, protocol_error = _core._resolve_tool_call(
-                                getattr(call, "name", None), getattr(call, "input", None),
-                            )
-                            if protocol_error is not None:
-                                candidate_errors[original_index] = (
-                                    target, _core.json.dumps(protocol_error, ensure_ascii=False),
-                                )
-                            elif getattr(call, "parse_error", None):
-                                candidate_errors[original_index] = (
-                                    target, _core.loop_drivers.TOOL_ARGS_TRUNCATED_ERROR,
-                                )
-                            else:
-                                executable_calls.append((original_index, call))
-                        candidate_batch = _core._prepare_parallel_batch(
-                            [call for _index, call in executable_calls], tool_snapshot,
-                        )
-                        if candidate_batch is not None:
-                            original_indexes = [index for index, _call in executable_calls]
-                            parallel_batch = [
-                                (original_indexes[index], *prepared_call)
-                                for index, prepared_call in enumerate(candidate_batch)
-                            ]
-                            parallel_protocol_errors = candidate_errors
-                    if parallel_batch is not None and not parallel_protocol_errors:
-                        parallel_batch = [
-                            (index, *prepared_call)
-                            for index, prepared_call in enumerate(parallel_batch)
-                        ]
-                if len(result.tool_calls) > 1 and parallel_batch is None:
+                for call_index, tool_call in enumerate(result.tool_calls):
+                    if not getattr(tool_call, "id", None):
+                        tool_call.id = f"{round_id}-tool-{call_index + 1}"
+                parallel_enabled = bool(
+                    getattr(agent_settings, "parallel_tool_execution_enabled", False)
+                )
+                if parallel_enabled:
+                    parallel_plan, serial_plan = _core._partition_tool_calls(
+                        result.tool_calls, tool_snapshot,
+                    )
+                else:
+                    parallel_plan, serial_plan = [], list(enumerate(result.tool_calls))
+
+                if len(result.tool_calls) > 1 and not parallel_enabled:
                     _log_tool_batch_observation({
                         "mode": "serial",
                         "calls": len(result.tool_calls),
-                        "reason": (
-                            "parallel_disabled"
-                            if not getattr(agent_settings, "parallel_tool_execution_enabled", False)
-                            else "batch_not_eligible_or_preflight_failed"
-                        ),
+                        "reason": "parallel_disabled",
                     })
-                if parallel_batch is not None:
+                indexed_dispatched: dict[int, tuple[Any, Any]] = {}
+                terminal_events: dict[int, dict[str, Any]] = {}
+                call_indexes_by_id = {
+                    getattr(call, "id", None): index
+                    for index, call in enumerate(result.tool_calls)
+                }
+                parallel_indexes = [index for index, _call, _target, _arguments in parallel_plan]
+                if parallel_plan:
                     from agent.loop.tool_round import ParallelToolBatchRuntime, ParallelToolBindings
 
                     parallel_runtime = ParallelToolBatchRuntime(
-                        tool_calls=result.tool_calls,
-                        parallel_batch=parallel_batch,
-                        protocol_errors=parallel_protocol_errors,
+                        tool_calls=[call for _index, call, _target, _arguments in parallel_plan],
+                        parallel_batch=[
+                            (local_index, call, target, arguments)
+                            for local_index, (_index, call, target, arguments)
+                            in enumerate(parallel_plan)
+                        ],
+                        protocol_errors={},
                         runner=runner,
                         user_id=user_id,
                         session_id=session_id,
@@ -580,26 +589,64 @@ async def run_loop(
                             diag_log=_core.diag_log,
                             log_batch=_log_tool_batch_observation,
                         ),
+                        run_state=run_state,
+                        on_interaction=on_interaction,
                     )
                     async for emission in parallel_runtime.run():
                         if emission.kind == "event":
                             payload = emission.value
                             if payload["type"] == "tool_call" and payload.get("status") != "running":
                                 run_state.tool_call_count += 1
+                            if payload["type"] == "tool_done":
+                                call_index = call_indexes_by_id.get(payload.get("tool_call_id"))
+                                if call_index is not None:
+                                    terminal_events[call_index] = payload
+                                    continue
                             event_type = payload["type"]
                             event_payload = {key: value for key, value in payload.items() if key != "type"}
                             yield stream_event(event_type, **event_payload)
                         elif emission.kind == "artifact":
                             yield _core._artifact_sse(emission.value)
                         elif emission.kind == "complete":
-                            dispatched.extend(emission.value.dispatched)
+                            indexed_dispatched.update(
+                                (original_index, item)
+                                for original_index, item in zip(
+                                    parallel_indexes, emission.value.dispatched,
+                                )
+                            )
                             parallel_cancelled = emission.value.cancelled
 
-                if parallel_batch is None:
+                serial_indexes = [index for index, _call in serial_plan]
+                if serial_plan and parallel_cancelled:
+                    for original_index, call in serial_plan:
+                        target, _arguments, _error = _core._resolve_tool_call(
+                            getattr(call, "name", None), getattr(call, "input", None),
+                        )
+                        label = runner._label(target)
+                        if verify_mode:
+                            label = runner._label("_verify_prefix", "复查 · ") + label
+                        tool_call_id = getattr(call, "id")
+                        cancelled_result = _core.json.dumps(
+                            {"error": "工具调用已取消。"}, ensure_ascii=False,
+                        )
+                        indexed_dispatched[original_index] = (call, cancelled_result)
+                        run_state.tool_call_count += 1
+                        yield stream_event(
+                            "tool_call", round_id=round_id, tool_call_id=tool_call_id,
+                            name=target, label=label, input={}, verify=verify_mode,
+                            status="cancelled",
+                        )
+                        terminal_events[original_index] = {
+                            "type": "tool_done", "round_id": round_id,
+                            "tool_call_id": tool_call_id, "name": target, "label": label,
+                            "verify": verify_mode, "status": "cancelled",
+                            "result": cancelled_result,
+                        }
+                elif serial_plan:
                     from agent.loop.tool_round import SerialToolBatchRuntime, SerialToolBindings
 
                     serial_runtime = SerialToolBatchRuntime(
-                        tool_calls=result.tool_calls,
+                        tool_calls=[call for _index, call in serial_plan],
                         runner=runner,
                         run_state=run_state,
                         bindings=SerialToolBindings(
@@ -625,12 +672,30 @@ async def run_loop(
                     async for emission in serial_runtime.run():
                         if emission.kind == "event":
                             payload = emission.value
+                            if parallel_plan and payload.get("type") == "tool_done":
+                                call_index = call_indexes_by_id.get(payload.get("tool_call_id"))
+                                if call_index is not None:
+                                    terminal_events[call_index] = payload
+                                    continue
                             event_type = payload.pop("type")
                             yield stream_event(event_type, **payload)
                         elif emission.kind == "artifact":
                             yield _core._artifact_sse(emission.value)
                         elif emission.kind == "complete":
-                            dispatched.extend(emission.value.dispatched)
+                            indexed_dispatched.update(
+                                (original_index, item)
+                                for original_index, item in zip(
+                                    serial_indexes, emission.value.dispatched,
+                                )
+                            )
+
+                dispatched = [indexed_dispatched[index] for index in sorted(indexed_dispatched)]
+                for call_index in sorted(terminal_events):
+                    payload = terminal_events[call_index]
+                    event_payload = {
+                        key: value for key, value in payload.items() if key != "type"
+                    }
+                    yield stream_event("tool_done", **event_payload)
 
                 # 只有工具实际成功才算取得进展：失败/等待确认的回执不能重置空回复额度。
                 if any(
@@ -778,20 +843,24 @@ async def run_loop(
                     )
                     interaction_action = None
                     interaction_tool_succeeded = False
-                    async for emission in interaction_runtime.resolve_pending():
-                        if emission.kind == "event":
-                            payload = emission.value
-                            event_type = payload.pop("type", "tool_done")
-                            if event_type == "tool_done" and payload.get("status") == "success":
-                                interaction_tool_succeeded = True
-                            event_payload = {key: value for key, value in payload.items() if key != "type"}
-                            yield stream_event(event_type, **event_payload)
-                        elif emission.kind == "raw":
-                            yield emission.value
-                        elif emission.kind == "artifact":
-                            yield _core._artifact_sse(emission.value)
-                        elif emission.kind == "action":
-                            interaction_action = emission.value
+                    while run_state.pending is not None:
+                        async for emission in interaction_runtime.resolve_pending():
+                            if emission.kind == "event":
+                                payload = emission.value
+                                event_type = payload.pop("type", "tool_done")
+                                if event_type == "tool_done" and payload.get("status") == "success":
+                                    interaction_tool_succeeded = True
+                                event_payload = {key: value for key, value in payload.items() if key != "type"}
+                                yield stream_event(event_type, **event_payload)
+                            elif emission.kind == "raw":
+                                yield emission.value
+                            elif emission.kind == "artifact":
+                                yield _core._artifact_sse(emission.value)
+                            elif emission.kind == "action":
+                                interaction_action = emission.value
+                        if interaction_action != "continue" or run_state.pending is None:
+                            break
+                        interaction_action = None
                     if interaction_action == "return":
                         return
                     if interaction_action == "continue":
@@ -894,3 +963,7 @@ async def run_loop(
             if reasoning_state is not None:
                 await reasoning_state.completed()
             return
+
+
+# 保持 run_loop 实现本身聚焦编排；边界包装只负责 provider client 的 run 租约。
+run_loop = _with_provider_client_scope(run_loop)
