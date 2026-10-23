@@ -27,6 +27,7 @@ class MediaLimits:
     compress_trigger_bitrate: int = 16 * 1024 * 1024
     transcode_video_mimes: frozenset[str] = frozenset()
     base64_max: int = 45 * 1024 * 1024
+    prefer_file_upload: bool = False
     inline_max_bytes: int = 36 * 1024 * 1024
 
 

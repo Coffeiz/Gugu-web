@@ -353,11 +353,9 @@ class Tool:
         self.requires_confirmation = requires_confirmation
         # 显式声明批量分支也使用精确目标集合确认；静态守卫检查统一 helper。
         self.batch_confirmation = batch_confirmation
-        # 并发安全是独立于 mutates 的显式调度授权；默认关闭，只有经过副作用与
-        # 共享状态审查的工具才能加入同一 Round 的并发批次。
+        # 历史调度声明保留兼容；当前 Agent Loop 不用它推断同 Round 调用间的冲突。
         self.parallel_safe = parallel_safe is True
-        # 少数有副作用工具（如受权限/确认策略保护的 Shell）可按具体输入
-        # 声明本次调用能否与同 Round 的其他调用并行；失败时默认串行。
+        # 历史输入级声明；Shell 当前只用它区分是否必须进入危险命令确认通道。
         self.parallel_safe_for_input = parallel_safe_for_input
         # 这些输入数组要求调用方提供规范结构，不应用模型侧 item 包装/拍平归一。
         self.strict_array_fields = frozenset(strict_array_fields)

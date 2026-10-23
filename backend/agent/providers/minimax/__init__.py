@@ -278,3 +278,11 @@ class MiniMaxAdapter(ProviderAdapter):
 
     def responses_input_capabilities(self, ai) -> ResponsesInputCapabilities:
         return minimax_media.responses_input_capabilities(ai)
+
+    async def upload_media_path(self, path, name: str, ai, *, mime: str = "",
+                                purpose: str = "") -> str | None:
+        return await minimax_media.upload_video_path(
+            path, name, mime=mime, purpose=purpose,
+            api_key=getattr(ai, "api_key", "") or "",
+            base_url=getattr(ai, "base_url", "") or "",
+        )

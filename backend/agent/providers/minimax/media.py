@@ -1,6 +1,8 @@
 """MiniMax 模型原生多模态能力与 Provider 官方输入规格。"""
 from __future__ import annotations
 
+from typing import BinaryIO
+
 from ..base import ResponsesInputCapabilities, configured_responses_input_capabilities
 from ..media import DEFAULT_MEDIA_LIMITS, MediaLimits
 
@@ -27,7 +29,9 @@ M3_MEDIA_LIMITS = MediaLimits(
     video_mimes=frozenset({
         "video/mp4", "video/x-msvideo", "video/quicktime", "video/x-matroska",
     }),
-    base64_max=45 * 1024 * 1024,
+    # 这是传输策略，不是文件能力上限；大视频保留原件，通过 Files API 引用。
+    base64_max=4 * 1024 * 1024,
+    prefer_file_upload=True,
 )
 
 
@@ -53,7 +57,7 @@ def responses_input_capabilities(ai) -> ResponsesInputCapabilities:
     return configured_responses_input_capabilities(ai)
 
 
-async def upload_video_file(raw: bytes, name: str, *, mime: str, purpose: str,
+async def upload_video_file(raw: bytes | BinaryIO, name: str, *, mime: str, purpose: str,
                             api_key: str, base_url: str) -> str | None:
     """把视频上传到 MiniMax Files API，返回 file_id；失败 None。
 
@@ -95,3 +99,13 @@ async def upload_video_file(raw: bytes, name: str, *, mime: str, purpose: str,
     except Exception as e:
         diag_log_raw("minimax.media.upload_video_file", f"上传异常 type={type(e).__name__}")
         return None
+
+
+async def upload_video_path(path, name: str, *, mime: str, purpose: str,
+                            api_key: str, base_url: str) -> str | None:
+    """按文件流上传原视频；HTTPX multipart 分块读取，不创建整份 bytes。"""
+    from pathlib import Path
+
+    with Path(path).open("rb") as source:
+        return await upload_video_file(source, name, mime=mime, purpose=purpose,
+                                       api_key=api_key, base_url=base_url)
