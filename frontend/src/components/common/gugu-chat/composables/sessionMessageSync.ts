@@ -103,37 +103,82 @@ function preserveToolDetails(existing: ChatMessage, incoming: ChatMessage): Part
   }
 }
 
-/** 合并从持久化会话增量恢复的消息；重复事件更新内容但不重复创建气泡。 */
-export function mergeSessionMessageDelta(
-  current: ChatMessage[],
-  incoming: ChatMessage[],
-): ChatMessage[] {
-  if (!incoming.length) return current
+function mergeMessage(existing: ChatMessage, incoming: ChatMessage): ChatMessage {
+  if (existing._updatedAt && incoming._updatedAt && Date.parse(existing._updatedAt) > Date.parse(incoming._updatedAt)) {
+    return existing
+  }
+  return {
+    ...existing,
+    ...incoming,
+    id: existing.id,
+    dbId: incoming.dbId ?? existing.dbId,
+    ...preserveToolDetails(existing, incoming),
+  }
+}
 
-  const result = [...current]
-  const indexByKey = new Map<string, number>()
-  result.forEach((message, index) => {
-    if (message._syncKey) indexByKey.set(message._syncKey, index)
-  })
+function normalizedMessageText(text: string | undefined) {
+  return (text || '').trim().replace(/\s+/g, ' ')
+}
 
-  for (const message of incoming) {
+function findGreetingIndex(messages: ChatMessage[], persisted: ChatMessage) {
+  if (persisted.role !== 'ai' || !persisted._syncKey?.startsWith('message:')) return -1
+  const text = normalizedMessageText(persisted.text)
+  if (!text) return -1
+  return messages.findIndex(message => message._greeting && message.role === 'ai'
+    && [message._greetFull, message.text].some(candidate => normalizedMessageText(candidate) === text))
+}
+
+function foldExistingMessages(messages: ChatMessage[], indexByKey: Map<string, number>) {
+  const result: ChatMessage[] = []
+  for (const message of messages) {
     const key = message._syncKey
     const index = key ? indexByKey.get(key) : undefined
     if (index == null) {
       if (key) indexByKey.set(key, result.length)
       result.push(message)
-      continue
-    }
-    const existing = result[index]
-    if (existing._updatedAt && message._updatedAt && Date.parse(existing._updatedAt) > Date.parse(message._updatedAt)) continue
-    result[index] = {
-      ...existing,
-      ...message,
-      id: existing.id,
-      dbId: message.dbId ?? existing.dbId,
-      ...preserveToolDetails(existing, message),
+    } else {
+      result[index] = mergeMessage(result[index], message)
     }
   }
+  return result
+}
+
+function mergeIncomingMessage(
+  result: ChatMessage[],
+  indexByKey: Map<string, number>,
+  message: ChatMessage,
+) {
+  const key = message._syncKey
+  let index = key ? indexByKey.get(key) : undefined
+  // 首次发送时，前端问候没有数据库 ID；新会话创建时后端会将同一文本持久化。
+  // 让持久化记录认领本地问候，保留其位置和组件身份，不再渲染第二张问候气泡。
+  const greetingIndex = index == null ? findGreetingIndex(result, message) : -1
+  if (greetingIndex >= 0) index = greetingIndex
+
+  if (index == null) {
+    if (key) indexByKey.set(key, result.length)
+    result.push(message)
+    return
+  }
+  const existing = result[index]
+  result[index] = mergeMessage(existing, message)
+  if (existing._greeting && greetingIndex >= 0) {
+    delete result[index]._greeting
+    delete result[index]._greetFull
+  }
+  if (key) indexByKey.set(key, index)
+}
+
+/** 合并从持久化会话增量恢复的消息；重复事件更新内容但不重复创建气泡。 */
+export function mergeSessionMessageDelta(
+  current: ChatMessage[],
+  incoming: ChatMessage[],
+): ChatMessage[] {
+  const indexByKey = new Map<string, number>()
+  // 会话 append 通知可能先于 SSE session_id 到达：历史同步已经插入持久化消息，
+  // 随后临时气泡才获得相同 _syncKey。先折叠当前列表中的重复身份，不能只防新增重复。
+  const result = foldExistingMessages(current, indexByKey)
+  for (const message of incoming) mergeIncomingMessage(result, indexByKey, message)
   return result
 }
 

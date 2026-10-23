@@ -37,6 +37,34 @@ describe('mergeSessionMessageDelta', () => {
     expect(merged).toEqual([ephemeral, message(2, 'message:2', 'saved')])
   })
 
+  it('身份补齐后折叠历史同步已经插入的同一条临时用户消息', () => {
+    const optimistic = { ...message(1, 'message:6', '用户文本'), role: 'user', dbId: 6 }
+    const persisted = { ...message(2, 'message:6', '用户文本'), role: 'user', dbId: 6, time: '19:30' }
+
+    const merged = mergeSessionMessageDelta([optimistic, persisted], [])
+
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toMatchObject({ id: optimistic.id, dbId: 6, _syncKey: 'message:6', role: 'user' })
+  })
+
+  it('用首次持久化记录认领本地默认问候，避免新会话出现重复问候', () => {
+    const greeting: ChatMessage = {
+      ...message(1, '', '咕咕在呢。今天想从哪件开始？'),
+      _greeting: true,
+      _greetFull: '咕咕在呢。今天想从哪件开始？',
+    }
+    const persistedGreeting = {
+      ...message(8, 'message:5', '咕咕在呢。今天想从哪件开始？'),
+      dbId: 5,
+    }
+
+    const merged = mergeSessionMessageDelta([greeting], [persistedGreeting])
+
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toMatchObject({ id: greeting.id, dbId: 5, _syncKey: 'message:5', text: greeting.text })
+    expect(merged[0]._greeting).toBeUndefined()
+  })
+
 
   it('展示身份只由 eventId 决定，相同正文不同事件不会合并', () => {
     const events = ['a', 'b'].map(eventId => ({ eventId, kind: 'assistant', text: '收到', runId: 'run-a', roundId: 'r1', createdAt: '2026-01-01T01:00:00Z' }))

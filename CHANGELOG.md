@@ -18,6 +18,10 @@
 - Load conversation history by visible page and reuse cached sessions to make switching and scrolling faster.
 - Allow main-model requests to wait up to five minutes for long-running multimodal responses.
 
+#### Fixes
+
+- Prevent duplicate chat bubbles when streamed messages are reconciled with persisted history.
+
 ### 更新内容
 
 #### 新功能
@@ -28,6 +32,10 @@
 
 - 按可见分页加载会话历史并复用会话缓存，提升切换会话和滚动加载的速度。
 - 主模型请求最长可等待五分钟，以完成耗时较长的多模态响应。
+
+#### 修复
+
+- 修复流式消息与持久化历史合并时重复显示气泡。
 
 ## [1.7.6] - 2026-10-21
 

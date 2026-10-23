@@ -294,7 +294,8 @@ test.describe('GuguChat 悬浮窗', () => {
     }))
     const timelineEvents = [{
       kind: 'tool',
-      id: 890100,
+      // 历史映射要求稳定的时间线事件身份；普通 `id` 不符合契约，会在消息装载前抛错。
+      eventId: 'e2e-selection-tool-event',
       messageId: 890040,
       timelineOrder: 40 * 1000 + 2,
       runId: 'e2e-selection-run',
@@ -334,9 +335,12 @@ test.describe('GuguChat 悬浮窗', () => {
     await sessionItem.locator('.exp-session-title').click()
 
     const scrollContainer = chatWindow.locator('.chat-messages')
-    const firstRow = chatWindow.locator('.msg-virtual-row[data-index="0"]')
+    // 等历史加载完成并定位到最新消息后，再滚到顶部；否则加载收尾会把滚动位置重新定位到底部。
+    await expect(chatWindow.locator('.msg-virtual-row[data-index="80"] .msg-bubble')).toBeVisible()
     await scrollContainer.evaluate(element => { element.scrollTop = 0 })
+    const firstRow = chatWindow.locator('.msg-virtual-row[data-index="0"]')
     await expect(firstRow).toBeVisible()
+    await expect(firstRow.locator('.msg-bubble')).toContainText('可选消息-0')
     await page.evaluate(() => {
       const firstBubble = document.querySelector('.msg-virtual-row[data-index="0"] .msg-bubble')
       firstBubble?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, isPrimary: true }))

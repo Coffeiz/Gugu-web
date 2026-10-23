@@ -58,6 +58,19 @@ function localizedToolStatusLabel(event: { name?: string; label?: string; input?
   return event.label || event.name || i18n.global.t('chatUi.toolCall')
 }
 
+function attachPersistedIdentity(messages: ChatMessage[], optimistic: ChatMessage, dbId: number): ChatMessage[] {
+  const index = messages.findIndex(message => message.id === optimistic.id)
+  if (index < 0) {
+    optimistic.dbId = dbId
+    optimistic._syncKey = `message:${dbId}`
+    return messages
+  }
+  messages[index].dbId = dbId
+  messages[index]._syncKey = `message:${dbId}`
+  // History sync may have inserted the persisted copy before SSE delivered identity.
+  return mergeSessionMessageDelta(messages, [])
+}
+
 export interface QueuedMessage extends QueuedMessagePayload {
   queueId: string
   sessionId: number | null
@@ -962,8 +975,8 @@ export function useChatStream(options: {
 
       const r = await consumeStream(res.body.getReader(), ownerSid, viewGeneration, (_acceptedSessionId, timelineOrder, userMessageId) => {
         if (optimisticUserMessage && userMessageId) {
-          optimisticUserMessage.dbId = userMessageId
-          optimisticUserMessage._syncKey = `message:${userMessageId}`
+          // 用响应式代理补稳定身份，并折叠历史同步可能已插入的竞态副本。
+          messages.value = attachPersistedIdentity(messages.value, optimisticUserMessage, userMessageId)
         }
         runSessionIds.set(requestController, _acceptedSessionId)
         if (stopWaitingForSessionId.has(requestController)) {
