@@ -25,6 +25,8 @@ export default defineConfig({
     {
       name: 'setup',
       testMatch: /auth\.setup\.ts/,
+      // page fixture 在测试体运行前初始化；测试体里的 setTimeout 无法覆盖 fixture 启动耗时。
+      timeout: 120_000,
     },
     {
       name: 'chromium',

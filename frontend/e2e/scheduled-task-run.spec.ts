@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test'
 
 const createdTaskNames = new Set<string>()
+const remoteE2e = Boolean(process.env.PLAYWRIGHT_BASE_URL && !/localhost|127\.0\.0\.1/.test(process.env.PLAYWRIGHT_BASE_URL))
 
 test.afterEach(async ({ page }) => {
   const names = [...createdTaskNames]
@@ -26,6 +27,7 @@ test.afterEach(async ({ page }) => {
  * 「web 通知：已发送」，不会因为真实模型的不确定性/限流导致这条测试偶发失败。
  */
 test('定时任务：创建后立即运行，展示确定的成功结果', async ({ page }) => {
+  test.setTimeout(remoteE2e ? 360000 : 30000)
   await page.goto('/schedules')
   await expect(page.locator('.sched-page')).toBeVisible()
 
@@ -42,5 +44,5 @@ test('定时任务：创建后立即运行，展示确定的成功结果', async
   await card.getByRole('button', { name: '试运行' }).click()
 
   const toast = page.locator('.app-toast__message')
-  await expect(toast).toContainText('已发送', { timeout: 20000 })
+  await expect(toast).toContainText('已发送', { timeout: remoteE2e ? 300000 : 20000 })
 })

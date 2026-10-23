@@ -19,11 +19,18 @@ test('交互式终端可以创建、连接、输入并删除', async ({ page }) 
     const terminal = page.locator('.pty-terminal-shell')
     await expect(terminal).toBeVisible({ timeout: 15000 })
     await expect(terminal).not.toHaveClass(/is-disconnected/, { timeout: 15000 })
+    await expect(terminal.locator('.xterm-rows')).toContainText('gugu-sandbox:/workspace/', { timeout: 15000 })
 
     await terminal.click()
-    await page.keyboard.type('printf e2e-pty')
+    const outputMarker = `e2e-pty-${Date.now()}`
+    const escapedMarker = [...outputMarker]
+      .map(char => `\\x${char.charCodeAt(0).toString(16).padStart(2, '0')}`)
+      .join('')
+    // Keep the expected output out of the echoed command itself so this verifies
+    // command execution, not only that keyboard events reached xterm.
+    await page.keyboard.type(`printf '${escapedMarker}\\n'`)
     await page.keyboard.press('Enter')
-    await expect(terminal.locator('.xterm-rows')).toContainText('e2e-pty', { timeout: 10000 })
+    await expect(terminal.locator('.xterm-rows')).toContainText(outputMarker, { timeout: 10000 })
     await expect(page.locator('.terminal-page-error, .terminal-output-error')).toHaveCount(0)
 
     await page.getByRole('button', { name: '删除' }).click()

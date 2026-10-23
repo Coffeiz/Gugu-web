@@ -30,6 +30,7 @@ let outputDecoder: TextDecoder | null = null
 let suppressPasteSubmitUntil = 0
 let promptRecoveryTimer: number | null = null
 let hasEstablishedConnection = false
+let userInputSinceConnect = false
 let terminalResizeObserver: ResizeObserver | null = null
 let resizeFrame: number | null = null
 
@@ -57,6 +58,7 @@ function connect(forcePromptRecovery = false) {
   statusText.value = t('terminalUi.connecting')
   if (promptRecoveryTimer !== null) { window.clearTimeout(promptRecoveryTimer); promptRecoveryTimer = null }
   const generation = ++socketGeneration
+  userInputSinceConnect = false
   const previous = socket
   if (previous && previous.readyState !== WebSocket.CLOSED) previous.close()
   const current = new WebSocket(socketUrl(props.terminalId))
@@ -70,7 +72,11 @@ function connect(forcePromptRecovery = false) {
     if (forcePromptRecovery || !hasEstablishedConnection) {
       promptRecoveryTimer = window.setTimeout(() => {
         promptRecoveryTimer = null
-        const shouldRecover = isCurrent() && !hasWorkspacePrompt()
+        // The sandbox prompt includes a working-directory segment (for example
+        // `/workspace/default$`), so match the stable prefix rather than an exact
+        // `/workspace$` suffix. Never inject Ctrl-L after the user has started typing:
+        // that would clear an in-progress command if prompt detection races input.
+        const shouldRecover = isCurrent() && !userInputSinceConnect && !hasWorkspacePrompt()
         if (shouldRecover) send({ type: 'input', data: '\u000c' })
       }, 700)
     }
@@ -170,6 +176,7 @@ onMounted(() => {
       suppressPasteSubmitUntil = 0
       return
     }
+    userInputSinceConnect = true
     send({ type: 'input', data })
   })
   window.addEventListener('resize', handleResize)
