@@ -85,18 +85,21 @@ const folderNames = ref<string[]>([])
 const workspaceName = ref('')
 const pathLoading = ref(false)
 let detailLoadSequence = 0
-const infoFile = computed(() => detailFile.value && String(detailFile.value.id) === String(props.file?.id)
-  ? { ...props.file, ...detailFile.value }
-  : props.file)
+const infoFile = computed<Partial<FileMeta>>(() => {
+  const file = props.file ?? {}
+  return detailFile.value && String(detailFile.value.id) === String(file.id)
+    ? { ...file, ...detailFile.value }
+    : file
+})
 const folderPath = computed(() => {
-  if (!infoFile.value || infoFile.value.attach_id) return ''
+  if (infoFile.value.attach_id) return ''
   const root = infoFile.value.projectName
     || (infoFile.value.workspaceDirectoryId != null ? (workspaceName.value || t('files.workspace')) : t('files.all'))
   const folders = [...folderNames.value]
   if (!folders.length && infoFile.value.folderName) folders.push(infoFile.value.folderName)
   return [root, ...folders].filter(Boolean).join(' / ')
 })
-const canNavigate = computed(() => !!infoFile.value && !infoFile.value.attach_id && Number.isSafeInteger(Number(infoFile.value.id)))
+const canNavigate = computed(() => !infoFile.value.attach_id && Number.isSafeInteger(Number(infoFile.value.id)))
 
 watch(() => [props.show, props.x, props.y, props.zIndex], async ([v]) => {
   if (!v) return
@@ -119,12 +122,14 @@ watch(() => [props.show, props.file?.id, accountBoundaryEpoch.value], ([show]) =
   folderNames.value = []
   workspaceName.value = ''
   pathLoading.value = false
-  if (!show || !props.file || props.file.attach_id || typeof props.file.id !== 'number') return
+  const file = props.file
+  if (!show || !file || file.attach_id || typeof file.id !== 'number') return
+  const fileId = file.id
   const accountEpoch = getAccountBoundaryEpoch()
   pathLoading.value = true
   void (async () => {
     try {
-      const location = await filesApi.location(props.file!.id)
+      const location = await filesApi.location(fileId)
       if (sequence !== detailLoadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
       detailFile.value = location.file as Partial<FileMeta>
       folderNames.value = location.folderPath.map(folder => folder.name)
