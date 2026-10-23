@@ -53,6 +53,22 @@ def is_goal_start(text: str, *, allow_leading_mention: bool = False) -> tuple[bo
     return True, arg
 
 
+def im_command_permission_denial(name: str, arg: str, im_role: str | None,
+                                 locale: str | None) -> str | None:
+    """限制 IM 对 Owner 私有数据和账号/会话状态的直接命令访问。"""
+    if im_role == "owner" or name == "help":
+        return None
+    normalized_arg = (arg or "").strip().lower()
+    if name == "auto" and normalized_arg in {"", "status", "状态", "help", "?", "？"}:
+        return None
+    normalized_locale = (locale or "zh-CN").replace("_", "-").lower()
+    if normalized_locale.startswith("en"):
+        return "Only the Bot owner can run commands that access private data or change account/session state."
+    if normalized_locale.startswith("ja"):
+        return "個人データの参照またはアカウント・会話状態を変更するコマンドは、Bot 所有者のみ実行できます。"
+    return "只有绑定 Bot 的用户可以执行会读取个人数据或修改账号、会话状态的命令。"
+
+
 async def handle(user_id, text: str, *, session_id: int | None = None,
                  allow_leading_mention: bool = False,
                  locale: str | None = None) -> str | dict | None:

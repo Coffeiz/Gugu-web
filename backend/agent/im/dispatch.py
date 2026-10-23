@@ -264,10 +264,21 @@ async def dispatch_im_message(payload: dict):
     # 命令在 Agent runner 之前短路，但 IM 路由可能仍持有已删除的 Redis session id。
     # 先按当前作用域恢复/创建真实会话，避免 /new、/workspace 等命令落到失效 id。
     from agent import commands as _commands
-    command_name, _ = _commands.parse(
+    command_name, command_arg = _commands.parse(
         semantic_text,
         allow_leading_mention=False,
     )
+    if command_name is not None:
+        denial = _commands.im_command_permission_denial(
+            command_name,
+            command_arg,
+            req.im_role or "unknown",
+            payload.get("locale"),
+        )
+        if denial is not None:
+            await send_text(payload, denial)
+            trace.finish_run("success", denial)
+            return None
     goal_start, goal_text = _commands.is_goal_start(semantic_text)
     if command_name is not None:
         import app.db.session as _db_session

@@ -163,6 +163,74 @@ async def test_automatic_mode_command_cannot_enable_when_admin_disables_it(db, u
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("role", ["member", "unknown", None])
+@pytest.mark.parametrize("text,initial", [
+    ("/auto on", False), ("／auto on", False), ("/auto 开启", False),
+    ("/auto off", True), ("/auto 关闭", True),
+])
+async def test_non_owner_im_cannot_change_owner_automatic_mode(db, user_a, monkeypatch, role, text, initial):
+    import json
+    from types import SimpleNamespace
+
+    from app.models import UserPreferences
+
+    monkeypatch.setattr(
+        "app.core.config.get_settings",
+        lambda: SimpleNamespace(agent=SimpleNamespace(automatic_mode_enabled=True)),
+    )
+    preferences = UserPreferences(
+        user_id=user_a.id,
+        data_json=json.dumps({"automatic_mode_enabled": initial, "reply_tone": "formal"}),
+    )
+    db.add(preferences)
+    await db.commit()
+
+    _command, arg = commands.parse(text)
+    result = commands.im_command_permission_denial("auto", arg, role, None)
+
+    assert "只有绑定 Bot 的用户" in result
+    await db.refresh(preferences)
+    assert json.loads(preferences.data_json) == {
+        "automatic_mode_enabled": initial,
+        "reply_tone": "formal",
+    }
+
+
+@pytest.mark.asyncio
+async def test_non_owner_im_can_query_automatic_mode_but_not_owner_private_commands(db, user_a):
+    import json
+
+    from app.models import UserPreferences
+
+    preferences = UserPreferences(
+        user_id=user_a.id,
+        data_json=json.dumps({"automatic_mode_enabled": True}),
+    )
+    db.add(preferences)
+    await db.commit()
+
+    assert commands.im_command_permission_denial("auto", "status", "member", None) is None
+    assert "已开启" in await commands.handle(user_a.id, "/auto status")
+    assert "绑定 Bot 的用户" in commands.im_command_permission_denial("memory", "", "member", None)
+    assert "绑定 Bot 的用户" in commands.im_command_permission_denial("workspace", "god", "unknown", None)
+    assert commands.im_command_permission_denial("help", "", "member", None) is None
+    assert "/auto" in await commands.handle(user_a.id, "/help")
+
+
+@pytest.mark.asyncio
+async def test_im_owner_can_still_change_automatic_mode(db, user_a, monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        "app.core.config.get_settings",
+        lambda: SimpleNamespace(agent=SimpleNamespace(automatic_mode_enabled=True)),
+    )
+
+    assert commands.im_command_permission_denial("auto", "on", "owner", None) is None
+    assert "已开启" in await commands.handle(user_a.id, "/auto on")
+
+
+@pytest.mark.asyncio
 async def test_compact_forces_compression_instead_of_using_threshold(monkeypatch):
     captured = {}
     from agent.llm import modelctx
@@ -422,6 +490,9 @@ def test_goal_is_parsed_as_a_control_command():
     assert commands.is_goal_start("/goal 整理项目") == (True, "整理项目")
     assert commands.is_goal_start("/goal status") == (False, "")
     assert commands.is_goal_start("/goal cancel") == (False, "")
+    assert "绑定 Bot 的用户" in commands.im_command_permission_denial("goal", "整理项目", "member", None)
+    assert "绑定 Bot 的用户" in commands.im_command_permission_denial("goal", "整理项目", "unknown", None)
+    assert commands.im_command_permission_denial("goal", "整理项目", "owner", None) is None
 
 
 @pytest.mark.asyncio

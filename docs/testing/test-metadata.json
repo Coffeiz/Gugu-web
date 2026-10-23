@@ -55,6 +55,14 @@
     "keyBehavior": "崩溃重领不重跑已开始任务；回复发送前落库，检查点保留中间轮和工具状态，正常收尾复用同一展示行",
     "ci": "backend-pytest"
   },
+  "backend/tests/im/test_im_commands.py": {
+    "domain": "im-command-auth",
+    "layer": "L1",
+    "owner": "backend/agent/commands/__init__.py",
+    "productionEntry": "backend/agent/im/dispatch.py 与 backend/agent/commands/__init__.py",
+    "keyBehavior": "IM 命令按可信角色限制 Owner 私有数据与账号状态操作，缺少角色时按未知身份拒绝",
+    "ci": "backend-pytest"
+  },
   "backend/tests/agent/test_agent_delete_undo.py": {
     "domain": "agent-undo",
     "layer": "L1",
@@ -1453,6 +1461,14 @@
     "owner": "backend/agent/providers",
     "productionEntry": "backend/agent/providers/__init__.py:build_openai_client",
     "keyBehavior": "真实 OpenAI 与 Anthropic SDK 在兼容传输上支持流式工具调用、超时分类和超时转换",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/providers/test_provider_client_pool.py": {
+    "domain": "provider-client-pool",
+    "layer": "L1",
+    "owner": "backend/agent/providers/client_pool.py",
+    "productionEntry": "backend/agent/providers/__init__.py",
+    "keyBehavior": "相同配置跨 run 复用 SDK 客户端，活跃 run 释放前不回收，空闲 TTL 后关闭且配置键不含密钥",
     "ci": "backend-pytest"
   },
   "backend/tests/storage/test_project_file_counts_postgres.py": {
