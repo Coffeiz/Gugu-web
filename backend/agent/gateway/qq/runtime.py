@@ -66,6 +66,7 @@ async def _run_raw_ws(app_id: str, secret: str, sandbox: bool, channel_id: str, 
     session_id = None
     last_seq = None
     reconnect_attempt = 0
+    last_ack: dict = {}
     while True:
         try:
             token = await _qq_access_token(app_id, secret)
@@ -138,7 +139,7 @@ async def _run_raw_ws(app_id: str, secret: str, sandbox: bool, channel_id: str, 
                                 elif event_type == "RESUMED":
                                     print(f"[qq:{channel_fp}] raw WebSocket RESUMED", flush=True)
                                 elif event_type in ("C2C_MESSAGE_CREATE", "GROUP_AT_MESSAGE_CREATE", "GROUP_MESSAGE_CREATE"):
-                                    await _handle_raw_qq_message(event_type, data, channel_id, owner)
+                                    await _handle_raw_qq_message(event_type, data, channel_id, owner, last_ack)
                                 elif event_type == "INTERACTION_CREATE":
                                     await _handle_qq_interaction(data, channel_id, owner)
                             elif op == _OP_RECONNECT:

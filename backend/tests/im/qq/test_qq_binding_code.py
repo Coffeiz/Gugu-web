@@ -151,6 +151,7 @@ async def test_qq_binding_command_is_consumed_before_agent_enqueue(monkeypatch):
         },
         "18",
         "00000000-0000-0000-0000-000000000001",
+        {},
     )
 
     assert produced == []

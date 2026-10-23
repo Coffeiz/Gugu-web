@@ -97,12 +97,16 @@ async def finalize_im_dispatch(
                     f"count={len(pending_interactions)}",
                 )
 
-    if platform in {"feishu", "qq"} and stream_sent:
+    if platform == "qq":
+        # 过程消息是否送达不代表最终答复成功。最终正文独立主动发送，
+        # 不携带原 msg_id，也不补发已经展示过的中间轮次。
+        reply_text = await send_agent_response(
+            {**payload, "message_id": None}, response,
+            show_intermediate_replies=False,
+        )
+    elif platform == "feishu" and stream_sent:
         # CardKit 已经发送正文；附件仍由统一附件出口发送，避免文本重复。
-        if platform == "qq" and response.errored:
-            # QQ 流只收束已产生的正文；错误终态由普通消息出口发送一次。
-            reply_text = response.text if response.text and await send_text(payload, response.text) else None
-        elif response.files:
+        if response.files:
             from agent.im.files import send_files
 
             file_result = await send_files(payload, response.files)

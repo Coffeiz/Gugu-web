@@ -15,7 +15,7 @@ import tempfile
 import aiohttp
 from aiohttp.abc import AbstractResolver
 
-from app.core.redaction import diag_log, redact
+from app.core.redaction import diag_log, diag_log_raw, redact
 from app.core.url_security import is_blocked_ip, url_is_safe
 
 
@@ -24,6 +24,10 @@ MAX_IM_MESSAGE_MIB = MAX_IM_MESSAGE_BYTES // (1024 * 1024)
 IM_SIZE_LIMIT_NOTICE = (
     f"文件大小超过限制：单条消息的附件总大小不能超过 {MAX_IM_MESSAGE_MIB} MiB，超限附件未接收。"
 )
+# QQ 附件下载失败原本是静默丢弃的：用户发完文件看不到任何回应，会以为机器人没收到。
+# 这里给出用户可见提示，和 Telegram 的同类提示保持一致的口径。
+QQ_DOWNLOAD_FAILURE_NOTICE = "有附件暂时无法从 QQ 下载，请稍后重试或重新发送。"
+QQ_STAGING_FAILURE_NOTICE = "有附件已从 QQ 下载，但保存失败，请稍后重试或重新发送。"
 _DOWNLOAD_CHUNK_BYTES = 64 * 1024
 _SPOOL_RAM_MAX_BYTES = 8 * 1024 * 1024
 
@@ -131,6 +135,8 @@ async def ingest_qq_media(
 
     out: list[str] = list(cached_attach_ids)
     size_limit_exceeded = False
+    download_failed_count = 0
+    staging_failed_count = 0
     message_bytes = 0
     connector = aiohttp.TCPConnector(resolver=_SafeResolver())
     async with aiohttp.ClientSession(connector=connector) as sess:
@@ -152,6 +158,10 @@ async def ingest_qq_media(
                     out.append(reused["attach_id"])
                     continue
             if not url:
+                # 协议给了附件但没给下载地址，等价于下载失败。
+                download_failed_count += 1
+                diag_log_raw("agent.im.media_ingress.ingest_qq_media.download_failed",
+                             "QQ 附件缺少下载地址")
                 continue
             if not url.startswith("http"):
                 url = "https://" + url.lstrip("/")
@@ -167,6 +177,7 @@ async def ingest_qq_media(
                 ext = ext or (mime_ext if mime_ext in {"jpeg", "jpg", "png", "gif", "webp"} else "png")
                 name = "QQ表情"
             spool = tempfile.SpooledTemporaryFile(max_size=_SPOOL_RAM_MAX_BYTES)
+            downloaded = False
             try:
                 size = 0
                 for _ in range(4):
@@ -197,8 +208,15 @@ async def ingest_qq_media(
                             if message_bytes > MAX_IM_MESSAGE_BYTES:
                                 raise MediaSizeLimitError(IM_SIZE_LIMIT_NOTICE)
                             spool.write(chunk)
+                        downloaded = True
                         break
                 if size == 0:
+                    # 地址不安全、非 200、空响应——都是下载失败，不再静默丢弃。
+                    download_failed_count += 1
+                    diag_log_raw(
+                        "agent.im.media_ingress.ingest_qq_media.download_failed",
+                        "QQ 附件下载失败（地址被拒或响应非 200）",
+                    )
                     continue
 
                 from app.core import media_transcode
@@ -267,6 +285,12 @@ async def ingest_qq_media(
                 size_limit_exceeded = True
                 diag_log("agent.im.media_ingress.ingest_qq_media", exc)
             except Exception as exc:
+                # 已经拿到字节再挂的是暂存失败，没拿到字节的是下载失败——
+                # 两者的用户提示不同，不能混成一句。
+                if downloaded:
+                    staging_failed_count += 1
+                else:
+                    download_failed_count += 1
                 diag_log("agent.im.media_ingress.ingest_qq_media", exc)
                 print(
                     f"[qq] 暂存附件出错: {redact(f'{type(exc).__name__}: {exc}')}",
@@ -274,4 +298,13 @@ async def ingest_qq_media(
                 )
             finally:
                 spool.close()
-    return MediaIngressResult(out, size_limit_exceeded)
+    notice_parts = []
+    if download_failed_count:
+        notice_parts.append(QQ_DOWNLOAD_FAILURE_NOTICE)
+    if staging_failed_count:
+        notice_parts.append(QQ_STAGING_FAILURE_NOTICE)
+    return MediaIngressResult(
+        out,
+        size_limit_exceeded,
+        failure_notice="\n".join(notice_parts) or None,
+    )

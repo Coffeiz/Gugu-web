@@ -120,13 +120,22 @@ async def dispatch_im_message(payload: dict):
                 str(payload.get("platform_message_id") or ""),
             )
             payload["attachments"] = media_result.attachment_ids
+            if media_result.failure_notice:
+                # 附件下载/暂存失败要明确回一句：否则用户发完文件既没有秒回、
+                # 也没有错误提示，会以为机器人根本没收到。
+                await send_text(payload, media_result.failure_notice)
             if media_result.size_limit_exceeded:
                 await send_text(
                     payload,
                     IM_SIZE_LIMIT_NOTICE,
                 )
-                if not payload["attachments"] and not str(payload.get("text") or "").strip():
-                    return None
+            # 提示都发完再判空：下载失败与超限可能同时出现，先发的那条不能把后一条吞掉。
+            if (
+                (media_result.failure_notice or media_result.size_limit_exceeded)
+                and not payload["attachments"]
+                and not str(payload.get("text") or "").strip()
+            ):
+                return None
             # faceType=3 的 ext 可能带一个文字标签；QFace 成功补图后，纯表情消息
             # 不应同时展示标签和图片。未匹配到资源时保留网关的兜底文字。
             if payload.get("emoji_refs") and not any(
@@ -339,8 +348,8 @@ async def dispatch_im_message(payload: dict):
         if message_format not in {"compat", "markdown"}:
             from agent.im.message_format import resolve_message_format
             message_format = await resolve_message_format(route.bot_id, "c2c")
-        # 流式消费器会在 interaction_required 前冲刷 round_end；QQ 发送器先结束
-        # 当前流消息，再由交互回调发送确认提示，确认后续轮使用新流消息继续。
+        # Markdown 私聊继续镜像实时 token 到 Web；QQ 仅在 round_end
+        # 发送过程正文，最终轮由主动消息出口交付，不创建长生命周期流。
         qq_private_streaming = _qq_private_streaming_requested(
             platform, payload.get("chat_type"), message_format,
         )
@@ -416,6 +425,8 @@ async def dispatch_im_message(payload: dict):
                 req,
                 on_interaction=_show_im_interaction,
                 on_tool_event=tool_event_callback,
+                on_event=stream_bridge.publish,
+                on_display=stream_bridge.publish_display,
             )
             stream_sent, resp = await feishu.send_text_stream(
                 str(receive_id or ""), stream_bridge.mirror_stream(token_iter),
@@ -433,26 +444,34 @@ async def dispatch_im_message(payload: dict):
                     req,
                     on_interaction=_show_im_interaction,
                     on_tool_event=tool_event_callback,
+                    on_display=stream_bridge.publish_display,
                     on_round=_show_round,
                 )
             reply_text = ""
         elif qq_private_streaming:
-            from agent.im.replies import send_qq_stream_by_round
+            from agent.im.replies import send_completed_round
+            from agent.im.streaming.qq import collect_qq_response
             token_iter = run_stream(
                 req,
                 on_interaction=_show_im_interaction,
                 on_tool_event=tool_event_callback,
+                on_event=stream_bridge.publish,
+                on_display=stream_bridge.publish_display,
             )
-            stream_sent, resp, reply_text = await send_qq_stream_by_round(
+            resp = await collect_qq_response(
                 payload, stream_bridge.mirror_stream(token_iter),
                 show_intermediate_replies=show_intermediate_replies,
+                send_completed_round=send_completed_round,
             )
+            reply_text = ""
         elif platform == "telegram" and payload.get("chat_type") == "c2c":
             from agent.im.replies import send_telegram_stream_by_round
             token_iter = run_stream(
                 req,
                 on_interaction=_show_im_interaction,
                 on_tool_event=tool_event_callback,
+                on_event=stream_bridge.publish,
+                on_display=stream_bridge.publish_display,
             )
             resp, telegram_sent_rounds = await send_telegram_stream_by_round(
                 payload,
@@ -466,6 +485,7 @@ async def dispatch_im_message(payload: dict):
                 req,
                 on_interaction=_show_im_interaction,
                 on_tool_event=tool_event_callback,
+                on_display=stream_bridge.publish_display,
                 on_round=_show_round,
             )
             reply_text = ""

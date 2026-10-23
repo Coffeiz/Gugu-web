@@ -88,6 +88,7 @@ async def prepare_request(
     )
     request = AgentRequest(
         message=payload.get("text", ""),
+        inbound_batch_key=payload.get("_inbound_batch_key"),
         user_id=owner_user_id,
         user_name=agent_user_name,
         session_id=session_id,

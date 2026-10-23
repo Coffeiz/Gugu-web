@@ -7,7 +7,7 @@ import threading
 import lark_oapi as lark
 
 from .events import _EventServices, _feishu_bot_open_id, _handle_card_action, _make_on_message
-from .messages import _do_send
+from .messages import _do_react, _do_send
 
 
 class _GatewayAsyncRunner:
@@ -68,7 +68,7 @@ class _GatewayAsyncRunner:
 
 
 _gateway_async_runner = _GatewayAsyncRunner()
-_event_services = _EventServices(_gateway_async_runner, _do_send)
+_event_services = _EventServices(_gateway_async_runner, _do_send, _do_react)
 
 
 def serve() -> None:

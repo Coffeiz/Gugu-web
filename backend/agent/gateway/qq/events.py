@@ -32,6 +32,8 @@ _log = logging.getLogger("agent.gateway.qq")
 
 STREAM = R.IM_INBOUND_STREAM
 
+_ACK_COOLDOWN = 10.0   # 同一用户「文件收到啦」秒回的冷却秒数：连发多图/文件只 ack 一次，不刷屏
+
 _ref_indexes: dict[tuple[str, str], QQRefIndex] = {}
 
 def _qq_ref_index(owner: str, channel_id: str) -> QQRefIndex:
@@ -141,7 +143,8 @@ async def _qq_reply(channel_id: str, chat_type: str, target_id: str, text: str, 
         else:
             await _post(channel_id, target_id, text, msg_id, message_format)
     except Exception as e:
-        # 这里只发送取消、绑定等网关侧必须立即返回的答复；失败不影响消息主链路，
+        # best-effort：这里只发网关侧必须立刻返回的答复（附件「收到啦」秒回提示、
+        # 取消/绑定确认）；失败不影响正式回复走 worker 那条主链路，可以广吞，
         # 但仍要留痕方便排查。
         diag_log("agent.gateway.qq._qq_reply", e)
         _log.warning("[qq] 即时回复失败: %s", redact(f"{type(e).__name__}: {e}"))
@@ -167,7 +170,7 @@ async def _ack_qq_interaction(channel_id: str, interaction_id: str, *, code: int
         return False
 
 async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
-                                 channel_id: str, owner: str) -> None:
+                                 channel_id: str, owner: str, last_ack: dict) -> None:
     read_enabled = False
     group_memory_enabled = True
     member_memory_enabled = True
@@ -309,6 +312,22 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
     # 没有附件且 ext.text 为空时，保留稳定的历史占位文本，供 GuguChat 和群上下文展示。
     if face_only and not all_attachments and not text.strip():
         text = "[QQ表情]"
+    if all_attachments:
+        ack_target = chat_id if chat_type == "group" else sender_id
+        now = time.monotonic()
+        ack_key = f"{chat_type}:{ack_target}"
+        # 附件确认也属于对外回复：只响应 @ 时，非 @ 消息不能发送确认；
+        # 静默记录模式即使被 @ 也不发送确认。
+        should_reply = (
+            chat_type != "group"
+            or (
+                not read_enabled
+                and (not requires_at or mentioned)
+            )
+        )
+        if should_reply and now - last_ack.get(ack_key, 0.0) > _ACK_COOLDOWN:
+            last_ack[ack_key] = now
+            await _qq_reply(channel_id, chat_type, ack_target, "文件收到啦，让我看看~", msg_id)
     if not text and not all_attachments and not quoted_text:
         return
     from agent.runtime import trace

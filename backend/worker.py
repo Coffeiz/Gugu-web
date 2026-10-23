@@ -155,6 +155,12 @@ async def _ack_inbound(msg_id: str) -> None:
     try:
         if should_ack:
             await R.ack(STREAM, GROUP, msg_id)
+            if lease:
+                from agent.im.inbound_recovery import receipt_key
+                try:
+                    await R.get_redis().expire(receipt_key(msg_id), 7 * 24 * 3600)
+                except Exception as exc:
+                    print(f"[worker] 已确认消息收据过期登记失败: {type(exc).__name__}", flush=True)
     finally:
         _pending_message_ids.discard(msg_id)
         _buffered_message_ids.discard(msg_id)
@@ -164,10 +170,14 @@ async def _renew_message_lease(msg_id: str, owner: str) -> None:
     try:
         while True:
             await asyncio.sleep(_MESSAGE_LEASE_HEARTBEAT_SECONDS)
-            await R.get_redis().eval(
+            renewed = await R.get_redis().eval(
                 _RENEW_MESSAGE_SCRIPT, 1, _message_state_key(msg_id), owner,
                 _MESSAGE_LEASE_SECONDS,
             )
+            if not renewed:
+                # 已开始的持久化收据阻止重放；不能假装续期成功或重新抢占所有权。
+                print("[worker] 消息租约已失去所有权，停止续期，重领将核验执行收据", flush=True)
+                return
     except asyncio.CancelledError:
         raise
     except Exception as exc:
@@ -175,7 +185,7 @@ async def _renew_message_lease(msg_id: str, owner: str) -> None:
 
 
 async def _claim_message(msg_id: str) -> str:
-    """返回 claimed/completed/busy；Redis 不可用时保留原有 fail-open 行为。"""
+    """返回 claimed/completed/busy；无法确认执行权时留队，防止重复操作。"""
     owner = uuid.uuid4().hex
     try:
         result = int(await R.get_redis().eval(
@@ -183,8 +193,8 @@ async def _claim_message(msg_id: str) -> str:
             _MESSAGE_LEASE_SECONDS,
         ))
     except Exception as exc:
-        print(f"[worker] 消息租约领取失败，继续处理: {type(exc).__name__}", flush=True)
-        return "claimed"
+        print(f"[worker] 消息租约领取失败，等待重领: {type(exc).__name__}", flush=True)
+        return "busy"
     if result == 2:
         return "completed"
     if result != 1:
@@ -276,13 +286,26 @@ async def _flush_loop(key: ImConversationKey):
                 merged = _merge_payloads([p for _, p in batch])
                 rep_msg_id = batch[-1][0]
                 async with _run_slot():     # 多会话同时活跃时，跑 agent 的全局并发上限
+                    cancelled = False
                     try:
+                        from agent.im.inbound_recovery import register_batch
+                        merged["_inbound_batch_key"] = await register_batch(
+                            R.get_redis(), [mid for mid, _ in batch])
                         await handle(rep_msg_id, merged)
+                    except asyncio.CancelledError:
+                        # 优雅停止也必须留在 PEL；重启后按执行收据收口，不能确认丢弃。
+                        cancelled = True
+                        raise
                     except Exception as e:
                         print(f"[worker] flush handle 出错（已 ack 丢弃，避免毒消息循环）: {type(e).__name__}: {e}", flush=True)
                     finally:
                         for mid, _ in batch:
-                            await _ack_inbound(mid)
+                            if merged.get("_inbound_batch_key") and not cancelled:
+                                await _ack_inbound(mid)
+                            else:
+                                _stop_message_lease(mid)
+                                _pending_message_ids.discard(mid)
+                                _buffered_message_ids.discard(mid)
     finally:
         _user_flush.pop(key, None)
 
@@ -298,6 +321,14 @@ async def _dispatch(msg_id: str, payload: dict):
     if claim == "busy":
         # 另一个 worker 仍持有有效租约；不能 ACK 尚未完成的原处理。
         return
+    from agent.im.inbound_recovery import receipt_key, recover_started
+    batch_key = await R.get_redis().get(receipt_key(msg_id))
+    if batch_key:
+        import app.db.session as db_session
+        db_session.ensure_engine()
+        if await recover_started(db_session._SessionLocal, batch_key):
+            await _ack_inbound(msg_id)
+            return
     payload = await _hydrate_group_policy(payload)
     key = conversation_key(payload)
     if not key.scope_id:

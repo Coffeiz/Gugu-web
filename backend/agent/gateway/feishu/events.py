@@ -25,6 +25,7 @@ class _EventServices(NamedTuple):
 
     runner: object
     do_send: Callable
+    do_react: Callable
 
 
 def _ingest_media(client, msg, owner: str) -> tuple[str, list]:
@@ -367,7 +368,7 @@ def _make_on_message(
         # 引用消息：用户「回复」某条历史消息时，parent_id 指向那条被引用的消息——飞书只给 id，
         # 要反查一次内容才知道引用的是什么。引用原文单独存 quoted_text，不拼进 text——
         # runner.py 只把它喂给模型当上下文，ConversationMessage.content/网页展示仍是用户
-        # 自己打的话，router 继续用原始 text 判关键词，别再把引用原文拼进
+        # 自己打的话，router/秒回表情继续用原始 text 判关键词（同一份），别再把引用原文拼进
         # 正文（网页气泡纯文本渲染，拼进去会把引用的 markdown 原样摊平显示得很难看，见 devlog
         # 2026-07-10）。
         quoted_text = _fetch_quoted_text(api_client, msg.parent_id) if msg.parent_id else None
@@ -394,6 +395,10 @@ def _make_on_message(
         print(f"[feishu:{channel_id}] 收到 {open_id} @ {msg.chat_id} ({mt}): text_len={len(text)} "
               f"fp={logsafe.fingerprint(text)} att={len(attachments)} quoted={bool(msg.parent_id)} trace={tid}", flush=True)
 
+        # 秒回表情：赶在入队/生成之前，用关键词快速判一个即时点上（完整回复随后由 worker 发）
+        from agent.im.shortcuts import choose_instant_reaction
+        _, emoji = choose_instant_reaction(text, bool(attachments))
+        services.do_react(api_client, msg.message_id, emoji)
         # 取消是实时控制信号：必须在 Gateway 侧立刻写入 Redis；其他 shortcut 继续入队，
         # 由 worker 的 IM Loop 统一处理，避免 Gateway 再承担业务回复编排。
         if not attachments:

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from typing import Any
 
 from app.services.conversation_run_outcomes import (
@@ -47,6 +46,9 @@ class ImWebStreamBridge:
         mirrored.setdefault("source", self.platform)
         await genstream.publish(self.session_id, mirrored)
 
+    async def publish_display(self, item: dict) -> None:
+        await self.publish({"type": "display_event", "item": item})
+
     async def publish_failure(self, request, presentation) -> None:
         """将失败终态写到触发消息并发送同一结构化事件。"""
         outcome = build_run_outcome(
@@ -59,6 +61,9 @@ class ImWebStreamBridge:
         user_message_id = request.user_message_id
         if self.session_id is not None and user_message_id is not None:
             import app.db.session as db_session
+            from agent.context.display_checkpoint import seal_checkpoint
+
+            await seal_checkpoint(db_session._SessionLocal, self.session_id, user_message_id)
 
             await persist_run_outcome(
                 db_session._SessionLocal,
@@ -77,18 +82,9 @@ class ImWebStreamBridge:
         })
 
     async def mirror_stream(self, source, stream_tool_events=None):
-        """镜像普通 SSE 事件；工具和交互事件由回调唯一负责发布。"""
+        """平台消费 tuple 原样透传；网页仅消费公共执行器的展示事件。"""
         async def mirrored_lines():
             async for line in source:
-                if isinstance(line, str) and line.startswith("data: "):
-                    try:
-                        event = json.loads(line[6:])
-                    except (TypeError, ValueError):
-                        event = None
-                    if isinstance(event, dict) and event.get("type") not in {
-                        "done", "error", "tool_call", "tool_done", "interaction_required",
-                    }:
-                        await self.publish(event)
                 yield line
 
         if stream_tool_events is None:

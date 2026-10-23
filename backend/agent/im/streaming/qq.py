@@ -9,6 +9,27 @@ from agent.interactions.events import ROUND_END
 from agent.models import AgentResponse
 
 
+async def collect_qq_response(payload: dict, token_iter, *, show_intermediate_replies: bool,
+                              send_completed_round: Callable) -> AgentResponse:
+    """只在后续轮已承诺时发送过程正文；最终轮留给普通主动消息出口。"""
+    response = None
+    async for kind, value in token_iter:
+        if kind == "final" and isinstance(value, AgentResponse):
+            response = value
+        elif kind == ROUND_END and show_intermediate_replies and str(value or "").strip():
+            # ROUND_END 由工具续轮/交互暂停产生，正常最终轮不会发这个事件。
+            # 不提前创建 QQ 流，避免最终正文受入站消息有效期和关闭帧影响。
+            try:
+                await send_completed_round(payload, str(value))
+            except Exception as exc:
+                from app.core.redaction import diag_log
+
+                diag_log("agent.im.qq_intermediate_delivery", exc)
+    if response is None:
+        raise RuntimeError("QQ 回复未收到模型终态")
+    return response
+
+
 class QQMermaidRound:
     """维护 QQ 私聊流及图文分段回退。"""
 
