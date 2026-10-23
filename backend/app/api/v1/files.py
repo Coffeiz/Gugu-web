@@ -18,10 +18,11 @@ from app.schemas import (
     BatchDeleteBody, FileCopyBody, BatchDownloadBody,
 )
 from app.services.files.browser import (
-    count_personal_library_items, get_file_detail_row, get_file_summary, get_folder_path_rows,
+    count_personal_library_entities, count_project_library_entities,
+    get_file_detail_row, get_file_summary, get_folder_path_rows,
     list_file_page_rows, resolve_relative_file_paths,
 )
-from app.services.files.trash import count_trash_root_items
+from app.services.files.trash import count_trash_root_entities
 from app.services.storage.quota_ledger import get_file_library_usage_snapshot
 from app.services.files.response import color_value, to_file_response, to_related_file_response
 from app.services.files.upload import (
@@ -196,10 +197,18 @@ async def file_library_counts(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """只返回个人文件和回收站根列表计数，不读取实体列表。"""
-    personal_count = await count_personal_library_items(db, current_user.id)
-    trash_count = await count_trash_root_items(db, current_user.id)
-    return FileLibraryCountsResponse(personal_count=personal_count, trash_count=trash_count)
+    """返回个人区、项目区和回收站的文件/文件夹计数，不读取实体列表。"""
+    personal_files, personal_folders = await count_personal_library_entities(db, current_user.id)
+    project_files, project_folders = await count_project_library_entities(db, current_user.id)
+    trash_files, trash_folders = await count_trash_root_entities(db, current_user.id)
+    return FileLibraryCountsResponse(
+        personal_file_count=personal_files,
+        personal_folder_count=personal_folders,
+        project_file_count=project_files,
+        project_folder_count=project_folders,
+        trash_file_count=trash_files,
+        trash_folder_count=trash_folders,
+    )
 
 
 # ── GET /files/storage ───────────────────────────────────────────────────────

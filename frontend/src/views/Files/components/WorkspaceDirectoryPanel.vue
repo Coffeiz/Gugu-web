@@ -18,7 +18,7 @@
         v-for="item in sortedItems"
         :key="item.id"
         :display-name="item.name"
-        :count-label="`${item.fileCount} ${t('workspaceUi.workspaceFileUnit')} · ${item.folderCount} ${t('workspaceUi.workspaceFolderUnit')}`"
+        :count-label="t('filesViewUi.folderContents', { files: item.fileCount, folders: item.folderCount })"
         accent-color="var(--accent-primary)"
         role="button"
         tabindex="0"

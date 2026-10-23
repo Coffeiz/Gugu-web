@@ -36,6 +36,8 @@ export interface FolderCard {
   type: string
   displayName: string
   count: number | null
+  fileCount?: number | null
+  folderCount?: number | null
   folderId?: number
   color?: string | null
   space?: string

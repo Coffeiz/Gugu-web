@@ -461,7 +461,11 @@ function pageQuery(params: CursorPageParams): URLSearchParams {
 }
 
 export const filesApi = {
-  libraryCounts: () => get<{ personalCount: number; trashCount: number }>('/files/library-counts'),
+  libraryCounts: () => get<{
+    personalFileCount: number; personalFolderCount: number
+    projectFileCount: number; projectFolderCount: number
+    trashFileCount: number; trashFolderCount: number
+  }>('/files/library-counts'),
   page: (filters: FileListParams & CursorPageParams = {}) => {
     const params = pageQuery(filters)
     for (const [key, value] of Object.entries(filters)) {
@@ -1028,16 +1032,10 @@ export const agentApi = {
   },
   getMessagesBefore: (sessionId: string, beforeId: number, limit = 200) =>
     get(`/agent/sessions/${sessionId}/messages?before_id=${encodeURIComponent(String(beforeId))}&limit=${encodeURIComponent(String(limit))}`),
-  getToolEventDetails: (sessionId: number, source: { kind: 'timeline'; messageId: number; index: number } | { kind: 'canonical'; runId: string; roundId: string; toolCallId: string }) => {
-    const params = new URLSearchParams({ source: source.kind })
-    if (source.kind === 'timeline') {
-      params.set('message_id', String(source.messageId))
-      params.set('timeline_index', String(source.index))
-    } else {
-      params.set('run_id', source.runId)
-      params.set('round_id', source.roundId)
-      params.set('tool_call_id', source.toolCallId)
-    }
+  getRunMessages: (sessionId: number, runId: string) =>
+    get(`/agent/sessions/${sessionId}/messages?run_id=${encodeURIComponent(runId)}&limit=200`),
+  getToolEventDetails: (sessionId: number, source: { kind: 'timeline'; messageId: number; index: number }) => {
+    const params = new URLSearchParams({ source: 'timeline', message_id: String(source.messageId), timeline_index: String(source.index) })
     return get<{ toolInput?: unknown; toolResult?: unknown }>(`/agent/sessions/${sessionId}/tool-event-details?${params.toString()}`)
   },
   listSessionInteractions: (sessionId: string) => get<{ items: Array<Record<string, any>> }>(`/agent/sessions/${sessionId}/interactions`),

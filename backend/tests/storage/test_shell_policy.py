@@ -15,6 +15,9 @@ def test_shell_risk_scans_the_whole_command():
     assert classify_command("cat README.md") is ShellRisk.SAFE
     assert classify_command("mkdir -p build") is ShellRisk.WRITE
     assert classify_command("python -c 'print(1)' | curl example.test") is ShellRisk.DANGEROUS
+    assert classify_command("python --version") is ShellRisk.SAFE
+    assert classify_command("node -V") is ShellRisk.SAFE
+    assert classify_command("python --version && rm -rf tmp") is ShellRisk.DANGEROUS
 
 
 @pytest.mark.asyncio

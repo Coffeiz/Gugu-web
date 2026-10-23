@@ -58,7 +58,8 @@ async def _resolve_file(db, user_id, args):
         return await package_resolve_file(db, user_id, args)
     return await _locations_resolve_file(db, user_id, args)
 
-READ_MAX_BYTES = 256 * 1024
+READ_MAX_BYTES = 32 * 1024 * 1024
+WRITE_MAX_BYTES = 256 * 1024
 
 # 已知扩展名的 MIME 映射。create_file 不再限制格式枚举；未知后缀按 text/plain 保存。
 _DOC_MIME = {
@@ -196,10 +197,16 @@ async def _list_dir(db, user_id, args: dict):
     scope=folder 或传 folder_id 时查看指定目录。parent_id 是 folder 的纯 id 形式。
     limit 只约束 files，folders 恒全量。
     """
-    kind = args.get("kind") if args.get("kind") in ("both", "file", "folder") else "both"
     scope = args.get("scope")
+    if scope == "system":
+        from .system_access import list_system_directory
+
+        return await list_system_directory(db, user_id, args)
+    if args.get("path") not in (None, ""):
+        return {"error": "path 仅可与 scope=system 一起使用"}
+    kind = args.get("kind") if args.get("kind") in ("both", "file", "folder") else "both"
     if scope not in (None, "project_root", "project_recursive", "folder"):
-        return {"error": "scope 必须是 project_root、project_recursive 或 folder"}
+        return {"error": "scope 必须是 project_root、project_recursive、folder 或 system"}
     if scope in {"project_root", "project_recursive"} and (
         args.get("space") != "project" or args.get("project_id") is None
     ):
@@ -362,7 +369,7 @@ async def _edit_one(db, user_id, f, spec: dict) -> dict:
     nm = f"{f.display_name}.{f.ext}"
     if not _is_text_file_record(f):
         return {"error": f"不支持修改该类型（{f.ext}），仅支持文本类文件", "name": nm}
-    if (f.size_bytes or 0) > READ_MAX_BYTES:
+    if (f.size_bytes or 0) > WRITE_MAX_BYTES:
         return {"error": "文件过大，超出可改上限 256KB", "name": nm}
     storage = get_storage()
     try:
@@ -398,7 +405,7 @@ async def _edit_one(db, user_id, f, spec: dict) -> dict:
     else:
         return {"error": f"未知 mode: {mode}", "name": nm}
     data = new.encode("utf-8")
-    if len(data) > READ_MAX_BYTES:
+    if len(data) > WRITE_MAX_BYTES:
         return {"error": "修改后文件过大，单文件上限 256KB", "name": nm}
     updated_file, save_error = await _save_agent_file_content(db, storage, user_id, f, new)
     if save_error:
@@ -483,7 +490,7 @@ async def _create_file(db, user_id, args: dict):
                            "error": f"create_file 只写 UTF-8 文本，不能直接生成 {ext}；请使用上传文件"})
             continue
         data = content.encode("utf-8")
-        if len(data) > READ_MAX_BYTES:
+        if len(data) > WRITE_MAX_BYTES:
             failed.append({"index": index, "name": name, "error": "文件过大，单文件上限 256KB"})
             continue
 

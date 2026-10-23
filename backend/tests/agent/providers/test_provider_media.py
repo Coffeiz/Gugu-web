@@ -36,7 +36,9 @@ def test_minimax_m3_declares_official_direct_upload_limits():
     assert limits.video_mimes == frozenset({
         "video/mp4", "video/x-msvideo", "video/quicktime", "video/x-matroska",
     })
-    assert limits.base64_max == 45 * 1024 * 1024
+    # 传输阈值下调以避免长视频 Base64 放大；源文件能力上限仍是 512 MB。
+    assert limits.base64_max == 4 * 1024 * 1024
+    assert limits.prefer_file_upload
 
 
 def test_minimax_m31_flash_uses_m3_video_capabilities_and_limits():

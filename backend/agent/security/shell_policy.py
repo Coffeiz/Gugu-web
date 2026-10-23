@@ -89,6 +89,10 @@ _CODE_EXECUTION = re.compile(
     r"|(?:^|[;&|\s])(?:\./|/)[^\s]+\.(?:py|js|mjs|cjs|sh|rb|pl|php|lua)\b",
     re.IGNORECASE,
 )
+_RUNTIME_VERSION_QUERY = re.compile(
+    r"(?:python(?:\d+(?:\.\d+)*)?|node(?:js)?|deno|bun|ruby|perl|php|lua)\s+(?:--version|-V)",
+    re.IGNORECASE,
+)
 _WRITE = re.compile(r"(^|[;&|()\n])\s*(mkdir|touch|cp|python|pytest|npm|pnpm|git)\b", re.IGNORECASE)
 _SESSION_LOCKS: dict[int, asyncio.Lock] = {}
 
@@ -120,8 +124,12 @@ def classify_command(command: str) -> ShellRisk:
     text = (command or "").strip()
     if not text:
         return ShellRisk.SAFE
-    # 不尝试静态理解脚本正文：解释器、包脚本和构建工具可执行任意代码，
-    # 必须在执行前经过同一确认门，不能将其视为普通文件写入。
+    # 独立的运行时版本查询不会执行脚本；避免把 Agent 的常见环境探测误判为
+    # 任意代码执行，同时要求整条命令精确匹配，不能借此拼接其他命令。
+    if _RUNTIME_VERSION_QUERY.fullmatch(text):
+        return ShellRisk.SAFE
+    # 不尝试静态理解脚本正文：除精确的版本查询外，解释器、包脚本和构建工具
+    # 可执行任意代码，必须在执行前经过确认门，不能将其视为普通文件写入。
     if _DANGEROUS.search(text) or _CODE_EXECUTION.search(text):
         return ShellRisk.DANGEROUS
     if _WRITE.search(text):

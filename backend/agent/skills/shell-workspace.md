@@ -22,6 +22,8 @@ related_tools: shell, list_workspaces, create_workspace, unlink_workspace, delet
 
 ## 调用规则
 
+- 同一任务需要做多个互不依赖的只读检查时，拆成多个 Shell 调用并尽量在同一轮提出，避免把它们串成一条命令逐项等待；例如分别检查版本、Git 状态和目录内容。若后一个命令需要前一个结果，或命令会改动共享状态，则按依赖顺序串行执行。
+- 是否并行由 Agent 根据任务依赖决定：同一轮的普通 Shell 调用会并发运行；若后一个命令依赖前一个结果，应放到后续轮次。不要因推测可能冲突而要求把普通命令强制串行。危险命令确认、权限和用户交互仍由执行器单独处理，不得规避。
 - 不要传递 `session_id`；会话身份由执行器注入。sandbox 的 `cwd` 只能是当前 Shell 范围内的相对路径；
   system 范围由独立权限明确提供时，可以使用宿主机绝对 `cwd`。
 - 沙盒容器的当前工作目录统一是 `/workspace`。它在 local 存储且本轮明确绑定
@@ -30,11 +32,12 @@ related_tools: shell, list_workspaces, create_workspace, unlink_workspace, delet
   才能访问。没有该声明时不得尝试访问、猜测路径或要求用户继续授权。
 - OSS 存储模式只提供独立 Shell 沙盒：workspace 绑定、`/personal`、`/project`、OSS
   对象挂载、materialize/cache、自动同步和自动上传均不可用。文件库操作必须走明确的文件 API。
+- 用户明确要求读取 Agent 服务环境中的文件时，优先使用 `read_file(scope="system", path="绝对路径")`；浏览目录用 `list_dir(scope="system", path="绝对目录")`。该范围是 Agent 进程所在环境（容器中即应用容器），文件工具只读；实际授权与执行范围由代码决定。
 - `cd` 不带参数会回到沙盒 home `/`；需要回到当前 workspace 时使用 `cd /workspace`。
 - Shell 支持普通命令、复合命令、管道和运行时调用；是否可用由服务端权限策略决定。
   不得利用命令拼接绕过危险操作确认、工作区挂载或沙盒隔离。
 - 网络由后台沙盒配置自动决定，不要向工具传递 `network` 参数。
-- system 范围使用宿主机执行器，开启后可访问宿主机路径和本机已有运行时；危险命令仍必须
+- system 范围直接使用 Agent 服务进程所在的执行环境，可访问该环境可见路径和已有运行时；Docker 部署时这是应用容器而非 Docker 宿主机；危险命令仍必须
   经过确认，system 开关不等于危险操作预授权。
 
 ## 高风险操作与失败处理

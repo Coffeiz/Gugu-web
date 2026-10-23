@@ -14,7 +14,7 @@
       <div class="fd-name" :title="displayName">
         <slot name="name">{{ displayName }}</slot>
       </div>
-      <div class="fd-count"><slot name="count">{{ countLabel }}</slot></div>
+      <div class="fd-count" :title="countLabel"><slot name="count">{{ countLabel }}</slot></div>
     </div>
 
     <Transition name="sel-cb">
@@ -115,7 +115,7 @@ defineProps({
 }
 /* 输入框宽度限制在名称栏内，但名称行允许 focus glow 绘制；卡片根节点仍负责最终裁切。 */
 .fd-name:has(.rename-sizer) { overflow: visible; text-overflow: clip; }
-.fd-count { font-size: 9px; line-height: 1.15; color: var(--content-secondary); opacity: 0.55; margin-top: 2px; }
+.fd-count { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; line-height: 1.15; color: var(--content-secondary); opacity: 0.55; margin-top: 2px; }
 .sel-cb-enter-from, .sel-cb-leave-to { opacity: 0; }
 /* leave 只走 opacity（同 FileCard.vue 的注释）：离场冻结 paint，避免选中填充
    先变色再淡完导致结尾闪烁。 */

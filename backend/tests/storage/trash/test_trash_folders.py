@@ -81,6 +81,7 @@ async def test_list_trash_folders_top_level_only(db, user_a):
     out = out['items']
     assert [f.id for f in out] == [parent.id]        # child 被祖先那次删除连带扫入，不单列
     assert out[0].file_count == 1                     # parent 自己直接包含的那个文件
+    assert out[0].folder_count == 1
 
 
 async def test_list_trash_folders_excludes_live(db, user_a):
@@ -123,6 +124,7 @@ async def test_list_trash_folder_contents_returns_children(db, user_a):
 
     assert [folder.name for folder in out['folders']['items']] == ["二级目录"]
     assert out['folders']['items'][0].file_count == 1
+    assert out['folders']['items'][0].folder_count == 0
     assert {file.display_name for file in out['files']['items']} == {parent_file.display_name}
     assert child_file.display_name not in {file.display_name for file in out['files']['items']}
 

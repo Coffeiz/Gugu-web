@@ -328,8 +328,12 @@ class FileSummaryResponse(CamelModel):
 
 
 class FileLibraryCountsResponse(CamelModel):
-    personal_count: int
-    trash_count: int
+    personal_file_count: int
+    personal_folder_count: int
+    project_file_count: int
+    project_folder_count: int
+    trash_file_count: int
+    trash_folder_count: int
 
 
 class FileStreamResponse(CamelModel):
@@ -423,6 +427,7 @@ class FolderResponse(CamelModel):
     parent_id:  Optional[int] = None
     name: str
     file_count: int = 0
+    folder_count: int = 0
     version: int = 1
 
 

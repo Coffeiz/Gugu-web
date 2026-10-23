@@ -74,10 +74,10 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
             # 消费侧硬门：文本/PDF/Office 在 read_text 里都是先整包 read_bytes 再提取、
             # 最后才截到 32K 字符；超限直接不读，超大文档留给按需 read_file。
             if meta["size"] > TEXT_READ_MAX:
-                # 提示别承诺 read_file：文本 256KB / PDF/Office 30MB 的上限都到不了这个量级。
+                # 提示别承诺 read_file：文本读取预算为 32MB，PDF/Office 提取预算为 30MB。
                 parts.append(f"\n\n📎 用户上传的文件{tag}（正文过大，超过 {TEXT_READ_MAX // 1048576}MB，未直接读取；"
                              f"可保存到文件库——用户要存就 save_uploaded_file(attach_id)——后续按需处理；"
-                             f"read_file 对文本/文档有更小的读取上限，不要反复尝试读取全文）。")
+                             f"read_file 对 PDF/Office 的提取上限更小，不要反复尝试读取全文）。")
             else:
                 parts.append(f"\n\n📎 用户上传的文件{tag}，内容如下：\n```\n{await chat_attach.read_text(meta)}\n```")
         elif meta["kind"] == "image":
@@ -162,17 +162,30 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
                             video.check_video_duration(video_probe.get("duration"), video_cfg)
                     if not is_video and meta["size"] > audio_raw_max:
                         raise ValueError("这条音频太大（超过上限），没法直接听")
-                    raw = await chat_attach.read_bytes(meta)
                     if is_video:
                         # 视频决策（压缩阈值/base64 vs mm_file/大小上限）全部在 prepare_video_media
                         # 里——read_file 读文件库视频（media_reader.py 的 read_video）复用同一份逻辑，
                         # 这里不重复维护一套阈值判断。
-                        media_items.append(await video.prepare_video_media(
-                            raw, mime, meta.get("name") or "video.mp4", video_cfg,
-                            storage_key=meta.get("storage_key"),
-                            duration=(video_probe or {}).get("duration"), probe=video_probe,
-                        ))
+                        from agent.media.budget import VIDEO_MEMORY_BUDGET
+                        from agent.media.video_source import prepare_video_path
+                        from app.services.storage import get_storage
+                        limits = gates.media_limits_for(video_cfg)
+                        local = (get_storage().local_path(meta["storage_key"])
+                                 if meta.get("storage_key") and limits.prefer_file_upload
+                                 and meta["size"] > limits.base64_max else None)
+                        if local is not None:
+                            item = await prepare_video_path(local, mime, meta.get("name") or "video.mp4",
+                                video_cfg, storage_key=meta.get("storage_key"), user_id=user_id, probe=video_probe)
+                        else:
+                            async with VIDEO_MEMORY_BUDGET.reserve(meta["size"] * 4):
+                                raw = await chat_attach.read_bytes(meta)
+                                item = await video.prepare_video_media(
+                                    raw, mime, meta.get("name") or "video.mp4", video_cfg,
+                                    storage_key=meta.get("storage_key"), user_id=user_id,
+                                    duration=(video_probe or {}).get("duration"), probe=video_probe)
+                        media_items.append(item)
                     else:
+                        raw = await chat_attach.read_bytes(meta)
                         # MiniMax ASR 使用 multipart 原始字节，可走官方 50 MiB 上限；
                         # 其他路径继续使用原有 base64 字节门槛。
                         audio_item = {

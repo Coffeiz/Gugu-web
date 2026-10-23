@@ -109,7 +109,14 @@ async def test_read_file_text_branch_and_guards(db, user_a, storage, monkeypatch
     assert "不支持读取该类型" in unsupported["error"]
 
     big = await _mk_file(db, user_a, storage, name="大文件.md", content="字" * (256 * 1024 + 1))
-    oversize = json.loads(await _read_file(db, user_a.id, {"file_id": big.id}))
+    readable = await _read_file(db, user_a.id, {"file_id": big.id})
+    from app.core.doctext import MAX_CHARS
+    assert len(readable["content"]) == MAX_CHARS
+
+    oversized_file = await _mk_file(
+        db, user_a, storage, name="超限文件.md", content="x" * (32 * 1024 * 1024 + 1),
+    )
+    oversize = json.loads(await _read_file(db, user_a.id, {"file_id": oversized_file.id}))
     assert "超出可读上限" in oversize["error"]
 
 

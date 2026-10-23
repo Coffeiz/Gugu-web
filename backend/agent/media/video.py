@@ -172,6 +172,19 @@ async def probe_video_at(storage_key: str) -> dict | None:
     return await asyncio.to_thread(_ffprobe_info, str(path))
 
 
+async def probe_video_path(path) -> dict | None:
+    """按显式本地文件路径探测视频元数据，不复制整份文件到临时目录。"""
+    from pathlib import Path
+
+    try:
+        source = Path(path)
+        if not source.is_file():
+            return None
+        return await asyncio.to_thread(_ffprobe_info, str(source))
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+
 async def probe_video_for(raw: bytes, storage_key: str | None = None) -> dict | None:
     """探测视频信息：优先按存储路径（省一整份写+读），回退到字节探测。
 

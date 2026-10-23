@@ -433,3 +433,27 @@ async def test_upload_fake_image_dims_none(db, user_a):
     )).scalars().one()
     assert row.img_width is None and row.img_height is None
     assert r.size_bytes == len(body)
+
+
+async def test_library_counts_return_separate_file_and_folder_totals(db, user_a):
+    """根卡片计数分别覆盖个人、项目、回收站中的可见文件与文件夹。"""
+    from datetime import datetime, timezone
+
+    project = Project(user_id=user_a.id, name="计数项目")
+    db.add(project)
+    await db.flush()
+    db.add_all([
+        Folder(user_id=user_a.id, name="个人目录"),
+        Folder(user_id=user_a.id, name="项目目录", project_id=project.id),
+        Folder(user_id=user_a.id, name="回收站目录", deleted_at=datetime.now(timezone.utc)),
+        File(user_id=user_a.id, display_name="个人文件", ext="txt", storage_key="count/personal.txt", space="personal"),
+        File(user_id=user_a.id, display_name="项目文件", ext="txt", storage_key="count/project.txt", space="project", project_id=project.id),
+        File(user_id=user_a.id, display_name="已删文件", ext="txt", storage_key="count/deleted.txt", space="personal", deleted_at=datetime.now(timezone.utc)),
+    ])
+    await db.flush()
+
+    counts = await files_api.file_library_counts(current_user=user_a, db=db)
+
+    assert (counts.personal_file_count, counts.personal_folder_count) == (1, 1)
+    assert (counts.project_file_count, counts.project_folder_count) == (1, 1)
+    assert (counts.trash_file_count, counts.trash_folder_count) == (1, 1)

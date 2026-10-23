@@ -694,7 +694,7 @@ test -S "/run/user/$(id -u)/gugu-sandboxd.sock" || true
 #### 沙盒镜像（`docker/sandbox/Dockerfile`）
 
 工具链 Sandbox 执行镜像以独立 `gugu-sandbox` 镜像发布；默认一体化 Compose 的最终发布镜像内含执行镜像和 egress proxy 的归档及 manifest，并在启动时校验后导入内置 Rootless daemon。拆分 backend/frontend 部署连接外部 Rootless manager，需由其运行环境准备匹配的工具链镜像 `docker/sandbox/Dockerfile`
-（bookworm-slim + git / nodejs / python3 / ffmpeg /
+（Debian 13 Trixie + git / nodejs / python3 / ffmpeg /
 Noto CJK 字体等，运行用户 uid 65532）。镜像只放通用工具链：**不预置任何 git 凭据或用户
 身份**（`user.name`/`user.email` 由使用方在会话内设置），系统级 gitconfig 仅设置
 `init.defaultBranch=main` 和 `safe.directory=*`（沙盒 bind 目录属主是宿主机 uid，属预期）。

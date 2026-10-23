@@ -61,8 +61,8 @@ async def list_folder_page(
             id=folder.id, project_id=folder.project_id,
             workspace_directory_id=folder.workspace_directory_id,
             parent_id=folder.parent_id, name=folder.name,
-            file_count=file_count, version=folder.version,
-        ) for folder, file_count in page["items"]],
+            file_count=file_count, folder_count=folder_count, version=folder.version,
+        ) for folder, file_count, folder_count in page["items"]],
         "next_cursor": page["next_cursor"],
         "has_more": page["has_more"],
     }

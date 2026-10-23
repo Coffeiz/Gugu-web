@@ -370,8 +370,8 @@ async def get_file_summary(db: AsyncSession, user_id: int, recent_limit: int):
     return recent_rows
 
 
-async def count_personal_library_items(db: AsyncSession, user_id: int) -> int:
-    """统计个人空间全部活动文件与文件夹，返回卡片需要的总项数。"""
+async def count_personal_library_entities(db: AsyncSession, user_id: int) -> tuple[int, int]:
+    """分别统计个人文件根目录中的直属文件和文件夹。"""
     file_count = await db.scalar(
         select(func.count(File.id)).where(
             File.user_id == user_id,
@@ -391,7 +391,28 @@ async def count_personal_library_items(db: AsyncSession, user_id: int) -> int:
             Folder.deleted_at.is_(None),
         )
     )
-    return int(file_count or 0) + int(folder_count or 0)
+    return int(file_count or 0), int(folder_count or 0)
+
+
+async def count_project_library_entities(db: AsyncSession, user_id: int) -> tuple[int, int]:
+    """统计当前用户所有有效项目空间中的文件与文件夹。"""
+    file_count = await db.scalar(
+        select(func.count(File.id)).join(Project, Project.id == File.project_id).where(
+            File.user_id == user_id,
+            Project.user_id == user_id,
+            Project.deleted_at.is_(None),
+            File.deleted_at.is_(None),
+        )
+    )
+    folder_count = await db.scalar(
+        select(func.count(Folder.id)).join(Project, Project.id == Folder.project_id).where(
+            Folder.user_id == user_id,
+            Project.user_id == user_id,
+            Project.deleted_at.is_(None),
+            Folder.deleted_at.is_(None),
+        )
+    )
+    return int(file_count or 0), int(folder_count or 0)
 
 
 async def get_storage_usage(db: AsyncSession, user_id: int) -> int:
@@ -817,7 +838,9 @@ async def list_folder_page_rows(
     folders = (await db.execute(stmt.order_by(ordering, id_order).limit(limit + 1))).scalars().all()
     has_more = len(folders) > limit
     items = folders[:limit]
-    counts = await file_counts_for_folders(db, user_id, [folder.id for folder in items])
+    folder_ids = [folder.id for folder in items]
+    counts = await file_counts_for_folders(db, user_id, folder_ids)
+    child_counts = await folder_counts_for_folders(db, user_id, folder_ids)
     next_cursor = None
     if has_more and items:
         next_cursor = encode_cursor(
@@ -832,7 +855,7 @@ async def list_folder_page_rows(
             ),
             entity_id=items[-1].id,
         )
-    return {"items": [(folder, counts.get(folder.id, 0)) for folder in items],
+    return {"items": [(folder, counts.get(folder.id, 0), child_counts.get(folder.id, 0)) for folder in items],
             "next_cursor": next_cursor, "has_more": has_more}
 
 
@@ -857,6 +880,20 @@ async def file_counts_for_folders(db: AsyncSession, user_id, folder_ids: list[in
             File.folder_id.in_(folder_ids),
             File.deleted_at.is_(None),
         ).group_by(File.folder_id)
+    )
+    return dict(rows.all())
+
+
+async def folder_counts_for_folders(db: AsyncSession, user_id, folder_ids: list[int]) -> dict[int, int]:
+    """批量统计当前用户各文件夹的直属存活子文件夹数。"""
+    if not folder_ids:
+        return {}
+    rows = await db.execute(
+        select(Folder.parent_id, func.count()).where(
+            Folder.user_id == user_id,
+            Folder.parent_id.in_(folder_ids),
+            Folder.deleted_at.is_(None),
+        ).group_by(Folder.parent_id)
     )
     return dict(rows.all())
 

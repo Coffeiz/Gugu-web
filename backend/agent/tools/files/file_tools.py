@@ -12,7 +12,7 @@ FILE_TOOLS = [
         Tool(
             name="list_dir", label="浏览目录",
             description_short='浏览目录：可显式查项目根层、项目递归清单或具体文件夹。',
-            description="列出文件与当前层直属子文件夹，可按空间、项目、工作区或目录筛选；文件仍按传入条件过滤，不传位置条件时覆盖当前用户所有可访问空间。"
+            description="列出文件与当前层直属子文件夹，可按空间、项目、工作区或目录筛选；文件仍按传入条件过滤，不传位置条件时覆盖当前用户所有可访问空间。若用户明确要求浏览 Agent 服务环境中的系统目录，必须在本次 list_dir 调用中同时传 scope=\"system\" 和 path=绝对目录路径，例如 {\"scope\":\"system\",\"path\":\"/tmp\"}；只传 path、只传 scope 或省略两者都不会自动浏览系统目录。system 模式可选 kind、query、ext、limit、offset，排序只支持 sort=\"name\"；不要混用 space、project_id、workspace_directory_id、folder 等文件库参数。该模式只读，浏览当前层；继续深入时，对返回的子目录路径再次传 scope=\"system\" 和 path。系统环境指 Agent 服务进程所在环境（原生部署时是服务所在主机环境，Docker 部署时是应用容器，不是 Docker 宿主机）。"
                         "space=workspace 单独使用会汇总该用户的所有顶层工作区；若用户指定了某个具名工作区，先用 list_workspaces 将名称解析为 kind=directory 的 directory_id，再传 workspace_directory_id 精确筛选。不要混用 workspace_id 与 directory_id，也不要把未限定工作区的汇总数量归到某个单独工作区。"
                         "项目查询优先显式指定 scope：scope=project_root + space=project + project_id 只查项目根层；"
                         "scope=project_recursive + 相同项目参数列出项目全部层级的文件与文件夹；"
@@ -20,7 +20,7 @@ FILE_TOOLS = [
                         "为兼容旧调用，不传 scope 时保留原行为；需要判断项目根层是否为空时不要依赖旧行为。"
                         "folder 传目录名（支持 a/b/c 式路径，也可用 folder_id/parent_id 传 id），限定该目录的子文件夹与直属文件。"
                         "folders 只返回当前层的直属子目录，不递归展开；未传目录时只返回各空间根目录下的文件夹。需要深入时，再对目标子目录传 folder_id 调用。"
-                        "返回 {shown, total, files, folders}：total/shown 只统计文件——shown<total 说明未取完，"
+                        "返回 {shown, total, files, folders}：文件库模式的 total/shown 只统计文件；scope=system 时 limit/offset 对文件与目录合并分页，total/shown 统计两者总数。shown<total 说明未取完，"
                         "加大 limit、加 offset 翻页或改用更精确的过滤条件，不能把部分结果当全量下结论；确认「全部/清空/还剩几个」类问题时务必核对 total。"
                         "文件和文件夹结果会带 workspace_directory_id，便于识别跨工作区汇总中的归属。limit 只约束 files（上限 200）；folders 恒全量，每项带 file_count（直属文件数）。kind=file/folder 可只看其中一种。"
                         "超大目录看全量：sort=\"name\" + limit=200 + offset 递增分页拉完（名字序翻页稳定不漏重）。"
@@ -32,8 +32,9 @@ FILE_TOOLS = [
                     "project_id": {"type": "integer"},
                     "scope": {
                         "type": "string",
-                        "enum": ["project_root", "project_recursive", "folder"],
+                        "enum": ["project_root", "project_recursive", "folder", "system"],
                     },
+                    "path": {"type": "string", "description": "scope=system 时必填的绝对目录路径；不与文件库筛选参数混用。"},
                     "workspace_directory_id": {
                         "type": "integer",
                         "description": "顶层工作区目录 ID；space=workspace 不传此参数时会汇总所有顶层工作区。",
@@ -51,13 +52,26 @@ FILE_TOOLS = [
                     "sort": {"type": "string", "enum": ["updated", "name"]},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 200},
                 },
+                "allOf": [
+                    {
+                        "if": {"required": ["scope"], "properties": {"scope": {"const": "system"}}},
+                        "then": {
+                            "required": ["path"],
+                            "properties": {"sort": {"enum": ["name"]}},
+                        },
+                    },
+                    {
+                        "if": {"required": ["path"]},
+                        "then": {"required": ["scope"], "properties": {"scope": {"const": "system"}}},
+                    },
+                ],
             },
             handler=_list_dir,
         ),
         Tool(
             name="read_file", label="读取文件",
-            description_short='读取文件库、附件或图片；Shell 路径支持逻辑路径或 file_id。',
-            description="读取文件库、聊天附件或图片 URL；单个来源使用 file_id/file/attach_id/url，多个来源放在 items 数组，一次最多 20 项、源文件总量最多 64 MiB。文件库引用可用 list_dir/grep 返回的 /personal、/project、/workspace 逻辑路径或 file_id；路径仅映射已登记的文件记录，不是宿主机路径。URL 仅允许网络图片，并执行安全校验与下载限制；文件库支持文本、文档、图片、音频和视频，历史聊天附件支持图片/音频/视频，其他附件先保存到文件库再读。用户要求理解或总结视频时，直接传视频的 attach_id/file_id 读取原生视频；不要先用 Shell/ffmpeg 抽帧代替，除非用户明确要求抽帧或逐帧分析。媒体按当前模型能力交付原生内容或音频转写。图片共用格式白名单、视觉能力、大小限制与图像处理策略；SVG 按源码文本读取。每个 items 项只能指定一种来源，可选 title/result_id 标记结果；某项失败不影响其他项。文本/文档可用 target_lines 按原始物理行读取，支持 all、8、8-11、8,11，默认 all。不接受 file:/// URI。",
+            description_short='读取文件库、附件、图片与媒体；system 范围可读服务环境路径。',
+            description="读取文件库、聊天附件或图片 URL；单个来源使用 file_id/file/attach_id/url，多个来源放在 items 数组，一次最多 20 项、源文件总量最多 64 MiB。文件库引用使用 file_id 或 /personal、/project、/workspace 逻辑路径；逻辑路径解析文件库记录，不是任意操作系统路径。若用户明确要求读取 Agent 服务进程环境中的系统路径，可显式传 scope=system 和绝对 path；原生部署时是服务所在主机环境，Docker 部署时是应用容器而非 Docker 宿主机。system 文件读取支持最多 32 MiB 的文本、可提取文档，以及现有读取器支持的图片、音频和视频；文档提取、媒体格式、模型能力和 Provider 大小限制沿用现有策略。批量 system 模式需在顶层设 scope=system，items 每项只提供 path（可附 title/result_id/target_lines）。普通文件库读取不要传 scope=system 或任意物理路径。URL 仅允许网络图片，并执行安全校验与下载限制；历史聊天附件支持图片/音频/视频，其他附件先保存到文件库再读。用户要求理解或总结视频时，直接传视频的 attach_id/file_id 读取原生视频；不要先用 Shell/ffmpeg 抽帧代替，除非用户明确要求抽帧或逐帧分析。媒体按当前模型能力交付原生内容或音频转写。图片共用格式白名单、视觉能力、大小限制与图像处理策略；SVG 按源码文本读取。每个 items 项只能指定一种来源，可选 title/result_id 标记结果；某项失败不影响其他项。文本/文档可用 target_lines 按原始物理行读取，支持 all、8、8-11、8,11，默认 all。不接受 file:/// URI。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -67,6 +81,8 @@ FILE_TOOLS = [
                     "url": {"type": "string"},
                     "image_url": {"type": "string"},
                     "img_src": {"type": "string"},
+                    "scope": {"type": "string", "enum": ["system"]},
+                    "path": {"type": "string", "description": "scope=system 时必填的绝对 Agent 服务环境文件路径。"},
                     "title": {"type": "string"},
                     "target_lines": {"type": "string", "pattern": "^(all|[0-9]+([-,][0-9]+)?)$"},
                     "items": {
@@ -80,6 +96,7 @@ FILE_TOOLS = [
                                 "url": {"type": "string"},
                                 "image_url": {"type": "string"},
                                 "img_src": {"type": "string"},
+                                "path": {"type": "string", "description": "scope=system 时的绝对 Agent 服务环境文件路径。"},
                                 "title": {"type": "string"},
                                 "result_id": {"type": "string"},
                                 "target_lines": {"type": "string", "pattern": "^(all|[0-9]+([-,][0-9]+)?)$"},
@@ -87,19 +104,33 @@ FILE_TOOLS = [
                             "anyOf": [
                                 {"required": ["file_id"]}, {"required": ["file"]},
                                 {"required": ["attach_id"]}, {"required": ["url"]},
-                                {"required": ["image_url"]}, {"required": ["img_src"]},
+                                {"required": ["image_url"]}, {"required": ["img_src"]}, {"required": ["path"]},
                             ],
                         },
                     },
                 },
                 "oneOf": [
-                    {"required": ["items"], "not": {"anyOf": [{"required": ["file_id"]}, {"required": ["file"]}, {"required": ["attach_id"]}, {"required": ["url"]}, {"required": ["image_url"]}, {"required": ["img_src"]}]}},
-                    {"required": ["file_id"], "not": {"anyOf": [{"required": ["file"]}, {"required": ["attach_id"]}, {"required": ["url"]}, {"required": ["image_url"]}, {"required": ["img_src"]}, {"required": ["items"]}]}},
-                    {"required": ["file"], "not": {"anyOf": [{"required": ["file_id"]}, {"required": ["attach_id"]}, {"required": ["url"]}, {"required": ["image_url"]}, {"required": ["img_src"]}, {"required": ["items"]}]}},
-                    {"required": ["attach_id"], "not": {"anyOf": [{"required": ["file_id"]}, {"required": ["file"]}, {"required": ["url"]}, {"required": ["image_url"]}, {"required": ["img_src"]}, {"required": ["items"]}]}},
-                    {"required": ["url"], "not": {"anyOf": [{"required": ["file_id"]}, {"required": ["file"]}, {"required": ["attach_id"]}, {"required": ["image_url"]}, {"required": ["img_src"]}, {"required": ["items"]}]}},
-                    {"required": ["image_url"], "not": {"anyOf": [{"required": ["file_id"]}, {"required": ["file"]}, {"required": ["attach_id"]}, {"required": ["url"]}, {"required": ["img_src"]}, {"required": ["items"]}]}},
-                    {"required": ["img_src"], "not": {"anyOf": [{"required": ["file_id"]}, {"required": ["file"]}, {"required": ["attach_id"]}, {"required": ["url"]}, {"required": ["image_url"]}, {"required": ["items"]}]}},
+                    {"required": ["items"], "not": {"anyOf": [{"required": ["file_id"]}, {"required": ["file"]}, {"required": ["attach_id"]}, {"required": ["url"]}, {"required": ["image_url"]}, {"required": ["img_src"]}, {"required": ["path"]}]}},
+                    {"required": ["path", "scope"], "not": {"anyOf": [{"required": ["file_id"]}, {"required": ["file"]}, {"required": ["attach_id"]}, {"required": ["url"]}, {"required": ["image_url"]}, {"required": ["img_src"]}, {"required": ["items"]}]}},
+                    {"required": ["file_id"], "not": {"anyOf": [{"required": ["file"]}, {"required": ["attach_id"]}, {"required": ["url"]}, {"required": ["image_url"]}, {"required": ["img_src"]}, {"required": ["path"]}, {"required": ["items"]}]}},
+                    {"required": ["file"], "not": {"anyOf": [{"required": ["file_id"]}, {"required": ["attach_id"]}, {"required": ["url"]}, {"required": ["image_url"]}, {"required": ["img_src"]}, {"required": ["path"]}, {"required": ["items"]}]}},
+                    {"required": ["attach_id"], "not": {"anyOf": [{"required": ["file_id"]}, {"required": ["file"]}, {"required": ["url"]}, {"required": ["image_url"]}, {"required": ["img_src"]}, {"required": ["path"]}, {"required": ["items"]}]}},
+                    {"required": ["url"], "not": {"anyOf": [{"required": ["file_id"]}, {"required": ["file"]}, {"required": ["attach_id"]}, {"required": ["image_url"]}, {"required": ["img_src"]}, {"required": ["path"]}, {"required": ["items"]}]}},
+                    {"required": ["image_url"], "not": {"anyOf": [{"required": ["file_id"]}, {"required": ["file"]}, {"required": ["attach_id"]}, {"required": ["url"]}, {"required": ["img_src"]}, {"required": ["path"]}, {"required": ["items"]}]}},
+                    {"required": ["img_src"], "not": {"anyOf": [{"required": ["file_id"]}, {"required": ["file"]}, {"required": ["attach_id"]}, {"required": ["url"]}, {"required": ["image_url"]}, {"required": ["path"]}, {"required": ["items"]}]}},
+                ],
+                "allOf": [
+                    {
+                        "if": {"required": ["scope"], "properties": {"scope": {"const": "system"}}},
+                        "then": {"anyOf": [{"required": ["path"]}, {"required": ["items"]}]},
+                    },
+                    {
+                        "if": {
+                            "required": ["items"],
+                            "properties": {"items": {"contains": {"required": ["path"]}}},
+                        },
+                        "then": {"required": ["scope"], "properties": {"scope": {"const": "system"}}},
+                    },
                 ],
             },
             handler=_read_file,

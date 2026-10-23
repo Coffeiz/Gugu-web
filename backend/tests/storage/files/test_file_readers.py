@@ -22,6 +22,10 @@ class _Storage:
         self.get_called = True
         return self.data
 
+    def local_path(self, key):
+        # 合成对象存储不提供本地路径，遵守 StorageBackend 的可选路径契约。
+        return None
+
 
 def _minimax_m3_ai():
     return SimpleNamespace(provider="minimax", model="abab-m3", base_url="https://api.minimaxi.com/anthropic",
@@ -373,6 +377,45 @@ async def test_read_audio_falls_back_to_asr_when_native_audio_is_disabled(monkey
 
     assert result["content"] == "转写内容"
     assert "_media_block" not in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("transcript", "raise_error", "expected_error"),
+    [
+        (None, False, "未配置可用的语音识别模型"),
+        ("", False, "未识别到语音内容，请确认文件包含清晰语音且格式受支持"),
+        (None, True, "语音识别服务调用失败，请检查配置或稍后重试"),
+    ],
+)
+async def test_system_audio_read_distinguishes_asr_outcomes(
+    tmp_path, monkeypatch, transcript, raise_error, expected_error,
+):
+    """system 读音频时区分未配置、空转写与 ASR 调用失败。"""
+    from agent import voice
+
+    path = tmp_path / "synthetic.wav"
+    path.write_bytes(b"synthetic audio")
+    monkeypatch.setattr(file_readers, "_active_model_cfg", lambda: SimpleNamespace(audio=False))
+    monkeypatch.setattr(file_readers, "_native_audio_enabled", lambda *_: False)
+
+    async def voice_profile(_user_id):
+        return True, 1024
+
+    async def transcribe(*_args, **_kwargs):
+        assert _kwargs["raise_errors"] is True
+        if raise_error:
+            raise RuntimeError("secret provider response")
+        return transcript
+
+    monkeypatch.setattr(file_readers, "voice_recognition_profile", voice_profile)
+    monkeypatch.setattr(file_readers, "get_settings", lambda: SimpleNamespace())
+    monkeypatch.setattr(voice, "transcribe", transcribe)
+
+    result = await file_readers.read_local_media(path, db=object(), user_id="synthetic-user")
+
+    assert result == {"error": expected_error}
+    assert "secret provider response" not in str(result)
 
 
 @pytest.mark.asyncio

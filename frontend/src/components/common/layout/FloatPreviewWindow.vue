@@ -50,7 +50,7 @@
       <ImageViewer v-if="isImg" :blobUrl="blobUrl ?? undefined" :upscale="isVector" @loaded="onImageLoaded" />
       <VideoViewer v-else-if="isVid && videoSrc" :src="videoSrc ?? undefined" :refresh-src="!win.file.attach_id ? refreshVideoSource : undefined" />
       <OfficeViewer v-else-if="isOffice && (!isCsv || !csvTextMode) && (blobUrl || (isXlsx && typeof win.file.id === 'number'))" :blobUrl="blobUrl ?? undefined" :ext="win.file.ext ?? ''" :file-id="typeof win.file.id === 'number' ? win.file.id : undefined" :file-version="win.file.version" @content-size="onOfficeContentSize" @csv-render-failed="onCsvRenderFailed" />
-      <TextViewer  v-else-if="isText && (!isCsv || csvTextMode) && (blobUrl || isVirtual)" :blobUrl="blobUrl ?? undefined" :source-text="win.sourceText" :save-source="win.saveSource" :read-only="!!win.textFallback" :ext="win.file.ext" :fontSize="textFontSize" :fileKey="win.file.id ?? win.file.attach_id ?? undefined" :fileContext="win.file" @content-saved="onTextContentSaved" />
+      <TextViewer  v-else-if="isText && (!isCsv || csvTextMode) && (blobUrl || isVirtual)" :blobUrl="blobUrl ?? undefined" :source-text="win.sourceText" :save-source="win.saveSource" :read-only="!!win.textFallback" :ext="win.file.ext" :fontSize="textFontSize" :fileKey="win.file.id ?? win.file.attach_id ?? undefined" :fileContext="win.file" @content-saved="onTextContentSaved" @refresh="refreshHtmlPreview" />
       <div v-if="loading && !placeholderReady" class="fpw-status fpw-loading">
         <div class="fpw-spinner"></div>
         <span>{{ t('viewerUi.loading') }}</span>
@@ -98,62 +98,12 @@
     </template>
   </div>
 
-  <!-- 文件信息浮窗（独立弹窗） -->
-  <Teleport to="body">
-    <Transition name="info-pop">
-      <div v-if="showInfo" class="fpw-info-win"
-        :style="{ left: infoX+'px', top: infoY+'px', zIndex: win.zIndex + 1 }"
-        @mousedown.stop
-      >
-        <div class="fpw-info-title" @mousedown.prevent="startInfoDrag">
-          <span>{{ t('files.info') }}</span>
-          <button class="fpw-btn fpw-close" @click.stop="showInfo = false">
-            <Icon name="action.close" :size="13" />
-          </button>
-        </div>
-        <div class="fpw-info-body">
-          <div class="fpw-info-row">
-            <span class="fpw-info-label">{{ t('files.name') }}</span>
-            <span class="fpw-info-val">{{ infoFile.displayName }}.{{ infoFile.ext?.toLowerCase() }}</span>
-          </div>
-          <div class="fpw-info-row">
-            <span class="fpw-info-label">{{ t('files.format') }}</span>
-            <span class="fpw-info-val">{{ infoFile.ext?.toUpperCase() }}</span>
-          </div>
-          <div v-if="contentSize" class="fpw-info-row">
-            <span class="fpw-info-label">{{ t('sharedUi.resolution') }}</span>
-            <span class="fpw-info-val">{{ contentSize }}</span>
-          </div>
-          <div class="fpw-info-row">
-            <span class="fpw-info-label">{{ t('files.size') }}</span>
-            <span class="fpw-info-val">{{ infoFile.size }}</span>
-          </div>
-          <div class="fpw-info-row">
-            <span class="fpw-info-label">{{ t('files.createdAt') }}</span>
-            <span class="fpw-info-val">{{ formatFileCreatedDate(infoFile.createdAt) || '—' }}</span>
-          </div>
-          <div class="fpw-info-row">
-            <span class="fpw-info-label">{{ t('files.folderLocation') }}</span>
-            <button class="fpw-info-path" :disabled="!win.file.id || !!win.file.attach_id" @click="navigateToFileDirectory">
-              {{ infoPath || (infoPathLoading ? t('files.loading') : '—') }}
-            </button>
-          </div>
-          <div v-if="infoFile.projectName" class="fpw-info-row">
-            <span class="fpw-info-label">{{ t('files.project') }}</span>
-            <span class="fpw-info-val">{{ infoFile.projectName }}</span>
-          </div>
-          <div v-if="infoFile.stageName" class="fpw-info-row">
-            <span class="fpw-info-label">{{ t('files.stage') }}</span>
-            <span class="fpw-info-val">{{ infoFile.stageName }}</span>
-          </div>
-          <div v-if="infoFile.mimeType" class="fpw-info-row">
-            <span class="fpw-info-label">MIME</span>
-            <span class="fpw-info-val fpw-info-mono">{{ infoFile.mimeType }}</span>
-          </div>
-        </div>
-      </div>
-    </Transition>
-  </Teleport>
+  <FileInfoPopup
+    :show="showInfo" :file="win.file" :x="infoX" :y="infoY" :z-index="win.zIndex + 1"
+    :resolution="contentSize"
+    @close="showInfo = false" @navigate="navigateToFileDirectory"
+    @update:x="infoOffsetX = $event - x" @update:y="infoOffsetY = $event - y"
+  />
 </template>
 
 <script setup lang="ts">
@@ -161,13 +111,14 @@ import { ref, computed, watch, onUnmounted , type PropType} from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import Icon from '@/components/common/icons/Icon.vue'
+import FileInfoPopup from '@/components/common/file-browser/FileInfoPopup.vue'
 import type { PreviewWindow } from '@/stores/preview'
-import { useFilesCacheStore, type FileMeta, type FolderMeta } from '@/stores/filesCache'
+import { useFilesCacheStore, type FileMeta } from '@/stores/filesCache'
 import ImageViewer from '@/components/common/viewers/ImageViewer.vue'
 import VideoViewer from '@/components/common/viewers/VideoViewer.vue'
 import TextViewer  from '@/components/common/viewers/TextViewer.vue'
 import OfficeViewer from '@/components/common/viewers/OfficeViewer.vue'
-import { CLIENT_ID, filesApi, workspaceDirectoriesApi } from '@/services/api'
+import { CLIENT_ID, filesApi } from '@/services/api'
 import { isUnauthorizedResponse } from '@/services/authSession'
 import { isImageExt, isVideoExt, isTextExt, isOfficeExt, isCsvExt, isPreviewReloadRequested, isPreviewAffectedByFileEvent, isTextFallbackCandidate, normalizeTextBlob, usePreviewStore } from '@/stores/preview'
 import { getCachedThumb, getThumb } from '@/composables/shared/useThumbCache'
@@ -176,7 +127,6 @@ import { useWindowDrag } from '@/composables/core/useWindowDrag'
 import { useLiveStore } from '@/stores/live'
 import { useUiStore } from '@/stores/ui'
 import { registerEsc, registerArrowNav } from '@/composables/core/windowz'
-import { formatFileCreatedDate } from '@/utils/fileDate'
 import { accountBoundaryEpoch, getAccountBoundaryEpoch } from '@/utils/accountBoundary'
 import { readDocumentFontSize, saveDocumentFontSize } from '@/utils/documentFontSizePreference'
 
@@ -189,32 +139,9 @@ const filesCache = useFilesCacheStore()
 const uiStore = useUiStore()
 const previewBlobCache = usePreviewBlobCache()
 const mountAccountEpoch = getAccountBoundaryEpoch()
-const infoDetails = ref<FileMeta | null>(null)
-const infoFolderPath = ref<FolderMeta[]>([])
-const infoWorkspaceName = ref('')
-const infoPathLoading = ref(false)
-const infoDetailsLoadedForId = ref<number | null>(null)
-let infoLoadSequence = 0
-const infoFile = computed(() => infoDetails.value && String(infoDetails.value.id) === String(props.win.file.id)
-  ? { ...props.win.file, ...infoDetails.value }
-  : props.win.file)
-const infoPath = computed(() => {
-  if (infoFile.value.attach_id) return ''
-  const root = infoFile.value.projectName
-    || (infoFile.value.workspaceDirectoryId != null ? (infoWorkspaceName.value || t('files.workspace')) : t('files.all'))
-  const folders = infoFolderPath.value.map(folder => folder.name)
-  if (!folders.length && infoFile.value.folderName) folders.push(infoFile.value.folderName)
-  return [root, ...folders].filter(Boolean).join(' / ')
-})
 let recentlySavedText: { fileId: string; content: string; savedAt: number } | null = null
 let checkingLocalDirectoryEcho = false
 watch(accountBoundaryEpoch, () => {
-  infoLoadSequence++
-  infoDetails.value = null
-  infoFolderPath.value = []
-  infoWorkspaceName.value = ''
-  infoDetailsLoadedForId.value = null
-  infoPathLoading.value = false
   loadSequence += 1
   previewBlobCache.release(currentCacheKey.value, blobUrl.value)
   currentCacheKey.value = ''
@@ -247,6 +174,7 @@ const h = ref(isPptx.value ? Math.round(window.innerHeight * 0.64) : props.win.h
 const isImg  = computed(() => isImageExt(props.win.file.ext))
 const isVid  = computed(() => isVideoExt(props.win.file.ext))
 const isText = computed(() => !!props.win.textFallback || isTextExt(props.win.file.ext, props.win.file.mimeType))
+const isHtml = computed(() => /^(html|htm)$/i.test(props.win.file.ext ?? ''))
 const isCsv = computed(() => isCsvExt(props.win.file.ext))
 const isOffice = computed(() => isOfficeExt(props.win.file.ext) || isCsv.value)
 const isXlsx = computed(() => (props.win.file.ext ?? '').toLowerCase() === 'xlsx')
@@ -345,14 +273,6 @@ const infoOffsetY  = ref(0)
 const infoX = computed(() => x.value + infoOffsetX.value)
 const infoY = computed(() => y.value + infoOffsetY.value)
 
-watch(() => props.win.file.id, () => {
-  infoLoadSequence++
-  infoDetails.value = null
-  infoFolderPath.value = []
-  infoDetailsLoadedForId.value = null
-  if (showInfo.value) void loadInfoDetails()
-})
-
 function openInfo() {
   const opening = !showInfo.value
   if (opening && infoBtnRef.value) {
@@ -363,53 +283,19 @@ function openInfo() {
     infoOffsetY.value = absY - y.value
   }
   showInfo.value = opening
-  if (opening) void loadInfoDetails()
-  else infoLoadSequence++
 }
 
-async function loadInfoDetails() {
-  const fileId = Number(props.win.file.id)
-  if (!Number.isSafeInteger(fileId) || fileId <= 0 || props.win.file.attach_id) return
-  if (infoDetailsLoadedForId.value === fileId) return
-  const sequence = ++infoLoadSequence
-  const accountEpoch = getAccountBoundaryEpoch()
-  infoPathLoading.value = true
-  try {
-    const location = await filesApi.location(fileId)
-    if (sequence !== infoLoadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
-    infoDetails.value = location.file as FileMeta
-    infoFolderPath.value = location.folderPath as FolderMeta[]
-    const workspaceDirectoryId = infoDetails.value.workspaceDirectoryId
-    if (workspaceDirectoryId != null) {
-      const directories = await workspaceDirectoriesApi.list()
-      if (sequence !== infoLoadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
-      infoWorkspaceName.value = directories.find(directory => directory.id === workspaceDirectoryId)?.name || ''
-    }
-    infoDetailsLoadedForId.value = fileId
-  } catch {
-    // 文件预览也可能来自仅有部分元数据的入口；定位信息失败时保留已有字段。
-  } finally {
-    if (sequence === infoLoadSequence) infoPathLoading.value = false
-  }
-}
-
-function navigateToFileDirectory() {
-  const fileId = Number(props.win.file.id)
-  if (!Number.isSafeInteger(fileId) || fileId <= 0 || props.win.file.attach_id) return
+function navigateToFileDirectory(file?: Partial<FileMeta>) {
+  const fileId = Number(file?.id)
+  if (!Number.isSafeInteger(fileId) || fileId <= 0 || file?.attach_id) return
   uiStore.pendingFileTarget = {
     kind: 'file',
     id: fileId,
-    ...(infoFile.value.workspaceDirectoryId != null
-      ? {
-          workspaceDirectoryId: infoFile.value.workspaceDirectoryId,
-          ...(infoWorkspaceName.value ? { workspaceDirectoryName: infoWorkspaceName.value } : {}),
-        }
-      : {}),
+    ...(file.workspaceDirectoryId != null ? { workspaceDirectoryId: file.workspaceDirectoryId } : {}),
   }
   void router.push('/files')
 }
 
-const { startDrag: startInfoDrag } = useWindowDrag(infoOffsetX, infoOffsetY)
 
 // 矢量图（无尺寸 SVG 的 natural 只是浏览器折算的默认对象尺寸，如 300×150）开窗时
 // 按比例放大到「恰好 contain 进视口舒适区」，只放大不缩小（大尺寸 SVG 仍按原逻辑
@@ -507,6 +393,11 @@ function toggleCsvView() {
   csvTextMode.value = !csvTextMode.value
   if (csvTextMode.value) fitWindow(Math.round(window.innerWidth * 0.44), Math.round(window.innerHeight * 0.86))
   else ready.value = false
+}
+
+function refreshHtmlPreview() {
+  if (!isHtml.value || isVirtual.value || loading.value) return
+  void load(props.win.file, true)
 }
 
 function onCsvRenderFailed() {
@@ -1115,75 +1006,6 @@ onUnmounted(() => {
 }
 .fpw-nav-prev { left: 10px; }
 .fpw-nav-next { right: 10px; }
-
-/* ── 信息独立弹窗 ── */
-.fpw-info-win {
-  position: fixed;
-  width: 220px;
-  border-radius: 12px;
-  overflow: hidden;
-  background: rgba(242, 243, 248, 0.97);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255,255,255,0.7);
-  box-shadow: 0 8px 32px rgba(20,25,60,0.18), 0 2px 8px rgba(0,0,0,0.07);
-  user-select: none;
-}
-.fpw-info-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 9px 10px 9px 14px;
-  background: rgba(255,255,255,0.55);
-  border-bottom: 1px solid rgba(0,0,0,0.07);
-  cursor: grab;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-.fpw-info-title:active { cursor: grabbing; }
-.fpw-info-body {
-  padding: 12px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  max-height: 70vh;
-  overflow-y: auto;
-}
-.fpw-info-row { display: flex; flex-direction: column; gap: 2px; }
-.fpw-info-label {
-  font-size: 10px; font-weight: 600;
-  color: var(--text-secondary); opacity: .6;
-  text-transform: uppercase; letter-spacing: 0.04em;
-}
-.fpw-info-val {
-  font-size: 12px; color: var(--text-primary);
-  word-break: break-all; line-height: 1.4;
-}
-.fpw-info-path {
-  min-width: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--text-primary);
-  font: inherit;
-  font-size: 12px;
-  line-height: 1.4;
-  text-align: left;
-  text-decoration: underline;
-  text-decoration-style: dotted;
-  text-underline-offset: 2px;
-  overflow-wrap: anywhere;
-  cursor: pointer;
-}
-.fpw-info-path:disabled { color: var(--text-secondary); cursor: default; text-decoration: none; }
-.fpw-info-mono { font-family: var(--font-family-mono); font-size: 11px; }
-
-/* ── 弹窗动画 ── */
-.info-pop-enter-active,
-.info-pop-leave-active { transition: opacity 0.12s ease, transform 0.12s ease; }
-.info-pop-enter-from,
-.info-pop-leave-to     { opacity: 0; transform: scale(0.95); }
 
 /* ── resize 边缘与角标 ── */
 .fpw-resize {

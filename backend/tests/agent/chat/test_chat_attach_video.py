@@ -11,6 +11,16 @@ from agent.media import video as media_video
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def isolated_voice_profile(monkeypatch):
+    """视频用例不查询部署环境的 BYOK 配置；专门的语音用例可显式覆盖。"""
+    from unittest.mock import AsyncMock
+    from agent.media.constants import MEDIA_RAW_MAX
+
+    monkeypatch.setattr("agent.chat.attachments.voice_recognition_profile",
+                        AsyncMock(return_value=(False, MEDIA_RAW_MAX)))
+
+
 def test_image_ready_uses_active_model_context(monkeypatch):
     """文件库工具必须按本轮实际模型判断，不能被全局默认模型遮蔽。"""
     from types import SimpleNamespace
@@ -464,14 +474,14 @@ def test_resolve_video_over_90mb_rejected(monkeypatch):
     assert "上限" in text
 
 
-def test_resolve_video_under_45mb_base64(monkeypatch):
-    """≤45MB 视频 → 走 base64 内联。"""
+def test_resolve_small_video_under_4mib_base64(monkeypatch):
+    """小于新传输阈值的短视频仍走 base64 内联。"""
     from agent.chat.attachments import resolve_for_message
     import asyncio
     from types import SimpleNamespace
     from app.core import chat_attach
 
-    size = 10 * 1024 * 1024  # 10MB
+    size = 2 * 1024 * 1024
     meta = _make_video_meta(size)
 
     async def fake_get_meta(uid, aid):

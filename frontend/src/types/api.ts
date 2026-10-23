@@ -5361,6 +5361,8 @@ export interface components {
              * @default 0
              */
             fileCount: number;
+            /** Foldercount */
+            folderCount: number;
             /**
              * Version
              * @default 1
@@ -6688,6 +6690,8 @@ export interface components {
              * @default 0
              */
             fileCount: number;
+            /** Foldercount */
+            folderCount: number;
             /**
              * Version
              * @default 1

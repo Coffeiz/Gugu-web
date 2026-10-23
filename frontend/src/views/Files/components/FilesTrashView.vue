@@ -20,7 +20,7 @@
         <span class="lr-type-cell"><span class="lr-type-text">{{ t('filesViewUi.folder') }}</span></span>
         <span class="lr-text">{{ formatDate(folder.deletedAt) }}</span>
         <span class="lr-text" :class="{ 'days-warn': daysLeft(folder.deletedAt) <= 3 }">{{ t('filesViewUi.days', { count: daysLeft(folder.deletedAt) }) }}</span>
-        <span class="lr-text">{{ t('filesViewUi.fileCount', { count: folder.fileCount }) }}</span>
+        <span class="lr-text">{{ t('filesViewUi.folderContents', { files: folder.fileCount, folders: folder.folderCount }) }}</span>
         <span class="lr-actions">
           <Transition name="sel-cb"><div v-if="inSelectionMode" class="sel-checkbox" :class="{ checked: selectedTrashFolderIds.has(folder.id) }"><svg v-if="selectedTrashFolderIds.has(folder.id)" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6l3 3 5-5"/></svg></div></Transition>
           <template v-if="!inSelectionMode">
@@ -32,7 +32,7 @@
       <div class="trash-folder-contents" :data-layout-open="expandedTrashFolders.has(folder.id) ? 'true' : 'false'">
         <div class="trash-folder-contents-inner">
           <div v-if="trashFolderContents[folder.id]?.folders.length === 0 && trashFolderContents[folder.id]?.files.length === 0" class="trash-folder-empty">{{ t('filesViewUi.emptyFolder') }}</div>
-          <div v-for="child in trashFolderContents[folder.id]?.folders || []" :key="`trash-child-${child.id}`" class="trash-child-row"><Icon name="file.folder" :size="14" /><span>{{ child.name }}</span><small>{{ t('filesViewUi.fileCount', { count: child.fileCount }) }}</small></div>
+          <div v-for="child in trashFolderContents[folder.id]?.folders || []" :key="`trash-child-${child.id}`" class="trash-child-row"><Icon name="file.folder" :size="14" /><span>{{ child.name }}</span><small>{{ t('filesViewUi.folderContents', { files: child.fileCount, folders: child.folderCount }) }}</small></div>
           <div v-for="file in trashFolderContents[folder.id]?.files || []" :key="`trash-child-file-${file.id}`" class="trash-child-row file"><component :is="fileListIcon(file.ext)" :size="14" :style="{ color: fileIconColor(file.ext) }" /><span>{{ file.displayName }}.{{ file.ext.toLowerCase() }}</span></div>
           <button v-if="trashFolderCursors[folder.id]?.folderHasMore || trashFolderCursors[folder.id]?.fileHasMore" class="trash-load-more" @click.stop="loadMoreTrashFolderContents(folder.id)">{{ t('filesViewUi.loadMore') }}</button>
         </div>

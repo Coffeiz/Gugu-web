@@ -119,7 +119,9 @@ async function loadScopedDirectory(type: string, segment: NavSeg | null, state: 
       displayName: folder.name, color: segment?.color ?? null,
       projectId: folder.projectId ?? projectId ?? null,
       ...(workspaceDirectoryId != null ? { space: 'workspace', workspaceDirectoryId } : {}),
-      count: folder.fileCount,
+      count: folder.fileCount + folder.folderCount,
+      fileCount: folder.fileCount,
+      folderCount: folder.folderCount,
     }))
     state.pagination.value = {
       scope, fileCursor: files.next_cursor, folderCursor: folders.next_cursor,
@@ -221,9 +223,9 @@ export function useFileLibraryDirectory(options: DirectoryOptions) {
     if (type === 'root') {
       contents.value = {
         folders: [
-          { id: 'personal', type: 'personal', displayName: t('filesUi.personalFiles'), count: null },
-          { id: 'projects', type: 'projects', displayName: t('filesUi.projectFiles'), count: projectStore.projects.length },
-          { id: 'trash', type: 'trash', displayName: t('filesUi.trash'), count: null },
+          { id: 'personal', type: 'personal', displayName: t('filesUi.personalFiles'), count: null, fileCount: null, folderCount: null },
+          { id: 'projects', type: 'projects', displayName: t('filesUi.projectFiles'), count: null, fileCount: null, folderCount: null },
+          { id: 'trash', type: 'trash', displayName: t('filesUi.trash'), count: null, fileCount: null, folderCount: null },
         ],
         files: [],
       }
@@ -235,8 +237,9 @@ export function useFileLibraryDirectory(options: DirectoryOptions) {
             ...contents.value,
             folders: contents.value.folders.map(folder => ({
               ...folder,
-              ...(folder.id === 'personal' ? { count: counts.personalCount } : {}),
-              ...(folder.id === 'trash' ? { count: counts.trashCount } : {}),
+              ...(folder.id === 'personal' ? { fileCount: counts.personalFileCount, folderCount: counts.personalFolderCount } : {}),
+              ...(folder.id === 'projects' ? { fileCount: counts.projectFileCount, folderCount: counts.projectFolderCount } : {}),
+              ...(folder.id === 'trash' ? { fileCount: counts.trashFileCount, folderCount: counts.trashFolderCount } : {}),
             })),
           }
         }).catch(() => {
@@ -422,7 +425,9 @@ export function useFileLibraryDirectory(options: DirectoryOptions) {
         displayName: folder.name, color: currentSeg.value?.color ?? null,
         projectId: folder.projectId ?? scope.projectId ?? null,
         ...(scope.workspaceDirectoryId != null ? { space: 'workspace', workspaceDirectoryId: scope.workspaceDirectoryId } : {}),
-        count: folder.fileCount,
+        count: folder.fileCount + folder.folderCount,
+        fileCount: folder.fileCount,
+        folderCount: folder.folderCount,
       }))
       contents.value = {
         folders: [...contents.value.folders, ...folderCards],

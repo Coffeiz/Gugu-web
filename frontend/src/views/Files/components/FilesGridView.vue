@@ -1,7 +1,7 @@
 <template>
   <FileBrowserGrid ref="browserRef" :class="{ 'is-virtual': virtualEnabled }" :style="gridStyle" :layout-collection="layoutCollection" @empty-context="openCtx('empty', null, $event)">
     <RuntimeFolderCard v-for="f in visibleFolders" :key="f.id"
-      :card-props="{ displayName: f.displayName, countLabel: f.count != null ? t('filesViewUi.items', { count: f.count }) : '—', accentColor: folderAccentColor(f), selected: selectedFolderKeys.has(f.id), preSelected: previewFolderKeys.has(f.id), cut: f.type === 'folder' && f.folderId != null && cbStore.isCut('folder', f.folderId), selectionMode: inSelectionMode }"
+      :card-props="{ displayName: f.displayName, countLabel: f.fileCount != null && f.folderCount != null ? t('filesViewUi.folderContents', { files: f.fileCount, folders: f.folderCount }) : f.count != null ? t('filesViewUi.items', { count: f.count }) : '—', accentColor: folderAccentColor(f), selected: selectedFolderKeys.has(f.id), preSelected: previewFolderKeys.has(f.id), cut: f.type === 'folder' && f.folderId != null && cbStore.isCut('folder', f.folderId), selectionMode: inSelectionMode }"
       :runtime-id="folderLayoutKey(f)" runtime-surface-id="files:surface:browser"
       :runtime-selected="selectedFolderKeys.has(f.id)"
       :runtime-abilities="f.type === 'folder' && f.folderId != null ? ['move'] : []"
@@ -73,7 +73,6 @@ watch([visibleFolders, visibleFiles], () => {
 
 <style scoped>
 .file-browser-grid.file-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(158px,1fr)); gap:10px; align-content:start; }
-.file-browser-grid.is-virtual :deep(.fc-card), .file-browser-grid.is-virtual :deep(.folder-card) { height:136px; box-sizing:border-box; }
 .fc-thumb-tiny,.fc-thumb-full { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; }
 .fc-thumb-tiny { filter:blur(10px); transform:scale(1.06); opacity:.7; }
 .fc-thumb-full { opacity:0; transition:opacity .2s; }
