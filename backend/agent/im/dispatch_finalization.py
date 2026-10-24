@@ -98,10 +98,14 @@ async def finalize_im_dispatch(
                 )
 
     if platform == "qq":
-        # 过程消息是否送达不代表最终答复成功。最终正文独立发送，保留入站
-        # msg_id 以优先走被动回复；QQ 出站层在发送失败时负责主动消息降级。
+        # 流式发送器已经完整交付正文时，只收尾附件，避免再发一份重复最终消息。
+        # 流式发送失败/未交付时仍走普通回复出口，由 QQ 出站层按 msg_id
+        # 被动发送并在过期或失败时降级主动消息。
         reply_text = await send_agent_response(
             payload, response,
+            already_sent_rounds=(
+                1 if payload.get("chat_type") == "c2c" and stream_sent and not response.errored else 0
+            ),
             show_intermediate_replies=False,
         )
     elif platform == "feishu" and stream_sent:

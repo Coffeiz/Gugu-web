@@ -7,6 +7,16 @@
 
 ## [Unreleased]
 
+## [1.7.7] - 2026-10-24
+
+### Fixes
+
+- Restore real-time QQ private-chat Markdown replies and avoid sending the final text twice; retain ordinary-reply fallback when streaming is unavailable or fails.
+
+### 修复
+
+- 恢复 QQ 私聊 Markdown 回复的实时流式传输，避免流式成功后再次重复发送最终正文；流式不可用或失败时保留普通回复回退。
+
 ## [1.7.6] - 2026-10-24
 
 ### What's New
