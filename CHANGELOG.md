@@ -9,13 +9,51 @@
 
 ## [1.7.7] - 2026-10-24
 
-### Fixes
+### What's New
+
+#### New Features
+
+- None for this release.
+
+#### Improvements
+
+- Shorten the memory-reflection idle window to three minutes.
+- Simplify the names of tool permissions available to IM group members.
+
+#### Fixes
 
 - Restore real-time QQ private-chat Markdown replies and avoid sending the final text twice; retain ordinary-reply fallback when streaming is unavailable or fails.
 
-### 修复
+#### Contributors
+
+- Thank you to [@Coffeiz](https://github.com/Coffeiz) for PR #106.
+
+#### Feedback & Issue Reporters
+
+- None for this release.
+
+### 更新内容
+
+#### 新功能
+
+- 本版本暂无新功能。
+
+#### 改进
+
+- 记忆反思闲置窗口缩短至三分钟。
+- 简化 IM 群成员可用工具权限名称。
+
+#### 修复
 
 - 恢复 QQ 私聊 Markdown 回复的实时流式传输，避免流式成功后再次重复发送最终正文；流式不可用或失败时保留普通回复回退。
+
+#### 贡献者
+
+- 感谢 [@Coffeiz](https://github.com/Coffeiz) 提交 PR #106。
+
+#### 反馈与问题报告
+
+- 本版本暂无。
 
 ## [1.7.6] - 2026-10-24
 
