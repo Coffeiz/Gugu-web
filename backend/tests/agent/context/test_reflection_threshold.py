@@ -134,14 +134,15 @@ def test_web_private_reflection_threshold_rejects_values_outside_admin_range(val
 
 
 @pytest.mark.asyncio
-async def test_reflection_idle_window_flushes_after_four_minutes_for_owner_and_group():
+async def test_reflection_idle_window_flushes_after_three_minutes_for_owner_and_group():
     from agent.memory import reflection_idle
 
     fake_redis = _FakeRedis()
     now = 10_000.0
-    due_member = "idle-exactly-four-minutes"
-    active_member = "idle-three-minutes-fifty-nine-seconds"
+    due_member = "idle-exactly-three-minutes"
+    active_member = "idle-two-minutes-fifty-nine-seconds"
     idle_seconds = reflection_idle.IDLE_WINDOW_SECONDS
+    assert idle_seconds == 180
     for key in (reflection_idle.OWNER_IDLE_KEY, reflection_idle.GROUP_OWNER_IDLE_KEY):
         fake_redis.zsets[key] = {
             due_member: now - idle_seconds,
@@ -154,7 +155,7 @@ async def test_reflection_idle_window_flushes_after_four_minutes_for_owner_and_g
 
     cutoff_input = datetime(2026, 9, 20, 12, 0, tzinfo=timezone.utc)
     assert reflection_idle.idle_cutoff(cutoff_input) == datetime(
-        2026, 9, 20, 11, 56, tzinfo=timezone.utc,
+        2026, 9, 20, 11, 57, tzinfo=timezone.utc,
     )
 
 

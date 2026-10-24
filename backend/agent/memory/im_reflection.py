@@ -21,7 +21,12 @@ from agent.context.branch_types import BranchInput, BranchPolicy
 from agent.memory.daily_compaction import merge_remaining, should_compact, split_batch
 from agent.memory.reflection_branch import run_reflection_branch
 from agent.memory.event_memory import deduplicate_event_sections, normalize_event_memory
-from agent.memory.reflection_jobs import IDLE_WINDOW, MAX_RETRIES, RETRY_BACKOFF_MINUTES
+from agent.memory.reflection_jobs import (
+    DEFERRED_JOB_RETRY_DELAY,
+    IDLE_WINDOW,
+    MAX_RETRIES,
+    RETRY_BACKOFF_MINUTES,
+)
 from agent.memory.scoped_store import (
     merge_scope_event_memory,
     read_scope,
@@ -412,7 +417,7 @@ async def _defer_job(db, job, now) -> None:
 
     job.status = "pending"
     job.locked_at = None
-    job.next_attempt_at = now + max(IDLE_WINDOW, timedelta(minutes=1))
+    job.next_attempt_at = now + DEFERRED_JOB_RETRY_DELAY
     job.updated_at = now
     await db.commit()
 

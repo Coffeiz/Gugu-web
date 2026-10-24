@@ -2,6 +2,7 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 import json
+from datetime import datetime, timedelta, timezone
 
 import anthropic
 import httpx
@@ -68,6 +69,24 @@ async def test_job_persists_rejection_terminal_but_retries_transient_failure(db,
     assert job.last_error_code == ("input_sensitive" if rejected else "InternalServerError")
     assert (job.next_attempt_at is None) is rejected
     assert (job.dead_at is not None) is rejected
+
+
+async def test_deferred_reflection_job_keeps_four_minute_retry_delay(db, user_a):
+    """缩短闲置窗口不能让会话忙等暂缓任务更频繁重试。"""
+    job = MemoryReflectionJob(
+        owner_user_id=user_a.id, platform="qq", bot_id="示例机器人",
+        scope_type="group", scope_id="示例群", idempotency_key="synthetic-deferred-job",
+        status="running", retry_count=0,
+    )
+    db.add(job)
+    await db.commit()
+    now = datetime(2026, 10, 25, 12, 0, tzinfo=timezone.utc)
+
+    await im_reflection._defer_job(db, job, now)
+
+    await db.refresh(job)
+    assert job.status == "pending"
+    assert job.next_attempt_at.replace(tzinfo=timezone.utc) == now + timedelta(minutes=4)
 
 
 async def test_im_rejection_propagates_from_provider_to_persisted_dead_job(db, user_a, monkeypatch):

@@ -19,6 +19,8 @@ REFLECTION_STREAM = "memory:reflection"
 REFLECTION_GROUP = "memory-reflection-workers"
 EXTRACTOR_VERSION = "im-memory-v1"
 IDLE_WINDOW = reflection_idle.IDLE_WINDOW
+# 会话忙、压缩未完成等暂缓执行的重试延迟不随闲置触发窗口变化。
+DEFERRED_JOB_RETRY_DELAY = timedelta(minutes=4)
 MAX_RETRIES = 5
 RETRY_BACKOFF_MINUTES = (1, 5, 30, 120, 360)
 GROUP_MESSAGE_THRESHOLD = 50
