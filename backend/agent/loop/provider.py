@@ -80,6 +80,17 @@ async def stream_round(client, kwargs, adapter=None):
 
     def _error_kind(exc: BaseException) -> str:
         """脱敏类别标签：随 retry 事件给前端状态行显示，不带上游正文。"""
+        if adapter is not None and getattr(adapter, "name", "") == "minimax":
+            from agent.providers.minimax import minimax_error_details
+
+            details = minimax_error_details(exc)
+            if details is not None:
+                if details.code == "1001":
+                    return "timeout"
+                if details.code == "1002":
+                    return "rate_limited"
+                if details.code in {"1000", "1024", "1033"}:
+                    return "server_error"
         if isinstance(exc, anthropic.RateLimitError):
             return "rate_limited"
         if isinstance(exc, anthropic.OverloadedError):
@@ -118,7 +129,12 @@ async def stream_round(client, kwargs, adapter=None):
                         cause=recovery_error, attempt=retries_done,
                     ) from recovery_error
                 return
-            if not isinstance(e, transient):
+            minimax_retryable = False
+            if adapter is not None and getattr(adapter, "name", "") == "minimax":
+                from agent.providers.minimax import is_retryable_error
+
+                minimax_retryable = is_retryable_error(e)
+            if not isinstance(e, transient) and not minimax_retryable:
                 raise
             if not LLM_RETRY.should_retry(retries_done, started_at):
                 # where 里带上 provider——上次这里崩溃排查时 diag_log 没记 provider，只能靠

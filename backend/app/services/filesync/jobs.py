@@ -29,6 +29,7 @@ _EMPTY_RESULT_COUNTS = {
     "skipped": 0,
     "conflicts": 0,
     "failed": 0,
+    "foldersDeferred": 0,
     "foldersCreated": 0,
     "foldersUpdated": 0,
     "foldersDeleted": 0,
@@ -42,6 +43,23 @@ _EMPTY_RESULT_COUNTS = {
 
 class ReconcileRunError(ValueError):
     """可安全返回给调用方的任务状态错误。"""
+
+
+async def capture_binding_root_identity(db: AsyncSession, binding: FileSyncBinding) -> tuple[int, int]:
+    """捕获本地绑定根目录身份；repair 用它防止排队后路径被替换。"""
+    from app.services.filesync.reconcile import _root_fingerprint
+    from app.services.filesync.watcher import _binding_root
+
+    root = await _binding_root(db, binding)
+    if root is None or root.is_symlink() or not root.is_dir():
+        raise ReconcileRunError("同步根目录不可用，无法安全排入完整修复")
+    try:
+        if _root_fingerprint(root) != binding.root_fingerprint:
+            raise ReconcileRunError("同步根目录身份已变化，请刷新绑定后重试")
+        stat = root.stat()
+    except OSError as exc:
+        raise ReconcileRunError("同步根目录不可访问，无法安全排入完整修复") from exc
+    return stat.st_dev, stat.st_ino
 
 
 async def notify_run_changed(
@@ -62,11 +80,13 @@ async def enqueue_reconcile_run(
     user_id,
     binding_id: int,
     action: str,
-    allow_delete: bool = False,
+    allow_delete: bool = True,
     root_identity: tuple[int, int] | None = None,
 ) -> FileSyncReconcileRun:
     if action not in {"dry_run", "repair", "initialize", "mirror_out"}:
         raise ReconcileRunError("对账任务类型无效")
+    if action != "repair":
+        allow_delete = False
     binding = await db.scalar(select(FileSyncBinding).where(
         FileSyncBinding.id == binding_id,
         FileSyncBinding.user_id == user_id,
@@ -75,8 +95,6 @@ async def enqueue_reconcile_run(
         raise LookupError("同步绑定不存在")
     if (action == "mirror_out") != (binding.mode == "mirror_out"):
         raise ReconcileRunError("任务类型与同步方向不匹配")
-    if action == "dry_run" and allow_delete:
-        raise ReconcileRunError("预检任务不能应用删除")
     existing = await db.scalar(select(FileSyncReconcileRun).where(
         FileSyncReconcileRun.binding_id == binding.id,
         FileSyncReconcileRun.status.in_(ACTIVE_BINDING_STATUSES),

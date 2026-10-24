@@ -13,7 +13,8 @@ import pytest
 from agent.context.session_history import load_session_history
 from agent.context.assembly import MessageArea, MessageSource, PersistencePolicy
 from agent.im.actor import ActorContext
-from agent.im.loop import PreparedImRequest, dispatch_im_message
+from agent.im.dispatch import dispatch_im_message
+from agent.im.request_preparation import PreparedImRequest
 from agent.im.session import SessionRoute
 from agent.models import AgentRequest
 from app.models import ConversationMessage, ConversationSession
@@ -137,26 +138,26 @@ async def test_im_cancel_persists_partial_assistant_message_for_followup(db, use
     monkeypatch.setattr("app.services.conversation_retention.trim_session_messages", lambda *_args: _async_value(None))
     import app.db.session as db_session
     execution.session_factory = db_session._SessionLocal
-    monkeypatch.setattr("agent.im.loop.prepare_message", lambda *_args: _async_value(prepared))
+    monkeypatch.setattr("agent.im.dispatch.prepare_message", lambda *_args: _async_value(prepared))
     monkeypatch.setattr(
-        "agent.im.loop.decide_im_shortcut",
+        "agent.im.dispatch.decide_im_shortcut",
         lambda *_args, **_kwargs: _async_value({"action": "run"}),
     )
-    monkeypatch.setattr("agent.im.loop.handle_im_command", lambda *_args, **_kwargs: _async_value(None))
+    monkeypatch.setattr("agent.im.dispatch.handle_im_command", lambda *_args, **_kwargs: _async_value(None))
     monkeypatch.setattr(
-        "agent.im.loop._im_display_preferences",
-        lambda *_args: _async_value((False, False)),
+        "agent.im.dispatch._im_display_preferences",
+        lambda *_args: _async_value(("slow_only", False)),
     )
-    monkeypatch.setattr("agent.im.loop.bind_im_context", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("agent.im.loop.remember_im_reach", lambda *_args: _async_value(None))
-    monkeypatch.setattr("agent.im.loop.start_im_activity", lambda *_args: _async_value(SimpleNamespace()))
-    monkeypatch.setattr("agent.im.loop.finish_im_activity", lambda *_args: _async_value(None))
+    monkeypatch.setattr("agent.im.dispatch.bind_im_context", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("agent.im.dispatch.remember_im_reach", lambda *_args: _async_value(None))
+    monkeypatch.setattr("agent.im.dispatch.start_im_activity", lambda *_args: _async_value(SimpleNamespace()))
+    monkeypatch.setattr("agent.im.dispatch.finish_im_activity", lambda *_args: _async_value(None))
     monkeypatch.setattr(
-        "agent.im.loop.persist_im_session",
+        "agent.im.dispatch_finalization.persist_im_session",
         lambda *_args, **_kwargs: _async_value(None),
     )
     monkeypatch.setattr(
-        "agent.im.loop.finalize_im_response",
+        "agent.im.dispatch_finalization.finalize_im_response",
         lambda *_args: _async_value(None),
     )
 

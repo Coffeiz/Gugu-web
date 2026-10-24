@@ -12,11 +12,17 @@ import { notifyResourceChanged } from '@/services/resourceRefreshEvents'
 import type GuguChatComposer from '../GuguChatComposer.vue'
 import { createPendingQueueKey, getDraftPendingQueueId, getSessionPendingQueueId, setPendingQueueRecoveryNeeded } from './chatPendingQueueStorage'
 import { dispatchPendingQueueItem } from './chatPendingQueueDispatch'
-import { findLatestPersistedAssistant, timelineSyncKey } from './sessionMessageSync'
+import {
+  mapSessionMessageDelta,
+  mergeSessionMessageDelta,
+  replaceRunHistory,
+} from './sessionMessageSync'
 
 interface StatusItem { kind: 'text' | 'dots' | 'hide'; label?: string }
 
-const RESUMED_HISTORY_EVENTS = new Set(['tool_call', 'tool_done', 'token', 'file', 'link_buttons', 'interaction_required'])
+const RESUMED_HISTORY_EVENTS = new Set([
+  'display_event', 'interaction_required', 'error',
+])
 
 interface PresentedFile {
   file_id: number
@@ -50,6 +56,19 @@ function localizedToolStatusLabel(event: { name?: string; label?: string; input?
   const key = `toolNames.${toolName}`
   if (toolName && i18n.global.te(key)) return i18n.global.t(key)
   return event.label || event.name || i18n.global.t('chatUi.toolCall')
+}
+
+function attachPersistedIdentity(messages: ChatMessage[], optimistic: ChatMessage, dbId: number): ChatMessage[] {
+  const index = messages.findIndex(message => message.id === optimistic.id)
+  if (index < 0) {
+    optimistic.dbId = dbId
+    optimistic._syncKey = `message:${dbId}`
+    return messages
+  }
+  messages[index].dbId = dbId
+  messages[index]._syncKey = `message:${dbId}`
+  // History sync may have inserted the persisted copy before SSE delivered identity.
+  return mergeSessionMessageDelta(messages, [])
 }
 
 export interface QueuedMessage extends QueuedMessagePayload {
@@ -96,6 +115,7 @@ export function useChatStream(options: {
   playIncomingMessageSfx: () => void
   onQueuePersistenceError?: (error: unknown) => void
   onQueueDispatchError?: (error: unknown) => void
+  onAutomaticModeCommand?: () => Promise<void>
   onContentReset?: () => void
   onPresentFile?: (file: PresentedFile) => void
 }) {
@@ -398,7 +418,6 @@ export function useChatStream(options: {
     reader: ReadableStreamDefaultReader<Uint8Array>,
     ownerSid: number | null,
     viewGeneration: number,
-    replayText = '',
     onSessionId?: (id: number, timelineOrder: number, userMessageId?: number) => void,
     runController?: AbortController,
   ) {
@@ -420,7 +439,6 @@ export function useChatStream(options: {
     let sid = ownerSid           // 本流归属的会话（新对话在 session_id 事件前为 null）
     let outcomeMessageDbId: number | null = null
     let detached = false         // 一旦用户切到别的会话，本流永久脱离、不再污染当前视图
-    let replaySuppressed = false
     let resumedHistoryReady = Boolean(onSessionId)
     const displayedGreeting = ownerSid == null
       ? (messages.value.find(m => m._greeting)?._greetFull || '').trim()
@@ -430,7 +448,6 @@ export function useChatStream(options: {
     let currentRunId = ''
     // 工具消息会随着多轮正文持续排序/插入，不能缓存数组下标；只保存稳定的消息 id，
     // 每次事件到达时重新定位，避免 tool_done 更新到错误的卡片或找不到卡片。
-    const toolMessageIds = new Map<string, number>()
     let timelineOrder = messages.value.reduce(
       (max, message) => Math.max(max, message._timelineOrder ?? 0),
       0,
@@ -442,9 +459,12 @@ export function useChatStream(options: {
       )
       return ++timelineOrder
     }
-    const applyRunOutcome = (outcome: ChatMessage['runOutcome']) => {
-      if (!outcome || !outcomeMessageDbId) return
-      const target = messages.value.find(message => message.dbId === outcomeMessageDbId)
+    const applyRunOutcome = (
+      outcome: ChatMessage['runOutcome'],
+      targetUserMessageId = outcomeMessageDbId,
+    ) => {
+      if (!outcome || !targetUserMessageId) return
+      const target = messages.value.find(message => message.dbId === targetUserMessageId)
       if (target?.role === 'user') target.runOutcome = outcome
     }
     const syncAiIndex = () => {
@@ -459,17 +479,6 @@ export function useChatStream(options: {
         return a._timelineOrder - b._timelineOrder
       })
     }
-    // 每个 round 的正文必须是独立气泡。工具调用前的草稿属于上一轮，
-    // 下一轮 token 不能继续写入同一个 aiIdx，否则 UI 会把多轮正文拼成一条消息。
-    const finishRoundMessage = () => {
-      syncAiIndex()
-      if (aiIdx === -1 || !messages.value[aiIdx]) return
-      const message = messages.value[aiIdx]
-      message.streaming = false
-      if (message.text.trim()) message.html = renderMd(message.text)
-      aiMessageId = null
-      aiIdx = -1
-    }
     // 当前看的还是本流的会话吗？切走后置 detached（之后切回靠 loadSession 干净重载，不半路重接）
     const live = () => {
       if (detached || viewGeneration !== options.getViewGeneration()) {
@@ -482,6 +491,19 @@ export function useChatStream(options: {
       }
       if (sessionId.value !== (sid ?? ownerSid)) { detached = true; return false }
       return true
+    }
+
+    async function settleHistory() {
+      if (!currentRunId || sid == null) return
+      const finishingRun = currentRunId
+      try {
+        const snapshot = await agentApi.getRunMessages(sid, finishingRun)
+        if (!live()) return
+        const timeline = mapSessionMessageDelta(snapshot, mkid, role => ({ role: role === 'assistant' ? 'ai' : role }))
+        messages.value = replaceRunHistory(messages.value, timeline, finishingRun)
+      } catch {
+        // 保留最后已知展示；重连最新窗口校准会重试，不把传输失败伪装成任务失败。
+      }
     }
     try {
       while (true) {
@@ -509,7 +531,7 @@ export function useChatStream(options: {
           if (evt.type === 'session_id') {
             const acceptedSessionId = Number(evt.session_id)
             if (runController) runSessionIds.set(runController, acceptedSessionId)
-            onSessionId?.(acceptedSessionId, onSessionId ? nextTimelineOrder() : 0,
+            onSessionId?.(acceptedSessionId, (outcomeMessageDbId ?? 0) * 1_000_000,
               outcomeMessageDbId ?? undefined)
             const isNew = sessionId.value !== evt.session_id
             // 仅当用户仍停在本流视图（旧会话或新对话）才把视图切到新 id，否则别抢走用户当前会话。
@@ -533,127 +555,43 @@ export function useChatStream(options: {
               s.goalStatus = evt.status === 'active' || evt.status === 'paused' ? evt.status : null
             }
           } else if (evt.type === 'round_start') {
-            finishRoundMessage()
             currentRunId = String(evt.core_run_id || evt.run_id || currentRunId)
-            currentRoundId = String(evt.round_id || `round-${toolMessageIds.size + 1}`)
+            currentRoundId = String(evt.round_id || 'round')
           } else if (evt.type === '_new_round') {
             // 兼容旧事件：新版 round_start 已先建立身份，旧客户端只看到这里也不会报错。
-            finishRoundMessage()
             currentRunId = String(evt.core_run_id || evt.run_id || currentRunId)
             if (evt.round_id) currentRoundId = String(evt.round_id)
-          } else if (evt.type === 'tool_call') {
-            if (evt.name && !evt.name.startsWith('_')) usedTools.add(evt.name)
-            const toolCallId = String(evt.tool_call_id || `${evt.round_id || currentRoundId || 'round'}-tool-${toolMessageIds.size + 1}`)
-            const runId = String(evt.core_run_id || currentRunId || evt.run_id || '')
-            const roundId = String(evt.round_id || currentRoundId || '')
-            const lookupKey = JSON.stringify([runId, roundId, toolCallId])
-            const syncKey = timelineSyncKey({ role: 'tool', runId, roundId, toolCallId })
-            if (live() && !evt.name?.startsWith('_')) {
-              const existingId = toolMessageIds.get(lookupKey)
-              const existingIndex = existingId == null
-                ? messages.value.findIndex(item => item.role === 'tool' && item.toolCallId === toolCallId
-                  && (!runId || item.runId === runId) && (!roundId || item.roundId === roundId))
-                : messages.value.findIndex(item => item.id === existingId)
-              if (existingIndex >= 0 && messages.value[existingIndex]) {
-                const existing = messages.value[existingIndex]
-                existing.runId = runId || existing.runId
-                existing.roundId = roundId || existing.roundId
-                existing.toolName = evt.name || existing.toolName
-                existing.toolLabel = evt.label || existing.toolLabel
-                if (evt.status === 'running' && existing.toolStatus !== 'running') {
-                  (existing as ChatMessage & { _toolStartedAt?: number })._toolStartedAt = Date.now()
-                }
-                existing.toolStatus = evt.status || existing.toolStatus || 'running'
-                if (evt.input !== undefined) existing.toolInput = evt.input
-                toolMessageIds.set(lookupKey, existing.id)
-              } else {
-                const messageId = mkid()
-                messages.value.push({
-                  id: messageId, role: 'tool', text: '', time: now(),
-                  _timelineOrder: nextTimelineOrder(),
-                  runId: runId || undefined,
-                  roundId: roundId || undefined,
-                  toolCallId, toolName: evt.name, toolLabel: evt.label,
-                  toolStatus: evt.status || 'running', toolInput: evt.input,
-                  _syncKey: syncKey,
-                  ...(evt.status === 'queued' ? {} : { _toolStartedAt: Date.now() }),
-                })
-                sortLiveTimeline()
-                toolMessageIds.set(lookupKey, messageId)
-                await options.scrollBottom()
-              }
+          } else if (evt.type === 'display_event') {
+            if (!live()) continue
+            const item = evt.item
+            currentRunId = item.runId
+            currentRoundId = item.roundId
+            if (item.kind === 'tool') {
+              usedTools.add(item.toolName)
+              options.setStatus(item.toolStatus === 'running' || item.toolStatus === 'queued'
+                ? { kind: 'text', label: localizedToolStatusLabel({ name: item.toolName, label: item.toolLabel }) }
+                : options.thinkingItem())
+            } else {
+              receivedAssistantContent = true
+              options.clearStatus()
             }
-            // 活动气泡与完成后的工具卡片都按稳定工具名翻译；服务端 label 仅作未知工具的 fallback。
-            if (live()) options.setStatus({ kind: 'text', label: localizedToolStatusLabel(evt) })
+            const delta = mapSessionMessageDelta({ timelineEvents: [item] }, mkid, role => ({ role }))
+            messages.value = mergeSessionMessageDelta(messages.value, delta)
+            if (item.kind === 'assistant') {
+              aiMessageId = messages.value.find(message => message._syncKey === `event:${item.eventId}`)?.id ?? null
+              syncAiIndex()
+            }
+            sortLiveTimeline()
+            scheduleStreamScroll()
           } else if (evt.type === 'tool_done') {
             if (evt.name === 'present_file' && evt.status === 'success') {
-              const presentedFile = parsePresentedFileResult(evt.result)
-              // 只在流仍属于当前展示视图、且 run 由本标签页发起时打开文件。
-              // 同会话续看会收到相同 SSE，但不能在另一标签页抢开原标签页的文件。
-              if (presentedFile && live() && evt.origin_client_id === CLIENT_ID) {
-                options.onPresentFile?.(presentedFile)
-              }
+              const file = parsePresentedFileResult(evt.result)
+              if (file && live() && evt.origin_client_id === CLIENT_ID) options.onPresentFile?.(file)
             }
-            // 改动类工具一完成就即时 bump 对应资源（走已连好的对话流，不等回合末、不靠 best-effort
-            // 的 events SSE）→ 文件预览 / 项目卡 / 日历当场刷新。视图是全局的，切走也该刷，故不受 live() 限制。
-            if (evt.name) {
-              if (FILE_TOOLS.has(evt.name)) liveStore.bump('files')
-              else if (PROJECT_TOOLS.has(evt.name)) liveStore.bump('projects')
-              else if (CALENDAR_TOOLS.has(evt.name)) liveStore.bump('calendar')
-              else if (MCP_TOOLS.has(evt.name)) notifyResourceChanged('mcp')
-            }
-            const toolCallId = evt.tool_call_id ? String(evt.tool_call_id) : ''
-            const runId = String(evt.core_run_id || currentRunId || evt.run_id || '')
-            const roundId = String(evt.round_id || currentRoundId || '')
-            const lookupKey = JSON.stringify([runId, roundId, toolCallId])
-            const syncKey = toolCallId
-              ? timelineSyncKey({ role: 'tool', runId, roundId, toolCallId })
-              : undefined
-            const mappedMessageId = toolCallId ? toolMessageIds.get(lookupKey) : undefined
-            let toolIndex = mappedMessageId == null
-              ? (toolCallId
-                ? messages.value.findIndex(item => item.role === 'tool' && item.toolCallId === toolCallId
-                  && (!runId || item.runId === runId) && (!roundId || item.roundId === roundId))
-                : -1)
-              : messages.value.findIndex(item => item.id === mappedMessageId)
-            // 兼容极少数旧/代理事件缺少 tool_call_id 的情况：按当前 round 和工具名
-            // 绑定最近一张仍在运行的卡片，避免完成事件丢失导致永久“进行中”。
-            if (toolIndex < 0 && evt.name) {
-              toolIndex = messages.value.findLastIndex(item =>
-                item.role === 'tool'
-                && (item.toolStatus === 'running' || item.toolStatus === 'queued')
-                && (!roundId || item.roundId === roundId)
-                && (!runId || item.runId === runId)
-                && (!item.toolName || item.toolName === evt.name),
-              )
-            }
-            if (toolIndex >= 0 && messages.value[toolIndex]) {
-              messages.value[toolIndex].toolStatus = evt.status || 'success'
-              if (evt.result !== undefined) messages.value[toolIndex].toolResult = evt.result
-              const startedAt = (messages.value[toolIndex] as ChatMessage & { _toolStartedAt?: number })._toolStartedAt
-              const serverDurationMs = Number(evt.duration_ms)
-              if (Number.isFinite(serverDurationMs) && serverDurationMs >= 0) {
-                messages.value[toolIndex].toolDurationMs = serverDurationMs
-              } else if (startedAt) {
-                messages.value[toolIndex].toolDurationMs = Math.max(0, Date.now() - startedAt)
-              }
-            } else if (live() && evt.name) {
-              // tool_done 先于 tool_call 到达时也要落一张终态卡，不能等刷新才补齐。
-              const messageId = mkid()
-              messages.value.push({
-                id: messageId, role: 'tool', text: '', time: now(),
-                _timelineOrder: nextTimelineOrder(), runId: runId || undefined,
-                roundId: roundId || undefined, toolCallId: toolCallId || undefined,
-                toolName: evt.name, toolLabel: evt.label, toolStatus: evt.status || 'success',
-                toolResult: evt.result,
-                _syncKey: syncKey,
-              })
-              if (toolCallId) toolMessageIds.set(lookupKey, messageId)
-              sortLiveTimeline()
-              await options.scrollBottom()
-            }
-            // 任一工具结束都回到思考态；下一轮工具调用会继续替换文字，不能让气泡闪退。
-            if (live()) options.setStatus(options.thinkingItem())
+            if (FILE_TOOLS.has(evt.name)) liveStore.bump('files')
+            else if (PROJECT_TOOLS.has(evt.name)) liveStore.bump('projects')
+            else if (CALENDAR_TOOLS.has(evt.name)) liveStore.bump('calendar')
+            else if (MCP_TOOLS.has(evt.name)) notifyResourceChanged('mcp')
           } else if (evt.type === 'interaction_required') {
             interactionPaused = true
             const eventSessionId = evt.session_id == null ? null : Number(evt.session_id)
@@ -734,91 +672,11 @@ export function useChatStream(options: {
             if (live() && typeof evt.message === 'string' && evt.message.trim()) {
               options.setStatus({ kind: 'text', label: evt.message })
             }
-          } else if (evt.type === 'token') {
-            if (live()) {
-              const tokenContent = String(evt.content || '')
-              if (tokenContent.trim()) receivedAssistantContent = true
-              // Provider 偶尔会先发空白 token。没有正文时不要先创建只有时间的助手行；
-              // 等第一个实际字符到达后再创建，避免最终收尾和工具排序竞态留下空气泡。
-              if (!tokenContent && aiMessageId === null) continue
-              if (!tokenContent.trim() && aiMessageId === null) continue
-              // 切回会话时，历史接口可能已经拿到完整助手消息，而 active 标记
-              // 尚未来得及清掉。resume 的首个 token 是同一段 Redis snapshot，
-              // 这时跳过它；真正后续新增 token 仍正常创建/追加流式气泡。
-              if (!replaySuppressed && replayText && tokenContent.trim() === replayText) {
-                replaySuppressed = true
-                continue
-              }
-              options.clearStatus()   // 真回复开始 → 打断状态队列、收起指示，让位给流式正文
-              syncAiIndex()
-              if (aiIdx === -1) options.playIncomingMessageSfx()
-              if (aiIdx === -1) {
-                const messageId = mkid()
-                messages.value.push({
-                  id: messageId, role: 'ai', text: '', time: now(), streaming: true,
-                  runId: evt.core_run_id || currentRunId || evt.run_id || undefined,
-                  roundId: evt.round_id || currentRoundId || undefined,
-                  _syncKey: timelineSyncKey({ role: 'ai', runId: evt.core_run_id || currentRunId || evt.run_id, roundId: evt.round_id || currentRoundId }),
-                  _timelineOrder: nextTimelineOrder(),
-                })
-                sortLiveTimeline()
-                aiMessageId = messageId
-                syncAiIndex()
-              }
-              messages.value[aiIdx].text += tokenContent
-              if (messages.value[aiIdx].text.length === tokenContent.length) {
-              }
-              scheduleStreamScroll()
-            }
-          } else if (evt.type === 'file') {
-            if (live()) {
-              receivedAssistantContent = true
-              options.clearStatus()
-              syncAiIndex()
-              if (aiIdx === -1) options.playIncomingMessageSfx()
-              if (aiIdx === -1) {
-                const messageId = mkid()
-                messages.value.push({
-                  id: messageId, role: 'ai', text: '', time: now(), streaming: true,
-                  runId: evt.core_run_id || currentRunId || evt.run_id || undefined,
-                  roundId: evt.round_id || currentRoundId || undefined,
-                  _syncKey: timelineSyncKey({ role: 'ai', runId: evt.core_run_id || currentRunId || evt.run_id, roundId: evt.round_id || currentRoundId }),
-                  _timelineOrder: nextTimelineOrder(),
-                })
-                sortLiveTimeline()
-                aiMessageId = messageId
-                syncAiIndex()
-              }
-              const m = messages.value[aiIdx]
-              if (!m.files) m.files = []
-              m.files.push(evt.file)
-              scheduleStreamScroll()
-            }
-          } else if (evt.type === 'link_buttons') {
-            if (live()) {
-              receivedAssistantContent = true
-              options.clearStatus()
-              syncAiIndex()
-              if (aiIdx === -1) options.playIncomingMessageSfx()
-              if (aiIdx === -1) {
-                const messageId = mkid()
-                messages.value.push({
-                  id: messageId, role: 'ai', text: '', time: now(), streaming: true,
-                  runId: evt.core_run_id || currentRunId || evt.run_id || undefined,
-                  roundId: evt.round_id || currentRoundId || undefined,
-                  _syncKey: timelineSyncKey({ role: 'ai', runId: evt.core_run_id || currentRunId || evt.run_id, roundId: evt.round_id || currentRoundId }),
-                  _timelineOrder: nextTimelineOrder(),
-                })
-                sortLiveTimeline()
-                aiMessageId = messageId
-                syncAiIndex()
-              }
-              const m = messages.value[aiIdx]
-              if (evt.link_buttons) m.linkButtons = evt.link_buttons
-              scheduleStreamScroll()
-            }
           } else if (evt.type === 'done') {
             if (runController) runTerminalControllers.add(runController)
+            // 会话列表的运行态由独立的用户级 live 事件刷新；若该瞬时通知丢失，
+            // 当前流仍能收到终态，借此重新读取服务端快照，避免侧栏标题动画残留。
+            void options.fetchSessions()
             if (live()) {
               options.clearStatus()
               // 取消收尾兜底：任何路径漏发个别 tool_done 终态时，把仍在转圈的
@@ -827,21 +685,33 @@ export function useChatStream(options: {
                 aborted = true // 取消是正常终态，不应再补「没有收到回复」兜底气泡。
                 applyRunOutcome(evt.run_outcome || {
                   status: 'interrupted', runId: String(evt.run_id || currentRunId || ''),
-                })
-                for (const messageId of toolMessageIds.values()) {
-                  const item = messages.value.find(message => message.id === messageId)
+                }, Number.isInteger(eventUserMessageId) && eventUserMessageId > 0
+                  ? eventUserMessageId
+                  : undefined)
+                for (const item of messages.value.filter(message => message.runId === currentRunId)) {
                   if (item?.role === 'tool' && (item.toolStatus === 'queued' || item.toolStatus === 'running' || item.toolStatus === 'waiting')) {
                     item.toolStatus = 'cancelled'
                   }
                 }
               }
+              if (currentRunId && sid != null) {
+                await settleHistory()
+              }
             }
           } else if (evt.type === 'error') {
+            // 失败流也可能先于/替代 completed live 通知结束；刷新列表以收敛运行态。
+            void options.fetchSessions()
             if (live()) {
+              await settleHistory()
               options.clearStatus()
               playGuguSfx('error')
               if (evt.run_outcome && typeof evt.run_outcome === 'object') {
-                applyRunOutcome(evt.run_outcome as ChatMessage['runOutcome'])
+                applyRunOutcome(
+                  evt.run_outcome as ChatMessage['runOutcome'],
+                  Number.isInteger(eventUserMessageId) && eventUserMessageId > 0
+                    ? eventUserMessageId
+                    : undefined,
+                )
                 await options.scrollBottom()
                 continue
               }
@@ -880,39 +750,6 @@ export function useChatStream(options: {
         }
       }
     }
-    // 工具执行成功后，后端可能已经持久化最终 assistant 消息，但最后一段 SSE
-    // 正文在连接收尾竞态中没有被浏览器消费到。此时不能直接显示“没有回复”，
-    // 先用本轮工具执行期间创建的最新 assistant 消息恢复视图。
-    if (aiIdx === -1 && currentRunId && usedTools.size && sid != null && !detached && !aborted && !interactionPaused
-        && viewGeneration === options.getViewGeneration()) {
-      try {
-        const recovered = await agentApi.getMessages(String(sid))
-        const latest = findLatestPersistedAssistant(recovered, currentRunId)
-        if (latest && live()) {
-          const item = latest.item
-          const messageId = mkid()
-          messages.value.push({
-            id: messageId,
-            dbId: item.messageId ?? (typeof item.id === 'number' ? item.id : undefined),
-            role: 'ai',
-            text: latest.text,
-            html: latest.text ? renderMd(latest.text) : null,
-            files: item.files?.length ? item.files : undefined,
-            linkButtons: item.linkButtons,
-            quotedText: item.quotedText || undefined,
-            time: new Date(item.createdAt || Date.now()).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
-            _createdAt: item.createdAt,
-            _timelineOrder: item.timelineOrder ?? item.id,
-            _syncKey: latest.syncKey,
-            runId: item.runId,
-            roundId: item.roundId,
-          })
-          sortLiveTimeline()
-          aiIdx = messages.value.findIndex(item => item.id === messageId)
-          await options.scrollBottom()
-        }
-      } catch { /* 恢复失败再由调用方决定是否显示兜底提示 */ }
-    }
     return { aiIdx, usedTools, detached, sid, aborted, interactionPaused, receivedAssistantContent }
   }
 
@@ -933,9 +770,7 @@ export function useChatStream(options: {
       if (!res.ok) return
       if (viewGeneration !== options.getViewGeneration() || sessionId.value !== id || abortCtrl.value !== controller) return   // 期间又切走/被新流接管，丢弃
       if (!res.body) return
-      const replayText = [...messages.value].reverse()
-        .find(m => m.role === 'ai' && m.text?.trim())?.text.trim() || ''
-      const r = await consumeStream(res.body.getReader(), id, viewGeneration, replayText, undefined, controller)
+      const r = await consumeStream(res.body.getReader(), id, viewGeneration, undefined, controller)
       options.refreshAfterTools(r.usedTools)
     } catch { /* 续看失败/被切走中断都不打扰 */ }
     finally {
@@ -1143,18 +978,16 @@ export function useChatStream(options: {
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       if (!res.body) throw new Error('empty response body')
 
-      let receivedSessionIdEvent = false
-      const r = await consumeStream(res.body.getReader(), ownerSid, viewGeneration, '', (_acceptedSessionId, timelineOrder, userMessageId) => {
+      const r = await consumeStream(res.body.getReader(), ownerSid, viewGeneration, (_acceptedSessionId, timelineOrder, userMessageId) => {
         if (optimisticUserMessage && userMessageId) {
-          optimisticUserMessage.dbId = userMessageId
-          optimisticUserMessage._syncKey = `message:${userMessageId}`
+          // 用响应式代理补稳定身份，并折叠历史同步可能已插入的竞态副本。
+          messages.value = attachPersistedIdentity(messages.value, optimisticUserMessage, userMessageId)
         }
         runSessionIds.set(requestController, _acceptedSessionId)
         if (stopWaitingForSessionId.has(requestController)) {
           stopWaitingForSessionId.delete(requestController)
           requestRunCancellation(_acceptedSessionId, requestController)
         }
-        receivedSessionIdEvent = true
         if (queuedItemKey === undefined || ownerSid !== sessionId.value || viewGeneration !== options.getViewGeneration()) return
         pendingQueue.value = pendingQueue.value.filter(item => queueIdentity(item) !== queuedIdentity)
         optimisticUserMessage = {
@@ -1224,6 +1057,9 @@ export function useChatStream(options: {
       // 解除 workspace 绑定会更新会话元数据；同步会话列表，让标题栏立即移除工作区名称。
       if (ownsCurrentView() && /^\/workspace\s+(?:unlink|off|none|unbind)\s*$/i.test(text)) {
         await options.fetchSessions()
+      }
+      if (/^(?:\/|／)auto(?:\s|$)/i.test(text)) {
+        await options.onAutomaticModeCommand?.()
       }
       // 咕咕若调用了改数据的工具，刷新对应前端视图（项目/日历/文件），免手动刷新页面
       options.refreshAfterTools(usedTools)

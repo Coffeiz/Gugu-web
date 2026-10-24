@@ -13,7 +13,7 @@
 以下能力由当前 Shell 沙盒镜像提供，属于系统环境说明，不代表本轮已经获得对应目录、网络或写入权限：
 
 - Shell：Bash
-- 运行时：Python 3.11、Node.js 18、npm 9、FFmpeg 5
+- 运行时：Python 3、Node.js/npm、FFmpeg；需要确认具体版本时运行对应的版本命令，不要根据提示词猜测
 - Python 绘图库：Matplotlib、Pillow
 - 常用命令：Git、curl、jq、less
 - Python 默认命令：`python`、`python3`

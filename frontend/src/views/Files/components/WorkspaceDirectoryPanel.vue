@@ -18,7 +18,7 @@
         v-for="item in sortedItems"
         :key="item.id"
         :display-name="item.name"
-        :count-label="`${item.fileCount} ${t('workspaceUi.workspaceFileUnit')} · ${item.folderCount} ${t('workspaceUi.workspaceFolderUnit')}`"
+        :count-label="t('filesViewUi.folderContents', { files: item.fileCount, folders: item.folderCount })"
         accent-color="var(--accent-primary)"
         role="button"
         tabindex="0"
@@ -76,7 +76,7 @@ import Icon from '@/components/common/icons/Icon.vue'
 import FolderCard from '@/components/common/file-browser/FolderCard.vue'
 import RenameInput from '@/components/common/file-browser/RenameInput.vue'
 
-const emit = defineEmits<{ open: [item: WorkspaceDirectory] }>()
+defineEmits<{ open: [item: WorkspaceDirectory] }>()
 const { t } = useI18n()
 const { sortedItems, items, loading, error, refresh, create, rename, remove } = useWorkspaceDirectories()
 const showCreate = ref(false)

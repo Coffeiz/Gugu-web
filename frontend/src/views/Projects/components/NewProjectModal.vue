@@ -221,6 +221,7 @@ import CloseButton from '@/components/common/overlays/CloseButton.vue'
 import { PROJECT_COLOR_PRESETS } from '@/utils/projectColors'
 import { projectStatusLabelKey } from '@/utils/projectStages'
 import { useI18n } from 'vue-i18n'
+import { browserDayKey as toIso } from '@/utils/dateAttribution'
 
 const props = defineProps({ show: Boolean, initStatus: { type: String, default: null } })
 const emit  = defineEmits(['close'])
@@ -328,9 +329,6 @@ onUnmounted(() => {
   document.removeEventListener('click', onClickOutsideTpl, true)
 })
 
-function toIso(d: Date) {
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
-}
 function todayIso() { return toIso(new Date()) }
 function weekLaterIso() {
   const d = new Date(); d.setDate(d.getDate() + 7); return toIso(d)

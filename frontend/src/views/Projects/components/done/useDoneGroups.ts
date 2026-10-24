@@ -1,6 +1,6 @@
 import { computed, type Ref } from 'vue'
 import type { Project } from '@/types/project'
-import type { DoneGroup, DoneMonthGroup, DoneRecentGroup, DoneUndatedGroup, DoneYearGroup } from './doneTypes'
+import type { DoneGroup, DoneMonthGroup, DoneRecentGroup, DoneUndatedGroup } from './doneTypes'
 
 function dateOf(project: Project): Date | null {
   const source = project.startDate || project.deadline || project.doneAt || null

@@ -2,7 +2,7 @@
 
 import pytest
 
-from agent.im import loop as im_loop
+from agent.im.conversation import should_record_passive_group
 from agent.im.actor import ActorContext
 from agent.models import AgentRequest
 from app.models import ConversationMessage, ConversationSession, UserBot
@@ -63,7 +63,7 @@ async def test_telegram_group_settings_hydrate_worker_passive_recording_and_repl
     assert payload["group_memory_enabled"] is False
     assert payload["member_memory_enabled"] is False
     assert _is_passive_group_payload(payload) is True
-    assert im_loop.should_record_passive_group(
+    assert should_record_passive_group(
         AgentRequest(message="ordinary message", user_id=user_a.id, user_name="合成用户",
                      source="telegram", chat_id="-1007002"),
         payload,
@@ -94,7 +94,7 @@ def test_telegram_group_response_modes_keep_passive_message_semantics(
         "group_mentioned": mentioned,
     }
 
-    assert im_loop.should_record_passive_group(request, payload) is passive
+    assert should_record_passive_group(request, payload) is passive
 
 
 @pytest.mark.asyncio

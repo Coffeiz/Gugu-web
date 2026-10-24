@@ -25,6 +25,7 @@ class NativeWatcher:
             raise OSError(ctypes.get_errno(), "无法初始化 inotify")
         self.bindings: dict[int, tuple[Path, set[str] | None]] = {}
         self.watches: dict[int, dict[int, Path]] = {}
+        self._expected_ignored: dict[int, set[int]] = {}
         self.entries: dict[int, dict[str, str]] = {}
         self.failed: set[int] = set()
         self.reported_gaps: set[tuple[int, str]] = set()
@@ -130,6 +131,10 @@ class NativeWatcher:
         self.initializing.discard(binding_id)
         self.pending_counts.pop(binding_id, None)
         self.pending = deque(item for item in self.pending if item[0] != binding_id)
+        for descriptor, expected in list(self._expected_ignored.items()):
+            expected.discard(binding_id)
+            if not expected:
+                self._expected_ignored.pop(descriptor, None)
         for descriptor, subscribers in list(self.watches.items()):
             subscribers.pop(binding_id, None)
             if not subscribers:
@@ -216,12 +221,17 @@ class NativeWatcher:
             self.emit({"kind": "event", "event": "needs_reconcile", "code": "kernel_event_queue_overflow"})
             return
         if mask & _IGNORED:
-            # 主动解除时已移除映射；仍有订阅表示意外失效，需重建监听并记录缺口。
-            for binding_id in self.watches.pop(descriptor, {}):
-                self.event(binding_id, "error", code="watcher_watch_lost")
+            # IN_DELETE_SELF 后的 IN_IGNORED 是目录删除的正常收尾，不应报告监听故障。
+            expected = self._expected_ignored.pop(descriptor, set())
+            subscribers = self.watches.pop(descriptor, {})
+            for binding_id in subscribers:
+                if binding_id not in expected:
+                    self.event(binding_id, "error", code="watcher_watch_lost")
             return
         for binding_id, directory in list(self.watches.get(descriptor, {}).items()):
             if not name:
+                if mask & _DELETE_SELF:
+                    self._expected_ignored.setdefault(descriptor, set()).add(binding_id)
                 if mask & (_DELETE_SELF | _MOVE_SELF) and directory == self.bindings[binding_id][0]:
                     self.event(binding_id, "error", code="watcher_root_changed")
                 continue

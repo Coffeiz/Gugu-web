@@ -2,10 +2,10 @@ import { ref, computed, nextTick, onUnmounted, watch, type Ref } from 'vue'
 import { CLIENT_ID, agentApi } from '@/services/api'
 import { i18n } from '@/i18n'
 import { useLiveStore } from '@/stores/live'
+import { getAccountBoundaryEpoch } from '@/utils/accountBoundary'
 import { getGreeting, prefetchGreeting } from '@/composables/shared/useGreeting'
 import type { ChatMessage, ChatFile, ChatSession, ChatReference } from '../chatTypes'
 import { renderMd } from '../markdown'
-import { displayQQFaces } from '../messageDisplay'
 import { SESSION_KEY, LAST_SESSION_KEY } from '../chatConstants'
 import { ensureSessionMessageLoaded } from './sessionMessageSync'
 import { waitForSessionSettlement } from './sessionReadiness'
@@ -13,6 +13,7 @@ import { hasPendingMessageMarkdown } from './sessionScrollLayout'
 import { getSessionPendingQueueId, setPendingQueueRecoveryNeeded } from './chatPendingQueueStorage'
 import { useChatStream } from './useChatStream'
 import { useChatSessions } from './useChatSessions'
+import { useChatHistoryPagination } from './useChatHistoryPagination'
 import type GuguChatComposer from '../GuguChatComposer.vue'
 import type GuguChatMessageList from '../GuguChatMessageList.vue'
 
@@ -42,6 +43,7 @@ export function useChatConversation(options: {
   playIncomingMessageSfx: () => void
   onQueuePersistenceError?: (error: unknown) => void
   onQueueDispatchError?: (error: unknown) => void
+  onAutomaticModeCommand?: () => Promise<void>
   onContentReset: () => void          // 窗口高度回到 SMALL_H 基线
   onCaptureBaseScrollH: () => void    // 记录当前内容高度为新的增高基线
   onSyncSmallH: () => void            // 按内容真实高度重新计算窗口高
@@ -50,6 +52,7 @@ export function useChatConversation(options: {
   const liveStore = useLiveStore()
   const messagesEl = computed(() => options.messageListRef.value?.el ?? null)
   const sessionSettling = ref(false)
+  const cachedHistoryVisible = ref(false)
   // 所有滚动请求共用一个代次与 rAF。切会话、流式 token、工具事件可能同时请求到底部，
   // 旧请求必须失效，否则它会在新消息布局完成后再次改写 scrollTop。
   let scrollRequest = 0
@@ -182,8 +185,14 @@ export function useChatConversation(options: {
     return ++_chatViewGeneration
   }
 
+  let sessionsFetchVersion = 0
   async function fetchSessions() {
-    try { sessions.value = await agentApi.listSessions() } catch {}
+    const version = ++sessionsFetchVersion
+    const epoch = getAccountBoundaryEpoch()
+    try {
+      const result = await agentApi.listSessions()
+      if (version === sessionsFetchVersion && epoch === getAccountBoundaryEpoch()) sessions.value = result
+    } catch {}
   }
 
   // role/platformUserId → 气泡归属 + 群成员发言人标注。三态：
@@ -332,6 +341,10 @@ export function useChatConversation(options: {
 
   // streaming 跟随意图：只有用户主动上翻才取消，回到底部附近恢复。
   const stick = ref(true)
+  const historyPagination = useChatHistoryPagination({
+    messages, sessionId, settling: sessionSettling, mkid, resolveSpeaker, getViewGeneration,
+    beforeMerge: () => { stick.value = false; invalidateScrollRequests() },
+  })
 
   // streaming 用即时滚动跟随，避免 smooth 叠加追不上。用虚拟列表的 scrollToIndex 而不是
   // 直接写 scrollTop——最后一条消息的高度可能还只是估算值（还没被 measureElement 量过），
@@ -348,6 +361,11 @@ export function useChatConversation(options: {
     const el = messagesEl.value; if (!el) return
     const dist = el.scrollHeight - el.scrollTop - el.clientHeight
     stick.value = dist < 40
+    // 跟随虚拟列表的实际范围预取：首个挂载行进入 overscan 区时开始取上一页，
+    // 给网络和长消息布局留出缓冲，避免滚到最顶端才发请求。
+    if ((options.messageListRef.value?.getVirtualRangeStart() ?? 0) <= 10) {
+      void historyPagination.loadOlder()
+    }
   }
 
   // 用户发送时强制即时跳到底（大窗用 smooth 会被随后出现的 thinking 气泡/内容打断，看着没到底）；
@@ -423,6 +441,7 @@ export function useChatConversation(options: {
     playIncomingMessageSfx: options.playIncomingMessageSfx,
     onQueuePersistenceError: options.onQueuePersistenceError,
     onQueueDispatchError: options.onQueueDispatchError,
+    onAutomaticModeCommand: options.onAutomaticModeCommand,
     onContentReset: options.onContentReset,
     onPresentFile: options.onPresentFile,
   })
@@ -441,14 +460,18 @@ export function useChatConversation(options: {
     abortCtrl, streaming, resumeStream, resetSessionTurn, clearPendingQueue,
     restorePendingQueue: restorePendingQueueForSession,
     drainPendingQueue,
-    clearStatus, setStatus, contextCompactingItem: _contextCompactingItem,
+    clearStatus, setStatus, thinkingItem: _thinkingItem, contextCompactingItem: _contextCompactingItem,
     onContentReset: options.onContentReset,
     onCaptureBaseScrollH: options.onCaptureBaseScrollH,
     scrollBottom,
     waitForStableScrollLayout,
     waitForSessionSettlement: (id) => waitForSessionSettlement(sessionId, sessionSettling, id),
     shouldFollowBottom: () => stick.value,
+    setCachedHistoryVisible: (value) => { cachedHistoryVisible.value = value },
     setSessionSettling: (value: boolean) => { sessionSettling.value = value },
+    onHistoryReset: () => historyPagination.reset(),
+    onHistoryLoaded: page => historyPagination.reset(page),
+    getHistoryPage: historyPagination.currentPage,
   })
   const { webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName, currentSessionGoalActive, currentSessionGoalStatus, currentSessionFilesystemAuthorized, currentSessionFilesystemAuthorizationEnabled, loadSession, newSession, deleteSession, renameSession, refreshSessionMessages } = sessionsApi
 
@@ -487,7 +510,7 @@ export function useChatConversation(options: {
   watch(() => liveStore.connected, (connected) => {
     if (connected) {
       void refreshSessionPendingQueue()
-      if (sessionId.value != null) {
+      if (sessionId.value != null && !sessionSettling.value) {
         const activeSessionId = sessionId.value
         void refreshSessionMessages(activeSessionId).then(async () => {
           const state = await agentApi.getSessionState(String(activeSessionId))
@@ -519,13 +542,28 @@ export function useChatConversation(options: {
   })
 
   watch(() => liveStore.agentRunEvent, (event) => {
-    if (!event || event.status !== 'running') return
+    if (!event) return
+    void fetchSessions()
+    if (event.status === 'completed' || event.status === 'failed') {
+      if (sessionId.value !== event.session_id) return
+      if (sessionSettling.value || streaming.value) deferredSessionRefresh.add(event.session_id)
+      else void refreshSessionMessages(event.session_id)
+      return
+    }
+    if (event.status !== 'running') return
     // IM 首条消息会先在服务端创建并提交 session，再发布 run=running；列表刷新不应
     // 等待助手回复后的 sessions 事件，否则新 IM 会话在生成期间或回复失败时不可见。
-    if (!sessions.value.some(item => item.id === event.session_id)) void fetchSessions()
-    if (sessionId.value !== event.session_id || streaming.value) return
+    if (sessionId.value !== event.session_id || streaming.value || sessionSettling.value) return
     // IM run 开始时通过用户级 live 事件通知；只续接当前正在看的会话。
     void resumeStream(event.session_id)
+  })
+
+  const deferredSessionRefresh = new Set<number>()
+  watch([sessionSettling, streaming], ([settling, active]) => {
+    if (settling || active || sessionId.value == null) return
+    const id = sessionId.value
+    if (!deferredSessionRefresh.delete(id)) return
+    void refreshSessionMessages(id)
   })
 
   // 跨端事件只作为失效通知；正文从数据库按 after_id 拉取，避免漏回放和重复追加。
@@ -534,17 +572,27 @@ export function useChatConversation(options: {
     const payload = event.payload && typeof event.payload === 'object' ? event.payload as Record<string, any> : {}
     const e = { ...payload, session_id: event.entity_id, origin: event.origin } as any
     const matchesCurrentSession = sessionId.value != null && String(event.entity_id) === String(sessionId.value)
+    if (matchesCurrentSession && e.message_update && typeof e.message_update === 'object') {
+      const update = e.message_update as { message_id?: number; files?: ChatFile[] }
+      const target = messages.value.find(message => message.dbId === Number(update.message_id))
+      if (target && Array.isArray(update.files)) target.files = update.files
+    }
     const appendedCount = Array.isArray(e.appended) ? e.appended.length : 0
     const isOwnOrigin = Boolean(e.origin && e.origin === CLIENT_ID)
     if (!matchesCurrentSession) return
     const session = sessions.value.find(item => item.id === Number(e.session_id))
     if (session && e.title) session.title = e.title
     if (!appendedCount || isOwnOrigin) return
+    if (sessionSettling.value) {
+      deferredSessionRefresh.add(Number(e.session_id))
+      return
+    }
     void refreshSessionMessages(Number(e.session_id))
   })
 
   return {
-    messages, mkid, now, sessionSettling,
+    messages, mkid, now, sessionSettling, cachedHistoryVisible,
+    historyState: historyPagination.state, loadOlderHistory: () => historyPagination.loadOlder(true),
     inputText, inputReferences, thinkingLabels, contextCompactingLabels, streaming, statusKind, statusTyped,
     isTypingText: computed(() => streaming.value && !statusKind.value),
     sessionId, ownerPlatformUserId, isGroupSession,

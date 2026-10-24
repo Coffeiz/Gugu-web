@@ -30,7 +30,10 @@
         @keydown.esc.prevent="cancel"
       />
     </span>
-    <span v-else class="exp-session-title" :title="title">{{ title }}</span>
+    <span v-else class="exp-session-title" :class="{ 'is-running-title': running }" :title="title" :aria-label="running ? title : undefined">
+      <template v-if="running"><span v-for="(character, index) in titleCharacters" :key="index" class="session-title-character" :style="{ animationDelay: `${index * 60 % 1200}ms` }" aria-hidden="true">{{ character }}</span></template>
+      <template v-else>{{ title }}</template>
+    </span>
     <button
       class="exp-session-rename-btn"
       :title="editing ? t('common.actions.confirm') : t('sharedUi.rename')"
@@ -44,7 +47,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick } from 'vue'
+import { computed, ref, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/icons/Icon.vue'
 /**
@@ -58,8 +61,11 @@ const props = defineProps<{
   onRename: (title: string) => void
   /** 顶部标题栏模式：单击标题进入编辑，不显示重命名按钮 */
   header?: boolean
+  /** 仅网页会话运行时启用逐字波浪动画。 */
+  running?: boolean
 }>()
 const { t } = useI18n()
+const titleCharacters = computed(() => Array.from(props.title))
 
 const editing = ref(false)
 const draft = ref('')
@@ -118,6 +124,15 @@ function cancel() {
   /* 小窗展开时会缩放整个面板，行盒需给 g/p/q 等下伸字形留足空间。 */
   font-size: 12.5px; line-height: 1.5; color: var(--text-primary);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.is-running-title { padding-block:2px; margin-block:-2px; }
+.session-title-character { display:inline-block; white-space:pre; animation:session-title-wave 1.2s ease-in-out infinite; }
+@keyframes session-title-wave {
+  0%, 40%, 100% { transform:translateY(0); }
+  20% { transform:translateY(-1.5px); }
+}
+@media(prefers-reduced-motion:reduce) {
+  .session-title-character { animation:none; }
 }
 /* 顶部标题栏模式：与项目编辑卡标题同款（默认像纯文本，悬停/聚焦浮出编辑框）。
    不强制 flex 增长，由父容器（GuguChatWindow）的 popup-status margin-left:auto 把右侧

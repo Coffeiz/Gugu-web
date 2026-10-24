@@ -2,7 +2,7 @@
 
 > 状态：✅ 已实施（Phase 1～5 代码完成，测试通过；消息物理保留已扩展为所有会话通用）
 > 创建：2026-08-06
-> 最近更新：2026-08-24
+> 最近更新：2026-10-19
 > 关联模块：`backend/app/services/conversation_retention.py`、`backend/agent/im/session.py`、`backend/agent/im/loop.py`、`backend/agent/im/owner_session.py`、`backend/agent/runner.py`、`backend/agent/gateway/web.py`、`backend/app/scheduled_tasks.py`、`backend/app/models/__init__.py`
 > 关联文档：[`【已完成】PRD-IM-2-IM-LOOP与GATEWAY解耦.md`](./【已完成】PRD-IM-2-IM-LOOP与GATEWAY解耦.md)、[`【已完成】PRD-IM-3-群组与成员记忆.md`](./【已完成】PRD-IM-3-群组与成员记忆.md)、[`09-MESSAGE-PROTOCOL.md`](../agent/09-MESSAGE-PROTOCOL.md)
 
@@ -15,9 +15,9 @@
 | 阶段 | 状态 | 说明 |
 |---|---|---|
 | Phase 1：会话复用 | ✅ 已完成 | `session_scope_filters` 扩展 `platform_user_id`；`get_or_create_session` 作用域复用；新建 session 补写 `platform_user_id`；`_im_continuity_bridge` 传 `platform_user_id` |
-| Phase 2：消息窗口裁剪 | ✅ 已完成 | `conversation_retention` 提供跨平台统一规则（600 阈值裁到 500）；Web、IM、流式/非流式 runner、主动消息统一在完整持久化后触发 |
-| Phase 3：读取窗口统一 | ✅ 已完成 | `_history_query_limit` 私聊从 40 提到 50 |
-| Phase 4：定时任务归并 | ✅ 已完成 | `_persist_push_im` 修 Redis key 格式、复用所属 session，并调用跨平台 `conversation_retention`；主动推送与 Web/IM 普通消息共用 600→500 规则 |
+| Phase 2：消息窗口裁剪 | ✅ 已完成 | `conversation_retention` 提供跨平台统一规则；当前每个 session 保留最近 2000 条，超过后每批最多删除 500 条；Web、IM、流式/非流式 runner、主动消息统一在完整持久化后触发 |
+| Phase 3：读取窗口统一 | ✅ 已完成 | Web、IM 与记忆上下文重建共用历史加载器；无 baseline 最多读取 100 条，有 baseline 保持 500 条增量窗口 |
+| Phase 4：定时任务归并 | ✅ 已完成 | `_persist_push_im` 修 Redis key 格式、复用所属 session，并调用跨平台 `conversation_retention`；主动推送与 Web/IM 普通消息共用 2000 条上限 |
 | Phase 5：测试 | ✅ 已完成 | 新增 `test_im_session_reuse.py`（9 用例）；更新群聊裁剪测试；完整后端套件 714 通过 |
 
 ## 0. 背景与问题
@@ -37,9 +37,9 @@
 ### 0.2 目标
 
 1. **每个私聊/群只对应一个 session**：私聊按 `(source, bot_id, platform_user_id)` 复用，群聊按 `(source, bot_id, chat_id)` 复用，不再每次新对话都新建。
-2. **数据库每个 session 只保留最近 500 条消息**（物理裁剪，Web、IM、定时任务等所有会话来源一致）。
-3. **上下文读取窗口统一为 50 条**（私聊从 40 条提升到 50 条，与群聊一致）。
-4. **裁剪阈值 600 条**：消息数超过 600 才裁剪到 500，避免每轮都做 DELETE。该规则是会话级策略，不按平台分叉。
+2. **数据库每个 session 只保留最近 2000 条消息**（物理裁剪，Web、IM、定时任务等所有会话来源一致）。
+3. **上下文历史读取统一有界**：无 baseline 时最多读取 100 条；有 baseline 时保留现有 500 条增量窗口。
+4. **裁剪阈值 2000 条**：每轮完整持久化后若超过 2000，就裁剪到最近 2000；数据库删除每批最多处理 500 条，降低单次事务与内存开销。该规则是会话级策略，不按平台分叉。
 5. **定时任务投递归并到所属 peer 的 session**，并修复 `_persist_push_im` 的 Redis key 格式 bug；推送写入后使用公共会话保留服务。
 
 ## 1. 方案设计
@@ -124,15 +124,16 @@ def session_scope_filters(model, source, chat_id, bot_id=None, platform_user_id=
 消息附件清理。`agent/im/session.py` 只保留兼容包装，旧调用方无需立即迁移。
 
 ```python
-MESSAGE_RETENTION_LIMIT = 500   # 每个 session 物理保留上限
-MESSAGE_TRIM_THRESHOLD = 600    # 超过该条数才触发裁剪（避免每轮 DELETE）
-GROUP_CONTEXT_LIMIT = 50        # IM 上下文读取窗口，不是物理保留规则
+MESSAGE_RETENTION_LIMIT = 2000  # 每个 session 物理保留上限
+MESSAGE_TRIM_THRESHOLD = 2000   # 超过上限即触发裁剪
+MESSAGE_TRIM_BATCH_SIZE = 500   # 单次事务最多删除的消息数
 
 async def trim_session_messages(session_id, limit=MESSAGE_RETENTION_LIMIT,
-                                threshold=MESSAGE_TRIM_THRESHOLD):
-    """消息数超过 threshold 时，物理裁剪到最近 limit 条。"""
+                                threshold=MESSAGE_TRIM_THRESHOLD,
+                                batch_size=MESSAGE_TRIM_BATCH_SIZE):
+    """消息数超过 threshold 时，分批物理裁剪到最近 limit 条。"""
     # 先 count，超过 threshold 才执行 DELETE
-    # 保留最近 limit 条，删除更旧的
+    # 每次删除最多 batch_size 条，直到只保留最近 limit 条
 ```
 
 **兼容**：IM 入口保留 `trim_session_messages` 包装，避免破坏已有调用方和测试；实际默认阈值只在公共服务维护。
@@ -145,19 +146,9 @@ async def trim_session_messages(session_id, limit=MESSAGE_RETENTION_LIMIT,
 
 所有触发点都在当前写入事务提交后执行，不会在 provider round 中途裁剪；重复触发只做一次轻量条数检查。
 
-### 1.4 上下文读取窗口统一为 50 条
+### 1.4 会话历史上下文统一有界
 
-**改动点**：[runner.py](backend/agent/runner.py#L38-L43) 的 `_history_query_limit`。
-
-```python
-def _history_query_limit(request: AgentRequest) -> int:
-    """IM 会话（私聊/群聊）从保留池取最近 50 条，Web 会话沿用原窗口。"""
-    if request.source in IM_SOURCES:
-        return GROUP_CONTEXT_LIMIT
-    return tokens.HISTORY_MAX_MSGS
-```
-
-**影响**：私聊读取窗口从 40 提升到 50。`select_history` 仍按 token 预算（`HISTORY_TOKEN_BUDGET=3000`）二次裁剪，实际进入上下文的条数受 token 限制，50 只是 DB 查询上限。
+Web、IM 和从数据库重建的记忆上下文统一调用 `context.session_history.load_session_history`。无 baseline 时数据库查询最多取最近 100 条，摘要计入该上限；有 baseline 时沿用最多 500 条的增量窗口。上限直接进入 SQL 查询，不会先全量读取再在内存裁剪。压缩和反思的触发策略仍由各自配置控制。
 
 ### 1.5 定时任务投递归并 + Redis key 格式修复
 
@@ -187,7 +178,8 @@ def _history_query_limit(request: AgentRequest) -> int:
 | `backend/app/services/conversation_retention.py` | 新增跨平台会话物理保留服务、统一阈值和附件清理 |
 | `backend/agent/im/session.py` | 常量改为公共服务导出；保留兼容包装；`session_scope_filters` 扩展 `platform_user_id`；`get_or_create_session` 增加作用域复用 |
 | `backend/agent/im/loop.py` | `persist_im_session` 私聊分支新增裁剪；`record_passive_im_message` 改用新函数 |
-| `backend/agent/runner.py` | `_history_query_limit` 私聊窗口改 50；`_im_continuity_bridge` 传 `platform_user_id` |
+| `backend/agent/context/session_history.py` | Web、IM 与记忆上下文重建共用 baseline 历史窗口；无 baseline 100 条、有 baseline 500 条 |
+| `backend/agent/runner.py` | `_im_continuity_bridge` 传 `platform_user_id` |
 | `backend/app/scheduled_tasks.py` | `_persist_push_im` 修 key 格式 + 复用所属 session + 裁剪；`owner_private_targets` 补 `bot_id` |
 | `backend/agent/tools/scheduled_tasks.py` | `_resolve_delivery_targets` 补 `bot_id` |
 | `backend/alembic/versions/` | 新增迁移：合并存量重复 session（可选） |
@@ -203,9 +195,10 @@ def _history_query_limit(request: AgentRequest) -> int:
 
 ### 3.2 存量超长 session
 
-复用后，存量私聊 session 可能超过 500 条。处理策略：
-- 任意会话来源首次触发裁剪时（消息数 > 600）自动裁到 500。
-- 不主动对存量做一次性裁剪，避免影响线上。
+存量 session 可能超过 2000 条。处理策略：
+- 每轮完整持久化后，只要消息数 > 2000，就自动裁到 2000，每批最多删除 500 条。
+- 通过 `scripts.maintenance.trim_conversation_history` 分页清理已有超限 session；默认只预览，显式传 `--apply` 才会删除。
+- 消息、附件引用和无引用附件按现有清理服务处理；压缩与反思策略保持各自配置。
 
 ### 3.3 常量重命名兼容
 
@@ -222,20 +215,21 @@ IM 入口的 `trim_session_messages` 包装保留为兼容层，默认值从公�
 | 不同私聊对象隔离 | 不同 `platform_user_id` 不串用 |
 | 不同 bot 隔离 | 不同 `bot_id` 不串用 |
 | `session_scope_filters` 私聊带 `platform_user_id` | 只匹配该私聊对象 |
-| `trim_session_messages` 超过 600 条 | 裁到 500 条 |
-| `trim_session_messages` 未超过 600 条 | 不执行 DELETE |
-| `_persist_push_im` 写入后 | session 不超过 500 条，Redis key 为新格式 |
+| `trim_session_messages` 超过 2000 条 | 分批裁到 2000 条 |
+| `trim_session_messages` 不超过 2000 条 | 不执行 DELETE |
+| `_persist_push_im` 写入后 | session 不超过 2000 条，Redis key 为新格式 |
 
 ### 4.2 回归测试
 
-- `test_qq_group_history.py`：群聊 500 条裁剪，改用新函数后仍通过。
+- `test_qq_group_history.py`：验证 session 物理保留为最近 2000 条。
 - `test_im_conversation_key.py`、`test_im_identity.py`：session 作用域隔离。
 - 定时任务投递相关测试。
 
 ### 4.3 E2E / 人工验收
 
 - 私聊连续对话，确认上下文连续（不"失忆"）。
-- 私聊发 600+ 条消息，确认数据库裁剪到 500。
+- Web、IM 无 baseline 首轮确认最多读取 100 条；有 baseline 时继续使用 500 条增量窗口。
+- 多轮工具调用确认在 100 条窗口内可连续恢复 canonical history。
 - 定时任务推送后，用户回复能路由到同一 session，上下文带上推送内容。
 - 群聊被动记录 + 主动 @ 回复，确认命中同一 session。
 
@@ -243,18 +237,18 @@ IM 入口的 `trim_session_messages` 包装保留为兼容层，默认值从公�
 
 | 风险 | 影响 | 缓解 |
 |---|---|---|
-| 复用后私聊上下文无限累积 | 话题漂移、token 超限 | 500 条物理裁剪 + 50 条读取窗口 + token 预算裁剪兜底 |
+| 复用后私聊上下文无限累积 | 话题漂移、token 超限 | 每个 session 保留 2000 条；无 baseline 读取 100 条、有 baseline 读取 500 条，并由 provider 预算控制 |
 | 存量重复 session 合并 | 数据丢失 | 先不合并，靠 `updated_at` 倒序自然淘汰 |
 | `_im_continuity_bridge` 失效 | 复用后"上一条对话"就是当前 session，桥接逻辑可能误判 | 复用后 `current_session_id` 就是上一条，桥接自然跳过；需验证 |
 | 定时任务投递目标缺 `bot_id` | 复用查找失败 | `_resolve_delivery_targets` 补字段 |
-| 裁剪 DELETE 性能 | 每轮 DELETE 开销 | 600 条阈值，超过才裁 |
+| 裁剪 DELETE 性能 | 单次事务和内存开销 | 每批最多删除 500 条，循环至保留 2000 条 |
 
 **回滚**：改动集中在 `get_or_create_session`、`trim_session_messages`、`_persist_push_im`，均为可独立回滚的提交。常量重命名保留别名，回滚不破坏引用。
 
 ## 6. 实施顺序
 
 1. **Phase 1**：`session_scope_filters` 扩展 `platform_user_id` + `get_or_create_session` 作用域复用（私聊 + 群聊）。
-2. **Phase 2**：`trim_session_messages` 泛化 + 600 阈值 + 私聊/群聊/被动记录触发点。
-3. **Phase 3**：`_history_query_limit` 私聊窗口改 50。
+2. **Phase 2**：`trim_session_messages` 泛化 + 2000 条硬上限、500 条分批 + 私聊/群聊/被动记录触发点。
+3. **Phase 3**：统一无 baseline / baseline 历史加载窗口。
 4. **Phase 4**：`_persist_push_im` 修 key 格式 + 复用所属 session + 裁剪；`delivery_targets` 补 `bot_id`。
 5. **Phase 5**：测试补齐 + 人工验收。

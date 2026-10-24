@@ -14,15 +14,13 @@ import asyncio
 import base64
 import logging
 import os
-import secrets
 import tempfile
 from types import SimpleNamespace
 from urllib.parse import urlsplit, urlunsplit
 
 from agent.security.logsafe import fingerprint
-from app.core.redaction import diag_log, redact
 from app.core.credentials import normalize_ascii_api_key
-from agent.providers.minimax import minimax_error_details
+from app.core.redaction import diag_log, redact
 
 logger = logging.getLogger("agent.voice")
 
@@ -128,31 +126,24 @@ def supports_configured_voice_model(vm) -> bool:
     if api_format == "dashscope":
         service = (getattr(vm, "dashscope_service", "qwen3-asr") or "qwen3-asr").strip().lower()
         return service in _DASHSCOPE_SERVICES
+    if api_format == "minimax-asr":
+        from agent.providers.minimax.asr import supports_model
+        return supports_model(getattr(vm, "model", ""))
     return api_format == "openai"
 
 
+def _is_minimax_error(error: BaseException) -> bool:
+    from agent.providers.minimax.asr import is_minimax_error
+    return is_minimax_error(error)
+
+
 def _log_transcription_error(context: str, error: BaseException, *, defer_minimax: bool = False) -> bool:
-    details = minimax_error_details(error)
-    if details is None:
-        diag_log(context, error)
-        return False
-    if defer_minimax:
-        return True
-    response = getattr(error, "response", None)
-    status_code = getattr(error, "status_code", None) or getattr(response, "status_code", None)
-    diagnostic_id = secrets.token_hex(8).upper()
-    diag_log(
-        f"{context} provider=minimax status={status_code or '-'} "
-        f"error_code={details.code} error_type={details.error_type} "
-        f"request_id={details.request_id or '-'} diagnostic_id={diagnostic_id}",
-        error,
-    )
-    logger.warning(
-        "MiniMax 语音转写失败 status=%s error_code=%s error_type=%s request_id=%s diagnostic_id=%s",
-        status_code or "-", details.code, details.error_type,
-        details.request_id or "-", diagnostic_id,
-    )
-    return True
+    from agent.providers.minimax.asr import log_transcription_error
+    handled = log_transcription_error(context, error, defer=defer_minimax)
+    if handled is not None:
+        return handled
+    diag_log(context, error)
+    return False
 
 
 async def transcribe(
@@ -167,12 +158,25 @@ async def transcribe(
         vm = await resolve_capability_settings(db, user_id, "speech_to_text", vm)
     if not vm or not (getattr(vm, "model", "") or "").strip():
         return None
+    api_format = (getattr(vm, "api_format", "openai") or "openai").strip().lower()
+    if api_format == "minimax-asr":
+        try:
+            from agent.providers.minimax.asr import transcribe as minimax_transcribe
+            return await minimax_transcribe(media or [], vm, to_wav=_to_wav, raise_errors=raise_errors)
+        except Exception as exc:
+            if raise_minimax_errors and _is_minimax_error(exc):
+                raise
+            if not _log_transcription_error("agent.voice.minimax_asr", exc, defer_minimax=raise_errors):
+                logger.warning("MiniMax 语音转写失败：%s", redact(f"{type(exc).__name__}: {exc}"))
+            if raise_errors:
+                raise
+            return ""
     # 只送音频块（纯 ASR，不加 text 指令）；base64 内联走 data URL（与现有 mimo input_audio 同格式）
     parts = []
     for m in (media or []):
-        if m.get("type") == "audio" and m.get("b64"):
+        if m.get("type") == "audio" and (m.get("b64") or isinstance(m.get("raw"), bytes)):
             mime = (m.get("mime") or "audio/mpeg").lower()
-            b64 = m["b64"]
+            b64 = m.get("b64") or base64.b64encode(m["raw"]).decode()
             # mimo ASR 只收 wav/mp3/mpeg；其余（mp4/webm/amr…）先用 ffmpeg 转 wav
             if mime not in _ASR_OK_MIME:
                 wav = await _to_wav(base64.b64decode(b64))
@@ -189,6 +193,7 @@ async def transcribe(
     from agent import providers
     import httpx
     import openai as _openai
+    from app.core.retry import llm_provider_timeout
     # 窄白名单：只有连接级/超时/5xx/429 算瞬时，安全重试（读操作，天然幂等）；
     # 鉴权失败/参数错/模型不存在等 4xx（openai.APIStatusError 但非 5xx/429）不在白名单内，
     # 会落进下面的 except Exception 分支直接回空串——不重试。
@@ -199,7 +204,7 @@ async def transcribe(
     dashscope_service = (getattr(vm, "dashscope_service", "qwen3-asr") or "qwen3-asr").strip().lower()
     if native_dashscope and dashscope_service not in _DASHSCOPE_SERVICES:
         raise ValueError("DashScope 语音产品线未选择或暂不支持")
-    client = None if native_dashscope else providers.build_openai_client(vm, httpx.Timeout(60.0))
+    client = None if native_dashscope else providers.build_openai_client(vm, llm_provider_timeout())
     for i in range(len(_ASR_RETRY_BACKOFF) + 1):
         try:
             if native_dashscope:
@@ -225,7 +230,7 @@ async def transcribe(
                     "Content-Type": "application/json",
                     "X-DashScope-SSE": "disable",
                 }
-                async with httpx.AsyncClient(timeout=60.0) as http:
+                async with httpx.AsyncClient(timeout=llm_provider_timeout()) as http:
                     response = await http.post(_dashscope_generation_url(vm.base_url),
                                                headers=headers, json=data)
                     response.raise_for_status()
@@ -242,7 +247,7 @@ async def transcribe(
             return out
         except transient as e:
             if i >= len(_ASR_RETRY_BACKOFF):
-                if raise_minimax_errors and minimax_error_details(e) is not None:
+                if raise_minimax_errors and _is_minimax_error(e):
                     raise
                 if not _log_transcription_error("agent.voice.transcribe", e, defer_minimax=raise_errors):
                     logger.warning("语音转写重试 %d 次后仍失败 model=%s：%s", i, vm.model, type(e).__name__)
@@ -259,7 +264,7 @@ async def transcribe(
             await asyncio.sleep(_ASR_RETRY_BACKOFF[i])
         except httpx.HTTPStatusError as e:
             if e.response.status_code not in (429,) and e.response.status_code < 500:
-                if raise_minimax_errors and minimax_error_details(e) is not None:
+                if raise_minimax_errors and _is_minimax_error(e):
                     raise
                 if not _log_transcription_error(
                     "agent.voice.transcribe.permanent", e, defer_minimax=raise_errors
@@ -271,7 +276,7 @@ async def transcribe(
                     raise
                 return ""
             if i >= len(_ASR_RETRY_BACKOFF):
-                if raise_minimax_errors and minimax_error_details(e) is not None:
+                if raise_minimax_errors and _is_minimax_error(e):
                     raise
                 if not _log_transcription_error("agent.voice.transcribe", e, defer_minimax=raise_errors):
                     logger.warning("语音转写重试 %d 次后仍失败 model=%s：HTTP %s",
@@ -286,7 +291,7 @@ async def transcribe(
             # 非瞬时（4xx 鉴权/参数错等）或未知错误：失败回空串（调用方兜底为「没听清」），
             # 但打日志——别再静默吞错（model 名错/端点错/鉴权都靠它排查）。原始异常（可能含
             # base_url/请求细节）只进受限诊断出口，可见日志只留脱敏摘要（P2-b §3/§5）。
-            if raise_minimax_errors and minimax_error_details(e) is not None:
+            if raise_minimax_errors and _is_minimax_error(e):
                 raise
             if not _log_transcription_error(
                 "agent.voice.transcribe.permanent", e, defer_minimax=raise_errors

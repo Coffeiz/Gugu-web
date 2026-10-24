@@ -77,6 +77,8 @@ def _effective_origin(
     空串不等于「无目的地」：adapter 会把它落到 default_base_url（如 glm →
     open.bigmodel.cn）。返回 None 表示解析失败，由调用方按「无法证明同目的地」拒绝。
     """
+    if provider == "minimax" and api_format == "minimax-asr":
+        return "https", "api.minimax.cn", 443
     from agent.providers import adapter_for
     cfg = SimpleNamespace(
         provider=provider, api_format=api_format, base_url=base_url, model=model,
@@ -91,6 +93,8 @@ def _protocol_default_origin(
     provider: str, api_format: str, model: str,
 ) -> tuple[str, str, int | None] | None:
     """返回 Provider 明确声明的协议默认端点 origin，不猜测自定义地址。"""
+    if provider == "minimax" and api_format == "minimax-asr":
+        return "https", "api.minimax.cn", 443
     from agent.providers import adapter_for
 
     config = SimpleNamespace(
@@ -443,6 +447,51 @@ async def _test_embedding_credential(*, api_key: str, base_url: str, model: str,
     return {"ok": True, "status": 200, "message": "Embedding 连接正常"}
 
 
+async def _test_minimax_asr_credential(*, api_key: str, base_url: str, model: str) -> dict:
+    """使用一秒静音音频验证 MiniMax 的独立 ASR multipart 接口。"""
+    import base64
+    from agent.voice import transcribe
+    from app.services.multimodal_probe import make_silent_wav
+
+    audio = base64.b64encode(make_silent_wav(sample_rate=16000, duration_seconds=1)).decode()
+    try:
+        result = await transcribe(
+            [{"type": "audio", "mime": "audio/wav", "ext": "wav", "b64": audio}],
+            {"voice": {"api_key": api_key, "base_url": base_url or "https://api.minimax.cn",
+                        "model": model or "asr-1.0", "api_format": "minimax-asr"}},
+            raise_errors=True,
+        )
+        return {"ok": result is not None, "status": 200 if result is not None else 0,
+                "message": "MiniMax ASR 连接正常" if result is not None else "语音模型未配置"}
+    except Exception as exc:
+        from agent.providers.minimax import minimax_error_details
+        if minimax_error_details(exc) is not None:
+            from agent.errors import describe_llm_error
+            return {"ok": False, "status": getattr(getattr(exc, "response", None), "status_code", 0),
+                    "message": describe_llm_error(exc, diagnostic_context="byok.test_minimax_asr").text}
+        from app.core.redaction import redact
+        return {"ok": False, "status": getattr(getattr(exc, "response", None), "status_code", 0),
+                "message": redact(f"MiniMax ASR 测试失败：{type(exc).__name__}: {exc}")}
+
+
+async def _test_native_voice_if_needed(*, capability: str, provider: str, api_format: str,
+                                      api_key: str, base_url: str, model: str) -> dict | None:
+    if capability == "speech_to_text" and api_format == "dashscope":
+        from agent.voice_config import dashscope_service_for_model
+        from app.api.v1.config import VoiceTestRequest, test_voice
+        try:
+            service = dashscope_service_for_model(model)
+        except ValueError as exc:
+            return {"ok": False, "status": 0, "message": str(exc)}
+        return await test_voice(VoiceTestRequest(api_format=api_format, dashscope_service=service,
+                                                api_key=api_key, base_url=base_url, model=model, use_config=False))
+    if capability != "speech_to_text" or provider != "minimax":
+        return None
+    if api_format != "minimax-asr":
+        return {"ok": False, "status": 0, "message": "MiniMax 语音识别需要选择 MiniMax ASR 接口格式"}
+    return await _test_minimax_asr_credential(api_key=api_key, base_url=base_url, model=model)
+
+
 async def _test_special_capability(provider: str, capability: str, api_key: str) -> dict:
     if capability == "deep_research":
         try:
@@ -498,6 +547,11 @@ async def test_credential_preview(body: CredentialTestPreview, user: User = Depe
             return {"ok": False, "status": 0, "message": "Embedding 测试需要填写 Base URL 和模型名"}
         return await _test_embedding_credential(api_key=api_key, base_url=body.base_url,
                                                 model=body.model, dimensions=body.dimensions)
+    voice_result = await _test_native_voice_if_needed(
+        capability=body.capability, provider=body.provider, api_format=body.api_format,
+        api_key=api_key, base_url=body.base_url, model=body.model)
+    if voice_result is not None:
+        return voice_result
     if body.capability in ("llm", "speech_to_text"):
         from app.services.provider_diagnostics import test_provider_credential
         result = await test_provider_credential(provider=body.provider, api_key=api_key,
@@ -527,6 +581,11 @@ async def test_credential(credential_id: int, user: User = Depends(get_current_u
             return {"ok": False, "status": 0, "message": "请先填写 Base URL 和模型名再测试"}
         return await _test_embedding_credential(api_key=api_key, base_url=row.base_url,
                                                 model=row.model, dimensions=row.dimensions)
+    voice_result = await _test_native_voice_if_needed(
+        capability=row.capability, provider=row.provider, api_format=row.api_format,
+        api_key=api_key, base_url=row.base_url, model=row.model)
+    if voice_result is not None:
+        return voice_result
     if row.capability in ("llm", "speech_to_text"):
         from app.services.provider_diagnostics import test_provider_credential
         result = await test_provider_credential(provider=row.provider, api_key=api_key,

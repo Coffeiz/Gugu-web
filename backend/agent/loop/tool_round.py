@@ -14,6 +14,20 @@ from agent.loop.events import artifact_sse
 _log = logging.getLogger("agent.traj")
 
 
+def _pending_interaction_kind(tool_name: str, result: Any) -> str | None:
+    if confirmation_payload(result) is not None:
+        return "confirmation"
+    if tool_name not in {"ask_user", "manage_mcp_servers"}:
+        return None
+    payload = result
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except (TypeError, ValueError):
+            return None
+    return "ask_user" if isinstance(payload, dict) and payload.get("_interaction") == "ask_user" else None
+
+
 @dataclass(frozen=True)
 class ParallelToolBindings:
     """由稳定 loop wrapper 注入的少量兼容点，保留现有 monkeypatch 契约。"""
@@ -58,6 +72,8 @@ class ParallelToolBatchRuntime:
     loaded_skill_ids: dict[str, str]
     max_concurrency: int
     bindings: ParallelToolBindings
+    run_state: Any = None
+    on_interaction: Any = None
 
     async def run(self) -> AsyncGenerator[ToolRoundEmission, None]:
         parallel_meta: list[tuple[int, Any, str, dict[str, Any], str, str, str]] = []
@@ -127,6 +143,7 @@ class ParallelToolBatchRuntime:
                     run_id=self.run_id,
                     tool_snapshot=self.tool_snapshot,
                     skill_state=self.bindings.copy_skill_state(self.loaded_skill_ids),
+                    tool_call_id=meta[6],
                 )
 
         async def dispatch_batch():
@@ -179,7 +196,7 @@ class ParallelToolBatchRuntime:
                 dispatch_task.cancel()
                 await asyncio.gather(dispatch_task, return_exceptions=True)
 
-        succeeded = failed = cancelled = 0
+        succeeded = failed = cancelled = waiting = 0
         results_by_index: dict[int, tuple[Any, Any]] = {}
         for meta, dispatched_result in zip(parallel_meta, parallel_results):
             original_index = meta[0]
@@ -191,10 +208,9 @@ class ParallelToolBatchRuntime:
                 results_by_index[original_index] = (dispatched_result, None)
             else:
                 result_payload = dispatched_result[0]
-                if (
-                    confirmation_payload(result_payload) is not None
-                    or not self.bindings.is_successful_result(result_payload)
-                ):
+                if _pending_interaction_kind(meta[4], result_payload) is not None:
+                    waiting += 1
+                elif not self.bindings.is_successful_result(result_payload):
                     failed += 1
                 else:
                     succeeded += 1
@@ -204,7 +220,7 @@ class ParallelToolBatchRuntime:
             "mode": "parallel",
             "calls": len(self.parallel_batch),
             "isolated_invalid": len(self.protocol_errors),
-            "reason": "eligible_batch",
+            "reason": "same_round_batch",
             "elapsed_ms": round((time.monotonic() - started_at) * 1000),
             "succeeded": succeeded,
             "failed": failed,
@@ -226,33 +242,21 @@ class ParallelToolBatchRuntime:
 
             meta = parallel_meta_by_index[original_index]
             _index, call, _target, _arguments, effective_name, label, tool_call_id = meta
-            result, artifact = results_by_index[original_index]
-            call_cancelled = isinstance(result, asyncio.CancelledError)
-            if call_cancelled:
-                result = json.dumps({"error": "工具调用已取消。"}, ensure_ascii=False)
-                artifact = None
-            if isinstance(result, Exception):
-                self.bindings.diag_log("agent.loop.parallel_tool_dispatch", result)
-                result = json.dumps({"error": "只读工具执行失败，请稍后重试。"}, ensure_ascii=False)
-                artifact = None
-            if confirmation_payload(result) is not None:
-                self.bindings.diag_log(
-                    "agent.loop.parallel_tool_interaction",
-                    RuntimeError("并发安全工具返回了交互确认载荷"),
-                )
-                result = json.dumps(
-                    {"error": "该只读工具返回了未声明的确认请求，本次结果无法使用。"},
-                    ensure_ascii=False,
-                )
-                artifact = None
+            result, artifact, status, pending_emissions = await self._settle_call_result(
+                meta, results_by_index[original_index],
+            )
+            for emission in pending_emissions:
+                yield emission
+                if emission.kind == "event" and self.on_interaction is not None:
+                    payload = emission.value
+                    if payload.get("type") == "interaction_required":
+                        await self.on_interaction({
+                            key: value for key, value in payload.items() if key != "type"
+                        })
             yield ToolRoundEmission("event", {
                 "type": "tool_done", "round_id": self.round_id,
                 "tool_call_id": tool_call_id, "name": effective_name,
-                "label": label, "verify": self.verify_mode,
-                "status": (
-                    "cancelled" if call_cancelled else
-                    "success" if self.bindings.is_successful_result(result) else "error"
-                ),
+                "label": label, "verify": self.verify_mode, "status": status,
                 "result": result,
             })
             if artifact:
@@ -263,6 +267,93 @@ class ParallelToolBatchRuntime:
             "complete",
             ParallelToolBatchOutcome(dispatched=dispatched, cancelled=parallel_cancelled),
         )
+
+    async def _create_interaction(self, item: dict[str, Any]) -> dict[str, Any] | None:
+        from app.services.interactions import create_tool_interaction
+
+        return await create_tool_interaction(
+            user_id=self.user_id,
+            session_id=self.session_id,
+            tool_name=item["tool_name"],
+            tool_call_id=item["tool_call_id"],
+            result=item["result"],
+            kind=item["kind"],
+        )
+
+    @staticmethod
+    def _interaction_unavailable_result() -> str:
+        return json.dumps({
+            "error": (
+                "该工具需要用户交互，但系统未能创建交互请求；本次操作未继续。"
+                "请在有效的 Web 或 IM 对话中重新发起。"
+            ),
+            "interaction_unavailable": True,
+        }, ensure_ascii=False)
+
+    async def _settle_call_result(
+        self, meta: tuple, dispatched_result: Any,
+    ) -> tuple[Any, Any, str, list[ToolRoundEmission]]:
+        """归一单项结果，并独立处理该调用触发的交互门。"""
+        _index, _call, target, arguments, name, label, tool_call_id = meta
+        result, artifact = dispatched_result
+        if isinstance(result, asyncio.CancelledError):
+            return json.dumps({"error": "工具调用已取消。"}, ensure_ascii=False), None, "cancelled", []
+        if isinstance(result, Exception):
+            self.bindings.diag_log("agent.loop.parallel_tool_dispatch", result)
+            return json.dumps({"error": "工具执行失败，请稍后重试。"}, ensure_ascii=False), None, "error", []
+
+        if name == "use_skill" and self.bindings.is_successful_result(result):
+            try:
+                skill_result = json.loads(result) if isinstance(result, str) else result
+            except (TypeError, ValueError):
+                skill_result = None
+            marker = skill_result.get("_capability_usage") if isinstance(skill_result, dict) else None
+            digest = marker.get("content_digest") if isinstance(marker, dict) else None
+            skill_id = str((arguments or {}).get("id") or "").strip().upper()
+            if skill_id and isinstance(digest, str) and digest:
+                self.loaded_skill_ids[skill_id] = digest
+
+        kind = _pending_interaction_kind(name, result)
+        if kind is None:
+            status = "success" if self.bindings.is_successful_result(result) else "error"
+            return result, artifact, status, []
+
+        item = {
+            "kind": kind, "result": result, "tool_call_id": tool_call_id,
+            "tool_name": name, "label": label, "target": target,
+            "input": arguments, "round_id": self.round_id,
+            "verify": self.verify_mode,
+        }
+        if self.run_state is None:
+            return self._interaction_unavailable_result(), None, "error", []
+        if self.run_state.pending is not None:
+            self.run_state.pending_tool_interactions.append(item)
+            if kind == "ask_user":
+                result = json.dumps({"status": "waiting_input"}, ensure_ascii=False)
+            return result, artifact, "waiting", []
+
+        interaction = await self._create_interaction(item)
+        if interaction is None:
+            return self._interaction_unavailable_result(), None, "error", []
+        from agent.loop.models import PendingInteraction
+
+        replay = None
+        if kind == "confirmation":
+            replay = {"name": name, "label": label, "target": target, "input": arguments}
+        self.run_state.pending = PendingInteraction(
+            interaction["prompt_id"], tool_call_id, name, replay,
+        )
+        if kind == "ask_user":
+            result = json.dumps({
+                "status": "waiting_input", "prompt_id": interaction["prompt_id"],
+            }, ensure_ascii=False)
+        payload = {
+            **interaction, "round_id": self.round_id,
+            "tool_call_id": tool_call_id,
+        }
+        return result, artifact, "waiting", [ToolRoundEmission("event", {
+            "type": "interaction_required", **payload,
+        })]
 
 
 @dataclass(frozen=True)
@@ -304,6 +395,7 @@ class SerialToolBatchRuntime:
 
     async def run(self) -> AsyncGenerator[ToolRoundEmission, None]:
         dispatched: list[tuple[Any, Any]] = []
+        interaction_call_index: int | None = None
         for call_index, tool_call in enumerate(self.tool_calls):
             raw_call_name = getattr(tool_call, "name", None)
             dispatch_target, dispatch_input, protocol_error = self.bindings.resolve_tool_call(
@@ -397,6 +489,7 @@ class SerialToolBatchRuntime:
                     self.user_id, dispatch_target, dispatch_input,
                     session_id=self.session_id, session=self.session, run_id=self.run_id,
                     tool_snapshot=self.tool_snapshot, skill_state=self.loaded_skill_ids,
+                    tool_call_id=tool_call_id,
                 )
                 if skill_id and self.bindings.is_successful_result(result):
                     try:
@@ -410,30 +503,21 @@ class SerialToolBatchRuntime:
                     elif current_digest:
                         self.loaded_skill_ids[skill_id] = current_digest
 
-            if effective_name in {"ask_user", "manage_mcp_servers"}:
-                try:
-                    ask_payload = self.bindings.json_loads(result) if isinstance(result, str) else result
-                except (TypeError, ValueError):
-                    ask_payload = None
-                from app.services.interactions import create_agent_prompt
+            if _pending_interaction_kind(effective_name, result) == "ask_user":
+                from app.services.interactions import create_tool_interaction
 
-                interaction = None
-                if isinstance(ask_payload, dict) and ask_payload.get("_interaction") == "ask_user":
-                    interaction = await create_agent_prompt(
-                        user_id=self.user_id, session_id=self.session_id,
-                        tool_call_id=tool_call_id, tool_name=effective_name,
-                        payload=ask_payload,
-                    )
+                interaction = await create_tool_interaction(
+                    user_id=self.user_id, session_id=self.session_id,
+                    tool_name=effective_name, tool_call_id=tool_call_id,
+                    result=result, kind="ask_user",
+                )
                 if interaction is not None:
-                    prompt, actions = interaction
-                    schema = prompt.schema_json or {}
-                    secret_fields = list(schema.get("secret_fields") or [])
                     pending_result = self.bindings.json_dumps({
-                        "status": "waiting_input", "prompt_id": prompt.id,
+                        "status": "waiting_input", "prompt_id": interaction["prompt_id"],
                     }, ensure_ascii=False)
                     dispatched.append((tool_call, pending_result))
                     self.run_state.pending = self.bindings.pending_interaction_type(
-                        prompt.id, tool_call_id, effective_name,
+                        interaction["prompt_id"], tool_call_id, effective_name,
                     )
                     yield emit(
                         "tool_done", round_id=self.round_id, tool_call_id=tool_call_id,
@@ -441,24 +525,21 @@ class SerialToolBatchRuntime:
                         status="waiting", result=pending_result,
                     )
                     interaction_payload = {
-                        "prompt_id": prompt.id, "kind": prompt.kind,
-                        "title": prompt.title, "body": prompt.body,
-                        "options": actions,
-                        "allow_text_input": bool(schema.get("allow_text_input", False)),
-                        "secret_fields": secret_fields,
-                        "expires_at": prompt.expires_at.isoformat(),
+                        **interaction,
                         "round_id": self.round_id, "tool_call_id": tool_call_id,
                     }
                     yield emit("interaction_required", **interaction_payload)
                     if self.on_interaction is not None:
                         await self.on_interaction(interaction_payload)
+                    interaction_call_index = call_index
                     break
 
-            from app.services.interactions import create_tool_confirmation
+            from app.services.interactions import create_tool_interaction
 
-            interaction = await create_tool_confirmation(
+            interaction = await create_tool_interaction(
                 user_id=self.user_id, session_id=self.session_id,
                 tool_name=effective_name, tool_call_id=tool_call_id, result=result,
+                kind="confirmation",
             )
             if interaction:
                 self.run_state.pending = self.bindings.pending_interaction_type(
@@ -483,7 +564,23 @@ class SerialToolBatchRuntime:
                     name=effective_name, label=label, verify=self.verify_mode,
                     status="waiting", result=result,
                 )
+                interaction_call_index = call_index
                 break
+
+            # 确认载荷只有成功创建交互事件后才能作为“等待用户确认”返回给模型。
+            # 后台定时任务没有交互 session，或确认桥接未能创建事件时，原样返回
+            # needs_confirm 会让模型误以为用户已收到确认按钮。工具确认门此时尚未
+            # 执行操作，因此改为明确失败结果，让模型和后续投递都知道需要用户在
+            # 有效的 Web/IM 会话中重新发起。
+            if confirmation_payload(result) is not None:
+                result = self.bindings.json_dumps({
+                    "error": (
+                        "该操作需要用户确认，但系统未能创建可交互的确认请求，"
+                        "当前定时任务无法向任何对话会话发起确认，操作未执行。"
+                        "请告知用户由用户本人在 Web 或 IM 对话中重新发起。"
+                    ),
+                    "confirmation_unavailable": True,
+                }, ensure_ascii=False)
 
             dispatched.append((tool_call, result))
             yield emit(
@@ -495,4 +592,42 @@ class SerialToolBatchRuntime:
             if artifact:
                 yield ToolRoundEmission("artifact", artifact)
 
+        if interaction_call_index is not None:
+            emissions, deferred_results = self._defer_following_calls(interaction_call_index)
+            dispatched.extend(deferred_results)
+            for emission in emissions:
+                yield emission
+
         yield ToolRoundEmission("complete", SerialToolBatchOutcome(dispatched))
+
+    def _defer_following_calls(
+        self, call_index: int,
+    ) -> tuple[list[ToolRoundEmission], list[tuple[Any, Any]]]:
+        """交互挂起时，给未执行的同轮调用补齐明确回执，避免丢失调用配对。"""
+        emissions: list[ToolRoundEmission] = []
+        dispatched: list[tuple[Any, Any]] = []
+        for index in range(call_index + 1, len(self.tool_calls)):
+            tool_call = self.tool_calls[index]
+            target, _arguments, _protocol_error = self.bindings.resolve_tool_call(
+                getattr(tool_call, "name", None), getattr(tool_call, "input", None),
+            )
+            label = self.runner._label(target)
+            if self.verify_mode:
+                label = self.runner._label("_verify_prefix", "复查 · ") + label
+            tool_call_id = getattr(tool_call, "id", None) or f"{self.round_id}-tool-{index + 1}"
+            deferred = self.bindings.json_dumps({
+                "status": "deferred",
+                "reason": "同一轮的前置调用正在等待用户交互；恢复后可重新安排此调用。",
+            }, ensure_ascii=False)
+            dispatched.append((tool_call, deferred))
+            emissions.append(ToolRoundEmission("event", {
+                "type": "tool_call", "round_id": self.round_id,
+                "tool_call_id": tool_call_id, "name": target, "label": label,
+                "input": {}, "verify": self.verify_mode, "status": "deferred",
+            }))
+            emissions.append(ToolRoundEmission("event", {
+                "type": "tool_done", "round_id": self.round_id,
+                "tool_call_id": tool_call_id, "name": target, "label": label,
+                "verify": self.verify_mode, "status": "deferred", "result": deferred,
+            }))
+        return emissions, dispatched

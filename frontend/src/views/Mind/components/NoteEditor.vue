@@ -124,7 +124,7 @@ import { useI18n } from 'vue-i18n'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
 import {
   PhAt, PhCheckSquare, PhCode, PhCodeBlock, PhLink, PhListBullets, PhListNumbers,
-  PhMinus, PhNoteBlank, PhPlus, PhQuotes, PhTextAa, PhTextB, PhTextItalic, PhTextStrikethrough,
+  PhMinus, PhNoteBlank, PhQuotes, PhTextAa, PhTextB, PhTextItalic, PhTextStrikethrough,
 } from '@phosphor-icons/vue'
 import { docToMarkdown, markdownToDoc, mindExtensions } from '@/composables/mind/useMindEditor'
 import { useMindObjectPicker } from '@/composables/mind/useMindObjectPicker'

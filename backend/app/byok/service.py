@@ -158,6 +158,9 @@ async def resolve_capability_settings(db: AsyncSession, user_id: UUID, capabilit
                "model": row.model or getattr(base, "model", ""), "image": row.image,
                "video": row.video, "audio": row.audio,
                "image_detail": row.image_detail, "ollama_api_mode": ollama_api_mode}
+    if capability == "speech_to_text" and row.api_format == "dashscope":
+        from agent.voice_config import dashscope_service_for_model
+        updates["dashscope_service"] = dashscope_service_for_model(row.model)
     if capability == "llm":
         if getattr(row, "max_tokens", None) is not None:
             updates["max_tokens"] = row.max_tokens

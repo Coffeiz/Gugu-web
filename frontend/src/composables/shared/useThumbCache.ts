@@ -26,11 +26,11 @@ export function getCachedThumb(id: number | string, size = 'card', revision?: Th
   return url ?? null
 }
 
-export function getThumb(id: number | string, size = 'card', revision?: ThumbRevision) {
-  const key = thumbKey(id, size, revision)
+/** 文件与暂存附件共用请求去重、超时和 blob 缓存；卡片加载标记由文件入口维护。 */
+function loadThumb(key: string, url: string, onReady?: () => void) {
   const cached = cache.get(key)
   if (cached) {
-    if (size === 'card') thumbLoadedIds.add(id)
+    onReady?.()
     return Promise.resolve(cached)
   }
   const existing = pending.get(key)
@@ -42,8 +42,7 @@ export function getThumb(id: number | string, size = 'card', revision?: ThumbRev
     //   abort 后 reject → 释放槽位 + 让懒加载指令下次进视口重试。
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), 15000)
-    const revisionQuery = revision == null ? '' : `&revision=${encodeURIComponent(String(revision))}`
-    return fetch(`${BASE}/files/${id}/thumb?size=${size}${revisionQuery}`, {
+    return fetch(url, {
       credentials: 'include',
       cache: 'no-cache',
       signal: ctrl.signal,
@@ -55,7 +54,7 @@ export function getThumb(id: number | string, size = 'card', revision?: ThumbRev
       .then(blob => {
         const url = URL.createObjectURL(blob)
         cache.set(key, url)
-        if (size === 'card') thumbLoadedIds.add(id)
+        onReady?.()
         return url
       })
       .finally(() => clearTimeout(timer))
@@ -67,41 +66,22 @@ export function getThumb(id: number | string, size = 'card', revision?: ThumbRev
   return p
 }
 
+export function getThumb(id: number | string, size = 'card', revision?: ThumbRevision) {
+  const revisionQuery = revision == null ? '' : `&revision=${encodeURIComponent(String(revision))}`
+  return loadThumb(
+    thumbKey(id, size, revision),
+    `${BASE}/files/${id}/thumb?size=${size}${revisionQuery}`,
+    size === 'card' ? () => { thumbLoadedIds.add(id) } : undefined,
+  )
+}
+
 // 通用：按任意 URL 取缩略图并以自定义 key 缓存（聊天暂存附件缩略图等，走 file id 之外的端点）
 export function getCachedThumbUrl(key: string) {
   return cache.get(key) ?? null
 }
 
 export function getThumbUrl(key: string, url: string) {
-  const cached = cache.get(key)
-  if (cached) return Promise.resolve(cached)
-  const existing = pending.get(key)
-  if (existing) return existing
-
-  const p = thumbLimit(() => {
-    const ctrl = new AbortController()
-    const timer = setTimeout(() => ctrl.abort(), 15000)   // 同 getThumb：卡住的请求别永久占并发槽
-    return fetch(url, {
-      credentials: 'include',
-      cache: 'no-cache',
-      signal: ctrl.signal,
-    })
-      .then(r => {
-        if (isUnauthorizedResponse(r)) throw new Error('登录已失效')
-        return r.ok ? r.blob() : Promise.reject()
-      })
-      .then(blob => {
-        const blobUrl = URL.createObjectURL(blob)
-        cache.set(key, blobUrl)
-        return blobUrl
-      })
-      .finally(() => clearTimeout(timer))
-  })
-    .then(blobUrl => { pending.delete(key); return blobUrl })
-    .catch(() => { pending.delete(key); return null })
-
-  pending.set(key, p)
-  return p
+  return loadThumb(key, url)
 }
 
 const _IMG_EXTS = new Set(['jpg','jpeg','png','gif','webp','avif','bmp','heic','heif','svg'])

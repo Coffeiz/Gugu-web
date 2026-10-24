@@ -78,6 +78,9 @@ test('浏览器真实渲染 Mermaid，在窄屏预览并导出有效 PNG', async
     const { renderMarkdownMermaid } = await import('/src/utils/mermaidRenderer.ts')
     const root = document.createElement('main')
     root.id = 'mermaid-e2e-fixture'
+    // The live app has fixed-position shell controls. Keep this isolated test fixture
+    // above them so pointer input reaches the Mermaid toolbar at narrow viewports.
+    Object.assign(root.style, { position: 'fixed', inset: '0', zIndex: '99999', overflow: 'auto' })
     root.innerHTML = '<pre class="md-mermaid-source"><code>graph LR\n  A[Start] --&gt; B[Finish]\n  classDef dark fill:#202638,stroke:#ef4444\n  class A dark</code></pre>'
     document.body.append(root)
     await renderMarkdownMermaid(root, {
@@ -120,11 +123,11 @@ test('浏览器真实渲染 Mermaid，在窄屏预览并导出有效 PNG', async
   const controlOpacity = () => controls.evaluate(element => Number(getComputedStyle(element).opacity))
   const controlBackdropFilter = () => controls.evaluate(element => getComputedStyle(element).backdropFilter)
   await expect.poll(controlBackdropFilter).not.toBe('none')
-  await page.mouse.move(1, 1)
+  await page.mouse.move(389, 843)
   await expect.poll(controlOpacity).toBeLessThan(0.05)
   await chart.hover()
   await expect.poll(controlOpacity).toBeGreaterThan(0.95)
-  await page.mouse.move(1, 1)
+  await page.mouse.move(389, 843)
   await expect.poll(controlOpacity).toBeLessThan(0.05)
 
   const expand = chart.getByRole('button', { name: 'Expand' })

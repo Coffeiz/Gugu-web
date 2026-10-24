@@ -20,9 +20,11 @@ import time
 from dataclasses import dataclass, field
 from typing import AsyncIterator, Callable
 
+from agent.context.display_timeline import upsert_tool_timeline_item
 from agent.errors import LLMErrorPresentation
 from agent.security import sanitize
 from agent.models import AgentResponse
+from app.core.tz import now_utc
 
 EVENT_TOKEN = "token"
 EVENT_FINAL = "final"
@@ -35,9 +37,8 @@ class RunOutcome:
     text: str = ""                       # 最终正文（错误时=错误文案，不入历史）
     round_texts: list = field(default_factory=list)   # 逐轮正文（strip 后，空轮剔除）
     # 流式顺序的展示时间线（assistant 轮次 + tool 项交错，语义与 gateway/web.py 的
-    # display_timeline 一致）。收尾层优先用它持久化 display_timeline——此前 IM/定时
-    # 路径只存正文轮次，刷新后工具气泡只能走兼容 toolEvents 通道（按 canonical 行
-    # id 排序，全部早于末条 assistant 消息），导致工具气泡整体跳到该轮正文前面。
+    # display_timeline 一致）。收尾层用它持久化 display_timeline，确保刷新回放保留
+    # 工具调用与正文交错的实际顺序。
     display_timeline_items: list = field(default_factory=list)
     tokens_in: int = 0
     tokens_out: int = 0
@@ -73,6 +74,9 @@ class CollectSink:
     on_tool_event: Callable | None = None
     on_round: Callable | None = None
     on_event: Callable | None = None
+    on_checkpoint: Callable | None = None
+    on_display: Callable | None = None
+    user_message_id: int = 0
     yield_tokens: bool = False
     yield_round_ends: bool = False
 
@@ -84,6 +88,9 @@ class WebStreamSink:
     on_tool_event: Callable | None = None
     on_round: Callable | None = None
     on_event: Callable | None = None
+    on_checkpoint: Callable | None = None
+    on_display: Callable | None = None
+    user_message_id: int = 0
     yield_tokens: bool = True
     yield_round_ends: bool = True
 
@@ -109,7 +116,28 @@ async def consume_agent_events(
     # 当前轮的展示时间线占位（首个 token 时创建）；工具项按流式顺序插在其后，
     # 轮次冲刷时回填清洗后的正文——镜像 gateway/web.py 的 display_timeline 语义。
     active_seg: dict | None = None
+    display_run_id = ""
+    display_round_id = ""
     tool_started_at: dict[str, float] = {}
+    last_checkpoint_at = 0.0
+    display_sequence = 0
+
+    async def display_changed(item: dict, *, force: bool = False) -> None:
+        nonlocal last_checkpoint_at, display_sequence
+        from agent.context.display_timeline import stamp_display_item
+
+        first = not item.get("eventId")
+        if first:
+            display_sequence += 1
+        item["runId"] = item.get("runId") or display_run_id
+        item["roundId"] = item.get("roundId") or display_round_id
+        stamp_display_item(item, sequence=display_sequence,
+                           user_message_id=sink.user_message_id)
+        if sink.on_checkpoint is not None and (first or force or time.monotonic() - last_checkpoint_at >= 1):
+            await sink.on_checkpoint(outcome.display_timeline_items)
+            last_checkpoint_at = time.monotonic()
+        if sink.on_display is not None:
+            await sink.on_display(dict(item))
 
     def _close_active_seg(display_round: str) -> None:
         nonlocal active_seg
@@ -145,6 +173,10 @@ async def consume_agent_events(
             from agent.outbound import sanitize_outbound
             display_round = sanitize.strip_disallowed_emoji(sanitize_outbound(completed)).strip()
         _close_active_seg(display_round)
+        if outcome.display_timeline_items:
+            await display_changed(outcome.display_timeline_items[-1], force=True)
+        if sink.on_checkpoint is not None:
+            await sink.on_checkpoint(outcome.display_timeline_items)
         if not completed:
             return
         if sink.on_round is not None:
@@ -171,6 +203,8 @@ async def consume_agent_events(
                 await _notify_event(sink.on_event, evt)
             elif t == "round_start":
                 continuation_pending = False
+                display_run_id = str(evt.get("core_run_id") or evt.get("run_id") or "")
+                display_round_id = str(evt.get("round_id") or "")
                 await _notify_event(sink.on_event, evt)
             elif t == "_usage":
                 outcome.tokens_in = evt.get("input", 0)
@@ -197,10 +231,12 @@ async def consume_agent_events(
                 token = san.feed(evt.get("content", ""))
                 if token:
                     if active_seg is None:
-                        active_seg = {"kind": "assistant", "text": ""}
+                        active_seg = {"kind": "assistant", "text": "", "runId": display_run_id,
+                                      "roundId": display_round_id, "createdAt": now_utc().isoformat()}
                         outcome.display_timeline_items.append(active_seg)
                     active_seg["text"] += token
                     cur += token
+                    await display_changed(active_seg)
                     if sink.yield_tokens:
                         yield (EVENT_TOKEN, token)
             elif t == "file" and evt.get("file"):
@@ -215,6 +251,7 @@ async def consume_agent_events(
                     "text": "",
                     "files": [file],
                 })
+                await display_changed(outcome.display_timeline_items[-1])
                 await _notify_event(sink.on_event, evt)
             elif t == "link_buttons" and evt.get("link_buttons"):
                 outcome.display_timeline_items.append({
@@ -224,6 +261,7 @@ async def consume_agent_events(
                     "text": "",
                     "linkButtons": evt["link_buttons"],
                 })
+                await display_changed(outcome.display_timeline_items[-1])
                 await _notify_event(sink.on_event, evt)
             elif t in {"tool_call", "tool_done"}:
                 tool_event = dict(evt)
@@ -236,15 +274,16 @@ async def consume_agent_events(
                     if started_at is not None:
                         tool_event["duration_ms"] = max(0, round((time.monotonic() - started_at) * 1000))
                 outcome.tool_events.append(tool_event)
-                await _notify_tool_event(sink.on_tool_event, tool_event)
                 name = str(evt.get("name") or "")
                 if t == "tool_call":
                     if name and name not in outcome.tool_names:
                         outcome.tool_names.append(name)
                     # 展示时间线：tool 项按流式顺序插入（语义对齐 gateway/web.py）
                     if name and not name.startswith("_"):
-                        outcome.display_timeline_items.append({
+                        upsert_tool_timeline_item(outcome.display_timeline_items, {
                             "kind": "tool",
+                            **({"runId": str(evt.get("run_id"))} if evt.get("run_id") else {}),
+                            **({"roundId": str(evt.get("round_id"))} if evt.get("round_id") else {}),
                             "toolCallId": str(evt.get("tool_call_id") or ""),
                             "toolName": name,
                             "toolLabel": str(evt.get("label") or name),
@@ -269,7 +308,14 @@ async def consume_agent_events(
                             if "duration_ms" in tool_event:
                                 item["toolDurationMs"] = tool_event["duration_ms"]
                             break
+                for display_item in reversed(outcome.display_timeline_items):
+                    if display_item.get("kind") == "tool" and display_item.get("toolCallId") == call_id:
+                        await display_changed(display_item, force=True)
+                        break
                 await _notify_event(sink.on_event, tool_event)
+                if sink.on_checkpoint is not None:
+                    await sink.on_checkpoint(outcome.display_timeline_items)
+                await _notify_tool_event(sink.on_tool_event, tool_event)
             elif t == "interaction_required":
                 # ask_user 的交互回调会在生成器产出此事件后展示选择卡，并等待用户输入。
                 # 若不先冲刷当前轮，前置说明会一直留在 cur，直到用户选择后核心循环才发
@@ -334,7 +380,10 @@ async def consume_agent_events(
     if tail and sink.yield_tokens:
         yield (EVENT_TOKEN, tail)
     rounds.append(cur)
+    completed_segment = active_seg
     _close_active_seg(cur.strip())
+    if completed_segment is not None and completed_segment in outcome.display_timeline_items:
+        await display_changed(completed_segment, force=True)
     outcome.round_texts = [r.strip() for r in rounds if r.strip()]
     outcome.text = ""
     for r in reversed(rounds):

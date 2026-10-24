@@ -552,7 +552,7 @@ async def test_qq_raw_quoted_attachment_is_ingested(monkeypatch):
     async def fake_produce(stream, payload):
         produced.append(payload)
 
-    monkeypatch.setattr(qq_events, "_qq_ack", fake_ack)
+    monkeypatch.setattr(qq_events, "_qq_reply", fake_ack)
     monkeypatch.setattr(qq_events.R, "produce", fake_produce)
 
     from agent import router

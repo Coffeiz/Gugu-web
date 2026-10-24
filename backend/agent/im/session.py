@@ -9,17 +9,14 @@ from sqlalchemy import func, select
 from app.core import redis as R
 from app.services.conversation_retention import (
     MESSAGE_RETENTION_LIMIT,
+    MESSAGE_TRIM_BATCH_SIZE,
     MESSAGE_TRIM_THRESHOLD,
     trim_session_messages as _trim_session_messages,
 )
 from agent.im.context_policy import IM_SOURCES
 
 IM_SESSION_TTL = 12 * 3600  # 12 小时滑动 TTL
-# 每个 IM 会话（私聊/群聊）物理保留的消息上限；超过 MESSAGE_TRIM_THRESHOLD 才裁剪到该值。
-MESSAGE_RETENTION_LIMIT = 500
-# 触发裁剪的条数阈值：消息数超过该值才执行 DELETE，避免每轮都做裁剪。
-MESSAGE_TRIM_THRESHOLD = 600
-GROUP_CONTEXT_LIMIT = 50
+# 兼容旧 IM 调用方的共享保留常量；压缩/反思窗口仍由各自策略独立控制。
 
 
 @dataclass(frozen=True)
@@ -255,10 +252,12 @@ async def trim_session_messages(
     session_id: int,
     limit: int | None = None,
     threshold: int | None = None,
+    batch_size: int | None = None,
 ) -> None:
     """兼容旧 IM 调用方；实际规则由跨平台保留服务统一执行。"""
     await _trim_session_messages(
         session_id,
         limit=MESSAGE_RETENTION_LIMIT if limit is None else limit,
         threshold=MESSAGE_TRIM_THRESHOLD if threshold is None else threshold,
+        batch_size=MESSAGE_TRIM_BATCH_SIZE if batch_size is None else batch_size,
     )

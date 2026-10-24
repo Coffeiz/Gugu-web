@@ -32,12 +32,18 @@
         v-for="s in webSessions" :key="s.id"
         class="exp-session-item"
         :data-session-id="s.id"
-        :class="{ active: s.id === sessionId }"
+        :class="{ active: s.id === sessionId, 'is-running': sessionBadges?.[s.id] === 'running', 'is-unread': sessionBadges?.[s.id] === 'unread' }"
         @click="onLoadSession(s.id)"
       >
         <div class="exp-session-copy">
-          <SessionTitleEdit :title="s.title" :on-rename="(t) => onRenameSession(s.id, t)" />
-          <span v-if="formatSessionTime(s.updatedAt)" class="exp-session-time">{{ formatSessionTime(s.updatedAt) }}</span>
+          <SessionTitleEdit :title="s.title" :running="sessionBadges?.[s.id] === 'running'" :on-rename="(t) => onRenameSession(s.id, t)" />
+          <div class="session-meta-row">
+            <span v-if="formatSessionTime(s.updatedAt)" class="exp-session-time">{{ formatSessionTime(s.updatedAt) }}</span>
+            <span v-if="sessionBadges?.[s.id]" class="session-state-indicator"
+              :class="sessionBadges[s.id]" role="status"
+              :aria-label="t(sessionBadges[s.id] === 'running' ? 'chatUi.sessionRunning' : 'chatUi.sessionUnread')"
+              :title="t(sessionBadges[s.id] === 'running' ? 'chatUi.sessionRunning' : 'chatUi.sessionUnread')" />
+          </div>
         </div>
         <button class="exp-session-del" @click.stop="onDeleteSession(s.id)" :title="t('common.actions.delete')">
           <Icon name="action.delete" :size="12" />
@@ -77,6 +83,7 @@ defineProps<{
   botsOf: (platform: ImPlatformKey) => unknown[]
   imSessionsOf: (platform: ImPlatformKey) => ChatSession[]
   webSessions: ChatSession[]
+  sessionBadges?: Record<number, 'running' | 'unread'>
   sessionId: number | null
   connect: ImConnectState | null
   connectHint: string
@@ -213,6 +220,11 @@ defineExpose({ imGroupEl: computed(() => imConnectRef.value?.imGroupEl ?? null) 
 :deep(.exp-session-copy) { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: var(--space-xs); }
 :deep(.exp-session-time) { color: var(--content-tertiary); font-size: var(--font-size-xs); line-height: 1; }
 :deep(.exp-session-item.active .exp-session-title) { font-weight: var(--font-weight-semibold); }
+.is-unread :deep(.exp-session-title) { font-weight:var(--font-weight-semibold); color:var(--content-primary); }
+.session-meta-row { display:flex; align-items:center; gap:var(--space-xs); min-width:0; min-height:12px; padding-right:26px; }
+.session-state-indicator { flex-shrink:0; display:block; color:var(--selection-fg); }
+.session-state-indicator.running { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+.session-state-indicator.unread { width:7px; height:7px; border-radius:50%; background:currentColor; }
 :deep(.exp-session-del) {
   width: 22px;
   height: 22px;

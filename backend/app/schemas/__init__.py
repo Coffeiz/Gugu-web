@@ -328,8 +328,12 @@ class FileSummaryResponse(CamelModel):
 
 
 class FileLibraryCountsResponse(CamelModel):
-    personal_count: int
-    trash_count: int
+    personal_file_count: int
+    personal_folder_count: int
+    project_file_count: int
+    project_folder_count: int
+    trash_file_count: int
+    trash_folder_count: int
 
 
 class FileStreamResponse(CamelModel):
@@ -353,6 +357,7 @@ class FileCopyBody(CamelModel):
 
 
 class FileUpdate(CamelModel):
+    version: int
     display_name: Optional[str] = None
     ext: Optional[str] = None
     stage_name: Optional[str] = None
@@ -422,6 +427,7 @@ class FolderResponse(CamelModel):
     parent_id:  Optional[int] = None
     name: str
     file_count: int = 0
+    folder_count: int = 0
     version: int = 1
 
 
@@ -683,7 +689,7 @@ class EventUpdate(CamelModel):
     client: Optional[str] = None
     project_id: Optional[int] = None
     description: Optional[str] = None
-    version: Optional[int] = None
+    version: int
 
 
 class EventResponse(CamelModel):
@@ -737,7 +743,7 @@ class PreferencesResponse(CamelModel):
     shellDangerousEnabled: bool = False       # 用户级全部 Shell 命令权限，危险操作仍需确认
     automaticModeEnabled: bool = False        # 用户级自动模式；默认关闭
     decisionGuardEnabled: bool = False        # 行动跟进守卫；默认关闭
-    showToolInteractions: bool = True         # IM 是否展示工具调用过程；默认开启
+    imToolDisplayMode: Literal["off", "all", "slow_only"] = "all"
     showIntermediateReplies: bool = False     # IM 是否展示运行中的中间轮次回复；默认关闭
     toolInjectionMode: str = "description"  # description = 简介模式；full = 全量模式，默认简介
     personalityPreference: Optional[str] = None
@@ -803,7 +809,7 @@ class PreferencesUpdate(CamelModel):
     shellDangerousEnabled: Optional[bool] = None
     automaticModeEnabled: Optional[bool] = None
     decisionGuardEnabled: Optional[bool] = None
-    showToolInteractions: Optional[bool] = None
+    imToolDisplayMode: Optional[Literal["off", "all", "slow_only"]] = None
     showIntermediateReplies: Optional[bool] = None
     toolInjectionMode: Optional[str] = None
     personalityPreference: Optional[str] = Field(default=None, max_length=10000)

@@ -346,10 +346,23 @@ if __name__ == "__main__":
     parser.add_argument("--allow-real-llm", action="store_true")
     parser.add_argument("--compaction-ab", action="store_true")
     parser.add_argument("--session-id", type=int)
+    parser.add_argument("--inline-run", help="使用 Collector 捕获请求回放内联压缩 A/B")
+    parser.add_argument("--collector-db")
+    parser.add_argument("--allow-real-data", action="store_true")
+    parser.add_argument("--context-tokens", type=int)
+    parser.add_argument("--probe-reflection-format", action="store_true")
+    parser.add_argument("--output")
     args = parser.parse_args()
     if not args.allow_real_llm:
         parser.error("真实模型请求可能计费，必须明确传入 --allow-real-llm")
-    if args.compaction_ab:
+    if args.inline_run:
+        if not args.allow_real_data or not args.collector_db:
+            parser.error("--inline-run 需要 --allow-real-data 和 --collector-db")
+        from probe_inline_compaction_progress import main as inline_main
+
+        args.run_id = args.inline_run
+        asyncio.run(inline_main(args))
+    elif args.compaction_ab:
         if args.session_id is None:
             parser.error("--compaction-ab 需要 --session-id")
         print(json.dumps(asyncio.run(run_compaction_ab(args.session_id)), ensure_ascii=False))

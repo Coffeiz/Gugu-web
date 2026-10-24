@@ -5,8 +5,10 @@ import json
 import logging
 from typing import AsyncGenerator
 from sqlalchemy import select
-from app.core.config import get_settings
+from agent.media import gates
+from agent.chat.attachments import resolve_for_message
 from app.core import chat_attach
+from app.core.config import get_settings
 from app.core.tz import set_ctx_tz
 from app.models import ConversationMessage, ConversationSession
 from agent.errors import describe_llm_error
@@ -129,7 +131,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             strip_thinking = False
 
         # 聊天附件：文本读内容注入给模型，图片/二进制给提示；卡片随用户消息持久化
-        aug_text, attach_cards, aug_images, aug_media = await chat_attach.resolve_for_message(
+        aug_text, attach_cards, aug_images, aug_media = await resolve_for_message(
             user_id, req.attachments, req.message, model_cfg=model_cfg)
         from agent.context.references import build_reference_context, reference_context_block
         reference_text = await build_reference_context(db, user_id, req.references)
@@ -248,7 +250,12 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     # 主模型支持音频时直接保留音频块；否则才用独立「语音识别模型」转文字。
     # 两者都不可用时，resolve_for_message 已在 aug_text 中留下不支持提示。
     _transcribe_media = [m for m in aug_media if m.get("type") != "video"]
-    if _transcribe_media and chat_attach.should_transcribe_audio(model_cfg):
+    _audio_fallback = gates.should_transcribe_audio(model_cfg)
+    _persist_transcript = any(
+        m.get("voice_recognition_enabled") and m.get("kind") == "voice"
+        for m in _transcribe_media
+    )
+    if _transcribe_media and (_audio_fallback or _persist_transcript):
         from agent import voice as _voice
         try:
             async with _sess._SessionLocal() as voice_db:
@@ -257,32 +264,62 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
                     raise_minimax_errors=True,
                 )
         except Exception as error:
-            from agent.providers.minimax import minimax_error_details
-            if minimax_error_details(error) is None:
-                raise
-            from agent.errors import describe_llm_error
-            error_event = describe_llm_error(
-                error, diagnostic_context="agent.gateway.web.voice"
-            ).as_event()
-            yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
-            return
-        if transcript is None:        # 未配置语音模型
-            block_msg = "抱歉，我现在还不能处理语音 / 音视频消息哦，打字告诉我就行～"
-            async with _sess._SessionLocal() as db2:
-                if await db2.get(ConversationSession, session_id) is not None:
-                    db2.add(ConversationMessage(session_id=session_id, role="assistant", content=block_msg))
-                    await db2.commit()
-                    await _publish_session_append(req, session_id, [{"role": "assistant", "text": block_msg}])
-                    from app.services.conversation_retention import trim_session_messages
-                    await trim_session_messages(session_id)
-            async for line in genstream.typed_stream(block_msg):
-                yield line
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
-            return
-        spoken = transcript.strip() or "（用户发来一段语音，但这次没听清内容）"
-        aug_text = (aug_text + "\n" if aug_text else "") + f"（用户发来语音，内容是：）{spoken}"
-        aug_media = [m for m in aug_media if m.get("type") == "video"]
+            if _audio_fallback:
+                from agent.providers.minimax import minimax_error_details
+                if minimax_error_details(error) is None:
+                    raise
+                from agent.errors import describe_llm_error
+                error_event = describe_llm_error(
+                    error, diagnostic_context="agent.gateway.web.voice"
+                ).as_event()
+                yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                return
+            # 主模型可直接听音频时，附加转写失败只标记状态，不中断对话。
+            from app.core.redaction import diag_log
+            diag_log("agent.gateway.web.voice_transcript", error)
+            transcript = None
+            transcript_status = "failed"
+        else:
+            transcript_status = "completed" if transcript and transcript.strip() else "empty"
+
+        if _persist_transcript:
+            try:
+                from app.services.conversation_transcripts import (
+                    publish_voice_transcript_update, save_voice_transcript,
+                )
+                async with _sess._SessionLocal() as transcript_db:
+                    saved_files = await save_voice_transcript(
+                        transcript_db, user_id=user_id, session_id=session_id,
+                        message_id=user_message.id, transcript=transcript,
+                        status=transcript_status,
+                    )
+                if saved_files is not None:
+                    await publish_voice_transcript_update(
+                        user_id, session_id=session_id,
+                        message_id=user_message.id, files=saved_files,
+                    )
+            except Exception as error:
+                from app.core.redaction import diag_log
+                diag_log("agent.gateway.web.persist_voice_transcript", error)
+
+        if _audio_fallback:
+            if transcript is None:        # 未配置语音模型
+                block_msg = "抱歉，我现在还不能处理语音 / 音视频消息哦，打字告诉我就行～"
+                async with _sess._SessionLocal() as db2:
+                    if await db2.get(ConversationSession, session_id) is not None:
+                        db2.add(ConversationMessage(session_id=session_id, role="assistant", content=block_msg))
+                        await db2.commit()
+                        await _publish_session_append(req, session_id, [{"role": "assistant", "text": block_msg}])
+                        from app.services.conversation_retention import trim_session_messages
+                        await trim_session_messages(session_id)
+                async for line in genstream.typed_stream(block_msg):
+                    yield line
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                return
+            spoken = transcript.strip() or "（用户发来一段语音，但这次没听清内容）"
+            aug_text = (aug_text + "\n" if aug_text else "") + f"（用户发来语音，内容是：）{spoken}"
+            aug_media = [m for m in aug_media if m.get("type") == "video"]
 
     # ── 先订阅频道、再启动后台生成 ──
     #    顺序很关键：pub/sub 发完即弃，若先起生成、后订阅，生成的头几个 token（短回复时是全部）

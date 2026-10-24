@@ -8,6 +8,8 @@ import logging
 import os
 import re
 import time
+import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from contextvars import ContextVar
@@ -1073,20 +1075,84 @@ def record_context_layout(
 async def _post_snapshot(snapshot: dict[str, Any]) -> None:
     base = os.getenv("LOOPSCOPE_ENDPOINT", "http://127.0.0.1:4320").rstrip("/")
     url = base if base.endswith("/api/collector/runs") else f"{base}/api/collector/runs"
-    data = json.dumps(snapshot, ensure_ascii=False).encode("utf-8")
+    terminal = snapshot.get("ended_at") is not None
+
+    if terminal:
+        finish_url = f"{url}/{urllib.parse.quote(str(snapshot['id']), safe='')}/finish"
+        finish_payload = {
+            key: snapshot[key]
+            for key in (
+                "id", "session_key", "external_session_id", "source", "started_at",
+                "status", "ended_at", "duration_ms",
+            )
+        }
+        finish_data = json.dumps(finish_payload, ensure_ascii=False).encode("utf-8")
+
+        def _send_finish() -> None:
+            req = urllib.request.Request(
+                finish_url, data=finish_data, method="POST",
+                headers={"Content-Type": "application/json", "User-Agent": "gugu-loopscope-bridge/0.2"},
+            )
+            with urllib.request.urlopen(req, timeout=8.0) as resp:
+                resp.read(32)
+
+        finish_failure: Exception | None = None
+        for delay in (0, 0.25, 1.0, 3.0):
+            if delay:
+                await asyncio.sleep(delay)
+            try:
+                await asyncio.to_thread(_send_finish)
+                finish_failure = None
+                break
+            except OSError as exc:
+                finish_failure = exc
+                if isinstance(exc, urllib.error.HTTPError) and exc.code < 500 and exc.code not in {408, 429}:
+                    break
+            except Exception as exc:
+                finish_failure = exc
+                break
+
+        if finish_failure is not None:
+            from app.core.redaction import diag_log
+
+            diag_log("agent.loopscope.final_status", finish_failure)
+
+    # 全量开发正文保持原样；序列化放在线程中，避免旁路抢占租约心跳事件循环。
+    def _encode_snapshot() -> bytes:
+        return json.dumps(snapshot, ensure_ascii=False).encode("utf-8")
+
+    data = await asyncio.to_thread(_encode_snapshot)
 
     def _send() -> None:
         req = urllib.request.Request(
             url, data=data, method="POST",
             headers={"Content-Type": "application/json", "User-Agent": "gugu-loopscope-bridge/0.2"},
         )
-        with urllib.request.urlopen(req, timeout=0.8) as resp:
+        # 终态快照可能包含数百个 span；Collector 在事务写入期间会串行处理
+        # 轻量请求，因此留出足够时间，避免 0.8 秒超时丢弃最终正文。
+        with urllib.request.urlopen(req, timeout=10.0 if terminal else 3.0) as resp:
             resp.read(32)
 
-    try:
-        await asyncio.to_thread(_send)
-    except Exception:
-        pass
+    retry_delays = (0, 1.0, 3.0) if terminal else (0,)
+    failure: Exception | None = None
+    for delay in retry_delays:
+        if delay:
+            # 重试只发生在独立上报任务内，不阻塞 Agent 或增加空闲轮询。
+            await asyncio.sleep(delay)
+        try:
+            await asyncio.to_thread(_send)
+            return
+        except OSError as exc:
+            failure = exc
+            if isinstance(exc, urllib.error.HTTPError) and exc.code < 500 and exc.code not in {408, 429}:
+                break
+        except Exception as exc:
+            failure = exc
+            break
+    if terminal and failure is not None:
+        from app.core.redaction import diag_log
+
+        diag_log("agent.loopscope.final_snapshot", failure)
 
 def _finish_run(run: _ScopeRun, status: str) -> None:
     if run.ended_at is not None:
@@ -1105,6 +1171,7 @@ def _finish_run(run: _ScopeRun, status: str) -> None:
                 if isinstance(draft, str) and draft.strip():
                     final_text = draft
                     break
+        run.output_text = final_text
         if final_span is not None:
             recorded_text = (
                 final_span.output.get("text")

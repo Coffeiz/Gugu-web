@@ -10,6 +10,7 @@ from .selector import CapabilitySelector
 
 CATALOG_DESCRIPTION_MAX_CHARS = DESCRIPTION_SHORT_MAX_CHARS
 FIXED_ADAPTER_TOOL_NAMES = ("call_tool", "get_tool_schema", "use_skill", "ask_user")
+RUN_META_TOOL_NAMES = ("stop_recurring",)
 # Skill 管理工具不属于默认业务工具集，只在能力快照中保留供 Adapter 按需发现；
 # 它们不会因此进入 Provider 的首轮工具 Schema。
 ON_DEMAND_TOOL_NAMES = (
@@ -72,7 +73,10 @@ class CapabilityToolContext:
 
     def select_for_messages(self, messages) -> SelectedCapabilities:
         if self.fixed_adapter:
-            names = tuple(name for name in FIXED_ADAPTER_TOOL_NAMES if name in self.snapshot.tools)
+            names = tuple(
+                name for name in (*FIXED_ADAPTER_TOOL_NAMES, *RUN_META_TOOL_NAMES)
+                if name in self.snapshot.tools
+            )
             self.selection = SelectedCapabilities(names, shadow=False)
             return self.selection
         query = ""

@@ -13,7 +13,7 @@ async def _live_speaker_index(db, user_id, platform: str, bot_id, chat_id) -> li
 
     不经 members.json——这里要的是"跟 Web 会话列表一样实时"的 id/曾用名信息，
     不能被反思任务的更新节奏拖慢（见 PRD-IM-8 Phase 2.5）。表本身受
-    MESSAGE_RETENTION_LIMIT（500~600 条）限制，全量查一遍成本很低。
+    MESSAGE_RETENTION_LIMIT（2000 条）限制，全量查一遍成本仍然可控。
     """
     rows = await live_speaker_index(db, user_id, platform, bot_id, chat_id)
     return rows

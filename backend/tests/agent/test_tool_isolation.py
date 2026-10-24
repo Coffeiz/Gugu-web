@@ -49,6 +49,19 @@ async def _mk(db, obj):
 
 # ── files ─────────────────────────────────────────────────────────────────────
 
+async def test_list_dir_system_scope_forwards_explicit_absolute_path(db, user_a, monkeypatch):
+    """显式 system 目录浏览应将 scope 与绝对路径原样交给系统目录处理器。"""
+    async def capture_system_directory(_db, _user_id, args):
+        return {"scope": args.get("scope"), "path": args.get("path")}
+
+    monkeypatch.setattr(
+        "agent.tools.files.system_access.list_system_directory", capture_system_directory,
+    )
+
+    result = await _list_dir(db, user_a.id, {"scope": "system", "path": "/tmp"})
+
+    assert result == {"scope": "system", "path": "/tmp"}
+
 async def test_file_resolve_cross_user(db, user_a, user_b):
     f = await _mk(db, File(user_id=user_b.id, display_name="secret", ext="md", storage_key="k"))
     got, err = await _resolve_file(db, user_a.id, {"file_id": f.id})

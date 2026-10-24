@@ -2,6 +2,7 @@ import type { ChatMessage, GuguSession } from '../types'
 
 export interface GuguBootstrap {
   apiBase: string
+  accountName?: string
 }
 
 const KEY = 'loopscope:gugu-bootstrap'
@@ -28,7 +29,7 @@ function apiBase(cfg: GuguBootstrap) {
 }
 
 export function saveBootstrap(value: GuguBootstrap) {
-  sessionStorage.setItem(KEY, JSON.stringify({ apiBase: normalizeBase(value.apiBase) }))
+  sessionStorage.setItem(KEY, JSON.stringify({ apiBase: normalizeBase(value.apiBase), accountName: value.accountName }))
   window.dispatchEvent(new CustomEvent('loopscope:bootstrap'))
 }
 
@@ -36,9 +37,12 @@ export function loadBootstrap(): GuguBootstrap | null {
   try {
     const raw = sessionStorage.getItem(KEY)
     if (!raw) return null
-    const parsed = JSON.parse(raw) as { apiBase?: unknown }
+    const parsed = JSON.parse(raw) as { apiBase?: unknown; accountName?: unknown }
     if (typeof parsed.apiBase !== 'string') return null
-    const safeConfig = { apiBase: normalizeBase(parsed.apiBase) }
+    const safeConfig = {
+      apiBase: normalizeBase(parsed.apiBase),
+      ...(typeof parsed.accountName === 'string' ? { accountName: parsed.accountName.slice(0, 80) } : {}),
+    }
     // 清理旧版曾在当前标签 sessionStorage 保存的 Gugu Bearer JWT。
     sessionStorage.setItem(KEY, JSON.stringify(safeConfig))
     return safeConfig

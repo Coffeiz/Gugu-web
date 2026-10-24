@@ -19,7 +19,7 @@
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import PopupMenu from '@/components/common/overlays/PopupMenu.vue'
-import { capBg, darkenHex } from '../utils/calendarColors'
+import { capBg, darkenHex } from '@/utils/calendarColors'
 import type { CalendarRenderItem } from '../domain/calendarTypes'
 
 defineProps<{

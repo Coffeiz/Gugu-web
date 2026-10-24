@@ -21,7 +21,7 @@ def _sse(event):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_state", ["completed", "failed", "cancelled"])
-async def test_web_generation_keeps_dedup_timeline_usage_and_persist_before_done(monkeypatch, terminal_state):
+async def test_web_generation_uses_persistent_event_identity_and_commits_before_terminal(monkeypatch, terminal_state):
     from agent.gateway.web import generation
     import app.db.session as db_session
     from agent import providers
@@ -102,6 +102,15 @@ async def test_web_generation_keeps_dedup_timeline_usage_and_persist_before_done
     async def no_op(*_args, **_kwargs):
         return None
 
+    async def checkpoint(*_args, **_kwargs):
+        order.append("checkpoint")
+
+    async def seal(*_args, **_kwargs):
+        order.append("seal")
+
+    monkeypatch.setattr("agent.context.display_checkpoint.save_checkpoint", checkpoint)
+    monkeypatch.setattr("agent.context.display_checkpoint.seal_checkpoint", seal)
+
     monkeypatch.setattr("agent.context.run_finalize.finalize_run", fake_finalize)
     monkeypatch.setattr(generation, "_publish_session_append", no_op)
     monkeypatch.setattr(genstream, "publish", fake_publish)
@@ -122,8 +131,10 @@ async def test_web_generation_keeps_dedup_timeline_usage_and_persist_before_done
 
     assert all(event["run_id"] == "owner-run" and event["user_message_id"] == 55 for event in published)
     if terminal_state == "completed":
-        tokens = [event["content"] for event in published if event["type"] == "token"]
-        assert tokens == ["Hello", " again"]
+        display = [event['item'] for event in published if event['type'] == 'display_event']
+        texts = {item['eventId']: item['text'] for item in display if item.get('text')}
+        assert list(texts.values()) == ['Hello', 'Hello again']
+        assert all(item.get('createdAt') and item.get('sequence') and item.get('eventId') for item in display)
         assert [event["type"] for event in published if event["type"] in {"round_start", "_new_round", "tool_call", "tool_done", "link_buttons"}] == [
             "round_start", "tool_call", "tool_done", "_new_round", "round_start", "link_buttons",
         ]
@@ -132,12 +143,12 @@ async def test_web_generation_keeps_dedup_timeline_usage_and_persist_before_done
         assert [item["kind"] for item in finalized[0]["display_timeline"]] == ["assistant", "tool", "assistant", "assistant"]
         assert finalized[0]["display_timeline"][1]["toolStatus"] == "success"
         assert finalized[0]["display_timeline"][-1]["linkButtons"][0]["label"] == "Open"
-        assert order == ["persist", "done"]
+        assert [entry for entry in order if entry != 'checkpoint'] == ["persist", "done"]
     elif terminal_state == "failed":
         assert any(event["type"] == "error" for event in published)
         assert not any(event["type"] == "done" for event in published)
         assert finalized == []
-        assert order == []
+        assert [entry for entry in order if entry != 'checkpoint'] == ["seal"]
     else:
         assert [event["type"] for event in published if event["type"] in {"_cancelled", "tool_done", "done"}] == [
             "_cancelled", "tool_done", "done",
@@ -145,7 +156,7 @@ async def test_web_generation_keeps_dedup_timeline_usage_and_persist_before_done
         assert published[-1]["cancelled"] is True
         assert finalized[0]["interrupted"] is True
         assert finalized[0]["display_timeline"][1]["toolStatus"] == "cancelled"
-        assert order == ["persist", "done"]
+        assert [entry for entry in order if entry != 'checkpoint'] == ["persist", "done"]
 
 
 async def _async_value(value):

@@ -6,7 +6,7 @@ import { resolveFolderIds } from '@/utils/folderKeys'
 import { InteractionSync } from '@/interaction/sync/InteractionSync'
 import type { useFileActions } from './useFileActions'
 import { useFileBatchCore } from './useFileBatchCore'
-import { useFilePasteCore } from './useFilePasteCore'
+import { findFileCopyConflicts, useFilePasteCore } from './useFilePasteCore'
 import type { ConflictDecision, ConflictItem } from '@/components/common/overlays/UploadConflictDialog.vue'
 import { clearThumbCache } from '@/composables/shared/useThumbCache'
 import { confirmFileDeletion } from './useFileDeleteConfirm'
@@ -127,14 +127,7 @@ export function useFileLibraryBatchActions(options: FileLibraryBatchActionOption
         onError: error => console.error('[Files] 粘贴失败:', error),
       })
     },
-    getCopyConflicts: fileIds => {
-      const destinationFiles = options.getFiles()
-      return fileIds.map(id => options.cacheStore.getFile(id)).filter((source): source is FileMeta => source != null)
-        .map(source => {
-          const existing = destinationFiles.find(target => target.displayName === source.displayName && target.ext === source.ext)
-          return existing ? { filename: `${source.displayName}.${source.ext}`, existingFile: { id: existing.id } } : null
-        }).filter(item => item != null) as ConflictItem[]
-    },
+    getCopyConflicts: fileIds => findFileCopyConflicts(fileIds, id => options.cacheStore.getFile(id), options.getFiles()),
     onCopy: async (fileIds, folderIds, destination, decisions) => {
       const copyIds = fileIds.filter(id => {
         const source = options.cacheStore.getFile(id)

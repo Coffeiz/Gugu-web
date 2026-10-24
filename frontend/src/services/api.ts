@@ -317,7 +317,9 @@ export const projectsApi = {
   list:   (archived = false, deleted = false)      => get<Schemas['ProjectResponse'][]>(`/projects${archived ? '?archived=true' : deleted ? '?deleted=true' : ''}`),
   fileCounts: ()                            => get<{ projectId: number; fileCount: number }[]>('/projects/file-counts'),
   get:    (id: number)                             => get<Schemas['ProjectResponse']>(`/projects/${id}`),
-  create: (data: Schemas['ProjectCreate'])         => post<Schemas['ProjectResponse']>('/projects', data),
+  create: (data: Schemas['ProjectCreate'], idempotencyKey?: string) => post<Schemas['ProjectResponse']>(
+    '/projects', data, idempotencyKey ? { headers: { 'Idempotency-Key': idempotencyKey } } : undefined,
+  ),
   update: (id: number, data: Schemas['ProjectUpdate'], meta?: RequestMeta) => patch<Schemas['ProjectResponse']>(`/projects/${id}`, data, meta),
   delete: (id: number)                             => del(`/projects/${id}`),
   restore: (id: number)                             => post<Schemas['ProjectResponse']>(`/projects/${id}/restore`),
@@ -459,7 +461,11 @@ function pageQuery(params: CursorPageParams): URLSearchParams {
 }
 
 export const filesApi = {
-  libraryCounts: () => get<{ personalCount: number; trashCount: number }>('/files/library-counts'),
+  libraryCounts: () => get<{
+    personalFileCount: number; personalFolderCount: number
+    projectFileCount: number; projectFolderCount: number
+    trashFileCount: number; trashFolderCount: number
+  }>('/files/library-counts'),
   page: (filters: FileListParams & CursorPageParams = {}) => {
     const params = pageQuery(filters)
     for (const [key, value] of Object.entries(filters)) {
@@ -495,7 +501,7 @@ export const filesApi = {
     }>('/files/unarchive', data),
   // workspaceDirectoryId：后端 schema 已支持，旧 OpenAPI 类型生成未覆盖，先由领域类型承接。
   update: (id: number, data: Schemas['FileUpdate'] & { workspaceDirectoryId?: number | null }, meta?: RequestMeta) => patch<Schemas['FileResponse']>(`/files/${id}`, data, meta),
-  saveContent: (id: number, content: string) => put<Schemas['FileResponse']>(`/files/${id}/content`, { content }),   // 改文本正文（md 勾选框等）
+  saveContent: (id: number, content: string, version: number) => put<Schemas['FileResponse']>(`/files/${id}/content`, { content, version }),   // 改文本正文（md 勾选框等）
   delete:      (id: number, meta?: RequestMeta)   => del(`/files/${id}`, meta),
   batchDelete: (ids: number[], meta?: RequestMeta)  => post('/files/batch-delete', { ids }, meta),
   copy: (id: number, body: Schemas['FileCopyBody'] & { workspaceDirectoryId?: number | null }) => post<Schemas['FileResponse']>(`/files/${id}/copy`, body),
@@ -614,9 +620,11 @@ export const userSkillsApi = {
 export const eventsApi = {
   list:   (year: number, month: number) => get<Schemas['EventResponse'][]>(`/events?year=${year}&month=${month}`),
   get:    (id: number) => get<Schemas['EventResponse']>(`/events/${id}`),
-  create: (data: Schemas['EventCreate']) => post<Schemas['EventResponse']>('/events', data),
+  create: (data: Schemas['EventCreate'], idempotencyKey?: string) => post<Schemas['EventResponse']>(
+    '/events', data, idempotencyKey ? { headers: { 'Idempotency-Key': idempotencyKey } } : undefined,
+  ),
   update: (id: number, data: Schemas['EventUpdate'], meta?: RequestMeta) => patch<Schemas['EventResponse']>(`/events/${id}`, data, meta),
-  delete: (id: number, meta?: RequestMeta)          => del(`/events/${id}`, meta),
+  delete: (id: number, version: number, meta?: RequestMeta) => del(`/events/${id}?version=${version}`, meta),
 }
 
 // ── Mind（思维面板 · 记录）─────────────────────────────────────────────────────
@@ -1024,6 +1032,12 @@ export const agentApi = {
   },
   getMessagesBefore: (sessionId: string, beforeId: number, limit = 200) =>
     get(`/agent/sessions/${sessionId}/messages?before_id=${encodeURIComponent(String(beforeId))}&limit=${encodeURIComponent(String(limit))}`),
+  getRunMessages: (sessionId: number, runId: string) =>
+    get(`/agent/sessions/${sessionId}/messages?run_id=${encodeURIComponent(runId)}&limit=200`),
+  getToolEventDetails: (sessionId: number, source: { kind: 'timeline'; messageId: number; index: number }) => {
+    const params = new URLSearchParams({ source: 'timeline', message_id: String(source.messageId), timeline_index: String(source.index) })
+    return get<{ toolInput?: unknown; toolResult?: unknown }>(`/agent/sessions/${sessionId}/tool-event-details?${params.toString()}`)
+  },
   listSessionInteractions: (sessionId: string) => get<{ items: Array<Record<string, any>> }>(`/agent/sessions/${sessionId}/interactions`),
   getInteractionSession: (promptId: number) => get<{ session_id: number }>(`/agent/interactions/${promptId}/session`),
   getPendingQueue: (queueId: string) => get<{ sessionId: number | null; items: Array<{ key: number; queue_id: string; session_id: number | null; claimed: boolean; text: string; attachments: any[]; references: any[] }> }>(`/agent/pending-queues/${encodeURIComponent(queueId)}`),

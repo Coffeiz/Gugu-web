@@ -173,14 +173,10 @@ html[data-theme][data-family] .cal-page .month-cell::before,
 html[data-theme][data-family] .cal-page .wv-dhead::after,
 html[data-theme][data-family] .cal-page .wv-ad-hover { background: var(--action-soft); }
 html[data-theme][data-family] .cal-page .month-cell.is-today { background: var(--calendar-today-cell-bg); }
-html[data-theme][data-family] .cal-page .month-cell.is-selected { background: var(--calendar-selected-cell-bg); }
-html[data-theme][data-family] .cal-page .month-cell.in-range { background: var(--calendar-range-cell-bg); }
 html[data-theme][data-family] .cal-page .wv-aco.today { background: var(--color-accent-faint); }
 html[data-theme][data-family] .cal-page .wv-dhead.selected::before,
 html[data-theme][data-family] .cal-page .wv-ad-sel,
 html[data-theme][data-family] .cal-page .wv-selected { background: var(--calendar-selected-cell-bg); }
-html[data-theme][data-family] .cal-page .month-cell.in-range.range-start,
-html[data-theme][data-family] .cal-page .month-cell.in-range.range-end { background: var(--calendar-range-edge-bg); }
 html[data-theme][data-family] .cal-page .month-cell.is-weekend,
 html[data-theme][data-family] .cal-page .wv-aco.weekend { background: var(--status-danger-bg); }
 html[data-theme][data-family] .cal-page .weekday-hdr.weekend,
@@ -340,9 +336,8 @@ html[data-theme='dark'][data-family] .mini-player {
   box-shadow: var(--gugu-chat-shadow);
   color: var(--content-primary);
 }
-html[data-theme='dark'][data-family] .mini-player .mp-bars i,
-html[data-theme='dark'][data-family] .mini-player .mp-track {
-  background: var(--surface-soft-hover);
+html[data-theme='dark'][data-family] .mini-player .mp-bars i {
+  background: var(--gugu-chat-voice-wave);
 }
 html[data-theme='dark'][data-family] .mini-player .mp-fill,
 html[data-theme='dark'][data-family] .mini-player .mp-thumb {

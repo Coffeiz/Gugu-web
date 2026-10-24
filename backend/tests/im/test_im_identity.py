@@ -212,14 +212,14 @@ def test_actor_context_keeps_owner_and_platform_identity_separate():
 
 
 async def test_im_loop_prepares_actor_and_agent_request(monkeypatch):
-    from agent.im.loop import prepare_request
+    from agent.im.request_preparation import prepare_request
     from agent.im.models import ChatTarget, PlatformMessage, PlatformSender
 
     async def fake_access(*args, **kwargs):
         from agent.im.permissions import ImAccess
         return ImAccess("member", ["xng_search"])
 
-    monkeypatch.setattr("agent.im.loop.resolve_access", fake_access)
+    monkeypatch.setattr("agent.im.request_preparation.resolve_access", fake_access)
     message = PlatformMessage(
         platform="qq",
         bot_id="bot-1",
@@ -238,7 +238,7 @@ async def test_im_loop_prepares_actor_and_agent_request(monkeypatch):
 
 
 async def test_non_qq_group_defaults_to_unknown_minimal_access(monkeypatch):
-    from agent.im.loop import prepare_request
+    from agent.im.request_preparation import prepare_request
     from agent.im.models import ChatTarget, PlatformMessage, PlatformSender
 
     message = PlatformMessage(
@@ -265,7 +265,7 @@ async def test_non_qq_group_defaults_to_unknown_minimal_access(monkeypatch):
 
 
 async def test_feishu_group_uses_bound_owner_open_id(db, user_a):
-    from agent.im.loop import prepare_request
+    from agent.im.request_preparation import prepare_request
     from agent.im.models import ChatTarget, PlatformMessage, PlatformSender
     from app.models import UserBot
 
@@ -308,7 +308,7 @@ async def test_feishu_group_uses_bound_owner_open_id(db, user_a):
 
 
 async def test_non_qq_private_message_keeps_owner_access():
-    from agent.im.loop import prepare_request
+    from agent.im.request_preparation import prepare_request
     from agent.im.models import ChatTarget, PlatformMessage, PlatformSender
 
     message = PlatformMessage(
@@ -328,7 +328,7 @@ async def test_non_qq_private_message_keeps_owner_access():
 
 
 async def test_feishu_private_message_keeps_owner_access():
-    from agent.im.loop import prepare_request
+    from agent.im.request_preparation import prepare_request
     from agent.im.models import ChatTarget, PlatformMessage, PlatformSender
 
     message = PlatformMessage(
@@ -516,26 +516,7 @@ async def test_im_sessions_are_isolated_by_bot_id(db, user_a):
     assert second.session.bot_id == "bot-b"
 
 
-def test_im_loop_selects_member_or_owner_facade_without_duplicate_runtime():
-    from agent.im.actor import ActorContext
-    from agent.im.loop import MemberAgentLoop, OwnerAgentLoop, select_loop
-    from agent.models import AgentRequest
-
-    member = AgentRequest(
-        message="你好", user_id="owner", user_name="群友", source="qq",
-        actor_context=ActorContext("owner", "qq", role="member"),
-    )
-    owner = AgentRequest(
-        message="你好", user_id="owner", user_name="coffeiz", source="qq",
-        actor_context=ActorContext("owner", "qq", role="owner"),
-    )
-
-    assert isinstance(select_loop(member), MemberAgentLoop)
-    assert isinstance(select_loop(owner), OwnerAgentLoop)
-    assert type(select_loop(member).run_collect) is type(select_loop(owner).run_collect)
-
-
-async def test_worker_handle_delegates_business_dispatch_to_im_loop(monkeypatch):
+async def test_worker_handle_delegates_business_dispatch_to_im_dispatch(monkeypatch):
     import worker
 
     seen = []
@@ -544,7 +525,7 @@ async def test_worker_handle_delegates_business_dispatch_to_im_loop(monkeypatch)
         seen.append(payload)
         return "done"
 
-    monkeypatch.setattr("agent.im.loop.dispatch_im_message", fake_dispatch)
+    monkeypatch.setattr("agent.im.dispatch.dispatch_im_message", fake_dispatch)
     assert await worker.handle("msg-1", {"text": "你好"}) == "done"
     assert seen == [{"text": "你好"}]
 
@@ -575,5 +556,5 @@ def test_group_search_permissions_include_restricted_image_reading():
     from app.services.im_identity import normalize_group_allowed_tools
 
     assert normalize_group_allowed_tools([
-        "xng_search", "similar_image_search", "inspect_images", "send_file",
+        "xng_search", "similar_image_search", "read_file", "send_file",
     ]) == ["xng_search", "http_get", "similar_image_search", "read_file", "send_file"]

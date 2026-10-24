@@ -91,11 +91,8 @@ const headers = computed(() => [
 
 const {
   contents, sortedContents, sortKey, sortDir, onSortSelect, openCtx,
-  selectedFolderKeys, previewFolderKeys, handleFolderClick,
-  folderListIcon, folderAccentColor, renamingFolderKey, renameText, commitRename, cancelRename,
-  startRenameFolder, downloadFolder, deleteFolder, inSelectionMode,
-  selectedIds, previewFileIds, cbStore, handleFileClick,
-  fileListIcon, fileIconColor, renamingFileId, startRenameFile, downloadFile, deleteSingleFile,
+  selectedFolderKeys, renamingFolderKey, commitRename,
+  selectedIds, fileListIcon, fileIconColor, renamingFileId,
   uploadingItems, loading, canUpload, handleFileInput,
   folderLayoutKey, fileLayoutKey, layoutCollection,
 } = props.context

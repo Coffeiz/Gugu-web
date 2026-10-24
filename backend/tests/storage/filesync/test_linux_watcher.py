@@ -56,6 +56,10 @@ async def test_overflow_ready_keeps_reason_and_scheduler_allows_verified_deletio
     assert binding.needs_reconcile
     root = tmp_path / "watched"
     root.mkdir()
+    from app.services.filesync.reconcile import _root_fingerprint
+
+    binding.root_fingerprint = _root_fingerprint(root)
+    await db.commit()
     async def binding_root(*args):
         return root
     monkeypatch.setattr("app.services.filesync.watcher._binding_root", binding_root)
@@ -114,6 +118,38 @@ def test_native_tracks_nested_delete_without_following_symlink(tmp_path, monkeyp
         os.close(watcher.fd)
 
 
+def test_deleting_watched_nested_directory_is_not_reported_as_lost(tmp_path, monkeypatch):
+    root = tmp_path / "root"
+    nested = root / "nested"
+    nested.mkdir(parents=True)
+    watcher = NativeWatcher()
+    messages = []
+    monkeypatch.setattr(watcher, "emit", messages.append)
+    try:
+        watcher.watch({"binding_id": 1, "root": str(root)})
+        while watcher.pending:
+            watcher.scan_step()
+        messages.clear()
+
+        nested.rmdir()
+        watcher.drain()
+
+        assert any(
+            item.get("event") == "change"
+            and item.get("operation") == "delete"
+            and item.get("relative_path") == "nested"
+            and item.get("object_type") == "folder"
+            for item in messages
+        )
+        assert not any(
+            item.get("event") == "error" and item.get("code") == "watcher_watch_lost"
+            for item in messages
+        )
+    finally:
+        watcher.unwatch(1)
+        os.close(watcher.fd)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("guard_state", ["absent", "replaced", "deferred"])
 async def test_periodic_overflow_deletion_requires_original_root_identity(
@@ -130,8 +166,10 @@ async def test_periodic_overflow_deletion_requires_original_root_identity(
     if guard_state == "replaced":
         root.rename(tmp_path / "previous-root")
         root.mkdir()
+    from app.services.filesync.reconcile import _root_fingerprint
+
     binding = FileSyncBinding(user_id=user_a.id, source="local_directory", mode="bidirectional",
-                              status="active", root_path=".", root_fingerprint="a" * 64,
+                              status="active", root_path=".", root_fingerprint=_root_fingerprint(root),
                               needs_reconcile=True, gap_revision=1,
                               health_error_code="kernel_event_queue_overflow")
     db.add(binding)

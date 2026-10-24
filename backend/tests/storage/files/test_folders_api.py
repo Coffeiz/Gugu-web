@@ -46,6 +46,8 @@ async def test_folder_page_is_direct_children_and_has_hard_bound(db, user_a, use
     )
 
     assert [folder.id for folder in roots['items']] == [parent.id]
+    assert roots['items'][0].file_count == 0
+    assert roots['items'][0].folder_count == 1
     assert roots['has_more'] is False
     assert child.id not in {folder.id for folder in roots['items']}
 

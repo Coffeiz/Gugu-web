@@ -70,7 +70,7 @@ export const MODEL_PROVIDERS: readonly ModelProvider[] = [
   { value: 'qwen', labelKey: 'adminAgentUi.providerQwen', base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen3.8-max', api_formats: ['openai', 'responses', 'anthropic'] },
   { value: 'glm', labelKey: 'adminAgentUi.providerGlm', base_url: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-5.3', api_formats: ['openai', 'responses', 'anthropic'] },
   { value: 'deepseek', labelKey: 'adminAgentUi.providerDeepseek', base_url: 'https://api.deepseek.com', model: 'deepseek-flash', api_formats: ['openai', 'responses', 'anthropic'] },
-  { value: 'minimax', labelKey: 'adminAgentUi.providerMinimax', base_url: 'https://api.minimaxi.com/anthropic', model: 'MiniMax-M3', api_formats: ['openai', 'responses', 'anthropic'] },
+  { value: 'minimax', labelKey: 'adminAgentUi.providerMinimax', base_url: 'https://api.minimaxi.com/anthropic', model: 'MiniMax-M3.1-Flash', api_formats: ['openai', 'responses', 'anthropic'] },
   { value: 'mimo', labelKey: 'adminAgentUi.providerMimo', base_url: 'https://api.xiaomimimo.com/v1', model: 'mimo-v2.6-pro', api_formats: ['openai', 'responses', 'anthropic'] },
   { value: 'ollama', labelKey: 'adminAgentUi.providerOllama', base_url: 'http://127.0.0.1:11434/v1', model: 'qwen3:8b', api_formats: ['openai', 'responses', 'anthropic'] },
   { value: 'local', labelKey: 'adminAgentUi.providerLocal', base_url: '', model: '', api_formats: ['openai', 'responses', 'anthropic'] },

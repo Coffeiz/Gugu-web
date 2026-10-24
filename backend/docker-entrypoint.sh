@@ -381,6 +381,7 @@ if [ "${GUGU_UNIFIED_APP:-0}" = "1" ] \
     fi
     app_pid=""
     if [ "${1:-}" = "nginx" ]; then
+        /usr/local/bin/prepare-admin-entry.sh
         uvicorn app.main:app --host 127.0.0.1 --port "${GUGU_APP_PORT:-8001}" &
         app_pid=$!
     fi

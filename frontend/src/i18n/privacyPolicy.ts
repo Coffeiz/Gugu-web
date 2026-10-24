@@ -53,7 +53,7 @@ export const privacyPolicy = {
 
 ### 联网搜索
 
-启用联网搜索后，搜索关键词会发送给 Admin 选择的搜索 Provider（例如 SearXNG、Tavily、百度搜索或 You.com）。咕咕不会主动把搜索词与账户身份一并提供给上游服务。
+启用联网搜索后，搜索关键词会发送给 Admin 选择的搜索提供商（例如 SearXNG、Tavily、百度搜索或 You.com）。咕咕不会主动把搜索词与账户身份一并提供给上游服务。
 
 ### IM 与邮件
 

@@ -5228,7 +5228,7 @@ export interface components {
             /** Description */
             description?: string | null;
             /** Version */
-            version?: number | null;
+            version: number;
         };
         /** FeedbackCreate */
         FeedbackCreate: {
@@ -5301,6 +5301,8 @@ export interface components {
         };
         /** FileUpdate */
         FileUpdate: {
+            /** Version */
+            version: number;
             /** Displayname */
             displayName?: string | null;
             /** Ext */
@@ -5359,6 +5361,8 @@ export interface components {
              * @default 0
              */
             fileCount: number;
+            /** Foldercount */
+            folderCount: number;
             /**
              * Version
              * @default 1
@@ -5886,11 +5890,7 @@ export interface components {
             automaticModeEnabled: boolean;
             /** Decisionguardenabled */
             decisionGuardEnabled: boolean;
-            /**
-             * Showtoolinteractions
-             * @default false
-             */
-            showToolInteractions: boolean;
+            imToolDisplayMode: "off" | "all" | "slow_only";
             /**
              * Showintermediatereplies
              * @default true
@@ -5962,8 +5962,7 @@ export interface components {
             automaticModeEnabled?: boolean | null;
             /** Decisionguardenabled */
             decisionGuardEnabled?: boolean | null;
-            /** Showtoolinteractions */
-            showToolInteractions?: boolean | null;
+            imToolDisplayMode?: ("off" | "all" | "slow_only") | null;
             showIntermediateReplies?: boolean | null;
             /** Toolinjectionmode */
             toolInjectionMode?: string | null;
@@ -6691,6 +6690,8 @@ export interface components {
              * @default 0
              */
             fileCount: number;
+            /** Foldercount */
+            folderCount: number;
             /**
              * Version
              * @default 1
@@ -8634,7 +8635,9 @@ export interface operations {
     };
     delete_event_api_v1_events__eid__delete: {
         parameters: {
-            query?: never;
+            query: {
+                version: number;
+            };
             header?: never;
             path: {
                 eid: number;

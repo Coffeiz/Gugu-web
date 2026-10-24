@@ -1,4 +1,4 @@
-import { computed, nextTick, ref, type Ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import type { FolderMeta } from '@/stores/filesCache'
 
 export interface FolderNavigationOptions {

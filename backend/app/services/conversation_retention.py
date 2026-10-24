@@ -3,21 +3,23 @@ from __future__ import annotations
 
 import logging
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import asc, desc, func, select
 
 from app.services.conversation_cleanup import remove_messages_with_attachments
 
 logger = logging.getLogger(__name__)
 
 # 所有会话类型共用这组物理保留边界；上下文读取窗口由各自的 history policy 单独决定。
-MESSAGE_RETENTION_LIMIT = 500
-MESSAGE_TRIM_THRESHOLD = 600
+MESSAGE_RETENTION_LIMIT = 2000
+MESSAGE_TRIM_THRESHOLD = MESSAGE_RETENTION_LIMIT
+MESSAGE_TRIM_BATCH_SIZE = 500
 
 
 async def trim_session_messages(
     session_id: int,
     limit: int = MESSAGE_RETENTION_LIMIT,
     threshold: int = MESSAGE_TRIM_THRESHOLD,
+    batch_size: int = MESSAGE_TRIM_BATCH_SIZE,
 ) -> None:
     """超过阈值时只保留会话最近的消息，并清理随消息保存的附件。
 
@@ -27,7 +29,7 @@ async def trim_session_messages(
     边界同步物理删除已完结（resolved/expired/cancelled）的卡片，active 的
     待回复确认门一律保留。
     """
-    if limit < 1:
+    if limit < 1 or batch_size < 1:
         return
 
     import app.db.session as db_session
@@ -49,13 +51,19 @@ async def trim_session_messages(
             .order_by(desc(ConversationMessage.created_at), desc(ConversationMessage.id))
             .limit(limit)
         )
-        old_ids = list((await db.execute(
-            select(ConversationMessage.id).where(
-                ConversationMessage.session_id == session_id,
-                ConversationMessage.id.not_in(keep_ids),
-            )
-        )).scalars().all())
-        await remove_messages_with_attachments(db, old_ids)
+        while True:
+            old_ids = list((await db.execute(
+                select(ConversationMessage.id).where(
+                    ConversationMessage.session_id == session_id,
+                    ConversationMessage.id.not_in(keep_ids),
+                ).order_by(
+                    asc(ConversationMessage.created_at), asc(ConversationMessage.id)
+                ).limit(batch_size)
+            )).scalars().all())
+            if not old_ids:
+                break
+            # 每批独立提交并在提交后清理附件引用；中断时重跑会从剩余超限消息继续。
+            await remove_messages_with_attachments(db, old_ids)
 
         boundary = (await db.execute(
             select(func.min(ConversationMessage.created_at)).where(

@@ -80,20 +80,20 @@ def test_tool_injection_mode_defaults_to_description(monkeypatch):
     assert result.toolInjectionMode == "description"
 
 
-def test_im_display_preferences_use_new_defaults_and_preserve_saved_choices(monkeypatch):
+def test_im_tool_display_mode_response_uses_unified_preference(monkeypatch):
     monkeypatch.setattr(preferences_api, "get_settings", lambda: SimpleNamespace(
         agent=SimpleNamespace(personality_preference_enabled=False),
     ))
 
     defaults = preferences_api._to_response({})
-    assert defaults.showToolInteractions is True
+    assert defaults.imToolDisplayMode == "all"
     assert defaults.showIntermediateReplies is False
 
     saved = preferences_api._to_response({
-        "show_tool_interactions": False,
+        "im_tool_display_mode": "off",
         "show_intermediate_replies": True,
     })
-    assert saved.showToolInteractions is False
+    assert saved.imToolDisplayMode == "off"
     assert saved.showIntermediateReplies is True
 
 

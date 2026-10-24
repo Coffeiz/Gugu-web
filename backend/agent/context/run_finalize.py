@@ -83,6 +83,7 @@ async def finalize_run(
     run_id: str | None = None,
     round_id: str | None = None,
     interrupted: bool = False,
+    inbound_batch_key: str | None = None,
 ) -> FinalizeResult:
     """用一个契约完成 canonical turn、展示时间线、trim 与压缩边界持久化。
 
@@ -140,18 +141,17 @@ async def finalize_run(
                 user_message=user_message,
                 interrupted=interrupted,
             )
-            persisted_timeline = display_timeline or None
-            if persisted_timeline and user_message_id:
-                # 展示时间线可能在取消收尾时才落库，而下一条用户消息已先提交。
-                # 用发起本 run 的用户消息锚定其顺序，避免刷新后按 assistant 行的
-                # 晚到自增 id 把旧 run 的工具卡排到后续用户消息之后。
-                persisted_timeline = [
-                    {
-                        **item,
-                        "timelineOrder": item.get("timelineOrder") or user_message_id * 1000 + index + 1,
-                    }
-                    for index, item in enumerate(persisted_timeline)
-                ]
+            if display_timeline:
+                # 聊天展示时间线不承担模型上下文职责。媒体块（尤其是视频帧
+                # base64）只留占位说明，避免把整段媒体副本写入会话记录。
+                from agent.context.display_timeline import finalize_display_timeline
+                from agent.media.images import strip_image_for_history
+
+                persisted_timeline = finalize_display_timeline(
+                    strip_image_for_history(display_timeline),
+                )
+            else:
+                persisted_timeline = None
             if text or files or persisted_timeline:
                 assistant_created_at = None
                 if interrupted and user_message is not None:
@@ -180,7 +180,22 @@ async def finalize_run(
                 )
                 if assistant_created_at is not None:
                     assistant_values["created_at"] = assistant_created_at
-                db.add(ConversationMessage(**assistant_values))
+                checkpoint = None
+                if user_message_id:
+                    from sqlalchemy import select, null
+                    from agent.context.display_checkpoint import display_run_key
+
+                    checkpoint = (await db.execute(select(ConversationMessage).where(
+                        ConversationMessage.session_id == session_id,
+                        ConversationMessage.role == "assistant",
+                        ConversationMessage.run_id == display_run_key(user_message_id),
+                    ))).scalars().first()
+                if checkpoint is None:
+                    db.add(ConversationMessage(**assistant_values))
+                else:
+                    for key, value in assistant_values.items():
+                        setattr(checkpoint, key, value)
+                    checkpoint.content_json = null()
 
         from agent.usage import record_usage
         # BYOK 不参与平台配额封顶，但仍记录实际 token，供用户查看自己的模型用量。

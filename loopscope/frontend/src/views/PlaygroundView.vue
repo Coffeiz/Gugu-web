@@ -3,9 +3,9 @@
     <section class="sessions">
       <header>
         <div><span class="eyebrow">SESSIONS</span><h2>Conversation</h2></div>
-        <button class="new" title="新会话" @click="newSession">＋</button>
+        <button class="new" :title="t('playground.newSession')" @click="newSession">＋</button>
       </header>
-      <div v-if="!connected" class="empty small">从 Gugu <b>/dev</b> 打开 LoopScope 后会自动连接。</div>
+      <div v-if="!connected" class="empty small">{{ t('playground.openDev') }}</div>
       <button
         v-for="s in sessions" :key="s.id"
         class="session-row" :class="{ active: s.id === activeId }"
@@ -24,32 +24,32 @@
           <h1>{{ activeSession?.title || 'New conversation' }}</h1>
         </div>
         <div class="head-actions">
-          <button v-if="activeId" class="refresh" title="刷新当前会话消息和 Runs" aria-label="刷新当前会话消息和 Runs" @click="refreshAll">↻</button>
+          <button v-if="activeId" class="refresh" :title="t('playground.refreshSession')" :aria-label="t('playground.refreshSession')" @click="refreshAll">↻</button>
           <div v-if="activeId" class="view-switch">
-            <button :class="{ active: sessionView === 'conversation' }" @click="showConversation">对话</button>
+            <button :class="{ active: sessionView === 'conversation' }" @click="showConversation">{{ t('playground.conversation') }}</button>
             <button :class="{ active: sessionView === 'monitor' }" @click="openMonitor">Monitor</button>
           </div>
           <div v-if="sessionView === 'conversation'" class="mode-switch">
-            <button :class="{active: mode==='normal'}" @click="mode='normal'">普通</button>
-            <button :class="{active: mode==='detail'}" @click="mode='detail'">详细</button>
+            <button :class="{active: mode==='normal'}" @click="mode='normal'">{{ t('playground.normal') }}</button>
+            <button :class="{active: mode==='detail'}" @click="mode='detail'">{{ t('playground.detailed') }}</button>
           </div>
         </div>
       </header>
 
       <template v-if="sessionView === 'conversation'">
         <div ref="scrollEl" class="messages" @scroll="onMessagesScroll">
-          <div v-if="loadingOlder" class="older-loading">正在加载更早消息…</div>
+          <div v-if="loadingOlder" class="older-loading">{{ t('playground.loadingOlder') }}</div>
           <div v-if="!messages.length" class="empty">
             <div class="empty-orb">◎</div>
-            <strong>从一条真实消息开始</strong>
-            <span>消息会走 Gugu 当前 Web AgentLoop；完成后对应 Run 会自动进入 Scope。</span>
+            <strong>{{ t('playground.startMessage') }}</strong>
+            <span>{{ t('playground.agentLoopHint') }}</span>
           </div>
 
           <article v-for="(m, idx) in messages" :key="m.id" class="message" :class="m.role">
             <div class="role">{{ m.role === 'user' ? 'YOU' : m.role === 'tool' ? 'TOOL' : 'GUGU' }}</div>
             <div v-if="m.role === 'tool'" class="bubble tool-bubble">
-              <strong>{{ m.toolLabel || m.toolName || '工具调用' }}</strong>
-              <span class="tool-status">{{ m.toolStatus === 'error' ? '失败' : m.toolStatus === 'running' ? '执行中' : '完成' }}</span>
+              <strong>{{ m.toolLabel || m.toolName || t('playground.toolCall') }}</strong>
+              <span class="tool-status">{{ m.toolStatus === 'error' ? t('playground.failed') : m.toolStatus === 'running' ? t('playground.running') : t('playground.completed') }}</span>
               <pre v-if="mode === 'detail' && (m.toolInput !== undefined || m.toolResult !== undefined)">{{ preview({ input: m.toolInput, result: m.toolResult }) }}</pre>
             </div>
             <div v-else class="bubble">{{ m.content }}<span v-if="m.pending" class="typing">▋</span></div>
@@ -73,16 +73,16 @@
                   <span v-if="runForAssistant(idx)?.usage?.input">{{ fmtTokens(runForAssistant(idx)?.usage?.input) }} in</span>
                   <span v-if="runForAssistant(idx)?.usage?.cache_read">{{ fmtTokens(runForAssistant(idx)?.usage?.cache_read) }} cached</span>
                 </div>
-                <button class="inspect-run" @click="inspectRun(runForAssistant(idx)?.id)">在 Monitor 中查看完整 Run →</button>
+                <button class="inspect-run" @click="inspectRun(runForAssistant(idx)?.id)">{{ t('playground.viewRun') }}</button>
               </template>
             </div>
           </article>
         </div>
 
         <form class="composer ls-card" @submit.prevent="send">
-          <textarea v-model="draft" :disabled="sending || !connected" rows="1" placeholder="给咕咕发消息…" @keydown="handleComposerKeydown" />
+          <textarea v-model="draft" :disabled="sending || !connected" rows="1" :placeholder="t('playground.composer')" @keydown="handleComposerKeydown" />
           <div class="composer-foot">
-            <span>{{ mode === 'detail' ? 'Detailed · round / tool / token summary' : 'Normal conversation' }}</span>
+            <span>{{ mode === 'detail' ? t('playground.detailedSummary') : t('playground.normalConversation') }}</span>
             <button class="ls-button primary" :disabled="sending || !draft.trim() || !connected">{{ sending ? 'Running…' : 'Send' }}</button>
           </div>
         </form>
@@ -111,6 +111,8 @@ import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import type { ChatMessage, GuguSession, TraceRun } from '../types'
 import { listGuguSessions, loadBootstrap, loadMessagePage, sendMessage } from '../services/gugu'
 import { getRun, getRunSpans, listRuns, subscribeTraceEvents } from '../services/api'
+import { useLoopScopeI18n } from '../i18n/index'
+const { t } = useLoopScopeI18n()
 import SessionMonitor from '../components/SessionMonitor.vue'
 import { buildTraceRounds } from '../utils/runExport'
 import { prettyJson } from '../utils/prettyJson'
@@ -280,7 +282,7 @@ async function exportRuns(runIds: string[]) {
     link.click()
     URL.revokeObjectURL(url)
   } catch (cause) {
-    error.value = cause instanceof Error ? `导出失败：${cause.message}` : '导出失败，请稍后重试。'
+    error.value = cause instanceof Error ? t('playground.exportFailedPrefix', { message: cause.message }) : t('playground.exportFailed')
   }
 }
 async function loadLatestMessages(sessionId: number) {

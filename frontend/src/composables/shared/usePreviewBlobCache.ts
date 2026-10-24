@@ -5,6 +5,12 @@ const PREVIEW_CACHE_MAX = 20
 const previewCache = new Map<string, { url: string; accountEpoch: number }>()
 const previewFileMeta = new Map<number, { file: Partial<FileMeta>; filesRevision: number | null; accountEpoch: number }>()
 
+/** 仅显式刷新预览时追加缓存版本，普通打开保留原 URL。 */
+export function withPreviewCacheBust(url: string, refresh: boolean): string {
+  if (!refresh) return url
+  return `${url}${url.includes('?') ? '&' : '?'}_t=${Date.now()}`
+}
+
 function clearPreviewBlobCache(): void {
   for (const { url } of previewCache.values()) URL.revokeObjectURL(url)
   previewCache.clear()

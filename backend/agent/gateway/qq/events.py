@@ -135,7 +135,7 @@ def _qq_bot_mention_id(data: Dict[str, Any], event_type: str) -> str:
             return match.group(1)
     return ""
 
-async def _qq_ack(channel_id: str, chat_type: str, target_id: str, text: str, msg_id: str | None) -> None:
+async def _qq_reply(channel_id: str, chat_type: str, target_id: str, text: str, msg_id: str | None) -> None:
     try:
         message_format = await _message_format(channel_id, chat_type)
         if chat_type == "group":
@@ -143,9 +143,10 @@ async def _qq_ack(channel_id: str, chat_type: str, target_id: str, text: str, ms
         else:
             await _post(channel_id, target_id, text, msg_id, message_format)
     except Exception as e:
-        # best-effort：这只是"收到啦"的秒回提示，失败不影响正式回复走 worker 那条主链路，
-        # 可以广吞，但仍要留痕方便排查。
-        diag_log("agent.gateway.qq._qq_ack", e)
+        # best-effort：这里只发网关侧必须立刻返回的答复（附件「收到啦」秒回提示、
+        # 取消/绑定确认）；失败不影响正式回复走 worker 那条主链路，可以广吞，
+        # 但仍要留痕方便排查。
+        diag_log("agent.gateway.qq._qq_reply", e)
         _log.warning("[qq] 即时回复失败: %s", redact(f"{type(e).__name__}: {e}"))
 
 async def _ack_qq_interaction(channel_id: str, interaction_id: str, *, code: int = 0) -> bool:
@@ -250,7 +251,7 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
                 diag_log("agent.gateway.qq.binding_code", exc)
                 bound = False
             reply = "QQ 身份已绑定，之后可以正常使用。" if bound else "验证码无效或已过期，请回网页重新生成。"
-            await _qq_ack(channel_id, chat_type, sender_id, reply, msg_id)
+            await _qq_reply(channel_id, chat_type, sender_id, reply, msg_id)
             return
     raw_attachments = data.get("attachments") or []
     if not isinstance(raw_attachments, list):
@@ -326,7 +327,7 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         )
         if should_reply and now - last_ack.get(ack_key, 0.0) > _ACK_COOLDOWN:
             last_ack[ack_key] = now
-            await _qq_ack(channel_id, chat_type, ack_target, "文件收到啦，让我看看~", msg_id)
+            await _qq_reply(channel_id, chat_type, ack_target, "文件收到啦，让我看看~", msg_id)
     if not text and not all_attachments and not quoted_text:
         return
     from agent.runtime import trace
@@ -370,7 +371,7 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
     # 取消是实时控制信号：必须在 Gateway 侧立刻写入 Redis，不能等同用户锁的
     # worker 轮到这条消息；普通 reply/drop shortcut 仍交给 worker 决策。
     if not all_attachments:
-        from agent.im.loop import apply_im_shortcut_cancel, decide_im_shortcut
+        from agent.im.shortcuts import apply_im_shortcut_cancel, decide_im_shortcut
         dec = await decide_im_shortcut(
             "qq", sender_id, text,
             bot_id=channel_id,
@@ -384,12 +385,12 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
                 scope_id=chat_id or sender_id,
             )
             target = chat_id if chat_type == "group" else sender_id
-            await _qq_ack(channel_id, chat_type, target, dec["reply"], msg_id)
+            await _qq_reply(channel_id, chat_type, target, dec["reply"], msg_id)
             return
         if dec["action"] == "no_permission":
             # 咕咕在跑别人的 loop，当前用户无权取消：回一句提示，不写取消标志、不入队。
             target = chat_id if chat_type == "group" else sender_id
-            await _qq_ack(channel_id, chat_type, target, dec["reply"], msg_id)
+            await _qq_reply(channel_id, chat_type, target, dec["reply"], msg_id)
             return
 
     try:
@@ -443,7 +444,7 @@ async def _handle_qq_interaction(data: Dict[str, Any], channel_id: str, owner: s
             if error_chat_type == "group" and event.get("chat_id")
             else event["platform_user_id"]
         )
-        await _qq_ack(
+        await _qq_reply(
             channel_id, error_chat_type, error_target_id,
             "这个操作已过期或已经处理过了。", None,
         )
@@ -460,18 +461,18 @@ async def _handle_qq_interaction(data: Dict[str, Any], channel_id: str, owner: s
     chat_type = str(event.get("chat_type") or "c2c")
     target_id = event.get("chat_id") or event["platform_user_id"]
     if result_payload.get("status") == "awaiting_text":
-        await _qq_ack(
+        await _qq_reply(
             channel_id, chat_type, target_id,
             "请直接发送你的回复，咕咕会继续处理。", None,
         )
         return
     if result.get("status") == "awaiting_secret":
-        await _qq_ack(channel_id, chat_type, target_id, "请发送凭据字段值；取消输入请发送“取消”。", None)
+        await _qq_reply(channel_id, chat_type, target_id, "请发送凭据字段值；取消输入请发送“取消”。", None)
         return
     if result.get("status") == "cancelled" and result.get("prompt_id"):
-        await _qq_ack(channel_id, chat_type, target_id, "已取消凭据输入。", None)
+        await _qq_reply(channel_id, chat_type, target_id, "已取消凭据输入。", None)
         return
-    await _qq_ack(
+    await _qq_reply(
         channel_id,
         chat_type,
         target_id,

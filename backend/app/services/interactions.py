@@ -925,3 +925,50 @@ async def create_tool_confirmation(
             "task_paused": True,
             "expires_at": prompt.expires_at.isoformat(),
         }
+
+
+async def create_tool_interaction(
+    *, user_id, session_id: int | None, tool_name: str,
+    tool_call_id: str, result, kind: str,
+) -> dict | None:
+    """为工具交互统一创建可展示的 Prompt 载荷。"""
+    if kind == "confirmation":
+        return await create_tool_confirmation(
+            user_id=user_id,
+            session_id=session_id,
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+            result=result,
+        )
+    if kind != "ask_user":
+        return None
+
+    payload = result
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except (TypeError, ValueError):
+            return None
+    if not isinstance(payload, dict):
+        return None
+    created = await create_agent_prompt(
+        user_id=user_id,
+        session_id=session_id,
+        tool_call_id=tool_call_id,
+        tool_name=tool_name,
+        payload=payload,
+    )
+    if created is None:
+        return None
+    prompt, actions = created
+    schema = prompt.schema_json or {}
+    return {
+        "prompt_id": prompt.id,
+        "kind": prompt.kind,
+        "title": prompt.title,
+        "body": prompt.body,
+        "options": actions,
+        "allow_text_input": bool(schema.get("allow_text_input", False)),
+        "secret_fields": list(schema.get("secret_fields") or []),
+        "expires_at": prompt.expires_at.isoformat(),
+    }

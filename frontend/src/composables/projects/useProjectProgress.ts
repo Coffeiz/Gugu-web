@@ -14,20 +14,3 @@ export function calculateStageProgress(stages: ProjectStage[], currentStageKey: 
 
   return Math.round(index * stageWeight + withinStage)
 }
-
-/** 顶部展示进度：有待办时按全部阶段待办完成度，否则退回当前阶段位置进度。 */
-export function calculateHeaderProgress(stages: ProjectStage[], currentStageKey: string): number {
-  if (!stages.length) return 0
-
-  let done = 0
-  let total = 0
-  for (const stage of stages) {
-    const todos = stage.todos ?? []
-    done += todos.filter(todo => todo.done).length
-    total += todos.length
-  }
-
-  return total > 0
-    ? Math.round(done / total * 100)
-    : calculateStageProgress(stages, currentStageKey)
-}

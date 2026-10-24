@@ -1,4 +1,4 @@
-"""视频转码结果缓存（PRD-STORAGE-1 Phase B，`chat_attach._compress_video_cached()`
+"""视频转码结果缓存（PRD-STORAGE-1 Phase B，`media_video.compress_video_cached()`
 + `app/core/video_cache_gc.py`）。
 
 覆盖：cache_key 随 storage_key/转码 profile 变化、alive marker 用 SET 而不是
@@ -6,6 +6,10 @@ EXPIRE（Redis 丢失后仍能自愈）、marker 缺失但缓存文件还在时�
 single-flight 去重、清理任务尊重 alive marker，以及公开的
 `prepare_video_media()` 命中缓存时仍重新探测但跳过转码。
 """
+from agent.media import gates as media_gates
+from agent.media import gates as media_gates
+from agent.media import video as media_video
+from agent.providers.media import MediaLimits
 import asyncio
 from types import SimpleNamespace
 
@@ -19,7 +23,7 @@ from app.services.storage import LocalStorageBackend
 def storage(tmp_path, monkeypatch):
     backend = LocalStorageBackend(tmp_path)
     monkeypatch.setattr("app.services.storage.get_storage", lambda: backend)
-    monkeypatch.setattr(chat_attach, "get_storage", lambda: backend)
+    monkeypatch.setattr("app.services.storage.get_storage", lambda: backend)
     return backend
 
 
@@ -76,34 +80,34 @@ def _probe():
 @pytest.mark.asyncio
 async def test_cache_hit_skips_transcode(storage, monkeypatch):
     fake_redis = _FakeRedis()
-    monkeypatch.setattr(chat_attach, "get_redis", lambda: fake_redis)
+    monkeypatch.setattr("app.core.redis.get_redis", lambda: fake_redis)
     call_count = 0
 
-    async def fake_compress(raw, probe=None):
+    async def fake_compress(raw, probe=None, limits=None):
         nonlocal call_count
         call_count += 1
         return b"compressed-bytes"
 
-    monkeypatch.setattr(chat_attach, "_compress_video", fake_compress)
+    monkeypatch.setattr(media_video, "compress_video", fake_compress)
 
     storage_key, user_id = "u1/lib/video.mp4", "u1"
     raw = b"raw-video"
     probe = _probe()
 
-    first = await chat_attach._compress_video_cached(raw, probe, storage_key, user_id, MODEL_CFG)
+    first = await media_video.compress_video_cached(raw, probe, storage_key, user_id, MODEL_CFG)
     assert first == b"compressed-bytes"
     assert call_count == 1
 
-    second = await chat_attach._compress_video_cached(raw, probe, storage_key, user_id, MODEL_CFG)
+    second = await media_video.compress_video_cached(raw, probe, storage_key, user_id, MODEL_CFG)
     assert second == b"compressed-bytes"
-    assert call_count == 1, "第二次应该命中缓存，不再调用 _compress_video"
+    assert call_count == 1, "第二次应该命中缓存，不再调用 compress_video"
 
 
 @pytest.mark.asyncio
 async def test_prepare_video_cache_hit_reprobes_but_skips_transcode(storage, monkeypatch):
     """公共入口命中缓存时仍需重新确认时长/媒体规则，但不能再次跑 ffmpeg。"""
     fake_redis = _FakeRedis()
-    monkeypatch.setattr(chat_attach, "get_redis", lambda: fake_redis)
+    monkeypatch.setattr("app.core.redis.get_redis", lambda: fake_redis)
     probe_calls = 0
     compress_calls = 0
 
@@ -112,22 +116,25 @@ async def test_prepare_video_cache_hit_reprobes_but_skips_transcode(storage, mon
         probe_calls += 1
         return {**_probe(), "width": 3840, "height": 2160}
 
-    async def fake_compress(_raw, probe=None):
+    async def fake_compress(_raw, probe=None, limits=None):
         nonlocal compress_calls
         compress_calls += 1
         return b"compressed-bytes"
 
-    monkeypatch.setattr(chat_attach, "_probe_video", fake_probe)
-    monkeypatch.setattr(chat_attach, "_compress_video", fake_compress)
+    monkeypatch.setattr(media_video, "probe_video", fake_probe)
+    monkeypatch.setattr(media_video, "compress_video", fake_compress)
+    # MiniMax M3 的 Provider 策略不跑 ffprobe、不转码（原样直传）；这里显式换成
+    # 默认策略（转码 + 时长上限），才能覆盖「公共入口命中缓存后重新探测、不重复转码」。
+    monkeypatch.setattr(media_gates, "media_limits_for", lambda _cfg: MediaLimits())
 
     kwargs = {
         "storage_key": "u1/lib/video.mp4",
         "user_id": "u1",
     }
-    first = await chat_attach.prepare_video_media(
+    first = await media_video.prepare_video_media(
         b"raw-video", "video/mp4", "video.mp4", MODEL_CFG, **kwargs
     )
-    second = await chat_attach.prepare_video_media(
+    second = await media_video.prepare_video_media(
         b"raw-video", "video/mp4", "video.mp4", MODEL_CFG, **kwargs
     )
 
@@ -139,18 +146,18 @@ async def test_prepare_video_cache_hit_reprobes_but_skips_transcode(storage, mon
 @pytest.mark.asyncio
 async def test_cache_key_changes_with_storage_key(storage, monkeypatch):
     fake_redis = _FakeRedis()
-    monkeypatch.setattr(chat_attach, "get_redis", lambda: fake_redis)
+    monkeypatch.setattr("app.core.redis.get_redis", lambda: fake_redis)
     call_count = 0
 
-    async def fake_compress(raw, probe=None):
+    async def fake_compress(raw, probe=None, limits=None):
         nonlocal call_count
         call_count += 1
         return b"compressed-bytes"
 
-    monkeypatch.setattr(chat_attach, "_compress_video", fake_compress)
+    monkeypatch.setattr(media_video, "compress_video", fake_compress)
 
-    await chat_attach._compress_video_cached(b"raw", _probe(), "u1/lib/a.mp4", "u1", MODEL_CFG)
-    await chat_attach._compress_video_cached(b"raw", _probe(), "u1/lib/b.mp4", "u1", MODEL_CFG)
+    await media_video.compress_video_cached(b"raw", _probe(), "u1/lib/a.mp4", "u1", MODEL_CFG)
+    await media_video.compress_video_cached(b"raw", _probe(), "u1/lib/b.mp4", "u1", MODEL_CFG)
 
     assert call_count == 2, "不同 storage_key 不该复用同一份缓存"
 
@@ -158,24 +165,24 @@ async def test_cache_key_changes_with_storage_key(storage, monkeypatch):
 @pytest.mark.asyncio
 async def test_cache_key_changes_with_transcode_profile(storage, monkeypatch):
     """同一个 storage_key，但 model_cfg 对应的转码 profile 不同（这里换一个不是
-    MiniMax M3 的 model_cfg，_video_transcode_profile 里 minimax 字段会不同）——
+    MiniMax M3 的 model_cfg，video_transcode_profile 里 minimax 字段会不同）——
     不应该命中同一份缓存。"""
     fake_redis = _FakeRedis()
-    monkeypatch.setattr(chat_attach, "get_redis", lambda: fake_redis)
+    monkeypatch.setattr("app.core.redis.get_redis", lambda: fake_redis)
     call_count = 0
 
-    async def fake_compress(raw, probe=None):
+    async def fake_compress(raw, probe=None, limits=None):
         nonlocal call_count
         call_count += 1
         return b"compressed-bytes"
 
-    monkeypatch.setattr(chat_attach, "_compress_video", fake_compress)
-    monkeypatch.setattr(chat_attach, "_minimax_video_enabled", lambda cfg: cfg is MODEL_CFG)
+    monkeypatch.setattr(media_video, "compress_video", fake_compress)
+    monkeypatch.setattr(media_gates, "minimax_video_enabled", lambda cfg: cfg is MODEL_CFG)
 
     other_cfg = SimpleNamespace(provider="mimo", base_url="https://api.xiaomimimo.com/v1", model="mimo-vl")
 
-    await chat_attach._compress_video_cached(b"raw", _probe(), "u1/lib/a.mp4", "u1", MODEL_CFG)
-    await chat_attach._compress_video_cached(b"raw", _probe(), "u1/lib/a.mp4", "u1", other_cfg)
+    await media_video.compress_video_cached(b"raw", _probe(), "u1/lib/a.mp4", "u1", MODEL_CFG)
+    await media_video.compress_video_cached(b"raw", _probe(), "u1/lib/a.mp4", "u1", other_cfg)
 
     assert call_count == 2, "转码 profile 不同不该命中同一份缓存"
 
@@ -185,18 +192,18 @@ async def test_no_cache_without_storage_key_or_user_id(storage, monkeypatch):
     """聊天附件路径（不传 storage_key/user_id）应该完全不接缓存，每次都真转码，
     行为跟没有缓存机制时一致（不误伤现有聊天附件视频路径）。"""
     fake_redis = _FakeRedis()
-    monkeypatch.setattr(chat_attach, "get_redis", lambda: fake_redis)
+    monkeypatch.setattr("app.core.redis.get_redis", lambda: fake_redis)
     call_count = 0
 
-    async def fake_compress(raw, probe=None):
+    async def fake_compress(raw, probe=None, limits=None):
         nonlocal call_count
         call_count += 1
         return b"compressed-bytes"
 
-    monkeypatch.setattr(chat_attach, "_compress_video", fake_compress)
+    monkeypatch.setattr(media_video, "compress_video", fake_compress)
 
-    await chat_attach._compress_video_cached(b"raw", _probe(), None, None, MODEL_CFG)
-    await chat_attach._compress_video_cached(b"raw", _probe(), None, None, MODEL_CFG)
+    await media_video.compress_video_cached(b"raw", _probe(), None, None, MODEL_CFG)
+    await media_video.compress_video_cached(b"raw", _probe(), None, None, MODEL_CFG)
 
     assert call_count == 2
     assert fake_redis.set_calls == []   # 完全没碰 Redis
@@ -205,18 +212,18 @@ async def test_no_cache_without_storage_key_or_user_id(storage, monkeypatch):
 @pytest.mark.asyncio
 async def test_cache_hit_refreshes_marker_with_set_not_expire(storage, monkeypatch):
     fake_redis = _FakeRedis()
-    monkeypatch.setattr(chat_attach, "get_redis", lambda: fake_redis)
+    monkeypatch.setattr("app.core.redis.get_redis", lambda: fake_redis)
 
-    async def fake_compress(raw, probe=None):
+    async def fake_compress(raw, probe=None, limits=None):
         return b"compressed-bytes"
 
-    monkeypatch.setattr(chat_attach, "_compress_video", fake_compress)
+    monkeypatch.setattr(media_video, "compress_video", fake_compress)
 
     storage_key, user_id = "u1/lib/video.mp4", "u1"
-    await chat_attach._compress_video_cached(b"raw", _probe(), storage_key, user_id, MODEL_CFG)
+    await media_video.compress_video_cached(b"raw", _probe(), storage_key, user_id, MODEL_CFG)
     set_calls_after_write = len(fake_redis.set_calls)
 
-    await chat_attach._compress_video_cached(b"raw", _probe(), storage_key, user_id, MODEL_CFG)
+    await media_video.compress_video_cached(b"raw", _probe(), storage_key, user_id, MODEL_CFG)
 
     assert len(fake_redis.set_calls) == set_calls_after_write + 1, "命中缓存应该调用 SET 续期"
     assert fake_redis.expire_calls == [], "不应该用 EXPIRE 续期"
@@ -228,15 +235,15 @@ async def test_marker_missing_but_cache_file_present_self_heals(storage, monkeyp
     marker 应该被重新创建出来，而不是判定未命中重新转码（存储层数据比 Redis
     更可信，marker 只是加速用的）。"""
     fake_redis = _FakeRedis()
-    monkeypatch.setattr(chat_attach, "get_redis", lambda: fake_redis)
+    monkeypatch.setattr("app.core.redis.get_redis", lambda: fake_redis)
 
-    async def fake_compress(raw, probe=None):
+    async def fake_compress(raw, probe=None, limits=None):
         return b"compressed-bytes"
 
-    monkeypatch.setattr(chat_attach, "_compress_video", fake_compress)
+    monkeypatch.setattr(media_video, "compress_video", fake_compress)
 
     storage_key, user_id = "u1/lib/video.mp4", "u1"
-    await chat_attach._compress_video_cached(b"raw", _probe(), storage_key, user_id, MODEL_CFG)
+    await media_video.compress_video_cached(b"raw", _probe(), storage_key, user_id, MODEL_CFG)
 
     # 模拟 Redis 整体丢失：清空所有 marker
     fake_redis.store.clear()
@@ -248,9 +255,9 @@ async def test_marker_missing_but_cache_file_present_self_heals(storage, monkeyp
         call_count_before += 1
         return b"should-not-happen"
 
-    monkeypatch.setattr(chat_attach, "_compress_video", fake_compress_should_not_be_called)
+    monkeypatch.setattr(media_video, "compress_video", fake_compress_should_not_be_called)
 
-    result = await chat_attach._compress_video_cached(b"raw", _probe(), storage_key, user_id, MODEL_CFG)
+    result = await media_video.compress_video_cached(b"raw", _probe(), storage_key, user_id, MODEL_CFG)
 
     assert result == b"compressed-bytes", "应该命中物理缓存文件，不应该重新转码"
     assert call_count_before == 0
@@ -262,21 +269,21 @@ async def test_single_flight_dedupes_concurrent_transcode(storage, monkeypatch):
     """两个请求"同时"读同一个未缓存的视频，只应该真正转码一次；等锁的那个应该
     直接拿到第一个转码的结果，而不是自己再转码一遍。"""
     fake_redis = _FakeRedis()
-    monkeypatch.setattr(chat_attach, "get_redis", lambda: fake_redis)
+    monkeypatch.setattr("app.core.redis.get_redis", lambda: fake_redis)
     call_count = 0
 
-    async def slow_compress(raw, probe=None):
+    async def slow_compress(raw, probe=None, limits=None):
         nonlocal call_count
         call_count += 1
         await asyncio.sleep(0.05)
         return b"compressed-once"
 
-    monkeypatch.setattr(chat_attach, "_compress_video", slow_compress)
+    monkeypatch.setattr(media_video, "compress_video", slow_compress)
 
     storage_key, user_id = "u1/lib/video.mp4", "u1"
     results = await asyncio.gather(
-        chat_attach._compress_video_cached(b"raw", _probe(), storage_key, user_id, MODEL_CFG),
-        chat_attach._compress_video_cached(b"raw", _probe(), storage_key, user_id, MODEL_CFG),
+        media_video.compress_video_cached(b"raw", _probe(), storage_key, user_id, MODEL_CFG),
+        media_video.compress_video_cached(b"raw", _probe(), storage_key, user_id, MODEL_CFG),
     )
 
     assert call_count == 1, "应该只真正转码一次（single-flight）"
@@ -319,7 +326,7 @@ async def test_video_cache_gc_skips_when_marker_alive(db, storage, monkeypatch):
     await storage.put(path, b"cached video", "video/mp4")
     old = time.time() - video_cache_gc._MIN_AGE_WITHOUT_MARKER - 3600
     os.utime(storage.root / path, (old, old))
-    fake_redis.store[chat_attach._video_cache_alive_key(user_id, cache_key)] = "1"
+    fake_redis.store[media_video.video_cache_alive_key(user_id, cache_key)] = "1"
 
     n = await video_cache_gc.sweep_video_cache()
 
@@ -389,20 +396,20 @@ async def test_video_cache_gc_noop_when_lock_held(db, storage, monkeypatch):
 @pytest.mark.asyncio
 async def test_first_call_writes_cache_file_and_marker(storage, monkeypatch):
     fake_redis = _FakeRedis()
-    monkeypatch.setattr(chat_attach, "get_redis", lambda: fake_redis)
+    monkeypatch.setattr("app.core.redis.get_redis", lambda: fake_redis)
 
-    async def fake_compress(raw, probe=None):
+    async def fake_compress(raw, probe=None, limits=None):
         return b"compressed-bytes"
 
-    monkeypatch.setattr(chat_attach, "_compress_video", fake_compress)
+    monkeypatch.setattr(media_video, "compress_video", fake_compress)
 
     storage_key, user_id = "u1/lib/video.mp4", "u1"
-    profile = chat_attach._video_transcode_profile(MODEL_CFG)
-    cache_key = chat_attach._video_cache_key(storage_key, profile)
-    cache_path = chat_attach._video_cache_path(user_id, cache_key)
-    alive_key = chat_attach._video_cache_alive_key(user_id, cache_key)
+    profile = media_video.video_transcode_profile(MODEL_CFG)
+    cache_key = media_video.video_cache_key(storage_key, profile)
+    cache_path = media_video.video_cache_path(user_id, cache_key)
+    alive_key = media_video.video_cache_alive_key(user_id, cache_key)
 
-    await chat_attach._compress_video_cached(b"raw", _probe(), storage_key, user_id, MODEL_CFG)
+    await media_video.compress_video_cached(b"raw", _probe(), storage_key, user_id, MODEL_CFG)
 
     assert await storage.exists(cache_path)
     assert await storage.get(cache_path) == b"compressed-bytes"
@@ -412,30 +419,30 @@ async def test_first_call_writes_cache_file_and_marker(storage, monkeypatch):
 @pytest.mark.asyncio
 async def test_alive_marker_present_but_cache_file_missing_retranscodes(storage, monkeypatch):
     """alive marker 还在（比如被外部/安全网误删了物理文件，但 Redis marker 还没
-    过期），`prepare_video_media`/`_compress_video_cached` 应该自动判定未命中、
+    过期），`prepare_video_media`/`compress_video_cached` 应该自动判定未命中、
     重新转码，而不是报错或返回损坏内容；成功后重建 marker + 缓存文件。"""
     fake_redis = _FakeRedis()
-    monkeypatch.setattr(chat_attach, "get_redis", lambda: fake_redis)
+    monkeypatch.setattr("app.core.redis.get_redis", lambda: fake_redis)
     call_count = 0
 
-    async def fake_compress(raw, probe=None):
+    async def fake_compress(raw, probe=None, limits=None):
         nonlocal call_count
         call_count += 1
         return b"fresh-compressed-bytes"
 
-    monkeypatch.setattr(chat_attach, "_compress_video", fake_compress)
+    monkeypatch.setattr(media_video, "compress_video", fake_compress)
 
     storage_key, user_id = "u1/lib/video.mp4", "u1"
-    profile = chat_attach._video_transcode_profile(MODEL_CFG)
-    cache_key = chat_attach._video_cache_key(storage_key, profile)
-    cache_path = chat_attach._video_cache_path(user_id, cache_key)
-    alive_key = chat_attach._video_cache_alive_key(user_id, cache_key)
+    profile = media_video.video_transcode_profile(MODEL_CFG)
+    cache_key = media_video.video_cache_key(storage_key, profile)
+    cache_path = media_video.video_cache_path(user_id, cache_key)
+    alive_key = media_video.video_cache_alive_key(user_id, cache_key)
 
     # 手动伪造"marker 存在，但物理文件不存在"的不一致状态
     fake_redis.store[alive_key] = "1"
     assert not await storage.exists(cache_path)
 
-    result = await chat_attach._compress_video_cached(b"raw", _probe(), storage_key, user_id, MODEL_CFG)
+    result = await media_video.compress_video_cached(b"raw", _probe(), storage_key, user_id, MODEL_CFG)
 
     assert result == b"fresh-compressed-bytes"
     assert call_count == 1, "marker 存在但文件缺失时应该重新转码，不能报错/返回空"
@@ -458,7 +465,7 @@ async def test_video_cache_gc_records_snapshot(db, storage, monkeypatch):
     removed_path = "u1/.video_cache/removed.mp4"
     await storage.put(kept_path, b"x" * 100, "video/mp4")
     await storage.put(removed_path, b"y" * 50, "video/mp4")
-    fake_redis.store[chat_attach._video_cache_alive_key("u1", "kept")] = "1"
+    fake_redis.store[media_video.video_cache_alive_key("u1", "kept")] = "1"
 
     import os, time
     old = time.time() - video_cache_gc._MIN_AGE_WITHOUT_MARKER - 3600

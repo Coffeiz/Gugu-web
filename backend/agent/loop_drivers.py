@@ -45,7 +45,7 @@ from typing import Any, AsyncGenerator, Protocol
 
 from app.core.errors import RetryableError
 from app.core.redaction import diag_log
-from app.core.retry import LLM_RETRY
+from app.core.retry import LLM_RETRY, llm_provider_timeout
 from app.core.redaction import diag_log
 from agent.context.assembly.area import MessageArea
 from agent.context.canonical_tool_history import ToolCall, ToolResult
@@ -293,7 +293,7 @@ class AnthropicDriver:
 
         schema_source = tool_snapshot or registry.snapshot()
         tools = schema_source.anthropic_schemas(tool_names)
-        _timeout = httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=5.0)
+        _timeout = llm_provider_timeout()
         supports_active_cache = supports_anthropic_active_cache(ai)
         adapter = providers.adapter_for(ai)
         client = providers.build_anthropic_client(ai, _timeout)
@@ -365,8 +365,6 @@ class AnthropicDriver:
             outbound_messages.insert(insert_at, restored)
             outbound = outbound.with_messages(outbound_messages)
             ctx.restored_blocks = None
-        if isinstance(messages, MessageArea):
-            messages.last_provider_projection = outbound
         pending_cache_state = None
         if ctx.supports_active_cache:
             _msgs, pending_cache_state = _with_history_cache(
@@ -375,8 +373,16 @@ class AnthropicDriver:
                 api_format=str(getattr(ctx.adapter, "api_format", "anthropic")),
                 model=ctx.model,
             )
+            # 保留本轮实际使用的缓存锚点计划，但不要把 cache_control 写进快照正文。
+            # 追加分支需要在主请求末尾继续复用这些断点。
+            snapshot_projection = outbound.with_messages(
+                outbound.to_messages(), cache_plan=_msgs.cache_plan,
+            )
         else:
             _msgs = outbound
+            snapshot_projection = outbound
+        if isinstance(messages, MessageArea):
+            messages.last_provider_projection = snapshot_projection
         from agent.runtime.loopscope_trace.state import record_anthropic_request_diagnostics
 
         record_anthropic_request_diagnostics(
@@ -568,7 +574,7 @@ class OpenAIDriver:
         declared = providers.capability_snapshot(ai)
         schema_source = tool_snapshot or registry.snapshot()
         tools = schema_source.openai_schemas(tool_names) if declared.get("tools", True) else []
-        _timeout = httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=5.0)
+        _timeout = llm_provider_timeout()
         client = providers.build_openai_client(ai, _timeout)
 
         generic_thinking = providers.generic_thinking_params(ai, "openai")
@@ -877,7 +883,7 @@ class OllamaDriver:
         adapter = providers.adapter_for(ai)
         if adapter.name != "ollama":
             raise ValueError("OllamaDriver 只能用于 Ollama provider")
-        timeout = httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=5.0)
+        timeout = llm_provider_timeout()
         client = providers.build_ollama_client(ai, timeout)
         effort = getattr(ai, "reasoning_effort", "") or "medium"
         think: bool | str = False if getattr(ai, "thinking", "disabled") != "adaptive" else effort

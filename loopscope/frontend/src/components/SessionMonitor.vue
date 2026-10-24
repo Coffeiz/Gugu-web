@@ -8,15 +8,15 @@
             class="export-button"
             :class="{ active: selectionMode }"
             :aria-pressed="selectionMode"
-            title="选择多个 Run"
+            :title="t('monitor.selectManyTitle')"
             @click="toggleSelectionMode"
-          >{{ selectionMode ? '完成' : '多选' }}</button>
+          >{{ selectionMode ? t('monitor.done') : t('monitor.multiSelect') }}</button>
           <button
             v-if="selectedRunIds.size"
             class="export-button"
-            title="导出选中的 Run"
+            :title="t('monitor.exportSelectedTitle')"
             @click="emit('export-runs', [...selectedRunIds])"
-          >导出 ({{ selectedRunIds.size }})</button>
+          >{{ t('monitor.exportCount', { count: selectedRunIds.size }) }}</button>
         </div>
       </div>
       <div v-for="run in runs" :key="run.id" class="run-item">
@@ -30,14 +30,14 @@
           <em>{{ fmtMs(run.duration_ms) }}</em>
         </button>
       </div>
-      <div v-if="!runs.length" class="empty-run">这个 Session 还没有 Trace。</div>
-      <div v-else-if="loadingMore" class="loading-more">正在加载更早 Run…</div>
+      <div v-if="!runs.length" class="empty-run">{{ t('monitor.emptyTrace') }}</div>
+      <div v-else-if="loadingMore" class="loading-more">{{ t('monitor.loadingOlder') }}</div>
     </aside>
 
     <section ref="runDetailEl" class="run-detail">
       <div v-if="!selected" class="monitor-empty">
-        <strong>没有可查看的 Run</strong>
-        <span>发送一条消息后，这里会出现完整 AgentLoop。</span>
+        <strong>{{ t('monitor.emptyRunTitle') }}</strong>
+        <span>{{ t('monitor.sendMessage') }}</span>
       </div>
       <template v-else>
         <header class="run-header">
@@ -47,7 +47,7 @@
             <div class="run-sub"><code>{{ selected.trace_id || 'no trace id' }}</code><span>·</span><span>{{ modelLabel }}</span></div>
           </div>
           <div class="run-header-actions">
-            <button class="export-button" title="导出当前 Run" @click="emit('export-runs', [selected.id])">导出 Run</button>
+            <button class="export-button" :title="t('monitor.exportRun')" @click="emit('export-runs', [selected.id])">{{ t('monitor.exportRun') }}</button>
             <div class="duration"><small>Duration</small><b>{{ fmtMs(selected.duration_ms) }}</b></div>
           </div>
         </header>
@@ -60,18 +60,18 @@
           <div class="usage-card total"><span>Total</span><b>{{ fmtTokens(usage.total) }}</b><small>input + output</small></div>
         </section>
 
-        <div v-if="usage.input" class="cache-bar" title="缓存命中占本轮输入 token 的比例">
+        <div v-if="usage.input" class="cache-bar" :title="t('monitor.cacheRatio')">
           <span class="cache-hit" :style="{ width: `${Math.min(cacheRatio * 100, 100)}%` }"></span>
         </div>
         <div v-if="usage.input" class="cache-legend"><span>cached {{ fmtTokens(usage.cache_read) }}</span><span>fresh {{ fmtTokens(usage.fresh_input) }}</span></div>
         <div v-if="cacheMode === 'passive'" class="cache-hint">
-          💡 本轮使用被动前缀缓存，服务端可能已缓存前缀，但 API 不返回缓存命中统计
+          💡 {{ t('monitor.passiveCache') }}
         </div>
         <div v-if="cacheMode === 'none' && usage.cache_read" class="cache-hint">
-          ℹ️ 当前模型不支持主动缓存标记，已检测到被动缓存命中
+          ℹ️ {{ t('monitor.passiveHit') }}
         </div>
         <div v-else-if="cacheMode === 'none'" class="cache-hint">
-          ℹ️ 当前模型不支持缓存机制
+          ℹ️ {{ t('monitor.noCache') }}
         </div>
 
         <section v-if="selectedLoaded" class="diagnostic-grid">
@@ -86,7 +86,7 @@
             <small v-if="canonicalStats.schema_digests?.length" class="digest-list">
               <code v-for="digest in canonicalStats.schema_digests" :key="digest">{{ digest }}</code>
             </small>
-            <small v-else>本 Run 未发现 Schema digest</small>
+            <small v-else>{{ t('monitor.noSchemaDigest') }}</small>
           </div>
           <div class="diagnostic-card">
             <span>Adapter calls</span>
@@ -97,14 +97,14 @@
 
         <section class="span-section">
           <header class="span-section-head">
-            <div><span class="eyebrow">AGENT LOOP</span><strong>{{ selectedLoaded ? `${selected.spans?.length ?? 0} spans` : '详情加载中…' }}</strong></div>
+            <div><span class="eyebrow">AGENT LOOP</span><strong>{{ selectedLoaded ? `${selected.spans?.length ?? 0} spans` : t('monitor.spanDetailsLoading') }}</strong></div>
             <div class="span-actions">
-              <span class="hint">{{ selectedLoaded ? 'Input / Output / Source 可分别展开' : '正在按需读取 Span' }}</span>
-              <button v-if="selectedLoaded && hasMoreSpans" class="load-spans" @click="emit('load-more-spans')">加载更多</button>
+              <span class="hint">{{ selectedLoaded ? t('monitor.inputOutputSource') : t('monitor.spanLoadHint') }}</span>
+              <button v-if="selectedLoaded && hasMoreSpans" class="load-spans" @click="emit('load-more-spans')">{{ t('monitor.loadMore') }}</button>
             </div>
           </header>
           <div v-if="injectionSpans.length" class="injection-overview">
-            <div class="injection-overview-head"><span class="eyebrow">INJECTION</span><span>本 Run 已注入的工具、Skill 与提示词</span></div>
+            <div class="injection-overview-head"><span class="eyebrow">INJECTION</span><span>{{ t('monitor.injected') }}</span></div>
             <div class="injection-list">
               <div v-for="item in injectionSpans" :key="item.id" class="injection-item">
                 <strong>{{ injectionLabel(item) }}</strong>
@@ -131,7 +131,9 @@ import { computed, ref, watch } from 'vue'
 import type { AdapterCallStats, CanonicalEventStats, TraceRun, TokenUsage } from '../types'
 import TraceSpanCard from './TraceSpanCard.vue'
 import { formatCompactNumber } from '../utils/formatNumber'
+import { useLoopScopeI18n } from '../i18n/index'
 
+const { t } = useLoopScopeI18n()
 const props = defineProps<{ runs: TraceRun[]; details?: Record<string, TraceRun>; focusRunId?: string; hasMoreSpans?: boolean }>()
 const emit = defineEmits<{
   select: [runId: string]
@@ -179,7 +181,7 @@ const adapterStats = computed<AdapterCallStats>(() => {
 })
 const canonicalTypeSummary = computed(() => {
   const entries = Object.entries(canonicalStats.value.by_type ?? {})
-  return entries.length ? entries.map(([name, count]) => `${name} ${count}`).join(' · ') : '未记录事件类型'
+  return entries.length ? entries.map(([name, count]) => `${name} ${count}`).join(' · ') : t('monitor.unrecordedEventTypes')
 })
 const adapterCallSummary = computed(() => {
   const providers = Object.entries(adapterStats.value.by_provider ?? {}).map(([name, count]) => `${name} ${count}`)
@@ -187,7 +189,7 @@ const adapterCallSummary = computed(() => {
   const rendered = adapterStats.value.canonical_render_calls ?? 0
   const success = adapterStats.value.success ?? 0
   const errors = adapterStats.value.errors ?? 0
-  return `${providers.join(' · ') || 'provider —'} · 成功 ${success} · 失败 ${errors} · canonical render ${rendered}${formats.length ? ` · ${formats.join(' · ')}` : ''}`
+  return `${providers.join(' · ') || 'provider —'} · ${t('monitor.requestSuccess')} ${success} · ${t('monitor.requestFailure')} ${errors} · canonical render ${rendered}${formats.length ? ` · ${formats.join(' · ')}` : ''}`
 })
 const modelLabel = computed(() => {
   const a = selected.value?.attributes ?? {}
@@ -206,9 +208,9 @@ const modelLabel = computed(() => {
   const label = labels.map(parts => parts.filter(Boolean).join(' / ')).find(Boolean)
   if (label) return label
   if (selected.value?.ended_at && !(selected.value.spans ?? []).some(span => span.kind === 'llm')) {
-    return 'no model call'
+    return t('monitor.noModelCall')
   }
-  return 'model unknown'
+  return t('monitor.modelUnknown')
 })
 const rootSpans = computed(() => (selected.value?.spans ?? []).filter(s => !s.parent_span_id))
 const injectionSpans = computed(() => (selected.value?.spans ?? []).filter((span) => {
@@ -216,23 +218,24 @@ const injectionSpans = computed(() => (selected.value?.spans ?? []).filter((span
   return source === 'tool_schema' || source === 'tool_schema_error' || source === 'capability_catalog' || source === 'skill_index' || source === 'skill_body' || source === 'shell_policy'
 }))
 function injectionLabel(span: any) {
-  const labels: Record<string, string> = { tool_schema: '工具 Schema', tool_schema_error: 'Schema 错误', capability_catalog: '能力目录', skill_index: 'Skill 索引', skill_body: 'Skill 正文', shell_policy: 'Shell 提示词' }
-  return labels[String(span.attributes?.context_source)] || span.name
+  const labels: Record<string, string> = { tool_schema: 'trace.contextSchema', tool_schema_error: 'trace.schemaError', capability_catalog: 'trace.capabilityCatalog', skill_index: 'trace.skillIndex', skill_body: 'trace.skillBody', shell_policy: 'trace.shellPolicy' }
+  const key = labels[String(span.attributes?.context_source)]
+  return key ? t(key) : span.name
 }
 function injectionSummary(span: any) {
   const input = (span.input && typeof span.input === 'object' ? span.input : {}) as Record<string, any>
   if (span.attributes?.context_source === 'shell_policy') {
-    return span.attributes?.role === 'stable_protocol' ? 'shell.md · 稳定安全协议' : '本轮动态权限状态'
+    return span.attributes?.role === 'stable_protocol' ? t('monitor.stableProtocol') : t('monitor.dynamicPermissions')
   }
   if (span.attributes?.context_source === 'tool_schema') {
     const selected = Array.isArray(input.selected_tool_names) ? input.selected_tool_names : []
     const count = selected.length > 0 ? selected.length : Number(input.tool_count ?? 0)
     const mcpCount = Array.isArray(input.mcp_tool_names) ? input.mcp_tool_names.length : 0
-    return `${count} 个工具${mcpCount ? ` · MCP ${mcpCount}` : ''}`
+    return `${t('monitor.toolsCount', { count })}${mcpCount ? t('monitor.mcpCount', { count: mcpCount }) : ''}`
   }
-  if (span.attributes?.context_source === 'capability_catalog') return `${input.skill_count ?? 0} 个 Skill · ${input.catalog_count ?? 0} 项能力`
-  if (span.attributes?.context_source === 'skill_index') return `${span.attributes?.skill_count ?? 0} 个 Skill 索引`
-  return `${input.skill ?? span.attributes?.skill ?? 'Skill'} · ${span.attributes?.action === 'reused' ? '复用' : '首次加载'}`
+  if (span.attributes?.context_source === 'capability_catalog') return `${t('monitor.skillsCount', { count: input.skill_count ?? 0 })} · ${t('monitor.capabilitiesCount', { count: input.catalog_count ?? 0 })}`
+  if (span.attributes?.context_source === 'skill_index') return `${t('monitor.skillsCount', { count: span.attributes?.skill_count ?? 0 })} index`
+  return `${input.skill ?? span.attributes?.skill ?? 'Skill'} · ${span.attributes?.action === 'reused' ? t('monitor.skillActionReused') : t('monitor.skillActionFirst')}`
 }
 function childrenOf(id: string) { return (selected.value?.spans ?? []).filter(s => s.parent_span_id === id) }
 function previousRoundSpan(span: any) {
@@ -361,9 +364,9 @@ function fmtMs(v: number | null | undefined) {
   return v >= 1000 ? `${(v / 1000).toFixed(2)}s` : `${Math.round(v)}ms`
 }
 function runStatus(status: string) {
-  if (status === 'running') return '进行中'
-  if (status === 'error' || status === 'failed' || status === 'cancelled') return '失败或中断'
-  return '已完成'
+  if (status === 'running') return t('monitor.runStatusRunning')
+  if (status === 'error' || status === 'failed' || status === 'cancelled') return t('monitor.runStatusFailed')
+  return t('monitor.runStatusCompleted')
 }
 function fmtTokens(v: number | null | undefined) {
   return formatCompactNumber(v)

@@ -123,6 +123,7 @@ def _build_append_branch_input(scope: MemoryScope, job, task_type: str,
         "reflection_scope": reflection_scope,
         "origin_run_id": snapshot.run_id,
         "trigger_source": "session_snapshot",
+        "snapshot_source": getattr(snapshot, "source", "unavailable"),
     }
     return BranchInput(
         stable_system=snapshot.system_prompt,
@@ -210,6 +211,41 @@ async def _rebuild_session_snapshot(db, scope: MemoryScope, session_id: int, mod
         ai=model_cfg,
         tools=(),
         history=tuple(history_parts),
+        source="persisted_history",
+    )
+
+
+def _extend_snapshot_with_persisted_tail(snapshot, persisted_snapshot):
+    """只在 DB 历史严格以原始 Provider 前缀开头时，保留原始请求并追加新消息。
+
+    persisted_snapshot 只用于核对持久化消息序列；静态 system 与工具声明继续取自
+    实际发给 Provider 的主 run 快照，避免按被动消息发言人重建 prompt 后误判前缀。
+    """
+    from dataclasses import replace
+
+    from agent.context.canonical_context import digest
+    from agent.context.provider_conversation import ProviderConversation
+
+    original = getattr(snapshot, "history", None)
+    persisted = getattr(persisted_snapshot, "history", None)
+    if not isinstance(original, ProviderConversation) or not isinstance(persisted, (list, tuple)):
+        return None
+    original_messages = original.to_messages()
+    persisted_messages = list(persisted)
+    if len(persisted_messages) < len(original_messages):
+        return None
+    if persisted_messages[:len(original_messages)] != original_messages:
+        return None
+
+    merged = original.with_messages(
+        [*original_messages, *persisted_messages[len(original_messages):]],
+        dynamic_tail_size=0,
+    )
+    return replace(
+        snapshot,
+        history=merged,
+        revision=digest({"history": merged.to_messages()}),
+        source="in_memory_extended",
     )
 
 
@@ -497,6 +533,24 @@ async def _execute_job_locked(job_id: int, settings, *, snapshot=None) -> bool:
                 from agent.context.reflection_snapshot import model_identity, peek_reflection_snapshot
 
                 candidate = resolved_snapshot or peek_reflection_snapshot(scope.owner_user_id, session_id)
+                passive_group_tail = (
+                    scope.scope_type == "group"
+                    and getattr(messages[-1], "run_id", None) is None
+                )
+                if job.reason == "context-pressure":
+                    # 压力由旧 run 之后的被动增量产生，不能复用旧 usage 或已压缩标志。
+                    candidate = None
+                elif passive_group_tail:
+                    # 保留原始 wire 前缀，只把 DB 历史中严格追加的新尾部接上；
+                    # 对齐失败就继续使用完整重建，不能遗漏被动消息。
+                    persisted_snapshot = await _rebuild_session_snapshot(
+                        db, scope, session_id, run_config.model, messages,
+                    )
+                    candidate = (
+                        _extend_snapshot_with_persisted_tail(candidate, persisted_snapshot)
+                        if candidate is not None and persisted_snapshot is not None
+                        else None
+                    ) or persisted_snapshot
                 if (candidate and candidate.user_id == str(scope.owner_user_id)
                         and candidate.session_id == session_id
                         and model_identity(candidate.ai) == model_identity(run_config.model)):
@@ -661,7 +715,7 @@ async def _aggregate_members(db, scope: MemoryScope) -> dict[str, dict]:
     """按 chat_id 全量聚合群成员：platform_user_id → {name, last_seen_at, message_count}。
 
     数据源是 ConversationMessage 表按 chat_id 聚合。群聊消息受 MESSAGE_RETENTION_LIMIT
-    （500）/MESSAGE_TRIM_THRESHOLD（600）限制，message_count 天然是"保留窗口内"的计数
+    （2000）限制，message_count 天然是"保留窗口内"的计数
     而非全量历史，语义上贴近"近期活跃度"。
     这里刻意不用 execute_job 本批 messages 累加——会漏掉窗口内、不在本批范围的历史，
     也没法正确反映消息裁剪后的实际计数；全量聚合成本很低，每次都查一遍。
@@ -733,7 +787,7 @@ def _merge_members(current: Any, aggregated: dict[str, dict]) -> dict[str, dict]
     members.json 每条必须挂在具体 platform_user_id 下才有意义，这是两个文件
     唯一但关键的设计分歧点，不要"修正"掉。
 
-    `aggregated` 只覆盖 ConversationMessage **保留窗口**（500~600 条）内还能看到的
+    `aggregated` 只覆盖 ConversationMessage **保留窗口**（最近 2000 条）内还能看到的
     成员——不活跃太久的成员会整个从这次聚合结果里消失。早期实现直接 `out = {}` 只填
     aggregated 里的 pid，等于把这些沉默成员的 aliases/nicknames 也一起从 members.json
     删掉了（code review 发现的真实数据生命周期问题：这些字段本来就是为了在成员长期

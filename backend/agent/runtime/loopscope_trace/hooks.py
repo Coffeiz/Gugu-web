@@ -238,9 +238,11 @@ def ensure_hooks() -> None:
                 )
             else:
                 run.trace_id = trace_id
-                run.session_key = f"gugu:web:{session_id}"
                 run.external_session_id = str(session_id)
-                run.source = "web"
+                # IM 也会 begin 一个 Web 镜像流；已绑定的平台归属不能被镜像覆盖。
+                if run.source == "unknown" or run.session_key.startswith("pending:"):
+                    run.source = "web"
+                run.session_key = f"gugu:{run.source}:{session_id}"
             _scope_run.set(run)
         except Exception:
             pass
@@ -261,7 +263,18 @@ def ensure_hooks() -> None:
                         token_impact={"output_tokens_estimate": _estimate_tokens(run.output_text)},
                     )
                     out.finish({"text": run.output_text})
-                    _finish_run(run, "success")
+                    # IM 的 done 只代表模型生成结束，平台投递仍在
+                    # dispatch_finalization 中进行。保留 run 到投递结果确定后，
+                    # 否则失败的最终回复会被提前记成 success。
+                    from agent.im.imctx import get_im
+
+                    im_context = get_im() or {}
+                    active_platform = str(im_context.get("platform") or "")
+                    is_im_delivery = bool(
+                        active_platform and active_platform == run.source
+                    )
+                    if not is_im_delivery:
+                        _finish_run(run, "success")
                 elif etype == "error":
                     err = run.span("output", "Agent error", {}, code=_code_ref(original_publish))
                     err.finish(event, status="error")

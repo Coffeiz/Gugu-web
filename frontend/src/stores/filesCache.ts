@@ -203,11 +203,11 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
     return request
   }
 
-  function addFolder(folder: { id: number; name: string; projectId?: number | null; workspaceDirectoryId?: number | null; parentId?: number | null; fileCount?: number; version?: number }) {
+  function addFolder(folder: { id: number; name: string; projectId?: number | null; workspaceDirectoryId?: number | null; parentId?: number | null; fileCount?: number; folderCount?: number; version?: number }) {
     touch(foldersById, folder.id, {
       id: folder.id, name: folder.name, projectId: folder.projectId ?? null,
       workspaceDirectoryId: folder.workspaceDirectoryId ?? null, parentId: folder.parentId ?? null,
-      fileCount: folder.fileCount ?? 0, version: folder.version ?? 1,
+      fileCount: folder.fileCount ?? 0, folderCount: folder.folderCount ?? 0, version: folder.version ?? 1,
     } as FolderMeta)
     invalidatePages()
   }

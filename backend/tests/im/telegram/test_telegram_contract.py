@@ -107,14 +107,14 @@ async def test_new_telegram_bot_persists_group_chat_disabled_by_default(db, user
 
 @pytest.mark.asyncio
 async def test_telegram_group_message_is_stopped_before_agent_when_group_policy_is_closed(monkeypatch):
-    from agent.im import loop
+    from agent.im import dispatch
 
     async def closed_policy(_bot_id, *, platform):
         assert platform == "telegram"
         return False, True, False, True, True
 
-    monkeypatch.setattr(loop, "resolve_group_policy", closed_policy)
-    result = await loop.dispatch_im_message({
+    monkeypatch.setattr(dispatch, "resolve_group_policy", closed_policy)
+    result = await dispatch.dispatch_im_message({
         "platform": "telegram",
         "channel_id": "41",
         "chat_type": "group",
@@ -130,7 +130,7 @@ async def test_telegram_group_message_is_stopped_before_agent_when_group_policy_
 async def test_telegram_bind_command_is_consumed_before_agent_and_confirms_in_private_chat(
     monkeypatch, user_a,
 ):
-    from agent.im import loop
+    from agent.im import dispatch
     from agent.gateway import telegram
     from app.core import events
     from app.services import im_identity
@@ -156,9 +156,9 @@ async def test_telegram_bind_command_is_consumed_before_agent_and_confirms_in_pr
     monkeypatch.setattr(im_identity, "consume_telegram_binding_code", consume)
     monkeypatch.setattr(telegram, "send_message", send)
     monkeypatch.setattr(events, "bump_context_revision", bump)
-    monkeypatch.setattr(loop, "prepare_message", should_not_enter_agent)
+    monkeypatch.setattr(dispatch, "prepare_message", should_not_enter_agent)
 
-    result = await loop.dispatch_im_message({
+    result = await dispatch.dispatch_im_message({
         "platform": "telegram",
         "channel_id": "41",
         "owner_user_id": str(user_a.id),
@@ -207,7 +207,7 @@ async def test_telegram_text_reply_uses_telegram_gateway_and_replies_to_inbound_
 @pytest.mark.parametrize("command", ["/stop", "/cancel"])
 @pytest.mark.asyncio
 async def test_telegram_stop_commands_cancel_only_their_bot_private_session(monkeypatch, command):
-    from agent.im import loop
+    from agent.im import shortcuts
     from agent.runtime import runtime_state
 
     requests = []
@@ -232,10 +232,10 @@ async def test_telegram_stop_commands_cancel_only_their_bot_private_session(monk
     monkeypatch.setattr(runtime_state, "get_active", active)
     monkeypatch.setattr(runtime_state, "request_cancel", request_cancel)
 
-    decision = await loop.decide_im_shortcut(
+    decision = await shortcuts.decide_im_shortcut(
         "telegram", "7001", command, bot_id="41", scope_id="7001"
     )
-    await loop.apply_im_shortcut_cancel(
+    await shortcuts.apply_im_shortcut_cancel(
         "telegram", "7001", decision, bot_id="41", scope_id="7001"
     )
 
@@ -245,7 +245,7 @@ async def test_telegram_stop_commands_cancel_only_their_bot_private_session(monk
 
 @pytest.mark.asyncio
 async def test_telegram_group_stop_is_scoped_to_the_current_bot_and_group(monkeypatch):
-    from agent.im import loop
+    from agent.im import shortcuts
     from agent.runtime import runtime_state
 
     requests = []
@@ -270,10 +270,10 @@ async def test_telegram_group_stop_is_scoped_to_the_current_bot_and_group(monkey
     monkeypatch.setattr(runtime_state, "get_active", active)
     monkeypatch.setattr(runtime_state, "request_cancel", request_cancel)
 
-    decision = await loop.decide_im_shortcut(
+    decision = await shortcuts.decide_im_shortcut(
         "telegram", "7003", "/stop", bot_id="41", scope_id="-1007002"
     )
-    await loop.apply_im_shortcut_cancel(
+    await shortcuts.apply_im_shortcut_cancel(
         "telegram", "7003", decision, bot_id="41", scope_id="-1007002"
     )
 

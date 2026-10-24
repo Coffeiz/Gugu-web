@@ -110,20 +110,18 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch, toRef, onUnmounted, type PropType } from 'vue'
+import { ref, computed, watch, toRef, onUnmounted, type PropType } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { runtime } from '@/interaction/runtime'
 import { useRuntimeAction } from '@/interaction/runtime/vue'
 import {
   fileObjectId,
   browserSurfaceId as makeBrowserSurfaceId,
-  folderSurfaceId,
 } from '@/interaction/runtime/adapters/file/fileRuntimeAdapter'
 import { useProjectStore } from '@/stores/projects'
 import { PROJECT_COLOR_PRESETS, extractProjectAccent } from '@/utils/projectColors'
 import { useFilesCacheStore, type FileMeta, type FolderMeta } from '@/stores/filesCache'
-import type { Project, ProjectStage, ProjectTodo } from '@/types/project'
-import { projectsApi } from '@/services/api'
+import type { Project } from '@/types/project'
 import { thumbLoadedIds } from '@/composables/shared/useThumbCache'
 import { isImageExt as isPmImageExt, fileIconColor } from '@/utils/fileTypes'
 import { useSorting } from '@/composables/shared/useSorting'
@@ -139,7 +137,6 @@ import ProjectStagesPanel from '@/views/Projects/components/ProjectStagesPanel.v
 import ProjectFilesPanel from '@/views/Projects/components/ProjectFilesPanel.vue'
 import ArchiveOperationDialog from '@/views/Files/components/ArchiveOperationDialog.vue'
 import { useClipboardStore } from '@/stores/clipboard'
-import { useLiveStore } from '@/stores/live'
 import { usePreferencesStore } from '@/stores/preferences'
 import { useUiStore } from '@/stores/ui'
 import { workspacesApi } from '@/services/api'
@@ -150,7 +147,8 @@ import { useProjectFileWorkspace } from '@/composables/files/useProjectFileWorks
 import { useFileActions } from '@/composables/files/useFileActions'
 import { useProjectDraft } from '@/composables/projects/useProjectDraft'
 import { useProjectStages } from '@/composables/projects/useProjectStages'
-import { calculateHeaderProgress } from '@/composables/projects/useProjectProgress'
+import { projectProgress } from '@/utils/projectProgress'
+import { calculateStageProgress } from '@/composables/projects/useProjectProgress'
 import { useProjectModalActions } from '@/composables/projects/useProjectModalActions'
 import { useProjectFileMutations } from '@/composables/files/useProjectFileMutations'
 import { useProjectFileUpload } from '@/composables/files/useProjectFileUpload'
@@ -165,7 +163,6 @@ import { useProjectFileSorting } from '@/composables/files/useProjectFileSorting
 import { useProjectFileRename } from '@/composables/files/useProjectFileRename'
 import { useProjectFileProjectSync } from '@/composables/files/useProjectFileProjectSync'
 import { useProjectModalLayout } from '@/composables/projects/useProjectModalLayout'
-import { projectStatusLabelKey } from '@/utils/projectStages'
 
 const props = defineProps({ project: { type: Object as PropType<Project | null>, default: null } })
 const { t } = useI18n()
@@ -186,7 +183,6 @@ const fileActions      = useFileActions({
   projectId: () => props.project?.id ?? null,
 })
 const fileCacheStore   = useFilesCacheStore()
-const liveStore        = useLiveStore()
 const prefsStore       = usePreferencesStore()
 const uiStore          = useUiStore()
 const workspaceSupported = ref(false)
@@ -279,7 +275,7 @@ const {
 const {
   fileViewMode, openFolders, folderStack, pmCanGoBack, pmCanGoForward,
   pmEnterFolder, pmNavigateTo, pmGoBack, pmGoForward, prunePmHistoryForFolder,
-  resetPmNavigation, currentFolders, currentFiles, currentFolder, currentFolderFiles,
+  resetPmNavigation, currentFolders, currentFiles, currentFolder,
   pmFolderCount,
 } = useProjectFileWorkspace({
   projectId: () => props.project?.id ?? null,
@@ -321,16 +317,12 @@ const {
   previewFolderIds: pmPreviewFolderIds,
   selectionRect: pmSelectionRect,
   inSelectionMode: pmInSelectionMode,
-  selectionModeForced: pmSelectionModeForced,
-  flatSelectableItems: pmFlatSelectableItems,
   onContainerMouseDown: onPmGridMouseDown,
   cancelDrag: _cancelPmBoxDrag,
   clearSelection: clearPmSelection,
   onContentClick: onPmContentClickImpl,
-  toggleFolderSelect: toggleFolderSelectPm,
   toggleSelectionMode: togglePmSelectionMode,
   handleFileClick: pmHandleFileClick,
-  onFileClick: onPmFileClick,
   onFolderClick: onPmFolderClick,
 } = useFileSelection({
   getFolders: () => sortedCurrentFolders.value,
@@ -609,7 +601,10 @@ watch(localDeadline, v => {
 })
 
 const headerProgress = computed(() => {
-  return calculateHeaderProgress(localStages.value, localCurrentStage.value)
+  return projectProgress(
+    { stages: localStages.value, currentStage: localCurrentStage.value },
+    () => calculateStageProgress(localStages.value, localCurrentStage.value),
+  )
 })
 
 // 只在明确切换阶段时调用，拖动重排不触发
@@ -618,7 +613,7 @@ const accentColor = computed(() => extractProjectAccent(localColor.value || prop
 
 const colorPresets = [...PROJECT_COLOR_PRESETS]
 
-function setStage(key: string, idx: number) {
+function setStage(key: string) {
   const transition = projectStages.transitionStage(key)
   if (!transition) return
   if (props.project) projectStore.setStage(props.project.id, key, transition.progress)

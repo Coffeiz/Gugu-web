@@ -414,11 +414,7 @@ export const useMindStore = defineStore('mind', () => {
 
   async function addRefToCanvas(canvasId: number, refType: 'project' | 'file' | 'event', refId: number, x: number, y: number) {
     const node = await mindApi.createRefNode(refType, refId)
-    const item = await mindApi.addCanvasItem(canvasId, { nodeId: node.id, x, y, z: nextCanvasZ() })
-    const index = canvasItems.value.findIndex(current => current.id === item.id)
-    if (index === -1) canvasItems.value.push(item)
-    else canvasItems.value[index] = item
-    return item
+    return addNoteToCanvas(canvasId, node, x, y)
   }
 
   /** 抽屉拖项目进画布专用：先本地插入一张占位卡，换取拖拽落地动画立刻有真实 DOM 可交接。

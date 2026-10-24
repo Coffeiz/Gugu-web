@@ -4,6 +4,7 @@
 rename 单/批量（含 format 修双后缀）、save_uploaded_file 暂存附件入库。
 DB 走 conftest 内存库，storage 用 LocalStorageBackend 多点接线（先例 test_grep_tool）。
 """
+from agent.media import images as media_images
 import json
 from types import SimpleNamespace
 
@@ -108,7 +109,14 @@ async def test_read_file_text_branch_and_guards(db, user_a, storage, monkeypatch
     assert "不支持读取该类型" in unsupported["error"]
 
     big = await _mk_file(db, user_a, storage, name="大文件.md", content="字" * (256 * 1024 + 1))
-    oversize = json.loads(await _read_file(db, user_a.id, {"file_id": big.id}))
+    readable = await _read_file(db, user_a.id, {"file_id": big.id})
+    from app.core.doctext import MAX_CHARS
+    assert len(readable["content"]) == MAX_CHARS
+
+    oversized_file = await _mk_file(
+        db, user_a, storage, name="超限文件.md", content="x" * (32 * 1024 * 1024 + 1),
+    )
+    oversize = json.loads(await _read_file(db, user_a.id, {"file_id": oversized_file.id}))
     assert "超出可读上限" in oversize["error"]
 
 
@@ -118,12 +126,12 @@ async def test_read_file_image_and_media_branches(db, user_a, storage, monkeypat
 
     png = await _mk_file(db, user_a, storage, name="图.png", content="\x89PNG",
                          mime_type="image/png")
-    monkeypatch.setattr(chat_attach, "image_ready", lambda *a: False)
+    monkeypatch.setattr(media_images, "image_ready", lambda *a: False)
     no_vision = json.loads(await file_operations._read_file(db, user_a.id, {"file_id": png.id}))
     assert "无法识别图像内容" in no_vision["error"]
 
-    monkeypatch.setattr(chat_attach, "image_ready", lambda *a: True)
-    monkeypatch.setattr(chat_attach, "image_block", lambda data, ext: {"type": "image"})
+    monkeypatch.setattr(media_images, "image_ready", lambda *a: True)
+    monkeypatch.setattr(media_images, "image_block", lambda data, ext, model_cfg=None: {"type": "image"})
     block = await file_operations._read_file(db, user_a.id, {"file_id": png.id})
     assert block["_image_block"] == {"type": "image"} and "已打开图片" in block["note"]
 
@@ -190,6 +198,44 @@ async def test_edit_file_shrink_warning_and_oversize(db, user_a, storage):
     binary = await _mk_file(db, user_a, storage, name="图.png", content="x", mime_type="image/png")
     not_text = await _edit_file(db, user_a.id, {"file_id": binary.id, "mode": "append", "content": "x"})
     assert "不支持修改该类型" in not_text["error"]
+
+
+@pytest.mark.parametrize("operation", ["edit", "rename"])
+async def test_agent_file_writes_do_not_mutate_storage_after_version_conflict(
+    db, user_a, storage, monkeypatch, operation,
+):
+    """Agent 写入遇到 CAS 冲突必须在碰触存储前退出，避免覆盖 Web/其他端的新内容。"""
+    import agent.tools.files.file_operations as file_operations
+
+    file = await _mk_file(db, user_a, storage, name="原稿.md", content="最新正文")
+
+    async def stale_version(*_args, **_kwargs):
+        return False
+
+    if operation == "edit":
+        async def conflict_content_save(*_args, **_kwargs):
+            from app.core.errors import Conflict
+            raise Conflict("file.version_mismatch", "文件已被其他端修改，请刷新后重试")
+
+        monkeypatch.setattr(file_operations, "update_file_content_service", conflict_content_save)
+        result = await _edit_file(db, user_a.id, {
+            "file_id": file.id, "mode": "replace", "content": "旧草稿覆盖",
+        })
+    else:
+        monkeypatch.setattr(
+            "app.services.storage.file_service.files.advance_file_version_atomic", stale_version,
+        )
+        result = await _rename_file(db, user_a.id, {
+            "file_id": file.id, "new_name": "重命名.md",
+        })
+
+    if operation == "edit":
+        assert result["error"] == "文件已被其他端修改，请重新读取后重试"
+    else:
+        assert result["error"] == "文件已被其他端修改，请刷新后重试"
+    assert await storage.get(file.storage_key) == "最新正文".encode()
+    await db.refresh(file)
+    assert file.display_name == "原稿"
 
 
 async def test_edit_file_batch_reports_per_item(db, user_a, storage):

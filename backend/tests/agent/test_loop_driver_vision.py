@@ -1,3 +1,4 @@
+from agent.media import images as media_images
 import asyncio
 from types import SimpleNamespace
 
@@ -171,7 +172,7 @@ def test_tool_image_gate_uses_actual_model_vision_setting(monkeypatch):
     from app.core import chat_attach
 
     model = SimpleNamespace(provider="openai", image=True)
-    monkeypatch.setattr(chat_attach, "image_ready", lambda model_cfg=None: bool(model_cfg.image))
+    monkeypatch.setattr(media_images, "image_ready", lambda model_cfg=None: bool(model_cfg.image))
     assert _allow_tool_images(model) is True
 
 

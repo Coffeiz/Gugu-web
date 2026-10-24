@@ -72,9 +72,9 @@ async def list_trash_folders_page(
     return {
         "items": [TrashFolderResponse(
             id=folder.id, project_id=folder.project_id, parent_id=folder.parent_id,
-            name=folder.name, file_count=count, version=folder.version,
+            name=folder.name, file_count=count, folder_count=folder_count, version=folder.version,
             deleted_at=folder.deleted_at.strftime("%Y-%m-%dT%H:%M:%S"),
-        ) for folder, count in page["items"]],
+        ) for folder, count, folder_count in page["items"]],
         "next_cursor": page["next_cursor"],
         "has_more": page["has_more"],
     }
@@ -99,9 +99,9 @@ async def list_trash_folder_contents_page(
         "folders": {
             "items": [TrashFolderResponse(
                 id=folder.id, project_id=folder.project_id, parent_id=folder.parent_id,
-                name=folder.name, file_count=count, version=folder.version,
+                name=folder.name, file_count=count, folder_count=folder_count, version=folder.version,
                 deleted_at=folder.deleted_at.strftime("%Y-%m-%dT%H:%M:%S"),
-            ) for folder, count in page["folders"]["items"]],
+            ) for folder, count, folder_count in page["folders"]["items"]],
             "next_cursor": page["folders"]["next_cursor"],
             "has_more": page["folders"]["has_more"],
         },

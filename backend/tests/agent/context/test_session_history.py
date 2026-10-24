@@ -1,6 +1,7 @@
 """Session baseline 历史读取回归测试。"""
 
 import asyncio
+import re
 
 from agent.context.budget import ContextBudget
 from agent.context.session_history import consume_history_stats, load_session_history
@@ -23,10 +24,14 @@ class _Db:
         self.rows = rows
         self.baseline = baseline
         self.last_queries = []
+        self.query_limits = []
 
     async def execute(self, query):
         self.last_queries.append(str(query))
-        query_text = str(query)
+        sql = str(query.compile(compile_kwargs={"literal_binds": True}))
+        match = re.search(r"\bLIMIT\s+(\d+)\b", sql, re.IGNORECASE)
+        limit = int(match.group(1)) if match else None
+        self.query_limits.append(limit)
         if len(self.last_queries) == 1:
             rows = [item for item in self.rows if item.role == "summary"][:1]
         else:
@@ -34,6 +39,8 @@ class _Db:
             if self.baseline > 0:
                 rows = [item for item in rows if item.id > self.baseline]
             rows = list(reversed(rows))
+            if limit is not None:
+                rows = rows[:limit]
         return _Result(rows)
 
 
@@ -66,6 +73,39 @@ def test_load_session_history_uses_baseline_watermark_and_keeps_summary():
     result = asyncio.run(load_session_history(db, 10, baseline_message_id=2))
     assert [item.id for item in result] == [4, 3]
     assert any("conversation_messages.id >" in query for query in db.last_queries)
+
+
+def test_unbaselined_history_is_limited_to_100_rows_in_database_query():
+    rows = [_Message(ident) for ident in range(1, 151)]
+    db = _Db(rows)
+
+    result = asyncio.run(load_session_history(db, 10, max_messages=200))
+
+    assert [item.id for item in result] == list(range(51, 151))
+    assert db.query_limits == [1, 100]
+
+
+def test_baselined_history_keeps_existing_500_row_window():
+    rows = [_Message(ident) for ident in range(1, 701)]
+    db = _Db(rows, baseline=100)
+
+    result = asyncio.run(load_session_history(db, 10, baseline_message_id=100))
+
+    assert [item.id for item in result] == list(range(201, 701))
+    assert db.query_limits == [1, 500]
+
+
+def test_unbaselined_summary_counts_toward_100_message_cap():
+    summary = _Message(151, role="summary")
+    rows = [_Message(ident) for ident in range(1, 151)] + [summary]
+    db = _Db(rows)
+
+    result = asyncio.run(load_session_history(db, 10))
+
+    assert len(result) == 100
+    assert result[0] is summary
+    assert [item.id for item in result[1:]] == list(range(52, 151))
+    assert db.query_limits == [1, 99]
 
 
 def test_context_budget_reserves_fixed_context_and_turn_batch():

@@ -1,4 +1,3 @@
-import type { Ref } from 'vue'
 import { useFileActions } from '@/composables/files/useFileActions'
 import { useFilesCacheStore, type FileMeta, type FolderMeta } from '@/stores/filesCache'
 import { confirmFileDeletion } from './useFileDeleteConfirm'

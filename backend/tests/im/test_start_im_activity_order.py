@@ -14,7 +14,7 @@ import pytest
 
 from agent.runtime import runtime_state
 from agent.gateway import wechat
-from agent.im import loop as im_loop
+from agent.im import activity as im_activity
 
 
 @pytest.mark.asyncio
@@ -30,7 +30,7 @@ async def test_start_im_activity_delegates_to_atomic_init(monkeypatch):
     monkeypatch.setattr(runtime_state, "init_activity", fake_init_activity, raising=False)
     monkeypatch.setattr(wechat, "start_typing", fake_start_typing, raising=False)
 
-    await im_loop.start_im_activity({"channel_id": "bot-1", "chat_id": "chat-1"}, "qq", "puid-1")
+    await im_activity.start_im_activity({"channel_id": "bot-1", "chat_id": "chat-1"}, "qq", "puid-1")
 
     assert calls == [("qq", "bot-1", "chat-1", "puid-1", runtime_state.THINKING)]
 
@@ -43,10 +43,10 @@ async def test_stop_im_typing_is_idempotent_for_waiting_interaction(monkeypatch)
         calls.append(indicator)
 
     monkeypatch.setattr(wechat, "stop_typing", fake_stop_typing)
-    activity = im_loop.ImActivity("wechat", "puid-1", "typing-1")
+    activity = im_activity.ImActivity("wechat", "puid-1", "typing-1")
 
-    await im_loop.stop_im_typing(activity)
-    await im_loop.stop_im_typing(activity)
+    await im_activity.stop_im_typing(activity)
+    await im_activity.stop_im_typing(activity)
 
     assert calls == ["typing-1"]
     assert activity.typing_stopped is True

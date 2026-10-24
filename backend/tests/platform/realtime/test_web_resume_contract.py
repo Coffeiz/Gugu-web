@@ -18,10 +18,9 @@ def _event_from_sse(line: str) -> dict:
 async def test_resume_replays_timeline_in_order_before_live_events(monkeypatch):
     pubsub = object()
     timeline = [
-        {"type": "round_start", "run_id": "run-a", "round_id": "round-1"},
-        {"type": "token", "run_id": "run-a", "content": "先说"},
-        {"type": "tool_call", "run_id": "run-a", "tool_call_id": "call-1"},
-        {"type": "token", "run_id": "run-a", "content": "后说"},
+        {"type": "display_event", "item": {"eventId": "a", "kind": "assistant", "text": "先说"}},
+        {"type": "display_event", "item": {"eventId": "b", "kind": "tool", "toolStatus": "success"}},
+        {"type": "display_event", "item": {"eventId": "c", "kind": "assistant", "text": "后说"}},
     ]
 
     async def open_subscription(session_id):
@@ -35,7 +34,7 @@ async def test_resume_replays_timeline_in_order_before_live_events(monkeypatch):
     async def subscribe(session_id, *, pubsub):
         assert session_id == 701
         assert pubsub is subscription
-        yield 'data: {"type":"token","run_id":"run-a","content":"实时尾部"}\n\n'
+        yield 'data: {"type":"display_event","item":{"eventId":"d","text":"实时尾部"}}\n\n'
         yield 'data: {"type":"done","run_id":"run-a"}\n\n'
 
     subscription = pubsub
@@ -47,7 +46,7 @@ async def test_resume_replays_timeline_in_order_before_live_events(monkeypatch):
 
     assert frames == [
         *timeline,
-        {"type": "token", "run_id": "run-a", "content": "实时尾部"},
+        {"type": "display_event", "item": {"eventId": "d", "text": "实时尾部"}},
         {"type": "done", "run_id": "run-a"},
     ]
 

@@ -48,6 +48,7 @@ async def persist_interrupted_agent_run(req, exec_, outcome: RunOutcome) -> None
         cache_write=outcome.cache_write,
         tools_used=outcome.tool_names,
         user_message_id=getattr(exec_.user_message, "id", None),
+        inbound_batch_key=req.inbound_batch_key,
         interrupted=True,
     )
 
@@ -106,8 +107,7 @@ async def finalize_agent_run(
     # 逐轮展示时间线。canonical assistant.content 兼容旧历史，但刷新回放必须
     # 依赖 display_timeline，否则多轮输出只剩最后一轮。
     # 优先用消费层按流式顺序记录的统一时间线（assistant 轮次 + tool 项交错，
-    # 与 gateway/web.py 的构造语义一致）——只存正文轮次会让刷新后的工具气泡
-    # 退化到兼容 toolEvents 通道（按 canonical 行 id 排序），整体跳到该轮正文前面。
+    # 与 gateway/web.py 的构造语义一致），确保刷新回放与运行时显示顺序相同。
     display_timeline = outcome.display_timeline_items or [
         {"kind": "assistant", "text": round_text}
         for round_text in round_texts
@@ -121,6 +121,7 @@ async def finalize_agent_run(
         model_cfg=exec_.model_cfg,
         message_area=getattr(prepared, "message_area", None),
         user_message_id=getattr(exec_.user_message, "id", None),
+        inbound_batch_key=req.inbound_batch_key,
         text=text,
         display_timeline=display_timeline or None,
         files=outcome.files,

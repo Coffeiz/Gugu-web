@@ -1,6 +1,7 @@
 import { computed, nextTick, ref, watch, type ComputedRef, type Ref } from 'vue'
 import { eventsApi } from '@/services/api'
 import { showAppError, showAppNotice } from '@/composables/core/useAppToast'
+import { useLiveStore } from '@/stores/live'
 import { reconcileOptimisticById } from '@/utils/reconcileById'
 import {
   useEventEditForm, defaultTimeRange, LEAD_OPTIONS, CHAN_LABEL,
@@ -35,6 +36,7 @@ interface EventFormOptions {
 }
 
 export function useCalendarEventForm(options: EventFormOptions) {
+  const liveStore = useLiveStore()
   const { selectedDate, todayIso, viewMode, selectedSlot, cursor, extraEvents, nextMonthEvents, spilloverEvents, projectTimelines, refreshUpcoming, cacheMonth, normalizeCalendarEvent, fetchEvents, fetchNextMonthEvents, fetchSpilloverEvents, clampPopupIntoView } = options
   const showAddForm = ref(false)
   const addInputRef = ref<HTMLInputElement | null>(null)
@@ -84,28 +86,40 @@ export function useCalendarEventForm(options: EventFormOptions) {
     nextTick(() => clampPopupIntoView(addFormRef, addFormStyle))
   }
 
-  async function deleteEvent(event: { id: string | number; _uid?: string }) {
+  async function deleteEvent(event: { id: string | number; version?: number; _uid?: string }) {
+    if (!Number.isInteger(event.version)) {
+      showAppError('活动数据已过期，正在刷新，请重试删除')
+      await Promise.all([fetchEvents(), fetchNextMonthEvents(), fetchSpilloverEvents()])
+      return
+    }
     const match = (item: CalendarRenderItem) => event._uid != null ? item._uid === event._uid : String(item.id) === String(event.id)
     const previous = {
       extra: [...extraEvents.value], next: [...nextMonthEvents.value], spill: [...spilloverEvents.value],
     }
-    await InteractionSync.execute({
-      scope: 'calendar.event.delete', entityKey: `calendar-event:${event.id}`,
-      apply: () => {
-        extraEvents.value = extraEvents.value.filter(item => !match(item))
-        nextMonthEvents.value = nextMonthEvents.value.filter(item => !match(item))
-        spilloverEvents.value = spilloverEvents.value.filter(item => !match(item))
-        refreshUpcoming(projectTimelines.value, [...extraEvents.value, ...nextMonthEvents.value])
-        cacheMonth(cursor.value, extraEvents.value)
-      },
-      rollback: () => {
-        extraEvents.value = previous.extra; nextMonthEvents.value = previous.next; spilloverEvents.value = previous.spill
-        refreshUpcoming(projectTimelines.value, [...extraEvents.value, ...nextMonthEvents.value])
-        cacheMonth(cursor.value, extraEvents.value)
-      },
-      request: mutation => eventsApi.delete(event.id as number, { mutationId: mutation.mutationId }),
-      onCommit: () => { void fetchEvents(); void fetchNextMonthEvents(); void fetchSpilloverEvents() },
-    })
+    try {
+      await InteractionSync.execute({
+        scope: 'calendar.event.delete', entityKey: `calendar-event:${event.id}`,
+        apply: () => {
+          extraEvents.value = extraEvents.value.filter(item => !match(item))
+          nextMonthEvents.value = nextMonthEvents.value.filter(item => !match(item))
+          spilloverEvents.value = spilloverEvents.value.filter(item => !match(item))
+          refreshUpcoming(projectTimelines.value, [...extraEvents.value, ...nextMonthEvents.value])
+          cacheMonth(cursor.value, extraEvents.value)
+        },
+        rollback: () => {
+          extraEvents.value = previous.extra; nextMonthEvents.value = previous.next; spilloverEvents.value = previous.spill
+          refreshUpcoming(projectTimelines.value, [...extraEvents.value, ...nextMonthEvents.value])
+          cacheMonth(cursor.value, extraEvents.value)
+        },
+        request: mutation => eventsApi.delete(event.id as number, event.version!, { mutationId: mutation.mutationId }),
+        onCommit: () => { void fetchEvents(); void fetchNextMonthEvents(); void fetchSpilloverEvents() },
+      })
+    } catch (error) {
+      if ((error as { status?: number })?.status !== 409) throw error
+      showAppError('活动已被其他端修改，已刷新最新数据')
+      liveStore.bump('calendar')
+      await Promise.all([fetchEvents(), fetchNextMonthEvents(), fetchSpilloverEvents()])
+    }
   }
 
   async function saveEvent() {
@@ -124,7 +138,7 @@ export function useCalendarEventForm(options: EventFormOptions) {
     newEvent.value = { name: '', date: todayIso.value, ...defaultTimeRange(), description: '', allDay: false }
     showAddForm.value = false
     try {
-      const created = await eventsApi.create({ title: localItem.name, date, time: localItem.time || undefined, endTime: localItem.endTime || undefined, type: 'event', description: localItem.description || undefined })
+      const created = await eventsApi.create({ title: localItem.name, date, time: localItem.time || undefined, endTime: localItem.endTime || undefined, type: 'event', description: localItem.description || undefined }, uid)
       const normalized = { ...normalizeCalendarEvent(created), _uid: uid }
       // 创建响应可能晚于实时 create 事件到达；按服务端 id 只保留一份，避免
       // “乐观临时项 + 实时正式项”同时留在当前月份列表中。

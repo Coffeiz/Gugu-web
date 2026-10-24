@@ -220,6 +220,8 @@ async def test_scope_revision_is_audit_only_and_preserves_prefix(monkeypatch):
 async def test_reflection_provider_usage_is_added_to_active_trace_without_prompt_text(monkeypatch):
     from agent.runtime.loopscope_trace import state
 
+    reflection_runs = []
+
     async def fake_complete_messages(*args, usage_sink=None, **kwargs):
         usage_sink.append({
             "input": 20_000,
@@ -231,6 +233,7 @@ async def test_reflection_provider_usage_is_added_to_active_trace_without_prompt
         return {"ok": True}
 
     monkeypatch.setenv("LOOPSCOPE_ENABLED", "1")
+    monkeypatch.setattr(state, "_finish_run", lambda reflection_run, _status: reflection_runs.append(reflection_run))
     monkeypatch.setattr(provider_runner, "complete_messages", fake_complete_messages)
     monkeypatch.setattr(
         "agent.context.cache_capability.record_reuse_outcome",
@@ -270,7 +273,11 @@ async def test_reflection_provider_usage_is_added_to_active_trace_without_prompt
         state._scope_run.reset(token)
 
     assert result.ok is True
-    span = next(item for item in run.spans if item.name == "Reflection cache observation")
+    assert run.spans == []
+    assert len(reflection_runs) == 1
+    reflection_run = reflection_runs[0]
+    assert reflection_run.source == "reflection"
+    span = next(item for item in reflection_run.spans if item.name == "Reflection cache observation")
     probe = span.input["reflection_cache_probe"]
     assert probe["reflection_scope"] == "owner"
     assert probe["cache_hit_ratio"] == 0.85

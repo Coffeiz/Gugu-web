@@ -37,7 +37,7 @@
             <template v-else-if="blobUrl || videoSrc">
               <PdfViewer v-if="isPdf" :blobUrl="blobUrl ?? undefined" />
               <ImageViewer v-else-if="isImage"      :blobUrl="blobUrl ?? undefined" :upscale="isVectorImage" />
-              <TextViewer  v-else-if="isText"       :blobUrl="blobUrl ?? undefined" :ext="file?.ext" :fileKey="file?.id ?? file?.attach_id ?? undefined" :fileContext="file ?? null" />
+              <TextViewer  v-else-if="isText"       :blobUrl="blobUrl ?? undefined" :ext="file?.ext" :fileKey="file?.id ?? file?.attach_id ?? undefined" :fileContext="file ?? null" @refresh="refreshTextPreview" />
               <VideoViewer v-else-if="isVideo"      :src="videoSrc ?? undefined" :refresh-src="refreshVideoSource" />
 
             </template>
@@ -46,82 +46,38 @@
       </div>
     </Transition>
 
-    <!-- 文件信息弹窗 -->
-    <Transition name="info-pop">
-      <div v-if="showInfo && file" class="fp-info-win"
-        :style="{ left: infoX+'px', top: infoY+'px', zIndex: myZ + 1 }"
-        @mousedown.stop
-      >
-        <div class="fp-info-title" @mousedown.prevent="startInfoDrag">
-          <span>{{ t('files.info') }}</span>
-          <button class="fp-action-btn fp-close-btn" @click="showInfo = false">
-            <Icon name="action.close" :size="15" />
-          </button>
-        </div>
-        <div class="fp-info-body">
-          <div class="fp-info-row">
-            <span class="fp-info-label">{{ t('files.name') }}</span>
-            <span class="fp-info-val">{{ file.displayName }}.{{ file.ext?.toLowerCase() }}</span>
-          </div>
-          <div class="fp-info-row">
-            <span class="fp-info-label">{{ t('files.format') }}</span>
-            <span class="fp-info-val">{{ file.ext?.toUpperCase() }}</span>
-          </div>
-          <div class="fp-info-row">
-            <span class="fp-info-label">{{ t('files.size') }}</span>
-            <span class="fp-info-val">{{ file.sizeBytes != null ? fmtBytes(file.sizeBytes) : file.size }}</span>
-          </div>
-          <div class="fp-info-row">
-            <span class="fp-info-label">{{ t('files.createdAt') }}</span>
-            <span class="fp-info-val">{{ formatFileCreatedDate(file.createdAt) }}</span>
-          </div>
-          <div v-if="file.projectName" class="fp-info-row">
-            <span class="fp-info-label">{{ t('files.project') }}</span>
-            <span class="fp-info-val">{{ file.projectName }}</span>
-          </div>
-          <div v-if="file.folderName" class="fp-info-row">
-            <span class="fp-info-label">{{ t('files.folderLocation') }}</span>
-            <span class="fp-info-val">{{ file.folderName }}</span>
-          </div>
-          <div v-if="file.stageName" class="fp-info-row">
-            <span class="fp-info-label">{{ t('files.stage') }}</span>
-            <span class="fp-info-val">{{ file.stageName }}</span>
-          </div>
-          <div v-if="file.mimeType" class="fp-info-row">
-            <span class="fp-info-label">MIME</span>
-            <span class="fp-info-val fp-info-mono">{{ file.mimeType }}</span>
-          </div>
-        </div>
-      </div>
-    </Transition>
+    <FileInfoPopup :show="showInfo" :file="file" :x="infoX" :y="infoY" :z-index="myZ + 1" @close="showInfo = false" @navigate="navigateToFileDirectory" />
   </Teleport>
 </template>
 
 <script setup lang="ts">
 import { ref, watch, computed, onUnmounted, nextTick, type PropType } from 'vue'
+import { useRouter } from 'vue-router'
 import type { FileMeta } from '@/stores/filesCache'
 import Icon from '@/components/common/icons/Icon.vue'
+import FileInfoPopup from '@/components/common/file-browser/FileInfoPopup.vue'
 import ImageViewer from '@/components/common/viewers/ImageViewer.vue'
 import TextViewer  from '@/components/common/viewers/TextViewer.vue'
 import { useLiveStore } from '@/stores/live'
 import VideoViewer from '@/components/common/viewers/VideoViewer.vue'
 import PdfViewer   from '@/components/common/viewers/PdfViewer.vue'
-import { formatFileCreatedDate } from '@/utils/fileDate'
 
 import { CLIENT_ID, filesApi } from '@/services/api'
 import { isUnauthorizedResponse } from '@/services/authSession'
-import { isImageExt, isTextExt, isVideoExt, isAudioExt, isPreviewAffectedByFileEvent } from '@/stores/preview'
+import { isImageExt, isTextExt, isVideoExt, isPreviewAffectedByFileEvent } from '@/stores/preview'
 import { nextZ, registerEsc } from '@/composables/core/windowz'
-import { usePreviewBlobCache } from '@/composables/shared/usePreviewBlobCache'
+import { usePreviewBlobCache, withPreviewCacheBust as withCacheBust } from '@/composables/shared/usePreviewBlobCache'
 import { useI18n } from 'vue-i18n'
-import { fmtBytes } from '@/utils/fileSize'
 import { accountBoundaryEpoch, getAccountBoundaryEpoch } from '@/utils/accountBoundary'
+import { useUiStore } from '@/stores/ui'
 
 const props = defineProps({
   show: Boolean,
   file: { type: Object as PropType<Partial<FileMeta>>, default: undefined },
 })
 const { t } = useI18n()
+const router = useRouter()
+const uiStore = useUiStore()
 const emit = defineEmits(['close'])
 
 const blobUrl    = ref<string | null>(null)
@@ -177,7 +133,6 @@ watch(blobUrl, url => {
 const isText   = computed(() => isTextExt(props.file?.ext, props.file?.mimeType))
 const isVideo  = computed(() => isVideoExt(props.file?.ext))
 const isPdf    = computed(() => props.file?.ext?.toUpperCase() === 'PDF')
-const isAudio  = computed(() => isAudioExt(props.file?.ext))
 
 const EXT_COLORS: Record<string, string> = {
   PDF: '#e05555',
@@ -197,11 +152,6 @@ function revoke() {
   blobUrl.value = null
   videoSrc.value = null
   currentCacheKey.value = ''
-}
-
-function withCacheBust(url: string, refresh: boolean): string {
-  if (!refresh) return url
-  return `${url}${url.includes('?') ? '&' : '?'}_t=${Date.now()}`
 }
 
 let loadSequence = 0
@@ -277,6 +227,12 @@ async function load(file: Partial<FileMeta>, refresh = false) {
   }
 }
 
+function refreshTextPreview() {
+  const file = props.file
+  if (!props.show || !file || loading.value) return
+  void load(file, true)
+}
+
 watch(() => [props.show, props.file] as [boolean, Partial<FileMeta> | undefined], ([show, file]) => {
   if (show && file) load(file)
   else revoke()
@@ -332,8 +288,6 @@ async function handleDownload() {
 onUnmounted(() => {
   revoke()
   _unregEsc?.()
-  window.removeEventListener('mousemove', onInfoDragMove)
-  window.removeEventListener('mouseup',   onInfoDragUp)
 })
 
 // ── 文件信息弹窗 ─────────────────────────────────────────────────────────────
@@ -352,23 +306,16 @@ async function openInfo() {
   showInfo.value = !showInfo.value
 }
 
-let infoDragOrig: { mx: number; my: number; x: number; y: number } | null = null
-function startInfoDrag(e: MouseEvent) {
-  if (e.button !== 0) return
-  infoDragOrig = { mx: e.clientX, my: e.clientY, x: infoX.value, y: infoY.value }
-  window.addEventListener('mousemove', onInfoDragMove)
-  window.addEventListener('mouseup',   onInfoDragUp)
+function navigateToFileDirectory(target?: Partial<FileMeta>) {
+  if (!target || !Number.isSafeInteger(Number(target.id)) || target.attach_id) return
+  uiStore.pendingFileTarget = {
+    kind: 'file',
+    id: Number(target.id),
+    ...(target.workspaceDirectoryId != null ? { workspaceDirectoryId: target.workspaceDirectoryId } : {}),
+  }
+  void router.push('/files')
 }
-function onInfoDragMove(e: MouseEvent) {
-  if (!infoDragOrig) return
-  infoX.value = Math.max(0, infoDragOrig.x + e.clientX - infoDragOrig.mx)
-  infoY.value = Math.max(0, infoDragOrig.y + e.clientY - infoDragOrig.my)
-}
-function onInfoDragUp() {
-  infoDragOrig = null
-  window.removeEventListener('mousemove', onInfoDragMove)
-  window.removeEventListener('mouseup',   onInfoDragUp)
-}
+
 
 // 关闭抽屉时同步关闭信息弹窗
 watch(() => props.show, v => { if (!v) showInfo.value = false })
@@ -510,54 +457,4 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
 /* ── info 按钮激活态 ── */
 .fp-action-btn.active { background: var(--action-soft); color: var(--action-primary); }
 
-/* ── 文件信息弹窗 ── */
-.fp-info-win {
-  position: fixed;
-  width: 220px;
-  border-radius: 12px;
-  overflow: hidden;
-  background: var(--popup-surface-bg);
-  backdrop-filter: var(--popup-surface-blur);
-  -webkit-backdrop-filter: var(--popup-surface-blur);
-  border: 1px solid var(--popup-surface-border);
-  box-shadow: var(--popup-surface-shadow);
-  user-select: none;
-  /* z-index 由 :style 动态(myZ+1,信息窗在面板之上) */
-}
-.fp-info-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 9px 10px 9px 14px;
-  background: var(--surface-glass);
-  border-bottom: 1px solid var(--panel-divider);
-  cursor: grab;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-.fp-info-title:active { cursor: grabbing; }
-.fp-info-body {
-  padding: 12px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  max-height: 70vh;
-  overflow-y: auto;
-}
-.fp-info-row { display: flex; flex-direction: column; gap: 2px; }
-.fp-info-label {
-  font-size: 10px; font-weight: 600;
-  color: var(--text-secondary); opacity: .6;
-  text-transform: uppercase; letter-spacing: 0.04em;
-}
-.fp-info-val {
-  font-size: 12px; color: var(--text-primary);
-  word-break: break-all; line-height: 1.4;
-}
-.fp-info-mono { font-family: var(--font-family-mono); font-size: 11px; }
-.info-pop-enter-active,
-.info-pop-leave-active { transition: opacity 0.12s ease, transform 0.12s ease; }
-.info-pop-enter-from,
-.info-pop-leave-to     { opacity: 0; transform: scale(0.95); }
 </style>

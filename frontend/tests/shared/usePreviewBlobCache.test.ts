@@ -4,10 +4,20 @@ import {
   clearPreviewBlobCacheForTests,
   previewBlobCacheKey,
   usePreviewBlobCache,
+  withPreviewCacheBust,
 } from '@/composables/shared/usePreviewBlobCache'
 import { beginAccountBoundary, getAccountBoundaryEpoch } from '@/utils/accountBoundary'
 
 describe('usePreviewBlobCache', () => {
+  it('普通预览保留 URL，显式刷新时根据现有查询串追加同一时间版本', () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1234)
+    try {
+      expect(withPreviewCacheBust('/preview?token=example', false)).toBe('/preview?token=example')
+      expect(withPreviewCacheBust('/preview', true)).toBe('/preview?_t=1234')
+      expect(withPreviewCacheBust('/preview?size=card', true)).toBe('/preview?size=card&_t=1234')
+    } finally { now.mockRestore() }
+  })
+
   beforeEach(() => {
     vi.stubGlobal('URL', {
       createObjectURL: vi.fn(),

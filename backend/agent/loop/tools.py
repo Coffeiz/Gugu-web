@@ -13,11 +13,10 @@ from agent.tools import registry
 from app.core.redaction import diag_log
 
 # 查询工具命名前缀：核实轮必须真调这类工具，不许凭印象说"确认了"。
-# 思维笔记的只读工具不带通用 read_/search_ 前缀，必须显式纳入，避免明明读回了
-# 数据却被误判成没有观察，白白多跑复查回合。
+# 思维笔记工具不带通用 read_/search_ 前缀，必须显式纳入，避免明明读回了数据却被
+# 误判成没有观察，白白多跑复查回合。
 READ_PREFIXES = ("read_", "list_", "get_", "find_", "search_")
 READ_TOOL_NAMES = {"note_get", "note_search"}
-_PARALLEL_INTERACTION_TOOLS = frozenset({"ask_user", "manage_mcp_servers", "use_skill"})
 
 
 def is_read_tool(name: str) -> bool:
@@ -25,85 +24,50 @@ def is_read_tool(name: str) -> bool:
     return name.startswith(READ_PREFIXES) or name in READ_TOOL_NAMES
 
 
-def parallel_safe_batch(tool_calls, tool_snapshot) -> bool:
-    """判断整批调用是否满足显式并行安全契约；任一不确定项都回退串行。
+def partition_tool_calls(
+    tool_calls, tool_snapshot,
+) -> tuple[list[tuple[int, Any, str, dict]], list[tuple[int, Any]]]:
+    """为同一 provider round 的工具调用分别解析目标；交互和权限在 dispatch 时独立处理。
 
-    固定 ``call_tool`` Adapter 必须先解析到最终业务目标，再检查目标元数据。
-    Provider 能否生成并行调用、工具是否标记 ``mutates=False``，都不能授予并发权限。
+    Agent 通过是否在同一轮提出调用来表达并发意图。工具是否读写、是否声明
+    ``parallel_safe`` 或是否可能与同轮另一调用冲突，不再由服务端预检裁决。权限、
+    Schema、Shell 风险、MCP 确认和危险
+    操作确认均由每次 dispatch 独立处理；这里不做跨调用冲突预检，也不预先校验 Schema。
     """
-    if not isinstance(tool_calls, (list, tuple)) or len(tool_calls) < 2:
-        return False
-    return all(_parallel_safe_call(call, tool_snapshot) for call in tool_calls)
+    from agent.tools.tool_contract import resolve_tool_call
 
-
-def prepare_parallel_batch(tool_calls, tool_snapshot) -> list[tuple[Any, str, dict]] | None:
-    """预解析并校验整批调用；任何一个输入不合约就让原串行路径处理整批。"""
-    if not parallel_safe_batch(tool_calls, tool_snapshot):
-        return None
-    from agent.tools.tool_contract import normalize_and_validate_tool_input, resolve_tool_call
-
-    prepared = []
-    for call in tool_calls:
+    parallel: list[tuple[int, Any, str, dict]] = []
+    serial: list[tuple[int, Any]] = []
+    for index, call in enumerate(tool_calls or ()):
+        if getattr(call, "parse_error", None):
+            serial.append((index, call))
+            continue
         target, arguments, error = resolve_tool_call(
             getattr(call, "name", None), getattr(call, "input", None),
         )
-        if error is not None:
-            return None
-        tool = tool_snapshot.get(target)
-        normalized, issues, _legacy_adaptations, _type_adaptations = (
-            normalize_and_validate_tool_input(target, arguments, tool)
+        tool = tool_snapshot.get(target) if error is None and tool_snapshot is not None else None
+        if error is not None or tool is None or not isinstance(arguments, dict):
+            serial.append((index, call))
+            continue
+        # 只把确实要等待用户或动态审批的单项放到交互通道；同轮普通工具仍并行。
+        # Shell 用输入级声明表达本条命令是否需要危险操作确认，谓词失败时保守分流。
+        requires_interaction = target in {"ask_user", "manage_mcp_servers"} or bool(
+            getattr(tool, "requires_confirmation", False)
         )
-        if issues:
-            return None
-        prepared.append((call, target, normalized))
-    return prepared
-
-
-def _parallel_safe_call(call, tool_snapshot) -> bool:
-    """解析一项调用并按最终目标判断；输入不完整或工具名不明时拒绝并行。"""
-    from agent.tools.tool_contract import resolve_tool_call
-
-    if getattr(call, "parse_error", None):
-        return False
-    target, arguments, error = resolve_tool_call(
-        getattr(call, "name", None), getattr(call, "input", None),
-    )
-    if error is not None or target in _PARALLEL_INTERACTION_TOOLS:
-        return False
-    if not isinstance(arguments, dict):
-        return False
-    return _parallel_safe_target(target, arguments, tool_snapshot)
-
-
-def _parallel_safe_target(target: str, arguments: dict, tool_snapshot) -> bool:
-    """检查最终业务工具的并发授权和可能按参数生效的写入声明。"""
-    tool = tool_snapshot.get(target) if tool_snapshot is not None else None
-    if (
-        tool is None
-        or getattr(tool, "requires_confirmation", False)
-        or getattr(tool, "source", "builtin") == "mcp"
-    ):
-        return False
-    safe_for_input = getattr(tool, "parallel_safe_for_input", None)
-    if callable(safe_for_input):
-        try:
-            if safe_for_input(arguments):
-                return True
-        except Exception:
-            return False
-    if (
-        getattr(tool, "parallel_safe", False) is not True
-        or getattr(tool, "mutates", False)
-        or getattr(tool, "destructive", False)
-    ):
-        return False
-    mutation_predicate = getattr(tool, "mutates_for_input", None)
-    if not callable(mutation_predicate):
-        return True
-    try:
-        return not mutation_predicate(arguments)
-    except Exception:
-        return False
+        confirmation_predicate = getattr(tool, "parallel_safe_for_input", None)
+        if callable(confirmation_predicate):
+            try:
+                requires_interaction = requires_interaction or not bool(
+                    confirmation_predicate(arguments)
+                )
+            except Exception as exc:
+                diag_log("agent.loop.tool_interaction_predicate", exc)
+                requires_interaction = True
+        if requires_interaction:
+            serial.append((index, call))
+            continue
+        parallel.append((index, call, target, arguments))
+    return parallel, serial
 
 
 def copy_skill_state_for_parallel(skill_state: dict[str, str] | None) -> dict[str, str] | None:
@@ -185,6 +149,7 @@ def pending_tool_signal(status: str, result, pending, *, verify: bool) -> dict:
 
 async def dispatch_in_session(
     user_id, target, dispatch_input, *, session_id, session, run_id, tool_snapshot, skill_state,
+    tool_call_id=None,
 ):
     """带 dispatch 会话上下文执行一次工具调用（原 core._dispatch_in_session）。
 
@@ -198,6 +163,7 @@ async def dispatch_in_session(
         session_id, session, run_id,
         tool_snapshot=tool_snapshot,
         skill_state=skill_state,
+        tool_call_id=tool_call_id,
     )
     try:
         return await registry.dispatch(user_id, target, dispatch_input)

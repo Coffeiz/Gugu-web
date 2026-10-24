@@ -62,14 +62,14 @@ async def test_stale_group_interaction_is_acknowledged_in_original_group(monkeyp
         protocol_acks.append((channel_id, interaction_id, code))
         return True
 
-    async def fake_qq_ack(channel_id, chat_type, target_id, text, msg_id):
+    async def fake_qq_reply(channel_id, chat_type, target_id, text, msg_id):
         user_replies.append((channel_id, chat_type, target_id, text, msg_id))
 
     monkeypatch.setattr(db_session, "_SessionLocal", _SessionFactory())
     monkeypatch.setattr(interactions, "consume_action", stale_action)
     monkeypatch.setattr("app.services.mcp_secret_inputs.consume_mcp_secret_action", no_secret_action)
     monkeypatch.setattr(qq_events, "_ack_qq_interaction", fake_protocol_ack)
-    monkeypatch.setattr(qq_events, "_qq_ack", fake_qq_ack)
+    monkeypatch.setattr(qq_events, "_qq_reply", fake_qq_reply)
 
     await qq_events._handle_qq_interaction({
         "id": "interaction-1",

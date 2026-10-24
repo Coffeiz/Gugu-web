@@ -1,4 +1,180 @@
 {
+  "backend/tests/agent/test_display_event_contract.py": {
+    "domain": "chat-display-events",
+    "layer": "L1",
+    "owner": "backend/agent/context/display_timeline.py",
+    "productionEntry": "backend/app/db/migrations/display_events.py",
+    "keyBehavior": "工具更新保留首次身份时间序号，版本迁移保留正文及结果，真实 SQL 表重复升级幂等",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/test_im_web_stream_bridge.py": {
+    "domain": "im-web-stream",
+    "layer": "L1",
+    "owner": "backend/agent/im/stream_bridge.py",
+    "productionEntry": "backend/agent/im/dispatch.py",
+    "keyBehavior": "平台 tuple 不作为第二展示源，公共展示事件透传且不重新生成身份",
+    "ci": "backend-pytest"
+  },
+  "frontend/tests/chat/composables/useWebSessionBadges.test.ts": {
+    "domain": "chat-session-status",
+    "layer": "L1",
+    "owner": "frontend/src/components/common/gugu-chat/composables/useWebSessionBadges.ts",
+    "productionEntry": "frontend/src/components/common/gugu-chat/GuguChat.vue",
+    "keyBehavior": "运行优先、后台完成未读、可见会话清除、刷新保留账号隔离已读版本，IM 不参与",
+    "ci": "frontend-vitest"
+  },
+  "backend/tests/agent/test_session_badges.py": {
+    "domain": "chat-session-status",
+    "layer": "L1",
+    "owner": "backend/app/api/v1/agent_routes/sessions.py",
+    "productionEntry": "GET /agent/sessions",
+    "keyBehavior": "列表只返回本人 Web 会话的运行状态和完成正文版本，不统计模型内部行、检查点或 IM，不泄露其他账号",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/qq/test_qq_final_active_delivery.py": {
+    "domain": "qq-final-delivery",
+    "layer": "L1",
+    "owner": "backend/agent/im/dispatch_finalization.py",
+    "productionEntry": "backend/agent/im/dispatch.py 与 backend/agent/im/streaming/qq.py",
+    "keyBehavior": "最终正文和错误提示主动发送且不重放中间轮；过程送达不掩盖最终失败；取消不补发，缺模型终态不伪造成功",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/files/test_video_path_transport.py": {
+    "domain": "media-video",
+    "layer": "L1",
+    "owner": "backend/agent/media/video_source.py",
+    "productionEntry": "backend/agent/tools/media_reader.py 与 backend/agent/chat/attachments.py",
+    "keyBehavior": "大视频分块上传不改原件；上传失败不回退大载荷；引用缓存按用户及配置隔离，文件变化不缓存；取消不泄漏预算；摘要契约不变",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_inbound_recovery.py": {
+    "domain": "im-recovery",
+    "layer": "L1",
+    "owner": "backend/agent/im/inbound_recovery.py",
+    "productionEntry": "backend/worker.py 与 backend/agent/run",
+    "keyBehavior": "崩溃重领不重跑已开始任务；回复发送前落库，检查点保留中间轮和工具状态，正常收尾复用同一展示行",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_im_commands.py": {
+    "domain": "im-command-auth",
+    "layer": "L1",
+    "owner": "backend/agent/commands/__init__.py",
+    "productionEntry": "backend/agent/im/dispatch.py 与 backend/agent/commands/__init__.py",
+    "keyBehavior": "IM 命令按可信角色限制 Owner 私有数据与账号状态操作，缺少角色时按未知身份拒绝",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/test_agent_delete_undo.py": {
+    "domain": "agent-undo",
+    "layer": "L1",
+    "owner": "backend/app/services/undo",
+    "productionEntry": "backend/agent/tools/undo.py 与 backend/app/services/undo/agent.py",
+    "keyBehavior": "Agent 项目和日历软删除可从原会话撤销，日历提醒状态一并恢复，Agent 操作不进入 Web 撤销栈",
+    "ci": "backend-test"
+  },
+  "backend/tests/api/test_create_idempotency.py": {
+    "domain": "create-idempotency",
+    "layer": "L1",
+    "owner": "backend/app/services/idempotency.py",
+    "productionEntry": "backend/app/api/v1/projects.py、backend/app/api/v1/events.py 与 Agent 创建工具",
+    "keyBehavior": "Web 与 Agent 项目和日历创建对相同请求键返回同一资源，同键不同内容明确冲突",
+    "ci": "backend-test"
+  },
+  "backend/tests/concurrency/test_cross_session_version_guards.py": {
+    "domain": "cross-session-concurrency",
+    "layer": "L1",
+    "owner": "backend/app/core 与 backend/app/services/storage",
+    "productionEntry": "项目、笔记、画布便签、文件夹和文件版本保护入口",
+    "keyBehavior": "五类资源在独立 Session 交错写入时拒绝旧版本覆盖并保留胜出写入",
+    "ci": "backend-test"
+  },
+  "backend/tests/scheduling/events/test_event_atomic_update.py": {
+    "domain": "calendar",
+    "layer": "L1",
+    "owner": "backend/app/services/calendar",
+    "productionEntry": "backend/app/api/v1/events.py 与 backend/agent/tools/calendar.py",
+    "keyBehavior": "Web 与 Agent 并发更新拒绝旧版本覆盖；事件软删除与提醒停用使用版本保护",
+    "ci": "backend-test"
+  },
+  "frontend/tests/files/fileActionsVersion.test.ts": {
+    "domain": "files",
+    "layer": "L1",
+    "owner": "frontend/composables/files",
+    "productionEntry": "frontend/src/composables/files/useFileActions.ts",
+    "keyBehavior": "改名与移动提交缓存中的文件版本，成功后回填服务端新版本，避免后续操作继续使用旧版本",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/calendar/DashboardCalendarPanel.test.ts": {
+    "domain": "calendar",
+    "layer": "L1",
+    "owner": "frontend/views/Dashboard",
+    "productionEntry": "frontend/src/views/Dashboard/components/CalendarPanel.vue",
+    "keyBehavior": "快捷编辑提交打开时捕获的事件版本；服务端拒绝并发旧草稿后恢复乐观状态、展示冲突提示并刷新缓存",
+    "ci": "frontend-test"
+  },
+  "backend/tests/im/test_group_reflection_snapshot_reuse.py": {
+    "domain": "im-memory",
+    "layer": "L1",
+    "owner": "backend/agent/memory",
+    "productionEntry": "backend/agent/context/reflection_snapshot.py 与 backend/agent/memory/reflection_jobs.py",
+    "keyBehavior": "数据库历史恢复后仅在消息序列严格匹配时复用原始 Provider 前缀；闲置调度可刷新、取消并在 worker 接管",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_group_reflection_policy.py": {
+    "domain": "im-memory",
+    "layer": "L1",
+    "owner": "backend/agent/memory",
+    "productionEntry": "backend/agent/im/loop.py:record_passive_im_message、backend/agent/memory/group_pressure.py、reflection_jobs.py",
+    "keyBehavior": "群被动消息不登记或续期闲置，主动 run 完成后计时且保留较新水位；不足50条达到90%压力仍入队两类反思，重建旧快照后先压缩再反思，压缩被阻止则持久延后",
+    "ci": "backend-test"
+  },
+  "frontend/tests/admin/agent/useAgentRuntimeConfig.test.ts": {
+    "domain": "agent-runtime-config",
+    "layer": "L1",
+    "owner": "frontend/views/Admin/Agent/runtime-config",
+    "productionEntry": "frontend/src/views/Admin/Agent/runtime-config/useAgentRuntimeConfig.ts",
+    "keyBehavior": "五个配置分区只提交各自草案，保留在途状态、三秒成功提示、失败反馈与草案以及服务端归一化回填",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/files/composables/useFilePasteCore.test.ts": {
+    "domain": "file-copy",
+    "layer": "L0",
+    "owner": "frontend/composables/files",
+    "productionEntry": "frontend/src/composables/files/useFilePasteCore.ts:findFileCopyConflicts",
+    "keyBehavior": "文件库和项目目录复制按同名同后缀严格判定冲突，保留选择顺序与目标 ID，跳过缺失源和非目标目录文件",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/preview/FloatPreviewWindowDrag.test.ts": {
+    "domain": "file-preview",
+    "layer": "L1",
+    "owner": "frontend/components/common/layout",
+    "productionEntry": "frontend/src/components/common/layout/FloatPreviewWindow.vue",
+    "keyBehavior": "真实预览组件拖动保持顶部可见、左右与底部 25% 额外视口边界，最大化禁止拖动并可恢复；用隔离虚拟文本避免网络",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/common/useWindowDrag.test.ts": {
+    "domain": "window-interaction",
+    "layer": "L1",
+    "owner": "frontend/composables/core",
+    "productionEntry": "frontend/src/composables/core/useWindowDrag.ts",
+    "keyBehavior": "预览窗和信息弹层保留主键拖动、独立偏移和动态边界，松开或卸载停止监听且不干扰其他窗口",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/files/runtimeFileObjects.test.ts": {
+    "domain": "file-runtime",
+    "layer": "L1",
+    "owner": "frontend/composables/files",
+    "productionEntry": "frontend/src/components/common/file-browser/RuntimeFileCard.vue 与 RuntimeFolderCard.vue、RuntimeListRow.vue、文件库 Runtime 列表行",
+    "keyBehavior": "五种文件包装器挂载绑定 DOM、同步选择和能力、卸载释放当前对象；旧 generation 不得更新或注销新对象与 surface",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/files/thumbCache.test.ts": {
+    "domain": "files",
+    "layer": "L0",
+    "owner": "frontend/composables/shared",
+    "productionEntry": "frontend/src/composables/shared/useThumbCache.ts",
+    "keyBehavior": "文件和附件缩略图保持缓存与并发去重、Cookie 鉴权、失败重试、超时释放以及按文件回收 URL 和加载标记",
+    "ci": "frontend-test"
+  },
   "backend/tests/im/test_im_memory_scopes.py": {
     "domain": "im-memory",
     "layer": "L1",
@@ -141,6 +317,54 @@
     "owner": "frontend/utils",
     "productionEntry": "frontend/src/utils/modelProviders.ts",
     "keyBehavior": "Provider API 协议选项与默认值符合端点能力且保留有效选择",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/agent-configuration/ModelPicker.test.ts": {
+    "domain": "agent-configuration",
+    "layer": "L1",
+    "owner": "frontend/components/common/models",
+    "productionEntry": "frontend/src/components/common/models/ModelPicker.vue",
+    "keyBehavior": "模型列表和错误反馈始终显示在当前模型输入行下方，不脱离编辑器弹出",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/agent-configuration/SpeechModelFields.test.ts": {
+    "domain": "agent-configuration",
+    "layer": "L1",
+    "owner": "frontend/components/common/models",
+    "productionEntry": "frontend/src/components/common/models/SpeechModelFields.vue",
+    "keyBehavior": "语音服务商切换同步协议与默认值、清除不适用于新目的地的草稿密钥，并忽略过期模型列表",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/agent-configuration/VoiceModelConfig.test.ts": {
+    "domain": "agent-configuration",
+    "layer": "L1",
+    "owner": "frontend/views/Admin/Agent/runtime-config",
+    "productionEntry": "frontend/src/views/Admin/Agent/runtime-config/components/VoiceModelConfig.vue",
+    "keyBehavior": "关闭语音转写仅在用户确认后执行停用",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/agent-configuration/useMultimodalProbe.test.ts": {
+    "domain": "agent-configuration",
+    "layer": "L1",
+    "owner": "frontend/views/Admin/Agent/llm",
+    "productionEntry": "frontend/src/views/Admin/Agent/llm/useMultimodalProbe.ts",
+    "keyBehavior": "模型检测反馈留在当前编辑器，且旧模型检测结果不会覆盖后续草稿",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/agent-configuration/useVoicePresets.test.ts": {
+    "domain": "agent-configuration",
+    "layer": "L1",
+    "owner": "frontend/views/Admin/Agent/runtime-config",
+    "productionEntry": "frontend/src/views/Admin/Agent/runtime-config/useVoicePresets.ts",
+    "keyBehavior": "保存后以服务端列表和启用项为准；失败时保留草稿并显示错误",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/agent-configuration/voiceActivationRefresh.test.ts": {
+    "domain": "agent-configuration",
+    "layer": "L1",
+    "owner": "frontend/views/Admin/Agent/runtime-config",
+    "productionEntry": "frontend/src/views/Admin/Agent/runtime-config/components/VoiceModelConfig.vue",
+    "keyBehavior": "语音模型启停期间保留原卡片实例，异步刷新结束后才更新启用状态",
     "ci": "frontend-test"
   },
   "frontend/tests/forms/field-label-focus.test.ts": {
@@ -287,6 +511,22 @@
     "keyBehavior": "模型配置决定推理持久化策略，缺省值安全关闭",
     "ci": "backend-pytest"
   },
+  "backend/tests/agent/providers/test_admin_voice_presets.py": {
+    "domain": "agent-voice",
+    "layer": "L1",
+    "owner": "backend/app/api/v1/agent_admin.py",
+    "productionEntry": "backend/app/api/v1/agent_admin.py 与 backend/app/api/v1/byok.py",
+    "keyBehavior": "语音预设密钥只对原服务商和地址复用；测试、模型列表与运行配置使用一致的语音产品线",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/providers/test_minimax_voice_audio.py": {
+    "domain": "agent-voice",
+    "layer": "L0",
+    "owner": "backend/agent/providers/minimax",
+    "productionEntry": "backend/agent/providers/minimax/voice.py",
+    "keyBehavior": "语音容器扩展名与 MIME 类型匹配，未知或超时长音频在发起请求前被拒绝",
+    "ci": "backend-pytest"
+  },
   "backend/tests/platform/security/test_phase3_filesystem_policy.py": {
     "domain": "filesystem-security",
     "layer": "L1",
@@ -309,6 +549,14 @@
     "owner": "backend/agent/tools/files",
     "productionEntry": "agent/tools/files/read.py",
     "keyBehavior": "群聊成员只能读取当前消息明确提供的图片附件，不能按 Owner 文件 ID 或历史附件探测私人文件",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/deployment/test_admin_entry_gate.py": {
+    "domain": "admin-entry-security",
+    "layer": "L1",
+    "owner": "nginx",
+    "productionEntry": "nginx/prepare-admin-entry.sh",
+    "keyBehavior": "Admin 入口配置生成正确限制令牌路径与主机白名单，并拒绝不安全配置",
     "ci": "backend-pytest"
   },
   "backend/tests/platform/deployment/test_bundle_runtime.py": {
@@ -775,6 +1023,14 @@
     "keyBehavior": "所有浅色配色和材质下分隔线及虚线边界均与浅色背景保持可见对比",
     "ci": "runtime-integration"
   },
+  "frontend/e2e/page-lifecycle.spec.ts": {
+    "domain": "frontend-ui",
+    "layer": "L3",
+    "owner": "frontend/e2e",
+    "productionEntry": "frontend/src/router/index.ts",
+    "keyBehavior": "主导航顺序打开各页面并离开，确认视图加载完成、可关闭且无运行时异常",
+    "ci": "runtime-integration"
+  },
   "frontend/e2e/project-file-drag-experimental.spec.ts": {
     "domain": "file-library",
     "layer": "L3",
@@ -967,6 +1223,14 @@
     "keyBehavior": "诊断 inline compaction 的 thinking A/B 结果时保留真实调用上下文并避免持久化原始正文",
     "ci": "backend-pytest"
   },
+  "backend/tests/agent/context/test_inline_compaction_progress.py": {
+    "domain": "agent-compaction",
+    "layer": "L1",
+    "owner": "backend/agent/loop",
+    "productionEntry": "backend/agent/loop/context_runtime.py 与 backend/agent/context/compaction.py",
+    "keyBehavior": "压力压缩保护前一 run 窗口和当前用户原文，仅摘要较早执行轮并保留最新工具往返",
+    "ci": "backend-pytest"
+  },
   "backend/tests/agent/context/test_branch_request_prefix.py": {
     "domain": "agent-context",
     "layer": "L1",
@@ -983,12 +1247,20 @@
     "keyBehavior": "迁移为既有技能分配稳定顺序 ID 并让后续序列从最大 ID 之后继续",
     "ci": "backend-pytest"
   },
+  "backend/tests/im/qq/test_qq_text.py": {
+    "domain": "qq-streaming",
+    "layer": "L1",
+    "owner": "backend/agent/gateway/qq",
+    "productionEntry": "backend/agent/gateway/qq/text.py",
+    "keyBehavior": "QQ 输出安全转换地图链接，流式任意前缀不截断且不泄露不支持的自定义协议",
+    "ci": "backend-pytest"
+  },
   "backend/tests/im/qq/test_qq_reply_sequences.py": {
     "domain": "qq-streaming",
     "layer": "L2",
     "owner": "backend/agent/gateway/qq",
     "productionEntry": "backend/agent/gateway/qq/outbound.py",
-    "keyBehavior": "同一条 QQ 入站消息的流式文字、图片和普通文本共享序号，冷计数与并发发送不被重复去重，同一流各帧保持相同序号",
+    "keyBehavior": "QQ 图文共用被动回复序号；中间刷新失败后仍关闭已创建的流；回执只确认实际发送的文字，关闭失败向调用方报告",
     "ci": "backend-pytest"
   },
   "backend/tests/im/qq/test_qq_package_facade.py": {
@@ -1191,6 +1463,14 @@
     "keyBehavior": "真实 OpenAI 与 Anthropic SDK 在兼容传输上支持流式工具调用、超时分类和超时转换",
     "ci": "backend-pytest"
   },
+  "backend/tests/agent/providers/test_provider_client_pool.py": {
+    "domain": "provider-client-pool",
+    "layer": "L1",
+    "owner": "backend/agent/providers/client_pool.py",
+    "productionEntry": "backend/agent/providers/__init__.py",
+    "keyBehavior": "相同配置跨 run 复用 SDK 客户端，活跃 run 释放前不回收，空闲 TTL 后关闭且配置键不含密钥",
+    "ci": "backend-pytest"
+  },
   "backend/tests/storage/test_project_file_counts_postgres.py": {
     "domain": "project-file-counts",
     "layer": "L2",
@@ -1317,6 +1597,86 @@
     "owner": "backend/app/services/filesync",
     "productionEntry": "app/services/filesync/linux_watcher.py、health.py、periodic.py",
     "keyBehavior": "原生内核溢出必须上报缺口；ready保留溢出原因；仅根身份已记录且匹配时允许周期删除补偿；递归事件不跟随符号链接；意外失效的内核监听报告缺口并触发重建，主动解除保持静默",
+    "ci": "backend-pytest"
+  },
+  "frontend/tests/chat/composables/useChatHistoryPagination.test.ts": {
+    "domain": "chat-history",
+    "layer": "L1",
+    "owner": "frontend/components/common/gugu-chat/composables",
+    "productionEntry": "frontend/src/components/common/gugu-chat/composables/useChatHistoryPagination.ts",
+    "keyBehavior": "历史游标逐页前进，时间线去重保持身份；请求去重、失败手动重试、空页停止、会话切换和卸载隔离迟到响应",
+    "ci": "frontend-test"
+  },
+  "backend/tests/agent/context/test_chat_timeline_migration.py": {
+    "domain": "chat-history",
+    "layer": "L1",
+    "owner": "backend/app/db/migrations/chat_timeline.py",
+    "productionEntry": "Alembic 20261022000003 与 run_finalize 展示收尾",
+    "keyBehavior": "历史跨行工具去重且保留真实耗时、模型原文与调用隔离；数据库迁移可重复执行，新 run 收尾不遗留进行中状态",
+    "ci": "backend-test"
+  },
+  "frontend/tests/chat/GuguChatToolBubble.test.ts": {
+    "domain": "chat-history",
+    "layer": "L1",
+    "owner": "frontend/src/components/common/gugu-chat/GuguChatToolBubble.vue",
+    "productionEntry": "工具卡片点击、异步详情加载与展开",
+    "keyBehavior": "详情返回前保持折叠，就绪后只展开一次；缓存不重复请求，取消、失败重试和虚拟滚动卸载不误展开",
+    "ci": "frontend-test"
+  },
+  "backend/tests/agent/knowledge/test_group_tool_permission_migration.py": {
+    "domain": "group-tool-permissions",
+    "layer": "L1",
+    "owner": "backend/alembic",
+    "productionEntry": "backend/app/models/group_tool_permissions.py 与 Alembic group tool permission migration",
+    "keyBehavior": "迁移保留 provider search 授权并规范旧群工具名称，不丢失无关权限字段",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/providers/test_llm_read_timeout.py": {
+    "domain": "agent-provider-timeout",
+    "layer": "L0",
+    "owner": "backend/agent/providers",
+    "productionEntry": "backend/agent/loop_drivers.py 与 backend/agent/providers/openai_responses.py",
+    "keyBehavior": "主对话各协议驱动共享五分钟响应读取超时，避免单个驱动回退到旧限制",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/providers/test_minimax_media_upload.py": {
+    "domain": "provider-media",
+    "layer": "L1",
+    "owner": "backend/agent/providers/minimax",
+    "productionEntry": "backend/agent/providers/minimax/media.py 与 provider adapter upload_media_file",
+    "keyBehavior": "MiniMax 媒体上传正确处理成功、上游失败与缺失凭据，基类不伪装支持上传",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/providers/test_minimax_video_duration_gate.py": {
+    "domain": "provider-media",
+    "layer": "L1",
+    "owner": "backend/agent/providers",
+    "productionEntry": "backend/agent/providers/media.py 与视频准备/时长探测路径",
+    "keyBehavior": "视频上传前按 Provider 官方时长限制拦截超限或未知时长输入，并复用本地路径探测",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/providers/test_provider_media.py": {
+    "domain": "provider-media",
+    "layer": "L1",
+    "owner": "backend/agent/providers",
+    "productionEntry": "backend/agent/providers/media.py、minimax/media.py 与各 Provider 的 ASR/media 配置",
+    "keyBehavior": "通用多模态默认值与 Provider 专属图片、视频、音频及 ASR 规格由对应模块提供",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_group_tool_permissions.py": {
+    "domain": "group-tool-permissions",
+    "layer": "L1",
+    "owner": "backend/agent/im 与 backend/app/api/v1",
+    "productionEntry": "backend/agent/im 与 backend/app/api/v1/user_bots.py",
+    "keyBehavior": "群工具授权允许受支持的 Provider 搜索工具并删除未知名称",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/qq/test_qq_instant_ack.py": {
+    "domain": "im-instant-ack",
+    "layer": "L1",
+    "owner": "backend/agent/gateway/qq",
+    "productionEntry": "backend/agent/gateway/qq/events.py 与 backend/agent/im/shortcuts.py",
+    "keyBehavior": "QQ 带附件时秒回「文件收到啦」，同一会话 10 秒冷却不刷屏，群聊按只响应@与静默记录策略决定是否回复，纯文本不触发秒回",
     "ci": "backend-pytest"
   }
 }

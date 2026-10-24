@@ -1,6 +1,6 @@
 """音频转码：把 IM 语音（QQ=SILK、飞书=opus 等）转成 mimo 能吃的格式（mp3）。
 
-mimo 音频理解只收 mp3/wav/flac/m4a/ogg（见 chat_attach.AUDIO_EXTS）；而 IM 语音多是
+mimo 音频理解只收 mp3/wav/flac/m4a/ogg（见 app.core.chat_attach.file_types.AUDIO_EXTS）；而 IM 语音多是
 SILK / opus / amr 这类，必须先转码。本件**优雅降级**：缺 ffmpeg / pilk 时一律返回 None，
 调用方退回文字提示，绝不报错、不阻塞网关。
 
@@ -47,8 +47,8 @@ def _ffprobe_bin() -> str | None:
     return None
 
 
-def probe_duration(data: bytes, ext: str | None) -> float | None:
-    """探测音频时长（秒，1 位小数）。没 ffprobe / 失败 → None（前端按未知时长显示）。"""
+def probe_duration(data: bytes, ext: str | None, *, precision: int = 1) -> float | None:
+    """探测媒体时长（秒）。没 ffprobe / 失败 → None（前端按未知时长显示）。"""
     ff = _ffprobe_bin()
     if not ff:
         return None
@@ -60,7 +60,7 @@ def probe_duration(data: bytes, ext: str | None) -> float | None:
         r = subprocess.run([ff, "-v", "quiet", "-show_entries", "format=duration",
                             "-of", "default=nk=1:nw=1", src], capture_output=True, timeout=30)
         out = (r.stdout or b"").decode().strip()
-        return round(float(out), 1) if (r.returncode == 0 and out) else None
+        return round(float(out), precision) if (r.returncode == 0 and out) else None
     except Exception:
         return None
     finally:

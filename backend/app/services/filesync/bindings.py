@@ -26,6 +26,7 @@ from app.services.filesync.reconcile import (
     SyncSummary,
     _fingerprint,
     _root_fingerprint,
+    _stable_fingerprint,
     reconcile_local_directory,
 )
 from app.services.filesync.snapshots import (
@@ -184,32 +185,26 @@ async def _pending_conflicts(
             continue
         if any(path.is_relative_to(other) for other in other_roots):
             continue
-        try:
-            local_fingerprint = _fingerprint(path)
-        except OSError:
-            continue
-        if row.updated_at <= journal.updated_at or local_fingerprint == journal.observed_fingerprint:
-            continue
         existing = await db.scalar(select(FileSyncConflict).where(
             FileSyncConflict.binding_id == binding.id,
             FileSyncConflict.relative_path == relative,
             FileSyncConflict.status == "pending",
         ))
-        if existing is None:
-            existing = FileSyncConflict(
-                binding_id=binding.id, user_id=user_id, relative_path=relative,
-                baseline_fingerprint=journal.observed_fingerprint,
-                local_fingerprint=local_fingerprint,
-                remote_fingerprint=(
-                    snapshot_fingerprint(user_id, binding.id, relative)
-                    or journal.observed_fingerprint
-                ),
-                source=FileSyncSource.LOCAL_DIRECTORY,
-                status="pending",
-            )
-            db.add(existing)
-            await db.flush()
-        conflict_ids.append(existing.id)
+        try:
+            local_fingerprint = _stable_fingerprint(path)
+        except (OSError, ValueError):
+            if existing is not None:
+                conflict_ids.append(existing.id)
+            continue
+        if row.updated_at <= journal.updated_at and local_fingerprint != journal.observed_fingerprint:
+            continue
+        # 本地物理文件是经过路径检查的文件内容事实；不再新建人工冲突。
+        # 有旧冲突时，让后续投影按物理文件更新数据库后自动关闭。
+        if existing is not None:
+            existing.status = "resolved"
+            existing.resolution = "keep_local"
+            existing.resolved_at = now_utc()
+            existing.updated_at = existing.resolved_at
     return tuple(conflict_ids)
 
 

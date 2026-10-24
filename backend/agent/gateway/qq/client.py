@@ -62,8 +62,8 @@ async def start_qq_http_session() -> aiohttp.ClientSession:
     if _QQ_HTTP_SESSION is None or _QQ_HTTP_SESSION.closed:
         connector = aiohttp.TCPConnector(
             keepalive_timeout=_QQ_HTTP_KEEPALIVE_SECONDS,
-            limit=100,
-            limit_per_host=32,
+            limit=0,
+            limit_per_host=64,
         )
         _QQ_HTTP_SESSION = aiohttp.ClientSession(
             connector=connector,
@@ -84,6 +84,8 @@ async def _get_qq_http_session() -> aiohttp.ClientSession:
 def _qq_endpoint_kind(path: str) -> str:
     """把接口路径归类，避免日志暴露路径中的用户或消息标识。"""
     normalized = path.lower()
+    if "stream_messages" in normalized:
+        return "stream_message"
     if "/messages" in normalized:
         return "message"
     if "/files" in normalized:
@@ -215,6 +217,14 @@ async def _send_token(channel_id: str) -> tuple[str, str]:
     _send_tokens[channel_id] = {"token": token, "base": base, "expires_at": now + expires_in}
     return token, base
 
+class QQStreamFinalizationError(RuntimeError):
+    """已有可见正文的流未获关闭确认，不能作为成功交付处理。"""
+
+
+class QQStreamDeliveryError(QQStreamFinalizationError):
+    """流虽已关闭，但正文未完整交付；沿用流失败路径，不报告发送成功。"""
+
+
 class QQAPIError(Exception):
     """QQ Bot API 返回非 2xx。status 是 HTTP 状态码，供上层判定瞬时/永久（P2-b §1/§6）；
     body 是原始响应体，只用于内部判定（如 markdown 权限被拒的错误码）和受限诊断出口，
@@ -266,9 +276,11 @@ async def _qq_request(channel_id: str, method: str, path: str, *,
         token, base = await _send_token(channel_id)
     except Exception as exc:
         _log.info(
-            "[qq-http] trace=%s method=%s endpoint=%s result=auth_%s auth_ms=%.1f",
+            "[qq-http] trace=%s method=%s endpoint=%s result=auth_%s auth_ms=%.1f "
+            "stream_state=%s stream_index=%s stream_id_sent=%s content_len=%s content_fp=%s",
             trace_id or "-", method, _qq_endpoint_kind(path), type(exc).__name__,
             (time.perf_counter() - auth_started) * 1000,
+            *_stream_request_metadata(json_body),
         )
         raise
     auth_ms = (time.perf_counter() - auth_started) * 1000
@@ -292,22 +304,27 @@ async def _qq_request(channel_id: str, method: str, path: str, *,
     except Exception as exc:
         _log.info(
             "[qq-http] trace=%s method=%s endpoint=%s result=%s auth_ms=%.1f request_ms=%.1f "
-            "dns_ms=%s connect_setup_ms=%s reused=%s",
+            "dns_ms=%s connect_setup_ms=%s reused=%s stream_state=%s stream_index=%s "
+            "stream_id_sent=%s content_len=%s content_fp=%s",
             trace_id or "-", method, _qq_endpoint_kind(path), type(exc).__name__, auth_ms,
             (time.perf_counter() - request_started) * 1000,
             f"{request_trace['dns_ms']:.1f}" if "dns_ms" in request_trace else "-",
             f"{request_trace['connect_ms']:.1f}" if "connect_ms" in request_trace else "-",
             request_trace["connection_reused"],
+            *_stream_request_metadata(json_body),
         )
         raise
     request_ms = (time.perf_counter() - request_started) * 1000
     _log.info(
         "[qq-http] trace=%s method=%s endpoint=%s status=%s auth_ms=%.1f request_ms=%.1f "
-        "dns_ms=%s connect_setup_ms=%s reused=%s",
+        "dns_ms=%s connect_setup_ms=%s reused=%s stream_state=%s stream_index=%s "
+        "stream_id_sent=%s content_len=%s content_fp=%s response_stream_id=%s response_code=%s",
         trace_id or "-", method, _qq_endpoint_kind(path), status, auth_ms, request_ms,
         f"{request_trace['dns_ms']:.1f}" if "dns_ms" in request_trace else "-",
         f"{request_trace['connect_ms']:.1f}" if "connect_ms" in request_trace else "-",
         request_trace["connection_reused"],
+        *_stream_request_metadata(json_body),
+        *_stream_response_metadata(data, json_body),
     )
     if status in (200, 201, 204):
         return data
@@ -317,3 +334,31 @@ async def _qq_request(channel_id: str, method: str, path: str, *,
     diag_log_raw("agent.gateway.qq._qq_request",
                   f"{method} {path} status={status} body={data}")
     raise QQAPIError(method, path, status, data)
+
+
+def _stream_request_metadata(json_body: dict | None) -> tuple[object, ...]:
+    """只提取流帧的无正文摘要；普通 QQ 请求使用短横线占位。"""
+    from agent.security.logsafe import fingerprint
+
+    if not isinstance(json_body, dict) or "input_state" not in json_body:
+        return "-", "-", "-", "-", "-"
+    content = json_body.get("content_raw")
+    content = content if isinstance(content, str) else ""
+    return (
+        json_body.get("input_state", "-"),
+        json_body.get("index", "-"),
+        bool(json_body.get("stream_msg_id")),
+        len(content),
+        fingerprint(content),
+    )
+
+
+def _stream_response_metadata(data: Any, json_body: dict | None) -> tuple[object, object]:
+    if not isinstance(json_body, dict) or "input_state" not in json_body:
+        return "-", "-"
+    if not isinstance(data, dict):
+        return False, "-"
+    code = data.get("code", data.get("err_code", "-"))
+    if not isinstance(code, (int, str)) or not str(code).isdigit():
+        code = "-"
+    return bool(data.get("stream_msg_id") or data.get("id")), code

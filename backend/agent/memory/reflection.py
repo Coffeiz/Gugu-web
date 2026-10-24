@@ -474,6 +474,23 @@ def _schedule_local_idle_drain(user_id, settings, session_id, *, group_mode: boo
     task.add_done_callback(_bg_tasks.discard)
 
 
+async def shutdown_local_idle_drains() -> None:
+    """Worker 正常退出时收尾本进程的 idle drain。
+
+    尚在 idle 等待的任务取消后会在 finally 中清掉本机快照标记；反思缓冲仍保存在
+    Redis，由下次 Worker 的 idle 收束流程接管。已经开始 drain 的任务则等待完成，
+    避免退出时中断其取走/写回流程。
+    """
+    scheduled = list(_local_idle_tasks.items())
+    for key, task in scheduled:
+        if not task.done() and not _local_idle_draining.get(key):
+            task.cancel()
+    if scheduled:
+        await asyncio.gather(
+            *(task for _, task in scheduled), return_exceptions=True,
+        )
+
+
 async def _arm_local_idle_drain(redis, user_id, settings, session_id, *, group_mode: bool) -> bool:
     """只有当前进程仍持有快照时才预约本机 drain；标记仅作 worker 协调。"""
     if session_id is None:
@@ -688,7 +705,22 @@ def _reflection_probe_context(snapshot, trigger_source, *, only_if_missing=False
     """通过 task-local 上下文传递来源，避免扩大反思公共调用签名。"""
     current = _reflection_probe_context_var.get()
     if only_if_missing and current is not None:
-        yield current
+        # idle drain 会先以 None 建立触发上下文；若 reflect 随后从持久历史
+        # 重建快照，沿用旧 context 会把 origin_run_id 留空，导致 LoopScope
+        # 无法关联真实来源。保留原触发类型，只用有效快照补齐来源字段。
+        if snapshot is None:
+            yield current
+            return
+        merged = dict(current)
+        refreshed = _reflection_probe_metadata(
+            snapshot, current.get("trigger_source") or trigger_source,
+        )
+        merged.update(refreshed)
+        token = _reflection_probe_context_var.set(merged)
+        try:
+            yield merged
+        finally:
+            _reflection_probe_context_var.reset(token)
         return
     token = _reflection_probe_context_var.set(
         _reflection_probe_metadata(snapshot, trigger_source),
@@ -705,11 +737,15 @@ def _reflection_probe_metadata(snapshot, trigger_source):
         created_at = getattr(snapshot, "created_at", None)
         if isinstance(created_at, (int, float)):
             gap = max(time.monotonic() - created_at, 0.0)
+    source = getattr(snapshot, "source", None) if snapshot is not None else None
+    if source not in {"persisted_history", "in_memory"}:
+        source = "in_memory" if snapshot is not None else "unavailable"
     return {
         "reflection_scope": "owner",
         "trigger_source": trigger_source,
         "origin_run_id": getattr(snapshot, "run_id", "") if snapshot else "",
         "origin_gap_seconds": gap,
+        "snapshot_source": source,
     }
 
 
@@ -847,7 +883,7 @@ async def _flush_due_owner_reflection_member(redis, settings, idle_key, member, 
 
 
 async def flush_due_owner_reflections(settings, *, now: float | None = None, limit: int = 100) -> int:
-    """收束 owner 私聊/群聊中连续闲置 4 分 30 秒的反思缓冲。"""
+    """收束 owner 私聊/群聊中连续闲置 4 分钟的反思缓冲。"""
     from app.core import redis as R
 
     redis = R.get_redis()
@@ -864,7 +900,7 @@ async def flush_due_owner_reflections(settings, *, now: float | None = None, lim
 
 
 def schedule(user_id, user_name, user_msg, assistant_reply, settings, used_tools=None, session_id=None,
-             group_mode: bool = False, flush_now: bool = False) -> None:
+             group_mode: bool = False, flush_now: bool = False, passive: bool = False) -> None:
     """非阻塞累计 owner 反思回合；达到 admin 配置阈值后批量反思（工具与否不影响时机）。
 
     琐碎应答（嗯/好的/谢谢…）不入缓冲省一次计数——除非这轮咕咕用了工具
@@ -877,7 +913,7 @@ def schedule(user_id, user_name, user_msg, assistant_reply, settings, used_tools
     if group_mode:
         task = asyncio.create_task(_schedule_group_owner(
             user_id, user_name, user_msg, assistant_reply, settings,
-            session_id, flush_now=flush_now,
+            session_id, flush_now=flush_now, passive=passive,
         ))
         _bg_tasks.add(task)
         task.add_done_callback(_bg_tasks.discard)
@@ -891,7 +927,7 @@ def schedule(user_id, user_name, user_msg, assistant_reply, settings, used_tools
 
 
 async def _schedule_group_owner(user_id, user_name, user_msg, assistant_reply, settings,
-                                session_id=None, *, flush_now: bool = False) -> None:
+                                session_id=None, *, flush_now: bool = False, passive: bool = False) -> None:
     from app.core import redis as R
 
     redis = R.get_redis()
@@ -906,7 +942,7 @@ async def _schedule_group_owner(user_id, user_name, user_msg, assistant_reply, s
     await lock.acquire()
     try:
         await redis.rpush(key, json.dumps(row, ensure_ascii=False))
-        if session_id is not None:
+        if session_id is not None and not passive:
             await reflection_idle.mark_active(
                 redis, _GROUP_OWNER_IDLE_KEY, _owner_idle_member(user_id, session_id),
             )
@@ -917,7 +953,7 @@ async def _schedule_group_owner(user_id, user_name, user_msg, assistant_reply, s
             redis, user_id, session_id, group_mode=True,
         )
         await _drain_group_owner_buffer(user_id, settings, session_id)
-    else:
+    elif not passive:
         await _arm_local_idle_drain(
             redis, user_id, settings, session_id, group_mode=True,
         )
@@ -986,6 +1022,10 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
                 user_id, session_id, user_name, bound_model,
             )
             rebuilt = snapshot is not None
+            if rebuilt:
+                # DB 重建快照的 run_id/source 用于诊断其与主请求的前缀差异；
+                # 即使它不是原始快照，也不能让探针错误显示为“无来源”。
+                probe_snapshot = snapshot
         if snapshot is not None and session_id is not None:
             # 静默群消息/延迟 owner 反思没有普通 run 的 provider usage 事件，
             # 这里先按全局 context_tokens 做预检；超阈值时只走正式 baseline

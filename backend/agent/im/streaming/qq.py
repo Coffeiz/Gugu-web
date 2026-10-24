@@ -4,8 +4,30 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Callable
 from typing import Tuple
 
+from agent.gateway.qq.client import QQStreamFinalizationError
 from agent.interactions.events import ROUND_END
 from agent.models import AgentResponse
+
+
+async def collect_qq_response(payload: dict, token_iter, *, show_intermediate_replies: bool,
+                              send_completed_round: Callable) -> AgentResponse:
+    """只在后续轮已承诺时发送过程正文；最终轮留给普通主动消息出口。"""
+    response = None
+    async for kind, value in token_iter:
+        if kind == "final" and isinstance(value, AgentResponse):
+            response = value
+        elif kind == ROUND_END and show_intermediate_replies and str(value or "").strip():
+            # ROUND_END 由工具续轮/交互暂停产生，正常最终轮不会发这个事件。
+            # 不提前创建 QQ 流，避免最终正文受入站消息有效期和关闭帧影响。
+            try:
+                await send_completed_round(payload, str(value))
+            except Exception as exc:
+                from app.core.redaction import diag_log
+
+                diag_log("agent.im.qq_intermediate_delivery", exc)
+    if response is None:
+        raise RuntimeError("QQ 回复未收到模型终态")
+    return response
 
 
 class QQMermaidRound:
@@ -176,6 +198,8 @@ class QQMermaidRound:
                 self.round_has_image = True
                 try:
                     await self._finish_text_segment(trim_end=True)
+                except QQStreamFinalizationError:
+                    raise
                 except Exception as exc:
                     from app.core.redaction import diag_log
 
@@ -241,6 +265,9 @@ async def send_qq_stream_by_round(
         if kind == "final" and isinstance(value, AgentResponse):
             response = value
             continue
+        if isinstance(transport_error, QQStreamFinalizationError):
+            # 继续消费模型终态以完成持久化，但关闭失败后不再发送其他分段。
+            continue
         try:
             if kind == "token":
                 await sender.push_token(str(value or ""))
@@ -249,20 +276,31 @@ async def send_qq_stream_by_round(
             elif kind == ROUND_END:
                 await sender.finish_round(str(value or ""))
         except Exception as exc:
-            if transport_error is None:
+            if transport_error is None or isinstance(exc, QQStreamFinalizationError):
                 transport_error = exc
             sender._fail_stream()
 
     response = response or AgentResponse()
     last_text = fix_loose_bold(response.text or "")
-    if not last_text.strip():
+    if response.cancelled:
+        # 取消终态正文为空是有意设计；结束已输出的流，不要补发普通空回复兜底。
+        last_text = ""
+    elif not last_text.strip():
         last_text = "给你～" if response.files else "嗯~在的，你说～"
     if transport_error is not None:
         from app.core.redaction import diag_log
 
         diag_log("agent.im.qq_stream_transport", transport_error)
+        if isinstance(transport_error, QQStreamFinalizationError):
+            raise transport_error
+    # 错误终态由 dispatch_finalization 作为普通消息发送。若把 response.text
+    # 也交给流式 sender，终态错误会先进入流，再由失败收尾路径发送第二次。
+    stream_final_text = "" if response.errored else last_text
     try:
-        stream_sent, last_text = await sender.finish_response(last_text)
+        stream_sent, last_text = await sender.finish_response(stream_final_text)
+    except QQStreamFinalizationError:
+        # 可见前缀不代表流已关闭；不能回退后把该 Run 标记为成功送达。
+        raise
     except Exception as exc:
         from app.core.redaction import diag_log
 

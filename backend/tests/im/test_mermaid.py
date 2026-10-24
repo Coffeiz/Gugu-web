@@ -775,6 +775,64 @@ async def test_qq_streaming_facade_keeps_text_image_text_order(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_qq_stream_sends_each_round_once_in_separate_streams(monkeypatch):
+    from agent.gateway import qq
+    from agent.im import mermaid, replies
+    from agent.interactions.events import ROUND_END
+    from agent.models import AgentResponse
+
+    streams = []
+
+    class FakeStream:
+        def __init__(self):
+            self.text = ""
+            self.finished = []
+            streams.append(self)
+
+        def push(self, text):
+            self.text += text
+
+        async def finish(self, text):
+            self.finished.append(text)
+
+        def has_sent(self):
+            return bool(self.text)
+
+    class EventPassthroughFilter:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def ordered_events(self, source):
+            async for event in source:
+                yield event
+
+    monkeypatch.setattr(qq, "create_private_text_stream", lambda *_args, **_kwargs: FakeStream())
+    monkeypatch.setattr(mermaid, "ProgressiveMermaidTokenFilter", EventPassthroughFilter)
+
+    async def token_iter():
+        yield ("token", "前置说明")
+        yield (ROUND_END, "前置说明")
+        yield ("token", "最终回复")
+        yield (ROUND_END, "最终回复")
+        yield ("final", AgentResponse(text="最终回复", round_texts=["前置说明", "最终回复"]))
+
+    sent, _response, _text = await replies.send_qq_stream_by_round(
+        {
+            "platform": "qq",
+            "platform_user_id": "synthetic-recipient",
+            "channel_id": "synthetic-channel",
+            "message_id": "synthetic-message",
+        },
+        token_iter(),
+    )
+
+    assert sent is True
+    assert len(streams) == 3
+    delivered_text = [text for stream in streams for text in stream.finished]
+    assert delivered_text == ["前置说明", "最终回复"]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("show_intermediate_replies", [False, True])
 async def test_qq_stream_sends_all_run_images_without_total_chart_cap(
     monkeypatch, show_intermediate_replies,

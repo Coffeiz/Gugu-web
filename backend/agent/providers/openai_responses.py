@@ -16,6 +16,7 @@ from agent.providers.cache_probe import finish_usage_probe, start_request_probe
 from agent.providers.errors import ResponsesStreamError
 from agent.providers.message_utils import _openai_tool_result, render_provider_history
 from app.core.errors import Invalid
+from app.core.retry import llm_provider_timeout
 
 
 class ResponsesCompatibilityError(RuntimeError):
@@ -463,17 +464,11 @@ async def complete_branch(
     json_mode: bool = False,
     usage_sink: list | None = None,
     probe_sink: list | None = None,
-    read_timeout: float | None = None,
 ) -> str:
     """以完整历史执行独立 Responses 只读分支，不接入主 run 的状态。"""
-    import httpx
     from agent import providers
 
-    client = providers.build_openai_client(
-        ai, httpx.Timeout(
-            connect=10.0, read=read_timeout or 40.0, write=10.0, pool=5.0,
-        ),
-    )
+    client = providers.build_openai_client(ai, llm_provider_timeout())
     adapter = providers.adapter_for(ai)
     from agent.context.provider_conversation import ProviderConversation
     if isinstance(history, ProviderConversation):
@@ -544,7 +539,13 @@ async def complete_branch(
         request["prompt_cache_key"] = prompt_cache_key
 
     probe = start_request_probe(probe_sink, request)
-    response = await client.responses.create(**request)
+    try:
+        response = await client.responses.create(**request)
+    except Exception as exc:
+        from agent.providers.cache_probe import fail_request_probe
+
+        fail_request_probe(probe, exc)
+        raise
     usage = getattr(response, "usage", None)
     if usage is None and isinstance(response, dict):
         usage = response.get("usage")
@@ -565,13 +566,10 @@ class OpenAIResponsesDriver:
     continuation_available = True
 
     def prepare(self, tool_names, ai, messages, system_text, tool_snapshot=None):
-        import httpx
         from agent import providers
         from agent.tools import registry
 
-        client = providers.build_openai_client(
-            ai, httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=5.0)
-        )
+        client = providers.build_openai_client(ai, llm_provider_timeout())
         schema_source = tool_snapshot or registry.snapshot()
         chat_tools = schema_source.openai_schemas(tool_names)
         tools = _responses_tools(chat_tools)

@@ -5270,11 +5270,7 @@ export interface components {
              * @default false
              */
             automaticModeEnabled: boolean;
-            /**
-             * Showtoolinteractions
-             * @default false
-             */
-            showToolInteractions: boolean;
+            imToolDisplayMode: "off" | "all" | "slow_only";
             /**
              * Toolinjectionmode
              * @default full
@@ -5328,8 +5324,7 @@ export interface components {
             shellDangerousEnabled?: boolean | null;
             /** Automaticmodeenabled */
             automaticModeEnabled?: boolean | null;
-            /** Showtoolinteractions */
-            showToolInteractions?: boolean | null;
+            imToolDisplayMode?: ("off" | "all" | "slow_only") | null;
             /** Toolinjectionmode */
             toolInjectionMode?: string | null;
             /** Personalitypreference */

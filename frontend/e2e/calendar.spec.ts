@@ -59,8 +59,10 @@ test('周视图选中时段的底色与月视图选中日期一致', async ({ pa
         const calendar = document.querySelector('.cal-page')
         if (!calendar) throw new Error('日历页面未挂载')
         const referenceCell = document.createElement('div')
-        referenceCell.className = `month-cell is-selected${isWeekend ? ' is-weekend' : ''}`
         referenceCell.style.cssText = 'position: absolute; visibility: hidden; pointer-events: none'
+        referenceCell.style.backgroundColor = isWeekend
+          ? 'var(--calendar-weekend-selected-bg)'
+          : 'var(--calendar-selected-cell-bg)'
         calendar.append(referenceCell)
         const reference = getComputedStyle(referenceCell).backgroundColor
         referenceCell.remove()

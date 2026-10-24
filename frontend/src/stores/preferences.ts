@@ -5,6 +5,8 @@ import { isSupportedLocale, setLocale, type SupportedLocale } from '@/i18n'
 import { applyServerTheme } from '@/composables/core/useTheme'
 import { InteractionSync } from '@/interaction/sync/InteractionSync'
 
+const AUTOMATIC_MODE_SYNC_KEY = 'gugu-automatic-mode-sync'
+
 export const usePreferencesStore = defineStore('preferences', () => {
   // 偏好里的松结构数组（阶段/模板元素类型待后端入 OpenAPI 后 gen:types 收紧），暂 any[]
   const lastStages       = ref<any[]>([])
@@ -20,7 +22,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
   const shellDangerousEnabled = ref(true)
   const automaticModeEnabled = ref(false)
   const decisionGuardEnabled = ref(false)
-  const showToolInteractions = ref(true)
+  const imToolDisplayMode = ref<'off' | 'all' | 'slow_only'>('all')
   const showIntermediateReplies = ref(false)
   const toolInjectionMode = ref<'description' | 'full'>('description')
   const personalityPreference = ref('')
@@ -30,8 +32,21 @@ export const usePreferencesStore = defineStore('preferences', () => {
   const personalityPreferenceRevision = ref(0)
   const locale = ref<SupportedLocale | null>(null)
   const loaded            = ref(false)
+  const automaticModeChannel = typeof BroadcastChannel === 'undefined'
+    ? null
+    : new BroadcastChannel('gugu_preferences')
 
-  async function saveOptimistically<T>(key: string, payload: Record<string, unknown>, apply: () => void, rollback: () => void): Promise<void> {
+  automaticModeChannel?.addEventListener('message', event => {
+    if (event.data?.type !== 'automatic-mode-changed') return
+    void refreshAutomaticModeEnabled()
+  })
+  if (typeof window !== 'undefined') {
+    window.addEventListener('storage', event => {
+      if (event.key === AUTOMATIC_MODE_SYNC_KEY) void refreshAutomaticModeEnabled()
+    })
+  }
+
+  async function saveOptimistically(key: string, payload: Record<string, unknown>, apply: () => void, rollback: () => void): Promise<boolean> {
     try {
       await InteractionSync.execute({
         scope: 'profile.preference.update',
@@ -40,8 +55,10 @@ export const usePreferencesStore = defineStore('preferences', () => {
         rollback,
         request: () => preferencesApi.update(payload as any),
       })
+      return true
     } catch {
       // 保持原有偏好 API 的静默失败行为；本地状态已经由统一层回滚。
+      return false
     }
   }
 
@@ -66,7 +83,8 @@ export const usePreferencesStore = defineStore('preferences', () => {
       shellDangerousEnabled.value = (data as any).shellDangerousEnabled ?? true
       automaticModeEnabled.value = (data as any).automaticModeEnabled === true
       decisionGuardEnabled.value = (data as any).decisionGuardEnabled === true
-      showToolInteractions.value = (data as any).showToolInteractions ?? true
+      const displayMode = (data as any).imToolDisplayMode
+      imToolDisplayMode.value = ['off', 'all', 'slow_only'].includes(displayMode) ? displayMode : 'all'
       showIntermediateReplies.value = (data as any).showIntermediateReplies ?? false
       toolInjectionMode.value = (data as any).toolInjectionMode === 'full' ? 'full' : 'description'
       personalityPreference.value = data.personalityPreference ?? ''
@@ -142,19 +160,52 @@ export const usePreferencesStore = defineStore('preferences', () => {
   }
 
   async function saveAutomaticModeEnabled(v: boolean) {
-    await savePreferenceValue('automaticModeEnabled', automaticModeEnabled, v)
+    const previous = automaticModeEnabled.value
+    const saved = await saveOptimistically('automaticModeEnabled', { automaticModeEnabled: v }, () => {
+      automaticModeEnabled.value = v
+    }, () => {
+      automaticModeEnabled.value = previous
+    })
+    if (saved) {
+      notifyAutomaticModeChanged()
+    }
+  }
+
+  function notifyAutomaticModeChanged() {
+    automaticModeChannel?.postMessage({ type: 'automatic-mode-changed' })
+    try {
+      localStorage.setItem(AUTOMATIC_MODE_SYNC_KEY, String(Date.now()))
+    } catch {
+      // BroadcastChannel 仍可用；隐私模式禁用 storage 时不影响服务端状态。
+    }
+  }
+
+  async function refreshAutomaticModeEnabled(): Promise<boolean> {
+    try {
+      const data = await preferencesApi.get()
+      automaticModeEnabled.value = data.automaticModeEnabled === true
+      return true
+    } catch {
+      // 跨窗口刷新失败时保留上次已知状态，下一次变更会再次触发同步。
+      return false
+    }
   }
 
   async function saveDecisionGuardEnabled(v: boolean) {
     await savePreferenceValue('decisionGuardEnabled', decisionGuardEnabled, v)
   }
 
-  async function saveShowToolInteractions(v: boolean) {
-    await savePreferenceValue('showToolInteractions', showToolInteractions, v)
-  }
-
   async function saveShowIntermediateReplies(v: boolean) {
     await savePreferenceValue('showIntermediateReplies', showIntermediateReplies, v)
+  }
+
+  async function saveImToolDisplayMode(value: 'off' | 'all' | 'slow_only') {
+    const previous = imToolDisplayMode.value
+    await saveOptimistically('imToolDisplayMode', { imToolDisplayMode: value }, () => {
+      imToolDisplayMode.value = value
+    }, () => {
+      imToolDisplayMode.value = previous
+    })
   }
 
   async function saveToolInjectionMode(v: 'description' | 'full') {
@@ -207,7 +258,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
   }
 
   return {
-    lastStages, stageTemplates, replyTone, replyLength, pmStagesExpanded, calendarWeekStart, calendarDoneMode, defaultView, shellEnabled, shellSystemEnabled, shellDangerousEnabled, automaticModeEnabled, decisionGuardEnabled, showToolInteractions, showIntermediateReplies, toolInjectionMode, personalityPreference, personalityPreferenceEnabled, personalityPreferenceAvailable, personalityPreferenceRevision, emailChangeEnabled, locale,
-    loaded, fetch, refreshEmailChangeEnabled, saveLocale, saveLastStages, saveTemplates, saveStyle, savePmStagesExpanded, saveCalendarWeekStart, saveCalendarDoneMode, saveDefaultView, saveShellEnabled, saveShellSystemEnabled, saveShellDangerousEnabled, saveAutomaticModeEnabled, saveDecisionGuardEnabled, saveShowToolInteractions, saveShowIntermediateReplies, saveToolInjectionMode, savePersonalityPreference, uploadPersonalityFile,
+    lastStages, stageTemplates, replyTone, replyLength, pmStagesExpanded, calendarWeekStart, calendarDoneMode, defaultView, shellEnabled, shellSystemEnabled, shellDangerousEnabled, automaticModeEnabled, decisionGuardEnabled, imToolDisplayMode, showIntermediateReplies, toolInjectionMode, personalityPreference, personalityPreferenceEnabled, personalityPreferenceAvailable, personalityPreferenceRevision, emailChangeEnabled, locale,
+    loaded, fetch, refreshAutomaticModeEnabled, notifyAutomaticModeChanged, refreshEmailChangeEnabled, saveLocale, saveLastStages, saveTemplates, saveStyle, savePmStagesExpanded, saveCalendarWeekStart, saveCalendarDoneMode, saveDefaultView, saveShellEnabled, saveShellSystemEnabled, saveShellDangerousEnabled, saveAutomaticModeEnabled, saveDecisionGuardEnabled, saveImToolDisplayMode, saveShowIntermediateReplies, saveToolInjectionMode, savePersonalityPreference, uploadPersonalityFile,
   }
 })

@@ -134,13 +134,13 @@ def test_web_private_reflection_threshold_rejects_values_outside_admin_range(val
 
 
 @pytest.mark.asyncio
-async def test_reflection_idle_window_flushes_after_four_and_a_half_minutes_for_owner_and_group():
+async def test_reflection_idle_window_flushes_after_four_minutes_for_owner_and_group():
     from agent.memory import reflection_idle
 
     fake_redis = _FakeRedis()
     now = 10_000.0
-    due_member = "idle-exactly-four-and-a-half-minutes"
-    active_member = "idle-four-minutes-twenty-nine-seconds"
+    due_member = "idle-exactly-four-minutes"
+    active_member = "idle-three-minutes-fifty-nine-seconds"
     idle_seconds = reflection_idle.IDLE_WINDOW_SECONDS
     for key in (reflection_idle.OWNER_IDLE_KEY, reflection_idle.GROUP_OWNER_IDLE_KEY):
         fake_redis.zsets[key] = {
@@ -154,7 +154,7 @@ async def test_reflection_idle_window_flushes_after_four_and_a_half_minutes_for_
 
     cutoff_input = datetime(2026, 9, 20, 12, 0, tzinfo=timezone.utc)
     assert reflection_idle.idle_cutoff(cutoff_input) == datetime(
-        2026, 9, 20, 11, 55, 30, tzinfo=timezone.utc,
+        2026, 9, 20, 11, 56, tzinfo=timezone.utc,
     )
 
 
@@ -175,12 +175,12 @@ async def test_group_owner_uses_group_threshold_not_private_threshold(monkeypatc
 
     for index in range(1, 51):
         await reflection._schedule_group_owner(
-            "owner-2", "小北", f"群主消息{index}", "", settings, 7,
+            "owner-2", "小北", f"群主消息{index}", "", settings, 7, passive=True,
         )
     assert drained == []
 
     await reflection._schedule_group_owner(
-        "owner-2", "小北", "群主消息51", "", settings, 7, flush_now=True,
+        "owner-2", "小北", "群主消息51", "", settings, 7, flush_now=True, passive=True,
     )
     assert drained == [("owner-2", settings, 7)]
 

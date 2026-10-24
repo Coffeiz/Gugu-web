@@ -28,8 +28,8 @@ async def test_restricted_group_identity_cannot_read_arbitrary_owner_attachment(
     chat_attach = importlib.import_module("app.core.chat_attach")
     get_meta = AsyncMock(side_effect=AssertionError("不应探测非当前消息附件"))
     monkeypatch.setattr(chat_attach, "get_meta", get_meta)
-    loop = importlib.import_module("agent.im.loop")
-    loop.bind_im_context(SimpleNamespace(
+    activity = importlib.import_module("agent.im.activity")
+    activity.bind_im_context(SimpleNamespace(
         source="telegram", chat_id="group-1", platform_user_id="member-1",
         allowed_tool_names=None, im_role="member", attachments=["current-image"],
     ), {"message_id": "message-1", "channel_id": "bot-1", "chat_type": "group"})
@@ -53,8 +53,8 @@ async def test_restricted_group_identity_can_read_current_message_image(monkeypa
     media_reader = importlib.import_module("agent.tools.media_reader")
     read_image = AsyncMock(return_value={"block": {"type": "image"}, "_source_size_bytes": 5})
     monkeypatch.setattr(media_reader, "read_stored_image", read_image)
-    loop = importlib.import_module("agent.im.loop")
-    loop.bind_im_context(SimpleNamespace(
+    activity = importlib.import_module("agent.im.activity")
+    activity.bind_im_context(SimpleNamespace(
         source="telegram", chat_id="group-1", platform_user_id="member-1",
         allowed_tool_names=None, im_role="member", attachments=["current-image"],
     ), {"message_id": "message-1", "channel_id": "bot-1", "chat_type": "group"})

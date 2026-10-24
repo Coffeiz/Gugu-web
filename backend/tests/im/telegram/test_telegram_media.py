@@ -6,12 +6,10 @@ from agent.im import media_ingress_telegram
 
 
 @pytest.mark.asyncio
-async def test_incoming_document_downloads_and_stages_under_current_bot_message(monkeypatch):
+async def test_incoming_document_downloads_and_stages_under_current_bot_message(monkeypatch, db, user_a):
     calls = []
-    staged = []
-
     async def token(owner_id, bot_id):
-        assert (owner_id, bot_id) == ("synthetic-owner", "41")
+        assert (owner_id, bot_id) == (user_a.id, "41")
         return "synthetic-token"
 
     async def api_call(value, method, *, payload):
@@ -22,30 +20,33 @@ async def test_incoming_document_downloads_and_stages_under_current_bot_message(
         calls.append((value, path, max_bytes))
         return b"data"
 
-    async def stage(owner, name, ext, mime, data, **kwargs):
-        staged.append((owner, name, ext, mime, data, kwargs))
-        return {"attach_id": "attachment-1"}
-
     monkeypatch.setattr(media_ingress_telegram, "_get_owned_bot_token", token)
     monkeypatch.setattr("app.services.telegram_bot_api.call", api_call)
     monkeypatch.setattr("app.services.telegram_bot_api.download_file", download)
-    monkeypatch.setattr("agent.im.files.stage", stage)
 
     result = await media_ingress_telegram.ingest_telegram_media(
         [{"file_id": "telegram-file", "file_size": 4, "file_name": "sample.txt",
           "mime_type": "text/plain", "media_type": "document"}],
-        [], "synthetic-owner", "41", "41:-1007002:55",
+        [], user_a.id, "41", "41:-1007002:55",
     )
 
-    assert result.attachment_ids == ["attachment-1"]
+    from sqlalchemy import select
+    from app.models import ChatAttachment
+    from app.services.storage import get_storage
+
+    assert len(result.attachment_ids) == 1
     assert result.failure_notice is None
     assert calls[0] == ("synthetic-token", "getFile", {"file_id": "telegram-file"})
     assert calls[1] == ("synthetic-token", "documents/sample.txt", 20_000_000)
-    assert staged[0] == (
-        "synthetic-owner", "sample", "txt", "text/plain", b"data",
-        {"platform": "telegram", "platform_message_id": "41:-1007002:55",
-         "attachment_index": 0},
-    )
+    attachment = await db.scalar(select(ChatAttachment).where(
+        ChatAttachment.attach_id == result.attachment_ids[0],
+    ))
+    assert attachment.user_id == user_a.id
+    assert attachment.platform == "telegram"
+    assert attachment.platform_message_id == "41:-1007002:55"
+    assert attachment.attachment_index == 0
+    assert (attachment.name, attachment.ext, attachment.mime) == ("sample", "txt", "text/plain")
+    assert await get_storage().get(attachment.storage_key) == b"data"
 
 
 @pytest.mark.asyncio
@@ -154,3 +155,32 @@ def test_media_mime_type_is_validated_against_telegram_media_kind():
     assert media_ingress_telegram._mime_type(
         {"mime_type": "not a mime"}, "txt", "document"
     ) == "text/plain"
+
+
+@pytest.mark.asyncio
+async def test_downloaded_file_save_failure_returns_distinct_safe_notice(monkeypatch):
+    async def token(*_args):
+        return "synthetic-token"
+
+    async def api_call(*_args, **_kwargs):
+        return {"file_path": "documents/sample.txt", "file_size": 4}
+
+    async def download(*_args, **_kwargs):
+        return b"data"
+
+    async def fail_save(*_args, **_kwargs):
+        raise OSError("synthetic internal storage failure")
+
+    monkeypatch.setattr(media_ingress_telegram, "_get_owned_bot_token", token)
+    monkeypatch.setattr("app.services.telegram_bot_api.call", api_call)
+    monkeypatch.setattr("app.services.telegram_bot_api.download_file", download)
+    monkeypatch.setattr("app.core.chat_attach.stage", fail_save)
+
+    result = await media_ingress_telegram.ingest_telegram_media(
+        [{"file_id": "telegram-file", "file_name": "sample.txt", "media_type": "document"}],
+        [], "synthetic-owner", "41", "41:-1007002:55",
+    )
+
+    assert result.attachment_ids == []
+    assert result.failure_notice == media_ingress_telegram._STAGING_FAILURE_NOTICE
+    assert "synthetic internal" not in result.failure_notice

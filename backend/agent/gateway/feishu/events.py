@@ -396,13 +396,13 @@ def _make_on_message(
               f"fp={logsafe.fingerprint(text)} att={len(attachments)} quoted={bool(msg.parent_id)} trace={tid}", flush=True)
 
         # 秒回表情：赶在入队/生成之前，用关键词快速判一个即时点上（完整回复随后由 worker 发）
-        from agent.im.loop import choose_instant_reaction
+        from agent.im.shortcuts import choose_instant_reaction
         _, emoji = choose_instant_reaction(text, bool(attachments))
         services.do_react(api_client, msg.message_id, emoji)
         # 取消是实时控制信号：必须在 Gateway 侧立刻写入 Redis；其他 shortcut 继续入队，
         # 由 worker 的 IM Loop 统一处理，避免 Gateway 再承担业务回复编排。
         if not attachments:
-            from agent.im.loop import apply_im_shortcut_cancel_sync, decide_im_shortcut_sync
+            from agent.im.shortcuts import apply_im_shortcut_cancel_sync, decide_im_shortcut_sync
             dec = decide_im_shortcut_sync(
                 "feishu", open_id, text,
                 bot_id=channel_id,

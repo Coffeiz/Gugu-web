@@ -16,27 +16,9 @@ function displayTime(createdAt: string) {
   })
 }
 
-function persistedMessageSyncKey(item: { id: number; runId?: string; roundId?: string }, resolvedRole: string) {
-  return (resolvedRole === 'ai' && timelineSyncKey({ role: 'ai', runId: item.runId, roundId: item.roundId }))
-    || `message:${item.id}`
-}
-
-/** 实时流与持久时间线共用的身份键；不依赖正文内容或本地临时消息 ID。 */
-export function timelineSyncKey(message: {
-  role: string
-  id?: string | number
-  runId?: string
-  roundId?: string
-  toolCallId?: string
-  fallback?: string
-}) {
-  if (message.role === 'tool' && message.toolCallId && message.runId && message.roundId) {
-    return `tool-call:${JSON.stringify([message.runId, message.roundId, message.toolCallId])}`
-  }
-  if (message.role === 'ai' && message.runId && message.roundId) {
-    return `assistant-round:${message.runId}:${message.roundId}`
-  }
-  return message.fallback || (message.id == null ? undefined : `timeline:${message.id}`)
+function displayEventKey(event: { eventId?: string }) {
+  if (!event.eventId) throw new Error('展示事件缺少稳定身份，需要完成本版本数据迁移')
+  return `event:${event.eventId}`
 }
 
 export function sortSessionTimelineMessages(items: ChatMessage[]) {
@@ -65,7 +47,7 @@ export function mapSessionMessageDelta(
     const roundId = item.roundId || undefined
     return {
       id: mkid(), dbId: item.id,
-      _syncKey: persistedMessageSyncKey({ id: item.id, runId, roundId }, speaker.role),
+      _syncKey: `message:${item.id}`,
       role: speaker.role, speakerLabel: speaker.speakerLabel,
       platformUserId: item.platformUserId || null,
       text: displayQQFaces(item.content), html: null,
@@ -84,9 +66,8 @@ export function mapSessionMessageDelta(
         files: event.files?.length ? event.files as ChatFile[] : undefined,
         linkButtons: event.linkButtons, time: displayTime(event.createdAt),
         runId: event.runId, roundId: event.roundId,
-        _timelineOrder: event.timelineOrder, _createdAt: event.createdAt,
-        _syncKey: timelineSyncKey({ role: 'ai', runId: event.runId, roundId: event.roundId,
-          fallback: `timeline:${event.id}` }),
+        _timelineOrder: event.timelineOrder, _createdAt: event.createdAt, _updatedAt: event.updatedAt,
+        _syncKey: displayEventKey(event),
       }
     : {
         id: mkid(), role: 'tool', text: '', toolCallId: event.toolCallId,
@@ -94,46 +75,98 @@ export function mapSessionMessageDelta(
         runId: event.runId, roundId: event.roundId,
         toolStatus: event.toolStatus || (event.toolResult !== undefined ? 'success' : 'running'),
         toolInput: event.toolInput, toolResult: event.toolResult,
+        toolDetailsAvailable: event.detailsAvailable,
+        _toolDetailsSource: event.detailSource,
         toolDurationMs: event.toolDurationMs,
         time: displayTime(event.createdAt), _timelineOrder: event.timelineOrder,
-        _createdAt: event.createdAt,
-        _syncKey: timelineSyncKey({ role: 'tool', runId: event.runId, roundId: event.roundId,
-          toolCallId: event.toolCallId, fallback: `timeline:${event.id}` }),
+        _createdAt: event.createdAt, _updatedAt: event.updatedAt,
+        _syncKey: displayEventKey(event),
       })
-  const tools: ChatMessage[] = (data.toolEvents || []).map((event: any) => ({
-    id: mkid(), role: 'tool', text: '',
-    _syncKey: timelineSyncKey({ role: 'tool', runId: event.runId, roundId: event.roundId,
-      toolCallId: event.toolCallId, fallback: `tool:${event.id}` }),
-    time: displayTime(event.createdAt), toolCallId: event.toolCallId,
-    toolName: event.toolName, toolLabel: event.toolLabel,
-    runId: event.runId, roundId: event.roundId,
-    _timelineOrder: event.timelineOrder,
-    toolStatus: event.toolStatus || (event.toolResult !== undefined ? 'success' : 'running'),
-    toolInput: event.toolInput, toolResult: event.toolResult,
-    toolDurationMs: event.toolDurationMs, _createdAt: event.createdAt,
-  }))
-  return [...messages, ...timeline, ...tools]
+  return [...messages, ...timeline]
 }
 
-/** 只恢复当前 run 的已持久化回复；队列下一轮的回复不能被旧流提前消费。 */
-export function findLatestPersistedAssistant(data: any, runId: string) {
-  const candidates = [
-    ...(data.messages || []).flatMap((item: any) => item.role === 'assistant'
-      ? [{ item, syncKey: persistedMessageSyncKey({ id: item.id, runId: item.runId, roundId: item.roundId }, 'ai'), text: item.content || '' }]
-      : []),
-    ...(data.timelineEvents || []).flatMap((item: any) => item.kind === 'assistant'
-      ? [{ item, syncKey: timelineSyncKey({ role: 'ai', runId: item.runId, roundId: item.roundId,
-        fallback: `timeline:${item.id}` }), text: item.text || '' }]
-      : []),
-  ].filter(({ item, text }) => {
-    const hasContent = Boolean(text?.trim() || item.files?.length)
-    return hasContent && Boolean(runId) && item.runId === runId
-  })
-  .sort((a, b) => Date.parse(b.item.createdAt || '') - Date.parse(a.item.createdAt || ''))
+function preserveToolDetails(existing: ChatMessage, incoming: ChatMessage): Partial<ChatMessage> {
+  if (existing._toolDetailsLoaded) {
+    return {
+      toolInput: existing.toolInput,
+      toolResult: existing.toolResult,
+      _toolDetailsLoaded: true,
+    }
+  }
+  return {
+    ...(incoming.toolInput === undefined && existing.toolInput !== undefined
+      ? { toolInput: existing.toolInput }
+      : {}),
+    ...(incoming.toolResult === undefined && existing.toolResult !== undefined
+      ? { toolResult: existing.toolResult }
+      : {}),
+  }
+}
 
-  const latest = candidates[0]
-  if (!latest) return null
-  return { item: latest.item, text: latest.text, syncKey: latest.syncKey }
+function mergeMessage(existing: ChatMessage, incoming: ChatMessage): ChatMessage {
+  if (existing._updatedAt && incoming._updatedAt && Date.parse(existing._updatedAt) > Date.parse(incoming._updatedAt)) {
+    return existing
+  }
+  return {
+    ...existing,
+    ...incoming,
+    id: existing.id,
+    dbId: incoming.dbId ?? existing.dbId,
+    ...preserveToolDetails(existing, incoming),
+  }
+}
+
+function normalizedMessageText(text: string | undefined) {
+  return (text || '').trim().replace(/\s+/g, ' ')
+}
+
+function findGreetingIndex(messages: ChatMessage[], persisted: ChatMessage) {
+  if (persisted.role !== 'ai' || !persisted._syncKey?.startsWith('message:')) return -1
+  const text = normalizedMessageText(persisted.text)
+  if (!text) return -1
+  return messages.findIndex(message => message._greeting && message.role === 'ai'
+    && [message._greetFull, message.text].some(candidate => normalizedMessageText(candidate) === text))
+}
+
+function foldExistingMessages(messages: ChatMessage[], indexByKey: Map<string, number>) {
+  const result: ChatMessage[] = []
+  for (const message of messages) {
+    const key = message._syncKey
+    const index = key ? indexByKey.get(key) : undefined
+    if (index == null) {
+      if (key) indexByKey.set(key, result.length)
+      result.push(message)
+    } else {
+      result[index] = mergeMessage(result[index], message)
+    }
+  }
+  return result
+}
+
+function mergeIncomingMessage(
+  result: ChatMessage[],
+  indexByKey: Map<string, number>,
+  message: ChatMessage,
+) {
+  const key = message._syncKey
+  let index = key ? indexByKey.get(key) : undefined
+  // 首次发送时，前端问候没有数据库 ID；新会话创建时后端会将同一文本持久化。
+  // 让持久化记录认领本地问候，保留其位置和组件身份，不再渲染第二张问候气泡。
+  const greetingIndex = index == null ? findGreetingIndex(result, message) : -1
+  if (greetingIndex >= 0) index = greetingIndex
+
+  if (index == null) {
+    if (key) indexByKey.set(key, result.length)
+    result.push(message)
+    return
+  }
+  const existing = result[index]
+  result[index] = mergeMessage(existing, message)
+  if (existing._greeting && greetingIndex >= 0) {
+    delete result[index]._greeting
+    delete result[index]._greetFull
+  }
+  if (key) indexByKey.set(key, index)
 }
 
 /** 合并从持久化会话增量恢复的消息；重复事件更新内容但不重复创建气泡。 */
@@ -141,31 +174,21 @@ export function mergeSessionMessageDelta(
   current: ChatMessage[],
   incoming: ChatMessage[],
 ): ChatMessage[] {
-  if (!incoming.length) return current
-
-  const result = [...current]
   const indexByKey = new Map<string, number>()
-  result.forEach((message, index) => {
-    if (message._syncKey) indexByKey.set(message._syncKey, index)
-  })
-
-  for (const message of incoming) {
-    const key = message._syncKey
-    const index = key ? indexByKey.get(key) : undefined
-    if (index == null) {
-      if (key) indexByKey.set(key, result.length)
-      result.push(message)
-      continue
-    }
-    const existing = result[index]
-    result[index] = {
-      ...existing,
-      ...message,
-      id: existing.id,
-      ...(existing.streaming ? { text: existing.text, streaming: true } : {}),
-    }
-  }
+  // 会话 append 通知可能先于 SSE session_id 到达：历史同步已经插入持久化消息，
+  // 随后临时气泡才获得相同 _syncKey。先折叠当前列表中的重复身份，不能只防新增重复。
+  const result = foldExistingMessages(current, indexByKey)
+  for (const message of incoming) mergeIncomingMessage(result, indexByKey, message)
   return result
+}
+
+/** run 终态以已提交历史原位接替临时展示；重复通知不会追加副本。 */
+export function replaceRunHistory(current: ChatMessage[], incoming: ChatMessage[], runId: string): ChatMessage[] {
+  const previous = new Map(current.filter(item => item.runId === runId).map(item => [item._syncKey, item.id]))
+  const history = incoming.filter(item => item.runId === runId).map(item => ({
+    ...item, id: previous.get(item._syncKey) ?? item.id, streaming: false,
+  }))
+  return sortSessionTimelineMessages([...current.filter(item => item.runId !== runId), ...history])
 }
 
 /** 搜索命中较早历史消息时，按目标 ID 一次读取有界历史页并并入当前时间线。 */
@@ -217,6 +240,11 @@ export function createSessionMessageSynchronizer(options: {
         requested.delete(sessionId)
         let cursor = cursors.get(sessionId) ?? 0
         try {
+          // 检查点在同一行原位更新，不能只用自增行 ID 查增量；重连先校准最新窗口。
+          const snapshot = await agentApi.getMessages(String(sessionId), undefined, 200)
+          if (options.sessionId.value !== sessionId) return
+          options.messages.value = sortSessionTimelineMessages(mergeSessionMessageDelta(options.messages.value,
+            mapSessionMessageDelta(snapshot, options.mkid, options.resolveSpeaker)))
           while (options.sessionId.value === sessionId) {
             const data = await agentApi.getMessages(String(sessionId), cursor, 200)
             if (options.sessionId.value !== sessionId) return
@@ -233,7 +261,7 @@ export function createSessionMessageSynchronizer(options: {
             if (!newestIdAdvanced) break
             cursor = nextCursor
             cursors.set(sessionId, cursor)
-            if ((data.messages || []).length < 200) break
+            if (!data.pagination?.hasNewer) break
           }
         } catch {
           /* 失败不推进游标，后续通知或 SSE 重连会再次尝试 */

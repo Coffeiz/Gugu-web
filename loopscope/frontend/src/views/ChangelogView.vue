@@ -1,33 +1,29 @@
 <template>
   <div class="changelog">
-    <header><span class="eyebrow">LOOPSCOPE</span><h1>Changelog</h1><p>产品能力与 Trace 协议的可见变更。</p></header>
+    <header><span class="eyebrow">LOOPSCOPE</span><h1>{{ t('nav.changelog') }}</h1><p>{{ t('changelog.description') }}</p></header>
     <article v-for="release in releases" :key="release.version" class="release ls-card">
       <div class="release-meta"><strong>{{ release.version }}</strong><span>{{ release.date }}</span></div>
-      <h2>{{ release.title }}</h2>
-      <ul><li v-for="item in release.items" :key="item">{{ item }}</li></ul>
+      <h2>{{ t(release.titleKey) }}</h2>
+      <ul><li v-for="item in release.itemKeys" :key="item">{{ t(item) }}</li></ul>
     </article>
   </div>
 </template>
 
 <script setup lang="ts">
+import { useLoopScopeI18n } from '../i18n/index'
+const { t } = useLoopScopeI18n()
 const releases = [
   {
-    version: '0.2.0', date: '2026-08-17', title: 'Context & Usage Provenance',
-    items: [
-      'Monitor 从独立路由改为当前 Session 内的布局模式，切换 Session 时保持同一工作流。',
-      'Span 增加 Python 文件 / module / function / line 来源，并将 Input、Output、Source、Attributes 分开展开。',
-      'Context Assembly 可展开 DB / Memory / Prompt file / cache prefix / dynamic suffix 等来源，Prompt 文件可单独查看正文。',
-      'Run 与 LLM Span 增加 input / output / cache read / fresh input token；Context 与 Tool 显示估算 token impact。',
-      'SQLite 0.1 数据库自动迁移 code / usage / token impact 字段，无需删库。',
+    version: '0.2.0', date: '2026-08-17', titleKey: 'changelog.contextUsageTitle',
+    itemKeys: [
+      'changelog.monitorLayout', 'changelog.spanSource', 'changelog.contextSources',
+      'changelog.runUsage', 'changelog.sqliteMigration',
     ],
   },
   {
-    version: '0.1.0', date: '2026-08-17', title: 'First usable loop debugger',
-    items: [
-      '独立 frontend / backend / SQLite / Docker 边界。',
-      '多 Session 真实对话与普通 / 详细模式。',
-      'Run / Span trace、Prompt / model draft / Tool / Guard 输入输出检查。',
-      '独立 Design Tokens 页面与 Gugu /dev 入口。',
+    version: '0.1.0', date: '2026-08-17', titleKey: 'changelog.firstLoopDebugger',
+    itemKeys: [
+      'changelog.boundaries', 'changelog.sessions', 'changelog.traceInspection', 'changelog.tokenEntry',
     ],
   },
 ]

@@ -175,6 +175,17 @@ received -> normalized -> queued -> processing
 
 同一会话保持输入顺序；不同会话可以并发执行。防抖只合并短时间内同一会话的连续输入，不改变消息的 owner、bot 或 scope。
 
+### 2.4 入队前即时反馈（ack）
+
+网关在入队前给用户一个「收到了」的即时反馈，避免用户以为消息没送达。该能力只属体验层：不决定是否进入 Agent、不参与权限判断，也不占用大模型的一轮。
+
+- 选择器：`backend/agent/im/shortcuts.py` 的 `choose_instant_reaction(text, has_media)`，按关键词返回 `(提示文案, emoji)`，未命中时走默认档。返回的 emoji 取自飞书官方 `emoji_type` 词表，可直接用于 reaction，无需再做映射。
+- 飞书：`backend/agent/gateway/feishu/events.py` 在入队前调用 `services.do_react(...)`，给用户那条消息加一个表情回应；完整回复仍由 worker 发。
+- QQ：`backend/agent/gateway/qq/events.py` 只在**带附件**时秒回一句「文件收到啦，让我看看~」。同一会话 10 秒冷却（`_ACK_COOLDOWN`），连发多图/文件只回一次，不刷屏。QQ 纯文本不做秒回——私聊路径支持 Markdown 流式输出，额外插入一条文本会打乱流式消息序列。
+- QQ 群聊的附件秒回与群回应策略保持一致：只响应 @ 时非 @ 消息不回；静默记录模式（`group_read_enabled`）即使被 @ 也不回。
+- 附件下载或暂存失败必须给出用户可见提示（`agent.im.media_ingress` 的 `failure_notice` → `agent.im.dispatch` 的 `send_text`），不能静默丢弃附件。
+- 秒回失败不影响主链路：正式回复仍走 worker 队列，失败只在诊断日志留痕。
+
 ## 3. 统一入站身份
 
 IM payload 的核心身份字段如下：
@@ -233,7 +244,7 @@ QQ 当前支持全量群消息进入网关；`group_requires_at`、`group_read_e
 - 使用 QQ Bot Gateway WebSocket 接收 C2C、`GROUP_AT_MESSAGE_CREATE` 和配置允许的群消息。
 - 优先使用 QQ 提供的 `user_openid`/`member_openid` 等稳定平台 ID；群消息保留 `group_openid`。
 - 解析引用、附件、QQ 表情和群成员 mention；引用正文与当前正文分开存储。
-- 入队前执行必要的事件确认和即时反馈，普通业务消息写入 `IM_INBOUND_STREAM`。
+- 入队前执行必要的事件确认和即时反馈（见 [2.4](#24-入队前即时反馈ack)），普通业务消息写入 `IM_INBOUND_STREAM`。
 - C2C 与群聊分别调用 `/v2/users/.../messages` 和 `/v2/groups/.../messages`。
 - 群 mention 使用官方 `<qqbot-at-user id="..." />` 形式；发送层可把 mention 部分拆为独立消息，再发送普通正文，避免平台把标签显示成纯文本。
 - 普通文本按会话消息格式发送；Markdown 被平台拒绝时只在可判定的失败场景降级为纯文本。

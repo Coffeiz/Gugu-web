@@ -23,7 +23,7 @@ async def test_prepare_run_preserves_current_media_with_optional_reference(
     monkeypatch, use_anthropic, images, media, block_type, reference_context,
 ):
     """共享 IM/Web 组装路径必须接收媒体，混合引用时不丢媒体或重复持久化上传内容。"""
-    from app.core.chat_attach import build_user_content
+    from agent.chat.attachments import build_user_content
 
     async def fake_rag(*args, **kwargs):
         return {"tail": []}

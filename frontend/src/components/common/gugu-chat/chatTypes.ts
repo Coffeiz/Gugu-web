@@ -9,6 +9,7 @@ export interface ChatMessage {
   id: number
   /** 仅用于从 API 恢复工具/交互时间线，不参与发送。 */
   _createdAt?: string
+  _updatedAt?: string
   /** 持久化/实时统一的时间线顺序；旧消息缺失时回退到 createdAt。 */
   _timelineOrder?: number
   /** 持久化消息/事件的去重身份，仅用于跨端增量同步。 */
@@ -46,9 +47,13 @@ export interface ChatMessage {
   toolCallId?: string
   toolName?: string
   toolLabel?: string
-  toolStatus?: 'queued' | 'running' | 'waiting' | 'success' | 'error' | 'skipped' | 'cancelled'
+  toolStatus?: 'queued' | 'running' | 'waiting' | 'success' | 'error' | 'skipped' | 'cancelled' | 'stopped'
   toolInput?: unknown
   toolResult?: unknown
+  /** 历史工具详情在首次展开时由服务端按归属读取。 */
+  toolDetailsAvailable?: boolean
+  _toolDetailsLoaded?: boolean
+  _toolDetailsSource?: { kind: 'timeline'; messageId: number; index: number }
   toolDurationMs?: number
   _toolStartedAt?: number
   interaction?: {
@@ -106,6 +111,9 @@ export interface ChatFile {
   qq_face?: boolean
   quoted?: boolean
   duration?: number
+  transcript?: string
+  transcript_status?: 'completed' | 'empty' | 'failed'
+  transcript_scope?: 'message'
   upload?: boolean
   _thumbUrl?: string
   img_width?: number
@@ -150,6 +158,8 @@ export interface ChatSession {
   // /agent/sessions 已返回这两个 ISO 时间；侧栏用 updatedAt 显示“最后对话时间”。
   updatedAt?: string
   createdAt?: string
+  isRunning?: boolean | null
+  lastAssistantId?: number
 }
 
 // 共享给 GuguChat.vue 和 GuguChatSidebar.vue：函数类型 props 在 strictFunctionTypes 下

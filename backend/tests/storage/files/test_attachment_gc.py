@@ -21,7 +21,7 @@ from app.services.storage import LocalStorageBackend
 def storage(tmp_path, monkeypatch):
     backend = LocalStorageBackend(tmp_path)
     monkeypatch.setattr("app.services.storage.get_storage", lambda: backend)
-    monkeypatch.setattr(chat_attach, "get_storage", lambda: backend)
+    monkeypatch.setattr("app.services.storage.get_storage", lambda: backend)
     return backend
 
 

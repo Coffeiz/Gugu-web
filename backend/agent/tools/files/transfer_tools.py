@@ -110,9 +110,9 @@ TRANSFER_TOOLS = [
             handler=_present_file,
         ),
         Tool(
-            name="list_recent_attachments", label="查最近暂存的附件",
-            description_short='查最近暂存的附件；用于找回近期图片或文件',
-            description="列出当前仍在暂存区的聊天附件；可用于找回近期图片或文件，再发送或保存。",
+            name="list_recent_attachments", label="查最近附件",
+            description_short='查暂存区和当前会话的近期附件；可按 attach_id 重读历史媒体。',
+            description="列出当前暂存附件及当前会话中已挂载的近期附件。已挂载的语音/音频/视频可调用 read_file 并传入 attach_id 重新读取；不要把已挂载附件误报为暂存区为空。",
             input_schema={"type": "object", "properties": {}},
             handler=_list_recent_attachments,
         ),

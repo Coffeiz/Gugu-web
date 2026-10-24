@@ -76,6 +76,129 @@ def test_tool_completion_summary_omits_unbounded_result_payload():
 
 
 @pytest.mark.asyncio
+async def test_private_feishu_keeps_input_and_result_json_in_the_same_stream_panel():
+    updates = []
+    summary = FeishuToolSummaryStream(include_tool_details=True)
+
+    async def write(elements):
+        updates.append(elements)
+        return True
+
+    summary.bind(write)
+    assert await summary.handle_tool_event({
+        "type": "tool_call",
+        "tool_call_id": "private-call",
+        "name": "web_search",
+        "label": "联网搜索",
+        "status": "running",
+        "input": {"query": "synthetic private query"},
+    })
+    assert await summary.handle_tool_event({
+        "type": "tool_done",
+        "tool_call_id": "private-call",
+        "name": "web_search",
+        "label": "联网搜索",
+        "status": "success",
+        "result": {"items": ["synthetic result"]},
+    })
+
+    panels = [
+        node for node in _walk_tags(summary.elements())
+        if node.get("tag") == "collapsible_panel"
+    ]
+    assert len(panels) == 1
+    detail = panels[0]["elements"][0]["content"]
+    assert "**输入**" in detail
+    assert '"query": "synthetic private query"' in detail
+    assert "**结果**" in detail
+    assert '"synthetic result"' in detail
+    assert len(updates) == 2
+    assert "synthetic private query" in updates[0][0]["elements"][0]["content"]
+    assert "synthetic result" in updates[1][0]["elements"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_private_feishu_keeps_each_tool_in_its_own_collapsible_block():
+    summary = FeishuToolSummaryStream(include_tool_details=True)
+    summary.bind(AsyncMock(return_value=True))
+
+    for call_id, name in (("private-a", "web_search"), ("private-b", "read_page")):
+        assert await summary.handle_tool_event({
+            "type": "tool_call",
+            "tool_call_id": call_id,
+            "name": name,
+            "label": name,
+            "status": "running",
+            "input": {"call": call_id},
+        })
+        assert await summary.handle_tool_event({
+            "type": "tool_done",
+            "tool_call_id": call_id,
+            "name": name,
+            "label": name,
+            "status": "success",
+            "result": {"completed": call_id},
+        })
+
+    panels = [
+        node for node in _walk_tags(summary.elements())
+        if node.get("tag") == "collapsible_panel"
+    ]
+    assert len(panels) == 2
+    assert [panel["header"]["title"]["content"] for panel in panels] == [
+        "🛠 web_search",
+        "🛠 read_page",
+    ]
+    panel_text = [
+        "\n".join(item["content"] for item in panel["elements"])
+        for panel in panels
+    ]
+    assert "web_search" in panel_text[0] and "read_page" not in panel_text[0]
+    assert "read_page" in panel_text[1] and "web_search" not in panel_text[1]
+    assert '"completed": "private-a"' in panel_text[0]
+    assert '"completed": "private-b"' in panel_text[1]
+
+
+def test_feishu_tool_detail_policy_keeps_details_private_and_summary_only_in_groups():
+    from agent.im.presentation import _create_feishu_tool_summary
+
+    private = _create_feishu_tool_summary("feishu", "p2p", True)
+    group = _create_feishu_tool_summary("feishu", "group", True)
+
+    assert private is not None and private.include_tool_details is True
+    assert group is not None and group.include_tool_details is False
+    assert _create_feishu_tool_summary("qq", "c2c", True) is None
+    assert _create_feishu_tool_summary("feishu", "p2p", False) is None
+
+
+@pytest.mark.asyncio
+async def test_private_feishu_keeps_detailed_fallback_if_stream_card_is_unavailable(monkeypatch):
+    from agent.im import presentation
+
+    send_tool_event = AsyncMock()
+    monkeypatch.setattr("agent.im.replies.send_tool_event", send_tool_event, raising=False)
+    summary = FeishuToolSummaryStream(include_tool_details=True)
+
+    async def publish(_event):
+        return None
+
+    event = {"type": "tool_call", "tool_call_id": "call-fallback"}
+    await presentation.display_tool_event(
+        {"platform": "feishu", "chat_type": "p2p"},
+        event,
+        tool_display_mode="all",
+        publish_web_event=publish,
+        feishu_tool_summary=summary,
+    )
+
+    send_tool_event.assert_awaited_once_with(
+        {"platform": "feishu", "chat_type": "p2p"},
+        event,
+        include_details=True,
+    )
+
+
+@pytest.mark.asyncio
 async def test_contiguous_tool_events_share_one_outer_summary_and_text_splits_groups():
     summary = FeishuToolSummaryStream()
     summary.bind(AsyncMock(return_value=True))
@@ -127,7 +250,7 @@ async def test_unbound_summary_allows_existing_tool_message_fallback():
 
 @pytest.mark.asyncio
 async def test_tool_display_off_still_mirrors_web_without_sending_im_message(monkeypatch):
-    from agent.im import loop
+    from agent.im import presentation
 
     send_tool_event = AsyncMock()
     monkeypatch.setattr("agent.im.replies.send_tool_event", send_tool_event, raising=False)
@@ -137,10 +260,10 @@ async def test_tool_display_off_still_mirrors_web_without_sending_im_message(mon
         published.append(event)
 
     event = {"type": "tool_call", "tool_call_id": "call-off"}
-    await loop.display_tool_event(
+    await presentation.display_tool_event(
         {"platform": "feishu"},
         event,
-        show_tool_interactions=False,
+        tool_display_mode="off",
         publish_web_event=publish,
     )
 
@@ -150,12 +273,12 @@ async def test_tool_display_off_still_mirrors_web_without_sending_im_message(mon
 
 @pytest.mark.asyncio
 async def test_enabled_feishu_routes_to_card_after_it_is_bound(monkeypatch):
-    from agent.im import loop
+    from agent.im import presentation
 
     send_tool_event = AsyncMock()
     monkeypatch.setattr("agent.im.replies.send_tool_event", send_tool_event, raising=False)
     updates = []
-    summary = FeishuToolSummaryStream()
+    summary = FeishuToolSummaryStream(include_tool_details=True)
 
     async def write(elements):
         updates.append(elements)
@@ -169,29 +292,29 @@ async def test_enabled_feishu_routes_to_card_after_it_is_bound(monkeypatch):
 
     call_event = {"type": "tool_call", "tool_call_id": "call-on"}
     done_event = {"type": "tool_done", "tool_call_id": "call-on", "status": "success"}
-    await loop.display_tool_event(
-        {"platform": "feishu"},
+    await presentation.display_tool_event(
+        {"platform": "feishu", "chat_type": "p2p"},
         call_event,
-        show_tool_interactions=True,
+        tool_display_mode="all",
         publish_web_event=publish,
         feishu_tool_summary=summary,
     )
-    await loop.display_tool_event(
-        {"platform": "feishu", "chat_type": "group"},
+    await presentation.display_tool_event(
+        {"platform": "feishu", "chat_type": "p2p"},
         done_event,
-        show_tool_interactions=True,
+        tool_display_mode="all",
         publish_web_event=publish,
         feishu_tool_summary=summary,
     )
 
     assert published == [call_event, done_event]
     send_tool_event.assert_not_awaited()
-    assert len(updates) == 1
+    assert len(updates) == 2
 
 
 @pytest.mark.asyncio
 async def test_enabled_feishu_uses_existing_tool_message_if_card_was_not_created(monkeypatch):
-    from agent.im import loop
+    from agent.im import presentation
 
     send_tool_event = AsyncMock()
     monkeypatch.setattr("agent.im.replies.send_tool_event", send_tool_event, raising=False)
@@ -201,10 +324,10 @@ async def test_enabled_feishu_uses_existing_tool_message_if_card_was_not_created
         return None
 
     event = {"type": "tool_call", "tool_call_id": "call-fallback"}
-    await loop.display_tool_event(
+    await presentation.display_tool_event(
         {"platform": "feishu"},
         event,
-        show_tool_interactions=True,
+        tool_display_mode="all",
         publish_web_event=publish,
         feishu_tool_summary=summary,
     )
@@ -236,7 +359,7 @@ async def test_feishu_tool_summary_stream_interleaves_text_and_tools_with_shared
     monkeypatch.setattr(feishu, "_do_update_card", update_card)
     monkeypatch.setattr(feishu, "_do_streaming_update_text", update_text)
     monkeypatch.setattr(feishu, "_do_finalize_streaming_card", finalize)
-    summary = FeishuToolSummaryStream()
+    summary = FeishuToolSummaryStream(include_tool_details=True)
 
     async def token_iter():
         yield ("token", "工具前的说明内容足够长，确保可见且保留在卡片中。")
@@ -281,6 +404,13 @@ async def test_feishu_tool_summary_stream_interleaves_text_and_tools_with_shared
     assert "最终回答" in text
     assert "工具执行后的最终说明内容" not in text
     assert any(node.get("tag") == "collapsible_panel" for node in _walk_tags(final_elements))
+    tool_detail = next(
+        node["content"]
+        for node in _walk_tags(final_elements)
+        if node.get("tag") == "markdown" and "**输入**" in str(node.get("content") or "")
+    )
+    assert "synthetic query" in tool_detail
+    assert "2 results" in tool_detail
 
 
 @pytest.mark.asyncio

@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import json
 import secrets
 from dataclasses import dataclass, field
 from typing import Any
@@ -76,6 +77,7 @@ def describe_llm_error(
     """按统一口径生成 LLM 失败描述。"""
     from agent.providers.errors import (
         anthropic_stream_protocol_details,
+        diagnostic_metadata,
         is_provider_http_error,
         is_responses_stream_error,
         upstream_status_code,
@@ -86,14 +88,30 @@ def describe_llm_error(
     # 所有 provider 失败（包括连接中断/协议错误）都进入受限诊断出口；常规日志和
     # 用户事件只保留脱敏分类。调用方可附带 run/provider/model/预算等非内容关联字段。
     diagnostic_id = secrets.token_hex(8).upper()
-    diag_log(f"{diagnostic_context} diagnostic_id={diagnostic_id}", error)
-    provider_error = is_provider_http_error(error)
-    tag = upstream_status_tag(error) if provider_error else ""
-    status_code = upstream_status_code(error) if provider_error else None
+    metadata = json.dumps(diagnostic_metadata(error), ensure_ascii=True, sort_keys=True)
+    diag_log(f"{diagnostic_context} diagnostic_id={diagnostic_id} metadata={metadata}", error)
+    from agent.gateway.qq.client import QQStreamDeliveryError
+
+    if isinstance(error, QQStreamDeliveryError):
+        return LLMErrorPresentation(
+            code="qq_content_rejected",
+            message_key="chatUi.qqContentRejected",
+            message_params={"diagnostic_id": diagnostic_id},
+            text=f"QQ 拒绝了部分回复内容，已结束当前消息；完整回复可在 Web 查看（诊断编号 {diagnostic_id}）。",
+        )
+    minimax_details = minimax_error_details(error)
+    provider_http_error = is_provider_http_error(error)
+    # MiniMax Anthropic SSE 可能用 HTTP 200 包装 error 事件；SDK 会抛
+    # APIStatusError，但其 status_code 不是 HTTP 失败码，需按已校验的 MiniMax
+    # 响应体识别供应商错误，避免对用户只显示无法定位的通用内部错误。
+    provider_error = provider_http_error or minimax_details is not None
+    tag = upstream_status_tag(error) if provider_http_error else (
+        type(error).__name__ if minimax_details is not None else ""
+    )
+    status_code = upstream_status_code(error) if provider_http_error else None
     params = {"tag": tag, "attempts": attempts}
     retried = f"已自动重试 {attempts} 次"
 
-    minimax_details = minimax_error_details(error)
     if provider_error and minimax_details is not None:
         error_type = minimax_details.error_type or "-"
         request_id = minimax_details.request_id or "-"

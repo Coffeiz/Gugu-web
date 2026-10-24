@@ -77,6 +77,8 @@ description: 后端开发约定。Python 规范、FastAPI 层级、Pydantic 命�
 
 owner 闲置反思触发的会话压缩，应先在捕获主请求快照的同一进程内执行；worker 仅在短 TTL 协调标记过期后作为进程退出时的接管路径。压缩复用快照前缀必须逐条验证模型身份、持久化行边界和消息序列，不能精确对齐时安全回退到数据库重建路径。完整快照不得写入 Redis/数据库/日志；该路径改善前缀一致性，但不承诺特定 provider 的缓存命中率。
 
+群被动消息不启动或续期闲置反思；保留全群累计 50 条触发，主动 run 完成后登记 4 分钟群闲置。被动入库事件另做无模型的上下文压力预检，达到 90% 时即使不足 50 条也入队群组和群友反思；没有代表新增历史的 provider usage，只能标记为估算。任务执行前使用当前历史检查压缩，不能用旧 run 的低用量或已压缩标志跳过；需要时走统一 baseline 压缩并重建后再反思，会话忙时持久延后。4 分钟是 owner、群及群友反思共用的闲置窗口；私聊触发阈值和固定条数策略不变。见 `docs/adr/0003-群反思按主动闲置与消息压力触发.md`。
+
 反思前的 90% 判定遵循上述统一口径：同进程主请求快照携带的最近一轮 provider `context_input` 优先；没有有效实际用量时才估算。压缩前缀允许纯文本字符串与单个 text block 等价，工具块和其他结构必须严格对齐；对齐成功后发送原始主请求前缀。2026-09-26 的合成 MiniMax-M3 A/B 见 `docs/reports/OPT-Cache-Strategy-2026-09-26.md`。
 
 2026-10-13：真实 MiniMax-M3.1-Flash-Preview / Anthropic run 回放确认，反思分支无条件删除主请求已恢复的原生 thinking/signature 会破坏前缀。同模型 wire 分支现保留原生块，继续清理外协议 reasoning_content 和孤立工具事件；默认历史清洗与续接身份校验保持既有语义。两条真实请求恢复后的 wire digest 均与原 run 精确匹配，隔离 A/B 缓存率从 37.9%/0% 提升至 96.2%/96.6%。后台持久历史重建未改变，不保证相同提升；详见 `docs/reports/OPT-Cache-Strategy-2026-10-13.md`。
@@ -87,7 +89,12 @@ owner 闲置反思触发的会话压缩，应先在捕获主请求快照的同�
 
 2026-10-18：群组与成员反思的任务增量先放共同的已有记忆资料，再放专用任务指令，避免相同资料因首段规则不同重复读取；私聊任务与 owner 快照路径保持原顺序。真实 MiniMax Responses 对照中成员反思由约 65% 提升到约 98%；首次冷重建单独统计，不保证命中。用量场景统计新增冷请求次数（有输入且 cache_read 为 0）和排除冷请求后的输入 token 加权缓存率；微量命中仍计入。详见 `docs/reports/2026-10-18-INVEST-记忆反思缓存率与群分支资料顺序.md`。
 
+2026-10-19：实际输入达到 90% 的运行中压力压缩保留用户最后原文和最近一个完整执行轮，允许摘要本 run 的较早执行轮；普通恢复仍沿用十轮窗口。保护位置在压缩后同步更新，摘要分支复用真实 wire，压缩范围使用 Area 投影坐标。所有 Provider 的 Chat 追加 JSON 分支统一不额外发送 `response_format`，保留任务 JSON 指令、统一解析与业务校验；独立 JSON 请求保留各 Provider 原有参数。DeepSeek 实测可改善缓存，MiniMax 未发现缓存退化；这不代表所有模型输出可靠性都经过真实验证。真实 A/B 中三次后续主请求未命中输入减少 64.25%，同输入 JSON 分支命中率 29.94% → 99.89%；794 项回归通过。详见 `docs/reports/OPT-Cache-Strategy-2026-10-19.md` 与对应 devlog。
+
+2026-10-20：群闲置反思在仍持有主 run 快照的进程内收束；Redis 仅保存 worker 协调标记。被动消息追加必须逐条匹配持久化历史尾部，成功时保留原始 Provider wire、system 和工具声明；否则回退数据库重建。真实 DeepSeek Chat A/B 使用合成历史，持久历史重建 cache read 为 0，原始前缀追加读取率为 90.59%/91.09%；第二轮由正式 `ContextBranch` 写入隔离 LoopScope trace。MiniMax M3.1 Flash Preview 的三轮真实 Anthropic 对照中，历史投影缓存率为 2.05%–2.25%，原始前缀追加为 99.57%–99.65%；该对照未经过正式 `ContextBranch`。实验不证明真实群历史必然匹配，线上还需按 `snapshot_source` 与 cache ratio 观察。详见 `docs/reports/2026-10-20-INVEST-群反思原始前缀复用真实模型AB.md`。
+
 **修改缓存策略前必须**：
+
 1. 用 `backend/scripts/diagnostics/test_cache_strategy_compare.py` 做对比测试
 2. 记录到 `docs/reports/OPT-Cache-Strategy-*.md`
 3. 更新 devlog 和本节

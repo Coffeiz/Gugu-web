@@ -3,7 +3,9 @@
     <div class="pm-section-label">{{ t('profileImUi.messagePreferences') }}</div>
     <div class="pm-bot-group-row pm-interaction-preference-row">
       <div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.showToolInteractions') }}</span><span class="pm-field-hint">{{ t('profileImUi.showToolInteractionsHint') }}</span></div>
-      <span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="preferences.showToolInteractions" :aria-label="t('profileImUi.toggleToolInteractions')" @update:model-value="toggleToolInteractions" /><span class="pm-switch-label" :class="{ on: preferences.showToolInteractions }">{{ preferences.showToolInteractions ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span>
+      <div class="pm-style-group pm-tool-display-options" role="group" :aria-label="t('profileImUi.showToolInteractions')">
+        <button v-for="option in toolDisplayOptions" :key="option.key" type="button" class="pm-style-chip" :class="{ active: preferences.imToolDisplayMode === option.key }" :aria-pressed="preferences.imToolDisplayMode === option.key" @click="setToolDisplayMode(option.key)">{{ t(option.labelKey) }}</button>
+      </div>
     </div>
     <div class="pm-bot-group-row pm-interaction-preference-row">
       <div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.showIntermediateReplies') }}</span><span class="pm-field-hint">{{ t('profileImUi.showIntermediateRepliesHint') }}</span></div>
@@ -29,7 +31,7 @@
           <div class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.groupMemory') }}</span><span class="pm-field-hint">{{ t('profileImUi.groupMemoryHint') }}</span></div><span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="bot.group_memory_enabled !== false" :aria-label="t('profileImUi.toggleGroupMemory')" @update:model-value="toggleMemory(bot, 'group_memory_enabled')" /><span class="pm-switch-label" :class="{ on: bot.group_memory_enabled !== false }">{{ bot.group_memory_enabled !== false ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span></div>
           <div class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.memberMemory') }}</span><span class="pm-field-hint">{{ t('profileImUi.memberMemoryHint') }}</span></div><span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="bot.member_memory_enabled !== false" :aria-label="t('profileImUi.toggleMemberMemory')" @update:model-value="toggleMemory(bot, 'member_memory_enabled')" /><span class="pm-switch-label" :class="{ on: bot.member_memory_enabled !== false }">{{ bot.member_memory_enabled !== false ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span></div>
         </template>
-        <div v-if="['qq', 'feishu', 'telegram'].includes(platform.key) && groupChatEnabled(bot)" class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.memberTools') }}</span><span class="pm-field-hint">{{ t('profileImUi.memberToolsHint') }}</span></div><div class="pm-style-group pm-tool-options"><button v-for="option in groupToolOptions" :key="option.key" type="button" class="pm-style-chip" :class="{ active: hasGroupTool(bot, option) }" @click="toggleGroupTool(bot, option)">{{ t(`profileImUi.${option.key === 'xng_search' ? 'webSearchTools' : 'groupContextSearch'}`) }}</button></div></div>
+        <div v-if="['qq', 'feishu', 'telegram'].includes(platform.key) && groupChatEnabled(bot)" class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.memberTools') }}</span><span class="pm-field-hint">{{ t('profileImUi.memberToolsHint') }}</span></div><div class="pm-style-group pm-tool-options"><button v-for="option in groupToolOptions" :key="option.key" :data-tool-option="option.key" type="button" class="pm-style-chip" :class="{ active: hasGroupTool(bot, option) }" @click="toggleGroupTool(bot, option)">{{ t(`profileImUi.${option.labelKey}`) }}</button></div></div>
       </div>
       <form v-if="platform.key === 'telegram' && telegramFormBotId !== null" class="pm-telegram-connect" @submit.prevent="submitTelegramToken"><span class="pm-field-name">{{ t('profileImUi.telegramTokenLabel') }}</span><div class="pm-telegram-token-controls"><input id="telegram-bot-token" v-model="telegramToken" class="form-input" type="password" autocomplete="new-password" :aria-label="t('profileImUi.telegramTokenLabel')" :placeholder="t('profileImUi.telegramTokenPlaceholder')" :disabled="connecting === 'telegram'" /><button class="pm-style-chip" type="submit" :disabled="connecting === 'telegram' || !telegramToken.trim()">{{ connecting === 'telegram' ? t('profileImUi.connectingTelegram') : t(telegramFormBotId ? 'profileImUi.replaceTelegramToken' : 'profileImUi.connectTelegram') }}</button><button class="pm-style-chip" type="button" :disabled="connecting === 'telegram'" @click="closeTelegramForm">{{ t('profileImUi.cancel') }}</button></div><p class="pm-field-hint">{{ t('profileImUi.telegramTokenSecurityHint') }}</p></form>
       <div v-if="connect?.platform === platform.key" :ref="el => setConnectPanelRef(platform.key, el)" class="pm-qr-box"><canvas :ref="setConnectCanvasRef" class="pm-qr-canvas"></canvas><div class="pm-qr-hint">{{ connectHint }}</div><button class="pm-qr-cancel" @click="cancelConnect">{{ t('profileImUi.cancel') }}</button></div>
@@ -68,8 +70,14 @@ const groupResponseOptions = [
   { key: 'record_only', label: '静默记录' },
 ] as const
 const groupToolOptions = [
-  { key: 'xng_search', label: '网页/图像搜索 + 以图搜图 + 网页阅读/图片核验/发图', tools: ['xng_search', 'http_get', 'similar_image_search', 'read_file', 'send_file'] },
-  { key: 'group_context_search', label: '群上下文搜索', tools: ['group_context_search'] },
+  { key: 'xng_search', labelKey: 'webSearchTools', tools: ['xng_search', 'http_get', 'similar_image_search', 'read_file', 'send_file'] },
+  { key: 'web_search', labelKey: 'providerWebSearch', tools: ['web_search'] },
+  { key: 'group_context_search', labelKey: 'groupContextSearch', tools: ['group_context_search'] },
+] as const
+const toolDisplayOptions = [
+  { key: 'off', labelKey: 'profileImUi.toolDisplayOff' },
+  { key: 'all', labelKey: 'profileImUi.toolDisplayAll' },
+  { key: 'slow_only', labelKey: 'profileImUi.toolDisplaySlowOnly' },
 ] as const
 const preferences = usePreferencesStore()
 const liveStore = useLiveStore()
@@ -118,12 +126,12 @@ const pendingSettingWrites = new Set<Promise<void>>()
 let settingsRevision = 0
 let botsLoadSeq = 0
 
-function toggleToolInteractions() {
-  void preferences.saveShowToolInteractions(!preferences.showToolInteractions)
-}
-
 function toggleIntermediateReplies() {
   void preferences.saveShowIntermediateReplies(!preferences.showIntermediateReplies)
+}
+
+function setToolDisplayMode(value: 'off' | 'all' | 'slow_only') {
+  void preferences.saveImToolDisplayMode(value)
 }
 
 function botById(botId: number): Bot | undefined { return bots.value.find(bot => bot.id === botId) }
@@ -287,7 +295,7 @@ function toggleMemory(bot: Bot, field: 'group_memory_enabled' | 'member_memory_e
 }
 function groupResponseMode(bot: Bot): string { return bot.group_response_mode ?? (bot.group_read_enabled ? 'record_only' : (bot.group_requires_at ?? true) ? 'reply_mentions' : 'reply_all') }
 function setGroupResponseMode(bot: Bot, mode: string) { void updateBotSetting(bot.id, { group_response_mode: mode }, '群聊回应方式设置失败') }
-function groupTools(bot: Bot): string[] { return bot.group_allowed_tools?.map(name => name === 'inspect_images' ? 'read_file' : name) ?? ['xng_search', 'http_get', 'similar_image_search', 'read_file', 'send_file', 'group_context_search'] }
+function groupTools(bot: Bot): string[] { return bot.group_allowed_tools ?? ['xng_search', 'http_get', 'similar_image_search', 'read_file', 'send_file', 'group_context_search'] }
 function hasGroupTool(bot: Bot, option: (typeof groupToolOptions)[number]): boolean { return option.tools.every(t => groupTools(bot).includes(t)) }
 function toggleGroupTool(bot: Bot, option: (typeof groupToolOptions)[number]) {
   const current = botById(bot.id)
@@ -320,6 +328,11 @@ onBeforeUnmount(() => { if (bindingCountdown) clearInterval(bindingCountdown); i
   margin-top: 0;
   padding-top: 0;
   border-top: 0;
+}
+.pm-tool-display-options {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  max-width: 58%;
 }
 
 .pm-platform-block > .pm-field-row > .pm-field-desc {

@@ -17,6 +17,7 @@ from app.services.personality_preferences import (
 from app.services.email.capabilities import is_system_email_available
 from app.services.email.queries import get_user_smtp as get_user_smtp_record, save_user_smtp
 from app.services.account_queries import get_or_create_user_preferences
+from app.services.user_preferences import normalize_im_tool_display_mode
 
 router = APIRouter(prefix="/preferences", tags=["preferences"])
 
@@ -94,6 +95,7 @@ def _to_response(data: dict, personality: str | None = None) -> PreferencesRespo
         tool_mode = stored_tool_mode
     else:
         tool_mode = _LEGACY_TOOL_INJECTION_MODES.get(stored_tool_mode, "full")
+    im_tool_mode = normalize_im_tool_display_mode(data.get("im_tool_display_mode"))
     return PreferencesResponse(
         locale=data.get("locale") if data.get("locale") in _SUPPORTED_LOCALES else None,
         theme=data.get("theme", "light") if data.get("theme", "light") in {"light", "dark", "system"} else "light",
@@ -111,7 +113,7 @@ def _to_response(data: dict, personality: str | None = None) -> PreferencesRespo
         shellDangerousEnabled=bool(data.get("shell_dangerous_enabled", True)),
         automaticModeEnabled=bool(data.get("automatic_mode_enabled", False)),
         decisionGuardEnabled=bool(data.get("decision_guard_enabled", False)),
-        showToolInteractions=bool(data.get("show_tool_interactions", True)),
+        imToolDisplayMode=im_tool_mode,
         showIntermediateReplies=bool(data.get("show_intermediate_replies", False)),
         toolInjectionMode=tool_mode,
         personalityPreference=personality,
@@ -241,10 +243,10 @@ async def update_preferences(
         data["automatic_mode_enabled"] = body.automaticModeEnabled
     if body.decisionGuardEnabled is not None:
         data["decision_guard_enabled"] = body.decisionGuardEnabled
-    if body.showToolInteractions is not None:
-        data["show_tool_interactions"] = body.showToolInteractions
     if body.showIntermediateReplies is not None:
         data["show_intermediate_replies"] = body.showIntermediateReplies
+    if body.imToolDisplayMode is not None:
+        data["im_tool_display_mode"] = body.imToolDisplayMode
     if body.toolInjectionMode is not None and body.toolInjectionMode in _TOOL_INJECTION_MODES:
         data["tool_injection_mode"] = body.toolInjectionMode
     prefs.data = data

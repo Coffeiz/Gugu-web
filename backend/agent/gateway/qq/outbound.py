@@ -11,10 +11,12 @@ from typing import Any, Dict
 
 from app.core import redis as R
 from app.core.redaction import diag_log, redact
-from agent.outbound import sanitize_im_links
+from .text import complete_qq_lines, prepare_qq_text, prepare_qq_link_buttons
 from agent.im.message_format import message_type as _message_type
 from .client import (
     QQAPIError,
+    QQStreamFinalizationError,
+    QQStreamDeliveryError,
     _qq_error_summary,
     _qq_is_transient,
     _qq_request,
@@ -68,11 +70,13 @@ class QQPrivateTextStream:
         self.msg_seq: int | None = None
         self.full_text = ""
         self.last_sent_text = ""
+        self.last_sent_content = ""
         self.stream_msg_id: str | None = None
         self.frame_index = 0
         self.sent_frame_count = 0
         self.finished = False
         self.error: Exception | None = None
+        self._flush_interval = 0.5
         self._timer: asyncio.Task | None = None
         self._chain: asyncio.Task | None = None
 
@@ -89,7 +93,7 @@ class QQPrivateTextStream:
 
     async def _delayed_flush(self) -> None:
         try:
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(self._flush_interval)
             # finish() 会取消这个节流任务，但不能连带取消已经开始的 HTTP
             # 刷新链；否则收尾时的 DONE 帧可能永远发不出去，客户端会一直显示生成中。
             await asyncio.shield(self._flush())
@@ -100,7 +104,7 @@ class QQPrivateTextStream:
         finally:
             self._timer = None
 
-    async def _flush(self, input_state: int = 1) -> None:
+    async def _flush(self, input_state: int = 1, *, content_override: str | None = None) -> None:
         if self.error is not None:
             raise self.error
         if not self.full_text or (input_state != 10 and self.full_text == self.last_sent_text):
@@ -110,6 +114,10 @@ class QQPrivateTextStream:
         async def send_one() -> None:
             if previous is not None:
                 await previous
+            frame = self._prepare_frame_text(input_state, content_override)
+            if frame is None:
+                return
+            sent_text, content = frame
             if self.msg_seq is None:
                 # QQ 在流式与普通消息接口间共同按 msg_id + msg_seq 去重。
                 # 关联入站消息时共享文字/图片计数；同一条流的后续帧仍复用该序号。
@@ -121,16 +129,15 @@ class QQPrivateTextStream:
                 "input_mode": "replace",
                 "input_state": input_state,
                 "content_type": self.content_type,
-                "content_raw": sanitize_im_links(self.full_text),
+                "content_raw": content,
                 "msg_seq": self.msg_seq,
                 "index": self.frame_index,
             }
-            self.frame_index += 1
             if self.message_id:
                 body.update({"msg_id": self.message_id, "event_id": self.message_id})
             if self.stream_msg_id:
                 body["stream_msg_id"] = self.stream_msg_id
-            attempts = 0
+            retries = 0
             while True:
                 try:
                     result = await _qq_request(
@@ -139,21 +146,40 @@ class QQPrivateTextStream:
                         f"/v2/users/{self.openid}/stream_messages",
                         json_body=body,
                     )
-                    self.sent_frame_count += 1
-                    if not self.stream_msg_id and isinstance(result, dict):
-                        candidate = result.get("stream_msg_id") or result.get("id")
-                        if isinstance(candidate, str) and candidate:
-                            self.stream_msg_id = candidate
-                    self.last_sent_text = self.full_text
+                    self._record_sent_frame(result, sent_text, body, original_content=content_override is None)
+                    # 只有收到 QQ 对该分片的成功响应后才推进序号。失败重试和后续
+                    # DONE 都复用这个序号，避免未确认的帧造成 index 跳号。
+                    self.frame_index += 1
                     return
                 except Exception as exc:
-                    rate_limited = isinstance(exc, QQAPIError) and (
-                        exc.status == 429 or "50002" in str(exc.body)
+                    error_code = None
+                    if isinstance(exc, QQAPIError) and isinstance(exc.body, dict):
+                        error_code = str(exc.body.get("code") or exc.body.get("err_code") or "")
+                    rate_limited = (
+                        error_code == "50002"
+                        or isinstance(exc, QQAPIError) and exc.status == 429
                     )
-                    if not rate_limited or attempts >= 2:
+                    # 首帧超时是结果不确定：服务端可能已创建流，但响应里的
+                    # stream_msg_id 丢失。此时重发可能再开一条流，不能盲目重试。
+                    # 已拿到 stream_msg_id 后，才对网络/5xx 瞬时错误重放同一分片。
+                    transport_retryable = (
+                        self.stream_msg_id is not None and _qq_is_transient(exc)
+                    )
+                    retryable = (
+                        rate_limited
+                        or error_code == "50001"
+                        or transport_retryable
+                    )
+                    if not retryable or retries >= 3:
                         raise
-                    await asyncio.sleep(1.0 * (2 ** attempts))
-                    attempts += 1
+                    if rate_limited:
+                        # 官方建议降低频率；本条请求退避后，也放慢后续增量刷新。
+                        self._flush_interval = min(max(self._flush_interval, 1.0), 2.0)
+                        delay = min(1.0 * (2 ** retries), 4.0)
+                    else:
+                        delay = min(0.5 * (2 ** retries), 2.0)
+                    await asyncio.sleep(delay)
+                    retries += 1
 
         task = asyncio.create_task(send_one())
         self._chain = task
@@ -163,6 +189,16 @@ class QQPrivateTextStream:
             self.error = exc
             raise
 
+    def _prepare_frame_text(self, input_state: int, override: str | None) -> tuple[str, str] | None:
+        """只生成稳定的追加正文；读取排队后的最新状态，不提前确认缓冲尾行。"""
+        raw = self.full_text if self.finished or input_state == 10 else complete_qq_lines(self.full_text)
+        content = override if override is not None else prepare_qq_text(raw)
+        if not content.strip() or (input_state != 10 and content == self.last_sent_content):
+            return None
+        if not content.startswith(self.last_sent_content):
+            raise ValueError("QQ 流式正文改写已发送前缀，已阻止出站")
+        return raw, content
+
     async def finish(self, final_text: str) -> None:
         self.finished = True
         if self._timer is not None:
@@ -170,15 +206,58 @@ class QQPrivateTextStream:
             with suppress(asyncio.CancelledError):
                 await self._timer
             self._timer = None
-        self.full_text = final_text or self.full_text
+        # Mermaid 分段结束会去掉尾部留白；已发出的换行属于不可修改前缀，收尾保留原样。
+        final_text = final_text or self.full_text
+        if self.full_text.startswith(final_text) and not self.full_text[len(final_text):].strip():
+            final_text = self.full_text
+        self.full_text = final_text
         if not self.full_text.strip():
             return
-        await self._flush(1)
+        try:
+            await self._flush(1)
+            if self._chain is not None:
+                await self._chain
+        except Exception as exc:
+            if not self.stream_msg_id:
+                raise
+            # 已创建的流即使中间刷新失败，也要尝试用完整正文发送 DONE。
+            # 失败的串行任务不能继续挂在链头，否则关闭帧还未请求就会再次抛错。
+            diag_log("agent.gateway.qq.stream_update_before_finish", exc)
+            self.error = None
+            self._chain = None
+        try:
+            await self._flush(10)
+        except Exception as exc:
+            await self._close_rejected_content(exc)
         if self._chain is not None:
             await self._chain
-        await self._flush(10)
-        if self._chain is not None:
-            await self._chain
+
+    def _record_sent_frame(self, result: Any, text: str, body: dict, *, original_content: bool) -> None:
+        """分开记录原始分片与实际送达正文；关闭受拒内容不能冒充原文已送达。"""
+        self.sent_frame_count += 1
+        if not self.stream_msg_id and isinstance(result, dict):
+            candidate = result.get("stream_msg_id") or result.get("id")
+            if isinstance(candidate, str) and candidate:
+                self.stream_msg_id = candidate
+        if original_content:
+            self.last_sent_text = text
+        self.last_sent_content = body["content_raw"]
+
+    async def _close_rejected_content(self, error: Exception) -> None:
+        """内容被拒后只关闭已送达正文，失败状态始终交给调用方处理。"""
+        body = error.body if isinstance(error, QQAPIError) else None
+        rejected = isinstance(body, dict) and str(body.get("code") or body.get("err_code")) == "40034028"
+        if not rejected or not self.stream_msg_id or not self.last_sent_content:
+            raise QQStreamFinalizationError("QQ 流式消息关闭未获确认") from error
+        delivered_content = self.last_sent_content
+        self.error = None
+        self._chain = None
+        try:
+            await self._flush(10, content_override=delivered_content)
+        except Exception as close_error:
+            diag_log("agent.gateway.qq.stream_rejected_content", error)
+            raise QQStreamFinalizationError("QQ 流式消息关闭未获确认") from close_error
+        raise QQStreamDeliveryError("QQ 部分正文被拒绝，已关闭最后送达的内容") from error
 
     def has_sent(self) -> bool:
         return self.sent_frame_count > 0
@@ -207,14 +286,21 @@ def _qq_msg_id_invalid(exc: Exception) -> bool:
     """QQ 被动回复窗口过期或 msg_id 越权时，允许降级为主动消息。"""
     body = getattr(exc, "body", None)
     if isinstance(body, dict):
-        if body.get("code") in (40034024, 40034031) or body.get("err_code") in (40034024, 40034031):
+        expired_codes = (40034005, 40034024, 40034031)
+        if body.get("code") in expired_codes or body.get("err_code") in expired_codes:
             return True
         message = str(body.get("message") or "")
-        return "msg_id无效或越权" in message or "msgid已经过期" in message
+        return (
+            "回复消息msg_id已过期" in message
+            or "msg_id无效或越权" in message
+            or "msgid已经过期" in message
+        )
     text = str(body) if body is not None else str(exc)
     return (
-        "40034024" in text
+        "40034005" in text
+        or "40034024" in text
         or "40034031" in text
+        or "回复消息msg_id已过期" in text
         or "msg_id无效或越权" in text
         or "msgid已经过期" in text
     )
@@ -285,7 +371,7 @@ async def _post(channel_id: str, openid: str, text: str, msg_id: str | None,
                 message_format: str | None = None):
     """按会话格式发送 QQ 文本；Markdown 被拒时回退纯文本。"""
     path = f"/v2/users/{openid}/messages"
-    text = sanitize_im_links(text)
+    text = prepare_qq_text(text)
     msg_type = _message_type(text, message_format)
     body = {"msg_type": msg_type, "msg_seq": await _next_seq(msg_id)}
     if msg_type == 2:
@@ -311,7 +397,7 @@ async def _post_group(channel_id: str, group_openid: str, text: str, msg_id: str
     """群聊版文本发送：按会话格式选择纯文本或 Markdown。"""
     path = f"/v2/groups/{group_openid}/messages"
     text = _format_group_mention(text, mention_user_id, known_member_ids)
-    text = sanitize_im_links(text)
+    text = prepare_qq_text(text)
     msg_type = _message_type(text, message_format)
     # compat 默认是纯文本，但 QQ 只会在可解析的富文本消息中渲染 mention 标签。
     # 仅对明确包含 mention 的群消息升级，不改变普通兼容模式的输出约束。
@@ -465,6 +551,10 @@ async def send_link_keyboard(target_id: str, text: str, buttons: list[dict[str, 
                              channel_id: str, msg_id: str | None = None,
                              group: bool = False) -> bool:
     """发送带链接跳转 Keyboard 的 Markdown 消息；失败返回 False 由出站层文本降级。"""
+    buttons, unsupported = prepare_qq_link_buttons(buttons)
+    if unsupported or not buttons:
+        return False
+    text = prepare_qq_text(text)
     target = "groups" if group else "users"
     path = f"/v2/{target}/{target_id}/messages"
     body = {
@@ -489,9 +579,7 @@ async def send_link_keyboard(target_id: str, text: str, buttons: list[dict[str, 
 
 async def send_c2c(openid: str, text: str, msg_id: str | None = None,
                    channel_id: str | None = None, message_format: str | None = None) -> bool:
-    """给指定用户发 C2C 被动回复（带原 msg_id）。只在失败判定为瞬时（超时/连接错/5xx/429）
-    时重试一次；4xx 等永久错误直接失败——发消息不是幂等操作，重试会造成重复推送，
-    对不会成功的永久错误重试只有坏处没有好处（P2-b §1/§4-A 幂等前提）。"""
+    """优先被动回复 C2C；被动发送任意失败后改用主动消息尝试一次。"""
     print(json.dumps({
         "event": "send-c2c-start",
         "has_openid": bool(openid),
@@ -517,8 +605,9 @@ async def send_c2c(openid: str, text: str, msg_id: str | None = None,
                 "transient": _qq_is_transient(e),
                 "qq": _qq_error_summary(e),
             }, ensure_ascii=False), flush=True)
-            if msg_id and (_qq_msg_id_invalid(e) or _qq_passive_reply_limited(e)):
-                _log.warning("[qq] C2C 被动回复受限，降级为主动消息")
+            if msg_id:
+                _log.warning("[qq] C2C 被动回复失败，降级为主动消息")
+                _send_tokens.pop(channel_id, None)
                 try:
                     if message_format is None:
                         await _post(channel_id, openid, text, None)
@@ -575,8 +664,7 @@ async def _known_group_member_ids(channel_id: str, group_openid: str) -> frozens
 async def send_group(group_openid: str, text: str, msg_id: str | None = None,
                      channel_id: str | None = None, message_format: str | None = None,
                      mention_user_id: str | None = None) -> bool:
-    """给指定群发被动回复（带原 msg_id）。只在失败判定为瞬时时重试一次；
-    4xx 等永久错误直接失败（同 send_c2c，发消息非幂等，不对永久错误盲重试）。"""
+    """优先被动回复 QQ 群；被动发送失败后改用主动消息尝试一次。"""
     print(json.dumps({
         "event": "send-group-start",
         "has_group_openid": bool(group_openid),
@@ -623,8 +711,8 @@ async def send_group(group_openid: str, text: str, msg_id: str | None = None,
                 "transient": _qq_is_transient(e),
                 "qq": _qq_error_summary(e),
             }, ensure_ascii=False), flush=True)
-            if msg_id and (_qq_msg_id_invalid(e) or _qq_passive_reply_limited(e)):
-                _log.warning("[qq] 群聊被动回复受限，降级为主动消息")
+            if msg_id and not (mention_sent and mention_text and body_text):
+                _log.warning("[qq] 群聊被动回复失败，降级为主动消息")
                 try:
                     if mention_text and not mention_sent:
                         await _post_group(channel_id, group_openid, mention_text, None, "markdown",
@@ -652,6 +740,13 @@ async def send_group(group_openid: str, text: str, msg_id: str | None = None,
                     _log.warning("[qq] 群聊主动消息发送失败: %s",
                                  redact(f"{type(fallback_error).__name__}: {fallback_error}"))
                     return False
+            elif msg_id and mention_sent and mention_text and body_text:
+                # mention 已经被动送达，后续正文本来就是主动消息；失败时不能
+                # 重发 mention，否则会产生重复提醒。
+                diag_log("agent.gateway.qq.send_group", e)
+                _log.warning("[qq] 群聊正文发送失败: %s",
+                             redact(f"{type(e).__name__}: {e}"))
+                return False
             diag_log("agent.gateway.qq.send_group", e)
             _log.warning("[qq] 群发送失败(第%d次): %s", attempt, redact(f"{type(e).__name__}: {e}"))
             _send_tokens.pop(channel_id, None)

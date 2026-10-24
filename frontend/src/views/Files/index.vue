@@ -166,6 +166,7 @@
     :x="infoPopup.x"
     :y="infoPopup.y"
     @close="infoPopup.show = false"
+    @navigate="navigateToInfoFileDirectory"
   />
 
   <!-- 上传同名冲突确认 -->
@@ -207,7 +208,7 @@ import { useClipboardStore } from '@/stores/clipboard'
 import { uploadSignal } from '@/services/cache'
 import { useProjectStore } from '@/stores/projects'
 import { usePreferencesStore } from '@/stores/preferences'
-import { usePreviewStore, isPreviewable, isAudioExt } from '@/stores/preview'
+import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { useUiStore } from '@/stores/ui'
 import { cardBlobReadyIds } from '@/composables/shared/useThumbCache'
@@ -383,6 +384,8 @@ function openWorkspaceDirectory(directory: WorkspaceDirectory): void {
     type: 'workspace',
     displayName: directory.name,
     count: directory.fileCount + directory.folderCount,
+    fileCount: directory.fileCount,
+    folderCount: directory.folderCount,
     space: 'workspace',
     workspaceDirectoryId: directory.id,
   })
@@ -828,7 +831,12 @@ const modKey = isMac ? '⌘' : 'Ctrl'
 // target 在 'folder' 菜单里读 .type 区分真实文件夹卡（f.type === 'folder'）与伪文件夹卡；
 // FileMeta 本身没有 type 字段，补一个可选的，让联合类型上都能访问 .type（不影响运行时形状）。
 type CtxTarget = (FileMeta & { type?: string }) | FolderCardMeta | null
-const infoPopup = ref<{ show: boolean; file: FileMeta | undefined; x: number; y: number }>({ show: false, file: undefined, x: 0, y: 0 })
+const infoPopup = ref<{
+  show: boolean
+  file: FileMeta | undefined
+  x: number
+  y: number
+}>({ show: false, file: undefined, x: 0, y: 0 })
 
 const contextActions = useFileLibraryContextActions<Exclude<CtxTarget, null>>({
   selectedFileIds: selectedIds,
@@ -896,7 +904,18 @@ function selCopy() {
 function ctxInfo() {
   const f = ctx.value.target
   ctx.value.visible = false
-  if (f) infoPopup.value = { show: true, file: f as FileMeta, x: ctx.value.x, y: ctx.value.y }
+  if (!f) return
+  const file = f as FileMeta
+  infoPopup.value = { show: true, file, x: ctx.value.x, y: ctx.value.y }
+}
+
+function navigateToInfoFileDirectory(file?: FileMeta) {
+  if (!file || typeof file.id !== 'number' || file.attach_id) return
+  uiStore.pendingFileTarget = {
+    kind: 'file',
+    id: file.id,
+    ...(file.workspaceDirectoryId != null ? { workspaceDirectoryId: file.workspaceDirectoryId } : {}),
+  }
 }
 
 async function ctxDownload() {

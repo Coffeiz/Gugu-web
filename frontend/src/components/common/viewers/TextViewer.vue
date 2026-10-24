@@ -15,7 +15,13 @@
           <button class="tv-html-tab" :class="{ active: htmlMode === 'source' }" role="tab" :aria-selected="htmlMode === 'source'" @click="htmlMode = 'source'">{{ t('viewerUi.source') }}</button>
         </div>
         <div class="tv-html-actions">
-          <span v-if="truncated" class="tv-html-truncated">{{ t('viewerUi.truncated') }}</span>
+          <RefreshButton
+            v-if="sourceText === null"
+            class="tv-html-refresh"
+            :disabled="loading"
+            :title="t('viewerUi.refresh')"
+            @click="emit('refresh')"
+          />
         </div>
       </div>
       <div v-if="htmlMode === 'preview'" ref="htmlPreview" class="tv-html-preview" :class="{ 'is-loading': !htmlPreviewLoaded }">
@@ -82,7 +88,6 @@
       <button v-if="editable" class="tv-edit-toggle" :title="t('viewerUi.edit')" @click="startEdit">
         <Icon name="action.edit" :size="13" />
       </button>
-      <div v-if="truncated" class="tv-notice">{{ t('viewerUi.truncated') }}</div>
       <!-- Markdown 渲染；txt/代码类扩展名走上面的 CodeMirror，不会落到这里 -->
       <div v-if="mdHtml" ref="mdRoot" class="tv-md" v-html="mdHtml" @click="onMdClick" />
     </div>
@@ -94,10 +99,11 @@ import { ref, watch, nextTick, computed, defineAsyncComponent, onMounted, onBefo
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/icons/Icon.vue'
+import RefreshButton from '@/components/common/controls/RefreshButton.vue'
 import { filesApi } from '@/services/api'
 import { sanitizeHtml, splitYamlFrontmatter } from '@/utils/markdown'
-import { cleanupMarkdownMermaid, renderMarkdownMermaid } from '@/utils/mermaidRenderer'
-import type { FileMeta } from '@/stores/filesCache'
+import { cleanupMarkdownMermaid, createMermaidRenderLabels, renderMarkdownMermaid } from '@/utils/mermaidRenderer'
+import { useFilesCacheStore, type FileMeta } from '@/stores/filesCache'
 import { usePreviewStore, isPreviewable, isTextMime, isImageExt } from '@/stores/preview'
 import { useUiStore } from '@/stores/ui'
 import { isRelativeFileLink } from '@/utils/fileLinks'
@@ -111,8 +117,6 @@ const { t, locale } = useI18n()
 // 文件里 hljs/marked 已有的做法一致，只在真正点了「编辑」且是代码类扩展名时才动态加载。
 const Codemirror = defineAsyncComponent(() => import('vue-codemirror').then(m => m.Codemirror))
 let CM: any = null   // 加载完后缓存 { EditorView, basicSetup }，见 ensureCm()
-
-const MAX_BYTES = 500 * 1024
 
 const props = defineProps({
   blobUrl:  { type: String, default: null },
@@ -129,12 +133,39 @@ const props = defineProps({
 })
 
 const emit = defineEmits<{
-  'content-saved': [content: string, fileKey: string | number | null]
+  'content-saved': [content: string, fileKey: string | number | null, version?: number]
+  refresh: []
 }>()
+
+const contentVersions = new Map<number, number>()
+const contentSaveQueues = new Map<number, Promise<void>>()
+function initialContentVersion(id: number): number {
+  const cached = contentVersions.get(id)
+  if (cached != null) return cached
+  if (Number(props.fileContext?.id) === id && props.fileContext?.version != null) {
+    contentVersions.set(id, props.fileContext.version)
+    return props.fileContext.version
+  }
+  throw new Error('缺少文件版本，请重新打开文件后再保存')
+}
+function saveFileContent(id: number, content: string) {
+  initialContentVersion(id)
+  const previous = contentSaveQueues.get(id) ?? Promise.resolve()
+  const request = previous.then(async () => {
+    const saved = await filesApi.saveContent(id, content, initialContentVersion(id))
+    contentVersions.set(id, saved.version)
+    filesCache.updateFile(id, saved)
+    emit('content-saved', content, id, saved.version)
+    return saved
+  })
+  contentSaveQueues.set(id, request.then(() => undefined, () => undefined))
+  return request
+}
 
 const router = useRouter()
 const previewStore = usePreviewStore()
 const uiStore = useUiStore()
+const filesCache = useFilesCacheStore()
 
 const tvScroll = ref<HTMLElement | null>(null)   // .tv-scroll 滚动容器
 const mdRoot = ref<HTMLElement | null>(null)
@@ -303,12 +334,10 @@ function onHtmlPreviewLoad() {
 // 行号、撤销栈和自动保存）：不分真实文件/聊天附件、不分编辑/预览，一律直接显示 CodeMirror。
 // 只有 md 保留「渲染预览 + 编辑」双视图——渲染后的排版本身就是预览价值。
 const isCodeExt = computed(() => {
-  const e = (props.ext || '').toLowerCase()
   return isTextDocument.value && !isMarkdownFile.value
 })
 const loading     = ref(false)
 const error       = ref<string | null>(null)
-const truncated   = ref(false)
 
 // ── 编辑模式：仅 md 有「渲染预览 + 编辑」切换态；txt/代码类见 isCodeExt（没有切换态） ──
 const editing   = ref(false)
@@ -376,9 +405,8 @@ function scheduleAutoSave(content = editText.value) {
 }
 async function doAutoSave(targetKey: string | number, content: string) {
   try {
-    await filesApi.saveContent(Number(targetKey), content)
+    await saveFileContent(Number(targetKey), content)
     rawText.value = content
-    emit('content-saved', content, targetKey)
   } catch (e) {
     console.error('[TextViewer] 自动保存失败:', e)  // eslint
   }
@@ -452,8 +480,7 @@ async function saveEdit() {
     if (isVirtualDocument.value) {
       await props.saveSource?.(editText.value)
     } else {
-      await filesApi.saveContent(Number(props.fileKey), editText.value)
-      emit('content-saved', editText.value, props.fileKey)
+      await saveFileContent(Number(props.fileKey), editText.value)
     }
     await processText(editText.value, props.ext)
     cmLoadSeq++
@@ -535,18 +562,8 @@ async function renderMarkdown(text: string) {
   return sanitizeHtml(_tvMarked.parse(text) as string)
 }
 
-function mermaidLabels() {
-  return {
-    zoomOut: t('mermaidUi.zoomOut'), zoomIn: t('mermaidUi.zoomIn'), resetZoom: t('mermaidUi.resetZoom'),
-    showSource: t('mermaidUi.showSource'), showDiagram: t('mermaidUi.showDiagram'),
-    expand: t('mermaidUi.expand'), downloadPng: t('mermaidUi.downloadPng'), close: t('mermaidUi.close'),
-    previewTitle: t('mermaidUi.previewTitle'), downloadFailed: t('mermaidUi.downloadFailed'),
-    pngTooLarge: t('mermaidUi.pngTooLarge'), renderFailed: t('mermaidUi.renderFailed'),
-  }
-}
-
 function renderMermaidBlocks(): Promise<void> {
-  return renderMarkdownMermaid(mdRoot.value, mermaidLabels())
+  return renderMarkdownMermaid(mdRoot.value, createMermaidRenderLabels(t))
 }
 
 // ── 任务勾选框可交互：去掉 marked 默认的 disabled、按文档顺序标 data-task（仅 md + 真实文件）──
@@ -571,8 +588,7 @@ async function toggleTask(idx: number, cb: HTMLInputElement) {
   ls[hit] = ls[hit].replace(/\[[ xX]\]/, cb.checked ? '[x]' : '[ ]')
   rawText.value = ls.join('\n')
   try {
-    await filesApi.saveContent(Number(props.fileKey), rawText.value)
-    emit('content-saved', rawText.value, props.fileKey)
+    await saveFileContent(Number(props.fileKey), rawText.value)
   } catch {
     rawText.value = before          // 存失败 → 回滚源 + 视觉
     cb.checked = !cb.checked
@@ -713,7 +729,6 @@ watch(() => [props.blobUrl, props.ext, props.sourceText], async ([url, ext, sour
   loading.value   = true
   htmlPreviewLoaded.value = false
   error.value     = null
-  truncated.value = false
   editing.value   = false   // 切换文件/重新加载时退出编辑态，别把上一份文件的编辑框留着
   htmlMode.value  = 'preview'
   taskCheckboxStates = null
@@ -726,13 +741,10 @@ watch(() => [props.blobUrl, props.ext, props.sourceText], async ([url, ext, sour
     let text: string
     if (sourceText !== null) {
       text = sourceText
-      truncated.value = new TextEncoder().encode(text).byteLength > MAX_BYTES
     } else {
       const res  = await fetch(url as string)
       const buf  = await res.arrayBuffer()
-      truncated.value = buf.byteLength > MAX_BYTES
-      const slice = truncated.value ? buf.slice(0, MAX_BYTES) : buf
-      text = new TextDecoder('utf-8', { fatal: false }).decode(slice)
+      text = new TextDecoder('utf-8', { fatal: false }).decode(buf)
     }
     await processText(text, ext)
     if (isCodeExt.value) {
@@ -832,7 +844,7 @@ onBeforeUnmount(() => {
   background: var(--surface-raised);
 }
 .tv-html-tabs { display: flex; align-items: center; gap: 3px; }
-.tv-html-actions { display: flex; align-items: center; gap: 8px; }
+.tv-html-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .tv-html-tab {
   border: 0;
   border-radius: 6px;
@@ -845,22 +857,23 @@ onBeforeUnmount(() => {
 }
 .tv-html-tab:hover { background: var(--surface-soft-hover); color: var(--content-primary); }
 .tv-html-tab.active { background: var(--action-soft); color: var(--action-primary); font-weight: 600; }
-.tv-html-truncated { color: var(--status-warning); font-size: 11px; }
+.tv-html-actions :deep(.tv-html-refresh.icon-btn) {
+  width: auto;
+  height: auto;
+  padding: 6px;
+  border: 0;
+  background: transparent;
+}
+.tv-html-actions :deep(.tv-html-refresh.icon-btn:hover) {
+  background: var(--surface-soft-hover);
+  color: var(--content-primary);
+}
 .tv-html-preview { position: relative; flex: 1; min-height: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; background: #fff; }
 .tv-html-frame { display: block; width: 100%; height: 100%; border: 0; background: #fff; }
 .tv-html-preview.is-loading .tv-html-frame { opacity: 0; }
 .tv-html-loading { position: absolute; inset: 0; z-index: 1; display: flex; align-items: center; justify-content: center; gap: 10px; background: #fff; color: var(--content-secondary); font-size: 13px; }
 .tv-html-canvas-fit { position: relative; flex: 0 0 auto; overflow: hidden; }
 .tv-html-frame-canvas { position: absolute; top: 0; left: 0; transform-origin: top left; }
-
-.tv-notice {
-  font-size: 11px;
-  color: var(--status-warning);
-  background: var(--status-warning-bg);
-  border-bottom: 1px solid color-mix(in srgb, var(--status-warning) 28%, transparent);
-  padding: 6px 20px;
-  margin-bottom: 8px;
-}
 
 /* ── 编辑入口（浮在只读视图右上角） ── */
 .tv-edit-toggle {

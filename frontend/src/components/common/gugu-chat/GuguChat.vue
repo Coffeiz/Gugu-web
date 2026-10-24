@@ -1,9 +1,8 @@
 <template>
   <!-- 迷你播放器 -->
   <GuguChatMiniPlayer
-    ref="miniPlayerRef"
     :visible="!!audioStore.file && (miniPinned || open)"
-    :style="miniPlayerStyle" :bars-playing="barsPlaying"
+    :style="miniPlayerStyle" :bars-playing="audioPlaying" :wave-bars="audioBars"
     :file-name="audioStore.file ? `${audioStore.file.displayName}.${audioStore.file.ext?.toLowerCase()}` : ''"
     :playlist="audioStore.playlist" :current-track-id="audioStore.file?.id ?? null"
     :pinned="miniPinned" @update:pinned="miniPinned = $event"
@@ -21,7 +20,7 @@
     :src="audioStore.blobUrl ?? undefined"
     @timeupdate="audioCurrent = audioEl?.currentTime ?? 0"
     @durationchange="onAudioDurationChange"
-    @play="audioPlaying = true"
+    @play="onAudioPlay"
     @pause="onAudioPause"
     @ended="onAudioEnded"
     @canplay="onCanPlay"
@@ -69,9 +68,11 @@
       :interaction-answer-mode="interactionAnswerMode"
       :presence-kind="presenceKind" :presence-text="presenceText" :presence-title="presenceTitle"
       :messages="messages" :is-group-session="isGroupSession"
-      :copied-id="copiedId" :voice-playing-id="voicePlayingId"
+      :copied-id="copiedId" :voice-playing-id="voicePlayingId" :voice-bars="voiceBars"
       :status-kind="statusKind" :status-typed="statusTyped"
       :session-settling="sessionSettling"
+      :cached-history-visible="cachedHistoryVisible"
+      :history-state="historyState" :on-load-history="loadOlderHistory"
       :pending-queue="visiblePendingQueue" @remove-queued="removeQueued"
       v-model:input-text="inputText"
       :references="inputReferences" @update:references="inputReferences = $event"
@@ -113,6 +114,7 @@
           :im-platforms="imPlatformOptions" :im-open="imOpen" :im-highlight="imHighlight"
           :bots-of="botsOf" :im-sessions-of="imSessionsOf"
           :web-sessions="webSessions" :session-id="sessionId"
+          :session-badges="webSessionBadges"
           :connect="connect" :connect-hint="connectHint" :connect-err="connectErr" :connecting="connecting"
           :telegram-token-dialog-open="telegramTokenDialogOpen"
           :telegram-connecting="telegramConnecting"
@@ -150,13 +152,14 @@ import GuguChatWindow from './GuguChatWindow.vue'
 import FilesystemAuthorizationDialog from '@/components/common/filesystem/FilesystemAuthorizationDialog.vue'
 import { CUSTOM_REPLY_OPTION_ID, findPendingTextInteractionId, type ChatMessage, type ChatFile, type ChatReference, type ImPlatformKey } from './chatTypes'
 import { API_BASE } from './chatConstants'
-import { markdownToSafePlainText, renderMd } from './markdown'
 import { canPreview, fmtSize } from './messageDisplay'
 import { useChatAudio } from './composables/useChatAudio'
 import { useChatAttachments } from './composables/useChatAttachments'
 import { useChatActions } from './composables/useChatActions'
 import { copyTextToClipboard } from './composables/copyTextToClipboard'
 import { useChatConversation } from './composables/useChatConversation'
+import { useWebSessionBadges } from './composables/useWebSessionBadges'
+import { useAuthStore } from '@/stores/auth'
 import { runChatNavigation } from './composables/chatNavigation'
 import { restoreStartupSession } from './composables/startupSessionRestore'
 import { useChatImConnect } from './composables/useChatImConnect'
@@ -226,20 +229,18 @@ const { refreshAfterTools, onChatActionClick } = useChatActions({
 })
 const { openMindRef } = useMindRefActions()
 const fabRef        = ref<InstanceType<typeof GuguChatFab> | null>(null)
-const miniPlayerRef = ref<InstanceType<typeof GuguChatMiniPlayer> | null>(null)
 const rippleActive  = ref(false)
-const barsPlaying   = ref(false)
 const spinningBack = ref(false)
 let rippleTimeout: ReturnType<typeof setTimeout> | null = null
 
 // 悬浮球转场动画在 audioStore.file 清空前触发（拿最后角度做转回归位动画）；
 // 播放器机制（暂停/进度/音量/语音条播放）全部收在 useChatAudio。
 const {
-  audioEl, audioPlaying, audioCurrent, audioDuration, audioSeekPct,
-  saveProgress, onCanPlay, onAudioPause, onAudioEnded, audioToggle, audioStop,
+  audioEl, audioPlaying, audioCurrent, audioDuration, audioSeekPct, audioBars,
+  saveProgress, onCanPlay, onAudioPlay, onAudioPause, onAudioEnded, audioToggle, audioStop,
   onAudioDurationChange,
   audioVolume, audioMuted, audioSetVolume, audioToggleMute, audioStartDrag, fmtTime,
-  voicePlayingId, toggleVoice,
+  voicePlayingId, voiceBars, toggleVoice,
 } = useChatAudio({
   onTip: (text) => _chatTip(text),
   onBeforeStop: () => {
@@ -264,21 +265,6 @@ function selectAudioTrack(track: AudioTrack) {
 }
 
 watch(audioPlaying, (playing) => {
-  if (playing) {
-    miniPlayerRef.value?.barsEl?.querySelectorAll('i').forEach((b) => { (b as HTMLElement).style.cssText = '' })
-    barsPlaying.value = true
-  } else {
-    const bars = miniPlayerRef.value?.barsEl?.querySelectorAll('i') ?? []
-    bars.forEach((b) => { (b as HTMLElement).style.height = getComputedStyle(b).height; (b as HTMLElement).style.transition = 'none' })
-    barsPlaying.value = false
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      bars.forEach((b) => { (b as HTMLElement).style.transition = 'height 0.45s ease-out'; (b as HTMLElement).style.height = '4px' })
-    }))
-    setTimeout(() => bars.forEach((b) => { (b as HTMLElement).style.cssText = '' }), 500)
-  }
-})
-
-watch(audioPlaying, (playing) => {
   if (playing) { if (rippleTimeout) clearTimeout(rippleTimeout); rippleActive.value = true }
   else { rippleTimeout = setTimeout(() => { rippleActive.value = false }, 3600) }
 })
@@ -298,7 +284,7 @@ const windowElRef   = computed(() => windowRef.value?.el ?? null)
 
 const {
   open, expanded, resizing, chatClosing, chatZ, fabZ,
-  vw, vh,
+  vw,
   windowStyle, miniPlayerStyle,
   miniPinned, reopenResume,
   raiseChat, closeChat, markResizing, playIncomingMessageSfx,
@@ -432,8 +418,8 @@ function _chatTip(text: string) { messages.value.push({ id: mkid(), role: 'ai', 
 // 附件（选择/拖拽/粘贴/暂存上传）与语音录制的唯一状态所有权在 useChatAttachments；
 // 这里单次实例化，因为 send() 仍需要直接读 pendingAtt 来拼发送 payload。
 const {
-  pendingAtt, attUploading, uploadAttachFiles, onFilePicked,
-  chatDrag, isChatDragging, onChatDragEnter, onChatDragOver, onChatDragLeave, onChatDrop, onPaste,
+  pendingAtt, attUploading, onFilePicked,
+  isChatDragging, onChatDragEnter, onChatDragOver, onChatDragLeave, onChatDrop, onPaste,
   removeAtt,
   recording, recordSecs, startRecord, stopRecord, cancelRecord,
 } = useChatAttachments({
@@ -447,6 +433,10 @@ const {
 const conversation = useChatConversation({
   composerRef, messageListRef, pendingAtt,
   refreshAfterTools, loadQuota: () => loadQuota(),
+  onAutomaticModeCommand: async () => {
+    const refreshed = await preferencesStore.refreshAutomaticModeEnabled()
+    if (refreshed) preferencesStore.notifyAutomaticModeChanged()
+  },
   playIncomingMessageSfx: () => playIncomingMessageSfx(),
   onContentReset, onCaptureBaseScrollH, onSyncSmallH,
   onQueuePersistenceError: () => showAppError(t('chatUi.pendingQueuePersistFailed')),
@@ -458,20 +448,25 @@ const conversation = useChatConversation({
   }),
 })
 const {
-  messages, mkid, now, sessionSettling,
+  messages, mkid, now, sessionSettling, cachedHistoryVisible, historyState, loadOlderHistory,
   inputText, inputReferences, thinkingLabels, contextCompactingLabels, streaming, statusKind, statusTyped, isTypingText,
-  sessionId, ownerPlatformUserId, isGroupSession,
+  sessionId, isGroupSession,
   sessions, webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName, currentSessionGoalActive, currentSessionGoalStatus,
   currentSessionFilesystemAuthorized, currentSessionFilesystemAuthorizationEnabled,
-  restorePendingQueueForDraft, restorePendingQueueForSession,
-  drainPendingQueue,
+  restorePendingQueueForDraft,
   stick,
   fetchSessions, loadSession, newSession, deleteSession, renameSession,
   send, stopStreaming,
   pendingQueue, removeQueued,
-  scrollBottom, onMsgScroll,
-  animateGreeting, clearStatus,
+  scrollBottom,
+  animateGreeting,
 } = conversation
+
+const badgeAuth = useAuthStore()
+const webSessionBadges = useWebSessionBadges({
+  sessions, sessionId, visible: open,
+  accountId: computed(() => badgeAuth.user?.id ?? null),
+})
 
 // 业务空状态可以请求打开聊天并预填一条配置指令；只消费一次，绝不自动发送。
 watch(() => uiStore.pendingChatPrefill, async (prompt) => {
@@ -729,6 +724,7 @@ async function onInteractionTextSubmit(message: ChatMessage, text: string) {
 }
 
 async function onChatSend() {
+  if (sessionSettling.value) return
   const promptId = pendingCustomPromptId.value
   if (!promptId) {
     await send()
@@ -815,12 +811,8 @@ function openFileFromChat(f: ChatFile) {
 }
 
 async function copyMsg(msg: ChatMessage) {
-  // AI 消息取渲染后的纯文本，用户消息直接取原文
-  let text = msg.text
-  if (msg.role === 'ai' && msg.text) {
-    text = markdownToSafePlainText(renderMd(msg.text)) || msg.text
-  }
-  const copied = await copyTextToClipboard(text)
+  // 复制消息源 Markdown，保留标题、列表、围栏代码块等语法；渲染后的纯文本会把这些结构压平。
+  const copied = await copyTextToClipboard(msg.text)
   if (!copied) {
     showAppError(t('chatUi.copyFailed'))
     return
@@ -840,7 +832,7 @@ watch(open, (v) => {
 const sidebarRef    = ref<InstanceType<typeof GuguChatSidebar> | null>(null)
 const bindDialogRef = ref<InstanceType<typeof GuguChatBindDialog> | null>(null)
 const {
-  bots, imOpen, imPlatformOptions, imOnline, botsOf, imHighlight,
+  imOpen, imPlatformOptions, imOnline, botsOf, imHighlight,
   loadBots, toggleImPlatform, promptConnectIM,
   telegramTokenDialogOpen, telegramConnecting, telegramConnectError,
   openTelegramTokenDialog, closeTelegramTokenDialog, submitTelegramToken,
@@ -907,7 +899,7 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
 :deep(.chat-messages) {
   flex: 1; overflow-y: auto; overflow-x: hidden; position: relative;
 }
-.chat-main.is-expanded :deep(.chat-messages .msg-bubble) { max-width: 72%; font-size: 14px; }
+.chat-main.is-expanded :deep(.chat-messages .msg.ai .msg-bubble) { max-width: 90%; font-size: 14px; }
 .chat-main.is-expanded :deep(.chat-messages .msg-quoted) { max-width: 72%; font-size: 13.5px; }
 /* 虚拟列表占位容器：高度由 JS 撑出来（虚拟内容高度 + 顶部留白），撑出的空间给绝对定位的消息行腾地方 */
 :deep(.msg-virtual-spacer) { position: relative; width: 100%; }
@@ -1170,11 +1162,8 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
   background: var(--gugu-chat-voice-button-bg); box-shadow: var(--elevation-card);
 }
 :deep(.msg-voice .mv-wave) { display: flex; align-items: center; gap: 2px; height: 18px; }
-:deep(.msg-voice .mv-wave i) { width: 2.5px; border-radius: 2px; background: var(--gugu-chat-voice-wave); transition: background 0.2s; }
-:deep(.msg-voice.playing .mv-wave i) { background: var(--gugu-chat-voice-wave-playing); animation: mv-pulse 0.9s ease-in-out infinite; }
-:deep(.msg-voice .mv-wave i:nth-child(even)) { animation-delay: 0.15s; }
-:deep(.msg-voice .mv-wave i:nth-child(3n)) { animation-delay: 0.3s; }
-@keyframes mv-pulse { 0%,100% { transform: scaleY(0.6); } 50% { transform: scaleY(1); } }
+:deep(.msg-voice .mv-wave i) { width: 2.5px; border-radius: 2px; background: var(--gugu-chat-voice-wave); transition: height 320ms ease-out, background 0.2s; }
+:deep(.msg-voice.playing .mv-wave i) { transition: height 70ms linear, background 0.2s; }
 :deep(.msg-voice .mv-dur) { font-size: 12.5px; color: var(--gugu-chat-voice-duration); font-variant-numeric: tabular-nums; flex-shrink: 0; }
 /* 用户(右侧)发的附件卡：气泡尾巴翻到右下、左下回正常圆角、容器右对齐 */
 :deep(.msg.user .msg-files) { align-items: flex-end; }

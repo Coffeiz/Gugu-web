@@ -198,18 +198,33 @@ def _fmt_age(ttl_left: int, total_ttl: int) -> str:
 
 
 async def _list_recent_attachments(db, user_id, args: dict):
-    """列出该用户当前暂存区（未过期）的附件，供模型在「刚刚的图/那张图」等模糊指代时反查 attach_id。"""
+    """列出暂存附件和当前会话已挂载附件，便于按 attach_id 重读近期媒体。"""
     from app.core import chat_attach
+    from agent.tools.base import current_dispatch_session_id
+
     staged = await chat_attach.list_staged(user_id)
-    if not staged:
-        return {"count": 0, "items": [], "note": "暂存区当前没有未过期的附件"}
     items = [{
         "attach_id": m["attach_id"], "name": m.get("name"), "ext": m.get("ext"),
         "kind": m.get("kind"), "platform": m.get("platform"),
         "size_bytes": m.get("size"), "img_width": m.get("img_width"), "img_height": m.get("img_height"),
+        "state": "draft",
         "staged_about": _fmt_age(m.get("_ttl"), chat_attach.TTL),
     } for m in staged]
-    return {"count": len(items), "items": items}
+    session_id = current_dispatch_session_id()
+    if session_id:
+        attached = await chat_attach.list_session_attachments(user_id, session_id)
+        items.extend({
+            "attach_id": m["attach_id"], "name": m.get("name"), "ext": m.get("ext"),
+            "kind": m.get("kind"), "platform": m.get("platform"),
+            "size_bytes": m.get("size"), "img_width": m.get("img_width"), "img_height": m.get("img_height"),
+            "duration": m.get("duration"), "state": "attached",
+        } for m in attached)
+    if not items:
+        return {"count": 0, "items": [], "note": "暂存区和当前会话中都没有可读取的近期附件"}
+    return {
+        "count": len(items), "items": items,
+        "note": "已挂载附件可用 read_file 并传入 attach_id 重新读取；语音附件可重新听取。",
+    }
 
 
 async def _send_file_from_url(user_id, url: str, title: str, *, stage: bool = True, max_bytes: int | None = None):

@@ -1,7 +1,8 @@
 from ..base import (
     ProviderAdapter, ProviderCapabilities, ReasoningCapabilities,
-    ResponsesInputCapabilities, configured_responses_input_capabilities,
+    ResponsesInputCapabilities,
 )
+from . import media as mimo_media
 
 
 class MimoAdapter(ProviderAdapter):
@@ -10,20 +11,18 @@ class MimoAdapter(ProviderAdapter):
     cache_mode = "none"
     supports_thinking_toggle = True
     default_base_url = "https://api.xiaomimimo.com/v1"
-    _AUDIO_EXTS = frozenset({"mp3", "wav", "flac", "m4a", "ogg"})
-
     def capabilities(self, model: str = "") -> ProviderCapabilities:
         return ProviderCapabilities(api_format="openai", cache_mode="none", thinking=True,
-                                    structured_json=True, tools=True, audio=True, video=True)
+                                    structured_json=True, tools=True,
+                                    audio=mimo_media.supports_audio_model(model),
+                                    video=mimo_media.supports_video_model(model))
 
     def supported_api_formats(self, ai):
         # MiMo 官方同时提供 Chat Completions、Responses 和 Anthropic Messages。
         return ("openai", "responses", "anthropic")
 
     def responses_input_capabilities(self, ai) -> ResponsesInputCapabilities:
-        return configured_responses_input_capabilities(
-            ai, audio_formats=self._AUDIO_EXTS, supports_video=True,
-        )
+        return mimo_media.responses_input_capabilities(ai)
 
     def default_base_url_for(self, ai) -> str:
         if self.protocol_format(ai) == "anthropic":
@@ -39,7 +38,7 @@ class MimoAdapter(ProviderAdapter):
         return {"api-key": getattr(ai, "api_key", "") or ""}
 
     def audio_native_exts(self) -> frozenset[str]:
-        return self._AUDIO_EXTS
+        return mimo_media.AUDIO_NATIVE_EXTS
 
     def build_thinking_params(self, ai, *, thinking: str | None = None) -> dict:
         value = thinking if thinking is not None else getattr(ai, "thinking", "disabled")

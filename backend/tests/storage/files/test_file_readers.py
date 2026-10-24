@@ -1,7 +1,10 @@
+from agent.media.constants import IMAGE_READ_MAX
+from agent.media import images as media_images
 from types import SimpleNamespace
 
 import pytest
 
+from agent import media
 from app.core import chat_attach
 from agent.tools import media_reader as file_readers, media_reader
 
@@ -19,6 +22,10 @@ class _Storage:
         self.get_called = True
         return self.data
 
+    def local_path(self, key):
+        # 合成对象存储不提供本地路径，遵守 StorageBackend 的可选路径契约。
+        return None
+
 
 def _minimax_m3_ai():
     return SimpleNamespace(provider="minimax", model="abab-m3", base_url="https://api.minimaxi.com/anthropic",
@@ -34,8 +41,8 @@ def _mimo_ai():
     ("reader", "physical_size", "data", "read_expected"),
     [
         ("audio", file_readers.MEDIA_READ_MAX_BYTES + 1, b"media", False),
-        ("image", chat_attach.IMAGE_READ_MAX + 1, b"media", False),
-        ("image", 5, b"x" * (chat_attach.IMAGE_READ_MAX + 1), True),
+        ("image", IMAGE_READ_MAX + 1, b"media", False),
+        ("image", 5, b"x" * (IMAGE_READ_MAX + 1), True),
     ],
 )
 async def test_media_readers_enforce_physical_and_actual_size(
@@ -50,7 +57,7 @@ async def test_media_readers_enforce_physical_and_actual_size(
         assert "超出读取上限" in result["error"]
     else:
         monkeypatch.setattr("app.services.storage.get_storage", lambda: storage)
-        monkeypatch.setattr(chat_attach, "image_ready", lambda: True)
+        monkeypatch.setattr(media_images, "image_ready", lambda: True)
         monkeypatch.setattr(media_reader, "get_storage", lambda: storage)
         result = await media_reader.read_stored_image("u/image.png", "png")
         assert "过大" in result["error"]
@@ -90,14 +97,16 @@ async def test_read_video_returns_native_video_block_for_minimax_m3(monkeypatch)
         captured_args["model_cfg"] = model_cfg
         return {"type": "video", "mode": "base64", "mime": "video/mp4", "b64": "ZmFrZQ=="}
 
-    monkeypatch.setattr(file_readers.chat_attach, "prepare_video_media", fake_prepare_video_media)
+    monkeypatch.setattr(file_readers.video, "prepare_video_media", fake_prepare_video_media)
 
     file = SimpleNamespace(storage_key="u/media.mp4", ext="mp4", id=1, display_name="clip", user_id="u1")
     result = await file_readers.read_video(file)
 
     assert "_media_block" in result
     block = result["_media_block"]
-    assert block == {"type": "video", "source": {"type": "base64", "media_type": "video/mp4", "data": "ZmFrZQ=="}}
+    assert block == {"type": "video", "source": {
+        "type": "base64", "media_type": "video/mp4", "data": "ZmFrZQ==", "fps": 1,
+    }}
     assert "_image_block" not in result
     assert "content" not in result
     assert captured_args["raw"] == b"media"
@@ -117,7 +126,7 @@ async def test_read_video_supports_openai_compatible_video_model(monkeypatch):
     async def fake_prepare_video_media(raw, mime, name, model_cfg, **kwargs):
         return {"type": "video", "mode": "base64", "mime": "video/mp4", "b64": "ZmFrZQ=="}
 
-    monkeypatch.setattr(file_readers.chat_attach, "prepare_video_media", fake_prepare_video_media)
+    monkeypatch.setattr(file_readers.video, "prepare_video_media", fake_prepare_video_media)
 
     file = SimpleNamespace(storage_key="u/media.mp4", ext="mp4", id=1, display_name="clip", user_id="u1")
     result = await file_readers.read_video(file)
@@ -167,7 +176,36 @@ async def test_read_video_rejects_over_500mb_without_reading_full_bytes(monkeypa
     file = SimpleNamespace(storage_key="u/media.mp4", ext="mp4", id=1, display_name="clip", user_id="u1")
     result = await file_readers.read_video(file)
 
-    assert "500MB" in result["error"]
+    assert "512MB" in result["error"]
+    assert storage.get_called is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("ext", "size", "expected_error"),
+    [
+        ("mp4", 600, "单文件上限"),
+        ("webm", 10, "不支持视频格式"),
+    ],
+)
+async def test_read_video_preflights_provider_size_and_mime(monkeypatch, ext, size, expected_error):
+    """read_file 按 Provider 媒体规格，在 storage.get 前返回明确工具错误。"""
+    from agent.providers.media import MediaLimits
+
+    storage = _Storage(size)
+    monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
+    monkeypatch.setattr(file_readers, "get_settings", lambda: SimpleNamespace(ai=_minimax_m3_ai()))
+    monkeypatch.setattr(file_readers.gates, "video_transport_for", lambda _ai: "anthropic")
+    monkeypatch.setattr(
+        file_readers.gates,
+        "media_limits_for",
+        lambda _ai: MediaLimits(video_source_max_bytes=500, video_mimes=frozenset({"video/mp4"})),
+    )
+
+    file = SimpleNamespace(storage_key="u/media", ext=ext, id=1, display_name="clip", user_id="u1")
+    result = await file_readers.read_video(file)
+
+    assert expected_error in result["error"]
     assert storage.get_called is False
 
 
@@ -182,12 +220,71 @@ async def test_read_video_propagates_prepare_video_media_rejection(monkeypatch):
     async def fake_prepare_video_media(raw, mime, name, model_cfg, **kwargs):
         raise ValueError("这条视频太大（超过 90MB 上限），没法直接看")
 
-    monkeypatch.setattr(file_readers.chat_attach, "prepare_video_media", fake_prepare_video_media)
+    monkeypatch.setattr(file_readers.video, "prepare_video_media", fake_prepare_video_media)
 
     file = SimpleNamespace(storage_key="u/media.mp4", ext="mp4", id=1, display_name="clip", user_id="u1")
     result = await file_readers.read_video(file)
 
     assert result == {"error": "这条视频太大（超过 90MB 上限），没法直接看"}
+
+
+@pytest.mark.asyncio
+async def test_read_video_rejects_video_over_provider_duration_limit(monkeypatch):
+    """视频时长超过 Provider 规格（MiniMax 上游硬限 1800 秒）→ 应用侧先拒绝。
+
+    这是「超出 Provider 规格就在应用侧返回失败结果」的验收点：read_file 读一个
+    68 分钟的视频时，不该先把 235MB 传上去了再等上游 400，而应该在本地判定，
+    把明确的拒绝理由作为**失败的 tool result** 交回去（error 字段会被工具层
+    序列化成 JSON 交给 `_tool_result_is_error` 判定）。
+    """
+    from agent.providers.minimax import MiniMaxAdapter
+
+    storage = _Storage(1024)
+    monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
+    monkeypatch.setattr(file_readers, "get_settings", lambda: SimpleNamespace(ai=_minimax_m3_ai()))
+
+    async def fake_probe(raw):
+        return {"width": 1920, "height": 1080, "bit_rate": 5_000_000, "duration": 4119.105}
+
+    uploaded = []
+
+    async def fake_upload(_self, raw, name, _ai, *, mime="", purpose=""):
+        uploaded.append(name)
+        return "file-abc"
+
+    monkeypatch.setattr(file_readers.video, "probe_video", fake_probe)
+    monkeypatch.setattr(MiniMaxAdapter, "upload_media_file", fake_upload)
+
+    file = SimpleNamespace(storage_key="u/media.mp4", ext="mp4", id=1, display_name="clip", user_id="u1")
+    result = await file_readers.read_video(file)
+
+    assert "1800" in result["error"]
+    assert "未发送给 Provider" in result["error"]
+    assert uploaded == [], "超时长应该在上传之前就拒绝"
+
+
+@pytest.mark.asyncio
+async def test_read_video_rejects_over_limit_before_reading_bytes(monkeypatch):
+    """超限视频在**读字节之前**就被拒——一次字节都不该读。
+
+    大小闸门本来就在读前拦（`image_capability_error` / `validate_video_source` 用的是
+    stat 出来的物理大小），时长闸门也该一样：不然为了说一句"太长了"，得先把
+    235MB 读进内存、再落一份 235MB 的临时文件。
+    """
+    storage = _Storage(1024)
+    monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
+    monkeypatch.setattr(file_readers, "get_settings", lambda: SimpleNamespace(ai=_minimax_m3_ai()))
+
+    async def fake_probe_at(storage_key):
+        return {"width": 1920, "height": 1080, "bit_rate": 5_000_000, "duration": 4119.105}
+
+    monkeypatch.setattr(file_readers.video, "probe_video_at", fake_probe_at)
+
+    file = SimpleNamespace(storage_key="u/media.mp4", ext="mp4", id=1, display_name="clip", user_id="u1")
+    result = await file_readers.read_video(file)
+
+    assert "1800" in result["error"]
+    assert storage.get_called is False, "超时长应该在读字节之前就拒绝"
 
 
 @pytest.mark.asyncio
@@ -199,7 +296,7 @@ async def test_read_video_generic_failure_returns_generic_error(monkeypatch):
     async def boom(raw, mime, name, model_cfg, **kwargs):
         raise RuntimeError("ffmpeg 挂了")
 
-    monkeypatch.setattr(file_readers.chat_attach, "prepare_video_media", boom)
+    monkeypatch.setattr(file_readers.video, "prepare_video_media", boom)
 
     file = SimpleNamespace(storage_key="u/media.mp4", ext="mp4", id=1, display_name="clip", user_id="u1")
     result = await file_readers.read_video(file)
@@ -229,7 +326,7 @@ async def test_read_video_uses_running_model_cfg_not_static_settings(monkeypatch
         captured["model_cfg"] = model_cfg
         return {"type": "video", "mode": "base64", "mime": "video/mp4", "b64": "ZmFrZQ=="}
 
-    monkeypatch.setattr(file_readers.chat_attach, "prepare_video_media", fake_prepare_video_media)
+    monkeypatch.setattr(file_readers.video, "prepare_video_media", fake_prepare_video_media)
 
     real_ai = _minimax_m3_ai()
     token = modelctx._model_cfg.set(real_ai)
@@ -270,7 +367,7 @@ async def test_read_audio_falls_back_to_asr_when_native_audio_is_disabled(monkey
                          audio=False)
     monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
     monkeypatch.setattr(file_readers, "get_settings", lambda: SimpleNamespace(ai=ai))
-    async def transcribe(*_):
+    async def transcribe(*_, **__):
         return "转写内容"
 
     monkeypatch.setattr(file_readers, "_transcribe_audio", transcribe)
@@ -283,6 +380,45 @@ async def test_read_audio_falls_back_to_asr_when_native_audio_is_disabled(monkey
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("transcript", "raise_error", "expected_error"),
+    [
+        (None, False, "未配置可用的语音识别模型"),
+        ("", False, "未识别到语音内容，请确认文件包含清晰语音且格式受支持"),
+        (None, True, "语音识别服务调用失败，请检查配置或稍后重试"),
+    ],
+)
+async def test_system_audio_read_distinguishes_asr_outcomes(
+    tmp_path, monkeypatch, transcript, raise_error, expected_error,
+):
+    """system 读音频时区分未配置、空转写与 ASR 调用失败。"""
+    from agent import voice
+
+    path = tmp_path / "synthetic.wav"
+    path.write_bytes(b"synthetic audio")
+    monkeypatch.setattr(file_readers, "_active_model_cfg", lambda: SimpleNamespace(audio=False))
+    monkeypatch.setattr(file_readers, "_native_audio_enabled", lambda *_: False)
+
+    async def voice_profile(_user_id):
+        return True, 1024
+
+    async def transcribe(*_args, **_kwargs):
+        assert _kwargs["raise_errors"] is True
+        if raise_error:
+            raise RuntimeError("secret provider response")
+        return transcript
+
+    monkeypatch.setattr(file_readers, "voice_recognition_profile", voice_profile)
+    monkeypatch.setattr(file_readers, "get_settings", lambda: SimpleNamespace())
+    monkeypatch.setattr(voice, "transcribe", transcribe)
+
+    result = await file_readers.read_local_media(path, db=object(), user_id="synthetic-user")
+
+    assert result == {"error": expected_error}
+    assert "secret provider response" not in str(result)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(("api_format", "ext"), [("responses", "mp3"), ("", "aac")])
 async def test_read_audio_falls_back_when_protocol_or_format_is_unsupported(monkeypatch, api_format, ext):
     storage = _Storage(1024, b"audio")
@@ -290,7 +426,7 @@ async def test_read_audio_falls_back_when_protocol_or_format_is_unsupported(monk
                          audio=True, api_format=api_format)
     monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
     monkeypatch.setattr(file_readers, "get_settings", lambda: SimpleNamespace(ai=ai))
-    async def transcribe(*_):
+    async def transcribe(*_, **__):
         return "转写内容"
 
     monkeypatch.setattr(file_readers, "_transcribe_audio", transcribe)

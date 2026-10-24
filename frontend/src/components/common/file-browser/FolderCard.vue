@@ -14,7 +14,7 @@
       <div class="fd-name" :title="displayName">
         <slot name="name">{{ displayName }}</slot>
       </div>
-      <div class="fd-count"><slot name="count">{{ countLabel }}</slot></div>
+      <div class="fd-count" :title="countLabel"><slot name="count">{{ countLabel }}</slot></div>
     </div>
 
     <Transition name="sel-cb">
@@ -80,14 +80,17 @@ defineProps({
 }
 .folder-card.selected {
   border-color: var(--folder-card-border-selected);
-  background: var(--folder-card-bg-selected);
   box-shadow: var(--folder-card-shadow-selected);
 }
-.folder-card.selected::before {
+/* 选择态只叠主题色遮罩；常驻伪元素确保移除 selected 后仍可淡出。 */
+.folder-card::before {
   content: ''; position: absolute; inset: 0; z-index: 2;
   pointer-events: none; border-radius: inherit;
   background: var(--folder-card-selection-overlay);
+  opacity: 0;
+  transition: opacity 0.2s ease;
 }
+.folder-card.selected::before { opacity: 1; }
 .folder-card.pre-selected:not(.selected) {
   border-color: var(--folder-card-border-preselected);
   background: var(--folder-card-bg-preselected);
@@ -112,7 +115,7 @@ defineProps({
 }
 /* 输入框宽度限制在名称栏内，但名称行允许 focus glow 绘制；卡片根节点仍负责最终裁切。 */
 .fd-name:has(.rename-sizer) { overflow: visible; text-overflow: clip; }
-.fd-count { font-size: 9px; line-height: 1.15; color: var(--content-secondary); opacity: 0.55; margin-top: 2px; }
+.fd-count { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; line-height: 1.15; color: var(--content-secondary); opacity: 0.55; margin-top: 2px; }
 .sel-cb-enter-from, .sel-cb-leave-to { opacity: 0; }
 /* leave 只走 opacity（同 FileCard.vue 的注释）：离场冻结 paint，避免选中填充
    先变色再淡完导致结尾闪烁。 */

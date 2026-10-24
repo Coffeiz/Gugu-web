@@ -16,8 +16,6 @@ from .canonical_context import (
 from .provider_history import strip_thinking_blocks
 from .summary_format import format_compacted_summary
 
-_LEGACY_TOOL_LABELS = {"image_search": "图片搜索"}
-
 _TIME_CONTEXT_RE = re.compile(
     r"^\[system-reminder\]\n(?:当前时间：)?[^\n]+\n\[/system-reminder\]$"
 )
@@ -56,149 +54,6 @@ def _summary_content(message) -> str:
     """将持久化 baseline 摘要恢复为普通历史 user 消息。"""
     text = (getattr(message, "content", "") or "").strip()
     return format_compacted_summary(text)
-
-
-def _tool_label(tool_name: str) -> str:
-    """读取工具注册表中的用户可见名称，历史恢复时与实时 SSE 保持一致。"""
-    try:
-        from agent.tools import registry
-        tool = registry.snapshot().get(tool_name)
-        return str(tool.label if tool else _LEGACY_TOOL_LABELS.get(tool_name, tool_name))
-    except Exception:
-        # 历史数据可能包含已移除的旧工具；名称仍比丢失整条时间线更有用。
-        return _LEGACY_TOOL_LABELS.get(tool_name, tool_name)
-
-
-def _display_tool_call(block: dict) -> tuple[str, object]:
-    """把持久化的工具调用转换成聊天 UI 使用的业务工具名和参数。
-
-    固定 Adapter 模式下，canonical history 必须保留外层 ``call_tool``，
-    这样 provider 之间可以继续复用同一套历史协议；真实业务工具名在
-    ``arguments.name`` 中。这里仅在恢复 UI 工具气泡时解包，不能改写
-    canonical history 本身。
-    """
-    tool_name = str(block.get("name") or "unknown_tool")
-    tool_input = block.get("arguments", block.get("input", {}))
-    adapter_input = tool_input
-    if isinstance(adapter_input, str):
-        try:
-            parsed = json.loads(adapter_input)
-        except (TypeError, json.JSONDecodeError):
-            parsed = None
-        if isinstance(parsed, dict):
-            adapter_input = parsed
-    if tool_name == "call_tool" and isinstance(adapter_input, dict):
-        target_name = str(adapter_input.get("name") or "").strip()
-        target_arguments = adapter_input.get("arguments")
-        if target_name:
-            return target_name, target_arguments if isinstance(target_arguments, dict) else {}
-    return tool_name, tool_input
-
-
-def _display_tool_result_name(block: dict) -> str:
-    """兼容旧记录里结果块携带 Adapter 工具名的情况。"""
-    tool_name = str(block.get("tool_name") or "").strip()
-    if tool_name == "call_tool":
-        result_input = block.get("input")
-        if isinstance(result_input, dict):
-            target_name = str(result_input.get("name") or "").strip()
-            if target_name:
-                return target_name
-    return tool_name
-
-
-def _tool_event_identity(call_id: str, message) -> tuple[str, str | None, str | None, str]:
-    run_id = getattr(message, "run_id", None)
-    round_id = getattr(message, "round_id", None)
-    if run_id and round_id:
-        identity = json.dumps([str(run_id), str(round_id), call_id], ensure_ascii=False, separators=(",", ":"))
-        stable_id = f"tool:{identity}"
-    else:
-        identity = call_id
-        stable_id = f"tool:{call_id}"
-    return identity, str(run_id) if run_id else None, str(round_id) if round_id else None, stable_id
-
-
-def _new_chat_tool_call_event(call_id: str, block: dict, message) -> tuple[str, dict]:
-    identity, run_id, round_id, stable_id = _tool_event_identity(call_id, message)
-    tool_name, tool_input = _display_tool_call(block)
-    event = {
-        "id": stable_id,
-        "toolCallId": call_id,
-        **({"runId": run_id, "roundId": round_id} if run_id and round_id else {}),
-        "timelineOrder": message.id,
-        "toolName": tool_name,
-        "toolLabel": _tool_label(tool_name),
-        "toolInput": tool_input,
-        "toolStatus": "running",
-        "createdAt": message.created_at,
-    }
-    batch_id = getattr(message, "canonical_batch_id", None)
-    if batch_id is not None:
-        event["canonicalBatchId"] = int(batch_id)
-    return identity, event
-
-
-def _new_chat_tool_result_event(call_id: str, block: dict, message) -> tuple[str, dict]:
-    identity, run_id, round_id, stable_id = _tool_event_identity(call_id, message)
-    tool_name = _display_tool_result_name(block) or "工具调用"
-    return identity, {
-        "id": stable_id,
-        "toolCallId": call_id,
-        **({"runId": run_id, "roundId": round_id} if run_id and round_id else {}),
-        "timelineOrder": message.id,
-        "toolName": tool_name,
-        "toolLabel": _tool_label(tool_name) if tool_name != "工具调用" else "工具调用",
-        "toolStatus": "running",
-        "createdAt": message.created_at,
-    }
-
-
-def _apply_chat_tool_result(event: dict, block: dict, message) -> None:
-    event["toolResult"] = block.get("content", "")
-    event["toolStatus"] = "error" if _tool_result_is_error(block) else "success"
-    # 工具调用和结果可能跨过消息分页窗口。以结果所在消息作为时间线位置，
-    # 这样恢复当前窗口时仍能保留前面已经配对的工具名称和输入。
-    event["timelineOrder"] = message.id
-    event["updatedAt"] = message.created_at
-    event["toolDurationMs"] = max(
-        0, int((message.created_at - event["createdAt"]).total_seconds() * 1000)
-    )
-    batch_id = getattr(message, "canonical_batch_id", None)
-    if batch_id is not None:
-        event["canonicalBatchId"] = int(batch_id)
-
-
-def build_chat_tool_events(messages: Iterable) -> list[dict]:
-    """把持久化的 canonical tool turn 聚合成聊天 UI 的工具气泡。"""
-    # 不假设数据库中的块顺序永远是 call -> result。旧数据、跨 provider
-    # 持久化或事务边界都可能让 result 先被扫描到；先收集调用，再合并结果，
-    # 避免先创建「工具调用」占位事件后丢失真实工具名。
-    events: dict[str, dict] = {}
-    pending_results: list[tuple[str, str, dict, object]] = []
-    for message in messages:
-        content_json = getattr(message, "content_json", None)
-        for index, block in enumerate(_blocks(content_json)):
-            block_type = block.get("type")
-            if block_type in ("tool_call", "tool_use"):
-                call_id = str(block.get("id") or f"message-{message.id}-{index}")
-                identity, event = _new_chat_tool_call_event(call_id, block, message)
-                events[identity] = event
-            elif block_type == "tool_result":
-                call_id = str(block.get("tool_call_id") or block.get("tool_use_id") or "")
-                if not call_id:
-                    continue
-                identity, _, _, _ = _tool_event_identity(call_id, message)
-                pending_results.append((identity, call_id, block, message))
-
-    for identity, call_id, block, message in pending_results:
-        event = events.get(identity)
-        if event is None:
-            # 兼容历史中只保存结果块的异常记录；若结果带有 tool_name，
-            # 仍可恢复具体名称，否则才退化为通用文案。
-            event = events.setdefault(identity, _new_chat_tool_result_event(call_id, block, message)[1])
-        _apply_chat_tool_result(event, block, message)
-    return sorted(events.values(), key=lambda item: (item["createdAt"], item["id"]))
 
 
 def _blocks(value) -> list[dict]:
@@ -418,7 +273,7 @@ def _openai_history_message(message, request, *, strip_thinking: bool = False,
 
         return [{"role": message.role, "content": format_history_content(message, request)}]
 
-    from app.core.chat_attach import strip_image_for_history
+    from agent.media.images import strip_image_for_history
     if strip_history_images:
         content_json = strip_image_for_history(content_json)
     blocks = _blocks(content_json)
@@ -599,7 +454,7 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
             if content_json is not None:
                 from agent.im.context_loader import format_attachment_refs
                 if getattr(message, "_canonical_restored", True):
-                    from app.core.chat_attach import strip_image_for_history
+                    from agent.media.images import strip_image_for_history
                     content_json = strip_image_for_history(content_json)
                 attachment_refs = format_attachment_refs(message)
                 blocks = _blocks(content_json)

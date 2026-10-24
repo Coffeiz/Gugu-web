@@ -547,6 +547,9 @@ class TerminalEventRecord(Base):
 
 class Project(Base):
     __tablename__ = "projects"
+    __table_args__ = (
+        UniqueConstraint("user_id", "idempotency_key", name="uq_projects_user_idempotency_key"),
+    )
 
     id:            Mapped[int]           = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id:       Mapped[UUID]          = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
@@ -567,6 +570,8 @@ class Project(Base):
     created_at:    Mapped[datetime]      = mapped_column(UtcDateTime,    default=now_utc)
     updated_at:    Mapped[datetime]      = mapped_column(UtcDateTime,    default=now_utc, onupdate=now_utc)
     deleted_at:    Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None, index=True)
+    idempotency_key: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    idempotency_fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     owner:   Mapped["User"]          = relationship(back_populates="projects")
     files:   Mapped[list["File"]]    = relationship(back_populates="project", lazy="select")
@@ -891,6 +896,9 @@ class MindRelation(Base):
 
 class CalendarEvent(Base):
     __tablename__ = "calendar_events"
+    __table_args__ = (
+        UniqueConstraint("user_id", "idempotency_key", name="uq_calendar_events_user_idempotency_key"),
+    )
 
     id:          Mapped[int]           = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id:     Mapped[UUID]          = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
@@ -905,6 +913,8 @@ class CalendarEvent(Base):
     version:     Mapped[int]           = mapped_column(Integer, default=1)
     created_at:  Mapped[datetime]      = mapped_column(UtcDateTime, default=now_utc)
     deleted_at:  Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None, index=True)
+    idempotency_key: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    idempotency_fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     owner: Mapped["User"] = relationship(back_populates="events")
 

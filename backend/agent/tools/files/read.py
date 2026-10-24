@@ -25,7 +25,7 @@ def _decode_extensionless_text(data: bytes) -> str | None:
     return text
 
 
-async def _read_history_media(user_id, attach_id: str, *, restricted: bool = False,
+async def _read_history_media(db, user_id, attach_id: str, *, restricted: bool = False,
                               max_source_bytes: int | None = None):
     from app.core import chat_attach
     from agent.tools.media_reader import AUDIO_EXTS, IMAGE_EXTS, VIDEO_EXTS, read_media, read_stored_image
@@ -54,7 +54,7 @@ async def _read_history_media(user_id, attach_id: str, *, restricted: bool = Fal
         id=attach_id, user_id=user_id, storage_key=meta["storage_key"], ext=ext,
         display_name=name,
     )
-    return await read_media(file, max_source_bytes=max_source_bytes)
+    return await read_media(file, max_source_bytes=max_source_bytes, db=db, user_id=user_id)
 
 
 def _restricted_file_reader() -> bool:
@@ -65,6 +65,22 @@ def _restricted_file_reader() -> bool:
 
 async def _read_file_single(db, user_id, args: dict, *, restricted: bool = False,
                             max_source_bytes: int | None = None):
+    if args.get("path") not in (None, ""):
+        if args.get("scope") != "system":
+            return {"error": "path 仅可与 scope=system 一起使用"}
+        if any(args.get(key) not in (None, "") for key in (
+            "file_id", "file", "attach_id", "url", "image_url", "img_src",
+        )):
+            return {"error": "system 路径不能与文件库、附件或图片来源混用"}
+        if restricted:
+            return {"error": "群聊成员和未识别身份不能读取 system 范围文件"}
+        from .system_access import read_system_file
+
+        return await read_system_file(
+            db, user_id, args, max_source_bytes=max_source_bytes,
+        )
+    if args.get("scope") == "system":
+        return {"error": "scope=system 时必须提供绝对 path"}
     from app.core import doctext
     from .file_operations import READ_MAX_BYTES, _is_text_file_record, _resolve_file, get_storage
 
@@ -97,7 +113,7 @@ async def _read_file_single(db, user_id, args: dict, *, restricted: bool = False
                     ensure_ascii=False,
                 )
         return await _read_history_media(
-            user_id, attach_id, restricted=restricted, max_source_bytes=max_source_bytes,
+            db, user_id, attach_id, restricted=restricted, max_source_bytes=max_source_bytes,
         )
     if restricted and args.get("file_id") is not None:
         return json.dumps(
@@ -117,7 +133,7 @@ async def _read_file_single(db, user_id, args: dict, *, restricted: bool = False
     if restricted and ext not in IMAGE_EXTS:
         return json.dumps({"error": "群聊成员和未识别身份只能读取图片文件"}, ensure_ascii=False)
     if ext in MEDIA_EXTS:
-        result = await read_media(f, max_source_bytes=max_source_bytes)
+        result = await read_media(f, max_source_bytes=max_source_bytes, db=db, user_id=user_id)
         if result.get("error"):
             return json.dumps(result, ensure_ascii=False)
         if ext in IMAGE_EXTS:
@@ -177,12 +193,14 @@ async def _read_file_single(db, user_id, args: dict, *, restricted: bool = False
 def _file_item_source_count(item: dict) -> int:
     return sum((item.get("file_id") is not None, bool(item.get("file")),
                 bool(item.get("attach_id")),
-                bool(item.get("url") or item.get("image_url") or item.get("img_src"))))
+                bool(item.get("url") or item.get("image_url") or item.get("img_src")),
+                bool(item.get("path"))))
 
 
 def _file_item_label(item: dict, result: dict, index: int) -> str:
     return str(
         item.get("title") or item.get("result_id") or result.get("name")
+        or item.get("path")
         or (f"文件 {item['file_id']}" if item.get("file_id") is not None else None)
         or (f"附件 {item['attach_id']}" if item.get("attach_id") else None)
         or (item.get("file") or f"媒体 {index}")
@@ -205,17 +223,28 @@ async def _read_file(db, user_id, args: dict):
     from agent.tools.media_reader import MEDIA_BATCH_MAX_BYTES, MEDIA_BATCH_MAX_ITEMS, reserve_remote_image_read
 
     items = args.get("items")
+    system_scope = args.get("scope") == "system"
     if items is None:
         items = [args]
         batch = False
     else:
         batch = True
-        if any(args.get(key) not in (None, "") for key in ("file_id", "file", "attach_id", "url", "image_url", "img_src")):
+        if any(args.get(key) not in (None, "") for key in (
+            "file_id", "file", "attach_id", "url", "image_url", "img_src", "path",
+        )):
             return json.dumps({"error": "items 批量模式不能同时提供单文件来源字段"}, ensure_ascii=False)
         if not isinstance(items, list) or not items:
             return json.dumps({"error": "items 必须是非空数组"}, ensure_ascii=False)
         if len(items) > MEDIA_BATCH_MAX_ITEMS:
             return json.dumps({"error": f"一次最多读取 {MEDIA_BATCH_MAX_ITEMS} 个文件或媒体"}, ensure_ascii=False)
+        if system_scope and any(
+            not isinstance(item, dict) or set(item) - {"path", "title", "result_id", "target_lines"}
+            or not item.get("path")
+            for item in items
+        ):
+            return json.dumps({"error": "scope=system 的批量模式每项只能提供 path、title、result_id 或 target_lines"}, ensure_ascii=False)
+        if not system_scope and any(isinstance(item, dict) and item.get("path") for item in items):
+            return json.dumps({"error": "批量读取系统路径必须在顶层显式设置 scope=system"}, ensure_ascii=False)
 
     has_url = any(
         isinstance(item, dict) and bool(item.get("url") or item.get("image_url") or item.get("img_src"))
@@ -238,10 +267,11 @@ async def _read_file(db, user_id, args: dict):
     for index, item in enumerate(items, start=1):
         if not isinstance(item, dict) or _file_item_source_count(item) != 1:
             failed += 1
-            content_blocks.append({"type": "text", "text": f"【第 {index} 项】需且只能指定 file_id、file、attach_id 或图片 url 之一。"})
+            content_blocks.append({"type": "text", "text": f"【第 {index} 项】需且只能指定 file_id、file、attach_id、图片 url，或顶层 scope=system 时的 path 之一。"})
             continue
+        item_args = {**item, "scope": "system"} if system_scope else item
         result = await _read_file_single(
-            db, user_id, item, restricted=restricted,
+            db, user_id, item_args, restricted=restricted,
             max_source_bytes=MEDIA_BATCH_MAX_BYTES - total_bytes,
         )
         if isinstance(result, str):

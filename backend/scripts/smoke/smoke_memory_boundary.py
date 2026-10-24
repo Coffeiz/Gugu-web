@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) 
 
 import agent.tools  # noqa: F401  注册全部工具集
 from app.core.config import get_settings
-from app.core.chat_attach import build_user_content
+from agent.chat.attachments import build_user_content
 from agent.context import builder, loaders
 from agent.core import LLMRunner
 from agent.llm.llm_select import pick_model, release as _release_model

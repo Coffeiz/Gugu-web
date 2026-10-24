@@ -6,7 +6,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { renderMarkdown, sanitizeHtml, sanitizeChatHtml } from '@/utils/markdown'
-import { cleanupMarkdownMermaid, renderMarkdownMermaid } from '@/utils/mermaidRenderer'
+import { cleanupMarkdownMermaid, createMermaidRenderLabels, renderMarkdownMermaid } from '@/utils/mermaidRenderer'
 
 // 全站通用的 markdown 展示组件，统一 GuguChat 聊天 / 通知气泡 / 侧边栏通知中心的 md 输出样式。
 // - text：原始 markdown 文本，用轻量 renderMarkdown 渲染；
@@ -23,16 +23,6 @@ const mermaidReady = ref(false)
 const { t, locale } = useI18n()
 let themeObserver: MutationObserver | null = null
 let renderGeneration = 0
-
-function mermaidLabels() {
-  return {
-    zoomOut: t('mermaidUi.zoomOut'), zoomIn: t('mermaidUi.zoomIn'), resetZoom: t('mermaidUi.resetZoom'),
-    showSource: t('mermaidUi.showSource'), showDiagram: t('mermaidUi.showDiagram'),
-    expand: t('mermaidUi.expand'), downloadPng: t('mermaidUi.downloadPng'), close: t('mermaidUi.close'),
-    previewTitle: t('mermaidUi.previewTitle'), downloadFailed: t('mermaidUi.downloadFailed'),
-    pngTooLarge: t('mermaidUi.pngTooLarge'), renderFailed: t('mermaidUi.renderFailed'),
-  }
-}
 
 function wrapMarkdownTables(): void {
   if (!root.value) return
@@ -51,7 +41,7 @@ async function renderMermaidBlocks(): Promise<void> {
   const generation = ++renderGeneration
   mermaidReady.value = false
   try {
-    await renderMarkdownMermaid(element, mermaidLabels(), wrapMarkdownTables)
+    await renderMarkdownMermaid(element, createMermaidRenderLabels(t), wrapMarkdownTables)
   } finally {
     if (generation === renderGeneration && element.isConnected) mermaidReady.value = true
   }

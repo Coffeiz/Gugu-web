@@ -99,35 +99,21 @@ describe('Admin 存储对账分区', () => {
     expect(root.textContent).not.toContain('storageAuditUi.healthy')
   })
 
-  it('目录对账独立扫描，并且错位文件仅通过目录修复接口迁移', async () => {
-    mocks.authFetch
-      .mockResolvedValueOnce(jsonResponse({
-        missing_dirs: [], orphan_dirs: [],
-        misplaced_files: [{ file_id: 23, display_name: 'moved.png', current_key: 'old.png', expected_key: 'new.png' }],
-        scanned_folders: 3, created: 0, removed: 0, relocated: 0, healthy: false,
-      }))
-      .mockResolvedValueOnce(jsonResponse({
-        missing_dirs: [], orphan_dirs: [], misplaced_files: [],
-        scanned_folders: 3, created: 0, removed: 0, relocated: 1, healthy: true,
-      }))
+  it('目录对账独立扫描，只有错位文件时提供只读结果', async () => {
+    mocks.authFetch.mockResolvedValue(jsonResponse({
+      missing_dirs: [], orphan_dirs: [],
+      misplaced_files: [{ file_id: 23, display_name: 'moved.png', current_key: 'old.png', expected_key: 'new.png' }],
+      scanned_folders: 3, created: 0, removed: 0, relocated: 0, healthy: false,
+    }))
 
     const root = mount(DirectoryReconciliation)
     root.querySelector('.sa-card-head button')?.click()
     await flushUi()
     expect(mocks.authFetch).toHaveBeenNthCalledWith(1, '/api/v1/admin/folder-doctor/scan')
     expect(root.textContent).toContain('moved.png')
-
-    const checkbox = root.querySelector('input[type="checkbox"]') as HTMLInputElement
-    checkbox.click()
-    await flushUi()
-    root.querySelector('.fd-actions button')?.click()
-    await flushUi()
-
-    expect(mocks.authFetch).toHaveBeenNthCalledWith(2, '/api/v1/admin/folder-doctor/repair', {
-      method: 'POST',
-      body: JSON.stringify({ user_id: null, remove_orphans: false, relocate_files: true }),
-    })
-    expect(root.textContent).toContain('storageAuditExtra.lastFix')
+    expect(root.textContent).toContain('storageAuditExtra.readOnlyDirectoryFindings')
+    expect(root.querySelector('.fd-actions')).toBeNull()
+    expect(mocks.authFetch).toHaveBeenCalledOnce()
     expect(mocks.authFetch.mock.calls.some(([url]) => String(url).includes('reconcile-storage/repair'))).toBe(false)
   })
 

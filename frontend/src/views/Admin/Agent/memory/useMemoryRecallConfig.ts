@@ -21,6 +21,7 @@ export function useMemoryRecallConfig() {
   const capabilityRagEnabled = ref(Boolean(configStore.cfg.search.capability_rag_enabled))
   const capabilityRagShadow = ref(Boolean(configStore.cfg.search.capability_rag_shadow ?? true))
   const capabilityRagLimit = ref(Number(configStore.cfg.search.capability_rag_limit || 5))
+  const ragIndexTtlDays = ref(Math.round(configStore.cfg.search.ts_sidecar_index_ttl_seconds / 86400))
   const embeddingSaving = ref(false)
   const embeddingSaved = ref(false)
   const embeddingError = ref('')
@@ -40,6 +41,7 @@ export function useMemoryRecallConfig() {
     capabilityRagEnabled.value = Boolean(configStore.cfg.search.capability_rag_enabled)
     capabilityRagShadow.value = Boolean(configStore.cfg.search.capability_rag_shadow ?? true)
     capabilityRagLimit.value = Number(configStore.cfg.search.capability_rag_limit || 5)
+    ragIndexTtlDays.value = Math.round(configStore.cfg.search.ts_sidecar_index_ttl_seconds / 86400)
   }
   function toggleRagSource(key: string, checked: boolean) {
     const set = new Set(ragAutoSources.value)
@@ -50,32 +52,6 @@ export function useMemoryRecallConfig() {
   function syncFromStore() {
     Object.assign(embeddingDraft, configStore.cfg.embedding)
     resetRag()
-  }
-
-  async function saveEmbedding() {
-    embeddingSaving.value = true
-    embeddingSaved.value = false
-    embeddingError.value = ''
-    try {
-      await configStore.saveConfig({ embedding: { ...embeddingDraft } })
-      embeddingSaved.value = true
-      Object.assign(embeddingDraft, configStore.cfg.embedding)
-      setTimeout(() => { embeddingSaved.value = false }, 3000)
-    } catch (e) { embeddingError.value = e instanceof Error ? e.message : String(e) }
-    finally { embeddingSaving.value = false }
-  }
-
-  async function saveRag() {
-    ragSaving.value = true
-    ragSaved.value = false
-    ragError.value = ''
-    try {
-      await configStore.saveConfig({ search: { rag_enabled: ragEnabled.value, rag_auto_sources: [...ragAutoSources.value] } })
-      ragSaved.value = true
-      resetRag()
-      setTimeout(() => { ragSaved.value = false }, 3000)
-    } catch (e) { ragError.value = e instanceof Error ? e.message : String(e) }
-    finally { ragSaving.value = false }
   }
 
   async function saveAll() {
@@ -93,6 +69,7 @@ export function useMemoryRecallConfig() {
           capability_rag_enabled: capabilityRagEnabled.value,
           capability_rag_shadow: capabilityRagShadow.value,
           capability_rag_limit: Math.max(1, Math.min(20, Number(capabilityRagLimit.value) || 5)),
+          ts_sidecar_index_ttl_seconds: Math.max(7, Math.min(365, Number(ragIndexTtlDays.value) || 30)) * 86400,
         },
         embedding: { ...embeddingDraft },
       })
@@ -132,9 +109,9 @@ export function useMemoryRecallConfig() {
   }
 
   return {
-    configStore, embeddingDraft, ragEnabled, ragAutoSources, capabilityRagEnabled, capabilityRagShadow, capabilityRagLimit,
+    configStore, embeddingDraft, ragEnabled, ragAutoSources, capabilityRagEnabled, capabilityRagShadow, capabilityRagLimit, ragIndexTtlDays,
     embeddingSaving, embeddingSaved, embeddingError,
     ragSaving, ragSaved, ragError, embTest, rebuild, pollRebuild, startRebuild,
-    resetEmbedding, resetRag, toggleRagSource, syncFromStore, saveEmbedding, saveRag, saveAll, testEmbedding,
+    resetEmbedding, resetRag, toggleRagSource, syncFromStore, saveAll, testEmbedding,
   }
 }

@@ -48,7 +48,7 @@ test('全局搜索便签：冷启动和重复热跳转都能打开首屏外目�
   })
 
   await page.goto('/projects')
-  const search = page.getByPlaceholder('搜索项目、文件、日程、客户…')
+  const search = page.getByPlaceholder('搜索项目、文件、日程、联系人…')
   await expect(search).toBeVisible()
 
   async function searchAndOpen() {
@@ -116,7 +116,7 @@ test('全局搜索定时任务：用目标 ID 打开编辑弹窗并消费路由�
   })
 
   await page.goto('/projects')
-  const search = page.getByPlaceholder('搜索项目、文件、日程、客户…')
+  const search = page.getByPlaceholder('搜索项目、文件、日程、联系人…')
   await expect(search).toBeVisible()
   await search.fill('e2e-scheduled-task')
   await page.getByRole('button', { name: /E2E 定时任务目标/ }).click()

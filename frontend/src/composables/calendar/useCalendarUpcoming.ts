@@ -1,11 +1,8 @@
 import { ref } from 'vue'
+import { browserDayKey as toIso } from '@/utils/dateAttribution'
 import type { CalendarRenderItem } from '@/views/Calendar/domain/calendarTypes'
 
 type UpcomingItem = CalendarRenderItem & { daysLeft?: number; daysLabel?: string }
-
-function toIso(date: Date) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
-}
 
 function priority(item: CalendarRenderItem) {
   return ({ high: 3, medium: 2, low: 1 } as Record<string, number>)[item.priority ?? ''] ?? 0

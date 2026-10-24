@@ -1,4 +1,5 @@
 import { test, expect, type Page, type Locator } from '@playwright/test'
+import { dragOnto } from './fixtures/runtimeDrag'
 
 /**
  * 文件/文件夹拖拽移动的 e2e 覆盖（Interaction Runtime Core 接入后，见
@@ -41,31 +42,6 @@ test.afterEach(async ({ page }) => {
   }, { fileIds, folderIds })
 })
 
-async function dragOnto(page: Page, source: Locator, target: Locator, edgeOffset?: { x: number; y: number }) {
-  // raw page.mouse.* 不像 locator.click() 那样会自动把元素滚入视口——测试账号的个人文件目录
-  // 随着长期跑 e2e 会积累很多历史文件夹/文件，新建的卡片经常落在折叠区以下，不显式滚动的话
-  // boundingBox 拿到的是页面坐标，但那块区域可能根本不在当前视口内，鼠标移过去等于移到空白处。
-  await source.scrollIntoViewIfNeeded()
-  await target.scrollIntoViewIfNeeded()
-  const from = await source.boundingBox()
-  const to = await target.boundingBox()
-  if (!from || !to) throw new Error('drag source/target 没有可见的 bounding box')
-  const startX = from.x + from.width / 2
-  const startY = from.y + from.height / 2
-  const endX = edgeOffset ? to.x + edgeOffset.x : to.x + to.width / 2
-  const endY = edgeOffset ? to.y + edgeOffset.y : to.y + to.height / 2
-
-  await page.mouse.move(startX, startY)
-  await page.mouse.down()
-  // 先走几步小位移越过 5px 抓取阈值，再移向落点——太快/太少步数有时不会触发 Runtime 的拖拽 session。
-  await page.mouse.move(startX + 20, startY + 20, { steps: 5 })
-  await page.mouse.move(endX, endY, { steps: 15 })
-  // 确认 Runtime 已创建跟手代理，再释放指针；之后等待代理消失才能证明视觉事务收尾，
-  // 避免仅检查“当前没有代理”时在 landing 尚未开始前提前通过。
-  await expect(page.locator('[data-runtime-proxy-content="true"]').first()).toBeAttached({ timeout: 5000 })
-  await page.mouse.up()
-  await page.mouse.move(0, 0)
-}
 
 async function createFolder(root: Locator, name: string) {
   await root.locator('button', { hasText: '新建文件夹' }).click()
@@ -174,7 +150,7 @@ test.describe('文件库：单文件拖拽（Runtime Core API）', () => {
     await expect(page.locator('.fc-card', { hasText: baseName })).toBeVisible({ timeout: 10000 })
   })
 
-  test('底部拖拽单卡不改变文件区滚动位置', async ({ page }) => {
+  test('底部拖拽单卡后文件区仍保持贴底', async ({ page }) => {
     await page.goto('/files')
     await page.locator('.folder-card', { hasText: '个人文件' }).first().click()
     await expect(page.locator('.file-browser-panel')).toBeVisible()
@@ -194,17 +170,22 @@ test.describe('文件库：单文件拖拽（Runtime Core API）', () => {
 
     const startX = box.x + box.width / 2
     const startY = box.y + box.height / 2
-    const before = await viewport.evaluate((element) => element.scrollTop)
+    const isAtBottom = () => viewport.evaluate((element) =>
+      element.scrollHeight - element.clientHeight - element.scrollTop <= 1,
+    )
+    expect(await isAtBottom()).toBe(true)
 
     await page.mouse.move(startX, startY)
     await page.mouse.down()
     // 只横向越过抓取阈值，避免触发靠近视口边缘时的自动滚动。
     await page.mouse.move(startX + 8, startY, { steps: 2 })
-    const during = await viewport.evaluate((element) => element.scrollTop)
+    const remainsAtBottom = await isAtBottom()
     await page.mouse.up()
     await page.mouse.move(0, 0)
 
-    expect(Math.abs(during - before)).toBeLessThanOrEqual(0.1)
+    // detach 源卡会缩短 scrollHeight，浏览器将 scrollTop clamp 到新的最大值；
+    // 用户可见契约是视口继续贴住底部，而不是内部 scrollTop 数字保持不变。
+    expect(remainsAtBottom).toBe(true)
   })
 })
 
@@ -240,7 +221,7 @@ test.describe('文件库：Runtime 多选拖拽', () => {
 
     await expect(root.locator('.fc-card', { hasText: nameA })).toHaveCount(0, { timeout: 10000 })
     await expect(root.locator('.fc-card', { hasText: nameB })).toHaveCount(0, { timeout: 10000 })
-    await expect(target).toContainText('2 项', { timeout: 10000 })
+    await expect(target).toContainText('2 个文件 · 0 个文件夹', { timeout: 10000 })
 
     // 落地后点文件夹应该正常导航进入，不是切换选中（见 selectModeForced 回归修复）
     await waitForMoveRuntime(page)
@@ -316,7 +297,7 @@ test.describe('文件库：Runtime 多选拖拽', () => {
     await rejectFileMoves(page, 409)
     await dragOnto(page, card, target)
     await expect(root.locator('.fc-card', { hasText: fileName })).toBeVisible({ timeout: 10000 })
-    await expect(target).toContainText('0 项', { timeout: 10000 })
+    await expect(target).toContainText('0 个文件 · 0 个文件夹', { timeout: 10000 })
   })
 
   test('单文件移动被权限拒绝时回滚缓存和页面', async ({ page }) => {
@@ -324,7 +305,7 @@ test.describe('文件库：Runtime 多选拖拽', () => {
     await rejectFileMoves(page, 403)
     await dragOnto(page, card, target)
     await expect(root.locator('.fc-card', { hasText: fileName })).toBeVisible({ timeout: 10000 })
-    await expect(target).toContainText('0 项', { timeout: 10000 })
+    await expect(target).toContainText('0 个文件 · 0 个文件夹', { timeout: 10000 })
   })
 
   test('多文件移动部分失败时整体回滚', async ({ page }) => {
@@ -365,7 +346,7 @@ test.describe('文件库：Runtime 多选拖拽', () => {
     await dragOnto(page, cardA, target, { x: 10, y: 10 })
     await expect(root.locator('.fc-card', { hasText: nameA })).toBeVisible({ timeout: 10000 })
     await expect(root.locator('.fc-card', { hasText: nameB })).toBeVisible({ timeout: 10000 })
-    await expect(target).toContainText('0 项', { timeout: 10000 })
+    await expect(target).toContainText('0 个文件 · 0 个文件夹', { timeout: 10000 })
     await page.reload()
     const persisted = await page.evaluate(async ({ fileIds, sourceFolderId, targetFolderId }) => {
       const csrfToken = decodeURIComponent(document.cookie.split('; ').find(item => item.startsWith('gugu_user_csrf_token='))?.split('=').slice(1).join('=') ?? '')

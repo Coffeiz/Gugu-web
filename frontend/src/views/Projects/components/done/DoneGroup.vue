@@ -42,7 +42,7 @@ import FlipChevron from '@/components/common/controls/FlipChevron.vue'
 import type { DoneGroup } from './doneTypes'
 import DoneCardList from './DoneCardList.vue'
 
-const props = defineProps({
+defineProps({
   group: { type: Object as PropType<DoneGroup>, required: true },
   isUndatedOpen: { type: Boolean, default: false },
   isProjectDetached: { type: Function as PropType<(projectId: string) => boolean>, required: true },

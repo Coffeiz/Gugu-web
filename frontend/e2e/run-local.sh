@@ -11,10 +11,14 @@ if [ ! -f "$ENV_FILE" ]; then
   echo "找不到 $ENV_FILE——先 cp .env.e2e.local.example .env.e2e.local，再填账号密码" >&2
   exit 1
 fi
+PLAYWRIGHT_BASE_URL_OVERRIDE="${PLAYWRIGHT_BASE_URL:-}"
 set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 set +a
+if [ -n "$PLAYWRIGHT_BASE_URL_OVERRIDE" ]; then
+  export PLAYWRIGHT_BASE_URL="$PLAYWRIGHT_BASE_URL_OVERRIDE"
+fi
 
 if [ -z "${PLAYWRIGHT_USERNAME:-}" ] || [ -z "${PLAYWRIGHT_PASSWORD:-}" ]; then
   echo "$ENV_FILE 里 PLAYWRIGHT_USERNAME/PLAYWRIGHT_PASSWORD 还没填" >&2

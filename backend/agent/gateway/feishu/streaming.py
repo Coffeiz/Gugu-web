@@ -747,6 +747,11 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
                 accumulated += payload
             elif kind == "final":
                 final_resp = payload
+        if final_resp is not None and final_resp.cancelled:
+            partial_text = accumulated.strip()
+            sent = await send_text(receive_id, partial_text, channel_id) if partial_text else False
+            await _send_queued_mermaid_images(mermaid_filter.images, receive_id, channel_id)
+            return (sent, final_resp)
         final_text = _stream_fallback_text(
             final_resp.text if final_resp is not None else (
                 accumulated if show_intermediate_replies else ""
@@ -771,6 +776,11 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
                 accumulated += payload
             elif kind == "final":
                 final_resp = payload
+        if final_resp is not None and final_resp.cancelled:
+            partial_text = accumulated.strip()
+            sent = await send_text(receive_id, partial_text, channel_id) if partial_text else False
+            await _send_queued_mermaid_images(mermaid_filter.images, receive_id, channel_id)
+            return (sent, final_resp)
         final_text = _stream_fallback_text(
             final_resp.text if final_resp is not None else (
                 accumulated if show_intermediate_replies else ""

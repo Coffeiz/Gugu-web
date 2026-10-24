@@ -159,18 +159,22 @@ async def send_link_button_message(payload: dict, message: str, buttons: list[di
             print(f"[im] qq 链接按钮无出站目标 fp={_fp(fallback_text)}", flush=True)
             return _link_buttons_result("unsupported", platform, "none", buttons)
         from agent.gateway import qq
+        from agent.gateway.qq.text import prepare_qq_link_button_message
+
+        qq_message, qq_buttons, details = prepare_qq_link_button_message(message, buttons)
+        fallback_text = _link_buttons_text(qq_message, qq_buttons)
         # 链接按钮不绑定被动回复窗口（同交互键盘：主动消息，避免 40034128）。
-        if await qq.send_link_keyboard(
-            target_id, message, buttons,
+        if qq_buttons and await qq.send_link_keyboard(
+            target_id, qq_message, qq_buttons,
             channel_id=payload.get("channel_id") or "",
             msg_id=None,
             group=is_group,
         ):
-            return _link_buttons_result("sent", platform, "native", buttons)
+            return {**_link_buttons_result("sent", platform, "native", qq_buttons), **details}
         if await send_text({**payload, "message_id": None}, fallback_text):
-            return _link_buttons_result("sent_with_fallback", platform, "text", buttons)
+            return {**_link_buttons_result("sent_with_fallback", platform, "text", []), **details}
         print(f"[im] qq 链接按钮原生与文本降级均失败 fp={_fp(fallback_text)}", flush=True)
-        return _link_buttons_result("failed", platform, "none", buttons)
+        return {**_link_buttons_result("failed", platform, "none", []), **details}
 
     if platform == "feishu":
         target_id = payload.get("chat_id") or payload.get("platform_user_id")
@@ -272,10 +276,15 @@ async def _send_telegram_interaction(
     return await send_text(payload, format_fallback(fallback_prompt, platform="telegram"))
 
 
-async def send_tool_event(payload: dict, event: dict) -> bool:
-    """统一发送 IM 工具完成状态；不展示调用参数或原始 JSON。"""
+async def send_tool_event(
+    payload: dict,
+    event: dict,
+    *,
+    include_details: bool = False,
+) -> bool:
+    """发送独立工具消息；详情仅由明确选择详情样式的调用方开启。"""
     from agent.outbound import sanitize_outbound
-    text = format_tool_event(event, markdown=False)
+    text = format_tool_event(event, markdown=include_details)
     if not text:
         return True
     # 工具状态是过程消息，不应消耗入站消息唯一的 QQ 被动回复机会。

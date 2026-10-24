@@ -85,12 +85,12 @@ TypeScript Collector
         v
 SQLite（sessions / runs / spans / usage / context fragments / artifacts）
         |
-        | GET /api/sessions、/api/runs、/api/runs/:id/spans
+        | Gugu /api/v1/dev/loopscope/*（用户会话鉴权后代理只读查询）
         v
 LoopScope Web
 ```
 
-Collector 保存 Run、Span、usage、Context Fragment 和 Prompt Artifact。前端通过分页接口读取数据；重新加载页面后，历史 Run 仍从 SQLite 恢复。Collector 不可用时，Gugu trace bridge 应静默失败，不阻塞 Agent 主链路。
+Collector 保存 Run、Span、usage、Context Fragment 和 Prompt Artifact。LoopScope Web 通过 Gugu 的用户鉴权入口读取分页数据；未登录时接口返回 401，前端清除诊断视图并提示从咕咕登录。Collector 只读端口应保持本机绑定，不直接暴露给浏览器或外部网络。重新加载页面后，历史 Run 仍从 SQLite 恢复。Collector 不可用时，Gugu trace bridge 应静默失败，不阻塞 Agent 主链路。
 
 ## 诊断入口
 

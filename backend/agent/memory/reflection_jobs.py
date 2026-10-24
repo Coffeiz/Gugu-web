@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import timedelta
 from typing import Any, List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from app.core import redis as R
@@ -22,6 +23,25 @@ MAX_RETRIES = 5
 RETRY_BACKOFF_MINUTES = (1, 5, 30, 120, 360)
 GROUP_MESSAGE_THRESHOLD = 50
 _LOCAL_SNAPSHOT_TASKS: set[asyncio.Task] = set()
+_LOCAL_IDLE_SNAPSHOT_TASKS: dict[str, asyncio.Task] = {}
+_LOCAL_IDLE_SNAPSHOT_DRAINING: set[str] = set()
+_LOCAL_IDLE_SNAPSHOT_MARKER_PREFIX = "memory:reflection:local-idle-snapshot:"
+_LOCAL_IDLE_SNAPSHOT_MARKER_GRACE_SECONDS = 90
+_LOCAL_IDLE_SNAPSHOT_MARKER_REFRESH_SECONDS = 30
+_REFRESH_LOCAL_IDLE_SNAPSHOT_MARKER_LUA = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+  return 1
+end
+return 0
+"""
+_DELETE_LOCAL_IDLE_SNAPSHOT_MARKER_LUA = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('DEL', KEYS[1])
+end
+return 0
+"""
+_async_sleep = asyncio.sleep
 
 
 def _scope_filters(model, scope: MemoryScope) -> List[Any]:
@@ -44,6 +64,172 @@ async def _db_session():
     if db_session._engine is None:
         db_session._build_engine()
     return db_session._SessionLocal()
+
+
+def _local_idle_snapshot_marker(scope: MemoryScope) -> str:
+    return f"{_LOCAL_IDLE_SNAPSHOT_MARKER_PREFIX}{scope.prefix}"
+
+
+async def _refresh_local_idle_snapshot_marker(redis, marker: str, token: str) -> bool:
+    return bool(await redis.eval(
+        _REFRESH_LOCAL_IDLE_SNAPSHOT_MARKER_LUA,
+        1,
+        marker,
+        token,
+        str(_LOCAL_IDLE_SNAPSHOT_MARKER_REFRESH_SECONDS * 3),
+    ))
+
+
+async def _delete_local_idle_snapshot_marker(redis, marker: str, token: str) -> bool:
+    return bool(await redis.eval(
+        _DELETE_LOCAL_IDLE_SNAPSHOT_MARKER_LUA,
+        1,
+        marker,
+        token,
+    ))
+
+
+async def _arm_local_idle_snapshot(scope: MemoryScope, session_id: int, settings, snapshot) -> bool:
+    """让捕获快照的进程在 idle 窗口到期后执行群反思；worker 只作进程退出后的接管。"""
+    from app.core.redis import get_redis
+
+    redis = get_redis()
+    marker = _local_idle_snapshot_marker(scope)
+    task_key = f"{scope.prefix}:{session_id}"
+    token = str(time.time_ns())
+    try:
+        await redis.set(
+            marker, token,
+            ex=int(IDLE_WINDOW.total_seconds()) + _LOCAL_IDLE_SNAPSHOT_MARKER_GRACE_SECONDS,
+        )
+    except Exception as exc:
+        from app.core.redaction import diag_log
+        diag_log("agent.memory.reflection_jobs.local_snapshot_marker", exc)
+        return False
+
+    previous = _LOCAL_IDLE_SNAPSHOT_TASKS.get(task_key)
+    if (previous is not None and not previous.done()
+            and task_key not in _LOCAL_IDLE_SNAPSHOT_DRAINING):
+        previous.cancel()
+
+    async def run_local_idle_snapshot() -> None:
+        marker_task = None
+        try:
+            await _async_sleep(IDLE_WINDOW.total_seconds())
+
+            async def refresh_marker() -> None:
+                while True:
+                    await _async_sleep(_LOCAL_IDLE_SNAPSHOT_MARKER_REFRESH_SECONDS)
+                    if not await _refresh_local_idle_snapshot_marker(redis, marker, token):
+                        return
+
+            marker_task = asyncio.create_task(refresh_marker())
+            _LOCAL_IDLE_SNAPSHOT_DRAINING.add(task_key)
+            try:
+                await _settle_scope_with_snapshot(scope, settings, snapshot)
+            finally:
+                _LOCAL_IDLE_SNAPSHOT_DRAINING.discard(task_key)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            from app.core.redaction import diag_log
+            diag_log("agent.memory.reflection_jobs.local_snapshot_drain", exc)
+        finally:
+            if marker_task is not None:
+                marker_task.cancel()
+                try:
+                    await marker_task
+                except asyncio.CancelledError:
+                    pass
+            try:
+                await _delete_local_idle_snapshot_marker(redis, marker, token)
+            except Exception:
+                pass
+            if _LOCAL_IDLE_SNAPSHOT_TASKS.get(task_key) is asyncio.current_task():
+                _LOCAL_IDLE_SNAPSHOT_TASKS.pop(task_key, None)
+
+    task = asyncio.create_task(run_local_idle_snapshot())
+    _LOCAL_IDLE_SNAPSHOT_TASKS[task_key] = task
+    _LOCAL_SNAPSHOT_TASKS.add(task)
+    task.add_done_callback(_LOCAL_SNAPSHOT_TASKS.discard)
+    return True
+
+
+async def _settle_scope_with_snapshot(scope: MemoryScope, settings, snapshot) -> int:
+    """在原始请求进程内收束一个已闲置群 scope，并以其 Provider 前缀执行任务。"""
+    from app.models import MemoryReflectionCursor
+
+    now = now_utc()
+    cutoff = reflection_idle.idle_cutoff(now)
+    async with await _db_session() as db:
+        cursor = (await db.execute(
+            select(MemoryReflectionCursor)
+            .where(*_scope_filters(MemoryReflectionCursor, scope))
+            .with_for_update()
+        )).scalars().first()
+        if (cursor is None or cursor.scope_type != "group"
+                or cursor.pending_agent_count <= 0
+                or cursor.active_started_at is None
+                or cursor.active_started_at > cutoff
+                or cursor.settled_at is not None):
+            return 0
+        cursor_id = cursor.id
+        version = cursor.scope_version
+        active_started_at = cursor.active_started_at
+        last = cursor.last_message_id
+        group_first = (cursor.last_reflected_message_id or 0) + 1
+        member_first = (cursor.last_member_reflected_message_id or 0) + 1
+        await db.commit()
+
+    pending: list[int] = []
+    if last is not None:
+        if group_first <= last:
+            job_id = await enqueue_scope(
+                scope, group_first, last, "idle", task_type="group",
+                defer_dispatch=True, now=now,
+            )
+            if job_id is not None:
+                pending.append(job_id)
+        if member_first <= last:
+            job_id = await enqueue_scope(
+                scope, member_first, last, "idle", task_type="member-batch",
+                defer_dispatch=True, now=now,
+            )
+            if job_id is not None:
+                pending.append(job_id)
+
+    async with await _db_session() as db:
+        cursor = await db.get(MemoryReflectionCursor, cursor_id)
+        if (cursor and cursor.last_message_id == last and cursor.settled_at is None
+                and cursor.active_started_at == active_started_at
+                and cursor.scope_version == version):
+            cursor.settled_at = now
+            cursor.pending_passive_count = 0
+            cursor.pending_agent_count = 0
+            cursor.updated_at = now
+            await db.commit()
+
+    if pending:
+        from app.models import MemoryReflectionJob
+
+        async with await _db_session() as db:
+            jobs = (await db.execute(
+                select(MemoryReflectionJob).where(MemoryReflectionJob.id.in_(pending))
+            )).scalars().all()
+            for job in jobs:
+                if job.status in {"pending", "retry"}:
+                    job.next_attempt_at = now
+                    job.updated_at = now
+            await db.commit()
+
+    from agent.memory.im_reflection import execute_job
+
+    for job_id in pending:
+        completed = await execute_job(job_id, settings, snapshot=snapshot)
+        if not completed:
+            # Worker 可接手锁竞争或本地任务失败；重放受 job 状态与幂等键保护。
+            await _dispatch_job(job_id)
+    return len(pending)
 
 
 async def enqueue_scope(
@@ -150,7 +336,7 @@ async def observe_group_message(
     now=None,
     member_batch: bool = True,
 ) -> Optional[int]:
-    """推进群级游标；群级和群友记忆都由群消息累计 50 条触发。"""
+    """累计被动消息；只有已完成的主动 run 才登记群闲置窗口。"""
     from app.models import MemoryReflectionCursor
     from agent.memory.scope_lifecycle import is_tombstoned
 
@@ -172,11 +358,12 @@ async def observe_group_message(
                 bot_id=scope.bot_id,
                 scope_type=scope.scope_type,
                 scope_id=scope.scope_id,
-                active_started_at=message_at or now,
+                active_started_at=None if member_batch else now,
                 last_message_at=message_at or now,
                 last_message_id=message_id,
                 scope_version=1,
                 pending_passive_count=1 if member_batch else 0,
+                pending_agent_count=0 if member_batch else 1,
                 created_at=now,
                 updated_at=now,
             )
@@ -196,13 +383,14 @@ async def observe_group_message(
                 if cursor is None:
                     raise
 
-        if cursor.settled_at is not None:
+        if not member_batch:
+            # 群游标的 agent 计数表示尚未收束的主动回合。被动消息不能重置时钟。
+            cursor.pending_agent_count += 1
             cursor.settled_at = None
-            cursor.active_started_at = message_at or now
-        elif cursor.active_started_at is None:
-            cursor.active_started_at = message_at or now
-        cursor.last_message_id = message_id
-        cursor.last_message_at = message_at or now
+            cursor.active_started_at = now
+        if message_id >= (cursor.last_message_id or 0):
+            cursor.last_message_id = message_id
+            cursor.last_message_at = message_at or now
         cursor.scope_version += 1
         if member_batch:
             cursor.pending_passive_count += 1
@@ -214,7 +402,6 @@ async def observe_group_message(
         last = cursor.last_message_id
         should_group = should_threshold
         if should_group or should_threshold:
-            cursor.active_started_at = message_at or now
             if should_threshold:
                 cursor.pending_passive_count = 0
             cursor.updated_at = now
@@ -239,8 +426,25 @@ async def observe_group_message(
     return job_ids[0] if job_ids else None
 
 
+def _idle_scope_predicate(cutoff):
+    """群必须有主动回合；私聊仍以末条消息为闲置起点。"""
+    from app.models import MemoryReflectionCursor
+
+    return or_(
+        and_(
+            MemoryReflectionCursor.scope_type == "group",
+            MemoryReflectionCursor.pending_agent_count > 0,
+            MemoryReflectionCursor.active_started_at <= cutoff,
+        ),
+        and_(
+            MemoryReflectionCursor.scope_type != "group",
+            MemoryReflectionCursor.last_message_at <= cutoff,
+        ),
+    )
+
+
 async def settle_idle_scopes(*, now=None, limit: int = 100) -> int:
-    """扫描 4 分 30 秒无新消息且未收束的 scope，每轮只投递一次。"""
+    """群按主动 run 完成时间收束；私聊保留原消息闲置规则。"""
     from app.models import MemoryReflectionCursor
 
     now = now or now_utc()
@@ -249,7 +453,7 @@ async def settle_idle_scopes(*, now=None, limit: int = 100) -> int:
         rows = (await db.execute(
             select(MemoryReflectionCursor)
             .where(
-                MemoryReflectionCursor.last_message_at <= cutoff,
+                _idle_scope_predicate(cutoff),
                 MemoryReflectionCursor.settled_at.is_(None),
             )
             .order_by(MemoryReflectionCursor.last_message_at)
@@ -261,10 +465,13 @@ async def settle_idle_scopes(*, now=None, limit: int = 100) -> int:
                 cursor.owner_user_id, cursor.platform, cursor.bot_id,
                 cursor.scope_type, cursor.scope_id,
             )
-            pending.append((scope, cursor, cursor.id))
+            pending.append((scope, cursor, cursor.id, cursor.active_started_at, cursor.scope_version))
         await db.commit()
     settled = 0
-    for scope, cursor, cursor_id in pending:
+    for scope, cursor, cursor_id, active_started_at, version in pending:
+        # 活跃 run 的进程仍持有原始前缀时，由本机 idle drain 执行；Redis 只存协调标记。
+        if await R.get_redis().get(_local_idle_snapshot_marker(scope)):
+            continue
         last = cursor.last_message_id
         jobs = []
         group_first = (cursor.last_reflected_message_id or 0) + 1
@@ -283,14 +490,17 @@ async def settle_idle_scopes(*, now=None, limit: int = 100) -> int:
                 ))
         except Exception:
             continue
-        if not any(job_id is not None for job_id in jobs):
+        already_reflected = scope.scope_type == "group" and group_first > last and member_first > last
+        if not already_reflected and not any(job_id is not None for job_id in jobs):
             continue
         async with await _db_session() as db:
             cursor = await db.get(MemoryReflectionCursor, cursor_id)
-            if cursor and cursor.last_message_id == last and cursor.settled_at is None:
+            if (cursor and cursor.last_message_id == last and cursor.settled_at is None
+                    and cursor.active_started_at == active_started_at and cursor.scope_version == version):
                 cursor.settled_at = now
                 if scope.scope_type == "group":
                     cursor.pending_passive_count = 0
+                    cursor.pending_agent_count = 0
                 elif scope.scope_type == "platform-user":
                     cursor.pending_agent_count = 0
                 cursor.updated_at = now
@@ -324,13 +534,22 @@ async def requeue_due_jobs(*, now=None, limit: int = 100) -> int:
             .order_by(MemoryReflectionJob.updated_at)
             .limit(limit)
         )).scalars().all()
+        eligible = []
         for job in rows:
+            if job.reason == "idle":
+                scope = MemoryScope(
+                    job.owner_user_id, job.platform, job.bot_id,
+                    job.scope_type, job.scope_id,
+                )
+                if await R.get_redis().get(_local_idle_snapshot_marker(scope)):
+                    continue
             job.status = "pending"
             job.locked_at = None
             job.next_attempt_at = now
             job.updated_at = now
+            eligible.append(job)
         await db.commit()
-        ids = [job.id for job in rows]
+        ids = [job.id for job in eligible]
     count = 0
     for job_id in ids:
         try:
@@ -382,6 +601,10 @@ async def _schedule_scope_jobs_with_snapshot(scope: MemoryScope, session_id: int
     snapshot = peek_reflection_snapshot(scope.owner_user_id, session_id)
     if snapshot is None:
         return 0
+    if scope.scope_type == "group":
+        from app.core.config import get_settings
+
+        await _arm_local_idle_snapshot(scope, session_id, get_settings(), snapshot)
     async with await _db_session() as db:
         jobs = (await db.execute(
             select(MemoryReflectionJob).where(

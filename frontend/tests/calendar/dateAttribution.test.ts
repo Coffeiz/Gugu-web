@@ -1,8 +1,41 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest'
-import { parseUtc, localDayKey, localDateTimeToUtcIso, isSameLocalDay, isToday, isThisWeek, fmtLocalDateTime } from '@/utils/dateAttribution'
+import { browserDayKey, buildCalendarMonthDays, parseUtc, localDayKey, localDateTimeToUtcIso, isSameLocalDay, isToday, isThisWeek, fmtLocalDateTime } from '@/utils/dateAttribution'
 
 // 全程显式传 tz + 注入 now，不依赖测试机时区，保证确定性。
+
+describe('browserDayKey — 日期选择保持浏览器本地日历日期', () => {
+  it.each([
+    [new Date(2026, 0, 1, 0, 1), '2026-01-01'],
+    [new Date(2026, 11, 31, 23, 59), '2026-12-31'],
+    [new Date(2024, 1, 29, 12), '2024-02-29'],
+    [new Date(2026, 0, 0, 12), '2025-12-31'],
+  ])('保留本地日期 %s 为 %s', (date, expected) => {
+    expect(browserDayKey(date)).toBe(expected)
+  })
+})
+
+describe('buildCalendarMonthDays — 日期选择与月视图共用网格', () => {
+  it('周日起始月在周一视图补齐前六天，周日视图不增加空白周', () => {
+    const monday = buildCalendarMonthDays(new Date(2026, 1, 10), 1)
+    const sunday = buildCalendarMonthDays(new Date(2026, 1, 10), 0)
+    expect(monday).toHaveLength(35)
+    expect(monday[0]).toMatchObject({ iso: '2026-01-26', date: 26, other: true, dow: 0 })
+    expect(monday.at(-1)).toMatchObject({ iso: '2026-03-01', other: true, dow: 6 })
+    expect(sunday).toHaveLength(28)
+    expect(sunday[0]).toMatchObject({ iso: '2026-02-01', other: false, dow: 6 })
+    expect(sunday.at(-1)?.iso).toBe('2026-02-28')
+  })
+
+  it.each([0, 1] as const)('起始星期 %s 下保留闰月全部日期、跨月补齐与稳定唯一 key', weekStart => {
+    const days = buildCalendarMonthDays(new Date(2024, 1, 1), weekStart)
+    expect(days.filter(day => !day.other)).toHaveLength(29)
+    expect(days.find(day => day.iso === '2024-02-29')).toMatchObject({ date: 29, other: false })
+    expect(days.length % 7).toBe(0)
+    expect(new Set(days.map(day => day.key)).size).toBe(days.length)
+    expect(new Set(days.map(day => day.iso)).size).toBe(days.length)
+  })
+})
 
 describe('parseUtc — naive UTC 串不能被当本地时间', () => {
   it('无时区标记 → 当 UTC 解析', () => {

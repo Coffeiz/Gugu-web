@@ -50,6 +50,8 @@ class ReflectionSnapshot:
     provider_context_input: int | None = None
     # 本轮已经完成压缩时，快照的历史是新边界，旧 usage 不得再次触发压缩。
     provider_compacted: bool = False
+    # 仅用于诊断快照来源；正文仍只留在当前进程内。
+    source: str = "in_memory"
 
 
 _snapshots: "OrderedDict[tuple[str, int], ReflectionSnapshot]" = OrderedDict()

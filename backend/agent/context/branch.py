@@ -86,7 +86,6 @@ class ContextBranch:
                             tools=list(branch_input.tools) or None,
                             usage_sink=usage_sink,
                             probe_sink=probe_sink,
-                            read_timeout=policy.provider_read_timeout_seconds,
                         )
                         ok = bool(str(output or "").strip()) and (
                             not isinstance(output, dict) or bool(output))
@@ -154,8 +153,10 @@ class ContextBranch:
             record_compaction_probe(branch_input, settings, probe_sink)
 
         output_fp = _fingerprint(output) if output else None
-        if branch_input.branch_mode == "append_reuse" and usage_sink:
-            usage = usage_sink[-1]
+        if branch_input.branch_mode == "append_reuse" and (
+            usage_sink or (policy.name == "reflection" and probe_sink)
+        ):
+            usage = usage_sink[-1] if usage_sink else {}
             try:
                 from agent.llm.modelctx import effective_ai
                 from .cache_capability import record_reuse_outcome
@@ -167,7 +168,7 @@ class ContextBranch:
             from agent.runtime.loopscope_trace.cache_probe import record_reflection_usage
 
             record_reflection_usage(
-                policy.name, branch_input, settings, usage_sink,
+                policy.name, branch_input, settings, usage_sink, probe_sink,
             )
         result = BranchResult(
             ok=validated_ok,

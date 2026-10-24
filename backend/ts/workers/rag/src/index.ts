@@ -905,7 +905,11 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
     const transientRevision = digest({ documents: prepared.documents, vectorVersion });
     prepared.probe.stage_ms.transient_revision = Math.round(performance.now() - stageStarted);
     stageStarted = performance.now();
-    replaceInMemory(transient, transientRevision, prepared.documents);
+    // prepare_memory 每轮都会返回同一份已缓存的记忆文档。revision 覆盖完整文档
+    // 与向量模型版本；相同 revision 时保留已有 BM25 postings，避免重新分词和建索引。
+    if (transient.revision !== transientRevision) {
+      replaceInMemory(transient, transientRevision, prepared.documents);
+    }
     transient.vectors = new Map(Object.entries(prepared.vectors));
     transient.vectorVersion = vectorVersion;
     prepared.probe.stage_ms.transient_index_install = Math.round(performance.now() - stageStarted);

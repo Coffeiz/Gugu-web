@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+from agent.commands.automatic_mode import handle as handle_automatic_mode
 from agent.commands.compact import handle as handle_compact
 from agent.commands.help import all_help_text, command_help, is_help_arg
 from agent.commands.goal import handle as handle_goal
@@ -23,6 +24,7 @@ _COMMANDS: dict[str, str] = {
     "goal": "goal",
     "new": "new",
     "workspace": "workspace",
+    "auto": "auto",
     "help": "help", "h": "help",
 }
 
@@ -51,6 +53,22 @@ def is_goal_start(text: str, *, allow_leading_mention: bool = False) -> tuple[bo
     return True, arg
 
 
+def im_command_permission_denial(name: str, arg: str, im_role: str | None,
+                                 locale: str | None) -> str | None:
+    """限制 IM 对 Owner 私有数据和账号/会话状态的直接命令访问。"""
+    if im_role == "owner" or name == "help":
+        return None
+    normalized_arg = (arg or "").strip().lower()
+    if name == "auto" and normalized_arg in {"", "status", "状态", "help", "?", "？"}:
+        return None
+    normalized_locale = (locale or "zh-CN").replace("_", "-").lower()
+    if normalized_locale.startswith("en"):
+        return "Only the Bot owner can run commands that access private data or change account/session state."
+    if normalized_locale.startswith("ja"):
+        return "個人データの参照またはアカウント・会話状態を変更するコマンドは、Bot 所有者のみ実行できます。"
+    return "只有绑定 Bot 的用户可以执行会读取个人数据或修改账号、会话状态的命令。"
+
+
 async def handle(user_id, text: str, *, session_id: int | None = None,
                  allow_leading_mention: bool = False,
                  locale: str | None = None) -> str | dict | None:
@@ -72,4 +90,6 @@ async def handle(user_id, text: str, *, session_id: int | None = None,
         return await handle_new(user_id, session_id, arg, locale)
     if name == "workspace":
         return await handle_workspace(user_id, session_id, arg, locale)
+    if name == "auto":
+        return await handle_automatic_mode(user_id, arg, locale)
     return None

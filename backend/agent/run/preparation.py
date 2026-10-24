@@ -16,11 +16,13 @@ from __future__ import annotations
 
 import asyncio
 
-from app.core.chat_attach import image_ready
 from app.core.config import get_settings
 from app.core.tz import set_ctx_tz
 
 from agent import quota
+from agent.chat.attachments import build_user_content, resolve_for_message
+from agent.media import gates
+from agent.media.images import image_ready
 from agent.context import builder, dynamic_tail, loaders, run_context, session_snapshot, session_history, session_system
 from agent.context.provider_history import clean_persisted_history, prepare_session
 from agent.core import LLMRunner
@@ -241,7 +243,6 @@ async def prepare_run_capabilities(
 
 def prepare_scheduled_context(system_prompt, snapshot_context, user_tz, prompt, memory, *, use_anthropic):
     """任务无会话历史；复用公共消息布局，不引入交互式 RAG 或会话持久化。"""
-    from app.core.chat_attach import build_user_content
 
     fixed_parts = [session_snapshot.snapshot_message(snapshot_context)] if snapshot_context else []
     area, batch = run_context.assemble_run_area(
@@ -406,7 +407,7 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
         # 附件（IM 收到的文件）：文本读内容注入给模型，卡片随用户消息持久化（和网页同一套）
         from app.core import chat_attach
         llm_text = with_quoted_context(req.message, getattr(req, "quoted_text", None))
-        aug_text, attach_cards, aug_images, aug_media = await chat_attach.resolve_for_message(
+        aug_text, attach_cards, aug_images, aug_media = await resolve_for_message(
             user_id, getattr(req, "attachments", None) or [], llm_text, model_cfg=model_cfg)
         if getattr(req, "attachments", None):   # 诊断：带附件时记 kind/ext/media 数，排查语音为何没转写
             import logging as _lg
@@ -422,7 +423,11 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
                                            platform_bot_user_id=req.platform_bot_user_id,
                                            chat_type="group" if req.chat_id else "c2c" if req.source in IM_SOURCES else None)
         db.add(user_message)
+        if req.inbound_batch_key:
+            from agent.im.inbound_recovery import user_run_key
+            user_message.run_id = user_run_key(req.inbound_batch_key)
         await db.flush()
+        req.user_message_id = user_message.id
         # 消息 + 所有附件 claim 是同一个事务（PRD-STORAGE-1 不变量 3），同网页路
         try:
             await chat_attach.claim_attachments(
@@ -473,7 +478,12 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
     # 主模型支持音频时直接保留音频块；否则才用独立配置的「语音识别模型」
     # 转成文字交给主模型。两者都不可用时，resolve_for_message 已留下不支持提示。
     _transcribe_media = [m for m in aug_media if m.get("type") != "video"]
-    if _transcribe_media and chat_attach.should_transcribe_audio(model_cfg):
+    _audio_fallback = gates.should_transcribe_audio(model_cfg)
+    _persist_transcript = any(
+        m.get("voice_recognition_enabled") and m.get("kind") == "voice"
+        for m in _transcribe_media
+    )
+    if _transcribe_media and (_audio_fallback or _persist_transcript):
         from agent import voice as _voice
         # 上面的会话读取事务已经结束，不能继续复用已退出上下文的 db；
         # 语音模型解析需要独立短事务，避免把连接带进后续 LLM 等待。
@@ -484,24 +494,56 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
                     raise_minimax_errors=True,
                 )
         except Exception as error:
-            from agent.providers.minimax import minimax_error_details
-            if minimax_error_details(error) is None:
-                raise
-            from agent.errors import describe_llm_error
-            error_info = describe_llm_error(error, diagnostic_context="agent.run.preparation.voice")
-            _release_model(model_cfg)
-            return EarlyExit(EARLY_EXIT_PROVIDER_ERROR, AgentResponse(
-                text=error_info.text, session_id=session_id, tokens_in=0, tokens_out=0,
-                errored=True, error_info=error_info,
-            ))
-        if transcript is None:        # 未配置语音模型
-            _release_model(model_cfg)
-            return EarlyExit(EARLY_EXIT_VOICE, AgentResponse(
-                text="抱歉，我现在还不能处理语音 / 音视频消息哦，打字告诉我就行～",
-                session_id=session_id, tokens_in=0, tokens_out=0))
-        spoken = transcript.strip() or "（用户发来一段语音，但这次没听清内容）"
-        aug_text = (aug_text + "\n" if aug_text else "") + f"（用户发来语音，内容是：）{spoken}"
-        aug_media = [m for m in aug_media if m.get("type") == "video"]
+            if not _audio_fallback:
+                # 独立转写只是原生音频模型的附加展示能力；转写故障不能阻断主模型听音频。
+                from app.core.redaction import diag_log
+                diag_log("agent.run.preparation.voice_transcript", error)
+                transcript = None
+                transcript_status = "failed"
+            else:
+                transcript_status = "failed"
+                from agent.providers.minimax import minimax_error_details
+                if minimax_error_details(error) is None:
+                    raise
+                from agent.errors import describe_llm_error
+                error_info = describe_llm_error(error, diagnostic_context="agent.run.preparation.voice")
+                _release_model(model_cfg)
+                return EarlyExit(EARLY_EXIT_PROVIDER_ERROR, AgentResponse(
+                    text=error_info.text, session_id=session_id, tokens_in=0, tokens_out=0,
+                    errored=True, error_info=error_info,
+                ))
+        else:
+            transcript_status = "completed" if transcript and transcript.strip() else "empty"
+
+        if _persist_transcript:
+            try:
+                from app.services.conversation_transcripts import (
+                    publish_voice_transcript_update, save_voice_transcript,
+                )
+                async with _sess._SessionLocal() as transcript_db:
+                    saved_files = await save_voice_transcript(
+                        transcript_db, user_id=user_id, session_id=session_id,
+                        message_id=req.user_message_id, transcript=transcript,
+                        status=transcript_status,
+                    )
+                if saved_files is not None:
+                    await publish_voice_transcript_update(
+                        user_id, session_id=session_id,
+                        message_id=req.user_message_id, files=saved_files,
+                    )
+            except Exception as error:
+                from app.core.redaction import diag_log
+                diag_log("agent.run.preparation.persist_voice_transcript", error)
+
+        if _audio_fallback:
+            if transcript is None:        # 未配置语音模型
+                _release_model(model_cfg)
+                return EarlyExit(EARLY_EXIT_VOICE, AgentResponse(
+                    text="抱歉，我现在还不能处理语音 / 音视频消息哦，打字告诉我就行～",
+                    session_id=session_id, tokens_in=0, tokens_out=0))
+            spoken = transcript.strip() or "（用户发来一段语音，但这次没听清内容）"
+            aug_text = (aug_text + "\n" if aug_text else "") + f"（用户发来语音，内容是：）{spoken}"
+            aug_media = [m for m in aug_media if m.get("type") == "video"]
 
     system_prompt = snapshot["system_prompt"]
     snapshot_context = snapshot["snapshot_context"]

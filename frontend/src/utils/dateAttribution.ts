@@ -19,6 +19,33 @@ export function browserTz(): string {
   return browserTimezone()
 }
 
+/** 浏览器本地日历日期；保留日期选择器的墙上日期，不套用用户账户时区。 */
+export function browserDayKey(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+/** 月网格补齐相邻月份到完整周；dow 始终采用周一为 0 的既有展示口径。 */
+export function buildCalendarMonthDays(cursor: Date, weekStart: 0 | 1 = 1) {
+  const year = cursor.getFullYear()
+  const month = cursor.getMonth()
+  const startDow = (new Date(year, month, 1).getDay() - weekStart + 7) % 7
+  const lastDate = new Date(year, month + 1, 0).getDate()
+  const days: Array<{ key: string; date: number; iso: string; other: boolean; dow: number }> = []
+  const append = (date: Date, key: string, other: boolean) => {
+    days.push({ key, date: date.getDate(), iso: browserDayKey(date), other, dow: (date.getDay() + 6) % 7 })
+  }
+  for (let index = startDow - 1; index >= 0; index--) append(new Date(year, month, -index), `p${index}`, true)
+  for (let day = 1; day <= lastDate; day++) {
+    const date = new Date(year, month, day)
+    append(date, browserDayKey(date), false)
+  }
+  const remaining = 7 - (days.length % 7)
+  if (remaining < 7) {
+    for (let day = 1; day <= remaining; day++) append(new Date(year, month + 1, day), `n${day}`, true)
+  }
+  return days
+}
+
 /** 把后端时间串解析成绝对时刻:带时区标记（Z / ±hh:mm）就原样，naive 的当 UTC 补 `Z`。 */
 export function parseUtc(iso: string | null | undefined): Date {
   if (!iso) return new Date(NaN)
@@ -109,6 +136,6 @@ export function fmtLocalDateTime(iso: string | null | undefined, opts: { seconds
   const d = parseUtc(iso)
   if (Number.isNaN(d.getTime())) return ''
   const p = (n: number) => String(n).padStart(2, '0')
-  const s = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+  const s = `${browserDayKey(d)} ${p(d.getHours())}:${p(d.getMinutes())}`
   return opts.seconds ? `${s}:${p(d.getSeconds())}` : s
 }

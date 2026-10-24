@@ -9,6 +9,22 @@ export interface FilePasteDestination {
   workspaceDirectoryId: number | null
 }
 
+type CopyConflictFile = { id: number; displayName: string; ext: string }
+
+/** 文件库和项目目录使用同一同名同后缀规则；缺少源文件或不在目标目录的文件不参与冲突。 */
+export function findFileCopyConflicts(
+  fileIds: number[],
+  getFile: (id: number) => CopyConflictFile | null | undefined,
+  destinationFiles: CopyConflictFile[],
+): ConflictItem[] {
+  return fileIds.flatMap(id => {
+    const source = getFile(id)
+    if (!source) return []
+    const existing = destinationFiles.find(target => target.displayName === source.displayName && target.ext === source.ext)
+    return existing ? [{ filename: `${source.displayName}.${source.ext}`, existingFile: { id: existing.id } }] : []
+  })
+}
+
 export interface FilePasteCoreOptions {
   clipboardStore: ReturnType<typeof useClipboardStore>
   getDestination: () => FilePasteDestination

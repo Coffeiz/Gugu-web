@@ -26,6 +26,60 @@ def _scheduled_collect_result(collected: tuple) -> tuple[str, bool, dict]:
     return text, errored, execution_meta
 
 
+def _stop_recurring_tool(stop_intent_state: dict):
+    """创建仅属于当前周期任务 Run 的无参数 Meta Tool。"""
+    from agent.tools.base import Tool
+
+    async def _request_stop_recurring(_db, _owner_id, _args):
+        stop_intent_state["requested"] = True
+        return {
+            "status": "requested",
+            "message": "已登记停止当前周期任务后续执行的请求；当前一轮仍会继续。",
+        }
+
+    return Tool(
+        name="stop_recurring",
+        description=(
+            "停止当前周期性定时任务未来的执行。仅当整个周期性目标已经达成、未来不再需要继续时调用。"
+            "完成当前这一轮不代表周期任务结束；周期检查、报告或提醒本轮成功时不得调用。"
+            "调用只登记请求，不会中断本轮，也不会立即修改或删除任务。"
+        ),
+        input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+        handler=_request_stop_recurring,
+        label="停止周期任务",
+        description_short="请求在本轮成功投递后停止当前周期任务",
+        category="scheduled",
+        source="builtin",
+        mutates=False,
+    )
+
+
+async def _scheduled_tools(
+    user_id, settings, tool_names, allowed_tools, tool_names_override,
+    stop_context: dict | None,
+):
+    mcp_allowed_names = allowed_tools if allowed_tools is not None else tool_names_override
+    mcp_tools = await _load_mcp_tools(user_id, settings, mcp_allowed_names)
+    dynamic_tools = list(mcp_tools)
+    if stop_context and stop_context.get("eligible"):
+        dynamic_tools.append(_stop_recurring_tool(stop_context["requested_state"]))
+        if "stop_recurring" not in tool_names:
+            tool_names = [*tool_names, "stop_recurring"]
+    return tool_names, dynamic_tools, bool(mcp_tools)
+
+
+def _finalize_stop_intent(context: dict | None, errored: bool, meta: dict) -> None:
+    if not context or not context.get("eligible"):
+        return
+    state = context["requested_state"]
+    state["requested"] = bool(
+        state.get("requested")
+        and not errored
+        and not _has_unresolved_tool_errors(meta.get("tool_events"))
+    )
+    meta["stop_requested"] = state["requested"]
+
+
 async def run_scheduled_once(
     user_id,
     user_name: str,
@@ -38,6 +92,7 @@ async def run_scheduled_once(
     allowed_tools: list[str] | None = None,
     filesystem_subject: dict | None = None,
     allow_shell: bool = False,
+    stop_context: dict | None = None,
 ):
     """执行一个非流式阶段；编排、重试和投递由 app.scheduled_tasks 负责。"""
     model_cfg = None
@@ -103,16 +158,18 @@ async def run_scheduled_once(
             tool_names = [name for name in tool_names if name != "shell"]
         subject = filesystem_subject or {}
 
-        mcp_allowed_names = allowed_tools if allowed_tools is not None else tool_names_override
-        mcp_tools = await _load_mcp_tools(user_id, settings, mcp_allowed_names)
+        tool_names, dynamic_tools, has_mcp_tools = await _scheduled_tools(
+            user_id, settings, tool_names, allowed_tools, tool_names_override,
+            stop_context,
+        )
         modelctx.set_usage_context(
-            user_id, scenario="mcp" if mcp_tools else "chat",
+            user_id, scenario="mcp" if has_mcp_tools else "chat",
         )
 
         async with _sess._SessionLocal() as policy_db:
             tool_names, system_prompt, snapshot_context, capability_context = await prepare_run_capabilities(
                 policy_db, user_id, None, tool_names, settings, system_prompt, snapshot_context,
-                query=prompt, dynamic_tools=mcp_tools,
+                query=prompt, dynamic_tools=dynamic_tools,
                 subject_type=str(subject.get("subject_type") or "session"),
                 subject_id=subject.get("subject_id"), workspace_id=subject.get("workspace_id"),
                 model_cfg=model_cfg,
@@ -124,7 +181,7 @@ async def run_scheduled_once(
             tool_names,
             settings,
             capability_context=capability_context,
-            dynamic_tools=mcp_tools,
+            dynamic_tools=dynamic_tools,
         )
 
         messages = prepare_scheduled_context(
@@ -160,6 +217,7 @@ async def run_scheduled_once(
             reset_automation_allowed_tools(automation_token)
 
         text, errored, meta = _scheduled_collect_result(collected)
+        _finalize_stop_intent(stop_context, errored, meta)
         from agent.usage import record_usage
 
         _, tokens_in, tokens_out, cache_read, cache_write, *_ = collected
@@ -191,6 +249,7 @@ async def run_scheduled_execution(
     allowed_tools: list[str] | None = None,
     filesystem_subject: dict | None = None,
     allow_shell: bool = False,
+    stop_context: dict | None = None,
 ):
     """执行阶段适配器；自动工具权限来自任务持久化授权，不默认放行。"""
     from app.core.config import get_settings
@@ -204,4 +263,32 @@ async def run_scheduled_execution(
         allowed_tools=allowed_tools,
         filesystem_subject=filesystem_subject,
         allow_shell=allow_shell,
+        stop_context=stop_context,
     )
+
+
+def _has_unresolved_tool_errors(tool_events) -> bool:
+    """同一工具、同一参数的后续成功调用可恢复失败；最终仍失败则阻止停用。"""
+    import json
+
+    call_keys: dict[str, tuple[str, str]] = {}
+    unresolved: set[tuple[str, str]] = set()
+    for event in tool_events or ():
+        if not isinstance(event, dict):
+            continue
+        call_id = str(event.get("tool_call_id") or "")
+        name = str(event.get("name") or "")
+        if event.get("type") == "tool_call":
+            if call_id and name:
+                args = json.dumps(event.get("input") or {}, sort_keys=True, ensure_ascii=False)
+                call_keys[call_id] = (name, args)
+            continue
+        if event.get("type") != "tool_done" or event.get("status") not in {"success", "error"}:
+            continue
+        key = call_keys.get(call_id) or (name, call_id)
+        if key[0]:
+            if event["status"] == "success":
+                unresolved.discard(key)
+            else:
+                unresolved.add(key)
+    return bool(unresolved)

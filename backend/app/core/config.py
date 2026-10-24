@@ -162,7 +162,7 @@ class AISettings(BaseModel):
         description="API Base URL",
     )
     model: str = Field("qwen-max", description="使用模型")
-    max_tokens: int = Field(8000, gt=0, description="最大输出 token 数")
+    max_tokens: int = Field(25600, gt=0, description="最大输出 token 数")
     context_tokens: int = Field(128000, gt=1, description="模型总上下文窗口 token 数；服务商上限需按模型规格手动确认")
     thinking: str = Field("", description="思考控制: 空=跟随端点默认 | disabled | adaptive")
     reasoning_effort: str = Field("", description="思考强度（仅 DeepSeek、思考开时生效）: 空=跟随模型默认 | low | high | max")
@@ -194,17 +194,30 @@ class AISettings(BaseModel):
 
 
 class VoiceSettings(BaseModel):
-    """语音 / 音视频识别（转写）模型——独立于主模型。把语音转成文字后交主模型处理，主模型不再被强切。
-    **model 为空 = 未配置**：收到语音/音视频时咕咕直接回「不支持」，不再强切 mimo。
-    `api_format=openai` 走 OpenAI 兼容接口，`api_format=dashscope` 走百炼原生多模态接口。"""
+    """运行时使用的语音模型配置，由启用的语音模型预设生成。"""
     api_key: str = Field("", description="语音模型 API Key")
     base_url: str = Field("", description="语音模型 Base URL")
     model: str = Field("", description="语音/识别模型名（空=未配置→收到语音回不支持）")
-    api_format: str = Field("openai", description="语音接口格式: openai | dashscope")
+    api_format: str = Field("openai", description="语音接口格式: openai | dashscope | minimax-asr")
     dashscope_service: str = Field(
         "qwen3-asr",
         description="DashScope 产品线: qwen3-asr | qwen-audio | fun-asr",
     )
+
+
+class VoicePresetItem(BaseModel):
+    id: str = ""
+    name: str = Field(min_length=1, max_length=80)
+    provider: Literal["openai", "qwen", "minimax", "local"] = "openai"
+    api_key: str = ""
+    base_url: str = ""
+    model: str = Field(min_length=1, max_length=200)
+    api_format: Literal["openai", "dashscope", "minimax-asr"] = "openai"
+    dashscope_service: Literal["qwen3-asr", "qwen-audio", "fun-asr"] = "qwen3-asr"
+
+class VoicePresets(BaseModel):
+    active_id: str = ""
+    items: list[VoicePresetItem] = Field(default_factory=list)
 
 
 class SandboxSettings(BaseModel):
@@ -316,7 +329,7 @@ class AIPresetItem(BaseModel):
     api_key: str = ""
     base_url: str = ""
     model: str = ""
-    max_tokens: int = Field(8000, gt=0)
+    max_tokens: int = Field(25600, gt=0)
     context_tokens: int = Field(128000, gt=1, description="模型总上下文窗口 token 数；服务商上限需按模型规格手动确认")
     thinking: str = ""
     reasoning_effort: str = ""   # 思考强度（仅 DeepSeek、思考开时生效）：空=默认 | low | high | max
@@ -393,7 +406,6 @@ class AgentBehaviorSettings(BaseModel):
     )
     worker_concurrency: int = Field(16, description="IM worker 同时跑几条 agent（实测单 MiniMax key 安全上限≈16；worker 每 30s 热读）")
     conv_compress_enabled: bool = Field(True, description="允许手动对话压缩；正常请求按实际组装上下文预算判断，不按数据库累计消息量后台压缩")
-    im_progress_announce_enabled: bool = Field(False, description="IM 慢工具进度声明：多步工具循环期间（IM 非流式、用户容易觉得沉默）可先发一句「我去查一下」这类声明再执行；默认关闭以避免与每轮 draft 重复，文案来自工具自身登记的 start_message（不是模型现场生成，见 docs/agent/proposals/IM慢工具进度声明-设计.md）；只在 IM 生效，网页不受影响")
 
 class QuotaSettings(BaseModel):
     default_token_limit_6h:      Optional[int] = Field(None, description="全局 6 小时 Token 上限（None=不限制）")
@@ -594,7 +606,7 @@ class AppSettings(BaseSettings):
     redis: RedisSettings = Field(default_factory=RedisSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
     ai: AISettings = Field(default_factory=AISettings)
-    voice: VoiceSettings = Field(default_factory=VoiceSettings)   # 独立语音识别模型（空=不支持语音）
+    voice_presets: VoicePresets = Field(default_factory=VoicePresets)
     embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)   # 独立向量模型（disabled=退回词法检索）
     sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
     filesync: FileSyncSettings = Field(default_factory=FileSyncSettings)
@@ -681,12 +693,8 @@ class AppSettings(BaseSettings):
                 }}
                 updates["ai"] = AISettings.model_construct(**merged)
 
-            if "voice" in override:
-                merged = {**self.voice.model_dump(), **{
-                    k: v for k, v in override["voice"].items()
-                    if k in VoiceSettings.model_fields
-                }}
-                updates["voice"] = VoiceSettings.model_construct(**merged)
+            if "voice_presets" in override:
+                updates["voice_presets"] = VoicePresets.model_validate(override["voice_presets"] or {})
 
             if "embedding" in override:
                 merged = {**self.embedding.model_dump(), **{
@@ -796,7 +804,7 @@ class AppSettings(BaseSettings):
             # 顶层字段（secret_key、debug 等）
             top_fields = set(AppSettings.model_fields) - {
                 "db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search",
-                "state_labels", "smtp", "security", "im", "voice", "embedding", "sandbox",
+                "state_labels", "smtp", "security", "im", "voice_presets", "embedding", "sandbox",
                 "filesync", "byok", "mcp", "safe_egress", "admin_allowed_hosts",
             }
             for k in top_fields:
@@ -810,6 +818,23 @@ class AppSettings(BaseSettings):
         except Exception as e:
             print(f"[config] override 加载失败: {e}")
             return self
+
+    @property
+    def voice(self) -> VoiceSettings:
+        """运行时快捷入口，返回当前启用模型；空 active_id 表示未配置。"""
+        active = next(
+            (item for item in self.voice_presets.items if item.id == self.voice_presets.active_id),
+            None,
+        )
+        if active is None:
+            return VoiceSettings()
+        return VoiceSettings(
+            api_key=active.api_key,
+            base_url=active.base_url,
+            model=active.model,
+            api_format=active.api_format,
+            dashscope_service=active.dashscope_service,
+        )
 
 
 def _merge_agent_override(base: dict, raw_agent: object) -> dict:

@@ -42,6 +42,7 @@ _log = logging.getLogger("agent.tools")
 _dispatch_session_id: ContextVar[int | None] = ContextVar("agent_dispatch_session_id", default=None)
 _dispatch_session: ContextVar[object | None] = ContextVar("agent_dispatch_session", default=None)
 _dispatch_run_id: ContextVar[str | None] = ContextVar("agent_dispatch_run_id", default=None)
+_dispatch_tool_call_id: ContextVar[str | None] = ContextVar("agent_dispatch_tool_call_id", default=None)
 _dispatch_tool_snapshot: ContextVar[object | None] = ContextVar(
     "agent_dispatch_tool_snapshot", default=None
 )
@@ -67,21 +68,24 @@ def reset_dispatch_session_id(token) -> None:
 
 
 def set_dispatch_session(session_id: int | None, session=None, run_id: str | None = None,
-                         tool_snapshot=None, skill_state: dict[str, str] | None = None):
+                         tool_snapshot=None, skill_state: dict[str, str] | None = None,
+                         tool_call_id: str | None = None):
     """绑定本轮真实会话；工具复核优先使用对象，避免 IM 映射短暂过期。"""
     id_token = _dispatch_session_id.set(session_id)
     session_token = _dispatch_session.set(session)
     run_token = _dispatch_run_id.set(run_id)
+    call_token = _dispatch_tool_call_id.set(tool_call_id)
     snapshot_token = _dispatch_tool_snapshot.set(tool_snapshot)
     skill_token = _dispatch_skill_state.set(skill_state)
-    return id_token, session_token, run_token, snapshot_token, skill_token
+    return id_token, session_token, run_token, call_token, snapshot_token, skill_token
 
 
 def reset_dispatch_session(token) -> None:
-    id_token, session_token, run_token, snapshot_token, skill_token = token
+    id_token, session_token, run_token, call_token, snapshot_token, skill_token = token
     _dispatch_session_id.reset(id_token)
     _dispatch_session.reset(session_token)
     _dispatch_run_id.reset(run_token)
+    _dispatch_tool_call_id.reset(call_token)
     _dispatch_tool_snapshot.reset(snapshot_token)
     _dispatch_skill_state.reset(skill_token)
 
@@ -96,6 +100,10 @@ def current_dispatch_session():
 
 def current_dispatch_run_id() -> str | None:
     return _dispatch_run_id.get()
+
+
+def current_dispatch_tool_call_id() -> str | None:
+    return _dispatch_tool_call_id.get()
 
 
 def current_dispatch_tool_snapshot():
@@ -259,17 +267,13 @@ async def _maybe_announce_progress(tool: "Tool", args: dict) -> None:
     if not payload:             # web 路径：imctx 没 set 过，压根不在 IM 上下文里
         return
     im = imctx.get_im()
-    if im and im.get("show_tool_interactions"):
-        # 已有独立工具气泡时，慢进度声明会重复描述同一件事。
+    if im and im.get("tool_display_mode", "all") == "off":
         return
     if not payload.get("message_id"):  # 定时任务等无具体触发消息的路径：不发进度声明
         return
     if imctx.was_announced():  # 本 Busy Session 已经发过声明，不重复发
         return
     try:
-        from app.core.config import get_settings
-        if not get_settings().agent.im_progress_announce_enabled:
-            return
         # 用户已取消：不再发进度声明。取消是实时控制信号，声明会误导用户以为还在执行
         # （实测：取消后仍看到「我搜搜看有没有合适的图」这类 start_message）。
         im = imctx.get_im()
@@ -349,11 +353,9 @@ class Tool:
         self.requires_confirmation = requires_confirmation
         # 显式声明批量分支也使用精确目标集合确认；静态守卫检查统一 helper。
         self.batch_confirmation = batch_confirmation
-        # 并发安全是独立于 mutates 的显式调度授权；默认关闭，只有经过副作用与
-        # 共享状态审查的工具才能加入同一 Round 的并发批次。
+        # 历史调度声明保留兼容；当前 Agent Loop 不用它推断同 Round 调用间的冲突。
         self.parallel_safe = parallel_safe is True
-        # 少数有副作用工具（如受权限/确认策略保护的 Shell）可按具体输入
-        # 声明本次调用能否与同 Round 的其他调用并行；失败时默认串行。
+        # 历史输入级声明；Shell 当前只用它区分是否必须进入危险命令确认通道。
         self.parallel_safe_for_input = parallel_safe_for_input
         # 这些输入数组要求调用方提供规范结构，不应用模型侧 item 包装/拍平归一。
         self.strict_array_fields = frozenset(strict_array_fields)

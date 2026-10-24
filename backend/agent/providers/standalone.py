@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from agent.security.sanitize import strip_think_blocks
+from app.core.retry import llm_provider_timeout
 
 
 def output_budget(ai, requested: int | None) -> int | None:
@@ -15,16 +16,14 @@ def output_budget(ai, requested: int | None) -> int | None:
     return max(requested, 4096) if capabilities.modes or capabilities.efforts else requested
 
 
-async def complete_text(ai, prompt: str, *, max_tokens: int = 800,
-                        timeout: float = 40.0) -> str:
+async def complete_text(ai, prompt: str, *, max_tokens: int = 800) -> str:
     """供问候、会话元数据和邮件生成使用；用量仍由各业务入口负责。"""
-    import httpx
     from agent import providers
 
     adapter = providers.adapter_for(ai)
     protocol = adapter.protocol_format(ai)
     budget = output_budget(ai, max_tokens)
-    limits = httpx.Timeout(timeout)
+    limits = llm_provider_timeout()
     if protocol == "anthropic":
         async with providers.build_anthropic_client(ai, limits) as client:
             response = await client.messages.create(

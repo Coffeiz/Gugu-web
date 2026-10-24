@@ -11,7 +11,7 @@ interface ProgressInput {
   currentStage?: string | null
 }
 
-export function projectProgress(project: ProgressInput | null | undefined): number {
+export function projectProgress(project: ProgressInput | null | undefined, withoutTodos?: () => number): number {
   const stages = project?.stages ?? []
   if (!stages.length) return 0
   let done = 0, total = 0
@@ -21,6 +21,8 @@ export function projectProgress(project: ProgressInput | null | undefined): numb
     total += todos.length
   }
   if (total > 0) return Math.round(done / total * 100)
+  // 项目头部沿用阶段加权公式，其浮点舍入与卡片的位置比例可能相差 1%。
+  if (withoutTodos) return withoutTodos()
   const idx = stages.findIndex(s => s.key === project?.currentStage)
   return idx < 0 ? 0 : Math.round((idx + 1) / stages.length * 100)
 }

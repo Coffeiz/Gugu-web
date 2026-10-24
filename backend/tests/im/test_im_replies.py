@@ -17,17 +17,20 @@ async def test_im_display_preferences_reads_explicit_values(monkeypatch):
 
         async def scalar(self, _query):
             class Row:
-                data = {"show_tool_interactions": True, "show_intermediate_replies": False}
+                data = {
+                    "im_tool_display_mode": "slow_only",
+                    "show_intermediate_replies": False,
+                }
             return Row()
 
     monkeypatch.setattr(db_session, "ensure_engine", lambda: None)
     monkeypatch.setattr(db_session, "_SessionLocal", FakeDb)
 
-    assert await im_display_preferences("synthetic-user") == (True, False)
+    assert await im_display_preferences("synthetic-user") == ("slow_only", False)
 
 
 @pytest.mark.asyncio
-async def test_im_display_preferences_default_missing_values_to_enabled_tools_and_hidden_intermediate(monkeypatch):
+async def test_im_display_preferences_defaults_to_all_and_hides_intermediate_replies(monkeypatch):
     from agent.interactions.preferences import im_display_preferences
     from app.db import session as db_session
 
@@ -46,7 +49,7 @@ async def test_im_display_preferences_default_missing_values_to_enabled_tools_an
     monkeypatch.setattr(db_session, "ensure_engine", lambda: None)
     monkeypatch.setattr(db_session, "_SessionLocal", FakeDb)
 
-    assert await im_display_preferences("synthetic-user") == (True, False)
+    assert await im_display_preferences("synthetic-user") == ("all", False)
 
 
 @pytest.mark.asyncio
@@ -478,14 +481,14 @@ async def test_telegram_tool_event_shows_status_only_without_call_input_or_resul
 
 @pytest.mark.asyncio
 async def test_interaction_prompt_send_result_is_propagated(monkeypatch):
-    from agent.im import loop
+    from agent.im import presentation
     from agent.im import replies
 
     async def fake_send(_payload, prompt):
         return prompt["prompt_id"] == 21
 
     monkeypatch.setattr(replies, "send_interaction", fake_send)
-    assert await loop._send_interaction_prompts(
+    assert await presentation._send_interaction_prompts(
         {"platform": "qq"},
         [{"prompt_id": 21}, {"prompt_id": 22}],
     ) is False

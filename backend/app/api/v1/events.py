@@ -1,7 +1,8 @@
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 
 from app.db.session import get_db
 from app.models import CalendarEvent, Project, User
@@ -11,8 +12,17 @@ from app.core.ownership import get_owned
 from app.core import events
 from app.core.tz import now_utc
 from app.services.undo import UndoService
-from app.services.calendar import event_base_datetime, list_event_reminders, sync_event_reminders_after_update
+from app.services.calendar import (
+    event_base_datetime,
+    list_event_reminders,
+    soft_delete_event_atomic,
+    sync_event_reminders_after_update,
+    update_event_atomic,
+)
 from app.services.undo.domains import domain_ref, domain_state, event_snapshot, task_snapshot
+from app.services.idempotency import (
+    IdempotencyConflict, attach_idempotency, find_idempotent,
+)
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -69,14 +79,35 @@ async def create_event(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     request: Request = None,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
+    payload = body.model_dump(by_alias=False)
+    try:
+        existing = await find_idempotent(db, CalendarEvent, current_user.id, idempotency_key, payload)
+    except IdempotencyConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if existing is not None:
+        return _to_resp(existing)
     if body.project_id is not None:
         project = await get_owned(db, Project, body.project_id, current_user.id)
         if project is None or project.deleted_at is not None:
             raise HTTPException(400, "关联的项目不存在")
-    e = CalendarEvent(user_id=current_user.id, **body.model_dump(by_alias=False))
-    db.add(e)
-    await db.flush()
+    e = CalendarEvent(user_id=current_user.id, **payload)
+    attach_idempotency(e, idempotency_key, payload)
+    try:
+        async with db.begin_nested():
+            db.add(e)  # orm-exempt: 幂等创建需在保存点内原子写入事件，待迁移到日历 Service
+            await db.flush()
+    except IntegrityError:
+        try:
+            existing = await find_idempotent(db, CalendarEvent, current_user.id, idempotency_key, payload)
+        except IdempotencyConflict as exc:
+            raise HTTPException(409, str(exc)) from exc
+        if existing is None:
+            raise
+        return _to_resp(existing)
     await UndoService.record_forward(
         db, user_id=current_user.id,
         context_id=request.headers.get("X-Undo-Context-ID") if request else None,
@@ -106,20 +137,24 @@ async def update_event(
     if not e or e.deleted_at is not None:
         raise HTTPException(404, "事件不存在")
     data = body.model_dump(exclude_unset=True, by_alias=False)
+    client_version = data.pop("version")
+    if e.version != client_version:
+        raise HTTPException(409, "数据已被其他用户修改，请刷新后重试")
+    if not data:
+        return _to_resp(e)
+
     event_ref = domain_ref("event", e.id)
     previous_base = event_base_datetime(e)
     reminders_before = await list_event_reminders(db, current_user.id, e.id)
     before_items = {event_ref: event_snapshot(e)}
     before_items.update({domain_ref("task", task.id): task_snapshot(task) for task in reminders_before})
-    client_version = data.pop("version", None)
-    if client_version is not None and e.version != client_version:
-        raise HTTPException(409, "数据已被其他用户修改，请刷新后重试")
     if data.get("project_id") is not None:
         project = await get_owned(db, Project, data["project_id"], current_user.id)
         if project is None or project.deleted_at is not None:
             raise HTTPException(400, "关联的项目不存在")
-    for k, v in data.items():
-        setattr(e, k, v)
+    if not await update_event_atomic(db, eid, current_user.id, client_version, data):
+        raise HTTPException(409, "数据已被其他用户修改，请刷新后重试")
+    await db.refresh(e)
     _reminders, reminder_error = await sync_event_reminders_after_update(
         db, current_user.id, e, previous_base=previous_base,
         timing_changed="date" in data or "time" in data,
@@ -127,7 +162,6 @@ async def update_event(
     )
     if reminder_error:
         raise HTTPException(422, reminder_error)
-    e.version = (e.version or 1) + 1
     await db.flush()
     reminders_after = await list_event_reminders(db, current_user.id, e.id)
     after_items = {event_ref: event_snapshot(e)}
@@ -154,6 +188,7 @@ async def update_event(
 @router.delete("/{eid}", status_code=204)
 async def delete_event(
     eid: int,
+    version: int,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     request: Request = None,
@@ -161,14 +196,17 @@ async def delete_event(
     e = await get_owned(db, CalendarEvent, eid, current_user.id)
     if not e or e.deleted_at is not None:
         raise HTTPException(404, "事件不存在")
+    if e.version != version:
+        raise HTTPException(409, "数据已被其他端修改，请刷新后重试")
     from app.models import ScheduledTask
     tasks = (await db.execute(select(ScheduledTask).where(  # orm-exempt: 定时任务读取待 Service 收口（1.1.2 遗留）
         ScheduledTask.user_id == current_user.id, ScheduledTask.event_id == eid,
     ))).scalars().all()
     before_items = {domain_ref("event", e.id): event_snapshot(e)}
     before_items.update({domain_ref("task", t.id): task_snapshot(t) for t in tasks})
-    e.deleted_at = now_utc()
-    e.version = (e.version or 1) + 1
+    if not await soft_delete_event_atomic(db, eid, current_user.id, version, now_utc()):
+        raise HTTPException(409, "数据已被其他端修改，请刷新后重试")
+    await db.refresh(e)
     for task in tasks:
         task.enabled = False
     await db.flush()

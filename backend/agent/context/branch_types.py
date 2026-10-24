@@ -10,7 +10,6 @@ from typing import Any, Literal
 
 BranchName = Literal["compaction", "reflection", "knowledge"]
 OutputMode = Literal["text", "json"]
-LONG_RUNNING_PROVIDER_READ_TIMEOUT_SECONDS = 300.0
 # append_reuse：只读 sibling branch（PRD-LLM-27 §6.6），复用会话前缀但不修改
 # 主 continuation——分支响应不作为主会话下一轮的 Responses API 续接。
 # 没有 history_messages 的内部调用仍可执行，但不再携带独立分支模式。
@@ -56,7 +55,6 @@ class BranchPolicy:
     max_retries: int = 0
     max_tokens: int = 800
     thinking: str | None = None
-    provider_read_timeout_seconds: float | None = None
 
 
 @dataclass(frozen=True)

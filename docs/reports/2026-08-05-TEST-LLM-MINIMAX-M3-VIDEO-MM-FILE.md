@@ -1,8 +1,8 @@
 # Test-LLM：MiniMax-M3 视频 mm_file 传输模式测试报告
 
 > 测试日期：2026-08-05
-> 测试环境：devserver（<测试网络地址>）
-> 测试对象：MiniMax-M3（`p_6688c7c9`，`https://api.minimaxi.com/anthropic`）
+> 测试环境：devserver（测试地址已省略）
+> 测试对象：MiniMax-M3（测试配置标识已省略）
 > 测试目的：验证 MiniMax-M3 的 `mm_file://` 视频传输模式，确定大视频（>50MB）的可用边界
 
 ---
@@ -24,7 +24,7 @@ MiniMax-M3 支持两种视频传输模式：
 
 ### 2.1 上传接口
 
-- **正确端点**：`POST https://api.minimaxi.com/v1/files/upload`
+- **正确端点**：MiniMax Files API 的 `POST /v1/files/upload`
 - **格式**：`multipart/form-data`，字段 `file` + `purpose`
 - **响应**：`{"file": {"file_id": <int>, "bytes": <int>, ...}, "base_resp": {"status_code": 0, "status_msg": "success"}}`
 
@@ -62,7 +62,7 @@ MiniMax-M3 支持两种视频传输模式：
 
 ## 3. 测试视频规格与结果
 
-测试源视频：`uploads/019eec39-4f5e-73cf-817d-60c0e0b640a8/项目文件/2026/07/邦多利描绘未来同人 #193/描绘未来conti（完整版）.mp4`
+测试源视频：匿名化的用户上传样本（原文件路径与名称已移除）
 - 时长 103.875s，1920×1080，h264+aac，约 15Mbps，187MB
 
 ### 3.1 完整测试矩阵
@@ -129,10 +129,10 @@ MiniMax-M3 支持两种视频传输模式：
 
 ---
 
-## 5. 补充测试：真实 4K HEVC 视频（VID_20260516_024549.mov）
+## 5. 补充测试：真实 4K HEVC MOV 视频
 
 > 测试日期：2026-08-06
-> 测试文件：`<下载目录>/VID_20260516_024549.mov`（手机拍摄原始视频）
+> 测试文件：匿名化的 4K HEVC MOV 样本（原文件名与本地路径已移除）
 > 规格：HEVC，3840×2160（4K），30fps，27.7Mbps，25.55s，86MB
 
 ### 5.1 测试目的
@@ -238,9 +238,9 @@ MiniMax-M3 支持两种视频传输模式：
 
 ---
 
-## 8. 实现方案（已落地）
+## 8. 首版实现方案（截至 2026-08-06）
 
-在 `backend/app/core/chat_attach.py` 实现视频压缩 + mm_file 传输：
+首版在 `backend/app/core/chat_attach.py` 实现视频压缩 + mm_file 传输。后续已将 Provider 差异化规格迁入 `backend/agent/providers/*/media.py`；本节保留首版记录，当前实现边界以第 10 节及 Provider 媒体策略为准。
 
 ### 8.1 策略
 
@@ -294,7 +294,7 @@ MiniMax-M3 支持两种视频传输模式：
 ```python
 # 1. 上传
 r = httpx.post(
-    'https://api.minimaxi.com/v1/files/upload',
+    '<MiniMax API endpoint>/v1/files/upload',
     headers={'Authorization': f'Bearer {API_KEY}'},
     files={'file': (name, f, 'video/mp4')},
     data={'purpose': 'video_understanding'},
@@ -305,7 +305,133 @@ fid = json.loads(r.text)['file']['file_id']
 # 2. 调用模型
 content = [
     {'type': 'text', 'text': '这段视频是什么内容？简短回答。'},
-    {'type': 'video', 'source': {'type': 'url', 'url': f'mm_file://{fid}'}, 'fps': 1},
+  {'type': 'video', 'source': {'type': 'url', 'url': f'mm_file://{fid}', 'fps': 1}},
 ]
 r = await client.messages.create(model='MiniMax-M3', max_tokens=64, messages=[{'role': 'user', 'content': content}])
 ```
+
+---
+
+## 10. 2026-10-22 复测补充：M3.1-Flash 与应用媒体链路
+
+本节用当前实际配置的 MiniMax Anthropic `MiniMax-M3.1-Flash` 复测。视频均为本次生成的测试图案，不含用户素材；`mm_file` 样本每次请求后均调用 Files API 删除，并确认删除成功。测试不改写运行配置。
+
+### 10.1 修复与产品侧行为
+
+1. Anthropic 原生视频块的 `fps` 应放在 `source` 内。此前 `mm_file` 分支把它放在块顶层，base64 分支则漏传；现两条路径都在 `source.fps` 发送 `1`。
+2. 上述复测阶段，应用曾把 WMV 转成 MP4；后续明确按用户意图改为 MiniMax 支持范围内原样上传，不由 Gugu 预先转码。格式支持由 MiniMax 接口负责校验。
+3. 上述复测阶段的图片仍经过共享图像压缩；后续明确按 MiniMax 官方单图限制直传原始分辨率和字节，详见 10.6。
+
+### 10.2 8 月失败规格复测
+
+| 8 月失败规格 | 本轮合成样本 | 当前 M3.1-Flash 结果 |
+|---|---|---|
+| 约 55 MiB、约 103.9 秒、1080p H.264（旧结果为敏感拦截） | 56,754,611 字节，探测时长 104 秒，通过 `mm_file` | ✅ 成功，上传文件已删除 |
+| 约 75 MiB、约 103.9 秒、1080p H.264（旧结果为敏感拦截） | 77,398,349 字节，探测时长 104 秒，通过 `mm_file` | ✅ 成功，上传文件已删除 |
+| 约 99 MiB、4K H.264（旧结果为 512） | 103,253,410 字节，约 25.5 秒，通过 `mm_file` | ✅ 成功，上传文件已删除 |
+| 约 187 MiB、约 103.9 秒、1080p H.264（旧结果为 512） | 192,992,523 字节，探测时长 104 秒，通过 `mm_file` | ✅ 成功，上传文件已删除 |
+| 约 32 MiB、4K HEVC | 33,346,049 字节，约 25.5 秒，通过 `mm_file` | ✅ 成功，上传文件已删除 |
+| 约 86 MiB、4K HEVC MOV | 89,933,890 字节，约 25.5 秒，通过 `mm_file` | ✅ 成功，上传文件已删除 |
+
+以上是模型端对等规格的合成复测，不是原始失败视频的重放。55/75 MiB 的合成测试通过，说明这些大小和时长本身不会稳定触发拒绝；但没有重放原动画内容，不能据此推翻旧样本曾触发内容审核的记录。99/187 MiB 与 HEVC/MOV 合成样本当前均成功，说明旧 512 不再能由这些规格稳定复现；由于模型版本、内容样本和运行时块格式都有变化，不能把旧失败归因到其中某一项。
+
+**应用上限与 Provider 上限要分开看。** 这几项较大样本直接通过 Files API 验证模型端，不代表 Gugu 会把它们原样发送。当前 MiniMax 应用策略对超过 90 MiB 的输入先尝试转码，最终 `mm_file` 不超过 90 MiB；源视频处理上限为 500 MiB，应用时长上限为 120 秒。MiniMax 当前公开规格允许 Files API 视频最大 512 MB；直连 URL/base64 视频上限为 50 MB，请求体上限为 64 MB。因而 187 MiB 在模型 Files API 端能处理，但经 Gugu 应用时会先走转码策略。
+
+### 10.3 当前链路真实请求回归
+
+| 路径 | 输入 | 结果 |
+|---|---|---|
+| Anthropic `mm_file` | 上表 6 种视频，`source.fps=1` | 6/6 成功；每个上传文件均已删除 |
+| WMV 应用处理与 base64 | 5 秒、640×360、约 0.64 MiB WMV | 转成 MP4 后真实调用成功 |
+| 图片格式 | JPEG、PNG、GIF、WebP，各 512×512 | 同一真实请求成功 |
+| 图片应用预处理 | PNG 8192×8192 | Gugu 转为 JPEG 3840×3840 后真实请求成功 |
+
+在上一轮规格探测中，MiniMax 真实请求还接受过 2016×2016、3840×2160、8192×8192 图片，以及 1920×1080、3840×2160、7680×4320 视频；它们是已证实可用的下界，不是查出的 Provider 最大分辨率。本轮没有发现更高的 Provider 分辨率硬上限。
+
+### 10.4 验证与边界
+
+- devserver 定向回归：`tests/agent/chat/test_chat_attach_video.py` 与 `tests/agent/providers/test_provider_media.py`，61 项通过。
+- 本地同范围回归：61 项通过。两边都出现既有的异步清理 RuntimeWarning，不影响测试退出状态。
+- 第一次运行的测试脚本在上传前遇到 NameError，没有发出模型请求；修正后完成上述全部复测。
+- 复测使用合成图案。未重放曾触发 1026 的原始动画样本，故不能验证该内容审核结果是否改变；也未验证超过 120 秒以及超过 90 MiB 转码后仍超限的应用输入。
+- 当前没有得到 MiniMax 的 100 MiB 附近 Provider 硬失败边界：本轮合成 99 MiB 与 187 MiB Files 输入均通过；官方 Files API 上限为 512 MB。应用继续保留 90 MiB 的最终载荷限制作为本产品侧安全余量。
+
+官方规格：[MiniMax Anthropic SDK 多模态消息说明](https://platform.minimax.io/docs/api-reference/text-anthropic-api)。
+
+### 10.5 Files API 最大规格边界补测
+
+针对官方公布的单个 Files API 视频 512 MB 上限，使用当前 devserver 激活的 MiniMax M3.1-Flash 进行精确字节边界测试。测试视频为本地生成的 100 秒合成 H.264，ffprobe 可正常读取；在 MP4 中添加合法 `free` box 填充到指定字节数，不包含用户媒体。每个成功上传的文件在测试后均调用 Files API 删除，并确认删除成功。
+
+| 文件字节数 | Files API 上传 | 模型请求 | 清理 |
+|---:|---|---|---|
+| 512,000,000（512 MB 十进制） | ✅ HTTP 200，返回字节数一致 | API 返回；因 `max_tokens=64` 触发 `stop_reason=max_tokens`，没有可读文本，未完成语义理解验证 | ✅ 已删除 |
+| 512,000,001 | ✅ HTTP 200 | 未请求模型 | ✅ 已删除 |
+| 536,870,912（512 MiB） | ❌ HTTP 413 | 未请求模型 | 无文件生成 |
+| 536,870,913（512 MiB + 1） | ❌ HTTP 413 | 未请求模型 | 无文件生成 |
+
+本次确认：512,000,000 字节的合法合成视频可以上传，并且 M3.1-Flash 消息端点接受了引用该文件的请求；由于输出额度过低，本次不证明模型已完成视频语义识别。上传 512,000,001 字节也成功，但没有验证该多出的 1 字节能否用于模型推理。512 MiB 文件触发 413，且 multipart 封装本身会增加请求体字节，因此这组结果无法精确定位服务端上传器的内部极限。对外仍应以官方规格 512 MB（512,000,000 字节）为支持上限，不把超出官方值的单次上传成功视为受支持规格。
+
+这里的 500 MiB 是 Gugu 侧源文件处理保护值；它与 MiniMax Files API 的 512 MB Provider 规格是不同边界。当前 Gugu 的最终 `mm_file` 应用策略仍为 90 MiB，本轮没有修改运行配置或 Provider 限制。
+
+### 10.6 分辨率 A/B 与应用载荷限制说明
+
+使用当前 devserver 激活的 MiniMax M3.1-Flash，对合成媒体走 Gugu 预处理函数后进行真实请求。对照请求将 `max_tokens` 统一设为 25600；没有使用低 token 预算截断答复。所有样本均为临时生成的色块和文字，不含用户媒体。
+
+| 媒体 | Gugu 输入策略 | 实际送入模型 | 模型结果 |
+|---|---|---|---|
+| 4K、2 秒合成视频 | `compress_max_dim=1920` | 1920×1080，5,222 字节 | HTTP 200，正确读出 `7319` |
+| 同一 4K 视频 | 候选 `compress_max_dim=3840` | 3840×2160，8,948 字节 | HTTP 200，但将编号读成 `7119` |
+| 8K 合成图片 | 当前全局 `VISION_MAX_DIM=3840` | 3840×3840，94,900 字节 | HTTP 200，回答 `M704` |
+| 同一 8K 图片 | 候选 `VISION_MAX_DIM=8192` | 8192×8192，218,627 字节 | HTTP 200，仍回答 `M704` |
+
+结果没有显示提高到 4K 视频或 8K 图片能改善本次细节识别；候选图像组都把 `Q` 识别为 `0`，其中一个视频候选把编号误读一位。这不是模型最大分辨率测试，也不足以证明这些分辨率普遍更差。另一次高复杂度 4K、20 Mbps 视频候选转码达到 180 秒超时。该 A/B 比较的是“经 Gugu 转码后模型识别效果”，不回答用户希望的“能否把高规格原文件直接交给 Provider”。
+
+**实现方向据此修正为原文件直传。** 1920px、3840px、120 秒及 90 MiB 都是旧的 Gugu 预处理阈值，不是 MiniMax 官方限制。MiniMax M3 规格改为在其支持范围内保留图像原始字节、分辨率及视频原始字节、编码和时长；视频 ≤45 MiB 走 base64，超过内联范围则原样走 Files API。图像只检查 MiniMax 官方的单图字节上限；视频只检查官方 Files API 单文件上限和官方格式列表。不支持的格式明确拒绝，不再由 Gugu 擅自转码成另一种格式。
+
+45 MiB 在此仅用于选择 base64 或 Files API，不是文件拒绝上限；较大的视频会用原始字节上传 Files API，最高按官方 512 MB。该行为仅属于 MiniMax M3 Provider 策略；共享 Provider 继续沿用原来的图片压缩、视频时长检查及转码。
+
+本轮本地定向回归 77 项通过，验证图片原始尺寸/字节保留、官方大小和格式边界、视频不运行 ffprobe/转码并把原始字节交给 Files API，以及通用 Provider 默认策略不变。此前的真实 MiniMax API 上限证据仍见 10.3、10.5；本段记录的是应用处理策略纠正，不把小样本识别结果表述为模型规格上限。本轮没有将工作区改动同步到 devserver 运行服务，也没有用新实现再发起远端模型调用。
+
+## 11. 2026-10-22 传输策略复核：保留当前双路径方案
+
+本轮复核了「MiniMax 视频是否应全部改走 `mm_file://`」这一选项，结论是**保留当前方案**（≤45 MiB 走 base64 内联，超过走 Files API），不调整传输策略。本节记录新查证的官方规格事实、已评估并否决的备选方案及其原因，以及一个需要单独处理的已知缺口。
+
+### 11.1 官方 Files API 规格（本轮新查证）
+
+端点为 `POST /v1/files/upload`、`GET /v1/files/retrieve`、`GET /v1/files/retrieve_content`、`GET /v1/files/list`、`POST /v1/files/delete`，均用 `bearerAuth` 鉴权。
+
+- `purpose=video_understanding` 的官方描述：「Video file for multimodal understanding, referenced in chat requests as `mm_file://{file_id}` and **retained for up to 7 days**」。
+- **`/v1/files/delete` 的 `purpose` 枚举为 `voice_clone` / `prompt_audio` / `t2a_async` / `t2a_async_input` / `video_generation`，不含 `video_understanding`**；`/v1/files/list` 的 `purpose` 枚举同样不含它，`/v1/files/retrieve` 的 `file_id` 说明也只提到 video generation 与异步语音合成。
+- 但 10.2 / 10.3 / 10.5 的实测中，`video_understanding` 上传的文件**可以正常删除**，且每次都确认删除成功。结论：删除能力存在，但属未文档化行为，不能假设长期稳定。
+- 上传错误码含 `1002 Rate limit triggered`、`1008 Insufficient account balance`、`2013 Invalid input parameters`。官方文档未说明文件存储是否计费、是否有配额上限。
+
+### 11.2 留存位置与账号维度
+
+7 天留存的对象位于 **MiniMax 侧的 Files 服务**内，不在 Gugu 的服务器、对象存储或数据库中。Gugu 侧只持有 `file_id` 字符串。
+
+账号维度决定配额与可见性：平台共用一个 MiniMax API Key 时，**全平台用户的视频都落在同一个 MiniMax 账号的文件空间**，共享同一份配额与 RPM 限制；BYOK 用户则各自独立。
+
+### 11.3 已评估并否决的备选方案
+
+**方案 A — 全部改走 `mm_file://`。** Files API 的 512 MB 完整覆盖 base64 的 0–50 MB 区间，能力上无损，并可消除 45 MiB 阈值与 64 MB 请求体压力。**否决原因**：它把「每个视频产生一个对方侧对象」从部分场景变为全量，而当前实现不删除任何已上传对象（见 11.4），会放大既有泄漏；同时 Files API 将成为视频的硬依赖，而当前 ≤45 MiB 仍有 base64 兜底。
+
+**方案 B — 直连 URL（`source.type=url` 传公网可拉地址）。** 官方文档确认 `type="video"` 支持「Video input via URL, base64, or `mm_file://{file_id}`」，URL 视频上限同为 50 MB。视频原件本就在 Gugu 存储中，签名 URL 在字节数、后端内存、请求体大小、残留对象四项上均优于 base64。**否决原因**：它要求 MiniMax 侧能反向访问 Gugu 的存储，只有公网可达的对象存储后端满足——`StorageBackend.fetch_url()` 在本地存储后端恒返回 `None`（其基类注释即写明「本地存储没有公网地址 → None（调用方退回 base64 上传）」），且该方法目前没有调用方。落地前还需实测 MiniMax 拉取 presigned URL 是同步阻塞还是异步，以及拉取失败的错误形态。
+
+**方案 C — 把 base64 阈值降到 8–16 MB。** 同样因 11.4 的删除缺口被否决：删除链路可靠之前，降低阈值只会让更多视频产生无法清理的对象。
+
+### 11.4 已知缺口：已上传的 `mm_file` 对象从不删除
+
+`_upload_video_mmfile()` 只做 `POST /v1/files/upload`，**全仓库没有任何一处调用 Files API 的删除端点**。因此当前每个走 `mm_file` 的视频，都会在 MiniMax 侧留下一个最长 7 天的对象，Gugu 侧既无账本、也无法统计数量或主动清理。
+
+这是**当前方案下已经存在**的问题，与是否调整传输策略无关，因此即使保留当前方案仍需单独处理。建议方向（尚未实施）：
+
+1. 建立 `mm_file` 账本表，记录 `file_id` / `purpose` / `created_at` / 状态；
+2. 用定时任务扫描「创建超过一定时间且未标记删除」的记录并调用 `POST /v1/files/delete`——不与请求生命周期耦合，可同时覆盖流式响应、模型报错与进程崩溃三种情况；
+3. 由于 `/v1/files/list` 不支持 `video_understanding`，**账本是唯一的真相来源**，丢失后无法通过官方接口找回；
+4. 删除失败必须可观测，不能静默重试至放弃，否则会退化为依赖 7 天自动过期。
+
+另注：上传时当前传入的是用户原始文件名（`_upload_video_mmfile` 的 `name` 参数），而 `FileObject` 会回显 `filename`。建议改为脱敏文件名，避免把用户命名信息写入第三方存储。
+
+### 11.5 顺带发现的独立问题：多图请求体可能超限
+
+该问题属图片路径，不受视频传输策略影响：M3 单图上限 10 MB，而 `IMAGE_COUNT = 6`，且 M3 走 `preserve_image_source` 原图直传不压缩。6 张 10 MB 图片经 base64 后约 80 MB，超出官方 64 MB 请求体上限；当前没有任何图片聚合字节上限。视频是否走 `mm_file` 都不能解决这一项，需要在图片路径单独处理。

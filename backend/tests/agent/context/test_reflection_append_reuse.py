@@ -175,6 +175,7 @@ async def test_extract_append_builds_reuse_input(monkeypatch):
         "trigger_source": "idle",
         "origin_run_id": "run-x",
         "origin_gap_seconds": pytest.approx(180.0, abs=0.01),
+        "snapshot_source": "in_memory",
     }
     assert tuple(branch_input.tools) == ({"name": "list_dir"},)
     # history = 快照 history（快照已含末尾 assistant 最终回复）
@@ -420,6 +421,7 @@ async def test_reflect_routes_idle_rebuilt_history_through_append(monkeypatch):
         tools=(), history=(), source="persisted_history",
     )
     calls = []
+    observed_probe = {}
 
     async def fake_bind(*_args, **_kwargs):
         return model
@@ -432,6 +434,7 @@ async def test_reflect_routes_idle_rebuilt_history_through_append(monkeypatch):
 
     async def fake_extract(snapshot, *_args, **_kwargs):
         calls.append(snapshot)
+        observed_probe.update(reflection._reflection_probe_context_var.get() or {})
         return {}
 
     monkeypatch.setattr(reflection, "_bind_user_model", fake_bind)
@@ -442,11 +445,15 @@ async def test_reflect_routes_idle_rebuilt_history_through_append(monkeypatch):
     monkeypatch.setattr(reflection, "_extract_append", fake_extract)
 
     turns = [{"user_msg": "m", "assistant_reply": "a", "user_name": "小北", "session_id": 7}]
-    assert await reflection.reflect(
-        "u1", "小北", "m", "a", SimpleNamespace(), session_id=7,
-        turns=turns, snapshot=None, rebuild_from_history=True,
-    ) is False
+    with reflection._reflection_probe_context(None, "idle"):
+        assert await reflection.reflect(
+            "u1", "小北", "m", "a", SimpleNamespace(), session_id=7,
+            turns=turns, snapshot=None, rebuild_from_history=True,
+        ) is False
     assert calls == [rebuilt]
+    assert observed_probe["trigger_source"] == "idle"
+    assert observed_probe["origin_run_id"] == "idle"
+    assert observed_probe["snapshot_source"] == "persisted_history"
 
 
 async def _async_value(value):

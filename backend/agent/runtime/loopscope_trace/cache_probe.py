@@ -210,7 +210,7 @@ def record_cache_drop(run: Any, span: Any, previous: dict[str, Any] | None,
 
 def build_reflection_sample(
     branch_input: Any, ai: Any, adapter: Any, usage: dict[str, Any],
-    attempt_index: int = 1,
+    attempt_index: int = 1, request_probe: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """构造反思请求缓存样本；只输出 token、计数与指纹，不输出任何正文。"""
     stable_system = branch_input.stable_system
@@ -258,6 +258,7 @@ def build_reflection_sample(
         gap_seconds = None
     history = history_messages or ()
     tool_list = tools or ()
+    request_probe = request_probe if isinstance(request_probe, dict) else {}
     return {
         "schema_version": 1,
         "scenario": "reflection",
@@ -280,17 +281,31 @@ def build_reflection_sample(
         "trigger_source": source,
         "origin_run_id": _safe_label(trigger_context.get("origin_run_id")),
         "origin_gap_seconds": gap_seconds,
+        "snapshot_source": trigger_context.get("snapshot_source", "unavailable"),
         "probe_eligible": eligible,
-        "cache_low_hit": eligible and ratio <= MAX_CURRENT_HIT_RATIO,
+        "cache_low_hit": (
+            eligible and ratio <= MAX_CURRENT_HIT_RATIO
+            and request_probe.get("outcome", "success") != "error"
+        ),
         "attempt_index": max(1, _nonnegative_int(attempt_index)),
+        "request_started_at": request_probe.get("request_started_at"),
+        "response_received_at": request_probe.get("response_received_at"),
+        "request_duration_ms": request_probe.get("request_duration_ms"),
+        "wire_prefix": request_probe.get("wire_prefix"),
+        "raw_usage_probe": request_probe.get("raw_usage"),
+        "request_outcome": request_probe.get("outcome", "unknown"),
+        "request_error_type": request_probe.get("error_type"),
+        "request_error_status": request_probe.get("error_status"),
+        "request_error_code": request_probe.get("error_code"),
     }
 
 
 def record_reflection_usage(
     policy_name: str, branch_input: Any, settings: Any, usage_samples: list,
+    request_samples: list | None = None,
 ) -> None:
     """记录 append 分支实际 usage；遥测错误只进入受限诊断，不影响反思结果。"""
-    if policy_name != "reflection" or not usage_samples:
+    if policy_name != "reflection" or not (usage_samples or request_samples):
         return
     from . import state
 
@@ -302,9 +317,15 @@ def record_reflection_usage(
 
         ai = effective_ai(settings)
         adapter = providers.adapter_for(ai)
-        for index, usage in enumerate(usage_samples, start=1):
+        probe_rows = [item for item in (request_samples or []) if isinstance(item, dict)]
+        samples = (
+            [(item.get("normalized_usage") or {}, item) for item in probe_rows]
+            if probe_rows else [(usage, None) for usage in usage_samples]
+        )
+        for index, (usage, request_probe) in enumerate(samples, start=1):
             observation = build_reflection_sample(
                 branch_input, ai, adapter, usage, attempt_index=index,
+                request_probe=request_probe,
             )
             record_reflection_sample(
                 observation, session_id=branch_input.session_id,
@@ -443,23 +464,23 @@ def record_reflection_sample(
     if not safe:
         return
 
-    run = state._scope_run.get()
-    detached = run is None or run.ended_at is not None
-    if detached:
-        trace_id = uuid.uuid4().hex[:12]
-        session_text = str(session_id) if session_id is not None else "unknown"
-        run = state._ScopeRun(
-            id=f"run-{trace_id}-{uuid.uuid4().hex[:6]}",
-            trace_id=trace_id,
-            session_key=f"gugu:reflection:{session_text}",
-            external_session_id=session_text,
-            source="reflection",
-            started_at=state._now(),
-        )
-        run.attributes["scenario"] = "reflection"
-        run.attributes["reflection_scope"] = safe["reflection_scope"]
-        if safe.get("origin_run_id"):
-            run.attributes["origin_run_id"] = safe["origin_run_id"]
+    # Every sample gets its own reflection trace so the dedicated page can query
+    # threshold and idle reflections consistently, regardless of the parent run.
+    trace_id = uuid.uuid4().hex[:12]
+    session_text = str(session_id) if session_id is not None else "unknown"
+    run = state._ScopeRun(
+        id=f"run-{trace_id}-{uuid.uuid4().hex[:6]}",
+        trace_id=trace_id,
+        session_key=f"gugu:reflection:{session_text}",
+        external_session_id=session_text,
+        source="reflection",
+        started_at=state._now(),
+    )
+    run.attributes["scenario"] = "reflection"
+    run.attributes["reflection_scope"] = safe["reflection_scope"]
+    run.attributes["reflection_cache_probe"] = safe
+    if safe.get("origin_run_id"):
+        run.attributes["origin_run_id"] = safe["origin_run_id"]
 
     usage = {
         "input": safe["input_tokens"],
@@ -499,14 +520,15 @@ def record_reflection_sample(
     samples.append({key: safe[key] for key in (
         "provider", "model", "api_format", "cache_hit_ratio",
         "stable_prefix_tokens_estimate", "reflection_scope", "trigger_source",
-        "origin_gap_seconds",
-        "cache_low_hit",
+        "snapshot_source",
+        "origin_gap_seconds", "cache_low_hit", "request_started_at",
+        "request_duration_ms", "wire_prefix_digest", "wire_prefix_row_count",
+        "wire_prefix_text_char_count",
     )})
     del samples[:-10]
 
-    if detached:
-        run.add_usage(usage)
-        state._finish_run(run, "success")
+    run.add_usage(usage)
+    state._finish_run(run, "success")
 
 
 def _nonnegative_int(value: Any) -> int:
@@ -532,7 +554,10 @@ def _safe_reflection_observation(value: dict[str, Any]) -> dict[str, Any]:
         "cache_write_tokens", "cache_hit_ratio", "stable_prefix_tokens_estimate",
         "stable_prefix_digest", "system_digest", "tool_schema_digest",
         "history_message_count", "tool_count", "reflection_scope", "trigger_source", "origin_run_id",
-        "origin_gap_seconds", "probe_eligible", "cache_low_hit", "attempt_index",
+        "origin_gap_seconds", "snapshot_source", "probe_eligible", "cache_low_hit", "attempt_index",
+        "request_started_at", "response_received_at", "request_duration_ms",
+        "wire_prefix", "raw_usage_probe", "request_outcome", "request_error_type",
+        "request_error_status", "request_error_code",
     )
     safe = {key: value[key] for key in allowed if key in value}
     for key in (
@@ -545,12 +570,65 @@ def _safe_reflection_observation(value: dict[str, Any]) -> dict[str, Any]:
     safe["trigger_source"] = source if source in _REFLECTION_TRIGGER_SOURCES else "unknown"
     scope = safe.get("reflection_scope")
     safe["reflection_scope"] = scope if scope in _REFLECTION_SCOPES else "unknown"
+    snapshot_source = safe.get("snapshot_source")
+    safe["snapshot_source"] = (
+        snapshot_source if snapshot_source in {
+            "in_memory", "in_memory_extended", "persisted_history", "unavailable",
+        }
+        else "other"
+    )
     for key in (
         "schema_version", "input_tokens", "fresh_input_tokens", "cache_read_tokens",
         "cache_write_tokens", "stable_prefix_tokens_estimate", "history_message_count",
         "tool_count", "attempt_index",
     ):
         safe[key] = _nonnegative_int(safe.get(key))
+    for key in ("request_started_at", "response_received_at"):
+        value = safe.get(key)
+        safe[key] = value[:64] if isinstance(value, str) else None
+    try:
+        safe["request_duration_ms"] = round(max(0.0, float(safe.get("request_duration_ms"))), 3)
+    except (TypeError, ValueError):
+        safe["request_duration_ms"] = None
+    outcome = safe.get("request_outcome")
+    safe["request_outcome"] = outcome if outcome in {"success", "error"} else "unknown"
+    safe["request_error_type"] = _safe_label(safe.get("request_error_type", ""))
+    status = safe.get("request_error_status")
+    safe["request_error_status"] = status if isinstance(status, int) and 100 <= status <= 599 else None
+    code = safe.get("request_error_code")
+    safe["request_error_code"] = _safe_label(code) if isinstance(code, str) else ""
+    wire_prefix = safe.get("wire_prefix")
+    if isinstance(wire_prefix, dict):
+        allowed_wire = {
+            "digest", "rows_key", "prefix_row_count", "request_row_count",
+            "text_block_count", "text_char_count", "anchor_paths", "anchor_index_basis",
+        }
+        wire = {key: wire_prefix[key] for key in allowed_wire if key in wire_prefix}
+        wire["digest"] = _safe_label(wire.get("digest", ""))
+        wire["rows_key"] = wire.get("rows_key") if wire.get("rows_key") in {"messages", "input"} else None
+        wire["anchor_paths"] = [
+            _safe_label(path) for path in wire.get("anchor_paths", []) if isinstance(path, str)
+        ][:32]
+        for key in ("prefix_row_count", "request_row_count", "text_block_count", "text_char_count"):
+            wire[key] = _nonnegative_int(wire.get(key))
+        wire["anchor_index_basis"] = "wire row index; paths identify nested block positions"
+        safe["wire_prefix"] = wire
+    else:
+        safe["wire_prefix"] = {}
+    raw_usage = safe.get("raw_usage_probe")
+    def numeric_usage_shape(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {
+                _safe_label(str(key)): numeric_usage_shape(item)
+                for key, item in value.items()
+                if isinstance(key, str) and isinstance(item, (dict, list, int, float, bool))
+            }
+        if isinstance(value, list):
+            return [numeric_usage_shape(item) for item in value[:64]
+                    if isinstance(item, (dict, list, int, float, bool))]
+        return value if isinstance(value, (int, float, bool)) else None
+
+    safe["raw_usage_probe"] = numeric_usage_shape(raw_usage) if isinstance(raw_usage, dict) else None
     if not has_fresh_input:
         safe["fresh_input_tokens"] = max(
             0,
@@ -575,6 +653,10 @@ def _safe_reflection_observation(value: dict[str, Any]) -> dict[str, Any]:
     safe["cache_low_hit"] = (
         safe["probe_eligible"]
         and safe["cache_hit_ratio"] <= MAX_CURRENT_HIT_RATIO
+        and safe["request_outcome"] != "error"
     )
     safe["scenario"] = "reflection"
+    safe["wire_prefix_digest"] = safe["wire_prefix"].get("digest")
+    safe["wire_prefix_row_count"] = safe["wire_prefix"].get("prefix_row_count", 0)
+    safe["wire_prefix_text_char_count"] = safe["wire_prefix"].get("text_char_count", 0)
     return safe

@@ -30,7 +30,7 @@ html[data-theme][data-family] .admin-layout :is(
   -webkit-backdrop-filter: none;
 }
 
-html[data-family='mono'] .mini-player .mp-bars i { background: color-mix(in srgb,var(--action-primary) 72%,transparent); }
+html[data-family='mono'] .mini-player .mp-bars i { background: var(--gugu-chat-voice-wave); }
 html[data-family='mono'] .mini-player .mp-track { background: color-mix(in srgb,var(--action-primary) 14%,transparent); }
 html[data-family='mono'] .mini-player .mp-fill {
   background: var(--action-primary);

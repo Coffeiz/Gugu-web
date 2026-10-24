@@ -17,6 +17,7 @@ pytest 进程里的其它测试文件。
 import asyncio
 import collections
 import json
+from unittest.mock import AsyncMock
 from types import SimpleNamespace
 
 import pytest
@@ -43,6 +44,55 @@ EXPECTED_USAGE = {
     "input": 13, "output": 5, "cache_read": 3, "cache_write": 0,
     "fresh_input": 10, "total": 18, "cache_ratio": round(3 / 13, 6),
 }
+
+
+@pytest.mark.parametrize(
+    ("source", "active_im_delivery"),
+    [("qq", False), ("feishu", False), ("qq", True)],
+)
+async def test_genstream_done_finishes_only_after_active_im_delivery(
+    monkeypatch, loopscope_hooks, source, active_im_delivery,
+):
+    """区分继承 IM 来源的 Web run 与当前 IM 投递，终态快照包含生成正文。"""
+    from agent.im import imctx
+    from agent.llm import genstream
+    from agent.runtime import trace
+    from agent.runtime.loopscope_trace import state
+
+    post = AsyncMock()
+    monkeypatch.setattr(state, "_post_snapshot", post)
+    run = _ScopeRun(
+        id=f"run-mirror-{source}", trace_id=f"trace-mirror-{source}",
+        session_key=f"gugu:{source}:42", external_session_id="42",
+        source=source, started_at=_now(),
+    )
+    token = _scope_run.set(run)
+    if active_im_delivery:
+        imctx.set_im(source, "message-1", "bot-1", "group-1", "member-1", "group")
+    try:
+        await genstream.begin(42, owner_run_id="mirror-owner")
+        assert run.session_key == f"gugu:{source}:42"
+        assert run.source == source
+        await genstream.publish(42, {"type": "token", "content": "合成回复_STATE", "source": source})
+        await genstream.publish(42, {"type": "done", "source": source})
+        if active_im_delivery:
+            assert run.ended_at is None
+            trace.finish_run("error")
+            expected_status = "error"
+        else:
+            # 仅继承 QQ/飞书会话来源的 Web run 应在生成完成时收尾。
+            assert run.ended_at is not None
+            trace.finish_run("success", "合成回复_STATE")
+            expected_status = "success"
+        await asyncio.gather(*list(state._send_tasks))
+        final = post.call_args.args[0]
+        assert final["status"] == expected_status
+        assert final["ended_at"] is not None
+        assert final["output"] == {"text": "合成回复_STATE"}
+        assert final["session_key"] == f"gugu:{source}:42"
+    finally:
+        imctx.clear()
+        _scope_run.reset(token)
 
 
 def test_loopscope_separates_session_snapshot_from_history_display():

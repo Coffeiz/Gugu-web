@@ -66,7 +66,6 @@
       <div v-if="report.orphan_dirs.length" class="fd-section">
         <div class="sec-title orphan">{{ t('storageAuditExtra.orphanSection') }}</div>
         <ul class="dir-list"><li v-for="dir in report.orphan_dirs" :key="dir" class="dir-item">{{ dir }}</li></ul>
-        <Checkbox v-model="removeOrphans" class="fd-confirm">{{ t('storageAuditUi.confirmOrphans') }}</Checkbox>
       </div>
 
       <div v-if="report.misplaced_files.length" class="fd-section">
@@ -77,24 +76,23 @@
             <div class="misplaced-path"><span class="from">{{ item.current_key }}</span> → <span class="to">{{ item.expected_key }}</span></div>
           </li>
         </ul>
-        <Checkbox v-model="relocateFiles" class="fd-confirm">{{ t('storageAuditExtra.relocateConfirm') }}</Checkbox>
       </div>
 
-      <div v-if="!report.healthy" class="fd-actions">
+      <div v-if="report.missing_dirs.length" class="fd-actions">
         <ActionButton :disabled="fixing" fit @click="repairDirs()">
-          <Icon name="admin.wrench" size="sm" />{{ fixButtonLabel }}
+          <Icon name="admin.wrench" size="sm" />{{ t('storageAuditExtra.actionMissing') }}
         </ActionButton>
         <span class="fd-actions-note">{{ t('storageAuditExtra.actionsNote') }}</span>
       </div>
+      <div v-else-if="!report.healthy" class="fd-actions-note">{{ t('storageAuditExtra.readOnlyDirectoryFindings') }}</div>
     </template>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
-import Checkbox from '@/components/common/controls/Checkbox.vue'
 import { useAdminStore } from '@/stores/admin'
 
 interface MisplacedFile { file_id: number; display_name: string; current_key: string; expected_key: string }
@@ -114,19 +112,9 @@ const { t } = useI18n()
 const userId = ref('')
 const report = ref<DoctorReport | null>(null)
 const lastFix = ref<{ created: number; removed: number; relocated: number } | null>(null)
-const removeOrphans = ref(false)
-const relocateFiles = ref(false)
 const scanning = ref(false)
 const fixing = ref(false)
 const error = ref('')
-
-const fixButtonLabel = computed(() => {
-  const parts: string[] = []
-  if (report.value?.missing_dirs.length) parts.push(t('storageAuditExtra.actionMissing'))
-  if (removeOrphans.value && report.value?.orphan_dirs.length) parts.push(t('storageAuditExtra.actionOrphan'))
-  if (relocateFiles.value && report.value?.misplaced_files.length) parts.push(t('storageAuditExtra.actionRelocate'))
-  return parts.length ? t('storageAuditExtra.actionWithParts', { parts: parts.join(' + ') }) : t('storageAuditExtra.noAction')
-})
 
 function queryString() { return userId.value ? `?user_id=${encodeURIComponent(userId.value)}` : '' }
 
@@ -134,8 +122,6 @@ async function scanDirs() {
   scanning.value = true
   error.value = ''
   lastFix.value = null
-  removeOrphans.value = false
-  relocateFiles.value = false
   try {
     const response = await adminStore.authFetch(`/api/v1/admin/folder-doctor/scan${queryString()}`)
     if (!response.ok) throw new Error(t('storageAuditExtra.scanFailed', { message: `(${response.status})` }))
@@ -156,16 +142,12 @@ async function repairDirs() {
       method: 'POST',
       body: JSON.stringify({
         user_id: userId.value || null,
-        remove_orphans: removeOrphans.value,
-        relocate_files: relocateFiles.value,
       }),
     })
     if (!response.ok) throw new Error(t('storageAuditExtra.repairFailure', { message: `(${response.status})` }))
     const fresh: DoctorReport = await response.json()
     lastFix.value = { created: fresh.created, removed: fresh.removed, relocated: fresh.relocated }
     report.value = fresh
-    removeOrphans.value = false
-    relocateFiles.value = false
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : String(cause)
   } finally {
@@ -207,7 +189,6 @@ async function repairDirs() {
 .misplaced-path { font-size: var(--font-size-xs); }
 .misplaced-path .from { color: var(--status-warning); }
 .misplaced-path .to { color: var(--status-success); }
-.fd-confirm { margin-top: 12px; font-size: var(--font-size-sm); color: var(--content-secondary); }
 .fd-actions { display: flex; align-items: center; gap: 14px; margin-top: 4px; flex-wrap: wrap; }
 .fd-actions-note { font-size: var(--font-size-sm); color: var(--content-secondary); }
 @media (max-width: 760px) { .sa-card-head { flex-wrap: wrap; } .sa-card-head-right { width: 100%; } .sa-input { min-width: 0; flex: 1; } }

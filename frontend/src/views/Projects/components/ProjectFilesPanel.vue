@@ -291,7 +291,7 @@ const { folderListIcon, folderAccentColor } = useFileLibraryFolderPresentation()
 const {
   fileViewMode, pmInSelectionMode,
   pmIsDragging, pmSelectionRect, bindPmGridEl, onPmGridMouseDown, onPmContentClick, openPmCtx,
-  onPmDragEnter, onPmDragLeave, onPmDrop, sortedCurrentFolders, pmFolderCount, accentColor,
+  onPmDragEnter, onPmDragLeave, onPmDrop, sortedCurrentFolders, pmFolderCount,
   folderLayoutKey, fileLayoutKey, layoutCollection,
   pmSelectedFolderIds, pmPreviewFolderIds, onPmFolderClick, runtimeScope,
   renamingFolderId, commitFolderRename, startRenameFolder, downloadFolderZip, deleteFolderCard,

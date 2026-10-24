@@ -16,7 +16,7 @@ BACKEND = Path(__file__).resolve().parents[3]
 # 允许直读 settings.ai 的模块（相对 agent/、app/ 路径）：
 # - llm_select/modelctx：解析与兜底本身
 # - media_reader/run_finalize：主循环模型缺失时的兜底与 context_tokens 读取
-# - chat_attach/byok/policy：能力开关判断，不选模型
+# - media/gates/byok/policy：能力开关判断，不选模型
 # - email_admin/agent_admin：管理端指定/平台预设按设计
 ALLOWLIST = {
     "agent/llm/llm_select.py",
@@ -24,7 +24,7 @@ ALLOWLIST = {
     "agent/core.py",
     "agent/tools/media_reader.py",
     "agent/context/run_finalize.py",
-    "app/core/chat_attach.py",
+    "agent/media/gates.py",
     "app/byok/policy.py",
     "app/api/v1/email_admin.py",
     "app/api/v1/agent_admin.py",
@@ -36,6 +36,27 @@ def _iter_python_files():
         yield from (BACKEND / base).rglob("*.py")
 
 
+def _non_code_lines(path: Path) -> set[int]:
+    """返回只出现在注释或字符串字面量里的行号。
+
+    守卫要拦的是"代码直读 settings.ai"，文档字符串里**提到** settings.ai
+    （比如解释"为什么不能直读"）不是违规——只按行扫原文会把这类说明当成违规，
+    制造误报。用 tokenize 把注释与字符串行标出来，扫描时跳过。
+    """
+    import io
+    import tokenize
+
+    source = path.read_text(encoding="utf-8")
+    skip: set[int] = set()
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(source).readline):
+            if token.type in (tokenize.COMMENT, tokenize.STRING):
+                skip.update(range(token.start[0], token.end[0] + 1))
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        return set()
+    return skip
+
+
 def test_user_scoped_modules_do_not_read_settings_ai_directly():
     """用户链路模块不得直读 settings.ai 选模型，必须走 modelctx.effective_ai。"""
     violations = []
@@ -43,10 +64,12 @@ def test_user_scoped_modules_do_not_read_settings_ai_directly():
         rel = path.relative_to(BACKEND).as_posix()
         if rel in ALLOWLIST or "__pycache__" in rel:
             continue
+        non_code = _non_code_lines(path)
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            stripped = line.strip()
-            if stripped.startswith("#") and "settings.ai" in stripped:
+            if lineno in non_code:
+                # 注释 / 文档字符串里提到 settings.ai 不是"直读"
                 continue
+            stripped = line.strip()
             if "settings.ai" in line.replace(" ", "") and "context_tokens" not in line:
                 # context_tokens 行是上下文预算兜底（与 run_finalize 同模式），不选模型
                 violations.append(f"{rel}:{lineno}: {stripped}")

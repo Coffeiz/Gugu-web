@@ -12,35 +12,41 @@
         <div class="fp-info-body">
           <div class="fp-info-row">
             <span class="fp-info-label">{{ t('files.name') }}</span>
-            <span class="fp-info-val">{{ file.displayName }}.{{ file.ext?.toLowerCase() }}</span>
+            <span class="fp-info-val">{{ infoFile.displayName }}.{{ infoFile.ext?.toLowerCase() }}</span>
           </div>
           <div class="fp-info-row">
             <span class="fp-info-label">{{ t('files.format') }}</span>
-            <span class="fp-info-val">{{ file.ext?.toUpperCase() }}</span>
+            <span class="fp-info-val">{{ infoFile.ext?.toUpperCase() }}</span>
           </div>
-          <div v-if="file.sizeBytes != null || file.size" class="fp-info-row">
+          <div v-if="resolution" class="fp-info-row">
+            <span class="fp-info-label">{{ t('sharedUi.resolution') }}</span>
+            <span class="fp-info-val">{{ resolution }}</span>
+          </div>
+          <div v-if="infoFile.sizeBytes != null || infoFile.size" class="fp-info-row">
             <span class="fp-info-label">{{ t('files.size') }}</span>
-            <span class="fp-info-val">{{ file.sizeBytes != null ? fmtBytes(file.sizeBytes) : file.size }}</span>
+            <span class="fp-info-val">{{ infoFile.sizeBytes != null ? fmtBytes(infoFile.sizeBytes) : infoFile.size }}</span>
           </div>
-          <div v-if="file.createdAt" class="fp-info-row">
+          <div v-if="infoFile.createdAt" class="fp-info-row">
             <span class="fp-info-label">{{ t('files.createdAt') }}</span>
-            <span class="fp-info-val">{{ formatFileCreatedDate(file.createdAt) }}</span>
+            <span class="fp-info-val">{{ formatFileCreatedDate(infoFile.createdAt) }}</span>
           </div>
-          <div v-if="file.projectName" class="fp-info-row">
+          <div v-if="infoFile.projectName" class="fp-info-row">
             <span class="fp-info-label">{{ t('files.project') }}</span>
-            <span class="fp-info-val">{{ file.projectName }}</span>
+            <span class="fp-info-val">{{ infoFile.projectName }}</span>
           </div>
-          <div v-if="file.folderName" class="fp-info-row">
+          <div v-if="folderPath || pathLoading || infoFile.folderName || infoFile.id" class="fp-info-row">
             <span class="fp-info-label">{{ t('files.folderLocation') }}</span>
-            <span class="fp-info-val">{{ file.folderName }}</span>
+            <button class="fp-info-path" :disabled="!canNavigate" @click="$emit('navigate', infoFile)">
+              {{ folderPath || (pathLoading ? t('files.loading') : infoFile.folderName || '—') }}
+            </button>
           </div>
-          <div v-if="file.stageName" class="fp-info-row">
+          <div v-if="infoFile.stageName" class="fp-info-row">
             <span class="fp-info-label">{{ t('files.stage') }}</span>
-            <span class="fp-info-val">{{ file.stageName }}</span>
+            <span class="fp-info-val">{{ infoFile.stageName }}</span>
           </div>
-          <div v-if="file.mimeType" class="fp-info-row">
+          <div v-if="infoFile.mimeType" class="fp-info-row">
             <span class="fp-info-label">MIME</span>
-            <span class="fp-info-val fp-info-mono">{{ file.mimeType }}</span>
+            <span class="fp-info-val fp-info-mono">{{ infoFile.mimeType }}</span>
           </div>
         </div>
       </div>
@@ -51,27 +57,53 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
-import { ref, watch, nextTick, onUnmounted } from 'vue'
+import { computed, ref, watch, nextTick, type PropType } from 'vue'
+import { useWindowDrag } from '@/composables/core/useWindowDrag'
 import { nextZ } from '@/composables/core/windowz'
 import CloseButton from '@/components/common/overlays/CloseButton.vue'
 import { fmtBytes } from '@/utils/fileSize'
 import { formatFileCreatedDate } from '@/utils/fileDate'
+import { filesApi, workspaceDirectoriesApi } from '@/services/api'
+import type { FileMeta } from '@/stores/filesCache'
+import { accountBoundaryEpoch, getAccountBoundaryEpoch } from '@/utils/accountBoundary'
 const props = defineProps({
   show: Boolean,
-  file: Object,
+  file: { type: Object as PropType<Partial<FileMeta> | undefined>, default: undefined },
   x:    { type: Number, default: 0 },
   y:    { type: Number, default: 0 },
+  zIndex: { type: Number, default: 0 },
+  resolution: { type: String, default: '' },
 })
-const emit = defineEmits(['close'])
+const emit = defineEmits(['close', 'navigate', 'update:x', 'update:y'])
 
 const el   = ref<HTMLElement | null>(null)
 const posX = ref(0)
 const posY = ref(0)
 const myZ  = ref(0)   // 每次弹出领新 z,盖当前最顶窗口
+const detailFile = ref<Partial<FileMeta> | null>(null)
+const folderNames = ref<string[]>([])
+const workspaceName = ref('')
+const pathLoading = ref(false)
+let detailLoadSequence = 0
+const infoFile = computed<Partial<FileMeta>>(() => {
+  const file = props.file ?? {}
+  return detailFile.value && String(detailFile.value.id) === String(file.id)
+    ? { ...file, ...detailFile.value }
+    : file
+})
+const folderPath = computed(() => {
+  if (infoFile.value.attach_id) return ''
+  const root = infoFile.value.projectName
+    || (infoFile.value.workspaceDirectoryId != null ? (workspaceName.value || t('files.workspace')) : t('files.all'))
+  const folders = [...folderNames.value]
+  if (!folders.length && infoFile.value.folderName) folders.push(infoFile.value.folderName)
+  return [root, ...folders].filter(Boolean).join(' / ')
+})
+const canNavigate = computed(() => !infoFile.value.attach_id && Number.isSafeInteger(Number(infoFile.value.id)))
 
-watch(() => [props.show, props.x, props.y], async ([v]) => {
+watch(() => [props.show, props.x, props.y, props.zIndex], async ([v]) => {
   if (!v) return
-  myZ.value = nextZ()
+  myZ.value = props.zIndex || nextZ()
   posX.value = props.x
   posY.value = props.y
   await nextTick()
@@ -84,27 +116,43 @@ watch(() => [props.show, props.x, props.y], async ([v]) => {
   }
 }, { immediate: false })
 
+watch(() => [props.show, props.file?.id, accountBoundaryEpoch.value], ([show]) => {
+  const sequence = ++detailLoadSequence
+  detailFile.value = null
+  folderNames.value = []
+  workspaceName.value = ''
+  pathLoading.value = false
+  const file = props.file
+  if (!show || !file || file.attach_id || typeof file.id !== 'number') return
+  const fileId = file.id
+  const accountEpoch = getAccountBoundaryEpoch()
+  pathLoading.value = true
+  void (async () => {
+    try {
+      const location = await filesApi.location(fileId)
+      if (sequence !== detailLoadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
+      detailFile.value = location.file as Partial<FileMeta>
+      folderNames.value = location.folderPath.map(folder => folder.name)
+      const workspaceDirectoryId = detailFile.value.workspaceDirectoryId
+      if (workspaceDirectoryId != null) {
+        const directories = await workspaceDirectoriesApi.list()
+        if (sequence !== detailLoadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
+        workspaceName.value = directories.find(item => item.id === workspaceDirectoryId)?.name || ''
+      }
+    } catch {
+      // 详情接口失败时继续展示调用方已持有的元数据。
+    } finally {
+      if (sequence === detailLoadSequence) pathLoading.value = false
+    }
+  })()
+}, { immediate: true })
+
 // ── 拖动 ──────────────────────────────────────────────
-let dragOrig: { mx: number; my: number; x: number; y: number } | null = null
-function startDrag(e: MouseEvent) {
-  if (e.button !== 0) return
-  dragOrig = { mx: e.clientX, my: e.clientY, x: posX.value, y: posY.value }
-  window.addEventListener('mousemove', onDragMove)
-  window.addEventListener('mouseup',   onDragUp)
-}
-function onDragMove(e: MouseEvent) {
-  if (!dragOrig) return
-  posX.value = Math.max(0, dragOrig.x + e.clientX - dragOrig.mx)
-  posY.value = Math.max(0, dragOrig.y + e.clientY - dragOrig.my)
-}
-function onDragUp() {
-  dragOrig = null
-  window.removeEventListener('mousemove', onDragMove)
-  window.removeEventListener('mouseup',   onDragUp)
-}
-onUnmounted(() => {
-  window.removeEventListener('mousemove', onDragMove)
-  window.removeEventListener('mouseup',   onDragUp)
+const { startDrag } = useWindowDrag(posX, posY, (x, y) => {
+  const next = { x: Math.max(0, x), y: Math.max(0, y) }
+  emit('update:x', next.x)
+  emit('update:y', next.y)
+  return next
 })
 </script>
 
@@ -114,23 +162,24 @@ onUnmounted(() => {
   width: 220px;
   border-radius: 12px;
   overflow: hidden;
-  background: rgba(242, 243, 248, 0.97);
-  backdrop-filter: var(--popup-blur);
-  -webkit-backdrop-filter: var(--popup-blur);
-  border: 1px solid rgba(255, 255, 255, 0.7);
-  box-shadow: 0 8px 32px rgba(20, 25, 60, 0.18), 0 2px 8px rgba(0, 0, 0, 0.07);
+  background: var(--popup-surface-bg);
+  backdrop-filter: var(--popup-surface-blur);
+  -webkit-backdrop-filter: var(--popup-surface-blur);
+  border: 1px solid var(--popup-surface-border);
+  box-shadow: var(--popup-surface-shadow);
   user-select: none;
   /* z-index 由 :style 动态(每次弹出盖当前最顶窗口) */
 }
 .fp-info-title {
   box-sizing: border-box;
-  min-height: var(--card-close-safe-area);
+  min-height: 44px;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 9px var(--card-close-safe-area) 9px 14px;
-  background: rgba(255, 255, 255, 0.55);
-  border-bottom: 1px solid rgba(0, 0, 0, 0.07);
+  padding: 6px 8px 6px 14px;
+  background: var(--surface-glass);
+  border-bottom: 1px solid var(--panel-divider);
   cursor: grab;
   font-size: 12px;
   font-weight: 600;
@@ -155,6 +204,8 @@ onUnmounted(() => {
   font-size: 12px; color: var(--text-primary);
   word-break: break-all; line-height: 1.4;
 }
+.fp-info-path { min-width:0; padding:0; border:0; background:transparent; color:var(--text-primary); font:inherit; font-size:12px; line-height:1.4; text-align:left; text-decoration:underline; text-decoration-style:dotted; text-underline-offset:2px; overflow-wrap:anywhere; cursor:pointer; }
+.fp-info-path:disabled { color:var(--text-secondary); cursor:default; text-decoration:none; }
 .fp-info-mono { font-family: var(--font-family-mono); font-size: 11px; }
 
 .info-pop-enter-active,

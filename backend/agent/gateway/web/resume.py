@@ -28,21 +28,6 @@ async def resume(session_id) -> AsyncGenerator[str, None]:
                 if not isinstance(item, dict) or not item.get("type"):
                     continue
                 yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
-        else:
-            # 兼容升级前已经存在的旧快照（只有 text/tools，没有 timeline）。
-            run_id = snap.get("run_id") or ""
-            round_id = snap.get("round_id") or ""
-            if run_id or round_id:
-                yield f"data: {json.dumps({'type': 'round_start', 'run_id': run_id, 'round_id': round_id}, ensure_ascii=False)}\n\n"
-            if snap.get("text"):
-                yield f"data: {json.dumps({'type': 'token', 'content': snap['text'], 'run_id': run_id, 'round_id': round_id}, ensure_ascii=False)}\n\n"
-            for f in (snap.get("files") or []):
-                yield f"data: {json.dumps({'type': 'file', 'file': f}, ensure_ascii=False)}\n\n"
-            for tool_call in snap.get("tools") or []:
-                if tool_call.get("name"):
-                    yield f"data: {json.dumps({'type': 'tool_call', **tool_call}, ensure_ascii=False)}\n\n"
-                    if tool_call.get("status") not in (None, "queued", "running", "waiting"):
-                        yield f"data: {json.dumps({'type': 'tool_done', **tool_call}, ensure_ascii=False)}\n\n"
         async for line in genstream.subscribe(session_id, pubsub=pubsub):
             yield line
         pubsub = None

@@ -388,6 +388,35 @@ async def _process_update(
     if normalized is not None:
         normalized["platform_event_id"] = str(update_id)
         normalized["message_id"] = str(normalized.get("message_id") or "")
+        if not normalized.get("attachments"):
+            from agent.im.shortcuts import apply_im_shortcut_cancel, decide_im_shortcut
+
+            platform_user_id = str(normalized.get("platform_user_id") or "")
+            dec = await decide_im_shortcut(
+                "telegram",
+                platform_user_id,
+                str(normalized.get("text") or ""),
+                bot_id=str(bot_id),
+                scope_id=str(normalized.get("chat_id") or platform_user_id),
+                allow_leading_mention=bool(normalized.get("group_mentioned")),
+            )
+            if dec.get("action") in {"cancel", "no_permission"}:
+                if dec["action"] == "cancel":
+                    await apply_im_shortcut_cancel(
+                        "telegram",
+                        platform_user_id,
+                        dec,
+                        bot_id=str(bot_id),
+                        scope_id=str(normalized.get("chat_id") or platform_user_id),
+                    )
+                await _persist_update(bot_id, update_id, None)
+                await send_message(
+                    str(normalized.get("chat_id") or platform_user_id),
+                    str(dec.get("reply") or ""),
+                    channel_id=str(bot_id),
+                    reply_to_message_id=str(normalized.get("message_id") or "") or None,
+                )
+                return True
     await _persist_update(bot_id, update_id, normalized)
     return True
 

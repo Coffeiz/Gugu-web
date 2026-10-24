@@ -1,0 +1,28 @@
+export const en = {
+  'changelog.description': 'Visible changes to product capabilities and the Trace protocol.',
+  'changelog.contextUsageTitle': 'Context & Usage Provenance',
+  'changelog.monitorLayout': 'Monitor moved from a standalone route into the current Session layout, keeping one workflow when switching Sessions.',
+  'changelog.spanSource': 'Spans now include Python file / module / function / line provenance, with Input, Output, Source, and Attributes shown separately.',
+  'changelog.contextSources': 'Context Assembly can expand DB / Memory / Prompt file / cache prefix / dynamic suffix sources; prompt files can be inspected separately.',
+  'changelog.runUsage': 'Runs and LLM Spans now include input / output / cache read / fresh input tokens; Context and Tool show estimated token impact.',
+  'changelog.sqliteMigration': 'SQLite 0.1 databases automatically migrate code / usage / token impact fields without deleting the database.',
+  'changelog.firstLoopDebugger': 'First usable loop debugger',
+  'changelog.boundaries': 'Independent frontend / backend / SQLite / Docker boundaries.',
+  'changelog.sessions': 'Real conversations across multiple Sessions with standard and detailed modes.',
+  'changelog.traceInspection': 'Inspect Run / Span traces, Prompt / model draft / Tool / Guard inputs and outputs.',
+  'changelog.tokenEntry': 'Standalone Design Tokens page and Gugu /dev entry point.',
+}
+export const zh = {
+  'changelog.description': '产品能力与 Trace 协议的可见变更。',
+  'changelog.contextUsageTitle': '上下文与用量来源',
+  'changelog.monitorLayout': 'Monitor 从独立路由改为当前 Session 内的布局模式，切换 Session 时保持同一工作流。',
+  'changelog.spanSource': 'Span 增加 Python 文件 / module / function / line 来源，并将 Input、Output、Source、Attributes 分开展开。',
+  'changelog.contextSources': 'Context Assembly 可展开 DB / Memory / Prompt file / cache prefix / dynamic suffix 等来源，Prompt 文件可单独查看正文。',
+  'changelog.runUsage': 'Run 与 LLM Span 增加 input / output / cache read / fresh input token；Context 与 Tool 显示估算 token impact。',
+  'changelog.sqliteMigration': 'SQLite 0.1 数据库自动迁移 code / usage / token impact 字段，无需删库。',
+  'changelog.firstLoopDebugger': '首个可用的 Loop 调试器',
+  'changelog.boundaries': 'frontend / backend / SQLite / Docker 各自独立。',
+  'changelog.sessions': '支持多 Session 实际对话与普通 / 详细模式。',
+  'changelog.traceInspection': '可检查 Run / Span Trace、Prompt / model draft / Tool / Guard 输入输出。',
+  'changelog.tokenEntry': '独立 Design Tokens 页面与 Gugu /dev 入口。',
+}

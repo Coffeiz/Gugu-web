@@ -28,7 +28,7 @@ import ProjectCard from '../ProjectCard.vue'
 
 defineEmits(['card-click'])
 
-const props = defineProps({
+defineProps({
   projects: { type: Array as PropType<Project[]>, default: () => [] },
   recent: { type: Boolean, default: false },
   collectionKey: { type: String, default: '' },

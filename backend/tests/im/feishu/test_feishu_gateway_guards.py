@@ -221,3 +221,80 @@ def test_feishu_gateway_async_runner_reuses_loop_for_sequential_preflights():
         assert first_loop == second_loop
     finally:
         runner.stop()
+
+
+def _install_react_probe(monkeypatch):
+    """记录秒回表情，并放行入队；返回 (表情记录, 入队记录)。"""
+    produced: list[dict] = []
+    reactions: list[tuple] = []
+
+    def fake_produce_sync(_stream, payload):
+        produced.append(payload)
+
+    def fake_do_react(_client, message_id, emoji_type):
+        reactions.append((message_id, emoji_type))
+        return True
+
+    monkeypatch.setattr(events.R, "produce_sync", fake_produce_sync)
+    monkeypatch.setattr(messages, "_do_react", fake_do_react)
+
+    from agent import router
+    from agent.runtime import runtime_state
+
+    monkeypatch.setattr(router, "decide", lambda *args, **kwargs: {"action": "run"})
+    monkeypatch.setattr(runtime_state, "get_state_sync", lambda *args, **kwargs: None)
+    monkeypatch.setattr(runtime_state, "is_awaiting_sync", lambda *args, **kwargs: False)
+    return reactions, produced
+
+
+def test_feishu_reacts_with_emoji_before_enqueueing(monkeypatch):
+    """秒回表情必须赶在入队之前发生：用户先看到反应，完整回复随后由 worker 发。"""
+    reactions, produced = _install_react_probe(monkeypatch)
+
+    handler = _make_handler("bot-1", "user-1", object(), expected_app_id="cli_expected")
+    handler(_feishu_event(message_id="om_react"))
+
+    assert len(reactions) == 1
+    assert reactions[0][0] == "om_react"
+    # 默认（没命中关键词）也要回一个表情，否则这个特性等于没上线。
+    assert reactions[0][1] == "OnIt"
+    assert len(produced) == 1
+
+
+def test_feishu_reaction_emoji_follows_message_keywords(monkeypatch):
+    reactions, produced = _install_react_probe(monkeypatch)
+
+    handler = _make_handler("bot-1", "user-1", object(), expected_app_id="cli_expected")
+    data = _feishu_event(message_id="om_react_laugh")
+    data.event.message.content = json.dumps({"text": "哈哈哈太好笑了"}, ensure_ascii=False)
+    handler(data)
+
+    assert reactions == [("om_react_laugh", "LAUGH")]
+
+
+def test_feishu_reaction_emoji_is_a_valid_feishu_emoji_type():
+    """选择器返回的每个 emoji 都得是飞书官方的 emoji_type，否则 reaction 会被平台拒掉。
+
+    飞书开放平台「表情文案说明」给出的合法 emoji_type 列表里，这 8 个 key 都在其中。
+    """
+    from agent.im.shortcuts import (
+        _QUICK_DEFAULT,
+        _QUICK_MEDIA,
+        _QUICK_REACTION_RULES,
+        choose_instant_reaction,
+    )
+
+    feishu_emoji_types = {
+        "OK", "THUMBSUP", "THANKS", "MUSCLE", "FINGERHEART", "APPLAUSE",
+        "FISTBUMP", "JIAYI", "DONE", "SMILE", "BLUSH", "LAUGH", "SMIRK",
+        "LOL", "FACEPALM", "LOVE", "WINK", "PROUD", "WITTY", "SMART",
+        "SCOWL", "THINKING", "SOB", "CRY", "JOYFUL", "WOW", "LGTM",
+        "OnIt", "PARTY", "HEART",
+    }
+    candidates = {rule[0] for rule in _QUICK_REACTION_RULES} | {_QUICK_DEFAULT[0]}
+    assert candidates <= feishu_emoji_types
+
+    # 媒体分支和默认分支返回的 emoji 也必须在合法集合里。
+    assert choose_instant_reaction("普通消息", True)[1] in feishu_emoji_types
+    assert choose_instant_reaction("普通消息", False)[1] in feishu_emoji_types
+    assert _QUICK_MEDIA  # 媒体分支的文案固定，但 emoji 仍走默认分支

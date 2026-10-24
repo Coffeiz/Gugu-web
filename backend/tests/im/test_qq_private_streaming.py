@@ -2,7 +2,7 @@
 
 import pytest
 
-from agent.im.loop import _qq_private_streaming_requested
+from agent.im.shortcuts import _qq_private_streaming_requested
 
 
 @pytest.mark.parametrize(

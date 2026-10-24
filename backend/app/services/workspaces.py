@@ -143,6 +143,7 @@ async def ensure_default_workspace_directory(db: AsyncSession, user_id) -> Works
 
 
 async def workspace_directory_payload(db: AsyncSession, user_id, row: WorkspaceDirectory) -> dict:
+    """返回工作区完整计数，供删除预览展示整个目录树的影响范围。"""
     file_count = await db.scalar(select(func.count(File.id)).where(
         File.user_id == user_id, File.workspace_directory_id == row.id, File.deleted_at.is_(None),
     ))
@@ -163,6 +164,69 @@ async def workspace_directory_payload(db: AsyncSession, user_id, row: WorkspaceD
         "bound_session_count": int(session_count or 0),
         "bound_task_count": int(task_count or 0),
     }
+
+
+async def workspace_directory_card_payloads(
+    db: AsyncSession, user_id, rows: list[WorkspaceDirectory],
+) -> list[dict]:
+    """批量统计工作区根目录直属项目，口径与个人文件根卡片一致。"""
+    if not rows:
+        return []
+
+    directory_ids = [row.id for row in rows]
+    file_counts = dict((await db.execute(
+        select(File.workspace_directory_id, func.count(File.id))
+        .where(
+            File.user_id == user_id,
+            File.space == "workspace",
+            File.workspace_directory_id.in_(directory_ids),
+            File.folder_id.is_(None),
+            File.deleted_at.is_(None),
+        )
+        .group_by(File.workspace_directory_id)
+    )).all())
+    folder_counts = dict((await db.execute(
+        select(Folder.workspace_directory_id, func.count(Folder.id))
+        .where(
+            Folder.user_id == user_id,
+            Folder.workspace_directory_id.in_(directory_ids),
+            Folder.parent_id.is_(None),
+            Folder.deleted_at.is_(None),
+        )
+        .group_by(Folder.workspace_directory_id)
+    )).all())
+    session_counts = dict((await db.execute(
+        select(Workspace.directory_id, func.count(ConversationSession.id))
+        .join(ConversationSession, ConversationSession.workspace_id == Workspace.id)
+        .where(
+            Workspace.user_id == user_id,
+            Workspace.directory_id.in_(directory_ids),
+            ConversationSession.user_id == user_id,
+        )
+        .group_by(Workspace.directory_id)
+    )).all())
+    task_counts = dict((await db.execute(
+        select(Workspace.directory_id, func.count(ScheduledTask.id))
+        .join(ScheduledTask, ScheduledTask.workspace_id == Workspace.id)
+        .where(
+            Workspace.user_id == user_id,
+            Workspace.directory_id.in_(directory_ids),
+            ScheduledTask.user_id == user_id,
+        )
+        .group_by(Workspace.directory_id)
+    )).all())
+
+    return [{
+        "id": row.id,
+        "name": row.name,
+        "directory_name": row.directory_name,
+        "is_default": row.is_default,
+        "is_system": row.is_system,
+        "file_count": int(file_counts.get(row.id, 0)),
+        "folder_count": int(folder_counts.get(row.id, 0)),
+        "bound_session_count": int(session_counts.get(row.id, 0)),
+        "bound_task_count": int(task_counts.get(row.id, 0)),
+    } for row in rows]
 
 
 def _validate_workspace_display_name(name: str) -> str:

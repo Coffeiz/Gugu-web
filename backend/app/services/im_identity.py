@@ -16,14 +16,17 @@ from app.core.tz import now_utc
 from app.models import UserBot
 
 DEFAULT_GROUP_ALLOWED_TOOLS: List[str] = ["xng_search", "http_get", "similar_image_search", "read_file", "send_file", "group_context_search"]
+GROUP_ALLOWED_TOOLS = frozenset({
+    "xng_search", "web_search", "http_get", "similar_image_search",
+    "read_file", "send_file", "group_context_search",
+})
 
 
 def normalize_group_allowed_tools(configured: object) -> List[str]:
-    """规范化群白名单，并把图片读取授权映射到受限 read_file。"""
+    """收敛群白名单；保留明确授权的 Provider 搜索并映射图片读取能力。"""
     if not isinstance(configured, list):
         return list(DEFAULT_GROUP_ALLOWED_TOOLS)
-    allowed = ["read_file" if name == "inspect_images" else name
-               for name in configured if isinstance(name, str)]
+    allowed = [name for name in configured if isinstance(name, str) and name in GROUP_ALLOWED_TOOLS]
     allowed = list(dict.fromkeys(allowed))
     if "xng_search" in allowed and "http_get" not in allowed:
         allowed.insert(allowed.index("xng_search") + 1, "http_get")

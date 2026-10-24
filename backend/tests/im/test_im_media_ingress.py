@@ -348,7 +348,7 @@ async def test_qq_large_media_uses_stream_staging_without_materializing(monkeypa
 
 @pytest.mark.asyncio
 async def test_im_loop_reports_oversized_only_attachment_without_sending_empty_agent_reply(monkeypatch):
-    from agent.im.loop import dispatch_im_message
+    from agent.im.dispatch import dispatch_im_message
     from agent.im.media_ingress import MediaIngressResult
 
     sent = []
@@ -375,3 +375,135 @@ async def test_im_loop_reports_oversized_only_attachment_without_sending_empty_a
     assert len(sent) == 1
     assert "文件大小超过限制" in sent[0][1]
     assert "512 MiB" in sent[0][1]
+
+
+class _NotFoundResponse(_FakeResponse):
+    status = 404
+    headers = {}
+
+
+class _NotFoundSession(_FakeSession):
+    def get(self, url, **kwargs):
+        self.urls.append(url)
+        return _NotFoundResponse()
+
+
+@pytest.mark.asyncio
+async def test_qq_media_ingress_reports_download_failure_instead_of_silent_drop(monkeypatch):
+    """下载失败必须回一句用户可见提示，不能静默丢弃附件。"""
+    from agent.im.media_ingress import QQ_DOWNLOAD_FAILURE_NOTICE, ingest_qq_media
+
+    monkeypatch.setattr("aiohttp.ClientSession", _NotFoundSession)
+    monkeypatch.setattr("agent.im.media_ingress.url_is_safe", lambda _url: None)
+
+    result = await ingest_qq_media(
+        [{"url": "https://example.test/gone.bin", "filename": "gone.bin"}],
+        "owner-1",
+    )
+
+    assert result.attachment_ids == []
+    assert result.failure_notice == QQ_DOWNLOAD_FAILURE_NOTICE
+    assert not result.size_limit_exceeded
+
+
+@pytest.mark.asyncio
+async def test_qq_media_ingress_reports_attachment_without_url(monkeypatch):
+    from agent.im.media_ingress import QQ_DOWNLOAD_FAILURE_NOTICE, ingest_qq_media
+
+    monkeypatch.setattr("aiohttp.ClientSession", _FakeSession)
+
+    result = await ingest_qq_media(
+        [{"filename": "no-url.bin"}],
+        "owner-1",
+    )
+
+    assert result.attachment_ids == []
+    assert result.failure_notice == QQ_DOWNLOAD_FAILURE_NOTICE
+
+
+@pytest.mark.asyncio
+async def test_qq_media_ingress_reports_staging_failure_separately(monkeypatch):
+    """下载到了但存不下来，跟下载失败不是一回事，提示也要分开。"""
+    from agent.im.media_ingress import QQ_STAGING_FAILURE_NOTICE, ingest_qq_media
+
+    async def failing_stage(*_args, **_kwargs):
+        raise RuntimeError("staging broke")
+
+    monkeypatch.setattr("aiohttp.ClientSession", _FakeSession)
+    monkeypatch.setattr("agent.im.media_ingress.url_is_safe", lambda _url: None)
+    monkeypatch.setattr("app.core.chat_attach.stage", failing_stage)
+
+    result = await ingest_qq_media(
+        [{"url": "https://example.test/a.bin", "filename": "a.bin"}],
+        "owner-1",
+    )
+
+    assert result.attachment_ids == []
+    assert result.failure_notice == QQ_STAGING_FAILURE_NOTICE
+
+
+@pytest.mark.asyncio
+async def test_im_loop_reports_qq_download_failure_to_user(monkeypatch):
+    """IM Loop 要把附件下载失败的提示发回用户，而不是当作什么都没发生。"""
+    from agent.im.dispatch import dispatch_im_message
+    from agent.im.media_ingress import MediaIngressResult
+
+    sent = []
+
+    async def fake_ingest(*_args, **_kwargs):
+        return MediaIngressResult([], failure_notice="有附件暂时无法从 QQ 下载，请稍后重试或重新发送。")
+
+    async def fake_send_text(payload, text):
+        sent.append((payload, text))
+        return True
+
+    monkeypatch.setattr("agent.im.media_ingress.ingest_qq_media", fake_ingest)
+    monkeypatch.setattr("agent.im.replies.send_text", fake_send_text)
+
+    result = await dispatch_im_message({
+        "platform": "qq",
+        "chat_type": "private",
+        "owner_user_id": "owner-1",
+        "text": "",
+        "attachments": [{"url": "https://example.test/gone.bin", "filename": "gone.bin"}],
+    })
+
+    assert result is None
+    assert len(sent) == 1
+    assert "无法从 QQ 下载" in sent[0][1]
+
+
+@pytest.mark.asyncio
+async def test_im_loop_reports_both_qq_failure_notices_without_swallowing(monkeypatch):
+    """下载失败和超限可能同时出现：两条提示都要发出去，先发的那条不能把后一条吞掉。"""
+    from agent.im.dispatch import dispatch_im_message
+    from agent.im.media_ingress import MediaIngressResult
+
+    sent = []
+
+    async def fake_ingest(*_args, **_kwargs):
+        return MediaIngressResult(
+            [],
+            size_limit_exceeded=True,
+            failure_notice="有附件暂时无法从 QQ 下载，请稍后重试或重新发送。",
+        )
+
+    async def fake_send_text(payload, text):
+        sent.append((payload, text))
+        return True
+
+    monkeypatch.setattr("agent.im.media_ingress.ingest_qq_media", fake_ingest)
+    monkeypatch.setattr("agent.im.replies.send_text", fake_send_text)
+
+    result = await dispatch_im_message({
+        "platform": "qq",
+        "chat_type": "private",
+        "owner_user_id": "owner-1",
+        "text": "",
+        "attachments": [{"url": "https://example.test/gone.bin", "filename": "gone.bin"}],
+    })
+
+    assert result is None
+    assert len(sent) == 2
+    assert "无法从 QQ 下载" in sent[0][1]
+    assert "文件大小超过限制" in sent[1][1]

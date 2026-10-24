@@ -2,7 +2,7 @@
 import { computed, isReactive, reactive } from 'vue'
 import { describe, expect, it } from 'vitest'
 import type { Project } from '@/types/project'
-import { projectTodoProgress } from '@/utils/projectStages'
+import { projectProgress } from '@/utils/projectProgress'
 import { useProjectColumnViews } from '@/composables/projects/useProjectColumnViews'
 
 describe('useProjectColumnViews', () => {
@@ -32,7 +32,7 @@ describe('useProjectColumnViews', () => {
 
     const firstList = views.columnProjects('active')
     const cardProject = firstList[0]
-    const cardProgress = computed(() => projectTodoProgress(cardProject.stages, cardProject.currentStage))
+    const cardProgress = computed(() => projectProgress(cardProject))
 
     expect(cardProject.fileCount).toBe(0)
     expect(isReactive(cardProject)).toBe(true)

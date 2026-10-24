@@ -2,9 +2,31 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+import json
 
 _MAX_VISIBLE_TOOL_CALLS = 24
+_MAX_TOOL_DETAIL_CHARS = 1200
 _MAX_CARD_COMPONENTS = 180
+
+
+def _tool_detail_block(value: object) -> str:
+    """将工具输入/结果限制长度并清理后放入 JSON 代码块。"""
+    from agent.outbound import sanitize_outbound
+    from agent.tool_messages import tool_code_block
+
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            pass
+        else:
+            if isinstance(parsed, (dict, list)):
+                value = parsed
+
+    code_block = tool_code_block(value, limit=_MAX_TOOL_DETAIL_CHARS)
+    fence, body = code_block.split("\n", 1)
+    body = body.removesuffix("\n```").replace("```", "` ` `")
+    return f"{fence}\n{sanitize_outbound(body)}\n```"
 
 
 def _component_count(value: object) -> int:
@@ -18,7 +40,13 @@ def _component_count(value: object) -> int:
 class FeishuToolSummaryStream:
     """维护单轮 Feishu Card 2.0 的有序回复/工具摘要元素。"""
 
-    def __init__(self, placeholder: str = "咕咕正在想…") -> None:
+    def __init__(
+        self,
+        placeholder: str = "咕咕正在想…",
+        *,
+        include_tool_details: bool = False,
+    ) -> None:
+        self._include_tool_details = include_tool_details
         self._blocks: list[dict] = [{
             "kind": "assistant",
             "id": "markdown_1",
@@ -37,6 +65,10 @@ class FeishuToolSummaryStream:
     @property
     def healthy(self) -> bool:
         return not self._failed
+
+    @property
+    def include_tool_details(self) -> bool:
+        return self._include_tool_details
 
     @property
     def active_text_id(self) -> str | None:
@@ -118,6 +150,21 @@ class FeishuToolSummaryStream:
             return False
 
         event_type = str(event.get("type") or "")
+        if self._include_tool_details:
+            if event_type not in {"tool_call", "tool_done"}:
+                return True
+            call_id = str(event.get("tool_call_id") or "").strip()
+            location = self._tool_blocks.get(call_id) if call_id else None
+            if location is not None:
+                group_index, tool_index = location
+                merged = dict(self._blocks[group_index]["tools"][tool_index])
+                merged.update(event)
+                self._blocks[group_index]["tools"][tool_index] = merged
+            else:
+                self._append_tool_event(event, call_id)
+            await self._write()
+            return True
+
         if event_type == "tool_call":
             return True
         if event_type != "tool_done":
@@ -140,17 +187,24 @@ class FeishuToolSummaryStream:
         if self._blocks and self._blocks[-1].get("placeholder"):
             self._blocks.pop()
         self._active_text_id = None
-        if self._active_tool_group_index is not None:
+        if self._include_tool_details:
+            group = {"kind": "tool_summary", "tools": []}
+            self._blocks.append(group)
+            group_index = len(self._blocks) - 1
+            self._active_tool_group_index = None
+        elif self._active_tool_group_index is not None:
             group = self._blocks[self._active_tool_group_index]
+            group_index = self._active_tool_group_index
         else:
             group = {"kind": "tool_summary", "tools": []}
             self._blocks.append(group)
             self._active_tool_group_index = len(self._blocks) - 1
+            group_index = self._active_tool_group_index
         tool_index = len(group["tools"])
         group["tools"].append(dict(event))
         self._visible_tool_calls += 1
         if call_id:
-            self._tool_blocks[call_id] = (self._active_tool_group_index, tool_index)
+            self._tool_blocks[call_id] = (group_index, tool_index)
 
     def finish(self, text: str, *, cancelled: bool = False) -> None:
         """将最终清洗正文合入最后一段，并收束未完成工具状态。"""
@@ -246,8 +300,14 @@ class FeishuToolSummaryStream:
             elements = [{"tag": "markdown", "content": " "}]
         return elements
 
-    @classmethod
-    def _tool_summary_panel(cls, events: list[dict]) -> dict:
+    def _tool_summary_panel(self, events: list[dict]) -> dict:
+        title = f"🛠 工具摘要 ({len(events)})"
+        if self._include_tool_details and len(events) == 1:
+            event = events[0]
+            label = " ".join(
+                str(event.get("label") or event.get("name") or "工具").split()
+            )[:80]
+            title = f"🛠 {label}"
         return {
             "tag": "collapsible_panel",
             "expanded": False,
@@ -256,19 +316,51 @@ class FeishuToolSummaryStream:
             "header": {
                 "title": {
                     "tag": "plain_text",
-                    "content": f"🛠 工具摘要 ({len(events)})",
+                    "content": title,
                 },
             },
             "padding": "8px 12px",
             "elements": [
-                {"tag": "markdown", "content": cls._tool_entry(event)}
+                {"tag": "markdown", "content": self._tool_entry(event)}
                 for event in events
             ],
         }
 
-    @staticmethod
-    def _tool_entry(event: dict) -> str:
+    def _tool_entry(self, event: dict) -> str:
         from agent.outbound import sanitize_outbound
         from agent.tool_messages import format_tool_event
+
+        if self._include_tool_details:
+            label = " ".join(
+                str(event.get("label") or event.get("name") or "工具").split()
+            )[:80]
+            status = str(event.get("status") or "")
+            if event.get("type") == "tool_call":
+                status_label, icon = {
+                    "queued": ("排队中", "⏳"),
+                    "running": ("执行中", "⏳"),
+                    "invalid": ("未执行", "⚠️"),
+                    "cancelled": ("已停止", "⏹️"),
+                }.get(status, ("执行中", "⏳"))
+            else:
+                status_label, icon = {
+                    "success": ("已完成", "✅"),
+                    "ok": ("已完成", "✅"),
+                    "waiting": ("等待确认", "⏸️"),
+                    "cancelled": ("已停止", "⏹️"),
+                }.get(status, ("未完成", "⚠️"))
+
+            details = [
+                f"**{icon} {label} · {status_label}**",
+                f"**状态**：{status_label}",
+            ]
+            if "input" in event:
+                details.extend(("**输入**", _tool_detail_block(event.get("input"))))
+            if event.get("result") is not None:
+                details.extend(("**结果**", _tool_detail_block(event.get("result"))))
+            detail_text = sanitize_outbound("\n\n".join(details))
+            if len(detail_text) > _MAX_TOOL_DETAIL_CHARS * 2:
+                detail_text = detail_text[: _MAX_TOOL_DETAIL_CHARS * 2 - 1] + "…"
+            return detail_text
 
         return sanitize_outbound(format_tool_event(event, markdown=False))

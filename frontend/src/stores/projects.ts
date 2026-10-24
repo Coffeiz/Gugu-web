@@ -4,7 +4,7 @@ import { projectsApi, eventsApi } from '@/services/api'
 import { useLiveStore } from '@/stores/live'
 import { mapProjectResponse, type Project, type ProjectStage, type ProjectStatus } from '@/types/project'
 import {
-  normalizeStages, transitionProjectStage, transitionProjectStatus, transitionProjectTodos,
+  normalizeStages, transitionProjectStage, transitionProjectStatus, transitionProjectTodos, type ProjectStateTransition,
 } from '@/utils/projectStages'
 import { DEFAULT_PROJECT_COLOR } from '@/utils/projectColors'
 import type { components } from '@/types/api'
@@ -131,7 +131,10 @@ export const useProjectStore = defineStore('projects', () => {
       deadline:     fields.deadline  || null,
       color:        fields.color || DEFAULT_PROJECT_COLOR,
     }
-    const created = mapProjectResponse(await projectsApi.create(payload))
+    const idempotencyKey = typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `project-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const created = mapProjectResponse(await projectsApi.create(payload, idempotencyKey))
     projects.value.unshift(created)
     rememberConfirmed(created)
     return created
@@ -259,13 +262,8 @@ export const useProjectStore = defineStore('projects', () => {
     }
   }
 
-  async function moveProject(id: number, newStatusRaw: string) {
-    // 调用方来自看板列 key / DOM data-col-status，运行时保证是三态之一，边界收紧
-    const newStatus = newStatusRaw as ProjectStatus
-    const p = projects.value.find(p => p.id === id)
-    if (!p) return
+  async function applyTransition(p: Project, transition: ProjectStateTransition) {
     const oldStatus = p.status
-    const transition = transitionProjectStatus(p, newStatus)
     const becameDone = oldStatus !== 'done' && transition.status === 'done'
     Object.assign(p, transition)
     p._stageBeforeDone = transition.stageBeforeDone
@@ -275,10 +273,18 @@ export const useProjectStore = defineStore('projects', () => {
     } else if (oldStatus === 'done' && transition.status !== 'done') {
       p.doneAt = null
     }
-    await _patchProject(id, {
+    await _patchProject(p.id, {
       status: transition.status, currentStage: transition.currentStage,
       progress: transition.progress, stages: transition.stages,
     })
+  }
+
+  async function moveProject(id: number, newStatusRaw: string) {
+    // 调用方来自看板列 key / DOM data-col-status，运行时保证是三态之一，边界收紧
+    const newStatus = newStatusRaw as ProjectStatus
+    const p = projects.value.find(p => p.id === id)
+    if (!p) return
+    await applyTransition(p, transitionProjectStatus(p, newStatus))
   }
 
   async function setStage(id: number, stageKey: string, progress?: number) {
@@ -286,19 +292,7 @@ export const useProjectStore = defineStore('projects', () => {
     if (!p) return
 
     const transition = transitionProjectStage(p, stageKey, progress ?? 0)
-    const oldStatus = p.status
-    const becameDone = oldStatus !== 'done' && transition.status === 'done'
-    Object.assign(p, transition)
-    p._stageBeforeDone = transition.stageBeforeDone
-    if (becameDone) {
-      p.doneAt = new Date().toISOString()
-    } else if (transition.status !== 'done' && oldStatus === 'done') {
-      p.doneAt = null
-    }
-    await _patchProject(id, {
-      currentStage: transition.currentStage, progress: transition.progress,
-      stages: transition.stages, status: transition.status,
-    })
+    await applyTransition(p, transition)
   }
 
   async function updateStages(id: number, newStages: ProjectStage[]) {
@@ -318,18 +312,7 @@ export const useProjectStore = defineStore('projects', () => {
     const transition = advanceTo
       ? transitionProjectStage(state, advanceTo, progress)
       : transitionProjectTodos(state, newStages, progress)
-    const oldStatus = p.status
-    const becameDone = oldStatus !== 'done' && transition.status === 'done'
-    Object.assign(p, transition)
-    p._stageBeforeDone = transition.stageBeforeDone
-    if (becameDone) {
-      p.doneAt = new Date().toISOString()
-    }
-    if (transition.status !== 'done' && oldStatus === 'done') p.doneAt = null
-    await _patchProject(id, {
-      stages: transition.stages, currentStage: transition.currentStage,
-      progress: transition.progress, status: transition.status,
-    })
+    await applyTransition(p, transition)
   }
 
   async function updateProject(id: number, fields: Partial<Project>) {

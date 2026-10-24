@@ -141,6 +141,35 @@ async def _handle_msg(msg: dict, channel_id: str, owner: str, client) -> None:
           f"att={len(attachments)} quoted={has_quote} trace={tid}", flush=True)
     if not text and not attachments:   # 只有不支持的媒体、啥也没取到 → 不入队（agent 无内容）
         return
+    if text.strip() and not attachments:
+        from agent.im.shortcuts import apply_im_shortcut_cancel, decide_im_shortcut
+
+        scope_id = group_id or from_user
+        dec = await decide_im_shortcut(
+            "wechat",
+            from_user,
+            text,
+            bot_id=channel_id,
+            scope_id=scope_id,
+        )
+        if dec.get("action") in {"cancel", "no_permission"}:
+            if dec["action"] == "cancel":
+                await apply_im_shortcut_cancel(
+                    "wechat",
+                    from_user,
+                    dec,
+                    bot_id=channel_id,
+                    scope_id=scope_id,
+                )
+            from agent.gateway import wechat
+
+            await wechat.send_text(
+                from_user,
+                str(dec.get("reply") or ""),
+                channel_id=channel_id,
+                context_token=context_token,
+            )
+            return
     # typing_ticket（per-user, 24h 有效）——同步等 + 超时兜底，避免 race condition
     # （OpenClaw 做法也是同步 await，但 Gugu-web 这里加 500ms 上限防网络抖动拖慢 gateway 拉消息节奏）
     # 拿不到时 worker 端按空 ticket 走"不发 typing"分支（与 OpenClaw 退化策略一致）
@@ -173,7 +202,7 @@ async def _handle_msg(msg: dict, channel_id: str, owner: str, client) -> None:
         "trace_id": tid,                    # 全链路 trace：worker/工具日志同 id，grep 可串联
         "typing_ticket": typing_ticket,     # 空 = 不发 typing（worker 端按空 ticket 退化）
     }
-    # TODO: 接 Intent Router 短路（仿 qq）
+    # 取消/无权取消在 Gateway 即时处理，其他 intent 仍交给 worker 的 IM Loop。
     try:
         from agent.im.models import normalize_payload
         payload = normalize_payload(payload)

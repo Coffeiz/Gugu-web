@@ -10,7 +10,12 @@ from app.core import scheduler
 from app.core.config import get_settings
 from app.core.tz import now_utc
 from app.models import FileSyncBinding, FileSyncReconcileRun, User
-from app.services.filesync.jobs import RECONCILABLE_OVERFLOW_CODES, ReconcileRunError, enqueue_reconcile_run
+from app.services.filesync.jobs import (
+    RECONCILABLE_OVERFLOW_CODES,
+    ReconcileRunError,
+    capture_binding_root_identity,
+    enqueue_reconcile_run,
+)
 
 _RECONCILE_INTERVAL = timedelta(days=7)
 _FAILED_RETRY_INTERVAL = timedelta(hours=24)
@@ -72,23 +77,24 @@ async def _gap_retry_due(db: AsyncSession, binding: FileSyncBinding, timestamp) 
 
 
 async def _repair_root_identity(db: AsyncSession, binding: FileSyncBinding) -> tuple[int, int] | None:
-    from app.services.filesync.watcher import _binding_root
-
-    if binding.health_error_code not in RECONCILABLE_OVERFLOW_CODES:
+    if binding.health_error_code in RECONCILABLE_OVERFLOW_CODES:
+        metadata = await db.scalar(select(FileSyncReconcileRun.result_counts).where(
+            FileSyncReconcileRun.binding_id == binding.id,
+            FileSyncReconcileRun.root_fingerprint == binding.root_fingerprint,
+        ).order_by(FileSyncReconcileRun.created_at.desc()).limit(1))
+        guard = metadata or {}
+        if "rootDevice" not in guard or "rootInode" not in guard:
+            return None
+        expected = (int(guard["rootDevice"]), int(guard["rootInode"]))
+        try:
+            current = await capture_binding_root_identity(db, binding)
+        except ReconcileRunError:
+            return None
+        return expected if expected == current else None
+    try:
+        return await capture_binding_root_identity(db, binding)
+    except ReconcileRunError:
         return None
-    root = await _binding_root(db, binding)
-    if root is None or not root.is_dir():
-        return None
-    metadata = await db.scalar(select(FileSyncReconcileRun.result_counts).where(
-        FileSyncReconcileRun.binding_id == binding.id,
-        FileSyncReconcileRun.root_fingerprint == binding.root_fingerprint,
-    ).order_by(FileSyncReconcileRun.created_at.desc()).limit(1))
-    guard = metadata or {}
-    if "rootDevice" not in guard or "rootInode" not in guard:
-        return None
-    identity = (int(guard["rootDevice"]), int(guard["rootInode"]))
-    stat = root.stat()
-    return identity if identity == (stat.st_dev, stat.st_ino) else None
 
 
 async def enqueue_due_weekly_reconciles(
@@ -150,8 +156,8 @@ async def enqueue_due_weekly_reconciles(
                 user_id=binding.user_id,
                 binding_id=binding.id,
                 action="repair",
-                # 仅已知事件溢出可自动同步删除；目录不可用等其他缺口仍保持非删除策略。
-                allow_delete=identity is not None and binding.health_error_code in RECONCILABLE_OVERFLOW_CODES,
+                # 已知 watcher 溢出必须有此前捕获的根目录身份且当前匹配；普通周期扫描捕获当前身份。
+                allow_delete=identity is not None,
                 root_identity=identity,
             )
         except (LookupError, ReconcileRunError):

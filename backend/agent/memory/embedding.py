@@ -108,8 +108,9 @@ async def embed_multimodal(contents: list[dict | str], *, enable_fusion: bool = 
         payload["parameters"]["enable_fusion"] = True
     try:
         import httpx
+        from app.core.retry import llm_provider_timeout
         headers = {"Authorization": f"Bearer {normalize_ascii_api_key(e.api_key, label='Embedding API Key')}"} if e.api_key else {}
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+        async with httpx.AsyncClient(timeout=llm_provider_timeout()) as client:
             response = await client.post(_multimodal_url(base_url), json=payload, headers=headers)
         if response.status_code != 200:
             print(f"[embedding] 多模态 HTTP {response.status_code}", flush=True)
@@ -206,10 +207,11 @@ async def embed(text: str) -> list[float] | None:
     payload = build_payload(e.provider, base_url, e.model, text, e.dimensions)
     try:
         import httpx
+        from app.core.retry import llm_provider_timeout
         url = base_url + "/embeddings"
         # key 为空就不发 Authorization 头（Ollama 无需鉴权；空 key 拼 "Bearer " 是非法 header）
         headers = {"Authorization": f"Bearer {normalize_ascii_api_key(e.api_key, label='Embedding API Key')}"} if e.api_key else {}
-        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as c:
+        async with httpx.AsyncClient(timeout=llm_provider_timeout()) as c:
             r = await c.post(url, json=payload, headers=headers)
         if r.status_code != 200:
             print(f"[embedding] HTTP {r.status_code}", flush=True)

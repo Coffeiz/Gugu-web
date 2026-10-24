@@ -150,8 +150,8 @@ async def list_trash_file_page_rows(db: AsyncSession, user_id, *, limit: int, cu
     return {"items": items, "next_cursor": next_cursor, "has_more": has_more}
 
 
-async def count_trash_root_items(db: AsyncSession, user_id) -> int:
-    """统计回收站根列表可见的独立文件和顶层文件夹。"""
+async def count_trash_root_entities(db: AsyncSession, user_id) -> tuple[int, int]:
+    """分别统计回收站根列表可见的独立文件和顶层文件夹。"""
     file_count = await db.scalar(
         select(func.count(File.id))
         .select_from(File)
@@ -167,7 +167,7 @@ async def count_trash_root_items(db: AsyncSession, user_id) -> int:
         .with_only_columns(func.count(Folder.id))
         .order_by(None)
     )
-    return int(file_count or 0) + int(folder_count or 0)
+    return int(file_count or 0), int(folder_count or 0)
 
 
 async def list_trash_folder_page_rows(db: AsyncSession, user_id, *, limit: int, cursor: str | None):
@@ -193,11 +193,19 @@ async def list_trash_folder_page_rows(db: AsyncSession, user_id, *, limit: int, 
         ).group_by(File.folder_id)
     ) if items else None
     count_map = {row.folder_id: row.cnt for row in counts} if counts else {}
+    child_counts = await db.execute(
+        select(Folder.parent_id, func.count().label("cnt")).where(
+            Folder.user_id == user_id,
+            Folder.parent_id.in_([folder.id for folder in items]),
+            Folder.deleted_at.isnot(None),
+        ).group_by(Folder.parent_id)
+    ) if items else None
+    child_count_map = {row.parent_id: row.cnt for row in child_counts} if child_counts else {}
     next_cursor = encode_cursor(
         user_id=user_id, scope=scope,
         sort_value=items[-1].deleted_at.isoformat(), entity_id=items[-1].id,
     ) if has_more and items else None
-    return {"items": [(folder, count_map.get(folder.id, 0)) for folder in items],
+    return {"items": [(folder, count_map.get(folder.id, 0), child_count_map.get(folder.id, 0)) for folder in items],
             "next_cursor": next_cursor, "has_more": has_more}
 
 
@@ -266,6 +274,14 @@ async def list_trash_folder_contents_page_rows(
         ).group_by(File.folder_id)
     ) if child_folders else None
     count_map = {row.folder_id: row.cnt for row in counts} if counts else {}
+    child_counts = await db.execute(
+        select(Folder.parent_id, func.count().label("cnt")).where(
+            Folder.user_id == user_id,
+            Folder.parent_id.in_([item.id for item in child_folders]),
+            Folder.deleted_at.isnot(None),
+        ).group_by(Folder.parent_id)
+    ) if child_folders else None
+    child_count_map = {row.parent_id: row.cnt for row in child_counts} if child_counts else {}
     next_folder_cursor = encode_cursor(
         user_id=user_id, scope=folder_scope,
         sort_value=child_folders[-1].deleted_at.isoformat(), entity_id=child_folders[-1].id,
@@ -276,7 +292,7 @@ async def list_trash_folder_contents_page_rows(
     ) if more_files and direct_files else None
     return {
         "folder": folder,
-        "folders": {"items": [(item, count_map.get(item.id, 0)) for item in child_folders],
+        "folders": {"items": [(item, count_map.get(item.id, 0), child_count_map.get(item.id, 0)) for item in child_folders],
                     "next_cursor": next_folder_cursor, "has_more": more_folders},
         "files": {"items": direct_files, "next_cursor": next_file_cursor, "has_more": more_files},
     }

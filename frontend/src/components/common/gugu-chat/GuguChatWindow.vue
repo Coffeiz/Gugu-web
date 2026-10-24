@@ -89,9 +89,11 @@
         ref="messageListRef"
         :messages="messages" :session-id="sessionId" :is-group-session="isGroupSession"
         :interaction-answer-mode="interactionAnswerMode"
-        :copied-id="copiedId" :voice-playing-id="voicePlayingId"
+        :copied-id="copiedId" :voice-playing-id="voicePlayingId" :voice-bars="voiceBars"
         :expanded="expanded" :resizing="resizing" :status-kind="statusKind" :status-typed="statusTyped"
         :session-settling="sessionSettling"
+        :cached-history-visible="cachedHistoryVisible"
+        :history-state="historyState" :on-load-history="onLoadHistory"
         @copy="onCopy" @toggle-voice="onToggleVoice"
         @open-file="onOpenFile" @download="onDownload" @action-click="onActionClick"
         @interaction-select="onInteractionSelect" @interaction-text-submit="onInteractionTextSubmit"
@@ -136,6 +138,7 @@
 </template>
 
 <script setup lang="ts">
+import type { ChatHistoryState } from './composables/useChatHistoryPagination'
 import { ref, computed, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/icons/Icon.vue'
@@ -185,9 +188,13 @@ const props = defineProps<{
   isGroupSession: boolean
   copiedId: number | null
   voicePlayingId: string | null
+  voiceBars: number[]
   statusKind: string
   statusTyped: string
+  historyState?: ChatHistoryState
+  onLoadHistory?: () => void
   sessionSettling: boolean
+  cachedHistoryVisible: boolean
   // 排队条：生成中发出的消息在输入框上方排队，排水发送时才落入对话
   pendingQueue: QueuedMessage[]
   // 输入框
@@ -455,8 +462,8 @@ defineExpose({
 :deep(.chat-messages) {
   flex: 1; overflow-y: auto; overflow-x: hidden; position: relative;
 }
-:deep(.chat-messages.is-session-settling) { visibility: hidden; }
-.chat-main.is-expanded :deep(.chat-messages .msg-bubble) { max-width: 72%; font-size: 14px; }
+:deep(.chat-messages.is-session-settling:not(.is-cache-visible)) { visibility: hidden; }
+.chat-main.is-expanded :deep(.chat-messages .msg.ai .msg-bubble) { max-width: 90%; font-size: 14px; }
 .chat-main.is-expanded :deep(.chat-messages .msg-quoted) { max-width: 72%; font-size: 13.5px; }
 :deep(.msg-virtual-spacer) { position: relative; width: 100%; }
 :deep(.msg-virtual-row) { position: absolute; top: 0; left: 0; width: 100%; box-sizing: border-box; padding: 0 13px 8px; }

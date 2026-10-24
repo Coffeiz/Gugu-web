@@ -13,6 +13,7 @@ COMMAND_HELP: dict[str, str] = {
     "memory": "/memory　查看咕咕记住的内容；发送 /memory help 查看说明",
     "forget": "/forget <text>　忘记匹配的记忆；发送 /forget help 查看说明",
     "workspace": "/workspace　查看、绑定、解除或删除工作区，并管理当前会话的沙箱权限；发送 /workspace help 查看说明",
+    "auto": "/auto　查看或切换自动模式；发送 /auto help 查看说明",
     "help": "/help　查看全部斜杠命令；也可对单个命令发送 /<command> help",
 }
 
@@ -71,6 +72,13 @@ COMMAND_DETAILS: dict[str, str] = {
         "/workspace delete <ID> confirm　确认删除工作区\n"
         "解除只取消当前会话绑定；删除会解除所有会话绑定，但不会删除项目或文件。"
     ),
+    "auto": (
+        "查看或切换当前用户的自动模式。无参数只查看状态；管理员未开放时不能开启。\n"
+        "/auto status　查看状态\n"
+        "/auto on　开启自动模式\n"
+        "/auto off　关闭自动模式\n"
+        "自动模式只跳过普通操作确认；权限授权和强制确认仍需你确认。"
+    ),
     "help": (
         "查看全部斜杠命令。\n"
         "/help　查看全部命令\n"
@@ -87,6 +95,7 @@ COMMAND_HELP_EN = {
     "memory": "/memory - View saved memories; send /memory help for details",
     "forget": "/forget <text> - Forget matching memories; send /forget help for details",
     "workspace": "/workspace - Manage workspace binding and sandbox access; send /workspace help for details",
+    "auto": "/auto - View or change automatic mode; send /auto help for details",
     "help": "/help - View all slash commands; send /<command> help for details",
 }
 
@@ -99,6 +108,7 @@ COMMAND_HELP_JA = {
     "memory": "/memory - 保存したメモリを確認。詳しくは /memory help",
     "forget": "/forget <内容> - 一致するメモリを削除。詳しくは /forget help",
     "workspace": "/workspace - ワークスペースとサンドボックス権限を管理。詳しくは /workspace help",
+    "auto": "/auto - 自動モードの確認・切り替え。詳しくは /auto help",
     "help": "/help - スラッシュコマンド一覧を確認。詳しくは /<command> help",
 }
 
@@ -111,6 +121,7 @@ COMMAND_DETAILS_EN = {
     "memory": "View saved personal long-term memories.\n/memory - View saved memories\nAlias: /mem",
     "forget": "Delete personal memories matching the given content.\n/forget <text> - Delete matching memories\nExample: /forget I like coffee",
     "workspace": "Manage the current workspace binding and filesystem access.\n/workspace show - View the current binding\n/workspace status - View sandbox access\n/workspace god - Request full sandbox access\n/workspace revoke - Revoke full sandbox access\n/workspace list - List workspaces\n/workspace <ID> - Bind a workspace\n/workspace unlink - Unbind this session\n/workspace delete <ID> - Delete a workspace, then confirm\n/workspace delete <ID> confirm - Confirm deletion",
+    "auto": "View or change your automatic mode. With no argument, view its status.\n/auto status - View status\n/auto on - Enable\n/auto off - Disable\nOnly ordinary action confirmations may be skipped; authorization and required confirmations remain.",
     "help": "View all slash commands.\n/help - View all commands\n/<command> help - Details for one command",
 }
 
@@ -123,6 +134,7 @@ COMMAND_DETAILS_JA = {
     "memory": "保存した個人メモリを確認します。\n/memory - 保存したメモリを確認\n別名: /mem",
     "forget": "指定内容に一致する個人メモリを削除します。\n/forget <内容> - 一致するメモリを削除",
     "workspace": "ワークスペースの紐付けとファイルシステム権限を管理します。\n/workspace show - 現在の紐付け\n/workspace status - サンドボックス権限\n/workspace god - 完全権限を申請\n/workspace revoke - 完全権限を取消\n/workspace list - ワークスペース一覧\n/workspace <ID> - 紐付け\n/workspace unlink - このセッションの紐付けを解除\n/workspace delete <ID> - 削除して確認\n/workspace delete <ID> confirm - 削除を確認",
+    "auto": "自動モードを確認・変更します。引数なしの場合は状態を表示します。\n/auto status - 状態を表示\n/auto on - 有効\n/auto off - 無効\n権限付与と必須確認は引き続き必要です。",
     "help": "スラッシュコマンド一覧を表示します。\n/help - コマンド一覧を確認\n/<command> help - 各コマンドの詳細",
 }
 
@@ -145,6 +157,7 @@ COMMAND_MENU: dict[str, tuple[str, str, str]] = {
     "memory": ("查看记忆", "查看咕咕记住的内容", "/memory"),
     "forget": ("忘记一条记忆", "输入要忘记的内容", "/forget "),
     "workspace": ("工作区", "查看、绑定、删除工作区或管理沙盒权限", "/workspace "),
+    "auto": ("自动模式", "查看或开启、关闭自动模式", "/auto "),
     "help": ("命令帮助", "查看全部命令说明", "/help"),
 }
 
@@ -166,7 +179,7 @@ def all_help_text(locale: str | None = None) -> str:
     catalog = COMMAND_HELP_EN if locale_key == "en-US" else COMMAND_HELP_JA if locale_key == "ja-JP" else COMMAND_HELP
     title = "🤖 Available commands (deterministic and immediate):" if locale_key == "en-US" else "🤖 利用可能なコマンド（確定的・即時実行）:" if locale_key == "ja-JP" else "🤖 可用命令（确定性、立即生效）："
     lines = [title]
-    lines.extend(catalog[name] for name in ("stop", "status", "compact", "goal", "new", "memory", "forget", "workspace", "help"))
+    lines.extend(catalog[name] for name in ("stop", "status", "compact", "goal", "new", "memory", "forget", "workspace", "auto", "help"))
     return "\n".join(lines)
 
 

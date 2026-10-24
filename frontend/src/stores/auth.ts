@@ -21,8 +21,6 @@ import { setUserTimezone } from '@/utils/userTimezone'
 import { InteractionSync } from '@/interaction/sync/InteractionSync'
 
 type UserResponse = components['schemas']['UserResponse']
-// 后端已提供该字段；待下次从最新 OpenAPI 重新生成 api.ts 后可移除交叉类型。
-type UserWithTimezone = UserResponse & { timezone?: string | null; emailSubscribed?: boolean }
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
 
@@ -43,7 +41,7 @@ function resetAccountState() {
 }
 
 export const useAuthStore = defineStore('auth', () => {
-  const user  = ref<UserWithTimezone | null>(null)
+  const user  = ref<UserResponse | null>(null)
   const sessionChecked = ref(false)
   const liveStore = useLiveStore()
 
@@ -55,12 +53,12 @@ export const useAuthStore = defineStore('auth', () => {
 
   const isLoggedIn = computed(() => !!user.value)
 
-  function _setUser(u: UserWithTimezone | null) {
+  function _setUser(u: UserResponse | null) {
     user.value = u
     setUserTimezone(u?.timezone)
   }
 
-  function _applyUserUpdate(updated: UserWithTimezone) {
+  function _applyUserUpdate(updated: UserResponse) {
     const current = user.value
     // profile/avatar 接口不会计算动态的 imChannels，保留同一账号当前值；
     // 解绑等渠道变化由 /auth/me 的实时刷新负责清空或替换。
@@ -124,7 +122,7 @@ export const useAuthStore = defineStore('auth', () => {
         return false
       }
       if (!res.ok) return null
-      const nextUser = await res.json() as UserWithTimezone
+      const nextUser = await res.json() as UserResponse
       if (requestEpoch !== getAccountBoundaryEpoch()) return null
       user.value = nextUser
       sessionChecked.value = true

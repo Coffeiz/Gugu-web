@@ -185,10 +185,14 @@ REDIS__PORT=6379
 
 ```dotenv
 GUGU_ADMIN_ALLOWED_HOSTS=admin.example.com
+# 可选；不设置时入口保持 /admin。启用自定义入口时填写不带前导斜杠的路径
+# GUGU_ADMIN_ENTRY_PATH=my-private-admin
 GUGU_HTTP_BIND=127.0.0.1
 ```
 
-分体 Compose 同样在根目录 `.env` 设置 `GUGU_ADMIN_ALLOWED_HOSTS`；裸机/systemd 部署则在 `backend/.env` 设置 `ADMIN_ALLOWED_HOSTS=admin.example.com`。白名单对 `/api/v1/admin/...` 生效，精确匹配 Host（不带协议和端口）；留空时保持旧行为，且不会被 Admin 的运行配置覆盖。Compose 的 `GUGU_HTTP_BIND=127.0.0.1` 会把发布端口限制在本机，适用于同机反向代理，避免外网绕过入口规则直连。若反向代理不在同一台机器，需将其网络地址作为绑定/防火墙策略的一部分，不能照抄 loopback 配置。
+`GUGU_ADMIN_ENTRY_PATH` 用于增加安全入口：访问 `https://admin.example.com/<自定义入口>` 后，网关会设置 HttpOnly、Secure、SameSite Cookie 并跳转到 Admin；直接访问 `/admin` 或 `/api/v1/admin` 会返回 404。启用 `GUGU_ADMIN_ALLOWED_HOSTS` 后，Nginx 会在静态 Admin 页面、入口跳转和 Admin API 层同时精确限制域名；未列入白名单的域名即使访问正确入口也会返回 404。白名单使用逗号分隔的 ASCII 域名（国际化域名填写 punycode），不能带协议、路径或端口。入口由部署者自行填写，不强制最低长度；只允许字母、数字、下划线和连字符，最多 128 个字符。短入口更容易被猜到，生产环境建议用 `python3 -c "import secrets; print(secrets.token_urlsafe(32))"` 生成高熵随机值，只保存到服务器 `.env`，不要写入文档、聊天记录或 Git。入口 URL 仍可能被浏览器历史和外层反向代理访问日志记录，应限制日志访问与留存，避免把它嵌入第三方页面。只修改入口路径时，分体部署重建/重启网关 Nginx 即可；修改域名白名单时需同时重建/重启后端和 Nginx，让 API 与静态页面策略同步；一体化部署则重建/重启 app。未配置入口时默认仍通过 `/admin` 访问；未配置域名白名单时保持旧行为，不限制 Host。
+
+分体 Compose 同样在根目录 `.env` 设置 `GUGU_ADMIN_ALLOWED_HOSTS`；该变量会同时交给网关 Nginx 与后端，保护静态页面和 API。裸机/systemd 部署则在 `backend/.env` 设置 `ADMIN_ALLOWED_HOSTS=admin.example.com`；外部反向代理仍需按下方规则拒绝非 Admin 域名的静态 `/admin` 路径。Compose 白名单精确匹配 Host（不带协议和端口），留空时保持旧行为，且不会被 Admin 的运行配置覆盖。Compose 的 `GUGU_HTTP_BIND=127.0.0.1` 会把发布端口限制在本机，适用于同机反向代理，避免外网绕过入口规则直连。若反向代理不在同一台机器，需将其网络地址作为绑定/防火墙策略的一部分，不能照抄 loopback 配置。
 
 Host 白名单是后端纵深防护，不代替入口代理规则：外层反向代理应只允许管理域名访问 Admin 页面和 API，并在管理域名配置 VPN、可信网段白名单或 Zero Trust；主站域名应拒绝 `/admin`、`/admin/` 与 `/api/v1/admin/...`。不要只靠难猜的域名或 Admin 密码作为网络入口限制。示意 Nginx 规则（将域名、上游和测试网段换成自己的值）：
 
@@ -690,7 +694,7 @@ test -S "/run/user/$(id -u)/gugu-sandboxd.sock" || true
 #### 沙盒镜像（`docker/sandbox/Dockerfile`）
 
 工具链 Sandbox 执行镜像以独立 `gugu-sandbox` 镜像发布；默认一体化 Compose 的最终发布镜像内含执行镜像和 egress proxy 的归档及 manifest，并在启动时校验后导入内置 Rootless daemon。拆分 backend/frontend 部署连接外部 Rootless manager，需由其运行环境准备匹配的工具链镜像 `docker/sandbox/Dockerfile`
-（bookworm-slim + git / nodejs / python3 / ffmpeg /
+（Debian 13 Trixie + git / nodejs / python3 / ffmpeg /
 Noto CJK 字体等，运行用户 uid 65532）。镜像只放通用工具链：**不预置任何 git 凭据或用户
 身份**（`user.name`/`user.email` 由使用方在会话内设置），系统级 gitconfig 仅设置
 `init.defaultBranch=main` 和 `safe.directory=*`（沙盒 bind 目录属主是宿主机 uid，属预期）。

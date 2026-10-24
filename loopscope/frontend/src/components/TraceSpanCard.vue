@@ -27,7 +27,7 @@
       <button v-if="schemaError" :class="{ active: open.schema }" @click="toggle('schema')">Schema</button>
       <button v-if="mcpDetails" :class="{ active: open.mcp }" @click="toggle('mcp')">MCP</button>
       <button :class="{ active: open.input }" @click="toggle('input')">
-        {{ firstDiff ? `Input · #${firstDiff.index}` : 'Input' }}
+        {{ firstDiff ? t('trace.spanInput', { index: firstDiff.index }) : 'Input' }}
       </button>
       <button :class="{ active: open.output }" @click="toggle('output')">Output</button>
       <button v-if="hasSource" :class="{ active: open.source }" @click="toggle('source')">Source</button>
@@ -45,41 +45,41 @@
         <div><span>Digest</span><code>{{ assembly.system?.digest || '—' }}</code></div>
         <div><span>Messages</span><strong>{{ assembly.messages?.count ?? '—' }}</strong></div>
       </div>
-      <p class="assembly-note">完整 system 文本只在 Context assembly 中展示；本轮通过 digest 与来源重建实际组装关系。</p>
+      <p class="assembly-note">{{ t('trace.assemblyNote') }}</p>
     </section>
     <section v-if="firstDiff" class="panel first-diff-panel">
       <div class="first-diff-head">
         <div>
           <div class="panel-label">Earliest input change</div>
-          <strong>消息 #{{ firstDiff.index }}</strong>
+          <strong>{{ t('trace.message', { index: firstDiff.index }) }}</strong>
         </div>
         <span class="diff-reason">{{ diffReasonLabel }}</span>
       </div>
       <div class="first-diff-meta">
-        <span>上一轮：{{ firstDiff.previous?.shape?.representation || '—' }}</span>
-        <span>本轮：{{ firstDiff.current?.shape?.representation || '—' }}</span>
-        <span>前缀：{{ prefixStable ? '未变化' : '已断开' }}</span>
+        <span>{{ t('trace.previous', { value: firstDiff.previous?.shape?.representation || '—' }) }}</span>
+        <span>{{ t('trace.current', { value: firstDiff.current?.shape?.representation || '—' }) }}</span>
+        <span>{{ t('trace.prefix', { value: prefixStable ? t('trace.unchanged') : t('trace.disconnected') }) }}</span>
       </div>
       <div class="first-diff-actions">
-        <p class="first-diff-note">Input 已标记这条消息，可直接查看完整正文。</p>
+        <p class="first-diff-note">{{ t('trace.inputMarked') }}</p>
         <div class="first-diff-buttons">
-          <button class="jump-input" @click="jumpToFirstDiff">定位到 Input</button>
-          <button class="compare-input" :class="{ active: comparisonOpen }" @click="comparisonOpen = !comparisonOpen">对比上一轮 Input</button>
+          <button class="jump-input" @click="jumpToFirstDiff">{{ t('trace.jumpInput') }}</button>
+          <button class="compare-input" :class="{ active: comparisonOpen }" @click="comparisonOpen = !comparisonOpen">{{ t('trace.compareInput') }}</button>
         </div>
       </div>
     </section>
     <section v-if="comparisonOpen && firstDiff" class="panel comparison-panel">
       <div class="comparison-head">
         <div class="panel-label">Input comparison</div>
-        <span>消息 #{{ firstDiff.index }} · {{ diffReasonLabel }}</span>
+        <span>{{ t('trace.messageDiff', { index: firstDiff.index, reason: diffReasonLabel }) }}</span>
       </div>
       <div class="comparison-grid">
         <article class="comparison-column">
-          <div class="comparison-label">上一轮 Input</div>
+          <div class="comparison-label">{{ t('trace.previousInput') }}</div>
           <pre>{{ pretty(previousInputMessages[firstDiff.index]) }}</pre>
         </article>
         <article class="comparison-column is-current">
-          <div class="comparison-label">本轮 Input</div>
+          <div class="comparison-label">{{ t('trace.currentInput') }}</div>
           <pre>{{ pretty(inputMessages[firstDiff.index]) }}</pre>
         </article>
       </div>
@@ -91,8 +91,8 @@
     <section v-if="open.schema && schemaError" class="panel schema-error-panel">
       <div class="panel-label">Schema error trace</div>
       <div class="schema-error-meta">
-        <span>工具：<code>{{ schemaError.tool_name || '—' }}</code></span>
-        <span>类型：<code>{{ schemaError.error_kind || '—' }}</code></span>
+        <span>{{ t('trace.toolLabel') }}<code>{{ schemaError.tool_name || '—' }}</code></span>
+        <span>{{ t('trace.typeLabel') }}<code>{{ schemaError.error_kind || '—' }}</code></span>
         <span>Digest：<code>{{ schemaError.schema_digest || '—' }}</code></span>
       </div>
       <div class="schema-error-grid">
@@ -122,7 +122,7 @@
       <div v-if="snapshotContent" class="input-snapshot">
         <div class="input-message-label">
           <span>Session snapshot</span>
-          <b>用户侧固定上下文 · 不属于 history</b>
+          <b>{{ t('trace.userFixedContext') }}</b>
         </div>
         <pre>{{ snapshotContent }}</pre>
       </div>
@@ -136,7 +136,7 @@
         >
           <div class="input-message-label">
             <span>Message #{{ index }}</span>
-            <b v-if="index === firstDiff.index">最早变化点</b>
+            <b v-if="index === firstDiff.index">{{ t('trace.earlyDiff') }}</b>
           </div>
           <pre>{{ pretty(message) }}</pre>
         </article>
@@ -167,7 +167,9 @@ import { computed, nextTick, reactive, ref } from 'vue'
 import type { TraceSpan } from '../types'
 import { prettyJson } from '../utils/prettyJson'
 import { formatCompactNumber } from '../utils/formatNumber'
+import { useLoopScopeI18n } from '../i18n/index'
 
+const { t } = useLoopScopeI18n()
 const props = withDefaults(defineProps<{ span: TraceSpan; previousSpan?: TraceSpan; depth?: number }>(), { depth: 0 })
 const open = reactive<Record<string, boolean>>({ content: false, assembly: false, diagnostics: false, schema: false, input: false, output: false, source: false, attributes: false })
 const inputMessageList = ref<HTMLElement | null>(null)
@@ -269,14 +271,15 @@ const firstDiff = computed(() => {
 const prefixStable = computed(() => diagnostics.value?.prefix_integrity?.stable === true)
 const diffReasonLabel = computed(() => {
   const labels: Record<string, string> = {
-    wrapper_changed: '包装格式变化',
-    role_changed: 'Role 变化',
-    block_shape_changed: 'Block 结构变化',
-    content_kind_changed: 'Content 类型变化',
-    content_changed: '正文变化',
-    message_count_changed: '消息数量变化',
+    wrapper_changed: 'trace.changedWrapper',
+    role_changed: 'trace.changedRole',
+    block_shape_changed: 'trace.changedBlock',
+    content_kind_changed: 'trace.changedContentKind',
+    content_changed: 'trace.changedContent',
+    message_count_changed: 'trace.changedMessageCount',
   }
-  return labels[String(firstDiff.value?.reason || '')] || String(firstDiff.value?.reason || '结构变化')
+  const key = labels[String(firstDiff.value?.reason || '')]
+  return key ? t(key) : t('trace.structuralChange')
 })
 const inputMessages = computed(() => messagesFrom(props.span))
 const previousInputMessages = computed(() => messagesFrom(props.previousSpan))
@@ -298,7 +301,7 @@ function messageRepresentation(message: any): string {
   if (typeof content === 'string') {
     const value = content.trimStart()
     if (value.startsWith('<compacted-summary>')) return 'compacted-summary'
-    if (value.startsWith('## 早前对话摘要')) return 'legacy-summary-header'
+    if (value.startsWith(t('trace.legacySummary'))) return 'legacy-summary-header'
     if (value.startsWith('[system-reminder]')) return 'system-reminder-text'
     return 'text'
   }
@@ -325,14 +328,15 @@ const contextLabel = computed(() => {
   const source = props.span.attributes?.context_source
   if (!source) return ''
   const labels: Record<string, string> = {
-    tool_schema: '工具 Schema',
-    tool_schema_error: 'Schema 错误',
-    capability_catalog: '能力目录',
-    skill_index: 'Skill 索引',
-    skill_body: 'Skill 正文',
-    shell_policy: 'Shell 提示词',
+    tool_schema: 'trace.contextSchema',
+    tool_schema_error: 'trace.schemaError',
+    capability_catalog: 'trace.capabilityCatalog',
+    skill_index: 'trace.skillIndex',
+    skill_body: 'trace.skillBody',
+    shell_policy: 'trace.shellPolicy',
   }
-  return labels[String(source)] || '上下文注入'
+  const key = labels[String(source)]
+  return key ? t(key) : t('trace.contextInjection')
 })
 const codeLabel = computed(() => {
   const c = props.span.code

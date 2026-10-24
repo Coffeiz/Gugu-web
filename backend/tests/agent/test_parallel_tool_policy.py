@@ -7,8 +7,7 @@ from types import SimpleNamespace
 from app.core.tz import now_ctx
 from agent.loop.tools import (
     copy_skill_state_for_parallel,
-    parallel_safe_batch,
-    prepare_parallel_batch,
+    partition_tool_calls,
 )
 from agent.loop.tool_scheduler import ParallelDispatchCancelled, run_parallel_dispatches
 from agent.tools.base import Tool, current_dispatch_skill_state, set_dispatch_session, reset_dispatch_session
@@ -38,54 +37,54 @@ def _call(name, arguments=None, *, parse_error=None):
     )
 
 
-def test_parallel_safe_is_explicit_and_rejects_mutating_or_interactive_tools():
-    safe = _tool("safe_read", parallel_safe=True)
+def test_same_round_calls_follow_agent_batch_intent_not_mutation_metadata():
     snapshot = _snapshot(
-        safe,
-        _tool("unreviewed_read"),
-        _tool("write_even_if_flagged", parallel_safe=True, mutates=True),
-        _tool("confirmation", parallel_safe=True, requires_confirmation=True),
-        _tool("mcp_read", parallel_safe=True, source="mcp"),
-    )
-
-    assert parallel_safe_batch([_call("safe_read"), _call("safe_read")], snapshot)
-    assert not parallel_safe_batch(
-        [_call("safe_read"), _call("unreviewed_read")], snapshot,
-    ), "mutates=False 或工具名像只读都不能替代显式并发授权"
-    assert not parallel_safe_batch(
-        [_call("safe_read"), _call("write_even_if_flagged")], snapshot,
-    )
-    assert not parallel_safe_batch(
-        [_call("safe_read"), _call("confirmation")], snapshot,
-    )
-    assert not parallel_safe_batch(
-        [_call("safe_read"), _call("ask_user")], snapshot,
-    )
-    assert not parallel_safe_batch(
-        [_call("safe_read"), _call("mcp_read")], snapshot,
-    )
-    assert not parallel_safe_batch([_call("safe_read")], snapshot)
-
-
-def test_call_tool_eligibility_uses_resolved_target_not_adapter_metadata():
-    snapshot = _snapshot(
-        _tool("call_tool", parallel_safe=True),
-        _tool("safe_read", parallel_safe=True),
+        _tool("read", parallel_safe=False),
         _tool("write", parallel_safe=False, mutates=True),
+        _tool("dangerous", destructive=True),
+        _tool("confirmed", requires_confirmation=True),
+        _tool("mcp_read", source="mcp"),
+        _tool("shell", destructive=True,
+              parallel_safe_for_input=lambda args: args.get("command") != "danger"),
     )
+    calls = [
+        _call("read"),
+        _call("write"),
+        _call("shell", {"command": "python --version"}),
+        _call("shell", {"command": "danger"}),
+        _call("confirmed"),
+        _call("mcp_read"),
+        _call("ask_user"),
+    ]
 
-    wrapped_safe = _call("call_tool", {"name": "safe_read", "arguments": {}})
-    wrapped_write = _call("call_tool", {"name": "write", "arguments": {}})
-    unknown = _call("call_tool", {"name": "missing", "arguments": {}})
-    malformed = _call("call_tool", {"name": "safe_read", "arguments": []})
+    parallel, serial = partition_tool_calls(calls, snapshot)
 
-    assert parallel_safe_batch([wrapped_safe, _call("safe_read")], snapshot)
-    assert not parallel_safe_batch([wrapped_write, _call("safe_read")], snapshot)
-    assert not parallel_safe_batch([unknown, _call("safe_read")], snapshot)
-    assert not parallel_safe_batch([malformed, _call("safe_read")], snapshot)
-    assert not parallel_safe_batch(
-        [_call("safe_read"), _call("safe_read", parse_error="截断")], snapshot,
+    assert [index for index, *_ in parallel] == [0, 1, 2, 5]
+    assert [index for index, _call_item in serial] == [3, 4, 6]
+    assert parallel[1][2] == "write", "mutates/destructive 元数据不再做冲突推断"
+
+
+def test_call_tool_and_invalid_schema_are_partitioned_per_call():
+    snapshot = _snapshot(
+        _tool("call_tool"),
+        _tool("read", input_schema={
+            "type": "object", "properties": {"limit": {"type": "integer"}},
+            "required": ["limit"], "additionalProperties": False,
+        }),
+        _tool("write", mutates=True),
     )
+    calls = [
+        _call("call_tool", {"name": "write", "arguments": {}}),
+        _call("read", {"limit": "bad"}),
+        _call("write"),
+        _call("call_tool", {"name": "missing", "arguments": {}}),
+    ]
+
+    parallel, serial = partition_tool_calls(calls, snapshot)
+
+    assert [index for index, *_ in parallel] == [0, 1, 2]
+    assert [index for index, _call_item in serial] == [3]
+    assert parallel[1][1] is calls[1], "Schema 错误在 dispatch 内逐项返回，不阻塞同轮调用"
 
 
 def test_parallel_dispatch_inherits_context_but_receives_isolated_skill_state():
@@ -111,103 +110,41 @@ def test_parallel_dispatch_inherits_context_but_receives_isolated_skill_state():
     asyncio.run(scenario())
 
 
-def test_parallel_safe_predicate_failure_falls_back_to_serial():
+def test_shell_confirmation_predicate_failure_isolated_to_that_call():
     def broken_predicate(_arguments):
         raise RuntimeError("参数不应进入可见诊断")
 
-    snapshot = _snapshot(_tool(
-        "conditional_read", parallel_safe=True, mutates_for_input=broken_predicate,
-    ))
-
-    assert not parallel_safe_batch(
-        [_call("conditional_read"), _call("conditional_read")], snapshot,
+    parallel, serial = partition_tool_calls(
+        [_call("conditional_read", {"command": "danger"}), _call("other")],
+        _snapshot(
+            _tool("conditional_read", destructive=True, parallel_safe_for_input=broken_predicate),
+            _tool("other"),
+        ),
     )
+    assert [index for index, *_ in parallel] == [1]
+    assert [index for index, _call_item in serial] == [0]
 
 
-def test_input_parallel_authorization_is_required_for_mutating_shell_tools():
-    tool = _tool(
-        "guarded_shell",
-        parallel_safe_for_input=lambda args: args.get("command") == "read-only",
-        mutates=True,
-        destructive=True,
-    )
-    snapshot = _snapshot(tool)
-
-    assert parallel_safe_batch(
-        [_call("guarded_shell", {"command": "read-only"}), _call("guarded_shell", {"command": "read-only"})],
-        snapshot,
-    )
-    assert not parallel_safe_batch(
-        [_call("guarded_shell", {"command": "write"}), _call("guarded_shell", {"command": "write"})],
-        snapshot,
-    ), "mutates/destructive 工具没有本次输入的明确并行授权时仍应串行"
-
-
-def test_parallel_preflight_validates_the_entire_batch_without_dispatching():
-    safe = _tool(
-        "safe_read",
-        parallel_safe=True,
-        input_schema={
-            "type": "object",
-            "properties": {"limit": {"type": "integer"}},
-            "required": ["limit"],
-            "additionalProperties": False,
-        },
-    )
-    snapshot = _snapshot(safe)
-
-    prepared = prepare_parallel_batch(
-        [_call("safe_read", {"limit": "2"}), _call("safe_read", {"limit": 3})],
-        snapshot,
-    )
-    invalid_batch = prepare_parallel_batch(
-        [_call("safe_read", {"limit": 2}), _call("safe_read", {"limit": "not-a-number"})],
-        snapshot,
-    )
-
-    assert prepared is not None
-    assert [arguments for _call_item, _target, arguments in prepared] == [
-        {"limit": 2}, {"limit": 3},
-    ]
-    assert invalid_batch is None, "单项 Schema 无效时整批必须回到原串行校验路径"
-
-
-def test_reviewed_read_tools_and_parallel_shell_inputs_enter_the_batch():
+def test_shell_confirmation_gate_is_per_call_and_does_not_block_peer_tools():
     from agent.tools import registry
 
     snapshot = registry.snapshot()
-    reviewed_reads = (
-        "get_current_time", "list_projects", "get_project", "list_events",
-        "get_upcoming", "get_dashboard_stats",
-    )
-    assert all(snapshot.get(name).parallel_safe for name in reviewed_reads)
-    assert all(not snapshot.get(name).mutates for name in reviewed_reads)
-    assert parallel_safe_batch(
-        [_call("list_projects"), _call("get_upcoming")], snapshot,
-    )
-    assert not snapshot.get("read_file").parallel_safe
-    assert snapshot.get("xng_search").parallel_safe
-    assert snapshot.get("http_get").parallel_safe
-    assert parallel_safe_batch(
-        [_call("xng_search", {"query": "合成查询"}), _call("http_get", {"url": "https://example.invalid"})],
-        snapshot,
-    ), "只读联网搜索和受 SSRF/超时策略保护的 HTTP GET 应可同轮并行"
     shell = snapshot.get("shell")
     assert shell.parallel_safe_for_input({"command": "pwd"}) is True
     assert shell.parallel_safe_for_input({"command": "mkdir newdir"}) is True
     assert shell.parallel_safe_for_input({"command": "printf ok > result.txt"}) is False
     assert shell.parallel_safe_for_input({"command": "rm -rf result.txt"}) is False
-    assert parallel_safe_batch(
-        [_call("shell", {"command": "pwd"}), _call("xng_search", {"query": "合成查询"})],
+    parallel, serial = partition_tool_calls(
+        [
+            _call("shell", {"command": "python --version"}),
+            _call("shell", {"command": "date"}),
+            _call("shell", {"command": "rm -rf result.txt"}),
+            _call("get_current_time"),
+        ],
         snapshot,
-    ), "符合确认策略的 Shell 调用应能与同批联网搜索并行"
-    assert not parallel_safe_batch(
-        [_call("shell", {"command": "rm -rf result.txt"}), _call("xng_search", {"query": "合成查询"})],
-        snapshot,
-    ), "需要确认的危险 Shell 命令必须保留原串行确认流程"
-    assert not parallel_safe_batch(
-        [_call("list_projects"), _call("update_project")], snapshot,
-    ), "一个写工具必须让整批回到串行"
+    )
+    assert [index for index, *_ in parallel] == [0, 1, 3]
+    assert [index for index, _call_item in serial] == [2]
 
 
 def test_batch_observation_contains_only_bounded_aggregate_fields(caplog):
@@ -236,14 +173,16 @@ def test_batch_observation_contains_only_bounded_aggregate_fields(caplog):
     assert not {"user", "run", "tool", "args", "url", "query"}.intersection(record)
 
 
-async def test_phase2_whitelisted_tool_calls_reach_the_bounded_executor_concurrently():
-    from agent.tools import registry
-
-    prepared = prepare_parallel_batch(
-        [_call("get_current_time"), _call("list_projects")],
-        registry.snapshot(),
-    )
-    assert prepared is not None
+async def test_agent_selected_mutating_shell_calls_overlap_with_stable_results():
+    calls = [
+        _call("shell", {"command": f"check-{index}"})
+        for index in range(5)
+    ]
+    parallel, serial = partition_tool_calls(calls, _snapshot(_tool(
+        "shell", mutates=True, destructive=True,
+        parallel_safe_for_input=lambda _args: True,
+    )))
+    assert not serial
     active = 0
     max_active = 0
     started = 0
@@ -254,17 +193,17 @@ async def test_phase2_whitelisted_tool_calls_reach_the_bounded_executor_concurre
         active += 1
         started += 1
         max_active = max(max_active, active)
-        if started == 2:
+        if started == 5:
             all_started.set()
         try:
-            await asyncio.wait_for(all_started.wait(), timeout=1)
-            return call[1]
+            await asyncio.wait_for(all_started.wait(), timeout=2)
+            return call[3]["command"]
         finally:
             active -= 1
 
-    results = await run_parallel_dispatches(prepared, dispatch)
-    assert max_active == 2
-    assert results == ["get_current_time", "list_projects"]
+    results = await run_parallel_dispatches(parallel, dispatch, max_concurrency=5)
+    assert max_active == 5
+    assert results == [f"check-{index}" for index in range(5)]
 
 
 async def test_phase2_project_and_calendar_reads_preserve_user_scope(db, user_a, user_b):

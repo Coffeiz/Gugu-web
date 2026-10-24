@@ -46,12 +46,16 @@
   --radius-md: 14px;
   --radius-lg: 20px;
   --radius-pill: 999px;
+  --radius-list-overlay: 12px;
 
   --surface-page: #f7f5f8;
   --surface-panel: rgba(255,255,255,.78);
   --surface-card: rgba(255,255,255,.68);
   --surface-soft: rgba(240,237,242,.72);
   --surface-raised: #ffffff;
+  --surface-list-overlay: rgba(255,255,255,.96);
+  --surface-list-option-hover: rgba(109,100,160,.10);
+  --border-list-overlay: rgba(85,80,90,.16);
   --content-primary: #27242d;
   --content-secondary: #756f7a;
   --content-tertiary: #98909d;
@@ -68,6 +72,7 @@
   --elevation-card: 0 8px 24px rgba(39,36,45,.06);
   --elevation-card-hover: 0 14px 34px rgba(39,36,45,.10);
   --elevation-popup: 0 18px 46px rgba(39,36,45,.14);
+  --elevation-list-overlay: 0 14px 36px rgba(39,36,45,.16);
 
   --motion-hover-micro: 120ms;
   --motion-hover-control: 150ms;

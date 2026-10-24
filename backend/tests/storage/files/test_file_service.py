@@ -391,7 +391,8 @@ async def test_update_file_rename_and_extension_resolves_conflict(db, user_a, tm
     existing = await _create(svc, user_a.id, "new", "MD", data=b"existing")
     old_key = r.file.storage_key
     r2 = await svc.update_file(user_a.id, r.file.id, display_name="new", ext="MD", stage_name=None,
-                               folder_id=None, project_id=None, folder_set=False, project_set=False)
+                               folder_id=None, project_id=None, folder_set=False, project_set=False,
+                               client_version=int(r.file.version or 1))
     await db.commit()
     assert r2.file.display_name == "new(1)"
     assert r2.file.ext == "MD"
@@ -400,6 +401,32 @@ async def test_update_file_rename_and_extension_resolves_conflict(db, user_a, tm
     assert not await svc.storage.exists(old_key)
     assert await svc.storage.get(r2.file.storage_key) == b"source"
     assert await svc.storage.get(existing.file.storage_key) == b"existing"
+
+
+async def test_update_file_rejects_stale_version_before_renaming_storage(db, user_a, tmp_path):
+    svc = _svc(db, tmp_path)
+    created = await _create(svc, user_a.id, "original", "TXT", data=b"kept")
+    await db.commit()
+    original_key = created.file.storage_key
+    original_version = int(created.file.version or 1)
+    await svc.update_file(
+        user_a.id, created.file.id, display_name="first", stage_name=None,
+        folder_id=None, project_id=None, folder_set=False, project_set=False,
+        client_version=original_version,
+    )
+    await db.commit()
+
+    with pytest.raises(Conflict, match="文件已被其他端修改"):
+        await svc.update_file(
+            user_a.id, created.file.id, display_name="stale", stage_name=None,
+            folder_id=None, project_id=None, folder_set=False, project_set=False,
+            client_version=original_version,
+        )
+
+    await db.refresh(created.file)
+    assert created.file.display_name == "first"
+    assert await svc.storage.exists(original_key) is False
+    assert await svc.storage.get(created.file.storage_key) == b"kept"
 
 
 @pytest.mark.parametrize("new_ext", ["png", "jpg", "zip", "pyc", "docx"])
@@ -416,6 +443,7 @@ async def test_update_file_rejects_text_to_binary_suffix_without_moving_bytes(
         await svc.update_file(
             user_a.id, result.file.id, display_name="readme", ext=new_ext, stage_name=None,
             folder_id=None, project_id=None, folder_set=False, project_set=False,
+            client_version=int(result.file.version or 1),
         )
 
     await db.refresh(result.file)
@@ -428,7 +456,8 @@ async def test_update_file_not_found(db, user_a, tmp_path):
     svc = _svc(db, tmp_path)
     with pytest.raises(NotFound):
         await svc.update_file(user_a.id, 999, display_name="x", stage_name=None,
-                              folder_id=None, project_id=None, folder_set=False, project_set=False)
+                              folder_id=None, project_id=None, folder_set=False, project_set=False,
+                              client_version=1)
 
 
 async def test_update_file_other_user_denied(db, user_a, user_b, tmp_path):
@@ -437,7 +466,8 @@ async def test_update_file_other_user_denied(db, user_a, user_b, tmp_path):
     await db.commit()
     with pytest.raises(NotFound):        # B 拿 A 的 file id → 归属不符即「不存在」
         await svc.update_file(user_b.id, r.file.id, display_name="x", stage_name=None,
-                              folder_id=None, project_id=None, folder_set=False, project_set=False)
+                              folder_id=None, project_id=None, folder_set=False, project_set=False,
+                              client_version=int(r.file.version or 1))
 
 
 async def test_copy_file(db, user_a, tmp_path):
@@ -512,7 +542,8 @@ async def test_file_move_keeps_source_folder_dir(db, user_a, tmp_path, monkeypat
     await db.commit()
     root = svc.storage.root
     await svc.update_file(user_a.id, r.file.id, display_name=None, stage_name=None,
-                          folder_id=dst.id, project_id=None, folder_set=True, project_set=False)
+                          folder_id=dst.id, project_id=None, folder_set=True, project_set=False,
+                          client_version=int(r.file.version or 1))
     await db.commit()
     await db.refresh(r.file)
     assert "/个人文件/dst/" in r.file.storage_key
@@ -645,7 +676,8 @@ async def test_update_file_rejects_moving_into_deleted_folder(db, user_a, tmp_pa
     await db.commit()
     with pytest.raises(Invalid):
         await svc.update_file(user_a.id, r.file.id, display_name=None, stage_name=None,
-                              folder_id=folder.id, project_id=None, folder_set=True, project_set=False)
+                              folder_id=folder.id, project_id=None, folder_set=True, project_set=False,
+                              client_version=int(r.file.version or 1))
 
 
 async def test_upload_overwrite_rejects_cross_location_target(db, user_a, tmp_path):
@@ -719,7 +751,8 @@ async def test_update_file_cut_into_workspace_subfolder_keeps_folder(db, user_a,
     res = await svc.update_file(
         user_a.id, f.id, display_name=None, stage_name=None,
         folder_id=sub.id, project_id=None, folder_set=True, project_set=False,
-        workspace_directory_id=ws.id, workspace_directory_set=True)
+        workspace_directory_id=ws.id, workspace_directory_set=True,
+        client_version=int(f.version or 1))
     await db.commit()
     assert res.file.space == "workspace"
     assert res.file.workspace_directory_id == ws.id
@@ -745,7 +778,8 @@ async def test_update_file_cross_workspace_without_folder_lands_at_root(db, user
     res = await svc.update_file(
         user_a.id, in_a.file.id, display_name=None, stage_name=None,
         folder_id=None, project_id=None, folder_set=False, project_set=False,
-        workspace_directory_id=ws_b.id, workspace_directory_set=True)
+        workspace_directory_id=ws_b.id, workspace_directory_set=True,
+        client_version=int(in_a.file.version or 1))
     await db.commit()
     assert res.file.workspace_directory_id == ws_b.id
     assert res.file.folder_id is None
@@ -759,4 +793,5 @@ async def test_update_file_cross_workspace_without_folder_lands_at_root(db, user
         await svc.update_file(
             user_a.id, res.file.id, display_name=None, stage_name=None,
             folder_id=sub_b.id, project_id=None, folder_set=True, project_set=False,
-            workspace_directory_id=ws_a.id, workspace_directory_set=True)
+            workspace_directory_id=ws_a.id, workspace_directory_set=True,
+            client_version=int(res.file.version or 1))

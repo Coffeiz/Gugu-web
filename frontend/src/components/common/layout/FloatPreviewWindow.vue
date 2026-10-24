@@ -50,7 +50,7 @@
       <ImageViewer v-if="isImg" :blobUrl="blobUrl ?? undefined" :upscale="isVector" @loaded="onImageLoaded" />
       <VideoViewer v-else-if="isVid && videoSrc" :src="videoSrc ?? undefined" :refresh-src="!win.file.attach_id ? refreshVideoSource : undefined" />
       <OfficeViewer v-else-if="isOffice && (!isCsv || !csvTextMode) && (blobUrl || (isXlsx && typeof win.file.id === 'number'))" :blobUrl="blobUrl ?? undefined" :ext="win.file.ext ?? ''" :file-id="typeof win.file.id === 'number' ? win.file.id : undefined" :file-version="win.file.version" @content-size="onOfficeContentSize" @csv-render-failed="onCsvRenderFailed" />
-      <TextViewer  v-else-if="isText && (!isCsv || csvTextMode) && (blobUrl || isVirtual)" :blobUrl="blobUrl ?? undefined" :source-text="win.sourceText" :save-source="win.saveSource" :read-only="!!win.textFallback" :ext="win.file.ext" :fontSize="textFontSize" :fileKey="win.file.id ?? win.file.attach_id ?? undefined" :fileContext="win.file" @content-saved="onTextContentSaved" />
+      <TextViewer  v-else-if="isText && (!isCsv || csvTextMode) && (blobUrl || isVirtual)" :blobUrl="blobUrl ?? undefined" :source-text="win.sourceText" :save-source="win.saveSource" :read-only="!!win.textFallback" :ext="win.file.ext" :fontSize="textFontSize" :fileKey="win.file.id ?? win.file.attach_id ?? undefined" :fileContext="win.file" @content-saved="onTextContentSaved" @refresh="refreshHtmlPreview" />
       <div v-if="loading && !placeholderReady" class="fpw-status fpw-loading">
         <div class="fpw-spinner"></div>
         <span>{{ t('viewerUi.loading') }}</span>
@@ -98,68 +98,22 @@
     </template>
   </div>
 
-  <!-- 文件信息浮窗（独立弹窗） -->
-  <Teleport to="body">
-    <Transition name="info-pop">
-      <div v-if="showInfo" class="fpw-info-win"
-        :style="{ left: infoX+'px', top: infoY+'px', zIndex: win.zIndex + 1 }"
-        @mousedown.stop
-      >
-        <div class="fpw-info-title" @mousedown.prevent="startInfoDrag">
-          <span>{{ t('files.info') }}</span>
-          <button class="fpw-btn fpw-close" @click.stop="showInfo = false">
-            <Icon name="action.close" :size="13" />
-          </button>
-        </div>
-        <div class="fpw-info-body">
-          <div class="fpw-info-row">
-            <span class="fpw-info-label">{{ t('files.name') }}</span>
-            <span class="fpw-info-val">{{ win.file.displayName }}.{{ win.file.ext?.toLowerCase() }}</span>
-          </div>
-          <div class="fpw-info-row">
-            <span class="fpw-info-label">{{ t('files.format') }}</span>
-            <span class="fpw-info-val">{{ win.file.ext?.toUpperCase() }}</span>
-          </div>
-          <div v-if="contentSize" class="fpw-info-row">
-            <span class="fpw-info-label">{{ t('sharedUi.resolution') }}</span>
-            <span class="fpw-info-val">{{ contentSize }}</span>
-          </div>
-          <div class="fpw-info-row">
-            <span class="fpw-info-label">{{ t('files.size') }}</span>
-            <span class="fpw-info-val">{{ win.file.size }}</span>
-          </div>
-          <div class="fpw-info-row">
-            <span class="fpw-info-label">{{ t('files.createdAt') }}</span>
-            <span class="fpw-info-val">{{ formatFileCreatedDate(win.file.createdAt) }}</span>
-          </div>
-          <div v-if="win.file.projectName" class="fpw-info-row">
-            <span class="fpw-info-label">{{ t('files.project') }}</span>
-            <span class="fpw-info-val">{{ win.file.projectName }}</span>
-          </div>
-          <div v-if="win.file.folderName" class="fpw-info-row">
-            <span class="fpw-info-label">{{ t('files.folderLocation') }}</span>
-            <span class="fpw-info-val">{{ win.file.folderName }}</span>
-          </div>
-          <div v-if="win.file.stageName" class="fpw-info-row">
-            <span class="fpw-info-label">{{ t('files.stage') }}</span>
-            <span class="fpw-info-val">{{ win.file.stageName }}</span>
-          </div>
-          <div v-if="win.file.mimeType" class="fpw-info-row">
-            <span class="fpw-info-label">MIME</span>
-            <span class="fpw-info-val fpw-info-mono">{{ win.file.mimeType }}</span>
-          </div>
-        </div>
-      </div>
-    </Transition>
-  </Teleport>
+  <FileInfoPopup
+    :show="showInfo" :file="win.file" :x="infoX" :y="infoY" :z-index="win.zIndex + 1"
+    :resolution="contentSize"
+    @close="showInfo = false" @navigate="navigateToFileDirectory"
+    @update:x="infoOffsetX = $event - x" @update:y="infoOffsetY = $event - y"
+  />
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, onUnmounted , type PropType} from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import Icon from '@/components/common/icons/Icon.vue'
+import FileInfoPopup from '@/components/common/file-browser/FileInfoPopup.vue'
 import type { PreviewWindow } from '@/stores/preview'
-import type { FileMeta } from '@/stores/filesCache'
+import { useFilesCacheStore, type FileMeta } from '@/stores/filesCache'
 import ImageViewer from '@/components/common/viewers/ImageViewer.vue'
 import VideoViewer from '@/components/common/viewers/VideoViewer.vue'
 import TextViewer  from '@/components/common/viewers/TextViewer.vue'
@@ -168,17 +122,21 @@ import { CLIENT_ID, filesApi } from '@/services/api'
 import { isUnauthorizedResponse } from '@/services/authSession'
 import { isImageExt, isVideoExt, isTextExt, isOfficeExt, isCsvExt, isPreviewReloadRequested, isPreviewAffectedByFileEvent, isTextFallbackCandidate, normalizeTextBlob, usePreviewStore } from '@/stores/preview'
 import { getCachedThumb, getThumb } from '@/composables/shared/useThumbCache'
-import { usePreviewBlobCache } from '@/composables/shared/usePreviewBlobCache'
+import { usePreviewBlobCache, withPreviewCacheBust as withCacheBust } from '@/composables/shared/usePreviewBlobCache'
+import { useWindowDrag } from '@/composables/core/useWindowDrag'
 import { useLiveStore } from '@/stores/live'
+import { useUiStore } from '@/stores/ui'
 import { registerEsc, registerArrowNav } from '@/composables/core/windowz'
-import { formatFileCreatedDate } from '@/utils/fileDate'
 import { accountBoundaryEpoch, getAccountBoundaryEpoch } from '@/utils/accountBoundary'
 import { readDocumentFontSize, saveDocumentFontSize } from '@/utils/documentFontSizePreference'
 
 // 类型见下
 const props = defineProps({ win: { type: Object as PropType<PreviewWindow>, required: true } })
 const { t } = useI18n()
+const router = useRouter()
 const previewStore = usePreviewStore()
+const filesCache = useFilesCacheStore()
+const uiStore = useUiStore()
 const previewBlobCache = usePreviewBlobCache()
 const mountAccountEpoch = getAccountBoundaryEpoch()
 let recentlySavedText: { fileId: string; content: string; savedAt: number } | null = null
@@ -216,6 +174,7 @@ const h = ref(isPptx.value ? Math.round(window.innerHeight * 0.64) : props.win.h
 const isImg  = computed(() => isImageExt(props.win.file.ext))
 const isVid  = computed(() => isVideoExt(props.win.file.ext))
 const isText = computed(() => !!props.win.textFallback || isTextExt(props.win.file.ext, props.win.file.mimeType))
+const isHtml = computed(() => /^(html|htm)$/i.test(props.win.file.ext ?? ''))
 const isCsv = computed(() => isCsvExt(props.win.file.ext))
 const isOffice = computed(() => isOfficeExt(props.win.file.ext) || isCsv.value)
 const isXlsx = computed(() => (props.win.file.ext ?? '').toLowerCase() === 'xlsx')
@@ -315,33 +274,28 @@ const infoX = computed(() => x.value + infoOffsetX.value)
 const infoY = computed(() => y.value + infoOffsetY.value)
 
 function openInfo() {
-  if (!showInfo.value && infoBtnRef.value) {
+  const opening = !showInfo.value
+  if (opening && infoBtnRef.value) {
     const r   = infoBtnRef.value.getBoundingClientRect()
     const absX = r.left + r.width / 2 - 110   // 弹窗宽 220，居中对齐按钮
     const absY = r.bottom + 6
     infoOffsetX.value = absX - x.value
     infoOffsetY.value = absY - y.value
   }
-  showInfo.value = !showInfo.value
+  showInfo.value = opening
 }
 
-let infoDragOrig: { mx: number; my: number; ox: number; oy: number } | null = null
-function startInfoDrag(e: MouseEvent) {
-  if (e.button !== 0) return
-  infoDragOrig = { mx: e.clientX, my: e.clientY, ox: infoOffsetX.value, oy: infoOffsetY.value }
-  window.addEventListener('mousemove', onInfoDragMove)
-  window.addEventListener('mouseup',   onInfoDragUp)
+function navigateToFileDirectory(file?: Partial<FileMeta>) {
+  const fileId = Number(file?.id)
+  if (!Number.isSafeInteger(fileId) || fileId <= 0 || file?.attach_id) return
+  uiStore.pendingFileTarget = {
+    kind: 'file',
+    id: fileId,
+    ...(file.workspaceDirectoryId != null ? { workspaceDirectoryId: file.workspaceDirectoryId } : {}),
+  }
+  void router.push('/files')
 }
-function onInfoDragMove(e: MouseEvent) {
-  if (!infoDragOrig) return
-  infoOffsetX.value = infoDragOrig.ox + e.clientX - infoDragOrig.mx
-  infoOffsetY.value = infoDragOrig.oy + e.clientY - infoDragOrig.my
-}
-function onInfoDragUp() {
-  infoDragOrig = null
-  window.removeEventListener('mousemove', onInfoDragMove)
-  window.removeEventListener('mouseup',   onInfoDragUp)
-}
+
 
 // 矢量图（无尺寸 SVG 的 natural 只是浏览器折算的默认对象尺寸，如 300×150）开窗时
 // 按比例放大到「恰好 contain 进视口舒适区」，只放大不缩小（大尺寸 SVG 仍按原逻辑
@@ -441,6 +395,11 @@ function toggleCsvView() {
   else ready.value = false
 }
 
+function refreshHtmlPreview() {
+  if (!isHtml.value || isVirtual.value || loading.value) return
+  void load(props.win.file, true)
+}
+
 function onCsvRenderFailed() {
   csvTextMode.value = true
   fitWindow(Math.round(window.innerWidth * 0.44), Math.round(window.innerHeight * 0.86))
@@ -466,11 +425,6 @@ function onPlaceholderLoad(e: Event) {
     fitWindow(nw, nh)
   }
   placeholderReady.value = true
-}
-
-function withCacheBust(url: string, refresh: boolean): string {
-  if (!refresh) return url
-  return `${url}${url.includes('?') ? '&' : '?'}_t=${Date.now()}`
 }
 
 async function load(f: Partial<FileMeta>, refresh = false) {
@@ -713,12 +667,18 @@ watch(
   { immediate: true },
 )
 
-function onTextContentSaved(content: string, fileKey: string | number | null) {
+function onTextContentSaved(content: string, fileKey: string | number | null, version?: number) {
   // 保存成功后当前 TextViewer 已经持有最新文本；这里只替换会话 cache，避免把新的
   // blobUrl 回传给编辑器，导致每次自动保存都重新加载并打断光标/撤销栈。
   if (getAccountBoundaryEpoch() !== mountAccountEpoch) return
   const currentFileKey = props.win.file.id ?? props.win.file.attach_id ?? null
   if (fileKey == null || currentFileKey == null || String(fileKey) !== String(currentFileKey)) return
+  const staleKey = previewBlobCache.keyOf(props.win.file)
+  if (staleKey) previewBlobCache.discard(staleKey)
+  if (version != null && typeof props.win.file.id === 'number') {
+    props.win.file.version = version
+    filesCache.updateFile(props.win.file.id, { version })
+  }
   const key = previewBlobCache.keyOf(props.win.file)
   if (!key || props.win.file.attach_id) return
   recentlySavedText = { fileId: String(currentFileKey), content, savedAt: Date.now() }
@@ -784,7 +744,6 @@ async function handleDownload() {
 }
 
 // ── 拖拽标题栏移动 ───────────────────────────────────────────────────────────
-let dragOrig: { mx: number; my: number; x: number; y: number } | null = null
 const DRAG_OVERSCAN_RATIO = .25
 
 function previewDragBounds() {
@@ -804,27 +763,10 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value))
 }
 
-function startDrag(e: MouseEvent) {
-  if (e.button !== 0) return
-  dragOrig = { mx: e.clientX, my: e.clientY, x: x.value, y: y.value }
-  window.addEventListener('mousemove', onDragMove)
-  window.addEventListener('mouseup',   onDragUp)
-}
-
-function onDragMove(e: MouseEvent) {
-  if (!dragOrig) return
-  const nextX = dragOrig.x + e.clientX - dragOrig.mx
-  const nextY = dragOrig.y + e.clientY - dragOrig.my
+const { startDrag } = useWindowDrag(x, y, (nextX, nextY) => {
   const { minX, maxX, minY, maxY } = previewDragBounds()
-  x.value = clamp(nextX, minX, maxX)
-  y.value = clamp(nextY, minY, maxY)
-}
-
-function onDragUp() {
-  dragOrig = null
-  window.removeEventListener('mousemove', onDragMove)
-  window.removeEventListener('mouseup',   onDragUp)
-}
+  return { x: clamp(nextX, minX, maxX), y: clamp(nextY, minY, maxY) }
+})
 
 // ── 四角 resize（可见手柄只留右下角，其余三角只是能拖、没有图标）────────────────
 let resizeOrig: { mx: number; my: number; w: number; h: number; x: number; y: number; dir: string } | null = null
@@ -875,12 +817,8 @@ onUnmounted(() => {
   _unregEsc()
   _unregArrowNav()
   previewBlobCache.release(currentCacheKey.value, blobUrl.value)
-  window.removeEventListener('mousemove', onDragMove)
-  window.removeEventListener('mouseup',   onDragUp)
   window.removeEventListener('mousemove', onResizeMove)
   window.removeEventListener('mouseup',   onResizeUp)
-  window.removeEventListener('mousemove', onInfoDragMove)
-  window.removeEventListener('mouseup',   onInfoDragUp)
 })
 </script>
 
@@ -1068,58 +1006,6 @@ onUnmounted(() => {
 }
 .fpw-nav-prev { left: 10px; }
 .fpw-nav-next { right: 10px; }
-
-/* ── 信息独立弹窗 ── */
-.fpw-info-win {
-  position: fixed;
-  width: 220px;
-  border-radius: 12px;
-  overflow: hidden;
-  background: rgba(242, 243, 248, 0.97);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255,255,255,0.7);
-  box-shadow: 0 8px 32px rgba(20,25,60,0.18), 0 2px 8px rgba(0,0,0,0.07);
-  user-select: none;
-}
-.fpw-info-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 9px 10px 9px 14px;
-  background: rgba(255,255,255,0.55);
-  border-bottom: 1px solid rgba(0,0,0,0.07);
-  cursor: grab;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-.fpw-info-title:active { cursor: grabbing; }
-.fpw-info-body {
-  padding: 12px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  max-height: 70vh;
-  overflow-y: auto;
-}
-.fpw-info-row { display: flex; flex-direction: column; gap: 2px; }
-.fpw-info-label {
-  font-size: 10px; font-weight: 600;
-  color: var(--text-secondary); opacity: .6;
-  text-transform: uppercase; letter-spacing: 0.04em;
-}
-.fpw-info-val {
-  font-size: 12px; color: var(--text-primary);
-  word-break: break-all; line-height: 1.4;
-}
-.fpw-info-mono { font-family: var(--font-family-mono); font-size: 11px; }
-
-/* ── 弹窗动画 ── */
-.info-pop-enter-active,
-.info-pop-leave-active { transition: opacity 0.12s ease, transform 0.12s ease; }
-.info-pop-enter-from,
-.info-pop-leave-to     { opacity: 0; transform: scale(0.95); }
 
 /* ── resize 边缘与角标 ── */
 .fpw-resize {

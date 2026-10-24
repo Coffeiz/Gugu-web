@@ -71,6 +71,17 @@ export const TraceRunInputSchema = z.object({
   title: z.string().optional(),
 }).passthrough()
 
+export const TraceRunFinishSchema = z.object({
+  id: z.string().min(1),
+  session_key: z.string().min(1),
+  external_session_id: z.union([z.string(), z.number()]).optional().transform(v => v == null ? '' : String(v)),
+  source: z.string().optional().default('unknown'),
+  started_at: z.number(),
+  status: z.string().min(1).refine(value => value !== 'running'),
+  ended_at: z.number(),
+  duration_ms: z.number().nonnegative(),
+})
+
 export const TraceSessionSchema = z.object({
   session_key: z.string(),
   external_session_id: z.string().optional(),
@@ -100,6 +111,7 @@ export type TokenUsage = z.infer<typeof TokenUsageSchema>
 export type TokenImpact = z.infer<typeof TokenImpactSchema>
 export type TraceSpanInput = z.infer<typeof TraceSpanInputSchema>
 export type TraceRunInput = z.infer<typeof TraceRunInputSchema>
+export type TraceRunFinish = z.infer<typeof TraceRunFinishSchema>
 export type TraceSession = z.infer<typeof TraceSessionSchema>
 export type ContextFragment = z.infer<typeof ContextFragmentSchema>
 

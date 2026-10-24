@@ -138,7 +138,7 @@ async def test_qq_binding_command_is_consumed_before_agent_enqueue(monkeypatch):
 
     monkeypatch.setattr("app.services.im_identity.consume_qq_binding_code", fake_consume)
     monkeypatch.setattr("agent.im.interaction_text.consume_mcp_secret_payload", no_secret_prompt)
-    monkeypatch.setattr(qq_events, "_qq_ack", fake_ack)
+    monkeypatch.setattr(qq_events, "_qq_reply", fake_ack)
     monkeypatch.setattr(qq_events.R, "produce", fake_produce)
 
     await qq_events._handle_raw_qq_message(

@@ -28,6 +28,9 @@ class _Db:
     async def get(self, *args, **kwargs):
         return None
 
+    async def execute(self, *args, **kwargs):
+        return SimpleNamespace(scalars=lambda: SimpleNamespace(first=lambda: None))
+
     async def commit(self):
         return None
 
@@ -202,10 +205,9 @@ async def test_message_area_delta_commit_is_ordered_and_idempotent(db, user_a):
 
 @pytest.mark.asyncio
 async def test_twenty_isolated_tool_runs_keep_area_restore_and_provider_wire_aligned(db, user_a):
-    """连续工具 run 每轮 reload 后，新 Area 投影必须与旧 history renderer 等价。"""
+    """连续工具 run 重载后，canonical Area 恢复结果保持稳定。"""
     from agent.context.context_diagnostics import first_diff_index
     from agent.context.assembly import MessageSource, PersistencePolicy
-    from agent.context.history import render_canonical_area_snapshot
     from agent.context.message_area_repository import commit_delta, restore_entries
     from agent.context.assembly import MessageArea
 
@@ -217,7 +219,7 @@ async def test_twenty_isolated_tool_runs_keep_area_restore_and_provider_wire_ali
     expected_restored_wire = None
 
     for run_number in range(20):
-        history = await load_session_history(db, session.id, max_messages=200)
+        history = await load_session_history(db, session.id)
         area = restore_entries(history)
 
         area.configure_request(fixed_prefix=(), render_options={
@@ -267,14 +269,14 @@ async def test_twenty_isolated_tool_runs_keep_area_restore_and_provider_wire_ali
         await db.commit()
         observed.append((area.revision, area.digest(), delta.digest))
         expected_restored_area = restore_entries(
-            await load_session_history(db, session.id, max_messages=200),
+            await load_session_history(db, session.id),
         )
         expected_restored_area.configure_request(fixed_prefix=(), render_options={
             "api_format": "openai", "user_tz": timezone.utc,
         })
         expected_restored_wire = expected_restored_area.provider_projection().to_messages()
 
-    restored = restore_entries(await load_session_history(db, session.id, max_messages=200))
+    restored = restore_entries(await load_session_history(db, session.id))
     assert len(observed) == 20
     assert len(restored.entries) == 20 * 4
     assert restored.entries[-1].canonical_message["content"] == "完成 19"
@@ -282,6 +284,7 @@ async def test_twenty_isolated_tool_runs_keep_area_restore_and_provider_wire_ali
 
 @pytest.mark.asyncio
 async def test_finalize_run_uses_one_canonical_persistence_contract(monkeypatch):
+    from agent.context.display_timeline import stamp_display_item
     db = _Db()
     trim_calls = []
     baseline_calls = []
@@ -325,10 +328,13 @@ async def test_finalize_run_uses_one_canonical_persistence_contract(monkeypatch)
         model_cfg=model,
         message_area=area,
         text="reply",
-        display_timeline=[
-            {"kind": "tool", "toolCallId": "call-1", "toolName": "project_details"},
+        display_timeline=[stamp_display_item(item, sequence=index, user_message_id=321) for index, item in enumerate([
+            {
+                "kind": "tool", "toolCallId": "call-1", "toolName": "read_file",
+                "toolResult": [{"type": "video", "source": {"type": "base64", "data": "synthetic-media-payload"}}],
+            },
             {"kind": "assistant", "text": "已查到项目详情"},
-        ],
+        ], 1)],
         files=[],
         tokens_in=100,
         tokens_out=20,
@@ -351,7 +357,10 @@ async def test_finalize_run_uses_one_canonical_persistence_contract(monkeypatch)
         item for item in db.items
         if isinstance(item, ConversationMessage) and item.role == "assistant" and item.display_timeline
     )
-    assert [item["timelineOrder"] for item in assistant_row.display_timeline] == [321001, 321002]
+    assert [item["timelineOrder"] for item in assistant_row.display_timeline] == [321000001, 321000002]
+    assert assistant_row.display_timeline[0]["toolResult"] == [
+        {"type": "text", "text": "[视频已查看]"},
+    ]
     assert trim_calls == [7]
     assert baseline_calls == [(
         (7, "user-test", settings),

@@ -1,13 +1,14 @@
 export const chatUi = {
-  'zh-CN': { gugu: '咕咕', im: '即时通讯', recent: '最近对话', noWebSessions: '还没有网页对话', newConversation: '新对话', group: '群', submitted: '已提交', expired: '已过期，请重新发起操作', confirmationSubmitting: '正在确认…', confirmationConfirmed: '已确认，任务继续执行', confirmationCancelled: '已取消，任务已停止', customReply: '自定义回复', customReplyHint: '请在下方聊天输入框中直接输入并发送。', interactionAnswerPlaceholder: '输入你的回答', interactionAnswerSubmit: '提交回答', interactionSubmitFailed: '回复提交失败，请重试。', input: '输入', result: '结果', quoteEmoji: '引用 QQ 表情', focusCanvasItem: '定位到画布卡片' },
-  'ja-JP': { gugu: 'Gugu', im: 'インスタントメッセージ', recent: '最近の会話', noWebSessions: 'Web 会話はまだありません', newConversation: '新しい会話', group: 'グループ', submitted: '送信済み', expired: '期限切れです。もう一度操作してください', confirmationSubmitting: '確認中…', confirmationConfirmed: '確認済み。タスクを続行します', confirmationCancelled: 'キャンセルしました。タスクを停止しました', customReply: '自由回答', customReplyHint: '下のチャット入力欄に回答を入力して送信してください。', interactionAnswerPlaceholder: '回答を入力', interactionAnswerSubmit: '回答を送信', interactionSubmitFailed: '回答の送信に失敗しました。もう一度お試しください。', input: '入力', result: '結果', quoteEmoji: '引用 QQ 絵文字', focusCanvasItem: 'キャンバスカードを表示' },
-  'en-US': { gugu: 'Gugu', im: 'Instant messaging', recent: 'Recent conversations', noWebSessions: 'No web conversations yet', newConversation: 'New conversation', group: 'Group', submitted: 'Submitted', expired: 'Expired. Please start the operation again', confirmationSubmitting: 'Confirming…', confirmationConfirmed: 'Confirmed; continuing the task', confirmationCancelled: 'Cancelled; the task has stopped', customReply: 'Custom reply', customReplyHint: 'Type your reply in the chat box below and send it.', interactionAnswerPlaceholder: 'Type your answer', interactionAnswerSubmit: 'Submit answer', interactionSubmitFailed: 'Failed to submit the reply. Please try again.', input: 'Input', result: 'Result', quoteEmoji: 'Quoted QQ emoji', focusCanvasItem: 'Locate canvas card' },
+  'zh-CN': { gugu: '咕咕', im: '即时通讯', recent: '最近对话', noWebSessions: '还没有网页对话', newConversation: '新对话', group: '群', submitted: '已提交', expired: '已过期，请重新发起操作', confirmationSubmitting: '正在确认…', confirmationConfirmed: '已确认，任务继续执行', confirmationCancelled: '已取消，任务已停止', customReply: '自定义回复', customReplyHint: '请在下方聊天输入框中直接输入并发送。', interactionAnswerPlaceholder: '输入你的回答', interactionAnswerSubmit: '提交回答', interactionSubmitFailed: '回复提交失败，请重试。', input: '输入', result: '结果', quoteEmoji: '引用 QQ 表情', focusCanvasItem: '定位到画布卡片', scrollToLatest: '滚动到最新消息' },
+  'ja-JP': { gugu: 'Gugu', im: 'インスタントメッセージ', recent: '最近の会話', noWebSessions: 'Web 会話はまだありません', newConversation: '新しい会話', group: 'グループ', submitted: '送信済み', expired: '期限切れです。もう一度操作してください', confirmationSubmitting: '確認中…', confirmationConfirmed: '確認済み。タスクを続行します', confirmationCancelled: 'キャンセルしました。タスクを停止しました', customReply: '自由回答', customReplyHint: '下のチャット入力欄に回答を入力して送信してください。', interactionAnswerPlaceholder: '回答を入力', interactionAnswerSubmit: '回答を送信', interactionSubmitFailed: '回答の送信に失敗しました。もう一度お試しください。', input: '入力', result: '結果', quoteEmoji: '引用 QQ 絵文字', focusCanvasItem: 'キャンバスカードを表示', scrollToLatest: '最新のメッセージにスクロール' },
+  'en-US': { gugu: 'Gugu', im: 'Instant messaging', recent: 'Recent conversations', noWebSessions: 'No web conversations yet', newConversation: 'New conversation', group: 'Group', submitted: 'Submitted', expired: 'Expired. Please start the operation again', confirmationSubmitting: 'Confirming…', confirmationConfirmed: 'Confirmed; continuing the task', confirmationCancelled: 'Cancelled; the task has stopped', customReply: 'Custom reply', customReplyHint: 'Type your reply in the chat box below and send it.', interactionAnswerPlaceholder: 'Type your answer', interactionAnswerSubmit: 'Submit answer', interactionSubmitFailed: 'Failed to submit the reply. Please try again.', input: 'Input', result: 'Result', quoteEmoji: 'Quoted QQ emoji', focusCanvasItem: 'Locate canvas card', scrollToLatest: 'Scroll to latest message' },
 } as const
 
 Object.assign(chatUi['zh-CN'], {
+  sessionRunning: '运行中', sessionUnread: '有未读回复',
   minimaxProviderError: 'MiniMax 请求失败（上游 {tag}，错误码 {minimax_code} / {minimax_error_type}：{minimax_message}）。诊断编号 {diagnostic_id}；MiniMax 请求 ID：{minimax_request_id}',
   minimaxErrorCodes: {
-    unknown: '服务商未返回已收录的错误码，请使用诊断编号排查。',
+    unknown: '提供商未返回已收录的错误码，请使用诊断编号排查。',
     code1000: '未知或系统默认错误，请稍后再试。',
     code1001: '请求超时，请稍后再试。',
     code1002: '请求频率超限，请稍后再试。',
@@ -46,6 +47,7 @@ Object.assign(chatUi['zh-CN'], {
   playbackMode: { none: '无循环', single: '单曲循环', list: '列表循环', shuffle: '随机播放' },
 })
 Object.assign(chatUi['ja-JP'], {
+  sessionRunning: '実行中', sessionUnread: '未読の返信',
   minimaxProviderError: 'MiniMax リクエスト失敗（上流 {tag}、エラーコード {minimax_code} / {minimax_error_type}：{minimax_message}）。診断 ID {diagnostic_id}。MiniMax リクエスト ID：{minimax_request_id}',
   minimaxErrorCodes: {
     unknown: '登録されていないエラーコードです。診断 ID を使ってログを確認してください。',
@@ -87,6 +89,7 @@ Object.assign(chatUi['ja-JP'], {
   playbackMode: { none: 'リピートなし', single: '1曲リピート', list: '全曲リピート', shuffle: 'シャッフル' },
 })
 Object.assign(chatUi['en-US'], {
+  sessionRunning: 'Running', sessionUnread: 'Unread reply',
   minimaxProviderError: 'MiniMax request failed (upstream {tag}, error code {minimax_code} / {minimax_error_type}: {minimax_message}). Diagnostic ID {diagnostic_id}; MiniMax request ID: {minimax_request_id}',
   minimaxErrorCodes: {
     unknown: 'MiniMax returned an unrecognized error code. Use the diagnostic ID to inspect the logs.',

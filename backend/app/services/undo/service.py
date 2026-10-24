@@ -33,8 +33,8 @@ class UndoNotFound(UndoError):
 class UndoService:
     """操作记录的唯一公共入口。
 
-    `record_forward` 只记录 Web 请求显式提供的 context；Agent、IM、同步和 Shell
-    没有该 header，因此不会混入浏览器的 Ctrl/Command+Z 栈。
+    Web 与 Agent 使用独立 actor_type/context；Agent 操作不会混入浏览器的
+    Ctrl/Command+Z 栈。
     """
 
     RETENTION = timedelta(days=30)
@@ -64,6 +64,7 @@ class UndoService:
         base_versions: dict,
         artifact_refs: dict | None = None,
         group_id: str | None = None,
+        actor_type: str = "web",
     ) -> UndoOperation | None:
         context_id = cls._context(context_id)
         if context_id is None:
@@ -75,7 +76,7 @@ class UndoService:
             .where(
                 UndoOperation.user_id == user_id,
                 UndoOperation.undo_context_id == context_id,
-                UndoOperation.actor_type == "web",
+                UndoOperation.actor_type == actor_type,
                 UndoOperation.status == "undone",
             )
             .values(status="expired", failure_code="redo_cleared_by_new_operation")
@@ -92,7 +93,7 @@ class UndoService:
             after_state=deepcopy(after_state),
             base_versions=deepcopy(base_versions),
             artifact_refs=deepcopy(artifact_refs or {}),
-            actor_type="web",
+            actor_type=actor_type,
             status="active",
             created_at=now_utc(),
             expires_at=now_utc() + cls.RETENTION,
@@ -247,7 +248,8 @@ class UndoService:
         }
 
     @classmethod
-    def _claim_select(cls, *, operation_id: str, user_id, context_id: str | None):
+    def _claim_select(cls, *, operation_id: str, user_id, context_id: str | None,
+                      actor_type: str = "web"):
         """apply 的操作行认领查询：FOR UPDATE 把「读状态→校验→执行→落终态」串成原子段。
 
         两个并发 undo/redo 同时到达时，后到者阻塞在行锁上，等前者提交后读到的
@@ -258,7 +260,7 @@ class UndoService:
                 UndoOperation.id == operation_id,
                 UndoOperation.user_id == user_id,
                 UndoOperation.undo_context_id == context_id,
-                UndoOperation.actor_type == "web",
+                UndoOperation.actor_type == actor_type,
             ).with_for_update()
         )
 
@@ -271,11 +273,13 @@ class UndoService:
         context_id: str | None,
         operation_id: str,
         mode: str,
+        actor_type: str = "web",
     ) -> dict:
         context_id = cls._context(context_id)
         operation = (await db.execute(
             cls._claim_select(
-                operation_id=operation_id, user_id=user_id, context_id=context_id)
+                operation_id=operation_id, user_id=user_id, context_id=context_id,
+                actor_type=actor_type)
         )).scalar_one_or_none()
         if operation is None:
             raise UndoNotFound()

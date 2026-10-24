@@ -1,6 +1,6 @@
 import { filesApi, foldersApi } from '@/services/api'
 import type { RequestMeta } from '@/services/api'
-import type { FileMeta, FolderMeta } from '@/stores/filesCache'
+import { useFilesCacheStore, type FileMeta, type FolderMeta } from '@/stores/filesCache'
 
 type FolderTarget = Pick<FolderMeta, 'id' | 'name'> | { folderId?: number; displayName: string }
 
@@ -37,6 +37,7 @@ export function fileActionScopeError(options: FileActionOptions, targetProjectId
 
 /** 文件浏览层共用的 API 动作；InteractionSync adapter 由动作宿主负责本地 apply/rollback。 */
 export function useFileActions(options: FileActionOptions = {}) {
+  const filesCache = useFilesCacheStore()
   const scope = options.scope ?? 'personal'
   const allowCrossProject = options.allowCrossProject ?? scope !== 'project'
   const allowTrashActions = options.allowTrashActions ?? false
@@ -83,8 +84,17 @@ export function useFileActions(options: FileActionOptions = {}) {
     return foldersApi.download(id, name)
   }
 
+  async function updateFile(id: number, fields: Omit<NonNullable<Parameters<typeof filesApi.update>[1]>, 'version'>,
+    meta?: RequestMeta) {
+    const current = await filesCache.ensureFile(id)
+    if (!current) throw new Error('文件不存在或已被删除')
+    const updated = await filesApi.update(id, { ...fields, version: current.version }, meta)
+    filesCache.updateFile(id, updated)
+    return updated
+  }
+
   function renameFile(id: number, displayName: string, meta?: RequestMeta, extension?: string) {
-    return filesApi.update(id, { displayName, ...(extension !== undefined ? { ext: extension } : {}) }, meta)
+    return updateFile(id, { displayName, ...(extension !== undefined ? { ext: extension } : {}) }, meta)
   }
 
   function renameFolder(id: number, name: string, version: number, meta?: RequestMeta) {
@@ -102,7 +112,7 @@ export function useFileActions(options: FileActionOptions = {}) {
   function moveFile(id: number, folderId: number | null, projectId: number | null = null,
     meta?: RequestMeta, workspaceDirectoryId: number | null = null) {
     assertProjectTarget(projectId)
-    return filesApi.update(id, { folderId, projectId, workspaceDirectoryId }, meta)
+    return updateFile(id, { folderId, projectId, workspaceDirectoryId }, meta)
   }
 
   function moveFolder(id: number, parentId: number | null, version: number, projectId: number | null = null,

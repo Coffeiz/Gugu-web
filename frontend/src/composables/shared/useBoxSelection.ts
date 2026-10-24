@@ -54,18 +54,6 @@ export function useBoxSelection<F extends Id = Id>(containerRef: Ref<HTMLElement
     onClear?.()
   }
 
-  function toggleFileSelect(id: number) {
-    const ids = new Set(selectedFileIds.value)
-    if (ids.has(id)) ids.delete(id); else ids.add(id)
-    selectedFileIds.value = ids
-  }
-
-  function toggleFolderSelect(id: F) {
-    const ids = new Set(selectedFolderIds.value)
-    if (ids.has(id)) ids.delete(id); else ids.add(id)
-    selectedFolderIds.value = ids
-  }
-
   function _getItemsInBox() {
     const rect = selectionRect.value
     if (!rect || !containerRef.value) return { fileIds: new Set<number>(), folderIds: new Set<F>() }
@@ -174,7 +162,7 @@ export function useBoxSelection<F extends Id = Id>(containerRef: Ref<HTMLElement
     selectedFileIds, selectedFolderIds,
     previewFileIds, previewFolderIds,
     boxStart, selectionRect,
-    clearSelection, toggleFileSelect, toggleFolderSelect,
+    clearSelection,
     onContainerMouseDown, cancelDrag,
   }
 }

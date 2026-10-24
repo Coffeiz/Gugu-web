@@ -30,7 +30,7 @@ def test_admin_im_preview_maps_scope_to_reflection_task_type():
 
 def test_private_platform_user_reflection_is_not_scheduled_for_owner():
     """owner 私聊保留统一 owner 反思，不重复进入成员私聊记忆任务。"""
-    from agent.im.loop import _should_observe_private_member_activity
+    from agent.im.request_preparation import _should_observe_private_member_activity
     from agent.models import AgentRequest
 
     def request(role, *, enabled=True, chat_id=None):
@@ -259,6 +259,7 @@ async def test_idle_scope_is_enqueued_once_and_settled(db, user_a, monkeypatch):
         settled_at=None,
         scope_version=3,
         pending_passive_count=2,
+        pending_agent_count=1,
         created_at=now,
         updated_at=now,
     )
@@ -289,7 +290,7 @@ async def test_idle_scope_is_enqueued_once_and_settled(db, user_a, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_settled_scope_reopens_on_next_message(db, user_a, monkeypatch):
+async def test_settled_group_reopens_only_after_active_run(db, user_a, monkeypatch):
     from app.models import MemoryReflectionCursor
     from agent.memory import reflection_jobs
     from agent.memory.scopes import MemoryScope
@@ -324,10 +325,15 @@ async def test_settled_scope_reopens_on_next_message(db, user_a, monkeypatch):
 
     assert await reflection_jobs.observe_group_message(scope, 43, now, now=now) is None
     await db.refresh(cursor)
-    assert cursor.settled_at is None
-    assert cursor.active_started_at == now
+    assert cursor.settled_at == now - timedelta(minutes=15)
+    assert cursor.active_started_at == now - timedelta(minutes=30)
     assert cursor.last_message_id == 43
     assert calls == []
+    assert await reflection_jobs.observe_group_message(scope, 43, now, now=now, member_batch=False) is None
+    await db.refresh(cursor)
+    assert cursor.settled_at is None
+    assert cursor.active_started_at == now
+    assert cursor.pending_agent_count == 1
 
 
 @pytest.mark.asyncio
@@ -359,7 +365,7 @@ async def test_group_reflection_threshold_is_fifty(db, user_a, monkeypatch):
 @pytest.mark.asyncio
 async def test_group_threshold_event_flushes_group_owner_buffer(db, user_a, monkeypatch, im_role):
     from app.models import ConversationSession
-    from agent.im import loop
+    from agent.im import conversation
     from agent.memory import reflection, reflection_jobs
 
     settings = SimpleNamespace(agent=SimpleNamespace(web_private_reflection_threshold=10))
@@ -376,7 +382,7 @@ async def test_group_threshold_event_flushes_group_owner_buffer(db, user_a, monk
 
     monkeypatch.setattr(reflection_jobs, "observe_group_message", fake_observe)
     monkeypatch.setattr("app.core.events.publish", fake_publish)
-    monkeypatch.setattr(loop, "trim_session_messages", fake_trim)
+    monkeypatch.setattr(conversation, "trim_session_messages", fake_trim)
     scheduled = []
     flushed = []
 
@@ -413,9 +419,9 @@ async def test_group_threshold_event_flushes_group_owner_buffer(db, user_a, monk
         user_name="小北",
     )
 
-    assert await loop.record_passive_im_message(request, session.id) == session.id
+    assert await conversation.record_passive_im_message(request, session.id) == session.id
     if im_role == "owner":
-        assert scheduled == [{"group_mode": True, "session_id": session.id, "flush_now": True}]
+        assert scheduled == [{"group_mode": True, "session_id": session.id, "flush_now": True, "passive": True}]
         assert flushed == []
     else:
         assert scheduled == []

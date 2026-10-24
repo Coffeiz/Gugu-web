@@ -26,7 +26,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, watch } from 'vue'
 import { runtime, type MoveAction } from '@/interaction/runtime'
 import { useRuntimeAction } from '@/interaction/runtime/vue'
 import { showAppError } from '@/composables/core/useAppToast'

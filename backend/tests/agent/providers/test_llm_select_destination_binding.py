@@ -7,6 +7,8 @@ resolver），曾与 embedding/stt 同病：用户 base_url 为空时回退平�
 目的地只来自用户凭据（空串按 provider 官方默认端点解析），解析不出就放弃
 覆盖回落平台配置。
 """
+from agent.media import gates as media_gates
+from agent.media import images as media_images
 from types import SimpleNamespace
 
 import pytest
@@ -15,6 +17,7 @@ import agent.llm.llm_select as llm_select
 from agent.llm import modelctx
 from agent.tools import media_reader
 import app.byok.service as byok_service
+from agent import media
 from app.core import chat_attach
 from agent.llm.llm_select import ModelRunConfig, resolve_run_config_for_user
 from app.core.config import AIPresetItem
@@ -122,8 +125,8 @@ async def test_byok_multimodal_flags_reach_the_runtime_model(monkeypatch, harnes
     assert cfg.model.video is True
     assert cfg.model.audio is True
     assert cfg.model.image_detail == "high"
-    assert chat_attach.image_ready(cfg.model) is True
-    assert chat_attach.video_transport_for(cfg.model) == "anthropic"
+    assert media_images.image_ready(cfg.model) is True
+    assert media_gates.video_transport_for(cfg.model) == "anthropic"
     modelctx.set_model_cfg(cfg.model)
     try:
         assert media_reader.image_capability_error("png") is None

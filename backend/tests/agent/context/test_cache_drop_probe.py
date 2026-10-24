@@ -39,6 +39,7 @@ def _reflection_observation_input(*, supported=True, prefix="stable"):
             "trigger_source": "idle",
             "origin_run_id": "run-origin-123",
             "origin_gap_seconds": 180.0,
+            "snapshot_source": "persisted_history",
         },
     )
     ai = SimpleNamespace(model="MiniMax-M3")
@@ -179,6 +180,7 @@ def test_reflection_cache_observation_records_usage_and_only_prefix_fingerprints
     assert observation["trigger_source"] == "idle"
     assert observation["origin_run_id"] == "run-origin-123"
     assert observation["origin_gap_seconds"] == 180.0
+    assert observation["snapshot_source"] == "persisted_history"
     assert observation["cache_hit_ratio"] == 0.85
     assert observation["cache_read_tokens"] == 17_000
     assert observation["stable_prefix_tokens_estimate"] > 0
@@ -290,10 +292,12 @@ def test_reflection_probe_counts_full_provider_prefix_without_trace_truncation()
     assert content not in repr(observation)
 
 
-def test_reflection_cache_observation_is_attached_to_an_active_trace(monkeypatch):
+def test_reflection_cache_observation_uses_a_dedicated_trace(monkeypatch):
     from agent.runtime.loopscope_trace import state
 
+    reflection_runs = []
     monkeypatch.setenv("LOOPSCOPE_ENABLED", "1")
+    monkeypatch.setattr(state, "_finish_run", lambda reflection_run, _status: reflection_runs.append(reflection_run))
     run = state._ScopeRun(
         id="run-active",
         trace_id="trace-active",
@@ -323,7 +327,11 @@ def test_reflection_cache_observation_is_attached_to_an_active_trace(monkeypatch
     finally:
         state._scope_run.reset(token)
 
-    span = run.spans[-1]
+    assert run.spans == []
+    assert len(reflection_runs) == 1
+    reflection_run = reflection_runs[0]
+    assert reflection_run.source == "reflection"
+    span = reflection_run.spans[-1]
     assert span.name == "Reflection cache observation"
     assert span.attributes["scenario"] == "reflection"
     assert span.attributes["reflection_scope"] == "unknown"

@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import json
 
-# 历史读取只保留非 token 的条数安全上限，预算由 provider 边界裁定。
-HISTORY_MAX_MSGS = 500
+# 无 baseline 时限制首次上下文恢复的数据库读取量；baseline 增量窗口沿用旧上限。
+HISTORY_MAX_MSGS = 100
+BASELINE_HISTORY_MAX_MSGS = 500
 
 
 def estimate_tokens(text: str) -> int:

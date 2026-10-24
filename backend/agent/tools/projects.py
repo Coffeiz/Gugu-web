@@ -4,6 +4,9 @@
 """
 import json
 import random
+from sqlalchemy.exc import IntegrityError
+
+from sqlalchemy import or_, select
 
 from app.core.project_colors import (
     PROJECT_COLOR_KEYS,
@@ -16,6 +19,7 @@ from app.core.projects import (
     normalize_project_stages, replace_project_stages, update_project_atomic,
 )
 from app.core.tz import now_utc
+from app.models import CalendarEvent, File, Folder, Project, ScheduledTask  # orm-exempt: 项目删除快照需读取级联对象，待迁移到项目 Service
 from app.services.projects import (
     add_project,
     count_project_files,
@@ -28,10 +32,20 @@ from app.services.projects import (
 )
 from app.services.project_context import load_project_file_overviews, project_context_metadata
 from app.services.storage import get_storage
+from app.services.undo.agent import record_agent_forward
+from app.services.undo.domains import (
+    domain_ref, domain_state, event_snapshot, project_snapshot, task_snapshot,
+)
+from app.services.undo.files import file_snapshot, folder_snapshot, ref_for
 
 from app.core import events
 from agent.security import confirm
-from agent.tools.base import BaseSkill, Tool
+from agent.tools.base import (
+    BaseSkill, Tool, current_dispatch_session_id, current_dispatch_tool_call_id,
+)
+from app.services.idempotency import (
+    IdempotencyConflict, agent_create_key, attach_idempotency, find_idempotent,
+)
 
 
 async def _list_projects(db, user_id, args: dict):
@@ -136,6 +150,21 @@ async def _pick_unused_color(db, user_id) -> str:
 
 
 async def _create_project(db, user_id, args: dict):
+    idempotency_key = agent_create_key(
+        "create_project", session_id=current_dispatch_session_id(),
+        tool_call_id=current_dispatch_tool_call_id(),
+    )
+    try:
+        existing = await find_idempotent(db, Project, user_id, idempotency_key, args)
+    except IdempotencyConflict as exc:
+        return {"error": str(exc)}
+    if existing is not None:
+        stages = existing.stages
+        return {"success": True, "project_id": existing.id, "name": existing.name,
+                "stages": [s["label"] for s in stages],
+                "stage_details": [{"key": s["key"], "label": s["label"],
+                                   "todo_count": len(s.get("todos", []))} for s in stages],
+                "current_stage": existing.current_stage, "idempotent_replay": True}
     priority = (args.get("priority") or "").strip().lower()
     try:
         stages = (
@@ -157,7 +186,19 @@ async def _create_project(db, user_id, args: dict):
         })
     except ValueError as exc:
         return json.dumps({"error": str(exc)})
-    await add_project(db, p)
+    attach_idempotency(p, idempotency_key, args)
+    try:
+        async with db.begin_nested():
+            await add_project(db, p)
+    except IntegrityError:
+        existing = await find_idempotent(db, Project, user_id, idempotency_key, args)
+        if existing is None:
+            raise
+        return {"success": True, "project_id": existing.id, "name": existing.name,
+                "stages": [s["label"] for s in existing.stages],
+                "stage_details": [{"key": s["key"], "label": s["label"],
+                                   "todo_count": len(s.get("todos", []))} for s in existing.stages],
+                "current_stage": existing.current_stage, "idempotent_replay": True}
     await db.commit()
     return {"success": True, "project_id": p.id, "name": p.name,
             "stages": [s["label"] for s in stages],
@@ -348,14 +389,18 @@ async def _delete_project(db, user_id, args: dict):
         )
         if blocked is not None:
             return blocked
-        storage = get_storage()
-        deleted_at = now_utc()
-        results = []
-        for project in projects:
-            pid, name = project.id, project.name
-            file_count = await count_project_files(db, user_id, pid)
-            await soft_delete_project_full(db, storage, user_id, project, deleted_at)
-            results.append({"deleted_project_id": pid, "name": name, "file_count": file_count})
+        results, before_items, after_items = await _soft_delete_projects_for_agent(
+            db, user_id, projects,
+        )
+        await record_agent_forward(
+            db, user_id=user_id, session_id=current_dispatch_session_id(),
+            resource="projects", action="delete",
+            target_refs=[{"kind": ref.split(":", 1)[0], "id": int(ref.split(":", 1)[1])}
+                         for ref in after_items],
+            before_state=domain_state(before_items), after_state=domain_state(after_items),
+            base_versions={ref: {"version": state.get("version", 0)}
+                           for ref, state in before_items.items()},
+        )
         await db.commit()
         for project in projects:
             await events.publish(user_id, "projects", operation="delete", entity_id=project.id)
@@ -364,7 +409,7 @@ async def _delete_project(db, user_id, args: dict):
     if _err:
         return _err
 
-    # 不可逆 → 删除二次确认保底
+    # 删除前仍要求确认；软删除可由回收站或当前对话撤销恢复。
     file_cnt = await count_project_files(db, user_id, p.id)
     summary = f"将删除项目「{p.name}」" + (f"及其 {file_cnt} 个文件" if file_cnt else "") + "移入回收站（30 天内可恢复）"
     blocked = confirm.needs_target_confirmation(
@@ -376,11 +421,74 @@ async def _delete_project(db, user_id, args: dict):
     if blocked is not None:
         return blocked
 
-    pid, pname = p.id, p.name
-    await soft_delete_project_full(db, get_storage(), user_id, p, now_utc())
+    results, before_items, after_items = await _soft_delete_projects_for_agent(db, user_id, [p])
+    await record_agent_forward(
+        db, user_id=user_id, session_id=current_dispatch_session_id(),
+        resource="projects", action="delete",
+        target_refs=[{"kind": ref.split(":", 1)[0], "id": int(ref.split(":", 1)[1])}
+                     for ref in after_items],
+        before_state=domain_state(before_items), after_state=domain_state(after_items),
+        base_versions={ref: {"version": state.get("version", 0)}
+                       for ref, state in before_items.items()},
+    )
     await db.commit()
-    await events.publish(user_id, "projects", operation="delete", entity_id=pid)
-    return {"success": True, "deleted_project_id": pid, "name": pname}
+    await events.publish(user_id, "projects", operation="delete", entity_id=p.id)
+    return results[0]
+
+
+async def _soft_delete_projects_for_agent(db, user_id, projects):
+    """项目及其级联资源作为一个 Agent 撤销组软删除。"""
+    before_items = {}
+    results = []
+    storage = get_storage()
+    deleted_at = now_utc()
+    for project in projects:
+        pid, name = project.id, project.name
+        folders = (await db.execute(select(Folder).where(  # orm-exempt: 删除前收集项目文件夹快照，待迁移到项目 Service
+            Folder.user_id == user_id, Folder.project_id == pid, Folder.deleted_at.is_(None),
+        ))).scalars().all()
+        folder_ids = [folder.id for folder in folders]
+        file_scope = [File.project_id == pid]
+        if folder_ids:
+            file_scope.append(File.folder_id.in_(folder_ids))
+        files = (await db.execute(select(File).where(  # orm-exempt: 删除前收集项目文件快照，待迁移到项目 Service
+            File.user_id == user_id, File.deleted_at.is_(None), or_(*file_scope),
+        ))).scalars().all()
+        calendar_events = (await db.execute(select(CalendarEvent).where(  # orm-exempt: 删除前收集关联日程快照，待迁移到项目 Service
+            CalendarEvent.user_id == user_id, CalendarEvent.project_id == pid,
+            CalendarEvent.deleted_at.is_(None),
+        ))).scalars().all()
+        event_ids = [event.id for event in calendar_events]
+        tasks = []
+        if event_ids:
+            tasks = (await db.execute(select(ScheduledTask).where(  # orm-exempt: 删除前收集关联提醒快照，待迁移到项目 Service
+                ScheduledTask.user_id == user_id, ScheduledTask.event_id.in_(event_ids),
+            ))).scalars().all()
+        before_items[domain_ref("project", pid)] = project_snapshot(project)
+        before_items.update({ref_for("file", row.id): file_snapshot(row) for row in files})
+        before_items.update({ref_for("folder", row.id): folder_snapshot(row) for row in folders})
+        before_items.update({domain_ref("event", row.id): event_snapshot(row) for row in calendar_events})
+        before_items.update({domain_ref("task", row.id): task_snapshot(row) for row in tasks})
+        file_count = await count_project_files(db, user_id, pid)
+        await soft_delete_project_full(db, storage, user_id, project, deleted_at)
+        results.append({"success": True, "deleted_project_id": pid, "name": name,
+                        "file_count": file_count})
+    after_items = {}
+    for ref in before_items:
+        kind, raw_id = ref.split(":", 1)
+        model = {"project": Project, "file": File, "folder": Folder,
+                 "event": CalendarEvent, "task": ScheduledTask}.get(kind)
+        row = await db.scalar(select(model).where(  # orm-exempt: 删除后生成撤销快照并限定用户归属，待迁移到撤销 Service
+            model.id == int(raw_id), model.user_id == user_id,
+        ))
+        if row is None:
+            continue
+        snapshot = {
+            "project": project_snapshot, "file": file_snapshot, "folder": folder_snapshot,
+            "event": event_snapshot, "task": task_snapshot,
+        }[kind](row)
+        after_items[ref] = snapshot
+    return results, before_items, after_items
 
 
 # ── 阶段/待办辅助 ──

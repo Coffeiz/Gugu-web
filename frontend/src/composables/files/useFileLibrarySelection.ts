@@ -82,11 +82,23 @@ export function useFileLibrarySelection(options: FileLibrarySelectionOptions) {
   const selectionExiting = ref(false)
   const inSelectionMode = computed(() => !selectionExiting.value && (selectModeForced.value || box.selectedFileIds.value.size > 0 || box.selectedFolderIds.value.size > 0 || selectedTrashFolderIds.value.size > 0))
   function anchor(type: 'file' | 'folder', id: number | string) { lastAnchorIndex.value = flatSelectableItems.value.findIndex(item => item.type === type && item.id === id) }
+  function ensureSelectionAnchor() {
+    const items = flatSelectableItems.value
+    if (lastAnchorIndex.value >= 0 && lastAnchorIndex.value < items.length) return true
+    const selectedIndex = items.findIndex(item => item.type === 'file'
+      ? box.selectedFileIds.value.has(item.id as number)
+      : options.currentType.value === 'trash'
+        ? selectedTrashFolderIds.value.has(Number(item.id))
+        : box.selectedFolderIds.value.has(item.id))
+    if (selectedIndex < 0) return false
+    lastAnchorIndex.value = selectedIndex
+    return true
+  }
   function range(type: 'file' | 'folder', id: number | string) {
     // folder 和 file 是两张独立的自增主键表，id 会撞号（如 folder:12 与 file:12），
     // 查找必须同时匹配 type，否则 Shift 范围选择会锚到错误命名空间的项目。
     const target = flatSelectableItems.value.findIndex(item => item.type === type && item.id === id)
-    return target >= 0 && lastAnchorIndex.value >= 0 && state.selectRangeIn(flatSelectableItems.value, lastAnchorIndex.value, target)
+    return target >= 0 && ensureSelectionAnchor() && state.selectRangeIn(flatSelectableItems.value, lastAnchorIndex.value, target)
   }
   // 退出多选的两段式：先只关模式位让 checkbox 进入离场过渡（DOM 节点还在，selected
   // 集合未清 → .checked 保留，带着选中样式一次性淡出），过渡结束再清集合。若同帧清空，
@@ -98,7 +110,7 @@ export function useFileLibrarySelection(options: FileLibrarySelectionOptions) {
   function doClear() {
     restoringSelection = true
     selectionExiting.value = false
-    state.clearSelection(); box.clearSelection(); selectedTrashFolderIds.value = new Set(); lastAnchorIndex.value = -1
+    box.clearSelection(); lastAnchorIndex.value = -1
     nextTick(() => { restoringSelection = false })
   }
   function beginExit() {
@@ -153,7 +165,7 @@ export function useFileLibrarySelection(options: FileLibrarySelectionOptions) {
       return
     }
     if (event.shiftKey) {
-      const hadAnchor = lastAnchorIndex.value >= 0
+      const hadAnchor = ensureSelectionAnchor()
       if (!range('folder', folder.id)) state.selectOnlyFolder(folder.id)
       lastAnchorIndex.value = resolveSelectionAnchor(lastAnchorIndex.value, flatSelectableItems.value.findIndex(item => item.type === 'folder' && item.id === folder.id), hadAnchor)
       return
@@ -164,7 +176,7 @@ export function useFileLibrarySelection(options: FileLibrarySelectionOptions) {
   function handleFileClick(file: FileMeta, event: MouseEvent) {
     if (pressStartedOutside(event)) return
     if (event.shiftKey) {
-      const hadAnchor = lastAnchorIndex.value >= 0
+      const hadAnchor = ensureSelectionAnchor()
       if (!range('file', file.id)) state.selectOnlyFile(file.id)
       lastAnchorIndex.value = resolveSelectionAnchor(lastAnchorIndex.value, flatSelectableItems.value.findIndex(item => item.type === 'file' && item.id === file.id), hadAnchor)
       return
@@ -177,7 +189,8 @@ export function useFileLibrarySelection(options: FileLibrarySelectionOptions) {
   function handleTrashFileClick(file: FileMeta, event: MouseEvent) {
     if ((event.target as HTMLElement).closest('button')) return
     const target = flatSelectableItems.value.findIndex(item => item.type === 'file' && item.id === file.id)
-    if (event.shiftKey && lastAnchorIndex.value >= 0 && target >= 0) {
+    const hadAnchor = event.shiftKey && ensureSelectionAnchor()
+    if (hadAnchor && target >= 0) {
       const selected = selectRange(flatSelectableItems.value, lastAnchorIndex.value, target)
       if (selected) {
         box.selectedFileIds.value = selected.fileIds
@@ -196,7 +209,8 @@ export function useFileLibrarySelection(options: FileLibrarySelectionOptions) {
   function handleTrashFolderClick(folder: TrashFolderMeta, event: MouseEvent) {
     if ((event.target as HTMLElement).closest('button')) return
     const target = flatSelectableItems.value.findIndex(item => item.type === 'folder' && item.id === folder.id)
-    if (event.shiftKey && lastAnchorIndex.value >= 0 && target >= 0) {
+    const hadAnchor = event.shiftKey && ensureSelectionAnchor()
+    if (hadAnchor && target >= 0) {
       const selected = selectRange(flatSelectableItems.value, lastAnchorIndex.value, target)
       if (selected) {
         box.selectedFileIds.value = selected.fileIds
