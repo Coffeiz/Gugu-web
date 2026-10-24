@@ -62,8 +62,8 @@ async def start_qq_http_session() -> aiohttp.ClientSession:
     if _QQ_HTTP_SESSION is None or _QQ_HTTP_SESSION.closed:
         connector = aiohttp.TCPConnector(
             keepalive_timeout=_QQ_HTTP_KEEPALIVE_SECONDS,
-            limit=100,
-            limit_per_host=32,
+            limit=0,
+            limit_per_host=64,
         )
         _QQ_HTTP_SESSION = aiohttp.ClientSession(
             connector=connector,
