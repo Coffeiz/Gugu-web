@@ -7,43 +7,7 @@
 
 ## [Unreleased]
 
-### What's New
-
-#### New Features
-
-- Add configurable IM tool-detail display modes and load chat tool details only when opened.
-
-#### Improvements
-
-- Load conversation history by visible page and reuse cached sessions to make switching and scrolling faster.
-- Allow main-model requests to wait up to five minutes for long-running multimodal responses.
-- Increase QQ outbound connection capacity with a per-host limit of 64 and no global pool cap.
-
-#### Fixes
-
-- Prevent duplicate chat bubbles when streamed messages are reconciled with persisted history.
-- Fall back to proactive QQ delivery when a passive final reply fails or its message ID is unavailable.
-- Preserve active-run status when switching sessions and refresh session state when a run finishes.
-
-### 更新内容
-
-#### 新功能
-
-- IM 支持配置工具详情的展示模式；聊天工具详情改为展开时再读取。
-
-#### 改进
-
-- 按可见分页加载会话历史并复用会话缓存，提升切换会话和滚动加载的速度。
-- 主模型请求最长可等待五分钟，以完成耗时较长的多模态响应。
-- 提升 QQ 出站连接池容量：单主机上限为 64，不再限制连接池总数。
-
-#### 修复
-
-- 修复流式消息与持久化历史合并时重复显示气泡。
-- QQ 被动最终回复发送失败或消息 ID 不可用时，自动改用主动消息投递。
-- 修复切换会话后运行中状态丢失，并在 run 结束时刷新会话状态。
-
-## [1.7.6] - 2026-10-21
+## [1.7.6] - 2026-10-24
 
 ### What's New
 
@@ -51,6 +15,7 @@
 
 - Undo Agent deletions of projects, calendar events, files and folders from the originating conversation.
 - Add MiniMax ASR, a LoopScope reflection diagnostics view, and a calendar action for adding an event to a selected day.
+- Add configurable IM tool-detail display modes and load chat tool details only when opened.
 
 #### Improvements
 
@@ -64,6 +29,9 @@
 - Improve file-sync recovery and reconciliation after watcher event loss, and add safer batch handling for missing records.
 - Improve LoopScope localization and account display, QQ voice attachment handling, audio playback controls, calendar selection colors and file-preview location details.
 - Reuse unchanged transient memory indexes to reduce repeated RAG context preparation work.
+- Load conversation history by visible page and reuse cached sessions to make switching and scrolling faster.
+- Allow main-model requests to wait up to five minutes for long-running multimodal responses.
+- Increase QQ outbound connection capacity with a per-host limit of 64 and no global pool cap.
 
 #### Fixes
 
@@ -73,6 +41,9 @@
 - Prevent English edge labels from overflowing Mermaid flowcharts.
 - Correct reflection timing and prevent stale or mismatched history from being appended to a captured prefix.
 - Fix chat pagination position, mail-preview style leakage and file-sync recovery edge cases.
+- Prevent duplicate chat bubbles when streamed messages are reconciled with persisted history.
+- Fall back to proactive QQ delivery when a passive final reply fails or its message ID is unavailable.
+- Preserve active-run status when switching sessions and refresh session state when a run finishes.
 
 #### Contributors
 
@@ -88,6 +59,7 @@
 
 - 支持在原对话中撤销咕咕删除的项目、日程、文件和文件夹。
 - 新增 MiniMax ASR、LoopScope 反思诊断页面，以及为选中日期添加日程的操作。
+- IM 支持配置工具详情的展示模式；聊天工具详情改为展开时再读取。
 
 #### 改进
 
@@ -100,6 +72,9 @@
 - 改进文件监听事件丢失后的恢复和对账，并完善缺失记录的批量处理安全性。
 - 改进 LoopScope 多语言与账号显示、QQ 语音附件读取、音频播放控件、日历选区颜色和文件预览路径信息。
 - 复用内容未变化的瞬态记忆索引，减少多轮上下文准备的重复开销。
+- 按可见分页加载会话历史并复用会话缓存，提升切换会话和滚动加载的速度。
+- 主模型请求最长可等待五分钟，以完成耗时较长的多模态响应。
+- 提升 QQ 出站连接池容量：单主机上限为 64，不再限制连接池总数。
 
 #### 修复
 
@@ -109,6 +84,9 @@
 - 修复 Mermaid 流程图英文连线标签溢出。
 - 修正反思触发时序；历史前缀不一致时不再追加到已捕获快照。
 - 修复聊天历史分页位置、邮件预览样式泄漏及文件同步恢复边界问题。
+- 修复流式消息与持久化历史合并时重复显示气泡。
+- QQ 被动最终回复发送失败或消息 ID 不可用时，自动改用主动消息投递。
+- 修复切换会话后运行中状态丢失，并在 run 结束时刷新会话状态。
 
 #### 贡献者
 
