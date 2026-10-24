@@ -17,10 +17,13 @@
 
 - Load conversation history by visible page and reuse cached sessions to make switching and scrolling faster.
 - Allow main-model requests to wait up to five minutes for long-running multimodal responses.
+- Increase QQ outbound connection capacity with a per-host limit of 64 and no global pool cap.
 
 #### Fixes
 
 - Prevent duplicate chat bubbles when streamed messages are reconciled with persisted history.
+- Fall back to proactive QQ delivery when a passive final reply fails or its message ID is unavailable.
+- Preserve active-run status when switching sessions and refresh session state when a run finishes.
 
 ### 更新内容
 
@@ -32,10 +35,13 @@
 
 - 按可见分页加载会话历史并复用会话缓存，提升切换会话和滚动加载的速度。
 - 主模型请求最长可等待五分钟，以完成耗时较长的多模态响应。
+- 提升 QQ 出站连接池容量：单主机上限为 64，不再限制连接池总数。
 
 #### 修复
 
 - 修复流式消息与持久化历史合并时重复显示气泡。
+- QQ 被动最终回复发送失败或消息 ID 不可用时，自动改用主动消息投递。
+- 修复切换会话后运行中状态丢失，并在 run 结束时刷新会话状态。
 
 ## [1.7.6] - 2026-10-21
 
