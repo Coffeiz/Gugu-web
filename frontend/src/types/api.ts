@@ -4620,6 +4620,8 @@ export interface components {
             group_message_format?: string | null;
             /** Private Message Format */
             private_message_format?: string | null;
+            /** Private Streaming Enabled */
+            private_streaming_enabled?: boolean | null;
         };
         /** BroadcastRequest */
         BroadcastRequest: {

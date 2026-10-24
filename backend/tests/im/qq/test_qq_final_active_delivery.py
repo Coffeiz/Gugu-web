@@ -84,6 +84,115 @@ async def test_private_final_is_streamed_with_inbound_id_and_not_sent_again(deli
 
 
 @pytest.mark.asyncio
+async def test_prior_round_delivery_does_not_count_as_final_text_delivery(delivery):
+    from agent.interactions.events import ROUND_END
+
+    passive_send, finish, streamed = delivery
+    payload = {"platform": "qq", "chat_type": "c2c", "platform_user_id": "synthetic-user",
+               "channel_id": "synthetic-bot", "message_id": "synthetic-inbound"}
+    response = AgentResponse(text="查询结果")
+
+    async def events():
+        yield "token", "正在查询"
+        yield ROUND_END, "正在查询"
+        yield "final", response
+
+    final_text_sent, result, reply_text = await replies.send_qq_stream_by_round(
+        payload, events(), show_intermediate_replies=True,
+    )
+    await finalize(payload, result, stream_sent=final_text_sent, stream_reply_text=reply_text)
+
+    assert final_text_sent is True
+    assert streamed == ["正在查询", "查询结果"]
+    passive_send.assert_not_awaited()
+    assert finish.call_args.args[0] == "success"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fallback_succeeds", [True, False])
+async def test_partial_final_stream_only_suppresses_text_after_reliable_tail_delivery(
+    delivery, monkeypatch, fallback_succeeds,
+):
+    from agent.gateway import qq
+    from agent.interactions.events import ROUND_END
+
+    streams = []
+
+    class PartialStream:
+        def __init__(self):
+            self.parts = ""
+            self.last_sent_text = ""
+            self.sent = False
+            streams.append(self)
+
+        def push(self, text):
+            self.parts += text
+
+        async def finish(self, text):
+            if len(streams) == 1:
+                self.last_sent_text = text
+                self.sent = True
+                return
+            self.last_sent_text = "最终"
+            self.sent = True
+            raise RuntimeError("synthetic stream tail failure")
+
+        def has_sent(self):
+            return self.sent
+
+    monkeypatch.setattr(qq, "create_private_text_stream", lambda *_args, **_kwargs: PartialStream())
+    fallback_send = AsyncMock(return_value=fallback_succeeds)
+    monkeypatch.setattr(replies, "send_text", fallback_send)
+    payload = {"platform": "qq", "chat_type": "c2c", "platform_user_id": "synthetic-user",
+               "channel_id": "synthetic-bot", "message_id": "synthetic-inbound"}
+
+    async def events():
+        yield "token", "前置轮"
+        yield ROUND_END, "前置轮"
+        yield "token", "最终正文"
+        yield "final", AgentResponse(text="最终正文")
+
+    if fallback_succeeds:
+        final_text_sent, response, reply_text = await replies.send_qq_stream_by_round(
+            payload, events(), show_intermediate_replies=True,
+        )
+        assert final_text_sent is True
+        assert response.text == "最终正文"
+        assert reply_text == "最终正文"
+        fallback_send.assert_awaited_once_with(payload, "正文")
+    else:
+        final_text_sent, response, reply_text = await replies.send_qq_stream_by_round(
+            payload, events(), show_intermediate_replies=True,
+        )
+        assert final_text_sent is False
+        assert response.text == "最终正文"
+        assert reply_text is None
+        fallback_send.assert_awaited_once_with(payload, "正文")
+        await finalize(payload, response, stream_sent=final_text_sent, stream_reply_text=reply_text)
+        # 已确认“最终”前缀送达但尾部回退失败时，不能再把整段正文重发造成重复。
+        fallback_send.assert_awaited_once()
+        assert delivery[1].call_args.args[0] == "error"
+
+
+@pytest.mark.asyncio
+async def test_stream_without_final_event_raises_instead_of_creating_default_reply(delivery):
+    passive_send, _finish, streamed = delivery
+    payload = {"platform": "qq", "chat_type": "c2c", "platform_user_id": "synthetic-user",
+               "channel_id": "synthetic-bot", "message_id": "synthetic-inbound"}
+
+    async def events():
+        yield "token", "不完整的流"
+
+    with pytest.raises(RuntimeError, match="QQ 回复未收到模型终态"):
+        await replies.send_qq_stream_by_round(
+            payload, events(), show_intermediate_replies=True,
+        )
+
+    passive_send.assert_not_awaited()
+    assert streamed == []
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("fallback_succeeds", [True, False])
 async def test_stream_without_inbound_id_uses_reply_fallback_and_only_skips_after_success(
     delivery, monkeypatch, fallback_succeeds,

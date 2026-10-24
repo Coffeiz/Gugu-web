@@ -52,6 +52,7 @@ def _out(b: UserBot) -> dict:
         "private_message_format": (
             b.private_message_format if b.private_message_format in {"compat", "markdown"} else "markdown"
         ),
+        "private_streaming_enabled": bool(b.private_streaming_enabled),
         "owner_bound": bool(b.owner_platform_user_id),
     }
 
@@ -152,6 +153,7 @@ class BotUpdate(BaseModel):
     group_allowed_tools: list[str] | None = None
     group_message_format: str | None = None
     private_message_format: str | None = None
+    private_streaming_enabled: bool | None = None
 
 
 def _apply_group_chat_toggle(bot: UserBot, body: BotUpdate) -> None:
@@ -211,12 +213,22 @@ async def update_my_bot(
             raise HTTPException(400, "包含不支持的群成员工具")
         from app.services.im_identity import normalize_group_allowed_tools
         bot.group_allowed_tools = normalize_group_allowed_tools(body.group_allowed_tools)
+    if body.private_streaming_enabled is True and (
+        body.private_message_format or bot.private_message_format
+    ) != "markdown":
+        raise HTTPException(400, "QQ 私聊流式仅支持 Markdown 格式")
     for field in ("group_message_format", "private_message_format"):
         value = getattr(body, field)
         if value is not None:
             if value not in {"compat", "markdown"}:
                 raise HTTPException(400, "无效的 QQ 消息格式")
             setattr(bot, field, value)
+    if body.private_streaming_enabled is not None:
+        if bot.platform != "qq":
+            raise HTTPException(400, "私聊流式设置仅适用于 QQ 机器人")
+        bot.private_streaming_enabled = body.private_streaming_enabled
+    if body.private_message_format == "compat":
+        bot.private_streaming_enabled = False
     await db.commit()
     await db.refresh(bot)
     from app.core import events

@@ -101,13 +101,18 @@ async def finalize_im_dispatch(
         # 流式发送器已经完整交付正文时，只收尾附件，避免再发一份重复最终消息。
         # 流式发送失败/未交付时仍走普通回复出口，由 QQ 出站层按 msg_id
         # 被动发送并在过期或失败时降级主动消息。
-        reply_text = await send_agent_response(
-            payload, response,
-            already_sent_rounds=(
-                1 if payload.get("chat_type") == "c2c" and stream_sent and not response.errored else 0
-            ),
-            show_intermediate_replies=False,
-        )
+        if stream_reply_text is None:
+            # 流已确认发送最终正文前缀，但尾部恢复失败；重发全文会重复前缀，
+            # 因此将 Run 标记为交付失败，不再盲目重发。
+            reply_text = None
+        else:
+            reply_text = await send_agent_response(
+                payload, response,
+                already_sent_rounds=(
+                    1 if payload.get("chat_type") == "c2c" and stream_sent and not response.errored else 0
+                ),
+                show_intermediate_replies=False,
+            )
     elif platform == "feishu" and stream_sent:
         # CardKit 已经发送正文；附件仍由统一附件出口发送，避免文本重复。
         if response.files:

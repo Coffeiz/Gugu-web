@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 from inspect import signature
+from unittest.mock import AsyncMock
 
 from fastapi.dependencies.utils import get_dependant
 
@@ -172,6 +173,11 @@ async def test_terminal_websocket_cleanup_survives_task_cancellation_and_partial
 
 @pytest.mark.asyncio
 async def test_qq_stream_drains_agent_after_transport_failure(monkeypatch):
+    from agent.im import replies
+
+    # 没有关联入站消息，模拟主动回退通道也失败，确保已有中间轮成功
+    # 不会让尚未交付的最终正文被报告为已送达。
+    monkeypatch.setattr(replies, "send_text", AsyncMock(return_value=False))
     streams: list[_FakeStream] = []
 
     def make_stream(*_args, **_kwargs):

@@ -64,7 +64,7 @@ class _QQMermaidRound(QQMermaidRound):
 async def send_qq_stream_by_round(
     payload: dict, token_iter: AsyncIterator[tuple[str, object]], *,
     show_intermediate_replies: bool = True,
-) -> Tuple[bool, AgentResponse, str]:
+) -> Tuple[bool, AgentResponse, str | None]:
     """QQ 私聊按 round 流式发送；Mermaid 源码暂存，图表以图片消息补发。"""
     from agent.im.streaming.qq import send_qq_stream_by_round as run_stream
 

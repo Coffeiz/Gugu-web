@@ -359,10 +359,14 @@ async def dispatch_im_message(payload: dict):
         if message_format not in {"compat", "markdown"}:
             from agent.im.message_format import resolve_message_format
             message_format = await resolve_message_format(route.bot_id, "c2c")
-        # Markdown 私聊由 QQ stream_messages 实时交付正文；被动 msg_id
-        # 过期或传输失败时，流式发送器回退普通消息出口。
+        from agent.im.message_format import resolve_private_streaming_enabled
+        private_streaming_enabled = await resolve_private_streaming_enabled(route.bot_id)
+        # 被动 msg_id 过期或传输失败时，流式发送器回退普通消息出口。
         qq_private_streaming = _qq_private_streaming_requested(
-            platform, payload.get("chat_type"), message_format,
+            platform,
+            payload.get("chat_type"),
+            message_format,
+            private_streaming_enabled,
         )
     telegram_stream_tool_events = asyncio.Queue() if (
         platform == "telegram" and payload.get("chat_type") == "c2c"
