@@ -225,6 +225,9 @@ export function useChatSessions(options: {
       sessionId.value = id
       options.onHistoryLoaded?.(data.pagination || {})
       const loadedSession = sessions.value.find(s => s.id === id)
+      // 历史接口同时返回服务端生成快照；用它校准侧栏运行态，避免切回时保留
+      // 切走前缓存的 isRunning。缓存只用于即时展示消息，不能覆盖服务端终态。
+      if (loadedSession && typeof data.active === 'boolean') loadedSession.isRunning = data.active
       if (loadedSession && data.session?.workspaceName !== undefined) loadedSession.workspaceName = data.session.workspaceName
       if (loadedSession && data.session?.goalActive !== undefined) loadedSession.goalActive = Boolean(data.session.goalActive)
       if (loadedSession && data.session?.goalStatus !== undefined) loadedSession.goalStatus = data.session.goalStatus
@@ -279,11 +282,7 @@ export function useChatSessions(options: {
       // 服务端活跃标记是续接的权威状态。历史中存在助手消息不能证明当前 run 已结束
       // （例如 IM run 或多轮工具过程）；/stream 会按稳定事件 ID 重放，完成后由历史收尾。
       // 本地缓存也保留切走前的运行态，覆盖活跃标记短暂缺失的窗口。
-      const cachedRunPending = Boolean(cachedSnapshot?.wasRunning || cachedSnapshot?.messages.some(message =>
-        message.streaming || (message.role === 'tool'
-          && ['queued', 'running', 'waiting'].includes(message.toolStatus || '')),
-      ))
-      const shouldResume = Boolean(data.active || cachedRunPending)
+      const shouldResume = data.active === true
       // 基线整理是持久状态：刷新或切回会话时 SSE 已结束、没有可续看的流，
       // 从会话行状态恢复「正在整理上下文」提示，否则用户看到的就是静默卡死。
       if (!shouldResume && data.executionState === 'baseline_updating') {

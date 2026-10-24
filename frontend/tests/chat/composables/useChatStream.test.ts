@@ -78,6 +78,15 @@ describe('useChatStream 展示事件与生命周期', () => {
     expect(options.messages.value).toHaveLength(2)
   })
 
+  it('收到流终态时刷新会话运行态，修复丢失独立完成通知后的侧栏动画残留', async () => {
+    const options = createOptions([])
+    vi.stubGlobal('fetch', vi.fn(async () => sseResponse([{ type: 'done' }])))
+
+    await useChatStream(options).resumeStream(42)
+
+    expect(options.fetchSessions).toHaveBeenCalledOnce()
+  })
+
   it('完成通知按 run 接替历史，删除临时段并保留其他 run 和下一条用户消息', async () => {
     const old = item('text-a', 'assistant', 1, { text: '临时内容' })
     const saved = item('text-a', 'assistant', 1, { text: '最终内容' })

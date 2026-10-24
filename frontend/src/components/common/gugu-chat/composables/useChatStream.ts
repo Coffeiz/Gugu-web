@@ -674,6 +674,9 @@ export function useChatStream(options: {
             }
           } else if (evt.type === 'done') {
             if (runController) runTerminalControllers.add(runController)
+            // 会话列表的运行态由独立的用户级 live 事件刷新；若该瞬时通知丢失，
+            // 当前流仍能收到终态，借此重新读取服务端快照，避免侧栏标题动画残留。
+            void options.fetchSessions()
             if (live()) {
               options.clearStatus()
               // 取消收尾兜底：任何路径漏发个别 tool_done 终态时，把仍在转圈的
@@ -696,6 +699,8 @@ export function useChatStream(options: {
               }
             }
           } else if (evt.type === 'error') {
+            // 失败流也可能先于/替代 completed live 通知结束；刷新列表以收敛运行态。
+            void options.fetchSessions()
             if (live()) {
               await settleHistory()
               options.clearStatus()
