@@ -1519,6 +1519,10 @@ class UserBot(Base):
     private_message_format: Mapped[str] = mapped_column(
         String(16), default="markdown", server_default="markdown"
     )
+    # QQ 私聊是否通过 stream_messages 实时发送；开启后中间回复会立即对用户可见。
+    private_streaming_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
     # QQ/Telegram 当前 Bot 作用域内的 owner 身份；不作为跨 Bot 全局身份使用。
     owner_platform_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, default=None)
     owner_bound_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)

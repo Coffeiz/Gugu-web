@@ -26,8 +26,48 @@ describe('QQ 消息格式设置', () => {
 
     const rows = host.querySelectorAll('.pm-bot-group-row')
     expect(host.querySelectorAll('.pm-style-chip')).toHaveLength(4)
+    expect(rows).toHaveLength(3)
     expect(rows[0].querySelector('.pm-style-chip.active')?.textContent).toBe('profileImUi.compatFormat')
     expect(rows[1].querySelector('.pm-style-chip.active')?.textContent).toBe('profileImUi.markdownFormat')
+    expect(rows[2].querySelector('.toggle-switch')?.getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('Markdown 私聊切换实时流式时发出独立配置', async () => {
+    const streaming: boolean[] = []
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    app = createApp({
+      render: () => h(MessageFormatSettings, {
+        bot: { id: 1, private_message_format: 'markdown', private_streaming_enabled: false },
+        onStreaming: (enabled: boolean) => streaming.push(enabled),
+      }),
+    })
+    app.mount(host)
+
+    ;(host.querySelector('.toggle-switch') as HTMLButtonElement).click()
+
+    expect(streaming).toEqual([true])
+    expect(host.querySelectorAll('.pm-style-chip.active')[1]?.textContent).toBe('profileImUi.markdownFormat')
+  })
+
+  it('兼容格式下禁用流式开关且不会发出启用请求', () => {
+    const streaming: boolean[] = []
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    app = createApp({
+      render: () => h(MessageFormatSettings, {
+        bot: { id: 1, private_message_format: 'compat', private_streaming_enabled: false },
+        onStreaming: (enabled: boolean) => streaming.push(enabled),
+      }),
+    })
+    app.mount(host)
+
+    const toggle = host.querySelector('.toggle-switch') as HTMLButtonElement
+    expect(toggle.disabled).toBe(true)
+    expect(host.querySelectorAll('.pm-bot-group-row')[2].querySelector('.pm-field-hint')?.textContent)
+      .toBe('profileImUi.qqPrivateStreamingMarkdownRequiredHint')
+    toggle.click()
+    expect(streaming).toEqual([])
   })
 
   it('选择另一种格式时按会话范围提交稳定的配置值', async () => {

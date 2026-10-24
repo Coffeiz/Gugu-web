@@ -1303,6 +1303,14 @@
     "keyBehavior": "移除 smart 格式时仅迁移既有选项并保留其他偏好与数据默认值",
     "ci": "backend-pytest"
   },
+  "backend/tests/im/test_qq_private_streaming_migration.py": {
+    "domain": "qq-streaming",
+    "layer": "L2",
+    "owner": "backend/alembic/versions",
+    "productionEntry": "backend/alembic/versions/20261024000001_restore_qq_private_streaming_setting.py",
+    "keyBehavior": "新增独立私聊流式开关时保留既有 Markdown 行为，新建机器人默认关闭且回滚移除字段",
+    "ci": "backend-pytest"
+  },
   "backend/tests/im/test_qq_private_streaming.py": {
     "domain": "qq-streaming",
     "layer": "L1",

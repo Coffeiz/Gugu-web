@@ -105,7 +105,7 @@ RECORD_SPECS = (
     RecordSpec("bot_config", "connections", UserBot, "user_id", "id", (
         "platform", "name", "app_id", "sandbox", "group_chat_enabled", "feishu_group_chat_enabled", "group_requires_at",
         "group_read_enabled", "group_memory_enabled", "member_memory_enabled", "group_message_format",
-        "private_message_format", "created_at"), sanitize="bot"),
+        "private_message_format", "private_streaming_enabled", "created_at"), sanitize="bot"),
     RecordSpec("mcp_config", "connections", UserMcpServer, "user_id", "id", (
         "name", "transport", "endpoint", "timeout_seconds", "created_at", "updated_at"), sanitize="mcp"),
 )

@@ -359,10 +359,14 @@ async def dispatch_im_message(payload: dict):
         if message_format not in {"compat", "markdown"}:
             from agent.im.message_format import resolve_message_format
             message_format = await resolve_message_format(route.bot_id, "c2c")
-        # Markdown 私聊继续镜像实时 token 到 Web；QQ 仅在 round_end
-        # 发送过程正文，最终轮由主动消息出口交付，不创建长生命周期流。
+        from agent.im.message_format import resolve_private_streaming_enabled
+        private_streaming_enabled = await resolve_private_streaming_enabled(route.bot_id)
+        # 被动 msg_id 过期或传输失败时，流式发送器回退普通消息出口。
         qq_private_streaming = _qq_private_streaming_requested(
-            platform, payload.get("chat_type"), message_format,
+            platform,
+            payload.get("chat_type"),
+            message_format,
+            private_streaming_enabled,
         )
     telegram_stream_tool_events = asyncio.Queue() if (
         platform == "telegram" and payload.get("chat_type") == "c2c"
@@ -460,8 +464,7 @@ async def dispatch_im_message(payload: dict):
                 )
             reply_text = ""
         elif qq_private_streaming:
-            from agent.im.replies import send_completed_round
-            from agent.im.streaming.qq import collect_qq_response
+            from agent.im.replies import send_qq_stream_by_round
             token_iter = run_stream(
                 req,
                 on_interaction=_show_im_interaction,
@@ -469,12 +472,10 @@ async def dispatch_im_message(payload: dict):
                 on_event=stream_bridge.publish,
                 on_display=stream_bridge.publish_display,
             )
-            resp = await collect_qq_response(
+            stream_sent, resp, reply_text = await send_qq_stream_by_round(
                 payload, stream_bridge.mirror_stream(token_iter),
                 show_intermediate_replies=show_intermediate_replies,
-                send_completed_round=send_completed_round,
             )
-            reply_text = ""
         elif platform == "telegram" and payload.get("chat_type") == "c2c":
             from agent.im.replies import send_telegram_stream_by_round
             token_iter = run_stream(

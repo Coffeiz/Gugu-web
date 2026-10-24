@@ -31,10 +31,18 @@ def choose_instant_reaction(text: str, has_media: bool) -> tuple[str, str]:
 
 
 def _qq_private_streaming_requested(
-    platform: str, chat_type: str | None, message_format: str | None,
+    platform: str,
+    chat_type: str | None,
+    message_format: str | None,
+    enabled: bool,
 ) -> bool:
-    """QQ 私聊选择 Markdown 时流式发送；兼容格式和群聊维持非流式。"""
-    return platform == "qq" and chat_type == "c2c" and message_format == "markdown"
+    """仅在 Markdown 格式且显式启用时对 QQ 私聊使用流式发送。"""
+    return (
+        platform == "qq"
+        and chat_type == "c2c"
+        and message_format == "markdown"
+        and enabled is True
+    )
 
 
 async def decide_im_shortcut(

@@ -43,3 +43,23 @@ async def resolve_message_format(bot_id: str, chat_type: str | None) -> str:
         return fallback
     value = bot.group_message_format if chat_type == "group" else bot.private_message_format
     return value if value in MESSAGE_FORMATS else fallback
+
+
+async def resolve_private_streaming_enabled(bot_id: str) -> bool:
+    """读取 QQ Bot 的私聊实时流式开关；缺少有效 Bot 时按关闭处理。"""
+    import app.db.session as db_session
+    from app.models import UserBot
+
+    if db_session._engine is None:
+        db_session._build_engine()
+    try:
+        bot_db_id = int(bot_id)
+    except (TypeError, ValueError):
+        return False
+    async with db_session._SessionLocal() as db:
+        bot = await db.get(UserBot, bot_db_id)
+    return bool(
+        bot
+        and bot.private_streaming_enabled
+        and bot.private_message_format == "markdown"
+    )
