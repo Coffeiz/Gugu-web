@@ -1,4 +1,4 @@
-"""QQ 过程消息成功不能冒充最终交付；最终答复不依赖被动窗口和流关闭。"""
+"""QQ 最终答复在出站层优先被动发送，且不依赖过程消息与流关闭。"""
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -39,7 +39,7 @@ async def finalize(payload, response):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("show_intermediate", [True, False])
-async def test_final_is_sent_once_without_inbound_id_after_intermediate(delivery, show_intermediate):
+async def test_final_is_sent_once_with_inbound_id_after_intermediate(delivery, show_intermediate):
     send, finish = delivery
     payload = {"platform": "qq", "chat_type": "c2c", "platform_user_id": "synthetic-user",
                "channel_id": "synthetic-bot", "message_id": "synthetic-expired"}
@@ -60,7 +60,7 @@ async def test_final_is_sent_once_without_inbound_id_after_intermediate(delivery
         ["过程说明", "最终结论"] if show_intermediate else ["最终结论"])
     if show_intermediate:
         assert send.await_args_list[0].args[2] == "synthetic-expired"
-    assert send.await_args_list[-1].args[2] is None
+    assert send.await_args_list[-1].args[2] == "synthetic-expired"
     assert payload["message_id"] == "synthetic-expired"
     assert finish.call_args.args[0] == "success"
 
@@ -73,7 +73,7 @@ async def test_final_send_failure_is_not_reported_as_success_from_previous_strea
                "channel_id": "synthetic-bot", "message_id": "synthetic-expired"}
     await finalize(payload, AgentResponse(text="最终结论"))
     assert send.await_count == 1
-    assert send.await_args.args[2] is None
+    assert send.await_args.args[2] == "synthetic-expired"
     assert finish.call_args.args[0] == "error"
 
 
@@ -87,7 +87,7 @@ async def test_cancelled_run_does_not_send_active_final(delivery):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("errored", [True, False])
-async def test_group_final_and_error_notice_are_active_without_replaying_rounds(delivery, errored):
+async def test_group_final_and_error_notice_use_passive_fallback_path_without_replaying_rounds(delivery, errored):
     send, finish = delivery
     payload = {"platform": "qq", "chat_type": "group", "chat_id": "synthetic-group",
                "platform_user_id": "synthetic-user", "channel_id": "synthetic-bot",
@@ -96,7 +96,7 @@ async def test_group_final_and_error_notice_are_active_without_replaying_rounds(
     assert send.await_count == 1
     assert send.await_args.args[0] == "synthetic-group"
     assert send.await_args.args[1] == "最终提示"
-    assert send.await_args.args[2] is None
+    assert send.await_args.args[2] == "synthetic-expired"
     assert finish.call_args.args[0] == ("error" if errored else "success")
 
 

@@ -98,10 +98,10 @@ async def finalize_im_dispatch(
                 )
 
     if platform == "qq":
-        # 过程消息是否送达不代表最终答复成功。最终正文独立主动发送，
-        # 不携带原 msg_id，也不补发已经展示过的中间轮次。
+        # 过程消息是否送达不代表最终答复成功。最终正文独立发送，保留入站
+        # msg_id 以优先走被动回复；QQ 出站层在发送失败时负责主动消息降级。
         reply_text = await send_agent_response(
-            {**payload, "message_id": None}, response,
+            payload, response,
             show_intermediate_replies=False,
         )
     elif platform == "feishu" and stream_sent:

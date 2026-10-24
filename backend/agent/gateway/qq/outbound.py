@@ -579,9 +579,7 @@ async def send_link_keyboard(target_id: str, text: str, buttons: list[dict[str, 
 
 async def send_c2c(openid: str, text: str, msg_id: str | None = None,
                    channel_id: str | None = None, message_format: str | None = None) -> bool:
-    """给指定用户发 C2C 被动回复（带原 msg_id）。只在失败判定为瞬时（超时/连接错/5xx/429）
-    时重试一次；4xx 等永久错误直接失败——发消息不是幂等操作，重试会造成重复推送，
-    对不会成功的永久错误重试只有坏处没有好处（P2-b §1/§4-A 幂等前提）。"""
+    """优先被动回复 C2C；被动发送任意失败后改用主动消息尝试一次。"""
     print(json.dumps({
         "event": "send-c2c-start",
         "has_openid": bool(openid),
@@ -607,8 +605,9 @@ async def send_c2c(openid: str, text: str, msg_id: str | None = None,
                 "transient": _qq_is_transient(e),
                 "qq": _qq_error_summary(e),
             }, ensure_ascii=False), flush=True)
-            if msg_id and (_qq_msg_id_invalid(e) or _qq_passive_reply_limited(e)):
-                _log.warning("[qq] C2C 被动回复受限，降级为主动消息")
+            if msg_id:
+                _log.warning("[qq] C2C 被动回复失败，降级为主动消息")
+                _send_tokens.pop(channel_id, None)
                 try:
                     if message_format is None:
                         await _post(channel_id, openid, text, None)
@@ -665,8 +664,7 @@ async def _known_group_member_ids(channel_id: str, group_openid: str) -> frozens
 async def send_group(group_openid: str, text: str, msg_id: str | None = None,
                      channel_id: str | None = None, message_format: str | None = None,
                      mention_user_id: str | None = None) -> bool:
-    """给指定群发被动回复（带原 msg_id）。只在失败判定为瞬时时重试一次；
-    4xx 等永久错误直接失败（同 send_c2c，发消息非幂等，不对永久错误盲重试）。"""
+    """优先被动回复 QQ 群；被动发送失败后改用主动消息尝试一次。"""
     print(json.dumps({
         "event": "send-group-start",
         "has_group_openid": bool(group_openid),
@@ -713,8 +711,8 @@ async def send_group(group_openid: str, text: str, msg_id: str | None = None,
                 "transient": _qq_is_transient(e),
                 "qq": _qq_error_summary(e),
             }, ensure_ascii=False), flush=True)
-            if msg_id and (_qq_msg_id_invalid(e) or _qq_passive_reply_limited(e)):
-                _log.warning("[qq] 群聊被动回复受限，降级为主动消息")
+            if msg_id and not (mention_sent and mention_text and body_text):
+                _log.warning("[qq] 群聊被动回复失败，降级为主动消息")
                 try:
                     if mention_text and not mention_sent:
                         await _post_group(channel_id, group_openid, mention_text, None, "markdown",
@@ -742,6 +740,13 @@ async def send_group(group_openid: str, text: str, msg_id: str | None = None,
                     _log.warning("[qq] 群聊主动消息发送失败: %s",
                                  redact(f"{type(fallback_error).__name__}: {fallback_error}"))
                     return False
+            elif msg_id and mention_sent and mention_text and body_text:
+                # mention 已经被动送达，后续正文本来就是主动消息；失败时不能
+                # 重发 mention，否则会产生重复提醒。
+                diag_log("agent.gateway.qq.send_group", e)
+                _log.warning("[qq] 群聊正文发送失败: %s",
+                             redact(f"{type(e).__name__}: {e}"))
+                return False
             diag_log("agent.gateway.qq.send_group", e)
             _log.warning("[qq] 群发送失败(第%d次): %s", attempt, redact(f"{type(e).__name__}: {e}"))
             _send_tokens.pop(channel_id, None)

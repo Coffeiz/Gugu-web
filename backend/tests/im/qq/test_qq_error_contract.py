@@ -75,22 +75,37 @@ def test_qq_api_error_str_does_not_leak_raw_body():
     assert "status=400" in s
 
 
-# ── send_c2c：永久错误（4xx，非 401）不重试；瞬时错误重试一次 ─────────────
+# ── 被动回复优先；失败时主动发送一次 ─────────────────────────────────────
 
-async def test_send_c2c_does_not_retry_permanent_4xx(monkeypatch):
+async def test_send_c2c_falls_back_to_active_message_on_permanent_passive_error(monkeypatch):
     monkeypatch.setattr(qq_outbound, "_next_seq", _fake_next_seq)
     calls = []
 
     async def fake_post(channel_id, openid, text, msg_id):
-        calls.append(1)
-        raise qq_client.QQAPIError("POST", "/v2/users/ou_1/messages", 400, {"message": "bad request"})
+        calls.append(msg_id)
+        if msg_id:
+            raise qq_client.QQAPIError("POST", "/v2/users/ou_1/messages", 400, {"message": "bad request"})
 
     monkeypatch.setattr(qq_outbound, "_post", fake_post)
 
     ok = await qq_outbound.send_c2c("ou_1", "hi", "msg-1", "bot-perm")
 
-    assert ok is False
-    assert len(calls) == 1   # 永久错误只应尝试一次，不做第二次重复发送
+    assert ok is True
+    assert calls == ["msg-1", None]
+
+
+async def test_send_c2c_falls_back_to_active_message_on_unclassified_send_error(monkeypatch):
+    calls = []
+
+    async def fake_post(channel_id, openid, text, msg_id):
+        calls.append(msg_id)
+        if msg_id:
+            raise RuntimeError("transport failed")
+
+    monkeypatch.setattr(qq_outbound, "_post", fake_post)
+
+    assert await qq_outbound.send_c2c("ou_1", "hi", "msg-1", "bot-fallback") is True
+    assert calls == ["msg-1", None]
 
 
 async def test_send_c2c_falls_back_to_active_message_when_msg_id_expired(monkeypatch):
@@ -135,20 +150,20 @@ async def _noop():
 
 # ── send_group：同 send_c2c 的分类逻辑 ──────────────────────────────────────
 
-async def test_send_group_does_not_retry_permanent_4xx(monkeypatch):
-    monkeypatch.setattr(qq_outbound, "_next_seq", _fake_next_seq)
+async def test_send_group_falls_back_to_active_message_on_passive_error(monkeypatch):
     calls = []
 
     async def fake_post_group(channel_id, group_openid, text, msg_id, *args, **kwargs):
-        calls.append(1)
-        raise qq_client.QQAPIError("POST", "/v2/groups/g1/messages", 403, {"message": "forbidden"})
+        calls.append(msg_id)
+        if msg_id:
+            raise qq_client.QQAPIError("POST", "/v2/groups/g1/messages", 403, {"message": "forbidden"})
 
     monkeypatch.setattr(qq_outbound, "_post_group", fake_post_group)
 
     ok = await qq_outbound.send_group("g1", "hi", "msg-1", "bot-perm")
 
-    assert ok is False
-    assert len(calls) == 1
+    assert ok is True
+    assert calls == ["msg-1", None]
 
 
 @pytest.mark.parametrize("error_body", [
