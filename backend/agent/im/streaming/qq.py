@@ -18,6 +18,7 @@ class _FinalDeliveryState:
     prefix_sent: bool = False
     uncertain: bool = False
     last_round_delivered: bool = False
+    last_round_had_output: bool = False
 
 
 class QQMermaidRound:
@@ -55,6 +56,7 @@ class QQMermaidRound:
         self.segment_text = ""
         self.pending_whitespace = ""
         self.round_has_image = False
+        self.round_has_delivered_output = False
         self.trim_leading_segment = False
         self.stream_message_id: str | None = None
 
@@ -92,6 +94,7 @@ class QQMermaidRound:
         self.pending_whitespace = ""
         delivered = await self._finish_text_segment()
         self.final_delivery.last_round_delivered = delivered
+        self.final_delivery.last_round_had_output = self.round_has_delivered_output
         self.last_text = final_text.strip() or self.round_text.strip() or self.last_text
         self._reset_round()
         if start_next:
@@ -141,6 +144,16 @@ class QQMermaidRound:
         )
 
     async def _finish_final_round(self, current_text: str, final_text: str) -> None:
+        if self.round_has_image:
+            # response.text 仍含原始 Mermaid 源码；流式 renderer 已将其替换为图片，
+            # 当前轮中仅保留 renderer 实际输出的普通文本，不从原文补写源码。
+            delivered = await self.finish_round(current_text, start_next=False)
+            self.final_delivery.candidate = (
+                delivered and self.final_delivery.last_round_had_output
+            )
+            if self.final_delivery.candidate:
+                self.last_text = final_text
+            return
         # 最终 token 可能只覆盖正文前缀；收尾时把可确认的最终后缀补入当前流。
         if final_text.startswith(current_text) and final_text != current_text:
             self.round_text = final_text
@@ -203,6 +216,7 @@ class QQMermaidRound:
                         return False
                     self.stream_sent = True
                     self.segment_text = ""
+                    self.round_has_delivered_output = True
                 except Exception as exc:
                     from app.core.redaction import diag_log
 
@@ -217,6 +231,8 @@ class QQMermaidRound:
             self._record_failed_segment(stream, text)
             raise
         self.stream_sent = self.stream_sent or self.stream.has_sent()
+        if text.strip():
+            self.round_has_delivered_output = True
         self.segment_text = ""
         return True
 
@@ -254,10 +270,12 @@ class QQMermaidRound:
                 image_sent = await self._try_send_png_image(self.payload, part.png)
                 if image_sent:
                     self.stream_sent = True
+                    self.round_has_delivered_output = True
                 elif part.source:
                     if not await self._send_mermaid_text(self.payload, part.source):
                         raise RuntimeError("QQ Mermaid 图片和文本回退均发送失败")
                     self.stream_sent = True
+                    self.round_has_delivered_output = True
                 self.trim_leading_segment = True
                 self.stream = self._new_stream()
             elif part.placeholder_emitted:
@@ -286,6 +304,7 @@ class QQMermaidRound:
         self.round_has_image = False
         self.segment_text = ""
         self.pending_whitespace = ""
+        self.round_has_delivered_output = False
 
 
 async def send_qq_stream_by_round(

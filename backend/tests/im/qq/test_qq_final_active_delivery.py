@@ -109,6 +109,35 @@ async def test_prior_round_delivery_does_not_count_as_final_text_delivery(delive
 
 
 @pytest.mark.asyncio
+async def test_mermaid_only_final_is_delivered_as_image_without_replaying_source(delivery, monkeypatch):
+    from agent.im import mermaid
+
+    passive_send, finish, streamed = delivery
+    image_send = AsyncMock(return_value=True)
+    monkeypatch.setattr(replies, "_try_send_png_image", image_send)
+    monkeypatch.setattr(mermaid, "render_png", AsyncMock(return_value=b"synthetic-png"))
+    payload = {"platform": "qq", "chat_type": "c2c", "platform_user_id": "synthetic-user",
+               "channel_id": "synthetic-bot", "message_id": "synthetic-inbound"}
+    source = "```mermaid\nflowchart LR\n  A --> B\n```"
+
+    async def events():
+        yield "token", source
+        yield "final", AgentResponse(text=source)
+
+    stream_sent, response, reply_text = await replies.send_qq_stream_by_round(
+        payload, events(), show_intermediate_replies=True,
+    )
+    await finalize(payload, response, stream_sent=stream_sent, stream_reply_text=reply_text)
+
+    assert stream_sent is True
+    assert reply_text == source
+    assert streamed == []
+    image_send.assert_awaited_once_with(payload, b"synthetic-png")
+    passive_send.assert_not_awaited()
+    assert finish.call_args.args[0] == "success"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("fallback_succeeds", [True, False])
 async def test_partial_final_stream_only_suppresses_text_after_reliable_tail_delivery(
     delivery, monkeypatch, fallback_succeeds,
