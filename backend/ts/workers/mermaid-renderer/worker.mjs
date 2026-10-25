@@ -4,16 +4,14 @@ import { Resvg } from '@resvg/resvg-js'
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom'
 import { createHTMLWindow } from 'svgdom'
 import { normalizeMermaidEdgeLabelBounds, normalizeMermaidEdgeStyles, normalizeMermaidKanbanSectionColors, normalizeMermaidKanbanSectionTitles, normalizeMermaidMindmapRootLabel, normalizeMermaidNodeCorners, normalizeMermaidRasterColors, normalizeMermaidRasterText, normalizeMermaidRasterTextContrast, normalizeMermaidStateDiagramLabelAlignment, normalizeMermaidTimelineSectionColors } from './svg-style.mjs'
+import { calculateMermaidRasterDimensions } from './raster-dimensions.mjs'
 import { prepareMermaidDiagramSource, restoreMermaidDiagramLabels } from './diagram-source.mjs'
 import { createMermaidThemeConfig, resolveMermaidThemeColors } from './theme.mjs'
 
 const MAX_SOURCE_CHARS = 20_000
 const MAX_DIAGRAMS = 4
 const MAX_SVG_BYTES = 5 * 1024 * 1024
-const MAX_DIMENSION = 8_192
-const MAX_PIXELS = 5_000_000
 const MAX_PNG_BYTES = 3 * 1024 * 1024
-const TARGET_RASTER_SCALE = 2
 const CJK_FONT_FILE = [
   new URL('./fonts/NotoSansSC-VariableFont_wght.ttf', import.meta.url),
   new URL('../../../../frontend/public/fonts/Noto_Sans_SC/NotoSansSC-VariableFont_wght.ttf', import.meta.url),
@@ -351,29 +349,10 @@ for (let index = 0; index < sources.length; index += 1) {
     if (!viewBox) throw new Error('svg_dimensions_missing')
     const width = Math.ceil(Number(viewBox[1]))
     const height = Math.ceil(Number(viewBox[2]))
-    if (
-      !Number.isFinite(width) || !Number.isFinite(height) || width < 1 || height < 1 ||
-      width > MAX_DIMENSION || height > MAX_DIMENSION
-    ) {
-      throw new Error('pixel_limit_exceeded')
-    }
-
     // 保留 viewBox 坐标系，只增大 SVG 根元素的输出尺寸，让 Resvg 直接按矢量内容
     // 栅格化到高分辨率；倍率受最终边长和像素预算约束，不做位图二次缩放。
-    const rasterScale = Math.min(
-      TARGET_RASTER_SCALE,
-      MAX_DIMENSION / width,
-      MAX_DIMENSION / height,
-      Math.sqrt(MAX_PIXELS / (width * height)),
-    )
-    const rasterWidth = Math.max(1, Math.floor(width * rasterScale))
-    const rasterHeight = Math.max(1, Math.floor(height * rasterScale))
-    if (
-      rasterWidth > MAX_DIMENSION || rasterHeight > MAX_DIMENSION ||
-      rasterWidth * rasterHeight > MAX_PIXELS
-    ) {
-      throw new Error('pixel_limit_exceeded')
-    }
+    const { width: rasterWidth, height: rasterHeight } =
+      calculateMermaidRasterDimensions(width, height)
     root.setAttribute('width', String(rasterWidth))
     root.setAttribute('height', String(rasterHeight))
     const validatedSvg = new XMLSerializer().serializeToString(root)

@@ -457,6 +457,55 @@ export function normalizeMermaidDatabaseLabelPosition(root, { rasterizer = false
 }
 
 /** svgdom 的文字宽度可能偏小，会让连线标签底色变窄并露出穿过文字的连线。 */
+function expandViewBoxForEdgeLabelBackgrounds(root) {
+  const viewBox = root.getAttribute('viewBox')?.trim().split(/[\s,]+/).map(Number)
+  if (viewBox?.length !== 4 || !viewBox.every(Number.isFinite)) return
+
+  let [minX, minY, width, height] = viewBox
+  let maxX = minX + width
+  let maxY = minY + height
+  const originalBounds = { minX, minY, maxX, maxY }
+  for (const group of root.getElementsByTagName('g')) {
+    if (!(group.getAttribute('class') || '').split(/\s+/).includes('edgeLabel')) continue
+    for (const rect of group.getElementsByTagName('rect')) {
+      if (!/(?:^|\s)(?:background|labelBkg)(?:\s|$)/.test(rect.getAttribute('class') || '')) continue
+      const x = Number.parseFloat(rect.getAttribute('x') || '')
+      const y = Number.parseFloat(rect.getAttribute('y') || '')
+      const rectWidth = Number.parseFloat(rect.getAttribute('width') || '')
+      const rectHeight = Number.parseFloat(rect.getAttribute('height') || '')
+      if (![x, y, rectWidth, rectHeight].every(Number.isFinite)) continue
+
+      let offsetX = 0
+      let offsetY = 0
+      let ancestor = rect
+      while (ancestor && ancestor !== root) {
+        const transform = ancestor.getAttribute?.('transform') || ''
+        for (const translate of transform.matchAll(/translate\(\s*(-?[\d.]+)(?:[ ,]+(-?[\d.]+))?\s*\)/g)) {
+          offsetX += Number(translate[1])
+          offsetY += Number(translate[2] || 0)
+        }
+        ancestor = ancestor.parentNode
+      }
+
+      const left = x + offsetX
+      const top = y + offsetY
+      const right = left + rectWidth
+      const bottom = top + rectHeight
+      minX = Math.min(minX, left - (left < originalBounds.minX ? 2 : 0))
+      minY = Math.min(minY, top - (top < originalBounds.minY ? 2 : 0))
+      maxX = Math.max(maxX, right + (right > originalBounds.maxX ? 2 : 0))
+      maxY = Math.max(maxY, bottom + (bottom > originalBounds.maxY ? 2 : 0))
+    }
+  }
+
+  root.setAttribute('viewBox', `${minX} ${minY} ${maxX - minX} ${maxY - minY}`)
+  const declarations = styleDeclarations(root)
+  if (declarations.has('max-width')) {
+    declarations.set('max-width', `${maxX - minX}px`)
+    root.setAttribute('style', [...declarations].map(([name, value]) => `${name}: ${value}`).join('; '))
+  }
+}
+
 export function normalizeMermaidEdgeLabelBounds(root) {
   const cjkCharacter = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u
   for (const group of root.getElementsByTagName('g')) {
@@ -505,6 +554,9 @@ export function normalizeMermaidEdgeLabelBounds(root) {
       if (width < minimumWidth) rect.setAttribute('width', String(minimumWidth))
     }
   }
+
+  // Mermaid can place labels outside the viewBox on long curved links; Resvg clips to that box.
+  expandViewBoxForEdgeLabelBackgrounds(root)
   return root
 }
 
