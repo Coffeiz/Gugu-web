@@ -7,6 +7,50 @@
 
 ## [Unreleased]
 
+### What's New
+
+#### New Features
+
+- None.
+
+#### Improvements
+
+- None.
+
+#### Fixes
+
+- Render larger Mermaid diagrams in QQ by scaling them within the output pixel budget; avoid whole-diagram failures from reserved Flowchart node IDs.
+
+#### Contributors
+
+- None.
+
+#### Feedback & Issue Reporters
+
+- None.
+
+### 更新内容
+
+#### 新功能
+
+- 暂无。
+
+#### 改进
+
+- 暂无。
+
+#### 修复
+
+- QQ 支持渲染更大的 Mermaid 图表，并按输出像素预算缩放；补充流程图节点 ID 避开保留字的规则，减少整图渲染失败。
+
+#### 贡献者
+
+- 暂无。
+
+#### 反馈与问题报告
+
+- 暂无。
+
 ## [1.7.7] - 2026-10-24
 
 ### What's New

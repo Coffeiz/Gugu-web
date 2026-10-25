@@ -10,7 +10,7 @@ import { createMermaidThemeConfig, resolveMermaidThemeColors } from './theme.mjs
 const MAX_SOURCE_CHARS = 20_000
 const MAX_DIAGRAMS = 4
 const MAX_SVG_BYTES = 5 * 1024 * 1024
-const MAX_DIMENSION = 4_096
+const MAX_DIMENSION = 8_192
 const MAX_PIXELS = 5_000_000
 const MAX_PNG_BYTES = 3 * 1024 * 1024
 const TARGET_RASTER_SCALE = 2
@@ -353,7 +353,7 @@ for (let index = 0; index < sources.length; index += 1) {
     const height = Math.ceil(Number(viewBox[2]))
     if (
       !Number.isFinite(width) || !Number.isFinite(height) || width < 1 || height < 1 ||
-      width > MAX_DIMENSION || height > MAX_DIMENSION || width * height > MAX_PIXELS
+      width > MAX_DIMENSION || height > MAX_DIMENSION
     ) {
       throw new Error('pixel_limit_exceeded')
     }
