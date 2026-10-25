@@ -4,7 +4,7 @@ import { sanitizeHtml } from '@/utils/markdown'
 import { resolveMermaidThemeColors } from '@/utils/mermaidTheme'
 import { createMermaidThemeConfig } from '../../../backend/ts/workers/mermaid-renderer/theme.mjs'
 import { prepareMermaidDiagramSource, restoreMermaidDiagramLabels } from '../../../backend/ts/workers/mermaid-renderer/diagram-source.mjs'
-import { normalizeMermaidEdgeLabelBounds, normalizeMermaidEdgeStyles, normalizeMermaidMindmapRootLabel, normalizeMermaidNodeCorners, normalizeMermaidStateDiagramLabelAlignment } from '../../../backend/ts/workers/mermaid-renderer/svg-style.mjs'
+import { normalizeMermaidDatabaseLabelPosition, normalizeMermaidEdgeLabelBounds, normalizeMermaidEdgeStyles, normalizeMermaidMindmapRootLabel, normalizeMermaidNodeCorners, normalizeMermaidStateDiagramLabelAlignment } from '../../../backend/ts/workers/mermaid-renderer/svg-style.mjs'
 
 type MermaidApi = typeof import('mermaid').default
 
@@ -140,6 +140,7 @@ function normalizeSvgEdgeStyles(svg: string, arrowheadColor: string, labels: Rec
   const parsed = new DOMParser().parseFromString(svg, 'image/svg+xml')
   if (parsed.querySelector('parsererror')) return svg
   restoreMermaidDiagramLabels(parsed.documentElement, labels)
+  normalizeMermaidDatabaseLabelPosition(parsed.documentElement)
   normalizeMermaidMindmapRootLabel(parsed.documentElement)
   normalizeMermaidNodeCorners(parsed.documentElement)
   normalizeMermaidEdgeLabelBounds(parsed.documentElement)

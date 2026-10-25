@@ -1,4 +1,5 @@
 const EDGE_LABEL_RADIUS_PX = 8
+const DATABASE_LABEL_VERTICAL_OFFSET_PER_EXTRA_LINE_PX = 10.5
 
 function roundPolylineCorners(path) {
   const pointPattern = /([ML])\s*(-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)[,\s]+(-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)/gi
@@ -423,8 +424,8 @@ export function normalizeMermaidTimelineSectionColors(root) {
   return root
 }
 
-/** svgdom 会把数据库节点标签的 SVG 组左移半个标签宽度；栅格化前移回圆柱中心。 */
-export function normalizeMermaidDatabaseLabelPosition(root) {
+/** Mermaid 数据库节点的多行标签会偏离圆柱中心；统一校正水平与垂直位置。 */
+export function normalizeMermaidDatabaseLabelPosition(root, { rasterizer = false } = {}) {
   for (const node of root.getElementsByTagName('g')) {
     if (!(node.getAttribute('class') || '').split(/\s+/).includes('node')) continue
     const databaseShape = [...node.getElementsByTagName('path')].some(path =>
@@ -435,7 +436,18 @@ export function normalizeMermaidDatabaseLabelPosition(root) {
       if (!(label.getAttribute('class') || '').split(/\s+/).includes('label')) continue
       const transform = label.getAttribute('transform') || ''
       const translated = transform.match(/^translate\(\s*([-+\d.eE]+)[, ]+\s*([-+\d.eE]+)\s*\)$/)
-      if (translated) label.setAttribute('transform', `translate(0, ${translated[2]})`)
+      if (translated) {
+        const lineCount = Math.max(1, ...[...label.getElementsByTagName('text')].map(text =>
+          [...text.childNodes].filter(child =>
+            child.nodeType === 1 && child.localName === 'tspan' &&
+            (child.hasAttribute('y') || child.hasAttribute('dy')),
+          ).length,
+        ))
+        // 浏览器标签只需固定上移；svgdom/Resvg 的偏移会随行数累积。
+        const correctionLines = rasterizer ? lineCount - 1 : Number(lineCount > 1)
+        const y = Number(translated[2]) - correctionLines * DATABASE_LABEL_VERTICAL_OFFSET_PER_EXTRA_LINE_PX
+        label.setAttribute('transform', `translate(0, ${y})`)
+      }
       for (const text of label.getElementsByTagName('text')) {
         text.setAttribute('text-anchor', 'middle')
       }
@@ -498,7 +510,7 @@ export function normalizeMermaidEdgeLabelBounds(root) {
 
 /** Resvg 会把 svgdom 生成的 CJK 连线文字基线绘制在底色框下方；显式校正文字基线和字重。 */
 export function normalizeMermaidRasterText(root, textColor, options = {}) {
-  normalizeMermaidDatabaseLabelPosition(root)
+  normalizeMermaidDatabaseLabelPosition(root, { rasterizer: true })
 
   if (options.colorAllText) {
     for (const text of root.getElementsByTagName('text')) {
