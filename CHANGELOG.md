@@ -20,6 +20,9 @@
 #### Fixes
 
 - Render larger Mermaid diagrams in QQ by scaling them within the output pixel budget; avoid whole-diagram failures from reserved Flowchart node IDs.
+- Keep curved Mermaid edge labels inside QQ-rendered PNG images and align multi-line database labels correctly.
+- Prevent embedded Base64 image data and oversized grep results from overflowing Agent context; show truncation details in search results.
+- Identify MiniMax input-context overflow reported with generic error code 2013 and show actionable guidance.
 
 #### Contributors
 
@@ -42,6 +45,9 @@
 #### 修复
 
 - QQ 支持渲染更大的 Mermaid 图表，并按输出像素预算缩放；补充流程图节点 ID 避开保留字的规则，减少整图渲染失败。
+- 修复 QQ Mermaid 图片中的曲线连线标签裁切及多行数据库标签垂直对齐。
+- 省略 grep 结果中的内嵌 Base64 图片数据并限制超长行和结果体积，避免搜索结果撑爆 Agent 上下文，同时标明截断原因。
+- 将 MiniMax 以通用错误码 2013 返回的输入上下文超限识别为专用错误，并提供处理建议。
 
 #### 贡献者
 
