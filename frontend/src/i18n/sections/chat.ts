@@ -9,6 +9,7 @@ Object.assign(chatUi['zh-CN'], {
   minimaxProviderError: 'MiniMax 请求失败（上游 {tag}，错误码 {minimax_code} / {minimax_error_type}：{minimax_message}）。诊断编号 {diagnostic_id}；MiniMax 请求 ID：{minimax_request_id}',
   minimaxErrorCodes: {
     unknown: '提供商未返回已收录的错误码，请使用诊断编号排查。',
+    contextOverflow: '输入上下文超出模型上下文窗口，请缩短历史或减少工具输出。',
     code1000: '未知或系统默认错误，请稍后再试。',
     code1001: '请求超时，请稍后再试。',
     code1002: '请求频率超限，请稍后再试。',
@@ -51,6 +52,7 @@ Object.assign(chatUi['ja-JP'], {
   minimaxProviderError: 'MiniMax リクエスト失敗（上流 {tag}、エラーコード {minimax_code} / {minimax_error_type}：{minimax_message}）。診断 ID {diagnostic_id}。MiniMax リクエスト ID：{minimax_request_id}',
   minimaxErrorCodes: {
     unknown: '登録されていないエラーコードです。診断 ID を使ってログを確認してください。',
+    contextOverflow: '入力コンテキストがモデルのコンテキストウィンドウを超えました。履歴を短くするか、ツール出力を減らしてください。',
     code1000: '不明なエラー、またはシステム既定のエラーです。しばらくしてからお試しください。',
     code1001: 'リクエストがタイムアウトしました。もう一度お試しください。',
     code1002: 'リクエスト頻度の上限に達しました。しばらくしてからお試しください。',
@@ -93,6 +95,7 @@ Object.assign(chatUi['en-US'], {
   minimaxProviderError: 'MiniMax request failed (upstream {tag}, error code {minimax_code} / {minimax_error_type}: {minimax_message}). Diagnostic ID {diagnostic_id}; MiniMax request ID: {minimax_request_id}',
   minimaxErrorCodes: {
     unknown: 'MiniMax returned an unrecognized error code. Use the diagnostic ID to inspect the logs.',
+    contextOverflow: 'The input context exceeded the model context window. Shorten the history or reduce tool output.',
     code1000: 'Unknown or default system error. Please try again later.',
     code1001: 'The request timed out. Please try again.',
     code1002: 'The request rate limit was reached. Please try again later.',

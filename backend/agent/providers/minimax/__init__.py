@@ -49,6 +49,11 @@ _HTTP_ERROR_MESSAGES = {
     "500": "MiniMax 服务端错误，请稍后重试",
 }
 
+# 上游把「输入上下文超限」也归到 2013 这个通用参数错误码里。仅凭错误码无法区分，
+# 必须读上游文案；命中文案特征时给专用的上下文超限文案，避免把「内容太长」说成
+# 「参数格式不对」而误导用户去改模型或接口格式。
+_CONTEXT_OVERFLOW_SUMMARY = "输入上下文超出模型上下文窗口，请缩短历史或减少工具输出"
+
 # MiniMax 官方错误码中明确建议稍后重试的暂时性错误。仅在 Anthropic 流尚未
 # 向调用方输出正文时使用；其余错误（鉴权、参数、余额、内容审核等）不重试。
 _RETRYABLE_ERROR_CODES = frozenset({"1000", "1001", "1002", "1024", "1033"})
@@ -61,6 +66,22 @@ class MiniMaxErrorDetails:
     request_id: str
     summary: str
     description_key: str
+    context_overflow: bool = False
+
+
+def _is_context_overflow_message(message_candidates) -> bool:
+    """按上游文案判定「输入上下文超限」；仅凭错误码区分不出来。
+
+    上游把上下文超限也归到 2013 这类通用参数错误码里，只有文案才带真实语义。
+    这里复用预算模块的同一份特征清单，保证「判定为超限」和「告知用户超限」
+    不会因为两处各写一套文案而错位。
+    """
+    from agent.context.budget import CONTEXT_OVERFLOW_PHRASES
+
+    searchable = " ".join(
+        str(item) for item in message_candidates if isinstance(item, str)
+    ).lower()
+    return any(phrase in searchable for phrase in CONTEXT_OVERFLOW_PHRASES)
 
 
 def minimax_error_details(error: BaseException) -> MiniMaxErrorDetails | None:
@@ -114,6 +135,8 @@ def minimax_error_details(error: BaseException) -> MiniMaxErrorDetails | None:
                 if match:
                     candidates.append(match.group(1))
 
+        context_overflow = _is_context_overflow_message(message_candidates)
+
         code = next((str(item) for item in candidates
                      if isinstance(item, (int, str)) and re.fullmatch(r"\d{3,5}", str(item))), "")
         status_code = getattr(current, "status_code", None) or getattr(response, "status_code", None)
@@ -135,17 +158,22 @@ def minimax_error_details(error: BaseException) -> MiniMaxErrorDetails | None:
             code=code,
             error_type=error_type,
             request_id=request_id,
-            summary=_ERROR_MESSAGES.get(
-                code,
-                _HTTP_ERROR_MESSAGES.get(code, "MiniMax 未返回已收录的错误码，请使用诊断编号排查"),
+            summary=(
+                _CONTEXT_OVERFLOW_SUMMARY if context_overflow
+                else _ERROR_MESSAGES.get(
+                    code,
+                    _HTTP_ERROR_MESSAGES.get(code, "MiniMax 未返回已收录的错误码，请使用诊断编号排查"),
+                )
             ),
             description_key=(
-                f"chatUi.minimaxErrorCodes.code{code}"
+                "chatUi.minimaxErrorCodes.contextOverflow" if context_overflow
+                else f"chatUi.minimaxErrorCodes.code{code}"
                 if code in _ERROR_MESSAGES
                 else f"chatUi.minimaxErrorCodes.http{code}"
                 if code in _HTTP_ERROR_MESSAGES
                 else "chatUi.minimaxErrorCodes.unknown"
             ),
+            context_overflow=context_overflow,
         )
     return None
 
