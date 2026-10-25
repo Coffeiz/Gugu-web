@@ -660,6 +660,7 @@ def is_context_overflow_error(error: BaseException) -> bool:
             continue
         phrases = (
             "maximum context length", "context window exceeded", "context length exceeded",
+            "context window exceeds limit",
             "input token count exceeds", "prompt is too long", "input is too long",
             "request entity too large", "request too large",
         )

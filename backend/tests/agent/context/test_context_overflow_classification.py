@@ -9,6 +9,7 @@ def test_context_overflow_classifier_accepts_input_window_errors():
         ValueError("context_length_exceeded"),
         ValueError("This model's maximum context length is 32768 tokens"),
         ValueError("input token count exceeds the model context window"),
+        ValueError("invalid params, context window exceeds limit (2013)"),
     ]
     structured = ValueError("provider request rejected")
     structured.body = {"error": {"type": "context_length_exceeded", "message": "too long"}}
