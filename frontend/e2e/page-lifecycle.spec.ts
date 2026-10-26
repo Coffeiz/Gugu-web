@@ -69,9 +69,9 @@ test('主应用页面按导航顺序打开后可离开，不残留卡住的旧�
   const skills = page.locator('.skills-page .skills-home')
   await assertTransition(currentPage, skills)
   expect((await skillsResponse).status()).toBeLessThan(500)
-  await expect(skills.locator('.skill-list, .empty-state, .error-banner').first()).toBeVisible({ timeout: 20000 })
+  await expect(skills.locator('.skill-group, .scrollable-card-layout__empty, .error-banner').first()).toBeVisible({ timeout: 20000 })
   await expect.poll(async () => {
-    const emptyState = skills.locator('.empty-state')
+    const emptyState = skills.locator('.scrollable-card-layout__empty')
     return !(await emptyState.count()) || !(await emptyState.innerText()).includes('正在加载技能')
   }).toBe(true)
 
