@@ -1655,6 +1655,14 @@
     "keyBehavior": "MiniMax 媒体上传正确处理成功、上游失败与缺失凭据，基类不伪装支持上传",
     "ci": "backend-pytest"
   },
+  "backend/tests/agent/providers/test_minimax_error_details.py": {
+    "domain": "agent-provider-error",
+    "layer": "L1",
+    "owner": "backend/agent/providers/minimax",
+    "productionEntry": "backend/agent/providers/minimax/__init__.py 与 backend/agent/errors.py",
+    "keyBehavior": "上游以通用错误码 2013 返回输入上下文超限时按文案判为上下文超限并给专用提示，其它 2013 仍是通用参数错误",
+    "ci": "backend-pytest"
+  },
   "backend/tests/agent/providers/test_minimax_video_duration_gate.py": {
     "domain": "provider-media",
     "layer": "L1",

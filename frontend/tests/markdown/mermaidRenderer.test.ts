@@ -181,7 +181,7 @@ describe('共享 Mermaid 渲染', () => {
 
       await renderMarkdownMermaid(secondRoot, labels)
       const secondSvg = secondRoot.querySelector('svg')!
-      const secondIds = [secondSvg, ...secondSvg.querySelectorAll('[id]')].map(element => element.id)
+      const secondIds = [...secondSvg.querySelectorAll('[id]')].map(element => element.id)
       const clipReference = secondSvg.querySelector('[clip-path]')?.getAttribute('clip-path') || ''
       const referencedClipId = clipReference.match(/url\(#([^)]*)\)/)?.[1]
 
@@ -195,5 +195,50 @@ describe('共享 Mermaid 渲染', () => {
       firstRoot.remove()
       secondRoot.remove()
     }
+  })
+
+  it('连线标签底色越出 viewBox 时 Web 端把画布扩到能容下标签', async () => {
+    // 长曲线连线标签在 Mermaid 里会被放到 viewBox 之外；浏览器同样按 viewBox 裁剪，
+    // 所以 Web 端必须和 IM 栅格化一样扩展画布，否则标签在页面上被切掉。
+    mermaidMock.render.mockResolvedValueOnce({
+      svg: '<svg viewBox="-8 -8 374.457 759.455" style="max-width: 374.457px;">'
+        + '<g class="edgeLabel" transform="translate(75.728, 471.354)">'
+        + '<g class="label" transform="translate(-37.756, 5.207)">'
+        + '<rect class="background" x="-67.728" y="-18.102" width="135.457" height="25.789"/>'
+        + '<text x="0" text-anchor="middle"><tspan>Lemma 2.15 输入</tspan></text></g></g></svg>',
+    })
+
+    const root = new DOMParser()
+      .parseFromString(await renderMermaidSvg('flowchart LR; OUT_OF_BOUNDS_LABEL-->B;'), 'image/svg+xml')
+      .documentElement
+    const [minX, minY, width] = (root.getAttribute('viewBox') || '').split(/\s+/).map(Number)
+    const maxWidth = Number.parseFloat(
+      (root.getAttribute('style') || '').match(/max-width:\s*([\d.]+)px/)?.[1] || '0',
+    )
+
+    expect(minX).toBeCloseTo(-31.756, 2)
+    expect(minY).toBeCloseTo(-8, 2)
+    expect(minX + width).toBeCloseTo(366.457, 2)
+    // 内联 max-width 与画布同步，Web 端不会因为旧的 max-width 把扩展后的画布压回去
+    expect(maxWidth).toBeCloseTo(398.213, 2)
+  })
+
+  it('连线标签底色在 viewBox 内时 Web 端不改变画布与尺寸', async () => {
+    // 常规图表的连线标签都在画布内；这时扩展函数必须是恒等变换，
+    // 否则所有 Web 图表的尺寸都会平白变化。
+    mermaidMock.render.mockResolvedValueOnce({
+      svg: '<svg viewBox="0 0 400 300" style="max-width: 400px;">'
+        + '<g class="edgeLabel" transform="translate(100, 150)">'
+        + '<g class="label" transform="translate(-30, 0)">'
+        + '<rect class="background" x="-40" y="-12" width="80" height="24"/>'
+        + '<text x="0" text-anchor="middle"><tspan>普通标签</tspan></text></g></g></svg>',
+    })
+
+    const root = new DOMParser()
+      .parseFromString(await renderMermaidSvg('flowchart LR; INSIDE_LABEL-->B;'), 'image/svg+xml')
+      .documentElement
+
+    expect(root.getAttribute('viewBox')).toBe('0 0 400 300')
+    expect(root.getAttribute('style')).toContain('max-width: 400px')
   })
 })

@@ -20,7 +20,7 @@ async def _wire_storage(monkeypatch, root):
 
 
 async def _create_file(db, user_id, storage, *, name, content, space="personal", project_id=None,
-                       folder_id=None, workspace_directory_id=None):
+                       folder_id=None, workspace_directory_id=None, mime_type="text/plain"):
     result = await FileService(db, storage=storage).create_file(
         user_id,
         space=space,
@@ -31,7 +31,7 @@ async def _create_file(db, user_id, storage, *, name, content, space="personal",
         mind_map_id=None,
         display_name=name.rsplit(".", 1)[0],
         ext=name.rsplit(".", 1)[1],
-        mime_type="text/plain",
+        mime_type=mime_type,
         data=content.encode("utf-8"),
     )
     await db.commit()
@@ -118,6 +118,92 @@ async def test_grep_returns_matches_with_requested_context(db, user_a, tmp_path,
             {"line": 4, "text": "下一行"},
         ],
     }]
+
+
+async def test_grep_omits_embedded_base64_but_keeps_text_matches_in_svg(
+    db, user_a, tmp_path, monkeypatch,
+):
+    storage = await _wire_storage(monkeypatch, tmp_path)
+    payload_lengths = [113_926] * 4 + [113_925] * 8
+    payloads = []
+    for index, length in enumerate(payload_lengths):
+        embedded_query = "COTA" if index < 2 else ""
+        left = (length - len(embedded_query)) // 2
+        payloads.append("A" * left + embedded_query + "B" * (length - left - len(embedded_query)))
+    assert sum(map(len, payloads)) == 1_367_104
+    image_nodes = "".join(
+        f'<image href="data:image/png;base64,{payload}"/>' for payload in payloads
+    )
+    svg = f'<svg>{"prefix" * 200}{image_nodes}<text>COTA 标记</text></svg>'
+    await _create_file(
+        db, user_a.id, storage, name="icon.svg", content=svg, mime_type="image/svg+xml",
+    )
+
+    import json
+
+    from agent.tools.files.grep import _MAX_LINE_CHARS, _MAX_RESULT_BYTES, _grep_files
+
+    result = await _grep_files(db, user_a.id, {
+        "query": "COTA",
+        "context_lines": 0,
+    })
+
+    assert result["total_matches"] == 1
+    assert "COTA 标记" in result["results"][0]["matches"][0]["text"]
+    serialized = str(result["results"])
+    assert all(payload not in serialized for payload in payloads)
+    assert serialized.count("内嵌Base64数据已省略") == len(payloads)
+    assert len(json.dumps(result["results"], ensure_ascii=False).encode("utf-8")) <= _MAX_RESULT_BYTES
+    assert len(result["results"][0]["matches"][0]["text"]) <= _MAX_LINE_CHARS
+    assert result["truncated"] is True
+    assert "embedded_data_uri" in result["truncation_reasons"]
+    assert "line_length" in result["truncation_reasons"]
+
+
+async def test_grep_does_not_match_keyword_found_only_in_embedded_base64(
+    db, user_a, tmp_path, monkeypatch,
+):
+    storage = await _wire_storage(monkeypatch, tmp_path)
+    await _create_file(
+        db,
+        user_a.id,
+        storage,
+        name="embedded.svg",
+        content='<svg><image href="data:image/png;base64,AAAA_COTA_BBBB"/></svg>',
+        mime_type="image/svg+xml",
+    )
+
+    from agent.tools.files.grep import _grep_files
+
+    result = await _grep_files(db, user_a.id, {"query": "COTA", "context_lines": 0})
+
+    assert result["matched_files"] == 0
+    assert result["total_matches"] == 0
+    assert result["results"] == []
+
+
+async def test_grep_caps_serialized_results_and_reports_truncation(
+    db, user_a, tmp_path, monkeypatch,
+):
+    storage = await _wire_storage(monkeypatch, tmp_path)
+    content = "\n".join(f"命中 needle {index} " + "说明" * 350 for index in range(160))
+    await _create_file(db, user_a.id, storage, name="many-hits.txt", content=content)
+
+    import json
+
+    from agent.tools.files.grep import _MAX_RESULT_BYTES, _grep_files
+
+    result = await _grep_files(db, user_a.id, {
+        "query": "needle",
+        "context_lines": 0,
+        "limit": 200,
+    })
+
+    encoded_results = json.dumps(result["results"], ensure_ascii=False).encode("utf-8")
+    assert len(encoded_results) <= _MAX_RESULT_BYTES
+    assert result["truncated"] is True
+    assert "result_byte_limit" in result["truncation_reasons"]
+    assert 0 < result["total_matches"] < 160
 
 
 async def test_grep_can_search_personal_project_and_workspace_files(db, user_a, tmp_path, monkeypatch):

@@ -18,6 +18,24 @@ from .tokens import estimate_tokens, message_text
 SAFE_BUDGET_RATIO = 0.90
 TRUNCATION_RATIO = 0.95
 
+# 上游「输入上下文超限」的文案特征。用于**判定**：命中就走压缩重试
+# （is_context_overflow_error）。清单偏宽，因为其中包含 413 体量语义——请求体过大
+# 时确定性截断仍然有效，压缩重试就算无效也还有截断兜底。
+CONTEXT_OVERFLOW_PHRASES = (
+    "maximum context length", "context window exceeded", "context length exceeded",
+    "context window exceeds limit",
+    "input token count exceeds", "prompt is too long", "input is too long",
+    "request entity too large", "request too large",
+)
+
+# 明确指向**模型上下文窗口**超限的文案特征。用于**给用户定性**（provider 侧的
+# 错误摘要与前端文案）：只有这些措辞才说「上下文超限」。「request too large」
+# 这类 413 体量语义不在其中，否则会把「请求体过大」说成「上下文超限」。
+CONTEXT_WINDOW_OVERFLOW_PHRASES = (
+    "maximum context length", "context window exceeded", "context length exceeded",
+    "context window exceeds limit", "input token count exceeds",
+)
+
 
 @dataclass(frozen=True)
 class ContextBudget:
@@ -658,11 +676,7 @@ def is_context_overflow_error(error: BaseException) -> bool:
         # 常见 OpenAI-compatible 文案；不接受 max_tokens/output 限制作为上下文溢出。
         if any(marker in searchable for marker in ("max_tokens", "maximum output", "output token limit")):
             continue
-        phrases = (
-            "maximum context length", "context window exceeded", "context length exceeded",
-            "input token count exceeds", "prompt is too long", "input is too long",
-            "request entity too large", "request too large",
-        )
+        phrases = CONTEXT_OVERFLOW_PHRASES
         if any(phrase in searchable for phrase in phrases):
             return True
         status = fields.get("status_code") or fields.get("status")

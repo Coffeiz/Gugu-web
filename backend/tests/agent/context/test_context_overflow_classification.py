@@ -9,6 +9,7 @@ def test_context_overflow_classifier_accepts_input_window_errors():
         ValueError("context_length_exceeded"),
         ValueError("This model's maximum context length is 32768 tokens"),
         ValueError("input token count exceeds the model context window"),
+        ValueError("invalid params, context window exceeds limit (2013)"),
     ]
     structured = ValueError("provider request rejected")
     structured.body = {"error": {"type": "context_length_exceeded", "message": "too long"}}
@@ -34,6 +35,17 @@ def test_context_overflow_classifier_uses_http_413_status():
     error = ValueError("request failed")
     error.status_code = 413
     assert is_context_overflow_error(error)
+
+
+def test_request_size_errors_still_trigger_overflow_recovery():
+    """请求体过大的判定清单比用户定性清单宽：压缩/截断兜底仍要尝试。
+
+    「request entity too large」是 413 体量语义，不是模型上下文窗口超限，所以
+    provider 侧不会对用户说「上下文超限」；但兜底路径照样能通过截断工具结果
+    把请求压下来，因此判定这一侧仍然放行。
+    """
+    assert is_context_overflow_error(ValueError("request entity too large"))
+    assert is_context_overflow_error(ValueError("request too large"))
 
 
 @pytest.mark.parametrize(

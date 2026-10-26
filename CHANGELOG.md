@@ -7,6 +7,62 @@
 
 ## [Unreleased]
 
+### What's New
+
+#### New Features
+
+- None.
+
+#### Improvements
+
+- None.
+
+#### Fixes
+
+- Render larger Mermaid diagrams in QQ by scaling them within the output pixel budget; avoid whole-diagram failures from reserved Flowchart node IDs.
+- Keep curved Mermaid edge labels inside QQ-rendered PNG images and align multi-line database labels correctly.
+- Prevent embedded Base64 image data and oversized grep results from overflowing Agent context; show truncation details in search results.
+- Identify MiniMax input-context overflow reported with generic error code 2013 and show actionable guidance.
+- Stop reporting MiniMax request-size errors as context-window overflow, so the guidance points at the real cause.
+- Copy the Mermaid raster-dimension helper into the production images so the diagram worker no longer misses a module it imports.
+- Smoke-start the Mermaid diagram worker during image builds so missing modules or fonts fail the build instead of breaking rendering at runtime.
+
+#### Contributors
+
+- None.
+
+#### Feedback & Issue Reporters
+
+- None.
+
+### 更新内容
+
+#### 新功能
+
+- 暂无。
+
+#### 改进
+
+- 暂无。
+
+#### 修复
+
+- QQ 支持渲染更大的 Mermaid 图表，并按输出像素预算缩放；补充流程图节点 ID 避开保留字的规则，减少整图渲染失败。
+- 修复 QQ Mermaid 图片中的曲线连线标签裁切及多行数据库标签垂直对齐。
+- 省略 grep 结果中的内嵌 Base64 图片数据并限制超长行和结果体积，避免搜索结果撑爆 Agent 上下文，同时标明截断原因。
+- 将 MiniMax 以通用错误码 2013 返回的输入上下文超限识别为专用错误，并提供处理建议。
+- 不再把 MiniMax 的请求体过大错误说成「上下文超限」，让处理建议指向真实原因。
+- 生产镜像补入 Mermaid 栅格尺寸辅助模块，避免图表 Worker 在镜像里缺少它自己 import 的依赖。
+- 镜像构建期冒烟启动 Mermaid 图表 Worker，缺模块或缺字体时构建即失败，不再等到线上渲染才暴露。
+
+#### 贡献者
+
+- 暂无。
+
+#### 反馈与问题报告
+
+- 暂无。
+
 ## [1.7.7] - 2026-10-24
 
 ### What's New

@@ -138,7 +138,7 @@ FILE_TOOLS = [
         Tool(
             name="grep", label="搜索文件正文",
             description_short='在当前权限内的个人、项目和 Workspace 文本文件中查找内容。',
-            description="按关键词逐行搜索当前用户有权访问的个人、项目和 Workspace 文本文件；返回 file_id、逻辑路径、命中行号、匹配行和可选上下文，不执行 Shell grep。可用 context_lines 控制命中行前后行数，limit 限制总命中数；需要完整正文或精确读取时再调用 read_file。",
+            description="按关键词逐行搜索当前用户有权访问的个人、项目和 Workspace 文本文件；返回 file_id、逻辑路径、命中行号、匹配行和可选上下文，不执行 Shell grep。可用 context_lines 控制命中行前后行数，limit 限制总命中数；超长行、内嵌 Base64 数据或结果超出大小上限时会截断并说明原因，需要完整正文或精确读取时再调用 read_file。",
             input_schema={
                 "type": "object",
                 "properties": {

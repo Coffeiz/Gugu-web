@@ -1,4 +1,5 @@
 const EDGE_LABEL_RADIUS_PX = 8
+const DATABASE_LABEL_VERTICAL_OFFSET_PER_EXTRA_LINE_PX = 10.5
 
 function roundPolylineCorners(path) {
   const pointPattern = /([ML])\s*(-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)[,\s]+(-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)/gi
@@ -423,8 +424,8 @@ export function normalizeMermaidTimelineSectionColors(root) {
   return root
 }
 
-/** svgdom 会把数据库节点标签的 SVG 组左移半个标签宽度；栅格化前移回圆柱中心。 */
-export function normalizeMermaidDatabaseLabelPosition(root) {
+/** Mermaid 数据库节点的多行标签会偏离圆柱中心；统一校正水平与垂直位置。 */
+export function normalizeMermaidDatabaseLabelPosition(root, { rasterizer = false } = {}) {
   for (const node of root.getElementsByTagName('g')) {
     if (!(node.getAttribute('class') || '').split(/\s+/).includes('node')) continue
     const databaseShape = [...node.getElementsByTagName('path')].some(path =>
@@ -435,7 +436,18 @@ export function normalizeMermaidDatabaseLabelPosition(root) {
       if (!(label.getAttribute('class') || '').split(/\s+/).includes('label')) continue
       const transform = label.getAttribute('transform') || ''
       const translated = transform.match(/^translate\(\s*([-+\d.eE]+)[, ]+\s*([-+\d.eE]+)\s*\)$/)
-      if (translated) label.setAttribute('transform', `translate(0, ${translated[2]})`)
+      if (translated) {
+        const lineCount = Math.max(1, ...[...label.getElementsByTagName('text')].map(text =>
+          [...text.childNodes].filter(child =>
+            child.nodeType === 1 && child.localName === 'tspan' &&
+            (child.hasAttribute('y') || child.hasAttribute('dy')),
+          ).length,
+        ))
+        // 浏览器标签只需固定上移；svgdom/Resvg 的偏移会随行数累积。
+        const correctionLines = rasterizer ? lineCount - 1 : Number(lineCount > 1)
+        const y = Number(translated[2]) - correctionLines * DATABASE_LABEL_VERTICAL_OFFSET_PER_EXTRA_LINE_PX
+        label.setAttribute('transform', `translate(0, ${y})`)
+      }
       for (const text of label.getElementsByTagName('text')) {
         text.setAttribute('text-anchor', 'middle')
       }
@@ -445,6 +457,55 @@ export function normalizeMermaidDatabaseLabelPosition(root) {
 }
 
 /** svgdom 的文字宽度可能偏小，会让连线标签底色变窄并露出穿过文字的连线。 */
+function expandViewBoxForEdgeLabelBackgrounds(root) {
+  const viewBox = root.getAttribute('viewBox')?.trim().split(/[\s,]+/).map(Number)
+  if (viewBox?.length !== 4 || !viewBox.every(Number.isFinite)) return
+
+  let [minX, minY, width, height] = viewBox
+  let maxX = minX + width
+  let maxY = minY + height
+  const originalBounds = { minX, minY, maxX, maxY }
+  for (const group of root.getElementsByTagName('g')) {
+    if (!(group.getAttribute('class') || '').split(/\s+/).includes('edgeLabel')) continue
+    for (const rect of group.getElementsByTagName('rect')) {
+      if (!/(?:^|\s)(?:background|labelBkg)(?:\s|$)/.test(rect.getAttribute('class') || '')) continue
+      const x = Number.parseFloat(rect.getAttribute('x') || '')
+      const y = Number.parseFloat(rect.getAttribute('y') || '')
+      const rectWidth = Number.parseFloat(rect.getAttribute('width') || '')
+      const rectHeight = Number.parseFloat(rect.getAttribute('height') || '')
+      if (![x, y, rectWidth, rectHeight].every(Number.isFinite)) continue
+
+      let offsetX = 0
+      let offsetY = 0
+      let ancestor = rect
+      while (ancestor && ancestor !== root) {
+        const transform = ancestor.getAttribute?.('transform') || ''
+        for (const translate of transform.matchAll(/translate\(\s*(-?[\d.]+)(?:[ ,]+(-?[\d.]+))?\s*\)/g)) {
+          offsetX += Number(translate[1])
+          offsetY += Number(translate[2] || 0)
+        }
+        ancestor = ancestor.parentNode
+      }
+
+      const left = x + offsetX
+      const top = y + offsetY
+      const right = left + rectWidth
+      const bottom = top + rectHeight
+      minX = Math.min(minX, left - (left < originalBounds.minX ? 2 : 0))
+      minY = Math.min(minY, top - (top < originalBounds.minY ? 2 : 0))
+      maxX = Math.max(maxX, right + (right > originalBounds.maxX ? 2 : 0))
+      maxY = Math.max(maxY, bottom + (bottom > originalBounds.maxY ? 2 : 0))
+    }
+  }
+
+  root.setAttribute('viewBox', `${minX} ${minY} ${maxX - minX} ${maxY - minY}`)
+  const declarations = styleDeclarations(root)
+  if (declarations.has('max-width')) {
+    declarations.set('max-width', `${maxX - minX}px`)
+    root.setAttribute('style', [...declarations].map(([name, value]) => `${name}: ${value}`).join('; '))
+  }
+}
+
 export function normalizeMermaidEdgeLabelBounds(root) {
   const cjkCharacter = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u
   for (const group of root.getElementsByTagName('g')) {
@@ -493,12 +554,15 @@ export function normalizeMermaidEdgeLabelBounds(root) {
       if (width < minimumWidth) rect.setAttribute('width', String(minimumWidth))
     }
   }
+
+  // Mermaid can place labels outside the viewBox on long curved links; Resvg clips to that box.
+  expandViewBoxForEdgeLabelBackgrounds(root)
   return root
 }
 
 /** Resvg 会把 svgdom 生成的 CJK 连线文字基线绘制在底色框下方；显式校正文字基线和字重。 */
 export function normalizeMermaidRasterText(root, textColor, options = {}) {
-  normalizeMermaidDatabaseLabelPosition(root)
+  normalizeMermaidDatabaseLabelPosition(root, { rasterizer: true })
 
   if (options.colorAllText) {
     for (const text of root.getElementsByTagName('text')) {
@@ -575,8 +639,15 @@ export function normalizeMermaidRasterText(root, textColor, options = {}) {
     if (!hasCjk && !hasRasterizerBaselineOffset) continue
     const fontSizeValue = text.getAttribute('font-size') || text.getAttribute('style')?.match(/font-size\s*:\s*([\d.]+)px?/)?.[1]
     const fontSize = Number.parseFloat(fontSizeValue || '') || 16
+    const lineCount = [...text.childNodes].filter(child =>
+      child.nodeType === 1 && child.localName === 'tspan' &&
+      (child.hasAttribute('y') || child.hasAttribute('dy')),
+    ).length
     const existing = text.getAttribute('transform')
-    const baselineCorrection = `translate(0 ${(-fontSize * 0.9).toFixed(2)})`
+    // Resvg 会把多行中文边标签的可见字形重心画得偏低；额外上移 0.3em，
+    // 使两行及以上的文字整体重新对齐底色框中心，单行标签保持原有校正量。
+    const baselineOffset = fontSize * (lineCount > 1 ? 1.2 : 0.9)
+    const baselineCorrection = `translate(0 ${(-baselineOffset).toFixed(2)})`
     text.setAttribute('transform', existing ? `${baselineCorrection} ${existing}` : baselineCorrection)
   }
   return root
