@@ -42,8 +42,8 @@ test('主应用页面按导航顺序打开后可离开，不残留卡住的旧�
   await clickNav(page, '定时任务')
   const schedules = page.locator('.sched-page')
   await assertTransition(canvas, schedules)
-  await expect(schedules.locator('.section-header button')).toBeVisible()
-  await expect(schedules.locator('.task-grid, .empty-state')).toBeVisible({ timeout: 20000 })
+  await expect(schedules.getByRole('button', { name: '新建任务' })).toBeVisible()
+  await expect(schedules.locator('.task-grid, .scrollable-card-layout__empty')).toBeVisible({ timeout: 20000 })
 
   await clickNav(page, '文件库')
   const files = page.locator('.files-page .files-main')
