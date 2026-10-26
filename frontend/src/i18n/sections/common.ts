@@ -94,18 +94,21 @@ Object.assign((messages['en-US'] as Record<string, any>).storageAuditExtra, {
 Object.assign((messages['zh-CN'] as Record<string, any>).llmExtraUi, {
   webSearch: '联网搜索',
   webSearchHint: '联网搜索由当前模型提供商提供，使用时可能产生费用。',
+  minimaxWebSearchHint: 'MiniMax 联网搜索仅 M 计划用户可用，属于官网限制。',
   enabled: '已开启',
   disabled: '已关闭',
 })
 Object.assign((messages['ja-JP'] as Record<string, any>).llmExtraUi, {
   webSearch: 'ウェブ検索',
   webSearchHint: 'ウェブ検索ツールは現在のモデルの Provider が提供します。この設定の API Key を使用し、検索サービスやモデルの利用料金が発生する場合があります。料金は Provider の規定に従います。無効の場合、ツールを公開しません。',
+  minimaxWebSearchHint: 'MiniMax のウェブ検索は M プランのユーザーのみ利用できます（公式の制限）。',
   enabled: '有効',
   disabled: '無効',
 })
 Object.assign((messages['en-US'] as Record<string, any>).llmExtraUi, {
   webSearch: 'Web search',
   webSearchHint: 'Web search is provided by the current model Provider and uses this configuration’s API key. Search service and model usage may incur charges under the Provider’s pricing. When disabled, the tool is hidden from the model.',
+  minimaxWebSearchHint: 'MiniMax web search is available only to M Plan users, per MiniMax policy.',
   enabled: 'Enabled',
   disabled: 'Disabled',
 })
