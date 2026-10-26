@@ -140,6 +140,7 @@ COPY backend/ts/workers/mermaid-renderer/worker.mjs ./bin/gugu-mermaid-worker.mj
 COPY backend/ts/workers/mermaid-renderer/diagram-source.mjs ./bin/diagram-source.mjs
 COPY backend/ts/workers/mermaid-renderer/svg-style.mjs ./bin/svg-style.mjs
 COPY backend/ts/workers/mermaid-renderer/theme.mjs ./bin/theme.mjs
+COPY backend/ts/workers/mermaid-renderer/raster-dimensions.mjs ./bin/raster-dimensions.mjs
 COPY frontend/public/fonts/Noto_Sans_SC/NotoSansSC-VariableFont_wght.ttf ./bin/fonts/NotoSansSC-VariableFont_wght.ttf
 COPY --from=rag-runtime /rag/node_modules ./bin/node_modules
 COPY backend/scripts/runtime/prepare_rootless_storage.py /usr/local/bin/prepare_rootless_storage.py
