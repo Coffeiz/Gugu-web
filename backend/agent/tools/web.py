@@ -27,6 +27,7 @@ from urllib.parse import unquote, urlparse
 import httpx
 
 from agent.tools.base import BaseSkill, Tool
+from agent.request_headers import request_header_origin, validate_request_headers
 from agent.security import logsafe
 from app.core.redaction import diag_log, diag_log_raw, redact
 from app.core.safe_egress import SafeEgressClient, SafeEgressError
@@ -58,7 +59,7 @@ def _looks_like_html(text: str) -> bool:
     return head.startswith("<!doctype html") or head.startswith("<html")
 
 
-async def _http_get_one(db, user_id, url: str, max_chars: int):
+async def _http_get_one(db, user_id, url: str, max_chars: int, headers: object = None):
     """执行一个 URL 请求；批量入口也必须复用这条安全和解析链路。"""
     url = (url or "").strip()
     if not url:
@@ -70,11 +71,15 @@ async def _http_get_one(db, user_id, url: str, max_chars: int):
         return {"error": "非法 url"}
     if _ALLOW_HOSTS and p.hostname not in _ALLOW_HOSTS:
         return {"error": "该地址不允许访问（仅放行公网地址）"}
+    request_headers, header_error = validate_request_headers(headers, url)
+    if header_error:
+        return {"error": header_error}
+    request_headers = {"user-agent": "curl/8", **(request_headers or {})}
     r = None
     for i in range(len(_HTTP_GET_RETRY_BACKOFF) + 1):
         try:
             async with SafeEgressClient().stream(
-                url, timeout=15.0, headers={"User-Agent": "curl/8"},
+                url, timeout=15.0, headers=request_headers,
             ) as response:
                 chunks: list[bytes] = []
                 total = 0
@@ -166,8 +171,13 @@ async def _http_get(db, user_id, args: dict):
             return {"error": "单次最多并行请求 5 个 URL"}
         if any(not isinstance(url, str) or not url.strip() for url in urls):
             return {"error": "urls 中每个元素都必须是非空字符串"}
+        headers = args.get("headers")
+        if headers:
+            origins = [request_header_origin(url.strip()) for url in urls]
+            if any(origin is None for origin in origins) or len(set(origins)) != 1:
+                return {"error": "使用自定义请求头的批量 URL 必须属于同一来源"}
         results = await asyncio.gather(*(
-            _http_get_one(db, user_id, url, max_chars) for url in urls
+            _http_get_one(db, user_id, url, max_chars, headers) for url in urls
         ), return_exceptions=True)
         normalized = []
         for result in results:
@@ -180,7 +190,7 @@ async def _http_get(db, user_id, args: dict):
     url = args.get("url")
     if not isinstance(url, str) or not url.strip():
         return {"error": "缺少 url 或 urls"}
-    return await _http_get_one(db, user_id, url, max_chars)
+    return await _http_get_one(db, user_id, url, max_chars, args.get("headers"))
 
 
 def _download_filename(value: str | None, url: str, content_type: str) -> tuple[str, str]:
@@ -353,7 +363,11 @@ class WebSkill(BaseSkill):
             name="http_get",
             label="联网取数 / 读网页",
             description_short='读取公网 URL 正文。',
-            description="读取公网 URL；HTML/PDF 提取正文，可并行多个 URL，不跟随重定向。",
+            description=(
+                "读取公网 URL；HTML/PDF 提取正文，可并行多个 URL，不跟随重定向。"
+                "可选 headers 设置通用请求头，仅允许通过 HTTPS 发送；含 headers 的批量 URL 必须属于同一来源。"
+                "请求头值会从工具卡片和后续工具历史中隐藏。"
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
@@ -366,6 +380,16 @@ class WebSkill(BaseSkill):
                         "uniqueItems": True,
                     },
                     "max_chars": {"type": "integer"},
+                    "headers": {
+                        "type": "object",
+                        "description": (
+                            "可选通用请求头对象，键和值均为字符串；仅允许用于 HTTPS 请求。"
+                            "禁止代理、Host、连接控制等传输请求头。批量 URL 必须属于同一来源。"
+                            "请求头值不会显示在工具卡片或后续工具历史中。"
+                        ),
+                        "maxProperties": 20,
+                        "additionalProperties": {"type": "string", "maxLength": 8192},
+                    },
                 },
                 "anyOf": [
                     {"required": ["url"], "not": {"required": ["urls"]}},

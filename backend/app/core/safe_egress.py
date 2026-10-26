@@ -368,7 +368,7 @@ class SafeEgressClient:
         url: str,
         *,
         timeout: float | httpx.Timeout,
-        headers: dict[str, str] | None = None,
+        headers: dict[str, str | bytes] | None = None,
     ):
         address, proxy = await self.resolve(url)
         if proxy is None:

@@ -612,7 +612,7 @@ async def test_http_get_stops_reading_oversized_response(monkeypatch):
 async def test_http_get_batch_preserves_order_and_allows_partial_failure(monkeypatch):
     from agent.tools import web as web_mod
 
-    async def fake_one(_db, _user_id, url, _max_chars):
+    async def fake_one(_db, _user_id, url, _max_chars, _headers=None):
         await asyncio.sleep(0.01 if url.endswith("/a") else 0)
         if url.endswith("/bad"):
             return {"url": url, "error": "请求失败"}
