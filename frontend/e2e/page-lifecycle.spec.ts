@@ -81,7 +81,7 @@ test('主应用页面按导航顺序打开后可离开，不残留卡住的旧�
     await mcpNav.click()
     const mcp = page.locator('.mcp-route-page')
     await assertTransition(skills, mcp)
-    await expect(mcp.locator('.section-header button')).toBeVisible()
+    await expect(mcp.getByRole('button', { name: '添加服务' })).toBeVisible()
   }
 
   expect(pageErrors).toEqual([])
