@@ -43,12 +43,33 @@ class UnifiedQueryRetriever(UnifiedRetriever):
         "calendar", "scheduled_task", "conversation",
     )
 
-    def __init__(self, retrievers=None, *, session_factory=None, session=None):
+    def __init__(self, retrievers=None, *, session_factory=None, session=None,
+                 defer_cold_index: bool = False):
         super().__init__(retrievers)
         # Memory-only 查询没有持久化来源可借用会话；此时用显式 db 或该工厂
         # 开 IPC 宿主会话（与来源检索共享同一个连接事实源）。
         self._session_factory = session_factory
         self._session = session
+        self._defer_cold_index = defer_cold_index
+
+    async def prepare_index(self, *, scope="auto"):
+        """只恢复 owner 持久索引，不执行 query embedding、Memory 查询或排序。"""
+        selected = list(self._retrievers.values())
+        memory = next((item for item in selected if item.source_type == "memory"), None)
+        persistent = [item for item in selected if item.source_type != "memory"]
+        if persistent:
+            session_owner, owner = self._session_owner(persistent)
+        elif memory is not None:
+            session_owner = self._memory_session_owner(memory)
+            owner = memory.user_id
+        else:
+            return
+
+        async with session_owner.session_scope() as db:
+            await get_index_cache().get(
+                db, owner, "all", scope,
+                baseline_revision=get_snapshot_revision() or None,
+            )
 
     async def retrieve(self, query, *, source="all", scope="auto", strategy="auto", candidate_limit=20,
                        rank_options: dict | None = None):
@@ -83,15 +104,6 @@ class UnifiedQueryRetriever(UnifiedRetriever):
             return [RetrievalBatch(item.source_type, fallback_reason="scope_rejected") for item in selected]
         probe_update(search={"spec_count": len(specs), "selected_source_count": len(selected)})
 
-        # 凭据仍在 Python 的身份/解密边界解析；目标 URL 安全校验与 DNS pin 在后台线程做，
-        # provider 请求和 query vector 生成均由 TS worker 执行。
-        query_embedding = (
-            await await_probe("query_embedding_config", asyncio.to_thread(embedding.query_settings))
-            if strategy in {"auto", "embedding"} and str(query or "").strip()
-            else None
-        )
-        embedding_enabled = query_embedding is not None
-
         if persistent:
             session_owner, owner = self._session_owner(persistent)
         else:
@@ -108,6 +120,7 @@ class UnifiedQueryRetriever(UnifiedRetriever):
                     get_index_cache().get(
                         db, owner, "all", scope, diagnostics=metadata,
                         baseline_revision=get_snapshot_revision() or None,
+                        defer_cold=self._defer_cold_index,
                     ),
                 )
                 probe_update(index_cache={
@@ -119,6 +132,19 @@ class UnifiedQueryRetriever(UnifiedRetriever):
                     )
                     if key in metadata
                 })
+                # 先确认持久索引是否可用；自动 RAG 遇到冷索引会立即返回，
+                # 不必为一个本轮不会执行的查询解析 embedding 凭据。
+                # 凭据仍在 Python 的身份/解密边界解析；目标 URL 安全校验与 DNS pin 在后台线程做，
+                # provider 请求和 query vector 生成均由 TS worker 执行。
+                query_embedding = (
+                    await await_probe(
+                        "query_embedding_config",
+                        asyncio.to_thread(embedding.query_settings),
+                    )
+                    if strategy in {"auto", "embedding"} and str(query or "").strip()
+                    else None
+                )
+                embedding_enabled = query_embedding is not None
                 prepare_ms = int((time.monotonic() - started) * 1000)
                 for item in persistent:
                     progress(item.source_type, "sidecar_search", index_prepare_ms=prepare_ms)
@@ -182,6 +208,10 @@ class UnifiedQueryRetriever(UnifiedRetriever):
                         "sidecar_unified_query", index.unified_query(query, **query_kwargs),
                     )
                 except TsSidecarUnavailable as exc:
+                    if self._defer_cold_index and exc.code == "revision_mismatch":
+                        from agent.rag.index_cache import IndexNotReady
+
+                        raise IndexNotReady from exc
                     index, response = await await_probe(
                         "revision_resync_retry",
                         self._resync_and_retry(
@@ -198,13 +228,21 @@ class UnifiedQueryRetriever(UnifiedRetriever):
                     response.pop("_probe", None)
                 probe_update(sidecar=sidecar_timing, worker=worker_probe)
         except BaseException as exc:
+            from agent.rag.index_cache import IndexNotReady
+
+            deferred = isinstance(exc, IndexNotReady)
             probe_complete(
-                "cancelled" if isinstance(exc, asyncio.CancelledError) else "error",
+                "cancelled" if isinstance(exc, asyncio.CancelledError)
+                else "deferred" if deferred else "error",
                 error_type=type(exc).__name__,
             )
             for item in selected:
-                progress(item.source_type, "cancelled" if isinstance(exc, asyncio.CancelledError) else "error",
-                         error_type=type(exc).__name__)
+                progress(
+                    item.source_type,
+                    "cancelled" if isinstance(exc, asyncio.CancelledError)
+                    else "deferred" if deferred else "error",
+                    error_type=type(exc).__name__,
+                )
             raise
         elapsed_ms = int((time.monotonic() - started) * 1000)
         fusion = response.get("fusion") or {}

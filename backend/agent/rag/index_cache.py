@@ -32,6 +32,10 @@ DEFAULT_SOURCE_TYPES = (
 )
 
 
+class IndexNotReady(RuntimeError):
+    """请求方要求不等待时，当前 owner 的索引尚未驻留在进程缓存。"""
+
+
 @asynccontextmanager
 async def _observed_lock(lock: asyncio.Lock, phase: str):
     """等待缓存锁时保留独立阶段；没有自动召回观测时等同普通锁。"""
@@ -88,6 +92,7 @@ class KnowledgeIndexCache:
         diagnostics: dict[str, object] | None = None,
         baseline_revision: str | None = None,
         force: bool = False,
+        defer_cold: bool = False,
     ):
         """返回 owner 级 lexical index，TypeScript/Python 共用缓存生命周期。
 
@@ -123,6 +128,10 @@ class KnowledgeIndexCache:
                 diagnostics["shared_index"] = True
                 diagnostics["snapshot_reused"] = True
             return entry.index
+        # 没有任何进程内索引时，自动召回无需先查数据库 revision：无论 revision
+        # 当前是多少，本轮都不能从缓存完成检索，直接让出请求，由后台预热负责恢复。
+        if defer_cold and not force and entry is None:
+            raise IndexNotReady
         revision = baseline_revision
         if revision is None:
             revision = await await_probe(
@@ -156,6 +165,11 @@ class KnowledgeIndexCache:
             "revision_source": "snapshot_baseline" if baseline_revision is not None else "database",
             "cache_miss_reason": diagnostics.get("cache_miss_reason") if diagnostics else None,
         })
+
+        # 自动召回可选择在冷索引时立即让出当前对话，由后台任务使用普通 get
+        # 完成恢复/同步。显式查询和预热仍默认等待索引就绪。
+        if defer_cold and not force:
+            raise IndexNotReady
 
         lock = self._locks.setdefault(key, asyncio.Lock())
         async with _observed_lock(lock, "index_cache_lock_wait"):

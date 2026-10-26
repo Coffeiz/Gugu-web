@@ -567,10 +567,24 @@ async def search_memory(
     return result
 
 
+def _default_retrievers(user_id, *, db=None, db_factory=None):
+    return [
+        MemoryRetriever(user_id),
+        IndexedSourceRetriever(user_id, db=db, source_type="knowledge"),
+        ProjectRetriever(user_id, db=db, db_factory=db_factory),
+        IndexedSourceRetriever(user_id, db=db, db_factory=db_factory, source_type="canvas"),
+        IndexedSourceRetriever(user_id, db=db, db_factory=db_factory, source_type="note"),
+        IndexedSourceRetriever(user_id, db=db, db_factory=db_factory, source_type="calendar"),
+        IndexedSourceRetriever(user_id, db=db, db_factory=db_factory, source_type="scheduled_task"),
+        IndexedSourceRetriever(user_id, db=db, db_factory=db_factory, source_type="conversation"),
+    ]
+
+
 async def search_knowledge(
     user_id, query: str, *, scope="auto", source: str = "all", strategy: str = "bm25",
     limit: int = DEFAULT_RESULTS, mode: str = "automatic", db=None, db_factory=None,
     exclude_content_hashes: set[str] | None = None,
+    defer_cold_index: bool = False,
 ) -> dict:
     """统一 Knowledge 入口：注册 memory、knowledge、project、canvas、note、conversation 来源。
 
@@ -597,16 +611,7 @@ async def search_knowledge(
         if session_factory is None:
             raise RuntimeError("RAG 数据库会话工厂未初始化")
         db_factory = session_factory
-    retrievers = [
-        MemoryRetriever(user_id),
-        IndexedSourceRetriever(user_id, db=db, source_type="knowledge"),
-        ProjectRetriever(user_id, db=db, db_factory=db_factory),
-        IndexedSourceRetriever(user_id, db=db, db_factory=db_factory, source_type="canvas"),
-        IndexedSourceRetriever(user_id, db=db, db_factory=db_factory, source_type="note"),
-        IndexedSourceRetriever(user_id, db=db, db_factory=db_factory, source_type="calendar"),
-        IndexedSourceRetriever(user_id, db=db, db_factory=db_factory, source_type="scheduled_task"),
-        IndexedSourceRetriever(user_id, db=db, db_factory=db_factory, source_type="conversation"),
-    ]
+    retrievers = _default_retrievers(user_id, db=db, db_factory=db_factory)
     if mode == "automatic" and source == "all":
         from app.core.config import get_settings
         enabled = set(get_settings().search.rag_auto_sources)
@@ -617,6 +622,7 @@ async def search_knowledge(
     # legacy 查询链删除；统一 TS 查询是唯一交付链（2026-09-09 清理）。
     service = UnifiedRecallService(UnifiedQueryRetriever(
         retrievers, session=db, session_factory=db_factory,
+        defer_cold_index=defer_cold_index,
     ))
     result = await service.search(
         query, source=source, scope=scope, strategy=strategy, limit=limit,
@@ -656,6 +662,37 @@ async def search_knowledge(
         },
     )
     return result
+
+
+async def warm_knowledge_index(user_id, *, scope="auto") -> None:
+    """惰性预热 owner 持久索引，不执行 query embedding 或召回排序。"""
+    if scope == "auto":
+        from agent.rag.scope import owner_scope
+        scope = owner_scope(user_id)
+    import app.db.session as db_session
+
+    db_session.ensure_engine()
+    session_factory = db_session._SessionLocal
+    if session_factory is None:
+        raise RuntimeError("RAG 数据库会话工厂未初始化")
+    from agent.rag.batch_retriever import UnifiedQueryRetriever
+
+    retrievers = _default_retrievers(user_id, db_factory=session_factory)
+    retriever = UnifiedQueryRetriever(retrievers, session_factory=session_factory)
+    from agent.rag.context import (
+        get_snapshot_revision, reset_shared_index_key, set_shared_index_key,
+    )
+
+    snapshot_revision = get_snapshot_revision()
+    token = (
+        set_shared_index_key(f"snapshot:{snapshot_revision}")
+        if snapshot_revision != "" else None
+    )
+    try:
+        await retriever.prepare_index(scope=scope)
+    finally:
+        if token is not None:
+            reset_shared_index_key(token)
 
 
 async def search_conversations(
