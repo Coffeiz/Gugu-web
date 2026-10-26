@@ -70,18 +70,19 @@ class MiniMaxErrorDetails:
 
 
 def _is_context_overflow_message(message_candidates) -> bool:
-    """按上游文案判定「输入上下文超限」；仅凭错误码区分不出来。
+    """按上游文案判定「模型上下文窗口超限」；仅凭错误码区分不出来。
 
     上游把上下文超限也归到 2013 这类通用参数错误码里，只有文案才带真实语义。
-    这里复用预算模块的同一份特征清单，保证「判定为超限」和「告知用户超限」
-    不会因为两处各写一套文案而错位。
+    这里用预算模块里**只指向上下文窗口**的那份窄清单：判定走不走压缩重试可以
+    用更宽的清单，但要让用户看到的定性必须准确——「请求体过大」是 413 体量
+    问题，说成「上下文超限」会把用户引到错误的排查方向。
     """
-    from agent.context.budget import CONTEXT_OVERFLOW_PHRASES
+    from agent.context.budget import CONTEXT_WINDOW_OVERFLOW_PHRASES
 
     searchable = " ".join(
         str(item) for item in message_candidates if isinstance(item, str)
     ).lower()
-    return any(phrase in searchable for phrase in CONTEXT_OVERFLOW_PHRASES)
+    return any(phrase in searchable for phrase in CONTEXT_WINDOW_OVERFLOW_PHRASES)
 
 
 def minimax_error_details(error: BaseException) -> MiniMaxErrorDetails | None:

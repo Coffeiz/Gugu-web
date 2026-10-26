@@ -23,6 +23,7 @@
 - Keep curved Mermaid edge labels inside QQ-rendered PNG images and align multi-line database labels correctly.
 - Prevent embedded Base64 image data and oversized grep results from overflowing Agent context; show truncation details in search results.
 - Identify MiniMax input-context overflow reported with generic error code 2013 and show actionable guidance.
+- Stop reporting MiniMax request-size errors as context-window overflow, so the guidance points at the real cause.
 - Copy the Mermaid raster-dimension helper into the production images so the diagram worker no longer misses a module it imports.
 
 #### Contributors
@@ -49,6 +50,7 @@
 - 修复 QQ Mermaid 图片中的曲线连线标签裁切及多行数据库标签垂直对齐。
 - 省略 grep 结果中的内嵌 Base64 图片数据并限制超长行和结果体积，避免搜索结果撑爆 Agent 上下文，同时标明截断原因。
 - 将 MiniMax 以通用错误码 2013 返回的输入上下文超限识别为专用错误，并提供处理建议。
+- 不再把 MiniMax 的请求体过大错误说成「上下文超限」，让处理建议指向真实原因。
 - 生产镜像补入 Mermaid 栅格尺寸辅助模块，避免图表 Worker 在镜像里缺少它自己 import 的依赖。
 
 #### 贡献者

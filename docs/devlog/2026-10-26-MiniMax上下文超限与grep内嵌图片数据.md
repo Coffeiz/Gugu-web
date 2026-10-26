@@ -120,10 +120,8 @@ provider 上一轮回报的 usage，本轮新追加的工具结果在下一次�
 ### 配套一：溢出分类要认 MiniMax 的措辞
 
 `agent/context/budget.py` 抽出 `CONTEXT_OVERFLOW_PHRASES` 常量并补上
-`context window exceeds limit`。抽成常量是为了让**判定**与**用户文案**共用同一份清单，
-不会出现「判成超限但告诉用户参数错误」的错位。
-
-命中后 `agent/loop/runner.py` 的既有恢复链会接管：先摘要压缩，再走确定性截断，
+`context window exceeds limit`。命中后 `agent/loop/runner.py` 的既有恢复链会接管：
+先摘要压缩，再走确定性截断，
 各一次，失败才明确收尾。
 
 ### 配套二：2013 区分上下文超限
@@ -132,6 +130,12 @@ provider 上一轮回报的 usage，本轮新追加的工具结果在下一次�
   给出专用文案与 `chatUi.minimaxErrorCodes.contextOverflow`，
   而不是笼统的「请求参数错误」。
 - 前端 `chatUi.minimaxErrorCodes` 补 `contextOverflow` 的中 / 日 / 英三份文案。
+
+**判定与定性用两份清单**：判定走不走压缩/截断兜底用宽清单
+`CONTEXT_OVERFLOW_PHRASES`（含 `request too large` 这类 413 体量语义——请求体过大时
+截断兜底仍然有效）；给用户定性用窄清单 `CONTEXT_WINDOW_OVERFLOW_PHRASES`，
+只包含明确指向模型上下文窗口的措辞。否则「请求体过大」会被说成「上下文超限」，
+把用户引到缩短上下文这个无效方向。
 
 ## 验证
 

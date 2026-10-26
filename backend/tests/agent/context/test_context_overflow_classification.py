@@ -37,6 +37,17 @@ def test_context_overflow_classifier_uses_http_413_status():
     assert is_context_overflow_error(error)
 
 
+def test_request_size_errors_still_trigger_overflow_recovery():
+    """请求体过大的判定清单比用户定性清单宽：压缩/截断兜底仍要尝试。
+
+    「request entity too large」是 413 体量语义，不是模型上下文窗口超限，所以
+    provider 侧不会对用户说「上下文超限」；但兜底路径照样能通过截断工具结果
+    把请求压下来，因此判定这一侧仍然放行。
+    """
+    assert is_context_overflow_error(ValueError("request entity too large"))
+    assert is_context_overflow_error(ValueError("request too large"))
+
+
 @pytest.mark.parametrize(
     "payload",
     [
