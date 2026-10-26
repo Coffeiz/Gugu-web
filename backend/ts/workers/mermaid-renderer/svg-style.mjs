@@ -639,8 +639,15 @@ export function normalizeMermaidRasterText(root, textColor, options = {}) {
     if (!hasCjk && !hasRasterizerBaselineOffset) continue
     const fontSizeValue = text.getAttribute('font-size') || text.getAttribute('style')?.match(/font-size\s*:\s*([\d.]+)px?/)?.[1]
     const fontSize = Number.parseFloat(fontSizeValue || '') || 16
+    const lineCount = [...text.childNodes].filter(child =>
+      child.nodeType === 1 && child.localName === 'tspan' &&
+      (child.hasAttribute('y') || child.hasAttribute('dy')),
+    ).length
     const existing = text.getAttribute('transform')
-    const baselineCorrection = `translate(0 ${(-fontSize * 0.9).toFixed(2)})`
+    // Resvg 会把多行中文边标签的可见字形重心画得偏低；额外上移 0.3em，
+    // 使两行及以上的文字整体重新对齐底色框中心，单行标签保持原有校正量。
+    const baselineOffset = fontSize * (lineCount > 1 ? 1.2 : 0.9)
+    const baselineCorrection = `translate(0 ${(-baselineOffset).toFixed(2)})`
     text.setAttribute('transform', existing ? `${baselineCorrection} ${existing}` : baselineCorrection)
   }
   return root

@@ -3,7 +3,11 @@ import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import { DOMParser } from '@xmldom/xmldom'
-import { normalizeMermaidDatabaseLabelPosition, normalizeMermaidEdgeLabelBounds } from '../svg-style.mjs'
+import {
+  normalizeMermaidDatabaseLabelPosition,
+  normalizeMermaidEdgeLabelBounds,
+  normalizeMermaidRasterText,
+} from '../svg-style.mjs'
 import { calculateMermaidRasterDimensions } from '../raster-dimensions.mjs'
 
 const workerPath = fileURLToPath(new URL('../worker.mjs', import.meta.url))
@@ -95,6 +99,30 @@ test('IM 光栅化时英文连线标签底色应按文字宽度居中扩展', ()
   assert.ok(Math.abs(Number(rect.getAttribute('x')) + Number(rect.getAttribute('width')) / 2) < 0.001)
   assert.equal(rect.getAttribute('rx'), '8')
   assert.equal(rect.getAttribute('ry'), '8')
+})
+
+test('IM 光栅化时多行中文边标签应比单行标签额外上移以保持垂直居中', () => {
+  const document = new DOMParser().parseFromString(
+    '<svg><g class="edgeLabel"><text font-size="16" transform="translate(0, -2)">' +
+    '<tspan x="0" y="-0.1em" dy="1.1em">union estimate +</tspan>' +
+    '<tspan x="0" y="1em" dy="1.1em">加权凸聚类</tspan></text></g>' +
+    '<g class="edgeLabel"><text font-size="16"><tspan>Lemma 2.15 输入</tspan></text></g></svg>',
+    'image/svg+xml',
+  )
+
+  normalizeMermaidRasterText(document.documentElement, '#333333')
+
+  const labels = document.getElementsByTagName('text')
+  assert.equal(
+    labels[0].getAttribute('transform'),
+    'translate(0 -19.20) translate(0, -2)',
+    '多行中文边标签应额外上移，保留既有 Mermaid 变换',
+  )
+  assert.equal(
+    labels[1].getAttribute('transform'),
+    'translate(0 -14.40)',
+    '单行中文边标签应保持原有基线校正',
+  )
 })
 
 test('IM 光栅化应把越出 SVG 边界的曲线连线标签纳入 viewBox', () => {
