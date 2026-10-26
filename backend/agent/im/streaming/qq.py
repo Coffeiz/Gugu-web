@@ -37,6 +37,7 @@ class QQMermaidRound:
         from agent.gateway import qq
 
         self.payload = payload
+        self.active_payload = {**payload, "message_id": None}
         self._send_text = send_text
         self._try_send_png_image = try_send_png_image
         self._send_mermaid_text = send_mermaid_text
@@ -207,7 +208,7 @@ class QQMermaidRound:
             if self.stream_failed:
                 text = self.segment_text
                 try:
-                    payload = self.payload
+                    payload = self.active_payload
                     if not await self._send_text(payload, text):
                         # 留给统一最终回复出口重试；此前的中间轮送达不能
                         # 被误当作终态正文已交付。
@@ -272,7 +273,7 @@ class QQMermaidRound:
                     self.stream_sent = True
                     self.round_has_delivered_output = True
                 elif part.source:
-                    if not await self._send_mermaid_text(self.payload, part.source):
+                    if not await self._send_mermaid_text(self.active_payload, part.source):
                         raise RuntimeError("QQ Mermaid 图片和文本回退均发送失败")
                     self.stream_sent = True
                     self.round_has_delivered_output = True

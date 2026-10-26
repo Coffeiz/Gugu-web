@@ -76,6 +76,8 @@ async def finalize_im_dispatch(
             pass
     if response.cancelled:
         trace.finish_run("cancelled")
+        if response.remote_status_unknown:
+            await send_text(payload, "本地已停止，远端执行状态未知")
         await finalize_im_response(platform, puid, True, "")
         return response
 
@@ -99,20 +101,25 @@ async def finalize_im_dispatch(
 
     if platform == "qq":
         # 流式发送器已经完整交付正文时，只收尾附件，避免再发一份重复最终消息。
-        # 流式发送失败/未交付时仍走普通回复出口，由 QQ 出站层按 msg_id
-        # 被动发送并在过期或失败时降级主动消息。
+        # 普通 QQ 最终消息统一走主动消息出口，避免依赖入站消息的被动回复窗口。
         if stream_reply_text is None:
             # 流已确认发送最终正文前缀，但尾部恢复失败；重发全文会重复前缀，
             # 因此将 Run 标记为交付失败，不再盲目重发。
             reply_text = None
         else:
+            final_payload = {**payload, "message_id": None}
             reply_text = await send_agent_response(
-                payload, response,
+                final_payload, response,
                 already_sent_rounds=(
                     1 if payload.get("chat_type") == "c2c" and stream_sent and not response.errored else 0
                 ),
                 show_intermediate_replies=False,
             )
+            # QQ 私聊流式发送时，正文只存在 stream_reply_text；response.text 和
+            # round_texts 可能为空。send_agent_response 因为该轮已发送会返回空串，
+            # 这里用实际流式正文补齐 run 终态与活动记录，不重复发送消息。
+            if not response.errored and stream_sent and stream_reply_text and not reply_text:
+                reply_text = stream_reply_text
     elif platform == "feishu" and stream_sent:
         # CardKit 已经发送正文；附件仍由统一附件出口发送，避免文本重复。
         if response.files:
