@@ -108,6 +108,8 @@ test('框选日期后可以从侧栏创建带日期范围的项目', async ({ pa
 })
 
 test('暗色月视图中框选范围的周末使用选中底色', async ({ page }) => {
+  // 断言静态主题颜色，不应采样到背景色过渡的中间帧。
+  await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.goto('/calendar')
   await expect(page.locator('.month-body')).toBeVisible()
   await page.evaluate(() => {
