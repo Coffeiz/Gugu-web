@@ -88,8 +88,8 @@ export function mapSessionMessageDelta(
 function preserveToolDetails(existing: ChatMessage, incoming: ChatMessage): Partial<ChatMessage> {
   if (existing._toolDetailsLoaded) {
     return {
-      toolInput: existing.toolInput,
-      toolResult: existing.toolResult,
+      ...(incoming.toolInput === undefined ? { toolInput: existing.toolInput } : {}),
+      ...(incoming.toolResult === undefined ? { toolResult: existing.toolResult } : {}),
       _toolDetailsLoaded: true,
     }
   }
@@ -184,10 +184,16 @@ export function mergeSessionMessageDelta(
 
 /** run 终态以已提交历史原位接替临时展示；重复通知不会追加副本。 */
 export function replaceRunHistory(current: ChatMessage[], incoming: ChatMessage[], runId: string): ChatMessage[] {
-  const previous = new Map(current.filter(item => item.runId === runId).map(item => [item._syncKey, item.id]))
-  const history = incoming.filter(item => item.runId === runId).map(item => ({
-    ...item, id: previous.get(item._syncKey) ?? item.id, streaming: false,
-  }))
+  const previous = new Map(current.filter(item => item.runId === runId).map(item => [item._syncKey, item]))
+  const history = incoming.filter(item => item.runId === runId).map(item => {
+    const existing = previous.get(item._syncKey)
+    return {
+      ...item,
+      id: existing?.id ?? item.id,
+      streaming: false,
+      ...(existing?.role === 'tool' ? preserveToolDetails(existing, item) : {}),
+    }
+  })
   return sortSessionTimelineMessages([...current.filter(item => item.runId !== runId), ...history])
 }
 

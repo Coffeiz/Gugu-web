@@ -91,6 +91,25 @@ describe('mergeSessionMessageDelta', () => {
     expect(once.map(message => [message.id, message.text])).toEqual([[1, '历史'], [3, '下一轮']])
   })
 
+  it('run 历史接管时保留实时工具卡已加载的详情', () => {
+    const current: ChatMessage[] = [{
+      ...message(1, 'event:tool-1', ''), role: 'tool', runId: 'run-a',
+      toolInput: { command: 'pwd' }, toolResult: '已取消', _toolDetailsLoaded: true,
+    }]
+    const incoming: ChatMessage[] = [{
+      ...message(2, 'event:tool-1', ''), role: 'tool', runId: 'run-a',
+      toolStatus: 'cancelled', toolDetailsAvailable: true,
+      _toolDetailsSource: { kind: 'timeline', messageId: 11, index: 0 },
+    }]
+
+    const [tool] = replaceRunHistory(current, incoming, 'run-a')
+
+    expect(tool).toMatchObject({
+      id: 1, toolStatus: 'cancelled', toolInput: { command: 'pwd' },
+      toolResult: '已取消', _toolDetailsLoaded: true,
+    })
+  })
+
 })
 
 describe('session message refresh', () => {
