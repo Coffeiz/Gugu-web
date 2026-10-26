@@ -66,7 +66,23 @@ class McpStdioClient:
                 init = await self.initialize()
                 if "error" in init:
                     return init
-            return await self._request("tools/call", {"name": name, "arguments": dict(arguments or {})})
+            result = await self._request("tools/call", {
+                "name": name,
+                "arguments": dict(arguments or {}),
+                "_meta": {"io.modelcontextprotocol/clientCapabilities": {
+                    "extensions": {"io.modelcontextprotocol/tasks": {}}
+                }},
+            })
+            if result.get("resultType") == "task" and result.get("taskId"):
+                from agent.mcp.tasks import wait_for_task
+
+                task_id = str(result["taskId"])
+                return await wait_for_task(
+                    task_id, result,
+                    request=self._request,
+                    cancel=lambda: self._request("tasks/cancel", {"taskId": task_id}),
+                )
+            return result
         except _StdioClientError as exc:
             return {"error": exc.message, "error_kind": exc.kind}
 
@@ -117,6 +133,22 @@ class McpStdioClient:
                         message = error.get("message") if isinstance(error, dict) else str(error)
                         raise _StdioClientError(f"MCP server 协议错误：{message or '未知错误'}", "protocol")
                     return payload.get("result") or {}
+            except asyncio.CancelledError:
+                # stdio 的请求仍在同一持久连接上；按 MCP 标准通知请求已取消，
+                # 然后传播 task cancel。该通知是协作式信号，不能证明进程已停止。
+                if method in {"tools/call", "tasks/get"}:
+                    from agent.runtime.cancellation import mark_remote_cancel_uncertain
+                    mark_remote_cancel_uncertain()
+                if not method.startswith("tasks/"):
+                    try:
+                        await asyncio.shield(self._write_message({
+                            "jsonrpc": "2.0",
+                            "method": "notifications/cancelled",
+                            "params": {"requestId": request_id, "reason": "用户取消当前运行"},
+                        }))
+                    except Exception:
+                        pass
+                raise
             except (asyncio.TimeoutError, TimeoutError) as exc:
                 await self.aclose()
                 raise _StdioClientError("MCP stdio server 响应超时", "timeout") from exc

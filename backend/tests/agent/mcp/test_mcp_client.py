@@ -90,6 +90,42 @@ def test_list_and_call_roundtrip_json():
     asyncio.run(run())
 
 
+@pytest.mark.asyncio
+async def test_tasks_extension_is_polled_and_cancelled_with_task_routing_headers():
+    requests = []
+    task_poll = asyncio.Event()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode("utf-8"))
+        method = payload.get("method")
+        requests.append((payload, dict(request.headers)))
+        if method == "initialize":
+            result = {"protocolVersion": "2025-06-18", "capabilities": {}}
+        elif method == "tools/call":
+            assert payload["params"]["_meta"]["io.modelcontextprotocol/clientCapabilities"]["extensions"]
+            result = {"resultType": "task", "taskId": "task-7", "status": "working", "pollIntervalMs": 100}
+        elif method == "tasks/get":
+            task_poll.set()
+            result = {"resultType": "complete", "taskId": "task-7", "status": "working", "pollIntervalMs": 100}
+        elif method == "tasks/cancel":
+            result = {}
+        else:
+            return httpx.Response(202)
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": payload["id"], "result": result})
+
+    client = McpClient("https://mcp.example.com/rpc", transport=httpx.MockTransport(handler))
+    call = asyncio.create_task(client.call_tool("slow", {}))
+    await asyncio.wait_for(task_poll.wait(), timeout=1)
+    call.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await call
+    cancel = next((headers for payload, headers in requests if payload.get("method") == "tasks/cancel"), None)
+    assert cancel is not None
+    assert cancel.get("mcp-name") == "task-7"
+    assert cancel.get("mcp-method") == "tasks/cancel"
+    assert not any(payload.get("method") == "notifications/cancelled" for payload, _ in requests)
+
+
 def test_sse_response_and_session_header():
     async def run():
         server = FakeMcpServer(sse=True)

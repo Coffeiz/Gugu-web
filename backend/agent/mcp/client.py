@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import asyncio
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from typing import Any
 
@@ -130,9 +131,25 @@ class McpClient:
                 init = await self.initialize()
                 if "error" in init:
                     return init
-            return await self._request(
-                "tools/call", {"name": name, "arguments": dict(arguments or {})}
-            )
+            result = await self._request("tools/call", {
+                "name": name,
+                "arguments": dict(arguments or {}),
+                "_meta": {"io.modelcontextprotocol/clientCapabilities": {
+                    "extensions": {"io.modelcontextprotocol/tasks": {}}
+                }},
+            })
+            if result.get("resultType") == "task" and result.get("taskId"):
+                from agent.mcp.tasks import wait_for_task
+
+                task_id = str(result["taskId"])
+                return await wait_for_task(
+                    task_id, result,
+                    request=lambda method, params: self._request(method, params, task_id=task_id),
+                    cancel=lambda: self._request(
+                        "tasks/cancel", {"taskId": task_id}, task_id=task_id,
+                    ),
+                )
+            return result
         except McpClientError as exc:
             return error_payload(exc)
 
@@ -186,7 +203,9 @@ class McpClient:
             transport=transport,
         )
 
-    async def _request(self, method: str, params: dict | None = None) -> dict:
+    async def _request(
+        self, method: str, params: dict | None = None, *, task_id: str | None = None,
+    ) -> dict:
         """发一个 JSON-RPC 请求并返回 result；协议/网络错误抛 McpClientError。"""
         request_id = next(self._ids)
         body: dict[str, Any] = {"jsonrpc": "2.0", "id": request_id, "method": method}
@@ -197,10 +216,18 @@ class McpClient:
             try:
                 # stream=True：响应体不急读，交给 _read_capped 流式累计——恶意/异常
                 # server 回几十 MB 时在硬上限处截断，而不是先整个吃进内存
-                request = client.build_request(
-                    "POST", self._request_url(), json=body, headers=self._base_headers(),
-                )
+                headers = self._base_headers()
+                if task_id:
+                    headers.update({"Mcp-Name": task_id, "Mcp-Method": method})
+                request = client.build_request("POST", self._request_url(), json=body, headers=headers)
                 resp = await client.send(request, stream=True)
+            except asyncio.CancelledError:
+                # Streamable HTTP 通过关闭当前响应流表达取消；HTTPX task cancellation
+                # 关闭连接/流，不发送 notifications/cancelled。
+                if method in {"tools/call", "tasks/get"}:
+                    from agent.runtime.cancellation import mark_remote_cancel_uncertain
+                    mark_remote_cancel_uncertain()
+                raise
             except httpx.TimeoutException as exc:
                 raise McpClientError(
                     f"MCP server 响应超时（>{int(self._timeout_seconds)}s），"
@@ -252,6 +279,11 @@ class McpClient:
                     self._session_id = session_id
 
                 content = await self._read_capped(resp)
+            except asyncio.CancelledError:
+                if method in {"tools/call", "tasks/get"}:
+                    from agent.runtime.cancellation import mark_remote_cancel_uncertain
+                    mark_remote_cancel_uncertain()
+                raise
             finally:
                 await resp.aclose()
 

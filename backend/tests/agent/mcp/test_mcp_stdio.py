@@ -85,6 +85,40 @@ async def test_sandboxd_stdio_open_rejects_missing_socket():
         await client.open(root="/tmp", command="python3 server.py")
 
 
+@pytest.mark.asyncio
+async def test_stdio_cancel_sends_mcp_cancel_notification_for_in_flight_request(monkeypatch, tmp_path):
+    writes = []
+    request_written = asyncio.Event()
+    never = asyncio.Event()
+
+    class Handle:
+        async def write(self, payload):
+            writes.append(json.loads(payload.decode("utf-8")))
+            request_written.set()
+
+        async def read(self):
+            await never.wait()
+
+    handle = Handle()
+    client = McpStdioClient("server", root=str(tmp_path))
+
+    async def ensure_handle():
+        return handle
+
+    monkeypatch.setattr(client, "_ensure_handle", ensure_handle)
+    request = asyncio.create_task(client._request("tools/call", {"name": "slow", "arguments": {}}))
+    await request_written.wait()
+    request.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await request
+
+    assert writes[0]["method"] == "tools/call"
+    assert writes[1] == {
+        "jsonrpc": "2.0", "method": "notifications/cancelled",
+        "params": {"requestId": writes[0]["id"], "reason": "用户取消当前运行"},
+    }
+
+
 def test_stdio_container_has_no_tty_and_keeps_sandbox_boundary(tmp_path):
     from agent.sandbox.docker import DockerSandboxExecutor
 
