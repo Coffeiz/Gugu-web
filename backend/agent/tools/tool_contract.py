@@ -739,6 +739,40 @@ def invalid_input_payload(
     if tool_name in {"note_create", "note_update"}:
         payload["next_action"] = "笔记结构错误，请按 schema_hints 重建完整 blocks；不要沿用原来的嵌套结构或 item 包装。"
         hints = [*hints, *_NOTE_SCHEMA_HINTS]
+    if tool_name == "note_update":
+        missing_node_id = any(
+            item.get("path") == "node_id" and item.get("rule") == "required"
+            for item in bounded
+        )
+        invalid_append_blocks = any(
+            item.get("path", "") == "append_blocks"
+            or item.get("path", "").startswith("append_blocks.")
+            for item in bounded
+        )
+        if missing_node_id:
+            hints = [
+                *hints,
+                "note_update 缺少 node_id：先从当前上下文的 note_search/note_get 结果取真实 ID；没有结果时先搜索并读取目标笔记，无法唯一确定目标则询问用户。不要猜 ID，也不要再次提交缺少 node_id 的更新。",
+            ]
+        if invalid_append_blocks:
+            hints = [
+                *hints,
+                '追加普通文字的正确形状：{"node_id":123,"append_blocks":[{"type":"paragraph","content":[{"type":"text","text":"原文"}]}]}；123 必须替换为已确认的真实 ID，append_blocks 必须是块数组。',
+            ]
+        if missing_node_id and invalid_append_blocks:
+            payload["next_action"] = (
+                "更新未执行：先取得目标笔记的真实 node_id，再按 schema_hints 重建完整 append_blocks；"
+                "目标不明确时询问用户，不要重复提交当前参数。"
+            )
+        elif missing_node_id:
+            payload["next_action"] = (
+                "更新未执行：先从 note_search/note_get 结果取得真实 node_id；目标不明确时询问用户，"
+                "不要猜 ID 或重复提交。"
+            )
+        elif invalid_append_blocks:
+            payload["next_action"] = (
+                "更新未执行：按 schema_hints 重建完整 append_blocks 数组后重试，不要沿用 item 包装。"
+            )
     properties = schema.get("properties") if isinstance(schema, dict) else None
     has_boolean_for_string = (
         isinstance(instance, dict)
