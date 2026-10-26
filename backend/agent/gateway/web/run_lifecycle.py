@@ -68,8 +68,8 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
     # run 级进程心跳：长工具调用/交互等待期间没有 token 事件，快照 TTL 得不到
     # 刷新；这个心跳让「快照非 done 但心跳已断」可以安全判定为 crash 僵尸
     # （见 genstream.beat_alive / reap 与 recover_orphaned_session）。
-    # 每 5s 还会检查取消标记：终止端点在另一 worker 进程时只能写 Redis 标记，
-    # 由这里发现并直接 cancel 生成任务，而不是等 token/轮边界的协作检查。
+    # 跨 worker 取消通过 Redis Pub/Sub 主动唤醒；持久标记仍保留，每 5s 读回一次
+    # 作为断线/漏通知兜底。收到通知后仍校验 owner，防止旧 run 的取消误伤排队 run。
     # 排队任务（begin_after_gate）在拿到门、begin 清掉旧标记之前必须忽略取消
     # 标记——那可能是给上一个 run 的「停止」，不该连带杀掉排队的这条消息。
     generate_task = asyncio.current_task()
@@ -79,16 +79,62 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
         nonlocal run_begun
         loop = asyncio.get_running_loop()
         last_touch = 0.0
-        while True:
-            if run_begun and await genstream.is_cancelled(session_id):
-                if generate_task is not None:
-                    generate_task.cancel()
-                return
-            now = loop.time()
-            if now - last_touch >= 30:
-                await genstream.touch(session_id)
-                last_touch = now
-            await asyncio.sleep(5)
+        pubsub = None
+        try:
+            while True:
+                if not run_begun:
+                    now = loop.time()
+                    if now - last_touch >= 30:
+                        await genstream.touch(session_id)
+                        last_touch = now
+                    await asyncio.sleep(5)
+                    continue
+
+                if pubsub is None:
+                    try:
+                        pubsub = await genstream.open_cancel_subscription(session_id)
+                    except Exception as exc:
+                        from app.core.redaction import diag_log
+
+                        diag_log("agent.genstream.cancel_subscribe", exc)
+                        if run_begun and await genstream.is_cancelled(session_id):
+                            if generate_task is not None:
+                                generate_task.cancel()
+                            return
+                        await asyncio.sleep(1)
+                        continue
+
+                # 订阅先于读标记，覆盖“取消恰好发生在订阅建立前”的竞态。
+                if await genstream.is_cancelled(session_id):
+                    if generate_task is not None:
+                        generate_task.cancel()
+                    return
+                try:
+                    if await genstream.wait_for_cancel_signal(session_id, pubsub, timeout=5.0):
+                        if generate_task is not None:
+                            generate_task.cancel()
+                        return
+                except Exception as exc:
+                    from app.core.redaction import diag_log
+
+                    diag_log("agent.genstream.cancel_listener", exc)
+                    try:
+                        await pubsub.aclose()
+                    except Exception:
+                        pass
+                    pubsub = None
+                    continue
+
+                now = loop.time()
+                if now - last_touch >= 30:
+                    await genstream.touch(session_id)
+                    last_touch = now
+        finally:
+            if pubsub is not None:
+                try:
+                    await pubsub.aclose()
+                except Exception:
+                    pass
 
     heartbeat_task = asyncio.create_task(_run_heartbeat())
     try:

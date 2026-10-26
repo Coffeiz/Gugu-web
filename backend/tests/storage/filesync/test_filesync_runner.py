@@ -974,7 +974,8 @@ async def test_same_user_task_cannot_take_scan_slot_until_stopped_thread_exits(
             )
             await chat_db.rollback()
         assert chat_cancel == {
-            "ok": True, "active": True, "recovered": False, "cancelled_locally": True,
+            "ok": True, "active": True, "recovered": False,
+            "cancelled_locally": True, "outcome": "requested",
         }
         async with db_session._SessionLocal() as stop_db:
             if stop_mode == "cancel":

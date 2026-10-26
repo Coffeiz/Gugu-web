@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import time
@@ -10,8 +11,29 @@ from typing import Any, AsyncGenerator
 
 from agent.interactions.confirmations import confirmation_payload
 from agent.loop.events import artifact_sse
+from agent.request_headers import redact_tool_request_headers
 
 _log = logging.getLogger("agent.traj")
+
+
+def _tool_input_signature(tool_name: str, arguments: Any) -> str | None:
+    """为本轮失败的工具参数生成不含原文的短期指纹。"""
+    try:
+        encoded = json.dumps(
+            [tool_name, arguments], ensure_ascii=False, sort_keys=True,
+            separators=(",", ":"), allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError):
+        return None
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _is_schema_rejection(result: Any, json_loads: Any) -> bool:
+    try:
+        payload = json_loads(result) if isinstance(result, str) else result
+    except (TypeError, ValueError):
+        return False
+    return isinstance(payload, dict) and payload.get("error") == "tool_input_invalid"
 
 
 def _pending_interaction_kind(tool_name: str, result: Any) -> str | None:
@@ -110,7 +132,7 @@ class ParallelToolBatchRuntime:
             yield ToolRoundEmission("event", {
                 "type": "tool_call", "round_id": self.round_id,
                 "tool_call_id": tool_call_id, "name": effective_name,
-                "label": label, "input": dispatch_input,
+                "label": label, "input": redact_tool_request_headers(dispatch_input),
                 "verify": self.verify_mode, "status": "queued",
             })
             parallel_meta.append((
@@ -172,7 +194,8 @@ class ParallelToolBatchRuntime:
                 yield ToolRoundEmission("event", {
                     "type": "tool_call", "round_id": self.round_id,
                     "tool_call_id": meta[6], "name": meta[4], "label": meta[5],
-                    "input": meta[3], "verify": self.verify_mode, "status": "running",
+                    "input": redact_tool_request_headers(meta[3]),
+                    "verify": self.verify_mode, "status": "running",
                 })
             parallel_results = await dispatch_task
             if isinstance(parallel_results, self.bindings.dispatch_cancelled_type):
@@ -424,6 +447,8 @@ class SerialToolBatchRuntime:
             self.run_state.tool_call_count += 1
 
             def emit(event_type: str, **payload: Any) -> ToolRoundEmission:
+                if event_type == "tool_call" and "input" in payload:
+                    payload["input"] = redact_tool_request_headers(payload["input"])
                 return ToolRoundEmission("event", {"type": event_type, **payload})
 
             if protocol_error is not None:
@@ -451,6 +476,28 @@ class SerialToolBatchRuntime:
                     "tool_done", round_id=self.round_id, tool_call_id=tool_call_id,
                     name=effective_name, label=label, verify=self.verify_mode,
                     status="error", result=self.bindings.truncated_args_error,
+                )
+                continue
+
+            input_signature = _tool_input_signature(effective_name, dispatch_input)
+            if input_signature and input_signature in self.run_state.invalid_tool_input_signatures:
+                repeated_result = self.bindings.json_dumps({
+                    "error": "本轮中相同的无效工具参数已被拦截，没有再次执行。",
+                    "next_action": (
+                        "停止重复提交相同参数；按上次 schema 错误修正字段或先取得缺失信息，"
+                        "目标仍不明确时询问用户。修正后再调用工具。"
+                    ),
+                }, ensure_ascii=False)
+                yield emit(
+                    "tool_call", round_id=self.round_id, tool_call_id=tool_call_id,
+                    name=effective_name, label=label, input=dispatch_input,
+                    verify=self.verify_mode, status="invalid",
+                )
+                dispatched.append((tool_call, repeated_result))
+                yield emit(
+                    "tool_done", round_id=self.round_id, tool_call_id=tool_call_id,
+                    name=effective_name, label=label, verify=self.verify_mode,
+                    status="error", result=repeated_result,
                 )
                 continue
 
@@ -491,6 +538,8 @@ class SerialToolBatchRuntime:
                     tool_snapshot=self.tool_snapshot, skill_state=self.loaded_skill_ids,
                     tool_call_id=tool_call_id,
                 )
+                if input_signature and _is_schema_rejection(result, self.bindings.json_loads):
+                    self.run_state.invalid_tool_input_signatures.add(input_signature)
                 if skill_id and self.bindings.is_successful_result(result):
                     try:
                         payload = self.bindings.json_loads(result) if isinstance(result, str) else result

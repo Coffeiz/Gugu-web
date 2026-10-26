@@ -134,5 +134,12 @@ async def cancel_stream(
             # 这个 run。终止端点读快照与写标记之间，排队的 run 可能已经接管
             # 会话（begin 清不掉这之后才落下的标记），会话级标记会把刚接管的
             # 排队消息一起杀掉——用户消息已落库但永远等不到回复。
-            await genstream.request_cancel(session_id, owner_run_id or None)
-    return {"ok": True, "active": active, "recovered": recovered, "cancelled_locally": cancelled_locally}
+            from agent.runtime.cancellation import request_cancel
+            await request_cancel(session_id=session_id, owner_run_id=owner_run_id or None)
+    return {
+        "ok": True,
+        "active": active,
+        "recovered": recovered,
+        "cancelled_locally": cancelled_locally,
+        "outcome": "requested" if active else ("interrupted" if recovered else "already_completed"),
+    }

@@ -1054,7 +1054,10 @@ export const agentApi = {
   requestFilesystemAuthorization: (id: number) => post<Record<string, any>>(`/agent/sessions/${id}/filesystem-authorization/request`),
   confirmFilesystemAuthorization: (id: number, confirmCode: string) => post(`/agent/sessions/${id}/filesystem-authorization`, { confirm_code: confirmCode }),
   revokeFilesystemAuthorization: (id: number) => del(`/agent/sessions/${id}/filesystem-authorization`),
-  cancelSession:   (sessionId: string) => post(`/agent/sessions/${sessionId}/cancel`),
+  cancelSession:   (sessionId: string) => post<{
+    ok: boolean; active: boolean; recovered: boolean; cancelled_locally: boolean;
+    outcome: 'requested' | 'interrupted' | 'already_completed'
+  }>(`/agent/sessions/${sessionId}/cancel`),
   // 按消息 id 反查它所在的会话——笔记里的「@对话」引用锚定的是具体一条消息，点开时得先
   // 知道属于哪个会话才能 loadSession + 定位滚动
   getMessageLocation: (messageId: number) => get<{ id: number; sessionId: number }>(`/agent/messages/${messageId}`),

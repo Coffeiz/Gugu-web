@@ -29,6 +29,7 @@ class _FakeRedis:
     def __init__(self):
         self.values = {}
         self.deleted = []
+        self.published = []
 
     async def set(self, key, value, **_kwargs):
         self.values[key] = value
@@ -46,6 +47,10 @@ class _FakeRedis:
         self.deleted.extend(keys)
         for key in keys:
             self.values.pop(key, None)
+
+    async def publish(self, channel, value):
+        self.published.append((channel, value))
+        return 1
 
     async def eval(self, _script, numkeys, *args):
         keys = list(args[:numkeys])
@@ -107,6 +112,75 @@ async def test_web_cancel_is_scoped_to_generation_lifecycle(monkeypatch):
     assert not await genstream.is_cancelled(477)
     assert genstream._state_key(477) in redis.deleted
     assert genstream._cancel_key(477) in redis.deleted
+
+
+@pytest.mark.asyncio
+async def test_web_cancel_publishes_active_signal_after_persisting_owner_marker(monkeypatch):
+    redis = _FakeRedis()
+    signal = asyncio.Event()
+
+    class _CancelPubSub:
+        async def subscribe(self, channel):
+            self.channel = channel
+
+        async def get_message(self, **_kwargs):
+            await signal.wait()
+            return {"type": "message", "channel": self.channel, "data": "run-480"}
+
+        async def aclose(self):
+            return None
+
+    pubsub = _CancelPubSub()
+    async def publish(channel, value):
+        redis.published.append((channel, value))
+        signal.set()
+        return 1
+
+    redis.publish = publish
+    redis.pubsub = lambda: pubsub
+    monkeypatch.setattr(genstream, "get_redis", lambda: redis)
+    await genstream.begin(480, owner_run_id="run-480")
+    subscription = await genstream.open_cancel_subscription(480)
+
+    await genstream.request_cancel(480, "run-480")
+    assert await asyncio.wait_for(
+        genstream.wait_for_cancel_signal(480, subscription, timeout=5), timeout=0.5,
+    ) is True
+    assert redis.values[genstream._cancel_key(480)] == "run-480"
+    assert redis.published == [(genstream._cancel_notify_channel(480), "run-480")]
+
+
+@pytest.mark.asyncio
+async def test_cancel_signal_timeout_falls_back_to_durable_owner_marker(monkeypatch):
+    redis = _FakeRedis()
+    monkeypatch.setattr(genstream, "get_redis", lambda: redis)
+    await genstream.begin(481, owner_run_id="run-481")
+    await redis.set(genstream._cancel_key(481), "run-481")
+
+    class _QuietPubSub:
+        async def get_message(self, **_kwargs):
+            return None
+
+    assert await genstream.wait_for_cancel_signal(
+        481, _QuietPubSub(), timeout=0,
+    ) is True
+
+
+@pytest.mark.asyncio
+async def test_stale_cancel_marker_does_not_cancel_new_owner_run(monkeypatch):
+    redis = _FakeRedis()
+    monkeypatch.setattr(genstream, "get_redis", lambda: redis)
+    await genstream.begin(482, owner_run_id="run-current")
+    await redis.set(genstream._cancel_key(482), "run-previous")
+
+    class _QuietPubSub:
+        async def get_message(self, **_kwargs):
+            return None
+
+    assert await genstream.wait_for_cancel_signal(
+        482, _QuietPubSub(), timeout=0,
+    ) is False
+    assert genstream._cancel_key(482) in redis.deleted
 
 
 @pytest.mark.asyncio

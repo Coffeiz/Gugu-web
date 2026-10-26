@@ -244,6 +244,15 @@ async def run_loop(
         # 压缩判定使用最近一次 provider 请求的 context input，不能跨轮累加或沿用高水位。
         run_context_usage_peak = 0
         run_id = f"run-{_core.uuid4().hex[:16]}"
+        from agent.runtime.cancellation import (
+            RunCancellation, RunCancellationRequested, register_current_run,
+            set_current_cancellation,
+        )
+        # Agent loop 内部 run_id 与 Gateway 的 owner_run_id 是不同标识；当前执行
+        # 会话由 session gate 保证唯一，因此取消检查按 session 读取共享标记。
+        cancellation = RunCancellation(session_id)
+        set_current_cancellation(cancellation)
+        register_current_run(session_id, run_id)
         run_state = _core._RunState(run_id=run_id, session_id=session_id)
         event_sequencer = EventSequencer(run_state.run_id, encoder=_core.encode_event)
         context_runtime = ContextRuntime(
@@ -276,12 +285,11 @@ async def run_loop(
                 run_state.verify_rounds += 1
             else:
                 run_state.task_rounds += 1
-            # 用户中途「算了」→ 轮间协作中断（单次 LLM 流式调用本身切不了，故粒度是轮与轮之间）
-            if await _core._im_cancelled(session_id):
-                yield f"data: {_core.json.dumps({'type': '_cancelled'})}\n\n"
+            # 轮间检查与流式等待共用同一取消控制器；长流由 iterate 即时中断。
+            if await cancellation.is_requested():
+                yield stream_event("_cancelled", remote_status_unknown=cancellation.remote_status_unknown)
                 return
 
-            _tok = 0
             result = None
             run_state.next_round()
             round_id = f"round-{run_state.round_number}"
@@ -309,7 +317,7 @@ async def run_loop(
                 )
                 round_events = round_runtime.stream()
                 try:
-                    async for emission in round_events:
+                    async for emission in cancellation.iterate(round_events):
                         if emission.kind == "done":
                             result = emission.value
                             continue
@@ -339,10 +347,6 @@ async def run_loop(
                             reply_state.guard_retry_buf.append(token)
                         else:
                             yield stream_event("token", content=token, round_id=round_id)
-                        _tok += 1
-                        if _tok % _core._CANCEL_CHECK_EVERY == 0 and await _core._im_cancelled(session_id):
-                            yield f"data: {_core.json.dumps({'type': '_cancelled'})}\n\n"
-                            return
                 finally:
                     await round_events.aclose()
                     driver = round_runtime.driver
@@ -350,6 +354,9 @@ async def run_loop(
                     ctx = round_runtime.context
                     current_tool_names = round_runtime.tool_names
                     responses_fallback_used = round_runtime.responses_fallback_used
+            except RunCancellationRequested:
+                yield stream_event("_cancelled", remote_status_unknown=cancellation.remote_status_unknown)
+                return
             except _core.RetryableError as e:
                 if reasoning_state is not None:
                     await reasoning_state.failed("provider_rejected")
@@ -812,7 +819,7 @@ async def run_loop(
                 if parallel_cancelled:
                     # 已完成调用保留实际结果；未完成调用用取消回执补齐 canonical 配对。
                     # 取消事件结束当前 Run，不能再把这批结果发给 Provider 续轮。
-                    yield f"data: {_core.json.dumps({'type': '_cancelled'}, ensure_ascii=False)}\n\n"
+                    yield stream_event("_cancelled", remote_status_unknown=cancellation.remote_status_unknown)
                     return
                 if run_state.pending is not None:
                     interaction_runtime = InteractionRuntime(
@@ -826,7 +833,7 @@ async def run_loop(
                             dispatch_in_session=_core._dispatch_in_session,
                             tool_result_payload=_core._tool_result_payload,
                             is_successful_result=_core._is_successful_tool_result,
-                            is_cancelled=_core._im_cancelled,
+                            is_cancelled=cancellation.is_requested,
                             diag_log=_core.diag_log,
                         ),
                         user_id=user_id,
