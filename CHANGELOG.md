@@ -25,6 +25,7 @@
 - Identify MiniMax input-context overflow reported with generic error code 2013 and show actionable guidance.
 - Stop reporting MiniMax request-size errors as context-window overflow, so the guidance points at the real cause.
 - Copy the Mermaid raster-dimension helper into the production images so the diagram worker no longer misses a module it imports.
+- Smoke-start the Mermaid diagram worker during image builds so missing modules or fonts fail the build instead of breaking rendering at runtime.
 
 #### Contributors
 
@@ -52,6 +53,7 @@
 - 将 MiniMax 以通用错误码 2013 返回的输入上下文超限识别为专用错误，并提供处理建议。
 - 不再把 MiniMax 的请求体过大错误说成「上下文超限」，让处理建议指向真实原因。
 - 生产镜像补入 Mermaid 栅格尺寸辅助模块，避免图表 Worker 在镜像里缺少它自己 import 的依赖。
+- 镜像构建期冒烟启动 Mermaid 图表 Worker，缺模块或缺字体时构建即失败，不再等到线上渲染才暴露。
 
 #### 贡献者
 

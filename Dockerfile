@@ -252,6 +252,10 @@ COPY frontend/public/fonts/Noto_Sans_SC/NotoSansSC-VariableFont_wght.ttf ./bin/f
 COPY --from=rag-runtime /rag/node_modules ./bin/node_modules
 RUN node bin/gugu-rag-ts-worker.mjs --version \
     && cd bin && node -e "Promise.all([import('mermaid'), import('@mermaid-js/mermaid-zenuml'), import('@resvg/resvg-js'), import('@xmldom/xmldom'), import('svgdom')]).then(() => console.log('Mermaid PNG runtime ready'))"
+# 冒烟启动图表 Worker：解析它的全部同级依赖与 CJK 字体路径。缺任何一个都让镜像构建失败，
+# 而不是等到线上渲染时才 ERR_MODULE_NOT_FOUND。
+RUN printf '{"sources":[]}' | node bin/gugu-mermaid-worker.mjs \
+    && echo "Mermaid worker module graph OK"
 RUN python -c "import ctypes.util; assert ctypes.util.find_library('seccomp'), 'libseccomp2 runtime unavailable'"
 RUN node bin/gugu-filesync-ts-worker.cjs --version
 
