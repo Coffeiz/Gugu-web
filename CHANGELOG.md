@@ -37,7 +37,7 @@
 
 #### Contributors
 
-- None.
+- Thank you to [@Coffeiz](https://github.com/Coffeiz) for PR #109.
 
 #### Feedback & Issue Reporters
 
@@ -73,7 +73,7 @@
 
 #### 贡献者
 
-- 暂无。
+- 感谢 [@Coffeiz](https://github.com/Coffeiz) 提交 PR #109。
 
 #### 反馈与问题报告
 
