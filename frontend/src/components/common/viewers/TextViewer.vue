@@ -1117,7 +1117,7 @@ onBeforeUnmount(() => {
   background: none;
   color: var(--content-primary, #383a42);
   font-family: var(--font-family-mono);
-  font-size: 13px;
+  font-size: 1em;
   line-height: 1.65;
 }
 
@@ -1248,7 +1248,7 @@ onBeforeUnmount(() => {
   width: 100%;
   max-width: 100%;
   margin: 1em 0;
-  font-size: 14px;
+  font-size: 1.077em;
 }
 .tv-md :deep(table.md-frontmatter) { margin: 0 0 1.25em; }
 .tv-md :deep(th),
