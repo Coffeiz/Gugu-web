@@ -50,6 +50,16 @@ def test_normalize_semantic_text_only_removes_confirmed_leading_bot_mention(
     assert normalize_semantic_text(text, bot_mentioned=mentioned) == expected
 
 
+def test_extract_mention_ids_only_reads_explicit_mention_form():
+    from agent.im.models import extract_mention_ids
+
+    assert extract_mention_ids("<@BOT123> 和 <@!BOT456> 一起") == ["BOT123", "BOT456"]
+    assert extract_mention_ids("<@BOT123> <@BOT123>") == ["BOT123"]
+    # 裸 @xxx 可能是邮箱或普通词，不能当成 mention
+    assert extract_mention_ids("发我 mail@example.com 就行") == []
+    assert extract_mention_ids("@咕咕 在吗") == []
+
+
 def test_payload_semantic_text_uses_canonical_bot_mention_flag():
     from agent.im.mentions import payload_semantic_text
 

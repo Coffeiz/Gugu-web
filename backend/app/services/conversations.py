@@ -299,6 +299,67 @@ async def get_session_owner_platform_ids(db, user_id, platform: str, bot_id: int
     return bot.owner_platform_user_id, bot.bot_platform_user_id
 
 
+async def get_session_display_names(db, session_id: int, platform_user_ids) -> dict[str, str]:
+    """返回这些平台 ID 在本会话里最近一次发言时用的显示名。
+
+    群成员和机器人发言都带平台昵称，所以 @ 到别的 bot 时能显示它自己的名字，
+    而不是一律显示"咕咕"（群里有多个 bot 时"咕咕"会指错对象）。取会话内
+    最新一次昵称，改名后不会被旧昵称冻结。
+    """
+    ids = [str(value) for value in platform_user_ids if value]
+    if not ids:
+        return {}
+    latest = (
+        select(
+            ConversationMessage.platform_user_id.label("platform_user_id"),
+            func.max(ConversationMessage.created_at).label("last_seen"),
+        )
+        .where(
+            ConversationMessage.session_id == session_id,
+            ConversationMessage.platform_user_id.in_(ids),
+            ConversationMessage.platform_user_name.isnot(None),
+            ConversationMessage.platform_user_name != "",
+        )
+        .group_by(ConversationMessage.platform_user_id)
+        .subquery()
+    )
+    rows = (await db.execute(
+        select(
+            ConversationMessage.platform_user_id,
+            ConversationMessage.platform_user_name,
+        )
+        .join(latest, and_(
+            ConversationMessage.platform_user_id == latest.c.platform_user_id,
+            ConversationMessage.created_at == latest.c.last_seen,
+        ))
+        .where(ConversationMessage.session_id == session_id)
+    )).all()
+    names: dict[str, str] = {}
+    for platform_user_id, platform_user_name in rows:
+        key = str(platform_user_id or "")
+        if key and key not in names and platform_user_name:
+            names[key] = str(platform_user_name)
+    return names
+
+
+async def get_user_bot_display_names(db, user_id, platform: str) -> dict[str, str]:
+    """返回该用户在这条平台上自有机器人的「平台 ID → 配置名」。
+
+    自有 bot 的平台 ID 取自绑定时拿到的 openid，和群消息里 @ 到的 ID 同一
+    套命名空间，所以能直接对上；名字取用户在 IM 配置里起的名字。
+    """
+    rows = (await db.execute(
+        select(UserBot.bot_platform_user_id, UserBot.name)
+        .where(UserBot.user_id == user_id, UserBot.platform == platform)
+    )).all()
+    names: dict[str, str] = {}
+    for bot_platform_user_id, name in rows:
+        key = str(bot_platform_user_id or "")
+        if key and name:
+            names.setdefault(key, str(name))
+    return names
+
+
 async def get_display_timeline_item(db, session_id: int, message_id: int):
     """读取单条消息时间线；超大旧记录在数据库侧降为 None。"""
     return (await db.execute(
