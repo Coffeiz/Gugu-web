@@ -11,11 +11,16 @@
 
 #### New Features
 
-- None.
+- Allow users to cancel background MCP tool tasks while they are running.
 
 #### Improvements
 
-- None.
+- Propagate run cancellation through in-flight model and tool work, and report a consistent terminal state.
+- Batch and cache knowledge retrieval to reduce repeated work during context injection.
+- Use a consistent scrollable card layout across scheduled tasks, skills, and MCP services.
+- Improve outbound web request header handling and destination validation.
+- Clarify in BYOK and admin settings that MiniMax web search requires an M plan.
+- Give the note-writing tool clearer operating guidance and preserve strategy terminology in normal replies.
 
 #### Fixes
 
@@ -26,6 +31,9 @@
 - Stop reporting MiniMax request-size errors as context-window overflow, so the guidance points at the real cause.
 - Copy the Mermaid raster-dimension helper into the production images so the diagram worker no longer misses a module it imports.
 - Smoke-start the Mermaid diagram worker during image builds so missing modules or fonts fail the build instead of breaking rendering at runtime.
+- Deliver the final QQ streamed reply reliably when earlier streaming content was only partially delivered, and report missing stream terminal events as errors.
+- Keep tool activity synchronized when switching between chat sessions.
+- Keep localized cancellation status messages consistent across supported languages.
 
 #### Contributors
 
@@ -39,11 +47,16 @@
 
 #### 新功能
 
-- 暂无。
+- 支持取消正在运行的 MCP 后台工具任务。
 
 #### 改进
 
-- 暂无。
+- 将取消信号传递到运行中的模型和工具任务，并统一反馈任务终态。
+- 对知识检索进行批处理和缓存，减少上下文注入时的重复工作。
+- 定时任务、技能和 MCP 服务统一使用可滚动卡片布局。
+- 改进联网请求头处理与目标地址校验。
+- 在 BYOK 和管理设置中说明 MiniMax 联网搜索需要 M 计划。
+- 补充笔记工具的操作指引，并在普通回复中保留策略术语。
 
 #### 修复
 
@@ -54,6 +67,9 @@
 - 不再把 MiniMax 的请求体过大错误说成「上下文超限」，让处理建议指向真实原因。
 - 生产镜像补入 Mermaid 栅格尺寸辅助模块，避免图表 Worker 在镜像里缺少它自己 import 的依赖。
 - 镜像构建期冒烟启动 Mermaid 图表 Worker，缺模块或缺字体时构建即失败，不再等到线上渲染才暴露。
+- 修复 QQ 流式内容部分送达时最终回复可能遗漏的问题；缺少流终态时明确报错。
+- 修复切换会话后工具活动消息未及时同步的问题。
+- 统一各语言中的运行取消状态提示。
 
 #### 贡献者
 
