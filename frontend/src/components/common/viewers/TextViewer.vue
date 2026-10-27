@@ -171,6 +171,118 @@ const tvScroll = ref<HTMLElement | null>(null)   // .tv-scroll 滚动容器
 const mdRoot = ref<HTMLElement | null>(null)
 let themeObserver: MutationObserver | null = null
 
+// 宽表格的悬浮横向滚动条与粘性表头，跟随当前预览视口内的表格。
+let tableViewportObserver: MutationObserver | null = null
+let floatingTableScrollbar: HTMLDivElement | null = null
+let stickyTableHeader: HTMLDivElement | null = null
+let activeTableScroller: HTMLElement | null = null
+let activeTableHeader: HTMLTableElement | null = null
+let tableViewportFrame = 0
+
+function copyTableHeaderStyles(source: HTMLTableElement, clone: HTMLTableElement) {
+  const sourceHead = source.querySelector('thead')
+  const cloneHead = clone.querySelector('thead')
+  if (!sourceHead || !cloneHead) return
+  const sourceCells = sourceHead.querySelectorAll<HTMLElement>('th, td')
+  const cloneCells = cloneHead.querySelectorAll<HTMLElement>('th, td')
+  sourceCells.forEach((cell, index) => {
+    const target = cloneCells[index]
+    if (!target) return
+    const style = getComputedStyle(cell)
+    for (const property of ['font', 'color', 'background-color', 'text-align', 'vertical-align', 'padding', 'border', 'white-space', 'line-height']) {
+      target.style.setProperty(property, style.getPropertyValue(property))
+    }
+    target.style.width = `${cell.getBoundingClientRect().width}px`
+    target.style.boxSizing = 'border-box'
+  })
+}
+
+function updateTableViewportControls() {
+  tableViewportFrame = 0
+  const viewport = tvScroll.value
+  if (!viewport || !floatingTableScrollbar || !stickyTableHeader) return
+  const viewportRect = viewport.getBoundingClientRect()
+  const viewerRoot = viewport.closest('.fpw-root')
+  const rootLayer = Number.parseInt(viewerRoot ? getComputedStyle(viewerRoot).zIndex : '', 10)
+  const controlsLayer = Number.isFinite(rootLayer) ? rootLayer + 2 : 1202
+  stickyTableHeader.style.zIndex = String(controlsLayer)
+  floatingTableScrollbar.style.zIndex = String(controlsLayer + 1)
+  const tables = [...(mdRoot.value?.querySelectorAll<HTMLTableElement>('.md-table-wrap > table') ?? [])]
+    .map(table => ({ table, wrapper: table.parentElement as HTMLElement }))
+  const stickyCandidate = tables.find(({ table }) => {
+    const head = table.querySelector('thead')?.getBoundingClientRect()
+    return Boolean(head && head.top < viewportRect.top && table.getBoundingClientRect().bottom > viewportRect.top)
+  })
+
+  if (stickyCandidate) {
+    const { table, wrapper } = stickyCandidate
+    if (activeTableHeader !== table) {
+      const clone = table.cloneNode(false) as HTMLTableElement
+      table.querySelectorAll(':scope > colgroup, :scope > thead').forEach(part => clone.append(part.cloneNode(true)))
+      clone.setAttribute('aria-hidden', 'true')
+      clone.style.width = `${table.scrollWidth}px`
+      clone.style.minWidth = `${table.scrollWidth}px`
+      clone.style.tableLayout = 'fixed'
+      copyTableHeaderStyles(table, clone)
+      stickyTableHeader.replaceChildren(clone)
+      activeTableHeader = table
+    }
+    const headHeight = table.querySelector('thead')?.getBoundingClientRect().height ?? 0
+    const visibleHeight = Math.max(0, Math.min(headHeight, table.getBoundingClientRect().bottom - viewportRect.top))
+    stickyTableHeader.style.display = visibleHeight ? 'block' : 'none'
+    stickyTableHeader.style.top = `${viewportRect.top}px`
+    stickyTableHeader.style.left = `${wrapper.getBoundingClientRect().left}px`
+    stickyTableHeader.style.width = `${wrapper.clientWidth}px`
+    stickyTableHeader.style.height = `${visibleHeight}px`
+    const clone = stickyTableHeader.firstElementChild as HTMLTableElement | null
+    if (clone) clone.style.transform = `translate(${-wrapper.scrollLeft}px, ${visibleHeight - headHeight}px)`
+  } else {
+    stickyTableHeader.style.display = 'none'
+    activeTableHeader = null
+  }
+
+  const scrollCandidate = tables.find(({ table, wrapper }) => {
+    const rect = wrapper.getBoundingClientRect()
+    return table.scrollWidth > wrapper.clientWidth + 1
+      && rect.top < viewportRect.bottom && rect.bottom > viewportRect.bottom
+  })
+  if (scrollCandidate) {
+    const { table, wrapper } = scrollCandidate
+    const trackContent = floatingTableScrollbar.firstElementChild as HTMLDivElement | null
+    if (trackContent) trackContent.style.width = `${table.scrollWidth}px`
+    floatingTableScrollbar.style.display = 'block'
+    floatingTableScrollbar.style.left = `${wrapper.getBoundingClientRect().left}px`
+    floatingTableScrollbar.style.width = `${wrapper.clientWidth}px`
+    floatingTableScrollbar.style.top = `${viewportRect.bottom - floatingTableScrollbar.offsetHeight}px`
+    if (activeTableScroller !== wrapper || floatingTableScrollbar.scrollLeft !== wrapper.scrollLeft) {
+      floatingTableScrollbar.scrollLeft = wrapper.scrollLeft
+    }
+    activeTableScroller = wrapper
+  } else {
+    floatingTableScrollbar.style.display = 'none'
+    activeTableScroller = null
+  }
+}
+
+function scheduleTableViewportUpdate() {
+  if (tableViewportFrame) return
+  tableViewportFrame = requestAnimationFrame(updateTableViewportControls)
+}
+
+function syncTableScrollFromFloatingBar() {
+  if (activeTableScroller && floatingTableScrollbar) activeTableScroller.scrollLeft = floatingTableScrollbar.scrollLeft
+}
+
+function onTableViewportScroll(event: Event) {
+  if (event.target === floatingTableScrollbar) syncTableScrollFromFloatingBar()
+  scheduleTableViewportUpdate()
+}
+
+function refreshTableViewportLayout() {
+  activeTableHeader = null
+  scheduleTableViewportUpdate()
+}
+
 // 滚动位置持久化到 localStorage：实时刷新会把 blobUrl 置空、整组件销毁重建，内存变量留不住，
 // 只有 localStorage 跨重建（甚至跨整页刷新）还在。按 fileKey 存，渲染完读回。
 const _posKey = () => (props.fileKey != null ? 'tvpos:' + props.fileKey : null)
@@ -554,9 +666,13 @@ async function renderMarkdown(text: string) {
 
   let renderer = highlightDocument ? _tvMarked : _tvMarkedPlain
   if (!renderer) {
-    const { Marked } = await import('marked')
+    const { Marked, Renderer } = await import('marked')
     renderer = new Marked({
       renderer: {
+        table(token) {
+          const tableHtml = Renderer.prototype.table.call(this, token)
+          return `<div class="md-table-wrap">${tableHtml}</div>`
+        },
         code({ text, lang }) {
           if (String(lang || '').trim().toLowerCase() === 'mermaid') {
             return `<pre class="md-mermaid-source"><code>${escHtml(text)}</code></pre>`
@@ -813,6 +929,32 @@ onMounted(() => {
   renderMermaidBlocks()
   themeObserver = new MutationObserver(() => renderMermaidBlocks())
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-family'] })
+
+  stickyTableHeader = document.createElement('div')
+  stickyTableHeader.className = 'tv-table-sticky-head'
+  stickyTableHeader.setAttribute('aria-hidden', 'true')
+  stickyTableHeader.style.display = 'none'
+  document.body.append(stickyTableHeader)
+
+  floatingTableScrollbar = document.createElement('div')
+  floatingTableScrollbar.className = 'tv-table-floating-scroll'
+  floatingTableScrollbar.setAttribute('role', 'region')
+  floatingTableScrollbar.setAttribute('aria-label', '横向滚动表格')
+  floatingTableScrollbar.tabIndex = 0
+  floatingTableScrollbar.style.display = 'none'
+  const trackContent = document.createElement('div')
+  trackContent.className = 'tv-table-floating-scroll-content'
+  trackContent.setAttribute('aria-hidden', 'true')
+  floatingTableScrollbar.append(trackContent)
+  floatingTableScrollbar.addEventListener('scroll', syncTableScrollFromFloatingBar, { passive: true })
+  document.body.append(floatingTableScrollbar)
+
+  // 捕获阶段同时接收预览纵向滚动和表格自身的横向滚动。
+  document.addEventListener('scroll', onTableViewportScroll, { passive: true, capture: true })
+  window.addEventListener('resize', refreshTableViewportLayout, { passive: true })
+  tableViewportObserver = new MutationObserver(scheduleTableViewportUpdate)
+  tableViewportObserver.observe(document.body, { childList: true, subtree: true })
+  scheduleTableViewportUpdate()
 })
 
 watch(locale, () => renderMermaidBlocks())
@@ -823,6 +965,9 @@ watch([mdHtml, loading], ([html, isLoading]) => {
   if (html && !isLoading) {
     renderMermaidBlocks()
     resolveMdRelativeImages()
+    nextTick(scheduleTableViewportUpdate)
+  } else {
+    scheduleTableViewportUpdate()
   }
 }, { flush: 'post' })
 
@@ -831,6 +976,19 @@ onBeforeUnmount(() => {
   htmlPreviewObserver = null
   themeObserver?.disconnect()
   themeObserver = null
+  tableViewportObserver?.disconnect()
+  tableViewportObserver = null
+  document.removeEventListener('scroll', onTableViewportScroll, true)
+  window.removeEventListener('resize', refreshTableViewportLayout)
+  floatingTableScrollbar?.removeEventListener('scroll', syncTableScrollFromFloatingBar)
+  floatingTableScrollbar?.remove()
+  stickyTableHeader?.remove()
+  floatingTableScrollbar = null
+  stickyTableHeader = null
+  activeTableScroller = null
+  activeTableHeader = null
+  if (tableViewportFrame) cancelAnimationFrame(tableViewportFrame)
+  tableViewportFrame = 0
   cleanupMarkdownMermaid(mdRoot.value)
   releaseMdObjectUrls()
 })
@@ -1244,15 +1402,48 @@ onBeforeUnmount(() => {
 
 .tv-md :deep(table) {
   border-collapse: collapse;
-  table-layout: fixed;
-  width: 100%;
-  max-width: 100%;
-  margin: 1em 0;
+  table-layout: auto;
+  width: max-content;
+  min-width: 100%;
+  margin: 0;
   font-size: 1.077em;
 }
+.tv-md :deep(.md-table-wrap) {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 1em 0;
+  -webkit-overflow-scrolling: touch;
+}
+.tv-md :deep(.md-table-wrap > table > thead > tr > th) { position: static; }
+:global(.tv-table-sticky-head) {
+  position: fixed;
+  z-index: 1200;
+  overflow: hidden;
+  pointer-events: none;
+  background: var(--surface-card-solid, #fff);
+  box-shadow: 0 1px 0 var(--border-document-table);
+}
+:global(.tv-table-sticky-head > table) {
+  border-collapse: collapse;
+  table-layout: fixed;
+  margin: 0;
+}
+:global(.tv-table-floating-scroll) {
+  position: fixed;
+  z-index: 1201;
+  height: calc(var(--scrollbar-size-default) + 2px);
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-card-solid, #fff) 90%, transparent);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--content-primary) 18%, transparent);
+}
+:global(.tv-table-floating-scroll-content) { height: 1px; }
 .tv-md :deep(table.md-frontmatter) { margin: 0 0 1.25em; }
 .tv-md :deep(th),
 .tv-md :deep(td) {
+  min-width: 6em;
+  max-width: 28em;
   overflow-wrap: anywhere;
   padding: 8px 14px;
   border: 1px solid var(--border-document-table);
