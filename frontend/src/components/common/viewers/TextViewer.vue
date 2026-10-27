@@ -849,7 +849,9 @@ onBeforeUnmount(() => {
 
 .tv-scroll {
   flex: 1;
-  overflow: auto;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 0 0 16px;
   will-change: scroll-position;
   user-select: text;            /* 覆盖预览弹窗容器的 user-select:none，让正文可选/复制 */
@@ -1060,6 +1062,7 @@ onBeforeUnmount(() => {
   padding: 32px 48px;
   max-width: 956px;
   margin: 0 auto;
+  overflow-wrap: anywhere;
   color: var(--content-primary, #24292f);
   font-size: var(--tv-font-size, 15px);
   line-height: 1.75;
@@ -1102,17 +1105,15 @@ onBeforeUnmount(() => {
   background: var(--surface-panel, #f0f1f6);
   border-radius: 10px;
   margin: 1em 0;
-  overflow-x: auto;
-  overflow-y: hidden;
+  overflow: hidden;
 }
 .tv-md :deep(.md-pre code) {
   display: block;
   box-sizing: border-box;
-  width: max-content;
-  min-width: 100%;
+  min-width: 0;
   padding: 14px 20px 16px;
-  overflow: visible;
-  white-space: pre;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   background: none;
   color: var(--content-primary, #383a42);
   font-family: var(--font-family-mono);
@@ -1243,13 +1244,16 @@ onBeforeUnmount(() => {
 
 .tv-md :deep(table) {
   border-collapse: collapse;
+  table-layout: fixed;
   width: 100%;
+  max-width: 100%;
   margin: 1em 0;
   font-size: 14px;
 }
 .tv-md :deep(table.md-frontmatter) { margin: 0 0 1.25em; }
 .tv-md :deep(th),
 .tv-md :deep(td) {
+  overflow-wrap: anywhere;
   padding: 8px 14px;
   border: 1px solid var(--border-document-table);
   text-align: left;
