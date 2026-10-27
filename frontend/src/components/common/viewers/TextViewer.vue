@@ -515,32 +515,53 @@ const ICON_CHECK = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" s
 // 谁后调用谁生效，一旦用户此前打开过一次文件预览，这里的渲染器就会全局顶替掉聊天的，之后聊天
 // 消息里的代码块复制按钮就会带着这里的 SVG 图标出现——但聊天的 CSS 没给这几个 class 定过尺寸，
 // 图标就会没有约束地放大。真实症状：GuguChat 里代码块偶尔冒出一个巨大的图标（devlog 2026-07-10）。
-let _tvMarked: any = null   // 独立 marked 实例，动态导入
+let _tvMarked: any = null   // 常规文档的独立 marked 实例，动态导入
+let _tvMarkedPlain: any = null // 大文档使用纯文本代码块实例，避免高亮长内容
 
 async function renderMarkdown(text: string) {
-  // 先确保 hljs core 已加载，然后批量注册所有支持的语言
-  if (!hljs) {
+  // 大文档中的大型代码块直接按纯文本显示，避免 highlight.js 在主线程扫描超长内容。
+  // 普通 Markdown 仍保留语法高亮；全文内容不会被截断。
+  const highlightDocument = text.length <= 512_000
+  if (highlightDocument && !hljs) {
     const mod = await import('highlight.js/lib/core')
     hljs = mod.default
   }
-  await Promise.all(
-    Object.entries(LANG_LOADERS).map(async ([name, loader]) => {
-      if (!hljs.getLanguage(name)) {
-        const mod = await loader()
-        hljs.registerLanguage(name, mod.default)
-      }
-    })
-  )
+  const aliases: Record<string, string> = {
+    js: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript',
+    py: 'python', yml: 'yaml', sh: 'bash', shell: 'bash', zsh: 'bash',
+    html: 'xml', htm: 'xml', svg: 'xml',
+  }
+  const languagesInDocument = highlightDocument
+    ? new Set(
+        [...text.matchAll(/^ {0,3}(?:`{3,}|~{3,})\s*([^\s`~]+)/gm)]
+          .map(match => match[1].toLowerCase())
+          .filter(language => language !== 'mermaid')
+          .map(language => aliases[language] || language),
+      )
+    : new Set<string>()
+  if (highlightDocument) {
+    await Promise.all(
+      [...languagesInDocument].map(async name => {
+        const loader = LANG_LOADERS[name]
+        if (!loader) return
+        if (!hljs.getLanguage(name)) {
+          const mod = await loader()
+          hljs.registerLanguage(name, mod.default)
+        }
+      })
+    )
+  }
 
-  if (!_tvMarked) {
+  let renderer = highlightDocument ? _tvMarked : _tvMarkedPlain
+  if (!renderer) {
     const { Marked } = await import('marked')
-    _tvMarked = new Marked({
+    renderer = new Marked({
       renderer: {
         code({ text, lang }) {
           if (String(lang || '').trim().toLowerCase() === 'mermaid') {
             return `<pre class="md-mermaid-source"><code>${escHtml(text)}</code></pre>`
           }
-          const validLang = lang && hljs.getLanguage(lang) ? lang : null
+          const validLang = highlightDocument && text.length <= 32_000 && lang && hljs?.getLanguage(lang) ? lang : null
           const body = validLang
             ? hljs.highlight(text, { language: validLang, ignoreIllegals: true }).value
             : escHtml(text)
@@ -557,9 +578,11 @@ async function renderMarkdown(text: string) {
       gfm: true,
       breaks: false,
     })
+    if (highlightDocument) _tvMarked = renderer
+    else _tvMarkedPlain = renderer
   }
 
-  return sanitizeHtml(_tvMarked.parse(text) as string)
+  return sanitizeHtml(renderer.parse(text) as string)
 }
 
 function renderMermaidBlocks(): Promise<void> {
@@ -1031,8 +1054,11 @@ onBeforeUnmount(() => {
 
 /* ── Markdown 渲染 ── */
 .tv-md {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
   padding: 32px 48px;
-  max-width: 860px;
+  max-width: 956px;
   margin: 0 auto;
   color: var(--content-primary, #24292f);
   font-size: var(--tv-font-size, 15px);
@@ -1070,15 +1096,23 @@ onBeforeUnmount(() => {
 /* 代码块容器 */
 .tv-md :deep(.md-pre) {
   position: relative;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
   background: var(--surface-panel, #f0f1f6);
   border-radius: 10px;
   margin: 1em 0;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 .tv-md :deep(.md-pre code) {
   display: block;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 100%;
   padding: 14px 20px 16px;
-  overflow-x: auto;
+  overflow: visible;
+  white-space: pre;
   background: none;
   color: var(--content-primary, #383a42);
   font-family: var(--font-family-mono);
