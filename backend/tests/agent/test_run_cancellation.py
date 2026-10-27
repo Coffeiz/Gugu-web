@@ -92,6 +92,31 @@ async def test_model_stream_wait_is_interrupted_without_waiting_for_next_token(m
 
 
 @pytest.mark.asyncio
+async def test_model_stream_reuses_one_cancellation_listener_for_all_events(monkeypatch):
+    listener_started = asyncio.Event()
+    listener_count = 0
+
+    async def wait_until_requested(_self):
+        nonlocal listener_count
+        listener_count += 1
+        listener_started.set()
+        await asyncio.Event().wait()
+
+    async def stream():
+        for event in range(5):
+            await asyncio.sleep(0)
+            yield event
+
+    monkeypatch.setattr(RunCancellation, "_wait_until_requested", wait_until_requested)
+    cancellation = RunCancellation(46)
+    results = [event async for event in cancellation.iterate(stream())]
+
+    assert listener_started.is_set()
+    assert listener_count == 1
+    assert results == list(range(5))
+
+
+@pytest.mark.asyncio
 async def test_parallel_run_registry_tracks_source_session_and_task_until_completion(monkeypatch):
     from agent.runtime import cancellation
     async def run():

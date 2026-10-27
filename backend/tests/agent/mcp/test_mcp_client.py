@@ -14,6 +14,7 @@ import httpx
 import pytest
 
 from agent.mcp.client import McpClient
+from agent.mcp.models import MCP_MODERN_PROTOCOL_VERSION, MCP_TASKS_EXTENSION
 
 
 class FakeMcpServer:
@@ -99,10 +100,13 @@ async def test_tasks_extension_is_polled_and_cancelled_with_task_routing_headers
         payload = json.loads(request.content.decode("utf-8"))
         method = payload.get("method")
         requests.append((payload, dict(request.headers)))
-        if method == "initialize":
-            result = {"protocolVersion": "2025-06-18", "capabilities": {}}
+        if method == "server/discover":
+            result = {"resultType": "complete", "supportedVersions": [MCP_MODERN_PROTOCOL_VERSION],
+                      "capabilities": {"tools": {}, "extensions": {MCP_TASKS_EXTENSION: {}}}}
         elif method == "tools/call":
-            assert payload["params"]["_meta"]["io.modelcontextprotocol/clientCapabilities"]["extensions"]
+            assert payload["params"]["_meta"]["io.modelcontextprotocol/clientCapabilities"]["extensions"] == {
+                MCP_TASKS_EXTENSION: {},
+            }
             result = {"resultType": "task", "taskId": "task-7", "status": "working", "pollIntervalMs": 100}
         elif method == "tasks/get":
             task_poll.set()
@@ -123,7 +127,116 @@ async def test_tasks_extension_is_polled_and_cancelled_with_task_routing_headers
     assert cancel is not None
     assert cancel.get("mcp-name") == "task-7"
     assert cancel.get("mcp-method") == "tasks/cancel"
+    modern_requests = [payload for payload, _ in requests]
+    assert all(
+        payload.get("params", {}).get("_meta", {}).get("io.modelcontextprotocol/protocolVersion")
+        == MCP_MODERN_PROTOCOL_VERSION
+        for payload in modern_requests
+    )
+    call_headers = next(headers for payload, headers in requests if payload.get("method") == "tools/call")
+    assert call_headers.get("mcp-protocol-version") == MCP_MODERN_PROTOCOL_VERSION
+    assert call_headers.get("mcp-method") == "tools/call"
+    assert call_headers.get("mcp-name") == "slow"
     assert not any(payload.get("method") == "notifications/cancelled" for payload, _ in requests)
+
+
+@pytest.mark.asyncio
+async def test_legacy_server_uses_initialize_and_does_not_advertise_new_tasks_extension():
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode("utf-8"))
+        requests.append(payload)
+        if payload.get("method") == "initialize":
+            result = {"protocolVersion": "2025-06-18", "capabilities": {}}
+        elif payload.get("method") == "tools/call":
+            result = {"content": [{"type": "text", "text": "legacy"}], "isError": False}
+        else:
+            response = {"jsonrpc": "2.0", "id": payload.get("id"),
+                        "error": {"code": -32601, "message": "method not found"}}
+            return httpx.Response(200, json=response)
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": payload["id"], "result": result})
+
+    client = McpClient("https://mcp.example.com/rpc", transport=httpx.MockTransport(handler))
+    assert (await client.initialize())["protocolVersion"] == "2025-06-18"
+    assert (await client.call_tool("echo", {}))["content"][0]["text"] == "legacy"
+    call = next(payload for payload in requests if payload.get("method") == "tools/call")
+    assert "_meta" not in call["params"]
+    assert [payload["method"] for payload in requests[:3]] == [
+        "server/discover", "initialize", "notifications/initialized",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_legacy_http_endpoint_with_non_rpc_404_falls_back_to_initialize():
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode("utf-8"))
+        requests.append(payload)
+        if payload.get("method") == "server/discover":
+            return httpx.Response(404, text="legacy endpoint")
+        if payload.get("method") == "initialize":
+            result = {"protocolVersion": "2025-06-18", "capabilities": {}}
+        else:
+            return httpx.Response(202)
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": payload["id"], "result": result})
+
+    client = McpClient("https://mcp.example.com/rpc", transport=httpx.MockTransport(handler))
+    result = await client.initialize()
+
+    assert result["protocolVersion"] == "2025-06-18"
+    assert [payload["method"] for payload in requests] == [
+        "server/discover", "initialize", "notifications/initialized",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_modern_http_protocol_error_is_not_misidentified_as_legacy():
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode("utf-8"))
+        requests.append(payload)
+        return httpx.Response(400, json={
+            "jsonrpc": "2.0", "id": payload["id"],
+            "error": {
+                "code": -32022, "message": "Unsupported protocol version",
+                "data": {"supported": ["2025-11-25"], "requested": MCP_MODERN_PROTOCOL_VERSION},
+            },
+        })
+
+    client = McpClient("https://mcp.example.com/rpc", transport=httpx.MockTransport(handler))
+    result = await client.initialize()
+
+    assert result["error_kind"] == "protocol"
+    assert "Unsupported protocol version" in result["error"]
+    assert [payload["method"] for payload in requests] == ["server/discover"]
+
+
+@pytest.mark.asyncio
+async def test_modern_server_without_tasks_capability_gets_regular_tool_call():
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode("utf-8"))
+        requests.append((payload, dict(request.headers)))
+        if payload.get("method") == "server/discover":
+            result = {"resultType": "complete", "supportedVersions": [MCP_MODERN_PROTOCOL_VERSION],
+                      "capabilities": {"tools": {}}}
+        else:
+            result = {"content": [{"type": "text", "text": "ordinary"}], "isError": False}
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": payload["id"], "result": result})
+
+    client = McpClient("https://mcp.example.com/rpc", transport=httpx.MockTransport(handler))
+    result = await client.call_tool("read", {})
+
+    assert result["content"][0]["text"] == "ordinary"
+    call, headers = next((payload, headers) for payload, headers in requests
+                         if payload.get("method") == "tools/call")
+    capabilities = call["params"]["_meta"]["io.modelcontextprotocol/clientCapabilities"]
+    assert MCP_TASKS_EXTENSION not in capabilities.get("extensions", {})
+    assert headers["mcp-protocol-version"] == MCP_MODERN_PROTOCOL_VERSION
 
 
 def test_sse_response_and_session_header():
@@ -209,8 +322,15 @@ def test_protocol_error_humanized():
             ),
         ]
         for payload, expected in cases:
-            def response(_request: httpx.Request, payload=payload) -> httpx.Response:
-                return httpx.Response(200, json=payload)
+            def response(request: httpx.Request, payload=payload) -> httpx.Response:
+                request_body = json.loads(request.content.decode("utf-8"))
+                if request_body.get("method") == "server/discover" and "error" in payload:
+                    response_payload = {**payload, "id": request_body["id"]}
+                else:
+                    response_payload = {**payload}
+                    if "error" in response_payload:
+                        response_payload["id"] = request_body["id"]
+                return httpx.Response(200, json=response_payload)
 
             client = McpClient(
                 "https://mcp.example.com/rpc",
@@ -227,10 +347,16 @@ def test_numeric_request_id_can_match_string_response_id():
     """兼容少数把 JSON-RPC 数字 id 序列化为字符串的 MCP 服务。"""
     async def run():
         def response(request: httpx.Request) -> httpx.Response:
-            request_id = json.loads(request.content.decode("utf-8")).get("id")
+            request_body = json.loads(request.content.decode("utf-8"))
+            request_id = request_body.get("id")
+            if request_body.get("method") == "server/discover":
+                result = {"resultType": "complete", "supportedVersions": [MCP_MODERN_PROTOCOL_VERSION],
+                          "capabilities": {"tools": {}}}
+            else:
+                result = {"tools": []}
             return httpx.Response(
                 200,
-                json={"jsonrpc": "2.0", "id": str(request_id), "result": {"tools": []}},
+                json={"jsonrpc": "2.0", "id": str(request_id), "result": result},
             )
 
         client = McpClient(
@@ -270,9 +396,15 @@ def test_query_credentials_are_added_only_to_request_url():
         def response(request: httpx.Request) -> httpx.Response:
             seen_urls.append(str(request.url))
             request_id = json.loads(request.content.decode("utf-8")).get("id")
+            method = json.loads(request.content.decode("utf-8")).get("method")
+            result = (
+                {"resultType": "complete", "supportedVersions": [MCP_MODERN_PROTOCOL_VERSION],
+                 "capabilities": {"tools": {}}}
+                if method == "server/discover" else {"tools": []}
+            )
             return httpx.Response(
                 200,
-                json={"jsonrpc": "2.0", "id": request_id, "result": {"tools": []}},
+                json={"jsonrpc": "2.0", "id": request_id, "result": result},
             )
 
         client = McpClient(

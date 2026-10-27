@@ -184,10 +184,11 @@ class RunCancellation:
     async def iterate(self, stream):
         """等待模型流的下一项时同步监听取消，不必等到 token/轮次检查点。"""
         iterator = stream.__aiter__()
-        while True:
-            next_task = asyncio.create_task(iterator.__anext__())
-            cancel_task = asyncio.create_task(self._wait_until_requested())
-            try:
+        cancel_task = asyncio.create_task(self._wait_until_requested())
+        next_task: asyncio.Task | None = None
+        try:
+            while True:
+                next_task = asyncio.create_task(iterator.__anext__())
                 done, _ = await asyncio.wait(
                     (next_task, cancel_task), return_when=asyncio.FIRST_COMPLETED,
                 )
@@ -197,26 +198,30 @@ class RunCancellation:
                         yield next_task.result()
                     except StopAsyncIteration:
                         return
+                    finally:
+                        next_task = None
                 else:
                     # 本地停止流和后续轮次，但 Provider 没有通用的远端撤销确认协议。
                     self.remote_status_unknown = True
                     next_task.cancel()
                     await asyncio.gather(next_task, return_exceptions=True)
+                    next_task = None
                     close = getattr(iterator, "aclose", None)
                     if close:
                         await close()
                     raise RunCancellationRequested
-            except asyncio.CancelledError:
-                self.remote_status_unknown = True
+        except asyncio.CancelledError:
+            self.remote_status_unknown = True
+            if next_task is not None:
                 next_task.cancel()
                 await asyncio.gather(next_task, return_exceptions=True)
-                close = getattr(iterator, "aclose", None)
-                if close:
-                    await asyncio.shield(close())
-                raise
-            finally:
-                cancel_task.cancel()
-                await asyncio.gather(cancel_task, return_exceptions=True)
+            close = getattr(iterator, "aclose", None)
+            if close:
+                await asyncio.shield(close())
+            raise
+        finally:
+            cancel_task.cancel()
+            await asyncio.gather(cancel_task, return_exceptions=True)
 
     async def _wait_until_requested(self) -> None:
         from agent.im import imctx

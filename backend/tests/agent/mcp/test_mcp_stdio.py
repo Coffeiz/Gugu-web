@@ -10,7 +10,12 @@ from uuid import uuid4
 import pytest
 
 from agent.mcp.stdio_client import McpStdioClient
-from agent.mcp.models import McpServerConfig, McpToolMeta
+from agent.mcp.models import (
+    MCP_MODERN_PROTOCOL_VERSION,
+    MCP_TASKS_EXTENSION,
+    McpServerConfig,
+    McpToolMeta,
+)
 from agent.mcp.manager import McpToolManager, _ServerRuntime
 from agent.sandbox.stdio import SandboxdStdioClient, SandboxdStdioUnavailable
 
@@ -42,16 +47,24 @@ async def test_stdio_client_round_trips_through_sandboxd_socket(tmp_path, monkey
             received.append(message)
             if message.get("id") is None:
                 continue
-            if message["method"] == "initialize":
+            if message["method"] == "server/discover":
+                response = {
+                    "jsonrpc": "2.0", "id": message["id"],
+                    "error": {"code": -32601, "message": "method not found"},
+                }
+            elif message["method"] == "initialize":
                 result = {"protocolVersion": "2025-06-18", "capabilities": {}}
+                response = {"jsonrpc": "2.0", "id": message["id"], "result": result}
             elif message["method"] == "tools/list":
                 result = {"tools": [{
                     "name": "echo", "description": "test",
                     "inputSchema": {"type": "object", "properties": {}},
                 }]}
+                response = {"jsonrpc": "2.0", "id": message["id"], "result": result}
             else:
                 result = {"content": [{"type": "text", "text": "pong"}], "isError": False}
-            writer.write(_frame({"jsonrpc": "2.0", "id": message["id"], "result": result}))
+                response = {"jsonrpc": "2.0", "id": message["id"], "result": result}
+            writer.write(_frame(response))
             await writer.drain()
         writer.close()
         await writer.wait_closed()
@@ -76,6 +89,67 @@ async def test_stdio_client_round_trips_through_sandboxd_socket(tmp_path, monkey
         await client.aclose()
         server.close()
         await server.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_stdio_modern_server_negotiates_tasks_per_request(monkeypatch, tmp_path):
+    from agent.mcp.stdio_client import McpStdioClient
+
+    writes: list[dict] = []
+    replies: asyncio.Queue[bytes] = asyncio.Queue()
+
+    class Handle:
+        async def write(self, content: bytes):
+            message = json.loads(content.decode("utf-8"))
+            writes.append(message)
+            if message.get("id") is None:
+                return
+            method = message["method"]
+            if method == "server/discover":
+                result = {
+                    "resultType": "complete",
+                    "supportedVersions": [MCP_MODERN_PROTOCOL_VERSION],
+                    "capabilities": {"tools": {}, "extensions": {MCP_TASKS_EXTENSION: {}}},
+                }
+            elif method == "tools/list":
+                result = {"tools": []}
+            elif method == "tools/call":
+                result = {
+                    "resultType": "task", "taskId": "stdio-task", "status": "completed",
+                    "result": {"content": [{"type": "text", "text": "done"}], "isError": False},
+                }
+            else:
+                result = {}
+            response = {"jsonrpc": "2.0", "id": message["id"], "result": result}
+            await replies.put((json.dumps(response) + "\n").encode("utf-8"))
+
+        async def read(self):
+            return await replies.get()
+
+        async def close(self, *, force: bool = False):
+            return None
+
+    client = McpStdioClient("server", root=str(tmp_path))
+    handle = Handle()
+
+    async def ensure_handle():
+        return handle
+
+    monkeypatch.setattr(client, "_ensure_handle", ensure_handle)
+    try:
+        assert await client.list_tools() == {"tools": []}
+        result = await client.call_tool("slow", {})
+        assert result["content"][0]["text"] == "done"
+        assert writes[0]["method"] == "server/discover"
+        call = next(message for message in writes if message.get("method") == "tools/call")
+        meta = call["params"]["_meta"]
+        assert meta["io.modelcontextprotocol/protocolVersion"] == MCP_MODERN_PROTOCOL_VERSION
+        assert meta["io.modelcontextprotocol/clientCapabilities"]["extensions"] == {
+            MCP_TASKS_EXTENSION: {},
+        }
+        assert all(message["method"] != "initialize" for message in writes)
+    finally:
+        await client.aclose()
 
 
 @pytest.mark.asyncio

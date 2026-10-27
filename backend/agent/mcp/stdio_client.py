@@ -7,7 +7,13 @@ import json
 from typing import Any
 
 from app.core.config import get_settings
-from agent.mcp.models import CLIENT_INFO, MCP_PROTOCOL_VERSION
+from agent.mcp.models import (
+    CLIENT_INFO,
+    MCP_LEGACY_PROTOCOL_VERSION,
+    MCP_MODERN_PROTOCOL_VERSION,
+    MCP_TASKS_EXTENSION,
+)
+from agent.mcp.protocol import advertises_tasks, is_legacy_probe_error, with_protocol_metadata
 from agent.sandbox.stdio import SandboxdStdioClient, SandboxdStdioHandle, SandboxdStdioUnavailable
 
 _LIST_TOOLS_MAX_PAGES = 8
@@ -23,6 +29,9 @@ class McpStdioClient:
         self._ids = itertools.count(1)
         self._initialized = False
         self._request_lock = asyncio.Lock()
+        self._protocol_version: str | None = None
+        self._modern = False
+        self._supports_tasks = False
 
     async def aclose(self) -> None:
         if self._handle is not None:
@@ -32,13 +41,31 @@ class McpStdioClient:
 
     async def initialize(self) -> dict:
         try:
-            result = await self._request("initialize", {
-                "protocolVersion": MCP_PROTOCOL_VERSION,
-                "capabilities": {}, "clientInfo": CLIENT_INFO,
-            })
+            result = await self._request(
+                "server/discover", {}, protocol_version=MCP_MODERN_PROTOCOL_VERSION,
+            )
         except _StdioClientError as exc:
-            return {"error": exc.message, "error_kind": exc.kind}
-        await self._notify("notifications/initialized")
+            if not is_legacy_probe_error(transport="stdio", kind=exc.kind, code=exc.code):
+                return {"error": exc.message, "error_kind": exc.kind}
+            try:
+                result = await self._request("initialize", {
+                    "protocolVersion": MCP_LEGACY_PROTOCOL_VERSION,
+                    "capabilities": {}, "clientInfo": CLIENT_INFO,
+                })
+            except _StdioClientError as legacy_exc:
+                return {"error": legacy_exc.message, "error_kind": legacy_exc.kind}
+            await self._notify("notifications/initialized")
+            self._modern = False
+            self._supports_tasks = False
+            self._initialized = True
+            return result or {}
+
+        supported = result.get("supportedVersions")
+        if not isinstance(supported, list) or MCP_MODERN_PROTOCOL_VERSION not in supported:
+            return {"error": "MCP stdio server 未声明客户端支持的现代协议版本", "error_kind": "protocol"}
+        self._protocol_version = MCP_MODERN_PROTOCOL_VERSION
+        self._modern = True
+        self._supports_tasks = advertises_tasks(result)
         self._initialized = True
         return result or {}
 
@@ -66,14 +93,18 @@ class McpStdioClient:
                 init = await self.initialize()
                 if "error" in init:
                     return init
-            result = await self._request("tools/call", {
+            params = {
                 "name": name,
                 "arguments": dict(arguments or {}),
-                "_meta": {"io.modelcontextprotocol/clientCapabilities": {
-                    "extensions": {"io.modelcontextprotocol/tasks": {}}
-                }},
-            })
+            }
+            if self._supports_tasks:
+                params["_meta"] = {"io.modelcontextprotocol/clientCapabilities": {
+                    "extensions": {MCP_TASKS_EXTENSION: {}}
+                }}
+            result = await self._request("tools/call", params)
             if result.get("resultType") == "task" and result.get("taskId"):
+                if not self._supports_tasks:
+                    return {"error": "MCP stdio server 返回了未协商的 Tasks 结果", "error_kind": "protocol"}
                 from agent.mcp.tasks import wait_for_task
 
                 task_id = str(result["taskId"])
@@ -108,7 +139,13 @@ class McpStdioClient:
         handle = await self._ensure_handle()
         await handle.write((json.dumps(value, ensure_ascii=False) + "\n").encode("utf-8"))
 
-    async def _request(self, method: str, params: dict[str, Any]) -> dict:
+    async def _request(
+        self, method: str, params: dict[str, Any], *, protocol_version: str | None = None,
+    ) -> dict:
+        if protocol_version is None and self._modern:
+            protocol_version = self._protocol_version
+        if protocol_version:
+            params = with_protocol_metadata(params, protocol_version)
         async with self._request_lock:
             request_id = next(self._ids)
             try:
@@ -131,7 +168,10 @@ class McpStdioClient:
                     if "error" in payload:
                         error = payload.get("error") or {}
                         message = error.get("message") if isinstance(error, dict) else str(error)
-                        raise _StdioClientError(f"MCP server 协议错误：{message or '未知错误'}", "protocol")
+                        raise _StdioClientError(
+                            f"MCP server 协议错误：{message or '未知错误'}", "protocol",
+                            rpc_error=error if isinstance(error, dict) else None,
+                        )
                     return payload.get("result") or {}
             except asyncio.CancelledError:
                 # stdio 的请求仍在同一持久连接上；按 MCP 标准通知请求已取消，
@@ -161,6 +201,7 @@ class McpStdioClient:
 
 
 class _StdioClientError(Exception):
-    def __init__(self, message: str, kind: str):
+    def __init__(self, message: str, kind: str, *, rpc_error: dict | None = None):
         self.message, self.kind = message, kind
+        self.code = rpc_error.get("code") if isinstance(rpc_error, dict) else None
         super().__init__(message)

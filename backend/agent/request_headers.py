@@ -8,9 +8,6 @@ from urllib.parse import urlparse
 
 _HEADER_NAME = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
 _HEADER_FIELD = re.compile(r"(?i)(?:\"headers\"|'headers'|headers)\s*:")
-_SENSITIVE_HEADER_NAME = re.compile(
-    r"(?i)(?:cookie|auth|token|secret|password|passwd|api[-_]?key|session|credential|signature)"
-)
 _FORBIDDEN_HEADERS = frozenset({
     "proxy-authorization", "host", "connection",
     "keep-alive", "proxy-authenticate", "te", "trailer",
@@ -73,7 +70,7 @@ def request_header_origin(url: str) -> tuple[str, str, int | None] | None:
 
 
 def redact_tool_request_headers(value):
-    """递归隐藏凭据类请求头值并保留普通头；兼容 provider 保存的 JSON 字符串。"""
+    """递归隐藏所有自定义请求头值并保留名称；兼容 provider 保存的 JSON 字符串。"""
     if isinstance(value, str):
         try:
             parsed = json.loads(value)
@@ -102,11 +99,8 @@ def redact_tool_request_headers(value):
     for key, item in value.items():
         if str(key).lower() == "headers":
             if isinstance(item, dict):
-                hidden = {
-                    name: _REDACTED if _SENSITIVE_HEADER_NAME.search(str(name)) else header_value
-                    for name, header_value in item.items()
-                }
-                changed |= any(item[name] != header_value for name, header_value in hidden.items())
+                hidden = {name: _REDACTED for name in item}
+                changed |= any(header_value != _REDACTED for header_value in item.values())
                 result[key] = hidden
             else:
                 changed |= item != _REDACTED
