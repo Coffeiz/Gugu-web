@@ -12,6 +12,7 @@
 #### New Features
 
 - Allow users to cancel background MCP tool tasks while they are running.
+- Add a custom reply style preference that remains independent of the user's persona, and let group auto-replies skip conversations that do not need a response.
 
 #### Improvements
 
@@ -21,6 +22,9 @@
 - Improve outbound web request header handling and destination validation.
 - Clarify in BYOK and admin settings that MiniMax web search requires an M plan.
 - Give the note-writing tool clearer operating guidance and preserve strategy terminology in normal replies.
+- Batch consecutive private and group IM messages into one run, persist them as they arrive, and apply the least privilege when a batch contains multiple speakers.
+- Improve QQ outbound message delivery reliability.
+- Improve reading large Markdown documents and wide tables, expand the document zoom range, and refine the file library scrollbar layout.
 
 #### Fixes
 
@@ -34,6 +38,9 @@
 - Deliver the final QQ streamed reply reliably when earlier streaming content was only partially delivered, and report missing stream terminal events as errors.
 - Keep tool activity synchronized when switching between chat sessions.
 - Keep localized cancellation status messages consistent across supported languages.
+- Resolve group @mentions to the correct bot name instead of displaying another bot as Gugu.
+- Keep the session title in sync after renaming or switching conversations.
+- Prevent empty group reflection jobs and worker shutdown from repeatedly failing when no event loop is running.
 
 #### Contributors
 
@@ -48,6 +55,7 @@
 #### 新功能
 
 - 支持取消正在运行的 MCP 后台工具任务。
+- 在人格偏好之外增加独立的自定义回复风格，并让群聊自动回复跳过无需回应的对话。
 
 #### 改进
 
@@ -57,6 +65,9 @@
 - 改进联网请求头处理与目标地址校验。
 - 在 BYOK 和管理设置中说明 MiniMax 联网搜索需要 M 计划。
 - 补充笔记工具的操作指引，并在普通回复中保留策略术语。
+- 将连续的 IM 私聊和群聊消息合并为一轮处理，并在消息到达时及时入库；一个批次包含多人发言时按最小权限执行。
+- 提高 QQ 出站消息发送的可靠性。
+- 改进大型 Markdown 文档和宽表格的阅读体验，扩大文档缩放范围并调整文件库滚动布局。
 
 #### 修复
 
@@ -70,6 +81,9 @@
 - 修复 QQ 流式内容部分送达时最终回复可能遗漏的问题；缺少流终态时明确报错。
 - 修复切换会话后工具活动消息未及时同步的问题。
 - 统一各语言中的运行取消状态提示。
+- 修复群聊中 @ 其他机器人时错误显示为咕咕的问题。
+- 修复重命名或切换会话后标题未及时更新的问题。
+- 修复群反思任务遇到空消息范围或 Worker 停止时无事件循环而反复失败的问题。
 
 #### 贡献者
 
