@@ -750,6 +750,7 @@ class OpenAIDriver:
                     # provider 不接受强制 tool_choice（实测思考模式下直接 400）：
                     # 退回普通 tool_choice 重发同一轮，本 run 不再强求。
                     ctx.forced_tool_choice = None
+                    tool_params.pop("tool_choice", None)
                     ctx.think_kwargs = ctx.base_think_kwargs
                     notify = getattr(ctx, "on_forced_tool_choice_rejected", None)
                     if callable(notify):

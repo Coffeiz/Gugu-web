@@ -361,10 +361,21 @@ async def _reuse_early_user_rows(
     from app.core.tz import now_utc
 
     stamp = now_utc()
+    cards_by_id = {
+        str(card.get("attach_id")): card
+        for card in (attach_cards or [])
+        if isinstance(card, dict) and card.get("attach_id")
+    }
     for index, row in enumerate(rows):
-        # 附件归锚点行：这一批的附件由锚点行统一 claim，其他行不再挂同一批卡片，
-        # 否则同一条附件会在多条消息上重复出现。
-        row.files = (attach_cards or None) if row.id == anchor.id else None
+        if batch_messages:
+            # 展示归属按每条原始消息保留；claim 仍由批次锚点统一完成，
+            # 但不能把 A 的附件卡片挪到 B 的气泡上。
+            item = batch_messages[index]
+            if "attachments" in item:
+                row.files = [cards_by_id[str(attach_id)] for attach_id in item.get("attachments") or []
+                             if str(attach_id) in cards_by_id] or None
+        else:
+            row.files = (attach_cards or None) if row.id == anchor.id else None
         row.sent_at = stamp + timedelta(microseconds=index)
         if batch_key:
             from agent.im.inbound_recovery import user_run_key

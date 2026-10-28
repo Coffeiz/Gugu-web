@@ -5,6 +5,9 @@ from typing import Any
 from uuid import UUID
 
 
+_MCP_SECRET_CHECKED_MARKER = object()
+
+
 def _normalize_user_id(value: Any) -> UUID | None:
     """把网关 payload 里的 owner_user_id 归一成 ORM 用的 UUID 主键。
 

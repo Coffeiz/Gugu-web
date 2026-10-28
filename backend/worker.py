@@ -268,6 +268,7 @@ def _merge_payloads(payloads: list) -> dict:
                 "platform_user_id": p.get("platform_user_id"),
                 "platform_user_name": p.get("platform_user_name"),
                 "platform_bot_user_id": p.get("platform_bot_user_id"),
+                "attachments": list(p.get("attachments") or []),
             }
             for p in payloads
         ]
@@ -452,19 +453,42 @@ async def _dispatch(msg_id: str, payload: dict):
             await _ack_inbound(msg_id)
         return
 
+    # 敏感交互必须先于早落库消费；活动交互通常已被上面的快速通道处理，
+    # 这里覆盖过期凭据交互、快速通道查询失败等普通排队路径。消费失败时
+    # 仍允许消息进入队列，但禁止早落库，让 dispatch 再次处理并保持 fail-closed。
+    allow_early_persist = True
+    payload.pop("_mcp_secret_checked", None)
+    if not (payload.get("platform") == "telegram" and payload.get("telegram_command") == "bind"):
+        try:
+            from agent.im.interaction_text import (
+                _MCP_SECRET_CHECKED_MARKER,
+                consume_mcp_secret_payload,
+            )
+
+            if await consume_mcp_secret_payload(payload):
+                await _ack_inbound(msg_id)
+                return
+            payload["_mcp_secret_checked"] = _MCP_SECRET_CHECKED_MARKER
+        except Exception as exc:
+            from app.core.redaction import diag_log
+
+            diag_log("worker.early_sensitive_interaction", exc)
+            allow_early_persist = False
+
     # 要进 run 的 IM 消息先落库：run 期间到达的消息不必等当前 run 跑完才出现在
     # GuguChat。早落库行带临时 run_id 标记，run 起来时复用同一行（不重复写）。
-    try:
-        from agent.im.early_persist import persist_early_im_message
+    if allow_early_persist:
+        try:
+            from agent.im.early_persist import persist_early_im_message
 
-        early_id = await persist_early_im_message(payload, message_id=msg_id)
-        if early_id:
-            payload["_early_message_id"] = early_id
-    except Exception as exc:
-        # 早落库失败不阻断消息：run 路径会照旧写这一行，消息不会丢。
-        from app.core.redaction import diag_log
+            early_id = await persist_early_im_message(payload, message_id=msg_id)
+            if early_id:
+                payload["_early_message_id"] = early_id
+        except Exception as exc:
+            # 早落库失败不阻断消息：run 路径会照旧写这一行，消息不会丢。
+            from app.core.redaction import diag_log
 
-        diag_log("worker.early_persist", exc)
+            diag_log("worker.early_persist", exc)
 
     # 投缓冲 + 把截止时刻推后；**不在这里 ack**，留到 flush（崩了未 ack → claim_stale 60s 重投兜底）。
     # _dispatch 由多个消费 task 并发调用，必须把“注册缓冲 + 创建 flush task”作为

@@ -88,6 +88,28 @@ def test_merge_preserves_an_earlier_direct_mention():
     assert not should_enable_group_reply_gate(merged)
 
 
+def test_merge_keeps_attachment_ids_at_their_original_message_boundary():
+    """多人消息合并时仍携带逐条附件 ID，后续可将卡片归回正确发言人。"""
+    from worker import _merge_payloads
+
+    first = {
+        **_group_msg("A 发图", "speaker-a"),
+        "attachments": ["attachment-a"],
+        "_early_message_id": 101,
+    }
+    second = {
+        **_group_msg("B 提问", "speaker-b"),
+        "attachments": ["attachment-b"],
+        "_early_message_id": 102,
+    }
+
+    merged = _merge_payloads([first, second])
+
+    assert [item["attachments"] for item in merged["_batch_messages"]] == [
+        ["attachment-a"], ["attachment-b"],
+    ]
+
+
 async def test_group_ingress_waits_for_previous_message(monkeypatch):
     """先到消息的早落库尚未结束时，后到消息不能提前进入下一批。"""
     import worker

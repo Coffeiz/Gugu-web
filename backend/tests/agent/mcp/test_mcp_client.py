@@ -447,3 +447,37 @@ def test_http_405_is_reported_as_endpoint_configuration_error():
         assert "Streamable HTTP MCP" in result["error"]
 
     asyncio.run(run())
+
+
+def test_http_404_method_not_found_on_discover_falls_back_to_legacy_initialize():
+    """旧 MCP 服务对 server/discover 返回 404/-32601 时，客户端回退到 legacy 握手。"""
+    async def run():
+        requests = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            payload = json.loads(request.content.decode("utf-8"))
+            requests.append(payload)
+            if payload.get("method") == "server/discover":
+                return httpx.Response(404, json={
+                    "jsonrpc": "2.0", "id": payload["id"],
+                    "error": {"code": -32601, "message": "Method not found"},
+                })
+            if payload.get("method") == "initialize":
+                return httpx.Response(200, json={
+                    "jsonrpc": "2.0", "id": payload["id"],
+                    "result": {
+                        "protocolVersion": "2025-06-18", "capabilities": {},
+                        "serverInfo": {"name": "legacy-synthetic"},
+                    },
+                })
+            return httpx.Response(202)
+
+        client = McpClient("https://mcp.example.com/rpc", transport=httpx.MockTransport(handler))
+        result = await client.initialize()
+
+        assert result.get("protocolVersion") == "2025-06-18"
+        assert [item["method"] for item in requests] == [
+            "server/discover", "initialize", "notifications/initialized",
+        ]
+
+    asyncio.run(run())

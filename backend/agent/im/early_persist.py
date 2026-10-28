@@ -30,6 +30,9 @@ from agent.im.session import resolve_route, session_scope_filters
 def _should_persist_early(payload: dict, platform_message: PlatformMessage) -> bool:
     if platform_message.platform not in IM_SOURCES:
         return False
+    # Telegram owner 绑定码是控制消息：dispatch 会消费，但不能进入历史/SSE。
+    if platform_message.platform == "telegram" and payload.get("telegram_command") == "bind":
+        return False
     if platform_message.chat.type == "c2c":
         return True
     if platform_message.chat.type != "group":

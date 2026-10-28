@@ -26,7 +26,9 @@ def is_legacy_probe_error(
     if code in {-32020, -32021, -32022}:
         return False
     if transport == "http" and code == -32601 and status_code == 404:
-        return False
+        # 旧版 MCP endpoint 通常会把未知 server/discover 方法作为 404/-32601 拒绝；
+        # 这不是协议版本冲突，应视为尚未实现探测方法并尝试 legacy initialize。
+        return True
     if kind in {"network", "timeout", "auth"}:
         return False
     if transport == "http" and status_code is not None:

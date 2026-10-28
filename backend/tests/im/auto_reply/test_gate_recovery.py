@@ -248,3 +248,65 @@ def test_only_tool_choice_rejections_are_treated_as_capability_limits():
     assert _is_forced_tool_choice_rejected(
         _FakeProviderError(500, "tool_choice is temporarily unavailable")
     ) is False
+
+
+@pytest.mark.asyncio
+async def test_openai_retries_without_provider_rejected_forced_tool_choice():
+    """Provider 拒绝强制选择后，重试请求必须移除 tool_choice 并恢复思考参数。"""
+    from agent.context.assembly.area import MessageArea
+    from agent.loop_drivers import OpenAIDriver
+
+    calls = []
+
+    class EmptyStream:
+        def __aiter__(self):
+            async def iterate():
+                if False:
+                    yield None
+            return iterate()
+
+        async def close(self):
+            return None
+
+    class Completions:
+        async def create(self, **kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                raise _FakeProviderError(400, "unsupported tool_choice")
+            return EmptyStream()
+
+    from agent.providers.base import ProviderAdapter
+
+    class Adapter(ProviderAdapter):
+        api_format = "openai"
+
+        def build_tool_params(self, _ai, tools):
+            return {"tools": tools}
+
+        def build_openai_cache_kwargs(self, _ai):
+            return {}
+
+    ctx = SimpleNamespace(
+        supports_explicit_cache=False,
+        adapter=Adapter(),
+        tools=[{"type": "function", "function": {"name": "group_reply_decision"}}],
+        forced_tool_choice={
+            "type": "function", "function": {"name": "group_reply_decision"},
+        },
+        think_kwargs={"thinking": False},
+        base_think_kwargs={"reasoning_effort": "low"},
+        max_tokens=64,
+        model="synthetic-model",
+        ai=SimpleNamespace(provider="synthetic"),
+    )
+    expected_choice = dict(ctx.forced_tool_choice)
+    client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
+    messages = MessageArea.from_canonical_messages([{"role": "user", "content": "合成群消息"}])
+    events = [event async for event in OpenAIDriver().run_round(client, ctx, messages)]
+
+    assert len(calls) == 2
+    assert calls[0]["tool_choice"] == expected_choice
+    assert "tool_choice" not in calls[1]
+    assert calls[1]["reasoning_effort"] == "low"
+    assert ctx.forced_tool_choice is None
+    assert events[-1][0] == "done"

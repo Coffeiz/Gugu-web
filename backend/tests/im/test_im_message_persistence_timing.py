@@ -247,3 +247,54 @@ async def test_private_message_is_persisted_while_session_lock_is_held(db, user_
         worker._buffered_message_ids.discard("msg-private-live")
         worker._pending_message_ids.discard("msg-private-live")
         await redis.aclose()
+
+
+@pytest.mark.asyncio
+async def test_worker_consumes_mcp_secret_before_persistence_or_session_event(db, user_a, monkeypatch):
+    """凭据交互从 Worker 入口短路，秘密正文不得落库或发布到聊天 SSE。"""
+    import worker
+    from app.db import session as db_session
+
+    session = await _make_private_session(db, user_a)
+    session_id = session.id
+    await db.close()
+
+    redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    monkeypatch.setattr(worker.R, "get_redis", lambda: redis)
+    monkeypatch.setattr(worker, "_claim_message", AsyncMock(return_value="claimed"))
+    monkeypatch.setattr(worker, "_ack_inbound", AsyncMock())
+    monkeypatch.setattr("agent.im.interaction_text.has_active_interaction", AsyncMock(return_value=False))
+
+    consumed = []
+
+    async def consume_secret(payload):
+        consumed.append(payload["text"])
+        return True
+
+    monkeypatch.setattr("agent.im.interaction_text.consume_mcp_secret_payload", consume_secret)
+    appended_events = []
+
+    async def publish(_user_id, resource, **kwargs):
+        if resource == "sessions":
+            appended_events.extend(kwargs.get("appended") or [])
+        return True
+
+    monkeypatch.setattr("app.core.events.publish", publish)
+    secret = "synthetic-mcp-secret-value"
+    payload = _private_payload(
+        owner_user_id=str(user_a.id), message_id="secret-event-1", text=secret,
+    )
+
+    await worker._dispatch("secret-event-1", payload)
+
+    async with db_session._SessionLocal() as loaded:
+        rows = (await loaded.scalars(
+            select(ConversationMessage).where(ConversationMessage.session_id == session_id)
+        )).all()
+    assert consumed == [secret]
+    assert all(secret not in row.content for row in rows)
+    assert all(secret not in str(event) for event in appended_events)
+    assert appended_events == []
+    worker._user_buffers.clear()
+    worker._user_deadline.clear()
+    await redis.aclose()

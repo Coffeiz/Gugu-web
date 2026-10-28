@@ -315,6 +315,21 @@ async def test_passive_group_message_is_not_early_persisted(db, user_a):
 
 
 @pytest.mark.asyncio
+async def test_telegram_bind_command_is_not_early_persisted(db, user_a):
+    """Telegram 绑定控制命令不进入会话历史，避免验证码被写入聊天记录。"""
+    from agent.im.early_persist import persist_early_im_message
+
+    await _make_private_session(db, user_a)
+    payload = _private_payload(
+        owner_user_id=str(user_a.id), message_id="telegram-bind-1",
+        text="/bind synthetic-one-time-code", platform="telegram",
+        telegram_command="bind",
+    )
+    assert await persist_early_im_message(payload, message_id="telegram-bind-1") is None
+    assert (await db.scalars(select(ConversationMessage))).all() == []
+
+
+@pytest.mark.asyncio
 async def test_private_messages_are_early_persisted_and_reused_as_one_batch(db, user_a):
     """私聊 B、C 各自保留历史行，并由同一 run 批次消费。"""
     from agent.im.early_persist import persist_early_im_message
@@ -352,6 +367,43 @@ async def test_private_messages_are_early_persisted_and_reused_as_one_batch(db, 
     assert all(row.run_id == user_run_key("private-batch") for row in rows)
     assert [row.id for row in batch_rows] == [first_id, second_id]
     assert anchor.id == second_id
+
+
+@pytest.mark.asyncio
+async def test_batch_attachment_cards_remain_with_their_original_speakers(db, user_a):
+    """多人批次消费附件时，每条消息气泡保留自己发言人的附件卡片。"""
+    from agent.run.preparation import _reuse_early_user_rows
+
+    session = await _make_group_session(db, user_a)
+    first = ConversationMessage(
+        session_id=session.id, role="user", content="A 发图",
+        platform_user_id="speaker-a", chat_type="group",
+    )
+    second = ConversationMessage(
+        session_id=session.id, role="user", content="B 提问",
+        platform_user_id="speaker-b", chat_type="group",
+    )
+    db.add_all([first, second])
+    await db.flush()
+    card_a = {"attach_id": "attachment-a", "name": "a.png", "kind": "image"}
+    card_b = {"attach_id": "attachment-b", "name": "b.png", "kind": "image"}
+
+    anchor, rows = await _reuse_early_user_rows(
+        db,
+        session_id=session.id,
+        early_ids=[first.id, second.id],
+        attach_cards=[card_a, card_b],
+        batch_key="group-attachment-batch",
+        batch_messages=[
+            {"early_id": first.id, "text": "A 发图", "attachments": ["attachment-a"]},
+            {"early_id": second.id, "text": "B 提问", "attachments": ["attachment-b"]},
+        ],
+    )
+    await db.commit()
+
+    assert anchor.id == second.id
+    assert rows[0].files == [card_a]
+    assert rows[1].files == [card_b]
 
 
 async def test_first_private_batch_without_existing_session_is_persisted_by_run(db, user_a):

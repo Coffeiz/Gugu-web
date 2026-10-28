@@ -50,9 +50,15 @@ async def dispatch_im_message(payload: dict):
     from agent.runner import run_collect, run_stream
 
     # 在绑定命令、媒体下载、普通消息持久化、被动群记录和 Agent 前消费凭据输入。
-    from agent.im.interaction_text import consume_mcp_secret_payload
+    from agent.im.interaction_text import (
+        _MCP_SECRET_CHECKED_MARKER,
+        consume_mcp_secret_payload,
+    )
 
-    if await consume_mcp_secret_payload(payload):
+    mcp_secret_checked = (
+        payload.pop("_mcp_secret_checked", None) is _MCP_SECRET_CHECKED_MARKER
+    )
+    if not mcp_secret_checked and await consume_mcp_secret_payload(payload):
         return None
 
     # Telegram owner 只能通过网页签发的一次性绑定码，在 Bot 私聊中显式绑定。
