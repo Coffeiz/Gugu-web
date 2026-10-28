@@ -132,7 +132,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
 
         # 聊天附件：文本读内容注入给模型，图片/二进制给提示；卡片随用户消息持久化
         aug_text, attach_cards, aug_images, aug_media = await resolve_for_message(
-            user_id, req.attachments, req.message, model_cfg=model_cfg)
+            user_id, req.attachments, req.message, model_cfg=model_cfg, db=db)
         from agent.context.references import build_reference_context, reference_context_block
         reference_text = await build_reference_context(db, user_id, req.references)
         req.reference_context = reference_text or None
@@ -146,6 +146,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
         # 省略该字段，走列默认值落成真正的 SQL NULL。
         user_message = ConversationMessage(session_id=session.id, role="user", content=req.message,
                                            files=attach_cards or None,
+                                           client_message_id=req.client_message_id,
                                            references_json=req.references or None)
         if reference_content is not None:
             user_message.content_json = reference_content
@@ -184,11 +185,20 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
 
     await _publish_session_append(req, session_id, [{
         "role": "user",
+        "message_id": user_message.id,
+        "client_message_id": req.client_message_id,
         "text": req.message,
         "files": attach_cards or None,
         "references": req.references or None,
     }])
-    yield f"data: {json.dumps({'type': 'session_id', 'session_id': session_id, 'user_message_id': user_message.id})}\n\n"
+    session_event = {
+        "type": "session_id",
+        "session_id": session_id,
+        "user_message_id": user_message.id,
+    }
+    if req.client_message_id:
+        session_event["client_message_id"] = req.client_message_id
+    yield f"data: {json.dumps(session_event)}\n\n"
 
     # 记忆控制命令（/memory /forget）：确定性短路，零 LLM、不计精力、不反思；先于配额（命令免费）
     from agent import commands as _commands
