@@ -260,7 +260,7 @@ async def test_stream_without_inbound_id_uses_reply_fallback_and_only_skips_afte
 
     assert fallback_send.await_count == (1 if fallback_succeeds else 2)
     assert all(
-        call.args == ({**payload, "message_id": None}, "最终结论")
+        call.args[0].get("message_id") is None and call.args[1] == "最终结论"
         for call in fallback_send.await_args_list
     )
     assert passive_send.await_count == 0
@@ -280,14 +280,14 @@ async def test_c2c_error_notice_uses_active_reply_after_stream(delivery):
 
 
 @pytest.mark.asyncio
-async def test_unstreamed_final_uses_active_reply_and_reports_delivery_failure(delivery):
+async def test_unstreamed_final_uses_passive_reply_and_reports_delivery_failure(delivery):
     passive_send, finish, _streamed = delivery
     passive_send.return_value = False
     payload = {"platform": "qq", "chat_type": "c2c", "platform_user_id": "synthetic-user",
                "channel_id": "synthetic-bot", "message_id": "synthetic-expired"}
     await finalize(payload, AgentResponse(text="最终结论"))
     passive_send.assert_awaited_once()
-    assert passive_send.await_args.args[2] is None
+    assert passive_send.await_args.args[2] == "synthetic-expired"
     assert finish.call_args.args[0] == "error"
 
 
@@ -307,9 +307,9 @@ async def test_group_final_uses_ordinary_reply_without_private_streaming(deliver
                "platform_user_id": "synthetic-user", "channel_id": "synthetic-bot",
                "message_id": "synthetic-inbound"}
     await finalize(payload, AgentResponse(text="最终提示", round_texts=["过程说明"], errored=errored),
-                   stream_sent=True)
+                   stream_sent=False)
     passive_send.assert_awaited_once()
     assert passive_send.await_args.args[0] == "synthetic-group"
     assert passive_send.await_args.args[1] == "最终提示"
-    assert passive_send.await_args.args[2] is None
+    assert passive_send.await_args.args[2] == "synthetic-inbound"
     assert finish.call_args.args[0] == ("error" if errored else "success")

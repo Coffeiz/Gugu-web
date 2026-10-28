@@ -115,13 +115,15 @@ async def finalize_im_dispatch(
 
     if platform == "qq":
         # 流式发送器已经完整交付正文时，只收尾附件，避免再发一份重复最终消息。
-        # 普通 QQ 最终消息统一走主动消息出口，避免依赖入站消息的被动回复窗口。
+        # 未流式发送的最终回复保留入站 msg_id：网关先发被动消息，失败时再主动重试。
         if stream_reply_text is None:
             # 流已确认发送最终正文前缀，但尾部恢复失败；重发全文会重复前缀，
             # 因此将 Run 标记为交付失败，不再盲目重发。
             reply_text = None
         else:
-            final_payload = {**payload, "message_id": None}
+            # 已由 QQ 私聊流式接口交付的正文不能再走被动出口；未流式正文应优先
+            # 关联入站消息发送，send_c2c/send_group 会在被动发送失败时主动回退。
+            final_payload = {**payload, "message_id": None} if stream_sent else payload
             reply_text = await send_agent_response(
                 final_payload, response,
                 already_sent_rounds=(
