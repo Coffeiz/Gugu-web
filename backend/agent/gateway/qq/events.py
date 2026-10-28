@@ -90,50 +90,61 @@ def _quoted_platform_message_id(data: Dict[str, Any]) -> str:
     return str(_scene_ext_value(_message_scene_ext(data), "ref_msg_idx") or "")
 
 def _qq_message_mentions_bot(data: Dict[str, Any], event_type: str) -> bool:
-    """依据消息体判断是否真的 @ 了本实例对应的机器人。
+    """只有 QQ 明确标记属于当前实例的 mention 才算 @ 到本机器人。
 
-    同一群内多个机器人时，QQ 会把 AT 消息推送给所有机器人；mentions 数组里
-    每个 bot 条目带 is_you 字段标明是否指向当前 bot 实例，只接受
-    is_you=True 的条目。旧协议或测试适配器没有 is_you 时，退回到
-    mentions 中存在任意 bot=True 即算命中。
+    同群多个机器人都会收到 AT 事件；事件类型或 ``bot=True`` 只能说明目标
+    是某个机器人，不能证明目标是当前实例。缺少 ``is_you`` 时保守按未命中处理。
     """
-    if "mentions" not in data:
-        # 旧协议/适配器没有 mentions: GROUP_AT_MESSAGE_CREATE 兜底
-        if event_type == "GROUP_AT_MESSAGE_CREATE":
-            return True
+    if event_type not in {"GROUP_AT_MESSAGE_CREATE", "GROUP_MESSAGE_CREATE"}:
         return False
     mentions = data.get("mentions")
     if not isinstance(mentions, list):
         return False
-    if not mentions:
-        # mentions 存在但为空数组：协议未填充 bot 标记，按事件类型兜底
-        return event_type == "GROUP_AT_MESSAGE_CREATE"
     for item in mentions:
-        if not isinstance(item, dict) or item.get("bot") is not True:
-            continue
-        # 新协议: is_you 明确标识是否指向本实例
-        if "is_you" in item:
-            return item["is_you"] is True
-        # 旧协议没有 is_you, 只要 mentions 里有 bot 就算命中
-        return True
+        if (
+            isinstance(item, dict)
+            and item.get("bot") is True
+            and item.get("is_you") is True
+        ):
+            return True
     return False
 
 def _qq_bot_mention_id(data: Dict[str, Any], event_type: str) -> str:
-    """提取被 @ 的机器人平台 ID，不把未知 mention 猜成机器人。"""
+    """只提取 QQ 明确标记为当前实例的 bot ID，供咕咕身份展示使用。"""
+    if event_type not in {"GROUP_AT_MESSAGE_CREATE", "GROUP_MESSAGE_CREATE"}:
+        return ""
     mentions = data.get("mentions")
     if isinstance(mentions, list):
         for item in mentions:
-            if not isinstance(item, dict) or item.get("bot") is not True:
+            if (
+                not isinstance(item, dict)
+                or item.get("bot") is not True
+                or item.get("is_you") is not True
+            ):
                 continue
             for key in ("id", "user_openid", "member_openid", "openid"):
                 value = item.get(key)
                 if value:
                     return str(value)
-    if event_type == "GROUP_AT_MESSAGE_CREATE":
-        match = re.search(r"<@!?([^>]+)>", str(data.get("content") or ""))
-        if match:
-            return match.group(1)
     return ""
+
+
+def _qq_message_mentions_other_bot(data: Dict[str, Any]) -> bool:
+    """判断消息是否 @ 了别的 bot（同一个群里还有别的机器人在）。
+
+    QQ 的 mention 条目带 ``bot`` 标记：``bot=True`` 且 ``is_you`` 不为 True
+    就是 @ 别人家的机器人。这种消息不是喊咕咕的，抢答会替别人作答。
+    """
+    mentions = data.get("mentions")
+    if not isinstance(mentions, list):
+        return False
+    for item in mentions:
+        if not isinstance(item, dict) or item.get("bot") is not True:
+            continue
+        if item.get("is_you") is True:
+            continue
+        return True
+    return False
 
 async def _qq_reply(channel_id: str, chat_type: str, target_id: str, text: str, msg_id: str | None) -> None:
     try:
@@ -206,6 +217,8 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
     if not sender_id:
         return
     bot_platform_user_id = _qq_bot_mention_id(data, event_type)
+    # @ 的是别的 bot 时，咕咕不该抢答：这条消息是喊别人家的机器人的。
+    mentions_other_bot = _qq_message_mentions_other_bot(data)
     # 成员 mention 保留原始 ID；展示层按会话内最新 username 解析，避免改名后被旧昵称冻结。
     raw_text = (data.get("content") or "").strip()
     from agent.security import logsafe
@@ -316,13 +329,13 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         ack_target = chat_id if chat_type == "group" else sender_id
         now = time.monotonic()
         ack_key = f"{chat_type}:{ack_target}"
-        # 附件确认也属于对外回复：只响应 @ 时，非 @ 消息不能发送确认；
-        # 静默记录模式即使被 @ 也不发送确认。
+        # 附件确认也属于对外回复：自动回复模式下的普通群消息必须先经过
+        # Agent 选择门；只有明确 @ 咕咕时才能在模型选择前发送确认。
         should_reply = (
             chat_type != "group"
             or (
                 not read_enabled
-                and (not requires_at or mentioned)
+                and mentioned
             )
         )
         if should_reply and now - last_ack.get(ack_key, 0.0) > _ACK_COOLDOWN:
@@ -357,6 +370,7 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         payload["member_memory_enabled"] = member_memory_enabled
         payload["group_mentioned"] = mentioned
         payload["bot_mentioned"] = mentioned
+        payload["mentions_other_bot"] = mentions_other_bot
     payload["message_format"] = await _message_format(channel_id, chat_type)
     from agent.security import logsafe
     channel_fp = logsafe.fingerprint(channel_id)
