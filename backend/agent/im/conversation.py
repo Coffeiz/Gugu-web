@@ -165,6 +165,7 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
                 session_id=session.id,
                 appended=[{
                     "role": "user",
+                    "message_id": message_row.id,
                     "text": request.message,
                     "platform_user_id": request.platform_user_id,
                     "platform_user_name": request.platform_user_name,

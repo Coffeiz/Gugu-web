@@ -98,14 +98,16 @@ async def _run_slot():
             _run_condition.notify_all()
 
 # ── 输入防抖：QQ 等平台「一张图一条消息」，连发的图 + 后面的指令本是一次表达。
-#    不立即处理，攒进缓冲；同一会话每来一条就把「截止时刻」推后；静默到期才把缓冲里所有消息
-#    合并成「一轮」处理、只回一次。**非对称窗口**：带文字的消息 = 用户说完了 → 短窗口快速回；
+#    不立即处理，攒进缓冲；同一会话每来一条就把「截止时刻」推后；静默到期后切分消息段。
+#    群聊 owner 明确 @ 当前 Bot 的消息独立成段，其余相邻消息合并。**非对称窗口**：
+#    带文字的消息 = 用户说完了 → 短窗口快速回；
 #    纯附件（图/文件没配文字）= 多半还在补图 / 正手打指令 → 给更长窗口等后面的指令（先发图、隔
 #    几秒再打「存一下」也能并进同一轮，否则指令那轮手上没图、咕咕反问「存什么」）。
 DEBOUNCE_SEC = 1.0          # 带文字：用户说完了，快速处理
 DEBOUNCE_ATT_SEC = 1.0     # 纯附件：与文字同 1s（reset 仍能攒连发的图；快，但发完图停顿>1s 再打指令会拆轮）
 _user_buffers: dict[ImConversationKey, list] = {}   # key -> [(msg_id, payload)] 待处理缓冲
 _user_deadline: dict[ImConversationKey, float] = {} # key -> 防抖截止时刻（loop.time()），每条新消息推后
+_user_retry_after: dict[ImConversationKey, float] = {} # 失败段退避时刻，避免后续消息越过
 _user_flush: dict[ImConversationKey, asyncio.Task] = {}  # key -> 正在跑的 flush loop（每会话至多一个）
 _buffer_lock = asyncio.Lock()                  # 保护缓冲注册，避免并发 _dispatch 重复创建 flush loop
 _ingress_locks: dict[ImConversationKey, asyncio.Lock] = {}  # 同一 IM 会话的入站准备按队列顺序完成
@@ -222,8 +224,8 @@ def _merge_payloads(payloads: list) -> dict:
     """把同一批消息合并成一轮：拼接非空文字、合并附件；路由字段（message_id /
     channel_id 等）取**最后一条**——被动回复 / 表情挂在最近那条上。
 
-    一个批次就是一轮、只回一次（咕咕回复期间到达的消息攒到一起处理）。群里可能同时
-    有多位发言人：正文按发言人分段标注（``_attributed_text``），身份解析按「取最弱」
+    一个消息段就是一轮、只回一次（咕咕回复期间到达的相邻普通消息攒到一起处理）。群里可能同时
+    有多位发言人：原始消息逐条保留，身份解析按「取最弱」
     处理（见 ``agent/im/actor.py``），成员消息不会借主人权限执行特权操作。
     """
     base = dict(payloads[-1])
@@ -239,6 +241,8 @@ def _merge_payloads(payloads: list) -> dict:
             "platform_user_id": p.get("platform_user_id") or "",
             "platform_user_name": p.get("platform_user_name") or "",
             "text": t,
+            "bot_mentioned": p.get("bot_mentioned") is True,
+            "mentions_other_bot": p.get("mentions_other_bot") is True,
         })
         atts.extend(p.get("attachments") or [])
         emoji_refs.extend(
@@ -254,10 +258,9 @@ def _merge_payloads(payloads: list) -> dict:
         p.get("_early_message_id") for p in payloads if p.get("_early_message_id")
     ]
     base["_speaker_segments"] = segments
-    base["_attributed_text"] = _attributed_batch_text(segments)
     if base.get("chat_type") == "group":
         base["group_mentioned"] = any(bool(p.get("group_mentioned")) for p in payloads)
-        base["bot_mentioned"] = any(bool(p.get("bot_mentioned") or p.get("group_mentioned")) for p in payloads)
+        base["bot_mentioned"] = any(p.get("bot_mentioned") is True for p in payloads)
     if base.get("chat_type") in {"group", "c2c"}:
         base["_batch_messages"] = [
             {
@@ -268,29 +271,14 @@ def _merge_payloads(payloads: list) -> dict:
                 "platform_user_id": p.get("platform_user_id"),
                 "platform_user_name": p.get("platform_user_name"),
                 "platform_bot_user_id": p.get("platform_bot_user_id"),
+                "bot_mentioned": p.get("bot_mentioned") is True,
+                "group_mentioned": p.get("group_mentioned") is True,
+                "mentions_other_bot": p.get("mentions_other_bot") is True,
                 "attachments": list(p.get("attachments") or []),
             }
             for p in payloads
         ]
     return base
-
-
-def _attributed_batch_text(segments: list[dict]) -> str | None:
-    """多位发言人同批时，给每段正文标上发言人；只有一位发言人时返回 None。
-
-    单发言人不加标注：正文必须与改动前逐字一致，否则同一段话会在缓存前缀里变样。
-    """
-    speakers = {s.get("platform_user_id") or "" for s in segments}
-    if len(speakers) <= 1:
-        return None
-    lines = []
-    for s in segments:
-        text = (s.get("text") or "").strip()
-        if not text:
-            continue
-        name = s.get("platform_user_name") or s.get("platform_user_id") or "未知发言人"
-        lines.append(f"【{name}】{text}")
-    return "\n".join(lines) if lines else None
 
 
 def _is_passive_group_payload(payload: dict) -> bool:
@@ -321,7 +309,7 @@ def _arrival_key(msg_id: str) -> tuple[int, int]:
 
 
 async def _flush_loop(key: ImConversationKey):
-    """等该会话「静默满 DEBOUNCE_SEC」→ 把缓冲里所有消息合并成一轮处理、只回一次。
+    """等该会话防抖到期，按到达顺序切段并逐段串行处理。
     处理期间新到的消息进新缓冲，本 loop 跑完会再攒再处理，直到缓冲空才退出。
     用「截止时刻不断被推后」轮询、不 cancel——cancel 会打断正在跑的 run_collect。"""
     loop = asyncio.get_event_loop()
@@ -339,54 +327,68 @@ async def _flush_loop(key: ImConversationKey):
                 batch = _user_buffers.pop(key, [])
                 if not batch:
                     _user_deadline.pop(key, None)
+                    _user_retry_after.pop(key, None)
                     _user_flush.pop(key, None)
                     return
+                _user_retry_after.pop(key, None)
                 # 按到达序重排：缓冲里的 append 顺序来自并发派发，不等于会话消息顺序。
                 batch.sort(key=lambda item: _arrival_key(item[0]))
-                async with _run_slot():     # 多会话同时活跃时，跑 agent 的全局并发上限
-                    # 整个批次合成一轮：只跑一次 agent、只回一条消息。
-                    merged = _merge_payloads([p for _, p in batch])
-                    rep_msg_id = batch[-1][0]
-                    cancelled = False
-                    try:
-                        from agent.im.inbound_recovery import register_batch
-                        merged["_inbound_batch_key"] = await register_batch(
-                            R.get_redis(), [mid for mid, _ in batch])
-                        await handle(rep_msg_id, merged)
-                    except asyncio.CancelledError:
-                        # 优雅停止也必须留在 PEL；重启后按执行收据收口，不能确认丢弃。
-                        cancelled = True
-                        raise
-                    except Exception as e:
-                        print(f"[worker] flush handle 出错（已 ack 丢弃，避免毒消息循环）: {type(e).__name__}: {e}", flush=True)
-                    finally:
-                        can_ack = bool(merged.get("_inbound_batch_key")) and not cancelled
-                        early_ids = merged.get("_early_message_ids") or []
-                        if can_ack and early_ids:
-                            try:
-                                import app.db.session as db_session
-                                from agent.im.inbound_recovery import release_unconsumed_user_rows
+                from agent.im.inbound_batch import process_inbound_batch
 
-                                db_session.ensure_engine()
-                                await release_unconsumed_user_rows(db_session._SessionLocal, early_ids)
-                            except Exception as exc:
-                                from app.core.redaction import diag_log
-
-                                diag_log("worker.release_early_messages", exc)
-                                can_ack = False
-                        for mid, _ in batch:
-                            if can_ack:
-                                await _ack_inbound(mid)
-                            else:
-                                _stop_message_lease(mid)
-                                _pending_message_ids.discard(mid)
-                                _buffered_message_ids.discard(mid)
+                processed = await process_inbound_batch(
+                    batch,
+                    merge_payloads=_merge_payloads,
+                    handle=handle,
+                    run_slot=_run_slot,
+                    acknowledge=_ack_inbound,
+                    defer=lambda pending, **options: _defer_inbound_items(
+                        key, pending, **options
+                    ),
+                )
+                if processed:
+                    continue
+                return
     finally:
         _user_flush.pop(key, None)
+        if _user_buffers.get(key) and key not in _user_flush and not _stop.is_set():
+            task = asyncio.create_task(_flush_loop(key))
+            _user_flush[key] = task
+            _flush_tasks.add(task)
+            task.add_done_callback(_flush_tasks.discard)
+
+
+async def _defer_inbound_items(
+    key: ImConversationKey,
+    pending: list[tuple[str, dict]],
+    *,
+    release_ids: list[str],
+    retry_delay: int | None,
+) -> None:
+    """失败时保留待处理消息；停机取消时只释放内存租约，留给 Redis 恢复。"""
+    for msg_id in release_ids:
+        _stop_message_lease(msg_id)
+        _pending_message_ids.discard(msg_id)
+        _buffered_message_ids.discard(msg_id)
+    async with _buffer_lock:
+        pending = list(pending) + _user_buffers.pop(key, [])
+        pending.sort(key=lambda item: _arrival_key(item[0]))
+        if retry_delay is None:
+            for msg_id, _ in pending:
+                _stop_message_lease(msg_id)
+                _pending_message_ids.discard(msg_id)
+                _buffered_message_ids.discard(msg_id)
+            return
+        _user_buffers[key] = pending
+        retry_after = asyncio.get_event_loop().time() + retry_delay
+        _user_retry_after[key] = retry_after
+        _user_deadline[key] = retry_after
+        for msg_id, _ in pending:
+            _pending_message_ids.add(msg_id)
+            _buffered_message_ids.add(msg_id)
 
 
 async def _dispatch(msg_id: str, payload: dict):
-    """幂等去重 → 投入「防抖缓冲」（不立即处理）。同一会话 1s 内连发的消息攒成一轮、只回一次。"""
+    """幂等去重 → 投入防抖缓冲；相邻普通消息合并，owner @ 消息后续独立切段。"""
     # processing 租约由心跳维持；worker 崩溃后最多等待租约过期即可重新处理。
     # completed 才能安全 ACK 重复 claim；新状态 key 不受旧版 imseen TTL 阻塞。
     claim = await _claim_message(msg_id)
@@ -395,6 +397,10 @@ async def _dispatch(msg_id: str, payload: dict):
         return
     if claim == "busy":
         # 另一个 worker 仍持有有效租约；不能 ACK 尚未完成的原处理。
+        return
+    if msg_id in _buffered_message_ids:
+        # 退避中的消息仍留在本进程会话缓冲；PEL stale reclaim 不得再追加一份。
+        _stop_message_lease(msg_id)
         return
     from agent.im.inbound_recovery import receipt_key, recover_started, release_unconsumed_user_message
     batch_key = await R.get_redis().get(receipt_key(msg_id))
@@ -498,7 +504,11 @@ async def _dispatch(msg_id: str, payload: dict):
         _buffered_message_ids.add(msg_id)
         has_text = bool((payload.get("text") or "").strip())   # 这条带文字 = 短窗口；纯附件 = 长窗口等指令
         window = DEBOUNCE_SEC if has_text else DEBOUNCE_ATT_SEC
-        _user_deadline[key] = asyncio.get_event_loop().time() + window
+        now = asyncio.get_event_loop().time()
+        _user_deadline[key] = max(
+            now + window,
+            _user_retry_after.get(key, 0),
+        )
         t = _user_flush.get(key)
         if t is None or t.done():
             nt = asyncio.create_task(_flush_loop(key))

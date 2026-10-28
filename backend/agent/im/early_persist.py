@@ -129,6 +129,7 @@ async def persist_early_im_message(payload: dict, *, message_id: str) -> Optiona
             session_id=session_id,
             appended=[{
                 "role": "user",
+                "message_id": row_id,
                 "text": text,
                 "platform_user_id": payload.get("platform_user_id"),
                 "platform_user_name": payload.get("platform_user_name"),

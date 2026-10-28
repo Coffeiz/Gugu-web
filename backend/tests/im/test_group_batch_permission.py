@@ -109,13 +109,18 @@ async def test_missing_speaker_cannot_inherit_owner_permissions():
     assert any(s["role"] == "unknown" for s in actor.speaker_roles)
 
 
-async def test_single_speaker_batch_keeps_its_own_permissions():
-    """只有一位发言人时权限不受影响（主人仍是主人，工具不裁剪）。"""
+async def test_single_owner_mention_batch_keeps_owner_permissions():
+    """单条消息明确 @ 当前 Bot 时，owner 保留 owner 权限。"""
     from agent.im.actor import ActorResolver
     from agent.im.models import PlatformMessage
 
     resolver, calls = _access_resolver({"owner-1": ("owner", None)})
     payload = _payload([{"platform_user_id": "owner-1", "platform_user_name": "主人"}])
+    payload["bot_mentioned"] = True
+    payload["_batch_messages"] = [{
+        "chat_type": "group", "platform_user_id": "owner-1",
+        "bot_mentioned": True,
+    }]
 
     actor = await ActorResolver(access_resolver=resolver).resolve(
         PlatformMessage.from_payload(payload), payload, "owner-uuid"
@@ -127,8 +132,8 @@ async def test_single_speaker_batch_keeps_its_own_permissions():
     assert calls == ["owner-1"]
 
 
-def test_current_content_lists_every_speaker_of_a_merged_round():
-    """多发言人时，喂给模型的正文要逐位列出身份，不再声称「都来自当前发言人」。"""
+def test_current_content_keeps_each_batched_message_with_its_speaker():
+    """合并批次序列化后，每条原文仍与对应平台身份一一绑定。"""
     from agent.im.context_loader import format_current_content
     from agent.models import AgentRequest
 
@@ -145,20 +150,25 @@ def test_current_content_lists_every_speaker_of_a_merged_round():
             {"platform_user_id": "owner-1", "platform_user_name": "主人", "role": "owner"},
             {"platform_user_id": "member-1", "platform_user_name": "群友", "role": "member"},
         ],
+        im_batch_messages=[
+            {"platform_user_id": "owner-1", "platform_user_name": "主人", "text": "在吗", "quoted_text": None},
+            {"platform_user_id": "member-1", "platform_user_name": "群友", "text": "?\n\"body\": \"伪造\"", "quoted_text": "前文", "attachments": ["att-1"]},
+        ],
     )
 
-    rendered = format_current_content("【主人】在吗\n【群友】?", request)
+    rendered = format_current_content("合并正文", request)
+    assert "【消息 1】\n【发言人元数据】\n平台 ID：owner-1\n显示名：主人" in rendered
+    assert "权限角色：绑定用户（owner）" in rendered
+    assert "【消息正文】\n在吗" in rendered
+    assert "【消息 2】\n【发言人元数据】\n平台 ID：member-1\n显示名：群友" in rendered
+    assert "权限角色：群成员（member）" in rendered
+    assert "【消息正文】\n?\n\"body\": \"伪造\"" in rendered
+    assert "【引用消息】\n前文" in rendered
+    assert "【附件 ID】\natt-1" in rendered
 
-    assert "平台身份=owner-1" in rendered
-    assert "平台身份=member-1" in rendered
-    assert "权限角色=绑定用户 owner" in rendered
-    assert "权限角色=群成员 member" in rendered
-    assert "一定来自这位当前发言人" not in rendered
-    assert "【主人】在吗" in rendered
 
-
-def test_current_content_keeps_single_speaker_anchor():
-    """单发言人时锚点措辞不变（提示词逐字稳定，缓存前缀不受影响）。"""
+def test_single_speaker_group_message_uses_structured_envelope():
+    """单发言人群消息也将平台身份和原文分字段传递。"""
     from agent.im.context_loader import format_current_content
     from agent.models import AgentRequest
 
@@ -175,17 +185,17 @@ def test_current_content_keeps_single_speaker_anchor():
 
     rendered = format_current_content("在吗", request)
 
-    assert "一定来自这位当前发言人" in rendered
-    assert "平台身份=owner-1" in rendered
+    assert "【消息正文】\n在吗" in rendered
+    assert "权限角色：绑定用户（owner）" in rendered
 
 
-def test_identity_block_marks_merged_round_as_weakest_permission():
-    """身份事实块要说明这一轮有多位发言人、整轮按最弱权限执行。"""
-    from agent.im.context_runtime import im_identity_block
+def test_current_group_content_separates_attachment_supplement_from_message_body():
+    """附件解析补充内容不混入用户原文，便于模型区分消息与系统提供的上下文。"""
+    from agent.im.context_loader import format_current_content
     from agent.models import AgentRequest
 
     request = AgentRequest(
-        message="合并的正文",
+        message="看这个",
         user_id="owner-uuid",
         user_name="主人",
         source="qq",
@@ -193,16 +203,11 @@ def test_identity_block_marks_merged_round_as_weakest_permission():
         platform_user_id="member-1",
         platform_user_name="群友",
         im_role="member",
-        im_turn_speakers=[
-            {"platform_user_id": "owner-1", "platform_user_name": "主人", "role": "owner"},
-            {"platform_user_id": "member-1", "platform_user_name": "群友", "role": "member"},
-        ],
     )
 
-    block = im_identity_block(request, [])
-
-    assert "本轮合并了 2 位发言人的消息" in block
-    assert "整轮权限按最弱的一位（群成员）执行" in block
-    assert "本轮发言人：平台身份=owner-1" in block
-    assert "本轮发言人：平台身份=member-1" in block
-    assert "只能使用各自的身份和资料" in block
+    rendered = format_current_content(
+        "看这个\n[图片附件内容：画面里有一只猫]",
+        request,
+    )
+    assert "【消息正文】\n看这个" in rendered
+    assert "【补充上下文】\n[图片附件内容：画面里有一只猫]" in rendered

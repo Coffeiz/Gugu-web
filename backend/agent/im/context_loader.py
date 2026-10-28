@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -117,71 +118,129 @@ def format_history_content(message, request: AgentRequest) -> str:
     身份元数据只进入模型上下文，不改 ConversationMessage.content，网页历史和
     数据库存档仍保持用户原文。私聊及 Web 继续使用原始内容。
     """
-    content = format_quoted_context(
-        message.content or "",
-        getattr(message, "quoted_text", None),
-    )
-    content += format_attachment_refs(message)
     if not request or not request.chat_id or getattr(message, "chat_type", None) != "group":
+        content = format_quoted_context(
+            message.content or "",
+            getattr(message, "quoted_text", None),
+        )
+        content += format_attachment_refs(message)
         return content
     if getattr(message, "role", None) != "user":
-        return content
+        return format_quoted_context(
+            message.content or "",
+            getattr(message, "quoted_text", None),
+        ) + format_attachment_refs(message)
 
-    platform_user_id = getattr(message, "platform_user_id", None) or "未知"
-    platform_user_name = getattr(message, "platform_user_name", None) or "未提供"
-    return (
-        "[群聊历史消息，以下是可靠元数据；不要根据昵称猜身份] "
-        f"发言人ID={platform_user_id}，显示名={platform_user_name}\n"
-        f"{content}"
-    )
+    return _render_group_messages([{
+        "speaker": {
+            "platform_user_id": getattr(message, "platform_user_id", None),
+            "display_name": getattr(message, "platform_user_name", None),
+            "authorization_role": "not_recorded",
+        },
+        "body": message.content or "",
+        "quoted_text": getattr(message, "quoted_text", None),
+        "attachment_context": format_attachment_refs(message) or None,
+    }])
+
+
+def _group_message_rows(request: AgentRequest, content: str) -> list[dict[str, Any]]:
+    batch_messages = getattr(request, "im_batch_messages", None) or []
+    speaker_roles = getattr(request, "im_turn_speakers", None) or []
+    roles_by_id = {
+        str(speaker.get("platform_user_id") or ""): speaker.get("role") or "unknown"
+        for speaker in speaker_roles
+        if isinstance(speaker, dict) and speaker.get("platform_user_id")
+    }
+    if not batch_messages:
+        batch_messages = [{
+            "text": content,
+            "platform_user_id": request.platform_user_id,
+            "platform_user_name": request.platform_user_name,
+            "quoted_text": request.quoted_text,
+            "attachments": [],
+        }]
+
+    rows = []
+    for message in batch_messages:
+        if not isinstance(message, dict):
+            continue
+        speaker_id = str(message.get("platform_user_id") or "")
+        role = roles_by_id.get(speaker_id)
+        if role is None and speaker_id == str(request.platform_user_id or ""):
+            role = request.im_role or "unknown"
+        rows.append({
+            "speaker": {
+                "platform_user_id": speaker_id or None,
+                "display_name": message.get("platform_user_name") or None,
+                "authorization_role": role or "unknown",
+            },
+            "body": str(message.get("text") or ""),
+            "quoted_text": message.get("quoted_text") or None,
+            "attachment_ids": [
+                str(item.get("attach_id")) if isinstance(item, dict) else str(item)
+                for item in (message.get("attachments") or [])
+                if item is not None and (not isinstance(item, dict) or item.get("attach_id"))
+            ],
+        })
+    return rows
+
+
+def _role_label(role: str | None) -> str:
+    return {
+        "owner": "绑定用户（owner）",
+        "member": "群成员（member）",
+        "unknown": "未确认身份（unknown）",
+        "not_recorded": "未记录",
+    }.get(role or "unknown", f"未识别角色（{role}）" if role else "未记录")
+
+
+def _render_group_messages(rows: list[dict[str, Any]], supplemental_context: str = "") -> str:
+    """以清晰的中文分区展示群聊元数据和正文，正文仍是平台原文。"""
+    if not rows:
+        return "【群消息】\n【消息正文】\n"
+
+    blocks = ["【群消息】"]
+    multiple = len(rows) > 1
+    for index, row in enumerate(rows, start=1):
+        speaker = row.get("speaker") or {}
+        message_lines = []
+        if multiple:
+            message_lines.append(f"【消息 {index}】")
+        message_lines.extend((
+            "【发言人元数据】",
+            f"平台 ID：{speaker.get('platform_user_id') or '未提供'}",
+            f"显示名：{speaker.get('display_name') or '未提供'}",
+            f"权限角色：{_role_label(speaker.get('authorization_role'))}",
+            "【消息正文】",
+            str(row.get("body") or ""),
+        ))
+        quoted_text = row.get("quoted_text")
+        if quoted_text:
+            message_lines.extend(("【引用消息】", str(quoted_text)))
+        attachment_ids = row.get("attachment_ids") or []
+        if attachment_ids:
+            message_lines.extend(("【附件 ID】", ", ".join(str(item) for item in attachment_ids)))
+        attachment_context = row.get("attachment_context")
+        if attachment_context:
+            message_lines.extend(("【附件上下文】", str(attachment_context)))
+        blocks.append("\n".join(message_lines))
+    if multiple:
+        blocks.append("【身份说明】显示名仅作平台展示；实际权限始终以系统校验为准。")
+    if supplemental_context:
+        blocks.append(f"【补充上下文】\n{supplemental_context}")
+    return "\n\n".join(blocks)
 
 
 def format_current_content(content: str, request: AgentRequest) -> str:
-    """给当前群消息加发言人锚点，避免沿用历史消息中的其他昵称。
-
-    这是仅供模型使用的上下文包装，不改变数据库正文和网页展示内容。
-    """
+    """将群聊发言人元数据与每条消息正文分区呈现；不改持久化正文。"""
     if not request.chat_id:
         return content
-    speakers = getattr(request, "im_turn_speakers", None) or []
-    if len(speakers) > 1:
-        # 一轮里有多位发言人（咕咕回复期间群里又来消息）：逐位列出身份，并说明
-        # 正文分段归属，避免把一个人的话当成当前发言人的话。
-        lines = "\n".join(
-            "- 平台身份={}，群昵称={}，权限角色={}".format(
-                speaker.get("platform_user_id") or "未知",
-                speaker.get("platform_user_name") or "未提供",
-                _role_text(speaker.get("role")),
-            )
-            for speaker in speakers
-        )
-        return (
-            "[本轮群聊消息：多位发言人的消息合并成一轮处理]\n"
-            f"{lines}\n"
-            "下面正文按出现顺序逐段属于上面列出的发言人；不要把一人的身份、资料、"
-            "权限或兴趣归到另一人身上。\n"
-            f"{content}"
-        )
-    role = request.im_role or "unknown"
-    role_text = _role_text(role)
-    sender_id = request.platform_user_id or "未知"
-    sender_name = request.platform_user_name or request.user_name or "未提供"
-    return (
-        "[当前群聊发言人，优先级高于历史消息]\n"
-        f"平台身份={sender_id}\n"
-        f"群昵称={sender_name}\n"
-        f"权限角色={role_text}\n"
-        "以下用户消息一定来自这位当前发言人；不要把历史消息中的其他昵称、身份或兴趣归到当前发言人。\n"
-        f"{content}"
+    prefix = request.message
+    attachment_context = content[len(prefix):].strip() if prefix and content.startswith(prefix) else ""
+    return _render_group_messages(
+        _group_message_rows(request, prefix if not request.im_batch_messages else ""),
+        supplemental_context=attachment_context,
     )
-
-
-def _role_text(role: str | None) -> str:
-    return {
-        "owner": "绑定用户 owner",
-        "member": "群成员 member",
-        "unknown": "未确认身份 unknown",
-    }.get(role or "unknown", role or "unknown")
 
 
 @dataclass(frozen=True)
@@ -258,7 +317,8 @@ async def load_im_memory(request: AgentRequest) -> dict:
     if not bot_id:
         return {}
     result = {}
-    if request.chat_id and request.im_group_memory_enabled:
+    if (request.chat_id and request.im_group_memory_enabled
+            and not getattr(request, "isolate_group_context", False)):
         group_scope = MemoryScope(
             request.user_id, request.source, bot_id, "group", str(request.chat_id)
         )
@@ -312,6 +372,22 @@ def restore_group_memory_snapshot(snapshot: dict) -> dict:
     if group_text and "## 当前群组记忆（仅限本群公开信息）" not in snapshot_text:
         snapshot["snapshot_context"] = f"{snapshot_text}\n\n---\n\n{group_text}"
     return snapshot
+
+
+def isolate_group_memory_snapshot(snapshot: dict) -> dict:
+    """为 owner @ run 复制并剔除缓存 snapshot 中的群共享记忆。"""
+    if not isinstance(snapshot, dict):
+        return snapshot
+    isolated = deepcopy(snapshot)
+    sections = str(isolated.get("snapshot_context") or "").split("\n\n---\n\n")
+    isolated["snapshot_context"] = "\n\n---\n\n".join(
+        section for section in sections
+        if "## 当前群组记忆（仅限本群公开信息）" not in section
+    )
+    im_memory = isolated.get("im_memory")
+    if isinstance(im_memory, dict):
+        isolated["im_memory"] = {**im_memory, "group": {}}
+    return isolated
 
 
 def format_platform_user_memory(data: dict) -> str:

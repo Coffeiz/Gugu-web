@@ -20,6 +20,7 @@ class ImContextPolicy:
     load_owner_context: bool
     allow_continuity_bridge: bool
     allow_memory_reflection: bool
+    isolate_group_context: bool = False
 
 
 def policy_for(request: AgentRequest) -> ImContextPolicy:
@@ -31,10 +32,15 @@ def policy_for(request: AgentRequest) -> ImContextPolicy:
     is_im = request.source in IM_SOURCES
     role = request.actor_context.role if request.actor_context else request.im_role
     restricted = is_im and role in {"member", "unknown"}
+    isolate_group_context = bool(
+        is_im and request.source in IM_SOURCES and request.chat_id
+        and getattr(request, "isolate_group_context", False)
+    )
     return ImContextPolicy(
         is_im=is_im,
         restricted=restricted,
         load_owner_context=not restricted,
-        allow_continuity_bridge=is_im and not restricted,
+        allow_continuity_bridge=is_im and not restricted and not isolate_group_context,
         allow_memory_reflection=not restricted,
+        isolate_group_context=isolate_group_context,
     )

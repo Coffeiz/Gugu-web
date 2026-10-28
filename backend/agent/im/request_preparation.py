@@ -106,11 +106,14 @@ async def prepare_request(
         allowed_tool_names=allowed_tool_names,
         actor_context=actor,
         im_turn_speakers=getattr(actor, "speaker_roles", None),
-        im_attributed_text=payload.get("_attributed_text"),
         im_message_format=payload.get("message_format"),
-        im_group_memory_enabled=bool(payload.get("group_memory_enabled", True)),
+        im_group_memory_enabled=(
+            bool(payload.get("group_memory_enabled", True))
+            and not actor.owner_mention_authorized
+        ),
         im_member_memory_enabled=bool(payload.get("member_memory_enabled", True)),
         im_group_owner_memory_enabled=group_owner_memory,
+        isolate_group_context=actor.owner_mention_authorized,
     )
     return PreparedImRequest(request, actor, role, allowed_tool_names, route, session_id)
 

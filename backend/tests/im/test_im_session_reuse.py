@@ -153,14 +153,18 @@ async def test_trim_session_messages_skips_below_threshold(db, user_a):
 
 
 async def test_trim_session_messages_trims_above_threshold(db, user_a):
-    """消息数超过阈值时裁剪到保留上限。"""
+    """消息数超过阈值时只裁剪摘要已覆盖的旧消息。"""
     session = ConversationSession(user_id=user_a.id, title="私聊", source="qq")
     db.add(session)
     await db.flush()
-    db.add_all([
+    messages = [
         ConversationMessage(session_id=session.id, role="user", content=f"消息 {index}")
         for index in range(2005)
-    ])
+    ]
+    db.add_all(messages)
+    await db.flush()
+    db.add(ConversationMessage(session_id=session.id, role="summary", content="摘要",
+                               covers_until_id=messages[20].id))
     await db.commit()
 
     await trim_session_messages(session.id)
@@ -172,7 +176,7 @@ async def test_trim_session_messages_trims_above_threshold(db, user_a):
     )
     newest = await db.scalar(
         select(ConversationMessage.content)
-        .where(ConversationMessage.session_id == session.id)
+        .where(ConversationMessage.session_id == session.id, ConversationMessage.role != "summary")
         .order_by(ConversationMessage.created_at.desc(), ConversationMessage.id.desc())
         .limit(1)
     )
@@ -181,16 +185,20 @@ async def test_trim_session_messages_trims_above_threshold(db, user_a):
 
 
 async def test_trim_session_messages_removes_excess_in_bounded_batches(db, user_a, monkeypatch):
-    """超限清理每批最多处理 500 条，最后只保留最近 2000 条。"""
+    """已摘要的超限消息分批清理，并保留最近 2000 条。"""
     from app.services import conversation_retention
 
     session = ConversationSession(user_id=user_a.id, title="私聊", source="qq")
     db.add(session)
     await db.flush()
-    db.add_all([
+    messages = [
         ConversationMessage(session_id=session.id, role="user", content=f"消息 {index}")
         for index in range(2601)
-    ])
+    ]
+    db.add_all(messages)
+    await db.flush()
+    db.add(ConversationMessage(session_id=session.id, role="summary", content="摘要",
+                               covers_until_id=messages[1000].id))
     await db.commit()
 
     original_remove = conversation_retention.remove_messages_with_attachments
@@ -208,8 +216,34 @@ async def test_trim_session_messages_removes_excess_in_bounded_batches(db, user_
             ConversationMessage.session_id == session.id,
         )
     )
-    assert batch_sizes == [500, 101]
+    assert batch_sizes == [500, 102]
     assert count == 2000
+
+
+async def test_trim_keeps_pending_and_uncovered_messages(db, user_a):
+    """清理只移除已覆盖的旧消息，待处理和未覆盖消息必须保留。"""
+    from agent.im.inbound_recovery import PENDING_USER_RUN_PREFIX
+
+    session = ConversationSession(user_id=user_a.id, title="保留边界", source="qq")
+    db.add(session)
+    await db.flush()
+    messages = [
+        ConversationMessage(session_id=session.id, role="user", content=f"消息 {index}")
+        for index in range(6)
+    ]
+    messages[1].run_id = PENDING_USER_RUN_PREFIX + "synthetic"
+    db.add_all(messages)
+    await db.flush()
+    db.add(ConversationMessage(session_id=session.id, role="summary", content="摘要",
+                               covers_until_id=messages[3].id))
+    await db.commit()
+
+    await trim_session_messages(session.id, limit=2, threshold=2)
+
+    remaining = (await db.execute(
+        select(ConversationMessage).where(ConversationMessage.session_id == session.id)
+    )).scalars().all()
+    assert {message.content for message in remaining} == {"消息 1", "消息 4", "消息 5", "摘要"}
 
 
 async def test_trim_session_messages_cleans_attachment_storage(db, user_a, monkeypatch, tmp_path):
@@ -228,6 +262,9 @@ async def test_trim_session_messages_cleans_attachment_storage(db, user_a, monke
     messages = [ConversationMessage(session_id=session.id, role="user", content=f"消息 {i}")
                 for i in range(3)]
     db.add_all(messages)
+    await db.flush()
+    db.add(ConversationMessage(session_id=session.id, role="summary", content="摘要",
+                               covers_until_id=messages[1].id))
     await db.commit()   # stage 的独立 session 与单连接内存库共享事务，先落库再 stage
     metas = [await chat_attach.stage(user_a.id, f"a{i}.txt", "txt", "text/plain", b"x")
              for i in range(3)]
@@ -238,10 +275,11 @@ async def test_trim_session_messages_cleans_attachment_storage(db, user_a, monke
     from agent.im import session as session_mod
     monkeypatch.setattr(session_mod, "MESSAGE_TRIM_THRESHOLD", 2)
     monkeypatch.setattr(session_mod, "MESSAGE_RETENTION_LIMIT", 1)
-    await session_mod.trim_session_messages(session.id, limit=1, threshold=2)
+    await session_mod.trim_session_messages(session.id, limit=2, threshold=2)
 
     remaining = (await db.execute(
-        select(ConversationMessage).where(ConversationMessage.session_id == session.id)
+        select(ConversationMessage).where(ConversationMessage.session_id == session.id,
+                                          ConversationMessage.role != "summary")
     )).scalars().all()
     assert len(remaining) == 1
     old_rows = (await db.execute(

@@ -34,6 +34,7 @@ def _parse_bot_db_id(value: Optional[str]) -> Optional[int]:
 class ImAccess:
     role: Optional[str] = None
     allowed_tool_names: Optional[List[str]] = None
+    group_member_tool_names: Optional[List[str]] = None
 
 
 def filter_tool_names(system_tool_names: List[str], allowed_tool_names: Optional[List[str]]) -> List[str]:
@@ -55,7 +56,7 @@ def can_use_tool(
     platform: str | None = None,
 ) -> bool:
     """dispatch 层的第二道权限门；Skill 管理仅网页用户和已认证 owner 可用。"""
-    if name == "group_reply_decision":
+    if name == "decline_group_reply":
         from agent.im import imctx
 
         current_im = imctx.get_im()
@@ -98,7 +99,10 @@ async def _resolve_telegram_access(
     if not bot or bot.platform != "telegram" or bot.user_id != owner_user_id:
         return ImAccess("unknown", list(DEFAULT_GROUP_TOOLS))
     if platform_user_id and bot.owner_platform_user_id == platform_user_id:
-        return ImAccess("owner", None)
+        return ImAccess(
+            "owner", None,
+            normalize_group_allowed_tools(bot.group_allowed_tools),
+        )
     if chat_type == "group" and platform_user_id:
         return ImAccess("member", normalize_group_allowed_tools(bot.group_allowed_tools))
     return ImAccess("unknown", list(DEFAULT_GROUP_TOOLS))
@@ -140,7 +144,10 @@ async def resolve_access(
                 bot = await db.get(UserBot, bot_db_id)
             if bot and bot.platform == platform and bot.user_id == owner_user_id:
                 if bot.owner_platform_user_id and bot.owner_platform_user_id == platform_user_id:
-                    return ImAccess("owner", None)
+                    return ImAccess(
+                        "owner", None,
+                        normalize_group_allowed_tools(bot.group_allowed_tools),
+                    )
                 return ImAccess("member", normalize_group_allowed_tools(bot.group_allowed_tools))
             return ImAccess("unknown", list(DEFAULT_GROUP_TOOLS))
         return ImAccess("unknown", list(DEFAULT_GROUP_TOOLS))
@@ -162,7 +169,11 @@ async def resolve_access(
             owner_user_id,
             platform_user_id,
         )
-    return ImAccess(access.role, access.allowed_tool_names)
+    return ImAccess(
+        access.role,
+        access.allowed_tool_names,
+        getattr(access, "group_member_tool_names", None),
+    )
 
 
 async def resolve_group_owner_memory(actor, bot_id: str) -> bool:

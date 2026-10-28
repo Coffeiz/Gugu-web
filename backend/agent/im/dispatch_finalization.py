@@ -87,10 +87,8 @@ async def finalize_im_dispatch(
         gate = getattr(request, "group_reply_gate", None)
         gate_opened = gate is not None and gate.choice is ReplyChoice.REPLY
         if not gate_opened:
-            # 回复门关闭期间群里不得出现任何可见内容（PRD-IM-16 §6）：
-            # - 未选择 / 选择不回复 → 空正文，普通 IM 收尾会回退成「嗯~在的」，必须彻底静默
-            # - 协议失败 / 模型失败 → 保留 errored 终态与受限诊断（网页流、run outcome、日志），
-            #   但错误文案只是内部诊断，不得当回复发进群；否则群成员会看到本轮不该出现的提示。
+            # 没有正文或显式拒绝都保持群内静默；普通 IM 收尾的空正文兜底
+            # （「嗯~在的」）不能用于自动回复模式。
             trace.finish_run("error" if response.errored else "success")
             await finalize_im_response(platform, puid, False, "")
             return response

@@ -29,6 +29,7 @@ class ActorContext:
     chat_id: Optional[str] = None
     allowed_tool_names: Optional[List[str]] = None
     speaker_roles: Optional[List[dict]] = None
+    owner_mention_authorized: bool = False
 
     @property
     def is_im(self) -> bool:
@@ -102,10 +103,38 @@ async def _resolve_batch_access(resolver, platform, chat_type, channel_id, owner
         else:
             access = ImAccess("unknown", list(DEFAULT_GROUP_TOOLS))
         speaker_role = access.role or "unknown"
+        speaker_tools = access.allowed_tool_names
+        if chat_type == "group" and speaker_role == "owner":
+            # 批次中含多位发言人时，不允许任何人的 owner 权限外溢。
+            speaker_role = "member"
+            speaker_tools = (
+                getattr(access, "group_member_tool_names", None)
+                or list(DEFAULT_GROUP_TOOLS)
+            )
         speaker_roles.append({**speaker, "role": speaker_role})
         role = _weaker_role(role, speaker_role)
-        allowed_tool_names = _intersect_tool_names(allowed_tool_names, access.allowed_tool_names)
+        allowed_tool_names = _intersect_tool_names(allowed_tool_names, speaker_tools)
     return role, allowed_tool_names, speaker_roles
+
+
+def _is_single_owner_bot_mention(payload: dict, platform_user_id: str, chat_type: str) -> bool:
+    """仅接受网关标记的当前 Bot mention，且本 run 只能包含该条消息。"""
+    if (chat_type != "group" or payload.get("bot_mentioned") is not True
+            or payload.get("mentions_other_bot") is True or not platform_user_id):
+        return False
+    messages = payload.get("_batch_messages")
+    if messages is None:
+        return True
+    if not isinstance(messages, list) or len(messages) != 1:
+        return False
+    message = messages[0]
+    return bool(
+        isinstance(message, dict)
+        and str(message.get("platform_user_id") or "") == str(platform_user_id)
+        and message.get("chat_type") == "group"
+        and message.get("bot_mentioned") is True
+        and message.get("mentions_other_bot") is not True
+    )
 
 
 class ActorResolver:
@@ -121,6 +150,7 @@ class ActorResolver:
         role = None
         allowed_tool_names = None
         speaker_roles: Optional[List[dict]] = None
+        owner_mention_authorized = False
         if platform in {"feishu", "qq", "wechat", "telegram"}:
             try:
                 resolver = self._access_resolver
@@ -137,6 +167,18 @@ class ActorResolver:
                 )
                 role = access.role or "unknown"
                 allowed_tool_names = access.allowed_tool_names
+                if chat_type == "group" and role == "owner":
+                    owner_mention_authorized = _is_single_owner_bot_mention(
+                        payload, str(platform_user_id or ""), str(chat_type or "")
+                    )
+                    if not owner_mention_authorized:
+                        from agent.im.permissions import DEFAULT_GROUP_TOOLS
+
+                        role = "member"
+                        allowed_tool_names = (
+                            getattr(access, "group_member_tool_names", None)
+                            or list(DEFAULT_GROUP_TOOLS)
+                        )
                 if role == "unknown" and allowed_tool_names is None:
                     allowed_tool_names = ["xng_search", "http_get", "similar_image_search", "read_file", "send_file"]
 
@@ -167,5 +209,6 @@ class ActorResolver:
             chat_id=platform_message.chat.id if chat_type == "group" else None,
             allowed_tool_names=allowed_tool_names,
             speaker_roles=speaker_roles,
+            owner_mention_authorized=owner_mention_authorized,
         )
         return actor
