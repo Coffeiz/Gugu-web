@@ -16,9 +16,9 @@ from app.core.chat_attach.file_types import (
     model_attachment_name,
 )
 from agent.media import gates, images as image_processing, video
+from agent.media import audio
 from agent.media.constants import IMAGE_READ_MAX, MEDIA_MIME, MEDIA_RAW_MAX
-from agent.providers.mimo.media import AUDIO_NATIVE_EXTS
-from agent.voice_config import voice_recognition_profile
+from agent.voice_config import normalize_voice_recognition_profile, voice_recognition_profile
 
 # 单条消息最多带几张图
 IMAGE_COUNT = 6
@@ -27,7 +27,7 @@ IMAGE_COUNT = 6
 TEXT_READ_MAX = 32 * 1024 * 1024
 
 
-async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, model_cfg=None) -> tuple[str, list, list, list]:
+async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, model_cfg=None, db=None) -> tuple[str, list, list, list]:
     """把附件解析成：① 注入给模型的增广文本（文本读内容、图片/二进制给提示）
     ② 给前端气泡的附件卡片列表 ③ 图片块列表（仅 image 模型能力开启时提供）。
     失效/过期的 attach_id 跳过。
@@ -40,17 +40,17 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
     if model_cfg is not None:
         image = gates.image_enabled(model_cfg)
         video_ok = gates.video_enabled(model_cfg)
-        audio_ok = gates.audio_enabled(model_cfg)
     else:
         image = gates.image_enabled()
         video_ok = gates.video_enabled()
-        audio_ok = gates.audio_enabled()
-    voice_ok, voice_max_bytes = await voice_recognition_profile(user_id)
-    provider_media_limits = gates.media_limits_for(model_cfg)
-    audio_raw_max = (
-        voice_max_bytes if voice_ok and not audio_ok
-        else provider_media_limits.audio_max_bytes
+    profile_value = (
+        await voice_recognition_profile(user_id, db=db) if db is not None
+        else await voice_recognition_profile(user_id)
     )
+    voice_profile = normalize_voice_recognition_profile(profile_value)
+    voice_ok = voice_profile.configured
+    provider_media_limits = gates.media_limits_for(model_cfg)
+    native_audio_exts = audio.native_audio_extensions(model_cfg)
     parts = [base_message] if base_message else []
     cards = []
     images: list = []      # [{media_type, b64}]，仅 image 能力开启时填
@@ -125,16 +125,16 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
             is_video = meta["kind"] == "video"
             noun = "语音" if is_voice else ("视频" if is_video else "音频")
             ext = (meta.get("ext") or "").lower()
-            native = ext in (VIDEO_EXTS if is_video else AUDIO_NATIVE_EXTS)   # 语音转码后是 mp3，按音频判原生
+            native = ext in VIDEO_EXTS if is_video else ext in native_audio_exts
             # 能喂 base64 给模型的条件：① 主模型对应维度开启（视频→video，音频→audio，
             # 走 OpenAI 兼容媒体块 / MiniMax M3 原生块）；② 配了独立语音识别模型（仅音频/语音，
             # 交 transcribe 转文字）。视频仍只走 ①（ASR 听不了画面）。
-            can_feed = (video_ok if is_video else audio_ok) or (voice_ok and not is_video)
+            can_feed = (video_ok if is_video else native) or (voice_ok and not is_video)
             # 格式：配了语音识别模型时音频/语音**不必原生**——voice.transcribe 会用 ffmpeg 把任意格式
             # （webm/amr/mp4…）转 wav 再送。网页 Chrome 录的就是 webm，过去卡在这。视频无转写仍需原生交 mimo。
             # 视频格式是否被当前 Provider 接受由 MediaLimits.video_mimes 统一判断；
             # 不要先按音频原生格式集合过滤视频，否则不支持的视频会落到“转成 mp3”提示。
-            fmt_ok = is_video or native or (voice_ok and not is_video)
+            fmt_ok = is_video or native or voice_ok
             why = None
             if can_feed and fmt_ok:
                 try:
@@ -160,8 +160,20 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
                         video_probe = await video.probe_video_at(meta.get("storage_key"))
                         if video_probe is not None:
                             video.check_video_duration(video_probe.get("duration"), video_cfg)
-                    if not is_video and meta["size"] > audio_raw_max:
-                        raise ValueError("这条音频太大（超过上限），没法直接听")
+                    audio_limit = (
+                        provider_media_limits.audio_max_bytes if native
+                        else voice_profile.max_file_bytes if voice_ok
+                        else provider_media_limits.audio_max_bytes
+                    )
+                    if not is_video and meta["size"] > audio_limit:
+                        provider_name = (
+                            "当前主模型" if native
+                            else voice_profile.provider_label or "语音识别服务"
+                        )
+                        limit_mb = audio_limit / 1_000_000
+                        raise ValueError(
+                            f"音频超过 {provider_name} 的单文件上限（{limit_mb:g} MB），未发送"
+                        )
                     if is_video:
                         # 视频决策（压缩阈值/base64 vs mm_file/大小上限）全部在 prepare_video_media
                         # 里——read_file 读文件库视频（media_reader.py 的 read_video）复用同一份逻辑，
@@ -185,20 +197,9 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
                                     duration=(video_probe or {}).get("duration"), probe=video_probe)
                         media_items.append(item)
                     else:
-                        raw = await chat_attach.read_bytes(meta)
-                        # MiniMax ASR 使用 multipart 原始字节，可走官方 50 MiB 上限；
-                        # 其他路径继续使用原有 base64 字节门槛。
-                        audio_item = {
-                            "type": "audio", "mode": "base64", "mime": mime,
-                            "ext": ext, "attach_id": meta["attach_id"],
-                            "kind": meta["kind"], "voice_recognition_enabled": voice_ok,
-                        }
-                        audio_inline_max = provider_media_limits.audio_max_bytes if audio_ok else MEDIA_RAW_MAX
-                        if len(raw) <= audio_inline_max:
-                            audio_item["b64"] = base64.b64encode(raw).decode()
-                        else:
-                            audio_item["raw"] = raw
-                        media_items.append(audio_item)
+                        media_items.append(await _build_audio_item(
+                            meta, ext, mime, native, voice_profile, provider_media_limits,
+                        ))
                     if is_voice:
                         # 语音是「对话里说的话」，不是要存的文件——明确叫咕咕直接听内容回应，别问存不存。
                         parts.append(f"\n\n🎤 用户给你发来一条语音{tag}（已随附）。请**直接听里面说了什么并自然回应**——"
@@ -224,6 +225,31 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
             parts.append(f"\n\n📎 用户上传了文件{tag}，二进制内容读不了；"
                          f"若用户要保存，调用 save_uploaded_file(attach_id) 存进文件库。")
     return "".join(parts), cards, images, media_items
+
+
+async def _build_audio_item(meta, ext, mime, native, voice_profile, provider_limits):
+    """读取并校验音频附件，保留 Provider 所需的字节或 Base64 形式。"""
+    import base64
+
+    raw = await chat_attach.read_bytes(meta)
+    duration = None
+    if not native and voice_profile.configured:
+        duration = await audio.preflight_duration(
+            raw, ext, voice_profile.max_duration_s,
+            voice_profile.provider_label or "语音识别服务",
+        )
+    item = {
+        "type": "audio", "mode": "base64", "mime": mime,
+        "ext": ext, "attach_id": meta["attach_id"],
+        "kind": meta["kind"], "voice_recognition_enabled": voice_profile.configured,
+        "duration": duration,
+    }
+    # MiniMax ASR 使用 multipart 原始字节，可走官方 50 MiB 上限；其他路径继续用 base64 门槛。
+    inline_limit = provider_limits.audio_max_bytes if native else MEDIA_RAW_MAX
+    item["b64" if len(raw) <= inline_limit else "raw"] = (
+        base64.b64encode(raw).decode() if len(raw) <= inline_limit else raw
+    )
+    return item
 
 
 def build_user_content(text: str, images: list, use_anthropic: bool, media: list | None = None,

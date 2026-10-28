@@ -52,11 +52,14 @@ def test_worker_merges_group_debounce_batch_into_one_round():
     assert [s["platform_user_id"] for s in merged["_speaker_segments"]] == [
         "speaker-a", "speaker-a", "speaker-b",
     ]
-    assert merged["_attributed_text"] == "【甲】A1\n【甲】A2\n【乙】B1"
+    assert [message["text"] for message in merged["_batch_messages"]] == ["A1", "A2", "B1"]
+    assert [message["platform_user_id"] for message in merged["_batch_messages"]] == [
+        "speaker-a", "speaker-a", "speaker-b",
+    ]
 
 
-def test_worker_keeps_single_speaker_text_unchanged():
-    """只有一位发言人时正文逐字不变：加标注会改掉缓存前缀里的内容。"""
+def test_worker_preserves_individual_messages_for_single_speaker_batch():
+    """单人多条消息仍逐条保留，供上下文层无损关联身份与正文。"""
     from worker import _merge_payloads
 
     merged = _merge_payloads([
@@ -67,7 +70,7 @@ def test_worker_keeps_single_speaker_text_unchanged():
     ])
 
     assert merged["text"] == "A1\nA2"
-    assert merged["_attributed_text"] is None
+    assert [message["text"] for message in merged["_batch_messages"]] == ["A1", "A2"]
 
 
 class _FakeResponse:

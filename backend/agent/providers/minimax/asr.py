@@ -1,7 +1,6 @@
 """MiniMax 独立语音识别 API。"""
 from __future__ import annotations
 
-import asyncio
 import base64
 import logging
 import secrets
@@ -9,6 +8,8 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from agent.media.audio import check_audio_duration, probe_audio_duration
+from agent.media.errors import MediaPreflightError
 from agent.providers.minimax import minimax_error_details
 from app.core.credentials import normalize_ascii_api_key
 from app.core.redaction import diag_log, redact
@@ -106,18 +107,16 @@ async def transcribe(media: list, vm, *, to_wav, raise_errors: bool = False) -> 
         mime = str(item.get("mime") or "application/octet-stream").split(";", 1)[0].lower()
         formatted = _audio_format(item, mime)
         if mime in {"audio/pcm", "audio/l16", "audio/x-pcm"}:
-            raise ValueError("MiniMax ASR 不支持无容器的 PCM 音频")
-        from app.core.media_transcode import probe_duration
+            raise MediaPreflightError("MiniMax ASR 不支持无容器的 PCM 音频，未发送到识别服务")
         source_ext = str(item.get("ext") or (formatted[0] if formatted else "")).lower().lstrip(".") or None
-        duration = await asyncio.to_thread(probe_duration, raw, source_ext, precision=3)
-        if duration is None:
-            raise ValueError("无法确认音频时长；请确保 ffprobe 可用后重试")
-        if duration > MAX_DURATION_SECONDS:
-            raise ValueError("MiniMax ASR 音频时长不能超过 500 秒")
+        duration = item.get("duration")
+        if not isinstance(duration, (int, float)):
+            duration = await probe_audio_duration(raw, source_ext)
+        check_audio_duration(duration, MAX_DURATION_SECONDS, "语音识别服务")
         if formatted is None:
             raw = await to_wav(raw)
             if raw is None:
-                continue
+                raise MediaPreflightError("当前语音识别服务不支持该音频格式，且无法转换为受支持格式")
             ext, upload_mime = "wav", "audio/wav"
         else:
             ext, upload_mime = formatted
