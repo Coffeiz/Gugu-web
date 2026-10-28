@@ -8,11 +8,6 @@ from __future__ import annotations
 
 import json
 
-# 无 baseline 时限制首次上下文恢复的数据库读取量；baseline 增量窗口沿用旧上限。
-HISTORY_MAX_MSGS = 100
-BASELINE_HISTORY_MAX_MSGS = 500
-
-
 def estimate_tokens(text: str) -> int:
     """CJK 感知的 token 估算。宁可略高估，避免超窗。"""
     if not text:

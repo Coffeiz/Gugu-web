@@ -180,3 +180,69 @@ async def test_preparation_parity_between_collect_and_stream_modes(db, user_a, u
     assert exec_collect.session_id != exec_stream.session_id
     assert exec_collect.is_new_session is True and exec_stream.is_new_session is True
     assert exec_collect.user_message.content == exec_stream.user_message.content == "同一段输入"
+
+    # 独立模拟实际模型与 ASR 配置，验证音视频能力说明由 shared preparation
+    # 注入最终 extra_reminder，而不是只验证 prompt builder 的返回值。
+    from agent.media import capability_prompt
+    from agent.voice_config import VoiceRecognitionProfile
+    from types import SimpleNamespace
+
+    async def fake_voice_profile(user_id, *, db=None):
+        assert user_id == user_a.id
+        assert db is not None
+        return VoiceRecognitionProfile(
+            configured=True,
+            max_file_bytes=50_000_000,
+            max_duration_s=500,
+            provider_label="模拟 ASR",
+        )
+
+    monkeypatch.setattr(capability_prompt, "voice_recognition_profile", fake_voice_profile)
+    monkeypatch.setattr(capability_prompt.audio, "native_audio_extensions", lambda _cfg: frozenset({"mp3"}))
+    monkeypatch.setattr(capability_prompt.gates, "video_enabled", lambda _cfg: True)
+    monkeypatch.setattr(
+        capability_prompt.gates,
+        "media_limits_for",
+        lambda _cfg: SimpleNamespace(
+            audio_max_bytes=36_000_000,
+            video_mimes=frozenset({"video/mp4"}),
+            video_source_max_bytes=500_000_000,
+            max_duration_s=1500,
+        ),
+    )
+
+    media_exec = await prepare_agent_run(
+        AgentRequest(
+            message="帮我听一下这段音频，再看看视频",
+            user_id=user_a.id,
+            user_name=user_a.username,
+            origin="synthetic-media-context",
+        ),
+        non_streaming=True,
+    )
+    assert isinstance(media_exec, PreparedExecution)
+    reminder = captured_prepare_run_kwargs[2]["extra_reminder"]
+    assert "原生音频输入" in reminder and ".mp3" in reminder
+    assert "模拟 ASR" in reminder and "500 秒" in reminder
+    assert "原生视频输入" in reminder and "1500 秒" in reminder
+
+    async def fake_no_voice_profile(user_id, *, db=None):
+        assert user_id == user_a.id
+        return VoiceRecognitionProfile(configured=False, max_file_bytes=36_000_000)
+
+    monkeypatch.setattr(capability_prompt, "voice_recognition_profile", fake_no_voice_profile)
+    monkeypatch.setattr(capability_prompt.audio, "native_audio_extensions", lambda _cfg: frozenset())
+    monkeypatch.setattr(capability_prompt.gates, "video_enabled", lambda _cfg: False)
+    unavailable_exec = await prepare_agent_run(
+        AgentRequest(
+            message="听一下这个音频",
+            user_id=user_a.id,
+            user_name=user_a.username,
+            origin="synthetic-media-unavailable",
+        ),
+        non_streaming=True,
+    )
+    assert isinstance(unavailable_exec, PreparedExecution)
+    unavailable = captured_prepare_run_kwargs[3]["extra_reminder"]
+    assert "没有可用的原生音频或语音转写路径" in unavailable
+    assert "未启用原生视频输入" in unavailable

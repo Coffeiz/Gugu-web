@@ -1,7 +1,7 @@
 """按 session baseline 读取连续对话历史。
 
-读取阶段只应用 baseline 水位和非 token 的条数安全上限；不做本地 token 估算，
-也不推进 baseline。预算、压缩和重试统一在 provider 请求边界处理。
+读取阶段只应用 baseline 水位，不做本地 token 估算，也不推进 baseline。
+预算、压缩和重试统一在 provider 请求边界处理。
 """
 from __future__ import annotations
 
@@ -10,9 +10,6 @@ from contextvars import ContextVar
 from typing import Any
 
 from sqlalchemy import func, or_, select
-
-from .tokens import BASELINE_HISTORY_MAX_MSGS, HISTORY_MAX_MSGS
-
 
 logger = logging.getLogger(__name__)
 
@@ -48,11 +45,10 @@ async def load_session_history(
     *,
     max_messages: int | None = None,
 ) -> list:
-    """有 baseline 时读取增量窗口；没有时最多恢复 100 条，按消息时间正序返回。
+    """读取 baseline 后的连续历史，按消息时间正序返回。
 
-    条数限制下推到数据库查询。读取窗口只保护当前 run，不推进 baseline；持久化
-    baseline 更新由 ``compress_conv`` 负责。无 baseline 时 summary 计入 100 条，
-    并始终保留在结果第一条，由 history builder 在发送边界规范化为普通 user 历史消息。
+    baseline 为 0 时从会话开头恢复；持久化 baseline 更新由 ``compress_conv``
+    负责。已有 summary 始终放在结果第一条。显式条数上限仅供诊断脚本构造样本。
     """
     from app.models import ConversationMessage
     from agent.im.inbound_recovery import PENDING_USER_RUN_PREFIX
@@ -80,16 +76,6 @@ async def load_session_history(
             "[history-baseline-divergence] session=%s loader_baseline=%s summary_covers=%s",
             session_id, passed_baseline, covers_until,
         )
-
-    # 没有 baseline 的首次恢复必须让数据库查询本身有界，不能全量读取后再切片。
-    # 已有 baseline 时保持原有 500 条增量窗口；显式较小上限仍可收紧窗口。
-    context_limit = (
-        BASELINE_HISTORY_MAX_MSGS if effective_baseline > 0 else HISTORY_MAX_MSGS
-    )
-    if max_messages is not None:
-        context_limit = min(context_limit, max(1, int(max_messages)))
-    # 摘要也是送给模型的一条上下文消息，计入无 baseline 的统一 100 条上限。
-    query_limit = max(0, context_limit - (len(summary) if effective_baseline <= 0 else 0))
 
     query = (
         select(ConversationMessage)
@@ -120,13 +106,13 @@ async def load_session_history(
         query = query.where(
             ConversationMessage.id > effective_baseline
         )
-    if query_limit:
-        query = query.limit(query_limit)
-        newest = list((await db.execute(query)).scalars().all())
-    else:
-        newest = []
-    # 不在数据库读取阶段使用本地 token 估算。历史只受非 token 的条数安全上限
-    # 保护；真正的预算、压缩和重试统一由 provider 边界处理。
+    if max_messages is not None:
+        limit = max(1, int(max_messages))
+        if effective_baseline <= 0:
+            limit = max(0, limit - len(summary))
+        query = query.limit(limit)
+    newest = list((await db.execute(query)).scalars().all())
+    # 真正的预算、压缩和重试统一由 provider 边界处理。
     history = list(reversed(newest))
     await _hydrate_loaded_reference_contexts(db, session_id, history)
     _last_history_stats.set({
