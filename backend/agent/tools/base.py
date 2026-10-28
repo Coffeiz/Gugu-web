@@ -340,11 +340,13 @@ class Tool:
                  strict_array_fields: tuple[str, ...] = (),
                  parallel_safe: bool = False,
                  parallel_safe_for_input: Callable[[dict], bool] | None = None,
-                 input_schema_factory: Callable[[object], dict] | None = None):
+                 input_schema_factory: Callable[[object], dict] | None = None,
+                 proxy_selectable: bool = False):
         self.name = name
         self.description = description
         self.input_schema = input_schema
         self.input_schema_factory = input_schema_factory
+        self.proxy_selectable = proxy_selectable is True
         self.handler = handler          # async (db, user_id, args) -> dict | list
         self.label = label or name
         self.destructive = destructive  # 不可逆操作，handler 内走 confirm.gate
@@ -402,7 +404,19 @@ class Tool:
 
     def input_schema_for(self, model_cfg) -> dict:
         """按本轮模型解析声明，不修改全局工具定义。"""
-        return self.input_schema_factory(model_cfg) if self.input_schema_factory else self.input_schema
+        schema = self.input_schema_factory(model_cfg) if self.input_schema_factory else self.input_schema
+        if not self.proxy_selectable:
+            return schema
+        from app.core.safe_egress import admin_proxy_available
+        if not admin_proxy_available():
+            return schema
+        schema = copy.deepcopy(schema)
+        properties = schema.setdefault("properties", {})
+        properties["use_proxy"] = {
+            "type": "boolean",
+            "description": "是否使用管理员配置的出站代理；省略时沿用 Admin 默认设置。",
+        }
+        return schema
 
     def to_anthropic(self) -> dict:
         return {
@@ -435,10 +449,8 @@ class ToolRegistrySnapshot:
         tools = {}
         for name, tool in source._tools.items():
             frozen = copy.copy(tool)
-            frozen.input_schema = copy.deepcopy(
-                tool.input_schema_for(model_cfg) if model_cfg is not None else tool.input_schema
-            )
-            if model_cfg is not None and tool.input_schema_factory:
+            frozen.input_schema = copy.deepcopy(tool.input_schema_for(model_cfg))
+            if frozen.input_schema != tool.input_schema or (model_cfg is not None and tool.input_schema_factory):
                 frozen._input_validator = build_validator(frozen.input_schema)
             tools[name] = frozen
         # 动态工具只属于当前 run 的派生快照，不能写回 source._tools，也不能改变
@@ -702,13 +714,22 @@ class SkillRegistry:
                     )
                 automatic_mode_token = set_automatic_mode_enabled(automatic_mode)
                 handler_args = args
-                if name == "shell":
+                proxy_override_token = None
+                if tool.proxy_selectable:
+                    from app.core.safe_egress import set_tool_proxy_override
                     handler_args = dict(args)
+                    proxy_override = handler_args.pop("use_proxy", None)
+                    proxy_override_token = set_tool_proxy_override(proxy_override)
+                if name == "shell":
+                    handler_args = dict(handler_args)
                     handler_args["_session_id"] = session_id
                 try:
                     result: Any = await tool.handler(db, user_id, handler_args)
                 finally:
                     reset_automatic_mode_enabled(automatic_mode_token)
+                    if proxy_override_token is not None:
+                        from app.core.safe_egress import reset_tool_proxy_override
+                        reset_tool_proxy_override(proxy_override_token)
                 # 少数由服务端明确授权的执行路径不会携带
                 # confirm 参数。授权事实只允许通过内部标记传到 dispatch，随后立即移除，
                 # 不能进入模型结果或轨迹；普通 destructive handler 不能借此跳过绊线。

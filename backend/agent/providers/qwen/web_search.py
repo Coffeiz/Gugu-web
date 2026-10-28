@@ -1,13 +1,11 @@
 """阿里云百炼 Qwen 原生联网搜索适配器。"""
 from __future__ import annotations
 
-import asyncio
 from urllib.parse import urlsplit
 
 import httpx
 
-from app.core.pinned_http import PinnedHTTPTransport
-from app.core.url_security import resolve_pinned_ip
+from app.core.safe_egress import SafeEgressClient, SafeEgressError
 from ..search_http import read_search_response
 
 _DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -98,9 +96,6 @@ async def search(model_cfg, args: dict) -> dict:
     if not api_key or not model:
         return {"error": "当前 Qwen 配置缺少 API Key 或模型名称"}
 
-    ip, error = await asyncio.to_thread(resolve_pinned_ip, endpoint)
-    if error or not ip:
-        return {"error": "百炼搜索服务地址校验失败"}
     if api_format == "responses":
         payload = {
             **args, "max_output_tokens": min(args.get("max_output_tokens", 1200), 2048), "model": model, "tools": [{"type": "web_search"}], "store": False,
@@ -111,18 +106,14 @@ async def search(model_cfg, args: dict) -> dict:
             "search_options": {"forced_search": True, **args.get("search_options", {})},
         }
 
-    transport = PinnedHTTPTransport(ip)
-    async with httpx.AsyncClient(
-        transport=transport,
-        timeout=httpx.Timeout(connect=10, read=60, write=10, pool=5),
-        follow_redirects=False,
-        trust_env=False,
-    ) as client:
-        async with client.stream(
-            "POST",
+    try:
+        async with SafeEgressClient().stream(
             endpoint,
+            timeout=httpx.Timeout(connect=10, read=60, write=10, pool=5),
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json=payload,
+            post_json=payload,
         ) as response:
             data = await read_search_response(response, label="百炼联网搜索")
+    except SafeEgressError:
+        return {"error": "百炼搜索服务地址校验或连接失败"}
     return data

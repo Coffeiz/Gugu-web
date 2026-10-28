@@ -397,6 +397,7 @@ class WebSkill(BaseSkill):
                 ],
             },
             handler=_http_get,
+            proxy_selectable=True,
             parallel_safe=True,
         ),
         Tool(
@@ -417,6 +418,7 @@ class WebSkill(BaseSkill):
                 "additionalProperties": False,
             },
             handler=_web_download,
+            proxy_selectable=True,
             mutates=True,
         ),
     ]

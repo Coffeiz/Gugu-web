@@ -17,7 +17,7 @@ from collections.abc import Awaitable, Callable
 
 
 _SHELL_META = set(";&|<>$`()\n\r")
-_MAX_TIMEOUT = 300
+_MAX_TIMEOUT = 3600
 _MAX_OUTPUT = 120_000
 _PATH_SEPARATOR_RE = re.compile(r"[\\/]+")
 @dataclass(frozen=True)

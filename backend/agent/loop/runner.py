@@ -27,31 +27,16 @@ from agent.loop import watchdog as _watchdog
 
 _parallel_traj_log = logging.getLogger("agent.traj")
 
-# 群聊选择门协议失败的可见错误载荷。
-#
-# 这类错误只在群聊自动回复 run 里产生：群里不显示（回复门没开时整轮静默），
-# 只在网页流里作为「这轮没处理成」的提示出现。措辞不引导用户「再说一遍」——
-# 群聊自动回复是群消息触发的，用户并没有对咕咕说过话，让他「再说一遍」是误导。
-# message_key 让界面按当前语言取文案；message 只是给不读 key 的消费方兜底。
-_GROUP_REPLY_PROTOCOL_ERROR = {
-    "type": "error",
-    "error_code": "group_reply_protocol",
-    "message_key": "chatUi.groupReplyFailed",
-    "message": "这条咕咕没接上 😅 稍后再看看。",
-}
-
-
 def _gate_violation_payload(reason: str) -> dict[str, Any]:
-    """门协议违规的工具级错误载荷。
+    """被拒绝的工具调用错误；回灌内容说明本轮回复状态及后续动作。"""
+    from agent.im.auto_reply import GATE_SILENT_REASON
 
-    这段文案会作为工具结果回灌给模型，所以必须写清下一步该做什么——
-    只说「不允许」模型会换个花样再绕一次。
-    """
     return {
         "error": reason,
         "next_action": (
-            "先调用 group_reply_decision 做出本轮回复选择（should_reply=true/false），"
-            "再按需要调用其它工具；不要重复提交同一个越权调用。"
+            "本轮已选择静默，停止工具调用。"
+            if reason == GATE_SILENT_REASON
+            else "本轮已经进入正常回复，继续完成回复，不要重试拒绝工具。"
         ),
     }
 
@@ -210,9 +195,11 @@ async def run_loop(
             initial_tool_names = list(runner.capability_context.select_for_messages(messages).tool_names)
         initial_tool_names = runner._provider_tool_names(initial_tool_names)
         reply_gate = getattr(runner, "group_reply_gate", None)
-        reply_tool_name = "group_reply_decision"
+        from agent.im.auto_reply import GROUP_REPLY_DECISION_TOOL
+        reply_tool_name = GROUP_REPLY_DECISION_TOOL
         if reply_gate is not None:
-            initial_tool_names = [reply_tool_name]
+            if reply_tool_name not in initial_tool_names:
+                initial_tool_names = [*initial_tool_names, reply_tool_name]
         current_tool_names = list(initial_tool_names)
         client, ctx = driver.prepare(
             initial_tool_names, ai, messages, system_text, tool_snapshot=tool_snapshot,
@@ -308,19 +295,20 @@ async def run_loop(
             if reply_gate is not None:
                 from agent.im.auto_reply import ReplyChoice
 
+                if (
+                    runner.capability_context is not None
+                    and not getattr(runner.capability_context, "metadata_only", False)
+                ):
+                    selected = runner.capability_context.select_for_messages(messages).tool_names
+                else:
+                    selected = tuple(runner.tool_names)
+                current_tool_names = list(runner._provider_tool_names(list(selected)))
                 if reply_gate.choice is ReplyChoice.PENDING:
-                    current_tool_names = [reply_tool_name]
-                elif reply_gate.choice is ReplyChoice.REPLY:
-                    if (
-                        runner.capability_context is not None
-                        and not getattr(runner.capability_context, "metadata_only", False)
-                    ):
-                        selected = runner.capability_context.select_for_messages(messages).tool_names
-                    else:
-                        selected = tuple(runner.tool_names)
+                    if reply_tool_name not in current_tool_names:
+                        current_tool_names.append(reply_tool_name)
+                else:
                     current_tool_names = [
-                        name for name in runner._provider_tool_names(list(selected))
-                        if name != reply_tool_name
+                        name for name in current_tool_names if name != reply_tool_name
                     ]
             scheduled_round_limit = getattr(runner, "round_limit_per_run", None)
             if scheduled_round_limit is not None and run_state.round_number >= scheduled_round_limit:
@@ -349,6 +337,7 @@ async def run_loop(
             ))
             yield stream_event("round_start", round_id=round_id)
             _verify_buf = []   # 核实轮缓冲区：先攒着，回合结束按"有没有补做"决定 flush 还是丢弃
+            _reply_gate_buf = []
             try:
                 round_runtime = ProviderRoundRuntime(
                     runner=runner,
@@ -393,8 +382,8 @@ async def run_loop(
                             # 等待完成标记判定，避免把内部标记流给用户。
                             pass
                         elif reply_gate is not None and reply_gate.choice is ReplyChoice.PENDING:
-                            # 选择前即使模型先生成正文，也不能交给 collect/Web/IM Sink。
-                            pass
+                            # 暂存到完整 provider 结果，确认没有拒绝工具后再决定是否展示。
+                            _reply_gate_buf.append(token)
                         elif reply_state.guard_retry_pending:
                             reply_state.guard_retry_buf.append(token)
                         else:
@@ -584,84 +573,56 @@ async def run_loop(
                     yield stream_event("_context_compaction", phase="completed", applied=False,
                                        reason="not_applied")
 
-            # 群聊自动回复：模型必须先调用 group_reply_decision 决定静默还是发言。
-            # 直接输出正文属于协议违反——该轮正文已在 token 层丢弃、不会发进群，
-            # 这里把协议错误回给模型，让它在同一 run 内重新做出选择（PRD-IM-16 §4）。
-            # 纠错轮里工具集仍然是 [group_reply_decision]，模型除了选没有别的路。
-            if reply_gate is not None and not result.tool_calls:
-                from agent.im.auto_reply import (
-                    GROUP_REPLY_PROTOCOL_PROMPT,
-                    check_protocol_violation,
-                )
-
-                violation = check_protocol_violation(
-                    reply_gate, has_text=bool((result.text or "").strip()),
-                )
-                if violation == "retry":
-                    from app.core.redaction import diag_log_raw
-
-                    diag_log_raw(
-                        "agent.loop.group_reply_protocol_retry",
-                        f"run_id={run_id} round_id={round_id}",
+            if reply_gate is not None and reply_gate.choice is ReplyChoice.PENDING:
+                # 默认是允许回答。流式阶段为了给拒绝工具留机会先隐藏正文；拿到
+                # 完整 provider 结果后，如果本轮没有拒绝调用，就把已完成的正文放行。
+                resolved_targets = []
+                for call in result.tool_calls:
+                    target, _arguments, resolve_error = _core._resolve_tool_call(
+                        getattr(call, "name", None), getattr(call, "input", None),
                     )
-                    messages.append_batch(
-                        driver.build_guard_followup(result, GROUP_REPLY_PROTOCOL_PROMPT)
-                    )
-                    yield stream_event(
-                        "_new_round",
-                        round_id=round_id,
-                        next_round=run_state.round_number + 1,
-                    )
-                    continue
-                if violation == "exhausted":
-                    # 纠错后仍不做选择：落静默并保留 error 终态，群里依旧零输出。
-                    from app.core.redaction import diag_log_raw
-
-                    diag_log_raw(
-                        "agent.loop.group_reply_protocol_exhausted",
-                        f"run_id={run_id} round_id={round_id}",
-                    )
-                    if reasoning_state is not None:
-                        await reasoning_state.failed("group_reply_protocol")
-                    yield f"data: {_core.json.dumps(_GROUP_REPLY_PROTOCOL_ERROR, ensure_ascii=False)}\n\n"
-                    return
+                    if resolve_error is None:
+                        resolved_targets.append(target)
+                declined_in_round = reply_tool_name in resolved_targets
+                buffered_reply = result.text or "".join(_reply_gate_buf)
+                if not declined_in_round and (buffered_reply.strip() or result.tool_calls):
+                    reply_gate.choice = ReplyChoice.REPLY
+                    if not result.text:
+                        result.text = buffered_reply
+                    if buffered_reply.strip() and not verify_mode and not goal_mode:
+                        yield stream_event("token", content=buffered_reply, round_id=round_id)
 
             if result.tool_calls:
-                # 门协议违规（没调门就调别的工具、选了静默还调工具）不再整轮判死：
-                # 越权调用逐个隔离成工具级错误回灌给模型，让它在同一 run 内补调门
-                # 后继续（PRD-IM-16 §4）。整轮判死会让已经写好的正文连同算好的
-                # token 一起报废——实测线上就是这么丢掉群回复的。
                 gate_violations: list[tuple[int, Any, str, str]] = []
+                declined_in_batch = False
                 if reply_gate is not None:
-                    from agent.im.auto_reply import gate_call_violation_reason
+                    from agent.im.auto_reply import GATE_SILENT_REASON, gate_call_violation_reason
 
-                    for index, call in enumerate(result.tool_calls):
+                    resolved_calls = []
+                    for call in result.tool_calls:
                         resolved, _arguments, resolve_error = _core._resolve_tool_call(
                             getattr(call, "name", None), getattr(call, "input", None),
                         )
+                        resolved_calls.append((resolved, resolve_error))
+                    declined_in_batch = (
+                        reply_gate.choice is ReplyChoice.PENDING
+                        and any(error is None and name == reply_tool_name for name, error in resolved_calls)
+                    )
+
+                    for index, call in enumerate(result.tool_calls):
+                        resolved, resolve_error = resolved_calls[index]
                         if resolve_error is not None:
                             continue
                         reason = gate_call_violation_reason(reply_gate, resolved)
+                        if declined_in_batch and resolved != reply_tool_name:
+                            reason = GATE_SILENT_REASON
                         if reason is not None:
                             gate_violations.append((index, call, resolved, reason))
 
                 if gate_violations:
                     from app.core.redaction import diag_log_raw
-
-                    if reply_gate.note_tool_violation():
-                        # 连续违规超上限：模型在复读里，再纠错只会白烧 token。
-                        if reasoning_state is not None:
-                            await reasoning_state.failed("group_reply_protocol")
-                        # 协议失败是内部诊断，不是用户文案：越权原因只进受限日志，对外只给
-                        # 通用失败提示，避免把实现术语暴露给群成员（PRD-IM-16 §6）。
-                        diag_log_raw(
-                            "agent.loop.group_reply_protocol",
-                            f"run_id={run_id} round_id={round_id} calls={len(gate_violations)}",
-                        )
-                        yield f"data: {_core.json.dumps(_GROUP_REPLY_PROTOCOL_ERROR, ensure_ascii=False)}\n\n"
-                        return
                     diag_log_raw(
-                        "agent.loop.group_reply_protocol_isolated",
+                        "agent.loop.group_reply_tool_call_blocked",
                         f"run_id={run_id} round_id={round_id} calls={len(gate_violations)}",
                     )
                 reply_state.tool_round_started()  # 本轮真调了工具 → narration 兜底不触发
@@ -683,12 +644,8 @@ async def run_loop(
                 else:
                     parallel_plan, serial_plan = [], list(enumerate(result.tool_calls))
 
-                # 门协议违规的调用不执行：并行批次走 protocol_errors 隔离，串行批次
-                # 走 resolve_tool_call 的协议错误分支——两条路径都会把错误当成工具
-                # 结果回灌给模型，模型下一轮补调门后能继续跑完。
-                # 判定必须基于**本轮开始时**的门状态：选择工具一旦被执行，门就开了，
-                # 同一批里后面的业务调用会看起来"合法"（线上就是这么把 read_file
-                # 放过去的）。这里先按轮初状态把越权名单定下来。
+                # 拒绝调用与业务工具同批时，按 provider 原始批次统一拦截；不能
+                # 因为串行执行时拒绝工具先改了 gate 状态而放过后续业务调用。
                 gate_violation_reasons: dict[str, str] = {}
                 for _index, _call, resolved, reason in gate_violations:
                     gate_violation_reasons.setdefault(resolved, reason)
@@ -708,7 +665,7 @@ async def run_loop(
                     ))
 
                 def gate_resolve_tool_call(raw_name, raw_input):
-                    """串行批次的门协议拦截：越权调用不执行，只把错误回灌给模型。"""
+                    """串行批次中预先判定并隔离拒绝工具同批的业务调用。"""
                     target, arguments, resolve_error = _core._resolve_tool_call(
                         raw_name, raw_input,
                     )

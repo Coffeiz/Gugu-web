@@ -455,22 +455,23 @@ async def _call_baidu_similar_image(raw: bytes, api_key: str, count: int, timeou
         return {"error": "百度相似图搜索 API Key 未配置，请管理员检查服务配置", "error_code": "invalid_api_key"}
     payload = {"image": base64.b64encode(raw).decode("ascii"), "count": count}
     try:
-        async with httpx.AsyncClient(
+        from app.core.safe_egress import SafeEgressClient, SafeEgressError
+        async with SafeEgressClient().stream(
+            "https://qianfan.baidubce.com/v2/tools/image_similar_info",
             timeout=httpx.Timeout(connect=5.0, read=timeout_seconds, write=10.0, pool=5.0),
-            follow_redirects=False,
-        ) as client:
-            response = await client.post(
-                "https://qianfan.baidubce.com/v2/tools/image_similar_info",
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            post_json=payload,
+        ) as response:
+            await response.aread()
     except httpx.TimeoutException:
         return {"error": "相似图搜索请求超时，请稍后重试", "error_code": "upstream_timeout"}
     except httpx.HTTPError:
         return {"error": "相似图搜索网络连接失败，请稍后重试", "error_code": "upstream_error"}
+    except SafeEgressError:
+        return {"error": "相似图搜索服务地址校验失败，请管理员检查网络配置", "error_code": "upstream_error"}
 
     if response.status_code in (401, 403):
         return {"error": "百度相似图搜索鉴权失败，请管理员检查 API Key", "error_code": "upstream_auth"}
@@ -573,6 +574,7 @@ class SearchSkill(BaseSkill):
             input_schema={"type": "object", "properties": {}, "additionalProperties": False},
             input_schema_factory=_provider_web_search_schema,
             handler=_web_search,
+            proxy_selectable=True,
             start_message=lambda args: random.choice(["我用当前模型的联网搜索查一下。", "我查一下最新网页资料。"]),
             parallel_safe=True,
         ),
@@ -611,6 +613,7 @@ class SearchSkill(BaseSkill):
                 "anyOf": [{"required": ["attach_id"]}, {"required": ["image_url"]}],
             },
             handler=_similar_image_search,
+            proxy_selectable=True,
             start_message=lambda args: random.choice(["我找找相似图片。", "我用这张图找找相似图片。"]),
         ),
         Tool(
@@ -629,6 +632,7 @@ class SearchSkill(BaseSkill):
                 "required": ["query"],
             },
             handler=_deep_research,
+            proxy_selectable=True,
             start_message=lambda args: random.choice(["我深入研究一下这个。", "我仔细看看，等会儿告诉你。"]),
         ),
     ]
