@@ -45,9 +45,13 @@ export function mapSessionMessageDelta(
     const speaker = resolveSpeaker(item.role, item.platformUserId, item.platformUserName)
     const runId = item.runId || undefined
     const roundId = item.roundId || undefined
+    const clientMessageId = typeof item.clientMessageId === 'string' && item.clientMessageId
+      ? item.clientMessageId
+      : undefined
     return {
       id: mkid(), dbId: item.id,
-      _syncKey: `message:${item.id}`,
+      _syncKey: clientMessageId ? `client:${clientMessageId}` : `message:${item.id}`,
+      clientMessageId,
       role: speaker.role, speakerLabel: speaker.speakerLabel,
       platformUserId: item.platformUserId || null,
       text: displayQQFaces(item.content), html: null,

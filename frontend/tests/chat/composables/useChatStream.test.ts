@@ -153,6 +153,30 @@ describe('useChatStream 展示事件与生命周期', () => {
     expect(options.onAutomaticModeCommand).toHaveBeenCalledOnce()
   })
 
+  it('发送时为乐观气泡和服务端请求分配同一客户端消息身份', async () => {
+    const options = createOptions([])
+    options.inputText.value = '架构身份测试'
+    let requestBody: Record<string, unknown> | undefined
+    vi.stubGlobal('fetch', vi.fn(async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body))
+      return sseResponse([
+        { type: 'session_id', session_id: 42, user_message_id: 73 },
+        { type: 'done' },
+      ])
+    }))
+
+    await useChatStream(options).send()
+
+    expect(typeof requestBody?.client_message_id).toBe('string')
+    const userMessages = options.messages.value.filter(message => message.role === 'user')
+    expect(userMessages).toHaveLength(1)
+    expect(userMessages[0]).toMatchObject({
+      role: 'user', dbId: 73,
+      clientMessageId: requestBody?.client_message_id,
+      _syncKey: `client:${requestBody?.client_message_id}`,
+    })
+  })
+
   it('失败终态更新原用户消息且不伪造 assistant 错误消息', async () => {
     const userMessage: ChatMessage = { id: 7, dbId: 42, role: 'user', text: '测试请求', time: '12:00' }
     const options = createOptions([userMessage])

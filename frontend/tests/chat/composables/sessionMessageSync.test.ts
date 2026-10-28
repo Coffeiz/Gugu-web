@@ -47,6 +47,34 @@ describe('mergeSessionMessageDelta', () => {
     expect(merged[0]).toMatchObject({ id: optimistic.id, dbId: 6, _syncKey: 'message:6', role: 'user' })
   })
 
+  it('历史先于 SSE 数据库确认到达时按客户端身份更新同一条乐观消息', () => {
+    const clientMessageId = 'tab-test:message-1'
+    const optimistic: ChatMessage = {
+      id: 1, role: 'user', text: '群 session 中的网页消息', time: '19:30',
+      clientMessageId, _syncKey: `client:${clientMessageId}`,
+    }
+    const persisted = mapSessionMessageDelta({
+      messages: [{ id: 73, role: 'user', content: optimistic.text, clientMessageId, createdAt: '2026-10-28T11:30:00Z' }],
+      timelineEvents: [],
+    }, () => 2, role => ({ role }))[0]
+
+    const beforeSseIdentity = mergeSessionMessageDelta([optimistic], [persisted])
+    expect(beforeSseIdentity).toHaveLength(1)
+    expect(beforeSseIdentity[0]).toMatchObject({ id: optimistic.id, dbId: 73, _syncKey: `client:${clientMessageId}` })
+
+    // SSE 后续确认数据库身份只补充 dbId，不替换跨来源稳定身份。
+    optimistic.dbId = 73
+    const afterSseIdentity = mergeSessionMessageDelta(beforeSseIdentity, [])
+    expect(afterSseIdentity).toHaveLength(1)
+    expect(afterSseIdentity[0]).toMatchObject({ id: optimistic.id, dbId: 73, text: optimistic.text })
+  })
+
+  it('相同正文但客户端身份不同的两次发送仍分别显示', () => {
+    const first = { ...message(1, 'client:send-1', '重复正文'), role: 'user' }
+    const second = { ...message(2, 'client:send-2', '重复正文'), role: 'user' }
+    expect(mergeSessionMessageDelta([first], [second])).toHaveLength(2)
+  })
+
   it('用首次持久化记录认领本地默认问候，避免新会话出现重复问候', () => {
     const greeting: ChatMessage = {
       ...message(1, '', '咕咕在呢。今天想从哪件开始？'),

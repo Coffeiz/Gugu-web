@@ -12,6 +12,9 @@ from agent.models import AgentRequest
 
 
 class _FakeDb:
+    def __init__(self):
+        self.records = []
+
     async def __aenter__(self):
         return self
 
@@ -19,6 +22,7 @@ class _FakeDb:
         return False
 
     def add(self, value):
+        self.records.append(value)
         if getattr(value, "id", None) is None:
             value.id = 321 if value.__class__.__name__ == "ConversationSession" else 654
 
@@ -57,6 +61,7 @@ async def test_stream_persists_user_message_then_forwards_background_sse(monkeyp
         message="你好，帮我总结一下。",
         user_id="00000000-0000-0000-0000-000000000001",
         user_name="小北",
+        client_message_id="tab-contract:message-1",
     )
     monkeypatch.setattr(stream_module, "get_settings", lambda: object())
     monkeypatch.setattr(stream_module, "resolve_run_config", lambda *_args: SimpleNamespace(model="test-model"))
@@ -70,7 +75,8 @@ async def test_stream_persists_user_message_then_forwards_background_sse(monkeyp
     monkeypatch.setattr(byok_service, "resolve_and_bind_user_embedding", resolve_for_user)
     monkeypatch.setattr(stream_module.quota, "is_exhausted", lambda *_args: _false())
     monkeypatch.setattr(db_session, "_engine", object())
-    monkeypatch.setattr(db_session, "_SessionLocal", _FakeDb)
+    fake_db = _FakeDb()
+    monkeypatch.setattr(db_session, "_SessionLocal", lambda: fake_db)
 
     async def style_prefs(*_args): return {"locale": "zh-CN"}
     async def snapshot(*_args, **_kwargs): return {"user_tz": "UTC"}
@@ -120,7 +126,13 @@ async def test_stream_persists_user_message_then_forwards_background_sse(monkeyp
 
     assert json.loads(frames[0][6:-2]) == {
         "type": "session_id", "session_id": 321, "user_message_id": 654,
+        "client_message_id": "tab-contract:message-1",
     }
+    persisted_user_message = next(
+        record for record in fake_db.records
+        if record.__class__.__name__ == "ConversationMessage"
+    )
+    assert persisted_user_message.client_message_id == "tab-contract:message-1"
     assert [json.loads(frame[6:-2]) for frame in frames[1:]] == [
         {"type": "token", "run_id": "run-contract", "content": "完成"},
         {"type": "done", "run_id": "run-contract"},

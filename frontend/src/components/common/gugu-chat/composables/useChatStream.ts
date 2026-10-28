@@ -62,11 +62,11 @@ function attachPersistedIdentity(messages: ChatMessage[], optimistic: ChatMessag
   const index = messages.findIndex(message => message.id === optimistic.id)
   if (index < 0) {
     optimistic.dbId = dbId
-    optimistic._syncKey = `message:${dbId}`
+    optimistic._syncKey ||= `message:${dbId}`
     return messages
   }
   messages[index].dbId = dbId
-  messages[index]._syncKey = `message:${dbId}`
+  messages[index]._syncKey ||= `message:${dbId}`
   // History sync may have inserted the persisted copy before SSE delivered identity.
   return mergeSessionMessageDelta(messages, [])
 }
@@ -119,6 +119,7 @@ export function useChatStream(options: {
   onContentReset?: () => void
   onPresentFile?: (file: PresentedFile) => void
 }) {
+  let clientMessageSequence = 0
   const liveStore = useLiveStore()
   const { messages, mkid, now, sessionId, sessions } = options
 
@@ -842,13 +843,14 @@ export function useChatStream(options: {
     itemKey: number,
     queueId: string,
     claimToken: string | null,
+    clientMessageId: string,
   ) {
     const res = await fetch(`${API_BASE}/agent/chat`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json', 'X-Client-Id': CLIENT_ID, ...getCsrfHeaders() },
       body: JSON.stringify({
-        message: text, locale: getLocale(), session_id: sessionId,
+        message: text, client_message_id: clientMessageId, locale: getLocale(), session_id: sessionId,
         pending_queue_id: queueId, pending_queue_item_key: itemKey,
         ...(claimToken ? { pending_queue_claim_token: claimToken } : {}),
         attachments: attachments.map(a => a.attach_id), references,
@@ -895,11 +897,13 @@ export function useChatStream(options: {
     const atts = fromInput ? options.pendingAtt.value.slice() : (forcedAttachments ?? [])   // 本次随消息发的附件
     const refs = fromInput ? options.inputReferences.value.slice() : (forcedReferences ?? [])
     if (!text && !atts.length) return
+    clientMessageSequence += 1
+    const clientMessageId = `${CLIENT_ID}:${Date.now().toString(36)}:${clientMessageSequence.toString(36)}`
     // 队列消息目标会话与当前视图不同：仍把原始 session_id 发给后端，但不接管
     // 当前会话的 streaming/status/messages 状态。回复已落库，切回目标会话即可恢复。
     if (isQueuedDispatch && targetSessionId != null && targetSessionId !== sessionId.value) {
       if (cancelledQueueKeys.has(queuedIdentity)) return
-      await dispatchQueuedInBackground(text, atts, refs, targetSessionId, queuedItemKey!, queueId, queuedClaimToken ?? null)
+      await dispatchQueuedInBackground(text, atts, refs, targetSessionId, queuedItemKey!, queueId, queuedClaimToken ?? null, clientMessageId)
       return
     }
     // 草稿尚未拿到真实 session_id 时不能脱离当前草稿发送，否则后端会创建/选中错误会话。
@@ -911,7 +915,7 @@ export function useChatStream(options: {
       await reconcileStaleStreaming(viewGeneration)
       if (isQueuedDispatch && targetSessionId != null && targetSessionId !== sessionId.value) {
         if (!cancelledQueueKeys.has(queuedIdentity)) {
-          await dispatchQueuedInBackground(text, atts, refs, targetSessionId, queuedItemKey!, queueId, queuedClaimToken ?? null)
+          await dispatchQueuedInBackground(text, atts, refs, targetSessionId, queuedItemKey!, queueId, queuedClaimToken ?? null, clientMessageId)
         }
         return
       }
@@ -926,6 +930,7 @@ export function useChatStream(options: {
         options.onContentReset?.()
       } else if (!streaming.value) {
         optimisticUserMessage = { id: mkid(), role: 'user', text, time: now(),
+          clientMessageId, _syncKey: `client:${clientMessageId}`,
           references: refs.length ? refs : undefined,
           files: atts.length ? atts.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, attach_id: a.attach_id, kind: a.kind, duration: a.duration, upload: true, _thumbUrl: a._thumbUrl, img_width: a.img_width, img_height: a.img_height })) : undefined }
         messages.value.push(optimisticUserMessage)
@@ -966,7 +971,7 @@ export function useChatStream(options: {
       if (isQueuedDispatch && targetSessionId != null && !cancelledQueueKeys.has(queuedIdentity)) {
         // 会话切换方已接管全局 UI 状态；这里只释放仍指向旧请求的控制器引用。
         if (abortCtrl.value === requestController) abortCtrl.value = null
-        await dispatchQueuedInBackground(text, atts, refs, targetSessionId, queuedItemKey!, queueId, queuedClaimToken ?? null)
+        await dispatchQueuedInBackground(text, atts, refs, targetSessionId, queuedItemKey!, queueId, queuedClaimToken ?? null, clientMessageId)
         return
       }
       if (invocationIsCurrent() && abortCtrl.value === requestController) {
@@ -993,7 +998,7 @@ export function useChatStream(options: {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json', 'X-Client-Id': CLIENT_ID, ...getCsrfHeaders() },
-        body: JSON.stringify({ message: text, locale: getLocale(), session_id: ownerSid, pending_queue_id: queueId,
+        body: JSON.stringify({ message: text, client_message_id: clientMessageId, locale: getLocale(), session_id: ownerSid, pending_queue_id: queueId,
                                ...(queuedItemKey !== undefined ? { pending_queue_item_key: queuedItemKey } : {}),
                                ...(queuedClaimToken ? { pending_queue_claim_token: queuedClaimToken } : {}),
                                attachments: atts.map(a => a.attach_id), references: refs,
@@ -1018,8 +1023,8 @@ export function useChatStream(options: {
         pendingQueue.value = pendingQueue.value.filter(item => queueIdentity(item) !== queuedIdentity)
         optimisticUserMessage = {
           id: mkid(), role: 'user', text, time: now(),
+          clientMessageId, _syncKey: `client:${clientMessageId}`,
           dbId: userMessageId,
-          _syncKey: userMessageId ? `message:${userMessageId}` : undefined,
           references: refs.length ? refs : undefined,
           files: atts.length ? atts.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, attach_id: a.attach_id, kind: a.kind, duration: a.duration, upload: true, _thumbUrl: a._thumbUrl, img_width: a.img_width, img_height: a.img_height })) : undefined,
           _timelineOrder: timelineOrder,

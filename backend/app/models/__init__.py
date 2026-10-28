@@ -1099,11 +1099,21 @@ class ConversationBatch(Base):
 
 class ConversationMessage(Base):
     __tablename__ = "conversation_messages"
+    __table_args__ = (
+        Index(
+            "uq_conversation_messages_session_client_message_id",
+            "session_id",
+            "client_message_id",
+            unique=True,
+        ),
+    )
 
     id:           Mapped[int]             = mapped_column(Integer, primary_key=True, autoincrement=True)
     session_id:   Mapped[int]             = mapped_column(ForeignKey("conversation_sessions.id", ondelete="CASCADE"), index=True)
     role:         Mapped[str]             = mapped_column(String(20))
     content:      Mapped[str]             = mapped_column(Text, default="")
+    # Web 乐观气泡与持久消息的稳定关联键；旧消息和 IM 消息可为空。
+    client_message_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, default=None)
     content_json: Mapped[Optional[list]]  = mapped_column(JSON, nullable=True, default=None)
     # 实时展示时间线；canonical history 仍使用 content/content_json。
     display_timeline: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=None)

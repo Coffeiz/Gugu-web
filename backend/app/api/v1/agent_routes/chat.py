@@ -21,6 +21,7 @@ router = APIRouter()
 
 class ChatRequest(BaseModel):
     message: str
+    client_message_id: Optional[str] = Field(default=None, max_length=64, pattern=r"^[A-Za-z0-9:_-]+$")
     locale: Optional[Literal["zh-CN", "ja-JP", "en-US"]] = None
     session_id: Optional[int] = None
     pending_queue_id: Optional[str] = Field(default=None, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
@@ -41,6 +42,7 @@ async def chat(
 ):
     req = AgentRequest(
         message=body.message,
+        client_message_id=body.client_message_id,
         user_id=current_user.id,
         user_name=current_user.username,
         session_id=body.session_id,
