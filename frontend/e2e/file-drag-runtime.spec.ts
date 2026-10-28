@@ -44,14 +44,21 @@ test.afterEach(async ({ page }) => {
 
 
 async function createFolder(root: Locator, name: string) {
+  const createResponse = root.page().waitForResponse(response =>
+    response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/v1/folders',
+  )
   await root.locator('button', { hasText: '新建文件夹' }).click()
   await root.locator('.new-folder-input').fill(name)
   await root.getByRole('button', { name: '确定' }).click()
+  const response = await createResponse
+  const created = await response.json() as { id?: number; detail?: string }
+  expect(response.status(), created.detail ?? `新建文件夹返回 ${response.status()}`).toBe(201)
+  expect(Number.isInteger(created.id)).toBeTruthy()
+  createdFolderIds.add(created.id!)
   const card = root.locator('.folder-card', { hasText: name })
   await expect(card).toBeVisible({ timeout: 10000 })
   const folderId = Number(await card.getAttribute('data-folder-id'))
-  expect(Number.isInteger(folderId)).toBeTruthy()
-  createdFolderIds.add(folderId)
+  expect(folderId).toBe(created.id)
 }
 
 async function enterFolder(root: Locator, name: string) {
@@ -70,19 +77,37 @@ async function uploadTextFile(root: Locator, name: string) {
   createdFileIds.add(fileId)
 }
 
-async function waitForMovedFiles(page: Page, fileIds: number[], targetFolderId: number) {
-  // 拖拽先更新本地缓存，API 提交随后完成；刷新后直接核对服务端记录及目标目录，
-  // 避免依赖已移除的全量 /files/all、/folders/all 端点。
-  await page.reload()
-  await expect.poll(async () => page.evaluate(async ({ fileIds, targetFolderId }) => {
-    const csrfToken = decodeURIComponent(document.cookie.split('; ').find(item => item.startsWith('gugu_user_csrf_token='))?.split('=').slice(1).join('=') ?? '')
-    const headers = { 'X-CSRF-Token': csrfToken }
-    const files = await Promise.all(fileIds.map(async fileId => {
-      const response = await fetch(`/api/v1/files/${fileId}`, { headers })
-      return response.ok ? response.json() : null
-    }))
-    return files.every(file => file?.folderId === targetFolderId)
-  }, { fileIds, targetFolderId })).toBe(true)
+function waitForMovedFiles(page: Page, fileIds: number[], targetFolderId: number) {
+  // PATCH 返回时服务端事务已提交；直接核对每个响应，避免刷新路由后再用
+  // 另一个 GET 竞态判断持久化状态。
+  return Promise.all(fileIds.map(async fileId => {
+    const response = await page.waitForResponse(candidate =>
+      candidate.request().method() === 'PATCH'
+      && new URL(candidate.url()).pathname === `/api/v1/files/${fileId}`,
+    )
+    const file = await response.json() as { id?: number; folderId?: number | null; detail?: string }
+    expect(response.status(), file.detail ?? `文件 ${fileId} 移动接口返回失败`).toBe(200)
+    expect(file.id).toBe(fileId)
+    expect(file.folderId).toBe(targetFolderId)
+    const stored = await page.evaluate(async ({ fileId, targetFolderId }) => {
+      const [detailResponse, listingResponse] = await Promise.all([
+        fetch(`/api/v1/files/${fileId}`),
+        fetch(`/api/v1/files?space=personal&folder_id=${targetFolderId}&sort_by=name&sort_order=asc`),
+      ])
+      const detail = detailResponse.ok ? await detailResponse.json() : null
+      const listing = listingResponse.ok ? await listingResponse.json() : null
+      return {
+        detailStatus: detailResponse.status,
+        listingStatus: listingResponse.status,
+        folderId: detail?.folderId ?? null,
+        isListed: Array.isArray(listing?.items) && listing.items.some((item: { id?: number }) => item.id === fileId),
+      }
+    }, { fileId, targetFolderId })
+    expect(stored.detailStatus).toBe(200)
+    expect(stored.folderId).toBe(targetFolderId)
+    expect(stored.listingStatus).toBe(200)
+    expect(stored.isListed).toBe(true)
+  }))
 }
 
 async function waitForMoveRuntime(page: Page) {
@@ -115,17 +140,15 @@ test.describe('文件库：单文件拖拽（Runtime Core API）', () => {
     const targetFolderId = Number(await target.getAttribute('data-folder-id'))
     expect(Number.isInteger(fileId)).toBeTruthy()
     expect(Number.isInteger(targetFolderId)).toBeTruthy()
-    const moveResponse = page.waitForResponse(response =>
-      response.request().method() === 'PATCH' && response.url().includes('/api/v1/files/'))
+    const moveResponse = waitForMovedFiles(page, [fileId], targetFolderId)
     await dragOnto(page, card, target)
     await moveResponse
 
     await expect(root.locator('.fc-card', { hasText: baseName })).toHaveCount(0, { timeout: 10000 })
     await waitForMoveRuntime(page)
-    // Runtime pointer 事务收尾期间直接派发语义 click，避免再次走拖拽指针序列；
-    // 目录进入仍由文件夹卡片的真实 click handler 完成。
-    await target.evaluate(element => (element as HTMLElement).click())
-    await waitForMovedFiles(page, [fileId], targetFolderId)
+    await target.click()
+    await expect(root.locator('.bc-item.active, .bc-cur', { hasText: folderName })).toBeVisible({ timeout: 10000 })
+    await expect(root.locator('.fc-card', { hasText: baseName })).toBeVisible({ timeout: 10000 })
   })
 
   test('单文件拖到面包屑返回上一层', async ({ page }) => {
@@ -214,10 +237,12 @@ test.describe('文件库：Runtime 多选拖拽', () => {
     const target = root.locator('.folder-card', { hasText: folderName })
     const targetFolderId = Number(await target.getAttribute('data-folder-id'))
     expect([fileIdA, fileIdB, targetFolderId].every(Number.isInteger)).toBeTruthy()
+    const moveResponses = waitForMovedFiles(page, [fileIdA, fileIdB], targetFolderId)
     await cardA.click({ modifiers: [multiSelectModifier] })
     await cardB.click({ modifiers: [multiSelectModifier] })
 
     await dragOnto(page, cardA, target, { x: 10, y: 10 })
+    await moveResponses
 
     await expect(root.locator('.fc-card', { hasText: nameA })).toHaveCount(0, { timeout: 10000 })
     await expect(root.locator('.fc-card', { hasText: nameB })).toHaveCount(0, { timeout: 10000 })
@@ -226,7 +251,8 @@ test.describe('文件库：Runtime 多选拖拽', () => {
     // 落地后点文件夹应该正常导航进入，不是切换选中（见 selectModeForced 回归修复）
     await waitForMoveRuntime(page)
     await target.click()
-    await waitForMovedFiles(page, [fileIdA, fileIdB], targetFolderId)
+    await expect(root.locator('.fc-card', { hasText: nameA })).toBeVisible({ timeout: 10000 })
+    await expect(root.locator('.fc-card', { hasText: nameB })).toBeVisible({ timeout: 10000 })
   })
 
   test('文件和文件夹混合多选后拖入文件夹', async ({ page }) => {
