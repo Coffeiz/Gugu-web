@@ -30,14 +30,14 @@
           <em>{{ fmtMs(run.duration_ms) }}</em>
         </button>
       </div>
-      <div v-if="!runs.length" class="empty-run">{{ t('monitor.emptyTrace') }}</div>
+      <div v-if="!runs.length" class="empty-run">{{ runsError || (runsLoading ? t('monitor.loadingRuns') : t('monitor.emptyTrace')) }}</div>
       <div v-else-if="loadingMore" class="loading-more">{{ t('monitor.loadingOlder') }}</div>
     </aside>
 
     <section ref="runDetailEl" class="run-detail">
       <div v-if="!selected" class="monitor-empty">
-        <strong>{{ t('monitor.emptyRunTitle') }}</strong>
-        <span>{{ t('monitor.sendMessage') }}</span>
+        <strong>{{ runsError || (runsLoading ? t('monitor.loadingRuns') : t('monitor.emptyRunTitle')) }}</strong>
+        <span v-if="!runsError && !runsLoading">{{ t('monitor.sendMessage') }}</span>
       </div>
       <template v-else>
         <header class="run-header">
@@ -128,14 +128,14 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import type { AdapterCallStats, CanonicalEventStats, TraceRun, TokenUsage } from '../types'
+import type { AdapterCallStats, CanonicalEventStats, TraceRun, TraceRunSummary, TokenUsage } from '../types'
 import TraceSpanCard from './TraceSpanCard.vue'
 import { formatCompactNumber } from '../utils/formatNumber'
 import { resolveMonitorSelection } from '../utils/monitorSelection'
 import { useLoopScopeI18n } from '../i18n/index'
 
 const { t } = useLoopScopeI18n()
-const props = defineProps<{ runs: TraceRun[]; details?: Record<string, TraceRun>; focusRunId?: string; hasMoreSpans?: boolean }>()
+const props = defineProps<{ runs: TraceRunSummary[]; details?: Record<string, TraceRun>; focusRunId?: string; hasMoreSpans?: boolean; runsLoading?: boolean; runsError?: string }>()
 const emit = defineEmits<{
   select: [runId: string]
   'load-more': []
@@ -292,7 +292,7 @@ function onRunListScroll(event: Event) {
   window.setTimeout(() => { loadingMore.value = false }, 500)
 }
 
-function resolveUsage(run: TraceRun | null): TokenUsage {
+function resolveUsage(run: TraceRun | TraceRunSummary | null): TokenUsage {
   if (!run) return {}
   const spans = run.spans ?? []
   if (!spans.some(span => span.kind === 'llm')) return {}
@@ -332,7 +332,7 @@ function hasPositiveUsage(usage: TokenUsage): boolean {
     .some(value => typeof value === 'number' && value > 0)
 }
 
-function hasProviderUsage(run: TraceRun | null): boolean {
+function hasProviderUsage(run: TraceRun | TraceRunSummary | null): boolean {
   const runInput = number(run?.usage?.input)
   if (runInput !== undefined && runInput > 0) return true
   return Boolean((run?.spans ?? []).some(span => {
@@ -408,7 +408,7 @@ function fmtTokens(v: number | null | undefined) {
 .monitor-empty span { font-size:11px; }
 .run-header { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; }
 .run-header h2 { margin:3px 0 5px; font:600 14px var(--font-mono); }
-.run-sub { display:flex; gap:7px; color:var(--content-tertiary); font-size:9px; }
+.run-sub { display:flex; align-items:baseline; gap:7px; color:var(--content-tertiary); font-size:9px; line-height:1.4; }
 .duration { text-align:right; }
 .run-header-actions { display:flex; align-items:flex-start; gap:14px; }
 .duration small { display:block; color:var(--content-tertiary); font-size:8px; text-transform:uppercase; letter-spacing:.08em; }

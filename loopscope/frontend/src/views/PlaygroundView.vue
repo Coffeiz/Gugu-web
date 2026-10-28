@@ -46,7 +46,7 @@
           </div>
 
           <article v-for="(m, idx) in messages" :key="m.id" class="message" :class="m.role">
-            <div class="role">{{ m.role === 'user' ? 'YOU' : m.role === 'tool' ? 'TOOL' : 'GUGU' }}</div>
+            <div class="role">{{ messageRoleLabel(m) }}</div>
             <div v-if="m.role === 'tool'" class="bubble tool-bubble">
               <strong>{{ m.toolLabel || m.toolName || t('playground.toolCall') }}</strong>
               <span class="tool-status">{{ m.toolStatus === 'error' ? t('playground.failed') : m.toolStatus === 'running' ? t('playground.running') : t('playground.completed') }}</span>
@@ -94,6 +94,8 @@
         ref="monitorRef"
         :runs="runs"
         :details="runDetails"
+        :runs-loading="runsLoading"
+        :runs-error="runsError"
         :has-more-spans="hasMoreSpans"
         :focus-run-id="monitorFocusRunId"
         @select="selectMonitorRun"
@@ -108,7 +110,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
-import type { ChatMessage, GuguSession, TraceRun } from '../types'
+import type { ChatMessage, GuguSession, TraceRun, TraceRunSummary } from '../types'
 import { listGuguSessions, loadBootstrap, loadMessagePage, sendMessage } from '../services/gugu'
 import { getRun, getRunSpans, listRuns, subscribeTraceEvents } from '../services/api'
 import { useLoopScopeI18n } from '../i18n/index'
@@ -121,7 +123,11 @@ import { formatCompactNumber } from '../utils/formatNumber'
 const sessions = ref<GuguSession[]>([])
 const activeId = ref<number | null>(null)
 const messages = ref<ChatMessage[]>([])
-const runs = ref<TraceRun[]>([])
+const activeChatType = ref<string | null>(null)
+const ownerPlatformUserId = ref<string | null>(null)
+const runs = ref<TraceRunSummary[]>([])
+const runsLoading = ref(false)
+const runsError = ref('')
 const runDetails = ref<Record<string, TraceRun>>({})
 const loadingRunId = ref('')
 const loadingSpanRunId = ref('')
@@ -146,6 +152,9 @@ const monitorScrollTop = ref(0)
 const connected = ref(!!loadBootstrap())
 const activeSession = computed(() => sessions.value.find(s => s.id === activeId.value))
 let stopTraceEvents: (() => void) | null = null
+let traceRefreshTimer: number | undefined
+let pendingTraceEvent: { run_id: string; session_key: string; status: string } | undefined
+const runRefreshes = new Map<number, Promise<TraceRunSummary[]>>()
 
 async function refreshSessions() {
   if (!connected.value) return
@@ -158,16 +167,46 @@ function runSources() {
 async function loadSessionRuns(options: { limit?: number; before?: number } = {}) {
   const sessionId = activeId.value
   if (sessionId == null) return []
-  const batches = await Promise.all(
-    runSources().map(source => listRuns(sessionId, source, options).catch(() => [])),
+  const results = await Promise.allSettled(
+    runSources().map(source => listRuns(sessionId, source, options)),
   )
+  const batches = results.map(result => result.status === 'fulfilled' ? result.value : [])
+  if (results.every(result => result.status === 'rejected')) {
+    throw results.find(result => result.status === 'rejected')?.reason ?? new Error('Runs 请求失败')
+  }
+  if (activeId.value === sessionId && results.some(result => result.status === 'rejected')) {
+    runsError.value = t('playground.runLoadFailed', { message: '部分会话来源暂不可用' })
+  }
   const unique = new Map(batches.flat().map(run => [run.id, run]))
   return [...unique.values()].sort((a, b) => (b.started_at - a.started_at) || b.id.localeCompare(a.id))
 }
 async function refreshRuns() {
-  if (!activeId.value) { runs.value = []; return }
-  runs.value = (await loadSessionRuns({ limit: 20 })).slice(0, 20)
-  hasOlderRuns.value = runs.value.length >= 20
+  const sessionId = activeId.value
+  if (!sessionId) { runs.value = []; runsError.value = ''; return }
+  let request = runRefreshes.get(sessionId)
+  runsLoading.value = Boolean(request)
+  if (!request) {
+    runsLoading.value = true
+    runsError.value = ''
+    request = loadSessionRuns({ limit: 20 }).then(result => result.slice(0, 20))
+    runRefreshes.set(sessionId, request)
+    void request.finally(() => {
+      if (runRefreshes.get(sessionId) === request) runRefreshes.delete(sessionId)
+      if (activeId.value === sessionId) runsLoading.value = false
+    }).catch(() => {})
+  }
+  try {
+    const nextRuns = await request
+    // 切换会话后，迟到的旧结果不能覆盖当前 Monitor。
+    if (activeId.value !== sessionId) return
+    runs.value = nextRuns
+    hasOlderRuns.value = runs.value.length >= 20
+  } catch (cause) {
+    if (activeId.value === sessionId) {
+      runs.value = []
+      runsError.value = t('playground.runLoadFailed', { message: errorMessage(cause) })
+    }
+  }
 }
 async function refreshLiveRun(runId: string) {
   const [detail, page] = await Promise.all([
@@ -180,12 +219,21 @@ async function refreshLiveRun(runId: string) {
 }
 function onTraceEvent(event: { run_id: string; session_key: string; status: string }) {
   if (!activeId.value || !runSources().some(source => event.session_key === `gugu:${source}:${activeId.value}`)) return
-  void (async () => {
-    await refreshRuns()
-    if (sessionView.value !== 'monitor') return
-    if (!monitorFocusRunId.value) monitorFocusRunId.value = event.run_id
-    if (monitorFocusRunId.value === event.run_id) await refreshLiveRun(event.run_id)
-  })().catch(() => {})
+  if (sessionView.value !== 'monitor' && mode.value !== 'detail') return
+  pendingTraceEvent = event
+  if (traceRefreshTimer !== undefined) return
+  traceRefreshTimer = window.setTimeout(() => {
+    traceRefreshTimer = undefined
+    const latestEvent = pendingTraceEvent
+    pendingTraceEvent = undefined
+    if (!latestEvent) return
+    void (async () => {
+      await refreshRuns()
+      if (sessionView.value !== 'monitor') return
+      if (!monitorFocusRunId.value) monitorFocusRunId.value = latestEvent.run_id
+      if (monitorFocusRunId.value === latestEvent.run_id) await refreshLiveRun(latestEvent.run_id)
+    })().catch(() => {})
+  }, 120)
 }
 async function loadOlderRuns() {
   if (!activeId.value || !hasOlderRuns.value || loadingOlderRuns.value || !runs.value.length) return
@@ -209,16 +257,24 @@ function previousRunFor(runId: string) {
     .sort((a, b) => b.started_at - a.started_at)[0]
 }
 async function loadRunDetail(runId: string, loadPrevious = true) {
-  if (!runId || runDetails.value[runId] || loadingRunId.value === runId) return
+  if (!runId || loadingRunId.value === runId) return
+  error.value = ''
+  const existing = runDetails.value[runId]
+  if (existing) {
+    if (!existing.spans) await loadSpans(runId, 0)
+    return
+  }
   loadingRunId.value = runId
   try {
     const detail = await getRun(runId, { includeSpans: false })
     runDetails.value = { ...runDetails.value, [runId]: detail }
-    await loadSpans(runId, 0)
+    if (!await loadSpans(runId, 0)) return
     if (loadPrevious) {
       const previous = previousRunFor(runId)
       if (previous && !runDetails.value[previous.id]) await loadRunDetail(previous.id, false)
     }
+  } catch (cause) {
+    error.value = t('playground.runLoadFailed', { message: errorMessage(cause) })
   } finally {
     loadingRunId.value = ''
   }
@@ -228,12 +284,13 @@ function selectMonitorRun(runId: string) {
   void loadRunDetail(runId)
 }
 async function loadSpans(runId: string, offset: number) {
-  if (loadingSpanRunId.value === runId) return
+  if (loadingSpanRunId.value === runId) return false
+  error.value = ''
   loadingSpanRunId.value = runId
   try {
     const page = await getRunSpans(runId, { limit: 100, offset })
     const previous = runDetails.value[runId]
-    if (!previous) return
+    if (!previous) return false
     const current = previous.spans ?? []
     runDetails.value = {
       ...runDetails.value,
@@ -241,9 +298,16 @@ async function loadSpans(runId: string, offset: number) {
     }
     spanOffsets.value = { ...spanOffsets.value, [runId]: offset + (page.items?.length ?? 0) }
     spanHasMore.value = { ...spanHasMore.value, [runId]: page.hasMore }
+    return true
+  } catch (cause) {
+    error.value = t('playground.spanLoadFailed', { message: errorMessage(cause) })
+    return false
   } finally {
     loadingSpanRunId.value = ''
   }
+}
+function errorMessage(cause: unknown) {
+  return cause instanceof Error ? cause.message : String(cause)
 }
 async function loadMoreSpans() {
   const runId = monitorFocusRunId.value
@@ -292,8 +356,21 @@ async function exportRuns(runIds: string[]) {
 async function loadLatestMessages(sessionId: number) {
   const page = await loadMessagePage(sessionId, { limit: 50 })
   messages.value = page.messages
+  activeChatType.value = page.chatType
+  ownerPlatformUserId.value = page.ownerPlatformUserId
   hasOlderMessages.value = page.hasMore
   oldestMessageId.value = page.oldestId
+}
+function messageRoleLabel(message: ChatMessage): string {
+  if (message.role === 'tool') return 'TOOL'
+  if (message.role !== 'user') return 'GUGU'
+  if (activeChatType.value !== 'group') return 'YOU'
+  if (message.platformUserId && ownerPlatformUserId.value
+      && message.platformUserId === ownerPlatformUserId.value) return 'YOU'
+  return message.platformUserName
+    || (message.platformUserId
+      ? t('playground.groupMemberWithId', { id: message.platformUserId })
+      : t('playground.groupMember'))
 }
 async function refreshAll() {
   if (!activeId.value) return
@@ -312,6 +389,11 @@ async function refreshAll() {
 }
 async function selectSession(id: number) {
   activeId.value = id
+  runs.value = []
+  runsError.value = ''
+  runsLoading.value = false
+  activeChatType.value = null
+  ownerPlatformUserId.value = null
   conversationScrollTop.value = 0
   monitorScrollTop.value = 0
   runDetails.value = {}
@@ -319,7 +401,7 @@ async function selectSession(id: number) {
   spanHasMore.value = {}
   monitorFocusRunId.value = ''
   await loadLatestMessages(id)
-  await refreshRuns()
+  if (sessionView.value === 'monitor' || mode.value === 'detail') await refreshRuns()
   if (sessionView.value === 'conversation') {
     await nextTick()
     scrollEl.value?.scrollTo({ top: scrollEl.value.scrollHeight })
@@ -327,6 +409,8 @@ async function selectSession(id: number) {
 }
 function newSession() {
   activeId.value = null
+  activeChatType.value = null
+  ownerPlatformUserId.value = null
   messages.value = []
   runs.value = []
   runDetails.value = {}
@@ -348,14 +432,19 @@ async function showConversation() {
 async function openMonitor() {
   if (!activeId.value) return
   conversationScrollTop.value = scrollEl.value?.scrollTop ?? conversationScrollTop.value
-  await refreshRuns()
+  sessionView.value = 'monitor'
   if (!runs.value.some(run => run.id === monitorFocusRunId.value)) {
     monitorFocusRunId.value = runs.value[0]?.id ?? ''
   }
-  if (monitorFocusRunId.value) await loadRunDetail(monitorFocusRunId.value)
-  sessionView.value = 'monitor'
   await nextTick()
   monitorRef.value?.setScrollTop(monitorScrollTop.value)
+  void refreshRuns().then(() => {
+    if (!runs.value.some(run => run.id === monitorFocusRunId.value)) {
+      monitorFocusRunId.value = runs.value[0]?.id ?? ''
+    }
+    if (monitorFocusRunId.value) void loadRunDetail(monitorFocusRunId.value)
+  })
+  if (monitorFocusRunId.value) void loadRunDetail(monitorFocusRunId.value)
 }
 function handleComposerKeydown(event: KeyboardEvent) {
   if (event.key !== 'Enter' || event.shiftKey) return
@@ -462,7 +551,7 @@ function runForAssistant(messageIndex: number) {
   const ordinal = assistantOrdinal(messageIndex) - offset
   return ordinal >= 0 ? runs.value[ordinal] : undefined
 }
-function spanCount(run: TraceRun | undefined, kind: string) { return run?.spans?.filter(s => s.kind === kind).length ?? 0 }
+function spanCount(run: TraceRun | TraceRunSummary | undefined, kind: string) { return run?.spans?.filter(s => s.kind === kind).length ?? 0 }
 function fmtMs(v: number | null | undefined) { return v == null ? '—' : v >= 1000 ? `${(v/1000).toFixed(2)}s` : `${Math.round(v)}ms` }
 function fmtTokens(v: number | null | undefined) { return formatCompactNumber(v) }
 function preview(v: unknown) {
@@ -482,6 +571,7 @@ onMounted(async () => {
 onUnmounted(() => {
   window.removeEventListener('loopscope:bootstrap', onBootstrap)
   stopTraceEvents?.()
+  if (traceRefreshTimer !== undefined) window.clearTimeout(traceRefreshTimer)
 })
 </script>
 

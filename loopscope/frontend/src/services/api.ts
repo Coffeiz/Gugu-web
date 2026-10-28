@@ -1,4 +1,4 @@
-import type { TraceRun } from '../types'
+import type { TraceRun, TraceRunSummary } from '../types'
 
 // 所有诊断数据都通过 Gugu 用户鉴权代理读取；不要直接访问无用户会话的 Collector。
 const BASE = '/gugu-api/dev/loopscope'
@@ -30,7 +30,7 @@ export async function listRuns(
   sessionId: number | string,
   source = 'web',
   options: { limit?: number; before?: number } = {},
-): Promise<TraceRun[]> {
+): Promise<TraceRunSummary[]> {
   const key = encodeURIComponent(`gugu:${source}:${sessionId}`)
   const query = new URLSearchParams()
   if (options.limit !== undefined) query.set('limit', String(options.limit))
@@ -38,7 +38,7 @@ export async function listRuns(
   const suffix = query.toString() ? `?${query.toString()}` : ''
   const r = await collectorFetch(`/sessions/${key}/runs${suffix}`)
   if (!r.ok) throw new Error(`LoopScope ${r.status}`)
-  const runs = await r.json() as TraceRun[]
+  const runs = await r.json() as TraceRunSummary[]
   // Collector 旧版本曾按“最旧到最新”返回；在 API 层统一成“最新到最旧”，
   // 这样前端分页方向不会依赖 Collector 是否已同步更新。
   return runs.sort((a, b) => (b.started_at - a.started_at) || b.id.localeCompare(a.id))

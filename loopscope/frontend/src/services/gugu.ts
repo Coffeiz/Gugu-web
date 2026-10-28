@@ -69,6 +69,8 @@ export async function listGuguSessions(): Promise<GuguSession[]> {
 
 export interface MessagePage {
   messages: ChatMessage[]
+  chatType: string | null
+  ownerPlatformUserId: string | null
   hasMore: boolean
   oldestId: number | null
   newestId: number | null
@@ -79,7 +81,10 @@ export async function loadMessagePage(
   options: { limit?: number; beforeId?: number; afterId?: number } = {},
 ): Promise<MessagePage> {
   const cfg = loadBootstrap()
-  if (!cfg) return { messages: [], hasMore: false, oldestId: null, newestId: null }
+  if (!cfg) return {
+    messages: [], chatType: null, ownerPlatformUserId: null,
+    hasMore: false, oldestId: null, newestId: null,
+  }
   const query = new URLSearchParams()
   if (options.limit !== undefined) query.set('limit', String(options.limit))
   if (options.beforeId !== undefined) query.set('before_id', String(options.beforeId))
@@ -97,6 +102,9 @@ export async function loadMessagePage(
       id: m.id,
       role: m.role,
       content: m.content ?? '',
+      platformUserId: m.platformUserId ?? null,
+      platformUserName: m.platformUserName ?? null,
+      platformBotUserId: m.platformBotUserId ?? null,
       createdAt: m.createdAt,
       canonicalId: Number(m.id),
       timelineOrder: Number(m.timelineOrder ?? Number(m.id) * 1000),
@@ -141,6 +149,10 @@ export async function loadMessagePage(
   messages.sort((a, b) => (a.timelineOrder ?? 0) - (b.timelineOrder ?? 0) || String(a.id).localeCompare(String(b.id)))
   return {
     messages,
+    chatType: typeof data.session?.chatType === 'string' ? data.session.chatType : null,
+    ownerPlatformUserId: typeof data.session?.ownerPlatformUserId === 'string'
+      ? data.session.ownerPlatformUserId
+      : null,
     hasMore: Boolean(page.hasMore),
     oldestId: page.oldestId ?? null,
     newestId: page.newestId ?? null,
