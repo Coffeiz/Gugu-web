@@ -154,6 +154,9 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             user_skill_metadata=user_skill_metadata, dynamic_tools=mcp_tools, source=req.source,
             model_cfg=model_cfg,
         )
+        from agent.media.capability_prompt import media_capability_for_user
+        media_capability_context = await media_capability_for_user(model_cfg, user_id, db=db)
+    system_prompt = "\n\n---\n\n".join((system_prompt, media_capability_context))
     if capability_context is not None:
         if _pin_session_user_skill_metadata(session, capability_context):
             # stream() 已经提交并关闭了原事务；后台生成使用独立事务，首次建立的
