@@ -138,8 +138,8 @@
 本次测试使用了以下测试脚本：
 
 - `test_simple_valueerror.py` - 已清理的一次性基础序列化脚本；相关边界由现有 pytest 契约测试覆盖
-- `test_minimax_null_fields.py` - MiniMax API 容忍度测试  
-- `test_full_agent_flow.py` - 完整 agent 链路测试
+- `probe_minimax_null_fields.py` - MiniMax API 容忍度测试
+- `probe_full_agent_flow.py` - 完整 agent 链路测试
 
 所有测试脚本已保存在 `backend/` 目录，可用于回归测试。
 

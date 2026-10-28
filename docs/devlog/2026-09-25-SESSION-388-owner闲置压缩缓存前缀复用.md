@@ -24,7 +24,7 @@ inline compaction 复用当前 run 已组装的 provider history；owner idle re
 
 - 新增精确映射、映射失败回退、反思压缩复用原 system/tools 与 cutoff，以及本地 active drain marker 生命周期测试。
 - 本地相关后端测试：`tests/test_reflection_threshold.py`、`tests/test_baseline_run_summary_reuse.py`、`tests/test_compaction.py`、`tests/test_reflection_append_reuse.py`、`tests/test_reflection_snapshot.py`、`tests/test_im_memory_scopes.py`，136 项通过；竞态回归补入后需再次确认最终总数。
-- 尚未进行真实 BYOK MiniMax 请求，也没有宣称已验证线上 cache ratio。仓库既有 `test_cache_strategy_compare.py` 会直接调用配置中的真实模型并产生用量；本次为避免未经单独授权消耗真实 API 配额，没有运行。应在自然发生的 SESSION #388 idle compaction 后，用 LoopScope 对比 cache-read/fresh-input 和压缩模式。
+- 尚未进行真实 BYOK MiniMax 请求，也没有宣称已验证线上 cache ratio。仓库既有 `compare_cache_strategies.py` 会直接调用配置中的真实模型并产生用量；本次为避免未经单独授权消耗真实 API 配额，没有运行。应在自然发生的 SESSION #388 idle compaction 后，用 LoopScope 对比 cache-read/fresh-input 和压缩模式。
 
 ## 后续观测
 

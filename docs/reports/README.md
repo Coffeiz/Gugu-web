@@ -49,7 +49,7 @@
 
 凡是由脚本生成或复现的测试报告，必须包含独立的「测试脚本」小节，并明确写出：
 
-- 使用脚本的仓库相对路径，并用 Markdown 链接指向脚本文件，例如 [`test_full_schema_compact_ab.py`](../../backend/scripts/diagnostics/test_full_schema_compact_ab.py)；
+- 使用脚本的仓库相对路径，并用 Markdown 链接指向脚本文件，例如 [`compare_full_schema_compaction.py`](../../backend/scripts/diagnostics/compare_full_schema_compaction.py)；
 - 实际运行命令，以及必要的危险开关（如 `--allow-real-llm`）；
 - 原始脱敏结果的保存位置；结果在 devserver 临时目录时，同时写明临时路径和是否已清理；
 - 测试是否连接真实 provider、真实数据库或真实用户数据，以及数据写入是否被拦截。

@@ -18,22 +18,22 @@
 ### 初步审查
 
 - 初步分组：缓存/前缀（诊断脚本与 `test_cross_run_cache_prefix.py`）、历史过滤/规范化、compaction、session 快照/续接。
-- 当前不直接合并：`test_new_assembly.py`、`test_prefix_optimization.py` 是组装边界诊断，`test_real_cache_optimization.py` 和 20-run 脚本是 provider 观测；生产入口或执行层级不同。
+- 当前不直接合并：`probe_new_assembly.py`、`probe_prefix_optimization.py` 是组装边界诊断，`probe_real_cache_optimization.py` 和 20-run 脚本是 provider 观测；生产入口或执行层级不同。
 - 重复候选：多个真实缓存脚本需要后续以同一 provider、同一 session、同一输出指标对拍；确认结果前全部保留。
 
 | 文件 | 类型 | 层级 | owner | 声明数 | 外部依赖 | skip | 处置依据 |
 |---|---|---|---|---:|---|---|---|
-| backend/scripts/diagnostics/test_cache_mode_compare.py | 诊断脚本 | L2 | backend/diagnostics | 0 | 否 | 否 | 保留独立诊断入口；观测外部服务或长链路，不并入标准测试 |
-| backend/scripts/diagnostics/test_cache_strategy_compare.py | 诊断脚本 | L2 | backend/diagnostics | 0 | 否 | 否 | 保留独立诊断入口；观测外部服务或长链路，不并入标准测试 |
-| backend/scripts/diagnostics/test_cross_call_cache.py | 诊断脚本 | L2 | backend/diagnostics | 0 | 是 | 否 | 保留独立诊断入口；观测外部服务或长链路，不并入标准测试 |
-| backend/scripts/diagnostics/test_locale_continuous.py | 诊断脚本 | L2 | backend/diagnostics | 0 | 是 | 否 | 保留独立诊断入口；观测外部服务或长链路，不并入标准测试 |
-| backend/scripts/diagnostics/test_new_assembly.py | 诊断脚本 | L2 | backend/diagnostics | 0 | 否 | 否 | 保留独立诊断入口；观测外部服务或长链路，不并入标准测试 |
-| backend/scripts/diagnostics/test_prefix_optimization.py | 诊断脚本 | L2 | backend/diagnostics | 0 | 否 | 否 | 保留独立诊断入口；观测外部服务或长链路，不并入标准测试 |
-| backend/scripts/diagnostics/test_real_cache_optimization.py | 诊断脚本 | L2 | backend/diagnostics | 0 | 否 | 否 | 保留独立诊断入口；观测外部服务或长链路，不并入标准测试 |
-| backend/scripts/diagnostics/test_real_session_20_run_cache_matrix.py | 诊断脚本 | L2 | backend/diagnostics | 0 | 否 | 否 | 保留独立诊断入口；观测外部服务或长链路，不并入标准测试 |
-| backend/scripts/diagnostics/test_real_session_20_run_cache.py | 诊断脚本 | L2 | backend/diagnostics | 0 | 否 | 否 | 保留独立诊断入口；观测外部服务或长链路，不并入标准测试 |
-| backend/scripts/diagnostics/test_session_incremental_cache.py | 诊断脚本 | L2 | backend/diagnostics | 0 | 否 | 否 | 保留独立诊断入口；观测外部服务或长链路，不并入标准测试 |
-| backend/scripts/diagnostics/test_tool_cache_boundary.py | 诊断脚本 | L2 | backend/diagnostics | 0 | 否 | 否 | 保留独立诊断入口；观测外部服务或长链路，不并入标准测试 |
+| backend/scripts/diagnostics/compare_cache_modes.py | 诊断脚本 | L2 | backend/diagnostics | 0 | 否 | 否 | 保留独立诊断入口；观测外部服务或长链路，不并入标准测试 |
+| backend/scripts/diagnostics/compare_cache_strategies.py | 诊断脚本 | L2 | backend/diagnostics | 0 | 否 | 否 | 保留独立诊断入口；观测外部服务或长链路，不并入标准测试 |
+| backend/scripts/diagnostics/probe_cross_call_cache.py | 诊断脚本 | L2 | backend/diagnostics | 0 | 是 | 否 | 保留独立诊断入口；观测外部服务或长链路，不并入标准测试 |
+| backend/scripts/diagnostics/probe_continuous_locale.py | 诊断脚本 | L2 | backend/diagnostics | 0 | 是 | 否 | 保留独立诊断入口；观测外部服务或长链路，不并入标准测试 |
+| backend/scripts/diagnostics/probe_new_assembly.py | 诊断脚本 | L2 | backend/diagnostics | 0 | 否 | 否 | 保留独立诊断入口；观测外部服务或长链路，不并入标准测试 |
+| backend/scripts/diagnostics/probe_prefix_optimization.py | 诊断脚本 | L2 | backend/diagnostics | 0 | 否 | 否 | 保留独立诊断入口；观测外部服务或长链路，不并入标准测试 |
+| backend/scripts/diagnostics/probe_real_cache_optimization.py | 诊断脚本 | L2 | backend/diagnostics | 0 | 否 | 否 | 保留独立诊断入口；观测外部服务或长链路，不并入标准测试 |
+| backend/scripts/diagnostics/probe_real_session_20_run_cache_matrix.py | 诊断脚本 | L2 | backend/diagnostics | 0 | 否 | 否 | 保留独立诊断入口；观测外部服务或长链路，不并入标准测试 |
+| backend/scripts/diagnostics/probe_real_session_20_run_cache.py | 诊断脚本 | L2 | backend/diagnostics | 0 | 否 | 否 | 保留独立诊断入口；观测外部服务或长链路，不并入标准测试 |
+| backend/scripts/diagnostics/probe_session_incremental_cache.py | 诊断脚本 | L2 | backend/diagnostics | 0 | 否 | 否 | 保留独立诊断入口；观测外部服务或长链路，不并入标准测试 |
+| backend/scripts/diagnostics/probe_tool_cache_boundary.py | 诊断脚本 | L2 | backend/diagnostics | 0 | 否 | 否 | 保留独立诊断入口；观测外部服务或长链路，不并入标准测试 |
 | backend/tests/test_agent_context_tz.py | pytest | L1 | backend/context | 7 | 否 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_canonical_context.py | pytest | L1 | backend/context | 5 | 否 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_canonical_tool_history.py | pytest | L1 | backend/context | 12 | 否 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
@@ -194,10 +194,10 @@
 
 | 文件 | 类型 | 层级 | owner | 声明数 | 外部依赖 | skip | 处置依据 |
 |---|---|---|---|---:|---|---|---|
-| backend/scripts/diagnostics/test_full_agent_flow.py | 诊断脚本 | L2 | backend/diagnostics | 0 | 否 | 否 | 保留独立诊断入口；观测外部服务或长链路，不并入标准测试 |
-| backend/scripts/diagnostics/test_full_schema_compact_ab.py | 诊断脚本 | L2 | backend/diagnostics | 0 | 是 | 否 | 保留独立诊断入口；观测外部服务或长链路，不并入标准测试 |
-| backend/scripts/diagnostics/test_minimax_null_fields.py | 诊断脚本 | L2 | backend/diagnostics | 0 | 否 | 否 | 保留独立诊断入口；观测外部服务或长链路，不并入标准测试 |
-| backend/scripts/diagnostics/test_schema_accumulation_5tools.py | 诊断脚本 | L2 | backend/diagnostics | 0 | 是 | 否 | 保留独立诊断入口；观测外部服务或长链路，不并入标准测试 |
+| backend/scripts/diagnostics/probe_full_agent_flow.py | 诊断脚本 | L2 | backend/diagnostics | 0 | 否 | 否 | 保留独立诊断入口；观测外部服务或长链路，不并入标准测试 |
+| backend/scripts/diagnostics/compare_full_schema_compaction.py | 诊断脚本 | L2 | backend/diagnostics | 0 | 是 | 否 | 保留独立诊断入口；观测外部服务或长链路，不并入标准测试 |
+| backend/scripts/diagnostics/probe_minimax_null_fields.py | 诊断脚本 | L2 | backend/diagnostics | 0 | 否 | 否 | 保留独立诊断入口；观测外部服务或长链路，不并入标准测试 |
+| backend/scripts/diagnostics/probe_schema_accumulation_5tools.py | 诊断脚本 | L2 | backend/diagnostics | 0 | 是 | 否 | 保留独立诊断入口；观测外部服务或长链路，不并入标准测试 |
 | backend/tests/test_agent_prompt_language.py | pytest | L1 | backend/agent-provider | 2 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_behaviors.py | pytest | L1 | backend/agent-provider | 3 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_byok_user_scope_guard.py | pytest | L1 | backend/agent-provider | 3 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
@@ -296,7 +296,7 @@
 
 | 文件 | 类型 | 层级 | owner | 声明数 | 外部依赖 | skip | 处置依据 |
 |---|---|---|---|---:|---|---|---|
-| backend/scripts/diagnostics/test_reminder_role_cache.py | 诊断脚本 | L2 | backend/diagnostics | 0 | 否 | 否 | 保留独立诊断入口；观测外部服务或长链路，不并入标准测试 |
+| backend/scripts/diagnostics/probe_reminder_role_cache.py | 诊断脚本 | L2 | backend/diagnostics | 0 | 否 | 否 | 保留独立诊断入口；观测外部服务或长链路，不并入标准测试 |
 | backend/tests/test_calendar_reminders.py | pytest | L1 | backend/mind-project | 3 | 否 | 否 | 保留 backend/mind-project 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_canvas_layout.py | pytest | L1 | backend/mind-project | 7 | 否 | 否 | 保留 backend/mind-project 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_event_reminder_migration.py | pytest | L1 | backend/mind-project | 1 | 否 | 否 | 保留 backend/mind-project 的 L1 契约；与 API、E2E 或其他领域入口分层 |

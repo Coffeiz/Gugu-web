@@ -11,7 +11,7 @@ MiniMax-M3 BYOK 的上下文上限为 128,000 tokens，90% 触发线为 115,200�
 使用同一会话的 MiniMax-M3 BYOK 模型配置和合成消息，不读取或输出会话正文，不写业务表或用量账本。运行仓库脚本：
 
 ```bash
-PYTHONPATH=. .venv/bin/python scripts/diagnostics/test_cache_strategy_compare.py \
+PYTHONPATH=. .venv/bin/python scripts/diagnostics/compare_cache_strategies.py \
   --allow-real-llm --compaction-ab --session-id 388
 ```
 
