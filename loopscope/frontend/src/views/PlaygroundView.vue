@@ -96,7 +96,7 @@
         :details="runDetails"
         :has-more-spans="hasMoreSpans"
         :focus-run-id="monitorFocusRunId"
-        @select="loadRunDetail"
+        @select="selectMonitorRun"
         @load-more="loadOlderRuns"
         @load-more-spans="loadMoreSpans"
         @export-runs="exportRuns"
@@ -222,6 +222,10 @@ async function loadRunDetail(runId: string, loadPrevious = true) {
   } finally {
     loadingRunId.value = ''
   }
+}
+function selectMonitorRun(runId: string) {
+  monitorFocusRunId.value = runId
+  void loadRunDetail(runId)
 }
 async function loadSpans(runId: string, offset: number) {
   if (loadingSpanRunId.value === runId) return

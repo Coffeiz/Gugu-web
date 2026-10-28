@@ -131,6 +131,7 @@ import { computed, ref, watch } from 'vue'
 import type { AdapterCallStats, CanonicalEventStats, TraceRun, TokenUsage } from '../types'
 import TraceSpanCard from './TraceSpanCard.vue'
 import { formatCompactNumber } from '../utils/formatNumber'
+import { resolveMonitorSelection } from '../utils/monitorSelection'
 import { useLoopScopeI18n } from '../i18n/index'
 
 const { t } = useLoopScopeI18n()
@@ -151,14 +152,20 @@ function setScrollTop(value: number) { if (runDetailEl.value) runDetailEl.value.
 defineExpose({ getScrollTop, setScrollTop })
 
 const selectedId = ref('')
+let previousFocusRunId: string | undefined
 watch(
-  () => [props.runs, props.focusRunId] as const,
-  ([runs, focus]) => {
-    if (!runs.length) { selectedId.value = ''; return }
-    if (focus && runs.some(r => r.id === focus)) { selectRun(focus); return }
-    if (!runs.some(r => r.id === selectedId.value)) selectRun(runs[0].id)
+  () => ({ runIds: props.runs.map(run => run.id), focusRunId: props.focusRunId }),
+  ({ runIds, focusRunId }) => {
+    const nextId = resolveMonitorSelection({
+      runIds,
+      selectedRunId: selectedId.value,
+      focusRunId,
+      focusChanged: focusRunId !== previousFocusRunId,
+    })
+    previousFocusRunId = focusRunId
+    if (nextId !== selectedId.value) selectRun(nextId)
   },
-  { immediate: true, deep: true },
+  { immediate: true },
 )
 
 const selected = computed(() => props.details?.[selectedId.value] ?? props.runs.find(r => r.id === selectedId.value) ?? null)
