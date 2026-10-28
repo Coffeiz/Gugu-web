@@ -26,7 +26,7 @@ RETRY_BACKOFF_MINUTES = (1, 5, 30, 120, 360)
 GROUP_MESSAGE_THRESHOLD = 50
 _LOCAL_SNAPSHOT_TASKS: set[asyncio.Task] = set()
 _LOCAL_IDLE_SNAPSHOT_TASKS: dict[str, asyncio.Task] = {}
-_LOCAL_IDLE_SNAPSHOT_DRAINING: set[str] = set()
+_LOCAL_IDLE_SNAPSHOT_DRAINING: set[asyncio.Task] = set()
 _LOCAL_IDLE_SNAPSHOT_MARKER_PREFIX = "memory:reflection:local-idle-snapshot:"
 _LOCAL_IDLE_SNAPSHOT_MARKER_GRACE_SECONDS = 90
 _LOCAL_IDLE_SNAPSHOT_MARKER_REFRESH_SECONDS = 30
@@ -111,10 +111,11 @@ async def _arm_local_idle_snapshot(scope: MemoryScope, session_id: int, settings
 
     previous = _LOCAL_IDLE_SNAPSHOT_TASKS.get(task_key)
     if (previous is not None and not previous.done()
-            and task_key not in _LOCAL_IDLE_SNAPSHOT_DRAINING):
+            and previous not in _LOCAL_IDLE_SNAPSHOT_DRAINING):
         previous.cancel()
 
     async def run_local_idle_snapshot() -> None:
+        owning_task = asyncio.current_task()
         marker_task = None
         try:
             await _async_sleep(IDLE_WINDOW.total_seconds())
@@ -126,11 +127,12 @@ async def _arm_local_idle_snapshot(scope: MemoryScope, session_id: int, settings
                         return
 
             marker_task = asyncio.create_task(refresh_marker())
-            _LOCAL_IDLE_SNAPSHOT_DRAINING.add(task_key)
+            if owning_task is not None:
+                _LOCAL_IDLE_SNAPSHOT_DRAINING.add(owning_task)
             try:
                 await _settle_scope_with_snapshot(scope, settings, snapshot)
             finally:
-                _LOCAL_IDLE_SNAPSHOT_DRAINING.discard(task_key)
+                _LOCAL_IDLE_SNAPSHOT_DRAINING.discard(owning_task)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -147,7 +149,7 @@ async def _arm_local_idle_snapshot(scope: MemoryScope, session_id: int, settings
                 await _delete_local_idle_snapshot_marker(redis, marker, token)
             except Exception:
                 pass
-            if _LOCAL_IDLE_SNAPSHOT_TASKS.get(task_key) is asyncio.current_task():
+            if _LOCAL_IDLE_SNAPSHOT_TASKS.get(task_key) is owning_task:
                 _LOCAL_IDLE_SNAPSHOT_TASKS.pop(task_key, None)
 
     task = asyncio.create_task(run_local_idle_snapshot())
@@ -155,6 +157,19 @@ async def _arm_local_idle_snapshot(scope: MemoryScope, session_id: int, settings
     _LOCAL_SNAPSHOT_TASKS.add(task)
     task.add_done_callback(_LOCAL_SNAPSHOT_TASKS.discard)
     return True
+
+
+async def shutdown_local_idle_snapshots() -> None:
+    """取消尚在等待的群反思定时器，并等待已开始的收束完成。"""
+    # 新建任务可能还未获得首个执行机会；先让它进入 try/finally，再取消。
+    await asyncio.sleep(0)
+    scheduled = list(_LOCAL_IDLE_SNAPSHOT_TASKS.items())
+    for _key, task in scheduled:
+        if not task.done() and task not in _LOCAL_IDLE_SNAPSHOT_DRAINING:
+            task.cancel()
+    tasks = list(_LOCAL_SNAPSHOT_TASKS)
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def _settle_scope_with_snapshot(scope: MemoryScope, settings, snapshot) -> int:

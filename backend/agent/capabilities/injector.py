@@ -10,7 +10,7 @@ from .selector import CapabilitySelector
 
 CATALOG_DESCRIPTION_MAX_CHARS = DESCRIPTION_SHORT_MAX_CHARS
 FIXED_ADAPTER_TOOL_NAMES = ("call_tool", "get_tool_schema", "use_skill", "ask_user")
-RUN_META_TOOL_NAMES = ("stop_recurring",)
+RUN_META_TOOL_NAMES = ("stop_recurring", "group_reply_decision")
 # Skill 管理工具不属于默认业务工具集，只在能力快照中保留供 Adapter 按需发现；
 # 它们不会因此进入 Provider 的首轮工具 Schema。
 ON_DEMAND_TOOL_NAMES = (
@@ -86,6 +86,13 @@ class CapabilityToolContext:
                 query = content if isinstance(content, str) else str(content)
                 break
         self.selection = self.selector.select(query, self.snapshot, self.limit)
+        # Run 内状态工具由服务端按场景启用，不能被能力推荐结果过滤。
+        mandatory = tuple(name for name in RUN_META_TOOL_NAMES if name in self.snapshot.tools)
+        if mandatory:
+            names = tuple(dict.fromkeys((*mandatory, *self.selection.tool_names)))
+            self.selection = SelectedCapabilities(
+                names, self.selection.reasons, self.selection.scores, self.selection.shadow,
+            )
         return self.selection
 
     async def select_for_query(self, query: str) -> SelectedCapabilities:
@@ -215,7 +222,9 @@ def catalog_block(
     tools = tuple(
         snapshot.tools[name]
         for name in ordered_tools
-        if name in snapshot.tools and snapshot.tools[name].kind == "tool"
+        if name in snapshot.tools
+        and snapshot.tools[name].kind == "tool"
+        and name != "group_reply_decision"
     )
     skills = tuple(
         item for item in snapshot.skills.values()

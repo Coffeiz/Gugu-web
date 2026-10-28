@@ -277,7 +277,7 @@ async def consume_agent_events(
                 outcome.tool_events.append(tool_event)
                 name = str(evt.get("name") or "")
                 if t == "tool_call":
-                    if name and name not in outcome.tool_names:
+                    if name and name != "group_reply_decision" and name not in outcome.tool_names:
                         outcome.tool_names.append(name)
                     # 展示时间线：tool 项按流式顺序插入（语义对齐 gateway/web.py）
                     if name and not name.startswith("_"):

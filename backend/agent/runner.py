@@ -31,8 +31,32 @@ from agent.run.execution import (
     cancelled_response,
     consume_agent_events,
 )
-from agent.run.finalization import finalize_agent_run, persist_interrupted_agent_run
+from agent.run.finalization import (
+    finalize_agent_run,
+    finalize_silent_group_reply,
+    persist_interrupted_agent_run,
+)
 from agent.run.preparation import prepare_agent_run
+
+
+def _silent_group_reply_response(req, outcome, session_id):
+    """选择前未获得回复许可时，丢弃本轮内部 assistant/tool history。"""
+    if not getattr(req, "group_auto_reply", False):
+        return None
+    from agent.im.auto_reply import ReplyChoice
+
+    gate = getattr(req, "group_reply_gate", None)
+    if gate is not None and gate.choice is ReplyChoice.REPLY:
+        return None
+    return AgentResponse(
+        text="",
+        session_id=session_id,
+        tokens_in=outcome.tokens_in,
+        tokens_out=outcome.tokens_out,
+        cache_read=outcome.cache_read,
+        cache_write=outcome.cache_write,
+        used_tools=False,
+    )
 
 
 async def _run_collect_unlocked(
@@ -90,7 +114,7 @@ async def _run_collect_unlocked(
         async for _ in consume_agent_events(
             gen, model_cfg=exec_.model_cfg, outcome=outcome,
             sink=CollectSink(on_tool_event=on_tool_event, on_round=on_round, on_display=on_display, user_message_id=req.user_message_id or 0,
-                             on_checkpoint=checkpoint_callback(req, exec_)),
+                             on_checkpoint=(None if req.group_auto_reply else checkpoint_callback(req, exec_))),
         ):
             pass
     finally:
@@ -99,6 +123,10 @@ async def _run_collect_unlocked(
 
     # 用户中途「算了」：网关已回「先不继续啦」，这里不再补发/不入历史/不反思（已执行的工具效果保留）
     if outcome.cancelled:
+        silent_response = _silent_group_reply_response(req, outcome, session_id)
+        if silent_response is not None:
+            await finalize_silent_group_reply(req, exec_, outcome)
+            return cancelled_response(outcome, session_id)
         await persist_interrupted_agent_run(req, exec_, outcome)
         return cancelled_response(outcome, session_id)
 
@@ -112,6 +140,11 @@ async def _run_collect_unlocked(
                              interactions=outcome.interactions,
                              tool_events=outcome.tool_events,
                              compaction_applied=outcome.compaction_applied)
+
+    silent_response = _silent_group_reply_response(req, outcome, session_id)
+    if silent_response is not None:
+        await finalize_silent_group_reply(req, exec_, outcome)
+        return silent_response
 
     im_used_tools = await finalize_agent_run(
         req, exec_, outcome, publish_assistant=_publish_assistant,
@@ -197,7 +230,7 @@ async def _run_stream_unlocked(
         async for item in consume_agent_events(
             gen, model_cfg=exec_.model_cfg, outcome=outcome,
             sink=WebStreamSink(on_tool_event=on_tool_event, on_event=on_event, on_display=on_display, user_message_id=req.user_message_id or 0,
-                               on_checkpoint=checkpoint_callback(req, exec_)),
+                               on_checkpoint=(None if req.group_auto_reply else checkpoint_callback(req, exec_))),
         ):
             yield item
     finally:
@@ -205,6 +238,11 @@ async def _run_stream_unlocked(
         _release_model(exec_.model_cfg)
 
     if outcome.cancelled:
+        silent_response = _silent_group_reply_response(req, outcome, session_id)
+        if silent_response is not None:
+            await finalize_silent_group_reply(req, exec_, outcome)
+            yield ("final", cancelled_response(outcome, session_id))
+            return
         await persist_interrupted_agent_run(req, exec_, outcome)
         yield ("final", cancelled_response(outcome, session_id))
         return
@@ -218,6 +256,12 @@ async def _run_stream_unlocked(
                                       used_tools=False, interactions=outcome.interactions,
                                       tool_events=outcome.tool_events,
                                       compaction_applied=outcome.compaction_applied))
+        return
+
+    silent_response = _silent_group_reply_response(req, outcome, session_id)
+    if silent_response is not None:
+        await finalize_silent_group_reply(req, exec_, outcome)
+        yield ("final", silent_response)
         return
 
     im_used_tools = await finalize_agent_run(

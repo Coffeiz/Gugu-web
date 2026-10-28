@@ -19,7 +19,7 @@ class InteractionBindings:
     dispatch_in_session: Callable[..., Awaitable[tuple[Any, Any]]]
     tool_result_payload: Callable[[Any], dict[str, Any]]
     is_successful_result: Callable[[Any], bool]
-    is_cancelled: Callable[[int | None], bool]
+    is_cancelled: Callable[[], Awaitable[bool]]
     diag_log: Callable[[str, BaseException], None]
 
 
@@ -62,7 +62,7 @@ class InteractionRuntime:
             user_id=self.user_id,
             prompt_id=pending.prompt_id,
             heartbeat=lambda: genstream.touch(self.session_id),
-            cancel_check=lambda: self.bindings.is_cancelled(self.session_id),
+            cancel_check=self.bindings.is_cancelled,
         )
         answer_status = self.bindings.classify_answer(answer)
         if answer_status in {"user_cancelled", "aborted", "expired"}:
@@ -147,7 +147,7 @@ class InteractionRuntime:
                         user_id=self.user_id,
                         prompt_id=followup["prompt_id"],
                         heartbeat=lambda: genstream.touch(self.session_id),
-                        cancel_check=lambda: self.bindings.is_cancelled(self.session_id),
+                        cancel_check=self.bindings.is_cancelled,
                     )
                     followup_status = self.bindings.classify_answer(followup_answer)
                     if followup_status in {"user_cancelled", "aborted", "expired"}:

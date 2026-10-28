@@ -297,6 +297,84 @@ async def _filter_shell_tool(
     return [name for name in names if name != "shell"]
 
 
+async def _reuse_early_user_rows(
+    db,
+    *,
+    session_id: int,
+    early_ids: list[int],
+    attach_cards: list | None,
+    batch_key: str | None,
+    batch_messages: list[dict] | None = None,
+):
+    """复用早落库的 IM 用户消息行，返回 (锚点行, 被复用的行列表)。
+
+    早落库：IM 消息在 run 启动前就已入库（否则「run 期间消息看不到」）。必须复用
+    那一行而不是再插一条——历史按 id 读行，多插一条会让同一段话在「历史」和「当前轮」
+    各出现一次。没有可复用的行时返回 (None, [])，调用方照旧插新行。
+    """
+    if not early_ids and not batch_messages:
+        return None, []
+    from sqlalchemy import select
+
+    from app.models import ConversationMessage
+
+    rows = (await db.execute(
+        select(ConversationMessage).where(
+            ConversationMessage.id.in_(early_ids),
+            ConversationMessage.session_id == session_id,
+        )
+    )).scalars().all()
+    if batch_messages:
+        by_id = {row.id: row for row in rows}
+        default_chat_type = rows[0].chat_type if rows else "c2c"
+        ordered = []
+        for item in batch_messages:
+            early_id = item.get("early_id")
+            row = by_id.get(int(early_id)) if early_id else None
+            if row is None:
+                row = ConversationMessage(
+                    session_id=session_id,
+                    role="user",
+                    content=item.get("text") or "",
+                    quoted_text=item.get("quoted_text"),
+                    platform_user_id=item.get("platform_user_id"),
+                    platform_user_name=item.get("platform_user_name"),
+                    platform_bot_user_id=item.get("platform_bot_user_id"),
+                    chat_type=item.get("chat_type") or default_chat_type,
+                )
+                db.add(row)
+            ordered.append(row)
+        await db.flush()
+        rows = ordered
+    if not rows:
+        return None, []
+    anchor = rows[-1] if batch_messages else max(rows, key=lambda row: row.id)
+    # 两个时间戳各司其职：
+    #
+    # - ``created_at`` 保留**消息到达时刻**。它是展示时间（网页气泡、网页实时排序），
+    #   也就是 IM 里的真实先后；改了它，网页顺序就会和平台消息顺序对不上。
+    # - ``sent_at`` 改写成**本轮处理时刻**。历史按 ``sent_at`` 排序、提示词里的
+    #   「消息时间」提醒也取自它：晚到的消息因此排在本轮回复之后而不是插到上一条
+    #   回复中间，上一轮的 provider 前缀逐字不变、缓存完整保留；新到的消息本来就是
+    #   fresh 内容，位置变化不影响已缓存的那一段。
+    from datetime import timedelta
+    from app.core.tz import now_utc
+
+    stamp = now_utc()
+    for index, row in enumerate(rows):
+        # 附件归锚点行：这一批的附件由锚点行统一 claim，其他行不再挂同一批卡片，
+        # 否则同一条附件会在多条消息上重复出现。
+        row.files = (attach_cards or None) if row.id == anchor.id else None
+        row.sent_at = stamp + timedelta(microseconds=index)
+        if batch_key:
+            from agent.im.inbound_recovery import user_run_key
+
+            # 从「已入库未消费」标记改成批次键：这行现在被本轮 run 消费了，
+            # recover_started 也能据此判定「这批已经开始过」。
+            row.run_id = user_run_key(batch_key)
+    return anchor, rows
+
+
 async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> PreparedExecution | EarlyExit:
     """统一第一段准备；返回执行快照，或准备期即确定的 EarlyExit 终态。
 
@@ -304,6 +382,14 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
     NON_STREAMING_BLOCK 行为提示），对齐 FR-RUN-03 允许的"provider 流式参数"差异。
     """
     user_id = req.user_id
+    group_reply_gate = None
+    group_reply_tool = None
+    if getattr(req, "group_auto_reply", False):
+        from agent.im.auto_reply import ReplyGate, build_group_reply_decision_tool
+
+        group_reply_gate = ReplyGate()
+        group_reply_tool = build_group_reply_decision_tool(group_reply_gate)
+        req.group_reply_gate = group_reply_gate
     settings = get_settings()
     # 用户链路标记：modelctx 兜底哨兵从此生效，后台派生任务不得静默烧平台配额
     from agent.llm import modelctx
@@ -406,7 +492,10 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
 
         # 附件（IM 收到的文件）：文本读内容注入给模型，卡片随用户消息持久化（和网页同一套）
         from app.core import chat_attach
-        llm_text = with_quoted_context(req.message, getattr(req, "quoted_text", None))
+        # 多发言人合并成一轮时，喂给模型的正文带发言人标注（req.message 保持原始正文，
+        # 落库和展示仍用原文）。
+        current_body = getattr(req, "im_attributed_text", None) or req.message
+        llm_text = with_quoted_context(current_body, getattr(req, "quoted_text", None))
         aug_text, attach_cards, aug_images, aug_media = await resolve_for_message(
             user_id, getattr(req, "attachments", None) or [], llm_text, model_cfg=model_cfg)
         if getattr(req, "attachments", None):   # 诊断：带附件时记 kind/ext/media 数，排查语音为何没转写
@@ -416,17 +505,33 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
                 len(req.attachments or []), len(aug_media or []),
                 [c.get("kind") for c in (attach_cards or [])],
                 [c.get("ext") for c in (attach_cards or [])])
-        user_message = ConversationMessage(session_id=session_id, role="user", content=req.message,
-                                           files=attach_cards or None, quoted_text=getattr(req, "quoted_text", None),
-                                           platform_user_id=req.platform_user_id,
-                                           platform_user_name=req.platform_user_name,
-                                           platform_bot_user_id=req.platform_bot_user_id,
-                                           chat_type="group" if req.chat_id else "c2c" if req.source in IM_SOURCES else None)
-        db.add(user_message)
-        if req.inbound_batch_key:
-            from agent.im.inbound_recovery import user_run_key
-            user_message.run_id = user_run_key(req.inbound_batch_key)
-        await db.flush()
+        user_message = None
+        early_ids = [int(i) for i in (getattr(req, "early_message_ids", None) or [])]
+        batch_messages = getattr(req, "im_batch_messages", None)
+        if early_ids or batch_messages:
+            # 早落库：这条 IM 消息在 run 启动前就已经入库（否则「run 期间消息看不到」）。
+            # 必须复用那一行而不是再插一条——历史按 id 读行，多插一条会让同一段话
+            # 在「历史」和「当前轮」各出现一次。
+            user_message, _reused = await _reuse_early_user_rows(
+                db,
+                session_id=session_id,
+                early_ids=early_ids,
+                attach_cards=attach_cards,
+                batch_key=req.inbound_batch_key,
+                batch_messages=batch_messages,
+            )
+        if user_message is None:
+            user_message = ConversationMessage(session_id=session_id, role="user", content=req.message,
+                                               files=attach_cards or None, quoted_text=getattr(req, "quoted_text", None),
+                                               platform_user_id=req.platform_user_id,
+                                               platform_user_name=req.platform_user_name,
+                                               platform_bot_user_id=req.platform_bot_user_id,
+                                               chat_type="group" if req.chat_id else "c2c" if req.source in IM_SOURCES else None)
+            db.add(user_message)
+            if req.inbound_batch_key:
+                from agent.im.inbound_recovery import user_run_key
+                user_message.run_id = user_run_key(req.inbound_batch_key)
+            await db.flush()
         req.user_message_id = user_message.id
         # 消息 + 所有附件 claim 是同一个事务（PRD-STORAGE-1 不变量 3），同网页路
         try:
@@ -574,6 +679,10 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
         user_id, settings, req.allowed_tool_names, req,
         history=history, snapshot_context=snapshot_context, user_message=user_message,
     )
+    if group_reply_tool is not None:
+        # Meta schema 只存在於此 run；不注册到全局工具表，也不受群成员业务白名单影响。
+        mcp_tools = [*mcp_tools, group_reply_tool]
+        tool_names = [*tool_names, group_reply_tool.name]
     modelctx.set_usage_context(
         user_id, session_id, scenario="mcp" if mcp_tools else "chat",
     )
@@ -587,6 +696,10 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
             user_skill_metadata=user_skill_metadata, dynamic_tools=mcp_tools, source=req.source,
             model_cfg=model_cfg,
         )
+    if group_reply_tool is not None:
+        from agent.im.auto_reply import group_reply_system_prompt
+
+        system_prompt = "\n\n---\n\n".join((system_prompt, group_reply_system_prompt()))
     if capability_context is not None:
         _pin_session_user_skill_metadata(session, capability_context)
     if capability_context is not None:
@@ -596,6 +709,7 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
         locale=getattr(req, "locale", None),
         dynamic_tools=mcp_tools,
     )
+    runner.group_reply_gate = group_reply_gate
 
     from agent.im.context_loader import format_current_content
     current_llm_text = format_current_content(aug_text, req)

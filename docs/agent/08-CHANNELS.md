@@ -235,6 +235,22 @@ QQ 当前支持全量群消息进入网关；`group_requires_at`、`group_read_e
 
 当前成员批量记忆反思由 `agent.memory.reflection_jobs` 和 `agent.memory.im_reflection` 负责，不由 Gateway 单独读取某个成员的历史。
 
+### 4.4 群聊自动回复选择门
+
+全量回复模式下，未 @ 咕咕的普通群消息进入同一个 run，由模型先决定是否回复：`agent/im/auto_reply/decision.py` 在本轮注入常驻 meta 工具 `group_reply_decision(should_reply: boolean)`，服务端 `ReplyGate` 记录本轮选择。
+
+- 选择前只向 provider 暴露选择工具，业务工具不可调用；服务端按批次校验 provider 返回的调用，越权批次整批拒绝，不执行其中任何一个工具。
+- **模型直接输出正文却没做选择属于协议违反**：该轮正文在 token 层即被丢弃、不会发进群，服务端把协议错误作为合成控制消息回给模型，让它在同一 run 内补做选择（上限一轮，纠错轮工具集仍只有选择工具）；补选后仍不选则落静默并保留 error 终态。模型没产出正文就结束属于主动沉默，按正常静默处理，不算违反。纠错轮的正文与提示只存在于本次请求上下文，不落库、不外发。
+- 选择工具是内部协议信号，**IM 侧一律不外显**（群里不得出现「群聊回复选择」这类工具消息）；Web 事件镜像保持完整，排查「模型是否做出选择」依赖它。
+- **回复门关闭期间群里不得出现任何可见内容**：正文、中间轮次、工具状态、交互提示、附件确认和错误提示都不发。协议失败、模型失败和超时保留 errored 终态与受限诊断（网页事件流、run outcome、诊断日志），但错误文案只是内部诊断，不作为回复发进群。
+- 选择"回复"后按该发言人原有权限开放业务工具并继续本 run；选择"不回复"直接结束 run，不持久化助手/工具历史、不触发反思，也不发普通 IM 空回复兜底。
+- 选择状态只属于本轮，不跨消息或会话继承；明确 @ 咕咕、仅 @ 模式、静默记录模式和私聊都不注入该工具。
+- 斜杠命令是显式控制输入，**在群里必须先 @ 咕咕才生效**：QQ / 飞书没有 bot 作用域，群里裸打 `/命令` 判断不出是给谁的（可能是别家 bot 的命令），不满足时这条消息按普通群消息继续走回复选择门，由模型自己决定要不要回应。Telegram 的 `group_mentioned` 已包含命令触发（parser 只把发给本 bot 的命令投递进来），因此裸打命令天然生效。私聊一律免 @。
+- 群里执行时，**owner 私有结果不能贴群**：`/memory`（记忆画像）、`/workspace`（工作区清单）的结果改私发 owner，群里只回一句提示；没有可用私聊地址或投递失败时同样只提示去私聊，不外泄内容。操作类命令（`/new` `/forget` 等）的回执不含私有内容，正常贴群。
+- 命令权限仍按发言人角色判定，只有绑定 Bot 的 owner 能执行读私有数据或改账号/会话状态的命令（`/help` 与 `/auto` 对所有角色开放）。命令执行前先恢复当前作用域的真实会话，避免 `/new`、`/workspace` 落到失效 id。
+
+详细设计见 `docs/prds/PRD-IM-16-群聊自动回复选择门.md`。
+
 ## 5. 平台适配
 
 ### 5.1 QQ
@@ -361,6 +377,7 @@ Agent text/tool/interaction result
 | 微信引用和媒体 | `test_wechat_quotes.py`、`test_im_media_ingress.py` |
 | Telegram update、游标、重试和出站 | `test_telegram_contract.py`、`test_telegram_gateway.py` |
 | 群成员/群组/私聊反思策略 | `test_im_memory_scopes.py`、`test_im_members.py` |
+| 群聊自动回复选择门与静默输出 | `tests/im/auto_reply/test_decision.py`、`test_runtime.py`、`test_group_silence.py`、`test_protocol_failure.py`、`test_protocol_retry.py`、`test_group_commands.py` |
 
 新增渠道或平台字段时，至少补充：身份归属、私聊/群聊路由、重复事件、引用/附件、权限拒绝、出站失败和重连后的行为测试。平台差异应留在 Gateway/replies 测试；共享行为应在 `agent.im` 和 worker 测试中验证。
 

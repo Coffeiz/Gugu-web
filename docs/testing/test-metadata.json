@@ -1694,5 +1694,21 @@
     "productionEntry": "backend/agent/gateway/qq/events.py 与 backend/agent/im/shortcuts.py",
     "keyBehavior": "QQ 带附件时秒回「文件收到啦」，同一会话 10 秒冷却不刷屏，群聊按只响应@与静默记录策略决定是否回复，纯文本不触发秒回",
     "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_protocol_retry.py": {
+    "domain": "im-group-reply-gate",
+    "layer": "L1",
+    "owner": "backend/agent/loop/runner.py",
+    "productionEntry": "backend/agent/im/auto_reply/decision.py",
+    "keyBehavior": "模型跳过选择工具直接输出正文时，把协议错误回灌模型补选一次，上限一轮；超限落静默与 error 终态，群里零输出；decision 工具调用在 IM 侧静默而 Web 镜像保留",
+    "ci": "backend-pytest"
+  },
+  "frontend/tests/i18n/group-reply-error.test.ts": {
+    "domain": "i18n-error-copy",
+    "layer": "L0",
+    "owner": "frontend/src/i18n/sections/common.ts",
+    "productionEntry": "frontend/src/components/common/gugu-chat/composables/useChatStream.ts",
+    "keyBehavior": "群聊选择门失败按界面语言取 chatUi.groupReplyFailed 文案，三语言互不相同，且不引导用户重发、不暴露实现术语",
+    "ci": "frontend-test"
   }
 }

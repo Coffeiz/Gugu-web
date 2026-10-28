@@ -22,6 +22,73 @@ def _reset_local_group_snapshot_tasks(monkeypatch):
     monkeypatch.setattr(reflection_jobs, "_LOCAL_SNAPSHOT_TASKS", set())
 
 
+async def test_worker_shutdown_drains_idle_snapshot_timer(monkeypatch):
+    """关闭 worker 时等待定时器清理标记，避免事件循环关闭后才运行 finally。"""
+    from app.core import redis as redis_module
+
+    class Redis:
+        def __init__(self):
+            self.values = {}
+
+        async def set(self, key, value, ex):
+            self.values[key] = value
+
+        async def eval(self, script, numkeys, key, token, *args):
+            if self.values.get(key) == token:
+                self.values.pop(key, None)
+                return 1
+            return 0
+
+    redis = Redis()
+    monkeypatch.setattr(redis_module, "get_redis", lambda: redis)
+    scope = MemoryScope("owner-synthetic", "qq", "bot-synthetic", "group", "group-synthetic")
+    assert await reflection_jobs._arm_local_idle_snapshot(scope, 7, SimpleNamespace(), "snapshot")
+    task = reflection_jobs._LOCAL_IDLE_SNAPSHOT_TASKS[f"{scope.prefix}:7"]
+    await reflection_jobs.shutdown_local_idle_snapshots()
+    assert task.done()
+    assert not reflection_jobs._LOCAL_IDLE_SNAPSHOT_TASKS
+    assert not redis.values
+
+
+async def test_shutdown_waits_for_previous_draining_snapshot_and_cancels_new_timer(monkeypatch):
+    """同一群旧任务正在收束而新计时器已注册时，两者都须有序收尾。"""
+    from app.core import redis as redis_module
+
+    class Redis:
+        def __init__(self):
+            self.values = {}
+
+        async def set(self, key, value, ex):
+            self.values[key] = value
+
+        async def eval(self, script, numkeys, key, token, *args):
+            if self.values.get(key) == token:
+                self.values.pop(key, None)
+                return 1
+            return 0
+
+    redis = Redis()
+    monkeypatch.setattr(redis_module, "get_redis", lambda: redis)
+    scope = MemoryScope("owner-synthetic", "qq", "bot-synthetic", "group", "group-synthetic")
+    release = asyncio.Event()
+    old_task = asyncio.create_task(release.wait())
+    key = f"{scope.prefix}:7"
+    reflection_jobs._LOCAL_IDLE_SNAPSHOT_TASKS[key] = old_task
+    reflection_jobs._LOCAL_IDLE_SNAPSHOT_DRAINING.add(old_task)
+    reflection_jobs._LOCAL_SNAPSHOT_TASKS.add(old_task)
+    assert await reflection_jobs._arm_local_idle_snapshot(scope, 7, SimpleNamespace(), "new")
+    new_task = reflection_jobs._LOCAL_IDLE_SNAPSHOT_TASKS[key]
+    stopping = asyncio.create_task(reflection_jobs.shutdown_local_idle_snapshots())
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert not old_task.cancelled()
+    assert not stopping.done()
+    release.set()
+    await asyncio.wait_for(stopping, 1)
+    assert old_task.done() and new_task.done()
+    assert not redis.values
+
+
 async def _restored_group_snapshot(db, user_a, monkeypatch):
     scope = MemoryScope(user_a.id, "qq", "bot-synthetic", "group", "group-synthetic")
     session = ConversationSession(
@@ -54,6 +121,9 @@ async def _restored_group_snapshot(db, user_a, monkeypatch):
             {"type": "tool_call", "id": "call-synthetic", "name": "lookup", "arguments": {"query": "项目"}},
             {"type": "text", "text": "已检查项目状态"},
         ],
+        # 历史按 sent_at（该消息被处理的时间）排序：助手这条与上面那条用户消息同属
+        # 一轮，必须排在用户消息之后、被动尾部之前。
+        sent_at=datetime(2026, 10, 20, 9, 30, 30, tzinfo=timezone.utc),
     )
     tool_message = ConversationMessage(
         session_id=session.id,
@@ -62,6 +132,7 @@ async def _restored_group_snapshot(db, user_a, monkeypatch):
         content_json=[{
             "type": "tool_result", "tool_call_id": "call-synthetic", "content": "合成工具结果",
         }],
+        sent_at=datetime(2026, 10, 20, 9, 30, 30, tzinfo=timezone.utc),
     )
     db.add_all([user_message, assistant_message, tool_message])
     await db.commit()

@@ -106,6 +106,7 @@ def bind_im_context(
         request.im_role,
         [str(item) for item in (request.attachments or [])],
         tool_display_mode=tool_display_mode,
+        group_auto_reply=bool(getattr(request, "group_auto_reply", False)),
     )
 
 

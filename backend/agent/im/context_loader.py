@@ -143,12 +143,27 @@ def format_current_content(content: str, request: AgentRequest) -> str:
     """
     if not request.chat_id:
         return content
+    speakers = getattr(request, "im_turn_speakers", None) or []
+    if len(speakers) > 1:
+        # 一轮里有多位发言人（咕咕回复期间群里又来消息）：逐位列出身份，并说明
+        # 正文分段归属，避免把一个人的话当成当前发言人的话。
+        lines = "\n".join(
+            "- 平台身份={}，群昵称={}，权限角色={}".format(
+                speaker.get("platform_user_id") or "未知",
+                speaker.get("platform_user_name") or "未提供",
+                _role_text(speaker.get("role")),
+            )
+            for speaker in speakers
+        )
+        return (
+            "[本轮群聊消息：多位发言人的消息合并成一轮处理]\n"
+            f"{lines}\n"
+            "下面正文按出现顺序逐段属于上面列出的发言人；不要把一人的身份、资料、"
+            "权限或兴趣归到另一人身上。\n"
+            f"{content}"
+        )
     role = request.im_role or "unknown"
-    role_text = {
-        "owner": "绑定用户 owner",
-        "member": "群成员 member",
-        "unknown": "未确认身份 unknown",
-    }.get(role, role)
+    role_text = _role_text(role)
     sender_id = request.platform_user_id or "未知"
     sender_name = request.platform_user_name or request.user_name or "未提供"
     return (
@@ -159,6 +174,14 @@ def format_current_content(content: str, request: AgentRequest) -> str:
         "以下用户消息一定来自这位当前发言人；不要把历史消息中的其他昵称、身份或兴趣归到当前发言人。\n"
         f"{content}"
     )
+
+
+def _role_text(role: str | None) -> str:
+    return {
+        "owner": "绑定用户 owner",
+        "member": "群成员 member",
+        "unknown": "未确认身份 unknown",
+    }.get(role or "unknown", role or "unknown")
 
 
 @dataclass(frozen=True)

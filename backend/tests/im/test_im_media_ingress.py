@@ -35,6 +35,41 @@ def test_worker_merges_qq_emoji_refs_from_all_payloads():
     ]
 
 
+def test_worker_merges_group_debounce_batch_into_one_round():
+    """一个防抖批次合成一轮：正文拼接，并保留每位发言人的分段信息。"""
+    from worker import _merge_payloads
+
+    merged = _merge_payloads([
+        {"chat_type": "group", "platform_user_id": "speaker-a", "platform_user_name": "甲",
+         "text": "A1"},
+        {"chat_type": "group", "platform_user_id": "speaker-a", "platform_user_name": "甲",
+         "text": "A2"},
+        {"chat_type": "group", "platform_user_id": "speaker-b", "platform_user_name": "乙",
+         "text": "B1"},
+    ])
+
+    assert merged["text"] == "A1\nA2\nB1"
+    assert [s["platform_user_id"] for s in merged["_speaker_segments"]] == [
+        "speaker-a", "speaker-a", "speaker-b",
+    ]
+    assert merged["_attributed_text"] == "【甲】A1\n【甲】A2\n【乙】B1"
+
+
+def test_worker_keeps_single_speaker_text_unchanged():
+    """只有一位发言人时正文逐字不变：加标注会改掉缓存前缀里的内容。"""
+    from worker import _merge_payloads
+
+    merged = _merge_payloads([
+        {"chat_type": "group", "platform_user_id": "speaker-a", "platform_user_name": "甲",
+         "text": "A1"},
+        {"chat_type": "group", "platform_user_id": "speaker-a", "platform_user_name": "甲",
+         "text": "A2"},
+    ])
+
+    assert merged["text"] == "A1\nA2"
+    assert merged["_attributed_text"] is None
+
+
 class _FakeResponse:
     status = 200
     headers = {"Content-Length": "11"}

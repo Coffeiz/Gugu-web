@@ -231,6 +231,33 @@ def test_reply_mentions_records_unmentioned_group_messages_without_replying():
     assert should_record_passive_group(request, {**policy, "group_mentioned": True}) is False
 
 
+def test_message_mentioning_another_bot_is_recorded_without_replying():
+    """@ 别的 bot 的消息只记录不回复：那条是喊别人家机器人的。"""
+    request = AgentRequest(
+        message="<@other-bot> 看看天气",
+        user_id="owner-1",
+        user_name="owner",
+        chat_id="group-1",
+        source="qq",
+    )
+    # 全量回复模式：本来每条群消息都会进回复选择门
+    reply_all = {
+        "chat_type": "group",
+        "group_requires_at": False,
+        "group_read_enabled": False,
+        "group_mentioned": False,
+    }
+
+    assert should_record_passive_group(request, reply_all) is False
+    assert should_record_passive_group(
+        request, {**reply_all, "mentions_other_bot": True}
+    ) is True
+    # 明确 @ 咕咕时仍然正常回复
+    assert should_record_passive_group(
+        request, {**reply_all, "mentions_other_bot": True, "group_mentioned": True}
+    ) is False
+
+
 def test_passive_group_payload_can_bypass_active_agent_task():
     base = {
         "platform": "qq",
@@ -250,6 +277,18 @@ def test_passive_group_payload_can_bypass_active_agent_task():
         "group_mentioned": True,
     }) is False
     assert _is_passive_group_payload({**base, "group_requires_at": False}) is False
+    # @ 别的 bot 的消息：全量回复模式下也只记录不回复
+    assert _is_passive_group_payload({
+        **base,
+        "group_requires_at": False,
+        "mentions_other_bot": True,
+    }) is True
+    assert _is_passive_group_payload({
+        **base,
+        "group_requires_at": False,
+        "mentions_other_bot": True,
+        "group_mentioned": True,
+    }) is False
     feishu = {**base, "platform": "feishu"}
     assert _is_passive_group_payload({**feishu, "group_read_enabled": True}) is True
     assert _is_passive_group_payload({
@@ -279,6 +318,8 @@ async def test_worker_hydrates_feishu_group_policy_before_passive_routing(monkey
     assert calls == [("12", "feishu")]
     assert updated == {
         **original,
+        # 群是否启用也要透传：早落库不能给已关闭的群写消息行。
+        "group_enabled": True,
         "group_requires_at": True,
         "group_read_enabled": False,
         "group_memory_enabled": False,

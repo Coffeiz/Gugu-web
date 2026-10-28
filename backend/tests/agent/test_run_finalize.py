@@ -516,6 +516,56 @@ async def test_finalize_run_records_byok_usage_without_platform_capping(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_silent_group_finalize_records_usage_without_persisting_private_tool_history(
+    db, user_a, monkeypatch,
+):
+    session = ConversationSession(user_id=user_a.id, title="群聊静默收尾")
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+    area = MessageArea()
+    area.append_batch(MessageBatch.from_canonical_messages([
+        {"role": "assistant", "content": [{
+            "type": "tool_call", "id": "internal-choice", "name": "group_reply_decision",
+            "arguments": "{\"should_reply\":false}",
+        }]},
+        {"role": "user", "content": [{
+            "type": "tool_result", "tool_call_id": "internal-choice", "content": "silent",
+        }]},
+    ]))
+    recorded = []
+
+    async def fake_record_usage(*_args, **kwargs):
+        recorded.append((kwargs.get("tokens_in"), kwargs.get("tokens_out")))
+        from agent.usage import UsageResult
+        return UsageResult(tokens_in=kwargs.get("tokens_in", 0), tokens_out=kwargs.get("tokens_out", 0))
+
+    async def no_trim(_session_id):
+        return None
+
+    monkeypatch.setattr("agent.usage.record_usage", fake_record_usage)
+    monkeypatch.setattr("app.services.conversation_retention.trim_session_messages", no_trim)
+    await run_finalize.finalize_run(
+        session_factory=async_sessionmaker(db.bind, expire_on_commit=False),
+        session_id=session.id,
+        user_id=user_a.id,
+        settings=SimpleNamespace(ai=SimpleNamespace(context_tokens=80000)),
+        model_cfg=SimpleNamespace(model="synthetic", provider="synthetic"),
+        message_area=area,
+        text="",
+        display_timeline=None,
+        files=[],
+        tokens_in=17,
+        tokens_out=3,
+        persist_message_delta=False,
+    )
+
+    assert recorded == [(17, 3)]
+    assert (await db.scalars(select(ConversationMessage))).all() == []
+    assert (await db.scalars(select(ConversationBatch))).all() == []
+
+
+@pytest.mark.asyncio
 async def test_finalize_run_keeps_byok_flag_from_real_pydantic_model(monkeypatch):
     """回归：resolve_run_config_for_user 注入的 is_byok 在真实 pydantic 模型上不能丢。
 
@@ -874,12 +924,16 @@ async def test_interrupted_run_persists_completed_history_before_followup(
         role="user",
         content="先检查文件",
         created_at=started_at,
+        # 历史按 sent_at 排、网页按 created_at 显示，两列必须同一套时间，
+        # 否则收尾行的先后锚定会失效。
+        sent_at=started_at,
     )
     followup_user = ConversationMessage(
         session_id=session.id,
         role="user",
         content="继续",
         created_at=started_at + timedelta(seconds=1),
+        sent_at=started_at + timedelta(seconds=1),
     )
     db.add_all([current_user, followup_user])
     await db.commit()

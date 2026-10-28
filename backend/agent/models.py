@@ -41,6 +41,8 @@ class AgentRequest:
     im_role: Optional[str] = None       # IM 身份：owner/member/unknown；网页为空
     allowed_tool_names: Optional[list[str]] = None  # None=沿用完整工具集；群成员使用白名单
     actor_context: Optional[ActorContext] = None    # IM 统一身份快照；Web 为空
+    im_turn_speakers: Optional[list] = None         # IM 群聊本轮多位发言人的身份快照（平台ID/昵称/角色）
+    im_attributed_text: Optional[str] = None        # 多发言人合并时喂给模型的正文（带发言人标注）
     im_message_format: Optional[str] = None         # QQ 文本出站格式策略
     im_group_memory_enabled: bool = True            # IM 群公开记忆是否读取/沉淀
     im_member_memory_enabled: bool = True           # IM 群成员记忆是否读取/沉淀
@@ -50,6 +52,10 @@ class AgentRequest:
     interaction_event_id: Optional[str] = None
     user_message_id: Optional[int] = None            # 本次触发消息的持久化 ID，用于 IM 失败终态回写
     inbound_batch_key: Optional[str] = None         # Worker 固定的入站批次身份，不进入模型输入
+    early_message_ids: Optional[list] = None        # 早落库的群消息行 id：run 复用这些行，不重复写
+    im_batch_messages: Optional[list] = None        # 批次原始消息与早落库结果，供逐条恢复
+    group_auto_reply: bool = False                  # 仅普通群聊自动回复 run 启用本轮回复选择门
+    group_reply_gate: object | None = None          # run 私有状态；不序列化、不跨消息继承
 
 
 @dataclass

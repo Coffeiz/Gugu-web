@@ -132,14 +132,19 @@ async def commit_delta(
             if not isinstance(message.get("content"), str):
                 values["content_json"] = media.images.strip_image_for_history(message.get("content"))
             if user_message is not None and user_sequence is not None:
+                # 两列时间戳同步锚定到用户消息：历史按 sent_at 排（该消息被处理的
+                # 时间），网页按 created_at 显示（消息到达时间），两列的相对先后
+                # 必须一致，否则同一批消息在「模型看到的顺序」和「网页显示的顺序」
+                # 里会错位。只锚一列会让另一列的排序失效。
+                anchor_sent_at = user_message.sent_at or user_message.created_at
                 if entry.sequence < user_sequence:
-                    values["created_at"] = user_message.created_at - timedelta(
-                        microseconds=user_sequence - entry.sequence,
-                    )
+                    offset = timedelta(microseconds=user_sequence - entry.sequence)
+                    values["created_at"] = user_message.created_at - offset
+                    values["sent_at"] = anchor_sent_at - offset
                 elif interrupted and entry.sequence > user_sequence:
-                    values["created_at"] = user_message.created_at + timedelta(
-                        microseconds=entry.sequence - user_sequence,
-                    )
+                    offset = timedelta(microseconds=entry.sequence - user_sequence)
+                    values["created_at"] = user_message.created_at + offset
+                    values["sent_at"] = anchor_sent_at + offset
             db.add(ConversationMessage(**values))
             inserted_messages += 1
     return {

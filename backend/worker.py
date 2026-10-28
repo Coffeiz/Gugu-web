@@ -108,6 +108,7 @@ _user_buffers: dict[ImConversationKey, list] = {}   # key -> [(msg_id, payload)]
 _user_deadline: dict[ImConversationKey, float] = {} # key -> 防抖截止时刻（loop.time()），每条新消息推后
 _user_flush: dict[ImConversationKey, asyncio.Task] = {}  # key -> 正在跑的 flush loop（每会话至多一个）
 _buffer_lock = asyncio.Lock()                  # 保护缓冲注册，避免并发 _dispatch 重复创建 flush loop
+_ingress_locks: dict[ImConversationKey, asyncio.Lock] = {}  # 同一 IM 会话的入站准备按队列顺序完成
 _flush_tasks: set = set()                       # 所有 flush loop：供优雅 drain 等它们跑完
 async def _refresh_concurrency():
     """从 config.override.json 直接热读并发上限（隔离读，不动全局 settings 缓存）。"""
@@ -218,18 +219,27 @@ async def handle(msg_id: str, payload: dict):
 
 
 def _merge_payloads(payloads: list) -> dict:
-    """把同一用户连发的多条消息合并成一条：拼接非空文字、合并所有附件；路由字段（message_id /
-    channel_id 等）取**最后一条**——被动回复 / 表情挂在最近那条上。"""
+    """把同一批消息合并成一轮：拼接非空文字、合并附件；路由字段（message_id /
+    channel_id 等）取**最后一条**——被动回复 / 表情挂在最近那条上。
+
+    一个批次就是一轮、只回一次（咕咕回复期间到达的消息攒到一起处理）。群里可能同时
+    有多位发言人：正文按发言人分段标注（``_attributed_text``），身份解析按「取最弱」
+    处理（见 ``agent/im/actor.py``），成员消息不会借主人权限执行特权操作。
+    """
     base = dict(payloads[-1])
-    texts, atts, emoji_refs = [], [], []
+    texts, atts, emoji_refs, segments = [], [], [], []
     has_face_marker = any(bool(p.get("qq_face_marker")) for p in payloads)
     for p in payloads:
         t = (p.get("text") or "").strip()
+        if has_face_marker and t == "[QQ表情]" and p.get("qq_face_marker"):
+            t = ""
         if t:
-            if has_face_marker and t == "[QQ表情]" and p.get("qq_face_marker"):
-                t = ""
-            if t:
-                texts.append(t)
+            texts.append(t)
+        segments.append({
+            "platform_user_id": p.get("platform_user_id") or "",
+            "platform_user_name": p.get("platform_user_name") or "",
+            "text": t,
+        })
         atts.extend(p.get("attachments") or [])
         emoji_refs.extend(
             ref for ref in (p.get("emoji_refs") or [])
@@ -239,7 +249,47 @@ def _merge_payloads(payloads: list) -> dict:
     base["attachments"] = atts
     base["emoji_refs"] = emoji_refs
     base["qq_face_marker"] = has_face_marker
+    # 早落库行 id：合并后的这一轮要复用这些行（而不是再插一遍）。
+    base["_early_message_ids"] = [
+        p.get("_early_message_id") for p in payloads if p.get("_early_message_id")
+    ]
+    base["_speaker_segments"] = segments
+    base["_attributed_text"] = _attributed_batch_text(segments)
+    if base.get("chat_type") == "group":
+        base["group_mentioned"] = any(bool(p.get("group_mentioned")) for p in payloads)
+        base["bot_mentioned"] = any(bool(p.get("bot_mentioned") or p.get("group_mentioned")) for p in payloads)
+    if base.get("chat_type") in {"group", "c2c"}:
+        base["_batch_messages"] = [
+            {
+                "early_id": p.get("_early_message_id"),
+                "text": p.get("text") or "",
+                "quoted_text": p.get("quoted_text"),
+                "chat_type": p.get("chat_type"),
+                "platform_user_id": p.get("platform_user_id"),
+                "platform_user_name": p.get("platform_user_name"),
+                "platform_bot_user_id": p.get("platform_bot_user_id"),
+            }
+            for p in payloads
+        ]
     return base
+
+
+def _attributed_batch_text(segments: list[dict]) -> str | None:
+    """多位发言人同批时，给每段正文标上发言人；只有一位发言人时返回 None。
+
+    单发言人不加标注：正文必须与改动前逐字一致，否则同一段话会在缓存前缀里变样。
+    """
+    speakers = {s.get("platform_user_id") or "" for s in segments}
+    if len(speakers) <= 1:
+        return None
+    lines = []
+    for s in segments:
+        text = (s.get("text") or "").strip()
+        if not text:
+            continue
+        name = s.get("platform_user_name") or s.get("platform_user_id") or "未知发言人"
+        lines.append(f"【{name}】{text}")
+    return "\n".join(lines) if lines else None
 
 
 def _is_passive_group_payload(payload: dict) -> bool:
@@ -248,18 +298,25 @@ def _is_passive_group_payload(payload: dict) -> bool:
     这条判断必须只依赖 Gateway 已经写入的回应方式字段，不能提前解析身份或
     读取数据库；这样被动消息才能在同一群的主动模型任务期间实时落库并推送前端。
     """
-    return bool(
-        payload.get("platform") in {"qq", "feishu", "telegram"}
-        and payload.get("chat_type") == "group"
-        and payload.get("chat_id")
-        and (
-            payload.get("group_read_enabled")
-            or (
-                payload.get("group_requires_at")
-                and not payload.get("group_mentioned")
-            )
-        )
-    )
+    from agent.im.conversation import GroupInboundMode, classify_group_inbound
+
+    return classify_group_inbound(payload) is GroupInboundMode.PASSIVE
+
+
+def _arrival_key(msg_id: str) -> tuple[int, int]:
+    """把消息 id 解析成可比较的**到达序**。
+
+    消息 id 是 Redis stream 的 entry id（形如 ``<毫秒>-<序号>``），由 gateway 入队时
+    分配，单调递增 = 真实到达顺序。缓冲里的 append 顺序不可靠：同一批里先到的消息可能
+    后进缓冲，合并后模型看到的顺序就会和会话里的实际顺序相反。合并前按到达序重排。
+    """
+    text = str(msg_id or "")
+    head, _, tail = text.partition("-")
+    try:
+        return (int(head), int(tail) if tail else 0)
+    except ValueError:
+        # 非 stream id（测试或旧格式）：全部视为相等，靠稳定排序保留原有顺序。
+        return (0, 0)
 
 
 async def _flush_loop(key: ImConversationKey):
@@ -283,9 +340,12 @@ async def _flush_loop(key: ImConversationKey):
                     _user_deadline.pop(key, None)
                     _user_flush.pop(key, None)
                     return
-                merged = _merge_payloads([p for _, p in batch])
-                rep_msg_id = batch[-1][0]
+                # 按到达序重排：缓冲里的 append 顺序来自并发派发，不等于会话消息顺序。
+                batch.sort(key=lambda item: _arrival_key(item[0]))
                 async with _run_slot():     # 多会话同时活跃时，跑 agent 的全局并发上限
+                    # 整个批次合成一轮：只跑一次 agent、只回一条消息。
+                    merged = _merge_payloads([p for _, p in batch])
+                    rep_msg_id = batch[-1][0]
                     cancelled = False
                     try:
                         from agent.im.inbound_recovery import register_batch
@@ -299,8 +359,22 @@ async def _flush_loop(key: ImConversationKey):
                     except Exception as e:
                         print(f"[worker] flush handle 出错（已 ack 丢弃，避免毒消息循环）: {type(e).__name__}: {e}", flush=True)
                     finally:
+                        can_ack = bool(merged.get("_inbound_batch_key")) and not cancelled
+                        early_ids = merged.get("_early_message_ids") or []
+                        if can_ack and early_ids:
+                            try:
+                                import app.db.session as db_session
+                                from agent.im.inbound_recovery import release_unconsumed_user_rows
+
+                                db_session.ensure_engine()
+                                await release_unconsumed_user_rows(db_session._SessionLocal, early_ids)
+                            except Exception as exc:
+                                from app.core.redaction import diag_log
+
+                                diag_log("worker.release_early_messages", exc)
+                                can_ack = False
                         for mid, _ in batch:
-                            if merged.get("_inbound_batch_key") and not cancelled:
+                            if can_ack:
                                 await _ack_inbound(mid)
                             else:
                                 _stop_message_lease(mid)
@@ -321,12 +395,13 @@ async def _dispatch(msg_id: str, payload: dict):
     if claim == "busy":
         # 另一个 worker 仍持有有效租约；不能 ACK 尚未完成的原处理。
         return
-    from agent.im.inbound_recovery import receipt_key, recover_started
+    from agent.im.inbound_recovery import receipt_key, recover_started, release_unconsumed_user_message
     batch_key = await R.get_redis().get(receipt_key(msg_id))
     if batch_key:
         import app.db.session as db_session
         db_session.ensure_engine()
         if await recover_started(db_session._SessionLocal, batch_key):
+            await release_unconsumed_user_message(db_session._SessionLocal, msg_id)
             await _ack_inbound(msg_id)
             return
     payload = await _hydrate_group_policy(payload)
@@ -377,6 +452,20 @@ async def _dispatch(msg_id: str, payload: dict):
             await _ack_inbound(msg_id)
         return
 
+    # 要进 run 的 IM 消息先落库：run 期间到达的消息不必等当前 run 跑完才出现在
+    # GuguChat。早落库行带临时 run_id 标记，run 起来时复用同一行（不重复写）。
+    try:
+        from agent.im.early_persist import persist_early_im_message
+
+        early_id = await persist_early_im_message(payload, message_id=msg_id)
+        if early_id:
+            payload["_early_message_id"] = early_id
+    except Exception as exc:
+        # 早落库失败不阻断消息：run 路径会照旧写这一行，消息不会丢。
+        from app.core.redaction import diag_log
+
+        diag_log("worker.early_persist", exc)
+
     # 投缓冲 + 把截止时刻推后；**不在这里 ack**，留到 flush（崩了未 ack → claim_stale 60s 重投兜底）。
     # _dispatch 由多个消费 task 并发调用，必须把“注册缓冲 + 创建 flush task”作为
     # 一个临界区，否则两个 task 都可能看到空的 _user_flush，从而把同一群拆成多条 session。
@@ -406,6 +495,7 @@ async def _hydrate_group_policy(payload: dict) -> dict:
     )
     result = dict(payload)
     result.update({
+        "group_enabled": settings[0],
         "group_requires_at": settings[1],
         "group_read_enabled": settings[2],
         "group_memory_enabled": settings[3],
@@ -440,7 +530,10 @@ async def run_once(block_ms: int = 5000) -> int:
 async def _dispatch_tracked(msg_id: str, payload: dict) -> None:
     """遇到未预期异常时释放内存准入名额，消息保留在 Redis 等待 stale reclaim。"""
     try:
-        await _dispatch(msg_id, payload)
+        key = conversation_key(payload)
+        lock = _ingress_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            await _dispatch(msg_id, payload)
     except Exception as exc:
         print(f"[worker] 消息派发出错（保留待重领）: {type(exc).__name__}", flush=True)
     finally:
@@ -641,6 +734,8 @@ async def _serve():
     await filesync_reconcile_task
     from agent.memory.reflection import shutdown_local_idle_drains
     await shutdown_local_idle_drains()
+    from agent.memory.reflection_jobs import shutdown_local_idle_snapshots
+    await shutdown_local_idle_snapshots()
     from agent.rag.injection import shutdown_background_recall_tasks
     await shutdown_background_recall_tasks()
     sched.shutdown()

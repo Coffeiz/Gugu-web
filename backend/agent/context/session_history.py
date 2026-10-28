@@ -9,7 +9,7 @@ import logging
 from contextvars import ContextVar
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 
 from .tokens import BASELINE_HISTORY_MAX_MSGS, HISTORY_MAX_MSGS
 
@@ -55,6 +55,7 @@ async def load_session_history(
     并始终保留在结果第一条，由 history builder 在发送边界规范化为普通 user 历史消息。
     """
     from app.models import ConversationMessage
+    from agent.im.inbound_recovery import PENDING_USER_RUN_PREFIX
 
     summary_query = (
         select(ConversationMessage)
@@ -95,8 +96,25 @@ async def load_session_history(
         .where(
             ConversationMessage.session_id == session_id,
             ConversationMessage.role != "summary",
+            # 早落库行（已入库但还没被任何 run 消费）不进历史：这一轮的正文本就
+            # 是当前这条消息，再入史会让同一段话在上下文里出现两次。
+            or_(
+                ConversationMessage.run_id.is_(None),
+                ConversationMessage.run_id.notlike(PENDING_USER_RUN_PREFIX + "%"),
+            ),
         )
-        .order_by(ConversationMessage.created_at.desc(), ConversationMessage.id.desc())
+        # 按 sent_at（该消息被本轮处理的时间）排序，而不是 created_at（入库时间）：
+        # 群消息在 run 跑的过程中就到了，created_at 是**到达时刻**，按它排会让晚到的
+        # 消息插到上一条回复**之前**，把 provider 缓存前缀从中间截断——上一轮那段就
+        # 缓存不住了。sent_at 与改动前（run 落库时刻）一致，历史顺序逐条不变。
+        #
+        # sent_at 为空的旧行回落 created_at：既保住老数据原来的顺序，也避开
+        # Postgres（SENT_AT DESC 时 NULLS FIRST）和 SQLite（NULLS LAST）排序相反
+        # 的差异，避免同一段历史在两端读出不同顺序。
+        .order_by(
+            func.coalesce(ConversationMessage.sent_at, ConversationMessage.created_at).desc(),
+            ConversationMessage.id.desc(),
+        )
     )
     if effective_baseline > 0:
         query = query.where(

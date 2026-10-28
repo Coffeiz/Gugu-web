@@ -27,6 +27,34 @@ from agent.loop import watchdog as _watchdog
 
 _parallel_traj_log = logging.getLogger("agent.traj")
 
+# 群聊选择门协议失败的可见错误载荷。
+#
+# 这类错误只在群聊自动回复 run 里产生：群里不显示（回复门没开时整轮静默），
+# 只在网页流里作为「这轮没处理成」的提示出现。措辞不引导用户「再说一遍」——
+# 群聊自动回复是群消息触发的，用户并没有对咕咕说过话，让他「再说一遍」是误导。
+# message_key 让界面按当前语言取文案；message 只是给不读 key 的消费方兜底。
+_GROUP_REPLY_PROTOCOL_ERROR = {
+    "type": "error",
+    "error_code": "group_reply_protocol",
+    "message_key": "chatUi.groupReplyFailed",
+    "message": "这条咕咕没接上 😅 稍后再看看。",
+}
+
+
+def _gate_violation_payload(reason: str) -> dict[str, Any]:
+    """门协议违规的工具级错误载荷。
+
+    这段文案会作为工具结果回灌给模型，所以必须写清下一步该做什么——
+    只说「不允许」模型会换个花样再绕一次。
+    """
+    return {
+        "error": reason,
+        "next_action": (
+            "先调用 group_reply_decision 做出本轮回复选择（should_reply=true/false），"
+            "再按需要调用其它工具；不要重复提交同一个越权调用。"
+        ),
+    }
+
 
 def _log_tool_batch_observation(event: dict[str, Any]) -> None:
     """只输出允许的低敏度批次汇总字段。"""
@@ -181,6 +209,10 @@ async def run_loop(
         ):
             initial_tool_names = list(runner.capability_context.select_for_messages(messages).tool_names)
         initial_tool_names = runner._provider_tool_names(initial_tool_names)
+        reply_gate = getattr(runner, "group_reply_gate", None)
+        reply_tool_name = "group_reply_decision"
+        if reply_gate is not None:
+            initial_tool_names = [reply_tool_name]
         current_tool_names = list(initial_tool_names)
         client, ctx = driver.prepare(
             initial_tool_names, ai, messages, system_text, tool_snapshot=tool_snapshot,
@@ -273,6 +305,23 @@ async def run_loop(
             return event
 
         while True:
+            if reply_gate is not None:
+                from agent.im.auto_reply import ReplyChoice
+
+                if reply_gate.choice is ReplyChoice.PENDING:
+                    current_tool_names = [reply_tool_name]
+                elif reply_gate.choice is ReplyChoice.REPLY:
+                    if (
+                        runner.capability_context is not None
+                        and not getattr(runner.capability_context, "metadata_only", False)
+                    ):
+                        selected = runner.capability_context.select_for_messages(messages).tool_names
+                    else:
+                        selected = tuple(runner.tool_names)
+                    current_tool_names = [
+                        name for name in runner._provider_tool_names(list(selected))
+                        if name != reply_tool_name
+                    ]
             scheduled_round_limit = getattr(runner, "round_limit_per_run", None)
             if scheduled_round_limit is not None and run_state.round_number >= scheduled_round_limit:
                 _core._log.warning(
@@ -342,6 +391,9 @@ async def run_loop(
                             _verify_buf.append(token)
                         elif goal_mode:
                             # 等待完成标记判定，避免把内部标记流给用户。
+                            pass
+                        elif reply_gate is not None and reply_gate.choice is ReplyChoice.PENDING:
+                            # 选择前即使模型先生成正文，也不能交给 collect/Web/IM Sink。
                             pass
                         elif reply_state.guard_retry_pending:
                             reply_state.guard_retry_buf.append(token)
@@ -532,7 +584,86 @@ async def run_loop(
                     yield stream_event("_context_compaction", phase="completed", applied=False,
                                        reason="not_applied")
 
+            # 群聊自动回复：模型必须先调用 group_reply_decision 决定静默还是发言。
+            # 直接输出正文属于协议违反——该轮正文已在 token 层丢弃、不会发进群，
+            # 这里把协议错误回给模型，让它在同一 run 内重新做出选择（PRD-IM-16 §4）。
+            # 纠错轮里工具集仍然是 [group_reply_decision]，模型除了选没有别的路。
+            if reply_gate is not None and not result.tool_calls:
+                from agent.im.auto_reply import (
+                    GROUP_REPLY_PROTOCOL_PROMPT,
+                    check_protocol_violation,
+                )
+
+                violation = check_protocol_violation(
+                    reply_gate, has_text=bool((result.text or "").strip()),
+                )
+                if violation == "retry":
+                    from app.core.redaction import diag_log_raw
+
+                    diag_log_raw(
+                        "agent.loop.group_reply_protocol_retry",
+                        f"run_id={run_id} round_id={round_id}",
+                    )
+                    messages.append_batch(
+                        driver.build_guard_followup(result, GROUP_REPLY_PROTOCOL_PROMPT)
+                    )
+                    yield stream_event(
+                        "_new_round",
+                        round_id=round_id,
+                        next_round=run_state.round_number + 1,
+                    )
+                    continue
+                if violation == "exhausted":
+                    # 纠错后仍不做选择：落静默并保留 error 终态，群里依旧零输出。
+                    from app.core.redaction import diag_log_raw
+
+                    diag_log_raw(
+                        "agent.loop.group_reply_protocol_exhausted",
+                        f"run_id={run_id} round_id={round_id}",
+                    )
+                    if reasoning_state is not None:
+                        await reasoning_state.failed("group_reply_protocol")
+                    yield f"data: {_core.json.dumps(_GROUP_REPLY_PROTOCOL_ERROR, ensure_ascii=False)}\n\n"
+                    return
+
             if result.tool_calls:
+                # 门协议违规（没调门就调别的工具、选了静默还调工具）不再整轮判死：
+                # 越权调用逐个隔离成工具级错误回灌给模型，让它在同一 run 内补调门
+                # 后继续（PRD-IM-16 §4）。整轮判死会让已经写好的正文连同算好的
+                # token 一起报废——实测线上就是这么丢掉群回复的。
+                gate_violations: list[tuple[int, Any, str, str]] = []
+                if reply_gate is not None:
+                    from agent.im.auto_reply import gate_call_violation_reason
+
+                    for index, call in enumerate(result.tool_calls):
+                        resolved, _arguments, resolve_error = _core._resolve_tool_call(
+                            getattr(call, "name", None), getattr(call, "input", None),
+                        )
+                        if resolve_error is not None:
+                            continue
+                        reason = gate_call_violation_reason(reply_gate, resolved)
+                        if reason is not None:
+                            gate_violations.append((index, call, resolved, reason))
+
+                if gate_violations:
+                    from app.core.redaction import diag_log_raw
+
+                    if reply_gate.note_tool_violation():
+                        # 连续违规超上限：模型在复读里，再纠错只会白烧 token。
+                        if reasoning_state is not None:
+                            await reasoning_state.failed("group_reply_protocol")
+                        # 协议失败是内部诊断，不是用户文案：越权原因只进受限日志，对外只给
+                        # 通用失败提示，避免把实现术语暴露给群成员（PRD-IM-16 §6）。
+                        diag_log_raw(
+                            "agent.loop.group_reply_protocol",
+                            f"run_id={run_id} round_id={round_id} calls={len(gate_violations)}",
+                        )
+                        yield f"data: {_core.json.dumps(_GROUP_REPLY_PROTOCOL_ERROR, ensure_ascii=False)}\n\n"
+                        return
+                    diag_log_raw(
+                        "agent.loop.group_reply_protocol_isolated",
+                        f"run_id={run_id} round_id={round_id} calls={len(gate_violations)}",
+                    )
                 reply_state.tool_round_started()  # 本轮真调了工具 → narration 兜底不触发
                 # 核实阶段首次补做（本轮调了增删改）→ 把"发现漏了X，补一下"说明发一次；之后的核对文字仍静默
                 dispatched = []
@@ -551,6 +682,42 @@ async def run_loop(
                     )
                 else:
                     parallel_plan, serial_plan = [], list(enumerate(result.tool_calls))
+
+                # 门协议违规的调用不执行：并行批次走 protocol_errors 隔离，串行批次
+                # 走 resolve_tool_call 的协议错误分支——两条路径都会把错误当成工具
+                # 结果回灌给模型，模型下一轮补调门后能继续跑完。
+                # 判定必须基于**本轮开始时**的门状态：选择工具一旦被执行，门就开了，
+                # 同一批里后面的业务调用会看起来"合法"（线上就是这么把 read_file
+                # 放过去的）。这里先按轮初状态把越权名单定下来。
+                gate_violation_reasons: dict[str, str] = {}
+                for _index, _call, resolved, reason in gate_violations:
+                    gate_violation_reasons.setdefault(resolved, reason)
+
+                gate_protocol_errors: dict[int, tuple[str, str]] = {}
+                parallel_local = {
+                    original: local
+                    for local, (original, _call, _target, _arguments)
+                    in enumerate(parallel_plan)
+                }
+                for original, _call, resolved, reason in gate_violations:
+                    local = parallel_local.get(original)
+                    if local is None:
+                        continue
+                    gate_protocol_errors[local] = (resolved, _core.json.dumps(
+                        _gate_violation_payload(reason), ensure_ascii=False,
+                    ))
+
+                def gate_resolve_tool_call(raw_name, raw_input):
+                    """串行批次的门协议拦截：越权调用不执行，只把错误回灌给模型。"""
+                    target, arguments, resolve_error = _core._resolve_tool_call(
+                        raw_name, raw_input,
+                    )
+                    if resolve_error is not None:
+                        return target, arguments, resolve_error
+                    reason = gate_violation_reasons.get(target)
+                    if reason is None:
+                        return target, arguments, None
+                    return target, arguments, _gate_violation_payload(reason)
 
                 if len(result.tool_calls) > 1 and not parallel_enabled:
                     _log_tool_batch_observation({
@@ -575,7 +742,7 @@ async def run_loop(
                             for local_index, (_index, call, target, arguments)
                             in enumerate(parallel_plan)
                         ],
-                        protocol_errors={},
+                        protocol_errors=gate_protocol_errors,
                         runner=runner,
                         user_id=user_id,
                         session_id=session_id,
@@ -657,7 +824,7 @@ async def run_loop(
                         runner=runner,
                         run_state=run_state,
                         bindings=SerialToolBindings(
-                            resolve_tool_call=_core._resolve_tool_call,
+                            resolve_tool_call=gate_resolve_tool_call,
                             set_tool_state=_core._im_set_tool_state,
                             dispatch_in_session=_core._dispatch_in_session,
                             is_successful_result=_core._is_successful_tool_result,
@@ -816,6 +983,22 @@ async def run_loop(
                             if tool is not None:
                                 add_event(tool_schema_event(tool))
                 messages.append_batch(batch)
+                if reply_gate is not None:
+                    from agent.im.auto_reply import ReplyChoice
+
+                    if reply_gate.choice is ReplyChoice.SILENT:
+                        # 选择静默后不再发起后续 provider 请求；run 收尾会丢弃本轮内部工具历史。
+                        if reasoning_state is not None:
+                            await reasoning_state.completed()
+                        yield stream_event(
+                            "_usage",
+                            input=run_state.total_usage_in,
+                            context_input=run_context_usage_peak,
+                            output=run_state.total_usage_out,
+                            cache_read=run_state.total_cache_read,
+                            cache_write=run_state.total_cache_write,
+                        )
+                        return
                 if parallel_cancelled:
                     # 已完成调用保留实际结果；未完成调用用取消回执补齐 canonical 配对。
                     # 取消事件结束当前 Run，不能再把这批结果发给 Provider 续轮。
@@ -953,17 +1136,18 @@ async def run_loop(
 
             # 反思快照捕获（PRD-LLM-27 §6.1）：只在成功收尾处捕获，进程内登记供
             # append_reuse 反思消费；失败/异常静默跳过，闲置 worker 可从持久历史重建最小输入。
-            try:
-                from agent.context.reflection_snapshot import capture_reflection_snapshot
-                capture_reflection_snapshot(
-                    user_id=user_id, session_id=session_id, run_id=run_id, ai=ai,
-                    system_prompt=system_text or "", tools=getattr(ctx, "tools", None),
-                    messages=messages, reply_text=_final_text,
-                    provider_context_input=run_state.run_context_usage or None,
-                    provider_compacted=context_runtime.provider_compacted,
-                )
-            except Exception as exc:
-                _core.diag_log("agent.context.reflection_snapshot.capture", exc)
+            if reply_gate is None or reply_gate.choice is ReplyChoice.REPLY:
+                try:
+                    from agent.context.reflection_snapshot import capture_reflection_snapshot
+                    capture_reflection_snapshot(
+                        user_id=user_id, session_id=session_id, run_id=run_id, ai=ai,
+                        system_prompt=system_text or "", tools=getattr(ctx, "tools", None),
+                        messages=messages, reply_text=_final_text,
+                        provider_context_input=run_state.run_context_usage or None,
+                        provider_compacted=context_runtime.provider_compacted,
+                    )
+                except Exception as exc:
+                    _core.diag_log("agent.context.reflection_snapshot.capture", exc)
 
             # 正文已经确定后立即结束本轮；90% 压缩已在 provider round 返回后同步完成。
             yield f"data: {_core.json.dumps({'type': '_usage', 'input': run_state.total_usage_in, 'context_input': run_context_usage_peak, 'output': run_state.total_usage_out, 'cache_read': run_state.total_cache_read, 'cache_write': run_state.total_cache_write})}\n\n"

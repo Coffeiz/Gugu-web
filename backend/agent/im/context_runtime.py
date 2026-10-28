@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 
 from app.core.tz import now_utc
 from agent.im.context_policy import IM_SOURCES
@@ -50,6 +50,8 @@ def im_identity_block(req: AgentRequest, history: list) -> str:
     chat_type = "群聊" if req.chat_id else "私聊"
     role = req.im_role or ("owner" if not req.chat_id else "unknown")
     role_text = {"owner": "绑定 Bot 的用户", "member": "群成员", "unknown": "未确认身份"}.get(role, role)
+    speakers = getattr(req, "im_turn_speakers", None) or []
+    multi_speaker = len(speakers) > 1
     lines = [
         "\n\n---\n\n## 当前 IM 身份事实（只供内部核对）",
         f"- 平台：{req.source}",
@@ -60,6 +62,20 @@ def im_identity_block(req: AgentRequest, history: list) -> str:
     ]
     if req.chat_id:
         lines.append(f"- 当前群会话标识：{req.chat_id}")
+    if multi_speaker:
+        # 一轮里有多位发言人：整轮按最弱权限执行，逐位列出身份，避免模型把
+        # 一个人的资料、权限当成另一个人的。
+        lines.append(f"- 本轮合并了 {len(speakers)} 位发言人的消息；整轮权限按最弱的一位（{role_text}）执行")
+        for speaker in speakers:
+            speaker_role = speaker.get("role") or "unknown"
+            lines.append(
+                "- 本轮发言人：平台身份={}，群昵称={}，权限角色={}".format(
+                    speaker.get("platform_user_id") or "未知",
+                    speaker.get("platform_user_name") or "未提供",
+                    {"owner": "绑定 Bot 的用户", "member": "群成员", "unknown": "未确认身份"}.get(
+                        speaker_role, speaker_role),
+                )
+            )
     previous = [
         getattr(item, "platform_user_id", None)
         for item in history
@@ -69,7 +85,11 @@ def im_identity_block(req: AgentRequest, history: list) -> str:
         lines.append(f"- 当前会话中此前记录到的发言人标识：{', '.join(dict.fromkeys(previous))}")
     lines.extend([
         "- 这是当前消息的可靠元数据，优先级高于历史消息；不要根据昵称、记忆或语气猜测身份。",
-        "- 历史消息可能来自其他群成员；回答当前消息时只能使用当前发言人的身份和资料。",
+        (
+            "- 本轮消息来自多位发言人；只能使用各自的身份和资料，不要跨发言人套用。"
+            if multi_speaker
+            else "- 历史消息可能来自其他群成员；回答当前消息时只能使用当前发言人的身份和资料。"
+        ),
         "- 群聊和私聊是不同会话类型；回答当前消息时必须按这里的会话类型处理。",
         "- 被问到‘是不是同一个 ID’时，只能根据这些标识比较；没有比较依据就明确说目前无法确认，不要编造‘一直没变’。",
         "- 不向用户主动展示原始平台 ID，也不要把 Gugu 账号昵称当成 QQ 昵称。",
@@ -139,7 +159,12 @@ async def continuity_bridge(
                     ConversationMessage.session_id == previous.id,
                     ConversationMessage.content_json.is_(None),
                 )
-                .order_by(desc(ConversationMessage.created_at))
+                # 与 provider 历史同一套顺序口径（sent_at=该消息被处理的时间，
+                # 缺失时回落 created_at），否则这里读出的先后会和模型看到的历史对不上。
+                .order_by(
+                    desc(func.coalesce(ConversationMessage.sent_at, ConversationMessage.created_at)),
+                    desc(ConversationMessage.id),
+                )
                 .limit(8)
             )
         ).scalars().all()

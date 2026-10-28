@@ -55,6 +55,15 @@ def can_use_tool(
     platform: str | None = None,
 ) -> bool:
     """dispatch 层的第二道权限门；Skill 管理仅网页用户和已认证 owner 可用。"""
+    if name == "group_reply_decision":
+        from agent.im import imctx
+
+        current_im = imctx.get_im()
+        return bool(
+            current_im
+            and current_im.get("chat_type") == "group"
+            and current_im.get("group_auto_reply") is True
+        )
     if name == "present_file" and platform:
         return False
     if name in SKILL_MANAGEMENT_TOOLS:
