@@ -1886,4 +1886,4 @@ class TrashPurgeJob(Base):
     started_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
     finished_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
 
-from app.models.mcp import McpSecretInput, UserMcpServer  # noqa: E402  (PRD-MCP-1)
+from app.models.mcp import McpSecretInput, UserMcpServer, UserMcpToolSchemaSnapshot  # noqa: E402  (PRD-MCP-1)
