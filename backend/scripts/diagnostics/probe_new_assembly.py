@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 
-async def test_new_assembly():
+async def run_new_assembly_probe():
     """测试新的组装结构"""
     from app.core.config import get_settings
     import httpx
@@ -100,7 +100,7 @@ async def test_new_assembly():
 
 async def main():
     """主函数"""
-    await test_new_assembly()
+    await run_new_assembly_probe()
 
 
 if __name__ == "__main__":

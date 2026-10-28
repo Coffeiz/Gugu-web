@@ -11,13 +11,12 @@ const files = execFileSync('git', ['ls-files', '-co', '--exclude-standard'], {
 }).split('\n').filter(file => file && fs.existsSync(path.join(root, file)))
 
 const testLike = files.filter(file =>
-  /(^|\/)test_[^/]+\.py$|\.(test|spec)\.(ts|js)$|\/check-[^/]+\.mjs$/.test(file),
+  /(^|\/)(test_[^/]+|[^/]+_test)\.py$|\.(test|spec)\.(ts|js)$|\/check-[^/]+\.mjs$/.test(file),
 )
 
 const known = file => (
   /^backend\/tests\/.+\.py$/.test(file)
   || /^backend\/test_[^/]+\.py$/.test(file)
-  || /^backend\/scripts\/diagnostics\/test_[^/]+\.py$/.test(file)
   || /^scripts\/release\/test_[^/]+\.py$/.test(file)
   || /^scripts\/quality\/test_[^/]+\.py$/.test(file)
   || /^scripts\/licenses\/tests\/test_[^/]+\.py$/.test(file)
@@ -34,7 +33,12 @@ const known = file => (
 const misplacedFrontendTests = testLike.filter(file =>
   /^frontend\/(src|test)\/.+\.(test|spec)\.ts$/.test(file),
 )
-const unknown = testLike.filter(file => !known(file) && !misplacedFrontendTests.includes(file))
+const misplacedActiveScripts = testLike.filter(file =>
+  /^backend\/scripts\/(diagnostics|benchmarks|smoke|checks)\/(test_[^/]+\.py|[^/]+_test\.py|[^/]+\.(test|spec)\.(ts|js))$/.test(file),
+)
+const unknown = testLike.filter(file =>
+  !known(file) && !misplacedFrontendTests.includes(file) && !misplacedActiveScripts.includes(file),
+)
 const skipFiles = testLike.filter(file => {
   const source = fs.readFileSync(path.join(root, file), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '')
@@ -46,6 +50,12 @@ const skipFiles = testLike.filter(file => {
 if (misplacedFrontendTests.length) {
   console.error('[测试边界] 前端 Vitest 测试必须位于 frontend/tests/：')
   for (const file of misplacedFrontendTests) console.error(`- ${file}`)
+  process.exitCode = 1
+}
+
+if (misplacedActiveScripts.length) {
+  console.error('[测试边界] 主动诊断/基准/冒烟/检查脚本不能使用自动测试命名：')
+  for (const file of misplacedActiveScripts) console.error(`- ${file}`)
   process.exitCode = 1
 }
 

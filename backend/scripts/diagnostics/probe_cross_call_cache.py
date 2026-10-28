@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 
-async def test_cross_call_cache():
+async def run_cross_call_cache_probe():
     from app.core.config import get_settings
     import httpx
     import anthropic
@@ -130,9 +130,9 @@ async def main():
     print("=" * 70)
     print("测试目标：验证相同静态人格跨 call 是否能命中缓存")
     print("=" * 70)
-    asyncio.run(test_cross_call_cache())
+    asyncio.run(run_cross_call_cache_probe())
 
 
 if __name__ == "__main__":
     import asyncio
-    asyncio.run(test_cross_call_cache())
+    asyncio.run(run_cross_call_cache_probe())

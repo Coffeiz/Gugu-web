@@ -21,7 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 
-async def test_session_incremental():
+async def run_session_incremental_probe():
     from app.core.config import get_settings
     import httpx
     import anthropic
@@ -135,4 +135,4 @@ if __name__ == "__main__":
     print("=" * 70)
     print("测试目标：验证静态 system + 累积 messages 的跨 call 缓存效果")
     print("=" * 70)
-    asyncio.run(test_session_incremental())
+    asyncio.run(run_session_incremental_probe())

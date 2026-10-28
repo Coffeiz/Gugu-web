@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 
-async def test_optimized_prefix():
+async def run_prefix_optimization_probe():
     """测试优化后的前缀一致性"""
     from agent.context import builder
 
@@ -67,7 +67,7 @@ async def test_optimized_prefix():
 
 async def main():
     """主函数"""
-    static1, static2 = await test_optimized_prefix()
+    static1, static2 = await run_prefix_optimization_probe()
 
     print(f"\n{'=' * 60}")
     print("✅ 验证结果")

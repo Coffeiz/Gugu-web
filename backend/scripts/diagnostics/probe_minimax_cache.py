@@ -6,7 +6,7 @@
 - 被动缓存：不发送 cache_control，API 不报告 cache_read_input_tokens
 
 用法：
-    python backend/scripts/diagnostics/minimax_cache_test.py
+    python backend/scripts/diagnostics/probe_minimax_cache.py
 """
 import os
 import json
@@ -132,7 +132,7 @@ def parse_stream_response(content: str):
     return None
 
 
-def test_active_cache(session_id: int = 1):
+def run_active_cache_probe(session_id: int = 1):
     """测试主动缓存模式"""
     print(f"\n{'='*70}")
     print(f"测试 1: 主动缓存模式 (Session {session_id})")
@@ -220,7 +220,7 @@ def test_active_cache(session_id: int = 1):
         return None
 
 
-def test_passive_cache(session_id: int = 1):
+def run_passive_cache_probe(session_id: int = 1):
     """测试被动缓存模式（不发送 cache_control）"""
     print(f"\n{'='*70}")
     print(f"测试 2: 被动缓存模式 (Session {session_id})")
@@ -301,7 +301,7 @@ def test_passive_cache(session_id: int = 1):
         return None
 
 
-def test_long_conversation_active(session_id: int = 1):
+def run_long_active_cache_probe(session_id: int = 1):
     """测试长对话的主动缓存效果（多轮工具调用）"""
     print(f"\n{'='*70}")
     print(f"测试 3: 长对话主动缓存 (Session {session_id})")
@@ -381,7 +381,7 @@ def test_long_conversation_active(session_id: int = 1):
         return None
 
 
-def test_long_conversation_passive(session_id: int = 1):
+def run_long_passive_cache_probe(session_id: int = 1):
     """测试长对话的被动缓存效果（不发送 cache_control）"""
     print(f"\n{'='*70}")
     print(f"测试 4: 长对话被动缓存 (Session {session_id})")
@@ -470,15 +470,15 @@ def main():
     results = []
 
     # 测试短对话
-    result1 = test_active_cache(session_id=1)
-    result2 = test_passive_cache(session_id=1)
+    result1 = run_active_cache_probe(session_id=1)
+    result2 = run_passive_cache_probe(session_id=1)
 
     if result1 and result2:
         results.extend([result1, result2])
 
     # 测试长对话
-    result3 = test_long_conversation_active(session_id=2)
-    result4 = test_long_conversation_passive(session_id=2)
+    result3 = run_long_active_cache_probe(session_id=2)
+    result4 = run_long_passive_cache_probe(session_id=2)
 
     if result3 and result4:
         results.extend([result3, result4])

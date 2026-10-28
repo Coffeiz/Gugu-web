@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 
-async def test_minimax_with_null_fields():
+async def run_minimax_null_fields_probe():
     """测试 MiniMax 处理 null 字段的能力"""
     print("=" * 60)
     print("测试 MiniMax 对 null 字段的容忍度")
@@ -205,7 +205,7 @@ async def test_minimax_with_null_fields():
 async def main():
     """主函数"""
     try:
-        await test_minimax_with_null_fields()
+        await run_minimax_null_fields_probe()
     except KeyboardInterrupt:
         print("\n\n⚠️  测试被用户中断")
     except Exception as e:

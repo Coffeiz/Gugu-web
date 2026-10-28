@@ -5,8 +5,12 @@ import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 
 const root = path.resolve(import.meta.dirname, '../..')
-const workflowPath = path.join(root, '.github/workflows/runtime-integration.yml')
-const workflow = fs.readFileSync(workflowPath, 'utf8')
+const workflowDirectory = path.join(root, '.github/workflows')
+const workflow = fs.readdirSync(workflowDirectory)
+  .filter(file => file.endsWith('.yml') || file.endsWith('.yaml'))
+  .map(file => fs.readFileSync(path.join(workflowDirectory, file), 'utf8'))
+  .join('\n')
+const frontendPackage = JSON.parse(fs.readFileSync(path.join(root, 'frontend/package.json'), 'utf8'))
 const outputPath = process.argv.slice(2).find(arg => arg.startsWith('--output='))?.slice('--output='.length)
 
 function gitFiles(glob) {
@@ -107,10 +111,10 @@ function domainFor(file) {
 function layerFor(file, kind) {
   const value = file.toLowerCase()
   if (value.includes('/e2e/')) return 'L3'
-  if (value.includes('/diagnostics/')) return 'L2'
+  if (['diagnostic-script', 'benchmark-script', 'smoke-script', 'test-support'].includes(kind)) return 'L2'
   if (value.includes('docker') || value.includes('pty') || value.includes('raw_ws') || value.includes('terminal_streaming')) return 'L2'
   if (value.includes('/scripts/') && !value.includes('/tests/')) return 'L0'
-  if (kind === 'vitest' || kind === 'static-check') return 'L0'
+  if (['vitest', 'static-check', 'test-governance'].includes(kind)) return 'L0'
   return 'L1'
 }
 
@@ -118,6 +122,10 @@ function ownerFor(file, kind, domain) {
   if (kind === 'playwright') return 'frontend/e2e'
   if (kind === 'static-check') return '工程质量'
   if (kind === 'diagnostic-script') return 'backend/diagnostics'
+  if (kind === 'benchmark-script') return 'backend/benchmarks'
+  if (kind === 'smoke-script') return 'backend/smoke'
+  if (kind === 'test-support') return '测试环境辅助'
+  if (kind === 'test-governance') return '测试治理'
   if (kind === 'node-test') return file.startsWith('loopscope/') ? 'loopscope/runtime' : 'backend/ts'
   if (kind === 'vitest') return `frontend/${domain}`
   return `backend/${domain}`
@@ -127,22 +135,35 @@ function inventoryItem(file, kind) {
   const source = read(file)
   const runnableSource = executableSource(source)
   const isE2e = kind === 'playwright'
-  const declaredTestCount = isE2e
-    ? countMatches(source, /\b(test|test\.describe)\s*\(/g)
-    : kind === 'pytest'
-      ? countMatches(source, /^\s*(?:async\s+)?def\s+test_[A-Za-z0-9_]+\s*\(/gm)
-      : countMatches(source, /\b(?:it|test)(?:\.each|\.skip|\.only)?\s*\(/g)
+  const isManualAsset = ['diagnostic-script', 'benchmark-script', 'smoke-script', 'static-check', 'test-support', 'test-governance'].includes(kind)
+  const declaredTestCount = isManualAsset
+    ? 0
+    : isE2e
+      ? countMatches(source, /\b(test|test\.describe)\s*\(/g)
+      : kind === 'pytest'
+        ? countMatches(source, /^\s*(?:async\s+)?def\s+test_[A-Za-z0-9_]+\s*\(/gm)
+        : countMatches(source, /\b(?:it|test)(?:\.each|\.skip|\.only)?\s*\(/g)
   const ci = isE2e
-    ? workflow.includes(path.basename(file))
+    ? workflow.includes('test:e2e:stable') && frontendPackage.scripts?.['test:e2e:stable']?.includes(path.basename(file))
     : kind === 'vitest'
       ? workflow.includes('pnpm --filter gugu-web run test:run') || workflow.includes('pnpm --filter gugu-web test:run')
       : kind === 'node-test'
-        ? false
-        : kind === 'diagnostic-script'
+        ? file.startsWith('loopscope/apps/collector/')
+          ? workflow.includes('pnpm test') && workflow.includes('working-directory: loopscope')
+          : workflow.includes(path.basename(file))
+        : ['diagnostic-script', 'benchmark-script', 'smoke-script'].includes(kind)
           ? false
+          : kind === 'test-support'
+            ? workflow.includes(path.basename(file))
           : kind === 'pytest'
-            ? workflow.includes('pytest -q')
-            : false
+            ? file.startsWith('scripts/licenses/tests/')
+              ? workflow.includes('scripts/licenses/tests')
+              : workflow.includes('pytest -q')
+            : kind === 'test-governance'
+              ? workflow.includes(path.basename(file))
+              : kind === 'static-check'
+                ? workflow.includes(path.basename(file))
+                : false
   const domain = domainFor(file)
   return {
     file,
@@ -163,15 +184,23 @@ const items = [
   ...Array.from(new Set([
     ...gitFiles('backend/tests/test_*.py'),
     ...gitFiles('backend/tests/**/test_*.py'),
+    ...gitFiles('scripts/release/test_*.py'),
+    ...gitFiles('scripts/quality/test_*.py'),
+    ...gitFiles('scripts/licenses/tests/test_*.py'),
   ])).map(file => inventoryItem(file, 'pytest')),
-  ...gitFiles('backend/scripts/diagnostics').filter(file => /\/test_[^/]+\.py$/.test(file)).map(file => inventoryItem(file, 'diagnostic-script')),
-  ...gitFiles('backend/ts').filter(file => file.endsWith('.test.ts')).map(file => inventoryItem(file, 'node-test')),
-  ...gitFiles('loopscope').filter(file => file.endsWith('.test.ts')).map(file => inventoryItem(file, 'node-test')),
-  ...gitFiles('frontend/src').filter(file => file.endsWith('.test.ts')).map(file => inventoryItem(file, 'vitest')),
-  ...gitFiles('frontend/test').filter(file => file.endsWith('.test.ts')).map(file => inventoryItem(file, 'vitest')),
+  ...gitFiles('backend/scripts/diagnostics').filter(file => /\.(py|ts|mjs)$/.test(file)).map(file => inventoryItem(file, 'diagnostic-script')),
+  ...gitFiles('backend/scripts/benchmarks').filter(file => /\.(py|ts|mjs)$/.test(file)).map(file => inventoryItem(file, 'benchmark-script')),
+  ...gitFiles('backend/scripts/smoke').filter(file => /\.(py|ts|mjs)$/.test(file)).map(file => inventoryItem(file, 'smoke-script')),
+  ...gitFiles('backend/scripts/testing').filter(file => /\.(py|ts|mjs)$/.test(file)).map(file => inventoryItem(file, 'test-support')),
+  ...gitFiles('backend/scripts/checks').filter(file => /\.(py|ts|mjs)$/.test(file)).map(file => inventoryItem(file, 'static-check')),
+  ...gitFiles('backend/ts').filter(file => /\.test\.(ts|mjs)$/.test(file)).map(file => inventoryItem(file, 'node-test')),
+  ...gitFiles('loopscope').filter(file => /\.test\.(ts|mjs)$/.test(file)).map(file => inventoryItem(file, 'node-test')),
+  ...gitFiles('scripts/release').filter(file => /\.test\.mjs$/.test(file)).map(file => inventoryItem(file, 'node-test')),
+  ...gitFiles('frontend/tests').filter(file => file.endsWith('.test.ts')).map(file => inventoryItem(file, 'vitest')),
   ...gitFiles('frontend/e2e/*.spec.ts').map(file => inventoryItem(file, 'playwright')),
   ...gitFiles('frontend/scripts').filter(file => /\/check-[^/]+\.mjs$/.test(file)).map(file => inventoryItem(file, 'static-check')),
   ...gitFiles('scripts/licenses').filter(file => /\/check-[^/]+\.mjs$/.test(file)).map(file => inventoryItem(file, 'static-check')),
+  ...gitFiles('scripts/tests').filter(file => /\/(check-|run-test-|run-fast-)[^/]+\.mjs$/.test(file)).map(file => inventoryItem(file, 'test-governance')),
 ].sort((left, right) => left.file.localeCompare(right.file))
 
 const summary = items.reduce((result, item) => {

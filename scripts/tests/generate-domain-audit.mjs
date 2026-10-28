@@ -19,7 +19,7 @@ const domains = [
 const reviewNotes = {
   context: [
     '初步分组：缓存/前缀（诊断脚本与 `test_cross_run_cache_prefix.py`）、历史过滤/规范化、compaction、session 快照/续接。',
-    '当前不直接合并：`test_new_assembly.py`、`test_prefix_optimization.py` 是组装边界诊断，`test_real_cache_optimization.py` 和 20-run 脚本是 provider 观测；生产入口或执行层级不同。',
+    '当前不直接合并：`probe_new_assembly.py`、`probe_prefix_optimization.py` 是组装边界诊断，`probe_real_cache_optimization.py` 和 20-run 脚本是 provider 观测；生产入口或执行层级不同。',
     '重复候选：多个真实缓存脚本需要后续以同一 provider、同一 session、同一输出指标对拍；确认结果前全部保留。',
   ],
   im: [
@@ -68,12 +68,20 @@ function kindLabel(kind) {
     vitest: 'Vitest',
     playwright: 'Playwright',
     'diagnostic-script': '诊断脚本',
+    'benchmark-script': '基准脚本',
+    'smoke-script': '冒烟脚本',
+    'test-support': '测试辅助程序',
+    'test-governance': '测试治理工具',
     'static-check': '静态检查',
   }[kind] ?? kind
 }
 
 function disposition(item) {
   if (item.kind === 'diagnostic-script') return '保留独立诊断入口；观测外部服务或长链路，不并入标准测试'
+  if (item.kind === 'benchmark-script') return '保留人工基准入口；记录条件与成本，不作为回归门禁'
+  if (item.kind === 'smoke-script') return '保留环境冒烟入口；确认链路可用，不替代回归断言'
+  if (item.kind === 'test-support') return '保留测试服务或 fixture 辅助程序；断言归对应回归套件'
+  if (item.kind === 'test-governance') return '保留测试调度、边界和元数据治理职责'
   if (item.kind === 'playwright') return item.hasSkip ? '保留实验 E2E；含环境数据 skip，不进入稳定 CI' : '保留稳定 E2E；验证真实浏览器入口'
   if (item.kind === 'vitest') return item.layer === 'L0' ? '保留前端 L0；按纯逻辑/样式/组件契约独立执行' : '保留前端分层测试'
   if (item.kind === 'node-test') return '保留 TS/Node 独立运行时边界，不与 Python pytest 合并'

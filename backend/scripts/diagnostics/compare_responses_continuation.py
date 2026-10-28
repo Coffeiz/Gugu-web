@@ -8,7 +8,7 @@ API Key、response ID 或上游错误正文。
 
 在 devserver 的 backend 目录运行：
     PYTHONPATH=. .venv/bin/python scripts/diagnostics/\
-      test_responses_continuation_ab.py --allow-real-llm --preset Agnes
+      compare_responses_continuation.py --allow-real-llm --preset Agnes
 
 两组始终回放完整历史，不发送 ``previous_response_id``。唯一变量是是否保留并回放
 模型 Responses 返回的 reasoning item，模拟“推理续接”关闭/开启。最多每组运行 5 次；

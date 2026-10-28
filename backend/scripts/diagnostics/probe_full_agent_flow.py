@@ -52,7 +52,7 @@ class StepByStepTracer:
             print(f"  {i}. {step}")
 
 
-async def test_full_agent_canvas_creation():
+async def run_full_agent_canvas_probe():
     """测试完整的 agent 创建画布流程"""
     print("=" * 70)
     print("完整的 Agent 创建画布流程测试")
@@ -337,7 +337,7 @@ async def test_full_agent_canvas_creation():
 async def main():
     """主函数"""
     try:
-        await test_full_agent_canvas_creation()
+        await run_full_agent_canvas_probe()
     except KeyboardInterrupt:
         print("\n\n⚠️  测试被用户中断")
     except Exception as e:

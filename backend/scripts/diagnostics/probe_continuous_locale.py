@@ -51,7 +51,7 @@ async def _run_model(settings, model_cfg) -> dict[str, Any]:
     from agent.context.assembly import MessageArea
     from agent.core import LLMRunner
     from agent.llm.llm_select import use_anthropic_for
-    from test_full_schema_compact_ab import payload
+    from compare_full_schema_compaction import payload
 
     anthropic = use_anthropic_for(model_cfg)
     system = (

@@ -1,4 +1,4 @@
-from scripts.diagnostics.test_full_schema_compact_ab import (
+from scripts.diagnostics.compare_full_schema_compaction import (
     aggregate_usage_rows,
     matches_expected,
     schema_mismatch,

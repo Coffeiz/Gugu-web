@@ -12,7 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 
-async def test_cross_call_cache_with_optimization():
+async def run_cross_call_cache_probe():
     """测试优化后的跨 call 缓存"""
     from app.core.config import get_settings
     import httpx
@@ -92,7 +92,7 @@ async def test_cross_call_cache_with_optimization():
 
 async def main():
     """主函数"""
-    await test_cross_call_cache_with_optimization()
+    await run_cross_call_cache_probe()
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@ from agent.capabilities.defaults import all_system_tool_names
 from agent.tools.base import Tool
 from agent.tools import registry
 
-from scripts.diagnostics.test_full_schema_compact_ab import (
+from scripts.diagnostics.compare_full_schema_compaction import (
     description_anthropic,
     description_openai,
     full_anthropic,
