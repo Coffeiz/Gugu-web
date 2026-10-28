@@ -735,6 +735,8 @@ class PreferencesResponse(CamelModel):
     stageTemplates:    list[dict] = []
     replyTone:         Optional[str] = None   # natural / formal / lively
     replyLength:       Optional[str] = None   # medium / short / detailed
+    customReplyStyle: Optional[str] = None
+    customReplyStyleEnabled: bool = False
     pmStagesExpanded:  bool = False            # 项目编辑卡：阶段区展开(50/50) 版面记忆
     calendarWeekStart: str = "monday"         # 日历每周起始日：monday / sunday
     defaultView:       str = "projects"       # 应用打开时的默认入口
@@ -801,6 +803,7 @@ class PreferencesUpdate(CamelModel):
     stageTemplates:    Optional[list[dict]] = None
     replyTone:         Optional[str] = None
     replyLength:       Optional[str] = None
+    customReplyStyleEnabled: Optional[bool] = None
     pmStagesExpanded:  Optional[bool] = None
     calendarWeekStart: Optional[str] = None
     defaultView:       Optional[str] = None
@@ -822,6 +825,19 @@ class PreferencesUpdate(CamelModel):
             return None
         if any(char in {"\x00", "\ufeff"} or (ord(char) < 32 and char not in {"\n", "\r", "\t"}) for char in value):
             raise ValueError("人格偏好包含不支持的控制字符")
+        return value.strip() or None
+
+
+class ReplyStyleUpdate(CamelModel):
+    content: Optional[str] = Field(..., max_length=10000)
+
+    @field_validator("content")
+    @classmethod
+    def validate_reply_style(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        if any(char in {"\x00", "\ufeff"} or (ord(char) < 32 and char not in {"\n", "\r", "\t"}) for char in value):
+            raise ValueError("回复风格包含不支持的控制字符")
         return value.strip() or None
 
 

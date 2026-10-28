@@ -25,6 +25,8 @@ export const usePreferencesStore = defineStore('preferences', () => {
   const imToolDisplayMode = ref<'off' | 'all' | 'slow_only'>('all')
   const showIntermediateReplies = ref(false)
   const toolInjectionMode = ref<'description' | 'full'>('description')
+  const customReplyStyle = ref('')
+  const customReplyStyleEnabled = ref(false)
   const personalityPreference = ref('')
   const personalityPreferenceEnabled = ref(false)
   const personalityPreferenceAvailable = ref(true)
@@ -87,6 +89,8 @@ export const usePreferencesStore = defineStore('preferences', () => {
       imToolDisplayMode.value = ['off', 'all', 'slow_only'].includes(displayMode) ? displayMode : 'all'
       showIntermediateReplies.value = (data as any).showIntermediateReplies ?? false
       toolInjectionMode.value = (data as any).toolInjectionMode === 'full' ? 'full' : 'description'
+      customReplyStyle.value = data.customReplyStyle ?? ''
+      customReplyStyleEnabled.value = data.customReplyStyleEnabled ?? false
       personalityPreference.value = data.personalityPreference ?? ''
       personalityPreferenceEnabled.value = data.personalityPreferenceEnabled ?? false
       personalityPreferenceAvailable.value = data.personalityPreferenceAvailable ?? true
@@ -214,6 +218,26 @@ export const usePreferencesStore = defineStore('preferences', () => {
     await saveOptimistically('toolInjectionMode', { toolInjectionMode: next }, () => { toolInjectionMode.value = next }, () => { toolInjectionMode.value = previous })
   }
 
+  async function saveCustomReplyStyle(text: string) {
+    const data = await preferencesApi.updateReplyStyle(text.trim() || null)
+    customReplyStyle.value = data.customReplyStyle ?? ''
+    return data
+  }
+
+  async function saveCustomReplyStyleEnabled(enabled: boolean) {
+    const data = await preferencesApi.update({ customReplyStyleEnabled: enabled })
+    customReplyStyle.value = data.customReplyStyle ?? ''
+    customReplyStyleEnabled.value = data.customReplyStyleEnabled ?? false
+    return data
+  }
+
+  async function uploadCustomReplyStyle(file: File) {
+    const data = await preferencesApi.uploadReplyStyle(file)
+    customReplyStyle.value = data.customReplyStyle ?? ''
+    customReplyStyleEnabled.value = data.customReplyStyleEnabled ?? false
+    return data
+  }
+
   async function savePersonalityPreference(text: string, enabled: boolean) {
     const data = await preferencesApi.update({
       personalityPreference: text.trim() || null,
@@ -258,7 +282,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
   }
 
   return {
-    lastStages, stageTemplates, replyTone, replyLength, pmStagesExpanded, calendarWeekStart, calendarDoneMode, defaultView, shellEnabled, shellSystemEnabled, shellDangerousEnabled, automaticModeEnabled, decisionGuardEnabled, imToolDisplayMode, showIntermediateReplies, toolInjectionMode, personalityPreference, personalityPreferenceEnabled, personalityPreferenceAvailable, personalityPreferenceRevision, emailChangeEnabled, locale,
-    loaded, fetch, refreshAutomaticModeEnabled, notifyAutomaticModeChanged, refreshEmailChangeEnabled, saveLocale, saveLastStages, saveTemplates, saveStyle, savePmStagesExpanded, saveCalendarWeekStart, saveCalendarDoneMode, saveDefaultView, saveShellEnabled, saveShellSystemEnabled, saveShellDangerousEnabled, saveAutomaticModeEnabled, saveDecisionGuardEnabled, saveImToolDisplayMode, saveShowIntermediateReplies, saveToolInjectionMode, savePersonalityPreference, uploadPersonalityFile,
+    lastStages, stageTemplates, replyTone, replyLength, pmStagesExpanded, calendarWeekStart, calendarDoneMode, defaultView, shellEnabled, shellSystemEnabled, shellDangerousEnabled, automaticModeEnabled, decisionGuardEnabled, imToolDisplayMode, showIntermediateReplies, toolInjectionMode, customReplyStyle, customReplyStyleEnabled, personalityPreference, personalityPreferenceEnabled, personalityPreferenceAvailable, personalityPreferenceRevision, emailChangeEnabled, locale,
+    loaded, fetch, refreshAutomaticModeEnabled, notifyAutomaticModeChanged, refreshEmailChangeEnabled, saveLocale, saveLastStages, saveTemplates, saveStyle, savePmStagesExpanded, saveCalendarWeekStart, saveCalendarDoneMode, saveDefaultView, saveShellEnabled, saveShellSystemEnabled, saveShellDangerousEnabled, saveAutomaticModeEnabled, saveDecisionGuardEnabled, saveImToolDisplayMode, saveShowIntermediateReplies, saveToolInjectionMode, saveCustomReplyStyle, saveCustomReplyStyleEnabled, uploadCustomReplyStyle, savePersonalityPreference, uploadPersonalityFile,
   }
 })

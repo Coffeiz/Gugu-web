@@ -6,7 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from agent.context import builder
-from app.schemas import PreferencesUpdate
+from app.schemas import PreferencesUpdate, ReplyStyleUpdate
 from app.services import personality_preferences as service
 
 
@@ -17,6 +17,9 @@ def test_personality_preference_is_bounded_and_normalized():
         PreferencesUpdate(personalityPreference="x" * 10001)
     with pytest.raises(ValidationError):
         PreferencesUpdate(personalityPreference="正常\x01文本")
+    assert ReplyStyleUpdate(content="  先给结论  ").content == "先给结论"
+    with pytest.raises(ValidationError):
+        ReplyStyleUpdate(content="正常\x01文本")
 
 
 def test_personality_file_is_user_scoped_and_written_atomically(tmp_path, monkeypatch):
@@ -31,6 +34,22 @@ def test_personality_file_is_user_scoped_and_written_atomically(tmp_path, monkey
     assert service.read_personality_file(7) == "叫我小北"
     assert service.read_personality_file(8) is None
     assert service.write_personality_file(7, None) is True
+    assert not path.exists()
+
+
+def test_reply_style_file_sits_beside_persona_and_is_user_scoped(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        service,
+        "get_settings",
+        lambda: SimpleNamespace(storage=SimpleNamespace(local_path=str(tmp_path))),
+    )
+    assert service.write_reply_style_file(7, "先给结论") is True
+    path = tmp_path / "7" / ".agent" / "prompt" / "reply-style.md"
+    assert path.read_text(encoding="utf-8") == "先给结论"
+    assert path.parent == service.personality_file_path(7).parent
+    assert service.read_reply_style_file(7) == "先给结论"
+    assert service.read_reply_style_file(8) is None
+    assert service.write_reply_style_file(7, None) is True
     assert not path.exists()
 
 

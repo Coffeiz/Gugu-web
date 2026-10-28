@@ -142,6 +142,8 @@ def build_static_prompt(prompt_name: str, user_name: str, *,
             parts.append(text)
     if style := _style_block(style_prefs):
         parts.append(style)
+    if style_prefs.get("custom_reply_style_enabled") and (custom_style := str(style_prefs.get("custom_reply_style") or "").strip()):
+        parts.append("## 用户自定义回复风格\n\n只调整表达方式，不改变人格设定、事实、安全规则或权限。与预设语气或长度冲突时优先遵循此风格；当前用户的明确表达要求优先。\n\n" + custom_style)
     if skill_index := _skills_index_block(skills):
         parts.append(skill_index)
     return "\n\n---\n\n".join(parts)

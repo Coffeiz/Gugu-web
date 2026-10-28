@@ -69,15 +69,75 @@ def write_personality_file(user_id, value: str | None) -> bool:
     return True
 
 
+def reply_style_file_path(user_id) -> Path:
+    """返回与 persona.md 同目录的独立回复风格文件路径。"""
+    persona_path = personality_file_path(user_id)
+    path = persona_path.with_name("reply-style.md")
+    user_root = persona_path.parents[2]
+    resolved = path.resolve(strict=False)
+    try:
+        resolved.relative_to(user_root)
+    except ValueError as exc:
+        raise ValueError("用户回复风格文件路径无效") from exc
+    return path
+
+
+def read_reply_style_file(user_id) -> str | None:
+    path = reply_style_file_path(user_id)
+    try:
+        return normalize_reply_style(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+
+
+def write_reply_style_file(user_id, value: str | None) -> bool:
+    """原子写入或删除独立回复风格文件。"""
+    normalized = normalize_reply_style(value)
+    path = reply_style_file_path(user_id)
+    current = read_reply_style_file(user_id)
+    if current == normalized:
+        return False
+    if normalized is None:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        return True
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(prefix=".reply-style-", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(normalized)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, path)
+    except BaseException:
+        try:
+            os.unlink(temp_name)
+        except FileNotFoundError:
+            pass
+        raise
+    return True
+
+
 def normalize_personality_preference(value: str | None) -> str | None:
     """规范化用户文本；空文本等价于恢复默认。"""
+    return _normalize_preference_text(value, "人格偏好")
+
+
+def normalize_reply_style(value: str | None) -> str | None:
+    """规范化自定义回复风格；空文本等价于删除文件。"""
+    return _normalize_preference_text(value, "回复风格")
+
+
+def _normalize_preference_text(value: str | None, label: str) -> str | None:
     if value is None:
         return None
     text = value.strip()
     if len(text) > MAX_PERSONALITY_PREFERENCE_CHARS:
-        raise ValueError(f"人格偏好不能超过 {MAX_PERSONALITY_PREFERENCE_CHARS} 个字符")
+        raise ValueError(f"{label}不能超过 {MAX_PERSONALITY_PREFERENCE_CHARS} 个字符")
     if any(char in {"\x00", "\ufeff"} or (ord(char) < 32 and char not in _ALLOWED_CONTROL_CHARS) for char in text):
-        raise ValueError("人格偏好包含不支持的控制字符")
+        raise ValueError(f"{label}包含不支持的控制字符")
     return text or None
 
 

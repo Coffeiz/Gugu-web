@@ -214,8 +214,18 @@ async def load_style_prefs(db, user_id) -> dict:
     if prefs is None:
         return {}
     data = prefs.data
-    from app.services.personality_preferences import read_personality_file, preference_revision
-    result = {k: data[k] for k in ("reply_tone", "reply_length") if data.get(k)}
+    from app.services.personality_preferences import (
+        preference_revision,
+        read_personality_file,
+        read_reply_style_file,
+    )
+    result = {k: data[k] for k in ("reply_tone", "reply_length", "custom_reply_style_enabled") if data.get(k)}
+    custom_style = read_reply_style_file(user_id)
+    if custom_style is None:
+        # 尚未访问偏好页的旧账号仍从 JSON 读取；偏好 API 会在首次访问时迁入文件并清理旧键。
+        custom_style = data.get("custom_reply_style")
+    if custom_style:
+        result["custom_reply_style"] = custom_style
     if data.get("locale") in {"zh-CN", "ja-JP", "en-US"}:
         result["locale"] = data["locale"]
     personality = read_personality_file(user_id) if data.get("personality_preference_enabled", False) else None

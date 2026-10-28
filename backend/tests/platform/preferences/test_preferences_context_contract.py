@@ -129,3 +129,14 @@ def test_default_style_preferences_are_explicitly_injected():
 
     assert "语气：自然" in static
     assert "回复长度：适中" in static
+
+
+def test_custom_reply_style_is_independent_of_persona_and_can_be_disabled():
+    prefs = {"personality_preference_enabled": True, "personality_preference": "测试人格设定", "custom_reply_style": "先给出结论", "custom_reply_style_enabled": True}
+    static, _, _ = builder.build_split("default", "测试用户", [], [], style_prefs=prefs)
+    assert "测试人格设定" in static
+    assert "先给出结论" in static
+    prefs["custom_reply_style_enabled"] = False
+    disabled, _, _ = builder.build_split("default", "测试用户", [], [], style_prefs=prefs)
+    assert "测试人格设定" in disabled
+    assert "先给出结论" not in disabled
