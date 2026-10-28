@@ -16,7 +16,7 @@ import pytest
 import agent.core as core
 from agent.core import LLMRunner
 from agent.im.auto_reply import (
-    GROUP_REPLY_DECISION_TOOL,
+    GROUP_NO_REPLY_TOOL,
     MAX_DUPLICATE_CHOICES,
     ReplyChoice,
     ReplyGate,
@@ -149,10 +149,10 @@ def test_duplicate_calls_are_bounded():
     gate.choose(True)
 
     for _ in range(MAX_DUPLICATE_CHOICES):
-        assert tool_batch_allowed(gate, [GROUP_REPLY_DECISION_TOOL]) is True
+        assert tool_batch_allowed(gate, [GROUP_NO_REPLY_TOOL]) is True
         gate.choose(True)
 
-    assert tool_batch_allowed(gate, [GROUP_REPLY_DECISION_TOOL]) is False
+    assert tool_batch_allowed(gate, [GROUP_NO_REPLY_TOOL]) is False
     # 业务工具不受影响：门开着时照常允许。
     assert tool_batch_allowed(gate, ["read_file"]) is True
 
@@ -162,8 +162,8 @@ def test_duplicate_calls_are_bounded():
 async def test_duplicate_decision_call_does_not_kill_the_turn(monkeypatch):
     """复现线上故障：开门后模型又调一次门，整轮应当继续跑完而不是报废。"""
     fake, state = _provider_returning([
-        _tool_round(GROUP_REPLY_DECISION_TOOL, {"should_reply": True}, "call-1"),
-        _tool_round(GROUP_REPLY_DECISION_TOOL, {"should_reply": True}, "call-2"),
+        _tool_round(GROUP_NO_REPLY_TOOL, {"should_reply": True}, "call-1"),
+        _tool_round(GROUP_NO_REPLY_TOOL, {"should_reply": True}, "call-2"),
         _text_round("最终回复"),
     ])
     monkeypatch.setattr(core, "_stream_round", fake)

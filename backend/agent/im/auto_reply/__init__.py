@@ -1,10 +1,10 @@
-"""群聊自动回复的拒绝策略。"""
+"""群聊自动回复的本轮回复选择策略。"""
 """群聊自动回复专用运行时能力。"""
 
 from .decision import (
-    GATE_DECLINE_AFTER_REPLY_REASON,
+    GATE_NO_REPLY_AFTER_TEXT_REASON,
     GATE_SILENT_REASON,
-    GROUP_REPLY_DECISION_TOOL,
+    GROUP_NO_REPLY_TOOL,
     ReplyChoice,
     ReplyGate,
     build_group_reply_decision_tool,
@@ -21,9 +21,9 @@ def group_reply_system_prompt() -> str:
     return (Path(__file__).parent / "prompts" / "group_reply_decision.md").read_text(encoding="utf-8").strip()
 
 __all__ = [
-    "GATE_DECLINE_AFTER_REPLY_REASON",
+    "GATE_NO_REPLY_AFTER_TEXT_REASON",
     "GATE_SILENT_REASON",
-    "GROUP_REPLY_DECISION_TOOL",
+    "GROUP_NO_REPLY_TOOL",
     "ReplyChoice",
     "ReplyGate",
     "build_group_reply_decision_tool",

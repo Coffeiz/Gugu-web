@@ -56,6 +56,14 @@ async def persist_early_im_message(payload: dict, *, message_id: str) -> Optiona
     attachments = list(payload.get("attachments") or [])
     if not text.strip() and not attachments:
         return None
+    # Gateway 的原始媒体字典尚未下载/暂存，不能在早落库时生成附件卡片。
+    # 这类消息等 dispatch 生成 attach_id 后随 run 一起落库，避免先推一个永久缺图的气泡。
+    if any(isinstance(item, dict) and not item.get("attach_id") for item in attachments):
+        return None
+    attachments = [
+        item["attach_id"] if isinstance(item, dict) else item
+        for item in attachments
+    ]
 
     from agent.im.identity import resolve_owner_account
 

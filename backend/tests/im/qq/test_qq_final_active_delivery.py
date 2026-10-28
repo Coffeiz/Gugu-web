@@ -22,7 +22,7 @@ def delivery(monkeypatch):
         def push(self, text):
             self.text += text
 
-        async def finish(self, text):
+        async def finish(self, text, *, allow_rewrite=False):
             streamed.append(text)
 
         def has_sent(self):
@@ -84,7 +84,7 @@ async def test_private_final_is_streamed_and_not_sent_again(delivery, monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_prior_round_delivery_does_not_count_as_final_text_delivery(delivery):
+async def test_next_round_token_confirms_round_end_as_intermediate_message(delivery):
     from agent.interactions.events import ROUND_END
 
     passive_send, finish, streamed = delivery
@@ -95,6 +95,7 @@ async def test_prior_round_delivery_does_not_count_as_final_text_delivery(delive
     async def events():
         yield "token", "正在查询"
         yield ROUND_END, "正在查询"
+        yield "token", "查询结果"
         yield "final", response
 
     final_text_sent, result, reply_text = await replies.send_qq_stream_by_round(
@@ -104,6 +105,30 @@ async def test_prior_round_delivery_does_not_count_as_final_text_delivery(delive
 
     assert final_text_sent is True
     assert streamed == ["正在查询", "查询结果"]
+    passive_send.assert_not_awaited()
+    assert finish.call_args.args[0] == "success"
+
+
+@pytest.mark.asyncio
+async def test_round_end_followed_by_rewritten_final_uses_one_qq_message(delivery):
+    from agent.interactions.events import ROUND_END
+
+    passive_send, finish, streamed = delivery
+    payload = {"platform": "qq", "chat_type": "c2c", "platform_user_id": "synthetic-user",
+               "channel_id": "synthetic-bot", "message_id": "synthetic-inbound"}
+
+    async def events():
+        yield "token", "过早的草稿内容"
+        yield ROUND_END, "过早的草稿内容"
+        yield "final", AgentResponse(text="整理后的最终回答")
+
+    stream_sent, response, reply_text = await replies.send_qq_stream_by_round(
+        payload, events(), show_intermediate_replies=True,
+    )
+    await finalize(payload, response, stream_sent=stream_sent, stream_reply_text=reply_text)
+
+    assert stream_sent is True
+    assert streamed == ["整理后的最终回答"]
     passive_send.assert_not_awaited()
     assert finish.call_args.args[0] == "success"
 
@@ -157,7 +182,7 @@ async def test_partial_final_stream_only_suppresses_text_after_reliable_tail_del
         def push(self, text):
             self.parts += text
 
-        async def finish(self, text):
+        async def finish(self, text, *, allow_rewrite=False):
             if len(streams) == 1:
                 self.last_sent_text = text
                 self.sent = True
@@ -204,7 +229,7 @@ async def test_partial_final_stream_only_suppresses_text_after_reliable_tail_del
 
 
 @pytest.mark.asyncio
-async def test_stream_without_final_event_raises_instead_of_creating_default_reply(delivery):
+async def test_stream_without_final_event_closes_partial_stream_then_raises(delivery):
     passive_send, _finish, streamed = delivery
     payload = {"platform": "qq", "chat_type": "c2c", "platform_user_id": "synthetic-user",
                "channel_id": "synthetic-bot", "message_id": "synthetic-inbound"}
@@ -218,7 +243,37 @@ async def test_stream_without_final_event_raises_instead_of_creating_default_rep
         )
 
     passive_send.assert_not_awaited()
-    assert streamed == []
+    assert streamed == ["不完整的流"]
+
+
+@pytest.mark.asyncio
+async def test_stream_exception_closes_partial_stream_before_propagating(delivery, monkeypatch):
+    from agent.im import mermaid
+
+    passive_send, _finish, streamed = delivery
+    payload = {"platform": "qq", "chat_type": "c2c", "platform_user_id": "synthetic-user",
+               "channel_id": "synthetic-bot", "message_id": "synthetic-inbound"}
+
+    class PassThroughFilter:
+        def __init__(self, **_kwargs):
+            pass
+
+        def ordered_events(self, events):
+            return events
+
+    monkeypatch.setattr(mermaid, "ProgressiveMermaidTokenFilter", PassThroughFilter)
+
+    async def events():
+        yield "token", "工具执行前的部分内容"
+        raise RuntimeError("synthetic run failure")
+
+    with pytest.raises(RuntimeError, match="synthetic run failure"):
+        await replies.send_qq_stream_by_round(
+            payload, events(), show_intermediate_replies=True,
+        )
+
+    assert streamed == ["工具执行前的部分内容"]
+    passive_send.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -31,6 +31,7 @@ def assemble_turn(*, stance: str | None = None,
                   previous_stance_digest: str | None = None,
                   message_time: dict | None = None,
                   current_user: dict | None = None,
+                  current_users: Iterable[dict] | None = None,
                   conversation_tail: Iterable[dict] = (),
                   extra_reminder: str | None = None) -> tuple[MessageBatch, str]:
     """把本轮新增内容一次性组装为 batch。
@@ -60,10 +61,10 @@ def assemble_turn(*, stance: str | None = None,
     tail_messages = [dict(item) for item in conversation_tail]
     messages.extend(tail_messages)
 
-    if message_time:
-        messages.append(_time_context(message_time))
-    if current_user is not None:
-        messages.append(current_user)
+    current_user_rows = [dict(item) for item in current_users or ()]
+    _append_current_user_messages(
+        messages, current_user_rows, message_time=message_time, current_user=current_user,
+    )
 
     # Batch 只持有完整 canonical entries 一份；持久化选择由每条 entry 的策略决定。
     batch = MessageBatch.from_area_entries(_build_area_entries(
@@ -74,13 +75,29 @@ def assemble_turn(*, stance: str | None = None,
         tail_messages=tail_messages,
         message_time=message_time,
         current_user=current_user,
+        current_users=current_user_rows,
     ), metadata={"dynamic_tail": [reminder(extra_reminder)]} if extra_reminder else None)
     return batch, current_digest
 
 
+def _append_current_user_messages(messages, current_users, *, message_time, current_user):
+    """按批次顺序追加逐条用户消息，单条请求沿用原有入口。"""
+    if current_users:
+        for item in current_users:
+            if item.get("message_time"):
+                messages.append(_time_context(item["message_time"]))
+            if item.get("message") is not None:
+                messages.append(item["message"])
+    else:
+        if message_time:
+            messages.append(_time_context(message_time))
+        if current_user is not None:
+            messages.append(current_user)
+
+
 def _build_area_entries(
     *, messages, previous_stance_digest, current_digest, stance, tail_messages,
-    message_time, current_user,
+    message_time, current_user, current_users,
 ) -> list[dict]:
     """为同一 turn 的 entries 标注来源与 durability，不改变 Provider 顺序。"""
     from ..history import canonicalize_tool_messages
@@ -104,6 +121,21 @@ def _build_area_entries(
         "source": MessageSource.RAG.value,
         "persistence_policy": PersistencePolicy.COMMIT_ON_SUCCESS.value,
     } for item in tail_messages)
+    entries.extend(_current_user_area_entries(
+        current_users=current_users,
+        message_time=message_time,
+        current_user=current_user,
+        canonicalize_tool_messages=canonicalize_tool_messages,
+    ))
+    return entries
+
+
+def _current_user_area_entries(
+    *, current_users, message_time, current_user, canonicalize_tool_messages,
+):
+    if current_users:
+        return _batched_user_area_entries(current_users, canonicalize_tool_messages)
+    entries = []
     if message_time:
         entries.append({
             "message": _time_context(message_time),
@@ -111,13 +143,43 @@ def _build_area_entries(
             "persistence_policy": PersistencePolicy.RECONSTRUCT_ON_RESTORE.value,
         })
     if current_user is not None:
-        entries.append({
-            "area_key": "current_user",
-            "message": _canonical_snapshot(current_user, canonicalize_tool_messages),
-            "source": _current_user_source(current_user).value,
-            "persistence_policy": PersistencePolicy.ALREADY_PERSISTED.value,
-        })
+        entries.append(_persisted_user_entry(
+            current_user, canonicalize_tool_messages, area_key="current_user",
+        ))
     return entries
+
+
+def _batched_user_area_entries(current_users, canonicalize_tool_messages):
+    entries = []
+    for index, item in enumerate(current_users):
+        message_time = item.get("message_time")
+        if message_time:
+            entries.append({
+                "message": _time_context(message_time),
+                "source": MessageSource.MESSAGE_TIME.value,
+                "persistence_policy": PersistencePolicy.RECONSTRUCT_ON_RESTORE.value,
+            })
+        message = item.get("message")
+        if message is not None:
+            entries.append(_persisted_user_entry(
+                message,
+                canonicalize_tool_messages,
+                area_key=f"current_user:{index}",
+                persisted_message_id=item.get("persisted_message_id"),
+            ))
+    return entries
+
+
+def _persisted_user_entry(message, canonicalize_tool_messages, *, area_key, persisted_message_id=None):
+    entry = {
+        "area_key": area_key,
+        "message": _canonical_snapshot(message, canonicalize_tool_messages),
+        "source": _current_user_source(message).value,
+        "persistence_policy": PersistencePolicy.ALREADY_PERSISTED.value,
+    }
+    if persisted_message_id is not None:
+        entry["persisted_message_id"] = persisted_message_id
+    return entry
 
 
 def _canonical_snapshot(message: dict, canonicalize_tool_messages) -> dict:

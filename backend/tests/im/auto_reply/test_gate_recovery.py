@@ -17,7 +17,7 @@ import pytest
 import agent.core as core
 from agent.core import LLMRunner
 from agent.im.auto_reply import (
-    GROUP_REPLY_DECISION_TOOL,
+    GROUP_NO_REPLY_TOOL,
     ReplyChoice,
     ReplyGate,
 )
@@ -125,7 +125,7 @@ async def test_model_bypassing_the_gate_recovers_in_the_same_run(monkeypatch, di
     """模型用元工具绕开门 → 那个调用不执行 → 错误回灌 → 它补调门后正常跑完。"""
     fake, state = _provider_returning([
         _tool_round("call_tool", {"tool_name": "read_file", "arguments": {"path": "x"}}, "call-1"),
-        _tool_round(GROUP_REPLY_DECISION_TOOL, {"should_reply": True}, "call-2"),
+        _tool_round(GROUP_NO_REPLY_TOOL, {"should_reply": True}, "call-2"),
         _text_round("最终回复"),
     ])
     monkeypatch.setattr(core, "_stream_round", fake)
@@ -181,7 +181,7 @@ def test_gate_round_forces_tool_choice_on_openai_format():
 
     assert ctx.forced_tool_choice == {
         "type": "function",
-        "function": {"name": GROUP_REPLY_DECISION_TOOL},
+        "function": {"name": GROUP_NO_REPLY_TOOL},
     }
     # 关思考必须显式发参数：省略等于沿用 provider 默认（DeepSeek 默认开着思考，
     # 会直接拒收强制 tool_choice）。

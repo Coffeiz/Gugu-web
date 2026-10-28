@@ -10,7 +10,7 @@ from .selector import CapabilitySelector
 
 CATALOG_DESCRIPTION_MAX_CHARS = DESCRIPTION_SHORT_MAX_CHARS
 FIXED_ADAPTER_TOOL_NAMES = ("call_tool", "get_tool_schema", "use_skill", "ask_user")
-RUN_META_TOOL_NAMES = ("stop_recurring", "decline_group_reply")
+RUN_META_TOOL_NAMES = ("stop_recurring", "choose_no_reply")
 # Skill 管理工具不属于默认业务工具集，只在能力快照中保留供 Adapter 按需发现；
 # 它们不会因此进入 Provider 的首轮工具 Schema。
 ON_DEMAND_TOOL_NAMES = (
@@ -224,7 +224,7 @@ def catalog_block(
         for name in ordered_tools
         if name in snapshot.tools
         and snapshot.tools[name].kind == "tool"
-        and name != "decline_group_reply"
+        and name != "choose_no_reply"
     )
     skills = tuple(
         item for item in snapshot.skills.values()

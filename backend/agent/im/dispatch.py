@@ -152,6 +152,20 @@ async def dispatch_im_message(payload: dict):
                 isinstance(item, dict) for item in raw_attachments
             ) and payload["attachments"]:
                 payload["text"] = ""
+        batch_messages = payload.get("_batch_messages")
+        if isinstance(batch_messages, list) and batch_messages:
+            from agent.im.inbound_batch import resolve_batch_attachment_ids
+            from app.core import chat_attach
+
+            attachment_meta = await chat_attach.get_meta_many(
+                str(payload.get("owner_user_id") or ""),
+                payload.get("attachments") or [],
+            )
+            resolve_batch_attachment_ids(
+                batch_messages,
+                attachment_meta,
+                fallback_platform_message_id=str(payload.get("platform_message_id") or ""),
+            )
         if payload.get("platform_bot_user_id"):
             from agent.im.identity import remember_bot_platform_user_id
 

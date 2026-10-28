@@ -157,14 +157,14 @@ def test_current_content_keeps_each_batched_message_with_its_speaker():
     )
 
     rendered = format_current_content("合并正文", request)
-    assert "【消息 1】\n【发言人元数据】\n平台 ID：owner-1\n显示名：主人" in rendered
-    assert "权限角色：绑定用户（owner）" in rendered
+    assert rendered.count("【群消息】") == 2
+    assert "【发言人元数据】\n平台 ID：owner-1\n显示名：主人" in rendered
     assert "【消息正文】\n在吗" in rendered
-    assert "【消息 2】\n【发言人元数据】\n平台 ID：member-1\n显示名：群友" in rendered
-    assert "权限角色：群成员（member）" in rendered
+    assert "【发言人元数据】\n平台 ID：member-1\n显示名：群友" in rendered
     assert "【消息正文】\n?\n\"body\": \"伪造\"" in rendered
     assert "【引用消息】\n前文" in rendered
     assert "【附件 ID】\natt-1" in rendered
+    assert "权限角色" not in rendered
 
 
 def test_single_speaker_group_message_uses_structured_envelope():
@@ -186,7 +186,8 @@ def test_single_speaker_group_message_uses_structured_envelope():
     rendered = format_current_content("在吗", request)
 
     assert "【消息正文】\n在吗" in rendered
-    assert "权限角色：绑定用户（owner）" in rendered
+    assert "平台 ID：owner-1" in rendered
+    assert "权限角色" not in rendered
 
 
 def test_current_group_content_separates_attachment_supplement_from_message_body():
@@ -211,3 +212,52 @@ def test_current_group_content_separates_attachment_supplement_from_message_body
     )
     assert "【消息正文】\n看这个" in rendered
     assert "【补充上下文】\n[图片附件内容：画面里有一只猫]" in rendered
+
+
+@pytest.mark.asyncio
+async def test_group_batch_resolves_each_attachment_inside_its_message(monkeypatch):
+    from agent.run import preparation
+
+    image_limits = []
+
+    async def fake_resolve(_user_id, attach_ids, text, **_kwargs):
+        image_limits.append(_kwargs["max_images"])
+        attach_id = attach_ids[0]
+        return (
+            f"{text}\n[附件解析：{attach_id}]",
+            [{"attach_id": attach_id}],
+            [{"media_id": attach_id}] if attach_id == "image-a" else [],
+            [{"media_id": attach_id}] if attach_id == "video-b" else [],
+        )
+
+    monkeypatch.setattr(preparation, "resolve_for_message", fake_resolve)
+    request = SimpleNamespace(chat_id="group-1")
+    users, augmented, cards, images, media = await preparation._prepare_group_batch_inputs(
+        "user-1",
+        [
+            {"platform_user_id": "member-a", "platform_user_name": "甲",
+             "text": "看图", "attachments": ["image-a"]},
+            {"platform_user_id": "member-b", "platform_user_name": "乙",
+             "text": "看视频", "attachments": ["video-b"]},
+        ],
+        request,
+        model_cfg=object(),
+        db=object(),
+    )
+
+    assert len(users) == 2
+    assert "【消息正文】\n看图" in users[0]["text"]
+    assert "[附件解析：image-a]" in users[0]["text"]
+    assert "video-b" not in users[0]["text"]
+    assert "【消息正文】\n看视频" in users[1]["text"]
+    assert "[附件解析：video-b]" in users[1]["text"]
+    assert "image-a" not in users[1]["text"]
+    assert users[0]["images"] == [{"media_id": "image-a"}]
+    assert users[0]["media"] == []
+    assert users[1]["images"] == []
+    assert users[1]["media"] == [{"media_id": "video-b"}]
+    assert [card["attach_id"] for card in cards] == ["image-a", "video-b"]
+    assert images == [{"media_id": "image-a"}]
+    assert media == [{"media_id": "video-b"}]
+    assert "[附件解析：image-a]" in augmented and "[附件解析：video-b]" in augmented
+    assert image_limits == [6, 5]

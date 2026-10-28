@@ -66,34 +66,45 @@ async def ensure_group(stream: str, group: str) -> None:
 
 _DEDUP_TTL_SECONDS = 600   # 10 分钟（QQ 协议 resume 窗口 5min，留余量）
 
+_ENQUEUE_SCRIPT = """
+local dedup_key = KEYS[1]
+local stream = KEYS[2]
+local maxlen = ARGV[1]
+local payload = ARGV[2]
+local ttl = tonumber(ARGV[3])
+if dedup_key ~= '' then
+    if not redis.call('SET', dedup_key, '1', 'EX', ttl, 'NX') then
+        return false
+    end
+end
+return redis.call('XADD', stream, 'MAXLEN', '~', maxlen, '*', 'data', payload)
+"""
 
-def _dedup_check(payload: dict) -> bool:
-    """跨进程/跨 channel 去重：基于 Redis SETNX，key=im:seen:{platform}:{message_id}。
-    返回 True=本调用是第一次见到（应当入队），False=已见过（丢弃）。
-    Redis 故障时降级为放行（业务优先，宁可重复也别丢消息），并写 warning。"""
-    channel = (payload.get("platform") or "").strip()
-    msg_id = (payload.get("message_id") or "").strip()
-    if not channel or not msg_id:
-        return True
-    try:
-        return bool(get_redis_sync().set(
-            f"im:seen:{channel}:{msg_id}", "1", ex=_DEDUP_TTL_SECONDS, nx=True,
-        ))
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning("[produce] dedup check failed, falling through: %s", e)
-        return True
+
+def _dedup_key(payload: dict) -> str:
+    """构造平台消息幂等键；将来源会话纳入范围，避免跨 Bot/群误去重。"""
+    platform = str(payload.get("platform") or "").strip()
+    message_id = str(payload.get("message_id") or "").strip()
+    if not platform or not message_id:
+        return ""
+    from hashlib import sha256
+
+    scope = "\x1f".join(str(payload.get(name) or "").strip() for name in (
+        "channel_id", "bot_id", "chat_type", "chat_id", "platform_user_id",
+    ))
+    identity = "\x1f".join((platform, scope, message_id))
+    digest = sha256(identity.encode("utf-8")).hexdigest()
+    return f"im:seen:{digest}"
 
 
 async def produce(stream: str, payload: dict, maxlen: int = 10000) -> str | None:
-    """入队一条（payload 存为单字段 data=JSON）。approximate maxlen 防流无界增长。
-    重复 message_id 返回 None 不入队（跨 channel/跨进程全局去重）。"""
-    if not _dedup_check(payload):
-        return None
-    return await get_redis().xadd(
-        stream, {"data": json.dumps(payload, ensure_ascii=False)},
-        maxlen=maxlen, approximate=True,
+    """原子去重并入队；重复平台消息返回 None，不会留下未入队的去重标记。"""
+    dedup_key = _dedup_key(payload) if stream == IM_INBOUND_STREAM else ""
+    result = await get_redis().eval(
+        _ENQUEUE_SCRIPT, 2, dedup_key, stream, int(maxlen),
+        json.dumps(payload, ensure_ascii=False), _DEDUP_TTL_SECONDS,
     )
+    return result or None
 
 
 def _parse(entries) -> list[tuple[str, dict]]:
@@ -139,13 +150,13 @@ def get_redis_sync():
 
 
 def produce_sync(stream: str, payload: dict, maxlen: int = 10000) -> str | None:
-    """同步版 produce（给同步 handler 用）。重复 message_id 返回 None。"""
-    if not _dedup_check(payload):
-        return None
-    return get_redis_sync().xadd(
-        stream, {"data": json.dumps(payload, ensure_ascii=False)},
-        maxlen=maxlen, approximate=True,
+    """同步版原子去重并入队（供同步平台 handler 使用）。"""
+    dedup_key = _dedup_key(payload) if stream == IM_INBOUND_STREAM else ""
+    result = get_redis_sync().eval(
+        _ENQUEUE_SCRIPT, 2, dedup_key, stream, int(maxlen),
+        json.dumps(payload, ensure_ascii=False), _DEDUP_TTL_SECONDS,
     )
+    return result or None
 
 
 async def claim_stale(stream: str, group: str, consumer: str,

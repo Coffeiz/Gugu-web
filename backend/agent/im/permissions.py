@@ -56,7 +56,7 @@ def can_use_tool(
     platform: str | None = None,
 ) -> bool:
     """dispatch 层的第二道权限门；Skill 管理仅网页用户和已认证 owner 可用。"""
-    if name == "decline_group_reply":
+    if name == "choose_no_reply":
         from agent.im import imctx
 
         current_im = imctx.get_im()

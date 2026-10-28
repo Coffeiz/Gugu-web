@@ -7,8 +7,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.im.models import extract_mention_ids, replace_mention_ids
 from agent.llm import genstream
+from agent.im.models import extract_mention_ids, replace_mention_ids
+from agent.im.parsers.qq import _normalize_qq_attachment_placeholders
 from app.core.ownership import get_owned
 from app.core.security import get_current_user
 from app.core.tz import iso_utc
@@ -264,7 +265,18 @@ async def get_session_messages(
         db, session, msgs, current_user.id, bot_platform_user_id,
     )
 
-    def render_content(text: str) -> str:
+    def render_content(
+        text: str,
+        files: list[dict] | None = None,
+        *,
+        quoted: bool = False,
+    ) -> str:
+        if session.source == "qq" and files:
+            matching_files = [
+                item for item in files
+                if isinstance(item, dict) and bool(item.get("quoted")) is quoted
+            ]
+            text = _normalize_qq_attachment_placeholders(text, matching_files)
         if session.chat_type != "group":
             return text
         # 只替换当前会话已知的成员和 Bot ID，未知 mention 保留原样。
@@ -311,10 +323,11 @@ async def get_session_messages(
             {"id": m.id, "role": m.role,
              "clientMessageId": m.client_message_id,
              "timelineOrder": m.id * 1_000_000,
-             "content": render_content(m.content),
+             "content": render_content(m.content, m.files or []),
              "files": m.files or [],
              "references": m.references_json or [],
-             "quotedText": render_content(m.quoted_text) if m.quoted_text else m.quoted_text,
+             "quotedText": render_content(m.quoted_text, m.files or [], quoted=True)
+             if m.quoted_text else m.quoted_text,
              "platformUserId": m.platform_user_id,
              "platformUserName": m.platform_user_name,
              "platformBotUserId": m.platform_bot_user_id,

@@ -28,7 +28,7 @@ from agent.loop import watchdog as _watchdog
 _parallel_traj_log = logging.getLogger("agent.traj")
 
 def _gate_violation_payload(reason: str) -> dict[str, Any]:
-    """被拒绝的工具调用错误；回灌内容说明本轮回复状态及后续动作。"""
+    """不符合本轮回复选择状态的工具调用错误。"""
     from agent.im.auto_reply import GATE_SILENT_REASON
 
     return {
@@ -36,7 +36,7 @@ def _gate_violation_payload(reason: str) -> dict[str, Any]:
         "next_action": (
             "本轮已选择静默，停止工具调用。"
             if reason == GATE_SILENT_REASON
-            else "本轮已经进入正常回复，继续完成回复，不要重试拒绝工具。"
+            else "本轮已经输出回复正文，继续完成回复，不要再选择不回复。"
         ),
     }
 
@@ -195,8 +195,8 @@ async def run_loop(
             initial_tool_names = list(runner.capability_context.select_for_messages(messages).tool_names)
         initial_tool_names = runner._provider_tool_names(initial_tool_names)
         reply_gate = getattr(runner, "group_reply_gate", None)
-        from agent.im.auto_reply import GROUP_REPLY_DECISION_TOOL
-        reply_tool_name = GROUP_REPLY_DECISION_TOOL
+        from agent.im.auto_reply import GROUP_NO_REPLY_TOOL
+        reply_tool_name = GROUP_NO_REPLY_TOOL
         if reply_gate is not None:
             if reply_tool_name not in initial_tool_names:
                 initial_tool_names = [*initial_tool_names, reply_tool_name]
@@ -382,7 +382,7 @@ async def run_loop(
                             # 等待完成标记判定，避免把内部标记流给用户。
                             pass
                         elif reply_gate is not None and reply_gate.choice is ReplyChoice.PENDING:
-                            # 暂存到完整 provider 结果，确认没有拒绝工具后再决定是否展示。
+                            # 暂存到完整 provider 结果，确认没有选择静默后再决定是否展示。
                             _reply_gate_buf.append(token)
                         elif reply_state.guard_retry_pending:
                             reply_state.guard_retry_buf.append(token)
@@ -574,8 +574,8 @@ async def run_loop(
                                        reason="not_applied")
 
             if reply_gate is not None and reply_gate.choice is ReplyChoice.PENDING:
-                # 默认是允许回答。流式阶段为了给拒绝工具留机会先隐藏正文；拿到
-                # 完整 provider 结果后，如果本轮没有拒绝调用，就把已完成的正文放行。
+                # 正文在拒绝门定案前保持缓冲；纯工具轮只用于收集判断依据，
+                # 继续保留拒绝机会，只有实际输出正文才锁定为回复。
                 resolved_targets = []
                 for call in result.tool_calls:
                     target, _arguments, resolve_error = _core._resolve_tool_call(
@@ -583,9 +583,9 @@ async def run_loop(
                     )
                     if resolve_error is None:
                         resolved_targets.append(target)
-                declined_in_round = reply_tool_name in resolved_targets
+                no_reply_selected_in_round = reply_tool_name in resolved_targets
                 buffered_reply = result.text or "".join(_reply_gate_buf)
-                if not declined_in_round and (buffered_reply.strip() or result.tool_calls):
+                if not no_reply_selected_in_round and buffered_reply.strip():
                     reply_gate.choice = ReplyChoice.REPLY
                     if not result.text:
                         result.text = buffered_reply
@@ -594,7 +594,7 @@ async def run_loop(
 
             if result.tool_calls:
                 gate_violations: list[tuple[int, Any, str, str]] = []
-                declined_in_batch = False
+                no_reply_selected_in_batch = False
                 if reply_gate is not None:
                     from agent.im.auto_reply import GATE_SILENT_REASON, gate_call_violation_reason
 
@@ -604,7 +604,7 @@ async def run_loop(
                             getattr(call, "name", None), getattr(call, "input", None),
                         )
                         resolved_calls.append((resolved, resolve_error))
-                    declined_in_batch = (
+                    no_reply_selected_in_batch = (
                         reply_gate.choice is ReplyChoice.PENDING
                         and any(error is None and name == reply_tool_name for name, error in resolved_calls)
                     )
@@ -614,7 +614,7 @@ async def run_loop(
                         if resolve_error is not None:
                             continue
                         reason = gate_call_violation_reason(reply_gate, resolved)
-                        if declined_in_batch and resolved != reply_tool_name:
+                        if no_reply_selected_in_batch and resolved != reply_tool_name:
                             reason = GATE_SILENT_REASON
                         if reason is not None:
                             gate_violations.append((index, call, resolved, reason))
@@ -644,8 +644,8 @@ async def run_loop(
                 else:
                     parallel_plan, serial_plan = [], list(enumerate(result.tool_calls))
 
-                # 拒绝调用与业务工具同批时，按 provider 原始批次统一拦截；不能
-                # 因为串行执行时拒绝工具先改了 gate 状态而放过后续业务调用。
+                # 不回复选择与业务工具同批时，按 provider 原始批次统一拦截；不能
+                # 因为串行执行时静默工具先改了 gate 状态而放过后续业务调用。
                 gate_violation_reasons: dict[str, str] = {}
                 for _index, _call, resolved, reason in gate_violations:
                     gate_violation_reasons.setdefault(resolved, reason)
@@ -665,7 +665,7 @@ async def run_loop(
                     ))
 
                 def gate_resolve_tool_call(raw_name, raw_input):
-                    """串行批次中预先判定并隔离拒绝工具同批的业务调用。"""
+                    """串行批次中预先判定并隔离与不回复选择同批的业务调用。"""
                     target, arguments, resolve_error = _core._resolve_tool_call(
                         raw_name, raw_input,
                     )

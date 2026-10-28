@@ -79,6 +79,59 @@ async def test_get_session_messages_preserves_run_identity_for_plain_replies(db,
     assert result["roundId"] == "round-2"
 
 
+async def test_get_qq_session_messages_hides_legacy_attachment_protocol_text(db, user_a):
+    marker = '<attachmentType="image/jpeg",attachmentIndex=0,description="opaque">'
+    session = ConversationSession(
+        user_id=user_a.id, source="qq", chat_type="group", chat_id="group-synthetic",
+    )
+    db.add(session)
+    await db.flush()
+    message = await _mk_message(
+        db,
+        session.id,
+        "user",
+        marker,
+        files=[{
+            "attach_id": "synthetic-attachment",
+            "mime": "image/jpeg",
+            "quoted": False,
+        }],
+    )
+    await db.commit()
+
+    payload = await agent_api.get_session_messages(session.id, current_user=user_a, db=db)
+
+    result = next(item for item in payload["messages"] if item["id"] == message.id)
+    assert result["content"] == ""
+    assert result["files"][0]["attach_id"] == "synthetic-attachment"
+
+
+async def test_get_qq_session_messages_preserves_unmatched_attachment_like_user_text(db, user_a):
+    marker = '<attachmentType="image/jpeg",attachmentIndex=0,description="opaque">'
+    session = ConversationSession(
+        user_id=user_a.id, source="qq", chat_type="group", chat_id="group-synthetic",
+    )
+    db.add(session)
+    await db.flush()
+    message = await _mk_message(
+        db,
+        session.id,
+        "user",
+        marker,
+        files=[{
+            "attach_id": "synthetic-attachment",
+            "mime": "image/png",
+            "quoted": False,
+        }],
+    )
+    await db.commit()
+
+    payload = await agent_api.get_session_messages(session.id, current_user=user_a, db=db)
+
+    result = next(item for item in payload["messages"] if item["id"] == message.id)
+    assert result["content"] == marker
+
+
 async def test_run_history_query_returns_only_target_run_after_commit(db, user_a):
     session = await _mk_session(db, user_a)
     for run_id in ('run-target', 'run-next'):

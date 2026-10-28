@@ -528,18 +528,18 @@ def test_current_group_message_separates_speaker_metadata_from_body():
     request = AgentRequest(
         message="我喜欢什么",
         user_id="owner",
-        user_name="coffeiz",
+        user_name="小北",
         source="qq",
         chat_id="group-1",
         platform_user_id="owner-1",
-        platform_user_name="Coffeiz",
+        platform_user_name="小北",
         im_role="owner",
     )
 
     formatted = format_current_content(request.message, request)
 
-    assert "【发言人元数据】\n平台 ID：owner-1\n显示名：Coffeiz" in formatted
-    assert "权限角色：绑定用户（owner）" in formatted
+    assert "【发言人元数据】\n平台 ID：owner-1\n显示名：小北" in formatted
+    assert "权限角色" not in formatted
     assert "【消息正文】\n我喜欢什么" in formatted
 
 

@@ -27,7 +27,10 @@ IMAGE_COUNT = 6
 TEXT_READ_MAX = 32 * 1024 * 1024
 
 
-async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, model_cfg=None, db=None) -> tuple[str, list, list, list]:
+async def resolve_for_message(
+    user_id, attach_ids: list, base_message: str, *, model_cfg=None, db=None,
+    max_images: int | None = None,
+) -> tuple[str, list, list, list]:
     """把附件解析成：① 注入给模型的增广文本（文本读内容、图片/二进制给提示）
     ② 给前端气泡的附件卡片列表 ③ 图片块列表（仅 image 模型能力开启时提供）。
     失效/过期的 attach_id 跳过。
@@ -37,6 +40,9 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
     的不一致（图时好时坏的根因）。没传则退回顶层 settings.ai（web 路一直用激活模型，一致）。"""
     if not attach_ids:
         return base_message, [], [], []
+    image_count_limit = IMAGE_COUNT if max_images is None else max(
+        0, min(IMAGE_COUNT, int(max_images)),
+    )
     if model_cfg is not None:
         image = gates.image_enabled(model_cfg)
         video_ok = gates.video_enabled(model_cfg)
@@ -84,7 +90,7 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
             ext = (meta.get("ext") or "").lower()
             img_why = None
             # image 能力开启 + 受支持格式 + 没超张数 → 喂给模型真看（超体积/超大尺寸自动压缩）
-            if image and ext in IMAGE_EXTS and len(images) < IMAGE_COUNT:
+            if image and ext in IMAGE_EXTS and len(images) < image_count_limit:
                 try:
                     import base64
                     image_limit = provider_media_limits.image_max_bytes
@@ -110,6 +116,8 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
                     img_why = str(e)
                 except Exception:
                     pass   # 读图/压缩失败 → 退回文字提示
+            elif image and ext in IMAGE_EXTS and len(images) >= image_count_limit:
+                img_why = "超过本轮图片数量上限"
             if not image:
                 # 没有任何能看图的模型 → **当普通文件处理**：正常收下、按需保存，
                 # 别向用户抱怨「看不了图 / 看不到内容」（那样体验很差，用户只是想发个文件）。

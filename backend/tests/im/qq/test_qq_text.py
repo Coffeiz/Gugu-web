@@ -211,15 +211,35 @@ async def test_real_transport_accepts_every_character_split_without_prefix_rewri
     assert frames[-1]['content_raw'] == prepare_qq_text(text)
 
 
-async def test_stream_rejects_prefix_edit_before_sending_invalid_frame(monkeypatch):
+async def test_final_response_can_replace_streamed_draft_in_same_qq_message(monkeypatch):
+    frames = []
+
+    async def request(*args, json_body):
+        frames.append(dict(json_body))
+        return {'stream_msg_id': 'synthetic-stream'}
+
+    monkeypatch.setattr(outbound, '_qq_request', request)
+    monkeypatch.setattr(outbound, '_next_seq', AsyncMock(return_value=1))
+    stream = outbound.create_private_text_stream('synthetic-user', channel_id='synthetic-bot', message_id='synthetic-message')
+    stream.push('已发送\n')
+    await stream._flush()
+    await stream.finish('最终回答\n', allow_rewrite=True)
+
+    assert [frame['input_state'] for frame in frames] == [1, 1, 10]
+    assert [frame['content_raw'] for frame in frames] == ['已发送\n', '最终回答\n', '最终回答\n']
+    assert {frame['stream_msg_id'] for frame in frames[1:]} == {'synthetic-stream'}
+
+
+async def test_noncanonical_stream_finish_still_rejects_prefix_edit(monkeypatch):
     request = AsyncMock(return_value={'stream_msg_id': 'synthetic-stream'})
     monkeypatch.setattr(outbound, '_qq_request', request)
     monkeypatch.setattr(outbound, '_next_seq', AsyncMock(return_value=1))
     stream = outbound.create_private_text_stream('synthetic-user', channel_id='synthetic-bot', message_id='synthetic-message')
     stream.push('已发送\n')
     await stream._flush()
+
     with pytest.raises(QQStreamFinalizationError):
-        await stream.finish('被改写\n')
+        await stream.finish('非权威改写\n')
     assert request.await_count == 1
 
 

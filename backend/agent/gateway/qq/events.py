@@ -15,6 +15,7 @@ from agent.im.parsers.qq import (
     _extract_quoted,
     _extract_qq_faces,
     _normalize_qq_faces,
+    _normalize_qq_attachment_placeholders,
     _pop_pending_qq_face,
     _queue_pending_qq_face,
     _qq_face_pending_key,
@@ -70,7 +71,9 @@ def _remember_qq_message(index: QQRefIndex, data: Dict[str, Any], chat_type: str
         "message_id": str(data.get("id") or ""),
         "sender_id": sender_id,
         "sender_name": sender_name,
-        "content": str(data.get("content") or "")[:200],
+        "content": _normalize_qq_attachment_placeholders(
+            str(data.get("content") or ""), attachments,
+        )[:200],
         "attachments": compact_attachments,
         "timestamp": str(data.get("timestamp") or ""),
     })
@@ -221,13 +224,18 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
     mentions_other_bot = _qq_message_mentions_other_bot(data)
     # 成员 mention 保留原始 ID；展示层按会话内最新 username 解析，避免改名后被旧昵称冻结。
     raw_text = (data.get("content") or "").strip()
+    raw_attachments = data.get("attachments") or []
+    if not isinstance(raw_attachments, list):
+        raw_attachments = []
     from agent.security import logsafe
     has_qq_face = _contains_qq_face(raw_text)
     face_ids = _extract_qq_faces(raw_text)
     # QQ 经常把一个表情拆成「协议文本」和紧随其后的图片事件；协议文本本身不应成为
     # 一条独立聊天消息，也不应和图片同时显示成两个内容块。
     face_only = has_qq_face and not _strip_qq_face_markers(raw_text)
-    text = _normalize_qq_faces(raw_text)
+    text = _normalize_qq_attachment_placeholders(
+        _normalize_qq_faces(raw_text), raw_attachments,
+    )
     msg_id = data.get("id") or ""
     # 在引用解析、附件 staging 和绑定码/快捷命令处理前检查安全输入态；
     # 凭据消息不应触发任何普通消息副作用。
@@ -266,9 +274,6 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
             reply = "QQ 身份已绑定，之后可以正常使用。" if bound else "验证码无效或已过期，请回网页重新生成。"
             await _qq_reply(channel_id, chat_type, sender_id, reply, msg_id)
             return
-    raw_attachments = data.get("attachments") or []
-    if not isinstance(raw_attachments, list):
-        raw_attachments = []
     ref_index = _qq_ref_index(owner, channel_id)
     # 先登记当前消息，再解析引用；这样同一条消息的 msg_idx 可以被后续私聊/群聊引用复用。
     _remember_qq_message(ref_index, data, chat_type, chat_id, sender_id, sender_name)
@@ -280,6 +285,7 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         quoted_text, quoted_attachments = _quoted_from_index(
             ref_index, data, chat_type, chat_id, sender_id,
         )
+    quoted_text = _normalize_qq_attachment_placeholders(quoted_text, quoted_attachments)
     quoted_text = _normalize_qq_faces(quoted_text)
     if quoted_attachments and quoted_text == "[QQ表情]":
         quoted_text = ""
@@ -329,12 +335,13 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         ack_target = chat_id if chat_type == "group" else sender_id
         now = time.monotonic()
         ack_key = f"{chat_type}:{ack_target}"
-        # 附件确认也属于对外回复：自动回复模式下的普通群消息必须先经过
-        # Agent 选择门；只有明确 @ 咕咕时才能在模型选择前发送确认。
+        # 全量自动回复群的所有消息（包括明确 @）都交由 Agent 统一回复，不能
+        # 在模型选择前额外发“文件收到啦”；只响应 @ 模式保留原有即时确认。
         should_reply = (
             chat_type != "group"
             or (
-                not read_enabled
+                requires_at
+                and not read_enabled
                 and mentioned
             )
         )

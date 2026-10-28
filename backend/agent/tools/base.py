@@ -269,6 +269,8 @@ async def _maybe_announce_progress(tool: "Tool", args: dict) -> None:
     im = imctx.get_im()
     if im and im.get("tool_display_mode", "all") == "off":
         return
+    if im and im.get("group_reply_all"):
+        return
     if not payload.get("message_id"):  # 定时任务等无具体触发消息的路径：不发进度声明
         return
     if imctx.was_announced():  # 本 Busy Session 已经发过声明，不重复发

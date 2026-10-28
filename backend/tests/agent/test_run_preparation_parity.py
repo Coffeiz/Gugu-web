@@ -221,10 +221,10 @@ async def test_preparation_parity_between_collect_and_stream_modes(db, user_a, u
         non_streaming=True,
     )
     assert isinstance(media_exec, PreparedExecution)
-    reminder = captured_prepare_run_kwargs[2]["extra_reminder"]
-    assert "原生音频输入" in reminder and ".mp3" in reminder
-    assert "模拟 ASR" in reminder and "500 秒" in reminder
-    assert "原生视频输入" in reminder and "1500 秒" in reminder
+    media_system_prompt = captured_prepare_run_kwargs[2]["system_prompt"]
+    assert "原生音频输入" in media_system_prompt and ".mp3" in media_system_prompt
+    assert "模拟 ASR" in media_system_prompt and "500 秒" in media_system_prompt
+    assert "原生视频输入" in media_system_prompt and "1500 秒" in media_system_prompt
 
     async def fake_no_voice_profile(user_id, *, db=None):
         assert user_id == user_a.id
@@ -243,6 +243,6 @@ async def test_preparation_parity_between_collect_and_stream_modes(db, user_a, u
         non_streaming=True,
     )
     assert isinstance(unavailable_exec, PreparedExecution)
-    unavailable = captured_prepare_run_kwargs[3]["extra_reminder"]
+    unavailable = captured_prepare_run_kwargs[3]["system_prompt"]
     assert "没有可用的原生音频或语音转写路径" in unavailable
     assert "未启用原生视频输入" in unavailable

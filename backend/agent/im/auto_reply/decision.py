@@ -1,17 +1,17 @@
-"""群聊自动回复的拒绝状态；默认输出正文就是正常回复。"""
+"""群聊自动回复的本轮回复选择状态；默认输出正文就是正常回复。"""
 from dataclasses import dataclass
 from enum import Enum
 
 from agent.tools.base import Tool
 
 
-GROUP_REPLY_DECISION_TOOL = "decline_group_reply"
+GROUP_NO_REPLY_TOOL = "choose_no_reply"
 GATE_SILENT_REASON = "本轮已明确选择不回复，不要再调用其它工具。"
-GATE_DECLINE_AFTER_REPLY_REASON = "本轮已经开始回复，不能再改为静默。"
+GATE_NO_REPLY_AFTER_TEXT_REASON = "本轮已经开始回复，不能再改为静默。"
 
 
 def should_enable_group_reply_gate(payload: dict) -> bool:
-    """普通全量回复群消息才启用拒绝工具；明确 @ 与仅 @ 模式保持原路径。"""
+    """普通全量回复群消息才启用不回复选择工具；明确 @ 与仅 @ 模式保持原路径。"""
     return bool(
         isinstance(payload, dict)
         and payload.get("platform") in {"qq", "feishu", "telegram"}
@@ -29,7 +29,7 @@ class ReplyChoice(Enum):
 
 @dataclass
 class ReplyGate:
-    """不调用拒绝工具时允许回复；拒绝工具是不可逆的本轮静默决定。"""
+    """未选择静默时允许回复；不回复选择是本轮不可逆的静默决定。"""
 
     choice: ReplyChoice = ReplyChoice.PENDING
 
@@ -46,20 +46,20 @@ def build_group_reply_decision_tool(gate: ReplyGate) -> Tool:
 
     async def decline(_db, _user_id, arguments):
         if arguments not in ({}, None):
-            raise ValueError("拒绝回复工具不接受参数")
+            raise ValueError("本轮不回复工具不接受参数")
         gate.decline()
         return {"selected": ReplyChoice.SILENT.value}
 
     return Tool(
-        name=GROUP_REPLY_DECISION_TOOL,
+        name=GROUP_NO_REPLY_TOOL,
         description=(
-            "明确拒绝本轮群聊回复。仅在尚未输出正文、尚未调用业务工具，且确定不应回应时调用；"
-            "调用后本轮立即静默结束，正文和其它业务工具都不会执行。"
-            "如果你要回答，直接输出正文或正常调用所需业务工具，不要调用本工具。"
+            "选择本轮不回复。可以先阅读上下文并调用必要工具，再根据结果判断是否值得回复；"
+            "确定不需要回应时调用本工具。调用后本轮立即静默结束；同一批次里的其它工具不会执行。"
+            "如果已经输出面向群成员的正文，就不能再改为静默。"
         ),
         description_short=(
-            "仅在输出正文或调用业务工具前决定不回复时调用；调用后本轮静默结束。要回答就直接输出正文，"
-            "或正常调用业务工具，不要调用本工具。"
+            "可先阅读上下文或调用必要工具，再决定是否回复；确定不需要回应时调用。调用后立即静默结束；"
+            "已输出正文后不能再改为静默。"
         ),
         input_schema={
             "type": "object",
@@ -67,31 +67,31 @@ def build_group_reply_decision_tool(gate: ReplyGate) -> Tool:
             "additionalProperties": False,
         },
         handler=decline,
-        label="拒绝群聊回复",
+        label="本轮不回复",
         category="meta",
         source="builtin",
-        schema_version=3,
+        schema_version=4,
         parallel_safe=False,
     )
 
 
 def gate_call_violation_reason(gate: ReplyGate, resolved_name: str) -> str | None:
-    """拒绝后阻止整批其它工具；开始正常回答后拒绝工具不再可用。"""
+    """静默后阻止后续工具；已经输出正文后不能再切换为静默。"""
     if gate.choice is ReplyChoice.SILENT:
         return GATE_SILENT_REASON
     if (
         gate.choice is ReplyChoice.REPLY
-        and resolved_name == GROUP_REPLY_DECISION_TOOL
+        and resolved_name == GROUP_NO_REPLY_TOOL
     ):
-        return GATE_DECLINE_AFTER_REPLY_REASON
+        return GATE_NO_REPLY_AFTER_TEXT_REASON
     return None
 
 
 def tool_batch_allowed(gate: ReplyGate, call_names: list[str]) -> bool:
-    """拒绝调用与其它工具同批时整批不执行，防止拒绝请求旁路业务工具。"""
+    """不回复选择与其它工具同批时整批不执行，防止静默选择旁路业务工具。"""
     if gate.choice is ReplyChoice.SILENT:
         return False
-    has_decline = GROUP_REPLY_DECISION_TOOL in call_names
-    if has_decline and len(call_names) != 1:
+    has_no_reply_choice = GROUP_NO_REPLY_TOOL in call_names
+    if has_no_reply_choice and len(call_names) != 1:
         return False
     return all(gate_call_violation_reason(gate, name) is None for name in call_names)

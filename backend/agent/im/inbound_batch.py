@@ -81,6 +81,56 @@ async def partition_inbound_batch(
     return segments
 
 
+def resolve_batch_attachment_ids(
+    batch_messages: list[dict],
+    attachment_meta: dict[str, dict],
+    *,
+    fallback_platform_message_id: str = "",
+) -> None:
+    """把媒体入口生成的附件 ID 按来源消息和附件序号归回原批次消息。"""
+    by_source: dict[tuple[str, int], str] = {}
+    for attach_id, meta in attachment_meta.items():
+        platform_message_id = str(meta.get("platform_message_id") or "")
+        attachment_index = meta.get("attachment_index")
+        if platform_message_id and attachment_index is not None:
+            by_source[(platform_message_id, int(attachment_index))] = str(attach_id)
+
+    for message in batch_messages:
+        message_platform_id = str(
+            message.get("platform_message_id") or fallback_platform_message_id or ""
+        )
+        resolved: list[str] = []
+        for index, attachment in enumerate(message.get("attachments") or []):
+            if isinstance(attachment, str):
+                resolved.append(attachment)
+                continue
+            if not isinstance(attachment, dict):
+                continue
+            attach_id = attachment.get("attach_id")
+            if isinstance(attach_id, str) and attach_id:
+                resolved.append(attach_id)
+                continue
+            source_message_id = str(
+                attachment.get("source_platform_message_id")
+                or attachment.get("batch_platform_message_id")
+                or message_platform_id
+            )
+            source_index = attachment.get(
+                "source_attachment_index",
+                attachment.get("batch_attachment_index", index),
+            )
+            if not source_message_id or source_index is None:
+                continue
+            try:
+                source_index = int(source_index)
+            except (TypeError, ValueError):
+                continue
+            resolved_id = by_source.get((source_message_id, source_index))
+            if resolved_id:
+                resolved.append(resolved_id)
+        message["attachments"] = resolved
+
+
 async def process_inbound_batch(
     batch: list[tuple[str, dict]],
     *,

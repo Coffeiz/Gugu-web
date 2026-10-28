@@ -12,7 +12,7 @@ import pytest
 
 import agent.core as core
 from agent.core import LLMRunner
-from agent.im.auto_reply import GROUP_REPLY_DECISION_TOOL, ReplyGate
+from agent.im.auto_reply import GROUP_NO_REPLY_TOOL, ReplyGate
 
 
 AI = SimpleNamespace(
@@ -120,7 +120,7 @@ async def test_violating_business_tool_never_runs(monkeypatch, dispatched_tools)
     fake, _state = _provider_returning([
         SimpleNamespace(
             content=[
-                _tool_use("call-1", GROUP_REPLY_DECISION_TOOL, {"should_reply": True}),
+                _tool_use("call-1", GROUP_NO_REPLY_TOOL, {"should_reply": True}),
                 _tool_use("call-2", "read_file", {"path": "synthetic"}),
             ],
             usage=_usage(),
@@ -134,7 +134,7 @@ async def test_violating_business_tool_never_runs(monkeypatch, dispatched_tools)
     events, wire_messages = await _run_turn(gate)
 
     assert "read_file" not in dispatched_tools, "越权的业务工具被执行了"
-    assert GROUP_REPLY_DECISION_TOOL in dispatched_tools, "选择工具本身必须能执行"
+    assert GROUP_NO_REPLY_TOOL in dispatched_tools, "选择工具本身必须能执行"
 
     # 协议错误要真的回给模型，模型才知道要先做选择。
     wire_text = json.dumps(wire_messages, ensure_ascii=False)
@@ -171,5 +171,5 @@ async def test_repeated_violations_end_run_with_structured_error(monkeypatch, di
         {key: error.get(key) for key in ("message", "detail", "message_key")},
         ensure_ascii=False,
     )
-    assert GROUP_REPLY_DECISION_TOOL not in visible
+    assert GROUP_NO_REPLY_TOOL not in visible
     assert "read_file" not in visible

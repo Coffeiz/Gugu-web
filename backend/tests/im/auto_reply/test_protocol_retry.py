@@ -13,7 +13,7 @@ import pytest
 import agent.core as core
 from agent.core import LLMRunner
 from agent.im.auto_reply import (
-    GROUP_REPLY_DECISION_TOOL,
+    GROUP_NO_REPLY_TOOL,
     ReplyChoice,
     ReplyGate,
     check_protocol_violation,
@@ -138,7 +138,7 @@ async def test_direct_text_output_triggers_protocol_retry_then_model_chooses(mon
     """模型直接输出正文 → 服务端把协议错误回给它 → 它补调选择工具后正常继续。"""
     fake, state = _provider_returning([
         _text_round("模型直接输出的正文"),
-        _tool_round(GROUP_REPLY_DECISION_TOOL, {"should_reply": True}, "call-2"),
+        _tool_round(GROUP_NO_REPLY_TOOL, {"should_reply": True}, "call-2"),
         _text_round("最终回复"),
     ])
     monkeypatch.setattr(core, "_stream_round", fake)
@@ -203,7 +203,7 @@ async def test_decision_tool_is_silent_on_im_but_kept_in_web_mirror(monkeypatch)
     decision_event = {
         "type": "tool_call",
         "tool_call_id": "call-1",
-        "name": GROUP_REPLY_DECISION_TOOL,
+        "name": GROUP_NO_REPLY_TOOL,
         "label": "群聊回复选择",
     }
     await presentation.display_tool_event(

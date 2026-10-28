@@ -2,7 +2,7 @@
 import pytest
 
 from agent.im.auto_reply.decision import (
-    GROUP_REPLY_DECISION_TOOL,
+    GROUP_NO_REPLY_TOOL,
     MAX_DUPLICATE_CHOICES,
     MAX_TOOL_VIOLATIONS,
     ReplyChoice,
@@ -40,17 +40,17 @@ def test_invalid_selection_does_not_open_gate(invalid):
 @pytest.mark.parametrize(
     ("choice", "calls", "allowed"),
     [
-        (ReplyChoice.PENDING, [GROUP_REPLY_DECISION_TOOL], True),
+        (ReplyChoice.PENDING, [GROUP_NO_REPLY_TOOL], True),
         (ReplyChoice.PENDING, ["read_file"], False),
-        (ReplyChoice.PENDING, [GROUP_REPLY_DECISION_TOOL, "read_file"], False),
+        (ReplyChoice.PENDING, [GROUP_NO_REPLY_TOOL, "read_file"], False),
         (ReplyChoice.REPLY, ["read_file"], True),
         # 已经做出选择后模型又调了一次选择工具：按幂等放行（既有选择不改写）。
         # 判成协议失败会让整条消息连同已经算好的 token 一起报废——实测线上就是
         # 这么丢的回复。
-        (ReplyChoice.REPLY, [GROUP_REPLY_DECISION_TOOL], True),
+        (ReplyChoice.REPLY, [GROUP_NO_REPLY_TOOL], True),
         # 门已经开了，业务工具照常执行：重复调门是模型复读工具名留下的噪音，
         # 不该把已经开门的这一轮连同业务调用一起报废。
-        (ReplyChoice.REPLY, [GROUP_REPLY_DECISION_TOOL, "read_file"], True),
+        (ReplyChoice.REPLY, [GROUP_NO_REPLY_TOOL, "read_file"], True),
         (ReplyChoice.SILENT, [], False),
     ],
 )
@@ -63,15 +63,15 @@ def test_tool_batch_is_checked_against_server_reply_gate(choice, calls, allowed)
     ("choice", "name", "violates"),
     [
         # 门还没开：只有选择工具能用，其它工具一个都不许执行。
-        (ReplyChoice.PENDING, GROUP_REPLY_DECISION_TOOL, False),
+        (ReplyChoice.PENDING, GROUP_NO_REPLY_TOOL, False),
         (ReplyChoice.PENDING, "read_file", True),
         (ReplyChoice.PENDING, "call_tool", True),
         # 门已开：业务工具放行；重复调门在幂等上限内也放行。
         (ReplyChoice.REPLY, "read_file", False),
-        (ReplyChoice.REPLY, GROUP_REPLY_DECISION_TOOL, False),
+        (ReplyChoice.REPLY, GROUP_NO_REPLY_TOOL, False),
         # 选了静默：任何工具都不该再调。
         (ReplyChoice.SILENT, "read_file", True),
-        (ReplyChoice.SILENT, GROUP_REPLY_DECISION_TOOL, True),
+        (ReplyChoice.SILENT, GROUP_NO_REPLY_TOOL, True),
     ],
 )
 def test_gate_call_violation_is_decided_per_call(choice, name, violates):
@@ -85,9 +85,9 @@ def test_gate_call_violation_is_decided_per_call(choice, name, violates):
 
 def test_duplicate_gate_call_beyond_limit_is_a_violation():
     gate = ReplyGate(ReplyChoice.REPLY)
-    assert gate_call_violation_reason(gate, GROUP_REPLY_DECISION_TOOL) is None
+    assert gate_call_violation_reason(gate, GROUP_NO_REPLY_TOOL) is None
     gate.duplicate_choices = MAX_DUPLICATE_CHOICES
-    assert gate_call_violation_reason(gate, GROUP_REPLY_DECISION_TOOL) is not None
+    assert gate_call_violation_reason(gate, GROUP_NO_REPLY_TOOL) is not None
 
 
 def test_tool_violations_are_recoverable_until_the_limit():
@@ -141,4 +141,4 @@ def test_internal_choice_tool_permission_is_limited_to_automatic_group_runs(
     from agent.im.permissions import can_use_tool
 
     monkeypatch.setattr(imctx, "get_im", lambda: im_context)
-    assert can_use_tool(GROUP_REPLY_DECISION_TOOL, None) is allowed
+    assert can_use_tool(GROUP_NO_REPLY_TOOL, None) is allowed

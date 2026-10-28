@@ -40,7 +40,7 @@ from agent.run.preparation import prepare_agent_run
 
 
 def _silent_group_reply_response(req, outcome, session_id):
-    """显式拒绝或 run 没有正文时，丢弃群自动回复的空助手/工具历史。"""
+    """选择不回复或 run 没有正文时，丢弃群自动回复的空助手/工具历史。"""
     if not getattr(req, "group_auto_reply", False):
         return None
     from agent.im.auto_reply import ReplyChoice

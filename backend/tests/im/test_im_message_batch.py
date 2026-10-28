@@ -88,6 +88,30 @@ def test_merge_preserves_an_earlier_direct_mention():
     assert not should_enable_group_reply_gate(merged)
 
 
+@pytest.mark.asyncio
+async def test_owner_mention_is_a_serial_boundary_between_ordinary_message_runs(monkeypatch):
+    """owner @ 单独成轮；前序普通消息不并入 @ run，后续普通消息另行合并。"""
+    from agent.im import inbound_batch
+
+    messages = [
+        ("100-0", _group_msg("前序消息", "owner")),
+        ("101-0", {**_group_msg("@咕咕", "owner"), "bot_mentioned": True}),
+        ("102-0", _group_msg("后续补充", "owner")),
+        ("103-0", _group_msg("再补充", "owner")),
+    ]
+
+    async def owner_mentions(_batch):
+        return {1}
+
+    monkeypatch.setattr(inbound_batch, "_owner_mention_indexes", owner_mentions)
+
+    segments = await inbound_batch.partition_inbound_batch(messages)
+
+    assert [[message_id for message_id, _ in segment] for segment in segments] == [
+        ["100-0"], ["101-0"], ["102-0", "103-0"],
+    ]
+
+
 def test_merge_keeps_attachment_ids_at_their_original_message_boundary():
     """多人消息合并时仍携带逐条附件 ID，后续可将卡片归回正确发言人。"""
     from worker import _merge_payloads

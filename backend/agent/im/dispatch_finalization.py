@@ -87,7 +87,7 @@ async def finalize_im_dispatch(
         gate = getattr(request, "group_reply_gate", None)
         gate_opened = gate is not None and gate.choice is ReplyChoice.REPLY
         if not gate_opened:
-            # 没有正文或显式拒绝都保持群内静默；普通 IM 收尾的空正文兜底
+            # 没有正文或选择不回复都保持群内静默；普通 IM 收尾的空正文兜底
             # （「嗯~在的」）不能用于自动回复模式。
             trace.finish_run("error" if response.errored else "success")
             await finalize_im_response(platform, puid, False, "")

@@ -15,9 +15,9 @@ async def display_tool_event(
     await publish_web_event(event)
     # 群聊回复选择工具是内部协议信号，不是给群成员看的内容：IM 侧一律不外显，
     # Web 镜像照常保留（Web 端需要它排查「模型忘了调用选择工具」这类问题）。
-    from agent.im.auto_reply import GROUP_REPLY_DECISION_TOOL
+    from agent.im.auto_reply import GROUP_NO_REPLY_TOOL
 
-    if event.get("name") == GROUP_REPLY_DECISION_TOOL:
+    if event.get("name") == GROUP_NO_REPLY_TOOL:
         return
     # 飞书 ask_user 已由交互卡片承载等待与完成状态；再把 tool_done
     # 当普通工具消息发出会产生“暂停/完成”两条额外消息。Web 事件仍照常镜像。

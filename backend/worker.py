@@ -230,6 +230,7 @@ def _merge_payloads(payloads: list) -> dict:
     """
     base = dict(payloads[-1])
     texts, atts, emoji_refs, segments = [], [], [], []
+    message_attachments = []
     has_face_marker = any(bool(p.get("qq_face_marker")) for p in payloads)
     for p in payloads:
         t = (p.get("text") or "").strip()
@@ -244,7 +245,19 @@ def _merge_payloads(payloads: list) -> dict:
             "bot_mentioned": p.get("bot_mentioned") is True,
             "mentions_other_bot": p.get("mentions_other_bot") is True,
         })
-        atts.extend(p.get("attachments") or [])
+        source_message_id = str(p.get("platform_message_id") or "")
+        source_attachments = []
+        for attachment_index, attachment in enumerate(p.get("attachments") or []):
+            if isinstance(attachment, dict):
+                attachment = dict(attachment)
+                if source_message_id:
+                    attachment.setdefault("batch_platform_message_id", source_message_id)
+                if p.get("message_id"):
+                    attachment.setdefault("batch_message_id", str(p["message_id"]))
+                attachment.setdefault("batch_attachment_index", attachment_index)
+            source_attachments.append(attachment)
+        atts.extend(source_attachments)
+        message_attachments.append(source_attachments)
         emoji_refs.extend(
             ref for ref in (p.get("emoji_refs") or [])
             if isinstance(ref, dict)
@@ -265,6 +278,7 @@ def _merge_payloads(payloads: list) -> dict:
         base["_batch_messages"] = [
             {
                 "early_id": p.get("_early_message_id"),
+                "platform_message_id": p.get("platform_message_id"),
                 "text": p.get("text") or "",
                 "quoted_text": p.get("quoted_text"),
                 "chat_type": p.get("chat_type"),
@@ -274,9 +288,9 @@ def _merge_payloads(payloads: list) -> dict:
                 "bot_mentioned": p.get("bot_mentioned") is True,
                 "group_mentioned": p.get("group_mentioned") is True,
                 "mentions_other_bot": p.get("mentions_other_bot") is True,
-                "attachments": list(p.get("attachments") or []),
+                "attachments": message_attachments[index],
             }
-            for p in payloads
+            for index, p in enumerate(payloads)
         ]
     return base
 

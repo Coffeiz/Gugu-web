@@ -502,6 +502,52 @@ async def test_qq_raw_group_event_to_payload(monkeypatch):
     assert produced[0]["group_mentioned"] is False
 
 
+async def test_qq_group_image_protocol_placeholder_is_not_forwarded_as_message_text(monkeypatch):
+    produced: list[dict] = []
+
+    async def fake_group_settings(_bot_id):
+        return True, True
+
+    async def fake_produce(_stream, payload):
+        produced.append(payload)
+
+    monkeypatch.setattr(qq_events, "_group_settings", fake_group_settings)
+    monkeypatch.setattr(qq_events.R, "produce", fake_produce)
+
+    from agent import router
+    from agent.runtime import runtime_state
+
+    async def fake_async_false(*args, **kwargs):
+        return False
+
+    async def fake_async_none(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(router, "decide", lambda *args, **kwargs: {"action": "run"})
+    monkeypatch.setattr(runtime_state, "get_state", fake_async_none)
+    monkeypatch.setattr(runtime_state, "is_awaiting", fake_async_false)
+
+    marker = '<attachmentType="image/jpeg",attachmentIndex=0,description="opaque">'
+    attachment = {
+        "url": "https://example.invalid/image.jpg",
+        "filename": "synthetic-image.jpg",
+        "content_type": "image/jpeg",
+    }
+    data = _raw_group_event(content=marker, attachments=[attachment])
+
+    await qq_events._handle_raw_qq_message(
+        "GROUP_AT_MESSAGE_CREATE", data, "bot-1", "user-1", {},
+    )
+
+    assert len(produced) == 1
+    assert produced[0]["text"] == ""
+    assert produced[0]["attachments"] == [attachment]
+    cached_message = qq_events._qq_ref_index("user-1", "bot-1").get(
+        ref_index_key("group", "group_1", "member_1", "2"),
+    )
+    assert cached_message["content"] == ""
+
+
 async def test_qq_raw_group_disabled_drops_event(monkeypatch):
     produced: list[dict] = []
 

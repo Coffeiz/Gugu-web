@@ -15,6 +15,7 @@ collect/stream（以及后续 web）入口共用的唯一准备实现：会话�
 from __future__ import annotations
 
 import asyncio
+import time
 
 from app.core.config import get_settings
 from app.core.tz import set_ctx_tz
@@ -47,6 +48,7 @@ from agent.run.contract import (
     EarlyExit,
     PreparedExecution,
 )
+from agent.runtime.loopscope_trace.state import record_phase_timing
 
 
 async def _load_mcp_tools(user_id, settings, allowed_tool_names=None):
@@ -68,6 +70,40 @@ async def _load_mcp_tools(user_id, settings, allowed_tool_names=None):
         return tools
     allowed = set(allowed_tool_names)
     return [tool for tool in tools if tool.name in allowed]
+
+
+async def _prepare_group_batch_inputs(user_id, batch_messages, request, model_cfg, db):
+    """逐条解析群批次的正文和附件，返回当前轮 entries 及汇总附件数据。"""
+    from agent.im.context_loader import format_current_group_message
+    from agent.chat.attachments import IMAGE_COUNT
+
+    current_users = []
+    augmented_parts = []
+    attach_cards, images, media = [], [], []
+    for item in batch_messages:
+        if not isinstance(item, dict):
+            continue
+        message_text = str(item.get("text") or "")
+        attachment_ids = [
+            value.get("attach_id") if isinstance(value, dict) else value
+            for value in (item.get("attachments") or [])
+        ]
+        augmented_text, cards, row_images, row_media = await resolve_for_message(
+            user_id, [value for value in attachment_ids if value], message_text,
+            model_cfg=model_cfg, db=db, max_images=IMAGE_COUNT - len(images),
+        )
+        augmented_parts.append(augmented_text)
+        attach_cards.extend(cards)
+        images.extend(row_images)
+        media.extend(row_media)
+        current_users.append({
+            "text": format_current_group_message(augmented_text, request, item),
+            "images": row_images,
+            "media": row_media,
+            "sent_at": None,
+            "persisted_message_id": None,
+        })
+    return current_users, "\n".join(part for part in augmented_parts if part), attach_cards, images, media
 
 
 async def load_mcp_tools_and_rag_context(
@@ -508,15 +544,24 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
         # 让咕咕知道「自己刚主动发了啥」、能接住用户对它的回复（如新闻速览后用户回「4」）。
         # 附件（IM 收到的文件）：文本读内容注入给模型，卡片随用户消息持久化（和网页同一套）
         from app.core import chat_attach
-        # 群聊当前轮由 format_current_content 以逐条结构化消息序列化；引用属于各条消息，
-        # 不要再拼进合并正文。私聊/Web 继续沿用原有引用前缀。
-        if req.chat_id:
-            llm_text = req.message
+        # 群聊批次逐条解析附件与正文，之后每条原始平台消息分别进入 canonical Area。
+        # 私聊/Web 仍使用原有的单条消息路径。
+        batch_messages = getattr(req, "im_batch_messages", None)
+        current_user_inputs = None
+        if req.chat_id and isinstance(batch_messages, list) and batch_messages:
+            (current_user_inputs, aug_text, attach_cards,
+             aug_images, aug_media) = await _prepare_group_batch_inputs(
+                user_id, batch_messages, req, model_cfg, db,
+            )
         else:
-            llm_text = with_quoted_context(req.message, getattr(req, "quoted_text", None))
-        aug_text, attach_cards, aug_images, aug_media = await resolve_for_message(
-            user_id, getattr(req, "attachments", None) or [], llm_text,
-            model_cfg=model_cfg, db=db)
+            # 引用属于各条群消息；私聊/Web 继续沿用原有引用前缀。
+            llm_text = req.message if req.chat_id else with_quoted_context(
+                req.message, getattr(req, "quoted_text", None),
+            )
+            aug_text, attach_cards, aug_images, aug_media = await resolve_for_message(
+                user_id, getattr(req, "attachments", None) or [], llm_text,
+                model_cfg=model_cfg, db=db,
+            )
         from agent.media.capability_prompt import media_capability_for_user
         media_capability_context = await media_capability_for_user(model_cfg, user_id, db=db)
         if getattr(req, "attachments", None):   # 诊断：带附件时记 kind/ext/media 数，排查语音为何没转写
@@ -528,12 +573,12 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
                 [c.get("ext") for c in (attach_cards or [])])
         user_message = None
         early_ids = [int(i) for i in (getattr(req, "early_message_ids", None) or [])]
-        batch_messages = getattr(req, "im_batch_messages", None)
+        reused_user_messages = []
         if early_ids or batch_messages:
             # 早落库：这条 IM 消息在 run 启动前就已经入库（否则「run 期间消息看不到」）。
             # 必须复用那一行而不是再插一条——历史按 id 读行，多插一条会让同一段话
             # 在「历史」和「当前轮」各出现一次。
-            user_message, _reused = await _reuse_early_user_rows(
+            user_message, reused_user_messages = await _reuse_early_user_rows(
                 db,
                 session_id=session_id,
                 early_ids=early_ids,
@@ -541,6 +586,12 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
                 batch_key=req.inbound_batch_key,
                 batch_messages=batch_messages,
             )
+        if current_user_inputs:
+            for index, current_input in enumerate(current_user_inputs):
+                if index < len(reused_user_messages):
+                    row = reused_user_messages[index]
+                    current_input["persisted_message_id"] = row.id
+                    current_input["sent_at"] = row.sent_at
         if user_message is None:
             user_message = ConversationMessage(session_id=session_id, role="user", content=req.message,
                                                files=attach_cards or None, quoted_text=getattr(req, "quoted_text", None),
@@ -694,6 +745,7 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
         _dynamic_extra_parts.append("\n## 你刚主动发给 TA 的消息（TA 接下来很可能在回应这条）\n\n" + _proactive_lead)
 
     use_anthropic = run_config.use_anthropic
+    tool_preparation_started_at = time.time()
     tool_names = filter_tool_names(all_system_tool_names(), req.allowed_tool_names)
     mcp_tools, precomputed_rag_context = await load_mcp_tools_and_rag_context(
         user_id, settings, req.allowed_tool_names, req,
@@ -709,6 +761,7 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
     user_skill_metadata = _session_user_skill_metadata(session)
     # 这里同样使用短事务。工具组装可能触发数据库查询，不能把前面已关闭的
     # session 传入，否则 AsyncSession 会在上下文外重新 checkout 连接并由 GC 回收。
+    capability_started_at = time.time()
     async with _sess._SessionLocal() as tool_db:
         tool_names, system_prompt, snapshot_context, capability_context = await prepare_run_capabilities(
             tool_db, user_id, session_id, tool_names, settings, system_prompt, snapshot_context,
@@ -716,6 +769,7 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
             user_skill_metadata=user_skill_metadata, dynamic_tools=mcp_tools, source=req.source,
             model_cfg=model_cfg,
         )
+    record_phase_timing("Capability context assembly", capability_started_at)
     if group_reply_tool is not None:
         from agent.im.auto_reply import group_reply_system_prompt
 
@@ -733,7 +787,9 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
     runner.group_reply_gate = group_reply_gate
 
     from agent.im.context_loader import format_current_content
-    current_llm_text = format_current_content(aug_text, req)
+    current_llm_text = (
+        "" if current_user_inputs else format_current_content(aug_text, req)
+    )
     prepared = await run_context.prepare_run(
         system_prompt=system_prompt,
         snapshot_context=snapshot_context,
@@ -743,6 +799,7 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
         strip_thinking=strip_thinking,
         use_anthropic=use_anthropic,
         current_text=current_llm_text,
+        current_users=current_user_inputs,
         images=aug_images,
         media=aug_media,
         model_cfg=model_cfg,
@@ -755,6 +812,7 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
         history_stats=history_stats,
         prepared_rag_context=precomputed_rag_context,
     )
+    record_phase_timing("Tool and RAG preparation", tool_preparation_started_at)
 
     return PreparedExecution(
         session_id=session_id,

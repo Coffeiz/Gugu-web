@@ -15,6 +15,10 @@ _QQ_FACE_RE = re.compile(
     r'<faceType=(?P<face_type>[^,>]+),faceId="(?P<face_id>[^"]*)",'
     r'ext="(?P<ext>[^"]*)">'
 )
+_QQ_ATTACHMENT_PLACEHOLDER_RE = re.compile(
+    r'<attachmentType="(?P<mime>[A-Za-z0-9.+-]+/[A-Za-z0-9.+-]+)",'
+    r'attachmentIndex=(?P<index>\d+),description="[^"]*">'
+)
 _QQ_FACE_PENDING_TTL = 3.0
 _pending_qq_faces: dict[str, list[float]] = {}
 _pending_qq_face_ids: dict[str, list[list[dict[str, str]]]] = {}
@@ -155,6 +159,29 @@ def _extract_quoted(raw_data: Dict[str, Any]) -> tuple[str, list]:
         attachments = []
     media = _dedupe_attachments(attachments + _collect_media_attachments(elem))
     return text, media
+
+
+def _normalize_qq_attachment_placeholders(text: str, attachments: list) -> str:
+    """只移除能与同条消息真实附件按序号和 MIME 对上的 QQ 正文占位符。"""
+    if not text or not isinstance(attachments, list) or not attachments:
+        return text
+
+    def replace(match: re.Match) -> str:
+        index = int(match.group("index"))
+        if index >= len(attachments):
+            return match.group(0)
+        attachment = attachments[index]
+        if not isinstance(attachment, dict):
+            return match.group(0)
+        actual_mime = str(
+            attachment.get("content_type") or attachment.get("mime") or attachment.get("type") or ""
+        ).split(";", 1)[0].strip().lower()
+        if actual_mime != match.group("mime").lower():
+            return match.group(0)
+        return ""
+
+    normalized = _QQ_ATTACHMENT_PLACEHOLDER_RE.sub(replace, text)
+    return normalized.strip() if normalized != text else text
 
 
 def _collect_media_attachments(value) -> list:
