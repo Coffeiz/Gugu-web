@@ -31,7 +31,6 @@ from agent.im.context_policy import IM_SOURCES, policy_for
 from agent.im.context_loader import load_context_data
 from agent.im.context_runtime import (
     continuity_bridge,
-    im_identity_block,
     proactive_lead_for,
     snapshot_im_memory as add_im_memory_to_snapshot,
     with_quoted_context,
@@ -476,6 +475,10 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
             db, session, load_context=_load_snapshot,
             workspace_binding=workspace_binding,
         )
+        if context_policy.isolate_group_context:
+            from agent.im.context_loader import isolate_group_memory_snapshot
+
+            snapshot = isolate_group_memory_snapshot(snapshot)
         snapshot_user_tz = snapshot["user_tz"]
         snapshot["system_prompt"] = await _load_system_prompt(snapshot_user_tz)
         user_tz = snapshot["user_tz"]
@@ -486,29 +489,36 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
         restore_group_memory_snapshot(snapshot)
 
         # 历史读取不做本地 token 预估；预算由 provider 实际请求结果决定。
-        history = await session_history.load_session_history(
-            db,
-            session_id,
-            session_snapshot.history_baseline(session),
-        )
-        history_stats = session_history.consume_history_stats()
+        if context_policy.isolate_group_context:
+            # 群历史由成员共同写入；owner 的特权 @ run 不把这些文本带入高权限上下文。
+            history = []
+            history_stats = session_history.consume_history_stats()
+        else:
+            history = await session_history.load_session_history(
+                db,
+                session_id,
+                session_snapshot.history_baseline(session),
+            )
+            history_stats = session_history.consume_history_stats()
         _, strip_thinking = prepare_session(session, model_cfg)
         if strip_thinking:
             clean_persisted_history(history)
             strip_thinking = False
         # 主动推送（定时任务/活动提醒）若是会话首条 assistant（前导，sanitize 会剥掉）→ 记下来塞进 system，
         # 让咕咕知道「自己刚主动发了啥」、能接住用户对它的回复（如新闻速览后用户回「4」）。
-        # 主动推送桥只保留群聊行为；私聊不把历史首条主动消息重复塞进每轮尾部。
-        _proactive_lead = proactive_lead_for(req, history)
-
         # 附件（IM 收到的文件）：文本读内容注入给模型，卡片随用户消息持久化（和网页同一套）
         from app.core import chat_attach
-        # 多发言人合并成一轮时，喂给模型的正文带发言人标注（req.message 保持原始正文，
-        # 落库和展示仍用原文）。
-        current_body = getattr(req, "im_attributed_text", None) or req.message
-        llm_text = with_quoted_context(current_body, getattr(req, "quoted_text", None))
+        # 群聊当前轮由 format_current_content 以逐条结构化消息序列化；引用属于各条消息，
+        # 不要再拼进合并正文。私聊/Web 继续沿用原有引用前缀。
+        if req.chat_id:
+            llm_text = req.message
+        else:
+            llm_text = with_quoted_context(req.message, getattr(req, "quoted_text", None))
         aug_text, attach_cards, aug_images, aug_media = await resolve_for_message(
-            user_id, getattr(req, "attachments", None) or [], llm_text, model_cfg=model_cfg)
+            user_id, getattr(req, "attachments", None) or [], llm_text,
+            model_cfg=model_cfg, db=db)
+        from agent.media.capability_prompt import media_capability_for_user
+        media_capability_context = await media_capability_for_user(model_cfg, user_id, db=db)
         if getattr(req, "attachments", None):   # 诊断：带附件时记 kind/ext/media 数，排查语音为何没转写
             import logging as _lg
             _lg.getLogger("agent.runner").info(
@@ -576,6 +586,8 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
                 )
             except Exception:
                 im_bridge = ""
+        # 主动推送桥只保留群聊行为；私聊不把历史首条主动消息重复塞进每轮尾部。
+        _proactive_lead = proactive_lead_for(req, history)
 
     # 用户消息先推给网页：一存下就推（先看到「我发了什么」），回复生成完再推第二次。
     # origin 是 Web 入口的回声抑制标识（发起标签页跳过这条广播）；IM 入口无此概念。
@@ -676,9 +688,6 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
     # 组装本轮动态上下文注入块（放入 history 之后，不进 system）。
     # Shell 状态说明单独放在 system_prompt 的固定位置，见下方 Shell 策略组装。
     _dynamic_extra_parts = []
-    _im_id = im_identity_block(req, history)
-    if _im_id:
-        _dynamic_extra_parts.append(_im_id)
     if im_bridge:
         _dynamic_extra_parts.append(im_bridge)
     if _proactive_lead:
@@ -711,6 +720,7 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
         from agent.im.auto_reply import group_reply_system_prompt
 
         system_prompt = "\n\n---\n\n".join((system_prompt, group_reply_system_prompt()))
+    system_prompt = "\n\n---\n\n".join((system_prompt, media_capability_context))
     if capability_context is not None:
         _pin_session_user_skill_metadata(session, capability_context)
     if capability_context is not None:

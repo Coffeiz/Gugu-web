@@ -16,6 +16,7 @@ class AgentRequest:
     message: str
     user_id: object               # UUID
     user_name: str
+    client_message_id: Optional[str] = None      # Web 乐观消息与数据库消息共享的客户端身份
     session_id: Optional[int] = None
     pending_queue_id: Optional[str] = None  # Web 标签页的待发队列标识，用于新会话 ID 落地前暂存
     pending_queue_item_key: Optional[int] = None  # 后端持久化用户消息时原子确认对应队列项
@@ -42,11 +43,11 @@ class AgentRequest:
     allowed_tool_names: Optional[list[str]] = None  # None=沿用完整工具集；群成员使用白名单
     actor_context: Optional[ActorContext] = None    # IM 统一身份快照；Web 为空
     im_turn_speakers: Optional[list] = None         # IM 群聊本轮多位发言人的身份快照（平台ID/昵称/角色）
-    im_attributed_text: Optional[str] = None        # 多发言人合并时喂给模型的正文（带发言人标注）
     im_message_format: Optional[str] = None         # QQ 文本出站格式策略
     im_group_memory_enabled: bool = True            # IM 群公开记忆是否读取/沉淀
     im_member_memory_enabled: bool = True           # IM 群成员记忆是否读取/沉淀
     im_group_owner_memory_enabled: bool = False     # 群聊允许已验证 owner 召回私人记忆
+    isolate_group_context: bool = False             # owner @ run 不读取群历史与群共享记忆
     interaction_prompt_id: Optional[int] = None     # Web 恢复 ask_user 的 pending Run
     interaction_token: Optional[str] = None         # 仅由交互恢复入口消费，不进入模型上下文
     interaction_event_id: Optional[str] = None
