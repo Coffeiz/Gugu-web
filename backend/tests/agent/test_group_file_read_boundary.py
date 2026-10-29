@@ -44,10 +44,16 @@ async def test_restricted_group_identity_cannot_read_arbitrary_owner_attachment(
 
 
 @pytest.mark.asyncio
-async def test_restricted_group_identity_can_read_current_message_image(monkeypatch):
+@pytest.mark.parametrize(("kind", "ext", "expected_error"), [
+    ("image", "png", None),
+    ("text", "txt", "只能读取图片附件"),
+])
+async def test_restricted_group_identity_can_read_current_message_image(
+    monkeypatch, kind, ext, expected_error,
+):
     chat_attach = importlib.import_module("app.core.chat_attach")
     get_meta = AsyncMock(return_value={
-        "kind": "image", "ext": "png", "name": "image.png", "storage_key": "safe-key",
+        "kind": kind, "ext": ext, "name": f"attachment.{ext}", "storage_key": "safe-key",
     })
     monkeypatch.setattr(chat_attach, "get_meta", get_meta)
     media_reader = importlib.import_module("agent.tools.media_reader")
@@ -64,5 +70,36 @@ async def test_restricted_group_identity_can_read_current_message_image(monkeypa
         None, "synthetic-owner", {"attach_id": "current-image"}, restricted=True,
     )
 
-    assert result["_image_block"] == {"type": "image"}
+    if expected_error:
+        assert expected_error in json.loads(result)["error"]
+        read_image.assert_not_awaited()
+    else:
+        assert result["_image_block"] == {"type": "image"}
     get_meta.assert_awaited_once_with("synthetic-owner", "current-image")
+
+
+@pytest.mark.asyncio
+async def test_owner_can_read_historical_text_attachment_without_saving(monkeypatch):
+    chat_attach = importlib.import_module("app.core.chat_attach")
+    monkeypatch.setattr(chat_attach, "get_meta", AsyncMock(return_value={
+        "kind": "text", "ext": "txt", "name": "notes.txt",
+        "storage_key": "owned-attachment", "size": 12,
+    }))
+    storage = SimpleNamespace(
+        stat=AsyncMock(return_value=SimpleNamespace(size=22)),
+        get=AsyncMock(return_value=b"first line\nsecond line"),
+    )
+    storage_service = importlib.import_module("app.services.storage")
+    monkeypatch.setattr(storage_service, "get_storage", lambda: storage)
+    doctext = importlib.import_module("app.core.doctext")
+    monkeypatch.setattr(doctext, "extract_text", AsyncMock(return_value="first line\nsecond line"))
+    read = importlib.import_module("agent.tools.files.read")
+
+    result = await read._read_file_single(
+        None, "synthetic-owner", {"attach_id": "historical-text"},
+    )
+
+    assert result["attach_id"] == "historical-text"
+    assert result["name"] == "notes.txt"
+    assert "second line" in result["content"]
+    storage.get.assert_awaited_once_with("owned-attachment")
