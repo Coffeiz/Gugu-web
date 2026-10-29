@@ -1004,7 +1004,7 @@
     "layer": "L1",
     "owner": "frontend/components/common/profile",
     "productionEntry": "frontend/src/components/common/profile/ProfileImPane.vue",
-    "keyBehavior": "平台群聊策略仅提交当前 Bot 对应字段，Telegram 连接、替换和群组策略入口对用户正确呈现",
+    "keyBehavior": "平台群聊策略仅提交当前 Bot 对应字段；自动回复下按 Bot 保存注意力模式，切至仅响应 @ 后隐藏该选项；Telegram 连接和群策略入口正确呈现",
     "ci": "frontend-test"
   },
   "frontend/tests/shared/liveRevisionRefresh.test.ts": {
@@ -1756,7 +1756,7 @@
     "layer": "L1",
     "owner": "backend/agent/im/dispatch_finalization.py",
     "productionEntry": "backend/agent/im/dispatch.py",
-    "keyBehavior": "群回复门未开启时协议错误、模型失败和未选择均保持静默；门开启后错误送达，私聊错误不受抑制",
+    "keyBehavior": "群回复门未开启时协议错误、模型失败和未选择均保持静默；choose_no_reply 释放未消费的注意力预算并记录脱敏收尾事实",
     "ci": "backend-pytest"
   },
   "backend/tests/im/auto_reply/test_protocol_failure.py": {
@@ -1846,5 +1846,85 @@
     "productionEntry": "loopscope/frontend/src/views/Monitor.vue",
     "keyBehavior": "列表刷新时保留用户手动选择的旧 run；显式焦点变化跟随目标 run；当前选择移除后回到最新可用项",
     "ci": "frontend-vitest"
+  },
+  "backend/tests/im/auto_reply/test_attention_budget.py": {
+    "domain": "group-attention-budget",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply/budget.py",
+    "productionEntry": "backend/agent/im/dispatch.py 与 scored 群聊预算收尾",
+    "keyBehavior": "PROACTIVE 与 SOFT 预算按平台机器人群及成员作用域原子预留，限制窗口、幂等重试、失败释放和未知状态有界占位",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_attention_delivery.py": {
+    "domain": "group-attention-delivery-ledger",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply/delivery.py",
+    "productionEntry": "backend/agent/im/replies.py 与 attention snapshot",
+    "keyBehavior": "投递幂等且只把已接受的原生消息 ID 按平台、Bot、群索引；已回答来源映射回 N07；可信引用必须发给同一成员",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_attention_platform_facts.py": {
+    "domain": "group-attention-platform-facts",
+    "layer": "L1",
+    "owner": "backend/agent/gateway 与 backend/agent/im/parsers",
+    "productionEntry": "QQ、飞书、Telegram 群聊事件适配",
+    "keyBehavior": "平台 @ 与引用只从原生结构化目标解析；未知引用身份保持 UNKNOWN 并按会话范围隔离",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_attention_decision.py": {
+    "domain": "group-attention-decisions",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply/attention.py",
+    "productionEntry": "backend/agent/im/dispatch.py 的注意力决策入口",
+    "keyBehavior": "自主路径旁路评分；DIRECT 和可信引用先于硬拒绝；natural、active 阈值与预算按模式执行，缺失快照不准入开放候选",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_attention_features.py": {
+    "domain": "group-attention-features",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply/attention.py",
+    "productionEntry": "Gateway 事实规范化与 scored 特征计算",
+    "keyBehavior": "结构化消息事实保留 UNKNOWN；只使用可靠 Stream 时间和作用域；逻辑候选去重且不跨成员或群拼接",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_attention_runtime.py": {
+    "domain": "group-attention-snapshot",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply/runtime.py",
+    "productionEntry": "backend/agent/im/dispatch.py",
+    "keyBehavior": "自主模式绕过评分与新预算；scored 上下文合并数据库和尚未落库的同群消息，并审计模式版本、准入、分项分数和快照完整性",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_attention_scenario_matrix.py": {
+    "domain": "group-attention-scenarios",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply/attention.py",
+    "productionEntry": "backend/agent/im/dispatch.py 的 scored 决策入口",
+    "keyBehavior": "覆盖 PRD v1.4 P/N 权重、H 规则、三值关系、跨成员对话、邀请、媒体兜底和预算场景的分数与准入结果",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_attention_review_matrix.py": {
+    "domain": "group-attention-review-matrix",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply/attention.py",
+    "productionEntry": "backend/agent/im/dispatch.py 的群聊注意力决策入口",
+    "keyBehavior": "以 60 余个独立合成对话验证四种模式、邀请与续接、硬拒绝、阈值、历史证据、预算和媒体准入结果",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_attention_passive_persistence.py": {
+    "domain": "group-attention-passive-persistence",
+    "layer": "L1",
+    "owner": "backend/agent/im/conversation.py",
+    "productionEntry": "backend/agent/im/dispatch.py 与 Worker ACK",
+    "keyBehavior": "PASSIVE 批次逐条保存成员身份和附件归属，在单事务完成后记录结构化决策摘要并支持事件幂等重投",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_group_attention_mode.py": {
+    "domain": "group-attention-mode",
+    "layer": "L1",
+    "owner": "backend/app/api/v1/user_bots.py 与 UserBot",
+    "productionEntry": "用户 Bot 设置 API 与群聊 dispatch",
+    "keyBehavior": "模式按 Bot 持久化并校验为 autonomous、quiet、natural 或 active；仅变化时递增配置版本，未配置时兼容默认 autonomous",
+    "ci": "backend-pytest"
   }
 }
