@@ -1144,8 +1144,8 @@ class ConversationMessage(Base):
     platform_user_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     platform_bot_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     # IM 注意力门控只保存平台结构化事实；不从引用正文反推发言人或关系。
-    im_platform_message_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
-    im_reply_to_message_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    im_platform_message_id: Mapped[Optional[str]] = mapped_column(String(512), nullable=True, index=True)
+    im_reply_to_message_id: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     im_reply_target_sender_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     im_reply_target_is_bot: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     im_sender_is_bot: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
