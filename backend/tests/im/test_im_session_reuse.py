@@ -164,7 +164,7 @@ async def test_trim_session_messages_trims_above_threshold(db, user_a):
     db.add_all(messages)
     await db.flush()
     db.add(ConversationMessage(session_id=session.id, role="summary", content="摘要",
-                               covers_until_id=messages[20].id))
+                               covers_until_seq=messages[20].conversation_seq))
     await db.commit()
 
     await trim_session_messages(session.id)
@@ -198,7 +198,7 @@ async def test_trim_session_messages_removes_excess_in_bounded_batches(db, user_
     db.add_all(messages)
     await db.flush()
     db.add(ConversationMessage(session_id=session.id, role="summary", content="摘要",
-                               covers_until_id=messages[1000].id))
+                               covers_until_seq=messages[1000].conversation_seq))
     await db.commit()
 
     original_remove = conversation_retention.remove_messages_with_attachments
@@ -235,7 +235,7 @@ async def test_trim_keeps_pending_and_uncovered_messages(db, user_a):
     db.add_all(messages)
     await db.flush()
     db.add(ConversationMessage(session_id=session.id, role="summary", content="摘要",
-                               covers_until_id=messages[3].id))
+                               covers_until_seq=messages[3].conversation_seq))
     await db.commit()
 
     await trim_session_messages(session.id, limit=2, threshold=2)
@@ -264,7 +264,7 @@ async def test_trim_session_messages_cleans_attachment_storage(db, user_a, monke
     db.add_all(messages)
     await db.flush()
     db.add(ConversationMessage(session_id=session.id, role="summary", content="摘要",
-                               covers_until_id=messages[1].id))
+                               covers_until_seq=messages[1].conversation_seq))
     await db.commit()   # stage 的独立 session 与单连接内存库共享事务，先落库再 stage
     metas = [await chat_attach.stage(user_a.id, f"a{i}.txt", "txt", "text/plain", b"x")
              for i in range(3)]

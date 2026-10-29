@@ -2,6 +2,7 @@
 from types import MappingProxyType
 
 from agent.capabilities.injector import CapabilityToolContext, catalog_block
+from agent.im.auto_reply import GROUP_NO_REPLY_TOOL
 from agent.capabilities.models import CapabilityMeta, CapabilitySnapshot, SelectedCapabilities
 
 
@@ -17,12 +18,12 @@ class EmptyMessages:
     conversation = ()
 
 
-def test_reply_choice_is_mandatory_for_provider_selection_but_hidden_from_catalog():
+def test_reply_control_is_hidden_from_capability_catalog():
     snapshot = CapabilitySnapshot(
         generation=1,
         tools=MappingProxyType({
-            "group_reply_decision": CapabilityMeta(
-                "group_reply_decision", "tool", "选择是否回复群消息", source="builtin",
+            GROUP_NO_REPLY_TOOL: CapabilityMeta(
+                GROUP_NO_REPLY_TOOL, "tool", "选择是否回复群消息", source="builtin",
             ),
             "read_file": CapabilityMeta("read_file", "tool", "读取文件"),
         }),
@@ -30,5 +31,4 @@ def test_reply_choice_is_mandatory_for_provider_selection_but_hidden_from_catalo
     )
     context = CapabilityToolContext(snapshot, EmptySelector())
 
-    assert context.select_for_messages(EmptyMessages()).tool_names == ("group_reply_decision",)
-    assert "group_reply_decision" not in catalog_block(snapshot)
+    assert GROUP_NO_REPLY_TOOL not in catalog_block(snapshot)

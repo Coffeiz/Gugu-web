@@ -570,7 +570,7 @@ async def test_qq_stream_mermaid_fallback_and_following_text_survive_without_mes
         def push(self, text):
             self.text += text
 
-        async def finish(self, text):
+        async def finish(self, text, **_kwargs):
             self.text = text
 
         def has_sent(self):
@@ -667,7 +667,7 @@ async def test_qq_stream_preserves_text_image_text_order_after_deferred_render(m
         def push(self, text):
             self.text += text
 
-        async def finish(self, text):
+        async def finish(self, text, **_kwargs):
             events.append(("text", text))
 
         def has_sent(self):
@@ -726,7 +726,7 @@ async def test_qq_streaming_facade_keeps_text_image_text_order(monkeypatch):
         def push(self, text):
             self.text += text
 
-        async def finish(self, text):
+        async def finish(self, text, **_kwargs):
             events.append(("text", text))
 
         def has_sent(self):
@@ -792,7 +792,7 @@ async def test_qq_stream_sends_each_round_once_in_separate_streams(monkeypatch):
         def push(self, text):
             self.text += text
 
-        async def finish(self, text):
+        async def finish(self, text, **_kwargs):
             self.finished.append(text)
 
         def has_sent(self):
@@ -827,7 +827,7 @@ async def test_qq_stream_sends_each_round_once_in_separate_streams(monkeypatch):
     )
 
     assert sent is True
-    assert len(streams) == 3
+    assert len(streams) == 2
     delivered_text = [text for stream in streams for text in stream.finished]
     assert delivered_text == ["前置说明", "最终回复"]
 
@@ -854,7 +854,7 @@ async def test_qq_stream_sends_all_run_images_without_total_chart_cap(
         def push(self, text):
             self.text += text
 
-        async def finish(self, text):
+        async def finish(self, text, **_kwargs):
             self.text = text
             events.append(("text", text))
 

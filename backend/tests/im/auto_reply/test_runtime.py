@@ -1,6 +1,7 @@
 """保护 provider 在回复选择前后分别只收到正确的工具集合。"""
 from types import SimpleNamespace
 
+from agent.im.auto_reply import GROUP_NO_REPLY_TOOL
 from agent.im.auto_reply import ReplyChoice, ReplyGate
 from agent.loop.round_runtime import ProviderRoundRuntime
 
@@ -10,7 +11,7 @@ class CapabilityContext:
     fixed_adapter = False
 
     def select_for_messages(self, _messages):
-        return SimpleNamespace(tool_names=("read_file", "group_reply_decision"))
+        return SimpleNamespace(tool_names=("read_file",))
 
 
 class Driver:
@@ -21,13 +22,13 @@ class Driver:
         self.tool_names = list(names)
 
 
-def test_provider_schema_opens_business_tools_only_after_reply_selection():
+def test_provider_keeps_business_tools_available_and_removes_silence_tool_after_selection():
     gate = ReplyGate()
     driver = Driver()
     runner = SimpleNamespace(
         group_reply_gate=gate,
         capability_context=CapabilityContext(),
-        tool_names=["read_file", "group_reply_decision"],
+        tool_names=["read_file"],
         _provider_tool_names=lambda names: list(names),
     )
     runtime = ProviderRoundRuntime(
@@ -39,14 +40,14 @@ def test_provider_schema_opens_business_tools_only_after_reply_selection():
         messages=None,
         system_text=None,
         tool_snapshot=object(),
-        tool_names=["read_file", "group_reply_decision"],
+        tool_names=["read_file"],
         stream_round=None,
     )
 
     runtime._refresh_tools()
-    assert driver.tool_names == ["group_reply_decision"]
+    assert driver.tool_names == ["read_file", GROUP_NO_REPLY_TOOL]
 
-    gate.choose(True)
+    gate.decline()
     runtime._refresh_tools()
     assert driver.tool_names == ["read_file"]
-    assert gate.choice is ReplyChoice.REPLY
+    assert gate.choice is ReplyChoice.SILENT

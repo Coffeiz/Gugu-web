@@ -62,8 +62,7 @@ class ConversationAdapter:
             partition_by=ConversationSession.id,
             order_by=(
                 match_count.desc(),
-                ConversationMessage.created_at.desc(),
-                ConversationMessage.id.desc(),
+                ConversationMessage.conversation_seq.desc(),
             ),
         ).label("session_rank")
         candidate_rows = (
@@ -72,7 +71,7 @@ class ConversationAdapter:
                 ConversationMessage.session_id,
                 ConversationMessage.role,
                 ConversationMessage.content,
-                ConversationMessage.created_at,
+                ConversationMessage.conversation_seq,
                 ConversationSession.title,
                 ConversationSession.summary,
                 ConversationSession.source.label("session_source"),

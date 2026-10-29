@@ -800,7 +800,7 @@ class TestCompactContext:
     def test_baseline_cas_rejects_same_id_with_changed_hash(self):
         from types import SimpleNamespace
 
-        session = SimpleNamespace(baseline_message_id=12, baseline_message_hash="new-hash")
+        session = SimpleNamespace(baseline_message_seq=12, baseline_message_hash="new-hash")
         assert compress_conv._baseline_matches(session, 12, "new-hash")
         assert not compress_conv._baseline_matches(session, 12, "old-hash")
         assert not compress_conv._baseline_matches(session, 11, "old-hash")

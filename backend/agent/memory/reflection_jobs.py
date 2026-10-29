@@ -597,7 +597,7 @@ async def observe_session_activity(
                 ConversationMessage.role == "user",
                 ConversationMessage.platform_user_id.is_not(None),
             )
-            .order_by(ConversationMessage.id.desc())
+            .order_by(ConversationMessage.conversation_seq.desc())
             .limit(1)
         )).scalars().first()
     if message is None:
@@ -685,7 +685,7 @@ async def observe_private_member_activity(
                 ConversationMessage.role == "user",
                 ConversationMessage.platform_user_id == platform_user_id,
             )
-            .order_by(ConversationMessage.id.desc())
+            .order_by(ConversationMessage.conversation_seq.desc())
             .limit(1)
         )).scalars().first()
         if message is None:

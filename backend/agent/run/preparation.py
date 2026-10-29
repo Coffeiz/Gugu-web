@@ -383,15 +383,31 @@ async def _reuse_early_user_rows(
         rows = ordered
     if not rows:
         return None, []
+    if batch_messages:
+        # 批次顺序来自网关的入站排序，不能由并发早落库的 flush 先后决定。
+        # 若某条消息早落库失败，补写行会拿到更大的 seq；将本批消息映射回本批
+        # 已占用的序号槽，保持批内顺序，同时不越过 run 期间到达的其他消息。
+        sequence_slots = sorted(int(row.conversation_seq) for row in rows)
+        from sqlalchemy import update
+        from sqlalchemy.orm.attributes import set_committed_value
+
+        table = ConversationMessage.__table__
+        for row in rows:
+            await db.execute(
+                update(table).where(table.c.id == row.id).values(conversation_seq=-int(row.id))
+            )
+        for row, sequence in zip(rows, sequence_slots, strict=True):
+            await db.execute(
+                update(table).where(table.c.id == row.id).values(conversation_seq=sequence)
+            )
+            set_committed_value(row, "conversation_seq", sequence)
     anchor = rows[-1] if batch_messages else max(rows, key=lambda row: row.id)
     # 两个时间戳各司其职：
     #
     # - ``created_at`` 保留**消息到达时刻**。它是展示时间（网页气泡、网页实时排序），
     #   也就是 IM 里的真实先后；改了它，网页顺序就会和平台消息顺序对不上。
-    # - ``sent_at`` 改写成**本轮处理时刻**。历史按 ``sent_at`` 排序、提示词里的
-    #   「消息时间」提醒也取自它：晚到的消息因此排在本轮回复之后而不是插到上一条
-    #   回复中间，上一轮的 provider 前缀逐字不变、缓存完整保留；新到的消息本来就是
-    #   fresh 内容，位置变化不影响已缓存的那一段。
+    # - ``sent_at`` 改写成**本轮处理时刻**，供提示词里的「消息时间」提醒使用；
+    #   历史先后由持久化会话序号决定，不再依赖这个时间戳。
     from datetime import timedelta
     from app.core.tz import now_utc
 
@@ -430,11 +446,17 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
     user_id = req.user_id
     group_reply_gate = None
     group_reply_tool = None
+    group_reply_prompt = ""
     if getattr(req, "group_auto_reply", False):
-        from agent.im.auto_reply import ReplyGate, build_group_reply_decision_tool
+        from agent.im.auto_reply import (
+            ReplyGate,
+            build_group_reply_decision_tool,
+            group_reply_system_prompt,
+        )
 
         group_reply_gate = ReplyGate()
         group_reply_tool = build_group_reply_decision_tool(group_reply_gate)
+        group_reply_prompt = group_reply_system_prompt()
         req.group_reply_gate = group_reply_gate
     settings = get_settings()
     # 用户链路标记：modelctx 兜底哨兵从此生效，后台派生任务不得静默烧平台配额
@@ -478,7 +500,7 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
                 source=getattr(req, "source", None), im_channels=data.im_channels,
                 im_message_format=getattr(req, "im_message_format", None),
                 user_msg=req.message, non_streaming=non_streaming, user_tz=data.user_tz,
-                knowledge=data.knowledge,
+                knowledge=data.knowledge, after_base_prompt=group_reply_prompt,
             )
             snapshot_context, snapshot_im_memory = add_im_memory_to_snapshot(
                 snapshot_context, data.im_memory, req,
@@ -500,10 +522,13 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
             }
 
         async def _load_system_prompt(current_user_tz):
-            style_prefs = await loaders.load_style_prefs(db, user_id)
+            style_prefs = await loaders.load_style_prefs(
+                db, user_id, group_chat=bool(req.chat_id),
+            )
             return builder.build_static_prompt(
                 DEFAULT_PROMPT_NAME, req.user_name,
                 style_prefs=style_prefs,
+                after_base_prompt=group_reply_prompt,
                 current_date=dynamic_tail.current_date_text(current_user_tz),
             )
 
@@ -511,10 +536,6 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
             db, session, load_context=_load_snapshot,
             workspace_binding=workspace_binding,
         )
-        if context_policy.isolate_group_context:
-            from agent.im.context_loader import isolate_group_memory_snapshot
-
-            snapshot = isolate_group_memory_snapshot(snapshot)
         snapshot_user_tz = snapshot["user_tz"]
         snapshot["system_prompt"] = await _load_system_prompt(snapshot_user_tz)
         user_tz = snapshot["user_tz"]
@@ -525,17 +546,12 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
         restore_group_memory_snapshot(snapshot)
 
         # 历史读取不做本地 token 预估；预算由 provider 实际请求结果决定。
-        if context_policy.isolate_group_context:
-            # 群历史由成员共同写入；owner 的特权 @ run 不把这些文本带入高权限上下文。
-            history = []
-            history_stats = session_history.consume_history_stats()
-        else:
-            history = await session_history.load_session_history(
-                db,
-                session_id,
-                session_snapshot.history_baseline(session),
-            )
-            history_stats = session_history.consume_history_stats()
+        history = await session_history.load_session_history(
+            db,
+            session_id,
+            session_snapshot.history_baseline(session),
+        )
+        history_stats = session_history.consume_history_stats()
         _, strip_thinking = prepare_session(session, model_cfg)
         if strip_thinking:
             clean_persisted_history(history)
@@ -770,10 +786,6 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
             model_cfg=model_cfg,
         )
     record_phase_timing("Capability context assembly", capability_started_at)
-    if group_reply_tool is not None:
-        from agent.im.auto_reply import group_reply_system_prompt
-
-        system_prompt = "\n\n---\n\n".join((system_prompt, group_reply_system_prompt()))
     system_prompt = "\n\n---\n\n".join((system_prompt, media_capability_context))
     if capability_context is not None:
         _pin_session_user_skill_metadata(session, capability_context)

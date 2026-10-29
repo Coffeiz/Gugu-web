@@ -121,8 +121,7 @@ async def _restored_group_snapshot(db, user_a, monkeypatch):
             {"type": "tool_call", "id": "call-synthetic", "name": "lookup", "arguments": {"query": "项目"}},
             {"type": "text", "text": "已检查项目状态"},
         ],
-        # 历史按 sent_at（该消息被处理的时间）排序：助手这条与上面那条用户消息同属
-        # 一轮，必须排在用户消息之后、被动尾部之前。
+        # 时间戳只用于语义/展示；历史顺序由持久序号保证助手输出排在用户消息之后。
         sent_at=datetime(2026, 10, 20, 9, 30, 30, tzinfo=timezone.utc),
     )
     tool_message = ConversationMessage(

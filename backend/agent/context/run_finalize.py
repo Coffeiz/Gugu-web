@@ -97,6 +97,7 @@ async def finalize_run(
     from app.models import ConversationMessage, ConversationSession
     from app.services.conversation_retention import trim_session_messages
     persisted_round_id = round_id or "round-1"
+    user_message_seq = None
 
     if message_area is None:
         raise ValueError("finalize_run 必须接收 MessageArea")
@@ -141,9 +142,21 @@ async def finalize_run(
                 await db.get(ConversationMessage, user_message_id)
                 if user_message_id and persist_message_delta else None
             )
+            if user_message is not None:
+                user_message_seq = user_message.conversation_seq
             if user_message is not None and run_id:
                 user_message.run_id = run_id
                 user_message.round_id = "round-1"
+            checkpoint = None
+            if user_message_id:
+                from sqlalchemy import select
+                from agent.context.display_checkpoint import display_run_key
+
+                checkpoint = (await db.execute(select(ConversationMessage).where(
+                    ConversationMessage.session_id == session_id,
+                    ConversationMessage.role == "assistant",
+                    ConversationMessage.run_id == display_run_key(user_message_id),
+                ))).scalars().first()
             if persist_message_delta:
                 from agent.context.message_area_repository import commit_delta
                 outcome = "interruption" if interrupted else "success"
@@ -157,6 +170,10 @@ async def finalize_run(
                     user_message=user_message,
                     interrupted=interrupted,
                 )
+            if checkpoint is not None:
+                from agent.context.display_checkpoint import resequence_checkpoint
+
+                await resequence_checkpoint(db, checkpoint)
             if display_timeline:
                 # 聊天展示时间线不承担模型上下文职责。媒体块（尤其是视频帧
                 # base64）只留占位说明，避免把整段媒体副本写入会话记录。
@@ -184,8 +201,8 @@ async def finalize_run(
                         ),
                     )
                     assistant_created_at = user_message.created_at + offset
-                    # sent_at 与 created_at 同步锚定：历史按 sent_at 排、网页按
-                    # created_at 显示，两列的相对先后必须一致。
+                    # sent_at 与 created_at 同步锚定，保留诊断与展示时间线一致；
+                    # canonical 历史顺序由 conversation_seq 管理。
                     assistant_sent_at = (user_message.sent_at or user_message.created_at) + offset
                 assistant_content = text
                 if interrupted and assistant_content:
@@ -202,19 +219,11 @@ async def finalize_run(
                 if assistant_created_at is not None:
                     assistant_values["created_at"] = assistant_created_at
                     assistant_values["sent_at"] = assistant_sent_at
-                checkpoint = None
-                if user_message_id:
-                    from sqlalchemy import select, null
-                    from agent.context.display_checkpoint import display_run_key
-
-                    checkpoint = (await db.execute(select(ConversationMessage).where(
-                        ConversationMessage.session_id == session_id,
-                        ConversationMessage.role == "assistant",
-                        ConversationMessage.run_id == display_run_key(user_message_id),
-                    ))).scalars().first()
                 if checkpoint is None:
                     db.add(ConversationMessage(**assistant_values))
                 else:
+                    from sqlalchemy import null
+
                     for key, value in assistant_values.items():
                         setattr(checkpoint, key, value)
                     checkpoint.content_json = null()
@@ -252,7 +261,7 @@ async def finalize_run(
         await compress_conv.compress_if_needed(
             session_id, user_id, settings, force=False,
             reuse_summary=reuse_summary,
-            reuse_before_message_id=user_message_id if reuse_summary else None,
+            reuse_before_message_seq=user_message_seq if reuse_summary else None,
         )
     return FinalizeResult(
         tokens_in=usage_result.tokens_in,

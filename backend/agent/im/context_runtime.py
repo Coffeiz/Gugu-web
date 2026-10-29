@@ -106,8 +106,7 @@ async def continuity_bridge(
                 # 与 provider 历史同一套顺序口径（sent_at=该消息被处理的时间，
                 # 缺失时回落 created_at），否则这里读出的先后会和模型看到的历史对不上。
                 .order_by(
-                    desc(func.coalesce(ConversationMessage.sent_at, ConversationMessage.created_at)),
-                    desc(ConversationMessage.id),
+                    desc(ConversationMessage.conversation_seq),
                 )
                 .limit(8)
             )

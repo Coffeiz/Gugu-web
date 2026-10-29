@@ -129,13 +129,15 @@ async def commit_delta(
                 "run_id": run_id,
                 "round_id": entry.round_id or default_round_id,
             }
+            if user_message is not None and user_sequence is not None and entry.sequence < user_sequence:
+                # 固定输入前缀（RAG/姿态/引用等）虽在 run 收尾时才写库，重建时仍
+                # 必须放回触发它的用户消息之前；晚到的其他用户消息则保持在该消息之后。
+                values["history_anchor_seq"] = user_message.conversation_seq
             if not isinstance(message.get("content"), str):
                 values["content_json"] = media.images.strip_image_for_history(message.get("content"))
             if user_message is not None and user_sequence is not None:
-                # 两列时间戳同步锚定到用户消息：历史按 sent_at 排（该消息被处理的
-                # 时间），网页按 created_at 显示（消息到达时间），两列的相对先后
-                # 必须一致，否则同一批消息在「模型看到的顺序」和「网页显示的顺序」
-                # 里会错位。只锚一列会让另一列的排序失效。
+                # 两列时间戳同步锚定到用户消息，用于诊断及展示时间线；canonical
+                # 历史另按 conversation_seq 排列，并由 history_anchor_seq 还原输入前缀。
                 anchor_sent_at = user_message.sent_at or user_message.created_at
                 if entry.sequence < user_sequence:
                     offset = timedelta(microseconds=user_sequence - entry.sequence)

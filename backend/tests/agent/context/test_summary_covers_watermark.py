@@ -1,9 +1,9 @@
-"""summary 行 covers_until_id 压缩水位回归测试。
+"""summary 行 covers_until_seq 压缩水位回归测试。
 
 断点2竞态：finalize 先提交 turns、压缩事务稍后才写 summary 行并推进
 session.baseline。下一次装配若夹在两次提交之间，会读到「新摘要 + 旧
 baseline」，把摘要已覆盖的原文重复拼进上下文（跨 run 前缀断裂 + 内容重复）。
-修复：水位与摘要行同事务落库（covers_until_id），装载取
+修复：水位与摘要行同事务落库（covers_until_seq），装载取
 max(loader_baseline, summary.covers) 作有效水位。
 """
 from types import SimpleNamespace
@@ -47,7 +47,7 @@ async def _seed(db, user, *, message_count=5):
 
 
 @pytest.mark.asyncio
-async def test_compress_writes_covers_until_id_with_summary(db, user_a, monkeypatch):
+async def test_compress_writes_covers_until_seq_with_summary(db, user_a, monkeypatch):
     """压缩事务必须把水位写进 summary 行，与 baseline CAS 同一事务。"""
     from agent.context import compress_conv
 
@@ -67,7 +67,7 @@ async def test_compress_writes_covers_until_id_with_summary(db, user_a, monkeypa
         session.id, user_a.id,
         SimpleNamespace(ai=SimpleNamespace(context_tokens=120_000, max_tokens=8_000)),
         reuse_summary="复用的 run 内摘要正文",
-        reuse_before_message_id=ids[-1],
+        reuse_before_message_seq=ids[-1],
     )
 
     assert ok is True
@@ -78,7 +78,7 @@ async def test_compress_writes_covers_until_id_with_summary(db, user_a, monkeypa
             ConversationMessage.role == "summary",
         ))).scalars().all()
     assert len(summaries) == 1
-    assert summaries[0].covers_until_id == session.baseline_message_id == ids[1]
+    assert summaries[0].covers_until_seq == session.baseline_message_seq == ids[1]
 
 
 @pytest.mark.asyncio
@@ -87,21 +87,21 @@ async def test_loader_prefers_summary_covers_over_stale_baseline(db, user_a):
     session, ids = await _seed(db, user_a)
     db.add(ConversationMessage(
         session_id=session.id, role="summary",
-        content="新摘要", covers_until_id=ids[3],
+        content="新摘要", covers_until_seq=ids[3],
     ))
     # 模拟 compress 只推进了一半：session.baseline 仍停在旧水位。
-    session.baseline_message_id = ids[1]
+    session.baseline_message_seq = ids[1]
     await db.commit()
 
-    result = await load_session_history(db, session.id, baseline_message_id=ids[1])
+    result = await load_session_history(db, session.id, baseline_message_seq=ids[1])
     stats = consume_history_stats()
 
     non_summary = [m for m in result if m.role != "summary"]
     # ids[2]、ids[3] 已被摘要覆盖，绝不能重复出现。
     assert [m.id for m in non_summary] == [ids[4]]
     assert result[0].role == "summary"
-    assert stats["history_effective_baseline_id"] == ids[3]
-    assert stats["history_summary_covers_until_id"] == ids[3]
+    assert stats["history_effective_baseline_seq"] == ids[3]
+    assert stats["history_summary_covers_until_seq"] == ids[3]
 
 
 @pytest.mark.asyncio
@@ -113,13 +113,13 @@ async def test_loader_legacy_summary_without_covers_falls_back_to_baseline(db, u
     ))
     await db.commit()
 
-    result = await load_session_history(db, session.id, baseline_message_id=ids[1])
+    result = await load_session_history(db, session.id, baseline_message_seq=ids[1])
     stats = consume_history_stats()
 
     non_summary = [m for m in result if m.role != "summary"]
     assert [m.id for m in non_summary] == [ids[2], ids[3], ids[4]]
-    assert stats["history_effective_baseline_id"] == ids[1]
-    assert stats["history_summary_covers_until_id"] is None
+    assert stats["history_effective_baseline_seq"] == ids[1]
+    assert stats["history_summary_covers_until_seq"] is None
 
 
 @pytest.mark.asyncio
@@ -128,13 +128,13 @@ async def test_loader_baseline_still_ceilings_when_covers_is_older(db, user_a):
     session, ids = await _seed(db, user_a)
     db.add(ConversationMessage(
         session_id=session.id, role="summary",
-        content="旧摘要", covers_until_id=ids[1],
+        content="旧摘要", covers_until_seq=ids[1],
     ))
     await db.commit()
 
-    result = await load_session_history(db, session.id, baseline_message_id=ids[3])
+    result = await load_session_history(db, session.id, baseline_message_seq=ids[3])
     stats = consume_history_stats()
 
     non_summary = [m for m in result if m.role != "summary"]
     assert [m.id for m in non_summary] == [ids[4]]
-    assert stats["history_effective_baseline_id"] == ids[3]
+    assert stats["history_effective_baseline_seq"] == ids[3]

@@ -238,21 +238,13 @@ async def test_pending_row_is_excluded_from_history_until_the_run_consumes_it(db
     await db.commit()
 
     history = await load_session_history(db, session.id)
-    # 被消费后这行的时间戳改成 run 落库时刻，排序随之落在上一行之后。
-    assert [row.content for row in history] == ["上一轮已处理的一句", "还没被 run 消费的一句"]
+    # 历史按持久序号排序；消费标记变更不会重排已提前入库的消息。
+    assert [row.content for row in history] == ["还没被 run 消费的一句", "上一轮已处理的一句"]
 
 
 @pytest.mark.asyncio
-async def test_promoted_row_uses_run_time_so_history_order_stays_stable(db, user_a):
-    """晚到消息被 run 消费后，sent_at 改写成 run 时刻（历史排序与提示词用）。
-
-    历史按 sent_at 排序、prompt 里还带 sent_at 生成的「消息时间」提醒，两者都进
-    provider cache 前缀。若沿用"到达时刻"，晚到消息会排到上一轮回复之前，前缀从中间
-    被截断、缓存整段失效——这里钉住"沿用 run 时刻、与改动前同序"。
-
-    created_at 保留**到达时刻**：它是展示时间（网页气泡与实时排序），网页顺序要和
-    QQ 群的真实先后一致。展示顺序与历史顺序因此分开由两列承担。
-    """
+async def test_promoted_row_keeps_sequence_order_after_consumption(db, user_a):
+    """消费早落库行只更新处理时间，不改变到达时确定的持久历史顺序。"""
     from datetime import timedelta
 
     from agent.context.session_history import load_session_history
@@ -288,10 +280,11 @@ async def test_promoted_row_uses_run_time_so_history_order_stays_stable(db, user
     await db.commit()
     await db.refresh(early_row)
 
-    # 晚到消息排在上一轮回复之后（与改动前的顺序一致），不是按到达时刻插到前面。
+    # sent_at 用于提示词时间语义，不参与 canonical history 的顺序判定。
     assert early_row.sent_at >= reply.created_at
     # 展示时间仍是到达时刻。
     assert early_row.created_at == arrival_at
+    assert early_row.conversation_seq > reply.conversation_seq
     history = await load_session_history(db, session.id)
     assert [(row.role, row.content) for row in history] == [
         ("assistant", "上一轮的回话"),

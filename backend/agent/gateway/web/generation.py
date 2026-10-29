@@ -544,5 +544,5 @@ async def _refresh_generation_history(session_id: int, snapshot: dict, model_cfg
         if should_strip_thinking:
             clean_persisted_history(history)
         refreshed_snapshot = dict(snapshot)
-        refreshed_snapshot["history_baseline_message_id"] = baseline
+        refreshed_snapshot["history_baseline_message_seq"] = baseline
         return session, refreshed_snapshot, history, history_stats, bool(should_strip_thinking)

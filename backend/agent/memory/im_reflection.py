@@ -387,7 +387,7 @@ async def _messages_for_job(db, job):
             )
         else:
             query = query.where(ConversationSession.chat_type != "group")
-    return (await db.execute(query.order_by(ConversationMessage.id))).scalars().all()
+    return (await db.execute(query.order_by(ConversationMessage.conversation_seq))).scalars().all()
 
 
 async def _mark_failure(db, job, exc: BaseException) -> None:
@@ -771,7 +771,7 @@ async def _aggregate_members(db, scope: MemoryScope) -> dict[str, dict]:
             ConversationMessage.role == "user",
             ConversationMessage.platform_user_id.is_not(None),
         )
-        .order_by(ConversationMessage.created_at, ConversationMessage.id)
+        .order_by(ConversationMessage.conversation_seq)
     )).all()
     members: dict[str, dict] = {}
     for pid, name, created_at in rows:

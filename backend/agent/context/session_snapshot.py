@@ -181,9 +181,9 @@ def snapshot_context(session) -> dict:
         "memory_summary_hash": str(context.get("memory_summary_hash") or ""),
         "rag_revision": "" if stored_rag_revision is None else str(stored_rag_revision),
         "snapshot_hash": str(getattr(session, "snapshot_hash", None) or ""),
-        "history_baseline_message_id": int(
-            context.get("history_baseline_message_id")
-            or getattr(session, "baseline_message_id", 0)
+        "history_baseline_message_seq": int(
+            context.get("history_baseline_message_seq")
+            or getattr(session, "baseline_message_seq", 0)
             or 0
         ),
         "workspace_binding": workspace_binding_key(context.get("workspace_binding")),
@@ -204,13 +204,13 @@ def _set_rag_snapshot_context(text: str | None, revision: object | None = None) 
 def history_baseline(session) -> int:
     """返回 snapshot 与压缩水位中较新的历史边界。
 
-    旧 session 没有 snapshot 边界时回退到 ``baseline_message_id``；不能凭空
+    snapshot 没有单独边界时回退到 ``baseline_message_seq``；不能凭空
     丢弃未进入 summary 的历史，因此默认 0 仍表示完整连续历史。
     """
     context = getattr(session, "session_context", None) or {}
     return max(
-        int(getattr(session, "baseline_message_id", 0) or 0),
-        int(context.get("history_baseline_message_id", 0) or 0),
+        int(getattr(session, "baseline_message_seq", 0) or 0),
+        int(context.get("history_baseline_message_seq", 0) or 0),
     )
 
 
@@ -294,7 +294,7 @@ def initialize_snapshot(
         "locale": locale,
         "snapshot_context_hash": digest(snapshot_context),
         "snapshot_context_version": SNAPSHOT_CONTEXT_VERSION,
-        "history_baseline_message_id": int(getattr(session, "baseline_message_id", 0) or 0),
+        "history_baseline_message_seq": int(getattr(session, "baseline_message_seq", 0) or 0),
         "workspace_binding": workspace_binding_key(workspace_binding),
         **preserved_control,
     }
@@ -314,7 +314,7 @@ def update_baseline_snapshot(
     session,
     messages: list[dict],
     *,
-    baseline_message_id: int | None = None,
+    baseline_message_seq: int | None = None,
     now: datetime | None = None,
     ttl: timedelta = DEFAULT_IDLE_TTL,
 ) -> str:
@@ -331,15 +331,15 @@ def update_baseline_snapshot(
         getattr(session, "session_info_hash", None) or session_info_hash(context["session_info"]),
         covered_hash,
     )
-    context["history_baseline_message_id"] = int(
-        getattr(session, "baseline_message_id", 0)
-        if baseline_message_id is None
-        else baseline_message_id
+    context["history_baseline_message_seq"] = int(
+        getattr(session, "baseline_message_seq", 0)
+        if baseline_message_seq is None
+        else baseline_message_seq
     )
     next_revision = int(stored_context.get("context_revision", 0) or 0) + 1
     context["context_revision"] = next_revision
     context["rag_revision"] = str(next_revision)
-    stored_context["history_baseline_message_id"] = context["history_baseline_message_id"]
+    stored_context["history_baseline_message_seq"] = context["history_baseline_message_seq"]
     stored_context["context_revision"] = next_revision
     stored_context["rag_revision"] = str(next_revision)
     session.session_context = stored_context

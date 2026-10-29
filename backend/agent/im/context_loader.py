@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import asyncio
-from copy import deepcopy
 from dataclasses import dataclass, field
 import time
 from typing import Any
@@ -300,7 +299,9 @@ async def load_context_data(
         events = await loaders.load_events(db, user_id, tz=user_tz)
         notes = await loaders.load_recent_notes(db, user_id)
         files_overview = await loaders.load_files_overview(db, user_id)
-        style_prefs = await loaders.load_style_prefs(db, user_id)
+        style_prefs = await loaders.load_style_prefs(
+            db, user_id, group_chat=bool(request.chat_id),
+        )
         im_channels = await loaders.load_im_channels(db, user_id)
         task_names = [name for name, task in auxiliary_tasks.items() if task is not None]
         task_results = await asyncio.gather(
@@ -355,8 +356,7 @@ async def load_im_memory(request: AgentRequest) -> dict:
     if not bot_id:
         return {}
     result = {}
-    if (request.chat_id and request.im_group_memory_enabled
-            and not getattr(request, "isolate_group_context", False)):
+    if request.chat_id and request.im_group_memory_enabled:
         group_scope = MemoryScope(
             request.user_id, request.source, bot_id, "group", str(request.chat_id)
         )
@@ -410,22 +410,6 @@ def restore_group_memory_snapshot(snapshot: dict) -> dict:
     if group_text and "## 当前群组记忆（仅限本群公开信息）" not in snapshot_text:
         snapshot["snapshot_context"] = f"{snapshot_text}\n\n---\n\n{group_text}"
     return snapshot
-
-
-def isolate_group_memory_snapshot(snapshot: dict) -> dict:
-    """为 owner @ run 复制并剔除缓存 snapshot 中的群共享记忆。"""
-    if not isinstance(snapshot, dict):
-        return snapshot
-    isolated = deepcopy(snapshot)
-    sections = str(isolated.get("snapshot_context") or "").split("\n\n---\n\n")
-    isolated["snapshot_context"] = "\n\n---\n\n".join(
-        section for section in sections
-        if "## 当前群组记忆（仅限本群公开信息）" not in section
-    )
-    im_memory = isolated.get("im_memory")
-    if isinstance(im_memory, dict):
-        isolated["im_memory"] = {**im_memory, "group": {}}
-    return isolated
 
 
 def format_platform_user_memory(data: dict) -> str:

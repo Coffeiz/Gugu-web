@@ -178,7 +178,7 @@ async def resolve_access(
 
 async def resolve_group_owner_memory(actor, bot_id: str) -> bool:
     """只读服务端 Bot 设置；载荷不能授权私人记忆进入群聊。"""
-    if not actor.is_owner or actor.chat_type != "group":
+    if not (actor.is_owner or getattr(actor, "verified_owner", False)) or actor.chat_type != "group":
         return False
     bot_db_id = _parse_bot_db_id(bot_id)
     if bot_db_id is None:

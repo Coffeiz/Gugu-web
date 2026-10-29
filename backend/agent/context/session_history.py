@@ -9,7 +9,7 @@ import logging
 from contextvars import ContextVar
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 
 logger = logging.getLogger(__name__)
 
@@ -41,11 +41,11 @@ async def _hydrate_loaded_reference_contexts(db, session_id: int, history: list)
 async def load_session_history(
     db,
     session_id: int,
-    baseline_message_id: int = 0,
+    baseline_message_seq: int = 0,
     *,
     max_messages: int | None = None,
 ) -> list:
-    """读取 baseline 后的连续历史，按消息时间正序返回。
+    """读取 baseline 后的连续历史，按持久化会话顺序返回。
 
     baseline 为 0 时从会话开头恢复；持久化 baseline 更新由 ``compress_conv``
     负责。已有 summary 始终放在结果第一条。显式条数上限仅供诊断脚本构造样本。
@@ -59,17 +59,24 @@ async def load_session_history(
             ConversationMessage.session_id == session_id,
             ConversationMessage.role == "summary",
         )
-        .order_by(ConversationMessage.created_at.desc(), ConversationMessage.id.desc())
+        .order_by(
+            func.coalesce(
+                ConversationMessage.history_anchor_seq,
+                ConversationMessage.conversation_seq,
+            ).desc(),
+            case((ConversationMessage.history_anchor_seq.is_not(None), 0), else_=1).desc(),
+            ConversationMessage.conversation_seq.desc(),
+        )
         .limit(1)
     )
     summary = list((await db.execute(summary_query)).scalars().all())
 
-    # summary 行自带本次压缩的真实覆盖边界（与摘要同一事务写入，covers_until_id）。
+    # summary 行自带本次压缩的真实覆盖边界（与摘要同一事务写入，covers_until_seq）。
     # 装载先读 session.baseline、后读 summary，两次读取之间可能隔着一次压缩落库，
     # 形成「新摘要 + 旧 baseline」竞态；取两者较大者作有效水位，防止把摘要已
     # 覆盖的原文重复拼进上下文。旧摘要行没有该水位时退回传入的 baseline。
-    passed_baseline = int(baseline_message_id or 0)
-    covers_until = int(getattr(summary[0], "covers_until_id", 0) or 0) if summary else 0
+    passed_baseline = int(baseline_message_seq or 0)
+    covers_until = int(getattr(summary[0], "covers_until_seq", 0) or 0) if summary else 0
     effective_baseline = max(passed_baseline, covers_until)
     if covers_until > passed_baseline:
         logger.info(
@@ -89,22 +96,23 @@ async def load_session_history(
                 ConversationMessage.run_id.notlike(PENDING_USER_RUN_PREFIX + "%"),
             ),
         )
-        # 按 sent_at（该消息被本轮处理的时间）排序，而不是 created_at（入库时间）：
-        # 群消息在 run 跑的过程中就到了，created_at 是**到达时刻**，按它排会让晚到的
-        # 消息插到上一条回复**之前**，把 provider 缓存前缀从中间截断——上一轮那段就
-        # 缓存不住了。sent_at 与改动前（run 落库时刻）一致，历史顺序逐条不变。
-        #
-        # sent_at 为空的旧行回落 created_at：既保住老数据原来的顺序，也避开
-        # Postgres（SENT_AT DESC 时 NULLS FIRST）和 SQLite（NULLS LAST）排序相反
-        # 的差异，避免同一段历史在两端读出不同顺序。
+        # 会话序号代表持久化事件顺序；run 输入前置上下文回锚到其用户消息前，
+        # 其余运行期间到达的用户消息先于 run 完成时写入的工具/助手输出。
         .order_by(
-            func.coalesce(ConversationMessage.sent_at, ConversationMessage.created_at).desc(),
-            ConversationMessage.id.desc(),
+            func.coalesce(
+                ConversationMessage.history_anchor_seq,
+                ConversationMessage.conversation_seq,
+            ).desc(),
+            case((ConversationMessage.history_anchor_seq.is_not(None), 0), else_=1).desc(),
+            ConversationMessage.conversation_seq.desc(),
         )
     )
     if effective_baseline > 0:
         query = query.where(
-            ConversationMessage.id > effective_baseline
+            func.coalesce(
+                ConversationMessage.history_anchor_seq,
+                ConversationMessage.conversation_seq,
+            ) > effective_baseline
         )
     if max_messages is not None:
         limit = max(1, int(max_messages))
@@ -120,11 +128,17 @@ async def load_session_history(
         "history_selected_count": len(history) + len(summary),
         "history_selection": "provider-authoritative",
         "history_summary_count": len(summary),
-        "history_baseline_message_id": passed_baseline,
-        "history_effective_baseline_id": effective_baseline,
-        "history_summary_covers_until_id": covers_until or None,
-        "history_oldest_selected_id": getattr(history[0], "id", None) if history else None,
-        "history_newest_selected_id": getattr(history[-1], "id", None) if history else None,
+        "history_baseline_message_seq": passed_baseline,
+        "history_effective_baseline_seq": effective_baseline,
+        "history_summary_covers_until_seq": covers_until or None,
+        "history_oldest_selected_seq": (
+            getattr(history[0], "history_anchor_seq", None)
+            or getattr(history[0], "conversation_seq", None)
+        ) if history else None,
+        "history_newest_selected_seq": (
+            getattr(history[-1], "history_anchor_seq", None)
+            or getattr(history[-1], "conversation_seq", None)
+        ) if history else None,
     })
     return summary + history
 

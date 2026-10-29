@@ -93,6 +93,7 @@ class _Session:
     context_epoch = 0
     session_context = None
     snapshot_expires_at = None
+    baseline_message_seq = 0
 
 
 def test_snapshot_revision_is_pending_metadata_not_hit_gate():
@@ -359,13 +360,13 @@ def test_checkpoint_hash_chains_new_messages_without_copying_snapshot_text():
 
 def test_snapshot_records_history_baseline_without_dropping_context_metadata():
     session = _Session()
-    session.baseline_message_id = 12
+    session.baseline_message_seq = 12
     initialize_snapshot(session, system_prompt="system", snapshot_context="fixed",
                         session_info={"epoch": 1}, user_tz="Asia/Shanghai")
 
-    update_baseline_snapshot(session, [{"role": "summary", "content": "摘要"}], baseline_message_id=18)
+    update_baseline_snapshot(session, [{"role": "summary", "content": "摘要"}], baseline_message_seq=18)
 
-    assert session.session_context["history_baseline_message_id"] == 18
+    assert session.session_context["history_baseline_message_seq"] == 18
     assert session.session_context["context_revision"] == 1
 
 
@@ -405,8 +406,8 @@ def test_initialize_snapshot_preserves_goal_control_state():
 
 def test_history_baseline_never_moves_back_from_session_watermark():
     session = _Session()
-    session.baseline_message_id = 20
-    session.session_context = {"history_baseline_message_id": 12}
+    session.baseline_message_seq = 20
+    session.session_context = {"history_baseline_message_seq": 12}
 
     from agent.context.session_snapshot import history_baseline
 

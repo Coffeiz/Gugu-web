@@ -966,8 +966,9 @@ class ConversationSession(Base):
     snapshot_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     snapshot_expires_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, index=True)
     # 压缩后的连续历史水位：旧消息保留在数据库，但运行时只从该消息之后追加。
-    baseline_message_id: Mapped[int] = mapped_column(Integer, default=0, server_default="0", index=True)
+    baseline_message_seq: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0", index=True)
     baseline_message_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    last_message_seq: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
     # 单 session 执行状态：Redis 只负责跨 worker 租约，这些字段才是 pending 的持久事实。
     execution_state: Mapped[str] = mapped_column(String(24), default="idle", server_default="idle", index=True)
     active_run_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
@@ -983,7 +984,11 @@ class ConversationSession(Base):
     workspace: Mapped[Optional["Workspace"]]     = relationship()
     messages: Mapped[list["ConversationMessage"]] = relationship(
         back_populates="session",
-        order_by="ConversationMessage.created_at",
+        order_by=lambda: (
+            func.coalesce(ConversationMessage.history_anchor_seq, ConversationMessage.conversation_seq),
+            ConversationMessage.history_anchor_seq.is_(None),
+            ConversationMessage.conversation_seq,
+        ),
         cascade="all, delete-orphan",
     )
     batches: Mapped[list["ConversationBatch"]] = relationship(
@@ -1106,10 +1111,19 @@ class ConversationMessage(Base):
             "client_message_id",
             unique=True,
         ),
+        Index(
+            "uq_conversation_messages_session_sequence",
+            "session_id",
+            "conversation_seq",
+            unique=True,
+        ),
     )
 
     id:           Mapped[int]             = mapped_column(Integer, primary_key=True, autoincrement=True)
     session_id:   Mapped[int]             = mapped_column(ForeignKey("conversation_sessions.id", ondelete="CASCADE"), index=True)
+    conversation_seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    # 当前 run 输入中先于用户正文的 RAG/姿态等上下文，锚定到触发它的用户消息之前。
+    history_anchor_seq: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     role:         Mapped[str]             = mapped_column(String(20))
     content:      Mapped[str]             = mapped_column(Text, default="")
     # Web 乐观气泡与持久消息的稳定关联键；旧消息和 IM 消息可为空。
@@ -1138,10 +1152,10 @@ class ConversationMessage(Base):
     round_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     # 生成失败/中断的展示元数据；不参与 canonical history 的正文组装。
     run_outcome: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
-    # 仅 summary 行使用：本条摘要覆盖到的最大消息 id。compress 在写摘要的同一
+    # 仅 summary 行使用：本条摘要覆盖到的最大会话序号。compress 在写摘要的同一
     # 事务里落这个水位；历史装载取 max(session.baseline, summary.covers) 过滤，
     # 防「读到新摘要 + 旧 baseline」竞态把摘要已覆盖的原文重复拼进上下文。
-    covers_until_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
+    covers_until_seq: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True, default=None)
 
     session: Mapped["ConversationSession"] = relationship(back_populates="messages")
     canonical_batch: Mapped[Optional["ConversationBatch"]] = relationship(back_populates="messages")
@@ -1887,3 +1901,6 @@ class TrashPurgeJob(Base):
     finished_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
 
 from app.models.mcp import McpSecretInput, UserMcpServer, UserMcpToolSchemaSnapshot  # noqa: E402  (PRD-MCP-1)
+from app.services.conversation_order import register_conversation_order_listener  # noqa: E402
+
+register_conversation_order_listener()

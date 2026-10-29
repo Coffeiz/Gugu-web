@@ -348,12 +348,10 @@ async def test_group_owner_keeps_privileges_only_for_single_bot_mention(db, user
     assert mentioned.request.im_role == "owner"
     assert mentioned.request.allowed_tool_names is None
     assert mentioned.actor.owner_mention_authorized is True
-    assert mentioned.request.isolate_group_context is True
-    assert mentioned.request.im_group_memory_enabled is False
+    assert mentioned.request.im_group_memory_enabled is True
     owner_policy = policy_for(mentioned.request)
     assert owner_policy.load_owner_context is True
-    assert owner_policy.allow_continuity_bridge is False
-    assert owner_policy.isolate_group_context is True
+    assert owner_policy.allow_continuity_bridge is True
 
     not_mentioned = await prepare_request(
         message, common, user_a.id, "主人",
@@ -361,7 +359,6 @@ async def test_group_owner_keeps_privileges_only_for_single_bot_mention(db, user
     assert not_mentioned.request.im_role == "member"
     assert not_mentioned.request.allowed_tool_names == ["xng_search", "http_get"]
     assert not_mentioned.actor.owner_mention_authorized is False
-    assert not_mentioned.request.isolate_group_context is False
 
     member_message = PlatformMessage(
         platform="qq", bot_id=str(bot.id), message_id="message-member-1",
@@ -434,7 +431,6 @@ async def test_owner_mention_in_mixed_batch_cannot_elevate_the_run(db, user_a):
     assert prepared.request.im_role == "member"
     assert prepared.request.allowed_tool_names == ["xng_search", "http_get"]
     assert prepared.actor.owner_mention_authorized is False
-    assert prepared.request.isolate_group_context is False
     assert {speaker["role"] for speaker in prepared.request.im_turn_speakers} == {"member"}
 
 

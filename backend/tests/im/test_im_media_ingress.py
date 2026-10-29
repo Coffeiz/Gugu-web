@@ -238,8 +238,8 @@ async def test_qq_quoted_media_falls_back_to_download_when_not_reusable(monkeypa
     assert staged == [{
         "platform": "qq",
         "extra": None,
-        "platform_message_id": "current-msg",
-        "attachment_index": 0,
+        "platform_message_id": "missing-ref",
+        "attachment_index": 1,
     }]
 
 

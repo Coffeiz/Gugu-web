@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 
-from sqlalchemy import asc, desc, func, or_, select
+from sqlalchemy import asc, case, desc, func, or_, select
 
 from app.services.conversation_cleanup import remove_messages_with_attachments
 
@@ -22,16 +22,15 @@ async def _covered_history_baseline(db, session_id: int) -> int:
     summary = (await db.execute(
         select(ConversationMessage)
         .where(ConversationMessage.session_id == session_id, ConversationMessage.role == "summary")
-        .order_by(desc(ConversationMessage.created_at), desc(ConversationMessage.id))
+        .order_by(desc(ConversationMessage.conversation_seq))
         .limit(1)
     )).scalar_one_or_none()
     if summary is None:
         return 0
-    if summary.covers_until_id:
-        return int(summary.covers_until_id)
-    # 旧摘要尚无 covers_until_id，沿用其持久化 session 水位。
+    if summary.covers_until_seq:
+        return int(summary.covers_until_seq)
     return int((await db.scalar(
-        select(ConversationSession.baseline_message_id)
+        select(ConversationSession.baseline_message_seq)
         .where(ConversationSession.id == session_id)
     )) or 0)
 
@@ -92,7 +91,13 @@ async def trim_session_messages(
         keep_ids = (
             select(ConversationMessage.id)
             .where(ConversationMessage.session_id == session_id)
-            .order_by(desc(ConversationMessage.created_at), desc(ConversationMessage.id))
+            .order_by(
+                desc(func.coalesce(
+                    ConversationMessage.history_anchor_seq,
+                    ConversationMessage.conversation_seq,
+                )),
+                desc(ConversationMessage.conversation_seq),
+            )
             .limit(limit)
         )
         while True:
@@ -100,14 +105,22 @@ async def trim_session_messages(
                 select(ConversationMessage.id).where(
                     ConversationMessage.session_id == session_id,
                     ConversationMessage.id.not_in(keep_ids),
-                    ConversationMessage.id <= baseline,
+                    func.coalesce(
+                        ConversationMessage.history_anchor_seq,
+                        ConversationMessage.conversation_seq,
+                    ) <= baseline,
                     ConversationMessage.role != "summary",
                     or_(
                         ConversationMessage.run_id.is_(None),
                         ConversationMessage.run_id.notlike(PENDING_USER_RUN_PREFIX + "%"),
                     ),
                 ).order_by(
-                    asc(ConversationMessage.created_at), asc(ConversationMessage.id)
+                    asc(func.coalesce(
+                        ConversationMessage.history_anchor_seq,
+                        ConversationMessage.conversation_seq,
+                    )),
+                    case((ConversationMessage.history_anchor_seq.is_not(None), 0), else_=1),
+                    asc(ConversationMessage.conversation_seq),
                 ).limit(batch_size)
             )).scalars().all())
             if not old_ids:

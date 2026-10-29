@@ -62,10 +62,10 @@ def context_layout_audit(*, phase: str, session: Any, snapshot: dict[str, Any] |
     history_meta = [_message_audit(item) for item in history]
     sequence = [_message_audit(item) for item in (messages or [])]
     sequence_json = repr(sequence).encode("utf-8")
-    session_baseline = int(getattr(session, "baseline_message_id", 0) or 0)
+    session_baseline = int(getattr(session, "baseline_message_seq", 0) or 0)
     snapshot_baseline = int(
-        (snapshot.get("context") or {}).get("history_baseline_message_id", 0)
-        or snapshot.get("history_baseline_message_id", 0)
+        (snapshot.get("context") or {}).get("history_baseline_message_seq", 0)
+        or snapshot.get("history_baseline_message_seq", 0)
         or 0
     )
     payload = {
@@ -91,7 +91,7 @@ def context_layout_audit(*, phase: str, session: Any, snapshot: dict[str, Any] |
         "history_loaded_count": (history_stats or {}).get("history_loaded_count"),
         "history_selected_count": (history_stats or {}).get("history_selected_count", len(history_meta)),
         "history_summary_count": (history_stats or {}).get("history_summary_count"),
-        "history_baseline_message_id": (history_stats or {}).get("history_baseline_message_id"),
+        "history_baseline_message_seq": (history_stats or {}).get("history_baseline_message_seq"),
         "history_oldest_selected_id": (history_stats or {}).get("history_oldest_selected_id"),
         "history_newest_selected_id": (history_stats or {}).get("history_newest_selected_id"),
         "sanitize_before_count": sanitize_before_count,

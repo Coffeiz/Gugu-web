@@ -169,7 +169,7 @@ async def test_qq_group_attachment_ack_waits_for_auto_reply_choice(monkeypatch):
     assert len(produced) == 1
 
 
-async def test_qq_group_attachment_ack_allowed_for_explicit_mention_in_auto_mode(monkeypatch):
+async def test_qq_group_attachment_ack_is_deferred_to_agent_in_auto_mode_even_when_mentioned(monkeypatch):
     sent, produced = _install(monkeypatch, group_settings=(True, False, False, True, True))
 
     await qq_events._handle_raw_qq_message(
@@ -178,7 +178,7 @@ async def test_qq_group_attachment_ack_allowed_for_explicit_mention_in_auto_mode
         "bot-1", "user-1", {},
     )
 
-    assert [item[3] for item in sent] == ["文件收到啦，让我看看~"]
+    assert sent == []
     assert len(produced) == 1
 
 

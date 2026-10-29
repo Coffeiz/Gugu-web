@@ -364,7 +364,7 @@ async def test_finalize_run_uses_one_canonical_persistence_contract(monkeypatch)
     assert trim_calls == [7]
     assert baseline_calls == [(
         (7, "user-test", settings),
-        {"force": False, "reuse_summary": None, "reuse_before_message_id": None},
+        {"force": False, "reuse_summary": None, "reuse_before_message_seq": None},
     )]
 
 
@@ -416,7 +416,7 @@ async def test_finalize_run_reuses_run_summary_for_baseline(monkeypatch):
     assert baseline_calls == [{
         "force": False,
         "reuse_summary": "run 内摘要正文",
-        "reuse_before_message_id": 321,
+        "reuse_before_message_seq": None,
     }]
 
 
@@ -912,7 +912,7 @@ async def test_synthetic_tool_round_survives_canonical_persistence_and_restore(
 async def test_interrupted_run_persists_completed_history_before_followup(
     db, user_a, monkeypatch,
 ):
-    """取消收尾晚到时，部分 assistant 与已完成工具轮仍排在后续用户消息之前。"""
+    """run 期间晚到的用户消息排在中止 run 的工具结果和最终展示之后。"""
     session = ConversationSession(user_id=user_a.id, title="中止历史顺序")
     db.add(session)
     await db.commit()
@@ -924,8 +924,7 @@ async def test_interrupted_run_persists_completed_history_before_followup(
         role="user",
         content="先检查文件",
         created_at=started_at,
-        # 历史按 sent_at 排、网页按 created_at 显示，两列必须同一套时间，
-        # 否则收尾行的先后锚定会失效。
+    # 真实到达时间仍用于网页展示；canonical 顺序由会话序号管理。
         sent_at=started_at,
     )
     followup_user = ConversationMessage(
@@ -994,14 +993,14 @@ async def test_interrupted_run_persists_completed_history_before_followup(
         rows = await load_session_history(check_db, session.id, max_messages=20)
 
     assert [row.content for row in rows] == [
-        "先检查文件", "", "", "已经读到文件开头，后续检查被中止。\n\n[本轮已中止，以上内容未完成]", "继续",
+        "先检查文件", "继续", "", "", "已经读到文件开头，后续检查被中止。\n\n[本轮已中止，以上内容未完成]",
     ]
-    assert [row.role for row in rows] == ["user", "assistant", "user", "assistant", "user"]
-    assert rows[1].created_at < rows[2].created_at < rows[3].created_at < rows[4].created_at
-    assert rows[1].content_json[0]["type"] == "tool_call"
-    assert rows[2].content_json[0]["type"] == "tool_result"
-    assert [row.run_id for row in rows[2:4]] == ["run-test-interrupted"] * 2
-    assert [row.round_id for row in rows[2:4]] == ["round-1", "round-2"]
+    assert [row.role for row in rows] == ["user", "user", "assistant", "user", "assistant"]
+    assert [row.conversation_seq for row in rows] == sorted(row.conversation_seq for row in rows)
+    assert rows[2].content_json[0]["type"] == "tool_call"
+    assert rows[3].content_json[0]["type"] == "tool_result"
+    assert [row.run_id for row in rows[2:]] == ["run-test-interrupted"] * 3
+    assert [row.round_id for row in rows[2:]] == ["round-1", "round-1", "round-2"]
     assert rows[0].run_id == "run-test-interrupted"
     assert rows[0].round_id == "round-1"
 

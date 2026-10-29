@@ -89,21 +89,16 @@ def test_merge_preserves_an_earlier_direct_mention():
 
 
 @pytest.mark.asyncio
-async def test_owner_mention_is_a_serial_boundary_between_ordinary_message_runs(monkeypatch):
-    """owner @ 单独成轮；前序普通消息不并入 @ run，后续普通消息另行合并。"""
+async def test_bot_mention_is_a_serial_boundary_between_group_message_runs():
+    """任何人 @ 当前 Bot 都单独排队；前后普通消息不与 @ run 合并。"""
     from agent.im import inbound_batch
 
     messages = [
         ("100-0", _group_msg("前序消息", "owner")),
-        ("101-0", {**_group_msg("@咕咕", "owner"), "bot_mentioned": True}),
+        ("101-0", {**_group_msg("@咕咕", "member"), "bot_mentioned": True}),
         ("102-0", _group_msg("后续补充", "owner")),
         ("103-0", _group_msg("再补充", "owner")),
     ]
-
-    async def owner_mentions(_batch):
-        return {1}
-
-    monkeypatch.setattr(inbound_batch, "_owner_mention_indexes", owner_mentions)
 
     segments = await inbound_batch.partition_inbound_batch(messages)
 

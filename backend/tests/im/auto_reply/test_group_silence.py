@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from agent.im import dispatch_finalization
-from agent.im.auto_reply import ReplyGate
+from agent.im.auto_reply import ReplyChoice, ReplyGate
 from agent.models import AgentResponse
 
 
@@ -93,8 +93,8 @@ async def test_model_failure_keeps_group_silent(platform_sender):
 
 
 @pytest.mark.asyncio
-async def test_unselected_run_keeps_group_silent(platform_sender):
-    """模型没做选择就结束时，群里的可见输出必须为零。"""
+async def test_empty_run_does_not_send_a_group_fallback(platform_sender):
+    """没有正文时不发送普通群聊收尾兜底。"""
     group_send, _private_send, finish = platform_sender
     response = AgentResponse(text="模型直接输出的正文")
 
@@ -109,7 +109,7 @@ async def test_error_after_reply_selection_is_still_delivered(platform_sender):
     """门已经打开时失败要送达，否则群成员等不到任何回应。"""
     group_send, _private_send, finish = platform_sender
     gate = ReplyGate()
-    gate.choose(True)
+    gate.choice = ReplyChoice.REPLY
     response = AgentResponse(text="合成失败提示", errored=True)
 
     await finalize(response, gate=gate)

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Awaitable, Callable
+from typing import Awaitable, Callable
 
 
 def _arrival_key(msg_id: str) -> tuple[int, int]:
@@ -14,62 +14,30 @@ def _arrival_key(msg_id: str) -> tuple[int, int]:
         return 0, 0
 
 
-async def _owner_mention_indexes(batch: list[tuple[str, dict]]) -> set[int]:
-    """只把当前 Bot 的真实 mention 且身份绑定为 owner 的消息标为独立段。"""
-    from agent.im.identity import resolve_owner_account
-    from agent.im.permissions import resolve_access
-
-    owner_mentions: set[int] = set()
-    access_cache: dict[tuple[str, str], bool] = {}
-    identity_cache: dict[str, Any] = {}
+async def _bot_mention_indexes(batch: list[tuple[str, dict]]) -> set[int]:
+    """按网关确认的当前 Bot mention 切段；权限由后续 ActorResolver 单独判定。"""
+    mentions: set[int] = set()
     for index, (_msg_id, payload) in enumerate(batch):
         if (payload.get("chat_type") != "group"
                 or payload.get("bot_mentioned") is not True
                 or payload.get("mentions_other_bot") is True):
             continue
-        sender_id = str(payload.get("platform_user_id") or "")
-        owner_key = str(payload.get("owner_user_id") or payload.get("user_id") or "")
-        if not sender_id or not owner_key:
-            continue
-        cache_key = (owner_key, sender_id)
-        if cache_key not in access_cache:
-            try:
-                if owner_key not in identity_cache:
-                    identity_cache[owner_key] = await resolve_owner_account(payload)
-                identity = identity_cache[owner_key]
-                if identity is None:
-                    access_cache[cache_key] = False
-                    continue
-                access = await resolve_access(
-                    str(payload.get("platform") or ""),
-                    "group",
-                    str(payload.get("channel_id") or payload.get("bot_id") or ""),
-                    identity.user_id,
-                    sender_id,
-                )
-                access_cache[cache_key] = access.role == "owner"
-            except Exception as exc:
-                from app.core.redaction import diag_log
-
-                diag_log("agent.im.inbound_batch.owner_mention", exc)
-                access_cache[cache_key] = False
-        if access_cache[cache_key]:
-            owner_mentions.add(index)
-    return owner_mentions
+        mentions.add(index)
+    return mentions
 
 
 async def partition_inbound_batch(
     batch: list[tuple[str, dict]],
 ) -> list[list[tuple[str, dict]]]:
-    """相邻普通消息合并；每条已验证 owner @ 消息单独成段。"""
+    """相邻普通消息合并；每条网关确认的 @ 当前 Bot 消息单独成段。"""
     if not batch:
         return []
     ordered = sorted(batch, key=lambda item: _arrival_key(item[0]))
-    owner_mentions = await _owner_mention_indexes(ordered)
+    bot_mentions = await _bot_mention_indexes(ordered)
     segments: list[list[tuple[str, dict]]] = []
     ordinary: list[tuple[str, dict]] = []
     for index, item in enumerate(ordered):
-        if index not in owner_mentions:
+        if index not in bot_mentions:
             ordinary.append(item)
             continue
         if ordinary:

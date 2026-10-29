@@ -109,11 +109,9 @@ async def prepare_request(
         im_message_format=payload.get("message_format"),
         im_group_memory_enabled=(
             bool(payload.get("group_memory_enabled", True))
-            and not actor.owner_mention_authorized
         ),
         im_member_memory_enabled=bool(payload.get("member_memory_enabled", True)),
         im_group_owner_memory_enabled=group_owner_memory,
-        isolate_group_context=actor.owner_mention_authorized,
     )
     return PreparedImRequest(request, actor, role, allowed_tool_names, route, session_id)
 

@@ -40,7 +40,10 @@ class _Db:
         else:
             rows = [item for item in self.rows if item.role != "summary"]
             if self.baseline > 0:
-                rows = [item for item in rows if item.id > self.baseline]
+                rows = [
+                    item for item in rows
+                    if (item.history_anchor_seq or item.conversation_seq) > self.baseline
+                ]
             rows = list(reversed(rows))
             if limit is not None:
                 rows = rows[:limit]
@@ -50,6 +53,8 @@ class _Db:
 class _Message:
     def __init__(self, ident, role="user", content="消息", content_json=None):
         self.id = ident
+        self.conversation_seq = ident
+        self.history_anchor_seq = None
         self.role = role
         self.content = content
         self.content_json = content_json
@@ -66,16 +71,16 @@ def test_load_session_history_returns_database_order():
     assert [item.id for item in result] == [1, 2, 3]
     assert stats["history_loaded_count"] == 3
     assert stats["history_selected_count"] == 3
-    assert stats["history_oldest_selected_id"] == 1
-    assert stats["history_newest_selected_id"] == 3
+    assert stats["history_oldest_selected_seq"] == 1
+    assert stats["history_newest_selected_seq"] == 3
 
 
 def test_load_session_history_uses_baseline_watermark_and_keeps_summary():
     rows = [_Message(1), _Message(2), _Message(3), _Message(4, "summary")]
     db = _Db(rows, baseline=2)
-    result = asyncio.run(load_session_history(db, 10, baseline_message_id=2))
+    result = asyncio.run(load_session_history(db, 10, baseline_message_seq=2))
     assert [item.id for item in result] == [4, 3]
-    assert any("conversation_messages.id >" in query for query in db.last_queries)
+    assert [item.conversation_seq for item in result[1:]] == [3]
 
 
 def test_unbaselined_history_keeps_all_rows_and_stable_prefix():
@@ -95,7 +100,7 @@ def test_baselined_history_keeps_all_rows_after_watermark():
     rows = [_Message(ident) for ident in range(1, 701)]
     db = _Db(rows, baseline=100)
 
-    result = asyncio.run(load_session_history(db, 10, baseline_message_id=100))
+    result = asyncio.run(load_session_history(db, 10, baseline_message_seq=100))
 
     assert [item.id for item in result] == list(range(101, 701))
     assert db.query_limits == [1, None]

@@ -18,6 +18,7 @@ class ActorContext:
 
     ``speaker_roles`` 记录本轮每一位发言人的角色快照：一个批次可能包含多位
     发言人（群聊里咕咕回复期间又来消息），此时整轮按**最弱**权限执行。
+    ``verified_owner`` 只代表平台身份与 Bot 绑定匹配，不会提升工具权限角色。
     """
 
     owner_user_id: Any
@@ -30,6 +31,7 @@ class ActorContext:
     allowed_tool_names: Optional[List[str]] = None
     speaker_roles: Optional[List[dict]] = None
     owner_mention_authorized: bool = False
+    verified_owner: bool = False
 
     @property
     def is_im(self) -> bool:
@@ -151,6 +153,7 @@ class ActorResolver:
         allowed_tool_names = None
         speaker_roles: Optional[List[dict]] = None
         owner_mention_authorized = False
+        verified_owner = False
         if platform in {"feishu", "qq", "wechat", "telegram"}:
             try:
                 resolver = self._access_resolver
@@ -166,6 +169,7 @@ class ActorResolver:
                     platform_user_id or "",
                 )
                 role = access.role or "unknown"
+                verified_owner = role == "owner"
                 allowed_tool_names = access.allowed_tool_names
                 if chat_type == "group" and role == "owner":
                     owner_mention_authorized = _is_single_owner_bot_mention(
@@ -191,6 +195,10 @@ class ActorResolver:
                         resolver, platform, chat_type, channel_id, owner_user_id,
                         speakers, role, allowed_tool_names,
                     )
+                    # 混合发言人批次按最弱角色处理，主人私人记忆也不得跨发言人混入。
+                    verified_owner = False
+                elif speakers and speakers[0]["platform_user_id"] != str(platform_user_id or ""):
+                    verified_owner = False
             except (ValueError, TypeError, SQLAlchemyError) as exc:
                 diag_log("im.actor_resolver", exc)
                 print(
@@ -199,6 +207,7 @@ class ActorResolver:
                 )
                 role = "unknown"
                 allowed_tool_names = ["xng_search", "http_get", "similar_image_search", "read_file", "send_file"]
+                verified_owner = False
         actor = ActorContext(
             owner_user_id=owner_user_id,
             platform=platform,
@@ -210,5 +219,6 @@ class ActorResolver:
             allowed_tool_names=allowed_tool_names,
             speaker_roles=speaker_roles,
             owner_mention_authorized=owner_mention_authorized,
+            verified_owner=verified_owner,
         )
         return actor
