@@ -576,4 +576,17 @@ Object.assign((messages['zh-CN'] as Record<string, any>).chatUi, { loadEarlier: 
 Object.assign((messages['ja-JP'] as Record<string, any>).chatUi, { loadEarlier: '以前のメッセージを読み込む', loadingEarlier: '読み込み中…', loadEarlierFailed: '読み込めませんでした。再試行' })
 Object.assign((messages['en-US'] as Record<string, any>).chatUi, { loadEarlier: 'Load earlier messages', loadingEarlier: 'Loading earlier messages…', loadEarlierFailed: 'Could not load. Click to retry' })
 
+Object.assign((messages['zh-CN'] as Record<string, any>).profileImUi, {
+  groupAttentionMode: '群聊参与度', groupAttentionModeHint: '自主模式不做注意力筛选或新增预算；通过既有群聊路由后，普通消息进入 Run。仅提及模式仍只处理明确提及咕咕的消息。',
+  groupAttentionQuiet: '安静', groupAttentionNatural: '自然', groupAttentionActive: '主动', groupAttentionAutonomous: '自主',
+})
+Object.assign((messages['ja-JP'] as Record<string, any>).profileImUi, {
+  groupAttentionMode: 'グループ参加度', groupAttentionModeHint: '自主モードでは注意力フィルターと新しい予算制限を使いません。既存のグループルーティング後、通常メッセージを Run に送ります。「メンションに返信」では Gugu に明示的に言及したメッセージのみを処理します。',
+  groupAttentionQuiet: '静か', groupAttentionNatural: '自然', groupAttentionActive: '積極的', groupAttentionAutonomous: '自主',
+})
+Object.assign((messages['en-US'] as Record<string, any>).profileImUi, {
+  groupAttentionMode: 'Group participation', groupAttentionModeHint: 'Autonomous mode skips attention filtering and new budgets. Ordinary messages enter a Run after existing group routing; mention-only mode still handles only messages that explicitly mention Gugu.',
+  groupAttentionQuiet: 'Quiet', groupAttentionNatural: 'Natural', groupAttentionActive: 'Active', groupAttentionAutonomous: 'Autonomous',
+})
+
 }
