@@ -205,12 +205,17 @@ class QQPrivateTextStream:
         allow_rewrite: bool = False,
     ) -> tuple[str, str] | None:
         """只生成稳定的追加正文；读取排队后的最新状态，不提前确认缓冲尾行。"""
-        raw = self.full_text if self.finished or input_state == 10 else complete_qq_lines(self.full_text)
+        raw = self.full_text if input_state == 10 else complete_qq_lines(self.full_text)
         content = override if override is not None else prepare_qq_text(raw)
         if not content.strip() or (input_state != 10 and content == self.last_sent_content):
             return None
         if not allow_rewrite and not content.startswith(self.last_sent_content):
             raise ValueError("QQ 流式正文改写已发送前缀，已阻止出站")
+        # QQ C2C 原生 Markdown 流要求每个分片以换行结束。中间帧由
+        # complete_qq_lines 保证；最终帧包含尚未换行的尾行时也要补齐，
+        # 否则 QQ 会拒绝 DONE，继而触发普通消息恢复并造成重复回复。
+        if input_state == 10 and self.content_type == "markdown" and not content.endswith("\n"):
+            content += "\n"
         return raw, content
 
     async def finish(self, final_text: str, *, allow_rewrite: bool = False) -> None:

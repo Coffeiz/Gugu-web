@@ -24,7 +24,7 @@ class _FakeStream:
     def push(self, text: str) -> None:
         self.parts.append(text)
 
-    async def finish(self, text: str) -> None:
+    async def finish(self, text: str, **_kwargs) -> None:
         if self.fail_finish:
             raise RuntimeError("QQ transport failed")
         self.sent = True
@@ -211,7 +211,7 @@ async def test_qq_stream_drains_agent_after_transport_failure(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_qq_stream_finishes_interaction_round_before_prompt_and_resumes(monkeypatch):
-    """确认交互前先发送完成帧，确认后后续正文使用新的 QQ 流消息。"""
+    """ROUND_END 是暂定边界；后续正文到达时再收束前轮并开启新流。"""
     from agent.gateway import qq as qq_gateway
 
     timeline = []
@@ -223,7 +223,7 @@ async def test_qq_stream_finishes_interaction_round_before_prompt_and_resumes(mo
         def push(self, text):
             self.text += text
 
-        async def finish(self, text):
+        async def finish(self, text, **_kwargs):
             timeline.append(("stream_finished", text))
 
         def has_sent(self):
@@ -237,7 +237,7 @@ async def test_qq_stream_finishes_interaction_round_before_prompt_and_resumes(mo
     async def token_iter():
         yield ("token", "需要先确认")
         yield (ROUND_END, "需要先确认")
-        # send_qq_stream_by_round 必须先消费 ROUND_END 并发完成帧，才会继续取下一事件。
+        # 工具/交互可能改写暂定轮次；只有后续正文到达才确认它是独立消息。
         timeline.append(("interaction_prompt", None))
         yield ("token", "确认后继续")
         yield ("final", AgentResponse(text="确认后继续", session_id=7))
@@ -253,8 +253,8 @@ async def test_qq_stream_finishes_interaction_round_before_prompt_and_resumes(mo
     assert sent is True
     assert response.session_id == 7
     assert timeline[:2] == [
-        ("stream_finished", "需要先确认"),
         ("interaction_prompt", None),
+        ("stream_finished", "需要先确认"),
     ]
     assert timeline[-1] == ("stream_finished", "确认后继续")
 
