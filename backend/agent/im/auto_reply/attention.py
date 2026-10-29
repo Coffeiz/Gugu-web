@@ -273,13 +273,10 @@ _SHORT_REACTION_NORMALIZED = frozenset(normalize_text(item) for item in _SHORT_R
 
 
 def _explicit_call(message: AttentionMessage, aliases: tuple[str, ...] = ()) -> bool:
-    text = message.raw_text.strip()
+    text = normalize_text(message.raw_text)
     for alias in aliases:
-        alias = str(alias or "").strip()
-        if not alias:
-            continue
-        match = re.match(rf"^{re.escape(alias)}[，,:：\s]+(.+)$", text, re.IGNORECASE)
-        if match and (_REQUEST_RE.search(match.group(1)) or _QUESTION_RE.search(match.group(1))) and _CONCRETE_RE.search(match.group(1)):
+        normalized_alias = normalize_text(alias)
+        if normalized_alias and normalized_alias in text:
             return True
     return False
 
