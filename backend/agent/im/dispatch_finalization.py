@@ -92,6 +92,14 @@ async def _settle_attention_budget(request, *, outcome: str) -> None:
         diag_log("agent.im.attention.budget_release", exc)
 
 
+async def settle_attention_budget_after_run_error(request, payload: dict) -> None:
+    """Run 异常时按出站收据结算；收据不明时保守保留预算。"""
+    await _settle_attention_budget(
+        request,
+        outcome=_verified_budget_outcome(payload, "UNKNOWN"),
+    )
+
+
 def _verified_budget_outcome(payload: dict, fallback: str) -> str:
     """tracked 模式只按真实出站回执提交额度，正文存在不等于平台接受。"""
     if payload.get("_attention_track_delivery") is not True:
@@ -388,6 +396,21 @@ async def finalize_im_dispatch(
         await _register_soft_request_anchor(
             payload, reply_text, run_key=getattr(request, "inbound_batch_key", None),
         )
+    try:
+        from agent.im.auto_reply.conversation_ttl import record_conversation_after_final_reply
+
+        await record_conversation_after_final_reply(
+            payload,
+            run_key=str(
+                payload.get("_attention_run_key")
+                or getattr(request, "inbound_batch_key", None)
+                or ""
+            ),
+        )
+    except Exception as exc:
+        from app.core.redaction import diag_log
+
+        diag_log("agent.im.attention.conversation_open", exc)
     trace.finish_run("success", trace_output)
     await finalize_im_response(platform, puid, False, reply_text)
     print(

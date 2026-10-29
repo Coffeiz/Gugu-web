@@ -141,6 +141,58 @@ def _log_attention_passive_receipt(
     )
 
 
+async def _preflight_group_conversation(payload: dict) -> None:
+    if not payload.get("group_requires_at") or payload.get("group_read_enabled"):
+        return
+    try:
+        from agent.im.auto_reply.runtime import preflight_active_conversation_event_ids
+
+        active_event_ids = await preflight_active_conversation_event_ids(payload)
+    except Exception as exc:
+        from app.core.redaction import diag_log
+
+        diag_log("agent.im.attention.conversation_preflight", exc)
+        return
+    if active_event_ids:
+        payload["_attention_continuation_only"] = True
+        payload["_attention_active_conversation_event_ids"] = active_event_ids
+
+
+def _track_direct_group_invitation(payload: dict, request) -> None:
+    """让已邀请群聊的最终回复能建立成员级续接窗口。"""
+    if (
+        payload.get("chat_type") != "group"
+        or payload.get("group_read_enabled") is True
+        or not payload.get("group_mentioned")
+        or payload.get("_attention_track_delivery") is True
+    ):
+        return
+    try:
+        from agent.im.auto_reply.runtime import batch_attention_messages
+
+        messages = batch_attention_messages(payload)
+        message = next(
+            (item for item in messages if item.mentioned_current_bot is True),
+            messages[0] if messages else None,
+        )
+    except Exception as exc:
+        from app.core.redaction import diag_log
+
+        diag_log("agent.im.attention.direct_delivery_setup", exc)
+        message = None
+    if message is None or not message.sender_id:
+        return
+    payload["_attention_track_delivery"] = True
+    payload["_attention_run_key"] = str(
+        getattr(request, "inbound_batch_key", None) or message.event_id
+    )
+    payload["_attention_source_event_ids"] = [message.event_id]
+    payload["_attention_conversation_subject_sender_id"] = message.sender_id
+    payload["_attention_delivery_counter"] = {"value": 0}
+    payload["_attention_outbound_receipts"] = []
+    payload["_attention_budget_kind"] = None
+
+
 async def dispatch_im_message(payload: dict):
     """处理一条已入队 IM 消息的完整业务编排。
 
@@ -214,6 +266,8 @@ async def dispatch_im_message(payload: dict):
         payload["member_memory_enabled"] = group_settings[4]
         payload["group_attention_mode"] = group_settings[5] if len(group_settings) > 5 else "autonomous"
         payload["group_attention_config_version"] = group_settings[6] if len(group_settings) > 6 else 0
+
+        await _preflight_group_conversation(payload)
 
     from agent.im.auto_reply import should_enable_group_reply_gate
 
@@ -367,7 +421,7 @@ async def dispatch_im_message(payload: dict):
             trace.finish_run("success")
             return None
 
-    if should_record_passive_group(req, payload):
+    if should_record_passive_group(req, payload) and not payload.get("_attention_continuation_only"):
         passive_sid = await record_passive_im_message(req, prepared.session_id)
         await persist_im_session(platform, route.bot_id, session_scope, passive_sid, group=True)
         trace.bind_im_run(passive_sid, platform)
@@ -403,10 +457,13 @@ async def dispatch_im_message(payload: dict):
         await finalize_im_response(platform, puid or "", shortcut["action"] == "cancel", shortcut["reply"])
         return None
     if shortcut["action"] == "no_permission":
-        # 咕咕在跑别人的 loop，当前用户无权取消：回一句提示，不入队。
-        await send_text(payload, shortcut["reply"])
-        trace.finish_run("success", shortcut["reply"])
-        return None
+        # 全量自动回复群中的普通消息仍是群上下文内容；即使正文包含“取消”，
+        # 也不能用私聊式的取消权限提示截断这条消息。
+        if not group_auto_reply_payload:
+            # 咕咕在跑别人的 loop，当前用户无权取消：回一句提示，不入队。
+            await send_text(payload, shortcut["reply"])
+            trace.finish_run("success", shortcut["reply"])
+            return None
 
     # 命令在 Agent runner 之前短路，但 IM 路由可能仍持有已删除的 Redis session id。
     # 先按当前作用域恢复/创建真实会话，避免 /new、/workspace 等命令落到失效 id。
@@ -560,6 +617,7 @@ async def dispatch_im_message(payload: dict):
             # 出站分支会浅拷贝 payload；提前创建共享计数器，让各副本获得
             # 同一条 Run 内唯一的 delivery ordinal。
             payload["_attention_delivery_counter"] = {"value": 0}
+            payload["_attention_outbound_receipts"] = []
             payload["_attention_budget_kind"] = (
                 budget_reservation.get("kind") if budget_reservation else None
             )
@@ -570,9 +628,10 @@ async def dispatch_im_message(payload: dict):
                 "bot_id": route.bot_id,
                 "group_id": str(req.chat_id or ""),
             }
-            req.attention_budget_heartbeat = asyncio.create_task(
-                _renew_attention_budget_lease(req.attention_budget_reservation)
-            )
+
+    # 原生 @ 路径绕过注意力门，但其已确认最终回复也可以建立成员续接窗口。
+    # 只在实际进入 Agent Run 的群聊消息上启用投递账本，不覆盖只读群。
+    _track_direct_group_invitation(payload, req)
 
     if platform == "qq":
         # 让 token 刷新和 API 建连与模型运行重叠；预热失败不阻断当前 run。
@@ -695,6 +754,10 @@ async def dispatch_im_message(payload: dict):
 
     # 飞书使用 CardKit、Telegram 私聊使用 live draft 流式预览；其余平台按 round 收集发送。
     stream_sent = False
+    if getattr(req, "attention_budget_reservation", None):
+        req.attention_budget_heartbeat = asyncio.create_task(
+            _renew_attention_budget_lease(req.attention_budget_reservation)
+        )
     try:
         if platform == "feishu" and payload.get("chat_type") != "group":
             from agent.gateway import feishu
@@ -778,10 +841,19 @@ async def dispatch_im_message(payload: dict):
     except BaseException as exc:
         web_stream_failed = True
         from agent.errors import describe_llm_error
+        from agent.im.dispatch_finalization import settle_attention_budget_after_run_error
+
+        # Run 失败时按真实出站收据结算；UNKNOWN 保守占位，不能因异常直接退款。
+        await asyncio.shield(settle_attention_budget_after_run_error(req, payload))
         await stream_bridge.publish_failure(req, describe_llm_error(exc))
         trace.finish_run("error")
         raise
     finally:
+        heartbeat = getattr(req, "attention_budget_heartbeat", None)
+        if heartbeat is not None:
+            heartbeat.cancel()
+            await asyncio.gather(heartbeat, return_exceptions=True)
+            req.attention_budget_heartbeat = None
         await finish_im_activity(activity)
         await stream_bridge.finish(failed=web_stream_failed)
 

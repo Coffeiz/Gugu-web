@@ -200,6 +200,9 @@ _MATERIAL_REVIEW_RE = re.compile(
     re.IGNORECASE,
 )
 _RHETORICAL_SOCIAL = frozenset({"这也行", "怎么这么离谱"})
+_CONVERSATION_END_RE = re.compile(
+    r"(?:已解决|解决了|问题解决|搞定了|已经好了|不用继续|不用再说|先这样|到此为止|结束吧|就这样吧)"
+)
 
 
 def _stream_event_ms(event_id: str) -> int:
@@ -451,6 +454,35 @@ def _hard_reject(message: AttentionMessage, snapshot: AttentionSnapshot, explici
     return None
 
 
+def _conversation_close_reason(message: AttentionMessage) -> str | None:
+    """只识别明确结束或明确转向，避免把普通感谢当作关闭信号。"""
+    if message.has_unresolved_mention:
+        return "CONVERSATION_REDIRECT_unresolved_mention"
+    if message.mentioned_current_bot is False and (
+        message.mentioned_other_bot is True or message.mentioned_other_member is True
+    ):
+        return "CONVERSATION_REDIRECT_other_mention"
+    if (
+        message.reply_to_platform_message_id
+        and message.reply_target_is_bot is False
+        and message.mentioned_current_bot is not True
+    ):
+        return "CONVERSATION_REDIRECT_reply_to_other"
+    if _CONVERSATION_END_RE.search(message.raw_text):
+        return "CONVERSATION_END_explicit"
+    return None
+
+
+def _active_conversation_decision(message: AttentionMessage) -> AttentionDecision:
+    if message.media_only and message.processable_media is not True:
+        return AttentionDecision(
+            AttentionKind.PASSIVE, None, None, ("CONVERSATION_media_unprocessable",),
+        )
+    return AttentionDecision(
+        AttentionKind.CONTINUE, 100, None, ("CONVERSATION_CONTINUE_ttl",),
+    )
+
+
 def _implicit_open_audience(message: AttentionMessage, text: str) -> bool:
     if message.has_unresolved_mention or message.mentioned_other_bot is True or message.mentioned_other_member is True:
         return False
@@ -606,6 +638,7 @@ def decide_attention(
     *,
     budget_available: bool = True,
     bot_aliases: tuple[str, ...] = (),
+    conversation_active: bool = False,
 ) -> AttentionDecision:
     """自主模式直接放行；其他模式按 DIRECT→CONTINUE→H→开放候选评分执行。"""
     if mode is AttentionMode.AUTONOMOUS:
@@ -613,6 +646,10 @@ def decide_attention(
             AttentionKind.ALLOW_RUN, None, None, ("autonomous_bypass",)
         )
     explicit_call = _explicit_call(message, bot_aliases)
+    if conversation_active:
+        close_reason = _conversation_close_reason(message)
+        if close_reason:
+            return AttentionDecision(AttentionKind.PASSIVE, 0, None, (close_reason,))
     if message.mentioned_current_bot is True or explicit_call:
         return AttentionDecision(AttentionKind.DIRECT, 100, None, ("DIRECT_invitation",))
     if _trusted_media_continuation(message, snapshot):
@@ -622,6 +659,8 @@ def decide_attention(
     hard_reason = _hard_reject(message, snapshot, explicit_call)
     if hard_reason:
         return AttentionDecision(AttentionKind.PASSIVE, 0, None, (hard_reason,))
+    if conversation_active:
+        return _active_conversation_decision(message)
     if mode in {AttentionMode.NATURAL, AttentionMode.ACTIVE} and _soft_continuation_candidate(message, snapshot):
         return AttentionDecision(
             AttentionKind.SOFT_CONTINUE, 100, None,

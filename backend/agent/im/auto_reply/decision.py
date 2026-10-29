@@ -16,8 +16,14 @@ def should_enable_group_reply_gate(payload: dict) -> bool:
         isinstance(payload, dict)
         and payload.get("platform") in {"qq", "feishu", "telegram"}
         and payload.get("chat_type") == "group"
-        and not payload.get("group_requires_at")
-        and not payload.get("group_mentioned")
+        and (
+            payload.get("_attention_continuation_only") is True
+            or (
+                not payload.get("group_requires_at")
+                and not payload.get("group_mentioned")
+            )
+        )
+        and not payload.get("group_read_enabled")
     )
 
 
