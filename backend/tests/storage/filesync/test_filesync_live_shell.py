@@ -75,6 +75,7 @@ async def _assert_shell_churn_converges(shell, file_snapshot, session_factory, b
 
 
 @pytest.mark.asyncio
+@pytest.mark.process
 async def test_shell_create_equal_size_update_and_delete_project_without_manual_scan(
     isolated_filesync_session, monkeypatch,
 ):

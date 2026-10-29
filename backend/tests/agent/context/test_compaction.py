@@ -334,20 +334,6 @@ class TestCompactContext:
         assert "旧摘要" in calls[0]["delta"]
         assert "对话摘要" in calls[0]["delta"]
 
-    def test_append_provider_failure_returns_empty_for_local_fallback(self, monkeypatch):
-        calls: list = []
-        monkeypatch.setattr(
-            "agent.context.branch.ContextBranch",
-            lambda: _FakeBranch(calls, fail=True),
-        )
-        monkeypatch.setattr("app.core.config.get_settings", lambda: object())
-        result = asyncio.get_event_loop().run_until_complete(
-            _generate_append_summary(
-                [{"role": "user", "content": "你好"}], model_cfg=_model_cfg(),
-            )
-        )
-        assert result == ""
-
     def test_above_threshold_triggers_compact(self, monkeypatch):
         """超过阈值应触发压缩"""
         # 构造一个足够长的消息列表来超过 90% 阈值

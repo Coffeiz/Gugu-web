@@ -7,6 +7,8 @@ import pytest
 
 SCRIPT = Path(__file__).resolve().parents[4] / "nginx" / "prepare-admin-entry.sh"
 
+pytestmark = pytest.mark.process
+
 
 def _generate(
     tmp_path: Path,

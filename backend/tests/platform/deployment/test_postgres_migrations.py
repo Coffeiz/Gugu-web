@@ -16,10 +16,14 @@ from alembic.operations import Operations
 from sqlalchemy.ext.asyncio import create_async_engine
 
 BACKEND = Path(__file__).resolve().parents[3]
-pytestmark = pytest.mark.skipif(
-    os.environ.get("GUGU_RUN_DOCKER_INTEGRATION") != "1",
-    reason="需显式启用隔离 Docker 集成测试",
-)
+pytestmark = [
+    pytest.mark.process,
+    pytest.mark.external_service,
+    pytest.mark.skipif(
+        os.environ.get("GUGU_RUN_DOCKER_INTEGRATION") != "1",
+        reason="需显式启用隔离 Docker 集成测试",
+    ),
+]
 
 
 def _run(*args, **kwargs):

@@ -6,8 +6,6 @@
 from agent.media import images as media_images
 from agent.media import gates as media_gates
 from agent.media import video as media_video
-from agent.media import gates as media_gates
-from agent.media import video as media_video
 import pytest
 
 
@@ -83,41 +81,23 @@ def test_image_ready_honors_capability_override(monkeypatch):
 
 
 # ── should_compress_video：压缩触发判断 ─────────────────────────────────────
-def test_should_compress_4k_high_bitrate():
+@pytest.mark.parametrize(
+    ("probe", "expected"),
+    [
+        pytest.param({"width": 3840, "height": 2160, "bit_rate": 20_000_000}, True, id="4k-high-bitrate"),
+        pytest.param({"width": 3840, "height": 2160, "bit_rate": 5_000_000}, True, id="4k-low-bitrate"),
+        pytest.param({"width": 1920, "height": 1080, "bit_rate": 20_000_000}, True, id="1080p-high-bitrate"),
+        pytest.param({"width": 1920, "height": 1080, "bit_rate": 5_000_000}, False, id="1080p-low-bitrate"),
+        pytest.param(None, False, id="probe-failed"),
+        pytest.param({"width": 1920, "height": 1080, "bit_rate": 0}, False, id="1080p-missing-bitrate"),
+        pytest.param({"width": 3840, "height": 2160, "bit_rate": 0}, True, id="4k-missing-bitrate"),
+    ],
+)
+def test_should_compress_video_for_resolution_bitrate_and_probe_state(probe, expected):
+    """压缩策略覆盖分辨率、码率与探测失败的组合边界。"""
     from agent.media.video import should_compress_video
-    # 4K + 高码率 → 压
-    assert should_compress_video({"width": 3840, "height": 2160, "bit_rate": 20_000_000}) is True
 
-
-def test_should_compress_4k_low_bitrate():
-    from agent.media.video import should_compress_video
-    # 4K 但低码率 → 分辨率超 1080p，仍压
-    assert should_compress_video({"width": 3840, "height": 2160, "bit_rate": 5_000_000}) is True
-
-
-def test_should_compress_1080p_high_bitrate():
-    from agent.media.video import should_compress_video
-    # 1080p 但码率 >16M → 压
-    assert should_compress_video({"width": 1920, "height": 1080, "bit_rate": 20_000_000}) is True
-
-
-def test_should_not_compress_1080p_low_bitrate():
-    from agent.media.video import should_compress_video
-    # 1080p + 低码率 → 不压
-    assert should_compress_video({"width": 1920, "height": 1080, "bit_rate": 5_000_000}) is False
-
-
-def test_should_not_compress_none_probe():
-    from agent.media.video import should_compress_video
-    # 探测失败 → 不压（保守，避免误伤）
-    assert should_compress_video(None) is False
-
-
-def test_should_not_compress_zero_bitrate():
-    from agent.media.video import should_compress_video
-    # 容器未带码率（bit_rate=0）→ 只看分辨率
-    assert should_compress_video({"width": 1920, "height": 1080, "bit_rate": 0}) is False
-    assert should_compress_video({"width": 3840, "height": 2160, "bit_rate": 0}) is True
+    assert should_compress_video(probe) is expected
 
 
 # ── build_user_content：mm_file 视频块 ───────────────────────────────────────
