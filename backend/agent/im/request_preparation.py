@@ -89,6 +89,8 @@ async def prepare_request(
     request = AgentRequest(
         message=payload.get("text", ""),
         inbound_batch_key=payload.get("_inbound_batch_key"),
+        early_message_ids=payload.get("_early_message_ids") or None,
+        im_batch_messages=payload.get("_batch_messages") or None,
         user_id=owner_user_id,
         user_name=agent_user_name,
         session_id=session_id,
@@ -103,8 +105,11 @@ async def prepare_request(
         im_role=role,
         allowed_tool_names=allowed_tool_names,
         actor_context=actor,
+        im_turn_speakers=getattr(actor, "speaker_roles", None),
         im_message_format=payload.get("message_format"),
-        im_group_memory_enabled=bool(payload.get("group_memory_enabled", True)),
+        im_group_memory_enabled=(
+            bool(payload.get("group_memory_enabled", True))
+        ),
         im_member_memory_enabled=bool(payload.get("member_memory_enabled", True)),
         im_group_owner_memory_enabled=group_owner_memory,
     )

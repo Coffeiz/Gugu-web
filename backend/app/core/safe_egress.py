@@ -7,6 +7,7 @@ import json
 import socket
 import ssl
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from urllib.parse import urlsplit
 
 import httpcore
@@ -22,6 +23,28 @@ from app.core.config import SafeEgressSettings, get_settings
 from app.core.url_security import is_blocked_ip
 
 DOH_URL = "https://cloudflare-dns.com/dns-query"
+_tool_proxy_override: ContextVar[bool | None] = ContextVar("tool_proxy_override", default=None)
+
+
+def set_tool_proxy_override(value: bool | None):
+    """为当前工具调用设置代理选择；None 沿用 Admin 默认值。"""
+    return _tool_proxy_override.set(value)
+
+
+def reset_tool_proxy_override(token) -> None:
+    _tool_proxy_override.reset(token)
+
+
+def admin_proxy_available(settings: SafeEgressSettings | None = None) -> bool:
+    """只有管理员启用且地址有效时才向模型暴露代理选择。"""
+    settings = settings or get_settings().safe_egress
+    if not settings.enabled or not settings.proxy_url.strip():
+        return False
+    try:
+        validate_proxy_url(settings.proxy_url)
+    except ValueError:
+        return False
+    return True
 
 
 class SafeEgressError(RuntimeError):
@@ -31,6 +54,20 @@ class SafeEgressError(RuntimeError):
         super().__init__(message)
         self.code = code
         self.message = message
+
+
+def _effective_settings(settings: SafeEgressSettings) -> SafeEgressSettings:
+    override = _tool_proxy_override.get()
+    if override is None:
+        return settings
+    selected = settings.model_copy(deep=True)
+    if override:
+        if not admin_proxy_available(selected):
+            raise SafeEgressError("proxy_unavailable", "管理员尚未配置可用的出站代理")
+        selected.enabled = True
+    else:
+        selected.enabled = False
+    return selected
 
 
 def validate_proxy_url(value: str) -> str:
@@ -341,7 +378,7 @@ class _PinnedProxyTransport(httpx.AsyncHTTPTransport):
 
 
 class SafeEgressClient:
-    """用途受限的 GET client；代理和 SSRF 策略由服务端配置决定。"""
+    """受安全策略约束的 HTTP client；代理和 SSRF 策略由服务端配置决定。"""
 
     def __init__(self, settings: SafeEgressSettings | None = None):
         self.settings = settings or get_settings().safe_egress.model_copy(deep=True)
@@ -358,7 +395,8 @@ class SafeEgressClient:
             raise SafeEgressError("invalid_url", "URL 不能包含账号密码")
         if port is not None and not 1 <= port <= 65535:
             raise SafeEgressError("invalid_url", "URL 端口无效")
-        proxy = _httpcore_proxy(self.settings) if self.settings.enabled else None
+        settings = _effective_settings(self.settings)
+        proxy = _httpcore_proxy(settings) if settings.enabled else None
         address = await _resolve_public_ip(parsed.hostname, proxy)
         return address, proxy
 
@@ -368,8 +406,10 @@ class SafeEgressClient:
         url: str,
         *,
         timeout: float | httpx.Timeout,
-        headers: dict[str, str] | None = None,
+        headers: dict[str, str | bytes] | None = None,
+        post_json: dict | None = None,
     ):
+        """通过 IP 钉扎的直连/代理传输发送请求；调用方必须自行固定并校验目标端点。"""
         address, proxy = await self.resolve(url)
         if proxy is None:
             from app.core.pinned_http import PinnedHTTPTransport
@@ -380,10 +420,12 @@ class SafeEgressClient:
         async with httpx.AsyncClient(
             timeout=timeout if isinstance(timeout, httpx.Timeout) else httpx.Timeout(timeout),
             follow_redirects=False,
+            trust_env=False,
             transport=transport,
         ) as client:
             try:
-                async with client.stream("GET", url, headers=headers or {}) as response:
+                method = "POST" if post_json is not None else "GET"
+                async with client.stream(method, url, headers=headers or {}, json=post_json) as response:
                     yield response
             except Exception as exc:
                 if _caused_by_tls_error(exc):

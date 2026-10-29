@@ -1,5 +1,11 @@
 <template>
-  <!-- 顶部标题模式：非编辑态和编辑态用同一个 span（保持选框不消失），编辑态用 contenteditable -->
+  <!-- 顶部标题模式：非编辑态和编辑态用同一个 span（保持选框不消失），编辑态用 contenteditable。
+
+       标题文本走 :textContent 属性绑定，不用 {{ title }} 插值：插值会让 Vue 在这个 span 里
+       持有一个文本节点引用，而 contenteditable 编辑时浏览器改写这个节点、提交时又会整体
+       替换子节点——两者一撞，Vue 的虚拟 DOM 就和真实 DOM 脱钩，之后标题再也更新不了
+       （改名不生效、切会话也停在旧名字）。走属性绑定后 Vue 只负责「写值」、不持有节点
+       引用，浏览器怎么改都不会脱钩。 -->
   <span
     v-if="header"
     ref="headerRef"
@@ -7,12 +13,13 @@
     :class="{ 'is-editing': editing }"
     :title="title"
     :contenteditable="editing"
+    :textContent="title"
     spellcheck="false"
     @click="!editing && startEdit()"
     @blur="commit"
     v-enter.prevent="commit"
     @keydown.esc.prevent="cancel"
-  >{{ title }}</span>
+  ></span>
   <!-- 侧边栏模式：编辑态用文件重命名样式（.rename-input-inline），按钮原地变勾选确认。
        侧栏改名只通过铅笔按钮触发（下方 @click.stop），标题区域点击不进入编辑、也不阻止冒泡，
        让点击标题能冒泡到父级 session item 的 onLoadSession 切换会话；仅编辑态阻止冒泡，
@@ -95,18 +102,32 @@ async function startEdit() {
 
 function commit() {
   if (!editing.value) return
+  // 读 textContent 而不是 innerText：两者在浏览器里等价，但 innerText 是「渲染后文本」，
+  // 依赖布局；textContent 是所有环境都有的标准属性，测试里能直接复现编辑态。
   const trimmed = props.header
-    ? (headerRef.value?.innerText ?? '').trim()
+    ? (headerRef.value?.textContent ?? '').trim()
     : draft.value.trim()
   editing.value = false
-  // 清掉 contenteditable 可能残留的 placeholder
-  if (props.header && headerRef.value) headerRef.value.innerText = props.title
+  // 先把编辑态里残留的输入还原成当前标题：改名成功后父级会用新标题再写一次，
+  // 没改名成功（接口失败/标题没变）时标题栏就保持原样，不会留着用户敲的半截字。
+  if (props.header) resetHeaderText()
   if (trimmed && trimmed !== props.title) props.onRename(trimmed)
 }
 
 function cancel() {
   editing.value = false
-  if (props.header && headerRef.value) headerRef.value.innerText = props.title
+  if (props.header) resetHeaderText()
+}
+
+/**
+ * 把顶部标题栏的文本还原成当前标题。
+ *
+ * 顶部模式的文本由 Vue 的 :textContent 绑定托管，Vue 不持有文本节点引用，
+ * 所以这里整体替换子节点不会让 Vue 的虚拟 DOM 与真实 DOM 脱钩。
+ */
+function resetHeaderText() {
+  const el = headerRef.value
+  if (el) el.textContent = props.title
 }
 </script>
 

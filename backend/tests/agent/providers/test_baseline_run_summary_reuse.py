@@ -63,7 +63,7 @@ async def test_compress_if_needed_reuses_run_summary_without_llm(db, user_a, mon
         session.id, user_a.id,
         SimpleNamespace(ai=SimpleNamespace(context_tokens=120_000, max_tokens=8_000)),
         reuse_summary="复用的 run 内摘要正文",
-        reuse_before_message_id=current_row.id,
+        reuse_before_message_seq=current_row.conversation_seq,
     )
 
     assert ok is True
@@ -71,8 +71,8 @@ async def test_compress_if_needed_reuses_run_summary_without_llm(db, user_a, mon
     await db.refresh(session)
     # 最近完整 run 的 round-1 原样保留，较早的三个历史行进入摘要，
     # 水位停在它们的最后一条上，绝不越过本轮用户消息。
-    assert session.baseline_message_id == pre_ids[2]
-    assert session.baseline_message_id < current_row.id
+    assert session.baseline_message_seq == pre_ids[2]
+    assert session.baseline_message_seq < current_row.conversation_seq
     summaries = (await db.execute(
         select(ConversationMessage).where(
             ConversationMessage.session_id == session.id,
@@ -108,7 +108,7 @@ async def test_compress_if_needed_reuse_replaces_previous_summary_and_advances(d
     db.add(current_row)
     db.add(ConversationMessage(session_id=session.id, role="summary", content="旧摘要"))
     await db.flush()
-    session.baseline_message_id = ids[1]
+    session.baseline_message_seq = ids[1]
     await db.commit()
 
     monkeypatch.setattr("app.core.redis.get_redis", lambda: _FakeRedis())
@@ -119,13 +119,13 @@ async def test_compress_if_needed_reuse_replaces_previous_summary_and_advances(d
         session.id, user_a.id,
         SimpleNamespace(ai=SimpleNamespace(context_tokens=120_000, max_tokens=8_000)),
         reuse_summary="复用的 run 内摘要正文",
-        reuse_before_message_id=current_row.id,
+        reuse_before_message_seq=current_row.conversation_seq,
     )
 
     assert ok is True
     await db.refresh(session)
     # 压缩只从旧水位之后开始：新水位必须晚于它，且不越过本轮用户消息。
-    assert ids[1] < session.baseline_message_id < current_row.id
+    assert ids[1] < session.baseline_message_seq < current_row.conversation_seq
     summaries = (await db.execute(
         select(ConversationMessage).where(
             ConversationMessage.session_id == session.id,
@@ -158,13 +158,13 @@ async def test_compress_if_needed_reuse_without_compressible_history_is_noop(db,
     ok = await compress_conv.compress_if_needed(
         session.id, user_a.id, SimpleNamespace(),
         reuse_summary="复用的摘要",
-        reuse_before_message_id=current_row.id,
+        reuse_before_message_seq=current_row.conversation_seq,
     )
 
     assert ok is False
     assert llm_calls == []
     await db.refresh(session)
-    assert int(session.baseline_message_id or 0) == 0
+    assert int(session.baseline_message_seq or 0) == 0
 
 
 @pytest.mark.asyncio
@@ -209,7 +209,7 @@ async def test_compress_if_needed_force_replays_history_through_append_summary(d
     assert captured["history"][1]["content"].startswith("历史消息1")
     assert captured["previous"] is None
     await db.refresh(session)
-    assert int(session.baseline_message_id or 0) > 0
+    assert int(session.baseline_message_seq or 0) > 0
     summaries = (await db.execute(
         select(ConversationMessage).where(
             ConversationMessage.session_id == session.id,
@@ -326,10 +326,11 @@ async def test_reflection_compaction_reuses_only_an_exact_persisted_prefix(db, u
     reordered_snapshot = SimpleNamespace(
         ai=model_cfg, history=(captured_prefix, *reordered_prefix, *history[-1:]),
     )
+    # 持久序号是唯一排序依据；时间戳被改乱后，非规范顺序不再被视为可复用前缀。
     assert await compress_conv._snapshot_cache_prefix(
         reordered_snapshot, session, rows, user_a.id, model_cfg, 0,
-        {rows[0].id, rows[1].id},
-    ) == [captured_prefix, *reordered_prefix]
+        [rows[0].conversation_seq, rows[1].conversation_seq],
+    ) is None
     rows[0].created_at = original_created_at
 
     tail_mismatch = SimpleNamespace(
@@ -531,6 +532,6 @@ async def test_reflection_compaction_moves_unmatched_cutoff_into_recent_tail(
         force=True, cache_snapshot=snapshot,
     )
     await db.refresh(session)
-    assert session.baseline_message_id == rows[0].id
+    assert session.baseline_message_seq == rows[0].conversation_seq
     assert calls[0] == [{"role": "system", "content": "稳定 system"},
                         *history[:first_end]]

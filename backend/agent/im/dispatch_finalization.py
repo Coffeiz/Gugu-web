@@ -76,8 +76,22 @@ async def finalize_im_dispatch(
             pass
     if response.cancelled:
         trace.finish_run("cancelled")
+        if response.remote_status_unknown:
+            await send_text(payload, "本地已停止，远端执行状态未知")
         await finalize_im_response(platform, puid, True, "")
         return response
+
+    if getattr(request, "group_auto_reply", False):
+        from agent.im.auto_reply import ReplyChoice
+
+        gate = getattr(request, "group_reply_gate", None)
+        gate_opened = gate is not None and gate.choice is ReplyChoice.REPLY
+        if not gate_opened:
+            # 没有正文或选择不回复都保持群内静默；普通 IM 收尾的空正文兜底
+            # （「嗯~在的」）不能用于自动回复模式。
+            trace.finish_run("error" if response.errored else "success")
+            await finalize_im_response(platform, puid, False, "")
+            return response
 
     # 工具状态消息仍受工具展示模式控制；交互提示是恢复 Runner 所必需
     # 的用户输入，不能因关闭工具状态展示而被吞掉。
@@ -99,20 +113,27 @@ async def finalize_im_dispatch(
 
     if platform == "qq":
         # 流式发送器已经完整交付正文时，只收尾附件，避免再发一份重复最终消息。
-        # 流式发送失败/未交付时仍走普通回复出口，由 QQ 出站层按 msg_id
-        # 被动发送并在过期或失败时降级主动消息。
+        # 未流式发送的最终回复保留入站 msg_id：网关先发被动消息，失败时再主动重试。
         if stream_reply_text is None:
             # 流已确认发送最终正文前缀，但尾部恢复失败；重发全文会重复前缀，
             # 因此将 Run 标记为交付失败，不再盲目重发。
             reply_text = None
         else:
+            # 已由 QQ 私聊流式接口交付的正文不能再走被动出口；未流式正文应优先
+            # 关联入站消息发送，send_c2c/send_group 会在被动发送失败时主动回退。
+            final_payload = {**payload, "message_id": None} if stream_sent else payload
             reply_text = await send_agent_response(
-                payload, response,
+                final_payload, response,
                 already_sent_rounds=(
                     1 if payload.get("chat_type") == "c2c" and stream_sent and not response.errored else 0
                 ),
                 show_intermediate_replies=False,
             )
+            # QQ 私聊流式发送时，正文只存在 stream_reply_text；response.text 和
+            # round_texts 可能为空。send_agent_response 因为该轮已发送会返回空串，
+            # 这里用实际流式正文补齐 run 终态与活动记录，不重复发送消息。
+            if not response.errored and stream_sent and stream_reply_text and not reply_text:
+                reply_text = stream_reply_text
     elif platform == "feishu" and stream_sent:
         # CardKit 已经发送正文；附件仍由统一附件出口发送，避免文本重复。
         if response.files:

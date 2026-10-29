@@ -11,11 +11,20 @@
 
 #### New Features
 
-- None.
+- Allow users to cancel background MCP tool tasks while they are running.
+- Add a custom reply style preference that remains independent of the user's persona, and let group auto-replies skip conversations that do not need a response.
 
 #### Improvements
 
-- None.
+- Propagate run cancellation through in-flight model and tool work, and report a consistent terminal state.
+- Batch and cache knowledge retrieval to reduce repeated work during context injection.
+- Use a consistent scrollable card layout across scheduled tasks, skills, and MCP services.
+- Improve outbound web request header handling and destination validation.
+- Clarify in BYOK and admin settings that MiniMax web search requires an M plan.
+- Give the note-writing tool clearer operating guidance and preserve strategy terminology in normal replies.
+- Batch consecutive private and group IM messages into one run, persist them as they arrive, and apply the least privilege when a batch contains multiple speakers.
+- Improve QQ outbound message delivery reliability.
+- Improve reading large Markdown documents and wide tables, expand the document zoom range, and refine the file library scrollbar layout.
 
 #### Fixes
 
@@ -26,10 +35,16 @@
 - Stop reporting MiniMax request-size errors as context-window overflow, so the guidance points at the real cause.
 - Copy the Mermaid raster-dimension helper into the production images so the diagram worker no longer misses a module it imports.
 - Smoke-start the Mermaid diagram worker during image builds so missing modules or fonts fail the build instead of breaking rendering at runtime.
+- Deliver the final QQ streamed reply reliably when earlier streaming content was only partially delivered, and report missing stream terminal events as errors.
+- Keep tool activity synchronized when switching between chat sessions.
+- Keep localized cancellation status messages consistent across supported languages.
+- Resolve group @mentions to the correct bot name instead of displaying another bot as Gugu.
+- Keep the session title in sync after renaming or switching conversations.
+- Prevent empty group reflection jobs and worker shutdown from repeatedly failing when no event loop is running.
 
 #### Contributors
 
-- None.
+- Thank you to [@Coffeiz](https://github.com/Coffeiz) for PR #109.
 
 #### Feedback & Issue Reporters
 
@@ -39,11 +54,20 @@
 
 #### 新功能
 
-- 暂无。
+- 支持取消正在运行的 MCP 后台工具任务。
+- 在人格偏好之外增加独立的自定义回复风格，并让群聊自动回复跳过无需回应的对话。
 
 #### 改进
 
-- 暂无。
+- 将取消信号传递到运行中的模型和工具任务，并统一反馈任务终态。
+- 对知识检索进行批处理和缓存，减少上下文注入时的重复工作。
+- 定时任务、技能和 MCP 服务统一使用可滚动卡片布局。
+- 改进联网请求头处理与目标地址校验。
+- 在 BYOK 和管理设置中说明 MiniMax 联网搜索需要 M 计划。
+- 补充笔记工具的操作指引，并在普通回复中保留策略术语。
+- 将连续的 IM 私聊和群聊消息合并为一轮处理，并在消息到达时及时入库；一个批次包含多人发言时按最小权限执行。
+- 提高 QQ 出站消息发送的可靠性。
+- 改进大型 Markdown 文档和宽表格的阅读体验，扩大文档缩放范围并调整文件库滚动布局。
 
 #### 修复
 
@@ -54,10 +78,16 @@
 - 不再把 MiniMax 的请求体过大错误说成「上下文超限」，让处理建议指向真实原因。
 - 生产镜像补入 Mermaid 栅格尺寸辅助模块，避免图表 Worker 在镜像里缺少它自己 import 的依赖。
 - 镜像构建期冒烟启动 Mermaid 图表 Worker，缺模块或缺字体时构建即失败，不再等到线上渲染才暴露。
+- 修复 QQ 流式内容部分送达时最终回复可能遗漏的问题；缺少流终态时明确报错。
+- 修复切换会话后工具活动消息未及时同步的问题。
+- 统一各语言中的运行取消状态提示。
+- 修复群聊中 @ 其他机器人时错误显示为咕咕的问题。
+- 修复重命名或切换会话后标题未及时更新的问题。
+- 修复群反思任务遇到空消息范围或 Worker 停止时无事件循环而反复失败的问题。
 
 #### 贡献者
 
-- 暂无。
+- 感谢 [@Coffeiz](https://github.com/Coffeiz) 提交 PR #109。
 
 #### 反馈与问题报告
 

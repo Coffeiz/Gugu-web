@@ -25,8 +25,45 @@ def _decode_extensionless_text(data: bytes) -> str | None:
     return text
 
 
+async def _read_history_text(meta: dict, attach_id: str, *, target_lines="all",
+                             max_source_bytes: int | None = None):
+    from app.core import chat_attach, doctext
+    from app.core.redaction import redact
+    from app.services import storage as storage_service
+
+    ext = str(meta.get("ext") or "").lower()
+    is_document = ext in doctext.EXTRACTABLE
+    size_limit = doctext.EXTRACT_MAX_BYTES if is_document else 32 * 1024 * 1024
+    if ext not in chat_attach.TEXT_EXTS and not is_document:
+        return json.dumps({"error": "该历史附件类型不支持文本提取"}, ensure_ascii=False)
+    if int(meta.get("size") or 0) > size_limit:
+        return json.dumps({"error": f"附件过大，超出可读上限（{size_limit // 1048576}MB）"}, ensure_ascii=False)
+    try:
+        storage = storage_service.get_storage()
+        info = await storage.stat(meta["storage_key"])
+        if info is None:
+            return json.dumps({"error": "历史附件不存在，无法读取"}, ensure_ascii=False)
+        if info.size > size_limit:
+            return json.dumps({"error": f"附件过大，超出可读上限（{size_limit // 1048576}MB）"}, ensure_ascii=False)
+        if max_source_bytes is not None and info.size > max_source_bytes:
+            return json.dumps({"error": "本批次剩余容量不足，未读取该附件"}, ensure_ascii=False)
+        data = await storage.get(meta["storage_key"])
+        text = await doctext.extract_text(data, ext)
+        selected, numbered, line_range = select_numbered_lines(text, target_lines)
+    except Exception as exc:
+        return json.dumps({"error": f"读取历史附件失败：{redact(str(exc))[:80]}"}, ensure_ascii=False)
+    return {
+        "attach_id": attach_id,
+        "name": str(meta.get("name") or "聊天附件"),
+        "content": selected,
+        "numbered_content": numbered,
+        "line_range": {"start": line_range[0], "end": line_range[1]},
+        "_source_size_bytes": len(data),
+    }
+
+
 async def _read_history_media(db, user_id, attach_id: str, *, restricted: bool = False,
-                              max_source_bytes: int | None = None):
+                              max_source_bytes: int | None = None, target_lines="all"):
     from app.core import chat_attach
     from agent.tools.media_reader import AUDIO_EXTS, IMAGE_EXTS, VIDEO_EXTS, read_media, read_stored_image
 
@@ -48,8 +85,13 @@ async def _read_history_media(db, user_id, attach_id: str, *, restricted: bool =
         }
     if restricted:
         return json.dumps({"error": "群聊成员和未识别身份只能读取图片附件"}, ensure_ascii=False)
+    if kind == "text":
+        return await _read_history_text(
+            meta, attach_id, target_lines=target_lines,
+            max_source_bytes=max_source_bytes,
+        )
     if kind not in {"audio", "video", "voice"} or ext not in AUDIO_EXTS | VIDEO_EXTS:
-        return json.dumps({"error": "历史附件目前支持图片、音频或视频；其他文件请先保存到文件库"}, ensure_ascii=False)
+        return json.dumps({"error": "历史附件目前支持文本、PDF/Office、图片、音频或视频"}, ensure_ascii=False)
     file = SimpleNamespace(
         id=attach_id, user_id=user_id, storage_key=meta["storage_key"], ext=ext,
         display_name=name,
@@ -114,6 +156,7 @@ async def _read_file_single(db, user_id, args: dict, *, restricted: bool = False
                 )
         return await _read_history_media(
             db, user_id, attach_id, restricted=restricted, max_source_bytes=max_source_bytes,
+            target_lines=args.get("target_lines", "all"),
         )
     if restricted and args.get("file_id") is not None:
         return json.dumps(

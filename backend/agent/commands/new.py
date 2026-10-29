@@ -50,7 +50,7 @@ async def handle(user_id, session_id: int | None, arg: str, locale: str | None =
 
             # 保留 workspace_id、用户设置和权限；下次 run 会重新生成业务 snapshot。
             session.summary = ""
-            session.baseline_message_id = 0
+            session.baseline_message_seq = 0
             session.baseline_message_hash = None
             session.session_context = None
             session.session_info_hash = None

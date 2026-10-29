@@ -154,6 +154,9 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             user_skill_metadata=user_skill_metadata, dynamic_tools=mcp_tools, source=req.source,
             model_cfg=model_cfg,
         )
+        from agent.media.capability_prompt import media_capability_for_user
+        media_capability_context = await media_capability_for_user(model_cfg, user_id, db=db)
+    system_prompt = "\n\n---\n\n".join((system_prompt, media_capability_context))
     if capability_context is not None:
         if _pin_session_user_skill_metadata(session, capability_context):
             # stream() 已经提交并关闭了原事务；后台生成使用独立事务，首次建立的
@@ -191,6 +194,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
     compaction_applied = False
     run_completed = False
     cancelled = False
+    remote_status_unknown = False
     generation_failed = False
     failure_event = None
     rag_context: dict | None = None
@@ -296,7 +300,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
         )
 
         async def handle_agent_event(value: dict) -> None:
-            nonlocal current_run_id, current_round_id, cancelled, generation_failed, failure_event
+            nonlocal current_run_id, current_round_id, cancelled, generation_failed, failure_event, remote_status_unknown
             evt = dict(value)
             etype = evt.get("type")
             if etype == "round_start":
@@ -320,6 +324,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                 evt = {"session_id": session_id, **evt}
             if etype == "_cancelled":
                 cancelled = True
+                remote_status_unknown = bool(evt.get("remote_status_unknown"))
             elif etype == "error":
                 generation_failed = True
                 failure_event = evt
@@ -372,7 +377,8 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                     await persist_interrupted_run()
                 except Exception:
                     logger.exception("取消路径的部分历史持久化失败 session=%s", session_id)
-                await _pub({"type": "done", "cancelled": True})
+                await _pub({"type": "done", "cancelled": True,
+                            "remote_status_unknown": remote_status_unknown})
             elif failure_event:
                 from agent.context.display_checkpoint import seal_checkpoint
                 await seal_checkpoint(_sess._SessionLocal, session_id, user_message.id)
@@ -467,7 +473,9 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
         from app.services.conversation_run_outcomes import build_run_outcome
         outcome = build_run_outcome(status="interrupted", run_id=owner_run_id)
         await persist_run_outcome(_sess._SessionLocal, outcome_target, outcome)
-        await _pub({"type": "done", "cancelled": True, "run_outcome": outcome})
+        from agent.runtime.cancellation import current_remote_status_unknown
+        await _pub({"type": "done", "cancelled": True, "run_outcome": outcome,
+                    "remote_status_unknown": current_remote_status_unknown()})
         raise
     except BaseException as e:
         generation_failed = True
@@ -536,5 +544,5 @@ async def _refresh_generation_history(session_id: int, snapshot: dict, model_cfg
         if should_strip_thinking:
             clean_persisted_history(history)
         refreshed_snapshot = dict(snapshot)
-        refreshed_snapshot["history_baseline_message_id"] = baseline
+        refreshed_snapshot["history_baseline_message_seq"] = baseline
         return session, refreshed_snapshot, history, history_stats, bool(should_strip_thinking)

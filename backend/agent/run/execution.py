@@ -52,6 +52,7 @@ class RunOutcome:
     tool_events: list = field(default_factory=list)
     mutated: bool = False
     cancelled: bool = False
+    remote_status_unknown: bool = False
     errored: bool = False
     errored_text: str = ""
     error_info: LLMErrorPresentation | None = None
@@ -276,7 +277,7 @@ async def consume_agent_events(
                 outcome.tool_events.append(tool_event)
                 name = str(evt.get("name") or "")
                 if t == "tool_call":
-                    if name and name not in outcome.tool_names:
+                    if name and name != "choose_no_reply" and name not in outcome.tool_names:
                         outcome.tool_names.append(name)
                     # 展示时间线：tool 项按流式顺序插入（语义对齐 gateway/web.py）
                     if name and not name.startswith("_"):
@@ -331,6 +332,7 @@ async def consume_agent_events(
                 await _notify_event(sink.on_event, evt)
             elif t == "_cancelled":
                 outcome.cancelled = True   # 用户中途「算了」：停止收集，网关已回「先不继续」，worker 不再补发
+                outcome.remote_status_unknown = bool(evt.get("remote_status_unknown"))
                 interrupted = True
                 await _notify_event(sink.on_event, evt)
                 break
@@ -427,4 +429,5 @@ def cancelled_response(outcome: RunOutcome, session_id: int) -> AgentResponse:
     """用户中途取消的统一终态：不补发、不入历史（已执行的工具效果保留）。"""
     return AgentResponse(text="", session_id=session_id, tokens_in=outcome.tokens_in,
                          tokens_out=outcome.tokens_out, cancelled=True,
+                         remote_status_unknown=outcome.remote_status_unknown,
                          interactions=outcome.interactions, tool_events=outcome.tool_events)

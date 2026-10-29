@@ -270,9 +270,15 @@ async def bind_qq_owner_if_unbound(
 class QQGroupAccess:
     """当前 QQ Bot 内的一条群聊权限快照。"""
 
-    def __init__(self, role: str, allowed_tool_names: list[str] | None):
+    def __init__(
+        self,
+        role: str,
+        allowed_tool_names: list[str] | None,
+        group_member_tool_names: list[str] | None = None,
+    ):
         self.role = role
         self.allowed_tool_names = allowed_tool_names
+        self.group_member_tool_names = group_member_tool_names
 
 
 async def resolve_qq_group_access(db: AsyncSession, bot_id: int,
@@ -293,5 +299,7 @@ async def resolve_qq_group_access(db: AsyncSession, bot_id: int,
     if not bot or not bot.owner_platform_user_id:
         return QQGroupAccess("unknown", list(DEFAULT_GROUP_ALLOWED_TOOLS))
     if bot.owner_platform_user_id == platform_user_id:
-        return QQGroupAccess("owner", None)
+        return QQGroupAccess(
+            "owner", None, normalize_group_allowed_tools(bot.group_allowed_tools)
+        )
     return QQGroupAccess("member", normalize_group_allowed_tools(bot.group_allowed_tools))

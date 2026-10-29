@@ -265,7 +265,7 @@ class SandboxSettings(BaseModel):
     cpu_limit: float = Field(1.0, ge=0.1, le=2.0, description="单用户容器 CPU 上限")
     memory_limit_bytes: int = Field(512 * 1024 * 1024, ge=64 * 1024 * 1024, description="单用户容器内存上限")
     pids_limit: int = Field(64, ge=16, le=512, description="单用户容器进程数上限")
-    timeout_seconds: int = Field(30, ge=1, le=300, description="单次 Shell 默认超时")
+    timeout_seconds: int = Field(30, ge=1, le=3600, description="单次 Shell 默认超时")
 
 
     output_limit_bytes: int = Field(12 * 1024, ge=1024, le=120 * 1024, description="单次 Shell 输出上限")

@@ -35,7 +35,7 @@
   },
   "items": [
     {
-      "file": "backend/scripts/diagnostics/test_cache_mode_compare.py",
+      "file": "backend/scripts/diagnostics/compare_cache_modes.py",
       "kind": "diagnostic-script",
       "layer": "L2",
       "domain": "context",
@@ -48,7 +48,7 @@
       "lastChanged": "2026-08-21"
     },
     {
-      "file": "backend/scripts/diagnostics/test_cache_strategy_compare.py",
+      "file": "backend/scripts/diagnostics/compare_cache_strategies.py",
       "kind": "diagnostic-script",
       "layer": "L2",
       "domain": "context",
@@ -61,7 +61,7 @@
       "lastChanged": "2026-08-21"
     },
     {
-      "file": "backend/scripts/diagnostics/test_cross_call_cache.py",
+      "file": "backend/scripts/diagnostics/probe_cross_call_cache.py",
       "kind": "diagnostic-script",
       "layer": "L2",
       "domain": "context",
@@ -74,7 +74,7 @@
       "lastChanged": "2026-08-21"
     },
     {
-      "file": "backend/scripts/diagnostics/test_full_agent_flow.py",
+      "file": "backend/scripts/diagnostics/probe_full_agent_flow.py",
       "kind": "diagnostic-script",
       "layer": "L2",
       "domain": "agent-provider",
@@ -87,7 +87,7 @@
       "lastChanged": "2026-08-28"
     },
     {
-      "file": "backend/scripts/diagnostics/test_full_schema_compact_ab.py",
+      "file": "backend/scripts/diagnostics/compare_full_schema_compaction.py",
       "kind": "diagnostic-script",
       "layer": "L2",
       "domain": "agent-provider",
@@ -100,7 +100,7 @@
       "lastChanged": "2026-09-02"
     },
     {
-      "file": "backend/scripts/diagnostics/test_locale_continuous.py",
+      "file": "backend/scripts/diagnostics/probe_continuous_locale.py",
       "kind": "diagnostic-script",
       "layer": "L2",
       "domain": "context",
@@ -113,7 +113,7 @@
       "lastChanged": "2026-08-30"
     },
     {
-      "file": "backend/scripts/diagnostics/test_minimax_null_fields.py",
+      "file": "backend/scripts/diagnostics/probe_minimax_null_fields.py",
       "kind": "diagnostic-script",
       "layer": "L2",
       "domain": "agent-provider",
@@ -126,7 +126,7 @@
       "lastChanged": "2026-08-26"
     },
     {
-      "file": "backend/scripts/diagnostics/test_new_assembly.py",
+      "file": "backend/scripts/diagnostics/probe_new_assembly.py",
       "kind": "diagnostic-script",
       "layer": "L2",
       "domain": "context",
@@ -139,7 +139,7 @@
       "lastChanged": "2026-08-21"
     },
     {
-      "file": "backend/scripts/diagnostics/test_prefix_optimization.py",
+      "file": "backend/scripts/diagnostics/probe_prefix_optimization.py",
       "kind": "diagnostic-script",
       "layer": "L2",
       "domain": "context",
@@ -152,7 +152,7 @@
       "lastChanged": "2026-08-21"
     },
     {
-      "file": "backend/scripts/diagnostics/test_real_cache_optimization.py",
+      "file": "backend/scripts/diagnostics/probe_real_cache_optimization.py",
       "kind": "diagnostic-script",
       "layer": "L2",
       "domain": "context",
@@ -165,7 +165,7 @@
       "lastChanged": "2026-08-21"
     },
     {
-      "file": "backend/scripts/diagnostics/test_real_session_20_run_cache_matrix.py",
+      "file": "backend/scripts/diagnostics/probe_real_session_20_run_cache_matrix.py",
       "kind": "diagnostic-script",
       "layer": "L2",
       "domain": "context",
@@ -178,7 +178,7 @@
       "lastChanged": "2026-08-30"
     },
     {
-      "file": "backend/scripts/diagnostics/test_real_session_20_run_cache.py",
+      "file": "backend/scripts/diagnostics/probe_real_session_20_run_cache.py",
       "kind": "diagnostic-script",
       "layer": "L2",
       "domain": "context",
@@ -191,7 +191,7 @@
       "lastChanged": "2026-08-26"
     },
     {
-      "file": "backend/scripts/diagnostics/test_reminder_role_cache.py",
+      "file": "backend/scripts/diagnostics/probe_reminder_role_cache.py",
       "kind": "diagnostic-script",
       "layer": "L2",
       "domain": "mind-project",
@@ -204,7 +204,7 @@
       "lastChanged": "2026-08-25"
     },
     {
-      "file": "backend/scripts/diagnostics/test_schema_accumulation_5tools.py",
+      "file": "backend/scripts/diagnostics/probe_schema_accumulation_5tools.py",
       "kind": "diagnostic-script",
       "layer": "L2",
       "domain": "agent-provider",
@@ -217,7 +217,7 @@
       "lastChanged": "2026-08-30"
     },
     {
-      "file": "backend/scripts/diagnostics/test_session_incremental_cache.py",
+      "file": "backend/scripts/diagnostics/probe_session_incremental_cache.py",
       "kind": "diagnostic-script",
       "layer": "L2",
       "domain": "context",
@@ -230,7 +230,7 @@
       "lastChanged": "2026-08-21"
     },
     {
-      "file": "backend/scripts/diagnostics/test_tool_cache_boundary.py",
+      "file": "backend/scripts/diagnostics/probe_tool_cache_boundary.py",
       "kind": "diagnostic-script",
       "layer": "L2",
       "domain": "context",

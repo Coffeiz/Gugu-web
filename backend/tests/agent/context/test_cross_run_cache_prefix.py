@@ -4,6 +4,12 @@ from types import SimpleNamespace
 from agent.context.assembly import MessageBatch, MessageArea, assemble_turn, reminder
 from agent.context.canonical_tool_history import render_events_for_provider
 from agent.context.history import build_history_parts
+from agent.context.dynamic_tail import message_time_reminder
+from agent.im.context_loader import (
+    format_current_content,
+    format_current_group_message,
+    format_history_content,
+)
 from agent.context.provider_history import render_anthropic_message_roles
 from agent.context.run_context import (
     _effective_history,
@@ -299,6 +305,93 @@ def test_last_round_conversation_replays_as_next_run_prefix_without_dynamic_tail
     next_run_prefix = _provider_wire(restored)
 
     assert next_run_prefix.to_messages() == previous_conversation_wire.to_messages()
+
+
+def test_group_batch_messages_replay_as_the_same_provider_prefix():
+    sent_at = datetime(2026, 10, 28, 10, 12, tzinfo=timezone.utc)
+    request = SimpleNamespace(
+        chat_id="group-session",
+        message="先看这个\n还有这个",
+        im_batch_messages=[
+            {"platform_user_id": "member-a", "platform_user_name": "甲",
+             "text": "先看这个", "quoted_text": None, "attachments": []},
+            {"platform_user_id": "member-b", "platform_user_name": "乙",
+             "text": "还有这个", "quoted_text": "先看这个", "attachments": []},
+        ],
+    )
+    history = [
+        SimpleNamespace(
+            id=31,
+            role="user",
+            content="先看这个",
+            content_json=None,
+            sent_at=sent_at,
+            created_at=sent_at,
+            files=None,
+            quoted_text=None,
+            chat_type="group",
+            platform_user_id="member-a",
+            platform_user_name="甲",
+        ),
+        SimpleNamespace(
+            id=32,
+            role="user",
+            content="还有这个",
+            content_json=None,
+            sent_at=sent_at,
+            created_at=sent_at,
+            files=None,
+            quoted_text="先看这个",
+            chat_type="group",
+            platform_user_id="member-b",
+            platform_user_name="乙",
+        ),
+    ]
+    current_users = []
+    for message in history:
+        incoming = {
+            "platform_user_id": message.platform_user_id,
+            "platform_user_name": message.platform_user_name,
+            "text": message.content,
+            "quoted_text": message.quoted_text,
+            "attachments": [],
+        }
+        current_users.append({
+            "message": {
+                "role": "user",
+                "content": format_current_group_message(message.content, request, incoming),
+            },
+            "message_time": message_time_reminder(message.sent_at, timezone.utc),
+            "persisted_message_id": message.id,
+        })
+
+    batch, _ = assemble_turn(current_users=current_users)
+    # A 是旧的一条批次 user；B 把两条来源消息放入两个独立 canonical user entry。
+    legacy_a = [{"role": "user", "content": format_current_content(request.message, request)}]
+    treatment_b = list(batch.canonical_messages)
+    assert len(legacy_a) == 1
+    assert sum(isinstance(item.get("content"), str) for item in treatment_b) == 2
+    current_wire = render_events_for_provider(ProviderConversation(batch.canonical_messages))
+    restored = build_history_parts(
+        history, request, use_anthropic=False, user_tz=timezone.utc,
+    )
+    restored_wire = render_events_for_provider(ProviderConversation(restored))
+
+    assert current_wire == restored_wire
+    assert legacy_a[0] != treatment_b[-1]
+    current_text = str(current_wire.to_messages())
+    assert "平台 ID：member-a" in current_text
+    assert "平台 ID：member-b" in current_text
+    assert "【引用消息】" in current_text and "先看这个" in current_text
+    assert "权限角色" not in current_text
+
+    entries = batch.area_entries
+    bound = [entry for entry in entries if entry.get("persisted_message_id") is not None]
+    assert [entry["persisted_message_id"] for entry in bound] == [31, 32]
+    assert [entry["area_key"] for entry in bound] == ["current_user:0", "current_user:1"]
+
+    # Anthropic 兼容协议会合并相邻 user；合并后仍须与历史恢复完全一致。
+    assert sanitize.sanitize_messages(current_wire) == sanitize.sanitize_messages(restored_wire)
 
 
 def test_temporary_runtime_context_is_request_tail_not_persisted_history():

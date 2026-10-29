@@ -21,6 +21,31 @@ from agent.run.contract import PreparedExecution
 from agent.run.execution import RunOutcome
 
 
+async def finalize_silent_group_reply(req, exec_, outcome: RunOutcome) -> None:
+    """静默群 run 只记录用量与缓存锚点，不提交选择工具或助手历史。"""
+    from agent.context.run_finalize import finalize_run
+
+    await finalize_run(
+        session_factory=exec_.session_factory,
+        session_id=exec_.session_id,
+        user_id=req.user_id,
+        settings=exec_.settings,
+        model_cfg=exec_.model_cfg,
+        message_area=exec_.prepared.message_area,
+        text="",
+        display_timeline=None,
+        files=[],
+        tokens_in=outcome.tokens_in,
+        tokens_out=outcome.tokens_out,
+        cache_read=outcome.cache_read,
+        cache_write=outcome.cache_write,
+        tools_used=outcome.tool_names,
+        persist_message_delta=False,
+        inbound_batch_key=req.inbound_batch_key,
+        silent_completion=not outcome.cancelled,
+    )
+
+
 async def persist_interrupted_agent_run(req, exec_, outcome: RunOutcome) -> None:
     """持久化用户取消前已完成的 canonical 轮次和部分正文，不触发摘要/反思。"""
     from agent.context.run_finalize import finalize_run

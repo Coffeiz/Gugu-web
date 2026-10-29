@@ -19,5 +19,5 @@
 ## 验证状态
 
 - 合成单元测试覆盖精确前缀、错配回退、system/tools 传递和 active drain 协调标记。
-- 未运行 `backend/scripts/diagnostics/test_cache_strategy_compare.py`：它读取运行配置并向真实 MiniMax endpoint 发请求，可能产生费用；此次授权是修复实现，并未单独授权真实模型探针。
+- 未运行 `backend/scripts/diagnostics/compare_cache_strategies.py`：它读取运行配置并向真实 MiniMax endpoint 发请求，可能产生费用；此次授权是修复实现，并未单独授权真实模型探针。
 - 待自然会话运行后，在 LoopScope 检查 `snapshot-prefix`/`append-replay` 路径以及 cache-read、fresh-input、cache-write、output token 数据。

@@ -10,10 +10,11 @@
 """
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 import logging
 import time
-import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
@@ -106,22 +107,58 @@ class McpToolManager:
     def __init__(self):
         self._runtimes: dict[tuple[UUID, UUID], _ServerRuntime] = {}
         self._runtime_load_locks: dict[tuple[UUID, UUID], asyncio.Lock] = {}
+        self._snapshot_tool_cache: dict[UUID, dict[str, Tool]] = {}
         self._idle_reaper_task: asyncio.Task | None = None
 
     # ── 声明侧：轮次组装时按用户合并 ──
 
     async def list_user_tools(self, user_id) -> list[Tool]:
-        """返回当前用户所有启用 server 的 MCP Tool（mcp.enabled 关闭时为空）。"""
+        """读取持久化声明快照；只有缺失或配置版本变化时才发现 MCP schema。"""
         from app.core.config import get_settings
 
+        started_at = time.time()
         settings = get_settings()
+        if not settings.mcp.enabled:
+            self._record_discovery_timing(started_at, server_count=0, tool_count=0, source="disabled")
+            return []
+        configs = [config async for config in self._iter_enabled_configs(user_id)]
+        digest = self._config_digest(configs)
+        snapshot = await self._read_schema_snapshot(user_id)
+        if snapshot is not None and snapshot.config_digest == digest:
+            tools = [self._tool_from_snapshot(user_id, item) for item in snapshot.schemas]
+            self._snapshot_tool_cache[self._user_key(user_id)] = {tool.name: tool for tool in tools}
+            self._record_discovery_timing(
+                started_at, server_count=len(configs), tool_count=len(tools), source="database_snapshot",
+            )
+            return tools
+        tools = await self._discover_user_tools(user_id, settings=settings, configs=configs)
+        if self._discovery_succeeded(user_id, configs):
+            await self._write_schema_snapshot(user_id, digest, tools)
+        self._snapshot_tool_cache[self._user_key(user_id)] = {tool.name: tool for tool in tools}
+        self._record_discovery_timing(
+            started_at, server_count=len(configs), tool_count=len(tools), source="refresh",
+        )
+        return tools
+
+    async def _discover_user_tools(self, user_id, *, settings=None, configs=None) -> list[Tool]:
+        """旧网络发现实现；仅用于快照重建和首次缺失时的单次回填。"""
+        from app.core.config import get_settings
+
+        settings = settings or get_settings()
         if not settings.mcp.enabled:
             return []
 
+        configs = configs if configs is not None else [
+            config async for config in self._iter_enabled_configs(user_id)
+        ]
+        if not configs:
+            return []
+
+        runtimes = await self._load_enabled_runtimes(settings, configs)
+
         tools: list[Tool] = []
         seen_names: set[str] = set()
-        async for config in self._iter_enabled_configs(user_id):
-            runtime = await self._ensure_runtime(settings, config)
+        for runtime in runtimes:
             if runtime is None or runtime.in_backoff():
                 continue
             for name, tool in runtime.tools.items():
@@ -131,8 +168,145 @@ class McpToolManager:
                 tools.append(tool)
         return tools
 
+    @staticmethod
+    def _config_digest(configs: list[McpServerConfig]) -> str:
+        values = [{
+            "id": str(config.id), "name": config.name, "transport": config.transport,
+            "updated_at": config.updated_at.isoformat() if config.updated_at else "",
+            "allowlist": config.tool_allowlist,
+        } for config in configs]
+        raw = json.dumps(values, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(raw.encode()).hexdigest()
+
+    def _discovery_succeeded(self, user_id, configs: list[McpServerConfig]) -> bool:
+        runtimes = {
+            runtime.config.id: runtime for runtime in self._runtimes_for_user(user_id)
+        }
+        return all(
+            (runtime := runtimes.get(config.id)) is not None
+            and runtime.effective_state() == _OK_STATE
+            for config in configs
+        )
+
+    async def _read_schema_snapshot(self, user_id):
+        from app.db import session as db_session
+        from app.models import UserMcpToolSchemaSnapshot
+
+        db_session.ensure_engine()
+        async with db_session._SessionLocal() as db:
+            return await db.get(UserMcpToolSchemaSnapshot, self._user_key(user_id))
+
+    async def _write_schema_snapshot(self, user_id, digest: str, tools: list[Tool]) -> None:
+        from app.db import session as db_session
+        from app.core.tz import now_utc
+        from app.models import UserMcpToolSchemaSnapshot
+
+        db_session.ensure_engine()
+        current_configs = [config async for config in self._iter_enabled_configs(user_id)]
+        if self._config_digest(current_configs) != digest:
+            return
+        schemas = [{
+            "name": tool.name, "description": tool.provider_description,
+            "description_short": tool.description_short, "input_schema": tool.input_schema,
+            "server_id": tool.mcp_server_id, "server_name": tool.mcp_server_name,
+            "tool_name": tool.mcp_tool_name,
+        } for tool in tools]
+        async with db_session._SessionLocal() as db:
+            row = await db.get(UserMcpToolSchemaSnapshot, self._user_key(user_id))
+            if row is None:
+                row = UserMcpToolSchemaSnapshot(user_id=self._user_key(user_id))
+                db.add(row)
+            row.config_digest = digest
+            row.schemas = schemas
+            row.refreshed_at = now_utc()
+            await db.commit()
+
+    def _tool_from_snapshot(self, user_id, item: dict) -> Tool:
+        server_id = UUID(item["server_id"])
+        meta = McpToolMeta(
+            server_id=server_id, server_name=item["server_name"],
+            tool_name=item["tool_name"], prefixed_name=item["name"],
+            description_short=item["description_short"],
+            input_schema=item["input_schema"], provider_description=item["description"],
+        )
+        return build_mcp_tool(meta, self._make_handler(server_id, meta))
+
+    async def refresh_user_tool_schema_snapshot(self, user_id) -> None:
+        """设置提交后重建该用户快照；失败保留上一个有效快照。"""
+        from app.core.config import get_settings
+
+        try:
+            settings = get_settings()
+            if not settings.mcp.enabled:
+                return
+            configs = [config async for config in self._iter_enabled_configs(user_id)]
+            digest = self._config_digest(configs)
+            tools = await self._discover_user_tools(
+                user_id, settings=settings, configs=configs,
+            )
+            if self._discovery_succeeded(user_id, configs):
+                await self._write_schema_snapshot(user_id, digest, tools)
+            self._snapshot_tool_cache[self._user_key(user_id)] = {tool.name: tool for tool in tools}
+        except Exception as exc:
+            diag_log("agent.mcp.manager.refresh_schema_snapshot", exc)
+
+    async def _load_enabled_runtimes(
+        self, settings, configs: list[McpServerConfig],
+    ) -> list[_ServerRuntime | None]:
+        """并发发现独立 server；限制外呼并保留配置顺序。"""
+        started_at = time.time()
+        semaphore = asyncio.Semaphore(min(4, len(configs)))
+
+        async def load_server(index: int, config: McpServerConfig):
+            server_started_at = time.time()
+            try:
+                async with semaphore:
+                    runtime = await self._ensure_runtime(settings, config)
+            except BaseException:
+                self._record_discovery_timing(
+                    server_started_at, server_index=index + 1, tool_count=0,
+                    state="error",
+                )
+                raise
+            self._record_discovery_timing(
+                server_started_at, server_index=index + 1,
+                tool_count=len(runtime.tools) if runtime is not None else 0,
+                state=runtime.effective_state() if runtime is not None else "unavailable",
+            )
+            return runtime
+
+        tasks = [
+            asyncio.create_task(load_server(index, config))
+            for index, config in enumerate(configs)
+        ]
+        try:
+            runtimes = await asyncio.gather(*tasks)
+        except BaseException:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            self._record_discovery_timing(
+                started_at, server_count=len(configs), tool_count=0, state="error",
+            )
+            raise
+        self._record_discovery_timing(
+            started_at, server_count=len(configs),
+            tool_count=sum(len(runtime.tools) for runtime in runtimes if runtime is not None),
+        )
+        return runtimes
+
+    @staticmethod
+    def _record_discovery_timing(started_at: float, **attributes: Any) -> None:
+        from agent.runtime.loopscope_trace.state import record_phase_timing
+
+        record_phase_timing("MCP tool discovery", started_at, **attributes)
+
     def get_tool(self, user_id, tool_name: str) -> Tool | None:
         """返回当前用户已声明的 MCP Tool；跨用户不可见（缓存键含 user）。"""
+        tool = self._snapshot_tool_cache.get(self._user_key(user_id), {}).get(tool_name)
+        if tool is not None:
+            return tool
         for runtime in self._runtimes_for_user(user_id):
             tool = runtime.tools.get(tool_name)
             if tool is not None:
@@ -145,7 +319,7 @@ class McpToolManager:
         """执行一个 mcp_* 工具调用，返回 (JSON 字符串, None)，与 registry.dispatch 同形。"""
         t0 = time.monotonic()
         tool = self.get_tool(user_id, tool_name)
-        runtime = self._runtime_for_tool(user_id, tool_name)
+        tool, runtime = await self._resolve_dispatch_runtime(user_id, tool_name, tool)
         if tool is None or runtime is None:
             # 未声明：可能被配置变更/退避摘除，按未知工具结构化返回。
             payload = enrich_tool_error(tool_name, {"error": f"未知工具: {tool_name}"})
@@ -204,6 +378,23 @@ class McpToolManager:
         text = self._extract_text(result)
         _log_traj(tool_name, user_id, args, True, "", t0)
         return json.dumps({"result": text}, ensure_ascii=False), None
+
+    async def _resolve_dispatch_runtime(
+        self, user_id, tool_name: str, tool: Tool | None,
+    ) -> tuple[Tool | None, _ServerRuntime | None]:
+        """按当前启用配置懒加载快照工具的执行运行时。"""
+        runtime = self._runtime_for_tool(user_id, tool_name)
+        if tool is None:
+            return tool, runtime
+        config = await self._load_enabled_config(user_id, UUID(tool.mcp_server_id))
+        if config is None:
+            return tool, None
+        from app.core.config import get_settings
+
+        runtime = await self._ensure_runtime(get_settings(), config)
+        if runtime is None or tool_name not in runtime.tools:
+            return tool, None
+        return runtime.tools[tool_name], runtime
 
     # ── 生命周期：缓存与失效（FR-MCP-5） ──
 
@@ -325,6 +516,20 @@ class McpToolManager:
             )).scalars().all()
         for row in rows:
             yield self._config_from_row(row)
+
+    async def _load_enabled_config(self, user_id, server_id: UUID) -> McpServerConfig | None:
+        from app.db import session as db_session
+        from app.models import UserMcpServer
+
+        db_session.ensure_engine()
+        async with db_session._SessionLocal() as db:
+            row = await db.scalar(sa.select(UserMcpServer).where(
+                UserMcpServer.id == server_id,
+                UserMcpServer.user_id == self._user_key(user_id),
+                UserMcpServer.scope == SCOPE_USER,
+                UserMcpServer.enabled.is_(True),
+            ))
+        return self._config_from_row(row) if row is not None else None
 
     @staticmethod
     def _config_from_row(row) -> McpServerConfig:

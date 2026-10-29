@@ -105,7 +105,10 @@ class RecallObservation:
             if self.span is not None:
                 self.span.attributes.update({key: value for key, value in output.items()
                                              if key not in {"source_progress", "stages"}})
-                self.span.finish(output, status="success" if reason == "completed" else "error")
+                self.span.finish(
+                    output,
+                    status=("success" if reason in {"completed", "cold_index_deferred"} else "error"),
+                )
         except Exception:
             pass
 

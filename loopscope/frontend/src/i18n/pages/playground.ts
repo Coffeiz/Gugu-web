@@ -14,10 +14,14 @@ export const en = {
   'playground.completed': 'Completed',
   'playground.viewRun': 'View full Run in Monitor →',
   'playground.composer': 'Message Gugu…',
+  'playground.groupMember': 'Group member',
+  'playground.groupMemberWithId': 'Member · {id}',
   'playground.exportFailed': 'Export failed. Please try again.',
   'playground.detailedSummary': 'Detailed · round / tool / token summary',
   'playground.normalConversation': 'Normal conversation',
   'playground.exportFailedPrefix': 'Export failed: {message}',
+  'playground.runLoadFailed': 'Could not load Run details ({message}). Check the LoopScope Collector and retry.',
+  'playground.spanLoadFailed': 'Could not load Run spans ({message}). Check the LoopScope Collector and retry.',
 }
 export const zh = {
   'playground.newSession': '新会话',
@@ -35,8 +39,12 @@ export const zh = {
   'playground.completed': '完成',
   'playground.viewRun': '在 Monitor 中查看完整 Run →',
   'playground.composer': '给咕咕发消息…',
+  'playground.groupMember': '群成员',
+  'playground.groupMemberWithId': '群成员 · {id}',
   'playground.exportFailed': '导出失败，请稍后重试。',
   'playground.detailedSummary': '详细 · 轮次 / 工具 / token 摘要',
   'playground.normalConversation': '普通对话',
   'playground.exportFailedPrefix': '导出失败：{message}',
+  'playground.runLoadFailed': '无法加载 Run 详情（{message}）。请检查 LoopScope Collector 后重试。',
+  'playground.spanLoadFailed': '无法加载 Run spans（{message}）。请检查 LoopScope Collector 后重试。',
 }

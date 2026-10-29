@@ -14,11 +14,15 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.db.project_file_counts import PROJECT_FILE_COUNT_PROJECTION_SQL, rebuild_project_file_count_projection
 
-pytestmark = pytest.mark.skipif(
-    os.environ.get("GUGU_RUN_DOCKER_INTEGRATION") != "1"
-    and os.environ.get("GUGU_RUN_POSTGRES_INTEGRATION") != "1",
-    reason="需显式启用隔离 PostgreSQL 集成测试",
-)
+pytestmark = [
+    pytest.mark.process,
+    pytest.mark.external_service,
+    pytest.mark.skipif(
+        os.environ.get("GUGU_RUN_DOCKER_INTEGRATION") != "1"
+        and os.environ.get("GUGU_RUN_POSTGRES_INTEGRATION") != "1",
+        reason="需显式启用隔离 PostgreSQL 集成测试",
+    ),
+]
 
 
 def test_postgres_project_file_count_projection_tracks_file_lifecycle(tmp_path):

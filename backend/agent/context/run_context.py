@@ -25,6 +25,15 @@ class PreparedRun:
     message_area: Any
 
 
+@dataclass(frozen=True)
+class _CurrentUserOptions:
+    use_anthropic: bool
+    model_cfg: Any
+    request: Any
+    user_tz: Any
+    resume_interaction: bool
+
+
 def _history_stance_digest(history: list) -> str | None:
     """读取最近一次已落库的姿态事件，作为跨 Run 去重的事实来源。"""
     for message in reversed(history or []):
@@ -89,6 +98,44 @@ def _bind_persisted_user_message(batch, user_message: Any, resume_interaction: b
         )
 
 
+def _prepare_current_user_rows(current_users, options: _CurrentUserOptions):
+    """把逐条群消息解析为 canonical user entries，并从各自 sent_at 重建时间块。"""
+    if options.resume_interaction:
+        return []
+    rows = []
+    for item in current_users or ():
+        content = build_user_content(
+            str(item.get("text") or ""), item.get("images") or [], options.use_anthropic,
+            media=item.get("media") or [],
+            image_detail=getattr(options.model_cfg, "image_detail", "auto"),
+        )
+        content = prepend_reference_context(
+            content, getattr(options.request, "reference_context", None),
+        )
+        rows.append({
+            **item,
+            "message": {"role": "user", "content": content},
+            "message_time": dynamic_tail.message_time_reminder(item.get("sent_at"), options.user_tz),
+        })
+    return rows
+
+
+def _prepare_single_current_user(*, rows, current_text, images, media,
+                                 options: _CurrentUserOptions):
+    if options.resume_interaction or rows:
+        return None
+    content = build_user_content(
+        current_text, images, options.use_anthropic, media=media,
+        image_detail=getattr(options.model_cfg, "image_detail", "auto"),
+    )
+    return {
+        "role": "user",
+        "content": prepend_reference_context(
+            content, getattr(options.request, "reference_context", None),
+        ),
+    }
+
+
 async def _build_rag_context(
     req: Any, *, effective_history: list, snapshot_text: str,
     current_message_id: int | None,
@@ -129,7 +176,7 @@ async def build_run_rag_context(
 def assemble_run_area(
     *, system_prompt, fixed_parts, history, render_options, use_anthropic,
     current_user, stance=None, previous_stance_digest=None, message_time=None,
-    conversation_tail=(), extra_reminder=None, message_area=None,
+    current_users=None, conversation_tail=(), extra_reminder=None, message_area=None,
 ):
     """统一固定前缀、历史和本轮消息布局；协议差异只影响 system 的承载位置。"""
     prefix = list(fixed_parts)
@@ -142,6 +189,7 @@ def assemble_run_area(
     batch, _ = assembly.assemble_turn(
         stance=stance, previous_stance_digest=previous_stance_digest,
         message_time=message_time, current_user=current_user,
+        current_users=current_users,
         conversation_tail=conversation_tail, extra_reminder=extra_reminder,
     )
     return assembled, batch
@@ -164,6 +212,7 @@ async def prepare_run(
     snapshot_injection: Any | None,
     extra_reminder: str | None = None,
     user_message: Any = None,
+    current_users: list[dict] | None = None,
     resume_interaction: bool = False,
     session: Any = None,
     snapshot: Any = None,
@@ -221,6 +270,14 @@ async def prepare_run(
         )
     images = images or []
     media = media or []
+    current_user_options = _CurrentUserOptions(
+        use_anthropic=use_anthropic,
+        model_cfg=model_cfg,
+        request=req,
+        user_tz=user_tz,
+        resume_interaction=resume_interaction,
+    )
+    current_user_rows = _prepare_current_user_rows(current_users, current_user_options)
 
     session_context = getattr(session, "session_context", None)
     # history 是已经成功持久化的事实；session_context 只作为没有历史事件时
@@ -229,30 +286,30 @@ async def prepare_run(
     if not previous_stance_digest and isinstance(session_context, dict):
         previous_stance_digest = session_context.get("stance_digest")
 
-    current_user = None if resume_interaction else {
-        "role": "user",
-        "content": prepend_reference_context(
-            build_user_content(
-                current_text, images, use_anthropic, media=media,
-                image_detail=getattr(model_cfg, "image_detail", "auto"),
-            ),
-            getattr(req, "reference_context", None),
-        ),
-    }
+    current_user = _prepare_single_current_user(
+        rows=current_user_rows,
+        current_text=current_text,
+        images=images,
+        media=media,
+        options=current_user_options,
+    )
     current_stance_digest = assembly.stance_digest(stance_text)
     stance_changed = current_stance_digest != (previous_stance_digest or "")
     assembled, turn_batch = assemble_run_area(
         system_prompt=system_prompt, fixed_parts=fixed_parts, history=history_parts,
         message_area=restored_area, render_options=render_options, use_anthropic=use_anthropic,
         stance=stance_text, previous_stance_digest=previous_stance_digest,
-        message_time=message_time, current_user=current_user,
+        message_time=None if current_user_rows else message_time,
+        current_user=current_user,
+        current_users=current_user_rows,
         conversation_tail=rag_context["tail"], extra_reminder=extra_reminder,
     )
     if prior_run_parts_start is not None:
         assembled.protected_history_start = (
             assembled.fixed_prefix_size + prior_run_parts_start
         )
-    _bind_persisted_user_message(turn_batch, user_message, resume_interaction)
+    if not current_user_rows:
+        _bind_persisted_user_message(turn_batch, user_message, resume_interaction)
     assembled.append_batch(turn_batch)
     audit.context_layout_audit(
         phase="assembled", session=session, snapshot=snapshot,

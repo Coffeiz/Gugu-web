@@ -1,6 +1,7 @@
 """相似图搜索 P1-P3 回归：输入校验、百度响应归一化和配置边界。"""
 
 import base64
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import httpx
@@ -14,30 +15,19 @@ PNG_1X1 = base64.b64decode(
 )
 
 
-class _Response:
-    status_code = 200
+def _mock_safe_post(monkeypatch, payload, *, status_code=200):
+    requests = []
 
-    def __init__(self, payload):
-        self._payload = payload
+    @asynccontextmanager
+    async def stream(_self, url, *, timeout, headers=None, post_json=None):
+        requests.append({"url": url, "headers": headers, "json": post_json})
+        request = httpx.Request("POST", url, headers=headers, json=post_json)
+        yield httpx.Response(status_code, json=payload, request=request)
 
-    def json(self):
-        return self._payload
+    from app.core.safe_egress import SafeEgressClient
 
-
-class _Client:
-    def __init__(self, response):
-        self.response = response
-        self.request = None
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb):
-        return False
-
-    async def post(self, url, headers=None, json=None):
-        self.request = {"url": url, "headers": headers, "json": json}
-        return self.response
+    monkeypatch.setattr(SafeEgressClient, "stream", stream)
+    return requests
 
 
 @pytest.mark.asyncio
@@ -72,7 +62,7 @@ async def test_resolve_similar_image_rejects_unsupported_network_format(monkeypa
 
 @pytest.mark.asyncio
 async def test_baidu_provider_sends_base64_and_normalizes_results(monkeypatch):
-    client = _Client(_Response({
+    requests = _mock_safe_post(monkeypatch, {
         "requestId": "req-1",
         "res_data": {"res_items": [{
             "title": "相似结果",
@@ -84,18 +74,17 @@ async def test_baidu_provider_sends_base64_and_normalizes_results(monkeypatch):
             "width": 100,
             "height": 80,
         }]},
-    }))
-    monkeypatch.setattr(search_tools.httpx, "AsyncClient", lambda **kwargs: client)
+    })
 
     result = await search_tools._call_baidu_similar_image(PNG_1X1, "secret-key", 1, 20)
 
     assert result["count"] == 1
     assert result["results"][0]["detail_url"] == "https://example.test/detail"
-    assert client.request["headers"] == {
+    assert requests[0]["headers"] == {
         "Authorization": "Bearer secret-key",
         "Content-Type": "application/json",
     }
-    assert client.request["json"]["image"] == base64.b64encode(PNG_1X1).decode("ascii")
+    assert requests[0]["json"]["image"] == base64.b64encode(PNG_1X1).decode("ascii")
     assert "secret-key" not in str(result)
 
 
@@ -103,12 +92,14 @@ async def test_baidu_provider_sends_base64_and_normalizes_results(monkeypatch):
 async def test_baidu_provider_rejects_non_ascii_api_key_before_request(monkeypatch):
     called = False
 
-    def unexpected_client(**kwargs):
+    async def unexpected_stream(*_args, **_kwargs):
         nonlocal called
         called = True
-        return _Client(_Response({}))
+        raise AssertionError("无效 API Key 不应触发安全出站请求")
 
-    monkeypatch.setattr(search_tools.httpx, "AsyncClient", unexpected_client)
+    from app.core.safe_egress import SafeEgressClient
+
+    monkeypatch.setattr(SafeEgressClient, "stream", unexpected_stream)
 
     result = await search_tools._call_baidu_similar_image(PNG_1X1, "百度密钥", 1, 20)
 
@@ -121,7 +112,7 @@ async def test_baidu_provider_rejects_non_ascii_api_key_before_request(monkeypat
 
 @pytest.mark.asyncio
 async def test_baidu_provider_reads_official_result_wrapper(monkeypatch):
-    client = _Client(_Response({
+    requests = _mock_safe_post(monkeypatch, {
         "code": "0",
         "requestId": "req-wrapped",
         "result": {
@@ -134,23 +125,19 @@ async def test_baidu_provider_reads_official_result_wrapper(monkeypatch):
                 }],
             },
         },
-    }))
-    monkeypatch.setattr(search_tools.httpx, "AsyncClient", lambda **kwargs: client)
+    })
 
     result = await search_tools._call_baidu_similar_image(PNG_1X1, "secret-key", 1, 20)
 
     assert result["request_id"] == "req-wrapped"
     assert result["count"] == 1
     assert result["results"][0]["image_url"] == "https://example.test/wrapped.png"
-    assert client.request["headers"]["Content-Type"] == "application/json"
+    assert requests[0]["headers"]["Content-Type"] == "application/json"
 
 
 @pytest.mark.asyncio
 async def test_baidu_provider_classifies_auth_failure(monkeypatch):
-    response = _Response({})
-    response.status_code = 401
-    client = _Client(response)
-    monkeypatch.setattr(search_tools.httpx, "AsyncClient", lambda **kwargs: client)
+    _mock_safe_post(monkeypatch, {}, status_code=401)
 
     result = await search_tools._call_baidu_similar_image(PNG_1X1, "bad-key", 1, 20)
 

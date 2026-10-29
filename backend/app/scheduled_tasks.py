@@ -1324,6 +1324,14 @@ async def _deliver_im(
     return await send_text(payload, text)
 
 
+async def deliver_owner_private(user_id, text: str, platform: str) -> bool:
+    """把内容主动私发给 owner；无可用私聊地址或投递失败返回 False。
+
+    群里执行的 owner 私有结果（记忆画像、工作区清单）走这里，不贴群。
+    """
+    return await _deliver_im(user_id, text, platform=platform)
+
+
 async def _deliver_email(
     user_id,
     name: str,

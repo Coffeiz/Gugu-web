@@ -7,7 +7,7 @@
 - 文件数：45
 - 源码声明数：235
 
-### backend/scripts/diagnostics/test_cache_mode_compare.py
+### backend/scripts/diagnostics/compare_cache_modes.py
 
 - 类型/层级：diagnostic-script / L2
 - owner：backend/diagnostics
@@ -15,7 +15,7 @@
 - 测试内容：
   - test_cache_modes
 
-### backend/scripts/diagnostics/test_cache_strategy_compare.py
+### backend/scripts/diagnostics/compare_cache_strategies.py
 
 - 类型/层级：diagnostic-script / L2
 - owner：backend/diagnostics
@@ -23,7 +23,7 @@
 - 测试内容：
   - 脚本入口或静态检查，无标准测试函数
 
-### backend/scripts/diagnostics/test_cross_call_cache.py
+### backend/scripts/diagnostics/probe_cross_call_cache.py
 
 - 类型/层级：diagnostic-script / L2
 - owner：backend/diagnostics
@@ -31,7 +31,7 @@
 - 测试内容：
   - test_cross_call_cache
 
-### backend/scripts/diagnostics/test_locale_continuous.py
+### backend/scripts/diagnostics/probe_continuous_locale.py
 
 - 类型/层级：diagnostic-script / L2
 - owner：backend/diagnostics
@@ -39,7 +39,7 @@
 - 测试内容：
   - 脚本入口或静态检查，无标准测试函数
 
-### backend/scripts/diagnostics/test_new_assembly.py
+### backend/scripts/diagnostics/probe_new_assembly.py
 
 - 类型/层级：diagnostic-script / L2
 - owner：backend/diagnostics
@@ -47,7 +47,7 @@
 - 测试内容：
   - test_new_assembly
 
-### backend/scripts/diagnostics/test_prefix_optimization.py
+### backend/scripts/diagnostics/probe_prefix_optimization.py
 
 - 类型/层级：diagnostic-script / L2
 - owner：backend/diagnostics
@@ -55,7 +55,7 @@
 - 测试内容：
   - test_optimized_prefix
 
-### backend/scripts/diagnostics/test_real_cache_optimization.py
+### backend/scripts/diagnostics/probe_real_cache_optimization.py
 
 - 类型/层级：diagnostic-script / L2
 - owner：backend/diagnostics
@@ -63,7 +63,7 @@
 - 测试内容：
   - test_cross_call_cache_with_optimization
 
-### backend/scripts/diagnostics/test_real_session_20_run_cache_matrix.py
+### backend/scripts/diagnostics/probe_real_session_20_run_cache_matrix.py
 
 - 类型/层级：diagnostic-script / L2
 - owner：backend/diagnostics
@@ -71,7 +71,7 @@
 - 测试内容：
   - 脚本入口或静态检查，无标准测试函数
 
-### backend/scripts/diagnostics/test_real_session_20_run_cache.py
+### backend/scripts/diagnostics/probe_real_session_20_run_cache.py
 
 - 类型/层级：diagnostic-script / L2
 - owner：backend/diagnostics
@@ -79,7 +79,7 @@
 - 测试内容：
   - 脚本入口或静态检查，无标准测试函数
 
-### backend/scripts/diagnostics/test_session_incremental_cache.py
+### backend/scripts/diagnostics/probe_session_incremental_cache.py
 
 - 类型/层级：diagnostic-script / L2
 - owner：backend/diagnostics
@@ -87,7 +87,7 @@
 - 测试内容：
   - test_session_incremental
 
-### backend/scripts/diagnostics/test_tool_cache_boundary.py
+### backend/scripts/diagnostics/probe_tool_cache_boundary.py
 
 - 类型/层级：diagnostic-script / L2
 - owner：backend/diagnostics
@@ -573,7 +573,7 @@
 - 文件数：38
 - 源码声明数：324
 
-### backend/scripts/diagnostics/test_full_agent_flow.py
+### backend/scripts/diagnostics/probe_full_agent_flow.py
 
 - 类型/层级：diagnostic-script / L2
 - owner：backend/diagnostics
@@ -581,7 +581,7 @@
 - 测试内容：
   - test_full_agent_canvas_creation
 
-### backend/scripts/diagnostics/test_full_schema_compact_ab.py
+### backend/scripts/diagnostics/compare_full_schema_compaction.py
 
 - 类型/层级：diagnostic-script / L2
 - owner：backend/diagnostics
@@ -589,7 +589,7 @@
 - 测试内容：
   - 脚本入口或静态检查，无标准测试函数
 
-### backend/scripts/diagnostics/test_minimax_null_fields.py
+### backend/scripts/diagnostics/probe_minimax_null_fields.py
 
 - 类型/层级：diagnostic-script / L2
 - owner：backend/diagnostics
@@ -597,7 +597,7 @@
 - 测试内容：
   - test_minimax_with_null_fields
 
-### backend/scripts/diagnostics/test_schema_accumulation_5tools.py
+### backend/scripts/diagnostics/probe_schema_accumulation_5tools.py
 
 - 类型/层级：diagnostic-script / L2
 - owner：backend/diagnostics
@@ -1172,7 +1172,7 @@
 - 文件数：27
 - 源码声明数：217
 
-### backend/scripts/diagnostics/test_reminder_role_cache.py
+### backend/scripts/diagnostics/probe_reminder_role_cache.py
 
 - 类型/层级：diagnostic-script / L2
 - owner：backend/diagnostics

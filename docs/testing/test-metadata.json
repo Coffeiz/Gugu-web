@@ -1215,14 +1215,6 @@
     "keyBehavior": "启用且未加载的 MCP 状态受并发上限控制并逐项更新，取消后丢弃过期结果",
     "ci": "frontend-test"
   },
-  "backend/scripts/diagnostics/test_inline_compaction_thinking_ab.py": {
-    "domain": "agent-compaction",
-    "layer": "L2",
-    "owner": "backend/scripts/diagnostics",
-    "productionEntry": "backend/agent/context/compaction.py",
-    "keyBehavior": "诊断 inline compaction 的 thinking A/B 结果时保留真实调用上下文并避免持久化原始正文",
-    "ci": "backend-pytest"
-  },
   "backend/tests/agent/context/test_inline_compaction_progress.py": {
     "domain": "agent-compaction",
     "layer": "L1",
@@ -1694,5 +1686,165 @@
     "productionEntry": "backend/agent/gateway/qq/events.py 与 backend/agent/im/shortcuts.py",
     "keyBehavior": "QQ 带附件时秒回「文件收到啦」，同一会话 10 秒冷却不刷屏，群聊按只响应@与静默记录策略决定是否回复，纯文本不触发秒回",
     "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_protocol_retry.py": {
+    "domain": "im-group-reply-gate",
+    "layer": "L1",
+    "owner": "backend/agent/loop/runner.py",
+    "productionEntry": "backend/agent/im/auto_reply/decision.py",
+    "keyBehavior": "模型跳过选择工具直接输出正文时，把协议错误回灌模型补选一次，上限一轮；超限落静默与 error 终态，群里零输出；decision 工具调用在 IM 侧静默而 Web 镜像保留",
+    "ci": "backend-pytest"
+  },
+  "frontend/tests/i18n/group-reply-error.test.ts": {
+    "domain": "i18n-error-copy",
+    "layer": "L0",
+    "owner": "frontend/src/i18n/sections/common.ts",
+    "productionEntry": "frontend/src/components/common/gugu-chat/composables/useChatStream.ts",
+    "keyBehavior": "群聊选择门失败按界面语言取 chatUi.groupReplyFailed 文案，三语言互不相同，且不引导用户重发、不暴露实现术语",
+    "ci": "frontend-test"
+  },
+  "backend/tests/agent/test_request_headers.py": {
+    "domain": "provider-request-security",
+    "layer": "L1",
+    "owner": "backend/agent/providers/request_headers.py",
+    "productionEntry": "模型请求历史序列化入口",
+    "keyBehavior": "自定义请求头值在工具历史文本和 JSON 字符串中均脱敏，保留头名称",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_capability.py": {
+    "domain": "group-reply-gate",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply",
+    "productionEntry": "IM 群聊自动回复工具目录与 Provider schema",
+    "keyBehavior": "回复选择是群自动回复的必经门，但内部选择工具不暴露给业务工具目录",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_decision.py": {
+    "domain": "group-reply-gate",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply/gate.py",
+    "productionEntry": "backend/agent/im/dispatch.py 与 Agent 工具分发",
+    "keyBehavior": "回复门选择不可绕过或改写；门状态按 run 隔离，工具调用按选择状态校验",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_duplicate_decision.py": {
+    "domain": "group-reply-gate",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply/gate.py",
+    "productionEntry": "backend/agent/im/dispatch.py",
+    "keyBehavior": "重复选择幂等且有界；冲突选择不覆盖首次决定，复读不会直接废弃整轮",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_gate_recovery.py": {
+    "domain": "group-reply-gate",
+    "layer": "L1",
+    "owner": "backend/agent/im/loop_drivers.py",
+    "productionEntry": "backend/agent/im/auto_reply 与 Provider 请求入口",
+    "keyBehavior": "绕过回复门时阻止业务工具并回灌协议错误；仅支持的协议能力错误触发本 run 回退",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_group_commands.py": {
+    "domain": "group-command-auth",
+    "layer": "L1",
+    "owner": "backend/agent/commands 与 backend/agent/im/auto_reply",
+    "productionEntry": "backend/agent/im/dispatch.py",
+    "keyBehavior": "群命令要求明确 @；私有命令和结果保护 owner 数据，私聊命令不受群聊 @ 规则影响",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_group_silence.py": {
+    "domain": "group-reply-gate",
+    "layer": "L1",
+    "owner": "backend/agent/im/dispatch_finalization.py",
+    "productionEntry": "backend/agent/im/dispatch.py",
+    "keyBehavior": "群回复门未开启时协议错误、模型失败和未选择均保持静默；门开启后错误送达，私聊错误不受抑制",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_protocol_failure.py": {
+    "domain": "group-reply-gate",
+    "layer": "L1",
+    "owner": "backend/agent/im/loop_drivers.py",
+    "productionEntry": "backend/agent/im/dispatch.py 与工具分发",
+    "keyBehavior": "回复门未开时违规业务工具不执行；连续违规有界结束并保留结构化错误且群内静默",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_runtime.py": {
+    "domain": "group-reply-gate",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply",
+    "productionEntry": "backend/agent/im/dispatch.py 与 Provider schema 构造",
+    "keyBehavior": "Provider schema 仅在完成回复选择后开放业务工具",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/qq/test_qq_other_bot_mention.py": {
+    "domain": "qq-mention-routing",
+    "layer": "L1",
+    "owner": "backend/agent/im/platforms/qq",
+    "productionEntry": "backend/agent/im/dispatch.py",
+    "keyBehavior": "@其他 Bot 的群消息只路由到目标 Bot；区分他人提及和当前 Bot 提及",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_early_persist_run_prefix.py": {
+    "domain": "im-early-persistence",
+    "layer": "L1",
+    "owner": "backend/agent/im/early_persist.py",
+    "productionEntry": "backend/worker.py 与历史上下文装载",
+    "keyBehavior": "待消费行前缀稳定且与批次/展示键隔离；只有待消费行暂不进入历史，提升后恢复",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_group_batch_permission.py": {
+    "domain": "im-batch-permissions",
+    "layer": "L1",
+    "owner": "backend/agent/run/preparation.py",
+    "productionEntry": "backend/agent/im/dispatch.py 与 run 准备阶段",
+    "keyBehavior": "合并批次按最弱身份与工具权限交集执行；缺失身份不继承 owner 权限；正文准确标注发言人",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_im_early_persist_prompt_stability.py": {
+    "domain": "im-early-persistence",
+    "layer": "L1",
+    "owner": "backend/agent/im/early_persist.py",
+    "productionEntry": "backend/agent/run/preparation.py",
+    "keyBehavior": "早落库不改变 Provider 历史消息字节内容，展示时间保留到达时刻",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_im_early_persistence.py": {
+    "domain": "im-early-persistence",
+    "layer": "L1",
+    "owner": "backend/agent/im/early_persist.py",
+    "productionEntry": "backend/worker.py 与 backend/agent/run/preparation.py",
+    "keyBehavior": "早落库幂等、批次复用与失败补齐保持消息顺序；敏感控制消息不落历史；附件仍归属原发言人",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_im_message_batch.py": {
+    "domain": "im-message-batching",
+    "layer": "L1",
+    "owner": "backend/agent/im/message_batch.py",
+    "productionEntry": "backend/agent/im/dispatch.py 与 Worker 入站处理",
+    "keyBehavior": "群聊和私聊按到达顺序合并并只触发一次回复；慢持久化不拆批；run 中到达消息进入下一批",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_im_message_persistence_timing.py": {
+    "domain": "im-message-persistence",
+    "layer": "L1",
+    "owner": "backend/agent/im/early_persist.py",
+    "productionEntry": "backend/worker.py 与 SSE 会话增量发布",
+    "keyBehavior": "会话锁期间消息仍及时持久化并发布；MCP 凭据先消费，秘密正文不进入数据库或 SSE",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_interaction_fast_path.py": {
+    "domain": "im-interaction-fast-path",
+    "layer": "L1",
+    "owner": "backend/agent/im/dispatch.py",
+    "productionEntry": "backend/worker.py 与 IM 交互路由",
+    "keyBehavior": "活动交互归属键规范化正确；过期或无效 owner 不进入快速通道，活动交互回复不等待会话锁",
+    "ci": "backend-pytest"
+  },
+  "frontend/tests/loopscope/monitorSelection.test.ts": {
+    "domain": "loopscope-monitor",
+    "layer": "L0",
+    "owner": "loopscope/frontend/src/utils/monitorSelection.ts",
+    "productionEntry": "loopscope/frontend/src/views/Monitor.vue",
+    "keyBehavior": "列表刷新时保留用户手动选择的旧 run；显式焦点变化跟随目标 run；当前选择移除后回到最新可用项",
+    "ci": "frontend-vitest"
   }
 }

@@ -128,7 +128,7 @@
               <div class="setting-choice-row">
                 <div class="setting-choice-row__copy">
                   <span class="setting-choice-row__title">{{ t('llmExtraUi.webSearch') }}</span>
-                  <span class="thinking-hint">{{ t('llmExtraUi.webSearchHint') }}</span>
+                  <span class="thinking-hint">{{ draft.provider === 'minimax' ? t('llmExtraUi.minimaxWebSearchHint') : t('llmExtraUi.webSearchHint') }}</span>
                 </div>
                 <div class="setting-choice-row__options">
                   <ToggleSwitch :model-value="draft.web_search_enabled"

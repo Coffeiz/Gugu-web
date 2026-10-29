@@ -48,6 +48,7 @@ def test_acl_helper_only_mounts_authorized_root_and_uses_dynamic_rootless_identi
         ("find: unexpected traversal failure", 1),
     ],
 )
+@pytest.mark.process
 def test_acl_helper_preserves_traversal_and_acl_failures(
     tmp_path, monkeypatch, find_error, expected_returncode,
 ):

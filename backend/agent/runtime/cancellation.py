@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, TypeVar
@@ -9,6 +11,70 @@ from typing import Awaitable, Callable, TypeVar
 _T = TypeVar("_T")
 _CANCEL_POLL_INTERVAL = 0.15
 _LAST_CHECK_ERROR_LOG_AT = 0.0
+_ACTIVE_RUNS: dict[str, "RunRecord"] = {}
+_CURRENT_CANCELLATION: contextvars.ContextVar["RunCancellation | None"] = contextvars.ContextVar(
+    "agent_run_cancellation", default=None,
+)
+
+
+def set_current_cancellation(cancellation: "RunCancellation") -> None:
+    _CURRENT_CANCELLATION.set(cancellation)
+
+
+def current_cancellation(session_id: int | None = None) -> "RunCancellation":
+    cancellation = _CURRENT_CANCELLATION.get()
+    if cancellation is not None and cancellation.session_id == session_id:
+        return cancellation
+    return RunCancellation(session_id)
+
+
+def mark_remote_cancel_uncertain() -> None:
+    """MCP task cancel 是协作式的；记录前端必须说明远端状态未确认。"""
+    cancellation = _CURRENT_CANCELLATION.get()
+    if cancellation is not None:
+        cancellation.remote_status_unknown = True
+
+
+def current_remote_status_unknown() -> bool:
+    cancellation = _CURRENT_CANCELLATION.get()
+    return bool(cancellation and cancellation.remote_status_unknown)
+
+
+@dataclass(frozen=True)
+class RunRecord:
+    """当前进程中运行的任务索引；跨 worker 的取消仍由共享状态存储传播。"""
+
+    source: str
+    session_id: int | None
+    run_id: str
+    worker_id: str
+    task: asyncio.Task
+
+
+def register_current_run(session_id: int | None, run_id: str) -> RunRecord | None:
+    """记录当前 run 来源、会话、worker 与 task，并在 task 结束时移除。"""
+    task = asyncio.current_task()
+    if task is None:
+        return None
+    from agent.im import imctx
+
+    source = "im" if imctx.get_im() else "web"
+    record = RunRecord(
+        source=source,
+        session_id=session_id,
+        run_id=str(run_id),
+        worker_id=os.getenv("WORKER_ID") or f"pid-{os.getpid()}",
+        task=task,
+    )
+    _ACTIVE_RUNS[record.run_id] = record
+    task.add_done_callback(lambda _task: _ACTIVE_RUNS.pop(record.run_id, None))
+    return record
+
+
+def active_run(run_id: str) -> RunRecord | None:
+    """供本地取消和诊断路径按 run 身份检查当前执行 task。"""
+    record = _ACTIVE_RUNS.get(str(run_id))
+    return record if record and not record.task.done() else None
 
 
 def _log_check_error(where: str, exc: Exception) -> None:
@@ -32,9 +98,9 @@ class RunCancellation:
     """把 Web session 标记和 IM 会话标记收敛为同一个取消检查入口。"""
 
     session_id: int | None
-    owner_run_id: str | None = None
     _last_im_activity_refresh: float = field(default=0.0, init=False, repr=False, compare=False)
     _im_cancel_logged: bool = field(default=False, init=False, repr=False, compare=False)
+    remote_status_unknown: bool = field(default=False, init=False)
 
     async def is_requested(self) -> bool:
         from agent.im import imctx
@@ -73,9 +139,7 @@ class RunCancellation:
         from agent.llm import genstream
 
         try:
-            return await genstream.is_cancelled(
-                self.session_id, owner_run_id=self.owner_run_id,
-            )
+            return await genstream.is_cancelled(self.session_id)
         except Exception as exc:
             _log_check_error("agent.cancellation.web_check", exc)
             return False
@@ -117,7 +181,55 @@ class RunCancellation:
             cancellation_task.cancel()
             await asyncio.gather(cancellation_task, return_exceptions=True)
 
+    async def iterate(self, stream):
+        """等待模型流的下一项时同步监听取消，不必等到 token/轮次检查点。"""
+        iterator = stream.__aiter__()
+        cancel_task = asyncio.create_task(self._wait_until_requested())
+        next_task: asyncio.Task | None = None
+        try:
+            while True:
+                next_task = asyncio.create_task(iterator.__anext__())
+                done, _ = await asyncio.wait(
+                    (next_task, cancel_task), return_when=asyncio.FIRST_COMPLETED,
+                )
+                # 完成与取消同时发生时保留已到达的模型结果，和工具竞态一致。
+                if next_task in done:
+                    try:
+                        yield next_task.result()
+                    except StopAsyncIteration:
+                        return
+                    finally:
+                        next_task = None
+                else:
+                    # 本地停止流和后续轮次，但 Provider 没有通用的远端撤销确认协议。
+                    self.remote_status_unknown = True
+                    next_task.cancel()
+                    await asyncio.gather(next_task, return_exceptions=True)
+                    next_task = None
+                    close = getattr(iterator, "aclose", None)
+                    if close:
+                        await close()
+                    raise RunCancellationRequested
+        except asyncio.CancelledError:
+            self.remote_status_unknown = True
+            if next_task is not None:
+                next_task.cancel()
+                await asyncio.gather(next_task, return_exceptions=True)
+            close = getattr(iterator, "aclose", None)
+            if close:
+                await asyncio.shield(close())
+            raise
+        finally:
+            cancel_task.cancel()
+            await asyncio.gather(cancel_task, return_exceptions=True)
+
     async def _wait_until_requested(self) -> None:
+        from agent.im import imctx
+
+        im = imctx.get_im()
+        # Web run 由 Gateway 的 Pub/Sub listener 主动 cancel；这里保留低频读标记
+        # 作为通知断线时的兜底。IM 暂无对应 worker 唤醒通道，仍用短间隔协作检查。
+        poll_interval = _CANCEL_POLL_INTERVAL if im and im.get("puid") else 5.0
         while True:
             try:
                 if await self.is_requested():
@@ -125,7 +237,7 @@ class RunCancellation:
             except Exception as exc:
                 _log_check_error("agent.cancellation.wait", exc)
             try:
-                await asyncio.wait_for(asyncio.Event().wait(), timeout=_CANCEL_POLL_INTERVAL)
+                await asyncio.wait_for(asyncio.Event().wait(), timeout=poll_interval)
             except asyncio.TimeoutError:
                 pass
 

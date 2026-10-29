@@ -3,14 +3,25 @@ from __future__ import annotations
 
 from hashlib import sha256
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 
 from app.models import ConversationMessage
 from agent.context.display_checkpoint import display_run_key
 
 
+# 早落库用户行的临时 run_id 前缀：这行已经入库，但对应的 run 还没开始消费它。
+# run 真正开始时会把 run_id 改写成 user_run_key(batch_key)，"已处理"的判定与
+# 崩溃重领语义因此保持不变。
+PENDING_USER_RUN_PREFIX = "im-pending:"
+
+
 def receipt_key(message_id: str) -> str:
     return f"im:started:{message_id}"
+
+
+def pending_user_run_key(message_id: str) -> str:
+    """早落库用户行的临时 run_id；同时充当这条消息的幂等键。"""
+    return f"{PENDING_USER_RUN_PREFIX}{sha256(str(message_id).encode()).hexdigest()[:32]}"
 
 
 async def register_batch(redis, message_ids: list[str]) -> str:
@@ -24,18 +35,60 @@ def user_run_key(batch_key: str) -> str:
     return f"im-inbound:{batch_key}"
 
 
+async def release_unconsumed_user_rows(session_factory, row_ids: list[int]) -> None:
+    """命令等未启动 run 的路径结束后，让其早落库用户消息进入正常历史。"""
+    if not row_ids:
+        return
+    async with session_factory() as db:
+        await db.execute(
+            update(ConversationMessage)
+            .where(
+                ConversationMessage.id.in_(row_ids),
+                ConversationMessage.role == "user",
+                ConversationMessage.run_id.like(PENDING_USER_RUN_PREFIX + "%"),
+            )
+            .values(run_id=None)
+        )
+        await db.commit()
+
+
+async def release_unconsumed_user_message(session_factory, message_id: str) -> None:
+    """重领已开始的批次时，清理该来源消息可能残留的早落库标记。"""
+    async with session_factory() as db:
+        await db.execute(
+            update(ConversationMessage)
+            .where(
+                ConversationMessage.role == "user",
+                ConversationMessage.run_id == pending_user_run_key(message_id),
+            )
+            .values(run_id=None)
+        )
+        await db.commit()
+
+
 async def recover_started(session_factory, batch_key: str) -> bool:
     """找到已开始的持久化请求即停止重放；未落库的准备阶段允许重新消费。"""
     from agent.context.display_timeline import finalize_display_timeline
+    from app.models import ConversationBatch
     from app.services.conversation_run_outcomes import build_run_outcome
 
     async with session_factory() as db:
         user = (await db.execute(select(ConversationMessage).where(
             ConversationMessage.role == "user",
             ConversationMessage.run_id == user_run_key(batch_key),
+        ).order_by(
+            func.coalesce(ConversationMessage.sent_at, ConversationMessage.created_at).desc(),
+            ConversationMessage.id.desc(),
         ))).scalars().first()
         if user is None:
             return False
+        silent_receipt = (await db.execute(select(ConversationBatch.id).where(
+            ConversationBatch.session_id == user.session_id,
+            ConversationBatch.version == "im-silent-v1",
+            ConversationBatch.run_id == user_run_key(batch_key),
+        ).limit(1))).scalar_one_or_none()
+        if silent_receipt is not None:
+            return True
         completed = (await db.execute(select(ConversationMessage.id).where(
             ConversationMessage.session_id == user.session_id,
             ConversationMessage.role == "assistant",

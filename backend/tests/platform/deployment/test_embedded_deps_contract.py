@@ -157,6 +157,7 @@ def test_embedded_redis_readiness_helper_is_called_before_app_start():
     ("service", "ready_message"),
     [("redis", "内置 Redis 已就绪"), ("postgres", "内置 PostgreSQL 已就绪")],
 )
+@pytest.mark.process
 def test_embedded_service_readiness_waits_until_ready(tmp_path: Path, service: str, ready_message: str):
     helper = REPO_ROOT / "backend" / "scripts" / "runtime" / f"wait_embedded_{service}.sh"
     call_count = tmp_path / f"{service}-readiness-calls"
@@ -189,6 +190,7 @@ def test_embedded_service_readiness_waits_until_ready(tmp_path: Path, service: s
         ("postgres", "等待内置 PostgreSQL 就绪超时（1s）"),
     ],
 )
+@pytest.mark.process
 def test_embedded_service_readiness_fails_clearly_on_timeout(
     tmp_path: Path,
     service: str,

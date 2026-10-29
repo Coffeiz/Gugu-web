@@ -12,7 +12,6 @@ from agent.commands.help import all_help_text, command_help, is_help_arg
 from agent.commands.goal import handle as handle_goal
 from agent.commands.memory import forget, show_memory
 from agent.commands.new import handle as handle_new
-from agent.commands.text import normalize_command_text
 from agent.commands.workspace import handle as handle_workspace
 
 _PREFIX = ("/", "／")
@@ -28,10 +27,23 @@ _COMMANDS: dict[str, str] = {
     "help": "help", "h": "help",
 }
 
+# 命令结果含 owner 私有数据（记忆画像、工作区清单）。在群里执行时不能贴群：
+# 群成员都能看到消息内容。交互卡结果不在此列——卡片必须在群里点。
+PRIVATE_RESULT_COMMANDS = frozenset({"memory", "workspace"})
 
-def parse(text: str, *, allow_leading_mention: bool = False) -> tuple[str | None, str]:
-    """拆解 ``/命令 参数``；非本模块命令返回 ``(None, "")``。"""
-    normalized = normalize_command_text(text) if allow_leading_mention else (text or "").strip()
+
+def command_result_is_private(name: str | None) -> bool:
+    """判断命令结果是否属于 owner 私有数据（群里执行时改私发 owner）。"""
+    return bool(name) and str(name) in PRIVATE_RESULT_COMMANDS
+
+
+def parse(text: str) -> tuple[str | None, str]:
+    """拆解 ``/命令 参数``；非本模块命令返回 ``(None, "")``。
+
+    调用方必须传**语义文本**：IM 链路用 ``agent.im.mentions.payload_semantic_text``
+    剥掉开头的 mention 后再解析，命令层不再自己处理 mention 前缀。
+    """
+    normalized = (text or "").strip()
     if normalized[:1] not in _PREFIX:
         return None, ""
     body = normalized[1:].strip()
@@ -42,9 +54,9 @@ def parse(text: str, *, allow_leading_mention: bool = False) -> tuple[str | None
     return name, parts[1].strip() if len(parts) == 2 else ""
 
 
-def is_goal_start(text: str, *, allow_leading_mention: bool = False) -> tuple[bool, str]:
+def is_goal_start(text: str) -> tuple[bool, str]:
     """判断是否为需要立即进入 Agent runner 的目标创建命令。"""
-    name, arg = parse(text, allow_leading_mention=allow_leading_mention)
+    name, arg = parse(text)
     if name != "goal" or not arg:
         return False, ""
     if arg.lower() in {"status", "状态", "pause", "暂停", "resume", "继续", "恢复",
@@ -70,10 +82,9 @@ def im_command_permission_denial(name: str, arg: str, im_role: str | None,
 
 
 async def handle(user_id, text: str, *, session_id: int | None = None,
-                 allow_leading_mention: bool = False,
                  locale: str | None = None) -> str | dict | None:
     """命中控制命令 → 返回文本或结构化交互（短路）；否则 None。"""
-    name, arg = parse(text, allow_leading_mention=allow_leading_mention)
+    name, arg = parse(text)
     if name is None:
         return None
     if name == "help":

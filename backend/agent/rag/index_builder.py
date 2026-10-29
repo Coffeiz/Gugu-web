@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 
-from sqlalchemy import select
+from sqlalchemy import case, func, select
 
 from agent.rag.adapters.memory import MemoryAdapter
 from agent.rag.adapters.knowledge import KnowledgeAdapter
@@ -305,7 +305,15 @@ async def build_source_records(db, owner_user_id: object, source_type: str) -> l
             message_rows = (await db.execute(
                 select(ConversationMessage)
                 .where(ConversationMessage.session_id.in_(session_ids))
-                .order_by(ConversationMessage.session_id.asc(), ConversationMessage.id.asc())
+                .order_by(
+                    ConversationMessage.session_id.asc(),
+                    func.coalesce(
+                        ConversationMessage.history_anchor_seq,
+                        ConversationMessage.conversation_seq,
+                    ),
+                    case((ConversationMessage.history_anchor_seq.is_not(None), 0), else_=1),
+                    ConversationMessage.conversation_seq,
+                )
             )).scalars().all()
             for row in message_rows:
                 messages_by_session[row.session_id].append(row)
@@ -316,7 +324,7 @@ async def build_source_records(db, owner_user_id: object, source_type: str) -> l
                 records.append((conversation_summary_record(session), session_scope))
             eligible_messages = [
                 row for row in messages_by_session.get(session.id, ())
-                if row.id > (session.baseline_message_id or 0)
+                if (row.history_anchor_seq or row.conversation_seq) > (session.baseline_message_seq or 0)
                 and row.role in {"user", "assistant"}
                 and (row.content or "").strip()
             ]

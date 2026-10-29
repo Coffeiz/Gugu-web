@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.models import User, UserPreferences, UserSmtpConfig
-from app.schemas import PreferencesResponse, PreferencesUpdate, UserEmailPreview, UserSmtpConfig as UserSmtpConfigSchema, UserSmtpConfigUpdate, UserSmtpTest
+from app.schemas import PreferencesResponse, PreferencesUpdate, ReplyStyleUpdate, UserEmailPreview, UserSmtpConfig as UserSmtpConfigSchema, UserSmtpConfigUpdate, UserSmtpTest
 from app.core.security import get_current_user
 from app.core.config import get_settings
 from app.services.personality_preferences import (
@@ -11,8 +11,13 @@ from app.services.personality_preferences import (
     preference_revision,
     preference_updated_at,
     normalize_personality_preference,
+    normalize_reply_style,
+    read_group_personality_file,
     read_personality_file,
+    read_reply_style_file,
     write_personality_file,
+    write_group_personality_file,
+    write_reply_style_file,
 )
 from app.services.email.capabilities import is_system_email_available
 from app.services.email.queries import get_user_smtp as get_user_smtp_record, save_user_smtp
@@ -85,7 +90,12 @@ async def _get_or_create(user: User, db: AsyncSession) -> UserPreferences:
     return await get_or_create_user_preferences(db, user.id)
 
 
-def _to_response(data: dict, personality: str | None = None) -> PreferencesResponse:
+def _to_response(
+    data: dict,
+    personality: str | None = None,
+    reply_style: str | None = None,
+    group_personality: str | None = None,
+) -> PreferencesResponse:
     personality_enabled = bool(personality and data.get("personality_preference_enabled", False))
     personality_available = bool(get_settings().agent.personality_preference_enabled)
     stored_tool_mode = data.get("tool_injection_mode")
@@ -105,6 +115,8 @@ def _to_response(data: dict, personality: str | None = None) -> PreferencesRespo
         stageTemplates=data.get("stage_templates", []),
         replyTone=data.get("reply_tone"),
         replyLength=data.get("reply_length"),
+        customReplyStyle=reply_style,
+        customReplyStyleEnabled=bool(data.get("custom_reply_style_enabled", False)),
         pmStagesExpanded=data.get("pm_stages_expanded", False),
         calendarWeekStart=data.get("calendar_week_start", "monday") if data.get("calendar_week_start", "monday") in {"monday", "sunday"} else "monday",
         defaultView=data.get("default_view", "projects") if data.get("default_view", "projects") in _DEFAULT_VIEWS else "projects",
@@ -118,6 +130,10 @@ def _to_response(data: dict, personality: str | None = None) -> PreferencesRespo
         toolInjectionMode=tool_mode,
         personalityPreference=personality,
         personalityPreferenceEnabled=personality_enabled,
+        groupPersonalityPreference=group_personality,
+        groupPersonalityPreferenceEnabled=bool(
+            group_personality and data.get("group_personality_preference_enabled", False)
+        ),
         personalityPreferenceRevision=preference_revision(data),
         personalityPreferenceUpdatedAt=(
             preference_updated_at(data).isoformat()
@@ -128,14 +144,49 @@ def _to_response(data: dict, personality: str | None = None) -> PreferencesRespo
     )
 
 
+def _update_group_personality(data: dict, user_id, body: PreferencesUpdate) -> tuple[bool, bool]:
+    content_changed = False
+    toggle_changed = False
+    if "groupPersonalityPreference" in body.model_fields_set:
+        content_changed = write_group_personality_file(user_id, body.groupPersonalityPreference)
+        data.pop("group_personality_preference", None)
+        data["personality_preference_revision"] = (
+            int(data.get("personality_preference_revision", 0)) + int(content_changed)
+        )
+    if "groupPersonalityPreferenceEnabled" in body.model_fields_set:
+        enabled = bool(body.groupPersonalityPreferenceEnabled)
+        toggle_changed = enabled != bool(data.get("group_personality_preference_enabled", False))
+        data["group_personality_preference_enabled"] = enabled
+    return content_changed, toggle_changed
+
+
+def _migrate_legacy_reply_style(data: dict, user_id) -> tuple[str | None, bool]:
+    """先确保旧正文落入文件，再由调用方持久化清理旧 JSON 键。"""
+    style = read_reply_style_file(user_id)
+    legacy_style = data.get("custom_reply_style")
+    if style is None and legacy_style:
+        style = normalize_reply_style(str(legacy_style))
+        write_reply_style_file(user_id, style)
+    had_legacy_value = "custom_reply_style" in data
+    data.pop("custom_reply_style", None)
+    return style, had_legacy_value
+
+
 @router.get("", response_model=PreferencesResponse)
 async def get_preferences(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     prefs = await _get_or_create(user, db)
+    data = prefs.data
+    style, had_legacy_value = _migrate_legacy_reply_style(data, user.id)
+    if had_legacy_value:
+        prefs.data = data
     await db.commit()
-    return _to_response(prefs.data, read_personality_file(user.id))
+    return _to_response(
+        prefs.data, read_personality_file(user.id), style,
+        read_group_personality_file(user.id),
+    )
 
 
 @router.post("/personality/upload", response_model=PreferencesResponse)
@@ -174,7 +225,111 @@ async def upload_personality(
     if changed:
         from app.core import events
         await events.bump_context_revision(user.id, "preferences")
-    return _to_response(data, read_personality_file(user.id))
+    return _to_response(
+        data, read_personality_file(user.id), read_reply_style_file(user.id),
+        read_group_personality_file(user.id),
+    )
+
+
+@router.post("/group-personality/upload", response_model=PreferencesResponse)
+async def upload_group_personality(
+    file: UploadFile = FastAPIFile(...),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """上传群聊专用 Markdown 人格文件；与个人 persona.md 独立保存。"""
+    if not get_settings().agent.personality_preference_enabled:
+        raise HTTPException(status_code=403, detail="用户人格偏好当前未开放")
+    filename = (file.filename or "").strip().lower()
+    if not filename.endswith(".md"):
+        raise HTTPException(status_code=415, detail="群聊人格文件必须是 Markdown（.md）文件")
+    raw = await file.read(_MAX_PERSONALITY_UPLOAD_BYTES + 1)
+    if len(raw) > _MAX_PERSONALITY_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="群聊人格文件过大")
+    try:
+        content = normalize_personality_preference(raw.decode("utf-8")) or ""
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=400, detail="群聊人格文件必须使用 UTF-8 编码") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    prefs = await _get_or_create(user, db)
+    data = prefs.data
+    changed = write_group_personality_file(user.id, content)
+    data.pop("group_personality_preference", None)
+    data["personality_preference_revision"] = int(data.get("personality_preference_revision", 0)) + int(changed)
+    prefs.data = data
+    if changed:
+        await invalidate_personality_snapshots(db, user.id)
+    await db.commit()
+    if changed:
+        from app.core import events
+        await events.bump_context_revision(user.id, "preferences")
+    return _to_response(
+        data, read_personality_file(user.id), read_reply_style_file(user.id),
+        read_group_personality_file(user.id),
+    )
+
+
+@router.post("/reply-style/upload", response_model=PreferencesResponse)
+async def upload_reply_style(
+    file: UploadFile = FastAPIFile(...),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """导入 Markdown 或纯文本内容，并统一保存为 reply-style.md。"""
+    filename = (file.filename or "").strip().lower()
+    if not (filename.endswith(".md") or filename.endswith(".txt")):
+        raise HTTPException(status_code=415, detail="回复风格文件必须是 Markdown 或 TXT 文件")
+    raw = await file.read(_MAX_PERSONALITY_UPLOAD_BYTES + 1)
+    if len(raw) > _MAX_PERSONALITY_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="回复风格文件过大")
+    try:
+        content = normalize_reply_style(raw.decode("utf-8"))
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=400, detail="回复风格文件必须使用 UTF-8 编码") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    prefs = await _get_or_create(user, db)
+    data = prefs.data
+    changed = write_reply_style_file(user.id, content)
+    data.pop("custom_reply_style", None)
+    data["custom_reply_style_enabled"] = bool(data.get("custom_reply_style_enabled", False))
+    prefs.data = data
+    if changed:
+        await invalidate_personality_snapshots(db, user.id)
+    await db.commit()
+    if changed:
+        from app.core import events
+        await events.bump_context_revision(user.id, "preferences")
+    return _to_response(
+        data, read_personality_file(user.id), read_reply_style_file(user.id),
+        read_group_personality_file(user.id),
+    )
+
+
+@router.patch("/reply-style", response_model=PreferencesResponse)
+async def update_reply_style(
+    body: ReplyStyleUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    prefs = await _get_or_create(user, db)
+    data = prefs.data
+    _migrate_legacy_reply_style(data, user.id)
+    changed = write_reply_style_file(user.id, body.content)
+    data["custom_reply_style_enabled"] = bool(data.get("custom_reply_style_enabled", False))
+    prefs.data = data
+    if changed:
+        await invalidate_personality_snapshots(db, user.id)
+    await db.commit()
+    if changed:
+        from app.core import events
+        await events.bump_context_revision(user.id, "preferences")
+    return _to_response(
+        data, read_personality_file(user.id), read_reply_style_file(user.id),
+        read_group_personality_file(user.id),
+    )
 
 
 @router.patch("", response_model=PreferencesResponse)
@@ -183,11 +338,15 @@ async def update_preferences(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    if {"personalityPreference", "personalityPreferenceEnabled"}.intersection(body.model_fields_set):
+    if {
+        "personalityPreference", "personalityPreferenceEnabled",
+        "groupPersonalityPreference", "groupPersonalityPreferenceEnabled",
+    }.intersection(body.model_fields_set):
         if not get_settings().agent.personality_preference_enabled:
             raise HTTPException(status_code=403, detail="用户人格偏好当前未开放")
     prefs = await _get_or_create(user, db)
     data = prefs.data
+    _migrate_legacy_reply_style(data, user.id)
     style_changed = False
     personality_changed = False
     personality_toggle_changed = False
@@ -201,6 +360,9 @@ async def update_preferences(
         enabled = bool(body.personalityPreferenceEnabled)
         personality_toggle_changed = enabled != bool(data.get("personality_preference_enabled", False))
         data["personality_preference_enabled"] = enabled
+    group_personality_changed, group_personality_toggle_changed = _update_group_personality(
+        data, user.id, body,
+    )
     if body.lastStages is not None:
         data["last_stages"] = body.lastStages
     if body.stageTemplates is not None:
@@ -226,6 +388,9 @@ async def update_preferences(
             data.pop("reply_length", None) # null = 重置为默认（适中）
         else:
             data["reply_length"] = body.replyLength
+    if body.customReplyStyleEnabled is not None:
+        style_changed = style_changed or bool(body.customReplyStyleEnabled) != bool(data.get("custom_reply_style_enabled", False))
+        data["custom_reply_style_enabled"] = bool(body.customReplyStyleEnabled)
     if body.pmStagesExpanded is not None:
         data["pm_stages_expanded"] = body.pmStagesExpanded
     if body.calendarWeekStart is not None and body.calendarWeekStart in {"monday", "sunday"}:
@@ -250,7 +415,10 @@ async def update_preferences(
     if body.toolInjectionMode is not None and body.toolInjectionMode in _TOOL_INJECTION_MODES:
         data["tool_injection_mode"] = body.toolInjectionMode
     prefs.data = data
-    if personality_changed or personality_toggle_changed:
+    if style_changed:
+        await invalidate_personality_snapshots(db, user.id)
+    if (personality_changed or personality_toggle_changed
+            or group_personality_changed or group_personality_toggle_changed):
         await invalidate_personality_snapshots(db, user.id)
     await db.commit()
     shell_changed = any(
@@ -265,7 +433,11 @@ async def update_preferences(
     if style_changed:
         from app.core import events
         await events.bump_context_revision(user.id, "preferences")
-    if personality_changed or personality_toggle_changed:
+    if (personality_changed or personality_toggle_changed
+            or group_personality_changed or group_personality_toggle_changed):
         from app.core import events
         await events.bump_context_revision(user.id, "preferences")
-    return _to_response(data, read_personality_file(user.id))
+    return _to_response(
+        data, read_personality_file(user.id), read_reply_style_file(user.id),
+        read_group_personality_file(user.id),
+    )

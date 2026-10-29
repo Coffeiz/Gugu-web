@@ -4,6 +4,8 @@ import json
 from datetime import timedelta
 from types import SimpleNamespace
 
+import pytest
+
 from app.core.tz import now_ctx
 from agent.loop.tools import (
     copy_skill_state_for_parallel,
@@ -361,6 +363,30 @@ def test_parallel_cancellation_keeps_completed_results_and_marks_pending_calls()
             assert all(isinstance(item, asyncio.CancelledError) for item in exc.results[1:])
         else:
             raise AssertionError("批次取消必须携带部分结果并停止后续处理")
+
+    asyncio.run(scenario())
+
+
+def test_parallel_cancellation_does_not_start_a_later_batch():
+    async def scenario():
+        started = []
+        batch_started = asyncio.Event()
+        never = asyncio.Event()
+
+        async def dispatch(call_id):
+            started.append(call_id)
+            if len(started) == 2:
+                batch_started.set()
+            await never.wait()
+
+        task = asyncio.create_task(
+            run_parallel_dispatches(list(range(6)), dispatch, max_concurrency=2),
+        )
+        await asyncio.wait_for(batch_started.wait(), timeout=1)
+        task.cancel()
+        with pytest.raises(ParallelDispatchCancelled):
+            await task
+        assert started == [0, 1]
 
     asyncio.run(scenario())
 

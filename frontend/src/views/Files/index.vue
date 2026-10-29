@@ -1130,6 +1130,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 }
 
 .files-main {
+  --scrollbar-overlay-right-offset: -8px;
   height: 100%; padding: 16px; overflow-y: auto; overflow-x: hidden;
   box-sizing: border-box;
 }

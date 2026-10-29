@@ -107,7 +107,7 @@ async def list_messages(db, session_id, limit):
     return (await db.execute(select(ConversationMessage).where(
         ConversationMessage.session_id == session_id,
         ConversationMessage.content_json.is_(None),
-    ).order_by(desc(ConversationMessage.created_at)).limit(limit))).scalars().all()
+    ).order_by(desc(ConversationMessage.conversation_seq)).limit(limit))).scalars().all()
 
 
 async def list_agent_sessions(db, user_id, limit: int = 50):
@@ -162,21 +162,27 @@ async def latest_visible_assistant_message_ids(db, session_ids: list[int]) -> di
     """返回会话列表里可见的最新助手正文版本，不把工具/空检查点算作未读。"""
     if not session_ids:
         return {}
-    rows = await db.execute(
-        select(ConversationMessage.session_id, func.max(ConversationMessage.id))
-        .where(
-            ConversationMessage.session_id.in_(session_ids),
-            ConversationMessage.role == "assistant",
-            ConversationMessage.content_json.is_(None),
-            or_(
-                ConversationMessage.content != "",
-                and_(
-                    ConversationMessage.files.is_not(None),
-                    cast(ConversationMessage.files, Text).notin_(["[]", "null"]),
-                ),
+    latest = select(
+        ConversationMessage.session_id.label("session_id"),
+        func.max(ConversationMessage.conversation_seq).label("conversation_seq"),
+    ).where(
+        ConversationMessage.session_id.in_(session_ids),
+        ConversationMessage.role == "assistant",
+        ConversationMessage.content_json.is_(None),
+        or_(
+            ConversationMessage.content != "",
+            and_(
+                ConversationMessage.files.is_not(None),
+                cast(ConversationMessage.files, Text).notin_(["[]", "null"]),
             ),
-        )
-        .group_by(ConversationMessage.session_id)
+        ),
+    ).group_by(ConversationMessage.session_id).subquery()
+    rows = await db.execute(
+        select(ConversationMessage.session_id, ConversationMessage.id)
+        .join(latest, and_(
+            latest.c.session_id == ConversationMessage.session_id,
+            latest.c.conversation_seq == ConversationMessage.conversation_seq,
+        ))
     )
     return dict(rows.all())
 
@@ -227,16 +233,44 @@ async def load_display_message_page(
             ConversationMessage.run_id == run_id,
             ConversationMessage.display_timeline[0]["runId"].as_string() == run_id,
         ))
+    before_seq = None
+    after_seq = None
     if before_id is not None:
-        statement = statement.where(ConversationMessage.id < before_id).order_by(
-            desc(ConversationMessage.id)
+        before_seq = select(ConversationMessage.conversation_seq).where(
+            ConversationMessage.id == before_id,
+            ConversationMessage.session_id == session_id,
+        ).scalar_subquery()
+        statement = statement.where(or_(
+            and_(
+                before_seq.is_not(None),
+                ConversationMessage.conversation_seq < before_seq,
+            ),
+            and_(
+                before_seq.is_(None),
+                ConversationMessage.id < before_id,
+            ),
+        )).order_by(
+            desc(ConversationMessage.conversation_seq)
         )
     elif after_id is not None:
-        statement = statement.where(ConversationMessage.id > after_id).order_by(
-            ConversationMessage.id
+        after_seq = select(ConversationMessage.conversation_seq).where(
+            ConversationMessage.id == after_id,
+            ConversationMessage.session_id == session_id,
+        ).scalar_subquery()
+        statement = statement.where(or_(
+            and_(
+                after_seq.is_not(None),
+                ConversationMessage.conversation_seq > after_seq,
+            ),
+            and_(
+                after_seq.is_(None),
+                ConversationMessage.id > after_id,
+            ),
+        )).order_by(
+            ConversationMessage.conversation_seq
         )
     else:
-        statement = statement.order_by(desc(ConversationMessage.id))
+        statement = statement.order_by(desc(ConversationMessage.conversation_seq))
     fetched_rows = (await db.execute(statement.limit(limit))).all()
     page_rows = [row[0] for row in fetched_rows]
     display_body_ids = {row[0].id for row in fetched_rows if row.is_display_body}
@@ -265,14 +299,14 @@ async def load_display_message_page(
     if page_rows:
         older_probe = await db.execute(
             select(ConversationMessage.id)
-            .where(*row_filters, ConversationMessage.id < page_rows[0].id)
+            .where(*row_filters, ConversationMessage.conversation_seq < page_rows[0].conversation_seq)
             .limit(1)
         )
         has_more = older_probe.first() is not None
         if after_id is not None and len(page_rows) == limit:
             newer_probe = await db.execute(
                 select(ConversationMessage.id)
-                .where(*row_filters, ConversationMessage.id > page_rows[-1].id)
+                .where(*row_filters, ConversationMessage.conversation_seq > page_rows[-1].conversation_seq)
                 .limit(1)
             )
             has_newer = newer_probe.first() is not None
@@ -297,6 +331,67 @@ async def get_session_owner_platform_ids(db, user_id, platform: str, bot_id: int
     if bot is None:
         return None, None
     return bot.owner_platform_user_id, bot.bot_platform_user_id
+
+
+async def get_session_display_names(db, session_id: int, platform_user_ids) -> dict[str, str]:
+    """返回这些平台 ID 在本会话里最近一次发言时用的显示名。
+
+    群成员和机器人发言都带平台昵称，所以 @ 到别的 bot 时能显示它自己的名字，
+    而不是一律显示"咕咕"（群里有多个 bot 时"咕咕"会指错对象）。取会话内
+    最新一次昵称，改名后不会被旧昵称冻结。
+    """
+    ids = [str(value) for value in platform_user_ids if value]
+    if not ids:
+        return {}
+    latest = (
+        select(
+            ConversationMessage.platform_user_id.label("platform_user_id"),
+            func.max(ConversationMessage.created_at).label("last_seen"),
+        )
+        .where(
+            ConversationMessage.session_id == session_id,
+            ConversationMessage.platform_user_id.in_(ids),
+            ConversationMessage.platform_user_name.isnot(None),
+            ConversationMessage.platform_user_name != "",
+        )
+        .group_by(ConversationMessage.platform_user_id)
+        .subquery()
+    )
+    rows = (await db.execute(
+        select(
+            ConversationMessage.platform_user_id,
+            ConversationMessage.platform_user_name,
+        )
+        .join(latest, and_(
+            ConversationMessage.platform_user_id == latest.c.platform_user_id,
+            ConversationMessage.created_at == latest.c.last_seen,
+        ))
+        .where(ConversationMessage.session_id == session_id)
+    )).all()
+    names: dict[str, str] = {}
+    for platform_user_id, platform_user_name in rows:
+        key = str(platform_user_id or "")
+        if key and key not in names and platform_user_name:
+            names[key] = str(platform_user_name)
+    return names
+
+
+async def get_user_bot_display_names(db, user_id, platform: str) -> dict[str, str]:
+    """返回该用户在这条平台上自有机器人的「平台 ID → 配置名」。
+
+    自有 bot 的平台 ID 取自绑定时拿到的 openid，和群消息里 @ 到的 ID 同一
+    套命名空间，所以能直接对上；名字取用户在 IM 配置里起的名字。
+    """
+    rows = (await db.execute(
+        select(UserBot.bot_platform_user_id, UserBot.name)
+        .where(UserBot.user_id == user_id, UserBot.platform == platform)
+    )).all()
+    names: dict[str, str] = {}
+    for bot_platform_user_id, name in rows:
+        key = str(bot_platform_user_id or "")
+        if key and name:
+            names.setdefault(key, str(name))
+    return names
 
 
 async def get_display_timeline_item(db, session_id: int, message_id: int):

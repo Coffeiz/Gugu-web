@@ -387,7 +387,7 @@ async def _messages_for_job(db, job):
             )
         else:
             query = query.where(ConversationSession.chat_type != "group")
-    return (await db.execute(query.order_by(ConversationMessage.id))).scalars().all()
+    return (await db.execute(query.order_by(ConversationMessage.conversation_seq))).scalars().all()
 
 
 async def _mark_failure(db, job, exc: BaseException) -> None:
@@ -464,20 +464,9 @@ async def _execute_job_locked(job_id: int, settings, *, snapshot=None) -> bool:
         job.locked_at = now
         job.updated_at = now
         await db.commit()
-        phase = "bind_model"
+        phase = "load_entry"
         try:
             scope = MemoryScope(job.owner_user_id, job.platform, job.bot_id, job.scope_type, job.scope_id)
-            # 反思任务在独立 worker 中执行，重新解析用户 BYOK，随后由 provider 用量
-            # 记录器把本任务的调用归属到该用户。
-            from agent.llm import modelctx
-            from agent.llm.llm_select import resolve_run_config_for_user
-            modelctx.mark_user_scope()
-            run_config = await resolve_run_config_for_user(settings, db, scope.owner_user_id, None)
-            modelctx.set_model_cfg(run_config.model)
-            modelctx.set_usage_context(scope.owner_user_id)
-            from app.byok.service import resolve_and_bind_user_embedding
-            await resolve_and_bind_user_embedding(settings, db, scope.owner_user_id)   # 向量化走用户 embedding 凭据（PRD-SEC-2）
-            phase = "load_entry"
             existing_entry = (await db.execute(
                 select(MemoryEntry).where(
                     MemoryEntry.owner_user_id == scope.owner_user_id,
@@ -501,9 +490,9 @@ async def _execute_job_locked(job_id: int, settings, *, snapshot=None) -> bool:
                 )).scalars().first()
                 if cursor:
                     if job.task_type == "member-batch":
-                        cursor.last_member_reflected_message_id = job.to_message_id
+                        cursor.last_member_reflected_message_id = max(cursor.last_member_reflected_message_id or 0, job.to_message_id or 0)
                     else:
-                        cursor.last_reflected_message_id = job.to_message_id
+                        cursor.last_reflected_message_id = max(cursor.last_reflected_message_id or 0, job.to_message_id or 0)
                 job.status = "completed"
                 job.locked_at = None
                 job.updated_at = now
@@ -530,7 +519,33 @@ async def _execute_job_locked(job_id: int, settings, *, snapshot=None) -> bool:
             phase = "load_messages"
             messages = await _messages_for_job(db, job)
             if not messages:
-                raise RuntimeError("memory_reflection_empty_scope_messages")
+                # 范围内消息可能已被保留策略清理，或游标已被其他任务推进。
+                # 没有可提取的消息时正常收束该范围，不能让同一空任务反复重试。
+                if cursor is not None and job.to_message_id is not None:
+                    field = (
+                        "last_member_reflected_message_id"
+                        if job.task_type == "member-batch"
+                        else "last_reflected_message_id"
+                    )
+                    setattr(cursor, field, max(getattr(cursor, field) or 0, job.to_message_id))
+                    cursor.updated_at = now
+                job.status = "completed"
+                job.locked_at = None
+                job.next_attempt_at = None
+                job.last_error_code = None
+                job.updated_at = now
+                await db.commit()
+                return True
+            phase = "bind_model"
+            # 只对确有消息的任务解析 BYOK；空范围不需要模型或向量化凭据。
+            from agent.llm import modelctx
+            from agent.llm.llm_select import resolve_run_config_for_user
+            modelctx.mark_user_scope()
+            run_config = await resolve_run_config_for_user(settings, db, scope.owner_user_id, None)
+            modelctx.set_model_cfg(run_config.model)
+            modelctx.set_usage_context(scope.owner_user_id)
+            from app.byok.service import resolve_and_bind_user_embedding
+            await resolve_and_bind_user_embedding(settings, db, scope.owner_user_id)
             phase = "load_session_prefix"
             session_id = int(messages[-1].session_id)
             resolved_snapshot = snapshot
@@ -669,9 +684,9 @@ async def _execute_job_locked(job_id: int, settings, *, snapshot=None) -> bool:
             )).scalars().first()
             if cursor:
                 if task_type == "member-batch":
-                    cursor.last_member_reflected_message_id = job.to_message_id
+                    cursor.last_member_reflected_message_id = max(cursor.last_member_reflected_message_id or 0, job.to_message_id or 0)
                 else:
-                    cursor.last_reflected_message_id = job.to_message_id
+                    cursor.last_reflected_message_id = max(cursor.last_reflected_message_id or 0, job.to_message_id or 0)
                 cursor.updated_at = now
             entry = MemoryEntry(
                 owner_user_id=scope.owner_user_id,
@@ -756,7 +771,7 @@ async def _aggregate_members(db, scope: MemoryScope) -> dict[str, dict]:
             ConversationMessage.role == "user",
             ConversationMessage.platform_user_id.is_not(None),
         )
-        .order_by(ConversationMessage.created_at, ConversationMessage.id)
+        .order_by(ConversationMessage.conversation_seq)
     )).all()
     members: dict[str, dict] = {}
     for pid, name, created_at in rows:

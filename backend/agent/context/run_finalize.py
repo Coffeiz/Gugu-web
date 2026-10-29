@@ -84,6 +84,8 @@ async def finalize_run(
     round_id: str | None = None,
     interrupted: bool = False,
     inbound_batch_key: str | None = None,
+    persist_message_delta: bool = True,
+    silent_completion: bool = False,
 ) -> FinalizeResult:
     """用一个契约完成 canonical turn、展示时间线、trim 与压缩边界持久化。
 
@@ -95,6 +97,7 @@ async def finalize_run(
     from app.models import ConversationMessage, ConversationSession
     from app.services.conversation_retention import trim_session_messages
     persisted_round_id = round_id or "round-1"
+    user_message_seq = None
 
     if message_area is None:
         raise ValueError("finalize_run 必须接收 MessageArea")
@@ -104,6 +107,19 @@ async def finalize_run(
         if session_exists_required:
             session_alive = await db.get(ConversationSession, session_id) is not None
         if session_alive:
+            if silent_completion and inbound_batch_key:
+                # 静默 run 没有 assistant 行，但重领仍须能识别已完成，不能误记中断。
+                from agent.context.canonical_context import digest
+                from agent.context.message_area_repository import _insert_or_get_batch
+                from agent.im.inbound_recovery import user_run_key
+
+                await _insert_or_get_batch(db, {
+                    "session_id": session_id,
+                    "version": "im-silent-v1",
+                    "run_id": user_run_key(inbound_batch_key),
+                    "round_id": "silent",
+                    "digest": digest({"im_silent_batch": inbound_batch_key}),
+                })
             if run_id:
                 from agent.context.canonical_context import digest
                 from agent.context.message_area_repository import _insert_or_get_batch
@@ -124,23 +140,40 @@ async def finalize_run(
                     session_row.session_context = session_context
             user_message = (
                 await db.get(ConversationMessage, user_message_id)
-                if user_message_id else None
+                if user_message_id and persist_message_delta else None
             )
+            if user_message is not None:
+                user_message_seq = user_message.conversation_seq
             if user_message is not None and run_id:
                 user_message.run_id = run_id
                 user_message.round_id = "round-1"
-            from agent.context.message_area_repository import commit_delta
-            outcome = "interruption" if interrupted else "success"
-            delta = message_area.persistence_delta(outcome=outcome)
-            await commit_delta(
-                db,
-                session_id=session_id,
-                delta=delta,
-                run_id=run_id,
-                default_round_id=persisted_round_id if run_id else None,
-                user_message=user_message,
-                interrupted=interrupted,
-            )
+            checkpoint = None
+            if user_message_id:
+                from sqlalchemy import select
+                from agent.context.display_checkpoint import display_run_key
+
+                checkpoint = (await db.execute(select(ConversationMessage).where(
+                    ConversationMessage.session_id == session_id,
+                    ConversationMessage.role == "assistant",
+                    ConversationMessage.run_id == display_run_key(user_message_id),
+                ))).scalars().first()
+            if persist_message_delta:
+                from agent.context.message_area_repository import commit_delta
+                outcome = "interruption" if interrupted else "success"
+                delta = message_area.persistence_delta(outcome=outcome)
+                await commit_delta(
+                    db,
+                    session_id=session_id,
+                    delta=delta,
+                    run_id=run_id,
+                    default_round_id=persisted_round_id if run_id else None,
+                    user_message=user_message,
+                    interrupted=interrupted,
+                )
+            if checkpoint is not None:
+                from agent.context.display_checkpoint import resequence_checkpoint
+
+                await resequence_checkpoint(db, checkpoint)
             if display_timeline:
                 # 聊天展示时间线不承担模型上下文职责。媒体块（尤其是视频帧
                 # base64）只留占位说明，避免把整段媒体副本写入会话记录。
@@ -154,18 +187,23 @@ async def finalize_run(
                 persisted_timeline = None
             if text or files or persisted_timeline:
                 assistant_created_at = None
+                assistant_sent_at = None
                 if interrupted and user_message is not None:
                     anchor = delta.user_anchor_sequence
                     persisted_after_anchor = [
                         entry.sequence for entry in delta.entries
                         if anchor is not None and entry.sequence > anchor
                     ]
-                    assistant_created_at = user_message.created_at + timedelta(
+                    offset = timedelta(
                         microseconds=max(
                             (sequence - anchor + 1 for sequence in persisted_after_anchor),
                             default=1,
                         ),
                     )
+                    assistant_created_at = user_message.created_at + offset
+                    # sent_at 与 created_at 同步锚定，保留诊断与展示时间线一致；
+                    # canonical 历史顺序由 conversation_seq 管理。
+                    assistant_sent_at = (user_message.sent_at or user_message.created_at) + offset
                 assistant_content = text
                 if interrupted and assistant_content:
                     assistant_content += "\n\n[本轮已中止，以上内容未完成]"
@@ -180,19 +218,12 @@ async def finalize_run(
                 )
                 if assistant_created_at is not None:
                     assistant_values["created_at"] = assistant_created_at
-                checkpoint = None
-                if user_message_id:
-                    from sqlalchemy import select, null
-                    from agent.context.display_checkpoint import display_run_key
-
-                    checkpoint = (await db.execute(select(ConversationMessage).where(
-                        ConversationMessage.session_id == session_id,
-                        ConversationMessage.role == "assistant",
-                        ConversationMessage.run_id == display_run_key(user_message_id),
-                    ))).scalars().first()
+                    assistant_values["sent_at"] = assistant_sent_at
                 if checkpoint is None:
                     db.add(ConversationMessage(**assistant_values))
                 else:
+                    from sqlalchemy import null
+
                     for key, value in assistant_values.items():
                         setattr(checkpoint, key, value)
                     checkpoint.content_json = null()
@@ -212,7 +243,7 @@ async def finalize_run(
             tools_used=tools_used,
         )
         coordinator = message_area.reasoning_state
-        if session_alive and not interrupted and coordinator is not None:
+        if session_alive and not interrupted and coordinator is not None and persist_message_delta:
             await coordinator.commit_pending(db, run_id=run_id)
         await db.commit()
         if session_alive and not interrupted and coordinator is not None:
@@ -230,7 +261,7 @@ async def finalize_run(
         await compress_conv.compress_if_needed(
             session_id, user_id, settings, force=False,
             reuse_summary=reuse_summary,
-            reuse_before_message_id=user_message_id if reuse_summary else None,
+            reuse_before_message_seq=user_message_seq if reuse_summary else None,
         )
     return FinalizeResult(
         tokens_in=usage_result.tokens_in,

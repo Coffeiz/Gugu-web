@@ -93,9 +93,11 @@ owner 闲置反思触发的会话压缩，应先在捕获主请求快照的同�
 
 2026-10-20：群闲置反思在仍持有主 run 快照的进程内收束；Redis 仅保存 worker 协调标记。被动消息追加必须逐条匹配持久化历史尾部，成功时保留原始 Provider wire、system 和工具声明；否则回退数据库重建。真实 DeepSeek Chat A/B 使用合成历史，持久历史重建 cache read 为 0，原始前缀追加读取率为 90.59%/91.09%；第二轮由正式 `ContextBranch` 写入隔离 LoopScope trace。MiniMax M3.1 Flash Preview 的三轮真实 Anthropic 对照中，历史投影缓存率为 2.05%–2.25%，原始前缀追加为 99.57%–99.65%；该对照未经过正式 `ContextBranch`。实验不证明真实群历史必然匹配，线上还需按 `snapshot_source` 与 cache ratio 观察。详见 `docs/reports/2026-10-20-INVEST-群反思原始前缀复用真实模型AB.md`。
 
+2026-10-28：Web、IM 和反思共用的历史加载器按摘要覆盖水位读取连续历史，不再按 100/500 条截断；物理保留只清理摘要覆盖的旧消息。合成 MiniMax 对照中截去历史开头的缓存读取率为 0.47%，保留相同历史为 100%；这不是线上会话前后对照，新代码加载后的 LoopScope 验证仍待完成。详见 `docs/reports/OPT-Cache-Strategy-2026-10-28-历史baseline.md`。
+
 **修改缓存策略前必须**：
 
-1. 用 `backend/scripts/diagnostics/test_cache_strategy_compare.py` 做对比测试
+1. 用 `backend/scripts/diagnostics/compare_cache_strategies.py` 做对比测试
 2. 记录到 `docs/reports/OPT-Cache-Strategy-*.md`
 3. 更新 devlog 和本节
 4. 在 LoopScope 验证 cache_ratio 提升

@@ -2,6 +2,7 @@ import io
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -12,8 +13,37 @@ from app.services.data_portability.projection import (
     write_record_stream,
 )
 from app.models import UserPreferences
+from app.services import personality_preferences
 from app.services.data_portability.producers import build_record_producers
 from app.services.data_portability.identity_map import SQLitePortableIdentityMap
+
+
+@pytest.mark.asyncio
+async def test_preferences_export_reads_reply_style_from_user_prompt_file(db, user_a, tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        personality_preferences,
+        "get_settings",
+        lambda: SimpleNamespace(storage=SimpleNamespace(local_path=str(tmp_path))),
+    )
+    assert personality_preferences.write_reply_style_file(user_a.id, "先给结论")
+    preferences = UserPreferences(user_id=user_a.id, data_json='{"custom_reply_style_enabled":true,"theme":"dark"}')
+    db.add(preferences)
+    await db.flush()
+
+    record = await project_record(
+        db,
+        user_id=user_a.id,
+        origin_id=uuid4(),
+        spec=next(spec for spec in RECORD_SPECS if spec.record_type == "preferences"),
+        row=preferences,
+        identities={("preferences", str(preferences.id)): "portable-preferences"},
+    )
+
+    assert record.fields["data"] == {
+        "custom_reply_style_enabled": True,
+        "theme": "dark",
+        "custom_reply_style": "先给结论",
+    }
 
 
 @pytest.mark.asyncio

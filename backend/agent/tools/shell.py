@@ -429,7 +429,7 @@ class ShellSkill(BaseSkill):
                 "properties": {
                     "command": {"type": "string"},
                     "cwd": {"type": "string"},
-                    "timeout": {"type": "number", "minimum": 0.1, "maximum": 300},
+                    "timeout": {"type": "number", "minimum": 0.1, "maximum": 3600},
                     "max_output_chars": {"type": "integer", "minimum": 1, "maximum": 120000},
                     "scope": {
                         "type": "string",

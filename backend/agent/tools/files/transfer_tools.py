@@ -87,6 +87,7 @@ TRANSFER_TOOLS = [
             },
             handler=_send_file,
             mutates=True,
+            proxy_selectable=True,
         ),
         Tool(
             name="present_file", label="在网页展示文件",

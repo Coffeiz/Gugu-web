@@ -20,7 +20,9 @@ def set_im(platform: str, message_id: str | None,
            context_token: str = "", allowed_tool_names: list[str] | None = None,
            im_role: str | None = None,
            current_attachment_ids: list[str] | None = None,
-           tool_display_mode: str = "all") -> None:
+           tool_display_mode: str = "all",
+           group_auto_reply: bool = False,
+           group_reply_all: bool = False) -> None:
     _im.set({
         "platform": platform, "message_id": message_id,
         "channel_id": channel_id, "chat_id": chat_id,
@@ -31,6 +33,8 @@ def set_im(platform: str, message_id: str | None,
         "im_role": im_role,
         "current_attachment_ids": frozenset(str(item) for item in (current_attachment_ids or [])),
         "tool_display_mode": tool_display_mode,
+        "group_auto_reply": bool(group_auto_reply),
+        "group_reply_all": bool(group_reply_all),
         "reacted": False,   # 本轮咕咕有没有用 react 工具点过表情（worker 收尾据此决定要不要兜底补一个）
         "announced": False,  # 本轮（一个 Busy Session）有没有发过慢工具进度声明，见 tools/base.py dispatch
     })

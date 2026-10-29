@@ -26,7 +26,28 @@
         </div>
       </div>
       <div v-if="error || status" class="personality-status" :class="{ error: !!error }">{{ error || status }}</div>
+      <ProfileGroupPersonalityCard />
     </template>
+    <div class="personality-heading">
+      <div class="pm-field-desc"><span class="pm-field-name">{{ t('personalityUi.customStyle') }}</span><span class="pm-field-hint">{{ t('personalityUi.customStyleHint') }}</span></div>
+      <div class="personality-toggle">
+        <ToggleSwitch :model-value="customEnabled" :disabled="customSaving || !hasCustomStyle" :aria-label="t('personalityUi.customStyleEnable')" @update:model-value="toggleCustomStyle" />
+        <span class="personality-enabled-label">{{ customEnabled ? t('personalityUi.enabled') : t('personalityUi.disabled') }}</span>
+      </div>
+    </div>
+    <div class="personality-file-card">
+      <div class="personality-file-icon">MD</div>
+      <div class="personality-file-info">
+        <div class="personality-file-name">reply-style.md</div>
+        <div class="personality-file-meta">{{ hasCustomStyle ? t('personalityUi.characters', { count: customCharacterCount }) : t('personalityUi.notCreated') }} · {{ t('personalityUi.hidden') }}</div>
+      </div>
+      <div class="personality-file-actions">
+        <input ref="customFileInput" class="personality-file-input" type="file" accept=".md,.txt,text/markdown,text/plain" @change="onCustomFileSelected" />
+        <button type="button" class="pm-text-button" :disabled="customSaving" @click="customFileInput?.click()">{{ t('personalityUi.upload') }}</button>
+        <button type="button" class="pm-text-button" :disabled="customSaving" @click="openCustomEditor">{{ t('personalityUi.edit') }}</button>
+      </div>
+    </div>
+    <div v-if="customError || customStatus" class="personality-status" :class="{ error: !!customError }">{{ customError || customStatus }}</div>
   </div>
 </template>
 
@@ -34,6 +55,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
+import ProfileGroupPersonalityCard from '@/components/common/profile/ProfileGroupPersonalityCard.vue'
 import { usePreferencesStore } from '@/stores/preferences'
 import { usePreviewStore } from '@/stores/preview'
 
@@ -41,6 +63,60 @@ const prefsStore = usePreferencesStore()
 const { t } = useI18n()
 const previewStore = usePreviewStore()
 const enabled = ref(false)
+const customEnabled = ref(false)
+const customSaving = ref(false)
+const customStatus = ref('')
+const customError = ref('')
+const customFileInput = ref<HTMLInputElement | null>(null)
+const hasCustomStyle = computed(() => !!prefsStore.customReplyStyle.trim())
+const customCharacterCount = computed(() => Array.from(prefsStore.customReplyStyle).length)
+
+function openCustomEditor() {
+  customStatus.value = ''; customError.value = ''
+  previewStore.openVirtual(
+    { id: -2, displayName: 'reply-style', ext: 'MD', size: `${customCharacterCount.value} 字符` },
+    prefsStore.customReplyStyle,
+    saveCustomDocument,
+  )
+}
+
+async function saveCustomDocument(content: string) {
+  customSaving.value = true; customError.value = ''; customStatus.value = ''
+  try {
+    await prefsStore.saveCustomReplyStyle(content)
+    customStatus.value = t('personalityUi.saved')
+  } catch (err) {
+    customError.value = err instanceof Error ? err.message : t('personalityUi.saveFailed')
+    throw err
+  } finally { customSaving.value = false }
+}
+
+async function onCustomFileSelected(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  customSaving.value = true; customStatus.value = ''; customError.value = ''
+  try {
+    await prefsStore.uploadCustomReplyStyle(file)
+    customStatus.value = t('personalityUi.uploaded')
+    openCustomEditor()
+  } catch (err) {
+    customError.value = err instanceof Error ? err.message : t('personalityUi.uploadFailed')
+  } finally { customSaving.value = false }
+}
+async function toggleCustomStyle(value: boolean) {
+  const previous = customEnabled.value
+  customEnabled.value = value
+  customSaving.value = true; customError.value = ''; customStatus.value = ''
+  try {
+    const data = await prefsStore.saveCustomReplyStyleEnabled(value)
+    customEnabled.value = data.customReplyStyleEnabled ?? value
+  } catch (err) {
+    customEnabled.value = previous
+    customError.value = err instanceof Error ? err.message : t('personalityUi.saveFailed')
+  } finally { customSaving.value = false }
+}
 const saving = ref(false)
 const status = ref('')
 const error = ref('')
@@ -94,7 +170,7 @@ async function onToggle(value: boolean) {
   } finally { saving.value = false }
 }
 
-onMounted(async () => { if (!prefsStore.loaded) await prefsStore.fetch(); syncFromStore() })
+onMounted(async () => { if (!prefsStore.loaded) await prefsStore.fetch(); syncFromStore(); customEnabled.value = prefsStore.customReplyStyleEnabled })
 onUnmounted(() => { if (statusTimer !== null) window.clearTimeout(statusTimer) })
 </script>
 

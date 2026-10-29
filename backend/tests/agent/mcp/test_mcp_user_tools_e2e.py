@@ -12,6 +12,26 @@ from agent.mcp import manager as manager_module
 from agent.mcp.models import McpServerConfig
 
 
+@pytest.fixture(autouse=True)
+def _isolate_schema_snapshot_storage(monkeypatch):
+    """这些桩级链路不建数据库；只验证声明/dispatch，不覆盖持久化集成测试。"""
+    async def no_snapshot(_self, _user_id):
+        return None
+
+    async def ignore_write(_self, _user_id, _digest, _tools):
+        return None
+
+    async def find_config(self, user_id, server_id):
+        async for config in self._iter_enabled_configs(user_id):
+            if config.id == server_id:
+                return config
+        return None
+
+    monkeypatch.setattr(manager_module.McpToolManager, "_read_schema_snapshot", no_snapshot)
+    monkeypatch.setattr(manager_module.McpToolManager, "_write_schema_snapshot", ignore_write)
+    monkeypatch.setattr(manager_module.McpToolManager, "_load_enabled_config", find_config)
+
+
 class EchoClient:
     async def list_tools(self):
         return {

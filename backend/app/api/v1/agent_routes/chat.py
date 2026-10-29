@@ -21,6 +21,7 @@ router = APIRouter()
 
 class ChatRequest(BaseModel):
     message: str
+    client_message_id: Optional[str] = Field(default=None, max_length=64, pattern=r"^[A-Za-z0-9:_-]+$")
     locale: Optional[Literal["zh-CN", "ja-JP", "en-US"]] = None
     session_id: Optional[int] = None
     pending_queue_id: Optional[str] = Field(default=None, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
@@ -41,6 +42,7 @@ async def chat(
 ):
     req = AgentRequest(
         message=body.message,
+        client_message_id=body.client_message_id,
         user_id=current_user.id,
         user_name=current_user.username,
         session_id=body.session_id,
@@ -134,5 +136,12 @@ async def cancel_stream(
             # 这个 run。终止端点读快照与写标记之间，排队的 run 可能已经接管
             # 会话（begin 清不掉这之后才落下的标记），会话级标记会把刚接管的
             # 排队消息一起杀掉——用户消息已落库但永远等不到回复。
-            await genstream.request_cancel(session_id, owner_run_id or None)
-    return {"ok": True, "active": active, "recovered": recovered, "cancelled_locally": cancelled_locally}
+            from agent.runtime.cancellation import request_cancel
+            await request_cancel(session_id=session_id, owner_run_id=owner_run_id or None)
+    return {
+        "ok": True,
+        "active": active,
+        "recovered": recovered,
+        "cancelled_locally": cancelled_locally,
+        "outcome": "requested" if active else ("interrupted" if recovered else "already_completed"),
+    }

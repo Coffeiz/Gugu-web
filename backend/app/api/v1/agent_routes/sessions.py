@@ -7,8 +7,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.im.models import replace_mention_ids
 from agent.llm import genstream
+from agent.im.models import extract_mention_ids, replace_mention_ids
+from agent.im.parsers.qq import _normalize_qq_attachment_placeholders
 from app.core.ownership import get_owned
 from app.core.security import get_current_user
 from app.core.tz import iso_utc
@@ -174,6 +175,49 @@ async def revoke_session_filesystem_authorization(
     await db.commit()
     return {"status": "revoked", "session_id": session_id, "revoked": revoked}
 
+
+async def _group_mention_names(
+    db,
+    session: ConversationSession,
+    msgs: list[ConversationMessage],
+    user_id,
+    bot_platform_user_id: Optional[str],
+) -> dict[str, str]:
+    """解析群聊里 @ 到的对象各自显示成什么名字。
+
+    取值按可信度排序：
+
+    1. 会话内真实发言记录里的昵称——群成员和机器人发言都带平台昵称，所以
+       @ 到别的 bot 时显示它自己的名字，不再一律显示"咕咕"（群里同时有
+       多个 bot 时，"咕咕"会指错对象）。
+    2. 当前会话自己的 bot → 咕咕（产品自称，和群里看到的昵称一致）。
+    3. 用户在同一平台的其它 bot → 它在 IM 配置里起的名字。
+    4. 解析不到 → 不放进映射，原始平台 ID 保持原样（不猜名字）。
+    """
+    if session.chat_type != "group":
+        return {}
+    candidate_ids: set[str] = set()
+    for message in msgs:
+        if message.platform_bot_user_id:
+            candidate_ids.add(str(message.platform_bot_user_id))
+        # 正文和引用原文里都可能有 @，两边都要收候选 ID，否则引用框里会露原始 ID。
+        candidate_ids.update(extract_mention_ids(message.content or ""))
+        candidate_ids.update(extract_mention_ids(message.quoted_text or ""))
+    names: dict[str, str] = {}
+    if candidate_ids:
+        names.update(await conversations.get_session_display_names(db, session.id, candidate_ids))
+    if bot_platform_user_id:
+        names.setdefault(str(bot_platform_user_id), "咕咕")
+    unresolved = candidate_ids - set(names)
+    if unresolved and session.source:
+        for platform_user_id, name in (
+            await conversations.get_user_bot_display_names(db, user_id, session.source)
+        ).items():
+            if platform_user_id in unresolved:
+                names[platform_user_id] = name
+    return names
+
+
 @router.get("/sessions/{session_id}/messages")
 async def get_session_messages(
     session_id: int,
@@ -208,26 +252,31 @@ async def get_session_messages(
     display_body_ids = page["display_body_ids"]
     display_timeline_by_id = page["timelines"]
     oversized_timeline_ids = page["oversized_timeline_ids"]
-    mention_names = {
-        str(message.platform_user_id): message.platform_user_name
-        for message in msgs
-        if message.platform_user_id and message.platform_user_name
-    }
-    for message in msgs:
-        if message.platform_bot_user_id:
-            mention_names[message.platform_bot_user_id] = "咕咕"
     # 群聊消息按发言人区分左右气泡：owner 的平台身份挂在该来源的 UserBot 上
     # （目前只有 QQ 走了绑定流程，其它渠道查不到就是 None，前端据此把消息
     # 归到左侧、标发言人 username，而不是误判成 owner 自己发的）。
     owner_platform_user_id = None
+    bot_platform_user_id = None
     if session.source:
         owner_platform_user_id, bot_platform_user_id = await conversations.get_session_owner_platform_ids(
             db, current_user.id, session.source, session.bot_id,
         )
-        if bot_platform_user_id:
-            mention_names[bot_platform_user_id] = "咕咕"
+    mention_names = await _group_mention_names(
+        db, session, msgs, current_user.id, bot_platform_user_id,
+    )
 
-    def render_content(text: str) -> str:
+    def render_content(
+        text: str,
+        files: list[dict] | None = None,
+        *,
+        quoted: bool = False,
+    ) -> str:
+        if session.source == "qq" and files:
+            matching_files = [
+                item for item in files
+                if isinstance(item, dict) and bool(item.get("quoted")) is quoted
+            ]
+            text = _normalize_qq_attachment_placeholders(text, matching_files)
         if session.chat_type != "group":
             return text
         # 只替换当前会话已知的成员和 Bot ID，未知 mention 保留原样。
@@ -272,11 +321,13 @@ async def get_session_messages(
         },
         "messages": [
             {"id": m.id, "role": m.role,
+             "clientMessageId": m.client_message_id,
              "timelineOrder": m.id * 1_000_000,
-             "content": render_content(m.content),
+             "content": render_content(m.content, m.files or []),
              "files": m.files or [],
              "references": m.references_json or [],
-             "quotedText": m.quoted_text,
+             "quotedText": render_content(m.quoted_text, m.files or [], quoted=True)
+             if m.quoted_text else m.quoted_text,
              "platformUserId": m.platform_user_id,
              "platformUserName": m.platform_user_name,
              "platformBotUserId": m.platform_bot_user_id,

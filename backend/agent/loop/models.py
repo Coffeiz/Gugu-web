@@ -37,6 +37,8 @@ class RunState:
     round_number: int = 0
     task_rounds: int = 0
     tool_call_count: int = 0
+    # Run 内用于拦截相同 schema 错误参数的哈希；不保存原始参数正文。
+    invalid_tool_input_signatures: set[str] = field(default_factory=set)
     verify_rounds: int = 0
     round_start_indices: list[tuple[int, int]] = field(default_factory=list)
 

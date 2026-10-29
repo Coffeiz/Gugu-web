@@ -106,6 +106,12 @@ def bind_im_context(
         request.im_role,
         [str(item) for item in (request.attachments or [])],
         tool_display_mode=tool_display_mode,
+        group_auto_reply=bool(getattr(request, "group_auto_reply", False)),
+        group_reply_all=(
+            payload.get("chat_type") == "group"
+            and not payload.get("group_requires_at")
+            and not payload.get("group_read_enabled")
+        ),
     )
 
 

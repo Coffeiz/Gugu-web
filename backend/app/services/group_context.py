@@ -33,7 +33,7 @@ async def search_group_messages(
         ConversationSession.chat_type == "group",
         ConversationSession.chat_id == chat_id,
         ConversationMessage.content_json.is_(None),
-    ).order_by(desc(ConversationMessage.created_at), desc(ConversationMessage.id)).limit(limit)
+    ).order_by(desc(ConversationMessage.conversation_seq)).limit(limit)
     if speaker_id:
         query = query.where(ConversationMessage.platform_user_id == speaker_id)
     if queries:

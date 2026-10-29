@@ -17,11 +17,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from collections.abc import Iterable
 from contextlib import asynccontextmanager
 from uuid import uuid4
 
 from redis.exceptions import LockNotOwnedError
-from sqlalchemy import delete, select
+from sqlalchemy import case, delete, func, select
 
 from agent.context import session_snapshot
 from agent.context.budget import ContextBudget
@@ -49,7 +50,7 @@ def _session_lock_key(request) -> str:
 
 def _baseline_matches(session, baseline_id: int, baseline_hash: str) -> bool:
     """判断摘要请求开始时的 baseline 是否仍是当前水位。"""
-    current_id = int(getattr(session, "baseline_message_id", 0) or 0)
+    current_id = int(getattr(session, "baseline_message_seq", 0) or 0)
     current_hash = str(getattr(session, "baseline_message_hash", "") or "")
     return current_id == int(baseline_id or 0) and current_hash == str(baseline_hash or "")
 
@@ -421,7 +422,7 @@ async def compress_if_needed(
     force: bool = False,
     only_if_idle: bool = False,
     reuse_summary: str | None = None,
-    reuse_before_message_id: int | None = None,
+    reuse_before_message_seq: int | None = None,
     cache_snapshot=None,
 ) -> bool:
     """按 session 串行执行压缩，避免后台任务与手动命令覆盖 baseline。
@@ -429,7 +430,7 @@ async def compress_if_needed(
     ``reuse_summary``：本 run 刚在 provider round 边界生成的压缩摘要。run 内压缩
     的分支请求已与主对话共享前缀（能命中缓存），baseline 再用摊平文本重放一次
     是一次结构性全冷的 3 万 token 调用，因此 run 收尾时直接复用该摘要，只重算
-    baseline 水位。``reuse_before_message_id``（通常是本轮用户消息 id）用来把
+    baseline 水位。``reuse_before_message_seq``（本轮用户消息的会话序号）用来把
     可压缩范围限制在本 run 开始之前——run 内摘要不覆盖本轮自身的消息，复用时
     水位绝不能推进到它们之上。
 
@@ -462,7 +463,7 @@ async def compress_if_needed(
         result = await _compress_if_needed_unlocked(
             session_id, user_id, settings, force=force,
             reuse_summary=reuse_summary,
-            reuse_before_message_id=reuse_before_message_id,
+            reuse_before_message_seq=reuse_before_message_seq,
             cache_snapshot=cache_snapshot,
         )
         persisted = bool(result)
@@ -603,7 +604,7 @@ async def _snapshot_cache_prefix(
     user_id: int,
     model_cfg,
     baseline_id: int,
-    compressed_message_ids: set[int],
+    compressed_message_ids: Iterable[int],
 ) -> list[dict] | ProviderConversation | None:
     """仅当持久化历史能逐条精确对齐时，返回原 provider 请求的同前缀。"""
     if snapshot is None or not getattr(snapshot, "history", None):
@@ -641,26 +642,34 @@ async def _snapshot_cache_prefix(
         )
         effective_baseline = max(
             int(baseline_id or 0),
-            int(getattr(latest_summary, "covers_until_id", 0) or 0),
+            int(getattr(latest_summary, "covers_until_seq", 0) or 0),
         )
         source_rows = ([latest_summary] if latest_summary is not None else []) + [
             row for row in rows
-            if row.role != "summary" and int(row.id) > effective_baseline
+            if row.role != "summary"
+            and int(row.history_anchor_seq or row.conversation_seq) > effective_baseline
         ]
-        selected_ids = sorted(int(value) for value in compressed_message_ids)
+        selected_ids = [int(value) for value in compressed_message_ids]
+        if isinstance(compressed_message_ids, (set, frozenset)):
+            selected_ids.sort()
         if not selected_ids:
             return None
         # 只验证将要压缩的连续前缀。保留尾部可能包含本 run 的工具结果或
         # provider-only 形态，不能因尾部重建差异放弃已经对齐的缓存前缀。
+        selected_set = set(selected_ids)
         selected_rows = [
             row for row in source_rows
-            if row.role != "summary" and int(row.id) <= selected_ids[-1]
+            if row.role != "summary" and int(row.conversation_seq) in selected_set
         ]
-        if [int(row.id) for row in selected_rows] != selected_ids:
+        if [int(row.conversation_seq) for row in selected_rows] != selected_ids:
             return None
-        # 主会话 session_history 按 (created_at, id) 装载；并发持久化时
-        # 自增 id 与创建时间可能交错，压缩前缀必须重放主会话的顺序。
-        selected_rows.sort(key=lambda row: (row.created_at, int(row.id)))
+        # 压缩前缀按有效会话位置重放；输入前置上下文跟随锚定用户消息，
+        # 不受其较晚入库序号和时间戳影响。
+        selected_rows.sort(key=lambda row: (
+            int(row.history_anchor_seq or row.conversation_seq),
+            0 if row.history_anchor_seq is not None else 1,
+            int(row.conversation_seq),
+        ))
         prefix_rows = ([latest_summary] if latest_summary is not None else []) + selected_rows
         parts: list[dict] = []
         use_anthropic = use_anthropic_for(model_cfg)
@@ -697,7 +706,7 @@ async def _compress_if_needed_unlocked(
     *,
     force: bool = False,
     reuse_summary: str | None = None,
-    reuse_before_message_id: int | None = None,
+    reuse_before_message_seq: int | None = None,
     cache_snapshot=None,
 ) -> bool:
     """检查并执行压缩，返回是否实际执行了压缩。
@@ -715,19 +724,29 @@ async def _compress_if_needed_unlocked(
         rows = (await db.execute(
             select(ConversationMessage)
             .where(ConversationMessage.session_id == session_id)
-            .order_by(ConversationMessage.id.asc())
+            .order_by(
+                func.coalesce(ConversationMessage.history_anchor_seq, ConversationMessage.conversation_seq),
+                case((ConversationMessage.history_anchor_seq.is_not(None), 0), else_=1),
+                ConversationMessage.conversation_seq,
+            )
         )).scalars().all()
 
     prev_summary = next((m.content for m in rows if m.role == "summary"), None)
-    baseline_id = int(getattr(session, "baseline_message_id", 0) or 0)
+    baseline_id = int(getattr(session, "baseline_message_seq", 0) or 0)
     baseline_hash_before = str(getattr(session, "baseline_message_hash", "") or "")
-    all_msgs = [m for m in rows if m.role != "summary" and m.id > baseline_id]
-    if reuse_before_message_id:
+    all_msgs = [
+        m for m in rows
+        if m.role != "summary" and (m.history_anchor_seq or m.conversation_seq) > baseline_id
+    ]
+    if reuse_before_message_seq:
         # 复用 run 内摘要时，可压缩范围只允许覆盖本 run 开始之前的历史：run 内
         # 压缩把本轮消息整体保护，不会写进摘要；水位若推进到它们之上会丢上下文。
         # 本 run 的消息（含 RAG/姿态注入）都在 finalize 里才拿到 id，因此必然
-        # 落在 ``>= reuse_before_message_id`` 一侧，被这条过滤整体排除。
-        all_msgs = [m for m in all_msgs if m.id < reuse_before_message_id]
+        # 落在 ``>= reuse_before_message_seq`` 一侧，被这条过滤整体排除。
+        all_msgs = [
+            m for m in all_msgs
+            if (m.history_anchor_seq or m.conversation_seq) < reuse_before_message_seq
+        ]
     if not all_msgs:
         return False
 
@@ -761,7 +780,7 @@ async def _compress_if_needed_unlocked(
                 user_id,
                 model_cfg,
                 baseline_id,
-                {int(message.id) for message in candidate},
+                [int(message.conversation_seq) for message in candidate],
             )
             if cache_prefix is not None:
                 to_compress = candidate
@@ -866,7 +885,7 @@ async def _compress_if_needed_unlocked(
         session = await db.get(ConversationSession, session_id, with_for_update=True)
         if session is None:
             return False
-        current_baseline = int(getattr(session, "baseline_message_id", 0) or 0)
+        current_baseline = int(getattr(session, "baseline_message_seq", 0) or 0)
         current_baseline_hash = str(getattr(session, "baseline_message_hash", "") or "")
         if not _baseline_matches(session, baseline_id, baseline_hash_before):
             logger.info(
@@ -885,18 +904,18 @@ async def _compress_if_needed_unlocked(
             session_id=session_id, role="summary", content=summary,
             # 水位与摘要行同事务落库：历史装载即使拿到旧的 session.baseline，
             # 也能从摘要行本身读到真实覆盖边界，避免重复拼接已摘要的原文。
-            covers_until_id=to_compress[-1].id,
+            covers_until_seq=to_compress[-1].history_anchor_seq or to_compress[-1].conversation_seq,
         )
         db.add(summary_message)
         await db.flush()
-        session.baseline_message_id = to_compress[-1].id
+        session.baseline_message_seq = to_compress[-1].history_anchor_seq or to_compress[-1].conversation_seq
         session.baseline_message_hash = session_snapshot.baseline_hash(to_compress)
-        baseline_after = int(session.baseline_message_id)
+        baseline_after = int(session.baseline_message_seq)
         baseline_hash_after = str(session.baseline_message_hash or "")
         session_snapshot.update_baseline_snapshot(
             session,
             [{"role": "summary", "content": summary}],
-            baseline_message_id=session.baseline_message_id,
+            baseline_message_seq=session.baseline_message_seq,
         )
         await db.commit()
         session_snapshot.record_baseline_update(session)
@@ -910,7 +929,7 @@ async def _compress_if_needed_unlocked(
         new=summary,
         trigger="force" if force else ("run_reuse" if reuse_summary else "budget"),
         baseline_before=baseline_id,
-        baseline_after=to_compress[-1].id,
+        baseline_after=to_compress[-1].history_anchor_seq or to_compress[-1].conversation_seq,
         compressed_messages=len(to_compress),
         **audit_scope,
     )

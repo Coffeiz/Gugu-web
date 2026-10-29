@@ -1,3 +1,5 @@
+import asyncio
+
 from agent.gateway.qq import client as qq_client, events as qq_events, outbound as qq_outbound, runtime as qq_runtime
 
 
@@ -341,6 +343,75 @@ async def test_send_token_uses_cache_until_expiry(monkeypatch):
 
     assert token1 == token2 == "tok"
     assert fetch_count == 1
+
+
+async def test_send_token_refresh_is_singleflight(monkeypatch):
+    qq_client._send_tokens.pop("bot-singleflight", None)
+    creds_count = 0
+    token_count = 0
+    token_started = asyncio.Event()
+
+    async def fake_creds(channel_id):
+        nonlocal creds_count
+        creds_count += 1
+        return "app-1", "secret-1", False
+
+    async def fake_token_ttl(app_id, secret):
+        nonlocal token_count
+        token_count += 1
+        token_started.set()
+        await asyncio.sleep(0.01)
+        return "singleflight-token", 7200
+
+    monkeypatch.setattr(qq_client, "_creds_by_id", fake_creds)
+    monkeypatch.setattr(qq_client, "_qq_access_token_with_ttl", fake_token_ttl)
+
+    results = await asyncio.gather(
+        *(qq_client._send_token("bot-singleflight") for _ in range(10))
+    )
+
+    assert token_started.is_set()
+    assert results == [("singleflight-token", qq_client._QQ_API_BASE)] * 10
+    assert creds_count == 1
+    assert token_count == 1
+
+
+async def test_qq_outbound_prewarm_opens_connection_once_per_cooldown(monkeypatch):
+    base = qq_client._QQ_API_BASE
+    qq_client._loop_state(qq_client._qq_api_last_activity).pop(base, None)
+    requests = []
+
+    class FakeResponse:
+        status = 200
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def read(self):
+            return b"{}"
+
+    class FakeSession:
+        def get(self, url, **kwargs):
+            requests.append((url, kwargs))
+            return FakeResponse()
+
+    async def fake_token(_channel_id):
+        return "token", base
+
+    async def fake_session():
+        return FakeSession()
+
+    monkeypatch.setattr(qq_client, "_send_token", fake_token)
+    monkeypatch.setattr(qq_client, "_get_qq_http_session", fake_session)
+
+    await qq_client._prewarm_qq_outbound("bot-prewarm")
+    await qq_client._prewarm_qq_outbound("bot-prewarm")
+
+    assert len(requests) == 1
+    assert requests[0][0] == f"{base}/gateway"
 
 
 async def test_send_file_base64_mode_uploads_then_sends_media(monkeypatch):

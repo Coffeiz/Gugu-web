@@ -33,6 +33,37 @@ interface PurgeController {
   finishedJobId: number | null
   requestVersion: number
   latestEvent: ReturnType<typeof useLiveStore>['trashPurgeEvent']
+  lastRefreshedProgress: number
+  lastListRefreshAt: number
+  listRefreshTimer: ReturnType<typeof setTimeout> | null
+}
+
+const LIST_REFRESH_INTERVAL_MS = 1000
+
+function clearListRefreshTimer(controller: PurgeController) {
+  if (controller.listRefreshTimer !== null) {
+    clearTimeout(controller.listRefreshTimer)
+    controller.listRefreshTimer = null
+  }
+}
+
+function refreshTrashList(controller: PurgeController, progress: number) {
+  if (progress <= controller.lastRefreshedProgress) return
+  const elapsed = Date.now() - controller.lastListRefreshAt
+  if (elapsed >= LIST_REFRESH_INTERVAL_MS) {
+    controller.lastRefreshedProgress = progress
+    controller.lastListRefreshAt = Date.now()
+    controller.options.loadContents()
+    return
+  }
+  if (controller.listRefreshTimer !== null) return
+  controller.listRefreshTimer = setTimeout(() => {
+    controller.listRefreshTimer = null
+    if (!controller.mounted || controller.jobId === null) return
+    controller.lastRefreshedProgress = controller.progress.value?.done ?? progress
+    controller.lastListRefreshAt = Date.now()
+    controller.options.loadContents()
+  }, LIST_REFRESH_INTERVAL_MS - elapsed)
 }
 
 function acceptJob(controller: PurgeController, job: TrashPurgeJob) {
@@ -51,6 +82,7 @@ function acceptJob(controller: PurgeController, job: TrashPurgeJob) {
 
 async function finish(controller: PurgeController, job: TrashPurgeJob) {
   if (controller.finishedJobId === job.id) return
+  clearListRefreshTimer(controller)
   controller.finishedJobId = job.id
   controller.jobId = null
   controller.busy.value = false
@@ -96,6 +128,7 @@ async function applyProgressEvent(controller: PurgeController, event: ReturnType
     failedCount: event.failed_count,
   }
   acceptJob(controller, job)
+  if (job.status === 'running') refreshTrashList(controller, job.progressCurrent)
   if (job.status === 'completed' || job.status === 'failed') {
     await finish(controller, job)
   }
@@ -144,6 +177,9 @@ export function useFileLibraryTrashPurge(options: TrashPurgeOptions) {
     finishedJobId: null,
     latestEvent: null,
     requestVersion: 0,
+    lastRefreshedProgress: -1,
+    lastListRefreshAt: 0,
+    listRefreshTimer: null,
   }
   watch(() => live.trashPurgeEvent, event => applyProgressEvent(controller, event), { immediate: true, flush: 'sync' })
   watch(() => live.connected, (connected, wasConnected) => {
@@ -163,6 +199,7 @@ export function useFileLibraryTrashPurge(options: TrashPurgeOptions) {
   })
   onBeforeUnmount(() => {
     controller.mounted = false
+    clearListRefreshTimer(controller)
     document.removeEventListener('visibilitychange', onVisibilityChange)
   })
 

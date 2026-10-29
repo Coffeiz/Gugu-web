@@ -460,6 +460,7 @@ async def test_voice_transcribe_accepts_dict_settings():
 
 async def test_http_get_retries_on_timeout_then_succeeds(monkeypatch):
     from agent.tools import web as web_mod
+    from contextlib import asynccontextmanager
 
     calls = {"n": 0}
 
@@ -471,100 +472,59 @@ async def test_http_get_retries_on_timeout_then_succeeds(monkeypatch):
         async def aiter_bytes(self):
             yield b"ok body"
 
-    class _FakeStream:
-        def __init__(self, response):
-            self.response = response
+    @asynccontextmanager
+    async def fake_stream(_self, _url, **_kwargs):
+        calls["n"] += 1
+        if calls["n"] < 2:
+            raise httpx.ConnectTimeout("timed out")
+        yield _FakeResponse()
 
-        async def __aenter__(self):
-            return self.response
-
-        async def __aexit__(self, *a):
-            return False
-
-    class _FakeAsyncClient:
-        def __init__(self, *a, **kw):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return False
-
-        def stream(self, method, url, headers=None):
-            calls["n"] += 1
-            if calls["n"] < 2:
-                raise httpx.ConnectTimeout("timed out")
-            return _FakeStream(_FakeResponse())
-
-    async def fake_resolve(_self, url):
-        return "93.184.216.34", None
-    monkeypatch.setattr(web_mod.SafeEgressClient, "resolve", fake_resolve)
-    monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr(web_mod.SafeEgressClient, "stream", fake_stream)
     out = await web_mod._http_get(None, None, {"url": "https://example.com/x"})
     assert out["status"] == 200
     assert calls["n"] == 2
 
 
-async def test_http_get_exhausts_retries_returns_error():
+async def test_http_get_exhausts_retries_returns_error(monkeypatch):
     from agent.tools import web as web_mod
+    from contextlib import asynccontextmanager
 
     calls = {"n": 0}
 
-    class _FakeAsyncClient:
-        def __init__(self, *a, **kw):
-            pass
+    @asynccontextmanager
+    async def fake_stream(_self, _url, **_kwargs):
+        calls["n"] += 1
+        raise httpx.ConnectTimeout("still timing out")
+        yield  # pragma: no cover - makes this an async context manager
 
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return False
-
-        def stream(self, method, url, headers=None):
-            calls["n"] += 1
-            raise httpx.ConnectTimeout("still timing out")
-
-    async def fake_resolve(_self, url):
-        return "93.184.216.34", None
-    with patch.object(web_mod.SafeEgressClient, "resolve", fake_resolve), \
-         patch.object(httpx, "AsyncClient", _FakeAsyncClient):
-        out = await web_mod._http_get(None, None, {"url": "https://example.com/x"})
+    monkeypatch.setattr(web_mod.SafeEgressClient, "stream", fake_stream)
+    out = await web_mod._http_get(None, None, {"url": "https://example.com/x"})
     assert "error" in out
     assert calls["n"] == len(web_mod._HTTP_GET_RETRY_BACKOFF) + 1
 
 
-async def test_http_get_does_not_retry_on_non_transient_exception():
+async def test_http_get_does_not_retry_on_non_transient_exception(monkeypatch):
     """非白名单异常（如 URL/证书等编程侧问题）不重试，一次失败即返回 error。"""
     from agent.tools import web as web_mod
+    from contextlib import asynccontextmanager
 
     calls = {"n": 0}
 
-    class _FakeAsyncClient:
-        def __init__(self, *a, **kw):
-            pass
+    @asynccontextmanager
+    async def fake_stream(_self, _url, **_kwargs):
+        calls["n"] += 1
+        raise ValueError("unexpected")
+        yield  # pragma: no cover - makes this an async context manager
 
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return False
-
-        def stream(self, method, url, headers=None):
-            calls["n"] += 1
-            raise ValueError("unexpected")
-
-    async def fake_resolve(_self, url):
-        return "93.184.216.34", None
-    with patch.object(web_mod.SafeEgressClient, "resolve", fake_resolve), \
-         patch.object(httpx, "AsyncClient", _FakeAsyncClient):
-        out = await web_mod._http_get(None, None, {"url": "https://example.com/x"})
+    monkeypatch.setattr(web_mod.SafeEgressClient, "stream", fake_stream)
+    out = await web_mod._http_get(None, None, {"url": "https://example.com/x"})
     assert "error" in out
     assert calls["n"] == 1
 
 
 async def test_http_get_stops_reading_oversized_response(monkeypatch):
     from agent.tools import web as web_mod
+    from contextlib import asynccontextmanager
 
     class _FakeResponse:
         status_code = 200
@@ -580,30 +540,11 @@ async def test_http_get_stops_reading_oversized_response(monkeypatch):
 
     response = _FakeResponse()
 
-    class _FakeStream:
-        async def __aenter__(self):
-            return response
+    @asynccontextmanager
+    async def fake_stream(_self, _url, **_kwargs):
+        yield response
 
-        async def __aexit__(self, *a):
-            return False
-
-    class _FakeClient:
-        def __init__(self, *a, **kw):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return False
-
-        def stream(self, method, url, headers=None):
-            return _FakeStream()
-
-    async def fake_resolve(_self, url):
-        return "93.184.216.34", None
-    monkeypatch.setattr(web_mod.SafeEgressClient, "resolve", fake_resolve)
-    monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
+    monkeypatch.setattr(web_mod.SafeEgressClient, "stream", fake_stream)
     out = await web_mod._http_get(None, None, {"url": "https://example.com/large"})
     assert "过大" in out["error"]
     assert response.chunks_read == 1
@@ -612,7 +553,7 @@ async def test_http_get_stops_reading_oversized_response(monkeypatch):
 async def test_http_get_batch_preserves_order_and_allows_partial_failure(monkeypatch):
     from agent.tools import web as web_mod
 
-    async def fake_one(_db, _user_id, url, _max_chars):
+    async def fake_one(_db, _user_id, url, _max_chars, _headers=None):
         await asyncio.sleep(0.01 if url.endswith("/a") else 0)
         if url.endswith("/bad"):
             return {"url": url, "error": "请求失败"}

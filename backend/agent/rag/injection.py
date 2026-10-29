@@ -19,6 +19,7 @@ _log = logging.getLogger("agent.rag")
 AUTO_RECALL_TIMEOUT_SECONDS = 10.0
 MAX_BACKGROUND_RECALL_TASKS = 32
 _background_recall_tasks: set[asyncio.Task] = set()
+_background_index_warmups: dict[str, asyncio.Task] = {}
 
 
 class RecallCapacityExceeded(RuntimeError):
@@ -32,6 +33,10 @@ def _drain_background_task(task: asyncio.Task) -> None:
     except asyncio.CancelledError:
         pass
     except Exception as exc:
+        from agent.rag.index_cache import IndexNotReady
+
+        if isinstance(exc, IndexNotReady):
+            return
         from app.core.redaction import diag_log
         diag_log("agent.rag.background_recall", exc)
     finally:
@@ -55,6 +60,40 @@ async def shutdown_background_recall_tasks(timeout: float = 5.0) -> None:
         await asyncio.gather(*tasks, return_exceptions=True)
     finally:
         _background_recall_tasks.difference_update(tasks)
+
+
+async def _warm_index_without_request_trace(user_id, scopes) -> None:
+    """预热任务不复用已经结束的主请求 RAG span。"""
+    from agent.rag.observation import current_recall
+    from agent.rag.service import warm_knowledge_index
+
+    token = current_recall.set(None)
+    try:
+        await warm_knowledge_index(user_id, scope=scopes)
+    finally:
+        current_recall.reset(token)
+
+
+def _release_index_warmup(owner: str, task: asyncio.Task) -> None:
+    if _background_index_warmups.get(owner) is task:
+        _background_index_warmups.pop(owner, None)
+
+
+def _schedule_index_warmup(user_id, scopes) -> bool:
+    """按 owner 单飞地异步准备持久索引；不为每条冷请求重复创建任务。"""
+    owner = str(user_id)
+    existing = _background_index_warmups.get(owner)
+    if existing is not None and not existing.done():
+        return True
+    if len(_background_recall_tasks) >= MAX_BACKGROUND_RECALL_TASKS:
+        _log.warning("RAG 索引预热任务达到上限，跳过 owner 预热")
+        return False
+    task = asyncio.create_task(_warm_index_without_request_trace(user_id, scopes))
+    _background_index_warmups[owner] = task
+    _background_recall_tasks.add(task)
+    task.add_done_callback(_drain_background_task)
+    task.add_done_callback(lambda completed: _release_index_warmup(owner, completed))
+    return True
 
 
 async def _search_with_timeout(search_awaitable, timeout: float):
@@ -230,7 +269,12 @@ def _request_scopes(request) -> list[tuple[str, Any]]:
         if getattr(request, "im_group_memory_enabled", True):
             scopes.append(("group-rag", group_scope(request.user_id, source, bot_id, chat_id)))
         role = getattr(request, "im_role", None)
-        if role == "owner" and getattr(request, "im_group_owner_memory_enabled", False):
+        actor = getattr(request, "actor_context", None)
+        verified_group_owner = bool(getattr(actor, "verified_owner", False))
+        if (
+            getattr(request, "im_group_owner_memory_enabled", False)
+            and (role == "owner" or verified_group_owner)
+        ):
             scopes.append(("owner-rag", owner_scope(request.user_id)))
         if role == "member" and getattr(request, "im_member_memory_enabled", True):
             member_id = str(getattr(request, "platform_user_id", "") or "")
@@ -279,20 +323,36 @@ async def _build_automatic_rag_context(
         labels = [label for label, _ in requested_scopes]
         label = "+".join(labels)
         scopes = [scope for _, scope in requested_scopes]
+        from agent.rag.index_cache import IndexNotReady
+
         try:
+            search_args = dict(
+                scope=scopes, source="all", strategy="auto", limit=5,
+                mode="automatic", exclude_content_hashes=seen,
+            )
             try:
                 # 自动召回是可选增强，不能阻塞主 Agent 或让 IM 一直停在“思考中”。
+                # 本进程还没有当前 owner 的索引时，先让对话继续，再由后台准备索引。
                 # 显式 read_knowledge 直读工具保留自己的完整等待语义。
                 result = await _search_with_timeout(
                     search_knowledge(
-                        request.user_id, query, scope=scopes, source="all",
-                        strategy="auto", limit=5, mode="automatic",
-                        exclude_content_hashes=seen,
+                        request.user_id, query, **search_args,
+                        defer_cold_index=True,
                     ),
                     AUTO_RECALL_TIMEOUT_SECONDS,
                 )
                 if not isinstance(result, dict):
                     raise TypeError("RAG 返回值不是对象")
+            except IndexNotReady:
+                scheduled = _schedule_index_warmup(request.user_id, scopes)
+                return {
+                    "tail": [], "blocks": [],
+                    "scope_hits": [{
+                        "scope": label, "candidate_count": 0, "hit_count": 0,
+                        "index_cold": True, "warmup_scheduled": scheduled,
+                    }],
+                    "injected": False, "reason": "cold_index_deferred",
+                }
             except RecallCapacityExceeded:
                 return {"tail": [], "blocks": [], "scope_hits": [], "injected": False,
                         "reason": "capacity_exceeded"}

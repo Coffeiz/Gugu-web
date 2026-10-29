@@ -37,6 +37,7 @@ class QQMermaidRound:
         from agent.gateway import qq
 
         self.payload = payload
+        self.active_payload = {**payload, "message_id": None}
         self._send_text = send_text
         self._try_send_png_image = try_send_png_image
         self._send_mermaid_text = send_mermaid_text
@@ -59,6 +60,8 @@ class QQMermaidRound:
         self.round_has_delivered_output = False
         self.trim_leading_segment = False
         self.stream_message_id: str | None = None
+        self.pending_round_end = False
+        self.pending_round_text = ""
 
     def _new_stream(self):
         # 每个文本段是独立气泡；被动回复窗口/次数由 QQ 响应决定，触发限制时网关回退主动发送。
@@ -84,7 +87,13 @@ class QQMermaidRound:
 
         await self._emit_parts([ReplyPart(png=png, source=source)])
 
-    async def finish_round(self, final_text: str = "", *, start_next: bool = True) -> bool:
+    async def finish_round(
+        self,
+        final_text: str = "",
+        *,
+        start_next: bool = True,
+        allow_rewrite: bool = False,
+    ) -> bool:
         final_text = self._fix_loose_bold(final_text or "")
         if not self.round_text.strip() and final_text.strip() and not self.round_has_image:
             self.segment_text = final_text.strip()
@@ -92,7 +101,7 @@ class QQMermaidRound:
             if self.stream is not None:
                 self.stream.push(self.segment_text)
         self.pending_whitespace = ""
-        delivered = await self._finish_text_segment()
+        delivered = await self._finish_text_segment(allow_rewrite=allow_rewrite)
         self.final_delivery.last_round_delivered = delivered
         self.final_delivery.last_round_had_output = self.round_has_delivered_output
         self.last_text = final_text.strip() or self.round_text.strip() or self.last_text
@@ -116,6 +125,8 @@ class QQMermaidRound:
         elif final_text and self.final_delivery.last_round_delivered:
             # 只有完整结束且与终态正文相同的轮次，才能计为最终正文已送达。
             self.final_delivery.candidate = True
+        self.pending_round_end = False
+        self.pending_round_text = ""
         if self.stream is not None:
             self.stream_sent = self.stream_sent or self.stream.has_sent()
         self.final_delivery.text_sent = bool(
@@ -132,7 +143,15 @@ class QQMermaidRound:
         if self._matches_final_round(current_text, final_text):
             await self._finish_final_round(current_text, final_text)
             return
-        # 当前轮与终态不是前缀关系，不能把它当作最终正文已送达。
+        # ROUND_END 可能只是工具调用前的阶段性正文。若这轮没有后续 token，
+        # 终态可以修订已流出的内容；在同一条 QQ replace 流里覆盖并结束即可。
+        if self.pending_round_end and final_text and not self.round_has_image:
+            self.round_text = final_text
+            self.segment_text = final_text
+            self.pending_whitespace = ""
+            await self._finish_final_round(current_text, final_text)
+            return
+        # 没有待收束的阶段边界时，保留原来的分段回退语义。
         await self.finish_round(current_text)
         await self._send_final_text(final_text)
 
@@ -159,7 +178,9 @@ class QQMermaidRound:
             self.round_text = final_text
             self.segment_text += final_text[len(current_text):]
         self.final_delivery.candidate = True
-        delivered = await self.finish_round(final_text, start_next=False)
+        delivered = await self.finish_round(
+            final_text, start_next=False, allow_rewrite=True,
+        )
         self.final_delivery.candidate = delivered
 
     async def _send_final_text(self, final_text: str) -> None:
@@ -196,7 +217,12 @@ class QQMermaidRound:
             self.final_delivery.text_sent = True
         return self.final_delivery.text_sent
 
-    async def _finish_text_segment(self, *, trim_end: bool = False) -> bool:
+    async def _finish_text_segment(
+        self,
+        *,
+        trim_end: bool = False,
+        allow_rewrite: bool = False,
+    ) -> bool:
         if trim_end:
             # 已展示的流式前缀不可回改；只丢弃还未推送的尾部空白。
             self.pending_whitespace = ""
@@ -207,7 +233,7 @@ class QQMermaidRound:
             if self.stream_failed:
                 text = self.segment_text
                 try:
-                    payload = self.payload
+                    payload = self.active_payload
                     if not await self._send_text(payload, text):
                         # 留给统一最终回复出口重试；此前的中间轮送达不能
                         # 被误当作终态正文已交付。
@@ -226,7 +252,7 @@ class QQMermaidRound:
         stream = self.stream
         text = self.segment_text
         try:
-            await stream.finish(text)
+            await stream.finish(text, allow_rewrite=allow_rewrite)
         except Exception:
             self._record_failed_segment(stream, text)
             raise
@@ -272,7 +298,7 @@ class QQMermaidRound:
                     self.stream_sent = True
                     self.round_has_delivered_output = True
                 elif part.source:
-                    if not await self._send_mermaid_text(self.payload, part.source):
+                    if not await self._send_mermaid_text(self.active_payload, part.source):
                         raise RuntimeError("QQ Mermaid 图片和文本回退均发送失败")
                     self.stream_sent = True
                     self.round_has_delivered_output = True
@@ -305,6 +331,14 @@ class QQMermaidRound:
         self.segment_text = ""
         self.pending_whitespace = ""
         self.round_has_delivered_output = False
+        self.pending_round_end = False
+        self.pending_round_text = ""
+
+    async def continue_after_round_end(self, text: str = "") -> None:
+        """新一轮事件到达时，才把上一轮 ROUND_END 确认为独立消息。"""
+        if not self.pending_round_end:
+            return
+        await self.finish_round(text or self.pending_round_text, start_next=True)
 
 
 async def send_qq_stream_by_round(
@@ -325,26 +359,55 @@ async def send_qq_stream_by_round(
     response: AgentResponse | None = None
     transport_error: Exception | None = None
 
-    async for kind, value in token_iter:
-        if kind == "final" and isinstance(value, AgentResponse):
-            response = value
-            continue
-        if isinstance(transport_error, QQStreamFinalizationError):
-            # 继续消费模型终态以完成持久化，但关闭失败后不再发送其他分段。
-            continue
-        try:
-            if kind == "token":
-                await sender.push_token(str(value or ""))
-            elif kind == "mermaid_image":
-                await sender.push_image(value)
-            elif kind == ROUND_END:
-                await sender.finish_round(str(value or ""))
-        except Exception as exc:
-            if transport_error is None or isinstance(exc, QQStreamFinalizationError):
-                transport_error = exc
-            sender._fail_stream()
+    try:
+        async for kind, value in token_iter:
+            if kind == "final" and isinstance(value, AgentResponse):
+                response = value
+                continue
+            if isinstance(transport_error, QQStreamFinalizationError):
+                # 继续消费模型终态以完成持久化，但关闭失败后不再发送其他分段。
+                continue
+            try:
+                if kind in {"token", "mermaid_image"} and sender.pending_round_end:
+                    await sender.continue_after_round_end()
+                if kind == "token":
+                    await sender.push_token(str(value or ""))
+                elif kind == "mermaid_image":
+                    await sender.push_image(value)
+                elif kind == ROUND_END:
+                    sender.pending_round_end = True
+                    sender.pending_round_text = str(value or "")
+            except Exception as exc:
+                if transport_error is None or isinstance(exc, QQStreamFinalizationError):
+                    transport_error = exc
+                sender._fail_stream()
+    except BaseException:
+        await _close_aborted_qq_stream(sender)
+        raise
+
+    if response is None:
+        # 事件流正常结束却缺少模型终态时，先关闭已打开的 QQ 流，避免客户端
+        # 永久显示生成中；仍向上报告协议错误，不把部分内容误判成成功回复。
+        await _close_aborted_qq_stream(sender)
+        raise RuntimeError("QQ 回复未收到模型终态")
 
     return await _finish_qq_stream_run(sender, response, transport_error, fix_loose_bold)
+
+
+async def _close_aborted_qq_stream(sender) -> None:
+    if sender.stream is None or not (
+        sender.round_text.strip() or sender.segment_text.strip() or sender.pending_round_text.strip()
+    ):
+        return
+    try:
+        await sender.finish_round(
+            sender.pending_round_text or sender.round_text,
+            start_next=False,
+        )
+    except BaseException as exc:
+        from app.core.redaction import diag_log
+
+        diag_log("agent.im.qq_stream_abort_finalize", exc)
 
 
 async def _finish_qq_stream_run(sender, response, transport_error, fix_loose_bold):

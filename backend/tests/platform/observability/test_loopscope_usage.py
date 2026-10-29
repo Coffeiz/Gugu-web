@@ -512,21 +512,30 @@ async def test_mid_stream_abort_marks_span_cancelled(monkeypatch, loopscope_hook
     )
 
     async def fake_stream_round(client, kwargs, adapter=None):
-        # 一直吐 token、不给 final：让 _run_loop 在流式途中撞上取消检查点
+        # 一直吐 token、不给 final：确认统一取消监听可关闭活跃的 provider span
         for i in range(30):
             yield ("token", f"字{i}")
         yield ("final", final)
 
     monkeypatch.setattr(core, "_stream_round", fake_stream_round)
 
-    # 第一处在轮开始前的检查要放行，第二处（流式途中 _tok % 24 == 0）再掐断
-    calls = {"n": 0}
+    from agent.runtime.cancellation import RunCancellation
+    from agent.runtime.cancellation import RunCancellationRequested
 
-    async def fake_cancel(_session_id=None):
-        calls["n"] += 1
-        return calls["n"] >= 2
+    async def cancel_after_three_tokens(self, stream):
+        token_count = 0
+        async for item in stream:
+            if item.kind == "token":
+                token_count += 1
+                if token_count == 4:
+                    raise RunCancellationRequested
+            yield item
 
-    monkeypatch.setattr(core, "_im_cancelled", fake_cancel)
+    monkeypatch.setattr(RunCancellation, "is_requested", lambda _self: _async_false())
+    monkeypatch.setattr(RunCancellation, "iterate", cancel_after_three_tokens)
+
+    async def _async_false():
+        return False
 
     run = _ScopeRun(
         id="run-test-cancel", trace_id="trace-test",

@@ -73,12 +73,29 @@ def test_qq_group_sender_prefers_user_openid_for_owner_binding(monkeypatch):
     assert message.sender.id == "owner-openid"
 
 
-def test_qq_message_mentions_bot_uses_at_event_and_payload_fallback():
+def test_qq_message_mentions_bot_requires_current_instance_marker():
     assert qq_events._qq_message_mentions_bot(
-        {"mentions": [{"bot": True}]}, "GROUP_AT_MESSAGE_CREATE"
+        {"mentions": [{"bot": True, "is_you": True}]}, "GROUP_MESSAGE_CREATE"
     ) is True
     assert qq_events._qq_message_mentions_bot(
+        {"mentions": [{"bot": True, "is_you": False}]}, "GROUP_AT_MESSAGE_CREATE"
+    ) is False
+    assert qq_events._qq_message_mentions_bot(
+        {"mentions": [{"bot": True}]}, "GROUP_AT_MESSAGE_CREATE"
+    ) is False
+    assert qq_events._qq_message_mentions_bot({}, "GROUP_AT_MESSAGE_CREATE") is False
+    assert qq_events._qq_message_mentions_bot(
         {"mentions": []}, "GROUP_AT_MESSAGE_CREATE"
+    ) is False
+
+
+def test_qq_message_mentions_bot_finds_current_instance_after_another_bot():
+    assert qq_events._qq_message_mentions_bot(
+        {"mentions": [
+            {"id": "other-bot", "bot": True, "is_you": False},
+            {"id": "current-bot", "bot": True, "is_you": True},
+        ]},
+        "GROUP_MESSAGE_CREATE",
     ) is True
 
 
@@ -129,9 +146,29 @@ def test_qq_bot_mention_id_uses_explicit_bot_mention():
 
     data = {
         "content": "<@D5A139> 看看这个",
-        "mentions": [{"id": "D5A139", "bot": True}],
+        "mentions": [{"id": "D5A139", "bot": True, "is_you": True}],
     }
     assert _qq_bot_mention_id(data, "GROUP_MESSAGE_CREATE") == "D5A139"
+
+
+def test_qq_bot_mention_id_ignores_other_bot_even_when_it_is_first():
+    from agent.gateway.qq.events import _qq_bot_mention_id
+
+    data = {
+        "content": "<@other-bot> 看看这个",
+        "mentions": [
+            {"id": "other-bot", "bot": True, "is_you": False},
+            {"id": "current-bot", "bot": True, "is_you": True},
+        ],
+    }
+    assert _qq_bot_mention_id(data, "GROUP_MESSAGE_CREATE") == "current-bot"
+
+
+def test_qq_bot_mention_id_does_not_guess_from_event_type_or_content():
+    from agent.gateway.qq.events import _qq_bot_mention_id
+
+    data = {"content": "<@other-bot> 看看这个"}
+    assert _qq_bot_mention_id(data, "GROUP_AT_MESSAGE_CREATE") == ""
 
 
 def test_qq_bot_mention_id_does_not_guess_unknown_mentions():
@@ -144,11 +181,11 @@ def test_qq_bot_mention_id_does_not_guess_unknown_mentions():
     assert _qq_bot_mention_id(data, "GROUP_MESSAGE_CREATE") == ""
 
 
-def test_qq_bot_mention_id_falls_back_only_for_at_event():
+def test_qq_bot_mention_id_does_not_guess_from_event_type_or_content():
     from agent.gateway.qq.events import _qq_bot_mention_id
 
     data = {"content": "<@D5A139> 看看这个"}
-    assert _qq_bot_mention_id(data, "GROUP_AT_MESSAGE_CREATE") == "D5A139"
+    assert _qq_bot_mention_id(data, "GROUP_AT_MESSAGE_CREATE") == ""
 
 
 def test_qq_mention_display_uses_username_without_changing_identity_fields():
@@ -184,7 +221,7 @@ def test_qq_group_reply_formats_current_member_mention():
     ) == ('<qqbot-at-user id="member-1" />', "测试一下")
 
 
-async def test_qq_group_at_event_without_mentions_reaches_agent(monkeypatch):
+async def test_qq_group_at_event_without_current_bot_marker_is_not_claimed(monkeypatch):
     produced: list[dict] = []
 
     async def fake_group_settings(_bot_id):
@@ -222,7 +259,7 @@ async def test_qq_group_at_event_without_mentions_reaches_agent(monkeypatch):
     )
 
     assert len(produced) == 1
-    assert produced[0]["group_mentioned"] is True
+    assert produced[0]["group_mentioned"] is False
 
 
 def test_qq_extracts_quoted_text_by_ref_msg_idx():
@@ -462,6 +499,53 @@ async def test_qq_raw_group_event_to_payload(monkeypatch):
     assert produced[0]["platform_user_id"] == "member_1"
     assert produced[0]["chat_id"] == "group_1"
     assert produced[0]["chat_type"] == "group"
+    assert produced[0]["group_mentioned"] is False
+
+
+async def test_qq_group_image_protocol_placeholder_is_not_forwarded_as_message_text(monkeypatch):
+    produced: list[dict] = []
+
+    async def fake_group_settings(_bot_id):
+        return True, True
+
+    async def fake_produce(_stream, payload):
+        produced.append(payload)
+
+    monkeypatch.setattr(qq_events, "_group_settings", fake_group_settings)
+    monkeypatch.setattr(qq_events.R, "produce", fake_produce)
+
+    from agent import router
+    from agent.runtime import runtime_state
+
+    async def fake_async_false(*args, **kwargs):
+        return False
+
+    async def fake_async_none(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(router, "decide", lambda *args, **kwargs: {"action": "run"})
+    monkeypatch.setattr(runtime_state, "get_state", fake_async_none)
+    monkeypatch.setattr(runtime_state, "is_awaiting", fake_async_false)
+
+    marker = '<attachmentType="image/jpeg",attachmentIndex=0,description="opaque">'
+    attachment = {
+        "url": "https://example.invalid/image.jpg",
+        "filename": "synthetic-image.jpg",
+        "content_type": "image/jpeg",
+    }
+    data = _raw_group_event(content=marker, attachments=[attachment])
+
+    await qq_events._handle_raw_qq_message(
+        "GROUP_AT_MESSAGE_CREATE", data, "bot-1", "user-1", {},
+    )
+
+    assert len(produced) == 1
+    assert produced[0]["text"] == ""
+    assert produced[0]["attachments"] == [attachment]
+    cached_message = qq_events._qq_ref_index("user-1", "bot-1").get(
+        ref_index_key("group", "group_1", "member_1", "2"),
+    )
+    assert cached_message["content"] == ""
 
 
 async def test_qq_raw_group_disabled_drops_event(monkeypatch):

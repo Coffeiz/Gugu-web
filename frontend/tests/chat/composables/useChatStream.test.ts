@@ -153,6 +153,30 @@ describe('useChatStream 展示事件与生命周期', () => {
     expect(options.onAutomaticModeCommand).toHaveBeenCalledOnce()
   })
 
+  it('发送时为乐观气泡和服务端请求分配同一客户端消息身份', async () => {
+    const options = createOptions([])
+    options.inputText.value = '架构身份测试'
+    let requestBody: Record<string, unknown> | undefined
+    vi.stubGlobal('fetch', vi.fn(async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body))
+      return sseResponse([
+        { type: 'session_id', session_id: 42, user_message_id: 73 },
+        { type: 'done' },
+      ])
+    }))
+
+    await useChatStream(options).send()
+
+    expect(typeof requestBody?.client_message_id).toBe('string')
+    const userMessages = options.messages.value.filter(message => message.role === 'user')
+    expect(userMessages).toHaveLength(1)
+    expect(userMessages[0]).toMatchObject({
+      role: 'user', dbId: 73,
+      clientMessageId: requestBody?.client_message_id,
+      _syncKey: `client:${requestBody?.client_message_id}`,
+    })
+  })
+
   it('失败终态更新原用户消息且不伪造 assistant 错误消息', async () => {
     const userMessage: ChatMessage = { id: 7, dbId: 42, role: 'user', text: '测试请求', time: '12:00' }
     const options = createOptions([userMessage])
@@ -214,6 +238,54 @@ describe('useChatStream 展示事件与生命周期', () => {
 
     expect(toolMessage.toolStatus).toBe('cancelled')
     expect(unrelatedToolMessage.toolStatus).toBe('running')
+    expect(options.setStatus).toHaveBeenCalledWith({
+      kind: 'text', label: i18n.global.t('chatUi.runInterrupted'),
+    })
+  })
+
+  it('取消请求到达时 run 已结束，提示来不及中断', async () => {
+    const sessionId = ref<number | null>(42)
+    const options = createOptions([], sessionId)
+    const stream = useChatStream(options)
+    vi.spyOn(agentApi, 'cancelSession').mockResolvedValue({
+      ok: true, active: false, recovered: false, cancelled_locally: false,
+      outcome: 'already_completed',
+    })
+    let sseController!: ReadableStreamDefaultController<Uint8Array>
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) { sseController = controller },
+    })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(body)))
+
+    const consuming = stream.resumeStream(42)
+    stream.stopStreaming()
+    await Promise.resolve()
+    expect(options.setStatus).toHaveBeenCalledWith({
+      kind: 'text', label: i18n.global.t('chatUi.cancelTooLate'),
+    })
+    sseController.enqueue(new TextEncoder().encode('data: {"type":"done"}\n\n'))
+    sseController.close()
+    await consuming
+  })
+
+  it('远端取消未确认时提示本地停止且远端状态未知', async () => {
+    const options = createOptions([])
+    const stream = useChatStream(options)
+    let sseController!: ReadableStreamDefaultController<Uint8Array>
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) { sseController = controller },
+    })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(body)))
+
+    const consuming = stream.resumeStream(42)
+    sseController.enqueue(new TextEncoder().encode(
+      'data: {"type":"done","cancelled":true,"remote_status_unknown":true}\n\n',
+    ))
+    sseController.close()
+    await consuming
+    expect(options.setStatus).toHaveBeenCalledWith({
+      kind: 'text', label: i18n.global.t('chatUi.cancelRemoteUnknown'),
+    })
   })
 
   it('新会话尚无 session_id 时等待绑定后再取消，保留取消终态并避免伪造空回复', async () => {

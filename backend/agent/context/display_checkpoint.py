@@ -6,6 +6,13 @@ from sqlalchemy import select
 from app.models import ConversationMessage
 
 
+async def resequence_checkpoint(db, row: ConversationMessage) -> None:
+    """把运行展示占位行移动到后续用户输入之后、最终输出之前。"""
+    from app.services.conversation_order import reserve_conversation_sequence
+
+    row.conversation_seq = await reserve_conversation_sequence(db, row.session_id)
+
+
 def display_run_key(user_message_id: int) -> str:
     return f"display-user:{user_message_id}"
 
@@ -58,6 +65,7 @@ async def seal_checkpoint(session_factory, session_id: int, user_message_id: int
         ))).scalars().first()
         if row is None:
             return
+        await resequence_checkpoint(db, row)
         items = finalize_display_timeline(row.display_timeline or [])
         row.display_timeline = items
         row.content_json = null()

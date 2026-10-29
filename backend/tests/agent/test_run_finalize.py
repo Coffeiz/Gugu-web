@@ -364,7 +364,7 @@ async def test_finalize_run_uses_one_canonical_persistence_contract(monkeypatch)
     assert trim_calls == [7]
     assert baseline_calls == [(
         (7, "user-test", settings),
-        {"force": False, "reuse_summary": None, "reuse_before_message_id": None},
+        {"force": False, "reuse_summary": None, "reuse_before_message_seq": None},
     )]
 
 
@@ -416,7 +416,7 @@ async def test_finalize_run_reuses_run_summary_for_baseline(monkeypatch):
     assert baseline_calls == [{
         "force": False,
         "reuse_summary": "run 内摘要正文",
-        "reuse_before_message_id": 321,
+        "reuse_before_message_seq": None,
     }]
 
 
@@ -513,6 +513,56 @@ async def test_finalize_run_records_byok_usage_without_platform_capping(monkeypa
     assert usage.is_byok is True
     assert usage.tokens_in == 100
     assert usage.tokens_out == 20
+
+
+@pytest.mark.asyncio
+async def test_silent_group_finalize_records_usage_without_persisting_private_tool_history(
+    db, user_a, monkeypatch,
+):
+    session = ConversationSession(user_id=user_a.id, title="群聊静默收尾")
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+    area = MessageArea()
+    area.append_batch(MessageBatch.from_canonical_messages([
+        {"role": "assistant", "content": [{
+            "type": "tool_call", "id": "internal-choice", "name": "group_reply_decision",
+            "arguments": "{\"should_reply\":false}",
+        }]},
+        {"role": "user", "content": [{
+            "type": "tool_result", "tool_call_id": "internal-choice", "content": "silent",
+        }]},
+    ]))
+    recorded = []
+
+    async def fake_record_usage(*_args, **kwargs):
+        recorded.append((kwargs.get("tokens_in"), kwargs.get("tokens_out")))
+        from agent.usage import UsageResult
+        return UsageResult(tokens_in=kwargs.get("tokens_in", 0), tokens_out=kwargs.get("tokens_out", 0))
+
+    async def no_trim(_session_id):
+        return None
+
+    monkeypatch.setattr("agent.usage.record_usage", fake_record_usage)
+    monkeypatch.setattr("app.services.conversation_retention.trim_session_messages", no_trim)
+    await run_finalize.finalize_run(
+        session_factory=async_sessionmaker(db.bind, expire_on_commit=False),
+        session_id=session.id,
+        user_id=user_a.id,
+        settings=SimpleNamespace(ai=SimpleNamespace(context_tokens=80000)),
+        model_cfg=SimpleNamespace(model="synthetic", provider="synthetic"),
+        message_area=area,
+        text="",
+        display_timeline=None,
+        files=[],
+        tokens_in=17,
+        tokens_out=3,
+        persist_message_delta=False,
+    )
+
+    assert recorded == [(17, 3)]
+    assert (await db.scalars(select(ConversationMessage))).all() == []
+    assert (await db.scalars(select(ConversationBatch))).all() == []
 
 
 @pytest.mark.asyncio
@@ -862,7 +912,7 @@ async def test_synthetic_tool_round_survives_canonical_persistence_and_restore(
 async def test_interrupted_run_persists_completed_history_before_followup(
     db, user_a, monkeypatch,
 ):
-    """取消收尾晚到时，部分 assistant 与已完成工具轮仍排在后续用户消息之前。"""
+    """run 期间晚到的用户消息排在中止 run 的工具结果和最终展示之后。"""
     session = ConversationSession(user_id=user_a.id, title="中止历史顺序")
     db.add(session)
     await db.commit()
@@ -874,12 +924,15 @@ async def test_interrupted_run_persists_completed_history_before_followup(
         role="user",
         content="先检查文件",
         created_at=started_at,
+    # 真实到达时间仍用于网页展示；canonical 顺序由会话序号管理。
+        sent_at=started_at,
     )
     followup_user = ConversationMessage(
         session_id=session.id,
         role="user",
         content="继续",
         created_at=started_at + timedelta(seconds=1),
+        sent_at=started_at + timedelta(seconds=1),
     )
     db.add_all([current_user, followup_user])
     await db.commit()
@@ -940,14 +993,14 @@ async def test_interrupted_run_persists_completed_history_before_followup(
         rows = await load_session_history(check_db, session.id, max_messages=20)
 
     assert [row.content for row in rows] == [
-        "先检查文件", "", "", "已经读到文件开头，后续检查被中止。\n\n[本轮已中止，以上内容未完成]", "继续",
+        "先检查文件", "继续", "", "", "已经读到文件开头，后续检查被中止。\n\n[本轮已中止，以上内容未完成]",
     ]
-    assert [row.role for row in rows] == ["user", "assistant", "user", "assistant", "user"]
-    assert rows[1].created_at < rows[2].created_at < rows[3].created_at < rows[4].created_at
-    assert rows[1].content_json[0]["type"] == "tool_call"
-    assert rows[2].content_json[0]["type"] == "tool_result"
-    assert [row.run_id for row in rows[2:4]] == ["run-test-interrupted"] * 2
-    assert [row.round_id for row in rows[2:4]] == ["round-1", "round-2"]
+    assert [row.role for row in rows] == ["user", "user", "assistant", "user", "assistant"]
+    assert [row.conversation_seq for row in rows] == sorted(row.conversation_seq for row in rows)
+    assert rows[2].content_json[0]["type"] == "tool_call"
+    assert rows[3].content_json[0]["type"] == "tool_result"
+    assert [row.run_id for row in rows[2:]] == ["run-test-interrupted"] * 3
+    assert [row.round_id for row in rows[2:]] == ["round-1", "round-1", "round-2"]
     assert rows[0].run_id == "run-test-interrupted"
     assert rows[0].round_id == "round-1"
 

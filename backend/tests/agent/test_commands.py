@@ -83,10 +83,14 @@ def test_router_does_not_strip_mentions_without_group_context():
 
 
 @pytest.mark.asyncio
-async def test_command_handler_accepts_group_mention():
-    assert await commands.handle(
-        "user-1", "@小北 /compact", allow_leading_mention=True
-    ) == "当前还没有可压缩的对话。"
+async def test_command_handler_only_accepts_semantic_text():
+    """命令层只处理语义文本；mention 前缀由 IM 层（payload_semantic_text）剥掉。
+
+    命令层不再自带第二套 mention 解析：群里命令要不要算，必须先由 IM 层判断
+    「这条消息确证是对咕咕说的」，否则会误抢别家 bot 的命令。
+    """
+    assert await commands.handle("user-1", "@小北 /compact") is None
+    assert await commands.handle("user-1", "/compact") == "当前还没有可压缩的对话。"
 
 
 @pytest.mark.asyncio

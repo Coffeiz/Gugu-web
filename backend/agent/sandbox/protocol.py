@@ -121,7 +121,7 @@ class ExecuteRequest:
         if quota_bytes is not None and not quota_roots:
             raise ValueError("sandboxd quota_bytes 缺少 quota_roots")
         workspace_mounts, primary_workspace = _parse_workspace_mounts(value)
-        if not 0.1 <= timeout <= 300:
+        if not 0.1 <= timeout <= 3600:
             raise ValueError("sandboxd timeout 超出允许范围")
         if not 1 <= max_output_chars <= 120_000:
             raise ValueError("sandboxd 输出上限超出允许范围")

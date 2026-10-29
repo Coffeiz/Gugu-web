@@ -41,7 +41,7 @@ from .quota import measure_directory
 from .offline_bundle import load_bundle_manifest
 
 
-_MAX_TIMEOUT = 300
+_MAX_TIMEOUT = 3600
 _MAX_OUTPUT = 120_000
 _CONTAINER_ROOT = Path("/workspace")
 _CONTAINER_USER = "65532:65532"

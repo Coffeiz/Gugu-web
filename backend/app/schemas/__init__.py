@@ -735,6 +735,8 @@ class PreferencesResponse(CamelModel):
     stageTemplates:    list[dict] = []
     replyTone:         Optional[str] = None   # natural / formal / lively
     replyLength:       Optional[str] = None   # medium / short / detailed
+    customReplyStyle: Optional[str] = None
+    customReplyStyleEnabled: bool = False
     pmStagesExpanded:  bool = False            # 项目编辑卡：阶段区展开(50/50) 版面记忆
     calendarWeekStart: str = "monday"         # 日历每周起始日：monday / sunday
     defaultView:       str = "projects"       # 应用打开时的默认入口
@@ -748,6 +750,8 @@ class PreferencesResponse(CamelModel):
     toolInjectionMode: str = "description"  # description = 简介模式；full = 全量模式，默认简介
     personalityPreference: Optional[str] = None
     personalityPreferenceEnabled: bool = False
+    groupPersonalityPreference: Optional[str] = None
+    groupPersonalityPreferenceEnabled: bool = False
     personalityPreferenceRevision: int = 0
     personalityPreferenceUpdatedAt: Optional[str] = None
     personalityPreferenceAvailable: bool = True
@@ -801,6 +805,7 @@ class PreferencesUpdate(CamelModel):
     stageTemplates:    Optional[list[dict]] = None
     replyTone:         Optional[str] = None
     replyLength:       Optional[str] = None
+    customReplyStyleEnabled: Optional[bool] = None
     pmStagesExpanded:  Optional[bool] = None
     calendarWeekStart: Optional[str] = None
     defaultView:       Optional[str] = None
@@ -814,14 +819,29 @@ class PreferencesUpdate(CamelModel):
     toolInjectionMode: Optional[str] = None
     personalityPreference: Optional[str] = Field(default=None, max_length=10000)
     personalityPreferenceEnabled: Optional[bool] = None
+    groupPersonalityPreference: Optional[str] = Field(default=None, max_length=10000)
+    groupPersonalityPreferenceEnabled: Optional[bool] = None
 
-    @field_validator("personalityPreference")
+    @field_validator("personalityPreference", "groupPersonalityPreference")
     @classmethod
     def validate_personality_preference(cls, value: Optional[str]) -> Optional[str]:
         if value is None:
             return None
         if any(char in {"\x00", "\ufeff"} or (ord(char) < 32 and char not in {"\n", "\r", "\t"}) for char in value):
             raise ValueError("人格偏好包含不支持的控制字符")
+        return value.strip() or None
+
+
+class ReplyStyleUpdate(CamelModel):
+    content: Optional[str] = Field(..., max_length=10000)
+
+    @field_validator("content")
+    @classmethod
+    def validate_reply_style(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        if any(char in {"\x00", "\ufeff"} or (ord(char) < 32 and char not in {"\n", "\r", "\t"}) for char in value):
+            raise ValueError("回复风格包含不支持的控制字符")
         return value.strip() or None
 
 

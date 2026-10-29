@@ -59,6 +59,82 @@ async def test_completed_tool_result_wins_if_cancel_arrives_after_completion(mon
     assert await cancellation.dispatch(operation, request_id="run-43") == "completed"
 
 
+@pytest.mark.asyncio
+async def test_model_stream_wait_is_interrupted_without_waiting_for_next_token(monkeypatch):
+    cancel_requested = asyncio.Event()
+    stream_cancelled = asyncio.Event()
+
+    async def is_requested(_self):
+        return cancel_requested.is_set()
+
+    async def blocked_stream():
+        try:
+            await asyncio.Event().wait()
+            yield "unreachable"
+        except asyncio.CancelledError:
+            stream_cancelled.set()
+            raise
+
+    monkeypatch.setattr(RunCancellation, "is_requested", is_requested)
+    monkeypatch.setattr("agent.runtime.cancellation._CANCEL_POLL_INTERVAL", 0.005)
+    cancellation = RunCancellation(44)
+
+    async def consume():
+        async for _ in cancellation.iterate(blocked_stream()):
+            pass
+
+    task = asyncio.create_task(consume())
+    await asyncio.sleep(0)
+    cancel_requested.set()
+    with pytest.raises(RunCancellationRequested):
+        await asyncio.wait_for(task, timeout=0.5)
+    assert stream_cancelled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_model_stream_reuses_one_cancellation_listener_for_all_events(monkeypatch):
+    listener_started = asyncio.Event()
+    listener_count = 0
+
+    async def wait_until_requested(_self):
+        nonlocal listener_count
+        listener_count += 1
+        listener_started.set()
+        await asyncio.Event().wait()
+
+    async def stream():
+        for event in range(5):
+            await asyncio.sleep(0)
+            yield event
+
+    monkeypatch.setattr(RunCancellation, "_wait_until_requested", wait_until_requested)
+    cancellation = RunCancellation(46)
+    results = [event async for event in cancellation.iterate(stream())]
+
+    assert listener_started.is_set()
+    assert listener_count == 1
+    assert results == list(range(5))
+
+
+@pytest.mark.asyncio
+async def test_parallel_run_registry_tracks_source_session_and_task_until_completion(monkeypatch):
+    from agent.runtime import cancellation
+    async def run():
+        task = asyncio.current_task()
+        record = cancellation.register_current_run(45, "run-registry")
+        assert record is not None
+        assert record.session_id == 45
+        assert record.run_id == "run-registry"
+        assert record.task is task
+        assert record.source in {"web", "im"}
+        assert cancellation.active_run("run-registry") is record
+
+    task = asyncio.create_task(run())
+    await task
+    await asyncio.sleep(0)
+    assert cancellation.active_run("run-registry") is None
+
+
 def test_sync_im_cancel_uses_shared_cancellation_entrypoint(monkeypatch):
     from agent.runtime import cancellation
     from agent.runtime import runtime_state
@@ -71,6 +147,23 @@ def test_sync_im_cancel_uses_shared_cancellation_entrypoint(monkeypatch):
 
     monkeypatch.setattr(runtime_state, "request_cancel_sync", request_cancel_sync)
     assert cancellation.request_cancel_sync(
+        platform="qq", bot_id="bot-test", scope_id="group-test", puid="user-test",
+    ) is True
+    assert calls == [("qq", "bot-test", "group-test", "user-test")]
+
+
+@pytest.mark.asyncio
+async def test_async_im_cancel_uses_shared_cancellation_entrypoint(monkeypatch):
+    from agent.runtime import cancellation, runtime_state
+
+    calls = []
+
+    async def request_cancel(*args):
+        calls.append(args)
+        return True
+
+    monkeypatch.setattr(runtime_state, "request_cancel", request_cancel)
+    assert await cancellation.request_cancel(
         platform="qq", bot_id="bot-test", scope_id="group-test", puid="user-test",
     ) is True
     assert calls == [("qq", "bot-test", "group-test", "user-test")]

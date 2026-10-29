@@ -1,6 +1,7 @@
 """IM 会话与被动群消息持久化。"""
 from __future__ import annotations
 
+from enum import Enum
 from typing import Optional
 
 from agent.im.context_policy import IM_SOURCES
@@ -10,35 +11,82 @@ from agent.models import AgentRequest
 from app.services.conversation_retention import trim_session_messages
 
 
+class GroupInboundMode(str, Enum):
+    """群消息的入站分类。"""
+
+    PASSIVE = "passive"   # 只记录不回复
+    REPLY = "reply"       # 进 run，由模型决定是否回话
+
+
+def classify_group_inbound(payload: dict) -> Optional[GroupInboundMode]:
+    """按群回复模式把一条群消息分成「只记录」和「进 run」两类。
+
+    判定只依赖网关已经写入的回应方式字段，不解析身份、不读数据库——被动消息必须
+    能在同一群的主动任务运行期间实时落库并推送前端。
+
+    ``None`` 表示这不是群消息（私聊/非 IM 平台），调用方按各自入口处理。
+    """
+    if not (
+        payload.get("platform") in {"qq", "feishu", "telegram"}
+        and payload.get("chat_type") == "group"
+        and payload.get("chat_id")
+    ):
+        return None
+    if (
+        payload.get("group_read_enabled")
+        or (
+            payload.get("group_requires_at")
+            and not payload.get("group_mentioned")
+        )
+        or (
+            payload.get("mentions_other_bot")
+            and not payload.get("group_mentioned")
+        )
+    ):
+        return GroupInboundMode.PASSIVE
+    return GroupInboundMode.REPLY
+
+
+async def build_attachment_cards(user_id, attach_ids: list) -> list[dict]:
+    """整理会话气泡用的附件卡片；只读元数据，**不** claim。
+
+    claim 必须留在 run 的"消息 + 附件同一事务"里（PRD-STORAGE-1 不变量 3）：
+    提前 claim 会让 run 后续 claim 不到、误判附件已失效。
+    """
+    if not attach_ids:
+        return []
+    from app.core import chat_attach
+
+    metas = await chat_attach.get_meta_many(user_id, attach_ids)
+    cards = []
+    for attach_id in attach_ids:
+        meta = metas.get(str(attach_id))
+        if not meta:
+            continue
+        cards.append({
+            "attach_id": meta["attach_id"],
+            "name": meta["name"],
+            "ext": meta["ext"],
+            "size_bytes": meta["size"],
+            "kind": meta["kind"],
+            "mime": meta.get("mime"),
+            "qq_face": bool(meta.get("qq_face")),
+            "quoted": bool(meta.get("quoted")),
+            "upload": True,
+            "duration": meta.get("duration"),
+            "img_width": meta.get("img_width"),
+            "img_height": meta.get("img_height"),
+        })
+    return cards
+
+
 async def record_passive_im_message(request: AgentRequest, session_id: Optional[int] = None) -> int:
     """保存未触发回复的群消息，供后续 @ 咕咕时读取同一会话上下文。"""
     import app.db.session as db_session
     from sqlalchemy import desc, select
     from app.models import ConversationMessage, ConversationSession
 
-    attachment_cards = []
-    if request.attachments:
-        from app.core import chat_attach
-
-        metas = await chat_attach.get_meta_many(request.user_id, request.attachments)
-        for attach_id in request.attachments:
-            meta = metas.get(str(attach_id))
-            if not meta:
-                continue
-            attachment_cards.append({
-                "attach_id": meta["attach_id"],
-                "name": meta["name"],
-                "ext": meta["ext"],
-                "size_bytes": meta["size"],
-                "kind": meta["kind"],
-                "mime": meta.get("mime"),
-                "qq_face": bool(meta.get("qq_face")),
-                "quoted": bool(meta.get("quoted")),
-                "upload": True,
-                "duration": meta.get("duration"),
-                "img_width": meta.get("img_width"),
-                "img_height": meta.get("img_height"),
-            })
+    attachment_cards = await build_attachment_cards(request.user_id, request.attachments)
 
     if db_session._engine is None:
         db_session._build_engine()
@@ -117,6 +165,7 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
                 session_id=session.id,
                 appended=[{
                     "role": "user",
+                    "message_id": message_row.id,
                     "text": request.message,
                     "platform_user_id": request.platform_user_id,
                     "platform_user_name": request.platform_user_name,
@@ -191,19 +240,19 @@ def should_record_passive_group(request: AgentRequest, payload: dict) -> bool:
     网关始终接收平台实际投递的群消息；这里仅负责回应方式的业务语义：
     ``record_only`` 记录全部消息，``reply_mentions`` 记录非 @ 消息，@ 消息
     继续进入模型回复流程。
+
+    另外，@ 的是**别的 bot** 的消息一律只记录不回复：那条是喊别人家机器人的，
+    抢答等于替别人作答。这条不看群回复模式——``reply_all`` 也不该抢答。
     """
-    return bool(
-        request.source in {"qq", "feishu", "telegram"}
-        and request.chat_id
-        and payload.get("chat_type") == "group"
-        and (
-            payload.get("group_read_enabled")
-            or (
-                payload.get("group_requires_at")
-                and not payload.get("group_mentioned")
-            )
-        )
-    )
+    return classify_group_inbound({
+        "platform": request.source,
+        "chat_type": payload.get("chat_type"),
+        "chat_id": request.chat_id,
+        "group_read_enabled": payload.get("group_read_enabled"),
+        "group_requires_at": payload.get("group_requires_at"),
+        "group_mentioned": payload.get("group_mentioned"),
+        "mentions_other_bot": payload.get("mentions_other_bot"),
+    }) is GroupInboundMode.PASSIVE
 
 
 async def persist_im_session(

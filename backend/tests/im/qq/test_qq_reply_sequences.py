@@ -87,7 +87,7 @@ async def test_stream_image_and_following_text_do_not_collide(
     assert all(body["msg_id"] == "inbound-1" for body in messages)
     for stream in (before, after):
         frames = [body for _, body in qq_reply_transport if body.get("msg_seq") == stream.msg_seq]
-        assert [body["input_state"] for body in frames] == [1, 10]
+        assert [body["input_state"] for body in frames] == [10]
 
 
 async def test_concurrent_stream_and_image_replies_do_not_collide(qq_reply_transport):
@@ -104,6 +104,34 @@ async def test_concurrent_stream_and_image_replies_do_not_collide(qq_reply_trans
     )
     assert image_sent is True
     assert stream.has_sent()
+
+
+async def test_final_markdown_frame_ends_with_newline(monkeypatch):
+    """模拟 QQ 拒绝未以换行结尾的 Markdown 分片，确保最终流帧能正常关闭。"""
+    frames = []
+
+    async def request(_channel, method, path, *, json_body):
+        body = dict(json_body)
+        frames.append(body)
+        if not body["content_raw"].endswith("\n"):
+            raise QQAPIError(method, path, 400, {
+                "code": 40034017,
+                "message": "流式消息md分片需要换行结束",
+            })
+        return {"stream_msg_id": "synthetic-stream"}
+
+    monkeypatch.setattr(outbound, "_qq_request", request)
+    monkeypatch.setattr(outbound, "_next_seq", lambda _id: _sequence())
+    stream = outbound.create_private_text_stream(
+        "synthetic-user", channel_id="synthetic-bot", message_id="inbound-final-newline",
+    )
+
+    await stream.finish("正文尾行没有换行")
+
+    assert len(frames) == 1
+    assert frames[0]["input_state"] == 10
+    assert frames[0]["content_raw"] == "正文尾行没有换行\n"
+    assert stream.last_sent_text == "正文尾行没有换行"
 
 
 async def test_stream_finishes_after_transient_intermediate_update_failure(monkeypatch):
@@ -127,7 +155,7 @@ async def test_stream_finishes_after_transient_intermediate_update_failure(monke
     await stream._timer
     await stream.finish("前缀\n后缀_STATE")
     assert delivered[-1]["input_state"] == 10
-    assert delivered[-1]["content_raw"] == "前缀\n后缀_STATE"
+    assert delivered[-1]["content_raw"] == "前缀\n后缀_STATE\n"
     assert delivered[-1]["stream_msg_id"] == "synthetic-stream"
 
 
@@ -160,8 +188,8 @@ async def test_inflight_frame_acknowledges_only_its_sent_text(monkeypatch):
     await stream._timer
     assert stream.last_sent_text == "前缀\n"
     await stream.finish("前缀\n新文字")
-    assert [frame["input_state"] for frame in frames] == [1, 1, 10]
-    assert frames[-1]["content_raw"] == "前缀\n新文字"
+    assert [frame["input_state"] for frame in frames] == [1, 10]
+    assert frames[-1]["content_raw"] == "前缀\n新文字\n"
 
 
 async def test_failed_done_frame_remains_a_delivery_error(monkeypatch):

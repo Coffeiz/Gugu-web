@@ -53,7 +53,7 @@ Phase 3-4 定向回归在 devserver 通过 13 项；能力注入、LoopScope tra
 
 测试口径已更新为**每个策略一个连续会话**：先用 case 1 执行一次 warmup，再在同一份 `PromptMessages` 历史中依次输入 case 1、case 2，直到 case 20。warmup 单独记录，不计入正式准确率和 token 汇总；每个正式 case 保留两轮之间的 assistant 回复、工具调用和工具结果。这样缓存率按真实连续对话测量，而不是把每个 case 当成独立冷启动请求。
 
-执行脚本：[`test_full_schema_compact_ab.py`](../../backend/scripts/diagnostics/test_full_schema_compact_ab.py)。脚本默认使用上述连续会话口径，每个 case 支持独立超时，并记录 `tool_selection`、缺失字段、字段值不匹配和续轮错误。运行需要显式传入 `--allow-real-llm`；原始结果必须保存为脱敏 JSON，不能把真实工具 dispatch 或用户数据带入测试。
+执行脚本：[`compare_full_schema_compaction.py`](../../backend/scripts/diagnostics/compare_full_schema_compaction.py)。脚本默认使用上述连续会话口径，每个 case 支持独立超时，并记录 `tool_selection`、缺失字段、字段值不匹配和续轮错误。运行需要显式传入 `--allow-real-llm`；原始结果必须保存为脱敏 JSON，不能把真实工具 dispatch 或用户数据带入测试。
 
 | 指标 | 当前全量 Schema | 精简全量 Schema | 变化 |
 | --- | ---: | ---: | ---: |
@@ -114,7 +114,7 @@ Phase 3-4 定向回归在 devserver 通过 13 项；能力注入、LoopScope tra
 
 此前的 45% 结果以及随后 5% 左右的结果均为无效探针数据：前者错误地丢失了 properties 字段名，后者的评估器没有解包模型返回的 `{name, arguments}` 包装。两轮数据不作为生产模式指标，本报告只采用本轮修正后的 v3 结果。
 
-测试脚本：[`test_full_schema_compact_ab.py`](../../backend/scripts/diagnostics/test_full_schema_compact_ab.py)。实际命令为 `--allow-real-llm --mode description --case-timeout 180 --output /tmp/schema-description-catalog-20260829-v3.json`；使用 devserver 真实 provider 配置，工具 dispatch 为 no-op，测试进程已清理。
+测试脚本：[`compare_full_schema_compaction.py`](../../backend/scripts/diagnostics/compare_full_schema_compaction.py)。实际命令为 `--allow-real-llm --mode description --case-timeout 180 --output /tmp/schema-description-catalog-20260829-v3.json`；使用 devserver 真实 provider 配置，工具 dispatch 为 no-op，测试进程已清理。
 
 ## 简介模式与全量模式复测（2026-08-29）
 
@@ -229,7 +229,7 @@ Phase 8 checklist 收尾：关键业务语义已改为显式字段、枚举、`o
 
 ### 5 工具连续会话累积测试（2026-08-29）
 
-使用 `test_schema_accumulation_5tools.py`，每种模式先预热 1 轮，再在同一会话连续执行 20 轮；测试用例固定为 3 个简单工具（`list_folders`、`read_file`、`list_events`）和 2 个复杂工具（`create_project`、`note_create`）。简介模式的固定 Adapter 首次只带 4 个基础 Schema，目标工具按需加载；工具 dispatch 被拦截，不写入真实数据。
+使用 `probe_schema_accumulation_5tools.py`，每种模式先预热 1 轮，再在同一会话连续执行 20 轮；测试用例固定为 3 个简单工具（`list_folders`、`read_file`、`list_events`）和 2 个复杂工具（`create_project`、`note_create`）。简介模式的固定 Adapter 首次只带 4 个基础 Schema，目标工具按需加载；工具 dispatch 被拦截，不写入真实数据。
 
 | 指标 | 简介模式 | 全量模式 |
 | --- | ---: | ---: |
@@ -245,4 +245,4 @@ Phase 8 checklist 收尾：关键业务语义已改为显式字段、枚举、`o
 
 简介模式的首轮到末轮增长 29,595 input token，主要来自连续历史和首次按需加载的工具 Schema；第 6 轮以后同一批工具重复调用时，Schema 本身没有按轮无限复制，但复杂工具仍可能触发关联工具（如 `list_projects`、`note_search`），因此会出现阶段性增长。全量模式从首轮就携带全部工具 Schema，连续历史叠加后末轮达到 78,067 input token。本轮全量模式第 1 轮将 `list_folders` 误选为 `list_files`，属于工具选择错误，不是参数 Schema 解析错误。该结果也说明连续多轮对话下，简介模式的固定目录成本会持续存在，按需 Schema 和关联工具事件会分阶段增加；不能只用单轮 Schema 大小判断总消耗。
 
-原始脱敏结果：[SCHEMA-ACCUMULATION-5TOOLS-20260829.json](schema-probes/SCHEMA-ACCUMULATION-5TOOLS-20260829.json)；测试脚本：[test_schema_accumulation_5tools.py](../../backend/scripts/diagnostics/test_schema_accumulation_5tools.py)。
+原始脱敏结果：[SCHEMA-ACCUMULATION-5TOOLS-20260829.json](schema-probes/SCHEMA-ACCUMULATION-5TOOLS-20260829.json)；测试脚本：[probe_schema_accumulation_5tools.py](../../backend/scripts/diagnostics/probe_schema_accumulation_5tools.py)。

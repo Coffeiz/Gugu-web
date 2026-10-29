@@ -244,6 +244,9 @@ def ensure_hooks() -> None:
                     run.source = "web"
                 run.session_key = f"gugu:{run.source}:{session_id}"
             _scope_run.set(run)
+            from .state import flush_pending_phase_timings
+
+            flush_pending_phase_timings(run)
         except Exception:
             pass
         return result

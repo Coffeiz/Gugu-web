@@ -14,7 +14,7 @@ from agent.im.activity import (
     start_im_activity,
     stop_im_typing,
 )
-from agent.im.commands import handle_im_command
+from agent.im.commands import group_command_requires_mention, handle_im_command
 from agent.im.conversation import (
     persist_im_session,
     record_passive_im_message,
@@ -50,9 +50,15 @@ async def dispatch_im_message(payload: dict):
     from agent.runner import run_collect, run_stream
 
     # 在绑定命令、媒体下载、普通消息持久化、被动群记录和 Agent 前消费凭据输入。
-    from agent.im.interaction_text import consume_mcp_secret_payload
+    from agent.im.interaction_text import (
+        _MCP_SECRET_CHECKED_MARKER,
+        consume_mcp_secret_payload,
+    )
 
-    if await consume_mcp_secret_payload(payload):
+    mcp_secret_checked = (
+        payload.pop("_mcp_secret_checked", None) is _MCP_SECRET_CHECKED_MARKER
+    )
+    if not mcp_secret_checked and await consume_mcp_secret_payload(payload):
         return None
 
     # Telegram owner 只能通过网页签发的一次性绑定码，在 Bot 私聊中显式绑定。
@@ -104,6 +110,10 @@ async def dispatch_im_message(payload: dict):
         payload["group_memory_enabled"] = group_settings[3]
         payload["member_memory_enabled"] = group_settings[4]
 
+    from agent.im.auto_reply import should_enable_group_reply_gate
+
+    group_auto_reply_payload = should_enable_group_reply_gate(payload)
+
     if payload.get("platform") == "qq":
         raw_attachments = payload.get("attachments") or []
         # 系统表情可能只有 emoji_refs，没有 QQ 原始附件；两者都要经过媒体入口，
@@ -120,11 +130,11 @@ async def dispatch_im_message(payload: dict):
                 str(payload.get("platform_message_id") or ""),
             )
             payload["attachments"] = media_result.attachment_ids
-            if media_result.failure_notice:
+            if media_result.failure_notice and not group_auto_reply_payload:
                 # 附件下载/暂存失败要明确回一句：否则用户发完文件既没有秒回、
                 # 也没有错误提示，会以为机器人根本没收到。
                 await send_text(payload, media_result.failure_notice)
-            if media_result.size_limit_exceeded:
+            if media_result.size_limit_exceeded and not group_auto_reply_payload:
                 await send_text(
                     payload,
                     IM_SIZE_LIMIT_NOTICE,
@@ -142,6 +152,20 @@ async def dispatch_im_message(payload: dict):
                 isinstance(item, dict) for item in raw_attachments
             ) and payload["attachments"]:
                 payload["text"] = ""
+        batch_messages = payload.get("_batch_messages")
+        if isinstance(batch_messages, list) and batch_messages:
+            from agent.im.inbound_batch import resolve_batch_attachment_ids
+            from app.core import chat_attach
+
+            attachment_meta = await chat_attach.get_meta_many(
+                str(payload.get("owner_user_id") or ""),
+                payload.get("attachments") or [],
+            )
+            resolve_batch_attachment_ids(
+                batch_messages,
+                attachment_meta,
+                fallback_platform_message_id=str(payload.get("platform_message_id") or ""),
+            )
         if payload.get("platform_bot_user_id"):
             from agent.im.identity import remember_bot_platform_user_id
 
@@ -163,7 +187,7 @@ async def dispatch_im_message(payload: dict):
             payload.get("attachment_source_message_id"),
         )
         payload["attachments"] = media_result.attachment_ids
-        if media_result.failure_notice:
+        if media_result.failure_notice and not group_auto_reply_payload:
             await send_text(payload, media_result.failure_notice)
             if not payload["attachments"] and not str(payload.get("text") or "").strip():
                 return None
@@ -234,6 +258,10 @@ async def dispatch_im_message(payload: dict):
         print(f"[im-loop] {platform} 群聊普通消息已记录(session={passive_sid} trace={trace_id})", flush=True)
         return None
 
+    # 全量回复模式下，未 @ 咕咕的普通群消息进入同一 run 的服务端回复选择门。
+    # 仅 @ 模式的被动消息已在上方记录返回；明确 @ 的消息保持既有正常 run。
+    req.group_auto_reply = group_auto_reply_payload
+
     shortcut = await decide_im_shortcut(
         platform,
         puid or "",
@@ -264,11 +292,16 @@ async def dispatch_im_message(payload: dict):
     # 命令在 Agent runner 之前短路，但 IM 路由可能仍持有已删除的 Redis session id。
     # 先按当前作用域恢复/创建真实会话，避免 /new、/workspace 等命令落到失效 id。
     from agent import commands as _commands
-    command_name, command_arg = _commands.parse(
-        semantic_text,
-        allow_leading_mention=False,
-    )
-    if command_name is not None:
+    command_name, command_arg = _commands.parse(semantic_text)
+    # 群里命令必须确证是对咕咕说的：QQ/飞书没有 bot 作用域，裸打 /命令
+    # 判断不出是给谁的（可能是别家 bot 的命令）。不满足时不把它当命令，
+    # 按普通群消息继续走回复选择门，由模型自己决定要不要回应。
+    command_allowed = command_name is not None and not group_command_requires_mention(payload)
+    goal_start, goal_text = False, ""
+    cmd_reply = None
+    if command_allowed:
+        # 群里命令已确证是对咕咕说的：属于显式控制输入，不进入普通群聊自动回复选择门。
+        req.group_auto_reply = False
         denial = _commands.im_command_permission_denial(
             command_name,
             command_arg,
@@ -279,8 +312,7 @@ async def dispatch_im_message(payload: dict):
             await send_text(payload, denial)
             trace.finish_run("success", denial)
             return None
-    goal_start, goal_text = _commands.is_goal_start(semantic_text)
-    if command_name is not None:
+        goal_start, goal_text = _commands.is_goal_start(semantic_text)
         import app.db.session as _db_session
         from agent.im.session import get_or_create_session
 
@@ -292,13 +324,11 @@ async def dispatch_im_message(payload: dict):
         req.session_id = command_state.session.id
         await persist_im_session(platform, route.bot_id, session_scope, req.session_id, group=route.is_group)
         trace.bind_im_run(req.session_id, platform)
-
-    cmd_reply = await handle_im_command(
-        user_id,
-        semantic_text,
-        req.session_id,
-        allow_leading_mention=False,
-    )
+        cmd_reply = await handle_im_command(
+            user_id,
+            semantic_text,
+            req.session_id,
+        )
     if cmd_reply is not None and not goal_start:
         if isinstance(cmd_reply, dict) and cmd_reply.get("_command_interaction"):
             prompt = cmd_reply.get("prompt") or {}
@@ -314,6 +344,19 @@ async def dispatch_im_message(payload: dict):
                 return None
             trace.finish_run("success", "已发送命令确认交互")
             return None
+        if payload.get("chat_type") == "group" and _commands.command_result_is_private(command_name):
+            # owner 私有结果（记忆画像、工作区清单）不能贴群：群成员都能看到消息正文。
+            # 改私发 owner；没有可用私聊地址或投递失败时只提示去私聊，不外泄内容。
+            from app.scheduled_tasks import deliver_owner_private
+
+            delivered = await deliver_owner_private(user_id, cmd_reply, platform)
+            notice = (
+                "这份结果只发给你了，我私聊发你～" if delivered
+                else "这份结果包含你的私有信息，请私聊我查看。"
+            )
+            await send_text(payload, notice)
+            trace.finish_run("success")
+            return None
         await send_text(payload, cmd_reply)
         trace.finish_run("success", cmd_reply)
         return None
@@ -321,7 +364,17 @@ async def dispatch_im_message(payload: dict):
         # 命令已写入 session_context；本轮继续进入 runner，让 /goal 本身就开始执行。
         req.message = f"请立即开始执行目标任务：{goal_text}"
 
+    if platform == "qq":
+        # 让 token 刷新和 API 建连与模型运行重叠；预热失败不阻断当前 run。
+        from agent.gateway.qq.client import schedule_qq_outbound_prewarm
+
+        schedule_qq_outbound_prewarm(str(payload.get("channel_id") or ""))
+
     tool_display_mode, show_intermediate_replies = await _im_display_preferences(req.user_id)
+    if payload.get("chat_type") == "group":
+        # 群聊不向成员展示工具调用状态；不改变工具执行及 Web 事件。
+        tool_display_mode = "off"
+        show_intermediate_replies = False
     if platform == "telegram":
         from agent.interactions.preferences import im_user_locale
         payload["locale"] = await im_user_locale(req.user_id)
@@ -433,7 +486,7 @@ async def dispatch_im_message(payload: dict):
     # 飞书使用 CardKit、Telegram 私聊使用 live draft 流式预览；其余平台按 round 收集发送。
     stream_sent = False
     try:
-        if platform == "feishu":
+        if platform == "feishu" and payload.get("chat_type") != "group":
             from agent.gateway import feishu
             receive_id = payload.get("chat_id") or payload.get("platform_user_id")
             token_iter = run_stream(

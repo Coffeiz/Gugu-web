@@ -2,7 +2,7 @@
 
 > 状态：🔲 待验证
 > 创建：2026-08-06
-> 最近更新：2026-08-06
+> 最近更新：2026-10-27
 > 关联模块：`backend/agent/gateway/qq.py`（`send_c2c`/`send_group`/`send_file`/`_send_token`/`_qq_request`）
 > 关联文档：[`【已完成】PRD-IM-1-IM接入稳定性与QQ自建WEBSOCKET.md`](./【已完成】PRD-IM-1-IM接入稳定性与QQ自建WEBSOCKET.md)（Phase 3，代码已完成，本 PRD 只跟踪生产环境端到端验证与并发加固）
 
@@ -13,8 +13,9 @@
 | 阶段 | 状态 | 说明 |
 |---|---|---|
 | 代码实现（PRD-IM-1 Phase 3） | ✅ 已完成 | `send_c2c`/`send_group`/`send_file` 已全部改为 raw HTTP 直连 QQ Bot API，botpy 依赖已完全移除；本地 mock 测试覆盖 markdown 回退、401 重试清缓存、token 缓存复用、URL/base64 发文件，`83 passed`。 |
-| 真实 QQ 环境端到端验证 | 🔲 待验证 | 文本、Markdown 回退、URL/base64 发文件、群消息四条路径均未在真实 QQ Bot API 上跑过；仅本地 mock 覆盖，无法确认真实响应结构、限流行为和权限报错码与 mock 假设一致。 |
-| `_send_tokens` 并发加锁 | 🔲 待做 | 同一 `channel_id` 并发首次请求可能同时判定 token 缓存未命中，重复调用 `_qq_access_token_with_ttl()` 取新 token；不影响正确性（QQ 允许同时存在多个有效 token），但浪费一次调用，高并发下有触发 QQ 侧限流的风险。 |
+| 真实 QQ 环境端到端验证 | 🟡 部分验证 | 2026-10-27 在指定 QQ 群验证了 `/gateway` 连接预热及一条 raw HTTP 群文本发送，均成功；Markdown 回退、URL/base64 发文件和 401 重试仍未完成真实环境验证。 |
+| `_send_tokens` 并发加锁 | ✅ 已完成 | `_send_token()` 按事件循环和 `channel_id` 做 single-flight，双重检查缓存；401 只清理当前请求使用的 token，避免并发请求误删已刷新的 token。 |
+| QQ 出站异步预热 | ✅ 已完成 | 活跃 QQ 消息进入 Agent run 前后台刷新 token；API 连接距上次活动接近 keepalive 时才调用 `/gateway` 预建连接，失败不会阻断当前 run。 |
 
 ---
 
@@ -49,13 +50,17 @@
 
 验收标准：以上 5 类场景各至少成功跑通一次，并在 [`docs/ops/KNOWN-ISSUES.md`](../../ops/KNOWN-ISSUES.md) 记录真实响应体结构与 mock 假设的任何出入。
 
-### FR-QQ-2：`_send_tokens` 并发加锁（🔲 待做）
+### FR-QQ-2：`_send_tokens` 并发加锁（✅ 已完成）
 
-`_send_token()` 当前是纯内存字典读写，无锁保护。同一 `channel_id` 下多个协程并发调用、同时判定缓存未命中时，会各自发起一次 `_qq_access_token_with_ttl()` 请求。
+此前 `_send_token()` 是纯内存字典读写，无锁保护；同一 `channel_id` 并发首次调用时会重复请求 token。现已由 single-flight 保护。
 
-预期行为：按 `channel_id` 加一把轻量协程锁（`asyncio.Lock`，字典存 `channel_id -> Lock`），确保同一 `channel_id` 同时只有一个协程在刷新 token，其余等待锁释放后直接复用刚写入的缓存。
+实现行为：按事件循环和 `channel_id` 加协程锁，确保同一 `channel_id` 同时只有一个协程在刷新 token，其余等待后复用刚写入的缓存。事件循环隔离可避免测试和 worker 生命周期变化时复用旧 loop 上的锁。
 
-验收标准：并发单测模拟同一 `channel_id` 同时 10 次调用 `_send_token()`，断言底层 `_qq_access_token_with_ttl()` 只被调用一次。
+验收标准：并发单测模拟同一 `channel_id` 同时 10 次调用 `_send_token()`，断言底层 `_qq_access_token_with_ttl()` 只被调用一次。已覆盖。
+
+### FR-QQ-3：QQ 出站异步预热（✅ 已完成）
+
+活跃 QQ 消息在进入模型执行前安排后台预热。预热先读取/刷新 token，再按 API host 的最近活动时间判断连接是否可能已超过连接池 keepalive；需要时请求一次 `/gateway` 并消费响应体，建立可复用的 API 连接。每个 bot 同一时刻最多一个预热任务；同一 API host 的预热由协程锁串行，并设有略短于 keepalive 的冷却时间。预热异常只写普通诊断日志，不影响模型 run 或用户可见回复。
 
 ---
 
@@ -67,31 +72,16 @@
 
 ### 3.2 `_send_tokens` 加锁
 
-```python
-_send_token_locks: dict[str, asyncio.Lock] = {}
+已实现，锁按当前事件循环和 `channel_id` 隔离；token 到期时间以 token 请求完成时间计算。
 
-async def _send_token(channel_id: str) -> tuple[str, str]:
-    cached = _send_tokens.get(channel_id)
-    now = time.time()
-    if cached and now < cached["expires_at"] - _QQ_TOKEN_SAFETY_MARGIN:
-        return cached["token"], cached["base"]
-    lock = _send_token_locks.setdefault(channel_id, asyncio.Lock())
-    async with lock:
-        # 双重检查：等锁期间可能已被另一协程刷新
-        cached = _send_tokens.get(channel_id)
-        if cached and now < cached["expires_at"] - _QQ_TOKEN_SAFETY_MARGIN:
-            return cached["token"], cached["base"]
-        ...（原有取 token 逻辑）
-```
-
-`_send_token_locks` 字典本身不会清理（channel_id 数量等于绑定的 Bot 数，量级很小，可接受）。
+锁和预热状态挂在弱引用事件循环表中；worker loop 退出后对应状态可回收。
 
 ---
 
 ## 4. 验证与上线
 
-- FR-QQ-1 是人工端到端验证，不是自动化测试能覆盖的范围；每类场景验证完在本文档对应行打勾并记录日期。
-- FR-QQ-2 补一个并发单测（mock `_qq_access_token_with_ttl` 用 `asyncio.sleep` 模拟慢请求，断言只被调用一次），跑本地全量确认不引入回归。
+- FR-QQ-1 是人工端到端验证，不是自动化测试能覆盖的范围；目前只完成了基本群文本发送和连接预热，其余场景仍待验证。
+- FR-QQ-2 并发行为由 10 协程单测覆盖；预热有冷却行为单测。实现后需运行定向测试并比较发送耗时日志中的 `auth_ms`、`request_ms`、`dns_ms`、`connect_setup_ms`、`reused`。
 - 上线方式：FR-QQ-2 是纯内部加锁，无外部行为变化，直接合并；FR-QQ-1 不涉及代码改动，验证过程本身就是"上线"。
 - 需要盯的日志关键字：`agent.gateway.qq._qq_request` 的 `diag_log_raw` 输出（非 2xx 响应）、`QQAPIError` 的 `status`/`body`（脱敏后）。
 

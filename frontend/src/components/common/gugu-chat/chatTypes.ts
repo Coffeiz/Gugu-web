@@ -14,6 +14,8 @@ export interface ChatMessage {
   _timelineOrder?: number
   /** 持久化消息/事件的去重身份，仅用于跨端增量同步。 */
   _syncKey?: string
+  /** 客户端发送身份；乐观消息与服务端历史用它保持同一实体。 */
+  clientMessageId?: string
   dbId?: number
   role: string
   text: string

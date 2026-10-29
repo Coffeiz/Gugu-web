@@ -104,7 +104,13 @@ class QQPrivateTextStream:
         finally:
             self._timer = None
 
-    async def _flush(self, input_state: int = 1, *, content_override: str | None = None) -> None:
+    async def _flush(
+        self,
+        input_state: int = 1,
+        *,
+        content_override: str | None = None,
+        allow_rewrite: bool = False,
+    ) -> None:
         if self.error is not None:
             raise self.error
         if not self.full_text or (input_state != 10 and self.full_text == self.last_sent_text):
@@ -114,7 +120,9 @@ class QQPrivateTextStream:
         async def send_one() -> None:
             if previous is not None:
                 await previous
-            frame = self._prepare_frame_text(input_state, content_override)
+            frame = self._prepare_frame_text(
+                input_state, content_override, allow_rewrite=allow_rewrite,
+            )
             if frame is None:
                 return
             sent_text, content = frame
@@ -189,17 +197,28 @@ class QQPrivateTextStream:
             self.error = exc
             raise
 
-    def _prepare_frame_text(self, input_state: int, override: str | None) -> tuple[str, str] | None:
+    def _prepare_frame_text(
+        self,
+        input_state: int,
+        override: str | None,
+        *,
+        allow_rewrite: bool = False,
+    ) -> tuple[str, str] | None:
         """只生成稳定的追加正文；读取排队后的最新状态，不提前确认缓冲尾行。"""
-        raw = self.full_text if self.finished or input_state == 10 else complete_qq_lines(self.full_text)
+        raw = self.full_text if input_state == 10 else complete_qq_lines(self.full_text)
         content = override if override is not None else prepare_qq_text(raw)
         if not content.strip() or (input_state != 10 and content == self.last_sent_content):
             return None
-        if not content.startswith(self.last_sent_content):
+        if not allow_rewrite and not content.startswith(self.last_sent_content):
             raise ValueError("QQ 流式正文改写已发送前缀，已阻止出站")
+        # QQ C2C 原生 Markdown 流要求每个分片以换行结束。中间帧由
+        # complete_qq_lines 保证；最终帧包含尚未换行的尾行时也要补齐，
+        # 否则 QQ 会拒绝 DONE，继而触发普通消息恢复并造成重复回复。
+        if input_state == 10 and self.content_type == "markdown" and not content.endswith("\n"):
+            content += "\n"
         return raw, content
 
-    async def finish(self, final_text: str) -> None:
+    async def finish(self, final_text: str, *, allow_rewrite: bool = False) -> None:
         self.finished = True
         if self._timer is not None:
             self._timer.cancel()
@@ -214,7 +233,8 @@ class QQPrivateTextStream:
         if not self.full_text.strip():
             return
         try:
-            await self._flush(1)
+            # 只有模型终态允许修订已经显示的草稿；中间轮继续遵守前缀保护。
+            await self._flush(1, allow_rewrite=allow_rewrite)
             if self._chain is not None:
                 await self._chain
         except Exception as exc:
@@ -226,7 +246,7 @@ class QQPrivateTextStream:
             self.error = None
             self._chain = None
         try:
-            await self._flush(10)
+            await self._flush(10, allow_rewrite=allow_rewrite)
         except Exception as exc:
             await self._close_rejected_content(exc)
         if self._chain is not None:

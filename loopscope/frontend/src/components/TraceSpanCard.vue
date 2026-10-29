@@ -126,17 +126,17 @@
         </div>
         <pre>{{ snapshotContent }}</pre>
       </div>
-      <div v-if="inputMessages.length && firstDiff" ref="inputMessageList" class="input-message-list">
+      <div v-if="inputMessages.length" ref="inputMessageList" class="input-message-list">
         <article
           v-for="(message, index) in inputMessages"
           :key="index"
           class="input-message"
-          :class="{ 'is-first-diff': index === firstDiff.index }"
+          :class="{ 'is-first-diff': firstDiff?.index === index }"
           :data-message-index="index"
         >
           <div class="input-message-label">
             <span>Message #{{ index }}</span>
-            <b v-if="index === firstDiff.index">{{ t('trace.earlyDiff') }}</b>
+            <b v-if="firstDiff?.index === index">{{ t('trace.earlyDiff') }}</b>
           </div>
           <pre>{{ pretty(message) }}</pre>
         </article>

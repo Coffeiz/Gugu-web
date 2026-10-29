@@ -48,6 +48,39 @@ function integerParam(url: URL, name: string, fallback: number, min: number, max
   return value
 }
 
+function listRunSummaries(store: TraceStore, sessionKey: string, limit: number, before?: number) {
+  // Monitor 列表只取大 JSON 之前的标量列，避免跨越超大 input/output/attributes 的溢出页读取 usage。
+  const query = before === undefined
+    ? store.connection.sqlite.prepare(`
+      SELECT id, session_key, trace_id, status, started_at, ended_at, duration_ms
+      FROM runs WHERE session_key = ? ORDER BY started_at DESC LIMIT ?
+    `)
+    : store.connection.sqlite.prepare(`
+      SELECT id, session_key, trace_id, status, started_at, ended_at, duration_ms
+      FROM runs WHERE session_key = ? AND started_at < ? ORDER BY started_at DESC LIMIT ?
+    `)
+  const rows = (before === undefined
+    ? query.all(sessionKey, limit)
+    : query.all(sessionKey, before, limit)) as Array<{
+      id: string
+      session_key: string
+      trace_id: string | null
+      status: string
+      started_at: number
+      ended_at: number | null
+      duration_ms: number | null
+    }>
+  return rows.map(row => ({
+    id: row.id,
+    session_key: row.session_key,
+    trace_id: row.trace_id ?? '',
+    status: row.status,
+    started_at: row.started_at,
+    ended_at: row.ended_at,
+    duration_ms: row.duration_ms,
+  }))
+}
+
 export function createCollectorServer(store: TraceStore) {
   const runEventClients = new Set<ServerResponse>()
   return createServer(async (req, res) => {
@@ -133,7 +166,7 @@ export function createCollectorServer(store: TraceStore) {
       const beforeRaw = url.searchParams.get('before')
       const before = beforeRaw == null || beforeRaw === '' ? undefined : Number(beforeRaw)
       if (before !== undefined && !Number.isFinite(before)) throw new Error('invalid before')
-      sendJson(res, 200, store.listRuns(decodeURIComponent(sessionMatch[1]!), { limit, before }))
+      sendJson(res, 200, listRunSummaries(store, decodeURIComponent(sessionMatch[1]!), limit, before))
       return
     }
     const spansMatch = pathname.match(/^\/api\/runs\/([^/]+)\/spans$/)

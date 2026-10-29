@@ -50,6 +50,33 @@ class ProviderRoundRuntime:
 
     def _refresh_tools(self) -> None:
         capability = self.runner.capability_context
+        reply_gate = getattr(self.runner, "group_reply_gate", None)
+        if reply_gate is not None:
+            from agent.im.auto_reply import GROUP_NO_REPLY_TOOL, ReplyChoice
+
+            selected = (
+                capability.select_for_messages(self.messages).tool_names
+                if capability is not None and not getattr(capability, "metadata_only", False)
+                else tuple(self.runner.tool_names)
+            )
+            self.tool_names = list(self.runner._provider_tool_names(list(selected)))
+            if reply_gate.choice is ReplyChoice.PENDING:
+                if GROUP_NO_REPLY_TOOL not in self.tool_names:
+                    self.tool_names.append(GROUP_NO_REPLY_TOOL)
+            else:
+                self.tool_names = [
+                    name for name in self.tool_names
+                    if name != GROUP_NO_REPLY_TOOL
+                ]
+            # 默认回复策略不能强制 provider 选择不回复。
+            if hasattr(self.context, "forced_tool_choice"):
+                self.context.forced_tool_choice = None
+            self.driver.update_tools(
+                self.context,
+                self.tool_names,
+                tool_snapshot=self.tool_snapshot,
+            )
+            return
         if (
             capability is None
             or getattr(capability, "fixed_adapter", False)

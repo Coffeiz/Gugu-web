@@ -205,3 +205,32 @@ def test_preparation_loader_results_include_slow_context_sources(monkeypatch):
     assert spans["Dynamic memory"].attributes["rows"] == 1
     assert spans["Knowledge overview"].attributes["rows"] == 1
     assert all(span.duration_ms is not None for span in spans.values())
+
+
+def test_preparation_phase_timings_attach_after_scope_run_is_created(monkeypatch):
+    """Run 建立前完成的准备阶段仍会挂入同一条 LoopScope trace。"""
+    monkeypatch.setenv("LOOPSCOPE_ENABLED", "1")
+    monkeypatch.setattr(state, "_queue_snapshot", lambda *_args, **_kwargs: None)
+    pending_token = state._pending_phase_timings.set(None)
+    run_token = state._scope_run.set(None)
+    try:
+        started_at = state._now() - 0.025
+        state.record_phase_timing("Context data loading", started_at, source_count=3)
+        assert state._pending_phase_timings.get()
+
+        run = state._ScopeRun(
+            id="run-delayed-phase", trace_id="trace-delayed-phase",
+            session_key="gugu:web:test", external_session_id="test",
+            source="web", started_at=state._now(),
+        )
+        state._scope_run.set(run)
+        state.flush_pending_phase_timings(run)
+    finally:
+        state._scope_run.reset(run_token)
+        state._pending_phase_timings.reset(pending_token)
+
+    assert len(run.spans) == 1
+    span = run.spans[0]
+    assert span.name == "Context data loading"
+    assert span.attributes == {"source_count": 3}
+    assert 20 <= span.duration_ms <= 200

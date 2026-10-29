@@ -27,6 +27,19 @@ from agent.loop import watchdog as _watchdog
 
 _parallel_traj_log = logging.getLogger("agent.traj")
 
+def _gate_violation_payload(reason: str) -> dict[str, Any]:
+    """不符合本轮回复选择状态的工具调用错误。"""
+    from agent.im.auto_reply import GATE_SILENT_REASON
+
+    return {
+        "error": reason,
+        "next_action": (
+            "本轮已选择静默，停止工具调用。"
+            if reason == GATE_SILENT_REASON
+            else "本轮已经输出回复正文，继续完成回复，不要再选择不回复。"
+        ),
+    }
+
 
 def _log_tool_batch_observation(event: dict[str, Any]) -> None:
     """只输出允许的低敏度批次汇总字段。"""
@@ -181,6 +194,12 @@ async def run_loop(
         ):
             initial_tool_names = list(runner.capability_context.select_for_messages(messages).tool_names)
         initial_tool_names = runner._provider_tool_names(initial_tool_names)
+        reply_gate = getattr(runner, "group_reply_gate", None)
+        from agent.im.auto_reply import GROUP_NO_REPLY_TOOL
+        reply_tool_name = GROUP_NO_REPLY_TOOL
+        if reply_gate is not None:
+            if reply_tool_name not in initial_tool_names:
+                initial_tool_names = [*initial_tool_names, reply_tool_name]
         current_tool_names = list(initial_tool_names)
         client, ctx = driver.prepare(
             initial_tool_names, ai, messages, system_text, tool_snapshot=tool_snapshot,
@@ -244,6 +263,15 @@ async def run_loop(
         # 压缩判定使用最近一次 provider 请求的 context input，不能跨轮累加或沿用高水位。
         run_context_usage_peak = 0
         run_id = f"run-{_core.uuid4().hex[:16]}"
+        from agent.runtime.cancellation import (
+            RunCancellation, RunCancellationRequested, register_current_run,
+            set_current_cancellation,
+        )
+        # Agent loop 内部 run_id 与 Gateway 的 owner_run_id 是不同标识；当前执行
+        # 会话由 session gate 保证唯一，因此取消检查按 session 读取共享标记。
+        cancellation = RunCancellation(session_id)
+        set_current_cancellation(cancellation)
+        register_current_run(session_id, run_id)
         run_state = _core._RunState(run_id=run_id, session_id=session_id)
         event_sequencer = EventSequencer(run_state.run_id, encoder=_core.encode_event)
         context_runtime = ContextRuntime(
@@ -264,6 +292,24 @@ async def run_loop(
             return event
 
         while True:
+            if reply_gate is not None:
+                from agent.im.auto_reply import ReplyChoice
+
+                if (
+                    runner.capability_context is not None
+                    and not getattr(runner.capability_context, "metadata_only", False)
+                ):
+                    selected = runner.capability_context.select_for_messages(messages).tool_names
+                else:
+                    selected = tuple(runner.tool_names)
+                current_tool_names = list(runner._provider_tool_names(list(selected)))
+                if reply_gate.choice is ReplyChoice.PENDING:
+                    if reply_tool_name not in current_tool_names:
+                        current_tool_names.append(reply_tool_name)
+                else:
+                    current_tool_names = [
+                        name for name in current_tool_names if name != reply_tool_name
+                    ]
             scheduled_round_limit = getattr(runner, "round_limit_per_run", None)
             if scheduled_round_limit is not None and run_state.round_number >= scheduled_round_limit:
                 _core._log.warning(
@@ -276,12 +322,11 @@ async def run_loop(
                 run_state.verify_rounds += 1
             else:
                 run_state.task_rounds += 1
-            # 用户中途「算了」→ 轮间协作中断（单次 LLM 流式调用本身切不了，故粒度是轮与轮之间）
-            if await _core._im_cancelled(session_id):
-                yield f"data: {_core.json.dumps({'type': '_cancelled'})}\n\n"
+            # 轮间检查与流式等待共用同一取消控制器；长流由 iterate 即时中断。
+            if await cancellation.is_requested():
+                yield stream_event("_cancelled", remote_status_unknown=cancellation.remote_status_unknown)
                 return
 
-            _tok = 0
             result = None
             run_state.next_round()
             round_id = f"round-{run_state.round_number}"
@@ -292,6 +337,7 @@ async def run_loop(
             ))
             yield stream_event("round_start", round_id=round_id)
             _verify_buf = []   # 核实轮缓冲区：先攒着，回合结束按"有没有补做"决定 flush 还是丢弃
+            _reply_gate_buf = []
             try:
                 round_runtime = ProviderRoundRuntime(
                     runner=runner,
@@ -309,7 +355,7 @@ async def run_loop(
                 )
                 round_events = round_runtime.stream()
                 try:
-                    async for emission in round_events:
+                    async for emission in cancellation.iterate(round_events):
                         if emission.kind == "done":
                             result = emission.value
                             continue
@@ -335,14 +381,13 @@ async def run_loop(
                         elif goal_mode:
                             # 等待完成标记判定，避免把内部标记流给用户。
                             pass
+                        elif reply_gate is not None and reply_gate.choice is ReplyChoice.PENDING:
+                            # 暂存到完整 provider 结果，确认没有选择静默后再决定是否展示。
+                            _reply_gate_buf.append(token)
                         elif reply_state.guard_retry_pending:
                             reply_state.guard_retry_buf.append(token)
                         else:
                             yield stream_event("token", content=token, round_id=round_id)
-                        _tok += 1
-                        if _tok % _core._CANCEL_CHECK_EVERY == 0 and await _core._im_cancelled(session_id):
-                            yield f"data: {_core.json.dumps({'type': '_cancelled'})}\n\n"
-                            return
                 finally:
                     await round_events.aclose()
                     driver = round_runtime.driver
@@ -350,6 +395,9 @@ async def run_loop(
                     ctx = round_runtime.context
                     current_tool_names = round_runtime.tool_names
                     responses_fallback_used = round_runtime.responses_fallback_used
+            except RunCancellationRequested:
+                yield stream_event("_cancelled", remote_status_unknown=cancellation.remote_status_unknown)
+                return
             except _core.RetryableError as e:
                 if reasoning_state is not None:
                     await reasoning_state.failed("provider_rejected")
@@ -525,7 +573,58 @@ async def run_loop(
                     yield stream_event("_context_compaction", phase="completed", applied=False,
                                        reason="not_applied")
 
+            if reply_gate is not None and reply_gate.choice is ReplyChoice.PENDING:
+                # 正文在拒绝门定案前保持缓冲；纯工具轮只用于收集判断依据，
+                # 继续保留拒绝机会，只有实际输出正文才锁定为回复。
+                resolved_targets = []
+                for call in result.tool_calls:
+                    target, _arguments, resolve_error = _core._resolve_tool_call(
+                        getattr(call, "name", None), getattr(call, "input", None),
+                    )
+                    if resolve_error is None:
+                        resolved_targets.append(target)
+                no_reply_selected_in_round = reply_tool_name in resolved_targets
+                buffered_reply = result.text or "".join(_reply_gate_buf)
+                if not no_reply_selected_in_round and buffered_reply.strip():
+                    reply_gate.choice = ReplyChoice.REPLY
+                    if not result.text:
+                        result.text = buffered_reply
+                    if buffered_reply.strip() and not verify_mode and not goal_mode:
+                        yield stream_event("token", content=buffered_reply, round_id=round_id)
+
             if result.tool_calls:
+                gate_violations: list[tuple[int, Any, str, str]] = []
+                no_reply_selected_in_batch = False
+                if reply_gate is not None:
+                    from agent.im.auto_reply import GATE_SILENT_REASON, gate_call_violation_reason
+
+                    resolved_calls = []
+                    for call in result.tool_calls:
+                        resolved, _arguments, resolve_error = _core._resolve_tool_call(
+                            getattr(call, "name", None), getattr(call, "input", None),
+                        )
+                        resolved_calls.append((resolved, resolve_error))
+                    no_reply_selected_in_batch = (
+                        reply_gate.choice is ReplyChoice.PENDING
+                        and any(error is None and name == reply_tool_name for name, error in resolved_calls)
+                    )
+
+                    for index, call in enumerate(result.tool_calls):
+                        resolved, resolve_error = resolved_calls[index]
+                        if resolve_error is not None:
+                            continue
+                        reason = gate_call_violation_reason(reply_gate, resolved)
+                        if no_reply_selected_in_batch and resolved != reply_tool_name:
+                            reason = GATE_SILENT_REASON
+                        if reason is not None:
+                            gate_violations.append((index, call, resolved, reason))
+
+                if gate_violations:
+                    from app.core.redaction import diag_log_raw
+                    diag_log_raw(
+                        "agent.loop.group_reply_tool_call_blocked",
+                        f"run_id={run_id} round_id={round_id} calls={len(gate_violations)}",
+                    )
                 reply_state.tool_round_started()  # 本轮真调了工具 → narration 兜底不触发
                 # 核实阶段首次补做（本轮调了增删改）→ 把"发现漏了X，补一下"说明发一次；之后的核对文字仍静默
                 dispatched = []
@@ -544,6 +643,38 @@ async def run_loop(
                     )
                 else:
                     parallel_plan, serial_plan = [], list(enumerate(result.tool_calls))
+
+                # 不回复选择与业务工具同批时，按 provider 原始批次统一拦截；不能
+                # 因为串行执行时静默工具先改了 gate 状态而放过后续业务调用。
+                gate_violation_reasons: dict[str, str] = {}
+                for _index, _call, resolved, reason in gate_violations:
+                    gate_violation_reasons.setdefault(resolved, reason)
+
+                gate_protocol_errors: dict[int, tuple[str, str]] = {}
+                parallel_local = {
+                    original: local
+                    for local, (original, _call, _target, _arguments)
+                    in enumerate(parallel_plan)
+                }
+                for original, _call, resolved, reason in gate_violations:
+                    local = parallel_local.get(original)
+                    if local is None:
+                        continue
+                    gate_protocol_errors[local] = (resolved, _core.json.dumps(
+                        _gate_violation_payload(reason), ensure_ascii=False,
+                    ))
+
+                def gate_resolve_tool_call(raw_name, raw_input):
+                    """串行批次中预先判定并隔离与不回复选择同批的业务调用。"""
+                    target, arguments, resolve_error = _core._resolve_tool_call(
+                        raw_name, raw_input,
+                    )
+                    if resolve_error is not None:
+                        return target, arguments, resolve_error
+                    reason = gate_violation_reasons.get(target)
+                    if reason is None:
+                        return target, arguments, None
+                    return target, arguments, _gate_violation_payload(reason)
 
                 if len(result.tool_calls) > 1 and not parallel_enabled:
                     _log_tool_batch_observation({
@@ -568,7 +699,7 @@ async def run_loop(
                             for local_index, (_index, call, target, arguments)
                             in enumerate(parallel_plan)
                         ],
-                        protocol_errors={},
+                        protocol_errors=gate_protocol_errors,
                         runner=runner,
                         user_id=user_id,
                         session_id=session_id,
@@ -650,7 +781,7 @@ async def run_loop(
                         runner=runner,
                         run_state=run_state,
                         bindings=SerialToolBindings(
-                            resolve_tool_call=_core._resolve_tool_call,
+                            resolve_tool_call=gate_resolve_tool_call,
                             set_tool_state=_core._im_set_tool_state,
                             dispatch_in_session=_core._dispatch_in_session,
                             is_successful_result=_core._is_successful_tool_result,
@@ -809,10 +940,26 @@ async def run_loop(
                             if tool is not None:
                                 add_event(tool_schema_event(tool))
                 messages.append_batch(batch)
+                if reply_gate is not None:
+                    from agent.im.auto_reply import ReplyChoice
+
+                    if reply_gate.choice is ReplyChoice.SILENT:
+                        # 选择静默后不再发起后续 provider 请求；run 收尾会丢弃本轮内部工具历史。
+                        if reasoning_state is not None:
+                            await reasoning_state.completed()
+                        yield stream_event(
+                            "_usage",
+                            input=run_state.total_usage_in,
+                            context_input=run_context_usage_peak,
+                            output=run_state.total_usage_out,
+                            cache_read=run_state.total_cache_read,
+                            cache_write=run_state.total_cache_write,
+                        )
+                        return
                 if parallel_cancelled:
                     # 已完成调用保留实际结果；未完成调用用取消回执补齐 canonical 配对。
                     # 取消事件结束当前 Run，不能再把这批结果发给 Provider 续轮。
-                    yield f"data: {_core.json.dumps({'type': '_cancelled'}, ensure_ascii=False)}\n\n"
+                    yield stream_event("_cancelled", remote_status_unknown=cancellation.remote_status_unknown)
                     return
                 if run_state.pending is not None:
                     interaction_runtime = InteractionRuntime(
@@ -826,7 +973,7 @@ async def run_loop(
                             dispatch_in_session=_core._dispatch_in_session,
                             tool_result_payload=_core._tool_result_payload,
                             is_successful_result=_core._is_successful_tool_result,
-                            is_cancelled=_core._im_cancelled,
+                            is_cancelled=cancellation.is_requested,
                             diag_log=_core.diag_log,
                         ),
                         user_id=user_id,
@@ -946,17 +1093,18 @@ async def run_loop(
 
             # 反思快照捕获（PRD-LLM-27 §6.1）：只在成功收尾处捕获，进程内登记供
             # append_reuse 反思消费；失败/异常静默跳过，闲置 worker 可从持久历史重建最小输入。
-            try:
-                from agent.context.reflection_snapshot import capture_reflection_snapshot
-                capture_reflection_snapshot(
-                    user_id=user_id, session_id=session_id, run_id=run_id, ai=ai,
-                    system_prompt=system_text or "", tools=getattr(ctx, "tools", None),
-                    messages=messages, reply_text=_final_text,
-                    provider_context_input=run_state.run_context_usage or None,
-                    provider_compacted=context_runtime.provider_compacted,
-                )
-            except Exception as exc:
-                _core.diag_log("agent.context.reflection_snapshot.capture", exc)
+            if reply_gate is None or reply_gate.choice is ReplyChoice.REPLY:
+                try:
+                    from agent.context.reflection_snapshot import capture_reflection_snapshot
+                    capture_reflection_snapshot(
+                        user_id=user_id, session_id=session_id, run_id=run_id, ai=ai,
+                        system_prompt=system_text or "", tools=getattr(ctx, "tools", None),
+                        messages=messages, reply_text=_final_text,
+                        provider_context_input=run_state.run_context_usage or None,
+                        provider_compacted=context_runtime.provider_compacted,
+                    )
+                except Exception as exc:
+                    _core.diag_log("agent.context.reflection_snapshot.capture", exc)
 
             # 正文已经确定后立即结束本轮；90% 压缩已在 provider round 返回后同步完成。
             yield f"data: {_core.json.dumps({'type': '_usage', 'input': run_state.total_usage_in, 'context_input': run_context_usage_peak, 'output': run_state.total_usage_out, 'cache_read': run_state.total_cache_read, 'cache_write': run_state.total_cache_write})}\n\n"
