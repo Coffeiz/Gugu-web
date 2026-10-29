@@ -27,7 +27,7 @@ DEFERRED_RENDER_BATCH_SIZE = 1
 DEFAULT_MAX_DIAGRAMS: int | None = None
 MAX_SOURCE_CHARS = 20_000
 MAX_PNG_BYTES = 3 * 1024 * 1024
-RENDER_TIMEOUT_SECONDS = 20
+RENDER_TIMEOUT_SECONDS = 30
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
@@ -288,7 +288,8 @@ async def render_pngs(
                 except ProcessLookupError:
                     pass
                 await process.wait()
-            diag_log_raw("agent.im.mermaid.render", "status=timeout")
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            diag_log_raw("agent.im.mermaid.render", f"status=timeout elapsed_ms={elapsed_ms}")
             return results
         except asyncio.CancelledError:
             if process and process.returncode is None:
