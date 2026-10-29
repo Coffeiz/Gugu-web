@@ -48,16 +48,20 @@ def test_explicit_bot_mention_precedes_other_mention_and_hard_reject():
     assert decision == AttentionDecision(AttentionKind.DIRECT, 100, None, ("DIRECT_invitation",))
 
 
-def test_explicit_alias_call_is_direct_only_when_it_contains_a_request():
+def test_any_configured_bot_alias_mention_is_direct():
     snapshot = AttentionSnapshot(complete=True)
     assert decide_attention(
         message(raw_text="咕咕，帮我分析一下 Python 配置"), snapshot, AttentionMode.QUIET,
         bot_aliases=("咕咕",),
     ).kind is AttentionKind.DIRECT
     assert decide_attention(
-        message(raw_text="咕咕，今天真热"), snapshot, AttentionMode.QUIET,
+        message(raw_text="一大段讨论里顺带提到咕咕之前的回复"), snapshot, AttentionMode.QUIET,
         bot_aliases=("咕咕",),
-    ).kind is AttentionKind.PASSIVE
+    ).kind is AttentionKind.DIRECT
+    assert decide_attention(
+        message(raw_text="咕咕看下刚刚有发吗？能再发一次吗"), snapshot, AttentionMode.QUIET,
+        bot_aliases=("咕咕",),
+    ).kind is AttentionKind.DIRECT
 
 
 def test_autonomous_mode_admits_ordinary_messages_without_attention_classification():
