@@ -757,11 +757,16 @@ async def test_resolve_oversized_audio_gates_before_read(db, user_a, storage, mo
     monkeypatch.setattr(media_gates, "image_enabled", lambda *a, **k: False)
     monkeypatch.setattr(media_gates, "video_enabled", lambda *a, **k: False)
     monkeypatch.setattr(media_gates, "audio_enabled", lambda *a, **k: True)
-    monkeypatch.setattr("agent.voice_config.voice_recognition_enabled", lambda *a, **k: False)
+    from agent.voice_config import VoiceRecognitionProfile
+
+    async def _voice_profile(*_args, **_kwargs):
+        return VoiceRecognitionProfile(True, 1024 * 1024, provider_label="合成语音识别")
+
+    monkeypatch.setattr("agent.chat.attachments.voice_recognition_profile", _voice_profile)
 
     parts, _cards, _images, media = await resolve_for_message(
         user_a.id, [meta["attach_id"]], "你好")
-    assert "太大" in parts
+    assert "单文件上限" in parts
     assert media == []
 
 

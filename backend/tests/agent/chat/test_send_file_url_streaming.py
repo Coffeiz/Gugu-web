@@ -67,7 +67,7 @@ class _FakeClient:
         self._resp.client_closed = True
         return False
 
-    def stream(self, method, url, headers=None):
+    def stream(self, method, url, headers=None, json=None):
         assert method == "GET"
         return _FakeStream(self._resp)
 
