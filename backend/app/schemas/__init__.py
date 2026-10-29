@@ -750,6 +750,8 @@ class PreferencesResponse(CamelModel):
     toolInjectionMode: str = "description"  # description = 简介模式；full = 全量模式，默认简介
     personalityPreference: Optional[str] = None
     personalityPreferenceEnabled: bool = False
+    groupPersonalityPreference: Optional[str] = None
+    groupPersonalityPreferenceEnabled: bool = False
     personalityPreferenceRevision: int = 0
     personalityPreferenceUpdatedAt: Optional[str] = None
     personalityPreferenceAvailable: bool = True
@@ -817,8 +819,10 @@ class PreferencesUpdate(CamelModel):
     toolInjectionMode: Optional[str] = None
     personalityPreference: Optional[str] = Field(default=None, max_length=10000)
     personalityPreferenceEnabled: Optional[bool] = None
+    groupPersonalityPreference: Optional[str] = Field(default=None, max_length=10000)
+    groupPersonalityPreferenceEnabled: Optional[bool] = None
 
-    @field_validator("personalityPreference")
+    @field_validator("personalityPreference", "groupPersonalityPreference")
     @classmethod
     def validate_personality_preference(cls, value: Optional[str]) -> Optional[str]:
         if value is None:

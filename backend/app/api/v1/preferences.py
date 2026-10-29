@@ -12,9 +12,11 @@ from app.services.personality_preferences import (
     preference_updated_at,
     normalize_personality_preference,
     normalize_reply_style,
+    read_group_personality_file,
     read_personality_file,
     read_reply_style_file,
     write_personality_file,
+    write_group_personality_file,
     write_reply_style_file,
 )
 from app.services.email.capabilities import is_system_email_available
@@ -88,7 +90,12 @@ async def _get_or_create(user: User, db: AsyncSession) -> UserPreferences:
     return await get_or_create_user_preferences(db, user.id)
 
 
-def _to_response(data: dict, personality: str | None = None, reply_style: str | None = None) -> PreferencesResponse:
+def _to_response(
+    data: dict,
+    personality: str | None = None,
+    reply_style: str | None = None,
+    group_personality: str | None = None,
+) -> PreferencesResponse:
     personality_enabled = bool(personality and data.get("personality_preference_enabled", False))
     personality_available = bool(get_settings().agent.personality_preference_enabled)
     stored_tool_mode = data.get("tool_injection_mode")
@@ -123,6 +130,10 @@ def _to_response(data: dict, personality: str | None = None, reply_style: str | 
         toolInjectionMode=tool_mode,
         personalityPreference=personality,
         personalityPreferenceEnabled=personality_enabled,
+        groupPersonalityPreference=group_personality,
+        groupPersonalityPreferenceEnabled=bool(
+            group_personality and data.get("group_personality_preference_enabled", False)
+        ),
         personalityPreferenceRevision=preference_revision(data),
         personalityPreferenceUpdatedAt=(
             preference_updated_at(data).isoformat()
@@ -131,6 +142,22 @@ def _to_response(data: dict, personality: str | None = None, reply_style: str | 
         personalityPreferenceAvailable=personality_available,
         emailChangeEnabled=is_system_email_available(),
     )
+
+
+def _update_group_personality(data: dict, user_id, body: PreferencesUpdate) -> tuple[bool, bool]:
+    content_changed = False
+    toggle_changed = False
+    if "groupPersonalityPreference" in body.model_fields_set:
+        content_changed = write_group_personality_file(user_id, body.groupPersonalityPreference)
+        data.pop("group_personality_preference", None)
+        data["personality_preference_revision"] = (
+            int(data.get("personality_preference_revision", 0)) + int(content_changed)
+        )
+    if "groupPersonalityPreferenceEnabled" in body.model_fields_set:
+        enabled = bool(body.groupPersonalityPreferenceEnabled)
+        toggle_changed = enabled != bool(data.get("group_personality_preference_enabled", False))
+        data["group_personality_preference_enabled"] = enabled
+    return content_changed, toggle_changed
 
 
 def _migrate_legacy_reply_style(data: dict, user_id) -> tuple[str | None, bool]:
@@ -156,7 +183,10 @@ async def get_preferences(
     if had_legacy_value:
         prefs.data = data
     await db.commit()
-    return _to_response(prefs.data, read_personality_file(user.id), style)
+    return _to_response(
+        prefs.data, read_personality_file(user.id), style,
+        read_group_personality_file(user.id),
+    )
 
 
 @router.post("/personality/upload", response_model=PreferencesResponse)
@@ -195,7 +225,49 @@ async def upload_personality(
     if changed:
         from app.core import events
         await events.bump_context_revision(user.id, "preferences")
-    return _to_response(data, read_personality_file(user.id), read_reply_style_file(user.id))
+    return _to_response(
+        data, read_personality_file(user.id), read_reply_style_file(user.id),
+        read_group_personality_file(user.id),
+    )
+
+
+@router.post("/group-personality/upload", response_model=PreferencesResponse)
+async def upload_group_personality(
+    file: UploadFile = FastAPIFile(...),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """上传群聊专用 Markdown 人格文件；与个人 persona.md 独立保存。"""
+    if not get_settings().agent.personality_preference_enabled:
+        raise HTTPException(status_code=403, detail="用户人格偏好当前未开放")
+    filename = (file.filename or "").strip().lower()
+    if not filename.endswith(".md"):
+        raise HTTPException(status_code=415, detail="群聊人格文件必须是 Markdown（.md）文件")
+    raw = await file.read(_MAX_PERSONALITY_UPLOAD_BYTES + 1)
+    if len(raw) > _MAX_PERSONALITY_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="群聊人格文件过大")
+    try:
+        content = normalize_personality_preference(raw.decode("utf-8")) or ""
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=400, detail="群聊人格文件必须使用 UTF-8 编码") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    prefs = await _get_or_create(user, db)
+    data = prefs.data
+    changed = write_group_personality_file(user.id, content)
+    data.pop("group_personality_preference", None)
+    data["personality_preference_revision"] = int(data.get("personality_preference_revision", 0)) + int(changed)
+    prefs.data = data
+    if changed:
+        await invalidate_personality_snapshots(db, user.id)
+    await db.commit()
+    if changed:
+        from app.core import events
+        await events.bump_context_revision(user.id, "preferences")
+    return _to_response(
+        data, read_personality_file(user.id), read_reply_style_file(user.id),
+        read_group_personality_file(user.id),
+    )
 
 
 @router.post("/reply-style/upload", response_model=PreferencesResponse)
@@ -230,7 +302,10 @@ async def upload_reply_style(
     if changed:
         from app.core import events
         await events.bump_context_revision(user.id, "preferences")
-    return _to_response(data, read_personality_file(user.id), read_reply_style_file(user.id))
+    return _to_response(
+        data, read_personality_file(user.id), read_reply_style_file(user.id),
+        read_group_personality_file(user.id),
+    )
 
 
 @router.patch("/reply-style", response_model=PreferencesResponse)
@@ -251,7 +326,10 @@ async def update_reply_style(
     if changed:
         from app.core import events
         await events.bump_context_revision(user.id, "preferences")
-    return _to_response(data, read_personality_file(user.id), read_reply_style_file(user.id))
+    return _to_response(
+        data, read_personality_file(user.id), read_reply_style_file(user.id),
+        read_group_personality_file(user.id),
+    )
 
 
 @router.patch("", response_model=PreferencesResponse)
@@ -260,7 +338,10 @@ async def update_preferences(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    if {"personalityPreference", "personalityPreferenceEnabled"}.intersection(body.model_fields_set):
+    if {
+        "personalityPreference", "personalityPreferenceEnabled",
+        "groupPersonalityPreference", "groupPersonalityPreferenceEnabled",
+    }.intersection(body.model_fields_set):
         if not get_settings().agent.personality_preference_enabled:
             raise HTTPException(status_code=403, detail="用户人格偏好当前未开放")
     prefs = await _get_or_create(user, db)
@@ -279,6 +360,9 @@ async def update_preferences(
         enabled = bool(body.personalityPreferenceEnabled)
         personality_toggle_changed = enabled != bool(data.get("personality_preference_enabled", False))
         data["personality_preference_enabled"] = enabled
+    group_personality_changed, group_personality_toggle_changed = _update_group_personality(
+        data, user.id, body,
+    )
     if body.lastStages is not None:
         data["last_stages"] = body.lastStages
     if body.stageTemplates is not None:
@@ -333,7 +417,8 @@ async def update_preferences(
     prefs.data = data
     if style_changed:
         await invalidate_personality_snapshots(db, user.id)
-    if personality_changed or personality_toggle_changed:
+    if (personality_changed or personality_toggle_changed
+            or group_personality_changed or group_personality_toggle_changed):
         await invalidate_personality_snapshots(db, user.id)
     await db.commit()
     shell_changed = any(
@@ -348,7 +433,11 @@ async def update_preferences(
     if style_changed:
         from app.core import events
         await events.bump_context_revision(user.id, "preferences")
-    if personality_changed or personality_toggle_changed:
+    if (personality_changed or personality_toggle_changed
+            or group_personality_changed or group_personality_toggle_changed):
         from app.core import events
         await events.bump_context_revision(user.id, "preferences")
-    return _to_response(data, read_personality_file(user.id), read_reply_style_file(user.id))
+    return _to_response(
+        data, read_personality_file(user.id), read_reply_style_file(user.id),
+        read_group_personality_file(user.id),
+    )

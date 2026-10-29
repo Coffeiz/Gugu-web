@@ -29,6 +29,8 @@ export const usePreferencesStore = defineStore('preferences', () => {
   const customReplyStyleEnabled = ref(false)
   const personalityPreference = ref('')
   const personalityPreferenceEnabled = ref(false)
+  const groupPersonalityPreference = ref('')
+  const groupPersonalityPreferenceEnabled = ref(false)
   const personalityPreferenceAvailable = ref(true)
   const emailChangeEnabled = ref(false)
   const personalityPreferenceRevision = ref(0)
@@ -93,6 +95,8 @@ export const usePreferencesStore = defineStore('preferences', () => {
       customReplyStyleEnabled.value = data.customReplyStyleEnabled ?? false
       personalityPreference.value = data.personalityPreference ?? ''
       personalityPreferenceEnabled.value = data.personalityPreferenceEnabled ?? false
+      groupPersonalityPreference.value = data.groupPersonalityPreference ?? ''
+      groupPersonalityPreferenceEnabled.value = data.groupPersonalityPreferenceEnabled ?? false
       personalityPreferenceAvailable.value = data.personalityPreferenceAvailable ?? true
       emailChangeEnabled.value = (data as any).emailChangeEnabled ?? false
       personalityPreferenceRevision.value = data.personalityPreferenceRevision ?? 0
@@ -259,6 +263,27 @@ export const usePreferencesStore = defineStore('preferences', () => {
     return data
   }
 
+  async function saveGroupPersonalityPreference(text: string, enabled: boolean) {
+    const data = await preferencesApi.update({
+      groupPersonalityPreference: text.trim() || null,
+      groupPersonalityPreferenceEnabled: enabled,
+    })
+    groupPersonalityPreference.value = data.groupPersonalityPreference ?? ''
+    groupPersonalityPreferenceEnabled.value = data.groupPersonalityPreferenceEnabled ?? false
+    personalityPreferenceAvailable.value = data.personalityPreferenceAvailable ?? true
+    personalityPreferenceRevision.value = data.personalityPreferenceRevision ?? 0
+    return data
+  }
+
+  async function uploadGroupPersonalityFile(file: File) {
+    const data = await preferencesApi.uploadGroupPersonality(file)
+    groupPersonalityPreference.value = data.groupPersonalityPreference ?? ''
+    groupPersonalityPreferenceEnabled.value = data.groupPersonalityPreferenceEnabled ?? false
+    personalityPreferenceAvailable.value = data.personalityPreferenceAvailable ?? true
+    personalityPreferenceRevision.value = data.personalityPreferenceRevision ?? 0
+    return data
+  }
+
   async function saveLastStages(stages: any[]) {
     lastStages.value = stages
     try { await preferencesApi.update({ lastStages: stages }) } catch {}
@@ -282,7 +307,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
   }
 
   return {
-    lastStages, stageTemplates, replyTone, replyLength, pmStagesExpanded, calendarWeekStart, calendarDoneMode, defaultView, shellEnabled, shellSystemEnabled, shellDangerousEnabled, automaticModeEnabled, decisionGuardEnabled, imToolDisplayMode, showIntermediateReplies, toolInjectionMode, customReplyStyle, customReplyStyleEnabled, personalityPreference, personalityPreferenceEnabled, personalityPreferenceAvailable, personalityPreferenceRevision, emailChangeEnabled, locale,
-    loaded, fetch, refreshAutomaticModeEnabled, notifyAutomaticModeChanged, refreshEmailChangeEnabled, saveLocale, saveLastStages, saveTemplates, saveStyle, savePmStagesExpanded, saveCalendarWeekStart, saveCalendarDoneMode, saveDefaultView, saveShellEnabled, saveShellSystemEnabled, saveShellDangerousEnabled, saveAutomaticModeEnabled, saveDecisionGuardEnabled, saveImToolDisplayMode, saveShowIntermediateReplies, saveToolInjectionMode, saveCustomReplyStyle, saveCustomReplyStyleEnabled, uploadCustomReplyStyle, savePersonalityPreference, uploadPersonalityFile,
+    lastStages, stageTemplates, replyTone, replyLength, pmStagesExpanded, calendarWeekStart, calendarDoneMode, defaultView, shellEnabled, shellSystemEnabled, shellDangerousEnabled, automaticModeEnabled, decisionGuardEnabled, imToolDisplayMode, showIntermediateReplies, toolInjectionMode, customReplyStyle, customReplyStyleEnabled, personalityPreference, personalityPreferenceEnabled, groupPersonalityPreference, groupPersonalityPreferenceEnabled, personalityPreferenceAvailable, personalityPreferenceRevision, emailChangeEnabled, locale,
+    loaded, fetch, refreshAutomaticModeEnabled, notifyAutomaticModeChanged, refreshEmailChangeEnabled, saveLocale, saveLastStages, saveTemplates, saveStyle, savePmStagesExpanded, saveCalendarWeekStart, saveCalendarDoneMode, saveDefaultView, saveShellEnabled, saveShellSystemEnabled, saveShellDangerousEnabled, saveAutomaticModeEnabled, saveDecisionGuardEnabled, saveImToolDisplayMode, saveShowIntermediateReplies, saveToolInjectionMode, saveCustomReplyStyle, saveCustomReplyStyleEnabled, uploadCustomReplyStyle, savePersonalityPreference, uploadPersonalityFile, saveGroupPersonalityPreference, uploadGroupPersonalityFile,
   }
 })

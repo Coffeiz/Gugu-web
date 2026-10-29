@@ -26,6 +26,7 @@
         </div>
       </div>
       <div v-if="error || status" class="personality-status" :class="{ error: !!error }">{{ error || status }}</div>
+      <ProfileGroupPersonalityCard />
     </template>
     <div class="personality-heading">
       <div class="pm-field-desc"><span class="pm-field-name">{{ t('personalityUi.customStyle') }}</span><span class="pm-field-hint">{{ t('personalityUi.customStyleHint') }}</span></div>
@@ -54,6 +55,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
+import ProfileGroupPersonalityCard from '@/components/common/profile/ProfileGroupPersonalityCard.vue'
 import { usePreferencesStore } from '@/stores/preferences'
 import { usePreviewStore } from '@/stores/preview'
 

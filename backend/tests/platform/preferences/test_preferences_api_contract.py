@@ -17,6 +17,9 @@ def test_personality_preference_is_bounded_and_normalized():
         PreferencesUpdate(personalityPreference="x" * 10001)
     with pytest.raises(ValidationError):
         PreferencesUpdate(personalityPreference="正常\x01文本")
+    assert PreferencesUpdate(groupPersonalityPreference="  群聊人格  ").groupPersonalityPreference == "群聊人格"
+    with pytest.raises(ValidationError):
+        PreferencesUpdate(groupPersonalityPreference="x" * 10001)
     assert ReplyStyleUpdate(content="  先给结论  ").content == "先给结论"
     with pytest.raises(ValidationError):
         ReplyStyleUpdate(content="正常\x01文本")
@@ -51,6 +54,23 @@ def test_reply_style_file_sits_beside_persona_and_is_user_scoped(tmp_path, monke
     assert service.read_reply_style_file(8) is None
     assert service.write_reply_style_file(7, None) is True
     assert not path.exists()
+
+
+def test_group_personality_file_is_separate_and_user_scoped(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        service,
+        "get_settings",
+        lambda: SimpleNamespace(storage=SimpleNamespace(local_path=str(tmp_path))),
+    )
+    assert service.write_personality_file(7, "个人只在私聊使用") is True
+    assert service.write_group_personality_file(7, "群聊使用的设定") is True
+    group_path = tmp_path / "7" / ".agent" / "prompt" / "group-persona.md"
+    assert group_path.read_text(encoding="utf-8") == "群聊使用的设定"
+    assert group_path != service.personality_file_path(7)
+    assert service.read_group_personality_file(7) == "群聊使用的设定"
+    assert service.read_group_personality_file(8) is None
+    assert service.write_group_personality_file(7, None) is True
+    assert not group_path.exists()
 
 
 def test_personality_is_in_static_prompt_only_when_enabled(monkeypatch):

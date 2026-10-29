@@ -8231,6 +8231,10 @@ export interface components {
              * @default false
              */
             personalityPreferenceEnabled: boolean;
+            /** Grouppersonalitypreference */
+            groupPersonalityPreference?: string | null;
+            /** Grouppersonalitypreferenceenabled */
+            groupPersonalityPreferenceEnabled: boolean;
             /**
              * Personalitypreferencerevision
              * @default 0
@@ -8297,6 +8301,10 @@ export interface components {
             personalityPreference?: string | null;
             /** Personalitypreferenceenabled */
             personalityPreferenceEnabled?: boolean | null;
+            /** Grouppersonalitypreference */
+            groupPersonalityPreference?: string | null;
+            /** Grouppersonalitypreferenceenabled */
+            groupPersonalityPreferenceEnabled?: boolean | null;
         };
         /** PresetCreate */
         PresetCreate: {

@@ -884,6 +884,7 @@ export const preferencesApi = {
   get:    ()                                  => get<Schemas['PreferencesResponse']>('/preferences'),
   update: (data: Schemas['PreferencesUpdate']) => request<Schemas['PreferencesResponse']>('PATCH', '/preferences', data),
   uploadPersonality: (file: File) => { const form = new FormData(); form.append('file', file); return upload<Schemas['PreferencesResponse']>('/preferences/personality/upload', form) },
+  uploadGroupPersonality: (file: File) => { const form = new FormData(); form.append('file', file); return upload<Schemas['PreferencesResponse']>('/preferences/group-personality/upload', form) },
   uploadReplyStyle: (file: File) => { const form = new FormData(); form.append('file', file); return upload<Schemas['PreferencesResponse']>('/preferences/reply-style/upload', form) },
   updateReplyStyle: (content: string | null) => request<Schemas['PreferencesResponse']>('PATCH', '/preferences/reply-style', { content }),
   getSmtp: () => get<{ host: string; port: number; user: string; fromAddr: string; useSsl: boolean; enabled: boolean; configured: boolean } | null>('/preferences/smtp'),

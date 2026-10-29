@@ -1,11 +1,15 @@
 """PRD-LLM-15：用户风格与跨渠道提示词组装回归测试。"""
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 
 from agent.context import builder
 from agent.context.session_snapshot import ensure_snapshot
+from agent.context.loaders import load_style_prefs
+from app.models import UserPreferences
+from app.services import personality_preferences
 
 
 def test_style_preference_static_prefix_is_stable_across_channels():
@@ -57,7 +61,7 @@ async def test_english_locale_reaches_the_session_prompt_used_for_reply():
         session_context = None
         snapshot_expires_at = None
         user_id = "synthetic-user"
-        baseline_message_id = 0
+        baseline_message_seq = 0
 
     session = Session()
     loaded = 0
@@ -140,3 +144,68 @@ def test_custom_reply_style_is_independent_of_persona_and_can_be_disabled():
     disabled, _, _ = builder.build_split("default", "测试用户", [], [], style_prefs=prefs)
     assert "测试人格设定" in disabled
     assert "先给出结论" not in disabled
+
+
+def test_group_persona_is_used_only_in_group_prompt_and_never_leaks_personal_persona():
+    personal_static, _, _ = builder.build_split(
+        "default", "测试用户", [], [],
+        style_prefs={
+            "personality_preference": "个人专属人格",
+            "personality_preference_enabled": True,
+        },
+    )
+    group_static, _, _ = builder.build_split(
+        "default", "测试用户", [], [],
+        style_prefs={
+            "group_chat": True,
+            "personality_preference": "个人专属人格",
+            "personality_preference_enabled": True,
+            "group_personality_preference": "群聊专属人格",
+            "group_personality_preference_enabled": True,
+        },
+    )
+    group_default_static, _, _ = builder.build_split(
+        "default", "测试用户", [], [],
+        style_prefs={
+            "group_chat": True,
+            "personality_preference": "个人专属人格",
+            "personality_preference_enabled": True,
+            "group_personality_preference": "群聊专属人格",
+            "group_personality_preference_enabled": False,
+        },
+    )
+
+    assert "个人专属人格" in personal_static
+    assert "群聊专属人格" in group_static
+    assert "个人专属人格" not in group_static
+    assert "群聊专属人格" not in group_default_static
+    assert "个人专属人格" not in group_default_static
+    assert "## 1. 做事" in group_default_static
+
+
+@pytest.mark.asyncio
+async def test_style_loader_selects_group_persona_only_for_group_scope(db, user_a, tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        personality_preferences,
+        "get_settings",
+        lambda: SimpleNamespace(storage=SimpleNamespace(local_path=str(tmp_path))),
+    )
+    await db.merge(UserPreferences(
+        user_id=user_a.id,
+        data_json=(
+            '{"personality_preference_enabled":true,'
+            '"group_personality_preference_enabled":true}'
+        ),
+    ))
+    await db.flush()
+    personality_preferences.write_personality_file(user_a.id, "个人设定")
+    personality_preferences.write_group_personality_file(user_a.id, "群聊设定")
+
+    private_prefs = await load_style_prefs(db, user_a.id)
+    group_prefs = await load_style_prefs(db, user_a.id, group_chat=True)
+
+    assert private_prefs["personality_preference"] == "个人设定"
+    assert "group_personality_preference" not in private_prefs
+    assert group_prefs["group_personality_preference"] == "群聊设定"
+    assert group_prefs["group_chat"] is True
+    assert "personality_preference" not in group_prefs

@@ -39,6 +39,19 @@ def read_personality_file(user_id) -> str | None:
         return None
 
 
+def group_personality_file_path(user_id) -> Path:
+    """返回用户专用于群聊的隐藏人格文件路径。"""
+    return personality_file_path(user_id).with_name("group-persona.md")
+
+
+def read_group_personality_file(user_id) -> str | None:
+    path = group_personality_file_path(user_id)
+    try:
+        return normalize_personality_preference(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+
+
 def write_personality_file(user_id, value: str | None) -> bool:
     """原子写入或删除用户人格文件，返回内容是否发生变化。"""
     normalized = normalize_personality_preference(value)
@@ -54,6 +67,39 @@ def write_personality_file(user_id, value: str | None) -> bool:
         return True
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temp_name = tempfile.mkstemp(prefix=".persona-", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(normalized)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, path)
+    except BaseException:
+        try:
+            os.unlink(temp_name)
+        except FileNotFoundError:
+            pass
+        raise
+    return True
+
+
+def write_group_personality_file(user_id, value: str | None) -> bool:
+    """原子写入或删除群聊专用人格文件。"""
+    normalized = normalize_personality_preference(value)
+    path = group_personality_file_path(user_id)
+    try:
+        current = normalize_personality_preference(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        current = None
+    if current == normalized:
+        return False
+    if normalized is None:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        return True
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(prefix=".group-persona-", suffix=".tmp", dir=path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(normalized)
