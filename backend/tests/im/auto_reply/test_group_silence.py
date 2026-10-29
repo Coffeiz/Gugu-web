@@ -36,13 +36,17 @@ def platform_sender(monkeypatch):
     return group_send, private_send, finish
 
 
-async def finalize(response, *, chat_type="group", group_auto_reply=True, gate=None):
+async def finalize(
+    response, *, chat_type="group", group_auto_reply=True, gate=None,
+    attention_tracking=False, reservation=None,
+):
     request = SimpleNamespace(
         source="qq",
         platform_user_id="synthetic-user",
         chat_id="synthetic-group" if chat_type == "group" else None,
         group_auto_reply=group_auto_reply,
         group_reply_gate=gate,
+        attention_budget_reservation=reservation,
     )
     payload = {
         "platform": "qq",
@@ -52,6 +56,13 @@ async def finalize(response, *, chat_type="group", group_auto_reply=True, gate=N
         "channel_id": "synthetic-bot",
         "message_id": "synthetic-inbound",
     }
+    if attention_tracking:
+        payload.update({
+            "_attention_track_delivery": True,
+            "_attention_audit_enabled": True,
+            "group_attention_mode": "natural",
+            "_attention_config_version": 1,
+        })
     return await dispatch_finalization.finalize_im_dispatch(
         payload=payload,
         request=request,
@@ -120,6 +131,23 @@ async def test_error_after_reply_selection_is_still_delivered(platform_sender):
 
 
 @pytest.mark.asyncio
+async def test_choose_no_reply_releases_reserved_attention_budget(platform_sender, monkeypatch):
+    settle = AsyncMock()
+    monkeypatch.setattr(dispatch_finalization, "_settle_attention_budget", settle)
+    monkeypatch.setattr("app.core.redaction.diag_log_raw", lambda *_args: None)
+    gate = ReplyGate()
+    gate.decline()
+
+    await finalize(
+        AgentResponse(text=""), gate=gate, attention_tracking=True,
+        reservation={"kind": "proactive", "run_id": "synthetic-run"},
+    )
+
+    settle.assert_awaited_once()
+    assert settle.await_args.kwargs["outcome"] == "FAILED_CONFIRMED"
+
+
+@pytest.mark.asyncio
 async def test_private_chat_error_is_not_suppressed(platform_sender):
     """私聊不受群聊静默门影响，失败提示照常送达。"""
     _group_send, private_send, finish = platform_sender
@@ -130,3 +158,44 @@ async def test_private_chat_error_is_not_suppressed(platform_sender):
     private_send.assert_awaited_once()
     assert private_send.await_args.args[1] == "合成模型失败提示"
     assert finish.call_args.args[0] == "error"
+
+
+def test_attention_run_audit_records_no_reply_and_delivery_status_without_identity(monkeypatch):
+    import json
+
+    captured = []
+    monkeypatch.setattr(
+        "app.core.redaction.diag_log_raw",
+        lambda where, text: captured.append((where, text)),
+    )
+    gate = ReplyGate()
+    gate.decline()
+    request = SimpleNamespace(group_reply_gate=gate)
+    payload = {
+        "_attention_audit_enabled": True,
+        "group_attention_mode": "natural",
+        "_attention_config_version": 9,
+        "_attention_outbound_receipts": [{"status": "ACCEPTED"}],
+    }
+
+    dispatch_finalization._log_attention_run_outcome(
+        payload, request, run_outcome="success",
+    )
+
+    where, serialized = captured[0]
+    record = json.loads(serialized)
+    assert where == "agent.im.attention.run_outcome"
+    assert record["mode"] == "natural"
+    assert record["config_version"] == 9
+    assert record["choose_no_reply_used"] is True
+    assert record["outbound_status"] == "ACCEPTED"
+    assert "synthetic" not in serialized
+
+    captured.clear()
+    payload["_attention_outbound_receipts"] = [{"status": "UNKNOWN"}]
+    dispatch_finalization._log_attention_run_outcome(
+        payload, request, run_outcome="outbound_failed_or_unknown",
+        reply_sent=True,
+    )
+    record = json.loads(captured[0][1])
+    assert record["outbound_status"] == "UNKNOWN"

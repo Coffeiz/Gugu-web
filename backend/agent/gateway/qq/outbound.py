@@ -401,14 +401,14 @@ async def _post(channel_id: str, openid: str, text: str, msg_id: str | None,
     if msg_id:
         body["msg_id"] = msg_id
     try:
-        await _qq_request(channel_id, "POST", path, json_body=body)
+        return await _qq_request(channel_id, "POST", path, json_body=body)
     except Exception as me:
         if msg_type != 2 or not _markdown_blocked(me):
             raise
         body = {"msg_type": 0, "content": text, "msg_seq": await _next_seq(msg_id)}
         if msg_id:
             body["msg_id"] = msg_id
-        await _qq_request(channel_id, "POST", path, json_body=body)
+        return await _qq_request(channel_id, "POST", path, json_body=body)
 
 async def _post_group(channel_id: str, group_openid: str, text: str, msg_id: str | None,
                       message_format: str | None = None,
@@ -431,14 +431,32 @@ async def _post_group(channel_id: str, group_openid: str, text: str, msg_id: str
     if msg_id:
         body["msg_id"] = msg_id
     try:
-        await _qq_request(channel_id, "POST", path, json_body=body)
+        return await _qq_request(channel_id, "POST", path, json_body=body)
     except Exception as me:
         if msg_type != 2 or not _markdown_blocked(me):
             raise
         body = {"msg_type": 0, "content": text, "msg_seq": await _next_seq(msg_id)}
         if msg_id:
             body["msg_id"] = msg_id
-        await _qq_request(channel_id, "POST", path, json_body=body)
+        return await _qq_request(channel_id, "POST", path, json_body=body)
+
+
+def _send_receipt(response: object) -> dict:
+    message_id = None
+    if isinstance(response, dict):
+        message_id = response.get("id") or response.get("message_id")
+    return {"accepted": True, "platform_message_id": str(message_id) if message_id else None}
+
+
+def _failed_send_receipt(error: BaseException, *, return_receipt: bool,
+                         unknown_seen: bool = False) -> bool | dict:
+    if not return_receipt:
+        return False
+    ambiguous = unknown_seen or not isinstance(error, QQAPIError) or error.status >= 500
+    return {
+        "accepted": False,
+        "outcome": "UNKNOWN" if ambiguous else "FAILED_CONFIRMED",
+    }
 
 KEYBOARD_ROW_BUDGET = 40
 
@@ -598,7 +616,8 @@ async def send_link_keyboard(target_id: str, text: str, buttons: list[dict[str, 
     return False
 
 async def send_c2c(openid: str, text: str, msg_id: str | None = None,
-                   channel_id: str | None = None, message_format: str | None = None) -> bool:
+                   channel_id: str | None = None, message_format: str | None = None,
+                   *, return_receipt: bool = False) -> bool | dict:
     """优先被动回复 C2C；被动发送任意失败后改用主动消息尝试一次。"""
     print(json.dumps({
         "event": "send-c2c-start",
@@ -606,18 +625,20 @@ async def send_c2c(openid: str, text: str, msg_id: str | None = None,
         "has_channel_id": bool(channel_id),
         "has_msg_id": bool(msg_id),
     }, ensure_ascii=False), flush=True)
+    unknown_seen = False
     for attempt in (1, 2):
         try:
             if message_format is None:
-                await _post(channel_id, openid, text, msg_id)
+                response = await _post(channel_id, openid, text, msg_id)
             else:
-                await _post(channel_id, openid, text, msg_id, message_format)
+                response = await _post(channel_id, openid, text, msg_id, message_format)
             print(json.dumps({
                 "event": "send-c2c-ok",
                 "attempt": attempt,
             }, ensure_ascii=False), flush=True)
-            return True
+            return _send_receipt(response) if return_receipt else True
         except Exception as e:
+            unknown_seen = unknown_seen or not isinstance(e, QQAPIError) or e.status >= 500
             print(json.dumps({
                 "event": "send-c2c-error",
                 "attempt": attempt,
@@ -630,22 +651,26 @@ async def send_c2c(openid: str, text: str, msg_id: str | None = None,
                 _send_tokens.pop(channel_id, None)
                 try:
                     if message_format is None:
-                        await _post(channel_id, openid, text, None)
+                        response = await _post(channel_id, openid, text, None)
                     else:
-                        await _post(channel_id, openid, text, None, message_format)
-                    return True
+                        response = await _post(channel_id, openid, text, None, message_format)
+                    return _send_receipt(response) if return_receipt else True
                 except Exception as fallback_error:
                     diag_log("agent.gateway.qq.send_c2c.active_fallback", fallback_error)
                     _log.warning("[qq] C2C 主动消息发送失败: %s",
                                  redact(f"{type(fallback_error).__name__}: {fallback_error}"))
-                    return False
+                    return _failed_send_receipt(
+                        fallback_error, return_receipt=return_receipt,
+                        unknown_seen=unknown_seen,
+                    )
             diag_log("agent.gateway.qq.send_c2c", e)
             _log.warning("[qq] 发送失败(第%d次): %s", attempt, redact(f"{type(e).__name__}: {e}"))
             _send_tokens.pop(channel_id, None)   # 丢弃缓存，下次重新取 token
             if attempt == 2 or not _qq_is_transient(e):
-                return False
+                return _failed_send_receipt(e, return_receipt=return_receipt, unknown_seen=unknown_seen)
             await asyncio.sleep(0.5)
-    return False
+    return _failed_send_receipt(RuntimeError("QQ C2C send exhausted"), return_receipt=return_receipt,
+                                unknown_seen=unknown_seen)
 
 async def _known_group_member_ids(channel_id: str, group_openid: str) -> frozenset[str]:
     """读群记忆 members.json 拿已登记成员 openid，作为 @ID 升级白名单。
@@ -683,7 +708,8 @@ async def _known_group_member_ids(channel_id: str, group_openid: str) -> frozens
 
 async def send_group(group_openid: str, text: str, msg_id: str | None = None,
                      channel_id: str | None = None, message_format: str | None = None,
-                     mention_user_id: str | None = None) -> bool:
+                     mention_user_id: str | None = None,
+                     *, return_receipt: bool = False) -> bool | dict:
     """优先被动回复 QQ 群；被动发送失败后改用主动消息尝试一次。"""
     print(json.dumps({
         "event": "send-group-start",
@@ -697,33 +723,36 @@ async def send_group(group_openid: str, text: str, msg_id: str | None = None,
         known_member_ids = await _known_group_member_ids(str(channel_id or ""), group_openid)
     mention_text, body_text = _split_qq_group_mention(text, mention_user_id, known_member_ids)
     mention_sent = False
+    response = None
+    unknown_seen = False
     for attempt in (1, 2):
         try:
             if mention_text and not mention_sent:
                 # mention 单独使用 Markdown，避免兼容模式把标签当普通文本展示。
-                await _post_group(channel_id, group_openid, mention_text, msg_id, "markdown",
-                                  known_member_ids=known_member_ids)
+                response = await _post_group(channel_id, group_openid, mention_text, msg_id, "markdown",
+                                             known_member_ids=known_member_ids)
                 mention_sent = True
             if mention_text and body_text:
                 if message_format is None:
-                    await _post_group(channel_id, group_openid, body_text, None,
-                                      known_member_ids=known_member_ids)
+                    response = await _post_group(channel_id, group_openid, body_text, None,
+                                                 known_member_ids=known_member_ids)
                 else:
-                    await _post_group(channel_id, group_openid, body_text, None, message_format,
-                                      known_member_ids=known_member_ids)
+                    response = await _post_group(channel_id, group_openid, body_text, None, message_format,
+                                                 known_member_ids=known_member_ids)
             elif not mention_text:
                 if message_format is None:
-                    await _post_group(channel_id, group_openid, text, msg_id,
-                                      known_member_ids=known_member_ids)
+                    response = await _post_group(channel_id, group_openid, text, msg_id,
+                                                 known_member_ids=known_member_ids)
                 else:
-                    await _post_group(channel_id, group_openid, text, msg_id, message_format,
-                                      known_member_ids=known_member_ids)
+                    response = await _post_group(channel_id, group_openid, text, msg_id, message_format,
+                                                 known_member_ids=known_member_ids)
             print(json.dumps({
                 "event": "send-group-ok",
                 "attempt": attempt,
             }, ensure_ascii=False), flush=True)
-            return True
+            return _send_receipt(response) if return_receipt else True
         except Exception as e:
+            unknown_seen = unknown_seen or not isinstance(e, QQAPIError) or e.status >= 500
             print(json.dumps({
                 "event": "send-group-error",
                 "attempt": attempt,
@@ -735,45 +764,51 @@ async def send_group(group_openid: str, text: str, msg_id: str | None = None,
                 _log.warning("[qq] 群聊被动回复失败，降级为主动消息")
                 try:
                     if mention_text and not mention_sent:
-                        await _post_group(channel_id, group_openid, mention_text, None, "markdown",
-                                          known_member_ids=known_member_ids)
+                        response = await _post_group(channel_id, group_openid, mention_text, None, "markdown",
+                                                     known_member_ids=known_member_ids)
                         mention_sent = True
                     if mention_text and body_text:
                         if message_format is None:
-                            await _post_group(channel_id, group_openid, body_text, None,
-                                              known_member_ids=known_member_ids)
+                            response = await _post_group(channel_id, group_openid, body_text, None,
+                                                         known_member_ids=known_member_ids)
                         else:
-                            await _post_group(
+                            response = await _post_group(
                                 channel_id, group_openid, body_text, None, message_format,
                                 known_member_ids=known_member_ids,
                             )
                     elif not mention_text:
                         if message_format is None:
-                            await _post_group(channel_id, group_openid, text, None,
-                                              known_member_ids=known_member_ids)
+                            response = await _post_group(channel_id, group_openid, text, None,
+                                                         known_member_ids=known_member_ids)
                         else:
-                            await _post_group(channel_id, group_openid, text, None, message_format,
-                                              known_member_ids=known_member_ids)
-                    return True
+                            response = await _post_group(channel_id, group_openid, text, None, message_format,
+                                                         known_member_ids=known_member_ids)
+                    return _send_receipt(response) if return_receipt else True
                 except Exception as fallback_error:
                     diag_log("agent.gateway.qq.send_group.active_fallback", fallback_error)
                     _log.warning("[qq] 群聊主动消息发送失败: %s",
                                  redact(f"{type(fallback_error).__name__}: {fallback_error}"))
-                    return False
+                    return _failed_send_receipt(
+                        fallback_error, return_receipt=return_receipt,
+                        unknown_seen=unknown_seen,
+                    )
             elif msg_id and mention_sent and mention_text and body_text:
                 # mention 已经被动送达，后续正文本来就是主动消息；失败时不能
                 # 重发 mention，否则会产生重复提醒。
                 diag_log("agent.gateway.qq.send_group", e)
                 _log.warning("[qq] 群聊正文发送失败: %s",
                              redact(f"{type(e).__name__}: {e}"))
-                return False
+                if response is not None:
+                    return _send_receipt(response) if return_receipt else False
+                return _failed_send_receipt(e, return_receipt=return_receipt, unknown_seen=unknown_seen)
             diag_log("agent.gateway.qq.send_group", e)
             _log.warning("[qq] 群发送失败(第%d次): %s", attempt, redact(f"{type(e).__name__}: {e}"))
             _send_tokens.pop(channel_id, None)
             if attempt == 2 or not _qq_is_transient(e):
-                return False
+                return _failed_send_receipt(e, return_receipt=return_receipt, unknown_seen=unknown_seen)
             await asyncio.sleep(0.5)
-    return False
+    return _failed_send_receipt(RuntimeError("QQ group send exhausted"), return_receipt=return_receipt,
+                                unknown_seen=unknown_seen)
 
 _IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "bmp"}
 

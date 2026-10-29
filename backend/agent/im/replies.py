@@ -112,6 +112,143 @@ async def _send_qq_mermaid_text(payload: dict, text: str) -> bool:
     return await send_text(payload, text)
 
 
+async def _begin_attention_delivery(payload: dict) -> dict | None:
+    """为 scored 群聊的一条可见外发创建幂等投递收据，不保存消息正文。"""
+    if payload.get("_attention_track_delivery") is not True:
+        return None
+    from app.core import redis as R
+    from agent.im.auto_reply.delivery import begin_delivery, delivery_id_for
+    import time
+
+    run_key = str(payload.get("_attention_run_key") or "")
+    platform = str(payload.get("platform") or "")
+    bot_id = str(payload.get("channel_id") or payload.get("bot_id") or "")
+    group_id = str(payload.get("chat_id") or "")
+    if not all((run_key, platform, bot_id, group_id)):
+        return None
+    ordinal = _next_attention_delivery_ordinal(payload)
+    delivery_id = delivery_id_for(run_key, ordinal)
+    source_event_ids = [
+        str(item.get("event_id"))
+        for item in payload.get("_batch_messages", [])
+        if isinstance(item, dict) and item.get("event_id")
+    ]
+    answer_source_event_ids = (
+        source_event_ids
+        if payload.get("_attention_delivery_role") == "answer"
+        else []
+    )
+    state = await begin_delivery(
+        R.get_redis(),
+        delivery_id=delivery_id,
+        platform=platform,
+        bot_id=bot_id,
+        group_id=group_id,
+        run_key=run_key,
+        source_event_ids=source_event_ids,
+        answer_source_event_ids=answer_source_event_ids,
+        recipient_sender_id=(
+            str(payload.get("platform_user_id"))
+            if payload.get("platform_user_id") else None
+        ),
+        budget_kind=payload.get("_attention_budget_kind"),
+        submitted_at_ms=int(time.time() * 1000),
+    )
+    return {
+        "delivery_id": delivery_id,
+        "state": state,
+        "platform": platform,
+        "bot_id": bot_id,
+        "group_id": group_id,
+        "answer_source_event_ids": answer_source_event_ids,
+    }
+
+
+def _next_attention_delivery_ordinal(payload: dict) -> int:
+    """浅拷贝的出站 payload 共用计数器，防止不同路径复用 delivery_id。"""
+    counter = payload.get("_attention_delivery_counter")
+    if not isinstance(counter, dict):
+        counter = {"value": int(payload.get("_attention_delivery_ordinal") or 0)}
+        payload["_attention_delivery_counter"] = counter
+    ordinal = int(counter.get("value") or 0) + 1
+    counter["value"] = ordinal
+    payload["_attention_delivery_ordinal"] = ordinal
+    return ordinal
+
+
+async def _settle_attention_delivery(payload: dict, delivery: dict, result: object) -> bool:
+    """记录文本、图片和文件出口的共同接受状态；不落正文或附件名。"""
+    accepted = (
+        bool(result.get("accepted"))
+        or result.get("status") in {"sent", "sent_with_fallback"}
+        if isinstance(result, dict) else bool(result)
+    )
+    outcome = (
+        str(result.get("outcome") or "UNKNOWN")
+        if isinstance(result, dict) and not accepted
+        else "ACCEPTED" if accepted else "UNKNOWN"
+    )
+    message_id = (
+        str(result.get("platform_message_id"))
+        if isinstance(result, dict) and result.get("platform_message_id") else None
+    )
+    message_ids = (
+        [str(value) for value in result.get("platform_message_ids", []) if value]
+        if isinstance(result, dict) else []
+    )
+    from app.core import redis as R
+    from agent.im.auto_reply.delivery import settle_delivery
+    import time
+
+    await settle_delivery(
+        R.get_redis(),
+        delivery_id=delivery["delivery_id"],
+        platform=delivery["platform"],
+        bot_id=delivery["bot_id"],
+        group_id=delivery["group_id"],
+        outcome=outcome,
+        platform_message_id=message_id,
+        platform_message_ids=message_ids,
+        answer_source_event_ids=delivery.get("answer_source_event_ids") or [],
+        accepted_at_ms=int(time.time() * 1000),
+    )
+    payload.setdefault("_attention_outbound_receipts", []).append({
+        "delivery_id": delivery["delivery_id"],
+        "status": outcome,
+        "platform_message_id": message_id,
+    })
+    return accepted
+
+
+async def _execute_tracked_attention_send(payload: dict, delivery: dict, operation):
+    """无论 Gateway 正常返回或抛错，都把已提交的 delivery 收束到可恢复状态。"""
+    import asyncio
+
+    try:
+        result = await operation()
+    except asyncio.CancelledError:
+        await _settle_attention_delivery(
+            payload, delivery, {"accepted": False, "outcome": "UNKNOWN"},
+        )
+        raise
+    except Exception:
+        await _settle_attention_delivery(
+            payload, delivery, {"accepted": False, "outcome": "UNKNOWN"},
+        )
+        raise
+    accepted = await _settle_attention_delivery(payload, delivery, result)
+    return result, accepted
+
+
+def _record_existing_attention_delivery(payload: dict, delivery: dict) -> None:
+    state = str(delivery.get("state") or "UNKNOWN")
+    payload.setdefault("_attention_outbound_receipts", []).append({
+        "delivery_id": delivery["delivery_id"],
+        "status": state,
+        "platform_message_id": None,
+    })
+
+
 def _link_buttons_text(message: str, buttons: list[dict]) -> str:
     """链接按钮的文本降级：保留可复制可点击的完整 URL（PRD-LLM-24 §8.4）。"""
     lines = [message.strip()] if message.strip() else []
@@ -129,6 +266,28 @@ def _link_buttons_result(status: str, platform: str, delivery: str, buttons: lis
 
 
 async def send_link_button_message(payload: dict, message: str, buttons: list[dict]) -> dict:
+    delivery = await _begin_attention_delivery(payload)
+    if delivery and delivery["state"] != "NEW":
+        _record_existing_attention_delivery(payload, delivery)
+        return {
+            "status": "sent" if delivery["state"] == "ACCEPTED" else "failed",
+            "platform": str(payload.get("platform") or ""),
+            "delivery": "ledger_replay",
+            "button_count": len(buttons),
+        }
+    if delivery:
+        result, _accepted = await _execute_tracked_attention_send(
+            payload, delivery,
+            lambda: _send_link_button_message_untracked(
+                {**payload, "_attention_track_delivery": False}, message, buttons,
+            ),
+        )
+        return result
+    result = await _send_link_button_message_untracked(payload, message, buttons)
+    return result
+
+
+async def _send_link_button_message_untracked(payload: dict, message: str, buttons: list[dict]) -> dict:
     """统一发送链接按钮：原生优先，失败降级文本 URL（PRD-LLM-24 §8/§11）。
 
     输入必须已通过 ``agent.im.link_buttons`` 校验；这里只负责"当前平台用哪种
@@ -202,6 +361,22 @@ async def send_link_button_message(payload: dict, message: str, buttons: list[di
 
 
 async def send_interaction(payload: dict, prompt: dict) -> bool:
+    delivery = await _begin_attention_delivery(payload)
+    if delivery and delivery["state"] != "NEW":
+        _record_existing_attention_delivery(payload, delivery)
+        return delivery["state"] == "ACCEPTED"
+    if delivery:
+        _result, accepted = await _execute_tracked_attention_send(
+            payload, delivery,
+            lambda: _send_interaction_untracked(
+                {**payload, "_attention_track_delivery": False}, prompt,
+            ),
+        )
+        return accepted
+    return await _send_interaction_untracked(payload, prompt)
+
+
+async def _send_interaction_untracked(payload: dict, prompt: dict) -> bool:
     """统一发送交互提示。
 
     QQ/Telegram 使用原生按钮，飞书使用交互卡片；原生交互失败后复用文本降级。
@@ -310,8 +485,24 @@ async def send_reply(payload: dict, reply: PlatformReply) -> bool:
             flush=True,
         )
         return False
+    delivery = await _begin_attention_delivery(payload)
+    if delivery and delivery["state"] != "NEW":
+        # 已经提交或接受过的同一 delivery_id 不重复外发；未知状态交给最终收尾保守占额。
+        _record_existing_attention_delivery(payload, delivery)
+        return delivery["state"] == "ACCEPTED"
+
+    async def finish_delivery(operation) -> bool:
+        if not delivery:
+            return bool(await operation())
+        _result, accepted = await _execute_tracked_attention_send(payload, delivery, operation)
+        return accepted
+
     if platform == "feishu" and reply.target.id:
         from agent.gateway import feishu
+        if delivery:
+            return await finish_delivery(lambda: feishu.send_text(
+                reply.target.id, text, payload.get("channel_id"), return_receipt=True,
+            ))
         result = await feishu.send_text(reply.target.id, text, payload.get("channel_id"))
         return result is not False
     elif platform == "qq" and reply.target.id:
@@ -326,19 +517,25 @@ async def send_reply(payload: dict, reply: PlatformReply) -> bool:
                 payload.get("channel_id"),
                 payload.get("message_format"),
             )
-            if mention_user_id:
+            if delivery and mention_user_id:
+                operation = lambda: qq.send_group(*args, mention_user_id, return_receipt=True)
+            elif delivery:
+                operation = lambda: qq.send_group(*args, return_receipt=True)
+            elif mention_user_id:
                 result = await qq.send_group(*args, mention_user_id)
             else:
                 result = await qq.send_group(*args)
+            if delivery:
+                return await finish_delivery(operation)
         else:
-            result = await qq.send_c2c(
-                reply.target.id,
-                text,
-                reply_message_id,
-                payload.get("channel_id"),
+            args = (
+                reply.target.id, text, reply_message_id, payload.get("channel_id"),
                 payload.get("message_format"),
             )
-        return result
+            if delivery:
+                return await finish_delivery(lambda: qq.send_c2c(*args, return_receipt=True))
+            result = await qq.send_c2c(*args)
+        return bool(result)
     elif platform == "wechat" and reply.target.id:
         from agent.gateway import wechat
         result = await wechat.send_text(
@@ -350,12 +547,20 @@ async def send_reply(payload: dict, reply: PlatformReply) -> bool:
         return result is not False
     elif platform == "telegram" and reply.target.id:
         from agent.gateway import telegram
-        return await telegram.send_message(
+        args = (
             reply.target.id,
             text,
-            channel_id=str(payload.get("channel_id") or ""),
-            reply_to_message_id=reply.reply_to_message_id,
         )
+        kwargs = {
+            "channel_id": str(payload.get("channel_id") or ""),
+            "reply_to_message_id": reply.reply_to_message_id,
+        }
+        if delivery:
+            kwargs["return_receipt"] = True
+        if delivery:
+            return await finish_delivery(lambda: telegram.send_message(*args, **kwargs))
+        result = await telegram.send_message(*args, **kwargs)
+        return bool(result)
     else:
         from agent.security import logsafe
         print(
@@ -367,6 +572,25 @@ async def send_reply(payload: dict, reply: PlatformReply) -> bool:
 
 
 async def send_file(payload: dict, *, storage_key: str, ext: str, display_name: str, fname: str) -> bool:
+    delivery = await _begin_attention_delivery(payload)
+    if delivery and delivery["state"] != "NEW":
+        _record_existing_attention_delivery(payload, delivery)
+        return delivery["state"] == "ACCEPTED"
+    if delivery:
+        _result, accepted = await _execute_tracked_attention_send(
+            payload, delivery,
+            lambda: _send_file_untracked(
+                payload, storage_key=storage_key, ext=ext, display_name=display_name, fname=fname,
+            ),
+        )
+        return accepted
+    return await _send_file_untracked(
+        payload, storage_key=storage_key, ext=ext, display_name=display_name, fname=fname,
+    )
+
+
+async def _send_file_untracked(payload: dict, *, storage_key: str, ext: str,
+                               display_name: str, fname: str) -> bool:
     """把一个文件按目标平台发送，返回是否成功。
 
     调用方（``agent.im.files``）负责解析文件元数据和读取存储；这里只负责
@@ -387,6 +611,19 @@ async def send_file(payload: dict, *, storage_key: str, ext: str, display_name: 
 
 
 async def send_png_image(payload: dict, png: bytes) -> bool:
+    delivery = await _begin_attention_delivery(payload)
+    if delivery and delivery["state"] != "NEW":
+        _record_existing_attention_delivery(payload, delivery)
+        return delivery["state"] == "ACCEPTED"
+    if delivery:
+        _result, accepted = await _execute_tracked_attention_send(
+            payload, delivery, lambda: _send_png_image_untracked(payload, png),
+        )
+        return accepted
+    return await _send_png_image_untracked(payload, png)
+
+
+async def _send_png_image_untracked(payload: dict, png: bytes) -> bool:
     """通过现有 Gateway 图片接口发送短期内存 PNG，不创建文件库记录。"""
     if not png or len(png) > 3 * 1024 * 1024:
         return False
@@ -581,12 +818,17 @@ async def send_agent_response(
     """
     from agent.im.files import send_files
 
-    result = await send_files(payload, response.files)
+    answer_payload = {**payload, "_attention_delivery_role": "answer"}
+    if payload.get("_attention_track_delivery") is True:
+        answer_payload["_attention_outbound_receipts"] = payload.setdefault(
+            "_attention_outbound_receipts", []
+        )
+    result = await send_files(answer_payload, response.files)
     if result.failed:
         # 附件失败提示是合成消息，不属于 Agent round index 域，不能参与
         # already_sent_rounds 去重，否则 round 0 已即时发送时会吞掉失败提示。
         failure_text = result.reason or "附件没有成功发出，你可以去网页或文件库查看。"
-        return failure_text if await send_text(payload, failure_text) else None
+        return failure_text if await send_text(answer_payload, failure_text) else None
     else:
         response_text = _fix_loose_bold(response.text or "").strip()
         if show_intermediate_replies:
@@ -613,7 +855,7 @@ async def send_agent_response(
     for index, text in enumerate(texts):
         if index in sent_indices:
             continue
-        delivered_text = await _send_mermaid_reply_text(payload, text)
+        delivered_text = await _send_mermaid_reply_text(answer_payload, text)
         if delivered_text is None:
             return None
         last_text = delivered_text or response_text or last_text
@@ -623,6 +865,6 @@ async def send_agent_response(
     # 也必须单独把错误提示发出去，不能被 round 去重吞掉。
     if response.errored:
         if response_text and response_text != last_text:
-            return response_text if await _send_mermaid_reply_text(payload, response_text) is not None else None
+            return response_text if await _send_mermaid_reply_text(answer_payload, response_text) is not None else None
         return response_text or last_text or None
     return response_text or last_text

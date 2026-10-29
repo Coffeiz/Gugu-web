@@ -194,7 +194,7 @@ async def resolve_group_owner_memory(actor, bot_id: str) -> bool:
                     and bot.platform == actor.platform and bot.group_owner_memory_enabled)
 
 
-async def resolve_group_policy(bot_id: str, platform: str = "qq") -> tuple[bool, bool, bool, bool, bool]:
+async def resolve_group_policy(bot_id: str, platform: str = "qq") -> tuple[bool, bool, bool, bool, bool, str, int]:
     """读取指定 IM Bot 的群策略；未知 Bot 或平台不匹配时关闭群聊。"""
     import app.db.session as db_session
     from app.models import UserBot
@@ -203,15 +203,19 @@ async def resolve_group_policy(bot_id: str, platform: str = "qq") -> tuple[bool,
         db_session._build_engine()
     bot_db_id = _parse_bot_db_id(bot_id)
     if bot_db_id is None:
-        return False, True, False, True, True
+        return False, True, False, True, True, "autonomous", 0
     async with db_session._SessionLocal() as db:
         bot = await db.get(UserBot, bot_db_id)
         if not bot or bot.platform != platform:
-            return False, True, False, True, True
+            return False, True, False, True, True, "autonomous", 0
         enabled = (
             bot.group_chat_enabled if platform in {"qq", "telegram"}
             else (bot.feishu_group_chat_enabled is not False if platform == "feishu" else False)
         )
         return enabled, bot.group_requires_at, (
             bot.group_read_enabled if bot.group_requires_at else False
-        ), bot.group_memory_enabled, bot.member_memory_enabled
+        ), bot.group_memory_enabled, bot.member_memory_enabled, (
+            getattr(bot, "group_attention_mode", "autonomous")
+            if getattr(bot, "group_attention_mode", "autonomous") in {"quiet", "natural", "active", "autonomous"}
+            else "autonomous"
+        ), int(getattr(bot, "group_attention_config_version", 0) or 0)

@@ -70,6 +70,7 @@ def _remember_qq_message(index: QQRefIndex, data: Dict[str, Any], chat_type: str
     index.set(ref_index_key(chat_type, chat_id, sender_id, msg_key), {
         "message_id": str(data.get("id") or ""),
         "sender_id": sender_id,
+        "sender_is_bot": (data.get("author") or {}).get("bot") if isinstance((data.get("author") or {}).get("bot"), bool) else None,
         "sender_name": sender_name,
         "content": _normalize_qq_attachment_placeholders(
             str(data.get("content") or ""), attachments,
@@ -149,6 +150,61 @@ def _qq_message_mentions_other_bot(data: Dict[str, Any]) -> bool:
         return True
     return False
 
+
+def _qq_attention_mention_facts(data: Dict[str, Any], event_type: str) -> tuple[bool | None, bool | None, bool | None, bool]:
+    """返回 QQ 结构化提及事实；缺字段与空提及列表分开处理。"""
+    if event_type not in {"GROUP_AT_MESSAGE_CREATE", "GROUP_MESSAGE_CREATE"}:
+        return False, False, False, False
+    mentions = data.get("mentions")
+    if not isinstance(mentions, list):
+        return None, None, None, False
+    current = False
+    other_bot = False
+    other_member = False
+    unresolved = False
+    for item in mentions:
+        if not isinstance(item, dict) or not isinstance(item.get("bot"), bool):
+            unresolved = True
+            continue
+        if item["bot"] is True:
+            if item.get("is_you") is True:
+                current = True
+            elif item.get("is_you") is False:
+                other_bot = True
+            else:
+                unresolved = True
+        else:
+            other_member = True
+    if unresolved and not (current or other_bot or other_member):
+        return None, None, None, True
+    return current, other_bot, other_member, unresolved
+
+
+def _qq_attention_reply_facts(index: QQRefIndex, data: Dict[str, Any], chat_type: str,
+                              chat_id: str, sender_id: str) -> tuple[str | None, str | None, bool | None]:
+    target_id = _quoted_platform_message_id(data)
+    if not target_id:
+        return None, None, None
+    entry = index.get(ref_index_key(chat_type, chat_id, sender_id, target_id))
+    if not entry:
+        return target_id, None, None
+    target_sender = entry.get("sender_id")
+    target_is_bot = entry.get("sender_is_bot")
+    return target_id, str(target_sender) if target_sender else None, target_is_bot if isinstance(target_is_bot, bool) else None
+
+
+def _qq_platform_sent_ms(data: Dict[str, Any]) -> int | None:
+    value = data.get("timestamp")
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        timestamp = int(value)
+    except (TypeError, ValueError):
+        return None
+    if timestamp <= 0:
+        return None
+    return timestamp * 1000 if timestamp < 10_000_000_000 else timestamp
+
 async def _qq_reply(channel_id: str, chat_type: str, target_id: str, text: str, msg_id: str | None) -> None:
     try:
         message_format = await _message_format(channel_id, chat_type)
@@ -222,6 +278,7 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
     bot_platform_user_id = _qq_bot_mention_id(data, event_type)
     # @ 的是别的 bot 时，咕咕不该抢答：这条消息是喊别人家的机器人的。
     mentions_other_bot = _qq_message_mentions_other_bot(data)
+    attention_mentions = _qq_attention_mention_facts(data, event_type)
     # 成员 mention 保留原始 ID；展示层按会话内最新 username 解析，避免改名后被旧昵称冻结。
     raw_text = (data.get("content") or "").strip()
     raw_attachments = data.get("attachments") or []
@@ -285,6 +342,9 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         quoted_text, quoted_attachments = _quoted_from_index(
             ref_index, data, chat_type, chat_id, sender_id,
         )
+    reply_target_id, reply_target_sender_id, reply_target_is_bot = _qq_attention_reply_facts(
+        ref_index, data, chat_type, chat_id, sender_id,
+    )
     quoted_text = _normalize_qq_attachment_placeholders(quoted_text, quoted_attachments)
     quoted_text = _normalize_qq_faces(quoted_text)
     if quoted_attachments and quoted_text == "[QQ表情]":
@@ -361,8 +421,10 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         "platform_bot_user_id": bot_platform_user_id or None,
         "message_id": msg_id,
         "platform_message_id": _qq_message_index_key(data, chat_type, chat_id, sender_id),
+        "platform_sent_ms": _qq_platform_sent_ms(data),
         "chat_type": chat_type,
         "text": text,
+        "attention_raw_text": text,
         "quoted_text": quoted_text or None,
         "attachments": all_attachments,
         "emoji_refs": face_ids if face_only else [],
@@ -378,6 +440,13 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         payload["group_mentioned"] = mentioned
         payload["bot_mentioned"] = mentioned
         payload["mentions_other_bot"] = mentions_other_bot
+        payload["native_bot_mentioned"] = attention_mentions[0]
+        payload["mentions_other_bot"] = attention_mentions[1]
+        payload["mentions_other_member"] = attention_mentions[2]
+        payload["has_unresolved_mention"] = attention_mentions[3]
+        payload["reply_to_platform_message_id"] = reply_target_id
+        payload["reply_target_sender_id"] = reply_target_sender_id
+        payload["reply_target_is_bot"] = reply_target_is_bot
     payload["message_format"] = await _message_format(channel_id, chat_type)
     from agent.security import logsafe
     channel_fp = logsafe.fingerprint(channel_id)

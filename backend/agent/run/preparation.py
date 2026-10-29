@@ -376,8 +376,33 @@ async def _reuse_early_user_rows(
                     platform_user_name=item.get("platform_user_name"),
                     platform_bot_user_id=item.get("platform_bot_user_id"),
                     chat_type=item.get("chat_type") or default_chat_type,
+                    client_message_id=str(item.get("event_id") or "") or None,
                 )
                 db.add(row)
+            row.im_platform_message_id = item.get("platform_message_id") or row.im_platform_message_id
+            row.im_reply_to_message_id = item.get("reply_to_platform_message_id") or row.im_reply_to_message_id
+            row.im_reply_target_sender_id = item.get("reply_target_sender_id") or row.im_reply_target_sender_id
+            if item.get("reply_target_is_bot") is not None:
+                row.im_reply_target_is_bot = item.get("reply_target_is_bot")
+            if item.get("sender_is_bot") is not None:
+                row.im_sender_is_bot = item.get("sender_is_bot")
+            if item.get("event_id"):
+                try:
+                    from agent.im.auto_reply.attention import _stream_event_ms
+
+                    row.im_event_received_ms = _stream_event_ms(str(item["event_id"]))
+                except Exception:
+                    pass
+            row.im_platform_sent_ms = item.get("platform_sent_ms") or row.im_platform_sent_ms
+            if item.get("media_kinds") is not None:
+                row.im_media_kinds = list(item.get("media_kinds") or [])
+            if item.get("processable_media") is not None:
+                row.im_media_processable = item.get("processable_media")
+            row.im_mention_facts = {
+                "current_bot": item.get("native_bot_mentioned"),
+                "other_bot": item.get("mentions_other_bot"),
+                "other_member": item.get("mentions_other_member"),
+            }
             ordered.append(row)
         await db.flush()
         rows = ordered
