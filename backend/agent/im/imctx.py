@@ -22,7 +22,8 @@ def set_im(platform: str, message_id: str | None,
            current_attachment_ids: list[str] | None = None,
            tool_display_mode: str = "all",
            group_auto_reply: bool = False,
-           group_reply_all: bool = False) -> None:
+           group_reply_all: bool = False,
+           attention_delivery_context: dict | None = None) -> None:
     _im.set({
         "platform": platform, "message_id": message_id,
         "channel_id": channel_id, "chat_id": chat_id,
@@ -35,6 +36,8 @@ def set_im(platform: str, message_id: str | None,
         "tool_display_mode": tool_display_mode,
         "group_auto_reply": bool(group_auto_reply),
         "group_reply_all": bool(group_reply_all),
+        # 同一 Run 内的工具发送共享计数器和收据列表；只透传 ledger 元数据，不含消息正文。
+        "attention_delivery_context": attention_delivery_context,
         "reacted": False,   # 本轮咕咕有没有用 react 工具点过表情（worker 收尾据此决定要不要兜底补一个）
         "announced": False,  # 本轮（一个 Busy Session）有没有发过慢工具进度声明，见 tools/base.py dispatch
     })
@@ -72,7 +75,7 @@ def to_send_payload() -> dict | None:
     c = _im.get()
     if not c:
         return None
-    return {
+    payload = {
         "platform": c["platform"],
         "message_id": c.get("message_id"),
         "channel_id": c.get("channel_id"),
@@ -82,6 +85,11 @@ def to_send_payload() -> dict | None:
         "context_token": c.get("context_token", ""),
         "im_role": c.get("im_role"),
     }
+    attention = c.get("attention_delivery_context")
+    if isinstance(attention, dict) and attention.get("_attention_track_delivery") is True:
+        payload.update(attention)
+        payload["_attention_delivery_role"] = "tool"
+    return payload
 
 
 def clear() -> None:

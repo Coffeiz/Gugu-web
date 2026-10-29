@@ -1926,5 +1926,13 @@
     "productionEntry": "用户 Bot 设置 API 与群聊 dispatch",
     "keyBehavior": "模式按 Bot 持久化并校验为 autonomous、quiet、natural 或 active；仅变化时递增配置版本，未配置时兼容默认 autonomous",
     "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_attention_conversation_ttl.py": {
+    "domain": "group-attention-conversation-ttl",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply/conversation_ttl.py",
+    "productionEntry": "backend/agent/im/dispatch.py 的群聊准入与最终回复投递",
+    "keyBehavior": "只允许同 Bot、群和成员在有效 TTL 内续聊；TTL 由最终回复平台接受回执创建，结束、转向、成员隔离和只读群规则有效",
+    "ci": "backend-pytest"
   }
 }

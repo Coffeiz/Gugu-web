@@ -129,10 +129,14 @@ async def _begin_attention_delivery(payload: dict) -> dict | None:
     ordinal = _next_attention_delivery_ordinal(payload)
     delivery_id = delivery_id_for(run_key, ordinal)
     source_event_ids = [
-        str(item.get("event_id"))
-        for item in payload.get("_batch_messages", [])
-        if isinstance(item, dict) and item.get("event_id")
+        str(item) for item in payload.get("_attention_source_event_ids", []) if item
     ]
+    if not source_event_ids:
+        source_event_ids = [
+            str(item.get("event_id"))
+            for item in payload.get("_batch_messages", [])
+            if isinstance(item, dict) and item.get("event_id")
+        ]
     answer_source_event_ids = (
         source_event_ids
         if payload.get("_attention_delivery_role") == "answer"
@@ -148,8 +152,12 @@ async def _begin_attention_delivery(payload: dict) -> dict | None:
         source_event_ids=source_event_ids,
         answer_source_event_ids=answer_source_event_ids,
         recipient_sender_id=(
-            str(payload.get("platform_user_id"))
-            if payload.get("platform_user_id") else None
+            str(
+                payload.get("_attention_conversation_subject_sender_id")
+                or payload.get("platform_user_id")
+            )
+            if payload.get("_attention_conversation_subject_sender_id")
+            or payload.get("platform_user_id") else None
         ),
         budget_kind=payload.get("_attention_budget_kind"),
         submitted_at_ms=int(time.time() * 1000),
@@ -200,6 +208,7 @@ async def _settle_attention_delivery(payload: dict, delivery: dict, result: obje
     from agent.im.auto_reply.delivery import settle_delivery
     import time
 
+    accepted_at_ms = int(time.time() * 1000)
     await settle_delivery(
         R.get_redis(),
         delivery_id=delivery["delivery_id"],
@@ -210,13 +219,19 @@ async def _settle_attention_delivery(payload: dict, delivery: dict, result: obje
         platform_message_id=message_id,
         platform_message_ids=message_ids,
         answer_source_event_ids=delivery.get("answer_source_event_ids") or [],
-        accepted_at_ms=int(time.time() * 1000),
+        accepted_at_ms=accepted_at_ms,
     )
-    payload.setdefault("_attention_outbound_receipts", []).append({
+    receipt = {
         "delivery_id": delivery["delivery_id"],
         "status": outcome,
         "platform_message_id": message_id,
-    })
+    }
+    role = payload.get("_attention_delivery_role")
+    if role:
+        receipt["role"] = role
+    if role == "answer" and outcome == "ACCEPTED":
+        receipt["accepted_at_ms"] = accepted_at_ms
+    payload.setdefault("_attention_outbound_receipts", []).append(receipt)
     return accepted
 
 
@@ -242,11 +257,15 @@ async def _execute_tracked_attention_send(payload: dict, delivery: dict, operati
 
 def _record_existing_attention_delivery(payload: dict, delivery: dict) -> None:
     state = str(delivery.get("state") or "UNKNOWN")
-    payload.setdefault("_attention_outbound_receipts", []).append({
+    receipt = {
         "delivery_id": delivery["delivery_id"],
         "status": state,
         "platform_message_id": None,
-    })
+    }
+    role = payload.get("_attention_delivery_role")
+    if role:
+        receipt["role"] = role
+    payload.setdefault("_attention_outbound_receipts", []).append(receipt)
 
 
 def _link_buttons_text(message: str, buttons: list[dict]) -> str:

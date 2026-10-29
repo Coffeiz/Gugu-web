@@ -1,9 +1,8 @@
 """把逐条 Gateway 事实与会话快照交给纯注意力决策器。"""
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 from dataclasses import replace
+from datetime import UTC, datetime
 
 from agent.im.auto_reply.attention import (
     AttentionDecision,
@@ -18,7 +17,263 @@ from agent.im.auto_reply.attention import (
 )
 
 
-def batch_attention_messages(payload: dict) -> tuple[AttentionMessage, ...]:
+def batch_attention_messages(
+    payload: dict, transcripts: dict[str, str] | None = None,
+) -> tuple[AttentionMessage, ...]:
+    return _batch_attention_messages(payload, transcripts or {})
+
+
+async def preflight_active_conversation_event_ids(payload: dict) -> list[str]:
+    """仅用于在 reply_mentions 的被动落库前判断是否存在成员续聊窗口。"""
+    from app.core import redis as R
+    from agent.im.auto_reply.conversation_ttl import has_active_conversation
+
+    if payload.get("group_read_enabled") or not payload.get("group_requires_at"):
+        return []
+    try:
+        messages = batch_attention_messages(payload)
+    except AttentionInputError:
+        return []
+    if any(
+        message.mentioned_other_bot is True
+        or message.mentioned_other_member is True
+        or message.has_unresolved_mention
+        for message in messages
+    ):
+        return []
+    redis = R.get_redis()
+    active_event_ids: list[str] = []
+    for message in messages:
+        if (
+            not message.sender_id
+            or message.sender_is_bot is True
+            or message.mentioned_current_bot is True
+            or message.mentioned_other_bot is True
+            or message.mentioned_other_member is True
+            or message.has_unresolved_mention
+        ):
+            continue
+        if await has_active_conversation(
+            redis,
+            platform=message.platform,
+            bot_id=message.bot_id,
+            group_id=message.group_id,
+            sender_id=message.sender_id,
+            event_received_ms=message.event_received_ms,
+        ):
+            active_event_ids.append(message.event_id)
+    return active_event_ids
+
+
+def _set_attention_subject(payload: dict, message: AttentionMessage) -> None:
+    """把本次准入绑定到唯一成员和原始入站事件。"""
+    payload["_attention_conversation_subject_sender_id"] = str(message.sender_id or "")
+    payload["_attention_source_event_ids"] = [message.event_id]
+
+
+async def _decide_attention_message(
+    redis,
+    message: AttentionMessage,
+    snapshot: AttentionSnapshot,
+    mode: AttentionMode,
+    *,
+    bot_aliases: tuple[str, ...],
+) -> tuple[AttentionDecision, str | None]:
+    """对单条消息加载同成员窗口并执行纯注意力规则。"""
+    from agent.im.auto_reply.budget import get_soft_anchor
+    from agent.im.auto_reply.conversation_ttl import has_active_conversation
+
+    soft_anchor_id = await get_soft_anchor(
+        redis,
+        platform=message.platform,
+        bot_id=message.bot_id,
+        group_id=message.group_id,
+        sender_id=str(message.sender_id or ""),
+    )
+    scoped_snapshot = replace(
+        snapshot,
+        messages=tuple(item for item in snapshot.messages if item.event_id != message.event_id),
+        soft_request_anchor_id=soft_anchor_id,
+    )
+    conversation_active = (
+        await has_active_conversation(
+            redis,
+            platform=message.platform,
+            bot_id=message.bot_id,
+            group_id=message.group_id,
+            sender_id=str(message.sender_id or ""),
+            event_received_ms=message.event_received_ms,
+        )
+        if message.sender_id else False
+    )
+    decision = decide_attention(
+        message,
+        scoped_snapshot,
+        mode,
+        budget_available=True,
+        bot_aliases=bot_aliases,
+        conversation_active=conversation_active,
+    )
+    if conversation_active and any(
+        reason.startswith(("CONVERSATION_END_", "CONVERSATION_REDIRECT_"))
+        for reason in decision.reasons
+    ):
+        from agent.im.auto_reply.conversation_ttl import close_conversation
+
+        await close_conversation(
+            redis,
+            platform=message.platform,
+            bot_id=message.bot_id,
+            group_id=message.group_id,
+            sender_id=str(message.sender_id or ""),
+        )
+    return decision, soft_anchor_id
+
+
+async def _evaluate_continuation_only(
+    payload: dict,
+    messages: tuple[AttentionMessage, ...],
+    mode: AttentionMode,
+) -> tuple[bool, AttentionDecision | None, None]:
+    """reply_mentions 下只复核 TTL 和硬停止条件，不装载评分历史。"""
+    from app.core import redis as R
+
+    redis = R.get_redis()
+    active_ids = set(payload.get("_attention_active_conversation_event_ids") or ())
+    if not active_ids:
+        return False, AttentionDecision(
+            AttentionKind.PASSIVE, 0, None, ("CONVERSATION_TTL_not_active",),
+        ), None
+    scoped_mode = AttentionMode.QUIET if mode is AttentionMode.AUTONOMOUS else mode
+    snapshot = AttentionSnapshot(complete=False)
+    decisions: list[tuple[AttentionMessage, AttentionDecision]] = []
+    for message in build_logical_candidates(messages):
+        if message.event_id not in active_ids:
+            continue
+        decision, _anchor_id = await _decide_attention_message(
+            redis,
+            message,
+            snapshot,
+            scoped_mode,
+            bot_aliases=(),
+        )
+        decisions.append((message, decision))
+    continuation = next(
+        ((message, decision) for message, decision in decisions
+         if decision.kind is AttentionKind.CONTINUE),
+        None,
+    )
+    if continuation:
+        message, decision = continuation
+        _set_attention_subject(payload, message)
+        payload["_attention_snapshot_complete"] = False
+        return True, decision, None
+    decision = decisions[0][1] if decisions else AttentionDecision(
+        AttentionKind.PASSIVE, 0, None, ("CONVERSATION_TTL_not_active",),
+    )
+    payload["_attention_snapshot_complete"] = False
+    return False, decision, None
+
+
+async def transcribe_voice_for_attention(request, payload: dict) -> dict[str, str]:
+    """预转写已暂存的群语音；结果供注意力判定和本轮 Run 复用。"""
+    from agent.voice_config import voice_recognition_profile
+    from app.core import chat_attach
+    from app.core.config import get_settings
+
+    items = payload.get("_batch_messages")
+    if not isinstance(items, list) or not items:
+        items = [payload]
+    user_id = getattr(request, "user_id", None)
+    if not user_id:
+        return {}
+
+    attachment_ids_by_event, all_attachment_ids = _attention_attachment_ids(items)
+    if not all_attachment_ids:
+        return {}
+    metas = await chat_attach.get_meta_many(user_id, all_attachment_ids)
+    metas = {
+        attach_id: meta for attach_id, meta in metas.items()
+        if meta.get("kind") in {"voice", "audio"}
+    }
+    if not metas:
+        return {}
+
+    profile = await voice_recognition_profile(request.user_id)
+    if not profile.configured or not profile.resolved:
+        return {}
+    settings = get_settings()
+    transcripts: dict[str, str] = {}
+    for event_id, attachment_ids in attachment_ids_by_event.items():
+        parts = [
+            transcript
+            for attach_id in attachment_ids
+            if (transcript := await _transcribe_attention_attachment(
+                metas.get(attach_id), profile, settings, user_id,
+            ))
+        ]
+        if parts:
+            transcripts[event_id] = "\n".join(parts)
+    return transcripts
+
+
+def _attention_attachment_ids(items: list) -> tuple[dict[str, list[str]], list[str]]:
+    attachment_ids_by_event: dict[str, list[str]] = {}
+    all_attachment_ids: list[str] = []
+    for item in items:
+        if not isinstance(item, dict) or not (item.get("event_id") or item.get("_redis_stream_id")):
+            continue
+        event_id = str(item.get("event_id") or item.get("_redis_stream_id"))
+        ids = [
+            str(attachment.get("attach_id") if isinstance(attachment, dict) else attachment)
+            for attachment in (item.get("attachments") or [])
+            if isinstance(attachment, str) or (
+                isinstance(attachment, dict) and attachment.get("attach_id")
+            )
+        ]
+        attachment_ids_by_event[event_id] = ids
+        all_attachment_ids.extend(ids)
+    return attachment_ids_by_event, list(dict.fromkeys(all_attachment_ids))
+
+
+async def _transcribe_attention_attachment(meta, profile, settings, user_id) -> str | None:
+    if not meta or meta.get("kind") not in {"voice", "audio"}:
+        return None
+    size = int(meta.get("size") or 0)
+    if size <= 0 or size > profile.max_file_bytes:
+        return None
+    try:
+        from agent.media import audio
+        from agent import voice
+        from app.core import chat_attach
+
+        raw = await chat_attach.read_bytes(meta)
+        ext = str(meta.get("ext") or "").lower()
+        mime = str(meta.get("mime") or f"audio/{ext or 'mpeg'}")
+        duration = await audio.preflight_duration(
+            raw, ext, profile.max_duration_s,
+            profile.provider_label or "语音识别服务",
+        )
+        result = await voice.transcribe(
+            [{
+                "type": "audio", "mime": mime, "ext": ext,
+                "raw": raw, "duration": duration,
+            }],
+            settings,
+            user_id=user_id,
+            raise_errors=True,
+        )
+    except Exception as exc:
+        from app.core.redaction import diag_log
+
+        diag_log("agent.im.attention.voice_transcription", exc)
+        return None
+    return result.strip() if result and result.strip() else None
+
+
+def _batch_attention_messages(
+    payload: dict, transcripts: dict[str, str],
+) -> tuple[AttentionMessage, ...]:
     items = payload.get("_batch_messages")
     if not isinstance(items, list) or not items:
         items = [payload]
@@ -34,7 +289,15 @@ def batch_attention_messages(payload: dict) -> tuple[AttentionMessage, ...]:
         normalized.setdefault("platform", payload.get("platform"))
         normalized.setdefault("bot_id", item.get("channel_id") or payload.get("channel_id"))
         normalized.setdefault("chat_id", payload.get("chat_id"))
-        normalized.setdefault("text", item.get("attention_raw_text", item.get("text", "")))
+        raw_text = str(item.get("attention_raw_text", item.get("text", "")) or "")
+        transcript = transcripts.get(str(event_id), "")
+        candidate_text = "\n".join(
+            part for part in (raw_text, transcript) if part
+        )
+        normalized.pop("attention_raw_text", None)
+        normalized["text"] = candidate_text
+        if transcript.strip():
+            normalized["media_only"] = False
         messages.append(AttentionMessage.from_payload(str(event_id), normalized))
     return tuple(messages)
 
@@ -44,6 +307,7 @@ async def load_attention_snapshot(session_id: int, messages: tuple[AttentionMess
     from sqlalchemy import select
     import app.db.session as db_session
     from app.models import ConversationMessage
+    from app.core import redis as R
 
     if db_session._engine is None:
         db_session._build_engine()
@@ -122,9 +386,8 @@ async def load_attention_snapshot(session_id: int, messages: tuple[AttentionMess
         )
         by_event_id = {item.event_id: item for item in (*history, *stream_history)}
         history = list(by_event_id.values())
-        complete = stream_covers_window and all(
-            item.sender_id and item.sender_is_bot is not None for item in messages
-        )
+        # Bot 身份缺失只会让依赖该特征的评分项不可用，不应让整批消息失去资格。
+        complete = stream_covers_window and all(item.sender_id for item in messages)
     except Exception as exc:
         from app.core.redaction import diag_log
 
@@ -396,19 +659,30 @@ async def evaluate_group_attention(request, payload: dict) -> tuple[bool, Attent
     """返回是否进入 Run、最优决策以及主动预算预留 ID。"""
     from app.core import redis as R
     from agent.im.auto_reply.budget import (
-        get_soft_anchor,
         reserve_proactive_slot,
         reserve_soft_slot,
     )
 
-    messages = build_logical_candidates(batch_attention_messages(payload))
-    if not messages:
+    inbound_messages = batch_attention_messages(payload)
+    if not inbound_messages:
         return False, None, None
     raw_mode = str(payload.get("group_attention_mode") or "autonomous")
     mode = AttentionMode(raw_mode) if raw_mode in {item.value for item in AttentionMode} else AttentionMode.AUTONOMOUS
+    continuation_only = payload.get("_attention_continuation_only") is True
+    if continuation_only:
+        return await _evaluate_continuation_only(payload, inbound_messages, mode)
     if mode is AttentionMode.AUTONOMOUS:
         payload["_attention_snapshot_complete"] = None
-        return True, decide_attention(messages[0], AttentionSnapshot(complete=False), mode), None
+        return True, decide_attention(inbound_messages[0], AttentionSnapshot(complete=False), mode), None
+    try:
+        transcripts = await transcribe_voice_for_attention(request, payload)
+    except Exception as exc:
+        from app.core.redaction import diag_log
+
+        diag_log("agent.im.attention.voice_transcription", exc)
+        transcripts = {}
+    request.im_attention_transcripts = transcripts
+    messages = build_logical_candidates(batch_attention_messages(payload, transcripts))
     if request.session_id is None:
         from agent.im.dispatch import _ensure_im_session
 
@@ -421,38 +695,33 @@ async def evaluate_group_attention(request, payload: dict) -> tuple[bool, Attent
         if isinstance(value, str) and value.strip()
     ) or ("咕咕",)
     decisions = []
+    decision_messages = []
     soft_candidates = []
     redis = R.get_redis()
     for message in messages:
-        soft_anchor_id = await get_soft_anchor(
+        decision, soft_anchor_id = await _decide_attention_message(
             redis,
-            platform=message.platform,
-            bot_id=message.bot_id,
-            group_id=message.group_id,
-            sender_id=str(message.sender_id or ""),
-        )
-        scoped_snapshot = replace(
-            snapshot,
-            messages=tuple(item for item in snapshot.messages if item.event_id != message.event_id),
-            soft_request_anchor_id=soft_anchor_id,
-        )
-        decision = decide_attention(
             message,
-            scoped_snapshot,
+            snapshot,
             mode,
-            budget_available=True,
             bot_aliases=bot_aliases,
         )
         decisions.append(decision)
+        decision_messages.append((message, decision))
         if decision.kind is AttentionKind.SOFT_CONTINUE and soft_anchor_id:
             soft_candidates.append((message, decision, soft_anchor_id))
     eligible = [
-        decision for decision in decisions
+        (message, decision) for message, decision in decision_messages
         if decision.kind in {AttentionKind.DIRECT, AttentionKind.CONTINUE}
     ]
-    proactive = [decision for decision in decisions if decision.kind is AttentionKind.PROACTIVE]
+    proactive = [
+        (message, decision) for message, decision in decision_messages
+        if decision.kind is AttentionKind.PROACTIVE
+    ]
     if eligible:
-        return True, eligible[0], None
+        message, decision = eligible[0]
+        _set_attention_subject(payload, message)
+        return True, decision, None
     if soft_candidates:
         message, decision, anchor_id = soft_candidates[0]
         batch_key = str(request.inbound_batch_key or message.event_id)
@@ -480,21 +749,22 @@ async def evaluate_group_attention(request, payload: dict) -> tuple[bool, Attent
     if not proactive:
         return False, max(decisions, key=lambda item: item.score), None
 
+    message, best_decision = max(proactive, key=lambda item: item[1].score)
     batch_key = str(request.inbound_batch_key or messages[-1].event_id)
     reserved = await reserve_proactive_slot(
         redis,
-        platform=messages[-1].platform,
-        bot_id=messages[-1].bot_id,
-        group_id=messages[-1].group_id,
+        platform=message.platform,
+        bot_id=message.bot_id,
+        group_id=message.group_id,
         run_id=batch_key,
         mode=mode.value,
         now_ms=snapshot.watermark_ms,
     )
     if not reserved:
-        best = max(proactive, key=lambda item: item.score)
-        return False, replace(best, kind=AttentionKind.PASSIVE,
-                              reasons=(*best.reasons, "proactive_budget_unavailable")), None
-    return True, max(proactive, key=lambda item: item.score), {
+        return False, replace(best_decision, kind=AttentionKind.PASSIVE,
+                              reasons=(*best_decision.reasons, "proactive_budget_unavailable")), None
+    _set_attention_subject(payload, message)
+    return True, best_decision, {
         "kind": "proactive",
         "run_id": batch_key,
         "sender_id": None,
@@ -502,4 +772,7 @@ async def evaluate_group_attention(request, payload: dict) -> tuple[bool, Attent
     }
 
 
-__all__ = ["batch_attention_messages", "evaluate_group_attention", "load_attention_snapshot"]
+__all__ = [
+    "batch_attention_messages", "evaluate_group_attention",
+    "load_attention_snapshot", "preflight_active_conversation_event_ids",
+]
