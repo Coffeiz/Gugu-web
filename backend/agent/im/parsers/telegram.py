@@ -159,6 +159,7 @@ def _other_mention_facts(message: dict[str, Any], *, bot_id: str, bot_username: 
     other_target = False
     other_bot = False
     recognized = False
+    unresolved = False
     for entity in entities:
         if not isinstance(entity, dict):
             continue
@@ -177,7 +178,7 @@ def _other_mention_facts(message: dict[str, Any], *, bot_id: str, bot_username: 
                 continue
             recognized = True
             if not username or target_name != username:
-                other_target = True
+                unresolved = True
         elif kind == "bot_command":
             target_name = entity_text(text, entity)
             match = re.fullmatch(r"/[^@\s]+@([A-Za-z0-9_]+)", target_name)
@@ -186,7 +187,58 @@ def _other_mention_facts(message: dict[str, Any], *, bot_id: str, bot_username: 
                 if username and match.group(1).casefold() != username:
                     other_target = True
                     other_bot = True
+    if unresolved:
+        return (other_target if other_target else None), (other_bot if other_bot else None)
     return (other_target if recognized else None), (other_bot if recognized else None)
+
+
+def _attention_mention_facts(
+    message: dict[str, Any], *, bot_id: str, bot_username: str,
+) -> tuple[bool | None, bool | None, bool | None, bool]:
+    entities = message.get("entities")
+    if entities is None:
+        entities = message.get("caption_entities")
+    text = str(message.get("text") or message.get("caption") or "")
+    unresolved_text_mention = bool(re.search(r"(?<![A-Za-z0-9_])@[A-Za-z0-9_]+", text))
+    if not isinstance(entities, list):
+        return (None if unresolved_text_mention else False), None, None, unresolved_text_mention
+    current = False
+    other_bot = False
+    other_member = False
+    unresolved = False
+    username = str(bot_username or "").lstrip("@").casefold()
+    for entity in entities:
+        if not isinstance(entity, dict):
+            unresolved = True
+            continue
+        kind = entity.get("type")
+        if kind == "text_mention":
+            target = entity.get("user")
+            if not isinstance(target, dict) or target.get("id") is None:
+                unresolved = True
+                continue
+            if str(target.get("id")) == str(bot_id):
+                current = True
+            else:
+                other_member = True
+                if target.get("is_bot") is True:
+                    other_bot = True
+        elif kind == "mention":
+            target_name = entity_text(text, entity).lstrip("@").casefold()
+            if not target_name:
+                unresolved = True
+            elif username and target_name == username:
+                current = True
+            else:
+                unresolved = True
+        elif kind == "bot_command":
+            command = entity_text(text, entity)
+            match = re.fullmatch(r"/[^@\s]+@([A-Za-z0-9_]+)", command)
+            if match and username and match.group(1).casefold() != username:
+                other_bot = True
+    if unresolved:
+        return (current if current else None), (other_bot if other_bot else None), (other_member if other_member else None), True
+    return current, other_bot, other_member, False
 
 
 def normalize_message(update: dict[str, Any], *, bot_id: str, owner_id: str,
@@ -236,6 +288,9 @@ def normalize_message(update: dict[str, Any], *, bot_id: str, owner_id: str,
     other_mention, other_bot_mention = _other_mention_facts(
         message, bot_id=str(bot_platform_id or ""), bot_username=bot_username,
     )
+    attention_mentions = _attention_mention_facts(
+        message, bot_id=str(bot_platform_id or ""), bot_username=bot_username,
+    )
     chat_id = chat.get("id") or ""
     attachments = [{**media, "source_attachment_index": 0}] if media else []
     quoted_attachments = []
@@ -266,6 +321,7 @@ def normalize_message(update: dict[str, Any], *, bot_id: str, owner_id: str,
         "message_id": str(message.get("message_id") or ""),
         "platform_event_id": str(update.get("update_id") or ""),
         "text": content,
+        "attention_raw_text": text,
         "attachments": attachments,
         "quoted_attachments": quoted_attachments,
         "attachment_source_message_id": (
@@ -273,14 +329,17 @@ def normalize_message(update: dict[str, Any], *, bot_id: str, owner_id: str,
             if media and message.get("message_id") is not None else None
         ),
         "bot_mentioned": mentioned,
-        "native_bot_mentioned": native_mentioned or parsed_command is not None,
-        "mentions_other_member": other_mention,
-        "mentions_other_bot": other_bot_mention,
+        "native_bot_mentioned": True if native_mentioned or parsed_command is not None else attention_mentions[0],
+        "mentions_other_member": attention_mentions[2] if attention_mentions[2] is not None else other_mention,
+        "mentions_other_bot": attention_mentions[1] if attention_mentions[1] is not None else other_bot_mention,
+        "has_unresolved_mention": attention_mentions[3],
         "group_mentioned": mentioned if chat_type != "private" else False,
         "reply_to_message_id": str(reply.get("message_id")) if isinstance(reply, dict) and reply.get("message_id") is not None else None,
         "reply_to_platform_message_id": str(reply.get("message_id")) if isinstance(reply, dict) and reply.get("message_id") is not None else None,
         "reply_target_sender_id": str(reply.get("from", {}).get("id")) if isinstance(reply, dict) and isinstance(reply.get("from"), dict) and reply.get("from", {}).get("id") is not None else None,
         "reply_target_is_bot": reply.get("from", {}).get("is_bot") if isinstance(reply, dict) and isinstance(reply.get("from", {}).get("is_bot"), bool) else None,
+        "platform_sent_ms": int(message.get("date") * 1000) if isinstance(message.get("date"), (int, float)) and not isinstance(message.get("date"), bool) and message.get("date") > 0 else None,
+        "sender_is_bot": False,
         "quoted_text": quoted_text[:2000] or None,
         "telegram_command": parsed_command[0] if parsed_command else None,
         "received_at": message.get("date"),

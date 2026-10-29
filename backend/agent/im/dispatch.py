@@ -38,6 +38,109 @@ from agent.im.shortcuts import (
 from agent.im.dispatch_finalization import finalize_im_dispatch
 from agent.im.stream_bridge import ImWebStreamBridge
 
+
+async def _renew_attention_budget_lease(reservation: dict) -> None:
+    """Run 在执行时续租新增预算；进程崩溃则由 Redis TTL 有界清理。"""
+    from app.core import redis as R
+
+    from agent.im.auto_reply.budget import renew_proactive_slot, renew_soft_slot
+
+    redis = R.get_redis()
+    while True:
+        await asyncio.sleep(30)
+        if reservation.get("kind") == "soft":
+            renewed = await renew_soft_slot(
+                redis,
+                platform=reservation["platform"],
+                bot_id=reservation["bot_id"],
+                group_id=reservation["group_id"],
+                sender_id=reservation["sender_id"],
+                run_id=reservation["run_id"],
+            )
+        else:
+            renewed = await renew_proactive_slot(
+                redis,
+                platform=reservation["platform"],
+                bot_id=reservation["bot_id"],
+                group_id=reservation["group_id"],
+                run_id=reservation["run_id"],
+            )
+        if not renewed:
+            from app.core.redaction import diag_log_raw
+
+            diag_log_raw("agent.im.attention.budget_lease", "renewal_lost")
+            return
+
+
+def _log_attention_decision(
+    decision,
+    *,
+    mode: str,
+    source_event_count: int,
+    should_run: bool,
+    config_version: int,
+    snapshot_complete: bool | None = None,
+    window_truncated: bool | None = None,
+    batch_key: str | None = None,
+    reservation: dict | None = None,
+) -> None:
+    if decision is None:
+        return
+    import json
+    import hashlib
+    from app.core.redaction import diag_log_raw
+
+    diag_log_raw(
+        "agent.im.attention.decision",
+        json.dumps({
+            "attention_version": "attention-v1.4",
+            "mode": mode,
+            "effective_config_source": "bot_setting",
+            "config_version": int(config_version),
+            "batch_key_hash": (
+                hashlib.sha256(batch_key.encode("utf-8")).hexdigest()[:16]
+                if batch_key else None
+            ),
+            "actual_decision": decision.kind.value,
+            "reason_codes": list(decision.reasons),
+            "score": decision.score,
+            "score_breakdown": (
+                dict(decision.score_breakdown) if decision.score_breakdown else None
+            ),
+            "threshold": decision.threshold,
+            "budget_kind": reservation.get("kind") if reservation else None,
+            "source_event_count": int(source_event_count),
+            "run_entered": bool(should_run),
+            # Snapshot coverage is decision input, not currently exposed in the
+            # immutable decision. Keep it explicitly unknown instead of guessing.
+            "snapshot_complete": snapshot_complete,
+            "window_truncated": window_truncated,
+            "outbound_status": None,
+        }, ensure_ascii=False, separators=(",", ":")),
+    )
+
+
+def _log_attention_passive_receipt(
+    *, mode: str, config_version: int, batch_key: str, source_event_count: int,
+) -> None:
+    import hashlib
+    import json
+
+    from app.core.redaction import diag_log_raw
+
+    diag_log_raw(
+        "agent.im.attention.passive_receipt",
+        json.dumps({
+            "attention_version": "attention-v1.4",
+            "mode": mode,
+            "config_version": int(config_version),
+            "batch_key_hash": hashlib.sha256(batch_key.encode("utf-8")).hexdigest()[:16],
+            "source_event_count": int(source_event_count),
+            "persistence_receipt": "completed",
+        }, ensure_ascii=False, separators=(",", ":")),
+    )
+
+
 async def dispatch_im_message(payload: dict):
     """处理一条已入队 IM 消息的完整业务编排。
 
@@ -109,6 +212,8 @@ async def dispatch_im_message(payload: dict):
         payload["group_read_enabled"] = group_settings[2]
         payload["group_memory_enabled"] = group_settings[3]
         payload["member_memory_enabled"] = group_settings[4]
+        payload["group_attention_mode"] = group_settings[5] if len(group_settings) > 5 else "autonomous"
+        payload["group_attention_config_version"] = group_settings[6] if len(group_settings) > 6 else 0
 
     from agent.im.auto_reply import should_enable_group_reply_gate
 
@@ -187,6 +292,20 @@ async def dispatch_im_message(payload: dict):
             payload.get("attachment_source_message_id"),
         )
         payload["attachments"] = media_result.attachment_ids
+        batch_messages = payload.get("_batch_messages")
+        if isinstance(batch_messages, list) and batch_messages:
+            from agent.im.inbound_batch import resolve_batch_attachment_ids
+            from app.core import chat_attach
+
+            attachment_meta = await chat_attach.get_meta_many(
+                str(payload.get("owner_user_id") or ""),
+                payload.get("attachments") or [],
+            )
+            resolve_batch_attachment_ids(
+                batch_messages,
+                attachment_meta,
+                fallback_platform_message_id=str(payload.get("platform_message_id") or ""),
+            )
         if media_result.failure_notice and not group_auto_reply_payload:
             await send_text(payload, media_result.failure_notice)
             if not payload["attachments"] and not str(payload.get("text") or "").strip():
@@ -363,6 +482,97 @@ async def dispatch_im_message(payload: dict):
     if goal_start:
         # 命令已写入 session_context；本轮继续进入 runner，让 /goal 本身就开始执行。
         req.message = f"请立即开始执行目标任务：{goal_text}"
+
+    if group_auto_reply_payload and payload.get("chat_type") == "group":
+        from agent.im.auto_reply.runtime import batch_attention_messages, evaluate_group_attention
+        from agent.im.conversation import record_passive_attention_batch
+
+        attention_messages = ()
+        _attention_decision = None
+        mode = str(payload.get("group_attention_mode") or "autonomous")
+        payload["_attention_audit_enabled"] = True
+        payload["_attention_config_version"] = int(
+            payload.get("group_attention_config_version") or 0
+        )
+        try:
+            attention_messages = batch_attention_messages(payload)
+            should_run, _attention_decision, budget_reservation = await evaluate_group_attention(req, payload)
+            _log_attention_decision(
+                _attention_decision,
+                mode=mode,
+                source_event_count=len(attention_messages),
+                reservation=budget_reservation,
+                should_run=should_run,
+                config_version=int(payload.get("group_attention_config_version") or 0),
+                snapshot_complete=payload.get("_attention_snapshot_complete"),
+                window_truncated=payload.get("_attention_window_truncated"),
+                batch_key=str(getattr(req, "inbound_batch_key", None) or "") or None,
+            )
+        except Exception as exc:
+            from app.core.redaction import diag_log
+
+            diag_log("agent.im.attention.evaluate", exc)
+            # 缺少稳定事件身份时保留旧路由；其余注意力/配额故障 fail-closed。
+            should_run, budget_reservation = not bool(attention_messages), None
+
+        if not should_run:
+            batch_key = str(getattr(req, "inbound_batch_key", None) or "")
+            if not batch_key:
+                raise RuntimeError("注意力 PASSIVE 批次缺少 Worker 批次收据")
+            passive_session_id = req.session_id or await _ensure_im_session(req)
+            batch_items = payload.get("_batch_messages")
+            if not isinstance(batch_items, list) or not batch_items:
+                batch_items = [{
+                    "event_id": item.event_id,
+                    "early_id": None,
+                    "text": item.raw_text,
+                    "quoted_text": item.quote_text,
+                    "platform_user_id": item.sender_id,
+                    "platform_user_name": payload.get("platform_user_name"),
+                    "platform_bot_user_id": payload.get("platform_bot_user_id"),
+                    "chat_type": "group",
+                    "attachments": payload.get("attachments") or [],
+                } for item in attention_messages]
+            recorded_session_id = await record_passive_attention_batch(
+                req,
+                batch_items,
+                session_id=int(passive_session_id),
+                batch_key=batch_key,
+                attention_decision=_attention_decision,
+                attention_mode=mode,
+                attention_config_version=int(payload.get("group_attention_config_version") or 0),
+            )
+            _log_attention_passive_receipt(
+                mode=mode,
+                config_version=int(payload.get("group_attention_config_version") or 0),
+                batch_key=batch_key,
+                source_event_count=len(batch_items),
+            )
+            await persist_im_session(
+                platform, route.bot_id, session_scope, recorded_session_id, group=True,
+            )
+            trace.bind_im_run(recorded_session_id, platform)
+            trace.discard_run()
+            return None
+        if mode in {"quiet", "natural", "active"}:
+            payload["_attention_track_delivery"] = True
+            payload["_attention_run_key"] = str(getattr(req, "inbound_batch_key", None) or "")
+            # 出站分支会浅拷贝 payload；提前创建共享计数器，让各副本获得
+            # 同一条 Run 内唯一的 delivery ordinal。
+            payload["_attention_delivery_counter"] = {"value": 0}
+            payload["_attention_budget_kind"] = (
+                budget_reservation.get("kind") if budget_reservation else None
+            )
+        if budget_reservation:
+            req.attention_budget_reservation = {
+                **budget_reservation,
+                "platform": platform,
+                "bot_id": route.bot_id,
+                "group_id": str(req.chat_id or ""),
+            }
+            req.attention_budget_heartbeat = asyncio.create_task(
+                _renew_attention_budget_lease(req.attention_budget_reservation)
+            )
 
     if platform == "qq":
         # 让 token 刷新和 API 建连与模型运行重叠；预热失败不阻断当前 run。

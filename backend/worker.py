@@ -239,11 +239,31 @@ def _merge_payloads(payloads: list) -> dict:
         if t:
             texts.append(t)
         segments.append({
+            "event_id": p.get("_redis_stream_id"),
+            "platform": p.get("platform"),
+            "bot_id": p.get("bot_id") or p.get("channel_id"),
+            "channel_id": p.get("channel_id"),
+            "chat_id": p.get("chat_id"),
             "platform_user_id": p.get("platform_user_id") or "",
             "platform_user_name": p.get("platform_user_name") or "",
             "text": t,
+            "attention_raw_text": p.get("attention_raw_text", p.get("text") or ""),
             "bot_mentioned": p.get("bot_mentioned") is True,
+            "native_bot_mentioned": p.get("native_bot_mentioned"),
             "mentions_other_bot": p.get("mentions_other_bot") is True,
+            "mentions_other_member": p.get("mentions_other_member"),
+            "has_unresolved_mention": p.get("has_unresolved_mention") is True,
+            "platform_message_id": p.get("platform_message_id"),
+            "platform_sent_ms": p.get("platform_sent_ms"),
+            "reply_to_platform_message_id": p.get("reply_to_platform_message_id"),
+            "reply_target_sender_id": p.get("reply_target_sender_id"),
+            "reply_target_is_bot": p.get("reply_target_is_bot"),
+            "sender_is_bot": p.get("sender_is_bot"),
+            "processable_media": p.get("processable_media"),
+            "media_only": p.get("media_only"),
+            "media_kinds": p.get("media_kinds"),
+            "quote_text": p.get("quoted_text"),
+            "attachments": list(p.get("attachments") or []),
         })
         source_message_id = str(p.get("platform_message_id") or "")
         source_attachments = []
@@ -277,10 +297,16 @@ def _merge_payloads(payloads: list) -> dict:
     if base.get("chat_type") in {"group", "c2c"}:
         base["_batch_messages"] = [
             {
+                "event_id": p.get("_redis_stream_id"),
+                "platform": p.get("platform"),
+                "bot_id": p.get("bot_id") or p.get("channel_id"),
+                "channel_id": p.get("channel_id"),
+                "chat_id": p.get("chat_id"),
                 "early_id": p.get("_early_message_id"),
                 "platform_message_id": p.get("platform_message_id"),
                 "text": p.get("text") or "",
                 "quoted_text": p.get("quoted_text"),
+                "attention_raw_text": p.get("attention_raw_text", p.get("text") or ""),
                 "chat_type": p.get("chat_type"),
                 "platform_user_id": p.get("platform_user_id"),
                 "platform_user_name": p.get("platform_user_name"),
@@ -288,6 +314,17 @@ def _merge_payloads(payloads: list) -> dict:
                 "bot_mentioned": p.get("bot_mentioned") is True,
                 "group_mentioned": p.get("group_mentioned") is True,
                 "mentions_other_bot": p.get("mentions_other_bot") is True,
+                "native_bot_mentioned": p.get("native_bot_mentioned"),
+                "mentions_other_member": p.get("mentions_other_member"),
+                "has_unresolved_mention": p.get("has_unresolved_mention") is True,
+                "platform_sent_ms": p.get("platform_sent_ms"),
+                "reply_to_platform_message_id": p.get("reply_to_platform_message_id"),
+                "reply_target_sender_id": p.get("reply_target_sender_id"),
+                "reply_target_is_bot": p.get("reply_target_is_bot"),
+                "sender_is_bot": p.get("sender_is_bot"),
+                "processable_media": p.get("processable_media"),
+                "media_only": p.get("media_only"),
+                "media_kinds": p.get("media_kinds"),
                 "attachments": message_attachments[index],
             }
             for index, p in enumerate(payloads)
@@ -548,6 +585,7 @@ async def _hydrate_group_policy(payload: dict) -> dict:
         "group_read_enabled": settings[2],
         "group_memory_enabled": settings[3],
         "member_memory_enabled": settings[4],
+        "group_attention_mode": settings[5] if len(settings) > 5 else "autonomous",
     })
     return result
 

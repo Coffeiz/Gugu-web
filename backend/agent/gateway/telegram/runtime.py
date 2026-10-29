@@ -43,6 +43,12 @@ def _dedup_key(bot_id: str, update_id: int) -> str:
     return f"im:telegram:{bot_id}:update:{update_id}"
 
 
+def _send_failure_receipt(*, return_receipt: bool, outcome: str) -> bool | dict:
+    if not return_receipt:
+        return False
+    return {"accepted": False, "outcome": outcome}
+
+
 def _is_new_message_update(update: dict) -> bool:
     """编辑消息不能重新触发 Agent 或有副作用的工具调用。"""
     return isinstance(update.get("message"), dict)
@@ -126,11 +132,13 @@ async def _bot_token(channel_id: str) -> str | None:
 
 
 async def send_message(chat_id: str, text: str, *, channel_id: str,
-                       reply_to_message_id: str | None = None) -> bool:
+                       reply_to_message_id: str | None = None,
+                       return_receipt: bool = False) -> bool | dict:
     """通过数据库取凭据发送文本；异常只进入受限诊断，不泄露 URL。"""
     return await _send_chat_message(
         chat_id, text, channel_id=channel_id,
         reply_to_message_id=reply_to_message_id,
+        return_receipt=return_receipt,
         diagnostic_operation="agent.gateway.telegram.send_message",
     )
 
@@ -142,36 +150,54 @@ async def _send_chat_message(
     channel_id: str,
     reply_to_message_id: str | None = None,
     prompt: dict | None = None,
+    return_receipt: bool = False,
     diagnostic_operation: str,
-) -> bool:
+) -> bool | dict:
     try:
         token = await _bot_token(channel_id)
         if not token:
-            return False
+            return _send_failure_receipt(return_receipt=return_receipt, outcome="FAILED_CONFIRMED")
         from agent.im.telegram_format import split_markdown_v2
 
         chunks = split_markdown_v2(text)
         if not chunks:
-            return False
+            return _send_failure_receipt(return_receipt=return_receipt, outcome="FAILED_CONFIRMED")
         reply_markup = None
         if prompt is not None:
             from agent.interactions.telegram import build_inline_keyboard
 
             reply_markup = build_inline_keyboard(prompt)
+        platform_message_ids = []
         for index, chunk in enumerate(chunks):
             body = {"chat_id": chat_id, "text": chunk, "parse_mode": "MarkdownV2"}
             if index == 0 and reply_to_message_id:
                 body["reply_to_message_id"] = int(reply_to_message_id)
             if index == len(chunks) - 1 and reply_markup:
                 body["reply_markup"] = reply_markup
-            await _call_for_chat(
+            result = await _call_for_chat(
                 token, "sendMessage", body, channel_id=channel_id, chat_id=chat_id,
                 is_group=chat_id.startswith("-"),
             )
+            message_id = result.get("message_id") if isinstance(result, dict) else None
+            if message_id is not None:
+                platform_message_ids.append(str(message_id))
+        if return_receipt:
+            return {
+                "accepted": True,
+                "platform_message_id": platform_message_ids[-1] if platform_message_ids else None,
+                "platform_message_ids": platform_message_ids,
+            }
         return True
     except Exception as exc:
         diag_log(diagnostic_operation, exc)
-        return False
+        outcome = (
+            "FAILED_CONFIRMED"
+            if isinstance(exc, TelegramBotApiError)
+            and exc.status_code is not None
+            and 300 <= exc.status_code < 500
+            else "UNKNOWN"
+        )
+        return _send_failure_receipt(return_receipt=return_receipt, outcome=outcome)
 
 
 async def send_interaction_message(

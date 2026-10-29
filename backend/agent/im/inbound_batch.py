@@ -64,6 +64,11 @@ def resolve_batch_attachment_ids(
             by_source[(platform_message_id, int(attachment_index))] = str(attach_id)
 
     for message in batch_messages:
+        original_attachments = message.get("attachments") or []
+        if not isinstance(message.get("media_kinds"), (list, tuple)):
+            from agent.im.auto_reply.attention import _media_kinds
+
+            message["media_kinds"] = _media_kinds(original_attachments)
         message_platform_id = str(
             message.get("platform_message_id") or fallback_platform_message_id or ""
         )
@@ -97,6 +102,11 @@ def resolve_batch_attachment_ids(
             if resolved_id:
                 resolved.append(resolved_id)
         message["attachments"] = resolved
+        message["media_only"] = not str(message.get("attention_raw_text") or message.get("text") or "").strip() and bool(
+            message.get("media_kinds")
+        )
+        if message["media_only"]:
+            message["processable_media"] = bool(resolved)
 
 
 async def process_inbound_batch(
@@ -120,7 +130,11 @@ async def process_inbound_batch(
 
     for segment_index, segment in enumerate(segments):
         segment_ids = [mid for mid, _ in segment]
-        merged = merge_payloads([payload for _, payload in segment])
+        # 把 Redis Stream ID 附在每条消息自身；后续门控不能从 merge 后的文本猜事件身份。
+        merged = merge_payloads([
+            {**payload, "_redis_stream_id": message_id}
+            for message_id, payload in segment
+        ])
         try:
             from agent.im.inbound_recovery import (
                 receipt_key,

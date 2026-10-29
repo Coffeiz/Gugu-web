@@ -324,5 +324,6 @@ async def test_worker_hydrates_feishu_group_policy_before_passive_routing(monkey
         "group_read_enabled": False,
         "group_memory_enabled": False,
         "member_memory_enabled": True,
+        "group_attention_mode": "autonomous",
     }
     assert "group_requires_at" not in original

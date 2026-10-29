@@ -265,6 +265,51 @@ async def test_group_batch_with_two_speakers_answers_once(stub_worker_io):
     assert len(calls) == 1, f"一个批次应该只回一次，实际 {len(calls)} 次"
 
 
+@pytest.mark.asyncio
+async def test_failed_passive_completion_defers_without_acknowledging(monkeypatch):
+    from contextlib import asynccontextmanager
+    from agent.im import inbound_batch
+    from app.core import redis as redis_module
+
+    acknowledged = []
+    deferred = []
+
+    class Redis:
+        async def get(self, _key):
+            return None
+
+    @asynccontextmanager
+    async def run_slot():
+        yield
+
+    async def register_batch(_redis, _ids):
+        return "synthetic-batch"
+
+    async def handle(_message_id, _payload):
+        raise RuntimeError("synthetic persistence failure")
+
+    async def acknowledge(message_id):
+        acknowledged.append(message_id)
+
+    async def defer(batch, **kwargs):
+        deferred.append((batch, kwargs))
+
+    monkeypatch.setattr(redis_module, "get_redis", lambda: Redis())
+    monkeypatch.setattr("agent.im.inbound_recovery.register_batch", register_batch)
+    result = await inbound_batch.process_inbound_batch(
+        [("1761746400000-0", _group_msg("消息", "member-a"))],
+        merge_payloads=lambda payloads: {"_early_message_ids": [], **payloads[-1]},
+        handle=handle,
+        run_slot=run_slot,
+        acknowledge=acknowledge,
+        defer=defer,
+    )
+
+    assert result is False
+    assert acknowledged == []
+    assert deferred[0][1]["release_ids"] == ["1761746400000-0"]
+
+
 async def test_messages_arriving_during_a_run_are_answered_together(stub_worker_io):
     """咕咕回复期间到达的消息攒成下一轮，一次性回复。"""
     import worker

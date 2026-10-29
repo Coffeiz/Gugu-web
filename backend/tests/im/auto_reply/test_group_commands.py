@@ -24,6 +24,8 @@ def _group_payload(text, *, requires_at=False, read_enabled=False, mentioned=Fal
         "owner_user_id": "owner-id",
         "text": text,
         "message_id": "message-id",
+        # 让群聊自动回复集成测试实际通过自主模式注意力旁路。
+        "event_id": "1761746400000-3",
         "group_requires_at": requires_at,
         "group_read_enabled": read_enabled,
         "group_mentioned": mentioned,

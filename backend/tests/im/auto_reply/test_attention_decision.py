@@ -27,6 +27,7 @@ def message(**overrides):
         "mentioned_current_bot": False,
         "mentioned_other_bot": False,
         "mentioned_other_member": False,
+        "has_unresolved_mention": False,
         "reply_to_platform_message_id": None,
         "reply_target_sender_id": None,
         "reply_target_is_bot": None,
@@ -51,10 +52,24 @@ def test_explicit_alias_call_is_direct_only_when_it_contains_a_request():
     snapshot = AttentionSnapshot(complete=True)
     assert decide_attention(
         message(raw_text="咕咕，帮我分析一下 Python 配置"), snapshot, AttentionMode.QUIET,
+        bot_aliases=("咕咕",),
     ).kind is AttentionKind.DIRECT
     assert decide_attention(
         message(raw_text="咕咕，今天真热"), snapshot, AttentionMode.QUIET,
+        bot_aliases=("咕咕",),
     ).kind is AttentionKind.PASSIVE
+
+
+def test_autonomous_mode_admits_ordinary_messages_without_attention_classification():
+    decision = decide_attention(
+        message(raw_text="哈哈"),
+        AttentionSnapshot(complete=False),
+        AttentionMode.AUTONOMOUS,
+    )
+
+    assert decision == AttentionDecision(
+        AttentionKind.ALLOW_RUN, None, None, ("autonomous_bypass",)
+    )
 
 
 def test_verified_bot_reply_continues_only_for_same_sender_and_recent_accepted_message():
@@ -102,21 +117,21 @@ def test_trusted_processable_media_reply_is_continuation_without_text():
 
 
 def test_quiet_suppresses_open_candidates_while_natural_and_active_apply_thresholds():
-    current = message(raw_text="有谁能推荐一下咖啡豆？")
-    recent = message(
-        event_id="1761746399000-0",
-        event_received_ms=current.event_received_ms - 1000,
-        sender_id="member-2",
-        raw_text="刚开始学手冲",
-    )
-    snapshot = AttentionSnapshot(messages=(recent,), complete=True, watermark_ms=current.event_received_ms)
+    current = message(raw_text="Python 的连接池超时怎么处理？")
+    snapshot = AttentionSnapshot(complete=True, watermark_ms=current.event_received_ms)
     quiet = decide_attention(current, snapshot, AttentionMode.QUIET)
     natural = decide_attention(current, snapshot, AttentionMode.NATURAL)
     active = decide_attention(current, snapshot, AttentionMode.ACTIVE)
     assert quiet.kind is AttentionKind.PASSIVE
     assert quiet.reasons == ("quiet_mode_suppresses_open_candidate",)
-    assert natural.kind is AttentionKind.PASSIVE and natural.threshold == 70 and natural.score == 65
-    assert active.kind is AttentionKind.PROACTIVE and active.threshold == 55 and active.score == 65
+    assert natural.kind is AttentionKind.PROACTIVE and natural.threshold == 70 and natural.score == 70
+    assert active.kind is AttentionKind.PROACTIVE and active.threshold == 55 and active.score == 70
+    assert dict(natural.score_breakdown) == {
+        "P02_substantive_question": 30,
+        "P03_concrete_context": 15,
+        "P05_quiet_conversation": 10,
+        "P07_implicit_open_audience": 15,
+    }
 
 
 def test_incomplete_snapshot_never_promotes_an_open_candidate():

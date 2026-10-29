@@ -20,7 +20,9 @@ async def test_non_numeric_platform_bot_id_fails_closed(monkeypatch):
 async def test_non_numeric_bot_policy_defaults_to_disabled():
     from agent.im.permissions import resolve_group_policy
 
-    assert await resolve_group_policy("platform-bot-id") == (False, True, False, True, True)
+    assert await resolve_group_policy("platform-bot-id") == (
+        False, True, False, True, True, "autonomous", 0,
+    )
 
 
 @pytest.mark.asyncio
@@ -66,9 +68,15 @@ async def test_group_policy_uses_platform_specific_enable_field(monkeypatch):
     monkeypatch.setattr(db_session, "_SessionLocal", Session)
 
     assert (await resolve_group_policy("11", "qq"))[0] is False
-    assert (await resolve_group_policy("12", "feishu")) == (False, True, True, False, True)
+    assert (await resolve_group_policy("12", "feishu")) == (
+        False, True, True, False, True, "autonomous", 0,
+    )
     # NULL 表示升级前的飞书连接，保持既有群聊可用行为。
-    assert (await resolve_group_policy("13", "feishu")) == (True, False, False, True, False)
-    assert (await resolve_group_policy("14", "telegram")) == (True, True, False, False, True)
+    assert (await resolve_group_policy("13", "feishu")) == (
+        True, False, False, True, False, "autonomous", 0,
+    )
+    assert (await resolve_group_policy("14", "telegram")) == (
+        True, True, False, False, True, "autonomous", 0,
+    )
     # 平台错配不能通过另一个 IM 的 Bot 行绕过各自的开关。
     assert (await resolve_group_policy("12", "qq"))[0] is False

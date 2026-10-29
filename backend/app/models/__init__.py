@@ -1096,6 +1096,8 @@ class ConversationBatch(Base):
     run_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     round_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     digest: Mapped[str] = mapped_column(String(64))
+    # 记录门控执行结果等不含正文的可审计状态摘要。
+    state_summary: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
 
     session: Mapped["ConversationSession"] = relationship(back_populates="batches")
@@ -1141,6 +1143,17 @@ class ConversationMessage(Base):
     platform_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     platform_user_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     platform_bot_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    # IM 注意力门控只保存平台结构化事实；不从引用正文反推发言人或关系。
+    im_platform_message_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    im_reply_to_message_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    im_reply_target_sender_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    im_reply_target_is_bot: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    im_sender_is_bot: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    im_event_received_ms: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True, index=True)
+    im_platform_sent_ms: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    im_media_kinds: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    im_media_processable: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    im_mention_facts: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     chat_type:    Mapped[Optional[str]]    = mapped_column(String(20), nullable=True)
     sent_at:      Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=now_utc, index=True)
     created_at:   Mapped[datetime]        = mapped_column(UtcDateTime, default=now_utc)
@@ -1528,6 +1541,13 @@ class UserBot(Base):
     feishu_group_chat_enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=None)
     group_requires_at:  Mapped[bool] = mapped_column(Boolean, default=True)
     group_read_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 群聊全量自动回复的注意力参与度；只在 reply_all 时生效。
+    group_attention_mode: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="autonomous", server_default="autonomous"
+    )
+    group_attention_config_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     # 群聊记忆：分别控制本群公开记忆和群成员个人记忆的读取/沉淀。
     group_memory_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     member_memory_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
