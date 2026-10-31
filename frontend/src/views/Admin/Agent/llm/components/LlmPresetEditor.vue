@@ -58,12 +58,12 @@
 
             <div class="modal-field-row">
               <div class="modal-field">
-                <label>{{ t('adminLlmUi.maxTokens') }}</label>
-                <input v-model.number="draft.max_tokens" type="number" min="100" max="32000" step="100" class="modal-input" />
-              </div>
-              <div class="modal-field">
                 <label>{{ t('adminLlmUi.contextTokens') }}</label>
                 <input v-model.number="draft.context_tokens" type="number" min="500" max="200000" step="500" class="modal-input" />
+              </div>
+              <div class="modal-field">
+                <label>{{ t('adminLlmUi.maxTokens') }}</label>
+                <input v-model.number="draft.max_tokens" type="number" min="100" max="32000" step="100" class="modal-input" />
               </div>
             </div>
 
