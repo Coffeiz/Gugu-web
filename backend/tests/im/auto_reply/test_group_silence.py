@@ -38,7 +38,7 @@ def platform_sender(monkeypatch):
 
 async def finalize(
     response, *, chat_type="group", group_auto_reply=True, gate=None,
-    attention_tracking=False, reservation=None,
+    attention_tracking=False,
 ):
     request = SimpleNamespace(
         source="qq",
@@ -46,7 +46,6 @@ async def finalize(
         chat_id="synthetic-group" if chat_type == "group" else None,
         group_auto_reply=group_auto_reply,
         group_reply_gate=gate,
-        attention_budget_reservation=reservation,
     )
     payload = {
         "platform": "qq",
@@ -128,23 +127,6 @@ async def test_error_after_reply_selection_is_still_delivered(platform_sender):
     group_send.assert_awaited_once()
     assert group_send.await_args.args[1] == "合成失败提示"
     assert finish.call_args.args[0] == "error"
-
-
-@pytest.mark.asyncio
-async def test_choose_no_reply_releases_reserved_attention_budget(platform_sender, monkeypatch):
-    settle = AsyncMock()
-    monkeypatch.setattr(dispatch_finalization, "_settle_attention_budget", settle)
-    monkeypatch.setattr("app.core.redaction.diag_log_raw", lambda *_args: None)
-    gate = ReplyGate()
-    gate.decline()
-
-    await finalize(
-        AgentResponse(text=""), gate=gate, attention_tracking=True,
-        reservation={"kind": "proactive", "run_id": "synthetic-run"},
-    )
-
-    settle.assert_awaited_once()
-    assert settle.await_args.kwargs["outcome"] == "FAILED_CONFIRMED"
 
 
 @pytest.mark.asyncio

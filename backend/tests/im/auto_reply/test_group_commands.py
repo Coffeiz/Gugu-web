@@ -145,6 +145,59 @@ async def test_group_command_without_mention_is_not_treated_as_command(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_automatic_reply_group_does_not_emit_cancel_permission_notice_for_ordinary_text(
+    monkeypatch, user_a,
+):
+    """全量自动回复群消息正文含“取消”时仍交给群消息处理，不冒出取消权限提示。"""
+    state = _setup(
+        monkeypatch,
+        user_a,
+        "这版取消 shadow 后，命中率回放怎么做？",
+        requires_at=False,
+    )
+    monkeypatch.setattr(
+        "agent.im.dispatch.decide_im_shortcut",
+        AsyncMock(return_value={
+            "action": "no_permission",
+            "reply": "这个不是你的任务哦，咕咕还在忙～",
+        }),
+    )
+
+    await dispatch_im_message(_group_payload(
+        "这版取消 shadow 后，命中率回放怎么做？",
+        requires_at=False,
+    ))
+
+    assert state["sent"] == []
+    assert state["request"].group_auto_reply is True
+    assert state["ran_agent"] is True
+
+
+@pytest.mark.asyncio
+async def test_mention_required_group_keeps_cancel_permission_notice(
+    monkeypatch, user_a,
+):
+    """仅 @ 模式里的明确 @ 消息保留跨成员取消权限拦截。"""
+    state = _setup(monkeypatch, user_a, "<@bot-id> 取消", requires_at=True, mentioned=True)
+    monkeypatch.setattr(
+        "agent.im.dispatch.decide_im_shortcut",
+        AsyncMock(return_value={
+            "action": "no_permission",
+            "reply": "这个不是你的任务哦，咕咕还在忙～",
+        }),
+    )
+
+    await dispatch_im_message(_group_payload(
+        "<@bot-id> 取消",
+        requires_at=True,
+        mentioned=True,
+    ))
+
+    assert state["sent"] == ["这个不是你的任务哦，咕咕还在忙～"]
+    assert state["ran_agent"] is False
+
+
+@pytest.mark.asyncio
 async def test_group_command_with_mention_is_executed(monkeypatch, user_a):
     """群里 @ 咕咕后命令照常生效，回复进群且不进回复选择门。"""
     state = _setup(monkeypatch, user_a, "<@bot-id> /help", mentioned=True)

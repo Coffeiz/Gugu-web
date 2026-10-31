@@ -254,6 +254,27 @@
             </article>
           </div>
 
+          <div class="subhead"><div><h3>Resizable textarea</h3><p>对比内容未溢出和出现内部滚动条时，缩放柄保持同一令牌样式。</p></div><code>.control-resizable · --control-resizer-bg</code></div>
+          <article class="preview-card resize-textarea-preview">
+            <div class="preview-stage resize-textarea-stage">
+              <div class="resize-textarea-demo-grid">
+                <div class="resize-textarea-case"><span>内容未溢出</span>
+                  <textarea class="form-input control-resizable resize-textarea-sample" rows="3" aria-label="内容未溢出的可调整大小输入框">拖动右下角调整输入框高度</textarea>
+                </div>
+                <div class="resize-textarea-case"><span>内容超出可视区</span>
+                  <textarea class="form-input control-resizable resize-textarea-sample" rows="3" aria-label="内容溢出的可调整大小输入框">第一行内容
+第二行内容
+第三行内容
+第四行内容
+第五行内容
+第六行内容
+第七行内容</textarea>
+                </div>
+              </div>
+            </div>
+            <div class="meta"><strong>Resize handle</strong><code>adoption/forms.css → --control-resizer-bg</code><span>滚动条角落使用输入框表面令牌；页面只组合公共类，不覆盖缩放柄样式。</span></div>
+          </article>
+
           <div class="subhead"><div><h3>Confirm dialog</h3><p>破坏性操作统一使用 Promise 确认服务；危险态、按钮与说明消费同一套组件 token。</p></div><code>--confirm-dialog-*</code></div>
           <div class="confirm-preview preview-card">
             <div class="confirm-preview-stage">
@@ -539,6 +560,11 @@ const notes = [
 @media(max-width:760px){.sample-main > .sample-topbar{left:var(--space-md);right:var(--space-md)}.sample-main > .sample-topbar .sample-search{display:none}.sample-main > .sample-topbar .sample-ghost{display:none}}
 @media(max-width:760px){.motion-token-grid{grid-template-columns:1fr}}
 .contracts-detail{margin-top:var(--space-xl);padding-top:var(--space-xl);border-top:1px solid var(--content-divider)}.contracts-detail .preview-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--design-grid-gap)}.contracts-detail .preview-card{overflow:hidden;border:1px solid var(--design-card-border);border-radius:var(--design-card-radius);background:var(--design-card-bg);box-shadow:var(--elevation-card)}.contracts-detail .preview-stage{height:150px;display:grid;place-items:center;padding:var(--space-lg);background:var(--surface-soft);border-bottom:1px solid var(--content-divider)}
+.contracts-detail .resize-textarea-preview{margin-top:var(--space-sm)}
+.contracts-detail .resize-textarea-stage{height:auto;min-height:150px}
+.contracts-detail .resize-textarea-demo-grid{width:100%;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-md)}
+.contracts-detail .resize-textarea-case{min-width:0;display:flex;flex-direction:column;gap:var(--space-xs);color:var(--content-secondary);font-size:var(--font-size-xs)}
+.contracts-detail .resize-textarea-sample{width:100%;height:110px;min-height:110px;padding:var(--space-sm);font:var(--font-size-sm)/var(--line-height-body) var(--font-sans)}
 .contracts-detail .panel-stage{background:linear-gradient(145deg,color-mix(in srgb,var(--action-primary) 12%,var(--surface-base)),var(--surface-base))}.contracts-detail .panel-preview{width:76%;height:104px;padding:var(--space-md);display:flex;flex-direction:column;gap:var(--space-xs);background:var(--panel-glass-bg);border:1px solid var(--panel-glass-border);border-radius:var(--radius-lg);box-shadow:var(--panel-glass-shadow);backdrop-filter:var(--panel-glass-blur)}.contracts-detail .panel-preview strong,.contracts-detail .modal-preview strong{font-size:var(--font-size-sm)}.contracts-detail .panel-preview span,.contracts-detail .modal-preview span{color:var(--content-secondary);font-size:var(--font-size-xs)}
 .contracts-detail .modal-preview{width:82%;padding:var(--space-lg);display:flex;flex-direction:column;gap:var(--space-xs);background:var(--modal-card-bg);border:1px solid var(--modal-card-border);border-radius:var(--radius-lg);box-shadow:var(--modal-card-shadow),inset 0 1px 0 var(--modal-card-highlight)}.contracts-detail .contract-input{width:90%;height:38px;padding:0 var(--space-md);border:1px solid var(--input-border);border-radius:var(--input-radius);outline:none;color:var(--input-fg);background:var(--input-bg);font:var(--font-size-sm) var(--font-sans)}.contracts-detail .contract-input:focus{background:var(--input-bg-focus);border-color:var(--input-border-focus);box-shadow:var(--input-focus-shadow)}
 .confirm-preview{overflow:hidden}.confirm-preview-stage{min-height:132px;display:flex;align-items:center;justify-content:space-between;gap:var(--space-lg);padding:var(--space-lg);background:var(--surface-soft);border-bottom:1px solid var(--content-divider)}.confirm-preview-copy{display:flex;flex-direction:column;gap:var(--space-xs)}.confirm-preview-copy strong{font-size:var(--font-size-sm)}.confirm-preview-copy span{max-width:360px;color:var(--content-tertiary);font-size:var(--font-size-xs);line-height:var(--line-height-body)}

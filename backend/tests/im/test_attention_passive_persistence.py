@@ -78,9 +78,9 @@ async def test_passive_attention_batch_persists_each_event_and_recovers_after_co
     ]
     assert receipts[0].state_summary == {
         "kind": "attention_passive", "mode": "natural",
-        "config_version": 0, "attention_version": "attention-v1.4",
+        "config_version": 0, "attention_version": "attention-v3.0.6",
         "actual_decision": "PASSIVE", "reason_codes": ["snapshot_incomplete"],
-        "score": 0, "score_breakdown": None, "threshold": 70, "budget_kind": None,
+        "score": 0, "score_breakdown": None, "threshold": 70,
         "source_event_count": 2,
     }
     assert len(published) == 1 and len(published[0]["appended"]) == 2

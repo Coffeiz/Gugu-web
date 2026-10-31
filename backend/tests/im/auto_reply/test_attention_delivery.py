@@ -22,7 +22,7 @@ async def test_delivery_is_idempotent_and_indexes_each_accepted_platform_message
         source_event_ids=["1761746400000-1"],
         answer_source_event_ids=["1761746400000-1"],
         recipient_sender_id="member-1",
-        budget_kind="proactive",
+        proactive=True,
         submitted_at_ms=1_000_000,
     )
 
@@ -75,7 +75,6 @@ async def test_delivery_is_idempotent_and_indexes_each_accepted_platform_message
 async def test_reply_facts_require_accepted_receipt_and_matching_recipient():
     import fakeredis.aioredis
     from types import SimpleNamespace
-    from agent.im.auto_reply.runtime import _load_answered_question_facts
 
     from agent.im.auto_reply.delivery import begin_delivery, settle_delivery
     from agent.im.auto_reply.runtime import _load_bot_reply_facts
@@ -84,7 +83,7 @@ async def test_reply_facts_require_accepted_receipt_and_matching_recipient():
     await begin_delivery(
         redis, delivery_id="delivery-2", platform="qq", bot_id="bot-2",
         group_id="group-2", run_key="run-2", source_event_ids=["event-2"],
-        recipient_sender_id="member-a", budget_kind=None, submitted_at_ms=1_000,
+        recipient_sender_id="member-a", proactive=False, submitted_at_ms=1_000,
     )
     await settle_delivery(
         redis, delivery_id="delivery-2", platform="qq", bot_id="bot-2",
@@ -108,6 +107,55 @@ async def test_reply_facts_require_accepted_receipt_and_matching_recipient():
     await redis.aclose()
 
 
+@pytest.mark.asyncio
+async def test_accepted_member_active_answer_remains_available_but_tool_message_does_not():
+    from agent.im.auto_reply.delivery import accepted_finals_before, member_activation_before
+
+    redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    common = dict(
+        platform="qq", bot_id="bot-3", group_id="group-3", run_key="run-3",
+        source_event_ids=["1761746400000-1"], recipient_sender_id="member-a",
+        proactive=False, submitted_at_ms=1_000, final_payload_text="synthetic answer",
+    )
+    await begin_delivery(
+        redis, delivery_id="answer-active", source_attention_kind="member_ACTIVE", **common,
+    )
+    await settle_delivery(
+        redis, delivery_id="answer-active", platform="qq", bot_id="bot-3",
+        group_id="group-3", outcome="ACCEPTED", platform_message_id="answer-message",
+        accepted_at_ms=1_250,
+    )
+    await begin_delivery(
+        redis, delivery_id="tool-progress", source_attention_kind="tool", **common,
+    )
+    await settle_delivery(
+        redis, delivery_id="tool-progress", platform="qq", bot_id="bot-3",
+        group_id="group-3", outcome="ACCEPTED", platform_message_id="tool-message",
+        accepted_at_ms=1_300,
+    )
+
+    accepted = await accepted_finals_before(
+        redis, platform="qq", bot_id="bot-3", group_id="group-3", watermark_ms=2_000,
+    )
+
+    assert [item["source_attention_kind"] for item in accepted] == ["member_ACTIVE"]
+    assert accepted[0]["recipient_sender_id"] == "member-a"
+    active_receipt = await member_activation_before(
+        redis, platform="qq", bot_id="bot-3", group_id="group-3",
+        sender_id="member-a", watermark_ms=1_250,
+    )
+    assert active_receipt["delivery_id"] == "answer-active"
+    assert await member_activation_before(
+        redis, platform="qq", bot_id="bot-3", group_id="group-3",
+        sender_id="member-a", watermark_ms=1_249,
+    ) is None
+    assert await member_activation_before(
+        redis, platform="qq", bot_id="bot-3", group_id="group-3",
+        sender_id="member-b", watermark_ms=2_000,
+    ) is None
+    await redis.aclose()
+
+
 def test_shallow_copied_send_payloads_cannot_reuse_delivery_ordinals():
     from agent.im.replies import _next_attention_delivery_ordinal
 
@@ -120,6 +168,53 @@ def test_shallow_copied_send_payloads_cannot_reuse_delivery_ordinals():
     assert _next_attention_delivery_ordinal(response_payload) == 3
     assert _next_attention_delivery_ordinal(original) == 4
     assert _next_attention_delivery_ordinal(response_payload) == 5
+
+
+@pytest.mark.asyncio
+async def test_tool_send_payload_uses_shared_attention_ledger_without_answer_attribution(monkeypatch):
+    import json
+
+    from agent.im import imctx
+    from agent.im.replies import send_text
+    from agent.im.auto_reply.delivery import (
+        _delivery_key, _scope_digest, delivery_id_for,
+    )
+    from agent.gateway import qq
+
+    redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    monkeypatch.setattr("app.core.redis.get_redis", lambda: redis)
+    async def accepted_group_send(*_args, **_kwargs):
+        return {"accepted": True, "platform_message_id": "tool-message-1"}
+
+    monkeypatch.setattr(qq, "send_group", accepted_group_send)
+    receipts = []
+    attention_context = {
+        "_attention_track_delivery": True,
+        "_attention_run_key": "run-tool-1",
+        "_attention_delivery_counter": {"value": 0},
+        "_attention_decision_kind": "proactive",
+        "_attention_outbound_receipts": receipts,
+        "_attention_source_event_ids": ["source-event-1"],
+    }
+    imctx.set_im(
+        "qq", "message-1", "bot-1", "group-1", "member-1", "group",
+        attention_delivery_context=attention_context,
+    )
+    payload = imctx.to_send_payload()
+    assert payload["_attention_delivery_role"] == "tool"
+
+    assert await send_text(payload, "工具发出的进度消息")
+    delivery_id = delivery_id_for("run-tool-1", 1)
+    record = await redis.hgetall(_delivery_key(
+        _scope_digest("qq", "bot-1", "group-1"), delivery_id,
+    ))
+    assert json.loads(record["source_event_ids"]) == ["source-event-1"]
+    assert json.loads(record["answer_source_event_ids"]) == []
+    assert record["status"] == "ACCEPTED"
+    assert receipts[0]["status"] == "ACCEPTED"
+    assert record["proactive"] == "0"
+    imctx.clear()
+    await redis.aclose()
 
 
 def test_platform_failures_preserve_confirmed_and_ambiguous_outcomes():
@@ -138,37 +233,6 @@ def test_platform_failures_preserve_confirmed_and_ambiguous_outcomes():
 
 
 @pytest.mark.asyncio
-async def test_accepted_answer_is_mapped_back_to_source_question_for_n07():
-    from types import SimpleNamespace
-    from agent.im.auto_reply.runtime import _load_answered_question_facts
-
-    redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
-    await begin_delivery(
-        redis, delivery_id="answer-delivery", platform="qq", bot_id="bot-3",
-        group_id="group-3", run_key="answer-run", source_event_ids=["source-1"],
-        answer_source_event_ids=["source-1"], recipient_sender_id="member-3",
-        budget_kind="proactive", submitted_at_ms=10_000,
-    )
-    await settle_delivery(
-        redis, delivery_id="answer-delivery", platform="qq", bot_id="bot-3",
-        group_id="group-3", outcome="ACCEPTED", platform_message_id="answer-1",
-        answer_source_event_ids=["source-1"], accepted_at_ms=10_500,
-    )
-    source = SimpleNamespace(
-        event_id="source-1", sender_is_bot=False, event_received_ms=10_000,
-        platform_message_id="question-1", raw_text="Python 连接池超时怎么排查？",
-    )
-
-    question_ids, question_texts = await _load_answered_question_facts(
-        redis, [source], platform="qq", bot_id="bot-3", group_id="group-3", now_ms=11_000,
-    )
-
-    assert question_ids == {"question-1"}
-    assert question_texts == {"python连接池超时怎么排查"}
-    await redis.aclose()
-
-
-@pytest.mark.asyncio
 async def test_sent_link_button_result_is_recorded_as_accepted_delivery(monkeypatch):
     import fakeredis.aioredis
     from agent.im.replies import _settle_attention_delivery
@@ -178,7 +242,7 @@ async def test_sent_link_button_result_is_recorded_as_accepted_delivery(monkeypa
     await begin_delivery(
         redis, delivery_id="button-delivery", platform="qq", bot_id="bot-1",
         group_id="group-1", run_key="run-1", source_event_ids=["event-1"],
-        recipient_sender_id="member-1", budget_kind="proactive", submitted_at_ms=1_000,
+        recipient_sender_id="member-1", proactive=True, submitted_at_ms=1_000,
     )
     payload = {"_attention_outbound_receipts": []}
 
@@ -199,6 +263,6 @@ async def test_sent_link_button_result_is_recorded_as_accepted_delivery(monkeypa
     assert await begin_delivery(
         redis, delivery_id="button-delivery", platform="qq", bot_id="bot-1",
         group_id="group-1", run_key="run-1", source_event_ids=["event-1"],
-        recipient_sender_id="member-1", budget_kind="proactive", submitted_at_ms=2_000,
+        recipient_sender_id="member-1", proactive=True, submitted_at_ms=2_000,
     ) == "ACCEPTED"
     await redis.aclose()

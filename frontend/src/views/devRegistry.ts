@@ -34,6 +34,12 @@ export const devToolRegistry: DevToolEntry[] = [
     descriptionKey: 'devHome.tools.email.description',
   },
   {
+    path: '/dev/attention',
+    labelKey: 'devHome.tools.attention.label',
+    eyebrowKey: 'devHome.tools.attention.eyebrow',
+    descriptionKey: 'devHome.tools.attention.description',
+  },
+  {
     path: '/dev/notes-timeline',
     labelKey: 'devHome.tools.notesTimeline.label',
     eyebrowKey: 'devHome.tools.notesTimeline.eyebrow',

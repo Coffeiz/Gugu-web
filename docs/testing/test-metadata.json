@@ -871,6 +871,46 @@
     "keyBehavior": "knowledge 关键词请求走 BM25，按 id 直读全文且保持 owner 隔离和稳定结果元数据",
     "ci": "backend-pytest"
   },
+  "backend/tests/agent/rag/test_cython_lifecycle.py": {
+    "domain": "memory-rag-cython-equivalence",
+    "layer": "L1",
+    "owner": "backend/agent/rag/cython_lifecycle.py",
+    "productionEntry": "backend/agent/rag/index_cache.py 与 TypeScript RAG worker 的索引/向量生命周期操作",
+    "keyBehavior": "数据库快照、revision 增量、快照恢复和向量缓存刷新保持 owner、模型版本及 tombstone 契约；版本刷新清除未命中的旧向量；Memory scope 并发读取保持顺序，snapshot 覆盖过滤复用预处理上下文",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/rag/test_cython_bm25_differential.py": {
+    "domain": "memory-rag-cython-equivalence",
+    "layer": "L1",
+    "owner": "backend/agent/rag/cython_backend.py",
+    "productionEntry": "backend/agent/rag/ts_sidecar.py 与 TypeScript RAG worker 的 search 操作",
+    "keyBehavior": "固定种子语料下分词 BM25、全语料 IDF、来源及 scope 过滤、稳定排序、limit 和诊断与 TS worker 逐项一致",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/rag/test_cython_rank_differential.py": {
+    "domain": "memory-rag-cython-equivalence",
+    "layer": "L1",
+    "owner": "backend/agent/rag/cython_rank.py",
+    "productionEntry": "backend/agent/rag/ts_sidecar.py 与 TypeScript RAG worker 的 rank_candidates 操作",
+    "keyBehavior": "候选排序、JS Number 配额边界与小数字符预算回退、JSONL 默认值、无效 wire shape 和评分版本错误与 TS worker 一致",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/rag/test_cython_operation_differential.py": {
+    "domain": "memory-rag-cython-equivalence",
+    "layer": "L1",
+    "owner": "backend/agent/rag/cython_backend.py",
+    "productionEntry": "backend/agent/rag/ts_sidecar.py 与 TypeScript RAG worker 的 hybrid_fuse 操作",
+    "keyBehavior": "Hybrid RRF 分数、fallback、诊断和并列顺序遵循 TS UTF-16 字符串排序契约",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/rag/test_cython_projection_differential.py": {
+    "domain": "memory-rag-cython-equivalence",
+    "layer": "L1",
+    "owner": "backend/agent/rag/cython_projection.py",
+    "productionEntry": "backend/agent/rag/index_builder.py 与 TypeScript RAG worker 的 build_and_index/search 操作",
+    "keyBehavior": "跨来源投影后的文档安装到 Cython 索引并查询，候选 ID、顺序、分数和过滤诊断与 TS 一致",
+    "ci": "backend-pytest"
+  },
   "backend/tests/im/feishu/test_feishu_tool_summary.py": {
     "domain": "im",
     "layer": "L1",
@@ -1252,7 +1292,7 @@
     "layer": "L2",
     "owner": "backend/agent/gateway/qq",
     "productionEntry": "backend/agent/gateway/qq/outbound.py",
-    "keyBehavior": "QQ 图文共用被动回复序号；中间刷新失败后仍关闭已创建的流；回执只确认实际发送的文字，关闭失败向调用方报告",
+    "keyBehavior": "QQ 图文共用被动回复序号且长任务跨过旧 10 分钟窗口仍递增；中间刷新失败后仍关闭已创建的流；回执只确认实际发送的文字，关闭失败向调用方报告",
     "ci": "backend-pytest"
   },
   "backend/tests/im/qq/test_qq_package_facade.py": {
@@ -1275,7 +1315,7 @@
     "domain": "markdown-mermaid",
     "layer": "L1",
     "owner": "backend/agent/im",
-    "productionEntry": "backend/agent/im/mermaid.py",
+    "productionEntry": "backend/agent/im/chart.py",
     "keyBehavior": "Mermaid 图表渲染失败时保留可读源码，成功时替换图表并维持前后文本流式输出",
     "ci": "backend-pytest"
   },
@@ -1355,7 +1395,7 @@
     "domain": "markdown-mermaid",
     "layer": "L3",
     "owner": "frontend/e2e",
-    "productionEntry": "frontend/src/utils/mermaidRenderer.ts",
+    "productionEntry": "frontend/src/utils/chart/mermaidRenderer.ts",
     "keyBehavior": "浏览器验证 Mermaid 路由样式、窄屏预览与导出 PNG 的用户可见结果",
     "ci": "frontend-e2e"
   },
@@ -1403,7 +1443,7 @@
     "domain": "markdown-mermaid",
     "layer": "L0",
     "owner": "frontend/utils",
-    "productionEntry": "frontend/src/utils/mermaidInteraction.ts",
+    "productionEntry": "frontend/src/utils/chart/mermaidInteraction.ts",
     "keyBehavior": "Mermaid 图表交互可绑定、更新和清理，避免重复监听与过期状态残留",
     "ci": "frontend-test"
   },
@@ -1411,7 +1451,7 @@
     "domain": "markdown-mermaid",
     "layer": "L0",
     "owner": "frontend/utils",
-    "productionEntry": "frontend/src/utils/mermaidPng.ts",
+    "productionEntry": "frontend/src/utils/chart/mermaidPng.ts",
     "keyBehavior": "Mermaid PNG 导出生成有效图像并在结束后释放临时资源",
     "ci": "frontend-test"
   },
@@ -1419,7 +1459,7 @@
     "domain": "markdown-mermaid",
     "layer": "L0",
     "owner": "frontend/utils",
-    "productionEntry": "frontend/src/utils/mermaidRenderer.ts",
+    "productionEntry": "frontend/src/utils/chart/mermaidRenderer.ts",
     "keyBehavior": "共享 Markdown Mermaid 渲染器更新图表且在卸载后清理 DOM 与交互资源",
     "ci": "frontend-test"
   },
@@ -1751,6 +1791,142 @@
     "keyBehavior": "群命令要求明确 @；私有命令和结果保护 owner 数据，私聊命令不受群聊 @ 规则影响",
     "ci": "backend-pytest"
   },
+  "backend/tests/im/auto_reply/test_attention_budget.py": {
+    "domain": "group-attention-budget",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply/budget.py",
+    "productionEntry": "backend/agent/im/dispatch.py 与 scored 群聊预算收尾",
+    "keyBehavior": "PROACTIVE 与 SOFT 预算按平台机器人群及成员作用域原子预留，限制窗口、幂等重试、失败释放和未知状态有界占位",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_attention_delivery.py": {
+    "domain": "group-attention-delivery-ledger",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply/delivery.py",
+    "productionEntry": "backend/agent/im/replies.py 与 attention snapshot",
+    "keyBehavior": "投递幂等且只把已接受的原生消息 ID 按平台、Bot、群索引；已回答来源映射回 N07；可信引用必须发给同一成员",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_attention_platform_facts.py": {
+    "domain": "group-attention-platform-facts",
+    "layer": "L1",
+    "owner": "backend/agent/gateway 与 backend/agent/im/parsers",
+    "productionEntry": "QQ、飞书、Telegram 群聊事件适配",
+    "keyBehavior": "平台 @ 与引用只从原生结构化目标解析；未知引用身份保持 UNKNOWN 并按会话范围隔离",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_attention_decision.py": {
+    "domain": "group-attention-decisions",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply/attention.py",
+    "productionEntry": "backend/agent/im/dispatch.py 的注意力决策入口",
+    "keyBehavior": "自主路径旁路评分；DIRECT 和可信引用先于硬拒绝；natural、active 阈值与预算按模式执行，缺失快照不准入开放候选",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_attention_features.py": {
+    "domain": "group-attention-features",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply/attention.py",
+    "productionEntry": "Gateway 事实规范化与 scored 特征计算",
+    "keyBehavior": "结构化消息事实保留 UNKNOWN；只使用可靠 Stream 时间和作用域；逻辑候选去重且不跨成员或群拼接",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/context/test_conversation_order.py": {
+    "domain": "conversation-order",
+    "layer": "L1",
+    "owner": "backend/agent/context/conversation_sequence.py",
+    "productionEntry": "IM run 写入、早落库与展示检查点",
+    "keyBehavior": "并发晚到消息排在已完成输出之前；检查点按会话序列重排且不同会话互相隔离",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/context/test_conversation_sequence_migration.py": {
+    "domain": "conversation-order-migration",
+    "layer": "L1",
+    "owner": "backend/alembic/versions 会话序列迁移",
+    "productionEntry": "conversation_messages 序列字段迁移",
+    "keyBehavior": "迁移保留原序列水位并重写冲突上下文序号，不丢消息顺序",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/mcp/test_mcp_schema_snapshot.py": {
+    "domain": "mcp-schema-snapshot",
+    "layer": "L1",
+    "owner": "backend/agent/mcp 与持久化模型",
+    "productionEntry": "用户 MCP 设置更新和 Provider tool schema 读取",
+    "keyBehavior": "schema 快照可离线往返、旧配置发现不能覆盖较新快照、启用服务器发现失败不能报告成功",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/test_context_loader_parallel.py": {
+    "domain": "context-loader-concurrency",
+    "layer": "L1",
+    "owner": "backend/agent/run/preparation.py",
+    "productionEntry": "IM 与 Web Agent 请求上下文准备",
+    "keyBehavior": "相互独立的上下文数据库读取并发执行，维持各自结果和异常边界",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/qq/test_qq_attachment_placeholders.py": {
+    "domain": "qq-attachment-parser",
+    "layer": "L1",
+    "owner": "backend/agent/im/parsers/qq.py",
+    "productionEntry": "QQ 入站引用与附件规范化",
+    "keyBehavior": "只有与真实附件匹配的占位标记会移除；无对应附件时保留用户正文",
+    "ci": "backend-pytest"
+  },
+  "frontend/tests/profile/preferences-group-personality.test.ts": {
+    "domain": "profile-group-personality",
+    "layer": "L1",
+    "owner": "frontend/src/components/common/profile",
+    "productionEntry": "用户偏好设置中的群人格编辑区",
+    "keyBehavior": "群人格文本、启用状态和上传独立保存，不覆盖个人人格配置",
+    "ci": "frontend-vitest"
+  },
+  "backend/tests/im/auto_reply/test_attention_runtime.py": {
+    "domain": "group-attention-snapshot",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply/runtime.py",
+    "productionEntry": "backend/agent/im/dispatch.py",
+    "keyBehavior": "自主模式绕过评分与新预算；scored 上下文合并数据库和尚未落库的同群消息，并审计模式版本、准入、分项分数和快照完整性",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_attention_conversation_ttl.py": {
+    "domain": "group-attention-conversation-ttl",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply/conversation_ttl.py",
+    "productionEntry": "backend/agent/im/dispatch.py 的群聊准入与最终回复投递",
+    "keyBehavior": "只允许同 Bot、群和成员在有效 TTL 内续聊；TTL 由最终回复平台接受回执创建，结束、转向、成员隔离和只读群规则有效",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_attention_scenario_matrix.py": {
+    "domain": "group-attention-scenarios",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply/attention.py",
+    "productionEntry": "backend/agent/im/dispatch.py 的 scored 决策入口",
+    "keyBehavior": "覆盖 PRD v1.4 P/N 权重、H 规则、三值关系、跨成员对话、邀请、媒体兜底和预算场景的分数与准入结果",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_attention_review_matrix.py": {
+    "domain": "group-attention-review-matrix",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply/attention.py",
+    "productionEntry": "backend/agent/im/dispatch.py 的群聊注意力决策入口",
+    "keyBehavior": "以 60 余个独立合成对话验证四种模式、邀请与续接、硬拒绝、阈值、历史证据、预算和媒体准入结果",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_attention_passive_persistence.py": {
+    "domain": "group-attention-passive-persistence",
+    "layer": "L1",
+    "owner": "backend/agent/im/conversation.py",
+    "productionEntry": "backend/agent/im/dispatch.py 与 Worker ACK",
+    "keyBehavior": "PASSIVE 批次逐条保存成员身份和附件归属，在单事务完成后记录结构化决策摘要并支持事件幂等重投",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_group_attention_mode.py": {
+    "domain": "group-attention-mode",
+    "layer": "L1",
+    "owner": "backend/app/api/v1/user_bots.py 与 UserBot",
+    "productionEntry": "用户 Bot 设置 API 与群聊 dispatch",
+    "keyBehavior": "模式按 Bot 持久化并校验为 autonomous、quiet、natural 或 active；仅变化时递增配置版本，未配置时兼容默认 autonomous",
+    "ci": "backend-pytest"
+  },
   "backend/tests/im/auto_reply/test_group_silence.py": {
     "domain": "group-reply-gate",
     "layer": "L1",
@@ -1846,93 +2022,5 @@
     "productionEntry": "loopscope/frontend/src/views/Monitor.vue",
     "keyBehavior": "列表刷新时保留用户手动选择的旧 run；显式焦点变化跟随目标 run；当前选择移除后回到最新可用项",
     "ci": "frontend-vitest"
-  },
-  "backend/tests/im/auto_reply/test_attention_budget.py": {
-    "domain": "group-attention-budget",
-    "layer": "L1",
-    "owner": "backend/agent/im/auto_reply/budget.py",
-    "productionEntry": "backend/agent/im/dispatch.py 与 scored 群聊预算收尾",
-    "keyBehavior": "PROACTIVE 与 SOFT 预算按平台机器人群及成员作用域原子预留，限制窗口、幂等重试、失败释放和未知状态有界占位",
-    "ci": "backend-pytest"
-  },
-  "backend/tests/im/auto_reply/test_attention_delivery.py": {
-    "domain": "group-attention-delivery-ledger",
-    "layer": "L1",
-    "owner": "backend/agent/im/auto_reply/delivery.py",
-    "productionEntry": "backend/agent/im/replies.py 与 attention snapshot",
-    "keyBehavior": "投递幂等且只把已接受的原生消息 ID 按平台、Bot、群索引；已回答来源映射回 N07；可信引用必须发给同一成员",
-    "ci": "backend-pytest"
-  },
-  "backend/tests/im/auto_reply/test_attention_platform_facts.py": {
-    "domain": "group-attention-platform-facts",
-    "layer": "L1",
-    "owner": "backend/agent/gateway 与 backend/agent/im/parsers",
-    "productionEntry": "QQ、飞书、Telegram 群聊事件适配",
-    "keyBehavior": "平台 @ 与引用只从原生结构化目标解析；未知引用身份保持 UNKNOWN 并按会话范围隔离",
-    "ci": "backend-pytest"
-  },
-  "backend/tests/im/auto_reply/test_attention_decision.py": {
-    "domain": "group-attention-decisions",
-    "layer": "L1",
-    "owner": "backend/agent/im/auto_reply/attention.py",
-    "productionEntry": "backend/agent/im/dispatch.py 的注意力决策入口",
-    "keyBehavior": "自主路径旁路评分；DIRECT 和可信引用先于硬拒绝；natural、active 阈值与预算按模式执行，缺失快照不准入开放候选",
-    "ci": "backend-pytest"
-  },
-  "backend/tests/im/auto_reply/test_attention_features.py": {
-    "domain": "group-attention-features",
-    "layer": "L1",
-    "owner": "backend/agent/im/auto_reply/attention.py",
-    "productionEntry": "Gateway 事实规范化与 scored 特征计算",
-    "keyBehavior": "结构化消息事实保留 UNKNOWN；只使用可靠 Stream 时间和作用域；逻辑候选去重且不跨成员或群拼接",
-    "ci": "backend-pytest"
-  },
-  "backend/tests/im/auto_reply/test_attention_runtime.py": {
-    "domain": "group-attention-snapshot",
-    "layer": "L1",
-    "owner": "backend/agent/im/auto_reply/runtime.py",
-    "productionEntry": "backend/agent/im/dispatch.py",
-    "keyBehavior": "自主模式绕过评分与新预算；scored 上下文合并数据库和尚未落库的同群消息，并审计模式版本、准入、分项分数和快照完整性",
-    "ci": "backend-pytest"
-  },
-  "backend/tests/im/auto_reply/test_attention_scenario_matrix.py": {
-    "domain": "group-attention-scenarios",
-    "layer": "L1",
-    "owner": "backend/agent/im/auto_reply/attention.py",
-    "productionEntry": "backend/agent/im/dispatch.py 的 scored 决策入口",
-    "keyBehavior": "覆盖 PRD v1.4 P/N 权重、H 规则、三值关系、跨成员对话、邀请、媒体兜底和预算场景的分数与准入结果",
-    "ci": "backend-pytest"
-  },
-  "backend/tests/im/auto_reply/test_attention_review_matrix.py": {
-    "domain": "group-attention-review-matrix",
-    "layer": "L1",
-    "owner": "backend/agent/im/auto_reply/attention.py",
-    "productionEntry": "backend/agent/im/dispatch.py 的群聊注意力决策入口",
-    "keyBehavior": "以 60 余个独立合成对话验证四种模式、邀请与续接、硬拒绝、阈值、历史证据、预算和媒体准入结果",
-    "ci": "backend-pytest"
-  },
-  "backend/tests/im/test_attention_passive_persistence.py": {
-    "domain": "group-attention-passive-persistence",
-    "layer": "L1",
-    "owner": "backend/agent/im/conversation.py",
-    "productionEntry": "backend/agent/im/dispatch.py 与 Worker ACK",
-    "keyBehavior": "PASSIVE 批次逐条保存成员身份和附件归属，在单事务完成后记录结构化决策摘要并支持事件幂等重投",
-    "ci": "backend-pytest"
-  },
-  "backend/tests/im/test_group_attention_mode.py": {
-    "domain": "group-attention-mode",
-    "layer": "L1",
-    "owner": "backend/app/api/v1/user_bots.py 与 UserBot",
-    "productionEntry": "用户 Bot 设置 API 与群聊 dispatch",
-    "keyBehavior": "模式按 Bot 持久化并校验为 autonomous、quiet、natural 或 active；仅变化时递增配置版本，未配置时兼容默认 autonomous",
-    "ci": "backend-pytest"
-  },
-  "backend/tests/im/auto_reply/test_attention_conversation_ttl.py": {
-    "domain": "group-attention-conversation-ttl",
-    "layer": "L1",
-    "owner": "backend/agent/im/auto_reply/conversation_ttl.py",
-    "productionEntry": "backend/agent/im/dispatch.py 的群聊准入与最终回复投递",
-    "keyBehavior": "只允许同 Bot、群和成员在有效 TTL 内续聊；TTL 由最终回复平台接受回执创建，结束、转向、成员隔离和只读群规则有效",
-    "ci": "backend-pytest"
   }
 }
