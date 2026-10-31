@@ -1,6 +1,7 @@
 <template>
   <div ref="rootEl"
     class="fc-card"
+    :title="displayName"
     :class="{ selected, 'pre-selected': preSelected, cut, 'fc-has-thumb': hasThumb, 'no-lift': !lift, 'canvas-mode': canvasMode }"
     :style="{ '--fc-color': fileIconColor(ext), '--fc-area-h': `${areaHeight}px`, '--fc-icon-lift': `${iconLift}px` }"
   >

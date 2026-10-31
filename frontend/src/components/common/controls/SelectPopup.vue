@@ -6,6 +6,8 @@
       :class="[triggerClass, { open: open, disabled: disabled }]"
       :disabled="disabled"
       :aria-expanded="open"
+      :aria-label="ariaLabel || undefined"
+      :aria-labelledby="ariaLabelledby || undefined"
       @click="toggle"
     >
       <span>{{ selectedLabel }}</span>
@@ -43,6 +45,8 @@ const props = defineProps({
   triggerClass: { type: String, default: '' },
   popupClass: { type: String, default: '' },
   autoFlip: { type: Boolean, default: false },
+  ariaLabel: { type: String, default: '' },
+  ariaLabelledby: { type: String, default: '' },
 })
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 
