@@ -1,6 +1,6 @@
 import { createVNode, render } from 'vue'
 import ViewerToolbar from '@/components/common/viewers/ViewerToolbar.vue'
-import type { MermaidInteractionLabels } from '@/utils/mermaidInteraction'
+import type { MermaidInteractionLabels } from './mermaidInteraction'
 
 /** 创建独立原生对话框，返回可用于卸载清理的关闭函数。 */
 export function openMermaidPreview(

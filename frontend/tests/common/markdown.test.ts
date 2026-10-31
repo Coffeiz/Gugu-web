@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import { renderMd, renderMdStream } from '@/components/common/gugu-chat/markdown'
 import { splitYamlFrontmatter } from '@/utils/markdown'
+import { renderMarkdownMath } from '@/utils/chart/math'
 
 const escapedTable = [
   '\\| 测试 \\| 期望 \\| 实际 \\| 结论 \\|',
@@ -99,6 +100,40 @@ describe('Markdown YAML frontmatter', () => {
       { key: 'related_tools', value: 'shell, list_workspaces' },
       { key: 'description', value: '第一行描述 第二行描述' },
     ])
+  })
+})
+
+describe('LaTeX fenced code rendering', () => {
+  it('renders bare and explicitly delimited formulas while keeping one toolbar per block', async () => {
+    const root = document.createElement('div')
+    root.innerHTML = renderMd([
+      '```latex',
+      'E = mc^2',
+      '$$',
+      '\\mathrm{sim}(m,b)=\\frac{1}{2}',
+      '$$',
+      '```',
+    ].join('\n'))
+    document.body.append(root)
+
+    try {
+      await renderMarkdownMath(root, {
+        copy: '复制',
+        copied: '已复制',
+        downloadPng: '下载公式 PNG',
+        showSource: '显示 TeX 源码',
+        showRendered: '显示公式',
+        renderFailed: '公式渲染失败',
+      })
+
+      expect(root.querySelectorAll('.katex-display')).toHaveLength(2)
+      expect(root.querySelectorAll(':scope > .md-math-block > .md-chart-controls--math')).toHaveLength(1)
+      expect(root.querySelectorAll('.md-math-copy-btn')).toHaveLength(1)
+      expect(root.querySelectorAll('.md-math-download-btn')).toHaveLength(1)
+      expect(root.querySelectorAll('.md-math-source-toggle-btn')).toHaveLength(1)
+    } finally {
+      root.remove()
+    }
   })
 })
 

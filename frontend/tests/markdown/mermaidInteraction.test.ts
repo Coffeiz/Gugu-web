@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { bindMermaidInteractions, cleanupMermaidInteractions, type MermaidInteractionLabels } from '@/utils/mermaidInteraction'
+import { bindMermaidInteractions, cleanupMermaidInteractions, type MermaidInteractionLabels } from '@/utils/chart/mermaidInteraction'
 
 const labels: MermaidInteractionLabels = {
   zoomOut: 'Zoom out', zoomIn: 'Zoom in', resetZoom: 'Reset', expand: 'Expand',

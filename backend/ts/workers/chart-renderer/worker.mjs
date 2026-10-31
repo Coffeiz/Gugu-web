@@ -3,15 +3,17 @@ import { fileURLToPath } from 'node:url'
 import { Resvg } from '@resvg/resvg-js'
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom'
 import { createHTMLWindow } from 'svgdom'
+import MathJax from 'mathjax'
 import { normalizeMermaidEdgeLabelBounds, normalizeMermaidEdgeStyles, normalizeMermaidKanbanSectionColors, normalizeMermaidKanbanSectionTitles, normalizeMermaidMindmapRootLabel, normalizeMermaidNodeCorners, normalizeMermaidRasterColors, normalizeMermaidRasterText, normalizeMermaidRasterTextContrast, normalizeMermaidStateDiagramLabelAlignment, normalizeMermaidTimelineSectionColors } from './svg-style.mjs'
-import { calculateMermaidRasterDimensions } from './raster-dimensions.mjs'
+import { calculateMathRasterDimensions, calculateMermaidRasterDimensions } from './raster-dimensions.mjs'
 import { prepareMermaidDiagramSource, restoreMermaidDiagramLabels } from './diagram-source.mjs'
 import { createMermaidThemeConfig, resolveMermaidThemeColors } from './theme.mjs'
 
 const MAX_SOURCE_CHARS = 20_000
-const MAX_DIAGRAMS = 4
+const MAX_CHARTS = 4
 const MAX_SVG_BYTES = 5 * 1024 * 1024
 const MAX_PNG_BYTES = 3 * 1024 * 1024
+const MATH_IMAGE_PADDING = 16
 const CJK_FONT_FILE = [
   new URL('./fonts/NotoSansSC-VariableFont_wght.ttf', import.meta.url),
   new URL('../../../../frontend/public/fonts/Noto_Sans_SC/NotoSansSC-VariableFont_wght.ttf', import.meta.url),
@@ -28,7 +30,7 @@ const input = await new Promise((resolve, reject) => {
   let size = 0
   process.stdin.on('data', (chunk) => {
     size += chunk.length
-    if (size > MAX_SOURCE_CHARS * MAX_DIAGRAMS * 4 + 1024) {
+    if (size > MAX_SOURCE_CHARS * MAX_CHARTS * 4 + 1024) {
       reject(new Error('input_too_large'))
       process.stdin.destroy()
       return
@@ -40,12 +42,29 @@ const input = await new Promise((resolve, reject) => {
 })
 
 const request = JSON.parse(input)
-const sources = Array.isArray(request) ? request : request?.sources
+const charts = Array.isArray(request) ? request.map((source) => ({ type: 'mermaid', source })) : request?.charts
 const colors = resolveMermaidThemeColors(Array.isArray(request) ? {} : request?.theme)
 if (
-  !Array.isArray(sources) || sources.length > MAX_DIAGRAMS ||
-  sources.some((source) => typeof source !== 'string' || !source || source.length > MAX_SOURCE_CHARS)
+  !Array.isArray(charts) || charts.length > MAX_CHARTS ||
+  charts.some((chart) => !chart || !['mermaid', 'math'].includes(chart.type)
+    || typeof chart.source !== 'string' || !chart.source || chart.source.length > MAX_SOURCE_CHARS)
 ) throw new Error('input_too_large')
+
+let mathJaxPromise
+if (charts.some((chart) => chart.type === 'math')) {
+  // 初始化时还没有安装 Mermaid 所需的 svgdom 全局 window/document。MathJax
+  // 在 Node 环境应使用自己的 lite adaptor，避免误选浏览器启动路径。
+  mathJaxPromise = (async () => {
+    await MathJax.init({
+      loader: { load: ['input/tex', 'output/svg'] },
+      startup: { typeset: false },
+      tex: { packages: ['base', 'ams'], maxBuffer: MAX_SOURCE_CHARS, maxMacros: 500 },
+      svg: { fontCache: 'none' },
+    })
+    return MathJax
+  })()
+  await mathJaxPromise
+}
 
 const window = createHTMLWindow()
 Object.defineProperty(globalThis, 'window', {
@@ -270,17 +289,52 @@ function diagramType(source) {
   return match?.[1].toLowerCase() || 'unknown'
 }
 
-for (let index = 0; index < sources.length; index += 1) {
+async function renderMathSvg(source) {
+  const mathJax = await mathJaxPromise
+  const container = await mathJax.tex2svgPromise(source, { display: true })
+  const svg = mathJax.startup.adaptor.firstChild(container)
+  if (!svg || mathJax.startup.adaptor.kind(svg) !== 'svg') throw new Error('svg_dimensions_missing')
+  return mathJax.startup.adaptor.outerHTML(svg)
+}
+
+function getSvgViewBoxDimensions(root) {
+  const viewBox = root.getAttribute('viewBox')?.trim().split(/[\s,]+/).map(Number)
+  if (!viewBox || viewBox.length !== 4 || !viewBox.every(Number.isFinite)) {
+    throw new Error('svg_dimensions_missing')
+  }
+  const [, , width, height] = viewBox
+  if (width < 1 || height < 1) throw new Error('svg_dimensions_missing')
+  return viewBox
+}
+
+function addMathImagePadding(root, padding) {
+  const [x, y, width, height] = getSvgViewBoxDimensions(root)
+  root.setAttribute(
+    'viewBox',
+    `${x - padding} ${y - padding} ${width + padding * 2} ${height + padding * 2}`,
+  )
+  return { width: width + padding * 2, height: height + padding * 2 }
+}
+
+for (let index = 0; index < charts.length; index += 1) {
   let png = Buffer.alloc(0)
-  const prepared = prepareMermaidDiagramSource(sources[index], { forRasterizer: true })
+  const chart = charts[index]
+  const chartType = chart.type
+  const prepared = chartType === 'mermaid'
+    ? prepareMermaidDiagramSource(chart.source, { forRasterizer: true })
+    : { source: chart.source, labels: [] }
   const source = prepared.source
-  const type = diagramType(source)
+  const type = chartType === 'mermaid' ? diagramType(source) : 'math'
   try {
     let svg
-    try {
-      ({ svg } = await mermaid.render(`gugu-${process.pid}-${index}`, source))
-    } catch {
-      throw new Error('diagram_parse_or_render_failed')
+    if (chartType === 'math') {
+      svg = await renderMathSvg(source)
+    } else {
+      try {
+        ({ svg } = await mermaid.render(`gugu-${process.pid}-${index}`, source))
+      } catch {
+        throw new Error('diagram_parse_or_render_failed')
+      }
     }
     if (Buffer.byteLength(svg, 'utf8') > MAX_SVG_BYTES) throw new Error('svg_too_large')
     const document = new DOMParser({
@@ -292,30 +346,35 @@ for (let index = 0; index < sources.length; index += 1) {
     if (!root || root.localName.toLowerCase() !== 'svg') {
       throw new Error('invalid_svg')
     }
-    normalizeMermaidStateDiagramLabelAlignment(root)
-    normalizeMermaidMindmapRootLabel(root)
-    restoreMermaidDiagramLabels(root, prepared.labels)
-    normalizeMermaidNodeCorners(root)
-    if (type === 'kanban') {
-      normalizeMermaidKanbanSectionColors(root)
-      normalizeMermaidKanbanSectionTitles(root)
+    if (chartType === 'mermaid') {
+      normalizeMermaidStateDiagramLabelAlignment(root)
+      normalizeMermaidMindmapRootLabel(root)
+      restoreMermaidDiagramLabels(root, prepared.labels)
+      normalizeMermaidNodeCorners(root)
+      if (type === 'kanban') {
+        normalizeMermaidKanbanSectionColors(root)
+        normalizeMermaidKanbanSectionTitles(root)
+      }
+      if (type === 'timeline' || type === 'timeline-beta') normalizeMermaidTimelineSectionColors(root)
+      normalizeMermaidEdgeLabelBounds(root)
+      normalizeMermaidRasterColors(root)
+      normalizeMermaidRasterText(root, colors.primaryTextColor, {
+        allText: true,
+        fontFamily: 'Noto Sans SC',
+        fontWeight: type === 'ishikawa-beta' ? 700 : 600,
+        strokeWidth: type === 'ishikawa-beta' ? '0.6px' : '0.4px',
+        colorAllText: type === 'sequencediagram' || type === 'journey',
+        strokeAllText: true,
+      })
+      // 时序图和 Journey 的全部文字已经按图表主题强制着色。对比度修正会
+      // 从外层 SVG 分组猜背景色，可能把参与者标题误判为深色底并覆盖成白字。
+      if (type !== 'sequencediagram' && type !== 'journey') {
+        normalizeMermaidRasterTextContrast(root, colors.primaryTextColor)
+      }
+      normalizeMermaidEdgeStyles(root, colors.arrowheadColor)
+    } else {
+      root.setAttribute('color', colors.primaryTextColor)
     }
-    if (type === 'timeline' || type === 'timeline-beta') normalizeMermaidTimelineSectionColors(root)
-    normalizeMermaidEdgeLabelBounds(root)
-    normalizeMermaidRasterColors(root)
-    const rasterTextOptions = {
-      allText: true,
-      fontFamily: 'Noto Sans SC',
-      fontWeight: type === 'ishikawa-beta' ? 700 : 600,
-      strokeWidth: type === 'ishikawa-beta' ? '0.6px' : '0.4px',
-      colorAllText: type === 'sequencediagram' || type === 'journey',
-      // Resvg 的可变字体在甘特图、饼图和 Journey 上即使设为 600 仍明显偏细；
-      // 与 flowchart 的 CJK 标签采用同样的轻描边补偿，统一所有图片的视觉字重。
-      strokeAllText: true,
-    }
-    normalizeMermaidRasterText(root, colors.primaryTextColor, rasterTextOptions)
-    normalizeMermaidRasterTextContrast(root, colors.primaryTextColor)
-    normalizeMermaidEdgeStyles(root, colors.arrowheadColor)
     for (const element of document.getElementsByTagName('*')) {
       if (element.namespaceURI !== 'http://www.w3.org/2000/svg') {
         throw new Error('non_svg_content_rejected')
@@ -345,14 +404,20 @@ for (let index = 0; index < sources.length; index += 1) {
       }
     }
 
-    const viewBox = root.getAttribute('viewBox')?.match(/^\s*[-\d.]+[ ,]+[-\d.]+[ ,]+([\d.]+)[ ,]+([\d.]+)\s*$/i)
-    if (!viewBox) throw new Error('svg_dimensions_missing')
-    const width = Math.ceil(Number(viewBox[1]))
-    const height = Math.ceil(Number(viewBox[2]))
+    let dimensions
+    if (chartType === 'math') {
+      dimensions = addMathImagePadding(root, MATH_IMAGE_PADDING)
+    } else {
+      const viewBox = getSvgViewBoxDimensions(root)
+      dimensions = { width: viewBox[2], height: viewBox[3] }
+    }
+    const width = Math.ceil(dimensions.width)
+    const height = Math.ceil(dimensions.height)
     // 保留 viewBox 坐标系，只增大 SVG 根元素的输出尺寸，让 Resvg 直接按矢量内容
-    // 栅格化到高分辨率；倍率受最终边长和像素预算约束，不做位图二次缩放。
-    const { width: rasterWidth, height: rasterHeight } =
-      calculateMermaidRasterDimensions(width, height)
+    // 栅格化；Mermaid 按 2x 输出，公式按原始尺寸输出，均受边长和像素预算约束。
+    const { width: rasterWidth, height: rasterHeight } = chartType === 'math'
+      ? calculateMathRasterDimensions(width, height)
+      : calculateMermaidRasterDimensions(width, height)
     root.setAttribute('width', String(rasterWidth))
     root.setAttribute('height', String(rasterHeight))
     const validatedSvg = new XMLSerializer().serializeToString(root)
@@ -379,7 +444,7 @@ for (let index = 0; index < sources.length; index += 1) {
     ])
     const reason = knownReasons.has(error?.message) ? error.message : 'render_failed'
     process.stderr.write(
-      `MERMAID_RENDER_FAILURE index=${index} type=${type} reason=${reason}\n`,
+      `CHART_RENDER_FAILURE index=${index} type=${type} reason=${reason}\n`,
     )
     png = Buffer.alloc(0)
   }

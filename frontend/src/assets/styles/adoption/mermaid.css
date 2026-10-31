@@ -1,68 +1,45 @@
-.md-mermaid-controls {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  z-index: 1;
-  display: flex;
-  gap: 3px;
-  padding: 3px;
-  border: 1px solid var(--popup-border);
-  border-radius: 7px;
-  background: var(--popup-background);
-  box-shadow: var(--popup-shadow);
-  backdrop-filter: var(--popup-blur);
-  -webkit-backdrop-filter: var(--popup-blur);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity var(--motion-hover-control) var(--motion-ease-standard);
-}
-.md-mermaid:hover .md-mermaid-controls,
-.md-mermaid:focus-within .md-mermaid-controls {
-  opacity: 1;
-  pointer-events: auto;
-}
-@media (hover: none), (pointer: coarse) {
-  .md-mermaid-controls {
-    opacity: 1;
-    pointer-events: auto;
-  }
-}
-.md-mermaid-controls button {
-  display: inline-flex;
-  width: 28px;
-  height: 28px;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 0;
-  border-radius: 6px;
-  color: var(--content-secondary);
-  background: transparent;
-  cursor: pointer;
-  font: inherit;
-  line-height: 1;
-}
-.md-mermaid-controls [data-mermaid-action='toggle-source'] {
-  width: auto;
-  min-width: 28px;
-  padding: 0 4px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
-  font-weight: 600;
-}
-.md-mermaid-controls [data-mermaid-action='toggle-source'][aria-pressed='true'] {
+.md-view .md-math-block,
+.tv-md .md-math-block {
+  position: relative;
+  box-sizing: border-box;
+  width: 100%;
+  margin: 9px 0;
+  padding: 10px;
+  overflow-x: auto;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
   color: var(--content-primary);
-  background: var(--surface-soft-hover);
+  background: var(--surface-card-solid);
+  user-select: none;
 }
-.md-mermaid-controls button:hover {
-  color: var(--content-primary);
-  background: var(--surface-soft-hover);
+.md-view .md-math-result,
+.tv-md .md-math-result { min-width: max-content; text-align: center; }
+.md-view .md-math-result[hidden],
+.md-view .md-math-source-view[hidden],
+.tv-md .md-math-result[hidden],
+.tv-md .md-math-source-view[hidden] { display: none; }
+.md-view .md-math-block > .md-math-source-view,
+.tv-md .md-math-block > .md-math-source-view {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding: 9px 12px;
 }
-.md-mermaid-controls button:focus-visible,
-.md-mermaid-dialog button:focus-visible {
-  outline: 2px solid var(--theme-focus);
-  outline-offset: 1px;
-}
+.md-view .md-math-copy-wrap,
+.tv-md .md-math-copy-wrap { position: relative; display: inline-block; max-width: 100%; }
+.md-view .md-math-copy-wrap.is-display,
+.tv-md .md-math-copy-wrap.is-display { display: block; width: 100%; box-sizing: border-box; padding-top: 1.55em; }
+.md-view .md-math-block .md-math-copy-wrap.is-display,
+.tv-md .md-math-block .md-math-copy-wrap.is-display { padding-top: 0; }
+.md-view .md-math-copy-wrap.is-display > .katex-display,
+.tv-md .md-math-copy-wrap.is-display > .katex-display,
+.md-view .katex-display,
+.tv-md .katex-display { max-width: 100%; margin: 0; overflow-x: auto; overflow-y: hidden; padding: 0.2em 0; }
+.md-view .md-math-block.md-math-error,
+.tv-md .md-math-block.md-math-error { padding: 10px; }
+.md-view .md-math-error-source,
+.tv-md .md-math-error-source { overflow-wrap: anywhere; }
 .md-mermaid-source-view {
   box-sizing: border-box;
   max-width: 100%;
@@ -137,7 +114,9 @@
   bottom: 12px;
 }
 @media (max-width: 600px) {
-  .md-mermaid-controls { top: 4px; right: 4px; gap: 1px; padding: 2px; }
-  .md-mermaid-controls button { width: 24px; height: 24px; }
+  .md-view .md-math-block,
+  .tv-md .md-math-block { padding: 8px; }
+  .md-view .md-math-block.md-math-error,
+  .tv-md .md-math-block.md-math-error { padding: 8px; }
   .md-mermaid-dialog { width: 96vw; height: 92vh; max-width: 96vw; max-height: 92vh; }
 }

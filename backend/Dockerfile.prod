@@ -50,6 +50,7 @@ RUN npm install --omit=dev --ignore-scripts --no-fund --no-audit \
         mermaid@12.1.0 \
         @mermaid-js/mermaid-zenuml@1.0.1 \
         svgdom@0.1.28 \
+        mathjax@4.1.3 \
     && node -e "Promise.all([import('@node-rs/jieba'), import('ali-oss'), import('@resvg/resvg-js'), import('svgdom'), import('mermaid'), import('@mermaid-js/mermaid-zenuml')]).then(() => console.log('Node runtime dependencies ready'))"
 
 FROM python:3.14-slim-trixie
@@ -136,17 +137,17 @@ COPY backend/compose_bootstrap.py ./compose_bootstrap.py
 COPY backend/scripts/runtime/sandbox_rootless_init.sh /usr/local/bin/gugu-sandbox-init.sh
 COPY backend/bin/gugu-rag-ts-worker.mjs ./bin/gugu-rag-ts-worker.mjs
 COPY backend/bin/gugu-filesync-ts-worker.cjs ./bin/gugu-filesync-ts-worker.cjs
-COPY backend/ts/workers/mermaid-renderer/worker.mjs ./bin/gugu-mermaid-worker.mjs
-COPY backend/ts/workers/mermaid-renderer/diagram-source.mjs ./bin/diagram-source.mjs
-COPY backend/ts/workers/mermaid-renderer/svg-style.mjs ./bin/svg-style.mjs
-COPY backend/ts/workers/mermaid-renderer/theme.mjs ./bin/theme.mjs
-COPY backend/ts/workers/mermaid-renderer/raster-dimensions.mjs ./bin/raster-dimensions.mjs
+COPY backend/ts/workers/chart-renderer/worker.mjs ./bin/gugu-chart-worker.mjs
+COPY backend/ts/workers/chart-renderer/diagram-source.mjs ./bin/diagram-source.mjs
+COPY backend/ts/workers/chart-renderer/svg-style.mjs ./bin/svg-style.mjs
+COPY backend/ts/workers/chart-renderer/theme.mjs ./bin/theme.mjs
+COPY backend/ts/workers/chart-renderer/raster-dimensions.mjs ./bin/raster-dimensions.mjs
 COPY frontend/public/fonts/Noto_Sans_SC/NotoSansSC-VariableFont_wght.ttf ./bin/fonts/NotoSansSC-VariableFont_wght.ttf
 COPY --from=rag-runtime /rag/node_modules ./bin/node_modules
 # 冒烟启动图表 Worker：解析它的全部同级依赖与 CJK 字体路径。缺任何一个都让镜像构建失败，
 # 而不是等到线上渲染时才 ERR_MODULE_NOT_FOUND。
-RUN printf '{"sources":[]}' | node bin/gugu-mermaid-worker.mjs \
-    && echo "Mermaid worker module graph OK"
+RUN printf '{"charts":[]}' | node bin/gugu-chart-worker.mjs \
+    && echo "Chart worker module graph OK"
 COPY backend/scripts/runtime/prepare_rootless_storage.py /usr/local/bin/prepare_rootless_storage.py
 RUN mkdir -p logs \
     && chmod 755 docker-entrypoint.sh /usr/local/bin/gugu-sandbox-init.sh /usr/local/bin/prepare_rootless_storage.py \
@@ -163,7 +164,7 @@ RUN mkdir -p logs \
 
 RUN node bin/gugu-rag-ts-worker.mjs --version \
     && node bin/gugu-filesync-ts-worker.cjs --version \
-    && cd /app/bin && node -e "Promise.all([import('mermaid'), import('@mermaid-js/mermaid-zenuml'), import('@resvg/resvg-js'), import('@xmldom/xmldom'), import('svgdom'), import('./theme.mjs')]).then(() => console.log('Mermaid PNG runtime ready'))"
+    && cd /app/bin && node -e "Promise.all([import('mermaid'), import('@mermaid-js/mermaid-zenuml'), import('@resvg/resvg-js'), import('@xmldom/xmldom'), import('svgdom'), import('mathjax'), import('./theme.mjs')]).then(() => console.log('Chart PNG runtime ready'))"
 RUN python -c "import ctypes.util; assert ctypes.util.find_library('seccomp'), 'libseccomp2 runtime unavailable'"
 
 EXPOSE 8000

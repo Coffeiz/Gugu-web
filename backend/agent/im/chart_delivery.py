@@ -1,28 +1,28 @@
-"""Mermaid 回复的图文顺序交付与失败回退。"""
+"""图表回复的图文顺序交付与失败回退。"""
 from __future__ import annotations
 
 import re
 from collections.abc import Callable
 
-_MERMAID_SOURCE_FENCE_RE = re.compile(
-    r"```mermaid[ \t]*\r?\n[\s\S]*?```", re.IGNORECASE,
+_CHART_SOURCE_RE = re.compile(
+    r"```(?:mermaid|tex|latex)[ \t]*\r?\n[\s\S]*?```", re.IGNORECASE,
 )
 
 
-async def send_mermaid_reply_text(
+async def send_chart_reply_text(
     payload: dict,
     text: str,
     *,
     send_text: Callable,
     try_send_png_image: Callable,
-    send_qq_mermaid_text: Callable,
+    send_qq_chart_text: Callable,
 ) -> str | None:
-    """按生成顺序发送文字与图；图片失败时退回 Mermaid 源码。"""
-    from agent.im.mermaid import render_reply
+    """按生成顺序发送文字与图；图片失败时退回对应的图表或公式源码。"""
+    from agent.im.chart import render_chart_reply
 
     platform = payload.get("platform")
-    parts = await render_reply(
-        text, theme_preferences=payload.get("mermaid_theme_preferences")
+    parts = await render_chart_reply(
+        text, theme_preferences=payload.get("chart_theme_preferences")
     )
     if platform == "qq":
         for index, part in enumerate(parts):
@@ -30,18 +30,18 @@ async def send_mermaid_reply_text(
                 continue
             previous = parts[index - 1] if index > 0 else None
             following = parts[index + 1] if index + 1 < len(parts) else None
-            previous_diagram = bool(previous and (
+            previous_chart = bool(previous and (
                 previous.png is not None
-                or _MERMAID_SOURCE_FENCE_RE.fullmatch(previous.text)
+                or _CHART_SOURCE_RE.fullmatch(previous.text)
             ))
-            next_diagram = bool(following and (
+            next_chart = bool(following and (
                 following.png is not None
-                or _MERMAID_SOURCE_FENCE_RE.fullmatch(following.text)
+                or _CHART_SOURCE_RE.fullmatch(following.text)
             ))
             text_value = part.text
-            if previous_diagram:
+            if previous_chart:
                 text_value = text_value.lstrip()
-            if next_diagram:
+            if next_chart:
                 text_value = text_value.rstrip()
             parts[index] = type(part)(
                 text=text_value,
@@ -75,7 +75,7 @@ async def send_mermaid_reply_text(
             visible = True
             if not await try_send_png_image(payload, part.png) and part.source:
                 fallback = (
-                    send_qq_mermaid_text
+                    send_qq_chart_text
                     if platform == "qq"
                     else send_text
                 )
@@ -85,7 +85,7 @@ async def send_mermaid_reply_text(
             continue
         if part.text.strip():
             visible = True
-            fallback = send_qq_mermaid_text if platform == "qq" else send_text
+            fallback = send_qq_chart_text if platform == "qq" else send_text
             if not await fallback(payload, part.text):
                 return None
             delivered.append(part.text)

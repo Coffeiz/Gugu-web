@@ -27,10 +27,10 @@
       <span v-else class="msg-quoted-file" @click.stop="$emit('openFile', f)">{{ f.name }}{{ f.ext ? `.${f.ext}` : '' }}</span>
     </template>
   </div>
-  <div v-if="msg.role === 'ai' && (msg.text?.trim() || msg.streaming)" class="msg-bubble md-body" @click="onBodyClick"><MarkdownView :html="msg.streaming ? renderMdStream(msg.text) : (msg.html ?? renderChatMd(msg.text, msg.references))" :text="msg.text" chat /></div>
+  <div v-if="msg.role === 'ai' && (msg.text?.trim() || msg.streaming)" class="msg-bubble md-body" @click="onBodyClick"><MarkdownView :html="msg.streaming ? renderMdStream(msg.text) : (msg.html ?? renderChatMd(msg.text, msg.references))" :text="msg.text" chat :render-math="!msg.streaming" /></div>
   <!-- 用户消息也走 MD 渲染（sanitize 后），和 AI 气泡同一条链路；样式差异由
        .user-md 在 GuguChat.vue 里按紫底气泡重映射。输入框侧保持纯文本不渲染。 -->
-  <div v-else-if="msg.text" class="msg-bubble user-md" @click="onBodyClick"><MarkdownView :html="msg.html ?? renderChatMd(displayQQFaces(msg.text), msg.references)" :text="msg.text" chat /></div>
+  <div v-else-if="msg.text" class="msg-bubble user-md" @click="onBodyClick"><MarkdownView :html="msg.html ?? renderChatMd(displayQQFaces(msg.text), msg.references)" :text="msg.text" chat render-math /></div>
   <div v-if="msg.role === 'user' && msg.runOutcome" class="msg-run-outcome" role="status">
     <span class="msg-run-outcome-label">
       {{ t(msg.runOutcome.status === 'interrupted' ? 'chatUi.runInterrupted' : 'chatUi.runFailed') }}
@@ -137,18 +137,28 @@ const props = defineProps<{
 }>()
 const { t } = useI18n()
 const openTranscripts = ref(new Set<string>())
+const dismissedTranscripts = ref(new Set<string>())
 function transcriptKey(file: ChatFile) {
   return String(file.attach_id || file.file_id || file.name || 'voice')
 }
 function isTranscriptOpen(file: ChatFile) {
-  return openTranscripts.value.has(transcriptKey(file))
+  const key = transcriptKey(file)
+  return openTranscripts.value.has(key)
+    || (Boolean(file.transcript) && !dismissedTranscripts.value.has(key))
 }
 function toggleTranscript(file: ChatFile) {
   const key = transcriptKey(file)
   const next = new Set(openTranscripts.value)
-  if (next.has(key)) next.delete(key)
-  else next.add(key)
+  const dismissed = new Set(dismissedTranscripts.value)
+  if (isTranscriptOpen(file)) {
+    next.delete(key)
+    dismissed.add(key)
+  } else {
+    dismissed.delete(key)
+    next.add(key)
+  }
   openTranscripts.value = next
+  dismissedTranscripts.value = dismissed
 }
 const runOutcomeDetail = computed(() => {
   const outcome = props.msg.runOutcome

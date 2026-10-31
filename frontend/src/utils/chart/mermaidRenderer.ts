@@ -1,10 +1,10 @@
 import { nextTick } from 'vue'
-import { bindMermaidInteractions, cleanupMermaidInteractions, type MermaidInteractionLabels } from '@/utils/mermaidInteraction'
+import { bindMermaidInteractions, cleanupMermaidInteractions, type MermaidInteractionLabels } from './mermaidInteraction'
 import { sanitizeHtml } from '@/utils/markdown'
-import { resolveMermaidThemeColors } from '@/utils/mermaidTheme'
-import { createMermaidThemeConfig } from '../../../backend/ts/workers/mermaid-renderer/theme.mjs'
-import { prepareMermaidDiagramSource, restoreMermaidDiagramLabels } from '../../../backend/ts/workers/mermaid-renderer/diagram-source.mjs'
-import { normalizeMermaidDatabaseLabelPosition, normalizeMermaidEdgeLabelBounds, normalizeMermaidEdgeStyles, normalizeMermaidMindmapRootLabel, normalizeMermaidNodeCorners, normalizeMermaidStateDiagramLabelAlignment } from '../../../backend/ts/workers/mermaid-renderer/svg-style.mjs'
+import { resolveMermaidThemeColors } from './mermaidTheme'
+import { createMermaidThemeConfig } from '../../../../backend/ts/workers/chart-renderer/theme.mjs'
+import { prepareMermaidDiagramSource, restoreMermaidDiagramLabels } from '../../../../backend/ts/workers/chart-renderer/diagram-source.mjs'
+import { normalizeMermaidDatabaseLabelPosition, normalizeMermaidEdgeLabelBounds, normalizeMermaidEdgeStyles, normalizeMermaidMindmapRootLabel, normalizeMermaidNodeCorners, normalizeMermaidStateDiagramLabelAlignment } from '../../../../backend/ts/workers/chart-renderer/svg-style.mjs'
 
 type MermaidApi = typeof import('mermaid').default
 

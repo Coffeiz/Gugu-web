@@ -102,14 +102,30 @@ import Icon from '@/components/common/icons/Icon.vue'
 import RefreshButton from '@/components/common/controls/RefreshButton.vue'
 import { filesApi } from '@/services/api'
 import { sanitizeHtml, splitYamlFrontmatter } from '@/utils/markdown'
-import { cleanupMarkdownMermaid, createMermaidRenderLabels, renderMarkdownMermaid } from '@/utils/mermaidRenderer'
+import {
+  downloadMarkdownMathPng,
+  normalizeMarkdownMathSource,
+  prepareLatexCodeForMath,
+  renderMarkdownMath,
+  toggleMarkdownMathSource,
+  type MarkdownMathLabels,
+} from '@/utils/chart/math'
+import { cleanupMarkdownMermaid, createMermaidRenderLabels, renderMarkdownMermaid } from '@/utils/chart/mermaidRenderer'
 import { useFilesCacheStore, type FileMeta } from '@/stores/filesCache'
 import { usePreviewStore, isPreviewable, isTextMime, isImageExt } from '@/stores/preview'
 import { useUiStore } from '@/stores/ui'
 import { isRelativeFileLink } from '@/utils/fileLinks'
 import { createHtmlPreviewDocument } from '@/utils/htmlPreview'
+import { showAppError } from '@/composables/core/useAppToast'
 
 const { t, locale } = useI18n()
+function createMathLabels(): MarkdownMathLabels {
+  return {
+    copy: t('chatUi.copy'), copied: t('chatUi.copied'), downloadPng: t('mermaidUi.formulaDownload'),
+    showSource: t('mermaidUi.formulaSource'), showRendered: t('mermaidUi.formulaRendered'),
+    renderFailed: t('mermaidUi.formulaRenderFailed'),
+  }
+}
 
 // CodeMirror 全部延迟加载：TextViewer 从 FloatPreviewWindow 静态引入，FloatPreviewWindow
 // 又从 DefaultLayout 静态引入（基本每个登录页都会经过这条链路）——顶层 import codemirror/
@@ -677,6 +693,11 @@ async function renderMarkdown(text: string) {
           if (String(lang || '').trim().toLowerCase() === 'mermaid') {
             return `<pre class="md-mermaid-source"><code>${escHtml(text)}</code></pre>`
           }
+          if (/^(?:latex|tex)$/i.test(String(lang || '').trim())) {
+            const escaped = escHtml(text)
+            const math = escHtml(prepareLatexCodeForMath(text))
+            return `<div class="md-math-block"><div class="md-math-result">${math}</div><pre class="md-mermaid-source-view md-math-source-view" hidden><code>${escaped}</code></pre></div>`
+          }
           const validLang = highlightDocument && text.length <= 32_000 && lang && hljs?.getLanguage(lang) ? lang : null
           const body = validLang
             ? hljs.highlight(text, { language: validLang, ignoreIllegals: true }).value
@@ -698,7 +719,7 @@ async function renderMarkdown(text: string) {
     else _tvMarkedPlain = renderer
   }
 
-  return sanitizeHtml(renderer.parse(text) as string)
+  return sanitizeHtml(renderer.parse(normalizeMarkdownMathSource(text)) as string)
 }
 
 function renderMermaidBlocks(): Promise<void> {
@@ -761,6 +782,45 @@ async function copyCodeToClipboard(text: string): Promise<boolean> {
 }
 
 async function onMdClick(e: MouseEvent) {
+  const clickTarget = e.target as HTMLElement
+  const mathDownloadButton = clickTarget.closest('.md-math-download-btn') as HTMLButtonElement | null
+  if (mathDownloadButton) {
+    e.preventDefault()
+    const formula = mathDownloadButton.closest('.md-math-block')?.querySelector<HTMLElement>('.md-math-result')
+      ?? mathDownloadButton.closest('.md-math-copy-wrap')?.querySelector<HTMLElement>('.katex')
+    if (!formula) return
+    try {
+      await downloadMarkdownMathPng(formula)
+    } catch (error) {
+      showAppError(t(error instanceof Error && error.message === 'png_too_large'
+        ? 'mermaidUi.formulaPngTooLarge' : 'mermaidUi.formulaDownloadFailed'))
+    }
+    return
+  }
+  const mathSourceButton = clickTarget.closest('.md-math-source-toggle-btn') as HTMLButtonElement | null
+  if (mathSourceButton) {
+    e.preventDefault()
+    toggleMarkdownMathSource(mathSourceButton)
+    return
+  }
+  const mathCopyButton = clickTarget.closest('.md-math-copy-btn') as HTMLButtonElement | null
+  if (mathCopyButton) {
+    e.preventDefault()
+    const source = mathCopyButton.dataset.mathSource || ''
+    if (source && await copyCodeToClipboard(source)) {
+      const originalIcon = mathCopyButton.innerHTML
+      const copiedLabel = mathCopyButton.dataset.copiedLabel || t('chatUi.copied')
+      mathCopyButton.textContent = '✓'
+      mathCopyButton.title = copiedLabel
+      mathCopyButton.setAttribute('aria-label', copiedLabel)
+      setTimeout(() => {
+        mathCopyButton.innerHTML = originalIcon
+        mathCopyButton.title = mathCopyButton.dataset.copyLabel || t('chatUi.copy')
+        mathCopyButton.setAttribute('aria-label', mathCopyButton.title)
+      }, 1200)
+    }
+    return
+  }
   const cb = (e.target as HTMLElement).closest('input[type="checkbox"][data-task]') as HTMLInputElement | null
   if (cb) { toggleTask(Number(cb.dataset.task), cb); return }   // 不 preventDefault：原生勾选即时显示
   const btn = (e.target as HTMLElement).closest('.md-copy-btn') as HTMLElement | null
@@ -926,6 +986,7 @@ watch([htmlMode, loading], async ([mode, isLoading]) => {
 
 onMounted(() => {
   // 首次文件加载可能发生在组件挂载前，此时 mdRoot 尚未存在；挂载后补一次 Mermaid 渲染。
+  renderMarkdownMath(mdRoot.value, createMathLabels())
   renderMermaidBlocks()
   themeObserver = new MutationObserver(() => renderMermaidBlocks())
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-family'] })
@@ -963,6 +1024,7 @@ watch(locale, () => renderMermaidBlocks())
 // 相对路径图片的 blob 替换也必须等节点挂载（flush: 'post'）后做，processText 阶段 mdRoot 还是 null。
 watch([mdHtml, loading], ([html, isLoading]) => {
   if (html && !isLoading) {
+    renderMarkdownMath(mdRoot.value, createMathLabels())
     renderMermaidBlocks()
     resolveMdRelativeImages()
     nextTick(scheduleTableViewportUpdate)
@@ -1243,7 +1305,6 @@ onBeforeUnmount(() => {
 .tv-md :deep(p)  { margin: 0.8em 0; }
 .tv-md :deep(a)  { color: var(--action-primary); text-decoration: none; }
 .tv-md :deep(a:hover) { text-decoration: underline; }
-
 /* 行内代码 */
 .tv-md :deep(code) {
   font-family: var(--font-family-mono);

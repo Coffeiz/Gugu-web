@@ -23,7 +23,7 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     && pnpm install --filter gugu-web --frozen-lockfile
 
 COPY frontend/ ./frontend/
-COPY backend/ts/workers/mermaid-renderer/diagram-source.mjs backend/ts/workers/mermaid-renderer/diagram-source.d.mts backend/ts/workers/mermaid-renderer/svg-style.mjs backend/ts/workers/mermaid-renderer/theme.mjs backend/ts/workers/mermaid-renderer/theme.d.mts ./backend/ts/workers/mermaid-renderer/
+COPY backend/ts/workers/chart-renderer/diagram-source.mjs backend/ts/workers/chart-renderer/diagram-source.d.mts backend/ts/workers/chart-renderer/svg-style.mjs backend/ts/workers/chart-renderer/theme.mjs backend/ts/workers/chart-renderer/theme.d.mts ./backend/ts/workers/chart-renderer/
 RUN cd frontend && pnpm build
 
 # ── Stage 1.5：TS RAG worker 的 Linux x64 原生运行时依赖 ─────────────────────
@@ -42,6 +42,7 @@ RUN npm install --omit=dev --ignore-scripts --no-fund --no-audit \
         mermaid@12.1.0 \
         @mermaid-js/mermaid-zenuml@1.0.1 \
         svgdom@0.1.28 \
+        mathjax@4.1.3 \
     && node -e "import('@node-rs/jieba').then(() => console.log('RAG Jieba runtime ready'))"
 
 # ── Stage 2：后端依赖构建（venv 与最终镜像分离） ─────────────────────────────
@@ -246,16 +247,16 @@ RUN set -eux; \
 RUN mkdir -p ./bin
 COPY backend/bin/gugu-rag-ts-worker.mjs ./bin/gugu-rag-ts-worker.mjs
 COPY backend/bin/gugu-filesync-ts-worker.cjs ./bin/gugu-filesync-ts-worker.cjs
-COPY backend/ts/workers/mermaid-renderer/worker.mjs ./bin/gugu-mermaid-worker.mjs
-COPY backend/ts/workers/mermaid-renderer/diagram-source.mjs backend/ts/workers/mermaid-renderer/svg-style.mjs backend/ts/workers/mermaid-renderer/theme.mjs backend/ts/workers/mermaid-renderer/raster-dimensions.mjs ./bin/
+COPY backend/ts/workers/chart-renderer/worker.mjs ./bin/gugu-chart-worker.mjs
+COPY backend/ts/workers/chart-renderer/diagram-source.mjs backend/ts/workers/chart-renderer/svg-style.mjs backend/ts/workers/chart-renderer/theme.mjs backend/ts/workers/chart-renderer/raster-dimensions.mjs ./bin/
 COPY frontend/public/fonts/Noto_Sans_SC/NotoSansSC-VariableFont_wght.ttf ./bin/fonts/NotoSansSC-VariableFont_wght.ttf
 COPY --from=rag-runtime /rag/node_modules ./bin/node_modules
 RUN node bin/gugu-rag-ts-worker.mjs --version \
-    && cd bin && node -e "Promise.all([import('mermaid'), import('@mermaid-js/mermaid-zenuml'), import('@resvg/resvg-js'), import('@xmldom/xmldom'), import('svgdom')]).then(() => console.log('Mermaid PNG runtime ready'))"
+    && cd bin && node -e "Promise.all([import('mermaid'), import('@mermaid-js/mermaid-zenuml'), import('@resvg/resvg-js'), import('@xmldom/xmldom'), import('svgdom'), import('mathjax')]).then(() => console.log('Chart PNG runtime ready'))"
 # 冒烟启动图表 Worker：解析它的全部同级依赖与 CJK 字体路径。缺任何一个都让镜像构建失败，
 # 而不是等到线上渲染时才 ERR_MODULE_NOT_FOUND。
-RUN printf '{"sources":[]}' | node bin/gugu-mermaid-worker.mjs \
-    && echo "Mermaid worker module graph OK"
+RUN printf '{"charts":[]}' | node bin/gugu-chart-worker.mjs \
+    && echo "Chart worker module graph OK"
 RUN python -c "import ctypes.util; assert ctypes.util.find_library('seccomp'), 'libseccomp2 runtime unavailable'"
 RUN node bin/gugu-filesync-ts-worker.cjs --version
 
