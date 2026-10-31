@@ -48,7 +48,10 @@ from agent.run.contract import (
     EarlyExit,
     PreparedExecution,
 )
-from agent.runtime.loopscope_trace.state import record_phase_timing
+from agent.runtime.loopscope_trace.state import (
+    mark_agent_preparation_started,
+    record_phase_timing,
+)
 
 
 async def _load_mcp_tools(user_id, settings, allowed_tool_names=None):
@@ -507,6 +510,8 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
     ``non_streaming`` 是 collect/stream 唯一的组装差异（builder 追加
     NON_STREAMING_BLOCK 行为提示），对齐 FR-RUN-03 允许的"provider 流式参数"差异。
     """
+    preparation_started_at = mark_agent_preparation_started()
+    setup_started_at = time.time()
     user_id = req.user_id
     group_reply_gate = None
     group_reply_tool = None
@@ -551,6 +556,7 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
             db, user_id, session.workspace_id,
         ) if session.workspace_id is not None else None
         workspace_binding = session_snapshot.workspace_binding_key(workspace_target)
+        record_phase_timing("Run config and session resolution", setup_started_at)
 
         async def _load_snapshot():
             data = await load_context_data(
@@ -596,6 +602,7 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
                 current_date=dynamic_tail.current_date_text(current_user_tz),
             )
 
+        snapshot_started_at = time.time()
         snapshot = await session_snapshot.ensure_snapshot(
             db, session, load_context=_load_snapshot,
             workspace_binding=workspace_binding,
@@ -608,8 +615,10 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
         # 正文。collect/stream 曾各有一份等价实现（helper + 内联），这里收成单一实现。
         from agent.im.context_loader import restore_group_memory_snapshot
         restore_group_memory_snapshot(snapshot)
+        record_phase_timing("Snapshot and prompt preparation", snapshot_started_at)
 
         # 历史读取不做本地 token 预估；预算由 provider 实际请求结果决定。
+        history_started_at = time.time()
         history = await session_history.load_session_history(
             db,
             session_id,
@@ -620,9 +629,11 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
         if strip_thinking:
             clean_persisted_history(history)
             strip_thinking = False
+        record_phase_timing("Conversation history loading", history_started_at)
         # 主动推送（定时任务/活动提醒）若是会话首条 assistant（前导，sanitize 会剥掉）→ 记下来塞进 system，
         # 让咕咕知道「自己刚主动发了啥」、能接住用户对它的回复（如新闻速览后用户回「4」）。
         # 附件（IM 收到的文件）：文本读内容注入给模型，卡片随用户消息持久化（和网页同一套）
+        message_preparation_started_at = time.time()
         from app.core import chat_attach
         # 群聊批次逐条解析附件与正文，之后每条原始平台消息分别进入 canonical Area。
         # 私聊/Web 仍使用原有的单条消息路径。
@@ -644,6 +655,10 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
             )
         from agent.media.capability_prompt import media_capability_for_user
         media_capability_context = await media_capability_for_user(model_cfg, user_id, db=db)
+        record_phase_timing(
+            "Current message and attachment preparation",
+            message_preparation_started_at,
+        )
         if getattr(req, "attachments", None):   # 诊断：带附件时记 kind/ext/media 数，排查语音为何没转写
             import logging as _lg
             _lg.getLogger("agent.runner").info(
@@ -652,6 +667,7 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
                 [c.get("kind") for c in (attach_cards or [])],
                 [c.get("ext") for c in (attach_cards or [])])
         user_message = None
+        persistence_started_at = time.time()
         early_ids = [int(i) for i in (getattr(req, "early_message_ids", None) or [])]
         reused_user_messages = []
         if early_ids or batch_messages:
@@ -697,9 +713,12 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
 
         # 精力耗尽 → 硬拦（IM / 定时任务，与网页 web.stream 同口径）：用户消息已记，不再生成，直接回一句
         if await quota.is_exhausted(db, user_id, settings):
+            record_phase_timing("Message persistence and quota check", persistence_started_at)
             return EarlyExit(EARLY_EXIT_QUOTA, AgentResponse(
                 text="咕咕累了，休息会儿再来～", session_id=session_id, tokens_in=0, tokens_out=0))
+        record_phase_timing("Message persistence and quota check", persistence_started_at)
 
+        continuity_started_at = time.time()
         # IM 新会话「续接桥」：趁 db 还开着查上一条对话，给指针/尾部，免得 12h TTL 起新会话后
         # 用户说「继续刚刚」咕咕空着答（web 有自己的会话续接 + 可手动选历史，无需此桥）。
         im_bridge = ""
@@ -719,7 +738,9 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
                 im_bridge = ""
         # 主动推送桥只保留群聊行为；私聊不把历史首条主动消息重复塞进每轮尾部。
         _proactive_lead = proactive_lead_for(req, history)
+        record_phase_timing("Continuity bridge and proactive lead", continuity_started_at)
 
+    event_media_started_at = time.time()
     # 用户消息先推给网页：一存下就推（先看到「我发了什么」），回复生成完再推第二次。
     # origin 是 Web 入口的回声抑制标识（发起标签页跳过这条广播）；IM 入口无此概念。
     try:
@@ -822,11 +843,14 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
             aug_text = (aug_text + "\n" if aug_text else "") + f"（用户发来语音，内容是：）{spoken}"
             aug_media = [m for m in aug_media if m.get("type") == "video"]
 
+    record_phase_timing("Session event publish and voice transcription", event_media_started_at)
     system_prompt = snapshot["system_prompt"]
     snapshot_context = snapshot["snapshot_context"]
+    dynamic_memory_started_at = time.time()
     stance_text = builder.stance_block(
         await loaders.load_dynamic_memory(user_id) if SYSTEM_MEMORY_ENABLED else {}
     )
+    record_phase_timing("Dynamic memory preparation", dynamic_memory_started_at)
 
     # snapshot 内容在 snapshot 有效期内保持稳定，放在 history 之前形成可缓存前缀。
     _snapshot_injection = (
@@ -843,6 +867,7 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
         _dynamic_extra_parts.append("\n## 你刚主动发给 TA 的消息（TA 接下来很可能在回应这条）\n\n" + _proactive_lead)
 
     use_anthropic = run_config.use_anthropic
+    record_phase_timing("Preparation before MCP/RAG", preparation_started_at)
     tool_preparation_started_at = time.time()
     tool_names = filter_tool_names(all_system_tool_names(), req.allowed_tool_names)
     mcp_tools, precomputed_rag_context = await load_mcp_tools_and_rag_context(
