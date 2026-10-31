@@ -447,7 +447,7 @@ class SearchSettings(BaseModel):
     searxng_image_engines: str = Field("", description="SearXNG XNG 搜索 mode=images 启用的引擎（逗号分隔）；留空则回退复用 searxng_engines。图片分类能连通的引擎不一定和文本分类是同一批，需部署后用「测试」按钮实测调整")
     max_results:    int = Field(5, description="默认返回结果数")
     rag_backend: Literal["typescript", "cython"] = Field(
-        "typescript", description="统一 RAG 查询运行时；Cython 开发观察入口，TS 作为手动回滚基线",
+        "typescript", description="统一 RAG 查询运行时；启用 sidecar 时 Cython 索引由常驻宿主共享，TS 保留为手动回滚基线",
     )
     ts_sidecar_command: str = Field("", description="TypeScript RAG worker 命令；为空则使用项目内置构建物")
     ts_index_sync_mode: Literal["incremental", "full"] = Field(
@@ -457,8 +457,8 @@ class SearchSettings(BaseModel):
     )
     ts_sidecar_socket: str = Field(
         "",
-        description="gugu-rag-sidecar 常驻宿主的 unix socket 路径；为空=每个 Python 进程按需自启 worker（旧行为）。"
-        "配置后 RAG worker 由 sidecar 宿主统一托管，多个后端进程共享热索引，后端重启不再触发冷装载",
+        description="gugu-rag-sidecar 常驻宿主的 unix socket 路径；为空时 TypeScript/Cython 使用各自的进程内实现。"
+        "配置后由 sidecar 统一托管对应索引，多个后端进程共享热索引",
     )
     ts_sidecar_index_ttl_seconds: int = Field(
         30 * 24 * 3600,

@@ -137,10 +137,12 @@ worker 使用 `backend/ts/packages/contracts/src/rag.ts` 作为协议契约。�
 
 ### 5.0 索引更新与增量边界（PRD-RAG-9）
 
-**worker 托管**：配置 `search.ts_sidecar_socket`（unix socket）后，per-owner TS worker 由
-`gugu-rag-sidecar` 常驻宿主统一托管，多个 Python 进程共享同一份热索引，后端重启不再触发
-冷装载；socket 不可达时自动回退进程内 spawn。状态（revision/瞬态指纹/进程代数）以宿主为唯一
-权威，`reuse_if_current` 与 `replace_transient` 的短路判定都在宿主侧执行。
+**worker 托管**：配置 `search.ts_sidecar_socket`（unix socket）后，TS per-owner worker 与
+Cython owner/cache-scope lifecycle 与 transient 索引由 `gugu-rag-sidecar` 常驻宿主统一托管，多个 Python 进程
+共享热索引。TS 状态（revision/瞬态指纹/进程代数）以宿主为唯一权威；Cython 由宿主内单进程
+引擎持有持久及 transient 索引，并按 `KnowledgeIndexCache` 的 30 分钟 TTL、单 owner 128 MiB、全局 512 MiB
+估算预算统一回收。该预算是索引缓存估算值，不是进程 RSS 硬上限。未配置 socket 时保留各自的
+进程内实现；已配置但不可达时显式报错，不静默切回本地冷构建。
 
 索引更新事件（`RagIndexUpdated`）由事件总线按 (user, source_type) 串行消费，并先落 `index_jobs` durable outbox（进程重启后由恢复循环重放）。事件按来源归并不代表文档 ID 合并正确：多 `source_id` 不丢失的行为仍在 PRD-RAG-9 Phase 5 待验收。管线按事件是否携带 `source_id` 分流：
 

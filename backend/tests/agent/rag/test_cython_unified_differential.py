@@ -348,6 +348,33 @@ async def test_cython_query_embedding_facade_matches_ts_query_vector_path(monkey
 
 
 @pytest.mark.asyncio
+async def test_cython_query_uses_precomputed_embedding_without_second_provider_call(monkeypatch) -> None:
+    """并行预取的查询向量应直接用于 Cython 检索，不能重复调用 Embedding provider。"""
+    engine = CythonRagEngine()
+    engine.replace([], "persistent-rev")
+
+    async def forbidden_embed(*_args, **_kwargs):
+        raise AssertionError("已并行生成的查询向量不应再次请求 provider")
+
+    monkeypatch.setattr("agent.memory.embedding.embed_query", forbidden_embed)
+    response = await engine.unified_query_with_embedding(
+        "并行查询", revision="persistent-rev", searches=[], source_order=[],
+        candidate_limit=5,
+        rank_options={"limit": 5, "max_chars": 3000, "max_per_source": 3,
+                      "max_per_parent": 3, "selection_mode": "confidence"},
+        query_embedding={"provider": "synthetic", "model": "synthetic-model"},
+        precomputed_query_embedding={
+            "vector": [0.25, 0.75], "outcome": "success", "http_status": 200,
+            "elapsed_ms": 37,
+        },
+    )
+
+    assert response["probe"]["stage_ms"]["query_embedding"] == 37
+    assert response["probe"]["counts"]["query_vector_dimensions"] == 2
+    assert response["probe"]["embedding"] == {"outcome": "success", "http_status": 200}
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("revision", "transient_revision", "searches", "expected_message"),
     [

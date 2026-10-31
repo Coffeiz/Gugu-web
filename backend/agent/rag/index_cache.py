@@ -63,6 +63,32 @@ def estimate_index_bytes(documents: list[IndexDocument], index) -> int:
     return max(estimate_document_bytes(documents), int(getattr(index, "estimated_bytes", 0) or 0))
 
 
+async def _try_acquire_shared_cython_index(
+    owner_user_id: object, cache_scope: str, backend: str, revision: str | None,
+):
+    """自动召回只探测 sidecar 已缓存的同 revision 索引，不触发冷恢复。"""
+    if backend != "cython" or revision is None:
+        return None
+    from agent.rag.ts_sidecar import _sidecar_socket_path
+
+    sidecar_socket = _sidecar_socket_path()
+    if not sidecar_socket:
+        return None
+    from agent.memory import embedding
+    from agent.rag.cython_sidecar import CythonSidecarLifecycle
+    from agent.rag.observation import await_probe
+
+    vector_version = embedding.model_tag() if embedding.is_enabled() else ""
+    sidecar_index = CythonSidecarLifecycle(owner_user_id, cache_scope, sidecar_socket)
+    cached_state = await await_probe(
+        "index_shared_sidecar_hot_check",
+        sidecar_index.try_acquire_cached(
+            revision=revision, vector_version=vector_version,
+        ),
+    )
+    return sidecar_index if cached_state is not None else None
+
+
 @dataclass
 class _Entry:
     index: object
@@ -128,9 +154,35 @@ class KnowledgeIndexCache:
                 diagnostics["shared_index"] = True
                 diagnostics["snapshot_reused"] = True
             return entry.index
-        # 没有任何进程内索引时，自动召回无需先查数据库 revision：无论 revision
-        # 当前是多少，本轮都不能从缓存完成检索，直接让出请求，由后台预热负责恢复。
+        # Cython sidecar 跨 backend worker 持有索引；本进程缓存冷时先做一次有界热缓存
+        # 探测，只有 sidecar 也没有匹配索引才让出本轮，由后台预热负责恢复。
         if defer_cold and not force and entry is None:
+            sidecar_index = await _try_acquire_shared_cython_index(
+                owner_user_id, cache_scope, backend, baseline_revision,
+            )
+            if sidecar_index is not None:
+                # Python 侧只缓存远端 facade；真实索引的容量与 TTL 由 sidecar 管理。
+                self._store(key, _Entry(
+                    sidecar_index, 1, baseline_revision, backend,
+                    time.monotonic(), persistent_loaded=True,
+                ))
+                probe_update(index_cache={
+                    "cache_path": "shared_sidecar_hot_hit",
+                    "cache_entry_present": True,
+                    "shared_index": True,
+                    "cache_miss_reason": "worker_local_cache_cold",
+                })
+                if diagnostics is not None:
+                    diagnostics.update(
+                        cache_hit=True,
+                        cache_hit_layer="shared_rag_sidecar",
+                        shared_index=True,
+                        snapshot_reused=bool(shared_key),
+                        cache_miss_reason="worker_local_cache_cold",
+                        document_count=sidecar_index.document_count,
+                        cython_sidecar=True,
+                    )
+                return sidecar_index
             raise IndexNotReady
         revision = baseline_revision
         if revision is None:
@@ -281,6 +333,23 @@ class KnowledgeIndexCache:
         if diagnostics is not None:
             diagnostics["engine"] = backend
             diagnostics["cache_entries"] = 1
+        if backend == "cython":
+            from agent.rag.ts_sidecar import _sidecar_socket_path
+
+            sidecar_socket = _sidecar_socket_path()
+            if sidecar_socket:
+                from agent.rag.cython_sidecar import CythonSidecarTransientIndex
+
+                if diagnostics is not None:
+                    diagnostics.update(
+                        cache_hit=None,
+                        cache_miss_reason="resolved_in_rag_sidecar",
+                        document_count=len(documents),
+                        cython_sidecar=True,
+                    )
+                return CythonSidecarTransientIndex(
+                    owner_user_id, documents, revision, sidecar_socket,
+                )
         owner_key = str(owner_user_id)
         from agent.rag.context import get_shared_index_key
 
@@ -365,19 +434,51 @@ class KnowledgeIndexCache:
         started = time.monotonic()
         if backend == "cython":
             if documents is not None:
+                from agent.rag.cython_runtime import ensure_cython_native_loaded
                 from agent.rag.cython_backend import CythonLexicalIndex
 
+                # 未配置 sidecar 的诊断/瞬态文档仍在调用进程构建。
+                await ensure_cython_native_loaded()
                 return CythonLexicalIndex.build(documents, revision or "")
             if not allow_database_load:
                 return None
             from agent.rag.cython_lifecycle import CythonRagLifecycle
 
             vector_tag = embedding.model_tag() if embedding.is_enabled() else ""
-            lifecycle = CythonRagLifecycle()
             cache_tag = hashlib.sha256(cache_scope.encode("utf-8")).hexdigest()[:20]
             snapshot_dir = Path(index_dir_for_owner(owner_user_id)).parent / "cython" / cache_tag
+            from agent.rag.ts_sidecar import _sidecar_socket_path
+
+            sidecar_socket = _sidecar_socket_path()
+            if sidecar_socket:
+                from agent.rag.cython_sidecar import CythonSidecarLifecycle
+
+                lifecycle = CythonSidecarLifecycle(
+                    owner_user_id, cache_scope, sidecar_socket,
+                )
+                result = await lifecycle.load_index_from_snapshot_or_database(
+                    db, owner_user_id, snapshot_dir,
+                    vector_version=vector_tag, revision=revision,
+                )
+                if diagnostics is not None:
+                    diagnostics["index_sync"] = str(
+                        result.get("snapshot_status") or result.get("status") or ""
+                    )
+                    diagnostics["document_count"] = int(result.get("document_count") or 0)
+                    diagnostics["vector_count"] = int(result.get("vector_count") or 0)
+                    diagnostics["disk_index_reused"] = bool(result.get("snapshot_hit"))
+                    diagnostics["cython_sidecar"] = True
+                if diagnostics is not None:
+                    diagnostics["index_build_ms"] = int((time.monotonic() - started) * 1000)
+                return lifecycle
+
             if db is None:
                 raise RuntimeError("Cython index build requires a database session")
+            from agent.rag.cython_runtime import ensure_cython_native_loaded
+
+            # 未启用常驻 sidecar 时保持旧的进程内实现。
+            await ensure_cython_native_loaded()
+            lifecycle = CythonRagLifecycle()
             result = await lifecycle.load_index_from_snapshot_or_database(
                 db, owner_user_id, snapshot_dir,
                 vector_version=vector_tag, revision=revision,
@@ -778,11 +879,21 @@ async def search_documents_with_cache(
             timing = None
     if diagnostics is not None:
         elapsed = int((time.monotonic() - started) * 1000)
-        diagnostics["sidecar_search_ms"] = elapsed
-        diagnostics["sidecar_queue_wait_ms"] = int(getattr(timing, "queue_wait_ms", 0) or 0)
-        diagnostics["sidecar_query_ms"] = int(getattr(timing, "query_ms", 0) or 0)
-        diagnostics["search_ms"] = elapsed
+        _record_search_diagnostics(diagnostics, index, timing, elapsed)
     return results
+
+
+def _record_search_diagnostics(diagnostics: dict[str, object], index, timing, elapsed: int) -> None:
+    diagnostics["sidecar_search_ms"] = elapsed
+    if hasattr(index, "cache_hit"):
+        diagnostics["cache_hit"] = bool(index.cache_hit)
+    queue_wait = (timing.get("queue_wait_ms") if isinstance(timing, dict)
+                  else getattr(timing, "queue_wait_ms", 0))
+    query_ms = (timing.get("query_ms") if isinstance(timing, dict)
+                else getattr(timing, "query_ms", 0))
+    diagnostics["sidecar_queue_wait_ms"] = int(queue_wait or 0)
+    diagnostics["sidecar_query_ms"] = int(query_ms or 0)
+    diagnostics["search_ms"] = elapsed
 
 
 def _selected_backend(settings) -> str:

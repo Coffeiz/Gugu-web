@@ -733,6 +733,7 @@ class CythonRagEngine:
         from agent.memory.embedding import embed_query
 
         embedding_settings = options.pop("query_embedding", None)
+        precomputed = options.pop("precomputed_query_embedding", None)
         revision = str(options.get("revision") or "")
         if revision != self.revision:
             raise CythonRevisionMismatch("持久 RAG 索引 revision 不一致")
@@ -742,7 +743,7 @@ class CythonRagEngine:
             if not transient_revision or str(transient_revision) != self.transient_revision:
                 raise CythonRevisionMismatch("瞬态 RAG 索引 revision 不一致")
         embedding_started = time.monotonic()
-        embedded = await embed_query(query, settings=embedding_settings)
+        embedded = precomputed or await embed_query(query, settings=embedding_settings)
         response = await asyncio.to_thread(
             self.unified_query, query, query_vector=embedded["vector"], **options,
         )
@@ -750,9 +751,11 @@ class CythonRagEngine:
         if isinstance(probe, dict):
             stage_ms = probe.setdefault("stage_ms", {})
             counts = probe.setdefault("counts", {})
-            stage_ms["query_embedding"] = max(
-                0, round((time.monotonic() - embedding_started) * 1000),
-            )
+            stage_ms["query_embedding"] = max(0, round(
+                float(embedded.get("elapsed_ms")
+                      if embedded.get("elapsed_ms") is not None
+                      else (time.monotonic() - embedding_started) * 1000),
+            ))
             counts["query_vector_dimensions"] = len(embedded["vector"])
             probe["embedding"] = {
                 "outcome": embedded["outcome"],

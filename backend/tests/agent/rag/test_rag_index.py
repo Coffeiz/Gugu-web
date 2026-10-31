@@ -35,6 +35,7 @@ async def test_cython_backend_is_selected_once_for_unified_query(monkeypatch):
     from types import SimpleNamespace
 
     from agent.rag import cython_lifecycle
+    from agent.rag import cython_runtime
     from agent.rag.index_cache import KnowledgeIndexCache
 
     settings = SimpleNamespace(search=SimpleNamespace(rag_backend="cython"))
@@ -52,8 +53,15 @@ async def test_cython_backend_is_selected_once_for_unified_query(monkeypatch):
         parent_document_id="knowledge:airport",
     )
     loaded_dirs = []
+    stages = []
+
+    async def preload_native():
+        stages.append("native_ready")
+
+    monkeypatch.setattr(cython_runtime, "ensure_cython_native_loaded", preload_native)
 
     async def load_snapshot(self, db, owner_user_id, index_dir, *, vector_version="", revision=None):
+        stages.append("load_snapshot")
         loaded_dirs.append(str(index_dir))
         self._owner_user_id = str(owner_user_id)
         self.engine.replace([document], str(revision or "revision-1"))
@@ -67,6 +75,7 @@ async def test_cython_backend_is_selected_once_for_unified_query(monkeypatch):
 
     assert first is second
     assert len(loaded_dirs) == 1
+    assert stages == ["native_ready", "load_snapshot"]
     assert "cython" in loaded_dirs[0]
     response = await first.unified_query(
         "机场账单异常", searches=[{"source_types": {"knowledge"}}],

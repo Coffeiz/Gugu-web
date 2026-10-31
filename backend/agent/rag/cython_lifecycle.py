@@ -8,6 +8,7 @@ import math
 import os
 import re
 import tempfile
+import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -32,6 +33,9 @@ SNAPSHOT_PERSIST_DEBOUNCE_SECONDS = 1.5
 VECTOR_FILE_MAX_CHARS = 50_000_000
 VECTOR_FILE_CACHE_SIZE = 8
 _vector_file_cache: OrderedDict[tuple[str, str], tuple[str, dict[str, tuple[float, ...]]]] = OrderedDict()
+_vector_metadata_cache: OrderedDict[
+    tuple[str, str], tuple[tuple[int, float | None, str | None], str]
+] = OrderedDict()
 
 
 class _CythonMemoryAdapter(MemoryAdapter):
@@ -164,7 +168,10 @@ class CythonRagLifecycle:
                 options.setdefault("transient_revision", self.engine.transient_revision)
             options["vector_version"] = str(options.get("vector_version") or "")
             if options.get("query_embedding"):
-                return await self.engine.unified_query_with_embedding(query, **options)
+                precomputed = options.pop("precomputed_query_embedding", None)
+                return await self.engine.unified_query_with_embedding(
+                    query, precomputed_query_embedding=precomputed, **options,
+                )
             options.pop("query_embedding", None)
             return await asyncio.to_thread(self.engine.unified_query, query, **options)
 
@@ -607,12 +614,18 @@ class CythonRagLifecycle:
         token = _snapshot_revision.set(str(snapshot_revision or ""))
         source_names: list[str] = []
         documents = []
+        # 向量文件与 Memory 文档来自独立存储对象。先启动缓存读取，和下面的
+        # scope 文档读取/适配重叠；等筛选出本轮文档后再做依赖文档键的向量映射。
+        vector_maps_task = asyncio.create_task(
+            self._read_vector_maps_timed(owner_user_id, vector_version, memory_only=True),
+        )
 
         async def load_scope(scope):
             if scope.scope_type == "owner":
                 return await adapter.build_cached_owner_documents(scope=scope)
             return await adapter.build_cached_documents(scope=scope)
 
+        document_load_started = time.monotonic()
         try:
             # 不同 scope 的 revision/Storage 读取相互独立；有限并发隐藏 I/O 等待，
             # 同时避免大量群/成员 scope 将数据库连接瞬时打满。gather 保持输入顺序。
@@ -628,11 +641,92 @@ class CythonRagLifecycle:
             for loaded, source in loaded_scopes:
                 documents.extend(loaded)
                 source_names.append(source)
+            document_load_ms = max(0, round((time.monotonic() - document_load_started) * 1000))
+        except BaseException:
+            vector_maps_task.cancel()
+            await asyncio.gather(vector_maps_task, return_exceptions=True)
+            raise
         finally:
             _snapshot_revision.reset(token)
 
-        allowed = {"profile", "pattern", "daily", "memory"} if source_filter == "all" else {str(source_filter)}
+        try:
+            document_filter_started = time.monotonic()
+            filtered, authorized, snapshot_filtered = self._filter_memory_documents(
+                documents, source_filter, authorized_scopes, snapshot_text,
+            )
+            document_filter_ms = max(
+                0, round((time.monotonic() - document_filter_started) * 1000),
+            )
+            vector_maps, vector_cache_ms = await vector_maps_task
+            vector_map_started = time.monotonic()
+            vectors = self._map_document_vectors(snapshot_filtered, vector_maps)
+            vector_map_ms = max(0, round((time.monotonic() - vector_map_started) * 1000))
+        except BaseException:
+            if not vector_maps_task.done():
+                vector_maps_task.cancel()
+                await asyncio.gather(vector_maps_task, return_exceptions=True)
+            raise
+        # transient revision 仅用于本地缓存失效，不是跨运行时协议；直接分帧
+        # 摘要完整字段，避免构造整批 RagDocument wire 字典和大 JSON 字符串。
+        from agent.rag import cython_native
+
+        transient_revision = cython_native.memory_revision(
+            snapshot_filtered, str(vector_version or ""),
+        )
+        # Python 缓存读取器以 parent:version:chunk 返回，worker state 与 unified
+        # query 则以稳定 chunk slot（parent:chunk）索引 vectors；在此转换键空间。
+        # _read_vectors 的 Cython JSON 校验器已逐元素验证有限数值；不要在映射
+        # chunk-slot 时再次扫描每个高维向量。
+        vector_map = _worker_vector_map(snapshot_filtered, vectors, values_validated=True)
+        transient_install_started = time.monotonic()
+        self.engine.replace_transient(
+            snapshot_filtered, transient_revision,
+            vectors=vector_map, vector_version=vector_version,
+            revision_is_content_addressed=True,
+        )
+        transient_install_ms = max(
+            0, round((time.monotonic() - transient_install_started) * 1000),
+        )
+        return {
+            "status": "ok", "transient_revision": transient_revision,
+            "document_count": len(snapshot_filtered), "vector_count": len(vector_map),
+            "vector_version": self.engine.transient_vector_version,
+            "memory_source": ",".join(source_names) or "empty",
+            "probe": {
+                "stage_ms": {
+                    "document_load_parallel": document_load_ms,
+                    "document_filter": document_filter_ms,
+                    "vector_cache_read_parallel": vector_cache_ms,
+                    "vector_document_mapping": vector_map_ms,
+                    "transient_index_install": transient_install_ms,
+                },
+                "counts": {
+                    "scope_count": len(authorized_scopes),
+                    "base_documents": len(documents),
+                    "source_allowed_documents": len(filtered),
+                    "scope_authorized_documents": len(authorized),
+                    "snapshot_excluded_documents": len(authorized) - len(snapshot_filtered),
+                    "selected_documents": len(snapshot_filtered),
+                    "vector_count": len(vector_map),
+                },
+            },
+        }
+
+    @staticmethod
+    async def _read_vector_maps_timed(owner_user_id, vector_version, *, memory_only=False):
+        started = time.monotonic()
+        reader = (
+            CythonRagLifecycle._read_memory_vector_maps
+            if memory_only else CythonRagLifecycle._read_vector_maps
+        )
+        maps = await reader(owner_user_id, vector_version)
+        return maps, max(0, round((time.monotonic() - started) * 1000))
+
+    @staticmethod
+    def _filter_memory_documents(documents, source_filter, authorized_scopes, snapshot_text):
         from dataclasses import replace
+
+        allowed = {"profile", "pattern", "daily", "memory"} if source_filter == "all" else {str(source_filter)}
         filtered = [
             replace(document, scope=replace(document.scope, scope_id=""))
             if document.source_type == "memory" and document.source_id == "daily"
@@ -647,49 +741,16 @@ class CythonRagLifecycle:
             document for document in authorized
             if not _snapshot_covers_context(document.content, snapshot_context)
         ]
-        vectors = await self._read_vectors(owner_user_id, snapshot_filtered, vector_version)
-        # transient revision 仅用于本地缓存失效，不是跨运行时协议；直接分帧
-        # 摘要完整字段，避免构造整批 RagDocument wire 字典和大 JSON 字符串。
-        from agent.rag import cython_native
-
-        transient_revision = cython_native.memory_revision(
-            snapshot_filtered, str(vector_version or ""),
-        )
-        # Python 缓存读取器以 parent:version:chunk 返回，worker state 与 unified
-        # query 则以稳定 chunk slot（parent:chunk）索引 vectors；在此转换键空间。
-        # _read_vectors 的 Cython JSON 校验器已逐元素验证有限数值；不要在映射
-        # chunk-slot 时再次扫描每个高维向量。
-        vector_map = _worker_vector_map(snapshot_filtered, vectors, values_validated=True)
-        self.engine.replace_transient(
-            snapshot_filtered, transient_revision,
-            vectors=vector_map, vector_version=vector_version,
-            revision_is_content_addressed=True,
-        )
-        return {
-            "status": "ok", "transient_revision": transient_revision,
-            "document_count": len(snapshot_filtered), "vector_count": len(vector_map),
-            "vector_version": self.engine.transient_vector_version,
-            "memory_source": ",".join(source_names) or "empty",
-            "probe": {
-                "counts": {
-                    "scope_count": len(authorized_scopes),
-                    "base_documents": len(documents),
-                    "source_allowed_documents": len(filtered),
-                    "scope_authorized_documents": len(authorized),
-                    "snapshot_excluded_documents": len(authorized) - len(snapshot_filtered),
-                    "selected_documents": len(snapshot_filtered),
-                    "vector_count": len(vector_map),
-                },
-            },
-        }
+        return filtered, authorized, snapshot_filtered
 
     @staticmethod
-    async def _read_vectors(owner_user_id, documents, vector_version: str) -> dict[str, list[float]]:
+    async def _read_vector_maps(owner_user_id, vector_version: str) -> dict[str, dict[str, tuple[float, ...]]]:
+        empty_maps = {"memory": {}, "knowledge": {}, "pattern": {}}
         if not vector_version:
-            return {}
+            return empty_maps
         from agent.memory.embedding import model_tag
         if vector_version != model_tag():
-            return {}
+            return empty_maps
         from app.services.storage import get_storage
 
         owner = str(owner_user_id)
@@ -708,11 +769,78 @@ class CythonRagLifecycle:
             cache_name: _parse_vector_file(raw_text, f"{owner}:{cache_name}:{vector_version}", vector_version)
             for (cache_name, _), raw_text in zip(vector_keys, raw_texts)
         }
-        from agent.rag.vector_cache import cache_key
+        return vector_maps
 
+    @staticmethod
+    async def _read_memory_vector_maps(
+        owner_user_id, vector_version: str,
+    ) -> dict[str, dict[str, tuple[float, ...]]]:
+        """Memory 只读取自身和 pattern 向量；未变化时用元信息跳过大文件下载。"""
+        empty_maps = {"memory": {}, "knowledge": {}, "pattern": {}}
+        if not vector_version:
+            return empty_maps
+        from agent.memory.embedding import model_tag
+        if vector_version != model_tag():
+            return empty_maps
+        from app.services.storage import get_storage
+
+        owner = str(owner_user_id)
+        _validate_scope_component(owner, "ownerId")
+        storage = get_storage()
+        base = f"{owner}/.agent/"
+        vector_keys = (
+            ("memory", f"{base}memory_vec.json"),
+            ("pattern", f"{base}pattern_vec.json"),
+        )
+        stats = await asyncio.gather(*(_vector_stat(storage, key) for _, key in vector_keys))
+        vector_maps = dict(empty_maps)
+        pending: list[tuple[str, str, tuple[int, float | None, str | None] | None]] = []
+
+        for (cache_name, key), signature in zip(vector_keys, stats):
+            cache_key = (f"{owner}:{cache_name}:{vector_version}", vector_version)
+            metadata = _vector_metadata_cache.get(cache_key)
+            parsed = _vector_file_cache.get(cache_key)
+            if signature is not None and metadata is not None and metadata[0] == signature \
+                    and parsed is not None and metadata[1] == parsed[0]:
+                _vector_metadata_cache.move_to_end(cache_key)
+                _vector_file_cache.move_to_end(cache_key)
+                vector_maps[cache_name] = dict(parsed[1])
+            else:
+                pending.append((cache_name, key, signature))
+
+        raw_values = await asyncio.gather(*(
+            _read_vector_bytes(storage, key) for _, key, _ in pending
+        ))
+        parsed_values = await asyncio.to_thread(
+            _parse_vector_bytes_batch,
+            [
+                (raw, f"{owner}:{cache_name}:{vector_version}", vector_version)
+                for (cache_name, _, _), raw in zip(pending, raw_values)
+            ],
+        )
+        for (cache_name, _, signature), vectors in zip(pending, parsed_values):
+            vector_maps[cache_name] = vectors
+            cache_key = (f"{owner}:{cache_name}:{vector_version}", vector_version)
+            parsed = _vector_file_cache.get(cache_key)
+            if signature is not None and parsed is not None:
+                _vector_metadata_cache[cache_key] = (signature, parsed[0])
+                _vector_metadata_cache.move_to_end(cache_key)
+                while len(_vector_metadata_cache) > VECTOR_FILE_CACHE_SIZE:
+                    _vector_metadata_cache.popitem(last=False)
+        return vector_maps
+
+    @staticmethod
+    def _map_document_vectors(documents, vector_maps) -> dict[str, list[float]]:
+        from agent.rag.vector_cache import cache_key
         from agent.rag import cython_native
 
         return cython_native.map_document_vectors(documents, vector_maps, cache_key)
+
+    @staticmethod
+    async def _read_vectors(owner_user_id, documents, vector_version: str) -> dict[str, list[float]]:
+        """按文档映射当前版本的缓存向量；保留供持久索引加载路径复用。"""
+        vector_maps = await CythonRagLifecycle._read_vector_maps(owner_user_id, vector_version)
+        return CythonRagLifecycle._map_document_vectors(documents, vector_maps)
 
 
 __all__ = ["CythonRagLifecycle", "DELTA_MAX_PASSES", "WATERMARK_HORIZON"]
@@ -822,12 +950,43 @@ async def _read_vector_text(storage, key: str) -> str | None:
     """复刻 StorageReader 的 50M 字符/200MB 上限与 best-effort 单文件读取。"""
     try:
         raw = await storage.get(key)
-        if len(raw) > VECTOR_FILE_MAX_CHARS * 4:
-            return None
-        text = raw.decode("utf-8", errors="replace").removeprefix("\ufeff")
-        return _js_utf16_slice(text, VECTOR_FILE_MAX_CHARS)
+        return await asyncio.to_thread(_decode_vector_text, raw)
     except Exception:
         return None
+
+
+async def _vector_stat(storage, key: str) -> tuple[int, float | None, str | None] | None:
+    """只信任带版本信息的 stat；不支持可靠元信息的后端继续走内容读取。"""
+    try:
+        info = await storage.stat(key)
+    except Exception:
+        return None
+    if info is None or (info.mtime is None and not info.checksum):
+        return None
+    return info.size, info.mtime, info.checksum
+
+
+async def _read_vector_bytes(storage, key: str) -> bytes | None:
+    try:
+        return await storage.get(key)
+    except Exception:
+        return None
+
+
+def _decode_vector_text(raw: bytes) -> str | None:
+    if len(raw) > VECTOR_FILE_MAX_CHARS * 4:
+        return None
+    text = raw.decode("utf-8", errors="replace").removeprefix("\ufeff")
+    return _js_utf16_slice(text, VECTOR_FILE_MAX_CHARS)
+
+
+def _parse_vector_bytes_batch(items) -> list[dict[str, tuple[float, ...]]]:
+    """在线程池中完成大向量文件的解码、JSON 解析及数值校验。"""
+    results = []
+    for raw, cache_key, vector_version in items:
+        text = _decode_vector_text(raw) if raw is not None else None
+        results.append(_parse_vector_file(text, cache_key, vector_version))
+    return results
 
 
 def _js_utf16_slice(value: str, limit: int) -> str:

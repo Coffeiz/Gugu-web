@@ -1,6 +1,8 @@
 """开发环境按需装载 Cython RAG 扩展。"""
 from __future__ import annotations
 
+import asyncio
+import importlib
 import os
 import sys
 import tempfile
@@ -38,3 +40,9 @@ def ensure_cython_importer() -> None:
         build_dir.mkdir(parents=True, exist_ok=True)
         pyximport.install(build_dir=str(build_dir), language_level=3, inplace=False)
         _installed = True
+
+
+async def ensure_cython_native_loaded() -> None:
+    """在线程池中完成 Cython 内核首次编译，避免阻塞 asyncio 请求循环。"""
+    await asyncio.to_thread(ensure_cython_importer)
+    await asyncio.to_thread(importlib.import_module, "agent.rag.cython_native")

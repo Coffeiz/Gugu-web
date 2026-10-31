@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from dataclasses import replace
 import json
 import asyncio
+import time
 from collections import Counter, OrderedDict
 from types import SimpleNamespace
 
@@ -480,11 +481,15 @@ async def test_cython_prepare_memory_filters_sources_scopes_snapshot_and_vectors
         return docs, "synthetic-owner-cache"
 
     vectors = {document.chunk_id: [0.25, 0.75] for document in docs}
-    async def read_vectors(_owner, _documents, _version):
+    async def read_vector_maps(_owner, _version):
+        return {"memory": {}, "knowledge": {}, "pattern": {}}
+
+    def map_document_vectors(_documents, _vector_maps):
         return vectors
 
     monkeypatch.setattr(MemoryAdapter, "build_cached_owner_documents", owner_documents)
-    monkeypatch.setattr(CythonRagLifecycle, "_read_vectors", staticmethod(read_vectors))
+    monkeypatch.setattr(CythonRagLifecycle, "_read_memory_vector_maps", staticmethod(read_vector_maps))
+    monkeypatch.setattr(CythonRagLifecycle, "_map_document_vectors", staticmethod(map_document_vectors))
     lifecycle = CythonRagLifecycle()
     prepared = await lifecycle.prepare_memory(
         owner, [scope], source_filter="daily", snapshot_revision="snap-1",
@@ -537,12 +542,8 @@ async def test_cython_prepare_memory_loads_independent_scopes_concurrently(monke
     async def scope_documents(_self, *, scope):
         return await wait_for_peer(group_document)
 
-    async def no_vectors(_owner, _documents, _version):
-        return {}
-
     monkeypatch.setattr(MemoryAdapter, "build_cached_owner_documents", owner_documents)
     monkeypatch.setattr(MemoryAdapter, "build_cached_documents", scope_documents)
-    monkeypatch.setattr(CythonRagLifecycle, "_read_vectors", staticmethod(no_vectors))
 
     lifecycle = CythonRagLifecycle()
     result = await lifecycle.prepare_memory(owner, [owner_scope, group_scope])
@@ -551,6 +552,145 @@ async def test_cython_prepare_memory_loads_independent_scopes_concurrently(monke
     assert [document.content for document in lifecycle.engine._transient.documents] == [
         "owner memory", "group memory",
     ]
+
+
+@pytest.mark.asyncio
+async def test_cython_prepare_memory_reads_vector_cache_while_loading_documents(monkeypatch):
+    """Memory 文档与向量缓存 I/O 应重叠，避免两段存储等待串行累加。"""
+    from agent.rag.adapters.memory import MemoryAdapter
+
+    owner = "synthetic-owner"
+    scope = Scope(owner_user_id=owner, scope_type="owner")
+    document = IndexDocument(
+        "memory:owner:1", "memory", "profile", scope,
+        "owner", "", "owner memory", "v1", parent_document_id="memory:owner",
+    )
+    document_load_started = asyncio.Event()
+    vector_load_started = asyncio.Event()
+
+    async def wait_for_parallel_start(own_started, peer_started):
+        own_started.set()
+        await asyncio.wait_for(peer_started.wait(), timeout=2)
+
+    async def owner_documents(_self, *, scope):
+        await wait_for_parallel_start(document_load_started, vector_load_started)
+        return [document], "cached"
+
+    async def vector_maps(_owner, _version):
+        await wait_for_parallel_start(vector_load_started, document_load_started)
+        return {}
+
+    monkeypatch.setattr(MemoryAdapter, "build_cached_owner_documents", owner_documents)
+    monkeypatch.setattr(CythonRagLifecycle, "_read_memory_vector_maps", staticmethod(vector_maps))
+    monkeypatch.setattr(
+        CythonRagLifecycle, "_map_document_vectors", staticmethod(lambda _docs, _maps: {}),
+    )
+
+    lifecycle = CythonRagLifecycle()
+    result = await lifecycle.prepare_memory(owner, [scope], vector_version="synthetic:v1")
+
+    assert result["document_count"] == 1
+    assert document_load_started.is_set() and vector_load_started.is_set()
+    assert "vector_cache_read_parallel" in result["probe"]["stage_ms"]
+
+
+@pytest.mark.asyncio
+async def test_memory_vector_cache_skips_unchanged_downloads_and_knowledge_file(monkeypatch):
+    """同一向量版本/文件元信息复用校验映射；变更元信息后重新读取对应文件。"""
+    import agent.memory.embedding
+    import app.services.storage
+    import agent.rag.cython_lifecycle as lifecycle_module
+    from app.services.storage import StorageObjectInfo
+
+    owner = "synthetic-vector-cache-owner"
+    tag = "synthetic-model-v1"
+    memory_key = f"{owner}/.agent/memory_vec.json"
+    pattern_key = f"{owner}/.agent/pattern_vec.json"
+    content = {
+        memory_key: (b'{"memory:doc":{"t":"synthetic-model-v1","v":[1,2]}}', 1),
+        pattern_key: (b'{"pattern:doc":{"t":"synthetic-model-v1","v":[3,4]}}', 1),
+    }
+
+    class Storage:
+        def __init__(self):
+            self.get_calls = []
+
+        async def stat(self, key):
+            value = content.get(key)
+            return StorageObjectInfo(len(value[0]), mtime=value[1]) if value else None
+
+        async def get(self, key):
+            self.get_calls.append(key)
+            return content[key][0]
+
+    storage = Storage()
+    monkeypatch.setattr(agent.memory.embedding, "model_tag", lambda: tag)
+    monkeypatch.setattr(app.services.storage, "get_storage", lambda: storage)
+    for cache_name in ("memory", "pattern"):
+        key = (f"{owner}:{cache_name}:{tag}", tag)
+        lifecycle_module._vector_file_cache.pop(key, None)
+        lifecycle_module._vector_metadata_cache.pop(key, None)
+
+    first = await CythonRagLifecycle._read_memory_vector_maps(owner, tag)
+    assert first["memory"]["memory:doc"] == (1.0, 2.0)
+    assert first["pattern"]["pattern:doc"] == (3.0, 4.0)
+    assert storage.get_calls == [memory_key, pattern_key]
+
+    await CythonRagLifecycle._read_memory_vector_maps(owner, tag)
+    assert storage.get_calls == [memory_key, pattern_key]
+
+    content[memory_key] = (b'{"memory:doc":{"t":"synthetic-model-v1","v":[5,6]}}', 2)
+    updated = await CythonRagLifecycle._read_memory_vector_maps(owner, tag)
+    assert updated["memory"]["memory:doc"] == (5.0, 6.0)
+    assert storage.get_calls == [memory_key, pattern_key, memory_key]
+    assert all("knowledge/vectors.json" not in key for key in storage.get_calls)
+
+
+@pytest.mark.asyncio
+async def test_memory_vector_decode_and_validation_do_not_block_event_loop(monkeypatch):
+    """大向量解析在线程池执行，避免读取阶段阻塞其他异步任务。"""
+    import agent.memory.embedding
+    import app.services.storage
+    import agent.rag.cython_lifecycle as lifecycle_module
+
+    owner = "synthetic-vector-thread-owner"
+    tag = "synthetic-model-thread-v1"
+    vector_bytes = b'{"memory:doc":{"t":"synthetic-model-thread-v1","v":[1]}}'
+
+    class Storage:
+        async def stat(self, _key):
+            return None
+
+        async def get(self, _key):
+            return vector_bytes
+
+    original_parse = lifecycle_module._parse_vector_file
+
+    def slow_parse(*args):
+        time.sleep(0.04)
+        return original_parse(*args)
+
+    monkeypatch.setattr(agent.memory.embedding, "model_tag", lambda: tag)
+    monkeypatch.setattr(app.services.storage, "get_storage", lambda: Storage())
+    monkeypatch.setattr(lifecycle_module, "_parse_vector_file", slow_parse)
+    ticks = 0
+
+    async def heartbeat():
+        nonlocal ticks
+        while not done.is_set():
+            ticks += 1
+            await asyncio.sleep(0.005)
+
+    done = asyncio.Event()
+    task = asyncio.create_task(heartbeat())
+    try:
+        result = await CythonRagLifecycle._read_memory_vector_maps(owner, tag)
+    finally:
+        done.set()
+        await task
+
+    assert result["memory"]["memory:doc"] == (1.0,)
+    assert ticks >= 4
 
 
 @pytest.mark.asyncio
@@ -596,11 +736,15 @@ async def test_cython_prepare_memory_vectors_use_worker_document_ids(monkeypatch
     async def owner_documents(_self, *, scope):
         return [document], "synthetic-owner-cache"
 
-    async def read_vectors(_owner, _documents, _version):
+    async def read_vector_maps(_owner, _version):
+        return {}
+
+    def map_document_vectors(_documents, _vector_maps):
         return {document.chunk_id: [1.0, 0.0]}
 
     monkeypatch.setattr(MemoryAdapter, "build_cached_owner_documents", owner_documents)
-    monkeypatch.setattr(CythonRagLifecycle, "_read_vectors", staticmethod(read_vectors))
+    monkeypatch.setattr(CythonRagLifecycle, "_read_memory_vector_maps", staticmethod(read_vector_maps))
+    monkeypatch.setattr(CythonRagLifecycle, "_map_document_vectors", staticmethod(map_document_vectors))
     lifecycle = CythonRagLifecycle()
     await lifecycle.prepare_memory(owner, [scope], vector_version="synthetic:v1")
 
@@ -633,14 +777,14 @@ async def test_memory_revision_tracks_all_visible_document_state_without_ts_wire
     async def owner_documents(_self, *, scope):
         return [document], "synthetic-owner-cache"
 
-    async def read_vectors(_owner, _documents, _version):
-        return {}
+    async def read_vector_maps(_owner, _version):
+        return {"memory": {}, "knowledge": {}, "pattern": {}}
 
     async def forbidden(*args, **kwargs):
         raise AssertionError("本地 transient revision 不应构造 TS wire")
 
     monkeypatch.setattr(MemoryAdapter, "build_cached_owner_documents", owner_documents)
-    monkeypatch.setattr(CythonRagLifecycle, "_read_vectors", staticmethod(read_vectors))
+    monkeypatch.setattr(CythonRagLifecycle, "_read_memory_vector_maps", staticmethod(read_vector_maps))
     monkeypatch.setattr(ts_sidecar, "_wire_document", forbidden)
 
     lifecycle = CythonRagLifecycle()
