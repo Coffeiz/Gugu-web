@@ -879,6 +879,14 @@
     "keyBehavior": "数据库快照、revision 增量、快照恢复和向量缓存刷新保持 owner、模型版本及 tombstone 契约；版本刷新清除未命中的旧向量；Memory scope 并发读取保持顺序，snapshot 覆盖过滤复用预处理上下文",
     "ci": "backend-pytest"
   },
+  "backend/tests/agent/rag/test_cython_runtime.py": {
+    "domain": "memory-rag-cython-runtime",
+    "layer": "L1",
+    "owner": "backend/agent/rag/cython_runtime.py",
+    "productionEntry": "backend/agent/rag/index_cache.py",
+    "keyBehavior": "普通应用进程按配置选择 Cython 时能装载 .pyx 内核与 jieba-rs；未安装构建依赖时明确失败，不借助 pytest 钩子或静默切回 TS",
+    "ci": "backend-pytest"
+  },
   "backend/tests/agent/rag/test_cython_bm25_differential.py": {
     "domain": "memory-rag-cython-equivalence",
     "layer": "L1",

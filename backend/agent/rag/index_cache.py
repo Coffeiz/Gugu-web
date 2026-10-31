@@ -787,7 +787,12 @@ async def search_documents_with_cache(
 
 def _selected_backend(settings) -> str:
     """由运行配置选择唯一 RAG 引擎；不做双跑或自动 fallback。"""
-    return str(getattr(settings, "rag_backend", "typescript") or "typescript")
+    backend = str(getattr(settings, "rag_backend", "typescript") or "typescript")
+    if backend == "cython":
+        from agent.rag.cython_runtime import ensure_cython_importer
+
+        ensure_cython_importer()
+    return backend
 
 
 def _documents_fingerprint(documents: list[IndexDocument]) -> str:
