@@ -71,9 +71,8 @@ def _ingest_interactive(msg) -> str:
     return _extract_card_text(c) or "[卡片消息]"
 
 
-def _fetch_quoted_text(client, parent_id: str) -> str | None:
-    """按 parent_id 反查被引用的原消息文字（同步，供 _on_message 直接调用）。
-    非文字类型给占位说明；查询失败返回 None，调用方静默跳过、不阻塞主消息。"""
+def _fetch_quoted_facts(client, parent_id: str, bot_open_id: str | None = None) -> dict:
+    """按 parent_id 读取引用正文和平台结构化发送者事实。"""
     from lark_oapi.api.im.v1 import GetMessageRequest
     try:
         # card_msg_content_type=user_card_content：不传这个参数时，飞书对 CardKit 动态卡片
@@ -84,14 +83,33 @@ def _fetch_quoted_text(client, parent_id: str) -> str | None:
               .card_msg_content_type("user_card_content").build())
         resp = client.im.v1.message.get(req)
         if not resp.success() or not resp.data or not resp.data.items:
-            return None
+            return {"text": None, "sender_id": None, "sender_is_bot": None, "platform_sent_ms": None}
         m = resp.data.items[0]
+        sender = getattr(m, "sender", None)
+        sender_identity = getattr(sender, "sender_id", None) if sender else None
+        sender_id = getattr(sender_identity, "open_id", None) if sender_identity else None
+        create_time = getattr(m, "create_time", None)
+        try:
+            platform_sent_ms = int(create_time) if create_time is not None else None
+        except (TypeError, ValueError):
+            platform_sent_ms = None
+        sender_is_bot = None
+        if sender_id and bot_open_id:
+            sender_is_bot = str(sender_id) == str(bot_open_id)
+        facts = {
+            "text": None,
+            "sender_id": str(sender_id) if sender_id else None,
+            "sender_is_bot": sender_is_bot,
+            "platform_sent_ms": platform_sent_ms if platform_sent_ms and platform_sent_ms > 0 else None,
+        }
         if m.msg_type == "text":
             try:
                 c = json.loads(m.body.content) if (m.body and m.body.content) else {}
             except (json.JSONDecodeError, TypeError):   # 只吞「内容不是合法 JSON」这类预期失败，不裸吞未知异常（P2-b §6）
-                return "[解析失败]"
-            return (c.get("text") or "").strip() or "[空消息]"
+                facts["text"] = "[解析失败]"
+                return facts
+            facts["text"] = (c.get("text") or "").strip() or "[空消息]"
+            return facts
         if m.msg_type == "interactive":
             # 咕咕自己发的回复走卡片（见 _do_send 的 _build_card_elements），引用到的大概率是这种——
             # 从卡片 markdown 元素里把文字拼回来（table 组件跳过，不还原成文字，只取叙述性内容）。
@@ -100,15 +118,24 @@ def _fetch_quoted_text(client, parent_id: str) -> str | None:
             try:
                 c = json.loads(m.body.content) if (m.body and m.body.content) else {}
             except (json.JSONDecodeError, TypeError):   # 只吞「内容不是合法 JSON」这类预期失败，不裸吞未知异常（P2-b §6）
-                return "[解析失败]"
-            return _extract_card_text(c) or "[空消息]"
+                facts["text"] = "[解析失败]"
+                return facts
+            facts["text"] = _extract_card_text(c) or "[空消息]"
+            return facts
         if m.msg_type == "post":
-            return "[图文消息]"
-        return {"image": "[图片消息]", "file": "[文件消息]", "audio": "[语音消息]", "media": "[视频消息]"}.get(m.msg_type, "[非文字消息]")
+            facts["text"] = "[图文消息]"
+            return facts
+        facts["text"] = {"image": "[图片消息]", "file": "[文件消息]", "audio": "[语音消息]", "media": "[视频消息]"}.get(m.msg_type, "[非文字消息]")
+        return facts
     except Exception as e:
         diag_log("agent.gateway.feishu.fetch_quoted_text", e)   # 原始 → 受限诊断出口
         print(f"[feishu] 查引用原消息失败: {redact(f'{type(e).__name__}: {e}')}", flush=True)
-        return None
+        return {"text": None, "sender_id": None, "sender_is_bot": None, "platform_sent_ms": None}
+
+
+def _fetch_quoted_text(client, parent_id: str) -> str | None:
+    """兼容旧调用；非文字类型给占位说明，查询失败返回 None。"""
+    return _fetch_quoted_facts(client, parent_id).get("text")
 
 
 def _header_value(data, name: str):
@@ -267,6 +294,37 @@ def _feishu_mentions_current_bot(message, open_id: str | None) -> bool:
     return False
 
 
+def _feishu_attention_mention_facts(message, open_id: str | None) -> tuple[bool | None, bool | None, bool | None, bool]:
+    mentions = getattr(message, "mentions", None)
+    if not isinstance(mentions, list):
+        return None, None, None, False
+    if not mentions:
+        return False, False, False, False
+    if not open_id:
+        return None, None, None, True
+    current = False
+    other_member = False
+    other_bot = False
+    unresolved = False
+    for item in mentions:
+        target = _feishu_mention_field(item, "id")
+        candidate = _feishu_mention_field(target, "open_id") if target is not None else None
+        if candidate is None and isinstance(target, str):
+            candidate = target
+        if not candidate:
+            unresolved = True
+            continue
+        if str(candidate) == str(open_id):
+            current = True
+            continue
+        other_member = True
+        if _feishu_mention_field(item, "is_bot") is True:
+            other_bot = True
+    if unresolved:
+        return (current if current else None), (other_bot if other_bot else None), (other_member if other_member else None), True
+    return current, other_bot, other_member, False
+
+
 def _feishu_mention_field(item, field: str):
     return item.get(field) if isinstance(item, dict) else getattr(item, field, None)
 
@@ -359,6 +417,7 @@ def _make_on_message(
             text = _ingest_interactive(msg)
         else:
             return  # 表情/位置/合并转发等暂不处理
+        attention_raw_text = text
         text = _feishu_resolve_mention_text(msg, text)
         if not text and not attachments:
             return
@@ -371,7 +430,16 @@ def _make_on_message(
         # 自己打的话，router/秒回表情继续用原始 text 判关键词（同一份），别再把引用原文拼进
         # 正文（网页气泡纯文本渲染，拼进去会把引用的 markdown 原样摊平显示得很难看，见 devlog
         # 2026-07-10）。
-        quoted_text = _fetch_quoted_text(api_client, msg.parent_id) if msg.parent_id else None
+        quoted_facts = _fetch_quoted_facts(api_client, msg.parent_id, bot_open_id) if msg.parent_id else {}
+        quoted_text = quoted_facts.get("text")
+        mention_facts = _feishu_attention_mention_facts(msg, bot_open_id)
+        platform_sent_ms = getattr(msg, "create_time", None)
+        try:
+            platform_sent_ms = int(platform_sent_ms) if platform_sent_ms is not None else None
+        except (TypeError, ValueError):
+            platform_sent_ms = None
+        sender = getattr(ev, "sender", None)
+        sender_type = getattr(sender, "sender_type", None) if sender else None
 
         payload = {
             "platform": "feishu",
@@ -381,8 +449,22 @@ def _make_on_message(
             "chat_id": msg.chat_id,
             "chat_type": msg.chat_type,
             "message_id": msg.message_id,
+            "platform_message_id": msg.message_id,
+            "platform_sent_ms": platform_sent_ms if platform_sent_ms and platform_sent_ms > 0 else None,
             "text": text,
+            "attention_raw_text": attention_raw_text,
             "quoted_text": quoted_text,
+            "reply_to_platform_message_id": str(msg.parent_id) if msg.parent_id else None,
+            "reply_target_sender_id": quoted_facts.get("sender_id"),
+            "reply_target_is_bot": quoted_facts.get("sender_is_bot"),
+            "sender_is_bot": True if sender_type == "app" else False if sender_type == "user" else None,
+            "native_bot_mentioned": mention_facts[0],
+            "mentions_other_bot": mention_facts[1],
+            "mentions_other_member": mention_facts[2],
+            "has_unresolved_mention": mention_facts[3],
+            "processable_media": bool(attachments) and all(
+                isinstance(item, dict) and bool(item.get("attach_id")) for item in attachments
+            ),
             "attachments": attachments,
             "trace_id": tid,             # 全链路 trace：worker/工具日志同 id，grep 可串联
         }

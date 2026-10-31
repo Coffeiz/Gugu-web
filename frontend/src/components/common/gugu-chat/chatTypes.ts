@@ -116,6 +116,7 @@ export interface ChatFile {
   transcript?: string
   transcript_status?: 'completed' | 'empty' | 'failed'
   transcript_scope?: 'message'
+  transcript_origin?: 'attention'
   upload?: boolean
   _thumbUrl?: string
   img_width?: number

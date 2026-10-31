@@ -1,4 +1,4 @@
-"""各类记忆作用域共用的 daily 批量压缩编排。"""
+"""各类记忆作用域共用的 daily 全量沉淀批次规则。"""
 from __future__ import annotations
 
 from typing import Sequence, TypeVar
@@ -9,20 +9,17 @@ T = TypeVar("T")
 COMPACTION_BATCH_SIZE = 100
 
 
-def should_compact(count: int, *, trigger: int, keep_recent: int,
-                   batch_size: int = COMPACTION_BATCH_SIZE) -> bool:
-    """初次达到阈值或已有积压时继续压缩；低于保留窗口则停止。"""
-    return count >= trigger or count >= keep_recent + batch_size
+def should_compact(count: int, *, trigger: int) -> bool:
+    """达到触发条数后启动，把当时积累的 daily 全部沉淀。"""
+    return count >= trigger
 
 
-def split_batch(entries: Sequence[T], *, keep_recent: int,
-                batch_size: int = COMPACTION_BATCH_SIZE) -> tuple[list[T], list[T], list[T]]:
-    """返回（保留的最新记录、当前压缩批次、尚未处理的旧记录）。"""
+def split_oldest_batch(
+    entries: Sequence[T], *, batch_size: int = COMPACTION_BATCH_SIZE,
+) -> tuple[list[T], list[T]]:
+    """返回（仍待处理的较新记录、当前最旧批次）。输入顺序为新到旧。"""
     items = list(entries)
-    start = max(0, keep_recent)
-    return items[:start], items[start:start + batch_size], items[start + batch_size:]
-
-
-def merge_remaining(recent: Sequence[T], remaining: Sequence[T]) -> list[T]:
-    """压缩成功后合并，保留未处理的旧记录，顺序仍是新到旧。"""
-    return list(recent) + list(remaining)
+    size = max(1, batch_size)
+    if len(items) <= size:
+        return [], items
+    return items[:-size], items[-size:]

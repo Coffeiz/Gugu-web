@@ -16,6 +16,8 @@ from sqlalchemy import select, update
 from agent.rag.index_cache import get_index_cache
 from agent.rag.models import IndexDocument, Scope
 from agent.rag.persistent_store import (
+    load_rag_index_delta,
+    load_rag_index_snapshot,
     TOMBSTONE_RETENTION,
     load_index_documents,
     replace_source_documents,
@@ -62,6 +64,32 @@ async def test_replace_shrink_soft_deletes_and_advances_revision(db, user_a):
     # 活跃读路径过滤墓碑
     docs = await load_index_documents(db, user_a.id, source_types={"knowledge"})
     assert [d.source_id for d in docs] == ["k-1"]
+
+
+@pytest.mark.asyncio
+async def test_cython_lifecycle_snapshot_and_delta_keep_ts_revision_and_tombstone_contract(db, user_a):
+    """Python 生命周期读接口保持 TS 的同快照 revision、墓碑和稳定删除键语义。"""
+    await replace_source_documents(db, user_a.id, "knowledge", [
+        _doc("k-1", "第一份资料", 0, 1), _doc("k-2", "第二份资料", 0, 1),
+    ])
+    await replace_source_documents(db, user_a.id, "knowledge", [_doc("k-1", "更新资料", 0, 1)])
+
+    snapshot = await load_rag_index_snapshot(db, user_a.id)
+    assert snapshot.revision is not None
+    assert snapshot.revision.startswith("ts-jieba-words-v4:rag-projection-v5:")
+    assert snapshot.watermark is not None and snapshot.watermark.row_id == 0
+    assert [item.source_id for item in snapshot.documents] == ["k-1"]
+
+    first = await load_rag_index_delta(db, user_a.id, None, limit=1)
+    assert first.scanned_rows == 1 and first.has_more
+    second = await load_rag_index_delta(db, user_a.id, first.cursor, limit=1)
+    assert second.scanned_rows == 1 and second.has_more
+    last = await load_rag_index_delta(db, user_a.id, second.cursor, limit=1)
+    assert not last.has_more
+    changes = [*first.upserts, *second.upserts, *last.upserts]
+    deletes = [*first.deletes, *second.deletes, *last.deletes]
+    assert any(document.source_id == "k-1" and document.content == "更新资料" for document in changes)
+    assert "knowledge:k-2:0" in deletes
 
 
 @pytest.mark.asyncio

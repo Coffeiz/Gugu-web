@@ -165,6 +165,10 @@ async def consume_agent_events(
         cur += tail
         if tail and sink.yield_tokens:
             yield (EVENT_TOKEN, tail)
+        if not cur:
+            # 工具结果后的 _new_round 可能再次触发冲刷；空轮不应制造空 assistant round。
+            san = sanitize.StreamSanitizer(adapter=provider_adapter)
+            return
         rounds.append(cur)
         completed = cur.strip()
         cur = ""
@@ -265,6 +269,11 @@ async def consume_agent_events(
                 await display_changed(outcome.display_timeline_items[-1])
                 await _notify_event(sink.on_event, evt)
             elif t in {"tool_call", "tool_done"}:
+                if t == "tool_call" and sink.yield_round_ends:
+                    # 模型可在同一轮先输出正文、再请求工具。先把正文尾部和 ROUND_END
+                    # 交给流式适配器，再触发平台工具通知，避免工具边界截断正文。
+                    async for item in flush_current_round():
+                        yield item
                 tool_event = dict(evt)
                 call_id = str(evt.get("tool_call_id") or "")
                 if t == "tool_call":

@@ -45,6 +45,11 @@ def _out(b: UserBot) -> dict:
         "group_owner_memory_enabled": b.group_owner_memory_enabled,
         "member_memory_enabled": b.member_memory_enabled,
         "group_response_mode": response_mode,
+        "group_attention_mode": (
+            b.group_attention_mode
+            if b.group_attention_mode in {"quiet", "natural", "active", "autonomous"}
+            else "autonomous"
+        ),
         "group_allowed_tools": normalize_group_allowed_tools(b.group_allowed_tools),
         "group_message_format": (
             b.group_message_format if b.group_message_format in {"compat", "markdown"} else "compat"
@@ -150,6 +155,7 @@ class BotUpdate(BaseModel):
     group_owner_memory_enabled: bool | None = None
     member_memory_enabled: bool | None = None
     group_response_mode: str | None = None
+    group_attention_mode: str | None = None
     group_allowed_tools: list[str] | None = None
     group_message_format: str | None = None
     private_message_format: str | None = None
@@ -204,6 +210,12 @@ async def update_my_bot(
             raise HTTPException(400, "无效的群聊回应方式")
         bot.group_requires_at = body.group_response_mode != "reply_all"
         bot.group_read_enabled = body.group_response_mode == "record_only"
+    if body.group_attention_mode is not None:
+        if body.group_attention_mode not in {"quiet", "natural", "active", "autonomous"}:
+            raise HTTPException(400, "无效的群聊参与度")
+        if body.group_attention_mode != bot.group_attention_mode:
+            bot.group_attention_mode = body.group_attention_mode
+            bot.group_attention_config_version += 1
     # 普通群聊模式默认接收并回复所有消息；只有显式选择静默记录时才保存后静默。
     if bot.group_requires_at is False and body.group_response_mode is None:
         bot.group_read_enabled = False

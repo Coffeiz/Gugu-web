@@ -162,7 +162,7 @@ async def test_telegram_keeps_compact_tool_result_when_intermediate_replies_are_
 @pytest.mark.asyncio
 async def test_hidden_rounds_switch_to_ordered_delivery_when_mermaid_appears(monkeypatch):
     from agent.gateway import telegram
-    from agent.im import mermaid
+    from agent.im import chart
 
     drafts = []
     persisted_text = []
@@ -192,7 +192,7 @@ async def test_hidden_rounds_switch_to_ordered_delivery_when_mermaid_appears(mon
         sent_images.append(png)
         return True
 
-    monkeypatch.setattr(mermaid, "ProgressiveMermaidTokenFilter", EventPassthroughFilter)
+    monkeypatch.setattr(chart, "ProgressiveChartTokenFilter", EventPassthroughFilter)
     monkeypatch.setattr(telegram, "send_message_draft", send_draft)
     monkeypatch.setattr(replies, "send_completed_round", send_round)
     monkeypatch.setattr(replies, "_try_send_png_image", send_image)
@@ -202,7 +202,7 @@ async def test_hidden_rounds_switch_to_ordered_delivery_when_mermaid_appears(mon
         yield "token", "前置回复"
         yield ROUND_END, "前置回复"
         yield "token", "图前说明\n"
-        yield "mermaid_image", (0, 1, "```mermaid\ngraph LR\nA-->B\n```", b"png")
+        yield "chart_image", (0, 1, "```mermaid\ngraph LR\nA-->B\n```", b"png")
         yield "token", "\n图后说明"
         yield ROUND_END, "图前说明\n图后说明"
         yield "final", AgentResponse(

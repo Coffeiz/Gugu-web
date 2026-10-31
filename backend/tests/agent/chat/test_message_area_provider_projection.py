@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -129,6 +130,26 @@ def test_adapter_projects_restored_canonical_area_without_mutating_it():
     assert "消息时间：2026-09-30 12:00" in projection[1]["content"][0]["text"]
     assert projection[2] == {"role": "user", "content": "旧问题"}
     assert area.snapshot() == before
+
+
+def test_request_render_option_keeps_live_task_without_sharing_mutable_config():
+    loop = asyncio.new_event_loop()
+    task = loop.create_task(asyncio.Event().wait())
+    request = SimpleNamespace(source="qq", chat_id="synthetic-group", heartbeat=task)
+    options = {"api_format": "openai", "request": request, "nested": {"values": [1]}}
+    area = MessageArea()
+
+    try:
+        area.configure_request(fixed_prefix=(), render_options=options)
+
+        assert area.render_options["request"] is request
+        assert area.render_options["nested"] is not options["nested"]
+        options["nested"]["values"].append(2)
+        assert area.render_options["nested"]["values"] == [1]
+    finally:
+        task.cancel()
+        loop.run_until_complete(asyncio.gather(task, return_exceptions=True))
+        loop.close()
 
 
 def test_projection_preserves_tool_and_multimodal_canonical_event_order():

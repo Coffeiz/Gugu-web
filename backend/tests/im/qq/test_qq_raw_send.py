@@ -304,7 +304,7 @@ async def test_post_reraises_non_markdown_errors(monkeypatch):
         assert "boom" in str(e)
 
 
-async def test_send_c2c_clears_token_cache_and_retries_on_failure(monkeypatch):
+async def test_send_c2c_clears_token_cache_without_retrying_ambiguous_failure(monkeypatch):
     qq_client._send_tokens["bot-1"] = {"token": "stale", "base": "x", "expires_at": 0}
     attempts = []
 
@@ -318,8 +318,8 @@ async def test_send_c2c_clears_token_cache_and_retries_on_failure(monkeypatch):
 
     ok = await qq_outbound.send_c2c("ou_1", "hi", "msg-1", "bot-1")
 
-    assert ok is True
-    assert len(attempts) == 2
+    assert ok is False
+    assert len(attempts) == 1
     assert "bot-1" not in qq_client._send_tokens
 
 

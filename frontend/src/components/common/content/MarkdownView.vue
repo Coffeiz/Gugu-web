@@ -6,7 +6,9 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { renderMarkdown, sanitizeHtml, sanitizeChatHtml } from '@/utils/markdown'
-import { cleanupMarkdownMermaid, createMermaidRenderLabels, renderMarkdownMermaid } from '@/utils/mermaidRenderer'
+import { renderMarkdownMath } from '@/utils/chart/math'
+import { cleanupMarkdownMermaid, createMermaidRenderLabels, renderMarkdownMermaid } from '@/utils/chart/mermaidRenderer'
+import type { MarkdownMathLabels } from '@/utils/chart/math'
 
 // 全站通用的 markdown 展示组件，统一 GuguChat 聊天 / 通知气泡 / 侧边栏通知中心的 md 输出样式。
 // - text：原始 markdown 文本，用轻量 renderMarkdown 渲染；
@@ -17,10 +19,19 @@ const props = defineProps({
   html: { type: String, default: null },
   // 聊天路径：额外放行 gugu:// 动作链接（由 GuguChat onChatActionClick 处理）；其余仍严格消毒
   chat: { type: Boolean, default: false },
+  // 仅聊天消息显式开启，避免在全站通知和侧栏 Markdown 中改变渲染范围。
+  renderMath: { type: Boolean, default: false },
 })
 const root = ref<HTMLElement | null>(null)
 const mermaidReady = ref(false)
 const { t, locale } = useI18n()
+function createMathLabels(): MarkdownMathLabels {
+  return {
+    copy: t('chatUi.copy'), copied: t('chatUi.copied'), downloadPng: t('mermaidUi.formulaDownload'),
+    showSource: t('mermaidUi.formulaSource'), showRendered: t('mermaidUi.formulaRendered'),
+    renderFailed: t('mermaidUi.formulaRenderFailed'),
+  }
+}
 let themeObserver: MutationObserver | null = null
 let renderGeneration = 0
 
@@ -52,9 +63,13 @@ const rendered = computed(() =>
     ? (props.chat ? sanitizeChatHtml(props.html) : sanitizeHtml(props.html))
     : renderMarkdown(props.text))
 
-watch([rendered, locale], renderMermaidBlocks, { flush: 'post' })
+watch([rendered, locale, () => props.renderMath], async () => {
+  if (props.renderMath) await renderMarkdownMath(root.value, createMathLabels())
+  await renderMermaidBlocks()
+}, { flush: 'post' })
 
 onMounted(() => {
+  if (props.renderMath) renderMarkdownMath(root.value, createMathLabels())
   renderMermaidBlocks()
   themeObserver = new MutationObserver(() => renderMermaidBlocks())
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-family'] })

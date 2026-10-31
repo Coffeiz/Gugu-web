@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { downloadMermaidPng } from '@/utils/mermaidPng'
+import { downloadMermaidPng } from '@/utils/chart/mermaidPng'
 
 const originalCreateObjectURL = Object.getOwnPropertyDescriptor(URL, 'createObjectURL')
 const originalRevokeObjectURL = Object.getOwnPropertyDescriptor(URL, 'revokeObjectURL')

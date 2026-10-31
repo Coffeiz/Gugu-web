@@ -164,11 +164,17 @@ def test_qq_bot_mention_id_ignores_other_bot_even_when_it_is_first():
     assert _qq_bot_mention_id(data, "GROUP_MESSAGE_CREATE") == "current-bot"
 
 
-def test_qq_bot_mention_id_does_not_guess_from_event_type_or_content():
+@pytest.mark.parametrize(
+    ("content", "event_type"),
+    [
+        ("<@other-bot> 看看这个", "GROUP_AT_MESSAGE_CREATE"),
+        ("<@D5A139> 看看这个", "GROUP_AT_MESSAGE_CREATE"),
+    ],
+)
+def test_qq_bot_mention_id_does_not_guess_from_event_type_or_content(content, event_type):
     from agent.gateway.qq.events import _qq_bot_mention_id
 
-    data = {"content": "<@other-bot> 看看这个"}
-    assert _qq_bot_mention_id(data, "GROUP_AT_MESSAGE_CREATE") == ""
+    assert _qq_bot_mention_id({"content": content}, event_type) == ""
 
 
 def test_qq_bot_mention_id_does_not_guess_unknown_mentions():
@@ -181,28 +187,21 @@ def test_qq_bot_mention_id_does_not_guess_unknown_mentions():
     assert _qq_bot_mention_id(data, "GROUP_MESSAGE_CREATE") == ""
 
 
-def test_qq_bot_mention_id_does_not_guess_from_event_type_or_content():
-    from agent.gateway.qq.events import _qq_bot_mention_id
-
-    data = {"content": "<@D5A139> 看看这个"}
-    assert _qq_bot_mention_id(data, "GROUP_AT_MESSAGE_CREATE") == ""
-
-
 def test_qq_mention_display_uses_username_without_changing_identity_fields():
     from agent.im.models import replace_mention_ids
 
     text = replace_mention_ids(
         "<@D5A139> 看来未来得继续做。",
-        {"D5A139": "Coffeiz"},
+        {"D5A139": "小北"},
     )
 
-    assert text == "@Coffeiz 看来未来得继续做。"
+    assert text == "@小北 看来未来得继续做。"
 
 
 def test_platform_mention_display_keeps_unknown_ids():
     from agent.im.models import replace_mention_ids
 
-    assert replace_mention_ids("@known <@unknown>", {"known": "Coffeiz"}) == "@Coffeiz <@unknown>"
+    assert replace_mention_ids("@known <@unknown>", {"known": "小北"}) == "@小北 <@unknown>"
 
 
 def test_qq_group_reply_formats_current_member_mention():
@@ -655,3 +654,16 @@ async def test_qq_raw_quoted_attachment_is_ingested(monkeypatch):
     await qq_events._handle_raw_qq_message("C2C_MESSAGE_CREATE", data, "bot-1", "user-1", {})
 
     assert produced[0]["attachments"][0]["url"] == "https://example.test/a.png"
+
+
+def test_qq_long_message_index_is_preserved_and_fits_database_column():
+    from agent.gateway.qq.events import _qq_message_index_key
+    from app.models import ConversationMessage
+
+    message_index = "qq-index-" + "x" * 126
+    event = {"message_scene": {"ext": [f"msg_idx={message_index}"]}}
+
+    assert len(message_index) == 135
+    assert _qq_message_index_key(event, "c2c", "", "member-1") == message_index
+    assert ConversationMessage.__table__.c.im_platform_message_id.type.length == 512
+    assert ConversationMessage.__table__.c.im_reply_to_message_id.type.length == 512

@@ -1,8 +1,13 @@
 import { createVNode, render } from 'vue'
 import Icon from '@/components/common/icons/Icon.vue'
 import type { IconName } from '@/components/common/icons/iconRegistry'
-import { downloadMermaidPng } from '@/utils/mermaidPng'
-import { openMermaidPreview } from '@/utils/mermaidPreview'
+import { downloadMermaidPng } from './mermaidPng'
+import { openMermaidPreview } from './mermaidPreview'
+import {
+  bindChartControls,
+  createChartControl,
+  createChartControls,
+} from './controls'
 
 export type MermaidInteractionLabels = {
   zoomOut: string
@@ -25,16 +30,15 @@ const MIN_SCALE = 0.5
 const MAX_SCALE = 3
 
 function makeButton(action: string, label: string, icon: string | { name: IconName }): HTMLButtonElement {
-  const button = document.createElement('button')
-  button.type = 'button'
-  button.dataset.mermaidAction = action
-  button.setAttribute('aria-label', label)
-  button.title = label
+  const button = createChartControl({
+    action,
+    label,
+    text: typeof icon === 'string' ? icon : undefined,
+    data: { mermaidAction: action },
+  })
   if (typeof icon !== 'string') {
     button.dataset.mermaidIcon = icon.name
     render(createVNode(Icon, { name: icon.name, size: 16 }), button)
-  } else {
-    button.textContent = icon
   }
   return button
 }
@@ -81,13 +85,13 @@ class MermaidInteractionBinding implements MermaidBinding {
     container.removeEventListener('pointerup', this.onPointerUp)
     container.removeEventListener('pointercancel', this.onPointerUp)
     container.removeEventListener('dblclick', this.onDoubleClick)
-    container.querySelectorAll<HTMLButtonElement>('.md-mermaid-controls [data-mermaid-icon]').forEach(button => {
+    container.querySelectorAll<HTMLButtonElement>('.md-chart-controls--mermaid [data-mermaid-icon]').forEach(button => {
       render(null, button)
     })
     this.setSourceVisible(false)
     this.sourceView?.remove()
     this.sourceView = null
-    container.querySelector('.md-mermaid-controls')?.remove()
+    container.querySelector('.md-chart-controls--mermaid')?.remove()
     container.querySelector('.md-mermaid-status')?.remove()
     this.closePreview?.()
     this.closePreview = null
@@ -99,22 +103,21 @@ class MermaidInteractionBinding implements MermaidBinding {
   }
 
   private ensureControls(): void {
-    let controls = this.container.querySelector<HTMLElement>('.md-mermaid-controls')
+    let controls = this.container.querySelector<HTMLElement>('.md-chart-controls--mermaid')
     if (!controls) {
-      controls = document.createElement('div')
-      controls.className = 'md-mermaid-controls'
-      controls.append(
+      controls = createChartControls(['md-chart-controls--mermaid'], [
         makeButton('zoom-out', this.labels.zoomOut, '−'),
         makeButton('zoom-in', this.labels.zoomIn, '+'),
         makeButton('reset', this.labels.resetZoom, '↺'),
         makeButton('toggle-source', this.labels.showSource, '</>'),
         makeButton('expand', this.labels.expand, '⛶'),
         makeButton('download-png', this.labels.downloadPng, { name: 'action.download' }),
-      )
+      ])
       controls.addEventListener('click', this.onControlClick)
       controls.addEventListener('dblclick', event => event.stopPropagation())
       this.container.append(controls)
     }
+    bindChartControls(controls)
     const labels: Record<string, string> = {
       'zoom-out': this.labels.zoomOut,
       'zoom-in': this.labels.zoomIn,
@@ -183,7 +186,7 @@ class MermaidInteractionBinding implements MermaidBinding {
     svg.style.display = visible ? 'none' : this.originalSvgDisplay
     this.sourceView.style.display = visible ? 'block' : 'none'
     const button = this.container.querySelector<HTMLButtonElement>(
-      '.md-mermaid-controls [data-mermaid-action="toggle-source"]',
+      '.md-chart-controls--mermaid [data-mermaid-action="toggle-source"]',
     )
     if (button) {
       const label = visible ? this.labels.showDiagram : this.labels.showSource
@@ -236,7 +239,7 @@ class MermaidInteractionBinding implements MermaidBinding {
     if (
       event.button !== 0
       || this.scale <= 1
-      || (event.target as HTMLElement).closest('.md-mermaid-controls, .md-mermaid-source-view')
+      || (event.target as HTMLElement).closest('.md-chart-controls--mermaid, .md-mermaid-source-view')
     ) return
     event.preventDefault()
     window.getSelection()?.removeAllRanges()

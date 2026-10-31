@@ -2,22 +2,32 @@
 from __future__ import annotations
 
 import re
-import unicodedata
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Mapping
+
+ATTENTION_ALGORITHM_VERSION = "attention-v3.0.6"
+MEMBER_ACTIVE_TTL_MS = 180_000
+DEFAULT_ACTIVE_THRESHOLD = 55
+DEFAULT_NATURAL_THRESHOLD = 65
+DEFAULT_QUIET_THRESHOLD = 85
 
 
 class AttentionMode(StrEnum):
     QUIET = "quiet"
     NATURAL = "natural"
     ACTIVE = "active"
+    AUTONOMOUS = "autonomous"
 
 
 class AttentionKind(StrEnum):
+    ALLOW_RUN = "ALLOW_RUN"
     DIRECT = "DIRECT"
     CONTINUE = "CONTINUE"
+    CAPABILITY_ACTION = "CAPABILITY_ACTION"
+    MEMBER_ACTIVE = "MEMBER_ACTIVE"
     PROACTIVE = "PROACTIVE"
+    EXCLUDED = "EXCLUDED"
     PASSIVE = "PASSIVE"
 
 
@@ -40,19 +50,26 @@ class AttentionMessage:
     mentioned_current_bot: bool | None
     mentioned_other_bot: bool | None
     mentioned_other_member: bool | None
+    has_unresolved_mention: bool
     reply_to_platform_message_id: str | None
     reply_target_sender_id: str | None
     reply_target_is_bot: bool | None
     quote_text: str | None
     sender_is_bot: bool | None = None
+    candidate_text: str | None = None
 
     @classmethod
     def from_payload(cls, event_id: str, payload: Mapping[str, object]) -> "AttentionMessage":
         """从已规范化 Gateway payload 构造输入。事件时间只接受 Redis Stream ID。"""
         stream_ms = _stream_event_ms(event_id)
-        text = str(payload.get("text") or "")
+        text = str(payload.get("attention_raw_text", payload.get("text")) or "")
         attachments = payload.get("attachments")
-        media_kinds = _media_kinds(attachments)
+        explicit_media_kinds = payload.get("media_kinds")
+        media_kinds = (
+            tuple(sorted({str(item).lower() for item in explicit_media_kinds if item}))
+            if isinstance(explicit_media_kinds, (list, tuple))
+            else _media_kinds(attachments)
+        )
         explicit_media_only = payload.get("media_only")
         media_only = (
             bool(explicit_media_only)
@@ -62,26 +79,36 @@ class AttentionMessage:
         processable = payload.get("processable_media")
         if not isinstance(processable, bool):
             processable = None
+        platform = str(payload.get("platform") or "")
+        bot_id = str(payload.get("bot_id") or payload.get("channel_id") or "")
+        group_id = str(payload.get("chat_id") or "")
+        if not platform or not bot_id or not group_id:
+            raise AttentionInputError("注意力门控缺少平台、Bot 或群作用域")
         return cls(
             event_id=str(event_id),
-            platform=str(payload.get("platform") or ""),
-            bot_id=str(payload.get("bot_id") or payload.get("channel_id") or ""),
-            group_id=str(payload.get("chat_id") or ""),
+            platform=platform,
+            bot_id=bot_id,
+            group_id=group_id,
             platform_message_id=_optional_text(payload.get("platform_message_id") or payload.get("message_id")),
             sender_id=_optional_text(payload.get("platform_user_id")),
             event_received_ms=stream_ms,
             platform_sent_ms=_optional_millis(
-                payload.get("_platform_sent_ms", payload.get("received_at"))
+                payload.get("platform_sent_ms", payload.get("_platform_sent_ms"))
             ),
             raw_text=text,
             media_only=media_only,
             media_kinds=media_kinds,
             processable_media=processable,
-            mentioned_current_bot=_optional_bool(
-                payload.get("native_bot_mentioned", payload.get("bot_mentioned"))
-            ),
+            mentioned_current_bot=_optional_bool(payload.get("native_bot_mentioned")),
             mentioned_other_bot=_optional_bool(payload.get("mentions_other_bot")),
             mentioned_other_member=_optional_bool(payload.get("mentions_other_member")),
+            has_unresolved_mention=(
+                payload.get("has_unresolved_mention") is True
+                or (
+                    payload.get("native_bot_mentioned") is None
+                    and bool(re.search(r"(?<![A-Za-z0-9_])@[A-Za-z0-9_]+", text))
+                )
+            ),
             reply_to_platform_message_id=_optional_text(
                 payload.get("reply_to_platform_message_id") or payload.get("reply_to_message_id")
             ),
@@ -89,6 +116,7 @@ class AttentionMessage:
             reply_target_is_bot=_optional_bool(payload.get("reply_target_is_bot")),
             quote_text=_optional_text(payload.get("quoted_text")),
             sender_is_bot=_optional_bool(payload.get("sender_is_bot")),
+            candidate_text=text,
         )
 
 
@@ -98,6 +126,10 @@ class BotReplyFact:
     sent_at_ms: int
     recipient_sender_id: str | None
     accepted: bool
+    proactive: bool = False
+    source_attention_kind: str | None = None
+    final_text: str | None = None
+    delivery_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,53 +138,51 @@ class AttentionSnapshot:
 
     messages: tuple[AttentionMessage, ...] = ()
     complete: bool = False
-    watermark_ms: int = 0
-    resolved_question_ids: frozenset[str] = frozenset()
-    question_owners: Mapping[str, str] = field(default_factory=dict)
     bot_replies: Mapping[str, BotReplyFact] = field(default_factory=dict)
+    window_truncated: bool | None = None
+    # 只允许由出站投递账本的确定性链接填充；assistant 历史行不可代替。
+    latest_accepted_final: BotReplyFact | None = None
+    accepted_outbound_facts: tuple[BotReplyFact, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class AttentionDecision:
     kind: AttentionKind
-    score: int
+    score: float | None
     threshold: int | None
     reasons: tuple[str, ...]
+    score_breakdown: tuple[tuple[str, float], ...] = ()
+    state: str | None = None
+    scene_type: str | None = None
+    scene_score: float = 0.0
+    topic_score: float = 0.0
+    topic_raw_score: float = 0.0
+    anchor_event_id: str | None = None
+    topic_match_event_id: str | None = None
+    matched_span_lengths: tuple[int, int] | None = None
+    ask_raw_score: float = 0.0
+    ask_position_weight: float = 1.0
+    ask_punctuation_weight: float = 1.0
+    ask_adjusted_score: float = 0.0
+    ask_span_start: int | None = None
+    ask_span_end: int | None = None
+    capability_strength: str | None = None
+    capability_span_start: int | None = None
+    capability_span_end: int | None = None
+    capability_position_weight: float | None = None
 
 
 class AttentionInputError(ValueError):
     """输入缺少可信 Redis 事件 ID 或无法解析事件时间。"""
 
 
-_SHORT_REACTIONS = frozenset({
-    "哈哈", "哈哈哈", "哈哈哈哈", "好", "好的", "收到", "谢谢", "嗯", "嗯嗯",
-    "哦", "哦哦", "是的", "对", "对的", "没错", "666", "草", "笑死",
-    "笑死了", "懂了", "可以", "行", "ok", "👍", "👌", "😂", "🤣",
-})
-_BROADCAST_RE = re.compile(r"(?:有(?:没有|人|谁)|大家|各位|群里(?:有|有没有))")
-_ASK_RE = re.compile(r"(?:请教|求助|求推荐|推荐一下|帮(?:忙|我)?(?:看|查|找|解决|分析)|谁知道|怎么(?:办|设置|解决|修复)|如何|为什么|为啥|能不能|有没有办法|哪里(?:能|可以))")
-_QUESTION_RE = re.compile(r"[？?]|(?:怎么|如何|为什么|为啥|能否|是否|有没有|哪一个|哪个|多少|什么原因)")
-_REQUEST_RE = re.compile(r"(?:帮我|麻烦|请|求|查一下|看一下|分析一下|推荐|设置|解决|修复|对比|比较|解释)")
-_CONCRETE_RE = re.compile(
-    r"(?:[A-Za-z][A-Za-z0-9_.+-]*|\d+(?:\.\d+)+(?:[A-Za-z]+)?|"
-    r"(?:报错|错误|异常|配置|版本|型号|软件|应用|程序|设备|芯片|模型|文件|视频|图片|代码|接口|网络|账号|参数|日志|命令|方案|价格|延迟|温度|咖啡))",
-    re.IGNORECASE,
-)
-_VAGUE_RE = re.compile(r"^(?:这个怎么搞|这个咋办|怎么弄|咋整|有懂的吗|有人吗|在吗)[。！!？? ]*$", re.IGNORECASE)
-_HIGH_CONFIDENCE_NO_REQUEST = frozenset({
-    "笑死", "笑死了", "太好了", "确实", "离谱", "好家伙", "绷不住了",
-    "这也太离谱了", "这个太好笑了", "这结果真让人笑死",
-})
-_EXPLICIT_CALL_RE = re.compile(r"^(?:咕咕|gugu)[，,:：\s]+(.+)$", re.IGNORECASE)
-_GENERIC_UNTARGETED = frozenset({"测试个功能", "测试一下功能", "帮我看看", "看一下", "帮忙看看"})
-
-
 def _stream_event_ms(event_id: str) -> int:
-    head, separator, _tail = str(event_id).partition("-")
-    if not separator:
+    head, separator, tail = str(event_id).partition("-")
+    if not separator or not tail:
         raise AttentionInputError("Redis Stream event_id 格式无效")
     try:
         value = int(head)
+        int(tail)
     except (TypeError, ValueError) as exc:
         raise AttentionInputError("Redis Stream event_id 缺少可信到达时间") from exc
     if value <= 0:
@@ -163,8 +193,8 @@ def _stream_event_ms(event_id: str) -> int:
 def _optional_text(value: object) -> str | None:
     if value is None:
         return None
-    value = str(value).strip()
-    return value or None
+    text = str(value).strip()
+    return text or None
 
 
 def _optional_bool(value: object) -> bool | None:
@@ -180,235 +210,47 @@ def _optional_millis(value: object) -> int | None:
         return None
     if result <= 0:
         return None
-    # 平台字段可能是 Unix 秒，也可能已经是毫秒。
     return result * 1000 if result < 10_000_000_000 else result
 
 
 def _media_kinds(value: object) -> tuple[str, ...]:
     if not isinstance(value, (list, tuple)):
         return ()
-    kinds: set[str] = set()
+    result = set()
     for item in value:
         if isinstance(item, dict):
-            raw_kind = item.get("media_kind") or item.get("media_type") or item.get("type")
+            raw = str(item.get("media_kind") or item.get("media_type") or item.get("type") or "").lower()
             mime = str(item.get("mime_type") or "").lower()
-            if raw_kind:
-                kinds.add(str(raw_kind).lower())
-            elif mime:
-                kinds.add(mime.split("/", 1)[0])
-            else:
-                kinds.add("unknown")
+            aliases = {"photo": "image", "picture": "image", "document": "file", "voice": "audio", "animation": "video"}
+            result.add(aliases.get(raw, raw or mime.split("/", 1)[0] or "unknown"))
         elif isinstance(item, str):
-            kinds.add("unknown")
-    return tuple(sorted(kinds))
+            result.add("unknown")
+    return tuple(sorted(result))
 
 
-def normalize_text(text: str) -> str:
-    value = unicodedata.normalize("NFKC", str(text or "")).casefold()
-    return re.sub(r"[\s\u3000]+", "", value).strip("，。！？!?；;、,.：:")
+def build_logical_candidates(*args, **kwargs):
+    from agent.im.auto_reply.attention_algorithm import build_logical_candidates as implementation
+    return implementation(*args, **kwargs)
 
 
-def _explicit_call(message: AttentionMessage) -> bool:
-    match = _EXPLICIT_CALL_RE.match(message.raw_text.strip())
-    return bool(match and _REQUEST_RE.search(match.group(1)))
+def decide_attention(*args, **kwargs):
+    from agent.im.auto_reply.attention_algorithm import decide_attention as implementation
+    return implementation(*args, **kwargs)
 
 
-def _trusted_bot_reply(message: AttentionMessage, snapshot: AttentionSnapshot) -> BotReplyFact | None:
-    if not message.reply_to_platform_message_id or not snapshot.complete:
-        return None
-    fact = snapshot.bot_replies.get(message.reply_to_platform_message_id)
-    if fact is None or not fact.accepted or not message.sender_id:
-        return None
-    if fact.recipient_sender_id != message.sender_id:
-        return None
-    if message.event_received_ms - fact.sent_at_ms > 120_000:
-        return None
-    return fact
+def normalize_text(*args, **kwargs):
+    from agent.im.auto_reply.attention_algorithm import normalize_text as implementation
+    return implementation(*args, **kwargs)
 
 
-def _trusted_bot_continuation(message: AttentionMessage, snapshot: AttentionSnapshot) -> bool:
-    fact = _trusted_bot_reply(message, snapshot)
-    return bool(fact and (_REQUEST_RE.search(message.raw_text) or _QUESTION_RE.search(message.raw_text)))
+def score_attention(*args, **kwargs):
+    from agent.im.auto_reply.attention_algorithm import score_attention as implementation
+    return implementation(*args, **kwargs)
 
-
-def _trusted_media_continuation(message: AttentionMessage, snapshot: AttentionSnapshot) -> bool:
-    if not message.media_only or message.processable_media is not True or not snapshot.complete:
-        return False
-    return _trusted_bot_reply(message, snapshot) is not None
-
-
-def _hard_reject(message: AttentionMessage, snapshot: AttentionSnapshot, explicit_call: bool) -> str | None:
-    text = normalize_text(message.raw_text)
-    if message.media_only and not text:
-        return "H01_media_only"
-    if len(text) <= 8 and text in {normalize_text(item) for item in _SHORT_REACTIONS}:
-        return "H02_short_reaction"
-    if not message.mentioned_current_bot and (
-        message.mentioned_other_bot is True or message.mentioned_other_member is True
-    ):
-        return "H03_other_mention"
-    if (
-        not explicit_call
-        and not message.mentioned_current_bot
-        and message.reply_to_platform_message_id
-        and message.reply_target_is_bot is False
-    ):
-        return "H04_reply_to_other"
-    if not message.mentioned_current_bot and not explicit_call and text in {
-        normalize_text(item) for item in _GENERIC_UNTARGETED
-    }:
-        return "H05_untargeted_command"
-    if not message.mentioned_current_bot and not explicit_call and not _QUESTION_RE.search(message.raw_text):
-        if text in {normalize_text(item) for item in _HIGH_CONFIDENCE_NO_REQUEST}:
-            return "H06_social_expression"
-    if (
-        message.reply_to_platform_message_id
-        and message.reply_to_platform_message_id in snapshot.resolved_question_ids
-        and message.sender_id
-        and snapshot.question_owners.get(message.reply_to_platform_message_id) == message.sender_id
-        and not _QUESTION_RE.search(message.raw_text)
-    ):
-        return "H08_question_resolved"
-    return None
-
-
-def _is_open_candidate(message: AttentionMessage) -> bool:
-    text = message.raw_text.strip()
-    if not text or message.media_only:
-        return False
-    concrete = bool(_CONCRETE_RE.search(text))
-    question = bool(_QUESTION_RE.search(text))
-    broadcast_request = bool(_BROADCAST_RE.search(text) and _ASK_RE.search(text))
-    return broadcast_request and concrete or question and concrete
-
-
-def _same_question_count(message: AttentionMessage, snapshot: AttentionSnapshot) -> int:
-    normalized = normalize_text(message.raw_text)
-    if not normalized:
-        return 0
-    senders = {
-        item.sender_id for item in snapshot.messages
-        if item.sender_id and item.sender_id != message.sender_id
-        and normalize_text(item.raw_text) == normalized
-        and not item.sender_is_bot
-    }
-    return len(senders)
-
-
-def _peer_exchange(messages: tuple[AttentionMessage, ...], message: AttentionMessage) -> str | None:
-    if not message.sender_id:
-        return None
-    recent = [item for item in messages if not item.sender_is_bot and item.sender_id and
-              0 <= message.event_received_ms - item.event_received_ms <= 60_000]
-    senders = []
-    for item in recent:
-        if not senders or senders[-1] != item.sender_id:
-            senders.append(item.sender_id)
-    if len(set(senders[-3:])) == 2 and len(senders) >= 3 and senders[-3] == senders[-1]:
-        exchange = recent[-3:]
-        if all(item.reply_to_platform_message_id for item in exchange[1:]):
-            return "N01_strong_peer_exchange"
-    counts: dict[str, int] = {}
-    for item in recent:
-        counts[item.sender_id] = counts.get(item.sender_id, 0) + 1
-    ranked = sorted(counts.items(), key=lambda pair: pair[1], reverse=True)
-    if len(ranked) >= 2:
-        first, second = ranked[:2]
-        human_count = max(1, len(recent))
-        if first[1] + second[1] >= human_count * 0.7 and len(senders) >= 3:
-            if len(set(senders[-3:])) == 2:
-                return "N02_weak_peer_exchange"
-    return None
-
-
-def score_open_candidate(message: AttentionMessage, snapshot: AttentionSnapshot) -> tuple[int, tuple[str, ...]]:
-    """依据 PRD 的固定 P/N 权重评分，不读取正文以外的非结构化推测。"""
-    if not snapshot.complete:
-        return 0, ("snapshot_incomplete",)
-    reasons: list[str] = []
-    text = message.raw_text
-    if _BROADCAST_RE.search(text) and _ASK_RE.search(text) and _CONCRETE_RE.search(text):
-        reasons.append("P01_group_broadcast_request")
-    if _QUESTION_RE.search(text) and _CONCRETE_RE.search(text):
-        reasons.append("P02_substantive_question")
-    if re.search(r"(?:\d+(?:\.\d+)+|错误码|报错|配置项|型号|预算|地区|时间|温度|版本)", text):
-        reasons.append("P03_concrete_context")
-    if (
-        message.event_received_ms - snapshot.watermark_ms >= 5_000
-        and not any(item.event_received_ms > message.event_received_ms for item in snapshot.messages)
-    ):
-        reasons.append("P04_unanswered_observed")
-    prior_humans = [item for item in snapshot.messages if not item.sender_is_bot]
-    if not any(0 <= message.event_received_ms - item.event_received_ms <= 60_000 for item in prior_humans):
-        reasons.append("P05_quiet_conversation")
-    if _same_question_count(message, snapshot):
-        reasons.append("P06_multiple_independent_askers")
-    exchange = _peer_exchange(snapshot.messages, message)
-    if exchange:
-        reasons.append(exchange)
-    if message.reply_to_platform_message_id in snapshot.resolved_question_ids:
-        reasons.append("N03_human_answer_confirmed")
-    if any(
-        fact.accepted and 0 <= message.event_received_ms - fact.sent_at_ms <= 180_000
-        for fact in snapshot.bot_replies.values()
-    ):
-        reasons.append("N04_recent_proactive_bot_reply")
-    if sum(
-        1 for item in prior_humans
-        if 0 <= message.event_received_ms - item.event_received_ms <= 60_000
-    ) >= 8:
-        reasons.append("N05_busy_group")
-    if _VAGUE_RE.fullmatch(text.strip()):
-        reasons.append("N06_vague_question")
-    normalized = normalize_text(text)
-    if any(normalize_text(item.raw_text) == normalized for item in snapshot.messages if item.sender_is_bot):
-        reasons.append("N07_bot_already_answered")
-    weights = {
-        "P01_group_broadcast_request": 35,
-        "P02_substantive_question": 30,
-        "P03_concrete_context": 15,
-        "P04_unanswered_observed": 10,
-        "P05_quiet_conversation": 10,
-        "P06_multiple_independent_askers": 10,
-        "N01_strong_peer_exchange": -45,
-        "N02_weak_peer_exchange": -20,
-        "N03_human_answer_confirmed": -45,
-        "N04_recent_proactive_bot_reply": -25,
-        "N05_busy_group": -10,
-        "N06_vague_question": -25,
-        "N07_bot_already_answered": -40,
-    }
-    return max(0, min(100, sum(weights[item] for item in reasons))), tuple(reasons)
-
-
-def decide_attention(
-    message: AttentionMessage,
-    snapshot: AttentionSnapshot,
-    mode: AttentionMode,
-    *,
-    budget_available: bool = True,
-) -> AttentionDecision:
-    """对单条消息执行 DIRECT→CONTINUE→H→开放候选评分的固定顺序。"""
-    explicit_call = _explicit_call(message)
-    if message.mentioned_current_bot is True or explicit_call:
-        return AttentionDecision(AttentionKind.DIRECT, 100, None, ("DIRECT_invitation",))
-    if _trusted_media_continuation(message, snapshot):
-        return AttentionDecision(AttentionKind.CONTINUE, 100, None, ("CONTINUE_verified_media_reply",))
-    if _trusted_bot_continuation(message, snapshot):
-        return AttentionDecision(AttentionKind.CONTINUE, 100, None, ("CONTINUE_verified_reply",))
-    hard_reason = _hard_reject(message, snapshot, explicit_call)
-    if hard_reason:
-        return AttentionDecision(AttentionKind.PASSIVE, 0, None, (hard_reason,))
-    if not _is_open_candidate(message):
-        return AttentionDecision(AttentionKind.PASSIVE, 0, None, ("not_open_candidate",))
-    if mode is AttentionMode.QUIET:
-        return AttentionDecision(AttentionKind.PASSIVE, 0, None, ("quiet_mode_suppresses_open_candidate",))
-    score, reasons = score_open_candidate(message, snapshot)
-    threshold = 70 if mode is AttentionMode.NATURAL else 55
-    if not snapshot.complete:
-        return AttentionDecision(AttentionKind.PASSIVE, score, threshold, reasons)
-    if score < threshold:
-        return AttentionDecision(AttentionKind.PASSIVE, score, threshold, reasons)
-    if not budget_available:
-        return AttentionDecision(AttentionKind.PASSIVE, score, threshold, (*reasons, "proactive_budget_unavailable"))
-    return AttentionDecision(AttentionKind.PROACTIVE, score, threshold, reasons)
+__all__ = [
+    "AttentionDecision", "AttentionInputError", "AttentionKind", "AttentionMessage",
+    "AttentionMode", "AttentionSnapshot", "BotReplyFact", "ATTENTION_ALGORITHM_VERSION",
+    "DEFAULT_ACTIVE_THRESHOLD", "DEFAULT_NATURAL_THRESHOLD", "DEFAULT_QUIET_THRESHOLD",
+    "MEMBER_ACTIVE_TTL_MS",
+    "build_logical_candidates", "decide_attention", "normalize_text", "score_attention",
+]

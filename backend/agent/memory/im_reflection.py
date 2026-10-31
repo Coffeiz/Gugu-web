@@ -18,7 +18,7 @@ from app.core import redis as R
 from app.core.tz import now_utc
 from agent.context.branch import ContextBranch
 from agent.context.branch_types import BranchInput, BranchPolicy
-from agent.memory.daily_compaction import merge_remaining, should_compact, split_batch
+from agent.memory.daily_compaction import should_compact, split_oldest_batch
 from agent.memory.reflection_branch import run_reflection_branch
 from agent.memory.event_memory import deduplicate_event_sections, normalize_event_memory
 from agent.memory.reflection_jobs import (
@@ -41,8 +41,7 @@ import logging
 _reflection_log = logging.getLogger("agent.memory.reflection")
 
 
-GROUP_DAILY_COMPACT_AT = 200
-GROUP_DAILY_KEEP_RECENT = 100
+GROUP_DAILY_COMPACT_AT = 100
 GROUP_DAILY_HARD_CAP = 300
 GROUP_MEMORY_MAX_TOKENS = 15000
 PRIVATE_DAILY_KEEP_RECENT = 50
@@ -977,10 +976,7 @@ async def _apply_output(
         summary = str(output.get("summary") or "").strip()
         if summary:
             await write_scope_json(scope, "summary.json", {"text": summary, "ts": now_utc().timestamp()})
-        if should_compact(
-            len(entries), trigger=GROUP_DAILY_COMPACT_AT,
-            keep_recent=GROUP_DAILY_KEEP_RECENT,
-        ):
+        if should_compact(len(entries), trigger=GROUP_DAILY_COMPACT_AT):
             try:
                 await _compact_group_daily(
                     scope,
@@ -1097,33 +1093,35 @@ async def _compact_group_daily(
     current_memory: str,
     settings,
 ) -> None:
-    """一次调用压缩群 daily，只维护群主档。"""
-    recent, batch, remaining = split_batch(
-        entries, keep_recent=GROUP_DAILY_KEEP_RECENT,
-    )
-    if not batch:
-        return
+    """按最旧优先分批全量沉淀群 daily；成功一批才移除该批记录。"""
     prompt = (Path(__file__).resolve().parents[1] / "prompts" / "im" / "group_compress.md").read_text(encoding="utf-8")
-    daily = _render_daily(batch)
-    branch = await ContextBranch().run(
-        BranchInput(
-            stable_system=prompt,
-            delta=f"已有长期记忆：\n{current_memory}\n\n近期群聊记录：\n{daily}",
-            scope="group-daily-compaction",
-        ),
-        BranchPolicy(
-            name="compaction",
-            output_mode="json",
-            max_tokens=GROUP_MEMORY_MAX_TOKENS,
-        ),
-        settings,
-    )
-    result = branch.output if branch.ok and isinstance(branch.output, dict) else {}
-    if branch.return_reason == "provider_error":
-        raise RuntimeError("group_daily_compaction_provider_error")
-    memory = str(result.get("memory") or "").strip() if isinstance(result, dict) else ""
-    memory = deduplicate_event_sections(normalize_event_memory(memory, fallback_title="群组事件记录"))
-    if not memory or not _preserves_group_dates(batch, memory):
-        return
-    await write_scope_file(scope, "memory.md", memory + "\n")
-    await write_scope_file(scope, "daily.md", _render_daily(merge_remaining(recent, remaining)))
+    pending = list(entries)
+    while pending:
+        remaining, batch = split_oldest_batch(pending)
+        if not batch:
+            return
+        daily = _render_daily(batch)
+        branch = await ContextBranch().run(
+            BranchInput(
+                stable_system=prompt,
+                delta=f"已有长期记忆：\n{current_memory}\n\n近期群聊记录：\n{daily}",
+                scope="group-daily-compaction",
+            ),
+            BranchPolicy(
+                name="compaction",
+                output_mode="json",
+                max_tokens=GROUP_MEMORY_MAX_TOKENS,
+            ),
+            settings,
+        )
+        result = branch.output if branch.ok and isinstance(branch.output, dict) else {}
+        if branch.return_reason == "provider_error":
+            raise RuntimeError("group_daily_compaction_provider_error")
+        memory = str(result.get("memory") or "").strip() if isinstance(result, dict) else ""
+        memory = deduplicate_event_sections(normalize_event_memory(memory, fallback_title="群组事件记录"))
+        if not memory or not _preserves_group_dates(batch, memory):
+            return
+        await write_scope_file(scope, "memory.md", memory + "\n")
+        await write_scope_file(scope, "daily.md", _render_daily(remaining))
+        current_memory = memory
+        pending = remaining

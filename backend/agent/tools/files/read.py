@@ -62,7 +62,7 @@ async def _read_history_text(meta: dict, attach_id: str, *, target_lines="all",
     }
 
 
-async def _read_history_media(db, user_id, attach_id: str, *, restricted: bool = False,
+async def _read_history_media(db, user_id, attach_id: str, *,
                               max_source_bytes: int | None = None, target_lines="all"):
     from app.core import chat_attach
     from agent.tools.media_reader import AUDIO_EXTS, IMAGE_EXTS, VIDEO_EXTS, read_media, read_stored_image
@@ -83,8 +83,6 @@ async def _read_history_media(db, user_id, attach_id: str, *, restricted: bool =
             "_image_block": result["block"], "_source_size_bytes": result["_source_size_bytes"],
             "note": f"已打开聊天附件图片《{meta.get('name') or attach_id}》，见随附图像。",
         }
-    if restricted:
-        return json.dumps({"error": "群聊成员和未识别身份只能读取图片附件"}, ensure_ascii=False)
     if kind == "text":
         return await _read_history_text(
             meta, attach_id, target_lines=target_lines,
@@ -103,6 +101,36 @@ def _restricted_file_reader() -> bool:
     from agent.im import imctx
     current_im = imctx.get_im()
     return bool(current_im and current_im.get("im_role") != "owner")
+
+
+async def _is_current_group_session_attachment(db, user_id, attach_id: str) -> bool:
+    """只允许群成员回读确实挂在当前群 session 消息上的聊天附件。"""
+    from agent.im import imctx
+    from agent.tools.base import current_dispatch_session_id
+    from app.models import ChatAttachment, ConversationMessage, ConversationSession
+    from sqlalchemy import select
+
+    current_im = imctx.get_im() or {}
+    session_id = current_dispatch_session_id()
+    if current_im.get("chat_type") != "group" or session_id is None:
+        return False
+    linked_session_id = await db.scalar(
+        select(ConversationSession.id)
+        .join(ConversationMessage, ConversationMessage.session_id == ConversationSession.id)
+        .join(ChatAttachment, ChatAttachment.message_id == ConversationMessage.id)
+        .where(
+            ChatAttachment.user_id == user_id,
+            ChatAttachment.attach_id == attach_id,
+            ChatAttachment.state == "attached",
+            ConversationSession.id == int(session_id),
+            ConversationSession.user_id == user_id,
+            ConversationSession.source == current_im.get("platform"),
+            ConversationSession.bot_id == current_im.get("channel_id"),
+            ConversationSession.chat_id == current_im.get("chat_id"),
+            ConversationSession.chat_type == "group",
+        )
+    )
+    return linked_session_id is not None
 
 
 async def _read_file_single(db, user_id, args: dict, *, restricted: bool = False,
@@ -149,13 +177,18 @@ async def _read_file_single(db, user_id, args: dict, *, restricted: bool = False
 
             current_im = imctx.get_im() or {}
             allowed_ids = current_im.get("current_attachment_ids") or ()
-            if attach_id not in allowed_ids:
+            is_session_attachment = attach_id not in allowed_ids and (
+                await _is_current_group_session_attachment(db, user_id, attach_id)
+                if current_im.get("chat_type") == "group"
+                else False
+            )
+            if attach_id not in allowed_ids and not is_session_attachment:
                 return json.dumps(
-                    {"error": "群聊成员和未识别身份只能读取当前消息提供的图片附件"},
+                    {"error": "群聊成员和未识别身份只能读取当前群会话中提供的附件"},
                     ensure_ascii=False,
                 )
         return await _read_history_media(
-            db, user_id, attach_id, restricted=restricted, max_source_bytes=max_source_bytes,
+            db, user_id, attach_id, max_source_bytes=max_source_bytes,
             target_lines=args.get("target_lines", "all"),
         )
     if restricted and args.get("file_id") is not None:

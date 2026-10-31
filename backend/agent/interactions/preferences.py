@@ -42,8 +42,8 @@ async def im_user_locale(user_id) -> str:
         return "zh-CN"
 
 
-async def im_mermaid_theme_preferences(user_id) -> dict[str, str]:
-    """读取 Mermaid 图片渲染需要的主题偏好；异常时使用默认浅色主题。"""
+async def im_chart_theme_preferences(user_id) -> dict[str, str]:
+    """读取 IM 图表渲染需要的主题偏好；异常时使用默认浅色主题。"""
     from sqlalchemy import select
     from app.db import session as db_session
     from app.models import UserPreferences

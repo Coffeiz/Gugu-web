@@ -446,6 +446,9 @@ class SearchSettings(BaseModel):
     )
     searxng_image_engines: str = Field("", description="SearXNG XNG 搜索 mode=images 启用的引擎（逗号分隔）；留空则回退复用 searxng_engines。图片分类能连通的引擎不一定和文本分类是同一批，需部署后用「测试」按钮实测调整")
     max_results:    int = Field(5, description="默认返回结果数")
+    rag_backend: Literal["typescript", "cython"] = Field(
+        "typescript", description="统一 RAG 查询运行时；Cython 开发观察入口，TS 作为手动回滚基线",
+    )
     ts_sidecar_command: str = Field("", description="TypeScript RAG worker 命令；为空则使用项目内置构建物")
     ts_index_sync_mode: Literal["incremental", "full"] = Field(
         "incremental",

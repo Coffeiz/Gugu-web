@@ -54,6 +54,7 @@ class AgentRequest:
     inbound_batch_key: Optional[str] = None         # Worker 固定的入站批次身份，不进入模型输入
     early_message_ids: Optional[list] = None        # 早落库的群消息行 id：run 复用这些行，不重复写
     im_batch_messages: Optional[list] = None        # 批次原始消息与早落库结果，供逐条恢复
+    im_attention_transcripts: dict[str, str] = field(default_factory=dict)  # 本轮群注意力预转写，仅内存复用
     group_auto_reply: bool = False                  # 仅普通群聊自动回复 run 启用本轮回复选择门
     group_reply_gate: object | None = None          # run 私有状态；不序列化、不跨消息继承
 

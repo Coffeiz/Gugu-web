@@ -2,15 +2,16 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import time
 from contextlib import asynccontextmanager
 from collections import OrderedDict
 from dataclasses import dataclass
-
-from sqlalchemy import func, select
+from pathlib import Path
 
 from agent.rag.models import IndexDocument
 from agent.rag.models import Scope
+from agent.rag.persistent_store import _load_rag_index_revision_rows
 from agent.rag.ts_sidecar import (
     TsLexicalIndex,
     TsSidecarUnavailable,
@@ -18,7 +19,6 @@ from agent.rag.ts_sidecar import (
     index_dir_for_owner,
 )
 from agent.rag.scope import matches_scope
-from app.models import KnowledgeIndexEntry
 
 
 INDEX_CACHE_TTL_SECONDS = 30 * 60
@@ -220,6 +220,30 @@ class KnowledgeIndexCache:
                         restored, 1, revision, backend, time.monotonic(),
                     ))
                     return restored
+            if backend == "cython":
+                index = await await_probe(
+                    "index_cython_database_load",
+                    self._build_index(
+                        backend, owner_user_id, None, revision, search_settings, diagnostics,
+                        allow_database_load=True,
+                        cache_scope=cache_scope,
+                        db=db,
+                    ),
+                )
+                if diagnostics is not None:
+                    diagnostics["cache_hit"] = False
+                    diagnostics["shared_index"] = bool(shared_key)
+                    diagnostics["document_count"] = _index_document_count(index)
+                    diagnostics.setdefault("index_sync", "cython_snapshot_or_database")
+                size = estimate_index_bytes([], index)
+                if size <= self.owner_limit_bytes:
+                    self._store(key, _Entry(
+                        index, size, revision, backend, time.monotonic(), persistent_loaded=True,
+                    ))
+                else:
+                    self._entries.pop(key, None)
+                    self._dispose(_Entry(index, size, revision, backend, time.monotonic()))
+                return index
             if backend == "typescript":
                 index = await await_probe(
                     "index_ts_database_load",
@@ -243,10 +267,7 @@ class KnowledgeIndexCache:
                     self._entries.pop(key, None)
                     self._dispose(_Entry(index, size, revision, backend, time.monotonic()))
                 return index
-            # backend 固定为 typescript（_selected_backend），上方分支必然返回。
-            # 此处曾是 Python 后端的「全量装载 + 来源合并 + worker sync」路径，
-            # TS 迁移后不可达，已删除（2026-09-14 清理）；force 语义不受影响——
-            # 它只作用于上方缓存捷径的跳过，worker 侧仍走水位增量同步。
+            raise RuntimeError(f"不支持的 RAG 后端: {backend}")
 
     async def get_transient(
         self, owner_user_id: object, documents: list[IndexDocument], *, revision: str,
@@ -336,11 +357,44 @@ class KnowledgeIndexCache:
                            diagnostics: dict[str, object] | None = None,
                            previous_documents: list[IndexDocument] | None = None,
                            previous_revision: str | None = None,
-                           allow_database_load: bool = False):
+                           allow_database_load: bool = False,
+                           cache_scope: str = "all", db=None):
         from agent.rag.observation import await_probe, probe_finish, probe_start, probe_update
         from agent.memory import embedding
 
         started = time.monotonic()
+        if backend == "cython":
+            if documents is not None:
+                from agent.rag.cython_backend import CythonLexicalIndex
+
+                return CythonLexicalIndex.build(documents, revision or "")
+            if not allow_database_load:
+                return None
+            from agent.rag.cython_lifecycle import CythonRagLifecycle
+
+            vector_tag = embedding.model_tag() if embedding.is_enabled() else ""
+            lifecycle = CythonRagLifecycle()
+            cache_tag = hashlib.sha256(cache_scope.encode("utf-8")).hexdigest()[:20]
+            snapshot_dir = Path(index_dir_for_owner(owner_user_id)).parent / "cython" / cache_tag
+            if db is None:
+                raise RuntimeError("Cython index build requires a database session")
+            result = await lifecycle.load_index_from_snapshot_or_database(
+                db, owner_user_id, snapshot_dir,
+                vector_version=vector_tag, revision=revision,
+            )
+            if diagnostics is not None:
+                diagnostics["index_sync"] = str(result.get("snapshot_status") or result.get("status") or "")
+                diagnostics["document_count"] = int(result.get("document_count") or 0)
+                diagnostics["vector_count"] = int(result.get("vector_count") or 0)
+                diagnostics["disk_index_reused"] = bool(result.get("snapshot_hit"))
+            probe_update(index_build={
+                "document_count": int(result.get("document_count") or 0),
+                "vector_count": int(result.get("vector_count") or 0),
+                "index_source": "cython_snapshot" if result.get("snapshot_hit") else "database",
+            })
+            if diagnostics is not None:
+                diagnostics["index_build_ms"] = int((time.monotonic() - started) * 1000)
+            return lifecycle
         if backend == "typescript":
             vector_tag = embedding.model_tag() if embedding.is_enabled() else ""
             client = await await_probe(
@@ -531,13 +585,7 @@ class KnowledgeIndexCache:
 
         # max(indexed_at) 必须含墓碑行（软删行）：这是 worker 增量同步的单游标水位。
         # 纯删除时墓碑自身的时间戳推进 revision，删除才能被 worker 看见。
-        rows = (await db.execute(select(
-            KnowledgeIndexEntry.source_type,
-            func.max(KnowledgeIndexEntry.indexed_at),
-        ).where(
-            KnowledgeIndexEntry.owner_user_id == owner_user_id,
-            KnowledgeIndexEntry.source_type != "file",
-        ).group_by(KnowledgeIndexEntry.source_type))).all()
+        rows = await _load_rag_index_revision_rows(db, owner_user_id)
         if not rows:
             return None
         revisions = ";".join(
@@ -682,9 +730,7 @@ class KnowledgeIndexCache:
 
     @staticmethod
     def _dispose(entry: _Entry) -> None:
-        """释放 Python 索引包装；常驻 TS worker 由应用生命周期统一回收。"""
-        # lexical client 由应用级 manager 持有，缓存淘汰只释放 Python entry，
-        # 保留 worker 内存索引以便后续 revision 变化直接 patch。
+        """释放缓存 entry；派生快照留在 owner 私有目录供后续冷恢复。"""
         return
 
 
@@ -717,8 +763,19 @@ async def search_documents_with_cache(
             query, limit=limit, source_types=source_types, scope=scope,
         )
     else:
-        results = await index.search(query, limit=limit, source_types=source_types, scope=scope)
-        timing = None
+        from app.core.config import get_settings
+
+        if _selected_backend(get_settings().search) == "cython":
+            results, search_diagnostics = await asyncio.to_thread(
+                index.search, query, limit=limit, source_types=source_types, scope=scope,
+            )
+            timing = None
+            if diagnostics is not None:
+                diagnostics["candidate_count"] = int(search_diagnostics.candidate_count)
+                diagnostics["eligible_count"] = int(search_diagnostics.eligible_count)
+        else:
+            results = await index.search(query, limit=limit, source_types=source_types, scope=scope)
+            timing = None
     if diagnostics is not None:
         elapsed = int((time.monotonic() - started) * 1000)
         diagnostics["sidecar_search_ms"] = elapsed
@@ -729,8 +786,13 @@ async def search_documents_with_cache(
 
 
 def _selected_backend(settings) -> str:
-    """生产词法检索固定使用 TypeScript worker。"""
-    return "typescript"
+    """由运行配置选择唯一 RAG 引擎；不做双跑或自动 fallback。"""
+    backend = str(getattr(settings, "rag_backend", "typescript") or "typescript")
+    if backend == "cython":
+        from agent.rag.cython_runtime import ensure_cython_importer
+
+        ensure_cython_importer()
+    return backend
 
 
 def _documents_fingerprint(documents: list[IndexDocument]) -> str:

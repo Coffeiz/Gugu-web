@@ -22,18 +22,22 @@ def test_unified_image_defaults_to_embedded_deps():
     assert "/data" in dockerfile and "VOLUME" in dockerfile, "必须声明 /data 卷兜底持久化"
 
 
-def test_production_dockerfiles_copy_mermaid_build_and_worker_dependencies():
-    """Mermaid 的静态导入在前端构建和一体化 Worker 运行时都必须随镜像存在。"""
-    worker = (REPO_ROOT / "backend/ts/workers/mermaid-renderer/worker.mjs").read_text(encoding="utf-8")
+def test_production_dockerfiles_copy_chart_build_and_worker_dependencies():
+    """图表静态导入和公式渲染依赖在对应镜像运行时都必须存在。"""
+    worker = (REPO_ROOT / "backend/ts/workers/chart-renderer/worker.mjs").read_text(encoding="utf-8")
     worker_modules = re.findall(r"from ['\"]\./([^'\"]+)['\"]", worker)
-    browser_renderer = (REPO_ROOT / "frontend/src/utils/mermaidRenderer.ts").read_text(encoding="utf-8")
+    browser_renderer = (REPO_ROOT / "frontend/src/utils/chart/mermaidRenderer.ts").read_text(encoding="utf-8")
     browser_modules = re.findall(
-        r"from ['\"][^'\"]*backend/ts/workers/mermaid-renderer/([^'\"]+)['\"]",
+        r"from ['\"][^'\"]*backend/ts/workers/chart-renderer/([^'\"]+)['\"]",
         browser_renderer,
     )
     unified = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
     standalone_frontend = (REPO_ROOT / "frontend/Dockerfile.prod").read_text(encoding="utf-8")
     standalone_backend = (REPO_ROOT / "backend/Dockerfile.prod").read_text(encoding="utf-8")
+
+    for dockerfile in (unified, standalone_backend):
+        assert "mathjax@4.1.3" in dockerfile
+        assert "import('mathjax')" in dockerfile
 
     def has_copy(dockerfile, source, destination):
         return any(
@@ -42,15 +46,15 @@ def test_production_dockerfiles_copy_mermaid_build_and_worker_dependencies():
         )
 
     for module in browser_modules:
-        source = f"backend/ts/workers/mermaid-renderer/{module}"
-        destination = "./backend/ts/workers/mermaid-renderer/"
+        source = f"backend/ts/workers/chart-renderer/{module}"
+        destination = "./backend/ts/workers/chart-renderer/"
         assert has_copy(unified, source, destination)
         assert has_copy(standalone_frontend, source, destination)
     for module in worker_modules:
-        source = f"backend/ts/workers/mermaid-renderer/{module}"
+        source = f"backend/ts/workers/chart-renderer/{module}"
         assert has_copy(unified, source, "./bin/")
         assert has_copy(standalone_backend, source, "./bin/")
-    worker_source = "backend/ts/workers/mermaid-renderer/worker.mjs"
+    worker_source = "backend/ts/workers/chart-renderer/worker.mjs"
     assert has_copy(unified, worker_source, "./bin/")
     assert has_copy(standalone_backend, worker_source, "./bin/")
 

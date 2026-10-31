@@ -454,6 +454,43 @@ async def test_send_message_replies_to_original_only_for_first_chunk(db, user_a,
 
 
 @pytest.mark.asyncio
+async def test_send_message_receipt_contains_all_chunk_message_ids(db, user_a, monkeypatch):
+    from app.models import UserBot
+
+    bot = UserBot(
+        user_id=user_a.id,
+        platform="telegram",
+        app_id="9003",
+        app_secret="123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef0123456789",
+    )
+    db.add(bot)
+    await db.commit()
+    await db.refresh(bot)
+    calls = []
+
+    async def api_call(_token, method, *, payload=None, timeout=20):
+        calls.append(method)
+        return {"message_id": 70 + len(calls)}
+
+    monkeypatch.setattr(telegram, "call", api_call)
+    monkeypatch.setattr(
+        "agent.im.telegram_format.split_markdown_v2",
+        lambda _text: ["第一段", "第二段"],
+    )
+
+    receipt = await telegram.send_message(
+        "-7001", "长回复", channel_id=str(bot.id), return_receipt=True,
+    )
+
+    assert receipt == {
+        "accepted": True,
+        "platform_message_id": "72",
+        "platform_message_ids": ["71", "72"],
+    }
+    assert calls == ["sendMessage", "sendMessage"]
+
+
+@pytest.mark.asyncio
 async def test_send_file_uses_multipart_photo_and_replies_to_source_message(db, user_a, monkeypatch):
     from app.models import UserBot
 

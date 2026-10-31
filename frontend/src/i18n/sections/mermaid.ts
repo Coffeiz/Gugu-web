@@ -5,6 +5,9 @@ export const mermaidUi = {
     expand: '放大预览', downloadPng: '下载 PNG', close: '关闭', previewTitle: 'Mermaid 图表预览',
     renderFailed: 'Mermaid 图表渲染失败', downloadFailed: 'PNG 导出失败，请稍后重试。',
     pngTooLarge: '图表超出 PNG 导出限制，请缩小图表后重试。',
+    formulaSource: '显示 TeX 源码', formulaRendered: '显示公式', formulaDownload: '下载公式 PNG',
+    formulaRenderFailed: '公式渲染失败，已显示 TeX 源码。', formulaDownloadFailed: '公式 PNG 导出失败，请稍后重试。',
+    formulaPngTooLarge: '公式超出 PNG 导出限制，请缩小公式后重试。',
   },
   'ja-JP': {
     zoomOut: '図を縮小', zoomIn: '図を拡大', resetZoom: '図のサイズをリセット',
@@ -12,6 +15,9 @@ export const mermaidUi = {
     expand: '拡大プレビュー', downloadPng: 'PNG をダウンロード', close: '閉じる', previewTitle: 'Mermaid 図のプレビュー',
     renderFailed: 'Mermaid 図を描画できませんでした', downloadFailed: 'PNG を出力できませんでした。後でもう一度お試しください。',
     pngTooLarge: '図が PNG 出力の上限を超えています。図を小さくして再試行してください。',
+    formulaSource: 'TeX ソースを表示', formulaRendered: '数式を表示', formulaDownload: '数式 PNG をダウンロード',
+    formulaRenderFailed: '数式を描画できません。TeX ソースを表示しています。', formulaDownloadFailed: '数式 PNG を出力できませんでした。後でもう一度お試しください。',
+    formulaPngTooLarge: '数式が PNG 出力の上限を超えています。数式を縮小して再試行してください。',
   },
   'en-US': {
     zoomOut: 'Zoom out diagram', zoomIn: 'Zoom in diagram', resetZoom: 'Reset diagram size',
@@ -19,5 +25,8 @@ export const mermaidUi = {
     expand: 'Expand preview', downloadPng: 'Download PNG', close: 'Close', previewTitle: 'Mermaid diagram preview',
     renderFailed: 'Mermaid diagram could not be rendered', downloadFailed: 'PNG export failed. Please try again.',
     pngTooLarge: 'The diagram exceeds PNG export limits. Reduce its size and try again.',
+    formulaSource: 'Show TeX source', formulaRendered: 'Show formula', formulaDownload: 'Download formula PNG',
+    formulaRenderFailed: 'Formula could not be rendered. Showing TeX source.', formulaDownloadFailed: 'Formula PNG export failed. Please try again.',
+    formulaPngTooLarge: 'The formula exceeds PNG export limits. Reduce its size and try again.',
   },
 } as const

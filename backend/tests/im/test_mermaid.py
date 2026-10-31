@@ -5,27 +5,27 @@ import pytest
 
 
 def test_renderer_does_not_exec_node_when_network_isolation_cannot_be_installed(monkeypatch):
-    from agent.im import mermaid
+    from agent.im import chart
 
     exec_calls = []
-    monkeypatch.setattr(mermaid.shutil, "which", lambda _name: "/usr/bin/node")
-    monkeypatch.setattr(mermaid.resource, "setrlimit", lambda *_args: None)
+    monkeypatch.setattr(chart.shutil, "which", lambda _name: "/usr/bin/node")
+    monkeypatch.setattr(chart.resource, "setrlimit", lambda *_args: None)
 
     def fail_closed():
         raise RuntimeError("seccomp_unavailable")
 
-    monkeypatch.setattr(mermaid, "_apply_network_seccomp", fail_closed)
-    monkeypatch.setattr(mermaid.os, "execv", lambda *args: exec_calls.append(args))
+    monkeypatch.setattr(chart, "_apply_network_seccomp", fail_closed)
+    monkeypatch.setattr(chart.os, "execv", lambda *args: exec_calls.append(args))
 
     with pytest.raises(RuntimeError, match="seccomp_unavailable"):
-        mermaid._sandbox_exec("worker.mjs")
+        chart._sandbox_exec("worker.mjs")
 
     assert exec_calls == []
 
 
 @pytest.mark.asyncio
 async def test_renderer_maps_individual_frames_and_skips_overlong_source(monkeypatch):
-    from agent.im import mermaid
+    from agent.im import chart
 
     png = b"\x89PNG\r\n\x1a\nvalid"
     frames = len(png).to_bytes(4, "big") + png + (0).to_bytes(4, "big")
@@ -41,21 +41,21 @@ async def test_renderer_maps_individual_frames_and_skips_overlong_source(monkeyp
     async def create_process(*_args, **_kwargs):
         return FakeProcess()
 
-    monkeypatch.setattr(mermaid.asyncio, "create_subprocess_exec", create_process)
-    sources = ["valid-a", "x" * (mermaid.MAX_SOURCE_CHARS + 1), "valid-c"]
+    monkeypatch.setattr(chart.asyncio, "create_subprocess_exec", create_process)
+    sources = [("mermaid", "valid-a"), ("mermaid", "x" * (chart.MAX_SOURCE_CHARS + 1)), ("mermaid", "valid-c")]
 
-    results = await mermaid.render_pngs(sources)
+    results = await chart.render_chart_pngs(sources)
 
     assert results == [png, None, None]
     assert json.loads(observed["payload"]) == {
-        "sources": ["valid-a", "valid-c"],
+        "charts": [{"type": "mermaid", "source": "valid-a"}, {"type": "mermaid", "source": "valid-c"}],
         "theme": {},
     }
 
 
 @pytest.mark.asyncio
 async def test_renderer_accepts_four_diagrams_in_one_reply(monkeypatch):
-    from agent.im import mermaid
+    from agent.im import chart
 
     png = b"\x89PNG\r\n\x1a\nvalid"
     frames = b"".join(len(png).to_bytes(4, "big") + png for _ in range(4))
@@ -71,21 +71,21 @@ async def test_renderer_accepts_four_diagrams_in_one_reply(monkeypatch):
     async def create_process(*_args, **_kwargs):
         return FakeProcess()
 
-    monkeypatch.setattr(mermaid.asyncio, "create_subprocess_exec", create_process)
-    sources = [f"synthetic-chart-{index}" for index in range(4)]
+    monkeypatch.setattr(chart.asyncio, "create_subprocess_exec", create_process)
+    sources = [("mermaid", f"synthetic-chart-{index}") for index in range(4)]
 
-    results = await mermaid.render_pngs(sources)
+    results = await chart.render_chart_pngs(sources)
 
     assert results == [png] * 4
     assert json.loads(observed["payload"]) == {
-        "sources": sources,
+        "charts": [{"type": chart_type, "source": source} for chart_type, source in sources],
         "theme": {},
     }
 
 
 @pytest.mark.asyncio
 async def test_renderer_timeout_terminates_child_and_returns_fallback(monkeypatch):
-    from agent.im import mermaid
+    from agent.im import chart
 
     events = []
 
@@ -109,24 +109,24 @@ async def test_renderer_timeout_terminates_child_and_returns_fallback(monkeypatc
         raise asyncio.TimeoutError
 
     process = FakeProcess()
-    monkeypatch.setattr(mermaid.asyncio, "create_subprocess_exec", create_process)
-    monkeypatch.setattr(mermaid.asyncio, "wait_for", timeout)
-    monkeypatch.setattr(mermaid.os, "killpg", lambda pid, signal: events.append((pid, signal)))
+    monkeypatch.setattr(chart.asyncio, "create_subprocess_exec", create_process)
+    monkeypatch.setattr(chart.asyncio, "wait_for", timeout)
+    monkeypatch.setattr(chart.os, "killpg", lambda pid, signal: events.append((pid, signal)))
 
-    assert await mermaid.render_pngs(["synthetic-source"]) == [None]
-    assert events == [("timeout", mermaid.RENDER_TIMEOUT_SECONDS), (456, 9), "wait"]
+    assert await chart.render_chart_pngs([("mermaid", "synthetic-source")]) == [None]
+    assert events == [("timeout", chart.RENDER_TIMEOUT_SECONDS), (456, 9), "wait"]
 
 
 @pytest.mark.asyncio
 async def test_complete_chart_becomes_png_between_surrounding_text(monkeypatch):
-    from agent.im import mermaid
+    from agent.im import chart
 
     async def fake_render(sources):
-        assert sources == ["graph TD; A-->B\n"]
+        assert sources == [("mermaid", "graph TD; A-->B\n")]
         return [b"\x89PNG\r\n\x1a\nchart"]
 
-    monkeypatch.setattr(mermaid, "render_pngs", fake_render)
-    parts = await mermaid.render_reply(
+    monkeypatch.setattr(chart, "render_chart_pngs", fake_render)
+    parts = await chart.render_chart_reply(
         "图在这里：\n```Mermaid\ngraph TD; A-->B\n```\n总结在这里。"
     )
 
@@ -139,22 +139,22 @@ async def test_complete_chart_becomes_png_between_surrounding_text(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_incomplete_or_failed_chart_keeps_readable_source(monkeypatch):
-    from agent.im import mermaid
+    from agent.im import chart
 
     async def fail_render(sources):
         return [None] * len(sources)
 
-    monkeypatch.setattr(mermaid, "render_pngs", fail_render)
+    monkeypatch.setattr(chart, "render_chart_pngs", fail_render)
     incomplete = "正文\n```mermaid\ngraph TD; A-->B"
     failed = "```mermaid\ngraph TD; A-->B\n```"
 
-    assert [part.text for part in await mermaid.render_reply(incomplete)] == [incomplete]
-    assert [part.text for part in await mermaid.render_reply(failed)] == [failed]
+    assert [part.text for part in await chart.render_chart_reply(incomplete)] == [incomplete]
+    assert [part.text for part in await chart.render_chart_reply(failed)] == [failed]
 
 
 @pytest.mark.asyncio
 async def test_streaming_renderer_batches_more_than_one_batch_across_rounds(monkeypatch):
-    from agent.im import mermaid
+    from agent.im import chart
 
     calls = []
 
@@ -162,8 +162,8 @@ async def test_streaming_renderer_batches_more_than_one_batch_across_rounds(monk
         calls.append(sources)
         return [b"\x89PNG\r\n\x1a\nchart"] * len(sources)
 
-    monkeypatch.setattr(mermaid, "render_pngs", render)
-    renderer = mermaid.StreamingRenderer(max_diagrams=None)
+    monkeypatch.setattr(chart, "render_chart_pngs", render)
+    renderer = chart.StreamingChartRenderer(max_charts=None)
     sources = [f"```mermaid\ngraph TD; A{i}-->B{i}\n```" for i in range(5)]
 
     streamed = await renderer.feed("前文\n" + "\n".join(sources[:4]) + "\n后文")
@@ -186,7 +186,7 @@ async def test_streaming_renderer_batches_more_than_one_batch_across_rounds(monk
 
 @pytest.mark.asyncio
 async def test_run_queued_diagrams_keep_text_streaming_and_render_one_at_a_time(monkeypatch):
-    from agent.im import mermaid
+    from agent.im import chart
 
     calls = []
     png = b"\x89PNG\r\n\x1a\nchart"
@@ -195,8 +195,8 @@ async def test_run_queued_diagrams_keep_text_streaming_and_render_one_at_a_time(
         calls.append(sources)
         return [png] * len(sources)
 
-    monkeypatch.setattr(mermaid, "render_pngs", render)
-    renderer = mermaid.StreamingRenderer(max_diagrams=None, inline_images=False)
+    monkeypatch.setattr(chart, "render_chart_pngs", render)
+    renderer = chart.StreamingChartRenderer(max_charts=None, inline_images=False)
     sources = [f"```mermaid\ngraph LR; A{index}-->B{index}\n```" for index in range(6)]
 
     streamed = await renderer.feed("前文\n" + "\n".join(sources) + "\n后文继续生成一些文字。")
@@ -208,7 +208,7 @@ async def test_run_queued_diagrams_keep_text_streaming_and_render_one_at_a_time(
 
     await renderer.finish_round(defer_images=True)
     assert calls == []
-    images = await renderer.render_deferred_diagrams()
+    images = await renderer.render_deferred_charts()
 
     assert [len(batch) for batch in calls] == [1] * len(sources)
     assert len([part for part in images if part.png]) == len(sources)
@@ -218,20 +218,20 @@ async def test_run_queued_diagrams_keep_text_streaming_and_render_one_at_a_time(
 
 @pytest.mark.asyncio
 async def test_progressive_mermaid_render_queue_does_not_pause_stream_tokens(monkeypatch):
-    from agent.im import mermaid
+    from agent.im import chart
 
     render_started = asyncio.Event()
     release_render = asyncio.Event()
     render_finished = asyncio.Event()
     png = b"\x89PNG\r\n\x1a\nchart"
 
-    async def render(source):
+    async def render(_chart_type, source):
         render_started.set()
         await release_render.wait()
         render_finished.set()
         return png
 
-    monkeypatch.setattr(mermaid, "render_png", render)
+    monkeypatch.setattr(chart, "render_chart_png", render)
     source = "```mermaid\ngraph LR; A-->B\n```"
     seen = []
 
@@ -244,28 +244,28 @@ async def test_progressive_mermaid_render_queue_does_not_pause_stream_tokens(mon
         release_render.set()
         yield ("final", object())
 
-    async for event in mermaid.ProgressiveMermaidTokenFilter().events(token_iter()):
+    async for event in chart.ProgressiveChartTokenFilter().events(token_iter()):
         seen.append(event)
 
-    assert seen[0] == ("mermaid_pending", (1, source))
+    assert seen[0] == ("chart_pending", (1, source))
     assert "".join(value for kind, value in seen if kind == "token") == "后续文字仍然继续流出。"
-    assert [kind for kind, _payload in seen].index("mermaid_image") < len(seen) - 1
-    image = next(value for kind, value in seen if kind == "mermaid_image")
+    assert [kind for kind, _payload in seen].index("chart_image") < len(seen) - 1
+    image = next(value for kind, value in seen if kind == "chart_image")
     assert image[2:] == (source, png)
     assert seen[-1][0] == "final"
 
 
 @pytest.mark.asyncio
 async def test_progressive_mermaid_queue_has_no_total_chart_limit(monkeypatch):
-    from agent.im import mermaid
+    from agent.im import chart
 
     rendered = []
 
-    async def render(source):
+    async def render(_chart_type, source):
         rendered.append(source)
         return b"\x89PNG\r\n\x1a\nchart"
 
-    monkeypatch.setattr(mermaid, "render_png", render)
+    monkeypatch.setattr(chart, "render_chart_png", render)
     sources = [f"```mermaid\ngraph LR; A{index}-->B{index}\n```" for index in range(5)]
     text = "\n".join(sources)
 
@@ -274,27 +274,30 @@ async def test_progressive_mermaid_queue_has_no_total_chart_limit(monkeypatch):
         yield ("final", object())
 
     events = [
-        event async for event in mermaid.ProgressiveMermaidTokenFilter().events(token_iter())
+        event async for event in chart.ProgressiveChartTokenFilter().events(token_iter())
     ]
 
     assert len(rendered) == len(sources)
-    assert sum(kind == "mermaid_image" for kind, _payload in events) == len(sources)
-    assert sum(kind == "mermaid_pending" for kind, _payload in events) == len(sources)
+    assert sum(kind == "chart_image" for kind, _payload in events) == len(sources)
+    assert sum(kind == "chart_pending" for kind, _payload in events) == len(sources)
     assert not any(source in "".join(value for kind, value in events if kind == "token") for source in sources)
 
 
 @pytest.mark.asyncio
 async def test_inline_streaming_renderer_keeps_images_between_text_segments(monkeypatch):
-    from agent.im import mermaid
+    from agent.im import chart
 
     pngs = [b"\x89PNG\r\n\x1a\nchart-1", b"\x89PNG\r\n\x1a\nchart-2"]
 
     async def render(sources):
-        assert sources == ["graph TD; A-->B\n", "graph TD; B-->C\n"]
+        assert sources == [
+            ("mermaid", "graph TD; A-->B\n"),
+            ("mermaid", "graph TD; B-->C\n"),
+        ]
         return pngs
 
-    monkeypatch.setattr(mermaid, "render_pngs", render)
-    renderer = mermaid.StreamingRenderer(inline_images=True)
+    monkeypatch.setattr(chart, "render_chart_pngs", render)
+    renderer = chart.StreamingChartRenderer(inline_images=True)
     source_a = "```mermaid\ngraph TD; A-->B\n```"
     source_b = "```mermaid\ngraph TD; B-->C\n```"
 
@@ -312,7 +315,7 @@ async def test_inline_streaming_renderer_keeps_images_between_text_segments(monk
 
 @pytest.mark.asyncio
 async def test_image_send_failure_falls_back_without_dropping_reply_text(monkeypatch):
-    from agent.im import replies, mermaid
+    from agent.im import replies, chart
     from agent.models import AgentResponse
 
     sent_text = []
@@ -334,7 +337,7 @@ async def test_image_send_failure_falls_back_without_dropping_reply_text(monkeyp
         raise RuntimeError("synthetic gateway failure")
 
     monkeypatch.setattr("agent.im.files.send_files", fake_files)
-    monkeypatch.setattr(mermaid, "render_pngs", fake_render)
+    monkeypatch.setattr(chart, "render_chart_pngs", fake_render)
     monkeypatch.setattr(replies, "send_text", fake_text)
     monkeypatch.setattr(replies, "send_png_image", fail_image)
 
@@ -350,14 +353,14 @@ async def test_image_send_failure_falls_back_without_dropping_reply_text(monkeyp
 
 @pytest.mark.asyncio
 async def test_completed_im_round_sends_mermaid_as_independent_image(monkeypatch):
-    from agent.im import replies, mermaid
+    from agent.im import replies, chart
 
     events = []
     png = b"\x89PNG\r\n\x1a\nchart"
     source = "```mermaid\ngraph LR; A-->B\n```"
 
     async def fake_render(sources):
-        assert sources == ["graph LR; A-->B\n"]
+        assert sources == [("mermaid", "graph LR; A-->B\n")]
         return [png]
 
     async def fake_text(_payload, text):
@@ -368,7 +371,7 @@ async def test_completed_im_round_sends_mermaid_as_independent_image(monkeypatch
         events.append(("image", image))
         return True
 
-    monkeypatch.setattr(mermaid, "render_pngs", fake_render)
+    monkeypatch.setattr(chart, "render_chart_pngs", fake_render)
     monkeypatch.setattr(replies, "send_text", fake_text)
     monkeypatch.setattr(replies, "send_png_image", fake_image)
 
@@ -387,7 +390,7 @@ async def test_completed_im_round_sends_mermaid_as_independent_image(monkeypatch
 
 @pytest.mark.asyncio
 async def test_qq_completed_round_keeps_trailing_text_together_after_mermaid(monkeypatch):
-    from agent.im import mermaid, replies
+    from agent.im import chart, replies
 
     events = []
     png = b"\x89PNG\r\n\x1a\nchart"
@@ -395,7 +398,7 @@ async def test_qq_completed_round_keeps_trailing_text_together_after_mermaid(mon
     trailing_text = "最后这段文字用于验证解析器暂存的末尾内容仍和正文发在同一条消息里。"
 
     async def fake_render(sources):
-        assert sources == ["graph LR; A-->B\n"]
+        assert sources == [("mermaid", "graph LR; A-->B\n")]
         return [png]
 
     async def fake_text(_payload, text):
@@ -406,7 +409,7 @@ async def test_qq_completed_round_keeps_trailing_text_together_after_mermaid(mon
         events.append(("image", image))
         return True
 
-    monkeypatch.setattr(mermaid, "render_pngs", fake_render)
+    monkeypatch.setattr(chart, "render_chart_pngs", fake_render)
     monkeypatch.setattr(replies, "send_text", fake_text)
     monkeypatch.setattr(replies, "send_png_image", fake_image)
 
@@ -423,7 +426,7 @@ async def test_qq_completed_round_keeps_trailing_text_together_after_mermaid(mon
 
 @pytest.mark.asyncio
 async def test_qq_completed_round_sends_all_rendered_charts(monkeypatch):
-    from agent.im import mermaid, replies
+    from agent.im import chart, replies
 
     sent = []
     png = b"\x89PNG\r\n\x1a\nchart"
@@ -431,9 +434,9 @@ async def test_qq_completed_round_sends_all_rendered_charts(monkeypatch):
 
     batches = []
 
-    async def render(diagrams):
-        batches.append(diagrams)
-        return [png] * len(diagrams)
+    async def render(charts):
+        batches.append(charts)
+        return [png] * len(charts)
 
     async def send_image(_payload, image):
         sent.append(image)
@@ -443,7 +446,7 @@ async def test_qq_completed_round_sends_all_rendered_charts(monkeypatch):
         sent.append(_text)
         return True
 
-    monkeypatch.setattr(mermaid, "render_pngs", render)
+    monkeypatch.setattr(chart, "render_chart_pngs", render)
     monkeypatch.setattr(replies, "_try_send_png_image", send_image)
     monkeypatch.setattr(replies, "send_text", send_text)
 
@@ -524,7 +527,7 @@ async def test_qq_mermaid_image_always_uses_active_send(monkeypatch):
 async def test_qq_completed_mermaid_text_without_inbound_message_uses_active_send(
     monkeypatch,
 ):
-    from agent.im import mermaid, replies
+    from agent.im import chart, replies
 
     sent = []
 
@@ -536,7 +539,7 @@ async def test_qq_completed_mermaid_text_without_inbound_message_uses_active_sen
         return [None] * len(sources)
 
     monkeypatch.setattr(replies, "send_text", fake_text)
-    monkeypatch.setattr(mermaid, "render_pngs", failed_render)
+    monkeypatch.setattr(chart, "render_chart_pngs", failed_render)
     diagrams = [f"```mermaid\ngraph TD; A{index}-->B{index}\n```" for index in range(1, 8)]
     text = "\n".join(diagrams)
     payload = {
@@ -557,7 +560,7 @@ async def test_qq_stream_mermaid_fallback_and_following_text_survive_without_mes
     monkeypatch,
 ):
     from agent.gateway import qq
-    from agent.im import mermaid, replies
+    from agent.im import chart, replies
 
     active_payloads = []
     streams = []
@@ -597,12 +600,12 @@ async def test_qq_stream_mermaid_fallback_and_following_text_survive_without_mes
         "channel_id": "synthetic-channel",
         "message_id": None,
     }
-    sender = replies._QQMermaidRound(payload, show_intermediate_replies=True)
+    sender = replies._QQChartRound(payload, show_intermediate_replies=True)
     fallback_source = "```mermaid\ngraph TD; A-->B\n```"
 
     await sender._emit_parts([
-        mermaid.ReplyPart(png=b"png", source=fallback_source),
-        mermaid.ReplyPart(text="后续正文"),
+        chart.ReplyPart(png=b"png", source=fallback_source),
+        chart.ReplyPart(text="后续正文"),
     ])
     await sender._finish_text_segment()
 
@@ -615,7 +618,7 @@ async def test_qq_stream_mermaid_fallback_and_following_text_survive_without_mes
 
 @pytest.mark.asyncio
 async def test_image_send_preserves_text_image_text_order(monkeypatch):
-    from agent.im import replies, mermaid
+    from agent.im import replies, chart
     from agent.models import AgentResponse
 
     events = []
@@ -638,7 +641,7 @@ async def test_image_send_preserves_text_image_text_order(monkeypatch):
         return True
 
     monkeypatch.setattr("agent.im.files.send_files", fake_files)
-    monkeypatch.setattr(mermaid, "render_pngs", fake_render)
+    monkeypatch.setattr(chart, "render_chart_pngs", fake_render)
     monkeypatch.setattr(replies, "send_text", fake_text)
     monkeypatch.setattr(replies, "send_png_image", fake_image)
 
@@ -655,7 +658,7 @@ async def test_image_send_preserves_text_image_text_order(monkeypatch):
 @pytest.mark.asyncio
 async def test_qq_stream_preserves_text_image_text_order_after_deferred_render(monkeypatch):
     from agent.gateway import qq
-    from agent.im import replies, mermaid
+    from agent.im import replies, chart
     from agent.models import AgentResponse
 
     events = []
@@ -675,14 +678,14 @@ async def test_qq_stream_preserves_text_image_text_order_after_deferred_render(m
 
     monkeypatch.setattr(qq, "create_private_text_stream", lambda *_args, **_kwargs: FakeStream())
 
-    async def fake_render(_source):
+    async def fake_render(_chart_type, _source):
         return b"\x89PNG\r\n\x1a\nchart"
 
     async def send_image(_payload, _png):
         events.append(("image", "png"))
         return True
 
-    monkeypatch.setattr(mermaid, "render_png", fake_render)
+    monkeypatch.setattr(chart, "render_chart_png", fake_render)
     monkeypatch.setattr(replies, "_try_send_png_image", send_image)
 
     chart = "```mermaid\ngraph TD; A-->B\n```"
@@ -714,7 +717,7 @@ async def test_qq_stream_preserves_text_image_text_order_after_deferred_render(m
 async def test_qq_streaming_facade_keeps_text_image_text_order(monkeypatch):
     """保护 replies 门面与抽出的 QQ 状态机之间的实际图文发送契约。"""
     from agent.gateway import qq
-    from agent.im import mermaid, replies
+    from agent.im import chart, replies
     from agent.models import AgentResponse
 
     events = []
@@ -745,7 +748,7 @@ async def test_qq_streaming_facade_keeps_text_image_text_order(monkeypatch):
                 yield event
 
     monkeypatch.setattr(qq, "create_private_text_stream", lambda *_args, **_kwargs: FakeStream())
-    monkeypatch.setattr(mermaid, "ProgressiveMermaidTokenFilter", EventPassthroughFilter)
+    monkeypatch.setattr(chart, "ProgressiveChartTokenFilter", EventPassthroughFilter)
 
     async def send_image(_payload, _png):
         events.append(("image", "png"))
@@ -756,7 +759,7 @@ async def test_qq_streaming_facade_keeps_text_image_text_order(monkeypatch):
 
     async def token_iter():
         yield ("token", "前文\n")
-        yield ("mermaid_image", (0, 1, source, b"png"))
+        yield ("chart_image", (0, 1, source, b"png"))
         yield ("token", "\n后文")
         yield ("final", AgentResponse(text=f"前文\n{source}\n后文"))
 
@@ -777,7 +780,7 @@ async def test_qq_streaming_facade_keeps_text_image_text_order(monkeypatch):
 @pytest.mark.asyncio
 async def test_qq_stream_sends_each_round_once_in_separate_streams(monkeypatch):
     from agent.gateway import qq
-    from agent.im import mermaid, replies
+    from agent.im import chart, replies
     from agent.interactions.events import ROUND_END
     from agent.models import AgentResponse
 
@@ -807,7 +810,7 @@ async def test_qq_stream_sends_each_round_once_in_separate_streams(monkeypatch):
                 yield event
 
     monkeypatch.setattr(qq, "create_private_text_stream", lambda *_args, **_kwargs: FakeStream())
-    monkeypatch.setattr(mermaid, "ProgressiveMermaidTokenFilter", EventPassthroughFilter)
+    monkeypatch.setattr(chart, "ProgressiveChartTokenFilter", EventPassthroughFilter)
 
     async def token_iter():
         yield ("token", "前置说明")
@@ -838,7 +841,7 @@ async def test_qq_stream_sends_all_run_images_without_total_chart_cap(
     monkeypatch, show_intermediate_replies,
 ):
     from agent.gateway import qq
-    from agent.im import mermaid, replies
+    from agent.im import chart, replies
     from agent.models import AgentResponse
 
     events = []
@@ -861,7 +864,7 @@ async def test_qq_stream_sends_all_run_images_without_total_chart_cap(
         def has_sent(self):
             return bool(self.text)
 
-    async def render(source):
+    async def render(_chart_type, source):
         rendered_sources.append(source)
         return png
 
@@ -870,7 +873,7 @@ async def test_qq_stream_sends_all_run_images_without_total_chart_cap(
         return True
 
     monkeypatch.setattr(qq, "create_private_text_stream", lambda *_args, **_kwargs: FakeStream())
-    monkeypatch.setattr(mermaid, "render_png", render)
+    monkeypatch.setattr(chart, "render_chart_png", render)
     monkeypatch.setattr(replies, "_try_send_png_image", send_image)
 
     async def token_iter():
@@ -908,7 +911,7 @@ async def test_feishu_stream_embeds_rendered_mermaid_in_final_card(
     monkeypatch, upload_key, card_update_ok,
 ):
     from agent.gateway.feishu import messages, streaming as feishu
-    from agent.im import mermaid
+    from agent.im import chart
     from agent.models import AgentResponse
 
     events = []
@@ -928,7 +931,7 @@ async def test_feishu_stream_embeds_rendered_mermaid_in_final_card(
         events.append(("card-update", _kwargs.get("elements")))
         return card_update_ok
 
-    async def render(_source):
+    async def render(_chart_type, _source):
         return b"\x89PNG\r\n\x1a\nchart"
 
     async def send_file(*_args, **_kwargs):
@@ -942,7 +945,7 @@ async def test_feishu_stream_embeds_rendered_mermaid_in_final_card(
     monkeypatch.setattr(feishu, "_do_streaming_update_text", update_text)
     monkeypatch.setattr(feishu, "_do_finalize_streaming_card", finalize)
     monkeypatch.setattr(feishu, "_do_update_card", update_card)
-    monkeypatch.setattr(mermaid, "render_png", render)
+    monkeypatch.setattr(chart, "render_chart_png", render)
     monkeypatch.setattr(messages, "send_file", send_file)
     monkeypatch.setattr(messages, "upload_image", upload_image)
 
@@ -979,7 +982,7 @@ async def test_feishu_stream_embeds_rendered_mermaid_in_final_card(
 async def test_feishu_tool_summary_card_keeps_mermaid_image_in_reply_order(monkeypatch):
     from agent.gateway.feishu import messages, streaming as feishu
     from agent.gateway.feishu.tool_summary import FeishuToolSummaryStream
-    from agent.im import mermaid
+    from agent.im import chart
     from agent.models import AgentResponse
 
     final_card = {}
@@ -997,7 +1000,7 @@ async def test_feishu_tool_summary_card_keeps_mermaid_image_in_reply_order(monke
     async def finalize(*_args, **_kwargs):
         return True
 
-    async def render(_source):
+    async def render(_chart_type, _source):
         return b"\x89PNG\r\n\x1a\nchart"
 
     async def upload_image(_png, _channel):
@@ -1009,7 +1012,7 @@ async def test_feishu_tool_summary_card_keeps_mermaid_image_in_reply_order(monke
     monkeypatch.setattr(feishu, "_do_update_card", update_card)
     monkeypatch.setattr(feishu, "_do_streaming_update_text", update_text)
     monkeypatch.setattr(feishu, "_do_finalize_streaming_card", finalize)
-    monkeypatch.setattr(mermaid, "render_png", render)
+    monkeypatch.setattr(chart, "render_chart_png", render)
     monkeypatch.setattr(messages, "upload_image", upload_image)
     monkeypatch.setattr(messages, "send_file", send_file)
 

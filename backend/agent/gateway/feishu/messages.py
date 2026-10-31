@@ -9,6 +9,16 @@ from app.core.redaction import diag_log, redact
 from .cards import _build_card_elements
 
 
+def _send_failure_receipt(*, return_receipt: bool, outcome: str) -> bool | dict:
+    if not return_receipt:
+        return False
+    return {"accepted": False, "outcome": outcome}
+
+
+def _send_was_accepted(result: bool | dict) -> bool:
+    return bool(result.get("accepted")) if isinstance(result, dict) else bool(result)
+
+
 def _do_react(client, message_id: str, emoji_type: str) -> bool:
     """给某条消息加表情回应（同步，给 asyncio.to_thread 用）。失败返回 False。"""
     try:
@@ -69,13 +79,13 @@ async def _client_for_bot(channel_id: str | None):
     return _client_for(channel_id, app_id, app_secret)
 
 
-def _do_send(client, receive_id: str, text: str) -> bool:
+def _do_send(client, receive_id: str, text: str, *, return_receipt: bool = False) -> bool | dict:
     from lark_oapi.api.im.v1 import CreateMessageRequest, CreateMessageRequestBody
 
     # 按前缀判断收件人类型：ou_=open_id（连接时存的 owner 地址）、oc_=chat_id（消息学到的会话）
     rid_type = "open_id" if str(receive_id).startswith("ou_") else "chat_id"
 
-    def _create(msg_type: str, content: str) -> bool:
+    def _create(msg_type: str, content: str) -> bool | dict:
         req = (
             CreateMessageRequest.builder()
             .receive_id_type(rid_type)
@@ -89,13 +99,18 @@ def _do_send(client, receive_id: str, text: str) -> bool:
         resp = client.im.v1.message.create(req)
         if not resp.success():
             print(f"[feishu] 发送失败({msg_type}): code={resp.code} msg={resp.msg}", flush=True)
-            return False
-        return True
+            return _send_failure_receipt(return_receipt=return_receipt, outcome="FAILED_CONFIRMED")
+        message = getattr(getattr(resp, "data", None), "message_id", None)
+        return {
+            "accepted": True,
+            "platform_message_id": str(message) if message else None,
+        } if return_receipt else True
 
     # 优先发交互卡片（markdown 元素渲染粗体/列表/代码，表格走原生 table 组件）；失败回退纯文本
     card = json.dumps({"elements": _build_card_elements(text)}, ensure_ascii=False)
-    if _create("interactive", card):
-        return True
+    result = _create("interactive", card)
+    if _send_was_accepted(result):
+        return result
     return _create("text", json.dumps({"text": text}, ensure_ascii=False))
 
 
@@ -124,15 +139,22 @@ def _do_send_interaction_card(client, receive_id: str, prompt: dict) -> bool:
     return True
 
 
-async def send_text(receive_id: str, text: str, channel_id: str | None = None) -> bool:
+async def send_text(receive_id: str, text: str, channel_id: str | None = None,
+                    *, return_receipt: bool = False) -> bool | dict:
     """给指定收件人发文本（chat_id 或 open_id 都行，用该 bot 的凭据）。lark API 同步，丢线程跑。"""
     client = await _client_for_bot(channel_id)
     if not client:
         print(f"[feishu] user_bot {channel_id} 无凭据，发送跳过", flush=True)
-        return False
-    return await asyncio.to_thread(
-        _do_send, client, receive_id, text,
-    )
+        return _send_failure_receipt(return_receipt=return_receipt, outcome="FAILED_CONFIRMED")
+    if return_receipt:
+        try:
+            return await asyncio.to_thread(
+                _do_send, client, receive_id, text, return_receipt=True,
+            )
+        except Exception as exc:
+            diag_log("agent.gateway.feishu.send_text", exc)
+            return _send_failure_receipt(return_receipt=True, outcome="UNKNOWN")
+    return await asyncio.to_thread(_do_send, client, receive_id, text)
 
 
 def _build_link_card_payload(message: str, buttons: list[dict]) -> dict:

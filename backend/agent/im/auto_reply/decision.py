@@ -18,6 +18,7 @@ def should_enable_group_reply_gate(payload: dict) -> bool:
         and payload.get("chat_type") == "group"
         and not payload.get("group_requires_at")
         and not payload.get("group_mentioned")
+        and not payload.get("group_read_enabled")
     )
 
 

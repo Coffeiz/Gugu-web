@@ -1,4 +1,4 @@
-"""IM 回复中的 Mermaid PNG 渲染与有界子进程管理。"""
+"""IM 回复中的图表渲染与有界子进程管理。"""
 from __future__ import annotations
 
 import asyncio
@@ -15,24 +15,27 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _OPEN_RE = re.compile(r"(?m)^ {0,3}```mermaid[ \t]*\r?\n", re.IGNORECASE)
+_PROGRESSIVE_CHART_OPEN_RE = re.compile(
+    r"(?m)^ {0,3}```(mermaid|tex|latex)[ \t]*\r?\n", re.IGNORECASE,
+)
 _FENCE_LINE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})([^\r\n]*)$")
 _WORKER_FAILURE_RE = re.compile(
-    r"^MERMAID_RENDER_FAILURE index=(\d+) type=([a-z0-9-]+) reason=([a-z0-9_]+)$"
+    r"^CHART_RENDER_FAILURE index=(\d+) type=([a-z0-9-]+) reason=([a-z0-9_]+)$"
 )
 _RENDER_LIMIT = asyncio.Semaphore(1)
 # 单个 worker 请求的批大小上限；不是每轮/每次回复的图表上限。
-MAX_DIAGRAMS = 4
+MAX_CHARTS = 4
 DEFERRED_RENDER_BATCH_SIZE = 1
-# 总图表数不设上限；单批大小与全局并发分别由 MAX_DIAGRAMS 和 _RENDER_LIMIT 控制。
-DEFAULT_MAX_DIAGRAMS: int | None = None
+# 总图表数不设上限；单批大小与全局并发分别由 MAX_CHARTS 和 _RENDER_LIMIT 控制。
+DEFAULT_MAX_CHARTS: int | None = None
 MAX_SOURCE_CHARS = 20_000
 MAX_PNG_BYTES = 3 * 1024 * 1024
 RENDER_TIMEOUT_SECONDS = 20
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
-def _top_level_mermaid_fences(text: str):
-    """只找 Markdown 顶层 Mermaid 围栏，跳过其他代码围栏内部的示例。"""
+def _top_level_chart_fences(text: str):
+    """只找 Markdown 顶层 Mermaid 与 TeX 围栏，跳过其他代码围栏内部的示例。"""
     lines = text.splitlines(keepends=True)
     offsets = []
     offset = 0
@@ -63,7 +66,7 @@ def _top_level_mermaid_fences(text: str):
             continue
 
         language = info.strip().split(maxsplit=1)[0].lower() if info.strip() else ""
-        if language == "mermaid" and char == "`" and size == 3:
+        if language in {"mermaid", "tex", "latex"} and char == "`" and size == 3:
             closing = index + 1
             while closing < len(lines):
                 close_line = lines[closing].rstrip("\r\n")
@@ -78,7 +81,8 @@ def _top_level_mermaid_fences(text: str):
                     body_start = start + len(lines[index])
                     close_start = offsets[closing]
                     end = close_start + len(close_line)
-                    yield start, end, text[body_start:close_start], text[start:end]
+                    chart_type = "mermaid" if language == "mermaid" else "math"
+                    yield start, end, chart_type, text[body_start:close_start], text[start:end]
                     index = closing + 1
                     break
                 closing += 1
@@ -89,6 +93,14 @@ def _top_level_mermaid_fences(text: str):
 
         outer_fence = (char, size)
         index += 1
+
+
+def _top_level_chart_sources(text: str):
+    """按正文顺序返回顶层 Mermaid 图表和 TeX 代码块的源码范围。"""
+    return [
+        match for match in _top_level_chart_fences(text)
+        if match[3] and len(match[3]) <= MAX_SOURCE_CHARS
+    ]
 
 
 class _MarkdownFenceTracker:
@@ -190,33 +202,37 @@ def _sandbox_exec(worker: str) -> None:
     os.execv(node, [node, "--max-old-space-size=256", worker])
 
 
-async def render_pngs(
-    sources: list[str], *, theme_preferences: dict | None = None,
+async def render_chart_pngs(
+    charts: list[tuple[str, str]], *, theme_preferences: dict | None = None,
 ) -> list[bytes | None]:
     """在一个受限 Node 子进程中批量渲染单轮图表，避免重复冷启动。"""
     from app.core.redaction import diag_log_raw
 
-    if not sources:
+    if not charts:
         return []
-    if len(sources) > MAX_DIAGRAMS:
-        return [None] * len(sources)
-    results: list[bytes | None] = [None] * len(sources)
+    if len(charts) > MAX_CHARTS:
+        return [None] * len(charts)
+    results: list[bytes | None] = [None] * len(charts)
     valid = [
-        (index, source) for index, source in enumerate(sources)
-        if source and len(source) <= MAX_SOURCE_CHARS
+        (index, chart_type, source)
+        for index, (chart_type, source) in enumerate(charts)
+        if chart_type in {"mermaid", "math"} and source and len(source) <= MAX_SOURCE_CHARS
     ]
     if not valid:
         return results
     backend_root = Path(__file__).resolve().parents[2]
-    worker = backend_root / "ts" / "workers" / "mermaid-renderer" / "worker.mjs"
+    worker = backend_root / "ts" / "workers" / "chart-renderer" / "worker.mjs"
     if not worker.is_file():
-        worker = backend_root / "bin" / "gugu-mermaid-worker.mjs"
+        worker = backend_root / "bin" / "gugu-chart-worker.mjs"
     if not worker.is_file():
         return results
     try:
         input_bytes = json.dumps(
             {
-                "sources": [source for _index, source in valid],
+                "charts": [
+                    {"type": chart_type, "source": source}
+                    for _index, chart_type, source in valid
+                ],
                 "theme": theme_preferences or {},
             },
             ensure_ascii=False,
@@ -242,19 +258,19 @@ async def render_pngs(
                 timeout=RENDER_TIMEOUT_SECONDS,
             )
             if process.returncode != 0:
-                diag_log_raw("agent.im.mermaid.render", "status=worker_failed")
+                diag_log_raw("agent.im.chart.render", "status=worker_failed")
                 return results
             for line in stderr.decode("utf-8", errors="ignore").splitlines():
                 match = _WORKER_FAILURE_RE.fullmatch(line)
                 if match:
                     diag_log_raw(
-                        "agent.im.mermaid.render",
+                        "agent.im.chart.render",
                         f"status=diagram_failed index={match.group(1)} "
-                        f"diagram_type={match.group(2)} reason={match.group(3)}",
+                        f"chart_type={match.group(2)} reason={match.group(3)}",
                     )
             rendered: list[bytes | None] = []
             offset = 0
-            for _index, _source in valid:
+            for _index, _chart_type, _source in valid:
                 if len(stdout) - offset < 4:
                     raise ValueError("invalid_worker_frame")
                 size = int.from_bytes(stdout[offset:offset + 4], "big")
@@ -273,12 +289,12 @@ async def render_pngs(
                 raise ValueError("invalid_worker_trailing_data")
             failed = sum(png is None for png in rendered)
             diag_log_raw(
-                "agent.im.mermaid.render",
-                f"status={'partial' if failed else 'ok'} diagrams={len(valid)} "
+                "agent.im.chart.render",
+                f"status={'partial' if failed else 'ok'} charts={len(valid)} "
                 f"failed={failed} bytes={len(stdout)} "
                 f"elapsed_ms={int((time.monotonic() - started) * 1000)}",
             )
-            for (index, _source), png in zip(valid, rendered):
+            for (index, _chart_type, _source), png in zip(valid, rendered):
                 results[index] = png
             return results
         except asyncio.TimeoutError:
@@ -288,7 +304,7 @@ async def render_pngs(
                 except ProcessLookupError:
                     pass
                 await process.wait()
-            diag_log_raw("agent.im.mermaid.render", "status=timeout")
+            diag_log_raw("agent.im.chart.render", "status=timeout")
             return results
         except asyncio.CancelledError:
             if process and process.returncode is None:
@@ -300,51 +316,51 @@ async def render_pngs(
             raise
         except Exception as exc:
             diag_log_raw(
-                "agent.im.mermaid.render",
+                "agent.im.chart.render",
                 f"status=unavailable error={type(exc).__name__}",
             )
             return results
 
 
-async def render_png(
-    source: str, *, theme_preferences: dict | None = None,
+async def render_chart_png(
+    chart_type: str, source: str, *, theme_preferences: dict | None = None,
 ) -> bytes | None:
     """单图便捷入口；内部仍复用批量 renderer。"""
     if theme_preferences is None:
-        return (await render_pngs([source]))[0]
-    return (await render_pngs([source], theme_preferences=theme_preferences))[0]
+        return (await render_chart_pngs([(chart_type, source)]))[0]
+    return (await render_chart_pngs([(chart_type, source)], theme_preferences=theme_preferences))[0]
 
 
 async def _render_sources(
-    sources: list[str], *, theme_preferences: dict | None = None,
+    charts: list[tuple[str, str]], *, theme_preferences: dict | None = None,
 ) -> list[bytes | None]:
     """按 worker 支持的批大小渲染完整列表，不限制整轮图表数。"""
     results: list[bytes | None] = []
-    for offset in range(0, len(sources), MAX_DIAGRAMS):
-        batch = sources[offset:offset + MAX_DIAGRAMS]
+    for offset in range(0, len(charts), MAX_CHARTS):
+        batch = charts[offset:offset + MAX_CHARTS]
         rendered = (
-            await render_pngs(batch)
+            await render_chart_pngs(batch)
             if theme_preferences is None
-            else await render_pngs(batch, theme_preferences=theme_preferences)
+            else await render_chart_pngs(batch, theme_preferences=theme_preferences)
         )
         results.extend(rendered)
     return results
 
 
-async def render_reply(
-    text: str, *, max_diagrams: int | None = DEFAULT_MAX_DIAGRAMS,
+async def render_chart_reply(
+    text: str, *, max_charts: int | None = DEFAULT_MAX_CHARTS,
     theme_preferences: dict | None = None,
 ) -> list[ReplyPart]:
-    """解析完整 Mermaid fence，成功时用 PNG part 替换源码，失败时保留源码。"""
+    """解析完整图表与块公式，成功时用 PNG part 替换源码，失败时保留源码。"""
     value = text or ""
-    matches = list(_top_level_mermaid_fences(value))
-    if max_diagrams is not None:
-        matches = matches[:max(0, max_diagrams)]
-    sources = [body for _start, _end, body, _source in matches]
-    pngs = await _render_sources(sources, theme_preferences=theme_preferences)
+    matches = list(_top_level_chart_sources(value))
+    if max_charts is not None:
+        matches = matches[:max(0, max_charts)]
+    charts = [(chart_type, body) for _start, _end, chart_type, body, _source in matches]
+    pngs = await _render_sources(charts, theme_preferences=theme_preferences)
     parts: list[ReplyPart] = []
     cursor = 0
-    for index, (start, end, _body, source_block) in enumerate(matches):
+    for index, (start, end, _chart_type, _body, source_block) in enumerate(matches):
         parts.append(ReplyPart(text=value[cursor:start]))
         png = pngs[index] if index < len(pngs) else None
         parts.append(ReplyPart(png=png, source=source_block) if png else ReplyPart(text=source_block))
@@ -353,12 +369,12 @@ async def render_reply(
     return [part for part in parts if part.text or part.png]
 
 
-class StreamingRenderer:
+class StreamingChartRenderer:
     """暂存 Mermaid fence；按需把图片结果放回其在回复中的原始位置。"""
 
     def __init__(
         self,
-        max_diagrams: int | None = DEFAULT_MAX_DIAGRAMS,
+        max_charts: int | None = DEFAULT_MAX_CHARTS,
         *,
         inline_images: bool = False,
         defer_until_run_end: bool = False,
@@ -367,10 +383,10 @@ class StreamingRenderer:
         self._pending = ""
         self._opening = ""
         self._in_diagram = False
-        self._diagram_count = 0
-        self._max_diagrams = max_diagrams
-        self._diagrams: list[tuple[str, str]] = []
-        self._deferred_diagrams: list[tuple[str, str]] = []
+        self._chart_count = 0
+        self._max_charts = max_charts
+        self._charts: list[tuple[str, str]] = []
+        self._deferred_charts: list[tuple[str, str]] = []
         self._inline_images = inline_images
         self._defer_until_run_end = defer_until_run_end
         self._theme_preferences = theme_preferences
@@ -383,34 +399,34 @@ class StreamingRenderer:
         return await self._drain()
 
     @property
-    def has_pending_diagrams(self) -> bool:
-        return bool(self._diagrams)
+    def has_pending_charts(self) -> bool:
+        return bool(self._charts)
 
     @property
-    def has_deferred_diagrams(self) -> bool:
-        return bool(self._deferred_diagrams)
+    def has_deferred_charts(self) -> bool:
+        return bool(self._deferred_charts)
 
     async def finish_round(
         self, *, max_images: int | None = None, defer_images: bool = False,
     ) -> list[ReplyPart]:
         parts = await self._drain(final=True)
-        diagrams, self._diagrams = self._diagrams, []
-        if diagrams:
+        charts, self._charts = self._charts, []
+        if charts:
             if defer_images:
-                self._deferred_diagrams.extend(diagrams)
-                diagrams = []
-        if diagrams:
-            render_count = len(diagrams) if max_images is None else max(0, min(max_images, len(diagrams)))
-            sources = [body for _source, body in diagrams[:render_count]]
+                self._deferred_charts.extend(charts)
+                charts = []
+        if charts:
+            render_count = len(charts) if max_images is None else max(0, min(max_images, len(charts)))
+            sources = [("mermaid", body) for _source, body in charts[:render_count]]
             pngs = await _render_sources(
                 sources, theme_preferences=self._theme_preferences,
             )
             if self._inline_images:
-                diagram_index = 0
+                chart_index = 0
                 for part in self._deferred_parts:
                     if part.placeholder_emitted:
-                        png = pngs[diagram_index] if diagram_index < len(pngs) else None
-                        diagram_index += 1
+                        png = pngs[chart_index] if chart_index < len(pngs) else None
+                        chart_index += 1
                         parts.append(
                             ReplyPart(png=png, source=part.source)
                             if png else ReplyPart(text=part.source)
@@ -418,7 +434,7 @@ class StreamingRenderer:
                     else:
                         parts.append(part)
             else:
-                for index, (source, _body) in enumerate(diagrams):
+                for index, (source, _body) in enumerate(charts):
                     png = pngs[index] if index < len(pngs) else None
                     if png:
                         parts.append(ReplyPart(png=png, source=source, placeholder_emitted=True))
@@ -432,28 +448,28 @@ class StreamingRenderer:
             self._deferred_parts = []
         return parts
 
-    async def render_deferred_diagrams(self) -> list[ReplyPart]:
+    async def render_deferred_charts(self) -> list[ReplyPart]:
         """在整次 run 完成后分批渲染此前排队的 Mermaid 图。"""
-        diagrams, self._deferred_diagrams = self._deferred_diagrams, []
+        charts, self._deferred_charts = self._deferred_charts, []
         parts: list[ReplyPart] = []
-        for offset in range(0, len(diagrams), DEFERRED_RENDER_BATCH_SIZE):
-            batch = diagrams[offset:offset + DEFERRED_RENDER_BATCH_SIZE]
-            sources = [body for _source, body in batch]
+        for offset in range(0, len(charts), DEFERRED_RENDER_BATCH_SIZE):
+            batch = charts[offset:offset + DEFERRED_RENDER_BATCH_SIZE]
+            sources = [("mermaid", body) for _source, body in batch]
             pngs = (
-                await render_pngs(sources)
+                await render_chart_pngs(sources)
                 if self._theme_preferences is None
-                else await render_pngs(sources, theme_preferences=self._theme_preferences)
+                else await render_chart_pngs(sources, theme_preferences=self._theme_preferences)
             )
             for index, (source, _body) in enumerate(batch):
                 png = pngs[index] if index < len(pngs) else None
                 parts.append(ReplyPart(png=png, source=source) if png else ReplyPart(text=source))
         if self._inline_images:
             ordered_parts: list[ReplyPart] = []
-            diagram_index = 0
+            chart_index = 0
             for part in self._deferred_parts:
                 if part.placeholder_emitted:
-                    rendered = parts[diagram_index] if diagram_index < len(parts) else None
-                    diagram_index += 1
+                    rendered = parts[chart_index] if chart_index < len(parts) else None
+                    chart_index += 1
                     ordered_parts.append(
                         rendered if rendered and rendered.png
                         else ReplyPart(text=part.source)
@@ -546,11 +562,11 @@ class StreamingRenderer:
             self._pending = self._pending[closing + 3:]
             self._opening = ""
             self._in_diagram = False
-            self._diagram_count += 1
+            self._chart_count += 1
             opening = _OPEN_RE.match(source)
             body = source[len(opening.group(0)):-3] if opening else ""
-            if (self._max_diagrams is None or self._diagram_count <= self._max_diagrams) and len(source) <= MAX_SOURCE_CHARS:
-                self._diagrams.append((source, body))
+            if (self._max_charts is None or self._chart_count <= self._max_charts) and len(source) <= MAX_SOURCE_CHARS:
+                self._charts.append((source, body))
                 placeholder = ReplyPart(source=source, placeholder_emitted=True)
                 if self._inline_images:
                     self._inline_deferred = True
@@ -559,7 +575,7 @@ class StreamingRenderer:
                         parts.append(placeholder)
                 else:
                     parts.append(ReplyPart(
-                        text=f"\n\n（图表 {self._diagram_count} 见后续图片）\n\n",
+                        text=f"\n\n（图表 {self._chart_count} 见后续图片）\n\n",
                         source=source,
                         placeholder_emitted=True,
                     ))
@@ -576,26 +592,28 @@ class StreamingRenderer:
         ]
 
 
-class ProgressiveMermaidTokenFilter:
-    """跨 IM 共用的流式 Mermaid 解析器与背压调度器。
+class ProgressiveChartTokenFilter:
+    """跨 IM 共用的 Mermaid 与 TeX 代码块解析器、背压调度器。
 
-    普通文本立即透传。完整图表源码进入后台渲染队列，解析器继续消费后续
+    普通文本和 IM 原生公式立即透传。完整图表/TeX 代码块进入后台渲染队列，解析器继续消费后续
     token；图片完成事件携带图表序号，调用方可选择流式占位替换或有序交付。
     """
 
     def __init__(
         self,
-        max_diagrams: int | None = DEFAULT_MAX_DIAGRAMS,
+        max_charts: int | None = DEFAULT_MAX_CHARTS,
         *,
         theme_preferences: dict | None = None,
         preserve_source: bool = False,
     ) -> None:
         self.images: list[tuple[bytes, str]] = []
-        self._max_diagrams = max_diagrams
+        self._max_charts = max_charts
         self._preserve_source = preserve_source
         self._theme_preferences = theme_preferences
-        self._diagram_index = 0
-        self._in_diagram = False
+        self._chart_index = 0
+        self._in_chart = False
+        self._chart_type = "mermaid"
+        self._closing = "```"
         self._opening = ""
         self._pending = ""
         self._render_tasks: dict[int, asyncio.Task] = {}
@@ -607,10 +625,10 @@ class ProgressiveMermaidTokenFilter:
         resolved: dict[int, tuple[str, object]] = {}
 
         async for kind, value in self.events(source_iter):
-            if kind == "mermaid_pending":
+            if kind == "chart_pending":
                 slots.append((kind, value))
-            elif kind in {"mermaid_image", "mermaid_error"}:
-                index = value[0] if kind == "mermaid_image" else value
+            elif kind in {"chart_image", "chart_error"}:
+                index = value[0] if kind == "chart_image" else value
                 resolved[index] = (kind, value)
             elif slots and kind not in {"final"}:
                 slots.append((kind, value))
@@ -619,13 +637,13 @@ class ProgressiveMermaidTokenFilter:
 
             while slots:
                 slot_kind, slot_value = slots[0]
-                if slot_kind == "mermaid_pending":
+                if slot_kind == "chart_pending":
                     index, source = slot_value
                     completion = resolved.pop(index, None)
                     if completion is None:
                         break
                     slots.pop(0)
-                    if completion[0] == "mermaid_image":
+                    if completion[0] == "chart_image":
                         yield completion
                     elif not self._preserve_source:
                         yield "token", source
@@ -636,31 +654,33 @@ class ProgressiveMermaidTokenFilter:
         # events() 收尾时会等待所有渲染任务，因此槽位此时都应已解决。
         while slots:
             slot_kind, slot_value = slots.pop(0)
-            if slot_kind == "mermaid_pending":
+            if slot_kind == "chart_pending":
                 index, source = slot_value
                 completion = resolved.pop(index, None)
-                if completion and completion[0] == "mermaid_image":
+                if completion and completion[0] == "chart_image":
                     yield completion
                 elif not self._preserve_source:
                     yield "token", source
             else:
                 yield slot_kind, slot_value
 
-    async def _render(self, diagram_index: int, body: str, source: str):
+    async def _render(self, chart_index: int, chart_type: str, body: str, source: str):
         try:
             png = (
-                await render_png(body)
+                await render_chart_png(chart_type, body)
                 if self._theme_preferences is None
-                else await render_png(body, theme_preferences=self._theme_preferences)
+                else await render_chart_png(
+                    chart_type, body, theme_preferences=self._theme_preferences,
+                )
             )
         except Exception as exc:
             from app.core.redaction import diag_log
-            diag_log("agent.im.mermaid.stream_render", exc)
+            diag_log("agent.im.chart.stream_render", exc)
             png = None
         if png:
             self.images.append((png, source))
-            return "mermaid_image", (diagram_index, len(self.images), source, png)
-        return "mermaid_error", diagram_index
+            return "chart_image", (chart_index, len(self.images), source, png)
+        return "chart_error", chart_index
 
     async def _completed_render_events(self, *, wait: bool = False):
         if wait and self._render_tasks:
@@ -673,8 +693,8 @@ class ProgressiveMermaidTokenFilter:
                 yield task.result()
             except Exception as exc:
                 from app.core.redaction import diag_log
-                diag_log("agent.im.mermaid.stream_render_task", exc)
-                yield "mermaid_error", index
+                diag_log("agent.im.chart.stream_render_task", exc)
+                yield "chart_error", index
 
     async def events(self, source_iter):
         async for kind, value in source_iter:
@@ -692,7 +712,7 @@ class ProgressiveMermaidTokenFilter:
                 async for event in self._completed_render_events(wait=True):
                     yield event
                 yield (kind, value)
-            elif kind == "round_end" and not self._in_diagram:
+            elif kind == "round_end" and not self._in_chart:
                 if self._pending:
                     self._fence_tracker.feed(self._pending)
                     yield ("token", self._pending)
@@ -708,8 +728,11 @@ class ProgressiveMermaidTokenFilter:
     async def _feed(self, chunk: str, *, final: bool = False):
         self._pending += chunk
         while self._pending:
-            if not self._in_diagram:
-                opening = _OPEN_RE.search(self._pending)
+            if not self._in_chart:
+                opening = (
+                    None if self._fence_tracker.open_fence
+                    else _PROGRESSIVE_CHART_OPEN_RE.search(self._pending)
+                )
                 if opening is not None:
                     if opening.start():
                         prefix = self._pending[:opening.start()]
@@ -723,7 +746,10 @@ class ProgressiveMermaidTokenFilter:
                         continue
                     self._opening = self._pending[opening.start():opening.end()]
                     self._pending = self._pending[opening.end():]
-                    self._in_diagram = True
+                    language = opening.group(1).lower()
+                    self._chart_type = "mermaid" if language == "mermaid" else "math"
+                    self._closing = "```"
+                    self._in_chart = True
                     continue
                 if final:
                     if self._pending:
@@ -740,7 +766,8 @@ class ProgressiveMermaidTokenFilter:
                     self._pending = self._pending[safe_end:]
                 return
 
-            closing = self._pending.find("```")
+            closing_match = re.search(r"(?<!\\)" + re.escape(self._closing), self._pending)
+            closing = closing_match.start() if closing_match else -1
             if closing < 0:
                 source_size = len(self._opening) + len(self._pending)
                 if source_size > MAX_SOURCE_CHARS or final:
@@ -749,27 +776,29 @@ class ProgressiveMermaidTokenFilter:
                     yield ("token", literal)
                     self._opening = ""
                     self._pending = ""
-                    self._in_diagram = False
+                    self._in_chart = False
                     return
                 return
 
-            source = self._opening + self._pending[:closing + 3]
+            closing_end = closing + len(self._closing)
+            source = self._opening + self._pending[:closing_end]
             body = self._pending[:closing]
-            self._pending = self._pending[closing + 3:]
+            chart_type = self._chart_type
+            self._pending = self._pending[closing_end:]
             self._opening = ""
-            self._in_diagram = False
-            self._diagram_index += 1
-            diagram_index = self._diagram_index
+            self._in_chart = False
+            self._chart_index += 1
+            chart_index = self._chart_index
             if len(source) > MAX_SOURCE_CHARS or (
-                self._max_diagrams is not None and diagram_index > self._max_diagrams
+                self._max_charts is not None and chart_index > self._max_charts
             ):
                 self._fence_tracker.feed(source)
                 yield ("token", source)
                 continue
-            self._render_tasks[diagram_index] = asyncio.create_task(
-                self._render(diagram_index, body, source)
+            self._render_tasks[chart_index] = asyncio.create_task(
+                self._render(chart_index, chart_type, body, source)
             )
-            yield "mermaid_pending", (diagram_index, source)
+            yield "chart_pending", (chart_index, source)
             if self._preserve_source:
                 self._fence_tracker.feed(source)
                 yield "token", source

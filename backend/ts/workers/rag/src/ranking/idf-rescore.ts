@@ -78,7 +78,7 @@ export function rescoreDocument(
     });
   }
   contributions.sort((left, right) =>
-    right.nonlinear - left.nonlinear || left.term.localeCompare(right.term));
+    right.nonlinear - left.nonlinear || left.term.localeCompare(right.term, "en-US"));
   return {
     rankScore: contributions.reduce((sum, item) => sum + item.nonlinear, 0),
     matchedTerms: contributions.map((item) => item.term),

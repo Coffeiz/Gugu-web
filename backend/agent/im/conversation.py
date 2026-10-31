@@ -18,6 +18,15 @@ class GroupInboundMode(str, Enum):
     REPLY = "reply"       # 进 run，由模型决定是否回话
 
 
+def _attention_event_ms(event_id: str) -> int | None:
+    try:
+        from agent.im.auto_reply.attention import _stream_event_ms
+
+        return _stream_event_ms(event_id)
+    except Exception:
+        return None
+
+
 def classify_group_inbound(payload: dict) -> Optional[GroupInboundMode]:
     """按群回复模式把一条群消息分成「只记录」和「进 run」两类。
 
@@ -231,6 +240,231 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
             from app.core.redaction import diag_log
 
             diag_log("agent.im.conversation.passive_reflection_schedule", exc)
+    return recorded_session_id
+
+
+async def record_passive_attention_batch(
+    request: AgentRequest,
+    messages: list[dict],
+    *,
+    session_id: int,
+    batch_key: str,
+    attention_decision=None,
+    attention_mode: str | None = None,
+    attention_config_version: int = 0,
+    transcripts: dict[str, str] | None = None,
+) -> int:
+    """逐条幂等持久化注意力门控判为 PASSIVE 的群消息并写完成收据。"""
+    from sqlalchemy import select
+    from app.models import ConversationMessage, ConversationSession
+    from agent.context.canonical_context import digest
+    from agent.context.message_area_repository import _insert_or_get_batch
+    from agent.im.inbound_recovery import user_run_key
+
+    if not messages:
+        raise ValueError("PASSIVE 注意力批次缺少原始消息")
+    if not batch_key:
+        raise ValueError("PASSIVE 注意力批次缺少稳定批次 ID")
+    run_id = user_run_key(batch_key)
+    transcripts = transcripts or {}
+    created_events: list[dict] = []
+    transcript_updates: list[tuple[int, list[dict]]] = []
+    recorded_message_ids: list[int] = []
+    import app.db.session as db_session
+
+    if db_session._engine is None:
+        db_session._build_engine()
+    async with db_session._SessionLocal() as db:
+        session = await db.get(ConversationSession, session_id)
+        if (
+            session is None
+            or session.user_id != request.user_id
+            or session.source != (request.source or "qq")
+            or session.bot_id != request.platform_bot_id
+            or session.chat_id != request.chat_id
+        ):
+            raise ValueError("PASSIVE 注意力批次会话作用域不匹配")
+
+        from app.core import chat_attach
+
+        for item in messages:
+            if not isinstance(item, dict):
+                raise ValueError("PASSIVE 注意力批次包含无效原始消息")
+            event_id = str(item.get("event_id") or "")
+            if not event_id:
+                raise ValueError("PASSIVE 注意力消息缺少 Redis Stream ID")
+            row = None
+            early_id = item.get("early_id")
+            if early_id:
+                row = await db.get(ConversationMessage, int(early_id))
+                if row is not None and row.session_id != session.id:
+                    raise ValueError("早落库消息会话作用域不匹配")
+            if row is None:
+                row = (await db.execute(
+                    select(ConversationMessage).where(
+                        ConversationMessage.session_id == session.id,
+                        ConversationMessage.client_message_id == event_id,
+                    )
+                )).scalars().first()
+            is_new = row is None
+            attachment_ids = [
+                value.get("attach_id") if isinstance(value, dict) else value
+                for value in (item.get("attachments") or [])
+            ]
+            attachment_ids = [str(value) for value in attachment_ids if value]
+            if attachment_ids:
+                metadata = await chat_attach.get_meta_many(request.user_id, attachment_ids)
+                if set(metadata) != set(attachment_ids):
+                    raise chat_attach.AttachmentClaimError("附件元数据缺失")
+            cards = await build_attachment_cards(request.user_id, attachment_ids)
+            transcript = transcripts.get(event_id, "").strip()
+            if transcript:
+                voice_card = next((card for card in cards if (
+                    card.get("kind") in {"voice", "audio"} and not card.get("quoted")
+                )), None)
+                if voice_card is not None:
+                    voice_card["transcript"] = transcript
+                    voice_card["transcript_status"] = "completed"
+                    voice_card["transcript_scope"] = "message"
+                    voice_card["transcript_origin"] = "attention"
+            if row is None:
+                row = ConversationMessage(
+                    session_id=session.id,
+                    role="user",
+                    content=str(item.get("text") or ""),
+                    quoted_text=item.get("quoted_text"),
+                    platform_user_id=item.get("platform_user_id"),
+                    platform_user_name=item.get("platform_user_name"),
+                    platform_bot_user_id=item.get("platform_bot_user_id"),
+                    im_platform_message_id=item.get("platform_message_id"),
+                    im_reply_to_message_id=item.get("reply_to_platform_message_id"),
+                    im_reply_target_sender_id=item.get("reply_target_sender_id"),
+                    im_reply_target_is_bot=item.get("reply_target_is_bot"),
+                    im_sender_is_bot=item.get("sender_is_bot"),
+                    im_event_received_ms=_attention_event_ms(event_id),
+                    im_platform_sent_ms=item.get("platform_sent_ms"),
+                    im_media_kinds=list(item.get("media_kinds") or []),
+                    im_media_processable=item.get("processable_media"),
+                    im_mention_facts={
+                        "current_bot": item.get("native_bot_mentioned"),
+                        "other_bot": item.get("mentions_other_bot"),
+                        "other_member": item.get("mentions_other_member"),
+                    },
+                    chat_type="group",
+                    files=cards or None,
+                    client_message_id=event_id,
+                )
+                db.add(row)
+                await db.flush()
+            else:
+                row.client_message_id = row.client_message_id or event_id
+                row.files = cards or row.files
+                row.run_id = run_id
+                row.im_platform_message_id = item.get("platform_message_id") or row.im_platform_message_id
+                row.im_reply_to_message_id = item.get("reply_to_platform_message_id") or row.im_reply_to_message_id
+                row.im_reply_target_sender_id = item.get("reply_target_sender_id") or row.im_reply_target_sender_id
+                if item.get("reply_target_is_bot") is not None:
+                    row.im_reply_target_is_bot = item.get("reply_target_is_bot")
+                if item.get("sender_is_bot") is not None:
+                    row.im_sender_is_bot = item.get("sender_is_bot")
+                row.im_event_received_ms = _attention_event_ms(event_id) or row.im_event_received_ms
+                row.im_platform_sent_ms = item.get("platform_sent_ms") or row.im_platform_sent_ms
+                if item.get("media_kinds") is not None:
+                    row.im_media_kinds = list(item.get("media_kinds") or [])
+                if item.get("processable_media") is not None:
+                    row.im_media_processable = item.get("processable_media")
+                row.im_mention_facts = {
+                    "current_bot": item.get("native_bot_mentioned"),
+                    "other_bot": item.get("mentions_other_bot"),
+                    "other_member": item.get("mentions_other_member"),
+                }
+                if transcript and cards:
+                    transcript_updates.append((int(row.id), cards))
+            await chat_attach.claim_attachments(
+                db, request.user_id, row.id, [card["attach_id"] for card in cards],
+            )
+            recorded_message_ids.append(int(row.id))
+            if is_new:
+                created_events.append({
+                    "role": "user",
+                    "message_id": row.id,
+                    "text": row.content,
+                    "platform_user_id": row.platform_user_id,
+                    "platform_user_name": row.platform_user_name,
+                    "platform_bot_user_id": row.platform_bot_user_id,
+                    "chat_type": "group",
+                    "files": cards,
+                })
+            row.run_id = run_id
+
+        receipt, _ = await _insert_or_get_batch(db, {
+            "session_id": session.id,
+            "version": "im-attention-passive-v1",
+            "run_id": run_id,
+            "round_id": "passive",
+            "digest": digest({"attention_passive_batch": batch_key}),
+        })
+        if attention_decision is not None:
+            receipt.state_summary = {
+                "kind": "attention_passive",
+                "mode": attention_mode or "autonomous",
+                "config_version": int(attention_config_version),
+                "attention_version": "attention-v3.0.6",
+                "actual_decision": attention_decision.kind.value,
+                "reason_codes": list(attention_decision.reasons),
+                "score": attention_decision.score,
+                "score_breakdown": (
+                    dict(attention_decision.score_breakdown)
+                    if attention_decision.score_breakdown else None
+                ),
+                "threshold": attention_decision.threshold,
+                "source_event_count": len(messages),
+            }
+        await db.commit()
+        recorded_session_id = int(session.id)
+
+    await trim_session_messages(recorded_session_id)
+    if created_events:
+        try:
+            from app.core import events
+
+            await events.publish(
+                request.user_id,
+                "sessions",
+                session_id=recorded_session_id,
+                appended=created_events,
+            )
+        except Exception:
+            pass
+    if transcript_updates:
+        try:
+            from app.services.conversation_transcripts import publish_voice_transcript_update
+
+            for message_id, files in transcript_updates:
+                await publish_voice_transcript_update(
+                    request.user_id, session_id=recorded_session_id,
+                    message_id=message_id, files=files,
+                )
+        except Exception as exc:
+            from app.core.redaction import diag_log
+
+            diag_log("agent.im.conversation.attention_transcript_publish", exc)
+    if request.chat_id:
+        try:
+            from agent.memory.reflection_jobs import observe_group_message
+            from agent.memory.scopes import MemoryScope
+
+            scope = MemoryScope(
+                request.user_id, request.source or "qq", str(request.platform_bot_id or ""),
+                "group", str(request.chat_id),
+            )
+            if request.im_group_memory_enabled:
+                for message_id in recorded_message_ids:
+                    await observe_group_message(scope, message_id, None)
+        except Exception as exc:
+            from app.core.redaction import diag_log
+
+            diag_log("agent.im.conversation.attention_passive_reflection", exc)
     return recorded_session_id
 
 
