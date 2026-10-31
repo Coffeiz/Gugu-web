@@ -10,7 +10,7 @@ from contextlib import suppress
 from typing import Any, Dict
 
 from app.core import redis as R
-from app.core.redaction import diag_log, redact
+from app.core.redaction import diag_log, diag_log_raw, redact
 from .text import complete_qq_lines, prepare_qq_text, prepare_qq_link_buttons
 from agent.im.message_format import message_type as _message_type
 from .client import (
@@ -26,19 +26,29 @@ from .client import (
 _log = logging.getLogger("agent.gateway.qq")
 
 _stream_seq_fallback = 0
+_PASSIVE_REPLY_SEQ_TTL_SECONDS = 70 * 60
+_NEXT_PASSIVE_REPLY_SEQ_SCRIPT = """
+local value = redis.call('INCR', KEYS[1])
+if value == 1 then
+    redis.call('EXPIRE', KEYS[1], ARGV[1])
+end
+return value
+"""
 
 async def _next_seq(msg_id: str | None) -> int:
+    """为同一入站消息分配递增序号，并在 QQ 被动回复窗口后再回收状态。"""
     if not msg_id:
         return 1
-    try:
-        k = f"qqseq:{msg_id}"
-        n = await R.get_redis().incr(k)
-        if n == 1:
-            await R.get_redis().expire(k, 600)   # 比 5min 被动窗口稍长
-        return n
-    except Exception:
-        import time as _t
-        return int(_t.time() * 1000) % 1_000_000   # Redis 挂了退回时间戳尾数
+    key = f"qqseq:{msg_id}"
+    redis = R.get_redis()
+    # Lua 将递增和首次 TTL 设置作为一个原子操作，避免并发初始化留下无过期时间的键。
+    value = await redis.eval(
+        _NEXT_PASSIVE_REPLY_SEQ_SCRIPT,
+        1,
+        key,
+        _PASSIVE_REPLY_SEQ_TTL_SECONDS,
+    )
+    return int(value)
 
 async def _next_stream_seq(channel_id: str) -> int:
     """为每个 QQ 官方流会话生成新的 msg_seq，避免跨回复撞序列。"""
@@ -268,6 +278,7 @@ class QQPrivateTextStream:
         body = error.body if isinstance(error, QQAPIError) else None
         rejected = isinstance(body, dict) and str(body.get("code") or body.get("err_code")) == "40034028"
         if not rejected or not self.stream_msg_id or not self.last_sent_content:
+            self._log_finalization_failure(error)
             raise QQStreamFinalizationError("QQ 流式消息关闭未获确认") from error
         delivered_content = self.last_sent_content
         self.error = None
@@ -275,9 +286,46 @@ class QQPrivateTextStream:
         try:
             await self._flush(10, content_override=delivered_content)
         except Exception as close_error:
-            diag_log("agent.gateway.qq.stream_rejected_content", error)
+            self._log_finalization_failure(close_error, original_error=error)
             raise QQStreamFinalizationError("QQ 流式消息关闭未获确认") from close_error
         raise QQStreamDeliveryError("QQ 部分正文被拒绝，已关闭最后送达的内容") from error
+
+    def _log_finalization_failure(
+        self,
+        error: Exception,
+        *,
+        original_error: Exception | None = None,
+    ) -> None:
+        """记录流关闭失败的协议诊断，不记录正文、URL 或平台消息标识。"""
+        def safe_error_fields(exc: Exception) -> dict[str, object]:
+            fields: dict[str, object] = {"type": type(exc).__name__}
+            if not isinstance(exc, QQAPIError):
+                return fields
+            fields["http_status"] = exc.status
+            body = exc.body
+            if not isinstance(body, dict):
+                return fields
+            code = body.get("code") or body.get("err_code")
+            if isinstance(code, int) and not isinstance(code, bool):
+                fields["upstream_code"] = code
+            elif isinstance(code, str) and code.isdecimal() and len(code) <= 12:
+                fields["upstream_code"] = int(code)
+            return fields
+
+        details: dict[str, object] = {
+            "input_state": 10,
+            "frame_index": self.frame_index,
+            "msg_seq": self.msg_seq,
+            "stream_id_present": bool(self.stream_msg_id),
+            "message_id_present": bool(self.message_id),
+            "error": safe_error_fields(error),
+        }
+        if original_error is not None:
+            details["original_error"] = safe_error_fields(original_error)
+        diag_log_raw(
+            "agent.gateway.qq.stream_finalization",
+            json.dumps(details, ensure_ascii=False, sort_keys=True),
+        )
 
     def has_sent(self) -> bool:
         return self.sent_frame_count > 0
@@ -646,7 +694,8 @@ async def send_c2c(openid: str, text: str, msg_id: str | None = None,
                 "transient": _qq_is_transient(e),
                 "qq": _qq_error_summary(e),
             }, ensure_ascii=False), flush=True)
-            if msg_id:
+            passive_rejected = _qq_msg_id_invalid(e) or _qq_passive_reply_limited(e)
+            if msg_id and passive_rejected:
                 _log.warning("[qq] C2C 被动回复失败，降级为主动消息")
                 _send_tokens.pop(channel_id, None)
                 try:
@@ -666,7 +715,9 @@ async def send_c2c(openid: str, text: str, msg_id: str | None = None,
             diag_log("agent.gateway.qq.send_c2c", e)
             _log.warning("[qq] 发送失败(第%d次): %s", attempt, redact(f"{type(e).__name__}: {e}"))
             _send_tokens.pop(channel_id, None)   # 丢弃缓存，下次重新取 token
-            if attempt == 2 or not _qq_is_transient(e):
+            # QQ 写消息接口不是幂等操作。超时或 5xx 时服务端可能已接收；
+            # 不带 msg_id 的 C2C 消息不能安全重试，否则会把同一正文发两次。
+            if attempt == 2 or unknown_seen or not _qq_is_transient(e):
                 return _failed_send_receipt(e, return_receipt=return_receipt, unknown_seen=unknown_seen)
             await asyncio.sleep(0.5)
     return _failed_send_receipt(RuntimeError("QQ C2C send exhausted"), return_receipt=return_receipt,
@@ -760,7 +811,8 @@ async def send_group(group_openid: str, text: str, msg_id: str | None = None,
                 "transient": _qq_is_transient(e),
                 "qq": _qq_error_summary(e),
             }, ensure_ascii=False), flush=True)
-            if msg_id and not (mention_sent and mention_text and body_text):
+            passive_rejected = _qq_msg_id_invalid(e) or _qq_passive_reply_limited(e)
+            if msg_id and passive_rejected and not (mention_sent and mention_text and body_text):
                 _log.warning("[qq] 群聊被动回复失败，降级为主动消息")
                 try:
                     if mention_text and not mention_sent:
@@ -804,7 +856,9 @@ async def send_group(group_openid: str, text: str, msg_id: str | None = None,
             diag_log("agent.gateway.qq.send_group", e)
             _log.warning("[qq] 群发送失败(第%d次): %s", attempt, redact(f"{type(e).__name__}: {e}"))
             _send_tokens.pop(channel_id, None)
-            if attempt == 2 or not _qq_is_transient(e):
+            # QQ 写消息接口不是幂等操作。超时或 5xx 时服务端可能已接收；
+            # 不带 msg_id 的群消息不能安全重试，否则会把同一正文发两次。
+            if attempt == 2 or unknown_seen or not _qq_is_transient(e):
                 return _failed_send_receipt(e, return_receipt=return_receipt, unknown_seen=unknown_seen)
             await asyncio.sleep(0.5)
     return _failed_send_receipt(RuntimeError("QQ group send exhausted"), return_receipt=return_receipt,

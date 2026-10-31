@@ -12,7 +12,7 @@ from collections.abc import Callable, Set
 from typing import AsyncIterator, Tuple
 
 from agent.im.models import PlatformReply
-from agent.im.streaming.qq import QQMermaidRound
+from agent.im.streaming.qq import QQChartRound
 from agent.tool_messages import format_tool_event, tool_code_block as _tool_code_block
 from agent.models import AgentResponse
 
@@ -47,7 +47,7 @@ async def _close_async_iterator(iterator) -> None:
         pass
 
 
-class _QQMermaidRound(QQMermaidRound):
+class _QQChartRound(QQChartRound):
     """旧测试/调用路径的适配器，绑定 replies 门面的可替换发送接缝。"""
 
     def __init__(self, payload: dict, *, show_intermediate_replies: bool) -> None:
@@ -56,7 +56,7 @@ class _QQMermaidRound(QQMermaidRound):
             show_intermediate_replies=show_intermediate_replies,
             send_text=send_text,
             try_send_png_image=_try_send_png_image,
-            send_mermaid_text=_send_qq_mermaid_text,
+            send_chart_text=_send_qq_chart_text,
             fix_loose_bold=_fix_loose_bold,
         )
 
@@ -64,12 +64,13 @@ class _QQMermaidRound(QQMermaidRound):
 async def send_qq_stream_by_round(
     payload: dict, token_iter: AsyncIterator[tuple[str, object]], *,
     show_intermediate_replies: bool = True,
+    tool_event_boundary=None,
 ) -> Tuple[bool, AgentResponse, str | None]:
-    """QQ 私聊按 round 流式发送；Mermaid 源码暂存，图表以图片消息补发。"""
+    """QQ 私聊按 round 流式发送；图表 源码暂存，图表以图片消息补发。"""
     from agent.im.streaming.qq import send_qq_stream_by_round as run_stream
 
     def sender_factory(sender_payload: dict, *, show_intermediate_replies: bool):
-        return _QQMermaidRound(
+        return _QQChartRound(
             sender_payload, show_intermediate_replies=show_intermediate_replies,
         )
 
@@ -79,6 +80,7 @@ async def send_qq_stream_by_round(
         show_intermediate_replies=show_intermediate_replies,
         sender_factory=sender_factory,
         fix_loose_bold=_fix_loose_bold,
+        tool_event_boundary=tool_event_boundary,
     )
 
 
@@ -107,13 +109,13 @@ async def send_text(payload: dict, text: str) -> bool:
     return await send_reply(payload, PlatformReply.from_text(payload, text))
 
 
-async def _send_qq_mermaid_text(payload: dict, text: str) -> bool:
-    """Mermaid 降级文本沿普通 QQ 文本路径发送；平台限额由网关处理。"""
+async def _send_qq_chart_text(payload: dict, text: str) -> bool:
+    """图表 降级文本沿普通 QQ 文本路径发送；平台限额由网关处理。"""
     return await send_text(payload, text)
 
 
-async def _begin_attention_delivery(payload: dict) -> dict | None:
-    """为 scored 群聊的一条可见外发创建幂等投递收据，不保存消息正文。"""
+async def _begin_attention_delivery(payload: dict, *, final_payload_text: str | None = None) -> dict | None:
+    """为可见外发登记幂等收据及受限的最终正文因果引用。"""
     if payload.get("_attention_track_delivery") is not True:
         return None
     from app.core import redis as R
@@ -159,8 +161,16 @@ async def _begin_attention_delivery(payload: dict) -> dict | None:
             if payload.get("_attention_conversation_subject_sender_id")
             or payload.get("platform_user_id") else None
         ),
-        budget_kind=payload.get("_attention_budget_kind"),
+        proactive=(
+            payload.get("_attention_decision_kind") == "proactive"
+            and payload.get("_attention_delivery_role") != "tool"
+        ),
         submitted_at_ms=int(time.time() * 1000),
+        final_payload_text=final_payload_text,
+        source_attention_kind=(
+            "tool" if payload.get("_attention_delivery_role") == "tool"
+            else str(payload.get("_attention_decision_kind") or "")
+        ),
     )
     return {
         "delivery_id": delivery_id,
@@ -285,7 +295,7 @@ def _link_buttons_result(status: str, platform: str, delivery: str, buttons: lis
 
 
 async def send_link_button_message(payload: dict, message: str, buttons: list[dict]) -> dict:
-    delivery = await _begin_attention_delivery(payload)
+    delivery = await _begin_attention_delivery(payload, final_payload_text=_link_buttons_text(message, buttons))
     if delivery and delivery["state"] != "NEW":
         _record_existing_attention_delivery(payload, delivery)
         return {
@@ -380,7 +390,19 @@ async def _send_link_button_message_untracked(payload: dict, message: str, butto
 
 
 async def send_interaction(payload: dict, prompt: dict) -> bool:
-    delivery = await _begin_attention_delivery(payload)
+    from agent.interactions.qq import format_text_fallback
+
+    platform = str(payload.get("platform") or "")
+    fallback_prompt = prompt
+    if platform == "qq" and prompt.get("options"):
+        fallback_prompt = {
+            **prompt,
+            "platform_user_id": payload.get("platform_user_id"),
+            "native_keyboard": True,
+        }
+    final_text = format_text_fallback(fallback_prompt, platform=platform or "qq")
+    payload.setdefault("_attention_delivery_role", "tool")
+    delivery = await _begin_attention_delivery(payload, final_payload_text=final_text)
     if delivery and delivery["state"] != "NEW":
         _record_existing_attention_delivery(payload, delivery)
         return delivery["state"] == "ACCEPTED"
@@ -504,7 +526,12 @@ async def send_reply(payload: dict, reply: PlatformReply) -> bool:
             flush=True,
         )
         return False
-    delivery = await _begin_attention_delivery(payload)
+    delivery = await _begin_attention_delivery(
+        payload,
+        final_payload_text=(
+            text if payload.get("_attention_delivery_role") == "answer" else None
+        ),
+    )
     if delivery and delivery["state"] != "NEW":
         # 已经提交或接受过的同一 delivery_id 不重复外发；未知状态交给最终收尾保守占额。
         _record_existing_attention_delivery(payload, delivery)
@@ -651,7 +678,7 @@ async def _send_png_image_untracked(payload: dict, png: bytes) -> bool:
         from agent.gateway import feishu
         target = payload.get("chat_id") or payload.get("platform_user_id")
         return bool(target) and await feishu.send_file(
-            str(target), png, "mermaid-diagram", "png", payload.get("channel_id")
+            str(target), png, "chart-image", "png", payload.get("channel_id")
         )
     if platform == "qq":
         from agent.gateway import qq
@@ -661,7 +688,7 @@ async def _send_png_image_untracked(payload: dict, png: bytes) -> bool:
             return False
         # 图片始终作为主动消息发送，不消耗触发本轮任务的被动回复次数。
         sent = await qq.send_file(
-            str(target), png, "mermaid-diagram", "png", payload.get("channel_id"),
+            str(target), png, "chart-image", "png", payload.get("channel_id"),
             None, group=group,
         )
         return bool(sent)
@@ -675,7 +702,7 @@ async def _send_png_image_untracked(payload: dict, png: bytes) -> bool:
         from agent.gateway import telegram
         target = payload.get("chat_id") if payload.get("chat_type") == "group" else payload.get("platform_user_id")
         return bool(target) and await telegram.send_file(
-            str(target), png, "mermaid-diagram.png",
+            str(target), png, "chart-image.png",
             channel_id=str(payload.get("channel_id") or ""),
             reply_to_message_id=str(payload.get("message_id") or "") or None,
         )
@@ -683,18 +710,18 @@ async def _send_png_image_untracked(payload: dict, png: bytes) -> bool:
 
 
 async def _try_send_png_image(payload: dict, png: bytes) -> bool:
-    """媒体 Gateway 异常只降级当前 Mermaid 图，不中断 Agent Run。"""
+    """媒体 Gateway 异常只降级当前 图表 图，不中断 Agent Run。"""
     try:
         sent = await send_png_image(payload, png)
         if not sent:
             from app.core.redaction import diag_log_raw
 
-            diag_log_raw("agent.im.mermaid.send_image", "status=delivery_failed")
+            diag_log_raw("agent.im.chart.send_image", "status=delivery_failed")
         return sent
     except Exception as exc:
         from app.core.redaction import diag_log
 
-        diag_log("agent.im.mermaid.send_image", exc)
+        diag_log("agent.im.chart.send_image", exc)
         return False
 
 
@@ -796,22 +823,22 @@ def _fix_loose_bold(text: str) -> str:
     return ''.join(parts)
 
 
-async def _send_mermaid_reply_text(payload: dict, text: str) -> str | None:
-    """发送一段含 Mermaid 的文本，图像失败时降级回原始 fence。"""
-    from agent.im.mermaid_delivery import send_mermaid_reply_text
+async def _send_chart_reply_text(payload: dict, text: str) -> str | None:
+    """发送一段含 图表 的文本，图像失败时降级回原始 fence。"""
+    from agent.im.chart_delivery import send_chart_reply_text
 
-    return await send_mermaid_reply_text(
+    return await send_chart_reply_text(
         payload,
         text,
         send_text=send_text,
         try_send_png_image=_try_send_png_image,
-        send_qq_mermaid_text=_send_qq_mermaid_text,
+        send_qq_chart_text=_send_qq_chart_text,
     )
 
 
 async def _send_completed_parts(payload: dict, parts) -> bool:
     """按解析顺序发送已渲染的文本与图片 part。"""
-    from agent.im.mermaid_delivery import send_completed_parts
+    from agent.im.chart_delivery import send_completed_parts
 
     return await send_completed_parts(
         payload, parts, send_text=send_text, try_send_png_image=_try_send_png_image,
@@ -819,8 +846,8 @@ async def _send_completed_parts(payload: dict, parts) -> bool:
 
 
 async def send_completed_round(payload: dict, text: str) -> bool:
-    """发送已完成的 IM 回复轮次，并把 Mermaid 图表作为独立图片消息发送。"""
-    return await _send_mermaid_reply_text(payload, text) is not None
+    """发送已完成的 IM 回复轮次，并把 图表 图表作为独立图片消息发送。"""
+    return await _send_chart_reply_text(payload, text) is not None
 
 
 async def send_agent_response(
@@ -874,7 +901,7 @@ async def send_agent_response(
     for index, text in enumerate(texts):
         if index in sent_indices:
             continue
-        delivered_text = await _send_mermaid_reply_text(answer_payload, text)
+        delivered_text = await _send_chart_reply_text(answer_payload, text)
         if delivered_text is None:
             return None
         last_text = delivered_text or response_text or last_text
@@ -884,6 +911,6 @@ async def send_agent_response(
     # 也必须单独把错误提示发出去，不能被 round 去重吞掉。
     if response.errored:
         if response_text and response_text != last_text:
-            return response_text if await _send_mermaid_reply_text(answer_payload, response_text) is not None else None
+            return response_text if await _send_chart_reply_text(answer_payload, response_text) is not None else None
         return response_text or last_text or None
     return response_text or last_text

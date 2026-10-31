@@ -10,9 +10,13 @@ async def display_tool_event(
     publish_web_event,
     feishu_tool_summary=None,
     stream_tool_events=None,
+    before_platform_event=None,
 ) -> None:
     """保持 Web 镜像独立，再按用户偏好选择 IM 工具状态呈现。"""
     await publish_web_event(event)
+    # QQ 文本流必须在平台工具消息之前收到 DONE；该边界也独立于工具展示偏好。
+    if before_platform_event is not None and not await before_platform_event(event):
+        return
     # 群聊回复选择工具是内部协议信号，不是给群成员看的内容：IM 侧一律不外显，
     # Web 镜像照常保留（Web 端需要它排查「模型忘了调用选择工具」这类问题）。
     from agent.im.auto_reply import GROUP_NO_REPLY_TOOL

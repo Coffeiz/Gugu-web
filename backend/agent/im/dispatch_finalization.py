@@ -1,9 +1,7 @@
 """IM run 完成后的会话写回、记忆触发和平台回复收尾。"""
 from __future__ import annotations
 
-import asyncio
 import re
-import time
 
 from agent.im.activity import finalize_im_response
 from agent.im.conversation import persist_im_session
@@ -12,108 +10,6 @@ from agent.im.request_preparation import _should_observe_private_member_activity
 from agent.im.replies import send_agent_response, send_text
 from agent.runtime import trace
 from agent.security import logsafe
-
-_SOFT_MATERIAL_REQUEST_RE = re.compile(
-    r"(?:截图|图片|照片|文件|日志|报错|结果|录屏|样例).{0,24}(?:发|上传|贴|提供|补充)|"
-    r"(?:发|上传|贴|提供|补充).{0,24}(?:截图|图片|照片|文件|日志|报错|结果|录屏|样例)"
-)
-
-
-async def _register_soft_request_anchor(payload: dict, text: str, *, run_key: str | None) -> None:
-    if (
-        payload.get("chat_type") != "group"
-        or payload.get("group_attention_mode") not in {"natural", "active"}
-        or not payload.get("platform_user_id")
-        or not text
-        or not _SOFT_MATERIAL_REQUEST_RE.search(text)
-    ):
-        return
-    from app.core import redis as R
-    from agent.im.auto_reply.budget import register_soft_anchor
-
-    anchor_id = str(run_key or payload.get("event_id") or "")
-    try:
-        await register_soft_anchor(
-            R.get_redis(),
-            platform=str(payload.get("platform") or ""),
-            bot_id=str(payload.get("channel_id") or payload.get("bot_id") or ""),
-            group_id=str(payload.get("chat_id") or ""),
-            sender_id=str(payload.get("platform_user_id") or ""),
-            anchor_id=anchor_id,
-        )
-    except Exception as exc:
-        from app.core.redaction import diag_log
-
-        diag_log("agent.im.attention.soft_anchor", exc)
-
-
-async def _settle_attention_budget(request, *, outcome: str) -> None:
-    reservation = getattr(request, "attention_budget_reservation", None)
-    heartbeat = getattr(request, "attention_budget_heartbeat", None)
-    if heartbeat is not None:
-        heartbeat.cancel()
-        await asyncio.gather(heartbeat, return_exceptions=True)
-        request.attention_budget_heartbeat = None
-    if not reservation:
-        return
-    from app.core import redis as R
-    from agent.im.auto_reply.budget import settle_proactive_slot, settle_soft_slot
-
-    try:
-        now_ms = int(time.time() * 1000)
-        redis = R.get_redis()
-        # 当前平台出口没有跨平台消息查询对账接口。回执不明时将其记为
-        # UNRESOLVED，并在 10 分钟预算窗内保守占位；不自动重发。
-        settled_outcome = "UNRESOLVED" if outcome == "UNKNOWN" else outcome
-        if reservation.get("kind") == "soft":
-            await settle_soft_slot(
-                redis,
-                platform=reservation["platform"],
-                bot_id=reservation["bot_id"],
-                group_id=reservation["group_id"],
-                sender_id=reservation["sender_id"],
-                run_id=reservation["run_id"],
-                outcome=settled_outcome,
-                now_ms=now_ms,
-            )
-        else:
-            await settle_proactive_slot(
-                redis,
-                platform=reservation["platform"],
-                bot_id=reservation["bot_id"],
-                group_id=reservation["group_id"],
-                run_id=reservation["run_id"],
-                outcome=settled_outcome,
-                now_ms=now_ms,
-            )
-    except Exception as exc:
-        from app.core.redaction import diag_log
-
-        diag_log("agent.im.attention.budget_release", exc)
-
-
-async def settle_attention_budget_after_run_error(request, payload: dict) -> None:
-    """Run 异常时按出站收据结算；收据不明时保守保留预算。"""
-    await _settle_attention_budget(
-        request,
-        outcome=_verified_budget_outcome(payload, "UNKNOWN"),
-    )
-
-
-def _verified_budget_outcome(payload: dict, fallback: str) -> str:
-    """tracked 模式只按真实出站回执提交额度，正文存在不等于平台接受。"""
-    if payload.get("_attention_track_delivery") is not True:
-        return fallback
-    receipts = payload.get("_attention_outbound_receipts") or []
-    statuses = [item.get("status") for item in receipts if isinstance(item, dict)]
-    if "ACCEPTED" in statuses:
-        return "ACCEPTED"
-    if any(status not in {"FAILED_CONFIRMED", "RELEASED"} for status in statuses):
-        return "UNKNOWN"
-    if statuses:
-        return "FAILED_CONFIRMED"
-    return "FAILED_CONFIRMED" if fallback == "FAILED_CONFIRMED" else "UNKNOWN"
-
 
 def _log_attention_run_outcome(
     payload: dict,
@@ -150,7 +46,7 @@ def _log_attention_run_outcome(
     diag_log_raw(
         "agent.im.attention.run_outcome",
         json.dumps({
-            "attention_version": "attention-v1.4",
+            "attention_version": "attention-v3.0.6",
             "mode": str(payload.get("group_attention_mode") or "autonomous"),
             "config_version": int(payload.get("_attention_config_version") or 0),
             "run_entered": True,
@@ -229,13 +125,6 @@ async def finalize_im_dispatch(
             # 私聊成员记忆是后台增强能力，不影响当前回复。
             pass
     if response.cancelled:
-        await _settle_attention_budget(
-            request,
-            outcome=_verified_budget_outcome(
-                payload,
-                "UNKNOWN" if response.remote_status_unknown else "FAILED_CONFIRMED",
-            ),
-        )
         trace.finish_run("cancelled")
         if response.remote_status_unknown:
             await send_text(payload, "本地已停止，远端执行状态未知")
@@ -254,9 +143,6 @@ async def finalize_im_dispatch(
             # 没有正文或选择不回复都保持群内静默；普通 IM 收尾的空正文兜底
             # （「嗯~在的」）不能用于自动回复模式。
             trace.finish_run("error" if response.errored else "success")
-            await _settle_attention_budget(
-                request, outcome=_verified_budget_outcome(payload, "FAILED_CONFIRMED"),
-            )
             await finalize_im_response(platform, puid, False, "")
             _log_attention_run_outcome(
                 payload, request,
@@ -322,9 +208,6 @@ async def finalize_im_dispatch(
                         "agent.im.file_attachment_delivery",
                         f"platform={platform} status=notice_failed",
                     )
-                await _settle_attention_budget(
-                    request, outcome=_verified_budget_outcome(payload, "UNKNOWN"),
-                )
                 trace.finish_run("error")
                 await finalize_im_response(platform, puid, False, "")
                 _log_attention_run_outcome(
@@ -342,11 +225,6 @@ async def finalize_im_dispatch(
         )
 
     if reply_text is None:
-        # 平台发送失败不能被记成成功回复。
-        # API 回执未知时保留主动额度，避免超额重试。
-        await _settle_attention_budget(
-            request, outcome=_verified_budget_outcome(payload, "UNKNOWN"),
-        )
         trace.finish_run("error")
         await finalize_im_response(platform, puid, False, "")
         print(
@@ -360,13 +238,6 @@ async def finalize_im_dispatch(
 
     if response.errored:
         # 错误提示已送达，但 Agent run 仍是失败终态。
-        await _settle_attention_budget(
-            request,
-            outcome=_verified_budget_outcome(
-                payload,
-                "ACCEPTED" if reply_text or response.files or sent_round_indices else "FAILED_CONFIRMED",
-            ),
-        )
         trace.finish_run("error", reply_text)
         await finalize_im_response(platform, puid, False, reply_text)
         print(
@@ -385,32 +256,6 @@ async def finalize_im_dispatch(
         for text in (response.round_texts or [])
         if str(text or "").strip()
     ) or reply_text
-    await _settle_attention_budget(
-        request,
-        outcome=_verified_budget_outcome(
-            payload,
-            "ACCEPTED" if reply_text or response.files or sent_round_indices else "FAILED_CONFIRMED",
-        ),
-    )
-    if reply_text:
-        await _register_soft_request_anchor(
-            payload, reply_text, run_key=getattr(request, "inbound_batch_key", None),
-        )
-    try:
-        from agent.im.auto_reply.conversation_ttl import record_conversation_after_final_reply
-
-        await record_conversation_after_final_reply(
-            payload,
-            run_key=str(
-                payload.get("_attention_run_key")
-                or getattr(request, "inbound_batch_key", None)
-                or ""
-            ),
-        )
-    except Exception as exc:
-        from app.core.redaction import diag_log
-
-        diag_log("agent.im.attention.conversation_open", exc)
     trace.finish_run("success", trace_output)
     await finalize_im_response(platform, puid, False, reply_text)
     print(

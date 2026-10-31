@@ -117,7 +117,7 @@ def bind_im_context(
                 "_attention_track_delivery": True,
                 "_attention_run_key": payload.get("_attention_run_key"),
                 "_attention_delivery_counter": payload.get("_attention_delivery_counter"),
-                "_attention_budget_kind": payload.get("_attention_budget_kind"),
+                "_attention_decision_kind": payload.get("_attention_decision_kind"),
                 "_attention_outbound_receipts": payload.get("_attention_outbound_receipts"),
                 "_attention_source_event_ids": payload.get("_attention_source_event_ids") or [
                     str(item.get("event_id"))

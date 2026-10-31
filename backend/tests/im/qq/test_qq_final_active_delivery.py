@@ -135,12 +135,12 @@ async def test_round_end_followed_by_rewritten_final_uses_one_qq_message(deliver
 
 @pytest.mark.asyncio
 async def test_mermaid_only_final_is_delivered_as_image_without_replaying_source(delivery, monkeypatch):
-    from agent.im import mermaid
+    from agent.im import chart
 
     passive_send, finish, streamed = delivery
     image_send = AsyncMock(return_value=True)
     monkeypatch.setattr(replies, "_try_send_png_image", image_send)
-    monkeypatch.setattr(mermaid, "render_png", AsyncMock(return_value=b"synthetic-png"))
+    monkeypatch.setattr(chart, "render_chart_png", AsyncMock(return_value=b"synthetic-png"))
     payload = {"platform": "qq", "chat_type": "c2c", "platform_user_id": "synthetic-user",
                "channel_id": "synthetic-bot", "message_id": "synthetic-inbound"}
     source = "```mermaid\nflowchart LR\n  A --> B\n```"
@@ -248,7 +248,7 @@ async def test_stream_without_final_event_closes_partial_stream_then_raises(deli
 
 @pytest.mark.asyncio
 async def test_stream_exception_closes_partial_stream_before_propagating(delivery, monkeypatch):
-    from agent.im import mermaid
+    from agent.im import chart
 
     passive_send, _finish, streamed = delivery
     payload = {"platform": "qq", "chat_type": "c2c", "platform_user_id": "synthetic-user",
@@ -261,7 +261,7 @@ async def test_stream_exception_closes_partial_stream_before_propagating(deliver
         def ordered_events(self, events):
             return events
 
-    monkeypatch.setattr(mermaid, "ProgressiveMermaidTokenFilter", PassThroughFilter)
+    monkeypatch.setattr(chart, "ProgressiveChartTokenFilter", PassThroughFilter)
 
     async def events():
         yield "token", "工具执行前的部分内容"

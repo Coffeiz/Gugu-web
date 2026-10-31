@@ -18,11 +18,13 @@ async def _bot_mention_indexes(batch: list[tuple[str, dict]]) -> set[int]:
     """按网关确认的当前 Bot mention 切段；权限由后续 ActorResolver 单独判定。"""
     mentions: set[int] = set()
     for index, (_msg_id, payload) in enumerate(batch):
-        if (payload.get("chat_type") != "group"
-                or payload.get("bot_mentioned") is not True
-                or payload.get("mentions_other_bot") is True):
+        if payload.get("_pending_ask_resume") is True:
+            mentions.add(index)
             continue
-        mentions.add(index)
+        if (payload.get("chat_type") == "group"
+                and payload.get("bot_mentioned") is True
+                and payload.get("mentions_other_bot") is not True):
+            mentions.add(index)
     return mentions
 
 

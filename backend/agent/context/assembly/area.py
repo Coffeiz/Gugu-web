@@ -225,7 +225,14 @@ class MessageArea:
     ) -> None:
         """设置本次请求专属固定前缀和纯渲染选项，不写入 canonical history。"""
         self._request_prefix = tuple(copy.deepcopy(tuple(fixed_prefix)))
-        self.render_options = copy.deepcopy(render_options or {})
+        options = dict(render_options or {})
+        has_request = "request" in options
+        request = options.pop("request", None)
+        # request 是本轮活跃上下文而非渲染配置，可能携带 asyncio.Task、锁等
+        # 不可深拷贝的运行时对象；渲染器需要读取原请求身份，因此保留原引用。
+        self.render_options = copy.deepcopy(options)
+        if has_request:
+            self.render_options["request"] = request
 
     def set_dynamic_tail(self, messages: Iterable[dict]) -> None:
         """替换仅用于 Provider 请求的动态尾部，不推进 Area revision。"""

@@ -505,7 +505,7 @@ def test_merge_group_profile_keeps_distinct_items():
         [],
         [
             {"type": "nature", "text": "这是产品开发讨论群"},
-            {"type": "role", "text": "Coffeiz负责最终确认"},
+            {"type": "role", "text": "小北负责最终确认"},
         ],
         [],
     )

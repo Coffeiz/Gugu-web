@@ -106,6 +106,24 @@ async def _prepare_group_batch_inputs(user_id, batch_messages, request, model_cf
     return current_users, "\n".join(part for part in augmented_parts if part), attach_cards, images, media
 
 
+async def _run_voice_transcription(req, media, settings, user_id, session_factory):
+    """复用注意力预转写；其它入口按原配置调用语音模型。"""
+    cached = "\n".join(
+        text.strip()
+        for text in (getattr(req, "im_attention_transcripts", {}) or {}).values()
+        if isinstance(text, str) and text.strip()
+    )
+    if cached:
+        return cached
+    from agent import voice
+
+    async with session_factory() as voice_db:
+        return await voice.transcribe(
+            media, settings, db=voice_db, user_id=user_id,
+            raise_minimax_errors=True,
+        )
+
+
 async def load_mcp_tools_and_rag_context(
     user_id, settings, allowed_tool_names, req, *, history, snapshot_context,
     user_message=None, resume_interaction=False,
@@ -359,13 +377,34 @@ async def _reuse_early_user_rows(
             ConversationMessage.session_id == session_id,
         )
     )).scalars().all()
+    rows_by_event: dict[str, ConversationMessage] = {}
+    if batch_messages:
+        event_ids = list(dict.fromkeys(
+            str(item.get("event_id") or "")
+            for item in batch_messages
+            if isinstance(item, dict) and item.get("event_id")
+        ))
+        if event_ids:
+            event_rows = (await db.execute(
+                select(ConversationMessage).where(
+                    ConversationMessage.client_message_id.in_(event_ids),
+                    ConversationMessage.session_id == session_id,
+                )
+            )).scalars().all()
+            rows_by_event = {
+                str(row.client_message_id): row
+                for row in event_rows if row.client_message_id
+            }
     if batch_messages:
         by_id = {row.id: row for row in rows}
         default_chat_type = rows[0].chat_type if rows else "c2c"
         ordered = []
         for item in batch_messages:
             early_id = item.get("early_id")
+            event_id = str(item.get("event_id") or "")
             row = by_id.get(int(early_id)) if early_id else None
+            if row is None and event_id:
+                row = rows_by_event.get(event_id)
             if row is None:
                 row = ConversationMessage(
                     session_id=session_id,
@@ -376,7 +415,7 @@ async def _reuse_early_user_rows(
                     platform_user_name=item.get("platform_user_name"),
                     platform_bot_user_id=item.get("platform_bot_user_id"),
                     chat_type=item.get("chat_type") or default_chat_type,
-                    client_message_id=str(item.get("event_id") or "") or None,
+                    client_message_id=event_id or None,
                 )
                 db.add(row)
             row.im_platform_message_id = item.get("platform_message_id") or row.im_platform_message_id
@@ -704,15 +743,12 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
         for m in _transcribe_media
     )
     if _transcribe_media and (_audio_fallback or _persist_transcript):
-        from agent import voice as _voice
-        # 上面的会话读取事务已经结束，不能继续复用已退出上下文的 db；
-        # 语音模型解析需要独立短事务，避免把连接带进后续 LLM 等待。
+        # 复用注意力阶段预转写，避免本轮同一音频重复调用 ASR。
+        # 无缓存时仍使用短事务调用语音模型。
         try:
-            async with _sess._SessionLocal() as voice_db:
-                transcript = await _voice.transcribe(
-                    _transcribe_media, settings, db=voice_db, user_id=user_id,
-                    raise_minimax_errors=True,
-                )
+            transcript = await _run_voice_transcription(
+                req, _transcribe_media, settings, user_id, _sess._SessionLocal,
+            )
         except Exception as error:
             if not _audio_fallback:
                 # 独立转写只是原生音频模型的附加展示能力；转写故障不能阻断主模型听音频。
@@ -740,17 +776,38 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
                 from app.services.conversation_transcripts import (
                     publish_voice_transcript_update, save_voice_transcript,
                 )
-                async with _sess._SessionLocal() as transcript_db:
-                    saved_files = await save_voice_transcript(
-                        transcript_db, user_id=user_id, session_id=session_id,
-                        message_id=req.user_message_id, transcript=transcript,
-                        status=transcript_status,
-                    )
-                if saved_files is not None:
-                    await publish_voice_transcript_update(
-                        user_id, session_id=session_id,
-                        message_id=req.user_message_id, files=saved_files,
-                    )
+                attention_transcripts = getattr(req, "im_attention_transcripts", {}) or {}
+                if batch_messages and attention_transcripts and reused_user_messages:
+                    for item, message_row in zip(
+                        batch_messages, reused_user_messages, strict=False,
+                    ):
+                        event_id = str(item.get("event_id") or "")
+                        message_transcript = attention_transcripts.get(event_id)
+                        if not message_transcript:
+                            continue
+                        async with _sess._SessionLocal() as transcript_db:
+                            saved_files = await save_voice_transcript(
+                                transcript_db, user_id=user_id, session_id=session_id,
+                                message_id=message_row.id,
+                                transcript=message_transcript, status="completed",
+                            )
+                        if saved_files is not None:
+                            await publish_voice_transcript_update(
+                                user_id, session_id=session_id,
+                                message_id=message_row.id, files=saved_files,
+                            )
+                else:
+                    async with _sess._SessionLocal() as transcript_db:
+                        saved_files = await save_voice_transcript(
+                            transcript_db, user_id=user_id, session_id=session_id,
+                            message_id=req.user_message_id, transcript=transcript,
+                            status=transcript_status,
+                        )
+                    if saved_files is not None:
+                        await publish_voice_transcript_update(
+                            user_id, session_id=session_id,
+                            message_id=req.user_message_id, files=saved_files,
+                        )
             except Exception as error:
                 from app.core.redaction import diag_log
                 diag_log("agent.run.preparation.persist_voice_transcript", error)

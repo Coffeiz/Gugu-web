@@ -39,39 +39,6 @@ from agent.im.dispatch_finalization import finalize_im_dispatch
 from agent.im.stream_bridge import ImWebStreamBridge
 
 
-async def _renew_attention_budget_lease(reservation: dict) -> None:
-    """Run 在执行时续租新增预算；进程崩溃则由 Redis TTL 有界清理。"""
-    from app.core import redis as R
-
-    from agent.im.auto_reply.budget import renew_proactive_slot, renew_soft_slot
-
-    redis = R.get_redis()
-    while True:
-        await asyncio.sleep(30)
-        if reservation.get("kind") == "soft":
-            renewed = await renew_soft_slot(
-                redis,
-                platform=reservation["platform"],
-                bot_id=reservation["bot_id"],
-                group_id=reservation["group_id"],
-                sender_id=reservation["sender_id"],
-                run_id=reservation["run_id"],
-            )
-        else:
-            renewed = await renew_proactive_slot(
-                redis,
-                platform=reservation["platform"],
-                bot_id=reservation["bot_id"],
-                group_id=reservation["group_id"],
-                run_id=reservation["run_id"],
-            )
-        if not renewed:
-            from app.core.redaction import diag_log_raw
-
-            diag_log_raw("agent.im.attention.budget_lease", "renewal_lost")
-            return
-
-
 def _log_attention_decision(
     decision,
     *,
@@ -82,7 +49,6 @@ def _log_attention_decision(
     snapshot_complete: bool | None = None,
     window_truncated: bool | None = None,
     batch_key: str | None = None,
-    reservation: dict | None = None,
 ) -> None:
     if decision is None:
         return
@@ -93,7 +59,8 @@ def _log_attention_decision(
     diag_log_raw(
         "agent.im.attention.decision",
         json.dumps({
-            "attention_version": "attention-v1.4",
+            "attention_version": "attention-v3.0.6",
+            "scorer_version": "v3_0_6",
             "mode": mode,
             "effective_config_source": "bot_setting",
             "config_version": int(config_version),
@@ -104,11 +71,28 @@ def _log_attention_decision(
             "actual_decision": decision.kind.value,
             "reason_codes": list(decision.reasons),
             "score": decision.score,
+            "state": decision.state,
+            "scene_type": decision.scene_type,
+            "scene_score": decision.scene_score,
+            "ask_raw_score": decision.ask_raw_score,
+            "ask_position_weight": decision.ask_position_weight,
+            "ask_punctuation_weight": decision.ask_punctuation_weight,
+            "ask_adjusted_score": decision.ask_adjusted_score,
+            "ask_span_start": decision.ask_span_start,
+            "ask_span_end": decision.ask_span_end,
+            "capability_strength": decision.capability_strength,
+            "capability_span_start": decision.capability_span_start,
+            "capability_span_end": decision.capability_span_end,
+            "capability_position_weight": decision.capability_position_weight,
+            "topic_score": decision.topic_score,
+            "topic_raw_score": decision.topic_raw_score,
+            "anchor_event_id": decision.anchor_event_id,
+            "topic_match_event_id": decision.topic_match_event_id,
+            "matched_span_lengths": decision.matched_span_lengths,
             "score_breakdown": (
                 dict(decision.score_breakdown) if decision.score_breakdown else None
             ),
             "threshold": decision.threshold,
-            "budget_kind": reservation.get("kind") if reservation else None,
             "source_event_count": int(source_event_count),
             "run_entered": bool(should_run),
             # Snapshot coverage is decision input, not currently exposed in the
@@ -131,7 +115,7 @@ def _log_attention_passive_receipt(
     diag_log_raw(
         "agent.im.attention.passive_receipt",
         json.dumps({
-            "attention_version": "attention-v1.4",
+            "attention_version": "attention-v3.0.6",
             "mode": mode,
             "config_version": int(config_version),
             "batch_key_hash": hashlib.sha256(batch_key.encode("utf-8")).hexdigest()[:16],
@@ -139,23 +123,6 @@ def _log_attention_passive_receipt(
             "persistence_receipt": "completed",
         }, ensure_ascii=False, separators=(",", ":")),
     )
-
-
-async def _preflight_group_conversation(payload: dict) -> None:
-    if not payload.get("group_requires_at") or payload.get("group_read_enabled"):
-        return
-    try:
-        from agent.im.auto_reply.runtime import preflight_active_conversation_event_ids
-
-        active_event_ids = await preflight_active_conversation_event_ids(payload)
-    except Exception as exc:
-        from app.core.redaction import diag_log
-
-        diag_log("agent.im.attention.conversation_preflight", exc)
-        return
-    if active_event_ids:
-        payload["_attention_continuation_only"] = True
-        payload["_attention_active_conversation_event_ids"] = active_event_ids
 
 
 def _track_direct_group_invitation(payload: dict, request) -> None:
@@ -188,9 +155,9 @@ def _track_direct_group_invitation(payload: dict, request) -> None:
     )
     payload["_attention_source_event_ids"] = [message.event_id]
     payload["_attention_conversation_subject_sender_id"] = message.sender_id
+    payload["_attention_decision_kind"] = "DIRECT"
     payload["_attention_delivery_counter"] = {"value": 0}
     payload["_attention_outbound_receipts"] = []
-    payload["_attention_budget_kind"] = None
 
 
 async def dispatch_im_message(payload: dict):
@@ -209,6 +176,31 @@ async def dispatch_im_message(payload: dict):
         _MCP_SECRET_CHECKED_MARKER,
         consume_mcp_secret_payload,
     )
+
+    if payload.get("chat_type") == "group":
+        # 静默观察只依赖发送者 ID；在任何命令、交互、快捷指令和被动分流早退前记录。
+        try:
+            from agent.im.auto_reply.pending_ask import (
+                cancel_pending_ask,
+                is_current_bot_mention,
+                observe_group_activity,
+                pending_ask_was_cancelled,
+            )
+
+            await observe_group_activity(payload)
+            if await pending_ask_was_cancelled(payload):
+                trace.discard_run()
+                return None
+            if (
+                payload.get("_pending_ask_resume") is not True
+                and is_current_bot_mention(payload)
+            ):
+                # 原生 @ 路径可能绕过注意力评分；仍须先取消已排队的旧开放问题。
+                await cancel_pending_ask(payload)
+        except Exception as exc:
+            from app.core.redaction import diag_log
+
+            diag_log("agent.im.attention.pending_ask_activity", exc)
 
     mcp_secret_checked = (
         payload.pop("_mcp_secret_checked", None) is _MCP_SECRET_CHECKED_MARKER
@@ -267,7 +259,6 @@ async def dispatch_im_message(payload: dict):
         payload["group_attention_mode"] = group_settings[5] if len(group_settings) > 5 else "autonomous"
         payload["group_attention_config_version"] = group_settings[6] if len(group_settings) > 6 else 0
 
-        await _preflight_group_conversation(payload)
 
     from agent.im.auto_reply import should_enable_group_reply_gate
 
@@ -421,7 +412,7 @@ async def dispatch_im_message(payload: dict):
             trace.finish_run("success")
             return None
 
-    if should_record_passive_group(req, payload) and not payload.get("_attention_continuation_only"):
+    if should_record_passive_group(req, payload):
         passive_sid = await record_passive_im_message(req, prepared.session_id)
         await persist_im_session(platform, route.bot_id, session_scope, passive_sid, group=True)
         trace.bind_im_run(passive_sid, platform)
@@ -553,12 +544,11 @@ async def dispatch_im_message(payload: dict):
         )
         try:
             attention_messages = batch_attention_messages(payload)
-            should_run, _attention_decision, budget_reservation = await evaluate_group_attention(req, payload)
+            should_run, _attention_decision = await evaluate_group_attention(req, payload)
             _log_attention_decision(
                 _attention_decision,
                 mode=mode,
                 source_event_count=len(attention_messages),
-                reservation=budget_reservation,
                 should_run=should_run,
                 config_version=int(payload.get("group_attention_config_version") or 0),
                 snapshot_complete=payload.get("_attention_snapshot_complete"),
@@ -569,8 +559,8 @@ async def dispatch_im_message(payload: dict):
             from app.core.redaction import diag_log
 
             diag_log("agent.im.attention.evaluate", exc)
-            # 缺少稳定事件身份时保留旧路由；其余注意力/配额故障 fail-closed。
-            should_run, budget_reservation = not bool(attention_messages), None
+            # 缺少稳定事件身份时保留旧路由；其余注意力判断故障 fail-closed。
+            should_run = not bool(attention_messages)
 
         if not should_run:
             batch_key = str(getattr(req, "inbound_batch_key", None) or "")
@@ -598,6 +588,7 @@ async def dispatch_im_message(payload: dict):
                 attention_decision=_attention_decision,
                 attention_mode=mode,
                 attention_config_version=int(payload.get("group_attention_config_version") or 0),
+                transcripts=getattr(req, "im_attention_transcripts", {}) or {},
             )
             _log_attention_passive_receipt(
                 mode=mode,
@@ -611,23 +602,13 @@ async def dispatch_im_message(payload: dict):
             trace.bind_im_run(recorded_session_id, platform)
             trace.discard_run()
             return None
-        if mode in {"quiet", "natural", "active"}:
+        if mode in {"quiet", "natural", "active", "autonomous"}:
             payload["_attention_track_delivery"] = True
             payload["_attention_run_key"] = str(getattr(req, "inbound_batch_key", None) or "")
             # 出站分支会浅拷贝 payload；提前创建共享计数器，让各副本获得
             # 同一条 Run 内唯一的 delivery ordinal。
             payload["_attention_delivery_counter"] = {"value": 0}
             payload["_attention_outbound_receipts"] = []
-            payload["_attention_budget_kind"] = (
-                budget_reservation.get("kind") if budget_reservation else None
-            )
-        if budget_reservation:
-            req.attention_budget_reservation = {
-                **budget_reservation,
-                "platform": platform,
-                "bot_id": route.bot_id,
-                "group_id": str(req.chat_id or ""),
-            }
 
     # 原生 @ 路径绕过注意力门，但其已确认最终回复也可以建立成员续接窗口。
     # 只在实际进入 Agent Run 的群聊消息上启用投递账本，不覆盖只读群。
@@ -647,8 +628,8 @@ async def dispatch_im_message(payload: dict):
     if platform == "telegram":
         from agent.interactions.preferences import im_user_locale
         payload["locale"] = await im_user_locale(req.user_id)
-    from agent.interactions.preferences import im_mermaid_theme_preferences
-    payload["mermaid_theme_preferences"] = await im_mermaid_theme_preferences(req.user_id)
+    from agent.interactions.preferences import im_chart_theme_preferences
+    payload["chart_theme_preferences"] = await im_chart_theme_preferences(req.user_id)
     bind_im_context(
         req,
         payload,
@@ -676,6 +657,7 @@ async def dispatch_im_message(payload: dict):
     immediate_round_index = 0
     immediate_round_blocked = False
     qq_private_streaming = False
+    qq_tool_event_boundary = None
     if platform == "qq" and payload.get("chat_type") == "c2c":
         message_format = payload.get("message_format")
         if message_format not in {"compat", "markdown"}:
@@ -690,6 +672,9 @@ async def dispatch_im_message(payload: dict):
             message_format,
             private_streaming_enabled,
         )
+        if qq_private_streaming:
+            from agent.im.streaming.qq import QQToolEventBoundary
+            qq_tool_event_boundary = QQToolEventBoundary()
     telegram_stream_tool_events = asyncio.Queue() if (
         platform == "telegram" and payload.get("chat_type") == "c2c"
     ) else None
@@ -700,6 +685,10 @@ async def dispatch_im_message(payload: dict):
         publish_web_event=stream_bridge.publish,
         feishu_tool_summary=feishu_tool_summary,
         stream_tool_events=telegram_stream_tool_events,
+        before_platform_event=(
+            qq_tool_event_boundary.before_platform_event
+            if qq_tool_event_boundary is not None else None
+        ),
     )
 
     async def _show_round(text: str) -> bool:
@@ -754,10 +743,6 @@ async def dispatch_im_message(payload: dict):
 
     # 飞书使用 CardKit、Telegram 私聊使用 live draft 流式预览；其余平台按 round 收集发送。
     stream_sent = False
-    if getattr(req, "attention_budget_reservation", None):
-        req.attention_budget_heartbeat = asyncio.create_task(
-            _renew_attention_budget_lease(req.attention_budget_reservation)
-        )
     try:
         if platform == "feishu" and payload.get("chat_type") != "group":
             from agent.gateway import feishu
@@ -773,7 +758,7 @@ async def dispatch_im_message(payload: dict):
                 str(receive_id or ""), stream_bridge.mirror_stream(token_iter),
                 channel_id=payload.get("channel_id"),
                 tool_summary=feishu_tool_summary,
-                mermaid_theme_preferences=payload.get("mermaid_theme_preferences"),
+                chart_theme_preferences=payload.get("chart_theme_preferences"),
             )
             if resp is None and stream_sent:
                 # 卡片已经可见但流没有产出最终响应；不能重新执行同一 Run。
@@ -801,6 +786,7 @@ async def dispatch_im_message(payload: dict):
             stream_sent, resp, reply_text = await send_qq_stream_by_round(
                 payload, stream_bridge.mirror_stream(token_iter),
                 show_intermediate_replies=show_intermediate_replies,
+                tool_event_boundary=qq_tool_event_boundary,
             )
         elif platform == "telegram" and payload.get("chat_type") == "c2c":
             from agent.im.replies import send_telegram_stream_by_round
@@ -841,19 +827,10 @@ async def dispatch_im_message(payload: dict):
     except BaseException as exc:
         web_stream_failed = True
         from agent.errors import describe_llm_error
-        from agent.im.dispatch_finalization import settle_attention_budget_after_run_error
-
-        # Run 失败时按真实出站收据结算；UNKNOWN 保守占位，不能因异常直接退款。
-        await asyncio.shield(settle_attention_budget_after_run_error(req, payload))
         await stream_bridge.publish_failure(req, describe_llm_error(exc))
         trace.finish_run("error")
         raise
     finally:
-        heartbeat = getattr(req, "attention_budget_heartbeat", None)
-        if heartbeat is not None:
-            heartbeat.cancel()
-            await asyncio.gather(heartbeat, return_exceptions=True)
-            req.attention_budget_heartbeat = None
         await finish_im_activity(activity)
         await stream_bridge.finish(failed=web_stream_failed)
 

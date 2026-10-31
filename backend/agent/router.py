@@ -15,13 +15,13 @@
 之后问「查到了吗」，因 state 已回 IDLE 被路由拦成一句「在的，你说～」，压根没触发真的去查）。
 空闲时交主 Agent，让它看着对话历史自己判断该不该真去查。
 以上两处是相对原版的改动。其余（催促/取消）保留。
-原则：**短词歧义大，宁可漏判进主模型、不误判短路**——整条消息匹配，取消/催促只在短消息上判。
-例外：**「取消」无条件识别**——只要消息包含「取消」即判 CANCEL（不受长度限制，解决「@咕咕 取消」
-这类带前缀长消息漏判）；其余取消词（算了/不用）仍只在短消息上判。
+原则：**短词歧义大，宁可漏判进主模型、不误判短路**——取消只匹配完整短语或明确的命令短句，正文提及“取消”不短路。
 **取消权限隔离**：`current_puid`（当前用户）+ `active_puid`（当前会话活跃 loop 的发起者集合）——
-咕咕在跑别人的 loop 时，当前用户发「取消」返回 `no_permission`（「这个不是你的任务哦，咕咕还在忙～」），
+咕咕在跑别人的 loop 时，当前用户发明确取消指令返回 `no_permission`（「这个不是你的任务哦，咕咕还在忙～」），
 不真的取消；发起者本人取消则正常中断。
 """
+import re
+
 from agent.runtime import runtime_state as st
 from agent.commands.text import normalize_command_text
 from agent.commands.help import all_help_text, command_help, is_help_arg
@@ -53,9 +53,25 @@ _PROGRESS = {
     "进度怎么样了", "进度怎么样", "进度如何", "现在怎么样了", "做到哪了", "弄到哪了",
 }
 
-# 短消息内包含即判（≤12 字，长句多半是真任务）
-_CANCEL_KW  = ["算了", "不用了", "不弄了", "别弄了", "别分析了", "先别弄", "先别", "停一下",
-               "停下", "先停", "不做了", "取消", "别搞了", "先不弄", "不想弄了"]
+_CANCEL_EXACT = {
+    "算了", "不用了", "不弄了", "别弄了", "别分析了", "先别弄", "先别", "停一下",
+    "停下", "先停", "不做了", "取消", "别搞了", "先不弄", "不想弄了", "停止",
+}
+_CANCEL_COMMAND = re.compile(
+    r"^(?:(?:请|麻烦|帮我|帮忙)\s*)?(?:取消|停止|终止)"
+    r"(?:\s*(?:(?:当前|现在|这个|刚才|刚刚|上一个|上一条)?"
+    r"(?:任务|操作|请求|执行|搜索|run)|一下|掉))?"
+    r"(?:\s*(?:吧|一下|好吗|可以吗))?$",
+    re.IGNORECASE,
+)
+
+
+def is_explicit_cancel(text: str) -> bool:
+    """只把完整短指令或完整的动词命令短句识别为取消，避免正文提及取消时误短路。"""
+    candidate = (text or "").strip(_STRIP + "，,：:")
+    return candidate in _CANCEL_EXACT or bool(_CANCEL_COMMAND.fullmatch(candidate))
+
+
 _EMOTION_KW = ["急", "快点", "快快", "怎么还没", "怎么这么慢", "太慢", "等不及"]
 # 催词只在「整句基本就是这句催」时才判——句首，或仅「你/咕咕」指向咕咕的前缀。
 # 否则子串匹配会把带话题主语的「法拉利怎么这么慢」「这电脑太慢」也当成催咕咕而误短路。
@@ -100,13 +116,9 @@ def classify(text: str) -> str:
         return ACK
     if t in _PROGRESS:
         return PROGRESS
-    # 「取消」无条件识别：用户要求「只要输入取消就取消」，不管消息多长
-    # （如「@咕咕 取消」这类带前缀的长消息，len>12 时原逻辑会漏判成普通消息）。
-    if "取消" in t:
+    if is_explicit_cancel(t):
         return CANCEL
     if len(t) <= 12:
-        if any(k in t for k in _CANCEL_KW):
-            return CANCEL
         if _is_emotion(t):
             return EMOTION
     return AGENT
@@ -148,7 +160,7 @@ def decide(text: str, state: str, awaiting: bool = False,
 
     `current_puid`：当前发消息的用户；`active_puid`：当前会话活跃 loop 的发起者 puid 集合
     （来自 runtime_state.get_active）。两者用于判断「其他用户取消」的权限：咕咕在跑 A 的
-    loop 时，B 发「取消」→ B 不在 active_puid 里 → 返回 no_permission（提示无权取消），
+    loop 时，B 发明确取消指令 → B 不在 active_puid 里 → 返回 no_permission（提示无权取消），
     而不是真的取消 A 的任务。
 
     **去掉了两类短路**：① 「嗯/好/谢谢」这类 ACK——曾被回「嗯嗋～」或 drop、吞掉用户真实意图
@@ -157,7 +169,8 @@ def decide(text: str, state: str, awaiting: bool = False,
     吞掉「查到了吗」这类追问的真实意图（用户想问的是"之前说要查的那件事查了没"，不是随口搭话）。
     现在 ACK 与「空闲时的进度追问」都一律交主模型。
     **保留**：斜杠命令；咕咕**在忙（思考/搜索/生成/等确认）时**的进度追问与催促 → 回一句状态、不打断；
-    在忙时的取消（算了/停）→ 置取消标志中断。`awaiting`：咕咕以提问/确认收尾时「算了/不用」是回答 → 交 agent。
+    明确取消指令（如「取消当前任务」）或完整取消短语（如「算了/停一下」）→ 置取消标志中断。
+    `awaiting`：咕咕以提问/确认收尾时「算了/不用」是回答 → 交 agent。
     """
     # state 有短 TTL，长时间压缩/工具调用期间可能恰好过期；活跃集合是同一会话的
     # 第二个信号。发起者仍在 active set 时，/stop 必须继续被识别为取消命令。
@@ -193,10 +206,11 @@ def decide(text: str, state: str, awaiting: bool = False,
                 else {"action": "agent"})
     # ACK（嗯/好/谢谢）：**不再短路**，一律交主模型（这就是本次唯一去掉的）
     if intent == CANCEL:
-        # 「取消」无条件识别（不管消息多长，如「@咕咕 取消」），但只在真在忙时取消任务；
+        # 只有完整短语或明确的命令短句才是取消指令；正文提到“取消”继续交给 Agent。
+        # 明确取消指令只在真在忙时取消任务；
         # 空闲时没有任务可取消，不触发「好的，那先不继续啦～」的 ACK（否则用户 B 空闲时
         # 发「取消」会莫名收到一句确认，体验很怪）。
-        if "取消" in text:
+        if is_explicit_cancel(text):
             # 咕咕在跑别人的 loop（当前会话有活跃 loop，但当前用户不是发起者）→ 无权取消，
             # 回一句提示，不真的取消（也不触发「好的，那先不继续啦～」）。
             if active_puid and current_puid and current_puid not in active_puid:

@@ -229,6 +229,8 @@ def _merge_payloads(payloads: list) -> dict:
     处理（见 ``agent/im/actor.py``），成员消息不会借主人权限执行特权操作。
     """
     base = dict(payloads[-1])
+    pending_source_messages = base.get("_batch_messages")
+    pending_source_segments = base.get("_speaker_segments")
     texts, atts, emoji_refs, segments = [], [], [], []
     message_attachments = []
     has_face_marker = any(bool(p.get("qq_face_marker")) for p in payloads)
@@ -329,6 +331,20 @@ def _merge_payloads(payloads: list) -> dict:
             }
             for index, p in enumerate(payloads)
         ]
+    if base.get("_pending_ask_resume") is True and isinstance(pending_source_messages, list):
+        # 延迟 ASK 重入时保留原始 Redis 事件身份，供生产评分和早落库行复用；
+        # 不能把合成唤醒事件当成新的群消息写入会话。
+        base["_batch_messages"] = [
+            dict(item) for item in pending_source_messages if isinstance(item, dict)
+        ]
+        base["_early_message_ids"] = [
+            item.get("early_id") for item in base["_batch_messages"]
+            if item.get("early_id")
+        ]
+        if isinstance(pending_source_segments, list):
+            base["_speaker_segments"] = [
+                dict(item) for item in pending_source_segments if isinstance(item, dict)
+            ]
     return base
 
 
@@ -534,7 +550,7 @@ async def _dispatch(msg_id: str, payload: dict):
 
     # 要进 run 的 IM 消息先落库：run 期间到达的消息不必等当前 run 跑完才出现在
     # GuguChat。早落库行带临时 run_id 标记，run 起来时复用同一行（不重复写）。
-    if allow_early_persist:
+    if allow_early_persist and payload.get("_pending_ask_resume") is not True:
         try:
             from agent.im.early_persist import persist_early_im_message
 
@@ -626,6 +642,36 @@ async def _dispatch_tracked(msg_id: str, payload: dict) -> None:
         if msg_id not in _buffered_message_ids:
             _stop_message_lease(msg_id)
             _pending_message_ids.discard(msg_id)
+
+
+async def _pending_ask_loop():
+    """按静默窗口唤醒开放 ASK；状态留在 Redis，重启后可继续消费。"""
+    from agent.im.auto_reply.pending_ask import (
+        claim_due_pending_asks,
+        complete_pending_ask,
+    )
+
+    while not _stop.is_set():
+        try:
+            due_items = await claim_due_pending_asks()
+            for scope_id, payload in due_items:
+                resume_id = str(payload.get("_pending_ask_resume_id") or "")
+                try:
+                    await R.produce(STREAM, payload)
+                    if resume_id:
+                        await complete_pending_ask(scope_id, resume_id)
+                except Exception as exc:
+                    from app.core.redaction import diag_log
+
+                    diag_log("agent.im.attention.pending_ask_enqueue", exc)
+        except Exception as exc:
+            from app.core.redaction import diag_log
+
+            diag_log("agent.im.attention.pending_ask_worker", exc)
+        try:
+            await asyncio.wait_for(_stop.wait(), timeout=1)
+        except asyncio.TimeoutError:
+            pass
 
 
 async def _reflection_loop():
@@ -767,6 +813,9 @@ async def _serve():
     except Exception as e:
         print(f"[worker] 定时任务初始化出错: {type(e).__name__}: {e}", flush=True)
     sched_task = asyncio.create_task(_reconcile_loop())
+    pending_ask_task = asyncio.create_task(
+        _pending_ask_loop(), name="pending-ask-worker",
+    )
     from app.services.filesync.watcher import FileSyncWatcherManager
     filesync_task = asyncio.create_task(
         FileSyncWatcherManager().run(_stop), name="filesync-watcher"
@@ -807,11 +856,12 @@ async def _serve():
     filesync_task.cancel()
     reflection_task.cancel()
     cleanup_task.cancel()
+    pending_ask_task.cancel()
     mcp_secret_expiry_task.cancel()
     portability_task.cancel()
     trash_purge_task.cancel()
     await asyncio.gather(
-        hb, sched_task, filesync_task, reflection_task, cleanup_task, mcp_secret_expiry_task, portability_task,
+        hb, sched_task, pending_ask_task, filesync_task, reflection_task, cleanup_task, mcp_secret_expiry_task, portability_task,
         trash_purge_task,
         return_exceptions=True,
     )

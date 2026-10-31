@@ -14,7 +14,7 @@ def test_platform_message_normalizes_group_payload_without_losing_metadata():
         "chat_id": "group-1",
         "chat_type": "group",
         "platform_user_id": "user-1",
-        "platform_user_name": "Coffeiz",
+        "platform_user_name": "小北",
         "text": "你好",
         "attachments": [{"id": "att-1"}],
         "group_mentioned": True,
@@ -26,7 +26,7 @@ def test_platform_message_normalizes_group_payload_without_losing_metadata():
 
     assert message.chat == ChatTarget(id="group-1", type="group")
     assert message.sender.id == "user-1"
-    assert message.sender.name == "Coffeiz"
+    assert message.sender.name == "小北"
     assert message.mentioned is True
     assert normalized["owner_user_id"] == "gugu-1"
     assert normalized["attachments"] == [{"id": "att-1"}]

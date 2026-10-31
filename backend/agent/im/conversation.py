@@ -252,6 +252,7 @@ async def record_passive_attention_batch(
     attention_decision=None,
     attention_mode: str | None = None,
     attention_config_version: int = 0,
+    transcripts: dict[str, str] | None = None,
 ) -> int:
     """逐条幂等持久化注意力门控判为 PASSIVE 的群消息并写完成收据。"""
     from sqlalchemy import select
@@ -265,7 +266,9 @@ async def record_passive_attention_batch(
     if not batch_key:
         raise ValueError("PASSIVE 注意力批次缺少稳定批次 ID")
     run_id = user_run_key(batch_key)
+    transcripts = transcripts or {}
     created_events: list[dict] = []
+    transcript_updates: list[tuple[int, list[dict]]] = []
     recorded_message_ids: list[int] = []
     import app.db.session as db_session
 
@@ -314,6 +317,16 @@ async def record_passive_attention_batch(
                 if set(metadata) != set(attachment_ids):
                     raise chat_attach.AttachmentClaimError("附件元数据缺失")
             cards = await build_attachment_cards(request.user_id, attachment_ids)
+            transcript = transcripts.get(event_id, "").strip()
+            if transcript:
+                voice_card = next((card for card in cards if (
+                    card.get("kind") in {"voice", "audio"} and not card.get("quoted")
+                )), None)
+                if voice_card is not None:
+                    voice_card["transcript"] = transcript
+                    voice_card["transcript_status"] = "completed"
+                    voice_card["transcript_scope"] = "message"
+                    voice_card["transcript_origin"] = "attention"
             if row is None:
                 row = ConversationMessage(
                     session_id=session.id,
@@ -365,6 +378,8 @@ async def record_passive_attention_batch(
                     "other_bot": item.get("mentions_other_bot"),
                     "other_member": item.get("mentions_other_member"),
                 }
+                if transcript and cards:
+                    transcript_updates.append((int(row.id), cards))
             await chat_attach.claim_attachments(
                 db, request.user_id, row.id, [card["attach_id"] for card in cards],
             )
@@ -394,7 +409,7 @@ async def record_passive_attention_batch(
                 "kind": "attention_passive",
                 "mode": attention_mode or "autonomous",
                 "config_version": int(attention_config_version),
-                "attention_version": "attention-v1.4",
+                "attention_version": "attention-v3.0.6",
                 "actual_decision": attention_decision.kind.value,
                 "reason_codes": list(attention_decision.reasons),
                 "score": attention_decision.score,
@@ -403,7 +418,6 @@ async def record_passive_attention_batch(
                     if attention_decision.score_breakdown else None
                 ),
                 "threshold": attention_decision.threshold,
-                "budget_kind": None,
                 "source_event_count": len(messages),
             }
         await db.commit()
@@ -422,6 +436,19 @@ async def record_passive_attention_batch(
             )
         except Exception:
             pass
+    if transcript_updates:
+        try:
+            from app.services.conversation_transcripts import publish_voice_transcript_update
+
+            for message_id, files in transcript_updates:
+                await publish_voice_transcript_update(
+                    request.user_id, session_id=recorded_session_id,
+                    message_id=message_id, files=files,
+                )
+        except Exception as exc:
+            from app.core.redaction import diag_log
+
+            diag_log("agent.im.conversation.attention_transcript_publish", exc)
     if request.chat_id:
         try:
             from agent.memory.reflection_jobs import observe_group_message
