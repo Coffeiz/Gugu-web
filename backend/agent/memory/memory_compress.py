@@ -1,10 +1,9 @@
 """记忆沉淀：daily 攒够后，把最老的条目追加进 memory.md（长期记忆主档）。
 
-机制（按累积条数，不按天数，便于直接控住注入 prompt 的体积）：
-- daily 达到 `DAILY_COMPACT_AT`(100) 触发
-- 每次只取最老的 `COMPACTION_BATCH_SIZE`(100) 条，LLM 只处理这批 daily
-- 新事件章节追加到 memory.md，已有内容不重新组织、不覆盖
-压缩失败时不裁剪 daily，避免历史丢失。由 reflection 在写完 daily 后顺带触发，失败不影响主流程。
+机制（按累积条数，不按天数）：daily 达到 `DAILY_COMPACT_AT`(50) 后，按最旧优先分批
+处理当时积累的全部 daily。新事件章节追加到 memory.md，已有内容不重新组织、不覆盖；
+每批成功后才从 daily 移除，任一批失败时保留该批及尚未处理的记录，供后续重试。
+由 reflection 在写完 daily 后顺带触发，失败不影响主流程。
 """
 from __future__ import annotations
 
@@ -14,7 +13,7 @@ from pathlib import Path
 
 from agent.context import provider_runner
 from agent.memory import store
-from agent.memory.daily_compaction import merge_remaining, should_compact, split_batch
+from agent.memory.daily_compaction import should_compact, split_oldest_batch
 from agent.memory.event_memory import deduplicate_event_sections, normalize_event_memory
 from app.core.redaction import diag_log
 from agent.memory.memory_references import render_event_references, retrieve_event_references
@@ -73,49 +72,51 @@ def _load_sys() -> str:
 
 
 async def compact(user_id, settings) -> bool:
-    """daily 超阈值则压缩一次。返回是否执行了压缩。失败不抛。"""
+    """daily 达到阈值后全量沉淀；成功批次才从 daily 移除。失败不抛。"""
+    processed = False
     try:
         lines = await store.read_daily_lines(user_id)
-        if not should_compact(
-            len(lines), trigger=store.DAILY_COMPACT_AT,
-            keep_recent=store.DAILY_KEEP_RECENT,
-        ):
+        if not should_compact(len(lines), trigger=store.DAILY_COMPACT_AT):
             return False
 
-        recent, overflow, remaining = split_batch(
-            lines, keep_recent=store.DAILY_KEEP_RECENT,
-        )
-        if not overflow:
-            return False
+        while lines:
+            remaining, batch = split_oldest_batch(lines)
+            if not batch:
+                break
 
-        try:
-            references = await retrieve_event_references(user_id, overflow)
-        except Exception:
-            # RAG 是压缩去重的可选参考，不能把索引/数据库故障升级成记忆压缩失败。
-            references = []
-        user = (
-            f"相关历史事件参考：\n{render_event_references(references)}\n\n"
-            f"要追加的近期记录（只从这里提取新增事件，不要丢掉日期）：\n" + "\n".join(overflow) + "\n\n"
-            f"请只输出本批次要追加的事件章节。"
-        )
-        out = await _generate_memory_entries(user, settings)
-        additions = normalize_event_memory(
-            (out.get("entries") or "").strip(),
-            fallback_title=(
-                f"{_DATE_RE.search(overflow[0]).group(0)} 事件记录"
-                if overflow and _DATE_RE.search(overflow[0]) else "事件记录"
-            ),
-        )
-        additions = deduplicate_event_sections(additions)
+            try:
+                references = await retrieve_event_references(user_id, batch)
+            except Exception:
+                # RAG 是压缩去重的可选参考，不能把索引/数据库故障升级成记忆压缩失败。
+                references = []
+            user = (
+                f"相关历史事件参考：\n{render_event_references(references)}\n\n"
+                f"要追加的近期记录（只从这里提取新增事件，不要丢掉日期）：\n"
+                + "\n".join(batch) + "\n\n请只输出本批次要追加的事件章节。"
+            )
+            out = await _generate_memory_entries(user, settings)
+            additions = normalize_event_memory(
+                (out.get("entries") or "").strip(),
+                fallback_title=(
+                    f"{_DATE_RE.search(batch[0]).group(0)} 事件记录"
+                    if batch and _DATE_RE.search(batch[0]) else "事件记录"
+                ),
+            )
+            additions = deduplicate_event_sections(additions)
 
-        # 防误删兜底：模型返回空或丢掉全部时间锚点 → 不写入，也不裁 daily。
-        if not additions or not _preserves_incoming_dates(overflow, additions):
-            return False
+            # 防误删兜底：模型返回空或丢掉全部时间锚点 → 不写入，也不裁该批 daily。
+            if not additions or not _preserves_incoming_dates(batch, additions):
+                return processed
 
-        memory = await store.append_memory_doc(user_id, additions)
-        await store.sync_memory_vecs(user_id, memory)   # 追加后只为新增块补向量（embedding 未启用=no-op）
-        # 压缩成功才裁 daily（沉淀的内容已进 memory）
-        await store.write_daily_lines(user_id, merge_remaining(recent, remaining))
-        return True
+            memory = await store.append_memory_doc(user_id, additions)
+            # 向量索引是可重建缓存；失败不应阻止从 daily 移除已写入长期记忆的批次。
+            try:
+                await store.sync_memory_vecs(user_id, memory)
+            except Exception as exc:
+                diag_log("agent.memory.compaction.vector_sync", exc)
+            await store.write_daily_lines(user_id, remaining)
+            lines = remaining
+            processed = True
+        return processed
     except Exception:
-        return False  # 压缩是后台优化，任何失败都不影响主流程
+        return processed  # 压缩是后台优化，任何失败都不影响主流程

@@ -10,9 +10,11 @@
 """
 from __future__ import annotations
 
-import math
+import hashlib
 import ipaddress
+import math
 import socket
+import time
 from types import SimpleNamespace
 from urllib.parse import urlparse
 
@@ -46,6 +48,11 @@ def _effective() -> SimpleNamespace:
 
 BAILIAN_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 BAILIAN_MULTIMODAL_PATH = "/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding"
+QUERY_EMBEDDING_TIMEOUT_SECONDS = 4.0
+QUERY_EMBEDDING_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+QUERY_EMBEDDING_CACHE_TTL_SECONDS = 5 * 60
+QUERY_EMBEDDING_CACHE_LIMIT = 64
+_query_vector_cache: dict[str, tuple[float, list[float]]] = {}
 
 
 def _is_bailian(provider: str, base_url: str) -> bool:
@@ -133,10 +140,10 @@ def is_enabled() -> bool:
 
 
 def query_settings() -> dict | None:
-    """返回本轮 query embedding 的短生命周期配置，供 owner-bound TS worker 使用。
+    """返回本轮 query embedding 的短生命周期配置，供 owner-bound RAG runtime 使用。
 
-    Python 仍是凭据解密、BYOK 绑定和配置授权边界；实际 HTTP 请求由 TS worker 执行。
-    调用方不得记录或持久化返回值，api_key 只经本机 sidecar IPC 传输一次。
+    Python 仍是凭据解密、BYOK 绑定和配置授权边界；实际 HTTP 请求由 RAG runtime facade 执行。
+    调用方不得记录或持久化返回值；api_key 只保留在当前进程内存。
     文档/Memory 向量写入继续复用本模块的 ``embed`` 原语。
     """
     e = _effective()
@@ -178,6 +185,140 @@ def query_settings() -> dict | None:
         "api_key": api_key,
         "multimodal": bool(e.multimodal),
     }
+
+
+async def embed_query(text: str, *, settings: dict | None = None) -> dict:
+    """安全地生成 RAG query 向量，返回受控结果，不暴露凭据或上游正文。
+
+    默认配置解析、owner/BYOK 绑定和 DNS pin 沿用 ``query_settings``；调用方也可传入
+    本轮已校验的配置快照，避免配置在准备与查询之间变化。HTTP 在 Python 侧执行，
+    使 RAG 引擎无需接触网络细节。缓存键只保留 SHA-256，不保存明文 query。
+    """
+    normalized = str(text or "").strip()
+    if not normalized:
+        return {"vector": [], "outcome": "invalid_config"}
+    resolved_settings = settings if settings is not None else query_settings()
+    if resolved_settings is None:
+        return {"vector": [], "outcome": "invalid_config"}
+    request = _query_embedding_request(resolved_settings, normalized)
+    if request is None:
+        return {"vector": [], "outcome": "invalid_config"}
+    try:
+        key = hashlib.sha256((
+            f"{resolved_settings['provider']}\n{resolved_settings['model']}\n"
+            f"{resolved_settings['dimensions']}\n{normalized}"
+        ).encode("utf-8")).hexdigest()
+    except (KeyError, TypeError, ValueError):
+        return {"vector": [], "outcome": "invalid_config"}
+    now = time.monotonic()
+    cached = _query_vector_cache.get(key)
+    if cached is not None and now - cached[0] < QUERY_EMBEDDING_CACHE_TTL_SECONDS:
+        return {"vector": list(cached[1]), "outcome": "success"}
+    if cached is not None:
+        _query_vector_cache.pop(key, None)
+
+    url, payload, vector_path = request
+    # TS http.request 不声明压缩编码；明确要求 identity，避免 HTTPX 默认协商
+    # gzip 后改变与 TS 一致的 wire-byte 上限/JSON 解析语义。
+    headers = {
+        "accept": "application/json",
+        "content-type": "application/json",
+        "accept-encoding": "identity",
+    }
+    if resolved_settings["api_key"]:
+        headers["authorization"] = f"Bearer {resolved_settings['api_key']}"
+    import httpx
+    from app.core.pinned_http import PinnedHTTPTransport
+    try:
+        async with httpx.AsyncClient(
+            timeout=QUERY_EMBEDDING_TIMEOUT_SECONDS,
+            follow_redirects=False,
+            trust_env=False,
+            transport=PinnedHTTPTransport(str(resolved_settings["pinned_ip"])),
+        ) as client:
+            async with client.stream("POST", url, json=payload, headers=headers) as response:
+                if 300 <= response.status_code < 400:
+                    return {"vector": [], "outcome": "http_error", "http_status": response.status_code}
+                if response.status_code != 200:
+                    return {"vector": [], "outcome": "http_error", "http_status": response.status_code}
+                body = bytearray()
+                # TS worker 按原始 HTTP body 计数并 JSON.parse，不会透明解压；
+                # 这里也读取 wire bytes，避免压缩响应改变大小上限或解析结果。
+                async for chunk in response.aiter_raw():
+                    body.extend(chunk)
+                    if len(body) > QUERY_EMBEDDING_MAX_RESPONSE_BYTES:
+                        return {"vector": [], "outcome": "response_too_large", "http_status": 200}
+        import json
+        try:
+            parsed = json.loads(body)
+        except (UnicodeDecodeError, ValueError):
+            return {"vector": [], "outcome": "invalid_response", "http_status": 200}
+        vector = _extract_query_vector(parsed, vector_path)
+        if vector is None:
+            return {"vector": [], "outcome": "invalid_response", "http_status": 200}
+        if len(_query_vector_cache) >= QUERY_EMBEDDING_CACHE_LIMIT:
+            oldest = min(_query_vector_cache, key=lambda item: _query_vector_cache[item][0])
+            _query_vector_cache.pop(oldest, None)
+        _query_vector_cache[key] = (time.monotonic(), vector)
+        return {"vector": vector, "outcome": "success", "http_status": 200}
+    except (httpx.TimeoutException, TimeoutError):
+        return {"vector": [], "outcome": "timeout"}
+    except Exception:
+        return {"vector": [], "outcome": "network_error"}
+
+
+def _query_embedding_request(settings: dict, text: str) -> tuple[str, dict, str] | None:
+    """按 TS query-embedding worker 的规则生成请求，不携带任何额外字段。"""
+    try:
+        base_url_text = str(settings["base_url"]).strip()
+        model = settings["model"]
+        base_url = urlparse(base_url_text)
+        if (base_url.scheme not in {"http", "https"} or not base_url.hostname
+                or base_url.username or base_url.password or base_url.query or base_url.fragment
+                or not isinstance(model, str) or not model.strip()
+                or not ipaddress.ip_address(settings["pinned_ip"])
+                or any(not 0x20 <= ord(char) <= 0x7E for char in settings["api_key"])):
+            return None
+        root = base_url_text.rstrip("/")
+        if settings["multimodal"] and _is_bailian(settings["provider"], root):
+            marker = "/compatible-mode/v1"
+            if marker in root:
+                root = root.split(marker, 1)[0]
+            return (
+                root + BAILIAN_MULTIMODAL_PATH,
+                {"model": model, "input": {"contents": [{"text": text}]},
+                 "parameters": {"output_type": "dense",
+                                **({"dimension": settings["dimensions"]}
+                                   if settings["dimensions"] > 0 else {}),
+                                "enable_fusion": False}},
+                "bailian",
+            )
+        payload: dict = {"model": model, "input": text}
+        if settings["dimensions"] > 0:
+            payload["dimensions"] = settings["dimensions"]
+        if _is_bailian(settings["provider"], root):
+            payload["encoding_format"] = "float"
+        return root + "/embeddings", payload, "openai"
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _extract_query_vector(body: object, vector_path: str) -> list[float] | None:
+    if not isinstance(body, dict):
+        return None
+    if vector_path == "bailian":
+        output = body.get("output")
+        embeddings = output.get("embeddings") if isinstance(output, dict) else None
+    else:
+        embeddings = body.get("data")
+    if not isinstance(embeddings, list) or not embeddings or not isinstance(embeddings[0], dict):
+        return None
+    raw = embeddings[0].get("embedding")
+    if (not isinstance(raw, list) or not raw
+            or any(not isinstance(value, (int, float)) or isinstance(value, bool)
+                   or not math.isfinite(value) for value in raw)):
+        return None
+    return [float(value) for value in raw]
 
 
 def model_tag() -> str:

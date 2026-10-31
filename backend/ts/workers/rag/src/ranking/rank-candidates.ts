@@ -75,9 +75,9 @@ export function rankCandidates(
     || right.rankScore - left.rankScore
     || right.fused - left.fused
     || (SOURCE_PRIORITY[left.candidate.source_type] ?? 100) - (SOURCE_PRIORITY[right.candidate.source_type] ?? 100)
-    || String(right.candidate.document.updated_at ?? "").localeCompare(String(left.candidate.document.updated_at ?? ""))
-    || String(left.candidate.document.document_version).localeCompare(String(right.candidate.document.document_version))
-    || String(left.candidate.document.id).localeCompare(String(right.candidate.document.id))
+    || String(right.candidate.document.updated_at ?? "").localeCompare(String(left.candidate.document.updated_at ?? ""), "en-US")
+    || String(left.candidate.document.document_version).localeCompare(String(right.candidate.document.document_version), "en-US")
+    || String(left.candidate.document.id).localeCompare(String(right.candidate.document.id), "en-US")
   );
   const selectionMode = options.selectionMode ?? "confidence";
   const preferred = finalOrdered.filter((item) => item.value >= thresholds.preferred);

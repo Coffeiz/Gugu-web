@@ -26,7 +26,7 @@ export function selectUnifiedRecall(
   const diversityLimited = options.selectionMode !== "top_k";
 
   const ordered = [...candidates].sort(
-    (left, right) => right.result.score - left.result.score || left.result.id.localeCompare(right.result.id),
+    (left, right) => right.result.score - left.result.score || left.result.id.localeCompare(right.result.id, "en-US"),
   );
   for (const { document } of ordered) {
     const text = String(document.context_text || document.text || "").trim();
