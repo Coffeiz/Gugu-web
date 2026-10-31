@@ -205,15 +205,20 @@ async def append_shell_result(db: AsyncSession, row: TerminalSessionRecord, *, c
                               stdout: str, stderr: str, exit_code: int | None,
                               ok: bool, source: str = TerminalSource.AGENT.value,
                               run_id: str | None = None) -> None:
+    # PostgreSQL TEXT 无法保存 U+0000。二进制程序或文件预览可能把 NUL 写入
+    # stdout/stderr；用可见转义保留信息，避免命令已完成后终端事件插入失败。
+    command = (command or "").replace("\x00", r"\0")
+    stdout = (stdout or "").replace("\x00", r"\0")
+    stderr = (stderr or "").replace("\x00", r"\0")
     sequence, _output_chars = await _advance_terminal_event_state(
         db,
         row,
-        output_delta=len(stdout or "") + len(stderr or ""),
+        output_delta=len(stdout) + len(stderr),
         status=TerminalStatus.IDLE.value if ok else TerminalStatus.FAILED.value,
     )
     event = TerminalEventRecord(
         terminal_id=row.id, run_id=run_id or row.run_id, sequence=sequence, event_type="command",
-        source=source, command=command, stdout=stdout or "", stderr=stderr or "",
+        source=source, command=command, stdout=stdout, stderr=stderr,
         exit_code=exit_code,
     )
     db.add(event)
