@@ -15,6 +15,7 @@ This directory documents the current Gugu Agent architecture, execution paths, a
 9. 09-MESSAGE-PROTOCOL.md: streaming events, tools, attachments, and history.
 10. 10-RELIABILITY.md: retry, cancellation, concurrency, shutdown, and recovery.
 11. 11-LOOPSCOPE.md: development observability and trace diagnosis.
-12. COMMANDS.md: slash commands and session controls.
+12. 12-GROUP-AUTO-REPLY-ALGORITHM.md: group attention admission, delayed open questions, and in-Run reply selection.
+13. COMMANDS.md: slash commands and session controls.
 
 The English files are kept in sync with the current implementation. Historical proposals under ../_archive are excluded from the active documentation set.
