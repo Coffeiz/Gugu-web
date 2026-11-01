@@ -14,6 +14,9 @@ DEFAULT_GROUP_TOOLS = ["xng_search", "http_get", "similar_image_search", "read_f
 # 纯时间查询不读取用户数据，也不产生外部副作用；它属于系统 utility，
 # 不应因为群成员的业务工具白名单而无法发现或执行。
 SAFE_ALWAYS_ALLOWED_TOOLS = frozenset({"get_current_time"})
+# 链接按钮只负责发送已做 URL 安全校验的导航入口，不读取或修改群成员数据；
+# 作为群聊公共交互能力，不受群业务工具白名单限制。
+PUBLIC_GROUP_TOOLS = frozenset({"send_link_buttons"})
 # 固定 Adapter 和 Skill 生命周期入口只负责发现、委派或维护用户的 Prompt Skill；
 # 业务工具的实际调用仍会在 call_tool 的内层 dispatch 再走一次白名单校验。
 FIXED_ADAPTER_TOOLS = frozenset({"call_tool", "get_tool_schema", "use_skill", "ask_user"})
@@ -54,6 +57,7 @@ def can_use_tool(
     *,
     im_role: str | None = None,
     platform: str | None = None,
+    chat_type: str | None = None,
 ) -> bool:
     """dispatch 层的第二道权限门；Skill 管理仅网页用户和已认证 owner 可用。"""
     if name == "choose_no_reply":
@@ -67,6 +71,12 @@ def can_use_tool(
         )
     if name == "present_file" and platform:
         return False
+    if (
+        name in PUBLIC_GROUP_TOOLS
+        and chat_type == "group"
+        and platform in {"qq", "telegram", "feishu", "wechat"}
+    ):
+        return True
     if name in SKILL_MANAGEMENT_TOOLS:
         return im_role in {None, "owner"}
     return (

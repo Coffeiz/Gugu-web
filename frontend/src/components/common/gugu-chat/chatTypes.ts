@@ -9,6 +9,8 @@ export interface ChatMessage {
   id: number
   /** 仅用于从 API 恢复工具/交互时间线，不参与发送。 */
   _createdAt?: string
+  /** 助手 round 的完成时间；长流完成后按该时刻定位最终消息。 */
+  _completedAt?: string
   _updatedAt?: string
   /** 持久化/实时统一的时间线顺序；旧消息缺失时回退到 createdAt。 */
   _timelineOrder?: number

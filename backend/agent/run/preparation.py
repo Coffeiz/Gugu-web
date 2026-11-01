@@ -103,6 +103,8 @@ async def _prepare_group_batch_inputs(user_id, batch_messages, request, model_cf
             "text": format_current_group_message(augmented_text, request, item),
             "images": row_images,
             "media": row_media,
+            "platform_sent_ms": item.get("platform_sent_ms"),
+            "event_id": item.get("event_id"),
             "sent_at": None,
             "persisted_message_id": None,
         })
@@ -473,8 +475,8 @@ async def _reuse_early_user_rows(
     #
     # - ``created_at`` 保留**消息到达时刻**。它是展示时间（网页气泡、网页实时排序），
     #   也就是 IM 里的真实先后；改了它，网页顺序就会和平台消息顺序对不上。
-    # - ``sent_at`` 改写成**本轮处理时刻**，供提示词里的「消息时间」提醒使用；
-    #   历史先后由持久化会话序号决定，不再依赖这个时间戳。
+    # - ``sent_at`` 改写成**本轮处理时刻**，用于历史排序兼容；提示词里的消息时间
+    #   优先使用 IM 平台发送时间，其次事件到达时间，再退回 created_at。
     from datetime import timedelta
     from app.core.tz import now_utc
 
@@ -516,6 +518,11 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
     group_reply_gate = None
     group_reply_tool = None
     group_reply_prompt = ""
+    group_chat_prompt = ""
+    if req.chat_id:
+        from agent.im.group_chat_prompt import group_chat_system_prompt
+
+        group_chat_prompt = group_chat_system_prompt()
     if getattr(req, "group_auto_reply", False):
         from agent.im.auto_reply import (
             ReplyGate,
@@ -527,6 +534,9 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
         group_reply_tool = build_group_reply_decision_tool(group_reply_gate)
         group_reply_prompt = group_reply_system_prompt()
         req.group_reply_gate = group_reply_gate
+    group_system_prompt = "\n\n---\n\n".join(
+        part for part in (group_chat_prompt, group_reply_prompt) if part
+    )
     settings = get_settings()
     # 用户链路标记：modelctx 兜底哨兵从此生效，后台派生任务不得静默烧平台配额
     from agent.llm import modelctx
@@ -570,7 +580,7 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
                 source=getattr(req, "source", None), im_channels=data.im_channels,
                 im_message_format=getattr(req, "im_message_format", None),
                 user_msg=req.message, non_streaming=non_streaming, user_tz=data.user_tz,
-                knowledge=data.knowledge, after_base_prompt=group_reply_prompt,
+                knowledge=data.knowledge, after_base_prompt=group_system_prompt,
             )
             snapshot_context, snapshot_im_memory = add_im_memory_to_snapshot(
                 snapshot_context, data.im_memory, req,
@@ -598,7 +608,7 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
             return builder.build_static_prompt(
                 DEFAULT_PROMPT_NAME, req.user_name,
                 style_prefs=style_prefs,
-                after_base_prompt=group_reply_prompt,
+                after_base_prompt=group_system_prompt,
                 current_date=dynamic_tail.current_date_text(current_user_tz),
             )
 
@@ -687,6 +697,9 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
                 if index < len(reused_user_messages):
                     row = reused_user_messages[index]
                     current_input["persisted_message_id"] = row.id
+                    current_input["im_platform_sent_ms"] = row.im_platform_sent_ms
+                    current_input["im_event_received_ms"] = row.im_event_received_ms
+                    current_input["created_at"] = row.created_at
                     current_input["sent_at"] = row.sent_at
         if user_message is None:
             user_message = ConversationMessage(session_id=session_id, role="user", content=req.message,
@@ -710,6 +723,19 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
             return EarlyExit(EARLY_EXIT_ATTACHMENT, AgentResponse(
                 text="附件已失效（可能已被使用或清理），请重新发送", session_id=session_id))
         await db.commit()
+
+        # 群聊批次在本轮开始前已经作为 pending 行早落库。历史首次读取时这些行被
+        # inbound_recovery 过滤，避免被提前消费；现在它们已绑定到本轮，重新读取
+        # canonical 历史，让它们按持久化序号插回到运行期间已经完成的助手回复之前。
+        # 否则把当前批次简单追加到旧历史末尾，会造成 QQ 实际时间线与后续 Run 输入倒序。
+        current_users_in_history = bool(current_user_inputs and reused_user_messages)
+        if current_users_in_history:
+            history = await session_history.load_session_history(
+                db,
+                session_id,
+                session_snapshot.history_baseline(session),
+            )
+            history_stats = session_history.consume_history_stats()
 
         # 精力耗尽 → 硬拦（IM / 定时任务，与网页 web.stream 同口径）：用户消息已记，不再生成，直接回一句
         if await quota.is_exhausted(db, user_id, settings):
@@ -918,7 +944,8 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
         strip_thinking=strip_thinking,
         use_anthropic=use_anthropic,
         current_text=current_llm_text,
-        current_users=current_user_inputs,
+        current_users=None if current_users_in_history else current_user_inputs,
+        current_users_in_history=current_users_in_history,
         images=aug_images,
         media=aug_media,
         model_cfg=model_cfg,

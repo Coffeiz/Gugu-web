@@ -177,6 +177,8 @@ async def consume_agent_events(
         if completed:
             from agent.outbound import sanitize_outbound
             display_round = sanitize.strip_disallowed_emoji(sanitize_outbound(completed)).strip()
+        if active_seg is not None:
+            active_seg["completedAt"] = now_utc().isoformat()
         _close_active_seg(display_round)
         if outcome.display_timeline_items:
             await display_changed(outcome.display_timeline_items[-1], force=True)
@@ -392,6 +394,8 @@ async def consume_agent_events(
         yield (EVENT_TOKEN, tail)
     rounds.append(cur)
     completed_segment = active_seg
+    if completed_segment is not None:
+        completed_segment["completedAt"] = now_utc().isoformat()
     _close_active_seg(cur.strip())
     if completed_segment is not None and completed_segment in outcome.display_timeline_items:
         await display_changed(completed_segment, force=True)

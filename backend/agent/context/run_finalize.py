@@ -186,8 +186,10 @@ async def finalize_run(
             else:
                 persisted_timeline = None
             if text or files or persisted_timeline:
-                assistant_created_at = None
-                assistant_sent_at = None
+                from app.core.tz import now_utc
+
+                assistant_created_at = now_utc()
+                assistant_sent_at = assistant_created_at
                 if interrupted and user_message is not None:
                     anchor = delta.user_anchor_sequence
                     persisted_after_anchor = [
@@ -216,9 +218,10 @@ async def finalize_run(
                     run_id=run_id,
                     round_id=persisted_round_id if run_id else None,
                 )
-                if assistant_created_at is not None:
-                    assistant_values["created_at"] = assistant_created_at
-                    assistant_values["sent_at"] = assistant_sent_at
+                # 检查点占位行可能在 Run 开始时已插入；最终正文时间应反映本次收尾，
+                # 否则 UI 会把完成后的长回复按占位行的旧时间排到中途消息之前。
+                assistant_values["created_at"] = assistant_created_at
+                assistant_values["sent_at"] = assistant_sent_at
                 if checkpoint is None:
                     db.add(ConversationMessage(**assistant_values))
                 else:

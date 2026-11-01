@@ -57,8 +57,8 @@ def _history_stance_digest(history: list) -> str | None:
 def _is_legacy_persisted_time_context(message: Any) -> bool:
     """识别误持久化的独立 time-context canonical 行。
 
-    普通用户消息的时间现在统一以真实 ``ConversationMessage.sent_at`` 为事实源，
-    history restore 会在原 user row 前重新生成相同 reminder。因此历史中任何只包含
+    普通用户消息的时间现在统一从平台发送时间、事件到达时间或入库时间重建，并内嵌
+    到原 user row。历史中任何只包含
     ``time-context`` 的独立 canonical 行都属于旧实现/回归产生的冗余投影：继续恢复
     会形成 ``sent_at time -> user -> persisted time`` 的重复前缀。
 
@@ -75,7 +75,8 @@ def _is_legacy_persisted_time_context(message: Any) -> bool:
 
 
 def _effective_history(history: list, user_message: Any = None,
-                       resume_interaction: bool = False) -> list:
+                       resume_interaction: bool = False,
+                       current_user_in_history: bool = False) -> list:
     """返回本轮可恢复的历史，不重复当前已提交的用户行。"""
     current_message_id = (
         getattr(user_message, "id", None)
@@ -85,6 +86,8 @@ def _effective_history(history: list, user_message: Any = None,
         message for message in history
         if not _is_legacy_persisted_time_context(message)
         and (
+            current_user_in_history
+            or
             current_message_id is None
             or getattr(message, "id", None) != current_message_id
         )
@@ -99,7 +102,7 @@ def _bind_persisted_user_message(batch, user_message: Any, resume_interaction: b
 
 
 def _prepare_current_user_rows(current_users, options: _CurrentUserOptions):
-    """把逐条群消息解析为 canonical user entries，并从各自 sent_at 重建时间块。"""
+    """把逐条群消息解析为 canonical user entries，并准备各自的时间标签。"""
     if options.resume_interaction:
         return []
     rows = []
@@ -115,7 +118,9 @@ def _prepare_current_user_rows(current_users, options: _CurrentUserOptions):
         rows.append({
             **item,
             "message": {"role": "user", "content": content},
-            "message_time": dynamic_tail.message_time_reminder(item.get("sent_at"), options.user_tz),
+            "message_time": dynamic_tail.message_time_reminder(
+                dynamic_tail.message_timestamp(item), options.user_tz,
+            ),
         })
     return rows
 
@@ -213,6 +218,7 @@ async def prepare_run(
     extra_reminder: str | None = None,
     user_message: Any = None,
     current_users: list[dict] | None = None,
+    current_users_in_history: bool = False,
     resume_interaction: bool = False,
     session: Any = None,
     snapshot: Any = None,
@@ -231,6 +237,7 @@ async def prepare_run(
     # 相同文本是合法对话。
     effective_history = _effective_history(
         history, user_message=user_message, resume_interaction=resume_interaction,
+        current_user_in_history=current_users_in_history,
     )
     restored_area = session_history.restore_canonical_area(effective_history)
     from agent import providers
@@ -257,7 +264,7 @@ async def prepare_run(
     message_time = None
     if user_message is not None and not resume_interaction:
         message_time = dynamic_tail.message_time_reminder(
-            user_message.sent_at, user_tz,
+            dynamic_tail.message_timestamp(user_message), user_tz,
         )
 
     # Web/IM 可以在 MCP 工具发现期间预先启动这项独立召回；不提供预计算结果的
@@ -277,7 +284,10 @@ async def prepare_run(
         user_tz=user_tz,
         resume_interaction=resume_interaction,
     )
-    current_user_rows = _prepare_current_user_rows(current_users, current_user_options)
+    current_user_rows = (
+        [] if current_users_in_history
+        else _prepare_current_user_rows(current_users, current_user_options)
+    )
 
     session_context = getattr(session, "session_context", None)
     # history 是已经成功持久化的事实；session_context 只作为没有历史事件时
@@ -286,7 +296,7 @@ async def prepare_run(
     if not previous_stance_digest and isinstance(session_context, dict):
         previous_stance_digest = session_context.get("stance_digest")
 
-    current_user = _prepare_single_current_user(
+    current_user = None if current_users_in_history else _prepare_single_current_user(
         rows=current_user_rows,
         current_text=current_text,
         images=images,
@@ -308,7 +318,7 @@ async def prepare_run(
         assembled.protected_history_start = (
             assembled.fixed_prefix_size + prior_run_parts_start
         )
-    if not current_user_rows:
+    if not current_user_rows and not current_users_in_history:
         _bind_persisted_user_message(turn_batch, user_message, resume_interaction)
     assembled.append_batch(turn_batch)
     audit.context_layout_audit(

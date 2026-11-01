@@ -519,14 +519,13 @@ def test_turn_batch_keeps_stance_and_message_time_order_stable():
         current_user={"role": "user", "content": "new"},
     )
 
-    assert [item["content"] for item in batch.canonical_messages] == [
-        [{
+    assert batch.canonical_messages == [
+        {"role": "user", "content": [{
             "type": "stance-context",
             "digest": stance_digest("stance"),
             "text": reminder("stance")["content"],
-        }],
-        [{"type": "time-context", "text": "[system-reminder]\nmessage-time\n[/system-reminder]"}],
-        "new",
+        }]},
+        {"role": "user", "content": "【消息时间】message-time\n【消息正文】\nnew"},
     ]
 
 

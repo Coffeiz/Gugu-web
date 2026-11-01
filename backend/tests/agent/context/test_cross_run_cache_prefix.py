@@ -134,30 +134,27 @@ def test_dynamic_tail_is_provider_only_and_always_stays_last():
     assert prompt.provider_projection().to_messages()[-1] == reminder("当前时间：2026-08-27（星期四）")
 
 
-def test_message_time_is_canonical_but_reconstructed_and_user_is_already_persisted():
+def test_message_time_is_inline_and_user_is_already_persisted():
     batch, _ = assemble_turn(
         message_time=reminder("08-27 18:27"),
         current_user={"role": "user", "content": "所以已经有一些信息了？"},
     )
-    assert [
-        message["content"][0]["type"] if isinstance(message["content"], list) else "text"
-        for message in batch.canonical_messages
-    ] == ["time-context", "text"]
+    assert len(batch.canonical_messages) == 1
+    assert batch.canonical_messages[0]["content"] == (
+        "【消息时间】08-27 18:27\n【消息正文】\n所以已经有一些信息了？"
+    )
 
     prompt = MessageArea.from_canonical_messages()
     prompt.append_batch(batch)
 
-    assert prompt.entries[0].canonical_message["content"][0]["type"] == "time-context"
-    assert prompt.provider_projection().to_messages() == [
-        {"role": "user", "content": [{
-            "type": "text",
-            "text": "[system-reminder]\n08-27 18:27\n[/system-reminder]",
-        }]},
-        {"role": "user", "content": "所以已经有一些信息了？"},
-    ]
-    assert [entry.persistence_policy.value for entry in prompt.entries] == [
-        "reconstruct_on_restore", "already_persisted",
-    ]
+    assert prompt.entries[0].canonical_message["content"] == (
+        "【消息时间】08-27 18:27\n【消息正文】\n所以已经有一些信息了？"
+    )
+    assert prompt.provider_projection().to_messages() == [{
+        "role": "user",
+        "content": "【消息时间】08-27 18:27\n【消息正文】\n所以已经有一些信息了？",
+    }]
+    assert [entry.persistence_policy.value for entry in prompt.entries] == ["already_persisted"]
     assert prompt.persistence_delta(outcome="success").entries == ()
     assert prompt.batch_records() == ()
 
@@ -269,11 +266,10 @@ def test_last_round_conversation_replays_as_next_run_prefix_without_dynamic_tail
     assert "当前时间：2026-08-27（星期四）" not in str(previous_conversation_wire)
 
     # Batch 只暴露 canonical Area 内容；是否提交由 entry policy 决定。
-    assert [
-        block["type"]
-        for message in turn_batch.canonical_messages
-        for block in message["content"]
-    ] == ["time-context", "text"]
+    assert len(turn_batch.canonical_messages) == 1
+    assert turn_batch.canonical_messages[0]["content"][0]["text"] == (
+        "【消息时间】2026-08-27 17:08\n【消息正文】\n"
+    )
 
     history = [
         _history_row(
