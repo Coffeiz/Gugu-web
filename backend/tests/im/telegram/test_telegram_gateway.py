@@ -667,31 +667,46 @@ async def _empty_coroutine():
     return None
 
 
-def test_gateway_restarts_telegram_process_when_token_spec_changes(monkeypatch):
+@pytest.mark.asyncio
+async def test_gateway_restarts_any_platform_process_when_spawn_spec_changes(monkeypatch):
+    import asyncio
     from agent.gateway import gateway
 
-    key = "telegram:17"
-    old = {"id": "17", "platform": "telegram", "app_id": "9001", "app_secret": "old-test-token", "sandbox": False, "owner": "owner-1"}
-    new = {**old, "app_secret": "new-test-token"}
+    key = "feishu:17"
+    old = {"id": "17", "platform": "feishu", "app_id": "9001", "app_secret": "old-test-secret", "sandbox": False, "owner": "owner-1"}
+    new = {**old, "app_secret": "new-test-secret"}
     class RunningProcess:
-        def poll(self):
-            return None
+        returncode = None
 
     running = RunningProcess()
     spawned = []
     killed = []
-    monkeypatch.setattr(gateway, "_desired", lambda: {key: new})
-    monkeypatch.setattr(gateway, "_procs", {key: running})
-    monkeypatch.setattr(gateway, "_procs_spec", {key: old})
-    monkeypatch.setattr(gateway, "_spawned_at", {key: 1.0})
-    monkeypatch.setattr(gateway, "_fail_count", {})
-    monkeypatch.setattr(gateway, "_next_retry_at", {})
-    monkeypatch.setattr(gateway, "_kill", lambda proc_key, proc: killed.append((proc_key, proc)))
-    monkeypatch.setattr(gateway, "_spawn", lambda proc_key, spec: spawned.append((proc_key, spec)) or "replacement")
+    async def fetch():
+        return [new]
 
-    gateway.reconcile()
+    async def terminate(managed):
+        killed.append((key, managed.process))
+
+    async def spawn(proc_key, spec):
+        spawned.append((proc_key, spec))
+        replacement = gateway.ManagedBot(
+            spec=spec, process=RunningProcess(), started_at=1.0,
+        )
+        gateway._procs[proc_key] = replacement
+        return replacement
+
+    lock = asyncio.Lock()
+    monkeypatch.setattr(gateway, "_fetch_userbots", fetch)
+    monkeypatch.setattr(gateway, "_terminate_process", terminate)
+    monkeypatch.setattr(gateway, "_spawn", spawn)
+    monkeypatch.setattr(gateway, "_reconcile_lock", lock)
+    monkeypatch.setattr(gateway, "_procs", {
+        key: gateway.ManagedBot(spec=old, process=running, started_at=1.0),
+    })
+    monkeypatch.setattr(gateway, "_desired_specs", {key: old})
+
+    assert await gateway.reconcile() is True
 
     assert killed == [(key, running)]
     assert spawned == [(key, new)]
-    assert gateway._procs[key] == "replacement"
-    assert gateway._procs_spec[key] == new
+    assert gateway._procs[key].spec == new

@@ -2,7 +2,6 @@
 import pytest
 from fastapi import HTTPException
 
-from app.api.v1 import user_bots
 from app.api.v1.user_bots import BotUpdate, update_my_bot
 from app.models import UserBot
 
@@ -14,7 +13,6 @@ async def test_message_format_setting_persists_supported_modes_and_rejects_remov
     async def no_op(*_args, **_kwargs):
         return None
 
-    monkeypatch.setattr(user_bots, "_touch_gateway", no_op)
     from app.core import events
     monkeypatch.setattr(events, "bump_context_revision", no_op)
 
