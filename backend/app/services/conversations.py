@@ -210,6 +210,33 @@ def _safe_timeline_projection(db):
     return case((stored_size > 1024 * 1024, None), else_=timeline_column)
 
 
+def _display_time_order_expr():
+    """会话消息的统一时间键：平台发送、事件接收、数据库创建时间。"""
+    return func.coalesce(
+        ConversationMessage.im_platform_sent_ms,
+        ConversationMessage.im_event_received_ms,
+        func.extract("epoch", ConversationMessage.created_at) * 1000,
+    )
+
+
+def _display_cursor_predicate(time_key, cursor, *, before: bool):
+    """按时间和会话序号构造分页游标；旧游标缺失时回退到消息 ID。"""
+    cursor_time, cursor_seq, cursor_id = cursor
+    time_comparison = time_key < cursor_time if before else time_key > cursor_time
+    seq_comparison = (
+        ConversationMessage.conversation_seq < cursor_seq
+        if before else ConversationMessage.conversation_seq > cursor_seq
+    )
+    id_comparison = ConversationMessage.id < cursor_id if before else ConversationMessage.id > cursor_id
+    return or_(
+        and_(cursor_time.is_not(None), or_(
+            time_comparison,
+            and_(time_key == cursor_time, seq_comparison),
+        )),
+        and_(cursor_time.is_(None), id_comparison),
+    )
+
+
 async def load_display_message_page(
     db,
     session_id: int,
@@ -233,44 +260,33 @@ async def load_display_message_page(
             ConversationMessage.run_id == run_id,
             ConversationMessage.display_timeline[0]["runId"].as_string() == run_id,
         ))
-    before_seq = None
-    after_seq = None
+    time_key = _display_time_order_expr()
     if before_id is not None:
-        before_seq = select(ConversationMessage.conversation_seq).where(
+        cursor_time = select(time_key).where(
             ConversationMessage.id == before_id,
             ConversationMessage.session_id == session_id,
         ).scalar_subquery()
-        statement = statement.where(or_(
-            and_(
-                before_seq.is_not(None),
-                ConversationMessage.conversation_seq < before_seq,
-            ),
-            and_(
-                before_seq.is_(None),
-                ConversationMessage.id < before_id,
-            ),
-        )).order_by(
-            desc(ConversationMessage.conversation_seq)
-        )
+        cursor_seq = select(ConversationMessage.conversation_seq).where(
+            ConversationMessage.id == before_id,
+            ConversationMessage.session_id == session_id,
+        ).scalar_subquery()
+        statement = statement.where(_display_cursor_predicate(
+            time_key, (cursor_time, cursor_seq, before_id), before=True,
+        )).order_by(desc(time_key), desc(ConversationMessage.conversation_seq))
     elif after_id is not None:
-        after_seq = select(ConversationMessage.conversation_seq).where(
+        cursor_time = select(time_key).where(
             ConversationMessage.id == after_id,
             ConversationMessage.session_id == session_id,
         ).scalar_subquery()
-        statement = statement.where(or_(
-            and_(
-                after_seq.is_not(None),
-                ConversationMessage.conversation_seq > after_seq,
-            ),
-            and_(
-                after_seq.is_(None),
-                ConversationMessage.id > after_id,
-            ),
-        )).order_by(
-            ConversationMessage.conversation_seq
-        )
+        cursor_seq = select(ConversationMessage.conversation_seq).where(
+            ConversationMessage.id == after_id,
+            ConversationMessage.session_id == session_id,
+        ).scalar_subquery()
+        statement = statement.where(_display_cursor_predicate(
+            time_key, (cursor_time, cursor_seq, after_id), before=False,
+        )).order_by(time_key, ConversationMessage.conversation_seq)
     else:
-        statement = statement.order_by(desc(ConversationMessage.conversation_seq))
+        statement = statement.order_by(desc(time_key), desc(ConversationMessage.conversation_seq))
     fetched_rows = (await db.execute(statement.limit(limit))).all()
     page_rows = [row[0] for row in fetched_rows]
     display_body_ids = {row[0].id for row in fetched_rows if row.is_display_body}
@@ -297,16 +313,28 @@ async def load_display_message_page(
     has_more = False
     has_newer = False
     if page_rows:
+        oldest = page_rows[0]
+        oldest_time = select(time_key).where(
+            ConversationMessage.id == oldest.id,
+            ConversationMessage.session_id == session_id,
+        ).scalar_subquery()
         older_probe = await db.execute(
-            select(ConversationMessage.id)
-            .where(*row_filters, ConversationMessage.conversation_seq < page_rows[0].conversation_seq)
+            select(ConversationMessage.id).where(*row_filters, _display_cursor_predicate(
+                time_key, (oldest_time, oldest.conversation_seq, oldest.id), before=True,
+            ))
             .limit(1)
         )
         has_more = older_probe.first() is not None
         if after_id is not None and len(page_rows) == limit:
+            newest = page_rows[-1]
+            newest_time = select(time_key).where(
+                ConversationMessage.id == newest.id,
+                ConversationMessage.session_id == session_id,
+            ).scalar_subquery()
             newer_probe = await db.execute(
-                select(ConversationMessage.id)
-                .where(*row_filters, ConversationMessage.conversation_seq > page_rows[-1].conversation_seq)
+                select(ConversationMessage.id).where(*row_filters, _display_cursor_predicate(
+                    time_key, (newest_time, newest.conversation_seq, newest.id), before=False,
+                ))
                 .limit(1)
             )
             has_newer = newer_probe.first() is not None

@@ -107,6 +107,23 @@ async def test_bot_mention_is_a_serial_boundary_between_group_message_runs():
     ]
 
 
+@pytest.mark.asyncio
+async def test_batch_uses_platform_time_instead_of_gateway_arrival_order():
+    from agent.im.inbound_batch import partition_inbound_batch
+
+    messages = [
+        ("1790000001000-0", {**_group_msg("实际较晚", "speaker-a"), "platform_sent_ms": 1_790_000_003_000}),
+        ("1790000002000-0", {**_group_msg("实际较早", "speaker-b"), "platform_sent_ms": 1_790_000_001_000}),
+        ("1790000004000-0", _group_msg("没有平台时间", "speaker-c")),
+    ]
+
+    segments = await partition_inbound_batch(messages)
+
+    assert [message_id for segment in segments for message_id, _ in segment] == [
+        "1790000002000-0", "1790000001000-0", "1790000004000-0",
+    ]
+
+
 def test_merge_keeps_attachment_ids_at_their_original_message_boundary():
     """多人消息合并时仍携带逐条附件 ID，后续可将卡片归回正确发言人。"""
     from worker import _merge_payloads

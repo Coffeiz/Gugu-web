@@ -65,7 +65,7 @@ async def _load_history_and_stats(rows):
     return result, consume_history_stats()
 
 
-def test_load_session_history_returns_database_order():
+def test_load_session_history_returns_stable_chronological_order():
     rows = [_Message(1), _Message(2), _Message(3)]
     result, stats = asyncio.run(_load_history_and_stats(rows))
     assert [item.id for item in result] == [1, 2, 3]

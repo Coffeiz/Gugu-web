@@ -53,6 +53,7 @@ export function mapSessionMessageDelta(
     const clientMessageId = typeof item.clientMessageId === 'string' && item.clientMessageId
       ? item.clientMessageId
       : undefined
+    const occurredAt = item.occurredAt || item.createdAt
     return {
       id: mkid(), dbId: item.id,
       _syncKey: clientMessageId ? `client:${clientMessageId}` : `message:${item.id}`,
@@ -63,7 +64,7 @@ export function mapSessionMessageDelta(
       files: item.files?.length ? item.files as ChatFile[] : undefined,
       references: item.references?.length ? item.references as ChatReference[] : undefined,
       quotedText: item.quotedText || undefined,
-      time: displayTime(item.createdAt), _createdAt: item.createdAt,
+      time: displayTime(occurredAt), _createdAt: occurredAt,
       _timelineOrder: item.timelineOrder ?? item.id,
       runId, roundId,
       runOutcome: item.runOutcome,

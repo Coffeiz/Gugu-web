@@ -33,6 +33,18 @@ from .config_cache import WeixinConfigManager
 
 STREAM = R.IM_INBOUND_STREAM
 
+
+def _wechat_platform_sent_ms(message: dict) -> int | None:
+    """读取 iLink WeixinMessage.create_time_ms；无效或缺失时交给入站时间回退。"""
+    value = message.get("create_time_ms")
+    if isinstance(value, bool):
+        return None
+    try:
+        timestamp = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return timestamp if timestamp > 0 else None
+
 # 网关进程内 per-user typing_ticket 缓存（2026-07-09 接入 iLink typing 接口）
 # 单 bot 单网关进程 → 模块级单例天然 per-bot 隔离；多 user 共享同一 manager
 _config_managers: dict[str, WeixinConfigManager] = {}
@@ -193,6 +205,7 @@ async def _handle_msg(msg: dict, channel_id: str, owner: str, client) -> None:
         "owner_user_id": owner,             # BYO：bot 归属即用户，worker 直接用
         "platform_user_id": from_user,      # 微信用户 id（xxx@im.wechat）
         "message_id": context_token,        # iLink 无独立 msg_id，用 context_token 作标识/去重
+        "platform_sent_ms": _wechat_platform_sent_ms(msg),
         "chat_type": "group" if group_id else "c2c",
         "wechat_group_id": group_id,
         "context_token": context_token,     # ⚠️ iLink 回复必需，worker 透传回 send_text

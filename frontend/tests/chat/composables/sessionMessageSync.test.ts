@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
 import type { ChatMessage } from '@/components/common/gugu-chat/chatTypes'
 import { agentApi } from '@/services/api'
-import { createSessionMessageSynchronizer, ensureSessionMessageLoaded, mapSessionMessageDelta, mergeSessionMessageDelta, replaceRunHistory } from '@/components/common/gugu-chat/composables/sessionMessageSync'
+import { createSessionMessageSynchronizer, ensureSessionMessageLoaded, mapSessionMessageDelta, mergeSessionMessageDelta, replaceRunHistory, sortSessionTimelineMessages } from '@/components/common/gugu-chat/composables/sessionMessageSync'
 
 vi.mock('@/services/api', () => ({ agentApi: { getMessages: vi.fn(), getMessagesBefore: vi.fn() } }))
 
@@ -99,6 +99,25 @@ describe('mergeSessionMessageDelta', () => {
     const loaded = mapSessionMessageDelta({ timelineEvents: events }, (() => { let id = 1; return () => id++ })(), role => ({ role }))
     expect(loaded.map(message => message._syncKey)).toEqual(['event:a', 'event:b'])
     expect(mergeSessionMessageDelta(loaded, loaded)).toHaveLength(2)
+  })
+
+  it('IM 用户气泡按平台发生时间排序，助手按完成时间排在期间到达的消息之后', () => {
+    const loaded = mapSessionMessageDelta({
+      messages: [{
+        id: 73, role: 'user', content: 'Run 中到达的群消息',
+        createdAt: '2026-11-01T14:57:00Z', occurredAt: '2026-11-01T14:55:00Z',
+      }],
+      timelineEvents: [{
+        eventId: 'assistant-done', kind: 'assistant', text: 'Run 完成回复', runId: 'run-a',
+        createdAt: '2026-11-01T14:54:00Z', completedAt: '2026-11-01T14:56:00Z',
+      }],
+    }, (() => { let id = 1; return () => id++ })(), role => ({ role: role === 'assistant' ? 'ai' : role }))
+
+    const ordered = sortSessionTimelineMessages(loaded)
+
+    expect(ordered.map(item => item.text)).toEqual(['Run 中到达的群消息', 'Run 完成回复'])
+    expect(ordered[0]._createdAt).toBe('2026-11-01T14:55:00Z')
+    expect(ordered[1]._completedAt).toBe('2026-11-01T14:56:00Z')
   })
 
   it('迟到的旧检查点不能覆盖较新的实时事件', () => {

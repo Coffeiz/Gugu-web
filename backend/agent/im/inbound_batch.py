@@ -14,6 +14,15 @@ def _arrival_key(msg_id: str) -> tuple[int, int]:
         return 0, 0
 
 
+def _message_order_key(item: tuple[str, dict]) -> tuple[int, int]:
+    """优先按平台发送时间排序；缺失平台时间时回退到 Redis 入站时间。"""
+    message_id, payload = item
+    sent_ms = payload.get("platform_sent_ms") if isinstance(payload, dict) else None
+    if isinstance(sent_ms, (int, float)) and not isinstance(sent_ms, bool) and sent_ms > 0:
+        return int(sent_ms), _arrival_key(message_id)[1]
+    return _arrival_key(message_id)
+
+
 async def _bot_mention_indexes(batch: list[tuple[str, dict]]) -> set[int]:
     """按网关确认的当前 Bot mention 切段；权限由后续 ActorResolver 单独判定。"""
     mentions: set[int] = set()
@@ -34,7 +43,7 @@ async def partition_inbound_batch(
     """相邻普通消息合并；每条网关确认的 @ 当前 Bot 消息单独成段。"""
     if not batch:
         return []
-    ordered = sorted(batch, key=lambda item: _arrival_key(item[0]))
+    ordered = sorted(batch, key=_message_order_key)
     bot_mentions = await _bot_mention_indexes(ordered)
     segments: list[list[tuple[str, dict]]] = []
     ordinary: list[tuple[str, dict]] = []
