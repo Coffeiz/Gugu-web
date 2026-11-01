@@ -3,7 +3,6 @@ import pytest
 from fastapi import HTTPException
 
 from agent.im.permissions import filter_tool_names
-from app.api.v1 import user_bots
 from app.api.v1.user_bots import BotUpdate, update_my_bot
 from app.models import UserBot
 from app.services.im_identity import normalize_group_allowed_tools
@@ -27,7 +26,6 @@ async def test_group_tool_update_accepts_provider_search_but_rejects_unknown_nam
 
     from app.core import events
 
-    monkeypatch.setattr(user_bots, "_touch_gateway", no_op)
     monkeypatch.setattr(events, "publish", no_op)
     bot = UserBot(user_id=user_a.id, platform="qq", app_id="synthetic-app")
     db.add(bot)

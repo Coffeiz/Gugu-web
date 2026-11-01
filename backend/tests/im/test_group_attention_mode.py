@@ -9,13 +9,8 @@ from app.models import UserBot
 
 @pytest.mark.asyncio
 async def test_attention_mode_defaults_to_autonomous_and_is_independent_of_reply_mode(
-    db, user_a, monkeypatch,
+    db, user_a,
 ):
-    async def no_op(*_args, **_kwargs):
-        return None
-
-    monkeypatch.setattr(user_bots, "_touch_gateway", no_op)
-
     bot = UserBot(user_id=user_a.id, platform="qq", app_id="synthetic-app")
     db.add(bot)
     await db.commit()
@@ -47,11 +42,7 @@ async def test_attention_mode_defaults_to_autonomous_and_is_independent_of_reply
 
 
 @pytest.mark.asyncio
-async def test_attention_mode_accepts_only_supported_values(db, user_a, monkeypatch):
-    async def no_op(*_args, **_kwargs):
-        return None
-
-    monkeypatch.setattr(user_bots, "_touch_gateway", no_op)
+async def test_attention_mode_accepts_only_supported_values(db, user_a):
     bot = UserBot(user_id=user_a.id, platform="telegram", app_id="synthetic-app")
     db.add(bot)
     await db.commit()

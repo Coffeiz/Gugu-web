@@ -185,6 +185,10 @@ async def update_config(body: ConfigPatch, request: Request, db: AsyncSession = 
             if not sandbox_ready:
                 raise HTTPException(status_code=400, detail=f"当前 Shell 沙盒不可用：{sandbox_reason}")
         new_cfg = await save_override(body.patch)
+        if im_patch is not None:
+            from app.services.im_gateway import notify_gateway_reload
+
+            await notify_gateway_reload()
         sections = "、".join(body.patch.keys())
         username = getattr(request.state, "admin_username", "admin")
         await write_log(db, username, "config", f"修改配置：{sections}", request)

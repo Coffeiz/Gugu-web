@@ -140,10 +140,6 @@ async def poll(
         from app.core import events
         await events.publish(current_user.id, "im_channels", operation="refresh")
         await R.get_redis().delete(_rk(poll_id))
-        try:
-            await R.get_redis().publish("im:gateway:reload", "1")
-        except Exception:
-            pass
         return {"status": "success", "bot": {"id": bot.id, "name": bot.name, "app_id": bot.app_id}}
 
     err = data.get("error", "")

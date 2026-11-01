@@ -11,7 +11,6 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import redis as R
 from app.core.ownership import get_owned
 from app.core.security import get_current_user
 from app.db.session import get_db
@@ -60,14 +59,6 @@ def _out(b: UserBot) -> dict:
         "private_streaming_enabled": bool(b.private_streaming_enabled),
         "owner_bound": bool(b.owner_platform_user_id),
     }
-
-
-async def _touch_gateway():
-    """通知 gateway 立即重扫（不必等轮询周期）。失败无所谓，下轮也会同步。"""
-    try:
-        await R.get_redis().publish("im:gateway:reload", "1")
-    except Exception:
-        pass
 
 
 @router.get("")
@@ -119,7 +110,6 @@ async def create_my_bot(
     await db.refresh(bot)
     from app.core import events
     await events.publish(current_user.id, "im_channels", operation="refresh")
-    await _touch_gateway()
     return _out(bot)
 
 
@@ -245,7 +235,6 @@ async def update_my_bot(
     await db.refresh(bot)
     from app.core import events
     await events.publish(current_user.id, "im_channels", operation="refresh")
-    await _touch_gateway()
     return _out(bot)
 
 
@@ -286,4 +275,3 @@ async def delete_my_bot(
         pass
     from app.core import events
     await events.publish(current_user.id, "im_channels", operation="refresh")
-    await _touch_gateway()
