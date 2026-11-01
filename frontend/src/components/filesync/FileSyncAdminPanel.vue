@@ -129,7 +129,9 @@
               <small v-if="run.resultCounts.permissionSkipped" class="is-warning">
                 {{ t('filesyncUser.permissionSkipped', { count: run.resultCounts.permissionSkipped }) }}
               </small>
-              <small v-if="run.errorCode" class="is-danger">{{ runErrorMessage(run) }}</small>
+              <small v-if="run.errorCode" :class="run.errorCode === 'worker_restarting' ? 'is-warning' : 'is-danger'">
+                {{ runErrorMessage(run) }}
+              </small>
           <small v-if="hasPartialResult(run)" class="is-warning">{{ t('filesyncUser.partialResult') }}</small>
         </div>
       </div>
@@ -462,6 +464,7 @@ function resultSummary(run: FileSyncRunStatus) {
 }
 
 function runErrorMessage(run: FileSyncRunStatus) {
+  if (run.errorCode === 'worker_restarting') return t('filesyncUser.workerRestarting')
   if (run.errorCode === 'root_recovery_blocked') return t('filesyncUser.rootRecoveryBlocked')
   if (run.errorCode === 'binding_root_unavailable') return t('filesyncUser.bindingRootUnavailable')
   if (run.errorCode === 'scan_incomplete' || run.errorCode === 'scan_scope_incomplete') return t('filesyncUser.scanIncomplete')

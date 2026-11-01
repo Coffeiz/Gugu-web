@@ -53,7 +53,7 @@ from app.services.filesync.reconcile import (
     _directory_fingerprint,
     _classify_path,
     _find_folder_path,
-    _is_sync_temporary,
+    _is_sync_ignored_path,
     _parse_directory_path,
     _safe_storage_key,
     _stable_fingerprint,
@@ -238,7 +238,7 @@ async def _project_changed_file(
     key = scope_prefix + relative
     size_delta = 0
     try:
-        if _is_sync_temporary(path):
+        if _is_sync_ignored_path(relative):
             return 0
         validate_sync_path(root, relative)
         _safe_storage_key(storage_root, path)
@@ -393,7 +393,7 @@ async def _project_deleted_file(
     latest: dict[tuple[str, str], FileSyncJournal], summary_inout: dict,
     *, record_quota_delta: bool = False,
 ) -> None:
-    if _is_sync_temporary(Path(relative)):
+    if _is_sync_ignored_path(relative):
         return
     key = scope_prefix + relative
     row = (await db.execute(select(File).where(

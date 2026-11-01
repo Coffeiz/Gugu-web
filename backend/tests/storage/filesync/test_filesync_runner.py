@@ -869,7 +869,7 @@ async def test_manifest_budget_failure_does_not_delete_db_orphan(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("stop_mode", ["cancel", "timeout"])
+@pytest.mark.parametrize("stop_mode", ["cancel", "timeout", "worker_shutdown"])
 async def test_same_user_task_cannot_take_scan_slot_until_stopped_thread_exits(
     multi_session_filesync_db, user_a, monkeypatch, stop_mode,
 ):
@@ -983,6 +983,8 @@ async def test_same_user_task_cannot_take_scan_slot_until_stopped_thread_exits(
                     stop_db, run_a.id, user_id=user_a.id,
                 )
                 assert stopping is not None and stopping.status == "cancelling"
+            elif stop_mode == "worker_shutdown":
+                worker_stop.set()
             else:
                 stopping = await stop_db.get(FileSyncReconcileRun, run_a.id)
                 assert stopping is not None
@@ -1004,14 +1006,39 @@ async def test_same_user_task_cannot_take_scan_slot_until_stopped_thread_exits(
     gc.collect()
     assert not unhandled_loop_errors, "取消/超时收尾遗留未消费的扫描任务异常"
 
-    async with db_session._SessionLocal() as next_db:
-        stored_a = await next_db.get(FileSyncReconcileRun, run_a.id)
-        claimed_b = await claim_next_run(next_db, "runner-b", now=now_utc())
-    expected_status = "cancelled" if stop_mode == "cancel" else "failed"
-    expected_error = None if stop_mode == "cancel" else "execution_timeout"
-    assert stored_a is not None and stored_a.status == expected_status
-    assert stored_a.error_code == expected_error
-    assert claimed_b is not None and claimed_b.id == run_b.id
+    async with db_session._SessionLocal() as check_db:
+        stored_a = await check_db.get(FileSyncReconcileRun, run_a.id)
+        observed_a = None if stored_a is None else (
+            stored_a.status,
+            stored_a.error_code,
+            stored_a.scanned_count,
+            stored_a.lease_owner,
+            stored_a.finished_at,
+            dict(stored_a.result_counts or {}),
+        )
+    async with db_session._SessionLocal() as claim_db:
+        claimed_b = await claim_next_run(claim_db, "runner-b", now=now_utc())
+    expected_status = (
+        "cancelled" if stop_mode == "cancel" else
+        "queued" if stop_mode == "worker_shutdown" else
+        "failed"
+    )
+    expected_error = (
+        None if stop_mode == "cancel" else
+        "worker_restarting" if stop_mode == "worker_shutdown" else
+        "execution_timeout"
+    )
+    assert observed_a is not None and observed_a[0] == expected_status
+    assert observed_a[1] == expected_error
+    if stop_mode == "worker_shutdown":
+        assert observed_a[2] == 0
+        assert observed_a[3] is None
+        assert observed_a[4] is None
+        assert observed_a[5]["created"] == 0
+        assert observed_a[5]["permissionSkipped"] == 0
+        assert claimed_b is not None and claimed_b.id == run_a.id
+    else:
+        assert claimed_b is not None and claimed_b.id == run_b.id
 
 
 @pytest.mark.asyncio
