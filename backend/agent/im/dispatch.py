@@ -625,6 +625,11 @@ async def dispatch_im_message(payload: dict):
         # 群聊不向成员展示工具调用状态；不改变工具执行及 Web 事件。
         tool_display_mode = "off"
         show_intermediate_replies = False
+    elif platform == "feishu":
+        # 飞书私聊支持 CardKit 完整流式展示，固定展示工具过程和中间回复；
+        # 群聊仍遵循上面的隐藏规则，其他平台继续使用个人偏好。
+        tool_display_mode = "all"
+        show_intermediate_replies = True
     if platform == "telegram":
         from agent.interactions.preferences import im_user_locale
         payload["locale"] = await im_user_locale(req.user_id)
@@ -758,6 +763,7 @@ async def dispatch_im_message(payload: dict):
                 str(receive_id or ""), stream_bridge.mirror_stream(token_iter),
                 channel_id=payload.get("channel_id"),
                 tool_summary=feishu_tool_summary,
+                show_intermediate_replies=show_intermediate_replies,
                 chart_theme_preferences=payload.get("chart_theme_preferences"),
             )
             if resp is None and stream_sent:
