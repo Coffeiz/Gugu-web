@@ -135,8 +135,10 @@ export function setupInteractionRuntime(): void {
     proxyZIndex: TOP_Z,
     landingProxyZIndex: TOP_Z,
     affordances: { selector: '[data-card-affordances]' },
-    // 画布和抽屉使用同一份项目卡结构。跨 Surface landing 需要保留源卡和目标卡两层，
-    // 让内容、卡面和边框一起交叉淡化，避免落地结束时从源代理瞬间切换到目标卡。
+    // 项目卡两端共用同一结构，landing 直接保留源代理卡面。跨 Surface 的
+    // 双层 morph 会把抓取 blur 插值到目标的 none，让玻璃在落地途中消失。
+    // 卡面渐变由项目卡自己的 landing 状态恢复，落地完成后再交还真实目标。
+    disableTargetVisualMorph: objectType === MIND_PROJECT_OBJECT_TYPE,
     camera: { enabled: true },
     releaseMode: 'physical',
     // 画布单独限制释放速度；该档案只在 free Surface 上读取，
