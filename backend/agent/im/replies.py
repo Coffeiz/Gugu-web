@@ -12,6 +12,7 @@ from collections.abc import Callable, Set
 from typing import AsyncIterator, Tuple
 
 from agent.im.models import PlatformReply
+from agent.platform_limits import QQ_ATTACHMENT_MAX_BYTES
 from agent.im.streaming.qq import QQChartRound
 from agent.tool_messages import format_tool_event, tool_code_block as _tool_code_block
 from agent.models import AgentResponse
@@ -24,7 +25,6 @@ _FEISHU_IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "bmp"}
 _FEISHU_IMAGE_MAX = 10 * 1024 * 1024
 _FEISHU_FILE_MAX = 30 * 1024 * 1024
 _WECHAT_FILE_MAX = 30 * 1024 * 1024
-_QQ_FILE_MAX = 10 * 1024 * 1024
 _TELEGRAM_DRAFT_MIN_INTERVAL = 1.0
 
 
@@ -671,7 +671,7 @@ async def send_png_image(payload: dict, png: bytes) -> bool:
 
 async def _send_png_image_untracked(payload: dict, png: bytes) -> bool:
     """通过现有 Gateway 图片接口发送短期内存 PNG，不创建文件库记录。"""
-    if not png or len(png) > 3 * 1024 * 1024:
+    if not png:
         return False
     platform = payload.get("platform")
     if platform == "feishu":
@@ -804,7 +804,7 @@ async def _send_file_qq(
         return False
     storage = get_storage()
     data = await storage.get(storage_key)
-    if len(data) > _QQ_FILE_MAX:
+    if len(data) > QQ_ATTACHMENT_MAX_BYTES:
         return False
     # 文件始终主动发送，不消耗触发本轮任务的被动回复次数。
     ok = await qq.send_file(
@@ -870,6 +870,14 @@ async def send_agent_response(
             "_attention_outbound_receipts", []
         )
     result = await send_files(answer_payload, response.files)
+    # 将真实平台附件送达结果交给 run 收尾层，写入下一轮可见的内部上下文。
+    # 工具返回的只是附件已准备好，不能代表这里的平台上传成功。
+    if response.files:
+        payload.setdefault("_attachment_delivery_results", []).append({
+            "requested": int(getattr(result, "requested", len(response.files))),
+            "sent": int(getattr(result, "sent", 0)),
+            "failed": int(result.failed),
+        })
     if result.failed:
         # 附件失败提示是合成消息，不属于 Agent round index 域，不能参与
         # already_sent_rounds 去重，否则 round 0 已即时发送时会吞掉失败提示。

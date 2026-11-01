@@ -501,6 +501,9 @@ async def _handle_qq_interaction(data: Dict[str, Any], channel_id: str, owner: s
     if event is None or not event.get("platform_user_id"):
         await _ack_qq_interaction(channel_id, interaction_id, code=1)
         return
+    # QQ 要求在短时限内确认交互事件。先确认已接收回调，再做数据库事务，
+    # 避免事务耗时导致平台重投；业务消费仍由下方的单次动作状态和 event_id 保证幂等。
+    await _ack_qq_interaction(channel_id, interaction_id, code=0)
     try:
         from app.db import session as db_session
         from app.services.interactions import consume_action
@@ -521,10 +524,9 @@ async def _handle_qq_interaction(data: Dict[str, Any], channel_id: str, owner: s
             if result is None:
                 result = await consume_action(
                     db, user_id=user_id, prompt_id=event["prompt_id"], token=event["token"],
-                    event_id=event.get("event_id"),
+                    event_id=event.get("event_id"), allow_duplicate_event=True,
                 )
     except (LookupError, ValueError):
-        await _ack_qq_interaction(channel_id, interaction_id, code=3)
         # 交互回调的 event_id 不是 QQ 消息 msg_id，不能用于消息回复，否则会触发
         # 40034024（msg_id 无效或越权）。交互状态已经由上面的协议 ACK 确认，
         # 这里发送独立的提示；如果按钮来自群聊，必须回到原群，不能误发到私聊。
@@ -540,10 +542,13 @@ async def _handle_qq_interaction(data: Dict[str, Any], channel_id: str, owner: s
         )
         return
     except Exception as exc:
-        await _ack_qq_interaction(channel_id, interaction_id, code=1)
         diag_log("agent.gateway.qq.interaction", exc)
         return
-    await _ack_qq_interaction(channel_id, interaction_id, code=0)
+
+    # 同一事件被 QQ 重投时，首次回调已经消费并恢复 Run；重复回调只需 ACK，
+    # 不能再次发“已选择”，更不能把幂等命中显示成已过期错误。
+    if result.get("duplicate") or result.get("status") == "duplicate":
+        return
 
     option_id = str(result.get("option_id") or "")
     result_payload = result.get("result") if isinstance(result.get("result"), dict) else {}

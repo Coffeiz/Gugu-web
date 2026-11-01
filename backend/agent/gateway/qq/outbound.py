@@ -869,68 +869,67 @@ _IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "bmp"}
 async def send_file(openid: str, data: bytes | None, name: str, ext: str,
                     channel_id: str | None = None, msg_id: str | None = None,
                     group: bool = False) -> bool:
-    """给 QQ 私聊或群聊发媒体；本地文件统一使用 base64 上传。"""
-    import base64
+    """向 QQ 上传并发送附件。"""
     ext_l = (ext or "").lower()
     is_img = ext_l in _IMAGE_EXTS
     file_type = 1 if is_img else 4
     fname = f"{name}.{ext_l}" if ext_l else name
     if data is None:
         return False
-    b64 = base64.b64encode(data).decode()
+    from agent.platform_limits import QQ_ATTACHMENT_MAX_BYTES
+    if len(data) > QQ_ATTACHMENT_MAX_BYTES:
+        _log.warning("[qq] 文件超过 30 MiB 上传上限: bytes=%d", len(data))
+        return False
     target = "groups" if group else "users"
-    # 上传 inner proxy 偶发抖动，多重试几次（每次取新 msg_seq，避免去重）
-    for attempt in range(1, 5):
+    try:
+        # 超时不重传。
+        from .media_upload import upload_qq_media
+        media = await upload_qq_media(
+            str(channel_id or ""), target, openid, file_type, data, file_name=fname,
+        )
+        file_info = media.get("file_info")
+        if not file_info:
+            # 只打字段名，不打响应内容，避免泄露上游回显的数据。
+            keys = sorted(media.keys())
+            print(f"[qq] 富媒体上传无 file_info: keys={keys}", flush=True)
+            return False
+    except Exception as error:
+        diag_log("agent.gateway.qq.send_file.upload", error)
+        _log.warning("[qq] 文件上传失败: %s", redact(f"{type(error).__name__}: {error}"))
+        if isinstance(error, QQAPIError) and error.status == 401:
+            _send_tokens.pop(channel_id, None)
+        return False
+
+    msg_body = {
+        "msg_type": 7,
+        "media": {"file_info": file_info},
+        "msg_seq": await _next_seq(msg_id),
+    }
+    if msg_id:
+        msg_body["msg_id"] = msg_id
+    if not is_img:
+        msg_body["content"] = fname
+    message_path = f"/v2/{target}/{openid}/messages"
+    try:
+        await _qq_request(channel_id, "POST", message_path, json_body=msg_body)
+        return True
+    except Exception as message_error:
+        if not (
+            group
+            and msg_id
+            and (_qq_msg_id_invalid(message_error) or _qq_passive_reply_limited(message_error))
+        ):
+            diag_log("agent.gateway.qq.send_file.message", message_error)
+            _log.warning("[qq] 文件消息发送失败: %s", redact(f"{type(message_error).__name__}: {message_error}"))
+            return False
+        _log.warning("[qq] 群文件被动回复受限，降级为主动消息")
+        active_body = dict(msg_body)
+        active_body.pop("msg_id", None)
+        active_body["msg_seq"] = await _next_seq(None)
         try:
-            # 1) 上传到 QQ 富媒体，拿 file_info。
-            body = {"file_type": file_type, "srv_send_msg": False}
-            body["file_data"] = b64
-            if not is_img:
-                body["file_name"] = fname
-            media = await _qq_request(channel_id, "POST", f"/v2/{target}/{openid}/files", json_body=body)
-            file_info = media.get("file_info") if isinstance(media, dict) else None
-            if not file_info:
-                # 只打字段名，不打整个响应体（万一 QQ 把请求里的 file_name 之类字段原样回显）
-                keys = sorted(media.keys()) if isinstance(media, dict) else type(media).__name__
-                print(f"[qq] 富媒体上传无 file_info: keys={keys}", flush=True)
-                return False
-            # 2) 发媒体消息（被动回复带 msg_id；文件用 content 让 QQ 显示文件名）
-            msg_body = {"msg_type": 7, "media": {"file_info": file_info},
-                       "msg_seq": await _next_seq(msg_id)}
-            if msg_id:
-                msg_body["msg_id"] = msg_id
-            if not is_img:
-                msg_body["content"] = fname
-            message_path = f"/v2/{target}/{openid}/messages"
-            try:
-                await _qq_request(channel_id, "POST", message_path, json_body=msg_body)
-            except Exception as message_error:
-                # 群文件经常在模型生成期间跨过 QQ 的被动回复窗口；上传已经成功，
-                # 只去掉过期的 msg_id 重发同一个 file_info，避免重复上传和丢失附件。
-                if not (
-                    group
-                    and msg_id
-                    and (_qq_msg_id_invalid(message_error) or _qq_passive_reply_limited(message_error))
-                ):
-                    raise
-                _log.warning("[qq] 群文件被动回复受限，降级为主动消息")
-                active_body = dict(msg_body)
-                active_body.pop("msg_id", None)
-                active_body["msg_seq"] = await _next_seq(None)
-                await _qq_request(channel_id, "POST", message_path, json_body=active_body)
+            await _qq_request(channel_id, "POST", message_path, json_body=active_body)
             return True
-        except Exception as e:
-            diag_log("agent.gateway.qq.send_file", e)
-            _log.warning("[qq] 发文件失败(第%d次): %s", attempt, redact(f"{type(e).__name__}: {e}"))
-            # token 失效才重建缓存；inner proxy 等抖动直接重试
-            if isinstance(e, QQAPIError) and e.status == 401:
-                _send_tokens.pop(channel_id, None)
-            elif "token" in str(e).lower():
-                _send_tokens.pop(channel_id, None)
-            # 上传/发送都不是幂等操作（重复上传浪费、重复发送会造成重复文件消息）；
-            # 只对判定为瞬时的失败继续重试，4xx 等永久错误立即放弃（P2-b §1/§4-A）。
-            if attempt < 4 and _qq_is_transient(e):
-                await asyncio.sleep(0.6 * attempt)
-            else:
-                return False
-    return False
+        except Exception as fallback_error:
+            diag_log("agent.gateway.qq.send_file.active_fallback", fallback_error)
+            _log.warning("[qq] 群文件主动发送失败: %s", redact(f"{type(fallback_error).__name__}: {fallback_error}"))
+            return False

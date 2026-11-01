@@ -70,6 +70,8 @@ async def start_qq_http_session() -> aiohttp.ClientSession:
         _QQ_HTTP_SESSION = aiohttp.ClientSession(
             connector=connector,
             trace_configs=[_qq_http_trace_config()],
+            # QQ REST 与预签名 COS 请求固定直连；环境变量代理不参与这条链路。
+            trust_env=False,
         )
     return _QQ_HTTP_SESSION
 
@@ -361,9 +363,11 @@ def _qq_is_transient(exc: BaseException) -> bool:
     return "status=401" in s or "code: 401" in s
 
 async def _qq_request(channel_id: str, method: str, path: str, *,
-                      json_body: dict | None = None, retry_on_401: bool = True):
+                      json_body: dict | None = None, retry_on_401: bool = True,
+                      timeout_seconds: float = 20):
     """raw HTTP 调 QQ Bot API；401 时清缓存重取 token 重试一次（幂等：读token+重发同一请求，
-    未产生额外副作用，安全）。其余非 2xx 抛 QQAPIError，由调用方按 _qq_is_transient 判定是否重试。"""
+    未产生额外副作用，安全）。其余非 2xx 抛 QQAPIError，由调用方按 _qq_is_transient 判定是否重试。
+    timeout_seconds 仅调整当前 HTTP 请求的总时限；默认保持普通请求的 20 秒。"""
     auth_started = time.perf_counter()
     from agent.runtime import trace
     trace_id = trace.get_trace()
@@ -386,7 +390,7 @@ async def _qq_request(channel_id: str, method: str, path: str, *,
         async with session.request(
             method, f"{base}{path}", json=json_body,
             headers={"Authorization": f"QQBot {token}", "Content-Type": "application/json"},
-            timeout=aiohttp.ClientTimeout(total=20),
+            timeout=aiohttp.ClientTimeout(total=timeout_seconds),
             trace_request_ctx=request_trace,
         ) as resp:
             status = resp.status

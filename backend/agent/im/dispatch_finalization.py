@@ -60,6 +60,27 @@ def _log_attention_run_outcome(
     )
 
 
+async def _persist_attachment_delivery_receipt(payload: dict, request, response, trace_id: str) -> None:
+    results = payload.get("_attachment_delivery_results") or []
+    if not results:
+        return
+    requested = sum(max(0, int(item.get("requested") or 0)) for item in results if isinstance(item, dict))
+    sent = sum(max(0, int(item.get("sent") or 0)) for item in results if isinstance(item, dict))
+    failed = sum(max(0, int(item.get("failed") or 0)) for item in results if isinstance(item, dict))
+    if failed <= 0:
+        return
+    from agent.im.delivery_receipts import persist_attachment_delivery_receipt
+
+    await persist_attachment_delivery_receipt(
+        user_id=request.user_id,
+        session_id=response.session_id,
+        trace_id=trace_id,
+        requested=requested,
+        sent=sent,
+        failed=failed,
+    )
+
+
 async def finalize_im_dispatch(
     *,
     payload: dict,
@@ -77,6 +98,8 @@ async def finalize_im_dispatch(
     """写回会话、调度记忆活动并确保平台收到正确的最终消息。"""
     platform = request.source
     puid = request.platform_user_id
+    # 预先建立共享列表，避免流式私聊复制 payload 后丢失附件实际投递回执。
+    payload.setdefault("_attachment_delivery_results", [])
 
     await persist_im_session(
         platform,
@@ -197,6 +220,11 @@ async def finalize_im_dispatch(
             from agent.im.files import send_files
 
             file_result = await send_files(payload, response.files)
+            payload.setdefault("_attachment_delivery_results", []).append({
+                "requested": int(file_result.requested),
+                "sent": int(file_result.sent),
+                "failed": int(file_result.failed),
+            })
             reply_text = response.text or "给你～"
             if file_result.failed:
                 notice = file_result.reason or "附件没有成功发出，你可以去网页或文件库查看。"
@@ -208,6 +236,7 @@ async def finalize_im_dispatch(
                         "agent.im.file_attachment_delivery",
                         f"platform={platform} status=notice_failed",
                     )
+                await _persist_attachment_delivery_receipt(payload, request, response, trace_id)
                 trace.finish_run("error")
                 await finalize_im_response(platform, puid, False, "")
                 _log_attention_run_outcome(
@@ -223,6 +252,8 @@ async def finalize_im_dispatch(
             already_sent_rounds=sent_round_indices,
             show_intermediate_replies=show_intermediate_replies,
         )
+
+    await _persist_attachment_delivery_receipt(payload, request, response, trace_id)
 
     if reply_text is None:
         trace.finish_run("error")

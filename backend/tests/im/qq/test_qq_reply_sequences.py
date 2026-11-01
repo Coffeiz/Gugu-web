@@ -7,6 +7,7 @@ from collections import defaultdict
 import pytest
 
 from agent.gateway.qq import outbound
+from agent.gateway.qq import media_upload
 from agent.gateway.qq.client import QQAPIError, QQStreamFinalizationError
 
 
@@ -35,6 +36,9 @@ def qq_reply_transport(monkeypatch):
     seen = set()
     delivered = []
 
+    async def upload_media(*_args, **_kwargs):
+        return {"file_info": "synthetic-image-info"}
+
     async def request(channel_id, method, path, *, json_body=None, **kwargs):
         body = dict(json_body or {})
         if path.endswith("/files"):
@@ -53,6 +57,7 @@ def qq_reply_transport(monkeypatch):
 
     monkeypatch.setattr(outbound.R, "get_redis", lambda: redis)
     monkeypatch.setattr(outbound, "_qq_request", request)
+    monkeypatch.setattr(media_upload, "upload_qq_media", upload_media)
     return delivered
 
 

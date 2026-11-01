@@ -78,6 +78,9 @@ class QQChartRound:
         }
         self._qq = qq
         self.stream_failed = False
+        # 一次 Run 只使用一条 QQ 原生流。流被工具消息或图表消息切开后，
+        # 后续独立气泡走普通 sendText，避免把“发完一句再发一句”模拟成多条流。
+        self.regular_text_only = False
         # 按需创建流，避免在没有正文时预占 msg_seq，也避免工具执行期间空挂一条流。
         self.stream = None
         self.stream_sent = False
@@ -128,7 +131,7 @@ class QQChartRound:
         if not self.round_text.strip() and final_text.strip() and not self.round_has_image:
             self.segment_text = final_text.strip()
             self.round_text = self.segment_text
-            if self.stream is None and not self.stream_failed:
+            if self.stream is None and not self.stream_failed and not self.regular_text_only:
                 self.stream = self._new_stream()
             if self.stream is not None:
                 self.stream.push(self.segment_text)
@@ -147,8 +150,10 @@ class QQChartRound:
         text = self.round_text or self.pending_round_text
         if self.stream is None and not self.segment_text.strip():
             self._reset_round()
+            self.regular_text_only = True
             return
         await self.finish_round(text, start_next=False)
+        self.regular_text_only = True
 
     async def finish_response(self, final_text: str) -> tuple[bool, str]:
         final_text = self._fix_loose_bold(final_text or "").strip()
@@ -270,7 +275,7 @@ class QQChartRound:
             self.segment_text = ""
             return True
         if self.stream is None:
-            if self.stream_failed:
+            if self.stream_failed or self.regular_text_only:
                 text = self.segment_text
                 try:
                     payload = self.active_payload
@@ -344,10 +349,12 @@ class QQChartRound:
                     self.round_has_delivered_output = True
                 self.trim_leading_segment = True
                 self.stream = None
+                self.regular_text_only = True
             elif part.placeholder_emitted:
                 self.round_has_image = True
                 await self._finish_text_segment(trim_end=True)
                 self.trim_leading_segment = True
+                self.regular_text_only = True
             elif part.text:
                 text = part.text
                 if self.trim_leading_segment:
@@ -362,7 +369,7 @@ class QQChartRound:
                 self.pending_whitespace = buffered[len(visible):]
                 if visible:
                     self.segment_text += visible
-                    if self.stream is None and not self.stream_failed:
+                    if self.stream is None and not self.stream_failed and not self.regular_text_only:
                         self.stream = self._new_stream()
                     if self.stream is not None:
                         self.stream.push(visible)
@@ -381,6 +388,7 @@ class QQChartRound:
         if not self.pending_round_end:
             return
         await self.finish_round(text or self.pending_round_text, start_next=True)
+        self.regular_text_only = True
 
 
 async def send_qq_stream_by_round(

@@ -41,7 +41,9 @@ def delivery(monkeypatch):
 
 
 async def finalize(payload, response, *, stream_sent=False, stream_reply_text=""):
-    request = SimpleNamespace(source="qq", platform_user_id="synthetic-user", chat_id=None)
+    request = SimpleNamespace(
+        source="qq", platform_user_id="synthetic-user", user_id="synthetic-owner", chat_id=None,
+    )
     return await dispatch_finalization.finalize_im_dispatch(
         payload=payload, request=request, route=SimpleNamespace(bot_id="synthetic-bot"),
         session_scope="synthetic", response=response, trace_id="synthetic-trace",
@@ -80,6 +82,31 @@ async def test_private_final_is_streamed_and_not_sent_again(delivery, monkeypatc
     assert streamed == ["最终结论"]
     assert created[0]["message_id"] == "synthetic-inbound"
     passive_send.assert_not_awaited()
+    assert finish.call_args.args[0] == "success"
+
+
+@pytest.mark.asyncio
+async def test_failed_attachment_delivery_persists_receipt(delivery, monkeypatch):
+    from agent.im import files
+
+    _passive_send, finish, _streamed = delivery
+    persist_receipt = AsyncMock(return_value=True)
+    monkeypatch.setattr(dispatch_finalization, "_persist_attachment_delivery_receipt", persist_receipt)
+    monkeypatch.setattr(files, "send_files", AsyncMock(return_value=SimpleNamespace(
+        requested=1, sent=0, failed=1, reason="上传失败",
+    )))
+    payload = {
+        "platform": "qq", "chat_type": "group", "chat_id": "synthetic-chat",
+        "platform_user_id": "synthetic-user", "channel_id": "synthetic-bot",
+    }
+    response = AgentResponse(text="附件已准备好", files=[{"file_id": "synthetic-file"}], session_id=42)
+
+    await finalize(payload, response)
+
+    persist_receipt.assert_awaited_once()
+    args, kwargs = persist_receipt.await_args
+    assert args[0]["_attachment_delivery_results"] == [{"requested": 1, "sent": 0, "failed": 1}]
+    assert args[3] == "synthetic-trace"
     assert finish.call_args.args[0] == "success"
 
 
