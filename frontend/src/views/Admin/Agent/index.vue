@@ -324,7 +324,7 @@
                 class="behavior-input"
                 style="width: 280px; flex-shrink:0;"
                 v-model="generalSearchDraft.searxng_image_engines"
-              :placeholder="t('agentConfigUi.imageEnginePlaceholder')"
+                :placeholder="t('agentConfigUi.imageEnginePlaceholder')"
               />
             </div>
           </div>

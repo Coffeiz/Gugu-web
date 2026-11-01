@@ -19,7 +19,14 @@ from pydantic import BaseModel, field_validator
 from typing import Any, Literal
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.config import FileSyncSettings, IMPlatformSettings, SmtpSettings, get_settings, save_override
+from app.core.config import (
+    DEFAULT_SEARXNG_IMAGE_ENGINES,
+    FileSyncSettings,
+    IMPlatformSettings,
+    SmtpSettings,
+    get_settings,
+    save_override,
+)
 from app.core.redaction import diag_log, redact
 from app.db.session import create_all_tables, reset_engine, get_db
 from app.services.multimodal_probe import make_silent_wav
@@ -783,7 +790,14 @@ async def test_search(body: SearchTestRequest):
             return {"ok": False, "message": "未填 SearXNG 地址"}
         is_images = body.target == "searxng_images"
         if is_images:
-            engines = body.searxng_image_engines or cfg.search.searxng_image_engines or cfg.search.searxng_engines
+            engines = (
+                (
+                    body.searxng_image_engines
+                    or cfg.search.searxng_image_engines
+                    or ""
+                ).strip()
+                or DEFAULT_SEARXNG_IMAGE_ENGINES
+            )
         else:
             engines = body.searxng_engines or cfg.search.searxng_engines
         params = {"q": "test", "format": "json", "engines": engines}

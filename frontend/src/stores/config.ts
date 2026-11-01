@@ -128,7 +128,7 @@ export const useConfigStore = defineStore('config', () => {
       deep_research_you_api_key: '',
       searxng_url: '',
       searxng_engines: 'baidu,sogou,quark,360search,yandex,duckduckgo web,mwmbl,gabanza,reloado,searchch,privacywall,gmx,zapmeta,google',
-      searxng_image_engines: '',
+      searxng_image_engines: 'baidu images,quark images,sogou images,bing images,brave.images,duckduckgo images,google images,qwant images,yandex images,pinterest,wikicommons.images,openverse,flickr,imgur,artstation',
       max_results: 5,
       ts_sidecar_index_ttl_seconds: 30 * 24 * 3600,
       similar_image_provider: 'baidu_qianfan',

@@ -22,6 +22,26 @@ def test_ts_sidecar_timeout_is_thirty_seconds_by_default():
     assert SearchSettings().ts_sidecar_timeout_ms == 30_000
 
 
+def test_searxng_image_engines_default_include_broad_domestic_and_international_sources():
+    assert set(SearchSettings().searxng_image_engines.split(",")) == {
+        "baidu images",
+        "quark images",
+        "sogou images",
+        "bing images",
+        "brave.images",
+        "duckduckgo images",
+        "google images",
+        "qwant images",
+        "yandex images",
+        "pinterest",
+        "wikicommons.images",
+        "openverse",
+        "flickr",
+        "imgur",
+        "artstation",
+    }
+
+
 def test_rag_index_ttl_has_safe_default_and_bounds():
     settings = SearchSettings()
 

@@ -414,6 +414,13 @@ class QuotaSettings(BaseModel):
     default_search_limit_daily:  Optional[int] = Field(None, description="全局每日联网搜索次数上限（None=不限制）")
 
 
+DEFAULT_SEARXNG_IMAGE_ENGINES = (
+    "baidu images,quark images,sogou images,bing images,brave.images,"
+    "duckduckgo images,google images,qwant images,yandex images,pinterest,"
+    "wikicommons.images,openverse,flickr,imgur,artstation"
+)
+
+
 class SearchSettings(BaseModel):
     rag_enabled: bool = Field(True, description="是否启用 Agent 自动知识召回（RAG）")
     rag_auto_sources: list[Literal["memory", "knowledge", "project", "canvas", "note", "calendar", "scheduled_task", "conversation"]] = Field(
@@ -444,7 +451,10 @@ class SearchSettings(BaseModel):
         "baidu,sogou,quark,360search,yandex,duckduckgo web,mwmbl,gabanza,reloado,searchch,privacywall,gmx,zapmeta,google",
         description="SearXNG 启用的通用网页搜索引擎（逗号分隔）",
     )
-    searxng_image_engines: str = Field("", description="SearXNG XNG 搜索 mode=images 启用的引擎（逗号分隔）；留空则回退复用 searxng_engines。图片分类能连通的引擎不一定和文本分类是同一批，需部署后用「测试」按钮实测调整")
+    searxng_image_engines: str = Field(
+        DEFAULT_SEARXNG_IMAGE_ENGINES,
+        description="SearXNG XNG 搜索 mode=images 启用的引擎（逗号分隔）；默认兼顾国内外来源，可按部署环境测试后调整；留空时使用此默认名单",
+    )
     max_results:    int = Field(5, description="默认返回结果数")
     rag_backend: Literal["typescript", "cython"] = Field(
         "typescript", description="统一 RAG 查询运行时；启用 sidecar 时 Cython 索引由常驻宿主共享，TS 保留为手动回滚基线",
