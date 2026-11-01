@@ -94,14 +94,17 @@
       <!-- 侧栏 -->
       <CalendarSidebar
         :selected-date-label="selectedDateLabel"
-        :has-active-range="!!activeRange"
         :selected-events="selectedEvents"
+        :selected-notes="selectedNotes"
+        :notes-loading="notesLoading"
+        :notes-failed="notesFailed"
         :upcoming-list="upcomingList"
         @add-project="ctxAddProject"
         @add-event="openAddForm"
         @open-project="openProject"
         @edit-event="onSidebarEditEvent"
         @delete-event="deleteEvent"
+        @open-note="openNote"
       />
 
     </div>
@@ -134,6 +137,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import { browserDayKey as toIso, buildCalendarMonthDays } from '@/utils/dateAttribution'
 import { useProjectStore } from '@/stores/projects'
 import { useUiStore } from '@/stores/ui'
@@ -156,6 +160,7 @@ import MonthGrid from './components/MonthGrid.vue'
 import WeekTimeline from './components/WeekTimeline.vue'
 
 const { t, tm, locale } = useI18n()
+const router = useRouter()
 import { useCalendarUpcoming } from '@/composables/calendar/useCalendarUpcoming'
 import { useCalendarNav } from '@/composables/calendar/useCalendarNav'
 import { useCalendarDrag, type CalendarDragState } from '@/composables/calendar/useCalendarDrag'
@@ -163,6 +168,7 @@ import { useCalendarData } from '@/composables/calendar/useCalendarData'
 import { useCalendarWeekInteraction } from '@/composables/calendar/useCalendarWeekInteraction'
 import { useCalendarEventForm } from '@/composables/calendar/useCalendarEventForm'
 import { resolveCalendarMoreItems } from './utils/calendarMoreItems'
+import { useCalendarNotes } from '@/composables/calendar/useCalendarNotes'
 import type { CalendarContext } from './domain/calendarContext'
 import type { CalendarMonthDay, CalendarRenderItem, CalendarTimeSelection, CalendarWeekDay } from './domain/calendarTypes'
 import { canResize, getDisplayColor } from './domain/calendarRules'
@@ -1037,6 +1043,12 @@ const selectedDateLabel = computed(() => {
   const weekday = new Intl.DateTimeFormat(locale.value, { weekday: 'short' }).format(d)
   return `${dateLabel} · ${locale.value === 'zh-CN' ? '周' : ''}${weekday}`
 })
+
+const { selectedNotes, loading: notesLoading, failed: notesFailed } = useCalendarNotes(selectedDate)
+
+function openNote(id: number) {
+  void router.push({ path: '/mind/notes', query: { object_id: String(id) } })
+}
 
 const selectedEvents = computed<CalItem[]>(() => {
   const sel = selectedDate.value ?? ''
