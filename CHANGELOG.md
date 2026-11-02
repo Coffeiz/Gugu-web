@@ -26,6 +26,8 @@
 - Give the note-writing tool clearer operating guidance and preserve strategy terminology in normal replies.
 - Batch consecutive private and group IM messages into one run, persist them as they arrive, and apply the least privilege when a batch contains multiple speakers.
 - Improve QQ outbound message delivery reliability.
+- Move current-group attachment ownership checks behind the attachment service boundary.
+- Upgrade msgpack to the fixed release for CVE-2026-114613.
 - Improve reading large Markdown documents and wide tables, expand the document zoom range, and refine the file library scrollbar layout.
 
 #### Fixes
@@ -73,6 +75,8 @@
 - 补充笔记工具的操作指引，并在普通回复中保留策略术语。
 - 将连续的 IM 私聊和群聊消息合并为一轮处理，并在消息到达时及时入库；一个批次包含多人发言时按最小权限执行。
 - 提高 QQ 出站消息发送的可靠性。
+- 将当前群附件归属校验移入附件服务，避免 Agent 工具直接查询 ORM。
+- 将 msgpack 升级到修复 CVE-2026-114613 的版本。
 - 改进大型 Markdown 文档和宽表格的阅读体验，扩大文档缩放范围并调整文件库滚动布局。
 
 #### 修复
