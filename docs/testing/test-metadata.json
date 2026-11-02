@@ -2030,5 +2030,125 @@
     "productionEntry": "loopscope/frontend/src/views/Monitor.vue",
     "keyBehavior": "列表刷新时保留用户手动选择的旧 run；显式焦点变化跟随目标 run；当前选择移除后回到最新可用项",
     "ci": "frontend-vitest"
+  },
+  "backend/tests/agent/providers/test_rag_query_embedding.py": {
+    "domain": "rag-query-embedding",
+    "layer": "L1",
+    "owner": "backend/agent/rag/cython_backend.py",
+    "productionEntry": "backend/agent/rag/service.py 与 provider embedding 适配",
+    "keyBehavior": "查询向量按校验后的 provider 配置生成并安全缓存；拒绝无效向量和配置，保持与 TS worker 协议一致",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/rag/test_cython_backend.py": {
+    "domain": "rag-cython-backend",
+    "layer": "L1",
+    "owner": "backend/agent/rag/cython_backend.py",
+    "productionEntry": "backend/agent/rag/service.py",
+    "keyBehavior": "瞬态索引按文档版本更新或失效；投影、切块、排序及增量索引保持 TS 运行时语义",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/rag/test_cython_collation.py": {
+    "domain": "rag-cython-collation",
+    "layer": "L0",
+    "owner": "backend/agent/rag/cython_collation.py",
+    "productionEntry": "backend/agent/rag/cython_rank.py",
+    "keyBehavior": "相同分数按 TS 英文区域排序规则稳定处理，反向排序保持前缀顺序",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/rag/test_cython_projection.py": {
+    "domain": "rag-cython-projection",
+    "layer": "L1",
+    "owner": "backend/agent/rag/cython_projection.py",
+    "productionEntry": "backend/agent/rag/service.py 的数据源投影",
+    "keyBehavior": "不同数据源保留稳定分块身份、来源和所有者边界；Unicode 切块不拆分码点",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/rag/test_cython_rank.py": {
+    "domain": "rag-cython-ranking",
+    "layer": "L1",
+    "owner": "backend/agent/rag/cython_rank.py",
+    "productionEntry": "backend/agent/rag/service.py 的候选排序",
+    "keyBehavior": "置信区间、去重、来源上限和上下文预算遵循排序契约，并与 TS 黄金结果一致",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/rag/test_cython_sidecar.py": {
+    "domain": "rag-cython-sidecar",
+    "layer": "L1",
+    "owner": "backend/agent/rag/cython_sidecar.py",
+    "productionEntry": "backend/agent/rag/sidecar_host.py",
+    "keyBehavior": "sidecar 复用按用户隔离的索引生命周期；拒绝跨所有者访问，查询不卡住事件循环",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/rag/test_cython_tokenizer.py": {
+    "domain": "rag-cython-tokenizer",
+    "layer": "L0",
+    "owner": "backend/agent/rag/cython_tokenizer.pyx",
+    "productionEntry": "backend/agent/rag/cython_backend.py",
+    "keyBehavior": "Cython 分词与 Python 参考及 TS 语义保持一致，保留 ASCII 压缩、日期别名与索引查询一致性",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/rag/test_cython_unified_differential.py": {
+    "domain": "rag-cython-differential",
+    "layer": "L1",
+    "owner": "backend/agent/rag/cython_runtime.py",
+    "productionEntry": "backend/agent/rag/sidecar_host.py 与 TS RAG worker",
+    "keyBehavior": "Cython 查询、批处理和 revision 错误与 TS worker 对照一致；预计算向量不会重复请求 provider",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/test_session_display_order.py": {
+    "domain": "im-history-order",
+    "layer": "L1",
+    "owner": "backend/agent/context/session_history.py",
+    "productionEntry": "会话消息分页与历史恢复入口",
+    "keyBehavior": "展示消息和历史页优先按平台实际时间排序，保留稳定的到达时间与序号次序",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/api/test_dev_attention.py": {
+    "domain": "group-attention-sandbox",
+    "layer": "L1",
+    "owner": "backend/app/api/v1/dev_attention.py",
+    "productionEntry": "开发注意力算法复现 API",
+    "keyBehavior": "沙盒复用生产评分器并只返回安全诊断；模拟有效锚点、成员 TTL、长问句和能力操作边界",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_attention_algorithm.py": {
+    "domain": "group-attention-scoring",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply/attention_algorithm.py",
+    "productionEntry": "backend/agent/im/auto_reply/runtime.py",
+    "keyBehavior": "CALL、ASK、CAP 与 TOPIC 按当前评分规则处理；长文弱问句位置和句末标点修正不误伤强证据",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/auto_reply/test_pending_ask.py": {
+    "domain": "group-pending-ask",
+    "layer": "L1",
+    "owner": "backend/agent/im/auto_reply/pending_ask.py",
+    "productionEntry": "backend/agent/im/auto_reply/runtime.py 与延迟恢复 Worker",
+    "keyBehavior": "延迟记录只绑定确切 ASK 消息；其他成员原生回复可原子取消，避免批次中旧候选被恢复",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_im_delivery_receipts.py": {
+    "domain": "im-delivery-receipts",
+    "layer": "L1",
+    "owner": "backend/agent/im/delivery_receipts.py",
+    "productionEntry": "backend/agent/im/dispatch_finalization.py",
+    "keyBehavior": "附件投递回执进入内部上下文，但不能跨会话或泄漏到其他用户历史",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/deployment/test_searxng_compose_defaults.py": {
+    "domain": "deployment-search-defaults",
+    "layer": "L1",
+    "owner": "docker-compose.yml 与 docker-compose.prod.yml",
+    "productionEntry": "SearXNG Compose 默认配置",
+    "keyBehavior": "Compose 默认启用 JSON 与配置的图片引擎，同时保留部署覆盖配置的行为",
+    "ci": "backend-pytest"
+  },
+  "frontend/tests/interactions/runtime/setup.test.ts": {
+    "domain": "mind-canvas-drag-runtime",
+    "layer": "L1",
+    "owner": "frontend/src/interaction/runtime/setup.ts",
+    "productionEntry": "思维导图项目抽屉拖入画布交互",
+    "keyBehavior": "项目卡片落地时保留代理卡片外观，避免目标视觉 morph 将毛玻璃模糊插值消失",
+    "ci": "frontend-vitest"
   }
 }
