@@ -324,7 +324,7 @@ export function toggleMarkdownMathSource(button: HTMLButtonElement): void {
   const block = button.closest<HTMLElement>('.md-math-block')
   const source = block?.querySelector<HTMLElement>('.md-math-source-view')
   const rendered = block?.querySelector<HTMLElement>('.md-math-result')
-  if (!source || !rendered) return
+  if (!block || !source || !rendered) return
   const showingSource = source.hidden
   source.hidden = !showingSource
   rendered.hidden = showingSource

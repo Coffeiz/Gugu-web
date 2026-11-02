@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import { renderMd, renderMdStream } from '@/components/common/gugu-chat/markdown'
 import { splitYamlFrontmatter } from '@/utils/markdown'
-import { renderMarkdownMath } from '@/utils/chart/math'
+import { renderMarkdownMath, toggleMarkdownMathSource } from '@/utils/chart/math'
 
 const escapedTable = [
   '\\| 测试 \\| 期望 \\| 实际 \\| 结论 \\|',
@@ -104,6 +104,12 @@ describe('Markdown YAML frontmatter', () => {
 })
 
 describe('LaTeX fenced code rendering', () => {
+  it('math control detached from its block is ignored safely', () => {
+    const button = document.createElement('button')
+
+    expect(() => toggleMarkdownMathSource(button)).not.toThrow()
+  })
+
   it('renders bare and explicitly delimited formulas while keeping one toolbar per block', async () => {
     const root = document.createElement('div')
     root.innerHTML = renderMd([
