@@ -405,7 +405,7 @@ def test_history_cache_copy_preserves_dynamic_tail_boundary():
     assert isinstance(cached, ProviderConversation)
     assert cached.dynamic_tail == prompt.dynamic_tail
     assert cached.conversation[0] == prompt.provider_projection().conversation[0]
-    assert cached.conversation[1]["content"][0]["text"] == "上一轮问题"
+    assert cached.conversation[1]["content"][0]["text"] == "【消息正文】\n上一轮问题"
     plan = _history_cache_state(cached, state)
     assert plan.stable_limit == 2
     assert all(index < plan.stable_limit for index in plan.anchor_indices)
@@ -438,8 +438,8 @@ def _prompt_with_volatile_image_and_dynamic_tail():
 def _assert_dynamic_tail_is_uncached(cached, original):
     assert isinstance(cached, ProviderConversation)
     assert len(cached.conversation) == len(original.provider_projection().conversation)
-    assert cached.conversation[2]["content"][0]["type"] == "image_url"
-    assert cached.conversation[3]["content"] == "图片之后的真实对话"
+    assert any(block.get("type") == "image_url" for block in cached.conversation[2]["content"])
+    assert cached.conversation[3]["content"].endswith("图片之后的真实对话")
     assert cached.dynamic_tail == [{
         "role": "system",
         "content": [{"type": "text", "text": "本轮动态时间提醒"}],
@@ -520,14 +520,14 @@ def test_openai_system_messages_merge_at_request_boundary_without_mutating_histo
     assert isinstance(outbound, ProviderConversation)
     assert outbound.conversation == [
         {"role": "system", "content": "基础人格\n\n---\n\nsession snapshot"},
-        {"role": "user", "content": "当前问题"},
+        {"role": "user", "content": "【消息正文】\n当前问题"},
     ]
     assert outbound.dynamic_tail == messages.dynamic_tail
     assert outbound.fixed_prefix_size == 1
     assert messages.provider_projection().to_messages() == [
         {"role": "system", "content": "基础人格"},
         {"role": "system", "content": "session snapshot"},
-        {"role": "user", "content": "当前问题"},
+        {"role": "user", "content": "【消息正文】\n当前问题"},
         *messages.dynamic_tail,
     ]
 

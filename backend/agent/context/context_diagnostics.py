@@ -21,12 +21,16 @@ def _representation_kind(message: dict[str, Any]) -> str:
     content = message.get("content")
     if isinstance(content, str):
         value = content.lstrip()
+        from .dynamic_tail import unwrap_message_body_text
+        value = unwrap_message_body_text(value).lstrip()
         if value.startswith("<compacted-summary>"):
             return "compacted-summary"
         if value.startswith("## 早前对话摘要"):
             return "legacy-summary-header"
         if value.startswith("[system-reminder]"):
             return "system-reminder-text"
+        if value.startswith(("【消息正文】", "【消息时间】")):
+            return "message-envelope-text"
         return "text"
     if isinstance(content, list):
         return "blocks"

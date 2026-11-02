@@ -437,6 +437,9 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
             getattr(message, "role", None) == "user"
             and not is_tool_message
             and not is_canonical_event
+            and getattr(message, "source", None) not in {
+                "rag", "stance", "message_time", "runtime",
+            }
         )
 
         timestamp = (
@@ -549,6 +552,7 @@ def render_canonical_area_snapshot(snapshot, *, source=None, options=None):
                     created_at = None
         records.append(SimpleNamespace(
             id=record.get("_history_id"),
+            source=entry.source.value,
             role=record.get("role", "user"),
             content=content,
             content_json=content_json,

@@ -826,15 +826,18 @@ async def test_finalize_run_persists_rag_before_user_and_restores_provider_histo
             use_anthropic=use_anthropic,
             user_tz=timezone.utc,
         )
-        assert restored[2]["content"] == [
+        assert len(restored) == 3
+        assert restored[1]["content"] == [
             {"type": "knowledge-context", "scope": "owner-rag", "text": rag_block["text"]},
         ]
-        assert restored[3]["content"][0]["type"] == "time-context"
-        assert restored[4]["role"] == "user"
+        assert restored[2]["role"] == "user"
         if use_anthropic:
-            assert restored[4]["content"] == [{"type": "text", "text": "当前问题"}]
+            assert restored[2]["content"] == [
+                {"type": "text", "text": "【消息时间】2026-09-09 12:00\n【消息正文】\n"},
+                {"type": "text", "text": "当前问题"},
+            ]
         else:
-            assert restored[4]["content"] == "当前问题"
+            assert restored[2]["content"] == "【消息时间】2026-09-09 12:00\n【消息正文】\n当前问题"
 
 
 @pytest.mark.asyncio
@@ -912,7 +915,7 @@ async def test_synthetic_tool_round_survives_canonical_persistence_and_restore(
 async def test_interrupted_run_persists_completed_history_before_followup(
     db, user_a, monkeypatch,
 ):
-    """run 期间晚到的用户消息排在中止 run 的工具结果和最终展示之后。"""
+    """运行中收到的用户消息与工具事件、最终回复按实际发生时间恢复。"""
     session = ConversationSession(user_id=user_a.id, title="中止历史顺序")
     db.add(session)
     await db.commit()
@@ -993,14 +996,17 @@ async def test_interrupted_run_persists_completed_history_before_followup(
         rows = await load_session_history(check_db, session.id, max_messages=20)
 
     assert [row.content for row in rows] == [
-        "先检查文件", "继续", "", "", "已经读到文件开头，后续检查被中止。\n\n[本轮已中止，以上内容未完成]",
+        "先检查文件", "", "", "继续", "已经读到文件开头，后续检查被中止。\n\n[本轮已中止，以上内容未完成]",
     ]
-    assert [row.role for row in rows] == ["user", "user", "assistant", "user", "assistant"]
-    assert [row.conversation_seq for row in rows] == sorted(row.conversation_seq for row in rows)
-    assert rows[2].content_json[0]["type"] == "tool_call"
-    assert rows[3].content_json[0]["type"] == "tool_result"
-    assert [row.run_id for row in rows[2:]] == ["run-test-interrupted"] * 3
-    assert [row.round_id for row in rows[2:]] == ["round-1", "round-1", "round-2"]
+    assert [row.role for row in rows] == ["user", "assistant", "user", "user", "assistant"]
+    assert [row.sent_at for row in rows] == sorted(row.sent_at for row in rows)
+    assert rows[1].content_json[0]["type"] == "tool_call"
+    assert rows[2].content_json[0]["type"] == "tool_result"
+    assert [row.run_id for row in (rows[1], rows[2], rows[4])] == ["run-test-interrupted"] * 3
+    assert rows[3].run_id is None
+    assert [row.round_id for row in (rows[1], rows[2], rows[4])] == [
+        "round-1", "round-1", "round-2",
+    ]
     assert rows[0].run_id == "run-test-interrupted"
     assert rows[0].round_id == "round-1"
 

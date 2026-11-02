@@ -53,6 +53,18 @@ def message_time_text(sent_at, user_tz=None) -> str | None:
     return f"消息时间：{fmt_local(sent_at, tz=_as_tz(user_tz))}"
 
 
+def unwrap_message_body_text(value: str) -> str:
+    """移除用户消息的时间/正文信封，供摘要等需要原始正文的路径使用。"""
+    text = str(value or "").lstrip()
+    if text.startswith("【消息时间】"):
+        body_start = text.find("\n【消息正文】\n")
+        if body_start >= 0:
+            return text[body_start + len("\n【消息正文】\n"):]
+    if text.startswith("【消息正文】\n"):
+        return text[len("【消息正文】\n"):]
+    return text
+
+
 def message_timestamp(message):
     """取消息发生时间：优先平台发送时间，再取入库时间，最后兼容旧 sent_at。"""
     def _value(name):
@@ -85,7 +97,7 @@ def inline_message_time(content, message_time) -> str | list | dict:
             "【群消息】" in text and "【消息正文】" in text
         ) or (
             text.lstrip().startswith("【消息时间】") and "【消息正文】" in text
-        )
+        ) or text.lstrip().startswith("【消息正文】")
 
     def _header(text: str) -> str:
         if not prefix:

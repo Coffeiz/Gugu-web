@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import timedelta
 from typing import Any, Callable
 
 
@@ -41,10 +40,15 @@ def _run_compaction_summary(
         content = item.get("content") or ""
         if isinstance(content, list):
             # Anthropic 合并相邻 user 消息后，摘要与本轮用户原文是不同文本块。
-            # 只提取完整摘要块，不能把后续用户请求一起推进 baseline。
-            content = next((block.get("text", "") for block in content
+            # 只提取完整摘要块并去掉用户正文信封，不能把后续请求推进 baseline。
+            from agent.context.dynamic_tail import unwrap_message_body_text
+            content = next((unwrap_message_body_text(block.get("text", ""))
+                            for block in content
                             if isinstance(block, dict) and block.get("type") == "text"
-                            and block.get("text", "").lstrip().startswith(SUMMARY_OPEN)), "")
+                            and SUMMARY_OPEN in block.get("text", "")), "")
+        else:
+            from agent.context.dynamic_tail import unwrap_message_body_text
+            content = unwrap_message_body_text(str(content))
         # 摘要由组装器写成 <compacted-summary> 开头的 history 消息；run 内多次
         # 压缩时取最后一条（最新一次已经把上一版滚动合并进去）。
         if item.get("role") == "summary" or content.lstrip().startswith(SUMMARY_OPEN):
@@ -190,22 +194,6 @@ async def finalize_run(
 
                 assistant_created_at = now_utc()
                 assistant_sent_at = assistant_created_at
-                if interrupted and user_message is not None:
-                    anchor = delta.user_anchor_sequence
-                    persisted_after_anchor = [
-                        entry.sequence for entry in delta.entries
-                        if anchor is not None and entry.sequence > anchor
-                    ]
-                    offset = timedelta(
-                        microseconds=max(
-                            (sequence - anchor + 1 for sequence in persisted_after_anchor),
-                            default=1,
-                        ),
-                    )
-                    assistant_created_at = user_message.created_at + offset
-                    # sent_at 与 created_at 同步锚定，保留诊断与展示时间线一致；
-                    # canonical 历史顺序由 conversation_seq 管理。
-                    assistant_sent_at = (user_message.sent_at or user_message.created_at) + offset
                 assistant_content = text
                 if interrupted and assistant_content:
                     assistant_content += "\n\n[本轮已中止，以上内容未完成]"
@@ -219,7 +207,7 @@ async def finalize_run(
                     round_id=persisted_round_id if run_id else None,
                 )
                 # 检查点占位行可能在 Run 开始时已插入；最终正文时间应反映本次收尾，
-                # 否则 UI 会把完成后的长回复按占位行的旧时间排到中途消息之前。
+                # 以便用户在运行期间发送的新消息仍显示在实际发生时间的位置。
                 assistant_values["created_at"] = assistant_created_at
                 assistant_values["sent_at"] = assistant_sent_at
                 if checkpoint is None:

@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from agent.context.dynamic_tail import inline_message_time
 from agent.context.history import build_history_parts, canonicalize_tool_messages
 
 
@@ -40,6 +41,18 @@ def test_user_message_time_and_body_are_wrapped_in_one_history_message():
         "role": "user",
         "content": "【消息时间】2026-08-22 15:22\n【消息正文】\n测试",
     }]
+
+
+def test_inline_message_time_does_not_nest_existing_body_wrapper():
+    content = "【消息正文】\n当前消息"
+
+    assert inline_message_time(content, None) == content
+    assert inline_message_time(content, "2026-08-22 15:22") == (
+        "【消息时间】2026-08-22 15:22\n【消息正文】\n当前消息"
+    )
+    assert inline_message_time([{"type": "text", "text": content}], None) == [
+        {"type": "text", "text": content},
+    ]
 
 
 @pytest.mark.parametrize("use_anthropic", [False, True])

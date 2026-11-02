@@ -198,9 +198,18 @@ async def test_partial_early_persistence_restores_every_message_in_arrival_order
     anchor, rows = await _reuse_early_user_rows(
         db, session_id=session.id, early_ids=[earlier.id, later.id], attach_cards=None,
         batch_key="partial-batch", batch_messages=[
-            {"early_id": None, "text": "缺失的先到消息", "platform_user_id": "u3"},
-            {"early_id": earlier.id, "text": "第一条", "platform_user_id": "u1"},
-            {"early_id": later.id, "text": "第二条", "platform_user_id": "u2"},
+            {
+                "early_id": None, "text": "缺失的先到消息", "platform_user_id": "u3",
+                "platform_sent_ms": 1_000,
+            },
+            {
+                "early_id": earlier.id, "text": "第一条", "platform_user_id": "u1",
+                "platform_sent_ms": 2_000,
+            },
+            {
+                "early_id": later.id, "text": "第二条", "platform_user_id": "u2",
+                "platform_sent_ms": 3_000,
+            },
         ],
     )
     await db.commit()
@@ -238,7 +247,7 @@ async def test_pending_row_is_excluded_from_history_until_the_run_consumes_it(db
     await db.commit()
 
     history = await load_session_history(db, session.id)
-    # 历史按持久序号排序；消费标记变更不会重排已提前入库的消息。
+    # 早落库消息先于稍后写入的已处理消息；消费时间不能覆盖到达时间。
     assert [row.content for row in history] == ["还没被 run 消费的一句", "上一轮已处理的一句"]
 
 

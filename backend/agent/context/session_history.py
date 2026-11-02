@@ -18,16 +18,26 @@ def _history_order_key(message):
     """按有效事件时间恢复历史；同一毫秒内保持锚点前缀和会话顺序。"""
     from datetime import datetime, timezone
 
-    from agent.context.dynamic_tail import message_timestamp
+    # 排序采用消息实际发生/到达时间。早落库行被某轮消费时，sent_at 会改成
+    # 处理时间；它不能覆盖平台时间、网关接收时间或保留的 created_at 到达时间。
+    def _value(name):
+        return message.get(name) if isinstance(message, dict) else getattr(message, name, None)
 
-    timestamp = message_timestamp(message)
+    platform_sent_ms = _value("im_platform_sent_ms") or _value("platform_sent_ms")
+    received_ms = _value("im_event_received_ms") or _value("event_received_ms")
+    if isinstance(platform_sent_ms, (int, float)) and platform_sent_ms > 0:
+        timestamp = datetime.fromtimestamp(platform_sent_ms / 1000, timezone.utc)
+    elif isinstance(received_ms, (int, float)) and received_ms > 0:
+        timestamp = datetime.fromtimestamp(received_ms / 1000, timezone.utc)
+    else:
+        timestamp = _value("created_at") or _value("sent_at")
     if isinstance(timestamp, datetime):
         if timestamp.tzinfo is None:
             timestamp = timestamp.replace(tzinfo=timezone.utc)
         timestamp_key = timestamp.timestamp()
     else:
         timestamp_key = float("-inf")
-    received_ms = getattr(message, "im_event_received_ms", None) or 0
+    received_ms = received_ms if isinstance(received_ms, (int, float)) else 0
     anchor_seq = getattr(message, "history_anchor_seq", None)
     sequence = int(anchor_seq or getattr(message, "conversation_seq", 0) or 0)
     is_anchor_prefix = 0 if anchor_seq is not None else 1

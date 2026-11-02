@@ -59,7 +59,8 @@ def test_rag_precedes_current_user_while_current_time_stays_in_dynamic_tail():
     messages.append_batch(batch)
 
     assert [item["content"] for item in messages.provider_projection().conversation] == [
-        "固定 session info", "上一轮回复", "[group-rag]\n稳定知识", "当前问题",
+        "固定 session info", "上一轮回复", "[group-rag]\n稳定知识",
+        "【消息正文】\n当前问题",
     ]
     assert messages.dynamic_tail == [reminder("当前时间：当前时间")]
     assert "当前时间：当前时间" not in str(messages.provider_projection().conversation)
@@ -84,7 +85,8 @@ def test_compaction_keeps_snapshot_prefix_out_of_summary(monkeypatch):
     )
 
     assert result.changed
-    assert result.messages[:2] == messages[:2]
+    assert result.messages[0] == messages[0]
+    assert result.messages[1] == {"role": "user", "content": "【消息正文】\n固定 session info"}
     assert "固定系统" not in result.messages[2]["content"]
     assert "固定 session info" not in result.messages[2]["content"]
 

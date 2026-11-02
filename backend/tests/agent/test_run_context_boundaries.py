@@ -147,8 +147,9 @@ async def test_prepare_run_preserves_repeated_continue_turns_and_tool_outcomes(
     from agent.context.tokens import message_text
 
     visible_text = [message_text(message) for message in provider_messages]
-    assert visible_text.count("继续") == 2
-    assert visible_text.count("换句话说明后继续") == 1
+    from agent.context.dynamic_tail import unwrap_message_body_text
+    assert sum(unwrap_message_body_text(item).strip() == "继续" for item in visible_text) == 2
+    assert sum(unwrap_message_body_text(item).strip() == "换句话说明后继续" for item in visible_text) == 1
     assert visible_text.count(fallback) == 3
     assert "event-call" in serialized and "note-call" in serialized
     assert "合成失败" in serialized

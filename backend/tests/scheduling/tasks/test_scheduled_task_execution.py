@@ -28,7 +28,7 @@ def test_scheduled_messages_keep_snapshot_context_before_tail():
         for block in entry.canonical_message.get("content", [])
         if block.get("type") == "stance-context"
     )
-    assert projected[3] == {"role": "user", "content": "执行任务"}
+    assert projected[3] == {"role": "user", "content": "【消息正文】\n执行任务"}
     assert sum("小北的计划" in item["content"] for item in projected) == 1
     assert messages.dynamic_tail == [time_message(tz)]
     assert "当前时间" not in str(messages.provider_projection().conversation)

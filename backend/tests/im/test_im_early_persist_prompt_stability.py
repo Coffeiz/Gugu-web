@@ -158,6 +158,6 @@ async def test_early_row_keeps_arrival_time_for_display(db, user_a):
     assert promoted.created_at == arrival_at
     assert promoted.sent_at > reply_at
 
-    # 这条消息在上一轮回复完成前已早落库，重载历史必须保持该顺序。
+    # 按消息实际到达时间排序；后续消费时写入的 sent_at 不能改变它与回复的顺序。
     history = await load_session_history(db, session.id)
     assert [item.content for item in history] == ["第一条", "第二条", "回话"]

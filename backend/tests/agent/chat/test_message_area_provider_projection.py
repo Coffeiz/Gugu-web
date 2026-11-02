@@ -42,7 +42,7 @@ def test_provider_conversation_is_immutable_and_bound_to_area_snapshot():
 
     mutated = projection.to_messages()
     mutated[0]["content"] = "只改请求副本"
-    assert projection.to_messages()[0]["content"] == "旧问题"
+    assert projection.to_messages()[0]["content"] == "【消息正文】\n旧问题"
     assert area.snapshot() == before
 
 
@@ -127,8 +127,10 @@ def test_adapter_projects_restored_canonical_area_without_mutating_it():
     assert projection.area_revision == before.revision
     assert projection[0]["role"] == "system"
     assert projection[0]["content"] == "固定前缀"
-    assert "消息时间：2026-09-30 12:00" in projection[1]["content"][0]["text"]
-    assert projection[2] == {"role": "user", "content": "旧问题"}
+    assert projection[1] == {
+        "role": "user",
+        "content": "【消息时间】2026-09-30 12:00\n【消息正文】\n旧问题",
+    }
     assert area.snapshot() == before
 
 
