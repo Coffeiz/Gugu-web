@@ -78,8 +78,8 @@ class QQChartRound:
         }
         self._qq = qq
         self.stream_failed = False
-        # 一次 Run 只使用一条 QQ 原生流。流被工具消息或图表消息切开后，
-        # 后续独立气泡走普通 sendText，避免把“发完一句再发一句”模拟成多条流。
+        # 普通模型轮次结束后可以创建新的 QQ 原生流；只有工具消息或图表消息
+        # 等独立出站内容确实切开流时，后续正文才走普通 sendText。
         self.regular_text_only = False
         # 按需创建流，避免在没有正文时预占 msg_seq，也避免工具执行期间空挂一条流。
         self.stream = None
@@ -388,7 +388,6 @@ class QQChartRound:
         if not self.pending_round_end:
             return
         await self.finish_round(text or self.pending_round_text, start_next=True)
-        self.regular_text_only = True
 
 
 async def send_qq_stream_by_round(
