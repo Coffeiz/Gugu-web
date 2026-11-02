@@ -17,6 +17,48 @@ _ACTIVITY_PREFIX = "im:{pending_ask}:activity:v1:"
 _CANCELLED_PREFIX = "im:{pending_ask}:cancelled:v1:"
 
 
+def _payload_for_trigger(payload: dict, session_id: int | None, trigger_event_id: str | None) -> dict | None:
+    """生成只含被评分 ASK 的可恢复载荷。"""
+    safe_payload = dict(payload)
+    if session_id is not None:
+        safe_payload["session_id"] = int(session_id)
+    safe_payload.pop("_pending_ask_resume", None)
+    safe_payload.pop("_pending_ask_resume_id", None)
+    if not trigger_event_id:
+        return safe_payload
+
+    items = safe_payload.get("_batch_messages")
+    if isinstance(items, list):
+        trigger = next((
+            item for item in items
+            if isinstance(item, dict)
+            and str(item.get("event_id") or item.get("_redis_stream_id") or "")
+            == str(trigger_event_id)
+        ), None)
+        if trigger is None:
+            return None
+        safe_payload["_batch_messages"] = [dict(trigger)]
+        for field in (
+            "text", "attention_raw_text", "quoted_text", "attachments", "message_id",
+            "platform_message_id", "platform_user_id", "platform_user_name",
+            "platform_bot_user_id", "platform_sent_ms", "native_bot_mentioned",
+            "mentions_other_bot", "mentions_other_member", "has_unresolved_mention",
+            "reply_to_platform_message_id", "reply_target_sender_id", "reply_target_is_bot",
+            "sender_is_bot", "media_only", "media_kinds", "processable_media",
+        ):
+            if field in trigger:
+                safe_payload[field] = trigger[field]
+    safe_payload["event_id"] = str(trigger_event_id)
+    safe_payload["_pending_ask_trigger_event_id"] = str(trigger_event_id)
+    safe_payload["_pending_ask_trigger_platform_message_id"] = str(
+        safe_payload.get("platform_message_id") or safe_payload.get("message_id") or ""
+    )
+    safe_payload["_pending_ask_trigger_sender_id"] = str(
+        safe_payload.get("platform_user_id") or ""
+    )
+    return safe_payload
+
+
 def _scope(payload: dict) -> tuple[str, str] | None:
     values = (
         payload.get("platform"),
@@ -50,13 +92,22 @@ if raw then
   state = cjson.decode(raw)
   local previous_latest = tonumber(state.latest_ask_ms)
   state.latest_ask_ms = math.max(previous_latest, event_ms)
-  if event_ms >= previous_latest then state.payload = cjson.decode(payload_json) end
+  if event_ms >= previous_latest then
+    state.payload = cjson.decode(payload_json)
+    state.trigger_event_id = state.payload._pending_ask_trigger_event_id or ''
+    state.trigger_platform_message_id = state.payload._pending_ask_trigger_platform_message_id or ''
+    state.trigger_sender_id = state.payload._pending_ask_trigger_sender_id or ''
+  end
 else
+  local payload = cjson.decode(payload_json)
   state = {
     started_ms = event_ms,
     latest_ask_ms = event_ms,
     last_activity_ms = event_ms,
-    payload = cjson.decode(payload_json)
+    payload = payload,
+    trigger_event_id = payload._pending_ask_trigger_event_id or '',
+    trigger_platform_message_id = payload._pending_ask_trigger_platform_message_id or '',
+    trigger_sender_id = payload._pending_ask_trigger_sender_id or ''
   }
 end
 local latest_activity = tonumber(redis.call('GET', activity_key) or event_ms)
@@ -76,6 +127,7 @@ return due
 _ACTIVITY_SCRIPT = """
   local key, index, activity_key = KEYS[1], KEYS[2], KEYS[3]
 local scope_id, event_ms = ARGV[1], tonumber(ARGV[2])
+local sender_id, reply_to_id = ARGV[6], ARGV[7]
 local min_wait, quiet, max_wait = tonumber(ARGV[3]), tonumber(ARGV[4]), tonumber(ARGV[5])
 local previous_activity = tonumber(redis.call('GET', activity_key) or '0')
 local last_activity = math.max(previous_activity, event_ms)
@@ -83,6 +135,17 @@ redis.call('SET', activity_key, last_activity, 'EX', 600)
 local raw = redis.call('GET', key)
 if not raw then return 0 end
 local state = cjson.decode(raw)
+local trigger_sender = tostring(state.trigger_sender_id or '')
+local trigger_message = tostring(state.trigger_platform_message_id or '')
+if reply_to_id ~= '' and reply_to_id == trigger_message
+  and sender_id ~= '' and trigger_sender ~= '' and sender_id ~= trigger_sender then
+  local previous = tonumber(redis.call('GET', KEYS[4]) or '0')
+  local ask_ms = tonumber(state.latest_ask_ms or 0)
+  if ask_ms > previous then redis.call('SET', KEYS[4], ask_ms, 'EX', 600) end
+  redis.call('DEL', key)
+  redis.call('ZREM', index, scope_id)
+  return 2
+end
 state.last_activity_ms = math.max(tonumber(state.last_activity_ms), last_activity)
 local due = math.max(
   tonumber(state.started_ms) + min_wait,
@@ -158,18 +221,17 @@ return 1
 
 async def register_pending_ask(
     payload: dict, *, event_ms: int, session_id: int | None = None,
+    trigger_event_id: str | None = None,
 ) -> str | None:
-    """登记并合并同群开放 ASK；按首问时间设置不可延长的 180 秒上限。"""
+    """登记同群开放 ASK；只保存本次触发 ASK，不把整批候选带到唤醒 Run。"""
     scoped = _scope(payload)
     if scoped is None:
         return None
     scope_id, key = scoped
     activity_key = f"{_ACTIVITY_PREFIX}{scope_id}"
-    safe_payload = dict(payload)
-    if session_id is not None:
-        safe_payload["session_id"] = int(session_id)
-    safe_payload.pop("_pending_ask_resume", None)
-    safe_payload.pop("_pending_ask_resume_id", None)
+    safe_payload = _payload_for_trigger(payload, session_id, trigger_event_id)
+    if safe_payload is None:
+        return None
     await R.get_redis().eval(
         _REGISTER_SCRIPT, 3, key, _INDEX_KEY, activity_key,
         scope_id, int(event_ms), json.dumps(safe_payload, ensure_ascii=False),
@@ -190,7 +252,7 @@ async def observe_group_activity(payload: dict) -> None:
     items = payload.get("_batch_messages")
     if not isinstance(items, list) or not items:
         items = [payload]
-    latest_activity_ms = None
+    redis = R.get_redis()
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -201,12 +263,15 @@ async def observe_group_activity(payload: dict) -> None:
         if sender_id and gugu_id and sender_id == gugu_id:
             continue
         event_ms = _event_ms(item.get("event_id") or item.get("_redis_stream_id"))
-        latest_activity_ms = max(latest_activity_ms or event_ms, event_ms)
-    if latest_activity_ms is not None:
-        await R.get_redis().eval(
-            _ACTIVITY_SCRIPT, 3, key, _INDEX_KEY, activity_key,
-            scope_id, latest_activity_ms,
+        reply_to_id = str(
+            item.get("reply_to_platform_message_id") or item.get("reply_to_message_id") or ""
+        )
+        await redis.eval(
+            _ACTIVITY_SCRIPT, 4, key, _INDEX_KEY, activity_key,
+            f"{_CANCELLED_PREFIX}{scope_id}",
+            scope_id, event_ms,
             PENDING_ASK_MIN_WAIT_MS, PENDING_ASK_QUIET_MS, PENDING_ASK_MAX_WAIT_MS,
+            sender_id, reply_to_id,
         )
 
 
@@ -301,6 +366,9 @@ async def claim_due_pending_asks(*, now_ms: int | None = None, limit: int = 100)
             payload["_pending_ask_resume_id"] = resume_id
             payload["_pending_ask_scope"] = scope_id
             payload["_pending_ask_latest_ms"] = int(state.get("latest_ask_ms") or 0)
+            payload["_pending_ask_trigger_event_id"] = str(
+                state.get("trigger_event_id") or payload.get("_pending_ask_trigger_event_id") or ""
+            )
             ready.append((scope_id, payload))
     return ready
 

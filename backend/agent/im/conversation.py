@@ -409,7 +409,7 @@ async def record_passive_attention_batch(
                 "kind": "attention_passive",
                 "mode": attention_mode or "autonomous",
                 "config_version": int(attention_config_version),
-                "attention_version": "attention-v3.0.6",
+                "attention_version": "attention-v3.0.7",
                 "actual_decision": attention_decision.kind.value,
                 "reason_codes": list(attention_decision.reasons),
                 "score": attention_decision.score,

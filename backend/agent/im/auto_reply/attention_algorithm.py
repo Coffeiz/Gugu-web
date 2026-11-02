@@ -1,4 +1,4 @@
-"""IM-17 v3.0.6 长消息 ASK、能力操作与延迟介入判定。"""
+"""IM-17 v3.0.7 长消息 ASK、能力操作与延迟介入判定。"""
 from __future__ import annotations
 
 from collections import defaultdict
@@ -860,7 +860,7 @@ def _topic_evidence(message: AttentionMessage, snapshot: AttentionSnapshot) -> t
 
 
 def score_attention(message: AttentionMessage, snapshot: AttentionSnapshot, *, bot_aliases: tuple[str, ...] = ()) -> AttentionDecision:
-    """返回不经过模式阈值的 v3.0.6 情景、话题及实验诊断。"""
+    """返回不经过模式阈值的 v3.0.7 情景、话题及实验诊断。"""
     if message.sender_is_bot is True or not message.event_id:
         return AttentionDecision(AttentionKind.PASSIVE, 0.0, None, ("invalid_or_bot_echo",), state="COLD")
     if message.mentioned_current_bot is True:

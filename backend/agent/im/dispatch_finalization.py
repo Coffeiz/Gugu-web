@@ -46,7 +46,7 @@ def _log_attention_run_outcome(
     diag_log_raw(
         "agent.im.attention.run_outcome",
         json.dumps({
-            "attention_version": "attention-v3.0.6",
+            "attention_version": "attention-v3.0.7",
             "mode": str(payload.get("group_attention_mode") or "autonomous"),
             "config_version": int(payload.get("_attention_config_version") or 0),
             "run_entered": True,

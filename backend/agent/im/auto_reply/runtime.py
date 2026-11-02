@@ -50,6 +50,44 @@ async def _decide_attention_message(
     return decision, None
 
 
+def _pending_resume_messages(messages: tuple[AttentionMessage, ...], payload: dict) -> tuple[AttentionMessage, ...]:
+    """延迟恢复只允许评分登记时选中的 ASK 事件。"""
+    if payload.get("_pending_ask_resume") is not True:
+        return messages
+    trigger_event_id = str(payload.get("_pending_ask_trigger_event_id") or "")
+    return tuple(message for message in messages if message.event_id == trigger_event_id)
+
+
+def _snapshot_at_pending_trigger(
+    snapshot: AttentionSnapshot, trigger: AttentionMessage,
+) -> AttentionSnapshot:
+    """将历史和出站事实裁切到 ASK 到达时点，避免未来信息影响历史评分。"""
+    return replace(
+        snapshot,
+        messages=tuple(
+            item for item in snapshot.messages
+            if item.event_id != trigger.event_id
+            and item.event_received_ms <= trigger.event_received_ms
+        ),
+        bot_replies={
+            key: fact for key, fact in snapshot.bot_replies.items()
+            if fact.sent_at_ms <= trigger.event_received_ms
+        },
+        latest_accepted_final=max(
+            (
+                fact for fact in snapshot.accepted_outbound_facts
+                if fact.sent_at_ms <= trigger.event_received_ms
+            ),
+            key=lambda fact: fact.sent_at_ms,
+            default=None,
+        ),
+        accepted_outbound_facts=tuple(
+            fact for fact in snapshot.accepted_outbound_facts
+            if fact.sent_at_ms <= trigger.event_received_ms
+        ),
+    )
+
+
 async def transcribe_voice_for_attention(request, payload: dict) -> dict[str, str]:
     """预转写已暂存的群语音；结果供注意力判定和本轮 Run 复用。"""
     from agent.voice_config import voice_recognition_profile
@@ -534,18 +572,21 @@ async def evaluate_group_attention(request, payload: dict) -> tuple[bool, Attent
     request.im_attention_transcripts = transcripts
     messages = build_logical_candidates(batch_attention_messages(payload, transcripts))
     if payload.get("_pending_ask_resume") is True:
-        # 延迟消息仍复用原事件身份和正文，但评分以到期重入时刻为准，
-        # 使 TOPIC/成员续聊检查能看到 60–180 秒观察期内的最新上下文。
-        resume_ms = int(datetime.now(UTC).timestamp() * 1000)
-        messages = tuple(
-            replace(message, event_received_ms=resume_ms)
-            for message in messages
-        )
+        # 延迟唤醒只复核最初登记的确切 ASK 事件。不能把整批旧消息重新评分，
+        # 也不能把事件时间改成唤醒时间，否则会让观察期的后续消息泄漏进当时的分数。
+        messages = _pending_resume_messages(messages, payload)
+        if not messages:
+            from agent.im.auto_reply.pending_ask import cancel_pending_ask
+
+            await cancel_pending_ask(payload)
+            return False, None
     if request.session_id is None:
         from agent.im.dispatch import _ensure_im_session
 
         request.session_id = await _ensure_im_session(request)
     snapshot = await load_attention_snapshot(int(request.session_id), messages)
+    if payload.get("_pending_ask_resume") is True:
+        snapshot = _snapshot_at_pending_trigger(snapshot, messages[0])
     payload["_attention_snapshot_complete"] = snapshot.complete
     payload["_attention_window_truncated"] = snapshot.window_truncated
     bot_aliases = await _resolve_bot_aliases(request, payload)
@@ -607,6 +648,7 @@ async def evaluate_group_attention(request, payload: dict) -> tuple[bool, Attent
                     payload,
                     event_ms=message.event_received_ms,
                     session_id=request.session_id,
+                    trigger_event_id=message.event_id,
                 )
             except Exception as exc:
                 from app.core.redaction import diag_log

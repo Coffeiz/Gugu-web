@@ -10,7 +10,7 @@ async def test_dev_attention_defaults_match_v3_contract():
     defaults = await attention_defaults(_user=object())
 
     assert defaults == {
-        "algorithm_version": "attention-v3.0.6",
+        "algorithm_version": "attention-v3.0.7",
         "thresholds": {"quiet": 85, "natural": 65, "active": 55},
         "topic_ttl_seconds": 600,
         "topic_half_life_seconds": 360,
@@ -28,7 +28,7 @@ async def test_dev_attention_uses_accepted_anchor_and_returns_only_safe_diagnost
 
     result = await score_attention(request, _user=object())
 
-    assert result["algorithm_version"] == "attention-v3.0.6"
+    assert result["algorithm_version"] == "attention-v3.0.7"
     assert result["state"] == "TOPIC"
     assert result["scene_score"] == 0
     assert result["topic_raw_score"] == pytest.approx(.75)

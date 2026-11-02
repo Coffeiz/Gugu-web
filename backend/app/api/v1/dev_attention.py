@@ -1,4 +1,4 @@
-"""开发环境使用的 IM-17 v3.0.6 注意力算法沙盒。"""
+"""开发环境使用的 IM-17 v3.0.7 注意力算法沙盒。"""
 from __future__ import annotations
 
 from time import time

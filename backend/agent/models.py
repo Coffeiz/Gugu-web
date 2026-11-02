@@ -57,6 +57,7 @@ class AgentRequest:
     im_attention_transcripts: dict[str, str] = field(default_factory=dict)  # 本轮群注意力预转写，仅内存复用
     group_auto_reply: bool = False                  # 仅普通群聊自动回复 run 启用本轮回复选择门
     group_reply_gate: object | None = None          # run 私有状态；不序列化、不跨消息继承
+    group_attention_pending_ask_resume: bool = False  # 延迟开放问题恢复；避免旧推理分支覆盖当前上下文
 
 
 @dataclass

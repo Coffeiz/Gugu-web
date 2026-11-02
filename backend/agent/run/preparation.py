@@ -533,6 +533,14 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
         group_reply_gate = ReplyGate()
         group_reply_tool = build_group_reply_decision_tool(group_reply_gate)
         group_reply_prompt = group_reply_system_prompt()
+        if getattr(req, "group_attention_pending_ask_resume", False):
+            group_reply_prompt += (
+                "\n\n## 延迟群问题复核\n\n"
+                "本轮由延迟 ASK 唤醒；当前入站消息是当时登记的那条原始问题，不代表它仍是群里最新话题。"
+                "会话历史中时间晚于该问题的群消息是真实的后续上下文。先检查后续消息是否已回答、"
+                "是否转题或已失去时效；已解决、已转题或不再需要回应时，单独调用 choose_no_reply。"
+                "只回答这条待处理问题，不要恢复更早 Run 的话题，也不要把旧问题误当成后续消息。"
+            )
         req.group_reply_gate = group_reply_gate
     group_system_prompt = "\n\n---\n\n".join(
         part for part in (group_chat_prompt, group_reply_prompt) if part

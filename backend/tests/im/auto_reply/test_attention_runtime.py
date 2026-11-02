@@ -61,6 +61,77 @@ async def test_scored_invitation_reaches_run_without_frequency_gate(monkeypatch)
     assert first_decision.kind is second_decision.kind is AttentionKind.PROACTIVE
 
 
+@pytest.mark.asyncio
+async def test_pending_resume_scores_only_exact_trigger_at_original_time(monkeypatch):
+    anchor_id = "1761746401000-2"
+    seen = {}
+    future_message = runtime.AttentionMessage.from_payload(
+        "1761746402000-3",
+        {
+            "platform": "qq", "bot_id": "bot-1", "chat_id": "group-1",
+            "platform_user_id": "member-2", "text": "later answer",
+            "sender_is_bot": False,
+        },
+    )
+
+    async def snapshot(_session_id, messages):
+        seen["input_messages"] = messages
+        return AttentionSnapshot(messages=(future_message,), complete=True)
+
+    async def no_transcription(*_args, **_kwargs):
+        return {}
+
+    async def resolve_aliases(*_args, **_kwargs):
+        return ()
+
+    async def decide(message, snapshot_value, _mode, *, bot_aliases):
+        seen["message"] = message
+        seen["snapshot"] = snapshot_value
+        return runtime.AttentionDecision(
+            AttentionKind.PROACTIVE, 90, 65, ("scene_ask",),
+            state="COLD", scene_type="ASK", scene_score=.9,
+        ), None
+
+    async def cancel(_payload):
+        seen["cancelled"] = True
+
+    monkeypatch.setattr(runtime, "load_attention_snapshot", snapshot)
+    monkeypatch.setattr(runtime, "transcribe_voice_for_attention", no_transcription)
+    monkeypatch.setattr(runtime, "_resolve_bot_aliases", resolve_aliases)
+    monkeypatch.setattr(runtime, "_decide_attention_message", decide)
+    monkeypatch.setattr("agent.im.auto_reply.pending_ask.cancel_pending_ask", cancel)
+    payload = {
+        **_payload(anchor_id, "为啥这个项目没有 issue？"),
+        "_pending_ask_resume": True,
+        "_pending_ask_trigger_event_id": anchor_id,
+        "_batch_messages": [
+            {
+                "event_id": "1761746400000-1", "text": "@someone 这个 fork 是你的吗？",
+                "platform": "qq", "channel_id": "bot-1", "chat_id": "group-1",
+                "platform_user_id": "member-1", "mentions_other_member": True,
+            },
+            {
+                "event_id": anchor_id, "text": "为啥这个项目没有 issue？",
+                "platform": "qq", "channel_id": "bot-1", "chat_id": "group-1",
+                "platform_user_id": "member-1",
+            },
+        ],
+    }
+    request = SimpleNamespace(session_id=12, inbound_batch_key="resume-batch")
+
+    should_run, decision = await runtime.evaluate_group_attention(request, payload)
+
+    assert should_run is True
+    assert decision.scene_type == "ASK"
+    assert [item.event_id for item in seen["input_messages"]] == [anchor_id]
+    assert seen["message"].event_id == anchor_id
+    assert seen["message"].event_received_ms == 1761746401000
+    assert [item.event_id for item in seen["snapshot"].messages] == []
+    assert payload["_attention_source_event_ids"] == [anchor_id]
+    assert payload["_attention_decision_kind"] == "proactive"
+    assert seen["cancelled"] is True
+
+
 def test_attention_audit_records_v3_scores_without_plaintext(monkeypatch):
     import json
 
@@ -85,7 +156,7 @@ def test_attention_audit_records_v3_scores_without_plaintext(monkeypatch):
     where, serialized = captured[0]
     record = json.loads(serialized)
     assert where == "agent.im.attention.decision"
-    assert record["attention_version"] == "attention-v3.0.6"
+    assert record["attention_version"] == "attention-v3.0.7"
     assert record["state"] == "COLD"
     assert record["scene_type"] == "CALL"
     assert record["scene_score"] == .92

@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Mapping
 
-ATTENTION_ALGORITHM_VERSION = "attention-v3.0.6"
+ATTENTION_ALGORITHM_VERSION = "attention-v3.0.7"
 MEMBER_ACTIVE_TTL_MS = 180_000
 DEFAULT_ACTIVE_THRESHOLD = 55
 DEFAULT_NATURAL_THRESHOLD = 65

@@ -59,8 +59,8 @@ def _log_attention_decision(
     diag_log_raw(
         "agent.im.attention.decision",
         json.dumps({
-            "attention_version": "attention-v3.0.6",
-            "scorer_version": "v3_0_6",
+            "attention_version": "attention-v3.0.7",
+            "scorer_version": "v3_0_7",
             "mode": mode,
             "effective_config_source": "bot_setting",
             "config_version": int(config_version),
@@ -115,7 +115,7 @@ def _log_attention_passive_receipt(
     diag_log_raw(
         "agent.im.attention.passive_receipt",
         json.dumps({
-            "attention_version": "attention-v3.0.6",
+            "attention_version": "attention-v3.0.7",
             "mode": mode,
             "config_version": int(config_version),
             "batch_key_hash": hashlib.sha256(batch_key.encode("utf-8")).hexdigest()[:16],
