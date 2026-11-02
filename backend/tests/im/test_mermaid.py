@@ -685,8 +685,13 @@ async def test_qq_stream_preserves_text_image_text_order_after_deferred_render(m
         events.append(("image", "png"))
         return True
 
+    async def send_text(_payload, text):
+        events.append(("text", text))
+        return True
+
     monkeypatch.setattr(chart, "render_chart_png", fake_render)
     monkeypatch.setattr(replies, "_try_send_png_image", send_image)
+    monkeypatch.setattr(replies, "send_text", send_text)
 
     chart = "```mermaid\ngraph TD; A-->B\n```"
     full_text = f"前文\n\n{chart}\n\n后文"
@@ -754,7 +759,12 @@ async def test_qq_streaming_facade_keeps_text_image_text_order(monkeypatch):
         events.append(("image", "png"))
         return True
 
+    async def send_text(_payload, text):
+        events.append(("text", text))
+        return True
+
     monkeypatch.setattr(replies, "send_png_image", send_image)
+    monkeypatch.setattr(replies, "send_text", send_text)
     source = "```mermaid\ngraph LR; A-->B\n```"
 
     async def token_iter():
@@ -872,9 +882,14 @@ async def test_qq_stream_sends_all_run_images_without_total_chart_cap(
         events.append(("image", "png"))
         return True
 
+    async def send_text(_payload, text):
+        events.append(("text", text))
+        return True
+
     monkeypatch.setattr(qq, "create_private_text_stream", lambda *_args, **_kwargs: FakeStream())
     monkeypatch.setattr(chart, "render_chart_png", render)
     monkeypatch.setattr(replies, "_try_send_png_image", send_image)
+    monkeypatch.setattr(replies, "send_text", send_text)
 
     async def token_iter():
         yield ("token", final_text)
