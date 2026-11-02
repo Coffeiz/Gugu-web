@@ -4,7 +4,7 @@ from __future__ import annotations
 from sqlalchemy import delete, select
 
 from app.core import chat_attach
-from app.models import ChatAttachment
+from app.models import ChatAttachment, ConversationMessage, ConversationSession
 
 
 class DraftAttachmentNotFound(LookupError):
@@ -13,6 +13,38 @@ class DraftAttachmentNotFound(LookupError):
 
 class DraftAttachmentAlreadyUsed(RuntimeError):
     """附件已从草稿态转为消息附件，不能按草稿清理。"""
+
+
+async def is_current_group_session_attachment(
+    db,
+    user_id,
+    attach_id: str,
+    *,
+    session_id: int,
+    platform: str,
+    bot_id: str,
+    chat_id: str,
+) -> bool:
+    """确认附件属于当前用户、当前 IM 群及其当前会话的已发送消息。"""
+    if not session_id or not platform or not bot_id or not chat_id:
+        return False
+    linked_session_id = await db.scalar(
+        select(ConversationSession.id)
+        .join(ConversationMessage, ConversationMessage.session_id == ConversationSession.id)
+        .join(ChatAttachment, ChatAttachment.message_id == ConversationMessage.id)
+        .where(
+            ChatAttachment.user_id == user_id,
+            ChatAttachment.attach_id == attach_id,
+            ChatAttachment.state == "attached",
+            ConversationSession.id == int(session_id),
+            ConversationSession.user_id == user_id,
+            ConversationSession.source == platform,
+            ConversationSession.bot_id == bot_id,
+            ConversationSession.chat_id == chat_id,
+            ConversationSession.chat_type == "group",
+        )
+    )
+    return linked_session_id is not None
 
 
 async def delete_draft_attachment(db, user_id, attach_id: str) -> None:

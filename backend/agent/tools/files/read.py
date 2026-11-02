@@ -107,30 +107,21 @@ async def _is_current_group_session_attachment(db, user_id, attach_id: str) -> b
     """只允许群成员回读确实挂在当前群 session 消息上的聊天附件。"""
     from agent.im import imctx
     from agent.tools.base import current_dispatch_session_id
-    from app.models import ChatAttachment, ConversationMessage, ConversationSession
-    from sqlalchemy import select
+    from app.services.chat_attachments import is_current_group_session_attachment
 
     current_im = imctx.get_im() or {}
     session_id = current_dispatch_session_id()
     if current_im.get("chat_type") != "group" or session_id is None:
         return False
-    linked_session_id = await db.scalar(
-        select(ConversationSession.id)
-        .join(ConversationMessage, ConversationMessage.session_id == ConversationSession.id)
-        .join(ChatAttachment, ChatAttachment.message_id == ConversationMessage.id)
-        .where(
-            ChatAttachment.user_id == user_id,
-            ChatAttachment.attach_id == attach_id,
-            ChatAttachment.state == "attached",
-            ConversationSession.id == int(session_id),
-            ConversationSession.user_id == user_id,
-            ConversationSession.source == current_im.get("platform"),
-            ConversationSession.bot_id == current_im.get("channel_id"),
-            ConversationSession.chat_id == current_im.get("chat_id"),
-            ConversationSession.chat_type == "group",
-        )
+    return await is_current_group_session_attachment(
+        db,
+        user_id,
+        attach_id,
+        session_id=int(session_id),
+        platform=current_im.get("platform"),
+        bot_id=current_im.get("channel_id"),
+        chat_id=current_im.get("chat_id"),
     )
-    return linked_session_id is not None
 
 
 async def _read_file_single(db, user_id, args: dict, *, restricted: bool = False,
