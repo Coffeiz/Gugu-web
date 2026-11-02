@@ -16,6 +16,8 @@
 
 #### Improvements
 
+- Delay open group questions until the conversation has been quiet, and recheck the original question against the latest group context before resuming.
+- Preserve chronological message order and stable conversation prefixes when group messages arrive during a running reply.
 - Propagate run cancellation through in-flight model and tool work, and report a consistent terminal state.
 - Batch and cache knowledge retrieval to reduce repeated work during context injection.
 - Use a consistent scrollable card layout across scheduled tasks, skills, and MCP services.
@@ -28,6 +30,8 @@
 
 #### Fixes
 
+- Keep delayed group-question resumes bound to the exact triggering message and original session, preventing stale batch candidates or prior reasoning state from hijacking the resumed run.
+- Order IM history by actual message timestamps so replies completed after newer messages no longer appear before them in later runs.
 - Render larger Mermaid diagrams in QQ by scaling them within the output pixel budget; avoid whole-diagram failures from reserved Flowchart node IDs.
 - Keep curved Mermaid edge labels inside QQ-rendered PNG images and align multi-line database labels correctly.
 - Prevent embedded Base64 image data and oversized grep results from overflowing Agent context; show truncation details in search results.
@@ -59,6 +63,8 @@
 
 #### 改进
 
+- 群聊开放问题先等待群内静默，再结合最新群聊上下文复核原问题后恢复处理。
+- 群聊消息在回复运行期间到达时，保持历史时间顺序和会话前缀稳定。
 - 将取消信号传递到运行中的模型和工具任务，并统一反馈任务终态。
 - 对知识检索进行批处理和缓存，减少上下文注入时的重复工作。
 - 定时任务、技能和 MCP 服务统一使用可滚动卡片布局。
@@ -71,6 +77,8 @@
 
 #### 修复
 
+- 延迟群聊问题恢复时固定使用原始触发消息和会话，避免旧批次候选或之前的推理状态干扰新一轮判断。
+- 按真实消息时间排列 IM 历史，避免较晚完成的回复在后续 Run 中排到新消息之前。
 - QQ 支持渲染更大的 Mermaid 图表，并按输出像素预算缩放；补充流程图节点 ID 避开保留字的规则，减少整图渲染失败。
 - 修复 QQ Mermaid 图片中的曲线连线标签裁切及多行数据库标签垂直对齐。
 - 省略 grep 结果中的内嵌 Base64 图片数据并限制超长行和结果体积，避免搜索结果撑爆 Agent 上下文，同时标明截断原因。
