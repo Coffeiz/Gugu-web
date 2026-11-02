@@ -72,8 +72,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     && /opt/venv/bin/pip install -i "${PIP_INDEX_URL}" -r requirements.txt \
     && /opt/venv/bin/pip install --upgrade --force-reinstall \
         -i "${PIP_INDEX_URL}" \
-        "msgpack==1.2.2" "setuptools==84.0.0" \
-    && /opt/venv/bin/python -c "from importlib.metadata import version; assert version('msgpack') == '1.2.2'; assert version('setuptools') == '84.0.0'"
+        "msgpack==1.2.3" "setuptools==84.0.0" \
+    && /opt/venv/bin/python -c "from importlib.metadata import version; assert version('msgpack') == '1.2.3'; assert version('setuptools') == '84.0.0'"
 
 # ── Stage 2.5：从固定上游源码构建修复版 Cosign ───────────────────────────────
 # 保持官方签名版本与固定源码提交，使用已修复的 Go 工具链和压缩依赖。
@@ -94,6 +94,7 @@ RUN mkdir -p /out \
     && rm /tmp/cosign.tar.gz \
     && go mod edit \
         -require=github.com/klauspost/compress@v1.18.7 \
+        -require=github.com/go-jose/go-jose/v4@v4.1.6 \
         -require=golang.org/x/crypto@v0.55.0 \
         -require=golang.org/x/mod@v0.40.0 \
         -require=golang.org/x/net@v0.60.0 \

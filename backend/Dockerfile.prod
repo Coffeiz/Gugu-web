@@ -32,8 +32,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 RUN --mount=type=cache,target=/root/.cache/pip \
     /opt/venv/bin/pip install --upgrade --force-reinstall \
         -i "${PIP_INDEX_URL}" \
-        "msgpack==1.2.2" "setuptools==84.0.0" \
-    && /opt/venv/bin/python -c "from importlib.metadata import version; assert version('msgpack') == '1.2.2'; assert version('setuptools') == '84.0.0'"
+        "msgpack==1.2.3" "setuptools==84.0.0" \
+    && /opt/venv/bin/python -c "from importlib.metadata import version; assert version('msgpack') == '1.2.3'; assert version('setuptools') == '84.0.0'"
 
 # TS worker 的构建物已经提交到 backend/bin；这里只准备它运行时需要的
 # Linux native 依赖，不把 TS 源码、测试或构建工具带进最终镜像。
