@@ -44,14 +44,11 @@ def _asset_payload(name: str, tint: str | None = None) -> bytes:
         return path.read_bytes()
     image = Image.open(path).convert("RGBA")
     color = ImageColor.getrgb(tint)
-    pixels = image.load()
-    for y in range(image.height):
-        for x in range(image.width):
-            _, _, _, alpha = pixels[x, y]
-            if alpha:
-                pixels[x, y] = (*color, alpha)
+    alpha = image.getchannel("A")
+    image = Image.new("RGBA", image.size, (*color, 0))
+    image.putalpha(alpha)
     output = BytesIO()
-    image.save(output, format="PNG", optimize=True)
+    image.save(output, format="PNG")
     return output.getvalue()
 
 
