@@ -577,7 +577,7 @@ Object.assign((messages['ja-JP'] as Record<string, any>).chatUi, { loadEarlier: 
 Object.assign((messages['en-US'] as Record<string, any>).chatUi, { loadEarlier: 'Load earlier messages', loadingEarlier: 'Loading earlier messages…', loadEarlierFailed: 'Could not load. Click to retry' })
 
 Object.assign((messages['zh-CN'] as Record<string, any>).profileImUi, {
-  groupAttentionMode: '群聊参与度', groupAttentionModeHint: '自主模式下，通过群聊路由的消息会直接进入 Run；仅提及模式只处理明确 @ 咕咕的消息。注意力算法目前仅针对中文优化。',
+  groupAttentionMode: '群聊参与度', groupAttentionModeHint: "自主模式下，通过群聊路由的消息会直接进入 Run；仅提及模式只处理明确 {'@'} 咕咕的消息。注意力算法目前仅针对中文优化。",
   groupAttentionQuiet: '安静', groupAttentionNatural: '自然', groupAttentionActive: '主动', groupAttentionAutonomous: '自主',
 })
 Object.assign((messages['ja-JP'] as Record<string, any>).profileImUi, {
@@ -585,7 +585,7 @@ Object.assign((messages['ja-JP'] as Record<string, any>).profileImUi, {
   groupAttentionQuiet: '静か', groupAttentionNatural: '自然', groupAttentionActive: '積極的', groupAttentionAutonomous: '自主',
 })
 Object.assign((messages['en-US'] as Record<string, any>).profileImUi, {
-  groupAttentionMode: 'Group participation', groupAttentionModeHint: 'In Autonomous mode, messages that pass group routing enter a Run directly; Mention-only mode handles only messages that explicitly @ Gugu. The attention algorithm is currently optimized for Chinese only.',
+  groupAttentionMode: 'Group participation', groupAttentionModeHint: "In Autonomous mode, messages that pass group routing enter a Run directly; Mention-only mode handles only messages that explicitly {'@'} Gugu. The attention algorithm is currently optimized for Chinese only.",
   groupAttentionQuiet: 'Quiet', groupAttentionNatural: 'Natural', groupAttentionActive: 'Active', groupAttentionAutonomous: 'Autonomous',
 })
 
