@@ -262,11 +262,13 @@ async def _prewarm_qq_outbound(channel_id: str) -> None:
         token, base = await _send_token(channel_id)
         now = time.monotonic()
         activity = _loop_state(_qq_api_last_activity)
-        if now - activity.get(base, 0.0) < _QQ_PREWARM_COOLDOWN_SECONDS:
+        last_activity = activity.get(base)
+        if last_activity is not None and now - last_activity < _QQ_PREWARM_COOLDOWN_SECONDS:
             return
         async with _loop_channel_lock(_qq_prewarm_locks, base):
             now = time.monotonic()
-            if now - activity.get(base, 0.0) < _QQ_PREWARM_COOLDOWN_SECONDS:
+            last_activity = activity.get(base)
+            if last_activity is not None and now - last_activity < _QQ_PREWARM_COOLDOWN_SECONDS:
                 return
             session = await _get_qq_http_session()
             started = time.perf_counter()

@@ -379,6 +379,9 @@ async def test_send_token_refresh_is_singleflight(monkeypatch):
 async def test_qq_outbound_prewarm_opens_connection_once_per_cooldown(monkeypatch):
     base = qq_client._QQ_API_BASE
     qq_client._loop_state(qq_client._qq_api_last_activity).pop(base, None)
+    # CI runner 的 monotonic 时钟可能刚从 0 开始；空闲记录必须视为“从未活动”，
+    # 不能误判成刚在冷却期内发过请求。
+    monkeypatch.setattr(qq_client.time, "monotonic", lambda: 100.0)
     requests = []
 
     class FakeResponse:
