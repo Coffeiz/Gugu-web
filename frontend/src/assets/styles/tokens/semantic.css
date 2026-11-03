@@ -159,9 +159,8 @@
   --layer-chat: 400;
 }
 
-/* cafe 保留原有暖色对比；其他配色的辅助状态色统一收一点饱和度，避免成功/警告/危险/信息
-   在日历、项目状态和徽标中抢过主色。这里放在 semantic 层，所有消费者共享同一条规则。 */
-:root[data-palette]:not([data-palette='cafe']) {
+/* 统一收敛辅助状态色饱和度，避免成功/警告/危险/信息在日历、项目状态和徽标中抢过主色。 */
+:root[data-palette] {
   --status-success: color-mix(in srgb, var(--theme-success) 82%, var(--content-secondary) 18%);
   --status-warning: color-mix(in srgb, var(--theme-warning) 82%, var(--content-secondary) 18%);
   --status-danger: color-mix(in srgb, var(--theme-danger) 82%, var(--content-secondary) 18%);

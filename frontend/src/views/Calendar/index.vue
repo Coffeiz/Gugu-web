@@ -1284,8 +1284,8 @@ watch([projectTimelines, dragOverRange], () => _weekBarsCache.clear())
   height: 16px; box-sizing: border-box;
   font-size: 10px; font-weight: 500;
   padding: 0 7px; border-radius: 99px;
-  border: 1px solid rgba(123,127,178,0.35);
-  background: rgba(123,127,178,0.1); color: rgb(101,104,146);
+  border: 1px solid color-mix(in srgb, var(--action-primary) 35%, transparent);
+  background: color-mix(in srgb, var(--action-primary) 10%, transparent); color: rgb(101,104,146);
   cursor: pointer; font-family: var(--font-sans);
   white-space: nowrap;
   display: flex; align-items: center;
@@ -1325,8 +1325,8 @@ watch([projectTimelines, dragOverRange], () => _weekBarsCache.clear())
 .cal-sidebar { padding: 16px; display: flex; flex-direction: column; gap: 0; overflow-y: auto; min-height: 0; scrollbar-gutter: auto; }
 .sidebar-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .sidebar-date-label { font-size: 13px; font-weight: 700; color: var(--text-primary); }
-.add-event-btn { display: flex; align-items: center; gap: 5px; padding: 5px 10px; border-radius: 8px; border: 1px solid rgba(123,127,178,0.3); background: rgba(123,127,178,0.08); font-size: 11px; font-weight: 600; cursor: pointer; color: var(--color-primary); font-family: var(--font-sans); transition: all 0.15s; }
-.add-event-btn:hover { background: rgba(123,127,178,0.15); border-color: rgba(123,127,178,0.5); }
+.add-event-btn { display: flex; align-items: center; gap: 5px; padding: 5px 10px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--action-primary) 30%, transparent); background: color-mix(in srgb, var(--action-primary) 8%, transparent); font-size: 11px; font-weight: 600; cursor: pointer; color: var(--color-primary); font-family: var(--font-sans); transition: all 0.15s; }
+.add-event-btn:hover { background: color-mix(in srgb, var(--action-primary) 15%, transparent); border-color: color-mix(in srgb, var(--action-primary) 50%, transparent); }
 .add-proj-btn { background: var(--action-primary-bg); border-color: transparent; color: var(--content-on-accent); box-shadow: none; }
 .add-proj-btn:hover { background: var(--action-primary-bg-hover); border-color: transparent; opacity: 1; box-shadow: none; }
 .sidebar-events { display: flex; flex-direction: column; gap: 7px; margin-bottom: 4px; }
@@ -1347,7 +1347,7 @@ watch([projectTimelines, dragOverRange], () => _weekBarsCache.clear())
 .sidebar-ev-name { font-size: 12px; font-weight: 500; color: var(--text-primary); line-height: 1.4; overflow-wrap: break-word; word-break: break-word; }
 /* 有结束时间时按最长内容「00:00–00:00」固定，周视图拖拽改时间不会推挤活动名；
    只有开始时间时不预留结束时间的空位，让名称紧跟日期。 */
-.sidebar-ev-time { display: inline-block; font-size: 11px; font-weight: 600; color: var(--accent, #7b7fb2); margin-left: 7px; margin-right: 4px; font-variant-numeric: tabular-nums; }
+.sidebar-ev-time { display: inline-block; font-size: 11px; font-weight: 600; color: var(--accent, var(--action-primary)); margin-left: 7px; margin-right: 4px; font-variant-numeric: tabular-nums; }
 .sidebar-ev-time.has-end-time { min-width: 11ch; }
 .popup-row { display: flex; gap: 6px; align-items: center; }
 .popup-row > :first-child { flex: 1; min-width: 0; }
@@ -1362,8 +1362,8 @@ watch([projectTimelines, dragOverRange], () => _weekBarsCache.clear())
   white-space: nowrap;
 }
 .ev-proj-badge {
-  background: rgba(123,127,178,0.12); color: #7b7fb2;
-  border: 1px solid rgba(123,127,178,0.2);
+  background: color-mix(in srgb, var(--action-primary) 12%, transparent); color: var(--action-primary);
+  border: 1px solid color-mix(in srgb, var(--action-primary) 20%, transparent);
 }
 .ev-event-badge {
   background: rgba(210,175,40,0.15); color: #a07c00;
@@ -1377,37 +1377,37 @@ watch([projectTimelines, dragOverRange], () => _weekBarsCache.clear())
 .upcoming-item:last-child { margin-bottom: 0; }
 
 .add-event-popup { background: transparent; border: 0; border-radius: 0; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; padding: 0; display: flex; flex-direction: column; max-height: calc(100vh - 24px); overflow-y: auto; overscroll-behavior: contain; }
-.popup-textarea:focus { border-color: rgba(123,127,178,0.4); box-shadow: 0 0 0 3px rgba(123,127,178,0.1); background: rgba(255,255,255,0.85); }
+.popup-textarea:focus { border-color: color-mix(in srgb, var(--action-primary) 40%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--action-primary) 10%, transparent); background: rgba(255,255,255,0.85); }
 .popup-actions { display: flex; gap: 6px; justify-content: flex-end; align-items: center; margin-top: 2px; }
 .popup-delete { padding: 5px 12px; border-radius: 8px; border: 1px solid rgba(176,120,88,0.3); background: rgba(176,120,88,0.08); font-size: 12px; cursor: pointer; color: #b07858; font-family: var(--font-family-ui); font-weight: 600; transition: background 0.12s, border-color 0.12s; }
 .popup-delete:hover { background: rgba(176,120,88,0.15); border-color: rgba(176,120,88,0.5); }
 .popup-save { padding: 5px 14px; border-radius: 8px; border: none; background: var(--action-primary-bg); color: var(--content-on-accent); font-size: 12px; font-weight: 600; cursor: pointer; font-family: var(--font-family-ui); transition: background-color 0.15s; box-shadow: none; }
 .popup-save:disabled { opacity: 0.38; cursor: default; }
 .popup-save:not(:disabled):hover { background: var(--action-primary-bg-hover); opacity: 1; }
-.reminder-section { display: flex; flex-direction: column; gap: 6px; padding-top: 7px; border-top: 1px solid rgba(123,127,178,0.18); }
+.reminder-section { display: flex; flex-direction: column; gap: 6px; padding-top: 7px; border-top: 1px solid color-mix(in srgb, var(--action-primary) 18%, transparent); }
 .reminder-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .reminder-label { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; color: var(--text-secondary); }
 .reminder-item { display: flex; align-items: center; gap: 6px; }
 .reminder-lead { font-size: 11px; font-weight: 600; color: var(--text-secondary); }
-.reminder-test-bar { width: 100%; box-sizing: border-box; display: flex; align-items: center; justify-content: center; gap: 5px; margin-top: 7px; padding: 6px 10px; border-radius: 8px; border: 1px solid rgba(123,127,178,0.4); background: rgba(123,127,178,0.08); color: var(--text-secondary); font-size: 11px; font-weight: 600; cursor: pointer; font-family: var(--font-family-ui); transition: all 0.12s; }
-.reminder-test-bar:hover { border-color: rgba(123,127,178,0.7); background: rgba(123,127,178,0.16); color: var(--text-primary); }
+.reminder-test-bar { width: 100%; box-sizing: border-box; display: flex; align-items: center; justify-content: center; gap: 5px; margin-top: 7px; padding: 6px 10px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--action-primary) 40%, transparent); background: color-mix(in srgb, var(--action-primary) 8%, transparent); color: var(--text-secondary); font-size: 11px; font-weight: 600; cursor: pointer; font-family: var(--font-family-ui); transition: all 0.12s; }
+.reminder-test-bar:hover { border-color: color-mix(in srgb, var(--action-primary) 70%, transparent); background: color-mix(in srgb, var(--action-primary) 16%, transparent); color: var(--text-primary); }
 .reminder-del { display: flex; align-items: center; padding: 2px; border: none; background: none; cursor: pointer; color: #b07858; border-radius: 5px; }
 .reminder-del:hover { background: rgba(176,120,88,0.12); }
 .reminder-add { display: flex; gap: 6px; align-items: center; }
 .lead-select { flex: 1; height: 28px; padding: 0 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.75); background: rgba(255,255,255,0.68); font-size: 11px; font-family: var(--font-family-ui); color: #1e2028; cursor: pointer; outline: none; }
-.reminder-add-btn { flex-shrink: 0; padding: 5px 10px; border-radius: 8px; border: 1px solid rgba(123,127,178,0.3); background: rgba(123,127,178,0.1); color: var(--text-secondary); font-size: 11px; font-weight: 600; cursor: pointer; font-family: var(--font-family-ui); transition: background 0.12s; }
-.reminder-add-btn:hover { background: rgba(123,127,178,0.2); }
+.reminder-add-btn { flex-shrink: 0; padding: 5px 10px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--action-primary) 30%, transparent); background: color-mix(in srgb, var(--action-primary) 10%, transparent); color: var(--text-secondary); font-size: 11px; font-weight: 600; cursor: pointer; font-family: var(--font-family-ui); transition: background 0.12s; }
+.reminder-add-btn:hover { background: color-mix(in srgb, var(--action-primary) 20%, transparent); }
 .reminder-cancel { flex-shrink: 0; display: flex; align-items: center; padding: 4px; border: none; background: none; cursor: pointer; color: var(--text-secondary); border-radius: 6px; }
 .reminder-cancel:hover { background: rgba(0,0,0,0.06); }
-.reminder-add-toggle { width: 100%; box-sizing: border-box; text-align: center; padding: 6px 10px; border-radius: 8px; border: 1px dashed rgba(123,127,178,0.4); background: none; color: var(--text-secondary); font-size: 11px; font-weight: 600; cursor: pointer; font-family: var(--font-family-ui); transition: all 0.12s; }
-.reminder-add-toggle:hover { border-color: rgba(123,127,178,0.7); color: var(--text-primary); background: rgba(123,127,178,0.06); }
+.reminder-add-toggle { width: 100%; box-sizing: border-box; text-align: center; padding: 6px 10px; border-radius: 8px; border: 1px dashed color-mix(in srgb, var(--action-primary) 40%, transparent); background: none; color: var(--text-secondary); font-size: 11px; font-weight: 600; cursor: pointer; font-family: var(--font-family-ui); transition: all 0.12s; }
+.reminder-add-toggle:hover { border-color: color-mix(in srgb, var(--action-primary) 70%, transparent); color: var(--text-primary); background: color-mix(in srgb, var(--action-primary) 6%, transparent); }
 /* 绝对定位浮在右侧，不参与 flex 居中，保证「开始—结束」时间仍水平居中 */
-.nextday-tag { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 10px; font-weight: 600; color: #9590c4; background: rgba(123,127,178,0.1); padding: 1px 6px; border-radius: 5px; white-space: nowrap; pointer-events: none; }
-.nextday-mini { margin-left: 4px; font-size: 9px; font-weight: 600; color: #a8a3c8; padding: 1px 4px; border-radius: 4px; background: rgba(123,127,178,0.1); vertical-align: 1px; }
+.nextday-tag { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 10px; font-weight: 600; color: var(--action-primary-hover); background: color-mix(in srgb, var(--action-primary) 10%, transparent); padding: 1px 6px; border-radius: 5px; white-space: nowrap; pointer-events: none; }
+.nextday-mini { margin-left: 4px; font-size: 9px; font-weight: 600; color: #a8a3c8; padding: 1px 4px; border-radius: 4px; background: color-mix(in srgb, var(--action-primary) 10%, transparent); vertical-align: 1px; }
 .chan-block { display: flex; flex-direction: column; gap: 5px; }
 .chan-chips { display: flex; gap: 5px; flex-wrap: wrap; }
-.chan-chip { padding: 3px 11px; border-radius: 99px; border: 1px solid rgba(123,127,178,0.3); background: rgba(255,255,255,0.5); color: var(--text-secondary); font-size: 11px; font-weight: 600; cursor: pointer; font-family: var(--font-family-ui); transition: all 0.12s; }
-.chan-chip.on { background: rgba(123,127,178,0.16); border-color: rgba(123,127,178,0.55); color: #5b5f8c; }
+.chan-chip { padding: 3px 11px; border-radius: 99px; border: 1px solid color-mix(in srgb, var(--action-primary) 30%, transparent); background: rgba(255,255,255,0.5); color: var(--text-secondary); font-size: 11px; font-weight: 600; cursor: pointer; font-family: var(--font-family-ui); transition: all 0.12s; }
+.chan-chip.on { background: color-mix(in srgb, var(--action-primary) 16%, transparent); border-color: color-mix(in srgb, var(--action-primary) 55%, transparent); color: #5b5f8c; }
 .form-pop-enter-active { transition: opacity 0.16s, transform 0.18s cubic-bezier(0.34,1.2,0.64,1); }
 .form-pop-leave-active { transition: opacity 0.12s, transform 0.12s ease-in; }
 .form-pop-enter-from, .form-pop-leave-to { opacity: 0; transform: scale(0.95) translateY(-6px); }

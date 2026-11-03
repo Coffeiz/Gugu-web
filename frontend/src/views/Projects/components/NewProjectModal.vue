@@ -552,7 +552,7 @@ function handleCreate() {
 }
 .header-name-input::placeholder { color: var(--text-secondary); opacity: 0.45; font-weight: 700; }
 .header-name-input:focus {
-  border-color: rgba(123,127,178,0.4); box-shadow: 0 0 0 3px rgba(123,127,178,0.1);
+  border-color: color-mix(in srgb, var(--action-primary) 40%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--action-primary) 10%, transparent);
 }
 .header-name-input.error { color: var(--color-warning); }
 .name-error {
@@ -665,11 +665,11 @@ input:not(.name-input):not(.header-name-input):focus:not(:disabled) {
 .tpl-trigger {
   display: flex; align-items: center; gap: 4px;
   height: 24px; padding: 0 8px; border-radius: 6px; border: none;
-  background: rgba(123,127,178,0.1); color: var(--color-primary);
+  background: color-mix(in srgb, var(--action-primary) 10%, transparent); color: var(--color-primary);
   font-size: 11px; font-weight: 600; cursor: pointer;
   font-family: var(--font-sans); transition: background 0.15s;
 }
-.tpl-trigger:hover { background: rgba(123,127,178,0.18); }
+.tpl-trigger:hover { background: color-mix(in srgb, var(--action-primary) 18%, transparent); }
 
 /* 模板面板 */
 .tpl-panel {
@@ -697,7 +697,7 @@ input:not(.name-input):not(.header-name-input):focus:not(:disabled) {
   border-radius: 7px; text-align: left; transition: background 0.12s;
   font-family: var(--font-sans); min-width: 0;
 }
-.tpl-apply:hover { background: rgba(123,127,178,0.1); }
+.tpl-apply:hover { background: color-mix(in srgb, var(--action-primary) 10%, transparent); }
 .tpl-name { font-size: 12.5px; font-weight: 600; color: var(--text-primary); }
 .tpl-stages-preview {
   display: block; min-width: 0; max-width: 160px;
@@ -718,7 +718,7 @@ input:not(.name-input):not(.header-name-input):focus:not(:disabled) {
   font-size: 12px; font-family: var(--font-sans); outline: none;
 }
 .tpl-rename-input { min-width: 0; }
-.tpl-name-input:focus { border-color: rgba(123,127,178,0.4); }
+.tpl-name-input:focus { border-color: color-mix(in srgb, var(--action-primary) 40%, transparent); }
 
 .tpl-divider { height: 1px; background: rgba(0,0,0,0.07); margin: 4px 0; }
 .tpl-save-row { padding: 2px 8px 4px; }
@@ -728,7 +728,7 @@ input:not(.name-input):not(.header-name-input):focus:not(:disabled) {
   font-size: 12px; color: var(--color-primary); font-weight: 500;
   cursor: pointer; font-family: var(--font-sans); transition: background 0.12s;
 }
-.tpl-save-btn:hover { background: rgba(123,127,178,0.1); }
+.tpl-save-btn:hover { background: color-mix(in srgb, var(--action-primary) 10%, transparent); }
 .tpl-save-input-row {
   display: flex; align-items: center; gap: 2px; padding: 2px 6px 4px 4px;
 }
@@ -756,7 +756,7 @@ input:not(.name-input):not(.header-name-input):focus:not(:disabled) {
 .stage-row:hover::before { opacity: 0.4; }
 .stage-num {
   width: 20px; height: 20px; border-radius: 50%;
-  background: rgba(123,127,178,0.15);
+  background: color-mix(in srgb, var(--action-primary) 15%, transparent);
   font-size: 10px; font-weight: 700; color: var(--color-primary);
   display: flex; align-items: center; justify-content: center; flex-shrink: 0;
   cursor: pointer; transition: background 0.15s, color 0.15s;
@@ -797,8 +797,8 @@ input:not(.name-input):not(.header-name-input):focus:not(:disabled) {
   transition: background 0.15s, border-color 0.15s; width: 100% !important;
 }
 .np-todo-input:focus {
-  background: rgba(255,255,255,0.88); border-color: rgba(123,127,178,0.45);
-  box-shadow: 0 0 0 3px rgba(123,127,178,0.12);
+  background: rgba(255,255,255,0.88); border-color: color-mix(in srgb, var(--action-primary) 45%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--action-primary) 12%, transparent);
 }
 .np-todo-del {
   width: 22px; height: 22px; border-radius: 6px;
@@ -816,7 +816,7 @@ input:not(.name-input):not(.header-name-input):focus:not(:disabled) {
   cursor: pointer; font-family: var(--font-sans); transition: all 0.15s; margin-top: 2px;
   margin-right: 29px;
 }
-.np-todo-add-btn:hover { border-color: var(--color-primary); color: var(--color-primary); background: rgba(123,127,178,0.06); }
+.np-todo-add-btn:hover { border-color: var(--color-primary); color: var(--color-primary); background: color-mix(in srgb, var(--action-primary) 6%, transparent); }
 
 .add-stage-btn {
   display: flex; align-items: center; gap: 6px;
@@ -849,7 +849,7 @@ input:not(.name-input):not(.header-name-input):focus:not(:disabled) {
   padding: 6px 12px 6px 10px;
   background: rgba(238,240,246,0.94);
   backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(123,127,178,0.28);
+  border: 1px solid color-mix(in srgb, var(--action-primary) 28%, transparent);
   border-radius: 10px;
   box-shadow: 0 8px 24px rgba(30,40,80,0.16);
   opacity: 0.95;
@@ -857,8 +857,8 @@ input:not(.name-input):not(.header-name-input):focus:not(:disabled) {
 }
 .np-stage-ghost .stage-num {
   width: 20px; height: 20px; border-radius: 50%;
-  background: rgba(123,127,178,0.15);
-  font-size: 10px; font-weight: 700; color: #7b7fb2;
+  background: color-mix(in srgb, var(--action-primary) 15%, transparent);
+  font-size: 10px; font-weight: 700; color: var(--action-primary);
   display: flex; align-items: center; justify-content: center;
   flex-shrink: 0; line-height: 1;
 }

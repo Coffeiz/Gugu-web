@@ -65,8 +65,8 @@ const pdfSrc = computed(() => (props.blobUrl ? props.blobUrl + '#view=FitH' : un
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  border: 3px solid rgba(123, 127, 178, 0.2);
-  border-top-color: rgba(123, 127, 178, 0.7);
+  border: 3px solid color-mix(in srgb, var(--action-primary) 20%, transparent);
+  border-top-color: color-mix(in srgb, var(--action-primary) 70%, transparent);
   animation: pv-spin 0.7s linear infinite;
 }
 

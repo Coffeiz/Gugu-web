@@ -200,7 +200,7 @@
       <!-- ── 行为配置 ── -->
       <section v-if="activeTab === 'behavior' && behaviorTab === 'runtime'" class="config-card">
         <div class="card-head">
-          <div class="card-icon" style="--ic:rgba(123,127,178,0.15);--stroke:#7b7fb2">
+          <div class="card-icon" style="--ic:color-mix(in srgb,var(--action-primary) 15%,transparent);--stroke:var(--action-primary)">
             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"
               stroke-linecap="round" stroke-linejoin="round">
               <path d="M10 2a8 8 0 100 16A8 8 0 0010 2z"/>

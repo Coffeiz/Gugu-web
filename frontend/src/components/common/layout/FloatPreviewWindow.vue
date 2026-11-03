@@ -949,8 +949,8 @@ onUnmounted(() => {
 }
 .fpw-spinner {
   width: 24px; height: 24px; border-radius: 50%;
-  border: 2px solid rgba(123, 127, 178, 0.2);
-  border-top-color: rgba(123, 127, 178, 0.7);
+  border: 2px solid color-mix(in srgb, var(--action-primary) 20%, transparent);
+  border-top-color: color-mix(in srgb, var(--action-primary) 70%, transparent);
   animation: fpw-spin 0.7s linear infinite;
 }
 @keyframes fpw-spin { to { transform: rotate(360deg); } }
@@ -973,7 +973,7 @@ onUnmounted(() => {
 }
 
 /* ── info 按钮激活态 ── */
-.fpw-btn.active { background: rgba(123,127,178,0.15); color: var(--color-primary, #7b7fb2); }
+.fpw-btn.active { background: color-mix(in srgb, var(--action-primary) 15%, transparent); color: var(--color-primary, var(--action-primary)); }
 
 /* ── 图片左右切换按钮：平时隐藏，鼠标移进内容区才淡入；跟 ImageViewer 缩放胶囊
    （.iv-toolbar）同一套毛玻璃参数，视觉上是一家人 ── */

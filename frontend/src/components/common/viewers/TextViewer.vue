@@ -1544,7 +1544,7 @@ onBeforeUnmount(() => {
   width: 24px; height: 24px; border-radius: 50%;
   border: 2px solid var(--action-soft);
   border-top-color: var(--action-primary);
-  border-top-color: rgba(123, 127, 178, 0.7);
+  border-top-color: color-mix(in srgb, var(--action-primary) 70%, transparent);
   animation: tv-spin 0.7s linear infinite;
 }
 @keyframes tv-spin { to { transform: rotate(360deg); } }

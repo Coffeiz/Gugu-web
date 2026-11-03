@@ -248,7 +248,7 @@ async function save() {
 .cb-save {
   flex-shrink: 0;
   padding: 6px 16px; border: none; border-radius: var(--radius-sm);
-  background: linear-gradient(135deg, #7b7fb2, #9590c4);
+  background: linear-gradient(135deg, var(--action-primary), var(--action-primary-hover));
   color: rgba(255,255,255,0.95);
   font-size: 12.5px; font-weight: 600; cursor: pointer;
   font-family: var(--font-sans);

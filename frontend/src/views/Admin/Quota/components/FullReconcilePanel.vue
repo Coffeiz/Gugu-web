@@ -97,7 +97,7 @@ onBeforeUnmount(() => { disposed = true; if (pollTimer) clearTimeout(pollTimer) 
 .reconcile-status.completed { color: #75c6a7; }
 .reconcile-status.failed, .reconcile-status.interrupted { color: #e07878; }
 .progress-track { height: 4px; margin-top: 8px; border-radius: 5px; overflow: hidden; background: rgba(255,255,255,0.08); }
-.progress-track span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #7b7fb2, #9590c4); transition: width .2s ease; }
+.progress-track span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--action-primary), var(--action-primary-hover)); transition: width .2s ease; }
 .reconcile-error { color: #e07878 !important; }
 .btn-save {
   display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;

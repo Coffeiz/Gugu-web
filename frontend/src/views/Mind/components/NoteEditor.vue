@@ -521,8 +521,8 @@ onBeforeUnmount(() => {
   font-family: var(--font-sans);
   transition: background 0.15s, color 0.15s;
 }
-.ne-tool:hover { background: rgba(123,127,178,0.1); color: var(--color-primary); }
-.ne-tool.on { background: rgba(123,127,178,0.16); color: var(--color-primary); }
+.ne-tool:hover { background: color-mix(in srgb, var(--action-primary) 10%, transparent); color: var(--color-primary); }
+.ne-tool.on { background: color-mix(in srgb, var(--action-primary) 16%, transparent); color: var(--color-primary); }
 /* 消费方（便签卡的取消/保存等）塞进来的按钮，跟格式工具栏同一行——原来这里还兜着
    "输入 @ 引用…" 提示的 margin-left:auto，提示挪到 CaptureBar 自己的 cb-foot 里了 */
 .ne-toolbar-actions { margin-left: 0; flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
@@ -584,8 +584,8 @@ onBeforeUnmount(() => {
               background 0.15s, color 0.15s;
 }
 .ne-drawer.open .ne-style-item { opacity: 1; filter: blur(0); }
-.ne-style-item:hover { background: rgba(123,127,178,0.1); color: var(--color-primary); }
-.ne-style-item.on { background: rgba(123,127,178,0.16); color: var(--color-primary); }
+.ne-style-item:hover { background: color-mix(in srgb, var(--action-primary) 10%, transparent); color: var(--color-primary); }
+.ne-style-item.on { background: color-mix(in srgb, var(--action-primary) 16%, transparent); color: var(--color-primary); }
 /* 展开：从左到右依次出现（nth-child 数正数第几个）*/
 .ne-drawer.open .ne-style-item:nth-child(1) { --stagger-delay: 0s; }
 .ne-drawer.open .ne-style-item:nth-child(2) { --stagger-delay: 0.03s; }
@@ -601,17 +601,17 @@ onBeforeUnmount(() => {
 .ne-link-input { display: flex; align-items: center; gap: 4px; }
 .ne-link-input input {
   width: 160px; height: 24px; padding: 0 8px; box-sizing: border-box;
-  border: 1px solid rgba(123,127,178,0.25); border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--action-primary) 25%, transparent); border-radius: 6px;
   background: rgba(255,255,255,0.7); outline: none;
   font-size: 12px; font-family: var(--font-sans); color: var(--text-primary);
 }
 .ne-link-ok {
   flex-shrink: 0; height: 24px; padding: 0 9px;
   border: none; border-radius: 6px; cursor: pointer;
-  background: rgba(123,127,178,0.16); color: var(--color-primary);
+  background: color-mix(in srgb, var(--action-primary) 16%, transparent); color: var(--color-primary);
   font-size: 11.5px; font-weight: 600; font-family: var(--font-sans);
 }
-.ne-link-ok:hover { background: rgba(123,127,178,0.26); }
+.ne-link-ok:hover { background: color-mix(in srgb, var(--action-primary) 26%, transparent); }
 </style>
 
 <!-- 编辑器内部由 ProseMirror 生成，不能用 scoped。段落/标题/待办/列表/引用 chip 的排版
@@ -637,6 +637,6 @@ onBeforeUnmount(() => {
 
 /* 引用 chip 被选中时的高亮环，只有编辑态会出现 */
 .ne-body .ProseMirror .mind-ref.ProseMirror-selectednode {
-  box-shadow: 0 0 0 2px rgba(123,127,178,0.5);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--action-primary) 50%, transparent);
 }
 </style>

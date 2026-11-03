@@ -85,7 +85,7 @@
 .md-preview s, .ne-body .ProseMirror s { text-decoration: line-through; opacity: 0.75; }
 .md-preview code:not(pre code), .ne-body .ProseMirror code:not(pre code) {
   padding: 1px 5px; border-radius: 4px;
-  background: rgba(123,127,178,0.12); font-size: 0.92em;
+  background: color-mix(in srgb, var(--action-primary) 12%, transparent); font-size: 0.92em;
 }
 .md-preview a, .ne-body .ProseMirror a {
   color: var(--color-primary); text-decoration: underline; text-underline-offset: 2px;
@@ -117,7 +117,7 @@
 .md-preview .np-quote,
 .ne-body .ProseMirror blockquote {
   padding: 2px 0 2px 12px;
-  border-left: 3px solid rgba(123,127,178,0.35);
+  border-left: 3px solid color-mix(in srgb, var(--action-primary) 35%, transparent);
   color: var(--text-secondary);
 }
 .md-preview .np-quote p,
@@ -144,7 +144,7 @@
 .ne-body .ProseMirror .ne-codeblock-lang {
   padding: 4px 12px; font-size: 10px; font-weight: 600;
   color: var(--text-secondary); opacity: 0.8; text-transform: lowercase; letter-spacing: 0.03em;
-  border-bottom: 1px solid rgba(123,127,178,0.14);
+  border-bottom: 1px solid color-mix(in srgb, var(--action-primary) 14%, transparent);
   user-select: none;
 }
 .md-preview .np-code,
@@ -208,7 +208,7 @@
 .md-preview .np-hr,
 .ne-body .ProseMirror hr {
   border: none; height: 1px;
-  background: rgba(123,127,178,0.2);
+  background: color-mix(in srgb, var(--action-primary) 20%, transparent);
 }
 
 /* 对象引用 chip：整体选中/删除的原子节点，编辑态/只读态外观必须一致。
@@ -217,12 +217,12 @@
 .mind-ref {
   display: inline-flex; align-items: center; gap: 4px;
   padding: 0 6px; margin: 0 1px; border-radius: 5px;
-  background: rgba(123,127,178,0.14);
+  background: color-mix(in srgb, var(--action-primary) 14%, transparent);
   color: #5b5f8c; font-size: 12.5px; font-weight: 500;
   cursor: pointer; max-width: 100%; box-sizing: border-box;
   transition: background 0.12s;
 }
-.mind-ref:hover { background: rgba(123,127,178,0.26); }
+.mind-ref:hover { background: color-mix(in srgb, var(--action-primary) 26%, transparent); }
 .mind-ref.mind-ref-missing {
   background: rgba(120,124,142,0.1); color: var(--text-secondary);
   cursor: pointer; text-decoration: line-through; opacity: 0.72;

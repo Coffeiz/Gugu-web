@@ -358,9 +358,9 @@ const files = computed(() =>
   transition: all 0.18s;
 }
 .fc-upload:hover, .fc-upload.dragging {
-  border-color: rgba(123,127,178,0.45);
+  border-color: color-mix(in srgb, var(--action-primary) 45%, transparent);
   color: var(--color-primary);
-  background: rgba(123,127,178,0.04);
+  background: color-mix(in srgb, var(--action-primary) 4%, transparent);
 }
 .fc-upload-text { font-size: 10px; font-weight: 600; }
 

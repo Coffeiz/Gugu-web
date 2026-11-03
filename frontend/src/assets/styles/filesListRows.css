@@ -46,9 +46,9 @@
 }
 :is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) > * { min-width: 0; }
 :is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]):hover:not(.selected):not(.pre-selected) { background: var(--action-soft); }
-:is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]).selected { background: rgba(123,127,178,0.1); }
-:is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]).pre-selected:not(.selected) { background: rgba(123,127,178,0.06); outline: 1px solid rgba(123,127,178,0.25); }
-:is(.file-list .list-row.folder-row, .file-list-view .list-row.folder-row, .list-row[data-runtime-proxy-content].folder-row, .list-row[data-runtime-presence-ghost].folder-row).selected { background: rgba(123,127,178,0.09); }
+:is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]).selected { background: var(--action-soft); }
+:is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]).pre-selected:not(.selected) { background: color-mix(in srgb, var(--action-primary) 6%, transparent); outline: 1px solid color-mix(in srgb, var(--action-primary) 25%, transparent); }
+:is(.file-list .list-row.folder-row, .file-list-view .list-row.folder-row, .list-row[data-runtime-proxy-content].folder-row, .list-row[data-runtime-presence-ghost].folder-row).selected { background: color-mix(in srgb, var(--action-primary) 9%, transparent); }
 :is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-name-cell { display: flex; align-items: center; gap: 7px; min-width: 0; }
 :is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-folder-icon,
 :is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-file-icon { flex-shrink: 0; opacity: 0.82; }

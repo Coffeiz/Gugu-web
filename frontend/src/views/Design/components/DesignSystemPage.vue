@@ -30,7 +30,7 @@
           <div>
             <span class="section-kicker">PALETTE SYSTEM</span>
             <h2>主题配色色系</h2>
-            <p>每套色板同时覆盖主操作、辅助色、表面和状态色；点击卡片切换当前配色。</p>
+            <p>完整替换页面主色与状态色；点击卡片切换全局配色。</p>
           </div>
           <span class="state-badge">{{ palette.toUpperCase() }}</span>
         </div>
@@ -383,20 +383,20 @@ const themeChoices = [
 ] as const
 function applyTheme(choice: typeof themeChoices[number]) { setFamily(choice.family); setTheme(choice.mode) }
 const paletteChoices: Array<{ value: ThemePalette; label: string; note: string; swatches: Array<{ label: string; color: string }> }> = [
-  { value: 'mist', label: 'Mist', note: '轻盈通透的柔和雾色', swatches: [
-    { label: 'Primary', color: '#7b7fb2' }, { label: 'Surface', color: '#eef0f6' }, { label: 'Success', color: '#5a9e88' }, { label: 'Danger', color: '#c85a5a' },
+  { value: 'neutral', label: 'Ink', note: '黑白冷灰', swatches: [
+    { label: 'Primary', color: '#565b64' }, { label: 'Surface', color: '#f0f1f3' }, { label: 'Success', color: '#71877c' }, { label: 'Danger', color: '#a16d70' },
   ] },
-  { value: 'cafe', label: 'Cafe', note: '温暖咖啡棕色系', swatches: [
-    { label: 'Primary', color: '#746b78' }, { label: 'Surface', color: '#f7f5f8' }, { label: 'Success', color: '#5e8877' }, { label: 'Danger', color: '#a65d60' },
+  { value: 'cafe', label: 'Cafe', note: '原版咖啡棕', swatches: [
+    { label: 'Primary', color: '#715653' }, { label: 'Surface', color: '#f2edef' }, { label: 'Success', color: '#5e8877' }, { label: 'Danger', color: '#a65d60' },
   ] },
-  { value: 'rose', label: 'Rose', note: '低饱和玫瑰邻近色', swatches: [
-    { label: 'Primary', color: '#c98f98' }, { label: 'Surface', color: '#f7eff0' }, { label: 'Success', color: '#89a58e' }, { label: 'Danger', color: '#bd7c82' },
+  { value: 'red', label: 'Terra', note: '低饱和陶红', swatches: [
+    { label: 'Primary', color: '#a66e73' }, { label: 'Surface', color: '#f5eeee' }, { label: 'Success', color: '#778a7d' }, { label: 'Danger', color: '#a66e73' },
   ] },
-  { value: 'sky', label: 'Sky', note: '低饱和天空邻近色', swatches: [
-    { label: 'Primary', color: '#839fc2' }, { label: 'Surface', color: '#edf4f7' }, { label: 'Success', color: '#84a598' }, { label: 'Danger', color: '#b98087' },
+  { value: 'blue', label: 'Harbor', note: '低饱和雾蓝', swatches: [
+    { label: 'Primary', color: '#65789a' }, { label: 'Surface', color: '#edf0f5' }, { label: 'Success', color: '#718a7f' }, { label: 'Danger', color: '#a77578' },
   ] },
-  { value: 'sage', label: 'Sage', note: '低饱和鼠尾草邻近色', swatches: [
-    { label: 'Primary', color: '#84ab9e' }, { label: 'Surface', color: '#edf5f2' }, { label: 'Success', color: '#789d8c' }, { label: 'Danger', color: '#b98186' },
+  { value: 'green', label: 'Grove', note: '低饱和苔绿', swatches: [
+    { label: 'Primary', color: '#718a7e' }, { label: 'Surface', color: '#edf2ef' }, { label: 'Success', color: '#718a7e' }, { label: 'Danger', color: '#a77578' },
   ] },
 ]
 
@@ -516,12 +516,12 @@ const notes = [
 .hero-copy{min-width:0;max-width:760px}.hero-title-row{display:flex;align-items:baseline;gap:var(--space-sm)}.eyebrow,.section-kicker{color:var(--content-tertiary);font-size:var(--font-size-xs);font-weight:var(--font-weight-semibold);letter-spacing:var(--tracking-label)}.hero-copy h1{margin:0;padding-block:2px;font-size:var(--font-size-xl);line-height:var(--line-height-tight)}.hero-copy p{margin-top:var(--space-xs);color:var(--content-secondary);font-size:var(--font-size-xs);line-height:var(--line-height-ui);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .design-content{width:min(1440px,100%);margin:0 auto;padding:calc(58px + var(--space-xl) + var(--space-lg)) clamp(var(--space-lg),4vw,56px) 72px}
 .theme-matrix{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--space-sm);margin-bottom:var(--space-xl)}
-.palette-section{margin-bottom:var(--design-section-gap)}.palette-gallery{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--design-grid-gap)}.palette-gallery-card{display:flex;flex-direction:column;gap:var(--space-md);min-width:0;padding:var(--space-lg);text-align:left;color:var(--content-primary);background:var(--design-card-bg);border:1px solid var(--design-card-border);border-radius:var(--design-card-radius);box-shadow:var(--elevation-card);cursor:pointer;transition:background var(--motion-hover-control),border-color var(--motion-hover-control),box-shadow var(--motion-hover-control),transform var(--motion-hover-control)}.palette-gallery-card:hover{background:var(--surface-raised);border-color:var(--border-hover);box-shadow:var(--elevation-card-hover);transform:translateY(-1px)}.palette-gallery-card.active{border-color:var(--action-outline);box-shadow:0 0 0 2px var(--action-soft),var(--elevation-card)}.palette-gallery-head{display:flex;align-items:baseline;justify-content:space-between;gap:var(--space-sm)}.palette-gallery-name{font-weight:var(--font-weight-semibold)}.palette-gallery-note{color:var(--content-tertiary);font-size:var(--font-size-xs)}.palette-swatches{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--space-xs);height:36px}.palette-swatches i{display:block;border-radius:var(--radius-xs);box-shadow:inset 0 1px 0 rgba(255,255,255,.28),inset 0 -1px 0 rgba(0,0,0,.08)}.palette-gallery-tokens{display:flex;justify-content:space-between;color:var(--content-tertiary);font-size:var(--font-size-xs)}
+.palette-section{margin-bottom:var(--design-section-gap)}.palette-gallery{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:var(--design-grid-gap)}.palette-gallery-card{display:flex;flex-direction:column;gap:var(--space-md);min-width:0;padding:var(--space-lg);text-align:left;color:var(--content-primary);background:var(--design-card-bg);border:1px solid var(--design-card-border);border-radius:var(--design-card-radius);box-shadow:var(--elevation-card);cursor:pointer;transition:background var(--motion-hover-control),border-color var(--motion-hover-control),box-shadow var(--motion-hover-control),transform var(--motion-hover-control)}.palette-gallery-card:hover{background:var(--surface-raised);border-color:var(--border-hover);box-shadow:var(--elevation-card-hover);transform:translateY(-1px)}.palette-gallery-card.active{border-color:var(--action-outline);box-shadow:0 0 0 2px var(--action-soft),var(--elevation-card)}.palette-gallery-head{display:flex;align-items:baseline;justify-content:space-between;gap:var(--space-sm)}.palette-gallery-name{font-weight:var(--font-weight-semibold)}.palette-gallery-note{color:var(--content-tertiary);font-size:var(--font-size-xs)}.palette-swatches{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--space-xs);height:36px}.palette-swatches i{display:block;border-radius:var(--radius-xs);box-shadow:inset 0 1px 0 rgba(255,255,255,.28),inset 0 -1px 0 rgba(0,0,0,.08)}.palette-gallery-tokens{display:flex;justify-content:space-between;color:var(--content-tertiary);font-size:var(--font-size-xs)}
 .theme-cell{min-width:0;padding:var(--space-sm);display:flex;align-items:center;gap:var(--space-sm);border:1px solid var(--border-subtle);border-radius:var(--radius-md);color:var(--content-secondary);background:var(--surface-base);box-shadow:var(--elevation-card);font-family:var(--font-sans);text-align:left;cursor:pointer;transition:transform .18s var(--ease-standard),box-shadow .18s var(--ease-standard),outline-color .18s ease}
 .theme-cell:hover{transform:translateY(-1px);box-shadow:var(--elevation-card-hover)}.theme-cell.active{outline:2px solid var(--focus-ring);outline-offset:1px}.theme-cell>span:last-child{min-width:0;display:flex;flex-direction:column}.theme-cell strong{font-size:var(--font-size-sm);color:var(--content-primary)}.theme-cell small{margin-top:var(--space-xs);font-size:var(--font-size-xs);color:var(--content-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .theme-mini{width:72px;height:42px;flex-shrink:0;display:grid;grid-template-columns:20px 1fr;overflow:hidden;border:1px solid rgba(100,100,120,.12);border-radius:var(--radius-sm);background:var(--preview-bg)}.mini-side{padding:5px 3px;display:flex;flex-direction:column;gap:3px;background:var(--preview-side)}.mini-side i{height:3px;border-radius:var(--radius-pill);background:var(--preview-line)}.mini-canvas{padding:6px;display:flex;flex-direction:column;gap:4px}.mini-canvas i{height:7px;border:1px solid var(--preview-border);border-radius:4px;background:var(--preview-card)}
-.glass-light{--preview-bg:linear-gradient(145deg,#e8e9ee,#a7afc2);--preview-side:rgba(255,255,255,.48);--preview-card:rgba(255,255,255,.72);--preview-line:#7b7fb2;--preview-border:rgba(255,255,255,.75)}
-.glass-dark{--preview-bg:linear-gradient(145deg,#0e101a,#17192b);--preview-side:rgba(28,30,47,.88);--preview-card:rgba(255,255,255,.07);--preview-line:#9590c4;--preview-border:rgba(255,255,255,.10)}
+.glass-light{--preview-bg:linear-gradient(145deg,#e8e9ee,#a7afc2);--preview-side:rgba(255,255,255,.48);--preview-card:rgba(255,255,255,.72);--preview-line:var(--action-primary);--preview-border:rgba(255,255,255,.75)}
+.glass-dark{--preview-bg:linear-gradient(145deg,#0e101a,#17192b);--preview-side:rgba(28,30,47,.88);--preview-card:rgba(255,255,255,.07);--preview-line:var(--action-primary);--preview-border:rgba(255,255,255,.10)}
 .mono-light{--preview-bg:linear-gradient(180deg,#f5f3f6,#eeecf0);--preview-side:#f8f6f9;--preview-card:#fbfafc;--preview-line:#7067a5;--preview-border:rgba(42,35,49,.09)}
 .mono-dark{--preview-bg:linear-gradient(180deg,#1c1921,#17151b);--preview-side:#201d25;--preview-card:#24212a;--preview-line:#a49acb;--preview-border:rgba(255,255,255,.08)}
 .design-section{position:relative;margin-bottom:var(--design-section-gap);padding:var(--space-xl);background:var(--design-section-bg);border:1px solid var(--design-section-border);border-radius:var(--design-section-radius);box-shadow:var(--design-section-shadow),inset 0 1px 0 var(--design-section-highlight)}
@@ -587,4 +587,5 @@ const notes = [
 .progress-token-track span { display: block; width: 68%; height: 100%; border-radius: inherit; background: var(--progress-fill-bg); }
 .progress-token-swatch { height: 56px; display: grid; place-items: center; border-bottom: 1px solid var(--content-divider); }
 .progress-token-swatch > span { display: block; }
+
 </style>

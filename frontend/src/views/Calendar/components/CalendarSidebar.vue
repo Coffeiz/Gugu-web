@@ -128,8 +128,8 @@ function notePreview(note: MindNote) {
 .cal-sidebar { padding: 16px; display: flex; flex-direction: column; gap: 0; overflow-y: auto; min-height: 0; scrollbar-gutter: auto; }
 .sidebar-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .sidebar-date-label { font-size: 13px; font-weight: 700; color: var(--text-primary); }
-.add-event-btn { display: flex; align-items: center; gap: 5px; padding: 5px 10px; border-radius: 8px; border: 1px solid rgba(123,127,178,0.3); background: rgba(123,127,178,0.08); font-size: 11px; font-weight: 600; cursor: pointer; color: var(--color-primary); font-family: var(--font-sans); transition: all 0.15s; }
-.add-event-btn:hover { background: rgba(123,127,178,0.15); border-color: rgba(123,127,178,0.5); }
+.add-event-btn { display: flex; align-items: center; gap: 5px; padding: 5px 10px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--action-primary) 30%, transparent); background: color-mix(in srgb, var(--action-primary) 8%, transparent); font-size: 11px; font-weight: 600; cursor: pointer; color: var(--color-primary); font-family: var(--font-sans); transition: all 0.15s; }
+.add-event-btn:hover { background: color-mix(in srgb, var(--action-primary) 15%, transparent); border-color: color-mix(in srgb, var(--action-primary) 50%, transparent); }
 .add-proj-btn { background: var(--action-primary-bg); border-color: transparent; color: var(--content-on-accent); box-shadow: none; }
 .add-proj-btn:hover { background: var(--action-primary-bg-hover); border-color: transparent; opacity: 1; box-shadow: none; }
 .sidebar-group { display: flex; flex-direction: column; gap: 7px; }
@@ -144,7 +144,7 @@ function notePreview(note: MindNote) {
 .sidebar-ev-time { display: inline-block; font-size: 11px; font-weight: 600; color: var(--action-primary); margin-left: 7px; margin-right: 4px; font-variant-numeric: tabular-nums; }
 .sidebar-ev-time.has-end-time { min-width: 11ch; }
 .ev-type-badge { display: inline-block; vertical-align: middle; margin-left: 4px; font-size: 9px; font-weight: 700; letter-spacing: 0.04em; padding: 1px 5px; border-radius: 4px; line-height: 1.5; white-space: nowrap; }
-.ev-proj-badge { background: rgba(123,127,178,0.12); color: #7b7fb2; border: 1px solid rgba(123,127,178,0.2); }
+.ev-proj-badge { background: color-mix(in srgb, var(--action-primary) 12%, transparent); color: var(--action-primary); border: 1px solid color-mix(in srgb, var(--action-primary) 20%, transparent); }
 .ev-event-badge { background: rgba(210,175,40,0.15); color: #a07c00; border: 1px solid rgba(210,175,40,0.4); }
 .sidebar-ev-desc { font-size: 11px; color: var(--text-secondary); margin-top: 3px; line-height: 1.4; display: flex; align-items: flex-start; gap: 4px; }
 .sidebar-ev-desc > span { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }

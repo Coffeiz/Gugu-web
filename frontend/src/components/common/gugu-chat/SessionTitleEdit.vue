@@ -170,9 +170,9 @@ function resetHeaderText() {
 }
 .exp-session-title.is-header:hover,
 .exp-session-title.is-header.is-editing {
-  border-color: rgba(123,127,178,0.35); background: rgba(255,255,255,0.75);
+  border-color: color-mix(in srgb, var(--action-primary) 35%, transparent); background: rgba(255,255,255,0.75);
 /* 内阴影去 1px 纵向偏移，否则编辑态会把内容下推 1px、跟非编辑态对不齐 */
-  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.9), 0 0 0 3px rgba(123,127,178,0.08);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.9), 0 0 0 3px color-mix(in srgb, var(--action-primary) 8%, transparent);
 }
 .exp-session-title.is-header:focus { outline: none; }
 /* 侧边栏编辑态：字号与标题一致，占满剩余宽度（覆盖 global.css 的 .rename-sizer） */
@@ -191,7 +191,7 @@ function resetHeaderText() {
   transform: translateY(-50%);
   transition: opacity 0.15s, background 0.15s; flex-shrink: 0;
 }
-.exp-session-rename-btn:hover { background: rgba(123,127,178,0.12); color: var(--text-primary); }
+.exp-session-rename-btn:hover { background: color-mix(in srgb, var(--action-primary) 12%, transparent); color: var(--text-primary); }
 .exp-session-rename-btn svg { display: block; }
 /* 编辑态：按钮保持可见（即使光标移开会话项，勾选确认按钮也不会消失） */
 .exp-session-title-wrap.is-editing .exp-session-rename-btn { opacity: 1; }

@@ -1076,7 +1076,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
   font-size: 12px; font-weight: 600; font-family: var(--font-sans); white-space: nowrap;
   transition: background 0.15s, box-shadow 0.15s;
 }
-.paste-btn:hover { background: rgba(255,255,255,0.82); box-shadow: 0 1px 4px rgba(123,127,178,0.18); }
+.paste-btn:hover { background: rgba(255,255,255,0.82); box-shadow: 0 1px 4px color-mix(in srgb, var(--action-primary) 18%, transparent); }
 .paste-btn svg { display: block; }
 
 .view-toggle {
@@ -1102,18 +1102,18 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
   font-size: 12px; font-weight: 600; color: var(--color-primary);
   cursor: pointer; font-family: var(--font-sans); transition: all 0.15s; white-space: nowrap;
 }
-.new-folder-btn:hover { border-color: var(--color-primary); background: rgba(123,127,178,0.06); }
+.new-folder-btn:hover { border-color: var(--color-primary); background: color-mix(in srgb, var(--action-primary) 6%, transparent); }
 
 .new-folder-row { display: flex; align-items: center; gap: 6px; }
 .new-folder-input {
   height: 30px; padding: 0 10px; border-radius: 7px;
-  border: 1.5px solid rgba(123,127,178,0.4); background: white;
+  border: 1.5px solid color-mix(in srgb, var(--action-primary) 40%, transparent); background: white;
   font-size: 12px; font-family: var(--font-sans); outline: none; width: 140px;
 }
 .new-folder-input:focus { border-color: var(--color-primary); }
 .btn-confirm {
   height: 30px; padding: 0 12px; border-radius: 7px; border: none;
-  background: linear-gradient(135deg, #7b7fb2, #9590c4); color: white;
+  background: linear-gradient(135deg, var(--action-primary), var(--action-primary-hover)); color: white;
   font-size: 12px; font-weight: 600; cursor: pointer;
 }
 .btn-confirm:disabled { opacity: 0.5; cursor: default; }
@@ -1168,7 +1168,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
   display: flex; flex-direction: column; align-items: center; gap: 10px;
   padding: 40px 60px;
   background: rgba(255,255,255,0.72);
-  border: 2px dashed rgba(123,127,178,0.45); border-radius: 20px;
+  border: 2px dashed color-mix(in srgb, var(--action-primary) 45%, transparent); border-radius: 20px;
   color: var(--color-primary);
 }
 .drop-hint { font-size: 16px; font-weight: 700; color: var(--text-primary); }

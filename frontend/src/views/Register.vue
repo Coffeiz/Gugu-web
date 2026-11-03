@@ -167,7 +167,7 @@ onBeforeUnmount(() => { if (countdownTimer) clearInterval(countdownTimer) })
 }
 .glow-1 {
   width: 500px; height: 500px; top: -120px; left: -100px;
-  background: radial-gradient(circle, rgba(123,127,178,0.18) 0%, transparent 65%);
+  background: radial-gradient(circle, color-mix(in srgb, var(--action-primary) 18%, transparent) 0%, transparent 65%);
 }
 .glow-2 {
   width: 380px; height: 380px; bottom: -100px; right: -80px;
@@ -201,8 +201,8 @@ onBeforeUnmount(() => { if (countdownTimer) clearInterval(countdownTimer) })
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 .field input:focus {
-  border-color: rgba(123,127,178,0.5);
-  box-shadow: 0 0 0 3px rgba(123,127,178,0.12), inset 0 1px 3px rgba(80,90,110,0.06);
+  border-color: color-mix(in srgb, var(--action-primary) 50%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--action-primary) 12%, transparent), inset 0 1px 3px rgba(80,90,110,0.06);
 }
 .field input::placeholder { color: #b0b4c4; }
 .field input:disabled { opacity: 0.5; }
@@ -258,13 +258,13 @@ onBeforeUnmount(() => { if (countdownTimer) clearInterval(countdownTimer) })
   margin-top: 22px; text-align: center;
   font-size: 13px; color: #8a8fa8;
 }
-.card-footer a { color: #7b7fb2; font-weight: 600; text-decoration: none; }
+.card-footer a { color: var(--action-primary); font-weight: 600; text-decoration: none; }
 .card-footer a:hover { text-decoration: underline; }
 .card-policy {
   margin-top: 10px; text-align: center;
   font-size: 11px; color: #a0a4b8;
 }
 .card-policy a { color: #a0a4b8; text-decoration: underline; }
-.card-policy a:hover { color: #7b7fb2; }
+.card-policy a:hover { color: var(--action-primary); }
 
 </style>
