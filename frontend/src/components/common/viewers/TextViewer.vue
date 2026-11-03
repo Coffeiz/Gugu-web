@@ -1,5 +1,5 @@
 <template>
-  <div class="tv-wrap">
+  <div ref="viewerRoot" class="tv-wrap">
     <div v-if="loading" class="tv-status">
       <div class="tv-spinner" />
       <span>{{ t('viewerUi.loading') }}</span>
@@ -183,6 +183,7 @@ const previewStore = usePreviewStore()
 const uiStore = useUiStore()
 const filesCache = useFilesCacheStore()
 
+const viewerRoot = ref<HTMLElement | null>(null)
 const tvScroll = ref<HTMLElement | null>(null)   // .tv-scroll 滚动容器
 const mdRoot = ref<HTMLElement | null>(null)
 let themeObserver: MutationObserver | null = null
@@ -216,13 +217,18 @@ function copyTableHeaderStyles(source: HTMLTableElement, clone: HTMLTableElement
 function updateTableViewportControls() {
   tableViewportFrame = 0
   const viewport = tvScroll.value
-  if (!viewport || !floatingTableScrollbar || !stickyTableHeader) return
+  if (!floatingTableScrollbar || !stickyTableHeader) return
+  if (!viewport) {
+    stickyTableHeader.style.display = 'none'
+    floatingTableScrollbar.style.display = 'none'
+    return
+  }
   const viewportRect = viewport.getBoundingClientRect()
-  const viewerRoot = viewport.closest('.fpw-root')
-  const rootLayer = Number.parseInt(viewerRoot ? getComputedStyle(viewerRoot).zIndex : '', 10)
-  const controlsLayer = Number.isFinite(rootLayer) ? rootLayer + 2 : 1202
-  stickyTableHeader.style.zIndex = String(controlsLayer)
-  floatingTableScrollbar.style.zIndex = String(controlsLayer + 1)
+  const host = viewerRoot.value
+  if (!host) return
+  const hostRect = host.getBoundingClientRect()
+  const originLeft = hostRect.left + host.clientLeft
+  const originTop = hostRect.top + host.clientTop
   const tables = [...(mdRoot.value?.querySelectorAll<HTMLTableElement>('.md-table-wrap > table') ?? [])]
     .map(table => ({ table, wrapper: table.parentElement as HTMLElement }))
   const stickyCandidate = tables.find(({ table }) => {
@@ -246,8 +252,8 @@ function updateTableViewportControls() {
     const headHeight = table.querySelector('thead')?.getBoundingClientRect().height ?? 0
     const visibleHeight = Math.max(0, Math.min(headHeight, table.getBoundingClientRect().bottom - viewportRect.top))
     stickyTableHeader.style.display = visibleHeight ? 'block' : 'none'
-    stickyTableHeader.style.top = `${viewportRect.top}px`
-    stickyTableHeader.style.left = `${wrapper.getBoundingClientRect().left}px`
+    stickyTableHeader.style.top = `${viewportRect.top - originTop}px`
+    stickyTableHeader.style.left = `${wrapper.getBoundingClientRect().left - originLeft}px`
     stickyTableHeader.style.width = `${wrapper.clientWidth}px`
     stickyTableHeader.style.height = `${visibleHeight}px`
     const clone = stickyTableHeader.firstElementChild as HTMLTableElement | null
@@ -267,9 +273,9 @@ function updateTableViewportControls() {
     const trackContent = floatingTableScrollbar.firstElementChild as HTMLDivElement | null
     if (trackContent) trackContent.style.width = `${table.scrollWidth}px`
     floatingTableScrollbar.style.display = 'block'
-    floatingTableScrollbar.style.left = `${wrapper.getBoundingClientRect().left}px`
+    floatingTableScrollbar.style.left = `${wrapper.getBoundingClientRect().left - originLeft}px`
     floatingTableScrollbar.style.width = `${wrapper.clientWidth}px`
-    floatingTableScrollbar.style.top = `${viewportRect.bottom - floatingTableScrollbar.offsetHeight}px`
+    floatingTableScrollbar.style.top = `${viewportRect.bottom - originTop - floatingTableScrollbar.offsetHeight}px`
     if (activeTableScroller !== wrapper || floatingTableScrollbar.scrollLeft !== wrapper.scrollLeft) {
       floatingTableScrollbar.scrollLeft = wrapper.scrollLeft
     }
@@ -995,7 +1001,7 @@ onMounted(() => {
   stickyTableHeader.className = 'tv-table-sticky-head'
   stickyTableHeader.setAttribute('aria-hidden', 'true')
   stickyTableHeader.style.display = 'none'
-  document.body.append(stickyTableHeader)
+  viewerRoot.value?.append(stickyTableHeader)
 
   floatingTableScrollbar = document.createElement('div')
   floatingTableScrollbar.className = 'tv-table-floating-scroll'
@@ -1008,13 +1014,13 @@ onMounted(() => {
   trackContent.setAttribute('aria-hidden', 'true')
   floatingTableScrollbar.append(trackContent)
   floatingTableScrollbar.addEventListener('scroll', syncTableScrollFromFloatingBar, { passive: true })
-  document.body.append(floatingTableScrollbar)
+  viewerRoot.value?.append(floatingTableScrollbar)
 
   // 捕获阶段同时接收预览纵向滚动和表格自身的横向滚动。
   document.addEventListener('scroll', onTableViewportScroll, { passive: true, capture: true })
   window.addEventListener('resize', refreshTableViewportLayout, { passive: true })
   tableViewportObserver = new MutationObserver(scheduleTableViewportUpdate)
-  tableViewportObserver.observe(document.body, { childList: true, subtree: true })
+  if (viewerRoot.value) tableViewportObserver.observe(viewerRoot.value, { childList: true, subtree: true })
   scheduleTableViewportUpdate()
 })
 
@@ -1058,6 +1064,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .tv-wrap {
+  isolation: isolate;
   position: absolute;
   inset: 0;
   background: var(--surface-card-solid, #fff);
@@ -1477,8 +1484,8 @@ onBeforeUnmount(() => {
 }
 .tv-md :deep(.md-table-wrap > table > thead > tr > th) { position: static; }
 :global(.tv-table-sticky-head) {
-  position: fixed;
-  z-index: 1200;
+  position: absolute;
+  z-index: 2;
   overflow: hidden;
   pointer-events: none;
   background: var(--surface-card-solid, #fff);
@@ -1490,8 +1497,8 @@ onBeforeUnmount(() => {
   margin: 0;
 }
 :global(.tv-table-floating-scroll) {
-  position: fixed;
-  z-index: 1201;
+  position: absolute;
+  z-index: 3;
   height: calc(var(--scrollbar-size-default) + 2px);
   overflow-x: auto;
   overflow-y: hidden;
