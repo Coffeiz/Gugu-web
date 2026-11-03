@@ -59,15 +59,19 @@ function localizedToolStatusLabel(event: { name?: string; label?: string; input?
   return event.label || event.name || i18n.global.t('chatUi.toolCall')
 }
 
-function attachPersistedIdentity(messages: ChatMessage[], optimistic: ChatMessage, dbId: number): ChatMessage[] {
+function attachPersistedIdentity(
+  messages: ChatMessage[], optimistic: ChatMessage, dbId: number, timelineOrder?: number,
+): ChatMessage[] {
   const index = messages.findIndex(message => message.id === optimistic.id)
   if (index < 0) {
     optimistic.dbId = dbId
     optimistic._syncKey ||= `message:${dbId}`
+    if (timelineOrder != null) optimistic._timelineOrder = timelineOrder
     return messages
   }
   messages[index].dbId = dbId
   messages[index]._syncKey ||= `message:${dbId}`
+  if (timelineOrder != null) messages[index]._timelineOrder = timelineOrder
   // History sync may have inserted the persisted copy before SSE delivered identity.
   return mergeSessionMessageDelta(messages, [])
 }
@@ -897,6 +901,7 @@ export function useChatStream(options: {
     if (!text && !atts.length) return
     clientMessageSequence += 1
     const clientMessageId = `${CLIENT_ID}:${Date.now().toString(36)}:${clientMessageSequence.toString(36)}`
+    const sentAt = new Date().toISOString()
     // 队列消息目标会话与当前视图不同：仍把原始 session_id 发给后端，但不接管
     // 当前会话的 streaming/status/messages 状态。回复已落库，切回目标会话即可恢复。
     if (isQueuedDispatch && targetSessionId != null && targetSessionId !== sessionId.value) {
@@ -929,6 +934,7 @@ export function useChatStream(options: {
       } else if (!streaming.value) {
         optimisticUserMessage = { id: mkid(), role: 'user', text, time: now(),
           clientMessageId, _syncKey: `client:${clientMessageId}`,
+          _createdAt: sentAt,
           references: refs.length ? refs : undefined,
           files: atts.length ? atts.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, attach_id: a.attach_id, kind: a.kind, duration: a.duration, upload: true, _thumbUrl: a._thumbUrl, img_width: a.img_width, img_height: a.img_height })) : undefined }
         messages.value.push(optimisticUserMessage)
@@ -1010,7 +1016,9 @@ export function useChatStream(options: {
       const r = await consumeStream(res.body.getReader(), ownerSid, viewGeneration, (_acceptedSessionId, timelineOrder, userMessageId) => {
         if (optimisticUserMessage && userMessageId) {
           // 用响应式代理补稳定身份，并折叠历史同步可能已插入的竞态副本。
-          messages.value = attachPersistedIdentity(messages.value, optimisticUserMessage, userMessageId)
+          messages.value = attachPersistedIdentity(
+            messages.value, optimisticUserMessage, userMessageId, timelineOrder,
+          )
         }
         runSessionIds.set(requestController, _acceptedSessionId)
         if (stopWaitingForSessionId.has(requestController)) {
@@ -1023,6 +1031,7 @@ export function useChatStream(options: {
           id: mkid(), role: 'user', text, time: now(),
           clientMessageId, _syncKey: `client:${clientMessageId}`,
           dbId: userMessageId,
+          _createdAt: sentAt,
           references: refs.length ? refs : undefined,
           files: atts.length ? atts.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, attach_id: a.attach_id, kind: a.kind, duration: a.duration, upload: true, _thumbUrl: a._thumbUrl, img_width: a.img_width, img_height: a.img_height })) : undefined,
           _timelineOrder: timelineOrder,

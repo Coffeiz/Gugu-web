@@ -28,7 +28,9 @@ export function sortSessionTimelineMessages(items: ChatMessage[]) {
   return items.sort((a, b) => {
     const aTimestamp = Date.parse(a._completedAt || a._createdAt || '')
     const bTimestamp = Date.parse(b._completedAt || b._createdAt || '')
-    if (Number.isFinite(aTimestamp) && Number.isFinite(bTimestamp) && aTimestamp !== bTimestamp) {
+    const aHasTimestamp = Number.isFinite(aTimestamp)
+    const bHasTimestamp = Number.isFinite(bTimestamp)
+    if (aHasTimestamp && bHasTimestamp && aTimestamp !== bTimestamp) {
       return aTimestamp - bTimestamp
     }
     if (isPairedInteraction(a, b)) return 1
@@ -36,6 +38,9 @@ export function sortSessionTimelineMessages(items: ChatMessage[]) {
     if (a._timelineOrder != null && b._timelineOrder != null && a._timelineOrder !== b._timelineOrder) {
       return a._timelineOrder - b._timelineOrder
     }
+    // 乐观消息在服务端身份/时间尚未回填时应留在插入位置；空字符串排序会把它
+    // 错放到会话最前面，流式事件一到达，用户就会误以为气泡消失了。
+    if (!aHasTimestamp || !bHasTimestamp) return 0
     return String(a._createdAt || '').localeCompare(String(b._createdAt || ''))
   })
 }
