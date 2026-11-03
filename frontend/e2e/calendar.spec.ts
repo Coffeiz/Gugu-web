@@ -44,7 +44,7 @@ test('周视图选中时段的底色与月视图选中日期一致', async ({ pa
     await page.evaluate((selectedTheme) => {
       document.documentElement.dataset.theme = selectedTheme
       document.documentElement.dataset.family = 'glass'
-      document.documentElement.dataset.palette = 'mist'
+      document.documentElement.dataset.palette = 'neutral'
     }, theme)
 
     for (const weekend of [false, true]) {
@@ -202,7 +202,7 @@ test('周末作为框选头尾时比范围内的周末日期更突出', async ({
     await page.evaluate((selectedTheme) => {
       document.documentElement.dataset.theme = selectedTheme
       document.documentElement.dataset.family = 'glass'
-      document.documentElement.dataset.palette = 'mist'
+      document.documentElement.dataset.palette = 'neutral'
     }, theme)
 
     for (const [startCell, endCell, edgeSelector] of [

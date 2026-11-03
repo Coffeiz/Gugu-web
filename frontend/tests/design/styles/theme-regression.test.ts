@@ -58,9 +58,10 @@ const imageViewerVue = load('../../components/common/viewers/ImageViewer.vue')
 const viewerToolbarVue = load('../../components/common/viewers/ViewerToolbar.vue')
 const primitivesCss = load('./tokens/primitives.css')
 const fontsCss = load('./fonts.css')
-const paletteFiles = [['aero', 'mist'], ['mono', 'cafe'], ['rose', 'rose'], ['sky', 'sky'], ['sage', 'sage']].map(([file, name]) => ({
+const brandPalettesCss = load('./tokens/palettes/brand-palettes.css')
+const paletteFiles = ['cafe', 'neutral', 'red', 'blue', 'green'].map(name => ({
   name,
-  css: load(`./tokens/palettes/${file}.css`) + load('./tokens/palettes/color-base.css'),
+  css: brandPalettesCss,
 }))
 const paletteColorBaseCss = load('./tokens/palettes/color-base.css')
 const materialCompositionCss = load('./tokens/themes/material-composition.css')
@@ -100,13 +101,7 @@ const newProjectModalVue = load('../../views/Projects/components/NewProjectModal
 const appSidebarVue = load('../../components/common/layout/AppSidebar.vue')
 const themeRefinementsCss = load('./theme-refinements.css')
 const designOverridesCss = load('./design-overrides.css')
-const lightPaletteCss = [
-  load('./tokens/palettes/aero.css'),
-  load('./tokens/palettes/mono.css'),
-  load('./tokens/palettes/rose.css'),
-  load('./tokens/palettes/sky.css'),
-  load('./tokens/palettes/sage.css'),
-]
+const lightPaletteCss = [brandPalettesCss]
 const guguChatVue = load('../../components/common/gugu-chat/GuguChat.vue')
 const guguFabVue = load('../../components/common/gugu-chat/GuguChatFab.vue')
 const checkboxVue = load('../../components/common/controls/Checkbox.vue')
@@ -139,7 +134,7 @@ describe('主题 CSS 回归契约', () => {
       for (const mode of ['light', 'dark']) {
         const themeBlock = cssBlock(css, `:root[data-palette='${name}'][data-theme='${mode}']`)
         const navDividerColor = themeBlock.match(/--theme-divider-color:\s*([^;]+)/)?.[1]
-        const navGradientColor = themeBlock.match(/--theme-divider:\s*linear-gradient\(90deg,\s*transparent,\s*([^\s]+)\s+20%/)?.[1]
+        const navGradientColor = themeBlock.match(/--theme-divider:\s*linear-gradient\(90deg,\s*transparent,\s*(.+?)\s+20%/)?.[1]
         expect(navDividerColor, `${name} ${mode} solid divider color`).toBe(navGradientColor)
       }
       for (const token of paletteTokens) {
@@ -167,7 +162,7 @@ describe('主题 CSS 回归契约', () => {
     expect(materialCompositionCss).toContain('var(--palette-surface)')
     expect(materialCompositionCss).toContain('var(--palette-page-start)')
     expect(materialCompositionCss).toContain('--theme-sidebar: var(--theme-glass);')
-    expect(materialCompositionCss).toContain("[data-family='glass'][data-theme='dark']:not([data-palette='mist'])")
+    expect(materialCompositionCss).toContain(":root[data-family='glass'][data-theme='dark']")
     expect(materialCompositionCss).toContain('--theme-glass: color-mix(in srgb,var(--theme-action-primary) 2%,color-mix(in srgb,var(--palette-surface) 60%,transparent));')
     expect(materialCompositionCss).toContain('--theme-glass-hover: color-mix(in srgb,var(--palette-surface) 75%,transparent);')
     expect(themeCss).toContain('--theme-sidebar: var(--theme-glass);')
@@ -190,13 +185,13 @@ describe('主题 CSS 回归契约', () => {
     expect(load('./tokens/themes/mono-dark.css')).toContain(activeBorder)
   })
 
-  it('Cafe 亮色页面背景降低暖色主色染色比例，避免整页偏红', () => {
-    const cafeLight = cssBlock(load('./tokens/palettes/mono.css'), ":root[data-palette='cafe'][data-theme='light']")
-    expect(cafeLight).toContain('--theme-page: radial-gradient(')
-    expect(cafeLight).toContain('var(--theme-action-primary) 2.5%,#f5f3f6')
-    expect(cafeLight).toContain('var(--theme-action-primary) 3%,#dfe1e7')
-    expect(cafeLight).toContain('--theme-base: color-mix(in srgb,var(--theme-action-primary) 4%,#f7f5f8)')
-    expect(cafeLight).not.toContain('var(--theme-action-primary) 6%')
+  it('品牌色板只定义语义颜色，材质配方由主题家族负责', () => {
+    expect(brandPalettesCss).toContain('--theme-action-primary: #715653;')
+    expect(brandPalettesCss).toContain('--theme-action-primary: #be9d98;')
+    expect(materialCompositionCss).toContain(":root[data-family='glass'][data-theme='light']")
+    expect(materialCompositionCss).toContain(":root[data-family='mono'][data-theme='light']")
+    expect(brandPalettesCss).not.toContain('--theme-page:')
+    expect(brandPalettesCss).not.toContain('--theme-base:')
   })
 
   it('暗色玻璃页面渐变从较亮端向较暗端收束', () => {
@@ -491,10 +486,10 @@ describe('主题 CSS 回归契约', () => {
     expect(componentSurfacesCss).toContain('--file-card-bg-hover: rgba(255,255,255,.86);')
     expect(componentSurfacesCss).not.toContain('--file-card-bg-selected:')
     expect(componentSurfacesCss).not.toContain('--folder-card-bg-selected:')
-    expect(componentSurfacesCss).toContain('--file-card-border-selected: rgba(123,127,178,.55);')
-    expect(componentSurfacesCss).toContain('--file-card-selection-overlay: rgba(123,127,178,.14);')
-    expect(componentSurfacesCss).toContain('--file-card-selection-thumb-overlay: rgba(123,127,178,.28);')
-    expect(componentSurfacesCss).toContain('--file-card-preselection-thumb-overlay: rgba(123,127,178,.16);')
+    expect(componentSurfacesCss).toContain('--file-card-border-selected: color-mix(in srgb,var(--action-primary) 55%,transparent);')
+    expect(componentSurfacesCss).toContain('--file-card-selection-overlay: color-mix(in srgb,var(--action-primary) 14%,transparent);')
+    expect(componentSurfacesCss).toContain('--file-card-selection-thumb-overlay: color-mix(in srgb,var(--action-primary) 28%,transparent);')
+    expect(componentSurfacesCss).toContain('--file-card-preselection-thumb-overlay: color-mix(in srgb,var(--action-primary) 16%,transparent);')
 
     // 两种卡片的选择状态由透明遮罩表达，取消 selected 时可复用同一层淡出。
     expect(fileCardVue).toContain('background: var(--file-card-bg);')
@@ -525,8 +520,8 @@ describe('主题 CSS 回归契约', () => {
     expect(surfacesCss).not.toMatch(/html\[data-family='mono'\][^{]*\.fc-card/)
   })
 
-  it('Glass 亮色非 mist 调色板的文件与文件夹选择层使用当前主题主色', () => {
-    const paletteSelection = cssBlock(componentSurfacesCss, "html[data-theme='light'][data-family='glass'][data-palette]:not([data-palette='mist'])")
+  it('Glass 亮色品牌配色的文件与文件夹选择层使用当前主题主色', () => {
+    const paletteSelection = cssBlock(componentSurfacesCss, "html[data-theme='light'][data-family='glass'][data-palette]")
     expect(paletteSelection).toContain('--file-card-border-selected: var(--action-outline);')
     expect(paletteSelection).toContain('--file-card-selection-overlay: color-mix(in srgb,var(--action-primary) 14%,transparent);')
     expect(paletteSelection).toContain('--file-card-selection-thumb-overlay: color-mix(in srgb,var(--action-primary) 28%,transparent);')
@@ -606,11 +601,10 @@ describe('主题 CSS 回归契约', () => {
     expect(publicPagesCss).not.toMatch(/(?:background|border(?:-color)?)\s*:[^;]*(?:#fff\b|white\b|rgba?\(\s*255\s*,\s*255\s*,\s*255)/i)
   })
 
-  it('页面 Mono 配色与便签 Amber 色卡保持独立', () => {
-    const monoCss = load('./tokens/palettes/mono.css')
-    expect(monoCss).toContain('--theme-action-primary: #715653')
-    expect(monoCss).toContain('--theme-action-primary: #be9d98')
-    expect(monoCss).not.toContain('#ffc05f')
+  it('页面 Cafe 配色与便签 Amber 色卡保持独立', () => {
+    expect(brandPalettesCss).toContain("[data-palette='cafe'][data-theme='light']")
+    expect(brandPalettesCss).toContain("[data-palette='cafe'][data-theme='dark']")
+    expect(brandPalettesCss).not.toContain('#ffc05f')
     expect(load('../../views/Design/components/DesignSystemPage.vue')).toContain("label: 'Amber', token: '--note-paper-amber'")
   })
 

@@ -16,6 +16,7 @@
 
 #### Improvements
 
+- Add a complete selectable color-palette system, with brand colors separated from Glass/Mono material themes and dark-mode variants.
 - Delay open group questions until the conversation has been quiet, and recheck the original question against the latest group context before resuming.
 - Preserve chronological message order and stable conversation prefixes when group messages arrive during a running reply.
 - Propagate run cancellation through in-flight model and tool work, and report a consistent terminal state.
@@ -69,6 +70,7 @@
 
 #### 改进
 
+- 增加完整的可选配色体系，将品牌颜色与 Glass/Mono 材质主题分开，并为暗色模式提供对应配色。
 - 群聊开放问题先等待群内静默，再结合最新群聊上下文复核原问题后恢复处理。
 - 群聊消息在回复运行期间到达时，保持历史时间顺序和会话前缀稳定。
 - 将取消信号传递到运行中的模型和工具任务，并统一反馈任务终态。

@@ -54,10 +54,10 @@ describe('主题令牌状态', () => {
 
     expect(useTheme().preference.value).toBe('dark')
     expect(useTheme().family.value).toBe('mono')
-    expect(useTheme().palette.value).toBe('sage')
+    expect(useTheme().palette.value).toBe('green')
     expect(document.documentElement.dataset.theme).toBe('dark')
     expect(document.documentElement.dataset.family).toBe('mono')
-    expect(document.documentElement.dataset.palette).toBe('sage')
+    expect(document.documentElement.dataset.palette).toBe('green')
   })
 
   it('切换主题家族会持久化并更新根节点属性', async () => {
@@ -88,21 +88,21 @@ describe('主题令牌状态', () => {
     const { initializeTheme, useTheme } = await import('@/composables/core/useTheme')
     initializeTheme()
 
-    useTheme().setPalette('sky')
+    useTheme().setPalette('blue')
 
-    expect(localStorage.getItem('gugu-palette')).toBe('sky')
-    expect(document.documentElement.dataset.palette).toBe('sky')
-    expect(useTheme().palette.value).toBe('sky')
+    expect(localStorage.getItem('gugu-palette')).toBe('blue')
+    expect(document.documentElement.dataset.palette).toBe('blue')
+    expect(useTheme().palette.value).toBe('blue')
   })
 
-  it('非法配色回退为 Mist', async () => {
+  it('非法配色回退为 Neutral', async () => {
     installMatchMedia()
     localStorage.setItem('gugu-palette', 'unknown')
     const { initializeTheme, useTheme } = await import('@/composables/core/useTheme')
 
     initializeTheme()
 
-    expect(useTheme().palette.value).toBe('mist')
-    expect(document.documentElement.dataset.palette).toBe('mist')
+    expect(useTheme().palette.value).toBe('neutral')
+    expect(document.documentElement.dataset.palette).toBe('neutral')
   })
 })

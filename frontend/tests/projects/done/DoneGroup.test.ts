@@ -62,7 +62,7 @@ function countProjectCards(node: HostNode): number {
 }
 
 describe('DoneGroup 折叠年月组', () => {
-  it('折叠时不挂载项目卡片，展开时再挂载组内卡片', async () => {
+  it('折叠时保留卡片供收起动画使用，展开后继续保留组内卡片', async () => {
     const root: HostNode = { type: 'root', props: {}, children: [], parent: null }
     const group = reactive({
       key: 'month-2026-10月',
@@ -79,7 +79,7 @@ describe('DoneGroup 折叠年月组', () => {
     })
     app.mount(root)
 
-    expect(countProjectCards(root)).toBe(0)
+    expect(countProjectCards(root)).toBe(2)
     group.open = true
     await nextTick()
     expect(countProjectCards(root)).toBe(2)
