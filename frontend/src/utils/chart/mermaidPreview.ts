@@ -42,10 +42,13 @@ export function openMermaidPreview(
   let offsetX = 0
   let offsetY = 0
   let dragStart: { x: number; y: number; offsetX: number; offsetY: number } | null = null
-  const setScale = (nextScale: number) => {
-    // 工具栏显示整数百分比；落在 100% 的舍入误差范围时也统一回到居中基准。
-    scale = nextScale <= 1.005 ? 1 : nextScale
-    if (scale <= 1) offsetX = offsetY = 0
+  const setScale = (nextScale: number, anchorX = 0, anchorY = 0) => {
+    const next = Math.min(8, Math.max(0.1, nextScale))
+    // 保持锚点下的图表内容不动：鼠标滚轮传入指针位置，工具栏缩放默认锚定视口中心。
+    const ratio = next / scale
+    offsetX = Math.round((anchorX - (anchorX - offsetX) * ratio) * 1000) / 1000
+    offsetY = Math.round((anchorY - (anchorY - offsetY) * ratio) * 1000) / 1000
+    scale = next
     updateView()
   }
   const updateView = () => {
@@ -69,9 +72,14 @@ export function openMermaidPreview(
       downloadLabel: labels.downloadPng,
       showClose: true,
       closeLabel: labels.close,
-      onZoomOut: () => setScale(Math.max(0.1, scale / 1.25)),
-      onResetZoom: () => setScale(1),
-      onZoomIn: () => setScale(Math.min(8, scale * 1.25)),
+      onZoomOut: () => setScale(scale / 1.25),
+      onResetZoom: () => {
+        scale = 1
+        offsetX = 0
+        offsetY = 0
+        updateView()
+      },
+      onZoomIn: () => setScale(scale * 1.25),
       onMode: (mode: string) => {
         if (mode === 'source') {
           sourceVisible = !sourceVisible
@@ -116,6 +124,7 @@ export function openMermaidPreview(
   const onPointerDown = (event: PointerEvent) => {
     if (
       event.button !== 0
+      || (scale <= 1 && offsetX === 0 && offsetY === 0)
       || (event.target as HTMLElement).closest('.iv-toolbar')
       || (event.target instanceof Node && sourceView.contains(event.target))
     ) return
@@ -141,7 +150,12 @@ export function openMermaidPreview(
     // 源码模式由浏览器处理文本选择和滚动，不要把滚轮事件当成图表缩放。
     if (event.target instanceof Node && sourceView.contains(event.target)) return
     event.preventDefault()
-    setScale(Math.min(8, Math.max(0.1, scale * (event.deltaY > 0 ? 0.9 : 1.1))))
+    const rect = body.getBoundingClientRect()
+    setScale(
+      scale * (event.deltaY > 0 ? 0.9 : 1.1),
+      event.clientX - rect.left - rect.width / 2,
+      event.clientY - rect.top - rect.height / 2,
+    )
   }
   body.addEventListener('pointerdown', onPointerDown)
   body.addEventListener('pointermove', onPointerMove)

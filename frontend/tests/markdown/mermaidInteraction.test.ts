@@ -107,7 +107,7 @@ describe('Mermaid preview interactions', () => {
     expect(document.querySelector('.md-mermaid-dialog')).toBeNull()
   })
 
-  it('prevents text selection while dragging and recenters when zoom returns to 100 percent', () => {
+  it('preserves the view when zooming back to 100 percent and still allows panning', () => {
     root = document.createElement('div')
     const chart = document.createElement('div')
     chart.className = 'md-mermaid'
@@ -140,13 +140,41 @@ describe('Mermaid preview interactions', () => {
     expect(svg.style.transform).toBe('translate(20px, 30px) scale(1.25)')
 
     dialog.querySelector<HTMLButtonElement>(`.iv-tb-btn[title="${labels.zoomOut}"]`)?.click()
-    expect(svg.style.transform).toBe('translate(0px, 0px) scale(1)')
+    expect(svg.style.transform).toBe('translate(16px, 24px) scale(1)')
 
-    // 100% 下仍能按图片浏览器的交互方式拖动，但不会选中图中文字。
+    // 100% 下保留平移位置后仍可继续拖动，且不会选中图中文字。
     expect(dispatchPointer('pointerdown', 10, 10).defaultPrevented).toBe(true)
     dispatchPointer('pointermove', 15, 20)
     dispatchPointer('pointerup', 15, 20)
-    expect(svg.style.transform).toBe('translate(5px, 10px) scale(1)')
+    expect(svg.style.transform).toBe('translate(21px, 34px) scale(1)')
+  })
+
+  it('zooms around the mouse position instead of the dialog center', () => {
+    root = document.createElement('div')
+    const chart = document.createElement('div')
+    chart.className = 'md-mermaid'
+    chart.innerHTML = '<svg viewBox="0 0 120 80"><text>diagram</text></svg>'
+    root.append(chart)
+    document.body.append(root)
+    bindMermaidInteractions(chart, labels)
+    chart.querySelector<HTMLButtonElement>('[data-mermaid-action="expand"]')?.click()
+
+    const dialog = document.querySelector<HTMLDialogElement>('.md-mermaid-dialog')!
+    const body = dialog.querySelector<HTMLElement>('.md-mermaid-dialog-body')!
+    const svg = dialog.querySelector<SVGSVGElement>('svg')!
+    body.getBoundingClientRect = () => ({
+      x: 0, y: 0, left: 0, top: 0, right: 200, bottom: 100, width: 200, height: 100,
+      toJSON: () => ({}),
+    }) as DOMRect
+
+    const wheel = new Event('wheel', { bubbles: true, cancelable: true }) as WheelEvent
+    Object.defineProperties(wheel, {
+      deltaY: { value: -1 }, clientX: { value: 150 }, clientY: { value: 25 },
+    })
+    body.dispatchEvent(wheel)
+
+    expect(wheel.defaultPrevented).toBe(true)
+    expect(svg.style.transform).toBe('translate(-5px, 2.5px) scale(1.1)')
   })
 
   it('unmount cleanup removes controls and any open preview', () => {
