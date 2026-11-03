@@ -161,6 +161,71 @@ function hasMathCandidate(root: HTMLElement) {
   return false
 }
 
+function isEscapedCharacter(source: string, index: number) {
+  let backslashes = 0
+  for (let cursor = index - 1; cursor >= 0 && source[cursor] === '\\'; cursor--) backslashes++
+  return backslashes % 2 === 1
+}
+
+function looksLikeInlineMath(source: string) {
+  const expression = source.trim()
+  if (!expression || /[\u3400-\u9fff]/.test(expression)) return false
+  // TeX 命令、上下标属于明确的数学写法；单字母变量和简单运算也保留支持。
+  if (/\\[A-Za-z]+|[_^]/.test(expression)) return true
+  if (/^[A-Za-zα-ωΑ-Ω]$/.test(expression)) return true
+  if (!/[=<>+\-*/×÷]/.test(expression)) return false
+  if (!/^[A-Za-z0-9\s=<>+\-*/×÷().,]+$/.test(expression)) return false
+  // 避免把 `$Premium 137/.../Ultimate 197` 这类价格描述识别成变量乘积。
+  return [...expression.matchAll(/[A-Za-z]+/g)].every(([word]) => word.length <= 2)
+}
+
+/** 单美元符号常用于价格。保护不像公式的配对符号，避免 KaTeX 把普通文字排成数学斜体。 */
+function protectNonMathInlineDollarPairs(root: HTMLElement) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      return node.parentElement?.closest('pre, code, script, style, textarea, option, .katex, .md-math-block')
+        ? NodeFilter.FILTER_REJECT
+        : NodeFilter.FILTER_ACCEPT
+    },
+  })
+  const textNodes: Text[] = []
+  while (walker.nextNode()) textNodes.push(walker.currentNode as Text)
+
+  for (const node of textNodes) {
+    const source = node.textContent || ''
+    const fragment = document.createDocumentFragment()
+    let cursor = 0
+    let changed = false
+    for (let open = 0; open < source.length; open++) {
+      if (source[open] !== '$' || source[open + 1] === '$'
+        || (open > 0 && source[open - 1] === '$') || isEscapedCharacter(source, open)) continue
+      let close = open + 1
+      for (; close < source.length; close++) {
+        if (source[close] === '$' && source[close + 1] !== '$'
+          && source[close - 1] !== '$' && !isEscapedCharacter(source, close)) break
+      }
+      if (close >= source.length) break
+      if (looksLikeInlineMath(source.slice(open + 1, close))) {
+        open = close
+        continue
+      }
+
+      if (open > cursor) fragment.append(document.createTextNode(source.slice(cursor, open)))
+      const openingDollar = document.createElement('span')
+      openingDollar.textContent = '$'
+      const closingDollar = document.createElement('span')
+      closingDollar.textContent = '$'
+      fragment.append(openingDollar, document.createTextNode(source.slice(open + 1, close)), closingDollar)
+      cursor = close + 1
+      open = close
+      changed = true
+    }
+    if (!changed) continue
+    if (cursor < source.length) fragment.append(document.createTextNode(source.slice(cursor)))
+    node.replaceWith(fragment)
+  }
+}
+
 async function ensureMathAssets() {
   if (!mathAssetsPromise) {
     mathAssetsPromise = Promise.all([
@@ -179,6 +244,7 @@ async function ensureMathAssets() {
 /** 只在挂载完成、HTML 已经消毒后调用；公式通过 KaTeX 的不信任输入模式排版。 */
 export async function renderMarkdownMath(root: HTMLElement | null, labels: MarkdownMathLabels) {
   if (!root?.isConnected) return
+  protectNonMathInlineDollarPairs(root)
   if (!hasMathCandidate(root)) return
   await ensureMathAssets()
   if (!root.isConnected || !renderMathInElement) return
