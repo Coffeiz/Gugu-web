@@ -342,7 +342,7 @@ function onPmScroll(event: Event) {
 .col-toggle-btn:hover {
   color: var(--color-primary);
   background: linear-gradient(var(--control-bg-hover), var(--control-bg-hover)), var(--surface-card-solid);
-  box-shadow: 0 3px 14px rgba(123,127,178,0.25);
+  box-shadow: 0 3px 14px color-mix(in srgb, var(--action-primary) 25%, transparent);
 }
 
 .file-content { flex: 1; overflow-y: auto; padding: 14px; user-select: none; position: relative; isolation: isolate; }
@@ -429,7 +429,7 @@ function onPmScroll(event: Event) {
   display: flex; flex-direction: column; align-items: center; gap: 10px;
   padding: 32px 50px;
   background: rgba(255,255,255,0.72);
-  border: 2px dashed rgba(123,127,178,0.45); border-radius: 16px;
+  border: 2px dashed color-mix(in srgb, var(--action-primary) 45%, transparent); border-radius: 16px;
   color: var(--color-primary);
 }
 .drop-hint { font-size: 14px; font-weight: 700; color: var(--text-primary); }

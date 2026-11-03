@@ -61,7 +61,7 @@ const full = (n: number) => new Intl.NumberFormat().format(Number(n) || 0)
 
 const chartData = computed(() => {
   void chartThemeKey.value
-  const lineColor = cssVar('--action-primary', 'rgba(123,127,178,1)')
+  const lineColor = cssVar('--action-primary', '#565b64')
   const lineFill = `color-mix(in srgb, ${lineColor} 16%, transparent)`
   return {
   labels: props.labels,

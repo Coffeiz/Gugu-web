@@ -3,9 +3,13 @@
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 MIGRATION_SCRIPT = REPO_ROOT / "scripts" / "migrate-compose-env.sh"
+
+pytestmark = pytest.mark.process
 
 
 def _run_migration(source: Path, target: Path) -> subprocess.CompletedProcess[str]:

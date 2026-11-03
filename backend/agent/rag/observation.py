@@ -107,7 +107,10 @@ class RecallObservation:
                                              if key not in {"source_progress", "stages"}})
                 self.span.finish(
                     output,
-                    status=("success" if reason in {"completed", "cold_index_deferred"} else "error"),
+                    status=("success" if reason in {
+                        "completed", "cold_index_deferred", "disabled", "empty_query",
+                        "no_eligible_scope",
+                    } else "error"),
                 )
         except Exception:
             pass

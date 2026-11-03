@@ -170,10 +170,7 @@ async def test_group_snapshot_extends_actual_restored_provider_history(db, user_
     base = ProviderConversation(restored.history)
     base_messages = base.to_messages()
     assert {item["role"] for item in base_messages} >= {"assistant", "user"}
-    assert any(
-        block.get("type") == "time-context" and block.get("text") == "合成时间上下文"
-        for item in base_messages for block in item.get("content", []) if isinstance(block, dict)
-    )
+    assert "【消息时间】合成时间上下文" in str(base_messages)
     assert any(
         block.get("type") == "thinking" and block.get("signature") == "sig-synthetic"
         for item in base_messages for block in item.get("content", []) if isinstance(block, dict)
@@ -206,7 +203,9 @@ async def test_group_snapshot_extends_actual_restored_provider_history(db, user_
     assert extended is not None
     assert extended.source == "in_memory_extended"
     assert extended.history.to_messages()[:len(base_messages)] == base_messages
-    assert extended.history.to_messages()[-1]["content"] == "风险项仍在观察"
+    extended_tail = extended.history.to_messages()[-1]["content"]
+    assert "【消息时间】合成时间上下文" in extended_tail
+    assert "【消息正文】\n风险项仍在观察" in extended_tail
     assert extended.system_prompt == snapshot.system_prompt
     assert extended.tools == snapshot.tools
 

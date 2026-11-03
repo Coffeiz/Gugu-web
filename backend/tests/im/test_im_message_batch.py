@@ -107,6 +107,23 @@ async def test_bot_mention_is_a_serial_boundary_between_group_message_runs():
     ]
 
 
+@pytest.mark.asyncio
+async def test_batch_uses_platform_time_instead_of_gateway_arrival_order():
+    from agent.im.inbound_batch import partition_inbound_batch
+
+    messages = [
+        ("1790000001000-0", {**_group_msg("实际较晚", "speaker-a"), "platform_sent_ms": 1_790_000_003_000}),
+        ("1790000002000-0", {**_group_msg("实际较早", "speaker-b"), "platform_sent_ms": 1_790_000_001_000}),
+        ("1790000004000-0", _group_msg("没有平台时间", "speaker-c")),
+    ]
+
+    segments = await partition_inbound_batch(messages)
+
+    assert [message_id for segment in segments for message_id, _ in segment] == [
+        "1790000002000-0", "1790000001000-0", "1790000004000-0",
+    ]
+
+
 def test_merge_keeps_attachment_ids_at_their_original_message_boundary():
     """多人消息合并时仍携带逐条附件 ID，后续可将卡片归回正确发言人。"""
     from worker import _merge_payloads
@@ -263,6 +280,51 @@ async def test_group_batch_with_two_speakers_answers_once(stub_worker_io):
     await worker._flush_loop(key)
 
     assert len(calls) == 1, f"一个批次应该只回一次，实际 {len(calls)} 次"
+
+
+@pytest.mark.asyncio
+async def test_failed_passive_completion_defers_without_acknowledging(monkeypatch):
+    from contextlib import asynccontextmanager
+    from agent.im import inbound_batch
+    from app.core import redis as redis_module
+
+    acknowledged = []
+    deferred = []
+
+    class Redis:
+        async def get(self, _key):
+            return None
+
+    @asynccontextmanager
+    async def run_slot():
+        yield
+
+    async def register_batch(_redis, _ids):
+        return "synthetic-batch"
+
+    async def handle(_message_id, _payload):
+        raise RuntimeError("synthetic persistence failure")
+
+    async def acknowledge(message_id):
+        acknowledged.append(message_id)
+
+    async def defer(batch, **kwargs):
+        deferred.append((batch, kwargs))
+
+    monkeypatch.setattr(redis_module, "get_redis", lambda: Redis())
+    monkeypatch.setattr("agent.im.inbound_recovery.register_batch", register_batch)
+    result = await inbound_batch.process_inbound_batch(
+        [("1761746400000-0", _group_msg("消息", "member-a"))],
+        merge_payloads=lambda payloads: {"_early_message_ids": [], **payloads[-1]},
+        handle=handle,
+        run_slot=run_slot,
+        acknowledge=acknowledge,
+        defer=defer,
+    )
+
+    assert result is False
+    assert acknowledged == []
+    assert deferred[0][1]["release_ids"] == ["1761746400000-0"]
 
 
 async def test_messages_arriving_during_a_run_are_answered_together(stub_worker_io):

@@ -144,7 +144,7 @@ onMounted(load)
 }
 .cat-badge.bug        { background: rgba(224,120,120,0.15); color: #e07878; border: 1px solid rgba(224,120,120,0.2); }
 .cat-badge.suggestion { background: rgba(245,193,79,0.12);  color: #f5c14f; border: 1px solid rgba(245,193,79,0.2); }
-.cat-badge.other      { background: rgba(123,127,178,0.15); color: rgba(149,144,196,0.9); border: 1px solid rgba(123,127,178,0.25); }
+.cat-badge.other      { background: color-mix(in srgb, var(--action-primary) 15%, transparent); color: color-mix(in srgb, var(--action-primary-hover) 90%, transparent); border: 1px solid color-mix(in srgb, var(--action-primary) 25%, transparent); }
 
 .item-user {
   font-size: 12px; font-weight: 600;

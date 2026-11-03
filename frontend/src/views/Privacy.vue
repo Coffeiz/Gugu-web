@@ -50,7 +50,7 @@ const html = computed(() => sanitizeHtml(marked(privacyPolicy[locale.value as ke
 .md-content :deep(table) { width: 100%; border-collapse: collapse; font-size: 13px; margin: 10px 0 14px; }
 .md-content :deep(th) { text-align: left; font-weight: 600; padding: 7px 12px; background: rgba(0,0,0,0.04); border-bottom: 1px solid rgba(0,0,0,0.08); }
 .md-content :deep(td) { padding: 7px 12px; border-bottom: 1px solid rgba(0,0,0,0.05); color: var(--text-primary, #1a1d27); }
-.md-content :deep(a) { color: #7b7fb2; text-decoration: none; }
+.md-content :deep(a) { color: var(--action-primary); text-decoration: none; }
 .md-content :deep(a:hover) { text-decoration: underline; }
 @media (max-width: 620px) {
   .privacy-page { padding: 16px 8px 28px; }

@@ -16,6 +16,7 @@ import {
   mapSessionMessageDelta,
   mergeSessionMessageDelta,
   replaceRunHistory,
+  sortSessionTimelineMessages,
 } from './sessionMessageSync'
 
 interface StatusItem { kind: 'text' | 'dots' | 'hide'; label?: string }
@@ -485,10 +486,7 @@ export function useChatStream(options: {
       return aiIdx
     }
     const sortLiveTimeline = () => {
-      messages.value.sort((a, b) => {
-        if (a._timelineOrder == null || b._timelineOrder == null) return 0
-        return a._timelineOrder - b._timelineOrder
-      })
+      sortSessionTimelineMessages(messages.value)
     }
     // 当前看的还是本流的会话吗？切走后置 detached（之后切回靠 loadSession 干净重载，不半路重接）
     const live = () => {

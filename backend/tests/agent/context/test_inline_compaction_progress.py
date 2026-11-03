@@ -86,7 +86,11 @@ async def test_pressure_compacts_current_run_but_preserves_user_and_latest_tool_
 
     assert await runtime.compact_after_usage_threshold()
     retained = runtime.messages.provider_projection().to_messages()
-    assert current in retained
+    assert any(
+        item.get("role") == "user"
+        and str(item.get("content") or "").endswith(current["content"])
+        for item in retained
+    )
     assert "上个 run 的大段结果" not in str(retained)
     assert "执行轮 1 正文" not in str(retained)
     assert "执行轮 2 正文" in str(retained)
@@ -126,7 +130,9 @@ async def test_wire_cleanup_does_not_move_the_user_anchor_into_a_tool_round(monk
     result = await compact_context(area, protected_from=3, protected_anchor_index=2, model_cfg=ai)
 
     assert result.changed
-    assert result.messages[result.anchor_index] == current
+    assert result.messages[result.anchor_index] == {
+        "role": "user", "content": "【消息正文】\n最后的真实用户请求",
+    }
     assert result.messages[result.protected_start_index]["content"] == "最近完成的执行轮"
     assert captured == wire.to_messages()
 

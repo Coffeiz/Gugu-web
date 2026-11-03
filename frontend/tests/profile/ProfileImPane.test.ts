@@ -127,6 +127,39 @@ describe('个人设置中的 IM 群权限', () => {
     expect(contextSearch.classList.contains('active')).toBe(true)
   })
 
+  it('自动回复下按 Bot 保存注意力模式，切到仅响应 @ 后隐藏该选项', async () => {
+    mocks.list.mockResolvedValue({ items: [{
+      id: 21, platform: 'qq', enabled: true, group_chat_enabled: true,
+      group_response_mode: 'reply_all', group_attention_mode: 'autonomous',
+    }] })
+    mocks.update.mockResolvedValue({})
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    app = createApp(ProfileImPane)
+    app.mount(host)
+    await flushUi()
+
+    const botRow = host.querySelector('[data-platform="qq"] .pm-bot-item') as HTMLElement
+    const attentionGroup = botRow.querySelector('[aria-label="profileImUi.groupAttentionMode"]') as HTMLElement
+    expect(attentionGroup).not.toBeNull()
+    const autonomous = Array.from(attentionGroup.querySelectorAll('button'))
+      .find(button => button.textContent?.includes('profileImUi.groupAttentionAutonomous')) as HTMLButtonElement
+    expect(autonomous.classList.contains('active')).toBe(true)
+
+    const natural = Array.from(attentionGroup.querySelectorAll('button'))
+      .find(button => button.textContent?.includes('profileImUi.groupAttentionNatural')) as HTMLButtonElement
+    natural.click()
+    await flushUi()
+    expect(mocks.update).toHaveBeenCalledWith(21, { group_attention_mode: 'natural' })
+
+    const mentions = Array.from(botRow.querySelectorAll('.pm-tool-options button'))
+      .find(button => button.textContent?.includes('profileImUi.replyMentions')) as HTMLButtonElement
+    mentions.click()
+    await flushUi()
+    expect(mocks.update).toHaveBeenLastCalledWith(21, { group_response_mode: 'reply_mentions' })
+    expect(botRow.querySelector('[aria-label="profileImUi.groupAttentionMode"]')).toBeNull()
+  })
+
   it('Telegram 回应方式的引导说明如何关闭 Privacy Mode 并启用被提及回应', async () => {
     mocks.list.mockResolvedValue({ items: [{
       id: 8, platform: 'telegram', enabled: true, group_chat_enabled: true,

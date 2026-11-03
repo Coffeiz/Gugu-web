@@ -1,7 +1,8 @@
-"""会话内追加序号保证并发输入和 run 输出保持真实事件顺序。"""
+"""并发输入和 Run 输出按平台事件时间恢复顺序。"""
 
 import pytest
 from sqlalchemy import select
+from datetime import datetime, timezone
 
 from agent.context.display_checkpoint import resequence_checkpoint
 from agent.context.session_history import load_session_history
@@ -32,7 +33,47 @@ async def test_late_group_messages_precede_completed_run_output(db, user_a):
 
     history = await load_session_history(db, session.id)
     assert [row.content for row in history] == ["A", "B", "C", "D", "tool result", "run1 完成"]
-    assert [row.conversation_seq for row in history] == sorted(row.conversation_seq for row in history)
+
+
+@pytest.mark.asyncio
+async def test_history_follows_platform_time_when_run_output_was_persisted_first(db, user_a):
+    session = ConversationSession(user_id=user_a.id, title="平台时间顺序", source="telegram")
+    db.add(session)
+    await db.flush()
+
+    def instant(milliseconds: int):
+        return datetime.fromtimestamp(milliseconds / 1000, timezone.utc)
+
+    rows = [
+        ConversationMessage(
+            session_id=session.id, role="user", content="触发消息",
+            im_platform_sent_ms=1_790_000_000_000,
+            created_at=instant(1_790_000_001_000),
+        ),
+        # 模拟旧恢复路径将助手输出先落库、后补入 Run 期间收到的消息。
+        ConversationMessage(
+            session_id=session.id, role="assistant", content="Run 完成回复",
+            created_at=instant(1_790_000_004_000),
+        ),
+        ConversationMessage(
+            session_id=session.id, role="user", content="Run 中到达的群消息一",
+            im_platform_sent_ms=1_790_000_002_000,
+            created_at=instant(1_790_000_002_100),
+        ),
+        ConversationMessage(
+            session_id=session.id, role="user", content="Run 中到达的群消息二",
+            im_platform_sent_ms=1_790_000_003_000,
+            created_at=instant(1_790_000_003_100),
+        ),
+    ]
+    db.add_all(rows)
+    await db.commit()
+
+    history = await load_session_history(db, session.id)
+
+    assert [row.content for row in history] == [
+        "触发消息", "Run 中到达的群消息一", "Run 中到达的群消息二", "Run 完成回复",
+    ]
 
 
 @pytest.mark.asyncio

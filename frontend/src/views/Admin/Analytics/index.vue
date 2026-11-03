@@ -393,7 +393,7 @@ onMounted(load)
   display: flex; align-items: center; justify-content: center;
   margin-bottom: 12px;
 }
-.ic-blue  { background: rgba(123,127,178,0.18); color: rgba(150,155,210,0.9); }
+.ic-blue  { background: color-mix(in srgb, var(--action-primary) 18%, transparent); color: rgba(150,155,210,0.9); }
 .ic-muted { background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.4); }
 .ic-amber { background: rgba(201,148,58,0.18);  color: rgba(215,165,75,0.9); }
 .ic-teal  { background: rgba(90,158,136,0.18);  color: rgba(100,175,150,0.9); }

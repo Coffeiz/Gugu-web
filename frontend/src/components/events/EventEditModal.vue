@@ -112,7 +112,7 @@ function onFloatingOutsideClick(event: MouseEvent) {
   if (target.closest('.dp-popup, .drp-popup, .ctx-menu')) return
   // 活动胶囊自身会负责“再次点击关闭 / 点击其他活动切换”；捕获阶段不能先把
   // store 清空，否则胶囊 click 处理器会把同一活动重新打开，触发一次假离场再入场。
-  if (target.closest('.chip-ev-click, .chip-ev-tag, .event-pill, .calendar-event, .cal-event')) return
+  if (target.closest('.chip-ev-click, .chip-ev-tag, .event-pill, .calendar-event, .cal-event, .sidebar-event, .upcoming-item.upcoming-ev')) return
   // “更多”活动列表同样是活动触发器：点击同一活动时交给 openEditForm
   // 做 toggle，不能被浮窗的 outside 捕获监听提前关闭后又重新打开。
   if (target.closest('.overflow-popup, .overflow-item')) return

@@ -175,6 +175,13 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/DevEmail.vue'),
         meta: { title: 'devEmail.title' },
       }] : []),
+      // 注意力评分沙盒仅在 Vite 开发环境注册，生产路由和 bundle 不包含该页面。
+      ...(import.meta.env.DEV ? [{
+        path: 'dev/attention',
+        name: 'DevAttention',
+        component: () => import('@/views/DevAttention.vue'),
+        meta: { title: 'devHome.tools.attention.label' },
+      }] : []),
       // 原时间轴保留为临时 DEV 预览；UI9 响应式实现完成后移除该入口。
       ...(import.meta.env.DEV ? [{
         path: 'dev/notes-timeline',

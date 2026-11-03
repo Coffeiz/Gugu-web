@@ -29,6 +29,7 @@ async def test_send_file_accepts_workspace_logical_path(db, user_a, tmp_path, mo
 
     monkeypatch.setattr(file_transfer, "current_filesystem_policy", current_policy)
     monkeypatch.setattr("app.services.workspaces.resolve_shell_root", shell_root)
+    monkeypatch.setattr("agent.im.imctx.get_im", lambda: {"platform": "qq"})
 
     async def fake_stage_stream(user_id, name, ext, mime, *, stream, size, kind=None, **_kwargs):
         assert not db.in_transaction(), "上传文件期间不能继续持有数据库事务"
@@ -53,6 +54,8 @@ async def test_send_file_accepts_workspace_logical_path(db, user_a, tmp_path, mo
 
     assert result["_artifact"]["attach_id"] == "attach-path"
     assert result["_artifact"]["name"] == "F1蒙扎-正赛-长距离图-2x"
+    assert "将在本轮回复结束时尝试发送" in result["message"]
+    assert "已把" not in result["message"]
     # dispatch 在 handler 成功后仍会提交；读事务已结束时该提交应无害完成。
     await db.commit()
 

@@ -239,7 +239,7 @@ function onOpen() {
 }
 /* 本体没有这个标签（一眼就能从内容看出是项目卡），但快照态缺了 stage/segbar 这类底部
    内容，整张卡显得偏空、偏矮，加一个补一点视觉分量，也顺带点出"这原本是个项目"。 */
-.pr-kind { align-self: flex-start; padding: 1px 6px; border-radius: 4px; background: rgba(123,127,178,.12); color: var(--color-primary); font-size: 10px; font-weight: 700; }
+.pr-kind { align-self: flex-start; padding: 1px 6px; border-radius: 4px; background: color-mix(in srgb, var(--action-primary) 12%, transparent); color: var(--color-primary); font-size: 10px; font-weight: 700; }
 /* 名称/客户/日期三行字号、行高跟 ProjectCardBody 的 .proj-name/.proj-client/.date-range
    逐条对齐（含颜色变量），不是照抄数值——真实卡片改这几个样式时这里要记得跟着改。 */
 .pr-name { font-size: 13px; font-weight: 500; line-height: 1.35; overflow-wrap: anywhere; }

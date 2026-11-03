@@ -43,17 +43,6 @@
   --project-blue: #7d8eb7;
   --project-mauve: #a980ad;
 
-  /* Glass legacy palette：实现细节只留在 foundations，Design 页不直接暴露这些名字。 */
-  --palette-purple-500: #7b7fb2;
-  --palette-purple-400: #9590c4;
-  --palette-pink-400: #c4afc8;
-  --palette-cyan-400: #7ab8c8;
-  --palette-gray-050: #f5f6fa;
-  --palette-gray-100: #e8e9ee;
-  --palette-gray-300: #bfc4d2;
-  --palette-gray-500: #9aa2b8;
-  --palette-gray-900: #1e2028;
-
   --palette-pearl-050: var(--pearl-50);
   --palette-pearl-100: var(--pearl-100);
   --palette-pearl-200: var(--pearl-200);

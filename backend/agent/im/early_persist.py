@@ -117,8 +117,23 @@ async def persist_early_im_message(payload: dict, *, message_id: str) -> Optiona
             platform_user_id=payload.get("platform_user_id"),
             platform_user_name=payload.get("platform_user_name"),
             platform_bot_user_id=payload.get("platform_bot_user_id"),
+        im_platform_message_id=str(payload.get("platform_message_id") or "") or None,
+        im_reply_to_message_id=str(payload.get("reply_to_platform_message_id") or "") or None,
+        im_reply_target_sender_id=str(payload.get("reply_target_sender_id") or "") or None,
+        im_reply_target_is_bot=payload.get("reply_target_is_bot"),
+        im_sender_is_bot=payload.get("sender_is_bot"),
+        im_event_received_ms=_event_received_ms(message_id),
+        im_platform_sent_ms=payload.get("platform_sent_ms"),
+        im_media_kinds=_attention_media_kinds(payload),
+        im_media_processable=(bool(attachments) if attachments else None),
+        im_mention_facts={
+            "current_bot": payload.get("native_bot_mentioned"),
+            "other_bot": payload.get("mentions_other_bot"),
+            "other_member": payload.get("mentions_other_member"),
+        },
             chat_type=route.chat_type,
             files=cards or None,
+            client_message_id=str(message_id),
             run_id=pending_key,
         )
         db.add(row)
@@ -149,6 +164,24 @@ async def persist_early_im_message(payload: dict, *, message_id: str) -> Optiona
     except Exception:
         pass
     return row_id
+
+
+def _event_received_ms(message_id: str) -> int | None:
+    try:
+        from agent.im.auto_reply.attention import _stream_event_ms
+
+        return _stream_event_ms(message_id)
+    except Exception:
+        return None
+
+
+def _attention_media_kinds(payload: dict) -> list[str]:
+    try:
+        from agent.im.auto_reply.attention import _media_kinds
+
+        return list(_media_kinds(payload.get("attachments")))
+    except Exception:
+        return []
 
 
 __all__ = ["persist_early_im_message"]

@@ -403,12 +403,12 @@ onMounted(load)
 .section-label-row { justify-content: space-between; padding-right: 36px; }
 .expand-btn {
   display: flex; align-items: center; gap: 4px;
-  font-size: 11px; font-weight: 600; color: rgba(149,144,196,0.8);
+  font-size: 11px; font-weight: 600; color: color-mix(in srgb, var(--action-primary-hover) 80%, transparent);
   background: none; border: none; cursor: pointer; padding: 2px 0;
   font-family: var(--font-sans); transition: color 0.15s;
   letter-spacing: 0;
 }
-.expand-btn:hover { color: rgba(149,144,196,1); }
+.expand-btn:hover { color: color-mix(in srgb, var(--action-primary-hover) 100%, transparent); }
 .expand-btn svg { transform: rotate(-90deg); transition: transform 0.2s; }
 .expand-btn svg.open { transform: rotate(0deg); }
 
@@ -426,7 +426,7 @@ onMounted(load)
   display: flex; align-items: center; justify-content: center;
   margin-bottom: 12px;
 }
-.ic-blue { background: rgba(123,127,178,0.18); color: rgba(150,155,210,0.9); }
+.ic-blue { background: color-mix(in srgb, var(--action-primary) 18%, transparent); color: rgba(150,155,210,0.9); }
 .card-val  { font-size: 28px; font-weight: 700; color: rgba(255,255,255,0.88); line-height: 1; }
 .card-unit { font-size: 13px; font-weight: 400; color: rgba(255,255,255,0.35); }
 .card-lbl  { font-size: 11px; color: rgba(255,255,255,0.4); margin-top: 7px; }
@@ -466,7 +466,7 @@ onMounted(load)
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .tool-bar-track { flex: 1; height: 6px; border-radius: 3px; background: rgba(255,255,255,0.06); }
-.tool-bar-fill  { height: 100%; border-radius: 3px; background: rgba(123,127,178,0.7); transition: width 0.3s; }
+.tool-bar-fill  { height: 100%; border-radius: 3px; background: color-mix(in srgb, var(--action-primary) 70%, transparent); transition: width 0.3s; }
 .tool-calls { width: 44px; flex-shrink: 0; text-align: right; font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.5); }
 
 .model-section { display: flex; gap: 24px; align-items: flex-start; padding: 0 36px; }

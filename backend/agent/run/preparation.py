@@ -48,7 +48,10 @@ from agent.run.contract import (
     EarlyExit,
     PreparedExecution,
 )
-from agent.runtime.loopscope_trace.state import record_phase_timing
+from agent.runtime.loopscope_trace.state import (
+    mark_agent_preparation_started,
+    record_phase_timing,
+)
 
 
 async def _load_mcp_tools(user_id, settings, allowed_tool_names=None):
@@ -100,10 +103,30 @@ async def _prepare_group_batch_inputs(user_id, batch_messages, request, model_cf
             "text": format_current_group_message(augmented_text, request, item),
             "images": row_images,
             "media": row_media,
+            "platform_sent_ms": item.get("platform_sent_ms"),
+            "event_id": item.get("event_id"),
             "sent_at": None,
             "persisted_message_id": None,
         })
     return current_users, "\n".join(part for part in augmented_parts if part), attach_cards, images, media
+
+
+async def _run_voice_transcription(req, media, settings, user_id, session_factory):
+    """复用注意力预转写；其它入口按原配置调用语音模型。"""
+    cached = "\n".join(
+        text.strip()
+        for text in (getattr(req, "im_attention_transcripts", {}) or {}).values()
+        if isinstance(text, str) and text.strip()
+    )
+    if cached:
+        return cached
+    from agent import voice
+
+    async with session_factory() as voice_db:
+        return await voice.transcribe(
+            media, settings, db=voice_db, user_id=user_id,
+            raise_minimax_errors=True,
+        )
 
 
 async def load_mcp_tools_and_rag_context(
@@ -359,13 +382,34 @@ async def _reuse_early_user_rows(
             ConversationMessage.session_id == session_id,
         )
     )).scalars().all()
+    rows_by_event: dict[str, ConversationMessage] = {}
+    if batch_messages:
+        event_ids = list(dict.fromkeys(
+            str(item.get("event_id") or "")
+            for item in batch_messages
+            if isinstance(item, dict) and item.get("event_id")
+        ))
+        if event_ids:
+            event_rows = (await db.execute(
+                select(ConversationMessage).where(
+                    ConversationMessage.client_message_id.in_(event_ids),
+                    ConversationMessage.session_id == session_id,
+                )
+            )).scalars().all()
+            rows_by_event = {
+                str(row.client_message_id): row
+                for row in event_rows if row.client_message_id
+            }
     if batch_messages:
         by_id = {row.id: row for row in rows}
         default_chat_type = rows[0].chat_type if rows else "c2c"
         ordered = []
         for item in batch_messages:
             early_id = item.get("early_id")
+            event_id = str(item.get("event_id") or "")
             row = by_id.get(int(early_id)) if early_id else None
+            if row is None and event_id:
+                row = rows_by_event.get(event_id)
             if row is None:
                 row = ConversationMessage(
                     session_id=session_id,
@@ -376,8 +420,33 @@ async def _reuse_early_user_rows(
                     platform_user_name=item.get("platform_user_name"),
                     platform_bot_user_id=item.get("platform_bot_user_id"),
                     chat_type=item.get("chat_type") or default_chat_type,
+                    client_message_id=event_id or None,
                 )
                 db.add(row)
+            row.im_platform_message_id = item.get("platform_message_id") or row.im_platform_message_id
+            row.im_reply_to_message_id = item.get("reply_to_platform_message_id") or row.im_reply_to_message_id
+            row.im_reply_target_sender_id = item.get("reply_target_sender_id") or row.im_reply_target_sender_id
+            if item.get("reply_target_is_bot") is not None:
+                row.im_reply_target_is_bot = item.get("reply_target_is_bot")
+            if item.get("sender_is_bot") is not None:
+                row.im_sender_is_bot = item.get("sender_is_bot")
+            if item.get("event_id"):
+                try:
+                    from agent.im.auto_reply.attention import _stream_event_ms
+
+                    row.im_event_received_ms = _stream_event_ms(str(item["event_id"]))
+                except Exception:
+                    pass
+            row.im_platform_sent_ms = item.get("platform_sent_ms") or row.im_platform_sent_ms
+            if item.get("media_kinds") is not None:
+                row.im_media_kinds = list(item.get("media_kinds") or [])
+            if item.get("processable_media") is not None:
+                row.im_media_processable = item.get("processable_media")
+            row.im_mention_facts = {
+                "current_bot": item.get("native_bot_mentioned"),
+                "other_bot": item.get("mentions_other_bot"),
+                "other_member": item.get("mentions_other_member"),
+            }
             ordered.append(row)
         await db.flush()
         rows = ordered
@@ -406,8 +475,8 @@ async def _reuse_early_user_rows(
     #
     # - ``created_at`` 保留**消息到达时刻**。它是展示时间（网页气泡、网页实时排序），
     #   也就是 IM 里的真实先后；改了它，网页顺序就会和平台消息顺序对不上。
-    # - ``sent_at`` 改写成**本轮处理时刻**，供提示词里的「消息时间」提醒使用；
-    #   历史先后由持久化会话序号决定，不再依赖这个时间戳。
+    # - ``sent_at`` 改写成**本轮处理时刻**，用于历史排序兼容；提示词里的消息时间
+    #   优先使用 IM 平台发送时间，其次事件到达时间，再退回 created_at。
     from datetime import timedelta
     from app.core.tz import now_utc
 
@@ -443,10 +512,17 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
     ``non_streaming`` 是 collect/stream 唯一的组装差异（builder 追加
     NON_STREAMING_BLOCK 行为提示），对齐 FR-RUN-03 允许的"provider 流式参数"差异。
     """
+    preparation_started_at = mark_agent_preparation_started()
+    setup_started_at = time.time()
     user_id = req.user_id
     group_reply_gate = None
     group_reply_tool = None
     group_reply_prompt = ""
+    group_chat_prompt = ""
+    if req.chat_id:
+        from agent.im.group_chat_prompt import group_chat_system_prompt
+
+        group_chat_prompt = group_chat_system_prompt()
     if getattr(req, "group_auto_reply", False):
         from agent.im.auto_reply import (
             ReplyGate,
@@ -457,7 +533,18 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
         group_reply_gate = ReplyGate()
         group_reply_tool = build_group_reply_decision_tool(group_reply_gate)
         group_reply_prompt = group_reply_system_prompt()
+        if getattr(req, "group_attention_pending_ask_resume", False):
+            group_reply_prompt += (
+                "\n\n## 延迟群问题复核\n\n"
+                "本轮由延迟 ASK 唤醒；当前入站消息是当时登记的那条原始问题，不代表它仍是群里最新话题。"
+                "会话历史中时间晚于该问题的群消息是真实的后续上下文。先检查后续消息是否已回答、"
+                "是否转题或已失去时效；已解决、已转题或不再需要回应时，单独调用 choose_no_reply。"
+                "只回答这条待处理问题，不要恢复更早 Run 的话题，也不要把旧问题误当成后续消息。"
+            )
         req.group_reply_gate = group_reply_gate
+    group_system_prompt = "\n\n---\n\n".join(
+        part for part in (group_chat_prompt, group_reply_prompt) if part
+    )
     settings = get_settings()
     # 用户链路标记：modelctx 兜底哨兵从此生效，后台派生任务不得静默烧平台配额
     from agent.llm import modelctx
@@ -487,6 +574,7 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
             db, user_id, session.workspace_id,
         ) if session.workspace_id is not None else None
         workspace_binding = session_snapshot.workspace_binding_key(workspace_target)
+        record_phase_timing("Run config and session resolution", setup_started_at)
 
         async def _load_snapshot():
             data = await load_context_data(
@@ -500,7 +588,7 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
                 source=getattr(req, "source", None), im_channels=data.im_channels,
                 im_message_format=getattr(req, "im_message_format", None),
                 user_msg=req.message, non_streaming=non_streaming, user_tz=data.user_tz,
-                knowledge=data.knowledge, after_base_prompt=group_reply_prompt,
+                knowledge=data.knowledge, after_base_prompt=group_system_prompt,
             )
             snapshot_context, snapshot_im_memory = add_im_memory_to_snapshot(
                 snapshot_context, data.im_memory, req,
@@ -528,10 +616,11 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
             return builder.build_static_prompt(
                 DEFAULT_PROMPT_NAME, req.user_name,
                 style_prefs=style_prefs,
-                after_base_prompt=group_reply_prompt,
+                after_base_prompt=group_system_prompt,
                 current_date=dynamic_tail.current_date_text(current_user_tz),
             )
 
+        snapshot_started_at = time.time()
         snapshot = await session_snapshot.ensure_snapshot(
             db, session, load_context=_load_snapshot,
             workspace_binding=workspace_binding,
@@ -544,8 +633,10 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
         # 正文。collect/stream 曾各有一份等价实现（helper + 内联），这里收成单一实现。
         from agent.im.context_loader import restore_group_memory_snapshot
         restore_group_memory_snapshot(snapshot)
+        record_phase_timing("Snapshot and prompt preparation", snapshot_started_at)
 
         # 历史读取不做本地 token 预估；预算由 provider 实际请求结果决定。
+        history_started_at = time.time()
         history = await session_history.load_session_history(
             db,
             session_id,
@@ -556,9 +647,11 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
         if strip_thinking:
             clean_persisted_history(history)
             strip_thinking = False
+        record_phase_timing("Conversation history loading", history_started_at)
         # 主动推送（定时任务/活动提醒）若是会话首条 assistant（前导，sanitize 会剥掉）→ 记下来塞进 system，
         # 让咕咕知道「自己刚主动发了啥」、能接住用户对它的回复（如新闻速览后用户回「4」）。
         # 附件（IM 收到的文件）：文本读内容注入给模型，卡片随用户消息持久化（和网页同一套）
+        message_preparation_started_at = time.time()
         from app.core import chat_attach
         # 群聊批次逐条解析附件与正文，之后每条原始平台消息分别进入 canonical Area。
         # 私聊/Web 仍使用原有的单条消息路径。
@@ -580,6 +673,10 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
             )
         from agent.media.capability_prompt import media_capability_for_user
         media_capability_context = await media_capability_for_user(model_cfg, user_id, db=db)
+        record_phase_timing(
+            "Current message and attachment preparation",
+            message_preparation_started_at,
+        )
         if getattr(req, "attachments", None):   # 诊断：带附件时记 kind/ext/media 数，排查语音为何没转写
             import logging as _lg
             _lg.getLogger("agent.runner").info(
@@ -588,6 +685,7 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
                 [c.get("kind") for c in (attach_cards or [])],
                 [c.get("ext") for c in (attach_cards or [])])
         user_message = None
+        persistence_started_at = time.time()
         early_ids = [int(i) for i in (getattr(req, "early_message_ids", None) or [])]
         reused_user_messages = []
         if early_ids or batch_messages:
@@ -607,6 +705,9 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
                 if index < len(reused_user_messages):
                     row = reused_user_messages[index]
                     current_input["persisted_message_id"] = row.id
+                    current_input["im_platform_sent_ms"] = row.im_platform_sent_ms
+                    current_input["im_event_received_ms"] = row.im_event_received_ms
+                    current_input["created_at"] = row.created_at
                     current_input["sent_at"] = row.sent_at
         if user_message is None:
             user_message = ConversationMessage(session_id=session_id, role="user", content=req.message,
@@ -631,11 +732,27 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
                 text="附件已失效（可能已被使用或清理），请重新发送", session_id=session_id))
         await db.commit()
 
+        # 群聊批次在本轮开始前已经作为 pending 行早落库。历史首次读取时这些行被
+        # inbound_recovery 过滤，避免被提前消费；现在它们已绑定到本轮，重新读取
+        # canonical 历史，让它们按持久化序号插回到运行期间已经完成的助手回复之前。
+        # 否则把当前批次简单追加到旧历史末尾，会造成 QQ 实际时间线与后续 Run 输入倒序。
+        current_users_in_history = bool(current_user_inputs and reused_user_messages)
+        if current_users_in_history:
+            history = await session_history.load_session_history(
+                db,
+                session_id,
+                session_snapshot.history_baseline(session),
+            )
+            history_stats = session_history.consume_history_stats()
+
         # 精力耗尽 → 硬拦（IM / 定时任务，与网页 web.stream 同口径）：用户消息已记，不再生成，直接回一句
         if await quota.is_exhausted(db, user_id, settings):
+            record_phase_timing("Message persistence and quota check", persistence_started_at)
             return EarlyExit(EARLY_EXIT_QUOTA, AgentResponse(
                 text="咕咕累了，休息会儿再来～", session_id=session_id, tokens_in=0, tokens_out=0))
+        record_phase_timing("Message persistence and quota check", persistence_started_at)
 
+        continuity_started_at = time.time()
         # IM 新会话「续接桥」：趁 db 还开着查上一条对话，给指针/尾部，免得 12h TTL 起新会话后
         # 用户说「继续刚刚」咕咕空着答（web 有自己的会话续接 + 可手动选历史，无需此桥）。
         im_bridge = ""
@@ -655,7 +772,9 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
                 im_bridge = ""
         # 主动推送桥只保留群聊行为；私聊不把历史首条主动消息重复塞进每轮尾部。
         _proactive_lead = proactive_lead_for(req, history)
+        record_phase_timing("Continuity bridge and proactive lead", continuity_started_at)
 
+    event_media_started_at = time.time()
     # 用户消息先推给网页：一存下就推（先看到「我发了什么」），回复生成完再推第二次。
     # origin 是 Web 入口的回声抑制标识（发起标签页跳过这条广播）；IM 入口无此概念。
     try:
@@ -679,15 +798,12 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
         for m in _transcribe_media
     )
     if _transcribe_media and (_audio_fallback or _persist_transcript):
-        from agent import voice as _voice
-        # 上面的会话读取事务已经结束，不能继续复用已退出上下文的 db；
-        # 语音模型解析需要独立短事务，避免把连接带进后续 LLM 等待。
+        # 复用注意力阶段预转写，避免本轮同一音频重复调用 ASR。
+        # 无缓存时仍使用短事务调用语音模型。
         try:
-            async with _sess._SessionLocal() as voice_db:
-                transcript = await _voice.transcribe(
-                    _transcribe_media, settings, db=voice_db, user_id=user_id,
-                    raise_minimax_errors=True,
-                )
+            transcript = await _run_voice_transcription(
+                req, _transcribe_media, settings, user_id, _sess._SessionLocal,
+            )
         except Exception as error:
             if not _audio_fallback:
                 # 独立转写只是原生音频模型的附加展示能力；转写故障不能阻断主模型听音频。
@@ -715,17 +831,38 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
                 from app.services.conversation_transcripts import (
                     publish_voice_transcript_update, save_voice_transcript,
                 )
-                async with _sess._SessionLocal() as transcript_db:
-                    saved_files = await save_voice_transcript(
-                        transcript_db, user_id=user_id, session_id=session_id,
-                        message_id=req.user_message_id, transcript=transcript,
-                        status=transcript_status,
-                    )
-                if saved_files is not None:
-                    await publish_voice_transcript_update(
-                        user_id, session_id=session_id,
-                        message_id=req.user_message_id, files=saved_files,
-                    )
+                attention_transcripts = getattr(req, "im_attention_transcripts", {}) or {}
+                if batch_messages and attention_transcripts and reused_user_messages:
+                    for item, message_row in zip(
+                        batch_messages, reused_user_messages, strict=False,
+                    ):
+                        event_id = str(item.get("event_id") or "")
+                        message_transcript = attention_transcripts.get(event_id)
+                        if not message_transcript:
+                            continue
+                        async with _sess._SessionLocal() as transcript_db:
+                            saved_files = await save_voice_transcript(
+                                transcript_db, user_id=user_id, session_id=session_id,
+                                message_id=message_row.id,
+                                transcript=message_transcript, status="completed",
+                            )
+                        if saved_files is not None:
+                            await publish_voice_transcript_update(
+                                user_id, session_id=session_id,
+                                message_id=message_row.id, files=saved_files,
+                            )
+                else:
+                    async with _sess._SessionLocal() as transcript_db:
+                        saved_files = await save_voice_transcript(
+                            transcript_db, user_id=user_id, session_id=session_id,
+                            message_id=req.user_message_id, transcript=transcript,
+                            status=transcript_status,
+                        )
+                    if saved_files is not None:
+                        await publish_voice_transcript_update(
+                            user_id, session_id=session_id,
+                            message_id=req.user_message_id, files=saved_files,
+                        )
             except Exception as error:
                 from app.core.redaction import diag_log
                 diag_log("agent.run.preparation.persist_voice_transcript", error)
@@ -740,11 +877,14 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
             aug_text = (aug_text + "\n" if aug_text else "") + f"（用户发来语音，内容是：）{spoken}"
             aug_media = [m for m in aug_media if m.get("type") == "video"]
 
+    record_phase_timing("Session event publish and voice transcription", event_media_started_at)
     system_prompt = snapshot["system_prompt"]
     snapshot_context = snapshot["snapshot_context"]
+    dynamic_memory_started_at = time.time()
     stance_text = builder.stance_block(
         await loaders.load_dynamic_memory(user_id) if SYSTEM_MEMORY_ENABLED else {}
     )
+    record_phase_timing("Dynamic memory preparation", dynamic_memory_started_at)
 
     # snapshot 内容在 snapshot 有效期内保持稳定，放在 history 之前形成可缓存前缀。
     _snapshot_injection = (
@@ -761,6 +901,7 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
         _dynamic_extra_parts.append("\n## 你刚主动发给 TA 的消息（TA 接下来很可能在回应这条）\n\n" + _proactive_lead)
 
     use_anthropic = run_config.use_anthropic
+    record_phase_timing("Preparation before MCP/RAG", preparation_started_at)
     tool_preparation_started_at = time.time()
     tool_names = filter_tool_names(all_system_tool_names(), req.allowed_tool_names)
     mcp_tools, precomputed_rag_context = await load_mcp_tools_and_rag_context(
@@ -811,7 +952,8 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
         strip_thinking=strip_thinking,
         use_anthropic=use_anthropic,
         current_text=current_llm_text,
-        current_users=current_user_inputs,
+        current_users=None if current_users_in_history else current_user_inputs,
+        current_users_in_history=current_users_in_history,
         images=aug_images,
         media=aug_media,
         model_cfg=model_cfg,

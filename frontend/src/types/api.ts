@@ -6968,10 +6968,10 @@ export interface components {
             theme: "light" | "dark";
             /**
              * Palette
-             * @default mist
+             * @default neutral
              * @enum {string}
              */
-            palette: "mist" | "cafe" | "rose" | "sky" | "sage";
+            palette: "cafe" | "neutral" | "red" | "blue" | "green";
             /** Translations */
             translations?: {
                 [key: string]: components["schemas"]["LocalizedEmailContent"];
@@ -7008,10 +7008,10 @@ export interface components {
             theme: "light" | "dark";
             /**
              * Palette
-             * @default mist
+             * @default neutral
              * @enum {string}
              */
-            palette: "mist" | "cafe" | "rose" | "sky" | "sage";
+            palette: "cafe" | "neutral" | "red" | "blue" | "green";
             /** Translations */
             translations?: {
                 [key: string]: components["schemas"]["LocalizedEmailContent"];
@@ -7063,10 +7063,10 @@ export interface components {
             theme: "light" | "dark";
             /**
              * Palette
-             * @default mist
+             * @default neutral
              * @enum {string}
              */
-            palette: "mist" | "cafe" | "rose" | "sky" | "sage";
+            palette: "cafe" | "neutral" | "red" | "blue" | "green";
             /** Translations */
             translations?: {
                 [key: string]: components["schemas"]["LocalizedEmailContent"];
@@ -8141,10 +8141,10 @@ export interface components {
             themeFamily: "glass" | "mono";
             /**
              * Palette
-             * @default mist
+             * @default neutral
              * @enum {string}
              */
-            palette: "mist" | "cafe" | "rose" | "sky" | "sage";
+            palette: "cafe" | "neutral" | "red" | "blue" | "green";
             /**
              * Laststages
              * @default []
@@ -8262,7 +8262,7 @@ export interface components {
             /** Themefamily */
             themeFamily?: ("glass" | "mono") | null;
             /** Palette */
-            palette?: ("mist" | "cafe" | "rose" | "sky" | "sage") | null;
+            palette?: ("cafe" | "neutral" | "red" | "blue" | "green") | null;
             /** Laststages */
             lastStages?: string[] | null;
             /** Stagetemplates */
@@ -9222,10 +9222,10 @@ export interface components {
             theme: "light" | "dark";
             /**
              * Palette
-             * @default mist
+             * @default neutral
              * @enum {string}
              */
-            palette: "mist" | "cafe" | "rose" | "sky" | "sage";
+            palette: "cafe" | "neutral" | "red" | "blue" | "green";
         };
         /** UserLogin */
         UserLogin: {
@@ -9436,10 +9436,10 @@ export interface components {
             theme: "light" | "dark";
             /**
              * Palette
-             * @default mist
+             * @default neutral
              * @enum {string}
              */
-            palette: "mist" | "cafe" | "rose" | "sky" | "sage";
+            palette: "cafe" | "neutral" | "red" | "blue" | "green";
         };
         /** UserStorageRepairRequest */
         UserStorageRepairRequest: {

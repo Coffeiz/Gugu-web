@@ -136,9 +136,13 @@ async def commit_delta(
             if not isinstance(message.get("content"), str):
                 values["content_json"] = media.images.strip_image_for_history(message.get("content"))
             if user_message is not None and user_sequence is not None:
-                # 两列时间戳同步锚定到用户消息，用于诊断及展示时间线；canonical
-                # 历史另按 conversation_seq 排列，并由 history_anchor_seq 还原输入前缀。
+                # 固定上下文与触发消息共用时间边界；历史排序遇到同一时间时，
+                # 再由 history_anchor_seq 将这些前缀放回触发消息之前。
                 anchor_sent_at = user_message.sent_at or user_message.created_at
+                # 固定前缀与触发消息同属一个事件边界。继承平台/接收时间，
+                # 让后续按实际事件时间排序时仍保持在触发消息之前。
+                values["im_platform_sent_ms"] = user_message.im_platform_sent_ms
+                values["im_event_received_ms"] = user_message.im_event_received_ms
                 if entry.sequence < user_sequence:
                     offset = timedelta(microseconds=user_sequence - entry.sequence)
                     values["created_at"] = user_message.created_at - offset

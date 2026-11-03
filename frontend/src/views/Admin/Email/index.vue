@@ -26,7 +26,7 @@
         </div>
         <div class="toggle-row">
           <div class="toggle-group"><span>{{ t('adminEmailUi.theme') }}</span><div class="toggle-options"><button v-for="item in themes" :key="item" class="chip" :class="{ active: form.theme === item }" @click="form.theme = item">{{ item === 'light' ? t('adminEmailUi.light') : t('adminEmailUi.dark') }}</button></div></div>
-          <div class="toggle-group"><span>{{ t('adminEmailUi.palette') }}</span><div class="toggle-options"><button v-for="item in palettes" :key="item" class="chip" :class="{ active: form.palette === item }" @click="form.palette = item">{{ item }}</button></div></div>
+          <div class="toggle-group"><span>{{ t('adminEmailUi.palette') }}</span><div class="toggle-options"><button v-for="item in palettes" :key="item.value" class="chip" :class="{ active: form.palette === item.value }" @click="form.palette = item.value">{{ item.label }}</button></div></div>
         </div>
         <div class="field-block">
           <span class="field-label">{{ t('adminEmailUi.body') }}</span>
@@ -79,8 +79,11 @@ const templates = [
   { value: 'notification', label: '通知' }, { value: 'reminder', label: '提醒' }, { value: 'report', label: '报告' }, { value: 'security', label: '安全' }, { value: 'test', label: '测试' },
 ]
 const themes = ['light', 'dark'] as const
-const palettes = ['mist', 'cafe', 'rose', 'sky', 'sage'] as const
-const form = reactive({ template: 'notification', theme: 'light', palette: 'mist', subject: '咕咕 · 站点通知', title: '邮件标题', preheader: '', body: '这是来自咕咕的站点邮件。', sections: [] as Section[], actions: [] as Action[] })
+const palettes = [
+  { value: 'neutral', label: 'Ink' }, { value: 'cafe', label: 'Cafe' },
+  { value: 'red', label: 'Terra' }, { value: 'blue', label: 'Harbor' }, { value: 'green', label: 'Grove' },
+] as const
+const form = reactive({ template: 'notification', theme: 'light', palette: 'neutral', subject: '咕咕 · 站点通知', title: '邮件标题', preheader: '', body: '这是来自咕咕的站点邮件。', sections: [] as Section[], actions: [] as Action[] })
 const locales: Array<{ value: Locale }> = [{ value: 'zh-CN' }, { value: 'ja-JP' }, { value: 'en-US' }]
 const activeLocale = ref<Locale>('zh-CN')
 const translations = reactive<Partial<Record<Locale, LocalizedContent>>>({})
@@ -134,7 +137,7 @@ function restoreDraft() {
       const next = saved.form
       if (typeof next.template === 'string' && templates.some(item => item.value === next.template)) form.template = next.template
       if (next.theme === 'light' || next.theme === 'dark') form.theme = next.theme
-      if (typeof next.palette === 'string' && palettes.includes(next.palette as typeof palettes[number])) form.palette = next.palette as typeof form.palette
+      if (typeof next.palette === 'string' && palettes.some(item => item.value === next.palette)) form.palette = next.palette as typeof form.palette
       for (const key of ['subject', 'title', 'preheader', 'body'] as const) if (typeof next[key] === 'string') form[key] = next[key] as never
       if (Array.isArray(next.sections)) form.sections = next.sections.filter(item => item && typeof item.heading === 'string' && typeof item.text === 'string').slice(0, 8).map(item => ({ heading: item.heading, text: item.text }))
       if (Array.isArray(next.actions)) form.actions = next.actions.filter(item => item && typeof item.label === 'string' && typeof item.url === 'string').slice(0, 3).map(item => ({ label: item.label, url: item.url }))
@@ -211,7 +214,7 @@ onMounted(() => { void Promise.all([refreshPreview(), loadCount()]) })
 .field-block { display:flex; flex-direction:column; gap:7px; margin-top:15px; } .field-label { color:rgba(255,255,255,.42); font-size:11px; } .body-editor { min-height:130px; }
 .template-select { display:block; width:100%; } :deep(.template-select .asel-trigger) { width:100%; height:41px; box-sizing:border-box; }
 .toggle-row { display:flex; flex-direction:column; gap:12px; width:100%; margin:17px 0 2px; color:rgba(255,255,255,.4); font-size:11px; } .toggle-group { display:flex; min-width:0; flex-direction:column; gap:7px; } .toggle-options { display:flex; gap:7px; min-width:0; width:100%; } .toggle-options .chip { flex:1 1 0; min-width:0; }
-.chip,.small-btn,.remove-btn { box-sizing:border-box; min-height:34px; border:1px solid rgba(255,255,255,.13); border-radius:8px; background:rgba(255,255,255,.05); color:rgba(255,255,255,.62); padding:8px 10px; cursor:pointer; font:12px/1.2 var(--font-sans); } .chip { display:inline-flex; align-items:center; justify-content:center; text-align:center; } .chip.active { border-color:rgba(123,127,178,.58); color:var(--content-on-accent); background:var(--action-primary-bg); }
+.chip,.small-btn,.remove-btn { box-sizing:border-box; min-height:34px; border:1px solid rgba(255,255,255,.13); border-radius:8px; background:rgba(255,255,255,.05); color:rgba(255,255,255,.62); padding:8px 10px; cursor:pointer; font:12px/1.2 var(--font-sans); } .chip { display:inline-flex; align-items:center; justify-content:center; text-align:center; } .chip.active { border-color:color-mix(in srgb, var(--action-primary) 58%, transparent); color:var(--content-on-accent); background:var(--action-primary-bg); }
 .repeat-row { display:grid; grid-template-columns:1fr 1.4fr auto; gap:8px; margin-bottom:8px; } .remove-btn { color:#d49494; }
 .send-panel { border-top:1px solid var(--panel-divider); margin-top:23px; padding-top:17px; } .send-row input { flex:1; } :deep(.send-row .app-action-button) { height:41px; min-height:41px; } .hint { margin:8px 0 17px; font-size:11px; } .publish-row { align-items:center; flex-wrap:wrap; padding-top:15px; border-top:1px solid var(--panel-divider); font-size:12px; color:rgba(255,255,255,.5); } .publish-row > span { min-width:0; flex:1 1 180px; line-height:1.45; }
 .preview-card { min-height:720px; } .preview-head { margin-bottom:13px; color:rgba(255,255,255,.55); font-size:12px; } .preview-head code { margin-left:auto; color:rgba(255,255,255,.28); } .preview-frame { display:block; width:100%; height:690px; border:0; border-radius:10px; background:#f3f4f8; } .preview-frame--dark { background:#171925; }

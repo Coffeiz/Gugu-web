@@ -486,21 +486,21 @@ async def test_existing_stream_path_without_summary_keeps_plain_card_updates(mon
 @pytest.mark.asyncio
 async def test_feishu_stream_shows_mermaid_source_then_replaces_it_in_place(monkeypatch):
     from agent.gateway.feishu import streaming as feishu
-    from agent.im import mermaid
+    from agent.im import chart
 
     monkeypatch.setattr(feishu, "_creds_by_id", lambda _channel_id: _async_value(("app", "secret")))
     monkeypatch.setattr(feishu, "_do_create_card", lambda *_args: _async_value("card-id"))
     monkeypatch.setattr(feishu, "_do_send_card_message", lambda *_args: _async_value(True))
     monkeypatch.setattr(feishu, "_do_finalize_streaming_card", lambda *_args, **_kwargs: _async_value(True))
-    monkeypatch.setattr(feishu, "_upload_mermaid_image", lambda *_args: _async_value("image-key"))
+    monkeypatch.setattr(feishu, "_upload_chart_image", lambda *_args: _async_value("image-key"))
 
     rendered_sources = []
 
-    async def render(source):
+    async def render(_chart_type, source):
         rendered_sources.append(source)
         return b"synthetic-png"
 
-    monkeypatch.setattr(mermaid, "render_png", render)
+    monkeypatch.setattr(chart, "render_chart_png", render)
     card_updates = []
     stream_updates = []
     timeline = []

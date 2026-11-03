@@ -6,6 +6,8 @@ import subprocess
 import shlex
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -76,6 +78,7 @@ def _run_start(
     )
 
 
+@pytest.mark.process
 def test_systemd_start_fails_when_worker_is_not_active(tmp_path: Path):
     result = _run_start(_fake_systemctl(tmp_path), inactive=True)
 
@@ -83,12 +86,14 @@ def test_systemd_start_fails_when_worker_is_not_active(tmp_path: Path):
     assert "systemd 服务未全部处于 active 状态" in result.stdout
 
 
+@pytest.mark.process
 def test_systemd_start_succeeds_when_all_services_are_active(tmp_path: Path):
     result = _run_start(_fake_systemctl(tmp_path), inactive=False)
 
     assert result.returncode == 0
 
 
+@pytest.mark.process
 def test_systemd_start_fails_when_worker_drops_after_first_active_check(tmp_path: Path):
     result = _run_start(
         _fake_systemctl(tmp_path),

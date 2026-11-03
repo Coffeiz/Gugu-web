@@ -303,10 +303,11 @@ async def _build_automatic_rag_context(
 
     if not get_settings().search.rag_enabled:
         return {"tail": [], "blocks": [], "scope_hits": [], "injected": False,
-                "disabled": True}
+                "disabled": True, "reason": "disabled"}
     query = (query or "").strip()
     if not query:
-        return {"tail": [], "blocks": [], "scope_hits": [], "injected": False}
+        return {"tail": [], "blocks": [], "scope_hits": [], "injected": False,
+                "reason": "empty_query", "query_chars": 0}
     try:
         from agent.rag.service import search_knowledge
         from agent.rag.models import content_hash
@@ -319,7 +320,38 @@ async def _build_automatic_rag_context(
 
         requested_scopes = _request_scopes(request)
         if not requested_scopes:
-            return {"tail": [], "blocks": [], "scope_hits": [], "injected": False}
+            actor = getattr(request, "actor_context", None)
+            return {
+                "tail": [], "blocks": [], "scope_hits": [], "injected": False,
+                "reason": "no_eligible_scope",
+                "scope_decision": {
+                    "source": str(getattr(request, "source", "web") or "web"),
+                    "chat_type": str(
+                        getattr(request, "chat_type", None)
+                        or getattr(actor, "chat_type", None)
+                        or ""
+                    ),
+                    "role": str(
+                        getattr(actor, "role", None)
+                        or getattr(request, "im_role", None)
+                        or "unknown"
+                    ),
+                    "has_chat_id": bool(getattr(request, "chat_id", None)),
+                    "has_bot_id": bool(getattr(request, "platform_bot_id", None)),
+                    "group_memory_enabled": bool(
+                        getattr(request, "im_group_memory_enabled", True)
+                    ),
+                    "member_memory_enabled": bool(
+                        getattr(request, "im_member_memory_enabled", True)
+                    ),
+                    "group_owner_memory_enabled": bool(
+                        getattr(request, "im_group_owner_memory_enabled", False)
+                    ),
+                    "verified_group_owner": bool(
+                        getattr(actor, "verified_owner", False)
+                    ),
+                },
+            }
         labels = [label for label, _ in requested_scopes]
         label = "+".join(labels)
         scopes = [scope for _, scope in requested_scopes]

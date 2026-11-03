@@ -44,13 +44,11 @@ async def test_setting_roundtrip_and_actor_isolation(db, user_a, user_b):
 @pytest.mark.asyncio
 async def test_qq_telegram_and_feishu_group_toggles_are_platform_scoped(db, user_a, user_b, monkeypatch):
     from fastapi import HTTPException
-    from app.api.v1 import user_bots
     from app.api.v1.user_bots import BotUpdate, update_my_bot
 
     async def no_op(*_args, **_kwargs):
         return None
 
-    monkeypatch.setattr(user_bots, "_touch_gateway", no_op)
     from app.core import events
     monkeypatch.setattr(events, "bump_context_revision", no_op)
     qq = UserBot(user_id=user_a.id, platform="qq", app_id="qq-app")

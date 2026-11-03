@@ -28,8 +28,8 @@
       <div class="pm-field-row">
         <div class="pm-field-desc"><span class="pm-field-name">{{ t('preferences.palette') }}</span><span class="pm-field-hint">{{ t('preferences.paletteHint') }}</span></div>
         <div class="pm-style-group pm-palette-group" role="group" :aria-label="t('preferences.selectPalette')">
-          <button v-for="item in palettes" :key="item.value" type="button" class="pm-palette-chip" :class="{ active: palette === item.value }" :aria-label="`配色：${item.label}`" :aria-pressed="palette === item.value" @click="setPalette(item.value)">
-            <span class="pm-palette-swatch" :class="`palette-${item.value}`" aria-hidden="true" />
+          <button v-for="item in palettes" :key="item.value" type="button" class="pm-style-chip pm-palette-chip" :class="{ active: palette === item.value }" :aria-label="`${t('preferences.palette')}: ${item.label}`" :aria-pressed="palette === item.value" @click="setPalette(item.value)">
+            <span class="pm-palette-swatch" :style="{ background: item.color }" aria-hidden="true" />
             <span>{{ item.label }}</span>
           </button>
         </div>
@@ -98,12 +98,12 @@ const modes = computed<Array<{ value: ThemePreference; label: string }>>(() => [
   { value: 'dark', label: t('layout.dark') },
   { value: 'system', label: t('layout.followSystemOption') },
 ])
-const palettes: Array<{ value: ThemePalette; label: string }> = [
-  { value: 'mist', label: 'Mist' },
-  { value: 'cafe', label: 'Cafe' },
-  { value: 'rose', label: 'Rose' },
-  { value: 'sky', label: 'Sky' },
-  { value: 'sage', label: 'Sage' },
+const palettes: Array<{ value: ThemePalette; label: string; color: string }> = [
+  { value: 'neutral', label: 'Ink', color: '#565b64' },
+  { value: 'cafe', label: 'Cafe', color: '#715653' },
+  { value: 'red', label: 'Terra', color: '#a66e73' },
+  { value: 'blue', label: 'Harbor', color: '#65789a' },
+  { value: 'green', label: 'Grove', color: '#718a7e' },
 ]
 const views = computed(() => [
   { value: 'projects', label: t('navigation.projects') },
@@ -128,6 +128,9 @@ function onEmailSubscriptionChange(value: boolean) {
 </script>
 
 <style scoped>
+.pm-palette-group { flex-wrap: wrap; }
+.pm-palette-chip { display: inline-flex; align-items: center; gap: 6px; }
+.pm-palette-swatch { width: 12px; height: 12px; flex: 0 0 12px; border-radius: 50%; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--content-primary) 14%, transparent); }
 .pm-timezone-control { display: flex; flex: 0 1 360px; flex-direction: column; gap: 5px; min-width: 220px; }
 .pm-timezone-control small { color: var(--content-tertiary); font-size: 11px; }
 :deep(.pm-timezone-control .asel-wrap), :deep(.pm-timezone-control .asel-trigger) { width: 100%; }

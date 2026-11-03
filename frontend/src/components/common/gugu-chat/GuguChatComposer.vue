@@ -466,7 +466,7 @@ defineExpose({
 .chat-att-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 4px 6px; }
 .chat-att-chip { display: flex; align-items: center; gap: 5px; max-width: 180px;
   padding: 3px 8px; border-radius: 8px; font-size: 11px; color: var(--color-primary);
-  background: rgba(123,127,178,0.1); border: 1px solid rgba(123,127,178,0.2); }
+  background: color-mix(in srgb, var(--action-primary) 10%, transparent); border: 1px solid color-mix(in srgb, var(--action-primary) 20%, transparent); }
 .chat-att-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-att-x { background: none; border: none; cursor: pointer; color: var(--color-primary);
   font-size: 13px; line-height: 1; padding: 0; opacity: 0.6; }
@@ -552,8 +552,8 @@ defineExpose({
 @keyframes rec-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
 .rec-time { font-variant-numeric: tabular-nums; font-weight: 600; color: #e15c5c; }
 .rec-hint { color: var(--text-secondary); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rec-cancel { margin-left: auto; flex-shrink: 0; border: none; background: rgba(123,127,178,0.12); color: var(--text-secondary); font-size: 12px; padding: 3px 10px; border-radius: 999px; cursor: pointer; }
-.rec-cancel:hover { background: rgba(123,127,178,0.2); }
+.rec-cancel { margin-left: auto; flex-shrink: 0; border: none; background: color-mix(in srgb, var(--action-primary) 12%, transparent); color: var(--text-secondary); font-size: 12px; padding: 3px 10px; border-radius: 999px; cursor: pointer; }
+.rec-cancel:hover { background: color-mix(in srgb, var(--action-primary) 20%, transparent); }
 .chat-input-row textarea {
   flex: 1; border: none; background: none;
   font-size: 14px; color: var(--text-primary);

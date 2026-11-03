@@ -252,14 +252,16 @@ class TestCompactContext:
 
         monkeypatch.setattr("agent.context.compaction._generate_append_summary", oversized_summary)
         messages = [_make_msg("user", "旧消息" * 100) for _ in range(50)]
+        area = _area_from_fixture(messages)
+        expected = area.provider_projection().to_messages()
         result = asyncio.get_event_loop().run_until_complete(
             compact_context(
-                messages, model_cfg=_model_cfg(1000),
+                area, model_cfg=_model_cfg(1000),
             )
         )
         assert not result.changed
         assert result.return_reason == "summary_validation_failed"
-        assert result.messages == messages
+        assert result.messages == expected
 
     def test_empty_provider_summary_uses_bounded_local_fallback(self, monkeypatch):
         async def empty_summary(_history, _previous=None, **_kwargs):
@@ -333,20 +335,6 @@ class TestCompactContext:
         assert "任务切换" in calls[0]["delta"]
         assert "旧摘要" in calls[0]["delta"]
         assert "对话摘要" in calls[0]["delta"]
-
-    def test_append_provider_failure_returns_empty_for_local_fallback(self, monkeypatch):
-        calls: list = []
-        monkeypatch.setattr(
-            "agent.context.branch.ContextBranch",
-            lambda: _FakeBranch(calls, fail=True),
-        )
-        monkeypatch.setattr("app.core.config.get_settings", lambda: object())
-        result = asyncio.get_event_loop().run_until_complete(
-            _generate_append_summary(
-                [{"role": "user", "content": "你好"}], model_cfg=_model_cfg(),
-            )
-        )
-        assert result == ""
 
     def test_above_threshold_triggers_compact(self, monkeypatch):
         """超过阈值应触发压缩"""
@@ -534,7 +522,7 @@ class TestCompactContext:
         # 为保持摘要分支与主请求的缓存前缀一致，请求带完整历史；实际被摘要覆盖的
         # 消息边界由压缩结果验证，而不是分支输入中是否出现受保护轮次决定。
         assert "执行轮 3" in summary_input
-        assert result.messages[result.anchor_index]["content"] == "当前 run 用户原文"
+        assert result.messages[result.anchor_index]["content"] == "【消息正文】\n当前 run 用户原文"
         tail = result.messages[result.protected_start_index:]
         assert result.protected_source_start_index == 4
         assert [item["content"] for item in tail] == [
@@ -567,9 +555,11 @@ class TestCompactContext:
 
         assert result.changed
         assert result.messages[result.previous_protected_start_index:result.anchor_index] == [
-            messages[1], messages[2],
+            {"role": "user", "content": "【消息正文】\n上个 run round-1"}, messages[2],
         ]
-        assert result.messages[result.anchor_index] == messages[3]
+        assert result.messages[result.anchor_index] == {
+            "role": "user", "content": "【消息正文】\n当前 run 用户原文",
+        }
         assert result.messages[result.protected_start_index:] == messages[5:]
         assert "更早历史" not in [message_text(message) for message in result.messages]
 
@@ -591,8 +581,8 @@ class TestCompactContext:
 
         assert result.changed
         projected = messages.provider_projection().to_messages()
-        assert any(item.get("content") == "当前 run 用户原文" for item in projected)
-        assert projected[result.anchor_index]["content"] == "当前 run 用户原文"
+        assert any(str(item.get("content") or "").endswith("当前 run 用户原文") for item in projected)
+        assert projected[result.anchor_index]["content"].endswith("当前 run 用户原文")
         assert all(
             not str(item.get("content") or "").startswith(("执行轮 1x", "执行轮 2x"))
             for item in projected
@@ -1033,7 +1023,7 @@ class TestCompleteMessagesShape:
         assert result == "ok"
         msgs = captured["messages"]
         assert len(msgs) == 3 and msgs[-1]["content"] == "压缩指令"
-        assert msgs[0]["content"] == [{"type": "text", "text": "问题"}]
+        assert msgs[0]["content"] == [{"type": "text", "text": "【消息正文】\n问题"}]
         # 末尾历史消息被打上会话内缓存断点
         tail = msgs[1]["content"]
         assert isinstance(tail, list) and tail[-1].get("cache_control")
@@ -1098,7 +1088,7 @@ class TestCurrentProjectionCompaction:
 
         assert result.changed
         assert fallback_calls == [True]
-        assert any(message_text(item) == "新追加消息" for item in captured)
+        assert any(message_text(item).endswith("新追加消息") for item in captured)
         assert "过期推理" not in str(captured)
 
 
@@ -1130,8 +1120,9 @@ class TestBranchPrefixHistory:
         # 第一条必须是 run 的系统消息（对话头），不能从中段开始
         assert message_text(captured[0]) == "系统提示"
         # 且与原始序列逐条同前缀
-        assert [message_text(m) for m in captured] == [
-            message_text(m) for m in msgs[:len(captured)]
+        from agent.context.dynamic_tail import unwrap_message_body_text
+        assert [unwrap_message_body_text(message_text(m)) for m in captured] == [
+            unwrap_message_body_text(message_text(m)) for m in msgs[:len(captured)]
         ]
 
     def test_prefix_history_includes_kept_recent_tail(self, monkeypatch):

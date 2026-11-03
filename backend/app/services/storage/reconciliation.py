@@ -19,7 +19,7 @@ def is_internal_storage_key(value: str) -> bool:
     parts = [part for part in key.split("/") if part]
     user_path_parts = parts[2:] if len(parts) >= 3 and parts[0] == "u" else parts[1:]
     internal_user_root = bool(user_path_parts) and user_path_parts[0] in {
-        ".system", ".agent", "shell", ".voice", ".video_cache", ".data-portability",
+        ".system", ".agent", ".undo", "shell", ".voice", ".video_cache", ".data-portability",
         "workspace",
     }
     return (

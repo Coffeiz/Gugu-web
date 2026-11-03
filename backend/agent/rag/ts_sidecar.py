@@ -1096,8 +1096,8 @@ def _wire_document(document: IndexDocument) -> dict[str, Any]:
         "metadata": document.metadata,
     }
     if document.source_type == "conversation":
-        # 会话标题只用于展示；词法召回与重排只使用当前消息/摘要正文。
-        wire["ranking_text"] = document.content
+        # conversation adapter 对长消息分块时仍以完整当前消息统计词频。
+        wire["ranking_text"] = str(document.metadata.get("context_current") or document.content)
     if document.source_type == "conversation" and document.metadata.get("kind") == "message":
         context_text = document.contextual_content()
         if context_text:

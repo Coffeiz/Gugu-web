@@ -103,12 +103,14 @@ onUnmounted(() => {
 .done-col .month-name { font-size:11px; font-weight:500; color:var(--content-secondary); flex:1; }
 .done-col .month-folder { display:grid; grid-template-rows:1fr; overflow:hidden; transform-origin:top; min-height:0; }
 .done-col .month-folder[data-layout-open="false"]:not([data-runtime-group-animating="true"]) { height:0; overflow:hidden; }
+.done-col .month-folder[data-layout-open="false"]:not([data-runtime-group-animating="true"]) > .month-cards { display:none; }
 /* 年组引导线以 year-row 箭头几何中心为锚点。left 是伪元素左边缘，因此用 translateX(-50%)
    把 1px 线的真实中心校准到 10px；子内容从 20px 开始，线右侧保留约 10px 的结构安全间距。 */
 .done-col .year-folder { position:relative; min-height:0; overflow:hidden; padding:0 0 0 var(--done-year-content-indent); margin-top:1px; box-sizing:border-box; }
 .done-col .year-folder::before { content:''; position:absolute; left:var(--done-year-chevron-center); transform:translateX(-50%); top:0; bottom:0; width:1px; background:var(--done-group-border); pointer-events:none; }
 .done-col .year-folder[data-layout-open="false"]:not([data-runtime-group-animating="true"]) { height:0; overflow:hidden; }
 .done-col .year-folder[data-layout-open="false"]:not([data-runtime-group-animating="true"]) > .done-group-layout-node { visibility:hidden; }
+.done-col .year-folder[data-layout-open="false"]:not([data-runtime-group-animating="true"]) .done-card-item { display:none; }
 .done-col .done-card-list-enter-active,.done-col .done-card-list-leave-active { transition:opacity .22s ease; }
 .done-col .done-card-list-enter-from,.done-col .done-card-list-leave-to { opacity:0; }
 </style>

@@ -27,7 +27,7 @@ from app.core.tz import local_day_start_utc
 from app.core.credentials import normalize_ascii_api_key
 
 import httpx
-from app.core.config import get_settings
+from app.core.config import DEFAULT_SEARXNG_IMAGE_ENGINES, get_settings
 from app.core import chat_attach
 from app.byok.service import decrypt_value, get_active_credential
 from app.services.search import (
@@ -304,7 +304,10 @@ async def _xng_search(db, user_id, args: dict):
         return {"error": "mode 必须是 web、images 或 both"}
     max_results = args.get("max_results") or settings.search.max_results
     web_engines = settings.search.searxng_engines
-    image_engines = settings.search.searxng_image_engines or web_engines
+    image_engines = (
+        (settings.search.searxng_image_engines or "").strip()
+        or DEFAULT_SEARXNG_IMAGE_ENGINES
+    )
     if mode == "web":
         engines = web_engines
         categories = "general"

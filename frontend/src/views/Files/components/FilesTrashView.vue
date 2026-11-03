@@ -70,7 +70,7 @@ const { trashFolders, contents, sortedContents, sortedTrashFolders, expandedTras
 .list-head, .list-row { grid-template-columns: 2fr 90px 1.2fr 56px 72px 96px; }
 .days-warn { color: #c85a5a; font-weight: 600; }
 .trash-restore-btn { width: auto; display: flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; color: var(--color-primary); padding: 4px 8px; }
-.trash-restore-btn:hover { background: rgba(123,127,178,.15); }
+.trash-restore-btn:hover { background: color-mix(in srgb, var(--action-primary) 15%, transparent); }
 .trash-expand-btn { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; border: 0; background: transparent; color: var(--text-secondary); cursor: pointer; }
 .trash-folder-row.expanded { background: var(--surface-soft-hover); }
 .trash-folder-contents { --trash-chevron-center: 9px; --trash-content-indent: 20px; position: relative; display: grid; grid-template-rows: 1fr; min-height: 0; overflow: hidden; margin: -2px 0 0 14px; padding: 4px 0 4px var(--trash-content-indent); transform-origin: top; transition: grid-template-rows .22s ease, margin-top .22s ease, padding .22s ease; }

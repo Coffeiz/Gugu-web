@@ -26,11 +26,16 @@ export function sortSessionTimelineMessages(items: ChatMessage[]) {
     a.role === 'interaction' && b.role === 'tool' &&
     Boolean(a.interaction?.toolCallId) && a.interaction?.toolCallId === b.toolCallId
   return items.sort((a, b) => {
-    if (a._timelineOrder != null && b._timelineOrder != null && a._timelineOrder !== b._timelineOrder) {
-      return a._timelineOrder - b._timelineOrder
+    const aTimestamp = Date.parse(a._completedAt || a._createdAt || '')
+    const bTimestamp = Date.parse(b._completedAt || b._createdAt || '')
+    if (Number.isFinite(aTimestamp) && Number.isFinite(bTimestamp) && aTimestamp !== bTimestamp) {
+      return aTimestamp - bTimestamp
     }
     if (isPairedInteraction(a, b)) return 1
     if (isPairedInteraction(b, a)) return -1
+    if (a._timelineOrder != null && b._timelineOrder != null && a._timelineOrder !== b._timelineOrder) {
+      return a._timelineOrder - b._timelineOrder
+    }
     return String(a._createdAt || '').localeCompare(String(b._createdAt || ''))
   })
 }
@@ -48,6 +53,7 @@ export function mapSessionMessageDelta(
     const clientMessageId = typeof item.clientMessageId === 'string' && item.clientMessageId
       ? item.clientMessageId
       : undefined
+    const occurredAt = item.occurredAt || item.createdAt
     return {
       id: mkid(), dbId: item.id,
       _syncKey: clientMessageId ? `client:${clientMessageId}` : `message:${item.id}`,
@@ -58,7 +64,7 @@ export function mapSessionMessageDelta(
       files: item.files?.length ? item.files as ChatFile[] : undefined,
       references: item.references?.length ? item.references as ChatReference[] : undefined,
       quotedText: item.quotedText || undefined,
-      time: displayTime(item.createdAt), _createdAt: item.createdAt,
+      time: displayTime(occurredAt), _createdAt: occurredAt,
       _timelineOrder: item.timelineOrder ?? item.id,
       runId, roundId,
       runOutcome: item.runOutcome,
@@ -68,9 +74,10 @@ export function mapSessionMessageDelta(
     ? {
         id: mkid(), dbId: event.messageId, role: 'ai', text: displayQQFaces(event.text || ''), html: null,
         files: event.files?.length ? event.files as ChatFile[] : undefined,
-        linkButtons: event.linkButtons, time: displayTime(event.createdAt),
+        linkButtons: event.linkButtons, time: displayTime(event.completedAt || event.createdAt),
         runId: event.runId, roundId: event.roundId,
-        _timelineOrder: event.timelineOrder, _createdAt: event.createdAt, _updatedAt: event.updatedAt,
+        _timelineOrder: event.timelineOrder, _createdAt: event.createdAt,
+        _completedAt: event.completedAt, _updatedAt: event.updatedAt,
         _syncKey: displayEventKey(event),
       }
     : {

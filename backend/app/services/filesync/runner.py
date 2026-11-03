@@ -34,6 +34,7 @@ from app.services.filesync.jobs import (
     claim_next_run,
     finish_run,
     notify_run_changed,
+    requeue_run_after_worker_shutdown,
     renew_run_lease,
     update_run_progress,
 )
@@ -1256,21 +1257,33 @@ async def _run_claimed(
                 await db.commit()
             else:
                 await db.rollback()
+        graceful_worker_stop = (
+            worker_stop.is_set()
+            and signals.interrupted.is_set()
+            and not signals.cancelled.is_set()
+            and not signals.timed_out.is_set()
+            and not signals.lease_lost.is_set()
+            and status == "failed"
+            and error_code == "worker_interrupted"
+        )
         async with session_factory() as db:
-            await finish_run(
-                db, run.id, worker_id, status=status, error_code=error_code,
-                stage="finished" if status == "succeeded" else status,
-                reconciliation_complete=(
-                    status == "succeeded"
-                    and scope is not None
-                    and scope.action in {"repair", "initialize"}
-                ),
-                requeue_mirror_out_changes=(
-                    status == "succeeded"
-                    and scope is not None
-                    and scope.action == "mirror_out"
-                ),
-            )
+            if graceful_worker_stop:
+                await requeue_run_after_worker_shutdown(db, run.id, worker_id)
+            else:
+                await finish_run(
+                    db, run.id, worker_id, status=status, error_code=error_code,
+                    stage="finished" if status == "succeeded" else status,
+                    reconciliation_complete=(
+                        status == "succeeded"
+                        and scope is not None
+                        and scope.action in {"repair", "initialize"}
+                    ),
+                    requeue_mirror_out_changes=(
+                        status == "succeeded"
+                        and scope is not None
+                        and scope.action == "mirror_out"
+                    ),
+                )
     finally:
         signals.stop.set()
         if not monitor.done():

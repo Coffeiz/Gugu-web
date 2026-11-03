@@ -30,6 +30,7 @@ async def _ts_tokenize(text: str) -> list[str]:
 
 
 @pytest.mark.asyncio
+@pytest.mark.process
 async def test_ts_tokenizer_matches_golden_corpus():
     for case in _golden():
         assert await _ts_tokenize(case["text"]) == case["tokens"], case["text"]

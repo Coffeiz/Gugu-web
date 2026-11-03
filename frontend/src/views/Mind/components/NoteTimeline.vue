@@ -206,7 +206,7 @@ defineExpose({
 .tl-day-side { display: flex; flex-direction: column; gap: 1px; }
 .tl-month { font-size: 11px; font-weight: 600; color: var(--text-secondary); line-height: 1.1; }
 .tl-week { font-size: 10.5px; color: var(--text-secondary); opacity: 0.75; line-height: 1.1; }
-.tl-count { margin-left: auto; font-size: 10.5px; color: var(--text-secondary); background: rgba(123,127,178,0.1); border-radius: 99px; padding: 1px 7px; }
+.tl-count { margin-left: auto; font-size: 10.5px; color: var(--text-secondary); background: color-mix(in srgb, var(--action-primary) 10%, transparent); border-radius: 99px; padding: 1px 7px; }
 
 /* 列内溢出自己竖滚（横向翻历史、纵向翻当天，互不打架） */
 .tl-col-body {

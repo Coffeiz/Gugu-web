@@ -219,7 +219,9 @@ def test_render_branch_prefix_returns_immutable_provider_projection():
     # 保留 wire 类型边界，后续分支不能把已渲染内容重新解释为 canonical。
     assert isinstance(rendered, ProviderConversation)
     assert len(rendered) == 2
-    assert rendered.to_messages()[0] == {"role": "user", "content": "hi"}
+    assert rendered.to_messages()[0] == {
+        "role": "user", "content": "【消息正文】\nhi",
+    }
     # 输入不被修改
     assert prefix[0] == {"role": "user", "content": "hi"}
 

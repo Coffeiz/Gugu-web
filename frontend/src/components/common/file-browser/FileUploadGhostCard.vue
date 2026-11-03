@@ -58,16 +58,16 @@ const statusText = computed(() => {
 <style scoped>
 .fc-ghost {
   position: relative; min-height: 122px; overflow: hidden;
-  border-radius: 14px; border: 1.5px dashed rgba(123,127,178,0.35);
-  background: rgba(123,127,178,0.04);
+  border-radius: 14px; border: 1.5px dashed color-mix(in srgb, var(--action-primary) 35%, transparent);
+  background: color-mix(in srgb, var(--action-primary) 4%, transparent);
   display: flex; flex-direction: column;
   cursor: default; pointer-events: none;
 }
 .fc-ghost-fill {
   position: absolute; inset: 0; right: auto; height: 100%; pointer-events: none;
   background: linear-gradient(135deg,
-    color-mix(in srgb, var(--fc-color, rgba(123,127,178,1)) 18%, transparent),
-    color-mix(in srgb, var(--fc-color, rgba(123,127,178,1)) 10%, transparent));
+    color-mix(in srgb, var(--fc-color, color-mix(in srgb, var(--action-primary) 100%, transparent)) 18%, transparent),
+    color-mix(in srgb, var(--fc-color, color-mix(in srgb, var(--action-primary) 100%, transparent)) 10%, transparent));
   transition: width 0.25s ease-out;
 }
 .fc-ghost.is-indeterminate .fc-ghost-fill,
@@ -114,14 +114,14 @@ const statusText = computed(() => {
 .fc-ghost-row {
   position: relative;
   overflow: hidden;
-  border: 1px solid rgba(123,127,178,0.2) !important;
-  background: rgba(123,127,178,0.03) !important;
+  border: 1px solid color-mix(in srgb, var(--action-primary) 20%, transparent) !important;
+  background: color-mix(in srgb, var(--action-primary) 3%, transparent) !important;
   pointer-events: none;
   cursor: default;
 }
 .fc-ghost-row .fc-ghost-fill {
   position: absolute; inset: 0; right: auto; height: 100%; pointer-events: none;
-  background: rgba(123,127,178,0.08);
+  background: color-mix(in srgb, var(--action-primary) 8%, transparent);
 }
 .fc-ghost-row :deep(.lr-name-cell),
 .fc-ghost-row :deep(.lr-text),

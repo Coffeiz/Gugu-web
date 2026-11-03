@@ -145,7 +145,7 @@ function submitPageEdit() {
   --iv-toolbar-border: rgba(255, 255, 255, 0.82);
   --iv-toolbar-shadow: 0 4px 16px rgba(80, 90, 110, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.95), inset 1px 0 0 rgba(255, 255, 255, 0.55);
   --iv-toolbar-fg: var(--text-secondary);
-  --iv-toolbar-hover-bg: rgba(123, 127, 178, 0.12);
+  --iv-toolbar-hover-bg: color-mix(in srgb, var(--action-primary) 12%, transparent);
   --iv-toolbar-hover-fg: var(--color-primary);
   --iv-toolbar-pct-hover-fg: var(--text-primary);
   position: absolute;

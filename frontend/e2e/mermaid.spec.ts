@@ -5,7 +5,7 @@ test('Mermaid 不同折线路由统一圆角端点和标准箭头，同时保留
   await page.goto('/', { waitUntil: 'commit' })
 
   const rendered = await page.evaluate(async () => {
-    const { renderMermaidSvg } = await import('/src/utils/mermaidRenderer.ts')
+    const { renderMermaidSvg } = await import('/src/utils/chart/mermaidRenderer.ts')
     const newline = String.fromCharCode(10)
     const smooth = await renderMermaidSvg('flowchart TB; A[消息] --> B[读取]; A --> C[判断]; C --> D[结果]')
     const orthogonal = await renderMermaidSvg(
@@ -75,7 +75,7 @@ test('浏览器真实渲染 Mermaid，在窄屏预览并导出有效 PNG', async
   await page.goto('/', { waitUntil: 'commit' })
 
   await page.evaluate(async () => {
-    const { renderMarkdownMermaid } = await import('/src/utils/mermaidRenderer.ts')
+    const { renderMarkdownMermaid } = await import('/src/utils/chart/mermaidRenderer.ts')
     const root = document.createElement('main')
     root.id = 'mermaid-e2e-fixture'
     // The live app has fixed-position shell controls. Keep this isolated test fixture
@@ -161,7 +161,7 @@ test('浏览器真实渲染 Mermaid，在窄屏预览并导出有效 PNG', async
   await expect(expand).toBeFocused()
 
   await page.evaluate(async () => {
-    const { cleanupMarkdownMermaid } = await import('/src/utils/mermaidRenderer.ts')
+    const { cleanupMarkdownMermaid } = await import('/src/utils/chart/mermaidRenderer.ts')
     const root = document.querySelector<HTMLElement>('#mermaid-e2e-fixture')
     cleanupMarkdownMermaid(root)
     root?.remove()

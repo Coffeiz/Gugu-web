@@ -227,7 +227,7 @@ def send_email_with_status(subject: str, body: str, *, to_addr: str | None = Non
                            format_mode: str = "template",
                            template: str = "notification", title: str | None = None,
                            preheader: str | None = None, sections=None, actions=None,
-                           theme: str = "light", palette: str = "mist",
+                           theme: str = "light", palette: str = "neutral",
                            attachments: tuple[EmailAttachment, ...] = ()) -> dict:
     """发送邮件并返回可交付状态；``sent`` 只表示 SMTP 已接受，不代表最终送达。"""
     started_at = time.monotonic()
@@ -283,7 +283,7 @@ def send_email_with_status(subject: str, body: str, *, to_addr: str | None = Non
 def send_email(subject: str, body: str, *, to_addr: str | None = None, html: str | None = None,
                smtp_config=None, format_mode: str = "template", template: str = "notification", title: str | None = None,
                preheader: str | None = None, sections=None, actions=None,
-               theme: str = "light", palette: str = "mist",
+               theme: str = "light", palette: str = "neutral",
                attachments: tuple[EmailAttachment, ...] = ()) -> bool:
     """兼容旧调用方：只返回是否已被 SMTP 接受。"""
     return send_email_with_status(
@@ -296,7 +296,7 @@ def send_email(subject: str, body: str, *, to_addr: str | None = None, html: str
 
 def send_test_email(*, host: str, port: int, user: str, password: str,
                     from_addr: str, to_addr: str, use_ssl: bool,
-                    template: str = "test", theme: str = "light", palette: str = "mist") -> None:
+                    template: str = "test", theme: str = "light", palette: str = "neutral") -> None:
     """SMTP 连通测试：用传入的（可能未保存的）参数发一封测试邮件。失败抛异常（调用方捕获给提示）。"""
     from_name, real_from = _resolve_from(from_addr, user)
     content = render_email(
@@ -312,7 +312,7 @@ def send_test_email(*, host: str, port: int, user: str, password: str,
     _deliver(host=host, port=port, user=user, password=password, use_ssl=use_ssl, msg=msg)
 
 
-def send_reset_email(*, to_addr: str, username: str, link: str, theme: str = "light", palette: str = "mist") -> bool:
+def send_reset_email(*, to_addr: str, username: str, link: str, theme: str = "light", palette: str = "neutral") -> bool:
     """发送密码重置邮件（含纯文本 + HTML 按钮）。"""
     subject = "咕咕 · 重置密码"
     body = (
@@ -341,7 +341,7 @@ def send_registration_verification(*, to_addr: str, code: str) -> bool:
 
 
 def send_email_change_verification(*, to_addr: str, username: str, link: str,
-                                   theme: str = "light", palette: str = "mist") -> bool:
+                                   theme: str = "light", palette: str = "neutral") -> bool:
     """发送新邮箱确认邮件；link 只由服务端生成。"""
     subject = "咕咕 · 确认新邮箱"
     body = (
@@ -357,7 +357,7 @@ def send_email_change_verification(*, to_addr: str, username: str, link: str,
 
 
 def send_email_change_notice(*, to_addr: str, username: str, kind: str,
-                             theme: str = "light", palette: str = "mist") -> bool:
+                             theme: str = "light", palette: str = "neutral") -> bool:
     """发送邮箱变更安全通知，不在正文中回显新邮箱或令牌。"""
     if kind == "requested":
         subject = "咕咕 · 邮箱变更申请提醒"
@@ -375,7 +375,7 @@ def send_email_change_notice(*, to_addr: str, username: str, kind: str,
                       theme=theme, palette=palette)
 
 
-def notify_feedback(username: str, category: str, content: str, *, theme: str = "light", palette: str = "mist") -> None:
+def notify_feedback(username: str, category: str, content: str, *, theme: str = "light", palette: str = "neutral") -> None:
     cfg = get_settings().smtp
     enabled = cfg.get("feedback_email_enabled", True) if isinstance(cfg, dict) else cfg.feedback_email_enabled
     if not enabled:

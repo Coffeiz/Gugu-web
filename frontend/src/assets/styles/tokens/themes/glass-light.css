@@ -9,7 +9,7 @@
   --theme-chat-main-bg: #eef0f6;
   /* Glass 保持透明，但让当前配色有可辨识的轻微染色；页面底色仍由灰阶渐变负责。 */
   --theme-glass: color-mix(in srgb,var(--theme-action-primary) 2%,rgba(255,255,255,.60)); --theme-glass-hover: rgba(255,255,255,.75);
-  --theme-card-solid: rgba(255,255,255,.82); --theme-soft: rgba(123,127,178,.06); --theme-soft-hover: rgba(123,127,178,.10);
+  --theme-card-solid: rgba(255,255,255,.82); --theme-soft: color-mix(in srgb,var(--theme-action-primary) 6%,transparent); --theme-soft-hover: color-mix(in srgb,var(--theme-action-primary) 10%,transparent);
   --theme-raised: rgba(255,255,255,.70); --theme-floating: rgba(255,255,255,.72); --theme-scrim: rgba(31,34,45,.22); --theme-column: rgba(255,255,255,.16);
   --theme-content-primary: #1e2028; --theme-content-secondary: #747985; --theme-content-tertiary: #969bab; --theme-content-disabled: #b8bdc8; --theme-content-inverse: #fff;
   --theme-border-hairline: rgba(255,255,255,.30); --theme-border-subtle: rgba(255,255,255,.42); --theme-border-default: rgba(255,255,255,.62); --theme-border-strong: rgba(255,255,255,.76); --theme-border-hover: rgba(255,255,255,.92);

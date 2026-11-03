@@ -310,7 +310,10 @@ async def test_anthropic_append_branch_sanitizes_history_before_appending_delta(
             build_anthropic_generation_params=lambda ai: {},
         ))
     history = [
-        {"role": "user", "content": [{"type": "text", "text": "旧问题"}]},
+        {"role": "user", "content": [
+            {"type": "text", "text": "【消息正文】\n"},
+            {"type": "text", "text": "旧问题"},
+        ]},
         {"role": "assistant", "content": [
             {"type": "reasoning_content", "text": "unsupported"},
             {"type": "text", "text": "旧回答"},
@@ -326,7 +329,10 @@ async def test_anthropic_append_branch_sanitizes_history_before_appending_delta(
     )
 
     assert fake.kwargs["messages"] == [
-        {"role": "user", "content": [{"type": "text", "text": "旧问题"}]},
+        {"role": "user", "content": [
+            {"type": "text", "text": "【消息正文】\n"},
+            {"type": "text", "text": "旧问题"},
+        ]},
         {"role": "assistant", "content":[
             {"type": "text", "text": "旧回答", "cache_control": {"type": "ephemeral"}},
         ]},
@@ -457,7 +463,7 @@ async def test_complete_messages_uses_responses_protocol_and_native_tool_schema(
     assert result == {"summary": "ok"}
     assert fake.kwargs["instructions"] == "stable system"
     assert fake.kwargs["input"] == [
-        {"role": "user", "content": "历史"},
+        {"role": "user", "content": "【消息正文】\n历史"},
         {"role": "user", "content": "压缩指令"},
     ]
     assert fake.kwargs["tools"] == tools

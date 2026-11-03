@@ -13,6 +13,38 @@ from sqlalchemy import case, func, or_, select
 
 logger = logging.getLogger(__name__)
 
+
+def _history_order_key(message):
+    """按有效事件时间恢复历史；同一毫秒内保持锚点前缀和会话顺序。"""
+    from datetime import datetime, timezone
+
+    # 排序采用消息实际发生/到达时间。早落库行被某轮消费时，sent_at 会改成
+    # 处理时间；它不能覆盖平台时间、网关接收时间或保留的 created_at 到达时间。
+    def _value(name):
+        return message.get(name) if isinstance(message, dict) else getattr(message, name, None)
+
+    platform_sent_ms = _value("im_platform_sent_ms") or _value("platform_sent_ms")
+    received_ms = _value("im_event_received_ms") or _value("event_received_ms")
+    if isinstance(platform_sent_ms, (int, float)) and platform_sent_ms > 0:
+        timestamp = datetime.fromtimestamp(platform_sent_ms / 1000, timezone.utc)
+    elif isinstance(received_ms, (int, float)) and received_ms > 0:
+        timestamp = datetime.fromtimestamp(received_ms / 1000, timezone.utc)
+    else:
+        timestamp = _value("created_at") or _value("sent_at")
+    if isinstance(timestamp, datetime):
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+        timestamp_key = timestamp.timestamp()
+    else:
+        timestamp_key = float("-inf")
+    received_ms = received_ms if isinstance(received_ms, (int, float)) else 0
+    anchor_seq = getattr(message, "history_anchor_seq", None)
+    sequence = int(anchor_seq or getattr(message, "conversation_seq", 0) or 0)
+    is_anchor_prefix = 0 if anchor_seq is not None else 1
+    return timestamp_key, received_ms, sequence, is_anchor_prefix, int(
+        getattr(message, "conversation_seq", 0) or 0
+    )
+
 _last_history_stats: ContextVar[dict[str, Any] | None] = ContextVar(
     "session_history_stats", default=None,
 )
@@ -45,7 +77,7 @@ async def load_session_history(
     *,
     max_messages: int | None = None,
 ) -> list:
-    """读取 baseline 后的连续历史，按持久化会话顺序返回。
+    """读取 baseline 后的连续历史，按平台事件时间返回。
 
     baseline 为 0 时从会话开头恢复；持久化 baseline 更新由 ``compress_conv``
     负责。已有 summary 始终放在结果第一条。显式条数上限仅供诊断脚本构造样本。
@@ -96,8 +128,8 @@ async def load_session_history(
                 ConversationMessage.run_id.notlike(PENDING_USER_RUN_PREFIX + "%"),
             ),
         )
-        # 会话序号代表持久化事件顺序；run 输入前置上下文回锚到其用户消息前，
-        # 其余运行期间到达的用户消息先于 run 完成时写入的工具/助手输出。
+        # 先按会话序号读取候选行；最终历史再按平台发送时间排序，旧消息和
+        # 没有平台时间的消息则由事件到达时间、入库时间和会话序号稳定回退。
         .order_by(
             func.coalesce(
                 ConversationMessage.history_anchor_seq,
@@ -114,14 +146,15 @@ async def load_session_history(
                 ConversationMessage.conversation_seq,
             ) > effective_baseline
         )
+    newest = list((await db.execute(query)).scalars().all())
+    # 会话序号用于 baseline 和稳定回退，不代表群聊平台上的实际发生顺序。
+    # provider 历史和 UI 均以平台发送时间为先，缺失时再回退事件到达/入库时间。
+    history = sorted(newest, key=_history_order_key)
     if max_messages is not None:
         limit = max(1, int(max_messages))
         if effective_baseline <= 0:
             limit = max(0, limit - len(summary))
-        query = query.limit(limit)
-    newest = list((await db.execute(query)).scalars().all())
-    # 真正的预算、压缩和重试统一由 provider 边界处理。
-    history = list(reversed(newest))
+        history = history[-limit:] if limit else []
     await _hydrate_loaded_reference_contexts(db, session_id, history)
     _last_history_stats.set({
         "history_loaded_count": len(newest),

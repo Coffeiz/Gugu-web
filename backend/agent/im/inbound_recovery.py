@@ -84,7 +84,7 @@ async def recover_started(session_factory, batch_key: str) -> bool:
             return False
         silent_receipt = (await db.execute(select(ConversationBatch.id).where(
             ConversationBatch.session_id == user.session_id,
-            ConversationBatch.version == "im-silent-v1",
+            ConversationBatch.version.in_(("im-silent-v1", "im-attention-passive-v1")),
             ConversationBatch.run_id == user_run_key(batch_key),
         ).limit(1))).scalar_one_or_none()
         if silent_receipt is not None:

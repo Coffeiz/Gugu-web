@@ -257,7 +257,7 @@ def test_openai_history_drops_only_unpaired_parallel_calls_and_keeps_prompt_meta
     cleaned = sanitize_openai_tool_history(messages.provider_projection())
 
     assert cleaned.to_messages()[0] == {"role": "system", "content": "固定前缀"}
-    assert cleaned.to_messages()[-1] == {"role": "user", "content": "继续"}
+    assert cleaned.to_messages()[-1] == {"role": "user", "content": "【消息正文】\n继续"}
     assert len(cleaned.to_messages()) == 4
     retained_calls = cleaned.to_messages()[1]["tool_calls"]
     assert [call["id"] for call in retained_calls] == ["present"]
@@ -397,7 +397,9 @@ def test_deepseek_driver_drops_orphan_tool_result_before_request():
     asyncio.run(_run())
 
     projected = messages.to_messages()
-    assert completions.kwargs["messages"] == [projected[0], projected[2]]
+    assert completions.kwargs["messages"] == [
+        projected[0], {"role": "user", "content": "【消息正文】\n看这张图"},
+    ]
     assert projected[1]["role"] == "tool"  # 不回写会话历史
 
 

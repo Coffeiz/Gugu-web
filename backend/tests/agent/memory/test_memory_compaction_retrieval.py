@@ -67,6 +67,41 @@ async def test_compaction_keeps_working_when_event_recall_fails(monkeypatch, sto
 
 
 @pytest.mark.asyncio
+async def test_owner_daily_compacts_all_entries_at_fifty_and_clears_daily(monkeypatch, storage):
+    from agent.memory import memory_compress as compress, store
+
+    uid = "memory-threshold-test"
+    lines = [f"- 2026-08-24 记录{i}" for i in range(49)]
+    await store.write_daily_lines(uid, lines)
+    calls = []
+
+    async def fake_complete(_sys, user, _settings, **_kwargs):
+        calls.append(user)
+        return {"entries": "## 记录长期记忆：daily 全量沉淀\n\n2026-08-24 已整理全部近期记录。"}
+
+    async def no_references(*_args, **_kwargs):
+        return []
+
+    async def fake_sync(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr("agent.context.provider_runner.complete_json", fake_complete)
+    monkeypatch.setattr(compress, "retrieve_event_references", no_references)
+    monkeypatch.setattr(store, "sync_memory_vecs", fake_sync)
+
+    assert store.DAILY_COMPACT_AT == 50
+    assert await compress.compact(uid, SimpleNamespace()) is False
+    assert calls == []
+
+    await store.append_daily(uid, "2026-08-24", "第49条")
+    assert await compress.compact(uid, SimpleNamespace()) is True
+    assert len(calls) == 1
+    assert all(f"记录{i}" in calls[0] for i in range(49))
+    assert "第49条" in calls[0]
+    assert await store.read_daily_lines(uid) == []
+
+
+@pytest.mark.asyncio
 async def test_memory_compaction_retries_provider_without_context_branch(monkeypatch, storage):
     from agent.memory import memory_compress as compress, store
 

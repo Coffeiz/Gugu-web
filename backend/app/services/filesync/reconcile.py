@@ -142,6 +142,20 @@ def _is_sync_temporary(path: Path) -> bool:
     )
 
 
+_SYNC_IGNORED_DIRECTORY_NAMES = frozenset({".git", ".undo", "node_modules"})
+
+
+def _is_sync_ignored_tree(relative_path: str | Path) -> bool:
+    """识别仓库、依赖和撤销数据目录；它们不属于文件库内容。"""
+    return any(part in _SYNC_IGNORED_DIRECTORY_NAMES for part in Path(relative_path).parts)
+
+
+def _is_sync_ignored_path(relative_path: str | Path) -> bool:
+    """统一判断不应投影到文件库的路径。"""
+    path = Path(relative_path)
+    return _is_sync_ignored_tree(path) or _is_sync_temporary(path)
+
+
 async def _binding_for(
     db: AsyncSession,
     user_id,
@@ -413,7 +427,8 @@ async def reconcile_local_directory(
     physical_folders: dict[str, Path] = {}
     rejected = 0
     for item in root.rglob("*"):
-        if _is_sync_temporary(item):
+        relative = item.relative_to(root).as_posix()
+        if _is_sync_ignored_path(relative):
             continue
         if item.is_dir() and not item.is_symlink():
             try:

@@ -1,7 +1,7 @@
 """Phase 5 统一查询主链：一次索引准备 + 一次 ``unified_query`` IPC。
 
 旧的 batch/unified_shadow 影子模式与 legacy 交付链已删除（2026-09-09 清理，
-见 devlog）；本模块只保留 TS worker 统一查询的 Python 侧编排。
+见 devlog）；本模块保留统一查询运行时的 Python 侧编排。
 """
 import asyncio
 import time
@@ -19,7 +19,7 @@ from agent.rag.ts_sidecar import TsSidecarUnavailable
 
 @dataclass(frozen=True)
 class _TransientCorpus:
-    """worker 内 Memory 装载参数；不把语料正文或向量搬回 Python。"""
+    """RAG 运行时 Memory 装载参数；不把语料正文或向量搬回编排层。"""
 
     owner: str
     scopes: list[Scope]
@@ -30,12 +30,41 @@ class _TransientCorpus:
     vector_version: str
 
 
+async def _embed_query_timed(query: str, settings: dict) -> dict:
+    """生成查询向量并保留真实调用耗时，供并行 RAG 阶段记录。"""
+    from agent.memory.embedding import embed_query
+
+    started = time.monotonic()
+    result = await embed_query(query, settings=settings)
+    return {**result, "elapsed_ms": max(0, round((time.monotonic() - started) * 1000))}
+
+
+def _start_cython_query_embedding(index, engine_name: str, query: str, settings):
+    """只为具备本地 Cython engine 的查询提前启动 embedding。"""
+    if engine_name != "cython" or settings is None or getattr(index, "engine", None) is None:
+        return None
+    return asyncio.create_task(_embed_query_timed(query, settings))
+
+
+async def _await_cython_query_embedding(task):
+    if task is None:
+        return None
+    try:
+        return await task
+    except BaseException as exc:
+        probe_update(query_embedding_parallel={
+            "outcome": "cancelled" if isinstance(exc, asyncio.CancelledError) else "error",
+            "error_type": type(exc).__name__,
+        })
+        raise
+
+
 class UnifiedQueryRetriever(UnifiedRetriever):
-    """Phase 5 统一查询主链：一次索引准备 + 一次 ``unified_query`` IPC。
+    """统一查询主链：一次索引准备 + 一次 ``unified_query`` 调用。
 
     召回、来源聚合、conversation 水位、Memory 融合与 confidence 排序全部在
-    TS worker 内完成；Python 只保留 scope 授权、embedding 凭据绑定、命中
-    权限复核和最终注入组装。Memory 正文与缓存向量在 worker 内读取和驻留。
+    当前选定的 RAG 运行时内完成；Python 只保留 scope 授权、embedding 凭据绑定、命中
+    权限复核和最终注入组装。Memory 正文与缓存向量由当前运行时读取和驻留。
     """
 
     SOURCE_ORDER = (
@@ -112,7 +141,8 @@ class UnifiedQueryRetriever(UnifiedRetriever):
             session_owner = self._memory_session_owner(memory)
             owner = memory.user_id
         metadata: dict = {}
-        ts_index = None
+        backend_index = None
+        engine_name = "unknown"
         try:
             async with session_owner.session_scope() as db:
                 index = await await_probe(
@@ -123,6 +153,12 @@ class UnifiedQueryRetriever(UnifiedRetriever):
                         defer_cold=self._defer_cold_index,
                     ),
                 )
+                engine_name = str(metadata.get("engine") or "")
+                if not engine_name:
+                    from app.core.config import get_settings
+                    from agent.rag.index_cache import _selected_backend
+
+                    engine_name = _selected_backend(get_settings().search)
                 probe_update(index_cache={
                     key: metadata[key]
                     for key in (
@@ -135,7 +171,7 @@ class UnifiedQueryRetriever(UnifiedRetriever):
                 # 先确认持久索引是否可用；自动 RAG 遇到冷索引会立即返回，
                 # 不必为一个本轮不会执行的查询解析 embedding 凭据。
                 # 凭据仍在 Python 的身份/解密边界解析；目标 URL 安全校验与 DNS pin 在后台线程做，
-                # provider 请求和 query vector 生成均由 TS worker 执行。
+                # provider 请求由 Python embedding 边界执行；查询向量只在本轮短暂使用。
                 query_embedding = (
                     await await_probe(
                         "query_embedding_config",
@@ -145,11 +181,16 @@ class UnifiedQueryRetriever(UnifiedRetriever):
                     else None
                 )
                 embedding_enabled = query_embedding is not None
+                # Cython 可消费预先生成的向量，因此把网络等待与 Memory 准备重叠；
+                # 其他后端保持原来的 embedding 路径。
+                query_embedding_task = _start_cython_query_embedding(
+                    index, engine_name, query, query_embedding,
+                )
                 prepare_ms = int((time.monotonic() - started) * 1000)
                 for item in persistent:
-                    progress(item.source_type, "sidecar_search", index_prepare_ms=prepare_ms)
+                    progress(item.source_type, "index_query_prepare", index_prepare_ms=prepare_ms)
                 # 指纹耦合 embedding 模型版本戳：换模型必然重传语料与向量。参数留到
-                # 重试时复用；语料和向量只在 worker 内读取与驻留。
+                # 重试时复用；语料和向量由索引运行时读取与驻留。
                 transient: _TransientCorpus | None = None
                 if memory is not None and memory_scopes is not None:
                     vector_version = embedding.model_tag() if embedding_enabled else ""
@@ -160,17 +201,23 @@ class UnifiedQueryRetriever(UnifiedRetriever):
                         snapshot_text=get_snapshot_context(),
                         revision="", vector_version=vector_version,
                     )
-                    prepared = await await_probe(
-                        "memory_load",
-                        index.client.prepare_memory(
-                            transient.owner, transient.scopes,
-                            source_filter=transient.source_filter,
-                            snapshot_revision=transient.snapshot_revision,
-                            snapshot_text=transient.snapshot_text,
-                            vector_version=transient.vector_version,
-                        ),
-                        terminal_on_error=True,
-                    )
+                    try:
+                        prepared = await await_probe(
+                            "memory_load",
+                            index.client.prepare_memory(
+                                transient.owner, transient.scopes,
+                                source_filter=transient.source_filter,
+                                snapshot_revision=transient.snapshot_revision,
+                                snapshot_text=transient.snapshot_text,
+                                vector_version=transient.vector_version,
+                            ),
+                            terminal_on_error=True,
+                        )
+                    except BaseException:
+                        if query_embedding_task is not None:
+                            query_embedding_task.cancel()
+                            await asyncio.gather(query_embedding_task, return_exceptions=True)
+                        raise
                     transient = _TransientCorpus(
                         **{**transient.__dict__, "revision": str(prepared.get("transient_revision") or "")},
                     )
@@ -183,7 +230,7 @@ class UnifiedQueryRetriever(UnifiedRetriever):
                         "index_source": memory_index_source,
                         "prepare": memory_probe if isinstance(memory_probe, dict) else {},
                     })
-                ts_index = index
+                backend_index = index
                 query_kwargs = {
                     "searches": specs,
                     "query_embedding": query_embedding,
@@ -199,13 +246,16 @@ class UnifiedQueryRetriever(UnifiedRetriever):
                         "exclude_content_hashes": rank_options.get("exclude_content_hashes") or (),
                     },
                     "before_message_id": get_conversation_before_message_id(),
-                    # 持久向量表（knowledge 等）按此版本戳校验：worker 驻留表不同版
+                    # 持久向量表（knowledge 等）按此版本戳校验：运行时驻留表不同版
                     # （换模型窗口）时非 memory 组自动降级纯词法。
                     "vector_version": embedding.model_tag() if embedding_enabled else None,
                 }
+                embedded = await _await_cython_query_embedding(query_embedding_task)
+                if embedded is not None:
+                    query_kwargs["precomputed_query_embedding"] = embedded
                 try:
                     response = await await_probe(
-                        "sidecar_unified_query", index.unified_query(query, **query_kwargs),
+                        "rag_unified_query", index.unified_query(query, **query_kwargs),
                     )
                 except TsSidecarUnavailable as exc:
                     if self._defer_cold_index and exc.code == "revision_mismatch":
@@ -219,14 +269,23 @@ class UnifiedQueryRetriever(UnifiedRetriever):
                             scope=scope, transient=transient, metadata=metadata,
                         ),
                     )
-                ts_index = index
-                sidecar_timing = response.pop("_sidecar_timing", {})
-                worker_probe = response.pop("probe", None)
-                if not isinstance(worker_probe, dict):
-                    worker_probe = response.pop("_probe", {})
+                backend_index = index
+                runtime_probe = response.pop("probe", None)
+                if not isinstance(runtime_probe, dict):
+                    runtime_probe = response.pop("_probe", {})
                 else:
                     response.pop("_probe", None)
-                probe_update(sidecar=sidecar_timing, worker=worker_probe)
+                search_diagnostics = response.pop("search_diagnostics", {})
+                if engine_name == "cython":
+                    probe_update(
+                        cython_runtime=runtime_probe,
+                        search_diagnostics=search_diagnostics,
+                    )
+                else:
+                    probe_update(
+                        sidecar=response.pop("_sidecar_timing", {}),
+                        worker=runtime_probe,
+                    )
         except BaseException as exc:
             from agent.rag.index_cache import IndexNotReady
 
@@ -258,7 +317,7 @@ class UnifiedQueryRetriever(UnifiedRetriever):
             **metadata,
             "document_count": sum((response.get("document_counts") or {}).values()),
             "retrieve_ms": elapsed_ms,
-            "engine": "typescript", "cache_hit": "True",
+            "engine": engine_name, "cache_hit": "True",
             "batch_search": "True", "unified_query": "True",
             "fusion": str(fusion.get("fusion") or "bm25"),
         }
@@ -266,7 +325,7 @@ class UnifiedQueryRetriever(UnifiedRetriever):
         stats = dict(response.get("stats") or {})
         rank_resolution_started = time.monotonic()
         rank_rows = self._resolve_rank_rows(
-            ts_index, response, memory_scopes or [], owner_user_id=str(owner),
+            backend_index, response, memory_scopes or [], owner_user_id=str(owner),
         )
         probe_finish("rank_row_resolution", rank_resolution_started)
         probe_complete("completed", candidate_count=sum(
@@ -274,7 +333,7 @@ class UnifiedQueryRetriever(UnifiedRetriever):
             for group in (response.get("source_groups") or {}).values()
         ), selected_count=len(rank_rows))
         return [RetrievalBatch(
-            source_type="unified", results=(), index_source=memory_index_source or "persistent-ts",
+            source_type="unified", results=(), index_source=memory_index_source or f"persistent-{engine_name}",
             fallback_reason=fallback,
             candidate_count=sum(int(group.get("hit_count") or 0)
                                 for group in (response.get("source_groups") or {}).values()),
@@ -382,15 +441,15 @@ class UnifiedQueryRetriever(UnifiedRetriever):
                                           db_factory=adapter._db_factory, source_type="knowledge"), owner
         return first, owner
 
-    def _resolve_rank_rows(self, ts_index, response, memory_scopes, *, owner_user_id: str | None = None):
-        """把 worker 选中行回连 Python 文档，输出 (candidate, text, row) 三元组。"""
+    def _resolve_rank_rows(self, backend_index, response, memory_scopes, *, owner_user_id: str | None = None):
+        """把运行时选中行回连 Python 文档，输出 (candidate, text, row) 三元组。"""
         from agent.rag.models import IndexDocument, RecallCandidate, RecallResult, Scope
         from agent.rag.scope import matches_scope
 
-        owner = str(owner_user_id or getattr(ts_index.client, "owner_user_id", ""))
+        owner = str(owner_user_id or getattr(backend_index.client, "owner_user_id", ""))
         if not owner:
             raise ValueError("RAG 查询缺少已校验的 owner 身份")
-        documents_by_key = dict(ts_index.documents_by_id)
+        documents_by_key = dict(backend_index.documents_by_id)
         triples = []
         for row in response.get("selected") or []:
             document = documents_by_key.get(str(row.get("document_key") or ""))

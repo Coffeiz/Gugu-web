@@ -258,7 +258,7 @@ async function handleLogout() {
 
 .user-avatar {
   width: 32px; height: 32px; border-radius: 50%;
-  background: linear-gradient(135deg, var(--palette-purple-500), var(--palette-cyan-400));
+  background: var(--brand-gradient);
   display: flex; align-items: center; justify-content: center;
   font-size: var(--font-size-md); font-weight: 700; color: var(--content-on-accent); flex-shrink: 0;
 }

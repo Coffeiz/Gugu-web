@@ -11,6 +11,7 @@ import { i18n } from '@/i18n'
 import { notifyResourceChanged } from '@/services/resourceRefreshEvents'
 import { showAppError } from '@/composables/core/useAppToast'
 import { copyTextToClipboard } from './copyTextToClipboard'
+import { downloadMarkdownMathPng, toggleMarkdownMathSource } from '@/utils/chart/math'
 
 // 工具名 → 受影响数据域，咕咕操作后据此刷新前端，免手动刷新页面。
 // 与后端 RESOURCE_BY_TOOL（app/core/events.py）保持一致——漏了哪个工具，对应视图就不会实时刷新。
@@ -104,6 +105,49 @@ export function useChatActions(options: {
   async function onChatActionClick(e: MouseEvent) {
     // 代码块「复制」按钮：渲染时不写内联 onclick（DOMPurify 会剥掉 on*），这里事件委托兜住
     const target = e.target as HTMLElement
+    const mathDownloadButton = target.closest?.('.md-math-download-btn') as HTMLButtonElement | null
+    if (mathDownloadButton) {
+      e.preventDefault()
+      const formula = mathDownloadButton.closest('.md-math-block')?.querySelector<HTMLElement>('.md-math-result')
+        ?? mathDownloadButton.closest('.md-math-copy-wrap')?.querySelector<HTMLElement>('.katex')
+      if (!formula) return
+      try {
+        await downloadMarkdownMathPng(formula)
+      } catch (error) {
+        const key = error instanceof Error && error.message === 'png_too_large'
+          ? 'mermaidUi.formulaPngTooLarge' : 'mermaidUi.formulaDownloadFailed'
+        showAppError(i18n.global.t(key))
+      }
+      return
+    }
+    const mathSourceButton = target.closest?.('.md-math-source-toggle-btn') as HTMLButtonElement | null
+    if (mathSourceButton) {
+      e.preventDefault()
+      toggleMarkdownMathSource(mathSourceButton)
+      return
+    }
+    const mathButton = target.closest?.('.md-math-copy-btn') as HTMLButtonElement | null
+    if (mathButton) {
+      e.preventDefault()
+      const source = mathButton.dataset.mathSource || ''
+      if (!source) return
+      const copied = await copyTextToClipboard(source)
+      if (!copied) {
+        showAppError(i18n.global.t('chatUi.copyFailed'))
+        return
+      }
+      const originalIcon = mathButton.innerHTML
+      const copiedLabel = mathButton.dataset.copiedLabel || i18n.global.t('chatUi.copied')
+      mathButton.textContent = '✓'
+      mathButton.title = copiedLabel
+      mathButton.setAttribute('aria-label', copiedLabel)
+      setTimeout(() => {
+        mathButton.innerHTML = originalIcon
+        mathButton.title = mathButton.dataset.copyLabel || i18n.global.t('chatUi.copy')
+        mathButton.setAttribute('aria-label', mathButton.title)
+      }, 1200)
+      return
+    }
     const btn = target.closest?.('.md-copy-btn') as HTMLElement | null
     if (btn) {
       e.preventDefault()

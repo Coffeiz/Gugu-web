@@ -39,17 +39,14 @@ async def test_restricted_group_identity_cannot_read_arbitrary_owner_attachment(
         None, "synthetic-owner", {"attach_id": "older-owner-image"}, restricted=True,
     )
 
-    assert "当前消息提供" in json.loads(result)["error"]
+    assert "当前群会话中提供" in json.loads(result)["error"]
     get_meta.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("kind", "ext", "expected_error"), [
-    ("image", "png", None),
-    ("text", "txt", "只能读取图片附件"),
-])
+@pytest.mark.parametrize(("kind", "ext"), [("image", "png"), ("text", "txt")])
 async def test_restricted_group_identity_can_read_current_message_image(
-    monkeypatch, kind, ext, expected_error,
+    monkeypatch, kind, ext,
 ):
     chat_attach = importlib.import_module("app.core.chat_attach")
     get_meta = AsyncMock(return_value={
@@ -59,6 +56,14 @@ async def test_restricted_group_identity_can_read_current_message_image(
     media_reader = importlib.import_module("agent.tools.media_reader")
     read_image = AsyncMock(return_value={"block": {"type": "image"}, "_source_size_bytes": 5})
     monkeypatch.setattr(media_reader, "read_stored_image", read_image)
+    storage = SimpleNamespace(
+        stat=AsyncMock(return_value=SimpleNamespace(size=12)),
+        get=AsyncMock(return_value=b"line one\nline two"),
+    )
+    storage_service = importlib.import_module("app.services.storage")
+    monkeypatch.setattr(storage_service, "get_storage", lambda: storage)
+    doctext = importlib.import_module("app.core.doctext")
+    monkeypatch.setattr(doctext, "extract_text", AsyncMock(return_value="line one\nline two"))
     activity = importlib.import_module("agent.im.activity")
     activity.bind_im_context(SimpleNamespace(
         source="telegram", chat_id="group-1", platform_user_id="member-1",
@@ -70,11 +75,13 @@ async def test_restricted_group_identity_can_read_current_message_image(
         None, "synthetic-owner", {"attach_id": "current-image"}, restricted=True,
     )
 
-    if expected_error:
-        assert expected_error in json.loads(result)["error"]
-        read_image.assert_not_awaited()
-    else:
+    if kind == "image":
         assert result["_image_block"] == {"type": "image"}
+        read_image.assert_awaited_once()
+    else:
+        assert result["attach_id"] == "current-image"
+        assert "line two" in result["content"]
+        read_image.assert_not_awaited()
     get_meta.assert_awaited_once_with("synthetic-owner", "current-image")
 
 

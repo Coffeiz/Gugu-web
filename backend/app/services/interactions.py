@@ -325,6 +325,7 @@ async def consume_action(
     prompt_id: int,
     token: str,
     event_id: str | None = None,
+    allow_duplicate_event: bool = False,
 ) -> dict:
     """原子消费动作；返回给 Agent bridge 的受控结果，不返回 token。"""
     now = now_utc()
@@ -336,6 +337,44 @@ async def consume_action(
     )
     if prompt is None:
         raise LookupError("交互不存在")
+
+    action = await db.scalar(
+        select(InteractionAction).where(
+            InteractionAction.prompt_id == prompt_id,
+            InteractionAction.token_hash == _hash_token(token),
+        ).with_for_update()
+    )
+    if (
+        action is not None
+        and allow_duplicate_event
+        and action.status == "consumed"
+        and event_id
+        and action.consumed_event_id == event_id
+    ):
+        # QQ/IM 重投同一个交互事件时，动作已由首次回调原子消费。
+        # 返回幂等结果供网关静默确认，不能把同一次点击误报成“过期”。
+        schema = _schema_dict(prompt.schema_json)
+        result = schema.get("resolved_result")
+        if not isinstance(result, dict):
+            result = {
+                "kind": prompt.kind,
+                "status": "awaiting_text",
+                "prompt_id": prompt.id,
+                "option_id": action.option_id,
+                "value": None,
+                "text": CUSTOM_REPLY_LABEL,
+            }
+        return {
+            "prompt_id": prompt.id,
+            "session_id": prompt.session_id,
+            "kind": prompt.kind,
+            "option_id": action.option_id,
+            "action_type": action.action_type,
+            "context": dict(action.context_json or {}),
+            "result": result,
+            "duplicate": True,
+        }
+
     if prompt.status != "active":
         raise ValueError("交互已结束")
     if prompt.expires_at <= now:
@@ -344,12 +383,6 @@ async def consume_action(
         await db.commit()
         raise ValueError("交互已过期")
 
-    action = await db.scalar(
-        select(InteractionAction).where(
-            InteractionAction.prompt_id == prompt_id,
-            InteractionAction.token_hash == _hash_token(token),
-        ).with_for_update()
-    )
     if action is None or action.status != "pending" or action.expires_at <= now:
         raise ValueError("动作无效或已使用")
     context = dict(action.context_json or {})

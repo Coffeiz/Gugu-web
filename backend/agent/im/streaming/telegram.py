@@ -1,4 +1,4 @@
-"""Telegram live draft 与 Mermaid 有序发送状态机。"""
+"""Telegram live draft 与图表有序发送状态机。"""
 from __future__ import annotations
 
 import asyncio
@@ -11,7 +11,7 @@ from agent.models import AgentResponse
 
 
 class TelegramDraftRound:
-    """管理 Telegram live draft，并在 Mermaid 图片边界切分正式消息。"""
+    """管理 Telegram live draft，并在图表图片边界切分正式消息。"""
 
     def __init__(
         self,
@@ -43,7 +43,7 @@ class TelegramDraftRound:
         self.parts = []
         self.round_has_image = False
         self.trim_leading_segment = False
-        self.mermaid_streaming = False
+        self.chart_streaming = False
         self.round_has_assistant_text = False
         self.rounds_completed = 0
         self.assistant_since_round_end = False
@@ -65,7 +65,7 @@ class TelegramDraftRound:
             rendered = prefix + token
             self.round_text += rendered
             self.draft_text += rendered
-            from agent.im.mermaid import ReplyPart
+            from agent.im.chart import ReplyPart
 
             if self.parts and self.parts[-1].text:
                 previous = self.parts[-1]
@@ -86,7 +86,7 @@ class TelegramDraftRound:
         text = sanitize_outbound(format_tool_event(event, markdown=False))
         if not text:
             return
-        from agent.im.mermaid import ReplyPart
+        from agent.im.chart import ReplyPart
 
         prefix = "\n\n" if self.draft_text.strip() else ""
         rendered = prefix + text
@@ -103,12 +103,12 @@ class TelegramDraftRound:
 
     async def push_image(self, payload) -> None:
         _diagram_index, _image_number, source, png = payload
-        from agent.im.mermaid import ReplyPart
+        from agent.im.chart import ReplyPart
 
         self.round_has_image = True
-        if not self.mermaid_streaming:
+        if not self.chart_streaming:
             # 首次遇图后，按此前积累的文本、图片顺序正式交付。
-            self.mermaid_streaming = True
+            self.chart_streaming = True
 
         # 围栏边界换行不属于前后两段正文，避免图片前后的消息气泡留空行。
         if self.parts and self.parts[-1].text:
@@ -142,7 +142,7 @@ class TelegramDraftRound:
     async def finish_round(self, text: str) -> None:
         round_has_content = bool(text.strip() or self.parts or self.round_has_image)
         if not self.round_has_assistant_text and text.strip() and not self.round_has_image:
-            from agent.im.mermaid import ReplyPart
+            from agent.im.chart import ReplyPart
 
             fallback = ("\n\n" if self.round_text.strip() else "") + text.strip()
             self.round_text += fallback
@@ -159,7 +159,7 @@ class TelegramDraftRound:
         # Token 更新受 Telegram draft 限频；轮次结束前强制推送尾部，避免最后一段代码
         # 因为没有后续 token 触发节流窗口而只在正式消息中出现。
         await self._update_draft(force=True)
-        if self.mermaid_streaming and round_has_content:
+        if self.chart_streaming and round_has_content:
             try:
                 if await self._flush_parts():
                     self.sent_rounds.add(self.round_index)
@@ -171,7 +171,7 @@ class TelegramDraftRound:
             self.round_index += 1
             self.rounds_completed += 1
         self.assistant_since_round_end = False
-        if self.mermaid_streaming:
+        if self.chart_streaming:
             self.draft_id = secrets.randbits(63) or 1
             self.last_draft_text = ""
             self.draft_text = ""
@@ -203,11 +203,11 @@ class TelegramDraftRound:
             await self.finish_round(str(final_text or ""))
         if (
             not self.show_intermediate_replies
-            and not self.mermaid_streaming
+            and not self.chart_streaming
             and self.tool_texts
             and not response.errored
         ):
-            from agent.im.mermaid import ReplyPart
+            from agent.im.chart import ReplyPart
             from agent.outbound import sanitize_outbound
 
             final = sanitize_outbound(str(response.text or "").strip())
@@ -215,7 +215,7 @@ class TelegramDraftRound:
             self.parts = [ReplyPart(text=combined)]
             if await self._flush_parts():
                 self.sent_rounds = {0}
-        elif self.show_intermediate_replies and not self.mermaid_streaming:
+        elif self.show_intermediate_replies and not self.chart_streaming:
             try:
                 if await self._flush_parts():
                     self.sent_rounds = set(range(max(1, len(response.round_texts or []))))
@@ -294,7 +294,7 @@ async def send_telegram_stream_by_round(
     try_send_png_image: Callable,
     draft_min_interval: float,
 ) -> tuple[AgentResponse, set[int]]:
-    """以草稿预览生成过程；遇到 Mermaid 后按图文顺序正式流式交付。"""
+    """以草稿预览生成过程；遇到图表后按图文顺序正式流式交付。"""
     sender = TelegramDraftRound(
         payload,
         show_intermediate_replies=show_intermediate_replies,
@@ -303,10 +303,10 @@ async def send_telegram_stream_by_round(
         try_send_png_image=try_send_png_image,
         draft_min_interval=draft_min_interval,
     )
-    from agent.im.mermaid import ProgressiveMermaidTokenFilter
+    from agent.im.chart import ProgressiveChartTokenFilter
 
-    token_iter = ProgressiveMermaidTokenFilter(
-        theme_preferences=payload.get("mermaid_theme_preferences"),
+    token_iter = ProgressiveChartTokenFilter(
+        theme_preferences=payload.get("chart_theme_preferences"),
     ).ordered_events(token_iter)
     response: AgentResponse | None = None
     keepalive = asyncio.create_task(sender.keep_draft_alive())
@@ -320,7 +320,7 @@ async def send_telegram_stream_by_round(
                 await sender.push_token(str(value or ""))
             elif kind == "tool_event":
                 await sender.push_tool_event(value if isinstance(value, dict) else {})
-            elif kind == "mermaid_image":
+            elif kind == "chart_image":
                 await sender.push_image(value)
             elif kind == ROUND_END:
                 await sender.finish_round(str(value or ""))
@@ -331,7 +331,7 @@ async def send_telegram_stream_by_round(
         except asyncio.CancelledError:
             pass
     response = response or AgentResponse()
-    if not show_intermediate_replies and sender.mermaid_streaming and not response.errored:
+    if not show_intermediate_replies and sender.chart_streaming and not response.errored:
         expected_rounds = len(response.round_texts or [])
         if expected_rounds == 0 and (response.text or "").strip():
             expected_rounds = 1

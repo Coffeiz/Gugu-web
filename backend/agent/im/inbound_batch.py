@@ -14,15 +14,26 @@ def _arrival_key(msg_id: str) -> tuple[int, int]:
         return 0, 0
 
 
+def _message_order_key(item: tuple[str, dict]) -> tuple[int, int]:
+    """优先按平台发送时间排序；缺失平台时间时回退到 Redis 入站时间。"""
+    message_id, payload = item
+    sent_ms = payload.get("platform_sent_ms") if isinstance(payload, dict) else None
+    if isinstance(sent_ms, (int, float)) and not isinstance(sent_ms, bool) and sent_ms > 0:
+        return int(sent_ms), _arrival_key(message_id)[1]
+    return _arrival_key(message_id)
+
+
 async def _bot_mention_indexes(batch: list[tuple[str, dict]]) -> set[int]:
     """按网关确认的当前 Bot mention 切段；权限由后续 ActorResolver 单独判定。"""
     mentions: set[int] = set()
     for index, (_msg_id, payload) in enumerate(batch):
-        if (payload.get("chat_type") != "group"
-                or payload.get("bot_mentioned") is not True
-                or payload.get("mentions_other_bot") is True):
+        if payload.get("_pending_ask_resume") is True:
+            mentions.add(index)
             continue
-        mentions.add(index)
+        if (payload.get("chat_type") == "group"
+                and payload.get("bot_mentioned") is True
+                and payload.get("mentions_other_bot") is not True):
+            mentions.add(index)
     return mentions
 
 
@@ -32,7 +43,7 @@ async def partition_inbound_batch(
     """相邻普通消息合并；每条网关确认的 @ 当前 Bot 消息单独成段。"""
     if not batch:
         return []
-    ordered = sorted(batch, key=lambda item: _arrival_key(item[0]))
+    ordered = sorted(batch, key=_message_order_key)
     bot_mentions = await _bot_mention_indexes(ordered)
     segments: list[list[tuple[str, dict]]] = []
     ordinary: list[tuple[str, dict]] = []
@@ -64,6 +75,11 @@ def resolve_batch_attachment_ids(
             by_source[(platform_message_id, int(attachment_index))] = str(attach_id)
 
     for message in batch_messages:
+        original_attachments = message.get("attachments") or []
+        if not isinstance(message.get("media_kinds"), (list, tuple)):
+            from agent.im.auto_reply.attention import _media_kinds
+
+            message["media_kinds"] = _media_kinds(original_attachments)
         message_platform_id = str(
             message.get("platform_message_id") or fallback_platform_message_id or ""
         )
@@ -97,6 +113,11 @@ def resolve_batch_attachment_ids(
             if resolved_id:
                 resolved.append(resolved_id)
         message["attachments"] = resolved
+        message["media_only"] = not str(message.get("attention_raw_text") or message.get("text") or "").strip() and bool(
+            message.get("media_kinds")
+        )
+        if message["media_only"]:
+            message["processable_media"] = bool(resolved)
 
 
 async def process_inbound_batch(
@@ -120,7 +141,11 @@ async def process_inbound_batch(
 
     for segment_index, segment in enumerate(segments):
         segment_ids = [mid for mid, _ in segment]
-        merged = merge_payloads([payload for _, payload in segment])
+        # 把 Redis Stream ID 附在每条消息自身；后续门控不能从 merge 后的文本猜事件身份。
+        merged = merge_payloads([
+            {**payload, "_redis_stream_id": message_id}
+            for message_id, payload in segment
+        ])
         try:
             from agent.im.inbound_recovery import (
                 receipt_key,

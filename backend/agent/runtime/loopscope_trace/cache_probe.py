@@ -292,6 +292,11 @@ def build_reflection_sample(
         "response_received_at": request_probe.get("response_received_at"),
         "request_duration_ms": request_probe.get("request_duration_ms"),
         "wire_prefix": request_probe.get("wire_prefix"),
+        "cache_key_fingerprint": request_probe.get("cache_key_fingerprint"),
+        "singleflight_state": request_probe.get("singleflight_state"),
+        "singleflight_wait_ms": request_probe.get("singleflight_wait_ms"),
+        "singleflight_lease_renewals": request_probe.get("singleflight_lease_renewals"),
+        "singleflight_lease_lost": request_probe.get("singleflight_lease_lost"),
         "raw_usage_probe": request_probe.get("raw_usage"),
         "request_outcome": request_probe.get("outcome", "unknown"),
         "request_error_type": request_probe.get("error_type"),
@@ -523,7 +528,9 @@ def record_reflection_sample(
         "snapshot_source",
         "origin_gap_seconds", "cache_low_hit", "request_started_at",
         "request_duration_ms", "wire_prefix_digest", "wire_prefix_row_count",
-        "wire_prefix_text_char_count",
+        "wire_prefix_text_char_count", "cache_key_fingerprint",
+        "singleflight_state", "singleflight_wait_ms", "singleflight_lease_renewals",
+        "singleflight_lease_lost",
     )})
     del samples[:-10]
 
@@ -556,6 +563,8 @@ def _safe_reflection_observation(value: dict[str, Any]) -> dict[str, Any]:
         "history_message_count", "tool_count", "reflection_scope", "trigger_source", "origin_run_id",
         "origin_gap_seconds", "snapshot_source", "probe_eligible", "cache_low_hit", "attempt_index",
         "request_started_at", "response_received_at", "request_duration_ms",
+        "cache_key_fingerprint", "singleflight_state", "singleflight_wait_ms",
+        "singleflight_lease_renewals", "singleflight_lease_lost",
         "wire_prefix", "raw_usage_probe", "request_outcome", "request_error_type",
         "request_error_status", "request_error_code",
     )
@@ -590,6 +599,23 @@ def _safe_reflection_observation(value: dict[str, Any]) -> dict[str, Any]:
         safe["request_duration_ms"] = round(max(0.0, float(safe.get("request_duration_ms"))), 3)
     except (TypeError, ValueError):
         safe["request_duration_ms"] = None
+    safe["cache_key_fingerprint"] = _safe_label(
+        safe.get("cache_key_fingerprint", "")
+    ) or None
+    singleflight_state = safe.get("singleflight_state")
+    safe["singleflight_state"] = singleflight_state if singleflight_state in {
+        "disabled", "no_cache_anchor", "acquired", "redis_unavailable", "wait_timeout",
+    } else "unknown"
+    try:
+        safe["singleflight_wait_ms"] = round(
+            max(0.0, float(safe.get("singleflight_wait_ms"))), 3
+        )
+    except (TypeError, ValueError):
+        safe["singleflight_wait_ms"] = None
+    safe["singleflight_lease_renewals"] = _nonnegative_int(
+        safe.get("singleflight_lease_renewals")
+    )
+    safe["singleflight_lease_lost"] = bool(safe.get("singleflight_lease_lost"))
     outcome = safe.get("request_outcome")
     safe["request_outcome"] = outcome if outcome in {"success", "error"} else "unknown"
     safe["request_error_type"] = _safe_label(safe.get("request_error_type", ""))

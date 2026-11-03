@@ -3,10 +3,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[4]
 ENSURE_HBA_SCRIPT = REPO_ROOT / "backend" / "scripts" / "runtime" / "ensure_embedded_pg_hba.py"
 
 
+@pytest.mark.process
 def test_existing_hba_gets_idempotent_loopback_rules_without_rewriting_existing_rules(tmp_path):
     hba_file = tmp_path / "pg_hba.conf"
     original = (

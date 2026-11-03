@@ -622,7 +622,7 @@ sudo nginx -t && sudo systemctl reload nginx
 > # 然后用同一个 RUN_USER 补跑 make install，再 systemctl restart gugu-backend
 > ```
 
-项目自带六个单元模板（`gugu-rag-sidecar.service` 托管 RAG TS worker 宿主，`gugu-sandbox-egress.service`，
+项目自带六个单元模板（`gugu-rag-sidecar.service` 托管 TS/Cython RAG worker 宿主，`gugu-sandbox-egress.service`，
 以及 `gugu-sandboxd.service` / `gugu-backend.service` / `gugu-worker.service` /
 `gugu-gateway.service`，均用 `__APP_DIR__`/`__RUN_USER__` 占位符）。`make install` 会安装并
 立即重启六个单元；启用 Shell 沙盒前必须先准备 Rootless Docker、固定镜像和用户数据根目录：
@@ -766,7 +766,7 @@ docker image inspect gugu-sandbox:<tag> --format '{{index .RepoDigests 0}}'
 
 | 服务                | 进程                  | Restart                               | 日志                         |
 | ----------------- | ------------------- | ------------------------------------- | -------------------------- |
-| `gugu-rag-sidecar` | RAG TS worker 宿主（per-owner 常驻索引，socket 共享） | on-failure | `logs/gugu-rag-sidecar.log` |
+| `gugu-rag-sidecar` | RAG TS/Cython worker 宿主（常驻索引，socket 共享） | on-failure | `logs/gugu-rag-sidecar.log` |
 | `gugu-backend`    | uvicorn 网页          | on-failure                            | `logs/gugu.log`            |
 | `gugu-worker`     | IM 大脑（消费队列、跑 agent） | **always**                            | `logs/gugu-worker.log`     |
 | `gugu-gateway` | IM 网关管家（拉飞书/QQ 子进程） | **always** + `KillMode=control-group` | `logs/gugu-gateway.log` |

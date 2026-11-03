@@ -14,6 +14,9 @@ from app.models import Project
 @pytest.fixture(autouse=True)
 def _mock_ts_ranker(monkeypatch):
     """服务单测隔离进程边界；完整 TS 选择算法由 Worker protocol 测试覆盖。"""
+    from agent.rag import index_cache
+    monkeypatch.setattr(index_cache, "_selected_backend", lambda _settings: "typescript")
+
     async def rank(_owner, _query, candidates, *, limit, max_chars, max_per_source, max_per_parent, selection_mode="confidence"):
         selected = []
         hashes = set()
@@ -133,6 +136,43 @@ async def test_explicit_search_uses_top_k_but_passive_search_keeps_confidence_fi
     await service.search("缓存", source="fake", scope=owner_scope("user-a"), mode="passive")
 
     assert modes == ["top_k", "confidence"]
+
+
+@pytest.mark.asyncio
+async def test_cython_backend_ranks_direct_retriever_and_reports_engine(monkeypatch):
+    """独立来源（如历史会话）应使用已选的 Cython 排序器，并如实标注运行时。"""
+    from types import SimpleNamespace
+    from agent.rag import cython_rank
+    from agent.rag import index_cache
+
+    monkeypatch.setattr(index_cache, "_selected_backend", lambda _settings: "cython")
+    monkeypatch.setattr(
+        "app.core.config.get_settings",
+        lambda: SimpleNamespace(search=SimpleNamespace(
+            rag_backend="cython", ts_rank_scoring_version="confidence-v4",
+        )),
+    )
+    seen = {}
+    cython_rank_impl = cython_rank.rank_candidates
+
+    def rank(query, candidates, **options):
+        seen.update(query=query, candidates=candidates, options=options)
+        return cython_rank_impl(query, candidates, **options)
+
+    async def ts_rank_must_not_run(*_args, **_kwargs):
+        raise AssertionError("选择 Cython 时不得调用 TS rank sidecar")
+
+    monkeypatch.setattr(cython_rank, "rank_candidates", rank)
+    monkeypatch.setattr(rag_service, "rank_candidates_with_cache", ts_rank_must_not_run)
+    result = await UnifiedRecallService(
+        _StubMultiRetriever(FakeRetriever())
+    ).search("缓存", source="fake", scope=owner_scope("user-a"), mode="tool")
+
+    assert result["engine"] == "cython"
+    assert result["results"][0]["text"] == "测试来源\n摘要\n缓存"
+    assert seen["query"] == "缓存"
+    assert seen["options"]["selection_mode"] == "top_k"
+    assert seen["candidates"][0]["document"]["source_type"] == "fake"
 
 
 class SameContentRetriever(FakeRetriever):

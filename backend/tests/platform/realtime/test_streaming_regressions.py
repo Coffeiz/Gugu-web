@@ -500,3 +500,47 @@ async def test_qq_stream_delivers_each_round_when_platform_streaming_is_enabled(
 
 async def _async_value(value):
     return value
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("after_tool", [False, True])
+@pytest.mark.parametrize("pending_round_end", [False, True])
+@pytest.mark.parametrize("draft", ["合成测试：笔记已整理😼。", "尚未修订的草稿", "合成测试：笔记已整理。"])
+async def test_qq_tool_followup_delivers_only_terminal_text(monkeypatch, after_tool, pending_round_end, draft):
+    """待发送正文被终态修订时，原生流和工具后普通出口都只交付一次。"""
+    from agent.gateway import qq
+    from agent.im import replies
+    from agent.im.streaming.qq import QQToolEventBoundary
+
+    delivered = []
+
+    async def send_text(_payload, text):
+        delivered.append(text)
+        return True
+
+    class Stream(_FakeStream):
+        async def finish(self, text, **kwargs):
+            delivered.append(text)
+            await super().finish(text, **kwargs)
+
+    monkeypatch.setattr(qq, "create_private_text_stream", lambda *_args, **_kwargs: Stream())
+    monkeypatch.setattr(replies, "send_text", send_text)
+    boundary = QQToolEventBoundary()
+    final_text = "合成测试：笔记已整理。"
+
+    async def events():
+        if after_tool:
+            assert await boundary.before_platform_event({"type": "tool_call"})
+        yield ("token", draft)
+        if pending_round_end:
+            yield (ROUND_END, draft)
+        yield ("final", AgentResponse(text=final_text, session_id=14))
+
+    sent, response, last_text = await send_qq_stream_by_round(
+        {"platform": "qq", "platform_user_id": "synthetic-recipient", "channel_id": "41", "message_id": "synthetic-message"},
+        events(), tool_event_boundary=boundary,
+    )
+
+    assert sent is True
+    assert last_text == response.text == final_text
+    assert delivered == [final_text]

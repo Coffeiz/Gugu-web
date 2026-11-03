@@ -205,7 +205,7 @@ async def test_compress_if_needed_force_replays_history_through_append_summary(d
     # 最近 run 之外的两条历史按角色重建进追加式请求。
     roles = [m["role"] for m in captured["history"]]
     assert roles == ["user", "assistant"]
-    assert captured["history"][0]["content"].startswith("历史消息0")
+    assert captured["history"][0]["content"].startswith("【消息正文】\n历史消息0")
     assert captured["history"][1]["content"].startswith("历史消息1")
     assert captured["previous"] is None
     await db.refresh(session)

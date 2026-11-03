@@ -410,13 +410,13 @@ onMounted(load)
 .action-btn:hover { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.85); }
 .action-btn.danger { border-color: rgba(220,80,80,0.2); color: rgba(220,100,100,0.7); }
 .action-btn.danger:hover { background: rgba(220,80,80,0.12); color: rgba(240,120,120,0.9); }
-.action-btn.dev { border-color: rgba(123,127,178,0.35); color: rgba(170,175,225,0.9); background: rgba(123,127,178,0.12); }
+.action-btn.dev { border-color: color-mix(in srgb, var(--action-primary) 35%, transparent); color: rgba(170,175,225,0.9); background: color-mix(in srgb, var(--action-primary) 12%, transparent); }
 
 .dev-badge {
   display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 5px;
   font-size: 9px; font-weight: 700; letter-spacing: 0.05em; vertical-align: 1px;
-  background: rgba(123,127,178,0.18); color: rgba(170,175,225,0.95);
-  border: 1px solid rgba(123,127,178,0.35);
+  background: color-mix(in srgb, var(--action-primary) 18%, transparent); color: rgba(170,175,225,0.95);
+  border: 1px solid color-mix(in srgb, var(--action-primary) 35%, transparent);
 }
 
 .pagination {

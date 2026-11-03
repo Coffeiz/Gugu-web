@@ -41,7 +41,9 @@ def delivery(monkeypatch):
 
 
 async def finalize(payload, response, *, stream_sent=False, stream_reply_text=""):
-    request = SimpleNamespace(source="qq", platform_user_id="synthetic-user", chat_id=None)
+    request = SimpleNamespace(
+        source="qq", platform_user_id="synthetic-user", user_id="synthetic-owner", chat_id=None,
+    )
     return await dispatch_finalization.finalize_im_dispatch(
         payload=payload, request=request, route=SimpleNamespace(bot_id="synthetic-bot"),
         session_scope="synthetic", response=response, trace_id="synthetic-trace",
@@ -80,6 +82,31 @@ async def test_private_final_is_streamed_and_not_sent_again(delivery, monkeypatc
     assert streamed == ["最终结论"]
     assert created[0]["message_id"] == "synthetic-inbound"
     passive_send.assert_not_awaited()
+    assert finish.call_args.args[0] == "success"
+
+
+@pytest.mark.asyncio
+async def test_failed_attachment_delivery_persists_receipt(delivery, monkeypatch):
+    from agent.im import files
+
+    _passive_send, finish, _streamed = delivery
+    persist_receipt = AsyncMock(return_value=True)
+    monkeypatch.setattr(dispatch_finalization, "_persist_attachment_delivery_receipt", persist_receipt)
+    monkeypatch.setattr(files, "send_files", AsyncMock(return_value=SimpleNamespace(
+        requested=1, sent=0, failed=1, reason="上传失败",
+    )))
+    payload = {
+        "platform": "qq", "chat_type": "group", "chat_id": "synthetic-chat",
+        "platform_user_id": "synthetic-user", "channel_id": "synthetic-bot",
+    }
+    response = AgentResponse(text="附件已准备好", files=[{"file_id": "synthetic-file"}], session_id=42)
+
+    await finalize(payload, response)
+
+    persist_receipt.assert_awaited_once()
+    args, kwargs = persist_receipt.await_args
+    assert args[0]["_attachment_delivery_results"] == [{"requested": 1, "sent": 0, "failed": 1}]
+    assert args[3] == "synthetic-trace"
     assert finish.call_args.args[0] == "success"
 
 
@@ -135,12 +162,12 @@ async def test_round_end_followed_by_rewritten_final_uses_one_qq_message(deliver
 
 @pytest.mark.asyncio
 async def test_mermaid_only_final_is_delivered_as_image_without_replaying_source(delivery, monkeypatch):
-    from agent.im import mermaid
+    from agent.im import chart
 
     passive_send, finish, streamed = delivery
     image_send = AsyncMock(return_value=True)
     monkeypatch.setattr(replies, "_try_send_png_image", image_send)
-    monkeypatch.setattr(mermaid, "render_png", AsyncMock(return_value=b"synthetic-png"))
+    monkeypatch.setattr(chart, "render_chart_png", AsyncMock(return_value=b"synthetic-png"))
     payload = {"platform": "qq", "chat_type": "c2c", "platform_user_id": "synthetic-user",
                "channel_id": "synthetic-bot", "message_id": "synthetic-inbound"}
     source = "```mermaid\nflowchart LR\n  A --> B\n```"
@@ -248,7 +275,7 @@ async def test_stream_without_final_event_closes_partial_stream_then_raises(deli
 
 @pytest.mark.asyncio
 async def test_stream_exception_closes_partial_stream_before_propagating(delivery, monkeypatch):
-    from agent.im import mermaid
+    from agent.im import chart
 
     passive_send, _finish, streamed = delivery
     payload = {"platform": "qq", "chat_type": "c2c", "platform_user_id": "synthetic-user",
@@ -261,7 +288,7 @@ async def test_stream_exception_closes_partial_stream_before_propagating(deliver
         def ordered_events(self, events):
             return events
 
-    monkeypatch.setattr(mermaid, "ProgressiveMermaidTokenFilter", PassThroughFilter)
+    monkeypatch.setattr(chart, "ProgressiveChartTokenFilter", PassThroughFilter)
 
     async def events():
         yield "token", "工具执行前的部分内容"

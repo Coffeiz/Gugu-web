@@ -252,6 +252,7 @@ async def claim_next_run(
         row.lease_owner = worker_id
         row.lease_until = timestamp + timedelta(seconds=_RUN_LEASE_SECONDS)
         row.deadline_at = timestamp + timedelta(seconds=budget_seconds)
+        row.error_code = None
         row.started_at = timestamp
     row.revision += 1
     row.updated_at = timestamp
@@ -332,6 +333,47 @@ async def finish_run(
         await publish_filesync_binding_health_changed(
             binding_id=health_changed[0], revision=health_changed[1],
         )
+    await notify_run_changed(row)
+    return True
+
+
+async def requeue_run_after_worker_shutdown(
+    db: AsyncSession,
+    run_id: UUID,
+    worker_id: str,
+) -> bool:
+    """优雅停机时，在旧执行线程退出后释放租约并排回全新扫描。"""
+    row = await db.scalar(select(FileSyncReconcileRun).where(
+        FileSyncReconcileRun.id == run_id,
+        FileSyncReconcileRun.lease_owner == worker_id,
+        FileSyncReconcileRun.status.in_(RUNNING_STATUSES),
+    ).with_for_update())
+    if row is None:
+        await db.rollback()
+        return False
+    timestamp = now_utc()
+    if row.cancel_requested or row.status == "cancelling":
+        row.status = "cancelled"
+        row.stage = "cancelled"
+        row.error_code = None
+        row.finished_at = timestamp
+    else:
+        row.status = "queued"
+        row.stage = "queued"
+        row.error_code = "worker_restarting"
+        row.finished_at = None
+    row.lease_owner = None
+    row.lease_until = None
+    row.deadline_at = None
+    row.scanned_count = 0
+    root_identity = {
+        key: value for key, value in (row.result_counts or {}).items()
+        if key in {"rootDevice", "rootInode"}
+    }
+    row.result_counts = {**_EMPTY_RESULT_COUNTS, **root_identity}
+    row.revision += 1
+    row.updated_at = timestamp
+    await db.commit()
     await notify_run_changed(row)
     return True
 
