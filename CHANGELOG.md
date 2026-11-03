@@ -22,6 +22,8 @@
 - Batch and cache knowledge retrieval to reduce repeated work during context injection.
 - Use a consistent scrollable card layout across scheduled tasks, skills, and MCP services.
 - Improve outbound web request header handling and destination validation.
+- Coordinate concurrent background reflection requests that share a provider cache prefix.
+- Keep Mermaid preview zoom anchored to the pointer and preserve the view when returning to 100%.
 - Clarify in BYOK and admin settings that MiniMax web search requires an M plan.
 - Give the note-writing tool clearer operating guidance and preserve strategy terminology in normal replies.
 - Batch consecutive private and group IM messages into one run, persist them as they arrive, and apply the least privilege when a batch contains multiple speakers.
@@ -43,6 +45,7 @@
 - Copy the Mermaid raster-dimension helper into the production images so the diagram worker no longer misses a module it imports.
 - Smoke-start the Mermaid diagram worker during image builds so missing modules or fonts fail the build instead of breaking rendering at runtime.
 - Deliver the final QQ streamed reply reliably when earlier streaming content was only partially delivered, and report missing stream terminal events as errors.
+- Avoid duplicate QQ messages when a terminal reply revises buffered streaming text.
 - Keep tool activity synchronized when switching between chat sessions.
 - Keep localized cancellation status messages consistent across supported languages.
 - Resolve group @mentions to the correct bot name instead of displaying another bot as Gugu.
@@ -72,6 +75,8 @@
 - 对知识检索进行批处理和缓存，减少上下文注入时的重复工作。
 - 定时任务、技能和 MCP 服务统一使用可滚动卡片布局。
 - 改进联网请求头处理与目标地址校验。
+- 协调共享 Provider 缓存前缀的并发后台反思请求，减少缓存竞争。
+- Mermaid 预览缩放跟随鼠标位置，缩回 100% 时保留当前视图。
 - 在 BYOK 和管理设置中说明 MiniMax 联网搜索需要 M 计划。
 - 补充笔记工具的操作指引，并在普通回复中保留策略术语。
 - 将连续的 IM 私聊和群聊消息合并为一轮处理，并在消息到达时及时入库；一个批次包含多人发言时按最小权限执行。
@@ -93,6 +98,7 @@
 - 生产镜像补入 Mermaid 栅格尺寸辅助模块，避免图表 Worker 在镜像里缺少它自己 import 的依赖。
 - 镜像构建期冒烟启动 Mermaid 图表 Worker，缺模块或缺字体时构建即失败，不再等到线上渲染才暴露。
 - 修复 QQ 流式内容部分送达时最终回复可能遗漏的问题；缺少流终态时明确报错。
+- 修复 QQ 流式终态修订缓冲内容时阶段文本与最终文本重复发送的问题。
 - 修复切换会话后工具活动消息未及时同步的问题。
 - 统一各语言中的运行取消状态提示。
 - 修复群聊中 @ 其他机器人时错误显示为咕咕的问题。
