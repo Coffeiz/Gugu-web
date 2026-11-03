@@ -84,7 +84,8 @@ return redis.call('XADD', stream, 'MAXLEN', '~', maxlen, '*', 'data', payload)
 def _dedup_key(payload: dict) -> str:
     """构造平台消息幂等键；将来源会话纳入范围，避免跨 Bot/群误去重。"""
     platform = str(payload.get("platform") or "").strip()
-    message_id = str(payload.get("message_id") or "").strip()
+    pending_resume_id = str(payload.get("_pending_ask_resume_id") or "").strip()
+    message_id = pending_resume_id or str(payload.get("message_id") or "").strip()
     if not platform or not message_id:
         return ""
     from hashlib import sha256

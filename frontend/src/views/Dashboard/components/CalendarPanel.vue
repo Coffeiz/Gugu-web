@@ -443,12 +443,12 @@ function openProject(e: any) {
   font-size: 12px; font-weight: 500; border-radius: 9px; cursor: pointer;
   position: relative; transition: background 0.12s; color: var(--text-primary);
 }
-.cal-day:hover { background: rgba(123,127,178,0.1); }
+.cal-day:hover { background: color-mix(in srgb, var(--action-primary) 10%, transparent); }
 .cal-day.other-month { color: var(--text-secondary); opacity: 0.38; }
 .cal-day.today {
-  background: linear-gradient(135deg, #7b7fb2, #9590c4);
+  background: linear-gradient(135deg, var(--action-primary), var(--action-primary-hover));
   color: white; font-weight: 700;
-  box-shadow: 0 2px 8px rgba(123,127,178,0.28);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--action-primary) 28%, transparent);
 }
 .cal-day.is-holiday .day-num { color: rgba(210,75,75,0.82); }
 .cal-day.today .day-num { color: inherit; }
@@ -467,7 +467,7 @@ function openProject(e: any) {
 .dot-ev, .dot-dl {
   display: block; width: 4px; height: 4px; border-radius: 50%;
 }
-.dot-ev { background: #7b7fb2; }
+.dot-ev { background: var(--action-primary); }
 .dot-dl { background: #c4a060; }
 .dot-ev.on-today, .dot-dl.on-today { background: rgba(255,255,255,0.85); }
 
@@ -521,11 +521,11 @@ function openProject(e: any) {
   cursor: pointer; background: none; color: #1e2028;
   transition: all 0.12s;
 }
-.picker-month:hover { background: rgba(123,127,178,0.14); }
+.picker-month:hover { background: color-mix(in srgb, var(--action-primary) 14%, transparent); }
 .picker-month.active {
-  background: linear-gradient(135deg, #7b7fb2, #9590c4);
+  background: linear-gradient(135deg, var(--action-primary), var(--action-primary-hover));
   color: white; font-weight: 700;
-  box-shadow: 0 2px 6px rgba(123,127,178,0.3);
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--action-primary) 30%, transparent);
 }
 
 .picker-enter-active { transition: opacity 0.16s, transform 0.18s cubic-bezier(0.34,1.2,0.64,1); }
@@ -546,7 +546,7 @@ function openProject(e: any) {
   font-size: 12px; font-family: var(--font-family-ui); color: #1e2028;
   outline: none; box-sizing: border-box; transition: border-color 0.15s, box-shadow 0.15s;
 }
-.dash-popup-input:focus { border-color: rgba(123,127,178,0.55); box-shadow: 0 0 0 3px rgba(123,127,178,0.12); background: rgba(255,255,255,0.85); }
+.dash-popup-input:focus { border-color: color-mix(in srgb, var(--action-primary) 55%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--action-primary) 12%, transparent); background: rgba(255,255,255,0.85); }
 .dash-popup-textarea {
   width: 100%; padding: 7px 10px; border-radius: 9px;
   border: 1px solid rgba(255,255,255,0.75); background: rgba(255,255,255,0.68);
@@ -554,7 +554,7 @@ function openProject(e: any) {
   outline: none; box-sizing: border-box; transition: border-color 0.15s, box-shadow 0.15s;
   resize: none; line-height: 1.5;
 }
-.dash-popup-textarea:focus { border-color: rgba(123,127,178,0.55); box-shadow: 0 0 0 3px rgba(123,127,178,0.12); background: rgba(255,255,255,0.85); }
+.dash-popup-textarea:focus { border-color: color-mix(in srgb, var(--action-primary) 55%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--action-primary) 12%, transparent); background: rgba(255,255,255,0.85); }
 .dash-popup-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 2px; }
 .dash-popup-cancel { padding: 5px 12px; border-radius: 8px; border: none; background: none; font-size: 12px; cursor: pointer; color: #8a8fa8; font-family: var(--font-family-ui); transition: background 0.12s; }
 .dash-popup-cancel:hover { background: rgba(0,0,0,0.06); }

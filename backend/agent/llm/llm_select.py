@@ -128,13 +128,16 @@ def pick_model(settings, ctx=None):
     return settings.ai
 
 
-def _reasoning_persistence_for_model(model) -> str:
+def _reasoning_persistence_for_model(model, ctx=None) -> str:
     """返回当前协议真正支持的推理状态策略。
 
     Chat Completions 不会返回可恢复的 provider state。协议通过适配器解析，
     不根据 Provider 名单推断是否支持；continuation 只在非 Chat Completions
     协议且驱动明确支持时才可能生效。
     """
+    if getattr(ctx, "group_attention_pending_ask_resume", False):
+        # 延迟 ASK 恢复是新的群聊判断，旧 Run 的 provider 分支可能对应已转移的话题。
+        return "off"
     mode = ReasoningPersistencePolicy.from_value(
         getattr(model, "reasoning_persistence", "off")
     ).mode
@@ -158,7 +161,7 @@ def resolve_run_config(settings, ctx=None) -> ModelRunConfig:
         model=model,
         use_anthropic=use_anthropic_for(model),
         context_tokens=int(getattr(model, "context_tokens", settings.ai.context_tokens)),
-        reasoning_persistence=_reasoning_persistence_for_model(model),
+        reasoning_persistence=_reasoning_persistence_for_model(model, ctx),
     )
 
 
@@ -218,5 +221,5 @@ async def resolve_run_config_for_user(settings, db, user_id, ctx=None) -> ModelR
         model=model, use_anthropic=use_anthropic_for(model),
         context_tokens=int(getattr(model, "context_tokens", settings.ai.context_tokens)),
         is_byok=True,
-        reasoning_persistence=_reasoning_persistence_for_model(model),
+        reasoning_persistence=_reasoning_persistence_for_model(model, ctx),
     )

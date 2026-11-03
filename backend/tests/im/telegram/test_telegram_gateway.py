@@ -454,6 +454,43 @@ async def test_send_message_replies_to_original_only_for_first_chunk(db, user_a,
 
 
 @pytest.mark.asyncio
+async def test_send_message_receipt_contains_all_chunk_message_ids(db, user_a, monkeypatch):
+    from app.models import UserBot
+
+    bot = UserBot(
+        user_id=user_a.id,
+        platform="telegram",
+        app_id="9003",
+        app_secret="123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef0123456789",
+    )
+    db.add(bot)
+    await db.commit()
+    await db.refresh(bot)
+    calls = []
+
+    async def api_call(_token, method, *, payload=None, timeout=20):
+        calls.append(method)
+        return {"message_id": 70 + len(calls)}
+
+    monkeypatch.setattr(telegram, "call", api_call)
+    monkeypatch.setattr(
+        "agent.im.telegram_format.split_markdown_v2",
+        lambda _text: ["第一段", "第二段"],
+    )
+
+    receipt = await telegram.send_message(
+        "-7001", "长回复", channel_id=str(bot.id), return_receipt=True,
+    )
+
+    assert receipt == {
+        "accepted": True,
+        "platform_message_id": "72",
+        "platform_message_ids": ["71", "72"],
+    }
+    assert calls == ["sendMessage", "sendMessage"]
+
+
+@pytest.mark.asyncio
 async def test_send_file_uses_multipart_photo_and_replies_to_source_message(db, user_a, monkeypatch):
     from app.models import UserBot
 
@@ -630,31 +667,46 @@ async def _empty_coroutine():
     return None
 
 
-def test_gateway_restarts_telegram_process_when_token_spec_changes(monkeypatch):
+@pytest.mark.asyncio
+async def test_gateway_restarts_any_platform_process_when_spawn_spec_changes(monkeypatch):
+    import asyncio
     from agent.gateway import gateway
 
-    key = "telegram:17"
-    old = {"id": "17", "platform": "telegram", "app_id": "9001", "app_secret": "old-test-token", "sandbox": False, "owner": "owner-1"}
-    new = {**old, "app_secret": "new-test-token"}
+    key = "feishu:17"
+    old = {"id": "17", "platform": "feishu", "app_id": "9001", "app_secret": "old-test-secret", "sandbox": False, "owner": "owner-1"}
+    new = {**old, "app_secret": "new-test-secret"}
     class RunningProcess:
-        def poll(self):
-            return None
+        returncode = None
 
     running = RunningProcess()
     spawned = []
     killed = []
-    monkeypatch.setattr(gateway, "_desired", lambda: {key: new})
-    monkeypatch.setattr(gateway, "_procs", {key: running})
-    monkeypatch.setattr(gateway, "_procs_spec", {key: old})
-    monkeypatch.setattr(gateway, "_spawned_at", {key: 1.0})
-    monkeypatch.setattr(gateway, "_fail_count", {})
-    monkeypatch.setattr(gateway, "_next_retry_at", {})
-    monkeypatch.setattr(gateway, "_kill", lambda proc_key, proc: killed.append((proc_key, proc)))
-    monkeypatch.setattr(gateway, "_spawn", lambda proc_key, spec: spawned.append((proc_key, spec)) or "replacement")
+    async def fetch():
+        return [new]
 
-    gateway.reconcile()
+    async def terminate(managed):
+        killed.append((key, managed.process))
+
+    async def spawn(proc_key, spec):
+        spawned.append((proc_key, spec))
+        replacement = gateway.ManagedBot(
+            spec=spec, process=RunningProcess(), started_at=1.0,
+        )
+        gateway._procs[proc_key] = replacement
+        return replacement
+
+    lock = asyncio.Lock()
+    monkeypatch.setattr(gateway, "_fetch_userbots", fetch)
+    monkeypatch.setattr(gateway, "_terminate_process", terminate)
+    monkeypatch.setattr(gateway, "_spawn", spawn)
+    monkeypatch.setattr(gateway, "_reconcile_lock", lock)
+    monkeypatch.setattr(gateway, "_procs", {
+        key: gateway.ManagedBot(spec=old, process=running, started_at=1.0),
+    })
+    monkeypatch.setattr(gateway, "_desired_specs", {key: old})
+
+    assert await gateway.reconcile() is True
 
     assert killed == [(key, running)]
     assert spawned == [(key, new)]
-    assert gateway._procs[key] == "replacement"
-    assert gateway._procs_spec[key] == new
+    assert gateway._procs[key].spec == new

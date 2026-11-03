@@ -91,6 +91,7 @@ async def prepare_request(
         inbound_batch_key=payload.get("_inbound_batch_key"),
         early_message_ids=payload.get("_early_message_ids") or None,
         im_batch_messages=payload.get("_batch_messages") or None,
+        group_attention_pending_ask_resume=(payload.get("_pending_ask_resume") is True),
         user_id=owner_user_id,
         user_name=agent_user_name,
         session_id=session_id,

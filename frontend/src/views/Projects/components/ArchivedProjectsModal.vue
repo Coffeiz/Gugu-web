@@ -276,10 +276,10 @@ function formatDate(value: string | null | undefined): string {
 .ap-sub { font-size: 11px; color: var(--content-secondary); margin-top: 1px; }
 .ap-restore {
   flex-shrink: 0; font-size: 12px; font-weight: 600; padding: 5px 10px;
-  border-radius: 8px; border: 1px solid rgba(123,127,178,0.35);
-  background: rgba(123,127,178,0.08); color: var(--color-primary, #7b7fb2);
+  border-radius: 8px; border: 1px solid color-mix(in srgb, var(--action-primary) 35%, transparent);
+  background: color-mix(in srgb, var(--action-primary) 8%, transparent); color: var(--color-primary, var(--action-primary));
   cursor: pointer; transition: background 0.15s;
 }
-.ap-restore:hover:not(:disabled) { background: rgba(123,127,178,0.18); }
+.ap-restore:hover:not(:disabled) { background: color-mix(in srgb, var(--action-primary) 18%, transparent); }
 .ap-restore:disabled { opacity: 0.6; cursor: default; }
 </style>

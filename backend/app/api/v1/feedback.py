@@ -50,7 +50,7 @@ async def submit_feedback(
         category=fb.category,
         content=fb.content,
         theme=preference_data.get("theme", "light"),
-        palette=preference_data.get("palette", "mist"),
+        palette=preference_data.get("palette", "neutral"),
     )
     return {"ok": True}
 

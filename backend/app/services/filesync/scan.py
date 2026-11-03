@@ -163,7 +163,7 @@ def scan_to_manifest(
     try:
         # DFS 持有每层一个 scandir 迭代器，不将宽目录一次性 list 化。
         iterator_stack = [("", os.scandir(root))]
-        from app.services.filesync.reconcile import _is_sync_temporary
+        from app.services.filesync.reconcile import _is_sync_ignored_tree, _is_sync_temporary
 
         def exclude(relative_path: str, reason: str) -> None:
             connection.execute(
@@ -202,8 +202,14 @@ def scan_to_manifest(
                     # 用户存储根还承载工作区、运行时缓存等非文件库数据；它们不属于
                     # 该绑定的核对范围，也不能阻塞文件库扫描或进入其差异清单。
                     continue
+                if _is_sync_ignored_tree(relative):
+                    # 内部子树不会进入文件库；记录边界后，候选生成会保留其旧记录。
+                    exclude(relative, "out_of_scope")
+                    rejected += 1
+                    pending += 1
+                    continue
                 try:
-                    if _is_sync_temporary(item_path):
+                    if _is_sync_temporary(Path(relative)):
                         continue
                     if entry.is_symlink():
                         # 不跟随链接；后续与 DB 清单比对，若链接覆盖已有记录则整轮

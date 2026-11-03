@@ -77,7 +77,7 @@ def test_qq_api_error_str_does_not_leak_raw_body():
 
 # ── 被动回复优先；失败时主动发送一次 ─────────────────────────────────────
 
-async def test_send_c2c_falls_back_to_active_message_on_permanent_passive_error(monkeypatch):
+async def test_send_c2c_does_not_fallback_on_unclassified_permanent_error(monkeypatch):
     monkeypatch.setattr(qq_outbound, "_next_seq", _fake_next_seq)
     calls = []
 
@@ -90,11 +90,11 @@ async def test_send_c2c_falls_back_to_active_message_on_permanent_passive_error(
 
     ok = await qq_outbound.send_c2c("ou_1", "hi", "msg-1", "bot-perm")
 
-    assert ok is True
-    assert calls == ["msg-1", None]
+    assert ok is False
+    assert calls == ["msg-1"]
 
 
-async def test_send_c2c_falls_back_to_active_message_on_unclassified_send_error(monkeypatch):
+async def test_send_c2c_does_not_retry_ambiguous_transport_error(monkeypatch):
     calls = []
 
     async def fake_post(channel_id, openid, text, msg_id):
@@ -104,8 +104,8 @@ async def test_send_c2c_falls_back_to_active_message_on_unclassified_send_error(
 
     monkeypatch.setattr(qq_outbound, "_post", fake_post)
 
-    assert await qq_outbound.send_c2c("ou_1", "hi", "msg-1", "bot-fallback") is True
-    assert calls == ["msg-1", None]
+    assert await qq_outbound.send_c2c("ou_1", "hi", "msg-1", "bot-fallback") is False
+    assert calls == ["msg-1"]
 
 
 async def test_send_c2c_falls_back_to_active_message_when_msg_id_expired(monkeypatch):
@@ -125,7 +125,7 @@ async def test_send_c2c_falls_back_to_active_message_when_msg_id_expired(monkeyp
     assert calls == ["expired-msg", None]
 
 
-async def test_send_c2c_retries_transient_5xx(monkeypatch):
+async def test_send_c2c_does_not_retry_ambiguous_5xx(monkeypatch):
     monkeypatch.setattr(qq_outbound, "_next_seq", _fake_next_seq)
     calls = []
 
@@ -140,8 +140,8 @@ async def test_send_c2c_retries_transient_5xx(monkeypatch):
 
     ok = await qq_outbound.send_c2c("ou_1", "hi", "msg-1", "bot-transient")
 
-    assert ok is True
-    assert len(calls) == 2
+    assert ok is False
+    assert len(calls) == 1
 
 
 async def _noop():
@@ -150,7 +150,7 @@ async def _noop():
 
 # ── send_group：同 send_c2c 的分类逻辑 ──────────────────────────────────────
 
-async def test_send_group_falls_back_to_active_message_on_passive_error(monkeypatch):
+async def test_send_group_does_not_fallback_on_unclassified_error(monkeypatch):
     calls = []
 
     async def fake_post_group(channel_id, group_openid, text, msg_id, *args, **kwargs):
@@ -162,8 +162,8 @@ async def test_send_group_falls_back_to_active_message_on_passive_error(monkeypa
 
     ok = await qq_outbound.send_group("g1", "hi", "msg-1", "bot-perm")
 
-    assert ok is True
-    assert calls == ["msg-1", None]
+    assert ok is False
+    assert calls == ["msg-1"]
 
 
 @pytest.mark.parametrize("error_body", [

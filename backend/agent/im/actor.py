@@ -17,7 +17,8 @@ class ActorContext:
     发言人。两者必须保持分离，不能因为二者出现在同一个请求里就视为同一身份。
 
     ``speaker_roles`` 记录本轮每一位发言人的角色快照：一个批次可能包含多位
-    发言人（群聊里咕咕回复期间又来消息），此时整轮按**最弱**权限执行。
+    发言人（群聊里咕咕回复期间又来消息），混合权限时整轮按**最弱**权限执行；
+    只有每位发言人都确认是 owner 时才保留 owner 权限。
     ``verified_owner`` 只代表平台身份与 Bot 绑定匹配，不会提升工具权限角色。
     """
 
@@ -96,7 +97,8 @@ async def _resolve_batch_access(resolver, platform, chat_type, channel_id, owner
     """逐位解析批次身份，并返回权限交集。"""
     from agent.im.permissions import DEFAULT_GROUP_TOOLS, ImAccess
 
-    speaker_roles = []
+    resolved_speakers = []
+    all_speakers_are_owner = bool(speakers)
     for speaker in speakers:
         if speaker["platform_user_id"]:
             access = await resolver(
@@ -105,9 +107,14 @@ async def _resolve_batch_access(resolver, platform, chat_type, channel_id, owner
         else:
             access = ImAccess("unknown", list(DEFAULT_GROUP_TOOLS))
         speaker_role = access.role or "unknown"
+        all_speakers_are_owner = all_speakers_are_owner and speaker_role == "owner"
+        resolved_speakers.append((speaker, access, speaker_role))
+
+    speaker_roles = []
+    for speaker, access, speaker_role in resolved_speakers:
         speaker_tools = access.allowed_tool_names
-        if chat_type == "group" and speaker_role == "owner":
-            # 批次中含多位发言人时，不允许任何人的 owner 权限外溢。
+        if chat_type == "group" and speaker_role == "owner" and not all_speakers_are_owner:
+            # 只有整批发言人都经平台身份确认是 owner 才保留 owner 权限。
             speaker_role = "member"
             speaker_tools = (
                 getattr(access, "group_member_tool_names", None)
@@ -175,14 +182,6 @@ class ActorResolver:
                     owner_mention_authorized = _is_single_owner_bot_mention(
                         payload, str(platform_user_id or ""), str(chat_type or "")
                     )
-                    if not owner_mention_authorized:
-                        from agent.im.permissions import DEFAULT_GROUP_TOOLS
-
-                        role = "member"
-                        allowed_tool_names = (
-                            getattr(access, "group_member_tool_names", None)
-                            or list(DEFAULT_GROUP_TOOLS)
-                        )
                 if role == "unknown" and allowed_tool_names is None:
                     allowed_tool_names = ["xng_search", "http_get", "similar_image_search", "read_file", "send_file"]
 
@@ -195,10 +194,28 @@ class ActorResolver:
                         resolver, platform, chat_type, channel_id, owner_user_id,
                         speakers, role, allowed_tool_names,
                     )
-                    # 混合发言人批次按最弱角色处理，主人私人记忆也不得跨发言人混入。
-                    verified_owner = False
+                    # 只有每位批内发言人都解析为 owner，才允许使用 owner 级群权限。
+                    verified_owner = role == "owner" and all(
+                        speaker["role"] == "owner" for speaker in speaker_roles
+                    )
                 elif speakers and speakers[0]["platform_user_id"] != str(platform_user_id or ""):
+                    role, allowed_tool_names, speaker_roles = await _resolve_batch_access(
+                        resolver, platform, chat_type, channel_id, owner_user_id,
+                        speakers, role, allowed_tool_names,
+                    )
                     verified_owner = False
+                elif speakers and chat_type == "group" and role == "owner":
+                    # 单发言人批次按平台身份确认“整批只有 owner 的消息”，无需额外 @ Bot。
+                    verified_owner = True
+                elif chat_type == "group" and role == "owner" and not owner_mention_authorized:
+                    # 没有批次身份事实时，普通群消息仍需单条 @ Bot 才能使用 owner 权限。
+                    from agent.im.permissions import DEFAULT_GROUP_TOOLS
+
+                    role = "member"
+                    allowed_tool_names = (
+                        getattr(access, "group_member_tool_names", None)
+                        or list(DEFAULT_GROUP_TOOLS)
+                    )
             except (ValueError, TypeError, SQLAlchemyError) as exc:
                 diag_log("im.actor_resolver", exc)
                 print(

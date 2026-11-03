@@ -84,7 +84,7 @@ const recoverLabel = computed(() => {
   const minutes = Math.ceil(diffMs / 60000); const hours = Math.floor(minutes / 60); const rest = minutes % 60
   return t('profileGuguUi.energyRecovery', { time: hours > 0 ? t('profileGuguUi.hoursMinutes', { hours, minutes: rest }) : t('profileGuguUi.minutes', { minutes: rest }) })
 })
-function quotaBarStyle(used: number, limit: number | null) { if (!limit) return { width: '8%', background: 'rgba(123,127,178,0.3)' }; const pct = Math.min(100, used / limit * 100); const color = pct >= 90 ? 'rgba(200,80,80,0.7)' : pct >= 70 ? 'rgba(210,160,60,0.75)' : 'linear-gradient(90deg, rgba(123,127,178,0.6), rgba(149,144,196,0.75))'; return { width: pct + '%', background: color } }
+function quotaBarStyle(used: number, limit: number | null) { if (!limit) return { width: '8%', background: 'color-mix(in srgb,var(--action-primary) 30%,transparent)' }; const pct = Math.min(100, used / limit * 100); const color = pct >= 90 ? 'rgba(200,80,80,0.7)' : pct >= 70 ? 'rgba(210,160,60,0.75)' : 'linear-gradient(90deg, color-mix(in srgb,var(--action-primary) 60%,transparent), color-mix(in srgb,var(--action-primary) 75%,transparent))'; return { width: pct + '%', background: color } }
 function quotaPctClass(used: number, limit: number | null) { if (!limit) return ''; const pct = used / limit * 100; return pct >= 90 ? 'pct-danger' : pct >= 70 ? 'pct-warn' : '' }
 async function loadQuota() { quotaLoading.value = true; try { quota.value = await authApi.getQuota(); if (quota.value.is_byok) loadTrends() } catch {} finally { quotaLoading.value = false } }
 async function loadTrends() { try { trends.value = await authApi.getUsageTrends(30) } catch {} }

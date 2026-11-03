@@ -43,6 +43,13 @@ def test_chat_completions_disables_reasoning_persistence():
     assert resolve_run_config(settings).reasoning_persistence == "off"
 
 
+def test_pending_ask_resume_disables_cross_run_reasoning_state():
+    settings = _settings("continuation")
+    resume_context = SimpleNamespace(group_attention_pending_ask_resume=True)
+
+    assert resolve_run_config(settings, resume_context).reasoning_persistence == "off"
+
+
 def test_known_openai_provider_empty_format_uses_chat_completions():
     settings = _settings("continuation", provider="qwen", api_format="")
     settings.ai.base_url = "https://example.com/anthropic"

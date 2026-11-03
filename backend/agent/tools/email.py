@@ -73,7 +73,7 @@ async def _send_email(db, user_id, args: dict):
     if requested_theme not in {"auto", *EMAIL_THEMES}:
         return {"error": "不支持的邮件主题，仅支持 auto、light 或 dark"}
     if requested_palette not in {"auto", *EMAIL_PALETTES}:
-        return {"error": "不支持的邮件配色，仅支持 auto、mist、cafe、rose、sky 或 sage"}
+        return {"error": "不支持的邮件配色，仅支持 auto、cafe、neutral、red、blue 或 green"}
     if not subject:
         return {"error": "邮件主题不能为空"}
     if len(subject) > _MAX_SUBJECT_LENGTH:
@@ -126,7 +126,7 @@ async def _send_email(db, user_id, args: dict):
         summary += f"附件 {len(attachments)} 个（{total_size / 1024 / 1024:.1f}MB）：{names}。"
     preferences = await get_user_email_preferences(db, user_id)
     theme = requested_theme if requested_theme != "auto" else preferences.get("theme", "light")
-    palette = requested_palette if requested_palette != "auto" else preferences.get("palette", "mist")
+    palette = requested_palette if requested_palette != "auto" else preferences.get("palette", "neutral")
     if not automation_tool_allowed("send_email"):
         blocked = confirm.needs_confirmation(
             args, summary, user_id,
@@ -158,7 +158,7 @@ async def _send_email(db, user_id, args: dict):
             send_kwargs["html"] = html
         elif email_format == "template" and (
             any(key in args for key in ("template", "title", "preheader", "sections", "actions", "theme", "palette"))
-            or theme != "light" or palette != "mist"
+            or theme != "light" or palette != "neutral"
         ):
             send_kwargs.update(
                 template=template, title=title, preheader=preheader,
@@ -193,7 +193,7 @@ class EmailSkill(BaseSkill):
     tools = [
         Tool(
             name="send_email", label="发送邮件",
-            description="发送邮件。subject 和 body 必填，body 始终是纯文本正文；新调用必须指定 format，按场景选择：plain 用于普通邮件交流，只发送 text/plain；template 用于定时提醒、周期报告、状态通知和安全通知，发送咕咕标准 HTML + 纯文本；html 仅用于用户明确要求复杂排版、图表或品牌样式，必须同时提供自定义 html 和完整纯文本 body。普通交流默认 plain；定时提醒/报告默认 template。旧调用省略 format 时兼容原模板行为。可用 file_ids 附加当前用户文件库中的文件（最多 5 个，单个不超过 10MB，总计不超过 25MB），不要传宿主机路径。template 模式可用 notification、reminder、report、security 或 test 模板，并用 title、preheader、sections（heading/text 数组）和 actions（label/url 数组）表达结构化内容；test 仅用于 SMTP 测试。theme 和 palette 默认 auto，跟随用户偏好；也可分别指定 light/dark 和 mist/cafe/rose/sky/sage。html 仅允许基础邮件标签（a、b、blockquote、br、code、div、em、h1-h3、hr、i、img、li、ol、p、pre、span、strong、table、tbody、td、th、thead、tr、u、ul）、允许的内联样式和 http/https/mailto 链接；不要使用 script、style、事件属性、表单、iframe、svg、外部资源、flex/grid 或复杂定位。服务端会再次清洗 HTML，不能依赖被清洗的内容；html 最多 40000 个字符。用户说‘发我邮箱’、‘发到我的邮箱’或未指定收件人时，必须省略 to，工具会自动发送到当前用户注册邮箱；不要向用户索要邮箱地址。可用 to 指定其他邮箱，或用 client_id 发给当前用户的联系人邮箱。交互式发送前必须确认；已由用户授权的定时任务执行时不要再次请求确认。",
+            description="发送邮件。subject 和 body 必填，body 始终是纯文本正文；新调用必须指定 format，按场景选择：plain 用于普通邮件交流，只发送 text/plain；template 用于定时提醒、周期报告、状态通知和安全通知，发送咕咕标准 HTML + 纯文本；html 仅用于用户明确要求复杂排版、图表或品牌样式，必须同时提供自定义 html 和完整纯文本 body。普通交流默认 plain；定时提醒/报告默认 template。旧调用省略 format 时兼容原模板行为。可用 file_ids 附加当前用户文件库中的文件（最多 5 个，单个不超过 10MB，总计不超过 25MB），不要传宿主机路径。template 模式可用 notification、reminder、report、security 或 test 模板，并用 title、preheader、sections（heading/text 数组）和 actions（label/url 数组）表达结构化内容；test 仅用于 SMTP 测试。theme 和 palette 默认 auto，跟随用户偏好；也可分别指定 light/dark 和 cafe/neutral/red/blue/green。html 仅允许基础邮件标签（a、b、blockquote、br、code、div、em、h1-h3、hr、i、img、li、ol、p、pre、span、strong、table、tbody、td、th、thead、tr、u、ul）、允许的内联样式和 http/https/mailto 链接；不要使用 script、style、事件属性、表单、iframe、svg、外部资源、flex/grid 或复杂定位。服务端会再次清洗 HTML，不能依赖被清洗的内容；html 最多 40000 个字符。用户说‘发我邮箱’、‘发到我的邮箱’或未指定收件人时，必须省略 to，工具会自动发送到当前用户注册邮箱；不要向用户索要邮箱地址。可用 to 指定其他邮箱，或用 client_id 发给当前用户的联系人邮箱。交互式发送前必须确认；已由用户授权的定时任务执行时不要再次请求确认。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -220,7 +220,7 @@ class EmailSkill(BaseSkill):
                         }, "required": ["label", "url"], "additionalProperties": False},
                     },
                     "theme": {"type": "string", "enum": ["auto", "light", "dark"]},
-                    "palette": {"type": "string", "enum": ["auto", "mist", "cafe", "rose", "sky", "sage"]},
+                    "palette": {"type": "string", "enum": ["auto", "cafe", "neutral", "red", "blue", "green"]},
                     "html": {"type": "string", "minLength": 1, "maxLength": _MAX_HTML_LENGTH},
                     "file_ids": {
                         "type": "array", "maxItems": 5, "uniqueItems": True,

@@ -322,7 +322,7 @@ onMounted(() => {
 .cd-expanded-nav { position: absolute; inset: 0; display: flex; align-items: center; width: 100%; box-sizing: border-box; padding: 0 7px 0 25px; }
 .cd-compact-nav { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: space-evenly; width: 100%; height: calc(var(--canvas-toolbar-height) * 2); pointer-events: auto; }
 .cd-toggle { flex-shrink: 0; width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 50%; background: none; color: var(--text-secondary); cursor: pointer; transition: background .18s ease, color .18s ease; }
-.cd-toggle:hover, .cd-toggle.active { background: rgba(123,127,178,.11); color: var(--color-primary); }
+.cd-toggle:hover, .cd-toggle.active { background: color-mix(in srgb, var(--action-primary) 11%, transparent); color: var(--color-primary); }
 .canvas-drawer:not(.open) .cd-head { height: calc(var(--canvas-toolbar-height) * 2); flex-direction: column; }
 .canvas-drawer:not(.open) .cd-title { opacity: 0; }
 .cd-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; color: var(--text-secondary); font-size: 13px; font-weight: 700; opacity: 0; transition: opacity .15s ease; }

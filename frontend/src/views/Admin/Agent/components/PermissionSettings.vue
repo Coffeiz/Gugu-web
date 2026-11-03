@@ -123,7 +123,7 @@ function setAgentFlag(key: string, value: boolean) {
 <style scoped>
 .config-card { background: rgba(255,255,255,0.05); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border: 1px solid rgba(255,255,255,0.09); border-radius: 16px; padding: 22px 24px; box-shadow: 0 4px 24px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.06); }
 .card-head { display: flex; align-items: center; gap: 13px; margin-bottom: 20px; }
-.card-icon { width: 38px; height: 38px; border-radius: 11px; background: rgba(123,127,178,0.15); color: #7b7fb2; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.card-icon { width: 38px; height: 38px; border-radius: 11px; background: color-mix(in srgb, var(--action-primary) 15%, transparent); color: var(--action-primary); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .card-icon svg { width: 18px; height: 18px; }
 .card-title-block { flex: 1; }
 .card-title-block h3 { font-size: 14px; font-weight: 700; color: rgba(255,255,255,0.88); }
@@ -140,6 +140,6 @@ function setAgentFlag(key: string, value: boolean) {
 .save-hint.error { color: #e07878; }
 .btn-ghost, .btn-primary { border-radius: 8px; padding: 7px 14px; font-size: 12px; cursor: pointer; }
 .btn-ghost { border: 1px solid rgba(255,255,255,0.12); background: transparent; color: rgba(255,255,255,0.6); }
-.btn-primary { border: 1px solid rgba(123,127,178,0.4); background: rgba(123,127,178,0.7); color: white; }
+.btn-primary { border: 1px solid color-mix(in srgb, var(--action-primary) 40%, transparent); background: color-mix(in srgb, var(--action-primary) 70%, transparent); color: white; }
 .btn-primary:disabled { opacity: .55; cursor: default; }
 </style>

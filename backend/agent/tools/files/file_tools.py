@@ -11,12 +11,13 @@ from .read import _read_file
 FILE_TOOLS = [
         Tool(
             name="list_dir", label="浏览目录",
-            description_short='浏览目录：可显式查项目根层、项目递归清单或具体文件夹。',
+            description_short='浏览文件库目录、Shell 逻辑目录或授权的系统目录。',
             description="列出文件与当前层直属子文件夹，可按空间、项目、工作区或目录筛选；文件仍按传入条件过滤，不传位置条件时覆盖当前用户所有可访问空间。若用户明确要求浏览 Agent 服务环境中的系统目录，必须在本次 list_dir 调用中同时传 scope=\"system\" 和 path=绝对目录路径，例如 {\"scope\":\"system\",\"path\":\"/tmp\"}；只传 path、只传 scope 或省略两者都不会自动浏览系统目录。system 模式可选 kind、query、ext、limit、offset，排序只支持 sort=\"name\"；不要混用 space、project_id、workspace_directory_id、folder 等文件库参数。该模式只读，浏览当前层；继续深入时，对返回的子目录路径再次传 scope=\"system\" 和 path。系统环境指 Agent 服务进程所在环境（原生部署时是服务所在主机环境，Docker 部署时是应用容器，不是 Docker 宿主机）。"
+                        "Shell 逻辑目录使用 scope=logical + path，支持 /personal、/project、/workspace；/workspace 跟随当前会话绑定或默认 Workspace。逻辑目录只读并限制在用户数据根内，例如 {\"scope\":\"logical\",\"path\":\"/personal/参考素材\"}。这与 scope=system 的服务环境路径分开授权。"
                         "space=workspace 单独使用会汇总该用户的所有顶层工作区；若用户指定了某个具名工作区，先用 list_workspaces 将名称解析为 kind=directory 的 directory_id，再传 workspace_directory_id 精确筛选。不要混用 workspace_id 与 directory_id，也不要把未限定工作区的汇总数量归到某个单独工作区。"
                         "项目查询优先显式指定 scope：scope=project_root + space=project + project_id 只查项目根层；"
                         "scope=project_recursive + 相同项目参数列出项目全部层级的文件与文件夹；"
-                        "scope=folder 必须搭配真实 folder_id 查具体目录。项目本身不是 folder，不能把 project_id 填进 folder_id。"
+                        "scope=folder 必须搭配真实 folder_id 或 folder 逻辑目录路径查具体目录。项目本身不是 folder，不能把 project_id 填进 folder_id。"
                         "为兼容旧调用，不传 scope 时保留原行为；需要判断项目根层是否为空时不要依赖旧行为。"
                         "folder 传目录名（支持 a/b/c 式路径，也可用 folder_id/parent_id 传 id），限定该目录的子文件夹与直属文件。"
                         "folders 只返回当前层的直属子目录，不递归展开；未传目录时只返回各空间根目录下的文件夹。需要深入时，再对目标子目录传 folder_id 调用。"
@@ -32,14 +33,14 @@ FILE_TOOLS = [
                     "project_id": {"type": "integer"},
                     "scope": {
                         "type": "string",
-                        "enum": ["project_root", "project_recursive", "folder", "system"],
+                        "enum": ["project_root", "project_recursive", "folder", "logical", "system"],
                     },
-                    "path": {"type": "string", "description": "scope=system 时必填的绝对目录路径；不与文件库筛选参数混用。"},
+                    "path": {"type": "string", "description": "scope=logical 时填写 /personal、/project、/workspace 下的 Shell 逻辑目录；scope=system 时填写 Agent 服务环境绝对目录。必须显式指定对应 scope。"},
                     "workspace_directory_id": {
                         "type": "integer",
                         "description": "顶层工作区目录 ID；space=workspace 不传此参数时会汇总所有顶层工作区。",
                     },
-                    "folder": {"type": "string"},
+                    "folder": {"type": "string", "description": "文件库中的目录名或相对逻辑路径；使用 Shell 绝对逻辑路径时可传 /personal/...。Shell 逻辑目录绝对路径请改用 scope=logical + path。"},
                     "folder_id": {"type": "integer"},
                     "parent_id": {"type": "integer"},
                     "kind": {"type": "string", "enum": ["both", "file", "folder"]},
@@ -61,8 +62,24 @@ FILE_TOOLS = [
                         },
                     },
                     {
+                        "if": {"required": ["scope"], "properties": {"scope": {"const": "logical"}}},
+                        "then": {
+                            "required": ["path"],
+                            "properties": {
+                                "path": {"pattern": "^/(personal|project|workspace)(/|$)"},
+                                "sort": {"enum": ["name"]},
+                            },
+                            "not": {"anyOf": [
+                                {"required": ["space"]}, {"required": ["project_id"]},
+                                {"required": ["workspace_directory_id"]}, {"required": ["folder"]},
+                                {"required": ["folder_id"]}, {"required": ["parent_id"]},
+                                {"required": ["queries"]}, {"required": ["mode"]},
+                            ]},
+                        },
+                    },
+                    {
                         "if": {"required": ["path"]},
-                        "then": {"required": ["scope"], "properties": {"scope": {"const": "system"}}},
+                        "then": {"required": ["scope"], "properties": {"scope": {"enum": ["system", "logical"]}}},
                     },
                 ],
             },

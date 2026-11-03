@@ -355,11 +355,12 @@ async def test_migrate_profile_events_dedupes_existing_memory(storage):
     assert await store.read_memory_doc(UID) == "用户最近刚换了新空调"
 
 
-async def test_memory_compaction_uses_daily_batch_and_rag_only(storage, monkeypatch):
+async def test_memory_compaction_moves_all_daily_entries_into_longterm(storage, monkeypatch):
     from agent.memory import memory_compress as compress, store
 
-    for i in range(store.DAILY_COMPACT_AT):
-        date = "2026-07-10" if i < store.DAILY_KEEP_RECENT else "2026-07-09"
+    entries = 100
+    for i in range(entries):
+        date = "2026-07-10" if i < entries // 2 else "2026-07-09"
         await store.append_daily(UID, date, f"第{i}条")
     await store.write_profile_list(UID, [{"id": "p1", "text": "用户住南京", "ts": 1.0}])
     await store.write_pattern_list(UID, [
@@ -387,4 +388,7 @@ async def test_memory_compaction_uses_daily_batch_and_rag_only(storage, monkeypa
     assert "已结构化的行为模式" not in captured["user"]
     assert "用户做决定前会先核实事实" not in captured["user"]
     assert "要追加的近期记录" in captured["user"]
+    assert all(f"第{i}条" in captured["user"] for i in range(entries))
     assert captured["max_tokens"] is None
+    assert await store.read_daily_lines(UID) == []
+    assert "近期事件" in await store.read_memory_doc(UID)

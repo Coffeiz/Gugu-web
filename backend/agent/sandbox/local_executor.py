@@ -20,6 +20,13 @@ _SHELL_META = set(";&|<>$`()\n\r")
 _MAX_TIMEOUT = 3600
 _MAX_OUTPUT = 120_000
 _PATH_SEPARATOR_RE = re.compile(r"[\\/]+")
+
+
+def _decode_shell_output(data: bytes) -> str:
+    """将进程字节流转成可展示、可持久化的文本。PostgreSQL TEXT 不接受 NUL。"""
+    return data.decode("utf-8", errors="replace").replace("\x00", r"\0")
+
+
 @dataclass(frozen=True)
 class ShellResult:
     ok: bool
@@ -268,10 +275,10 @@ class LocalWorkspaceExecutor:
                 chunks.append(accepted)
                 size += len(accepted)
                 if on_output is not None and accepted:
-                    await on_output(stream_name, accepted.decode("utf-8", errors="replace"))
+                    await on_output(stream_name, _decode_shell_output(accepted))
             if len(chunk) > remaining:
                 truncated = True
-        return b"".join(chunks).decode("utf-8", errors="replace"), truncated
+        return _decode_shell_output(b"".join(chunks)), truncated
 
     @staticmethod
     def _terminate_process_group(pid: int) -> None:

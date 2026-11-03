@@ -86,6 +86,7 @@ class ContextBranch:
                             tools=list(branch_input.tools) or None,
                             usage_sink=usage_sink,
                             probe_sink=probe_sink,
+                            cache_singleflight=policy.name == "reflection",
                         )
                         ok = bool(str(output or "").strip()) and (
                             not isinstance(output, dict) or bool(output))

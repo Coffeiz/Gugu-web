@@ -1,0 +1,108 @@
+.md-chart-controls {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--popup-border);
+  border-radius: 7px;
+  background: var(--popup-background);
+  box-shadow: var(--popup-shadow);
+  backdrop-filter: var(--popup-blur);
+  -webkit-backdrop-filter: var(--popup-blur);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-hover-control) var(--motion-ease-standard);
+}
+.md-chart-controls--math {
+  top: 3px;
+  right: 3px;
+  flex-wrap: nowrap;
+  gap: 1px;
+  width: max-content;
+  padding: 2px;
+  white-space: nowrap;
+}
+.md-mermaid:hover > .md-chart-controls,
+.md-mermaid:focus-within > .md-chart-controls,
+.md-math-block:hover > .md-chart-controls,
+.md-math-block:focus-within > .md-chart-controls,
+.md-math-copy-wrap:hover > .md-chart-controls,
+.md-math-copy-wrap:focus-within > .md-chart-controls {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (hover: none), (pointer: coarse) {
+  .md-chart-controls { opacity: 1; pointer-events: auto; }
+}
+.md-chart-controls button {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: var(--content-secondary);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  line-height: 1;
+}
+.md-chart-controls--mermaid [data-mermaid-action='toggle-source'] {
+  width: auto;
+  min-width: 28px;
+  padding: 0 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 600;
+}
+.md-chart-controls--math .md-math-source-toggle-btn {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 600;
+}
+.md-chart-controls--math button {
+  flex: 0 0 24px;
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  padding: 0;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.md-chart-controls--math svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.md-chart-controls [data-chart-action='toggle-source'][aria-pressed='true'] {
+  color: var(--content-primary);
+  background: var(--surface-soft-hover);
+}
+.md-chart-controls button:hover {
+  color: var(--content-primary);
+  background: var(--surface-soft-hover);
+}
+.md-chart-controls button:disabled { opacity: 0.45; cursor: not-allowed; }
+.md-chart-controls button:focus-visible,
+.md-mermaid-dialog button:focus-visible {
+  outline: 2px solid var(--theme-focus);
+  outline-offset: 1px;
+}
+@media (max-width: 600px) {
+  .md-chart-controls { top: 4px; right: 4px; gap: 1px; padding: 2px; }
+  .md-chart-controls button { width: 24px; height: 24px; }
+  .md-chart-controls--math button {
+    flex-basis: 22px;
+    width: 22px;
+    min-width: 22px;
+    height: 22px;
+  }
+}

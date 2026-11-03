@@ -464,6 +464,7 @@ async def complete_branch(
     json_mode: bool = False,
     usage_sink: list | None = None,
     probe_sink: list | None = None,
+    cache_singleflight: bool = False,
 ) -> str:
     """以完整历史执行独立 Responses 只读分支，不接入主 run 的状态。"""
     from agent import providers
@@ -472,6 +473,7 @@ async def complete_branch(
     adapter = providers.adapter_for(ai)
     from agent.context.provider_conversation import ProviderConversation
     if isinstance(history, ProviderConversation):
+        stable_conversation_count = history.conversation_count
         projection = history.with_messages(
             [*history.to_messages(), {"role": "user", "content": user}],
             dynamic_tail_size=1,
@@ -487,6 +489,7 @@ async def complete_branch(
         projection = render_canonical_area_snapshot(
             area.snapshot(), source=area, options=area.render_options,
         )
+        stable_conversation_count = projection.conversation_count
     wire_history = projection.to_messages()
     base_instructions, snapshot_instructions, instructions = _responses_instruction_parts(
         wire_history, system_text,
@@ -540,7 +543,20 @@ async def complete_branch(
 
     probe = start_request_probe(probe_sink, request)
     try:
-        response = await client.responses.create(**request)
+        from agent.providers.cache_singleflight import run_responses_branch_request
+
+        response = await run_responses_branch_request(
+            lambda: client.responses.create(**request),
+            request,
+            probe,
+            stable_history_count=stable_conversation_count,
+            cache_supported=bool(
+                cache_singleflight and (
+                    prompt_cache_key or adapter.supports_active_cache(ai.model)
+                )
+            ),
+            namespace=f"{adapter.name}:{adapter.protocol_format(ai)}",
+        )
     except Exception as exc:
         from agent.providers.cache_probe import fail_request_probe
 

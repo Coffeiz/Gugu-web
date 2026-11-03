@@ -12,6 +12,7 @@ from agent.context.budget import (
 )
 from agent.context.assembly import MessageArea
 from agent.context.tokens import estimate_tokens, message_text
+from agent.context.dynamic_tail import unwrap_message_body_text
 
 
 def test_context_budget_uses_one_total_and_history_capacity_semantics():
@@ -208,8 +209,8 @@ def test_provider_overflow_keeps_last_ten_complete_units_in_place():
     assert result.dropped_messages == 30
     projected = messages.provider_projection().to_messages()
     assert len(projected) == 10
-    assert projected[0]["content"].startswith("消息30")
-    assert projected[-1]["content"].startswith("消息39")
+    assert unwrap_message_body_text(projected[0]["content"]).startswith("消息30")
+    assert unwrap_message_body_text(projected[-1]["content"]).startswith("消息39")
 
 
 def test_provider_overflow_keeps_last_ten_complete_units():
@@ -222,7 +223,7 @@ def test_provider_overflow_keeps_last_ten_complete_units():
     assert result.changed
     projected = messages.provider_projection().to_messages()
     assert len(projected) == 10
-    assert projected[0]["content"].startswith("m20")
+    assert unwrap_message_body_text(projected[0]["content"]).startswith("m20")
 
 
 def test_provider_overflow_keeps_tool_round_atomic():
@@ -258,7 +259,7 @@ def test_provider_overflow_preserves_fixed_prefix_and_protected_tail():
     assert result.changed
     projected = history.provider_projection().to_messages()
     assert projected[0]["content"] == conversation[0]["content"]
-    assert projected[-1]["content"] == "受保护的收尾"
+    assert unwrap_message_body_text(projected[-1]["content"]) == "受保护的收尾"
     assert len(projected) < original_count
 
 

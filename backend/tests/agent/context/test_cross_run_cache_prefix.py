@@ -73,7 +73,8 @@ def test_rag_context_precedes_user_in_anthropic_and_openai_projections():
     for projected in (anthropic, openai):
         assert [message["role"] for message in projected] == ["user", "user"]
         assert "参考资料" in str(projected[0]["content"])
-        assert projected[1]["content"] in ("当前问题", [{"type": "text", "text": "当前问题"}])
+        assert "当前问题" in str(projected[1]["content"])
+        assert "【消息正文】" in str(projected[1]["content"])
 
 
 def test_provider_render_keeps_canonical_blocks_in_original_position():
@@ -116,11 +117,11 @@ def test_dynamic_tail_is_provider_only_and_always_stays_last():
     ]
     assert prompt.provider_projection().to_messages()[-1] == reminder("当前时间：2026-08-27（星期四）")
     assert prompt.provider_projection().conversation == [
-        {"role": "user", "content": "测试"},
+        {"role": "user", "content": "【消息正文】\n测试"},
         {"role": "assistant", "content": "工具前说明"},
-        {"role": "user", "content": "工具结果"},
+        {"role": "user", "content": "【消息正文】\n工具结果"},
     ]
-    assert batch.canonical_messages == ({"role": "user", "content": "测试"},)
+    assert batch.canonical_messages == ({"role": "user", "content": "【消息正文】\n测试"},)
     assert prompt.batch_records() == ()
     assert prompt.persistence_delta(outcome="success").entries == ()
 
@@ -129,35 +130,32 @@ def test_dynamic_tail_is_provider_only_and_always_stays_last():
         expected_revision=prompt.revision,
     )
     assert prompt.provider_projection().conversation == [
-        {"role": "user", "content": "压缩后的稳定 conversation"},
+        {"role": "user", "content": "【消息正文】\n压缩后的稳定 conversation"},
     ]
     assert prompt.provider_projection().to_messages()[-1] == reminder("当前时间：2026-08-27（星期四）")
 
 
-def test_message_time_is_canonical_but_reconstructed_and_user_is_already_persisted():
+def test_message_time_is_inline_and_user_is_already_persisted():
     batch, _ = assemble_turn(
         message_time=reminder("08-27 18:27"),
         current_user={"role": "user", "content": "所以已经有一些信息了？"},
     )
-    assert [
-        message["content"][0]["type"] if isinstance(message["content"], list) else "text"
-        for message in batch.canonical_messages
-    ] == ["time-context", "text"]
+    assert len(batch.canonical_messages) == 1
+    assert batch.canonical_messages[0]["content"] == (
+        "【消息时间】08-27 18:27\n【消息正文】\n所以已经有一些信息了？"
+    )
 
     prompt = MessageArea.from_canonical_messages()
     prompt.append_batch(batch)
 
-    assert prompt.entries[0].canonical_message["content"][0]["type"] == "time-context"
-    assert prompt.provider_projection().to_messages() == [
-        {"role": "user", "content": [{
-            "type": "text",
-            "text": "[system-reminder]\n08-27 18:27\n[/system-reminder]",
-        }]},
-        {"role": "user", "content": "所以已经有一些信息了？"},
-    ]
-    assert [entry.persistence_policy.value for entry in prompt.entries] == [
-        "reconstruct_on_restore", "already_persisted",
-    ]
+    assert prompt.entries[0].canonical_message["content"] == (
+        "【消息时间】08-27 18:27\n【消息正文】\n所以已经有一些信息了？"
+    )
+    assert prompt.provider_projection().to_messages() == [{
+        "role": "user",
+        "content": "【消息时间】08-27 18:27\n【消息正文】\n所以已经有一些信息了？",
+    }]
+    assert [entry.persistence_policy.value for entry in prompt.entries] == ["already_persisted"]
     assert prompt.persistence_delta(outcome="success").entries == ()
     assert prompt.batch_records() == ()
 
@@ -269,11 +267,10 @@ def test_last_round_conversation_replays_as_next_run_prefix_without_dynamic_tail
     assert "当前时间：2026-08-27（星期四）" not in str(previous_conversation_wire)
 
     # Batch 只暴露 canonical Area 内容；是否提交由 entry policy 决定。
-    assert [
-        block["type"]
-        for message in turn_batch.canonical_messages
-        for block in message["content"]
-    ] == ["time-context", "text"]
+    assert len(turn_batch.canonical_messages) == 1
+    assert turn_batch.canonical_messages[0]["content"][0]["text"] == (
+        "【消息时间】2026-08-27 17:08\n【消息正文】\n"
+    )
 
     history = [
         _history_row(
@@ -458,13 +455,16 @@ def test_replayed_knowledge_context_keeps_message_boundary_across_runs():
     )
     clean = sanitize.sanitize_messages(restored)
 
-    # RAG、时间 reminder、用户正文、回答都保持独立边界，连续 user 没有被合并
-    assert len(clean) == 4
+    # RAG 事件与用户消息保持独立；消息时间和正文包装属于同一条用户消息。
+    assert len(clean) == 3
     assert clean[0]["content"] == [rag_block]
+    assert clean[1]["role"] == "user"
+    assert "【消息时间】" in str(clean[1]["content"])
+    assert "上一条问题" in str(clean[1]["content"])
 
     # provider wire 上与注入形状一致：canonical event 原位渲染成独立 user 消息
     wire = _provider_wire(restored)
-    assert len(wire) == 4
+    assert len(wire) == 3
     assert wire[0] == {
         "role": "user",
         "content": [{"type": "text", "text": rag_block["text"]}],

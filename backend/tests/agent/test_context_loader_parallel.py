@@ -38,7 +38,8 @@ async def test_independent_context_sources_overlap_db_loaders(monkeypatch):
     async def load_files_overview(_db, _user_id):
         return {"total": 1}
 
-    async def load_style_prefs(_db, _user_id):
+    async def load_style_prefs(_db, _user_id, *, group_chat=False):
+        assert group_chat is False
         return {"reply_tone": "concise"}
 
     async def load_im_channels(_db, _user_id):
@@ -69,7 +70,7 @@ async def test_independent_context_sources_overlap_db_loaders(monkeypatch):
     monkeypatch.setattr(context_loader, "load_im_memory", load_im_memory)
 
     result = await context_loader.load_context_data(
-        object(), "synthetic-user", SimpleNamespace(), True,
+        object(), "synthetic-user", SimpleNamespace(chat_id=None), True,
         "synthetic-query", policy=SimpleNamespace(load_owner_context=True),
     )
 

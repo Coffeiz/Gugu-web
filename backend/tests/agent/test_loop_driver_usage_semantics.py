@@ -160,7 +160,7 @@ async def test_openai_driver_merges_system_messages_before_sending():
     messages = MessageArea.from_canonical_messages([
         {"role": "system", "content": "基础人格"},
         {"role": "system", "content": "session snapshot"},
-        {"role": "user", "content": "当前问题"},
+        {"role": "user", "content": "【消息正文】\n当前问题"},
     ], fixed_prefix_size=2)
 
     async for _kind, _value in OpenAIDriver().run_round(
@@ -173,7 +173,7 @@ async def test_openai_driver_merges_system_messages_before_sending():
             "role": "system",
             "content": "基础人格\n\n---\n\nsession snapshot",
         },
-        {"role": "user", "content": "当前问题"},
+        {"role": "user", "content": "【消息正文】\n当前问题"},
     ]
     assert messages.provider_projection()[1]["role"] == "system"
 

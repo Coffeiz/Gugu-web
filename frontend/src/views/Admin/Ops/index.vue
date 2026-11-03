@@ -199,7 +199,7 @@ onMounted(load)
 .lat-row { display: flex; align-items: center; gap: 10px; }
 .lat-label { width: 64px; font-size: 12px; color: rgba(255,255,255,0.5); text-align: right; flex-shrink: 0; }
 .lat-track { flex: 1; height: 18px; background: rgba(255,255,255,0.05); border-radius: 5px; overflow: hidden; }
-.lat-fill { height: 100%; background: linear-gradient(90deg, #7b7fb2, #9590c4); border-radius: 5px; transition: width 0.3s; }
+.lat-fill { height: 100%; background: linear-gradient(90deg, var(--action-primary), var(--action-primary-hover)); border-radius: 5px; transition: width 0.3s; }
 .lat-cnt { width: 48px; font-size: 12px; color: rgba(255,255,255,0.55); flex-shrink: 0; }
 
 /* 明细表 */

@@ -41,6 +41,10 @@ def canonical_restore_record(message) -> dict:
         "content_json": content_json,
         "sent_at": getattr(message, "sent_at", None).isoformat()
         if getattr(message, "sent_at", None) is not None else None,
+        "created_at": getattr(message, "created_at", None).isoformat()
+        if getattr(message, "created_at", None) is not None else None,
+        "im_platform_sent_ms": getattr(message, "im_platform_sent_ms", None),
+        "im_event_received_ms": getattr(message, "im_event_received_ms", None),
         "quoted_text": getattr(message, "quoted_text", None),
         "references_json": getattr(message, "references_json", None),
         "files": getattr(message, "files", None),
@@ -379,11 +383,11 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
                         return_protected_start: bool = False) -> list[dict] | tuple[list[dict], int | None]:
     """统一构建 history；一条持久化消息可能展开为多个 OpenAI tool 消息。
 
-    用户消息的时间 reminder 固定放在该用户消息之前。
+    用户消息时间和正文标签在 provider 输入中一起重建，不改持久化原文。
     RAG 知识块由调用方放在当前用户消息之前的稳定 conversation 区域；这里只负责
     从持久化 history 还原同样的顺序，避免动态尾部与下一轮 history 边界不一致。
     """
-    from .dynamic_tail import message_time_reminder
+    from .dynamic_tail import inline_message_time, message_time_reminder, message_timestamp
 
     parts: list[dict] = []
     protected_start = None
@@ -433,22 +437,15 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
             getattr(message, "role", None) == "user"
             and not is_tool_message
             and not is_canonical_event
+            and getattr(message, "source", None) not in {
+                "rag", "stance", "message_time", "runtime",
+            }
         )
 
-        # 时间 reminder 固定放在对应 user 之前。当前请求也遵循同一顺序，避免
-        # 本轮末尾的时间在下一 run 恢复时移动到 assistant/tool 结果之后。
-        if is_user_message:
-            timestamp = message_time_reminder(getattr(message, "sent_at", None), user_tz)
-            if timestamp:
-                # 与本轮 assemble_turn 使用同一 canonical 形状。若这里保留为
-                # plain string，provider 的相邻 user 合并会让下一轮前缀边界漂移。
-                parts.append({
-                    "role": "user",
-                    "content": [{
-                        "type": "time-context",
-                        "text": str(timestamp.get("content") or ""),
-                    }],
-                })
+        timestamp = (
+            message_time_reminder(message_timestamp(message), user_tz)
+            if is_user_message else None
+        )
 
         if use_anthropic:
             if content_json is not None:
@@ -480,19 +477,27 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
                             content = quote_prefix + content
                 if attachment_refs and isinstance(content, list):
                     content = [*content, {"type": "text", "text": attachment_refs}]
+                if is_user_message:
+                    content = inline_message_time(content, timestamp)
                 role = "user" if message.role == "tool" else message.role
                 parts.append({"role": role, "content": content})
             else:
                 from agent.im.context_loader import format_history_content
 
-                parts.append({"role": message.role, "content": format_history_content(message, request)})
+                content = format_history_content(message, request)
+                if is_user_message:
+                    content = inline_message_time(content, timestamp)
+                parts.append({"role": message.role, "content": content})
         else:
-            parts.extend(_openai_history_message(
+            rendered = _openai_history_message(
                 message, request, strip_thinking=strip_thinking,
                 content_json=content_json,
                 strip_history_images=getattr(message, "_canonical_restored", True),
                 allow_tool_images=allow_tool_images,
-            ))
+            )
+            if is_user_message and rendered and rendered[0].get("role") == "user":
+                rendered[0]["content"] = inline_message_time(rendered[0].get("content"), timestamp)
+            parts.extend(rendered)
 
     return (parts, protected_start) if return_protected_start else parts
 
@@ -532,18 +537,29 @@ def render_canonical_area_snapshot(snapshot, *, source=None, options=None):
         elif content_json is None and isinstance(content, (list, dict)):
             content_json, content = content, ""
         sent_at = record.get("sent_at") if entry.source == MessageSource.RESTORED_HISTORY else None
-        if isinstance(sent_at, str):
+        created_at = record.get("created_at") if entry.source == MessageSource.RESTORED_HISTORY else None
+        if isinstance(sent_at, str) or isinstance(created_at, str):
             from datetime import datetime
-            try:
-                sent_at = datetime.fromisoformat(sent_at)
-            except ValueError:
-                sent_at = None
+            if isinstance(sent_at, str):
+                try:
+                    sent_at = datetime.fromisoformat(sent_at)
+                except ValueError:
+                    sent_at = None
+            if isinstance(created_at, str):
+                try:
+                    created_at = datetime.fromisoformat(created_at)
+                except ValueError:
+                    created_at = None
         records.append(SimpleNamespace(
             id=record.get("_history_id"),
+            source=entry.source.value,
             role=record.get("role", "user"),
             content=content,
             content_json=content_json,
             sent_at=sent_at,
+            created_at=created_at,
+            im_platform_sent_ms=record.get("im_platform_sent_ms"),
+            im_event_received_ms=record.get("im_event_received_ms"),
             quoted_text=record.get("quoted_text"),
             files=record.get("files"),
             references_json=record.get("references_json"),

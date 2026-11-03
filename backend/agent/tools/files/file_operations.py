@@ -202,11 +202,15 @@ async def _list_dir(db, user_id, args: dict):
         from .system_access import list_system_directory
 
         return await list_system_directory(db, user_id, args)
+    if scope == "logical":
+        from .logical_access import list_logical_directory
+
+        return await list_logical_directory(db, user_id, args)
     if args.get("path") not in (None, ""):
-        return {"error": "path 仅可与 scope=system 一起使用"}
+        return {"error": "path 仅可与 scope=logical 或 scope=system 一起使用"}
     kind = args.get("kind") if args.get("kind") in ("both", "file", "folder") else "both"
     if scope not in (None, "project_root", "project_recursive", "folder"):
-        return {"error": "scope 必须是 project_root、project_recursive、folder 或 system"}
+        return {"error": "scope 必须是 project_root、project_recursive、folder、logical 或 system"}
     if scope in {"project_root", "project_recursive"} and (
         args.get("space") != "project" or args.get("project_id") is None
     ):

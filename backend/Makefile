@@ -34,7 +34,7 @@ endif
 help:        ## 显示帮助
 	@echo "常用：make start | stop | restart | status | logs | fg | dev-web | dev-worker | deploy | install"
 	@echo "开发：make dev-web（Web 热重载）| make deps-dev && make dev-worker（Worker 热重载）"
-	@echo "生产：make install 后 make start | stop | restart | status 管理 egress、Python/FastAPI、IM、sandboxd；TS RAG 由 Python 按需复用固定制品"
+	@echo "生产：make install 后 make start | stop | restart | status 管理 RAG sidecar、egress、Python/FastAPI、IM 与 sandboxd；TS/Cython 索引由 sidecar 常驻共享"
 	@echo "沙盒：make sandbox-acl-plan；make install SANDBOX_ACL=1 显式初始化 Rootless ACL"
 	@echo "Compose：make compose-up（轻量模式）；make compose-up SANDBOX_ACL=1 开启 sandbox profile（ACL 由 bootstrap 自动初始化）"
 	@echo "开发：GUGU_SERVICE_MODE=local make start | stop | restart | status 强制使用本地 PID 模式"

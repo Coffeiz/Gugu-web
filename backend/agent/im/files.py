@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 from agent.im.models import PlatformReply
 from agent.im.replies import send_file
+from agent.platform_limits import QQ_ATTACHMENT_MAX_BYTES
 
 
 @dataclass
@@ -192,6 +193,14 @@ async def send_files(payload: dict, files: list) -> FileSendResult:
 
             if file_id:
                 file_size = record.size_bytes
+            if (
+                platform == "qq"
+                and isinstance(file_size, int)
+                and file_size > QQ_ATTACHMENT_MAX_BYTES
+            ):
+                result.failed += 1
+                result.reason = "QQ 单个附件上限为 30 MiB，请先压缩或拆分文件。"
+                continue
             if platform == "telegram" and isinstance(file_size, int) and file_size > 50_000_000:
                 result.failed += 1
                 result.reason = "Telegram 单个文件发送上限为 50 MB，请从文件库下载后分享。"

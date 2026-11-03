@@ -199,6 +199,7 @@ async def test_responses_request_sends_projected_tool_image_as_input_image_not_t
         and any(part.get("type") == "input_video" for part in item["content"])
     )
     assert audio_video_message["content"] == [
+        {"type": "input_text", "text": "【消息正文】\n"},
         {"type": "input_text", "text": "请分析这段音视频。"},
         {"type": "input_audio", "input_audio": {"data": "QUJD", "format": "wav"}},
         {"type": "input_video", "video_url": "data:video/mp4;base64,REVG",
@@ -648,7 +649,9 @@ async def test_responses_driver_sends_full_history_and_rejects_empty_input():
     assert results[0].text == "已继续"
     assert len(client.requests) == 1
     assert "previous_response_id" not in client.requests[0]
-    assert client.requests[0]["input"] == [{"role": "user", "content": "上一轮用户输入"}]
+    assert client.requests[0]["input"] == [{
+        "role": "user", "content": "【消息正文】\n上一轮用户输入",
+    }]
 
 
 @pytest.mark.asyncio
@@ -689,7 +692,7 @@ async def test_responses_driver_replays_user_intent_after_tool_result_instead_of
     assert "previous_response_id" not in request
     assert request["input"][0] == {
         "role": "user",
-        "content": "搜索 Childspot 的 MV，最后告诉我校验词 ORBIT-42。",
+        "content": "【消息正文】\n搜索 Childspot 的 MV，最后告诉我校验词 ORBIT-42。",
     }
     assert request["input"][1]["type"] == "function_call"
     assert request["input"][2] == {
@@ -814,7 +817,9 @@ async def test_responses_driver_captures_and_replays_reasoning_items_with_full_h
     assert result.usage_in == 40
     assert result.cache_tokens == 60
     assert result.usage_out == 7
-    assert client.requests[0]["input"] == [{"role": "user", "content": "请查日历"}]
+    assert client.requests[0]["input"] == [{
+        "role": "user", "content": "【消息正文】\n请查日历",
+    }]
     assert "previous_response_id" not in client.requests[0]
     assert client.requests[0]["prompt_cache_key"].startswith("gugu-")
 
@@ -841,10 +846,10 @@ async def test_responses_driver_captures_and_replays_reasoning_items_with_full_h
             break
     assert "previous_response_id" not in second_client.requests[0]
     assert second_client.requests[0]["input"] == [
-        {"role": "user", "content": "请查日历"},
+        {"role": "user", "content": "【消息正文】\n请查日历"},
         response["output"][0],
         {"role": "assistant", "content": "查一下"},
-        {"role": "user", "content": "结果呢？"},
+        {"role": "user", "content": "【消息正文】\n结果呢？"},
     ]
 
     disabled_ctx = _ResponsesCtx([], 100, "gpt-test", "system", adapter, ai)

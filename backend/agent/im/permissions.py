@@ -14,6 +14,9 @@ DEFAULT_GROUP_TOOLS = ["xng_search", "http_get", "similar_image_search", "read_f
 # 纯时间查询不读取用户数据，也不产生外部副作用；它属于系统 utility，
 # 不应因为群成员的业务工具白名单而无法发现或执行。
 SAFE_ALWAYS_ALLOWED_TOOLS = frozenset({"get_current_time"})
+# 链接按钮只负责发送已做 URL 安全校验的导航入口，不读取或修改群成员数据；
+# 作为群聊公共交互能力，不受群业务工具白名单限制。
+PUBLIC_GROUP_TOOLS = frozenset({"send_link_buttons"})
 # 固定 Adapter 和 Skill 生命周期入口只负责发现、委派或维护用户的 Prompt Skill；
 # 业务工具的实际调用仍会在 call_tool 的内层 dispatch 再走一次白名单校验。
 FIXED_ADAPTER_TOOLS = frozenset({"call_tool", "get_tool_schema", "use_skill", "ask_user"})
@@ -54,6 +57,7 @@ def can_use_tool(
     *,
     im_role: str | None = None,
     platform: str | None = None,
+    chat_type: str | None = None,
 ) -> bool:
     """dispatch 层的第二道权限门；Skill 管理仅网页用户和已认证 owner 可用。"""
     if name == "choose_no_reply":
@@ -67,6 +71,12 @@ def can_use_tool(
         )
     if name == "present_file" and platform:
         return False
+    if (
+        name in PUBLIC_GROUP_TOOLS
+        and chat_type == "group"
+        and platform in {"qq", "telegram", "feishu", "wechat"}
+    ):
+        return True
     if name in SKILL_MANAGEMENT_TOOLS:
         return im_role in {None, "owner"}
     return (
@@ -194,7 +204,7 @@ async def resolve_group_owner_memory(actor, bot_id: str) -> bool:
                     and bot.platform == actor.platform and bot.group_owner_memory_enabled)
 
 
-async def resolve_group_policy(bot_id: str, platform: str = "qq") -> tuple[bool, bool, bool, bool, bool]:
+async def resolve_group_policy(bot_id: str, platform: str = "qq") -> tuple[bool, bool, bool, bool, bool, str, int]:
     """读取指定 IM Bot 的群策略；未知 Bot 或平台不匹配时关闭群聊。"""
     import app.db.session as db_session
     from app.models import UserBot
@@ -203,15 +213,19 @@ async def resolve_group_policy(bot_id: str, platform: str = "qq") -> tuple[bool,
         db_session._build_engine()
     bot_db_id = _parse_bot_db_id(bot_id)
     if bot_db_id is None:
-        return False, True, False, True, True
+        return False, True, False, True, True, "autonomous", 0
     async with db_session._SessionLocal() as db:
         bot = await db.get(UserBot, bot_db_id)
         if not bot or bot.platform != platform:
-            return False, True, False, True, True
+            return False, True, False, True, True, "autonomous", 0
         enabled = (
             bot.group_chat_enabled if platform in {"qq", "telegram"}
             else (bot.feishu_group_chat_enabled is not False if platform == "feishu" else False)
         )
         return enabled, bot.group_requires_at, (
             bot.group_read_enabled if bot.group_requires_at else False
-        ), bot.group_memory_enabled, bot.member_memory_enabled
+        ), bot.group_memory_enabled, bot.member_memory_enabled, (
+            getattr(bot, "group_attention_mode", "autonomous")
+            if getattr(bot, "group_attention_mode", "autonomous") in {"quiet", "natural", "active", "autonomous"}
+            else "autonomous"
+        ), int(getattr(bot, "group_attention_config_version", 0) or 0)

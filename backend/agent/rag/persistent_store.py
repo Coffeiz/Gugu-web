@@ -1,10 +1,11 @@
 """统一知识索引的数据库持久化存储。"""
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 import time
 
-from sqlalchemy import delete, select
+from sqlalchemy import and_, delete, func, or_, select
 
 from agent.rag.models import IndexDocument, Scope
 from app.models import KnowledgeIndexEntry
@@ -74,6 +75,229 @@ def _from_row(row: KnowledgeIndexEntry) -> IndexDocument:
 # 软删墓碑保留期：worker 增量同步的水位只要落后不超过该视界就能看见删除；
 # 超过视界未同步的 worker 走全量 load 兜底。定期物理清理防表膨胀。
 TOMBSTONE_RETENTION = timedelta(days=30)
+RAG_DELTA_PAGE_SIZE = 2_000
+
+
+@dataclass(frozen=True, slots=True)
+class RagIndexCursor:
+    """TS Data Runtime 增量读取使用的 `(indexed_at, id)` 水位。"""
+
+    timestamp: datetime
+    row_id: int
+
+
+@dataclass(frozen=True, slots=True)
+class RagIndexSnapshot:
+    """同一查询快照中的文档、revision 与增量游标。"""
+
+    revision: str | None
+    documents: tuple[IndexDocument, ...]
+    watermark: RagIndexCursor | None
+
+
+@dataclass(frozen=True, slots=True)
+class RagIndexDelta:
+    """数据库增量页；墓碑以稳定 chunk-slot key 表达删除。"""
+
+    upserts: tuple[IndexDocument, ...]
+    deletes: tuple[str, ...]
+    cursor: RagIndexCursor | None
+    has_more: bool
+    scanned_rows: int
+
+
+def _js_iso_datetime(value: datetime | None) -> str:
+    """匹配 TS Date.toISOString 的 UTC 毫秒格式。"""
+    if value is None:
+        return ""
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+async def _load_rag_index_revision_rows(db, owner_user_id: object):
+    """读取 owner 各来源的 revision 基础行；墓碑也参与水位计算。"""
+    return (await db.execute(
+        select(KnowledgeIndexEntry.source_type, func.max(KnowledgeIndexEntry.indexed_at))
+        .where(
+            KnowledgeIndexEntry.owner_user_id == owner_user_id,
+            KnowledgeIndexEntry.source_type != "file",
+        )
+        .group_by(KnowledgeIndexEntry.source_type)
+    )).all()
+
+
+async def load_rag_index_revision(db, owner_user_id: object) -> str | None:
+    """只查询 owner 各来源的最新索引时间，生成与完整快照相同的 revision。"""
+    from agent.rag.protocol import RAG_PROJECTION_VERSION, TOKENIZER_VERSION
+
+    rows = await _load_rag_index_revision_rows(db, owner_user_id)
+    revision_by_source = {
+        str(source): _js_iso_datetime(source_revision)
+        for source, source_revision in rows if source
+    }
+    if not revision_by_source:
+        return None
+    return f"{TOKENIZER_VERSION}:{RAG_PROJECTION_VERSION}:" + ";".join(
+        f"{source}:{value}" for source, value in sorted(revision_by_source.items())
+    )
+
+
+async def load_rag_index_snapshot(
+    db, owner_user_id: object, *, cython_transform: bool = False,
+) -> RagIndexSnapshot:
+    """按 owner 在单条 SQL 快照中读取活文档、revision 与 TS 兼容 watermark。
+
+    与 TS `loadRagIndex` 一样，revision 的 max(indexed_at) 包含墓碑，而返回文档
+    排除墓碑及 file 来源。此函数只读 owner 分区，不推导或扩张调用方权限。
+    """
+    from agent.rag.protocol import RAG_PROJECTION_VERSION, TOKENIZER_VERSION
+
+    revisions = select(
+        KnowledgeIndexEntry.source_type.label("source_type"),
+        func.max(KnowledgeIndexEntry.indexed_at).label("source_max_indexed_at"),
+    ).where(
+        KnowledgeIndexEntry.owner_user_id == owner_user_id,
+        KnowledgeIndexEntry.source_type != "file",
+    ).group_by(KnowledgeIndexEntry.source_type).subquery()
+    # 同一语句快照内用窄列统计全部 revision，再只传输活文档正文。
+    # 外连接保留仅含墓碑的来源；其无 id 行只用于 revision 与水位。
+    rows = (await db.execute(
+        select(
+            KnowledgeIndexEntry.id,
+            KnowledgeIndexEntry.document_id,
+            revisions.c.source_type,
+            KnowledgeIndexEntry.source_id,
+            KnowledgeIndexEntry.owner_user_id,
+            KnowledgeIndexEntry.platform,
+            KnowledgeIndexEntry.bot_id,
+            KnowledgeIndexEntry.group_id,
+            KnowledgeIndexEntry.scope_type,
+            KnowledgeIndexEntry.scope_id,
+            KnowledgeIndexEntry.title,
+            KnowledgeIndexEntry.summary,
+            KnowledgeIndexEntry.content,
+            KnowledgeIndexEntry.document_version,
+            KnowledgeIndexEntry.chunk_index,
+            KnowledgeIndexEntry.chunk_count,
+            KnowledgeIndexEntry.parent_document_id,
+            KnowledgeIndexEntry.source_updated_at,
+            KnowledgeIndexEntry.metadata_json,
+            KnowledgeIndexEntry.deleted_at,
+            KnowledgeIndexEntry.indexed_at,
+            revisions.c.source_max_indexed_at,
+        ).select_from(revisions).outerjoin(
+            KnowledgeIndexEntry,
+            and_(
+                KnowledgeIndexEntry.owner_user_id == owner_user_id,
+                KnowledgeIndexEntry.source_type == revisions.c.source_type,
+                KnowledgeIndexEntry.deleted_at.is_(None),
+            ),
+        ).order_by(KnowledgeIndexEntry.id.asc())
+    )).all()
+    if cython_transform:
+        from agent.rag import cython_native
+
+        documents, revision_by_source, max_indexed_at = cython_native.snapshot_rows_to_documents(rows)
+    else:
+        revision_by_source = {}
+        documents = []
+        max_indexed_at = None
+        for row in rows:
+            source = str(row.source_type or "")
+            source_revision = row.source_max_indexed_at
+            if source:
+                revision_by_source[source] = _js_iso_datetime(source_revision)
+            if source_revision is not None and (
+                max_indexed_at is None or source_revision > max_indexed_at
+            ):
+                max_indexed_at = source_revision
+            if row.id is not None:
+                updated_at = row.source_updated_at.isoformat() if row.source_updated_at else None
+                documents.append(IndexDocument(
+                    document_id=row.document_id,
+                    source_type=row.source_type,
+                    source_id=row.source_id,
+                    scope=Scope(
+                        owner_user_id=str(row.owner_user_id),
+                        platform=row.platform or "",
+                        bot_id=row.bot_id or "",
+                        group_id=row.group_id or "",
+                        scope_type=row.scope_type or "owner",
+                        scope_id=row.scope_id or "",
+                    ),
+                    title=row.title or "",
+                    summary=row.summary or "",
+                    content=row.content or "",
+                    version=row.document_version,
+                    chunk_index=row.chunk_index,
+                    chunk_count=row.chunk_count,
+                    parent_document_id=row.parent_document_id,
+                    updated_at=updated_at,
+                    metadata=row.metadata_json if isinstance(row.metadata_json, dict) else {},
+                ))
+    revision = None
+    watermark = None
+    if revision_by_source:
+        revision = f"{TOKENIZER_VERSION}:{RAG_PROJECTION_VERSION}:" + ";".join(
+            f"{source}:{value}" for source, value in sorted(revision_by_source.items())
+        )
+        if max_indexed_at is not None:
+            watermark = RagIndexCursor(timestamp=max_indexed_at, row_id=0)
+    return RagIndexSnapshot(revision, tuple(documents), watermark)
+
+
+async def load_rag_index_delta(
+    db,
+    owner_user_id: object,
+    cursor: RagIndexCursor | None,
+    *,
+    limit: int = RAG_DELTA_PAGE_SIZE,
+    cython_transform: bool = False,
+) -> RagIndexDelta:
+    """读取 owner 水位后的增量，保留 TS 活行 upsert / 墓碑 delete 语义。"""
+    page_size = max(1, min(int(limit), RAG_DELTA_PAGE_SIZE))
+    query = select(KnowledgeIndexEntry).where(
+        KnowledgeIndexEntry.owner_user_id == owner_user_id,
+        KnowledgeIndexEntry.source_type != "file",
+    )
+    if cursor is not None:
+        query = query.where(or_(
+            KnowledgeIndexEntry.indexed_at > cursor.timestamp,
+            and_(
+                KnowledgeIndexEntry.indexed_at == cursor.timestamp,
+                KnowledgeIndexEntry.id > cursor.row_id,
+            ),
+        ))
+    rows = (await db.execute(
+        query.order_by(KnowledgeIndexEntry.indexed_at.asc(), KnowledgeIndexEntry.id.asc())
+        .limit(page_size)
+    )).scalars().all()
+    if cython_transform:
+        from agent.rag import cython_native
+
+        upserts, deletes, next_cursor = cython_native.delta_rows_to_changes(rows, cursor)
+    else:
+        from agent.rag.delta import chunk_slot_key
+
+        upserts = []
+        deletes = []
+        next_cursor = cursor
+        for row in rows:
+            if row.indexed_at is not None:
+                next_cursor = RagIndexCursor(row.indexed_at, int(row.id or 0))
+            if row.deleted_at is not None:
+                parent = str(row.parent_document_id or row.document_id or "")
+                key_document = _from_row(row)
+                # TS worker delete key is source_type:parent_document_id:chunk_index.
+                deletes.append(chunk_slot_key(key_document) if parent else "")
+            else:
+                upserts.append(_from_row(row))
+        deletes = [key for key in deletes if key]
+    return RagIndexDelta(
+        tuple(upserts), tuple(deletes), next_cursor,
+        has_more=len(rows) == page_size, scanned_rows=len(rows),
+    )
 
 
 async def _prune_tombstones(db, owner_user_id: object, source_type: str) -> int:
@@ -357,6 +581,12 @@ async def search_persistent_index(
 
 
 __all__ = [
+    "RagIndexCursor",
+    "RagIndexDelta",
+    "RagIndexSnapshot",
+    "load_rag_index_revision",
+    "load_rag_index_delta",
+    "load_rag_index_snapshot",
     "apply_document_patch",
     "count_index_entries",
     "load_index_documents",

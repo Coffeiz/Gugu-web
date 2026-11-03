@@ -16,13 +16,15 @@ from .messages import _creds_by_id, send_text
 _STREAM_PATCH_INTERVAL_S = 0.2
 
 _STREAM_PATCH_MIN_CHARS = 30
-_MERMAID_SOURCE_RE = re.compile(r"```mermaid[ \t]*\r?\n[\s\S]*?```", re.IGNORECASE)
+_CHART_SOURCE_RE = re.compile(
+    r"```(?:mermaid|tex|latex)[ \t]*\r?\n[\s\S]*?```", re.IGNORECASE,
+)
 
 _tenant_token_cache: dict[str, tuple[str, float]] = {}   # app_id -> (token, expire_ts)
 
 
 @dataclass(frozen=True)
-class _MermaidCardImages:
+class _ChartCardImages:
     images: list[tuple[bytes, str]]
     receive_id: str
     channel_id: str | None
@@ -301,25 +303,25 @@ def _stream_fallback_text(text: str, has_files: bool) -> str:
     return "给你～" if has_files else "嗯~在的，你说～"
 
 
-async def _send_queued_mermaid_images(
+async def _send_queued_chart_images(
     images: list[tuple[bytes, str]], receive_id: str, channel_id: str | None,
 ) -> None:
-    """卡片收尾后顺序发送 Mermaid PNG；单张失败只回退该图源码。"""
+    """卡片收尾后顺序发送 chart PNG；单张失败只回退该图源码。"""
     if not images:
         return
     from .messages import send_file
 
     for png, source in images:
         try:
-            sent = await send_file(receive_id, png, "mermaid-diagram", "png", channel_id)
+            sent = await send_file(receive_id, png, "chart-image", "png", channel_id)
         except Exception as exc:
-            diag_log("agent.gateway.feishu.mermaid_image", exc)
+            diag_log("agent.gateway.feishu.chart_image", exc)
             sent = False
         if not sent and source:
             try:
                 await send_text(receive_id, source, channel_id)
             except Exception as exc:
-                diag_log("agent.gateway.feishu.mermaid_fallback", exc)
+                diag_log("agent.gateway.feishu.chart_fallback", exc)
 
 
 def _markdown_elements(text: str) -> list[dict]:
@@ -329,17 +331,17 @@ def _markdown_elements(text: str) -> list[dict]:
     return elements
 
 
-def _elements_with_live_mermaid_images(
+def _elements_with_live_chart_images(
     text: str,
     image_keys: dict[int, tuple[str, str]],
     *,
     keep_active_element: bool = False,
 ) -> tuple[list[dict], str | None]:
-    """将已渲染的 Mermaid fence 原位换成图片，并给后续流式文本分配新元素 ID。"""
+    """将已渲染的 chart block 原位换成图片，并给后续流式文本分配新元素 ID。"""
     elements: list[dict] = []
     cursor = 0
     diagram_index = 0
-    for match in _MERMAID_SOURCE_RE.finditer(text or ""):
+    for match in _CHART_SOURCE_RE.finditer(text or ""):
         diagram_index += 1
         replacement = image_keys.get(diagram_index)
         if replacement and replacement[0] == match.group(0):
@@ -370,13 +372,13 @@ def _elements_with_live_mermaid_images(
     return elements, active_element_id
 
 
-async def _upload_mermaid_image(png: bytes, channel_id: str | None) -> str | None:
+async def _upload_chart_image(png: bytes, channel_id: str | None) -> str | None:
     from .messages import upload_image
 
     try:
         return await upload_image(png, channel_id)
     except Exception as exc:
-        diag_log("agent.gateway.feishu.mermaid_upload", exc)
+        diag_log("agent.gateway.feishu.chart_upload", exc)
         return None
 
 
@@ -434,14 +436,14 @@ class _ProgressiveFeishuCard:
             self.last_patch_ts = now
             self.last_patched_len = len(self.active_text)
 
-    async def replace_mermaid(self, payload) -> None:
+    async def replace_chart(self, payload) -> None:
         diagram_index, image_number, source, png = payload
-        image_key = await _upload_mermaid_image(png, self.channel_id)
+        image_key = await _upload_chart_image(png, self.channel_id)
         if not image_key:
             return
         candidate_keys = dict(self.image_keys)
         candidate_keys[diagram_index] = (source, image_key)
-        elements, next_element_id = _elements_with_live_mermaid_images(
+        elements, next_element_id = _elements_with_live_chart_images(
             self.accumulated,
             candidate_keys,
             keep_active_element=True,
@@ -490,7 +492,7 @@ class _ProgressiveFeishuCard:
                 print(f"[feishu] finalize_streaming_card 失败但保留已更新卡片: card_id={self.card_id}", flush=True)
 
         elements = (
-            _elements_with_live_mermaid_images(final_text, self.image_keys)[0]
+            _elements_with_live_chart_images(final_text, self.image_keys)[0]
             if self.image_keys else None
         )
         renamed = await _do_update_card(
@@ -506,7 +508,7 @@ class _ProgressiveFeishuCard:
         if not renamed:
             print(f"[feishu] 收尾改标题失败，保留「咕咕思考中」: card_id={self.card_id}", flush=True)
         elif self.image_keys:
-            matches = list(_MERMAID_SOURCE_RE.finditer(final_text or ""))
+            matches = list(_CHART_SOURCE_RE.finditer(final_text or ""))
             self.embedded_image_numbers = {
                 self.image_numbers_by_diagram[index]
                 for index, (source, _image_key) in self.image_keys.items()
@@ -521,9 +523,9 @@ class _ProgressiveFeishuCard:
         ]
 
 
-async def _replace_tool_summary_mermaid(summary, channel_id: str | None, payload) -> bool:
+async def _replace_tool_summary_chart(summary, channel_id: str | None, payload) -> bool:
     _diagram_index, _image_number, source, png = payload
-    image_key = await _upload_mermaid_image(png, channel_id)
+    image_key = await _upload_chart_image(png, channel_id)
     if not image_key or not summary.replace_active_text_with_image(source, image_key):
         return False
     return await summary.flush()
@@ -569,11 +571,11 @@ async def _append_tool_summary_token(
         state.last_patched_len = len(active_text)
 
 
-async def _handle_tool_summary_mermaid(
+async def _handle_tool_summary_chart(
     summary, state: _ToolSummaryStreamState, channel_id: str | None, payload,
 ) -> None:
     _diagram_index, image_number, source, _png = payload
-    replaced = await _replace_tool_summary_mermaid(summary, channel_id, payload)
+    replaced = await _replace_tool_summary_chart(summary, channel_id, payload)
     if replaced:
         state.embedded_image_numbers.add(image_number)
         state.embedded_sources.append(source)
@@ -592,7 +594,7 @@ async def _send_tool_summary_stream(
     token_iter,
     summary,
     *,
-    mermaid: _MermaidCardImages,
+    chart: _ChartCardImages,
 ) -> tuple[bool, "AgentResponse | None"]:
     """同一卡片串行呈现正文与工具摘要；只供用户主动开启摘要时使用。"""
     stream_seq_key = f"{card_id}:stream"
@@ -623,8 +625,8 @@ async def _send_tool_summary_stream(
             elif kind == "round_end":
                 summary.end_round()
                 state.active_element_id = None
-            elif kind == "mermaid_image":
-                await _handle_tool_summary_mermaid(summary, state, mermaid.channel_id, payload)
+            elif kind == "chart_image":
+                await _handle_tool_summary_chart(summary, state, chart.channel_id, payload)
             elif kind == "final":
                 state.final_response = payload
                 if payload.cancelled:
@@ -691,10 +693,10 @@ async def _send_tool_summary_stream(
         if not renamed:
             print(f"[feishu] 工具摘要卡片收尾改标题失败: card_id={card_id}", flush=True)
     remaining_images = [
-        image for image_number, image in enumerate(mermaid.images, start=1)
+        image for image_number, image in enumerate(chart.images, start=1)
         if image_number not in state.embedded_image_numbers
     ]
-    await _send_queued_mermaid_images(remaining_images, mermaid.receive_id, mermaid.channel_id)
+    await _send_queued_chart_images(remaining_images, chart.receive_id, chart.channel_id)
     # 占位卡片已经作为用户可见消息发送；即使后续卡片更新失败，也要阻止
     # IM Loop 再发一条重复正文。Run 仍完整消费，响应对象照常交给后续收尾。
     return True, state.final_response
@@ -704,7 +706,7 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
                           placeholder: str = "咕咕正在想…",
                           tool_summary=None,
                           show_intermediate_replies: bool = True,
-                          mermaid_theme_preferences: dict | None = None) -> tuple[bool, "AgentResponse | None"]:
+                          chart_theme_preferences: dict | None = None) -> tuple[bool, "AgentResponse | None"]:
     """飞书流式回复（IM 端模拟 SSE）。
 
     Args:
@@ -724,14 +726,14 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
         print(f"[feishu] user_bot {channel_id} 无凭据，流式回复跳过", flush=True)
         return (False, None)
 
-    # 先原样流出 Mermaid 源码；完整 fence 渲染成功后，通过整卡更新原位替换为图片。
-    from agent.im.mermaid import ProgressiveMermaidTokenFilter
+    # 先原样流出 图表源码；完整 fence 渲染成功后，通过整卡更新原位替换为图片。
+    from agent.im.chart import ProgressiveChartTokenFilter
 
-    mermaid_filter = ProgressiveMermaidTokenFilter(
-        theme_preferences=mermaid_theme_preferences,
+    chart_filter = ProgressiveChartTokenFilter(
+        theme_preferences=chart_theme_preferences,
         preserve_source=True,
     )
-    token_iter = mermaid_filter.events(token_iter)
+    token_iter = chart_filter.events(token_iter)
     # 之前的 lark.Client 缓存不再使用——card API 直走 httpx（绕 SDK bug）。
     # _clients 仍保留供 send_text / react / send_file 等其他路径继续用 SDK。
 
@@ -750,7 +752,7 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
         if final_resp is not None and final_resp.cancelled:
             partial_text = accumulated.strip()
             sent = await send_text(receive_id, partial_text, channel_id) if partial_text else False
-            await _send_queued_mermaid_images(mermaid_filter.images, receive_id, channel_id)
+            await _send_queued_chart_images(chart_filter.images, receive_id, channel_id)
             return (sent, final_resp)
         final_text = _stream_fallback_text(
             final_resp.text if final_resp is not None else (
@@ -760,9 +762,9 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
         )
         if final_text:
             ok = await send_text(receive_id, final_text, channel_id)
-            await _send_queued_mermaid_images(mermaid_filter.images, receive_id, channel_id)
+            await _send_queued_chart_images(chart_filter.images, receive_id, channel_id)
             return (ok, final_resp)
-        await _send_queued_mermaid_images(mermaid_filter.images, receive_id, channel_id)
+        await _send_queued_chart_images(chart_filter.images, receive_id, channel_id)
         return (False, final_resp)
 
     # 2) 把 card_id 当一条 interactive 消息发出去——不 send，user 端永远看不到。
@@ -779,7 +781,7 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
         if final_resp is not None and final_resp.cancelled:
             partial_text = accumulated.strip()
             sent = await send_text(receive_id, partial_text, channel_id) if partial_text else False
-            await _send_queued_mermaid_images(mermaid_filter.images, receive_id, channel_id)
+            await _send_queued_chart_images(chart_filter.images, receive_id, channel_id)
             return (sent, final_resp)
         final_text = _stream_fallback_text(
             final_resp.text if final_resp is not None else (
@@ -789,9 +791,9 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
         )
         if final_text:
             ok = await send_text(receive_id, final_text, channel_id)
-            await _send_queued_mermaid_images(mermaid_filter.images, receive_id, channel_id)
+            await _send_queued_chart_images(chart_filter.images, receive_id, channel_id)
             return (ok, final_resp)
-        await _send_queued_mermaid_images(mermaid_filter.images, receive_id, channel_id)
+        await _send_queued_chart_images(chart_filter.images, receive_id, channel_id)
         return (False, final_resp)
 
     if tool_summary is not None:
@@ -801,7 +803,7 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
             card_id,
             token_iter,
             tool_summary,
-            mermaid=_MermaidCardImages(mermaid_filter.images, receive_id, channel_id),
+            chart=_ChartCardImages(chart_filter.images, receive_id, channel_id),
         )
         return result
 
@@ -814,8 +816,8 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
         async for kind, payload in token_iter:
             if kind == "token":
                 await card_stream.append_text(payload)
-            elif kind == "mermaid_image":
-                await card_stream.replace_mermaid(payload)
+            elif kind == "chart_image":
+                await card_stream.replace_chart(payload)
             elif kind == "final":
                 # final AgentResponse：text 可能比 accumulated 多（出口兜底 sanitize_outbound/strip_disallowed_emoji
                 # 在 runner 末尾做过清洗，最终版更准）；如果不同就以 final.text 为准再 patch 一次
@@ -838,6 +840,6 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
     # 5) 收尾；未能原位嵌入的 PNG 才作为独立图片消息回退。
     final_text = pending_final_text or card_stream.accumulated
     await card_stream.finish(final_text)
-    remaining_images = card_stream.remaining_images(mermaid_filter.images)
-    await _send_queued_mermaid_images(remaining_images, receive_id, channel_id)
+    remaining_images = card_stream.remaining_images(chart_filter.images)
+    await _send_queued_chart_images(remaining_images, receive_id, channel_id)
     return (card_stream.stream_ok, final_resp)

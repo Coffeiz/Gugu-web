@@ -1,6 +1,7 @@
 """Knowledge RAG 统一召回服务与 Memory 首个来源实现。"""
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 import hashlib
@@ -82,6 +83,83 @@ def _snapshot_covers_document(text: str, snapshot_text: str) -> bool:
     # 避免把仅因 chunk overlap 而重复的少量前缀误判成已完整注入。
     minimum = max(80, int(len(normalized) * 0.7))
     return any(normalized[:size] in snapshot for size in range(len(normalized), minimum - 1, -1))
+
+
+def _cython_rank_document(candidate, candidate_id: str) -> dict[str, object]:
+    document = candidate.document
+    text = "\n".join(part for part in (document.title, document.summary, document.content) if part)
+    wire_document = {
+        "id": candidate_id,
+        "text": text,
+        "content": document.content,
+        "source_type": document.source_type,
+        "title": document.title,
+        "summary": document.summary,
+        "scope_type": document.scope.scope_type,
+        "scope_id": document.scope.scope_id,
+        "platform": document.scope.platform,
+        "bot_id": document.scope.bot_id,
+        "group_id": document.scope.group_id,
+        "document_version": document.version,
+        "parent_id": document.parent_document_id or document.document_id,
+        "chunk_index": document.chunk_index,
+        "chunk_count": document.chunk_count,
+        "updated_at": document.updated_at,
+        "metadata": document.metadata,
+    }
+    if document.source_type == "conversation":
+        wire_document["ranking_text"] = document.content
+        if document.metadata.get("kind") == "message":
+            context_text = document.contextual_content()
+            if context_text:
+                wire_document["context_text"] = context_text
+    return wire_document
+
+
+def _cython_rank_payload(candidates):
+    by_id = {}
+    payload = []
+    for index, candidate in enumerate(candidates):
+        candidate_id = f"{candidate.source_type}:{candidate.document.chunk_id}:{index}"
+        by_id[candidate_id] = candidate
+        payload.append({
+            "id": candidate_id,
+            "source_type": candidate.source_type,
+            "raw_score": candidate.raw_score,
+            "fusion": "hybrid-rrf" if candidate.fused_score else "bm25",
+            "fused_score": candidate.fused_score if candidate.fused_score else None,
+            "document": _cython_rank_document(candidate, candidate_id),
+        })
+    return by_id, payload
+
+
+async def _rank_candidates(query, candidates, rank_options):
+    """让独立候选排序路径与统一索引使用同一运行时选择。"""
+    from app.core.config import get_settings
+    from agent.rag.index_cache import _selected_backend
+
+    search_settings = get_settings().search
+    if _selected_backend(search_settings) != "cython":
+        return await rank_candidates_with_cache(
+            candidates[0].scope.owner_user_id if candidates else "",
+            query, candidates, **rank_options,
+        )
+
+    from agent.rag.cython_rank import rank_candidates as cython_rank
+
+    by_id, payload = _cython_rank_payload(candidates)
+
+    selected, stats = await asyncio.to_thread(
+        cython_rank, query, payload,
+        **rank_options,
+        scoring_version=str(getattr(search_settings, "ts_rank_scoring_version", "confidence-v4")),
+    )
+    ranked = [
+        (candidate, str(item.get("text") or ""), item)
+        for item in selected
+        if (candidate := by_id.get(str(item.get("id") or ""))) is not None
+    ]
+    return ranked, stats
 
 
 async def _load_memory_documents(user_id, query_scope):
@@ -205,10 +283,10 @@ class UnifiedRecallService:
             public_item["citations"] = rank_item.get("citations") or [public_item["citation"]]
             selected.append(public_item)
         fallback_reasons = [batch.fallback_reason for batch in batches if batch.fallback_reason]
-        engines = {batch.metadata.get("engine") for batch in batches if batch.metadata.get("engine")}
+        rank_engine = str(pre_ranked.metadata.get("engine") or "unknown")
         cache_values = [batch.metadata.get("cache_hit") == "True" for batch in batches
                         if "cache_hit" in batch.metadata]
-        # 统一主链 strategy 按融合事实判定：worker 完成了向量融合就是 hybrid。
+        # 统一主链 strategy 按融合事实判定：运行时完成了向量融合就是 hybrid。
         strategy = "hybrid" if any(batch.metadata.get("fusion") == "hybrid-rrf"
                                    for batch in batches) else "bm25"
         stage_ms: dict[str, int] = {}
@@ -253,7 +331,7 @@ class UnifiedRecallService:
             "rescore_version": rank_stats.get("rescore_version", "disabled"),
             "idf_source": rank_stats.get("idf_source", "none"),
             "contribution_exponent": rank_stats.get("contribution_exponent"),
-            "engine": next(iter(engines)) if len(engines) == 1 else ("mixed" if engines else "unknown"),
+            "engine": rank_engine,
             "cache_hit": bool(cache_values) and all(cache_values),
             "cache_entries": 1,
             "cache_miss_reasons": [],
@@ -319,7 +397,7 @@ class UnifiedRecallService:
         batch_order = {batch.source_type: index for index, batch in enumerate(batches)}
         candidates: list[tuple[int, RecallCandidate]] = []
         for batch in batches:
-            # 来源内归一化、confidence 和最终预算统一交给 TS worker；Python
+            # 来源内归一化、confidence 和最终预算统一交给当前 RAG 排序器；Python
             # 只保留来源批次、权限边界和 canonical candidate 映射。
             batch_candidates = list(batch.candidates())
             candidates.extend(
@@ -353,9 +431,8 @@ class UnifiedRecallService:
             if exclude_content_hashes is not None:
                 rank_kwargs["exclude_content_hashes"] = exclude_content_hashes
             rank_kwargs["selection_mode"] = "top_k" if mode == "tool" else "confidence"
-            ranked_candidates, rank_stats = await rank_candidates_with_cache(
-                candidate_values[0].scope.owner_user_id if candidate_values else "",
-                query, candidate_values, **rank_kwargs,
+            ranked_candidates, rank_stats = await _rank_candidates(
+                query, candidate_values, rank_kwargs,
             )
         except TsSidecarUnavailable:
             ranked_candidates, rank_stats = [], {
@@ -408,7 +485,10 @@ class UnifiedRecallService:
         output_chars = int(rank_stats.get("output_chars", 0) or 0)
 
         fallback_reasons = [batch.fallback_reason for batch in batches if batch.fallback_reason]
-        engines = {batch.metadata.get("engine") for batch in batches if batch.metadata.get("engine")}
+        from app.core.config import get_settings
+        from agent.rag.index_cache import _selected_backend
+
+        rank_engine = _selected_backend(get_settings().search)
         cache_values = [batch.metadata.get("cache_hit") == "True" for batch in batches
                         if "cache_hit" in batch.metadata]
         cache_miss_reasons = sorted({
@@ -473,7 +553,7 @@ class UnifiedRecallService:
             "rescore_version": rank_stats.get("rescore_version", "disabled"),
             "idf_source": rank_stats.get("idf_source", "none"),
             "contribution_exponent": rank_stats.get("contribution_exponent"),
-            "engine": next(iter(engines)) if len(engines) == 1 else ("mixed" if engines else "unknown"),
+            "engine": rank_engine,
             "cache_hit": bool(cache_values) and all(cache_values),
             "cache_entries": (
                 1

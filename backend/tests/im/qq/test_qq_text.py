@@ -62,7 +62,8 @@ async def test_stream_frames_never_send_custom_links(monkeypatch):
     stream = outbound.create_private_text_stream('synthetic-user', channel_id='synthetic-bot', message_id='synthetic-message')
     await stream.finish(MAP_LINK)
     assert frames[-1]['input_state'] == 10
-    assert frames[-1]['content_raw'] == WEB_LINK
+    # QQ C2C 原生 Markdown 的 DONE 分片必须以换行收尾。
+    assert frames[-1]['content_raw'] == WEB_LINK + "\n"
     assert all('baidumap:' not in frame['content_raw'] for frame in frames)
 
 
@@ -208,7 +209,8 @@ async def test_real_transport_accepts_every_character_split_without_prefix_rewri
     assert frames and '末行' not in frames[-1]['content_raw']
     await stream.finish(text)
     assert frames[-1]['input_state'] == 10
-    assert frames[-1]['content_raw'] == prepare_qq_text(text)
+    # 完整原文后补平台要求的结束换行，但不能改写已确认前缀。
+    assert frames[-1]['content_raw'] == prepare_qq_text(text) + "\n"
 
 
 async def test_final_response_can_replace_streamed_draft_in_same_qq_message(monkeypatch):

@@ -5,7 +5,7 @@
   2. 前端把 PNG（base64）直接渲染成二维码，用户手机微信扫
   3. GET   /me/wechat/connect/{task}   → 轮询 iLink get_qrcode_status(qrcode)
   4. status==confirmed 时拿 bot_token + baseurl → 写该用户的 UserBot(platform=wechat)
-     （bot_token 存 app_secret、baseurl 存 app_id，复用现有字段）→ 发 im:gateway:reload
+     （bot_token 存 app_secret、baseurl 存 app_id，复用现有字段）
 
 task_id 用 uuid、真正的 qrcode 串存 Redis（按 task_id，带 uid 防跨用户），避免 qrcode 含
 特殊字符进 URL path 出问题，也不把它下发前端。
@@ -118,10 +118,5 @@ async def poll(
     await R.get_redis().delete(_redis_key(task_id))
     from app.core import events
     await events.publish(current_user.id, "im_channels", operation="refresh")
-
-    try:
-        await R.get_redis().publish("im:gateway:reload", "1")
-    except Exception:
-        pass
 
     return {"status": "success", "bot": {"id": bot.id, "name": bot.name}}

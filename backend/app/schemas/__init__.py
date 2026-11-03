@@ -730,7 +730,7 @@ class PreferencesResponse(CamelModel):
     locale:          Optional[Literal["zh-CN", "ja-JP", "en-US"]] = None  # 用户显式选择的界面语言
     theme:           Literal["light", "dark", "system"] = "light"
     themeFamily:     Literal["glass", "mono"] = "glass"
-    palette:         Literal["mist", "cafe", "rose", "sky", "sage"] = "mist"
+    palette:         Literal["cafe", "neutral", "red", "blue", "green"] = "neutral"
     lastStages:        list[str] = []
     stageTemplates:    list[dict] = []
     replyTone:         Optional[str] = None   # natural / formal / lively
@@ -788,19 +788,19 @@ class UserSmtpTest(CamelModel):
     use_ssl: bool = False
     template: Literal["notification", "reminder", "report", "security", "test"] = "test"
     theme: Literal["light", "dark"] = "light"
-    palette: Literal["mist", "cafe", "rose", "sky", "sage"] = "mist"
+    palette: Literal["cafe", "neutral", "red", "blue", "green"] = "neutral"
 
 
 class UserEmailPreview(CamelModel):
     template: Literal["notification", "reminder", "report", "security", "test"] = "notification"
     theme: Literal["light", "dark"] = "light"
-    palette: Literal["mist", "cafe", "rose", "sky", "sage"] = "mist"
+    palette: Literal["cafe", "neutral", "red", "blue", "green"] = "neutral"
 
 class PreferencesUpdate(CamelModel):
     locale:          Optional[Literal["zh-CN", "ja-JP", "en-US"]] = None
     theme:           Optional[Literal["light", "dark", "system"]] = None
     themeFamily:     Optional[Literal["glass", "mono"]] = None
-    palette:          Optional[Literal["mist", "cafe", "rose", "sky", "sage"]] = None
+    palette:          Optional[Literal["cafe", "neutral", "red", "blue", "green"]] = None
     lastStages:        Optional[list[str]]  = None
     stageTemplates:    Optional[list[dict]] = None
     replyTone:         Optional[str] = None

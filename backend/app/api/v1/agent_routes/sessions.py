@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.llm import genstream
+from agent.context.dynamic_tail import message_timestamp
 from agent.im.models import extract_mention_ids, replace_mention_ids
 from agent.im.parsers.qq import _normalize_qq_attachment_placeholders
 from app.core.ownership import get_owned
@@ -20,6 +21,11 @@ from app.services.filesystem_authorization import SUBJECT_SESSION, filesystem_au
 from app.services.workspaces import workspace_shell_supported
 
 router = APIRouter()
+
+
+def _message_occurred_at(message: ConversationMessage) -> str:
+    """展示消息的真实发生时间；非 IM 消息继续使用数据库创建时间。"""
+    return iso_utc(message_timestamp(message) or message.created_at)
 
 
 @router.get("/sessions")
@@ -335,7 +341,8 @@ async def get_session_messages(
              "runId": m.run_id,
              "roundId": m.round_id,
              **({"timelineOmitted": True} if m.id in oversized_timeline_ids else {}),
-             "createdAt": iso_utc(m.created_at)}
+             "createdAt": iso_utc(m.created_at),
+             "occurredAt": _message_occurred_at(m)}
             for m in msgs
             if m.id in display_body_ids and display_timeline_by_id.get(m.id) is None
         ],

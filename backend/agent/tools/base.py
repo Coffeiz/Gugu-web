@@ -631,6 +631,7 @@ class SkillRegistry:
         if not can_use_tool(
             name, allowed_tool_names, im_role=im_role,
             platform=current_im.get("platform") if current_im else None,
+            chat_type=current_im.get("chat_type") if current_im else None,
         ):
             _log_traj(name, user_id, args, False, "当前群聊身份没有使用该工具的权限", t0)
             payload = enrich_tool_error(name, {"error": "当前群聊身份没有使用该工具的权限"})

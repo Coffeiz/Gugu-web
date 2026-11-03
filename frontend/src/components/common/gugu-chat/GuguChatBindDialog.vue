@@ -59,7 +59,7 @@ defineExpose({ canvasEl: computed(() => canvasEl.value) })
 .cb-qr {
   width: 168px; height: 168px; border-radius: 10px;
   background: #fff; padding: 6px; box-sizing: border-box;
-  box-shadow: 0 2px 10px rgba(123,127,178,0.18);
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--action-primary) 18%, transparent);
 }
 .cb-hint, .cb-err {
   font-size: 11.5px; text-align: center; line-height: 1.5; max-width: 190px;
@@ -70,8 +70,8 @@ defineExpose({ canvasEl: computed(() => canvasEl.value) })
 .cb-err  { color: rgba(200,80,80,0.9); }
 .cb-cancel {
   margin-top: 2px; padding: 5px 16px; font-size: 12px;
-  color: var(--text-secondary); background: rgba(123,127,178,0.1);
+  color: var(--text-secondary); background: color-mix(in srgb, var(--action-primary) 10%, transparent);
   border: none; border-radius: 999px; cursor: pointer;
 }
-.cb-cancel:hover { background: rgba(123,127,178,0.18); }
+.cb-cancel:hover { background: color-mix(in srgb, var(--action-primary) 18%, transparent); }
 </style>

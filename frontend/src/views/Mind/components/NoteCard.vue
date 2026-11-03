@@ -621,7 +621,7 @@ defineExpose({ rootEl: cardRef })
   cursor: pointer; font-family: var(--font-sans); white-space: nowrap;
   transition: background 0.12s;
 }
-.nc-done-btn:hover { background: rgba(123,127,178,0.12); }
+.nc-done-btn:hover { background: color-mix(in srgb, var(--action-primary) 12%, transparent); }
 </style>
 
 <!-- Markdown 生成的预览内容不能 scoped；排版规则跟 NoteEditor.vue 共用同一份文件，

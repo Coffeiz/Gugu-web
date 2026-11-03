@@ -22,7 +22,7 @@
       <!-- ── 数据库 ── -->
       <section id="sec-db" class="config-card">
         <div class="card-head">
-          <div class="card-icon" style="--ic:rgba(123,127,178,0.15);--stroke:#7b7fb2">
+          <div class="card-icon" style="--ic:color-mix(in srgb,var(--action-primary) 15%,transparent);--stroke:var(--action-primary)">
             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"
               stroke-linecap="round" stroke-linejoin="round">
               <ellipse cx="10" cy="5" rx="7" ry="2.5"/>
@@ -536,7 +536,7 @@ async function testSmtp() {
   cursor: pointer; transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
 .toggle-btn.active {
-  background: rgba(123,127,178,0.2); border-color: rgba(123,127,178,0.35);
+  background: color-mix(in srgb, var(--action-primary) 20%, transparent); border-color: color-mix(in srgb, var(--action-primary) 35%, transparent);
   color: rgba(255,255,255,0.88);
 }
 .toggle-btn { display: inline-flex; flex-direction: column; align-items: center; }

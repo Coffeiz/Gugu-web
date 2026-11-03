@@ -306,7 +306,7 @@ onBeforeUnmount(() => {
   cursor: pointer;
   transition: background 0.18s ease;
 }
-.gs-item:hover { background: rgba(123, 127, 178, 0.08); }
+.gs-item:hover { background: color-mix(in srgb, var(--action-primary) 8%, transparent); }
 
 .gs-item-icon {
   color: var(--topbar-search-result-icon);

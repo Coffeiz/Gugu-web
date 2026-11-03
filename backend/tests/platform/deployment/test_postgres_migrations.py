@@ -202,3 +202,109 @@ def test_postgres_skill_id_migration_preserves_uuid_owner_binding():
         asyncio.run(exercise())
     finally:
         subprocess.run(["docker", "rm", "-f", "-v", container], capture_output=True)
+
+
+def test_postgres_im_platform_message_id_migration_preserves_long_qq_indexes():
+    """消息索引列扩容后，历史值与超过 128 字符的 QQ ID 均可原样读写。"""
+    container = f"gugu-im-message-id-test-{uuid4().hex[:12]}"
+    long_id = "qq-index-" + "x" * 126
+    migration_path = BACKEND / "alembic/versions/20261029000006_expand_im_platform_message_id.py"
+    migration_spec = importlib.util.spec_from_file_location(
+        "im_platform_message_id_migration_postgres", migration_path,
+    )
+    assert migration_spec is not None and migration_spec.loader is not None
+    migration = importlib.util.module_from_spec(migration_spec)
+    migration_spec.loader.exec_module(migration)
+    reply_migration_path = BACKEND / "alembic/versions/20261029000007_expand_im_reply_to_message_id.py"
+    reply_migration_spec = importlib.util.spec_from_file_location(
+        "im_reply_to_message_id_migration_postgres", reply_migration_path,
+    )
+    assert reply_migration_spec is not None and reply_migration_spec.loader is not None
+    reply_migration = importlib.util.module_from_spec(reply_migration_spec)
+    reply_migration_spec.loader.exec_module(reply_migration)
+
+    try:
+        _run("docker", "run", "-d", "--name", container,
+             "--publish", "127.0.0.1::5432",
+             "--env", "POSTGRES_USER=synthetic", "--env", "POSTGRES_DB=synthetic",
+             "--env", "POSTGRES_PASSWORD=synthetic-test-only", "postgres:18-alpine")
+        for _ in range(60):
+            ready = subprocess.run(["docker", "exec", container, "pg_isready", "-U", "synthetic"],
+                                   capture_output=True)
+            if ready.returncode == 0:
+                break
+            time.sleep(0.5)
+        else:
+            pytest.fail("临时 PostgreSQL 未就绪")
+
+        info = json.loads(_run("docker", "inspect", container).stdout)[0]
+        port = info["NetworkSettings"]["Ports"]["5432/tcp"][0]["HostPort"]
+        engine = create_async_engine(
+            f"postgresql+asyncpg://synthetic:synthetic-test-only@127.0.0.1:{port}/synthetic",
+            connect_args={"ssl": False},
+        )
+
+        def prepare(connection):
+            connection.exec_driver_sql(
+                "CREATE TABLE conversation_messages (id BIGINT PRIMARY KEY, "
+                "im_platform_message_id VARCHAR(128) NULL, "
+                "im_reply_to_message_id VARCHAR(128) NULL)"
+            )
+            connection.exec_driver_sql(
+                "CREATE INDEX ix_conversation_messages_im_platform_message_id "
+                "ON conversation_messages (im_platform_message_id)"
+            )
+            connection.exec_driver_sql(
+                "INSERT INTO conversation_messages(id, im_platform_message_id) VALUES (1, 'legacy-id')"
+            )
+
+        def run_migration(connection):
+            with Operations.context(MigrationContext.configure(connection)):
+                migration.upgrade()
+                reply_migration.upgrade()
+            length = connection.exec_driver_sql(
+                "SELECT character_maximum_length FROM information_schema.columns "
+                "WHERE table_schema = current_schema() AND table_name = 'conversation_messages' "
+                "AND column_name = 'im_platform_message_id'"
+            ).scalar_one()
+            assert length == 512
+            reply_length = connection.exec_driver_sql(
+                "SELECT character_maximum_length FROM information_schema.columns "
+                "WHERE table_schema = current_schema() AND table_name = 'conversation_messages' "
+                "AND column_name = 'im_reply_to_message_id'"
+            ).scalar_one()
+            assert reply_length == 512
+            connection.exec_driver_sql(
+                "INSERT INTO conversation_messages(id, im_platform_message_id, im_reply_to_message_id) "
+                "VALUES (2, $1, $2)",
+                (long_id, long_id),
+            )
+            values = connection.exec_driver_sql(
+                "SELECT im_platform_message_id, im_reply_to_message_id "
+                "FROM conversation_messages ORDER BY id"
+            ).all()
+            assert [tuple(row) for row in values] == [("legacy-id", None), (long_id, long_id)]
+
+        async def exercise():
+            try:
+                for _ in range(60):
+                    try:
+                        async with engine.connect() as connection:
+                            await connection.execute(sa.text("SELECT 1"))
+                        break
+                    except Exception:
+                        await asyncio.sleep(0.5)
+                else:
+                    logs = subprocess.run(
+                        ["docker", "logs", container], capture_output=True, text=True,
+                    )
+                    pytest.fail(f"临时 PostgreSQL 主机端口未就绪：{logs.stderr or logs.stdout}")
+                async with engine.begin() as connection:
+                    await connection.run_sync(prepare)
+                    await connection.run_sync(run_migration)
+            finally:
+                await engine.dispose()
+
+        asyncio.run(exercise())
+    finally:
+        subprocess.run(["docker", "rm", "-f", "-v", container], capture_output=True)

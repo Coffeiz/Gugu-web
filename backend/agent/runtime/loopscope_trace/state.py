@@ -840,6 +840,7 @@ class _ScopeRun:
     })
     ended_at: float | None = None
     status: str = "running"
+    agent_preparation_started_at: float | None = None
 
     def span(
         self,
@@ -914,6 +915,31 @@ class _ScopeRun:
             "usage": _jsonable(self.usage),
             "spans": [s.payload() for s in self.spans],
         }
+
+
+def mark_agent_preparation_started() -> float:
+    """标记 Agent 准备入口，并将此前的调度开销独立记入 Trace。"""
+    started_at = _now()
+    if not _enabled():
+        return started_at
+    run = _scope_run.get()
+    if run is None or run.ended_at is not None:
+        return started_at
+    if run.agent_preparation_started_at is not None:
+        return run.agent_preparation_started_at
+
+    run.agent_preparation_started_at = started_at
+    span = run.span(
+        "context",
+        "Dispatch before Agent preparation",
+        {"scope": "trace_start_to_prepare_agent_run"},
+    )
+    span.started_at = run.started_at
+    span.ended_at = started_at
+    span.duration_ms = round((started_at - run.started_at) * 1000, 3)
+    span.status = "success"
+    _queue_snapshot(run)
+    return started_at
 
 
 async def _drain_snapshots(run_id: str) -> None:

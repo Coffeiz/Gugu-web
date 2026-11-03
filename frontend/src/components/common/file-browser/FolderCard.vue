@@ -3,6 +3,7 @@
     ref="rootEl"
     v-bind="$attrs"
     class="folder-card"
+    :title="displayName"
     :class="{ selected, 'pre-selected': preSelected, cut }"
     :style="{ '--fd-color': accentColor }"
   >

@@ -587,7 +587,7 @@ onBeforeUnmount(() => { stopRebuildPolling() })
 .byok-card-head { flex: 1; min-width: 0; }
 .byok-card-main { min-width: 0; }
 .byok-name { min-width: 0; color: var(--text-primary); font-size: 13px; line-height: 1.5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.byok-capability-tag { display: inline-flex; margin-left: 5px; padding: 2px 6px; border: 1px solid color-mix(in srgb, var(--accent-color, #7b7fb2) 35%, transparent); border-radius: var(--choice-chip-radius); color: var(--text-secondary); font-size: 10px; vertical-align: 1px; }
+.byok-capability-tag { display: inline-flex; margin-left: 5px; padding: 2px 6px; border: 1px solid color-mix(in srgb, var(--accent-color, var(--action-primary)) 35%, transparent); border-radius: var(--choice-chip-radius); color: var(--text-secondary); font-size: 10px; vertical-align: 1px; }
 .byok-meta { color: var(--text-secondary); font-size: 11px; margin-top: 3px; }
 .byok-expired { color: var(--color-danger, #c66); }
 .byok-card-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; flex-shrink: 0; }

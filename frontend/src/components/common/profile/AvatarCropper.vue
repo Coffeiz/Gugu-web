@@ -215,7 +215,7 @@ onBeforeUnmount(() => {
   cursor: pointer; border: none; transition: opacity 0.15s, transform 0.1s;
 }
 .ac-btn:active { transform: translateY(1px); }
-.ac-btn.ghost { background: rgba(123,127,178,0.12); color: var(--text-secondary); }
+.ac-btn.ghost { background: color-mix(in srgb,var(--action-primary) 12%,transparent); color: var(--text-secondary); }
 .ac-btn.primary { background: var(--color-primary); color: #fff; }
 .ac-btn.primary:disabled { opacity: 0.5; cursor: default; }
 </style>

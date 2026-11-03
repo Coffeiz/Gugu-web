@@ -155,10 +155,4 @@ async def poll(
     from app.core import events
     await events.publish(current_user.id, "im_channels", operation="refresh")
 
-    # 通知 gateway 立即重扫（失败也无所谓，下轮会同步）
-    try:
-        await R.get_redis().publish("im:gateway:reload", "1")
-    except Exception:
-        pass
-
     return {"status": "success", "bot": {"id": bot.id, "name": bot.name, "app_id": bot.app_id}}
