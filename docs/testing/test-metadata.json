@@ -1519,6 +1519,14 @@
     "keyBehavior": "相同配置跨 run 复用 SDK 客户端，活跃 run 释放前不回收，空闲 TTL 后关闭且配置键不含密钥",
     "ci": "backend-pytest"
   },
+  "backend/tests/agent/providers/test_cache_singleflight.py": {
+    "domain": "provider-cache-singleflight",
+    "layer": "L1",
+    "owner": "backend/agent/providers/cache_singleflight.py",
+    "productionEntry": "backend/agent/loop/provider.py 与后台反思 Provider 请求",
+    "keyBehavior": "相同缓存前缀跨 Worker 串行协调、不同前缀并行，任务结束释放锁，Redis 异常不阻断后台模型请求，诊断只保留脱敏指纹",
+    "ci": "backend-pytest"
+  },
   "backend/tests/storage/test_project_file_counts_postgres.py": {
     "domain": "project-file-counts",
     "layer": "L2",
