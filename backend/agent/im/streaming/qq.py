@@ -188,9 +188,10 @@ class QQChartRound:
         if self._matches_final_round(current_text, final_text):
             await self._finish_final_round(current_text, final_text)
             return
-        # ROUND_END 可能只是工具调用前的阶段性正文。若这轮没有后续 token，
-        # 终态可以修订已流出的内容；在同一条 QQ replace 流里覆盖并结束即可。
-        if self.pending_round_end and final_text and not self.round_has_image:
+        # 模型终态是当前未结束文本段的权威正文，不依赖 ROUND_END 是否到达。
+        # 原生流在同一气泡内修订并关闭；工具后的普通出口只发送修订后的缓冲，
+        # 避免先发 token 草稿、再补发最终全文。已结束的阶段消息由轮次边界保留。
+        if final_text and not self.round_has_image:
             self.round_text = final_text
             self.segment_text = final_text
             self.pending_whitespace = ""
