@@ -25,7 +25,7 @@ router = APIRouter(prefix="/admin/email", tags=["admin-email"])
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 TemplateName = Literal["notification", "reminder", "report", "security", "test"]
 ThemeName = Literal["light", "dark"]
-PaletteName = Literal["mist", "cafe", "rose", "sky", "sage"]
+PaletteName = Literal["cafe", "neutral", "red", "blue", "green"]
 LocaleName = Literal["zh-CN", "ja-JP", "en-US"]
 
 
@@ -56,7 +56,7 @@ class LocalizedEmailContent(BaseModel):
 class EmailDraft(LocalizedEmailContent):
     template: TemplateName = "notification"
     theme: ThemeName = "light"
-    palette: PaletteName = "mist"
+    palette: PaletteName = "neutral"
     translations: dict[LocaleName, LocalizedEmailContent] = Field(default_factory=dict)
 
     @field_validator("translations")

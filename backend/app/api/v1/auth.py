@@ -290,7 +290,7 @@ async def forgot_password(body: ForgotPassword, request: Request, db: AsyncSessi
         sent = await run_in_threadpool(
             email_svc.send_reset_email,
             to_addr=user.email, username=user.display_name or user.username, link=link,
-            theme=preference_data.get("theme", "light"), palette=preference_data.get("palette", "mist"),
+            theme=preference_data.get("theme", "light"), palette=preference_data.get("palette", "neutral"),
         )
     except Exception as exc:
         from app.core.redaction import diag_log
@@ -328,7 +328,7 @@ async def reset_password(body: ResetPassword, response: Response, db: AsyncSessi
 
 async def _email_preference_theme(db: AsyncSession, user_id) -> tuple[str, str]:
     data = await get_user_email_preferences(db, user_id)
-    return data.get("theme", "light"), data.get("palette", "mist")
+    return data.get("theme", "light"), data.get("palette", "neutral")
 
 
 @router.post("/email-change/request")

@@ -22,7 +22,7 @@ from app.services.personality_preferences import (
 from app.services.email.capabilities import is_system_email_available
 from app.services.email.queries import get_user_smtp as get_user_smtp_record, save_user_smtp
 from app.services.account_queries import get_or_create_user_preferences
-from app.services.user_preferences import normalize_im_tool_display_mode
+from app.services.user_preferences import normalize_im_tool_display_mode, normalize_theme_palette
 
 router = APIRouter(prefix="/preferences", tags=["preferences"])
 
@@ -110,7 +110,7 @@ def _to_response(
         locale=data.get("locale") if data.get("locale") in _SUPPORTED_LOCALES else None,
         theme=data.get("theme", "light") if data.get("theme", "light") in {"light", "dark", "system"} else "light",
         themeFamily=data.get("theme_family", "glass") if data.get("theme_family", "glass") in {"glass", "mono"} else "glass",
-        palette=data.get("palette", "mist") if data.get("palette", "mist") in {"mist", "cafe", "rose", "sky", "sage"} else "mist",
+        palette=normalize_theme_palette(data.get("palette")),
         lastStages=data.get("last_stages", []),
         stageTemplates=data.get("stage_templates", []),
         replyTone=data.get("reply_tone"),

@@ -10,6 +10,19 @@ from app.models import UserPreferences
 
 
 IM_TOOL_DISPLAY_MODES = frozenset({"off", "all", "slow_only"})
+THEME_PALETTES = frozenset({"cafe", "neutral", "red", "blue", "green"})
+_LEGACY_THEME_PALETTES = {
+    "mist": "blue", "rose": "red", "sky": "blue", "sage": "green",
+    "lavender": "blue", "amber": "neutral", "aero": "blue", "mono": "neutral",
+    "coral": "red", "teal": "green",
+}
+
+
+def normalize_theme_palette(value: object) -> str:
+    """把旧主题偏好映射到当前完整色板；未知值使用中性色。"""
+    if isinstance(value, str) and value in THEME_PALETTES:
+        return value
+    return _LEGACY_THEME_PALETTES.get(value, "neutral") if isinstance(value, str) else "neutral"
 
 
 def normalize_im_tool_display_mode(value: object) -> str:

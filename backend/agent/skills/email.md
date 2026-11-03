@@ -63,7 +63,7 @@ emoji: ✉️
 ## 内容与排版
 
 - 使用 `title`、`preheader`、`sections`（`heading`/`text`）和 `actions`（`label`/`url`）表达结构化内容。
-- `theme` 和 `palette` 默认使用 `auto`，跟随用户偏好；用户明确要求时可指定 `light`/`dark` 和 `mist`/`cafe`/`rose`/`sky`/`sage`。
+- `theme` 和 `palette` 默认使用 `auto`，跟随用户偏好；用户明确要求时可指定 `light`/`dark` 和 `cafe`/`neutral`/`red`/`blue`/`green`。
 - 需要间距、分隔线、强调块或按钮时，使用上述语义字段，由标准模板负责表格布局和兼容样式。
 - 不要把 HTML 标签塞进 `body`；使用 `html` 时仍必须提供完整的纯文本 `body`。
 - `html` 仅允许基础邮件标签：`a`、`b`、`blockquote`、`br`、`code`、`div`、`em`、`h1`-`h3`、`hr`、`i`、`img`、`li`、`ol`、`p`、`pre`、`span`、`strong`、`table`、`tbody`、`td`、`th`、`thead`、`tr`、`u`、`ul`；样式只能使用有限的内联 CSS，不使用自定义 CSS、外部字体、flex/grid、背景图片或复杂定位。

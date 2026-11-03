@@ -1,37 +1,37 @@
 export const MERMAID_NEUTRAL_THEME_COLORS = Object.freeze({
   background: '#ffffff',
-  primaryColor: '#eee9e8',
-  primaryTextColor: '#272532',
-  primaryBorderColor: 'rgba(113, 86, 83, 0.34)',
-  lineColor: '#67647a',
-  arrowheadColor: '#67647a',
-  edgeLabelBackground: '#eee9e8',
-  secondaryColor: '#edf3ef',
-  tertiaryColor: '#f4eee5',
+  primaryColor: '#eff0f2',
+  primaryTextColor: '#272a30',
+  primaryBorderColor: 'rgba(86, 91, 100, 0.34)',
+  lineColor: '#626771',
+  arrowheadColor: '#626771',
+  edgeLabelBackground: '#eff0f2',
+  secondaryColor: '#edf1ee',
+  tertiaryColor: '#f2efeb',
 })
 
 const EDGE_LABEL_RADIUS_PX = 8
 
 const PALETTE_COLORS = Object.freeze({
-  mist: {
-    light: { primary: '#7b7fb2', success: '#5a9e88', warning: '#b07858', info: '#6f9eaa' },
-    dark: { primary: '#9590c4', success: '#80b4a2', warning: '#cea07f', info: '#8bc7d6' },
-  },
   cafe: {
     light: { primary: '#715653', success: '#5e8877', warning: '#917451', info: '#647d8a' },
     dark: { primary: '#be9d98', success: '#92b9a7', warning: '#c5a77f', info: '#a1b9c5' },
   },
-  rose: {
-    light: { primary: '#b17e86', success: '#89a58e', warning: '#b39a75', info: '#7f9eaa' },
-    dark: { primary: '#d8aeb5', success: '#abc8b0', warning: '#d1b88d', info: '#a7c4cf' },
+  neutral: {
+    light: { primary: '#565b64', success: '#71877c', warning: '#9a8465', info: '#6f8794' },
+    dark: { primary: '#c0c3c9', success: '#a3b9ad', warning: '#c8b48f', info: '#a3bfca' },
   },
-  sky: {
-    light: { primary: '#738bb0', success: '#84a598', warning: '#ae9977', info: '#708faf' },
-    dark: { primary: '#abc0d8', success: '#a9c8b6', warning: '#cfb88e', info: '#a3c5da' },
+  red: {
+    light: { primary: '#a66e73', success: '#778a7d', warning: '#9a8465', info: '#718995' },
+    dark: { primary: '#d0a1a4', success: '#a8bcae', warning: '#c9b48f', info: '#a5c0c9' },
   },
-  sage: {
-    light: { primary: '#74968b', success: '#789d8c', warning: '#ad9977', info: '#709da4' },
-    dark: { primary: '#aacabd', success: '#a6c9b5', warning: '#ceb88e', info: '#9fcfd0' },
+  blue: {
+    light: { primary: '#65789a', success: '#718a7f', warning: '#988563', info: '#65789a' },
+    dark: { primary: '#9aaecd', success: '#a4c1b1', warning: '#cbb790', info: '#9aaed2' },
+  },
+  green: {
+    light: { primary: '#718a7e', success: '#718a7e', warning: '#978363', info: '#6d8990' },
+    dark: { primary: '#a9c1b4', success: '#a9c1b4', warning: '#c9b58f', info: '#a3c2c8' },
   },
 })
 
@@ -82,7 +82,7 @@ function toRgba(color, alpha) {
 
 function resolveCanvasColor(palette, family, mode) {
   const familyColors = FAMILY_COLORS[family]
-  if (family !== 'glass' || palette === 'mist') return familyColors[mode].canvas
+  if (family !== 'glass' || palette === PALETTE_COLORS.neutral) return familyColors[mode].canvas
 
   // glass 的非默认配色改用 material-composition.css：面板底色由 palette-surface
   // 派生。保持和 Web 的 --surface-canvas-card 一致，避免 Mermaid 色阶继续混入旧蓝灰底。
@@ -96,7 +96,11 @@ function resolveCanvasColor(palette, family, mode) {
 
 /** IM 使用账号已保存的显示主题，按与 Web CSS token 相同的混色比例生成图表颜色。 */
 export function resolveMermaidThemeColors(preferences = {}) {
-  const palette = PALETTE_COLORS[preferences.palette] || PALETTE_COLORS.mist
+  const legacyPalettes = { mist: 'blue', rose: 'red', sky: 'blue', sage: 'green', lavender: 'blue', amber: 'neutral', aero: 'blue', mono: 'neutral', coral: 'red', teal: 'green' }
+  const paletteName = PALETTE_COLORS[preferences.palette]
+    ? preferences.palette
+    : legacyPalettes[preferences.palette] || 'neutral'
+  const palette = PALETTE_COLORS[paletteName]
   const familyName = Object.hasOwn(FAMILY_COLORS, preferences.themeFamily) ? preferences.themeFamily : 'glass'
   const family = FAMILY_COLORS[familyName]
   const mode = preferences.theme === 'dark' ? 'dark' : 'light'
@@ -106,10 +110,10 @@ export function resolveMermaidThemeColors(preferences = {}) {
   const primaryColor = mixColors(paletteColors.primary, canvasColor, 0.15)
   // Web 对非 café 调色板的状态色会混入 18% 次级文字色；IM 复用同一条规则，
   // 这样 Mermaid 自动生成的状态色阶不会比页面上的状态标记更鲜艳。
-  const successColor = preferences.palette === 'cafe'
+  const successColor = paletteName === 'cafe'
     ? paletteColors.success
     : mixColors(paletteColors.success, familyColors.secondaryText, 0.82)
-  const warningColor = preferences.palette === 'cafe'
+  const warningColor = paletteName === 'cafe'
     ? paletteColors.warning
     : mixColors(paletteColors.warning, familyColors.secondaryText, 0.82)
   // Mermaid 分组底色属于结构层级，使用不同色相的浅辅色；警告色留给状态和第三色阶。

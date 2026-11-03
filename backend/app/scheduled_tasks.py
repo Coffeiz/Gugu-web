@@ -1361,7 +1361,8 @@ async def _deliver_email(
         ))
         prefs = await db.scalar(select(UserPreferences).where(UserPreferences.user_id == user.id))
         data = prefs.data if prefs else {}
-        theme, palette = data.get("theme", "light"), data.get("palette", "mist")
+        from app.services.user_preferences import normalize_theme_palette
+        theme, palette = data.get("theme", "light"), normalize_theme_palette(data.get("palette"))
         try:
             attachments = await resolve_email_attachments(
                 db, user.id, file_ids=file_ids, artifacts=generated_files,

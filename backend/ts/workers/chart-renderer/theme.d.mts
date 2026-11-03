@@ -17,7 +17,7 @@ export const MERMAID_NEUTRAL_THEME_COLORS: Readonly<MermaidThemeColors>
 export function resolveMermaidThemeColors(preferences?: {
   theme?: 'light' | 'dark' | 'system'
   themeFamily?: 'glass' | 'mono'
-  palette?: 'mist' | 'cafe' | 'rose' | 'sky' | 'sage'
+  palette?: 'cafe' | 'neutral' | 'red' | 'blue' | 'green'
 }): MermaidThemeColors & { clusterBkg: string; clusterBorder: string }
 
 export function createMermaidThemeConfig(
