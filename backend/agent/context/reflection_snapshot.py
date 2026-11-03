@@ -1,11 +1,10 @@
 """主会话只读快照：append_reuse 反思分支的短生命周期输入（PRD-LLM-27 §6.1）。
 
-拓扑边界（§6.1 钉死的结论，落码即在此）：快照只存在于捕获它的进程内——
-登记表是模块级内存结构，不写 Redis、不落数据库、不打正文日志。因此只有
-「内联冲刷」路径（反思队列在主请求同进程内 drain）能直接拿到完整快照走
-append_reuse；快照缺失时 owner idle worker 与群业务 worker 都从已持久化消息
-重建追加历史，不创建独立提取器。重建只恢复最小历史与当前静态 system，不保留
-完整 provider tools/动态上下文，所以不承诺前缀缓存命中。
+拓扑边界：快照只存在于捕获它的进程内——登记表是模块级内存结构，不写 Redis、
+数据库或正文日志。群级与成员级反思必须共用真实主 Run 快照；只追加该 Run 后的
+群消息。跨进程恢复时若没有兼容快照，任务保持待处理，等下一次主 Run 提供快照；
+不得静默从持久化历史重建普通群反思。Owner 私聊恢复与显式 context-pressure/压缩
+仍可按各自规则重建。
 
 快照内容是主请求的不可变 provider 消息投影，包含冻结前缀与末尾
 assistant 回复、不含 dynamic tail（时间 reminder 每轮必变，进快照会把公共
@@ -46,6 +45,8 @@ class ReflectionSnapshot:
     # digest(history)：快照自洽指纹；消费前重算比对可发现进程内篡改/损坏。
     revision: str
     created_at: float
+    # 本次主 Run 前缀覆盖到的已持久化消息，群反思只追加其后的被动消息。
+    persisted_message_ids: tuple[int, ...] = ()
     # 主 run 最后一轮 provider 返回的完整输入量；反思预检以此作为权威阈值依据。
     provider_context_input: int | None = None
     # 本轮已经完成压缩时，快照的历史是新边界，旧 usage 不得再次触发压缩。
@@ -115,6 +116,11 @@ def capture_reflection_snapshot(
             history=history,
             revision=digest({"history": history.to_messages()}),
             created_at=time.monotonic(),
+            persisted_message_ids=tuple(sorted({
+                int(entry.persisted_message_id)
+                for entry in messages.entries
+                if entry.persisted_message_id is not None
+            })),
             provider_context_input=provider_context_input,
             provider_compacted=provider_compacted,
         )
@@ -132,8 +138,8 @@ def capture_reflection_snapshot(
 
 def peek_reflection_snapshot(user_id, session_id: int | None) -> ReflectionSnapshot | None:
     """按 user+session 取快照（非破坏性：Memory 与 Knowledge 是 sibling branch，
-    先后共用同一份快照）。TTL 过期视为不存在——过期快照对应的主会话可能已经
-    前进，复用它有污染风险（§7）；owner 与群业务改由持久化消息重建追加历史。
+    群级与成员级反思也共用同一份快照）。TTL 过期视为不存在；群反思等待下次
+    主 Run 快照，Owner 私聊恢复仍按其持久化历史规则处理。
     """
     if session_id is None:
         return None

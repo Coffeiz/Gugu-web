@@ -542,6 +542,10 @@ async def requeue_due_jobs(*, now=None, limit: int = 100) -> int:
                         MemoryReflectionJob.next_attempt_at.is_(None)
                         | (MemoryReflectionJob.next_attempt_at <= now)
                     )
+                    & (
+                        MemoryReflectionJob.last_error_code.is_(None)
+                        | (MemoryReflectionJob.last_error_code != "awaiting_run_snapshot")
+                    )
                 )
                 | (
                     (MemoryReflectionJob.status == "running")
@@ -635,7 +639,13 @@ async def _schedule_scope_jobs_with_snapshot(scope: MemoryScope, session_id: int
         for job in jobs:
             messages = await _messages_for_job(db, job)
             if messages and all(int(message.session_id) == int(session_id) for message in messages):
+                if job.last_error_code == "awaiting_run_snapshot":
+                    job.last_error_code = None
+                    job.next_attempt_at = now_utc()
+                    job.updated_at = now_utc()
                 job_ids.append(job.id)
+        if job_ids:
+            await db.commit()
     if not job_ids:
         return 0
 

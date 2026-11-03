@@ -144,7 +144,7 @@ def _build_append_branch_input(scope: MemoryScope, job, task_type: str,
 
 
 async def _rebuild_session_snapshot(db, scope: MemoryScope, session_id: int, model_cfg, messages):
-    """无可复用运行时快照时，按 Web idle 重建规则恢复完整 session 前缀。"""
+    """为私聊恢复或显式上下文压力/压缩路径重建当前 session 前缀。"""
     from types import SimpleNamespace
 
     from sqlalchemy import select
@@ -219,30 +219,105 @@ async def _rebuild_session_snapshot(db, scope: MemoryScope, session_id: int, mod
     )
 
 
-def _extend_snapshot_with_persisted_tail(snapshot, persisted_snapshot):
-    """只在 DB 历史严格以原始 Provider 前缀开头时，保留原始请求并追加新消息。
+async def _extend_group_snapshot_with_passive_tail(
+    db, scope: MemoryScope, session_id: int, snapshot, messages, through_message_id: int | None,
+):
+    """保留真实主 Run 前缀，只把该 Run 之后的群消息渲染为追加尾部。
 
-    persisted_snapshot 只用于核对持久化消息序列；静态 system 与工具声明继续取自
-    实际发给 Provider 的主 run 快照，避免按被动消息发言人重建 prompt 后误判前缀。
+    群级和成员级反思共享同一 session 快照；任务消息范围只约束提取对象，不能
+    改变两类反思使用的群聊上下文。若发现快照边界之后另有 Run，或批次含有无法
+    证明已被快照覆盖的旧消息，则拒绝复用并等待新的主 Run 快照，不静默重建。
     """
+    from types import SimpleNamespace
+
     from dataclasses import replace
+    from sqlalchemy import select
 
     from agent.context.canonical_context import digest
     from agent.context.provider_conversation import ProviderConversation
+    from app.models import ConversationMessage, ConversationSession, User
 
     original = getattr(snapshot, "history", None)
-    persisted = getattr(persisted_snapshot, "history", None)
-    if not isinstance(original, ProviderConversation) or not isinstance(persisted, (list, tuple)):
+    if not isinstance(original, ProviderConversation):
         return None
-    original_messages = original.to_messages()
-    persisted_messages = list(persisted)
-    if len(persisted_messages) < len(original_messages):
-        return None
-    if persisted_messages[:len(original_messages)] != original_messages:
+    covered_ids = set(getattr(snapshot, "persisted_message_ids", ()))
+    max_covered_id = max(covered_ids, default=0)
+    if not covered_ids and any(
+        getattr(message, "run_id", None) != snapshot.run_id
+        for message in messages
+    ):
         return None
 
+    for message in messages:
+        message_id = int(getattr(message, "id", 0) or 0)
+        message_run_id = getattr(message, "run_id", None)
+        if message_id in covered_ids or message_run_id == snapshot.run_id:
+            continue
+        if message_run_id is not None or message_id <= max_covered_id:
+            return None
+
+    session = (await db.execute(
+        select(ConversationSession).where(
+            ConversationSession.id == int(session_id),
+            ConversationSession.user_id == scope.owner_user_id,
+            ConversationSession.source == scope.platform,
+            ConversationSession.bot_id == scope.bot_id,
+            ConversationSession.chat_type == "group",
+            ConversationSession.chat_id == scope.scope_id,
+        )
+    )).scalars().first()
+    if session is None:
+        return None
+
+    tail_query = select(ConversationMessage).where(
+        ConversationMessage.session_id == int(session_id),
+        ConversationMessage.id > max_covered_id,
+    )
+    if through_message_id is not None:
+        tail_query = tail_query.where(ConversationMessage.id <= int(through_message_id))
+    tail_rows = list((await db.execute(tail_query)).scalars().all())
+    passive_tail = []
+    for row in tail_rows:
+        if row.run_id == snapshot.run_id:
+            continue
+        if row.run_id is not None:
+            return None
+        if row.role == "user" and row.platform_user_id is not None:
+            passive_tail.append(row)
+    if not passive_tail:
+        return snapshot
+
+    from agent.context.history import build_history_parts
+    from agent.context.loaders import load_user_tz
+    from agent.context.session_history import _history_order_key
+    from agent.llm.llm_select import use_anthropic_for
+
+    passive_tail.sort(key=_history_order_key)
+    owner = await db.get(User, scope.owner_user_id)
+    owner_name = (owner.display_name or owner.username) if owner else ""
+    user_name = (passive_tail[-1].platform_user_name or owner_name)
+    user_tz = await load_user_tz(db, scope.owner_user_id)
+    request = SimpleNamespace(
+        chat_id=session.chat_id,
+        user_name=user_name,
+        platform_user_id=session.platform_user_id,
+        platform_user_name=user_name,
+        im_role="owner",
+    )
+    # 复用历史消息 renderer 只渲染本次新增尾部，不重新生成静态 system、旧历史或 tools。
+    tail_messages = build_history_parts(
+        passive_tail,
+        request,
+        use_anthropic=use_anthropic_for(snapshot.ai),
+        user_tz=user_tz,
+    )
+    tail = ProviderConversation(tail_messages)
+    from agent.context.prefix_history import render_branch_prefix
+
+    tail = render_branch_prefix(tail, snapshot.ai)
+    original_messages = original.to_messages()
     merged = original.with_messages(
-        [*original_messages, *persisted_messages[len(original_messages):]],
+        [*original_messages, *tail.conversation],
         dynamic_tail_size=0,
     )
     return replace(
@@ -421,13 +496,23 @@ async def _defer_job(db, job, now) -> None:
     await db.commit()
 
 
+async def _wait_for_run_snapshot(db, job, now) -> None:
+    """保留群反思任务，等待下一份真实主 Run 快照，不回退到历史重建。"""
+    job.status = "pending"
+    job.locked_at = None
+    job.next_attempt_at = None
+    job.last_error_code = "awaiting_run_snapshot"
+    job.updated_at = now
+    await db.commit()
+
+
 async def execute_job(job_id: int, settings, *, snapshot=None) -> bool:
     """在 scope 分布式锁内执行任务，确保同一 scope 严格串行。"""
     from app.models import MemoryReflectionJob
 
     async with await _db_session() as db:
         job = await db.get(MemoryReflectionJob, job_id)
-        if job is None:
+        if job is None or job.last_error_code == "awaiting_run_snapshot":
             return False
         scope = MemoryScope(
             job.owner_user_id,
@@ -548,28 +633,14 @@ async def _execute_job_locked(job_id: int, settings, *, snapshot=None) -> bool:
             phase = "load_session_prefix"
             session_id = int(messages[-1].session_id)
             resolved_snapshot = snapshot
+            group_snapshot_required = scope.scope_type == "group" and job.reason != "context-pressure"
             try:
                 from agent.context.reflection_snapshot import model_identity, peek_reflection_snapshot
 
                 candidate = resolved_snapshot or peek_reflection_snapshot(scope.owner_user_id, session_id)
-                passive_group_tail = (
-                    scope.scope_type == "group"
-                    and getattr(messages[-1], "run_id", None) is None
-                )
                 if job.reason == "context-pressure":
                     # 压力由旧 run 之后的被动增量产生，不能复用旧 usage 或已压缩标志。
                     candidate = None
-                elif passive_group_tail:
-                    # 保留原始 wire 前缀，只把 DB 历史中严格追加的新尾部接上；
-                    # 对齐失败就继续使用完整重建，不能遗漏被动消息。
-                    persisted_snapshot = await _rebuild_session_snapshot(
-                        db, scope, session_id, run_config.model, messages,
-                    )
-                    candidate = (
-                        _extend_snapshot_with_persisted_tail(candidate, persisted_snapshot)
-                        if candidate is not None and persisted_snapshot is not None
-                        else None
-                    ) or persisted_snapshot
                 if (candidate and candidate.user_id == str(scope.owner_user_id)
                         and candidate.session_id == session_id
                         and model_identity(candidate.ai) == model_identity(run_config.model)):
@@ -578,6 +649,18 @@ async def _execute_job_locked(job_id: int, settings, *, snapshot=None) -> bool:
                     resolved_snapshot = None
             except Exception:
                 resolved_snapshot = None
+            if group_snapshot_required and resolved_snapshot is not None:
+                resolved_snapshot = await _extend_group_snapshot_with_passive_tail(
+                    db,
+                    scope,
+                    session_id,
+                    resolved_snapshot,
+                    messages,
+                    cursor.last_message_id if cursor is not None else job.to_message_id,
+                )
+            if resolved_snapshot is None and group_snapshot_required:
+                await _wait_for_run_snapshot(db, job, now)
+                return False
             if resolved_snapshot is None:
                 resolved_snapshot = await _rebuild_session_snapshot(
                     db, scope, session_id, run_config.model, messages,

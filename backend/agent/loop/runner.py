@@ -1092,7 +1092,7 @@ async def run_loop(
                     yield _line
 
             # 反思快照捕获（PRD-LLM-27 §6.1）：只在成功收尾处捕获，进程内登记供
-            # append_reuse 反思消费；失败/异常静默跳过，闲置 worker 可从持久历史重建最小输入。
+            # append_reuse 反思消费；群反思无兼容快照时保留任务等待下次主 Run，不重建历史。
             if reply_gate is None or reply_gate.choice is ReplyChoice.REPLY:
                 try:
                     from agent.context.reflection_snapshot import capture_reflection_snapshot

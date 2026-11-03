@@ -1,7 +1,8 @@
-"""群反思真实历史恢复、快照扩展和本地闲置调度的回归。"""
+"""群反思原 Run 快照复用与本地闲置调度的回归。"""
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -111,6 +112,7 @@ async def _restored_group_snapshot(db, user_a, monkeypatch):
         platform_user_id="member-synthetic",
         platform_user_name="成员甲",
         sent_at=sent_at,
+        run_id="synthetic-main-run",
     )
     assistant_message = ConversationMessage(
         session_id=session.id,
@@ -123,6 +125,7 @@ async def _restored_group_snapshot(db, user_a, monkeypatch):
         ],
         # 时间戳只用于语义/展示；历史顺序由持久序号保证助手输出排在用户消息之后。
         sent_at=datetime(2026, 10, 20, 9, 30, 30, tzinfo=timezone.utc),
+        run_id="synthetic-main-run",
     )
     tool_message = ConversationMessage(
         session_id=session.id,
@@ -132,6 +135,7 @@ async def _restored_group_snapshot(db, user_a, monkeypatch):
             "type": "tool_result", "tool_call_id": "call-synthetic", "content": "合成工具结果",
         }],
         sent_at=datetime(2026, 10, 20, 9, 30, 30, tzinfo=timezone.utc),
+        run_id="synthetic-main-run",
     )
     db.add_all([user_message, assistant_message, tool_message])
     await db.commit()
@@ -146,7 +150,9 @@ async def _restored_group_snapshot(db, user_a, monkeypatch):
     model = SimpleNamespace(provider="minimax", model="MiniMax-M3.1-Flash-Preview", api_format="anthropic")
     restored = await im_reflection._rebuild_session_snapshot(db, scope, session.id, model, [])
     assert restored is not None
-    return scope, session, model, restored, assistant_message
+    return scope, session, model, restored, assistant_message, (
+        user_message.id, assistant_message.id, tool_message.id,
+    )
 
 
 def _captured_snapshot(base, user_id, session_id, model):
@@ -164,9 +170,11 @@ def _captured_snapshot(base, user_id, session_id, model):
 
 
 @pytest.mark.asyncio
-async def test_group_snapshot_extends_actual_restored_provider_history(db, user_a, monkeypatch):
-    """真实历史恢复生成的时间、Thinking 与工具消息前缀可匹配并只追加被动尾部。"""
-    scope, session, model, restored, _assistant = await _restored_group_snapshot(db, user_a, monkeypatch)
+async def test_group_snapshot_appends_passive_tail_to_original_provider_history(db, user_a, monkeypatch):
+    """群反思保留原始 Provider 前缀，只把主 Run 后的被动消息追加为尾部。"""
+    scope, session, model, restored, _assistant, covered_ids = await _restored_group_snapshot(
+        db, user_a, monkeypatch,
+    )
     base = ProviderConversation(restored.history)
     base_messages = base.to_messages()
     assert {item["role"] for item in base_messages} >= {"assistant", "user"}
@@ -184,7 +192,10 @@ async def test_group_snapshot_extends_actual_restored_provider_history(db, user_
         for item in base_messages for block in item.get("content", []) if isinstance(block, dict)
     )
 
-    snapshot = _captured_snapshot(base, user_a.id, session.id, model)
+    snapshot = replace(
+        _captured_snapshot(base, user_a.id, session.id, model),
+        persisted_message_ids=tuple(sorted(covered_ids)),
+    )
     tail = ConversationMessage(
         session_id=session.id,
         role="user",
@@ -196,9 +207,9 @@ async def test_group_snapshot_extends_actual_restored_provider_history(db, user_
     db.add(tail)
     await db.commit()
 
-    persisted = await im_reflection._rebuild_session_snapshot(db, scope, session.id, model, [tail])
-    assert persisted is not None
-    extended = im_reflection._extend_snapshot_with_persisted_tail(snapshot, persisted)
+    extended = await im_reflection._extend_group_snapshot_with_passive_tail(
+        db, scope, session.id, snapshot, [tail], tail.id,
+    )
 
     assert extended is not None
     assert extended.source == "in_memory_extended"
@@ -211,11 +222,17 @@ async def test_group_snapshot_extends_actual_restored_provider_history(db, user_
 
 
 @pytest.mark.asyncio
-async def test_group_snapshot_falls_back_when_restored_prefix_changed(db, user_a, monkeypatch):
-    """数据库里原有复杂块变化后拒绝拼接，避免把新尾部接到不一致的 wire 前缀。"""
-    scope, session, model, restored, assistant = await _restored_group_snapshot(db, user_a, monkeypatch)
+async def test_group_snapshot_waits_when_another_main_run_followed(db, user_a, monkeypatch):
+    """主快照之后已出现另一条 Run 时不跨 Run 拼接，交由新快照重新调度。"""
+    scope, session, model, restored, assistant, covered_ids = await _restored_group_snapshot(
+        db, user_a, monkeypatch,
+    )
     snapshot = _captured_snapshot(
         ProviderConversation(restored.history), user_a.id, session.id, model,
+    )
+    snapshot = replace(
+        snapshot,
+        persisted_message_ids=tuple(sorted(covered_ids)),
     )
     assistant.content_json = [
         {**assistant.content_json[0], "signature": "changed-signature"},
@@ -228,12 +245,21 @@ async def test_group_snapshot_falls_back_when_restored_prefix_changed(db, user_a
         platform_user_id="member-synthetic",
         sent_at=datetime(2026, 10, 20, 9, 31, tzinfo=timezone.utc),
     )
-    db.add(tail)
+    intervening_run = ConversationMessage(
+        session_id=session.id,
+        role="user",
+        content="后续主 Run 的输入",
+        platform_user_id="member-synthetic",
+        sent_at=datetime(2026, 10, 20, 9, 32, tzinfo=timezone.utc),
+        run_id="another-main-run",
+    )
+    db.add_all([tail, intervening_run])
     await db.commit()
 
-    persisted = await im_reflection._rebuild_session_snapshot(db, scope, session.id, model, [tail])
-    assert persisted is not None
-    assert im_reflection._extend_snapshot_with_persisted_tail(snapshot, persisted) is None
+    extended = await im_reflection._extend_group_snapshot_with_passive_tail(
+        db, scope, session.id, snapshot, [tail], intervening_run.id,
+    )
+    assert extended is None
 
 
 @pytest.mark.asyncio

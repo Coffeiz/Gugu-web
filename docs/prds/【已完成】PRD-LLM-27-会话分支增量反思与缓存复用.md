@@ -23,7 +23,7 @@
 3. 让 Knowledge 反思复用同一主会话前缀，而不是从独立 system prompt 冷启动。
 4. 不把内部反思请求或结果写入用户可见聊天历史。
 5. 不改变 Memory、Knowledge 的现有输出 schema、去重、权限、写回和 RAG 事件语义。
-6. 群聊采用最小复用范围：有实际助手回复的当前群聊回合复用本轮快照；被动消息、成员反思和跨 session 批处理继续走独立上下文。
+6. 群聊的群级与成员级反思共享同一群 session 主 Run 快照；只追加该 Run 后的被动群消息，任务范围只决定提取对象，不各自重建上下文。
 7. 用 LoopScope 和 AgentUsage 区分“可复用分支”和“独立分支”，验证实际缓存收益，而不是只依赖估算。
 
 ## 3. 非目标
@@ -87,14 +87,14 @@
 - `session_id`、主 `run_id`、会话 revision 和消息边界；
 - 快照是否包含附件、工具结果、RAG 或其它敏感内容的安全标记。
 
-快照只能作为进程内后台任务的短生命周期输入，不能把完整 provider 消息、工具参数、请求头或凭据写入 Redis、数据库、日志或 LoopScope 正文。若必须跨 worker 传递，应只传引用和可验证 revision，并从受权限保护的事实源重新构建。
+快照只能作为进程内后台任务的短生命周期输入，不能把完整 provider 消息、工具参数、请求头或凭据写入 Redis、数据库、日志或 LoopScope 正文。群反思跨进程时若没有可验证的原 Run 快照，任务保持待处理，等待下一次成功主 Run 提供快照；不能静默重建普通群反思的历史。
 
 **执行拓扑必须先钉死（Phase 1 第一项）**。owner Memory 反思只处理当前 session，缓冲按 session 隔离（见 `_queue_owner_reflection` / `_drain_owner_reflection_buffer`）：
 
 - **阈值冲刷**：阈值到达后立即 drain——同进程时优先携带完整快照；快照不可用时不创建独立调用，保留缓冲并重新计时；
-- **闲置冲刷**：接收会话的进程在最后活动满 4 分 30 秒后优先冲刷 owner 缓冲，并使用仍在本进程内的完整快照；Redis 只记录短 TTL 的本地处理标记，绝不传递快照正文。owner worker 遇到有效标记时暂缓接管；若进程退出，标记过期后 worker 按归属与 idle 状态从已持久化历史重建最小 append 输入。群/群友游标扫描沿用同一 TTL 策略，既有 scope batch 仍按各自消息范围构建历史。
+- **闲置冲刷**：owner 继续使用当前的本地快照与持久历史恢复策略。群级和成员级任务由持有主 Run 快照的进程收束；两类任务共享同一快照，只追加快照之后的被动群消息。Redis 只记录短 TTL 协调标记，不传递快照正文。若进程退出或快照已过期，群任务保留待处理并等待下一份兼容的主 Run 快照。
 
-因此反思不再设置独立提取器回退：即时冲刷与同进程 idle 冲刷优先使用进程内完整快照。压缩从持久化行构造历史后，只有在模型身份一致、待压缩行连续且逐条序列化结果能精确匹配快照中的连续片段时，才复用原 provider 前缀、system 和 tools；无法精确对齐时，回退到既有 DB append 重建，不猜测边界、不改动主会话历史或 baseline 语义。owner 或群业务的跨进程恢复查无快照时，先校验会话归属且会话已空闲，再从数据库 baseline 之后读取已持久化历史，重建最小 append 输入；反思规则和任务仍作为末尾增量。该恢复不保存完整 provider 请求体，也拿不到当时完整 tools 与动态业务上下文，因此功能复用同一 append 分支，但不保证缓存前缀命中。
+群级和成员级反思校验 user、session、模型身份及持久化消息边界后，使用原始 Provider 前缀、system 与 tools；新增被动消息只通过历史 renderer 单独生成尾部，再追加到原快照。两类反思保持相同对话前缀，末尾任务指令及提取范围仍各自独立。若快照缺失、发现快照之后已有另一主 Run，或无法证明批次边界，任务延迟到下一次兼容快照，不回退到普通群历史重建。显式 context-pressure 预算检查/压缩及 owner 私聊恢复仍沿用各自持久历史路径；压缩改变 baseline 后需要重建压缩后的有效输入。
 
 ### 6.2 追加式分支
 
@@ -129,7 +129,7 @@ delta = 分支任务前缀 + 本次反思所需动态数据
 
 存在完整主会话快照时，符合以下条件就使用原前缀追加分支：
 
-- 反思来源能定位到刚完成的单一 session；
+- 反思来源能定位到单一 session；群级、成员级和群内 Owner 反思共享同一群 session 的主 Run 快照；
 - 主请求和反思使用同一 provider、模型及 API 格式；
 - 主请求快照仍在有效 revision 内；
 - 当前反思输入属于该 session 的 owner/private 对话边界，或属于本轮确实产生助手回复的群聊 owner 回合。
@@ -138,14 +138,14 @@ delta = 分支任务前缀 + 本次反思所需动态数据
 
 append 模式对完整历史的使用边界（`_APPEND_HISTORY_DIRECTIVE`，仅 append 路径追加）：**新增方向**（profile_add/pattern_add/daily/knowledge_candidate）仍严格限待反思回合；**矛盾检测方向**开放完整历史——仅当历史与待反思回合或存量记忆明显矛盾/过时时提 profile_remove / pattern_remove（照抄存量记忆原文）或据此修正 summary。remove 依据锚定存量原文，模型引历史对话原文（从未入库）时 writer 按原文匹配自然 no-op。devserver 实测（session 387，MiniMax-M3，3 次重复）：schema 无退化、remove 零误报、新增未被抑制。
 
-网页/私聊 Owner 缓冲按 session 隔离，达到共享配置阈值或最后一次入队后闲置 4 分 30 秒时收束。群内 Owner 缓冲跟随同群累计 50 条消息事件冲刷，未到边界时也会在 4 分 30 秒空闲后收束。阈值触发时优先使用同进程快照；worker 闲置触发时快照可能已过期，按 §6.1 从持久化历史重建最小 append 输入。活跃中的 session 不反思，延后重试。
+网页/私聊 Owner 缓冲按 session 隔离，达到共享配置阈值或最后一次入队后闲置 4 分 30 秒时收束。群内 Owner 缓冲跟随同群累计 50 条消息事件冲刷，未到边界时也会在 4 分 30 秒空闲后收束。群内 Owner、群级和成员级任务共用群 session 的原始主 Run 快照，只追加该 Run 后的被动消息；worker 没有兼容快照时保留待处理状态，等待下一次成功主 Run。活跃中的 session 不反思，延后重试。
 
 如果 owner 阈值缓冲包含多轮消息，不新增复杂的群聊批处理逻辑：
 
 - 当前回合有主请求快照且为内联冲刷路径：直接使用本回合快照做一次追加式反思；
 - 缓冲跨 session：禁止拼在同一分支，按 session 独立 drain。
 
-闲置 worker 重建的是 session 中已持久化的消息序列，不是 provider 原始快照；因此它不承诺原 system/tools 前缀逐字节相同。调用仍走 `append_reuse`，由共享执行入口记录真实 usage/cache 数据。
+网页/私聊 Owner 的闲置恢复仍可重建 session 历史；群 session 的普通闲置及条数触发不重建完整历史。调用仍走 `append_reuse`，由共享执行入口记录真实 usage/cache 数据。
 
 ### 6.4 Knowledge 反思
 
@@ -160,15 +160,19 @@ Memory 和 Knowledge 是两个共享主前缀的 sibling branch，不把 Memory 
 
 ### 6.5 群聊与独立反思边界
 
-群级、群成员批量和群内 Owner 反思都以对应群 session 的主对话历史作为前缀，再追加本次反思任务：
+群级和群成员批量反思共享对应群 session 的同一份主 Run Provider 快照，再追加本次反思任务：
 
-- 有可复用主请求快照时使用该快照；
-- 闲置 worker、重启恢复等没有运行时快照的任务，按 session 从持久化消息重建完整历史，并使用重建出的 system、tools 和 session 归属；
+- 两种任务使用相同的快照和快照之后的群消息尾部；任务消息范围只限定本批提取目标；
+- 闲置 worker、进程重启等没有可复用原 Run 快照时，任务保持待处理，等下一次成功主 Run 提供新快照，不重建普通群反思历史；
+- 群内 Owner 私聊缓冲及显式 `context-pressure`/压缩任务保留既有独立策略；
 - 本批消息范围只用于限定要反思的用户消息，不代替主对话历史，也不把同一正文重复追加到任务 delta；
-- 若无法确认唯一、空闲且可重建的主 session，则延迟任务，不退化为仅含本批消息的独立上下文；
 - 跨 session 的批处理不得伪装成同一 Responses continuation，应按 session 拆分或延迟。
 
 以上规则适用于主动回复、被动群消息、群级和群成员 scope，不改变现有游标、锁、幂等和失败重试语义。追加反思分支不得修改主会话 reasoning continuation state。
+
+### 2026-11-03 群反思快照复用修订
+
+群级与成员级反思统一复用同一个群 session 主 Run 快照；快照后的被动消息只作为追加尾部。普通群反思不再从 DB 重建整段历史。快照不可用时保留任务等待下一次主 Run；显式上下文压力与压缩路径不变。
 
 ### 6.6 Reasoning state 边界
 
@@ -199,7 +203,7 @@ Memory 和 Knowledge 是两个共享主前缀的 sibling branch，不把 Memory 
 
 不满足时不伪造缓存复用成功：记录原因并延迟或跳过本次反思。延迟不能影响主会话，后续补偿仍沿用原游标、锁和幂等语义。
 
-闲置重建路径沿用同一 `ContextBranch` / `append_reuse` 执行器，但由于静态 system 是按当前配置重建、工具声明和动态业务上下文无法完整回放，不标记为“与原主 run 前缀完全一致”；其缓存效果单独观测，不纳入完整快照复用的成功率。
+网页/私聊 Owner 的闲置恢复路径沿用同一 `ContextBranch` / `append_reuse` 执行器；由于静态 system 按当前配置重建、工具声明和动态业务上下文无法完整回放，不标记为“与原主 Run 前缀完全一致”。群反思不再使用此恢复路径。
 
 ## 7. 数据、并发与安全约束
 
@@ -256,7 +260,7 @@ LoopScope 必须能按 `chat`、`reflection`、`knowledge`、`compaction` 区分
 
 ### Phase 1：快照与公共追加入口（已完成，2026-09-18）
 
-- [x] 钉死反思执行拓扑：内联冲刷与 worker 扫描双路径的进程归属，确定允许携带快照的路径清单（见 §6.1）。主请求快照只存捕获进程；owner 查无快照延迟，群业务 worker 从已持久化消息重建 append history。
+- [x] 钉死反思执行拓扑：内联冲刷与 worker 扫描双路径的进程归属，确定允许携带快照的路径清单（见 §6.1）。主请求快照只存捕获进程；owner 私聊恢复保留既有策略；群反思查无兼容快照时延迟到下一次成功主 Run。（群业务 worker 从已持久化消息重建 append history 的旧策略于 2026-11-03 废止。）
 - [x] 定义只读主会话快照结构和有效 revision：`ReflectionSnapshot`（user+session 键、system_prompt、ai 配置、tools、canonical history 含末尾 assistant 回复、digest revision、TTL 15min/LRU 64 条）。
 - [x] 为 `ContextBranch` 增加 `append_reuse` 状态边界，避免误失效 reasoning state（`BranchInput.branch_mode`，只读分支跳过 invalidate）。
 - [x] 将压缩的 `_branch_prefix_history()` 前缀准备逻辑提炼为共享 helper（`prefix_history.render_branch_prefix`），压缩已改调用；反思在 Phase 2 接入。
@@ -267,7 +271,7 @@ LoopScope 必须能按 `chat`、`reflection`、`knowledge`、`compaction` 区分
 ### Phase 2：owner Memory 反思（已完成，2026-09-18）
 
 - [x] Web/私聊 owner 反思接入公共追加分支：`reflect(snapshot=)` → `_append_reuse_decision` 资格门（快照/单 session 缓冲/模型身份一致，provider 能力门已随白名单废止删除）→ `_extract_append`（快照 history 经共享 helper 渲染成前缀；reflection.md 与存量数据进 delta；待反思回合用队列组装前原文标记引用）。
-- [x] 有实际助手回复的群聊 owner 回合复用同一公共追加分支（`_drain_group_owner_buffer` 同一资格门）；无快照时保留缓冲并延迟，群 scope worker 从持久化消息构建 append 分支。
+- [x] 有实际助手回复的群聊 owner 回合复用同一公共追加分支（`_drain_group_owner_buffer` 同一资格门）；无快照时保留缓冲并延迟。（群 scope worker 从持久化消息构建 append 分支的旧策略于 2026-11-03 废止。）
 - [x] 保持原 Memory writer、事件、锁、重试和失败语义：`reflect()` 下游未动，drains 回滚逻辑未动；append 模式矛盾检测开放完整历史（remove-only，`_APPEND_HISTORY_DIRECTIVE`），新增仍限待反思回合（devserver 验证 remove 零误报、新增未抑制）。
 - [x] LoopScope 主 run/branch 关联：branch metadata 与日志带 branch_mode + source run_id + session；provider A/B 验证完成（`docs/reports/OPT-Cache-Strategy-LLM27-AB-*.md`：append 79.7% vs standalone 3.1%，MiniMax-M3 BYOK 真实配置 3 触发）。
 
@@ -307,11 +311,11 @@ LoopScope 必须能按 `chat`、`reflection`、`knowledge`、`compaction` 区分
 - [x] 主会话 canonical history、reasoning state、工具集合和缓存前缀不被反思分支污染；
 - [x] 通过群/成员 append 分支回归与完整反思测试后，删除最后的 standalone 实现和 A/B 实验脚本。
 
-### Phase 6：共享闲置触发与 owner 历史重建（已完成本地验证，2026-09-20）
+### Phase 6：共享闲置触发与 Owner 私聊历史恢复（已完成本地验证，2026-09-20；群恢复策略于 2026-11-03 修订）
 
 - [x] 抽出统一 3 分钟 TTL 策略，供 owner、群主 owner 与群/群友游标共用。
 - [x] 网页/私聊 Owner 缓冲与群内 Owner 缓冲按 session 标记活动时间；前者使用网页/私聊共享阈值，后者跟随群消息 50 条事件，worker 闲置扫描统一 drain。
-- [x] 快照过期后按用户归属和 session idle 状态从持久化历史重建最小 append 输入，不存储完整 provider 快照。
+- [x] Owner 私聊快照过期后按用户归属和 session idle 状态从持久化历史重建最小 append 输入，不存储完整 provider 快照；群反思对应重建策略已废止，改为等待下一次主 Run 快照。
 - [x] Owner 与 IM 群/群友反思复用统一 `run_reflection_branch` 生命周期入口。
 - [x] 补齐完整反思回归、旧群主队列迁移与重试验证；记录重建路径缓存边界。
 
@@ -323,7 +327,7 @@ LoopScope 必须能按 `chat`、`reflection`、`knowledge`、`compaction` 区分
 | 延迟反思使用了过期会话 | 保存 session revision，写回前校验；失效则延迟或跳过 |
 | 分支破坏 Responses reasoning state | 唯一的 `append_reuse` 分支不接管主 continuation |
 | 反思内容污染聊天历史 | 分支消息只读、只存在短生命周期快照，禁止进入 canonical writer |
-| 群聊批处理无法映射单 session | 使用 scope batch 的持久化消息重建追加历史，不创建独立调用 |
+| 群聊批处理无法映射单 session | 群级与成员级任务共享同一群 session 主 Run 快照；无法映射或验证时保留任务等待下一次兼容快照 |
 | 只看缓存率误判成本收益 | 同时统计 fresh/cache-read/cache-write/output 和调用量 |
 | append_reuse 对某 provider 缓存率异常低导致成本上涨 | 资格门不做 provider 预判；`cache_capability` 只观测命中率，异常时人工评估参数与缓存收益 |
 | 快照携带工具结果中的敏感内容 | 不持久化完整快照，日志脱敏，按现有 provider 安全边界过滤 |
