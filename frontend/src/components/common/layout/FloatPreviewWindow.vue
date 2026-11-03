@@ -458,7 +458,6 @@ async function load(f: Partial<FileMeta>, refresh = false) {
     fitWindow(Math.round(f.imgWidth * vs), Math.round(f.imgHeight * vs))
   }
   const headers: Record<string, string> = {}
-  previewBlobCache.rememberFile(f, undefined, accountEpoch)
   let initialStreamUrl = props.win.streamUrl
   props.win.streamUrl = undefined
   const getStreamUrl = async (id: number) => {
@@ -471,6 +470,18 @@ async function load(f: Partial<FileMeta>, refresh = false) {
   }
 
   try {
+    // 聊天消息里的文件通常只有 file_id 和展示信息，没有版本号。文本文件必须先
+    // 从同一份权威文件记录拿到版本，再计算预览缓存键并允许编辑，保存时才能正确做乐观锁。
+    if (typeof f.id === 'number' && f.version == null
+      && (isTextExt(f.ext, f.mimeType) || isTextFallbackCandidate(f.ext, f.mimeType))) {
+      const stream = await filesApi.getStreamUrl(f.id)
+      if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
+      f.version = stream.file.version
+      filesCache.addFile(stream.file as FileMeta)
+      initialStreamUrl = stream.url
+    }
+    previewBlobCache.rememberFile(f, undefined, accountEpoch)
+
     if (isVideoExt(f.ext)) {
       let url
       if (f.attach_id) {
