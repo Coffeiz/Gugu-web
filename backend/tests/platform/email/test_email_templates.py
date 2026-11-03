@@ -70,5 +70,5 @@ def test_phase2_templates_share_the_same_compatible_shell(template):
     )
     assert 'role="presentation"' in content.html
     assert "#171925" in content.html
-    assert "#5f967e" in content.html
+    assert "#a9c2b5" in content.html
     assert "内容" in content.plain

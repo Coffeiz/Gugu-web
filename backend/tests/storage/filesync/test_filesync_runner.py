@@ -302,7 +302,7 @@ async def test_permission_excluded_subtree_cannot_finish_reconcile_as_success(
 
 @pytest.mark.asyncio
 async def test_user_root_with_only_workspace_records_is_an_empty_library_scope(
-    db, user_a, monkeypatch,
+    filesync_runner_db, user_a, monkeypatch,
 ):
     """用户根绑定不把 workspace 记录算作文件库范围，也不因它们误判空扫描。"""
     import app.services.filesync.runner as runner
@@ -322,6 +322,7 @@ async def test_user_root_with_only_workspace_records_is_an_empty_library_scope(
         mode="bidirectional", status="active", root_path=".",
         root_fingerprint=_root_fingerprint(root),
     )
+    db = filesync_runner_db
     db.add_all([workspace_file, binding])
     await db.flush()
     run = await enqueue_reconcile_run(
