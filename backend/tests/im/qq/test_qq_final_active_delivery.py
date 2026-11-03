@@ -304,17 +304,14 @@ async def test_stream_exception_closes_partial_stream_before_propagating(deliver
 
 
 @pytest.mark.asyncio
-async def test_cancel_with_unknown_remote_status_notifies_im_user(delivery, monkeypatch):
+async def test_cancel_with_unknown_remote_status_does_not_send_extra_im_message(delivery):
     passive_send, finish, _streamed = delivery
-    send_status = AsyncMock(return_value=True)
-    monkeypatch.setattr(dispatch_finalization, "send_text", send_status)
     payload = {"platform": "qq", "chat_type": "c2c", "platform_user_id": "synthetic-user",
                "channel_id": "synthetic-bot", "message_id": "synthetic-inbound"}
 
     response = await finalize(payload, AgentResponse(cancelled=True, remote_status_unknown=True))
 
     assert response.cancelled is True
-    send_status.assert_awaited_once_with(payload, "本地已停止，远端执行状态未知")
     passive_send.assert_not_awaited()
     assert finish.call_args.args[0] == "cancelled"
 

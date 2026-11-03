@@ -149,8 +149,8 @@ async def finalize_im_dispatch(
             pass
     if response.cancelled:
         trace.finish_run("cancelled")
-        if response.remote_status_unknown:
-            await send_text(payload, "本地已停止，远端执行状态未知")
+        # IM 取消命令已有单独的确认回复；远端状态不确定只保留在内部响应/诊断中，
+        # 不再追加一条技术状态消息打扰用户。
         await finalize_im_response(platform, puid, True, "")
         _log_attention_run_outcome(
             payload, request, run_outcome="cancelled",
