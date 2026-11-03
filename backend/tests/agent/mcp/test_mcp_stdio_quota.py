@@ -48,10 +48,13 @@ async def test_stdio_cap_accounting_releases_on_close(server, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_reap_idle_stdio_closes_only_idle_and_keeps_tools():
+async def test_reap_idle_stdio_closes_only_idle_and_keeps_tools(monkeypatch):
     """空闲超阈值的 stdio 连接被后台回收：客户端关闭、工具缓存保留以便重连。"""
     settings = SimpleNamespace(mcp=SimpleNamespace(stdio_idle_seconds=60))
     manager = manager_module.McpToolManager()
+    # CI runner 的单调时钟可能刚启动；用固定正时间避免“减 120 秒”落入
+    # last_used_at <= 0 的“从未使用”哨兵范围。
+    monkeypatch.setattr(manager_module.time, "monotonic", lambda: 1000.0)
 
     closed: list[str] = []
 
@@ -67,11 +70,11 @@ async def test_reap_idle_stdio_closes_only_idle_and_keeps_tools():
     fresh_config = McpServerConfig(id=uuid4(), user_id=user, name="fresh", transport="stdio", command="y")
     idle_rt = manager_module._ServerRuntime(config=idle_config)
     idle_rt.client = FakeClient("idle")
-    idle_rt.last_used_at = time.monotonic() - 120
+    idle_rt.last_used_at = 880.0
     idle_rt.tools["mcp_idle_x"] = object()
     fresh_rt = manager_module._ServerRuntime(config=fresh_config)
     fresh_rt.client = FakeClient("fresh")
-    fresh_rt.last_used_at = time.monotonic()
+    fresh_rt.last_used_at = 1000.0
     manager._runtimes[(user, idle_config.id)] = idle_rt
     manager._runtimes[(user, fresh_config.id)] = fresh_rt
 

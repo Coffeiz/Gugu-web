@@ -269,7 +269,7 @@ test('框选范围头尾在亮暗主题中都比中段更突出', async ({ page 
     await page.evaluate((selectedTheme) => {
       document.documentElement.dataset.theme = selectedTheme
       document.documentElement.dataset.family = 'glass'
-      document.documentElement.dataset.palette = 'mist'
+      document.documentElement.dataset.palette = 'neutral'
     }, theme)
 
     await page.mouse.move(startBox!.x + startBox!.width / 2, startBox!.y + 12)
