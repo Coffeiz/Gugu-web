@@ -5,8 +5,11 @@
 """
 from __future__ import annotations
 
+import asyncio
+import re
 from urllib.parse import urlsplit
 
+from app.core.redaction import diag_log_raw
 from app.core.safe_egress import SafeEgressClient, SafeEgressError
 from ..search_http import read_search_response
 
@@ -51,20 +54,35 @@ async def search(model_cfg, args: dict) -> dict:
     if not endpoint:
         return {"error": "当前 MiniMax API 地址不支持联网搜索"}
     api_key = str(getattr(model_cfg, "api_key", "") or "").strip()
-    try:
-        async with SafeEgressClient().stream(
-            endpoint,
-            timeout=30.0,
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            post_json={"q": args["query"]},
-        ) as response:
-            data = await read_search_response(response, label="MiniMax 搜索服务")
-    except SafeEgressError:
-        return {"error": "MiniMax 搜索服务地址校验或连接失败"}
-    if "error" in data:
-        return data
+    for attempt in range(3):
+        try:
+            async with SafeEgressClient().stream(
+                endpoint,
+                timeout=30.0,
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                post_json={"q": args["query"]},
+            ) as response:
+                request_id = response.headers.get("x-request-id", "")
+                data = await read_search_response(response, label="MiniMax 搜索服务")
+        except SafeEgressError:
+            return {"error": "MiniMax 搜索服务地址校验或连接失败"}
+        if "error" in data:
+            return data
 
-    base_resp = data.get("base_resp")
-    if isinstance(base_resp, dict) and str(base_resp.get("status_code", "0")) not in {"0", "None", ""}:
-        return {"error": "MiniMax 搜索请求未成功，请检查账户权限或稍后重试"}
-    return data
+        base_resp = data.get("base_resp")
+        code = str(base_resp.get("status_code", "0")) if isinstance(base_resp, dict) else "0"
+        if code in {"0", "None", ""}:
+            return data
+        safe_code = code if re.fullmatch(r"[0-9]{1,10}", code) else "unknown"
+        safe_id = request_id if re.fullmatch(r"[A-Za-z0-9_-]{1,128}", request_id) else "unavailable"
+        diag_log_raw("minimax.web_search", f"status_code={safe_code} request_id={safe_id} attempt={attempt + 1}")
+        if code == "1033" and attempt < 2:
+            await asyncio.sleep(5.0)
+            continue
+        if code == "1033":
+            return {"error": "MiniMax 搜索服务暂时出现内部错误，重试后仍未成功，请稍后再试"}
+        if code in {"1004", "2049"}:
+            return {"error": "MiniMax 搜索未获授权，请检查 API Key 和账户权限"}
+        if code in {"1008", "2056"}:
+            return {"error": "MiniMax 账户余额或可用额度不足，请检查账户状态"}
+        return {"error": f"MiniMax 搜索请求未成功（错误码 {safe_code}），请检查账户状态或稍后重试"}

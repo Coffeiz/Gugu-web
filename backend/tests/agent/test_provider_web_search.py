@@ -31,6 +31,33 @@ def config(provider, api_format="openai", base_url=""):
     )
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("codes, expected_calls", [([1033, 0], 2), ([1033, 1033, 1033], 3), ([1004], 1)])
+async def test_minimax_search_retries_only_transient_error(monkeypatch, codes, expected_calls):
+    from agent.providers.minimax import web_search as minimax_search
+
+    calls = []
+    diagnostics = []
+    async def no_delay(_seconds):
+        pass
+    def respond(request):
+        calls.append(request)
+        return httpx.Response(200, headers={"x-request-id": "test-request"}, json={"base_resp": {"status_code": codes[len(calls) - 1]}})
+
+    _mock_safe_egress(monkeypatch, respond)
+    monkeypatch.setattr(minimax_search.asyncio, "sleep", no_delay)
+    monkeypatch.setattr(minimax_search, "diag_log_raw", lambda _where, message: diagnostics.append(message))
+    result = await minimax_search.search(config("minimax"), {"query": "合成查询"})
+    assert len(calls) == expected_calls
+    if codes[-1] == 0:
+        assert result["base_resp"]["status_code"] == 0
+    elif codes[-1] == 1004:
+        assert "授权" in result["error"]
+    else:
+        assert "重试后" in result["error"]
+    assert all("合成查询" not in line and "synthetic-test-key" not in line for line in diagnostics)
+
+
 def test_run_schemas_and_validation_stay_bound_to_their_provider():
     """同进程多 Provider 不得相互覆盖参数，旧快照也不能随新 run 改变。"""
     default_schema = registry.snapshot().get("web_search").input_schema.copy()
