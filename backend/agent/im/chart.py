@@ -707,6 +707,13 @@ class ProgressiveChartTokenFilter:
             if kind == "token":
                 async for event in self._feed(str(value or "")):
                     yield event
+            elif kind == "qq_tool_boundary":
+                # 工具消息必须排在之前所有正文和图表之后。
+                async for event in self._feed("", final=True):
+                    yield event
+                async for event in self._completed_render_events(wait=True):
+                    yield event
+                yield (kind, value)
             elif kind == "final":
                 async for event in self._feed("", final=True):
                     yield event

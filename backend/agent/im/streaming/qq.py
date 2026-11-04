@@ -1,11 +1,12 @@
 """QQ 私聊流式回复生命周期与图表分段交付。"""
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Tuple
 
-from agent.gateway.qq.client import QQStreamFinalizationError
+from agent.gateway.qq.client import QQStreamFinalizationError, QQStreamPrefixMismatchError
 from agent.interactions.events import ROUND_END
 from agent.models import AgentResponse
 
@@ -27,6 +28,7 @@ class QQToolEventBoundary:
     def __init__(self) -> None:
         self.sender: QQChartRound | None = None
         self.error: Exception | None = None
+        self.barrier = None
 
     def bind(self, sender: "QQChartRound") -> None:
         self.sender = sender
@@ -39,7 +41,10 @@ class QQToolEventBoundary:
         if self.sender is None:
             return True
         try:
-            await self.sender.finish_before_tool()
+            if self.barrier is not None:
+                await self.barrier()
+            else:
+                await self.sender.finish_before_tool()
         except Exception as exc:
             self.sender._fail_stream()
             self.error = (
@@ -78,8 +83,7 @@ class QQChartRound:
         }
         self._qq = qq
         self.stream_failed = False
-        # 普通模型轮次结束后可以创建新的 QQ 原生流；只有工具消息或图表消息
-        # 等独立出站内容确实切开流时，后续正文才走普通 sendText。
+        # 图表等独立出站内容切开流后，后续正文走普通 sendText。
         self.regular_text_only = False
         # 按需创建流，避免在没有正文时预占 msg_seq，也避免工具执行期间空挂一条流。
         self.stream = None
@@ -104,9 +108,11 @@ class QQChartRound:
             return None
         self.stream_message_id = self.payload.get("message_id")
         kwargs = {**self.stream_kwargs, "message_id": self.stream_message_id}
-        return self._qq.create_private_text_stream(
+        stream = self._qq.create_private_text_stream(
             self.payload.get("platform_user_id") or "", **kwargs
         )
+        stream.prefix_normalizer = self._fix_loose_bold
+        return stream
 
     async def push_token(self, token: str) -> None:
         if token:
@@ -150,10 +156,10 @@ class QQChartRound:
         text = self.round_text or self.pending_round_text
         if self.stream is None and not self.segment_text.strip():
             self._reset_round()
-            self.regular_text_only = True
+            self.regular_text_only = False
             return
         await self.finish_round(text, start_next=False)
-        self.regular_text_only = True
+        self.regular_text_only = False
 
     async def finish_response(self, final_text: str) -> tuple[bool, str]:
         final_text = self._fix_loose_bold(final_text or "").strip()
@@ -189,7 +195,7 @@ class QQChartRound:
             await self._finish_final_round(current_text, final_text)
             return
         # 模型终态是当前未结束文本段的权威正文，不依赖 ROUND_END 是否到达。
-        # 原生流在同一气泡内修订并关闭；工具后的普通出口只发送修订后的缓冲，
+        # 原生流在同一气泡内修订并关闭；普通出口只发送修订后的缓冲，
         # 避免先发 token 草稿、再补发最终全文。已结束的阶段消息由轮次边界保留。
         if final_text and not self.round_has_image:
             self.round_text = final_text
@@ -316,8 +322,10 @@ class QQChartRound:
             return
         self.stream_sent = True
         delivered = str(getattr(stream, "last_sent_text", "") or "")
-        if delivered and text.startswith(delivered):
-            self.segment_text = text[len(delivered):]
+        normalized = self._fix_loose_bold(delivered) if delivered else ""
+        prefix = delivered if text.startswith(delivered) else normalized if text.startswith(normalized) else ""
+        if prefix:
+            self.segment_text = text[len(prefix):]
             self.final_delivery.prefix_sent = self.final_delivery.candidate
             return
         # 没有可验证的送达前缀时，不能把这一段标成完整交付或盲目重发。
@@ -402,8 +410,39 @@ async def send_qq_stream_by_round(
 ) -> Tuple[bool, AgentResponse, str | None]:
     """按 Agent 事件推进 QQ 流状态，并持续消费发送失败后的剩余事件。"""
     sender = sender_factory(payload, show_intermediate_replies=show_intermediate_replies)
+    pump_task = None
     if tool_event_boundary is not None:
         tool_event_boundary.bind(sender)
+        queue = asyncio.Queue()
+
+        async def barrier():
+            done = asyncio.get_running_loop().create_future()
+            await queue.put(("qq_tool_boundary", done))
+            await done
+
+        tool_event_boundary.barrier = barrier
+        source = token_iter
+
+        async def pump():
+            try:
+                async for item in source:
+                    await queue.put(item)
+            except Exception as exc:
+                await queue.put(("qq_source_error", exc))
+            finally:
+                await queue.put(("qq_source_end", None))
+
+        async def queued_events():
+            while True:
+                kind, value = await queue.get()
+                if kind == "qq_source_end":
+                    return
+                if kind == "qq_source_error":
+                    raise value
+                yield kind, value
+
+        pump_task = asyncio.create_task(pump())
+        token_iter = queued_events()
     from agent.im.chart import ProgressiveChartTokenFilter
 
     token_iter = ProgressiveChartTokenFilter(
@@ -419,8 +458,25 @@ async def send_qq_stream_by_round(
                 continue
             if isinstance(transport_error, QQStreamFinalizationError):
                 # 继续消费模型终态以完成持久化，但关闭失败后不再发送其他分段。
+                if kind == "qq_tool_boundary" and not value.done():
+                    value.set_exception(transport_error)
                 continue
             try:
+                if kind == "qq_tool_boundary":
+                    try:
+                        await sender.finish_before_tool()
+                    except Exception as exc:
+                        failure = (
+                            exc if isinstance(exc, QQStreamFinalizationError)
+                            else QQStreamFinalizationError("QQ 工具消息前的文本流未获关闭确认")
+                        )
+                        if not value.done():
+                            value.set_exception(failure)
+                        raise failure
+                    else:
+                        if not value.done():
+                            value.set_result(None)
+                    continue
                 if kind in {"token", "chart_image"} and sender.pending_round_end:
                     await sender.continue_after_round_end()
                 if kind == "token":
@@ -437,6 +493,12 @@ async def send_qq_stream_by_round(
     except BaseException:
         await _close_aborted_qq_stream(sender)
         raise
+    finally:
+        if pump_task is not None:
+            if not pump_task.done():
+                pump_task.cancel()
+            await asyncio.gather(pump_task, return_exceptions=True)
+            tool_event_boundary.barrier = None
 
     if response is None:
         # 事件流正常结束却缺少模型终态时，先关闭已打开的 QQ 流，避免客户端
@@ -487,6 +549,12 @@ async def _finish_qq_stream_run(sender, response, transport_error, fix_loose_bol
     stream_final_text = "" if response.errored else last_text
     try:
         stream_sent, last_text = await sender.finish_response(stream_final_text)
+    except QQStreamPrefixMismatchError:
+        # 只有流已经成功关闭且尾部能与确认前缀对齐时，才补发未送达部分。
+        if sender.final_delivery.uncertain or not sender.segment_text:
+            raise
+        sent = await sender.recover_after_stream_error()
+        return sent, response, None if sender.final_delivery.uncertain else last_text
     except QQStreamFinalizationError:
         # 可见前缀不代表流已关闭；不能回退后把该 Run 标记为成功送达。
         raise

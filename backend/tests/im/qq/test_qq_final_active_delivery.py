@@ -191,6 +191,37 @@ async def test_mermaid_only_final_is_delivered_as_image_without_replaying_source
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fallback_succeeds", [True, False])
+async def test_prefix_rejection_sends_only_confirmed_remaining_tail(delivery, monkeypatch, fallback_succeeds):
+    from agent.gateway import qq
+    from agent.gateway.qq.client import QQStreamPrefixMismatchError
+
+    class ClosedPartialStream:
+        last_sent_text = "已送达"
+        def push(self, text):
+            pass
+        async def finish(self, text, *, allow_rewrite=False):
+            raise QQStreamPrefixMismatchError("合成前缀冲突，流已关闭")
+        def has_sent(self):
+            return True
+
+    monkeypatch.setattr(qq, "create_private_text_stream", lambda *_args, **_kwargs: ClosedPartialStream())
+    fallback = AsyncMock(return_value=fallback_succeeds)
+    monkeypatch.setattr(replies, "send_text", fallback)
+    payload = {"platform": "qq", "chat_type": "c2c", "platform_user_id": "synthetic-user",
+               "channel_id": "synthetic-bot", "message_id": "synthetic-inbound"}
+
+    async def events():
+        yield "token", "已送达后续内容"
+        yield "final", AgentResponse(text="已送达后续内容")
+
+    sent, _, reply_text = await replies.send_qq_stream_by_round(payload, events())
+    fallback.assert_awaited_once_with({**payload, "message_id": None}, "后续内容")
+    assert sent is fallback_succeeds
+    assert reply_text == ("已送达后续内容" if fallback_succeeds else None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fallback_succeeds", [True, False])
 async def test_partial_final_stream_only_suppresses_text_after_reliable_tail_delivery(
     delivery, monkeypatch, fallback_succeeds,
 ):

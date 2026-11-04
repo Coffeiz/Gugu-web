@@ -17,6 +17,7 @@ from .client import (
     QQAPIError,
     QQStreamFinalizationError,
     QQStreamDeliveryError,
+    QQStreamPrefixMismatchError,
     _qq_error_summary,
     _qq_is_transient,
     _qq_request,
@@ -74,6 +75,7 @@ class QQPrivateTextStream:
     def __init__(self, channel_id: str, openid: str, *, message_id: str | None):
         self.channel_id = channel_id
         self.openid = openid
+        self.prefix_normalizer = None
         self.message_id = message_id
         # C2C 流式消息只用于 Markdown 私聊模式。
         self.content_type = "markdown"
@@ -219,8 +221,16 @@ class QQPrivateTextStream:
         content = override if override is not None else prepare_qq_text(raw)
         if not content.strip() or (input_state != 10 and content == self.last_sent_content):
             return None
-        if not allow_rewrite and not content.startswith(self.last_sent_content):
-            raise ValueError("QQ 流式正文改写已发送前缀，已阻止出站")
+        if not content.startswith(self.last_sent_content):
+            # 定稿可能只修正了已发送前缀中的 Markdown 空白。保留 QQ 已接受的
+            # 原始前缀，只追加能确认属于定稿的后缀，不能让 replace 改写前文。
+            if allow_rewrite and override is None and self.prefix_normalizer and self.last_sent_text:
+                normalized = self.prefix_normalizer(self.last_sent_text)
+                if raw.startswith(normalized):
+                    raw = self.last_sent_text + raw[len(normalized):]
+                    content = prepare_qq_text(raw)
+            if not content.startswith(self.last_sent_content):
+                raise QQStreamPrefixMismatchError("QQ 流式正文改写已发送前缀，已阻止出站")
         # QQ C2C 原生 Markdown 流要求每个分片以换行结束。中间帧由
         # complete_qq_lines 保证；最终帧包含尚未换行的尾行时也要补齐，
         # 否则 QQ 会拒绝 DONE，继而触发普通消息恢复并造成重复回复。
@@ -243,7 +253,7 @@ class QQPrivateTextStream:
         if not self.full_text.strip():
             return
         try:
-            # 只有模型终态允许修订已经显示的草稿；中间轮继续遵守前缀保护。
+            # 定稿也必须保留 QQ 已确认的前缀；格式修正只能影响尚未发送的部分。
             await self._flush(1, allow_rewrite=allow_rewrite)
             if self._chain is not None:
                 await self._chain
@@ -276,7 +286,9 @@ class QQPrivateTextStream:
     async def _close_rejected_content(self, error: Exception) -> None:
         """内容被拒后只关闭已送达正文，失败状态始终交给调用方处理。"""
         body = error.body if isinstance(error, QQAPIError) else None
-        rejected = isinstance(body, dict) and str(body.get("code") or body.get("err_code")) == "40034028"
+        code = str(body.get("code") or body.get("err_code")) if isinstance(body, dict) else ""
+        prefix_mismatch = isinstance(error, QQStreamPrefixMismatchError) or code == "40007"
+        rejected = prefix_mismatch or code == "40034028"
         if not rejected or not self.stream_msg_id or not self.last_sent_content:
             self._log_finalization_failure(error)
             raise QQStreamFinalizationError("QQ 流式消息关闭未获确认") from error
@@ -288,6 +300,8 @@ class QQPrivateTextStream:
         except Exception as close_error:
             self._log_finalization_failure(close_error, original_error=error)
             raise QQStreamFinalizationError("QQ 流式消息关闭未获确认") from close_error
+        if prefix_mismatch:
+            raise QQStreamPrefixMismatchError("QQ 前缀不匹配，已关闭最后送达的内容") from error
         raise QQStreamDeliveryError("QQ 部分正文被拒绝，已关闭最后送达的内容") from error
 
     def _log_finalization_failure(
