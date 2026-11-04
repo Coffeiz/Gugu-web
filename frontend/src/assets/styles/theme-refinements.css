@@ -65,7 +65,7 @@ html[data-theme='dark'][data-family] {
   --calendar-grid-line-strong: var(--border-subtle);
   --calendar-cell-hover-bg: color-mix(in srgb,var(--action-primary) 10%,transparent);
   --calendar-today-cell-bg: var(--color-accent-faint);
-  --calendar-range-cell-bg: var(--selection-bg);
+  --calendar-range-cell-bg: color-mix(in srgb,var(--action-primary) 8%,transparent);
   --calendar-selected-cell-bg: var(--selection-bg);
   --calendar-range-edge-bg: color-mix(in srgb,var(--action-primary) 18%,transparent);
   --calendar-weekend-range-edge-bg: color-mix(in srgb,var(--status-danger) 22%,transparent);
