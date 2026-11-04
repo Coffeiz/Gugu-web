@@ -33,6 +33,10 @@
 - Move current-group attachment ownership checks behind the attachment service boundary.
 - Upgrade msgpack and the embedded Cosign dependency to fixed releases for CVE-2026-114613 and CVE-2026-116587.
 - Improve reading large Markdown documents and wide tables, expand the document zoom range, and refine the file library scrollbar layout.
+- Soften the selected-date range in dark calendar mode and add consistent hover feedback to group-persona cards.
+- Retry transient MiniMax web-search failures with a bounded delay.
+- Keep a sent user message visible while its run starts, and save file edits against the latest file version.
+- Avoid interpreting dollar-denominated prices as inline math when Markdown math is enabled.
 
 #### Fixes
 
@@ -52,6 +56,7 @@
 - Resolve group @mentions to the correct bot name instead of displaying another bot as Gugu.
 - Keep the session title in sync after renaming or switching conversations.
 - Prevent empty group reflection jobs and worker shutdown from repeatedly failing when no event loop is running.
+- Avoid sending a second “remote execution state unknown” notice after an IM cancellation acknowledgement.
 
 #### Contributors
 
@@ -87,6 +92,10 @@
 - 将当前群附件归属校验移入附件服务，避免 Agent 工具直接查询 ORM。
 - 将 msgpack 和内置 Cosign 依赖升级到修复 CVE-2026-114613、CVE-2026-116587 的版本。
 - 改进大型 Markdown 文档和宽表格的阅读体验，扩大文档缩放范围并调整文件库滚动布局。
+- 减弱暗色日历模式下日期范围中间区域的高亮，并为群聊人格卡片补齐悬停反馈。
+- 对 MiniMax 联网搜索的临时故障进行有限间隔重试。
+- 修复 Run 启动时用户消息气泡短暂消失的问题，并确保文件编辑使用最新文件版本保存。
+- 启用 Markdown 行内公式时，避免将美元金额误识别为公式。
 
 #### 修复
 
@@ -106,6 +115,7 @@
 - 修复群聊中 @ 其他机器人时错误显示为咕咕的问题。
 - 修复重命名或切换会话后标题未及时更新的问题。
 - 修复群反思任务遇到空消息范围或 Worker 停止时无事件循环而反复失败的问题。
+- IM 任务取消已发送确认后，不再重复提示“远端执行状态未知”。
 
 #### 贡献者
 
