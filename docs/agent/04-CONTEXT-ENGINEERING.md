@@ -261,6 +261,6 @@ Provider adapter 负责角色映射、工具协议、流式 delta 和供应商�
 ## 11. 当前边界
 
 - 上下文主组装仍由 Python Agent 负责。
-- TypeScript 主要参与 RAG lexical index/search，不负责完整 Context Assembly。
+- RAG 的索引与词法检索由 Python/Cython 承担；TypeScript 不参与 RAG，也不负责完整 Context Assembly。
 - 不同 Provider 的 wire format 可以不同，但 canonical history 必须保持一致。
 - 具体压缩阈值、字段格式和消息顺序应在实现文档与测试中维护，本文只记录稳定原则。

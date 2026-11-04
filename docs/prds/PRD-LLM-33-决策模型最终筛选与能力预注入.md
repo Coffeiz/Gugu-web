@@ -10,7 +10,7 @@
 
 | 能力 | 结果 | 状态 | 说明 |
 |---|---|---|---|
-| RAG 召回与注入 | BM25 / hybrid 召回后由 TS worker 融合、排序、过滤和预算裁剪；Python 执行最终 owner/scope 复核与上下文组装 | ✅ 已完成 | 当前没有生产决策模型最终筛选；worker 的最终限制可能使上游无法取得更大的候选池。 |
+| RAG 召回与注入 | BM25 / hybrid 召回由 Python/Cython 融合、排序、过滤和预算裁剪；Python 执行最终 owner/scope 复核与上下文组装 | ✅ 已完成 | 当前没有生产决策模型最终筛选；统一排序限制可能使上游无法取得更大的候选池。 |
 | 工具能力选择 | Registry/授权快照与能力目录推荐已存在；推荐只重排，不裁掉授权工具 | 🟡 部分完成 | 全量 Schema 与简介/固定 Adapter 两种注入模式已存在；当前没有按本轮语义预先选择并直接注入具体 Schema 的决策策略。 |
 | Skill 注入 | Run 准备阶段提供 Skill metadata；Skill 正文通过 `use_skill` 按需加载 | 🟡 部分完成 | 当前没有基于决策模型的本轮 Skill 正文预注入。 |
 | 决策模型配置与协议 | 主 LLM、Embedding 与 Provider 配置已有独立路径 | 🔲 待实施 | 尚无独立 `decision` 模型角色、决策协议适配器或 Admin/用户决策模型设置。 |
@@ -39,7 +39,7 @@
 
 - 不让 Jev 生成自由文本、最终回答、工具参数或可执行代码；不以 Jev 替代主 LLM。
 - 不让决策模型修改工具注册表、用户授权、群/项目 ACL、危险操作确认门或执行结果。
-- 不替换 BM25、Embedding、RRF、索引、来源 Adapter 或现有 TS RAG worker；不对全量知识库逐条询问决策模型。
+- 不替换 BM25、Embedding、RRF、索引、来源 Adapter 或现有 Python/Cython RAG 检索链；不对全量知识库逐条询问决策模型。
 - 不让工具选择模型读取完整工具 Schema 或 Skill 正文；候选判断只使用经授权的短描述和必要上下文。
 - 不要求所有用户配置 Jev，也不因开启一个场景自动开启另一场景。
 - 首版不建立通用自动 Planner、不对内部每个工具 Round 重复运行预选择、不做模型自我训练。
@@ -145,9 +145,9 @@ RAG 与能力选择可复用 Decision Provider 请求适配、凭据解析、超
 
 ### 3.3 RAG 候选池与最终注入
 
-在 `UnifiedQueryRetriever` / TS worker 边界区分检索过取和最终注入参数。候选池须保持稳定 ID、source/scope、原始与融合排序信息；Python 在外发前对候选做权限复核。决策模型只在候选池上做语义判断，不负责检索或授权。Active 决策结果与现有确定性 score、过滤原因、内容预算共同生成最终选择；策略和版本可被复现，阈值通过离线集校准而非硬编码供应商概率。
+在 `UnifiedQueryRetriever` / Cython 排序边界区分检索过取和最终注入参数。候选池须保持稳定 ID、source/scope、原始与融合排序信息；Python 在外发前对候选做权限复核。决策模型只在候选池上做语义判断，不负责检索或授权。Active 决策结果与现有确定性 score、过滤原因、内容预算共同生成最终选择；策略和版本可被复现，阈值通过离线集校准而非硬编码供应商概率。
 
-若当前 worker 无法提供可供 Python 决策的扩展候选，增加受限 `candidate_limit` 或两阶段候选接口；不得通过简单增加最终 `limit` 破坏最大正文预算、来源多样性、父文档约束或 IPC 负载。Python 最终 owner/scope 复核仍保留在决策之后。
+若当前检索链无法提供可供决策的扩展候选，增加受限 `candidate_limit` 或两阶段候选接口；不得通过简单增加最终 `limit` 破坏最大正文预算、来源多样性、父文档约束或 IPC 负载。Python 最终 owner/scope 复核仍保留在决策之后。
 
 ### 3.4 工具 / Skill 选择与注入
 
@@ -172,7 +172,6 @@ backend/
 │   ├── capabilities/selector.py           【修改】添加模型决策策略；保留 Registry/RAG 现有策略
 │   ├── capabilities/injector.py           【修改】将决策选择映射到现有 Schema/Skill 注入方式
 │   └── run/preparation.py                 【修改】按用户 Run 解析配置并执行一次场景选择
-├── ts/workers/rag/src/                    【条件】仅在当前 worker 不能暴露独立候选池时修改
 ├── app/
 │   ├── byok/                              【修改】增加独立 decision capability 的校验、解析和密钥隔离
 │   ├── api/v1/                            【修改】Admin/用户模型设置与决策连接测试 API
@@ -186,7 +185,7 @@ frontend/src/
 └── i18n/                                           【修改】中文、英文、日文文案
 ```
 
-关键边界：Admin 页面遵循 Admin 前端拆分约定，新增配置优先进入独立组件/composable/service；不把外部决策请求放进通用聊天 Provider 的 `complete()`；不修改业务 Registry/执行器以接受模型输出的任意能力名；不增加原始内容观测表或日志。TS worker 仅在需要提供过取候选接口时纳入本 PRD，索引 schema 和索引写入流程不变。
+关键边界：Admin 页面遵循 Admin 前端拆分约定，新增配置优先进入独立组件/composable/service；不把外部决策请求放进通用聊天 Provider 的 `complete()`；不修改业务 Registry/执行器以接受模型输出的任意能力名；不增加原始内容观测表或日志。RAG 候选池扩展应通过现有 Python 检索服务与 Cython 内核契约实现，不新增 TypeScript RAG worker；索引 schema 和索引写入流程不变。
 
 ## 4. 验证与上线
 

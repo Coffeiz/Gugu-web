@@ -14,7 +14,7 @@
 
 `backend/app/core/events.py` 的用户级 Redis Pub/Sub -> SSE 是网页资源实时更新总线，不是 IM 渠道，也不替代 QQ/微信/飞书的入站连接。终端的 PTY WebSocket 是另一套交互协议，同样不属于本文的 IM Gateway。
 
-当前业务后端仍由 Python/FastAPI 承担。渠道网关、worker、Agent Loop 和出站适配均在 Python `backend/agent/` 中；TypeScript 仅承担 RAG lexical worker 等专项 sidecar。
+当前业务后端仍由 Python/FastAPI 承担。渠道网关、worker、Agent Loop 和出站适配均在 Python `backend/agent/` 中；TypeScript RAG worker 已清理，其他独立 TypeScript sidecar 不属于渠道处理链路。
 
 ## 1.1 渠道功能支持矩阵
 

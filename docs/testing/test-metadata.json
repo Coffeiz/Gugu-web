@@ -872,11 +872,11 @@
     "ci": "backend-pytest"
   },
   "backend/tests/agent/rag/test_cython_lifecycle.py": {
-    "domain": "memory-rag-cython-equivalence",
+    "domain": "memory-rag-cython-lifecycle",
     "layer": "L1",
     "owner": "backend/agent/rag/cython_lifecycle.py",
-    "productionEntry": "backend/agent/rag/index_cache.py 与 TypeScript RAG worker 的索引/向量生命周期操作",
-    "keyBehavior": "数据库快照、revision 增量、快照恢复和向量缓存刷新保持 owner、模型版本及 tombstone 契约；版本刷新清除未命中的旧向量；Memory scope 并发读取保持顺序，snapshot 覆盖过滤复用预处理上下文",
+    "productionEntry": "backend/agent/rag/index_cache.py 与 Cython 索引/向量生命周期",
+    "keyBehavior": "Cython 索引的构建、快照恢复、数据库加载与生命周期遵循统一 revision 契约",
     "ci": "backend-pytest"
   },
   "backend/tests/agent/rag/test_cython_runtime.py": {
@@ -884,39 +884,7 @@
     "layer": "L1",
     "owner": "backend/agent/rag/cython_runtime.py",
     "productionEntry": "backend/agent/rag/index_cache.py",
-    "keyBehavior": "普通应用进程按配置选择 Cython 时能装载 .pyx 内核与 jieba-rs；未安装构建依赖时明确失败，不借助 pytest 钩子或静默切回 TS",
-    "ci": "backend-pytest"
-  },
-  "backend/tests/agent/rag/test_cython_bm25_differential.py": {
-    "domain": "memory-rag-cython-equivalence",
-    "layer": "L1",
-    "owner": "backend/agent/rag/cython_backend.py",
-    "productionEntry": "backend/agent/rag/ts_sidecar.py 与 TypeScript RAG worker 的 search 操作",
-    "keyBehavior": "固定种子语料下分词 BM25、全语料 IDF、来源及 scope 过滤、稳定排序、limit 和诊断与 TS worker 逐项一致",
-    "ci": "backend-pytest"
-  },
-  "backend/tests/agent/rag/test_cython_rank_differential.py": {
-    "domain": "memory-rag-cython-equivalence",
-    "layer": "L1",
-    "owner": "backend/agent/rag/cython_rank.py",
-    "productionEntry": "backend/agent/rag/ts_sidecar.py 与 TypeScript RAG worker 的 rank_candidates 操作",
-    "keyBehavior": "候选排序、JS Number 配额边界与小数字符预算回退、JSONL 默认值、无效 wire shape 和评分版本错误与 TS worker 一致",
-    "ci": "backend-pytest"
-  },
-  "backend/tests/agent/rag/test_cython_operation_differential.py": {
-    "domain": "memory-rag-cython-equivalence",
-    "layer": "L1",
-    "owner": "backend/agent/rag/cython_backend.py",
-    "productionEntry": "backend/agent/rag/ts_sidecar.py 与 TypeScript RAG worker 的 hybrid_fuse 操作",
-    "keyBehavior": "Hybrid RRF 分数、fallback、诊断和并列顺序遵循 TS UTF-16 字符串排序契约",
-    "ci": "backend-pytest"
-  },
-  "backend/tests/agent/rag/test_cython_projection_differential.py": {
-    "domain": "memory-rag-cython-equivalence",
-    "layer": "L1",
-    "owner": "backend/agent/rag/cython_projection.py",
-    "productionEntry": "backend/agent/rag/index_builder.py 与 TypeScript RAG worker 的 build_and_index/search 操作",
-    "keyBehavior": "跨来源投影后的文档安装到 Cython 索引并查询，候选 ID、顺序、分数和过滤诊断与 TS 一致",
+    "keyBehavior": "普通应用进程可装载 Cython 内核与 tokenizer；缺少构建依赖时明确失败，不静默切换实现",
     "ci": "backend-pytest"
   },
   "backend/tests/im/feishu/test_feishu_tool_summary.py": {
@@ -2044,7 +2012,7 @@
     "layer": "L1",
     "owner": "backend/agent/rag/cython_backend.py",
     "productionEntry": "backend/agent/rag/service.py 与 provider embedding 适配",
-    "keyBehavior": "查询向量按校验后的 provider 配置生成并安全缓存；拒绝无效向量和配置，保持与 TS worker 协议一致",
+    "keyBehavior": "查询向量按校验后的 provider 配置生成并安全缓存；拒绝无效向量和配置",
     "ci": "backend-pytest"
   },
   "backend/tests/agent/rag/test_cython_backend.py": {
@@ -2052,7 +2020,7 @@
     "layer": "L1",
     "owner": "backend/agent/rag/cython_backend.py",
     "productionEntry": "backend/agent/rag/service.py",
-    "keyBehavior": "瞬态索引按文档版本更新或失效；投影、切块、排序及增量索引保持 TS 运行时语义",
+    "keyBehavior": "瞬态索引按内容版本更新或失效；投影、切块、排序及增量索引遵循统一检索契约",
     "ci": "backend-pytest"
   },
   "backend/tests/agent/rag/test_cython_collation.py": {
@@ -2060,7 +2028,7 @@
     "layer": "L0",
     "owner": "backend/agent/rag/cython_collation.py",
     "productionEntry": "backend/agent/rag/cython_rank.py",
-    "keyBehavior": "相同分数按 TS 英文区域排序规则稳定处理，反向排序保持前缀顺序",
+    "keyBehavior": "相同分数按稳定的英文区域排序规则处理，反向排序保持前缀顺序",
     "ci": "backend-pytest"
   },
   "backend/tests/agent/rag/test_cython_projection.py": {
@@ -2076,7 +2044,7 @@
     "layer": "L1",
     "owner": "backend/agent/rag/cython_rank.py",
     "productionEntry": "backend/agent/rag/service.py 的候选排序",
-    "keyBehavior": "置信区间、去重、来源上限和上下文预算遵循排序契约，并与 TS 黄金结果一致",
+    "keyBehavior": "置信区间、去重、来源上限和上下文预算遵循排序契约与确定性边界",
     "ci": "backend-pytest"
   },
   "backend/tests/agent/rag/test_cython_sidecar.py": {
@@ -2092,15 +2060,7 @@
     "layer": "L0",
     "owner": "backend/agent/rag/cython_tokenizer.pyx",
     "productionEntry": "backend/agent/rag/cython_backend.py",
-    "keyBehavior": "Cython 分词与 Python 参考及 TS 语义保持一致，保留 ASCII 压缩、日期别名与索引查询一致性",
-    "ci": "backend-pytest"
-  },
-  "backend/tests/agent/rag/test_cython_unified_differential.py": {
-    "domain": "rag-cython-differential",
-    "layer": "L1",
-    "owner": "backend/agent/rag/cython_runtime.py",
-    "productionEntry": "backend/agent/rag/sidecar_host.py 与 TS RAG worker",
-    "keyBehavior": "Cython 查询、批处理和 revision 错误与 TS worker 对照一致；预计算向量不会重复请求 provider",
+    "keyBehavior": "Cython 分词遵循 Python 参考契约，保留 ASCII 压缩、日期别名与索引查询一致性",
     "ci": "backend-pytest"
   },
   "backend/tests/agent/test_session_display_order.py": {

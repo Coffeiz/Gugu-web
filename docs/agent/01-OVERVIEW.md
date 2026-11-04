@@ -16,12 +16,12 @@ Agent 不直接等同于网页聊天页面，也不等同于某个模型供应�
 | 业务后端 | Python、FastAPI、SQLAlchemy、PostgreSQL、Redis | 用户数据、业务 API、Agent 编排、持久化和后台任务 |
 | Agent 核心 | `backend/agent/` | 请求路由、上下文、模型调用、工具、Skill、记忆、RAG 和交互 |
 | 模型适配 | `backend/agent/providers/` | Anthropic、OpenAI-compatible、Ollama 等供应商协议适配 |
-| RAG 检索服务 | Python 业务层 + 常驻 TypeScript lexical worker | 文档投影、索引缓存、BM25 召回、评分过滤和诊断 |
+| RAG 检索服务 | Python 业务层 + Cython 检索内核 | 文档投影、索引缓存、BM25 召回、评分过滤和诊断 |
 | 可观测性 | `backend/agent/runtime/loopscope_trace/` + LoopScope 前端 | Run、Round、Span、输入输出和性能诊断 |
 | IM 进程 | Worker、Gateway 和渠道适配器 | 接收外部消息、执行 Agent、推送回复和处理平台差异 |
 | Shell 沙盒 | `sandboxd` + Docker 执行器 | 在权限、配额和容器边界内执行 Shell 命令 |
 
-TS worker 和 LoopScope 是配合 Python 业务后端运行的专项服务；当前不能把它们描述为完整 TypeScript 后端。
+独立 TypeScript worker 与 LoopScope 配合 Python 业务后端运行；RAG 已统一由 Python/Cython 实现，不能把专项 worker 描述为完整 TypeScript 后端。
 
 ## 3. 核心能力
 
@@ -50,8 +50,8 @@ TS worker 和 LoopScope 是配合 Python 业务后端运行的专项服务；当
 ### RAG 与记忆
 
 - Memory 用于用户相关的长期信息；Knowledge 用于项目、系统、规则、流程和资料结论。
-- RAG 按来源和 scope 进行权限过滤，再使用 TypeScript lexical worker 执行词法召回和评分。
-- 索引、文档投影和 worker 具有 TTL 与增量更新策略；无命中或低于阈值时不注入上下文。
+- RAG 在 Python 层执行权限过滤、索引生命周期和检索编排，Cython 内核负责词法召回与评分。
+- 索引、文档投影和 Cython sidecar 具有 TTL 与增量更新策略；无命中或低于阈值时不注入上下文。
 - RAG 注入属于当前 run 的上下文事实，是否写入长期 Memory 或 Knowledge 由各自反思流程决定。
 
 ### 业务操作与执行工具

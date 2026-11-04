@@ -443,5 +443,5 @@ pytest -q
 - `snapshot_hash` 当前主要用于 checkpoint/trace 标识，尚未完全覆盖所有 snapshot 输入的内容哈希；正确性依靠 snapshot payload、TTL 和 context revision。
 - 工具能力通过固定 Adapter 暴露；模型需要业务工具定义时调用 `get_tool_schema`，OpenAI/Anthropic 的历史 wire format 仍由 history adapter 兼容转换。
 - canonical history 已覆盖工具调用、工具结果、Tool/Skill schema 事件，并使用 `ToolCall`/`ToolResult` 领域对象统一归一；LoopScope 展示 canonical event、Schema digest 和 Adapter 统计。
-- RAG 的统一索引、切片和召回以 `PRD-RAG-1-统一知识召回与索引.md`、`PRD-RAG-6-TypeScript词法检索与评分过滤直接替换.md` 为准；当前词法索引与 confidence/filter 正常路径由固定 Node TypeScript worker 执行，Python 负责权限、业务文档和正文回填；历史 Rust 实现不再进入运行时回退。
+- RAG 的统一索引、切片和召回以 `PRD-RAG-1-统一知识召回与索引.md` 和 `PRD-RAG-11-Cython等效模块与TS-RAG迁移.md` 为准；当前索引投影、词法检索、排序和生命周期由 Python/Cython 承担，TypeScript RAG worker 已移除；历史 Rust 实现不进入运行时回退。
 - 配额模型字段和 onboarding 路由已经存在，但计费窗口、运营规则和完整协议仍应维护在专题文档，不在本总览中重复展开。

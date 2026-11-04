@@ -41,7 +41,7 @@ RAG/Memory  Interaction
 canonical history。LoopScope 只接收受限生命周期摘要，Provider payload 不进入普通历史、日志或
 渠道消息。
 
-当前主链路由 Python/FastAPI 承担。TypeScript 主要提供 RAG lexical worker 和 LoopScope 相关服务，不是完整的 TypeScript Agent 后端。
+当前主链路由 Python/FastAPI 承担。RAG 检索由 Python 编排、Cython 内核执行；TypeScript 只提供文件同步、画布渲染和 LoopScope 等独立服务，不是完整的 TypeScript Agent 后端。
 
 ## 3. 服务与进程
 
@@ -59,7 +59,7 @@ FastAPI 业务服务，提供用户态和 Admin API，同时承载 Web Agent 请
 
 ### 3.4 TypeScript services
 
-TypeScript lexical worker 为 RAG 提供常驻词法索引、BM25 搜索、索引 patch 和评分能力。LoopScope 的 TypeScript 服务负责接收和查询运行诊断数据。
+TypeScript worker 不参与 RAG。文件同步、画布渲染和 LoopScope 服务各自承担独立职责。
 
 ### 3.5 `sandboxd`
 
@@ -160,7 +160,7 @@ Shell 沙盒执行服务。生产普通用户的 Shell 请求通过 Docker 执�
 
 位置：`backend/agent/rag/`、`backend/agent/memory/`、`backend/agent/knowledge/`。
 
-- RAG 负责按 scope 和来源召回上下文候选，并通过 TypeScript lexical worker 完成词法检索。
+- RAG 由 Python 层按 scope 和来源召回上下文候选，Cython 内核完成词法检索与评分。
 - Memory 负责用户相关的长期信息和反思结果。
 - Knowledge 负责项目、系统、规则、流程和资料结论，不等同于个人 Memory。
 
@@ -227,7 +227,7 @@ Tool schema
 | 工具调用 / 交互等待 | PostgreSQL | 支持确认、恢复、过期和审计 |
 | IM 入站队列 | Redis | 跨进程传递消息，不替代消息持久化 |
 | 文件和附件 | Local/OSS | 元数据与物理对象分离 |
-| RAG 文档和索引 | PostgreSQL、进程缓存、TS worker | 通过 revision、TTL 和 patch 更新 |
+| RAG 文档和索引 | PostgreSQL、进程缓存、Python/Cython | 通过 revision、TTL 和增量更新维护 |
 | Run / Round / Span | LoopScope 存储 | 用于执行诊断和性能分析 |
 
 展示消息不是唯一事实源。刷新页面或切换渠道时，应从结构化历史重新渲染，而不是依赖某一次流式显示结果。
@@ -268,7 +268,7 @@ LoopScope 用于查看这些运行事实；普通业务日志仍须遵循脱敏�
 
 - Agent 业务主链路仍是 Python，TypeScript 只承载已拆出的专项服务。
 - 不同 IM 平台仍需要独立的发送格式适配，不能保证所有平台支持相同的交互卡片能力。
-- RAG 的文档读取、索引缓存和跨 scope 处理仍需要同时关注数据库、Python service 和 TS worker 三层边界。
+- RAG 的文档读取、索引缓存和跨 scope 处理由 Python/Cython 统一实现，并保持数据库事实源与 Python 权限复核边界。
 - Shell 的本机执行器和 Docker 沙盒具有不同安全语义，生产普通用户不能把本机执行器当作隔离环境。
 
 后续新增或重构模块时，应先明确它属于哪一层、拥有哪条数据边界，以及是否复用现有 canonical history、权限校验和可观测性链路。

@@ -24,7 +24,7 @@ Web / QQ / WeChat / Feishu / Telegram / scheduled jobs
 - gugu-backend provides FastAPI APIs and the Web Agent path.
 - gugu-worker consumes IM messages and runs the shared Agent loop.
 - gugu-gateway manages external gateway connections and processes.
-- The TypeScript lexical worker provides RAG indexing and search.
+- RAG orchestration and indexing lifecycle run in Python; the Cython kernel provides lexical retrieval and ranking.
 - LoopScope collects development traces without blocking business requests.
 - sandboxd executes Shell commands within the container and quota boundary.
 
