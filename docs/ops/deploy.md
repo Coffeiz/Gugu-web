@@ -555,11 +555,23 @@ sudo ln -s /etc/nginx/sites-available/gugu /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-> HTTPS：用 `certbot --nginx -d www.gugugu.site` 自动配 Let's Encrypt。
+裸域与 `www` 应使用同一张同时包含 `gugugu.site` 和 `www.gugugu.site` 的证书。裸域 HTTP/HTTPS 都应重定向到 `https://www.gugugu.site$request_uri`；HTTPS 裸域在握手前也会校验证书，所以不能只配置 HTTP 跳转。
+
+使用原生 Nginx + Certbot 时，签发时同时包含两个 SAN：
+
+```bash
+sudo certbot --nginx -d gugugu.site -d www.gugugu.site
+```
+
+使用 1Panel 时，在网站证书的域名列表同时选择 `gugugu.site` 和 `www.gugugu.site` 后重新签发；再为裸域添加 HTTP 与 HTTPS 到 `www` 的永久跳转。修改后验证两个域名的证书 SAN、HTTP/HTTPS 跳转链和最终状态码。
+
+公开产品介绍页暂不发布。当前 `robots.txt` 禁止抓取应用页面，等公开页面准备好后再配置索引范围与站点地图。
 
 #### 4.4.1 1Panel 面板部署（对应上面 nginx，拆成面板几处填）
 
 1Panel 不手写 nginx server 块，把上面那套拆进面板：
+
+- **域名与证书**：站点绑定 `www.gugugu.site` 和 `gugugu.site`；证书 SAN 同时包含两者。裸域 HTTP 与 HTTPS 均永久跳转到 `https://www.gugugu.site$request_uri`，不可让 HTTP 裸域先跳到未覆盖裸域的 HTTPS。
 
 - **数据库 / Redis**：应用商店一键装 PostgreSQL + Redis（设密码）→「数据库」菜单建库，记下**库名/用户/密码/端口**填进 `.env`。⚠️ 1Panel 的 Postgres/Redis 端口常**不是默认** 5432/6379，在应用详情里看。
 - **网站根目录** → 指向 `Gugu-web/frontend/dist`（网站设置里改根目录）。
