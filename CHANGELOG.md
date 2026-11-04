@@ -21,6 +21,7 @@
 - Preserve chronological message order and stable conversation prefixes when group messages arrive during a running reply.
 - Propagate run cancellation through in-flight model and tool work, and report a consistent terminal state.
 - Batch and cache knowledge retrieval to reduce repeated work during context injection.
+- Unify knowledge retrieval and indexing on Python/Cython while preserving existing recall and access-control behavior.
 - Use a consistent scrollable card layout across scheduled tasks, skills, and MCP services.
 - Improve outbound web request header handling and destination validation.
 - Coordinate concurrent background reflection requests that share a provider cache prefix.
@@ -80,6 +81,7 @@
 - 群聊消息在回复运行期间到达时，保持历史时间顺序和会话前缀稳定。
 - 将取消信号传递到运行中的模型和工具任务，并统一反馈任务终态。
 - 对知识检索进行批处理和缓存，减少上下文注入时的重复工作。
+- 将知识检索与索引统一到 Python/Cython 实现，保持现有召回和访问控制行为。
 - 定时任务、技能和 MCP 服务统一使用可滚动卡片布局。
 - 改进联网请求头处理与目标地址校验。
 - 协调共享 Provider 缓存前缀的并发后台反思请求，减少缓存竞争。
