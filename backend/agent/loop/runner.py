@@ -819,6 +819,7 @@ async def run_loop(
                                     serial_indexes, emission.value.dispatched,
                                 )
                             )
+                            parallel_cancelled = emission.value.cancelled
 
                 dispatched = [indexed_dispatched[index] for index in sorted(indexed_dispatched)]
                 for call_index in sorted(terminal_events):

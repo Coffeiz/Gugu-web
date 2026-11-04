@@ -396,6 +396,7 @@ class SerialToolBindings:
 @dataclass(frozen=True)
 class SerialToolBatchOutcome:
     dispatched: list[tuple[Any, Any]]
+    cancelled: bool = False
 
 
 @dataclass
@@ -532,12 +533,29 @@ class SerialToolBatchRuntime:
                 }, ensure_ascii=False)
                 artifact = None
             else:
-                result, artifact = await self.bindings.dispatch_in_session(
-                    self.user_id, dispatch_target, dispatch_input,
-                    session_id=self.session_id, session=self.session, run_id=self.run_id,
-                    tool_snapshot=self.tool_snapshot, skill_state=self.loaded_skill_ids,
-                    tool_call_id=tool_call_id,
-                )
+                from agent.runtime.cancellation import RunCancellationRequested
+
+                try:
+                    result, artifact = await self.bindings.dispatch_in_session(
+                        self.user_id, dispatch_target, dispatch_input,
+                        session_id=self.session_id, session=self.session, run_id=self.run_id,
+                        tool_snapshot=self.tool_snapshot, skill_state=self.loaded_skill_ids,
+                        tool_call_id=tool_call_id,
+                    )
+                except RunCancellationRequested:
+                    result = self.bindings.json_dumps({"error": "工具调用已取消。"}, ensure_ascii=False)
+                    dispatched.append((tool_call, result))
+                    yield emit(
+                        "tool_done", round_id=self.round_id, tool_call_id=tool_call_id,
+                        name=effective_name, label=label, verify=self.verify_mode,
+                        status="cancelled", result=result,
+                    )
+                    emissions, remaining = self._defer_following_calls(call_index)
+                    dispatched.extend(remaining)
+                    for emission in emissions:
+                        yield emission
+                    yield ToolRoundEmission("complete", SerialToolBatchOutcome(dispatched, cancelled=True))
+                    return
                 if input_signature and _is_schema_rejection(result, self.bindings.json_loads):
                     self.run_state.invalid_tool_input_signatures.add(input_signature)
                 if skill_id and self.bindings.is_successful_result(result):

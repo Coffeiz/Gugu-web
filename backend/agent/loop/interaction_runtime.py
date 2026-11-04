@@ -73,6 +73,7 @@ class InteractionRuntime:
         replay = pending.replay
         if isinstance(answer, dict) and answer.get("status") == "confirmed" and isinstance(replay, dict):
             from agent.interactions.confirmations import is_block
+            from agent.runtime.cancellation import RunCancellationRequested
 
             try:
                 executed, artifact = await self.bindings.dispatch_in_session(
@@ -86,6 +87,10 @@ class InteractionRuntime:
                     skill_state=self.skill_state,
                     tool_call_id=pending.tool_call_id,
                 )
+            except RunCancellationRequested:
+                async for emission in self._terminate_pending(pending, None, "aborted"):
+                    yield emission
+                return
             except Exception as exc:
                 self.bindings.diag_log("agent.core.confirm_replay", exc)
                 executed, artifact = {

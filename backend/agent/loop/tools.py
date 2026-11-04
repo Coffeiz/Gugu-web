@@ -158,6 +158,7 @@ async def dispatch_in_session(
     与首次完全一致是这个不变量的前提）。
     """
     from agent.tools.base import set_dispatch_session, reset_dispatch_session
+    from agent.runtime.cancellation import current_cancellation
 
     _dispatch_token = set_dispatch_session(
         session_id, session, run_id,
@@ -166,6 +167,12 @@ async def dispatch_in_session(
         tool_call_id=tool_call_id,
     )
     try:
-        return await registry.dispatch(user_id, target, dispatch_input)
+        # 工具等待期间也监听取消并续期 IM 活跃状态；不能等工具返回后才检查。
+        # sandboxd 客户端在协程取消时使用自己的命令 ID 停止执行，system
+        # 执行器则终止本地进程组，因此这里不使用 Run ID 代替命令 ID。
+        return await current_cancellation(session_id).dispatch(
+            lambda: registry.dispatch(user_id, target, dispatch_input),
+            request_id=None,
+        )
     finally:
         reset_dispatch_session(_dispatch_token)
