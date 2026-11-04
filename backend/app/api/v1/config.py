@@ -1212,7 +1212,7 @@ async def _rebuild_index_worker(user_ids: list[str]) -> None:
                     get_index_cache().invalidate(user_id, include_snapshot=True)
             except Exception as exc:
                 user_failed = True
-                diag_log("app.api.v1.config.index_rebuild.ts_index", exc)
+                diag_log("app.api.v1.config.index_rebuild.cython_index", exc)
 
             done += 1
             if user_failed:

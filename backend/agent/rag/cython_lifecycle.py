@@ -860,7 +860,7 @@ def _validate_memory_scopes(owner_id: str, scopes) -> list:
         if scope.scope_type not in {"owner", "group", "member"}:
             raise ValueError("Memory scope 类型不受支持")
         if scope.scope_type == "owner":
-            # TsSidecarClient 会把 owner scope 的空 id 规范化为绑定 owner 后再发给 TS。
+            # IPC 边界会把 owner scope 的空 id 规范化为绑定 owner 后再发送。
             if str(scope.scope_id or "") not in {"", owner_id}:
                 raise ValueError("Memory owner scope 不匹配")
             if not scope.scope_id:

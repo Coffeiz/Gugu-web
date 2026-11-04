@@ -19,8 +19,8 @@ BACKEND = Path(__file__).resolve().parents[3]
 def test_selected_cython_backend_loads_native_extensions_in_plain_process(tmp_path):
     script = """
 from types import SimpleNamespace
-from agent.rag.index_cache import _selected_backend
-assert _selected_backend(SimpleNamespace(rag_backend='cython')) == 'cython'
+from agent.rag.cython_runtime import ensure_cython_importer
+ensure_cython_importer()
 from agent.rag.cython_backend import _load_kernel
 from agent.rag.cython_tokenizer import tokenize_raw
 assert callable(_load_kernel())

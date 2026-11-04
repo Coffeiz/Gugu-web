@@ -1,7 +1,7 @@
-"""RAG 候选排序与注入预算的 Python facade。
+"""RAG 候选排序与注入预算的 Cython facade。
 
-BM25、cosine 与 IDF 贡献数值核由 ``cython_kernel`` 提供；这里保留 TS
-rank-candidates 的评分编排、引用和诊断契约，且当前不接生产调用路径。
+BM25、cosine 与 IDF 贡献数值核由 ``cython_kernel`` 提供；本模块负责
+候选评分、引用和诊断，供生产检索链路调用。
 """
 from __future__ import annotations
 
@@ -76,9 +76,9 @@ def rank_candidates(
     precomputed_term_frequencies: Mapping[str, Mapping[str, int]] | None = None,
     precomputed_document_lengths: Mapping[str, int] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """与 TS ``rankCandidates`` 同契约的候选评分、选择和诊断 facade。
+    """对候选执行评分、选择并生成诊断信息。
 
-    输入 document 使用 TS wire 字段名，便于同一份脱敏 fixture 双边回放。
+    输入 document 使用 sidecar wire 字段名，与本地索引候选结构一致。
     """
     started = time.perf_counter()
     query = "" if query is None else query

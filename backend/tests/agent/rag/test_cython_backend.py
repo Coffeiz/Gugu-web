@@ -1,12 +1,8 @@
 """保护 Cython RAG 地基的 CSR 输入契约和确定性布局。"""
 from __future__ import annotations
 
-import json
-import subprocess
-import tempfile
 from collections import Counter
 from dataclasses import replace
-from pathlib import Path
 
 import pytest
 
@@ -102,14 +98,14 @@ def test_database_projection_and_incremental_patch_preserve_ts_text_rules():
 def test_database_wire_uses_ts_text_and_timestamp_without_changing_transient_wire():
     scope = Scope("owner-a")
     note = IndexDocument("n", "note", "n", scope, "标题", "摘要", "摘要 正文", "v1", updated_at="2026-01-02T03:04:05+00:00")
-    database = cython_backend._worker_document_wire(note, "note:n:0", True)
-    transient = cython_backend._worker_document_wire(note, "note:n:0")
+    database = cython_backend._index_document_wire(note, "note:n:0", True)
+    transient = cython_backend._index_document_wire(note, "note:n:0")
     assert database["text"] == "标题\n摘要\n摘要 正文"
     assert database["updated_at"] == "2026-01-02T03:04:05.000Z"
     assert transient["text"] == "标题\n摘要 正文"
     conversation = replace(note, source_type="conversation", content="片段", metadata={"context_current": "完整消息"})
-    assert cython_backend._worker_document_wire(conversation, "c", True)["ranking_text"] == "片段"
-    assert cython_backend._worker_document_wire(conversation, "c")["ranking_text"] == "完整消息"
+    assert cython_backend._index_document_wire(conversation, "c", True)["ranking_text"] == "片段"
+    assert cython_backend._index_document_wire(conversation, "c")["ranking_text"] == "完整消息"
 
 
 def test_daily_later_chunk_keeps_summary_like_ts_projection():
@@ -119,7 +115,7 @@ def test_daily_later_chunk_keeps_summary_like_ts_projection():
     expected = "近期记忆\n开头摘要\n后续片段"
     assert cython_backend._ranking_text(document) == expected
     assert cython_native.ranking_text_many([document]) == [expected]
-    assert cython_backend._worker_document_wire(document, "memory:daily:1")["text"] == expected
+    assert cython_backend._index_document_wire(document, "memory:daily:1")["text"] == expected
 
 
 def test_cython_index_preserves_document_and_term_posting_order() -> None:
@@ -368,71 +364,33 @@ def test_lexical_facade_matches_member_scope_group_exception(monkeypatch: pytest
     assert [item.document.document_id for item in results] == ["group-memory"]
 
 
-def test_scope_matrix_matches_ts_worker_for_owner_project_folder_and_group() -> None:
-    """owner 隔离后的 project/folder/group scope 可见性与 TS worker 一致。"""
-    from agent.rag.cython_backend import _worker_document_wire
-    from agent.rag.delta import chunk_slot_key
-
+def test_scope_matrix_enforces_owner_project_folder_and_group_boundaries() -> None:
+    """Cython 查询按 owner、项目、文件夹、群和成员范围隔离结果。"""
     owner = "owner-a"
     documents = [
         _document("owner", "knowledge", "scope query", scope=Scope(owner)),
         _document("project", "project", "scope query", scope=Scope(owner), metadata={"project_id": "p1"}),
         _document("folder", "knowledge", "scope query", scope=Scope(owner), metadata={"folder_id": "f1"}),
-        _document(
-            "group", "memory", "scope query",
-            scope=Scope(owner, "qq", "bot-a", "g1", "group", "g1"),
-        ),
-        _document(
-            "member", "memory", "scope query",
-            scope=Scope(owner, "qq", "bot-a", "g1", "member", "g1:u1"),
-        ),
-        _document(
-            "other-platform", "memory", "scope query",
-            scope=Scope(owner, "wechat", "bot-a", "g1", "group", "g1"),
-        ),
+        _document("group", "memory", "scope query", scope=Scope(owner, "qq", "bot-a", "g1", "group", "g1")),
+        _document("member", "memory", "scope query", scope=Scope(owner, "qq", "bot-a", "g1", "member", "g1:u1")),
+        _document("other-platform", "memory", "scope query", scope=Scope(owner, "wechat", "bot-a", "g1", "group", "g1")),
+        _document("other-owner", "knowledge", "scope query", scope=Scope("owner-b")),
     ]
     index = cython_backend.CythonLexicalIndex.build(documents, "r1")
     scope_cases = [
-        None,
-        Scope(owner),
-        Scope(owner, scope_type="project", scope_id="p1"),
-        Scope(owner, scope_type="folder", scope_id="f1"),
-        Scope(owner, "qq", "bot-a", "g1", "group", "g1"),
-        Scope(owner, "qq", "bot-a", "g1", "member", "g1:u1"),
+        (None, {"owner", "project", "folder", "group", "member", "other-platform"}),
+        (Scope(owner), {"owner", "project", "folder", "group", "member", "other-platform"}),
+        (Scope(owner, scope_type="project", scope_id="p1"), {"project"}),
+        (Scope(owner, scope_type="folder", scope_id="f1"), {"folder"}),
+        (Scope(owner, "qq", "bot-a", "g1", "group", "g1"), {"group"}),
+        (Scope(owner, "qq", "bot-a", "g1", "member", "g1:u1"), {"group", "member"}),
     ]
-    wire_documents = [
-        _worker_document_wire(document, chunk_slot_key(document)) for document in documents
-    ]
-    requests = [{"op": "replace", "revision": "r1", "documents": wire_documents}]
-    for scope in scope_cases:
-        requests.append({
-            "op": "search", "revision": "r1", "query": "scope query", "limit": 20,
-            **({"scope": {
-                "platform": scope.platform, "bot_id": scope.bot_id,
-                "group_id": scope.group_id, "scope_type": scope.scope_type,
-                "scope_id": scope.scope_id,
-            }} if scope is not None else {}),
-        })
 
-    with tempfile.TemporaryDirectory() as index_dir:
-        completed = subprocess.run(
-            ["node", "--experimental-strip-types", "backend/ts/workers/rag/src/index.ts", index_dir],
-            input="".join(json.dumps(item, ensure_ascii=False) + "\n" for item in requests),
-            text=True, capture_output=True, check=True, cwd=Path(__file__).parents[4], timeout=30,
-        )
-    responses = [json.loads(line) for line in completed.stdout.splitlines() if line.strip()]
-
-    for scope, response in zip(scope_cases, responses[1:]):
-        assert response["status"] == "ok"
-        actual, diagnostics = index.search("scope query", limit=20, scope=scope)
-        assert [(chunk_slot_key(row.document), row.score) for row in actual] == [
-            (row["id"], row["score"]) for row in response["results"]
-        ]
-        expected_diagnostics = response["diagnostics"]
-        assert diagnostics.candidate_count == expected_diagnostics["candidate_count"]
-        assert diagnostics.eligible_count == expected_diagnostics["eligible_count"]
-        assert diagnostics.filtered_count == expected_diagnostics["filtered_count"]
-        assert diagnostics.scope_filter_applied == expected_diagnostics["scope_filter_applied"]
+    for scope, expected_ids in scope_cases:
+        results, diagnostics = index.search("scope query", limit=20, scope=scope)
+        assert {item.document.document_id for item in results} == expected_ids
+        assert diagnostics.eligible_count == len(expected_ids)
+        assert diagnostics.scope_filter_applied is (scope is not None)
 
 
 def test_engine_revision_patch_transient_and_conversation_watermark_contract(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -692,7 +650,7 @@ def test_engine_patch_applies_stable_slot_upserts_and_deletes() -> None:
 
 
 def test_engine_patch_preserves_unchanged_order_and_appends_upserts_in_request_order() -> None:
-    """增量更新保留未变文档顺序，并按 TS worker 的 upsert 顺序追加变更项。"""
+    """增量更新保留未变文档顺序，并按输入顺序追加变更项。"""
     engine = CythonRagEngine()
     first = _document("first", "knowledge", "旧首项")
     second = _document("second", "knowledge", "保留项")

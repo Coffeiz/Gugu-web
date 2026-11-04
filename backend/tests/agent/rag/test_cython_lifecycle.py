@@ -694,12 +694,10 @@ async def test_memory_vector_decode_and_validation_do_not_block_event_loop(monke
 
 
 @pytest.mark.asyncio
-async def test_cython_memory_adapter_projects_without_ts_worker(monkeypatch):
-    """Cython Memory 投影不启动 TS，仍保留分块、来源和 owner 授权。"""
+async def test_cython_memory_adapter_projects_authorized_records(monkeypatch):
+    """Cython Memory 投影保留分块、来源和 owner 授权。"""
     from agent.rag.adapters.memory import MemoryAdapter
     from agent.rag.cython_lifecycle import _CythonMemoryAdapter
-    from agent.rag import ts_sidecar
-
     scope = Scope(owner_user_id="owner-a", scope_type="owner")
     adapter = _CythonMemoryAdapter("owner-a")
     record = adapter._make_source_record(scope, "daily", "长期记忆内容" * 300, "近期记忆", 0)
@@ -708,12 +706,8 @@ async def test_cython_memory_adapter_projects_without_ts_worker(monkeypatch):
     async def records(_self, *, scope):
         return [record]
 
-    async def forbidden(*args, **kwargs):
-        raise AssertionError("Cython Memory 投影不应启动 TS worker")
-
     monkeypatch.setattr(MemoryAdapter, "build_source_records", records)
     monkeypatch.setattr(MemoryAdapter, "_build_daily_source_records", records)
-    monkeypatch.setattr(ts_sidecar, "get_lexical_client", forbidden)
     documents = await adapter.build_documents(scope=scope)
     daily = await adapter.build_daily_documents(scope=scope)
     assert len(documents) > 1
@@ -761,11 +755,11 @@ async def test_cython_prepare_memory_vectors_use_worker_document_ids(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_memory_revision_tracks_all_visible_document_state_without_ts_wire(monkeypatch):
-    """瞬态 revision 覆盖文档/权限/元数据/向量版本，且不依赖 TS wire 投影。"""
+async def test_memory_revision_tracks_all_visible_document_state(monkeypatch):
+    """瞬态 revision 覆盖文档、权限、元数据和向量版本。"""
     from agent.rag.adapters.memory import MemoryAdapter
     from agent.rag.cython_lifecycle import _CythonMemoryAdapter
-    from agent.rag import cython_native, ts_sidecar
+    from agent.rag import cython_native
 
     scope = Scope("owner-a", scope_type="owner")
     document = IndexDocument(
@@ -780,12 +774,8 @@ async def test_memory_revision_tracks_all_visible_document_state_without_ts_wire
     async def read_vector_maps(_owner, _version):
         return {"memory": {}, "knowledge": {}, "pattern": {}}
 
-    async def forbidden(*args, **kwargs):
-        raise AssertionError("本地 transient revision 不应构造 TS wire")
-
     monkeypatch.setattr(MemoryAdapter, "build_cached_owner_documents", owner_documents)
     monkeypatch.setattr(CythonRagLifecycle, "_read_memory_vector_maps", staticmethod(read_vector_maps))
-    monkeypatch.setattr(ts_sidecar, "_wire_document", forbidden)
 
     lifecycle = CythonRagLifecycle()
     first = await lifecycle.prepare_memory("owner-a", [scope], vector_version="model:v1")

@@ -2,7 +2,7 @@
 
 覆盖：单条读取/投影、单 source_id chunk 增量写库、worker patch 与
 revision_mismatch 回退、删除/收缩无残留、事件路由（带 source_id 走文档级）。
-不启动真实 TS worker：投影与 worker 都用 fake。
+sidecar 通过 fake 隔离：测试集中验证投影和索引更新行为。
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ import agent.rag.pipeline as pipeline
 from agent.events.types import RagIndexUpdated
 from agent.rag.models import IndexDocument, Scope
 from agent.rag.persistent_store import load_parent_documents, replace_source_documents
-from agent.rag.ts_sidecar import TsSidecarUnavailable
+from agent.rag.sidecar_protocol import RagSidecarUnavailable
 from app.models import Base, User, KnowledgeIndexEntry
 from app.services.storage import LocalStorageBackend
 
@@ -66,7 +66,7 @@ class FakeWorker:
         if self.fail_patch_codes:
             code = self.fail_patch_codes.pop(0)
             if code:
-                raise TsSidecarUnavailable(f"worker: {code}", code=code)
+                raise RagSidecarUnavailable(f"worker: {code}", code=code)
         self.calls.append(("patch", {
             "upserts": [d.chunk_id for d in upserts],
             "deletes": list(deletes), "revision": revision,

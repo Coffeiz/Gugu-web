@@ -24,11 +24,7 @@ from agent.rag.models import RecallCandidate, Scope
 from agent.rag.scope import owner_scope, group_scope
 from agent.rag.service import _load_cached_vectors
 from agent.rag.index_cache import search_documents_with_cache
-from agent.rag.ts_sidecar import (
-    close_lexical_clients,
-    close_rank_clients,
-    rank_candidates_with_cache,
-)
+from agent.rag.service import rank_candidates_for_query
 from app.models import MemoryReflectionCursor, User
 
 
@@ -110,7 +106,7 @@ def public(
 async def quality_views(
     owner_id: str, query: str, results, *, top_k: int, full: bool = False,
 ) -> dict[str, Any]:
-    """输出四种离线策略；confidence 直接复用 TS worker，避免 Python 分词漂移。"""
+    """输出四种离线策略；confidence 使用生产 Cython scorer，确保诊断与线上算法一致。"""
     # 诊断只需要评估实际的 Top-K；对真实长正文再额外请求 20 条会让
     # JSONL worker 的单行响应超过 asyncio stream 上限，掩盖真正的评分结果。
     raw = list(results[:top_k])
@@ -118,13 +114,18 @@ async def quality_views(
         RecallCandidate.from_result(item, rank=index)
         for index, item in enumerate(raw, start=1)
     ]
-    confidence_kept, confidence_stats = await rank_candidates_with_cache(
-        owner_id, query, candidates, limit=top_k, max_chars=3000,
-        max_per_source=3, max_per_parent=3,
+    confidence_kept, confidence_stats = await rank_candidates_for_query(
+        query, candidates, {
+            "limit": top_k, "max_chars": 3000,
+            "max_per_source": 3, "max_per_parent": 3,
+        },
     )
-    active_kept, active_stats = await rank_candidates_with_cache(
-        owner_id, query, candidates, limit=top_k, max_chars=3000,
-        max_per_source=3, max_per_parent=3, selection_mode="top_k",
+    active_kept, active_stats = await rank_candidates_for_query(
+        query, candidates, {
+            "limit": top_k, "max_chars": 3000,
+            "max_per_source": 3, "max_per_parent": 3,
+            "selection_mode": "top_k",
+        },
     )
     return {
         "unfiltered": [public(item, item.score, mode="unfiltered", full=full) for item in raw[:top_k]],
@@ -267,8 +268,6 @@ async def main() -> None:
         else:
             print(json.dumps(payload, ensure_ascii=False))
     finally:
-        await close_rank_clients()
-        await close_lexical_clients()
 
 
 def _md(value: object) -> str:

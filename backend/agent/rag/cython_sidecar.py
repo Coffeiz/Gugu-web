@@ -7,11 +7,11 @@ import uuid
 from typing import Any
 
 from agent.rag.models import RecallResult, Scope
-from agent.rag.ts_sidecar import (
+from agent.rag.sidecar_protocol import (
     SIDECAR_STREAM_LIMIT_BYTES,
-    TsSidecarUnavailable,
-    _from_wire_document,
-    _wire_document,
+    RagSidecarUnavailable,
+    from_wire_document,
+    wire_document,
 )
 
 CYTHON_BUILD_TIMEOUT_SECONDS = 120.0
@@ -78,7 +78,7 @@ async def _socket_request(
     return result
 
 
-class CythonSidecarUnavailable(TsSidecarUnavailable):
+class CythonSidecarUnavailable(RagSidecarUnavailable):
     """常驻 Cython RAG worker 不可用或 RPC 失败。"""
 
     def __init__(self, message: str, *, code: str | None = None):
@@ -211,7 +211,7 @@ class CythonSidecarTransientIndex:
             "source_types": sorted(map(str, source_types)),
             "scope": _wire_value(scope) if scope is not None else None,
             "documents": [{
-                **_wire_document(document),
+                **wire_document(document),
                 "owner_user_id": document.scope.owner_user_id,
             } for document in self.documents],
         }
@@ -223,7 +223,7 @@ class CythonSidecarTransientIndex:
         for row in response.get("results") or ():
             if not isinstance(row, dict) or not isinstance(row.get("document"), dict):
                 continue
-            document = _from_wire_document(row["document"], self.owner_user_id)
+            document = from_wire_document(row["document"], self.owner_user_id)
             if document is not None:
                 results.append(RecallResult(document, float(row.get("score") or 0)))
         return results, response.get("timing") or {}

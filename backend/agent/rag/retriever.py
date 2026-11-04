@@ -46,7 +46,7 @@ class SourceRetriever(Protocol):
 
 
 class UnifiedRetriever:
-    """按 source_type 注册来源 Retriever 的容器；交付统一走 TS worker（Phase 5）。
+    """按 source_type 注册来源 Retriever 的容器；交付统一走 Cython 检索链。
 
     旧的多请求逐来源调度已随 legacy 查询链删除（2026-09-09 清理）；本类只保留
     注册表职责，供统一查询主链枚举来源、装载语料和收口 scope。

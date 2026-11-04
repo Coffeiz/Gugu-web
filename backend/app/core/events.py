@@ -20,7 +20,6 @@ from app.core.redis import get_redis
 _CONTEXT_RESOURCES = {"projects", "calendar", "files", "memory"}
 # snapshot 新鲜度覆盖的输入比前端 SSE 资源集合更大。
 _CONTEXT_REVISION_SOURCES = _CONTEXT_RESOURCES | {"preferences", "timezone", "im_channels"}
-_DATA_RUNTIME_RESOURCES = {"projects", "files", "sessions", "conversation"}
 _RAG_SOURCES_BY_RESOURCE: dict[str, tuple[str, ...]] = {
     "projects": ("project",),
     "sessions": ("conversation",),
@@ -137,33 +136,6 @@ async def bump_context_revision(user_id, *resources: str) -> None:
         redis = get_redis()
         await redis.incr(key)
         await redis.expire(key, 60 * 60 * 24 * 7)
-    except Exception:
-        pass
-
-
-async def publish_data_runtime_invalidation(user_id, resource: str,
-                                            *, operation: str = "refresh",
-                                            scope_type: str = "owner",
-                                            scope_id: str | None = None,
-                                            revision: int | str | None = None) -> None:
-    """向 TS Data Runtime 发布来源级失效事件；失败不影响业务写入。"""
-    canonical = {"projects": "project", "files": "file", "sessions": "conversation"}.get(resource, resource)
-    if canonical not in {"project", "file", "conversation"}:
-        return
-    try:
-        payload = {
-            "protocol_version": "data-runtime-invalidation-v1",
-            "event_id": f"data-{uuid.uuid4().hex}",
-            "owner_id": str(user_id),
-            "resource": canonical,
-            "scope_type": scope_type,
-            "scope_id": scope_id or str(user_id),
-            "operation": operation,
-        }
-        if revision is not None:
-            payload["revision"] = revision
-        redis = get_redis()
-        await redis.publish(f"data-runtime:invalidate:{user_id}", json.dumps(payload, ensure_ascii=False))
     except Exception:
         pass
 
@@ -309,12 +281,6 @@ async def publish(user_id, *resources: str, origin: str | None = None,
         await get_redis().publish(_channel(user_id), json.dumps(payload, ensure_ascii=False))
     except Exception:
         return False
-    for resource in res:
-        if resource in _DATA_RUNTIME_RESOURCES:
-            invalidation_operation = inferred_operation if res else (operation or "refresh")
-            if invalidation_operation == "append":
-                invalidation_operation = "update"
-            await publish_data_runtime_invalidation(user_id, resource, operation=invalidation_operation)
     return True
 
 

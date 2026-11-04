@@ -21,7 +21,7 @@
       --user <user-id> --query "gpt6大概多少参数量" --query "蒙扎的T6叫什么"
 
 说明：``--candidate-limit`` 是生产召回候选上限；观察模式默认另外请求
-TS ranker 最多 50 条结果，避免把“ranker 截断”误报成“来源没有召回”。
+Cython ranker 最多 50 条结果，避免把“ranker 截断”误报成“来源没有召回”。
 """
 from __future__ import annotations
 
@@ -45,11 +45,7 @@ from agent.rag.context import reset_conversation_before_message_id, set_conversa
 from agent.rag.models import RecallCandidate, RecallResult, Scope, content_hash
 from agent.rag.scope import group_scope, owner_scope
 from agent.rag.service import _load_cached_vectors
-from agent.rag.ts_sidecar import (
-    close_lexical_clients,
-    close_rank_clients,
-    rank_candidates_with_cache,
-)
+from agent.rag.service import rank_candidates_for_query
 from app.models import MemoryReflectionCursor, User
 
 from scripts.diagnostics.rag_quality_retest import QUERIES, cosine, fp
@@ -86,7 +82,7 @@ MAX_RANKER_OBSERVATION_LIMIT = 50
 def ranker_observation_limit(requested: int, top_k: int) -> int:
     """返回诊断观察模式的 ranker 上限，不与生产候选上限混用。
 
-    TS worker 的协议上限是 50。观察模式需要覆盖旧 rank_score 排序下的
+    观察模式最多读取 50 条候选，需要覆盖较低 rank_score 排序下的
     后段候选，否则候选池里存在的 Knowledge 可能在 ranker 截断后消失。
     """
     return min(
@@ -399,7 +395,7 @@ def rescore_rank_score(
     TS 返回的每个贡献项已经包含线上参数下的 ``weighted``、``idf``、``tf``
     和 ``queryWeight``。由线上 norm 反推出 ``document_length / average_length``
     后，可以在脚本中重算 K1/B，而不必启动第二个 worker 或修改生产协议。
-    这只适用于当前 TS rank 贡献格式；缺少贡献项的候选按 0 分处理。
+    这只适用于当前 rank 贡献格式；缺少贡献项的候选按 0 分处理。
     """
     total = 0.0
     for contribution in item.get("rank_contributions") or []:
@@ -887,29 +883,25 @@ async def _rank_views(
             "distribution": confidence_distribution([]),
         }
 
-    confidence_selected, confidence_stats = await rank_candidates_with_cache(
-        owner_id,
-        query,
-        candidates,
-        limit=top_k,
-        max_chars=3000,
-        max_per_source=3,
-        max_per_parent=3,
-        selection_mode="confidence",
-        corpus_documents=corpus_documents,
+    confidence_selected, confidence_stats = await rank_candidates_for_query(
+        query, candidates, {
+            "limit": top_k,
+            "max_chars": 3000,
+            "max_per_source": 3,
+            "max_per_parent": 3,
+            "selection_mode": "confidence",
+        },
     )
     # 观察模式放宽来源/父文档上限，尽量拿到同一候选池的完整 confidence
     # 分布；它只用于诊断，不代表生产选择结果。
-    observed, top_k_stats = await rank_candidates_with_cache(
-        owner_id,
-        query,
-        candidates,
-        limit=len(candidates),
-        max_chars=3000,
-        max_per_source=len(candidates),
-        max_per_parent=len(candidates),
-        selection_mode="top_k",
-        corpus_documents=corpus_documents,
+    observed, top_k_stats = await rank_candidates_for_query(
+        query, candidates, {
+            "limit": len(candidates),
+            "max_chars": 3000,
+            "max_per_source": len(candidates),
+            "max_per_parent": len(candidates),
+            "selection_mode": "top_k",
+        },
     )
     selected_keys = {_candidate_key(item) for _, _, item in confidence_selected}
     candidate_by_key = {
@@ -1336,7 +1328,7 @@ async def main() -> None:
     parser.add_argument(
         "--observation-limit", type=int, choices=range(1, MAX_RANKER_OBSERVATION_LIMIT + 1),
         default=MAX_RANKER_OBSERVATION_LIMIT,
-        help="观察模式向 TS ranker 请求的结果上限，默认 50；不改变生产候选上限",
+        help="观察模式向 Cython ranker 请求的结果上限，默认 50；不改变生产候选上限",
     )
     parser.add_argument("--query", action="append", default=[], help="只测试指定 query，可重复传入")
     parser.add_argument("--run", default="", help="LoopScope runs 导出 JSON；以其中的对话和 RAG 注入为测试输入")
@@ -1353,8 +1345,7 @@ async def main() -> None:
         run_path = Path(args.run).expanduser().resolve()
         if not run_path.is_file():
             parser.error(f"run 文件不存在：{run_path}")
-        try:
-            payload = await _probe_run(
+        payload = await _probe_run(
                 str(run_path),
                 override_user_id=args.user,
                 top_k=args.top_k,
@@ -1362,22 +1353,19 @@ async def main() -> None:
                 observation_limit=args.observation_limit,
                 full=bool(args.full_report),
             )
-            payload.update({
-                "engine": "typescript-rag-confidence-run-recheck",
-                "top_k": args.top_k,
-                "candidate_limit": args.candidate_limit,
-                "observation_limit": ranker_observation_limit(args.observation_limit, args.top_k),
-            })
-            if args.full_report:
-                report_path = Path(args.full_report).expanduser().resolve()
-                report_path.parent.mkdir(parents=True, exist_ok=True)
-                report_path.write_text(_run_markdown(payload), encoding="utf-8")
-                print(json.dumps({"report": str(report_path), "case_count": payload["case_count"]}, ensure_ascii=False))
-            else:
-                print(json.dumps(payload, ensure_ascii=False))
-        finally:
-            await close_rank_clients()
-            await close_lexical_clients()
+        payload.update({
+            "engine": "cython-rag-confidence-run-recheck",
+            "top_k": args.top_k,
+            "candidate_limit": args.candidate_limit,
+            "observation_limit": ranker_observation_limit(args.observation_limit, args.top_k),
+        })
+        if args.full_report:
+            report_path = Path(args.full_report).expanduser().resolve()
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(_run_markdown(payload), encoding="utf-8")
+            print(json.dumps({"report": str(report_path), "case_count": payload["case_count"]}, ensure_ascii=False))
+        else:
+            print(json.dumps(payload, ensure_ascii=False))
         return
 
     async with db_session._SessionLocal() as db:
@@ -1386,40 +1374,36 @@ async def main() -> None:
             user_id = str((await db.execute(select(User.id).order_by(User.created_at))).scalars().first())
     queries = tuple((f"custom-{index}", value) for index, value in enumerate(args.query, 1)) or QUERIES
     scopes = await _load_scopes(user_id)
-    try:
-        outputs = []
-        for label, scope in scopes:
-            result = await _query_scope(
-                user_id,
-                scope,
-                queries,
+    outputs = []
+    for label, scope in scopes:
+        result = await _query_scope(
+            user_id,
+            scope,
+            queries,
             top_k=args.top_k,
             candidate_limit=args.candidate_limit,
             observation_limit=args.observation_limit,
             full=bool(args.full_report),
-            )
-            result["scope_label"] = label
-            outputs.append(result)
-        payload = {
-            "engine": "typescript-rag-confidence",
-            "user_fp": fp(user_id),
-            "query_count": len(queries),
-            "scope_count": len(outputs),
-            "top_k": args.top_k,
-            "candidate_limit": args.candidate_limit,
-            "observation_limit": ranker_observation_limit(args.observation_limit, args.top_k),
-            "scopes": outputs,
-        }
-        if args.full_report:
-            path = Path(args.full_report).expanduser().resolve()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(_markdown(payload), encoding="utf-8")
-            print(json.dumps({"report": str(path), "scope_count": len(outputs)}, ensure_ascii=False))
-        else:
-            print(json.dumps(payload, ensure_ascii=False))
-    finally:
-        await close_rank_clients()
-        await close_lexical_clients()
+        )
+        result["scope_label"] = label
+        outputs.append(result)
+    payload = {
+        "engine": "cython-rag-confidence",
+        "user_fp": fp(user_id),
+        "query_count": len(queries),
+        "scope_count": len(outputs),
+        "top_k": args.top_k,
+        "candidate_limit": args.candidate_limit,
+        "observation_limit": ranker_observation_limit(args.observation_limit, args.top_k),
+        "scopes": outputs,
+    }
+    if args.full_report:
+        path = Path(args.full_report).expanduser().resolve()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_markdown(payload), encoding="utf-8")
+        print(json.dumps({"report": str(path), "scope_count": len(outputs)}, ensure_ascii=False))
+    else:
+        print(json.dumps(payload, ensure_ascii=False))
 
 
 if __name__ == "__main__":

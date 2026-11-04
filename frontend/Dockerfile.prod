@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1.7
 # 咕咕前端生产镜像：构建 dist 后只保留 Nginx 静态站点。
 FROM node:latest AS build
+ENV NODE_OPTIONS=--use-bundled-ca
 
 WORKDIR /workspace
 RUN npm install --global pnpm@10.15.0

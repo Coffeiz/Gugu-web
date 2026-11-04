@@ -1,8 +1,8 @@
 """PRD-RAG-9 Phase 4/5 性能测量：单文档增量 vs 来源级重建的分段耗时。
 
-纯内存 SQLite + fake worker + fake 投影，不触碰真实数据库/存储/模型；
+纯内存 SQLite + fake RAG 内核 + fake 投影，不触碰真实数据库/存储/模型；
 作为诊断脚本默认直接可跑（无真实数据风险），结果为 pipeline 层分段耗时，
-不含真实 TS worker 与 embedding 调用（那两段见 2026-09-13 基准报告）。
+不含真实 Cython 内核与 embedding 调用（端到端性能见对应基准报告）。
 
 用法：cd backend && PYTHONPATH=. .venv/bin/python scripts/diagnostics/rag_phase5_perf.py
 """

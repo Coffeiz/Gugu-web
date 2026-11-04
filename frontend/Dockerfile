@@ -3,6 +3,7 @@
 # Node 运行时 + 预装好的 node_modules，改代码不用重建镜像。生产环境不用这个镜像：
 # `pnpm build` 出静态文件，交给 nginx/CDN 或塞进后端的 StaticFiles 挂载即可。
 FROM node:latest
+ENV NODE_OPTIONS=--use-bundled-ca
 
 WORKDIR /workspace
 RUN npm install --global pnpm@10.15.0

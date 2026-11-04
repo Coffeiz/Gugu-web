@@ -1368,7 +1368,7 @@ class KnowledgeIndexEntry(Base):
     """统一知识索引的持久化 chunk。
 
     业务表仍然是事实来源；这张表只保存可重建的检索投影。scope 字段与正文
-    同行保存，查询时先做 owner/scope 过滤，再进入 TypeScript lexical worker 或数据库 ILIKE 兼容路径。
+    同行保存，查询时先做 owner/scope 过滤，再进入 Cython 检索内核或数据库 ILIKE 兼容路径。
     """
 
     __tablename__ = "knowledge_index_entries"

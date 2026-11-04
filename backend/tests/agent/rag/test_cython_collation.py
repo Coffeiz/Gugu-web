@@ -1,4 +1,4 @@
-"""保护 TS RAG 的 en-US 字符串并列排序契约。"""
+"""保护 Cython 排序的确定性字符串并列顺序。"""
 from __future__ import annotations
 
 from agent.rag.cython_collation import locale_sort_key, reverse_locale_sort_key

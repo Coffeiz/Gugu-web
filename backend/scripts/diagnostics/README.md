@@ -72,8 +72,8 @@ node --experimental-strip-types \
   --include-content
 ```
 
-传入 `--index-json` 时，脚本会读取 TS RAG 持久化索引里的全部 `documents`，用同一套 `tokenizeRaw` 按文档去重统计完整 `documentFrequency`，报告标记为 `full_ts_index`，并记录索引版本、revision 和文档数。`df=0` 的未知 token 不参与高信息词筛选，避免把 OOV 词误判成高 IDF 词。这里的 `index.json` 是只读输入，不会写回索引。
+传入 `--index-json` 时，脚本会读取 Cython RAG 持久化索引里的全部 `documents`，用生产 tokenizer 按文档去重统计完整 `documentFrequency`，报告标记为 `full_cython_index`，并记录索引版本、revision 和文档数。`df=0` 的未知 token 不参与高信息词筛选，避免把 OOV 词误判成高 IDF 词。这里的 `index.json` 是只读输入，不会写回索引。
 
-生产路径中的 `<owner-hash>` 是 `sha256(owner_user_id)[:32]`；索引目录由 `backend/agent/rag/ts_sidecar.py` 的 `index_dir_for_owner()` 决定。
+生产路径中的 `<owner-hash>` 是 `sha256(owner_user_id)[:32]`；索引目录由 RAG sidecar 协议模块的 `index_dir_for_owner()` 决定。
 
 不传 `--index-json` 时，报告会明确标记为 `candidate_corpus_proxy`：仅根据导出候选集估算 IDF，只适合快速比较，不能替代完整索引 IDF。

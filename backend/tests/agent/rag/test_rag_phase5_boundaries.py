@@ -2,7 +2,7 @@
 
 覆盖：仅关键词/描述变化的版本戳、删除后恢复、projection 事务失败不落脏、
 向量部分失败不破坏 lexical 投影（幂等重放收敛）、知识条目范围移动旧 scope 清理、
-owner scope 隔离。不启动真实 TS worker（同其他 delta 测试用 fake）。
+owner scope 隔离。sidecar 通过 fake 隔离，验证 Python 边界行为。
 """
 from __future__ import annotations
 

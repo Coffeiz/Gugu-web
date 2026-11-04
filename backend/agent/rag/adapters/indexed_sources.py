@@ -1,7 +1,7 @@
 """文件、画布、笔记、日历和对话的统一业务来源桥接。
 
 统一查询主链下，本模块只提供来源容器的 DB 会话托管；文档转换、检索和
-conversation 水位过滤全部由 TS Worker 完成（``unified_query`` 的
+conversation 水位过滤全部由统一 Cython 查询链完成（``unified_query`` 的
 ``before_message_id`` 参数）。
 """
 from __future__ import annotations
@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 
 
 class IndexedSourceRetriever:
-    """把持久化索引来源接入统一查询链；文档投影由 TS Worker 完成。"""
+    """把持久化索引来源接入统一查询链。"""
 
     SUPPORTED_SOURCE_TYPES = frozenset({
         "canvas", "note", "calendar", "scheduled_task", "conversation", "knowledge",

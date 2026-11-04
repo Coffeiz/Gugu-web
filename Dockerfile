@@ -4,11 +4,12 @@
 # 构建上下文 = 仓库根目录。
 #
 # 产物只含生产运行时：不含前端源码、前端 node_modules、pnpm 缓存、测试代码与 docs/；
-# 仅保留 TS RAG worker 所需的 Linux x64 native node_modules。
+# 仅保留图表渲染 Worker 所需的运行依赖。
 # 平台：linux/amd64（多架构暂不支持，见 PRD-DEPLOY-1）。
 
 # ── Stage 1：前端构建 ────────────────────────────────────────────────────────
 FROM node:22-trixie AS frontend-build
+ENV NODE_OPTIONS=--use-bundled-ca
 
 WORKDIR /workspace
 
@@ -26,24 +27,19 @@ COPY frontend/ ./frontend/
 COPY backend/ts/workers/chart-renderer/diagram-source.mjs backend/ts/workers/chart-renderer/diagram-source.d.mts backend/ts/workers/chart-renderer/svg-style.mjs backend/ts/workers/chart-renderer/theme.mjs backend/ts/workers/chart-renderer/theme.d.mts ./backend/ts/workers/chart-renderer/
 RUN cd frontend && pnpm build
 
-# ── Stage 1.5：TS RAG worker 的 Linux x64 原生运行时依赖 ─────────────────────
-# worker 构建时将 @node-rs/jieba 设为 external；默认镜像固定发布 linux/amd64，
-# 因此必须把对应 N-API 包随制品带入最终镜像，不能只复制 .mjs。
-FROM node:22-trixie AS rag-runtime
+# ── Stage 1.5：图表渲染 Worker 运行时依赖 ───────────────────────────────────
+FROM node:22-trixie AS chart-runtime
+ENV NODE_OPTIONS=--use-bundled-ca
 
-WORKDIR /rag
-
-COPY backend/ts/workers/rag/package.json ./package.json
+WORKDIR /chart
 RUN npm install --omit=dev --ignore-scripts --no-fund --no-audit \
         @xmldom/xmldom@0.9.12 \
-        @node-rs/jieba@2.0.1 \
-        @node-rs/jieba-linux-x64-gnu@2.0.1 \
         @resvg/resvg-js@2.6.2 \
         mermaid@12.1.0 \
         @mermaid-js/mermaid-zenuml@1.0.1 \
         svgdom@0.1.28 \
         mathjax@4.1.3 \
-    && node -e "import('@node-rs/jieba').then(() => console.log('RAG Jieba runtime ready'))"
+    && node -e "Promise.all([import('@resvg/resvg-js'), import('svgdom'), import('mermaid'), import('@mermaid-js/mermaid-zenuml')]).then(() => console.log('Chart runtime dependencies ready'))"
 
 # ── Stage 2：后端依赖构建（venv 与最终镜像分离） ─────────────────────────────
 FROM python:3.14-slim-trixie AS backend-deps
@@ -246,14 +242,11 @@ RUN set -eux; \
     chown -R 1000:1000 /var/lib/gugu-rootless /run/user/1000 /data/sandbox-rootless; \
     chmod 0700 /run/user/1000
 RUN mkdir -p ./bin
-COPY backend/bin/gugu-rag-ts-worker.mjs ./bin/gugu-rag-ts-worker.mjs
 COPY backend/bin/gugu-filesync-ts-worker.cjs ./bin/gugu-filesync-ts-worker.cjs
 COPY backend/ts/workers/chart-renderer/worker.mjs ./bin/gugu-chart-worker.mjs
 COPY backend/ts/workers/chart-renderer/diagram-source.mjs backend/ts/workers/chart-renderer/svg-style.mjs backend/ts/workers/chart-renderer/theme.mjs backend/ts/workers/chart-renderer/raster-dimensions.mjs ./bin/
 COPY frontend/public/fonts/Noto_Sans_SC/NotoSansSC-VariableFont_wght.ttf ./bin/fonts/NotoSansSC-VariableFont_wght.ttf
-COPY --from=rag-runtime /rag/node_modules ./bin/node_modules
-RUN node bin/gugu-rag-ts-worker.mjs --version \
-    && cd bin && node -e "Promise.all([import('mermaid'), import('@mermaid-js/mermaid-zenuml'), import('@resvg/resvg-js'), import('@xmldom/xmldom'), import('svgdom'), import('mathjax')]).then(() => console.log('Chart PNG runtime ready'))"
+COPY --from=chart-runtime /chart/node_modules ./bin/node_modules
 # 冒烟启动图表 Worker：解析它的全部同级依赖与 CJK 字体路径。缺任何一个都让镜像构建失败，
 # 而不是等到线上渲染时才 ERR_MODULE_NOT_FOUND。
 RUN printf '{"charts":[]}' | node bin/gugu-chart-worker.mjs \

@@ -1,9 +1,0 @@
-{
-  "name": "@gugu/data-runtime",
-  "private": true,
-  "type": "module",
-  "dependencies": {
-    "ali-oss": "6.23.0",
-    "postgres": "3.4.9"
-  }
-}

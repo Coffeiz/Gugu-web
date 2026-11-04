@@ -130,48 +130,6 @@ async def _owner_revision(db, user_id: object) -> str | None:
     return await get_index_cache()._revision(db, user_id)
 
 
-async def _knowledge_client(user_id: object):
-    from app.core.config import get_settings
-    from agent.rag.index_cache import index_dir_for_owner
-    from agent.rag.ts_sidecar import get_lexical_client
-
-    settings = get_settings()
-    return await get_lexical_client(
-        user_id,
-        command=settings.search.ts_sidecar_command,
-        index_dir=index_dir_for_owner(user_id),
-    )
-
-
-def _embedding_vector_version() -> str:
-    """索引写侧只传模型版本；向量缓存正文由 TS worker 从 owner 存储读取。"""
-    from agent.memory import embedding
-
-    return embedding.model_tag() if embedding.is_enabled() else ""
-
-
-async def _replace_worker_index(
-    user_id: object, db, revision: str | None, *, source_type: str = "knowledge",
-    diagnostics: dict[str, object] | None = None,
-) -> None:
-    """mismatch 回退：worker 侧整来源 replace（不动主数据库，DB 已是最新）。"""
-    from agent.rag.ts_sidecar import TsSidecarUnavailable
-
-    records = await build_source_records(db, user_id, source_type)
-    if records is None:
-        raise RuntimeError(f"来源未提供 canonical source record：{source_type}")
-    documents = await records_to_write_documents(user_id, source_type, records)
-    client = await _knowledge_client(user_id)
-    try:
-        await client.replace(
-            documents, revision, storage_owner_id=user_id,
-            vector_version=_embedding_vector_version(),
-        )
-    except TsSidecarUnavailable:
-        await client.close()
-        raise
-
-
 DOCUMENT_PATCH_SOURCE_TYPES = {"knowledge", "project", "calendar", "note", "canvas"}
 
 
@@ -183,13 +141,12 @@ async def update_document(
 
     支持 knowledge/project（两者都有稳定的单对象 canonical record）。
     DB 持久索引按 chunk 增量替换；knowledge 额外做向量 upsert/delete；
-    TS worker patch 失败时回退来源级 replace（mode 显式记 source_replace）。
+    持久索引以数据库 revision 为准，写入后使本地缓存失效；Cython 生命周期按新 revision 同步。
     返回该文档当前 chunk 数。
     """
     if source_type not in DOCUMENT_PATCH_SOURCE_TYPES:
         raise ValueError(f"来源不支持文档级增量：{source_type}")
     from agent.rag.delta import compute_chunk_delta
-    from agent.rag.ts_sidecar import TsSidecarUnavailable
 
     key = f"{user_id}:{source_type}:doc:{source_id}"
     async with _locks[key]:
@@ -257,34 +214,13 @@ async def update_document(
 
             await apply_vector_delta(user_id, upserts, vector_delete_keys)
         patch_started = time.monotonic()
-        status = "ready"
-        base_revision_match: bool | None = None
-        try:
-            client = await _knowledge_client(user_id)
-            await client.patch(
-                upserts, delete_slots, revision,
-                getattr(client, "_revision", None),
-                storage_owner_id=user_id,
-                vector_version=_embedding_vector_version(),
-            )
-        except TsSidecarUnavailable as exc:
-            if exc.code == "revision_mismatch":
-                base_revision_match = False
-                # 回退来源级 replace 必须显式记录，不得伪装成增量成功（PRD-RAG-9 §4）。
-                if stats_out is not None:
-                    stats_out["mode"] = "source_replace"
-                try:
-                    async with db_session._SessionLocal() as db:
-                        await _replace_worker_index(user_id, db, revision, source_type=source_type)
-                except TsSidecarUnavailable:
-                    status = "worker_unavailable"
-            else:
-                status = "worker_unavailable"
+        from agent.rag.index_cache import get_index_cache
+
+        get_index_cache().invalidate(user_id, include_snapshot=True)
         if stats_out is not None:
             stats_out.update({
                 "patch_ms": int((time.monotonic() - patch_started) * 1000),
-                "base_revision_match": base_revision_match,
-                "status": status,
+                "status": "index_invalidated",
             })
         return len(new_documents) if new_documents else len(old_documents) - len(delete_slots)
 

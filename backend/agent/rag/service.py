@@ -12,16 +12,13 @@ from agent.rag.adapters.indexed_sources import IndexedSourceRetriever
 from agent.rag.context import get_snapshot_context
 from agent.rag.diagnostics import record_recall
 from agent.rag.models import RecallCandidate, RecallResult, Scope
-from agent.rag.ts_sidecar import (
-    TsSidecarUnavailable,
-    rank_candidates_with_cache,
-)
 from agent.rag.scope import (
     matches_any_scope,
     matches_scope,
     normalize_memory_scopes,
     resolve_memory_query_scopes,
 )
+from agent.rag.sidecar_protocol import RagSidecarUnavailable
 from agent.rag.vector_cache import cache_key
 
 
@@ -133,18 +130,8 @@ def _cython_rank_payload(candidates):
     return by_id, payload
 
 
-async def _rank_candidates(query, candidates, rank_options):
-    """让独立候选排序路径与统一索引使用同一运行时选择。"""
-    from app.core.config import get_settings
-    from agent.rag.index_cache import _selected_backend
-
-    search_settings = get_settings().search
-    if _selected_backend(search_settings) != "cython":
-        return await rank_candidates_with_cache(
-            candidates[0].scope.owner_user_id if candidates else "",
-            query, candidates, **rank_options,
-        )
-
+async def rank_candidates_for_query(query, candidates, rank_options):
+    """以生产 Cython scorer 对已召回候选排序，供服务和诊断共用。"""
     from agent.rag.cython_rank import rank_candidates as cython_rank
 
     by_id, payload = _cython_rank_payload(candidates)
@@ -152,7 +139,7 @@ async def _rank_candidates(query, candidates, rank_options):
     selected, stats = await asyncio.to_thread(
         cython_rank, query, payload,
         **rank_options,
-        scoring_version=str(getattr(search_settings, "ts_rank_scoring_version", "confidence-v4")),
+        scoring_version="confidence-v4",
     )
     ranked = [
         (candidate, str(item.get("text") or ""), item)
@@ -205,7 +192,7 @@ async def _memory_recall_documents(user_id, scope, source_filter) -> tuple[list,
 
 
 class MemoryRetriever:
-    """Memory 来源载体：统一查询链按 source_filter 装载瞬态语料，交付由 TS worker 完成。"""
+    """Memory 来源载体：统一查询链按 source_filter 装载瞬态语料，由 Cython 统一检索。"""
 
     source_type = "memory"
 
@@ -215,7 +202,7 @@ class MemoryRetriever:
 
 
 class ProjectRetriever:
-    """Project 来源载体：持有 adapter 的会话工厂，交付由 TS worker 统一查询完成。"""
+    """Project 来源载体：持有 adapter 会话工厂，交付由 Cython 统一查询完成。"""
 
     source_type = "project"
 
@@ -431,10 +418,10 @@ class UnifiedRecallService:
             if exclude_content_hashes is not None:
                 rank_kwargs["exclude_content_hashes"] = exclude_content_hashes
             rank_kwargs["selection_mode"] = "top_k" if mode == "tool" else "confidence"
-            ranked_candidates, rank_stats = await _rank_candidates(
+            ranked_candidates, rank_stats = await rank_candidates_for_query(
                 query, candidate_values, rank_kwargs,
             )
-        except TsSidecarUnavailable:
+        except RagSidecarUnavailable:
             ranked_candidates, rank_stats = [], {
                 "candidate_count": len(candidate_values),
                 "accepted_count": 0,
@@ -485,10 +472,7 @@ class UnifiedRecallService:
         output_chars = int(rank_stats.get("output_chars", 0) or 0)
 
         fallback_reasons = [batch.fallback_reason for batch in batches if batch.fallback_reason]
-        from app.core.config import get_settings
-        from agent.rag.index_cache import _selected_backend
-
-        rank_engine = _selected_backend(get_settings().search)
+        rank_engine = "cython"
         cache_values = [batch.metadata.get("cache_hit") == "True" for batch in batches
                         if "cache_hit" in batch.metadata]
         cache_miss_reasons = sorted({

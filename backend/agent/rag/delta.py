@@ -2,7 +2,7 @@
 
 契约（所有来源共用，不得各自实现一份）：
     parent_key = source_type + ":" + parent_document_id（无 parent 时为 document_id）
-    chunk_slot = parent_key + ":" + chunk_index        # 即 TS worker 文档键
+    chunk_slot = parent_key + ":" + chunk_index        # 稳定的父文档与 chunk 键
     document_digest = chunk_slot + 词法索引字段的规范化 hash
 
 差异规则（§6.2）：
@@ -12,7 +12,7 @@
     deletes = previous 中不再出现在 current 的项
 
 文档版本（``version``）不参与 digest：版本变化单独不构成重新投影的理由，
-与 TS worker 的稳定槽位契约逐字对齐。差异结果按键排序，同一输入必然产出
+稳定槽位由父文档和 chunk 序号组成。差异结果按键排序，同一输入必然产出
 同一结果；正文不进入任何日志。
 """
 from __future__ import annotations
@@ -31,7 +31,7 @@ def parent_document_key(document: IndexDocument) -> str:
 
 
 def chunk_slot_key(document: IndexDocument) -> str:
-    """稳定 chunk 槽位：``parent_key:chunk_index``，即 TS worker 文档键。"""
+    """稳定 chunk 槽位：``parent_key:chunk_index``。"""
     return f"{parent_document_key(document)}:{document.chunk_index}"
 
 
@@ -39,7 +39,7 @@ def document_digest(document: IndexDocument) -> str:
     """词法索引字段及召回展示上下文的规范化 hash；不含 document.version。
 
     纳入 scope 与 chunk_count（§3.2：scope 与必要元数据变化必须触发重新投影）；
-    旧实现（ts_sidecar._index_document_digest）漏掉这两项，会让移动/拆分后的
+    旧索引摘要实现漏掉这两项，会让移动/拆分后的
     存活 chunk 残留旧 scope 或旧 chunk 计数。
     """
     context = document.contextual_content() if document.source_type == "conversation" else ""

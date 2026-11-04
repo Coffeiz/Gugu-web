@@ -76,7 +76,7 @@ async def test_cython_lifecycle_snapshot_and_delta_keep_ts_revision_and_tombston
 
     snapshot = await load_rag_index_snapshot(db, user_a.id)
     assert snapshot.revision is not None
-    assert snapshot.revision.startswith("ts-jieba-words-v4:rag-projection-v5:")
+    assert snapshot.revision.startswith("cython-jieba-words-v1:rag-projection-v5:")
     assert snapshot.watermark is not None and snapshot.watermark.row_id == 0
     assert [item.source_id for item in snapshot.documents] == ["k-1"]
 

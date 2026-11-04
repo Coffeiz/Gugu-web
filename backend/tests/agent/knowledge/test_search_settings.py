@@ -18,10 +18,6 @@ def test_rag_auto_sources_are_enabled_by_default():
     ]
 
 
-def test_ts_sidecar_timeout_is_thirty_seconds_by_default():
-    assert SearchSettings().ts_sidecar_timeout_ms == 30_000
-
-
 def test_searxng_image_engines_default_include_broad_domestic_and_international_sources():
     assert set(SearchSettings().searxng_image_engines.split(",")) == {
         "baidu images",
@@ -45,7 +41,7 @@ def test_searxng_image_engines_default_include_broad_domestic_and_international_
 def test_rag_index_ttl_has_safe_default_and_bounds():
     settings = SearchSettings()
 
-    assert settings.ts_sidecar_index_ttl_seconds == 30 * 24 * 3600
-    assert SearchSettings(ts_sidecar_index_ttl_seconds=7 * 24 * 3600)
+    assert settings.rag_index_ttl_seconds == 30 * 24 * 3600
+    assert SearchSettings(rag_index_ttl_seconds=7 * 24 * 3600)
     with pytest.raises(ValueError):
-        SearchSettings(ts_sidecar_index_ttl_seconds=24 * 3600)
+        SearchSettings(rag_index_ttl_seconds=24 * 3600)

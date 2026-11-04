@@ -215,7 +215,7 @@ EOF
     # RAG worker 宿主：统一应用模式下由后面的 monitored_pids 块托管；
     # 仅非统一模式才交给 supervisord，两处都起会互相顶掉同一路径的 socket。
     mkdir -p /run/gugu
-    export SEARCH__TS_SIDECAR_SOCKET=/run/gugu/rag-sidecar.sock
+    export SEARCH__RAG_SIDECAR_SOCKET=/run/gugu/rag-sidecar.sock
     if [ "${GUGU_UNIFIED_APP:-0}" != "1" ]; then
         cat >> "$EMBED_RUN/supervisord.conf" <<SUPERVISEOF
 
@@ -359,7 +359,7 @@ if [ "${GUGU_UNIFIED_APP:-0}" = "1" ] \
     fi
     if [ "${GUGU_ENABLE_RAG_SIDECAR:-1}" = "1" ]; then
         mkdir -p /run/gugu
-        export SEARCH__TS_SIDECAR_SOCKET=/run/gugu/rag-sidecar.sock
+        export SEARCH__RAG_SIDECAR_SOCKET=/run/gugu/rag-sidecar.sock
         python -m agent.rag.sidecar_host --socket /run/gugu/rag-sidecar.sock &
         monitored_pids+=("$!")
     fi

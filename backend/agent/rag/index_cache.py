@@ -1,4 +1,4 @@
-"""进程内 TypeScript lexical 索引缓存与跨 worker revision 检测。"""
+"""Cython RAG 索引缓存与 revision 检测。"""
 from __future__ import annotations
 
 import asyncio
@@ -12,19 +12,14 @@ from pathlib import Path
 from agent.rag.models import IndexDocument
 from agent.rag.models import Scope
 from agent.rag.persistent_store import _load_rag_index_revision_rows
-from agent.rag.ts_sidecar import (
-    TsLexicalIndex,
-    TsSidecarUnavailable,
-    get_lexical_client,
-    index_dir_for_owner,
-)
+from agent.rag.sidecar_protocol import index_dir_for_owner, sidecar_socket_path
 from agent.rag.scope import matches_scope
 
 
 INDEX_CACHE_TTL_SECONDS = 30 * 60
 # 单 owner 索引准入预算。32MB 是语料很小时定的：真实用户索引长到 ~56MB（1.9 万
 # 持久文档）后条目永远进不了缓存，每次查询都全量冷装载 5s+，直接打穿搜索超时。
-# 提到 128MB；注意 TS 序列化索引住在 worker 进程里，这里的超卖是可控的。
+# 提到 128MB；Cython 索引驻留在进程内或共享 sidecar。
 PER_OWNER_CACHE_BYTES = 128 * 1024 * 1024
 GLOBAL_CACHE_BYTES = 512 * 1024 * 1024
 DEFAULT_SOURCE_TYPES = (
@@ -59,19 +54,17 @@ def estimate_document_bytes(documents: list[IndexDocument]) -> int:
 
 
 def estimate_index_bytes(documents: list[IndexDocument], index) -> int:
-    """估算统一 TypeScript lexical index 的缓存预算。"""
+    """估算统一 Cython lexical index 的缓存预算。"""
     return max(estimate_document_bytes(documents), int(getattr(index, "estimated_bytes", 0) or 0))
 
 
 async def _try_acquire_shared_cython_index(
-    owner_user_id: object, cache_scope: str, backend: str, revision: str | None,
+    owner_user_id: object, cache_scope: str, revision: str | None,
 ):
     """自动召回只探测 sidecar 已缓存的同 revision 索引，不触发冷恢复。"""
-    if backend != "cython" or revision is None:
+    if revision is None:
         return None
-    from agent.rag.ts_sidecar import _sidecar_socket_path
-
-    sidecar_socket = _sidecar_socket_path()
+    sidecar_socket = sidecar_socket_path()
     if not sidecar_socket:
         return None
     from agent.memory import embedding
@@ -120,7 +113,7 @@ class KnowledgeIndexCache:
         force: bool = False,
         defer_cold: bool = False,
     ):
-        """返回 owner 级 lexical index，TypeScript/Python 共用缓存生命周期。
+        """返回 owner 级 lexical index，Cython 缓存生命周期。
 
         ``force=True`` 跳过全部复用捷径（快照快路径、磁盘恢复、revision 复用）并按
         当前 revision 全量 replace 一次；只给 revision 不一致后的自愈重试用，正常
@@ -130,7 +123,7 @@ class KnowledgeIndexCache:
         from app.core.config import get_settings
 
         search_settings = get_settings().search
-        backend = _selected_backend(search_settings)
+        backend = "cython"
         if diagnostics is not None:
             diagnostics["engine"] = backend
         self._purge_expired()
@@ -158,7 +151,7 @@ class KnowledgeIndexCache:
         # 探测，只有 sidecar 也没有匹配索引才让出本轮，由后台预热负责恢复。
         if defer_cold and not force and entry is None:
             sidecar_index = await _try_acquire_shared_cython_index(
-                owner_user_id, cache_scope, backend, baseline_revision,
+                owner_user_id, cache_scope, baseline_revision,
             )
             if sidecar_index is not None:
                 # Python 侧只缓存远端 facade；真实索引的容量与 TTL 由 sidecar 管理。
@@ -207,7 +200,7 @@ class KnowledgeIndexCache:
             diagnostics["cache_miss_reason"] = (
                 "empty_or_expired" if entry is None
                 else "revision_changed" if entry.revision != revision
-                else "backend_changed"
+                else "index_changed"
             )
         probe_update(index_cache={
             "cache_path": "cache_miss",
@@ -249,29 +242,6 @@ class KnowledgeIndexCache:
                     diagnostics["cache_miss_reason"] = ""
                     diagnostics["document_count"] = _index_document_count(entry.index)
                 return entry.index
-            # 冷启动优先让 TS worker 从持久化索引恢复。只有索引不存在、版本不匹配或
-            # revision 变化时才读取完整 DB 文档并重建，避免每次进程重启都拉全量正文。
-            if backend == "typescript" and not shared_key and not force:
-                restored = await await_probe(
-                    "index_sidecar_restore",
-                    self._build_index(
-                        backend, owner_user_id, None, revision, search_settings, diagnostics,
-                    ),
-                )
-                if restored is not None:
-                    probe_update(index_cache={
-                        "cache_path": "persistent_sidecar_restore",
-                        "disk_index_reused": bool(diagnostics and diagnostics.get("disk_index_reused")),
-                    })
-                    if diagnostics is not None:
-                        diagnostics["cache_hit"] = True
-                        diagnostics["cache_hit_layer"] = "persistent_sidecar"
-                        diagnostics["cache_miss_reason"] = "persistent_sidecar_restore"
-                        diagnostics["document_count"] = _index_document_count(restored)
-                    self._store(key, _Entry(
-                        restored, 1, revision, backend, time.monotonic(),
-                    ))
-                    return restored
             if backend == "cython":
                 index = await await_probe(
                     "index_cython_database_load",
@@ -296,29 +266,6 @@ class KnowledgeIndexCache:
                     self._entries.pop(key, None)
                     self._dispose(_Entry(index, size, revision, backend, time.monotonic()))
                 return index
-            if backend == "typescript":
-                index = await await_probe(
-                    "index_ts_database_load",
-                    self._build_index(
-                        backend, owner_user_id, None, revision, search_settings, diagnostics,
-                        allow_database_load=True,
-                    ),
-                )
-                if diagnostics is not None:
-                    diagnostics["cache_hit"] = False
-                    diagnostics["shared_index"] = bool(shared_key)
-                    diagnostics["document_count"] = _index_document_count(index)
-                    # _build_index 内部已按 sync/load 写入精确标签；此处仅兜底
-                    diagnostics.setdefault("index_sync", "ts_database_load")
-                size = estimate_index_bytes([], index)
-                if size <= self.owner_limit_bytes:
-                    self._store(key, _Entry(
-                        index, size, revision, backend, time.monotonic(), persistent_loaded=True,
-                    ))
-                else:
-                    self._entries.pop(key, None)
-                    self._dispose(_Entry(index, size, revision, backend, time.monotonic()))
-                return index
             raise RuntimeError(f"不支持的 RAG 后端: {backend}")
 
     async def get_transient(
@@ -329,14 +276,14 @@ class KnowledgeIndexCache:
         from app.core.config import get_settings
 
         settings = get_settings().search
-        backend = _selected_backend(settings)
+        backend = "cython"
         if diagnostics is not None:
             diagnostics["engine"] = backend
             diagnostics["cache_entries"] = 1
         if backend == "cython":
-            from agent.rag.ts_sidecar import _sidecar_socket_path
+            from agent.rag.sidecar_protocol import sidecar_socket_path
 
-            sidecar_socket = _sidecar_socket_path()
+            sidecar_socket = sidecar_socket_path()
             if sidecar_socket:
                 from agent.rag.cython_sidecar import CythonSidecarTransientIndex
 
@@ -372,7 +319,7 @@ class KnowledgeIndexCache:
             diagnostics["cache_miss_reason"] = (
                 "empty_or_expired" if entry is None
                 else "revision_changed" if entry.revision != revision
-                else "backend_changed"
+                else "index_changed"
             )
         lock = self._locks.setdefault(key, asyncio.Lock())
         async with lock:
@@ -428,258 +375,54 @@ class KnowledgeIndexCache:
                            previous_revision: str | None = None,
                            allow_database_load: bool = False,
                            cache_scope: str = "all", db=None):
-        from agent.rag.observation import await_probe, probe_finish, probe_start, probe_update
+        from agent.rag.observation import probe_update
         from agent.memory import embedding
+        from agent.rag.cython_runtime import ensure_cython_native_loaded
+        from agent.rag.cython_backend import CythonLexicalIndex
 
         started = time.monotonic()
-        if backend == "cython":
-            if documents is not None:
-                from agent.rag.cython_runtime import ensure_cython_native_loaded
-                from agent.rag.cython_backend import CythonLexicalIndex
+        await ensure_cython_native_loaded()
+        if documents is not None:
+            return CythonLexicalIndex.build(documents, revision or "")
+        if not allow_database_load:
+            return None
 
-                # 未配置 sidecar 的诊断/瞬态文档仍在调用进程构建。
-                await ensure_cython_native_loaded()
-                return CythonLexicalIndex.build(documents, revision or "")
-            if not allow_database_load:
-                return None
-            from agent.rag.cython_lifecycle import CythonRagLifecycle
+        from agent.rag.cython_lifecycle import CythonRagLifecycle
 
-            vector_tag = embedding.model_tag() if embedding.is_enabled() else ""
-            cache_tag = hashlib.sha256(cache_scope.encode("utf-8")).hexdigest()[:20]
-            snapshot_dir = Path(index_dir_for_owner(owner_user_id)).parent / "cython" / cache_tag
-            from agent.rag.ts_sidecar import _sidecar_socket_path
+        vector_tag = embedding.model_tag() if embedding.is_enabled() else ""
+        cache_tag = hashlib.sha256(cache_scope.encode("utf-8")).hexdigest()[:20]
+        snapshot_dir = Path(index_dir_for_owner(owner_user_id)).parent / "cython" / cache_tag
+        socket_path = sidecar_socket_path()
+        if socket_path:
+            from agent.rag.cython_sidecar import CythonSidecarLifecycle
 
-            sidecar_socket = _sidecar_socket_path()
-            if sidecar_socket:
-                from agent.rag.cython_sidecar import CythonSidecarLifecycle
-
-                lifecycle = CythonSidecarLifecycle(
-                    owner_user_id, cache_scope, sidecar_socket,
-                )
-                result = await lifecycle.load_index_from_snapshot_or_database(
-                    db, owner_user_id, snapshot_dir,
-                    vector_version=vector_tag, revision=revision,
-                )
-                if diagnostics is not None:
-                    diagnostics["index_sync"] = str(
-                        result.get("snapshot_status") or result.get("status") or ""
-                    )
-                    diagnostics["document_count"] = int(result.get("document_count") or 0)
-                    diagnostics["vector_count"] = int(result.get("vector_count") or 0)
-                    diagnostics["disk_index_reused"] = bool(result.get("snapshot_hit"))
-                    diagnostics["cython_sidecar"] = True
-                if diagnostics is not None:
-                    diagnostics["index_build_ms"] = int((time.monotonic() - started) * 1000)
-                return lifecycle
-
-            if db is None:
-                raise RuntimeError("Cython index build requires a database session")
-            from agent.rag.cython_runtime import ensure_cython_native_loaded
-
-            # 未启用常驻 sidecar 时保持旧的进程内实现。
-            await ensure_cython_native_loaded()
+            lifecycle = CythonSidecarLifecycle(owner_user_id, cache_scope, socket_path)
+        else:
             lifecycle = CythonRagLifecycle()
-            result = await lifecycle.load_index_from_snapshot_or_database(
-                db, owner_user_id, snapshot_dir,
-                vector_version=vector_tag, revision=revision,
+        if db is None and not socket_path:
+            raise RuntimeError("Cython index build requires a database session")
+        result = await lifecycle.load_index_from_snapshot_or_database(
+            db, owner_user_id, snapshot_dir,
+            vector_version=vector_tag, revision=revision,
+        )
+        if diagnostics is not None:
+            diagnostics.update(
+                index_sync=str(result.get("snapshot_status") or result.get("status") or ""),
+                document_count=int(result.get("document_count") or 0),
+                vector_count=int(result.get("vector_count") or 0),
+                disk_index_reused=bool(result.get("snapshot_hit")),
+                cython_sidecar=bool(socket_path),
+                index_build_ms=int((time.monotonic() - started) * 1000),
             )
-            if diagnostics is not None:
-                diagnostics["index_sync"] = str(result.get("snapshot_status") or result.get("status") or "")
-                diagnostics["document_count"] = int(result.get("document_count") or 0)
-                diagnostics["vector_count"] = int(result.get("vector_count") or 0)
-                diagnostics["disk_index_reused"] = bool(result.get("snapshot_hit"))
-            probe_update(index_build={
-                "document_count": int(result.get("document_count") or 0),
-                "vector_count": int(result.get("vector_count") or 0),
-                "index_source": "cython_snapshot" if result.get("snapshot_hit") else "database",
-            })
-            if diagnostics is not None:
-                diagnostics["index_build_ms"] = int((time.monotonic() - started) * 1000)
-            return lifecycle
-        if backend == "typescript":
-            vector_tag = embedding.model_tag() if embedding.is_enabled() else ""
-            client = await await_probe(
-                "index_worker_acquire",
-                get_lexical_client(
-                    owner_user_id,
-                    command=settings.ts_sidecar_command,
-                    index_dir=index_dir_for_owner(owner_user_id),
-                ),
-            )
-            try:
-                reused = await await_probe(
-                    "index_worker_restore_check", client.reuse_if_current(revision),
-                )
-                probe_update(index_build={
-                    "document_count": len(documents) if documents is not None else None,
-                    "worker_revision_reused": bool(reused),
-                })
-                if diagnostics is not None:
-                    diagnostics["sidecar_reused"] = bool(reused)
-                    if client.restore_error:
-                        # 磁盘索引损坏或版本不匹配：显式报告，本次必然走全量重建。
-                        diagnostics["index_restore_error"] = client.restore_error
-                if reused and client._vector_version != vector_tag:
-                    vector_result = await await_probe(
-                        "index_ts_vector_cache_load",
-                        client.load_vectors_from_storage(owner_user_id, vector_tag),
-                    )
-                    if diagnostics is not None:
-                        diagnostics["vector_count"] = int(vector_result.get("vector_count") or 0)
-                        diagnostics["vector_version_refreshed"] = True
-                if documents is None:
-                    if reused:
-                        if diagnostics is not None:
-                            diagnostics["disk_index_reused"] = True
-                        return TsLexicalIndex([], client, revision)
-                    if not allow_database_load:
-                        return None
-                    database_snapshot = await await_probe(
-                        "index_ts_document_load",
-                        (
-                            client.sync_index_from_database(owner_user_id, revision or "", vector_tag)
-                            if getattr(settings, "ts_index_sync_mode", "incremental") == "incremental"
-                            else client.load_index_from_database(owner_user_id, revision or "", vector_tag)
-                        ),
-                    )
-                    worker_probe = database_snapshot.get("probe")
-                    if isinstance(worker_probe, dict):
-                        raw_stage_ms = worker_probe.get("stage_ms")
-                        raw_counts = worker_probe.get("counts")
-                        stage_names = {
-                            "data_runtime_database_query",
-                            "data_runtime_revision_projection",
-                            "data_runtime_document_projection",
-                            "data_runtime_load_rag_index_total",
-                            "data_runtime_delta",
-                            "index_install_build",
-                            "install_tokenize_ms",
-                            "install_structure_ms",
-                            "install_documents",
-                            "sync_index_from_database_total",
-                            "vector_cache_load",
-                            "vector_storage_read",
-                            "vector_parse_and_match",
-                            "persist_directory_prepare",
-                            "persist_serialize",
-                            "persist_write_and_rename",
-                            "persist_total",
-                            "load_index_from_database_total",
-                        }
-                        count_names = {
-                            "database_rows", "documents", "posting_terms",
-                            "vector_files_present", "vector_entries_loaded", "vector_count",
-                            "index_persisted", "serialized_bytes",
-                            "applied_upserts", "applied_deletes", "scanned_rows",
-                            "passes", "fallback_full",
-                        }
-                        probe_update(index_ts_database_load={
-                            "stage_ms": {
-                                name: int(value)
-                                for name, value in raw_stage_ms.items()
-                                if name in stage_names and isinstance(value, (int, float))
-                                and not isinstance(value, bool)
-                            } if isinstance(raw_stage_ms, dict) else {},
-                            "counts": {
-                                name: int(value)
-                                for name, value in raw_counts.items()
-                                if name in count_names and isinstance(value, (int, float))
-                                and not isinstance(value, bool)
-                            } if isinstance(raw_counts, dict) else {},
-                        })
-                    if diagnostics is not None:
-                        used_sync = getattr(settings, "ts_index_sync_mode", "incremental") == "incremental"
-                        worker_fell_back = bool((database_snapshot.get("probe") or {}).get("counts", {}).get("fallback_full")) \
-                            if isinstance(database_snapshot.get("probe"), dict) else False
-                        diagnostics["index_sync"] = (
-                            "ts_incremental_sync" if used_sync and not worker_fell_back else "database_load"
-                        )
-                        if worker_fell_back:
-                            diagnostics["index_sync_fallback_full"] = True
-                        diagnostics["document_count"] = int(database_snapshot.get("document_count") or 0)
-                        diagnostics["vector_count"] = int(database_snapshot.get("vector_count") or 0)
-                        diagnostics["sync_applied_upserts"] = int(database_snapshot.get("applied_upserts") or 0)
-                        diagnostics["sync_applied_deletes"] = int(database_snapshot.get("applied_deletes") or 0)
-                    probe_update(index_build={
-                        "document_count": int(database_snapshot.get("document_count") or 0),
-                        "vector_count": int(database_snapshot.get("vector_count") or 0),
-                        "index_source": "database",
-                    })
-                    return TsLexicalIndex([], client, revision)
-                if not reused:
-                    can_patch = bool(
-                        previous_documents is not None
-                        and previous_revision is not None
-                        and getattr(client, "_revision", None) == previous_revision
-                    )
-                    if can_patch:
-                        from agent.rag.delta import compute_chunk_delta
-
-                        delta_started = time.monotonic()
-                        probe_start("index_delta_compute")
-                        delta = compute_chunk_delta(previous_documents, documents)
-                        upserts = list(delta.upserts)
-                        deletes = list(delta.deletes)
-                        probe_finish(
-                            "index_delta_compute", delta_started,
-                            upsert_count=len(upserts), delete_count=len(deletes),
-                        )
-                        vector_result = await await_probe(
-                            "index_worker_patch",
-                            client.patch(
-                                upserts, deletes, revision, previous_revision,
-                                storage_owner_id=owner_user_id,
-                                vector_version=vector_tag,
-                            ),
-                        )
-                        if diagnostics is not None:
-                            diagnostics["index_sync"] = "patch"
-                            diagnostics["upsert_count"] = len(upserts)
-                            diagnostics["delete_count"] = len(deletes)
-                    else:
-                        vector_result = await await_probe(
-                            "index_worker_replace",
-                            client.replace(
-                                documents, revision,
-                                storage_owner_id=owner_user_id,
-                                vector_version=vector_tag,
-                            ),
-                        )
-                        if diagnostics is not None:
-                            diagnostics["index_sync"] = "replace"
-                    if diagnostics is not None:
-                        diagnostics["vector_count"] = int(vector_result.get("vector_count") or 0)
-            except TsSidecarUnavailable as error:
-                build_probe = {
-                    "outcome": "error",
-                    "error_type": type(error).__name__,
-                    "error_code": (
-                        "revision_mismatch" if error.code == "revision_mismatch"
-                        else "other" if error.code else "missing"
-                    ),
-                }
-                if error.diagnostics:
-                    build_probe["worker_build_probe"] = error.diagnostics
-                probe_update(index_build=build_probe)
-                await client.close()
-                if diagnostics is not None:
-                    diagnostics["fallback"] = "typescript_unavailable"
-                raise
-            else:
-                if diagnostics is not None:
-                    diagnostics["index_build_ms"] = int((time.monotonic() - started) * 1000)
-                return TsLexicalIndex(documents, client, revision)
-        raise TsSidecarUnavailable(f"不支持的词法后端: {backend}")
+        probe_update(index_build={
+            "document_count": int(result.get("document_count") or 0),
+            "vector_count": int(result.get("vector_count") or 0),
+            "index_source": "cython_snapshot" if result.get("snapshot_hit") else "database",
+        })
+        return lifecycle
 
     async def _current_revision(self, db, owner_user_id: object, backend, settings) -> str | None:
-        if backend != "typescript":
-            return await self._revision(db, owner_user_id)
-        client = await get_lexical_client(
-            owner_user_id,
-            command=settings.ts_sidecar_command,
-            index_dir=index_dir_for_owner(owner_user_id),
-        )
-        return await client.database_revision(owner_user_id)
+        return await self._revision(db, owner_user_id)
 
     async def _revision(self, db, owner_user_id: object) -> str | None:
         from agent.rag.protocol import RAG_PROJECTION_VERSION, TOKENIZER_VERSION
@@ -866,17 +609,13 @@ async def search_documents_with_cache(
     else:
         from app.core.config import get_settings
 
-        if _selected_backend(get_settings().search) == "cython":
-            results, search_diagnostics = await asyncio.to_thread(
-                index.search, query, limit=limit, source_types=source_types, scope=scope,
-            )
-            timing = None
-            if diagnostics is not None:
-                diagnostics["candidate_count"] = int(search_diagnostics.candidate_count)
-                diagnostics["eligible_count"] = int(search_diagnostics.eligible_count)
-        else:
-            results = await index.search(query, limit=limit, source_types=source_types, scope=scope)
-            timing = None
+        results, search_diagnostics = await asyncio.to_thread(
+            index.search, query, limit=limit, source_types=source_types, scope=scope,
+        )
+        timing = None
+        if diagnostics is not None:
+            diagnostics["candidate_count"] = int(search_diagnostics.candidate_count)
+            diagnostics["eligible_count"] = int(search_diagnostics.eligible_count)
     if diagnostics is not None:
         elapsed = int((time.monotonic() - started) * 1000)
         _record_search_diagnostics(diagnostics, index, timing, elapsed)
@@ -894,16 +633,6 @@ def _record_search_diagnostics(diagnostics: dict[str, object], index, timing, el
     diagnostics["sidecar_queue_wait_ms"] = int(queue_wait or 0)
     diagnostics["sidecar_query_ms"] = int(query_ms or 0)
     diagnostics["search_ms"] = elapsed
-
-
-def _selected_backend(settings) -> str:
-    """由运行配置选择唯一 RAG 引擎；不做双跑或自动 fallback。"""
-    backend = str(getattr(settings, "rag_backend", "typescript") or "typescript")
-    if backend == "cython":
-        from agent.rag.cython_runtime import ensure_cython_importer
-
-        ensure_cython_importer()
-    return backend
 
 
 def _documents_fingerprint(documents: list[IndexDocument]) -> str:

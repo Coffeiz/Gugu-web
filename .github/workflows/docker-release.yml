@@ -223,10 +223,6 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.cache-scope }}
           cache-to: type=gha,mode=max,scope=${{ matrix.cache-scope }}
 
-      - name: Smoke test TS RAG worker
-        if: matrix.name == 'app'
-        run: docker run --rm --entrypoint node ${{ steps.img.outputs.ref }} bin/gugu-rag-ts-worker.mjs --version
-
       - name: Smoke test updater toolchain in app image
         if: matrix.name == 'app'
         run: |

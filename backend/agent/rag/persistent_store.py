@@ -80,7 +80,7 @@ RAG_DELTA_PAGE_SIZE = 2_000
 
 @dataclass(frozen=True, slots=True)
 class RagIndexCursor:
-    """TS Data Runtime 增量读取使用的 `(indexed_at, id)` 水位。"""
+    """索引增量读取使用的 `(indexed_at, id)` 水位。"""
 
     timestamp: datetime
     row_id: int
@@ -289,7 +289,7 @@ async def load_rag_index_delta(
             if row.deleted_at is not None:
                 parent = str(row.parent_document_id or row.document_id or "")
                 key_document = _from_row(row)
-                # TS worker delete key is source_type:parent_document_id:chunk_index.
+                # 删除键由来源、父文档和 chunk 序号唯一确定。
                 deletes.append(chunk_slot_key(key_document) if parent else "")
             else:
                 upserts.append(_from_row(row))

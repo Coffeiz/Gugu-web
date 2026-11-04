@@ -6,7 +6,7 @@
 - 来源真实变更（folder 移动旧 scope 不再召回在 test_rag_file_project_delta
   覆盖，这里补 source-level refresh 覆盖文档级 pending 的语义）；
 - 诊断 mode/status 七态与写路径脱敏。
-不启动真实 TS worker：投影与 worker 都用 fake（同 test_rag_knowledge_delta_index）。
+sidecar 通过 fake 隔离：与 test_rag_knowledge_delta_index 一样验证收敛行为。
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from agent.events.types import RagIndexUpdated
 from agent.rag import index_jobs
 from agent.rag.models import IndexDocument, Scope
 from agent.rag.persistent_store import load_parent_documents, replace_source_documents
-from agent.rag.ts_sidecar import TsSidecarUnavailable
+from agent.rag.sidecar_protocol import RagSidecarUnavailable
 from app.core.tz import now_utc
 from app.models import Base, User, RagIndexJob
 from app.services.storage import LocalStorageBackend
@@ -71,7 +71,7 @@ class FakeWorker:
         if self.fail_patch_codes:
             code = self.fail_patch_codes.pop(0)
             if code:
-                raise TsSidecarUnavailable(f"worker: {code}", code=code)
+                raise RagSidecarUnavailable(f"worker: {code}", code=code)
         self.calls.append(("patch", {
             "upserts": [d.chunk_id for d in upserts],
             "deletes": list(deletes), "revision": revision,

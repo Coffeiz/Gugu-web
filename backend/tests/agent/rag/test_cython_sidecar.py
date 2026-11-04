@@ -128,7 +128,6 @@ async def test_cython_sidecar_loads_and_queries_synthetic_owner_index(
     """选用 sidecar 时索引缓存把 DB 装载和查询交给常驻 owner lifecycle。"""
     from agent.rag.index_cache import KnowledgeIndexCache
     from app.core.config import get_settings
-    import agent.rag.ts_sidecar as ts_sidecar
 
     document = IndexDocument(
         document_id="doc-a", source_type="knowledge", source_id="doc-a",
@@ -141,7 +140,7 @@ async def test_cython_sidecar_loads_and_queries_synthetic_owner_index(
     host = SidecarHost(str(socket_path))
     await host.start()
     try:
-        monkeypatch.setattr(ts_sidecar, "_sidecar_socket_path", lambda: host.socket_path)
+        monkeypatch.setattr("agent.rag.index_cache.sidecar_socket_path", lambda: host.socket_path)
         diagnostics = {}
         client = await KnowledgeIndexCache()._build_index(
             "cython", user_a.id, None, revision, get_settings().search, diagnostics,
@@ -225,7 +224,7 @@ async def test_cython_sidecar_caches_transient_capability_index(tmp_path):
 @pytest.mark.asyncio
 async def test_cython_transient_search_does_not_block_sidecar_event_loop(tmp_path):
     """慢 transient 检索期间宿主事件循环仍可处理其他 RAG socket 请求。"""
-    from agent.rag.ts_sidecar import _wire_document
+    from agent.rag.sidecar_protocol import wire_document
 
     owner = str(uuid.uuid4())
     socket_path = Path(tempfile.gettempdir()) / f"gugu-{uuid.uuid4().hex}.sock"
@@ -255,7 +254,7 @@ async def test_cython_transient_search_does_not_block_sidecar_event_loop(tmp_pat
             "source_types": ["capability"],
             "scope": None,
             "documents": [{
-                **_wire_document(document),
+                **wire_document(document),
                 "owner_user_id": owner,
             }],
         }

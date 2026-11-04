@@ -120,7 +120,7 @@ async def test_memory_only_query_runs_transient_spec_without_persistent_sources(
     assert [spec.get("corpus") for spec in calls["searches"]] == ["transient"]
     assert calls["source_order"] == ["memory"]
     assert len(batches) == 1 and batches[0].source_type == "unified"
-    assert batches[0].metadata["engine"] == "typescript"
+    assert batches[0].metadata["engine"] == "cython"
 
 
 @pytest.mark.asyncio
@@ -137,7 +137,7 @@ def _revision_mismatch_harness(monkeypatch, *, error_codes: list[str | None], ca
     等价于 resync 后重新调用一次 prepare_memory。
     """
     from agent.rag import batch_retriever as br
-    from agent.rag.ts_sidecar import TsSidecarUnavailable
+    from agent.rag.sidecar_protocol import RagSidecarUnavailable
 
     scope = Scope("synthetic-owner")
 
@@ -157,7 +157,7 @@ def _revision_mismatch_harness(monkeypatch, *, error_codes: list[str | None], ca
         calls["query"] = calls.get("query", 0) + 1
         code = error_codes[calls["query"] - 1] if calls["query"] <= len(error_codes) else None
         if code is not None:
-            raise TsSidecarUnavailable("统一查询失败", code=code)
+            raise RagSidecarUnavailable("统一查询失败", code=code)
         return {
             "selected": [], "stats": {}, "fusion": {"fusion": "bm25"},
             "document_counts": {"memory": 1},
@@ -205,12 +205,12 @@ async def test_revision_mismatch_resyncs_and_retries_once(monkeypatch):
 @pytest.mark.asyncio
 async def test_unmapped_worker_error_does_not_resync(monkeypatch):
     """非 revision 类失败保持原样抛出：真实故障不能被重试掩盖。"""
-    from agent.rag.ts_sidecar import TsSidecarUnavailable
+    from agent.rag.sidecar_protocol import RagSidecarUnavailable
 
     calls: dict = {}
     scope = _revision_mismatch_harness(monkeypatch, error_codes=["worker_crashed"], calls=calls)
     retriever = UnifiedQueryRetriever([_StubRetriever("synthetic-owner", "memory")])
-    with pytest.raises(TsSidecarUnavailable):
+    with pytest.raises(RagSidecarUnavailable):
         await retriever.retrieve("缓存", scope=scope, strategy="bm25")
     assert calls.get("resync") is None
     assert calls["query"] == 1
@@ -219,13 +219,13 @@ async def test_unmapped_worker_error_does_not_resync(monkeypatch):
 @pytest.mark.asyncio
 async def test_second_revision_mismatch_propagates(monkeypatch):
     """重试仍不一致就抛出去：只重试一次，不把重试变成风暴。"""
-    from agent.rag.ts_sidecar import TsSidecarUnavailable
+    from agent.rag.sidecar_protocol import RagSidecarUnavailable
 
     calls: dict = {}
     scope = _revision_mismatch_harness(
         monkeypatch, error_codes=["revision_mismatch", "revision_mismatch"], calls=calls)
     retriever = UnifiedQueryRetriever([_StubRetriever("synthetic-owner", "memory")])
-    with pytest.raises(TsSidecarUnavailable):
+    with pytest.raises(RagSidecarUnavailable):
         await retriever.retrieve("缓存", scope=scope, strategy="bm25")
     assert calls["resync"] == 1
     assert calls["query"] == 2
