@@ -1,8 +1,7 @@
-"""PRD-RAG-9 Phase 4/5 性能测量：单文档增量 vs 来源级重建的分段耗时。
+"""PRD-RAG-9 性能测量：单文档持久索引更新 vs 来源级重建。
 
-纯内存 SQLite + fake RAG 内核 + fake 投影，不触碰真实数据库/存储/模型；
-作为诊断脚本默认直接可跑（无真实数据风险），结果为 pipeline 层分段耗时，
-不含真实 Cython 内核与 embedding 调用（端到端性能见对应基准报告）。
+纯内存 SQLite + fake 投影，不触碰真实数据库/存储/模型；测量数据库投影和
+缓存失效的 pipeline 耗时，不含 Cython 索引重建与 embedding。
 
 用法：cd backend && PYTHONPATH=. .venv/bin/python scripts/diagnostics/rag_phase5_perf.py
 """
@@ -41,28 +40,6 @@ def _fake_projection(records):
     return documents
 
 
-class TimingWorker:
-    """fake worker：记录 patch/replace 的字节数与调用耗时。"""
-
-    def __init__(self):
-        self.revision = "seed"
-        self.patch_bytes = 0
-        self.replace_chunks = 0
-
-    async def patch(self, upserts, deletes, revision, base_revision, *, vectors=None,
-                    vector_version="", storage_owner_id=None):
-        self.patch_bytes += sum(len(d.content or "") for d in upserts)
-        self.revision = revision
-
-    async def replace(self, documents, revision, *, vectors=None, vector_version="",
-                      storage_owner_id=None):
-        self.replace_chunks += len(documents)
-        self.revision = revision
-
-    async def close(self):
-        return None
-
-
 async def _save_entry(owner_id, entry_id: str, content: str):
     from agent.knowledge.capture import build_entry
     from agent.knowledge.store import KnowledgeStore
@@ -90,7 +67,7 @@ def _percentiles(values: list[float]) -> dict[str, float]:
 async def main() -> None:
     scale = int(sys.argv[1]) if len(sys.argv) > 1 else 1000
     chunk_count = int(sys.argv[2]) if len(sys.argv) > 2 else 4
-    print(f"# 规模：{scale} 条 knowledge × {chunk_count} chunk/条（内存 SQLite + fake worker）")
+    print(f"# 规模：{scale} 条 knowledge × {chunk_count} chunk/条（内存 SQLite）")
 
     engine = create_async_engine(
         "sqlite+aiosqlite://", connect_args={"check_same_thread": False},
@@ -117,10 +94,6 @@ async def main() -> None:
     db_session._SessionLocal = session_factory
     db_session._engine_loop = asyncio.get_running_loop()
 
-    worker = TimingWorker()
-    async def fake_client(_user_id):
-        return worker
-    pipeline._knowledge_client = fake_client
     async def fake_project(owner_user_id, source_type, records, **_kwargs):
         return _fake_projection(records)
     pipeline.records_to_write_documents = fake_project
@@ -146,13 +119,13 @@ async def main() -> None:
         await _save_entry(owner_id, entry_id, body.replace("第1段", f"改后第1段v{i}"))
         stats: dict = {}
         t0 = time.perf_counter()
-        await pipeline.update_knowledge_document(owner_id, entry_id, stats_out=stats)
+        await pipeline.update_document(owner_id, "knowledge", entry_id, stats_out=stats)
         total = (time.perf_counter() - t0) * 1000
         modify_ms.append(total)
         proj_ms.append(float(stats.get("projection_ms") or 0))
         patch_ms.append(float(stats.get("patch_ms") or 0))
     print(f"单文档修改 ×20：端到端 ms {_percentiles(modify_ms)}；"
-          f"projection_ms {_percentiles(proj_ms)}；patch_ms {_percentiles(patch_ms)}")
+          f"projection_ms {_percentiles(proj_ms)}；cache_invalidation_ms {_percentiles(patch_ms)}")
 
     # 场景 2：单文档删除 ×20
     delete_ms = []
@@ -160,8 +133,8 @@ async def main() -> None:
         entry_id = f"k-{i}"
         stats = {}
         t0 = time.perf_counter()
-        await pipeline.update_knowledge_document(
-            owner_id, entry_id, operation="delete", stats_out=stats)
+        await pipeline.update_document(
+            owner_id, "knowledge", entry_id, operation="delete", stats_out=stats)
         delete_ms.append((time.perf_counter() - t0) * 1000)
     print(f"单文档删除 ×20：端到端 ms {_percentiles(delete_ms)}")
 
@@ -175,12 +148,10 @@ async def main() -> None:
         t0 = time.perf_counter()
         for entry_id in ids:
             stats = {}
-            await pipeline.update_knowledge_document(owner_id, entry_id, stats_out=stats)
+            await pipeline.update_document(owner_id, "knowledge", entry_id, stats_out=stats)
         batch_ms.append((time.perf_counter() - t0) * 1000)
     print(f"连续 10 次同源多文档变更 ×5 轮：每轮 ms {[round(v, 1) for v in batch_ms]}")
-    print(f"# worker 收到 patch 总字节（fake 内正文累计）：{worker.patch_bytes}")
-
-    # 场景 4：来源级全量重建基线（回退路径）
+    # 场景 4：来源级全量重建基线
     from agent.rag.adapters.knowledge import KnowledgeAdapter
 
     async with session_factory() as db:

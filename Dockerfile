@@ -250,7 +250,7 @@ COPY --from=chart-runtime /chart/node_modules ./bin/node_modules
 # 冒烟启动图表 Worker：解析它的全部同级依赖与 CJK 字体路径。缺任何一个都让镜像构建失败，
 # 而不是等到线上渲染时才 ERR_MODULE_NOT_FOUND。
 RUN printf '{"charts":[]}' | node bin/gugu-chart-worker.mjs \
-    && echo "Chart worker module graph OK"
+    && cd bin && node -e "Promise.all([import('mermaid'), import('@mermaid-js/mermaid-zenuml'), import('@resvg/resvg-js'), import('@xmldom/xmldom'), import('svgdom'), import('mathjax')]).then(() => console.log('Chart runtime dependencies ready'))"
 RUN python -c "import ctypes.util; assert ctypes.util.find_library('seccomp'), 'libseccomp2 runtime unavailable'"
 RUN node bin/gugu-filesync-ts-worker.cjs --version
 

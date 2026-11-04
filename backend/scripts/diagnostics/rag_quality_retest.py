@@ -249,25 +249,23 @@ async def main() -> None:
         scopes.append((f"group-{len(seen)}", group_scope(user_id, platform, bot_id, group_id)))
         if len(scopes) >= 4:
             break
-    try:
-        results = []
-        for label, scope in scopes:
-            results.append(await one_scope(
-                user_id, label, scope, QUERIES, args.top_k, full=bool(args.full_report),
-            ))
-        payload = {
-            "embedding_enabled": embedding.is_enabled(),
-            "embedding_model": embedding.model_tag(),
-            "query_count": len(QUERIES),
-            "scope_count": len(results),
-            "scopes": results,
-        }
-        if args.full_report:
-            path = _write_full_report(args.full_report, payload)
-            print(json.dumps({"report": str(path), "scope_count": len(results)}, ensure_ascii=False))
-        else:
-            print(json.dumps(payload, ensure_ascii=False))
-    finally:
+    results = []
+    for label, scope in scopes:
+        results.append(await one_scope(
+            user_id, label, scope, QUERIES, args.top_k, full=bool(args.full_report),
+        ))
+    payload = {
+        "embedding_enabled": embedding.is_enabled(),
+        "embedding_model": embedding.model_tag(),
+        "query_count": len(QUERIES),
+        "scope_count": len(results),
+        "scopes": results,
+    }
+    if args.full_report:
+        path = _write_full_report(args.full_report, payload)
+        print(json.dumps({"report": str(path), "scope_count": len(results)}, ensure_ascii=False))
+    else:
+        print(json.dumps(payload, ensure_ascii=False))
 
 
 def _md(value: object) -> str:

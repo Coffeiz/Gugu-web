@@ -22,11 +22,13 @@ class _FakeIndex:
         self.estimated_bytes = 1024
 
     async def search(self, query, *, source_types=(), scope=None, limit=10):
+        query_terms = query.casefold().split()
         selected = [
             RecallResult(document, 1.0)
             for document in self.documents
             if (not source_types or document.source_type in set(source_types))
-            and query.casefold() in (document.title + document.summary + document.content).casefold()
+            and any(term in (document.title + document.summary + document.content).casefold()
+                    for term in query_terms)
         ]
         return selected[:limit]
 

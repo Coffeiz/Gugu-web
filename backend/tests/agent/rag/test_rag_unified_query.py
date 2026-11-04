@@ -182,8 +182,6 @@ async def test_unified_retriever_single_ipc_delivers_rank_rows(monkeypatch):
     assert [spec.get("corpus") for spec in calls["query"]["searches"]] == [None, "transient"]
     assert any(update.get("memory", {}).get("prepare", {}).get("stage_ms", {}).get(
         "owner_document_read_and_adapt") == 12 for update in probe_updates)
-    assert any(update.get("worker", {}).get("stage_ms", {}).get("bm25_scoring") == 4
-               for update in probe_updates)
 
     assert len(batches) == 1
     batch = batches[0]

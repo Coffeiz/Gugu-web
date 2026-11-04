@@ -26,13 +26,12 @@ from agent.events.types import RagIndexUpdated
 from agent.rag import index_jobs
 from agent.rag.models import IndexDocument, Scope
 from agent.rag.persistent_store import load_parent_documents, replace_source_documents
-from agent.rag.sidecar_protocol import RagSidecarUnavailable
 from app.core.tz import now_utc
 from app.models import Base, User, RagIndexJob
 from app.services.storage import LocalStorageBackend
 
 
-# ── 基建（与 test_rag_knowledge_delta_index 同款：独立内存库 + fake worker） ──
+# ── 基建：独立内存库与 canonical 投影 ──
 
 def _doc(owner: str, source_id: str, content: str, index: int, count: int, version: str = "1") -> IndexDocument:
     return IndexDocument(
@@ -61,34 +60,6 @@ def _fake_projection(records):
     return documents
 
 
-class FakeWorker:
-    def __init__(self):
-        self.calls: list[tuple[str, dict]] = []
-        self.revision: str | None = "seed"
-        self.fail_patch_codes: list[str] = []
-
-    async def patch(self, upserts, deletes, revision, base_revision, *, vectors=None, vector_version="", storage_owner_id=None):
-        if self.fail_patch_codes:
-            code = self.fail_patch_codes.pop(0)
-            if code:
-                raise RagSidecarUnavailable(f"worker: {code}", code=code)
-        self.calls.append(("patch", {
-            "upserts": [d.chunk_id for d in upserts],
-            "deletes": list(deletes), "revision": revision,
-        }))
-        self.revision = revision
-
-    async def replace(self, documents, revision, *, vectors=None, vector_version="", storage_owner_id=None):
-        self.calls.append(("replace", {"chunks": [d.chunk_id for d in documents], "revision": revision}))
-        self.revision = revision
-
-    async def close(self):
-        return None
-
-    def ops(self) -> list[str]:
-        return [op for op, _ in self.calls]
-
-
 @pytest_asyncio.fixture
 async def rag_env(monkeypatch, tmp_path):
     engine = create_async_engine(
@@ -115,16 +86,11 @@ async def rag_env(monkeypatch, tmp_path):
     storage = LocalStorageBackend(tmp_path)
     monkeypatch.setattr("agent.knowledge.store.get_storage", lambda: storage)
 
-    worker = FakeWorker()
-    async def fake_client(_user_id):
-        return worker
-    monkeypatch.setattr(pipeline, "_knowledge_client", fake_client)
-
     async def fake_project(owner_user_id, source_type, records, **_kwargs):
         return _fake_projection(records)
     monkeypatch.setattr(pipeline, "records_to_write_documents", fake_project)
 
-    return owner_id, worker, session_factory
+    return owner_id, session_factory
 
 
 async def _seed_entry(owner_id, entry_id: str, content: str) -> None:
@@ -317,13 +283,13 @@ async def test_outbox_source_level_success_clears_pending_ids(db, user_a, monkey
     assert row.pending_source_ids == []
 
 
-# ── 3. 重启重放端到端收敛：DB projection + worker revision 一致 ──
+# ── 3. 重启重放端到端收敛：DB projection 为持久事实源 ──
 
 @pytest.mark.asyncio
 async def test_outbox_replay_converges_after_restart(rag_env, monkeypatch):
     """业务写入 → outbox 持久化 →（进程重启，内存队列丢失）→ 重放全部 ID
-    → 最终 DB projection 与 worker revision 一致，再无到期任务。"""
-    owner_id, worker, session_factory = rag_env
+    → 最终 DB projection 收敛，再无到期任务。"""
+    owner_id, session_factory = rag_env
     async with session_factory() as db:
         await _seed_entry(owner_id, "k-a", "甲一段|甲二段")
         await _seed_entry(owner_id, "k-b", "乙一段")
@@ -365,9 +331,7 @@ async def test_outbox_replay_converges_after_restart(rag_env, monkeypatch):
         revision = await pipeline._owner_revision(db, owner_id)
     assert len(rows_a) == 3 and all("甲改" in r.content for r in rows_a)
     assert len(rows_b) == 1 and "乙改" in rows_b[0].content
-    # worker revision 与 DB projection revision 收敛到同一点
-    assert worker.revision == revision
-    assert worker.ops().count("patch") == 2
+    assert revision
 
     # 全部成功后 outbox 清空：不再有到期任务
     monkeypatch.setattr(index_jobs, "now_utc", lambda: now_utc() + timedelta(seconds=2))
@@ -379,7 +343,7 @@ async def test_outbox_replay_converges_after_restart(rag_env, monkeypatch):
 @pytest.mark.asyncio
 async def test_conversation_event_stays_source_level(monkeypatch, rag_env):
     """conversation 即使带 source_id 也不走文档级 patch（保留 watermark 语义）。"""
-    owner_id, _worker, _sf = rag_env
+    owner_id, _sf = rag_env
     routed: list[str] = []
 
     async def fake_rebuild(user_id, source_type, *, operation="upsert", stats_out=None):
@@ -395,7 +359,7 @@ async def test_conversation_event_stays_source_level(monkeypatch, rag_env):
 @pytest.mark.asyncio
 async def test_memory_event_uses_dedicated_rebuild(monkeypatch, rag_env):
     """memory 事件走专用全量重建 + 瞬态槽语义，不进 DOCUMENT_PATCH 路径。"""
-    owner_id, _worker, _sf = rag_env
+    owner_id, _sf = rag_env
     calls: list[str] = []
 
     async def fake_rebuild(user_id, *, operation="upsert"):
@@ -412,11 +376,10 @@ async def test_memory_event_uses_dedicated_rebuild(monkeypatch, rag_env):
 
 @pytest.mark.asyncio
 async def test_diagnostic_modes_and_statuses(rag_env, caplog, monkeypatch):
-    """mode/status 七态：document_patch、source_replace、no_change、
-    worker_unavailable、revision_mismatch、projection_failed、event_replayed。"""
+    """诊断覆盖文档更新、来源重建、无变化、失败和 outbox 重放。"""
     import logging as _logging
 
-    owner_id, worker, session_factory = rag_env
+    owner_id, session_factory = rag_env
     async with session_factory() as db:
         await _seed_entry(owner_id, "k-a", "一段|二段")
         await _seed_entry(owner_id, "k-b", "另一条")
@@ -437,17 +400,15 @@ async def test_diagnostic_modes_and_statuses(rag_env, caplog, monkeypatch):
         assert await pipeline.handle_rag_index_event(RagIndexUpdated(
             user_id=owner_id, source_type="knowledge", source_id="k-a")) is True
 
-        # revision_mismatch → 回退 source_replace（mode 显式切换）
+        # 文档级更新后继续收敛到最新主数据
         await _modify_entry(owner_id, "k-a", "再改一段|再改二段")
-        worker.fail_patch_codes = ["revision_mismatch"]
         assert await pipeline.handle_rag_index_event(RagIndexUpdated(
             user_id=owner_id, source_type="knowledge", source_id="k-a")) is True
 
-        # worker_unavailable
+        # 无 source_id 时执行来源级全量重建
         await _modify_entry(owner_id, "k-a", "三改一段|三改二段")
-        worker.fail_patch_codes = ["worker_crashed"]
         assert await pipeline.handle_rag_index_event(RagIndexUpdated(
-            user_id=owner_id, source_type="knowledge", source_id="k-a")) is True
+            user_id=owner_id, source_type="knowledge", source_id="", operation="refresh")) is True
 
         # event_replayed（重放成功且真实收敛，与首投递区分）
         await _modify_entry(owner_id, "k-a", "重放触发一段|重放触发二段")
@@ -468,7 +429,7 @@ async def test_diagnostic_modes_and_statuses(rag_env, caplog, monkeypatch):
     modes = {m for p in payloads for m in [_extract(p, "mode")] if m}
     statuses = {m for p in payloads for m in [_extract(p, "status")] if m}
     assert {"document_patch", "source_replace"} <= modes
-    assert {"no_change", "ready", "worker_unavailable", "event_replayed",
+    assert {"no_change", "index_invalidated", "event_replayed",
             "projection_failed"} <= statuses
 
 
@@ -489,7 +450,7 @@ async def test_write_path_logs_never_contain_content(rag_env, caplog):
     """PRD §9 脱敏：写路径日志不得出现正文、条目标题或查询原文。"""
     import logging as _logging
 
-    owner_id, _worker, session_factory = rag_env
+    owner_id, session_factory = rag_env
     marker = "绝密正文标记XYZQ"
     async with session_factory() as db:
         await _seed_entry(owner_id, "k-a", f"{marker}|二段")

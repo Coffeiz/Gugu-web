@@ -1230,7 +1230,7 @@ def _run_markdown(payload: dict[str, Any]) -> str:
     lines = [
         "# LoopScope run · RAG confidence 对照报告（非脱敏）",
         "",
-        "> 当前结果是用指定 LoopScope run 的 query 对当前 TS 索引只读重跑；下方正文严格按观察排名对应。",
+        "> 当前结果是用指定 LoopScope run 的 query 对当前 Cython 索引只读重跑；下方正文严格按观察排名对应。",
         "",
         f"- 输入 run：`{md(payload['input_run'])}`",
         f"- case 数量：`{payload['case_count']}`",

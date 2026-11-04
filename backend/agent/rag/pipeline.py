@@ -255,7 +255,7 @@ async def handle_rag_index_event(event) -> bool:
                 mode = str(stats_out.get("mode", "source_replace"))
             stats = stats_out
             status = str(stats.get("status", "ready"))
-            if getattr(event, "replayed", False) and status == "ready":
+            if getattr(event, "replayed", False) and status in {"ready", "index_invalidated"}:
                 # durable outbox 重放成功的收敛，与首投递区分开（PRD-RAG-9 §9）。
                 status = "event_replayed"
             record_index_update(

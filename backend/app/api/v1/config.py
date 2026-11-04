@@ -1151,12 +1151,11 @@ async def embedding_rebuild_status():
 
 
 async def _rebuild_index_worker(user_ids: list[str]) -> None:
-    """后台按用户完整重投影 RAG 来源并强制刷新 TS 持久索引。
+    """后台按用户重投影 RAG 来源并预热 Cython 索引缓存。
 
     这是派生索引维护，不修改文件、对话等主数据；每个来源独立失败并继续，
     让管理员能在一次任务中尽量收敛所有用户，同时得到明确的失败计数。
     """
-    from agent.memory import embedding
     from agent.rag.index_cache import get_index_cache
     from agent.rag import pipeline as rag_pipeline
     from app.core import redis as redis_mod
@@ -1199,17 +1198,19 @@ async def _rebuild_index_worker(user_ids: list[str]) -> None:
                     failed_sources += 1
                     diag_log("app.api.v1.config.index_rebuild.source", exc)
 
-            # 来源写库完成后，直接执行一次全量数据库装载，确保 TS 磁盘索引不再
-            # 依赖下一次查询触发增量同步，也避免旧缓存只保留旧正文。
+            # 来源写库后失效旧 Cython 快照，再按最新数据库 revision 预装索引，
+            # 避免管理员重建结束后仍复用旧正文。
             try:
                 db_session.ensure_engine()
+                cache = get_index_cache()
+                cache.invalidate(user_id, include_snapshot=True)
                 async with db_session._SessionLocal() as db:
                     revision = await rag_pipeline._owner_revision(db, user_id)
                 if revision:
-                    client = await rag_pipeline._knowledge_client(user_id)
-                    vector_tag = embedding.model_tag() if embedding.is_enabled() else ""
-                    await client.load_index_from_database(user_id, revision, vector_tag)
-                    get_index_cache().invalidate(user_id, include_snapshot=True)
+                    async with db_session._SessionLocal() as db:
+                        await cache.get(
+                            db, user_id, "all", baseline_revision=revision, force=True,
+                        )
             except Exception as exc:
                 user_failed = True
                 diag_log("app.api.v1.config.index_rebuild.cython_index", exc)

@@ -989,6 +989,8 @@ def _matches_worker_scope(document: IndexDocument, scope: Scope | None) -> bool:
     if scope is None:
         return True
     actual = document.scope
+    if actual.owner_user_id != scope.owner_user_id:
+        return False
     if scope.scope_type in {"project", "folder"}:
         if actual.scope_type != "owner":
             return False

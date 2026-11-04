@@ -378,8 +378,7 @@ def test_scope_matrix_enforces_owner_project_folder_and_group_boundaries() -> No
     ]
     index = cython_backend.CythonLexicalIndex.build(documents, "r1")
     scope_cases = [
-        (None, {"owner", "project", "folder", "group", "member", "other-platform"}),
-        (Scope(owner), {"owner", "project", "folder", "group", "member", "other-platform"}),
+        (Scope(owner), {"owner", "project", "folder"}),
         (Scope(owner, scope_type="project", scope_id="p1"), {"project"}),
         (Scope(owner, scope_type="folder", scope_id="f1"), {"folder"}),
         (Scope(owner, "qq", "bot-a", "g1", "group", "g1"), {"group"}),

@@ -250,4 +250,3 @@ async def test_query_embedding_rejects_invalid_wire_config(change, text):
     expected = {"vector": [], "outcome": "invalid_config"}
     python_result = await embedding.embed_query(text, settings=settings)
     assert python_result == expected
-    assert ts_result == python_result

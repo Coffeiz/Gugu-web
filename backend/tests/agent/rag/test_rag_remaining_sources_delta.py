@@ -46,27 +46,6 @@ async def rest_env(monkeypatch, tmp_path):
     monkeypatch.setattr(db_session, "_SessionLocal", session_factory, raising=False)
     monkeypatch.setattr(db_session, "_engine_loop", _asyncio.get_running_loop())
 
-    class FakeWorker:
-        def __init__(self):
-            self.calls = []
-            self.revision = "seed"
-
-        async def patch(self, upserts, deletes, revision, base_revision, **kwargs):
-            self.calls.append(("patch", len(upserts)))
-            self.revision = revision
-
-        async def replace(self, documents, revision, **kwargs):
-            self.calls.append(("replace", len(documents)))
-            self.revision = revision
-
-        async def close(self):
-            return None
-
-    worker = FakeWorker()
-    async def fake_client(_user_id):
-        return worker
-    monkeypatch.setattr(pipeline, "_knowledge_client", fake_client)
-
     async def fake_projection(owner_user_id, source_type, records, **_kwargs):
         from agent.rag.models import IndexDocument, Scope
 
@@ -84,12 +63,12 @@ async def rest_env(monkeypatch, tmp_path):
             ))
         return docs
     monkeypatch.setattr(pipeline, "records_to_write_documents", fake_projection)
-    return owner_id, worker, session_factory
+    return owner_id, session_factory
 
 
 @pytest.mark.asyncio
 async def test_calendar_single_record_and_incremental_patch(rest_env):
-    owner_id, worker, session_factory = rest_env
+    owner_id, session_factory = rest_env
     async with session_factory() as db:
         event = CalendarEvent(user_id=owner_id, title="旧标题", date="2026-09-12",
                               description="描述", version=1)
@@ -105,13 +84,12 @@ async def test_calendar_single_record_and_incremental_patch(rest_env):
         await db.commit()
     stats: dict = {}
     count = await pipeline.update_document(owner_id, "calendar", str(event_id), stats_out=stats)
-    assert stats["status"] == "ready" and count == 1
-    assert worker.calls == [("patch", 1)]
+    assert stats["status"] == "index_invalidated" and count == 1
 
 
 @pytest.mark.asyncio
 async def test_calendar_delete_converges(rest_env):
-    owner_id, worker, session_factory = rest_env
+    owner_id, session_factory = rest_env
     async with session_factory() as db:
         event = CalendarEvent(user_id=owner_id, title="待删", date="2026-09-12")
         db.add(event)
@@ -127,7 +105,7 @@ async def test_calendar_delete_converges(rest_env):
 
 @pytest.mark.asyncio
 async def test_note_single_record_skips_canvas_kind(rest_env):
-    owner_id, worker, session_factory = rest_env
+    owner_id, session_factory = rest_env
     async with session_factory() as db:
         node = MindNode(user_id=owner_id, kind="note", title="便签",
                         content_md="md 正文", content_plain="纯文本")
@@ -150,7 +128,7 @@ async def test_note_single_record_skips_canvas_kind(rest_env):
 
 @pytest.mark.asyncio
 async def test_canvas_single_record_includes_relation_summary(rest_env):
-    owner_id, worker, session_factory = rest_env
+    owner_id, session_factory = rest_env
     async with session_factory() as db:
         node_a = MindNode(user_id=owner_id, kind="canvas_note", title="节点A", content_plain="A")
         node_b = MindNode(user_id=owner_id, kind="canvas_note", title="节点B", content_plain="B")
