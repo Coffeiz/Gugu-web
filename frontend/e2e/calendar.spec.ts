@@ -44,7 +44,7 @@ test('周视图选中时段的底色与月视图选中日期一致', async ({ pa
     await page.evaluate((selectedTheme) => {
       document.documentElement.dataset.theme = selectedTheme
       document.documentElement.dataset.family = 'glass'
-      document.documentElement.dataset.palette = 'mist'
+      document.documentElement.dataset.palette = 'neutral'
     }, theme)
 
     for (const weekend of [false, true]) {
@@ -108,6 +108,8 @@ test('框选日期后可以从侧栏创建带日期范围的项目', async ({ pa
 })
 
 test('暗色月视图中框选范围的周末使用选中底色', async ({ page }) => {
+  // 断言静态主题颜色，不应采样到背景色过渡的中间帧。
+  await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.goto('/calendar')
   await expect(page.locator('.month-body')).toBeVisible()
   await page.evaluate(() => {
@@ -200,7 +202,7 @@ test('周末作为框选头尾时比范围内的周末日期更突出', async ({
     await page.evaluate((selectedTheme) => {
       document.documentElement.dataset.theme = selectedTheme
       document.documentElement.dataset.family = 'glass'
-      document.documentElement.dataset.palette = 'mist'
+      document.documentElement.dataset.palette = 'neutral'
     }, theme)
 
     for (const [startCell, endCell, edgeSelector] of [
@@ -267,7 +269,7 @@ test('框选范围头尾在亮暗主题中都比中段更突出', async ({ page 
     await page.evaluate((selectedTheme) => {
       document.documentElement.dataset.theme = selectedTheme
       document.documentElement.dataset.family = 'glass'
-      document.documentElement.dataset.palette = 'mist'
+      document.documentElement.dataset.palette = 'neutral'
     }, theme)
 
     await page.mouse.move(startBox!.x + startBox!.width / 2, startBox!.y + 12)

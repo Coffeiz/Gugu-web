@@ -127,13 +127,25 @@ describe('回收站后台清空任务', () => {
       failed_count: 0, created_at: '2026-10-06T00:00:00Z', _t: 1,
     }
     await vi.waitFor(() => expect(mounted.actions.emptyTrashProgress.value?.done).toBe(10))
+    expect(mounted.loadContents).toHaveBeenCalledTimes(1)
     expect(getEmptyJob).toHaveBeenCalledTimes(1)
+
+    mounted.live.trashPurgeEvent = {
+      protocol_version: 'live-event-v1', event_id: 'evt-purge-progress-2',
+      type: 'task.progress', task_type: 'trash_purge', task_id: 33,
+      status: 'running', progress_current: 11, progress_total: 24,
+      failed_count: 0, created_at: '2026-10-06T00:00:00Z', _t: 2,
+    }
+    await vi.waitFor(() => expect(mounted.actions.emptyTrashProgress.value?.done).toBe(11))
+    expect(mounted.loadContents).toHaveBeenCalledTimes(1)
+    await new Promise(resolve => setTimeout(resolve, 1250))
+    expect(mounted.loadContents).toHaveBeenCalledTimes(2)
 
     mounted.live.trashPurgeEvent = {
       protocol_version: 'live-event-v1', event_id: 'evt-purge-complete',
       type: 'task.progress', task_type: 'trash_purge', task_id: 33,
       status: 'completed', progress_current: 24, progress_total: 24,
-      failed_count: 0, created_at: '2026-10-06T00:00:01Z', _t: 2,
+      failed_count: 0, created_at: '2026-10-06T00:00:01Z', _t: 3,
     }
     await vi.waitFor(() => expect(mounted.actions.emptyTrashBusy.value).toBe(false))
     await vi.waitFor(() => expect(showAppSuccess).toHaveBeenCalledOnce())

@@ -42,8 +42,8 @@ test('主应用页面按导航顺序打开后可离开，不残留卡住的旧�
   await clickNav(page, '定时任务')
   const schedules = page.locator('.sched-page')
   await assertTransition(canvas, schedules)
-  await expect(schedules.locator('.section-header button')).toBeVisible()
-  await expect(schedules.locator('.task-grid, .empty-state')).toBeVisible({ timeout: 20000 })
+  await expect(schedules.getByRole('button', { name: '新建任务' })).toBeVisible()
+  await expect(schedules.locator('.task-grid, .scrollable-card-layout__empty')).toBeVisible({ timeout: 20000 })
 
   await clickNav(page, '文件库')
   const files = page.locator('.files-page .files-main')
@@ -69,9 +69,9 @@ test('主应用页面按导航顺序打开后可离开，不残留卡住的旧�
   const skills = page.locator('.skills-page .skills-home')
   await assertTransition(currentPage, skills)
   expect((await skillsResponse).status()).toBeLessThan(500)
-  await expect(skills.locator('.skill-list, .empty-state, .error-banner').first()).toBeVisible({ timeout: 20000 })
+  await expect(skills.locator('.skill-group, .scrollable-card-layout__empty, .error-banner').first()).toBeVisible({ timeout: 20000 })
   await expect.poll(async () => {
-    const emptyState = skills.locator('.empty-state')
+    const emptyState = skills.locator('.scrollable-card-layout__empty')
     return !(await emptyState.count()) || !(await emptyState.innerText()).includes('正在加载技能')
   }).toBe(true)
 
@@ -81,7 +81,7 @@ test('主应用页面按导航顺序打开后可离开，不残留卡住的旧�
     await mcpNav.click()
     const mcp = page.locator('.mcp-route-page')
     await assertTransition(skills, mcp)
-    await expect(mcp.locator('.section-header button')).toBeVisible()
+    await expect(mcp.getByRole('button', { name: '添加服务' })).toBeVisible()
   }
 
   expect(pageErrors).toEqual([])

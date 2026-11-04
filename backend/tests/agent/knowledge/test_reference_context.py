@@ -161,23 +161,9 @@ async def test_old_message_replays_reference_context_from_references_json(
     assert f"文件 id：{file.id}" in rendered
     assert "更新下文档" in rendered
 
-    time_index = next(
-        index for index, item in enumerate(parts)
-        if item["role"] == "user"
-        and isinstance(item["content"], list)
-        and item["content"]
-        and item["content"][0].get("type") == "time-context"
-    )
-    reference_index = next(
-        index for index, item in enumerate(parts)
-        if item["role"] == "user"
-        and isinstance(item["content"], list)
-        and any(block.get("scope") == "explicit-reference" for block in item["content"])
-    )
-    assert time_index < reference_index
-    reference_user = parts[reference_index]
-    assert reference_user["content"][0]["scope"] == "explicit-reference"
-    assert reference_user["content"][1] == {"type": "text", "text": "更新下文档"}
+    reference_user = next(item for item in parts if item["role"] == "user")
+    rendered = str(reference_user["content"])
+    assert rendered.index("【消息正文】") < rendered.index("[文件]") < rendered.index("更新下文档")
 
 
 def test_inline_reference_history_keeps_reference_before_user_text():
@@ -201,5 +187,8 @@ def test_inline_reference_history_keeps_reference_before_user_text():
         use_anthropic=False, user_tz=timezone.utc,
     )
     user = next(item for item in parts if item["role"] == "user" and isinstance(item["content"], list))
-    assert user["content"][0]["scope"] == "explicit-reference"
-    assert user["content"][1] == {"type": "text", "text": "更新下文档"}
+    assert user["content"][0] == {"type": "text", "text": "【消息正文】\n"}
+    assert user["content"][1] == {
+        "type": "knowledge-context", "scope": "explicit-reference", "text": "文件 id：123",
+    }
+    assert user["content"][2] == {"type": "text", "text": "更新下文档"}

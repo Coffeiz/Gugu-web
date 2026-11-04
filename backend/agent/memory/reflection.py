@@ -411,6 +411,7 @@ def _schedule_local_idle_drain(user_id, settings, session_id, *, group_mode: boo
         previous.cancel()
 
     async def drain_after_idle():
+        owning_task = asyncio.current_task()
         marker_task = None
         try:
             await asyncio.sleep(reflection_idle.IDLE_WINDOW_SECONDS)
@@ -457,8 +458,7 @@ def _schedule_local_idle_drain(user_id, settings, session_id, *, group_mode: boo
                     await marker_task
                 except asyncio.CancelledError:
                     pass
-            current = asyncio.current_task()
-            if _local_idle_tasks.get(key) is current:
+            if _local_idle_tasks.get(key) is owning_task:
                 _local_idle_tasks.pop(key, None)
                 try:
                     from app.core.redis import get_redis
@@ -481,6 +481,8 @@ async def shutdown_local_idle_drains() -> None:
     Redis，由下次 Worker 的 idle 收束流程接管。已经开始 drain 的任务则等待完成，
     避免退出时中断其取走/写回流程。
     """
+    # 任务刚创建就关停时，先让协程进入 try/finally，保证协调标记能清理。
+    await asyncio.sleep(0)
     scheduled = list(_local_idle_tasks.items())
     for key, task in scheduled:
         if not task.done() and not _local_idle_draining.get(key):

@@ -65,6 +65,7 @@ flowchart TD
 | 模块 | 当前实际职责 | 边界判断 |
 |---|---|---|
 | `agent/gateway/{qq,feishu,wechat}.py` | 长连接/轮询、平台事件解析、引用和媒体下载/转码、平台即时 ack/reaction、入 Redis、平台发送 API | 只保留平台协议和即时体验适配；业务身份、权限和执行由 IM Loop 处理。 |
+| `agent/gateway/gateway.py` | 通过 PostgreSQL `LISTEN/NOTIFY` 接收 Bot 配置变化；启动和订阅重连时全量对账；用子进程退出等待器执行崩溃恢复与退避 | 不再固定频率查询 Bot 配置；进程健康心跳独立于配置通知。凭据继续只经环境变量注入。 |
 | `agent/im/models.py` | `PlatformMessage`、带 capability 的 `PlatformReply` 与旧 dict payload 互转，并校验目标平台能力 | 统一协议层；保留旧 payload 仅用于 Gateway 兼容，不在此做业务决策。 |
 | `agent/im/identity.py` | 根据 Bot owner 解析咕咕账号、owner 显示名裁剪 | 账号归属职责合适；QQ 平台 owner 绑定由网页验证码服务和 Gateway C2C 命令完成，member 身份解析仍主要在 QQ 权限服务中。 |
 | `agent/im/permissions.py` | QQ 群/C2C 角色查询、非 QQ 私聊 owner/群聊 unknown 策略、工具白名单裁剪和 dispatch 二次门禁、群开关读取 | 权限职责已收口；未知身份默认最小权限。 |

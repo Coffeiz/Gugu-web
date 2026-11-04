@@ -51,8 +51,21 @@ async def test_refresh_concurrency_releases_waiting_agent_slot(tmp_path, monkeyp
 
 
 async def test_run_once_keeps_unacked_backlog_out_of_process(monkeypatch):
-    queued = [(f"msg-{i}", {"text": "synthetic"}) for i in range(5)]
+    queued = [
+        (
+            f"msg-{i}",
+            {
+                "platform": "qq",
+                "channel_id": "bot-test",
+                "platform_user_id": f"user-{i}",
+                "chat_type": "c2c",
+                "text": "synthetic",
+            },
+        )
+        for i in range(5)
+    ]
     release = asyncio.Event()
+    buffered = asyncio.Event()
 
     async def claim_stale(*_args, **_kwargs):
         return []
@@ -64,6 +77,8 @@ async def test_run_once_keeps_unacked_backlog_out_of_process(monkeypatch):
 
     async def hold_message_in_buffer(msg_id, _payload):
         worker._buffered_message_ids.update((msg_id,))
+        if len(worker._buffered_message_ids) >= 2:
+            buffered.set()
         await release.wait()
 
     monkeypatch.setattr(worker, "R", SimpleNamespace(claim_stale=claim_stale, consume=consume))
@@ -75,8 +90,7 @@ async def test_run_once_keeps_unacked_backlog_out_of_process(monkeypatch):
 
     try:
         assert await worker.run_once(block_ms=0) == 2
-        while len(worker._buffered_message_ids) < 2:
-            await asyncio.sleep(0)
+        await asyncio.wait_for(buffered.wait(), timeout=1)
 
         assert len(worker._pending_message_ids) == 2
         assert await worker.run_once(block_ms=0) == 0

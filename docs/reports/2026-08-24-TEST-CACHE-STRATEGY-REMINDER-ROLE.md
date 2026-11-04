@@ -2,7 +2,7 @@
 
 日期：2026-08-24
 环境：devserver，使用真实 session snapshot、历史消息、工具历史和正式 history adapter 组装；只读请求，不写入会话历史。
-脚本：`backend/scripts/diagnostics/test_reminder_role_cache.py`
+脚本：`backend/scripts/diagnostics/probe_reminder_role_cache.py`
 
 ## 目的
 
@@ -53,7 +53,7 @@ MiniMax 接受 `system` role，且在本次真实上下文中没有观察到比 
 ```bash
 cd backend
 PYTHONUNBUFFERED=1 PYTHONPATH=. .venv/bin/python \
-  scripts/diagnostics/test_reminder_role_cache.py \
+  scripts/diagnostics/probe_reminder_role_cache.py \
   --session-id <session_id> \
   --provider minimax \
   --provider qwen

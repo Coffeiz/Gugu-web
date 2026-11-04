@@ -356,9 +356,9 @@ defineExpose({
   position: absolute; inset: 0; z-index: 120;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
   pointer-events: none;   /* 让拖拽事件穿透到 .chat-window，drop/dragleave 才能正常触发 */
-  background: rgba(123,127,178,0.16);
+  background: color-mix(in srgb, var(--action-primary) 16%, transparent);
   backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
-  border: 2px dashed rgba(123,127,178,0.6); border-radius: 20px;
+  border: 2px dashed color-mix(in srgb, var(--action-primary) 60%, transparent); border-radius: 20px;
   color: var(--color-primary); font-size: 14px; font-weight: 600;
 }
 .chat-drop-fade-enter-active, .chat-drop-fade-leave-active { transition: opacity 0.15s ease; }
@@ -447,7 +447,7 @@ defineExpose({
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; transition: background 0.12s, color 0.12s;
 }
-.popup-icon-btn:hover { background: rgba(123,127,178,0.12); color: var(--color-primary); }
+.popup-icon-btn:hover { background: color-mix(in srgb, var(--action-primary) 12%, transparent); color: var(--color-primary); }
 .popup-icon-btn svg { display: block; }
 .popup-close-btn {
   width: 26px; height: 26px; border-radius: 7px; border: none;
@@ -531,6 +531,6 @@ defineExpose({
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; transition: background 0.12s, color 0.12s; flex-shrink: 0;
 }
-.exp-icon-btn:hover { background: rgba(123,127,178,0.12); color: var(--color-primary); }
+.exp-icon-btn:hover { background: color-mix(in srgb, var(--action-primary) 12%, transparent); color: var(--color-primary); }
 .exp-icon-btn svg { display: block; }
 </style>

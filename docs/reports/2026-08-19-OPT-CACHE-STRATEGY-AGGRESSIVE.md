@@ -47,7 +47,7 @@ system_param = [
 
 ## 4. 对比测试
 
-**测试脚本**：`backend/scripts/diagnostics/test_cache_strategy_compare.py`
+**测试脚本**：`backend/scripts/diagnostics/compare_cache_strategies.py`
 
 **测试方法**：
 1. 构造真实场景的 system 提示词（含记忆、项目、文件概览）
@@ -126,7 +126,7 @@ if system_text:
 ## 8. 相关文件
 
 - `backend/agent/loop_drivers.py` - 缓存策略实现
-- `backend/scripts/diagnostics/test_cache_strategy_compare.py` - 对比诊断脚本
+- `backend/scripts/diagnostics/compare_cache_strategies.py` - 对比诊断脚本
 - `docs/DEVLOG.md` - debug 记录
 
 ## 9. 经验教训

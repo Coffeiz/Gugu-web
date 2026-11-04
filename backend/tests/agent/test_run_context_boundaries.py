@@ -147,8 +147,9 @@ async def test_prepare_run_preserves_repeated_continue_turns_and_tool_outcomes(
     from agent.context.tokens import message_text
 
     visible_text = [message_text(message) for message in provider_messages]
-    assert visible_text.count("继续") == 2
-    assert visible_text.count("换句话说明后继续") == 1
+    from agent.context.dynamic_tail import unwrap_message_body_text
+    assert sum(unwrap_message_body_text(item).strip() == "继续" for item in visible_text) == 2
+    assert sum(unwrap_message_body_text(item).strip() == "换句话说明后继续" for item in visible_text) == 1
     assert visible_text.count(fallback) == 3
     assert "event-call" in serialized and "note-call" in serialized
     assert "合成失败" in serialized
@@ -189,6 +190,64 @@ async def test_prepare_run_preserves_repeated_continue_turns_and_tool_outcomes(
             and block.get("tool_use_id") == "note-call"
         )
         assert error_result.get("is_error") is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_anthropic", [True, False])
+async def test_group_batch_already_in_history_is_not_appended_after_later_assistant(
+    monkeypatch, use_anthropic,
+):
+    """Run 中到达的群消息重载为历史后，必须按持久顺序位于较晚的助手回复之前且不重复。"""
+    monkeypatch.setattr(audit, "context_layout_audit", lambda **kwargs: None)
+
+    def row(ident, role, text):
+        return SimpleNamespace(
+            id=ident, role=role, content="", content_json=[{"type": "text", "text": text}],
+            sent_at=None, created_at=None, im_platform_sent_ms=None,
+            im_event_received_ms=None, chat_type="group", platform_user_id=None,
+            platform_user_name="小北", files=None, quoted_text=None, references_json=None,
+            canonical_batch_id=None, run_id=None, round_id=None,
+        )
+
+    history = [
+        row(10, "user", "初始问题"),
+        # 入站行在上一轮助手完成前早落库，故持久会话顺序先于助手回复。
+        row(11, "user", "运行中到达的群消息"),
+        row(12, "assistant", "上一轮稍后完成的回复"),
+    ]
+    current_users = [{
+        "persisted_message_id": 11,
+        "text": "运行中到达的群消息",
+        "message": {"role": "user", "content": "运行中到达的群消息"},
+        "message_time": None,
+    }]
+
+    async def empty_rag(*_args, **_kwargs):
+        return {"tail": []}
+
+    monkeypatch.setattr("agent.rag.injection.build_automatic_rag_context", empty_rag)
+    prepared = await run_context.prepare_run(
+        system_prompt="固定规则", snapshot_context="快照", history=history,
+        req=SimpleNamespace(message="运行中到达的群消息", reference_context=None, chat_id="group"),
+        user_tz=timezone.utc, strip_thinking=False, use_anthropic=use_anthropic,
+        current_text="", images=[], media=[],
+        model_cfg=SimpleNamespace(
+            image_detail="auto", api_format="anthropic" if use_anthropic else "openai",
+        ),
+        stance_text=None, snapshot_injection=None,
+        user_message=SimpleNamespace(id=11, sent_at=None),
+        current_users=current_users,
+        current_users_in_history=True,
+        prepared_rag_context={"tail": []},
+    )
+
+    from agent.context.tokens import message_text
+
+    visible = [message_text(message) for message in prepared.message_area.provider_projection().to_messages()]
+    current_index = next(i for i, text in enumerate(visible) if "运行中到达的群消息" in text)
+    assistant_index = next(i for i, text in enumerate(visible) if "上一轮稍后完成的回复" in text)
+    assert current_index < assistant_index
+    assert sum("运行中到达的群消息" in text for text in visible) == 1
 
 
 def test_message_time_reminder_uses_message_timestamp_and_user_timezone():
@@ -290,7 +349,7 @@ async def test_prepare_run_binds_rag_watermark_and_uses_message_time(
     assert rag_context.get_conversation_before_message_id() is None
     assert messages.dynamic_tail == []
     conversation_text = str(messages.provider_projection().to_messages())
-    current_time_text = "消息时间：2026-08-29 10:00"
+    current_time_text = "【消息时间】2026-08-29 10:00"
     assert conversation_text.count(current_time_text) == 1
     assert conversation_text.index(current_time_text) < conversation_text.index("当前文本")
     assert "当前时间：" not in conversation_text

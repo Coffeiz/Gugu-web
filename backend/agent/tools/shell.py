@@ -8,6 +8,7 @@ import uuid
 
 import app.db.session as _db_session
 
+from app.core.redaction import diag_log
 from agent.security import confirm
 from agent.security.logsafe import fingerprint
 from agent.security.shell_policy import ShellRisk, classify_command, evaluate, session_shell_lock
@@ -55,6 +56,31 @@ def _audit(**fields) -> None:
     logger.info("shell_audit %s", json.dumps(fields, ensure_ascii=False, sort_keys=True))
 
 
+async def _persist_terminal_result(db, terminal_row, *, command, result, source, run_id) -> bool:
+    """终端回放记录失败时保留已完成的 Shell 结果，并避免回滚配额账本。"""
+    from app.services.terminals import append_shell_result
+
+    try:
+        if db is not None:
+            await db.commit()
+        await append_shell_result(
+            db, terminal_row, command=command, stdout=result.stdout, stderr=result.stderr,
+            exit_code=result.exit_code, ok=result.ok, source=source, run_id=run_id,
+        )
+        if db is not None:
+            await db.commit()
+        return True
+    except Exception as exc:
+        # 命令进程已经结束，不能把记录失败伪装成命令未执行。
+        diag_log("agent.tools.shell.persist_terminal_result", exc)
+        if db is not None:
+            try:
+                await db.rollback()
+            except Exception as rollback_error:
+                diag_log("agent.tools.shell.rollback_terminal_result", rollback_error)
+        return False
+
+
 async def _shell(db, user_id, args: dict):
     session_id = args.get("_session_id")
     started = time.monotonic()
@@ -97,6 +123,7 @@ async def _shell(db, user_id, args: dict):
             permission_revoked=audit_result.get("permission_revoked", False),
             truncated=audit_result.get("truncated", False),
             network_access=audit_result.get("network_access"),
+            terminal_history_saved=audit_result.get("terminal_history_saved"),
             cwd_fingerprint=fingerprint(audit_result["cwd"]) if audit_result.get("cwd") else None,
             duration_ms=round((time.monotonic() - started) * 1000, 2),
             terminal_id=terminal_id,
@@ -273,6 +300,11 @@ async def _run_shell(db, user_id, args: dict):
                 shell_mode=decision.scope.value, network_profile=network_profile,
                 run_id=str(args.get("_run_id") or current_dispatch_run_id() or "") or None,
             )
+    # 这是展示元数据，提前查询，避免命令已经执行后再依赖数据库读取它。
+    cwd_display = await shell_cwd_mapping(
+        db, user_id, session=current_dispatch_session(),
+        workspace_id=decision.workspace_id,
+    )
     async def authorization_check() -> bool:
         """在独立事务中复核权限。
 
@@ -372,11 +404,12 @@ async def _run_shell(db, user_id, args: dict):
             idempotency_key=f"shell:{session_id or 'none'}:{time.monotonic_ns()}",
             metadata={"command_fingerprint": fingerprint(command), "measured_bytes": quota_after},
         )
+    terminal_history_saved = None
     if terminal_row is not None and not args.get("_defer_terminal_event"):
-        from app.services.terminals import append_shell_result
-        await append_shell_result(
-            db, terminal_row, command=command, stdout=result.stdout, stderr=result.stderr,
-            exit_code=result.exit_code, ok=result.ok,
+        # 先结算命令已产生的配额用量，再单独提交可重放终端事件。
+        # 失败时保留真实退出码和输出，并提示不可因历史记录失败而盲目重跑。
+        terminal_history_saved = await _persist_terminal_result(
+            db, terminal_row, command=command, result=result,
             source=str(args.get("_terminal_source") or "agent"),
             run_id=str(args.get("_run_id") or current_dispatch_run_id() or "") or None,
         )
@@ -398,19 +431,23 @@ async def _run_shell(db, user_id, args: dict):
             else "none"
         ),
         "cwd": result.cwd,
-        "cwd_display": await shell_cwd_mapping(
-            db, user_id, session=current_dispatch_session(),
-            workspace_id=decision.workspace_id,
-        ),
+        "cwd_display": cwd_display,
         "permission_revoked": result.permission_revoked,
         "quota_exceeded": getattr(result, "quota_exceeded", False),
+        **({"terminal_history_saved": terminal_history_saved} if terminal_history_saved is not None else {}),
+        **({"terminal_history_warning": "命令已执行，但终端历史未能确认保存；请勿仅因历史记录失败而重复执行。"}
+           if terminal_history_saved is False else {}),
         "_terminal_id": terminal_row.id if terminal_row is not None else None,
         **({"error": execution_error} if execution_error else {}),
         **({"error": "Shell 持久空间达到配额，命令已终止"} if getattr(result, "quota_exceeded", False) else {}),
         "_risk": decision.risk.value,
         "_workspace_id": decision.workspace_id,
         "_scope": decision.scope.value,
-        "_audit_event": "permission_revoked" if result.permission_revoked else "completed",
+        "_audit_event": (
+            "terminal_history_failed" if terminal_history_saved is False
+            else "permission_revoked" if result.permission_revoked
+            else "completed"
+        ),
         **({"_confirm_gate_authorized": "confirmation_gate"}
            if confirm_gate_authorized else {}),
     }
@@ -429,7 +466,7 @@ class ShellSkill(BaseSkill):
                 "properties": {
                     "command": {"type": "string"},
                     "cwd": {"type": "string"},
-                    "timeout": {"type": "number", "minimum": 0.1, "maximum": 300},
+                    "timeout": {"type": "number", "minimum": 0.1, "maximum": 3600},
                     "max_output_chars": {"type": "integer", "minimum": 1, "maximum": 120000},
                     "scope": {
                         "type": "string",

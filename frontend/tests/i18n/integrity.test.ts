@@ -31,4 +31,15 @@ describe('locale message registry', () => {
       expect(translated.join(' ')).toContain('@')
     }
   })
+
+  it('compiles group attention guidance containing a literal @ in every locale', () => {
+    for (const locale of ['zh-CN', 'ja-JP', 'en-US'] as const) {
+      const i18n = createI18n({ legacy: false, locale, messages: localeRegistry })
+      expect(() => i18n.global.t('profileImUi.groupAttentionModeHint')).not.toThrow()
+    }
+    const zh = createI18n({ legacy: false, locale: 'zh-CN', messages: localeRegistry })
+    const en = createI18n({ legacy: false, locale: 'en-US', messages: localeRegistry })
+    expect(zh.global.t('profileImUi.groupAttentionModeHint')).toContain('@')
+    expect(en.global.t('profileImUi.groupAttentionModeHint')).toContain('@')
+  })
 })

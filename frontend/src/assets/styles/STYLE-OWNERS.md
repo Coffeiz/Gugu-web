@@ -63,6 +63,7 @@ global.css
 
 约束：
 
+- `.control-resizable` 固定滚动槽，避免内容溢出后滚动条占位改变缩放柄区域；滚动条角落使用输入框表面色。
 - 只允许通过 `--control-resizer-bg` 调整缩放柄颜色/图案；主题差异放在 token 层，不在页面 scoped CSS 中覆盖。
 - 不得在业务页面新增 `textarea::-webkit-resizer`、`::-webkit-scrollbar` 或另一套缩放柄背景。
 - `resize: vertical` 由 `.control-resizable` 公共类负责；组件只组合语义 class，不重复声明视觉样式。

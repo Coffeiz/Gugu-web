@@ -11,6 +11,7 @@ from alembic.operations import Operations
 from sqlalchemy.ext.asyncio import create_async_engine
 
 
+@pytest.mark.external_service
 async def test_search_upgrade_downgrade_postgres():
     url = os.environ.get("GUGU_TEST_POSTGRES_URL")
     if not url:

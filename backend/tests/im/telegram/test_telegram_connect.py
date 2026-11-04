@@ -83,33 +83,24 @@ async def test_bot_api_failure_is_safe_and_does_not_include_token(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_gateway_reload_failure_is_written_to_restricted_diagnostics(monkeypatch, user_a):
+async def test_channel_refresh_does_not_publish_legacy_gateway_redis_event(monkeypatch, user_a):
     from app.core import events, redis
-    from app.core import redaction
 
     published_events = []
-    diagnostics = []
 
     async def publish_event(user_id, domain, *, operation):
         published_events.append((user_id, domain, operation))
 
     class Redis:
         async def publish(self, *_args):
-            raise RuntimeError("synthetic Redis unavailable")
-
-    def diag_log(where, exc):
-        diagnostics.append((where, type(exc)))
+            pytest.fail("Gateway configuration changes no longer use Redis publish")
 
     monkeypatch.setattr(events, "publish", publish_event)
     monkeypatch.setattr(redis, "get_redis", lambda: Redis())
-    monkeypatch.setattr(redaction, "diag_log", diag_log)
 
     await telegram_connect._touch(user_a.id)
 
     assert published_events == [(user_a.id, "im_channels", "refresh")]
-    assert diagnostics == [
-        ("app.api.telegram_connect.reload_gateway", RuntimeError),
-    ]
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,7 @@
 9. [09-MESSAGE-PROTOCOL.md](./09-MESSAGE-PROTOCOL.md)：流式事件、工具消息、交互、附件、引用和 canonical history。
 10. [10-RELIABILITY.md](./10-RELIABILITY.md)：重试、取消、压缩失败、并发、关闭和恢复。
 11. [11-LoopScope.md](./11-LOOPSCOPE.md)：开发观测、Context Provenance、Prefix Diff 和 cache 排障。
+12. [12-GROUP-AUTO-REPLY-ALGORITHM.md](./12-GROUP-AUTO-REPLY-ALGORITHM.md)：群聊自动回复的注意力准入、延迟 ASK 与 Run 内静默选择总流程。
 
 ## 参考文档
 

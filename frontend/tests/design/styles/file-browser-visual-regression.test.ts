@@ -352,14 +352,6 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(block).toContain('backdrop-filter: none !important;')
   })
 
-  it('画布跨 Surface landing 保留目标内容交叉淡化，不关闭 target morph', () => {
-    const start = runtimeSetup.indexOf('const registerMindObjectType')
-    const end = runtimeSetup.indexOf('registerMindObjectType(MIND_CANVAS_OBJECT_TYPE)')
-    expect(start).toBeGreaterThanOrEqual(0)
-    expect(end).toBeGreaterThan(start)
-    expect(runtimeSetup.slice(start, end)).not.toContain('disableTargetVisualMorph')
-  })
-
   it('项目名输入框不再有 project 专属透明底，统一复用共享 input contract', () => {
     expect(formsAdoption).toContain('.header-name-input,')
     expect(projectAdoption).not.toContain('.proj-header .header-name-input')

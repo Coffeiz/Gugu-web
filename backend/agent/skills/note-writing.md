@@ -74,6 +74,14 @@ emoji: 📝
 
 一旦收到 schema 报错，**重新生成完整的 `blocks`/`append_blocks`**，不要只给某个嵌套对象补字段，也不要把数组改成 `item` 对象。无法确定的内容不要猜，先向用户确认。
 
+`note_update` 每次都必须包含 `node_id`。若错误提示缺少它，先用 `note_search` 找到目标并用 `note_get` 确认；不要连续重发同一组参数，也不要根据标题自行猜 ID。追加一段普通文字的最小结构是：
+
+```json
+{"node_id":123,"append_blocks":[{"type":"paragraph","content":[{"type":"text","text":"追加内容"}]}]}
+```
+
+其中 `123` 必须替换为工具真实返回的 ID；`append_blocks` 必须是数组，不能包装成 `{"item": ...}`。
+
 ## 标题位置
 
 - **用户可见的标题 = `blocks` 里第一个 `heading` 块**，它渲染成便签卡片正文首行的 `# 标题`，用户能看到。

@@ -555,11 +555,23 @@ sudo ln -s /etc/nginx/sites-available/gugu /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-> HTTPS：用 `certbot --nginx -d www.gugugu.site` 自动配 Let's Encrypt。
+裸域与 `www` 应使用同一张同时包含 `gugugu.site` 和 `www.gugugu.site` 的证书。裸域 HTTP/HTTPS 都应重定向到 `https://www.gugugu.site$request_uri`；HTTPS 裸域在握手前也会校验证书，所以不能只配置 HTTP 跳转。
+
+使用原生 Nginx + Certbot 时，签发时同时包含两个 SAN：
+
+```bash
+sudo certbot --nginx -d gugugu.site -d www.gugugu.site
+```
+
+使用 1Panel 时，在网站证书的域名列表同时选择 `gugugu.site` 和 `www.gugugu.site` 后重新签发；再为裸域添加 HTTP 与 HTTPS 到 `www` 的永久跳转。修改后验证两个域名的证书 SAN、HTTP/HTTPS 跳转链和最终状态码。
+
+公开产品介绍页暂不发布。当前 `robots.txt` 禁止抓取应用页面，等公开页面准备好后再配置索引范围与站点地图。
 
 #### 4.4.1 1Panel 面板部署（对应上面 nginx，拆成面板几处填）
 
 1Panel 不手写 nginx server 块，把上面那套拆进面板：
+
+- **域名与证书**：站点绑定 `www.gugugu.site` 和 `gugugu.site`；证书 SAN 同时包含两者。裸域 HTTP 与 HTTPS 均永久跳转到 `https://www.gugugu.site$request_uri`，不可让 HTTP 裸域先跳到未覆盖裸域的 HTTPS。
 
 - **数据库 / Redis**：应用商店一键装 PostgreSQL + Redis（设密码）→「数据库」菜单建库，记下**库名/用户/密码/端口**填进 `.env`。⚠️ 1Panel 的 Postgres/Redis 端口常**不是默认** 5432/6379，在应用详情里看。
 - **网站根目录** → 指向 `Gugu-web/frontend/dist`（网站设置里改根目录）。
@@ -622,7 +634,7 @@ sudo nginx -t && sudo systemctl reload nginx
 > # 然后用同一个 RUN_USER 补跑 make install，再 systemctl restart gugu-backend
 > ```
 
-项目自带六个单元模板（`gugu-rag-sidecar.service` 托管 RAG TS worker 宿主，`gugu-sandbox-egress.service`，
+项目自带六个单元模板（`gugu-rag-sidecar.service` 托管 TS/Cython RAG worker 宿主，`gugu-sandbox-egress.service`，
 以及 `gugu-sandboxd.service` / `gugu-backend.service` / `gugu-worker.service` /
 `gugu-gateway.service`，均用 `__APP_DIR__`/`__RUN_USER__` 占位符）。`make install` 会安装并
 立即重启六个单元；启用 Shell 沙盒前必须先准备 Rootless Docker、固定镜像和用户数据根目录：
@@ -766,7 +778,7 @@ docker image inspect gugu-sandbox:<tag> --format '{{index .RepoDigests 0}}'
 
 | 服务                | 进程                  | Restart                               | 日志                         |
 | ----------------- | ------------------- | ------------------------------------- | -------------------------- |
-| `gugu-rag-sidecar` | RAG TS worker 宿主（per-owner 常驻索引，socket 共享） | on-failure | `logs/gugu-rag-sidecar.log` |
+| `gugu-rag-sidecar` | RAG TS/Cython worker 宿主（常驻索引，socket 共享） | on-failure | `logs/gugu-rag-sidecar.log` |
 | `gugu-backend`    | uvicorn 网页          | on-failure                            | `logs/gugu.log`            |
 | `gugu-worker`     | IM 大脑（消费队列、跑 agent） | **always**                            | `logs/gugu-worker.log`     |
 | `gugu-gateway` | IM 网关管家（拉飞书/QQ 子进程） | **always** + `KillMode=control-group` | `logs/gugu-gateway.log` |

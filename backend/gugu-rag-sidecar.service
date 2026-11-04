@@ -1,5 +1,5 @@
 [Unit]
-Description=Gugu RAG Sidecar Host (per-owner TS worker daemon)
+Description=Gugu RAG Sidecar Host (shared TS/Cython index workers)
 After=network.target
 Before=gugu-backend.service gugu-worker.service gugu-gateway.service
 StartLimitIntervalSec=60

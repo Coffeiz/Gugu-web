@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from agent.context.dynamic_tail import inline_message_time
 from agent.context.history import build_history_parts, canonicalize_tool_messages
 
 
@@ -21,7 +22,7 @@ def _message(role, content_json):
     )
 
 
-def test_user_message_time_is_a_stable_separate_reminder_in_history():
+def test_user_message_time_and_body_are_wrapped_in_one_history_message():
     from agent.models import AgentRequest
 
     message = SimpleNamespace(
@@ -36,11 +37,22 @@ def test_user_message_time_is_a_stable_separate_reminder_in_history():
         user_tz=ZoneInfo("Asia/Shanghai"),
     )
 
-    assert result[0]["content"][0] == {
-        "type": "time-context",
-        "text": "[system-reminder]\n消息时间：2026-08-22 15:22\n[/system-reminder]",
-    }
-    assert result[1] == {"role": "user", "content": "测试"}
+    assert result == [{
+        "role": "user",
+        "content": "【消息时间】2026-08-22 15:22\n【消息正文】\n测试",
+    }]
+
+
+def test_inline_message_time_does_not_nest_existing_body_wrapper():
+    content = "【消息正文】\n当前消息"
+
+    assert inline_message_time(content, None) == content
+    assert inline_message_time(content, "2026-08-22 15:22") == (
+        "【消息时间】2026-08-22 15:22\n【消息正文】\n当前消息"
+    )
+    assert inline_message_time([{"type": "text", "text": content}], None) == [
+        {"type": "text", "text": content},
+    ]
 
 
 @pytest.mark.parametrize("use_anthropic", [False, True])
@@ -144,9 +156,9 @@ def test_user_message_time_stays_before_complete_tool_turn():
         use_anthropic=False, user_tz=ZoneInfo("Asia/Shanghai"),
     )
 
-    assert [item["role"] for item in result] == ["user", "user", "assistant", "tool"]
-    assert result[0]["content"][0]["text"] == (
-        "[system-reminder]\n消息时间：2026-08-22 15:22\n[/system-reminder]"
+    assert [item["role"] for item in result] == ["user", "assistant", "tool"]
+    assert result[0]["content"] == (
+        "【消息时间】2026-08-22 15:22\n【消息正文】\n删掉文件夹"
     )
 
 
@@ -178,13 +190,13 @@ def test_canonical_events_do_not_split_user_turn_timestamp_boundary():
         user_tz=ZoneInfo("Asia/Shanghai"),
     )
 
-    assert [item["role"] for item in result] == ["user", "user", "user", "user", "user"]
-    assert result[0]["content"][0]["text"] == (
-        "[system-reminder]\n消息时间：2026-08-25 08:26\n[/system-reminder]"
+    assert [item["role"] for item in result] == ["user", "user", "user", "user"]
+    assert result[0]["content"] == (
+        "【消息时间】2026-08-25 08:26\n【消息正文】\n今天天气如何"
     )
     # 回放保留 canonical 类型，渲染推迟到 provider boundary（与注入形状一致）
-    assert result[2]["content"][0]["type"] == "knowledge-context"
-    assert result[3]["content"][0]["type"] == "skill-schema"
+    assert result[1]["content"][0]["type"] == "knowledge-context"
+    assert result[2]["content"][0]["type"] == "skill-schema"
 
 
 def test_anthropic_history_keeps_native_tool_blocks():

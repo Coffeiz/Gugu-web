@@ -6,12 +6,14 @@ httpx 用假客户端（预设响应/异常），配额与凭据模块级打桩�
 """
 import io
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
 
 from agent.tools import search as search_mod
 from agent.tools.search import _normalize_failure_reason
+from app.core.config import SearchSettings
 
 
 def _settings(**search_overrides):
@@ -145,6 +147,37 @@ async def test_xng_image_search_shapes_results(db, user_a, monkeypatch):
     # result_id 是源顺序索引（含被过滤项），过滤后不重排
     assert [r["result_id"] for r in payload["results"]] == ["image-1", "image-3"]
     assert payload["results"][1]["thumbnail"] == "https://thumb/3"
+
+
+async def test_xng_image_search_uses_default_domestic_and_international_engines(db, user_a, monkeypatch):
+    settings = SearchSettings()
+    monkeypatch.setattr(
+        search_mod,
+        "get_settings",
+        lambda: _settings(searxng_image_engines=""),
+    )
+    requested_urls = []
+
+    class RecordingClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, url):
+            requested_urls.append(url)
+            return httpx.Response(200, json={"results": []})
+
+    monkeypatch.setattr(search_mod.httpx, "AsyncClient", RecordingClient)
+    await search_mod._xng_search(db, user_a.id, {"query": "猫", "mode": "images"})
+
+    params = parse_qs(urlsplit(requested_urls[0]).query)
+    assert params["categories"] == ["images"]
+    assert set(params["engines"][0].split(",")) == set(settings.searxng_image_engines.split(","))
 
 
 # ── _resolve_similar_image：图片字节解析守卫 ──────────────────────────────

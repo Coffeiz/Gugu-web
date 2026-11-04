@@ -147,12 +147,39 @@ async def test_qq_group_attachment_ack_sent_when_bot_mentioned(monkeypatch):
     sent, produced = _install(monkeypatch, group_settings=(True, True, False, True, True))
 
     await qq_events._handle_raw_qq_message(
-        "GROUP_AT_MESSAGE_CREATE", _group_with_attachment(), "bot-1", "user-1", {},
+        "GROUP_AT_MESSAGE_CREATE",
+        _group_with_attachment(mentions=[{"id": "bot-1", "bot": True, "is_you": True}]),
+        "bot-1", "user-1", {},
     )
 
     assert [item[3] for item in sent] == ["文件收到啦，让我看看~"]
     assert sent[0][0] == "group"
     assert sent[0][2] == "group_1"
+
+
+async def test_qq_group_attachment_ack_waits_for_auto_reply_choice(monkeypatch):
+    # 全量回复群的普通消息会先进入 Agent 回复选择，不允许 Gateway 提前发附件确认。
+    sent, produced = _install(monkeypatch, group_settings=(True, False, False, True, True))
+
+    await qq_events._handle_raw_qq_message(
+        "GROUP_MESSAGE_CREATE", _group_with_attachment(), "bot-1", "user-1", {},
+    )
+
+    assert sent == []
+    assert len(produced) == 1
+
+
+async def test_qq_group_attachment_ack_is_deferred_to_agent_in_auto_mode_even_when_mentioned(monkeypatch):
+    sent, produced = _install(monkeypatch, group_settings=(True, False, False, True, True))
+
+    await qq_events._handle_raw_qq_message(
+        "GROUP_AT_MESSAGE_CREATE",
+        _group_with_attachment(mentions=[{"id": "bot-1", "bot": True, "is_you": True}]),
+        "bot-1", "user-1", {},
+    )
+
+    assert sent == []
+    assert len(produced) == 1
 
 
 async def test_qq_group_attachment_ack_skipped_in_read_only_mode(monkeypatch):

@@ -15,8 +15,8 @@ from PIL import Image, ImageColor
 EMAIL_TOKENS = {
     "canvas": "#f3f4f8",
     "surface": "#ffffff",
-    "brand": "#7b7fb2",
-    "brand_dark": "#626694",
+    "brand": "#565b64",
+    "brand_dark": "#474c55",
     "text": "#20222b",
     "muted": "#6f7486",
     "border": "#dfe2eb",
@@ -25,16 +25,28 @@ EMAIL_THEMES = {
     "light": EMAIL_TOKENS,
     "dark": {
         **EMAIL_TOKENS,
-        "canvas": "#171925", "surface": "#232638", "brand": "#a5a3d4",
-        "brand_dark": "#c0bee6", "text": "#f3f4f8", "muted": "#b7bbca", "border": "#41465c",
+        "canvas": "#171925", "surface": "#232638", "brand": "#c0c3c9",
+        "brand_dark": "#d2d4d9", "text": "#f3f4f8", "muted": "#b7bbca", "border": "#41465c",
     },
 }
 EMAIL_PALETTES = {
-    "mist": "#7b7fb2", "cafe": "#a67c5b", "rose": "#b56b82", "sky": "#598bb0", "sage": "#5f967e",
+    "cafe": {"light": "#715653", "dark": "#be9d98"},
+    "neutral": {"light": "#565b64", "dark": "#c0c3c9"},
+    "red": {"light": "#a66e73", "dark": "#d0a1a4"},
+    "blue": {"light": "#65789a", "dark": "#9aaecd"},
+    "green": {"light": "#718a7e", "dark": "#a9c2b5"},
 }
 TEMPLATES = {"notification", "reminder", "report", "security", "test"}
 _MAX_SECTIONS = 8
 _MAX_ACTIONS = 3
+
+
+def _email_theme_tokens(theme: str, palette: str) -> dict[str, str]:
+    token = dict(EMAIL_THEMES.get(theme, EMAIL_THEMES["light"]))
+    brand = EMAIL_PALETTES.get(palette)
+    if brand:
+        token["brand"] = brand["dark" if theme == "dark" else "light"]
+    return token
 
 
 @lru_cache(maxsize=32)
@@ -44,14 +56,11 @@ def _asset_payload(name: str, tint: str | None = None) -> bytes:
         return path.read_bytes()
     image = Image.open(path).convert("RGBA")
     color = ImageColor.getrgb(tint)
-    pixels = image.load()
-    for y in range(image.height):
-        for x in range(image.width):
-            _, _, _, alpha = pixels[x, y]
-            if alpha:
-                pixels[x, y] = (*color, alpha)
+    alpha = image.getchannel("A")
+    image = Image.new("RGBA", image.size, (*color, 0))
+    image.putalpha(alpha)
     output = BytesIO()
-    image.save(output, format="PNG", optimize=True)
+    image.save(output, format="PNG")
     return output.getvalue()
 
 
@@ -144,13 +153,11 @@ def _actions(value: object) -> list[tuple[str, str]]:
 def render_email(*, template: str = "notification", subject: str, body: str,
                  title: str | None = None, preheader: str | None = None,
                  sections: object = None, actions: object = None,
-                 theme: str = "light", palette: str = "mist") -> EmailContent:
+                 theme: str = "light", palette: str = "neutral") -> EmailContent:
     """把模型提供的语义字段编译成稳定的纯文本和 HTML 双格式邮件。"""
     if template not in TEMPLATES:
         raise ValueError("不支持的邮件模板")
-    token = dict(EMAIL_THEMES.get(theme, EMAIL_THEMES["light"]))
-    if palette in EMAIL_PALETTES:
-        token["brand"] = EMAIL_PALETTES[palette]
+    token = _email_theme_tokens(theme, palette)
     subject = _text(subject, "邮件主题", 200)
     body = _text(body, "邮件正文", 20000)
     title = _text(title, "邮件标题", 200) or subject

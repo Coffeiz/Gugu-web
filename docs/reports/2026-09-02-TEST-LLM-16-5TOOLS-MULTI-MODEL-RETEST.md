@@ -125,12 +125,12 @@ MiniMax 简介模式在第 4、5、9、10、14、15、19、20 轮多次触发 6 
 
 ## 8. 测试脚本与原始结果
 
-测试脚本：[`test_schema_accumulation_5tools.py`](../../backend/scripts/diagnostics/test_schema_accumulation_5tools.py)
+测试脚本：[`probe_schema_accumulation_5tools.py`](../../backend/scripts/diagnostics/probe_schema_accumulation_5tools.py)
 
 实际运行命令（四个模型均相同，仅替换 `--preset` 和输出文件名）：
 
 ```bash
-PYTHONPATH=. .venv/bin/python -m scripts.diagnostics.test_schema_accumulation_5tools \
+PYTHONPATH=. .venv/bin/python -m scripts.diagnostics.probe_schema_accumulation_5tools \
   --allow-real-llm --preset <minimax|glm|deepseek|qwen> \
   --rounds 20 --case-timeout 180 \
   --output /tmp/gugu-5tools-20260902-retest/<preset>.json

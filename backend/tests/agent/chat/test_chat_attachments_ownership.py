@@ -15,6 +15,7 @@ from agent.chat.attachments import resolve_for_message
 from app.core import chat_attach
 from app.core.tz import now_utc
 from app.models import ChatAttachment, ConversationMessage, ConversationSession
+from app.services.chat_attachments import is_current_group_session_attachment
 from app.services.storage import LocalStorageBackend
 
 
@@ -285,6 +286,38 @@ async def test_try_delete_deletes_when_unreferenced(db, user_a, storage):
     result = await chat_attach.try_delete_storage_if_unreferenced(user_a.id, meta["storage_key"])
     assert result == "deleted"
     assert not await storage.exists(meta["storage_key"])
+
+
+@pytest.mark.asyncio
+async def test_current_group_attachment_is_scoped_to_owned_session(db, user_a, user_b):
+    """群聊回读只认可挂在当前用户、Bot、群和 session 的已发送附件。"""
+    session = ConversationSession(
+        user_id=user_a.id, title="t", source="qq", bot_id="bot-a",
+        chat_id="group-a", chat_type="group",
+    )
+    db.add(session)
+    await db.flush()
+    message = await _mk_message(db, session, conversation_seq=1)
+    attachment = ChatAttachment(
+        attach_id="group-attachment", user_id=user_a.id, message_id=message.id,
+        storage_key="user-a/attachment.png", platform="qq", name="attachment.png",
+        ext="png", kind="image", state="attached",
+    )
+    db.add(attachment)
+    await db.commit()
+
+    scope = {
+        "session_id": session.id, "platform": "qq", "bot_id": "bot-a", "chat_id": "group-a",
+    }
+    assert await is_current_group_session_attachment(
+        db, user_a.id, "group-attachment", **scope,
+    )
+    assert not await is_current_group_session_attachment(
+        db, user_a.id, "group-attachment", **{**scope, "chat_id": "group-b"},
+    )
+    assert not await is_current_group_session_attachment(
+        db, user_b.id, "group-attachment", **scope,
+    )
 
 
 # ── delete_session：DB 优先 + 共享 storage_key 隔离 ─────────────────────────
@@ -757,11 +790,16 @@ async def test_resolve_oversized_audio_gates_before_read(db, user_a, storage, mo
     monkeypatch.setattr(media_gates, "image_enabled", lambda *a, **k: False)
     monkeypatch.setattr(media_gates, "video_enabled", lambda *a, **k: False)
     monkeypatch.setattr(media_gates, "audio_enabled", lambda *a, **k: True)
-    monkeypatch.setattr("agent.voice_config.voice_recognition_enabled", lambda *a, **k: False)
+    from agent.voice_config import VoiceRecognitionProfile
+
+    async def _voice_profile(*_args, **_kwargs):
+        return VoiceRecognitionProfile(True, 1024 * 1024, provider_label="合成语音识别")
+
+    monkeypatch.setattr("agent.chat.attachments.voice_recognition_profile", _voice_profile)
 
     parts, _cards, _images, media = await resolve_for_message(
         user_a.id, [meta["attach_id"]], "你好")
-    assert "太大" in parts
+    assert "单文件上限" in parts
     assert media == []
 
 

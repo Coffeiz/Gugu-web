@@ -52,6 +52,7 @@ class RunOutcome:
     tool_events: list = field(default_factory=list)
     mutated: bool = False
     cancelled: bool = False
+    remote_status_unknown: bool = False
     errored: bool = False
     errored_text: str = ""
     error_info: LLMErrorPresentation | None = None
@@ -164,6 +165,10 @@ async def consume_agent_events(
         cur += tail
         if tail and sink.yield_tokens:
             yield (EVENT_TOKEN, tail)
+        if not cur:
+            # 工具结果后的 _new_round 可能再次触发冲刷；空轮不应制造空 assistant round。
+            san = sanitize.StreamSanitizer(adapter=provider_adapter)
+            return
         rounds.append(cur)
         completed = cur.strip()
         cur = ""
@@ -172,6 +177,8 @@ async def consume_agent_events(
         if completed:
             from agent.outbound import sanitize_outbound
             display_round = sanitize.strip_disallowed_emoji(sanitize_outbound(completed)).strip()
+        if active_seg is not None:
+            active_seg["completedAt"] = now_utc().isoformat()
         _close_active_seg(display_round)
         if outcome.display_timeline_items:
             await display_changed(outcome.display_timeline_items[-1], force=True)
@@ -264,6 +271,11 @@ async def consume_agent_events(
                 await display_changed(outcome.display_timeline_items[-1])
                 await _notify_event(sink.on_event, evt)
             elif t in {"tool_call", "tool_done"}:
+                if t == "tool_call" and sink.yield_round_ends:
+                    # 模型可在同一轮先输出正文、再请求工具。先把正文尾部和 ROUND_END
+                    # 交给流式适配器，再触发平台工具通知，避免工具边界截断正文。
+                    async for item in flush_current_round():
+                        yield item
                 tool_event = dict(evt)
                 call_id = str(evt.get("tool_call_id") or "")
                 if t == "tool_call":
@@ -276,7 +288,7 @@ async def consume_agent_events(
                 outcome.tool_events.append(tool_event)
                 name = str(evt.get("name") or "")
                 if t == "tool_call":
-                    if name and name not in outcome.tool_names:
+                    if name and name != "choose_no_reply" and name not in outcome.tool_names:
                         outcome.tool_names.append(name)
                     # 展示时间线：tool 项按流式顺序插入（语义对齐 gateway/web.py）
                     if name and not name.startswith("_"):
@@ -331,6 +343,7 @@ async def consume_agent_events(
                 await _notify_event(sink.on_event, evt)
             elif t == "_cancelled":
                 outcome.cancelled = True   # 用户中途「算了」：停止收集，网关已回「先不继续」，worker 不再补发
+                outcome.remote_status_unknown = bool(evt.get("remote_status_unknown"))
                 interrupted = True
                 await _notify_event(sink.on_event, evt)
                 break
@@ -381,6 +394,8 @@ async def consume_agent_events(
         yield (EVENT_TOKEN, tail)
     rounds.append(cur)
     completed_segment = active_seg
+    if completed_segment is not None:
+        completed_segment["completedAt"] = now_utc().isoformat()
     _close_active_seg(cur.strip())
     if completed_segment is not None and completed_segment in outcome.display_timeline_items:
         await display_changed(completed_segment, force=True)
@@ -427,4 +442,5 @@ def cancelled_response(outcome: RunOutcome, session_id: int) -> AgentResponse:
     """用户中途取消的统一终态：不补发、不入历史（已执行的工具效果保留）。"""
     return AgentResponse(text="", session_id=session_id, tokens_in=outcome.tokens_in,
                          tokens_out=outcome.tokens_out, cancelled=True,
+                         remote_status_unknown=outcome.remote_status_unknown,
                          interactions=outcome.interactions, tool_events=outcome.tool_events)

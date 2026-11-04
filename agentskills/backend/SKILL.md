@@ -79,6 +79,8 @@ owner 闲置反思触发的会话压缩，应先在捕获主请求快照的同�
 
 群被动消息不启动或续期闲置反思；保留全群累计 50 条触发，主动 run 完成后登记 4 分钟群闲置。被动入库事件另做无模型的上下文压力预检，达到 90% 时即使不足 50 条也入队群组和群友反思；没有代表新增历史的 provider usage，只能标记为估算。任务执行前使用当前历史检查压缩，不能用旧 run 的低用量或已压缩标志跳过；需要时走统一 baseline 压缩并重建后再反思，会话忙时持久延后。4 分钟是 owner、群及群友反思共用的闲置窗口；私聊触发阈值和固定条数策略不变。见 `docs/adr/0003-群反思按主动闲置与消息压力触发.md`。
 
+普通群级与成员级反思必须共用同一个群 session 的原始主 Run 快照，只追加该 Run 之后的群消息；不要为两种 scope 分别重建历史。若跨进程恢复时原快照不可用，保留任务等待下一次成功主 Run，不静默回退到持久历史重建。`context-pressure` 和压缩改变 baseline 后的重建属于显式例外。
+
 反思前的 90% 判定遵循上述统一口径：同进程主请求快照携带的最近一轮 provider `context_input` 优先；没有有效实际用量时才估算。压缩前缀允许纯文本字符串与单个 text block 等价，工具块和其他结构必须严格对齐；对齐成功后发送原始主请求前缀。2026-09-26 的合成 MiniMax-M3 A/B 见 `docs/reports/OPT-Cache-Strategy-2026-09-26.md`。
 
 2026-10-13：真实 MiniMax-M3.1-Flash-Preview / Anthropic run 回放确认，反思分支无条件删除主请求已恢复的原生 thinking/signature 会破坏前缀。同模型 wire 分支现保留原生块，继续清理外协议 reasoning_content 和孤立工具事件；默认历史清洗与续接身份校验保持既有语义。两条真实请求恢复后的 wire digest 均与原 run 精确匹配，隔离 A/B 缓存率从 37.9%/0% 提升至 96.2%/96.6%。后台持久历史重建未改变，不保证相同提升；详见 `docs/reports/OPT-Cache-Strategy-2026-10-13.md`。
@@ -93,9 +95,11 @@ owner 闲置反思触发的会话压缩，应先在捕获主请求快照的同�
 
 2026-10-20：群闲置反思在仍持有主 run 快照的进程内收束；Redis 仅保存 worker 协调标记。被动消息追加必须逐条匹配持久化历史尾部，成功时保留原始 Provider wire、system 和工具声明；否则回退数据库重建。真实 DeepSeek Chat A/B 使用合成历史，持久历史重建 cache read 为 0，原始前缀追加读取率为 90.59%/91.09%；第二轮由正式 `ContextBranch` 写入隔离 LoopScope trace。MiniMax M3.1 Flash Preview 的三轮真实 Anthropic 对照中，历史投影缓存率为 2.05%–2.25%，原始前缀追加为 99.57%–99.65%；该对照未经过正式 `ContextBranch`。实验不证明真实群历史必然匹配，线上还需按 `snapshot_source` 与 cache ratio 观察。详见 `docs/reports/2026-10-20-INVEST-群反思原始前缀复用真实模型AB.md`。
 
+2026-10-28：Web、IM 和反思共用的历史加载器按摘要覆盖水位读取连续历史，不再按 100/500 条截断；物理保留只清理摘要覆盖的旧消息。合成 MiniMax 对照中截去历史开头的缓存读取率为 0.47%，保留相同历史为 100%；这不是线上会话前后对照，新代码加载后的 LoopScope 验证仍待完成。详见 `docs/reports/OPT-Cache-Strategy-2026-10-28-历史baseline.md`。
+
 **修改缓存策略前必须**：
 
-1. 用 `backend/scripts/diagnostics/test_cache_strategy_compare.py` 做对比测试
+1. 用 `backend/scripts/diagnostics/compare_cache_strategies.py` 做对比测试
 2. 记录到 `docs/reports/OPT-Cache-Strategy-*.md`
 3. 更新 devlog 和本节
 4. 在 LoopScope 验证 cache_ratio 提升

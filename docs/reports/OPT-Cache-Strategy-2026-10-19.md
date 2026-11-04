@@ -88,7 +88,7 @@ A 使用原 run 压缩后实际记录的三个后续请求。B 使用同一压�
 
 ## 测试脚本
 
-- [统一缓存对比入口](../../backend/scripts/diagnostics/test_cache_strategy_compare.py)
+- [统一缓存对比入口](../../backend/scripts/diagnostics/compare_cache_strategies.py)
 - [长任务回放](../../backend/scripts/diagnostics/probe_inline_compaction_progress.py)
 - [JSON 参数严格 A/B](../../backend/scripts/diagnostics/probe_reflection_cache_format.py)
 - [内联压缩回归](../../backend/tests/agent/context/test_inline_compaction_progress.py)
@@ -97,7 +97,7 @@ A 使用原 run 压缩后实际记录的三个后续请求。B 使用同一压�
 命令在 `<devserver仓库根目录>/backend` 执行；替换受控 Collector 路径及源 run，不能复制用户凭据到命令中：
 
 ```bash
-PYTHONPATH=. .venv/bin/python scripts/diagnostics/test_cache_strategy_compare.py \
+PYTHONPATH=. .venv/bin/python scripts/diagnostics/compare_cache_strategies.py \
   --inline-run <源run> --collector-db <受控Collector数据库> \
   --allow-real-data --allow-real-llm --context-tokens 128000 \
   --probe-reflection-format --output <临时目录>/inline-ab.json

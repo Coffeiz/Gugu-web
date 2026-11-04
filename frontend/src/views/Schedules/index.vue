@@ -1,21 +1,23 @@
 <template>
   <div class="sched-page">
     <div class="panel glass-card">
-      <div class="section-header">
-        <ActionButton fit @click="openCreate">
-          <Icon name="admin.alarm" :size="14" />{{ t('schedules.create') }}
-        </ActionButton>
-      </div>
-      <div v-if="!loading && !tasks.length" class="empty-state">
-        <Icon name="admin.alarm" :size="32" />
-        <strong>{{ t('schedules.emptyTitle') }}</strong>
-        <span>{{ t('schedules.emptyHint') }}</span>
-        <ActionButton fit @click="openChatSetup">{{ t('schedules.createFirst') }}</ActionButton>
-      </div>
-      <div v-else-if="tasks.length" class="task-grid scroll-surface scroll-surface--compact">
-        <ScheduleCard v-for="task in tasks" :key="task.id" :task="task" :busy="busy"
-          @toggle="toggle" @run="runNow" @edit="openEdit" @remove="remove" />
-      </div>
+      <ScrollableCardLayout>
+        <template #actions>
+          <ActionButton fit @click="openCreate">
+            <Icon name="admin.alarm" :size="14" />{{ t('schedules.create') }}
+          </ActionButton>
+        </template>
+        <div v-if="!loading && !tasks.length" class="scrollable-card-layout__empty">
+          <Icon name="admin.alarm" :size="32" />
+          <strong>{{ t('schedules.emptyTitle') }}</strong>
+          <span>{{ t('schedules.emptyHint') }}</span>
+          <ActionButton fit @click="openChatSetup">{{ t('schedules.createFirst') }}</ActionButton>
+        </div>
+        <div v-else-if="tasks.length" class="task-grid">
+          <ScheduleCard v-for="task in tasks" :key="task.id" :task="task" :busy="busy"
+            @toggle="toggle" @run="runNow" @edit="openEdit" @remove="remove" />
+        </div>
+      </ScrollableCardLayout>
     </div>
 
     <ScheduleFormModal :show="showModal" :task="editing" :im-channels="imChannels" :busy="busy"
@@ -33,6 +35,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/icons/Icon.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
+import ScrollableCardLayout from '@/components/common/layout/ScrollableCardLayout.vue'
 import { errorMessage, showAppError } from '@/composables/core/useAppToast'
 import { workspacesApi } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
@@ -185,15 +188,10 @@ async function confirmAuthorization() {
   --glass-card-background-hover: var(--column-bg);
   height: 100%; box-sizing: border-box;
   display: flex; flex-direction: column;
-  padding: 22px 24px;
+  padding: 0 24px;
 }
-.section-header { display: flex; align-items: center; justify-content: flex-start; margin-bottom: 16px; flex-shrink: 0; }
-.empty-state { min-height: 300px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; color:var(--content-secondary); }
-.empty-state strong { color:var(--content-primary); }
-.empty-state span { font-size:12px; }
 .task-grid {
-  flex: 1; min-height: 0; overflow-y: auto; align-content: start;
+  align-content: start;
   display: grid; grid-template-columns: repeat(auto-fill, minmax(264px, 1fr)); gap: 12px; align-items: stretch;
-  margin: 0 -8px; padding: 10px 8px 16px;
 }
 </style>

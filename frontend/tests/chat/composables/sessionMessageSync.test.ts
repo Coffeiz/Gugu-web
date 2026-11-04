@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
 import type { ChatMessage } from '@/components/common/gugu-chat/chatTypes'
 import { agentApi } from '@/services/api'
-import { createSessionMessageSynchronizer, ensureSessionMessageLoaded, mapSessionMessageDelta, mergeSessionMessageDelta, replaceRunHistory } from '@/components/common/gugu-chat/composables/sessionMessageSync'
+import { createSessionMessageSynchronizer, ensureSessionMessageLoaded, mapSessionMessageDelta, mergeSessionMessageDelta, replaceRunHistory, sortSessionTimelineMessages } from '@/components/common/gugu-chat/composables/sessionMessageSync'
 
 vi.mock('@/services/api', () => ({ agentApi: { getMessages: vi.fn(), getMessagesBefore: vi.fn() } }))
 
@@ -47,6 +47,34 @@ describe('mergeSessionMessageDelta', () => {
     expect(merged[0]).toMatchObject({ id: optimistic.id, dbId: 6, _syncKey: 'message:6', role: 'user' })
   })
 
+  it('历史先于 SSE 数据库确认到达时按客户端身份更新同一条乐观消息', () => {
+    const clientMessageId = 'tab-test:message-1'
+    const optimistic: ChatMessage = {
+      id: 1, role: 'user', text: '群 session 中的网页消息', time: '19:30',
+      clientMessageId, _syncKey: `client:${clientMessageId}`,
+    }
+    const persisted = mapSessionMessageDelta({
+      messages: [{ id: 73, role: 'user', content: optimistic.text, clientMessageId, createdAt: '2026-10-28T11:30:00Z' }],
+      timelineEvents: [],
+    }, () => 2, role => ({ role }))[0]
+
+    const beforeSseIdentity = mergeSessionMessageDelta([optimistic], [persisted])
+    expect(beforeSseIdentity).toHaveLength(1)
+    expect(beforeSseIdentity[0]).toMatchObject({ id: optimistic.id, dbId: 73, _syncKey: `client:${clientMessageId}` })
+
+    // SSE 后续确认数据库身份只补充 dbId，不替换跨来源稳定身份。
+    optimistic.dbId = 73
+    const afterSseIdentity = mergeSessionMessageDelta(beforeSseIdentity, [])
+    expect(afterSseIdentity).toHaveLength(1)
+    expect(afterSseIdentity[0]).toMatchObject({ id: optimistic.id, dbId: 73, text: optimistic.text })
+  })
+
+  it('相同正文但客户端身份不同的两次发送仍分别显示', () => {
+    const first = { ...message(1, 'client:send-1', '重复正文'), role: 'user' }
+    const second = { ...message(2, 'client:send-2', '重复正文'), role: 'user' }
+    expect(mergeSessionMessageDelta([first], [second])).toHaveLength(2)
+  })
+
   it('用首次持久化记录认领本地默认问候，避免新会话出现重复问候', () => {
     const greeting: ChatMessage = {
       ...message(1, '', '咕咕在呢。今天想从哪件开始？'),
@@ -73,6 +101,25 @@ describe('mergeSessionMessageDelta', () => {
     expect(mergeSessionMessageDelta(loaded, loaded)).toHaveLength(2)
   })
 
+  it('IM 用户气泡按平台发生时间排序，助手按完成时间排在期间到达的消息之后', () => {
+    const loaded = mapSessionMessageDelta({
+      messages: [{
+        id: 73, role: 'user', content: 'Run 中到达的群消息',
+        createdAt: '2026-11-01T14:57:00Z', occurredAt: '2026-11-01T14:55:00Z',
+      }],
+      timelineEvents: [{
+        eventId: 'assistant-done', kind: 'assistant', text: 'Run 完成回复', runId: 'run-a',
+        createdAt: '2026-11-01T14:54:00Z', completedAt: '2026-11-01T14:56:00Z',
+      }],
+    }, (() => { let id = 1; return () => id++ })(), role => ({ role: role === 'assistant' ? 'ai' : role }))
+
+    const ordered = sortSessionTimelineMessages(loaded)
+
+    expect(ordered.map(item => item.text)).toEqual(['Run 中到达的群消息', 'Run 完成回复'])
+    expect(ordered[0]._createdAt).toBe('2026-11-01T14:55:00Z')
+    expect(ordered[1]._completedAt).toBe('2026-11-01T14:56:00Z')
+  })
+
   it('迟到的旧检查点不能覆盖较新的实时事件', () => {
     const current = [{ ...message(1, 'event:a', '新正文'), _updatedAt: '2026-01-01T01:02:00Z' }]
     const incoming = [{ ...message(2, 'event:a', '旧正文'), _updatedAt: '2026-01-01T01:01:00Z' }]
@@ -89,6 +136,25 @@ describe('mergeSessionMessageDelta', () => {
     const once = replaceRunHistory(current, incoming, 'run-a')
     expect(replaceRunHistory(once, incoming, 'run-a')).toEqual(once)
     expect(once.map(message => [message.id, message.text])).toEqual([[1, '历史'], [3, '下一轮']])
+  })
+
+  it('run 历史接管时保留实时工具卡已加载的详情', () => {
+    const current: ChatMessage[] = [{
+      ...message(1, 'event:tool-1', ''), role: 'tool', runId: 'run-a',
+      toolInput: { command: 'pwd' }, toolResult: '已取消', _toolDetailsLoaded: true,
+    }]
+    const incoming: ChatMessage[] = [{
+      ...message(2, 'event:tool-1', ''), role: 'tool', runId: 'run-a',
+      toolStatus: 'cancelled', toolDetailsAvailable: true,
+      _toolDetailsSource: { kind: 'timeline', messageId: 11, index: 0 },
+    }]
+
+    const [tool] = replaceRunHistory(current, incoming, 'run-a')
+
+    expect(tool).toMatchObject({
+      id: 1, toolStatus: 'cancelled', toolInput: { command: 'pwd' },
+      toolResult: '已取消', _toolDetailsLoaded: true,
+    })
   })
 
 })

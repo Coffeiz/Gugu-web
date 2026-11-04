@@ -182,7 +182,7 @@ async def test_im_cancel_persists_partial_assistant_message_for_followup(db, use
     assert response.cancelled is True
     assert response.text == ""
     # 模拟紧接着到来的下一条 IM 消息所使用的历史读取路径。
-    history = await load_session_history(db, session.id, session.baseline_message_id)
+    history = await load_session_history(db, session.id, session.baseline_message_seq)
     # 中断前已生成的正文必须进入下一轮上下文，并明确标记为未完成。
     assert any(
         row.role == "assistant" and "已经检查到一半" in row.content

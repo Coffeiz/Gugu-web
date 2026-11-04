@@ -18,7 +18,7 @@ from app.core import redis as R
 from app.core.tz import now_utc
 from agent.context.branch import ContextBranch
 from agent.context.branch_types import BranchInput, BranchPolicy
-from agent.memory.daily_compaction import merge_remaining, should_compact, split_batch
+from agent.memory.daily_compaction import should_compact, split_oldest_batch
 from agent.memory.reflection_branch import run_reflection_branch
 from agent.memory.event_memory import deduplicate_event_sections, normalize_event_memory
 from agent.memory.reflection_jobs import (
@@ -41,8 +41,7 @@ import logging
 _reflection_log = logging.getLogger("agent.memory.reflection")
 
 
-GROUP_DAILY_COMPACT_AT = 200
-GROUP_DAILY_KEEP_RECENT = 100
+GROUP_DAILY_COMPACT_AT = 100
 GROUP_DAILY_HARD_CAP = 300
 GROUP_MEMORY_MAX_TOKENS = 15000
 PRIVATE_DAILY_KEEP_RECENT = 50
@@ -145,7 +144,7 @@ def _build_append_branch_input(scope: MemoryScope, job, task_type: str,
 
 
 async def _rebuild_session_snapshot(db, scope: MemoryScope, session_id: int, model_cfg, messages):
-    """无可复用运行时快照时，按 Web idle 重建规则恢复完整 session 前缀。"""
+    """为私聊恢复或显式上下文压力/压缩路径重建当前 session 前缀。"""
     from types import SimpleNamespace
 
     from sqlalchemy import select
@@ -220,30 +219,105 @@ async def _rebuild_session_snapshot(db, scope: MemoryScope, session_id: int, mod
     )
 
 
-def _extend_snapshot_with_persisted_tail(snapshot, persisted_snapshot):
-    """只在 DB 历史严格以原始 Provider 前缀开头时，保留原始请求并追加新消息。
+async def _extend_group_snapshot_with_passive_tail(
+    db, scope: MemoryScope, session_id: int, snapshot, messages, through_message_id: int | None,
+):
+    """保留真实主 Run 前缀，只把该 Run 之后的群消息渲染为追加尾部。
 
-    persisted_snapshot 只用于核对持久化消息序列；静态 system 与工具声明继续取自
-    实际发给 Provider 的主 run 快照，避免按被动消息发言人重建 prompt 后误判前缀。
+    群级和成员级反思共享同一 session 快照；任务消息范围只约束提取对象，不能
+    改变两类反思使用的群聊上下文。若发现快照边界之后另有 Run，或批次含有无法
+    证明已被快照覆盖的旧消息，则拒绝复用并等待新的主 Run 快照，不静默重建。
     """
+    from types import SimpleNamespace
+
     from dataclasses import replace
+    from sqlalchemy import select
 
     from agent.context.canonical_context import digest
     from agent.context.provider_conversation import ProviderConversation
+    from app.models import ConversationMessage, ConversationSession, User
 
     original = getattr(snapshot, "history", None)
-    persisted = getattr(persisted_snapshot, "history", None)
-    if not isinstance(original, ProviderConversation) or not isinstance(persisted, (list, tuple)):
+    if not isinstance(original, ProviderConversation):
         return None
-    original_messages = original.to_messages()
-    persisted_messages = list(persisted)
-    if len(persisted_messages) < len(original_messages):
-        return None
-    if persisted_messages[:len(original_messages)] != original_messages:
+    covered_ids = set(getattr(snapshot, "persisted_message_ids", ()))
+    max_covered_id = max(covered_ids, default=0)
+    if not covered_ids and any(
+        getattr(message, "run_id", None) != snapshot.run_id
+        for message in messages
+    ):
         return None
 
+    for message in messages:
+        message_id = int(getattr(message, "id", 0) or 0)
+        message_run_id = getattr(message, "run_id", None)
+        if message_id in covered_ids or message_run_id == snapshot.run_id:
+            continue
+        if message_run_id is not None or message_id <= max_covered_id:
+            return None
+
+    session = (await db.execute(
+        select(ConversationSession).where(
+            ConversationSession.id == int(session_id),
+            ConversationSession.user_id == scope.owner_user_id,
+            ConversationSession.source == scope.platform,
+            ConversationSession.bot_id == scope.bot_id,
+            ConversationSession.chat_type == "group",
+            ConversationSession.chat_id == scope.scope_id,
+        )
+    )).scalars().first()
+    if session is None:
+        return None
+
+    tail_query = select(ConversationMessage).where(
+        ConversationMessage.session_id == int(session_id),
+        ConversationMessage.id > max_covered_id,
+    )
+    if through_message_id is not None:
+        tail_query = tail_query.where(ConversationMessage.id <= int(through_message_id))
+    tail_rows = list((await db.execute(tail_query)).scalars().all())
+    passive_tail = []
+    for row in tail_rows:
+        if row.run_id == snapshot.run_id:
+            continue
+        if row.run_id is not None:
+            return None
+        if row.role == "user" and row.platform_user_id is not None:
+            passive_tail.append(row)
+    if not passive_tail:
+        return snapshot
+
+    from agent.context.history import build_history_parts
+    from agent.context.loaders import load_user_tz
+    from agent.context.session_history import _history_order_key
+    from agent.llm.llm_select import use_anthropic_for
+
+    passive_tail.sort(key=_history_order_key)
+    owner = await db.get(User, scope.owner_user_id)
+    owner_name = (owner.display_name or owner.username) if owner else ""
+    user_name = (passive_tail[-1].platform_user_name or owner_name)
+    user_tz = await load_user_tz(db, scope.owner_user_id)
+    request = SimpleNamespace(
+        chat_id=session.chat_id,
+        user_name=user_name,
+        platform_user_id=session.platform_user_id,
+        platform_user_name=user_name,
+        im_role="owner",
+    )
+    # 复用历史消息 renderer 只渲染本次新增尾部，不重新生成静态 system、旧历史或 tools。
+    tail_messages = build_history_parts(
+        passive_tail,
+        request,
+        use_anthropic=use_anthropic_for(snapshot.ai),
+        user_tz=user_tz,
+    )
+    tail = ProviderConversation(tail_messages)
+    from agent.context.prefix_history import render_branch_prefix
+
+    tail = render_branch_prefix(tail, snapshot.ai)
+    original_messages = original.to_messages()
     merged = original.with_messages(
-        [*original_messages, *persisted_messages[len(original_messages):]],
+        [*original_messages, *tail.conversation],
         dynamic_tail_size=0,
     )
     return replace(
@@ -387,7 +461,7 @@ async def _messages_for_job(db, job):
             )
         else:
             query = query.where(ConversationSession.chat_type != "group")
-    return (await db.execute(query.order_by(ConversationMessage.id))).scalars().all()
+    return (await db.execute(query.order_by(ConversationMessage.conversation_seq))).scalars().all()
 
 
 async def _mark_failure(db, job, exc: BaseException) -> None:
@@ -422,13 +496,23 @@ async def _defer_job(db, job, now) -> None:
     await db.commit()
 
 
+async def _wait_for_run_snapshot(db, job, now) -> None:
+    """保留群反思任务，等待下一份真实主 Run 快照，不回退到历史重建。"""
+    job.status = "pending"
+    job.locked_at = None
+    job.next_attempt_at = None
+    job.last_error_code = "awaiting_run_snapshot"
+    job.updated_at = now
+    await db.commit()
+
+
 async def execute_job(job_id: int, settings, *, snapshot=None) -> bool:
     """在 scope 分布式锁内执行任务，确保同一 scope 严格串行。"""
     from app.models import MemoryReflectionJob
 
     async with await _db_session() as db:
         job = await db.get(MemoryReflectionJob, job_id)
-        if job is None:
+        if job is None or job.last_error_code == "awaiting_run_snapshot":
             return False
         scope = MemoryScope(
             job.owner_user_id,
@@ -464,20 +548,9 @@ async def _execute_job_locked(job_id: int, settings, *, snapshot=None) -> bool:
         job.locked_at = now
         job.updated_at = now
         await db.commit()
-        phase = "bind_model"
+        phase = "load_entry"
         try:
             scope = MemoryScope(job.owner_user_id, job.platform, job.bot_id, job.scope_type, job.scope_id)
-            # 反思任务在独立 worker 中执行，重新解析用户 BYOK，随后由 provider 用量
-            # 记录器把本任务的调用归属到该用户。
-            from agent.llm import modelctx
-            from agent.llm.llm_select import resolve_run_config_for_user
-            modelctx.mark_user_scope()
-            run_config = await resolve_run_config_for_user(settings, db, scope.owner_user_id, None)
-            modelctx.set_model_cfg(run_config.model)
-            modelctx.set_usage_context(scope.owner_user_id)
-            from app.byok.service import resolve_and_bind_user_embedding
-            await resolve_and_bind_user_embedding(settings, db, scope.owner_user_id)   # 向量化走用户 embedding 凭据（PRD-SEC-2）
-            phase = "load_entry"
             existing_entry = (await db.execute(
                 select(MemoryEntry).where(
                     MemoryEntry.owner_user_id == scope.owner_user_id,
@@ -501,9 +574,9 @@ async def _execute_job_locked(job_id: int, settings, *, snapshot=None) -> bool:
                 )).scalars().first()
                 if cursor:
                     if job.task_type == "member-batch":
-                        cursor.last_member_reflected_message_id = job.to_message_id
+                        cursor.last_member_reflected_message_id = max(cursor.last_member_reflected_message_id or 0, job.to_message_id or 0)
                     else:
-                        cursor.last_reflected_message_id = job.to_message_id
+                        cursor.last_reflected_message_id = max(cursor.last_reflected_message_id or 0, job.to_message_id or 0)
                 job.status = "completed"
                 job.locked_at = None
                 job.updated_at = now
@@ -530,32 +603,44 @@ async def _execute_job_locked(job_id: int, settings, *, snapshot=None) -> bool:
             phase = "load_messages"
             messages = await _messages_for_job(db, job)
             if not messages:
-                raise RuntimeError("memory_reflection_empty_scope_messages")
+                # 范围内消息可能已被保留策略清理，或游标已被其他任务推进。
+                # 没有可提取的消息时正常收束该范围，不能让同一空任务反复重试。
+                if cursor is not None and job.to_message_id is not None:
+                    field = (
+                        "last_member_reflected_message_id"
+                        if job.task_type == "member-batch"
+                        else "last_reflected_message_id"
+                    )
+                    setattr(cursor, field, max(getattr(cursor, field) or 0, job.to_message_id))
+                    cursor.updated_at = now
+                job.status = "completed"
+                job.locked_at = None
+                job.next_attempt_at = None
+                job.last_error_code = None
+                job.updated_at = now
+                await db.commit()
+                return True
+            phase = "bind_model"
+            # 只对确有消息的任务解析 BYOK；空范围不需要模型或向量化凭据。
+            from agent.llm import modelctx
+            from agent.llm.llm_select import resolve_run_config_for_user
+            modelctx.mark_user_scope()
+            run_config = await resolve_run_config_for_user(settings, db, scope.owner_user_id, None)
+            modelctx.set_model_cfg(run_config.model)
+            modelctx.set_usage_context(scope.owner_user_id)
+            from app.byok.service import resolve_and_bind_user_embedding
+            await resolve_and_bind_user_embedding(settings, db, scope.owner_user_id)
             phase = "load_session_prefix"
             session_id = int(messages[-1].session_id)
             resolved_snapshot = snapshot
+            group_snapshot_required = scope.scope_type == "group" and job.reason != "context-pressure"
             try:
                 from agent.context.reflection_snapshot import model_identity, peek_reflection_snapshot
 
                 candidate = resolved_snapshot or peek_reflection_snapshot(scope.owner_user_id, session_id)
-                passive_group_tail = (
-                    scope.scope_type == "group"
-                    and getattr(messages[-1], "run_id", None) is None
-                )
                 if job.reason == "context-pressure":
                     # 压力由旧 run 之后的被动增量产生，不能复用旧 usage 或已压缩标志。
                     candidate = None
-                elif passive_group_tail:
-                    # 保留原始 wire 前缀，只把 DB 历史中严格追加的新尾部接上；
-                    # 对齐失败就继续使用完整重建，不能遗漏被动消息。
-                    persisted_snapshot = await _rebuild_session_snapshot(
-                        db, scope, session_id, run_config.model, messages,
-                    )
-                    candidate = (
-                        _extend_snapshot_with_persisted_tail(candidate, persisted_snapshot)
-                        if candidate is not None and persisted_snapshot is not None
-                        else None
-                    ) or persisted_snapshot
                 if (candidate and candidate.user_id == str(scope.owner_user_id)
                         and candidate.session_id == session_id
                         and model_identity(candidate.ai) == model_identity(run_config.model)):
@@ -564,6 +649,18 @@ async def _execute_job_locked(job_id: int, settings, *, snapshot=None) -> bool:
                     resolved_snapshot = None
             except Exception:
                 resolved_snapshot = None
+            if group_snapshot_required and resolved_snapshot is not None:
+                resolved_snapshot = await _extend_group_snapshot_with_passive_tail(
+                    db,
+                    scope,
+                    session_id,
+                    resolved_snapshot,
+                    messages,
+                    cursor.last_message_id if cursor is not None else job.to_message_id,
+                )
+            if resolved_snapshot is None and group_snapshot_required:
+                await _wait_for_run_snapshot(db, job, now)
+                return False
             if resolved_snapshot is None:
                 resolved_snapshot = await _rebuild_session_snapshot(
                     db, scope, session_id, run_config.model, messages,
@@ -669,9 +766,9 @@ async def _execute_job_locked(job_id: int, settings, *, snapshot=None) -> bool:
             )).scalars().first()
             if cursor:
                 if task_type == "member-batch":
-                    cursor.last_member_reflected_message_id = job.to_message_id
+                    cursor.last_member_reflected_message_id = max(cursor.last_member_reflected_message_id or 0, job.to_message_id or 0)
                 else:
-                    cursor.last_reflected_message_id = job.to_message_id
+                    cursor.last_reflected_message_id = max(cursor.last_reflected_message_id or 0, job.to_message_id or 0)
                 cursor.updated_at = now
             entry = MemoryEntry(
                 owner_user_id=scope.owner_user_id,
@@ -756,7 +853,7 @@ async def _aggregate_members(db, scope: MemoryScope) -> dict[str, dict]:
             ConversationMessage.role == "user",
             ConversationMessage.platform_user_id.is_not(None),
         )
-        .order_by(ConversationMessage.created_at, ConversationMessage.id)
+        .order_by(ConversationMessage.conversation_seq)
     )).all()
     members: dict[str, dict] = {}
     for pid, name, created_at in rows:
@@ -962,10 +1059,7 @@ async def _apply_output(
         summary = str(output.get("summary") or "").strip()
         if summary:
             await write_scope_json(scope, "summary.json", {"text": summary, "ts": now_utc().timestamp()})
-        if should_compact(
-            len(entries), trigger=GROUP_DAILY_COMPACT_AT,
-            keep_recent=GROUP_DAILY_KEEP_RECENT,
-        ):
+        if should_compact(len(entries), trigger=GROUP_DAILY_COMPACT_AT):
             try:
                 await _compact_group_daily(
                     scope,
@@ -1082,33 +1176,35 @@ async def _compact_group_daily(
     current_memory: str,
     settings,
 ) -> None:
-    """一次调用压缩群 daily，只维护群主档。"""
-    recent, batch, remaining = split_batch(
-        entries, keep_recent=GROUP_DAILY_KEEP_RECENT,
-    )
-    if not batch:
-        return
+    """按最旧优先分批全量沉淀群 daily；成功一批才移除该批记录。"""
     prompt = (Path(__file__).resolve().parents[1] / "prompts" / "im" / "group_compress.md").read_text(encoding="utf-8")
-    daily = _render_daily(batch)
-    branch = await ContextBranch().run(
-        BranchInput(
-            stable_system=prompt,
-            delta=f"已有长期记忆：\n{current_memory}\n\n近期群聊记录：\n{daily}",
-            scope="group-daily-compaction",
-        ),
-        BranchPolicy(
-            name="compaction",
-            output_mode="json",
-            max_tokens=GROUP_MEMORY_MAX_TOKENS,
-        ),
-        settings,
-    )
-    result = branch.output if branch.ok and isinstance(branch.output, dict) else {}
-    if branch.return_reason == "provider_error":
-        raise RuntimeError("group_daily_compaction_provider_error")
-    memory = str(result.get("memory") or "").strip() if isinstance(result, dict) else ""
-    memory = deduplicate_event_sections(normalize_event_memory(memory, fallback_title="群组事件记录"))
-    if not memory or not _preserves_group_dates(batch, memory):
-        return
-    await write_scope_file(scope, "memory.md", memory + "\n")
-    await write_scope_file(scope, "daily.md", _render_daily(merge_remaining(recent, remaining)))
+    pending = list(entries)
+    while pending:
+        remaining, batch = split_oldest_batch(pending)
+        if not batch:
+            return
+        daily = _render_daily(batch)
+        branch = await ContextBranch().run(
+            BranchInput(
+                stable_system=prompt,
+                delta=f"已有长期记忆：\n{current_memory}\n\n近期群聊记录：\n{daily}",
+                scope="group-daily-compaction",
+            ),
+            BranchPolicy(
+                name="compaction",
+                output_mode="json",
+                max_tokens=GROUP_MEMORY_MAX_TOKENS,
+            ),
+            settings,
+        )
+        result = branch.output if branch.ok and isinstance(branch.output, dict) else {}
+        if branch.return_reason == "provider_error":
+            raise RuntimeError("group_daily_compaction_provider_error")
+        memory = str(result.get("memory") or "").strip() if isinstance(result, dict) else ""
+        memory = deduplicate_event_sections(normalize_event_memory(memory, fallback_title="群组事件记录"))
+        if not memory or not _preserves_group_dates(batch, memory):
+            return
+        await write_scope_file(scope, "memory.md", memory + "\n")
+        await write_scope_file(scope, "daily.md", _render_daily(remaining))
+        current_memory = memory
+        pending = remaining

@@ -20,6 +20,9 @@
     >
       <div v-if="expanded" class="tool-detail-shell">
         <div class="tool-event-detail">
+          <div v-if="detailsLoading && msg.toolInput === undefined && msg.toolResult === undefined" class="tool-event-section tool-details-loading" role="status">
+            {{ t('chatUi.loadingToolDetails') }}
+          </div>
           <div v-if="msg.toolInput !== undefined" class="tool-event-section">
             <span class="tool-event-caption">{{ t('chatUi.input') }}</span>
             <pre>{{ formatValue(msg.toolInput) }}</pre>
@@ -58,7 +61,10 @@ function resetDetailsRequest() {
   detailsLoading.value = false
   detailsError.value = false
 }
-watch(() => [props.msg, props.sessionId], resetDetailsRequest)
+watch(() => [props.msg, props.sessionId, props.expanded], () => {
+  resetDetailsRequest()
+  if (props.expanded && needsDetails()) void loadDetails()
+}, { immediate: true })
 onBeforeUnmount(resetDetailsRequest)
 const OUTPUT_DISPLAY_LIMIT = 32_000
 const toolLabel = computed(() => {
@@ -86,6 +92,12 @@ function formatValue(value: unknown) {
   if (typeof value === 'string') return value
   try { return JSON.stringify(value, null, 2) } catch { return String(value) }
 }
+function needsDetails() {
+  const { msg, sessionId } = props
+  return Boolean(msg.toolDetailsAvailable && !msg._toolDetailsLoaded
+    && msg.toolInput === undefined && msg.toolResult === undefined
+    && msg._toolDetailsSource && sessionId != null)
+}
 const formattedResult = computed(() => formatValue(props.msg.toolResult))
 const resultDisplayTruncated = computed(() => formattedResult.value.length > OUTPUT_DISPLAY_LIMIT)
 const displayResult = computed(() => resultDisplayTruncated.value
@@ -103,11 +115,7 @@ function toggleExpanded() {
     return
   }
   expandRequested.value = true
-  const { msg, sessionId } = props
-  const needsDetails = msg.toolDetailsAvailable && !msg._toolDetailsLoaded
-    && msg.toolInput === undefined && msg.toolResult === undefined
-    && msg._toolDetailsSource && sessionId != null
-  if (!needsDetails) {
+  if (!needsDetails()) {
     expandRequested.value = false
     detailsError.value = false
     emit('update:expanded', true)
@@ -132,7 +140,7 @@ async function loadDetails() {
     // 数据与展开状态在同一轮更新，动画第一次测量即得到完整详情高度。
     if (expandRequested.value) emit('update:expanded', true)
   } catch {
-    if (generation === requestGeneration && expandRequested.value) detailsError.value = true
+    if (generation === requestGeneration && (expandRequested.value || props.expanded)) detailsError.value = true
   } finally {
     if (generation === requestGeneration) {
       detailsLoading.value = false
@@ -250,6 +258,7 @@ function cleanupDetailTransition(element: Element) {
 .tool-event-duration { grid-column: 3; grid-row: 1 / span 2; align-self: center; color: var(--content-tertiary); font-size: var(--font-size-xs); white-space: nowrap; }
 .tool-event-head :deep(.flip-chevron) { grid-column: 4; grid-row: 1 / span 2; align-self: center; }
 .tool-event-detail { position: relative; z-index: 1; padding: 10px 12px 11px; border-top: 1px solid var(--panel-divider); background: transparent; color: var(--content-secondary); }
+.tool-details-loading { color: var(--content-tertiary); font-size: var(--font-size-xs); }
 .tool-event-section + .tool-event-section { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--panel-divider); }
 .tool-event-caption { display: block; margin-bottom: 4px; color: var(--content-tertiary); font-size: var(--font-size-xs); font-weight: 600; }
 .tool-event-limit { margin-left: 6px; color: var(--content-tertiary); font-weight: 400; }

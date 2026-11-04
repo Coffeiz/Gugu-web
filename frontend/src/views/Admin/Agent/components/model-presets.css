@@ -106,8 +106,8 @@
 .presets-header { gap: 16px; flex-wrap: wrap; }
 .preset-name, .preset-model { min-width: 0; overflow-wrap: anywhere; white-space: normal; }
 .preset-card-top { min-width: 0; flex-wrap: wrap; }
-.btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: var(--control-md); padding: 6px 16px; border: 0; border-radius: 9px; background: var(--action-primary-bg); color: var(--content-on-accent); font-size: 13px; font-weight: 600; cursor: pointer; }
-.btn-primary:hover:not(:disabled) { background: var(--action-primary-bg-hover); }
+.btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: var(--control-md); padding: 6px 16px; border: 0; border-radius: 9px; background: var(--action-primary-bg); color: var(--content-on-accent); font-size: 13px; font-weight: 600; cursor: pointer; transition: filter var(--motion-hover-control) var(--motion-ease-standard); }
+.btn-primary:hover:not(:disabled) { filter: brightness(1.1); }
 .btn-primary:disabled { opacity: .5; cursor: default; }
 @media (max-width: 760px) { .preset-card { flex-wrap: wrap; } .preset-card-body { flex-basis: calc(100% - 24px); } .preset-card-actions { width: 100%; justify-content: flex-end; flex-wrap: wrap; } }
 

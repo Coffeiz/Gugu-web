@@ -25,6 +25,96 @@ async def prepare_receipt(db, user):
     return session, row, async_sessionmaker(db.bind, expire_on_commit=False)
 
 
+async def test_completed_multi_message_batch_recovers_using_last_message_anchor(db, user_a):
+    """完成后 ACK 前重启：批次多行时不能将较早用户行误标为中断。"""
+    from datetime import timedelta
+    from agent.context.display_timeline import stamp_display_item
+
+    session, anchor_user, factory = await prepare_receipt(db, user_a)
+    other = ConversationMessage(
+        session_id=session.id, role="user", content="先到消息",
+        run_id=user_run_key("synthetic-batch"),
+        sent_at=anchor_user.sent_at - timedelta(seconds=1),
+    )
+    db.add(other)
+    await db.flush()
+    assert anchor_user.id < other.id
+    item = stamp_display_item({"kind": "assistant", "text": "已完成"}, sequence=1, user_message_id=anchor_user.id)
+    db.add(ConversationMessage(session_id=session.id, role="assistant", content="已完成",
+                               display_timeline=[item]))
+    await db.commit()
+
+    assert await recover_started(factory, "synthetic-batch") is True
+    async with factory() as loaded:
+        assert (await loaded.get(ConversationMessage, anchor_user.id)).run_outcome is None
+        assert (await loaded.get(ConversationMessage, other.id)).run_outcome is None
+
+
+async def test_silent_completed_run_is_not_marked_interrupted_on_reclaim(db, user_a, monkeypatch):
+    """正常静默没有助手消息，完成后重领仍应识别成功且不产生可见回复。"""
+    from agent.context.assembly import MessageArea
+    from agent.context.run_finalize import finalize_run
+    from agent.usage import UsageResult
+
+    session, user, factory = await prepare_receipt(db, user_a)
+
+    async def usage(*args, **kwargs):
+        return UsageResult(tokens_in=3, tokens_out=1)
+
+    async def trim(*args):
+        pass
+
+    monkeypatch.setattr("agent.usage.record_usage", usage)
+    monkeypatch.setattr("app.services.conversation_retention.trim_session_messages", trim)
+    await finalize_run(
+        session_factory=factory, session_id=session.id, user_id=user_a.id,
+        settings=SimpleNamespace(), model_cfg=SimpleNamespace(model="synthetic", provider="synthetic"),
+        message_area=MessageArea(), text="", files=[], tokens_in=3, tokens_out=1,
+        inbound_batch_key="synthetic-batch", persist_message_delta=False, silent_completion=True,
+    )
+    assert await recover_started(factory, "synthetic-batch") is True
+    async with factory() as loaded:
+        assert (await loaded.get(ConversationMessage, user.id)).run_outcome is None
+        assert not (await loaded.scalars(select(ConversationMessage).where(
+            ConversationMessage.session_id == session.id, ConversationMessage.role == "assistant"
+        ))).all()
+
+
+async def test_short_circuit_releases_only_unconsumed_early_rows(db, user_a):
+    """群命令未启动 run 时，早落库行不应永久隐藏；已消费和其他批次保持原样。"""
+    from agent.im.inbound_recovery import pending_user_run_key, release_unconsumed_user_rows
+
+    session, consumed, factory = await prepare_receipt(db, user_a)
+    pending = ConversationMessage(session_id=session.id, role="user", content="命令",
+                                  run_id=pending_user_run_key("command"))
+    unrelated = ConversationMessage(session_id=session.id, role="user", content="其他消息",
+                                    run_id=pending_user_run_key("other"))
+    db.add_all([pending, unrelated])
+    await db.commit()
+    await release_unconsumed_user_rows(factory, [pending.id, consumed.id])
+    async with factory() as loaded:
+        assert (await loaded.get(ConversationMessage, pending.id)).run_id is None
+        assert (await loaded.get(ConversationMessage, consumed.id)).run_id == user_run_key("synthetic-batch")
+        assert (await loaded.get(ConversationMessage, unrelated.id)).run_id == pending_user_run_key("other")
+
+
+async def test_reclaim_clears_residual_pending_marker_for_its_source(db, user_a):
+    """批次已开始但释放早落库标记失败时，重领只清理当前来源的残留。"""
+    from agent.im.inbound_recovery import pending_user_run_key, release_unconsumed_user_message
+
+    session, _, factory = await prepare_receipt(db, user_a)
+    pending = ConversationMessage(session_id=session.id, role="user", content="待恢复",
+                                  run_id=pending_user_run_key("source-1"))
+    other = ConversationMessage(session_id=session.id, role="user", content="其他",
+                                run_id=pending_user_run_key("source-2"))
+    db.add_all([pending, other])
+    await db.commit()
+    await release_unconsumed_user_message(factory, "source-1")
+    async with factory() as loaded:
+        assert (await loaded.get(ConversationMessage, pending.id)).run_id is None
+        assert (await loaded.get(ConversationMessage, other.id)).run_id == pending_user_run_key("source-2")
+
+
 @pytest.mark.asyncio
 async def test_reclaimed_started_message_is_acknowledged_without_dispatch(db, user_a, monkeypatch):
     """原消息租约丢失后重领，不和后来发送的“继续”合并或再调模型。"""

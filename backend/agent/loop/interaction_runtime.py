@@ -19,7 +19,7 @@ class InteractionBindings:
     dispatch_in_session: Callable[..., Awaitable[tuple[Any, Any]]]
     tool_result_payload: Callable[[Any], dict[str, Any]]
     is_successful_result: Callable[[Any], bool]
-    is_cancelled: Callable[[int | None], bool]
+    is_cancelled: Callable[[], Awaitable[bool]]
     diag_log: Callable[[str, BaseException], None]
 
 
@@ -62,7 +62,7 @@ class InteractionRuntime:
             user_id=self.user_id,
             prompt_id=pending.prompt_id,
             heartbeat=lambda: genstream.touch(self.session_id),
-            cancel_check=lambda: self.bindings.is_cancelled(self.session_id),
+            cancel_check=self.bindings.is_cancelled,
         )
         answer_status = self.bindings.classify_answer(answer)
         if answer_status in {"user_cancelled", "aborted", "expired"}:
@@ -73,6 +73,7 @@ class InteractionRuntime:
         replay = pending.replay
         if isinstance(answer, dict) and answer.get("status") == "confirmed" and isinstance(replay, dict):
             from agent.interactions.confirmations import is_block
+            from agent.runtime.cancellation import RunCancellationRequested
 
             try:
                 executed, artifact = await self.bindings.dispatch_in_session(
@@ -86,6 +87,10 @@ class InteractionRuntime:
                     skill_state=self.skill_state,
                     tool_call_id=pending.tool_call_id,
                 )
+            except RunCancellationRequested:
+                async for emission in self._terminate_pending(pending, None, "aborted"):
+                    yield emission
+                return
             except Exception as exc:
                 self.bindings.diag_log("agent.core.confirm_replay", exc)
                 executed, artifact = {
@@ -147,7 +152,7 @@ class InteractionRuntime:
                         user_id=self.user_id,
                         prompt_id=followup["prompt_id"],
                         heartbeat=lambda: genstream.touch(self.session_id),
-                        cancel_check=lambda: self.bindings.is_cancelled(self.session_id),
+                        cancel_check=self.bindings.is_cancelled,
                     )
                     followup_status = self.bindings.classify_answer(followup_answer)
                     if followup_status in {"user_cancelled", "aborted", "expired"}:

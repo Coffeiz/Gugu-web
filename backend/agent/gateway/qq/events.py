@@ -15,6 +15,7 @@ from agent.im.parsers.qq import (
     _extract_quoted,
     _extract_qq_faces,
     _normalize_qq_faces,
+    _normalize_qq_attachment_placeholders,
     _pop_pending_qq_face,
     _queue_pending_qq_face,
     _qq_face_pending_key,
@@ -69,8 +70,11 @@ def _remember_qq_message(index: QQRefIndex, data: Dict[str, Any], chat_type: str
     index.set(ref_index_key(chat_type, chat_id, sender_id, msg_key), {
         "message_id": str(data.get("id") or ""),
         "sender_id": sender_id,
+        "sender_is_bot": (data.get("author") or {}).get("bot") if isinstance((data.get("author") or {}).get("bot"), bool) else None,
         "sender_name": sender_name,
-        "content": str(data.get("content") or "")[:200],
+        "content": _normalize_qq_attachment_placeholders(
+            str(data.get("content") or ""), attachments,
+        )[:200],
         "attachments": compact_attachments,
         "timestamp": str(data.get("timestamp") or ""),
     })
@@ -90,50 +94,116 @@ def _quoted_platform_message_id(data: Dict[str, Any]) -> str:
     return str(_scene_ext_value(_message_scene_ext(data), "ref_msg_idx") or "")
 
 def _qq_message_mentions_bot(data: Dict[str, Any], event_type: str) -> bool:
-    """依据消息体判断是否真的 @ 了本实例对应的机器人。
+    """只有 QQ 明确标记属于当前实例的 mention 才算 @ 到本机器人。
 
-    同一群内多个机器人时，QQ 会把 AT 消息推送给所有机器人；mentions 数组里
-    每个 bot 条目带 is_you 字段标明是否指向当前 bot 实例，只接受
-    is_you=True 的条目。旧协议或测试适配器没有 is_you 时，退回到
-    mentions 中存在任意 bot=True 即算命中。
+    同群多个机器人都会收到 AT 事件；事件类型或 ``bot=True`` 只能说明目标
+    是某个机器人，不能证明目标是当前实例。缺少 ``is_you`` 时保守按未命中处理。
     """
-    if "mentions" not in data:
-        # 旧协议/适配器没有 mentions: GROUP_AT_MESSAGE_CREATE 兜底
-        if event_type == "GROUP_AT_MESSAGE_CREATE":
-            return True
+    if event_type not in {"GROUP_AT_MESSAGE_CREATE", "GROUP_MESSAGE_CREATE"}:
         return False
     mentions = data.get("mentions")
     if not isinstance(mentions, list):
         return False
-    if not mentions:
-        # mentions 存在但为空数组：协议未填充 bot 标记，按事件类型兜底
-        return event_type == "GROUP_AT_MESSAGE_CREATE"
     for item in mentions:
-        if not isinstance(item, dict) or item.get("bot") is not True:
-            continue
-        # 新协议: is_you 明确标识是否指向本实例
-        if "is_you" in item:
-            return item["is_you"] is True
-        # 旧协议没有 is_you, 只要 mentions 里有 bot 就算命中
-        return True
+        if (
+            isinstance(item, dict)
+            and item.get("bot") is True
+            and item.get("is_you") is True
+        ):
+            return True
     return False
 
 def _qq_bot_mention_id(data: Dict[str, Any], event_type: str) -> str:
-    """提取被 @ 的机器人平台 ID，不把未知 mention 猜成机器人。"""
+    """只提取 QQ 明确标记为当前实例的 bot ID，供咕咕身份展示使用。"""
+    if event_type not in {"GROUP_AT_MESSAGE_CREATE", "GROUP_MESSAGE_CREATE"}:
+        return ""
     mentions = data.get("mentions")
     if isinstance(mentions, list):
         for item in mentions:
-            if not isinstance(item, dict) or item.get("bot") is not True:
+            if (
+                not isinstance(item, dict)
+                or item.get("bot") is not True
+                or item.get("is_you") is not True
+            ):
                 continue
             for key in ("id", "user_openid", "member_openid", "openid"):
                 value = item.get(key)
                 if value:
                     return str(value)
-    if event_type == "GROUP_AT_MESSAGE_CREATE":
-        match = re.search(r"<@!?([^>]+)>", str(data.get("content") or ""))
-        if match:
-            return match.group(1)
     return ""
+
+
+def _qq_message_mentions_other_bot(data: Dict[str, Any]) -> bool:
+    """判断消息是否 @ 了别的 bot（同一个群里还有别的机器人在）。
+
+    QQ 的 mention 条目带 ``bot`` 标记：``bot=True`` 且 ``is_you`` 不为 True
+    就是 @ 别人家的机器人。这种消息不是喊咕咕的，抢答会替别人作答。
+    """
+    mentions = data.get("mentions")
+    if not isinstance(mentions, list):
+        return False
+    for item in mentions:
+        if not isinstance(item, dict) or item.get("bot") is not True:
+            continue
+        if item.get("is_you") is True:
+            continue
+        return True
+    return False
+
+
+def _qq_attention_mention_facts(data: Dict[str, Any], event_type: str) -> tuple[bool | None, bool | None, bool | None, bool]:
+    """返回 QQ 结构化提及事实；缺字段与空提及列表分开处理。"""
+    if event_type not in {"GROUP_AT_MESSAGE_CREATE", "GROUP_MESSAGE_CREATE"}:
+        return False, False, False, False
+    mentions = data.get("mentions")
+    if not isinstance(mentions, list):
+        return None, None, None, False
+    current = False
+    other_bot = False
+    other_member = False
+    unresolved = False
+    for item in mentions:
+        if not isinstance(item, dict) or not isinstance(item.get("bot"), bool):
+            unresolved = True
+            continue
+        if item["bot"] is True:
+            if item.get("is_you") is True:
+                current = True
+            elif item.get("is_you") is False:
+                other_bot = True
+            else:
+                unresolved = True
+        else:
+            other_member = True
+    if unresolved and not (current or other_bot or other_member):
+        return None, None, None, True
+    return current, other_bot, other_member, unresolved
+
+
+def _qq_attention_reply_facts(index: QQRefIndex, data: Dict[str, Any], chat_type: str,
+                              chat_id: str, sender_id: str) -> tuple[str | None, str | None, bool | None]:
+    target_id = _quoted_platform_message_id(data)
+    if not target_id:
+        return None, None, None
+    entry = index.get(ref_index_key(chat_type, chat_id, sender_id, target_id))
+    if not entry:
+        return target_id, None, None
+    target_sender = entry.get("sender_id")
+    target_is_bot = entry.get("sender_is_bot")
+    return target_id, str(target_sender) if target_sender else None, target_is_bot if isinstance(target_is_bot, bool) else None
+
+
+def _qq_platform_sent_ms(data: Dict[str, Any]) -> int | None:
+    value = data.get("timestamp")
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        timestamp = int(value)
+    except (TypeError, ValueError):
+        return None
+    if timestamp <= 0:
+        return None
+    return timestamp * 1000 if timestamp < 10_000_000_000 else timestamp
 
 async def _qq_reply(channel_id: str, chat_type: str, target_id: str, text: str, msg_id: str | None) -> None:
     try:
@@ -206,15 +276,23 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
     if not sender_id:
         return
     bot_platform_user_id = _qq_bot_mention_id(data, event_type)
+    # @ 的是别的 bot 时，咕咕不该抢答：这条消息是喊别人家的机器人的。
+    mentions_other_bot = _qq_message_mentions_other_bot(data)
+    attention_mentions = _qq_attention_mention_facts(data, event_type)
     # 成员 mention 保留原始 ID；展示层按会话内最新 username 解析，避免改名后被旧昵称冻结。
     raw_text = (data.get("content") or "").strip()
+    raw_attachments = data.get("attachments") or []
+    if not isinstance(raw_attachments, list):
+        raw_attachments = []
     from agent.security import logsafe
     has_qq_face = _contains_qq_face(raw_text)
     face_ids = _extract_qq_faces(raw_text)
     # QQ 经常把一个表情拆成「协议文本」和紧随其后的图片事件；协议文本本身不应成为
     # 一条独立聊天消息，也不应和图片同时显示成两个内容块。
     face_only = has_qq_face and not _strip_qq_face_markers(raw_text)
-    text = _normalize_qq_faces(raw_text)
+    text = _normalize_qq_attachment_placeholders(
+        _normalize_qq_faces(raw_text), raw_attachments,
+    )
     msg_id = data.get("id") or ""
     # 在引用解析、附件 staging 和绑定码/快捷命令处理前检查安全输入态；
     # 凭据消息不应触发任何普通消息副作用。
@@ -253,9 +331,6 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
             reply = "QQ 身份已绑定，之后可以正常使用。" if bound else "验证码无效或已过期，请回网页重新生成。"
             await _qq_reply(channel_id, chat_type, sender_id, reply, msg_id)
             return
-    raw_attachments = data.get("attachments") or []
-    if not isinstance(raw_attachments, list):
-        raw_attachments = []
     ref_index = _qq_ref_index(owner, channel_id)
     # 先登记当前消息，再解析引用；这样同一条消息的 msg_idx 可以被后续私聊/群聊引用复用。
     _remember_qq_message(ref_index, data, chat_type, chat_id, sender_id, sender_name)
@@ -267,6 +342,10 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         quoted_text, quoted_attachments = _quoted_from_index(
             ref_index, data, chat_type, chat_id, sender_id,
         )
+    reply_target_id, reply_target_sender_id, reply_target_is_bot = _qq_attention_reply_facts(
+        ref_index, data, chat_type, chat_id, sender_id,
+    )
+    quoted_text = _normalize_qq_attachment_placeholders(quoted_text, quoted_attachments)
     quoted_text = _normalize_qq_faces(quoted_text)
     if quoted_attachments and quoted_text == "[QQ表情]":
         quoted_text = ""
@@ -316,13 +395,14 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         ack_target = chat_id if chat_type == "group" else sender_id
         now = time.monotonic()
         ack_key = f"{chat_type}:{ack_target}"
-        # 附件确认也属于对外回复：只响应 @ 时，非 @ 消息不能发送确认；
-        # 静默记录模式即使被 @ 也不发送确认。
+        # 全量自动回复群的所有消息（包括明确 @）都交由 Agent 统一回复，不能
+        # 在模型选择前额外发“文件收到啦”；只响应 @ 模式保留原有即时确认。
         should_reply = (
             chat_type != "group"
             or (
-                not read_enabled
-                and (not requires_at or mentioned)
+                requires_at
+                and not read_enabled
+                and mentioned
             )
         )
         if should_reply and now - last_ack.get(ack_key, 0.0) > _ACK_COOLDOWN:
@@ -341,8 +421,10 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         "platform_bot_user_id": bot_platform_user_id or None,
         "message_id": msg_id,
         "platform_message_id": _qq_message_index_key(data, chat_type, chat_id, sender_id),
+        "platform_sent_ms": _qq_platform_sent_ms(data),
         "chat_type": chat_type,
         "text": text,
+        "attention_raw_text": text,
         "quoted_text": quoted_text or None,
         "attachments": all_attachments,
         "emoji_refs": face_ids if face_only else [],
@@ -357,6 +439,14 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         payload["member_memory_enabled"] = member_memory_enabled
         payload["group_mentioned"] = mentioned
         payload["bot_mentioned"] = mentioned
+        payload["mentions_other_bot"] = mentions_other_bot
+        payload["native_bot_mentioned"] = attention_mentions[0]
+        payload["mentions_other_bot"] = attention_mentions[1]
+        payload["mentions_other_member"] = attention_mentions[2]
+        payload["has_unresolved_mention"] = attention_mentions[3]
+        payload["reply_to_platform_message_id"] = reply_target_id
+        payload["reply_target_sender_id"] = reply_target_sender_id
+        payload["reply_target_is_bot"] = reply_target_is_bot
     payload["message_format"] = await _message_format(channel_id, chat_type)
     from agent.security import logsafe
     channel_fp = logsafe.fingerprint(channel_id)
@@ -411,6 +501,9 @@ async def _handle_qq_interaction(data: Dict[str, Any], channel_id: str, owner: s
     if event is None or not event.get("platform_user_id"):
         await _ack_qq_interaction(channel_id, interaction_id, code=1)
         return
+    # QQ 要求在短时限内确认交互事件。先确认已接收回调，再做数据库事务，
+    # 避免事务耗时导致平台重投；业务消费仍由下方的单次动作状态和 event_id 保证幂等。
+    await _ack_qq_interaction(channel_id, interaction_id, code=0)
     try:
         from app.db import session as db_session
         from app.services.interactions import consume_action
@@ -431,10 +524,9 @@ async def _handle_qq_interaction(data: Dict[str, Any], channel_id: str, owner: s
             if result is None:
                 result = await consume_action(
                     db, user_id=user_id, prompt_id=event["prompt_id"], token=event["token"],
-                    event_id=event.get("event_id"),
+                    event_id=event.get("event_id"), allow_duplicate_event=True,
                 )
     except (LookupError, ValueError):
-        await _ack_qq_interaction(channel_id, interaction_id, code=3)
         # 交互回调的 event_id 不是 QQ 消息 msg_id，不能用于消息回复，否则会触发
         # 40034024（msg_id 无效或越权）。交互状态已经由上面的协议 ACK 确认，
         # 这里发送独立的提示；如果按钮来自群聊，必须回到原群，不能误发到私聊。
@@ -450,10 +542,13 @@ async def _handle_qq_interaction(data: Dict[str, Any], channel_id: str, owner: s
         )
         return
     except Exception as exc:
-        await _ack_qq_interaction(channel_id, interaction_id, code=1)
         diag_log("agent.gateway.qq.interaction", exc)
         return
-    await _ack_qq_interaction(channel_id, interaction_id, code=0)
+
+    # 同一事件被 QQ 重投时，首次回调已经消费并恢复 Run；重复回调只需 ACK，
+    # 不能再次发“已选择”，更不能把幂等命中显示成已过期错误。
+    if result.get("duplicate") or result.get("status") == "duplicate":
+        return
 
     option_id = str(result.get("option_id") or "")
     result_payload = result.get("result") if isinstance(result.get("result"), dict) else {}

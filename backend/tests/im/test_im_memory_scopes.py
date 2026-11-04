@@ -171,7 +171,6 @@ def test_group_daily_policy_and_markdown_roundtrip():
     from agent.memory.im_reflection import (
         GROUP_DAILY_COMPACT_AT,
         GROUP_DAILY_HARD_CAP,
-        GROUP_DAILY_KEEP_RECENT,
         _daily_entries,
         _render_daily,
     )
@@ -180,10 +179,48 @@ def test_group_daily_policy_and_markdown_roundtrip():
     entries = _daily_entries(text)
     assert entries == [("2026-08-04", "新决定"), ("2026-08-03", "旧记录")]
     assert _daily_entries(_render_daily(entries)) == entries
-    assert GROUP_DAILY_COMPACT_AT == 200
-    assert GROUP_DAILY_KEEP_RECENT == 100
+    assert GROUP_DAILY_COMPACT_AT == 100
     assert GROUP_DAILY_HARD_CAP == 300
-    assert GROUP_DAILY_KEEP_RECENT < GROUP_DAILY_COMPACT_AT < GROUP_DAILY_HARD_CAP
+    assert GROUP_DAILY_COMPACT_AT < GROUP_DAILY_HARD_CAP
+
+
+@pytest.mark.asyncio
+async def test_group_daily_compacts_all_entries_oldest_first(monkeypatch):
+    from agent.memory import im_reflection
+    from agent.memory.scopes import MemoryScope
+
+    scope = MemoryScope("owner-test", "qq", "bot-test", "group", "group-test")
+    entries = [("2026-08-04", f"记录{i}") for i in range(150)]
+    files = {}
+    deltas = []
+
+    class FakeBranch:
+        async def run(self, branch_input, _policy, _settings):
+            deltas.append(branch_input.delta)
+            old_memory, daily = branch_input.delta.split("\n\n近期群聊记录：\n", 1)
+            old_memory = old_memory.removeprefix("已有长期记忆：\n")
+            merged = f"{old_memory}\n\n" if old_memory else ""
+            return SimpleNamespace(
+                ok=True,
+                return_reason="completed",
+                output={"memory": f"{merged}## 群组事件\n2026-08-04\n{daily}"},
+            )
+
+    async def fake_write(scope_arg, name, text):
+        files[name] = text
+
+    monkeypatch.setattr(im_reflection, "ContextBranch", FakeBranch)
+    monkeypatch.setattr(im_reflection, "write_scope_file", fake_write)
+
+    await im_reflection._compact_group_daily(scope, entries, "", SimpleNamespace())
+
+    assert len(deltas) == 2
+    assert "记录50" in deltas[0] and "记录149" in deltas[0]
+    assert "记录49" not in deltas[0]
+    assert "记录0" in deltas[1] and "记录49" in deltas[1]
+    assert files["daily.md"] == ""
+    assert "记录149" in files["memory.md"]
+    assert "记录0" in files["memory.md"]
 
 
 def test_group_daily_string_is_one_entry_not_one_entry_per_character():
@@ -222,7 +259,7 @@ def test_group_profile_accepts_public_types_and_rejects_member_identity():
         [],
         [
             {"type": "nature", "text": "这是产品开发讨论群"},
-            {"type": "role", "text": "Coffeiz负责最终确认"},
+            {"type": "role", "text": "小北负责最终确认"},
             {"type": "member", "text": "platform_user_id=secret"},
         ],
         [],
@@ -235,7 +272,7 @@ def test_group_profile_accepts_public_types_and_rejects_member_identity():
         [{"type": "rule", "text": "删除操作需要先确认"}],
         ["这是产品开发讨论群"],
     )
-    assert [item["text"] for item in updated] == ["Coffeiz负责最终确认", "删除操作需要先确认"]
+    assert [item["text"] for item in updated] == ["小北负责最终确认", "删除操作需要先确认"]
 
 
 @pytest.mark.asyncio

@@ -227,7 +227,10 @@ async def _list_recent_attachments(db, user_id, args: dict):
     }
 
 
-async def _send_file_from_url(user_id, url: str, title: str, *, stage: bool = True, max_bytes: int | None = None):
+async def _send_file_from_url(
+    user_id, url: str, title: str, *, stage: bool = True,
+    deferred_delivery: bool = False, max_bytes: int | None = None,
+):
     """下载一张网络图片（如 xng_search / similar_image_search 结果的 img_src）暂存为聊天附件，返回 _artifact（attach_id 版）。
 
     下载用 streaming + 累计限流：不把整个响应读进内存再判大小（否则群成员给一个
@@ -293,7 +296,10 @@ async def _send_file_from_url(user_id, url: str, title: str, *, stage: bool = Tr
     meta = await chat_attach.stage(user_id, name, ext, ctype, data, kind="image")
     return {
         "ok": True,
-        "message": f"已把「{name}」发到对话窗口。",
+        "message": (
+            f"已准备好「{name}」，将在本轮回复结束时尝试发送；是否送达以后续回执为准。"
+            if deferred_delivery else f"已把「{name}」发到对话窗口。"
+        ),
         "_artifact": {
             "attach_id": meta["attach_id"],
             "name": name,
@@ -364,7 +370,9 @@ async def _send_file(db, user_id, args: dict):
 
     url = (args.get("url") or "").strip()
     if url:
-        return await _send_file_from_url(user_id, url, args.get("title") or "")
+        return await _send_file_from_url(
+            user_id, url, args.get("title") or "", deferred_delivery=bool(im),
+        )
 
     if is_restricted:
         # 群成员只允许发网络图片（url 分支）；file/file_id/attach_id 涉及 owner 私有文件，禁止。
@@ -384,7 +392,10 @@ async def _send_file(db, user_id, args: dict):
         shown = f"{artifact['name']}.{artifact['ext']}" if artifact.get("ext") else artifact["name"]
         return {
             "ok": True,
-            "message": f"已把《{shown}》重新发到对话窗口。{note}".strip(),
+            "message": (
+                f"已准备好重新发送《{shown}》，将在本轮回复结束时尝试；是否送达以后续回执为准。{note}"
+                if im else f"已把《{shown}》重新发到对话窗口。{note}"
+            ).strip(),
             "_artifact": artifact,
         }
 
@@ -399,7 +410,10 @@ async def _send_file(db, user_id, args: dict):
         shown = f"{artifact['name']}.{artifact['ext']}" if artifact.get("ext") else artifact["name"]
         return {
             "ok": True,
-            "message": f"已把《{shown}》发到对话窗口，用户可直接下载。",
+            "message": (
+                f"已准备好《{shown}》，将在本轮回复结束时尝试发送；是否送达以后续回执为准。"
+                if im else f"已把《{shown}》发到对话窗口，用户可直接下载。"
+            ),
             "_artifact": artifact,
         }
 
@@ -417,7 +431,10 @@ async def _send_file(db, user_id, args: dict):
     shown = f"{artifact['name']}.{artifact['ext']}" if artifact.get("ext") else artifact["name"]
     return {
         "ok": True,
-        "message": f"已把《{shown}》发到对话窗口，用户可直接下载。",
+        "message": (
+            f"已准备好《{shown}》，将在本轮回复结束时尝试发送；是否送达以后续回执为准。"
+            if im else f"已把《{shown}》发到对话窗口，用户可直接下载。"
+        ),
         "_artifact": artifact,
     }
 

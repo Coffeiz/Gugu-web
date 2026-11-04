@@ -42,11 +42,12 @@ async def im_user_locale(user_id) -> str:
         return "zh-CN"
 
 
-async def im_mermaid_theme_preferences(user_id) -> dict[str, str]:
-    """读取 Mermaid 图片渲染需要的主题偏好；异常时使用默认浅色主题。"""
+async def im_chart_theme_preferences(user_id) -> dict[str, str]:
+    """读取 IM 图表渲染需要的主题偏好；异常时使用默认浅色主题。"""
     from sqlalchemy import select
     from app.db import session as db_session
     from app.models import UserPreferences
+    from app.services.user_preferences import normalize_theme_palette
 
     try:
         db_session.ensure_engine()
@@ -58,7 +59,7 @@ async def im_mermaid_theme_preferences(user_id) -> dict[str, str]:
         return {
             "theme": data.get("theme") if data.get("theme") in {"light", "dark", "system"} else "light",
             "themeFamily": data.get("theme_family") if data.get("theme_family") in {"glass", "mono"} else "glass",
-            "palette": data.get("palette") if data.get("palette") in {"mist", "cafe", "rose", "sky", "sage"} else "mist",
+            "palette": normalize_theme_palette(data.get("palette")),
         }
     except Exception:
         return {}

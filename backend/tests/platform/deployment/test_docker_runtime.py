@@ -1159,6 +1159,7 @@ def test_docker_library_mounts_follow_filesystem_policy(tmp_path):
     assert not any(item.endswith("dst=/project,readonly") for item in writable)
 
 
+@pytest.mark.process
 def test_interactive_shell_resolves_unique_project_name_without_storage_id(tmp_path):
     from agent.sandbox.docker import DockerSandboxExecutor
 
@@ -1194,6 +1195,7 @@ def test_interactive_shell_resolves_unique_project_name_without_storage_id(tmp_p
     assert result.stdout.strip().endswith("2026/08/缘缘 修改 #204")
 
 
+@pytest.mark.process
 def test_interactive_shell_does_not_guess_duplicate_project_name(tmp_path):
     from agent.sandbox.docker import DockerSandboxExecutor
 

@@ -102,6 +102,68 @@ def test_user_root_scan_excludes_non_library_namespaces_before_traversal(tmp_pat
         manifest.close()
 
 
+def test_scan_ignores_repository_dependency_and_undo_trees_without_deleting_old_records(
+    tmp_path: Path, monkeypatch,
+):
+    """内部元数据目录不进入 File Library，也不把其中旧记录误判为缺失。"""
+    import app.services.filesync.scan as scan
+
+    root = tmp_path / "root"
+    (root / ".git" / "objects" / "pack").mkdir(parents=True)
+    (root / ".git" / "objects" / "pack" / "repo.promisor").write_bytes(b"metadata")
+    (root / "node_modules" / "pkg").mkdir(parents=True)
+    (root / "node_modules" / "pkg" / "index.js").write_bytes(b"dependency")
+    (root / ".undo" / "snapshot").mkdir(parents=True)
+    (root / ".undo" / "snapshot" / "old.txt").write_text("undo", encoding="utf-8")
+    (root / "visible.txt").write_text("library", encoding="utf-8")
+
+    real_scandir = scan.os.scandir
+
+    def reject_ignored_subtree(path):
+        if any(part in {".git", ".undo", "node_modules"} for part in Path(path).parts):
+            raise AssertionError("扫描器进入了应排除的内部目录")
+        return real_scandir(path)
+
+    monkeypatch.setattr(scan.os, "scandir", reject_ignored_subtree)
+    manifest = scan_to_manifest(
+        root,
+        temp_directory=tmp_path / "tmp",
+        stop_event=Event(),
+        max_manifest_bytes=1024 * 1024,
+    )
+    try:
+        entries = [row for batch in iter_manifest_entries(manifest) for row in batch]
+        assert manifest.permission_excluded_count == 0
+        assert {row[0] for row in entries} == {"visible.txt"}
+        with connect_manifest(manifest) as connection:
+            connection.executemany(
+                "INSERT INTO db_files "
+                "(id, relative_path, storage_key, size_bytes, version, display_name, ext, space) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (index, f"{directory}/old.txt", f"user/workspace/{directory}/old.txt", 1, 1,
+                     "old", "txt", "workspace")
+                    for index, directory in enumerate((".git", ".undo", "node_modules"), start=1)
+                ],
+            )
+            exclusions = dict(connection.execute(
+                "SELECT relative_path, reason FROM excluded_paths"
+            ).fetchall())
+        candidates = [
+            candidate
+            for batch in iter_reconcile_candidate_batches(manifest)
+            for candidate in batch
+        ]
+        assert exclusions == {
+            ".git": "out_of_scope",
+            ".undo": "out_of_scope",
+            "node_modules": "out_of_scope",
+        }
+        assert {candidate.relative_path for candidate in candidates} == {"visible.txt"}
+    finally:
+        manifest.close()
+
+
 def test_symlinks_are_excluded_without_following_and_only_block_when_they_hide_library_records(
     tmp_path: Path,
 ):

@@ -35,6 +35,44 @@ def test_worker_merges_qq_emoji_refs_from_all_payloads():
     ]
 
 
+def test_worker_merges_group_debounce_batch_into_one_round():
+    """一个防抖批次合成一轮：正文拼接，并保留每位发言人的分段信息。"""
+    from worker import _merge_payloads
+
+    merged = _merge_payloads([
+        {"chat_type": "group", "platform_user_id": "speaker-a", "platform_user_name": "甲",
+         "text": "A1"},
+        {"chat_type": "group", "platform_user_id": "speaker-a", "platform_user_name": "甲",
+         "text": "A2"},
+        {"chat_type": "group", "platform_user_id": "speaker-b", "platform_user_name": "乙",
+         "text": "B1"},
+    ])
+
+    assert merged["text"] == "A1\nA2\nB1"
+    assert [s["platform_user_id"] for s in merged["_speaker_segments"]] == [
+        "speaker-a", "speaker-a", "speaker-b",
+    ]
+    assert [message["text"] for message in merged["_batch_messages"]] == ["A1", "A2", "B1"]
+    assert [message["platform_user_id"] for message in merged["_batch_messages"]] == [
+        "speaker-a", "speaker-a", "speaker-b",
+    ]
+
+
+def test_worker_preserves_individual_messages_for_single_speaker_batch():
+    """单人多条消息仍逐条保留，供上下文层无损关联身份与正文。"""
+    from worker import _merge_payloads
+
+    merged = _merge_payloads([
+        {"chat_type": "group", "platform_user_id": "speaker-a", "platform_user_name": "甲",
+         "text": "A1"},
+        {"chat_type": "group", "platform_user_id": "speaker-a", "platform_user_name": "甲",
+         "text": "A2"},
+    ])
+
+    assert merged["text"] == "A1\nA2"
+    assert [message["text"] for message in merged["_batch_messages"]] == ["A1", "A2"]
+
+
 class _FakeResponse:
     status = 200
     headers = {"Content-Length": "11"}
@@ -200,8 +238,8 @@ async def test_qq_quoted_media_falls_back_to_download_when_not_reusable(monkeypa
     assert staged == [{
         "platform": "qq",
         "extra": None,
-        "platform_message_id": "current-msg",
-        "attachment_index": 0,
+        "platform_message_id": "missing-ref",
+        "attachment_index": 1,
     }]
 
 

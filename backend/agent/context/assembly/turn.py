@@ -16,28 +16,18 @@ def stance_digest(content: str | None) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16] if value else ""
 
 
-def _time_context(message: dict) -> dict:
-    """把时间 reminder 统一成可稳定重放的 canonical block。"""
-    return {
-        "role": "user",
-        "content": [{
-            "type": "time-context",
-            "text": str(message.get("content") or ""),
-        }],
-    }
-
-
 def assemble_turn(*, stance: str | None = None,
                   previous_stance_digest: str | None = None,
                   message_time: dict | None = None,
                   current_user: dict | None = None,
+                  current_users: Iterable[dict] | None = None,
                   conversation_tail: Iterable[dict] = (),
                   extra_reminder: str | None = None) -> tuple[MessageBatch, str]:
     """把本轮新增内容一次性组装为 batch。
 
     姿态只有在摘要变化时才追加；历史中的旧姿态不会被删除或替换。
     当前轮所有消息都按顺序进入 Batch/Area；entry policy 分别控制持久化、请求结束
-    丢弃或恢复时重建。当前轮消息时间由 ``sent_at`` 生成，持久化策略为重建；实时
+    丢弃或恢复时重建。当前轮消息时间由发送/到达/入库时间生成，并内嵌于正文；实时
     当前时间由 ``get_current_time`` 按需获取，不进入历史。
     """
     current_digest = stance_digest(stance)
@@ -52,18 +42,15 @@ def assemble_turn(*, stance: str | None = None,
                 "text": str(wrapped_stance.get("content") or ""),
             }],
         })
-    # 姿态和 RAG 在收尾时按各自策略持久化到用户消息之前；当前时间与当前用户
-    # 也留在同一有序 Area 中，但分别采用“恢复时重建”及“已提前持久化”策略。
-    # RAG 必须位于当前用户问题之前；下一轮 history 会按同样的
-    # canonical 顺序恢复。当前时间不持久化，因此放在 RAG 后、用户正文前；下次
-    # 恢复时从用户时间戳重建，不会把本轮时间重复写入历史。
+    # 姿态和 RAG 在收尾时按各自策略持久化到用户消息之前；消息时间内嵌到每条
+    # user 正文里，并在恢复历史时按同一规则重建。
     tail_messages = [dict(item) for item in conversation_tail]
     messages.extend(tail_messages)
 
-    if message_time:
-        messages.append(_time_context(message_time))
-    if current_user is not None:
-        messages.append(current_user)
+    current_user_rows = [dict(item) for item in current_users or ()]
+    _append_current_user_messages(
+        messages, current_user_rows, message_time=message_time, current_user=current_user,
+    )
 
     # Batch 只持有完整 canonical entries 一份；持久化选择由每条 entry 的策略决定。
     batch = MessageBatch.from_area_entries(_build_area_entries(
@@ -72,15 +59,38 @@ def assemble_turn(*, stance: str | None = None,
         current_digest=current_digest,
         stance=stance,
         tail_messages=tail_messages,
-        message_time=message_time,
         current_user=current_user,
+        current_users=current_user_rows,
     ), metadata={"dynamic_tail": [reminder(extra_reminder)]} if extra_reminder else None)
     return batch, current_digest
 
 
+def _append_current_user_messages(messages, current_users, *, message_time, current_user):
+    """按批次顺序追加逐条用户消息，单条请求沿用原有入口。"""
+    from ..dynamic_tail import inline_message_time
+
+    if current_users:
+        for item in current_users:
+            message = item.get("message")
+            if message is None:
+                continue
+            message = dict(message)
+            message["content"] = inline_message_time(
+                message.get("content"), item.get("message_time"),
+            )
+            item["message"] = message
+            messages.append(message)
+    else:
+        if current_user is not None:
+            current_user["content"] = inline_message_time(
+                current_user.get("content"), message_time,
+            )
+            messages.append(current_user)
+
+
 def _build_area_entries(
     *, messages, previous_stance_digest, current_digest, stance, tail_messages,
-    message_time, current_user,
+    current_user, current_users,
 ) -> list[dict]:
     """为同一 turn 的 entries 标注来源与 durability，不改变 Provider 顺序。"""
     from ..history import canonicalize_tool_messages
@@ -104,20 +114,51 @@ def _build_area_entries(
         "source": MessageSource.RAG.value,
         "persistence_policy": PersistencePolicy.COMMIT_ON_SUCCESS.value,
     } for item in tail_messages)
-    if message_time:
-        entries.append({
-            "message": _time_context(message_time),
-            "source": MessageSource.MESSAGE_TIME.value,
-            "persistence_policy": PersistencePolicy.RECONSTRUCT_ON_RESTORE.value,
-        })
-    if current_user is not None:
-        entries.append({
-            "area_key": "current_user",
-            "message": _canonical_snapshot(current_user, canonicalize_tool_messages),
-            "source": _current_user_source(current_user).value,
-            "persistence_policy": PersistencePolicy.ALREADY_PERSISTED.value,
-        })
+    entries.extend(_current_user_area_entries(
+        current_users=current_users,
+        current_user=current_user,
+        canonicalize_tool_messages=canonicalize_tool_messages,
+    ))
     return entries
+
+
+def _current_user_area_entries(
+    *, current_users, current_user, canonicalize_tool_messages,
+):
+    if current_users:
+        return _batched_user_area_entries(current_users, canonicalize_tool_messages)
+    entries = []
+    if current_user is not None:
+        entries.append(_persisted_user_entry(
+            current_user, canonicalize_tool_messages, area_key="current_user",
+        ))
+    return entries
+
+
+def _batched_user_area_entries(current_users, canonicalize_tool_messages):
+    entries = []
+    for index, item in enumerate(current_users):
+        message = item.get("message")
+        if message is not None:
+            entries.append(_persisted_user_entry(
+                message,
+                canonicalize_tool_messages,
+                area_key=f"current_user:{index}",
+                persisted_message_id=item.get("persisted_message_id"),
+            ))
+    return entries
+
+
+def _persisted_user_entry(message, canonicalize_tool_messages, *, area_key, persisted_message_id=None):
+    entry = {
+        "area_key": area_key,
+        "message": _canonical_snapshot(message, canonicalize_tool_messages),
+        "source": _current_user_source(message).value,
+        "persistence_policy": PersistencePolicy.ALREADY_PERSISTED.value,
+    }
+    if persisted_message_id is not None:
+        entry["persisted_message_id"] = persisted_message_id
+    return entry
 
 
 def _canonical_snapshot(message: dict, canonicalize_tool_messages) -> dict:

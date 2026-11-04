@@ -1,4 +1,5 @@
 """Phase 5 统一查询：retriever 单 IPC、预排序装配与影子隔离的单元契约。"""
+import asyncio
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
@@ -71,7 +72,8 @@ def _canned_response(knowledge_doc, memory_doc, knowledge_key, memory_key, *, fa
 
 
 def _install_unified_stubs(monkeypatch, *, canned, vector_map=None, model_tag="prov:model:2",
-                           memory_documents=None, embedding_enabled=True):
+                           memory_documents=None, embedding_enabled=True,
+                           engine_name="typescript"):
     """打桩索引准备、瞬态语料上传、TS query embedding 与统一查询 IPC。"""
     import agent.memory.embedding as embedding_mod
     from agent.rag import batch_retriever as br
@@ -118,6 +120,9 @@ def _install_unified_stubs(monkeypatch, *, canned, vector_map=None, model_tag="p
 
     async def get(*args, **kwargs):
         calls["prepare"] = True
+        diagnostics = kwargs.get("diagnostics")
+        if diagnostics is not None:
+            diagnostics["engine"] = engine_name
         return index
 
     monkeypatch.setattr(br, "get_index_cache", lambda: SimpleNamespace(get=get))
@@ -196,6 +201,105 @@ async def test_unified_retriever_single_ipc_delivers_rank_rows(monkeypatch):
     assert row["confidence"] == 0.9
     memory_candidate = batch.rank_rows[1][0]
     assert memory_candidate.document.content == memory_doc.content
+
+
+@pytest.mark.asyncio
+async def test_cython_unified_trace_reports_cython_runtime_not_sidecar(monkeypatch):
+    """Cython 查询的 LoopScope 探针必须记录实际引擎与其诊断数据。"""
+    from agent.rag import batch_retriever as br
+    from agent.rag.batch_retriever import UnifiedQueryRetriever
+    from agent.rag.context import reset_conversation_before_message_id, set_conversation_before_message_id
+    from agent.rag.ts_sidecar import _worker_document_key
+
+    updates = []
+    monkeypatch.setattr(br, "probe_update", lambda **values: updates.append(values))
+    knowledge_doc, memory_doc = _knowledge_doc(), _memory_doc()
+    knowledge_key, memory_key = _worker_document_key(knowledge_doc), _worker_document_key(memory_doc)
+    canned = _canned_response(knowledge_doc, memory_doc, knowledge_key, memory_key)
+    expected_diagnostics = {"candidate_pool": 2, "ranked": 2}
+    canned["search_diagnostics"] = expected_diagnostics
+    calls, index = _install_unified_stubs(
+        monkeypatch, canned=canned, vector_map={memory_key: [0.3, 0.4]},
+        memory_documents=[memory_doc], engine_name="cython",
+    )
+    index.documents_by_id[knowledge_key] = knowledge_doc
+
+    token = set_conversation_before_message_id(7)
+    try:
+        retriever = UnifiedQueryRetriever([
+            _StubRetriever("synthetic-owner", "knowledge"),
+            _StubRetriever("synthetic-owner", "memory"),
+        ])
+        batches = await retriever.retrieve("缓存", scope=SCOPE, rank_options={"limit": 3})
+    finally:
+        reset_conversation_before_message_id(token)
+
+    assert batches[0].metadata["engine"] == "cython"
+    assert batches[0].index_source == "owner-index+daily"
+    assert any(update.get("cython_runtime", {}).get("stage_ms", {}).get("bm25_scoring") == 4
+               for update in updates)
+    assert any(update.get("search_diagnostics") == expected_diagnostics for update in updates)
+    assert not any("sidecar" in update or "worker" in update for update in updates)
+
+
+@pytest.mark.asyncio
+async def test_cython_retriever_overlaps_query_embedding_with_memory_preparation(monkeypatch):
+    """Cython RAG 应在 Memory 装载期间生成查询向量，并只传递该结果执行查询。"""
+    from agent.memory import embedding
+    from agent.rag.batch_retriever import UnifiedQueryRetriever
+
+    knowledge_doc, memory_doc = _knowledge_doc(), _memory_doc()
+    from agent.rag.ts_sidecar import _worker_document_key
+
+    canned = _canned_response(
+        knowledge_doc, memory_doc,
+        _worker_document_key(knowledge_doc), _worker_document_key(memory_doc),
+    )
+    calls, index = _install_unified_stubs(
+        monkeypatch, canned=canned, memory_documents=[memory_doc],
+        engine_name="cython",
+    )
+    index.engine = object()
+    embedding_started = asyncio.Event()
+    memory_started = asyncio.Event()
+
+    async def embed_query(_query, *, settings=None):
+        embedding_started.set()
+        await asyncio.wait_for(memory_started.wait(), timeout=2)
+        return {"vector": [0.5, 0.5], "outcome": "success", "http_status": 200}
+
+    async def prepare_memory(owner, scopes, *, source_filter, snapshot_revision,
+                             snapshot_text, vector_version):
+        memory_started.set()
+        await asyncio.wait_for(embedding_started.wait(), timeout=2)
+        calls["memory"] = {"owner": owner, "vector_version": vector_version}
+        return {
+            "transient_revision": "ts-memory-revision", "document_count": 1,
+            "vector_count": 0, "memory_source": "owner-cache", "probe": {},
+        }
+
+    async def unified_query(query, *, precomputed_query_embedding, **kwargs):
+        calls["query"] = {
+            "query": query, "precomputed_query_embedding": precomputed_query_embedding,
+            **kwargs,
+        }
+        return canned
+
+    index.client.prepare_memory = prepare_memory
+    index.unified_query = unified_query
+
+    monkeypatch.setattr(embedding, "embed_query", embed_query)
+
+    retriever = UnifiedQueryRetriever([
+        _StubRetriever("synthetic-owner", "knowledge"),
+        _StubRetriever("synthetic-owner", "memory"),
+    ])
+    batches = await retriever.retrieve("缓存", scope=SCOPE)
+
+    assert embedding_started.is_set() and memory_started.is_set()
+    assert calls["query"]["precomputed_query_embedding"]["vector"] == [0.5, 0.5]
+    assert calls["query"]["precomputed_query_embedding"]["outcome"] == "success"
+    assert len(batches) == 1
 
 
 def test_unified_retriever_reconstructs_persistent_row_after_cold_restore():

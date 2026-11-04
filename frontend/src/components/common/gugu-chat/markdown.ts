@@ -5,6 +5,7 @@ import { i18n } from '@/i18n'
 import { MIND_REF_TYPE_ICON_PATH } from '@/composables/mind/useMindEditor'
 import type { ChatReference } from './chatTypes'
 import { sanitizeChatHtml } from '@/utils/markdown'
+import { normalizeMarkdownMathSource, prepareLatexCodeForMath } from '@/utils/chart/math'
 
 // Markdown 渲染器输出的是 HTML 字符串，不能直接挂载 Vue 图标组件；这里复用
 // Remix Icon 的 path 数据，保持对象卡片和应用内 Icon 的视觉语义一致。
@@ -65,6 +66,11 @@ marked.use({
     r.code = ({ text, lang }: Tokens.Code) => {
       if (String(lang || '').trim().toLowerCase() === 'mermaid') {
         return `<pre class="md-mermaid-source"><code>${escapeHtml(text)}</code></pre>`
+      }
+      if (/^(?:latex|tex)$/i.test(String(lang || '').trim())) {
+        const escaped = escapeHtml(text)
+        const math = escapeHtml(prepareLatexCodeForMath(text))
+        return `<div class="md-math-block"><div class="md-math-result">${math}</div><pre class="md-mermaid-source-view md-math-source-view" hidden><code>${escaped}</code></pre></div>`
       }
       // 没写语言或语言未注册时自动探测，而不是直接按 plaintext 放弃高亮；
       // 探测失败 hljs 内部会退回纯文本，不会抛错。
@@ -155,7 +161,7 @@ function fixEscapedTablePipes(text: string) {
 }
 
 function prepareMarkdown(text: string) {
-  return fixLooseBold(fixEscapedTablePipes(text))
+  return normalizeMarkdownMathSource(fixLooseBold(fixEscapedTablePipes(text)))
 }
 
 export function renderMd(text: string) { return text ? marked.parse(prepareMarkdown(text)) as string : '' }

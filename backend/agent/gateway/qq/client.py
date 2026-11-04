@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import weakref
 from typing import Any
 
 import aiohttp
@@ -13,6 +14,7 @@ from app.core.redaction import diag_log, diag_log_raw
 _log = logging.getLogger("agent.gateway.qq")
 
 _QQ_HTTP_KEEPALIVE_SECONDS = 300.0
+_QQ_PREWARM_COOLDOWN_SECONDS = _QQ_HTTP_KEEPALIVE_SECONDS - 30.0
 
 _QQ_HTTP_SESSION: aiohttp.ClientSession | None = None
 
@@ -68,6 +70,8 @@ async def start_qq_http_session() -> aiohttp.ClientSession:
         _QQ_HTTP_SESSION = aiohttp.ClientSession(
             connector=connector,
             trace_configs=[_qq_http_trace_config()],
+            # QQ REST 与预签名 COS 请求固定直连；环境变量代理不参与这条链路。
+            trust_env=False,
         )
     return _QQ_HTTP_SESSION
 
@@ -190,6 +194,33 @@ async def _qq_gateway_url(token: str, sandbox: bool) -> str:
 _QQ_TOKEN_SAFETY_MARGIN = 60   # 提前 60s 判过期，避免请求发出瞬间 token 恰好过期
 
 _send_tokens: dict = {}   # channel_id -> {"token", "base", "expires_at"}
+_send_token_locks: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+_qq_api_last_activity: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+_qq_prewarm_tasks: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+_qq_prewarm_locks: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+
+
+def _loop_channel_lock(lock_registry: weakref.WeakKeyDictionary, key: str) -> asyncio.Lock:
+    """按事件循环隔离协程锁，避免测试或重启后的新 loop 复用旧 loop 锁。"""
+    loop = asyncio.get_running_loop()
+    locks = lock_registry.get(loop)
+    if locks is None:
+        locks = {}
+        lock_registry[loop] = locks
+    lock = locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        locks[key] = lock
+    return lock
+
+
+def _loop_state(registry: weakref.WeakKeyDictionary) -> dict:
+    loop = asyncio.get_running_loop()
+    state = registry.get(loop)
+    if state is None:
+        state = {}
+        registry[loop] = state
+    return state
 
 async def _creds_by_id(bot_id: str) -> tuple[str, str, bool]:
     """worker 端：按 user_bots.id 取 (app_id, app_secret, sandbox)。"""
@@ -206,16 +237,84 @@ async def _creds_by_id(bot_id: str) -> tuple[str, str, bool]:
 async def _send_token(channel_id: str) -> tuple[str, str]:
     """返回 (access_token, api_base)，按 channel_id 缓存，过期前自动刷新。"""
     cached = _send_tokens.get(channel_id)
-    now = time.time()
-    if cached and now < cached["expires_at"] - _QQ_TOKEN_SAFETY_MARGIN:
+    if cached and time.time() < cached["expires_at"] - _QQ_TOKEN_SAFETY_MARGIN:
         return cached["token"], cached["base"]
-    app_id, secret, sandbox = await _creds_by_id(channel_id)
-    if not app_id:
-        raise RuntimeError(f"user_bot {channel_id} 不存在或无凭据")
-    token, expires_in = await _qq_access_token_with_ttl(app_id, secret)
-    base = _qq_api_base(sandbox)
-    _send_tokens[channel_id] = {"token": token, "base": base, "expires_at": now + expires_in}
-    return token, base
+    async with _loop_channel_lock(_send_token_locks, channel_id):
+        cached = _send_tokens.get(channel_id)
+        if cached and time.time() < cached["expires_at"] - _QQ_TOKEN_SAFETY_MARGIN:
+            return cached["token"], cached["base"]
+        app_id, secret, sandbox = await _creds_by_id(channel_id)
+        if not app_id:
+            raise RuntimeError(f"user_bot {channel_id} 不存在或无凭据")
+        token, expires_in = await _qq_access_token_with_ttl(app_id, secret)
+        base = _qq_api_base(sandbox)
+        _send_tokens[channel_id] = {
+            "token": token,
+            "base": base,
+            "expires_at": time.time() + expires_in,
+        }
+        return token, base
+
+
+async def _prewarm_qq_outbound(channel_id: str) -> None:
+    """刷新可用 token，并在连接池可能已空闲过期时预建 QQ API 连接。"""
+    try:
+        token, base = await _send_token(channel_id)
+        now = time.monotonic()
+        activity = _loop_state(_qq_api_last_activity)
+        last_activity = activity.get(base)
+        if last_activity is not None and now - last_activity < _QQ_PREWARM_COOLDOWN_SECONDS:
+            return
+        async with _loop_channel_lock(_qq_prewarm_locks, base):
+            now = time.monotonic()
+            last_activity = activity.get(base)
+            if last_activity is not None and now - last_activity < _QQ_PREWARM_COOLDOWN_SECONDS:
+                return
+            session = await _get_qq_http_session()
+            started = time.perf_counter()
+            request_trace = {"connection_reused": False}
+            try:
+                async with session.get(
+                    f"{base}/gateway",
+                    headers={"Authorization": f"QQBot {token}"},
+                    timeout=aiohttp.ClientTimeout(total=15),
+                    trace_request_ctx=request_trace,
+                ) as response:
+                    # 消费响应体以便 aiohttp 复用连接；gateway JSON 不需要在预热中解析。
+                    await response.read()
+                    status = response.status
+            finally:
+                activity[base] = time.monotonic()
+            _log.info(
+                "[qq-http] endpoint=prewarm_gateway status=%s request_ms=%.1f "
+                "dns_ms=%s connect_setup_ms=%s reused=%s",
+                status,
+                (time.perf_counter() - started) * 1000,
+                f"{request_trace['dns_ms']:.1f}" if "dns_ms" in request_trace else "-",
+                f"{request_trace['connect_ms']:.1f}" if "connect_ms" in request_trace else "-",
+                request_trace["connection_reused"],
+            )
+    except Exception as exc:
+        # 预热失败不能影响当前 Agent run；错误只记录异常类型，不带请求内容。
+        _log.info("[qq-http] endpoint=prewarm result=%s", type(exc).__name__)
+
+
+def schedule_qq_outbound_prewarm(channel_id: str) -> None:
+    """异步安排 QQ 出站预热，同一 loop/bot 至多保留一个在途任务。"""
+    if not channel_id:
+        return
+    tasks = _loop_state(_qq_prewarm_tasks)
+    current = tasks.get(channel_id)
+    if current is not None and not current.done():
+        return
+    task = asyncio.create_task(_prewarm_qq_outbound(channel_id))
+    tasks[channel_id] = task
+
+    def _forget(done_task: asyncio.Task) -> None:
+        if tasks.get(channel_id) is done_task:
+            tasks.pop(channel_id, None)
+
+    task.add_done_callback(_forget)
 
 class QQStreamFinalizationError(RuntimeError):
     """已有可见正文的流未获关闭确认，不能作为成功交付处理。"""
@@ -223,6 +322,10 @@ class QQStreamFinalizationError(RuntimeError):
 
 class QQStreamDeliveryError(QQStreamFinalizationError):
     """流虽已关闭，但正文未完整交付；沿用流失败路径，不报告发送成功。"""
+
+
+class QQStreamPrefixMismatchError(QQStreamDeliveryError):
+    """流已关闭，但最终正文与已送达前缀无法直接续接。"""
 
 
 class QQAPIError(Exception):
@@ -266,9 +369,11 @@ def _qq_is_transient(exc: BaseException) -> bool:
     return "status=401" in s or "code: 401" in s
 
 async def _qq_request(channel_id: str, method: str, path: str, *,
-                      json_body: dict | None = None, retry_on_401: bool = True):
+                      json_body: dict | None = None, retry_on_401: bool = True,
+                      timeout_seconds: float = 20):
     """raw HTTP 调 QQ Bot API；401 时清缓存重取 token 重试一次（幂等：读token+重发同一请求，
-    未产生额外副作用，安全）。其余非 2xx 抛 QQAPIError，由调用方按 _qq_is_transient 判定是否重试。"""
+    未产生额外副作用，安全）。其余非 2xx 抛 QQAPIError，由调用方按 _qq_is_transient 判定是否重试。
+    timeout_seconds 仅调整当前 HTTP 请求的总时限；默认保持普通请求的 20 秒。"""
     auth_started = time.perf_counter()
     from agent.runtime import trace
     trace_id = trace.get_trace()
@@ -291,7 +396,7 @@ async def _qq_request(channel_id: str, method: str, path: str, *,
         async with session.request(
             method, f"{base}{path}", json=json_body,
             headers={"Authorization": f"QQBot {token}", "Content-Type": "application/json"},
-            timeout=aiohttp.ClientTimeout(total=20),
+            timeout=aiohttp.ClientTimeout(total=timeout_seconds),
             trace_request_ctx=request_trace,
         ) as resp:
             status = resp.status
@@ -302,6 +407,7 @@ async def _qq_request(channel_id: str, method: str, path: str, *,
                 # 广吞合理——这里只是"尽量拿到点诊断信息"，拿不到也不影响后面的状态码分支。
                 data = await resp.text()
     except Exception as exc:
+        _loop_state(_qq_api_last_activity)[base] = time.monotonic()
         _log.info(
             "[qq-http] trace=%s method=%s endpoint=%s result=%s auth_ms=%.1f request_ms=%.1f "
             "dns_ms=%s connect_setup_ms=%s reused=%s stream_state=%s stream_index=%s "
@@ -315,6 +421,7 @@ async def _qq_request(channel_id: str, method: str, path: str, *,
         )
         raise
     request_ms = (time.perf_counter() - request_started) * 1000
+    _loop_state(_qq_api_last_activity)[base] = time.monotonic()
     _log.info(
         "[qq-http] trace=%s method=%s endpoint=%s status=%s auth_ms=%.1f request_ms=%.1f "
         "dns_ms=%s connect_setup_ms=%s reused=%s stream_state=%s stream_index=%s "
@@ -329,7 +436,10 @@ async def _qq_request(channel_id: str, method: str, path: str, *,
     if status in (200, 201, 204):
         return data
     if status == 401 and retry_on_401:
-        _send_tokens.pop(channel_id, None)
+        # 并发请求可能已经换好新 token；只清理本请求实际使用的旧 token。
+        current = _send_tokens.get(channel_id)
+        if current is not None and current.get("token") == token:
+            _send_tokens.pop(channel_id, None)
         return await _qq_request(channel_id, method, path, json_body=json_body, retry_on_401=False)
     diag_log_raw("agent.gateway.qq._qq_request",
                   f"{method} {path} status={status} body={data}")

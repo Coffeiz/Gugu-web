@@ -2,10 +2,12 @@
 
 > 状态：已完成；Phase 0–3 的适配器实现、接入范围和验收均已完成，其他用途由独立需求管理
 > 创建：2026-10-02
-> 最近更新：2026-10-12
+> 最近更新：2026-10-28
 > 关联模块：`backend/app/core/url_security.py`、`backend/app/core/pinned_http.py`、`backend/app/core/safe_egress.py`、`backend/app/api/v1/safe_egress_admin.py`、`backend/agent/tools/web.py`、`backend/agent/tools/search.py`、`backend/agent/tools/deep_research.py`、`backend/agent/mcp/client.py`、`backend/agent/tools/files/transfer.py`、Admin 运行配置
 
 本 PRD 定义的安全出站适配器、Admin 代理配置、模型可控公网内容工具接入及其他出站客户端边界评估均已完成并通过验收。Provider API、MCP 等固定端点是否使用代理属于独立用途决策，不是本 PRD 的未完成项。
+
+> 范围补充（2026-10-28）：已将 Admin 代理选择扩展到固定 Provider 搜索端点。启用有效代理后，`http_get`、`web_download`、网络 URL 的 `send_file`、`web_search`、`deep_research` 和 `similar_image_search` 的工具 Schema 会增加可选 `use_proxy`；未传时沿用 Admin 代理设置，`false` 仅对当前工具请求直连，仍执行目标校验和 IP 钉扎。Provider API 继续使用代码固定且经过 allowlist 校验的官方端点；不扩展到任意 Provider Base URL、模型主请求、MCP、平台网关、SearXNG 或内部服务。
 
 ## 0. 决策摘要
 

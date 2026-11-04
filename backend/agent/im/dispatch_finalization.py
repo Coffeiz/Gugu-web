@@ -1,6 +1,8 @@
 """IM run 完成后的会话写回、记忆触发和平台回复收尾。"""
 from __future__ import annotations
 
+import re
+
 from agent.im.activity import finalize_im_response
 from agent.im.conversation import persist_im_session
 from agent.im.presentation import _send_interaction_prompts
@@ -8,6 +10,75 @@ from agent.im.request_preparation import _should_observe_private_member_activity
 from agent.im.replies import send_agent_response, send_text
 from agent.runtime import trace
 from agent.security import logsafe
+
+def _log_attention_run_outcome(
+    payload: dict,
+    request,
+    *,
+    run_outcome: str,
+    reply_sent: bool = False,
+) -> None:
+    """记录真实 Run 收尾事实；不写入正文、群 ID 或成员身份。"""
+    if payload.get("_attention_audit_enabled") is not True:
+        return
+    import json
+
+    from agent.im.auto_reply import ReplyChoice
+    from app.core.redaction import diag_log_raw
+
+    gate = getattr(request, "group_reply_gate", None)
+    receipts = payload.get("_attention_outbound_receipts") or []
+    receipt_statuses = [
+        item.get("status") for item in receipts if isinstance(item, dict)
+    ]
+    if receipt_statuses:
+        if "ACCEPTED" in receipt_statuses:
+            outbound_status = "ACCEPTED"
+        elif any(status not in {"FAILED_CONFIRMED", "RELEASED"} for status in receipt_statuses):
+            outbound_status = "UNKNOWN"
+        else:
+            outbound_status = "FAILED_CONFIRMED"
+    elif reply_sent:
+        outbound_status = "ACCEPTED"
+    else:
+        outbound_status = None
+
+    diag_log_raw(
+        "agent.im.attention.run_outcome",
+        json.dumps({
+            "attention_version": "attention-v3.0.7",
+            "mode": str(payload.get("group_attention_mode") or "autonomous"),
+            "config_version": int(payload.get("_attention_config_version") or 0),
+            "run_entered": True,
+            "choose_no_reply_used": bool(
+                gate is not None and gate.choice is ReplyChoice.SILENT
+            ),
+            "run_outcome": run_outcome,
+            "outbound_status": outbound_status,
+            "outbound_receipt_count": len(receipt_statuses),
+        }, ensure_ascii=False, separators=(",", ":")),
+    )
+
+
+async def _persist_attachment_delivery_receipt(payload: dict, request, response, trace_id: str) -> None:
+    results = payload.get("_attachment_delivery_results") or []
+    if not results:
+        return
+    requested = sum(max(0, int(item.get("requested") or 0)) for item in results if isinstance(item, dict))
+    sent = sum(max(0, int(item.get("sent") or 0)) for item in results if isinstance(item, dict))
+    failed = sum(max(0, int(item.get("failed") or 0)) for item in results if isinstance(item, dict))
+    if failed <= 0:
+        return
+    from agent.im.delivery_receipts import persist_attachment_delivery_receipt
+
+    await persist_attachment_delivery_receipt(
+        user_id=request.user_id,
+        session_id=response.session_id,
+        trace_id=trace_id,
+        requested=requested,
+        sent=sent,
+        failed=failed,
+    )
 
 
 async def finalize_im_dispatch(
@@ -27,6 +98,8 @@ async def finalize_im_dispatch(
     """写回会话、调度记忆活动并确保平台收到正确的最终消息。"""
     platform = request.source
     puid = request.platform_user_id
+    # 预先建立共享列表，避免流式私聊复制 payload 后丢失附件实际投递回执。
+    payload.setdefault("_attachment_delivery_results", [])
 
     await persist_im_session(
         platform,
@@ -76,8 +149,29 @@ async def finalize_im_dispatch(
             pass
     if response.cancelled:
         trace.finish_run("cancelled")
+        # IM 取消命令已有单独的确认回复；远端状态不确定只保留在内部响应/诊断中，
+        # 不再追加一条技术状态消息打扰用户。
         await finalize_im_response(platform, puid, True, "")
+        _log_attention_run_outcome(
+            payload, request, run_outcome="cancelled",
+        )
         return response
+
+    if getattr(request, "group_auto_reply", False):
+        from agent.im.auto_reply import ReplyChoice
+
+        gate = getattr(request, "group_reply_gate", None)
+        gate_opened = gate is not None and gate.choice is ReplyChoice.REPLY
+        if not gate_opened:
+            # 没有正文或选择不回复都保持群内静默；普通 IM 收尾的空正文兜底
+            # （「嗯~在的」）不能用于自动回复模式。
+            trace.finish_run("error" if response.errored else "success")
+            await finalize_im_response(platform, puid, False, "")
+            _log_attention_run_outcome(
+                payload, request,
+                run_outcome="error" if response.errored else "silent",
+            )
+            return response
 
     # 工具状态消息仍受工具展示模式控制；交互提示是恢复 Runner 所必需
     # 的用户输入，不能因关闭工具状态展示而被吞掉。
@@ -99,26 +193,38 @@ async def finalize_im_dispatch(
 
     if platform == "qq":
         # 流式发送器已经完整交付正文时，只收尾附件，避免再发一份重复最终消息。
-        # 流式发送失败/未交付时仍走普通回复出口，由 QQ 出站层按 msg_id
-        # 被动发送并在过期或失败时降级主动消息。
+        # 未流式发送的最终回复保留入站 msg_id：网关先发被动消息，失败时再主动重试。
         if stream_reply_text is None:
             # 流已确认发送最终正文前缀，但尾部恢复失败；重发全文会重复前缀，
             # 因此将 Run 标记为交付失败，不再盲目重发。
             reply_text = None
         else:
+            # 已由 QQ 私聊流式接口交付的正文不能再走被动出口；未流式正文应优先
+            # 关联入站消息发送，send_c2c/send_group 会在被动发送失败时主动回退。
+            final_payload = {**payload, "message_id": None} if stream_sent else payload
             reply_text = await send_agent_response(
-                payload, response,
+                final_payload, response,
                 already_sent_rounds=(
                     1 if payload.get("chat_type") == "c2c" and stream_sent and not response.errored else 0
                 ),
                 show_intermediate_replies=False,
             )
+            # QQ 私聊流式发送时，正文只存在 stream_reply_text；response.text 和
+            # round_texts 可能为空。send_agent_response 因为该轮已发送会返回空串，
+            # 这里用实际流式正文补齐 run 终态与活动记录，不重复发送消息。
+            if not response.errored and stream_sent and stream_reply_text and not reply_text:
+                reply_text = stream_reply_text
     elif platform == "feishu" and stream_sent:
         # CardKit 已经发送正文；附件仍由统一附件出口发送，避免文本重复。
         if response.files:
             from agent.im.files import send_files
 
             file_result = await send_files(payload, response.files)
+            payload.setdefault("_attachment_delivery_results", []).append({
+                "requested": int(file_result.requested),
+                "sent": int(file_result.sent),
+                "failed": int(file_result.failed),
+            })
             reply_text = response.text or "给你～"
             if file_result.failed:
                 notice = file_result.reason or "附件没有成功发出，你可以去网页或文件库查看。"
@@ -130,8 +236,12 @@ async def finalize_im_dispatch(
                         "agent.im.file_attachment_delivery",
                         f"platform={platform} status=notice_failed",
                     )
+                await _persist_attachment_delivery_receipt(payload, request, response, trace_id)
                 trace.finish_run("error")
                 await finalize_im_response(platform, puid, False, "")
+                _log_attention_run_outcome(
+                    payload, request, run_outcome="attachment_delivery_failed",
+                )
                 return response
         else:
             reply_text = stream_reply_text or ""
@@ -143,13 +253,17 @@ async def finalize_im_dispatch(
             show_intermediate_replies=show_intermediate_replies,
         )
 
+    await _persist_attachment_delivery_receipt(payload, request, response, trace_id)
+
     if reply_text is None:
-        # 平台发送失败不能被记成成功回复。
         trace.finish_run("error")
         await finalize_im_response(platform, puid, False, "")
         print(
             f"[im-loop] {platform} 回复发送失败(session={response.session_id} trace={trace_id})",
             flush=True,
+        )
+        _log_attention_run_outcome(
+            payload, request, run_outcome="outbound_failed_or_unknown",
         )
         return response
 
@@ -161,6 +275,10 @@ async def finalize_im_dispatch(
             f"[im-loop] {platform} 已发送失败提示(session={response.session_id} trace={trace_id}) "
             f"len={len(reply_text)} fp={logsafe.fingerprint(reply_text)}",
             flush=True,
+        )
+        _log_attention_run_outcome(
+            payload, request, run_outcome="agent_error",
+            reply_sent=bool(reply_text or response.files or sent_round_indices),
         )
         return response
 
@@ -175,5 +293,9 @@ async def finalize_im_dispatch(
         f"[im-loop] {platform} 回复(session={response.session_id} trace={trace_id}) "
         f"len={len(reply_text)} fp={logsafe.fingerprint(reply_text)}",
         flush=True,
+    )
+    _log_attention_run_outcome(
+        payload, request, run_outcome="success",
+        reply_sent=bool(reply_text or response.files or sent_round_indices),
     )
     return response

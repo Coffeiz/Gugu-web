@@ -9,9 +9,30 @@ html[data-theme][data-family] input[type='number']::-webkit-outer-spin-button {
 /* 多行输入框的原生缩放柄使用公共契约，避免 Chromium 默认绘制白色方块。 */
 html[data-theme][data-family] .control-resizable {
   resize: vertical;
+  scrollbar-gutter: stable;
 }
 html[data-theme][data-family] .control-resizable::-webkit-resizer {
+  border-bottom-right-radius: var(--input-radius);
   background: var(--control-resizer-bg);
+}
+html[data-theme][data-family] .control-resizable::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* 显式使用 CSS 滚动条，使缩放区域不再由平台原生滚动条覆盖绘制。 */
+html[data-theme][data-family] .control-resizable::-webkit-scrollbar {
+  width: 14px;
+  height: 14px;
+  background: transparent;
+}
+html[data-theme][data-family] .control-resizable::-webkit-scrollbar-thumb {
+  border: 4px solid transparent;
+  border-radius: var(--radius-pill);
+  background: var(--scrollbar-thumb);
+  background-clip: padding-box;
+}
+html[data-theme][data-family] .control-resizable::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 html[data-theme][data-family] :is(

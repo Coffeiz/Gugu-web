@@ -49,6 +49,14 @@ def enabled_mcp(monkeypatch):
     FakeMcpClient.calls = 0
     FakeMcpClient.list_calls = 0
     monkeypatch.setattr(manager_module, "McpClient", FakeMcpClient)
+    async def no_snapshot(_self, _user_id):
+        return None
+
+    async def ignore_snapshot(_self, _user_id, _digest, _tools):
+        return None
+
+    monkeypatch.setattr(manager_module.McpToolManager, "_read_schema_snapshot", no_snapshot)
+    monkeypatch.setattr(manager_module.McpToolManager, "_write_schema_snapshot", ignore_snapshot)
     return settings
 
 
@@ -77,6 +85,10 @@ def test_connection_error_details_only_marks_transient_failures_retryable():
 async def _configs(configs):
     for config in configs:
         yield config
+
+
+async def _one_config(config):
+    return config
 
 
 @pytest.mark.asyncio
@@ -109,6 +121,73 @@ async def test_concurrent_runtime_requests_share_one_mcp_connection(monkeypatch)
 
     assert first_runtime is second_runtime
     assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_enabled_mcp_servers_are_discovered_concurrently(monkeypatch, enabled_mcp):
+    """独立 MCP server 的冷发现并发启动，避免总等待时间按 server 数相加。"""
+    user_id = uuid4()
+    configs = [_config(user_id, name=f"server_{index}") for index in range(2)]
+    manager = manager_module.McpToolManager()
+    manager._iter_enabled_configs = lambda _user_id: _configs(configs)
+    active = 0
+    peak = 0
+    both_started = asyncio.Event()
+
+    async def ensure_runtime(_settings, config):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        if peak == len(configs):
+            both_started.set()
+        try:
+            await asyncio.wait_for(both_started.wait(), timeout=1)
+            return manager_module._ServerRuntime(config=config)
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(manager, "_ensure_runtime", ensure_runtime)
+
+    assert await manager.list_user_tools(user_id) == []
+    assert peak == 2
+
+
+@pytest.mark.asyncio
+async def test_matching_database_snapshot_skips_mcp_discovery(monkeypatch, enabled_mcp):
+    """可用快照命中时不连接 MCP；模型仍拿到相同的规范化工具声明。"""
+    user_id = uuid4()
+    config = _config(user_id)
+    manager = manager_module.McpToolManager()
+    manager._iter_enabled_configs = lambda _user_id: _configs([config])
+    digest = manager._config_digest([config])
+    async def read_snapshot(_uid):
+        return _snapshot(digest, [{
+            "name": "mcp_demo_echo", "description": "回显文本",
+            "description_short": "回显文本",
+            "input_schema": {"type": "object", "properties": {"text": {"type": "string"}}},
+            "server_id": str(config.id), "server_name": "demo", "tool_name": "echo",
+        }])
+
+    monkeypatch.setattr(manager, "_read_schema_snapshot", read_snapshot)
+
+    async def fail_discovery(*_args, **_kwargs):
+        raise AssertionError("快照命中时不应连接 MCP")
+
+    async def _write(*_args):
+        raise AssertionError("快照命中时不应重写数据库")
+
+    monkeypatch.setattr(manager, "_discover_user_tools", fail_discovery)
+    monkeypatch.setattr(manager, "_write_schema_snapshot", _write)
+    tools = await manager.list_user_tools(user_id)
+
+    assert [tool.name for tool in tools] == ["mcp_demo_echo"]
+    assert tools[0].input_schema["properties"]["text"]["type"] == "string"
+
+
+def _snapshot(digest, schemas):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(config_digest=digest, schemas=schemas)
 
 
 @pytest.mark.asyncio
@@ -197,6 +276,7 @@ async def test_dispatch_routes_to_mcp_and_keeps_users_isolated(enabled_mcp):
     config = _config(user_a)
     manager = manager_module.McpToolManager()
     manager._iter_enabled_configs = lambda _user_id: _configs([config])
+    manager._load_enabled_config = lambda _user_id, _server_id: _one_config(config)
 
     await manager.list_user_tools(user_a)
     result, artifact = await manager.dispatch(user_a, "mcp_demo_echo", {"text": "hello"})

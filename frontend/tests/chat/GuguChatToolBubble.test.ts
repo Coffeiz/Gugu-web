@@ -64,6 +64,41 @@ it('已有详情直接展开，不重复请求', async () => {
   expect(agentApi.getToolEventDetails).not.toHaveBeenCalled()
 })
 
+it('已展开卡片接管到历史投影时自动加载详情并避免空白', async () => {
+  let resolveDetails!: (value: { toolInput?: unknown; toolResult?: unknown }) => void
+  vi.mocked(agentApi.getToolEventDetails).mockReturnValueOnce(new Promise(resolve => {
+    resolveDetails = resolve
+  }))
+  const current = ref<ChatMessage>({
+    id: 1, role: 'tool', text: '', time: '', toolName: 'shell', toolStatus: 'cancelled',
+    toolInput: { command: 'pwd' }, toolResult: '已取消',
+  })
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const app = createApp(defineComponent({ setup: () => () => h(GuguChatToolBubble, {
+    msg: current.value, sessionId: 7, expanded: true,
+  }) }))
+  app.mount(host)
+  await nextTick()
+
+  current.value = {
+    ...current.value, toolInput: undefined, toolResult: undefined,
+    toolDetailsAvailable: true,
+    _toolDetailsSource: { kind: 'timeline', messageId: 11, index: 0 },
+  }
+  await nextTick()
+  expect(agentApi.getToolEventDetails).toHaveBeenCalledWith(7, { kind: 'timeline', messageId: 11, index: 0 })
+  expect(host.textContent).toContain('chatUi.loadingToolDetails')
+
+  resolveDetails({ toolInput: { command: 'pwd' }, toolResult: '已取消' })
+  await settle()
+  expect(host.querySelector('.tool-detail-shell')?.textContent).toContain('pwd')
+  expect(host.querySelector('.tool-detail-shell')?.textContent).toContain('已取消')
+
+  app.unmount()
+  host.remove()
+})
+
 it('等待时取消不会被晚到响应打开，再次点击使用已缓存详情', async () => {
   const request = pendingDetails()
   const bubble = mountBubble()

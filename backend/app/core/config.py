@@ -265,7 +265,7 @@ class SandboxSettings(BaseModel):
     cpu_limit: float = Field(1.0, ge=0.1, le=2.0, description="单用户容器 CPU 上限")
     memory_limit_bytes: int = Field(512 * 1024 * 1024, ge=64 * 1024 * 1024, description="单用户容器内存上限")
     pids_limit: int = Field(64, ge=16, le=512, description="单用户容器进程数上限")
-    timeout_seconds: int = Field(30, ge=1, le=300, description="单次 Shell 默认超时")
+    timeout_seconds: int = Field(30, ge=1, le=3600, description="单次 Shell 默认超时")
 
 
     output_limit_bytes: int = Field(12 * 1024, ge=1024, le=120 * 1024, description="单次 Shell 输出上限")
@@ -414,6 +414,13 @@ class QuotaSettings(BaseModel):
     default_search_limit_daily:  Optional[int] = Field(None, description="全局每日联网搜索次数上限（None=不限制）")
 
 
+DEFAULT_SEARXNG_IMAGE_ENGINES = (
+    "baidu images,quark images,sogou images,bing images,brave.images,"
+    "duckduckgo images,google images,qwant images,yandex images,pinterest,"
+    "wikicommons.images,openverse,flickr,imgur,artstation"
+)
+
+
 class SearchSettings(BaseModel):
     rag_enabled: bool = Field(True, description="是否启用 Agent 自动知识召回（RAG）")
     rag_auto_sources: list[Literal["memory", "knowledge", "project", "canvas", "note", "calendar", "scheduled_task", "conversation"]] = Field(
@@ -444,8 +451,14 @@ class SearchSettings(BaseModel):
         "baidu,sogou,quark,360search,yandex,duckduckgo web,mwmbl,gabanza,reloado,searchch,privacywall,gmx,zapmeta,google",
         description="SearXNG 启用的通用网页搜索引擎（逗号分隔）",
     )
-    searxng_image_engines: str = Field("", description="SearXNG XNG 搜索 mode=images 启用的引擎（逗号分隔）；留空则回退复用 searxng_engines。图片分类能连通的引擎不一定和文本分类是同一批，需部署后用「测试」按钮实测调整")
+    searxng_image_engines: str = Field(
+        DEFAULT_SEARXNG_IMAGE_ENGINES,
+        description="SearXNG XNG 搜索 mode=images 启用的引擎（逗号分隔）；默认兼顾国内外来源，可按部署环境测试后调整；留空时使用此默认名单",
+    )
     max_results:    int = Field(5, description="默认返回结果数")
+    rag_backend: Literal["typescript", "cython"] = Field(
+        "typescript", description="统一 RAG 查询运行时；启用 sidecar 时 Cython 索引由常驻宿主共享，TS 保留为手动回滚基线",
+    )
     ts_sidecar_command: str = Field("", description="TypeScript RAG worker 命令；为空则使用项目内置构建物")
     ts_index_sync_mode: Literal["incremental", "full"] = Field(
         "incremental",
@@ -454,8 +467,8 @@ class SearchSettings(BaseModel):
     )
     ts_sidecar_socket: str = Field(
         "",
-        description="gugu-rag-sidecar 常驻宿主的 unix socket 路径；为空=每个 Python 进程按需自启 worker（旧行为）。"
-        "配置后 RAG worker 由 sidecar 宿主统一托管，多个后端进程共享热索引，后端重启不再触发冷装载",
+        description="gugu-rag-sidecar 常驻宿主的 unix socket 路径；为空时 TypeScript/Cython 使用各自的进程内实现。"
+        "配置后由 sidecar 统一托管对应索引，多个后端进程共享热索引",
     )
     ts_sidecar_index_ttl_seconds: int = Field(
         30 * 24 * 3600,

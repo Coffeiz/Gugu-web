@@ -150,10 +150,13 @@ async def apply_im_shortcut_cancel(platform: str, platform_user_id: str, decisio
     bot_id/scope_id 与活跃集合同作用域：取消标志按会话隔离，避免跨群误取消。
     """
     if decision.get("action") == "cancel":
-        from agent.runtime import runtime_state
+        from agent.runtime.cancellation import request_cancel
         try:
-            written = await runtime_state.request_cancel(
-                platform, bot_id or "", scope_id or platform_user_id, platform_user_id
+            written = await request_cancel(
+                platform=platform,
+                bot_id=bot_id or "",
+                scope_id=scope_id or platform_user_id,
+                puid=platform_user_id,
             )
         except Exception as exc:
             from app.core.redaction import diag_log, redact
@@ -182,10 +185,13 @@ def apply_im_shortcut_cancel_sync(platform: str, platform_user_id: str, decision
                                   *, bot_id: str = "", scope_id: str = "") -> None:
     """同步 Gateway 回调使用的取消动作。"""
     if decision.get("action") == "cancel":
-        from agent.runtime import runtime_state
+        from agent.runtime.cancellation import request_cancel_sync
         try:
-            written = runtime_state.request_cancel_sync(
-                platform, bot_id or "", scope_id or platform_user_id, platform_user_id
+            written = request_cancel_sync(
+                platform=platform,
+                bot_id=bot_id or "",
+                scope_id=scope_id or platform_user_id,
+                puid=platform_user_id,
             )
         except Exception as exc:
             from app.core.redaction import diag_log, redact

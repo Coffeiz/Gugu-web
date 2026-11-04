@@ -4,6 +4,7 @@ from pathlib import Path
 import os
 import subprocess
 
+import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -37,6 +38,7 @@ def test_unified_image_defaults_to_embedded_rootless_manager_without_host_socket
     assert "其未就绪不会重启 Web/数据库" in entrypoint
 
 
+@pytest.mark.process
 def test_embedded_manager_supervisor_start_uses_isolated_paths_and_fails_closed(tmp_path):
     helper = REPO_ROOT / "backend/scripts/runtime/start_embedded_sandbox_manager.sh"
     fake_bin = tmp_path / "bin"

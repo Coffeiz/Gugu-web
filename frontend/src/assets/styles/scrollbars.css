@@ -43,6 +43,32 @@ html[data-theme][data-family] .col-body {
   scrollbar-width: none;
 }
 
+/* 可选玻璃边缘：内侧高光仅压在视口边界，不覆盖内容、模糊文字或 mask 裁切。 */
+html[data-theme][data-family] .scroll-surface--glass-edges {
+  box-shadow:
+    inset 0 10px 12px -12px color-mix(in srgb, var(--border-highlight) 72%, transparent),
+    inset 0 -10px 12px -12px color-mix(in srgb, var(--border-highlight) 72%, transparent);
+}
+html[data-theme][data-family] .scroll-surface--glass-edges::before,
+html[data-theme][data-family] .scroll-surface--glass-edges::after {
+  content: '';
+  position: sticky;
+  z-index: 2;
+  display: block;
+  height: 12px;
+  pointer-events: none;
+}
+html[data-theme][data-family] .scroll-surface--glass-edges::before {
+  top: 0;
+  margin-bottom: -12px;
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--column-bg) 38%, transparent), transparent);
+}
+html[data-theme][data-family] .scroll-surface--glass-edges::after {
+  bottom: 0;
+  margin-top: -12px;
+  background: linear-gradient(to top, color-mix(in srgb, var(--column-bg) 38%, transparent), transparent);
+}
+
 /* 应用滚动面隐藏原生滚动条，不占用内容宽度；可见滑块由独立浮层绘制。 */
 html[data-theme][data-family] .scroll-surface:not(.scroll-surface--hidden):not(.scrollbar-preview),
 html[data-theme][data-family] .page-content,

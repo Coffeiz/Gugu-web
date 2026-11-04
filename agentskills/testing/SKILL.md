@@ -5,6 +5,13 @@ description: 测试约定。pytest 基座、vitest 要求、E2E Playwright 标�
 
 # 测试约定
 
+## 回归测试与主动脚本分层
+
+- 自动回归断言与人工发起的诊断、基准、冒烟脚本分开存放。后端回归测试只放 `backend/tests/`；前端 Vitest 放 `frontend/tests/`；Playwright 放 `frontend/e2e/`。后端主动脚本按用途放 `backend/scripts/diagnostics/`、`benchmarks/`、`smoke/` 或 `checks/`。
+- 主动脚本文件名用 `probe_*.py`、`compare_*.py`、`bench_*` 或 `smoke_*` 等动作名；禁止以 `test_*.py`、`*_test.py`、`*.test.*`、`*.spec.*` 命名，以免被测试收集和元数据审计误认。自动回归测试继续使用各框架的标准命名。
+- 主动脚本不应成为回归测试的唯一覆盖。发现稳定行为后，应将合成输入、可重复断言沉淀到对应回归套件；真实 Provider/数据探针留在人工脚本目录并明确成本、副作用和授权边界。
+- `scripts/tests/` 是测试分层调度和清单治理工具，不是产品测试用例目录。性能报告、临时复现输出和真实数据不得放进回归测试目录。
+
 ## 测试质量与选层
 
 测试的目标是保护产品契约、领域规则和重要边界，不是复述当前实现。针对具体函数编写单测是允许的；关键在于断言函数对调用方承诺的输入、输出、不变量和失败行为，而不是私有变量、调用顺序或当前代码片段。
@@ -39,7 +46,7 @@ description: 测试约定。pytest 基座、vitest 要求、E2E Playwright 标�
 
 ## 后端（pytest）
 
-- 跑法：`PYTHONPATH=. .venv/bin/pytest`（devserver 上跑）；全量回归带并行 `-n auto`（内存库/fake 依赖逐 worker 独立；单测调试用 pdb 时去掉它，xdist 下断点不可用）。
+- 跑法：从 `backend/` 执行 `PYTHONPATH=. .venv/bin/pytest`，默认串行；只有任务明确需要并行性能评估时才使用 xdist。单测调试用 pdb 时不使用 xdist。
 - 测试基座在 `backend/tests/conftest.py`：
   - `db` fixture 给每个测试一个全新的内存 SQLite（`StaticPool` 共享同一条连接），测完即弃。
   - `user_a`/`user_b` 是标准的多用户越权测试姿势：B 拥有资源，A 拿着 B 的资源 id 调工具，必须得到"不存在"而不是数据。

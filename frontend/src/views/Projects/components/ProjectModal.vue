@@ -1019,16 +1019,16 @@ const filePanelContext = {
 }
 .archive-float-btn {
   width: 36px; height: 36px; border-radius: 10px;
-  background: rgba(123,127,178,0.1);
-  border: 1px solid rgba(123,127,178,0.25);
+  background: color-mix(in srgb, var(--action-primary) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--action-primary) 25%, transparent);
   display: flex; align-items: center; justify-content: center;
-  cursor: pointer; color: var(--color-primary, #7b7fb2);
-  box-shadow: 0 2px 10px rgba(123,127,178,0.12);
+  cursor: pointer; color: var(--color-primary, var(--action-primary));
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--action-primary) 12%, transparent);
   transition: background 0.15s, box-shadow 0.15s;
 }
 .archive-float-btn:hover {
-  background: rgba(123,127,178,0.18);
-  box-shadow: 0 4px 14px rgba(123,127,178,0.22);
+  background: color-mix(in srgb, var(--action-primary) 18%, transparent);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--action-primary) 22%, transparent);
 }
 
 /* 右栏文件面板样式已迁移至 ProjectFilesPanel.vue。 */

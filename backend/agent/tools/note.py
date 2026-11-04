@@ -415,7 +415,7 @@ class NoteSkill(BaseSkill):
         Tool(
             name="note_update", label="更新思维笔记",
             description_short='更新思维笔记；captured_at 只用于指定归属日期，不用于指定排序序号。',
-            description="对已知笔记做更新；使用 node_id 指定目标。用户要求在笔记里 @/引用文件、项目或活动时，先搜索确认真实 ID，再通过 append_blocks 的 reference 行内节点追加，不要写成普通 @文本。可追加 append_blocks，或用 line_edits 按 target_lines 更新/删除指定行；也可修改标题、颜色、归属日期。数字 target_lines 支持 8、8-11、8,11，整篇使用 all；content 为空表示删除，数字行必须提供从 note_get.numbered_content 读取的 expected 原文。行号以最新原始 Markdown 物理行号为准，多个范围不能重叠。append_blocks 与 note_create.blocks 使用同一扁平块结构。日期支持 MM-DD、MM/DD、YYYY-MM-DD、YYYY/MM/DD、年份前后和中文日期。",
+            description="对已知笔记做更新；必须使用 note_search/note_get 返回的真实 node_id 指定目标，不要猜 ID。用户要求在笔记里 @/引用文件、项目或活动时，先搜索确认真实 ID，再通过 append_blocks 的 reference 行内节点追加，不要写成普通 @文本。可追加 append_blocks，或用 line_edits 按 target_lines 更新/删除指定行；也可修改标题、颜色、归属日期。append_blocks 必须是块数组；普通文字示例：[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"文字\"}]}]。数字 target_lines 支持 8、8-11、8,11，整篇使用 all；content 为空表示删除，数字行必须提供从 note_get.numbered_content 读取的 expected 原文。行号以最新原始 Markdown 物理行号为准，多个范围不能重叠。append_blocks 与 note_create.blocks 使用同一扁平块结构。日期支持 MM-DD、MM/DD、YYYY-MM-DD、YYYY/MM/DD、年份前后和中文日期。",
             input_schema={
                 "type": "object",
                 "properties": {

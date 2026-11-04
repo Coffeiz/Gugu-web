@@ -7,7 +7,7 @@ import path from 'node:path'
 const root = path.resolve(import.meta.dirname, '../..')
 const metadataPath = path.join(root, 'docs/testing/test-metadata.json')
 const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'))
-const testPattern = /(^|\/)(test_[^/]+\.py|[^/]+\.(test|spec)\.(ts|js))$/
+const testPattern = /(^|\/)(test_[^/]+\.py|[^/]+_test\.py|[^/]+\.(test|spec)\.(ts|js))$/
 
 function git(args) {
   return execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim()

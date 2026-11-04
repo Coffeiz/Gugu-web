@@ -24,7 +24,7 @@ class _FakeStream:
     def push(self, text: str) -> None:
         self.parts.append(text)
 
-    async def finish(self, text: str) -> None:
+    async def finish(self, text: str, **_kwargs) -> None:
         if self.fail_finish:
             raise RuntimeError("QQ transport failed")
         self.sent = True
@@ -211,7 +211,7 @@ async def test_qq_stream_drains_agent_after_transport_failure(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_qq_stream_finishes_interaction_round_before_prompt_and_resumes(monkeypatch):
-    """确认交互前先发送完成帧，确认后后续正文使用新的 QQ 流消息。"""
+    """ROUND_END 是暂定边界；后续正文到达时再收束前轮并开启新流。"""
     from agent.gateway import qq as qq_gateway
 
     timeline = []
@@ -223,7 +223,7 @@ async def test_qq_stream_finishes_interaction_round_before_prompt_and_resumes(mo
         def push(self, text):
             self.text += text
 
-        async def finish(self, text):
+        async def finish(self, text, **_kwargs):
             timeline.append(("stream_finished", text))
 
         def has_sent(self):
@@ -237,7 +237,7 @@ async def test_qq_stream_finishes_interaction_round_before_prompt_and_resumes(mo
     async def token_iter():
         yield ("token", "需要先确认")
         yield (ROUND_END, "需要先确认")
-        # send_qq_stream_by_round 必须先消费 ROUND_END 并发完成帧，才会继续取下一事件。
+        # 工具/交互可能改写暂定轮次；只有后续正文到达才确认它是独立消息。
         timeline.append(("interaction_prompt", None))
         yield ("token", "确认后继续")
         yield ("final", AgentResponse(text="确认后继续", session_id=7))
@@ -253,8 +253,8 @@ async def test_qq_stream_finishes_interaction_round_before_prompt_and_resumes(mo
     assert sent is True
     assert response.session_id == 7
     assert timeline[:2] == [
-        ("stream_finished", "需要先确认"),
         ("interaction_prompt", None),
+        ("stream_finished", "需要先确认"),
     ]
     assert timeline[-1] == ("stream_finished", "确认后继续")
 
@@ -500,3 +500,173 @@ async def test_qq_stream_delivers_each_round_when_platform_streaming_is_enabled(
 
 async def _async_value(value):
     return value
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("before_text", [False, True])
+async def test_qq_tool_boundary_flushes_before_tool_and_streams_after(monkeypatch, before_text):
+    """工具消息之前排空短文本；后续正文在最终结果前进入新的流。"""
+    from agent.gateway import qq
+    from agent.im.streaming.qq import QQToolEventBoundary
+
+    events_seen = []
+    streams = []
+    streamed_after_tool = asyncio.Event()
+
+    class Stream(_FakeStream):
+        def push(self, text):
+            super().push(text)
+            events_seen.append(("push", text))
+            if ("tool", "调用") in events_seen:
+                streamed_after_tool.set()
+
+        async def finish(self, text, **kwargs):
+            events_seen.append(("done", text))
+            await super().finish(text, **kwargs)
+
+    def create_stream(*_args, **_kwargs):
+        stream = Stream()
+        streams.append(stream)
+        return stream
+
+    monkeypatch.setattr(qq, "create_private_text_stream", create_stream)
+    boundary = QQToolEventBoundary()
+    final = "工具执行完毕之后这段正文需要持续流式展示。"
+
+    async def events():
+        if before_text:
+            yield ("token", "阶段文本")
+        assert await boundary.before_platform_event({"type": "tool_call"})
+        events_seen.append(("tool", "调用"))
+        yield ("token", final)
+        # 上游尚未产生终态时，就必须已有后续正文交给 QQ 流。
+        await asyncio.wait_for(streamed_after_tool.wait(), timeout=2)
+        yield (ROUND_END, final)
+        yield ("final", AgentResponse(text=final, session_id=14))
+
+    sent, _, _ = await send_qq_stream_by_round(
+        {"platform": "qq", "platform_user_id": "synthetic-recipient", "channel_id": "41", "message_id": "synthetic-message"},
+        events(), tool_event_boundary=boundary,
+    )
+    assert sent
+    tool_index = events_seen.index(("tool", "调用"))
+    if before_text:
+        assert events_seen[:tool_index] == [("push", "阶段文本"), ("done", "阶段文本")]
+    assert any(kind == "push" for kind, _ in events_seen[tool_index + 1:])
+    assert events_seen[-1] == ("done", final)
+    assert len(streams) == (2 if before_text else 1)
+
+
+@pytest.mark.asyncio
+async def test_qq_tool_boundary_waits_for_chart_before_starting_new_stream(monkeypatch):
+    """工具通知等待前面的异步图表，工具后的正文恢复流式。"""
+    from agent.gateway import qq
+    from agent.im import chart, replies
+    from agent.im.streaming.qq import QQToolEventBoundary
+
+    delivered = []
+    class Stream(_FakeStream):
+        def push(self, text):
+            super().push(text)
+            delivered.append("text")
+        async def finish(self, text, **kwargs):
+            delivered.append("done")
+            await super().finish(text, **kwargs)
+
+    async def render(*_args, **_kwargs):
+        await asyncio.sleep(0.01)
+        return b"synthetic-png"
+
+    async def send_image(*_args, **_kwargs):
+        delivered.append("image")
+        return True
+
+    monkeypatch.setattr(qq, "create_private_text_stream", lambda *_args, **_kwargs: Stream())
+    monkeypatch.setattr(chart, "render_chart_png", render)
+    monkeypatch.setattr(replies, "_try_send_png_image", send_image)
+    boundary = QQToolEventBoundary()
+    final = "工具之后的正文应该继续通过新的流逐步显示。"
+
+    async def events():
+        yield ("token", "```mermaid\ngraph LR\nA-->B\n```\n")
+        assert await boundary.before_platform_event({"type": "tool_call"})
+        delivered.append("tool")
+        yield ("token", final)
+        yield ("final", AgentResponse(text=final, session_id=14))
+
+    sent, _, _ = await send_qq_stream_by_round(
+        {"platform": "qq", "platform_user_id": "synthetic-recipient", "channel_id": "41", "message_id": "synthetic-message"},
+        events(), tool_event_boundary=boundary,
+    )
+    assert sent
+    assert delivered.index("image") < delivered.index("tool") < delivered.index("text")
+    assert delivered[-1] == "done"
+
+
+@pytest.mark.asyncio
+async def test_qq_tool_boundary_close_failure_does_not_send_later_text(monkeypatch):
+    """前一段关闭失败时，工具通知和后续正文不能越过失败边界。"""
+    from agent.gateway import qq
+    from agent.gateway.qq.client import QQStreamFinalizationError
+    from agent.im.streaming.qq import QQToolEventBoundary
+
+    stream = _FakeStream(fail_finish=True)
+    monkeypatch.setattr(qq, "create_private_text_stream", lambda *_args, **_kwargs: stream)
+    boundary = QQToolEventBoundary()
+
+    async def events():
+        yield ("token", "阶段文本")
+        assert not await boundary.before_platform_event({"type": "tool_call"})
+        yield ("token", "工具后的正文不应发送")
+        yield ("final", AgentResponse(text="工具后的正文不应发送", session_id=14))
+
+    with pytest.raises(QQStreamFinalizationError):
+        await asyncio.wait_for(send_qq_stream_by_round(
+            {"platform": "qq", "platform_user_id": "synthetic-recipient", "channel_id": "41", "message_id": "synthetic-message"},
+            events(), tool_event_boundary=boundary,
+        ), timeout=3)
+    assert stream.parts == ["阶段文本"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("after_tool", [False, True])
+@pytest.mark.parametrize("pending_round_end", [False, True])
+@pytest.mark.parametrize("draft", ["合成测试：笔记已整理😼。", "尚未修订的草稿", "合成测试：笔记已整理。"])
+async def test_qq_tool_followup_delivers_only_terminal_text(monkeypatch, after_tool, pending_round_end, draft):
+    """待发送正文被终态修订时，原生流和工具后普通出口都只交付一次。"""
+    from agent.gateway import qq
+    from agent.im import replies
+    from agent.im.streaming.qq import QQToolEventBoundary
+
+    delivered = []
+
+    async def send_text(_payload, text):
+        delivered.append(text)
+        return True
+
+    class Stream(_FakeStream):
+        async def finish(self, text, **kwargs):
+            delivered.append(text)
+            await super().finish(text, **kwargs)
+
+    monkeypatch.setattr(qq, "create_private_text_stream", lambda *_args, **_kwargs: Stream())
+    monkeypatch.setattr(replies, "send_text", send_text)
+    boundary = QQToolEventBoundary()
+    final_text = "合成测试：笔记已整理。"
+
+    async def events():
+        if after_tool:
+            assert await boundary.before_platform_event({"type": "tool_call"})
+        yield ("token", draft)
+        if pending_round_end:
+            yield (ROUND_END, draft)
+        yield ("final", AgentResponse(text=final_text, session_id=14))
+
+    sent, response, last_text = await send_qq_stream_by_round(
+        {"platform": "qq", "platform_user_id": "synthetic-recipient", "channel_id": "41", "message_id": "synthetic-message"},
+        events(), tool_event_boundary=boundary,
+    )
+
+    assert sent is True
+    assert last_text == response.text == final_text
+    assert delivered == [final_text]

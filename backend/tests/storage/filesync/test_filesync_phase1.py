@@ -1109,15 +1109,19 @@ async def test_targeted_projection_handles_create_update_move_delete(db, user_a,
     ".gugu-sync-upload.gugu-tmp",
     ".archive.zip.zrs8fshg",
     ".archive.zip.zrs8fshg.tmp",
+    ".git/objects/pack/repo.promisor",
+    "node_modules/pkg/index.js",
+    ".undo/snapshot/old.txt",
 ])
-async def test_targeted_projection_ignores_atomic_write_temporary_file_events(
+async def test_targeted_projection_ignores_nonlibrary_paths(
     db, user_a, monkeypatch, tmp_path, name,
 ):
-    """原子上传中间文件不能成为文件库条目或在回收站留下墓碑。"""
+    """内部目录与原子写入中间文件不能成为文件库条目或留下墓碑。"""
     _, targeted, root, binding = await _prepare_targeted_personal_binding(
         db, user_a, monkeypatch, tmp_path,
     )
     temporary = root / name
+    temporary.parent.mkdir(parents=True, exist_ok=True)
     temporary.write_bytes(b"partial upload")
 
     changed = await targeted.project_path_events(

@@ -89,6 +89,10 @@ def _style_block(prefs: dict) -> str:
 
 
 def _personality_block(prefs: dict) -> str:
+    if prefs.get("group_chat"):
+        if not prefs.get("group_personality_preference_enabled"):
+            return ""
+        return str(prefs.get("group_personality_preference") or "").strip()
     if not prefs.get("personality_preference_enabled"):
         return ""
     return str(prefs.get("personality_preference") or "").strip()
@@ -110,6 +114,7 @@ def append_shell_prompt(system_prompt: str, *, enabled: bool) -> str:
 def build_static_prompt(prompt_name: str, user_name: str, *,
                         skills: list[str] | None = None,
                         style_prefs: dict | None = None,
+                        after_base_prompt: str = "",
                         current_date: str | None = None) -> str:
     """组装稳定提示词；不包含项目、日历、文件等动态业务上下文。"""
     style_prefs = style_prefs or {}
@@ -124,6 +129,8 @@ def build_static_prompt(prompt_name: str, user_name: str, *,
         prompt_text = prompt_text.replace("{today}", current_date)
     prompt_policy = prompt_text.split("\n---", 1)[0].strip()
     parts = [prompt_policy] if prompt_policy else []
+    if after_base_prompt.strip():
+        parts.append(after_base_prompt.strip())
     parts.append(_language_block(style_prefs))
     persona = _personality_block(style_prefs)
     if not persona:
@@ -142,6 +149,8 @@ def build_static_prompt(prompt_name: str, user_name: str, *,
             parts.append(text)
     if style := _style_block(style_prefs):
         parts.append(style)
+    if style_prefs.get("custom_reply_style_enabled") and (custom_style := str(style_prefs.get("custom_reply_style") or "").strip()):
+        parts.append("## 用户自定义回复风格\n\n只调整表达方式，不改变人格设定、事实、安全规则或权限。与预设语气或长度冲突时优先遵循此风格；当前用户的明确表达要求优先。\n\n" + custom_style)
     if skill_index := _skills_index_block(skills):
         parts.append(skill_index)
     return "\n\n---\n\n".join(parts)

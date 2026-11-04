@@ -24,7 +24,7 @@
 | 压缩 | 2 | 23,917 / 4,864 | 20.3370% | 23,922 / 23,808 | 99.5235% |
 | 压缩 | 3 | 23,921 / 4,864 | 20.3336% | 23,926 / 23,808 | 99.5068% |
 
-同时运行既有 `backend/scripts/diagnostics/test_cache_strategy_compare.py --allow-real-llm --compaction-ab` 基线：36 条合成历史，截取重放命中 0.33%，完整追加命中约 100%。
+同时运行既有 `backend/scripts/diagnostics/compare_cache_strategies.py --allow-real-llm --compaction-ab` 基线：36 条合成历史，截取重放命中 0.33%，完整追加命中约 100%。
 
 ## 真实 trace 的只读重放
 

@@ -16,6 +16,7 @@ import {
   mapSessionMessageDelta,
   mergeSessionMessageDelta,
   replaceRunHistory,
+  sortSessionTimelineMessages,
 } from './sessionMessageSync'
 
 interface StatusItem { kind: 'text' | 'dots' | 'hide'; label?: string }
@@ -58,15 +59,19 @@ function localizedToolStatusLabel(event: { name?: string; label?: string; input?
   return event.label || event.name || i18n.global.t('chatUi.toolCall')
 }
 
-function attachPersistedIdentity(messages: ChatMessage[], optimistic: ChatMessage, dbId: number): ChatMessage[] {
+function attachPersistedIdentity(
+  messages: ChatMessage[], optimistic: ChatMessage, dbId: number, timelineOrder?: number,
+): ChatMessage[] {
   const index = messages.findIndex(message => message.id === optimistic.id)
   if (index < 0) {
     optimistic.dbId = dbId
-    optimistic._syncKey = `message:${dbId}`
+    optimistic._syncKey ||= `message:${dbId}`
+    if (timelineOrder != null) optimistic._timelineOrder = timelineOrder
     return messages
   }
   messages[index].dbId = dbId
-  messages[index]._syncKey = `message:${dbId}`
+  messages[index]._syncKey ||= `message:${dbId}`
+  if (timelineOrder != null) messages[index]._timelineOrder = timelineOrder
   // History sync may have inserted the persisted copy before SSE delivered identity.
   return mergeSessionMessageDelta(messages, [])
 }
@@ -119,6 +124,7 @@ export function useChatStream(options: {
   onContentReset?: () => void
   onPresentFile?: (file: PresentedFile) => void
 }) {
+  let clientMessageSequence = 0
   const liveStore = useLiveStore()
   const { messages, mkid, now, sessionId, sessions } = options
 
@@ -139,7 +145,16 @@ export function useChatStream(options: {
     if (runTerminalControllers.has(controller) || cancelRequestedControllers.has(controller)) return
     cancelRequestedControllers.add(controller)
     options.setStatus({ kind: 'text', label: i18n.global.t('chatUi.cancelling') })
-    void agentApi.cancelSession(String(id)).catch(() => {
+    void agentApi.cancelSession(String(id)).then(result => {
+      if (abortCtrl.value !== controller || runTerminalControllers.has(controller)) return
+      if (result.outcome === 'interrupted') {
+        runTerminalControllers.add(controller)
+        options.setStatus({ kind: 'text', label: i18n.global.t('chatUi.runInterrupted') })
+      } else if (result.outcome === 'already_completed') {
+        runTerminalControllers.add(controller)
+        options.setStatus({ kind: 'text', label: i18n.global.t('chatUi.cancelTooLate') })
+      }
+    }).catch(() => {
       cancelRequestedControllers.delete(controller)
       if (abortCtrl.value === controller && !runTerminalControllers.has(controller)) {
         options.setStatus({ kind: 'text', label: i18n.global.t('chatUi.cancelFailed') })
@@ -423,6 +438,7 @@ export function useChatStream(options: {
   ) {
     const decoder = new TextDecoder()
     let buf = '', aiIdx = -1, aiMessageId: number | null = null, aborted = false, interactionPaused = false
+    let sawCancelledTerminal = false
     // token 到达速度由 Provider 决定；滚动只是展示副作用，不能让每个 token 等待一次
     // nextTick。按帧合并滚动请求，避免把快速到达的 token 人为变成固定打字速度。
     let streamScrollRaf: number | null = null
@@ -474,10 +490,7 @@ export function useChatStream(options: {
       return aiIdx
     }
     const sortLiveTimeline = () => {
-      messages.value.sort((a, b) => {
-        if (a._timelineOrder == null || b._timelineOrder == null) return 0
-        return a._timelineOrder - b._timelineOrder
-      })
+      sortSessionTimelineMessages(messages.value)
     }
     // 当前看的还是本流的会话吗？切走后置 detached（之后切回靠 loadSession 干净重载，不半路重接）
     const live = () => {
@@ -678,7 +691,12 @@ export function useChatStream(options: {
             // 当前流仍能收到终态，借此重新读取服务端快照，避免侧栏标题动画残留。
             void options.fetchSessions()
             if (live()) {
-              options.clearStatus()
+              if (evt.cancelled) {
+                sawCancelledTerminal = true
+                options.setStatus({ kind: 'text', label: i18n.global.t(evt.remote_status_unknown
+                  ? 'chatUi.cancelRemoteUnknown'
+                  : 'chatUi.runInterrupted') })
+              } else options.clearStatus()
               // 取消收尾兜底：任何路径漏发个别 tool_done 终态时，把仍在转圈的
               // 工具气泡统一翻成「已停止」，不允许出现永久「进行中」。
               if (evt.cancelled) {
@@ -750,7 +768,8 @@ export function useChatStream(options: {
         }
       }
     }
-    return { aiIdx, usedTools, detached, sid, aborted, interactionPaused, receivedAssistantContent }
+    return { aiIdx, usedTools, detached, sid, aborted, interactionPaused, receivedAssistantContent,
+      cancelledTerminal: sawCancelledTerminal }
   }
 
   // 续看：打开会话时若它正在生成（messages 接口返回 active），重连看后端跑完。
@@ -761,6 +780,7 @@ export function useChatStream(options: {
     runSessionIds.set(controller, id)
     abortCtrl.value = controller             // 让下次切会话能 abort 掉这条续看
     streaming.value = true; options.clearStatus(); options.setStatus(options.thinkingItem())
+    let cancelledTerminal = false
     try {
       const res = await fetch(`${API_BASE}/agent/sessions/${id}/stream`, {
         credentials: 'include',
@@ -771,6 +791,7 @@ export function useChatStream(options: {
       if (viewGeneration !== options.getViewGeneration() || sessionId.value !== id || abortCtrl.value !== controller) return   // 期间又切走/被新流接管，丢弃
       if (!res.body) return
       const r = await consumeStream(res.body.getReader(), id, viewGeneration, undefined, controller)
+      cancelledTerminal = r.cancelledTerminal
       options.refreshAfterTools(r.usedTools)
     } catch { /* 续看失败/被切走中断都不打扰 */ }
     finally {
@@ -778,7 +799,14 @@ export function useChatStream(options: {
         && sessionId.value === id && abortCtrl.value === controller
       // 仍停在本会话才收尾全局指示，避免切走后清掉新会话续看的状态
       if (ownsResumedView) {
-        options.clearStatus(); streaming.value = false; abortCtrl.value = null
+        if (!cancelledTerminal) options.clearStatus()
+        streaming.value = false
+        abortCtrl.value = null
+        if (cancelledTerminal) {
+          window.setTimeout(() => {
+            if (!streaming.value && abortCtrl.value === null) options.clearStatus()
+          }, 2400)
+        }
       }
       // 续看期间排队的消息必须在这里接续发送：之前漏了这一步，续看流结束后
       // 队列永远无人消费，排队的消息显示着「已发出」却从未 POST（2026-09-11 修复）。
@@ -817,13 +845,14 @@ export function useChatStream(options: {
     itemKey: number,
     queueId: string,
     claimToken: string | null,
+    clientMessageId: string,
   ) {
     const res = await fetch(`${API_BASE}/agent/chat`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json', 'X-Client-Id': CLIENT_ID, ...getCsrfHeaders() },
       body: JSON.stringify({
-        message: text, locale: getLocale(), session_id: sessionId,
+        message: text, client_message_id: clientMessageId, locale: getLocale(), session_id: sessionId,
         pending_queue_id: queueId, pending_queue_item_key: itemKey,
         ...(claimToken ? { pending_queue_claim_token: claimToken } : {}),
         attachments: attachments.map(a => a.attach_id), references,
@@ -870,11 +899,14 @@ export function useChatStream(options: {
     const atts = fromInput ? options.pendingAtt.value.slice() : (forcedAttachments ?? [])   // 本次随消息发的附件
     const refs = fromInput ? options.inputReferences.value.slice() : (forcedReferences ?? [])
     if (!text && !atts.length) return
+    clientMessageSequence += 1
+    const clientMessageId = `${CLIENT_ID}:${Date.now().toString(36)}:${clientMessageSequence.toString(36)}`
+    const sentAt = new Date().toISOString()
     // 队列消息目标会话与当前视图不同：仍把原始 session_id 发给后端，但不接管
     // 当前会话的 streaming/status/messages 状态。回复已落库，切回目标会话即可恢复。
     if (isQueuedDispatch && targetSessionId != null && targetSessionId !== sessionId.value) {
       if (cancelledQueueKeys.has(queuedIdentity)) return
-      await dispatchQueuedInBackground(text, atts, refs, targetSessionId, queuedItemKey!, queueId, queuedClaimToken ?? null)
+      await dispatchQueuedInBackground(text, atts, refs, targetSessionId, queuedItemKey!, queueId, queuedClaimToken ?? null, clientMessageId)
       return
     }
     // 草稿尚未拿到真实 session_id 时不能脱离当前草稿发送，否则后端会创建/选中错误会话。
@@ -886,7 +918,7 @@ export function useChatStream(options: {
       await reconcileStaleStreaming(viewGeneration)
       if (isQueuedDispatch && targetSessionId != null && targetSessionId !== sessionId.value) {
         if (!cancelledQueueKeys.has(queuedIdentity)) {
-          await dispatchQueuedInBackground(text, atts, refs, targetSessionId, queuedItemKey!, queueId, queuedClaimToken ?? null)
+          await dispatchQueuedInBackground(text, atts, refs, targetSessionId, queuedItemKey!, queueId, queuedClaimToken ?? null, clientMessageId)
         }
         return
       }
@@ -901,6 +933,8 @@ export function useChatStream(options: {
         options.onContentReset?.()
       } else if (!streaming.value) {
         optimisticUserMessage = { id: mkid(), role: 'user', text, time: now(),
+          clientMessageId, _syncKey: `client:${clientMessageId}`,
+          _createdAt: sentAt,
           references: refs.length ? refs : undefined,
           files: atts.length ? atts.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, attach_id: a.attach_id, kind: a.kind, duration: a.duration, upload: true, _thumbUrl: a._thumbUrl, img_width: a.img_width, img_height: a.img_height })) : undefined }
         messages.value.push(optimisticUserMessage)
@@ -941,7 +975,7 @@ export function useChatStream(options: {
       if (isQueuedDispatch && targetSessionId != null && !cancelledQueueKeys.has(queuedIdentity)) {
         // 会话切换方已接管全局 UI 状态；这里只释放仍指向旧请求的控制器引用。
         if (abortCtrl.value === requestController) abortCtrl.value = null
-        await dispatchQueuedInBackground(text, atts, refs, targetSessionId, queuedItemKey!, queueId, queuedClaimToken ?? null)
+        await dispatchQueuedInBackground(text, atts, refs, targetSessionId, queuedItemKey!, queueId, queuedClaimToken ?? null, clientMessageId)
         return
       }
       if (invocationIsCurrent() && abortCtrl.value === requestController) {
@@ -954,6 +988,7 @@ export function useChatStream(options: {
     const ownerSid = targetSessionId   // 队列项显式归属的 session；普通发送取当前会话
     runSessionIds.set(requestController, ownerSid)
     let resolvedSid = ownerSid         // 流里 session_id 事件后回填成真实 id
+    let cancelledTerminal = false
     let aiIdx = -1
     const usedTools = new Set<string>()
 
@@ -967,7 +1002,7 @@ export function useChatStream(options: {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json', 'X-Client-Id': CLIENT_ID, ...getCsrfHeaders() },
-        body: JSON.stringify({ message: text, locale: getLocale(), session_id: ownerSid, pending_queue_id: queueId,
+        body: JSON.stringify({ message: text, client_message_id: clientMessageId, locale: getLocale(), session_id: ownerSid, pending_queue_id: queueId,
                                ...(queuedItemKey !== undefined ? { pending_queue_item_key: queuedItemKey } : {}),
                                ...(queuedClaimToken ? { pending_queue_claim_token: queuedClaimToken } : {}),
                                attachments: atts.map(a => a.attach_id), references: refs,
@@ -981,7 +1016,9 @@ export function useChatStream(options: {
       const r = await consumeStream(res.body.getReader(), ownerSid, viewGeneration, (_acceptedSessionId, timelineOrder, userMessageId) => {
         if (optimisticUserMessage && userMessageId) {
           // 用响应式代理补稳定身份，并折叠历史同步可能已插入的竞态副本。
-          messages.value = attachPersistedIdentity(messages.value, optimisticUserMessage, userMessageId)
+          messages.value = attachPersistedIdentity(
+            messages.value, optimisticUserMessage, userMessageId, timelineOrder,
+          )
         }
         runSessionIds.set(requestController, _acceptedSessionId)
         if (stopWaitingForSessionId.has(requestController)) {
@@ -992,8 +1029,9 @@ export function useChatStream(options: {
         pendingQueue.value = pendingQueue.value.filter(item => queueIdentity(item) !== queuedIdentity)
         optimisticUserMessage = {
           id: mkid(), role: 'user', text, time: now(),
+          clientMessageId, _syncKey: `client:${clientMessageId}`,
           dbId: userMessageId,
-          _syncKey: userMessageId ? `message:${userMessageId}` : undefined,
+          _createdAt: sentAt,
           references: refs.length ? refs : undefined,
           files: atts.length ? atts.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, attach_id: a.attach_id, kind: a.kind, duration: a.duration, upload: true, _thumbUrl: a._thumbUrl, img_width: a.img_width, img_height: a.img_height })) : undefined,
           _timelineOrder: timelineOrder,
@@ -1008,6 +1046,7 @@ export function useChatStream(options: {
       }
       if (r.sid != null) resolvePendingSession(r.sid, viewGeneration)
       aiIdx = r.aiIdx
+      cancelledTerminal = r.cancelledTerminal
       r.usedTools.forEach(t => usedTools.add(t))
       // 用户中途切走了 → 别把兜底气泡塞进当前别的会话视图（回复已在后端，切回会重载）
       if (aiIdx === -1 && !r.receivedAssistantContent && !r.detached && !r.aborted && !r.interactionPaused) {
@@ -1040,10 +1079,16 @@ export function useChatStream(options: {
       if (ownsCurrentView()) {
         // 流式结束：把该条 AI 消息标记为非流式，触发 markdown 渲染（流式中按纯文本显示，避免半截表格/代码块闪烁）
         if (aiIdx !== -1 && messages.value[aiIdx]) messages.value[aiIdx].streaming = false
-        options.clearStatus(); streaming.value = false
+        if (!cancelledTerminal) options.clearStatus()
+        streaming.value = false
         if (abortCtrl.value === requestController) {
           abortCtrl.value = null
           releasedOwnController = true
+        }
+        if (cancelledTerminal) {
+          window.setTimeout(() => {
+            if (!streaming.value && abortCtrl.value === null) options.clearStatus()
+          }, 2400)
         }
         options.loadQuota()   // 回复消耗精力，刷新一次——耗尽时顶部状态即时变「休息中」（不 await，原逻辑就是 fire-and-forget）
         // markdown 重渲染后内容变高，MutationObserver 此时已因 streaming=false 停止跟随，

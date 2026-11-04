@@ -540,6 +540,13 @@ class _OpenAICtx:
     ai: Any
     tool_state_digest: str = ""
     cache_state: CacheState = field(default_factory=CacheState)
+    # 群聊选择门那一轮用 provider 原生强制工具选择；平时为 None。
+    forced_tool_choice: dict | None = None
+    # prepare() 算出的原始思考参数：强制 tool_choice 需要临时关思考，收尾时还原。
+    base_think_kwargs: dict = field(default_factory=dict)
+    # 显式关闭思考的参数。**不能靠省略思考字段来关**——DeepSeek 省略时默认
+    # 仍然开着思考，并直接拒收强制 tool_choice（400）。
+    disabled_think_kwargs: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -551,6 +558,18 @@ class _OpenAIRaw:
     content: str
     reasoning: str
     tool_calls_payload: list
+
+
+def _is_forced_tool_choice_rejected(exc: BaseException) -> bool:
+    """判断上游是不是因为强制 tool_choice 而拒绝这次请求。
+
+    只认 4xx 且响应正文提到 tool_choice；其它 400（参数写错之类）照旧按
+    失败处理——把真正的错误误降级成「能力不支持」会让问题被静默吞掉。
+    """
+    status = getattr(exc, "status_code", None)
+    if not isinstance(status, int) or status < 400 or status >= 500:
+        return False
+    return "tool_choice" in str(exc).lower()
 
 
 class OpenAIDriver:
@@ -579,6 +598,17 @@ class OpenAIDriver:
 
         generic_thinking = providers.generic_thinking_params(ai, "openai")
         think_kwargs = generic_thinking or adapter.build_openai_thinking_kwargs(ai)
+        # 选择门那一轮要显式关思考：省略思考字段等于沿用 provider 默认（DeepSeek
+        # 默认开着思考，会直接拒收强制 tool_choice）。走和上面同一条构造路径，
+        # 只是把 thinking 配置换成 disabled。
+        disabled_ai = (
+            ai.model_copy(update={"thinking": "disabled"})
+            if hasattr(ai, "model_copy") else ai
+        )
+        disabled_think_kwargs = (
+            providers.generic_thinking_params(disabled_ai, "openai")
+            or adapter.build_openai_thinking_kwargs(disabled_ai, thinking="disabled")
+        )
 
         ctx = _OpenAICtx(
             tools=tools, max_tokens=ai.max_tokens,
@@ -587,6 +617,8 @@ class OpenAIDriver:
             supports_explicit_cache=supports_explicit_cache,
             adapter=adapter,
             ai=ai,
+            base_think_kwargs=dict(think_kwargs),
+            disabled_think_kwargs=dict(disabled_think_kwargs),
             tool_state_digest=hashlib.sha256(json.dumps(
                 tools, ensure_ascii=False, sort_keys=True, separators=(",", ":")
             ).encode("utf-8")).hexdigest()[:16],
@@ -642,6 +674,13 @@ class OpenAIDriver:
             messages = outbound
             pending_cache_state = None
         tool_params = ctx.adapter.build_tool_params(ctx.ai, ctx.tools)
+        forced_tool_choice = getattr(ctx, "forced_tool_choice", None)
+        if forced_tool_choice and tool_params.get("tools"):
+            # 群聊选择门那一轮：provider 原生强制工具选择。模型只能产出选择工具
+            # 的调用，没法直接写正文绕开门。形状按 OpenAI 兼容协议（嵌套
+            # function.name）；Anthropic 协议形状不同，且会打崩前缀缓存，不走这里。
+            # 没有工具声明时不能设 tool_choice（provider 会拒）。
+            tool_params["tool_choice"] = forced_tool_choice
         cache_kwargs = ctx.adapter.build_openai_cache_kwargs(ctx.ai)
         # 与 AnthropicDriver 的 stream_round 同一套统一重试节奏（app/core/retry.py）：
         # 使用主对话共享预算；只在吐出首个 token 前重试，重试事件对用户可见。
@@ -703,6 +742,20 @@ class OpenAIDriver:
                 break   # 本轮正常完成 → 退出重试循环
             except Exception as exc:
                 from agent.providers.errors import openai_transient_error, openai_error_kind
+                if (
+                    getattr(ctx, "forced_tool_choice", None)
+                    and not emitted
+                    and _is_forced_tool_choice_rejected(exc)
+                ):
+                    # provider 不接受强制 tool_choice（实测思考模式下直接 400）：
+                    # 退回普通 tool_choice 重发同一轮，本 run 不再强求。
+                    ctx.forced_tool_choice = None
+                    tool_params.pop("tool_choice", None)
+                    ctx.think_kwargs = ctx.base_think_kwargs
+                    notify = getattr(ctx, "on_forced_tool_choice_rejected", None)
+                    if callable(notify):
+                        notify()
+                    continue
                 if not openai_transient_error(exc):
                     raise
                 if emitted:

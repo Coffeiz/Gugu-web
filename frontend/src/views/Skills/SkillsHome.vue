@@ -1,38 +1,50 @@
 <template>
   <div class="skills-home">
     <div v-if="error" class="error-banner">{{ error }} <button @click="load">{{ t('skills.retry') }}</button></div>
-    <div v-if="loading" class="empty-state">{{ t('skills.loading') }}</div>
-    <div v-else-if="!skills.length" class="empty-state"><Icon name="resource.skill" :size="32" /><strong>{{ t('skills.emptyTitle') }}</strong><span>{{ t('skills.emptyHint') }}</span><ActionButton fit @click="openChatSetup">{{ t('skills.createFirst') }}</ActionButton></div>
-    <div v-else class="skill-list scroll-surface scroll-surface--compact">
-      <section class="skill-group" aria-labelledby="user-skills-heading">
-        <h2 id="user-skills-heading" class="skill-group-title">{{ t('skills.managedByUser') }}</h2>
-        <div v-if="userSkills.length" class="skill-group-grid">
-          <SkillCard v-for="skill in userSkills" :key="skill.id" :skill="skill" @toggle="toggleSkill" @edit="openEdit" @remove="removeSkill" />
-        </div>
-        <p v-else class="skill-group-empty">{{ t('skills.userManagedEmpty') }}</p>
-      </section>
-      <section class="skill-group" aria-labelledby="assistant-skills-heading">
-        <h2 id="assistant-skills-heading" class="skill-group-title">{{ t('skills.managedByAssistant') }}</h2>
-        <div v-if="assistantSkills.length" class="skill-group-grid">
-          <SkillCard v-for="skill in assistantSkills" :key="skill.id" :skill="skill" @toggle="toggleSkill" @edit="openEdit" @remove="removeSkill" />
-        </div>
-        <p v-else class="skill-group-empty">{{ t('skills.assistantManagedEmpty') }}</p>
-      </section>
-    </div>
-      <SkillForm
-        :key="formKey"
-        :show="formOpen"
-        :skill="editing"
-        :tools="tools"
-        :tools-loaded="toolsLoaded"
-        :tools-loading="toolsLoading"
-        :tools-error="toolsError"
-        :busy="saving"
-        :external-error="error"
-        @close="formOpen = false"
-        @load-tools="loadTools"
-        @save="saveForm"
-      />
+    <ScrollableCardLayout>
+      <template #actions>
+        <ActionButton fit @click="openCreate">
+          <Icon name="action.add" :size="14" />{{ t('skills.create') }}
+        </ActionButton>
+      </template>
+      <div v-if="loading" class="scrollable-card-layout__empty">{{ t('skills.loading') }}</div>
+      <div v-else-if="!skills.length" class="scrollable-card-layout__empty">
+        <Icon name="resource.skill" :size="32" />
+        <strong>{{ t('skills.emptyTitle') }}</strong>
+        <span>{{ t('skills.emptyHint') }}</span>
+        <ActionButton fit @click="openChatSetup">{{ t('skills.createFirst') }}</ActionButton>
+      </div>
+      <template v-else>
+        <section class="skill-group" aria-labelledby="user-skills-heading">
+          <h2 id="user-skills-heading" class="skill-group-title">{{ t('skills.managedByUser') }}</h2>
+          <div v-if="userSkills.length" class="skill-group-grid">
+            <SkillCard v-for="skill in userSkills" :key="skill.id" :skill="skill" @toggle="toggleSkill" @edit="openEdit" @remove="removeSkill" />
+          </div>
+          <p v-else class="skill-group-empty">{{ t('skills.userManagedEmpty') }}</p>
+        </section>
+        <section class="skill-group" aria-labelledby="assistant-skills-heading">
+          <h2 id="assistant-skills-heading" class="skill-group-title">{{ t('skills.managedByAssistant') }}</h2>
+          <div v-if="assistantSkills.length" class="skill-group-grid">
+            <SkillCard v-for="skill in assistantSkills" :key="skill.id" :skill="skill" @toggle="toggleSkill" @edit="openEdit" @remove="removeSkill" />
+          </div>
+          <p v-else class="skill-group-empty">{{ t('skills.assistantManagedEmpty') }}</p>
+        </section>
+      </template>
+    </ScrollableCardLayout>
+    <SkillForm
+      :key="formKey"
+      :show="formOpen"
+      :skill="editing"
+      :tools="tools"
+      :tools-loaded="toolsLoaded"
+      :tools-loading="toolsLoading"
+      :tools-error="toolsError"
+      :busy="saving"
+      :external-error="error"
+      @close="formOpen = false"
+      @load-tools="loadTools"
+      @save="saveForm"
+    />
   </div>
 </template>
 
@@ -42,6 +54,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/icons/Icon.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
+import ScrollableCardLayout from '@/components/common/layout/ScrollableCardLayout.vue'
 import type { UserSkillItem, UserSkillWrite } from '@/services/api'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { showAppError } from '@/composables/core/useAppToast'
@@ -60,17 +73,12 @@ const groupedSkills = computed(() => groupSkillsByManager(skills.value))
 const userSkills = computed(() => groupedSkills.value.user)
 const assistantSkills = computed(() => groupedSkills.value.assistant)
 const { t } = useI18n()
-const props = defineProps<{ createRequest?: number }>()
 const uiStore = useUiStore()
 const route = useRoute()
 const router = useRouter()
 const formOpen = ref(false)
 const formKey = ref(0)
 const editing = ref<UserSkillItem | null>(null)
-
-watch(() => props.createRequest, (request, previous) => {
-  if (request && request !== previous) openCreate()
-})
 
 async function openRequestedSkill() {
   const skillId = typeof route.query.skill === 'string' ? route.query.skill.toUpperCase() : ''
@@ -105,14 +113,11 @@ async function removeSkill(skill: UserSkillItem) {
 
 <style scoped>
 .skills-home { min-height:0; height:100%; display:flex; flex-direction:column; }
-.skill-list { flex:1; min-height:0; overflow-y:auto; margin:0 -8px; padding:10px 8px 16px; }
 .skill-group + .skill-group { margin-top:20px; padding-top:16px; border-top:1px solid var(--content-divider); }
 .skill-group-title { margin:0 0 12px; color:var(--text-primary); font-size:14px; font-weight:600; }
 .skill-group-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:12px; }
 .skill-group-grid :deep(.skill-card) { height:100%; }
 .skill-group-empty { margin:0; padding:14px; border:1px dashed var(--content-outline); border-radius:var(--radius-md); color:var(--text-secondary); font-size:12px; text-align:center; }
-.empty-state { min-height:300px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; color:var(--content-secondary); }
-.empty-state strong { color:var(--content-primary); }.empty-state span { font-size:12px; }
 .error-banner { padding:10px 12px; border-radius:var(--radius-sm); color:var(--danger-fg); background:var(--danger-bg); font-size:12px; margin-bottom:12px; }
 .error-banner button { margin-left:10px; border:0; background:transparent; color:inherit; cursor:pointer; }
 @media (max-width:720px) { .skill-group-grid { grid-template-columns:1fr; } }

@@ -26,11 +26,21 @@ export function sortSessionTimelineMessages(items: ChatMessage[]) {
     a.role === 'interaction' && b.role === 'tool' &&
     Boolean(a.interaction?.toolCallId) && a.interaction?.toolCallId === b.toolCallId
   return items.sort((a, b) => {
-    if (a._timelineOrder != null && b._timelineOrder != null && a._timelineOrder !== b._timelineOrder) {
-      return a._timelineOrder - b._timelineOrder
+    const aTimestamp = Date.parse(a._completedAt || a._createdAt || '')
+    const bTimestamp = Date.parse(b._completedAt || b._createdAt || '')
+    const aHasTimestamp = Number.isFinite(aTimestamp)
+    const bHasTimestamp = Number.isFinite(bTimestamp)
+    if (aHasTimestamp && bHasTimestamp && aTimestamp !== bTimestamp) {
+      return aTimestamp - bTimestamp
     }
     if (isPairedInteraction(a, b)) return 1
     if (isPairedInteraction(b, a)) return -1
+    if (a._timelineOrder != null && b._timelineOrder != null && a._timelineOrder !== b._timelineOrder) {
+      return a._timelineOrder - b._timelineOrder
+    }
+    // 乐观消息在服务端身份/时间尚未回填时应留在插入位置；空字符串排序会把它
+    // 错放到会话最前面，流式事件一到达，用户就会误以为气泡消失了。
+    if (!aHasTimestamp || !bHasTimestamp) return 0
     return String(a._createdAt || '').localeCompare(String(b._createdAt || ''))
   })
 }
@@ -45,16 +55,21 @@ export function mapSessionMessageDelta(
     const speaker = resolveSpeaker(item.role, item.platformUserId, item.platformUserName)
     const runId = item.runId || undefined
     const roundId = item.roundId || undefined
+    const clientMessageId = typeof item.clientMessageId === 'string' && item.clientMessageId
+      ? item.clientMessageId
+      : undefined
+    const occurredAt = item.occurredAt || item.createdAt
     return {
       id: mkid(), dbId: item.id,
-      _syncKey: `message:${item.id}`,
+      _syncKey: clientMessageId ? `client:${clientMessageId}` : `message:${item.id}`,
+      clientMessageId,
       role: speaker.role, speakerLabel: speaker.speakerLabel,
       platformUserId: item.platformUserId || null,
       text: displayQQFaces(item.content), html: null,
       files: item.files?.length ? item.files as ChatFile[] : undefined,
       references: item.references?.length ? item.references as ChatReference[] : undefined,
       quotedText: item.quotedText || undefined,
-      time: displayTime(item.createdAt), _createdAt: item.createdAt,
+      time: displayTime(occurredAt), _createdAt: occurredAt,
       _timelineOrder: item.timelineOrder ?? item.id,
       runId, roundId,
       runOutcome: item.runOutcome,
@@ -64,9 +79,10 @@ export function mapSessionMessageDelta(
     ? {
         id: mkid(), dbId: event.messageId, role: 'ai', text: displayQQFaces(event.text || ''), html: null,
         files: event.files?.length ? event.files as ChatFile[] : undefined,
-        linkButtons: event.linkButtons, time: displayTime(event.createdAt),
+        linkButtons: event.linkButtons, time: displayTime(event.completedAt || event.createdAt),
         runId: event.runId, roundId: event.roundId,
-        _timelineOrder: event.timelineOrder, _createdAt: event.createdAt, _updatedAt: event.updatedAt,
+        _timelineOrder: event.timelineOrder, _createdAt: event.createdAt,
+        _completedAt: event.completedAt, _updatedAt: event.updatedAt,
         _syncKey: displayEventKey(event),
       }
     : {
@@ -88,8 +104,8 @@ export function mapSessionMessageDelta(
 function preserveToolDetails(existing: ChatMessage, incoming: ChatMessage): Partial<ChatMessage> {
   if (existing._toolDetailsLoaded) {
     return {
-      toolInput: existing.toolInput,
-      toolResult: existing.toolResult,
+      ...(incoming.toolInput === undefined ? { toolInput: existing.toolInput } : {}),
+      ...(incoming.toolResult === undefined ? { toolResult: existing.toolResult } : {}),
       _toolDetailsLoaded: true,
     }
   }
@@ -184,10 +200,16 @@ export function mergeSessionMessageDelta(
 
 /** run 终态以已提交历史原位接替临时展示；重复通知不会追加副本。 */
 export function replaceRunHistory(current: ChatMessage[], incoming: ChatMessage[], runId: string): ChatMessage[] {
-  const previous = new Map(current.filter(item => item.runId === runId).map(item => [item._syncKey, item.id]))
-  const history = incoming.filter(item => item.runId === runId).map(item => ({
-    ...item, id: previous.get(item._syncKey) ?? item.id, streaming: false,
-  }))
+  const previous = new Map(current.filter(item => item.runId === runId).map(item => [item._syncKey, item]))
+  const history = incoming.filter(item => item.runId === runId).map(item => {
+    const existing = previous.get(item._syncKey)
+    return {
+      ...item,
+      id: existing?.id ?? item.id,
+      streaming: false,
+      ...(existing?.role === 'tool' ? preserveToolDetails(existing, item) : {}),
+    }
+  })
   return sortSessionTimelineMessages([...current.filter(item => item.runId !== runId), ...history])
 }
 

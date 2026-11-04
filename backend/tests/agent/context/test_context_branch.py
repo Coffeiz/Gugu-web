@@ -38,6 +38,27 @@ async def test_context_branch_assembles_stable_order_and_json(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_only_reflection_append_branch_enables_cache_singleflight(monkeypatch):
+    captured = []
+
+    async def fake_complete_messages(*_args, **kwargs):
+        captured.append(kwargs.get("cache_singleflight"))
+        return "{}"
+
+    monkeypatch.setattr(provider_runner, "complete_messages", fake_complete_messages)
+    history = [{"role": "user", "content": "stable history"}]
+    for branch_name in ("reflection", "compaction"):
+        result = await ContextBranch().run(
+            BranchInput(stable_system="stable", delta="task", history_messages=history),
+            BranchPolicy(name=branch_name),
+            SimpleNamespace(),
+        )
+        assert result.ok
+
+    assert captured == [True, False]
+
+
+@pytest.mark.asyncio
 async def test_context_branch_retries_empty_output(monkeypatch):
     calls = 0
 

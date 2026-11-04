@@ -107,6 +107,16 @@ def _current_provider_projection(area):
     return projection
 
 
+def _previous_summary_text(summary_msg):
+    """摘要正文可能带消息信封；追加压缩只接收摘要本身，不接收路由标签。"""
+    if not summary_msg:
+        return None
+    from .dynamic_tail import unwrap_message_body_text
+    from .tokens import message_text
+
+    return unwrap_message_body_text(message_text(summary_msg))
+
+
 def _deterministic_summary(
     content_list: list[str],
     previous: str | None,
@@ -326,7 +336,7 @@ async def compact_context(
     compact_summary = await _generate_append_summary(
         _branch_prefix_history(messages, fixed_prefix_size, message_history, compressible_msgs,
                                model_cfg, include_recent=True, provider_projection=projection),
-        summary_msg.get("content", "") if summary_msg else None,
+        _previous_summary_text(summary_msg),
         model_cfg=model_cfg,
         append_system=append_system,
         tools=branch_tools,
@@ -336,7 +346,7 @@ async def compact_context(
     if not compact_summary.strip():
         compact_summary = _deterministic_summary(
             compressible_content,
-            summary_msg.get("content", "") if summary_msg else None,
+            _previous_summary_text(summary_msg),
             max_output_tokens=limits.output_tokens,
         )
         logger.warning(

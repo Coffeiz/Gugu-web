@@ -244,6 +244,9 @@ def ensure_hooks() -> None:
                     run.source = "web"
                 run.session_key = f"gugu:{run.source}:{session_id}"
             _scope_run.set(run)
+            from .state import flush_pending_phase_timings
+
+            flush_pending_phase_timings(run)
         except Exception:
             pass
         return result
@@ -421,15 +424,18 @@ def ensure_hooks() -> None:
             model_name = str(getattr(ai, "model", "") or "")
             system_est = _estimate_tokens(plain_system, model_name)
             messages_est = _estimate_tokens(messages, model_name)
+            from agent.run.preparation import prepare_agent_run
+
             preparation_span = run.span(
                 "context",
                 "Preparation to provider input",
-                {"scope": "run_start_to_provider_loop_entry"},
-                code=_code_ref(original_builder_build),
+                {"scope": "agent_preparation_to_provider_loop_entry"},
+                code=_code_ref(prepare_agent_run),
             )
-            # 这段计时覆盖 Run 开始到 Provider loop 入口，包含快照加载、上下文
-            # 查询及组装；真正的 build_split 耗时由 traced_build 单独记录。
-            preparation_span.started_at = run.started_at
+            # 从统一准备函数入口计时；Trace 创建到该入口的分发耗时另有独立 span。
+            preparation_span.started_at = (
+                run.agent_preparation_started_at or run.started_at
+            )
             ctx_span = run.span(
                 "context",
                 "Provider input snapshot",

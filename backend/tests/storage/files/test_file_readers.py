@@ -52,6 +52,12 @@ async def test_media_readers_enforce_physical_and_actual_size(
     storage = _Storage(physical_size, data)
     if reader == "audio":
         monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
+        from agent.voice_config import VoiceRecognitionProfile
+
+        async def configured_profile(_user_id, *, db=None):
+            return VoiceRecognitionProfile(True, file_readers.MEDIA_READ_MAX_BYTES)
+
+        monkeypatch.setattr(file_readers, "voice_recognition_profile", configured_profile)
         file = SimpleNamespace(storage_key="u/media.mp3", size_bytes=0, size="0 B", ext="mp3")
         result = await file_readers.read_audio(file)
         assert "超出读取上限" in result["error"]
@@ -68,6 +74,12 @@ async def test_media_readers_enforce_physical_and_actual_size(
 async def test_media_reader_rejects_missing_physical_object(monkeypatch):
     storage = _Storage(None)
     monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
+    from agent.voice_config import VoiceRecognitionProfile
+
+    async def configured_profile(_user_id, *, db=None):
+        return VoiceRecognitionProfile(True, file_readers.MEDIA_READ_MAX_BYTES)
+
+    monkeypatch.setattr(file_readers, "voice_recognition_profile", configured_profile)
     file = SimpleNamespace(storage_key="u/missing.mp3", size_bytes=1, size="1 B", ext="mp3")
 
     result = await file_readers.read_audio(file)
@@ -367,6 +379,12 @@ async def test_read_audio_falls_back_to_asr_when_native_audio_is_disabled(monkey
                          audio=False)
     monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
     monkeypatch.setattr(file_readers, "get_settings", lambda: SimpleNamespace(ai=ai))
+    from agent.voice_config import VoiceRecognitionProfile
+
+    async def configured_profile(_user_id, *, db=None):
+        return VoiceRecognitionProfile(True, file_readers.MEDIA_READ_MAX_BYTES)
+
+    monkeypatch.setattr(file_readers, "voice_recognition_profile", configured_profile)
     async def transcribe(*_, **__):
         return "转写内容"
 
@@ -383,7 +401,7 @@ async def test_read_audio_falls_back_to_asr_when_native_audio_is_disabled(monkey
 @pytest.mark.parametrize(
     ("transcript", "raise_error", "expected_error"),
     [
-        (None, False, "未配置可用的语音识别模型"),
+        (None, False, "未配置可用的语音识别模型，当前主模型也无法原生读取此音频格式"),
         ("", False, "未识别到语音内容，请确认文件包含清晰语音且格式受支持"),
         (None, True, "语音识别服务调用失败，请检查配置或稍后重试"),
     ],
@@ -399,8 +417,10 @@ async def test_system_audio_read_distinguishes_asr_outcomes(
     monkeypatch.setattr(file_readers, "_active_model_cfg", lambda: SimpleNamespace(audio=False))
     monkeypatch.setattr(file_readers, "_native_audio_enabled", lambda *_: False)
 
-    async def voice_profile(_user_id):
-        return True, 1024
+    from agent.voice_config import VoiceRecognitionProfile
+
+    async def voice_profile(_user_id, *, db=None):
+        return VoiceRecognitionProfile(raise_error or transcript is not None, 1024)
 
     async def transcribe(*_args, **_kwargs):
         assert _kwargs["raise_errors"] is True
@@ -426,6 +446,12 @@ async def test_read_audio_falls_back_when_protocol_or_format_is_unsupported(monk
                          audio=True, api_format=api_format)
     monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
     monkeypatch.setattr(file_readers, "get_settings", lambda: SimpleNamespace(ai=ai))
+    from agent.voice_config import VoiceRecognitionProfile
+
+    async def configured_profile(_user_id, *, db=None):
+        return VoiceRecognitionProfile(True, file_readers.MEDIA_READ_MAX_BYTES)
+
+    monkeypatch.setattr(file_readers, "voice_recognition_profile", configured_profile)
     async def transcribe(*_, **__):
         return "转写内容"
 

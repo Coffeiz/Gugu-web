@@ -66,6 +66,19 @@ class UserMcpServer(Base):
     updated_at:      Mapped[datetime]       = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
 
 
+class UserMcpToolSchemaSnapshot(Base):
+    """用户 MCP 工具声明快照；不包含 endpoint、凭据或运行时权限。"""
+
+    __tablename__ = "user_mcp_tool_schema_snapshots"
+
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True,
+    )
+    config_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    schemas: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    refreshed_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+
+
 class McpSecretInput(Base):
     """IM MCP 凭据输入的短时状态；字段值只允许存 envelope 密文。"""
 

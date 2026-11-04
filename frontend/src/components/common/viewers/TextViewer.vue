@@ -1,5 +1,5 @@
 <template>
-  <div class="tv-wrap">
+  <div ref="viewerRoot" class="tv-wrap">
     <div v-if="loading" class="tv-status">
       <div class="tv-spinner" />
       <span>{{ t('viewerUi.loading') }}</span>
@@ -102,14 +102,30 @@ import Icon from '@/components/common/icons/Icon.vue'
 import RefreshButton from '@/components/common/controls/RefreshButton.vue'
 import { filesApi } from '@/services/api'
 import { sanitizeHtml, splitYamlFrontmatter } from '@/utils/markdown'
-import { cleanupMarkdownMermaid, createMermaidRenderLabels, renderMarkdownMermaid } from '@/utils/mermaidRenderer'
+import {
+  downloadMarkdownMathPng,
+  normalizeMarkdownMathSource,
+  prepareLatexCodeForMath,
+  renderMarkdownMath,
+  toggleMarkdownMathSource,
+  type MarkdownMathLabels,
+} from '@/utils/chart/math'
+import { cleanupMarkdownMermaid, createMermaidRenderLabels, renderMarkdownMermaid } from '@/utils/chart/mermaidRenderer'
 import { useFilesCacheStore, type FileMeta } from '@/stores/filesCache'
 import { usePreviewStore, isPreviewable, isTextMime, isImageExt } from '@/stores/preview'
 import { useUiStore } from '@/stores/ui'
 import { isRelativeFileLink } from '@/utils/fileLinks'
 import { createHtmlPreviewDocument } from '@/utils/htmlPreview'
+import { showAppError } from '@/composables/core/useAppToast'
 
 const { t, locale } = useI18n()
+function createMathLabels(): MarkdownMathLabels {
+  return {
+    copy: t('chatUi.copy'), copied: t('chatUi.copied'), downloadPng: t('mermaidUi.formulaDownload'),
+    showSource: t('mermaidUi.formulaSource'), showRendered: t('mermaidUi.formulaRendered'),
+    renderFailed: t('mermaidUi.formulaRenderFailed'),
+  }
+}
 
 // CodeMirror 全部延迟加载：TextViewer 从 FloatPreviewWindow 静态引入，FloatPreviewWindow
 // 又从 DefaultLayout 静态引入（基本每个登录页都会经过这条链路）——顶层 import codemirror/
@@ -167,9 +183,127 @@ const previewStore = usePreviewStore()
 const uiStore = useUiStore()
 const filesCache = useFilesCacheStore()
 
+const viewerRoot = ref<HTMLElement | null>(null)
 const tvScroll = ref<HTMLElement | null>(null)   // .tv-scroll 滚动容器
 const mdRoot = ref<HTMLElement | null>(null)
 let themeObserver: MutationObserver | null = null
+
+// 宽表格的悬浮横向滚动条与粘性表头，跟随当前预览视口内的表格。
+let tableViewportObserver: MutationObserver | null = null
+let floatingTableScrollbar: HTMLDivElement | null = null
+let stickyTableHeader: HTMLDivElement | null = null
+let activeTableScroller: HTMLElement | null = null
+let activeTableHeader: HTMLTableElement | null = null
+let tableViewportFrame = 0
+
+function copyTableHeaderStyles(source: HTMLTableElement, clone: HTMLTableElement) {
+  const sourceHead = source.querySelector('thead')
+  const cloneHead = clone.querySelector('thead')
+  if (!sourceHead || !cloneHead) return
+  const sourceCells = sourceHead.querySelectorAll<HTMLElement>('th, td')
+  const cloneCells = cloneHead.querySelectorAll<HTMLElement>('th, td')
+  sourceCells.forEach((cell, index) => {
+    const target = cloneCells[index]
+    if (!target) return
+    const style = getComputedStyle(cell)
+    for (const property of ['font', 'color', 'background-color', 'text-align', 'vertical-align', 'padding', 'border', 'white-space', 'line-height']) {
+      target.style.setProperty(property, style.getPropertyValue(property))
+    }
+    target.style.width = `${cell.getBoundingClientRect().width}px`
+    target.style.boxSizing = 'border-box'
+  })
+}
+
+function updateTableViewportControls() {
+  tableViewportFrame = 0
+  const viewport = tvScroll.value
+  if (!floatingTableScrollbar || !stickyTableHeader) return
+  if (!viewport) {
+    stickyTableHeader.style.display = 'none'
+    floatingTableScrollbar.style.display = 'none'
+    return
+  }
+  const viewportRect = viewport.getBoundingClientRect()
+  const host = viewerRoot.value
+  if (!host) return
+  const hostRect = host.getBoundingClientRect()
+  const originLeft = hostRect.left + host.clientLeft
+  const originTop = hostRect.top + host.clientTop
+  const tables = [...(mdRoot.value?.querySelectorAll<HTMLTableElement>('.md-table-wrap > table') ?? [])]
+    .map(table => ({ table, wrapper: table.parentElement as HTMLElement }))
+  const stickyCandidate = tables.find(({ table }) => {
+    const head = table.querySelector('thead')?.getBoundingClientRect()
+    return Boolean(head && head.top < viewportRect.top && table.getBoundingClientRect().bottom > viewportRect.top)
+  })
+
+  if (stickyCandidate) {
+    const { table, wrapper } = stickyCandidate
+    if (activeTableHeader !== table) {
+      const clone = table.cloneNode(false) as HTMLTableElement
+      table.querySelectorAll(':scope > colgroup, :scope > thead').forEach(part => clone.append(part.cloneNode(true)))
+      clone.setAttribute('aria-hidden', 'true')
+      clone.style.width = `${table.scrollWidth}px`
+      clone.style.minWidth = `${table.scrollWidth}px`
+      clone.style.tableLayout = 'fixed'
+      copyTableHeaderStyles(table, clone)
+      stickyTableHeader.replaceChildren(clone)
+      activeTableHeader = table
+    }
+    const headHeight = table.querySelector('thead')?.getBoundingClientRect().height ?? 0
+    const visibleHeight = Math.max(0, Math.min(headHeight, table.getBoundingClientRect().bottom - viewportRect.top))
+    stickyTableHeader.style.display = visibleHeight ? 'block' : 'none'
+    stickyTableHeader.style.top = `${viewportRect.top - originTop}px`
+    stickyTableHeader.style.left = `${wrapper.getBoundingClientRect().left - originLeft}px`
+    stickyTableHeader.style.width = `${wrapper.clientWidth}px`
+    stickyTableHeader.style.height = `${visibleHeight}px`
+    const clone = stickyTableHeader.firstElementChild as HTMLTableElement | null
+    if (clone) clone.style.transform = `translate(${-wrapper.scrollLeft}px, ${visibleHeight - headHeight}px)`
+  } else {
+    stickyTableHeader.style.display = 'none'
+    activeTableHeader = null
+  }
+
+  const scrollCandidate = tables.find(({ table, wrapper }) => {
+    const rect = wrapper.getBoundingClientRect()
+    return table.scrollWidth > wrapper.clientWidth + 1
+      && rect.top < viewportRect.bottom && rect.bottom > viewportRect.bottom
+  })
+  if (scrollCandidate) {
+    const { table, wrapper } = scrollCandidate
+    const trackContent = floatingTableScrollbar.firstElementChild as HTMLDivElement | null
+    if (trackContent) trackContent.style.width = `${table.scrollWidth}px`
+    floatingTableScrollbar.style.display = 'block'
+    floatingTableScrollbar.style.left = `${wrapper.getBoundingClientRect().left - originLeft}px`
+    floatingTableScrollbar.style.width = `${wrapper.clientWidth}px`
+    floatingTableScrollbar.style.top = `${viewportRect.bottom - originTop - floatingTableScrollbar.offsetHeight}px`
+    if (activeTableScroller !== wrapper || floatingTableScrollbar.scrollLeft !== wrapper.scrollLeft) {
+      floatingTableScrollbar.scrollLeft = wrapper.scrollLeft
+    }
+    activeTableScroller = wrapper
+  } else {
+    floatingTableScrollbar.style.display = 'none'
+    activeTableScroller = null
+  }
+}
+
+function scheduleTableViewportUpdate() {
+  if (tableViewportFrame) return
+  tableViewportFrame = requestAnimationFrame(updateTableViewportControls)
+}
+
+function syncTableScrollFromFloatingBar() {
+  if (activeTableScroller && floatingTableScrollbar) activeTableScroller.scrollLeft = floatingTableScrollbar.scrollLeft
+}
+
+function onTableViewportScroll(event: Event) {
+  if (event.target === floatingTableScrollbar) syncTableScrollFromFloatingBar()
+  scheduleTableViewportUpdate()
+}
+
+function refreshTableViewportLayout() {
+  activeTableHeader = null
+  scheduleTableViewportUpdate()
+}
 
 // 滚动位置持久化到 localStorage：实时刷新会把 blobUrl 置空、整组件销毁重建，内存变量留不住，
 // 只有 localStorage 跨重建（甚至跨整页刷新）还在。按 fileKey 存，渲染完读回。
@@ -515,32 +649,62 @@ const ICON_CHECK = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" s
 // 谁后调用谁生效，一旦用户此前打开过一次文件预览，这里的渲染器就会全局顶替掉聊天的，之后聊天
 // 消息里的代码块复制按钮就会带着这里的 SVG 图标出现——但聊天的 CSS 没给这几个 class 定过尺寸，
 // 图标就会没有约束地放大。真实症状：GuguChat 里代码块偶尔冒出一个巨大的图标（devlog 2026-07-10）。
-let _tvMarked: any = null   // 独立 marked 实例，动态导入
+let _tvMarked: any = null   // 常规文档的独立 marked 实例，动态导入
+let _tvMarkedPlain: any = null // 大文档使用纯文本代码块实例，避免高亮长内容
 
 async function renderMarkdown(text: string) {
-  // 先确保 hljs core 已加载，然后批量注册所有支持的语言
-  if (!hljs) {
+  // 大文档中的大型代码块直接按纯文本显示，避免 highlight.js 在主线程扫描超长内容。
+  // 普通 Markdown 仍保留语法高亮；全文内容不会被截断。
+  const highlightDocument = text.length <= 512_000
+  if (highlightDocument && !hljs) {
     const mod = await import('highlight.js/lib/core')
     hljs = mod.default
   }
-  await Promise.all(
-    Object.entries(LANG_LOADERS).map(async ([name, loader]) => {
-      if (!hljs.getLanguage(name)) {
-        const mod = await loader()
-        hljs.registerLanguage(name, mod.default)
-      }
-    })
-  )
+  const aliases: Record<string, string> = {
+    js: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript',
+    py: 'python', yml: 'yaml', sh: 'bash', shell: 'bash', zsh: 'bash',
+    html: 'xml', htm: 'xml', svg: 'xml',
+  }
+  const languagesInDocument = highlightDocument
+    ? new Set(
+        [...text.matchAll(/^ {0,3}(?:`{3,}|~{3,})\s*([^\s`~]+)/gm)]
+          .map(match => match[1].toLowerCase())
+          .filter(language => language !== 'mermaid')
+          .map(language => aliases[language] || language),
+      )
+    : new Set<string>()
+  if (highlightDocument) {
+    await Promise.all(
+      [...languagesInDocument].map(async name => {
+        const loader = LANG_LOADERS[name]
+        if (!loader) return
+        if (!hljs.getLanguage(name)) {
+          const mod = await loader()
+          hljs.registerLanguage(name, mod.default)
+        }
+      })
+    )
+  }
 
-  if (!_tvMarked) {
-    const { Marked } = await import('marked')
-    _tvMarked = new Marked({
+  let renderer = highlightDocument ? _tvMarked : _tvMarkedPlain
+  if (!renderer) {
+    const { Marked, Renderer } = await import('marked')
+    renderer = new Marked({
       renderer: {
+        table(token) {
+          const tableHtml = Renderer.prototype.table.call(this, token)
+          return `<div class="md-table-wrap">${tableHtml}</div>`
+        },
         code({ text, lang }) {
           if (String(lang || '').trim().toLowerCase() === 'mermaid') {
             return `<pre class="md-mermaid-source"><code>${escHtml(text)}</code></pre>`
           }
-          const validLang = lang && hljs.getLanguage(lang) ? lang : null
+          if (/^(?:latex|tex)$/i.test(String(lang || '').trim())) {
+            const escaped = escHtml(text)
+            const math = escHtml(prepareLatexCodeForMath(text))
+            return `<div class="md-math-block"><div class="md-math-result">${math}</div><pre class="md-mermaid-source-view md-math-source-view" hidden><code>${escaped}</code></pre></div>`
+          }
+          const validLang = highlightDocument && text.length <= 32_000 && lang && hljs?.getLanguage(lang) ? lang : null
           const body = validLang
             ? hljs.highlight(text, { language: validLang, ignoreIllegals: true }).value
             : escHtml(text)
@@ -557,9 +721,11 @@ async function renderMarkdown(text: string) {
       gfm: true,
       breaks: false,
     })
+    if (highlightDocument) _tvMarked = renderer
+    else _tvMarkedPlain = renderer
   }
 
-  return sanitizeHtml(_tvMarked.parse(text) as string)
+  return sanitizeHtml(renderer.parse(normalizeMarkdownMathSource(text)) as string)
 }
 
 function renderMermaidBlocks(): Promise<void> {
@@ -622,6 +788,45 @@ async function copyCodeToClipboard(text: string): Promise<boolean> {
 }
 
 async function onMdClick(e: MouseEvent) {
+  const clickTarget = e.target as HTMLElement
+  const mathDownloadButton = clickTarget.closest('.md-math-download-btn') as HTMLButtonElement | null
+  if (mathDownloadButton) {
+    e.preventDefault()
+    const formula = mathDownloadButton.closest('.md-math-block')?.querySelector<HTMLElement>('.md-math-result')
+      ?? mathDownloadButton.closest('.md-math-copy-wrap')?.querySelector<HTMLElement>('.katex')
+    if (!formula) return
+    try {
+      await downloadMarkdownMathPng(formula)
+    } catch (error) {
+      showAppError(t(error instanceof Error && error.message === 'png_too_large'
+        ? 'mermaidUi.formulaPngTooLarge' : 'mermaidUi.formulaDownloadFailed'))
+    }
+    return
+  }
+  const mathSourceButton = clickTarget.closest('.md-math-source-toggle-btn') as HTMLButtonElement | null
+  if (mathSourceButton) {
+    e.preventDefault()
+    toggleMarkdownMathSource(mathSourceButton)
+    return
+  }
+  const mathCopyButton = clickTarget.closest('.md-math-copy-btn') as HTMLButtonElement | null
+  if (mathCopyButton) {
+    e.preventDefault()
+    const source = mathCopyButton.dataset.mathSource || ''
+    if (source && await copyCodeToClipboard(source)) {
+      const originalIcon = mathCopyButton.innerHTML
+      const copiedLabel = mathCopyButton.dataset.copiedLabel || t('chatUi.copied')
+      mathCopyButton.textContent = '✓'
+      mathCopyButton.title = copiedLabel
+      mathCopyButton.setAttribute('aria-label', copiedLabel)
+      setTimeout(() => {
+        mathCopyButton.innerHTML = originalIcon
+        mathCopyButton.title = mathCopyButton.dataset.copyLabel || t('chatUi.copy')
+        mathCopyButton.setAttribute('aria-label', mathCopyButton.title)
+      }, 1200)
+    }
+    return
+  }
   const cb = (e.target as HTMLElement).closest('input[type="checkbox"][data-task]') as HTMLInputElement | null
   if (cb) { toggleTask(Number(cb.dataset.task), cb); return }   // 不 preventDefault：原生勾选即时显示
   const btn = (e.target as HTMLElement).closest('.md-copy-btn') as HTMLElement | null
@@ -787,9 +992,36 @@ watch([htmlMode, loading], async ([mode, isLoading]) => {
 
 onMounted(() => {
   // 首次文件加载可能发生在组件挂载前，此时 mdRoot 尚未存在；挂载后补一次 Mermaid 渲染。
+  renderMarkdownMath(mdRoot.value, createMathLabels())
   renderMermaidBlocks()
   themeObserver = new MutationObserver(() => renderMermaidBlocks())
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-family'] })
+
+  stickyTableHeader = document.createElement('div')
+  stickyTableHeader.className = 'tv-table-sticky-head'
+  stickyTableHeader.setAttribute('aria-hidden', 'true')
+  stickyTableHeader.style.display = 'none'
+  viewerRoot.value?.append(stickyTableHeader)
+
+  floatingTableScrollbar = document.createElement('div')
+  floatingTableScrollbar.className = 'tv-table-floating-scroll'
+  floatingTableScrollbar.setAttribute('role', 'region')
+  floatingTableScrollbar.setAttribute('aria-label', '横向滚动表格')
+  floatingTableScrollbar.tabIndex = 0
+  floatingTableScrollbar.style.display = 'none'
+  const trackContent = document.createElement('div')
+  trackContent.className = 'tv-table-floating-scroll-content'
+  trackContent.setAttribute('aria-hidden', 'true')
+  floatingTableScrollbar.append(trackContent)
+  floatingTableScrollbar.addEventListener('scroll', syncTableScrollFromFloatingBar, { passive: true })
+  viewerRoot.value?.append(floatingTableScrollbar)
+
+  // 捕获阶段同时接收预览纵向滚动和表格自身的横向滚动。
+  document.addEventListener('scroll', onTableViewportScroll, { passive: true, capture: true })
+  window.addEventListener('resize', refreshTableViewportLayout, { passive: true })
+  tableViewportObserver = new MutationObserver(scheduleTableViewportUpdate)
+  if (viewerRoot.value) tableViewportObserver.observe(viewerRoot.value, { childList: true, subtree: true })
+  scheduleTableViewportUpdate()
 })
 
 watch(locale, () => renderMermaidBlocks())
@@ -798,8 +1030,12 @@ watch(locale, () => renderMermaidBlocks())
 // 相对路径图片的 blob 替换也必须等节点挂载（flush: 'post'）后做，processText 阶段 mdRoot 还是 null。
 watch([mdHtml, loading], ([html, isLoading]) => {
   if (html && !isLoading) {
+    renderMarkdownMath(mdRoot.value, createMathLabels())
     renderMermaidBlocks()
     resolveMdRelativeImages()
+    nextTick(scheduleTableViewportUpdate)
+  } else {
+    scheduleTableViewportUpdate()
   }
 }, { flush: 'post' })
 
@@ -808,6 +1044,19 @@ onBeforeUnmount(() => {
   htmlPreviewObserver = null
   themeObserver?.disconnect()
   themeObserver = null
+  tableViewportObserver?.disconnect()
+  tableViewportObserver = null
+  document.removeEventListener('scroll', onTableViewportScroll, true)
+  window.removeEventListener('resize', refreshTableViewportLayout)
+  floatingTableScrollbar?.removeEventListener('scroll', syncTableScrollFromFloatingBar)
+  floatingTableScrollbar?.remove()
+  stickyTableHeader?.remove()
+  floatingTableScrollbar = null
+  stickyTableHeader = null
+  activeTableScroller = null
+  activeTableHeader = null
+  if (tableViewportFrame) cancelAnimationFrame(tableViewportFrame)
+  tableViewportFrame = 0
   cleanupMarkdownMermaid(mdRoot.value)
   releaseMdObjectUrls()
 })
@@ -815,6 +1064,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .tv-wrap {
+  isolation: isolate;
   position: absolute;
   inset: 0;
   background: var(--surface-card-solid, #fff);
@@ -826,7 +1076,9 @@ onBeforeUnmount(() => {
 
 .tv-scroll {
   flex: 1;
-  overflow: auto;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 0 0 16px;
   will-change: scroll-position;
   user-select: text;            /* 覆盖预览弹窗容器的 user-select:none，让正文可选/复制 */
@@ -1031,9 +1283,13 @@ onBeforeUnmount(() => {
 
 /* ── Markdown 渲染 ── */
 .tv-md {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
   padding: 32px 48px;
-  max-width: 860px;
+  max-width: 956px;
   margin: 0 auto;
+  overflow-wrap: anywhere;
   color: var(--content-primary, #24292f);
   font-size: var(--tv-font-size, 15px);
   line-height: 1.75;
@@ -1056,7 +1312,6 @@ onBeforeUnmount(() => {
 .tv-md :deep(p)  { margin: 0.8em 0; }
 .tv-md :deep(a)  { color: var(--action-primary); text-decoration: none; }
 .tv-md :deep(a:hover) { text-decoration: underline; }
-
 /* 行内代码 */
 .tv-md :deep(code) {
   font-family: var(--font-family-mono);
@@ -1070,6 +1325,9 @@ onBeforeUnmount(() => {
 /* 代码块容器 */
 .tv-md :deep(.md-pre) {
   position: relative;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
   background: var(--surface-panel, #f0f1f6);
   border-radius: 10px;
   margin: 1em 0;
@@ -1077,12 +1335,15 @@ onBeforeUnmount(() => {
 }
 .tv-md :deep(.md-pre code) {
   display: block;
+  box-sizing: border-box;
+  min-width: 0;
   padding: 14px 20px 16px;
-  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   background: none;
   color: var(--content-primary, #383a42);
   font-family: var(--font-family-mono);
-  font-size: 13px;
+  font-size: 1em;
   line-height: 1.65;
 }
 
@@ -1209,13 +1470,49 @@ onBeforeUnmount(() => {
 
 .tv-md :deep(table) {
   border-collapse: collapse;
-  width: 100%;
-  margin: 1em 0;
-  font-size: 14px;
+  table-layout: auto;
+  width: max-content;
+  min-width: 100%;
+  margin: 0;
+  font-size: 1.077em;
 }
+.tv-md :deep(.md-table-wrap) {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 1em 0;
+  -webkit-overflow-scrolling: touch;
+}
+.tv-md :deep(.md-table-wrap > table > thead > tr > th) { position: static; }
+:global(.tv-table-sticky-head) {
+  position: absolute;
+  z-index: 2;
+  overflow: hidden;
+  pointer-events: none;
+  background: var(--surface-card-solid, #fff);
+  box-shadow: 0 1px 0 var(--border-document-table);
+}
+:global(.tv-table-sticky-head > table) {
+  border-collapse: collapse;
+  table-layout: fixed;
+  margin: 0;
+}
+:global(.tv-table-floating-scroll) {
+  position: absolute;
+  z-index: 3;
+  height: calc(var(--scrollbar-size-default) + 2px);
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-card-solid, #fff) 90%, transparent);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--content-primary) 18%, transparent);
+}
+:global(.tv-table-floating-scroll-content) { height: 1px; }
 .tv-md :deep(table.md-frontmatter) { margin: 0 0 1.25em; }
 .tv-md :deep(th),
 .tv-md :deep(td) {
+  min-width: 6em;
+  max-width: 28em;
+  overflow-wrap: anywhere;
   padding: 8px 14px;
   border: 1px solid var(--border-document-table);
   text-align: left;
@@ -1254,7 +1551,7 @@ onBeforeUnmount(() => {
   width: 24px; height: 24px; border-radius: 50%;
   border: 2px solid var(--action-soft);
   border-top-color: var(--action-primary);
-  border-top-color: rgba(123, 127, 178, 0.7);
+  border-top-color: color-mix(in srgb, var(--action-primary) 70%, transparent);
   animation: tv-spin 0.7s linear infinite;
 }
 @keyframes tv-spin { to { transform: rotate(360deg); } }

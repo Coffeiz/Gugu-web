@@ -1324,6 +1324,14 @@ async def _deliver_im(
     return await send_text(payload, text)
 
 
+async def deliver_owner_private(user_id, text: str, platform: str) -> bool:
+    """把内容主动私发给 owner；无可用私聊地址或投递失败返回 False。
+
+    群里执行的 owner 私有结果（记忆画像、工作区清单）走这里，不贴群。
+    """
+    return await _deliver_im(user_id, text, platform=platform)
+
+
 async def _deliver_email(
     user_id,
     name: str,
@@ -1353,7 +1361,8 @@ async def _deliver_email(
         ))
         prefs = await db.scalar(select(UserPreferences).where(UserPreferences.user_id == user.id))
         data = prefs.data if prefs else {}
-        theme, palette = data.get("theme", "light"), data.get("palette", "mist")
+        from app.services.user_preferences import normalize_theme_palette
+        theme, palette = data.get("theme", "light"), normalize_theme_palette(data.get("palette"))
         try:
             attachments = await resolve_email_attachments(
                 db, user.id, file_ids=file_ids, artifacts=generated_files,

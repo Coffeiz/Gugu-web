@@ -55,7 +55,7 @@ async function mockScheduledTasks(page: Page) {
 test('定时任务页面：空状态、新建、编辑、启停、试运行和删除', async ({ page }) => {
   await mockScheduledTasks(page)
   await page.goto('/schedules')
-  await expect(page.locator('.empty-state')).toContainText('还没有定时任务')
+  await expect(page.getByText('还没有定时任务')).toBeVisible()
 
   await page.getByRole('button', { name: '新建任务' }).click()
   await page.locator('.title-input').fill('自动化任务')

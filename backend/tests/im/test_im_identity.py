@@ -113,15 +113,6 @@ async def test_group_context_search_accepts_multiple_keywords(db, user_a, monkey
     imctx.clear()
 
 
-def test_im_identity_context_is_not_injected_into_webchat():
-    from agent.models import AgentRequest
-    from agent.im.context_runtime import im_identity_block
-
-    request = AgentRequest(message="你好", user_id="u1", user_name="coffeiz")
-
-    assert im_identity_block(request, []) == ""
-
-
 def test_member_context_policy_does_not_load_owner_context():
     from agent.im.context_policy import policy_for
     from agent.models import AgentRequest
@@ -298,13 +289,149 @@ async def test_feishu_group_uses_bound_owner_open_id(db, user_a):
         content="你好",
     )
 
-    owner = await prepare_request(owner_message, {"chat_type": "group", "channel_id": str(bot.id)}, user_a.id, "本人")
+    owner = await prepare_request(
+        owner_message,
+        {"chat_type": "group", "channel_id": str(bot.id), "bot_mentioned": True},
+        user_a.id,
+        "本人",
+    )
     member = await prepare_request(member_message, {"chat_type": "group", "channel_id": str(bot.id)}, user_a.id, "本人")
 
     assert owner.request.im_role == "owner"
     assert owner.request.allowed_tool_names is None
     assert member.request.im_role == "member"
     assert member.request.allowed_tool_names == ["xng_search", "http_get"]
+
+
+async def test_group_owner_keeps_privileges_only_for_single_bot_mention(db, user_a):
+    """群内 owner 只有单条、明确 @ 当前 Bot 的消息才保留高权限上下文。"""
+    from agent.im.context_policy import policy_for
+    from agent.im.models import ChatTarget, PlatformMessage, PlatformSender
+    from agent.im.request_preparation import prepare_request
+    from app.models import UserBot
+
+    bot = UserBot(
+        user_id=user_a.id,
+        platform="qq",
+        app_id="synthetic-app",
+        app_secret="synthetic-secret",
+        owner_platform_user_id="owner-1",
+        group_allowed_tools=["xng_search"],
+    )
+    db.add(bot)
+    await db.commit()
+    await db.refresh(bot)
+
+    message = PlatformMessage(
+        platform="qq",
+        bot_id=str(bot.id),
+        message_id="message-owner-1",
+        chat=ChatTarget("group-1", "group"),
+        sender=PlatformSender("owner-1", "主人"),
+        content="查看项目",
+    )
+    common = {
+        "chat_type": "group",
+        "chat_id": "group-1",
+        "channel_id": str(bot.id),
+        "platform_user_id": "owner-1",
+        "platform_user_name": "主人",
+        "_batch_messages": [{
+            "chat_type": "group", "platform_user_id": "owner-1",
+            "bot_mentioned": True,
+        }],
+    }
+
+    mentioned = await prepare_request(
+        message, {**common, "bot_mentioned": True}, user_a.id, "主人",
+    )
+    assert mentioned.request.im_role == "owner"
+    assert mentioned.request.allowed_tool_names is None
+    assert mentioned.actor.owner_mention_authorized is True
+    assert mentioned.request.im_group_memory_enabled is True
+    owner_policy = policy_for(mentioned.request)
+    assert owner_policy.load_owner_context is True
+    assert owner_policy.allow_continuity_bridge is True
+
+    not_mentioned = await prepare_request(
+        message, common, user_a.id, "主人",
+    )
+    assert not_mentioned.request.im_role == "member"
+    assert not_mentioned.request.allowed_tool_names == ["xng_search", "http_get"]
+    assert not_mentioned.actor.owner_mention_authorized is False
+
+    member_message = PlatformMessage(
+        platform="qq", bot_id=str(bot.id), message_id="message-member-1",
+        chat=ChatTarget("group-1", "group"),
+        sender=PlatformSender("member-1", "群友"), content="请看一下",
+    )
+    member_mention = await prepare_request(
+        member_message,
+        {
+            **common,
+            "platform_user_id": "member-1",
+            "platform_user_name": "群友",
+            "bot_mentioned": True,
+            "_batch_messages": [{
+                "chat_type": "group", "platform_user_id": "member-1",
+                "bot_mentioned": True,
+            }],
+        },
+        user_a.id,
+        "主人",
+    )
+    assert member_mention.request.im_role == "member"
+    assert member_mention.request.allowed_tool_names == ["xng_search", "http_get"]
+    assert member_mention.actor.owner_mention_authorized is False
+
+
+async def test_owner_mention_in_mixed_batch_cannot_elevate_the_run(db, user_a):
+    """含其他群友的同批消息不因 owner 曾 @ Bot 而继承其权限。"""
+    from agent.im.models import ChatTarget, PlatformMessage, PlatformSender
+    from agent.im.request_preparation import prepare_request
+    from app.models import UserBot
+
+    bot = UserBot(
+        user_id=user_a.id,
+        platform="qq",
+        app_id="synthetic-app",
+        app_secret="synthetic-secret",
+        owner_platform_user_id="owner-1",
+        group_allowed_tools=["xng_search"],
+    )
+    db.add(bot)
+    await db.commit()
+    await db.refresh(bot)
+
+    message = PlatformMessage(
+        platform="qq", bot_id=str(bot.id), message_id="message-batch-1",
+        chat=ChatTarget("group-1", "group"),
+        sender=PlatformSender("owner-1", "主人"), content="合并消息",
+    )
+    owner = {
+        "chat_type": "group", "platform_user_id": "owner-1",
+        "bot_mentioned": True,
+    }
+    member = {
+        "chat_type": "group", "platform_user_id": "member-1",
+        "bot_mentioned": False,
+    }
+    payload = {
+        "chat_type": "group", "chat_id": "group-1", "channel_id": str(bot.id),
+        "platform_user_id": "owner-1", "bot_mentioned": True,
+        "_batch_messages": [owner, member],
+        "_speaker_segments": [
+            {"platform_user_id": "owner-1", "platform_user_name": "主人"},
+            {"platform_user_id": "member-1", "platform_user_name": "群友"},
+        ],
+    }
+
+    prepared = await prepare_request(message, payload, user_a.id, "主人")
+
+    assert prepared.request.im_role == "member"
+    assert prepared.request.allowed_tool_names == ["xng_search", "http_get"]
+    assert prepared.actor.owner_mention_authorized is False
+    assert {speaker["role"] for speaker in prepared.request.im_turn_speakers} == {"member"}
 
 
 async def test_non_qq_private_message_keeps_owner_access():
@@ -370,9 +497,9 @@ def test_group_history_keeps_sender_id_and_name_in_model_context():
 
     formatted = format_history_content(message, request)
 
-    assert "发言人ID=member-2" in formatted
-    assert "显示名=CoffeiZzz" in formatted
-    assert formatted.endswith("看看项目")
+    assert "【群消息】" in formatted
+    assert "【发言人元数据】\n平台 ID：member-2\n显示名：CoffeiZzz" in formatted
+    assert "【消息正文】\n看看项目" in formatted
 
 
 def test_history_does_not_inject_persisted_message_time():
@@ -390,28 +517,26 @@ def test_history_does_not_inject_persisted_message_time():
     assert "2026-08-20" not in format_history_content(message, request)
 
 
-def test_current_group_message_has_priority_sender_anchor():
+def test_current_group_message_separates_speaker_metadata_from_body():
     from agent.im.context_loader import format_current_content
     from agent.models import AgentRequest
 
     request = AgentRequest(
         message="我喜欢什么",
         user_id="owner",
-        user_name="coffeiz",
+        user_name="小北",
         source="qq",
         chat_id="group-1",
         platform_user_id="owner-1",
-        platform_user_name="Coffeiz",
+        platform_user_name="小北",
         im_role="owner",
     )
 
     formatted = format_current_content(request.message, request)
 
-    assert formatted.startswith("[当前群聊发言人，优先级高于历史消息]")
-    assert "平台身份=owner-1" in formatted
-    assert "群昵称=Coffeiz" in formatted
-    assert "权限角色=绑定用户 owner" in formatted
-    assert formatted.endswith("我喜欢什么")
+    assert "【发言人元数据】\n平台 ID：owner-1\n显示名：小北" in formatted
+    assert "权限角色" not in formatted
+    assert "【消息正文】\n我喜欢什么" in formatted
 
 
 def test_session_route_uses_group_id_for_group_and_sender_id_for_private_chat():
@@ -528,28 +653,6 @@ async def test_worker_handle_delegates_business_dispatch_to_im_dispatch(monkeypa
     monkeypatch.setattr("agent.im.dispatch.dispatch_im_message", fake_dispatch)
     assert await worker.handle("msg-1", {"text": "你好"}) == "done"
     assert seen == [{"text": "你好"}]
-
-
-def test_im_identity_context_marks_group_and_compares_history():
-    from types import SimpleNamespace
-
-    from agent.models import AgentRequest
-    from agent.im.context_runtime import im_identity_block
-
-    request = AgentRequest(
-        message="我是谁",
-        user_id="u1",
-        user_name="coffeiz",
-        source="qq",
-        chat_id="group-a",
-        platform_user_id="member-a",
-        im_role="member",
-    )
-    block = im_identity_block(request, [SimpleNamespace(role="user", platform_user_id="member-a")])
-
-    assert "会话类型：群聊" in block
-    assert "当前权限角色：群成员" in block
-    assert "member-a" in block
 
 
 def test_group_search_permissions_include_restricted_image_reading():

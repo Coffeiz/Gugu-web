@@ -62,11 +62,11 @@ B 比 A 多命中 9,233 tokens，缓存率提升 10.50 个百分点。两臂都�
 
 ## 测试脚本
 
-- 脚本：[`test_inline_compaction_thinking_ab.py`](../../backend/scripts/diagnostics/test_inline_compaction_thinking_ab.py)
+- 脚本：[`compare_inline_compaction_thinking.py`](../../backend/scripts/diagnostics/compare_inline_compaction_thinking.py)
 - 在 devserver/backend 运行：
 
   ```bash
-  PYTHONPATH=. .venv/bin/python scripts/diagnostics/test_inline_compaction_thinking_ab.py \
+  PYTHONPATH=. .venv/bin/python scripts/diagnostics/compare_inline_compaction_thinking.py \
     --session-id <目标QQ会话ID> --allow-real-llm --allow-config-fingerprint-mismatch
   ```
 

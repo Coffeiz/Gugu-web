@@ -89,6 +89,58 @@ async def test_deferred_reflection_job_keeps_four_minute_retry_delay(db, user_a)
     assert job.next_attempt_at.replace(tzinfo=timezone.utc) == now + timedelta(minutes=4)
 
 
+@pytest.mark.parametrize("previous_cursor", [20, 120])
+async def test_empty_group_reflection_range_completes_without_retry_or_cursor_regression(
+    db, user_a, monkeypatch, previous_cursor,
+):
+    """消息已清理或游标已推进时，空范围不应反复报错，也不能回退游标。"""
+    from app.models import MemoryReflectionCursor
+
+    scope = dict(owner_user_id=user_a.id, platform="qq", bot_id="示例机器人",
+                 scope_type="group", scope_id="示例群")
+    cursor = MemoryReflectionCursor(**scope, last_reflected_message_id=previous_cursor)
+    job = MemoryReflectionJob(**scope, from_message_id=1, to_message_id=100,
+                              task_type="group", idempotency_key="empty-range", status="pending")
+    db.add_all([cursor, job])
+    await db.commit()
+    resolve_model = AsyncMock(return_value=SimpleNamespace(model=SimpleNamespace()))
+    monkeypatch.setattr("agent.llm.llm_select.resolve_run_config_for_user", resolve_model)
+    monkeypatch.setattr("app.byok.service.resolve_and_bind_user_embedding", AsyncMock())
+    branch = AsyncMock()
+    monkeypatch.setattr(im_reflection, "run_reflection_branch", branch)
+
+    assert await im_reflection._execute_job_locked(job.id, SimpleNamespace()) is True
+    await db.refresh(job)
+    await db.refresh(cursor)
+    assert job.status == "completed"
+    assert job.next_attempt_at is None
+    assert job.last_error_code is None
+    assert cursor.last_reflected_message_id == max(previous_cursor, 100)
+    resolve_model.assert_not_awaited()
+    branch.assert_not_awaited()
+
+
+async def test_existing_reflection_entry_cannot_move_cursor_backwards(db, user_a):
+    """旧任务恢复时，即使已有结果也不能覆盖较新的反思水位。"""
+    from app.models import MemoryEntry, MemoryReflectionCursor
+
+    scope = dict(owner_user_id=user_a.id, platform="qq", bot_id="示例机器人",
+                 scope_type="group", scope_id="示例群")
+    cursor = MemoryReflectionCursor(**scope, last_reflected_message_id=120)
+    job = MemoryReflectionJob(**scope, from_message_id=1, to_message_id=100,
+                              task_type="group", idempotency_key="existing-range", status="pending")
+    db.add_all([cursor, job])
+    await db.flush()
+    db.add(MemoryEntry(**scope, entry_key=f"job-{job.id}", kind="reflection", content_hash="synthetic"))
+    await db.commit()
+
+    assert await im_reflection._execute_job_locked(job.id, SimpleNamespace()) is True
+    await db.refresh(cursor)
+    await db.refresh(job)
+    assert cursor.last_reflected_message_id == 120
+    assert job.status == "completed"
+
+
 async def test_im_rejection_propagates_from_provider_to_persisted_dead_job(db, user_a, monkeypatch):
     """经过真实分支和任务执行器：拒绝只调用一次，终态重投不再请求模型。"""
     from agent.context import provider_runner

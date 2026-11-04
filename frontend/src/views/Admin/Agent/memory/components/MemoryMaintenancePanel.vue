@@ -118,7 +118,7 @@ const { state: imScopes, preview: imPreview, startPreview: startImPreview, apply
 .btn-ghost { border:1px solid var(--border-subtle); background:var(--surface-glass); color:var(--content-secondary); }
 .btn-ghost:hover:not(:disabled) { background:var(--surface-glass-hover); color:var(--content-primary); }
 .btn-primary { border:0; background:var(--action-primary-bg); color:var(--content-on-accent); font-weight:600; box-shadow:none; }
-.btn-primary:hover:not(:disabled) { background:var(--action-primary-bg-hover); }
+.btn-primary:hover:not(:disabled) { filter:brightness(1.1); }
 .btn-ghost:disabled,.btn-primary:disabled { opacity:.5; cursor:default; }
 @media (max-width:720px) { .im-memory-summary-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .result-head { align-items:flex-start; flex-direction:column; } }
 </style>

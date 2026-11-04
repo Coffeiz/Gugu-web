@@ -66,6 +66,10 @@ export function useCalendarEventForm(options: EventFormOptions) {
   }
 
   function openAddForm(anchor: HTMLElement | null = null) {
+    if (anchor && showAddForm.value && addBtnRef.value === anchor) {
+      showAddForm.value = false
+      return
+    }
     addBtnRef.value = anchor
     newEvent.value = { name: '', ...addDefaults(), description: '', allDay: false }
     resetReminder()

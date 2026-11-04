@@ -15,7 +15,7 @@ from agent.context.assembly.area import MessageArea
 from agent.loop.models import RunState
 from agent.loop.rounds import remap_round_start_indices, rolling_compaction_start_index
 from agent.loop.rounds import usage_compaction_due as is_usage_compaction_due
-from agent.runtime.cancellation import RunCancellation, RunCancellationRequested
+from agent.runtime.cancellation import current_cancellation, RunCancellationRequested
 
 _log = logging.getLogger("agent.core")
 # 仅在实际用量达阈值或明确溢出后缩小保留窗口；普通历史恢复仍保留十轮。
@@ -75,7 +75,7 @@ class ContextRuntime:
         area_revision = self.messages.revision
         try:
             try:
-                result = await RunCancellation(self.session_id).dispatch(
+                result = await current_cancellation(self.session_id).dispatch(
                     lambda: compaction.compact_context(
                         self.messages,
                         session_id=self.session_id,

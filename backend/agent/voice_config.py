@@ -6,6 +6,19 @@
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class VoiceRecognitionProfile:
+    """本轮实际选中的语音识别服务输入规格。"""
+
+    configured: bool
+    max_file_bytes: int
+    max_duration_s: float | None = None
+    provider_label: str | None = None
+    resolved: bool = True
+
 
 def dashscope_service_for_model(model: str) -> str:
     name = model.strip().lower()
@@ -26,12 +39,11 @@ def voice_recognition_enabled() -> bool:
         return False
 
 
-async def voice_recognition_profile(user_id) -> tuple[bool, int]:
-    """返回语音识别是否可用及对应识别 Provider 的最大输入字节数。
+async def voice_recognition_spec(user_id, *, db=None) -> VoiceRecognitionProfile:
+    """解析本轮语音识别路由及其已知输入限制。
 
-    选谁：用户 BYOK 凭据优先，没配 BYOK 才看全局 `settings.voice`。
-    上限：各 Provider 自己声明（MiniMax ASR 用 multipart 原始字节，可以走官方
-    50 MiB 上限；其余路径沿用通用媒体字节门槛）。
+    选谁：用户 BYOK 凭据优先，没配 BYOK 才看全局 ``settings.voice``。
+    未声明的 Provider 限制保持为 ``None``，不推测其时长上限。
     """
     from agent.media.constants import MEDIA_RAW_MAX
 
@@ -42,26 +54,56 @@ async def voice_recognition_profile(user_id) -> tuple[bool, int]:
         if user_id is not None:
             from app.byok.policy import byok_enabled
             if byok_enabled():
-                import app.db.session as db_session
-                if db_session._engine is None:
-                    db_session._build_engine()
                 from app.byok.service import get_active_credential
-                async with db_session._SessionLocal() as db:
+                if db is not None:
                     credential = await get_active_credential(db, user_id, "speech_to_text")
+                else:
+                    import app.db.session as db_session
+                    if db_session._engine is None:
+                        db_session._build_engine()
+                    async with db_session._SessionLocal() as credential_db:
+                        credential = await get_active_credential(
+                            credential_db, user_id, "speech_to_text",
+                        )
                 if credential is not None:
-                    enabled = bool(credential.model)
-                    minimax_asr = bool(enabled and credential.provider == "minimax" and credential.api_format == "minimax-asr")
+                    enabled = voice_agent.supports_configured_voice_model(credential)
+                    if not enabled:
+                        return VoiceRecognitionProfile(False, MEDIA_RAW_MAX)
+                    api_format = (credential.api_format or "openai").strip().lower()
+                    minimax_asr = bool(
+                        enabled and credential.provider == "minimax" and api_format == "minimax-asr"
+                    )
                     if minimax_asr:
-                        from agent.providers.minimax.asr import MAX_FILE_BYTES
-                        return enabled, MAX_FILE_BYTES
-                    return enabled, MEDIA_RAW_MAX
-        if voice_agent.is_configured(settings):
-            voice = settings.voice
+                        from agent.providers.minimax.asr import MAX_DURATION_SECONDS, MAX_FILE_BYTES
+                        return VoiceRecognitionProfile(
+                            enabled, MAX_FILE_BYTES, MAX_DURATION_SECONDS, "MiniMax ASR",
+                        )
+                    return VoiceRecognitionProfile(
+                        enabled, MEDIA_RAW_MAX, provider_label="语音识别服务",
+                    )
+        voice = voice_agent._vm(settings)
+        if (voice_agent.is_configured(settings)
+                and voice_agent.supports_configured_voice_model(voice)):
             minimax_asr = (getattr(voice, "api_format", "") or "").strip().lower() == "minimax-asr"
             if minimax_asr:
-                from agent.providers.minimax.asr import MAX_FILE_BYTES
-                return True, MAX_FILE_BYTES
-            return True, MEDIA_RAW_MAX
-        return False, MEDIA_RAW_MAX
+                from agent.providers.minimax.asr import MAX_DURATION_SECONDS, MAX_FILE_BYTES
+                return VoiceRecognitionProfile(
+                    True, MAX_FILE_BYTES, MAX_DURATION_SECONDS, "MiniMax ASR",
+                )
+            return VoiceRecognitionProfile(True, MEDIA_RAW_MAX, provider_label="语音识别服务")
+        return VoiceRecognitionProfile(False, MEDIA_RAW_MAX)
     except Exception:
-        return False, MEDIA_RAW_MAX
+        return VoiceRecognitionProfile(False, MEDIA_RAW_MAX, resolved=False)
+
+
+def normalize_voice_recognition_profile(value) -> VoiceRecognitionProfile:
+    """接收规格对象，兼容已有调用桩返回的二元组。"""
+    if isinstance(value, VoiceRecognitionProfile):
+        return value
+    configured, max_file_bytes = value
+    return VoiceRecognitionProfile(bool(configured), int(max_file_bytes))
+
+
+async def voice_recognition_profile(user_id, *, db=None) -> VoiceRecognitionProfile:
+    """返回本轮实际语音识别配置及已知规格。"""
+    return await voice_recognition_spec(user_id, db=db)

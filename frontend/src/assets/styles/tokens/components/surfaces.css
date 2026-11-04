@@ -3,7 +3,7 @@
 :root {
   /* 用户气泡保持品牌紫主体，边缘高光不要直接复用 Aero 亮色的纯白玻璃边框。 */
   --gugu-chat-user-highlight: color-mix(in srgb,var(--action-primary) 26%,#fff);
-  --gugu-chat-user-shadow: inset 0 1px 0 var(--gugu-chat-user-highlight), inset 1px 0 0 color-mix(in srgb,var(--gugu-chat-user-highlight) 52%,transparent), var(--elevation-card-hover);
+  --gugu-chat-user-shadow: inset 0 1px 0 var(--gugu-chat-user-highlight), inset 1px 0 0 color-mix(in srgb,var(--gugu-chat-user-highlight) 52%,transparent), var(--elevation-card);
   --gugu-chat-assistant-bg: color-mix(in srgb,var(--surface-raised) 82%,transparent);
   --gugu-chat-assistant-border: var(--border-subtle);
   /* 工具卡片 hover：亮色沿用主题玻璃 hover（白系提亮）；暗色在 dark[data-family] 段覆盖。 */
@@ -108,10 +108,10 @@
   --file-dialog-choice-bg: rgba(255,255,255,.72);
   --file-dialog-choice-bg-hover: rgba(255,255,255,.90);
   --file-dialog-choice-border: color-mix(in srgb,var(--content-primary) 10%,transparent);
-  --file-dialog-choice-bg-active: linear-gradient(135deg,#7b7fb2,#9590c4);
+  --file-dialog-choice-bg-active: var(--action-primary-bg);
   --file-dialog-choice-fg-active: var(--content-on-accent);
   --file-dialog-choice-border-active: transparent;
-  --file-dialog-choice-shadow-active: 0 2px 8px rgba(123,127,178,.28);
+  --file-dialog-choice-shadow-active: 0 2px 8px color-mix(in srgb,var(--action-primary) 28%,transparent);
   --file-dialog-control-bg: rgba(255,255,255,.72);
   --file-dialog-control-bg-hover: rgba(255,255,255,.88);
   --file-dialog-control-border: color-mix(in srgb,var(--content-primary) 10%,transparent);
@@ -127,17 +127,17 @@
   --file-card-bg-hover: rgba(255,255,255,.86);
   --file-card-border-hover: rgba(255,255,255,.90);
   --file-card-shadow-hover: inset 0 1px 0 rgba(255,255,255,.90), 0 6px 18px rgba(80,90,110,.13);
-  --file-card-border-selected: rgba(123,127,178,.55);
-  --file-card-shadow-selected: inset 0 1px 0 rgba(255,255,255,.98), 0 0 0 2px rgba(123,127,178,.28);
+  --file-card-border-selected: color-mix(in srgb,var(--action-primary) 55%,transparent);
+  --file-card-shadow-selected: inset 0 1px 0 rgba(255,255,255,.98), 0 0 0 2px color-mix(in srgb,var(--action-primary) 28%,transparent);
   /* 亮色文件卡 hover 必须使用白色高光；--card-hover-overlay 会随非 Aero 调色板染成主色，
-     在 cafe/rose 等亮色主题上会把卡片压暗。暗色在下方单独使用自己的 action overlay。 */
+     在 红色等亮色主题上会把卡片压暗。暗色在下方单独使用自己的 action overlay。 */
   --file-card-hover-overlay: color-mix(in srgb,var(--theme-highlight-hover) 16%,transparent);
-  --file-card-preselection-bg: rgba(123,127,178,.06);
-  --file-card-preselection-border: rgba(123,127,178,.45);
-  --file-card-preselection-shadow: inset 0 1px 0 rgba(255,255,255,.85), 0 0 0 1.5px rgba(123,127,178,.15);
-  --file-card-selection-overlay: rgba(123,127,178,.14);
-  --file-card-selection-thumb-overlay: rgba(123,127,178,.28);
-  --file-card-preselection-thumb-overlay: rgba(123,127,178,.16);
+  --file-card-preselection-bg: color-mix(in srgb,var(--action-primary) 6%,transparent);
+  --file-card-preselection-border: color-mix(in srgb,var(--action-primary) 45%,transparent);
+  --file-card-preselection-shadow: inset 0 1px 0 rgba(255,255,255,.85), 0 0 0 1.5px color-mix(in srgb,var(--action-primary) 15%,transparent);
+  --file-card-selection-overlay: color-mix(in srgb,var(--action-primary) 14%,transparent);
+  --file-card-selection-thumb-overlay: color-mix(in srgb,var(--action-primary) 28%,transparent);
+  --file-card-preselection-thumb-overlay: color-mix(in srgb,var(--action-primary) 16%,transparent);
   --file-card-badge-bg: rgba(0,0,0,.04);
   --file-card-thumb-bg: rgba(0,0,0,.05);
   --file-card-image-badge-bg: rgba(0,0,0,.32);
@@ -148,12 +148,12 @@
   --folder-card-bg-base: rgba(255,255,255,.82);
   --folder-card-border-base: rgba(255,255,255,.92);
   --folder-card-shadow: inset 0 1px 0 rgba(255,255,255,.98), 0 1px 5px rgba(80,90,110,.06);
-  --folder-card-border-selected: rgba(123,127,178,.55);
-  --folder-card-shadow-selected: inset 0 1px 0 rgba(255,255,255,.98), 0 0 0 2px rgba(123,127,178,.28);
-  --folder-card-selection-overlay: rgba(123,127,178,.14);
-  --folder-card-bg-preselected: rgba(123,127,178,.05);
-  --folder-card-border-preselected: rgba(123,127,178,.38);
-  --folder-card-shadow-preselected: inset 0 1px 0 rgba(255,255,255,.90), 0 0 0 1.5px rgba(123,127,178,.12);
+  --folder-card-border-selected: color-mix(in srgb,var(--action-primary) 55%,transparent);
+  --folder-card-shadow-selected: inset 0 1px 0 rgba(255,255,255,.98), 0 0 0 2px color-mix(in srgb,var(--action-primary) 28%,transparent);
+  --folder-card-selection-overlay: color-mix(in srgb,var(--action-primary) 14%,transparent);
+  --folder-card-bg-preselected: color-mix(in srgb,var(--action-primary) 5%,transparent);
+  --folder-card-border-preselected: color-mix(in srgb,var(--action-primary) 38%,transparent);
+  --folder-card-shadow-preselected: inset 0 1px 0 rgba(255,255,255,.90), 0 0 0 1.5px color-mix(in srgb,var(--action-primary) 12%,transparent);
   /* Shared menu / calendar / context / sort popover. Geometry can stay component-specific; all
      paint and cadence comes from this one contract. */
   --popup-surface-bg: var(--surface-popup);
@@ -320,8 +320,8 @@ html[data-theme='light'][data-family='mono'] {
   --folder-card-border-accent: 0%;
 }
 
-/* Glass 亮色的 mist 保留 Aero 基线；其他调色板的文件/文件夹选择态必须随主题主色映射。 */
-html[data-theme='light'][data-family='glass'][data-palette]:not([data-palette='mist']) {
+/* Glass 亮色下，文件和文件夹选择态跟随当前完整色板的主色。 */
+html[data-theme='light'][data-family='glass'][data-palette] {
   --file-card-border-selected: var(--action-outline);
   --file-card-shadow-selected: inset 0 1px 0 var(--highlight-soft), 0 0 0 2px color-mix(in srgb,var(--action-primary) 28%,transparent);
   --file-card-preselection-bg: color-mix(in srgb,var(--action-primary) 6%,var(--file-card-bg));
@@ -344,7 +344,7 @@ html[data-theme='dark'][data-family] {
   --workspace-card-bg: var(--surface-soft);
   --workspace-card-bg-hover: var(--surface-soft-hover);
   --gugu-chat-user-highlight: color-mix(in srgb,var(--border-highlight) 82%,transparent);
-  --gugu-chat-user-shadow: inset 0 1px 0 var(--gugu-chat-user-highlight), inset 1px 0 0 color-mix(in srgb,var(--gugu-chat-user-highlight) 52%,transparent), var(--elevation-card-hover);
+  --gugu-chat-user-shadow: inset 0 1px 0 var(--gugu-chat-user-highlight), inset 1px 0 0 color-mix(in srgb,var(--gugu-chat-user-highlight) 52%,transparent), var(--elevation-card);
   --gugu-chat-assistant-bg: var(--surface-raised);
   --gugu-chat-assistant-border: var(--border-subtle);
   /* 暗色玻璃 hover 的通用值是透明白叠层，透出页面暗底比不透明气泡更暗；

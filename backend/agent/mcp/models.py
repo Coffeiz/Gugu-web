@@ -15,7 +15,9 @@ CONFIRM_ALL = "confirm_all"
 CONFIRM_AUTO = "auto"
 
 TOOL_NAME_PREFIX = "mcp_"
-MCP_PROTOCOL_VERSION = "2025-06-18"
+MCP_LEGACY_PROTOCOL_VERSION = "2025-06-18"
+MCP_MODERN_PROTOCOL_VERSION = "2026-07-28"
+MCP_TASKS_EXTENSION = "io.modelcontextprotocol/tasks"
 CLIENT_INFO = {"name": "gugu-web", "version": "1.0"}
 
 

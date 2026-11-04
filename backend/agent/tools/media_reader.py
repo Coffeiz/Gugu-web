@@ -8,9 +8,10 @@ from __future__ import annotations
 import base64
 from contextvars import ContextVar
 
-from agent.media import gates, images, video
+from agent.media import audio, gates, images, video
 from agent.media.constants import IMAGE_READ_MAX, MEDIA_MIME, VISION_MIME
-from agent.voice_config import voice_recognition_profile
+from agent.media.errors import MediaPreflightError
+from agent.voice_config import normalize_voice_recognition_profile, voice_recognition_profile
 from app.core import chat_attach
 from app.core.chat_attach.file_types import IMAGE_EXTS as ATTACHMENT_IMAGE_EXTS
 from app.core.config import get_settings
@@ -109,11 +110,15 @@ async def read_stored_image(storage_key: str, ext: str, *, max_source_bytes: int
     return build_image_block(raw, ext)
 
 
-async def _transcribe_audio(raw: bytes, mime: str, ext: str = "", *, db=None, user_id=None) -> str | None:
+async def _transcribe_audio(raw: bytes, mime: str, ext: str = "", *, duration=None,
+                            db=None, user_id=None) -> str | None:
     from agent.voice import transcribe
-    audio_media = [{"type": "audio", "mime": mime, "ext": ext, "b64": base64.b64encode(raw).decode()}]
+    audio_media = [{"type": "audio", "mime": mime, "ext": ext,
+                    "b64": base64.b64encode(raw).decode(), "duration": duration}]
     try:
         return await transcribe(audio_media, get_settings(), db=db, user_id=user_id, raise_errors=True)
+    except MediaPreflightError:
+        raise
     except Exception as exc:
         raise AudioTranscriptionError("语音识别服务调用失败") from exc
 
@@ -150,23 +155,44 @@ def _active_model_cfg():
 
 def _native_audio_enabled(ai, ext: str) -> bool:
     """当前主模型及其实际协议支持该音频格式时，才把原音频交给主模型。"""
-    if not gates.audio_enabled(ai):
-        return False
-    from agent import providers
-    adapter = providers.adapter_for(ai)
-    return ext.lower() in adapter.audio_native_exts()
+    return ext.lower().lstrip(".") in audio.native_audio_extensions(ai)
+
+
+async def _audio_route(ai, ext: str, user_id, *, db=None):
+    """解析本轮音频路由、字节上限与不可用原因。"""
+    if _native_audio_enabled(ai, ext):
+        return None, gates.media_limits_for(ai).audio_max_bytes, None
+    profile_value = (
+        await voice_recognition_profile(user_id, db=db) if db is not None
+        else await voice_recognition_profile(user_id)
+    )
+    profile = normalize_voice_recognition_profile(profile_value)
+    if profile.configured:
+        return profile, profile.max_file_bytes, None
+    if not profile.resolved:
+        reason = "无法确认当前语音识别配置，未尝试发送音频；请检查配置后重试"
+    else:
+        reason = "未配置可用的语音识别模型，当前主模型也无法原生读取此音频格式"
+    return profile, None, reason
+
+
+async def _preflight_audio_duration(raw: bytes, ext: str, profile):
+    """对 Provider 已声明时长上限的音频提前探测并校验。"""
+    return await audio.preflight_duration(
+        raw, ext, getattr(profile, "max_duration_s", None),
+        getattr(profile, "provider_label", None) or "语音识别服务",
+    )
 
 
 async def read_audio(file, *, max_source_bytes: int | None = None, db=None, user_id=None) -> dict:
     try:
         ai = _active_model_cfg()
-        if _native_audio_enabled(ai, file.ext):
-            provider_limit = gates.media_limits_for(ai).audio_max_bytes
-        else:
-            voice_ok, voice_limit = await voice_recognition_profile(
-                user_id or getattr(file, "user_id", None),
-            )
-            provider_limit = voice_limit if voice_ok else MEDIA_READ_MAX_BYTES
+        source_user_id = user_id or getattr(file, "user_id", None)
+        voice_profile, provider_limit, route_error = await _audio_route(
+            ai, file.ext, source_user_id, db=db,
+        )
+        if route_error:
+            return {"error": route_error}
         error = await _media_size_error(file, max_source_bytes, provider_limit)
         if error:
             return error
@@ -185,10 +211,13 @@ async def read_audio(file, *, max_source_bytes: int | None = None, db=None, user
                 "_source_size_bytes": len(data),
                 "note": f"已读取音频《{file.display_name}.{file.ext}》，请直接结合音频内容回答。",
             }
+        duration = await _preflight_audio_duration(data, file.ext.lower(), voice_profile)
         text = await _transcribe_audio(
-            data, f"audio/{file.ext.lower()}", file.ext.lower(),
-            db=db, user_id=user_id or getattr(file, "user_id", None),
+            data, f"audio/{file.ext.lower()}", file.ext.lower(), duration=duration,
+            db=db, user_id=source_user_id,
         )
+    except MediaPreflightError as error:
+        return {"error": str(error)}
     except AudioTranscriptionError as error:
         diag_log("agent.tools.media_reader.read_audio.transcription", error.__cause__ or error)
         return {"error": "语音识别服务调用失败，请检查配置或稍后重试"}
@@ -313,11 +342,11 @@ async def read_local_media(path, *, db=None, user_id=None,
 
     if ext in AUDIO_EXTS:
         ai = _active_model_cfg()
-        if _native_audio_enabled(ai, ext):
-            provider_limit = gates.media_limits_for(ai).audio_max_bytes
-        else:
-            voice_ok, voice_limit = await voice_recognition_profile(user_id)
-            provider_limit = voice_limit if voice_ok else MEDIA_READ_MAX_BYTES
+        voice_profile, provider_limit, route_error = await _audio_route(
+            ai, ext, user_id, db=db,
+        )
+        if route_error:
+            return {"error": route_error}
         if metadata.st_size > provider_limit:
             return {"error": f"音频超过当前读取上限（{provider_limit // 1_000_000}MB）"}
         try:
@@ -340,10 +369,13 @@ async def read_local_media(path, *, db=None, user_id=None,
                     "_source_size_bytes": len(raw),
                     "note": f"已读取音频《{path.name}》，请直接结合音频内容回答。",
                 }
+            duration = await _preflight_audio_duration(raw, ext, voice_profile)
             text = await _transcribe_audio(
                 raw, MEDIA_MIME.get(ext) or f"audio/{ext}", ext,
-                db=db, user_id=user_id,
+                duration=duration, db=db, user_id=user_id,
             )
+        except MediaPreflightError as error:
+            return {"error": str(error)}
         except AudioTranscriptionError as error:
             diag_log("agent.tools.media_reader.read_local_audio.transcription", error.__cause__ or error)
             return {"error": "语音识别服务调用失败，请检查配置或稍后重试"}

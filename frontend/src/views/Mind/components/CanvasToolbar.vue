@@ -146,15 +146,15 @@ function refTypeLabel(type: CanvasRefItem['type']) {
    在这种高度矮、圆角占满整条边的胶囊上，squircle 的数学反而把两端"挤"成圆角矩形，不是纯圆头。 */
 .canvas-toolbar { position: relative; display: flex; align-items: center; height: var(--canvas-toolbar-height); padding: 0 7px; border-radius: 999px; corner-shape: round; }
 .canvas-toolbar button { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border: 0; border-radius: 999px; background: none; color: var(--text-secondary); cursor: pointer; }
-.canvas-toolbar button:hover { color: var(--color-primary); background: rgba(123,127,178,.11); }
-.canvas-toolbar button.active { background: rgba(123,127,178,.15); color: var(--color-primary); }
+.canvas-toolbar button:hover { color: var(--color-primary); background: color-mix(in srgb, var(--action-primary) 11%, transparent); }
+.canvas-toolbar button.active { background: color-mix(in srgb, var(--action-primary) 15%, transparent); color: var(--color-primary); }
 .canvas-toolbar .zoom-label { width: 45px; font-size: 11px; font-weight: 700; }
-.tool-divider { width: 1px; height: 17px; margin: 0 4px; background: rgba(123,127,178,.18); }
+.tool-divider { width: 1px; height: 17px; margin: 0 4px; background: color-mix(in srgb, var(--action-primary) 18%, transparent); }
 
 .note-picker { display: flex; flex-direction: column; width: 270px; max-height: 390px; overflow: hidden; padding: 10px; }
 .np-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px 8px; color: var(--text-secondary); font-size: 12px; font-weight: 700; }
 .np-head button { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border: 0; border-radius: 5px; background: none; color: var(--text-secondary); cursor: pointer; }
-.np-head button:hover { color: var(--color-primary); background: rgba(123,127,178,.11); }
+.np-head button:hover { color: var(--color-primary); background: color-mix(in srgb, var(--action-primary) 11%, transparent); }
 .np-search {
   flex: 0 0 auto;
   width: 100%; height: 31px; box-sizing: border-box; margin: 0; padding: 0 9px;

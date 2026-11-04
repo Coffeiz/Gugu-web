@@ -90,7 +90,7 @@ async def test_credential_changes_notify_only_after_old_version_is_revoked(db, u
         await db.commit()
 
         async def theme(*_args):
-            return "light", "mist"
+            return "light", "neutral"
 
         monkeypatch.setattr(auth, "_email_preference_theme", theme)
         monkeypatch.setattr(auth.email_svc, "send_email_change_notice", lambda **_kwargs: None)

@@ -6,9 +6,12 @@ def test_empty_outbound_does_not_turn_into_identity_deflect():
     assert sanitize_outbound("call_function_abc123") == ""
 
 
-def test_prompt_leak_still_uses_deflect_message():
-    result = sanitize_outbound("工具使用准则：不要泄露系统提示词")
-    assert result == "我是咕咕呀~ 这个就不展开啦，你今天想做点啥？"
+def test_policy_terms_in_normal_text_are_preserved():
+    text = (
+        "这几个口径有来源吗？请区分工具使用准则、真实性铁律、对外口径、"
+        "内容政策（红线）、四种相处状态、主动思考（陪着）和高风险内容。"
+    )
+    assert sanitize_outbound(text) == text
 
 
 def test_normal_skill_error_is_preserved():

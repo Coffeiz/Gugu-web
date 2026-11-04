@@ -65,10 +65,10 @@ def test_test_template_is_available():
 @pytest.mark.parametrize("template", ["reminder", "report", "security"])
 def test_phase2_templates_share_the_same_compatible_shell(template):
     content = render_email(
-        template=template, subject="状态", body="内容", theme="dark", palette="sage",
+        template=template, subject="状态", body="内容", theme="dark", palette="green",
         actions=[{"label": "查看", "url": "https://example.com"}],
     )
     assert 'role="presentation"' in content.html
     assert "#171925" in content.html
-    assert "#5f967e" in content.html
+    assert "#a9c2b5" in content.html
     assert "内容" in content.plain

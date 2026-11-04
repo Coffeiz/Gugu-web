@@ -95,6 +95,13 @@ def test_wechat_media_url_falls_back_to_encrypt_query_param():
                    "?encrypted_query_param=abc%2Fdef%2B123%3D")
 
 
+def test_wechat_platform_timestamp_reads_ilink_create_time_ms():
+    assert wechat._wechat_platform_sent_ms({"create_time_ms": 1_760_000_123_456}) == 1_760_000_123_456
+    assert wechat._wechat_platform_sent_ms({"create_time_ms": "1760000123456"}) == 1_760_000_123_456
+    assert wechat._wechat_platform_sent_ms({"create_time_ms": True}) is None
+    assert wechat._wechat_platform_sent_ms({}) is None
+
+
 def test_wechat_media_url_empty_when_neither_present():
     assert wechat._wechat_media_url({}) == ""
 
@@ -141,6 +148,7 @@ async def test_wechat_quoted_image_is_ingested_and_enqueued(monkeypatch):
     produced = []
 
     msg = _wechat_text_msg(
+        create_time_ms=1_760_000_123_456,
         item_list=[
             {
                 "type": 1,
@@ -195,6 +203,7 @@ async def test_wechat_quoted_image_is_ingested_and_enqueued(monkeypatch):
     assert produced[0]["owner_user_id"] == "owner_1"
     assert produced[0]["platform_user_id"] == "wx_user_1"
     assert produced[0]["message_id"] == "ctx_1"
+    assert produced[0]["platform_sent_ms"] == 1_760_000_123_456
     assert produced[0]["chat_type"] == "c2c"
     assert produced[0]["wechat_group_id"] == ""
     assert produced[0]["context_token"] == "ctx_1"

@@ -54,14 +54,8 @@ def _bot_name(info: dict) -> str:
 
 
 async def _touch(user_id) -> None:
-    from app.core import events, redis as R
+    from app.core import events
     await events.publish(user_id, "im_channels", operation="refresh")
-    try:
-        await R.get_redis().publish("im:gateway:reload", "1")
-    except Exception as exc:
-        from app.core.redaction import diag_log
-
-        diag_log("app.api.telegram_connect.reload_gateway", exc)
 
 
 @router.post("")

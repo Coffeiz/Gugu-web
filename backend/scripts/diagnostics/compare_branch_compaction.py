@@ -201,7 +201,7 @@ async def run(args) -> int:
 
     settings = get_settings()
     session, rows = await load_session(args.session_id)
-    baseline_id = int(getattr(session, "baseline_message_id", 0) or 0)
+    baseline_id = int(getattr(session, "baseline_message_seq", 0) or 0)
     compressible, tail = split_history(rows, baseline_id, _RECENT_HISTORY_KEEP_CHARS)
     source_lines = text_lines(compressible)
     if not source_lines:
@@ -242,7 +242,7 @@ async def run(args) -> int:
         "session": {
             "id": session.id,
             "source": session.source,
-            "baseline_message_id": baseline_id,
+            "baseline_message_seq": baseline_id,
             "history_rows": len(rows),
             "compressible_rows": len(compressible),
             "kept_tail_rows": len(tail),

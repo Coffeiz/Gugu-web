@@ -113,12 +113,8 @@ def _media_item(message: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
-def bot_is_mentioned(message: dict[str, Any], *, bot_id: str, bot_username: str) -> bool:
-    reply = message.get("reply_to_message")
-    if isinstance(reply, dict):
-        reply_sender = reply.get("from")
-        if isinstance(reply_sender, dict) and str(reply_sender.get("id")) == str(bot_id):
-            return True
+def native_bot_is_mentioned(message: dict[str, Any], *, bot_id: str, bot_username: str) -> bool:
+    """只判断原生 mention/命令；引用 Bot 回复另作为可信 CONTINUE 关系处理。"""
     text = str(message.get("text") or message.get("caption") or "")
     entities = message.get("entities") or message.get("caption_entities") or []
     username = str(bot_username or "").lstrip("@").casefold()
@@ -143,6 +139,106 @@ def bot_is_mentioned(message: dict[str, Any], *, bot_id: str, bot_username: str)
             if username and match.group(1).casefold() == username:
                 return True
     return False
+
+
+def bot_is_mentioned(message: dict[str, Any], *, bot_id: str, bot_username: str) -> bool:
+    """兼容既有 reply_mentions 路由：原生 mention 或直接回复 Bot 都可触发。"""
+    if native_bot_is_mentioned(message, bot_id=bot_id, bot_username=bot_username):
+        return True
+    reply = message.get("reply_to_message")
+    reply_sender = reply.get("from") if isinstance(reply, dict) else None
+    return bool(isinstance(reply_sender, dict) and str(reply_sender.get("id")) == str(bot_id))
+
+
+def _other_mention_facts(message: dict[str, Any], *, bot_id: str, bot_username: str) -> tuple[bool | None, bool | None]:
+    entities = message.get("entities") or message.get("caption_entities")
+    if not isinstance(entities, list):
+        return None, None
+    text = str(message.get("text") or message.get("caption") or "")
+    username = str(bot_username or "").lstrip("@").casefold()
+    other_target = False
+    other_bot = False
+    recognized = False
+    unresolved = False
+    for entity in entities:
+        if not isinstance(entity, dict):
+            continue
+        kind = entity.get("type")
+        if kind == "text_mention":
+            target = entity.get("user")
+            if not isinstance(target, dict) or target.get("id") is None:
+                continue
+            recognized = True
+            if str(target.get("id")) != str(bot_id):
+                other_target = True
+                other_bot = other_bot or target.get("is_bot") is True
+        elif kind == "mention":
+            target_name = entity_text(text, entity).lstrip("@").casefold()
+            if not target_name:
+                continue
+            recognized = True
+            if not username or target_name != username:
+                unresolved = True
+        elif kind == "bot_command":
+            target_name = entity_text(text, entity)
+            match = re.fullmatch(r"/[^@\s]+@([A-Za-z0-9_]+)", target_name)
+            if match:
+                recognized = True
+                if username and match.group(1).casefold() != username:
+                    other_target = True
+                    other_bot = True
+    if unresolved:
+        return (other_target if other_target else None), (other_bot if other_bot else None)
+    return (other_target if recognized else None), (other_bot if recognized else None)
+
+
+def _attention_mention_facts(
+    message: dict[str, Any], *, bot_id: str, bot_username: str,
+) -> tuple[bool | None, bool | None, bool | None, bool]:
+    entities = message.get("entities")
+    if entities is None:
+        entities = message.get("caption_entities")
+    text = str(message.get("text") or message.get("caption") or "")
+    unresolved_text_mention = bool(re.search(r"(?<![A-Za-z0-9_])@[A-Za-z0-9_]+", text))
+    if not isinstance(entities, list):
+        return (None if unresolved_text_mention else False), None, None, unresolved_text_mention
+    current = False
+    other_bot = False
+    other_member = False
+    unresolved = False
+    username = str(bot_username or "").lstrip("@").casefold()
+    for entity in entities:
+        if not isinstance(entity, dict):
+            unresolved = True
+            continue
+        kind = entity.get("type")
+        if kind == "text_mention":
+            target = entity.get("user")
+            if not isinstance(target, dict) or target.get("id") is None:
+                unresolved = True
+                continue
+            if str(target.get("id")) == str(bot_id):
+                current = True
+            else:
+                other_member = True
+                if target.get("is_bot") is True:
+                    other_bot = True
+        elif kind == "mention":
+            target_name = entity_text(text, entity).lstrip("@").casefold()
+            if not target_name:
+                unresolved = True
+            elif username and target_name == username:
+                current = True
+            else:
+                unresolved = True
+        elif kind == "bot_command":
+            command = entity_text(text, entity)
+            match = re.fullmatch(r"/[^@\s]+@([A-Za-z0-9_]+)", command)
+            if match and username and match.group(1).casefold() != username:
+                other_bot = True
+    if unresolved:
+        return (current if current else None), (other_bot if other_bot else None), (other_member if other_member else None), True
+    return current, other_bot, other_member, False
 
 
 def normalize_message(update: dict[str, Any], *, bot_id: str, owner_id: str,
@@ -181,12 +277,20 @@ def normalize_message(update: dict[str, Any], *, bot_id: str, owner_id: str,
         command, args = parsed_command
         content = f"/{command} {args}".strip()
     reply = message.get("reply_to_message")
-    mentioned = bot_is_mentioned(
+    native_mentioned = native_bot_is_mentioned(
         message, bot_id=str(bot_platform_id or ""), bot_username=bot_username
     )
     # Telegram 的实际更新只包含平台投递给当前 Bot 的命令。命令实体缺失时
     # 仍使用已校验目标 Bot 的 parser 结果，不把定向给其他 Bot 的命令当触发。
-    mentioned = mentioned or parsed_command is not None
+    mentioned = native_mentioned or parsed_command is not None or bot_is_mentioned(
+        message, bot_id=str(bot_platform_id or ""), bot_username=bot_username
+    )
+    other_mention, other_bot_mention = _other_mention_facts(
+        message, bot_id=str(bot_platform_id or ""), bot_username=bot_username,
+    )
+    attention_mentions = _attention_mention_facts(
+        message, bot_id=str(bot_platform_id or ""), bot_username=bot_username,
+    )
     chat_id = chat.get("id") or ""
     attachments = [{**media, "source_attachment_index": 0}] if media else []
     quoted_attachments = []
@@ -217,6 +321,7 @@ def normalize_message(update: dict[str, Any], *, bot_id: str, owner_id: str,
         "message_id": str(message.get("message_id") or ""),
         "platform_event_id": str(update.get("update_id") or ""),
         "text": content,
+        "attention_raw_text": text,
         "attachments": attachments,
         "quoted_attachments": quoted_attachments,
         "attachment_source_message_id": (
@@ -224,8 +329,17 @@ def normalize_message(update: dict[str, Any], *, bot_id: str, owner_id: str,
             if media and message.get("message_id") is not None else None
         ),
         "bot_mentioned": mentioned,
+        "native_bot_mentioned": True if native_mentioned or parsed_command is not None else attention_mentions[0],
+        "mentions_other_member": attention_mentions[2] if attention_mentions[2] is not None else other_mention,
+        "mentions_other_bot": attention_mentions[1] if attention_mentions[1] is not None else other_bot_mention,
+        "has_unresolved_mention": attention_mentions[3],
         "group_mentioned": mentioned if chat_type != "private" else False,
         "reply_to_message_id": str(reply.get("message_id")) if isinstance(reply, dict) and reply.get("message_id") is not None else None,
+        "reply_to_platform_message_id": str(reply.get("message_id")) if isinstance(reply, dict) and reply.get("message_id") is not None else None,
+        "reply_target_sender_id": str(reply.get("from", {}).get("id")) if isinstance(reply, dict) and isinstance(reply.get("from"), dict) and reply.get("from", {}).get("id") is not None else None,
+        "reply_target_is_bot": reply.get("from", {}).get("is_bot") if isinstance(reply, dict) and isinstance(reply.get("from", {}).get("is_bot"), bool) else None,
+        "platform_sent_ms": int(message.get("date") * 1000) if isinstance(message.get("date"), (int, float)) and not isinstance(message.get("date"), bool) and message.get("date") > 0 else None,
+        "sender_is_bot": False,
         "quoted_text": quoted_text[:2000] or None,
         "telegram_command": parsed_command[0] if parsed_command else None,
         "received_at": message.get("date"),

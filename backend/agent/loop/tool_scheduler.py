@@ -5,6 +5,8 @@ import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
+from agent.runtime.cancellation import RunCancellationRequested
+
 MAX_PARALLEL_TOOL_CALLS = 5
 
 
@@ -35,7 +37,7 @@ async def run_parallel_dispatches(
         async with semaphore:
             try:
                 return await dispatch(call)
-            except asyncio.CancelledError:
+            except (asyncio.CancelledError, RunCancellationRequested):
                 raise
             except Exception as exc:
                 return exc
@@ -45,7 +47,7 @@ async def run_parallel_dispatches(
         tasks = [asyncio.create_task(run_one(call)) for call in batch]
         try:
             results.extend(await asyncio.gather(*tasks))
-        except asyncio.CancelledError as exc:
+        except (asyncio.CancelledError, RunCancellationRequested) as exc:
             for task in tasks:
                 if not task.done():
                     task.cancel()

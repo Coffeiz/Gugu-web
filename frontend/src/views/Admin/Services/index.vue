@@ -178,7 +178,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 .svc-gateways { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 5px; }
 .svc-gw {
   font-size: 10.5px; padding: 2px 7px; border-radius: 5px;
-  background: rgba(123,127,178,0.16); color: rgba(180,185,225,0.95);
+  background: color-mix(in srgb, var(--action-primary) 16%, transparent); color: rgba(180,185,225,0.95);
 }
 
 

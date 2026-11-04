@@ -1,7 +1,7 @@
 <template>
   <section class="config-card deep-research-card">
     <div class="card-head">
-      <div class="card-icon" style="--ic:rgba(123,127,178,0.15);--stroke:#7b7fb2">
+      <div class="card-icon" style="--ic:color-mix(in srgb,var(--action-primary) 15%,transparent);--stroke:var(--action-primary)">
         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="9" cy="9" r="6"/><path d="M17 17l-3.5-3.5"/></svg>
       </div>
       <div class="card-title-block">
@@ -77,7 +77,7 @@ const { t } = useI18n()
 .deep-research-card .btn-ghost { padding:6px 14px; border-radius:9px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.06); color:rgba(255,255,255,0.45); font-size:13px; cursor:pointer; transition:all .15s; }
 .deep-research-card .btn-ghost:hover { background:rgba(255,255,255,0.1); color:rgba(255,255,255,0.7); }
 .deep-research-card .btn-ghost:disabled { opacity:.5; cursor:default; }
-.deep-research-card .btn-primary { padding:6px 16px; border-radius:9px; border:none; background:linear-gradient(135deg,#7b7fb2,#9590c4); color:#fff; font-size:13px; font-weight:600; cursor:pointer; transition:opacity .15s; }
+.deep-research-card .btn-primary { padding:6px 16px; border-radius:9px; border:none; background:linear-gradient(135deg,var(--action-primary),var(--action-primary-hover)); color:#fff; font-size:13px; font-weight:600; cursor:pointer; transition:opacity .15s; }
 .deep-research-card .btn-primary:disabled { opacity:.5; cursor:default; }
 @media (max-width: 760px) {
   .deep-research-card .behavior-item { align-items:flex-start; flex-direction:column; }
@@ -88,6 +88,6 @@ const { t } = useI18n()
 }
 </style>
 <style scoped>
-.deep-research-card .btn-primary { background: var(--action-primary-bg); color: var(--content-on-accent); transition: background-color .15s; }
-.deep-research-card .btn-primary:hover:not(:disabled) { background: var(--action-primary-bg-hover); }
+.deep-research-card .btn-primary { background: var(--action-primary-bg); color: var(--content-on-accent); transition: filter var(--motion-hover-control) var(--motion-ease-standard); }
+.deep-research-card .btn-primary:hover:not(:disabled) { filter:brightness(1.1); }
 </style>

@@ -2,12 +2,7 @@
 from __future__ import annotations
 
 from urllib.parse import urlsplit
-import asyncio
-
-import httpx
-
-from app.core.pinned_http import PinnedHTTPTransport
-from app.core.url_security import resolve_pinned_ip
+from app.core.safe_egress import SafeEgressClient, SafeEgressError
 from ..search_http import read_search_response
 
 _ENDPOINT = "https://open.bigmodel.cn/api/paas/v4/web_search"
@@ -50,18 +45,14 @@ def input_schema(model_cfg=None) -> dict:
 async def search(model_cfg, args: dict) -> dict:
     if not supports(model_cfg):
         return {"error": "当前 GLM API 地址不支持智谱网络搜索"}
-    ip, error = await asyncio.to_thread(resolve_pinned_ip, _ENDPOINT)
-    if error or not ip:
-        return {"error": "智谱搜索服务地址校验失败"}
-    async with httpx.AsyncClient(
-        transport=PinnedHTTPTransport(ip), timeout=30.0,
-        follow_redirects=False, trust_env=False,
-    ) as client:
-        async with client.stream(
-            "POST",
+    try:
+        async with SafeEgressClient().stream(
             _ENDPOINT,
+            timeout=30.0,
             headers={"Authorization": f"Bearer {model_cfg.api_key}", "Content-Type": "application/json"},
-            json=args,
+            post_json=args,
         ) as response:
             data = await read_search_response(response, label="智谱网络搜索")
+    except SafeEgressError:
+        return {"error": "智谱搜索服务地址校验或连接失败"}
     return data

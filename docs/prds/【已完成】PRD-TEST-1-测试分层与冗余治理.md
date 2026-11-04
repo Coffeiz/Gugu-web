@@ -88,7 +88,7 @@ frontend/
 
 backend/
 ├── tests/test_*.py                   # 196 个：Python/FastAPI/Agent 主测试集
-├── scripts/diagnostics/test_*.py     # 18 个：诊断/观测脚本，不纳入 pytest 主门禁
+├── scripts/diagnostics/probe_*.py、compare_*.py # 人工诊断/观测脚本，不纳入 pytest 主门禁
 ├── ts/api/*.test.ts                  # TS API 测试
 ├── ts/packages/*/test/*.test.ts      # TS 共享包测试
 └── ts/workers/*/test/*.test.ts       # TS Worker 测试

@@ -16,6 +16,9 @@ export interface ChatMessage {
   id: number | string
   role: 'user' | 'assistant' | 'tool'
   content: string
+  platformUserId?: string | null
+  platformUserName?: string | null
+  platformBotUserId?: string | null
   createdAt?: string
   canonicalId?: number
   timelineOrder?: number
@@ -98,6 +101,10 @@ export interface TraceRun {
   spans?: TraceSpan[]
   rounds?: TraceRoundExport[]
 }
+
+export type TraceRunSummary = Pick<TraceRun,
+  'id' | 'session_key' | 'trace_id' | 'status' | 'started_at' | 'ended_at' | 'duration_ms' | 'usage'>
+  & Partial<Pick<TraceRun, 'input' | 'output' | 'attributes' | 'spans'>>
 
 export interface TraceRoundExport {
   round: number

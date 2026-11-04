@@ -76,12 +76,12 @@ Schema 本身从约 0.3–0.35k tokens 增加到约 12.0–12.7k tokens；简介
 
 ## 7. 可复现信息
 
-测试脚本：`backend/scripts/diagnostics/test_schema_accumulation_5tools.py`
+测试脚本：`backend/scripts/diagnostics/probe_schema_accumulation_5tools.py`
 
 运行口径：
 
 ```bash
-PYTHONPATH=. .venv/bin/python -m scripts.diagnostics.test_schema_accumulation_5tools \
+PYTHONPATH=. .venv/bin/python -m scripts.diagnostics.probe_schema_accumulation_5tools \
   --allow-real-llm --preset <minimax|glm|deepseek|qwen> \
   --rounds 20 --case-timeout 180 --output <脱敏结果路径>
 ```

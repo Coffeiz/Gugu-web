@@ -1,7 +1,7 @@
 """按 session baseline 读取连续对话历史。
 
-读取阶段只应用 baseline 水位和非 token 的条数安全上限；不做本地 token 估算，
-也不推进 baseline。预算、压缩和重试统一在 provider 请求边界处理。
+读取阶段只应用 baseline 水位，不做本地 token 估算，也不推进 baseline。
+预算、压缩和重试统一在 provider 请求边界处理。
 """
 from __future__ import annotations
 
@@ -9,12 +9,41 @@ import logging
 from contextvars import ContextVar
 from typing import Any
 
-from sqlalchemy import select
-
-from .tokens import BASELINE_HISTORY_MAX_MSGS, HISTORY_MAX_MSGS
-
+from sqlalchemy import case, func, or_, select
 
 logger = logging.getLogger(__name__)
+
+
+def _history_order_key(message):
+    """按有效事件时间恢复历史；同一毫秒内保持锚点前缀和会话顺序。"""
+    from datetime import datetime, timezone
+
+    # 排序采用消息实际发生/到达时间。早落库行被某轮消费时，sent_at 会改成
+    # 处理时间；它不能覆盖平台时间、网关接收时间或保留的 created_at 到达时间。
+    def _value(name):
+        return message.get(name) if isinstance(message, dict) else getattr(message, name, None)
+
+    platform_sent_ms = _value("im_platform_sent_ms") or _value("platform_sent_ms")
+    received_ms = _value("im_event_received_ms") or _value("event_received_ms")
+    if isinstance(platform_sent_ms, (int, float)) and platform_sent_ms > 0:
+        timestamp = datetime.fromtimestamp(platform_sent_ms / 1000, timezone.utc)
+    elif isinstance(received_ms, (int, float)) and received_ms > 0:
+        timestamp = datetime.fromtimestamp(received_ms / 1000, timezone.utc)
+    else:
+        timestamp = _value("created_at") or _value("sent_at")
+    if isinstance(timestamp, datetime):
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+        timestamp_key = timestamp.timestamp()
+    else:
+        timestamp_key = float("-inf")
+    received_ms = received_ms if isinstance(received_ms, (int, float)) else 0
+    anchor_seq = getattr(message, "history_anchor_seq", None)
+    sequence = int(anchor_seq or getattr(message, "conversation_seq", 0) or 0)
+    is_anchor_prefix = 0 if anchor_seq is not None else 1
+    return timestamp_key, received_ms, sequence, is_anchor_prefix, int(
+        getattr(message, "conversation_seq", 0) or 0
+    )
 
 _last_history_stats: ContextVar[dict[str, Any] | None] = ContextVar(
     "session_history_stats", default=None,
@@ -44,17 +73,17 @@ async def _hydrate_loaded_reference_contexts(db, session_id: int, history: list)
 async def load_session_history(
     db,
     session_id: int,
-    baseline_message_id: int = 0,
+    baseline_message_seq: int = 0,
     *,
     max_messages: int | None = None,
 ) -> list:
-    """有 baseline 时读取增量窗口；没有时最多恢复 100 条，按消息时间正序返回。
+    """读取 baseline 后的连续历史，按平台事件时间返回。
 
-    条数限制下推到数据库查询。读取窗口只保护当前 run，不推进 baseline；持久化
-    baseline 更新由 ``compress_conv`` 负责。无 baseline 时 summary 计入 100 条，
-    并始终保留在结果第一条，由 history builder 在发送边界规范化为普通 user 历史消息。
+    baseline 为 0 时从会话开头恢复；持久化 baseline 更新由 ``compress_conv``
+    负责。已有 summary 始终放在结果第一条。显式条数上限仅供诊断脚本构造样本。
     """
     from app.models import ConversationMessage
+    from agent.im.inbound_recovery import PENDING_USER_RUN_PREFIX
 
     summary_query = (
         select(ConversationMessage)
@@ -62,17 +91,24 @@ async def load_session_history(
             ConversationMessage.session_id == session_id,
             ConversationMessage.role == "summary",
         )
-        .order_by(ConversationMessage.created_at.desc(), ConversationMessage.id.desc())
+        .order_by(
+            func.coalesce(
+                ConversationMessage.history_anchor_seq,
+                ConversationMessage.conversation_seq,
+            ).desc(),
+            case((ConversationMessage.history_anchor_seq.is_not(None), 0), else_=1).desc(),
+            ConversationMessage.conversation_seq.desc(),
+        )
         .limit(1)
     )
     summary = list((await db.execute(summary_query)).scalars().all())
 
-    # summary 行自带本次压缩的真实覆盖边界（与摘要同一事务写入，covers_until_id）。
+    # summary 行自带本次压缩的真实覆盖边界（与摘要同一事务写入，covers_until_seq）。
     # 装载先读 session.baseline、后读 summary，两次读取之间可能隔着一次压缩落库，
     # 形成「新摘要 + 旧 baseline」竞态；取两者较大者作有效水位，防止把摘要已
     # 覆盖的原文重复拼进上下文。旧摘要行没有该水位时退回传入的 baseline。
-    passed_baseline = int(baseline_message_id or 0)
-    covers_until = int(getattr(summary[0], "covers_until_id", 0) or 0) if summary else 0
+    passed_baseline = int(baseline_message_seq or 0)
+    covers_until = int(getattr(summary[0], "covers_until_seq", 0) or 0) if summary else 0
     effective_baseline = max(passed_baseline, covers_until)
     if covers_until > passed_baseline:
         logger.info(
@@ -80,47 +116,62 @@ async def load_session_history(
             session_id, passed_baseline, covers_until,
         )
 
-    # 没有 baseline 的首次恢复必须让数据库查询本身有界，不能全量读取后再切片。
-    # 已有 baseline 时保持原有 500 条增量窗口；显式较小上限仍可收紧窗口。
-    context_limit = (
-        BASELINE_HISTORY_MAX_MSGS if effective_baseline > 0 else HISTORY_MAX_MSGS
-    )
-    if max_messages is not None:
-        context_limit = min(context_limit, max(1, int(max_messages)))
-    # 摘要也是送给模型的一条上下文消息，计入无 baseline 的统一 100 条上限。
-    query_limit = max(0, context_limit - (len(summary) if effective_baseline <= 0 else 0))
-
     query = (
         select(ConversationMessage)
         .where(
             ConversationMessage.session_id == session_id,
             ConversationMessage.role != "summary",
+            # 早落库行（已入库但还没被任何 run 消费）不进历史：这一轮的正文本就
+            # 是当前这条消息，再入史会让同一段话在上下文里出现两次。
+            or_(
+                ConversationMessage.run_id.is_(None),
+                ConversationMessage.run_id.notlike(PENDING_USER_RUN_PREFIX + "%"),
+            ),
         )
-        .order_by(ConversationMessage.created_at.desc(), ConversationMessage.id.desc())
+        # 先按会话序号读取候选行；最终历史再按平台发送时间排序，旧消息和
+        # 没有平台时间的消息则由事件到达时间、入库时间和会话序号稳定回退。
+        .order_by(
+            func.coalesce(
+                ConversationMessage.history_anchor_seq,
+                ConversationMessage.conversation_seq,
+            ).desc(),
+            case((ConversationMessage.history_anchor_seq.is_not(None), 0), else_=1).desc(),
+            ConversationMessage.conversation_seq.desc(),
+        )
     )
     if effective_baseline > 0:
         query = query.where(
-            ConversationMessage.id > effective_baseline
+            func.coalesce(
+                ConversationMessage.history_anchor_seq,
+                ConversationMessage.conversation_seq,
+            ) > effective_baseline
         )
-    if query_limit:
-        query = query.limit(query_limit)
-        newest = list((await db.execute(query)).scalars().all())
-    else:
-        newest = []
-    # 不在数据库读取阶段使用本地 token 估算。历史只受非 token 的条数安全上限
-    # 保护；真正的预算、压缩和重试统一由 provider 边界处理。
-    history = list(reversed(newest))
+    newest = list((await db.execute(query)).scalars().all())
+    # 会话序号用于 baseline 和稳定回退，不代表群聊平台上的实际发生顺序。
+    # provider 历史和 UI 均以平台发送时间为先，缺失时再回退事件到达/入库时间。
+    history = sorted(newest, key=_history_order_key)
+    if max_messages is not None:
+        limit = max(1, int(max_messages))
+        if effective_baseline <= 0:
+            limit = max(0, limit - len(summary))
+        history = history[-limit:] if limit else []
     await _hydrate_loaded_reference_contexts(db, session_id, history)
     _last_history_stats.set({
         "history_loaded_count": len(newest),
         "history_selected_count": len(history) + len(summary),
         "history_selection": "provider-authoritative",
         "history_summary_count": len(summary),
-        "history_baseline_message_id": passed_baseline,
-        "history_effective_baseline_id": effective_baseline,
-        "history_summary_covers_until_id": covers_until or None,
-        "history_oldest_selected_id": getattr(history[0], "id", None) if history else None,
-        "history_newest_selected_id": getattr(history[-1], "id", None) if history else None,
+        "history_baseline_message_seq": passed_baseline,
+        "history_effective_baseline_seq": effective_baseline,
+        "history_summary_covers_until_seq": covers_until or None,
+        "history_oldest_selected_seq": (
+            getattr(history[0], "history_anchor_seq", None)
+            or getattr(history[0], "conversation_seq", None)
+        ) if history else None,
+        "history_newest_selected_seq": (
+            getattr(history[-1], "history_anchor_seq", None)
+            or getattr(history[-1], "conversation_seq", None)
+        ) if history else None,
     })
     return summary + history
 

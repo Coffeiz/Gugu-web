@@ -17,7 +17,7 @@ from uuid import UUID
 from typing import Literal
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -353,6 +353,14 @@ def _invalidate(user_id, server_id) -> None:
     mcp_manager.invalidate_server(user_id, server_id)
 
 
+def _schedule_schema_snapshot(background_tasks: BackgroundTasks | None, user_id) -> None:
+    if background_tasks is None:
+        return
+    from agent.mcp.manager import mcp_manager
+
+    background_tasks.add_task(mcp_manager.refresh_user_tool_schema_snapshot, user_id)
+
+
 @router.get("/servers")
 async def list_servers(user: User = Depends(get_current_user),
                        db: AsyncSession = Depends(get_db)):
@@ -378,7 +386,8 @@ async def list_servers(user: User = Depends(get_current_user),
 
 
 @router.post("/servers")
-async def create_server(payload: McpServerCreate, user: User = Depends(get_current_user),
+async def create_server(payload: McpServerCreate, background_tasks: BackgroundTasks = None,
+                        user: User = Depends(get_current_user),
                         db: AsyncSession = Depends(get_db)):
     settings = get_settings()
     name = _validate_name(payload.name)
@@ -433,6 +442,7 @@ async def create_server(payload: McpServerCreate, user: User = Depends(get_curre
     await db.commit()
     await db.refresh(row)
     _log.info("MCP server 配置已保存：user=%s server=%s", str(user.id)[:8], name)
+    _schedule_schema_snapshot(background_tasks, user.id)
     return _server_view(row, settings)
 
 
@@ -451,6 +461,7 @@ async def _get_owned_server(db: AsyncSession, server_id: str, user: User) -> Use
 
 @router.patch("/servers/{server_id}")
 async def update_server(server_id: str, payload: McpServerPatch,
+                        background_tasks: BackgroundTasks = None,
                         user: User = Depends(get_current_user),
                         db: AsyncSession = Depends(get_db)):
     row = await _get_owned_server(db, server_id, user)
@@ -504,11 +515,13 @@ async def update_server(server_id: str, payload: McpServerPatch,
     await db.refresh(row)
     _invalidate(user.id, row.id)
     _log.info("MCP server 配置已更新：user=%s server=%s", str(user.id)[:8], row.name)
+    _schedule_schema_snapshot(background_tasks, user.id)
     return _server_view(row, settings)
 
 
 @router.delete("/servers/{server_id}")
-async def delete_server(server_id: str, user: User = Depends(get_current_user),
+async def delete_server(server_id: str, background_tasks: BackgroundTasks = None,
+                        user: User = Depends(get_current_user),
                         db: AsyncSession = Depends(get_db)):
     row = await _get_owned_server(db, server_id, user)
     name = row.name
@@ -516,6 +529,7 @@ async def delete_server(server_id: str, user: User = Depends(get_current_user),
     await db.commit()
     _invalidate(user.id, row.id)
     _log.info("MCP server 配置已删除：user=%s server=%s", str(user.id)[:8], name)
+    _schedule_schema_snapshot(background_tasks, user.id)
     return {"deleted": True, "id": server_id}
 
 
@@ -535,6 +549,7 @@ async def test_connection(server_id: str, user: User = Depends(get_current_user)
             "tools": [],
             **connection_error_details(runtime),
         }
+    await mcp_manager.refresh_user_tool_schema_snapshot(user.id)
     tool_names = [meta.tool_name for meta in runtime.metas.values()]
     return {"ok": True, "tool_count": len(tool_names), "tools": tool_names[:64]}
 

@@ -2,13 +2,11 @@
 from __future__ import annotations
 
 from urllib.parse import urlsplit
-import asyncio
 import json
 
 import httpx
 
-from app.core.pinned_http import PinnedHTTPTransport
-from app.core.url_security import resolve_pinned_ip
+from app.core.safe_egress import SafeEgressClient
 from .search_limits import MAX_RESPONSE_BYTES, limit_search_result
 
 
@@ -54,15 +52,14 @@ async def post_search(endpoint: str, api_key: str, payload: dict, *, label: str,
     """调用已由 Provider 选定的端点；上游错误正文不进入工具结果。"""
     if not api_key.strip():
         return {"error": f"{label}缺少有效 API Key"}
-    ip, error = await asyncio.to_thread(resolve_pinned_ip, endpoint)
-    if error or not ip:
-        return {"error": f"{label}服务地址校验失败"}
     authorization = f"Bearer {api_key}" if auth_header == "Authorization" else api_key
-    async with httpx.AsyncClient(
-        transport=PinnedHTTPTransport(ip), timeout=httpx.Timeout(connect=10, read=60, write=10, pool=5),
-        follow_redirects=False, trust_env=False,
-    ) as client:
-        async with client.stream(
-            "POST", endpoint, headers={auth_header: authorization, "Content-Type": "application/json"}, json=payload,
+    try:
+        async with SafeEgressClient().stream(
+            endpoint,
+            timeout=httpx.Timeout(connect=10, read=60, write=10, pool=5),
+            headers={auth_header: authorization, "Content-Type": "application/json"},
+            post_json=payload,
         ) as response:
             return await read_search_response(response, label=label)
+    except Exception:
+        return {"error": f"{label}服务地址校验或连接失败"}

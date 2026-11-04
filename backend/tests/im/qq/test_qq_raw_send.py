@@ -1,3 +1,5 @@
+import asyncio
+
 from agent.gateway.qq import client as qq_client, events as qq_events, outbound as qq_outbound, runtime as qq_runtime
 
 
@@ -78,7 +80,7 @@ async def test_stale_group_interaction_is_acknowledged_in_original_group(monkeyp
         "data": {"action_data": "17:opaque-token"},
     }, "bot-1", "019eec39-4f5e-73cf-817d-60c0e0b640a8")
 
-    assert protocol_acks == [("bot-1", "interaction-1", 3)]
+    assert protocol_acks == [("bot-1", "interaction-1", 0)]
     assert user_replies == [(
         "bot-1", "group", "group-1", "这个操作已过期或已经处理过了。", None,
     )]
@@ -302,7 +304,7 @@ async def test_post_reraises_non_markdown_errors(monkeypatch):
         assert "boom" in str(e)
 
 
-async def test_send_c2c_clears_token_cache_and_retries_on_failure(monkeypatch):
+async def test_send_c2c_clears_token_cache_without_retrying_ambiguous_failure(monkeypatch):
     qq_client._send_tokens["bot-1"] = {"token": "stale", "base": "x", "expires_at": 0}
     attempts = []
 
@@ -316,8 +318,8 @@ async def test_send_c2c_clears_token_cache_and_retries_on_failure(monkeypatch):
 
     ok = await qq_outbound.send_c2c("ou_1", "hi", "msg-1", "bot-1")
 
-    assert ok is True
-    assert len(attempts) == 2
+    assert ok is False
+    assert len(attempts) == 1
     assert "bot-1" not in qq_client._send_tokens
 
 
@@ -343,59 +345,139 @@ async def test_send_token_uses_cache_until_expiry(monkeypatch):
     assert fetch_count == 1
 
 
-async def test_send_file_base64_mode_uploads_then_sends_media(monkeypatch):
+async def test_send_token_refresh_is_singleflight(monkeypatch):
+    qq_client._send_tokens.pop("bot-singleflight", None)
+    creds_count = 0
+    token_count = 0
+    token_started = asyncio.Event()
+
+    async def fake_creds(channel_id):
+        nonlocal creds_count
+        creds_count += 1
+        return "app-1", "secret-1", False
+
+    async def fake_token_ttl(app_id, secret):
+        nonlocal token_count
+        token_count += 1
+        token_started.set()
+        await asyncio.sleep(0.01)
+        return "singleflight-token", 7200
+
+    monkeypatch.setattr(qq_client, "_creds_by_id", fake_creds)
+    monkeypatch.setattr(qq_client, "_qq_access_token_with_ttl", fake_token_ttl)
+
+    results = await asyncio.gather(
+        *(qq_client._send_token("bot-singleflight") for _ in range(10))
+    )
+
+    assert token_started.is_set()
+    assert results == [("singleflight-token", qq_client._QQ_API_BASE)] * 10
+    assert creds_count == 1
+    assert token_count == 1
+
+
+async def test_qq_outbound_prewarm_opens_connection_once_per_cooldown(monkeypatch):
+    base = qq_client._QQ_API_BASE
+    qq_client._loop_state(qq_client._qq_api_last_activity).pop(base, None)
+    # CI runner 的 monotonic 时钟可能刚从 0 开始；空闲记录必须视为“从未活动”，
+    # 不能误判成刚在冷却期内发过请求。
+    monkeypatch.setattr(qq_client.time, "monotonic", lambda: 100.0)
+    requests = []
+
+    class FakeResponse:
+        status = 200
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def read(self):
+            return b"{}"
+
+    class FakeSession:
+        def get(self, url, **kwargs):
+            requests.append((url, kwargs))
+            return FakeResponse()
+
+    async def fake_token(_channel_id):
+        return "token", base
+
+    async def fake_session():
+        return FakeSession()
+
+    monkeypatch.setattr(qq_client, "_send_token", fake_token)
+    monkeypatch.setattr(qq_client, "_get_qq_http_session", fake_session)
+
+    await qq_client._prewarm_qq_outbound("bot-prewarm")
+    await qq_client._prewarm_qq_outbound("bot-prewarm")
+
+    assert len(requests) == 1
+    assert requests[0][0] == f"{base}/gateway"
+
+
+async def test_send_file_uploads_then_sends_media(monkeypatch):
+    from agent.gateway.qq import media_upload
+
     monkeypatch.setattr(qq_outbound, "_next_seq", _fake_next_seq)
     calls = []
 
+    async def fake_upload(channel_id, target, openid, file_type, data, *, file_name):
+        calls.append((channel_id, target, openid, file_type, data, file_name))
+        return {"file_info": "media-token-abc"}
+
     async def fake_request(channel_id, method, path, json_body=None, **kw):
-        calls.append((path, json_body))
-        if path.endswith("/files"):
-            return {"file_info": "media-token-abc"}
+        calls.append((path, json_body, kw))
         return {}
 
     monkeypatch.setattr(qq_outbound, "_qq_request", fake_request)
+    monkeypatch.setattr(media_upload, "upload_qq_media", fake_upload)
 
     ok = await qq_outbound.send_file("ou_1", b"image-bytes", "photo", "png", "bot-1", "msg-1")
 
     assert ok is True
-    assert calls[0][0] == "/v2/users/ou_1/files"
-    assert calls[0][1]["file_data"] == "aW1hZ2UtYnl0ZXM="
+    assert calls[0] == ("bot-1", "users", "ou_1", 1, b"image-bytes", "photo.png")
     assert calls[1][0] == "/v2/users/ou_1/messages"
     assert calls[1][1]["media"] == {"file_info": "media-token-abc"}
     assert calls[1][1]["msg_type"] == 7
 
 
 async def test_send_group_file_uses_group_media_endpoints(monkeypatch):
+    from agent.gateway.qq import media_upload
+
     monkeypatch.setattr(qq_outbound, "_next_seq", _fake_next_seq)
     calls = []
 
+    async def fake_upload(channel_id, target, openid, file_type, data, *, file_name):
+        calls.append(("upload", channel_id, target, openid, file_type, data, file_name))
+        return {"file_info": "group-media-token"}
+
     async def fake_request(channel_id, method, path, json_body=None, **kw):
         calls.append((path, json_body))
-        if path.endswith("/files"):
-            return {"file_info": "group-media-token"}
         return {}
 
     monkeypatch.setattr(qq_outbound, "_qq_request", fake_request)
+    monkeypatch.setattr(media_upload, "upload_qq_media", fake_upload)
 
     ok = await qq_outbound.send_file(
         "group-1", b"image-bytes", "photo", "png", "bot-1", "msg-1", group=True,
     )
 
     assert ok is True
-    assert calls[0][0] == "/v2/groups/group-1/files"
-    assert calls[0][1]["file_data"] == "aW1hZ2UtYnl0ZXM="
+    assert calls[0] == ("upload", "bot-1", "groups", "group-1", 1, b"image-bytes", "photo.png")
     assert calls[1][0] == "/v2/groups/group-1/messages"
     assert calls[1][1]["media"] == {"file_info": "group-media-token"}
 
 
 async def test_send_group_file_falls_back_to_active_message_when_msg_id_expired(monkeypatch):
+    from agent.gateway.qq import media_upload
+
     monkeypatch.setattr(qq_outbound, "_next_seq", _fake_next_seq)
     calls = []
 
     async def fake_request(channel_id, method, path, json_body=None, **kw):
         calls.append((path, json_body))
-        if path.endswith("/files"):
-            return {"file_info": "group-media-token"}
         if json_body.get("msg_id"):
             raise qq_client.QQAPIError(
                 "POST", path, 400,
@@ -403,7 +485,12 @@ async def test_send_group_file_falls_back_to_active_message_when_msg_id_expired(
             )
         return {}
 
+    async def fake_upload(*_args, **_kwargs):
+        calls.append(("upload", None))
+        return {"file_info": "group-media-token"}
+
     monkeypatch.setattr(qq_outbound, "_qq_request", fake_request)
+    monkeypatch.setattr(media_upload, "upload_qq_media", fake_upload)
 
     ok = await qq_outbound.send_file(
         "group-1", b"document-bytes", "report", "pdf", "bot-1", "expired-msg", group=True,
@@ -411,10 +498,155 @@ async def test_send_group_file_falls_back_to_active_message_when_msg_id_expired(
 
     assert ok is True
     assert len(calls) == 3
-    assert calls[0][0] == "/v2/groups/group-1/files"
+    assert calls[0] == ("upload", None)
     assert calls[1][1]["msg_id"] == "expired-msg"
     assert "msg_id" not in calls[2][1]
     assert calls[2][1]["media"] == {"file_info": "group-media-token"}
+
+
+async def test_qq_large_media_uses_chunk_upload_without_base64_body(monkeypatch):
+    from agent.gateway.qq import media_upload
+
+    calls = []
+
+    async def fake_request(channel_id, method, path, json_body=None, **kwargs):
+        calls.append((method, path, json_body, kwargs))
+        if path.endswith("/upload_prepare"):
+            return {
+                "upload_id": "upload-1",
+                "block_size": str(3 * 1024 * 1024),
+                "parts": [
+                    {"index": 1, "block_size": str(3 * 1024 * 1024), "presigned_url": "https://bucket.cos.ap-guangzhou.myqcloud.com/part-1"},
+                    {"index": 2, "block_size": str(3 * 1024 * 1024), "presigned_url": "https://bucket.cos.ap-guangzhou.myqcloud.com/part-2"},
+                ],
+                "upload_config": {"concurrency": 2, "retry_delay": 1, "retry_timeout": 20},
+            }
+        if path.endswith("/upload_part_finish"):
+            return {}
+        if path.endswith("/files"):
+            return {"file_info": "chunked-file-info"}
+        raise AssertionError(f"unexpected request path: {path}")
+
+    class FakeResponse:
+        status = 200
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+    class FakeSession:
+        def __init__(self):
+            self.uploaded_parts = []
+
+        def put(self, url, *, data, **kwargs):
+            self.uploaded_parts.append((url, bytes(data), kwargs))
+            return FakeResponse()
+
+    fake_session = FakeSession()
+    monkeypatch.setattr(media_upload, "_qq_request", fake_request)
+    monkeypatch.setattr(media_upload, "_get_qq_http_session", lambda: _async_value(fake_session))
+
+    data = b"x" * (5 * 1024 * 1024)
+    result = await media_upload.upload_qq_media(
+        "bot-1", "groups", "group-1", 4, data, file_name="report.pdf",
+    )
+
+    assert result == {"file_info": "chunked-file-info"}
+    assert calls[0][1] == "/v2/groups/group-1/upload_prepare"
+    assert calls[0][2]["file_size"] == len(data)
+    assert "file_data" not in calls[0][2]
+    assert [call[1] for call in calls[1:]] == [
+        "/v2/groups/group-1/upload_part_finish",
+        "/v2/groups/group-1/upload_part_finish",
+        "/v2/groups/group-1/files",
+    ]
+    assert sum(len(part[1]) for part in fake_session.uploaded_parts) == len(data)
+    assert all(part[2]["allow_redirects"] is False for part in fake_session.uploaded_parts)
+
+
+async def test_qq_small_media_also_uses_server_defined_chunk_upload(monkeypatch):
+    """小附件也走分块协议，并严格按 QQ 返回的 512 KiB 分片描述上传。"""
+    from agent.gateway.qq import media_upload
+
+    calls = []
+
+    async def fake_request(channel_id, method, path, json_body=None, **kwargs):
+        calls.append((path, json_body))
+        if path.endswith("/upload_prepare"):
+            return {
+                "upload_id": "small-upload",
+                "block_size": "524288",
+                "parts": [{
+                    "index": 1,
+                    "block_size": "524288",
+                    "presigned_url": "https://bucket.cos.ap-guangzhou.myqcloud.com/part-1",
+                }],
+                "upload_config": {"concurrency": 1},
+            }
+        if path.endswith("/upload_part_finish"):
+            return {}
+        if path.endswith("/files"):
+            return {"file_info": "small-chunked-file-info"}
+        raise AssertionError(f"unexpected request path: {path}")
+
+    class FakeResponse:
+        status = 200
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+    class FakeSession:
+        def __init__(self):
+            self.uploaded_parts = []
+
+        def put(self, url, *, data, **kwargs):
+            self.uploaded_parts.append((url, bytes(data), kwargs))
+            return FakeResponse()
+
+    fake_session = FakeSession()
+    monkeypatch.setattr(media_upload, "_qq_request", fake_request)
+    monkeypatch.setattr(media_upload, "_get_qq_http_session", lambda: _async_value(fake_session))
+
+    data = b"small image"
+    result = await media_upload.upload_qq_media(
+        "bot-1", "groups", "group-1", 1, data, file_name="photo.png",
+    )
+
+    assert result == {"file_info": "small-chunked-file-info"}
+    assert calls[0][0] == "/v2/groups/group-1/upload_prepare"
+    assert calls[0][1]["file_size"] == len(data)
+    assert "file_data" not in calls[0][1]
+    assert fake_session.uploaded_parts[0][1] == data
+
+
+async def test_qq_media_upload_timeout_is_not_retried(monkeypatch):
+    from agent.gateway.qq import media_upload
+
+    attempts = []
+
+    async def timeout_upload(*_args, **_kwargs):
+        attempts.append(1)
+        raise TimeoutError("remote result unknown")
+
+    async def unexpected_message(*_args, **_kwargs):
+        raise AssertionError("upload timeout must not continue to message send")
+
+    monkeypatch.setattr(media_upload, "upload_qq_media", timeout_upload)
+    monkeypatch.setattr(qq_outbound, "_qq_request", unexpected_message)
+
+    result = await qq_outbound.send_file("group-1", b"image", "photo", "png", "bot-1", group=True)
+
+    assert result is False
+    assert attempts == [1]
+
+
+async def _async_value(value):
+    return value
 
 
 def test_group_mention_upgrades_known_members_only():

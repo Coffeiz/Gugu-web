@@ -75,7 +75,8 @@ def build_split(prompt_name: str, user_name: str, projects: list, events: list,
                 user_tz=None, im_message_format: str | None = None,
                 notes: list[dict] | None = None,
                 knowledge: list[dict] | None = None,
-                include_knowledge: bool = True) -> tuple[str, str, str]:
+                include_knowledge: bool = True,
+                after_base_prompt: str = "") -> tuple[str, str, str]:
     """将 system prompt 拆分为静态部分和动态部分。
 
     静态部分（每轮重建）：人格/基础 policy/政策/工具使用协议/风格/全部内置 Skill 索引
@@ -93,6 +94,7 @@ def build_split(prompt_name: str, user_name: str, projects: list, events: list,
     # 仍只在 snapshot 重建时读取。
     static_text = build_static_prompt(
         prompt_name, user_name, skills=skills, style_prefs=style_prefs,
+        after_base_prompt=after_base_prompt,
         current_date=current_date_text(user_tz),
     )
 

@@ -26,7 +26,7 @@
       <template v-else>
         <div class="done-box">
           <div class="done-icon">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#7b7fb2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--action-primary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
               <polyline points="22,6 12,13 2,6"/>
             </svg>
@@ -96,7 +96,7 @@ async function handleSubmit() {
 }
 .glow-1 {
   width: 500px; height: 500px; top: -120px; left: -100px;
-  background: radial-gradient(circle, rgba(123,127,178,0.18) 0%, transparent 65%);
+  background: radial-gradient(circle, color-mix(in srgb, var(--action-primary) 18%, transparent) 0%, transparent 65%);
 }
 .glow-2 {
   width: 380px; height: 380px; bottom: -100px; right: -80px;
@@ -132,8 +132,8 @@ async function handleSubmit() {
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 .field input:focus {
-  border-color: rgba(123,127,178,0.5);
-  box-shadow: 0 0 0 3px rgba(123,127,178,0.12), inset 0 1px 3px rgba(80,90,110,0.06);
+  border-color: color-mix(in srgb, var(--action-primary) 50%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--action-primary) 12%, transparent), inset 0 1px 3px rgba(80,90,110,0.06);
 }
 .field input::placeholder { color: #b0b4c4; }
 .field input:disabled { opacity: 0.5; }
@@ -149,7 +149,7 @@ async function handleSubmit() {
 .done-box { text-align: center; padding: 8px 0 4px; }
 .done-icon {
   width: 52px; height: 52px; margin: 0 auto 14px; border-radius: 15px;
-  background: rgba(123,127,178,0.1);
+  background: color-mix(in srgb, var(--action-primary) 10%, transparent);
   display: flex; align-items: center; justify-content: center;
 }
 .done-text { font-size: 14px; color: #1e2028; line-height: 1.6; margin: 0 0 8px; }
@@ -159,6 +159,6 @@ async function handleSubmit() {
   margin-top: 22px; text-align: center;
   font-size: 13px; color: #8a8fa8;
 }
-.card-footer a { color: #7b7fb2; font-weight: 600; text-decoration: none; }
+.card-footer a { color: var(--action-primary); font-weight: 600; text-decoration: none; }
 .card-footer a:hover { text-decoration: underline; }
 </style>

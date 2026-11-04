@@ -203,7 +203,7 @@ async def load_im_channels(db, user_id) -> dict:
     return channels
 
 
-async def load_style_prefs(db, user_id) -> dict:
+async def load_style_prefs(db, user_id, *, group_chat: bool = False) -> dict:
     """读取用户回复风格偏好（reply_tone / reply_length），缺失键直接省略。
     （emoji 风格不开放给用户选，由 persona 统一管，见 builder._style_block。）"""
     from app.models import UserPreferences
@@ -214,15 +214,42 @@ async def load_style_prefs(db, user_id) -> dict:
     if prefs is None:
         return {}
     data = prefs.data
-    from app.services.personality_preferences import read_personality_file, preference_revision
-    result = {k: data[k] for k in ("reply_tone", "reply_length") if data.get(k)}
+    from app.services.personality_preferences import preference_revision, read_reply_style_file
+    result = {k: data[k] for k in ("reply_tone", "reply_length", "custom_reply_style_enabled") if data.get(k)}
+    custom_style = read_reply_style_file(user_id)
+    if custom_style is None:
+        # 尚未访问偏好页的旧账号仍从 JSON 读取；偏好 API 会在首次访问时迁入文件并清理旧键。
+        custom_style = data.get("custom_reply_style")
+    if custom_style:
+        result["custom_reply_style"] = custom_style
     if data.get("locale") in {"zh-CN", "ja-JP", "en-US"}:
         result["locale"] = data["locale"]
-    personality = read_personality_file(user_id) if data.get("personality_preference_enabled", False) else None
+    result.update(_load_personality_preferences(user_id, data, group_chat=group_chat))
+    result["personality_preference_revision"] = preference_revision(data)
+    return result
+
+
+def _load_personality_preferences(user_id, data: dict, *, group_chat: bool) -> dict:
+    from app.services.personality_preferences import (
+        read_group_personality_file,
+        read_personality_file,
+    )
+
+    if group_chat:
+        enabled = bool(data.get("group_personality_preference_enabled", False))
+        personality = read_group_personality_file(user_id) if enabled else None
+        result: dict[str, object] = {
+            "group_personality_preference_enabled": bool(personality and enabled),
+            "group_chat": True,
+        }
+        if personality:
+            result["group_personality_preference"] = personality
+        return result
+    enabled = bool(data.get("personality_preference_enabled", False))
+    personality = read_personality_file(user_id) if enabled else None
+    result: dict[str, object] = {"personality_preference_enabled": bool(personality and enabled)}
     if personality:
         result["personality_preference"] = personality
-    result["personality_preference_enabled"] = bool(personality and data.get("personality_preference_enabled", False))
-    result["personality_preference_revision"] = preference_revision(data)
     return result
 
 

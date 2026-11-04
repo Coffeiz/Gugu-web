@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
-import { cleanupMarkdownMermaid, renderMarkdownMermaid, renderMermaidSvg } from '@/utils/mermaidRenderer'
-import type { MermaidInteractionLabels } from '@/utils/mermaidInteraction'
-import { createMermaidThemeConfig, MERMAID_NEUTRAL_THEME_COLORS } from '../../../backend/ts/workers/mermaid-renderer/theme.mjs'
+import { cleanupMarkdownMermaid, renderMarkdownMermaid, renderMermaidSvg } from '@/utils/chart/mermaidRenderer'
+import type { MermaidInteractionLabels } from '@/utils/chart/mermaidInteraction'
+import { createMermaidThemeConfig, MERMAID_NEUTRAL_THEME_COLORS } from '../../../backend/ts/workers/chart-renderer/theme.mjs'
 
 const mermaidMock = vi.hoisted(() => ({
   initialize: vi.fn(),
@@ -55,13 +55,17 @@ describe('共享 Mermaid 渲染', () => {
       webTheme.themeVariables.fontFamily,
     ).themeCSS)
     const imTheme = createMermaidThemeConfig(MERMAID_NEUTRAL_THEME_COLORS, 'Inter, sans-serif')
-    expect(imTheme.themeCSS).toBe(webTheme.themeCSS)
+    expect(imTheme.themeCSS).toContain('.node rect { rx: 12px; }')
+    expect(imTheme.themeCSS).toContain('.nodeLabel, .edgeLabel { font-weight: 500; }')
+    expect(imTheme.themeCSS).toContain('fill: #eff0f2; stroke: rgba(86, 91, 100, 0.34);')
+    expect(webTheme.themeCSS).toContain('.node rect { rx: 12px; }')
+    expect(webTheme.themeCSS).toContain('.nodeLabel, .edgeLabel { font-weight: 500; }')
     expect(imTheme.themeVariables).toMatchObject({
       background: '#ffffff',
-      primaryTextColor: '#272532',
-      nodeTextColor: '#272532',
-      textColor: '#272532',
-      lineColor: '#67647a',
+      primaryTextColor: '#272a30',
+      nodeTextColor: '#272a30',
+      textColor: '#272a30',
+      lineColor: '#626771',
     })
     const darkTheme = createMermaidThemeConfig({
       ...MERMAID_NEUTRAL_THEME_COLORS,

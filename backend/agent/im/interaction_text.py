@@ -2,6 +2,28 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import UUID
+
+
+_MCP_SECRET_CHECKED_MARKER = object()
+
+
+def _normalize_user_id(value: Any) -> UUID | None:
+    """把网关 payload 里的 owner_user_id 归一成 ORM 用的 UUID 主键。
+
+    网关传的是字符串（各平台的 owner 来自环境变量），而 ConversationSession.user_id
+    与 InteractionRequest.user_id 都是 UUID 列：直接拿字符串做等值比较会在 SQL 绑定
+    阶段抛 ``'str' object has no attribute 'hex'``，交互快速通道会被整体吞掉。
+    归一失败一律当作"查不到归属"，返回 None 交给调用方按无交互处理。
+    """
+    if not value:
+        return None
+    if isinstance(value, UUID):
+        return value
+    try:
+        return UUID(str(value))
+    except (TypeError, ValueError, AttributeError):
+        return None
 
 
 async def _candidate_session_ids(db, *, user_id: Any, session_id: int | None,
@@ -43,7 +65,8 @@ async def has_active_interaction(*, user_id: Any, platform: str,
                                  chat_id: str | None = None,
                                  platform_user_id: str | None = None) -> bool:
     """判断当前 IM 作用域是否有可被文本回复的活动交互。"""
-    if not user_id or not platform or not platform_user_id:
+    normalized_user_id = _normalize_user_id(user_id)
+    if normalized_user_id is None or not platform or not platform_user_id:
         return False
     from app.db import session as db_session
     from app.models import InteractionRequest
@@ -55,13 +78,13 @@ async def has_active_interaction(*, user_id: Any, platform: str,
         return False
     async with db_session._SessionLocal() as db:
         candidate_ids = await _candidate_session_ids(
-            db, user_id=user_id, session_id=None, platform=platform,
+            db, user_id=normalized_user_id, session_id=None, platform=platform,
             bot_id=bot_id, chat_id=chat_id, platform_user_id=platform_user_id,
         )
         if not candidate_ids:
             return False
         count = await db.scalar(select(func.count()).select_from(InteractionRequest).where(
-            InteractionRequest.user_id == user_id,
+            InteractionRequest.user_id == normalized_user_id,
             InteractionRequest.session_id.in_(candidate_ids),
             InteractionRequest.status == "active",
             InteractionRequest.expires_at > now_utc(),
@@ -85,6 +108,9 @@ async def consume_text_choice(
     text = normalize_semantic_text(text, bot_mentioned=bot_mentioned)
     if not text:
         return None
+    normalized_user_id = _normalize_user_id(user_id)
+    if normalized_user_id is None:
+        return None
     from app.db import session as db_session
     from app.services.interactions import consume_choice_text, consume_custom_text
 
@@ -93,14 +119,14 @@ async def consume_text_choice(
         return None
     async with db_session._SessionLocal() as db:
         candidate_ids = await _candidate_session_ids(
-            db, user_id=user_id, session_id=session_id, platform=platform,
+            db, user_id=normalized_user_id, session_id=session_id, platform=platform,
             bot_id=bot_id, chat_id=chat_id, platform_user_id=platform_user_id,
         )
         for candidate_id in candidate_ids:
             result = await consume_choice_text(
                 db,
                 session_id=candidate_id,
-                user_id=user_id,
+                user_id=normalized_user_id,
                 text=text,
                 event_id=event_id,
             )
@@ -109,7 +135,7 @@ async def consume_text_choice(
             result = await consume_custom_text(
                 db,
                 session_id=candidate_id,
-                user_id=user_id,
+                user_id=normalized_user_id,
                 text=text,
                 event_id=event_id,
             )

@@ -59,12 +59,17 @@ async function openFixtureDirectory(page: Page) {
   await openPersonalDirectory(page)
   const name = `e2e-phase-folder-${Date.now()}-${Math.random().toString(16).slice(2)}`
   const root = page.locator('.files-page')
+  const createResponse = page.waitForResponse(response =>
+    response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/v1/folders',
+  )
   await root.locator('button', { hasText: '新建文件夹' }).click()
   await root.locator('.new-folder-input').fill(name)
   await root.getByRole('button', { name: '确定' }).click()
+  const response = await createResponse
+  expect(response.status()).toBe(201)
+  fixtureFolders.add(name)
   const folder = root.locator('.folder-card', { hasText: name })
   await expect(folder).toBeVisible()
-  fixtureFolders.add(name)
   await folder.click()
   await expect(root.locator('.bc-item.active, .bc-cur', { hasText: name })).toBeVisible()
   return name

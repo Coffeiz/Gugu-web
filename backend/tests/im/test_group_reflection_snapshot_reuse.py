@@ -1,7 +1,8 @@
-"""群反思真实历史恢复、快照扩展和本地闲置调度的回归。"""
+"""群反思原 Run 快照复用与本地闲置调度的回归。"""
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -20,6 +21,73 @@ def _reset_local_group_snapshot_tasks(monkeypatch):
     monkeypatch.setattr(reflection_jobs, "_LOCAL_IDLE_SNAPSHOT_TASKS", {})
     monkeypatch.setattr(reflection_jobs, "_LOCAL_IDLE_SNAPSHOT_DRAINING", set())
     monkeypatch.setattr(reflection_jobs, "_LOCAL_SNAPSHOT_TASKS", set())
+
+
+async def test_worker_shutdown_drains_idle_snapshot_timer(monkeypatch):
+    """关闭 worker 时等待定时器清理标记，避免事件循环关闭后才运行 finally。"""
+    from app.core import redis as redis_module
+
+    class Redis:
+        def __init__(self):
+            self.values = {}
+
+        async def set(self, key, value, ex):
+            self.values[key] = value
+
+        async def eval(self, script, numkeys, key, token, *args):
+            if self.values.get(key) == token:
+                self.values.pop(key, None)
+                return 1
+            return 0
+
+    redis = Redis()
+    monkeypatch.setattr(redis_module, "get_redis", lambda: redis)
+    scope = MemoryScope("owner-synthetic", "qq", "bot-synthetic", "group", "group-synthetic")
+    assert await reflection_jobs._arm_local_idle_snapshot(scope, 7, SimpleNamespace(), "snapshot")
+    task = reflection_jobs._LOCAL_IDLE_SNAPSHOT_TASKS[f"{scope.prefix}:7"]
+    await reflection_jobs.shutdown_local_idle_snapshots()
+    assert task.done()
+    assert not reflection_jobs._LOCAL_IDLE_SNAPSHOT_TASKS
+    assert not redis.values
+
+
+async def test_shutdown_waits_for_previous_draining_snapshot_and_cancels_new_timer(monkeypatch):
+    """同一群旧任务正在收束而新计时器已注册时，两者都须有序收尾。"""
+    from app.core import redis as redis_module
+
+    class Redis:
+        def __init__(self):
+            self.values = {}
+
+        async def set(self, key, value, ex):
+            self.values[key] = value
+
+        async def eval(self, script, numkeys, key, token, *args):
+            if self.values.get(key) == token:
+                self.values.pop(key, None)
+                return 1
+            return 0
+
+    redis = Redis()
+    monkeypatch.setattr(redis_module, "get_redis", lambda: redis)
+    scope = MemoryScope("owner-synthetic", "qq", "bot-synthetic", "group", "group-synthetic")
+    release = asyncio.Event()
+    old_task = asyncio.create_task(release.wait())
+    key = f"{scope.prefix}:7"
+    reflection_jobs._LOCAL_IDLE_SNAPSHOT_TASKS[key] = old_task
+    reflection_jobs._LOCAL_IDLE_SNAPSHOT_DRAINING.add(old_task)
+    reflection_jobs._LOCAL_SNAPSHOT_TASKS.add(old_task)
+    assert await reflection_jobs._arm_local_idle_snapshot(scope, 7, SimpleNamespace(), "new")
+    new_task = reflection_jobs._LOCAL_IDLE_SNAPSHOT_TASKS[key]
+    stopping = asyncio.create_task(reflection_jobs.shutdown_local_idle_snapshots())
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert not old_task.cancelled()
+    assert not stopping.done()
+    release.set()
+    await asyncio.wait_for(stopping, 1)
+    assert old_task.done() and new_task.done()
+    assert not redis.values
 
 
 async def _restored_group_snapshot(db, user_a, monkeypatch):
@@ -44,6 +112,7 @@ async def _restored_group_snapshot(db, user_a, monkeypatch):
         platform_user_id="member-synthetic",
         platform_user_name="成员甲",
         sent_at=sent_at,
+        run_id="synthetic-main-run",
     )
     assistant_message = ConversationMessage(
         session_id=session.id,
@@ -54,6 +123,9 @@ async def _restored_group_snapshot(db, user_a, monkeypatch):
             {"type": "tool_call", "id": "call-synthetic", "name": "lookup", "arguments": {"query": "项目"}},
             {"type": "text", "text": "已检查项目状态"},
         ],
+        # 时间戳只用于语义/展示；历史顺序由持久序号保证助手输出排在用户消息之后。
+        sent_at=datetime(2026, 10, 20, 9, 30, 30, tzinfo=timezone.utc),
+        run_id="synthetic-main-run",
     )
     tool_message = ConversationMessage(
         session_id=session.id,
@@ -62,6 +134,8 @@ async def _restored_group_snapshot(db, user_a, monkeypatch):
         content_json=[{
             "type": "tool_result", "tool_call_id": "call-synthetic", "content": "合成工具结果",
         }],
+        sent_at=datetime(2026, 10, 20, 9, 30, 30, tzinfo=timezone.utc),
+        run_id="synthetic-main-run",
     )
     db.add_all([user_message, assistant_message, tool_message])
     await db.commit()
@@ -76,7 +150,9 @@ async def _restored_group_snapshot(db, user_a, monkeypatch):
     model = SimpleNamespace(provider="minimax", model="MiniMax-M3.1-Flash-Preview", api_format="anthropic")
     restored = await im_reflection._rebuild_session_snapshot(db, scope, session.id, model, [])
     assert restored is not None
-    return scope, session, model, restored, assistant_message
+    return scope, session, model, restored, assistant_message, (
+        user_message.id, assistant_message.id, tool_message.id,
+    )
 
 
 def _captured_snapshot(base, user_id, session_id, model):
@@ -94,16 +170,15 @@ def _captured_snapshot(base, user_id, session_id, model):
 
 
 @pytest.mark.asyncio
-async def test_group_snapshot_extends_actual_restored_provider_history(db, user_a, monkeypatch):
-    """真实历史恢复生成的时间、Thinking 与工具消息前缀可匹配并只追加被动尾部。"""
-    scope, session, model, restored, _assistant = await _restored_group_snapshot(db, user_a, monkeypatch)
+async def test_group_snapshot_appends_passive_tail_to_original_provider_history(db, user_a, monkeypatch):
+    """群反思保留原始 Provider 前缀，只把主 Run 后的被动消息追加为尾部。"""
+    scope, session, model, restored, _assistant, covered_ids = await _restored_group_snapshot(
+        db, user_a, monkeypatch,
+    )
     base = ProviderConversation(restored.history)
     base_messages = base.to_messages()
     assert {item["role"] for item in base_messages} >= {"assistant", "user"}
-    assert any(
-        block.get("type") == "time-context" and block.get("text") == "合成时间上下文"
-        for item in base_messages for block in item.get("content", []) if isinstance(block, dict)
-    )
+    assert "【消息时间】合成时间上下文" in str(base_messages)
     assert any(
         block.get("type") == "thinking" and block.get("signature") == "sig-synthetic"
         for item in base_messages for block in item.get("content", []) if isinstance(block, dict)
@@ -117,7 +192,10 @@ async def test_group_snapshot_extends_actual_restored_provider_history(db, user_
         for item in base_messages for block in item.get("content", []) if isinstance(block, dict)
     )
 
-    snapshot = _captured_snapshot(base, user_a.id, session.id, model)
+    snapshot = replace(
+        _captured_snapshot(base, user_a.id, session.id, model),
+        persisted_message_ids=tuple(sorted(covered_ids)),
+    )
     tail = ConversationMessage(
         session_id=session.id,
         role="user",
@@ -129,24 +207,32 @@ async def test_group_snapshot_extends_actual_restored_provider_history(db, user_
     db.add(tail)
     await db.commit()
 
-    persisted = await im_reflection._rebuild_session_snapshot(db, scope, session.id, model, [tail])
-    assert persisted is not None
-    extended = im_reflection._extend_snapshot_with_persisted_tail(snapshot, persisted)
+    extended = await im_reflection._extend_group_snapshot_with_passive_tail(
+        db, scope, session.id, snapshot, [tail], tail.id,
+    )
 
     assert extended is not None
     assert extended.source == "in_memory_extended"
     assert extended.history.to_messages()[:len(base_messages)] == base_messages
-    assert extended.history.to_messages()[-1]["content"] == "风险项仍在观察"
+    extended_tail = extended.history.to_messages()[-1]["content"]
+    assert "【消息时间】合成时间上下文" in extended_tail
+    assert "【消息正文】\n风险项仍在观察" in extended_tail
     assert extended.system_prompt == snapshot.system_prompt
     assert extended.tools == snapshot.tools
 
 
 @pytest.mark.asyncio
-async def test_group_snapshot_falls_back_when_restored_prefix_changed(db, user_a, monkeypatch):
-    """数据库里原有复杂块变化后拒绝拼接，避免把新尾部接到不一致的 wire 前缀。"""
-    scope, session, model, restored, assistant = await _restored_group_snapshot(db, user_a, monkeypatch)
+async def test_group_snapshot_waits_when_another_main_run_followed(db, user_a, monkeypatch):
+    """主快照之后已出现另一条 Run 时不跨 Run 拼接，交由新快照重新调度。"""
+    scope, session, model, restored, assistant, covered_ids = await _restored_group_snapshot(
+        db, user_a, monkeypatch,
+    )
     snapshot = _captured_snapshot(
         ProviderConversation(restored.history), user_a.id, session.id, model,
+    )
+    snapshot = replace(
+        snapshot,
+        persisted_message_ids=tuple(sorted(covered_ids)),
     )
     assistant.content_json = [
         {**assistant.content_json[0], "signature": "changed-signature"},
@@ -159,12 +245,21 @@ async def test_group_snapshot_falls_back_when_restored_prefix_changed(db, user_a
         platform_user_id="member-synthetic",
         sent_at=datetime(2026, 10, 20, 9, 31, tzinfo=timezone.utc),
     )
-    db.add(tail)
+    intervening_run = ConversationMessage(
+        session_id=session.id,
+        role="user",
+        content="后续主 Run 的输入",
+        platform_user_id="member-synthetic",
+        sent_at=datetime(2026, 10, 20, 9, 32, tzinfo=timezone.utc),
+        run_id="another-main-run",
+    )
+    db.add_all([tail, intervening_run])
     await db.commit()
 
-    persisted = await im_reflection._rebuild_session_snapshot(db, scope, session.id, model, [tail])
-    assert persisted is not None
-    assert im_reflection._extend_snapshot_with_persisted_tail(snapshot, persisted) is None
+    extended = await im_reflection._extend_group_snapshot_with_passive_tail(
+        db, scope, session.id, snapshot, [tail], intervening_run.id,
+    )
+    assert extended is None
 
 
 @pytest.mark.asyncio

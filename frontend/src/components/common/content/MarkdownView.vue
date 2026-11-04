@@ -6,7 +6,9 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { renderMarkdown, sanitizeHtml, sanitizeChatHtml } from '@/utils/markdown'
-import { cleanupMarkdownMermaid, createMermaidRenderLabels, renderMarkdownMermaid } from '@/utils/mermaidRenderer'
+import { renderMarkdownMath } from '@/utils/chart/math'
+import { cleanupMarkdownMermaid, createMermaidRenderLabels, renderMarkdownMermaid } from '@/utils/chart/mermaidRenderer'
+import type { MarkdownMathLabels } from '@/utils/chart/math'
 
 // 全站通用的 markdown 展示组件，统一 GuguChat 聊天 / 通知气泡 / 侧边栏通知中心的 md 输出样式。
 // - text：原始 markdown 文本，用轻量 renderMarkdown 渲染；
@@ -17,10 +19,19 @@ const props = defineProps({
   html: { type: String, default: null },
   // 聊天路径：额外放行 gugu:// 动作链接（由 GuguChat onChatActionClick 处理）；其余仍严格消毒
   chat: { type: Boolean, default: false },
+  // 仅聊天消息显式开启，避免在全站通知和侧栏 Markdown 中改变渲染范围。
+  renderMath: { type: Boolean, default: false },
 })
 const root = ref<HTMLElement | null>(null)
 const mermaidReady = ref(false)
 const { t, locale } = useI18n()
+function createMathLabels(): MarkdownMathLabels {
+  return {
+    copy: t('chatUi.copy'), copied: t('chatUi.copied'), downloadPng: t('mermaidUi.formulaDownload'),
+    showSource: t('mermaidUi.formulaSource'), showRendered: t('mermaidUi.formulaRendered'),
+    renderFailed: t('mermaidUi.formulaRenderFailed'),
+  }
+}
 let themeObserver: MutationObserver | null = null
 let renderGeneration = 0
 
@@ -52,9 +63,13 @@ const rendered = computed(() =>
     ? (props.chat ? sanitizeChatHtml(props.html) : sanitizeHtml(props.html))
     : renderMarkdown(props.text))
 
-watch([rendered, locale], renderMermaidBlocks, { flush: 'post' })
+watch([rendered, locale, () => props.renderMath], async () => {
+  if (props.renderMath) await renderMarkdownMath(root.value, createMathLabels())
+  await renderMermaidBlocks()
+}, { flush: 'post' })
 
 onMounted(() => {
+  if (props.renderMath) renderMarkdownMath(root.value, createMathLabels())
   renderMermaidBlocks()
   themeObserver = new MutationObserver(() => renderMermaidBlocks())
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-family'] })
@@ -108,7 +123,7 @@ onBeforeUnmount(() => {
 
 .md-view :deep(code) {
   font-family: var(--font-mono, var(--font-family-mono));
-  font-size: 0.88em; background: rgba(123,127,178,0.12);
+  font-size: 0.88em; background: color-mix(in srgb, var(--action-primary) 12%, transparent);
   color: var(--color-primary); border-radius: 5px; padding: 1px 5px;
 }
 .md-view :deep(blockquote) {
@@ -139,9 +154,9 @@ onBeforeUnmount(() => {
 .md-view :deep(.md-mermaid-error) {
   white-space: pre-wrap; color: var(--text-secondary); font-family: var(--font-family-mono, monospace);
 }
-.md-view :deep(.md-code-block) { margin: 8px 0; border: 1px solid rgba(123,127,178,0.22); border-radius: 8px; overflow: hidden; background: transparent; font-size: 0.9em; }
+.md-view :deep(.md-code-block) { margin: 8px 0; border: 1px solid color-mix(in srgb, var(--action-primary) 22%, transparent); border-radius: 8px; overflow: hidden; background: transparent; font-size: 0.9em; }
 .md-view :deep(.md-code-block pre) { margin: 0; background: none; border-radius: 0; }
-.md-view :deep(.md-code-header) { display: flex; align-items: center; justify-content: space-between; min-height: 28px; box-sizing: border-box; padding: 5px 12px; background: rgba(123,127,178,0.1); border-bottom: 1px solid rgba(123,127,178,0.16); }
+.md-view :deep(.md-code-header) { display: flex; align-items: center; justify-content: space-between; min-height: 28px; box-sizing: border-box; padding: 5px 12px; background: color-mix(in srgb, var(--action-primary) 10%, transparent); border-bottom: 1px solid color-mix(in srgb, var(--action-primary) 16%, transparent); }
 html[data-theme='dark'] .md-view:deep(.md-code-header) { background: rgba(255,255,255,0.05); border-bottom-color: rgba(255,255,255,0.09); }
 html[data-theme='dark'] .md-view:deep(.md-code-block) { border-color: rgba(255,255,255,0.12); }
 .md-view :deep(.md-code-lang) { margin-right: auto; font-size: 10px; font-weight: 600; color: var(--color-primary); opacity: 0.85; text-transform: lowercase; letter-spacing: 0.04em; }

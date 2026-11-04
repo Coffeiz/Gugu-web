@@ -79,6 +79,59 @@ async def test_get_session_messages_preserves_run_identity_for_plain_replies(db,
     assert result["roundId"] == "round-2"
 
 
+async def test_get_qq_session_messages_hides_legacy_attachment_protocol_text(db, user_a):
+    marker = '<attachmentType="image/jpeg",attachmentIndex=0,description="opaque">'
+    session = ConversationSession(
+        user_id=user_a.id, source="qq", chat_type="group", chat_id="group-synthetic",
+    )
+    db.add(session)
+    await db.flush()
+    message = await _mk_message(
+        db,
+        session.id,
+        "user",
+        marker,
+        files=[{
+            "attach_id": "synthetic-attachment",
+            "mime": "image/jpeg",
+            "quoted": False,
+        }],
+    )
+    await db.commit()
+
+    payload = await agent_api.get_session_messages(session.id, current_user=user_a, db=db)
+
+    result = next(item for item in payload["messages"] if item["id"] == message.id)
+    assert result["content"] == ""
+    assert result["files"][0]["attach_id"] == "synthetic-attachment"
+
+
+async def test_get_qq_session_messages_preserves_unmatched_attachment_like_user_text(db, user_a):
+    marker = '<attachmentType="image/jpeg",attachmentIndex=0,description="opaque">'
+    session = ConversationSession(
+        user_id=user_a.id, source="qq", chat_type="group", chat_id="group-synthetic",
+    )
+    db.add(session)
+    await db.flush()
+    message = await _mk_message(
+        db,
+        session.id,
+        "user",
+        marker,
+        files=[{
+            "attach_id": "synthetic-attachment",
+            "mime": "image/png",
+            "quoted": False,
+        }],
+    )
+    await db.commit()
+
+    payload = await agent_api.get_session_messages(session.id, current_user=user_a, db=db)
+
+    result = next(item for item in payload["messages"] if item["id"] == message.id)
+    assert result["content"] == marker
+
+
 async def test_run_history_query_returns_only_target_run_after_commit(db, user_a):
     session = await _mk_session(db, user_a)
     for run_id in ('run-target', 'run-next'):
@@ -376,3 +429,136 @@ async def test_tool_event_details_require_owned_session(db, user_a, user_b):
             current_user=user_a, db=db,
         )
     assert denied.value.status_code == 404
+
+
+async def _mk_group_session(db, user, bot_id: str | None = None) -> ConversationSession:
+    session = ConversationSession(
+        user_id=user.id, source="qq", chat_type="group", chat_id="group-openid-1", bot_id=bot_id,
+    )
+    db.add(session)
+    await db.flush()
+    return session
+
+
+async def test_group_mention_shows_mentioned_bot_own_nickname(db, user_a):
+    """@ 到别的 bot 显示它自己的昵称，不再一律显示"咕咕"。
+
+    群里同时有多个 bot 时，"咕咕"会指错对象；机器人发言记录里带平台昵称，
+    展示层据此还原被 @ 的那个 bot 的名字。
+    """
+    from app.models import UserBot
+
+    own_bot = UserBot(user_id=user_a.id, platform="qq", app_id="synthetic-own-app",
+                      name="我的 QQ 机器人", bot_platform_user_id="OWNBOTID00000000000000000001")
+    db.add(own_bot)
+    await db.flush()
+    session = await _mk_group_session(db, user_a, str(own_bot.id))
+    await _mk_message(db, session.id, "user", "<@OTHERBOTID00000000000000000002> 看看天气",
+                      platform_bot_user_id="OTHERBOTID00000000000000000002")
+    await _mk_message(db, session.id, "user", "今天晴，15 度", platform_user_id="OTHERBOTID00000000000000000002",
+                      platform_user_name="小北的机器人")
+    await db.commit()
+
+    payload = await agent_api.get_session_messages(session.id, current_user=user_a, db=db)
+    contents = [item["content"] for item in payload["messages"]]
+    assert "@小北的机器人 看看天气" in contents
+    assert not any("咕咕" in content for content in contents)
+
+
+async def test_group_mention_of_own_bot_shows_gugu(db, user_a):
+    """@ 自己这个会话的 bot 仍显示"咕咕"——那是群里看到的它的昵称。"""
+    from app.models import UserBot
+
+    own_bot = UserBot(user_id=user_a.id, platform="qq", app_id="synthetic-own-app",
+                      name="我的 QQ 机器人", bot_platform_user_id="OWNBOTID00000000000000000001")
+    db.add(own_bot)
+    await db.flush()
+    session = await _mk_group_session(db, user_a, str(own_bot.id))
+    await _mk_message(db, session.id, "user", "<@OWNBOTID00000000000000000001> 看看天气")
+    await db.commit()
+
+    payload = await agent_api.get_session_messages(session.id, current_user=user_a, db=db)
+    contents = [item["content"] for item in payload["messages"]]
+    assert "@咕咕 看看天气" in contents
+
+
+async def test_group_mention_of_other_own_bot_uses_its_configured_name(db, user_a):
+    """@ 用户自己的另一个 bot 显示它在 IM 配置里的名字，不占用"咕咕"。"""
+    from app.models import UserBot
+
+    own_bot = UserBot(user_id=user_a.id, platform="qq", app_id="synthetic-own-app",
+                      name="我的 QQ 机器人", bot_platform_user_id="OWNBOTID00000000000000000001")
+    sibling_bot = UserBot(user_id=user_a.id, platform="qq", app_id="synthetic-sibling-app",
+                          name="二号小咕", bot_platform_user_id="OWNBOTID00000000000000000003")
+    db.add_all([own_bot, sibling_bot])
+    await db.flush()
+    session = await _mk_group_session(db, user_a, str(own_bot.id))
+    await _mk_message(db, session.id, "user", "<@OWNBOTID00000000000000000003> 在吗")
+    await db.commit()
+
+    payload = await agent_api.get_session_messages(session.id, current_user=user_a, db=db)
+    contents = [item["content"] for item in payload["messages"]]
+    assert "@二号小咕 在吗" in contents
+
+
+async def test_group_mention_of_unknown_id_keeps_raw_platform_id(db, user_a):
+    """解析不到名字的 mention 保持原始平台 ID，不猜名字也不写死"咕咕"。"""
+    from app.models import UserBot
+
+    own_bot = UserBot(user_id=user_a.id, platform="qq", app_id="synthetic-own-app",
+                      name="我的 QQ 机器人", bot_platform_user_id="OWNBOTID00000000000000000001")
+    db.add(own_bot)
+    await db.flush()
+    session = await _mk_group_session(db, user_a, str(own_bot.id))
+    await _mk_message(db, session.id, "user", "<@SILENTBOTID0000000000000000004> 在吗")
+    await db.commit()
+
+    payload = await agent_api.get_session_messages(session.id, current_user=user_a, db=db)
+    contents = [item["content"] for item in payload["messages"]]
+    assert "<@SILENTBOTID0000000000000000004> 在吗" in contents
+    assert "@咕咕 在吗" not in contents
+
+
+async def test_group_mention_uses_latest_nickname_after_rename(db, user_a):
+    """改名后 @ 显示新昵称，不冻结旧名字。"""
+    from datetime import datetime, timedelta, timezone
+
+    from app.models import UserBot
+
+    own_bot = UserBot(user_id=user_a.id, platform="qq", app_id="synthetic-own-app",
+                      name="我的 QQ 机器人", bot_platform_user_id="OWNBOTID00000000000000000001")
+    db.add(own_bot)
+    await db.flush()
+    session = await _mk_group_session(db, user_a, str(own_bot.id))
+    base = datetime(2026, 10, 1, tzinfo=timezone.utc)
+    await _mk_message(db, session.id, "user", "<@HUMANID0000000000000000000005> 一起来",
+                      created_at=base)
+    await _mk_message(db, session.id, "user", "旧名字", platform_user_id="HUMANID0000000000000000000005",
+                      platform_user_name="小北", created_at=base + timedelta(minutes=1))
+    await _mk_message(db, session.id, "user", "新名字", platform_user_id="HUMANID0000000000000000000005",
+                      platform_user_name="小北改名后", created_at=base + timedelta(minutes=2))
+    await db.commit()
+
+    payload = await agent_api.get_session_messages(session.id, current_user=user_a, db=db)
+    contents = [item["content"] for item in payload["messages"]]
+    assert "@小北改名后 一起来" in contents
+
+
+async def test_group_mention_in_quoted_text_uses_same_display_name(db, user_a):
+    """引用原文里的 @ 也走同一套展示名，不露原始平台 ID。"""
+    from app.models import UserBot
+
+    own_bot = UserBot(user_id=user_a.id, platform="qq", app_id="synthetic-own-app",
+                      name="我的 QQ 机器人", bot_platform_user_id="OWNBOTID00000000000000000001")
+    db.add(own_bot)
+    await db.flush()
+    session = await _mk_group_session(db, user_a, str(own_bot.id))
+    await _mk_message(db, session.id, "user", "看看这条",
+                      quoted_text="<@OTHERBOTID00000000000000000002> 早上好")
+    await _mk_message(db, session.id, "user", "今天晴，15 度",
+                      platform_user_id="OTHERBOTID00000000000000000002", platform_user_name="小北的机器人")
+    await db.commit()
+
+    payload = await agent_api.get_session_messages(session.id, current_user=user_a, db=db)
+    quoted = [item["quotedText"] for item in payload["messages"] if item["quotedText"]]
+    assert quoted == ["@小北的机器人 早上好"]

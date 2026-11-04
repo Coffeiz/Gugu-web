@@ -97,7 +97,8 @@ def test_wire_conversation_separates_display_title_from_ranking_text():
 
     document = IndexDocument(
         "conversation:1", "conversation", "1", Scope("owner"),
-        "今天天气", "", "user：看看有什么笔记", "v1",
+        "今天天气", "", "user：看看有什么", "v1",
+        metadata={"context_current": "user：看看有什么笔记", "kind": "message"},
     )
     wire = _wire_document(document)
     assert wire["text"].startswith("今天天气\n")

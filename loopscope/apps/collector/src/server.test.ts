@@ -129,3 +129,58 @@ test('Collector HTTP API ingests and paginates traces', async () => {
     store.close()
   }
 })
+
+test('Collector Monitor Run 列表只读摘要字段并显著缩小响应体', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'loopscope-run-summary-'))
+  const store = new TraceStore(path.join(directory, 'trace.db'))
+  const server = createCollectorServer(store).listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const address = server.address()
+  assert.ok(address && typeof address === 'object')
+  const base = `http://127.0.0.1:${address.port}`
+  const largeContext = 'synthetic diagnostic context '.repeat(4_000)
+
+  try {
+    for (let index = 0; index < 20; index += 1) {
+      store.ingestRun({
+        ...payload,
+        id: `summary-run-${index}`,
+        session_key: 'summary-session',
+        started_at: index + 1,
+        input: { prompt: largeContext },
+        output: { content: largeContext },
+        attributes: { diagnostic_context: largeContext },
+        usage: { input: 1200, output: 80 },
+        spans: [],
+      })
+    }
+
+    const fullStarted = performance.now()
+    const fullList = store.listRuns('summary-session')
+    const fullJson = JSON.stringify(fullList)
+    const fullMs = performance.now() - fullStarted
+
+    const summaryStarted = performance.now()
+    const { response, body } = await request(base, '/api/sessions/summary-session/runs?limit=20')
+    const summaryMs = performance.now() - summaryStarted
+    assert.equal(response.status, 200)
+    const summaries = body as Array<Record<string, any>>
+    const fullBytes = Buffer.byteLength(fullJson)
+    const summaryBytes = Buffer.byteLength(JSON.stringify(summaries))
+
+    assert.equal(summaries.length, 20)
+    assert.equal(summaries[0]?.id, 'summary-run-19')
+    assert.ok(!('input' in (summaries[0] ?? {})))
+    assert.ok(!('output' in (summaries[0] ?? {})))
+    assert.ok(!('attributes' in (summaries[0] ?? {})))
+    assert.ok(!('usage' in (summaries[0] ?? {})))
+    assert.ok(summaryBytes < fullBytes / 100, `摘要 ${summaryBytes} B 应小于完整列表 ${fullBytes} B 的 1%`)
+    if (process.env.LOOPSCOPE_BENCHMARK === '1') {
+      console.log(`合成 A/B（20 Runs，约 3×100KB 上下文/Run）：完整列表 ${fullBytes} B / ${fullMs.toFixed(1)} ms；摘要接口 ${summaryBytes} B / ${summaryMs.toFixed(1)} ms`)
+    }
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()))
+    store.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})

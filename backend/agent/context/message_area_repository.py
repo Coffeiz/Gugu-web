@@ -129,17 +129,28 @@ async def commit_delta(
                 "run_id": run_id,
                 "round_id": entry.round_id or default_round_id,
             }
+            if user_message is not None and user_sequence is not None and entry.sequence < user_sequence:
+                # 固定输入前缀（RAG/姿态/引用等）虽在 run 收尾时才写库，重建时仍
+                # 必须放回触发它的用户消息之前；晚到的其他用户消息则保持在该消息之后。
+                values["history_anchor_seq"] = user_message.conversation_seq
             if not isinstance(message.get("content"), str):
                 values["content_json"] = media.images.strip_image_for_history(message.get("content"))
             if user_message is not None and user_sequence is not None:
+                # 固定上下文与触发消息共用时间边界；历史排序遇到同一时间时，
+                # 再由 history_anchor_seq 将这些前缀放回触发消息之前。
+                anchor_sent_at = user_message.sent_at or user_message.created_at
+                # 固定前缀与触发消息同属一个事件边界。继承平台/接收时间，
+                # 让后续按实际事件时间排序时仍保持在触发消息之前。
+                values["im_platform_sent_ms"] = user_message.im_platform_sent_ms
+                values["im_event_received_ms"] = user_message.im_event_received_ms
                 if entry.sequence < user_sequence:
-                    values["created_at"] = user_message.created_at - timedelta(
-                        microseconds=user_sequence - entry.sequence,
-                    )
+                    offset = timedelta(microseconds=user_sequence - entry.sequence)
+                    values["created_at"] = user_message.created_at - offset
+                    values["sent_at"] = anchor_sent_at - offset
                 elif interrupted and entry.sequence > user_sequence:
-                    values["created_at"] = user_message.created_at + timedelta(
-                        microseconds=entry.sequence - user_sequence,
-                    )
+                    offset = timedelta(microseconds=entry.sequence - user_sequence)
+                    values["created_at"] = user_message.created_at + offset
+                    values["sent_at"] = anchor_sent_at + offset
             db.add(ConversationMessage(**values))
             inserted_messages += 1
     return {

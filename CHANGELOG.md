@@ -11,14 +11,37 @@
 
 #### New Features
 
-- None.
+- Allow users to cancel background MCP tool tasks while they are running.
+- Add a custom reply style preference that remains independent of the user's persona, and let group auto-replies skip conversations that do not need a response.
 
 #### Improvements
 
-- None.
+- Add a complete selectable color-palette system, with brand colors separated from Glass/Mono material themes and dark-mode variants.
+- Delay open group questions until the conversation has been quiet, and recheck the original question against the latest group context before resuming.
+- Preserve chronological message order and stable conversation prefixes when group messages arrive during a running reply.
+- Propagate run cancellation through in-flight model and tool work, and report a consistent terminal state.
+- Batch and cache knowledge retrieval to reduce repeated work during context injection.
+- Use a consistent scrollable card layout across scheduled tasks, skills, and MCP services.
+- Improve outbound web request header handling and destination validation.
+- Coordinate concurrent background reflection requests that share a provider cache prefix.
+- Keep Mermaid preview zoom anchored to the pointer and preserve the view when returning to 100%.
+- Clarify in BYOK and admin settings that MiniMax web search requires an M plan.
+- Give the note-writing tool clearer operating guidance and preserve strategy terminology in normal replies.
+- Batch consecutive private and group IM messages into one run, persist them as they arrive, and apply the least privilege when a batch contains multiple speakers.
+- Improve QQ outbound message delivery reliability.
+- Ensure QQ outbound connection prewarming is not skipped on processes with a recently started monotonic clock.
+- Move current-group attachment ownership checks behind the attachment service boundary.
+- Upgrade msgpack and the embedded Cosign dependency to fixed releases for CVE-2026-114613 and CVE-2026-116587.
+- Improve reading large Markdown documents and wide tables, expand the document zoom range, and refine the file library scrollbar layout.
+- Soften the selected-date range in dark calendar mode and add consistent hover feedback to group-persona cards.
+- Retry transient MiniMax web-search failures with a bounded delay.
+- Keep a sent user message visible while its run starts, and save file edits against the latest file version.
+- Avoid interpreting dollar-denominated prices as inline math when Markdown math is enabled.
 
 #### Fixes
 
+- Keep delayed group-question resumes bound to the exact triggering message and original session, preventing stale batch candidates or prior reasoning state from hijacking the resumed run.
+- Order IM history by actual message timestamps so replies completed after newer messages no longer appear before them in later runs.
 - Render larger Mermaid diagrams in QQ by scaling them within the output pixel budget; avoid whole-diagram failures from reserved Flowchart node IDs.
 - Keep curved Mermaid edge labels inside QQ-rendered PNG images and align multi-line database labels correctly.
 - Prevent embedded Base64 image data and oversized grep results from overflowing Agent context; show truncation details in search results.
@@ -26,10 +49,18 @@
 - Stop reporting MiniMax request-size errors as context-window overflow, so the guidance points at the real cause.
 - Copy the Mermaid raster-dimension helper into the production images so the diagram worker no longer misses a module it imports.
 - Smoke-start the Mermaid diagram worker during image builds so missing modules or fonts fail the build instead of breaking rendering at runtime.
+- Deliver the final QQ streamed reply reliably when earlier streaming content was only partially delivered, and report missing stream terminal events as errors.
+- Avoid duplicate QQ messages when a terminal reply revises buffered streaming text.
+- Keep tool activity synchronized when switching between chat sessions.
+- Keep localized cancellation status messages consistent across supported languages.
+- Resolve group @mentions to the correct bot name instead of displaying another bot as Gugu.
+- Keep the session title in sync after renaming or switching conversations.
+- Prevent empty group reflection jobs and worker shutdown from repeatedly failing when no event loop is running.
+- Avoid sending a second “remote execution state unknown” notice after an IM cancellation acknowledgement.
 
 #### Contributors
 
-- None.
+- Thank you to [@Coffeiz](https://github.com/Coffeiz) for PR #109.
 
 #### Feedback & Issue Reporters
 
@@ -39,14 +70,37 @@
 
 #### 新功能
 
-- 暂无。
+- 支持取消正在运行的 MCP 后台工具任务。
+- 在人格偏好之外增加独立的自定义回复风格，并让群聊自动回复跳过无需回应的对话。
 
 #### 改进
 
-- 暂无。
+- 增加完整的可选配色体系，将品牌颜色与 Glass/Mono 材质主题分开，并为暗色模式提供对应配色。
+- 群聊开放问题先等待群内静默，再结合最新群聊上下文复核原问题后恢复处理。
+- 群聊消息在回复运行期间到达时，保持历史时间顺序和会话前缀稳定。
+- 将取消信号传递到运行中的模型和工具任务，并统一反馈任务终态。
+- 对知识检索进行批处理和缓存，减少上下文注入时的重复工作。
+- 定时任务、技能和 MCP 服务统一使用可滚动卡片布局。
+- 改进联网请求头处理与目标地址校验。
+- 协调共享 Provider 缓存前缀的并发后台反思请求，减少缓存竞争。
+- Mermaid 预览缩放跟随鼠标位置，缩回 100% 时保留当前视图。
+- 在 BYOK 和管理设置中说明 MiniMax 联网搜索需要 M 计划。
+- 补充笔记工具的操作指引，并在普通回复中保留策略术语。
+- 将连续的 IM 私聊和群聊消息合并为一轮处理，并在消息到达时及时入库；一个批次包含多人发言时按最小权限执行。
+- 提高 QQ 出站消息发送的可靠性。
+- 修复进程单调时钟启动时间较短时 QQ 出站连接预热被误跳过的问题。
+- 将当前群附件归属校验移入附件服务，避免 Agent 工具直接查询 ORM。
+- 将 msgpack 和内置 Cosign 依赖升级到修复 CVE-2026-114613、CVE-2026-116587 的版本。
+- 改进大型 Markdown 文档和宽表格的阅读体验，扩大文档缩放范围并调整文件库滚动布局。
+- 减弱暗色日历模式下日期范围中间区域的高亮，并为群聊人格卡片补齐悬停反馈。
+- 对 MiniMax 联网搜索的临时故障进行有限间隔重试。
+- 修复 Run 启动时用户消息气泡短暂消失的问题，并确保文件编辑使用最新文件版本保存。
+- 启用 Markdown 行内公式时，避免将美元金额误识别为公式。
 
 #### 修复
 
+- 延迟群聊问题恢复时固定使用原始触发消息和会话，避免旧批次候选或之前的推理状态干扰新一轮判断。
+- 按真实消息时间排列 IM 历史，避免较晚完成的回复在后续 Run 中排到新消息之前。
 - QQ 支持渲染更大的 Mermaid 图表，并按输出像素预算缩放；补充流程图节点 ID 避开保留字的规则，减少整图渲染失败。
 - 修复 QQ Mermaid 图片中的曲线连线标签裁切及多行数据库标签垂直对齐。
 - 省略 grep 结果中的内嵌 Base64 图片数据并限制超长行和结果体积，避免搜索结果撑爆 Agent 上下文，同时标明截断原因。
@@ -54,10 +108,18 @@
 - 不再把 MiniMax 的请求体过大错误说成「上下文超限」，让处理建议指向真实原因。
 - 生产镜像补入 Mermaid 栅格尺寸辅助模块，避免图表 Worker 在镜像里缺少它自己 import 的依赖。
 - 镜像构建期冒烟启动 Mermaid 图表 Worker，缺模块或缺字体时构建即失败，不再等到线上渲染才暴露。
+- 修复 QQ 流式内容部分送达时最终回复可能遗漏的问题；缺少流终态时明确报错。
+- 修复 QQ 流式终态修订缓冲内容时阶段文本与最终文本重复发送的问题。
+- 修复切换会话后工具活动消息未及时同步的问题。
+- 统一各语言中的运行取消状态提示。
+- 修复群聊中 @ 其他机器人时错误显示为咕咕的问题。
+- 修复重命名或切换会话后标题未及时更新的问题。
+- 修复群反思任务遇到空消息范围或 Worker 停止时无事件循环而反复失败的问题。
+- IM 任务取消已发送确认后，不再重复提示“远端执行状态未知”。
 
 #### 贡献者
 
-- 暂无。
+- 感谢 [@Coffeiz](https://github.com/Coffeiz) 提交 PR #109。
 
 #### 反馈与问题报告
 

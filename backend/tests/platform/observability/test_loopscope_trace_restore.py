@@ -205,3 +205,60 @@ def test_preparation_loader_results_include_slow_context_sources(monkeypatch):
     assert spans["Dynamic memory"].attributes["rows"] == 1
     assert spans["Knowledge overview"].attributes["rows"] == 1
     assert all(span.duration_ms is not None for span in spans.values())
+
+
+def test_preparation_phase_timings_attach_after_scope_run_is_created(monkeypatch):
+    """Run 建立前完成的准备阶段仍会挂入同一条 LoopScope trace。"""
+    monkeypatch.setenv("LOOPSCOPE_ENABLED", "1")
+    monkeypatch.setattr(state, "_queue_snapshot", lambda *_args, **_kwargs: None)
+    pending_token = state._pending_phase_timings.set(None)
+    run_token = state._scope_run.set(None)
+    try:
+        started_at = state._now() - 0.025
+        state.record_phase_timing("Context data loading", started_at, source_count=3)
+        assert state._pending_phase_timings.get()
+
+        run = state._ScopeRun(
+            id="run-delayed-phase", trace_id="trace-delayed-phase",
+            session_key="gugu:web:test", external_session_id="test",
+            source="web", started_at=state._now(),
+        )
+        state._scope_run.set(run)
+        state.flush_pending_phase_timings(run)
+    finally:
+        state._scope_run.reset(run_token)
+        state._pending_phase_timings.reset(pending_token)
+
+    assert len(run.spans) == 1
+    span = run.spans[0]
+    assert span.name == "Context data loading"
+    assert span.attributes == {"source_count": 3}
+    assert 20 <= span.duration_ms <= 200
+
+
+def test_agent_preparation_start_splits_dispatch_prelude_from_preparation(monkeypatch):
+    """Provider 准备计时边界从 prepare_agent_run 起算，分发前置耗时单独可见。"""
+    monkeypatch.setenv("LOOPSCOPE_ENABLED", "1")
+    monkeypatch.setattr(state, "_queue_snapshot", lambda *_args, **_kwargs: None)
+    run = state._ScopeRun(
+        id="run-preparation-boundary", trace_id="trace-preparation-boundary",
+        session_key="gugu:qq:test", external_session_id="test",
+        source="qq", started_at=state._now() - 0.025,
+    )
+    token = state._scope_run.set(run)
+    try:
+        started_at = state.mark_agent_preparation_started()
+        repeated_started_at = state.mark_agent_preparation_started()
+    finally:
+        state._scope_run.reset(token)
+
+    assert started_at == repeated_started_at
+    assert run.agent_preparation_started_at == started_at
+    assert len(run.spans) == 1
+    span = run.spans[0]
+    assert span.name == "Dispatch before Agent preparation"
+    assert span.input == {"scope": "trace_start_to_prepare_agent_run"}
+    assert span.started_at == run.started_at
+    assert span.ended_at == started_at
+    assert span.duration_ms >= 20
+    assert "agent_preparation_started_at" not in run.snapshot()

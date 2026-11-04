@@ -142,9 +142,19 @@ async def ingest_qq_media(
     async with aiohttp.ClientSession(connector=connector) as sess:
         for item_index, item in enumerate(raw):
             url = item.get("url")
-            source_message_id = str(item.get("source_platform_message_id") or platform_message_id or "")
-            source_index = item.get("source_attachment_index", item_index)
-            if item.get("source_platform_message_id"):
+            quoted_source_message_id = str(item.get("source_platform_message_id") or "")
+            source_message_id = str(
+                quoted_source_message_id
+                or item.get("batch_platform_message_id")
+                or platform_message_id
+                or ""
+            )
+            source_index = item.get(
+                "source_attachment_index"
+                if quoted_source_message_id else "batch_attachment_index",
+                item_index,
+            )
+            if quoted_source_message_id:
                 from app.core import chat_attach
 
                 reused = await chat_attach.reuse_attachment(
@@ -238,8 +248,9 @@ async def ingest_qq_media(
                             is_voice = True
 
                 extra = {}
-                if message_id:
-                    extra["source_message_id"] = message_id
+                source_event_id = item.get("batch_message_id") or message_id
+                if source_event_id:
+                    extra["source_message_id"] = str(source_event_id)
                 # QQ 表情的协议文本与图片是两条消息，标记必须跟随图片
                 # 一起写入暂存元数据，后续前端才能按图片卡片展示而不显示随机文件名。
                 if is_qq_face:
@@ -254,15 +265,15 @@ async def ingest_qq_media(
                     duration = media_transcode.probe_duration(data, ext)
                     meta = await im_attachments.stage_voice(
                         owner, name, ext, mime, data, duration=duration, platform="qq",
-                        platform_message_id=platform_message_id,
-                        attachment_index=item_index,
+                        platform_message_id=source_message_id or None,
+                        attachment_index=int(source_index) if source_index is not None else item_index,
                     )
                 else:
                     stage_kwargs = {"platform": "qq", "extra": extra or None}
-                    if platform_message_id:
+                    if source_message_id:
                         stage_kwargs.update({
-                            "platform_message_id": platform_message_id,
-                            "attachment_index": item_index,
+                            "platform_message_id": source_message_id,
+                            "attachment_index": int(source_index) if source_index is not None else item_index,
                         })
                     if is_qq_face:
                         stage_kwargs["kind"] = "image"

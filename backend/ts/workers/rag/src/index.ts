@@ -626,7 +626,7 @@ function search(
   }
   return {
     results: scored
-      .sort((left, right) => right.score - left.score || left.id.localeCompare(right.id))
+      .sort((left, right) => right.score - left.score || left.id.localeCompare(right.id, "en-US"))
       .slice(0, Math.max(1, Math.min(limit, 50))),
     diagnostics: {
       candidate_count: state.documents.length,

@@ -10,12 +10,52 @@ from agent.tools import registry
 from agent.tools.tool_contract import validate_input
 
 
+def _mock_safe_egress(monkeypatch, respond):
+    """Provider 回归测试仍走共享安全客户端，仅把解析和 socket 传输替换为合成端点。"""
+    from app.core import pinned_http, safe_egress
+
+    async def resolve(_client, _url):
+        return "93.184.216.34", None
+
+    monkeypatch.setattr(safe_egress.SafeEgressClient, "resolve", resolve)
+    monkeypatch.setattr(
+        pinned_http, "PinnedHTTPTransport", lambda _ip: httpx.MockTransport(respond),
+    )
+
+
 def config(provider, api_format="openai", base_url=""):
     return SimpleNamespace(
         provider=provider, api_format=api_format, base_url=base_url,
         api_key="synthetic-test-key", model="mimo-v2.6-pro" if provider == "mimo" else "synthetic-model",
         ollama_mode="cloud", web_search_enabled=True,
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("codes, expected_calls", [([1033, 0], 2), ([1033, 1033, 1033], 3), ([1004], 1)])
+async def test_minimax_search_retries_only_transient_error(monkeypatch, codes, expected_calls):
+    from agent.providers.minimax import web_search as minimax_search
+
+    calls = []
+    diagnostics = []
+    async def no_delay(_seconds):
+        pass
+    def respond(request):
+        calls.append(request)
+        return httpx.Response(200, headers={"x-request-id": "test-request"}, json={"base_resp": {"status_code": codes[len(calls) - 1]}})
+
+    _mock_safe_egress(monkeypatch, respond)
+    monkeypatch.setattr(minimax_search.asyncio, "sleep", no_delay)
+    monkeypatch.setattr(minimax_search, "diag_log_raw", lambda _where, message: diagnostics.append(message))
+    result = await minimax_search.search(config("minimax"), {"query": "合成查询"})
+    assert len(calls) == expected_calls
+    if codes[-1] == 0:
+        assert result["base_resp"]["status_code"] == 0
+    elif codes[-1] == 1004:
+        assert "授权" in result["error"]
+    else:
+        assert "重试后" in result["error"]
+    assert all("合成查询" not in line and "synthetic-test-key" not in line for line in diagnostics)
 
 
 def test_run_schemas_and_validation_stay_bound_to_their_provider():
@@ -82,8 +122,7 @@ async def test_provider_sends_native_arguments_and_preserves_native_results(monk
         requests.append(request)
         return httpx.Response(200, json=response)
 
-    monkeypatch.setattr(adapter, "resolve_pinned_ip", lambda _: ("93.184.216.34", None))
-    monkeypatch.setattr(adapter, "PinnedHTTPTransport", lambda _: httpx.MockTransport(respond))
+    _mock_safe_egress(monkeypatch, respond)
     assert await web_search.search(cfg, args) == response
     request = requests[0]
     assert request.url.path == expected_path
@@ -160,8 +199,7 @@ async def test_added_providers_send_native_payload_and_keep_sources(monkeypatch,
         requests.append(request)
         return httpx.Response(200, json=result)
 
-    monkeypatch.setattr(search_http, "resolve_pinned_ip", lambda _: ("93.184.216.34", None))
-    monkeypatch.setattr(search_http, "PinnedHTTPTransport", lambda _: httpx.MockTransport(respond))
+    _mock_safe_egress(monkeypatch, respond)
     assert await web_search.search(cfg, args) == result
     request = requests[0]
     assert request.url.path == path
@@ -206,8 +244,7 @@ async def test_search_http_does_not_follow_redirect_or_expose_upstream_errors(mo
         requests.append(request)
         return httpx.Response(status, headers={"Location": "https://example.com/collect"}, json={"error": {"message": "synthetic-private-diagnostic"}})
 
-    monkeypatch.setattr(search_http, "resolve_pinned_ip", lambda _: ("93.184.216.34", None))
-    monkeypatch.setattr(search_http, "PinnedHTTPTransport", lambda _: httpx.MockTransport(respond))
+    _mock_safe_egress(monkeypatch, respond)
     result = await web_search.search(config("deepseek"), {"query": "测试"})
     assert "error" in result
     assert "synthetic-private-diagnostic" not in str(result)
@@ -230,10 +267,10 @@ async def test_every_provider_bounds_actual_http_results(monkeypatch, provider, 
 
     cfg = config(provider, api_format)
     adapter = web_search._adapter(cfg)
-    transport_owner = adapter if provider in {"minimax", "glm", "qwen"} else search_http
     payload = {"results": [{"content": "长正文" * 4000, "url": "https://example.com/page"} for _ in range(40)]}
-    monkeypatch.setattr(transport_owner, "resolve_pinned_ip", lambda _: ("93.184.216.34", None))
-    monkeypatch.setattr(transport_owner, "PinnedHTTPTransport", lambda _: httpx.MockTransport(lambda request: httpx.Response(200, json=payload)))
+    _mock_safe_egress(
+        monkeypatch, lambda request: httpx.Response(200, json=payload),
+    )
     result = await web_search.search(cfg, args)
     assert len(json.dumps(result, ensure_ascii=False).encode()) <= MAX_RESULT_BYTES
     assert result["_gugu_search_limits"]["truncated"]
@@ -254,8 +291,7 @@ async def test_model_search_output_budget_has_default_and_ceiling(monkeypatch, p
         requests.append(json.loads(request.content))
         return httpx.Response(200, json={"choices": []})
 
-    monkeypatch.setattr(owner, "resolve_pinned_ip", lambda _: ("93.184.216.34", None))
-    monkeypatch.setattr(owner, "PinnedHTTPTransport", lambda _: httpx.MockTransport(respond))
+    _mock_safe_egress(monkeypatch, respond)
     await web_search.search(cfg, args)
     assert requests[-1][field] == default
     await web_search.search(cfg, {**args, field: 100000})

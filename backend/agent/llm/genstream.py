@@ -48,6 +48,10 @@ def _cancel_key(session_id) -> str:
     return f"genstream:cancel:{session_id}"
 
 
+def _cancel_notify_channel(session_id) -> str:
+    return f"genstream:cancel-notify:{session_id}"
+
+
 def _lease_key(session_id) -> str:
     return f"genstream:lease:{session_id}"
 
@@ -136,10 +140,36 @@ async def request_cancel(session_id, owner_run_id: str | None = None) -> None:
     仍指向当前 run（或旧版万能值 "1"）时才认账，过期的标记自动失效——
     「停止」只杀用户看到正在跑的那个 run，排队接管的 run 不被误伤。
     """
+    r = get_redis()
+    marker = str(owner_run_id or "1")
     try:
-        await get_redis().set(_cancel_key(session_id), str(owner_run_id or "1"), ex=TTL)
-    except Exception:
-        pass
+        # 先写可恢复的权威标记，再发瞬时唤醒通知；订阅暂时断开时由 worker
+        # 的低频检查读回标记，不依赖 Pub/Sub 提供持久投递。
+        await r.set(_cancel_key(session_id), marker, ex=TTL)
+    except Exception as exc:
+        from app.core.redaction import diag_log
+
+        diag_log("agent.genstream.request_cancel", exc)
+        return
+    try:
+        await r.publish(_cancel_notify_channel(session_id), marker)
+    except Exception as exc:
+        from app.core.redaction import diag_log
+
+        diag_log("agent.genstream.cancel_notify", exc)
+
+
+async def open_cancel_subscription(session_id):
+    """订阅单个 run 的取消唤醒频道；调用方负责在 run 结束时关闭。"""
+    pubsub = get_redis().pubsub()
+    await pubsub.subscribe(_cancel_notify_channel(session_id))
+    return pubsub
+
+
+async def wait_for_cancel_signal(session_id, pubsub, *, timeout: float = 5.0) -> bool:
+    """等待主动取消通知，并以带 owner 校验的 Redis 标记确认；超时即做兜底检查。"""
+    await pubsub.get_message(ignore_subscribe_messages=True, timeout=timeout)
+    return await is_cancelled(session_id)
 
 
 async def is_cancelled(session_id, owner_run_id: str | None = None) -> bool:

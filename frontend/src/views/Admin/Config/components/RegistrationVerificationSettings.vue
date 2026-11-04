@@ -48,7 +48,7 @@ const { t } = useI18n()
 .toggle-group { display: flex; gap: 6px; }
 .compact-toggle { flex-shrink: 0; }
 .toggle-btn { padding: 6px 18px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05); font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.38); cursor: pointer; transition: background 0.15s, border-color 0.15s, color 0.15s; }
-.toggle-btn.active { background: rgba(123,127,178,0.2); border-color: rgba(123,127,178,0.35); color: rgba(255,255,255,0.88); }
+.toggle-btn.active { background: color-mix(in srgb, var(--action-primary) 20%, transparent); border-color: color-mix(in srgb, var(--action-primary) 35%, transparent); color: rgba(255,255,255,0.88); }
 .toggle-btn:disabled { cursor: not-allowed; opacity: 0.5; }
 .toggle-btn:hover:not(.active):not(:disabled) { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.6); }
 .setting-note { margin: 0; color: var(--content-tertiary); font-size: 12px; line-height: 1.5; }

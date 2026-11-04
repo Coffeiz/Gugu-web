@@ -12,6 +12,8 @@ import copy
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from agent.request_headers import redact_tool_request_headers
+
 
 def _canonical_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -200,6 +202,7 @@ def canonical_tool_round(result: Any, dispatched: list[tuple[Any, Any]]) -> list
         raw_arguments = getattr(call, "raw_arguments", None)
         input_value = raw_arguments if isinstance(raw_arguments, str) else getattr(
             call, "input", getattr(call, "arguments", {}))
+        input_value = redact_tool_request_headers(input_value)
         assistant_blocks.append(ToolCall(
             id=str(call.id),
             name=str(call.name),

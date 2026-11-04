@@ -1,10 +1,7 @@
 """IM 出口兜底：咕咕回复发给用户之前的确定性清洗（prompt 之外的代码层保险）。
 
-prompt 是概率性的（模型大概率守规矩但偶尔破）；这里做**确定性**拦截：
-- 小泄露（tool_call id / 内部 id 噪声）→ 抹掉
-- 大泄露（系统提示词被复述出来，多为 prompt injection 得手）→ 整条换成安全话术
-
-只管**字面**泄露；语义层（「我是个 agent」这种换说法）仍靠 policy 提示词。IM 路（run_collect）会调用，防止「脏内容混进历史，污染下一轮」。
+这里仅做确定性的格式清理：移除伪工具调用语法和内部 ID 噪声。
+内容规则与语义判断由 policy 提示词处理。IM 路（run_collect）会调用，避免格式噪声进入后续对话历史。
 """
 from __future__ import annotations
 
@@ -42,24 +39,14 @@ _NOISE = re.compile(
 # 通常前面已经有一段正常的自然语言回复，只截掉泄露开始之后的部分不影响体验。
 _FUNCTION_LEAK = re.compile(r"<function=.*", re.DOTALL)
 
-# 系统提示词被吐出的锚词：正常陪伴对话绝不会出现这些（多为 prompt injection 套出来）
-_PROMPT_LEAK_ANCHORS = (
-    "工具使用准则", "真实性铁律", "对外口径", "内容政策（红线",
-    "四种相处状态", "主动思考（陪着", "高风险内容",
-)
-
-_DEFLECT = "我是咕咕呀~ 这个就不展开啦，你今天想做点啥？"
-
-
-def _diag_sanitize(event: str, *, text_len: int, cleaned_len: int = 0, anchors: tuple[str, ...] = ()) -> None:
+def _diag_sanitize(event: str, *, text_len: int, cleaned_len: int = 0) -> None:
     """记录出口清洗分支，但不把回复正文写入日志。"""
     try:
         from app.core.redaction import diag_log_raw
 
-        matched = ",".join(anchors) if anchors else "-"
         diag_log_raw(
             "agent.outbound.sanitize",
-            f"event={event} text_len={text_len} cleaned_len={cleaned_len} anchors={matched}",
+            f"event={event} text_len={text_len} cleaned_len={cleaned_len}",
         )
     except Exception:
         # 诊断日志不可用时不能影响正常回复出口。
@@ -69,19 +56,13 @@ def _diag_sanitize(event: str, *, text_len: int, cleaned_len: int = 0, anchors: 
 def sanitize_outbound(text: str) -> str:
     """清洗咕咕要发给用户的回复。
 
-    提示词泄露和空响应必须区分：前者需要替换为安全话术，后者保持为空，
-    由上层决定是否发送，不能伪装成一条与当前请求无关的身份回复。
+    空响应保持为空，由上层决定是否发送，不能伪装成一条与当前请求无关的身份回复。
     """
     if not text:
         return text
     text = strip_think_blocks(text)
     if not text:
         return ""
-    # 大泄露：系统提示词/规则被复述 → 整条换掉
-    matched_anchors = tuple(a for a in _PROMPT_LEAK_ANCHORS if a in text)
-    if matched_anchors:
-        _diag_sanitize("prompt_leak_deflect", text_len=len(text), anchors=matched_anchors)
-        return _DEFLECT
     # 伪工具调用语法泄露：截掉泄露开始往后的全部内容，前面的正常文字保留
     text = _FUNCTION_LEAK.sub("", text).rstrip()
     # 小泄露：抹掉 tool_id / 内部 id 噪声

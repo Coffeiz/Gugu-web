@@ -52,11 +52,11 @@ defineEmits<{
 .toggle-group { display: flex; gap: 6px; }
 .compact-toggle { flex-shrink: 0; }
 .toggle-btn { padding: 6px 18px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05); font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.38); cursor: pointer; }
-.toggle-btn.active { background: rgba(123,127,178,0.2); border-color: rgba(123,127,178,0.35); color: rgba(255,255,255,0.88); }
+.toggle-btn.active { background: color-mix(in srgb, var(--action-primary) 20%, transparent); border-color: color-mix(in srgb, var(--action-primary) 35%, transparent); color: rgba(255,255,255,0.88); }
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field-label { font-size: 12px; color: rgba(255,255,255,0.55); }
 .field-input { width: 100%; box-sizing: border-box; padding: 9px 11px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.11); background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.86); outline: none; }
-.field-input:focus { border-color: rgba(123,127,178,0.55); }
+.field-input:focus { border-color: color-mix(in srgb, var(--action-primary) 55%, transparent); }
 .field-hint { font-size: 11px; color: rgba(255,255,255,0.32); }
 @media (max-width: 700px) { .card-head { align-items: flex-start; flex-wrap: wrap; } .compact-toggle { margin-left: 51px; } }
 </style>

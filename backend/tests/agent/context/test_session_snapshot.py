@@ -93,6 +93,7 @@ class _Session:
     context_epoch = 0
     session_context = None
     snapshot_expires_at = None
+    baseline_message_seq = 0
 
 
 def test_snapshot_revision_is_pending_metadata_not_hit_gate():
@@ -359,13 +360,13 @@ def test_checkpoint_hash_chains_new_messages_without_copying_snapshot_text():
 
 def test_snapshot_records_history_baseline_without_dropping_context_metadata():
     session = _Session()
-    session.baseline_message_id = 12
+    session.baseline_message_seq = 12
     initialize_snapshot(session, system_prompt="system", snapshot_context="fixed",
                         session_info={"epoch": 1}, user_tz="Asia/Shanghai")
 
-    update_baseline_snapshot(session, [{"role": "summary", "content": "摘要"}], baseline_message_id=18)
+    update_baseline_snapshot(session, [{"role": "summary", "content": "摘要"}], baseline_message_seq=18)
 
-    assert session.session_context["history_baseline_message_id"] == 18
+    assert session.session_context["history_baseline_message_seq"] == 18
     assert session.session_context["context_revision"] == 1
 
 
@@ -405,8 +406,8 @@ def test_initialize_snapshot_preserves_goal_control_state():
 
 def test_history_baseline_never_moves_back_from_session_watermark():
     session = _Session()
-    session.baseline_message_id = 20
-    session.session_context = {"history_baseline_message_id": 12}
+    session.baseline_message_seq = 20
+    session.session_context = {"history_baseline_message_seq": 12}
 
     from agent.context.session_snapshot import history_baseline
 
@@ -457,7 +458,7 @@ def test_stance_digest_only_appends_when_stance_changes():
 
     assert first.canonical_messages[0]["content"][0]["type"] == "stance-context"
     assert first.canonical_messages[0]["content"][0]["text"].startswith("[system-reminder]")
-    assert [item["content"] for item in same.canonical_messages] == ["二"]
+    assert [item["content"] for item in same.canonical_messages] == ["【消息正文】\n二"]
     assert changed.canonical_messages[0]["content"][0]["type"] == "stance-context"
     assert changed.canonical_messages[0]["content"][0]["text"].startswith("[system-reminder]")
     assert changed_digest != same_digest
@@ -466,7 +467,9 @@ def test_stance_digest_only_appends_when_stance_changes():
 def test_old_stance_message_is_never_removed_from_history():
     messages = MessageArea.from_canonical_messages([{"role": "user", "content": "旧姿态"}])
     messages.append_batch(MessageBatch.from_canonical_messages([{"role": "user", "content": "新姿态"}]))
-    assert [item["content"] for item in messages.provider_projection().conversation] == ["旧姿态", "新姿态"]
+    assert [item["content"] for item in messages.provider_projection().conversation] == [
+        "【消息正文】\n旧姿态", "【消息正文】\n新姿态",
+    ]
 
 
 def test_message_area_commits_one_new_message_batch_atomically():
@@ -481,12 +484,12 @@ def test_message_area_commits_one_new_message_batch_atomically():
     messages.append_batch(batch)
 
     assert [item["content"] for item in messages.provider_projection().conversation] == [
-        "history",
+        "【消息正文】\nhistory",
         "tool call",
-        "tool result",
+        "【消息正文】\ntool result",
     ]
     assert [item["content"] for item in messages.provider_projection().conversation[-2:]] == [
-        "tool call", "tool result",
+        "tool call", "【消息正文】\ntool result",
     ]
 
 
@@ -518,15 +521,14 @@ def test_turn_batch_keeps_stance_and_message_time_order_stable():
         current_user={"role": "user", "content": "new"},
     )
 
-    assert [item["content"] for item in batch.canonical_messages] == [
-        [{
+    assert batch.canonical_messages == (
+        {"role": "user", "content": [{
             "type": "stance-context",
             "digest": stance_digest("stance"),
             "text": reminder("stance")["content"],
-        }],
-        [{"type": "time-context", "text": "[system-reminder]\nmessage-time\n[/system-reminder]"}],
-        "new",
-    ]
+        }]},
+        {"role": "user", "content": "【消息时间】message-time\n【消息正文】\nnew"},
+    )
 
 
 def test_area_baseline_replacement_preserves_request_only_dynamic_tail():
@@ -536,7 +538,7 @@ def test_area_baseline_replacement_preserves_request_only_dynamic_tail():
         [{"role": "user", "content": "compacted"}],
         expected_revision=messages.revision,
     )
-    assert messages.provider_projection().conversation[0]["content"] == "compacted"
+    assert messages.provider_projection().conversation[0]["content"] == "【消息正文】\ncompacted"
 
 
 def test_history_cache_boundary_uses_batch_messages():

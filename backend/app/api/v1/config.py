@@ -19,7 +19,14 @@ from pydantic import BaseModel, field_validator
 from typing import Any, Literal
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.config import FileSyncSettings, IMPlatformSettings, SmtpSettings, get_settings, save_override
+from app.core.config import (
+    DEFAULT_SEARXNG_IMAGE_ENGINES,
+    FileSyncSettings,
+    IMPlatformSettings,
+    SmtpSettings,
+    get_settings,
+    save_override,
+)
 from app.core.redaction import diag_log, redact
 from app.db.session import create_all_tables, reset_engine, get_db
 from app.services.multimodal_probe import make_silent_wav
@@ -185,6 +192,10 @@ async def update_config(body: ConfigPatch, request: Request, db: AsyncSession = 
             if not sandbox_ready:
                 raise HTTPException(status_code=400, detail=f"当前 Shell 沙盒不可用：{sandbox_reason}")
         new_cfg = await save_override(body.patch)
+        if im_patch is not None:
+            from app.services.im_gateway import notify_gateway_reload
+
+            await notify_gateway_reload()
         sections = "、".join(body.patch.keys())
         username = getattr(request.state, "admin_username", "admin")
         await write_log(db, username, "config", f"修改配置：{sections}", request)
@@ -779,7 +790,14 @@ async def test_search(body: SearchTestRequest):
             return {"ok": False, "message": "未填 SearXNG 地址"}
         is_images = body.target == "searxng_images"
         if is_images:
-            engines = body.searxng_image_engines or cfg.search.searxng_image_engines or cfg.search.searxng_engines
+            engines = (
+                (
+                    body.searxng_image_engines
+                    or cfg.search.searxng_image_engines
+                    or ""
+                ).strip()
+                or DEFAULT_SEARXNG_IMAGE_ENGINES
+            )
         else:
             engines = body.searxng_engines or cfg.search.searxng_engines
         params = {"q": "test", "format": "json", "engines": engines}

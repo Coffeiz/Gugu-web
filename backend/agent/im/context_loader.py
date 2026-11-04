@@ -6,7 +6,9 @@
 """
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
+import time
 from typing import Any
 
 from agent.context import loaders
@@ -117,47 +119,124 @@ def format_history_content(message, request: AgentRequest) -> str:
     身份元数据只进入模型上下文，不改 ConversationMessage.content，网页历史和
     数据库存档仍保持用户原文。私聊及 Web 继续使用原始内容。
     """
-    content = format_quoted_context(
-        message.content or "",
-        getattr(message, "quoted_text", None),
-    )
-    content += format_attachment_refs(message)
     if not request or not request.chat_id or getattr(message, "chat_type", None) != "group":
+        content = format_quoted_context(
+            message.content or "",
+            getattr(message, "quoted_text", None),
+        )
+        content += format_attachment_refs(message)
         return content
     if getattr(message, "role", None) != "user":
-        return content
+        return format_quoted_context(
+            message.content or "",
+            getattr(message, "quoted_text", None),
+        ) + format_attachment_refs(message)
 
-    platform_user_id = getattr(message, "platform_user_id", None) or "未知"
-    platform_user_name = getattr(message, "platform_user_name", None) or "未提供"
-    return (
-        "[群聊历史消息，以下是可靠元数据；不要根据昵称猜身份] "
-        f"发言人ID={platform_user_id}，显示名={platform_user_name}\n"
-        f"{content}"
+    return format_group_message({
+        "speaker": {
+            "platform_user_id": getattr(message, "platform_user_id", None),
+            "display_name": getattr(message, "platform_user_name", None),
+        },
+        "body": message.content or "",
+        "quoted_text": getattr(message, "quoted_text", None),
+        "attachment_ids": [
+            str(item.get("attach_id"))
+            for item in (getattr(message, "files", None) or [])
+            if isinstance(item, dict) and item.get("attach_id")
+        ],
+        "attachment_context": format_attachment_refs(message) or None,
+    })
+
+
+def _group_message_rows(
+    request: AgentRequest, content: str,
+    batch_messages: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    batch_messages = batch_messages if batch_messages is not None else (
+        getattr(request, "im_batch_messages", None) or []
     )
+    if not batch_messages:
+        batch_messages = [{
+            "text": content,
+            "platform_user_id": request.platform_user_id,
+            "platform_user_name": request.platform_user_name,
+            "quoted_text": request.quoted_text,
+            "attachments": [],
+        }]
+
+    rows = []
+    for message in batch_messages:
+        if not isinstance(message, dict):
+            continue
+        speaker_id = str(message.get("platform_user_id") or "")
+        rows.append({
+            "speaker": {
+                "platform_user_id": speaker_id or None,
+                "display_name": message.get("platform_user_name") or None,
+            },
+            "body": str(message.get("text") or ""),
+            "quoted_text": message.get("quoted_text") or None,
+            "attachment_ids": [
+                str(item.get("attach_id")) if isinstance(item, dict) else str(item)
+                for item in (message.get("attachments") or [])
+                if item is not None and (not isinstance(item, dict) or item.get("attach_id"))
+            ],
+        })
+    return rows
+
+
+def format_group_message(row: dict[str, Any], supplemental_context: str = "") -> str:
+    """以固定字段顺序包装单条群消息；权限状态由服务端校验，不进入正文。"""
+    speaker = row.get("speaker") or {}
+    message_lines = [
+        "【群消息】",
+        "【发言人元数据】",
+        f"平台 ID：{speaker.get('platform_user_id') or '未提供'}",
+        f"显示名：{speaker.get('display_name') or '未提供'}",
+        "【消息正文】",
+        str(row.get("body") or ""),
+    ]
+    quoted_text = row.get("quoted_text")
+    if quoted_text:
+        message_lines.extend(("【引用消息】", str(quoted_text)))
+    attachment_ids = row.get("attachment_ids") or []
+    if attachment_ids:
+        message_lines.extend(("【附件 ID】", ", ".join(str(item) for item in attachment_ids)))
+    attachment_context = row.get("attachment_context") or supplemental_context
+    if attachment_context:
+        message_lines.extend(("【补充上下文】", str(attachment_context)))
+    return "\n".join(message_lines)
+
+
+def _render_group_messages(rows: list[dict[str, Any]], supplemental_context: str = "") -> str:
+    """兼容单字符串调用方；批次消息之间保留相同的独立包装边界。"""
+    if not rows:
+        return format_group_message({"speaker": {}, "body": ""})
+    return "\n\n".join(
+        format_group_message(row, supplemental_context if len(rows) == 1 else "")
+        for row in rows
+    )
+
+
+def format_current_group_message(
+    content: str, request: AgentRequest, batch_message: dict[str, Any],
+) -> str:
+    """序列化一个当前群消息，附件解析补充内容留在该消息的边界内。"""
+    body = str(batch_message.get("text") or "")
+    supplemental = content[len(body):].strip() if content.startswith(body) else ""
+    rows = _group_message_rows(request, body, [batch_message])
+    return format_group_message(rows[0], supplemental) if rows else format_group_message({})
 
 
 def format_current_content(content: str, request: AgentRequest) -> str:
-    """给当前群消息加发言人锚点，避免沿用历史消息中的其他昵称。
-
-    这是仅供模型使用的上下文包装，不改变数据库正文和网页展示内容。
-    """
+    """将群聊发言人元数据与每条消息正文分区呈现；不改持久化正文。"""
     if not request.chat_id:
         return content
-    role = request.im_role or "unknown"
-    role_text = {
-        "owner": "绑定用户 owner",
-        "member": "群成员 member",
-        "unknown": "未确认身份 unknown",
-    }.get(role, role)
-    sender_id = request.platform_user_id or "未知"
-    sender_name = request.platform_user_name or request.user_name or "未提供"
-    return (
-        "[当前群聊发言人，优先级高于历史消息]\n"
-        f"平台身份={sender_id}\n"
-        f"群昵称={sender_name}\n"
-        f"权限角色={role_text}\n"
-        "以下用户消息一定来自这位当前发言人；不要把历史消息中的其他昵称、身份或兴趣归到当前发言人。\n"
-        f"{content}"
+    prefix = request.message
+    attachment_context = content[len(prefix):].strip() if prefix and content.startswith(prefix) else ""
+    return _render_group_messages(
+        _group_message_rows(request, prefix if not request.im_batch_messages else ""),
+        supplemental_context=attachment_context,
     )
 
 
@@ -191,22 +270,55 @@ async def load_context_data(
     owner 的项目、文件或记忆注入其他发言人的 loop。
     """
     context_policy = policy or policy_for(request)
+    started_at = time.time()
     user_tz = await loaders.load_user_tz(db, user_id)
     if not context_policy.load_owner_context:
-        im_memory = await load_im_memory(request)
+        im_memory_task = asyncio.create_task(load_im_memory(request))
+        try:
+            im_memory = await im_memory_task
+        except BaseException:
+            if not im_memory_task.done():
+                im_memory_task.cancel()
+            await asyncio.gather(im_memory_task, return_exceptions=True)
+            raise
+        _record_context_load_timing(started_at, owner_context=False)
         return ContextData([], user_tz, [], [], {}, {}, {}, {}, im_memory)
 
-    projects = await loaders.load_projects(db, user_id)
-    events = await loaders.load_events(db, user_id, tz=user_tz)
-    notes = await loaders.load_recent_notes(db, user_id)
-    files_overview = await loaders.load_files_overview(db, user_id)
-    style_prefs = await loaders.load_style_prefs(db, user_id)
-    memory = await loaders.load_memory(
-        user_id, query, prefer_recent=True,
-    ) if memory_enabled else {}
-    im_channels = await loaders.load_im_channels(db, user_id)
-    im_memory = await load_im_memory(request)
-    knowledge = await loaders.load_knowledge_overview(user_id)
+    # Эти три источника не используют AsyncSession и независимы от DB-запросов.
+    # Запускаем их заранее, пока последовательно читаем DB-контекст: один
+    # AsyncSession нельзя одновременно передавать нескольким конкурентным задачам.
+    auxiliary_tasks = {
+        "memory": asyncio.create_task(loaders.load_memory(
+            user_id, query, prefer_recent=True,
+        )) if memory_enabled else None,
+        "im_memory": asyncio.create_task(load_im_memory(request)),
+        "knowledge": asyncio.create_task(loaders.load_knowledge_overview(user_id)),
+    }
+    try:
+        projects = await loaders.load_projects(db, user_id)
+        events = await loaders.load_events(db, user_id, tz=user_tz)
+        notes = await loaders.load_recent_notes(db, user_id)
+        files_overview = await loaders.load_files_overview(db, user_id)
+        style_prefs = await loaders.load_style_prefs(
+            db, user_id, group_chat=bool(request.chat_id),
+        )
+        im_channels = await loaders.load_im_channels(db, user_id)
+        task_names = [name for name, task in auxiliary_tasks.items() if task is not None]
+        task_results = await asyncio.gather(
+            *(auxiliary_tasks[name] for name in task_names),
+        )
+        auxiliary = dict(zip(task_names, task_results))
+    except BaseException:
+        pending = [task for task in auxiliary_tasks.values() if task is not None and not task.done()]
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(
+            *(task for task in auxiliary_tasks.values() if task is not None),
+            return_exceptions=True,
+        )
+        raise
+
+    _record_context_load_timing(started_at, owner_context=True)
     return ContextData(
         projects=projects,
         user_tz=user_tz,
@@ -214,10 +326,19 @@ async def load_context_data(
         notes=notes,
         files_overview=files_overview,
         style_prefs=style_prefs,
-        memory=memory,
+        memory=auxiliary.get("memory", {}),
         im_channels=im_channels,
-        im_memory=im_memory,
-        knowledge=knowledge,
+        im_memory=auxiliary["im_memory"],
+        knowledge=auxiliary["knowledge"],
+    )
+
+
+def _record_context_load_timing(started_at: float, *, owner_context: bool) -> None:
+    from agent.runtime.loopscope_trace.state import record_phase_timing
+
+    record_phase_timing(
+        "Context data loading", started_at,
+        owner_context=owner_context,
     )
 
 

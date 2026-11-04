@@ -10,13 +10,14 @@ from contextlib import suppress
 from typing import Any, Dict
 
 from app.core import redis as R
-from app.core.redaction import diag_log, redact
+from app.core.redaction import diag_log, diag_log_raw, redact
 from .text import complete_qq_lines, prepare_qq_text, prepare_qq_link_buttons
 from agent.im.message_format import message_type as _message_type
 from .client import (
     QQAPIError,
     QQStreamFinalizationError,
     QQStreamDeliveryError,
+    QQStreamPrefixMismatchError,
     _qq_error_summary,
     _qq_is_transient,
     _qq_request,
@@ -26,19 +27,29 @@ from .client import (
 _log = logging.getLogger("agent.gateway.qq")
 
 _stream_seq_fallback = 0
+_PASSIVE_REPLY_SEQ_TTL_SECONDS = 70 * 60
+_NEXT_PASSIVE_REPLY_SEQ_SCRIPT = """
+local value = redis.call('INCR', KEYS[1])
+if value == 1 then
+    redis.call('EXPIRE', KEYS[1], ARGV[1])
+end
+return value
+"""
 
 async def _next_seq(msg_id: str | None) -> int:
+    """为同一入站消息分配递增序号，并在 QQ 被动回复窗口后再回收状态。"""
     if not msg_id:
         return 1
-    try:
-        k = f"qqseq:{msg_id}"
-        n = await R.get_redis().incr(k)
-        if n == 1:
-            await R.get_redis().expire(k, 600)   # 比 5min 被动窗口稍长
-        return n
-    except Exception:
-        import time as _t
-        return int(_t.time() * 1000) % 1_000_000   # Redis 挂了退回时间戳尾数
+    key = f"qqseq:{msg_id}"
+    redis = R.get_redis()
+    # Lua 将递增和首次 TTL 设置作为一个原子操作，避免并发初始化留下无过期时间的键。
+    value = await redis.eval(
+        _NEXT_PASSIVE_REPLY_SEQ_SCRIPT,
+        1,
+        key,
+        _PASSIVE_REPLY_SEQ_TTL_SECONDS,
+    )
+    return int(value)
 
 async def _next_stream_seq(channel_id: str) -> int:
     """为每个 QQ 官方流会话生成新的 msg_seq，避免跨回复撞序列。"""
@@ -64,6 +75,7 @@ class QQPrivateTextStream:
     def __init__(self, channel_id: str, openid: str, *, message_id: str | None):
         self.channel_id = channel_id
         self.openid = openid
+        self.prefix_normalizer = None
         self.message_id = message_id
         # C2C 流式消息只用于 Markdown 私聊模式。
         self.content_type = "markdown"
@@ -104,7 +116,13 @@ class QQPrivateTextStream:
         finally:
             self._timer = None
 
-    async def _flush(self, input_state: int = 1, *, content_override: str | None = None) -> None:
+    async def _flush(
+        self,
+        input_state: int = 1,
+        *,
+        content_override: str | None = None,
+        allow_rewrite: bool = False,
+    ) -> None:
         if self.error is not None:
             raise self.error
         if not self.full_text or (input_state != 10 and self.full_text == self.last_sent_text):
@@ -114,7 +132,9 @@ class QQPrivateTextStream:
         async def send_one() -> None:
             if previous is not None:
                 await previous
-            frame = self._prepare_frame_text(input_state, content_override)
+            frame = self._prepare_frame_text(
+                input_state, content_override, allow_rewrite=allow_rewrite,
+            )
             if frame is None:
                 return
             sent_text, content = frame
@@ -189,17 +209,36 @@ class QQPrivateTextStream:
             self.error = exc
             raise
 
-    def _prepare_frame_text(self, input_state: int, override: str | None) -> tuple[str, str] | None:
+    def _prepare_frame_text(
+        self,
+        input_state: int,
+        override: str | None,
+        *,
+        allow_rewrite: bool = False,
+    ) -> tuple[str, str] | None:
         """只生成稳定的追加正文；读取排队后的最新状态，不提前确认缓冲尾行。"""
-        raw = self.full_text if self.finished or input_state == 10 else complete_qq_lines(self.full_text)
+        raw = self.full_text if input_state == 10 else complete_qq_lines(self.full_text)
         content = override if override is not None else prepare_qq_text(raw)
         if not content.strip() or (input_state != 10 and content == self.last_sent_content):
             return None
         if not content.startswith(self.last_sent_content):
-            raise ValueError("QQ 流式正文改写已发送前缀，已阻止出站")
+            # 定稿可能只修正了已发送前缀中的 Markdown 空白。保留 QQ 已接受的
+            # 原始前缀，只追加能确认属于定稿的后缀，不能让 replace 改写前文。
+            if allow_rewrite and override is None and self.prefix_normalizer and self.last_sent_text:
+                normalized = self.prefix_normalizer(self.last_sent_text)
+                if raw.startswith(normalized):
+                    raw = self.last_sent_text + raw[len(normalized):]
+                    content = prepare_qq_text(raw)
+            if not content.startswith(self.last_sent_content):
+                raise QQStreamPrefixMismatchError("QQ 流式正文改写已发送前缀，已阻止出站")
+        # QQ C2C 原生 Markdown 流要求每个分片以换行结束。中间帧由
+        # complete_qq_lines 保证；最终帧包含尚未换行的尾行时也要补齐，
+        # 否则 QQ 会拒绝 DONE，继而触发普通消息恢复并造成重复回复。
+        if input_state == 10 and self.content_type == "markdown" and not content.endswith("\n"):
+            content += "\n"
         return raw, content
 
-    async def finish(self, final_text: str) -> None:
+    async def finish(self, final_text: str, *, allow_rewrite: bool = False) -> None:
         self.finished = True
         if self._timer is not None:
             self._timer.cancel()
@@ -214,7 +253,8 @@ class QQPrivateTextStream:
         if not self.full_text.strip():
             return
         try:
-            await self._flush(1)
+            # 定稿也必须保留 QQ 已确认的前缀；格式修正只能影响尚未发送的部分。
+            await self._flush(1, allow_rewrite=allow_rewrite)
             if self._chain is not None:
                 await self._chain
         except Exception as exc:
@@ -226,7 +266,7 @@ class QQPrivateTextStream:
             self.error = None
             self._chain = None
         try:
-            await self._flush(10)
+            await self._flush(10, allow_rewrite=allow_rewrite)
         except Exception as exc:
             await self._close_rejected_content(exc)
         if self._chain is not None:
@@ -246,8 +286,11 @@ class QQPrivateTextStream:
     async def _close_rejected_content(self, error: Exception) -> None:
         """内容被拒后只关闭已送达正文，失败状态始终交给调用方处理。"""
         body = error.body if isinstance(error, QQAPIError) else None
-        rejected = isinstance(body, dict) and str(body.get("code") or body.get("err_code")) == "40034028"
+        code = str(body.get("code") or body.get("err_code")) if isinstance(body, dict) else ""
+        prefix_mismatch = isinstance(error, QQStreamPrefixMismatchError) or code == "40007"
+        rejected = prefix_mismatch or code == "40034028"
         if not rejected or not self.stream_msg_id or not self.last_sent_content:
+            self._log_finalization_failure(error)
             raise QQStreamFinalizationError("QQ 流式消息关闭未获确认") from error
         delivered_content = self.last_sent_content
         self.error = None
@@ -255,9 +298,48 @@ class QQPrivateTextStream:
         try:
             await self._flush(10, content_override=delivered_content)
         except Exception as close_error:
-            diag_log("agent.gateway.qq.stream_rejected_content", error)
+            self._log_finalization_failure(close_error, original_error=error)
             raise QQStreamFinalizationError("QQ 流式消息关闭未获确认") from close_error
+        if prefix_mismatch:
+            raise QQStreamPrefixMismatchError("QQ 前缀不匹配，已关闭最后送达的内容") from error
         raise QQStreamDeliveryError("QQ 部分正文被拒绝，已关闭最后送达的内容") from error
+
+    def _log_finalization_failure(
+        self,
+        error: Exception,
+        *,
+        original_error: Exception | None = None,
+    ) -> None:
+        """记录流关闭失败的协议诊断，不记录正文、URL 或平台消息标识。"""
+        def safe_error_fields(exc: Exception) -> dict[str, object]:
+            fields: dict[str, object] = {"type": type(exc).__name__}
+            if not isinstance(exc, QQAPIError):
+                return fields
+            fields["http_status"] = exc.status
+            body = exc.body
+            if not isinstance(body, dict):
+                return fields
+            code = body.get("code") or body.get("err_code")
+            if isinstance(code, int) and not isinstance(code, bool):
+                fields["upstream_code"] = code
+            elif isinstance(code, str) and code.isdecimal() and len(code) <= 12:
+                fields["upstream_code"] = int(code)
+            return fields
+
+        details: dict[str, object] = {
+            "input_state": 10,
+            "frame_index": self.frame_index,
+            "msg_seq": self.msg_seq,
+            "stream_id_present": bool(self.stream_msg_id),
+            "message_id_present": bool(self.message_id),
+            "error": safe_error_fields(error),
+        }
+        if original_error is not None:
+            details["original_error"] = safe_error_fields(original_error)
+        diag_log_raw(
+            "agent.gateway.qq.stream_finalization",
+            json.dumps(details, ensure_ascii=False, sort_keys=True),
+        )
 
     def has_sent(self) -> bool:
         return self.sent_frame_count > 0
@@ -381,14 +463,14 @@ async def _post(channel_id: str, openid: str, text: str, msg_id: str | None,
     if msg_id:
         body["msg_id"] = msg_id
     try:
-        await _qq_request(channel_id, "POST", path, json_body=body)
+        return await _qq_request(channel_id, "POST", path, json_body=body)
     except Exception as me:
         if msg_type != 2 or not _markdown_blocked(me):
             raise
         body = {"msg_type": 0, "content": text, "msg_seq": await _next_seq(msg_id)}
         if msg_id:
             body["msg_id"] = msg_id
-        await _qq_request(channel_id, "POST", path, json_body=body)
+        return await _qq_request(channel_id, "POST", path, json_body=body)
 
 async def _post_group(channel_id: str, group_openid: str, text: str, msg_id: str | None,
                       message_format: str | None = None,
@@ -411,14 +493,32 @@ async def _post_group(channel_id: str, group_openid: str, text: str, msg_id: str
     if msg_id:
         body["msg_id"] = msg_id
     try:
-        await _qq_request(channel_id, "POST", path, json_body=body)
+        return await _qq_request(channel_id, "POST", path, json_body=body)
     except Exception as me:
         if msg_type != 2 or not _markdown_blocked(me):
             raise
         body = {"msg_type": 0, "content": text, "msg_seq": await _next_seq(msg_id)}
         if msg_id:
             body["msg_id"] = msg_id
-        await _qq_request(channel_id, "POST", path, json_body=body)
+        return await _qq_request(channel_id, "POST", path, json_body=body)
+
+
+def _send_receipt(response: object) -> dict:
+    message_id = None
+    if isinstance(response, dict):
+        message_id = response.get("id") or response.get("message_id")
+    return {"accepted": True, "platform_message_id": str(message_id) if message_id else None}
+
+
+def _failed_send_receipt(error: BaseException, *, return_receipt: bool,
+                         unknown_seen: bool = False) -> bool | dict:
+    if not return_receipt:
+        return False
+    ambiguous = unknown_seen or not isinstance(error, QQAPIError) or error.status >= 500
+    return {
+        "accepted": False,
+        "outcome": "UNKNOWN" if ambiguous else "FAILED_CONFIRMED",
+    }
 
 KEYBOARD_ROW_BUDGET = 40
 
@@ -578,7 +678,8 @@ async def send_link_keyboard(target_id: str, text: str, buttons: list[dict[str, 
     return False
 
 async def send_c2c(openid: str, text: str, msg_id: str | None = None,
-                   channel_id: str | None = None, message_format: str | None = None) -> bool:
+                   channel_id: str | None = None, message_format: str | None = None,
+                   *, return_receipt: bool = False) -> bool | dict:
     """优先被动回复 C2C；被动发送任意失败后改用主动消息尝试一次。"""
     print(json.dumps({
         "event": "send-c2c-start",
@@ -586,18 +687,20 @@ async def send_c2c(openid: str, text: str, msg_id: str | None = None,
         "has_channel_id": bool(channel_id),
         "has_msg_id": bool(msg_id),
     }, ensure_ascii=False), flush=True)
+    unknown_seen = False
     for attempt in (1, 2):
         try:
             if message_format is None:
-                await _post(channel_id, openid, text, msg_id)
+                response = await _post(channel_id, openid, text, msg_id)
             else:
-                await _post(channel_id, openid, text, msg_id, message_format)
+                response = await _post(channel_id, openid, text, msg_id, message_format)
             print(json.dumps({
                 "event": "send-c2c-ok",
                 "attempt": attempt,
             }, ensure_ascii=False), flush=True)
-            return True
+            return _send_receipt(response) if return_receipt else True
         except Exception as e:
+            unknown_seen = unknown_seen or not isinstance(e, QQAPIError) or e.status >= 500
             print(json.dumps({
                 "event": "send-c2c-error",
                 "attempt": attempt,
@@ -605,27 +708,34 @@ async def send_c2c(openid: str, text: str, msg_id: str | None = None,
                 "transient": _qq_is_transient(e),
                 "qq": _qq_error_summary(e),
             }, ensure_ascii=False), flush=True)
-            if msg_id:
+            passive_rejected = _qq_msg_id_invalid(e) or _qq_passive_reply_limited(e)
+            if msg_id and passive_rejected:
                 _log.warning("[qq] C2C 被动回复失败，降级为主动消息")
                 _send_tokens.pop(channel_id, None)
                 try:
                     if message_format is None:
-                        await _post(channel_id, openid, text, None)
+                        response = await _post(channel_id, openid, text, None)
                     else:
-                        await _post(channel_id, openid, text, None, message_format)
-                    return True
+                        response = await _post(channel_id, openid, text, None, message_format)
+                    return _send_receipt(response) if return_receipt else True
                 except Exception as fallback_error:
                     diag_log("agent.gateway.qq.send_c2c.active_fallback", fallback_error)
                     _log.warning("[qq] C2C 主动消息发送失败: %s",
                                  redact(f"{type(fallback_error).__name__}: {fallback_error}"))
-                    return False
+                    return _failed_send_receipt(
+                        fallback_error, return_receipt=return_receipt,
+                        unknown_seen=unknown_seen,
+                    )
             diag_log("agent.gateway.qq.send_c2c", e)
             _log.warning("[qq] 发送失败(第%d次): %s", attempt, redact(f"{type(e).__name__}: {e}"))
             _send_tokens.pop(channel_id, None)   # 丢弃缓存，下次重新取 token
-            if attempt == 2 or not _qq_is_transient(e):
-                return False
+            # QQ 写消息接口不是幂等操作。超时或 5xx 时服务端可能已接收；
+            # 不带 msg_id 的 C2C 消息不能安全重试，否则会把同一正文发两次。
+            if attempt == 2 or unknown_seen or not _qq_is_transient(e):
+                return _failed_send_receipt(e, return_receipt=return_receipt, unknown_seen=unknown_seen)
             await asyncio.sleep(0.5)
-    return False
+    return _failed_send_receipt(RuntimeError("QQ C2C send exhausted"), return_receipt=return_receipt,
+                                unknown_seen=unknown_seen)
 
 async def _known_group_member_ids(channel_id: str, group_openid: str) -> frozenset[str]:
     """读群记忆 members.json 拿已登记成员 openid，作为 @ID 升级白名单。
@@ -663,7 +773,8 @@ async def _known_group_member_ids(channel_id: str, group_openid: str) -> frozens
 
 async def send_group(group_openid: str, text: str, msg_id: str | None = None,
                      channel_id: str | None = None, message_format: str | None = None,
-                     mention_user_id: str | None = None) -> bool:
+                     mention_user_id: str | None = None,
+                     *, return_receipt: bool = False) -> bool | dict:
     """优先被动回复 QQ 群；被动发送失败后改用主动消息尝试一次。"""
     print(json.dumps({
         "event": "send-group-start",
@@ -677,33 +788,36 @@ async def send_group(group_openid: str, text: str, msg_id: str | None = None,
         known_member_ids = await _known_group_member_ids(str(channel_id or ""), group_openid)
     mention_text, body_text = _split_qq_group_mention(text, mention_user_id, known_member_ids)
     mention_sent = False
+    response = None
+    unknown_seen = False
     for attempt in (1, 2):
         try:
             if mention_text and not mention_sent:
                 # mention 单独使用 Markdown，避免兼容模式把标签当普通文本展示。
-                await _post_group(channel_id, group_openid, mention_text, msg_id, "markdown",
-                                  known_member_ids=known_member_ids)
+                response = await _post_group(channel_id, group_openid, mention_text, msg_id, "markdown",
+                                             known_member_ids=known_member_ids)
                 mention_sent = True
             if mention_text and body_text:
                 if message_format is None:
-                    await _post_group(channel_id, group_openid, body_text, None,
-                                      known_member_ids=known_member_ids)
+                    response = await _post_group(channel_id, group_openid, body_text, None,
+                                                 known_member_ids=known_member_ids)
                 else:
-                    await _post_group(channel_id, group_openid, body_text, None, message_format,
-                                      known_member_ids=known_member_ids)
+                    response = await _post_group(channel_id, group_openid, body_text, None, message_format,
+                                                 known_member_ids=known_member_ids)
             elif not mention_text:
                 if message_format is None:
-                    await _post_group(channel_id, group_openid, text, msg_id,
-                                      known_member_ids=known_member_ids)
+                    response = await _post_group(channel_id, group_openid, text, msg_id,
+                                                 known_member_ids=known_member_ids)
                 else:
-                    await _post_group(channel_id, group_openid, text, msg_id, message_format,
-                                      known_member_ids=known_member_ids)
+                    response = await _post_group(channel_id, group_openid, text, msg_id, message_format,
+                                                 known_member_ids=known_member_ids)
             print(json.dumps({
                 "event": "send-group-ok",
                 "attempt": attempt,
             }, ensure_ascii=False), flush=True)
-            return True
+            return _send_receipt(response) if return_receipt else True
         except Exception as e:
+            unknown_seen = unknown_seen or not isinstance(e, QQAPIError) or e.status >= 500
             print(json.dumps({
                 "event": "send-group-error",
                 "attempt": attempt,
@@ -711,117 +825,125 @@ async def send_group(group_openid: str, text: str, msg_id: str | None = None,
                 "transient": _qq_is_transient(e),
                 "qq": _qq_error_summary(e),
             }, ensure_ascii=False), flush=True)
-            if msg_id and not (mention_sent and mention_text and body_text):
+            passive_rejected = _qq_msg_id_invalid(e) or _qq_passive_reply_limited(e)
+            if msg_id and passive_rejected and not (mention_sent and mention_text and body_text):
                 _log.warning("[qq] 群聊被动回复失败，降级为主动消息")
                 try:
                     if mention_text and not mention_sent:
-                        await _post_group(channel_id, group_openid, mention_text, None, "markdown",
-                                          known_member_ids=known_member_ids)
+                        response = await _post_group(channel_id, group_openid, mention_text, None, "markdown",
+                                                     known_member_ids=known_member_ids)
                         mention_sent = True
                     if mention_text and body_text:
                         if message_format is None:
-                            await _post_group(channel_id, group_openid, body_text, None,
-                                              known_member_ids=known_member_ids)
+                            response = await _post_group(channel_id, group_openid, body_text, None,
+                                                         known_member_ids=known_member_ids)
                         else:
-                            await _post_group(
+                            response = await _post_group(
                                 channel_id, group_openid, body_text, None, message_format,
                                 known_member_ids=known_member_ids,
                             )
                     elif not mention_text:
                         if message_format is None:
-                            await _post_group(channel_id, group_openid, text, None,
-                                              known_member_ids=known_member_ids)
+                            response = await _post_group(channel_id, group_openid, text, None,
+                                                         known_member_ids=known_member_ids)
                         else:
-                            await _post_group(channel_id, group_openid, text, None, message_format,
-                                              known_member_ids=known_member_ids)
-                    return True
+                            response = await _post_group(channel_id, group_openid, text, None, message_format,
+                                                         known_member_ids=known_member_ids)
+                    return _send_receipt(response) if return_receipt else True
                 except Exception as fallback_error:
                     diag_log("agent.gateway.qq.send_group.active_fallback", fallback_error)
                     _log.warning("[qq] 群聊主动消息发送失败: %s",
                                  redact(f"{type(fallback_error).__name__}: {fallback_error}"))
-                    return False
+                    return _failed_send_receipt(
+                        fallback_error, return_receipt=return_receipt,
+                        unknown_seen=unknown_seen,
+                    )
             elif msg_id and mention_sent and mention_text and body_text:
                 # mention 已经被动送达，后续正文本来就是主动消息；失败时不能
                 # 重发 mention，否则会产生重复提醒。
                 diag_log("agent.gateway.qq.send_group", e)
                 _log.warning("[qq] 群聊正文发送失败: %s",
                              redact(f"{type(e).__name__}: {e}"))
-                return False
+                if response is not None:
+                    return _send_receipt(response) if return_receipt else False
+                return _failed_send_receipt(e, return_receipt=return_receipt, unknown_seen=unknown_seen)
             diag_log("agent.gateway.qq.send_group", e)
             _log.warning("[qq] 群发送失败(第%d次): %s", attempt, redact(f"{type(e).__name__}: {e}"))
             _send_tokens.pop(channel_id, None)
-            if attempt == 2 or not _qq_is_transient(e):
-                return False
+            # QQ 写消息接口不是幂等操作。超时或 5xx 时服务端可能已接收；
+            # 不带 msg_id 的群消息不能安全重试，否则会把同一正文发两次。
+            if attempt == 2 or unknown_seen or not _qq_is_transient(e):
+                return _failed_send_receipt(e, return_receipt=return_receipt, unknown_seen=unknown_seen)
             await asyncio.sleep(0.5)
-    return False
+    return _failed_send_receipt(RuntimeError("QQ group send exhausted"), return_receipt=return_receipt,
+                                unknown_seen=unknown_seen)
 
 _IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "bmp"}
 
 async def send_file(openid: str, data: bytes | None, name: str, ext: str,
                     channel_id: str | None = None, msg_id: str | None = None,
                     group: bool = False) -> bool:
-    """给 QQ 私聊或群聊发媒体；本地文件统一使用 base64 上传。"""
-    import base64
+    """向 QQ 上传并发送附件。"""
     ext_l = (ext or "").lower()
     is_img = ext_l in _IMAGE_EXTS
     file_type = 1 if is_img else 4
     fname = f"{name}.{ext_l}" if ext_l else name
     if data is None:
         return False
-    b64 = base64.b64encode(data).decode()
+    from agent.platform_limits import QQ_ATTACHMENT_MAX_BYTES
+    if len(data) > QQ_ATTACHMENT_MAX_BYTES:
+        _log.warning("[qq] 文件超过 30 MiB 上传上限: bytes=%d", len(data))
+        return False
     target = "groups" if group else "users"
-    # 上传 inner proxy 偶发抖动，多重试几次（每次取新 msg_seq，避免去重）
-    for attempt in range(1, 5):
+    try:
+        # 超时不重传。
+        from .media_upload import upload_qq_media
+        media = await upload_qq_media(
+            str(channel_id or ""), target, openid, file_type, data, file_name=fname,
+        )
+        file_info = media.get("file_info")
+        if not file_info:
+            # 只打字段名，不打响应内容，避免泄露上游回显的数据。
+            keys = sorted(media.keys())
+            print(f"[qq] 富媒体上传无 file_info: keys={keys}", flush=True)
+            return False
+    except Exception as error:
+        diag_log("agent.gateway.qq.send_file.upload", error)
+        _log.warning("[qq] 文件上传失败: %s", redact(f"{type(error).__name__}: {error}"))
+        if isinstance(error, QQAPIError) and error.status == 401:
+            _send_tokens.pop(channel_id, None)
+        return False
+
+    msg_body = {
+        "msg_type": 7,
+        "media": {"file_info": file_info},
+        "msg_seq": await _next_seq(msg_id),
+    }
+    if msg_id:
+        msg_body["msg_id"] = msg_id
+    if not is_img:
+        msg_body["content"] = fname
+    message_path = f"/v2/{target}/{openid}/messages"
+    try:
+        await _qq_request(channel_id, "POST", message_path, json_body=msg_body)
+        return True
+    except Exception as message_error:
+        if not (
+            group
+            and msg_id
+            and (_qq_msg_id_invalid(message_error) or _qq_passive_reply_limited(message_error))
+        ):
+            diag_log("agent.gateway.qq.send_file.message", message_error)
+            _log.warning("[qq] 文件消息发送失败: %s", redact(f"{type(message_error).__name__}: {message_error}"))
+            return False
+        _log.warning("[qq] 群文件被动回复受限，降级为主动消息")
+        active_body = dict(msg_body)
+        active_body.pop("msg_id", None)
+        active_body["msg_seq"] = await _next_seq(None)
         try:
-            # 1) 上传到 QQ 富媒体，拿 file_info。
-            body = {"file_type": file_type, "srv_send_msg": False}
-            body["file_data"] = b64
-            if not is_img:
-                body["file_name"] = fname
-            media = await _qq_request(channel_id, "POST", f"/v2/{target}/{openid}/files", json_body=body)
-            file_info = media.get("file_info") if isinstance(media, dict) else None
-            if not file_info:
-                # 只打字段名，不打整个响应体（万一 QQ 把请求里的 file_name 之类字段原样回显）
-                keys = sorted(media.keys()) if isinstance(media, dict) else type(media).__name__
-                print(f"[qq] 富媒体上传无 file_info: keys={keys}", flush=True)
-                return False
-            # 2) 发媒体消息（被动回复带 msg_id；文件用 content 让 QQ 显示文件名）
-            msg_body = {"msg_type": 7, "media": {"file_info": file_info},
-                       "msg_seq": await _next_seq(msg_id)}
-            if msg_id:
-                msg_body["msg_id"] = msg_id
-            if not is_img:
-                msg_body["content"] = fname
-            message_path = f"/v2/{target}/{openid}/messages"
-            try:
-                await _qq_request(channel_id, "POST", message_path, json_body=msg_body)
-            except Exception as message_error:
-                # 群文件经常在模型生成期间跨过 QQ 的被动回复窗口；上传已经成功，
-                # 只去掉过期的 msg_id 重发同一个 file_info，避免重复上传和丢失附件。
-                if not (
-                    group
-                    and msg_id
-                    and (_qq_msg_id_invalid(message_error) or _qq_passive_reply_limited(message_error))
-                ):
-                    raise
-                _log.warning("[qq] 群文件被动回复受限，降级为主动消息")
-                active_body = dict(msg_body)
-                active_body.pop("msg_id", None)
-                active_body["msg_seq"] = await _next_seq(None)
-                await _qq_request(channel_id, "POST", message_path, json_body=active_body)
+            await _qq_request(channel_id, "POST", message_path, json_body=active_body)
             return True
-        except Exception as e:
-            diag_log("agent.gateway.qq.send_file", e)
-            _log.warning("[qq] 发文件失败(第%d次): %s", attempt, redact(f"{type(e).__name__}: {e}"))
-            # token 失效才重建缓存；inner proxy 等抖动直接重试
-            if isinstance(e, QQAPIError) and e.status == 401:
-                _send_tokens.pop(channel_id, None)
-            elif "token" in str(e).lower():
-                _send_tokens.pop(channel_id, None)
-            # 上传/发送都不是幂等操作（重复上传浪费、重复发送会造成重复文件消息）；
-            # 只对判定为瞬时的失败继续重试，4xx 等永久错误立即放弃（P2-b §1/§4-A）。
-            if attempt < 4 and _qq_is_transient(e):
-                await asyncio.sleep(0.6 * attempt)
-            else:
-                return False
-    return False
+        except Exception as fallback_error:
+            diag_log("agent.gateway.qq.send_file.active_fallback", fallback_error)
+            _log.warning("[qq] 群文件主动发送失败: %s", redact(f"{type(fallback_error).__name__}: {fallback_error}"))
+            return False

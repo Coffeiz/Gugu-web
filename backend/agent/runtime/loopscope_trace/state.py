@@ -20,6 +20,9 @@ from .utils import _code_ref, _estimate_tokens, _jsonable, provider_message_rows
 
 _trace: ContextVar[str] = ContextVar("trace_id", default="")
 _scope_run: ContextVar["_ScopeRun | None"] = ContextVar("loopscope_run", default=None)
+_pending_phase_timings: ContextVar[list[dict[str, Any]] | None] = ContextVar(
+    "loopscope_pending_phase_timings", default=None,
+)
 _active_llm_span: ContextVar["_Span | None"] = ContextVar("loopscope_active_llm_span", default=None)
 _send_tasks: set[asyncio.Task] = set()
 _snapshot_tasks: dict[str, asyncio.Task] = {}
@@ -32,6 +35,58 @@ def _enabled() -> bool:
 
 def _now() -> float:
     return time.time()
+
+
+def record_phase_timing(name: str, started_at: float, **attributes: Any) -> None:
+    """记录不含正文的阶段耗时；started_at 使用本模块的 wall-clock 时间基准。"""
+    if not _enabled():
+        return
+    run = _scope_run.get()
+    ended_at = _now()
+    if run is None or run.ended_at is not None:
+        pending = _pending_phase_timings.get()
+        if pending is None:
+            pending = []
+            _pending_phase_timings.set(pending)
+        pending.append({
+            "name": name,
+            "started_at": started_at,
+            "ended_at": ended_at,
+            "attributes": _jsonable(attributes),
+        })
+        return
+    try:
+        span = run.span("context", name, {}, **attributes)
+        span.started_at = started_at
+        span.ended_at = ended_at
+        span.duration_ms = round((ended_at - started_at) * 1000, 3)
+        span.status = "success"
+        _queue_snapshot(run)
+    except Exception:
+        # 观测不能改变 Agent 主链路。
+        return
+
+
+def flush_pending_phase_timings(run: "_ScopeRun") -> None:
+    """会话 Run 创建后，把准备阶段暂存的标量耗时挂回同一条 trace。"""
+    pending = _pending_phase_timings.get()
+    _pending_phase_timings.set(None)
+    if not pending or run.ended_at is not None:
+        return
+    try:
+        for item in pending:
+            span = run.span(
+                "context", str(item["name"]), {},
+                **(item.get("attributes") or {}),
+            )
+            span.started_at = float(item["started_at"])
+            span.ended_at = float(item["ended_at"])
+            span.duration_ms = round((span.ended_at - span.started_at) * 1000, 3)
+            span.status = "success"
+        _queue_snapshot(run)
+    except Exception:
+        # 观测失败不应改变运行链路。
+        return
 
 
 def _diagnostic_bucket(run: "_ScopeRun", key: str, default: dict[str, Any]) -> dict[str, Any]:
@@ -785,6 +840,7 @@ class _ScopeRun:
     })
     ended_at: float | None = None
     status: str = "running"
+    agent_preparation_started_at: float | None = None
 
     def span(
         self,
@@ -859,6 +915,31 @@ class _ScopeRun:
             "usage": _jsonable(self.usage),
             "spans": [s.payload() for s in self.spans],
         }
+
+
+def mark_agent_preparation_started() -> float:
+    """标记 Agent 准备入口，并将此前的调度开销独立记入 Trace。"""
+    started_at = _now()
+    if not _enabled():
+        return started_at
+    run = _scope_run.get()
+    if run is None or run.ended_at is not None:
+        return started_at
+    if run.agent_preparation_started_at is not None:
+        return run.agent_preparation_started_at
+
+    run.agent_preparation_started_at = started_at
+    span = run.span(
+        "context",
+        "Dispatch before Agent preparation",
+        {"scope": "trace_start_to_prepare_agent_run"},
+    )
+    span.started_at = run.started_at
+    span.ended_at = started_at
+    span.duration_ms = round((started_at - run.started_at) * 1000, 3)
+    span.status = "success"
+    _queue_snapshot(run)
+    return started_at
 
 
 async def _drain_snapshots(run_id: str) -> None:

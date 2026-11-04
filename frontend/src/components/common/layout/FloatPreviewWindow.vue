@@ -458,7 +458,6 @@ async function load(f: Partial<FileMeta>, refresh = false) {
     fitWindow(Math.round(f.imgWidth * vs), Math.round(f.imgHeight * vs))
   }
   const headers: Record<string, string> = {}
-  previewBlobCache.rememberFile(f, undefined, accountEpoch)
   let initialStreamUrl = props.win.streamUrl
   props.win.streamUrl = undefined
   const getStreamUrl = async (id: number) => {
@@ -471,6 +470,18 @@ async function load(f: Partial<FileMeta>, refresh = false) {
   }
 
   try {
+    // 聊天消息里的文件通常只有 file_id 和展示信息，没有版本号。文本文件必须先
+    // 从同一份权威文件记录拿到版本，再计算预览缓存键并允许编辑，保存时才能正确做乐观锁。
+    if (typeof f.id === 'number' && f.version == null
+      && (isTextExt(f.ext, f.mimeType) || isTextFallbackCandidate(f.ext, f.mimeType))) {
+      const stream = await filesApi.getStreamUrl(f.id)
+      if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
+      f.version = stream.file.version
+      filesCache.addFile(stream.file as FileMeta)
+      initialStreamUrl = stream.url
+    }
+    previewBlobCache.rememberFile(f, undefined, accountEpoch)
+
     if (isVideoExt(f.ext)) {
       let url
       if (f.attach_id) {
@@ -949,8 +960,8 @@ onUnmounted(() => {
 }
 .fpw-spinner {
   width: 24px; height: 24px; border-radius: 50%;
-  border: 2px solid rgba(123, 127, 178, 0.2);
-  border-top-color: rgba(123, 127, 178, 0.7);
+  border: 2px solid color-mix(in srgb, var(--action-primary) 20%, transparent);
+  border-top-color: color-mix(in srgb, var(--action-primary) 70%, transparent);
   animation: fpw-spin 0.7s linear infinite;
 }
 @keyframes fpw-spin { to { transform: rotate(360deg); } }
@@ -973,7 +984,7 @@ onUnmounted(() => {
 }
 
 /* ── info 按钮激活态 ── */
-.fpw-btn.active { background: rgba(123,127,178,0.15); color: var(--color-primary, #7b7fb2); }
+.fpw-btn.active { background: color-mix(in srgb, var(--action-primary) 15%, transparent); color: var(--color-primary, var(--action-primary)); }
 
 /* ── 图片左右切换按钮：平时隐藏，鼠标移进内容区才淡入；跟 ImageViewer 缩放胶囊
    （.iv-toolbar）同一套毛玻璃参数，视觉上是一家人 ── */

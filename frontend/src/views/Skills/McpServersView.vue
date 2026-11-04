@@ -5,26 +5,33 @@
     </div>
 
     <template v-if="loaded">
-      <div v-if="!items.length" class="empty-state">
-        <Icon name="resource.mcp" :size="32" />
-        <strong>{{ t('skillsMcpUi.empty') }}</strong>
-        <span>{{ t('skillsMcpUi.hint') }}</span>
-        <ActionButton fit @click="openChatSetup">{{ t('skillsMcpUi.createFirst') }}</ActionButton>
-      </div>
-      <div v-else class="mcp-list scroll-surface scroll-surface--compact">
-        <McpCard
-          v-for="item in items"
-          :key="item.id"
-          :server="item"
-          :busy="busyId === item.id || checkingIds.has(item.id)"
-          :status-checking="checkingIds.has(item.id)"
-          @toggle="toggle"
-          @test="test"
-          @reconnect="reconnect"
-          @edit="openEdit"
-          @remove="remove"
-        />
-      </div>
+      <ScrollableCardLayout>
+        <template #actions>
+          <ActionButton fit @click="openCreate">
+            <Icon name="action.add" :size="14" />{{ t('skillsMcpUi.add') }}
+          </ActionButton>
+        </template>
+        <div v-if="!items.length" class="scrollable-card-layout__empty">
+          <Icon name="resource.mcp" :size="32" />
+          <strong>{{ t('skillsMcpUi.empty') }}</strong>
+          <span>{{ t('skillsMcpUi.hint') }}</span>
+          <ActionButton fit @click="openChatSetup">{{ t('skillsMcpUi.createFirst') }}</ActionButton>
+        </div>
+        <div v-else class="mcp-list">
+          <McpCard
+            v-for="item in items"
+            :key="item.id"
+            :server="item"
+            :busy="busyId === item.id || checkingIds.has(item.id)"
+            :status-checking="checkingIds.has(item.id)"
+            @toggle="toggle"
+            @test="test"
+            @reconnect="reconnect"
+            @edit="openEdit"
+            @remove="remove"
+          />
+        </div>
+      </ScrollableCardLayout>
     </template>
 
     <div v-if="loaded && items.length && !editor" class="mcp-footer">
@@ -49,6 +56,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import Icon from '@/components/common/icons/Icon.vue'
+import ScrollableCardLayout from '@/components/common/layout/ScrollableCardLayout.vue'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { showAppError, showAppSuccess } from '@/composables/core/useAppToast'
 import { useUiStore } from '@/stores/ui'
@@ -62,7 +70,6 @@ import { useMcpStatusLoader } from './composables/useMcpStatusLoader'
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
-const props = defineProps<{ createRequest?: number }>()
 const uiStore = useUiStore()
 const loading = ref(false)
 const loaded = ref(false)
@@ -79,10 +86,6 @@ const statusLoader = useMcpStatusLoader()
 const checkingIds = statusLoader.checkingIds
 let dispatchingMcpChange = false
 let listGeneration = 0
-
-watch(() => props.createRequest, (request, previous) => {
-  if (request && request !== previous) openCreate()
-})
 
 async function load(refreshMissingStatuses = true) {
   const currentGeneration = ++listGeneration
@@ -310,14 +313,11 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .mcp-page { min-height:0; height:100%; display:flex; flex-direction:column; }
-.section-header { display:flex; align-items:center; justify-content:flex-start; gap:20px; margin-bottom:16px; flex-shrink:0; }
-.mcp-list { flex:1; min-height:0; overflow-y:auto; column-count:2; column-gap:12px; margin:0 -8px; padding:10px 8px 16px; }
+.mcp-list { column-count:2; column-gap:12px; }
 .mcp-list :deep(.skill-card) { margin:0 0 12px; }
-.empty-state { min-height:300px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; color:var(--content-secondary); }
-.empty-state strong { color:var(--content-primary); }.empty-state span { max-width:420px; font-size:12px; text-align:center; }
 .error-banner { padding:10px 12px; border-radius:var(--radius-sm); color:var(--danger-fg); background:var(--danger-bg); font-size:12px; margin-bottom:12px; }
 .error-banner button { margin-left:10px; border:0; background:transparent; color:inherit; cursor:pointer; }
-.mcp-footer { display:flex; align-items:center; gap:14px; flex-shrink:0; border-top:1px solid var(--content-divider); padding:14px 8px 0; }
+.mcp-footer { display:flex; align-items:center; gap:14px; flex-shrink:0; border-top:1px solid var(--content-divider); padding:14px 8px 22px; }
 .mcp-muted { color:var(--content-secondary); font-size:12px; }
 @media (max-width:720px) { .mcp-list { column-count:1; } }
 </style>

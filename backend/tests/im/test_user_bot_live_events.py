@@ -2,7 +2,6 @@
 
 import pytest
 
-from app.api.v1 import user_bots
 from app.api.v1.user_bots import delete_my_bot
 from app.core import events
 from app.models import UserBot
@@ -30,8 +29,6 @@ async def test_deleting_bot_publishes_im_channel_refresh_after_commit(
         return None
 
     monkeypatch.setattr(events, "publish", publish)
-    monkeypatch.setattr(user_bots, "_touch_gateway", no_op)
-
     await delete_my_bot(bot_id, user_a, db)
 
     assert published == [

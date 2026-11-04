@@ -25,15 +25,15 @@
 ## 测试命令
 
 ```bash
-PYTHONPATH=. .venv/bin/python scripts/diagnostics/test_schema_accumulation_5tools.py \
+PYTHONPATH=. .venv/bin/python scripts/diagnostics/probe_schema_accumulation_5tools.py \
   --allow-real-llm --preset qwen --variants description --rounds 20 \
   --case-timeout 180 --output /tmp/qwen-description-cache-20run-session-v2.json
 
-PYTHONPATH=. .venv/bin/python scripts/diagnostics/test_schema_accumulation_5tools.py \
+PYTHONPATH=. .venv/bin/python scripts/diagnostics/probe_schema_accumulation_5tools.py \
   --allow-real-llm --preset glm --variants description --rounds 20 \
   --case-timeout 180 --output /tmp/glm-description-cache-20run-20260830-rerun.json
 
-PYTHONPATH=. .venv/bin/python scripts/diagnostics/test_schema_accumulation_5tools.py \
+PYTHONPATH=. .venv/bin/python scripts/diagnostics/probe_schema_accumulation_5tools.py \
   --allow-real-llm --preset deepseek --variants description --rounds 20 \
   --case-timeout 180 --output /tmp/deepseek-description-cache-20run-20260830-rerun.json
 ```

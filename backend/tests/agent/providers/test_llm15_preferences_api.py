@@ -242,6 +242,91 @@ async def test_update_preferences_rejects_personality_when_global_switch_is_off(
     assert getattr(exc_info.value, "status_code", None) == 403
 
 
+@pytest.mark.asyncio
+async def test_group_personality_patch_is_saved_independently_and_invalidates_context(monkeypatch, tmp_path):
+    prefs = _Prefs()
+    db = _Db()
+    user = SimpleNamespace(id="user-1")
+    invalidated = []
+    bumped = []
+
+    async def get_or_create(_user, _db):
+        return prefs
+
+    async def invalidate(_db, user_id):
+        invalidated.append(user_id)
+
+    async def bump(user_id, resource):
+        bumped.append((user_id, resource))
+
+    settings = SimpleNamespace(
+        agent=SimpleNamespace(personality_preference_enabled=True),
+        storage=SimpleNamespace(local_path=str(tmp_path)),
+    )
+    monkeypatch.setattr(preferences_api, "_get_or_create", get_or_create)
+    monkeypatch.setattr(preferences_api, "invalidate_personality_snapshots", invalidate)
+    monkeypatch.setattr(preferences_api, "get_settings", lambda: settings)
+    monkeypatch.setattr("app.services.personality_preferences.get_settings", lambda: settings)
+    monkeypatch.setattr("app.core.events.bump_context_revision", bump)
+
+    result = await preferences_api.update_preferences(
+        PreferencesUpdate(
+            groupPersonalityPreference="群聊人格",
+            groupPersonalityPreferenceEnabled=True,
+        ),
+        user,
+        db,
+    )
+
+    path = tmp_path / "user-1" / ".agent" / "prompt" / "group-persona.md"
+    personal_path = tmp_path / "user-1" / ".agent" / "prompt" / "persona.md"
+    assert result.groupPersonalityPreference == "群聊人格"
+    assert result.groupPersonalityPreferenceEnabled is True
+    assert path.read_text(encoding="utf-8") == "群聊人格"
+    assert not personal_path.exists()
+    assert prefs.data["group_personality_preference_enabled"] is True
+    assert prefs.data["personality_preference_revision"] == 1
+    assert invalidated == ["user-1"]
+    assert bumped == [("user-1", "preferences")]
+    assert db.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_group_personality_upload_is_markdown_and_user_scoped(monkeypatch, tmp_path):
+    prefs = _Prefs()
+    user = SimpleNamespace(id="user-1")
+    bumped = []
+
+    async def get_or_create(_user, _db):
+        return prefs
+
+    async def invalidate(*_args):
+        return None
+
+    async def bump(user_id, resource):
+        bumped.append((user_id, resource))
+
+    settings = SimpleNamespace(
+        agent=SimpleNamespace(personality_preference_enabled=True),
+        storage=SimpleNamespace(local_path=str(tmp_path)),
+    )
+    monkeypatch.setattr(preferences_api, "_get_or_create", get_or_create)
+    monkeypatch.setattr(preferences_api, "invalidate_personality_snapshots", invalidate)
+    monkeypatch.setattr(preferences_api, "get_settings", lambda: settings)
+    monkeypatch.setattr("app.services.personality_preferences.get_settings", lambda: settings)
+    monkeypatch.setattr("app.core.events.bump_context_revision", bump)
+
+    result = await preferences_api.upload_group_personality(
+        _upload("群聊文件人格".encode()), user, _Db(),
+    )
+
+    path = tmp_path / "user-1" / ".agent" / "prompt" / "group-persona.md"
+    assert result.groupPersonalityPreference == "群聊文件人格"
+    assert path.read_text(encoding="utf-8") == "群聊文件人格"
+    assert not (tmp_path / "user-2" / ".agent").exists()
+    assert bumped == [("user-1", "preferences")]
+
+
 def _upload(content: bytes, filename: str = "persona.md") -> UploadFile:
     return UploadFile(file=BytesIO(content), filename=filename)
 
@@ -310,3 +395,115 @@ async def test_upload_personality_is_user_scoped_and_invalidates_snapshot(monkey
 
 async def _never():
     raise AssertionError("开关关闭时不应读取或创建用户偏好")
+
+
+@pytest.mark.asyncio
+async def test_custom_reply_style_is_saved_and_can_be_disabled(monkeypatch):
+    prefs = _Prefs()
+    db = _Db()
+    async def get_prefs(*_args):
+        return prefs
+    async def bump(*_args):
+        pass
+    monkeypatch.setattr(preferences_api, "_get_or_create", get_prefs)
+    monkeypatch.setattr(preferences_api, "read_personality_file", lambda _user: None)
+    monkeypatch.setattr(preferences_api, "read_reply_style_file", lambda _user: "先给结论")
+    monkeypatch.setattr(preferences_api, "write_reply_style_file", lambda _user, _content: True)
+    monkeypatch.setattr(preferences_api, "invalidate_personality_snapshots", bump)
+    monkeypatch.setattr(preferences_api, "get_settings", lambda: SimpleNamespace(agent=SimpleNamespace(personality_preference_enabled=True)))
+    from app.core import events
+    monkeypatch.setattr(events, "bump_context_revision", bump)
+    user = SimpleNamespace(id="synthetic-user")
+    from app.schemas import ReplyStyleUpdate
+    result = await preferences_api.update_reply_style(ReplyStyleUpdate(content="  先给结论  "), user, db)
+    assert "custom_reply_style" not in prefs.data
+    result = await preferences_api.update_preferences(PreferencesUpdate(customReplyStyleEnabled=True), user, db)
+    assert result.customReplyStyle == "先给结论"
+    assert result.customReplyStyleEnabled is True
+    result = await preferences_api.update_preferences(PreferencesUpdate(customReplyStyleEnabled=False), user, db)
+    assert result.customReplyStyle == "先给结论"
+    assert result.customReplyStyleEnabled is False
+
+
+@pytest.mark.asyncio
+async def test_legacy_reply_style_is_written_to_file_before_database_key_is_removed(monkeypatch):
+    prefs = _Prefs()
+    prefs.data = {"custom_reply_style": "  先给结论  ", "theme": "dark"}
+    db = _Db()
+    stored = {}
+
+    async def get_prefs(*_args):
+        return prefs
+
+    def read_style(_user):
+        return stored.get("style")
+
+    def write_style(_user, content):
+        stored["style"] = content.strip() if content else None
+        return True
+
+    monkeypatch.setattr(preferences_api, "_get_or_create", get_prefs)
+    monkeypatch.setattr(preferences_api, "read_reply_style_file", read_style)
+    monkeypatch.setattr(preferences_api, "write_reply_style_file", write_style)
+    monkeypatch.setattr(preferences_api, "read_personality_file", lambda _user: None)
+    monkeypatch.setattr(preferences_api, "get_settings", lambda: SimpleNamespace(agent=SimpleNamespace(personality_preference_enabled=False)))
+
+    result = await preferences_api.get_preferences(SimpleNamespace(id="synthetic-user"), db)
+
+    assert result.customReplyStyle == "先给结论"
+    assert prefs.data == {"theme": "dark"}
+    assert stored["style"] == "先给结论"
+    assert db.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_legacy_reply_style_is_preserved_when_file_migration_fails(monkeypatch):
+    prefs = _Prefs()
+    prefs.data = {"custom_reply_style": "先给结论", "theme": "dark"}
+
+    async def get_prefs(*_args):
+        return prefs
+
+    def fail_write(*_args):
+        raise OSError("synthetic write failure")
+
+    monkeypatch.setattr(preferences_api, "_get_or_create", get_prefs)
+    monkeypatch.setattr(preferences_api, "read_reply_style_file", lambda _user: None)
+    monkeypatch.setattr(preferences_api, "write_reply_style_file", fail_write)
+
+    with pytest.raises(OSError, match="synthetic write failure"):
+        await preferences_api.get_preferences(SimpleNamespace(id="synthetic-user"), _Db())
+
+    assert prefs.data == {"custom_reply_style": "先给结论", "theme": "dark"}
+
+
+@pytest.mark.asyncio
+async def test_reply_style_txt_upload_imports_plain_text_into_canonical_file(monkeypatch):
+    prefs = _Prefs()
+    db = _Db()
+    stored = {}
+
+    async def get_prefs(*_args):
+        return prefs
+
+    def write_style(_user, content):
+        stored["style"] = content
+        return True
+
+    monkeypatch.setattr(preferences_api, "_get_or_create", get_prefs)
+    monkeypatch.setattr(preferences_api, "write_reply_style_file", write_style)
+    monkeypatch.setattr(preferences_api, "read_reply_style_file", lambda _user: stored.get("style"))
+    monkeypatch.setattr(preferences_api, "read_personality_file", lambda _user: None)
+    monkeypatch.setattr(preferences_api, "invalidate_personality_snapshots", lambda *_args: _noop())
+    monkeypatch.setattr(preferences_api, "get_settings", lambda: SimpleNamespace(agent=SimpleNamespace(personality_preference_enabled=False)))
+
+    upload = UploadFile(filename="reply.txt", file=BytesIO("先给结论，再解释。".encode("utf-8")))
+    result = await preferences_api.upload_reply_style(upload, SimpleNamespace(id="synthetic-user"), db)
+
+    assert stored["style"] == "先给结论，再解释。"
+    assert result.customReplyStyle == stored["style"]
+    assert "custom_reply_style" not in prefs.data
+
+
+async def _noop():
+    return None

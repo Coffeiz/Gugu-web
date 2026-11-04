@@ -319,13 +319,21 @@ async def project_record(
         fields["items"] = _sanitize_pending_items(fields.get("items"), identities)
     elif spec.record_type == "preferences":
         preferences = fields.pop("data", {})
+        from app.services.personality_preferences import read_reply_style_file
+
         allowed = {
             "locale", "theme", "theme_family", "palette", "last_stages", "stage_templates",
-            "reply_tone", "reply_length", "pm_stages_expanded", "calendar_week_start",
+            "reply_tone", "reply_length", "custom_reply_style_enabled", "pm_stages_expanded", "calendar_week_start",
             "default_view", "im_tool_display_mode", "show_intermediate_replies",
             "tool_injection_mode",
         }
-        fields["data"] = {key: value for key, value in (preferences or {}).items() if key in allowed}
+        projected_preferences = {key: value for key, value in (preferences or {}).items() if key in allowed}
+        reply_style = read_reply_style_file(user_id)
+        if reply_style is None and isinstance(preferences, dict):
+            reply_style = preferences.get("custom_reply_style")
+        if reply_style:
+            projected_preferences["custom_reply_style"] = reply_style
+        fields["data"] = projected_preferences
     elif spec.record_type == "provider_config":
         fields["enabled"] = False
         fields["requires_reconfigure"] = True

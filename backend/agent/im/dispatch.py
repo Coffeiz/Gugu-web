@@ -14,7 +14,7 @@ from agent.im.activity import (
     start_im_activity,
     stop_im_typing,
 )
-from agent.im.commands import handle_im_command
+from agent.im.commands import group_command_requires_mention, handle_im_command
 from agent.im.conversation import (
     persist_im_session,
     record_passive_im_message,
@@ -38,6 +38,128 @@ from agent.im.shortcuts import (
 from agent.im.dispatch_finalization import finalize_im_dispatch
 from agent.im.stream_bridge import ImWebStreamBridge
 
+
+def _log_attention_decision(
+    decision,
+    *,
+    mode: str,
+    source_event_count: int,
+    should_run: bool,
+    config_version: int,
+    snapshot_complete: bool | None = None,
+    window_truncated: bool | None = None,
+    batch_key: str | None = None,
+) -> None:
+    if decision is None:
+        return
+    import json
+    import hashlib
+    from app.core.redaction import diag_log_raw
+
+    diag_log_raw(
+        "agent.im.attention.decision",
+        json.dumps({
+            "attention_version": "attention-v3.0.7",
+            "scorer_version": "v3_0_7",
+            "mode": mode,
+            "effective_config_source": "bot_setting",
+            "config_version": int(config_version),
+            "batch_key_hash": (
+                hashlib.sha256(batch_key.encode("utf-8")).hexdigest()[:16]
+                if batch_key else None
+            ),
+            "actual_decision": decision.kind.value,
+            "reason_codes": list(decision.reasons),
+            "score": decision.score,
+            "state": decision.state,
+            "scene_type": decision.scene_type,
+            "scene_score": decision.scene_score,
+            "ask_raw_score": decision.ask_raw_score,
+            "ask_position_weight": decision.ask_position_weight,
+            "ask_punctuation_weight": decision.ask_punctuation_weight,
+            "ask_adjusted_score": decision.ask_adjusted_score,
+            "ask_span_start": decision.ask_span_start,
+            "ask_span_end": decision.ask_span_end,
+            "capability_strength": decision.capability_strength,
+            "capability_span_start": decision.capability_span_start,
+            "capability_span_end": decision.capability_span_end,
+            "capability_position_weight": decision.capability_position_weight,
+            "topic_score": decision.topic_score,
+            "topic_raw_score": decision.topic_raw_score,
+            "anchor_event_id": decision.anchor_event_id,
+            "topic_match_event_id": decision.topic_match_event_id,
+            "matched_span_lengths": decision.matched_span_lengths,
+            "score_breakdown": (
+                dict(decision.score_breakdown) if decision.score_breakdown else None
+            ),
+            "threshold": decision.threshold,
+            "source_event_count": int(source_event_count),
+            "run_entered": bool(should_run),
+            # Snapshot coverage is decision input, not currently exposed in the
+            # immutable decision. Keep it explicitly unknown instead of guessing.
+            "snapshot_complete": snapshot_complete,
+            "window_truncated": window_truncated,
+            "outbound_status": None,
+        }, ensure_ascii=False, separators=(",", ":")),
+    )
+
+
+def _log_attention_passive_receipt(
+    *, mode: str, config_version: int, batch_key: str, source_event_count: int,
+) -> None:
+    import hashlib
+    import json
+
+    from app.core.redaction import diag_log_raw
+
+    diag_log_raw(
+        "agent.im.attention.passive_receipt",
+        json.dumps({
+            "attention_version": "attention-v3.0.7",
+            "mode": mode,
+            "config_version": int(config_version),
+            "batch_key_hash": hashlib.sha256(batch_key.encode("utf-8")).hexdigest()[:16],
+            "source_event_count": int(source_event_count),
+            "persistence_receipt": "completed",
+        }, ensure_ascii=False, separators=(",", ":")),
+    )
+
+
+def _track_direct_group_invitation(payload: dict, request) -> None:
+    """让已邀请群聊的最终回复能建立成员级续接窗口。"""
+    if (
+        payload.get("chat_type") != "group"
+        or payload.get("group_read_enabled") is True
+        or not payload.get("group_mentioned")
+        or payload.get("_attention_track_delivery") is True
+    ):
+        return
+    try:
+        from agent.im.auto_reply.runtime import batch_attention_messages
+
+        messages = batch_attention_messages(payload)
+        message = next(
+            (item for item in messages if item.mentioned_current_bot is True),
+            messages[0] if messages else None,
+        )
+    except Exception as exc:
+        from app.core.redaction import diag_log
+
+        diag_log("agent.im.attention.direct_delivery_setup", exc)
+        message = None
+    if message is None or not message.sender_id:
+        return
+    payload["_attention_track_delivery"] = True
+    payload["_attention_run_key"] = str(
+        getattr(request, "inbound_batch_key", None) or message.event_id
+    )
+    payload["_attention_source_event_ids"] = [message.event_id]
+    payload["_attention_conversation_subject_sender_id"] = message.sender_id
+    payload["_attention_decision_kind"] = "DIRECT"
+    payload["_attention_delivery_counter"] = {"value": 0}
+    payload["_attention_outbound_receipts"] = []
+
+
 async def dispatch_im_message(payload: dict):
     """处理一条已入队 IM 消息的完整业务编排。
 
@@ -50,9 +172,40 @@ async def dispatch_im_message(payload: dict):
     from agent.runner import run_collect, run_stream
 
     # 在绑定命令、媒体下载、普通消息持久化、被动群记录和 Agent 前消费凭据输入。
-    from agent.im.interaction_text import consume_mcp_secret_payload
+    from agent.im.interaction_text import (
+        _MCP_SECRET_CHECKED_MARKER,
+        consume_mcp_secret_payload,
+    )
 
-    if await consume_mcp_secret_payload(payload):
+    if payload.get("chat_type") == "group":
+        # 静默观察只依赖发送者 ID；在任何命令、交互、快捷指令和被动分流早退前记录。
+        try:
+            from agent.im.auto_reply.pending_ask import (
+                cancel_pending_ask,
+                is_current_bot_mention,
+                observe_group_activity,
+                pending_ask_was_cancelled,
+            )
+
+            await observe_group_activity(payload)
+            if await pending_ask_was_cancelled(payload):
+                trace.discard_run()
+                return None
+            if (
+                payload.get("_pending_ask_resume") is not True
+                and is_current_bot_mention(payload)
+            ):
+                # 原生 @ 路径可能绕过注意力评分；仍须先取消已排队的旧开放问题。
+                await cancel_pending_ask(payload)
+        except Exception as exc:
+            from app.core.redaction import diag_log
+
+            diag_log("agent.im.attention.pending_ask_activity", exc)
+
+    mcp_secret_checked = (
+        payload.pop("_mcp_secret_checked", None) is _MCP_SECRET_CHECKED_MARKER
+    )
+    if not mcp_secret_checked and await consume_mcp_secret_payload(payload):
         return None
 
     # Telegram owner 只能通过网页签发的一次性绑定码，在 Bot 私聊中显式绑定。
@@ -103,6 +256,13 @@ async def dispatch_im_message(payload: dict):
         payload["group_read_enabled"] = group_settings[2]
         payload["group_memory_enabled"] = group_settings[3]
         payload["member_memory_enabled"] = group_settings[4]
+        payload["group_attention_mode"] = group_settings[5] if len(group_settings) > 5 else "autonomous"
+        payload["group_attention_config_version"] = group_settings[6] if len(group_settings) > 6 else 0
+
+
+    from agent.im.auto_reply import should_enable_group_reply_gate
+
+    group_auto_reply_payload = should_enable_group_reply_gate(payload)
 
     if payload.get("platform") == "qq":
         raw_attachments = payload.get("attachments") or []
@@ -120,11 +280,11 @@ async def dispatch_im_message(payload: dict):
                 str(payload.get("platform_message_id") or ""),
             )
             payload["attachments"] = media_result.attachment_ids
-            if media_result.failure_notice:
+            if media_result.failure_notice and not group_auto_reply_payload:
                 # 附件下载/暂存失败要明确回一句：否则用户发完文件既没有秒回、
                 # 也没有错误提示，会以为机器人根本没收到。
                 await send_text(payload, media_result.failure_notice)
-            if media_result.size_limit_exceeded:
+            if media_result.size_limit_exceeded and not group_auto_reply_payload:
                 await send_text(
                     payload,
                     IM_SIZE_LIMIT_NOTICE,
@@ -142,6 +302,20 @@ async def dispatch_im_message(payload: dict):
                 isinstance(item, dict) for item in raw_attachments
             ) and payload["attachments"]:
                 payload["text"] = ""
+        batch_messages = payload.get("_batch_messages")
+        if isinstance(batch_messages, list) and batch_messages:
+            from agent.im.inbound_batch import resolve_batch_attachment_ids
+            from app.core import chat_attach
+
+            attachment_meta = await chat_attach.get_meta_many(
+                str(payload.get("owner_user_id") or ""),
+                payload.get("attachments") or [],
+            )
+            resolve_batch_attachment_ids(
+                batch_messages,
+                attachment_meta,
+                fallback_platform_message_id=str(payload.get("platform_message_id") or ""),
+            )
         if payload.get("platform_bot_user_id"):
             from agent.im.identity import remember_bot_platform_user_id
 
@@ -163,7 +337,21 @@ async def dispatch_im_message(payload: dict):
             payload.get("attachment_source_message_id"),
         )
         payload["attachments"] = media_result.attachment_ids
-        if media_result.failure_notice:
+        batch_messages = payload.get("_batch_messages")
+        if isinstance(batch_messages, list) and batch_messages:
+            from agent.im.inbound_batch import resolve_batch_attachment_ids
+            from app.core import chat_attach
+
+            attachment_meta = await chat_attach.get_meta_many(
+                str(payload.get("owner_user_id") or ""),
+                payload.get("attachments") or [],
+            )
+            resolve_batch_attachment_ids(
+                batch_messages,
+                attachment_meta,
+                fallback_platform_message_id=str(payload.get("platform_message_id") or ""),
+            )
+        if media_result.failure_notice and not group_auto_reply_payload:
             await send_text(payload, media_result.failure_notice)
             if not payload["attachments"] and not str(payload.get("text") or "").strip():
                 return None
@@ -234,6 +422,10 @@ async def dispatch_im_message(payload: dict):
         print(f"[im-loop] {platform} 群聊普通消息已记录(session={passive_sid} trace={trace_id})", flush=True)
         return None
 
+    # 全量回复模式下，未 @ 咕咕的普通群消息进入同一 run 的服务端回复选择门。
+    # 仅 @ 模式的被动消息已在上方记录返回；明确 @ 的消息保持既有正常 run。
+    req.group_auto_reply = group_auto_reply_payload
+
     shortcut = await decide_im_shortcut(
         platform,
         puid or "",
@@ -256,19 +448,27 @@ async def dispatch_im_message(payload: dict):
         await finalize_im_response(platform, puid or "", shortcut["action"] == "cancel", shortcut["reply"])
         return None
     if shortcut["action"] == "no_permission":
-        # 咕咕在跑别人的 loop，当前用户无权取消：回一句提示，不入队。
-        await send_text(payload, shortcut["reply"])
-        trace.finish_run("success", shortcut["reply"])
-        return None
+        # 全量自动回复群中的普通消息仍是群上下文内容；即使正文包含“取消”，
+        # 也不能用私聊式的取消权限提示截断这条消息。
+        if not group_auto_reply_payload:
+            # 咕咕在跑别人的 loop，当前用户无权取消：回一句提示，不入队。
+            await send_text(payload, shortcut["reply"])
+            trace.finish_run("success", shortcut["reply"])
+            return None
 
     # 命令在 Agent runner 之前短路，但 IM 路由可能仍持有已删除的 Redis session id。
     # 先按当前作用域恢复/创建真实会话，避免 /new、/workspace 等命令落到失效 id。
     from agent import commands as _commands
-    command_name, command_arg = _commands.parse(
-        semantic_text,
-        allow_leading_mention=False,
-    )
-    if command_name is not None:
+    command_name, command_arg = _commands.parse(semantic_text)
+    # 群里命令必须确证是对咕咕说的：QQ/飞书没有 bot 作用域，裸打 /命令
+    # 判断不出是给谁的（可能是别家 bot 的命令）。不满足时不把它当命令，
+    # 按普通群消息继续走回复选择门，由模型自己决定要不要回应。
+    command_allowed = command_name is not None and not group_command_requires_mention(payload)
+    goal_start, goal_text = False, ""
+    cmd_reply = None
+    if command_allowed:
+        # 群里命令已确证是对咕咕说的：属于显式控制输入，不进入普通群聊自动回复选择门。
+        req.group_auto_reply = False
         denial = _commands.im_command_permission_denial(
             command_name,
             command_arg,
@@ -279,8 +479,7 @@ async def dispatch_im_message(payload: dict):
             await send_text(payload, denial)
             trace.finish_run("success", denial)
             return None
-    goal_start, goal_text = _commands.is_goal_start(semantic_text)
-    if command_name is not None:
+        goal_start, goal_text = _commands.is_goal_start(semantic_text)
         import app.db.session as _db_session
         from agent.im.session import get_or_create_session
 
@@ -292,13 +491,11 @@ async def dispatch_im_message(payload: dict):
         req.session_id = command_state.session.id
         await persist_im_session(platform, route.bot_id, session_scope, req.session_id, group=route.is_group)
         trace.bind_im_run(req.session_id, platform)
-
-    cmd_reply = await handle_im_command(
-        user_id,
-        semantic_text,
-        req.session_id,
-        allow_leading_mention=False,
-    )
+        cmd_reply = await handle_im_command(
+            user_id,
+            semantic_text,
+            req.session_id,
+        )
     if cmd_reply is not None and not goal_start:
         if isinstance(cmd_reply, dict) and cmd_reply.get("_command_interaction"):
             prompt = cmd_reply.get("prompt") or {}
@@ -314,6 +511,19 @@ async def dispatch_im_message(payload: dict):
                 return None
             trace.finish_run("success", "已发送命令确认交互")
             return None
+        if payload.get("chat_type") == "group" and _commands.command_result_is_private(command_name):
+            # owner 私有结果（记忆画像、工作区清单）不能贴群：群成员都能看到消息正文。
+            # 改私发 owner；没有可用私聊地址或投递失败时只提示去私聊，不外泄内容。
+            from app.scheduled_tasks import deliver_owner_private
+
+            delivered = await deliver_owner_private(user_id, cmd_reply, platform)
+            notice = (
+                "这份结果只发给你了，我私聊发你～" if delivered
+                else "这份结果包含你的私有信息，请私聊我查看。"
+            )
+            await send_text(payload, notice)
+            trace.finish_run("success")
+            return None
         await send_text(payload, cmd_reply)
         trace.finish_run("success", cmd_reply)
         return None
@@ -321,12 +531,110 @@ async def dispatch_im_message(payload: dict):
         # 命令已写入 session_context；本轮继续进入 runner，让 /goal 本身就开始执行。
         req.message = f"请立即开始执行目标任务：{goal_text}"
 
+    if group_auto_reply_payload and payload.get("chat_type") == "group":
+        from agent.im.auto_reply.runtime import batch_attention_messages, evaluate_group_attention
+        from agent.im.conversation import record_passive_attention_batch
+
+        attention_messages = ()
+        _attention_decision = None
+        mode = str(payload.get("group_attention_mode") or "autonomous")
+        payload["_attention_audit_enabled"] = True
+        payload["_attention_config_version"] = int(
+            payload.get("group_attention_config_version") or 0
+        )
+        try:
+            attention_messages = batch_attention_messages(payload)
+            should_run, _attention_decision = await evaluate_group_attention(req, payload)
+            _log_attention_decision(
+                _attention_decision,
+                mode=mode,
+                source_event_count=len(attention_messages),
+                should_run=should_run,
+                config_version=int(payload.get("group_attention_config_version") or 0),
+                snapshot_complete=payload.get("_attention_snapshot_complete"),
+                window_truncated=payload.get("_attention_window_truncated"),
+                batch_key=str(getattr(req, "inbound_batch_key", None) or "") or None,
+            )
+        except Exception as exc:
+            from app.core.redaction import diag_log
+
+            diag_log("agent.im.attention.evaluate", exc)
+            # 缺少稳定事件身份时保留旧路由；其余注意力判断故障 fail-closed。
+            should_run = not bool(attention_messages)
+
+        if not should_run:
+            batch_key = str(getattr(req, "inbound_batch_key", None) or "")
+            if not batch_key:
+                raise RuntimeError("注意力 PASSIVE 批次缺少 Worker 批次收据")
+            passive_session_id = req.session_id or await _ensure_im_session(req)
+            batch_items = payload.get("_batch_messages")
+            if not isinstance(batch_items, list) or not batch_items:
+                batch_items = [{
+                    "event_id": item.event_id,
+                    "early_id": None,
+                    "text": item.raw_text,
+                    "quoted_text": item.quote_text,
+                    "platform_user_id": item.sender_id,
+                    "platform_user_name": payload.get("platform_user_name"),
+                    "platform_bot_user_id": payload.get("platform_bot_user_id"),
+                    "chat_type": "group",
+                    "attachments": payload.get("attachments") or [],
+                } for item in attention_messages]
+            recorded_session_id = await record_passive_attention_batch(
+                req,
+                batch_items,
+                session_id=int(passive_session_id),
+                batch_key=batch_key,
+                attention_decision=_attention_decision,
+                attention_mode=mode,
+                attention_config_version=int(payload.get("group_attention_config_version") or 0),
+                transcripts=getattr(req, "im_attention_transcripts", {}) or {},
+            )
+            _log_attention_passive_receipt(
+                mode=mode,
+                config_version=int(payload.get("group_attention_config_version") or 0),
+                batch_key=batch_key,
+                source_event_count=len(batch_items),
+            )
+            await persist_im_session(
+                platform, route.bot_id, session_scope, recorded_session_id, group=True,
+            )
+            trace.bind_im_run(recorded_session_id, platform)
+            trace.discard_run()
+            return None
+        if mode in {"quiet", "natural", "active", "autonomous"}:
+            payload["_attention_track_delivery"] = True
+            payload["_attention_run_key"] = str(getattr(req, "inbound_batch_key", None) or "")
+            # 出站分支会浅拷贝 payload；提前创建共享计数器，让各副本获得
+            # 同一条 Run 内唯一的 delivery ordinal。
+            payload["_attention_delivery_counter"] = {"value": 0}
+            payload["_attention_outbound_receipts"] = []
+
+    # 原生 @ 路径绕过注意力门，但其已确认最终回复也可以建立成员续接窗口。
+    # 只在实际进入 Agent Run 的群聊消息上启用投递账本，不覆盖只读群。
+    _track_direct_group_invitation(payload, req)
+
+    if platform == "qq":
+        # 让 token 刷新和 API 建连与模型运行重叠；预热失败不阻断当前 run。
+        from agent.gateway.qq.client import schedule_qq_outbound_prewarm
+
+        schedule_qq_outbound_prewarm(str(payload.get("channel_id") or ""))
+
     tool_display_mode, show_intermediate_replies = await _im_display_preferences(req.user_id)
+    if payload.get("chat_type") == "group":
+        # 群聊不向成员展示工具调用状态；不改变工具执行及 Web 事件。
+        tool_display_mode = "off"
+        show_intermediate_replies = False
+    elif platform == "feishu":
+        # 飞书私聊支持 CardKit 完整流式展示，固定展示工具过程和中间回复；
+        # 群聊仍遵循上面的隐藏规则，其他平台继续使用个人偏好。
+        tool_display_mode = "all"
+        show_intermediate_replies = True
     if platform == "telegram":
         from agent.interactions.preferences import im_user_locale
         payload["locale"] = await im_user_locale(req.user_id)
-    from agent.interactions.preferences import im_mermaid_theme_preferences
-    payload["mermaid_theme_preferences"] = await im_mermaid_theme_preferences(req.user_id)
+    from agent.interactions.preferences import im_chart_theme_preferences
+    payload["chart_theme_preferences"] = await im_chart_theme_preferences(req.user_id)
     bind_im_context(
         req,
         payload,
@@ -354,6 +662,7 @@ async def dispatch_im_message(payload: dict):
     immediate_round_index = 0
     immediate_round_blocked = False
     qq_private_streaming = False
+    qq_tool_event_boundary = None
     if platform == "qq" and payload.get("chat_type") == "c2c":
         message_format = payload.get("message_format")
         if message_format not in {"compat", "markdown"}:
@@ -368,6 +677,9 @@ async def dispatch_im_message(payload: dict):
             message_format,
             private_streaming_enabled,
         )
+        if qq_private_streaming:
+            from agent.im.streaming.qq import QQToolEventBoundary
+            qq_tool_event_boundary = QQToolEventBoundary()
     telegram_stream_tool_events = asyncio.Queue() if (
         platform == "telegram" and payload.get("chat_type") == "c2c"
     ) else None
@@ -378,6 +690,10 @@ async def dispatch_im_message(payload: dict):
         publish_web_event=stream_bridge.publish,
         feishu_tool_summary=feishu_tool_summary,
         stream_tool_events=telegram_stream_tool_events,
+        before_platform_event=(
+            qq_tool_event_boundary.before_platform_event
+            if qq_tool_event_boundary is not None else None
+        ),
     )
 
     async def _show_round(text: str) -> bool:
@@ -433,7 +749,7 @@ async def dispatch_im_message(payload: dict):
     # 飞书使用 CardKit、Telegram 私聊使用 live draft 流式预览；其余平台按 round 收集发送。
     stream_sent = False
     try:
-        if platform == "feishu":
+        if platform == "feishu" and payload.get("chat_type") != "group":
             from agent.gateway import feishu
             receive_id = payload.get("chat_id") or payload.get("platform_user_id")
             token_iter = run_stream(
@@ -447,7 +763,8 @@ async def dispatch_im_message(payload: dict):
                 str(receive_id or ""), stream_bridge.mirror_stream(token_iter),
                 channel_id=payload.get("channel_id"),
                 tool_summary=feishu_tool_summary,
-                mermaid_theme_preferences=payload.get("mermaid_theme_preferences"),
+                show_intermediate_replies=show_intermediate_replies,
+                chart_theme_preferences=payload.get("chart_theme_preferences"),
             )
             if resp is None and stream_sent:
                 # 卡片已经可见但流没有产出最终响应；不能重新执行同一 Run。
@@ -475,6 +792,7 @@ async def dispatch_im_message(payload: dict):
             stream_sent, resp, reply_text = await send_qq_stream_by_round(
                 payload, stream_bridge.mirror_stream(token_iter),
                 show_intermediate_replies=show_intermediate_replies,
+                tool_event_boundary=qq_tool_event_boundary,
             )
         elif platform == "telegram" and payload.get("chat_type") == "c2c":
             from agent.im.replies import send_telegram_stream_by_round

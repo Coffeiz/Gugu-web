@@ -82,11 +82,46 @@ def test_router_does_not_strip_mentions_without_group_context():
     assert router.decide("@小北 /compact", "idle")["action"] == "agent"
 
 
+@pytest.mark.parametrize("text", [
+    "取消", "取消当前任务", "请取消这个任务", "麻烦停止当前执行", "终止搜索吧",
+])
+def test_router_recognizes_explicit_cancel_language(text):
+    decision = router.decide(
+        text,
+        "thinking",
+        current_puid="member-b",
+        active_puid={"member-a"},
+    )
+
+    assert decision["action"] == "no_permission"
+
+
+@pytest.mark.parametrize("text", [
+    "这版取消 shadow 后，命中率回放怎么做？",
+    "报告在讨论取消任务的边界。",
+    "不要取消当前任务。",
+    "取消之后的行为是什么？",
+])
+def test_router_does_not_treat_discussion_of_cancellation_as_a_command(text):
+    decision = router.decide(
+        text,
+        "thinking",
+        current_puid="member-b",
+        active_puid={"member-a"},
+    )
+
+    assert decision == {"action": "agent"}
+
+
 @pytest.mark.asyncio
-async def test_command_handler_accepts_group_mention():
-    assert await commands.handle(
-        "user-1", "@小北 /compact", allow_leading_mention=True
-    ) == "当前还没有可压缩的对话。"
+async def test_command_handler_only_accepts_semantic_text():
+    """命令层只处理语义文本；mention 前缀由 IM 层（payload_semantic_text）剥掉。
+
+    命令层不再自带第二套 mention 解析：群里命令要不要算，必须先由 IM 层判断
+    「这条消息确证是对咕咕说的」，否则会误抢别家 bot 的命令。
+    """
+    assert await commands.handle("user-1", "@小北 /compact") is None
+    assert await commands.handle("user-1", "/compact") == "当前还没有可压缩的对话。"
 
 
 @pytest.mark.asyncio

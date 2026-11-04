@@ -1,12 +1,11 @@
-"""每轮/每消息的 provider-only 尾部注入：时间提醒与 reminder 消息信封。
+"""消息时间格式化与动态 reminder 消息信封。
 
-这些消息不进 canonical history、不参与跨轮缓存前缀（dynamic tail 每轮变化），
-只在 provider 边界拼接。session_snapshot 只负责固定 snapshot 与 baseline，
-两者不应互相依赖。
+消息时间标签随用户消息正文一起进入上下文；只有实时当前时间等动态 reminder
+仍由 provider-only 尾部注入。session_snapshot 只负责固定 snapshot 与 baseline。
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.core.tz import LOCAL_TZ, fmt_local, resolve_tz
 
@@ -42,7 +41,7 @@ def reminder_message(content: str) -> dict:
 
 
 def message_time_reminder(sent_at, user_tz=None) -> dict | None:
-    """把历史用户消息时间作为不可变的独立 reminder，按用户时区格式化。"""
+    """按用户时区格式化消息时间，供 user 消息正文包装使用。"""
     text = message_time_text(sent_at, user_tz)
     return reminder_message(text) if text else None
 
@@ -52,6 +51,78 @@ def message_time_text(sent_at, user_tz=None) -> str | None:
     if sent_at is None:
         return None
     return f"消息时间：{fmt_local(sent_at, tz=_as_tz(user_tz))}"
+
+
+def unwrap_message_body_text(value: str) -> str:
+    """移除用户消息的时间/正文信封，供摘要等需要原始正文的路径使用。"""
+    text = str(value or "").lstrip()
+    if text.startswith("【消息时间】"):
+        body_start = text.find("\n【消息正文】\n")
+        if body_start >= 0:
+            return text[body_start + len("\n【消息正文】\n"):]
+    if text.startswith("【消息正文】\n"):
+        return text[len("【消息正文】\n"):]
+    return text
+
+
+def message_timestamp(message):
+    """取消息发生时间：优先平台发送时间，再取入库时间，最后兼容旧 sent_at。"""
+    def _value(name):
+        return message.get(name) if isinstance(message, dict) else getattr(message, name, None)
+
+    platform_sent_ms = _value("im_platform_sent_ms") or _value("platform_sent_ms")
+    if isinstance(platform_sent_ms, (int, float)) and platform_sent_ms > 0:
+        return datetime.fromtimestamp(platform_sent_ms / 1000, timezone.utc)
+    received_ms = _value("im_event_received_ms") or _value("event_received_ms")
+    if isinstance(received_ms, (int, float)) and received_ms > 0:
+        return datetime.fromtimestamp(received_ms / 1000, timezone.utc)
+    return (
+        _value("created_at")
+        or _value("sent_at")
+    )
+
+
+def inline_message_time(content, message_time) -> str | list | dict:
+    """把消息时间（若可用）和正文标签放进同一条 user 消息。"""
+    value = message_time.get("content") if isinstance(message_time, dict) else message_time
+    value = str(value or "").strip()
+    if value.startswith("[system-reminder]") and value.endswith("[/system-reminder]"):
+        value = value[len("[system-reminder]"): -len("[/system-reminder]")].strip()
+    if value.startswith("消息时间："):
+        value = value[len("消息时间："):].strip()
+    prefix = f"【消息时间】{value}" if value else ""
+
+    def _already_wrapped(text: str) -> bool:
+        return (
+            "【群消息】" in text and "【消息正文】" in text
+        ) or (
+            text.lstrip().startswith("【消息时间】") and "【消息正文】" in text
+        ) or text.lstrip().startswith("【消息正文】")
+
+    def _header(text: str) -> str:
+        if not prefix:
+            return text
+        return f"{prefix}\n{text}" if text else prefix
+
+    if isinstance(content, str):
+        if _already_wrapped(content):
+            return _header(content)
+        body_header = "【消息正文】\n"
+        return f"{prefix}\n{body_header}{content}" if prefix else f"{body_header}{content}"
+    if isinstance(content, list):
+        first_text = next((
+            str(block.get("text") or "") for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        ), "")
+        if _already_wrapped(first_text):
+            return ([{"type": "text", "text": f"{prefix}\n"}] if prefix else []) + content
+        header = f"{prefix}\n【消息正文】\n" if prefix else "【消息正文】\n"
+        return [{"type": "text", "text": header}, *content]
+    if isinstance(content, dict):
+        header = f"{prefix}\n【消息正文】\n" if prefix else "【消息正文】\n"
+        return [{"type": "text", "text": header}, content]
+    body_header = f"{prefix}\n【消息正文】\n" if prefix else "【消息正文】\n"
+    return f"{body_header}{content or ''}"
 
 
 def time_message(user_tz=None) -> dict:

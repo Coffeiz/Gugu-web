@@ -220,7 +220,7 @@ onUnmounted(() => {
 .nb-dot {
   width: 8px; height: 8px; border-radius: 50%;
   flex-shrink: 0;
-  background: linear-gradient(135deg, #7b7fb2, #9590c4);   /* 固定咕咕主题色，不再随通知配色 */
+  background: linear-gradient(135deg, var(--action-primary), var(--action-primary-hover));   /* 固定咕咕主题色，不再随通知配色 */
 }
 /* 逐字流式进行中：圆点脉冲，像「正在接收」 */
 .nb-dot.typing { animation: nb-pulse 0.9s ease-in-out infinite; }

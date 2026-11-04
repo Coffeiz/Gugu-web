@@ -108,6 +108,7 @@ const { t } = useI18n()
 .similar-image-card .save-hint { flex:1; font-size:12px; color:#5ab899; }.similar-image-card .save-hint.error { color:#e07878; }
 .similar-image-card .btn-ghost,.similar-image-card .btn-primary { padding:6px 14px; border-radius:9px; font-size:13px; cursor:pointer; }
 .similar-image-card .btn-ghost { border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.06); color:rgba(255,255,255,0.45); }
-.similar-image-card .btn-primary { border:0; background:var(--action-primary-bg); color:#fff; font-weight:600; }
+.similar-image-card .btn-primary { border:0; background:var(--action-primary-bg); color:#fff; font-weight:600; transition:filter var(--motion-hover-control) var(--motion-ease-standard); }
+.similar-image-card .btn-primary:hover:not(:disabled) { filter:brightness(1.1); }
 .similar-image-card button:disabled { opacity:.5; cursor:default; }
 </style>

@@ -68,6 +68,25 @@ def replace_mention_ids(text: str, names: Dict[str, str]) -> str:
         )
     return result
 
+
+# 只认尖括号形态的 mention：裸 ``@xxx`` 在正文里可能是邮箱或普通词，
+# 猜错会把无关文本替换成 @名字。
+_MENTION_ID_PATTERN = re.compile(r"<@!?([A-Za-z0-9_\-]{1,64})>")
+
+
+def extract_mention_ids(text: str) -> List[str]:
+    """提取正文里显式 mention 的平台 ID，按出现顺序去重。
+
+    群聊正文里的 mention 是平台原样存下来的 ``<@ID>``，展示层据此判断
+    "这条到底 @ 了谁"，再决定显示成谁的名字。
+    """
+    result: List[str] = []
+    for match in _MENTION_ID_PATTERN.finditer(text or ""):
+        platform_user_id = match.group(1)
+        if platform_user_id and platform_user_id not in result:
+            result.append(platform_user_id)
+    return result
+
 _PART_CAPABILITIES = {
     "text": REPLY_CAPABILITY_TEXT,
     "file": REPLY_CAPABILITY_FILE,

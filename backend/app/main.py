@@ -66,6 +66,7 @@ from app.api.v1 import storage_quota_admin as storage_quota_admin_router
 from app.api.v1 import track as track_router
 from app.api.v1 import feedback as feedback_router
 from app.api.v1 import public_config as public_config_router
+from app.api.v1 import dev_attention as dev_attention_router
 from onboarding.routes import router as onboarding_router   # 独立子系统（backend/onboarding/）
 from app.db.session import create_all_tables
 
@@ -294,7 +295,6 @@ async def lifespan(app: FastAPI):
 # docs_url=None：默认 /docs 引用 swagger-ui-dist@5 浮动 tag，会被下方自定义路由替代。
 app = FastAPI(title=settings.app_name, debug=settings.debug, lifespan=lifespan, docs_url=None)
 
-
 @app.middleware("http")
 async def _admin_host_guard(request: Request, call_next):
     if not is_admin_api_host_allowed(
@@ -419,6 +419,8 @@ app.include_router(terminals_router.router, prefix="/api/v1")
 app.include_router(scheduled_tasks_router.router, prefix="/api/v1")
 app.include_router(feedback_router.router,    prefix="/api/v1")
 app.include_router(public_config_router.router, prefix="/api/v1")
+# 开发沙盒 API 只调用纯注意力算法且要求用户鉴权；前端页面仍仅在 DEV 路由和构建中注册。
+app.include_router(dev_attention_router.router, prefix="/api/v1")
 # 飞书 OAuth 扫码绑定：bind/url + status + unbind 需用户登录；callback 是飞书重定向（靠 state 校验）
 app.include_router(user_bots_router.router,      prefix="/api/v1")
 app.include_router(qq_connect_router.router,     prefix="/api/v1")

@@ -12,8 +12,8 @@
 - memory.md  长期记忆：daily 老条目压缩沉淀的长期叙述（compress 生成）
 
 daily 不再"满了直接丢"，而是**按累积条数压缩**：攒到 DAILY_COMPACT_AT 触发，
-最老的追加进 memory.md、daily 留回最近 DAILY_KEEP_RECENT 条（见 memory_compress.py）。
-DAILY_HARD_CAP 是压缩失败时的安全上限，但达到上限时仍保留数据并等待下次成功压缩。
+按最旧优先分批追加进 memory.md，全部成功后 daily 清空；压缩失败时保留尚未处理的记录
+等待后续重试（见 memory_compress.py）。
 
 本模块是 owner（Web）与 IM group/member 记忆共用的"通用共享层"：IM 记忆合并逻辑
 （`im_reflection.py` 的 `_merge_group_profile`/`_merge_profile`）同样复用这里的
@@ -36,10 +36,8 @@ _log = logging.getLogger("agent.memory.store")
 
 _DIR = ".agent"
 _list_write_locks: dict[str, asyncio.Lock] = {}
-DAILY_KEEP_RECENT = 50   # 压缩后 daily 保留的最近条数
 DAILY_INJECT_CHARS = 2000  # 注入 prompt 时只取最新内容，避免近期流水撑爆上下文
-DAILY_COMPACT_AT  = 100  # daily 达到此条数触发一次压缩
-DAILY_HARD_CAP    = 175  # 压缩失败时的硬安全上限，不能静默丢弃历史
+DAILY_COMPACT_AT  = 50   # 达到此条数后将当时积累的 daily 全部沉淀
 PROFILE_INJECT_MAX = 50  # profile 直注入条数；超出的条目由 RAG 按需召回
 
 # ── 用户画像（profile.json，无需衰减）──

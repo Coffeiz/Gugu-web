@@ -81,6 +81,7 @@ async def complete_messages(
     tools: list | None = None,
     usage_sink: list | None = None,
     probe_sink: list | None = None,
+    cache_singleflight: bool = False,
 ) -> str:
     """追加式分支：复用不可变 ProviderConversation，delta 只追加一次。
 
@@ -106,18 +107,21 @@ async def complete_messages(
         text = await _anthropic(sys, user, ai, max_tokens,
                                 settings=settings, history=history, tools=tools,
                                 align_with_main_run=True, usage_sink=usage_sink,
-                                probe_sink=probe_sink)
+                                probe_sink=probe_sink,
+                                cache_singleflight=cache_singleflight)
         return _parse_json(text) if json_mode else text
     text = await _non_anthropic(sys, user, ai, max_tokens, json_mode=json_mode,
                          thinking=thinking, settings=settings, history=history,
                          tools=tools, usage_sink=usage_sink,
-                         probe_sink=probe_sink)
+                         probe_sink=probe_sink,
+                         cache_singleflight=cache_singleflight)
     return _parse_json(text) if json_mode else text
 
 
 async def _non_anthropic(sys, user, ai, max_tokens, *, json_mode=False,
                          thinking=None, settings=None, history=None, tools=None,
-                         usage_sink=None, probe_sink=None):
+                         usage_sink=None, probe_sink=None,
+                         cache_singleflight=False):
     """文本、JSON、追加分支共用协议路由，不载入主对话的推理状态。"""
     from agent import providers
 
@@ -136,11 +140,13 @@ async def _non_anthropic(sys, user, ai, max_tokens, *, json_mode=False,
             json_mode=json_mode,
             usage_sink=usage_sink,
             probe_sink=probe_sink,
+            cache_singleflight=cache_singleflight,
         ))
     return await _openai(sys, user, ai, max_tokens, json_mode=json_mode,
                          thinking=thinking, settings=settings, history=history,
                          tools=tools, usage_sink=usage_sink,
-                         probe_sink=probe_sink)
+                         probe_sink=probe_sink,
+                         cache_singleflight=cache_singleflight)
 
 
 async def complete_json(
@@ -183,6 +189,7 @@ async def _anthropic(
     align_with_main_run: bool = False,
     usage_sink: list | None = None,
     probe_sink: list | None = None,
+    cache_singleflight: bool = False,
 ) -> str:
     from agent import providers
 
@@ -195,8 +202,9 @@ async def _anthropic(
     # 与主对话一致的主动缓存：稳定 system 前缀打 ephemeral 断点（分支的 user
     # 消息带时间戳每轮必变，只有 system 前缀能命中）。
     from agent.llm.llm_select import supports_anthropic_active_cache
+    cache_supported = supports_anthropic_active_cache(ai)
     system = sys
-    if supports_anthropic_active_cache(ai) and sys:
+    if cache_supported and sys:
         system = [{"type": "text", "text": sys, "cache_control": {"type": "ephemeral"}}]
     projection = _branch_projection(
         "", history, user, ai, api_format="anthropic", separate_system=True,
@@ -237,14 +245,19 @@ async def _anthropic(
         kwargs.update(adapter.build_anthropic_generation_params(ai))
     elif thinking is not None:
         kwargs.update(providers.adapter_for(ai).build_anthropic_thinking_params(ai, thinking=thinking))
+    stable_message_count = projection.conversation_count
     probe = start_request_probe(probe_sink, kwargs)
-    try:
-        resp = await client.messages.create(**kwargs)
-    except Exception as exc:
-        from agent.providers.cache_probe import fail_request_probe
+    from agent.providers.cache_singleflight import run_provider_branch_request
 
-        fail_request_probe(probe, exc)
-        raise
+    cache_adapter = providers.adapter_for(ai)
+    resp = await run_provider_branch_request(
+        lambda: client.messages.create(**kwargs),
+        kwargs,
+        probe,
+        stable_row_count=stable_message_count,
+        cache_supported=bool(cache_singleflight and cache_supported),
+        namespace=f"{cache_adapter.name}:{cache_adapter.protocol_format(ai)}",
+    )
     usage = getattr(resp, "usage", None)
     from agent.usage import normalize_anthropic_usage
     usage = normalize_anthropic_usage(usage)
@@ -325,6 +338,7 @@ async def _openai(
     tools: list | None = None,
     usage_sink: list | None = None,
     probe_sink: list | None = None,
+    cache_singleflight: bool = False,
 ) -> str:
     from agent import providers
 
@@ -360,15 +374,22 @@ async def _openai(
             ai, thinking=thinking)
         if thinking_params:
             kwargs.update(thinking_params)
+    stable_message_count = kwargs["messages"].conversation_count
     kwargs["messages"] = kwargs["messages"].to_messages()
     probe = start_request_probe(probe_sink, kwargs)
-    try:
-        resp = await client.chat.completions.create(**kwargs)
-    except Exception as exc:
-        from agent.providers.cache_probe import fail_request_probe
-
-        fail_request_probe(probe, exc)
-        raise
+    from agent.providers.cache_singleflight import (
+        provider_branch_cache_supported, run_provider_branch_request,
+    )
+    resp = await run_provider_branch_request(
+        lambda: client.chat.completions.create(**kwargs),
+        kwargs,
+        probe,
+        stable_row_count=stable_message_count,
+        cache_supported=bool(
+            cache_singleflight and provider_branch_cache_supported(adapter, ai)
+        ),
+        namespace=f"{adapter.name}:{adapter.protocol_format(ai)}",
+    )
     usage = getattr(resp, "usage", None)
     from agent.usage import normalize_openai_usage
     usage = normalize_openai_usage(usage)

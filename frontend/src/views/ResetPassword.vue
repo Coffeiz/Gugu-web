@@ -10,7 +10,7 @@
       <template v-if="done">
         <div class="done-box">
           <div class="done-icon">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#7b7fb2" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--action-primary)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M20 6 9 17l-5-5"/>
             </svg>
           </div>
@@ -108,7 +108,7 @@ function goLogin() { router.push('/login') }
 }
 .glow-1 {
   width: 500px; height: 500px; top: -120px; left: -100px;
-  background: radial-gradient(circle, rgba(123,127,178,0.18) 0%, transparent 65%);
+  background: radial-gradient(circle, color-mix(in srgb, var(--action-primary) 18%, transparent) 0%, transparent 65%);
 }
 .glow-2 {
   width: 380px; height: 380px; bottom: -100px; right: -80px;
@@ -142,8 +142,8 @@ function goLogin() { router.push('/login') }
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 .field input:focus {
-  border-color: rgba(123,127,178,0.5);
-  box-shadow: 0 0 0 3px rgba(123,127,178,0.12), inset 0 1px 3px rgba(80,90,110,0.06);
+  border-color: color-mix(in srgb, var(--action-primary) 50%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--action-primary) 12%, transparent), inset 0 1px 3px rgba(80,90,110,0.06);
 }
 .field input::placeholder { color: #b0b4c4; }
 .field input:disabled { opacity: 0.5; }
@@ -156,11 +156,11 @@ function goLogin() { router.push('/login') }
 
 .btn-primary {
   width: 100%; padding: 11px; margin-top: 4px;
-  background: linear-gradient(135deg, #7b7fb2, #9590c4);
+  background: linear-gradient(135deg, var(--action-primary), var(--action-primary-hover));
   border: none; border-radius: 11px;
   font-size: 14px; font-weight: 600; color: white;
   cursor: pointer; transition: opacity 0.15s, transform 0.15s;
-  box-shadow: 0 4px 16px rgba(123,127,178,0.32);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--action-primary) 32%, transparent);
 }
 .btn-primary:hover:not(:disabled) { opacity: 0.88; transform: translateY(-1px); }
 .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
@@ -168,7 +168,7 @@ function goLogin() { router.push('/login') }
 .done-box { text-align: center; padding: 8px 0 18px; }
 .done-icon {
   width: 52px; height: 52px; margin: 0 auto 14px; border-radius: 15px;
-  background: rgba(123,127,178,0.1);
+  background: color-mix(in srgb, var(--action-primary) 10%, transparent);
   display: flex; align-items: center; justify-content: center;
 }
 .done-text { font-size: 14px; color: #1e2028; line-height: 1.6; margin: 0; }
@@ -177,6 +177,6 @@ function goLogin() { router.push('/login') }
   margin-top: 22px; text-align: center;
   font-size: 13px; color: #8a8fa8;
 }
-.card-footer a { color: #7b7fb2; font-weight: 600; text-decoration: none; }
+.card-footer a { color: var(--action-primary); font-weight: 600; text-decoration: none; }
 .card-footer a:hover { text-decoration: underline; }
 </style>
