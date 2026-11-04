@@ -126,7 +126,8 @@ onMounted(async () => {
 .personality-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .personality-toggle { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 .personality-enabled-label, .personality-status { color: var(--content-secondary); font-size: 12px; }
-.personality-file-card { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 13px 14px; border: 1px solid var(--workspace-card-border); border-radius: var(--radius-md); background: var(--workspace-card-bg); box-shadow: var(--workspace-card-shadow); }
+.personality-file-card { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 13px 14px; border: 1px solid var(--workspace-card-border); border-radius: var(--radius-md); background: var(--workspace-card-bg); box-shadow: var(--workspace-card-shadow); transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard); }
+.personality-file-card:hover { border-color: var(--theme-action-primary); background: var(--workspace-card-bg-hover); box-shadow: var(--workspace-card-shadow-hover); }
 .personality-file-icon { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 8px; background: var(--action-soft); color: var(--action-primary); font: 700 10px var(--font-family-mono); }
 .personality-file-info { min-width: 0; flex: 1; }
 .personality-file-name { color: var(--content-primary); font-size: 13px; font-weight: 600; }
