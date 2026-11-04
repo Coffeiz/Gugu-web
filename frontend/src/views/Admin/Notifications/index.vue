@@ -304,9 +304,9 @@ onMounted(loadHistory)
   padding: 10px 0; border: none; border-radius: 10px;
   background: var(--action-primary-bg); color: var(--content-on-accent);
   font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit;
-  box-shadow: none; transition: background-color 0.15s;
+  box-shadow: none; transition: filter var(--motion-hover-control) var(--motion-ease-standard);
 }
-.send-btn:hover:not(:disabled) { background: var(--action-primary-bg-hover); opacity: 1; }
+.send-btn:hover:not(:disabled) { filter: brightness(1.1); }
 .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* 历史 */

@@ -104,9 +104,9 @@ onBeforeUnmount(() => { disposed = true; if (pollTimer) clearTimeout(pollTimer) 
   min-height: 34px; padding: 7px 16px; border: 0; border-radius: 9px;
   background: var(--action-primary-bg); color: var(--content-on-accent);
   font-size: 13px; font-weight: 600; white-space: nowrap; cursor: pointer;
-  transition: background-color .15s, opacity .15s;
+  transition: filter var(--motion-hover-control) var(--motion-ease-standard);
 }
-.btn-save:hover:not(:disabled) { background: var(--action-primary-bg-hover); }
+.btn-save:hover:not(:disabled) { filter: brightness(1.1); }
 .btn-save:disabled { opacity: .5; cursor: default; }
 @media (max-width: 680px) { .reconcile-card { align-items: stretch; flex-direction: column; gap: 14px; } .reconcile-card > button { align-self: flex-start; } }
 </style>

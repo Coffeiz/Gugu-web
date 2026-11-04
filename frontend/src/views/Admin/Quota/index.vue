@@ -293,10 +293,10 @@ const { globalDraft, globalSaving, globalSaved, saveGlobal, loading, refreshing,
   padding: 7px 18px; border-radius: 9px; border: none;
   background: var(--action-primary-bg);
   color: var(--content-on-accent); font-size: 13px; font-weight: 600;
-  cursor: pointer; transition: background-color 0.15s;
+  cursor: pointer; transition: filter var(--motion-hover-control) var(--motion-ease-standard);
   box-shadow: none;
 }
-.btn-save:hover:not(.loading) { background: var(--action-primary-bg-hover); opacity: 1; }
+.btn-save:hover:not(.loading) { filter: brightness(1.1); }
 .btn-save.loading { opacity: 0.5; cursor: default; }
 
 /* 用户表格 */

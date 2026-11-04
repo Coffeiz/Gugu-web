@@ -533,7 +533,7 @@ async function testSmtp() {
   padding: 6px 18px; border-radius: 9px;
   border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05);
   font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.38);
-  cursor: pointer; transition: background 0.15s, border-color 0.15s, color 0.15s;
+  cursor: pointer; transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard), filter var(--motion-hover-control) var(--motion-ease-standard);
 }
 .toggle-btn.active {
   background: color-mix(in srgb, var(--action-primary) 20%, transparent); border-color: color-mix(in srgb, var(--action-primary) 35%, transparent);
@@ -542,6 +542,7 @@ async function testSmtp() {
 .toggle-btn { display: inline-flex; flex-direction: column; align-items: center; }
 .toggle-btn[data-label]::after { content: attr(data-label); height: 0; overflow: hidden; visibility: hidden; font-weight: 600; }
 .toggle-btn:hover:not(.active) { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.6); }
+.toggle-btn.active:hover { filter: brightness(1.12); }
 
 /* ── 卡片底栏 ── */
 .card-footer {
@@ -595,10 +596,10 @@ async function testSmtp() {
   padding: 7px 18px; border-radius: 9px; border: none;
   background: var(--action-primary-bg);
   color: white; font-size: 13px; font-weight: 600;
-  cursor: pointer; transition: opacity 0.15s;
+  cursor: pointer; transition: filter var(--motion-hover-control) var(--motion-ease-standard);
   box-shadow: none;
 }
-.btn-primary:hover:not(:disabled) { opacity: 0.88; }
+.btn-primary:hover:not(:disabled) { filter: brightness(1.1); }
 .btn-primary:disabled { opacity: 0.5; cursor: default; }
 
 .oss-footer { flex-direction: column; align-items: stretch; gap: 10px; }

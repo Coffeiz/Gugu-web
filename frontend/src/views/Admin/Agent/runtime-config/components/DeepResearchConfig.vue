@@ -88,6 +88,6 @@ const { t } = useI18n()
 }
 </style>
 <style scoped>
-.deep-research-card .btn-primary { background: var(--action-primary-bg); color: var(--content-on-accent); transition: background-color .15s; }
-.deep-research-card .btn-primary:hover:not(:disabled) { background: var(--action-primary-bg-hover); }
+.deep-research-card .btn-primary { background: var(--action-primary-bg); color: var(--content-on-accent); transition: filter var(--motion-hover-control) var(--motion-ease-standard); }
+.deep-research-card .btn-primary:hover:not(:disabled) { filter:brightness(1.1); }
 </style>
