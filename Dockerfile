@@ -63,6 +63,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         build-essential libffi-dev libpq-dev libssl-dev
 
 COPY backend/requirements.txt ./requirements.txt
+COPY backend/agent ./agent
 RUN --mount=type=cache,target=/root/.cache/pip \
     python -m venv /opt/venv \
     && /opt/venv/bin/pip install -i "${PIP_INDEX_URL}" -r requirements.txt \
@@ -70,6 +71,13 @@ RUN --mount=type=cache,target=/root/.cache/pip \
         -i "${PIP_INDEX_URL}" \
         "msgpack==1.2.3" "setuptools==84.0.0" \
     && /opt/venv/bin/python -c "from importlib.metadata import version; assert version('msgpack') == '1.2.3'; assert version('setuptools') == '84.0.0'"
+
+# 两个生产 Cython 扩展都在带编译器的依赖构建层生成；最终应用层只接收 ABI 匹配的原生模块。
+RUN --mount=type=cache,target=/root/.cache/pip \
+    /opt/venv/bin/pip install -i "${PIP_INDEX_URL}" "Cython>=3.1" \
+    && /opt/venv/bin/python -c "from setuptools import Extension, setup; from Cython.Build import cythonize; setup(name='gugu-rag-cython', ext_modules=cythonize([Extension('agent.rag.cython_native', ['agent/rag/cython_native.pyx']), Extension('agent.rag.cython_kernel', ['agent/rag/cython_kernel.pyx'])], compiler_directives={'language_level': 3}))" build_ext --inplace \
+    && /opt/venv/bin/python -c "import agent.rag.cython_native, agent.rag.cython_kernel; print('Cython RAG extensions ready')" \
+    && /opt/venv/bin/pip uninstall -y Cython
 
 # ── Stage 2.5：从固定上游源码构建修复版 Cosign ───────────────────────────────
 # 保持官方签名版本与固定源码提交，使用已修复的 Go 工具链和压缩依赖。
@@ -213,6 +221,8 @@ COPY --from=backend-deps /opt/venv /opt/venv
 COPY backend/app ./app
 COPY backend/updater ./updater
 COPY backend/agent ./agent
+COPY --from=backend-deps /build/agent/rag/cython_native*.so ./agent/rag/
+COPY --from=backend-deps /build/agent/rag/cython_kernel*.so ./agent/rag/
 COPY backend/onboarding ./onboarding
 COPY backend/scripts/migrations ./scripts/migrations
 COPY backend/scripts/backfill_global_search_romaji.py ./scripts/backfill_global_search_romaji.py
@@ -265,6 +275,9 @@ RUN mkdir -p /usr/local/libexec/docker/cli-plugins \
     && install -m 0755 /out/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose \
     && docker compose version
 RUN cd /opt/gugu/image-app && python3 -c "import updater.daemon, updater.client"
+
+# 在最终生产层验证两个预编译扩展及真实 BM25 查询，不依赖 Cython 或本地编译器。
+RUN python -c "import importlib.util; assert importlib.util.find_spec('Cython') is None; from agent.rag import cython_native, cython_kernel; from agent.rag.cython_backend import build_text_index, search_text; index = build_text_index(['gugu rag bm25 smoke', 'unrelated document']); hits = search_text(index, 'bm25', limit=1); assert hits and hits[0][0] == 0, hits; print('Cython RAG BM25 runtime smoke passed')"
 
 # 前端静态产物：由 Nginx 直接托管，API/SSE/WebSocket 反代到容器内 Uvicorn。
 COPY --from=frontend-build /workspace/frontend/dist ./static/

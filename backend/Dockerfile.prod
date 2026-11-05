@@ -39,8 +39,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # Cython 扩展只在 builder 编译；最终镜像复制原生模块，不依赖 Cython 或编译器。
 RUN --mount=type=cache,target=/root/.cache/pip \
     /opt/venv/bin/pip install -i "${PIP_INDEX_URL}" "Cython>=3.1" \
-    && /opt/venv/bin/python -c "from setuptools import Extension, setup; from Cython.Build import cythonize; setup(name='gugu-rag-cython', ext_modules=cythonize([Extension('agent.rag.cython_native', ['agent/rag/cython_native.pyx'])], compiler_directives={'language_level': 3}))" build_ext --inplace \
-    && /opt/venv/bin/python -c "import agent.rag.cython_native; print('Cython RAG native extension ready')" \
+    && /opt/venv/bin/python -c "from setuptools import Extension, setup; from Cython.Build import cythonize; setup(name='gugu-rag-cython', ext_modules=cythonize([Extension('agent.rag.cython_native', ['agent/rag/cython_native.pyx']), Extension('agent.rag.cython_kernel', ['agent/rag/cython_kernel.pyx'])], compiler_directives={'language_level': 3}))" build_ext --inplace \
+    && /opt/venv/bin/python -c "import agent.rag.cython_native, agent.rag.cython_kernel; print('Cython RAG extensions ready')" \
     && /opt/venv/bin/pip uninstall -y Cython
 
 # 图表渲染 worker 的运行依赖；不包含已迁出的 RAG 依赖。
@@ -131,6 +131,7 @@ COPY backend/app ./app
 COPY backend/updater ./updater
 COPY backend/agent ./agent
 COPY --from=builder /build/agent/rag/cython_native*.so ./agent/rag/
+COPY --from=builder /build/agent/rag/cython_kernel*.so ./agent/rag/
 COPY backend/onboarding ./onboarding
 COPY backend/scripts/migrations ./scripts/migrations
 COPY backend/scripts/backfill_global_search_romaji.py ./scripts/backfill_global_search_romaji.py
@@ -166,8 +167,8 @@ RUN mkdir -p logs \
     && ! command -v git \
     && ! command -v hg
 
-# 以最终运行层的 Python/ABI 实际导入扩展，确保生产首次查询不触发编译。
-RUN python -c "import importlib.util; assert importlib.util.find_spec('Cython') is None; import agent.rag.cython_native"
+# 以最终运行层的 Python/ABI 执行完整 Cython BM25 检索；同时确认不携带 Cython 编译依赖。
+RUN python -c "import importlib.util; assert importlib.util.find_spec('Cython') is None; from agent.rag import cython_native, cython_kernel; from agent.rag.cython_backend import build_text_index, search_text; index = build_text_index(['gugu rag bm25 smoke', 'unrelated document']); hits = search_text(index, 'bm25', limit=1); assert hits and hits[0][0] == 0, hits; print('Cython RAG BM25 runtime smoke passed')"
 
 RUN node bin/gugu-filesync-ts-worker.cjs --version \
     && cd /app/bin && node -e "Promise.all([import('mermaid'), import('@mermaid-js/mermaid-zenuml'), import('@resvg/resvg-js'), import('@xmldom/xmldom'), import('svgdom'), import('mathjax'), import('./theme.mjs')]).then(() => console.log('Chart PNG runtime ready'))"
