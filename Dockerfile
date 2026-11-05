@@ -77,7 +77,6 @@ COPY backend/agent ./agent
 RUN --mount=type=cache,target=/root/.cache/pip \
     /opt/venv/bin/pip install -i "${PIP_INDEX_URL}" "Cython>=3.1" \
     && /opt/venv/bin/python -c "from setuptools import Extension, setup; from Cython.Build import cythonize; setup(name='gugu-rag-cython', ext_modules=cythonize([Extension('agent.rag.cython_native', ['agent/rag/cython_native.pyx']), Extension('agent.rag.cython_kernel', ['agent/rag/cython_kernel.pyx'])], compiler_directives={'language_level': 3}))" build_ext --inplace \
-    && /opt/venv/bin/python -c "import agent.rag.cython_native, agent.rag.cython_kernel; print('Cython RAG extensions ready')" \
     && /opt/venv/bin/pip uninstall -y Cython
 
 # ── Stage 2.5：从固定上游源码构建修复版 Cosign ───────────────────────────────
