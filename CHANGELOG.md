@@ -5,7 +5,7 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [1.7.8] - 2026-11-05
 
 ### What's New
 
@@ -38,6 +38,7 @@
 - Retry transient MiniMax web-search failures with a bounded delay.
 - Keep a sent user message visible while its run starts, and save file edits against the latest file version.
 - Avoid interpreting dollar-denominated prices as inline math when Markdown math is enabled.
+- Keep MCP tool and task requests bounded by their configured request timeout.
 
 #### Fixes
 
@@ -52,6 +53,7 @@
 - Smoke-start the Mermaid diagram worker during image builds so missing modules or fonts fail the build instead of breaking rendering at runtime.
 - Deliver the final QQ streamed reply reliably when earlier streaming content was only partially delivered, and report missing stream terminal events as errors.
 - Avoid duplicate QQ messages when a terminal reply revises buffered streaming text.
+- Ensure production images include both Cython RAG extensions so initial retrieval works without a runtime compiler.
 - Keep tool activity synchronized when switching between chat sessions.
 - Keep localized cancellation status messages consistent across supported languages.
 - Resolve group @mentions to the correct bot name instead of displaying another bot as Gugu.
@@ -61,7 +63,7 @@
 
 #### Contributors
 
-- Thank you to [@Coffeiz](https://github.com/Coffeiz) for PR #109.
+- Thank you to [@Coffeiz](https://github.com/Coffeiz) for PR #109 and PR #112.
 
 #### Feedback & Issue Reporters
 
@@ -98,6 +100,7 @@
 - 对 MiniMax 联网搜索的临时故障进行有限间隔重试。
 - 修复 Run 启动时用户消息气泡短暂消失的问题，并确保文件编辑使用最新文件版本保存。
 - 启用 Markdown 行内公式时，避免将美元金额误识别为公式。
+- 为 MCP 工具和任务请求应用配置的请求超时，避免服务端无响应时调用持续等待。
 
 #### 修复
 
@@ -118,6 +121,7 @@
 - 修复重命名或切换会话后标题未及时更新的问题。
 - 修复群反思任务遇到空消息范围或 Worker 停止时无事件循环而反复失败的问题。
 - IM 任务取消已发送确认后，不再重复提示“远端执行状态未知”。
+- 确保生产镜像包含 Cython RAG 的两个扩展，首次检索无需在运行时编译。
 
 #### 贡献者
 

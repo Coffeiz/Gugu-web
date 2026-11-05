@@ -63,7 +63,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         build-essential libffi-dev libpq-dev libssl-dev
 
 COPY backend/requirements.txt ./requirements.txt
-COPY backend/agent ./agent
 RUN --mount=type=cache,target=/root/.cache/pip \
     python -m venv /opt/venv \
     && /opt/venv/bin/pip install -i "${PIP_INDEX_URL}" -r requirements.txt \
@@ -71,6 +70,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
         -i "${PIP_INDEX_URL}" \
         "msgpack==1.2.3" "setuptools==84.0.0" \
     && /opt/venv/bin/python -c "from importlib.metadata import version; assert version('msgpack') == '1.2.3'; assert version('setuptools') == '84.0.0'"
+
+COPY backend/agent ./agent
 
 # 两个生产 Cython 扩展都在带编译器的依赖构建层生成；最终应用层只接收 ABI 匹配的原生模块。
 RUN --mount=type=cache,target=/root/.cache/pip \

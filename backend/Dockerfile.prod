@@ -25,7 +25,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 WORKDIR /build
 ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 COPY backend/requirements.txt ./requirements.txt
-COPY backend/agent ./agent
 
 RUN python -m venv /opt/venv
 RUN --mount=type=cache,target=/root/.cache/pip \
@@ -35,6 +34,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
         -i "${PIP_INDEX_URL}" \
         "msgpack==1.2.3" "setuptools==84.0.0" \
     && /opt/venv/bin/python -c "from importlib.metadata import version; assert version('msgpack') == '1.2.3'; assert version('setuptools') == '84.0.0'"
+
+COPY backend/agent ./agent
 
 # Cython 扩展只在 builder 编译；最终镜像复制原生模块，不依赖 Cython 或编译器。
 RUN --mount=type=cache,target=/root/.cache/pip \
