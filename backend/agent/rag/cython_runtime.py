@@ -43,6 +43,14 @@ def ensure_cython_importer() -> None:
 
 
 async def ensure_cython_native_loaded() -> None:
-    """在线程池中完成 Cython 内核首次编译，避免阻塞 asyncio 请求循环。"""
+    """优先加载预编译扩展；开发环境缺少扩展时再按需编译。"""
+    module_name = "agent.rag.cython_native"
+    try:
+        await asyncio.to_thread(importlib.import_module, module_name)
+        return
+    except ModuleNotFoundError as error:
+        # 仅目标扩展缺失时才走 pyximport；扩展自身的依赖缺失必须原样暴露。
+        if error.name != module_name:
+            raise
     await asyncio.to_thread(ensure_cython_importer)
-    await asyncio.to_thread(importlib.import_module, "agent.rag.cython_native")
+    await asyncio.to_thread(importlib.import_module, module_name)

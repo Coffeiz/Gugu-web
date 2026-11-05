@@ -170,6 +170,39 @@ async def test_cython_sidecar_loads_and_queries_synthetic_owner_index(
 
 
 @pytest.mark.asyncio
+async def test_sidecar_database_load_does_not_load_native_in_api_worker(monkeypatch, tmp_path):
+    """API worker 只通过 sidecar 装载持久索引，不本地编译 Cython 扩展。"""
+    from types import SimpleNamespace
+
+    from agent.rag import index_cache
+
+    async def unexpected_local_compile():
+        raise AssertionError("sidecar API worker must not load or compile the native extension")
+
+    class Sidecar:
+        def __init__(self, owner, cache_scope, socket_path):
+            self.owner = owner
+
+        async def load_index_from_snapshot_or_database(self, *args, **kwargs):
+            return {"status": "ok", "document_count": 0, "vector_count": 0}
+
+    monkeypatch.setattr(index_cache, "sidecar_socket_path", lambda: "test-sidecar.sock")
+    monkeypatch.setattr(index_cache, "index_dir_for_owner", lambda owner: str(tmp_path / str(owner) / "index"))
+    monkeypatch.setattr("agent.memory.embedding.is_enabled", lambda: False)
+    monkeypatch.setattr("agent.rag.cython_runtime.ensure_cython_native_loaded", unexpected_local_compile)
+    monkeypatch.setattr("agent.rag.cython_sidecar.CythonSidecarLifecycle", Sidecar)
+
+    diagnostics = {}
+    result = await index_cache.KnowledgeIndexCache()._build_index(
+        "cython", "owner-a", None, "revision-1", SimpleNamespace(), diagnostics,
+        allow_database_load=True, cache_scope="all", db=None,
+    )
+
+    assert isinstance(result, Sidecar)
+    assert diagnostics["cython_sidecar"] is True
+
+
+@pytest.mark.asyncio
 async def test_cython_sidecar_caches_transient_capability_index(tmp_path):
     """transient 能力目录跨请求复用 sidecar 索引，并按 owner 隔离 scope。"""
     owner = str(uuid.uuid4())

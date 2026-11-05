@@ -377,12 +377,13 @@ class KnowledgeIndexCache:
                            cache_scope: str = "all", db=None):
         from agent.rag.observation import probe_update
         from agent.memory import embedding
-        from agent.rag.cython_runtime import ensure_cython_native_loaded
         from agent.rag.cython_backend import CythonLexicalIndex
 
         started = time.monotonic()
-        await ensure_cython_native_loaded()
         if documents is not None:
+            from agent.rag.cython_runtime import ensure_cython_native_loaded
+
+            await ensure_cython_native_loaded()
             return CythonLexicalIndex.build(documents, revision or "")
         if not allow_database_load:
             return None
@@ -398,6 +399,9 @@ class KnowledgeIndexCache:
 
             lifecycle = CythonSidecarLifecycle(owner_user_id, cache_scope, socket_path)
         else:
+            from agent.rag.cython_runtime import ensure_cython_native_loaded
+
+            await ensure_cython_native_loaded()
             lifecycle = CythonRagLifecycle()
         if db is None and not socket_path:
             raise RuntimeError("Cython index build requires a database session")
@@ -535,6 +539,14 @@ class KnowledgeIndexCache:
     def _touch(self, key: tuple[str, str, str], entry: _Entry) -> None:
         entry.last_access = time.monotonic()
         self._entries.move_to_end(key)
+        if entry.persistent_loaded:
+            from agent.rag.snapshot_storage import touch_snapshot_access
+
+            owner_id, _backend, cache_scope = key
+            cache_tag = hashlib.sha256(cache_scope.encode("utf-8")).hexdigest()[:20]
+            snapshot_dir = Path(index_dir_for_owner(owner_id)).parent / "cython" / cache_tag
+            if snapshot_dir.is_dir():
+                touch_snapshot_access(snapshot_dir)
 
     def _store(self, key: tuple[str, str, str], entry: _Entry) -> None:
         self._purge_expired()

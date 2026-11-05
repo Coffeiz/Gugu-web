@@ -29,9 +29,13 @@ async def test_pending_ask_payload_contains_only_the_scored_trigger(monkeypatch)
             },
             {
                 "event_id": "1761746401000-2", "text": "为啥没有 issue？",
-                "platform_user_id": "member-b", "platform_user_name": "小北",
+                "platform_user_id": "owner-1", "platform_user_name": "主人",
                 "platform_message_id": "platform-2", "attachments": [],
             },
+        ],
+        "_speaker_segments": [
+            {"event_id": "1761746400000-1", "platform_user_id": "member-a"},
+            {"event_id": "1761746401000-2", "platform_user_id": "owner-1"},
         ],
     }
 
@@ -46,9 +50,26 @@ async def test_pending_ask_payload_contains_only_the_scored_trigger(monkeypatch)
     stored = json.loads(args[5])
     assert [item["event_id"] for item in stored["_batch_messages"]] == ["1761746401000-2"]
     assert stored["text"] == "为啥没有 issue？"
-    assert stored["platform_user_id"] == "member-b"
+    assert stored["platform_user_id"] == "owner-1"
+    assert [item["platform_user_id"] for item in stored["_speaker_segments"]] == ["owner-1"]
     assert stored["_pending_ask_trigger_event_id"] == "1761746401000-2"
     assert stored["_pending_ask_trigger_platform_message_id"] == "platform-2"
+
+    # 混合批次恢复后，只以 Owner 的 ASK 计算权限，不再被成员消息降级。
+    from agent.im.actor import ActorResolver
+    from agent.im.models import PlatformMessage
+    from types import SimpleNamespace
+
+    async def access_resolver(platform, chat_type, channel_id, owner_user_id, platform_user_id):
+        return SimpleNamespace(
+            role="owner" if platform_user_id == "owner-1" else "member",
+            allowed_tool_names=None,
+        )
+
+    actor = await ActorResolver(access_resolver=access_resolver).resolve(
+        PlatformMessage.from_payload(stored), stored, "owner-uuid",
+    )
+    assert actor.role == "owner"
 
 
 @pytest.mark.asyncio

@@ -76,3 +76,23 @@ async def test_cython_native_first_load_does_not_block_event_loop(monkeypatch):
 
     assert import_threads and import_threads[0] != event_loop_thread
     assert ticks >= 2
+
+
+@pytest.mark.asyncio
+async def test_precompiled_native_import_does_not_require_cython(monkeypatch):
+    """生产镜像内预编译扩展可直接加载，不要求安装 pyximport/Cython。"""
+    from agent.rag import cython_runtime
+
+    imported = []
+
+    def import_compiled(module_name):
+        imported.append(module_name)
+        return object()
+
+    def unexpected_importer():
+        raise AssertionError("预编译扩展不应启用 pyximport")
+
+    monkeypatch.setattr(cython_runtime, "importlib", SimpleNamespace(import_module=import_compiled))
+    monkeypatch.setattr(cython_runtime, "ensure_cython_importer", unexpected_importer)
+    await cython_runtime.ensure_cython_native_loaded()
+    assert imported == ["agent.rag.cython_native"]

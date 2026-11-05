@@ -38,6 +38,16 @@ def _payload_for_trigger(payload: dict, session_id: int | None, trigger_event_id
         if trigger is None:
             return None
         safe_payload["_batch_messages"] = [dict(trigger)]
+        # 恢复时的权限主体也必须与被评分的问题属于同一条入站事件。
+        # 否则初始合批中的其他发言人会通过 ActorResolver 降低触发者权限。
+        segments = safe_payload.get("_speaker_segments")
+        if isinstance(segments, list):
+            safe_payload["_speaker_segments"] = [
+                dict(segment) for segment in segments
+                if isinstance(segment, dict)
+                and str(segment.get("event_id") or segment.get("_redis_stream_id") or "")
+                == str(trigger_event_id)
+            ]
         for field in (
             "text", "attention_raw_text", "quoted_text", "attachments", "message_id",
             "platform_message_id", "platform_user_id", "platform_user_name",

@@ -1,6 +1,7 @@
 """清理过期的 Cython RAG 派生索引快照。"""
 from __future__ import annotations
 
+import asyncio
 import re
 import shutil
 from pathlib import Path
@@ -39,10 +40,17 @@ def _is_stale_snapshot(path: Path, *, cutoff: float) -> bool:
     if not index_file.is_file() or index_file.is_symlink():
         return False
     try:
-        # 原子写入尚未完成时保留快照，交由下一轮 GC 检查。
-        if (path / "index.json.tmp").exists():
+        # 与写入器使用同一临时文件契约；有未完成写入时保留快照。
+        if any(path.glob(".index-*.tmp")):
             return False
-        return index_file.stat().st_mtime < cutoff
+        from agent.rag.snapshot_storage import access_marker_path
+
+        access_marker = access_marker_path(path)
+        last_used = max(
+            index_file.stat().st_mtime,
+            access_marker.stat().st_mtime if access_marker.is_file() else 0.0,
+        )
+        return last_used < cutoff
     except OSError:
         return False
 
@@ -51,6 +59,21 @@ def _configured_ttl() -> int:
     from app.core.config import get_settings
 
     return int(get_settings().search.rag_index_ttl_seconds)
+
+
+def _delete_if_stale(snapshot_dir: Path, *, cutoff: float) -> bool:
+    from agent.rag.snapshot_storage import access_marker_path, snapshot_lock
+
+    try:
+        with snapshot_lock(snapshot_dir, exclusive=True):
+            if not _is_stale_snapshot(snapshot_dir, cutoff=cutoff):
+                return False
+            shutil.rmtree(snapshot_dir)
+            access_marker_path(snapshot_dir).unlink(missing_ok=True)
+            return True
+    except OSError as exc:
+        diag_log("app.core.rag_index_gc.delete", exc)
+        return False
 
 
 async def sweep_cython_index_cache() -> int:
@@ -68,13 +91,12 @@ async def sweep_cython_index_cache() -> int:
         cutoff = now_utc().timestamp() - _configured_ttl()
         for root in roots:
             for snapshot_dir in root.iterdir():
-                if not _is_stale_snapshot(snapshot_dir, cutoff=cutoff):
+                if not snapshot_dir.is_dir() or snapshot_dir.is_symlink() \
+                        or not _CACHE_TAG_DIR.fullmatch(snapshot_dir.name):
                     continue
-                try:
-                    shutil.rmtree(snapshot_dir)
-                    deleted += 1
-                except OSError as exc:
-                    diag_log("app.core.rag_index_gc.delete", exc)
+                deleted += int(await asyncio.to_thread(
+                    _delete_if_stale, snapshot_dir, cutoff=cutoff,
+                ))
         return deleted
     finally:
         try:
