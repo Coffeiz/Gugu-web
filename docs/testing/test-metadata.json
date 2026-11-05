@@ -1839,6 +1839,14 @@
     "keyBehavior": "schema 快照可离线往返、旧配置发现不能覆盖较新快照、启用服务器发现失败不能报告成功",
     "ci": "backend-pytest"
   },
+  "backend/tests/agent/mcp/test_github_compat.py": {
+    "domain": "mcp-github-compatibility",
+    "layer": "L1",
+    "owner": "backend/agent/mcp/github",
+    "productionEntry": "GitHub MCP 参数头兼容适配器",
+    "keyBehavior": "仅官方 GitHub MCP 端点按需重试参数头；普通 MCP 不受影响",
+    "ci": "backend-pytest"
+  },
   "backend/tests/agent/test_context_loader_parallel.py": {
     "domain": "context-loader-concurrency",
     "layer": "L1",
