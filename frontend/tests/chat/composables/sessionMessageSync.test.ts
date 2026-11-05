@@ -11,6 +11,16 @@ const message = (id: number, key: string, text: string): ChatMessage => ({
 })
 
 describe('mergeSessionMessageDelta', () => {
+  it('claims the local user bubble atomically when final history gains a run identity', () => {
+    const local: ChatMessage = { ...message(1, 'client:request-a', '测试'), role: 'user', clientMessageId: 'request-a' }
+    const persisted: ChatMessage = { ...local, id: 2, dbId: 10, runId: 'run-a' }
+    const reply = { ...message(3, 'event:reply-a', '收到'), runId: 'run-a' }
+    const result = replaceRunHistory([local], [persisted, reply], 'run-a')
+    expect(result).toHaveLength(2)
+    expect(result[0]).toMatchObject({ id: 1, dbId: 10, role: 'user', runId: 'run-a' })
+    expect(replaceRunHistory(result, [persisted, reply], 'run-a')).toEqual(result)
+  })
+
   it('appends unseen persisted messages without duplicating local bubbles', () => {
     const current = [message(1, 'message:10', 'hello')]
     const merged = mergeSessionMessageDelta(current, [

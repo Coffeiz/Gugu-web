@@ -210,7 +210,10 @@ export function replaceRunHistory(current: ChatMessage[], incoming: ChatMessage[
       ...(existing?.role === 'tool' ? preserveToolDetails(existing, item) : {}),
     }
   })
-  return sortSessionTimelineMessages([...current.filter(item => item.runId !== runId), ...history])
+  // 本地 user 气泡可能尚无 runId；终态历史必须按稳定身份认领它，避免先追加再去重。
+  return sortSessionTimelineMessages(mergeSessionMessageDelta(
+    current.filter(item => item.runId !== runId), history,
+  ))
 }
 
 /** 搜索命中较早历史消息时，按目标 ID 一次读取有界历史页并并入当前时间线。 */
