@@ -1,41 +1,27 @@
-"""最小 MCP JSON-RPC 客户端（streamable HTTP）。
-
-Phase 1 只承诺 initialize / tools/list / tools/call 三个方法；不实现 SSE 长连接
-监听（GET）与 sampling/resources/prompts。安全约束：
-
-- endpoint 属不可信外部地址：每次请求前用 ``resolve_pinned_ip`` 做内网校验并把
-  socket 钉扎到校验过的 IP（防 DNS rebinding TOCTOU，每跳重新解析不复用）；
-- ``follow_redirects=False``：禁止自动跟随未校验的重定向；
-- 超时/连接失败/协议错误一律归一为 ``{"error": 人话, "error_kind": 类别}`` 返回，
-  不向上抛异常打断 Agent Loop。
-
-协议要点（streamable HTTP）：POST 单一 endpoint；initialize 后从响应头取
-``Mcp-Session-Id`` 并在后续请求回传；响应可能是 application/json 或
-text/event-stream（后者按 SSE 帧解析取同 id 的 JSON-RPC 响应）。
-"""
+"""MCP HTTP 客户端：使用官方 Python SDK 处理协议会话。"""
 from __future__ import annotations
 
-import itertools
-import json
 import asyncio
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+import json
+from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
+import httpx2
+from mcp import Client, types as mcp_types
+from mcp.client.session import ClientSession
+from mcp.client.streamable_http import streamable_http_client
+from mcp.shared.exceptions import MCPError
+from mcp.shared.inbound import encode_header_value
 
+from agent.mcp.protocol import advertises_tasks, with_protocol_metadata
 from app.core.url_security import resolve_pinned_ip
-from agent.mcp.models import (
-    CLIENT_INFO,
-    MCP_LEGACY_PROTOCOL_VERSION,
-    MCP_MODERN_PROTOCOL_VERSION,
-    MCP_TASKS_EXTENSION,
-)
-from agent.mcp.protocol import advertises_tasks, is_legacy_probe_error, with_protocol_metadata
 
-_LIST_TOOLS_MAX_PAGES = 8        # 分页拉全量的防御上限
-_MAX_RESPONSE_BYTES = 2_000_000  # 单次 JSON-RPC 响应体硬上限（防恶意 server 撑爆内存）
-_MAX_TOOL_DESCRIPTION_CHARS = 2_000  # 单工具 description 截断（防上下文被工具说明撑爆）
-_MAX_LIST_TOOLS_BYTES = 1_000_000    # tools/list 累计体积上限
+_LIST_TOOLS_MAX_PAGES = 8
+_MAX_RESPONSE_BYTES = 2_000_000
+_MAX_TOOL_DESCRIPTION_CHARS = 2_000
+_MAX_LIST_TOOLS_BYTES = 1_000_000
 
 
 class McpClientError(Exception):
@@ -45,7 +31,7 @@ class McpClientError(Exception):
                  rpc_error: dict | None = None, status_code: int | None = None):
         super().__init__(message)
         self.message = message
-        self.kind = kind            # timeout | network | http | auth | configuration | protocol
+        self.kind = kind
         self.code = rpc_error.get("code") if isinstance(rpc_error, dict) else None
         self.data = rpc_error.get("data") if isinstance(rpc_error, dict) else None
         self.status_code = status_code
@@ -55,8 +41,122 @@ def error_payload(exc: McpClientError) -> dict[str, str]:
     return {"error": exc.message, "error_kind": exc.kind}
 
 
+class _LimitedHttpxStream(httpx2.AsyncByteStream):
+    """将受信任的旧 HTTP transport 桥接给 SDK，并限制响应体大小。"""
+
+    def __init__(self, response: httpx.Response, maximum: int):
+        self._response = response
+        self._maximum = maximum
+
+    async def __aiter__(self):
+        total = 0
+        try:
+            if self._response.is_stream_consumed:
+                source = (self._response.content,)
+            else:
+                source = self._response.aiter_raw()
+            async for chunk in _as_async_iterable(source):
+                total += len(chunk)
+                if total > self._maximum:
+                    raise McpClientError(
+                        f"MCP server 响应体超出防御上限 {self._maximum} 字节",
+                        kind="protocol",
+                    )
+                yield chunk
+        finally:
+            await self._response.aclose()
+
+    async def aclose(self) -> None:
+        await self._response.aclose()
+
+
+async def _read_capped_response(response: httpx.Response, maximum: int) -> bytes:
+    if response.is_stream_consumed:
+        body = response.content
+        if len(body) > maximum:
+            raise McpClientError("MCP server 响应体超出防御上限", kind="protocol")
+        return body
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in response.aiter_raw():
+        total += len(chunk)
+        if total > maximum:
+            raise McpClientError("MCP server 响应体超出防御上限", kind="protocol")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+async def _as_async_iterable(source):
+    if isinstance(source, tuple):
+        for chunk in source:
+            yield chunk
+        return
+    async for chunk in source:
+        yield chunk
+
+
+class _HttpxTransportBridge(httpx2.AsyncBaseTransport):
+    """桥接到既有 DNS 固定 transport；协议与 SSE 由官方 SDK 负责。"""
+
+    def __init__(self, transport: httpx.AsyncBaseTransport):
+        self._transport = transport
+
+    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
+        body = await request.aread()
+        legacy_request = httpx.Request(
+            request.method, str(request.url), headers=dict(request.headers), content=body,
+        )
+        response = await self._transport.handle_async_request(legacy_request)
+        if 300 <= response.status_code < 400:
+            await response.aclose()
+            raise McpClientError("MCP server 返回了不允许跟随的 HTTP 重定向", kind="http",
+                                 status_code=response.status_code)
+        if response.status_code >= 400:
+            status_code = response.status_code
+            try:
+                content = await _read_capped_response(response, _MAX_RESPONSE_BYTES)
+            finally:
+                await response.aclose()
+            if status_code == 404:
+                # SDK 的自动协商以 JSON-RPC method-not-found 作为旧协议探测信号。
+                try:
+                    payload = json.loads(content)
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    payload = None
+                if not (isinstance(payload, dict) and payload.get("jsonrpc") == "2.0"
+                        and isinstance(payload.get("error"), dict)):
+                    content = json.dumps({
+                        "jsonrpc": "2.0", "id": _request_id(body),
+                        "error": {"code": -32601, "message": "method not found"},
+                    }).encode("utf-8")
+                    headers = {"content-type": "application/json"}
+                    return httpx2.Response(200, headers=headers, content=content, request=request)
+            if status_code in {401, 403, 405} or status_code >= 500 or status_code == 429:
+                raise _http_status_error(status_code)
+            try:
+                payload = json.loads(content)
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                payload = None
+            if not (isinstance(payload, dict) and payload.get("jsonrpc") == "2.0"
+                    and isinstance(payload.get("error"), dict)):
+                raise _http_status_error(status_code)
+            # MCP 允许使用非 2xx 传递 JSON-RPC 错误；转成 SDK 可解析的成功 HTTP 包装。
+            headers = {"content-type": "application/json"}
+            return httpx2.Response(200, headers=headers, content=content, request=request)
+        headers = dict(response.headers)
+        return httpx2.Response(
+            response.status_code,
+            headers=headers,
+            stream=_LimitedHttpxStream(response, _MAX_RESPONSE_BYTES),
+            request=request,
+        )
+
+    async def aclose(self) -> None:
+        await self._transport.aclose()
+
+
 class McpClient:
-    """单 server 的 MCP 客户端；一次实例对应一次 initialize 会话。"""
+    """单 server 的官方 SDK 客户端；一次实例对应一个 MCP 会话。"""
 
     def __init__(self, endpoint: str, headers: dict[str, str] | None = None,
                  query_params: dict[str, str] | None = None,
@@ -66,13 +166,7 @@ class McpClient:
         self._headers = dict(headers or {})
         self._query_params = {str(k): str(v) for k, v in (query_params or {}).items()}
         self._timeout_seconds = float(timeout_seconds)
-        self._timeout = httpx.Timeout(self._timeout_seconds)
-        self._transport = transport        # 测试注入 MockTransport；生产走 IP 钉扎
-        self._session_id: str | None = None
-        self._ids = itertools.count(1)
-        self._initialized = False
-        self._protocol_version: str | None = None
-        self._modern = False
+        self._provided_transport = transport
         self._supports_tasks = False
 
     async def __aenter__(self) -> "McpClient":
@@ -82,394 +176,243 @@ class McpClient:
         await self.aclose()
 
     async def aclose(self) -> None:
-        return None
-
-    # ── 对外方法：永不抛异常，错误归一为 {"error": 人话, "error_kind": 类别} ──
+        # 每个 SDK 会话都在调用它的同一任务中创建和关闭。
+        self._supports_tasks = False
 
     async def initialize(self) -> dict:
         try:
-            result = await self._request(
-                "server/discover", {}, protocol_version=MCP_MODERN_PROTOCOL_VERSION,
-            )
+            async with self._connected_client() as client:
+                session = client.session
+                discovery = session.discover_result
+                initialized = session.initialize_result
+                result = discovery or initialized
+                return _model_dict(result) if result is not None else {}
         except McpClientError as exc:
-            if not is_legacy_probe_error(
-                transport="http", kind=exc.kind, code=exc.code, status_code=exc.status_code,
-            ):
-                return error_payload(exc)
-            try:
-                result = await self._request(
-                    "initialize",
-                    {
-                        "protocolVersion": MCP_LEGACY_PROTOCOL_VERSION,
-                        "capabilities": {},
-                        "clientInfo": CLIENT_INFO,
-                    },
-                )
-            except McpClientError as legacy_exc:
-                return error_payload(legacy_exc)
-            await self._notify("notifications/initialized")
-            self._modern = False
-            self._supports_tasks = False
-            self._initialized = True
-            return result or {}
-
-        supported = result.get("supportedVersions")
-        if not isinstance(supported, list) or MCP_MODERN_PROTOCOL_VERSION not in supported:
-            return error_payload(McpClientError(
-                "MCP server 未声明客户端支持的现代协议版本", kind="protocol",
-            ))
-        self._protocol_version = MCP_MODERN_PROTOCOL_VERSION
-        self._modern = True
-        self._supports_tasks = advertises_tasks(result)
-        self._initialized = True
-        return result or {}
+            return error_payload(exc)
+        except Exception as exc:
+            return error_payload(_map_exception(exc, self._timeout_seconds))
 
     async def list_tools(self) -> dict:
-        """返回 {"tools": [...]}；分页拉全量。description/总体积有防御上限。"""
         tools: list[dict] = []
         cursor: str | None = None
         total_bytes = 0
         try:
-            if not self._initialized:
-                init = await self.initialize()
-                if "error" in init:
-                    return init
-            for _page in range(_LIST_TOOLS_MAX_PAGES):
-                params: dict[str, Any] = {"cursor": cursor} if cursor else {}
-                result = await self._request("tools/list", params)
-                if "error" in result:
-                    return result
-                for tool in result.get("tools") or []:
-                    if not isinstance(tool, dict):
-                        continue
-                    description = tool.get("description")
-                    if isinstance(description, str) and len(description) > _MAX_TOOL_DESCRIPTION_CHARS:
-                        tool["description"] = description[:_MAX_TOOL_DESCRIPTION_CHARS] + "…（超长说明已截断）"
-                    tools.append(tool)
-                    total_bytes += len(json.dumps(tool, ensure_ascii=False))
-                cursor = result.get("nextCursor")
-                if total_bytes > _MAX_LIST_TOOLS_BYTES:
-                    return {"error": "tools/list 响应体积超出防御上限，已拒绝加载该 server 的工具",
-                            "error_kind": "protocol"}
-                if not cursor:
-                    break
-            else:
-                return {"error": "工具列表分页异常，已到防御上限", "error_kind": "protocol"}
-        except McpClientError as exc:
-            return error_payload(exc)
-        return {"tools": tools}
+            async with self._connected_client() as client:
+                for _page in range(_LIST_TOOLS_MAX_PAGES):
+                    result = await client.list_tools(cursor=cursor)
+                    for tool in result.tools:
+                        item = _model_dict(tool)
+                        description = item.get("description")
+                        if isinstance(description, str) and len(description) > _MAX_TOOL_DESCRIPTION_CHARS:
+                            item["description"] = description[:_MAX_TOOL_DESCRIPTION_CHARS] + "…（超长说明已截断）"
+                        tools.append(item)
+                        total_bytes += len(json.dumps(item, ensure_ascii=False))
+                    if total_bytes > _MAX_LIST_TOOLS_BYTES:
+                        return {"error": "tools/list 响应体积超出防御上限，已拒绝加载该 server 的工具",
+                                "error_kind": "protocol"}
+                    cursor = result.next_cursor
+                    if not cursor:
+                        break
+                else:
+                    return {"error": "工具列表分页异常，已到防御上限", "error_kind": "protocol"}
+            return {"tools": tools}
+        except Exception as exc:
+            return error_payload(_map_exception(exc, self._timeout_seconds))
 
     async def call_tool(self, name: str, arguments: dict | None) -> dict:
-        """调用工具，返回 MCP tools/call 的 result（content/isError）。"""
         try:
-            if not self._initialized:
-                init = await self.initialize()
-                if "error" in init:
-                    return init
-            params = {
-                "name": name,
-                "arguments": dict(arguments or {}),
-            }
-            if self._supports_tasks:
-                params["_meta"] = {"io.modelcontextprotocol/clientCapabilities": {
-                    "extensions": {MCP_TASKS_EXTENSION: {}}
-                }}
-            result = await self._request("tools/call", params)
-            if result.get("resultType") == "task" and result.get("taskId"):
-                if not self._supports_tasks:
-                    raise McpClientError(
-                        "MCP server 返回了未协商的 Tasks 结果", kind="protocol",
+            async with self._connected_client() as client:
+                params: dict[str, Any] = {"name": name, "arguments": dict(arguments or {})}
+                parameter_headers: dict[str, str] = {}
+                result = await self._call_tool_rpc(client, params, parameter_headers)
+                if result.get("resultType") == "task" and result.get("taskId"):
+                    if not self._supports_tasks:
+                        raise McpClientError("MCP server 返回了未协商的 Tasks 结果", kind="protocol")
+                    from agent.mcp.tasks import wait_for_task
+
+                    task_id = str(result["taskId"])
+                    return await wait_for_task(
+                        task_id, result,
+                        request=lambda method, task_params: self._task_request(client.session, method, task_params),
+                        cancel=lambda: self._task_request(client.session, "tasks/cancel", {"taskId": task_id}),
                     )
-                from agent.mcp.tasks import wait_for_task
+                return result
+        except asyncio.CancelledError:
+            from agent.runtime.cancellation import mark_remote_cancel_uncertain
+            mark_remote_cancel_uncertain()
+            raise
+        except Exception as exc:
+            return error_payload(_map_exception(exc, self._timeout_seconds))
 
-                task_id = str(result["taskId"])
-                return await wait_for_task(
-                    task_id, result,
-                    request=lambda method, params: self._request(method, params, task_id=task_id),
-                    cancel=lambda: self._request(
-                        "tasks/cancel", {"taskId": task_id}, task_id=task_id,
-                    ),
-                )
-            return result
-        except McpClientError as exc:
-            return error_payload(exc)
-
-    # ── 协议内部 ──
-
-    async def _notify(self, method: str) -> None:
-        """JSON-RPC 通知（无 id，无响应）。best-effort：失败不阻断初始化流程。"""
-        body = {"jsonrpc": "2.0", "method": method}
+    async def _call_tool_rpc(self, client: Client, params: dict,
+                             parameter_headers: dict[str, str]) -> dict:
+        payload = dict(params)
+        if client.protocol_version == "2026-07-28":
+            payload = with_protocol_metadata(payload, client.protocol_version)
+        if self._supports_tasks:
+            meta = dict(payload.get("_meta") or {})
+            meta["io.modelcontextprotocol/clientCapabilities"] = {
+                "extensions": {"io.modelcontextprotocol/tasks": {}}
+            }
+            payload["_meta"] = meta
+        headers: dict[str, str] = {}
+        if client.protocol_version == "2026-07-28":
+            headers.update({
+                "Mcp-Method": "tools/call",
+                "Mcp-Name": encode_header_value(str(payload.get("name") or "")),
+            })
+        headers.update({f"Mcp-Param-{key}": value for key, value in parameter_headers.items()})
         try:
-            async with self._build_client() as client:
-                await client.post(self._request_url(), json=body, headers=self._base_headers())
-        except Exception:
-            pass
+            # ClientSession 的高层 call_tool 会拒绝 Tasks 扩展结果；SDK 的
+            # Dispatcher 是公开协议边界，仍由它处理请求 ID、取消、错误和传输。
+            result = await client.session._dispatcher.send_raw_request(
+                "tools/call", payload, {"headers": headers},
+            )
+        except MCPError as exc:
+            raise _map_exception(exc, self._timeout_seconds) from exc
+        if not isinstance(result, dict):
+            raise McpClientError("MCP server 返回格式无效", kind="protocol")
+        return result
 
-    def _base_headers(self) -> dict[str, str]:
-        headers = {
-            "Accept": "application/json, text/event-stream",
-            **self._headers,
-        }
-        if self._session_id and not self._modern:
-            headers["Mcp-Session-Id"] = self._session_id
-        return headers
+    async def _task_request(self, session: ClientSession, method: str, params: dict) -> dict:
+        if method not in {"tasks/get", "tasks/cancel"}:
+            raise McpClientError("MCP Tasks 请求类型不受支持", kind="protocol")
+        headers: dict[str, str] = {}
+        version = session.protocol_version
+        if version == "2026-07-28":
+            params = with_protocol_metadata(params, version)
+            headers.update({
+                "Mcp-Method": method,
+                "Mcp-Name": encode_header_value(str(params.get("taskId") or "")),
+            })
+        try:
+            result = await session._dispatcher.send_raw_request(method, params, {
+                "headers": headers,
+                "cancel_on_abandon": False,
+            })
+        except MCPError as exc:
+            raise _map_exception(exc, self._timeout_seconds) from exc
+        return result if isinstance(result, dict) else {}
+
+    @asynccontextmanager
+    async def _connected_client(self):
+        stack = AsyncExitStack()
+        try:
+            endpoint = self._request_url()
+            transport = self._provided_transport
+            if transport is None:
+                pinned_ip, resolve_error = resolve_pinned_ip(self._endpoint)
+                if not pinned_ip:
+                    raise McpClientError(
+                        resolve_error or "该地址不允许访问（仅放行公网地址）", kind="network",
+                    )
+                from app.core.pinned_http import PinnedHTTPTransport
+                transport = PinnedHTTPTransport(pinned_ip)
+            bridge = _HttpxTransportBridge(transport)
+            http_client = httpx2.AsyncClient(
+                headers=self._headers,
+                timeout=httpx2.Timeout(self._timeout_seconds),
+                follow_redirects=False,
+                trust_env=False,
+                transport=bridge,
+            )
+            await stack.enter_async_context(http_client)
+            sdk_transport = streamable_http_client(
+                endpoint, http_client=http_client, max_sse_event_size=_MAX_RESPONSE_BYTES,
+            )
+            client = Client(
+                sdk_transport, read_timeout_seconds=self._timeout_seconds, mode="auto",
+                client_info=mcp_types.Implementation(**_client_info()),
+            )
+            await stack.enter_async_context(client)
+            discovery = client.session.discover_result
+            self._supports_tasks = advertises_tasks(_model_dict(discovery) if discovery else {})
+            yield client
+        finally:
+            await stack.aclose()
 
     def _request_url(self) -> str:
-        """只在请求边界拼接已解密的 Query 凭据，不修改或回显持久化 endpoint。"""
         if not self._query_params:
             return self._endpoint
         parts = urlsplit(self._endpoint)
-        configured_names = set(self._query_params)
-        query = [item for item in parse_qsl(parts.query, keep_blank_values=True) if item[0] not in configured_names]
+        names = set(self._query_params)
+        query = [item for item in parse_qsl(parts.query, keep_blank_values=True) if item[0] not in names]
         query.extend(self._query_params.items())
         return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
-    def _build_client(self) -> httpx.AsyncClient:
-        transport: httpx.AsyncBaseTransport | None = self._transport
-        if transport is None:
-            # 每次请求都重新校验并钉扎：resolve_pinned_ip 的约定是每一跳重新解析，
-            # 不复用上一跳结果，杜绝校验与连接之间切换 A 记录的 DNS rebinding。
-            pinned_ip, resolve_error = resolve_pinned_ip(self._endpoint)
-            if not pinned_ip:
-                raise McpClientError(
-                    resolve_error or "该地址不允许访问（仅放行公网地址）", kind="network"
-                )
-            from app.core.pinned_http import PinnedHTTPTransport
 
-            transport = PinnedHTTPTransport(pinned_ip)
-        return httpx.AsyncClient(
-            timeout=self._timeout,
-            follow_redirects=False,
-            trust_env=False,
-            transport=transport,
-        )
+def _model_dict(value: Any) -> dict:
+    if value is None:
+        return {}
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json", by_alias=True, exclude_none=True)
+    if isinstance(value, dict):
+        return value
+    return {}
 
-    async def _request(
-        self, method: str, params: dict | None = None, *, task_id: str | None = None,
-        protocol_version: str | None = None,
-    ) -> dict:
-        """发一个 JSON-RPC 请求并返回 result；协议/网络错误抛 McpClientError。"""
-        if protocol_version is None and self._modern:
-            protocol_version = self._protocol_version
-        if params is not None and protocol_version:
-            params = with_protocol_metadata(params, protocol_version)
-        request_id = next(self._ids)
-        body: dict[str, Any] = {"jsonrpc": "2.0", "id": request_id, "method": method}
-        if params is not None:
-            body["params"] = params
 
-        async with self._build_client() as client:
-            try:
-                # stream=True：响应体不急读，交给 _read_capped 流式累计——恶意/异常
-                # server 回几十 MB 时在硬上限处截断，而不是先整个吃进内存
-                headers = self._base_headers()
-                if protocol_version:
-                    headers.update({
-                        "MCP-Protocol-Version": protocol_version,
-                        "Mcp-Method": method,
-                    })
-                    name = params.get("name") if params else None
-                    if method == "tools/call" and name:
-                        headers["Mcp-Name"] = str(name)
-                    elif task_id:
-                        headers["Mcp-Name"] = task_id
-                elif task_id:
-                    headers.update({"Mcp-Name": task_id, "Mcp-Method": method})
-                request = client.build_request("POST", self._request_url(), json=body, headers=headers)
-                resp = await client.send(request, stream=True)
-            except asyncio.CancelledError:
-                # Streamable HTTP 通过关闭当前响应流表达取消；HTTPX task cancellation
-                # 关闭连接/流，不发送 notifications/cancelled。
-                if method in {"tools/call", "tasks/get"}:
-                    from agent.runtime.cancellation import mark_remote_cancel_uncertain
-                    mark_remote_cancel_uncertain()
-                raise
-            except httpx.TimeoutException as exc:
-                raise McpClientError(
-                    f"MCP server 响应超时（>{int(self._timeout_seconds)}s），"
-                    "请稍后重试或在设置里调大超时",
-                    kind="timeout",
-                ) from exc
-            except httpx.NetworkError as exc:
-                raise McpClientError(
-                    "无法连接 MCP server，请检查地址与网络", kind="network"
-                ) from exc
-            except (UnicodeError, httpx.InvalidURL, httpx.LocalProtocolError) as exc:
-                # HTTPX 组装请求头时可能直接抛 UnicodeEncodeError；不能让配置值
-                # 的编码细节逃出客户端，也不能把 secret 放进错误文案。
-                raise McpClientError(
-                    "MCP 请求配置无效，请检查 HTTP Header 名称和凭据格式",
-                    kind="configuration",
-                ) from exc
+def _client_info() -> dict[str, str]:
+    from agent.mcp.models import CLIENT_INFO
+    return dict(CLIENT_INFO)
 
-            try:
-                # 重定向一律不跟随（未校验的目的地不请求）
-                if 300 <= resp.status_code < 400:
-                    raise McpClientError(
-                        "MCP server 返回了重定向，出于安全考虑未跟随", kind="http"
-                    )
-                if resp.status_code == 202:
-                    return {}
-                await self._raise_http_status_error(resp)
 
-                session_id = resp.headers.get("Mcp-Session-Id")
-                if session_id and not protocol_version:
-                    self._session_id = session_id
-
-                content = await self._read_capped(resp)
-            except asyncio.CancelledError:
-                if method in {"tools/call", "tasks/get"}:
-                    from agent.runtime.cancellation import mark_remote_cancel_uncertain
-                    mark_remote_cancel_uncertain()
-                raise
-            finally:
-                await resp.aclose()
-
-        payload = self._extract_message(content, resp.headers.get("Content-Type") or "", request_id)
-        if "error" in payload:
-            err = payload.get("error") or {}
-            message = err.get("message") if isinstance(err, dict) else str(err)
-            raise McpClientError(
-                f"MCP server 协议错误：{message or '未知错误'}", kind="protocol",
-                rpc_error=err if isinstance(err, dict) else None,
-            )
-        return payload.get("result") or {}
-
-    async def _raise_http_status_error(self, resp: httpx.Response) -> None:
-        status_code = resp.status_code
-        if status_code < 400:
-            return
-        rpc_error = None
-        if status_code in {400, 404, 405}:
-            try:
-                error_body = json.loads(await self._read_capped(resp))
-                candidate = error_body.get("error") if isinstance(error_body, dict) else None
-                rpc_error = candidate if isinstance(candidate, dict) else None
-            except ValueError:
-                pass
-        if rpc_error is not None:
-            message = str(rpc_error.get("message") or "MCP server 协议错误")
-            raise McpClientError(
-                f"MCP server 协议错误：{message}", kind="protocol",
-                rpc_error=rpc_error, status_code=status_code,
-            )
-        if status_code in {401, 403}:
-            raise McpClientError(
-                f"MCP server 认证失败（HTTP {status_code}），请检查凭据配置",
-                kind="auth", status_code=status_code,
-            )
-        if status_code == 405:
-            raise McpClientError(
-                "目标返回 HTTP 405：该地址不接受 MCP 的 POST 请求，请确认 endpoint 指向 Streamable HTTP MCP 服务",
-                kind="configuration", status_code=status_code,
-            )
-        if 400 <= status_code < 500:
-            raise McpClientError(
-                f"MCP server 拒绝请求（HTTP {status_code}），请检查 endpoint 路径和协议配置",
-                kind="configuration", status_code=status_code,
-            )
-        raise McpClientError(
-            f"MCP server 返回错误状态码 {status_code}", kind="http", status_code=status_code,
-        )
-
-    async def _read_capped(self, resp: httpx.Response) -> bytes:
-        """整包读入响应体，但硬上限先拒：Content-Length 预检 + 流式累计超限即断。"""
-        declared = (resp.headers.get("Content-Length") or "").strip()
-        if declared.isdigit() and int(declared) > _MAX_RESPONSE_BYTES:
-            raise McpClientError(
-                f"MCP server 响应体 {declared} 字节，超出防御上限 {_MAX_RESPONSE_BYTES}",
-                kind="protocol",
-            )
-        content = b""
-        async for chunk in resp.aiter_bytes():
-            content += chunk
-            if len(content) > _MAX_RESPONSE_BYTES:
-                raise McpClientError(
-                    f"MCP server 响应体超出防御上限 {_MAX_RESPONSE_BYTES} 字节",
-                    kind="protocol",
-                )
-        return content
-
-    def _extract_message(self, content: bytes, content_type: str, request_id: int) -> dict:
-        """从 application/json 或 text/event-stream 内容里取出本请求的 JSON-RPC 消息。
-
-        两种情况都在已读入内存（且有上限）的字节上解析。
-        """
-        content_type = content_type.lower()
-        if "text/event-stream" not in content_type:
-            try:
-                payload = json.loads(content)
-            except ValueError as exc:
-                raise McpClientError("MCP server 返回了非 JSON 内容", kind="protocol") from exc
-            if isinstance(payload, dict) and "jsonrpc" not in payload:
-                # 部分网关在 endpoint、Key 或认证方式错误时返回自己的 JSON
-                # 错误包；把它和“响应 id 不匹配”区分开，便于定位配置问题。
-                provider_info = payload.get("info")
-                provider_code = payload.get("infocode")
-                if isinstance(provider_info, str) and provider_info.strip():
-                    detail = provider_info.strip()
-                    if isinstance(provider_code, str) and provider_code.strip():
-                        detail = f"{detail}（{provider_code.strip()}）"
-                    raise McpClientError(
-                        f"MCP server 返回上游错误：{detail}", kind="http"
-                    )
-            return self._require_matching_id(payload, request_id)
-
-        message: dict | None = None
-        data_lines: list[str] = []
-
-        def _flush():
-            nonlocal message, data_lines
-            if not data_lines:
-                return
-            try:
-                candidate = json.loads("\n".join(data_lines))
-            except ValueError:
-                candidate = None
-            data_lines = []
-            if isinstance(candidate, dict) and message is None:
-                matched = self._match_id(candidate, request_id)
-                if matched is not None:
-                    message = matched
-
-        for raw_line in content.decode("utf-8", errors="replace").split("\n"):
-            line = raw_line.rstrip("\r")
-            if line.startswith("data:"):
-                data_lines.append(line[len("data:"):].lstrip())
-            elif not line.strip():
-                _flush()
-        _flush()
-        if message is None:
-            raise McpClientError("MCP server 的 SSE 响应里没有本请求的结果", kind="protocol")
-        return message
-
-    @staticmethod
-    def _match_id(payload: Any, request_id: int) -> dict | None:
-        """SSE 流里可能混有通知/其他请求的响应，只取 id 匹配的本请求消息。
-
-        JSON-RPC 的 id 允许字符串或数字；少数服务端会把客户端的数字 id
-        序列化成字符串。两者在这里按 JSON 标量值兼容比较，但不会接受
-        缺失 id、null 或其它类型，避免把异步通知误当成本次请求的响应。
-        """
-        if isinstance(payload, dict) and McpClient._json_rpc_ids_equal(payload.get("id"), request_id):
-            return payload
+def _request_id(body: bytes) -> Any:
+    try:
+        payload = json.loads(body)
+    except (UnicodeDecodeError, json.JSONDecodeError):
         return None
+    return payload.get("id") if isinstance(payload, dict) else None
 
-    @staticmethod
-    def _json_rpc_ids_equal(response_id: Any, request_id: int) -> bool:
-        if response_id is None or isinstance(response_id, bool):
-            return False
-        if isinstance(response_id, (int, str)):
-            return str(response_id) == str(request_id)
-        return False
 
-    @classmethod
-    def _require_matching_id(cls, payload: Any, request_id: int) -> dict:
-        """JSON 响应必须对应当前请求，否则统一归一为协议错误。"""
-        message = cls._match_id(payload, request_id)
-        if message is None:
-            raise McpClientError(
-                "MCP server 返回了不匹配的 JSON-RPC 响应",
-                kind="protocol",
+def _http_status_error(status_code: int) -> McpClientError:
+    if status_code in {401, 403}:
+        return McpClientError(f"MCP server 认证失败（HTTP {status_code}），请检查凭据配置",
+                              kind="auth", status_code=status_code)
+    if status_code == 405:
+        return McpClientError(
+            "服务器不支持 Streamable HTTP MCP，请检查服务端点与传输类型",
+            kind="configuration", status_code=status_code,
+        )
+    return McpClientError(f"MCP server HTTP 请求失败（HTTP {status_code}）", kind="http",
+                          status_code=status_code)
+
+
+def _map_exception(exc: Exception, timeout_seconds: float) -> McpClientError:
+    if isinstance(exc, BaseExceptionGroup):
+        mapped = [_map_exception(item, timeout_seconds) for item in exc.exceptions]
+        # TaskGroup 包装异常时保留最具体、最有用的一项底层错误。
+        return next((item for item in mapped if item.kind != "protocol"), mapped[0])
+    if isinstance(exc, McpClientError):
+        return exc
+    if isinstance(exc, asyncio.TimeoutError) or isinstance(exc, (httpx.TimeoutException, httpx2.TimeoutException)):
+        return McpClientError(
+            f"MCP server 响应超时（>{int(timeout_seconds)}s），请稍后重试或在设置里调大超时",
+            kind="timeout",
+        )
+    if isinstance(exc, (httpx.NetworkError, httpx2.NetworkError, OSError)):
+        return McpClientError("无法连接 MCP server，请检查地址与网络", kind="network")
+    if isinstance(exc, MCPError):
+        if "timed out" in (exc.message or "").lower() or "timeout" in (exc.message or "").lower():
+            return McpClientError(
+                f"MCP server 响应超时（>{int(timeout_seconds)}s），请稍后重试或在设置里调大超时",
+                kind="timeout", status_code=None,
             )
-        return message
+        data = {"code": exc.code, "data": exc.data}
+        return McpClientError(f"MCP server 协议错误：{exc.message or '未知错误'}", kind="protocol",
+                              rpc_error=data)
+    status_code = getattr(exc, "status_code", None)
+    if status_code is not None:
+        return _http_status_error(status_code)
+    if isinstance(exc, (httpx2.InvalidURL, httpx.InvalidURL)):
+        return McpClientError("MCP 请求配置无效，请检查 HTTP Header 名称和凭据格式",
+                              kind="configuration")
+    if isinstance(exc, (httpx2.HTTPError, httpx.HTTPError)):
+        return McpClientError("MCP server HTTP 请求失败，请检查服务状态与网络", kind="http")
+    if isinstance(exc, (UnicodeError, httpx.InvalidURL, httpx2.InvalidURL)):
+        return McpClientError("MCP 请求配置无效，请检查 HTTP Header 名称和凭据格式", kind="configuration")
+    message = str(exc).strip()
+    if "status code 401" in message or "HTTP 401" in message:
+        return McpClientError("MCP server 认证失败（HTTP 401），请检查凭据配置", kind="auth")
+    if "status code 403" in message or "HTTP 403" in message:
+        return McpClientError("MCP server 认证失败（HTTP 403），请检查凭据配置", kind="auth")
+    return McpClientError("MCP server 请求失败，请检查服务状态与协议配置", kind="protocol")
