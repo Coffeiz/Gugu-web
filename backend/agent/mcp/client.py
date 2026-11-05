@@ -266,7 +266,10 @@ class McpClient:
             # ClientSession 的高层 call_tool 会拒绝 Tasks 扩展结果；SDK 的
             # Dispatcher 是公开协议边界，仍由它处理请求 ID、取消、错误和传输。
             result = await client.session._dispatcher.send_raw_request(
-                "tools/call", payload, {"headers": headers},
+                "tools/call", payload, {
+                    "headers": headers,
+                    "timeout": self._timeout_seconds,
+                },
             )
         except MCPError as exc:
             raise _map_exception(exc, self._timeout_seconds) from exc
@@ -289,6 +292,7 @@ class McpClient:
             result = await session._dispatcher.send_raw_request(method, params, {
                 "headers": headers,
                 "cancel_on_abandon": False,
+                "timeout": self._timeout_seconds,
             })
         except MCPError as exc:
             raise _map_exception(exc, self._timeout_seconds) from exc

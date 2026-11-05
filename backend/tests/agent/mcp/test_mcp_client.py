@@ -72,6 +72,17 @@ class FakeMcpServer:
         return httpx.MockTransport(handler)
 
 
+class _NeverEndingBody(httpx.AsyncByteStream):
+    """模拟服务端已接受请求、但一直不发送 MCP 最终响应。"""
+
+    async def __aiter__(self):
+        await asyncio.Event().wait()
+        yield b""
+
+    async def aclose(self) -> None:
+        return None
+
+
 def _client(server: FakeMcpServer, **kwargs) -> McpClient:
     return McpClient("https://mcp.example.com/rpc", transport=server.transport(), **kwargs)
 
@@ -139,6 +150,111 @@ async def test_tasks_extension_is_polled_and_cancelled_with_task_routing_headers
     assert call_headers.get("mcp-method") == "tools/call"
     assert call_headers.get("mcp-name") == "slow"
     assert not any(payload.get("method") == "notifications/cancelled" for payload, _ in requests)
+
+
+@pytest.mark.asyncio
+async def test_tools_call_times_out_when_server_accepts_but_never_returns_response():
+    accepted = asyncio.Event()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode("utf-8"))
+        if payload.get("method") == "server/discover":
+            result = {"resultType": "complete", "supportedVersions": [MCP_MODERN_PROTOCOL_VERSION],
+                      "capabilities": {}}
+            return httpx.Response(200, json={
+                "jsonrpc": "2.0", "id": payload["id"], "result": result,
+            })
+        accepted.set()
+        return httpx.Response(
+            200, headers={"Content-Type": "application/json"}, stream=_NeverEndingBody(),
+        )
+
+    client = McpClient(
+        "https://mcp.example.com/rpc", timeout_seconds=0.05,
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = await client.call_tool("slow", {})
+
+    assert accepted.is_set()
+    assert result["error_kind"] == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_tasks_get_times_out_when_server_never_returns_final_result():
+    accepted = asyncio.Event()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode("utf-8"))
+        method = payload.get("method")
+        if method == "server/discover":
+            result = {"resultType": "complete", "supportedVersions": [MCP_MODERN_PROTOCOL_VERSION],
+                      "capabilities": {"tools": {}, "extensions": {MCP_TASKS_EXTENSION: {}}}}
+        elif method == "tools/call":
+            result = {"resultType": "task", "taskId": "task-timeout", "status": "working",
+                      "pollIntervalMs": 1}
+        elif method == "tasks/get":
+            accepted.set()
+            return httpx.Response(
+                200, headers={"Content-Type": "application/json"}, stream=_NeverEndingBody(),
+            )
+        else:
+            result = {}
+        return httpx.Response(200, json={
+            "jsonrpc": "2.0", "id": payload["id"], "result": result,
+        })
+
+    client = McpClient(
+        "https://mcp.example.com/rpc", timeout_seconds=0.05,
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = await client.call_tool("slow", {})
+
+    assert accepted.is_set()
+    assert result["error_kind"] == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_tasks_cancel_times_out_when_server_never_returns_acknowledgement():
+    task_poll = asyncio.Event()
+    cancel_accepted = asyncio.Event()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode("utf-8"))
+        method = payload.get("method")
+        if method == "server/discover":
+            result = {"resultType": "complete", "supportedVersions": [MCP_MODERN_PROTOCOL_VERSION],
+                      "capabilities": {"tools": {}, "extensions": {MCP_TASKS_EXTENSION: {}}}}
+        elif method == "tools/call":
+            result = {"resultType": "task", "taskId": "task-cancel-timeout", "status": "working",
+                      "pollIntervalMs": 1}
+        elif method == "tasks/get":
+            task_poll.set()
+            result = {"resultType": "complete", "taskId": "task-cancel-timeout", "status": "working",
+                      "pollIntervalMs": 1}
+        elif method == "tasks/cancel":
+            cancel_accepted.set()
+            return httpx.Response(
+                200, headers={"Content-Type": "application/json"}, stream=_NeverEndingBody(),
+            )
+        else:
+            result = {}
+        return httpx.Response(200, json={
+            "jsonrpc": "2.0", "id": payload["id"], "result": result,
+        })
+
+    client = McpClient(
+        "https://mcp.example.com/rpc", timeout_seconds=0.05,
+        transport=httpx.MockTransport(handler),
+    )
+    call = asyncio.create_task(client.call_tool("slow", {}))
+    await asyncio.wait_for(task_poll.wait(), timeout=1)
+    call.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(call, timeout=1)
+    assert cancel_accepted.is_set()
 
 
 @pytest.mark.asyncio
