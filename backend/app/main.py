@@ -205,6 +205,9 @@ async def _shutdown_step(name: str, operation, *, timeout: float = 5.0) -> None:
 async def lifespan(app: FastAPI):
     from agent.terminal.runtime import close_pty_manager, start_pty_manager
 
+    from agent.providers.client_pool import preload_provider_sdks
+
+    await preload_provider_sdks()
     start_pty_manager()
     db_ready = False
     if RUN_STARTUP_MIGRATIONS:

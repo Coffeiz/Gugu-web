@@ -183,10 +183,15 @@ async def run_loop(
                     )
                 else:
                     messages.insert(0, {"role": "system", "content": _core._GOAL_POLICY.strip()})
+        from agent.runtime.loopscope_trace.state import record_phase_timing
+        import time as phase_time
+
+        snapshot_started = phase_time.time()
         from agent.tools import registry as tool_registry
         tool_snapshot = tool_registry.snapshot_with_extras(tuple(runner.dynamic_tools.values()), model_cfg=ai)
         from agent.context.canonical_tool_history import refresh_model_tool_schemas
         refresh_model_tool_schemas(messages, tool_snapshot, runner.tool_names)
+        record_phase_timing("Tool snapshot and history schemas prepared", snapshot_started)
         initial_tool_names = runner.tool_names
         if (
             runner.capability_context is not None
@@ -201,9 +206,11 @@ async def run_loop(
             if reply_tool_name not in initial_tool_names:
                 initial_tool_names = [*initial_tool_names, reply_tool_name]
         current_tool_names = list(initial_tool_names)
+        prepare_started = phase_time.time()
         client, ctx = driver.prepare(
             initial_tool_names, ai, messages, system_text, tool_snapshot=tool_snapshot,
         )
+        record_phase_timing("Provider client and schemas prepared", prepare_started)
         if getattr(ctx, "supports_active_cache", False):
             from agent.context.cache_state import CacheState
 

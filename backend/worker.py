@@ -885,6 +885,9 @@ async def serve():
     """worker 生命周期持有 QQ HTTP 连接池，优雅或异常退出时均释放。"""
     from agent.gateway.qq import close_qq_http_session, start_qq_http_session
 
+    from agent.providers.client_pool import preload_provider_sdks
+
+    await preload_provider_sdks()
     await start_qq_http_session()
     try:
         await _serve()

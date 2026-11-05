@@ -452,7 +452,7 @@ class ToolRegistrySnapshot:
         for name, tool in source._tools.items():
             frozen = copy.copy(tool)
             frozen.input_schema = copy.deepcopy(tool.input_schema_for(model_cfg))
-            if frozen.input_schema != tool.input_schema or (model_cfg is not None and tool.input_schema_factory):
+            if frozen.input_schema != tool.input_schema:
                 frozen._input_validator = build_validator(frozen.input_schema)
             tools[name] = frozen
         # 动态工具只属于当前 run 的派生快照，不能写回 source._tools，也不能改变
