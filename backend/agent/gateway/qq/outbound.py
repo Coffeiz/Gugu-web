@@ -230,6 +230,30 @@ class QQPrivateTextStream:
                     raw = self.last_sent_text + raw[len(normalized):]
                     content = prepare_qq_text(raw)
             if not content.startswith(self.last_sent_content):
+                from agent.security.logsafe import fingerprint
+
+                diag_log_raw(
+                    "agent.gateway.qq.stream_prefix_mismatch",
+                    json.dumps(
+                        {
+                            "source": "local_prefix_guard",
+                            "input_state": input_state,
+                            "allow_rewrite": allow_rewrite,
+                            "content_type": self.content_type,
+                            "stream_id_present": bool(self.stream_msg_id),
+                            "sent_prefix_len": len(self.last_sent_content),
+                            "sent_prefix_fp": fingerprint(self.last_sent_content),
+                            "candidate_len": len(content),
+                            "candidate_fp": fingerprint(content),
+                            "raw_len": len(raw),
+                            "raw_fp": fingerprint(raw),
+                            "last_sent_text_len": len(self.last_sent_text),
+                            "last_sent_text_fp": fingerprint(self.last_sent_text),
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                )
                 raise QQStreamPrefixMismatchError("QQ 流式正文改写已发送前缀，已阻止出站")
         # QQ C2C 原生 Markdown 流要求每个分片以换行结束。中间帧由
         # complete_qq_lines 保证；最终帧包含尚未换行的尾行时也要补齐，
@@ -289,6 +313,27 @@ class QQPrivateTextStream:
         code = str(body.get("code") or body.get("err_code")) if isinstance(body, dict) else ""
         prefix_mismatch = isinstance(error, QQStreamPrefixMismatchError) or code == "40007"
         rejected = prefix_mismatch or code == "40034028"
+        if prefix_mismatch:
+            from agent.security.logsafe import fingerprint
+
+            diag_log_raw(
+                "agent.gateway.qq.stream_prefix_mismatch",
+                json.dumps(
+                    {
+                        "source": "qq_rejected_prefix",
+                        "input_state": 10,
+                        "stream_id_present": bool(self.stream_msg_id),
+                        "sent_prefix_len": len(self.last_sent_content),
+                        "sent_prefix_fp": fingerprint(self.last_sent_content),
+                        "candidate_len": len(self.full_text),
+                        "candidate_fp": fingerprint(self.full_text),
+                        "error_type": type(error).__name__,
+                        "upstream_code": code if code.isdecimal() else None,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+            )
         if not rejected or not self.stream_msg_id or not self.last_sent_content:
             self._log_finalization_failure(error)
             raise QQStreamFinalizationError("QQ 流式消息关闭未获确认") from error
