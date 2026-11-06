@@ -189,6 +189,12 @@
           <div class="card-lbl">{{ t('adminAnalytics.imAdoption') }}</div>
           <div class="card-sub">{{ t('adminAnalytics.connectedUsers', { count: data.im_bots.users_with_bot }) }}</div>
         </div>
+        <div v-for="platform in imPlatforms" :key="platform.key" class="card">
+          <div class="card-icon ic-blue"><Icon name="communication.chat" size="md" /></div>
+          <div class="card-val">{{ data.im_bots.users_by_platform?.[platform.key] ?? 0 }}<span class="card-unit"> {{ t('adminAnalytics.people') }}</span></div>
+          <div class="card-lbl">{{ platform.label }}</div>
+          <div class="card-sub">{{ t('adminAnalytics.connectedPlatformUsers') }}</div>
+        </div>
         <div class="card">
           <div class="card-icon ic-blue"><Icon name="admin.folders" size="md" /></div>
           <div class="card-val">{{ data.projects.total.toLocaleString() }}</div>
@@ -255,6 +261,10 @@ const ranges = computed(() => [
 ])
 
 const rm = computed(() => data.value?.retention_metrics ?? {})
+const imPlatforms = computed(() => [
+  { key: 'qq', label: t('adminAnalytics.qq') }, { key: 'feishu', label: t('adminAnalytics.feishu') },
+  { key: 'telegram', label: t('adminAnalytics.telegram') }, { key: 'wechat', label: t('adminAnalytics.wechat') },
+])
 
 // ── 漏斗 ──────────────────────────────────────────────────────────────────
 const funnelSteps = computed(() => {

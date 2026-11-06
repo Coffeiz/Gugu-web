@@ -121,6 +121,12 @@ async def get_summary(exclude_dev: bool = Query(False),
         select(func.count(distinct(UserBot.user_id))).where(UserBot.enabled == True),
         UserBot.user_id, xd)
     )).scalar() or 0
+    bot_platform_rows = (await db.execute(_xd(
+        select(UserBot.platform, func.count(distinct(UserBot.user_id)))
+        .where(UserBot.enabled == True).group_by(UserBot.platform),
+        UserBot.user_id, xd)
+    )).all()
+    bots_by_platform = {str(platform): int(count) for platform, count in bot_platform_rows}
 
     # ── Agent 用量 ─────────────────────────────────────────────────────────────
     def _usage_stmt(where=None):
@@ -230,6 +236,7 @@ async def get_summary(exclude_dev: bool = Query(False),
         "im_bots": {
             "users_with_bot": users_with_bot,
             "adoption_rate":  round(users_with_bot / total_users, 4) if total_users else 0,
+            "users_by_platform": bots_by_platform,
         },
         "agent": {
             "total_calls":    all_row.calls     if all_row else 0,
@@ -284,6 +291,25 @@ async def get_trends(days: int = Query(default=30, ge=7, le=90),
     """), {"start": start_utc})).all()
     agent_map = {r.d: (r.calls, int(r.tokens)) for r in agent_rows}
 
+    # Agent 请求通过 session_id 归属来源：web、qq、feishu、telegram、wechat。
+    # 没有关联会话的历史/后台请求不伪装成某个平台，单独作为 other 展示。
+    interaction_rows = (await db.execute(text(f"""
+        SELECT DATE(a.created_at AT TIME ZONE {tz_expr}) AS d,
+               CASE WHEN s.source IN ('web', 'qq', 'feishu', 'telegram', 'wechat')
+                    THEN s.source ELSE 'other' END AS source,
+               COUNT(*)::int AS calls
+        FROM agent_usage a
+        LEFT JOIN conversation_sessions s ON s.id = a.session_id
+        WHERE a.created_at >= :start
+          {('AND a.user_id NOT IN (SELECT id FROM users WHERE is_developer)' if exclude_dev else '')}
+          {('AND NOT a.is_byok' if not include_byok else '')}
+        GROUP BY d, source
+    """), {"start": start_utc})).all()
+    interaction_map: dict[tuple[object, str], int] = {
+        (row.d, str(row.source)): int(row.calls) for row in interaction_rows
+    }
+    interaction_sources = ("web", "qq", "feishu", "telegram", "wechat", "other")
+
     _u_dev = " AND NOT is_developer " if exclude_dev else ""
     user_rows = (await db.execute(text(f"""
         SELECT DATE(created_at AT TIME ZONE {tz_expr}) AS d, COUNT(*)::int AS cnt
@@ -331,6 +357,10 @@ async def get_trends(days: int = Query(default=30, ge=7, le=90),
         "labels":              labels,
         "agent_calls":         [agent_map.get(d, (0, 0))[0] for d in local_date_list],
         "agent_tokens":        [agent_map.get(d, (0, 0))[1] for d in local_date_list],
+        "interactions_by_source": {
+            source: [interaction_map.get((d, source), 0) for d in local_date_list]
+            for source in interaction_sources
+        },
         "user_registrations":  [user_map.get(d, 0) for d in local_date_list],
         "project_completions": [proj_map.get(d, 0) for d in local_date_list],
         "project_creations":   [proj_new_map.get(d, 0) for d in local_date_list],
