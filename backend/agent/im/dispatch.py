@@ -24,6 +24,7 @@ from agent.im.presentation import (
     _create_feishu_tool_summary,
     _im_display_preferences,
     _send_interaction_prompts,
+    display_context_compaction,
     display_tool_event,
 )
 from agent.im.request_preparation import (
@@ -696,6 +697,19 @@ async def dispatch_im_message(payload: dict):
         ),
     )
 
+    async def _run_event_callback(event: dict) -> None:
+        """镜像 Run 状态，并按 IM 展示偏好提示上下文压缩。"""
+        await stream_bridge.publish(event)
+        await display_context_compaction(
+            payload,
+            event,
+            tool_display_mode=tool_display_mode,
+            before_platform_event=(
+                qq_tool_event_boundary.before_platform_event
+                if qq_tool_event_boundary is not None else None
+            ),
+        )
+
     async def _show_round(text: str) -> bool:
         """立即发送已结束的正文 round，成功后从最终收尾中跳过。"""
         nonlocal immediate_round_index, immediate_round_blocked
@@ -756,7 +770,7 @@ async def dispatch_im_message(payload: dict):
                 req,
                 on_interaction=_show_im_interaction,
                 on_tool_event=tool_event_callback,
-                on_event=stream_bridge.publish,
+                on_event=_run_event_callback,
                 on_display=stream_bridge.publish_display,
             )
             stream_sent, resp = await feishu.send_text_stream(
@@ -778,6 +792,7 @@ async def dispatch_im_message(payload: dict):
                     on_tool_event=tool_event_callback,
                     on_display=stream_bridge.publish_display,
                     on_round=_show_round,
+                    on_event=_run_event_callback,
                 )
             reply_text = ""
         elif qq_private_streaming:
@@ -786,7 +801,7 @@ async def dispatch_im_message(payload: dict):
                 req,
                 on_interaction=_show_im_interaction,
                 on_tool_event=tool_event_callback,
-                on_event=stream_bridge.publish,
+                on_event=_run_event_callback,
                 on_display=stream_bridge.publish_display,
             )
             stream_sent, resp, reply_text = await send_qq_stream_by_round(
@@ -800,7 +815,7 @@ async def dispatch_im_message(payload: dict):
                 req,
                 on_interaction=_show_im_interaction,
                 on_tool_event=tool_event_callback,
-                on_event=stream_bridge.publish,
+                on_event=_run_event_callback,
                 on_display=stream_bridge.publish_display,
             )
             resp, telegram_sent_rounds = await send_telegram_stream_by_round(
@@ -817,6 +832,7 @@ async def dispatch_im_message(payload: dict):
                 on_tool_event=tool_event_callback,
                 on_display=stream_bridge.publish_display,
                 on_round=_show_round,
+                on_event=_run_event_callback,
             )
             reply_text = ""
         if resp.errored:

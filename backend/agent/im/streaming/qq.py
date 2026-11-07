@@ -23,7 +23,7 @@ class _FinalDeliveryState:
 
 
 class QQToolEventBoundary:
-    """在独立工具消息发出前确认当前 QQ 文本流已结束。"""
+    """在独立平台状态消息发出前确认当前 QQ 文本流已结束。"""
 
     def __init__(self) -> None:
         self.sender: QQChartRound | None = None
@@ -36,7 +36,12 @@ class QQToolEventBoundary:
     async def before_platform_event(self, event: dict) -> bool:
         if self.error is not None:
             return False
-        if event.get("type") != "tool_call":
+        is_tool_call = event.get("type") == "tool_call"
+        is_compaction_start = (
+            event.get("type") == "_context_compaction"
+            and event.get("phase") == "started"
+        )
+        if not (is_tool_call or is_compaction_start):
             return True
         if self.sender is None:
             return True
