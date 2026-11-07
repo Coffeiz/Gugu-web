@@ -681,6 +681,14 @@ async def dispatch_im_message(payload: dict):
         if qq_private_streaming:
             from agent.im.streaming.qq import QQToolEventBoundary
             qq_tool_event_boundary = QQToolEventBoundary()
+    from agent.im import imctx
+    from agent.im.immediate_files import ImmediateFileDelivery
+
+    im_context = imctx.get_im()
+    if im_context is not None and not req.group_auto_reply:
+        im_context["immediate_file_delivery"] = ImmediateFileDelivery(
+            payload, boundary=qq_tool_event_boundary,
+        )
     telegram_stream_tool_events = asyncio.Queue() if (
         platform == "telegram" and payload.get("chat_type") == "c2c"
     ) else None

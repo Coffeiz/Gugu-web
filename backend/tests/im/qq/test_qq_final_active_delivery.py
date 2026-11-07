@@ -200,7 +200,7 @@ async def test_prefix_rejection_sends_only_confirmed_remaining_tail(delivery, mo
         def push(self, text):
             pass
         async def finish(self, text, *, allow_rewrite=False):
-            raise QQStreamPrefixMismatchError("合成前缀冲突，流已关闭")
+            raise QQStreamPrefixMismatchError("合成前缀冲突，流已关闭", closed_confirmed=True)
         def has_sent(self):
             return True
 
@@ -209,15 +209,101 @@ async def test_prefix_rejection_sends_only_confirmed_remaining_tail(delivery, mo
     monkeypatch.setattr(replies, "send_text", fallback)
     payload = {"platform": "qq", "chat_type": "c2c", "platform_user_id": "synthetic-user",
                "channel_id": "synthetic-bot", "message_id": "synthetic-inbound"}
+    expected_payload = {**payload, "message_id": None}
 
     async def events():
         yield "token", "已送达后续内容"
         yield "final", AgentResponse(text="已送达后续内容")
 
     sent, _, reply_text = await replies.send_qq_stream_by_round(payload, events())
-    fallback.assert_awaited_once_with({**payload, "message_id": None}, "后续内容")
+    fallback.assert_awaited_once_with(expected_payload, "后续内容")
     assert sent is fallback_succeeds
     assert reply_text == ("已送达后续内容" if fallback_succeeds else None)
+
+
+@pytest.mark.asyncio
+async def test_closed_prefix_mismatch_still_delivers_attachments_without_repeating_text(delivery, monkeypatch):
+    from agent.gateway import qq
+    from agent.gateway.qq.client import QQStreamPrefixMismatchError
+    from agent.im import files
+
+    class ClosedStream:
+        last_sent_text = "已显示的草稿"
+        def push(self, text):
+            pass
+        async def finish(self, text, *, allow_rewrite=False):
+            raise QQStreamPrefixMismatchError("已关闭", closed_confirmed=True)
+        def has_sent(self):
+            return True
+
+    monkeypatch.setattr(qq, "create_private_text_stream", lambda *_a, **_kw: ClosedStream())
+    send_files = AsyncMock(return_value=SimpleNamespace(requested=1, sent=1, failed=0, reason=None))
+    monkeypatch.setattr(files, "send_files", send_files)
+    payload = {"platform": "qq", "chat_type": "c2c", "platform_user_id": "synthetic-user",
+               "channel_id": "synthetic-bot", "message_id": "synthetic-inbound"}
+    response = AgentResponse(text="不同的最终正文", files=[{"file_id": 42}], session_id=42)
+
+    async def events():
+        yield "token", "草稿正文"
+        yield "final", response
+
+    sent, result, reply_text = await replies.send_qq_stream_by_round(payload, events())
+    await finalize(payload, result, stream_sent=sent, stream_reply_text=reply_text)
+
+    assert reply_text is None
+    send_files.assert_awaited_once()
+    assert send_files.await_args.args[1] == response.files
+    delivery[0].assert_not_awaited()
+    assert payload["_attachment_delivery_results"] == [{"requested": 1, "sent": 1, "failed": 0}]
+    assert delivery[1].call_args.args[0] == "error"
+
+
+@pytest.mark.asyncio
+async def test_uncertain_text_still_records_failed_attachment_delivery(delivery, monkeypatch):
+    from agent.im import files
+
+    persist = AsyncMock()
+    monkeypatch.setattr(dispatch_finalization, "_persist_attachment_delivery_receipt", persist)
+    monkeypatch.setattr(files, "send_files", AsyncMock(return_value=SimpleNamespace(
+        requested=1, sent=0, failed=1, reason="附件上传失败",
+    )))
+    payload = {"platform": "qq", "chat_type": "c2c", "platform_user_id": "synthetic-user",
+               "channel_id": "synthetic-bot", "message_id": "synthetic-inbound",
+               "_qq_stream_closed_partial": True}
+    response = AgentResponse(text="最终正文", files=[{"file_id": 42}], session_id=42)
+
+    await finalize(payload, response, stream_reply_text=None)
+
+    assert payload["_attachment_delivery_results"] == [{"requested": 1, "sent": 0, "failed": 1}]
+    persist.assert_awaited_once()
+    delivery[0].assert_awaited_once()
+    assert delivery[1].call_args.args[0] == "error"
+
+
+@pytest.mark.asyncio
+async def test_unconfirmed_stream_close_does_not_report_safe_completion(delivery, monkeypatch):
+    from agent.gateway import qq
+    from agent.gateway.qq.client import QQStreamPrefixMismatchError
+
+    class UnconfirmedStream:
+        last_sent_text = "已发送"
+        def push(self, text):
+            pass
+        async def finish(self, text, *, allow_rewrite=False):
+            raise QQStreamPrefixMismatchError("关闭未确认")
+        def has_sent(self):
+            return True
+
+    monkeypatch.setattr(qq, "create_private_text_stream", lambda *_a, **_kw: UnconfirmedStream())
+    payload = {"platform": "qq", "chat_type": "c2c", "platform_user_id": "synthetic-user",
+               "channel_id": "synthetic-bot", "message_id": "synthetic-inbound"}
+
+    async def events():
+        yield "token", "草稿"
+        yield "final", AgentResponse(text="另一份正文")
+
+    with pytest.raises(QQStreamPrefixMismatchError):
+        await replies.send_qq_stream_by_round(payload, events())
 
 
 @pytest.mark.asyncio

@@ -346,7 +346,7 @@ class QQPrivateTextStream:
             self._log_finalization_failure(close_error, original_error=error)
             raise QQStreamFinalizationError("QQ 流式消息关闭未获确认") from close_error
         if prefix_mismatch:
-            raise QQStreamPrefixMismatchError("QQ 前缀不匹配，已关闭最后送达的内容") from error
+            raise QQStreamPrefixMismatchError("QQ 前缀不匹配，已关闭最后送达的内容", closed_confirmed=True) from error
         raise QQStreamDeliveryError("QQ 部分正文被拒绝，已关闭最后送达的内容") from error
 
     def _log_finalization_failure(
@@ -927,18 +927,26 @@ _IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "bmp"}
 
 async def send_file(openid: str, data: bytes | None, name: str, ext: str,
                     channel_id: str | None = None, msg_id: str | None = None,
-                    group: bool = False) -> bool:
+                    group: bool = False, *, return_outcome: bool = False) -> bool | str:
     """向 QQ 上传并发送附件。"""
+    def outcome(state: str) -> bool | str:
+        return state if return_outcome else state == "sent"
+
+    def error_outcome(error: Exception) -> bool | str:
+        if isinstance(error, QQAPIError) and 400 <= error.status < 500 and error.status != 408:
+            return outcome("failed")
+        return outcome("unknown")
+
     ext_l = (ext or "").lower()
     is_img = ext_l in _IMAGE_EXTS
     file_type = 1 if is_img else 4
     fname = f"{name}.{ext_l}" if ext_l else name
     if data is None:
-        return False
+        return outcome("failed")
     from agent.platform_limits import QQ_ATTACHMENT_MAX_BYTES
     if len(data) > QQ_ATTACHMENT_MAX_BYTES:
         _log.warning("[qq] 文件超过 30 MiB 上传上限: bytes=%d", len(data))
-        return False
+        return outcome("failed")
     target = "groups" if group else "users"
     try:
         # 超时不重传。
@@ -951,13 +959,13 @@ async def send_file(openid: str, data: bytes | None, name: str, ext: str,
             # 只打字段名，不打响应内容，避免泄露上游回显的数据。
             keys = sorted(media.keys())
             print(f"[qq] 富媒体上传无 file_info: keys={keys}", flush=True)
-            return False
+            return outcome("failed")
     except Exception as error:
         diag_log("agent.gateway.qq.send_file.upload", error)
         _log.warning("[qq] 文件上传失败: %s", redact(f"{type(error).__name__}: {error}"))
         if isinstance(error, QQAPIError) and error.status == 401:
             _send_tokens.pop(channel_id, None)
-        return False
+        return error_outcome(error)
 
     msg_body = {
         "msg_type": 7,
@@ -971,7 +979,7 @@ async def send_file(openid: str, data: bytes | None, name: str, ext: str,
     message_path = f"/v2/{target}/{openid}/messages"
     try:
         await _qq_request(channel_id, "POST", message_path, json_body=msg_body)
-        return True
+        return outcome("sent")
     except Exception as message_error:
         if not (
             group
@@ -980,15 +988,15 @@ async def send_file(openid: str, data: bytes | None, name: str, ext: str,
         ):
             diag_log("agent.gateway.qq.send_file.message", message_error)
             _log.warning("[qq] 文件消息发送失败: %s", redact(f"{type(message_error).__name__}: {message_error}"))
-            return False
+            return error_outcome(message_error)
         _log.warning("[qq] 群文件被动回复受限，降级为主动消息")
         active_body = dict(msg_body)
         active_body.pop("msg_id", None)
         active_body["msg_seq"] = await _next_seq(None)
         try:
             await _qq_request(channel_id, "POST", message_path, json_body=active_body)
-            return True
+            return outcome("sent")
         except Exception as fallback_error:
             diag_log("agent.gateway.qq.send_file.active_fallback", fallback_error)
             _log.warning("[qq] 群文件主动发送失败: %s", redact(f"{type(fallback_error).__name__}: {fallback_error}"))
-            return False
+            return error_outcome(fallback_error)

@@ -443,6 +443,23 @@ async def test_send_file_uploads_then_sends_media(monkeypatch):
     assert calls[1][1]["msg_type"] == 7
 
 
+async def test_send_file_distinguishes_rejection_from_unconfirmed_timeout(monkeypatch):
+    from agent.gateway.qq import media_upload
+
+    async def upload(*args, **kwargs):
+        return {"file_info": "test-media"}
+
+    monkeypatch.setattr(media_upload, "upload_qq_media", upload)
+    monkeypatch.setattr(qq_outbound, "_next_seq", _fake_next_seq)
+    for error, expected in ((qq_client.QQAPIError("POST", "/messages", 400, {}), "failed"),
+                            (TimeoutError(), "unknown")):
+        async def request(*args, **kwargs):
+            raise error
+        monkeypatch.setattr(qq_outbound, "_qq_request", request)
+        assert await qq_outbound.send_file("user", b"data", "test", "txt", return_outcome=True) == expected
+        assert await qq_outbound.send_file("user", b"data", "test", "txt") is False
+
+
 async def test_send_group_file_uses_group_media_endpoints(monkeypatch):
     from agent.gateway.qq import media_upload
 
