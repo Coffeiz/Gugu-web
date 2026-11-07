@@ -795,7 +795,7 @@ class SkillRegistry:
                     if delivery_state == "failed":
                         result["status"] = "failed"
                     result["message"] = (
-                        "平台已接受文件发送。"
+                        "平台接口已接受文件消息。请只告知已提交，收件人确认前不要说已送达。"
                         if delivery_state == "sent"
                         else "文件未能发送，请检查原因后重新发起请求；本轮不会自动重试。"
                         if delivery_state == "failed"

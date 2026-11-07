@@ -26,10 +26,10 @@ async def persist_attachment_delivery_receipt(
     receipt_run_id = f"attachment-receipt:{str(trace_id or '')[:100]}"
     text = (
         "附件投递回执（内部状态）：本轮请求发送 "
-        f"{max(0, int(requested))} 个附件，平台接口确认发送成功 "
+        f"{max(0, int(requested))} 个附件，平台接口已受理 "
         f"{max(0, int(sent))} 个，未确认成功 {max(0, int(failed))} 个。"
-        "附件工具准备成功不代表平台接口接受成功；超时等情况也可能无法确认最终状态。"
-        "后续如涉及这些附件，请以此回执为准；不要声称未确认成功的附件已经送达，"
+        "平台接口受理仅表示提交成功，收件人是否收到仍需确认。"
+        "后续如涉及这些附件，请以此回执为准；收件人确认前不要声称已经送达，"
         "对未确认的附件应先向用户核实；确认未收到且用户要求后再重新发送。"
     )
 

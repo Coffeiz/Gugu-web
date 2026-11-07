@@ -50,7 +50,8 @@ async def test_failed_attachment_receipt_is_persisted_as_internal_context(db, us
     assert is_internal_user_message({"role": row.role, "content": row.content_json})
     receipt_text = row.content_json[0]["text"]
     assert "请求发送 2 个附件" in receipt_text
-    assert "平台接口确认发送成功 1 个" in receipt_text
+    assert "平台接口已受理 1 个" in receipt_text
+    assert "收件人是否收到仍需确认" in receipt_text
     assert "未确认成功 1 个" in receipt_text
 
 
