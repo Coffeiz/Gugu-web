@@ -733,8 +733,6 @@ class PreferencesResponse(CamelModel):
     palette:         Literal["cafe", "neutral", "red", "blue", "green"] = "neutral"
     lastStages:        list[str] = []
     stageTemplates:    list[dict] = []
-    replyTone:         Optional[str] = None   # natural / formal / lively
-    replyLength:       Optional[str] = None   # medium / short / detailed
     customReplyStyle: Optional[str] = None
     customReplyStyleEnabled: bool = False
     pmStagesExpanded:  bool = False            # 项目编辑卡：阶段区展开(50/50) 版面记忆
@@ -803,8 +801,6 @@ class PreferencesUpdate(CamelModel):
     palette:          Optional[Literal["cafe", "neutral", "red", "blue", "green"]] = None
     lastStages:        Optional[list[str]]  = None
     stageTemplates:    Optional[list[dict]] = None
-    replyTone:         Optional[str] = None
-    replyLength:       Optional[str] = None
     customReplyStyleEnabled: Optional[bool] = None
     pmStagesExpanded:  Optional[bool] = None
     calendarWeekStart: Optional[str] = None

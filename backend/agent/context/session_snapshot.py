@@ -9,8 +9,8 @@ from typing import Any, Awaitable, Callable
 from app.core.tz import now_utc, resolve_tz, LOCAL_TZ
 
 DEFAULT_IDLE_TTL = timedelta(minutes=30)
-# 动态提示词格式升级时递增，让既有滑动快照在下一轮自动重建。
-SNAPSHOT_CONTEXT_VERSION = 2
+# 提示词组装变更时递增，让既有滑动快照在下一轮自动重建。
+SNAPSHOT_CONTEXT_VERSION = 3
 _SNAPSHOT_KEY_UNSET = object()
 _WORKSPACE_BINDING_FIELDS = (
     "workspace_id",

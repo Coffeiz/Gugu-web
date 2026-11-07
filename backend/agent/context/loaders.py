@@ -204,8 +204,7 @@ async def load_im_channels(db, user_id) -> dict:
 
 
 async def load_style_prefs(db, user_id, *, group_chat: bool = False) -> dict:
-    """读取用户回复风格偏好（reply_tone / reply_length），缺失键直接省略。
-    （emoji 风格不开放给用户选，由 persona 统一管，见 builder._style_block。）"""
+    """读取语言、人格和自定义回复风格偏好。"""
     from app.models import UserPreferences
     result = await db.execute(
         select(UserPreferences).where(UserPreferences.user_id == user_id)
@@ -215,7 +214,7 @@ async def load_style_prefs(db, user_id, *, group_chat: bool = False) -> dict:
         return {}
     data = prefs.data
     from app.services.personality_preferences import preference_revision, read_reply_style_file
-    result = {k: data[k] for k in ("reply_tone", "reply_length", "custom_reply_style_enabled") if data.get(k)}
+    result = {k: data[k] for k in ("custom_reply_style_enabled",) if data.get(k)}
     custom_style = read_reply_style_file(user_id)
     if custom_style is None:
         # 尚未访问偏好页的旧账号仍从 JSON 读取；偏好 API 会在首次访问时迁入文件并清理旧键。

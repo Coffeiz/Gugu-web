@@ -1,7 +1,7 @@
 """记忆边界 · 伪个性化幻觉对照测试（真实 LLM）。
 
 验证 A（persona/policy「记忆边界」红线）+ C（空记忆显式声明）是否压住"虚构共同历史"，
-并对照 natural / formal / lively 三风格，看「活泼」是否放大脑补。
+并对照默认、正式和活泼的自定义回复风格，看表达方式是否影响脑补。
 
 用全零 UUID 当用户：DB 无此人 → projects/events/memory 全空，正好命中 C 的空记忆分支。
 两个 prompt 都在逼咕咕「想起用户的历史/偏好」——记忆为空时，任何"你之前/我记得你/
@@ -31,11 +31,11 @@ import app.db.session as _sess
 _UID = "00000000-0000-0000-0000-000000000000"   # DB 无此用户 → 空记忆
 _UNAME = "测试用户"
 
-# 三风格 style_prefs（与 builder._style_block 对齐；natural 不注入风格块）
+# 三种自定义回复风格；默认不注入自定义风格。
 STYLES = {
     "natural": None,
-    "formal":  {"reply_tone": "formal"},
-    "lively":  {"reply_tone": "lively"},
+    "formal":  {"custom_reply_style_enabled": True, "custom_reply_style": "使用正式、严谨的书面语。"},
+    "lively":  {"custom_reply_style_enabled": True, "custom_reply_style": "使用轻松、活泼的表达方式。"},
 }
 
 # 诱发"call-back 共同历史/偏好"的纯记忆 prompt（问的都是"用户自己的事"，无处可搜

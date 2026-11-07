@@ -12,29 +12,17 @@ from app.models import UserPreferences
 from app.services import personality_preferences
 
 
-def test_style_preference_static_prefix_is_stable_across_channels():
+def test_legacy_style_preferences_do_not_affect_static_prompt_across_channels():
     outputs = [
         builder.build_split(
-            "default",
-            "测试用户",
-            [],
-            [],
+            "default", "测试用户", [], [],
             style_prefs={"reply_tone": "formal", "reply_length": "short"},
-            source=source,
-            im_channels={"qq": True, "feishu": True},
+            source=source, im_channels={"qq": True, "feishu": True},
         )
         for source in ("web", "qq", "feishu", "wechat")
     ]
-
-    static_parts = [static for static, _, _ in outputs]
-    dynamic_parts = [dynamic for _, dynamic, _ in outputs]
-
-    assert len(set(static_parts)) == 1
-    static = static_parts[0]
-    assert static.index("## 用户回复风格要求") > static.index("当前、最新、最近")
-    assert all("## 用户回复风格要求" not in dynamic for dynamic in dynamic_parts)
-    assert "除非用户当前消息明确要求其他表达方式，否则必须遵守" in static
-    assert "不限制段落数量" in static
+    assert len({static for static, _, _ in outputs}) == 1
+    assert all("## 用户回复风格要求" not in static for static, _, _ in outputs)
 
 
 def test_locale_rule_is_first_and_uses_the_selected_language():
@@ -113,26 +101,9 @@ async def test_english_locale_reaches_the_session_prompt_used_for_reply():
     assert reused == snapshot
 
 
-def test_phase0_keeps_controlled_style_preferences_distinct_from_personality_text():
-    static, dynamic, _ = builder.build_split(
-        "default",
-        "测试用户",
-        [],
-        [],
-        style_prefs={"reply_tone": "lively", "reply_length": "detailed"},
-    )
-
-    assert "语气：活泼" in static
-    assert "详细" in static
-    assert "personality_preference" not in static
-    assert "personality_preference" not in dynamic
-
-
-def test_default_style_preferences_are_explicitly_injected():
+def test_default_prompt_does_not_inject_removed_style_preferences():
     static, _, _ = builder.build_split("default", "测试用户", [], [])
-
-    assert "语气：自然" in static
-    assert "回复长度：适中" in static
+    assert "## 用户回复风格要求" not in static
 
 
 def test_custom_reply_style_is_independent_of_persona_and_can_be_disabled():
@@ -194,7 +165,8 @@ async def test_style_loader_selects_group_persona_only_for_group_scope(db, user_
         user_id=user_a.id,
         data_json=(
             '{"personality_preference_enabled":true,'
-            '"group_personality_preference_enabled":true}'
+            '"group_personality_preference_enabled":true,'
+            '"reply_tone":"formal","reply_length":"short"}'
         ),
     ))
     await db.flush()
@@ -205,6 +177,8 @@ async def test_style_loader_selects_group_persona_only_for_group_scope(db, user_
     group_prefs = await load_style_prefs(db, user_a.id, group_chat=True)
 
     assert private_prefs["personality_preference"] == "个人设定"
+    assert "reply_tone" not in private_prefs
+    assert "reply_length" not in private_prefs
     assert "group_personality_preference" not in private_prefs
     assert group_prefs["group_personality_preference"] == "群聊设定"
     assert group_prefs["group_chat"] is True

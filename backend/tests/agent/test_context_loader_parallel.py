@@ -40,7 +40,7 @@ async def test_independent_context_sources_overlap_db_loaders(monkeypatch):
 
     async def load_style_prefs(_db, _user_id, *, group_chat=False):
         assert group_chat is False
-        return {"reply_tone": "concise"}
+        return {"locale": "en-US"}
 
     async def load_im_channels(_db, _user_id):
         return {"qq": True}

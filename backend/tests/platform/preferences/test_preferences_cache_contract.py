@@ -9,8 +9,6 @@ def _build(source: str):
         style_prefs={
             "personality_preference": "称呼我为小北，先给结论。",
             "personality_preference_enabled": True,
-            "reply_tone": "lively",
-            "reply_length": "short",
         },
         source=source,
         im_channels={"qq": source == "qq", "feishu": source == "feishu"},

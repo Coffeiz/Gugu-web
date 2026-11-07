@@ -101,7 +101,6 @@ def _record_builder_sources(context_builder: Any, original_build: Any, bound: in
         events = args.get("events") or []
         files = args.get("files") or {}
         memory = args.get("memory") or {}
-        style_prefs = args.get("style_prefs") or {}
         skills = args.get("skills")
         source = args.get("source")
         im_channels = args.get("im_channels") or {}
@@ -232,7 +231,6 @@ def _record_builder_sources(context_builder: Any, original_build: Any, bound: in
                     )
 
         for label, fn, params in (
-            ("Reply style", getattr(context_builder, "_style_block", None), (style_prefs,)),
             ("Skill index", getattr(context_builder, "_skills_index_block", None), (skills,)),
             ("Conversation source", getattr(context_builder, "_source_block", None), (source, im_channels)),
         ):

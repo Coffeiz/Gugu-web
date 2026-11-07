@@ -128,7 +128,6 @@ def test_context_builder_span_measures_only_prompt_assembly(monkeypatch):
         _STATUS_ZH=builder._STATUS_ZH,
         _files_block=lambda files, _names: builder._files_block(files),
         _memory_block=builder._memory_block,
-        _style_block=session_system._style_block,
         _skills_index_block=session_system._skills_index_block,
     )
     install_context_hooks(SimpleNamespace(), context_builder)

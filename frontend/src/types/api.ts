@@ -8157,10 +8157,6 @@ export interface components {
             stageTemplates: {
                 [key: string]: unknown;
             }[];
-            /** Replytone */
-            replyTone?: string | null;
-            /** Replylength */
-            replyLength?: string | null;
             /** Customreplystyle */
             customReplyStyle?: string | null;
             /**
@@ -8269,10 +8265,6 @@ export interface components {
             stageTemplates?: {
                 [key: string]: unknown;
             }[] | null;
-            /** Replytone */
-            replyTone?: string | null;
-            /** Replylength */
-            replyLength?: string | null;
             /** Customreplystyleenabled */
             customReplyStyleEnabled?: boolean | null;
             /** Pmstagesexpanded */
