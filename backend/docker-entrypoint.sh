@@ -253,8 +253,29 @@ SUPERVISEOF
         mv "$LEGACY_REDIS_IMPORTED.tmp" "$LEGACY_REDIS_IMPORTED"
         echo "[entrypoint] 旧 Compose Redis 快照已加载；旧数据卷与快照均未删除。"
     fi
-    # 建应用库（幂等：已存在时忽略报错）。
-    su -s /bin/bash postgres -c "\"$PG_BIN/createdb\" -h 127.0.0.1 -U '$EMBED_DB_USER' '$EMBED_DB_NAME'" >/dev/null 2>&1 || true
+    # 确认应用库存在。旧实现会吞掉 createdb 的所有错误，导致缺库或角色权限不匹配
+    # 延迟到 schema 检查时才以 InvalidCatalogNameError 暴露，且丢失真正的创建错误。
+    if ! EMBED_DB_EXISTS="$("$PG_BIN/psql" -X -h 127.0.0.1 -U "$EMBED_DB_USER" \
+        --dbname=template1 --set=ON_ERROR_STOP=1 \
+        --set=app_db_name="$EMBED_DB_NAME" --tuples-only --no-align \
+        --command="SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'app_db_name')")"; then
+        echo "[entrypoint] 无法检查内置 PostgreSQL 中的应用数据库。请确认 DB__USER 对应的数据库角色存在且可连接。" >&2
+        exit 1
+    fi
+    if [ "$EMBED_DB_EXISTS" != "t" ]; then
+        if ! "$PG_BIN/createdb" -h 127.0.0.1 -U "$EMBED_DB_USER" \
+            --maintenance-db=template1 -- "$EMBED_DB_NAME"; then
+            # 允许并发启动时另一进程刚好创建了同名库；其他创建错误必须保留并停止启动。
+            if ! EMBED_DB_EXISTS="$("$PG_BIN/psql" -X -h 127.0.0.1 -U "$EMBED_DB_USER" \
+                --dbname=template1 --set=ON_ERROR_STOP=1 \
+                --set=app_db_name="$EMBED_DB_NAME" --tuples-only --no-align \
+                --command="SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'app_db_name')")" \
+                || [ "$EMBED_DB_EXISTS" != "t" ]; then
+                echo "[entrypoint] 无法创建内置 PostgreSQL 应用数据库。请检查 DB__NAME、DB__USER，以及该角色的 CREATEDB 权限；确认配置指向现有数据后再重启。" >&2
+                exit 1
+            fi
+        fi
+    fi
     if [ -s "$LEGACY_PG_DUMP" ] && [ ! -s "$LEGACY_PG_IMPORTED" ]; then
         if [ "$PG_INITIALIZED_NOW" != 1 ]; then
             echo "[entrypoint] 拒绝导入旧数据库备份：目标 PostgreSQL 并非本次新建，不能覆盖现有数据。" >&2

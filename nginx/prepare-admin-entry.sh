@@ -5,6 +5,7 @@ config_dir="${ADMIN_ENTRY_CONFIG_DIR:-/etc/nginx/conf.d}"
 http_config="$config_dir/admin-entry-http.conf"
 server_config="$config_dir/admin-entry-server.conf"
 host_http_config="$config_dir/admin-host-http.conf"
+host_role_http_config="$config_dir/admin-host-role-http.conf"
 entry_path="${GUGU_ADMIN_ENTRY_PATH:-}"
 allowed_hosts="${GUGU_ADMIN_ALLOWED_HOSTS:-}"
 
@@ -24,9 +25,10 @@ if [ -n "$entry_path" ]; then
 fi
 
 host_http_tmp="$host_http_config.tmp"
+host_role_http_tmp="$host_role_http_config.tmp"
 http_tmp="$http_config.tmp"
 server_tmp="$server_config.tmp"
-trap 'rm -f "$host_http_tmp" "$http_tmp" "$server_tmp"' EXIT HUP INT TERM
+trap 'rm -f "$host_http_tmp" "$host_role_http_tmp" "$http_tmp" "$server_tmp"' EXIT HUP INT TERM
 
 {
     printf '%s\n' 'map $host $gugu_admin_host_ok {'
@@ -58,6 +60,29 @@ trap 'rm -f "$host_http_tmp" "$http_tmp" "$server_tmp"' EXIT HUP INT TERM
     printf '%s\n' '}'
 } > "$host_http_tmp"
 
+# 只有显式配置在白名单中的域名才视为专用管理域名。
+# 未配置白名单时仍允许访问 / 与普通前端资源，避免默认安装被误判为管理域名。
+{
+    printf '%s\n' 'map $host $gugu_admin_host_is_dedicated {' '    default 0;'
+    if [ -n "$(printf '%s' "$allowed_hosts" | tr -d '[:space:]')" ]; then
+        remaining="$allowed_hosts"
+        seen_hosts=,
+        while :; do
+            case "$remaining" in
+                *,*) host="${remaining%%,*}"; remaining="${remaining#*,}"; has_more=1 ;;
+                *) host="$remaining"; remaining=; has_more=0 ;;
+            esac
+            host="$(printf '%s' "$host" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]')"
+            case "$seen_hosts" in
+                *",$host,"*) ;;
+                *) printf '    "%s" 1;\n' "$host"; seen_hosts="$seen_hosts$host," ;;
+            esac
+            [ "$has_more" -eq 1 ] || break
+        done
+    fi
+    printf '%s\n' '}'
+} > "$host_role_http_tmp"
+
 {
     printf '%s\n' 'map $cookie_gugu_admin_entry $gugu_admin_entry_ok {'
     if [ -z "$entry_path" ]; then
@@ -81,6 +106,7 @@ else
 fi
 
 mv "$host_http_tmp" "$host_http_config"
+mv "$host_role_http_tmp" "$host_role_http_config"
 mv "$http_tmp" "$http_config"
 mv "$server_tmp" "$server_config"
 trap - EXIT HUP INT TERM
