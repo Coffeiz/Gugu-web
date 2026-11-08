@@ -1003,6 +1003,11 @@ function onListScroll() {
 .rp-editor :deep(.ne-toolbar) { padding-right: 0; }
 .rp-editor :deep(.ne-body) { flex: 1; min-height: 0; overflow-y: auto; }
 .rp-editor :deep(.ProseMirror) { font-size: 14px; }
+/* 宽笔记窗格的工具按钮整体放大，尺寸与间距由 NoteEditor 统一消费，避免主工具和抽屉
+   选项被各自的局部规则覆盖成不同点击盒子。 */
+.rp-editor :deep(.ne-toolbar) {
+  --ne-tool-size: 30px; --ne-toolbar-gap: 4px; --ne-drawer-max-width: 180px;
+}
 /* 编辑器把所有 md 标题级别折叠成 h1（markdownToDoc level:1）：其余 h1 一律 15px
    对齐 .md-preview h1（笔记标题改由独立的标题输入位承担，不再依赖首块 h1 字号）。
    不写 margin——顶层块间距归 mind-content 的 owl selector 统一管，写了 0 会压过它，
@@ -1012,8 +1017,6 @@ function onListScroll() {
 .rp-editor :deep(.ProseMirror h3) { font-size: 15px; font-weight: 700; }
 .rp-editor :deep(.ne-tool svg),
 .rp-editor :deep(.ne-style-item svg) { width: 16px; height: 16px; }
-.rp-editor :deep(.ne-tool),
-.rp-editor :deep(.ne-style-item) { width: 30px; height: 30px; }
 .rp-editor :deep(.ne-toolbar-actions) { display: inline-flex; align-items: center; gap: 8px; }
 
 /* 引用 chip（便签本体单引用）：对齐气泡 @ chip 契约——图标不压扁 + label 不换行 */
