@@ -208,9 +208,9 @@ async function doDeleteAccount() {
 .pm-user-block { display: flex; align-items: center; gap: 10px; padding: 4px 6px 12px; }
 .pm-avatar {
   width: 42px; height: 42px; border-radius: 50%; flex-shrink: 0;
-  background: var(--brand-gradient); display: flex; align-items: center; justify-content: center;
-  font-size: 16px; font-weight: 700; color: white; position: relative; cursor: pointer; overflow: hidden;
-  box-shadow: 0 2px 8px color-mix(in srgb,var(--action-primary) 35%,transparent);
+  background: var(--action-primary); display: flex; align-items: center; justify-content: center;
+  font-size: 16px; font-weight: 700; color: var(--content-on-accent); position: relative; cursor: pointer; overflow: hidden;
+  box-shadow: 0 2px 6px color-mix(in srgb,var(--action-primary) 20%,transparent);
 }
 .pm-avatar-img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
 .pm-avatar-overlay {
