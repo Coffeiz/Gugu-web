@@ -15,7 +15,7 @@ from .retention import protected_unit_offset
 from .tokens import estimate_tokens, message_text
 
 
-SAFE_BUDGET_RATIO = 0.90
+SAFE_BUDGET_RATIO = 0.85
 TRUNCATION_RATIO = 0.95
 
 # 上游「输入上下文超限」的文案特征。用于**判定**：命中就走压缩重试

@@ -148,7 +148,7 @@ async def test_progress_only_round_is_retried_but_draft_remains_visible(monkeypa
 
 
 async def test_final_reply_compacts_at_provider_threshold(monkeypatch):
-    """无工具的最终回复达到 90% 时，也必须在结束前走同一压缩路径。"""
+    """无工具的最终回复达到 85% 时，也必须在结束前走同一压缩路径。"""
     calls = []
 
     async def fake_compact(messages, *args, **kwargs):
@@ -157,7 +157,7 @@ async def test_final_reply_compacts_at_provider_threshold(monkeypatch):
 
     monkeypatch.setattr(compaction, "compact_context", fake_compact)
     final = msg([TX("最终回复")])
-    final.usage.input_tokens = 950
+    final.usage.input_tokens = 850
     patch_anthropic(monkeypatch, [final])
     ai = SimpleNamespace(**{**AI.__dict__, "context_tokens": 1000})
     runner = make_runner(settings=SimpleNamespace(ai=ai))
@@ -225,7 +225,7 @@ async def test_long_compaction_keeps_qq_busy_and_stops_without_error(monkeypatch
     monkeypatch.setattr("agent.runtime.cancellation._CANCEL_POLL_INTERVAL", 0.001)
     monkeypatch.setattr(compaction, "compact_context", compact)
     final = msg([TX("最终回复")])
-    final.usage.input_tokens = 950
+    final.usage.input_tokens = 850
     patch_anthropic(monkeypatch, [final])
     ai = SimpleNamespace(**{**AI.__dict__, "context_tokens": 1000})
     task = asyncio.create_task(drain(make_runner()._run_anthropic(

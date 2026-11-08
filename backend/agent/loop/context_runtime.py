@@ -217,7 +217,7 @@ class ContextRuntime:
         if await self.compact_now():
             return True
         self.last_no_progress_length = len(self.messages.provider_projection())
-        _log.info("provider usage 达到 90%，本次摘要未应用，保留当前历史窗口")
+        _log.info("provider 实际用量达到自动压缩阈值，本次摘要未应用，保留当前历史窗口")
         return False
 
     def take_event(self) -> dict[str, Any] | None:

@@ -98,7 +98,7 @@ def _fake_summary(monkeypatch):
 
 class TestCompactionBudget:
     def test_compaction_prompt_path_dependency_is_available(self):
-        """90% 压缩触发时提示词路径解析不能因缺少标准库依赖而中断。"""
+        """达到压缩阈值时提示词路径解析不能因缺少标准库依赖而中断。"""
         assert compaction_module.Path("compress_conv.md").name == "compress_conv.md"
 
     def test_append_summary_uses_model_output_budget(self, monkeypatch):
@@ -338,8 +338,8 @@ class TestCompactContext:
 
     def test_above_threshold_triggers_compact(self, monkeypatch):
         """超过阈值应触发压缩"""
-        # 构造一个足够长的消息列表来超过 90% 阈值
-        # 256000 * 0.9 = 230400，每条约 50 tokens，需要约 4600 条
+        # 构造一个足够长的消息列表来超过 85% 阈值
+        # 256000 * 0.85 = 217600，每条约 50 tokens，需要约 4352 条
         # 简化测试：直接设置极小的 context_tokens
         msgs = [_make_msg("user", f"消息{i}" * 20) for i in range(100)]
         monkeypatch.setattr(
@@ -596,8 +596,8 @@ class TestCompactContext:
             assert result.protected_source_start_index == first_round + 1
 
     def test_provider_threshold_is_the_single_automatic_trigger(self):
-        """自动压缩以 provider 实际输入达到 90% 为触发线。"""
-        assert compress_conv.AUTO_COMPACTION_RATIO == 0.90
+        """自动压缩以 provider 实际输入达到 85% 为触发线。"""
+        assert compress_conv.AUTO_COMPACTION_RATIO == 0.85
         assert not hasattr(compress_conv, "schedule_baseline_update")
         assert not hasattr(compress_conv, "wait_for_baseline_update")
 
@@ -667,7 +667,7 @@ class TestCompactContext:
         )
         model = _model_cfg(context_tokens=128_000, max_tokens=16_000)
         snapshot = SimpleNamespace(
-            provider_context_input=81_515,
+            provider_context_input=108_799,
             provider_compacted=False,
             system_prompt="系统提示" * 5000,
             history=[{"role": "user", "content": "旧对话" * 40000}],
@@ -679,7 +679,7 @@ class TestCompactContext:
         ) == "not_needed"
         assert calls == []
 
-        snapshot.provider_context_input = 115_200
+        snapshot.provider_context_input = 108_800
         assert await compress_conv.compact_for_reflection(
             7, 11, SimpleNamespace(ai=SimpleNamespace()), **kwargs,
         ) == "compacted"
@@ -702,7 +702,7 @@ class TestCompactContext:
 
         def fake_budget(_cls, context_tokens, messages, **kwargs):
             estimated.append((context_tokens, messages, kwargs))
-            return SimpleNamespace(total_tokens=115_200, soft_limit_tokens=115_200)
+            return SimpleNamespace(total_tokens=108_800, soft_limit_tokens=108_800)
 
         async def fake_compact(*args, **kwargs):
             compacted.append((args, kwargs))

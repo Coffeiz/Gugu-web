@@ -8,7 +8,7 @@
 普通的 user history message。它是 baseline 的历史起点，不是动态尾部，也不是另一份
 system/snapshot 状态。
 
-自动路径由 ``agent.core`` 根据 provider 实际输入达到 90% 时触发；普通 run
+自动路径由 ``agent.core`` 根据 provider 实际输入达到 85% 时触发；普通 run
 收尾不会再按固定字符窗口裁剪。压缩保留窗口只决定达到阈值后的压缩目标，摘要请求的
 输入/输出预算跟随本轮实际模型配置。
 """
@@ -25,7 +25,7 @@ from redis.exceptions import LockNotOwnedError
 from sqlalchemy import case, delete, func, select
 
 from agent.context import session_snapshot
-from agent.context.budget import ContextBudget
+from agent.context.budget import ContextBudget, SAFE_BUDGET_RATIO
 from agent.context.provider_conversation import ProviderConversation
 from agent.context.tokens import content_text, estimate_tokens
 from agent.context.audit import session_scope, summary_change
@@ -33,7 +33,7 @@ from agent.context.audit import session_scope, summary_change
 logger = logging.getLogger(__name__)
 
 # provider 实际输入达到该比例后，由 agent.core 触发压缩。
-AUTO_COMPACTION_RATIO = 0.90
+AUTO_COMPACTION_RATIO = SAFE_BUDGET_RATIO
 _COMPRESS_LOCK_TIMEOUT = 300
 _SESSION_RUN_LOCK_TIMEOUT = 300
 _SESSION_RUN_HEARTBEAT_INTERVAL = 15

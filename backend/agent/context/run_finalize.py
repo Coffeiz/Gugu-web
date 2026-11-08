@@ -242,7 +242,7 @@ async def finalize_run(
             coordinator.committed()
 
     await trim_session_messages(session_id)
-    # 只有当前 run 已经在 provider round 边界执行过 >=90% 压缩，才同步推进
+    # 只有当前 run 已经在 provider round 边界应用了压缩，才同步推进
     # 持久 baseline。这里不再独立判断 token，也不再创建结束后的后台压缩任务。
     if compaction_applied:
         # run 内压缩已经在 provider 边界生成过摘要（那次分支请求与主对话共享

@@ -19,7 +19,7 @@ def usage_compaction_due(
     context_tokens: int | None,
     no_progress: bool = False,
 ) -> bool:
-    """provider 实际输入达到上下文窗口的 90% 时触发压缩。"""
+    """provider 实际输入达到上下文窗口的 85% 时触发压缩。"""
     from agent.context.compaction import compaction_trigger_tokens
 
     tokens = max(1, int(context_tokens or 0))

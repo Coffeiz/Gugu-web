@@ -1,6 +1,6 @@
 """上下文压缩模块。
 
-每个 provider round 返回后，实际输入达到 90% 时压缩较早 history；明确溢出时
+每个 provider round 返回后，实际输入达到 85% 时压缩较早 history；明确溢出时
 压缩并重试当前 round，避免用本地估算提前改变上下文。压力压缩也处理当前 run
 已完成的旧执行轮，保留用户最后原文及最近完整执行轮，其余旧 history
 一次生成摘要；只有 provider 明确报告上下文超限时，才先清空工具输入、
@@ -57,7 +57,7 @@ def resolve_compaction_limits(model_cfg) -> CompactionLimits:
 
 
 def compaction_trigger_tokens(context_tokens: int) -> int:
-    """主对话实际输入达到上下文窗口的 90% 时触发压缩。"""
+    """主对话实际输入达到上下文窗口的 85% 时触发压缩。"""
     from .compress_conv import AUTO_COMPACTION_RATIO
 
     context = max(1, int(context_tokens or 0))

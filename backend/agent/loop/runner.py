@@ -568,7 +568,7 @@ async def run_loop(
                 initial_volatile_indices = set()
 
             # 统一策略：每个 provider round 返回后都检查实际上下文用量，
-            # 最终回复轮也必须经过同一条 90% 压缩路径。
+            # 最终回复轮也必须经过同一条自动压缩路径。
             if context_runtime.usage_compaction_due():
                 yield stream_event("_context_compaction", phase="started", reason="usage_threshold")
                 if await context_runtime.compact_after_usage_threshold():
@@ -1114,7 +1114,7 @@ async def run_loop(
                 except Exception as exc:
                     _core.diag_log("agent.context.reflection_snapshot.capture", exc)
 
-            # 正文已经确定后立即结束本轮；90% 压缩已在 provider round 返回后同步完成。
+            # 正文已经确定后立即结束本轮；用量达到阈值后的压缩已在 provider round 返回后同步完成。
             yield f"data: {_core.json.dumps({'type': '_usage', 'input': run_state.total_usage_in, 'context_input': run_context_usage_peak, 'output': run_state.total_usage_out, 'cache_read': run_state.total_cache_read, 'cache_write': run_state.total_cache_write})}\n\n"
             if reasoning_state is not None:
                 await reasoning_state.completed()
