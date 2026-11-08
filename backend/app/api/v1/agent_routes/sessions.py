@@ -230,7 +230,9 @@ async def get_session_messages(
     limit: int = 50,
     before_id: Optional[int] = None,
     after_id: Optional[int] = None,
+    through_id: Optional[int] = None,
     run_id: Optional[str] = None,
+    restore_interactions: bool = False,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -252,6 +254,7 @@ async def get_session_messages(
         limit,
         before_id=before_id,
         after_id=after_id,
+        through_id=through_id,
         run_id=run_id,
     )
     msgs = page["messages"]
@@ -305,6 +308,11 @@ async def get_session_messages(
         user_id=current_user.id,
         session_id=session.id,
     )
+    interaction_history = await conversations.load_page_interactions(
+        db, user_id=current_user.id, session_id=session.id, page=page,
+        before_id=before_id, after_id=after_id, through_id=through_id, run_id=run_id,
+        restore_active=restore_interactions and all(cursor is None for cursor in (before_id, after_id, through_id)),
+    )
     return {
         "session": {"id": session.id, "title": session.title, "chatType": session.chat_type,
                     "ownerPlatformUserId": owner_platform_user_id,
@@ -318,6 +326,7 @@ async def get_session_messages(
         "executionState": session.execution_state,
         "pendingMessageCount": int(session.pending_message_count or 0),
         "pendingQueue": pending_queue,
+        "interactions": interaction_history,
         "pagination": {
             "limit": limit,
             "hasMore": page["has_more"],

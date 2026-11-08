@@ -337,7 +337,7 @@ async def consume_agent_events(
                     yield _
                 outcome.interactions.append({
                     key: evt[key]
-                    for key in ("prompt_id", "kind", "title", "body", "options", "allow_text_input", "custom_input_active", "expires_at", "round_id", "tool_call_id", "force_display")
+                    for key in ("prompt_id", "kind", "title", "body", "options", "allow_text_input", "custom_input_active", "created_at", "expires_at", "round_id", "tool_call_id", "force_display")
                     if key in evt
                 })
                 await _notify_event(sink.on_event, evt)

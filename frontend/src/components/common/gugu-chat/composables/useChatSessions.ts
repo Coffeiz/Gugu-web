@@ -4,8 +4,7 @@ import { agentApi } from '@/services/api'
 import { accountBoundaryEpoch, getAccountBoundaryEpoch } from '@/utils/accountBoundary'
 import type { ChatMessage, ChatSession, QueuedMessagePayload } from '../chatTypes'
 import type GuguChatComposer from '../GuguChatComposer.vue'
-import { effectiveTimezone } from '@/utils/userTimezone'
-import { createSessionMessageSynchronizer, mapSessionMessageDelta, mergeSessionMessageDelta, sortSessionTimelineMessages } from './sessionMessageSync'
+import { createSessionMessageSynchronizer, mapSessionMessageDelta, mergeSessionMessageDelta } from './sessionMessageSync'
 
 export type SessionLoadOutcome = 'loaded' | 'superseded' | 'unavailable' | 'failed'
 
@@ -219,7 +218,7 @@ export function useChatSessions(options: {
       options.onCaptureBaseScrollH()
     }
     try {
-      const data = await agentApi.getMessages(String(id))
+      const data = await agentApi.getMessages(id, { restoreInteractions: true })
       loadingHistory = false
       if (viewGeneration !== options.getViewGeneration() || accountEpoch !== getAccountBoundaryEpoch()) return 'superseded'   // 等待期间又切换/新建了会话，丢弃这次结果
       sessionId.value = id
@@ -237,43 +236,14 @@ export function useChatSessions(options: {
       else options.clearStatus()   // 切会话先清掉上个会话残留的状态指示
       // 历史首屏和增量刷新共用同一映射，防止同一持久化消息在不同加载路径获得不同身份键。
       const loadedTimelineMessages = mapSessionMessageDelta(data, mkid, options.resolveSpeaker)
-      const loadedInteractions: ChatMessage[] = []
-      // 刷新/切回会话时恢复尚未过期的交互按钮；服务端会轮换 pending action token，
-      // 因而前端不需要、也不会持久化旧 token。
-      try {
-        const interactionData = await agentApi.listSessionInteractions(String(id))
-        for (const item of (interactionData.items || [])) {
-          const promptId = Number(item.id)
-          if (!Number.isFinite(promptId)) continue
-          loadedInteractions.push({
-            id: promptId, dbId: promptId, role: 'interaction', text: '', _createdAt: item.created_at,
-            time: new Date(item.created_at || Date.now()).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit', timeZone: effectiveTimezone() }),
-            interaction: {
-              promptId, kind: String(item.kind || 'confirm'),
-              toolCallId: item.tool_call_id ? String(item.tool_call_id) : null,
-              title: String(item.title || i18n.global.t('chatUi.confirmRequired')), body: String(item.body || ''),
-              options: Array.isArray(item.options) ? item.options : [],
-              allowTextInput: Boolean(item.allow_text_input),
-              customInputActive: Boolean(item.custom_input_active),
-              taskPaused: Boolean(item.task_paused),
-              secretFields: Array.isArray(item.secret_fields) ? item.secret_fields : undefined,
-              resolved: Boolean(item.resolved), selectedOptionId: item.selected_option_id || null,
-              responseText: item.response_text ? String(item.response_text) : null,
-              expiresAt: item.expires_at ? String(item.expires_at) : undefined,
-            },
-          })
-        }
-      } catch { /* 交互恢复失败不阻断历史会话加载 */ }
-      if (viewGeneration !== options.getViewGeneration() || accountEpoch !== getAccountBoundaryEpoch()) return 'superseded'
-      // 切回时先展示缓存，服务端首屏只负责校准内容。按稳定事件 ID 合并，
-      // 避免历史请求返回时把缓存中的部分回复/工具卡片整体卸载后再由续流重建。
-      const restoredTimelineMessages = showingCachedSnapshot && cachedSnapshot
-        ? mergeSessionMessageDelta(cachedSnapshot.messages, loadedTimelineMessages)
-        : loadedTimelineMessages
-      messages.value = sortSessionTimelineMessages([
-        ...restoredTimelineMessages,
-        ...loadedInteractions,
-      ])
+      // 按稳定身份校准已展示的缓存，同时保留之前加载的旧页。
+      const restoredKeys = new Set(loadedTimelineMessages.map(item => item._syncKey))
+      const cachedMessages = showingCachedSnapshot && cachedSnapshot ? cachedSnapshot.messages.filter(item =>
+        item.role !== 'interaction' || item.interaction?.resolved || restoredKeys.has(item._syncKey),
+      ) : []
+      messages.value = mergeSessionMessageDelta(
+        cachedMessages, loadedTimelineMessages,
+      )
       cacheSessionSnapshot(id, messages.value, data.pagination || {})
       messageSync.setCursor(id, data.pagination?.newestId)
       options.onContentReset(); options.resetSessionTurn()
