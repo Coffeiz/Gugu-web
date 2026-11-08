@@ -101,7 +101,7 @@ RUN mkdir -p /out \
         -require=github.com/go-jose/go-jose/v4@v4.1.6 \
         -require=golang.org/x/crypto@v0.55.0 \
         -require=golang.org/x/mod@v0.40.0 \
-        -require=golang.org/x/net@v0.60.0 \
+        -require=golang.org/x/net@v0.62.0 \
         -require=golang.org/x/text@v0.39.0 \
         -require=google.golang.org/grpc@v1.83.2 \
     && go mod tidy \
@@ -129,7 +129,7 @@ RUN mkdir -p /src /out \
     && rm /tmp/compose.tar.gz \
     && go mod edit \
         -require=github.com/klauspost/compress@v1.18.7 \
-        -require=golang.org/x/net@v0.60.0 \
+        -require=golang.org/x/net@v0.62.0 \
     && go mod tidy \
     && go mod verify \
     && CGO_ENABLED=0 go build -trimpath -tags=e2e \
