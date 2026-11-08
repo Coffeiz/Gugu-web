@@ -739,6 +739,7 @@ async def test_mcp_confirm_replay_enters_credential_prompt_without_loop(monkeypa
             title="补全 MCP 服务凭据",
             body="请输入凭据",
             schema_json={"secret_fields": credential_form["secret_fields"], "allow_text_input": False},
+            created_at=SimpleNamespace(isoformat=lambda: "2026-09-10T20:00:00+08:00"),
             expires_at=SimpleNamespace(isoformat=lambda: "2026-09-10T21:00:00+08:00"),
         ), []
 
@@ -798,6 +799,7 @@ async def test_resolved_user_interaction_closes_waiting_tool_event(monkeypatch, 
             title="补全信息",
             body="请填写信息",
             schema_json={"allow_text_input": True},
+            created_at=SimpleNamespace(isoformat=lambda: "2026-10-12T22:00:00+08:00"),
             expires_at=SimpleNamespace(isoformat=lambda: "2026-10-12T23:00:00+08:00"),
         ), []
 

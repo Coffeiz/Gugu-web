@@ -140,8 +140,8 @@ async def test_owner_passive_buffer_neither_arms_nor_extends_idle(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("estimated,expected", [(899, False), (900, True), (901, True)])
-async def test_passive_pressure_at_ninety_percent_enqueues_both_scopes_below_fifty(
+@pytest.mark.parametrize("estimated,expected", [(849, False), (850, True), (851, True)])
+async def test_passive_pressure_at_compaction_threshold_enqueues_both_scopes_below_fifty(
     db, user_a, monkeypatch, estimated, expected,
 ):
     from agent.memory import group_pressure, im_reflection

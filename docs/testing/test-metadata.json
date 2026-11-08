@@ -55,6 +55,14 @@
     "keyBehavior": "崩溃重领不重跑已开始任务；回复发送前落库，检查点保留中间轮和工具状态，正常收尾复用同一展示行",
     "ci": "backend-pytest"
   },
+  "backend/tests/im/test_immediate_files.py": {
+    "domain": "im-file-delivery",
+    "layer": "L1",
+    "owner": "backend/agent/im/immediate_files.py",
+    "productionEntry": "IM 工具文件发送入口",
+    "keyBehavior": "同一消息与文件并发只发送一次，UUID 所有者标识稳定去重，发送状态未知时不重试",
+    "ci": "backend-pytest"
+  },
   "backend/tests/im/test_im_commands.py": {
     "domain": "im-command-auth",
     "layer": "L1",
@@ -124,7 +132,7 @@
     "layer": "L1",
     "owner": "backend/agent/memory",
     "productionEntry": "backend/agent/im/loop.py:record_passive_im_message、backend/agent/memory/group_pressure.py、reflection_jobs.py",
-    "keyBehavior": "群被动消息不登记或续期闲置，主动 run 完成后计时且保留较新水位；不足50条达到90%压力仍入队两类反思，重建旧快照后先压缩再反思，压缩被阻止则持久延后",
+    "keyBehavior": "群被动消息不登记或续期闲置，主动 run 完成后计时且保留较新水位；不足50条达到85%压缩阈值仍入队两类反思，重建旧快照后先压缩再反思，压缩被阻止则持久延后",
     "ci": "backend-test"
   },
   "frontend/tests/admin/agent/useAgentRuntimeConfig.test.ts": {
