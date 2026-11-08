@@ -35,6 +35,45 @@ class _Db:
         return None
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_anthropic", [True, False])
+async def test_user_image_history_replays_the_same_provider_message(db, user_a, use_anthropic):
+    from agent.chat.attachments import build_user_content
+    from agent.context.message_area_repository import commit_delta, restore_entries
+    from agent.context.history import render_canonical_area_snapshot
+
+    session = ConversationSession(user_id=user_a.id, title="图片回放", source="qq")
+    db.add(session)
+    await db.flush()
+    row_session_id = session.id
+    row = ConversationMessage(session_id=row_session_id, role="user", content="看这张图")
+    db.add(row)
+    await db.flush()
+    area = MessageArea()
+    content = build_user_content("看这张图", [{"media_type": "image/png", "b64": "AA=="}], use_anthropic)
+    batch, _ = assemble_turn(
+        current_user={"role": "user", "content": content},
+        message_time="2026-11-08 03:44",
+    )
+    batch.update_area_entry("current_user", persisted_message_id=row.id)
+    area.append_batch(batch)
+    options = {"api_format": "anthropic" if use_anthropic else "openai", "allow_tool_images": True}
+    original = render_canonical_area_snapshot(area.snapshot(), options=options).to_messages()
+    await commit_delta(
+        db, session_id=session.id, delta=area.persistence_delta(outcome="success"),
+        run_id=None, default_round_id=None, user_message=row, interrupted=False,
+        area_entries=area.entries,
+    )
+    await db.commit()
+    db.expire_all()
+    restored = restore_entries(await load_session_history(db, row_session_id))
+    assert render_canonical_area_snapshot(restored.snapshot(), options=options).to_messages() == original
+    assert "AA==" in str(original)
+    options["allow_tool_images"] = False
+    assert "AA==" not in str(render_canonical_area_snapshot(restored.snapshot(), options=options).to_messages())
+
+
+
 class _DbContext:
     def __init__(self, db):
         self.db = db

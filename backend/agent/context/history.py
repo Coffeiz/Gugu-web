@@ -19,6 +19,7 @@ from .summary_format import format_compacted_summary
 _TIME_CONTEXT_RE = re.compile(
     r"^\[system-reminder\]\n(?:当前时间：)?[^\n]+\n\[/system-reminder\]$"
 )
+USER_IMAGE_TYPES = frozenset({"image", "image_url"})
 
 
 def build_canonical_history_envelopes(history: Iterable, *, source: str | None = None) -> list[HistoryEnvelope]:
@@ -39,6 +40,7 @@ def canonical_restore_record(message) -> dict:
         "role": str(getattr(message, "role", "user") or "user"),
         "content": str(getattr(message, "content", "") or ""),
         "content_json": content_json,
+        "provider_image_content": vars(message).get("provider_image_content"),
         "sent_at": getattr(message, "sent_at", None).isoformat()
         if getattr(message, "sent_at", None) is not None else None,
         "created_at": getattr(message, "created_at", None).isoformat()
@@ -405,6 +407,14 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
         content_json = getattr(message, "_reference_content_json", None)
         if content_json is None:
             content_json = getattr(message, "content_json", None)
+        saved = vars(message).get("provider_image_content")
+        if message.role == "user" and saved and allow_tool_images:
+            native_type = "image" if use_anthropic else "image_url"
+            if any(block.get("type") == native_type for block in saved):
+                # 已含首次发送时的时间、引用和正文，直接回放。
+                content = saved if use_anthropic else _ordered_canonical_content(saved)
+                parts.append({"role": "user", "content": content})
+                continue
         if isinstance(content_json, list):
             # 旧数据可能把时间 reminder 存成 text；在 provider 分支前统一恢复
             # canonical 类型，确保跨 run 的消息结构不会漂移。
@@ -556,6 +566,7 @@ def render_canonical_area_snapshot(snapshot, *, source=None, options=None):
             role=record.get("role", "user"),
             content=content,
             content_json=content_json,
+            provider_image_content=record.get("provider_image_content"),
             sent_at=sent_at,
             created_at=created_at,
             im_platform_sent_ms=record.get("im_platform_sent_ms"),

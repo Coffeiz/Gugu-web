@@ -99,7 +99,7 @@ class CanonicalTurn:
         return digest([message.to_dict() for message in self.messages])
 
 
-# 当前请求的媒体在内存 Area 中保留，持久历史仍只存附件引用、按需重建。
+# 当前请求的媒体在内存 Area 中保留；图片回放快照由历史 adapter 单独管理。
 MEDIA_BLOCK_TYPES = frozenset({
     "image", "image_url", "input_image", "input_audio", "audio",
     "video", "video_url", "file",

@@ -173,6 +173,7 @@ async def finalize_run(
                     default_round_id=persisted_round_id if run_id else None,
                     user_message=user_message,
                     interrupted=interrupted,
+                    area_entries=message_area.entries,
                 )
             if checkpoint is not None:
                 from agent.context.display_checkpoint import resequence_checkpoint

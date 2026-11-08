@@ -10,6 +10,7 @@ from contextvars import ContextVar
 from typing import Any
 
 from sqlalchemy import case, func, or_, select
+from sqlalchemy.orm import undefer
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +119,7 @@ async def load_session_history(
 
     query = (
         select(ConversationMessage)
+        .options(undefer(ConversationMessage.provider_image_content))
         .where(
             ConversationMessage.session_id == session_id,
             ConversationMessage.role != "summary",

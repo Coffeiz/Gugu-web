@@ -1131,6 +1131,8 @@ class ConversationMessage(Base):
     # Web 乐观气泡与持久消息的稳定关联键；旧消息和 IM 消息可为空。
     client_message_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, default=None)
     content_json: Mapped[Optional[list]]  = mapped_column(JSON, nullable=True, default=None)
+    # 仅在模型历史回放时读取，聊天列表不加载图片 Base64。
+    provider_image_content: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, deferred=True)
     # 实时展示时间线；canonical history 仍使用 content/content_json。
     display_timeline: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=None)
     files:        Mapped[Optional[list]]  = mapped_column(JSON, nullable=True, default=None)  # 咕咕发的文件卡片 [{file_id,name,ext,size_bytes}]
