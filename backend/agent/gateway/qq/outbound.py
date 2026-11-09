@@ -999,11 +999,10 @@ async def send_file(openid: str, data: bytes | None, name: str, ext: str,
             _log.warning("[qq] 群文件主动发送失败: %s", redact(f"{type(fallback_error).__name__}: {fallback_error}"))
             return error_outcome(fallback_error)
 
-    if return_outcome:
-        message_id = response.get("id") if isinstance(response, dict) else None
-        if not isinstance(message_id, str) or not message_id.strip():
-            from agent.runtime import trace
+    message_id = response.get("id") if isinstance(response, dict) else None
+    if not isinstance(message_id, str) or not message_id.strip():
+        from agent.runtime import trace
 
-            _log.warning("[qq-file] 接口成功响应缺少消息 ID: trace=%s target=%s", trace.get_trace() or "-", target)
-            return outcome("unknown")
+        _log.warning("[qq-file] 接口成功响应缺少消息 ID: trace=%s target=%s", trace.get_trace() or "-", target)
+        return outcome("unknown")
     return outcome("sent")

@@ -32,6 +32,8 @@ class _Db:
     async def execute(self, query):
         self.last_queries.append(str(query))
         sql = str(query.compile(compile_kwargs={"literal_binds": True}))
+        if "length(" in sql.lower() or "octet_length(" in sql.lower():
+            return _Result([])
         match = re.search(r"\bLIMIT\s+(\d+)\b", sql, re.IGNORECASE)
         limit = int(match.group(1)) if match else None
         self.query_limits.append(limit)
@@ -149,6 +151,73 @@ async def test_history_reload_preserves_prefix_beyond_old_window(db, user_a, sou
     assert len(before) == 125
     assert [item.id for item in after[:-1]] == [item.id for item in before]
     assert after[-1].content == "新消息"
+
+
+@pytest.mark.asyncio
+async def test_history_hydrates_only_recent_bounded_image_snapshots(db, user_a):
+    """历史正文保持完整，但图片快照只回读最近预算内的有限条目。"""
+    session = ConversationSession(user_id=user_a.id, title="图片历史", source="web")
+    db.add(session)
+    await db.flush()
+    db.add_all([
+        ConversationMessage(
+            session_id=session.id,
+            role="user",
+            content=f"图片消息 {index}",
+            content_json=[{"type": "text", "text": f"图片消息 {index}"}],
+            provider_image_content=[
+                {"type": "text", "text": f"图片消息 {index}"},
+                {"type": "image", "source": {
+                    "type": "base64", "media_type": "image/png", "data": "x" * 128}},
+            ],
+        )
+        for index in range(20)
+    ])
+    await db.commit()
+
+    history = await load_session_history(db, session.id)
+    stats = consume_history_stats()
+    loaded_images = [
+        item for item in history
+        if "provider_image_content" in vars(item)
+    ]
+
+    assert len(history) == 20
+    assert len(loaded_images) == 12
+    assert [item.content for item in loaded_images] == [
+        f"图片消息 {index}" for index in range(8, 20)
+    ]
+    assert stats["history_image_snapshots_loaded"] == 12
+    assert stats["history_image_snapshot_bytes"] <= 8 * 1024 * 1024
+
+
+@pytest.mark.asyncio
+async def test_history_image_snapshot_hydration_obeys_byte_budget(db, user_a, monkeypatch):
+    """单条快照超过剩余预算时不读取 payload，避免少数大图打穿总量限制。"""
+    import agent.context.session_history as session_history
+
+    monkeypatch.setattr(session_history, "_MAX_HISTORY_IMAGE_BYTES", 400)
+    session = ConversationSession(user_id=user_a.id, title="大图历史", source="web")
+    db.add(session)
+    await db.flush()
+    db.add_all([
+        ConversationMessage(
+            session_id=session.id,
+            role="user",
+            content=f"大图 {index}",
+            provider_image_content=[{"type": "image", "source": {
+                "type": "base64", "media_type": "image/png", "data": "x" * 256}}],
+        )
+        for index in range(3)
+    ])
+    await db.commit()
+
+    history = await load_session_history(db, session.id)
+    stats = consume_history_stats()
+
+    assert len(history) == 3
+    assert sum("provider_image_content" in vars(item) for item in history) == 1
+    assert stats["history_image_snapshot_bytes"] <= 400
 
 
 def test_context_budget_reserves_fixed_context_and_turn_batch():

@@ -429,7 +429,7 @@ async def test_send_file_uploads_then_sends_media(monkeypatch):
 
     async def fake_request(channel_id, method, path, json_body=None, **kw):
         calls.append((path, json_body, kw))
-        return {}
+        return {"id": "outbound-id"}
 
     monkeypatch.setattr(qq_outbound, "_qq_request", fake_request)
     monkeypatch.setattr(media_upload, "upload_qq_media", fake_upload)
@@ -479,8 +479,11 @@ async def test_immediate_file_requires_a_qq_message_receipt(monkeypatch):
         assert await qq_outbound.send_file(
             "user", b"data", "report", "md", "bot", return_outcome=True,
         ) == expected
-        assert len(calls) == 1
-        assert "msg_id" not in calls[0]
+        assert await qq_outbound.send_file(
+            "user", b"data", "report", "md", "bot",
+        ) is (expected == "sent")
+        assert len(calls) == 2
+        assert all("msg_id" not in body for body in calls)
 
 
 async def test_send_group_file_uses_group_media_endpoints(monkeypatch):
@@ -495,7 +498,7 @@ async def test_send_group_file_uses_group_media_endpoints(monkeypatch):
 
     async def fake_request(channel_id, method, path, json_body=None, **kw):
         calls.append((path, json_body))
-        return {}
+        return {"id": "outbound-id"}
 
     monkeypatch.setattr(qq_outbound, "_qq_request", fake_request)
     monkeypatch.setattr(media_upload, "upload_qq_media", fake_upload)
@@ -523,7 +526,7 @@ async def test_send_group_file_falls_back_to_active_message_when_msg_id_expired(
                 "POST", path, 400,
                 {"code": 40034031, "message": "msgid已经过期,不能回复"},
             )
-        return {}
+        return {"id": "outbound-id"}
 
     async def fake_upload(*_args, **_kwargs):
         calls.append(("upload", None))

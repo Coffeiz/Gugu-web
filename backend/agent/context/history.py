@@ -267,6 +267,52 @@ def _ordered_canonical_content(
     return content
 
 
+def _anthropic_image_to_openai(block: dict) -> dict | None:
+    source = block.get("source") or {}
+    if source.get("type") != "base64" or not source.get("data"):
+        return None
+    media_type = str(source.get("media_type") or "image/jpeg")
+    return {
+        "type": "image_url",
+        "image_url": {
+            "url": f"data:{media_type};base64,{source['data']}",
+            "detail": "auto",
+        },
+    }
+
+
+def _openai_image_to_anthropic(block: dict) -> dict | None:
+    import re
+
+    image_url = block.get("image_url") or {}
+    url = image_url.get("url") if isinstance(image_url, dict) else None
+    match = re.fullmatch(r"data:([^;,]+);base64,(.+)", str(url or ""), re.DOTALL)
+    if not match:
+        return None
+    return {
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": match.group(1),
+            "data": match.group(2),
+        },
+    }
+
+
+def _adapt_saved_image_content(saved: list[dict], *, use_anthropic: bool) -> list[dict]:
+    """把首次发送时保存的图片快照转换为当前 Provider 的图片块格式。"""
+    adapted = []
+    for block in saved:
+        block_type = block.get("type")
+        if block_type == "image" and not use_anthropic:
+            adapted.append(_anthropic_image_to_openai(block) or dict(block))
+        elif block_type == "image_url" and use_anthropic:
+            adapted.append(_openai_image_to_anthropic(block) or dict(block))
+        else:
+            adapted.append(dict(block))
+    return adapted
+
+
 def _openai_history_message(message, request, *, strip_thinking: bool = False,
                             content_json=None, strip_history_images: bool = True,
                             allow_tool_images: bool = False) -> list[dict]:
@@ -409,10 +455,14 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
             content_json = getattr(message, "content_json", None)
         saved = vars(message).get("provider_image_content")
         if message.role == "user" and saved and allow_tool_images:
-            native_type = "image" if use_anthropic else "image_url"
-            if any(block.get("type") == native_type for block in saved):
-                # 已含首次发送时的时间、引用和正文，直接回放。
-                content = saved if use_anthropic else _ordered_canonical_content(saved)
+            has_saved_image = any(
+                block.get("type") in {"image", "image_url"} for block in saved
+            )
+            if has_saved_image:
+                # 快照保留首次发送时的完整正文、时间和引用；图片块在当前 Provider
+                # 边界转换，避免切换 OpenAI/Anthropic 后丢失历史图片。
+                adapted = _adapt_saved_image_content(saved, use_anthropic=use_anthropic)
+                content = adapted if use_anthropic else _ordered_canonical_content(adapted)
                 parts.append({"role": "user", "content": content})
                 continue
         if isinstance(content_json, list):
