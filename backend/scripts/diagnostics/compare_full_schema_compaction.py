@@ -183,9 +183,8 @@ def history_metrics(messages: MessageArea) -> dict[str, Any]:
     }
 
 
-def schema_metrics(registry, tool_names: list[str], anthropic: bool, model: str, *, description_mode: bool, settings) -> dict[str, Any]:
+def schema_metrics(registry, tool_names: list[str], anthropic: bool, *, description_mode: bool, settings) -> dict[str, Any]:
     """记录本轮实际工具声明和简介目录的脱敏 token 估算。"""
-    from agent.runtime.loopscope_trace.utils import _estimate_tokens
 
     from agent.capabilities.injector import FIXED_ADAPTER_TOOL_NAMES
 
@@ -195,9 +194,9 @@ def schema_metrics(registry, tool_names: list[str], anthropic: bool, model: str,
     result = {
         "schema_tool_count": len(schemas),
         "schema_chars": len(schema_text),
-        "schema_tokens": _estimate_tokens(schema_text, model),
+        "schema_bytes": len(schema_text.encode("utf-8")),
         "catalog_chars": 0,
-        "catalog_tokens": 0,
+        "catalog_bytes": 0,
     }
     if description_mode:
         from agent.capabilities.injector import build_fixed_adapter_context, catalog_block
@@ -205,7 +204,7 @@ def schema_metrics(registry, tool_names: list[str], anthropic: bool, model: str,
         snapshot = build_fixed_adapter_context(tool_names, search_settings=settings).snapshot
         catalog_text = catalog_block(snapshot, tool_order=tool_names)
         result["catalog_chars"] = len(catalog_text)
-        result["catalog_tokens"] = _estimate_tokens(catalog_text, model)
+        result["catalog_bytes"] = len(catalog_text.encode("utf-8"))
     return result
 
 
@@ -643,7 +642,7 @@ async def main_async(args: argparse.Namespace) -> int:
             try:
                 tool_names = all_system_tool_names()
                 metrics = schema_metrics(
-                    registry, tool_names, anthropic, getattr(model_cfg, "model", ""),
+                    registry, tool_names, anthropic,
                     description_mode=label == "description", settings=settings,
                 )
                 sequence = await asyncio.wait_for(
@@ -658,8 +657,8 @@ async def main_async(args: argparse.Namespace) -> int:
                 mode_metrics[label] = {
                     **metrics,
                     "requests": len(rows) + 1,
-                    "schema_tokens_total": metrics["schema_tokens"] * (len(rows) + 1),
-                    "catalog_tokens_total": metrics["catalog_tokens"] * (len(rows) + 1),
+                    "schema_bytes_total": metrics["schema_bytes"] * (len(rows) + 1),
+                    "catalog_bytes_total": metrics["catalog_bytes"] * (len(rows) + 1),
                 }
                 print(json.dumps({"variant": label, "schema_metrics": mode_metrics[label], "warmup": sequence["warmup"]}, ensure_ascii=False), flush=True)
                 for row in rows:
@@ -681,9 +680,9 @@ async def main_async(args: argparse.Namespace) -> int:
     for label, rows in results.items():
         sequence_summary = sequence_metrics(rows, anthropic)
         schema_metrics_for_mode = mode_metrics.get(label, {})
-        fixed_tokens_per_request = (
-            int(schema_metrics_for_mode.get("schema_tokens", 0) or 0)
-            + int(schema_metrics_for_mode.get("catalog_tokens", 0) or 0)
+        fixed_bytes_per_request = (
+            int(schema_metrics_for_mode.get("schema_bytes", 0) or 0)
+            + int(schema_metrics_for_mode.get("catalog_bytes", 0) or 0)
         )
         warmup_requests = 1
         actual_provider_requests = sequence_summary["provider_request_total"] + warmup_requests
@@ -691,11 +690,11 @@ async def main_async(args: argparse.Namespace) -> int:
             **sequence_summary,
             "warmup_requests": warmup_requests,
             "actual_provider_request_total": actual_provider_requests,
-            "fixed_tokens_per_request": fixed_tokens_per_request,
-            "fixed_tokens_logical_total": fixed_tokens_per_request * (len(rows) + 1),
-            "fixed_tokens_actual_total": fixed_tokens_per_request * actual_provider_requests,
-            "schema_tokens_total": mode_metrics.get(label, {}).get("schema_tokens", 0) * (len(rows) + 1),
-            "catalog_tokens_total": mode_metrics.get(label, {}).get("catalog_tokens", 0) * (len(rows) + 1),
+            "fixed_bytes_per_request": fixed_bytes_per_request,
+            "fixed_bytes_logical_total": fixed_bytes_per_request * (len(rows) + 1),
+            "fixed_bytes_actual_total": fixed_bytes_per_request * actual_provider_requests,
+            "schema_bytes_total": mode_metrics.get(label, {}).get("schema_bytes", 0) * (len(rows) + 1),
+            "catalog_bytes_total": mode_metrics.get(label, {}).get("catalog_bytes", 0) * (len(rows) + 1),
             "total_tokens": sequence_summary["provider_input_total"] + sequence_summary["output_total"],
             **mode_metrics.get(label, {}),
         }

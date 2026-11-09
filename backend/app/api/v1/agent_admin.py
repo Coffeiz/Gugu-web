@@ -506,10 +506,9 @@ async def _im_model_preview_worker(cursors: list[dict], settings) -> None:
                 messages,
                 lambda message: f"[{message.created_at.isoformat() if message.created_at else '未知时间'}] {_message_text(message)}",
                 lambda message: str(message.id),
-                model_cfg=settings,
             )
             if not batches:
-                batches = [MaintenanceBatch(items=tuple(), source_ids=tuple(), estimated_input_tokens=0)]
+                batches = [MaintenanceBatch(items=tuple(), source_ids=tuple(), input_chars=0)]
             total_batches += len(batches)
             source_text = "\n".join(
                 f"[{m.created_at.isoformat() if m.created_at else '未知时间'}] {_message_text(m)}"
@@ -528,7 +527,7 @@ async def _im_model_preview_worker(cursors: list[dict], settings) -> None:
                     for m in batch.items
                 )
                 prompt_input = (
-                    f"已有群组/用户记忆（受限视图）：\n{bounded_scope_memory(current, model_cfg=settings)}\n\n"
+                    f"已有群组/用户记忆（受限视图）：\n{bounded_scope_memory(current)}\n\n"
                     f"本批新增消息：\n{payload or '（无新增消息；请仅检查现有记忆是否需要整理）'}"
                 )
                 branch = await ContextBranch().run(

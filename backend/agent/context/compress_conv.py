@@ -25,9 +25,9 @@ from redis.exceptions import LockNotOwnedError
 from sqlalchemy import case, delete, func, select
 
 from agent.context import session_snapshot
-from agent.context.budget import ContextBudget, SAFE_BUDGET_RATIO
+from agent.context.budget import SAFE_BUDGET_RATIO
 from agent.context.provider_conversation import ProviderConversation
-from agent.context.tokens import content_text, estimate_tokens
+from agent.context.tokens import content_text
 from agent.context.audit import session_scope, summary_change
 
 logger = logging.getLogger(__name__)
@@ -507,18 +507,10 @@ async def compact_for_reflection(
     settings,
     *,
     snapshot,
-    extra_text: str = "",
     model_cfg=None,
     cache_snapshot=None,
 ) -> str:
-    """反思前优先按主请求实际用量检查，并复用正式 baseline 压缩。
-
-    同进程快照带有最近一轮 provider context input；无快照用量的静默群消息
-    或重启接管才使用本地估算。历史裁剪、摘要和持久化仍统一委托给
-    ``compress_if_needed``。返回 ``compacted``、``not_needed`` 或
-    ``blocked``；超预算但会话当前不适合后台写 baseline 时，调用方必须跳过
-    provider，不得退回另一套反思专用截断逻辑。
-    """
+    """只有主请求的实际输入达到阈值，才在反思前更新 baseline。"""
     if session_id is None:
         return "not_needed"
     from agent.llm.modelctx import effective_ai
@@ -533,30 +525,11 @@ async def compact_for_reflection(
     if getattr(snapshot, "provider_compacted", False):
         return "not_needed"
     provider_input = getattr(snapshot, "provider_context_input", None)
-    if provider_input is not None and int(provider_input) > 0:
-        # 同进程主 run 已按 provider usage 完成每轮触发判定；快照可能在压缩后
-        # 才捕获，不能拿压缩前的 usage 对新历史重复压缩。
-        if int(provider_input) < soft_limit:
-            return "not_needed"
-        observed_tokens = int(provider_input)
-        source = "provider"
-    else:
-        # 静默群消息、重启接管或 provider 未上报正数 usage，只能做保守预检。
-        output_reserve = min(max(1, int(getattr(model_cfg, "max_tokens", 900) or 900)), 900)
-        budget = ContextBudget.from_messages(
-            context_tokens,
-            getattr(snapshot, "history", ()) or (),
-            system_text=getattr(snapshot, "system_prompt", "") or "",
-            current_turn_tokens=estimate_tokens(extra_text or ""),
-            output_reserve_tokens=output_reserve,
-        )
-        if budget.total_tokens < soft_limit:
-            return "not_needed"
-        observed_tokens = budget.total_tokens
-        source = "estimate"
+    if provider_input is None or int(provider_input) < soft_limit:
+        return "not_needed"
     logger.info(
-        "[reflection-compaction] session=%s source=%s total_tokens=%s soft_limit_tokens=%s context_tokens=%s",
-        session_id, source, observed_tokens, soft_limit, context_tokens,
+        "[reflection-compaction] session=%s source=provider total_tokens=%s soft_limit_tokens=%s context_tokens=%s",
+        session_id, provider_input, soft_limit, context_tokens,
     )
     compacted = await compress_if_needed(
         session_id,
@@ -810,12 +783,8 @@ async def _compress_if_needed_unlocked(
 
     # 摘要候选只读取 history 快照，不持有数据库事务；结果仍需在下方按
     # baseline hash 做 CAS 后才能写回。
-    from agent.context.compaction import (
-        _generate_append_summary,
-        resolve_compaction_limits,
-    )
+    from agent.context.compaction import _generate_append_summary, validate_compact_summary
     from agent.context.prefix_history import render_branch_prefix
-    limits = resolve_compaction_limits(model_cfg=model_cfg)
     if reuse_summary:
         # run 内压缩刚生成过同一批历史的摘要（且那次分支请求命中了缓存），
         # 不再重放一遍。水位边界仍按上面的保留窗口规则计算。
@@ -847,25 +816,13 @@ async def _compress_if_needed_unlocked(
                 model_cfg=model_cfg,
             )
             compression_mode = "append-replay"
-    from agent.context.compaction import validate_compact_summary
-
-    summary_ok, summary_reason = validate_compact_summary(
-        summary,
-        max_output_tokens=limits.output_tokens,
-    )
+    summary_ok, summary_reason = validate_compact_summary(summary)
     if not summary_ok:
         # baseline 更新属于持久化保护路径：供应商超时/返回空时也必须把历史
         # 收敛到有界状态，否则下一轮会再次带上同一批旧消息并重复压缩。
         from agent.context.compaction import _deterministic_summary
-        fallback = _deterministic_summary(
-            content_items,
-            prev_summary,
-            max_output_tokens=limits.output_tokens,
-        )
-        fallback_ok, fallback_reason = validate_compact_summary(
-            fallback,
-            max_output_tokens=limits.output_tokens,
-        )
+        fallback = _deterministic_summary(content_items, prev_summary)
+        fallback_ok, fallback_reason = validate_compact_summary(fallback)
         if not fallback_ok:
             logger.warning(
                 "[compress_conv] session=%s 摘要候选校验失败: %s; 本地兜底失败: %s",

@@ -4,33 +4,31 @@ import pytest
 
 from app.services.storage import LocalStorageBackend
 from agent.memory.maintenance_batches import (
-    estimate_tokens, pattern_batches, resolve_maintenance_budget, split_batches,
+    MAX_BATCH_CHARS, pattern_batches,
 )
 
 
 def test_split_batches_keeps_complete_items_and_budget():
     items = [{"id": str(index), "text": "x" * 8000} for index in range(3)]
 
-    model_cfg = type("Model", (), {"context_tokens": 10000, "max_tokens": 4000})()
-    batches = pattern_batches(items, model_cfg=model_cfg)
+    batches = pattern_batches(items)
 
     assert len(batches) == 2
     assert [item["id"] for batch in batches for item in batch.items] == ["0", "1", "2"]
-    assert all(batch.estimated_input_tokens <= resolve_maintenance_budget(model_cfg).max_input_tokens for batch in batches)
+    assert all(batch.input_chars <= MAX_BATCH_CHARS for batch in batches)
     assert all(not batch.has_oversized_item for batch in batches)
 
 
 def test_split_batches_marks_oversized_item_without_silent_truncation():
-    item = {"id": "long", "text": "x" * 16000}
+    item = {"id": "long", "text": "x" * MAX_BATCH_CHARS}
 
-    model_cfg = type("Model", (), {"context_tokens": 8000, "max_tokens": 4000})()
-    batches = pattern_batches([item], model_cfg=model_cfg)
+    batches = pattern_batches([item])
 
     assert len(batches) == 1
     assert batches[0].items == (item,)
     assert batches[0].source_ids == ("long",)
     assert batches[0].has_oversized_item is True
-    assert batches[0].estimated_input_tokens > resolve_maintenance_budget(model_cfg).max_input_tokens
+    assert batches[0].input_chars > MAX_BATCH_CHARS
 
 
 @pytest.fixture

@@ -481,7 +481,7 @@ async def test_telegram_tool_event_shows_status_only_without_call_input_or_resul
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("platform, message_id", [("qq", None), ("telegram", "synthetic-trigger")])
-async def test_im_compaction_sends_completion_only_after_changes_are_applied(monkeypatch, platform, message_id):
+async def test_im_compaction_reports_both_applied_and_skipped_attempts(monkeypatch, platform, message_id):
     from agent.im.presentation import display_context_compaction
 
     send_text = AsyncMock(return_value=True)
@@ -504,6 +504,7 @@ async def test_im_compaction_sends_completion_only_after_changes_are_applied(mon
     expected_payload = {**payload, "message_id": message_id, "_attention_delivery_role": "tool"}
     assert [call.args for call in send_text.await_args_list] == [
         (expected_payload, "上下文较长，正在整理后继续处理。"),
+        (expected_payload, "本次未能整理上下文，继续处理。"),
         (expected_payload, "上下文整理完成。"),
     ]
     assert [call.args for call in before_platform_event.await_args_list] == [(started,), (completed,)]

@@ -128,7 +128,7 @@ async def _review_patterns(user_id: str, settings, dry_run: bool,
 
     from agent.memory.maintenance_batches import pattern_batches
 
-    batches = pattern_batches(patterns, model_cfg=settings)
+    batches = pattern_batches(patterns)
     if any(batch.has_oversized_item for batch in batches):
         return {
             "total": len(patterns), "removed": 0,
@@ -278,7 +278,7 @@ async def _split_profile(user_id: str, settings, dry_run: bool,
 
     from agent.memory.maintenance_batches import pattern_batches
 
-    batches = pattern_batches(patterns, model_cfg=settings)
+    batches = pattern_batches(patterns)
     if any(batch.has_oversized_item for batch in batches):
         return {
             "total": len(patterns), "moved": 0,

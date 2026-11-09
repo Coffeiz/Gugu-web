@@ -325,6 +325,7 @@ async def _extend_group_snapshot_with_passive_tail(
         history=merged,
         revision=digest({"history": merged.to_messages()}),
         source="in_memory_extended",
+        provider_context_input=None,
     )
 
 
@@ -672,15 +673,11 @@ async def _execute_job_locked(job_id: int, settings, *, snapshot=None) -> bool:
                 return False
             from agent.context import compress_conv
 
-            reflection_delta = "\n".join(
-                str(getattr(message, "content", "") or "") for message in messages
-            )
             compaction_status = await compress_conv.compact_for_reflection(
                 session_id,
                 scope.owner_user_id,
                 settings,
                 snapshot=resolved_snapshot,
-                extra_text=reflection_delta,
                 model_cfg=run_config.model,
             )
             if compaction_status == "blocked":

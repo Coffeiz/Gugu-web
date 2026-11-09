@@ -263,7 +263,7 @@ async def _anthropic(
     usage = normalize_anthropic_usage(usage)
     finish_usage_probe(probe, getattr(resp, "usage", None), usage)
     if usage_sink is not None:
-        usage_sink.append(usage)
+        usage_sink.append({**usage, "finish_reason": getattr(resp, "stop_reason", None)})
     await _record_usage(settings, ai, usage)
     return strip_think_blocks("".join(b.text for b in resp.content if getattr(b, "type", "") == "text"))
 
@@ -395,7 +395,7 @@ async def _openai(
     usage = normalize_openai_usage(usage)
     finish_usage_probe(probe, getattr(resp, "usage", None), usage)
     if usage_sink is not None:
-        usage_sink.append(usage)
+        usage_sink.append({**usage, "finish_reason": getattr(resp.choices[0], "finish_reason", None)})
     await _record_usage(settings, ai, usage)
     return strip_think_blocks(resp.choices[0].message.content or "")
 

@@ -6,7 +6,6 @@ from typing import Any
 from .cache_policy import cache_capabilities
 from .canonical_context import CanonicalContext, digest, group_history_units
 from .canonical_request import CanonicalRequest
-from .tokens import estimate_tokens, message_text
 
 
 def first_diff_index(previous: list[dict], current: list[dict]) -> int | None:
@@ -85,17 +84,12 @@ def _wire_message_shape(message: dict[str, Any]) -> dict[str, Any]:
 
 def _wire_message_diagnostics(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """按消息输出 digest 和结构，供跨 run 顺序对比。"""
-    cumulative_tokens = 0
     result = []
     for index, message in enumerate(messages):
-        message_tokens = estimate_tokens(message_text(message))
-        cumulative_tokens += message_tokens
         result.append({
             "index": index,
             "digest": digest(message),
             "shape": _wire_message_shape(message),
-            "token_estimate": message_tokens,
-            "cumulative_token_estimate": cumulative_tokens,
         })
     return result
 
@@ -190,9 +184,6 @@ def request_diagnostics(messages: Any, *, system_text: str, tools: list[dict],
     wire_diagnostics = _wire_message_diagnostics(wire)
     result["wire_conversation_message_count"] = len(wire)
     result["wire_turn_batch_count"] = 0
-    result["wire_total_token_estimate"] = (
-        wire_diagnostics[-1]["cumulative_token_estimate"] if wire_diagnostics else 0
-    )
     result["wire_role_sequence_digest"] = digest(
         [item["shape"]["role"] for item in wire_diagnostics]
     )

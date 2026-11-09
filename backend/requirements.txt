@@ -43,7 +43,6 @@ setuptools==84.0.0
 # RAG 中文分词使用 jieba-rs 的 PyO3 绑定；词项适配规则见 agent/rag/cython_tokenizer.py。
 rjieba==0.2.2
 # 可选本地 tokenizer：LoopScope 配置 tokenizer.json 后按模型精确估算；未配置时自动回退启发式
-tokenizers>=0.20.3,<1.0.0
 python-dotenv>=1.0.0
 pypinyin>=0.50.0
 SudachiPy>=0.6.11

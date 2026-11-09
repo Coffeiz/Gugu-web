@@ -73,6 +73,7 @@ class ContextBranch:
                     # 尝试之间按共享节奏（BRANCH_RETRY）歇一下：此前零间隔连发，
                     # 上游过载时两次尝试都打在同一个尖峰上（2026-09-18 529 实测）
                     await BRANCH_RETRY.pause()
+                usage_sink.clear()
                 call_failed = False
                 try:
                     if branch_input.history_messages and runner is None:

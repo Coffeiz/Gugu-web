@@ -1,22 +1,12 @@
-"""上下文预算分项与 provider 溢出后的确定性兜底。
-
-正常请求不使用本地 token 估算决定压缩；provider 的实际响应是预算触发的权威来源。
-本模块只保留统一分项诊断，以及 provider 溢出后摘要失败时的本地截断兜底，避免
-错误信息再次触发同一上游请求。静默反思没有普通 provider usage 事件时，可用
-它做保守预检，预检命中后仍必须调用正式 baseline 压缩。
-"""
+"""Provider 上下文超限识别与按完整消息单元恢复。"""
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
-from typing import Iterable
 
 from .retention import protected_unit_offset
-from .tokens import estimate_tokens, message_text
 
 
 SAFE_BUDGET_RATIO = 0.85
-TRUNCATION_RATIO = 0.95
 
 # 上游「输入上下文超限」的文案特征。用于**判定**：命中就走压缩重试
 # （is_context_overflow_error）。清单偏宽，因为其中包含 413 体量语义——请求体过大
@@ -38,191 +28,13 @@ CONTEXT_WINDOW_OVERFLOW_PHRASES = (
 
 
 @dataclass(frozen=True)
-class ContextBudget:
-    """一次模型请求的唯一预算计划。
-
-    这是 provider 边界的配置/诊断结构，不参与数据库历史读取。``history_tokens``
-    只用于记录 provider 返回的实际分项或兼容诊断；正常入口不得用本地估算值决定
-    历史窗口、压缩触发或重试。静默反思预检是没有 usage 事件时的明确例外，命中
-    后仍由正式 baseline 压缩负责历史处理。
-    """
-
-    model_context_tokens: int
-    tool_schema_tokens: int = 0
-    turn_batch_tokens: int = 0
-    current_turn_tokens: int = 0
-    output_reserve_tokens: int = 0
-    provider_overhead_tokens: int = 0
-    history_tokens: int = 0
-    system_prompt_tokens: int = 0
-    snapshot_tokens: int = 0
-    soft_ratio: float = SAFE_BUDGET_RATIO
-    compression_ratio: float = 0.50
-
-    @classmethod
-    def from_messages(
-        cls,
-        model_context_tokens: int,
-        messages: Iterable[dict],
-        *,
-        system_text: str = "",
-        fixed_prefix_size: int = 0,
-        tool_schema_tokens: int = 0,
-        turn_batch_tokens: int = 0,
-        current_turn_tokens: int = 0,
-        output_reserve_tokens: int = 0,
-        provider_overhead_tokens: int = 0,
-    ) -> "ContextBudget":
-        """从已组装消息生成唯一预算分解。
-
-        ``messages`` 只传一次：固定前缀单独计入 snapshot，剩余部分计入
-        history；system、工具 schema 和 dynamic tail 不再由调用方重复相加。
-        """
-        items = list(messages)
-        prefix_size = max(0, min(int(fixed_prefix_size or 0), len(items)))
-        snapshot_tokens = sum(
-            estimate_tokens(message_text(item)) for item in items[:prefix_size]
-        )
-        history_tokens = sum(
-            estimate_tokens(message_text(item)) for item in items[prefix_size:]
-        )
-        return cls.from_parts(
-            model_context_tokens=max(1, int(model_context_tokens or 0)),
-            tool_schema_tokens=max(0, int(tool_schema_tokens or 0)),
-            turn_batch_tokens=max(0, int(turn_batch_tokens or 0)),
-            current_turn_tokens=max(0, int(current_turn_tokens or 0)),
-            output_reserve_tokens=max(0, int(output_reserve_tokens or 0)),
-            provider_overhead_tokens=max(0, int(provider_overhead_tokens or 0)),
-            history_tokens=max(0, int(history_tokens)),
-            system_prompt_tokens=estimate_tokens(system_text),
-            snapshot_tokens=max(0, int(snapshot_tokens)),
-        )
-
-    @classmethod
-    def from_parts(
-        cls,
-        model_context_tokens: int,
-        *,
-        system_prompt_tokens: int = 0,
-        snapshot_tokens: int = 0,
-        history_tokens: int = 0,
-        tool_schema_tokens: int = 0,
-        turn_batch_tokens: int = 0,
-        current_turn_tokens: int = 0,
-        output_reserve_tokens: int = 0,
-        provider_overhead_tokens: int = 0,
-    ) -> "ContextBudget":
-        """用同一口径的分项 token 数创建预算，避免再次合计。"""
-        return cls(
-            model_context_tokens=max(1, int(model_context_tokens or 0)),
-            tool_schema_tokens=max(0, int(tool_schema_tokens or 0)),
-            turn_batch_tokens=max(0, int(turn_batch_tokens or 0)),
-            current_turn_tokens=max(0, int(current_turn_tokens or 0)),
-            output_reserve_tokens=max(0, int(output_reserve_tokens or 0)),
-            provider_overhead_tokens=max(0, int(provider_overhead_tokens or 0)),
-            history_tokens=max(0, int(history_tokens or 0)),
-            system_prompt_tokens=max(0, int(system_prompt_tokens or 0)),
-            snapshot_tokens=max(0, int(snapshot_tokens or 0)),
-        )
-
-    @property
-    def non_history_tokens(self) -> int:
-        return (
-            self.system_prompt_tokens
-            + self.snapshot_tokens
-            + self.tool_schema_tokens
-            + self.turn_batch_tokens
-            + self.current_turn_tokens
-            + self.output_reserve_tokens
-            + self.provider_overhead_tokens
-        )
-
-    @property
-    def total_tokens(self) -> int:
-        return self.non_history_tokens + max(0, self.history_tokens)
-
-    @property
-    def soft_limit_tokens(self) -> int:
-        ratio = min(0.95, max(0.5, float(self.soft_ratio)))
-        return max(1, int(self.model_context_tokens * ratio))
-
-    @property
-    def compression_cap_tokens(self) -> int:
-        ratio = min(0.5, max(0.0, float(self.compression_ratio)))
-        return max(1, int(self.model_context_tokens * ratio))
-
-    @property
-    def truncation_limit_tokens(self) -> int:
-        """确定性保护上限，保留 5% 给 provider/估算误差。"""
-        return max(1, int(self.model_context_tokens * TRUNCATION_RATIO))
-
-    @property
-    def history_capacity_tokens(self) -> int:
-        """兼容诊断字段；不得用于历史读取。"""
-        return max(0, self.soft_limit_tokens - self.non_history_tokens)
-
-    @property
-    def hard_history_capacity_tokens(self) -> int:
-        """兼容诊断字段；provider overflow 兜底不使用它。"""
-        return max(0, self.truncation_limit_tokens - self.non_history_tokens)
-
-    def with_history(self, history_tokens: int) -> "ContextBudget":
-        return ContextBudget(
-            model_context_tokens=self.model_context_tokens,
-            tool_schema_tokens=self.tool_schema_tokens,
-            turn_batch_tokens=self.turn_batch_tokens,
-            current_turn_tokens=self.current_turn_tokens,
-            output_reserve_tokens=self.output_reserve_tokens,
-            provider_overhead_tokens=self.provider_overhead_tokens,
-            history_tokens=max(0, int(history_tokens or 0)),
-            soft_ratio=self.soft_ratio,
-            compression_ratio=self.compression_ratio,
-            system_prompt_tokens=self.system_prompt_tokens,
-            snapshot_tokens=self.snapshot_tokens,
-        )
-
-    def diagnostics(self) -> dict[str, int | float]:
-        """返回可安全写入诊断日志的数字字段，不包含上下文正文。"""
-        return {
-            "model_context_tokens": self.model_context_tokens,
-            "system_prompt_tokens": self.system_prompt_tokens,
-            "snapshot_tokens": self.snapshot_tokens,
-            "tool_schema_tokens": self.tool_schema_tokens,
-            "turn_batch_tokens": self.turn_batch_tokens,
-            "current_turn_tokens": self.current_turn_tokens,
-            "output_reserve_tokens": self.output_reserve_tokens,
-            "provider_overhead_tokens": self.provider_overhead_tokens,
-            "history_tokens": self.history_tokens,
-            "total_tokens": self.total_tokens,
-            "soft_limit_tokens": self.soft_limit_tokens,
-            "truncation_limit_tokens": self.truncation_limit_tokens,
-            "compression_cap_tokens": self.compression_cap_tokens,
-            "history_capacity_tokens": self.history_capacity_tokens,
-        }
-
-
-@dataclass(frozen=True)
 class BudgetResult:
     changed: bool
-    before_tokens: int
-    after_tokens: int
     dropped_messages: int
-    oversized_item: bool = False
     protected_start_index: int | None = None
     anchor_index: int | None = None
     protected_source_start_index: int | None = None
     previous_protected_start_index: int | None = None
-
-
-def estimate_tool_schema_tokens(tools) -> int:
-    """估算本轮工具 schema 大小，不记录工具定义内容。"""
-    if not tools:
-        return 0
-    try:
-        payload = json.dumps(tools, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    except (TypeError, ValueError):
-        payload = str(tools)
-    return estimate_tokens(payload)
 
 
 def _blocks(message: dict) -> list[dict]:
@@ -276,205 +88,8 @@ def atomic_message_units(messages: list[dict]) -> list[list[int]]:
     return _units(messages)
 
 
-def _truncate_text(value: str, max_tokens: int) -> str:
-    if estimate_tokens(value) <= max_tokens:
-        return value
-    # 估算器是单调的，二分得到不超过目标的前缀，保留确定性和 O(log n) 复杂度。
-    marker = "\n[内容因上下文预算被截断]"
-    prefix_budget = max(1, max_tokens - estimate_tokens(marker))
-    low, high = 0, len(value)
-    while low < high:
-        middle = (low + high + 1) // 2
-        if estimate_tokens(value[:middle]) <= prefix_budget:
-            low = middle
-        else:
-            high = middle - 1
-    return value[:low] + marker
-
-
-def _truncate_value(value, max_tokens: int):
-    if isinstance(value, str):
-        return _truncate_text(value, max_tokens)
-    if isinstance(value, list):
-        return [_truncate_value(item, max_tokens) for item in value]
-    if isinstance(value, dict):
-        return {key: _truncate_value(item, max_tokens) for key, item in value.items()}
-    return value
-
-
-def _fit_oversized_message(message: dict, max_tokens: int) -> dict:
-    copy = dict(message)
-    if "content" in copy:
-        copy["content"] = _truncate_value(copy["content"], max_tokens)
-    if "reasoning_content" in copy:
-        copy["reasoning_content"] = _truncate_text(str(copy["reasoning_content"]), max_tokens)
-    if "tool_calls" in copy:
-        copy["tool_calls"] = _truncate_value(copy["tool_calls"], max_tokens)
-    return copy
-
-
-def _recent_fallback_selection(body: list[dict], fixed_tokens: int, safe_budget: int):
-    """LLM 压缩失败或压缩请求本身超限时，按统一策略保留最近完整单元。
-
-    只有这段仍放不进安全预算，才进入更激进的 token 截断；返回 (消息列表, 截断后
-    总量)，没有可用的回退时返回 (None, 0)。
-    """
-    units = _units(body)
-    unit_offset = protected_unit_offset(units)
-    recent_units = [[body[index] for index in unit] for unit in units[unit_offset:]]
-    recent = [message for unit in recent_units for message in unit]
-    recent_total = fixed_tokens + sum(estimate_tokens(message_text(message)) for message in recent)
-    if recent and recent_total <= safe_budget:
-        return recent, recent_total
-    return None, 0
-
-
-def _select_kept_units(body: list[dict], available: int) -> tuple[list[dict], bool]:
-    """从最新完整工具单元往回装配预算内消息。
-
-    最新单元单独超大时不能原样绕过，改做字段级确定性截断；返回 (消息列表,
-    是否发生过字段级截断)。
-    """
-    kept: list[list[dict]] = []
-    used = 0
-    units = _units(body)
-    for unit in reversed(units):
-        unit_messages = [body[index] for index in unit]
-        unit_tokens = sum(estimate_tokens(message_text(message)) for message in unit_messages)
-        if not kept and unit_tokens > available:
-            # 最新单元单独处理：不能用原样超大消息绕过字段级截断。
-            break
-        if kept and used + unit_tokens > available:
-            break
-        kept.append(unit_messages)
-        used += unit_tokens
-    kept.reverse()
-
-    # 最新单元必须存在；若它自身过大，做字段级确定性截断，而不是无限重试。
-    oversized = False
-    if not kept and units:
-        latest = [body[index] for index in units[-1]]
-        latest_budget = max(1, available)
-        oversized = sum(estimate_tokens(message_text(message)) for message in latest) > latest_budget
-        kept = [[_fit_oversized_message(message, latest_budget) for message in latest]]
-    return [message for unit in kept for message in unit], oversized
-
-
-def truncate_messages(
-    messages: Iterable[dict],
-    system_text: str = "",
-    context_tokens: int = 0,
-    *,
-    fixed_prefix_size: int = 0,
-    target_ratio: float | None = None,
-    overhead_tokens: int = 0,
-    extra_tokens: int = 0,
-    protected_from: int | None = None,
-) -> tuple[list[dict], BudgetResult]:
-    """在不调用 LLM 的前提下截断消息，返回新列表和统计结果。
-
-    固定前缀和最新完整工具单元优先保留；其余从最旧单元开始丢弃。
-    """
-    original = list(messages)
-    extra_tokens = max(0, int(extra_tokens or 0))
-    budget = ContextBudget.from_messages(
-        max(1, int(context_tokens or 0)),
-        original,
-        system_text=system_text,
-        fixed_prefix_size=fixed_prefix_size,
-        provider_overhead_tokens=overhead_tokens,
-        turn_batch_tokens=extra_tokens,
-    )
-    before = budget.total_tokens
-    # provider overflow 已证明当前 payload 不可接受；回退按正常软预算收紧，
-    # 并把工具 schema 等 provider 固定开销计入同一预算，避免仅满足 95% 硬线。
-    safe_budget = min(budget.truncation_limit_tokens, budget.soft_limit_tokens)
-    if before <= safe_budget:
-        return original, BudgetResult(False, before, before, 0)
-
-    prefix_size = max(0, min(int(fixed_prefix_size), len(original)))
-    prefix = original[:prefix_size]
-    body = original[prefix_size:]
-    protected_tail: list[dict] = []
-    if protected_from is not None:
-        protected_relative = max(0, int(protected_from) - prefix_size)
-        protected_tail = body[protected_relative:]
-        body = body[:protected_relative]
-    target = budget.compression_cap_tokens
-    if target_ratio is not None:
-        # 仅允许调用方进一步收紧上限，不允许恢复超过 50% 的旧目标。
-        ratio = min(0.5, max(0.0, float(target_ratio)))
-        target = max(1, int(budget.model_context_tokens * ratio))
-    fixed_tokens = extra_tokens + max(0, int(overhead_tokens or 0)) + estimate_tokens(system_text) + sum(
-        estimate_tokens(message_text(message)) for message in prefix
-    )
-    fixed_tokens += sum(estimate_tokens(message_text(message)) for message in protected_tail)
-
-    # LLM 压缩失败或压缩请求本身超限时，先按统一策略保留最近 10 个完整单元；
-    # 只有这段仍放不进安全预算，才进入下面更激进的 token 截断。
-    recent, recent_total = _recent_fallback_selection(
-        body, fixed_tokens, min(safe_budget, target),
-    )
-    if recent is not None:
-        return prefix + recent + protected_tail, BudgetResult(
-            True,
-            before,
-            recent_total,
-            max(0, len(original) - len(prefix) - len(recent)),
-        )
-
-    available = max(1, safe_budget - fixed_tokens)
-    if target > fixed_tokens:
-        available = min(available, target - fixed_tokens)
-    kept, oversized = _select_kept_units(body, available)
-
-    result = prefix + kept + protected_tail
-    after = ContextBudget.from_messages(
-        budget.model_context_tokens,
-        result,
-        system_text=system_text,
-        fixed_prefix_size=prefix_size,
-        provider_overhead_tokens=overhead_tokens,
-        turn_batch_tokens=extra_tokens,
-    ).total_tokens
-    dropped = max(0, len(original) - len(result))
-    return result, BudgetResult(True, before, after, dropped, oversized_item=oversized)
-
-
-def enforce_message_budget(
-    messages,
-    system_text: str,
-    context_tokens: int,
-    *,
-    overhead_tokens: int = 0,
-    protected_from: int | None = None,
-) -> BudgetResult:
-    """就地应用强制截断；本轮新增消息已经属于普通 history。"""
-    from agent.context.assembly.area import MessageArea
-    if not isinstance(messages, MessageArea):
-        raise TypeError("消息预算截断只接受 MessageArea")
-    conversation = messages.provider_projection().to_messages()
-    truncated, result = truncate_messages(
-        conversation,
-        system_text,
-        context_tokens,
-        fixed_prefix_size=messages.fixed_prefix_size,
-        overhead_tokens=overhead_tokens,
-        extra_tokens=0,
-        protected_from=protected_from,
-    )
-    if not result.changed:
-        return result
-    messages.replace_request_baseline(
-        truncated, expected_revision=messages.revision,
-    )
-    return result
-
-
 def enforce_provider_overflow_fallback(
     messages,
-    system_text: str = "",
-    context_tokens: int = 0,
     *,
     protected_from: int | None = None,
     protected_anchor_index: int | None = None,
@@ -482,9 +97,8 @@ def enforce_provider_overflow_fallback(
 ) -> BudgetResult:
     """provider 已明确返回超窗后的无估算兜底。
 
-    这里不估算 system、工具 schema 或动态尾部；保护窗口沿用共享的完整 round
-    单元数量策略，再按 token 硬预算从最旧完整单元开始缩窗。它仅在
-    provider overflow 且 LLM 压缩无结果时执行，正常请求不会经过此路径。
+    保留固定前缀、已有摘要、当前用户锚点和最新完整工具往返。
+    缩窗后只尝试一次，是否能容纳由 Provider 决定。
     """
     from agent.context.assembly.area import MessageArea
     if not isinstance(messages, MessageArea):
@@ -504,10 +118,10 @@ def enforce_provider_overflow_fallback(
     if protected_anchor_index is not None:
         anchor_body_index = max(0, int(protected_anchor_index) - prefix_size)
         if anchor_body_index >= len(conversation) - prefix_size:
-            return BudgetResult(False, 0, 0, 0)
+            return BudgetResult(False, 0)
         anchor_message = conversation[prefix_size + anchor_body_index]
         if protected_from is not None and protected_anchor_index >= protected_from:
-            return BudgetResult(False, 0, 0, 0)
+            return BudgetResult(False, 0)
         previous_relative = None
         if protected_previous_from is not None:
             previous_relative = max(0, int(protected_previous_from) - prefix_size)
@@ -519,8 +133,7 @@ def enforce_provider_overflow_fallback(
         body = body[:relative]
 
     if protected_anchor_index is not None and anchor_message is not None:
-        # 运行中滚动窗口兜底：保留已有压缩摘要、当前用户原文和预算容得下的
-        # 最新完整工具单元；若 10 轮本身过大，从最早轮开始缩窗。
+        # 运行中滚动窗口保留摘要、当前用户锚点和最后一次工具往返。
         from .summary_format import SUMMARY_OPEN
 
         summaries = [
@@ -531,115 +144,38 @@ def enforce_provider_overflow_fallback(
         previous_protected_start_index = len(prefix) + len(summaries)
         anchor_result_index = previous_protected_start_index + len(previous_protected_tail)
         fixed = prefix + summaries + previous_protected_tail + [anchor_message]
-        safe_budget = max(1, int(max(1, context_tokens) * TRUNCATION_RATIO))
-        fixed_tokens = estimate_tokens(system_text) + sum(
-            estimate_tokens(message_text(message)) for message in fixed
-        )
-        available = max(1, safe_budget - fixed_tokens)
         tail_units = _units(protected_tail)
-        kept_units: list[list[dict]] = []
-        kept_source_offsets: list[int] = []
-        kept_tokens = 0
-        oversized = False
-        for unit in reversed(tail_units):
-            unit_messages = [protected_tail[index] for index in unit]
-            unit_tokens = sum(estimate_tokens(message_text(message)) for message in unit_messages)
-            if kept_units and kept_tokens + unit_tokens > available:
-                break
-            if not kept_units and unit_tokens > available:
-                per_message_budget = max(1, available // max(1, len(unit_messages)))
-                unit_messages = [_fit_overflow_text_fields(message, per_message_budget)
-                                 for message in unit_messages]
-                unit_tokens = sum(estimate_tokens(message_text(message)) for message in unit_messages)
-                oversized = True
-                if unit_tokens > available:
-                    # 这一轮的非文本结构（例如不可拆分的工具参数）仍超预算，
-                    # 整轮丢弃比留下半个 tool exchange 安全。
-                    break
-            kept_units.append(unit_messages)
-            kept_source_offsets.append(unit[0])
-            kept_tokens += unit_tokens
-        kept_units.reverse()
-        kept = [message for unit in kept_units for message in unit]
+        last_unit = next(
+            (unit for unit in reversed(tail_units) if _has_tool_call(protected_tail[unit[0]])),
+            tail_units[-1] if tail_units else [],
+        )
+        source_offset = last_unit[0] if last_unit else len(protected_tail)
+        kept = protected_tail[source_offset:]
         result = fixed + kept
-        changed = result != conversation
-        if not changed:
-            return BudgetResult(False, 0, 0, 0, oversized_item=oversized)
+        if result == conversation and last_unit and _has_tool_call(protected_tail[last_unit[0]]):
+            # 连同工具结果一起移除超限的往返，保留它后面的消息。
+            source_offset = last_unit[-1] + 1
+            result = fixed + protected_tail[source_offset:]
+        if result == conversation:
+            return BudgetResult(False, 0)
         messages.replace_request_baseline(result, expected_revision=messages.revision)
         return BudgetResult(
-            True, 0, 0, max(0, len(conversation) - len(result)), oversized,
+            True, len(conversation) - len(result),
             protected_start_index=len(fixed), anchor_index=anchor_result_index,
-            protected_source_start_index=(
-                prefix_size + relative + min(kept_source_offsets)
-                if kept_source_offsets else prefix_size + relative + len(protected_tail)
-            ),
+            protected_source_start_index=prefix_size + relative + source_offset,
             previous_protected_start_index=(
                 previous_protected_start_index if previous_protected_tail else None
             ),
         )
 
     units = _units(body)
-    kept_units: list[list[dict]] = []
     unit_offset = protected_unit_offset(units)
-    kept_units = [[body[index] for index in unit] for unit in units[unit_offset:]]
-    kept = [item for unit in kept_units for item in unit]
+    kept = [body[index] for unit in units[unit_offset:] for index in unit]
     result = prefix + kept + protected_tail
-    changed = len(result) < len(conversation)
-    oversized = False
-    if not changed and result:
-        # 单条巨大消息也必须能退出 overflow 重试；只裁正文，不改工具结构。
-        latest = result[-1]
-        if context_tokens > 0 and isinstance(latest, dict) and isinstance(latest.get("content"), str):
-            text = latest["content"]
-            max_tokens = max(1, int(max(1, context_tokens) * TRUNCATION_RATIO))
-            if estimate_tokens(text) > max_tokens:
-                result[-1] = _fit_oversized_message(latest, max_tokens)
-                changed = True
-                oversized = True
-    if not changed:
-        return BudgetResult(False, 0, 0, 0, oversized_item=oversized)
+    if len(result) == len(conversation):
+        return BudgetResult(False, 0)
     messages.replace_request_baseline(result, expected_revision=messages.revision)
-    return BudgetResult(True, 0, 0, max(0, len(conversation) - len(result)), oversized_item=oversized)
-
-
-def _fit_overflow_text_fields(message: dict, max_tokens: int) -> dict:
-    """只截工具往返中的文本结果，不改 tool_use id 或调用参数结构。"""
-    copy = dict(message)
-    content = copy.get("content")
-    if isinstance(content, str):
-        copy["content"] = _truncate_text(content, max_tokens)
-    elif isinstance(content, list):
-        blocks = []
-        for block in content:
-            if not isinstance(block, dict):
-                blocks.append(block)
-                continue
-            cloned = dict(block)
-            if block.get("type") == "tool_result":
-                cloned["content"] = _fit_tool_result_content(block.get("content"), max_tokens)
-            elif block.get("type") == "text" and isinstance(block.get("text"), str):
-                cloned["text"] = _truncate_text(block["text"], max_tokens)
-            blocks.append(cloned)
-        copy["content"] = blocks
-    return copy
-
-
-def _fit_tool_result_content(value, max_tokens: int):
-    """限制工具结果中的可读文本，保留图片、ID、类型等结构字段不变。"""
-    if isinstance(value, str):
-        return _truncate_text(value, max_tokens)
-    if isinstance(value, list):
-        result = []
-        for item in value:
-            if not isinstance(item, dict):
-                result.append(item)
-                continue
-            cloned = dict(item)
-            if item.get("type") == "text" and isinstance(item.get("text"), str):
-                cloned["text"] = _truncate_text(item["text"], max_tokens)
-            result.append(cloned)
-        return result
-    return value
+    return BudgetResult(True, len(conversation) - len(result))
 
 
 def is_context_overflow_error(error: BaseException) -> bool:

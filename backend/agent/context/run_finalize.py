@@ -15,7 +15,6 @@ class FinalizeResult:
 
 def _run_compaction_summary(
     messages: Any,
-    model_cfg: Any,
     user_message_id: int | None,
 ) -> str | None:
     """取出本 run 在 provider 边界生成的压缩摘要正文；取不到就退回旧的重生成。
@@ -23,11 +22,11 @@ def _run_compaction_summary(
     run 内压缩的分支请求与主对话共享前缀、能命中缓存；run 收尾的 baseline
     再用摊平文本把同一批历史送一遍，是结构性不可能共享前缀的全冷大输入调用。
     复用必须确认候选确实是摘要（而不是正文里恰好带标记的用户消息）并仍然
-    通过输出预算校验，否则返回 None 让调用方走旧路径。
+    通过摘要结构校验，否则返回 None 让调用方走旧路径。
     """
     if not user_message_id:
         return None
-    from agent.context.compaction import resolve_compaction_limits, validate_compact_summary
+    from agent.context.compaction import validate_compact_summary
     from agent.context.summary_format import SUMMARY_OPEN, unwrap_compacted_summary
 
     # finalize 传入的是冻结的 CanonicalAreaSnapshot.messages；摘要识别属于
@@ -55,13 +54,8 @@ def _run_compaction_summary(
             candidate = content
     if not candidate:
         return None
-    try:
-        limits = resolve_compaction_limits(model_cfg)
-    except Exception:
-        # 取不到输出预算就无法确认候选仍然可用，退回旧的重生成路径。
-        return None
     text = unwrap_compacted_summary(candidate)
-    ok, _reason = validate_compact_summary(text, max_output_tokens=limits.output_tokens)
+    ok, _reason = validate_compact_summary(text)
     return text if ok else None
 
 
@@ -249,7 +243,7 @@ async def finalize_run(
         # 前缀、能命中缓存）。baseline 直接复用它并只重算水位，不再用摊平文本
         # 重放一遍——那条路结构上不可能共享前缀，每次都是全冷的大输入调用。
         # 摘要取不到时退回旧的重生成路径。
-        reuse_summary = _run_compaction_summary(message_area.snapshot().messages, model_cfg, user_message_id)
+        reuse_summary = _run_compaction_summary(message_area.snapshot().messages, user_message_id)
         await compress_conv.compress_if_needed(
             session_id, user_id, settings, force=False,
             reuse_summary=reuse_summary,

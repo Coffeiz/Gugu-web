@@ -459,12 +459,6 @@ async def test_finalize_run_reuses_run_summary_for_baseline(monkeypatch):
     }]
 
 
-def _summary_model(**overrides):
-    values = {"model": "test-model", "provider": "test", "context_tokens": 80000, "max_tokens": 4000}
-    values.update(overrides)
-    return SimpleNamespace(**values)
-
-
 def test_run_summary_reuse_excludes_merged_current_user_block():
     """摘要与当前用户请求合并为文本块时，只复用摘要正文。"""
     from agent.context.run_finalize import _run_compaction_summary
@@ -474,7 +468,7 @@ def test_run_summary_reuse_excludes_merged_current_user_block():
         {"type": "text", "text": format_compacted_summary("已完成设计")},
         {"type": "text", "text": "现在开始开发"},
     ]}]
-    assert _run_compaction_summary(messages, _summary_model(), 321) == "已完成设计"
+    assert _run_compaction_summary(messages, 321) == "已完成设计"
 
 
 def test_run_compaction_summary_requires_summary_shaped_candidate():
@@ -482,14 +476,13 @@ def test_run_compaction_summary_requires_summary_shaped_candidate():
     from agent.context.run_finalize import _run_compaction_summary
     from agent.context.summary_format import format_compacted_summary
 
-    model = _summary_model()
     assert _run_compaction_summary(
         [{"role": "user", "content": "帮我看下 <compacted-summary> 是什么格式"}],
-        model, 321,
+        321,
     ) is None
     assert _run_compaction_summary(
         [{"role": "user", "content": format_compacted_summary("正文")}],
-        model, 321,
+        321,
     ) == "正文"
     # 多次压缩取最后一条（最新一版已把上一版滚动合并进去）。
     assert _run_compaction_summary(
@@ -498,24 +491,18 @@ def test_run_compaction_summary_requires_summary_shaped_candidate():
             {"role": "assistant", "content": "…"},
             {"role": "user", "content": format_compacted_summary("新版")},
         ],
-        model, 321,
+        321,
     ) == "新版"
 
 
 def test_run_compaction_summary_falls_back_without_reusable_candidate():
-    """缺少摘要、缺少本轮消息 id、或预算不可解析时都必须退回旧路径。"""
+    """缺少摘要或缺少本轮消息 id 时都必须退回旧路径。"""
     from agent.context.run_finalize import _run_compaction_summary
     from agent.context.summary_format import format_compacted_summary
 
     wrapped = format_compacted_summary("正文")
-    assert _run_compaction_summary([{"role": "user", "content": wrapped}], _summary_model(), None) is None
-    assert _run_compaction_summary([{"role": "assistant", "content": "无摘要"}], _summary_model(), 321) is None
-    assert _run_compaction_summary([{"role": "user", "content": wrapped}], SimpleNamespace(), 321) is None
-    # 摘要超过输出预算时同样不复用，避免把超限文本写进持久 baseline。
-    assert _run_compaction_summary(
-        [{"role": "user", "content": format_compacted_summary("细节" * 5000)}],
-        _summary_model(max_tokens=16), 321,
-    ) is None
+    assert _run_compaction_summary([{"role": "user", "content": wrapped}], None) is None
+    assert _run_compaction_summary([{"role": "assistant", "content": "无摘要"}], 321) is None
 
 
 @pytest.mark.asyncio

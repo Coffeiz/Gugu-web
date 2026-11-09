@@ -62,6 +62,8 @@ async def display_context_compaction(
         text = "上下文较长，正在整理后继续处理。"
     elif phase == "completed" and event.get("applied") is True:
         text = "上下文整理完成。"
+    elif phase == "completed" and event.get("applied") is False:
+        text = "本次未能整理上下文，继续处理。"
     else:
         return
     if before_platform_event is not None and not await before_platform_event(event):

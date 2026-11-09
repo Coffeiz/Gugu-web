@@ -5,9 +5,7 @@ import re
 
 import pytest
 
-from agent.context.budget import ContextBudget
 from agent.context.session_history import consume_history_stats, load_session_history
-from agent.context.tokens import estimate_tokens
 from app.models import ConversationMessage, ConversationSession
 
 
@@ -298,14 +296,3 @@ async def test_history_image_snapshot_hydration_obeys_byte_budget(db, user_a, mo
     assert len(history) == 3
     assert sum("provider_image_content" in vars(item) for item in history) == 1
     assert stats["history_image_snapshot_bytes"] <= 400
-
-
-def test_context_budget_reserves_fixed_context_and_turn_batch():
-    full = ContextBudget.from_parts(120_000)
-    reserved = ContextBudget.from_parts(
-        120_000,
-        system_prompt_tokens=estimate_tokens("系统提示" * 1000 + "群记忆" * 1000),
-        turn_batch_tokens=800,
-    )
-    assert reserved.history_capacity_tokens < full.history_capacity_tokens
-    assert reserved.history_capacity_tokens > 1

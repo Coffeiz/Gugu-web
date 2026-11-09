@@ -406,7 +406,7 @@ LoopScope 是咕咕 Agent 的开发观测和排障工具，用来还原一次请
 | Token Usage | 查看 input、output、cache read/write、fresh input、total 和缓存率 |
 | Prefix Diff | 对比相邻 Round 或 Run 的提供商输入，定位稳定前缀最早从哪里发生变化 |
 | Tool Call | 查看工具名称、参数形状、结果摘要、耗时、父子关系和执行状态 |
-| Schema 诊断 | 查看实际注入的工具 Schema 数量、字节/token 估算、digest，以及 Schema 错误和恢复原因 |
+| Schema 诊断 | 查看实际注入的工具 Schema 数量、字节数、digest，以及 Schema 错误和恢复原因 |
 | Skill 诊断 | 查看 Skill 正文是否加载、加载耗时、内容长度和关联工具 Schema 注入情况 |
 | 性能与错误 | 定位 Prompt、Memory、RAG、数据库、工具、提供商、渠道和输出阶段的耗时、失败或取消 |
 | 导出与辅助页面 | 多选导出 `loopscope-run-export` v2 JSON，并使用 `/tokens`、`/changelog`、`/settings` |

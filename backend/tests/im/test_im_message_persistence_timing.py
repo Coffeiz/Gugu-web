@@ -92,10 +92,6 @@ def _silence_group_memory(monkeypatch) -> None:
     monkeypatch.setattr(
         "agent.memory.reflection_jobs.observe_group_message", AsyncMock(return_value=None)
     )
-    monkeypatch.setattr(
-        "agent.memory.group_pressure.observe_passive_context_pressure",
-        AsyncMock(return_value=False),
-    )
     monkeypatch.setattr("agent.memory.reflection.schedule", lambda *a, **k: None)
     monkeypatch.setattr("agent.memory.reflection.flush_group_owner_buffer", lambda *a, **k: None)
 

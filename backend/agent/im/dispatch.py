@@ -705,9 +705,20 @@ async def dispatch_im_message(payload: dict):
         ),
     )
 
+    compaction_failure_reported = False
+
     async def _run_event_callback(event: dict) -> None:
         """镜像 Run 状态，并按 IM 展示偏好提示上下文压缩。"""
+        nonlocal compaction_failure_reported
         await stream_bridge.publish(event)
+        if event.get("type") != "_context_compaction":
+            return
+        if event.get("phase") == "completed" and event.get("applied") is True:
+            compaction_failure_reported = False
+        elif compaction_failure_reported:
+            return
+        elif event.get("phase") == "completed" and event.get("applied") is False:
+            compaction_failure_reported = True
         await display_context_compaction(
             payload,
             event,
