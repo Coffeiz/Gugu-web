@@ -125,8 +125,9 @@ export interface ChatFile {
   img_height?: number
 }
 
-/** 拖文件卡进聊天 = @ 引用：Runtime 投放目标的共享契约（Window 注册，Composer 消费）。 */
+/** 拖业务卡片进聊天 = @ 引用：Runtime 投放目标的共享契约（Fab/Window 注册，Composer 消费）。 */
 export const CHAT_REF_SURFACE_ID = 'gugu-chat:composer-ref'
+export const CHAT_REF_FAB_SURFACE_ID = 'gugu-chat:fab-ref'
 export const CHAT_REF_ACCEPTS = [
   'project-card', 'file-item', 'folder-item', 'mind-canvas-object', 'mind-project-object',
 ] as const

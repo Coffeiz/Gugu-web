@@ -150,7 +150,9 @@ import GuguChatSidebar from './GuguChatSidebar.vue'
 import GuguChatBindDialog from './GuguChatBindDialog.vue'
 import GuguChatWindow from './GuguChatWindow.vue'
 import FilesystemAuthorizationDialog from '@/components/common/filesystem/FilesystemAuthorizationDialog.vue'
-import { CUSTOM_REPLY_OPTION_ID, findPendingTextInteractionId, type ChatMessage, type ChatFile, type ChatReference, type ImPlatformKey } from './chatTypes'
+import { CHAT_REF_ACCEPTS, CHAT_REF_FAB_SURFACE_ID, CUSTOM_REPLY_OPTION_ID, findPendingTextInteractionId, type ChatMessage, type ChatFile, type ChatReference, type ImPlatformKey } from './chatTypes'
+import { runtime } from '@/interaction/runtime'
+import { useRuntimeAction } from '@/interaction/runtime/vue'
 import { API_BASE } from './chatConstants'
 import { canPreview, fmtSize } from './messageDisplay'
 import { useChatAudio } from './composables/useChatAudio'
@@ -233,6 +235,28 @@ const rippleActive  = ref(false)
 const spinningBack = ref(false)
 let rippleTimeout: ReturnType<typeof setTimeout> | null = null
 
+// 悬浮球在聊天窗口关闭时仍接收可引用卡片。它使用独立 Surface，落点后由父组件
+// 打开并展开聊天，再复用 Composer 的引用解析逻辑插入 @ 卡片。
+const fabRefSurfaceGeneration = runtime.surfaces.register({
+  id: CHAT_REF_FAB_SURFACE_ID,
+  type: 'chat-composer',
+  layout: 'grid',
+  accepts: [...CHAT_REF_ACCEPTS],
+  element: null,
+})
+const fabRefTargetGeneration = runtime.targets.register({
+  id: `${CHAT_REF_FAB_SURFACE_ID}:target`,
+  surfaceId: CHAT_REF_FAB_SURFACE_ID,
+  accepts: [...CHAT_REF_ACCEPTS],
+  priority: 10,
+  element: null,
+})
+watch(fabRef, fab => runtime.targets.setElement(`${CHAT_REF_FAB_SURFACE_ID}:target`, fab?.dropTargetEl ?? null), { flush: 'post' })
+onUnmounted(() => {
+  runtime.targets.unregister(`${CHAT_REF_FAB_SURFACE_ID}:target`, fabRefTargetGeneration)
+  runtime.surfaces.unregister(CHAT_REF_FAB_SURFACE_ID, fabRefSurfaceGeneration)
+})
+
 // 悬浮球转场动画在 audioStore.file 清空前触发（拿最后角度做转回归位动画）；
 // 播放器机制（暂停/进度/音量/语音条播放）全部收在 useChatAudio。
 const {
@@ -310,16 +334,28 @@ async function toggleOpen() {
   await scrollBottom(true)
 }
 
-// 展开：先捕获当前视口底部锚点，再切换布局。
+useRuntimeAction(async action => {
+  if (action.type !== 'move' && action.type !== 'move-group') return
+  if (action.toSurfaceId !== CHAT_REF_FAB_SURFACE_ID) return
+  if (!expanded.value) await enterExpanded()
+  const objectIds = action.type === 'move-group' ? action.objectIds : [action.objectId]
+  await composerRef.value?.handleRuntimeReferenceDrop?.(objectIds)
+})
+
+// 已打开的小窗保留滚动锚点；从悬浮球打开时直接挂载大窗。
 async function enterExpanded() {
-  markResizing()
+  const opening = !open.value
+  if (!opening) markResizing()
   expanded.value = true
-  loadBots()
+  open.value = true
+  if (opening) trackApi.track('chat_open').catch(() => {})
+  else loadBots()
   // 真实输入框此时仍在从小窗宽度过渡到大窗宽度，输入高度统一在过渡结束后校准，
   // 避免用中间态宽度测量导致窗口先撑高再回落。
   await nextTick()
   trackApi.track('chat_expanded').catch(() => {})
   void fetchSessions()
+  if (opening) await scrollBottom(true)
   composerRef.value?.focus?.()
 }
 
