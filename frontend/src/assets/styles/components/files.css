@@ -23,12 +23,21 @@
 .fc-card::after, .folder-card::after {
   content: ''; position: absolute; inset: 0;
   border-radius: inherit;
-  background: var(--file-card-hover-overlay, var(--card-hover-overlay));
   opacity: 0; pointer-events: none; z-index: 1;
   transition: opacity 0.25s ease;
 }
+.fc-card::after { background: var(--file-card-hover-overlay, var(--card-hover-overlay)); }
+.folder-card::after { background: var(--folder-card-hover-overlay, var(--file-card-hover-overlay, var(--card-hover-overlay))); }
 .fc-card:hover::after, .folder-card:hover::after { opacity: 1; }
 .fc-card:hover, .folder-card:hover { transform: translateY(-2px); }
+
+/* 暗色文件夹 hover 不切换到带主题色的 raised surface；底色和边框维持静止态，
+   仅由上方的中性高光层提供亮色模式同类的提亮反馈。 */
+html[data-theme='dark'][data-family] .folder-card {
+  --folder-card-bg-hover: var(--folder-card-bg);
+  --folder-card-border-hover: var(--folder-card-border);
+}
+
 .fc-card:active:not(:has(:active)) { transform: translateY(1px); opacity: 0.93; }
 .folder-card:active:not(:has(:active)) { transform: translateY(1px); opacity: 0.93; }
 
