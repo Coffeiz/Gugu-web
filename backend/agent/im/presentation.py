@@ -54,12 +54,15 @@ async def display_context_compaction(
     tool_display_mode: str,
     before_platform_event=None,
 ) -> None:
-    """按 IM 工具状态偏好发送上下文压缩开始提示。"""
-    if (
-        tool_display_mode == "off"
-        or event.get("type") != "_context_compaction"
-        or event.get("phase") != "started"
-    ):
+    """按 IM 工具状态偏好提示上下文压缩开始与生效。"""
+    if tool_display_mode == "off" or event.get("type") != "_context_compaction":
+        return
+    phase = event.get("phase")
+    if phase == "started":
+        text = "上下文较长，正在整理后继续处理。"
+    elif phase == "completed" and event.get("applied") is True:
+        text = "上下文整理完成。"
+    else:
         return
     if before_platform_event is not None and not await before_platform_event(event):
         return
@@ -72,7 +75,7 @@ async def display_context_compaction(
         # 进度状态不能占用触发消息的被动回复机会。
         event_payload["message_id"] = None
     try:
-        await send_text(event_payload, "上下文较长，正在整理后继续处理。")
+        await send_text(event_payload, text)
     except Exception as exc:
         # 状态提示失败不应中断压缩或当前 Agent Run。
         diag_log("agent.im.context_compaction_display", exc)
