@@ -204,10 +204,9 @@ def resolve_preview_key(row: UserProviderCredential | None, *, supplied_key: str
 @router.post("", status_code=201)
 async def create_credential(body: CredentialCreate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     _gate()
-    if body.web_search_enabled and (
-        body.capability != "llm"
-        or not provider_web_search_supported(body.provider, body.api_format)
-    ):
+    web_search_supported = body.capability == "llm" and provider_web_search_supported(body.provider, body.api_format)
+    web_search_enabled = web_search_supported if body.web_search_enabled is None else body.web_search_enabled
+    if web_search_enabled and not web_search_supported:
         raise HTTPException(status_code=422, detail="当前 Provider 或 API 格式不支持联网搜索")
     existing = (await db.execute(select(UserProviderCredential).where(
         UserProviderCredential.user_id == user.id,
@@ -234,11 +233,7 @@ async def create_credential(body: CredentialCreate, user: User = Depends(get_cur
         context_tokens=body.context_tokens,
         thinking=body.thinking, reasoning_effort=body.reasoning_effort,
         reasoning_persistence=body.reasoning_persistence,
-        web_search_enabled=(
-            body.web_search_enabled
-            if body.capability == "llm" and provider_web_search_supported(body.provider, body.api_format)
-            else False
-        ),
+        web_search_enabled=web_search_enabled,
         image=body.image,
         video=body.video, audio=body.audio,
         image_detail=body.image_detail,

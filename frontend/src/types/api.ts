@@ -6744,11 +6744,8 @@ export interface components {
              * @enum {string}
              */
             reasoning_persistence: "off" | "continuation";
-            /**
-             * Web Search Enabled
-             * @default false
-             */
-            web_search_enabled: boolean;
+            /** Web Search Enabled */
+            web_search_enabled?: boolean | null;
             /**
              * Image
              * @default false
@@ -8345,11 +8342,8 @@ export interface components {
              * @default false
              */
             audio: boolean;
-            /**
-             * Web Search Enabled
-             * @default false
-             */
-            web_search_enabled: boolean;
+            /** Web Search Enabled */
+            web_search_enabled?: boolean | null;
             /**
              * Api Format
              * @default
@@ -8763,22 +8757,7 @@ export interface components {
              * Target
              * @enum {string}
              */
-            target: "searxng" | "searxng_images" | "tavily" | "deep_research" | "baidu_similar_images";
-            /**
-             * Searxng Url
-             * @default
-             */
-            searxng_url: string;
-            /**
-             * Searxng Engines
-             * @default
-             */
-            searxng_engines: string;
-            /**
-             * Searxng Image Engines
-             * @default
-             */
-            searxng_image_engines: string;
+            target: "tavily" | "deep_research" | "baidu_similar_images";
             /**
              * Tavily Api Key
              * @default

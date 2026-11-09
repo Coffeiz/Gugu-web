@@ -1057,7 +1057,8 @@ class PresetCreate(BaseModel):
     image_detail: str = "auto"
     video: bool = False
     audio: bool = False
-    web_search_enabled: bool = False
+    # 未显式选择时，创建接口按 Provider 能力默认开启。
+    web_search_enabled: bool | None = None
     api_format: str = ""
     ollama_mode: str = "local"
     ollama_api_mode: str = "native"
@@ -1073,7 +1074,9 @@ class PresetCreate(BaseModel):
 async def create_llm_preset(body: PresetCreate, db: AsyncSession = Depends(get_db)):
     if body.max_tokens >= body.context_tokens:
         raise HTTPException(422, "最大输出 token 数必须小于模型总上下文窗口")
-    if body.web_search_enabled and not provider_web_search_supported(body.provider, body.api_format):
+    web_search_supported = provider_web_search_supported(body.provider, body.api_format)
+    web_search_enabled = web_search_supported if body.web_search_enabled is None else body.web_search_enabled
+    if web_search_enabled and not web_search_supported:
         raise HTTPException(422, "当前 Provider 或 API 格式不支持联网搜索")
     new_id = f"p_{_uuid.uuid4().hex[:8]}"
     item = {
@@ -1092,7 +1095,7 @@ async def create_llm_preset(body: PresetCreate, db: AsyncSession = Depends(get_d
         "image_detail": body.image_detail if body.image_detail in ("auto", "low", "high", "original") else "auto",
         "video": body.video,
         "audio": body.audio,
-        "web_search_enabled": body.web_search_enabled if provider_web_search_supported(body.provider, body.api_format) else False,
+        "web_search_enabled": web_search_enabled,
         "api_format": body.api_format,
         "ollama_mode": body.ollama_mode,
         "ollama_api_mode": body.ollama_api_mode,

@@ -107,7 +107,7 @@
                       <div class="byok-subsection-hint">{{ newEditor.provider === 'minimax' ? t('llmExtraUi.minimaxWebSearchHint') : t('llmExtraUi.webSearchHint') }}</div>
                     </div>
                     <div class="setting-choice-row__options">
-                      <ToggleSwitch :model-value="newEditor.web_search_enabled" :aria-label="t('llmExtraUi.webSearch')" @update:model-value="newEditor.web_search_enabled = $event" />
+                      <ToggleSwitch :model-value="newEditor.web_search_enabled" :aria-label="t('llmExtraUi.webSearch')" @update:model-value="setNewWebSearchEnabled" />
                     </div>
                   </div>
                 </div>
@@ -240,6 +240,7 @@ function applyInterface(draft: Editor, value: string) {
   draft.api_format = value
   if (draft.provider === 'ollama') draft.ollama_api_mode = value === 'native' ? 'native' : 'openai'
   if (!supportsReasoningPersistence(draft)) draft.reasoning_persistence = 'off'
+  syncNewWebSearchDefault(draft)
 }
 const { t } = useI18n()
 const props = defineProps({
@@ -251,6 +252,20 @@ const visibleGroups = computed(() => props.capability ? groups.filter(group => g
 const localizedMediaDimensions = computed(() => mediaDimensions.map(dim => ({ ...dim, label: t(dim.labelKey) })))
 type MediaProbeResult = { key: string; label: string; text: string; status: 'supported' | 'unsupported' | 'unknown' }
 const items = ref<Item[]>([]); const loading = ref(false); const saving = ref(false); const testing = ref<number | null>(null); const mediaTesting = ref<string | null>(null); const mediaFeedback = ref(''); const mediaFeedbackType = ref<'ok' | 'err'>('ok'); const mediaFeedbackTarget = ref<string | null>(null); const needsReconfigure = ref(false); const error = ref(''); const message = ref(''); const messageParts = ref<MediaProbeResult[]>([]); const messageCapability = ref(''); const messageType = ref('ok'); const editor = ref<Editor | null>(null); const editors = ref<Record<number, Editor>>({}); const closingEditors = ref(new Set<number>()); const newEditor = ref<Editor | null>(null); const lastEditorWasExisting = ref(false); const modelLoading = ref(false); const modelError = ref(''); const modelOptions = ref<string[]>([]); const modelMenuOpen = ref(false);
+const newWebSearchTouched = ref(false)
+function syncNewWebSearchDefault(draft: Editor) {
+  if (draft !== newEditor.value || draft.capability !== 'llm') return
+  const supported = providerWebSearchAvailable(draft)
+  if (!supported) {
+    draft.web_search_enabled = false
+  } else if (!newWebSearchTouched.value) {
+    draft.web_search_enabled = true
+  }
+}
+function setNewWebSearchEnabled(enabled: boolean) {
+  newWebSearchTouched.value = true
+  if (newEditor.value) newEditor.value.web_search_enabled = enabled
+}
 let capabilityRequestId = 0
 const activeCapabilityDraft = computed(() => newEditor.value || editor.value)
 watch(() => {
@@ -376,6 +391,7 @@ function applyProvider(draft: Editor, value: string) {
   draft.api_format = draft.capability === 'speech_to_text' && value === 'minimax' ? 'minimax-asr' : value === 'ollama' ? 'native' : ''
   if (!supportsReasoningPersistence(draft)) draft.reasoning_persistence = 'off'
   if (!thinkingOptionsFor(draft).some(option => option.value === draft.thinking_mode)) applyThinkingOption(draft, 'default')
+  syncNewWebSearchDefault(draft)
 }
 function applyProviderChild(draft: Editor, value: string) {
   if (draft.provider === 'glm' || draft.provider === 'glm-coding') {
@@ -390,6 +406,7 @@ function applyProviderChild(draft: Editor, value: string) {
     draft.base_url = ''
     if (value === 'local') draft.value = ''
   }
+  syncNewWebSearchDefault(draft)
 }
 // 自托管 Embedding（本地 Ollama / llama.cpp 等本地推理）通常无鉴权，允许空 API Key 保存；
 // Ollama Cloud 与其余 provider 保存仍必须填 Key。
@@ -411,7 +428,7 @@ async function fetchModels() {
   } catch (e) { modelOptions.value = []; modelError.value = e instanceof Error ? e.message : '获取模型列表失败' }
   finally { modelLoading.value = false }
 }
-function selectModel(model: string) { const draft = editor.value || newEditor.value; if (draft) draft.model = model; modelMenuOpen.value = false }
+function selectModel(model: string) { const draft = editor.value || newEditor.value; if (draft) { draft.model = model; syncNewWebSearchDefault(draft) }; modelMenuOpen.value = false }
 function stripStatusMarks(value: string) { return value.replace(/\s*[✅✔☑]\s*$/gu, '').trim() }
 async function probeMedia(dim: string) {
   const draft = editor.value
@@ -493,7 +510,7 @@ async function rebuildVectors(_item: Item) {
   } catch (e) { message.value = e instanceof Error ? e.message : '重建失败'; messageType.value = 'err' }
 }
 function setActiveEditor(id: number) { editor.value = editors.value[id] || null }
-function openEditor(capability: string, item?: Item) { if (item) { if (editors.value[item.id]) { closeEditor(item.id); return } lastEditorWasExisting.value = true; const draft: Editor = { id: item.id, capability, provider: item.provider, value: '', api_format: item.api_format || '', base_url: item.base_url || '', model: item.model || '', dimensions: (item as Item).dimensions ?? null, max_tokens: item.max_tokens ?? 25600, context_tokens: item.context_tokens ?? 128000, thinking: item.thinking, reasoning_effort: item.reasoning_effort, reasoning_persistence: normalizeReasoningPersistence(item.reasoning_persistence), web_search_enabled: Boolean(item.web_search_enabled), thinking_mode: thinkingModeFor(item.thinking, item.reasoning_effort), image: Boolean(item.image), video: Boolean(item.video), audio: Boolean(item.audio), image_detail: item.image_detail || 'auto', local_runtime: item.local_runtime, ollama_mode: item.ollama_mode, ollama_api_mode: item.api_format === 'native' ? 'native' : 'openai' }; if (!supportsReasoningPersistence(draft)) draft.reasoning_persistence = 'off'; editors.value[item.id] = draft; editor.value = draft; newEditor.value = null } else { editor.value = null; newEditor.value = { capability, provider: '', value: '', api_format: '', base_url: '', model: '', dimensions: null, max_tokens: 25600, context_tokens: 128000, thinking: null, reasoning_effort: null, reasoning_persistence: 'off' as const, web_search_enabled: false, thinking_mode: 'default', image: false, video: false, audio: false, image_detail: 'auto', ollama_mode: 'local', ollama_api_mode: 'native' } } modelOptions.value = []; modelError.value = ''; modelMenuOpen.value = false; message.value = ''; messageParts.value = []; mediaFeedback.value = ''; mediaFeedbackTarget.value = null }
+function openEditor(capability: string, item?: Item) { if (item) { if (editors.value[item.id]) { closeEditor(item.id); return } lastEditorWasExisting.value = true; const draft: Editor = { id: item.id, capability, provider: item.provider, value: '', api_format: item.api_format || '', base_url: item.base_url || '', model: item.model || '', dimensions: (item as Item).dimensions ?? null, max_tokens: item.max_tokens ?? 25600, context_tokens: item.context_tokens ?? 128000, thinking: item.thinking, reasoning_effort: item.reasoning_effort, reasoning_persistence: normalizeReasoningPersistence(item.reasoning_persistence), web_search_enabled: Boolean(item.web_search_enabled), thinking_mode: thinkingModeFor(item.thinking, item.reasoning_effort), image: Boolean(item.image), video: Boolean(item.video), audio: Boolean(item.audio), image_detail: item.image_detail || 'auto', local_runtime: item.local_runtime, ollama_mode: item.ollama_mode, ollama_api_mode: item.api_format === 'native' ? 'native' : 'openai' }; if (!supportsReasoningPersistence(draft)) draft.reasoning_persistence = 'off'; editors.value[item.id] = draft; editor.value = draft; newEditor.value = null } else { editor.value = null; newWebSearchTouched.value = false; newEditor.value = { capability, provider: '', value: '', api_format: '', base_url: '', model: '', dimensions: null, max_tokens: 25600, context_tokens: 128000, thinking: null, reasoning_effort: null, reasoning_persistence: 'off' as const, web_search_enabled: false, thinking_mode: 'default', image: false, video: false, audio: false, image_detail: 'auto', ollama_mode: 'local', ollama_api_mode: 'native' } } modelOptions.value = []; modelError.value = ''; modelMenuOpen.value = false; message.value = ''; messageParts.value = []; mediaFeedback.value = ''; mediaFeedbackTarget.value = null }
 function applyProviderTo(target: Editor, value: string) { applyProvider(target, value) }
 function closeNewEditor() { newEditor.value = null }
 function notifyQuotaChanged() { window.dispatchEvent(new Event('gugu-quota-changed')) }
