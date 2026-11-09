@@ -13,8 +13,8 @@ from sqlalchemy import LargeBinary, Text, case, cast, func, or_, select
 
 logger = logging.getLogger(__name__)
 
-# 历史图片快照会包含 base64。正文历史仍按原有策略完整加载，但仅回放最近少量
-# 图片，且限制总量，避免每轮把会话中所有图片从数据库搬进 Worker 内存。
+# 历史图片快照会包含 base64。正文历史仍按原有策略完整加载；图片仅从最近 48 条
+# 用户消息中挑选，最多回放 12 张且限制总量，避免每轮把会话中所有图片搬进 Worker。
 _MAX_HISTORY_IMAGE_SNAPSHOTS = 12
 _MAX_HISTORY_IMAGE_BYTES = 8 * 1024 * 1024
 
@@ -76,6 +76,7 @@ async def _hydrate_loaded_reference_contexts(db, session_id: int, history: list)
 
 
 def _recent_image_candidate_ids(history: list) -> list[int]:
+    """只检查最近 48 条用户消息；更早图片不保证跨长文本对话回放。"""
     return [
         int(message.id) for message in reversed(history)
         if getattr(message, "role", None) == "user"

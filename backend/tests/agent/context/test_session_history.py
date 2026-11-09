@@ -192,6 +192,35 @@ async def test_history_hydrates_only_recent_bounded_image_snapshots(db, user_a):
 
 
 @pytest.mark.asyncio
+async def test_history_image_snapshot_candidates_stop_after_48_user_messages(db, user_a):
+    """图片候选范围是最近 48 条用户消息；更早图片不会穿过长文本对话回放。"""
+    session = ConversationSession(user_id=user_a.id, title="长文本后的图片", source="web")
+    db.add(session)
+    await db.flush()
+    db.add(ConversationMessage(
+        session_id=session.id,
+        role="user",
+        content="较早的图片",
+        provider_image_content=[{"type": "image", "source": {
+            "type": "base64", "media_type": "image/png", "data": "c25hcHNob3Q="}}],
+    ))
+    db.add_all([
+        ConversationMessage(
+            session_id=session.id,
+            role="user",
+            content=f"后续文本 {index}",
+        )
+        for index in range(48)
+    ])
+    await db.commit()
+
+    history = await load_session_history(db, session.id)
+
+    assert len(history) == 49
+    assert not any("provider_image_content" in vars(item) for item in history)
+
+
+@pytest.mark.asyncio
 async def test_history_image_snapshot_hydration_obeys_byte_budget(db, user_a, monkeypatch):
     """单条快照超过剩余预算时不读取 payload，避免少数大图打穿总量限制。"""
     import agent.context.session_history as session_history
