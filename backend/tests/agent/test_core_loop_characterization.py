@@ -2064,3 +2064,47 @@ async def test_continuation_recovery_refires_only_without_round_start(monkeypatc
     out, refires = await _recover_frames(settled, monkeypatch)
     assert refires == 0, "续轮已开始（round_start）就不该再发模型请求"
     assert [json.loads(l[len("data: "):])["type"] for l in out] == ["_new_round", "round_start"]
+
+
+@pytest.mark.parametrize("outcome", ["single_input", "retry_fails", "retry_succeeds"])
+async def test_overflow_reports_recovery_only_after_provider_accepts_retry(monkeypatch, outcome):
+    """原文超限时原样收尾，历史可缩减时也只重试一次，并以实际响应判定恢复。"""
+    prompt = "当前合成消息" * 4000
+    messages = [
+        {"role": "user", "content": "旧历史"},
+        {"role": "assistant", "content": "旧回复"},
+    ] if outcome != "single_input" else []
+    messages.append({"role": "user", "content": prompt})
+    requests = []
+
+    async def fake_stream_round(_client, kwargs, adapter=None):
+        requests.append(kwargs["messages"])
+        if len(requests) == 1 or outcome != "retry_succeeds":
+            error = ValueError("maximum context length exceeded")
+            if outcome == "retry_fails":
+                raise core.RetryableError("llm.stream_exhausted", "合成上游错误", cause=error)
+            raise error
+        yield "final", msg([TX("恢复成功。")])
+
+    async def no_summary(*_args, **_kwargs):
+        return [], False
+
+    monkeypatch.setattr(core, "_stream_round", fake_stream_round)
+    monkeypatch.setattr(compaction, "compact_context", no_summary)
+
+    events = [
+        json.loads(chunk[6:]) async for chunk in make_runner()._run_anthropic("u", "sys", messages, AI)
+        if chunk.startswith("data: ")
+    ]
+    assert len(requests) == (1 if outcome == "single_input" else 2)
+    assert all(prompt in str(request) for request in requests)
+    status = [event for event in events if event.get("type") == "_context_compaction"]
+    assert [event["phase"] for event in status] == ["started", "completed"]
+    assert status[-1]["applied"] is (outcome == "retry_succeeds")
+    errors = [event for event in events if event.get("type") == "error"]
+    if outcome != "retry_succeeds":
+        assert len(errors) == 1
+        assert errors[0]["error_code"] == "provider_input_too_large"
+        assert "缩短消息" in errors[0]["detail"]
+    else:
+        assert not errors

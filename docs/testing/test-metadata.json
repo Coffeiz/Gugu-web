@@ -131,8 +131,8 @@
     "domain": "im-memory",
     "layer": "L1",
     "owner": "backend/agent/memory",
-    "productionEntry": "backend/agent/im/loop.py:record_passive_im_message、backend/agent/memory/group_pressure.py、reflection_jobs.py",
-    "keyBehavior": "群被动消息不登记或续期闲置，主动 run 完成后计时且保留较新水位；不足50条达到85%压缩阈值仍入队两类反思，重建旧快照后先压缩再反思，压缩被阻止则持久延后",
+    "productionEntry": "backend/agent/im/conversation.py:record_passive_im_message、backend/agent/memory/reflection_jobs.py 与 im_reflection.py",
+    "keyBehavior": "群被动消息累计条数但不启动或续期闲置；主动 Run 完成后计时且保留较新水位；没有 Provider 用量时不触发压力任务，旧版已入队的任务仍可重建历史后执行",
     "ci": "backend-test"
   },
   "frontend/tests/admin/agent/useAgentRuntimeConfig.test.ts": {

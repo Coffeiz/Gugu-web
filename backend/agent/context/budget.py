@@ -88,6 +88,40 @@ def atomic_message_units(messages: list[dict]) -> list[list[int]]:
     return _units(messages)
 
 
+_OVERFLOW_TOOL_TEXT_MAX_CHARS = 2_048
+
+
+def _shorten_tool_text(value):
+    if isinstance(value, str) and len(value) > _OVERFLOW_TOOL_TEXT_MAX_CHARS:
+        return value[:_OVERFLOW_TOOL_TEXT_MAX_CHARS] + "\n[工具输出因请求超限已截短]"
+    if isinstance(value, list):
+        return [
+            {**block, "text": _shorten_tool_text(block["text"])}
+            if isinstance(block, dict) and block.get("type") == "text" and "text" in block
+            else block
+            for block in value
+        ]
+    return value
+
+
+def _shorten_tool_result(message: dict) -> dict:
+    """只缩减结果的可读文字，保留工具调用 ID、媒体和用户原文。"""
+    content = message.get("content")
+    if message.get("role") == "tool":
+        return {**message, "content": _shorten_tool_text(content)}
+    if not isinstance(content, list):
+        return message
+    return {
+        **message,
+        "content": [
+            {**block, "content": _shorten_tool_text(block.get("content"))}
+            if isinstance(block, dict) and block.get("type") == "tool_result"
+            else block
+            for block in content
+        ],
+    }
+
+
 def enforce_provider_overflow_fallback(
     messages,
     *,
@@ -151,11 +185,9 @@ def enforce_provider_overflow_fallback(
         )
         source_offset = last_unit[0] if last_unit else len(protected_tail)
         kept = protected_tail[source_offset:]
+        if last_unit and _has_tool_call(protected_tail[last_unit[0]]):
+            kept = [_shorten_tool_result(message) for message in kept]
         result = fixed + kept
-        if result == conversation and last_unit and _has_tool_call(protected_tail[last_unit[0]]):
-            # 连同工具结果一起移除超限的往返，保留它后面的消息。
-            source_offset = last_unit[-1] + 1
-            result = fixed + protected_tail[source_offset:]
         if result == conversation:
             return BudgetResult(False, 0)
         messages.replace_request_baseline(result, expected_revision=messages.revision)

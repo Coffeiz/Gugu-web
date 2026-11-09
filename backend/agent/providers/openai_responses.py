@@ -571,7 +571,7 @@ async def complete_branch(
     finish_usage_probe(probe, usage, normalized_usage)
     if usage_sink is not None:
         status = response.get("status") if isinstance(response, dict) else getattr(response, "status", None)
-        usage_sink.append({**normalized_usage, "finish_reason": status})
+        usage_sink.append({**normalized_usage, "finish_reason": status} if status else normalized_usage)
     await record_current_usage(settings, ai, normalized_usage)
     return _responses_output_text(response)
 

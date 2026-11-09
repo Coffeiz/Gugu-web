@@ -108,3 +108,26 @@ def test_provider_overflow_updates_baseline_only_when_history_changes(
     assert result.changed is (history_size != retained)
     assert len(history.provider_projection()) == retained
     assert history.revision == original_revision + revision_delta
+
+
+def test_overflow_shortens_large_tool_result_without_discarding_tool_exchange():
+    original_result = "合成工具结果" * 2000
+    area = MessageArea.from_canonical_messages([
+        {"role": "user", "content": "保留原样的用户请求"},
+        {"role": "assistant", "content": [{
+            "type": "tool_call", "id": "call-1", "name": "search", "arguments": {},
+        }]},
+        {"role": "user", "content": [{
+            "type": "tool_result", "tool_call_id": "call-1", "content": original_result,
+        }]},
+    ])
+    before = area.provider_projection().to_messages()
+
+    result = enforce_provider_overflow_fallback(area, protected_from=1, protected_anchor_index=0)
+
+    assert result.changed and result.dropped_messages == 0
+    user, call, tool = area.provider_projection().to_messages()
+    assert [user, call] == before[:2]
+    assert tool["tool_call_id"] == before[-1]["tool_call_id"]
+    assert "已截短" in str(tool["content"])
+    assert len(str(tool["content"])) < len(original_result)

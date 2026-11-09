@@ -68,3 +68,20 @@ async def test_review_patterns_maps_each_batch_back_to_stable_pattern_id(isolate
     assert result["removed_ids"] == ["first", "third"]
     remaining = await memory_store.read_pattern_list(user_id)
     assert [item["id"] for item in remaining] == ["second"]
+
+
+@pytest.mark.parametrize(("window", "expected_batch_sizes"), [
+    (4096, [1, 1, 1, 1, 1]), (8192, [3, 2]),
+])
+def test_small_model_profiles_batch_complete_chinese_messages(window, expected_batch_sizes):
+    from types import SimpleNamespace
+
+    from agent.memory.maintenance_batches import message_batches, resolve_maintenance_budget
+
+    messages = [(str(i), "合成中文" * 200) for i in range(5)]
+    budget = resolve_maintenance_budget(SimpleNamespace(context_tokens=window, max_tokens=8000))
+    batches = message_batches(messages, lambda item: item[1], lambda item: item[0],
+                              max_chars=budget.batch_chars)
+    assert [len(batch.items) for batch in batches] == expected_batch_sizes
+    assert [item for batch in batches for item in batch.items] == messages
+    assert all(batch.input_chars <= budget.batch_chars for batch in batches)

@@ -17,6 +17,7 @@ from uuid import uuid4
 
 from agent import core as _core
 from agent.context.assembly.area import MessageArea
+from agent.context.budget import is_context_overflow_error
 from agent.errors import describe_llm_error
 from agent.loop.context_runtime import ContextRuntime
 from agent.loop.events import EventSequencer
@@ -269,6 +270,7 @@ async def run_loop(
         # 确认门自动命中放行；运行时不做任何凭证续接，也不让模型再调用一次。
         # 压缩判定使用最近一次 provider 请求的 context input，不能跨轮累加或沿用高水位。
         run_context_usage_peak = 0
+        overflow_recovery_pending = False
         run_id = f"run-{_core.uuid4().hex[:16]}"
         from agent.runtime.cancellation import (
             RunCancellation, RunCancellationRequested, register_current_run,
@@ -405,98 +407,49 @@ async def run_loop(
             except RunCancellationRequested:
                 yield stream_event("_cancelled", remote_status_unknown=cancellation.remote_status_unknown)
                 return
-            except _core.RetryableError as e:
-                if reasoning_state is not None:
-                    await reasoning_state.failed("provider_rejected")
-                from agent.context.budget import is_context_overflow_error
-                overflow = is_context_overflow_error(e) or is_context_overflow_error(e.cause) if e.cause else is_context_overflow_error(e)
-                if overflow and run_state.hard_budget_retries < 1:
-                    yield stream_event("_context_compaction", phase="started", reason="provider_overflow")
-                    if await context_runtime.compact_now():
-                        run_state.hard_budget_retries += 1
-                        _event = context_runtime.take_event()
-
-                        if _event:
-                            yield f"data: {_core.json.dumps(_event, ensure_ascii=False)}\n\n"
-                        if verify_mode:
-                            run_state.verify_rounds -= 1
-                        else:
-                            run_state.task_rounds -= 1
-                        _core._log.warning("[core] provider overflow 后完成历史压缩，重试当前 round")
-                        continue
-                    if await context_runtime.apply_deterministic_fallback("provider_overflow_fallback"):
-                        _event = context_runtime.take_event()
-
-                        if _event:
-                            yield f"data: {_core.json.dumps(_event, ensure_ascii=False)}\n\n"
-                        run_state.hard_budget_retries += 1
-                        if verify_mode:
-                            run_state.verify_rounds -= 1
-                        else:
-                            run_state.task_rounds -= 1
-                        _core._log.warning("[core] provider 返回上下文超量，执行一次确定性截断重试")
-                        continue
-                    yield stream_event("_context_compaction", phase="completed", applied=False,
-                                       reason="not_applied")
-                # _core._stream_round 已经把原始异常记进受限诊断出口、也记过 WARNING 了，这里不重复记；
-                # 只根据 cause 类型挑一句降级文案给用户。文案带「上游 状态码 错误类型」的
-                # 脱敏技术标签（不含上游正文/provider 名，正文在 diag_log）——用户能一眼
-                # 看出是上游过载还是故障，而不是只收到一句 ack（2026-09-18 529 排查后定稿）。
-                # 429 限流与 529 过载同属「上游忙」，按状态码判定、与具体 SDK 解耦
-                # （anthropic/openai 两条链路的重试用尽都落到这里）
-                attempts_done = int(getattr(e, "attempt", 0) or 0)
-                error_info = describe_llm_error(
-                    e, attempts=attempts_done, diagnostic_context=diagnostic_context,
-                )
-                yield f"data: {_core.json.dumps(error_info.as_event(), ensure_ascii=False)}\n\n"
-                return
             except Exception as e:
                 from app.core.errors import AppError
-                if isinstance(e, AppError):
+
+                if overflow_recovery_pending:
+                    context_runtime.take_event()
+                    yield stream_event("_context_compaction", phase="completed", applied=False,
+                                       reason="provider_retry_failed")
+                retryable = isinstance(e, _core.RetryableError)
+                if isinstance(e, AppError) and not retryable:
                     if reasoning_state is not None:
                         await reasoning_state.failed(e.code)
-                    yield f"data: {_core.json.dumps({'type': 'error', 'detail': e.public_message}, ensure_ascii=False)}\n\n"
+                    yield stream_event("error", detail=e.public_message)
                     return
                 if reasoning_state is not None:
                     await reasoning_state.failed("provider_rejected")
-                from agent.context.budget import is_context_overflow_error
                 if is_context_overflow_error(e) and run_state.hard_budget_retries < 1:
                     yield stream_event("_context_compaction", phase="started", reason="provider_overflow")
-                    if await context_runtime.compact_now():
+                    if await context_runtime.compact_now() or await context_runtime.apply_deterministic_fallback(
+                        "provider_overflow_fallback",
+                    ):
                         run_state.hard_budget_retries += 1
-                        _event = context_runtime.take_event()
-
-                        if _event:
-                            yield f"data: {_core.json.dumps(_event, ensure_ascii=False)}\n\n"
+                        overflow_recovery_pending = True
                         if verify_mode:
                             run_state.verify_rounds -= 1
                         else:
                             run_state.task_rounds -= 1
-                        _core._log.warning("[core] provider overflow 后完成历史压缩，重试当前 round")
-                        continue
-                    if await context_runtime.apply_deterministic_fallback("provider_overflow_fallback"):
-                        _event = context_runtime.take_event()
-
-                        if _event:
-                            yield f"data: {_core.json.dumps(_event, ensure_ascii=False)}\n\n"
-                        run_state.hard_budget_retries += 1
-                        if verify_mode:
-                            run_state.verify_rounds -= 1
-                        else:
-                            run_state.task_rounds -= 1
-                        _core._log.warning("[core] provider 返回上下文超量，执行一次确定性截断重试")
+                        _core._log.warning("[core] provider 返回上下文超量，缩减历史后重试一次")
                         continue
                     yield stream_event("_context_compaction", phase="completed", applied=False,
                                        reason="not_applied")
-                # 已吐 token 后中途失败或其他未预期异常按未知错误处理。错误描述器会把原始异常
-                # 写入受限诊断日志，并将同一诊断编号返回给用户；上下文保留 provider 与 api_format。
-                _core._log.error("LLM 调用中途出错：%s", type(e).__name__)
+                if not retryable:
+                    _core._log.error("LLM 调用中途出错：%s", type(e).__name__)
                 error_info = describe_llm_error(
-                    e,
-                    diagnostic_context=diagnostic_context,
+                    e, attempts=int(getattr(e, "attempt", 0) or 0), diagnostic_context=diagnostic_context,
                 )
                 yield f"data: {_core.json.dumps(error_info.as_event(), ensure_ascii=False)}\n\n"
                 return
+
+            if overflow_recovery_pending:
+                overflow_recovery_pending = False
+                event = context_runtime.take_event()
+                if event:
+                    yield f"data: {_core.json.dumps(event, ensure_ascii=False)}\n\n"
 
             run_state.total_usage_in += result.usage_in
             run_state.total_usage_out += result.usage_out

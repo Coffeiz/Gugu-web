@@ -14,6 +14,7 @@ from typing import Any
 
 import httpx
 
+from agent.context.budget import is_context_overflow_error
 from agent.providers.errors import anthropic_stream_protocol_details
 from app.core.errors import RetryableError
 from app.core.redaction import diag_log
@@ -116,8 +117,8 @@ async def stream_round(client, kwargs, adapter=None):
                 yield ("final", await stream.get_final_message())
                 return
         except Exception as e:
-            if emitted:
-                raise   # 已吐 token，重试会重复输出——原样抛给上层当未知/中断处理
+            if emitted or is_context_overflow_error(e):
+                raise   # 交给主循环处理已输出的中断或确定的输入超限
             if _recoverable_stream_error(e, adapter, transient):
                 provider = adapter.name if adapter is not None else "unknown"
                 try:

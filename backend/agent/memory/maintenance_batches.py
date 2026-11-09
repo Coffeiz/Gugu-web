@@ -13,23 +13,33 @@ MAX_BATCH_CHARS = 24_000
 MAX_EXISTING_MEMORY_CHARS = 12_000
 
 
-
 @dataclass(frozen=True)
 class MaintenanceContextBudget:
     """维护模型输入的统一预算契约。"""
 
     output_tokens: int
+    batch_chars: int
+    existing_memory_chars: int
 
 
 def resolve_maintenance_budget(model_cfg) -> MaintenanceContextBudget:
-    """从当前模型配置派生维护预算，不维护独立的维护预算常量。"""
+    """按配置选择初始字符分档，实际请求能否容纳由 Provider 决定。"""
     config = getattr(model_cfg, "ai", model_cfg)
     context_tokens = int(getattr(config, "context_tokens", 0) or 0)
     output_tokens = int(getattr(config, "max_tokens", 0) or 0)
     if context_tokens <= 1 or output_tokens <= 0:
         raise ValueError("当前模型缺少有效的 context_tokens/max_tokens")
-    output_tokens = min(output_tokens, context_tokens - 1)
-    return MaintenanceContextBudget(output_tokens)
+    # 小窗口先为固定提示词和新增内容留出空间，再选择独立的字符上限。
+    output_tokens = min(output_tokens, max(1, context_tokens // 4))
+    for window, batch, memory in (
+        (4_096, 1_000, 400),
+        (8_192, 2_500, 1_000),
+        (16_384, 6_000, 2_000),
+        (32_768, 12_000, 6_000),
+    ):
+        if context_tokens <= window:
+            return MaintenanceContextBudget(output_tokens, batch, memory)
+    return MaintenanceContextBudget(output_tokens, MAX_BATCH_CHARS, MAX_EXISTING_MEMORY_CHARS)
 
 
 @dataclass(frozen=True)
@@ -84,10 +94,10 @@ def split_batches(
                 has_oversized_item=True,
             ))
             continue
-        if current and current_chars + item_chars > max_chars:
+        if current and current_chars + 1 + item_chars > max_chars:
             flush()
+        current_chars += item_chars + bool(current)
         current.append(item)
-        current_chars += item_chars
     flush()
     return batches
 
@@ -102,13 +112,16 @@ def pattern_batches(patterns: Sequence[dict]) -> list[MaintenanceBatch[dict]]:
     )
 
 
-def message_batches(messages: Sequence[T], render: Callable[[T], str], source_id: Callable[[T], str]) -> list[MaintenanceBatch[T]]:
+def message_batches(
+    messages: Sequence[T], render: Callable[[T], str], source_id: Callable[[T], str],
+    *, max_chars: int = MAX_BATCH_CHARS,
+) -> list[MaintenanceBatch[T]]:
     """按完整 IM 消息切批，消息正文不会跨批拆分。"""
     return split_batches(
         messages,
         render,
         source_id,
-        max_chars=MAX_BATCH_CHARS,
+        max_chars=max_chars,
     )
 
 
@@ -123,9 +136,8 @@ def scope_revision(current: object, source_ids: Sequence[object], source_text: s
     return hashlib.sha256(payload).hexdigest()
 
 
-def bounded_scope_memory(current: dict) -> str:
+def bounded_scope_memory(current: dict, *, max_chars: int = MAX_EXISTING_MEMORY_CHARS) -> str:
     """只为维护模型提供受限的已有记忆视图，不静默返回完整 scope JSON。"""
-    budget = MAX_EXISTING_MEMORY_CHARS
     parts: list[str] = []
     used = 0
     for key in ("summary", "profile", "pattern", "memory", "daily"):
@@ -133,11 +145,13 @@ def bounded_scope_memory(current: dict) -> str:
         if not value:
             continue
         text = json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else str(value)
-        remaining = budget - used
+        label = f"{key}: "
+        separator = bool(parts)
+        remaining = max_chars - used - len(label) - separator
         if remaining <= 0:
             break
         text = text[:remaining].rstrip()
         if text:
-            parts.append(f"{key}: {text}")
-            used += len(text)
+            parts.append(label + text)
+            used += len(parts[-1]) + separator
     return "\n".join(parts)
