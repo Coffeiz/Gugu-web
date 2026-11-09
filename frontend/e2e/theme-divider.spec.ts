@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test'
 
+const palettes = ['mist', 'cafe', 'rose', 'sky', 'sage']
+
 test('所有浅色配色和材质下的分隔线与虚线边界都有可见对比', async ({ page }) => {
   await page.goto('/skills')
   await expect(page.locator('.skills-panel')).toBeVisible()
@@ -58,7 +60,7 @@ test('所有浅色配色和材质下的分隔线与虚线边界都有可见对�
         else root.dataset[key] = value
       }
     }
-  }, ['mist', 'cafe', 'rose', 'sky', 'sage'])
+  }, palettes)
 
   for (const sample of samples) {
     expect(
@@ -69,5 +71,42 @@ test('所有浅色配色和材质下的分隔线与虚线边界都有可见对�
       sample.dashedOutlineDistance,
       `${sample.palette}/${sample.family} 浅色虚线边界不应融入白色背景`,
     ).toBeGreaterThanOrEqual(10)
+  }
+})
+
+test('日历侧栏的组间分隔线跟随主题内容色，不受卡片描边样式覆盖', async ({ page }) => {
+  await page.goto('/calendar')
+  const sidebar = page.locator('.cal-sidebar')
+  await expect(sidebar).toBeVisible()
+  const dividers = sidebar.locator('.sidebar-divider')
+  await expect(dividers).toHaveCount(3)
+
+  const samples = await dividers.evaluateAll((lines, palettes) => {
+    const root = document.documentElement
+    const previous = { theme: root.dataset.theme, family: root.dataset.family, palette: root.dataset.palette }
+    const reference = document.createElement('span')
+    reference.style.cssText = 'position:absolute;background-color:var(--content-divider)'
+    lines[0].parentElement!.append(reference)
+
+    try {
+      return ['light', 'dark'].flatMap(theme => ['glass', 'mono'].flatMap(family => palettes.map(palette => {
+        Object.assign(root.dataset, { theme, family, palette })
+        return {
+          name: `${theme}/${family}/${palette}`,
+          expectedColor: getComputedStyle(reference).backgroundColor,
+          colors: lines.map(line => getComputedStyle(line).backgroundColor),
+        }
+      })))
+    } finally {
+      reference.remove()
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete root.dataset[key]
+        else root.dataset[key] = value
+      }
+    }
+  }, palettes)
+
+  for (const { name, colors, expectedColor } of samples) {
+    expect(colors, `${name} 日历侧栏三个分隔线颜色`).toEqual(Array(3).fill(expectedColor))
   }
 })

@@ -63,6 +63,8 @@ description: 产品设计规范摘要。Glassmorphism 视觉风格、色板系�
 - 实心表面上的分隔线/网格线，禁止使用玻璃边框 token；用从内容色派生的语义令牌
   （如 `--border-document-table`、`--chart-grid-line`、`--chart-tick`，定义在
   `tokens/semantic.css`，均为 `color-mix` 自内容色，随主题明暗自动反转）。
+- 卡片内部的普通内容分隔线统一用 `--content-divider`，包括玻璃卡片内部。由组件定义线条，
+  全局主题兼容样式不要用卡片外描边令牌覆盖；回归验收检查页面的最终计算颜色。
 - 需要新的"实心表面线色"或图表专用色时，先在 `semantic.css` 加语义令牌再消费，
   不要在组件里单独写亮色兜底；canvas 图表（chart.js 不继承 CSS 颜色）用
   `getComputedStyle` 运行时解析令牌值（参考 `_shared.ts` 的 `cssVar` /

@@ -103,12 +103,14 @@ html[data-theme][data-family] .cal-page .wv-ad-hover.weekend {
 html[data-theme][data-family] .cal-page .month-cell.is-today.is-weekend {
   background: var(--calendar-weekend-hover-bg) !important;
 }
-html[data-theme][data-family] .cal-page .month-cell.is-selected.is-weekend,
 html[data-theme][data-family] .cal-page .month-cell.in-range.is-weekend,
 html[data-theme][data-family] .cal-page .wv-dhead.selected.weekend::before,
 html[data-theme][data-family] .cal-page .wv-ad-sel.weekend,
 html[data-theme][data-family] .cal-page .wv-col.weekend .wv-selected {
   background: var(--calendar-weekend-selected-bg) !important;
+}
+html[data-theme][data-family] .cal-page .month-cell.is-selected.is-weekend {
+  background: var(--calendar-weekend-range-edge-bg) !important;
 }
 html[data-theme][data-family] .cal-page .month-cell.range-start.is-weekend,
 html[data-theme][data-family] .cal-page .month-cell.range-end.is-weekend {
@@ -118,7 +120,7 @@ html[data-theme][data-family] .cal-page .month-cell.is-selected:not(.is-today).i
 html[data-theme][data-family] .cal-page .month-cell.range-start.is-weekend .cell-num,
 html[data-theme][data-family] .cal-page .month-cell.range-end.is-weekend .cell-num {
   color: var(--calendar-weekend-fg) !important;
-  background: var(--calendar-weekend-date-bg) !important;
+  background: var(--calendar-weekend-range-edge-bg) !important;
 }
 html[data-theme][data-family] .cal-page .month-cell.is-today .cell-num,
 html[data-theme][data-family] .cal-page .month-cell.is-today.is-weekend .cell-num,

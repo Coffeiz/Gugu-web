@@ -1044,7 +1044,7 @@
     "layer": "L3",
     "owner": "frontend/e2e",
     "productionEntry": "frontend/src/assets/styles/tokens/semantic.css",
-    "keyBehavior": "所有浅色配色和材质下分隔线及虚线边界均与浅色背景保持可见对比",
+    "keyBehavior": "浅色分隔线和虚线边界与背景保持可见对比，日历侧栏的组间分隔线在各主题下使用内容分隔线颜色",
     "ci": "runtime-integration"
   },
   "frontend/e2e/page-lifecycle.spec.ts": {
