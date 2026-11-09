@@ -192,6 +192,57 @@ async def test_history_hydrates_only_recent_bounded_image_snapshots(db, user_a):
 
 
 @pytest.mark.asyncio
+async def test_history_image_block_limit_applies_across_multi_image_messages(db, user_a):
+    """多图消息按图片块总数裁剪，且预算优先留给最近消息。"""
+    session = ConversationSession(user_id=user_a.id, title="多图历史", source="web")
+    db.add(session)
+    await db.flush()
+    db.add_all([
+        ConversationMessage(
+            session_id=session.id,
+            role="user",
+            content=f"多图消息 {index}",
+            provider_image_content=[
+                {"type": "text", "text": f"多图消息 {index}"},
+                *[
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{index}-{image}"}}
+                    for image in range(5)
+                ],
+            ],
+        )
+        for index in range(12)
+    ])
+    await db.commit()
+
+    history = await load_session_history(db, session.id)
+    stats = consume_history_stats()
+    restored = [item for item in history if "provider_image_content" in vars(item)]
+    restored_image_blocks = [
+        block
+        for item in restored
+        for block in vars(item)["provider_image_content"]
+        if isinstance(block, dict) and block.get("type") in {"image", "image_url"}
+    ]
+
+    assert len(restored_image_blocks) == 12
+    assert [item.content for item in restored] == [
+        "多图消息 9", "多图消息 10", "多图消息 11",
+    ]
+    assert [
+        sum(
+            isinstance(block, dict) and block.get("type") in {"image", "image_url"}
+            for block in vars(item)["provider_image_content"]
+        )
+        for item in restored
+    ] == [2, 5, 5]
+    assert vars(restored[0])["provider_image_content"][0] == {
+        "type": "text", "text": "多图消息 9",
+    }
+    assert stats["history_image_snapshots_loaded"] == 3
+    assert stats["history_image_snapshot_bytes"] <= 8 * 1024 * 1024
+
+
+@pytest.mark.asyncio
 async def test_history_image_snapshot_candidates_stop_after_48_user_messages(db, user_a):
     """图片候选范围是最近 48 条用户消息；更早图片不会穿过长文本对话回放。"""
     session = ConversationSession(user_id=user_a.id, title="长文本后的图片", source="web")
