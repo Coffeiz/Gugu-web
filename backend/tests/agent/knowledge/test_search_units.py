@@ -2,12 +2,20 @@
 
 覆盖：相似图搜索的图片解析守卫、百度通路配置与配额、deep_research 的凭据和配额。
 """
+import base64
 import io
 from types import SimpleNamespace
 
 import pytest
 
 from agent.tools import search as search_mod
+
+
+def _png_bytes():
+    """返回最小有效 PNG，供相似图输入路径验证真实图片解析。"""
+    return base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    )
 
 
 def _settings(**search_overrides):
