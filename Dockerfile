@@ -304,7 +304,7 @@ RUN mkdir -p logs \
 EXPOSE 9595
 
 # 默认 Compose 使用一体化应用镜像；前端、Nginx、Uvicorn、worker 与 IM gateway
-# 由同一个应用服务提供，PostgreSQL / Redis / SearXNG 由 Compose 中的独立服务提供。
+# 由同一个应用服务提供，PostgreSQL / Redis 由 Compose 中的独立服务提供。
 # 镜像声明应用变量，便于部署面板识别；SECRET_KEY 留空时由入口首次启动生成，
 # DB__PASSWORD 由 Compose 注入。入口端口统一 9595：Nginx 在容器内监听 9595，
 # Uvicorn 藏在 127.0.0.1:8001 后面（GUGU_APP_PORT），对外只有 9595 一个入口。

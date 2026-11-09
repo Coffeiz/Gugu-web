@@ -1508,7 +1508,7 @@ class AgentUsage(Base):
 
 class SearchUsage(Base):
     """深度研究用量：每次 deep_research（Tavily）记一行，用于每日次数配额统计。
-    （xng_search 走自建 SearXNG、免费，不计配额。）"""
+    （深度研究调用按配置计入配额。）"""
     __tablename__ = "search_usage"
 
     id:         Mapped[int]      = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -1557,8 +1557,8 @@ class UserBot(Base):
     # 群成员可用工具白名单；默认含群上下文搜索，不开放用户私有内容和写操作。
     group_allowed_tools: Mapped[Optional[list]] = mapped_column(
         JSON, nullable=True,
-        default=lambda: ["xng_search", "http_get", "similar_image_search", "read_file", "send_file", "group_context_search"],
-        server_default='["xng_search"]',
+        default=lambda: ["web_search", "http_get", "similar_image_search", "read_file", "send_file", "group_context_search"],
+        server_default='["web_search"]',
     )
     # QQ 文本出站格式：compat=兼容纯文本，markdown=Markdown 排版。
     group_message_format: Mapped[str] = mapped_column(String(16), default="compat")

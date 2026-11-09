@@ -894,7 +894,7 @@ async def test_synthetic_tool_round_survives_canonical_persistence_and_restore(
     arguments = {"max_results": 3, "query": "合成查询", "options": {"z": 1, "a": 2}}
     call = NormalizedToolCall(
         id="call-synthetic-order",
-        name="xng_search",
+        name="web_search",
         input=arguments,
         raw_arguments=json.dumps(arguments, ensure_ascii=False, separators=(",", ":")),
     )

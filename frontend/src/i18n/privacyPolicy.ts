@@ -53,7 +53,7 @@ export const privacyPolicy = {
 
 ### 联网搜索
 
-启用联网搜索后，搜索关键词会发送给 Admin 选择的搜索提供商（例如 SearXNG、Tavily、百度搜索或 You.com）。咕咕不会主动把搜索词与账户身份一并提供给上游服务。
+启用联网搜索后，搜索关键词会发送给 Admin 选择的搜索提供商（例如 Tavily、百度搜索或 You.com）。咕咕不会主动把搜索词与账户身份一并提供给上游服务。
 
 ### IM 与邮件
 
@@ -139,7 +139,7 @@ The services actually enabled depend on the site configuration.
 
 - **AI providers**: conversation content and task context may be sent to the configured provider, such as Anthropic, OpenAI, Alibaba Cloud, DeepSeek, MiniMax, or Zhipu GLM. Provider privacy policies also apply, and overseas providers may process data outside China.
 - **File storage**: files remain on the Gugu server with local storage, or are stored by Alibaba Cloud OSS when configured.
-- **Web search**: search terms may be sent to the configured provider, such as SearXNG, Tavily, Baidu Search, or You.com. Gugu does not intentionally send your account identity with the query.
+- **Web search**: search terms may be sent to the configured provider, such as Tavily, Baidu Search, or You.com. Gugu does not intentionally send your account identity with the query.
 - **IM and email**: IM messages follow the relevant platform policy. SMTP is used only for administrator feedback notifications and does not include passwords or API keys.
 
 ## 4. AI Memory
@@ -192,7 +192,7 @@ Material changes will update the effective date and be announced on the site or 
 
 ## 3. 第三者サービス
 
-実際に有効なサービスはサイト設定によります。会話と必要なタスク情報は設定された AI Provider（Anthropic、OpenAI、Alibaba Cloud、DeepSeek、MiniMax、Zhipu GLM など）へ送信される場合があります。OSS を設定した場合は Alibaba Cloud OSS にファイルを保存します。検索語は設定された検索 Provider（SearXNG、Tavily、Baidu Search、You.com など）へ送信される場合があります。IM は各プラットフォームのポリシーに従い、SMTP は管理者へのフィードバック通知だけに使用します。
+実際に有効なサービスはサイト設定によります。会話と必要なタスク情報は設定された AI Provider（Anthropic、OpenAI、Alibaba Cloud、DeepSeek、MiniMax、Zhipu GLM など）へ送信される場合があります。OSS を設定した場合は Alibaba Cloud OSS にファイルを保存します。検索語は設定された検索 Provider（Tavily、Baidu Search、You.com など）へ送信される場合があります。IM は各プラットフォームのポリシーに従い、SMTP は管理者へのフィードバック通知だけに使用します。
 
 ## 4. AI メモリ
 

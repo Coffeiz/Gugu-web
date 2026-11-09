@@ -180,7 +180,7 @@ docker run -d --name gugu-web \
 
 `Gugu-data` 保存用户数据和运行配置，`Gugu-config` 保存 Admin 配置；升级或重建容器时保留这两个目录。正式部署建议把 `latest` 换成固定版本标签。
 
-Shell 沙盒由镜像内的 Rootless Docker 和沙盒管理器运行，不需要挂载宿主 Docker Socket。外层 app 容器必须启用 `--privileged`；此方式面向可信个人单用户，不适用于多租户、公网或业务服务器。单容器镜像不包含 SearXNG，因此不提供联网搜索；如需联网搜索或 Compose 管理，请使用[快速部署指南中的 Compose 路径](docs/quick-deploy.md)。
+Shell 沙盒由镜像内的 Rootless Docker 和沙盒管理器运行，不需要挂载宿主 Docker Socket。外层 app 容器必须启用 `--privileged`；此方式面向可信个人单用户，不适用于多租户、公网或业务服务器。联网搜索由当前模型 Provider 提供；如需 Compose 管理，请使用[快速部署指南](docs/quick-deploy.md)。
 
 分体生产 Compose 继续使用独立 Rootless sandboxd；详细部署边界、Compose 路径和 NAS 图形界面步骤见[快速部署指南](docs/quick-deploy.md)。
 
@@ -206,7 +206,7 @@ README 只保留配置索引，完整变量和运行规则将在 `docs/configura
 | Database | 主数据存储，默认使用 PostgreSQL |
 | Redis | 消息、会话和 Runtime 状态 |
 | LLM / BYOK | 模型提供商和个人 API Key |
-| Search | 内置 SearXNG Web Search 与站内搜索后端 |
+| Search | Provider 网页搜索与站内搜索后端 |
 | Mail | 支持 Admin 系统 SMTP 和用户个人 SMTP；咕咕可按授权主动发邮件，定时任务可通过邮件汇报执行结果；Admin 还支持模板编辑、预览、测试发送和中日英多语言更新邮件，用户可在注册或偏好设置中管理订阅 |
 | IM | QQ、微信、飞书、Telegram 连接 |
 | LoopScope | Agent 链路和性能观测 |

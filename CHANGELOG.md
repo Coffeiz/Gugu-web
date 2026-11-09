@@ -5,6 +5,12 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### Improvements
+
+- 移除自托管搜索服务及其配置；网页搜索改由当前模型 Provider 提供，并保留用户图片的相似图搜索。
+
 ## [1.7.8] - 2026-11-05
 
 ### What's New

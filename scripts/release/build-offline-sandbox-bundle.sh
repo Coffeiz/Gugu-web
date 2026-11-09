@@ -33,7 +33,6 @@ fi
 if ((${#images[@]} == 0)); then
   images=(
     "${GUGU_WEB_IMAGE:-coffeiz/gugu-web:latest}"
-    "${GUGU_SEARCH_IMAGE:-searxng/searxng:latest}"
   )
 fi
 

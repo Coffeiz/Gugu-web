@@ -66,7 +66,6 @@
 | **sandboxd**   | 通过 Unix Socket 承接 Rootless Docker 沙盒执行；不接受调用方传入 Docker 参数 | `.venv/bin/python -m agent.sandbox.sandboxd --socket ... --allowed-root ...` | 启用生产 Shell 沙盒时 |
 | PostgreSQL     | 主数据库                               | 系统服务 / Docker                                   | 必须     |
 | Redis          | IM 消息队列（Streams）                   | 系统服务 / Docker                                   | 接 IM 时 |
-| SearXNG        | 自建通用搜索（`web_search`，省 Tavily 配额）   | Docker / 1Panel                                 | 可选     |
 
 
 > 前端：开发用 `corepack pnpm --filter gugu-web run dev`（:5173）；生产用 `corepack pnpm --filter gugu-web run build` 生成 `dist/`，由 nginx 托管。前端依赖使用根 `pnpm-lock.yaml`，其中 `gugu-interaction-runtime` 是从 npm registry 获取的外部包。
@@ -303,76 +302,6 @@ cd backend
 - 裸机 systemd 部署与一体化镜像都没有公开默认密码；一体化镜像在完全未设置 `ADMIN_PASSWORD` 时首启自动生成随机密码（写入数据卷 `.env` 并打印日志，重建容器不丢），裸机部署在 `.env` 设置 `ADMIN_USERNAME` / `ADMIN_PASSWORD` 后重启后端，再登录后台。
 - 登录后在「系统配置 / Agent 配置」里设 DB / Redis / AI provider / 存储 / 频道。
 
-### 3.9 SearXNG 自建搜索（Compose 默认内置）
-
-咕咕的 `web_search`（通用搜索）走自建 **SearXNG**，免费、不计配额；`deep_research`（外部资料研究）走 Admin 选择的 Tavily、百度搜索或 You.com。百度分支使用普通 `/v2/ai_search/web_search`，不调用 DeepResearch Agent。
-根目录 `docker-compose.yml` 已默认包含 SearXNG，执行 `docker compose up -d` 后，后端自动使用
-Compose 内网地址 `http://searxng:8080`，不需要在 Admin 页面手填地址。
-
-Compose 还会自动执行一次数据库迁移，并把用户文件、缩略图、记忆和工作区统一保存到
-宿主机 `Gugu-data/users/` 的 bind mount（容器内为 `/data/users`）。重建容器不会删除该目录；删除映射目录才会删除用户数据。
-
-注意：`backend/config.override.json` 是应用的最高优先级配置。若是从已有部署迁移到
-Compose，请检查其中是否还保留旧的 `db`、`storage` 或 `search.searxng_url`；这些字段会
-覆盖 Compose 注入的服务地址。AI provider 等需要保留的 Admin 配置不受影响。
-
-如果不使用 Docker，或希望使用另一台机器上的 SearXNG，再按下面的独立部署方式配置地址。
-
-**推荐用 compose**（配置文件挂出来可改、重建不丢；1Panel → 容器 → 编排 直接贴）。⚠️ 两个最常踩的坑：① 必须开 `formats: json`，否则后端拿到 **403 Forbidden**；② SearXNG 与后端**不在同一台机**时，端口要发布到 `0.0.0.0`、地址填 `http://内网IP:端口`（不能填 127.0.0.1）。
-
-```yaml
-# docker-compose.yml
-services:
-  searxng:
-    image: searxng/searxng:latest        # 国内拉不动换 docker.m.daocloud.io/searxng/searxng:latest
-    container_name: searxng
-    restart: unless-stopped
-    ports:
-      - "8888:8080"                       # 跨机访问发布到 0.0.0.0；仅同机用可写 127.0.0.1:8888:8080
-    volumes:
-      - ./searxng:/etc/searxng:rw         # 配置挂出来，可编辑、重建不丢
-    environment:
-      - SEARXNG_BASE_URL=http://内网IP:8888/
-      - UWSGI_WORKERS=1
-      - UWSGI_THREADS=2
-    mem_limit: 350m                       # 内存紧 / 与 DB 同机时限死，OOM 也只杀它、不拖垮别人
-```
-
-**配 settings.yml**（两选一）：
-- **A 先启动再改**：`docker compose up -d` 后，编排目录的 `searxng/` 下会生成默认 `settings.yml` → 改两处：`server.limiter: false`、`search.formats` 加 `json` → 重启容器。
-- **B 先放好再启动**：在编排目录建 `searxng/settings.yml`：
-  ```yaml
-  use_default_settings: true
-  server:
-    secret_key: "改成随机串：openssl rand -hex 32"
-    limiter: false
-  search:                      # ← 独立顶层段，和 server 平级
-    formats:
-      - html
-      - json
-  ```
-  ⚠️ **`formats` 属于 `search:` 段，别误塞进 `server:`**——`search:` 是和 `server:` 平级的独立顶层段；放错位置 JSON 不生效、测试仍 403（常见错误）。
-
-**配置 + 验证**：Docker Compose 环境可在宿主机用 `http://127.0.0.1:8888` 测试；后端实际使用
-`http://searxng:8080`。非 Docker 环境在 Admin → Agent → 联网搜索填写同机
-`http://127.0.0.1:8888`，跨机填写 `http://内网IP:8888`，然后点击「测试」。
-
-根目录的三套 Compose 会把 SearXNG 配置直接内嵌到 Compose，已经包含
-`search.formats: [html, json]` 和 `server.limiter: false`，不要求额外同步
-`searxng/settings.yml`。独立部署或自定义覆盖时仍可使用该文件。默认 secret key 只适用于本地/内网开发；生产环境必须替换它，并通过防火墙或反向代理限制 8888 访问，不能把这个无认证 JSON 接口直接暴露到公网。
-
-#### 默认一体化 Compose 沙箱
-
-根目录 `docker-compose.yml` 只有 `app` 与可选搜索服务等业务服务；默认一体化应用镜像在 app 容器内部托管 PostgreSQL、Redis、Rootless Docker、sandbox manager 和 egress proxy。固定 Shell 执行镜像及代理镜像由发布构建流程打包并校验。Compose 不定义独立 `sandboxd` / `egress-proxy` 服务，也不挂载宿主机 Docker socket；app 通过内部 Unix Socket 使用沙盒管理器。
-
-部署时按一体化 Compose 的 `.env` 和 `/data` 持久化约定启动：
-
-```bash
-docker compose up -d
-```
-
-如果内置 Rootless daemon、固定镜像或 sandbox manager 未就绪，Shell 会明确不可用，不会回退到宿主机命令。不要为此给 app 增加宿主 Docker socket 挂载，也不要通过设置旧的 `GUGU_DOCKER_SOCKET` 改变执行边界。
-
 ### 3.10 生产构建物 Compose（默认端口 9595）
 
 生产环境不要使用前面的开发 Compose。拆分业务 Compose 只消费已经构建好的
@@ -425,10 +354,6 @@ Docker socket。非 Compose 部署需在 `config.override.json` 的 `sandbox` �
 `egress_proxy_url`、`egress_network_name` 和 `egress_isolation_enabled`，并确保这些配置对
 sandboxd 可见；配置变更后重启 `gugu-sandboxd gugu-backend gugu-worker`。
 
-- 测试返回 **403** = 没开 `formats: json`；**0 结果** = 引擎被限/不可达；**连不上** = 端口没发布到 0.0.0.0 或地址填错。
-- **引擎**：国内服务器 google/bing/ddg 多会超时，一般只有 `sogou,quark,360search` 可达——按「测试」结果里列出的「超时引擎」调整「SearXNG 引擎」那栏。
-- **安全**：`0.0.0.0` + `limiter: false` = 内网无认证可用；要更严可用防火墙只放行后端那台访问 8888。
-- 关掉 SearXNG（清空地址）后，`web_search` 不可用；需要深度总结时使用 Admin 配置的 `deep_research` Provider。
 
 ---
 
@@ -1016,11 +941,11 @@ app 内 `/data/.env` 中已生效的数据库密码，不把密码写入命令�
 > 🔥 **dockerd 升级 / 服务器重启后的两个坑（2026-09-12 生产实战）**：
 >
 > 1. **dockerd 升级后必须全栈重建容器**。docker-ce 升级（如 29.8.0）+ 重启后，重启前已存在的容器内嵌 DNS（127.0.0.11）解析服务名会 SERVFAIL——nginx 报 `frontend could not be resolved (2: Server failure)`（整站 502）、worker 报 `Error -3 connecting to redis:6379. Temporary failure in name resolution` 崩溃循环，但新重建的容器正常。修复：`cd <devserver部署目录> && docker compose -p gugu-web-main up -d --force-recreate`。**以后 dockerd 相关包升级，重启后必须跟一次全栈 force-recreate**。
-> 2. **检查每个容器的 restart 策略**。默认一体化 Compose 的 app 和 searxng
+> 2. **检查每个容器的 restart 策略**。默认一体化 Compose 的 app
 >    声明了 `restart: unless-stopped`；旧式分体 Compose 仍需逐个核对，避免
 >    数据库或 backend 因策略为 `no` 而不再自动拉起。
 >
-> 重启后验证清单：一体化 Compose 应看到 app 和 searxng；分体 Compose 还应看到
+> 重启后验证清单：一体化 Compose 应看到 app；分体 Compose 还应看到
 > backend、worker、gateway、frontend、nginx、postgres、redis 等本拓扑定义的服务。随后检查
 > 健康端点；一体化 Shell 状态通过 app 的健康信息/日志确认，分体 Shell 状态通过外部
 > sandbox manager 的运维入口确认。不要把一体化部署误判为缺少 postgres 容器或独立 sandboxd。

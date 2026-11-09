@@ -1599,14 +1599,6 @@
     "keyBehavior": "真实 PostgreSQL 临时 schema 验证列约束、默认值和迁移升降级",
     "ci": "backend-pytest"
   },
-  "backend/tests/agent/knowledge/test_searxng_search_status.py": {
-    "domain": "search",
-    "layer": "L0",
-    "owner": "backend/agent/tools",
-    "productionEntry": "agent/tools/search.py",
-    "keyBehavior": "空结果、引擎故障和超时不隐式调用付费研究",
-    "ci": "backend-pytest"
-  },
   "backend/tests/storage/filesync/test_missing_batch.py": {
     "domain": "filesync",
     "layer": "L2",
@@ -2117,14 +2109,6 @@
     "owner": "backend/agent/im/delivery_receipts.py",
     "productionEntry": "backend/agent/im/dispatch_finalization.py",
     "keyBehavior": "附件投递回执进入内部上下文，但不能跨会话或泄漏到其他用户历史",
-    "ci": "backend-pytest"
-  },
-  "backend/tests/platform/deployment/test_searxng_compose_defaults.py": {
-    "domain": "deployment-search-defaults",
-    "layer": "L1",
-    "owner": "docker-compose.yml 与 docker-compose.prod.yml",
-    "productionEntry": "SearXNG Compose 默认配置",
-    "keyBehavior": "Compose 默认启用 JSON 与配置的图片引擎，同时保留部署覆盖配置的行为",
     "ci": "backend-pytest"
   },
   "frontend/tests/interactions/runtime/setup.test.ts": {

@@ -667,7 +667,7 @@ def test_scheduled_tasks_skill_documents_interval_window_semantics():
     assert "修改调度类型时必须同时提供新类型所需字段" in update.description
 
 
-def test_xng_search_skill_contains_freshness_verification_protocol():
+def test_web_search_skill_contains_freshness_verification_protocol():
     from agent.skills import load_skill
 
     content = load_skill("S13")

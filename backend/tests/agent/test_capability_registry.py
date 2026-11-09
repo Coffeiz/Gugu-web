@@ -59,7 +59,7 @@ def test_tool_registry_snapshot_does_not_change_until_process_restart():
 def test_user_skill_metadata_snapshot_round_trips_without_skill_body():
     item = CapabilityMeta(
         name="U1", display_name="按需做法", kind="skill", description_short="按需加载的做法",
-        category="personal", related_tools=("xng_search",), source="user",
+        category="personal", related_tools=("web_search",), source="user",
         content_digest="old-digest", owner_fingerprint="owner-fingerprint",
     )
 
@@ -74,7 +74,7 @@ def test_user_skill_metadata_snapshot_round_trips_without_skill_body():
 async def test_user_skill_metadata_snapshot_skips_live_database_read():
     item = CapabilityMeta(
         name="U1", display_name="冻结技能", kind="skill", description_short="冻结目录",
-        related_tools=("xng_search",), source="user",
+        related_tools=("web_search",), source="user",
     )
 
     class NoDatabaseRead:
@@ -82,7 +82,7 @@ async def test_user_skill_metadata_snapshot_skips_live_database_read():
             raise AssertionError(f"不应读取数据库：{name}")
 
     index = await CapabilityIndex.from_registries_for_user(
-        NoDatabaseRead(), "owner-1", tool_names=["xng_search"],
+        NoDatabaseRead(), "owner-1", tool_names=["web_search"],
         skill_metadata=(item,),
     )
 
@@ -91,11 +91,11 @@ async def test_user_skill_metadata_snapshot_skips_live_database_read():
 
 def test_builtin_capability_snapshot_has_separate_tool_and_skill_maps():
     index = CapabilityIndex.from_registries(
-        tool_names=["xng_search"],
+        tool_names=["web_search"],
         skill_names=["S13"],
     )
-    snapshot = index.snapshot(["xng_search"])
-    assert set(snapshot.tools) == {"xng_search"}
+    snapshot = index.snapshot(["web_search"])
+    assert set(snapshot.tools) == {"web_search"}
     assert set(snapshot.skills) == {"S13"}
     assert all(len(item.description_short) <= 100 for item in snapshot.catalog)
 

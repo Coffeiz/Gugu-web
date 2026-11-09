@@ -15,7 +15,7 @@
 | backend/frontend 分离镜像发布 | ✅ 已完成 | CI 推送 `coffeiz/gugu-web-{backend,frontend}`，tag 为 `v1.0.x` 与 commit sha，仅 linux/amd64；现生产使用中。 |
 | 源码开发部署（Dev Compose） | ✅ 已完成 | `docker-compose.dev.yml` 保留源码挂载与热更新路径，供开发者使用。 |
 | 一体化应用镜像（前端+后端单镜像，仅生产运行时） | ✅ 已完成 | 根目录 `Dockerfile` 已通过 devserver linux/amd64 构建，镜像内含 Nginx + Uvicorn + worker + IM gateway。 |
-| 一键 Compose（app 内置 PG/Redis + 默认沙盒） | ✅ 已完成 | 根目录 `docker-compose.yml` 默认启动 app、egress-proxy 和 sandboxd；SearXNG 保持独立服务，离线 bundle 一次导入所有运行镜像。 |
+| 一键 Compose（app 内置 PG/Redis + 默认沙盒） | ✅ 已完成 | 根目录 `docker-compose.yml` 默认启动 app、egress-proxy 和 sandboxd；离线 bundle 一次导入所有运行镜像。 |
 | Docker Hub `latest` 滚动 tag | ✅ 已完成 | 正式发布 workflow 将稳定版本镜像标记为 `latest`。 |
 | 多架构镜像（arm64） | 🔲 待评估 | 本期明确不做，README 标注 amd64-only。 |
 | README/DEPLOY 一键部署章节 | ✅ 已完成 | 中英文 README、快速部署与运维文档均包含默认 Compose 路径。 |
@@ -60,7 +60,7 @@
 
 ### FR-DEPLOY-003：一键 compose
 
-根目录 `docker-compose.yml` 直接提供默认一体化应用配置与 `.env.example`：`docker compose up -d` 一条命令拉起内置 PostgreSQL/Redis 的 app、SearXNG 及默认启用的 Shell 沙盒服务。在线模式自动准备独立沙盒执行镜像；离线发布包一次导入所有运行镜像。应用镜像不在入口脚本中启动 sandboxd。Docker Socket 是沙盒运行前置条件。
+根目录 `docker-compose.yml` 直接提供默认一体化应用配置与 `.env.example`：`docker compose up -d` 一条命令拉起内置 PostgreSQL/Redis 的 app 及默认启用的 Shell 沙盒服务。在线模式自动准备独立沙盒执行镜像；离线发布包一次导入所有运行镜像。应用镜像不在入口脚本中启动 sandboxd。Docker Socket 是沙盒运行前置条件。
 
 ### FR-DEPLOY-004：启动前置检查
 

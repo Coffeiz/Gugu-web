@@ -18,26 +18,6 @@ def test_rag_auto_sources_are_enabled_by_default():
     ]
 
 
-def test_searxng_image_engines_default_include_broad_domestic_and_international_sources():
-    assert set(SearchSettings().searxng_image_engines.split(",")) == {
-        "baidu images",
-        "quark images",
-        "sogou images",
-        "bing images",
-        "brave.images",
-        "duckduckgo images",
-        "google images",
-        "qwant images",
-        "yandex images",
-        "pinterest",
-        "wikicommons.images",
-        "openverse",
-        "flickr",
-        "imgur",
-        "artstation",
-    }
-
-
 def test_rag_index_ttl_has_safe_default_and_bounds():
     settings = SearchSettings()
 
