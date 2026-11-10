@@ -1,11 +1,11 @@
 import socket
 import tempfile
-import threading
-import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+import scripts.wait_for_unix_socket as socket_waiter
 from scripts.wait_for_unix_socket import wait_for_unix_socket
 
 BACKEND_ROOT = Path(__file__).resolve().parents[3]
@@ -49,24 +49,30 @@ def test_sidecar_readiness_waits_for_a_listening_socket_and_rejects_stale_path()
             listener.close()
 
 
-def test_sidecar_readiness_waits_through_a_cold_start_longer_than_five_seconds():
+def test_sidecar_readiness_waits_through_a_cold_start_longer_than_five_seconds(monkeypatch):
     """模拟首次原生模块编译耗时超过旧 5 秒阈值后，sidecar 才开始监听。"""
     with tempfile.TemporaryDirectory(prefix="rag-") as temp_dir:
         socket_path = Path(temp_dir) / "r.sock"
         listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        listening = threading.Event()
+        clock_seconds = 0.0
+        listening = False
 
-        def start_listener_after_cold_start():
-            time.sleep(5.1)
-            listener.bind(str(socket_path))
-            listener.listen()
-            listening.set()
+        def advance_startup_clock(seconds):
+            nonlocal clock_seconds, listening
+            clock_seconds += seconds
+            if clock_seconds >= 5.1 and not listening:
+                listener.bind(str(socket_path))
+                listener.listen()
+                listening = True
 
-        starter = threading.Thread(target=start_listener_after_cold_start)
-        starter.start()
+        monkeypatch.setattr(
+            socket_waiter,
+            "time",
+            SimpleNamespace(monotonic=lambda: clock_seconds, sleep=advance_startup_clock),
+        )
         try:
             wait_for_unix_socket(str(socket_path), timeout_seconds=120.0)
-            assert listening.is_set()
+            assert listening
+            assert clock_seconds >= 5.1
         finally:
-            starter.join(timeout=1)
             listener.close()
