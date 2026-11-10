@@ -385,7 +385,7 @@ cmd_foreground() {
 cmd_install() {
     # 安装核心应用服务与受限 inotify 容量服务；只有后者以 root 运行，代码安装到 root-owned 路径。
     # Cython RAG 由 rag-sidecar 宿主统一托管（unix socket 共享热索引）；
-    # 后端进程在 socket 不可达时自动回退进程内 spawn。
+    # 配置了 sidecar socket 时不会静默回退，systemd 会等待 sidecar 就绪后再启动消费者。
     local services="$SYSTEMD_SERVICES"
     # 必须显式指定服务运行用户，避免安装脚本擅自改变项目归属。
     local run_user="${RUN_USER:-}"

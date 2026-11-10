@@ -6,7 +6,7 @@ import socket
 import time
 
 
-def wait_for_unix_socket(path: str, timeout_seconds: float = 5.0) -> None:
+def wait_for_unix_socket(path: str, timeout_seconds: float = 120.0) -> None:
     deadline = time.monotonic() + max(0.0, timeout_seconds)
     while True:
         client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -26,7 +26,7 @@ def wait_for_unix_socket(path: str, timeout_seconds: float = 5.0) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("path")
-    parser.add_argument("--timeout", type=float, default=5.0)
+    parser.add_argument("--timeout", type=float, default=120.0)
     args = parser.parse_args()
     wait_for_unix_socket(args.path, args.timeout)
 

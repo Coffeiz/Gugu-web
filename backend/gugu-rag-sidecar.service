@@ -11,6 +11,8 @@ Type=simple
 User=__RUN_USER__
 Group=__RUN_USER__
 TimeoutStopSec=25s
+# 首次 Cython 编译与预热可能较慢；为 120 秒 socket 就绪等待留出启动余量。
+TimeoutStartSec=130s
 # 以下路径由 start.sh install 按实际安装目录(APP_DIR)自动填入，勿手改占位符
 WorkingDirectory=__APP_DIR__
 Environment="PATH=__APP_DIR__/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -18,7 +20,7 @@ Environment="PATH=__APP_DIR__/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin
 Environment="GUGU_RAG_SIDECAR_SOCKET=/run/user/__RUN_UID__/gugu-rag-sidecar.sock"
 ExecStart=__APP_DIR__/.venv/bin/python -m agent.rag.sidecar_host --socket /run/user/__RUN_UID__/gugu-rag-sidecar.sock
 # 依赖方只有在 Unix socket 可连接后才启动；单看 socket 文件会误认残留文件已就绪。
-ExecStartPost=__APP_DIR__/.venv/bin/python __APP_DIR__/scripts/wait_for_unix_socket.py /run/user/__RUN_UID__/gugu-rag-sidecar.sock
+ExecStartPost=__APP_DIR__/.venv/bin/python __APP_DIR__/scripts/wait_for_unix_socket.py --timeout 120 /run/user/__RUN_UID__/gugu-rag-sidecar.sock
 Restart=on-failure
 RestartSec=3
 

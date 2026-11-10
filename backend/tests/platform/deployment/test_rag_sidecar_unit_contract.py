@@ -1,5 +1,7 @@
 import socket
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -24,6 +26,8 @@ def test_rag_consumers_require_sidecar_and_wait_for_socket_readiness():
     sidecar = (BACKEND_ROOT / "gugu-rag-sidecar.service").read_text(encoding="utf-8")
     assert "ExecStartPost=__APP_DIR__/.venv/bin/python" in sidecar
     assert "scripts/wait_for_unix_socket.py" in sidecar
+    assert "--timeout 120" in sidecar
+    assert "TimeoutStartSec=130s" in sidecar
     assert "/run/user/__RUN_UID__/gugu-rag-sidecar.sock" in sidecar
 
 
@@ -42,4 +46,27 @@ def test_sidecar_readiness_waits_for_a_listening_socket_and_rejects_stale_path()
             listener.listen()
             wait_for_unix_socket(str(socket_path), timeout_seconds=0.2)
         finally:
+            listener.close()
+
+
+def test_sidecar_readiness_waits_through_a_cold_start_longer_than_five_seconds():
+    """模拟首次原生模块编译耗时超过旧 5 秒阈值后，sidecar 才开始监听。"""
+    with tempfile.TemporaryDirectory(prefix="rag-") as temp_dir:
+        socket_path = Path(temp_dir) / "r.sock"
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        listening = threading.Event()
+
+        def start_listener_after_cold_start():
+            time.sleep(5.1)
+            listener.bind(str(socket_path))
+            listener.listen()
+            listening.set()
+
+        starter = threading.Thread(target=start_listener_after_cold_start)
+        starter.start()
+        try:
+            wait_for_unix_socket(str(socket_path), timeout_seconds=120.0)
+            assert listening.is_set()
+        finally:
+            starter.join(timeout=1)
             listener.close()
