@@ -6,6 +6,9 @@ __pycache__/
 .Python
 backend/venv/
 backend/.venv/
+backend/*.egg-info/
+backend/build/
+backend/dist/
 backend/env/
 backend/.env
 # 误将 venv 示例路径作为真实目录创建时产生的本地虚拟环境

@@ -2134,5 +2134,37 @@
     "productionEntry": "思维导图项目抽屉拖入画布交互",
     "keyBehavior": "项目卡片落地时保留代理卡片外观，避免目标视觉 morph 将毛玻璃模糊插值消失",
     "ci": "frontend-vitest"
+  },
+  "backend/tests/core/test_local_runtime.py": {
+    "domain": "core-project-runtime",
+    "layer": "L1",
+    "owner": "backend/gugu_core/data/runtime.py",
+    "productionEntry": "python -m gugu_core",
+    "keyBehavior": "单用户文件库重开保持身份与版本；并发只提交一个改名；事务失败回滚；拒绝越权和隐式覆盖迁移",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/core/test_dependency_boundaries.py": {
+    "domain": "core-project-runtime",
+    "layer": "L0",
+    "owner": "backend/gugu_core",
+    "productionEntry": "backend/gugu_core/domain 与 application",
+    "keyBehavior": "Core 不反向导入宿主，领域与用例不依赖 SQL、Web、Redis 或端侧适配",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/projects/test_core_project_bridge.py": {
+    "domain": "core-project-runtime",
+    "layer": "L1",
+    "owner": "backend/app/core/projects.py",
+    "productionEntry": "backend/app/api/v1/projects.py",
+    "keyBehavior": "Web 与 Core 映射共用项目行、客户列别名和版本锁；用户外键和事务提交边界保留",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/core/test_postgres_projects.py": {
+    "domain": "core-project-runtime",
+    "layer": "L2",
+    "owner": "backend/gugu_core/data/projects.py",
+    "productionEntry": "backend/gugu_core/application/projects.py",
+    "keyBehavior": "真实 PostgreSQL 临时 schema 验证事务回滚、客户列别名、aware UTC、过期版本拒绝和用户隔离",
+    "ci": "backend-pytest"
   }
 }

@@ -76,8 +76,8 @@ dev-worker:  ## 开发 Worker 热重载（需先停掉同机 systemd worker）
 		echo "ERROR: 未找到 watchfiles，请先执行 make deps-dev"; \
 		exit 1; \
 	fi
-	@echo "监听 app/ agent/ onboarding/ worker.py；Ctrl+C 停止。"
-	@$(VENV_BIN)/watchfiles --filter python "$(VENV_BIN)/python -m worker" app agent onboarding worker.py
+	@echo "监听 app/ agent/ gugu_core/ onboarding/ worker.py；Ctrl+C 停止。"
+	@$(VENV_BIN)/watchfiles --filter python "$(VENV_BIN)/python -m worker" app agent gugu_core onboarding worker.py
 
 # ── 部署 / 维护 ──────────────────────────────────────────
 deploy:      ## 一键部署（备份 + 装依赖 + 跑迁移 + 前端 build + 重启）
