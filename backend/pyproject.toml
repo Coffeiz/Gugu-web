@@ -1,3 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gugu-core"
+version = "0.1.0"
+description = "咕咕跨宿主共享领域与数据运行时（实验性项目切片）"
+requires-python = ">=3.12"
+dependencies = ["sqlalchemy[asyncio]>=2.0,<3", "aiosqlite>=0.20,<1"]
+
+[tool.setuptools.packages.find]
+include = ["gugu_core*"]
+
 [tool.mutmut]
 source_paths = [
     "agent",

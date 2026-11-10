@@ -128,6 +128,7 @@ ENV DB__HOST=postgres \
 WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
 COPY backend/app ./app
+COPY backend/gugu_core ./gugu_core
 COPY backend/updater ./updater
 COPY backend/agent ./agent
 COPY --from=builder /build/agent/rag/cython_native*.so ./agent/rag/

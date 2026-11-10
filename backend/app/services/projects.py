@@ -3,6 +3,8 @@ from datetime import timedelta
 
 from sqlalchemy import func, select, or_
 
+from gugu_core.data.projects import SqlProjectRepository
+
 from app.core.tz import now_utc
 from app.models import CalendarEvent, File, Folder, Project, ScheduledTask
 from app.core.ownership import get_owned
@@ -18,18 +20,11 @@ def project_trash_cutoff():
 
 async def list_project_rows(db, user_id, *, archived: bool, deleted: bool = False):
     """查询项目列表；删除列表只保留 30 天内墓碑，不扫描项目文件统计。"""
-    project_filters = [Project.user_id == user_id]
-    if deleted:
-        project_filters.extend((
-            Project.deleted_at.is_not(None),
-            Project.deleted_at > project_trash_cutoff(),
-        ))
-    else:
-        project_filters.extend((Project.archived == archived, Project.deleted_at.is_(None)))
-
-    result = await db.execute(select(Project).where(*project_filters).order_by(
-        Project.deleted_at.desc() if deleted else Project.created_at.desc()))
-    return result.scalars().all()
+    repository = SqlProjectRepository(db, user_id, model=Project, clock=now_utc)
+    return await repository.list_rows(
+        archived=archived,
+        deleted_after=project_trash_cutoff() if deleted else None,
+    )
 
 
 async def get_project_row(db, user_id, project_id: int):

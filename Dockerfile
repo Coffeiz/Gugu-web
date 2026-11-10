@@ -219,6 +219,7 @@ COPY --from=backend-deps /opt/venv /opt/venv
 
 # 只复制运行时所需的后端模块和迁移文件，明确排除 tests/、test_*.py、docs/ 等。
 COPY backend/app ./app
+COPY backend/gugu_core ./gugu_core
 COPY backend/updater ./updater
 COPY backend/agent ./agent
 COPY --from=backend-deps /build/agent/rag/cython_native*.so ./agent/rag/

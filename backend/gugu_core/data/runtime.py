@@ -1,0 +1,104 @@
+"""显式生命周期的单用户 SQLite 宿主；不加载 Web 配置、Redis 或文件工具。"""
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import AsyncIterator
+from uuid import UUID, uuid4
+
+from sqlalchemy import URL, event, inspect, select
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
+
+from gugu_core.application.projects import ProjectService
+from gugu_core.data.models import LocalBase, LocalProject, RuntimeMetadata
+from gugu_core.data.projects import SqlProjectRepository
+
+SCHEMA_VERSION = "1"
+
+
+class RuntimeSchemaError(ValueError):
+    """宿主必须处理不兼容 schema，Core 不静默迁移或重建数据。"""
+
+
+def _engine(path: Path) -> AsyncEngine:
+    # mode=rw 确保打开已有运行时不会因路径错误而新建空库。
+    engine = create_async_engine(URL.create(
+        "sqlite+aiosqlite", database=path.as_uri(), query={"mode": "rw", "uri": "true"},
+    ), connect_args={"timeout": 5})
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def configure_connection(connection, _):
+        cursor = connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.close()
+
+    return engine
+
+
+class LocalRuntime:
+    def __init__(self, engine: AsyncEngine, owner_id: UUID):
+        self.engine = engine
+        self.owner_id = owner_id
+        self.sessions = async_sessionmaker(engine, expire_on_commit=False)
+
+    @classmethod
+    async def initialize(cls, path: Path) -> "LocalRuntime":
+        """只初始化全新文件；已存在文件必须显式 open，不覆盖或补建表。"""
+        path = Path(path).resolve()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("xb"):
+            pass
+        engine = _engine(path)
+        try:
+            async with engine.connect() as connection:
+                mode = (await connection.exec_driver_sql("PRAGMA journal_mode=WAL")).scalar_one()
+                if mode != "wal":
+                    raise RuntimeSchemaError("本地数据库无法启用 WAL")
+                await connection.commit()
+            async with engine.begin() as connection:
+                await connection.run_sync(LocalBase.metadata.create_all)
+            owner_id = uuid4()
+            sessions = async_sessionmaker(engine)
+            async with sessions.begin() as session:
+                session.add_all([
+                    RuntimeMetadata(key="schema_version", value=SCHEMA_VERSION),
+                    RuntimeMetadata(key="owner_id", value=str(owner_id)),
+                ])
+            return cls(engine, owner_id)
+        except BaseException:
+            await engine.dispose()
+            raise
+
+    @classmethod
+    async def open(cls, path: Path) -> "LocalRuntime":
+        """验证已有库的版本与本地身份，不执行 create_all 或自动升级。"""
+        path = Path(path).resolve(strict=True)
+        engine = _engine(path)
+        try:
+            async with engine.connect() as connection:
+                tables = await connection.run_sync(lambda sync: inspect(sync).get_table_names())
+                if "core_runtime_meta" not in tables or "projects" not in tables:
+                    raise RuntimeSchemaError("此文件不是已初始化的 Core 数据库")
+                rows = (await connection.execute(select(RuntimeMetadata.key, RuntimeMetadata.value))).all()
+                metadata = dict(rows)
+                if metadata.get("schema_version") != SCHEMA_VERSION:
+                    raise RuntimeSchemaError("本地数据库版本不兼容，请由宿主执行显式迁移")
+                columns = await connection.run_sync(lambda sync: inspect(sync).get_columns("projects"))
+                if {column["name"] for column in columns} != set(LocalProject.__table__.columns.keys()):
+                    raise RuntimeSchemaError("本地项目表结构不兼容，请检查数据库完整性")
+                try:
+                    owner_id = UUID(metadata["owner_id"])
+                except (KeyError, ValueError) as exc:
+                    raise RuntimeSchemaError("本地数据库身份缺失或损坏") from exc
+            return cls(engine, owner_id)
+        except BaseException:
+            await engine.dispose()
+            raise
+
+    @asynccontextmanager
+    async def transaction(self) -> AsyncIterator[ProjectService]:
+        """成功提交、异常回滚；一次事务内可编排多个项目操作。"""
+        async with self.sessions.begin() as session:
+            yield ProjectService(SqlProjectRepository(session, self.owner_id))
+
+    async def close(self) -> None:
+        await self.engine.dispose()

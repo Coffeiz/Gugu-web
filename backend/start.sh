@@ -378,6 +378,7 @@ cmd_foreground() {
         --host "$HOST" --port "$PORT" --reload \
         --reload-dir "$APP_DIR/app" \
         --reload-dir "$APP_DIR/agent" \
+        --reload-dir "$APP_DIR/gugu_core" \
         --reload-dir "$APP_DIR/onboarding" \
         --timeout-graceful-shutdown 1
 }
