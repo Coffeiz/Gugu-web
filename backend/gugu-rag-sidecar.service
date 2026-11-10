@@ -17,6 +17,8 @@ Environment="PATH=__APP_DIR__/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin
 # socket 路径必须与后端的 search.rag_sidecar_socket 配置一致（start.sh install 会校验）
 Environment="GUGU_RAG_SIDECAR_SOCKET=/run/user/__RUN_UID__/gugu-rag-sidecar.sock"
 ExecStart=__APP_DIR__/.venv/bin/python -m agent.rag.sidecar_host --socket /run/user/__RUN_UID__/gugu-rag-sidecar.sock
+# 依赖方只有在 Unix socket 可连接后才启动；单看 socket 文件会误认残留文件已就绪。
+ExecStartPost=__APP_DIR__/.venv/bin/python __APP_DIR__/scripts/wait_for_unix_socket.py /run/user/__RUN_UID__/gugu-rag-sidecar.sock
 Restart=on-failure
 RestartSec=3
 

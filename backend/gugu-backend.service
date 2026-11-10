@@ -1,8 +1,8 @@
 [Unit]
 Description=Gugu Backend (FastAPI)
 After=network.target
-# RAG worker 宿主：软依赖（Wants），sidecar 缺席时 Python 端回退进程内 spawn
-Wants=gugu-rag-sidecar.service
+# 配置了 sidecar socket 后，RAG 不会静默回退到进程内实现；sidecar 必须可用。
+Requires=gugu-rag-sidecar.service
 After=gugu-rag-sidecar.service
 StartLimitIntervalSec=60
 StartLimitBurst=5

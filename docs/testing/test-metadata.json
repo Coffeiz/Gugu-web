@@ -583,6 +583,14 @@
     "keyBehavior": "全新 PostgreSQL 经 ORM 建表和 Alembic 初始化后仍具有自定义 collation 与分页索引",
     "ci": "experimental"
   },
+  "backend/tests/platform/deployment/test_rag_sidecar_unit_contract.py": {
+    "domain": "rag-deployment",
+    "layer": "L1",
+    "owner": "backend/gugu-rag-sidecar.service",
+    "productionEntry": "backend/gugu-backend.service、backend/gugu-worker.service、backend/gugu-gateway.service 与 backend/gugu-rag-sidecar.service",
+    "keyBehavior": "RAG 消费服务等待 sidecar socket 就绪且依赖故障不再宣称会进程内回退",
+    "ci": "backend-pytest"
+  },
   "backend/tests/platform/test_contact_name_column_migration.py": {
     "domain": "contact-name-migration",
     "layer": "L1",
