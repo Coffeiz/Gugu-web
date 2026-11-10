@@ -71,8 +71,8 @@ onMounted(() => perform(async () => {
       <section class="desktop-panel" aria-labelledby="desktop-projects">
         <h2 id="desktop-projects">项目 <span>{{ projects.length }}</span></h2>
         <form @submit.prevent="createProject">
-          <label class="sr-only" for="project-name">项目名称</label>
-          <input id="project-name" v-model="projectName" maxlength="200" placeholder="准备开展的新项目" required :disabled="busy" />
+          <span id="project-name-title" class="sr-only">项目名称</span>
+          <input id="project-name" v-model="projectName" class="form-input" aria-labelledby="project-name-title" maxlength="200" placeholder="准备开展的新项目" required :disabled="busy" />
           <ActionButton fit type="submit" :disabled="busy">创建项目</ActionButton>
         </form>
         <ul v-if="projects.length"><li v-for="project in projects" :key="project.id"><span>{{ project.name }}</span><small>v{{ project.version }}</small></li></ul>
@@ -81,8 +81,8 @@ onMounted(() => perform(async () => {
       <section class="desktop-panel" aria-labelledby="desktop-clients">
         <h2 id="desktop-clients">联系人 <span>{{ clients.length }}</span></h2>
         <form @submit.prevent="createClient">
-          <label class="sr-only" for="client-name">联系人名称</label>
-          <input id="client-name" v-model="clientName" maxlength="200" placeholder="添加一位联系人" required :disabled="busy" />
+          <span id="client-name-title" class="sr-only">联系人名称</span>
+          <input id="client-name" v-model="clientName" class="form-input" aria-labelledby="client-name-title" maxlength="200" placeholder="添加一位联系人" required :disabled="busy" />
           <ActionButton fit type="submit" :disabled="busy">添加联系人</ActionButton>
         </form>
         <ul v-if="clients.length"><li v-for="client in clients" :key="client.id"><span>{{ client.name }}</span></li></ul>
@@ -109,8 +109,7 @@ p { color: var(--text-secondary); line-height: 1.6; }
 .desktop-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
 .desktop-panel { padding: 24px; border: 1px solid var(--content-divider); border-radius: 16px; background: var(--surface-card-solid); min-width: 0; }
 form { display: flex; gap: 10px; }
-input { min-width: 0; width: 100%; padding: 9px 12px; border: 1px solid var(--content-divider); border-radius: 8px; background: var(--control-bg); color: var(--text-primary); }
-input:focus { outline: 1px solid var(--border-focus); box-shadow: var(--control-focus-shadow); }
+input { min-width: 0; width: 100%; }
 button { flex-shrink: 0; }
 ul { margin: 20px 0 0; padding: 0; list-style: none; }
 li { display: flex; justify-content: space-between; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--content-divider); }
