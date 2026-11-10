@@ -1111,6 +1111,14 @@
     "keyBehavior": "仅失败轮捕获含原生 reasoning 的最终请求，拒绝保存凭据，深层 Schema 经 trace 数据库往返后摘要不变且只读回放不调用模型",
     "ci": "backend-pytest"
   },
+  "backend/tests/platform/observability/test_provider_token_usage_contract.py": {
+    "domain": "provider-token-usage-contract",
+    "layer": "L0",
+    "owner": "backend/agent/context",
+    "productionEntry": "agent/context/provider_runner.py 与上下文压缩流程",
+    "keyBehavior": "模型上下文与压缩决策只依据 Provider 实际用量，不重新引入本地 tokenizer 或 token 估算器",
+    "ci": "backend-pytest"
+  },
   "backend/tests/platform/test_im_platform_settings.py": {
     "domain": "im-platform-settings",
     "layer": "L1",
