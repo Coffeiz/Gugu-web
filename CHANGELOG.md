@@ -7,9 +7,59 @@
 
 ## [Unreleased]
 
-### Improvements
+## [1.7.9] - 2026-11-10
 
-- 移除自托管搜索服务及其配置；网页搜索改由当前模型 Provider 提供，并保留用户图片的相似图搜索。
+### What's New
+
+#### New Features
+
+- Add a monthly active user metric to the Admin data page.
+
+#### Improvements
+
+- Use the configured model Provider for web search by default, removing the need to deploy a separate self-hosted search service while preserving similar-image search.
+- Base context compaction and memory maintenance on Provider-reported usage, adapt maintenance batches to smaller model windows, and show a completion status after IM context cleanup.
+- Preserve recent image context across runs within explicit message and size limits.
+
+#### Fixes
+
+- Recover oversized chat requests with one bounded retry while preserving the user's original message and attachments; provide actionable guidance when the request still exceeds the model limit.
+- Retry Admin memory maintenance with smaller complete-message batches after a Provider reports an input limit, without overwriting existing memory when the retry cannot finish.
+- Restore chat history and interaction cards in chronological order when messages arrive during an active run.
+
+#### Contributors
+
+- Thank you to [@Coffeiz](https://github.com/Coffeiz) for PR #113.
+
+#### Feedback & Issue Reporters
+
+- None.
+
+### 更新内容
+
+#### 新功能
+
+- 管理数据页增加月活跃用户统计。
+
+#### 改进
+
+- 默认使用已配置模型服务商提供的网页搜索，无需另行部署自托管搜索服务，同时保留相似图片搜索。
+- 上下文整理和记忆维护依据服务商实际用量；记忆维护适配较小的模型上下文，并在 IM 上下文整理完成后反馈状态。
+- 在明确的消息数量和大小限制内，跨轮保留近期图片上下文。
+
+#### 修复
+
+- 聊天请求超限时进行一次有界恢复，保留用户原始消息和附件；仍超限时给出可执行的处理建议。
+- 服务商报告输入超限后，管理端记忆维护会缩小完整消息批次重试；重试仍失败时不会覆盖已有记忆。
+- 活跃回复期间有新消息到达时，聊天历史和交互卡片仍按时间顺序恢复。
+
+#### 贡献者
+
+- 感谢 [@Coffeiz](https://github.com/Coffeiz) 提交 PR #113。
+
+#### 反馈与问题报告
+
+- 暂无。
 
 ## [1.7.8] - 2026-11-05
 
