@@ -76,8 +76,8 @@ dev-worker:  ## 开发 Worker 热重载（需先停掉同机 systemd worker）
 		echo "ERROR: 未找到 watchfiles，请先执行 make deps-dev"; \
 		exit 1; \
 	fi
-	@echo "监听 app/ agent/ gugu_core/ onboarding/ worker.py；Ctrl+C 停止。"
-	@$(VENV_BIN)/watchfiles --filter python "$(VENV_BIN)/python -m worker" app agent gugu_core onboarding worker.py
+	@echo "监听 app/ agent/ ../gugu-core/src/ onboarding/ worker.py；Ctrl+C 停止。"
+	@$(VENV_BIN)/watchfiles --filter python "$(VENV_BIN)/python -m worker" app agent ../gugu-core/src onboarding worker.py
 
 # ── 部署 / 维护 ──────────────────────────────────────────
 deploy:      ## 一键部署（备份 + 装依赖 + 跑迁移 + 前端 build + 重启）
@@ -89,7 +89,7 @@ deps:        ## 装依赖（用 venv 绝对路径，避开系统 pip）
 		exit 1; \
 	fi
 	@echo "  pip install -r requirements.txt ..."
-	@$(VENV_BIN)/pip install -r requirements.txt
+	@$(VENV_BIN)/pip install -r requirements.txt -e "../gugu-core[postgres]"
 
 deps-dev:    ## 装开发/测试依赖（包含 Worker 热重载 watcher）
 	@if [ -z "$(VENV_BIN)" ]; then \
@@ -97,7 +97,7 @@ deps-dev:    ## 装开发/测试依赖（包含 Worker 热重载 watcher）
 		exit 1; \
 	fi
 	@echo "  pip install -r requirements-dev.txt ..."
-	@$(VENV_BIN)/pip install -r requirements-dev.txt
+	@$(VENV_BIN)/pip install -r requirements-dev.txt -e "../gugu-core[postgres]"
 
 filesync-ts-build: ## 构建固定的 TypeScript 文件监听 worker 制品（不在运行时编译）
 	@cd .. && pnpm install --filter @gugu/filesync-watcher... --frozen-lockfile --ignore-scripts --reporter=silent

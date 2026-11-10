@@ -8,15 +8,15 @@
 
 | 位置 | 职责 |
 | --- | --- |
-| `backend/gugu_core/domain/` | 项目字段与阶段规则、预设色板、脱离 ORM 的项目快照 |
-| `backend/gugu_core/application/projects.py` | 项目数据端口、列表/创建/更新用例，以及 Web 与本地共用的更新编排 |
-| `backend/gugu_core/data/` | 共享项目列、跨库 UTC 类型、SQL repository、SQLite 运行时生命周期 |
-| `backend/gugu_core/__main__.py` | 实验性本地命令行宿主；显式传入数据库路径 |
+| `gugu-core/src/gugu_core/domain/` | 项目字段与阶段规则、预设色板、脱离 ORM 的项目快照 |
+| `gugu-core/src/gugu_core/application/projects.py` | 项目数据端口、列表/创建/更新用例，以及 Web 与本地共用的更新编排 |
+| `gugu-core/src/gugu_core/data/` | 共享项目列、跨库 UTC 类型、SQL repository、SQLite 运行时生命周期 |
+| `gugu-core/src/gugu_core/__main__.py` | 实验性本地命令行宿主；显式传入数据库路径 |
 | `backend/app/core/projects.py` | Web 兼容入口，转发到 Core 用例与规则 |
 | `backend/app/services/projects.py` | Web 列表复用 Core 查询，继续编排文件、回收站等跨领域行为 |
 | `backend/app/models/` | Web 的用户外键、项目关联关系与其他领域模型 |
 
-首批包保留在现有后端目录中，避免同时改变服务装配与仓库布局。`pyproject.toml` 仅打包 `gugu_core`，独立安装只要求 Python 3.12+、SQLAlchemy 异步支持和 aiosqlite，不加载 Web 配置、账号体系、Redis 或 Agent。领域和 Application 不导入 SQL 库，所有 Core 模块不反向导入 `app` / `agent`；回归测试保护此依赖方向。
+首批原位提取后，现已搬到顶层 `gugu-core/`。`pyproject.toml` 仅打包 `gugu_core`，独立安装只要求 Python 3.12+、SQLAlchemy 异步支持和 aiosqlite，不加载 Web 配置、账号体系、Redis 或 Agent。领域和 Application 不导入 SQL 库，所有 Core 模块不反向导入 `app` / `agent`；回归测试保护此依赖方向。
 
 Web 的 API 路径、响应结构、幂等、撤销、事件发布、项目文件目录操作保持原有编排。现有 Web 单条读取仍通过 `get_owned()`；共享 SQL 查询与更新继续带有所有者条件，版本比较和墓碑检查位于同一条 UPDATE。共享 repository 不自行提交 Web 事务。
 
@@ -29,7 +29,7 @@ Web 的 API 路径、响应结构、幂等、撤销、事件发布、项目文�
 - `LocalRuntime.open(path)` 只打开已有文件，检查 Core 标记、schema 版本、项目列和本地身份；不兼容时拒绝，不执行自动迁移或补建表。
 - SQLite 使用 WAL、连接级外键检查和有限的忙等待；修改项目按版本比较，避免并发写入覆盖。
 - `runtime.transaction()` 成功提交，异常回滚；返回值是普通数据快照，不把 ORM 延迟加载或 Session 暴露给调用方。
-- 本地库当前 schema 版本为 `1`。将来升级需由宿主完成备份、显式迁移与恢复流程；不能直接把 Web 数据库文件当作本地库打开。
+- 本地库当前 schema 版本为 `2`，版本 `1` 需要显式执行带备份的升级。将来升级需由宿主完成备份、显式迁移与恢复流程；不能直接把 Web 数据库文件当作本地库打开。
 
 数据库驱动属于 Core 数据后端；数据库操作不经过执行沙箱。本切片没有 Shell、通用文件工具、网络服务或云同步入口，也不会读取或改写用户的 `.env`、`config.override.json`。
 
@@ -38,7 +38,7 @@ Web 的 API 路径、响应结构、幂等、撤销、事件发布、项目文�
 在隔离的 Python 虚拟环境中，从仓库根目录安装：
 
 ```bash
-python -m pip install ./backend
+python -m pip install ./gugu-core
 python -m gugu_core --database ./core-data/projects.db init
 python -m gugu_core --database ./core-data/projects.db create "准备计划"
 python -m gugu_core --database ./core-data/projects.db list
@@ -50,10 +50,10 @@ python -m gugu_core --database ./core-data/projects.db rename 1 "开始实施" -
 构建独立制品：
 
 ```bash
-python -m build --wheel backend
+python -m build --wheel gugu-core
 ```
 
-Web 仍按原有方式启动。两个显式复制后端模块的生产 Dockerfile 已加入 `gugu_core`；开发镜像复制整个后端目录，无需另改装配。回滚时同步回滚 Web 兼容入口及 Core 包；本地实验数据库不参与 Web 回滚。
+Web 仍按原有方式启动。生产镜像将独立 Core 包并入应用制品以保留应用包更新能力；开发镜像与 Compose 使用仓库根构建上下文并挂载顶层 Core。回滚时同步回滚 Web 兼容入口及 Core 包；本地实验数据库不参与 Web 回滚。
 
 ## 4. 验证与阶段状态
 
@@ -67,7 +67,7 @@ python -m pytest --confcutdir=tests/core tests/core -q
 PYTHONPATH=. python -m pytest -q
 python scripts/checks/check_ownership.py
 python scripts/checks/check_confirm_gate.py
-python -m compileall -q app agent gugu_core
+python -m compileall -q app agent ../gugu-core/src
 ```
 
 PostgreSQL 用例默认不连接服务；显式设置 `GUGU_CORE_TEST_POSTGRES_URL` 指向隔离测试库后执行 `tests/core/test_postgres_projects.py`。不得指向用户部署数据库。
@@ -75,3 +75,5 @@ PostgreSQL 用例默认不连接服务；显式设置 `GUGU_CORE_TEST_POSTGRES_U
 本轮实际验证结果在 PR 的“验证”中记录。尚未完成的闸门：macOS 实机、桌面 Python/Cython 打包、IPC、桌面壳、原生 Sandbox Executor、Agent 切片与长期迁移机制。Windows 原生 SQLite 验证与 Python wheel 构建不能替代这些验收。
 
 后续仍按原方案推进：先补齐 P1 桌面可行性，再将此数据切片接入桌面宿主；P3 抽取 Agent；P4 接入端侧 FS 与原生执行沙箱。MXC 继续作为 Sandbox Executor 候选独立验证。Linux/NAS 多用户能力和首版 SaaS 的 FS 兼容路径保留；SaaS 纯数据库与云同步目标留在 P6 收敛。
+
+后续数据门面、联系人域及目录边界更新见 [顶层 Core 与数据统一层](Gugu-Core顶层包与数据统一层.md)。

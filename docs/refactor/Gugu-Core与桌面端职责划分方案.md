@@ -1,13 +1,15 @@
 # Gugu Core 与桌面端职责划分方案
 
 > **文档类型**：架构方案
-> **状态**：🔲 架构待评审；项目数据切片已开始实验性实现
-> **创建及更新**：2026-11-10
-> **代码基线**：2026-11-10 从原仓库快进拉取的 `dev`，提交 `46d67f72`
-> **方案分支**：`codex/core-desktop-architecture-latest-dev`
+> **状态**：架构持续评审；顶层 Core、项目/联系人数据底座及桌面壳已有实验性实现
+> **创建及更新**：2026-11-10 / 2026-11-11
+> **代码基线**：`main` 的 1.7.9 squash 提交 `c7f3f6de`，与 `dev` 的 `11757f15` 文件树一致
+> **评审目标**：独立 `v2.0` 分支
 > **历史方案**：[Gugu Core 多端统一架构重构方案](./Gugu-Core多端统一架构重构方案.md)
 
 首批代码范围与未完成验收见 [Core 项目数据切片实现说明](Gugu-Core项目数据切片实现说明.md)。
+
+本轮进展见 [顶层 Core 与数据统一层](Gugu-Core顶层包与数据统一层.md)、[桌面壳与 MXC 验证](Gugu-Desktop与MXC验证.md)。P1 两平台可安装制品和完整沙箱验收尚未完成。
 
 ## 1. 架构结论与范围
 
@@ -420,33 +422,25 @@ Apple DTS 明确说明自定义 SBPL 不是受支持的第三方接口，`sandbo
 
 ## 10. 建议包布局与迁移接缝
 
-继续 monorepo。以下为目标布局示意，名称可以调整；目录移动不是阶段验收指标。
+Core 采用顶层独立包。桌面、云服务按产品宿主划分；SaaS 以后可拆为独立私有仓库，Core 的构建与发布不依赖其源码。前端本轮保留原位置。
 
 ```text
-packages/
-  gugu-core/
-    src/gugu_core/
-      domain/                 # 领域规则及数据范围
-      application/            # 业务用例、授权、数据门面契约
-      agent/                  # Loop、上下文、Provider、工具、记忆、RAG
-      data/                   # 模型、repository、UoW、schema、迁移
-        backends/             # PostgreSQL、SQLite 及协调后端差异
-      runtime/                # Run/Job、交互、调度、事件与 outbox
-      sync/                   # 后续业务变更同步、版本及冲突规则
-      ports/                  # FS、执行、watcher、SecretStore 等平台契约
-  protocol/                   # 对外 DTO、事件 schema 与生成工具
-hosts/
-  web/                        # NAS / 首版 SaaS 兼容装配、身份及端侧 Adapter
-  cloud/                      # SaaS：Gateway、常驻 Core Runtime、同步和任务转交
-  desktop/                    # Python Host 装配与本地 IPC 入口
-  mobile/                     # 后续 Mobile Runtime 承载与平台适配
-apps/
-  desktop/                    # 桌面壳、原生 Broker、系统集成
-frontend/                     # 现有 Vue UI，逐步隔离平台访问
-backend/                      # 迁移期兼容入口；按切片缩小
+gugu-core/
+  pyproject.toml
+  src/gugu_core/
+    domain/                   # 领域规则与普通数据快照
+    application/              # 用例、所有者上下文与数据门面
+    data/                     # 共享模型、SQLite/PostgreSQL、事务及显式迁移
+    agent/                    # 后续迁入 Agent
+    runtime/                  # 后续迁入 Run/Job、交互、调度、事件
+    ports/                    # 后续平台能力契约
+gugu-desktop/                 # 桌面验证宿主、原生 Broker；系统集成继续验收
+gugu-saas/                    # 后续 SaaS 宿主，可独立私有仓库
+frontend/                     # 现有前端，本轮不抽取
+backend/                      # Web/NAS 兼容宿主，逐步收缩业务职责
 ```
 
-首批可以在现有目录下建立包和接缝，不先移动所有文件。Host 显式注入 `DataRuntimeConfig`、平台 Port、时钟及运行策略；旧入口通过单向兼容转发调用新实现，禁止新 Core 反向导入旧 `app.*`。
+当前数据统一层以 `DataRuntimeConfig` 管理连接差异，`DataContext` 表达宿主解析后的所有者，统一事务门面装配项目与联系人用例；Web 借用已有请求事务。本地库显式初始化、验证及带备份升级。详见 [顶层 Core 与数据统一层实现](Gugu-Core顶层包与数据统一层.md)。Host 注入平台 Port、时钟及运行策略；兼容入口单向调用 Core，禁止 Core 反向导入旧 `app.*`。
 
 依赖检查按层设置：领域不依赖 SQL/Host；Application、Agent 不直接拿 DB Session、Redis client 或宿主路径；数据及协调后端允许对应依赖；任何 Core 包均不得导入 Web/桌面 Host。高层边界可用静态检查，业务结果必须通过运行时测试验证。
 

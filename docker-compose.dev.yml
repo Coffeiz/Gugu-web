@@ -123,7 +123,8 @@ services:
   migrate:
     logging: *json-file-logging
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
       args:
         - PIP_INDEX_URL
         - GUGU_INSTALL_DOCKER_CLI=false
@@ -150,6 +151,7 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
+      - ./gugu-core:/gugu-core:ro
       - *gugu-data-mount
 
   backend:
@@ -158,7 +160,8 @@ services:
     pid: "host"
     logging: *json-file-logging
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
       # 裸变量名（不是 `PIP_INDEX_URL: ${PIP_INDEX_URL:-}` 那种带默认值写法）——环境变量没设置
       # 时 compose 不会传这个 build arg，落到 Dockerfile 里 ARG 的默认值（官方 PyPI 源）；带
       # `:-` 写法未设置时会解析成空字符串，作为显式空值传给 docker build 反而**覆盖**掉那个默认值，
@@ -208,6 +211,7 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
+      - ./gugu-core:/gugu-core:ro
       - *gugu-data-mount
       - sandbox_socket:/run/gugu
 
@@ -217,7 +221,8 @@ services:
   worker:
     logging: *json-file-logging
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
       args:
         - PIP_INDEX_URL   # 跟 backend 同一个镜像/同一个坑，见上面 backend.build.args 的注释
         - GUGU_INSTALL_DOCKER_CLI=false
@@ -261,6 +266,7 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
+      - ./gugu-core:/gugu-core:ro
       - *gugu-data-mount
       - sandbox_socket:/run/gugu
 
@@ -268,7 +274,8 @@ services:
   gateway:
     logging: *json-file-logging
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
       args:
         - PIP_INDEX_URL
         - GUGU_INSTALL_DOCKER_CLI=false
@@ -304,6 +311,7 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
+      - ./gugu-core:/gugu-core:ro
       - *gugu-data-mount
 
   # 工具执行随 backend/worker 镜像提供，生产 Shell 沙盒由这个可选进程承接。
@@ -314,7 +322,8 @@ services:
     pid: "host"
     logging: *json-file-logging
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
       args:
         - PIP_INDEX_URL
         - GUGU_INSTALL_DOCKER_CLI=true

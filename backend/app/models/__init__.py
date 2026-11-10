@@ -16,7 +16,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
 
-from gugu_core.data.models import ProjectColumns
+from gugu_core.data.models import ClientColumns, ProjectColumns
 
 from app.core.tz import now_utc
 from app.core.crypto import EncryptedString
@@ -905,17 +905,11 @@ class CalendarEvent(Base):
 
 # ── Client ────────────────────────────────────────────────────────────────────
 
-class Client(Base):
+class Client(ClientColumns, Base):
     __tablename__ = "clients"
 
-    id:         Mapped[int]           = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id:    Mapped[UUID]          = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    name:       Mapped[str]           = mapped_column(String(200))
-    contact:    Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
-    email:      Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
-    phone:      Mapped[Optional[str]] = mapped_column(String(50),  nullable=True)
-    notes:      Mapped[str]           = mapped_column(Text,        default="")
-    created_at: Mapped[datetime]      = mapped_column(UtcDateTime,    default=now_utc)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
 
     owner: Mapped["User"] = relationship(back_populates="clients")
 

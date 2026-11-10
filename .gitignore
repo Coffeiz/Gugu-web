@@ -9,6 +9,17 @@ backend/.venv/
 backend/*.egg-info/
 backend/build/
 backend/dist/
+gugu-core/.venv/
+gugu-core/build/
+gugu-core/dist/
+gugu-core/src/*.egg-info/
+gugu-desktop/.tools/
+gugu-desktop/node_modules/
+gugu-desktop/src-tauri/target/
+gugu-desktop/src-tauri/gen/
+gugu-desktop/build/
+gugu-desktop/dist/
+gugu-desktop/python/*.egg-info/
 backend/env/
 backend/.env
 # 误将 venv 示例路径作为真实目录创建时产生的本地虚拟环境
@@ -28,6 +39,7 @@ frontend/.stryker-tmp/
 # ===== Node / Frontend =====
 frontend/node_modules/
 frontend/dist/
+frontend/dist-desktop/
 frontend/dist.zip
 frontend/build/
 frontend/.vite/

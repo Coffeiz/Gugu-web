@@ -22,6 +22,7 @@ backend/bin/node_modules
 backend/ts/**/node_modules
 frontend/node_modules
 frontend/dist
+frontend/dist-desktop
 frontend/test-results
 frontend/playwright-report
 node_modules
@@ -29,3 +30,15 @@ node_modules
 .DS_Store
 ._*
 **/._*
+
+# Core 的本机安装与构建产物不进入镜像上下文。
+gugu-core/.venv
+gugu-core/build
+gugu-core/dist
+gugu-core/src/*.egg-info
+gugu-core/**/__pycache__/
+gugu-core/**/*.pyc
+gugu-desktop/.tools
+gugu-desktop/node_modules
+gugu-desktop/src-tauri/target
+gugu-desktop/**/__pycache__/

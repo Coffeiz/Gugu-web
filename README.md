@@ -151,7 +151,7 @@
 corepack pnpm install --registry=https://registry.npmmirror.com
 
 # 本地安装 Python 依赖
-python -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r backend/requirements.txt
+python -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r backend/requirements.txt -e "./gugu-core[postgres]"
 
 # Dev Compose 重新构建镜像时使用清华 PyPI 镜像
 PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
@@ -490,7 +490,7 @@ corepack pnpm --filter gugu-web dev
 cd backend
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt -e "../gugu-core[postgres]"
 make dev-web
 ```
 

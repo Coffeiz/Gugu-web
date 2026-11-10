@@ -1,36 +1,30 @@
-"""联系人资料的查询与写入边界。"""
-from sqlalchemy import select
+"""联系人 Web 兼容入口；数据实现由 Core 维护，提交权留给宿主。"""
+from gugu_core.data.clients import SqlClientRepository
+from gugu_core.domain.clients import prepare_client_fields
 
 from app.core.ownership import get_owned
 from app.models import Client
+from app.services.core_data import core_data
+
+
+def _repository(db, user_id):
+    return SqlClientRepository(db, user_id, model=Client)
 
 
 async def list_clients(db, user_id):
-    return (await db.execute(
-        select(Client).where(Client.user_id == user_id).order_by(Client.created_at.desc())
-    )).scalars().all()
+    return await _repository(db, user_id).list_rows()
 
 
 async def create_client(db, user_id, *, commit=False, **fields):
-    client = Client(user_id=user_id, **fields)
-    db.add(client)
+    client = await _repository(db, user_id).create_row(prepare_client_fields(fields, creating=True))
     if commit:
         await db.commit()
-    else:
-        await db.flush()
     await db.refresh(client)
     return client
 
 
 async def find_clients_by_name(db, user_id, name):
-    rows = (await db.execute(select(Client).where(
-        Client.user_id == user_id, Client.name == name,
-    ))).scalars().all()
-    if not rows:
-        rows = (await db.execute(select(Client).where(
-            Client.user_id == user_id, Client.name.ilike(f"%{name}%"),
-        ))).scalars().all()
-    return rows
+    return await _repository(db, user_id).find_rows(name)
 
 
 async def get_client(db, user_id, client_id):
@@ -38,20 +32,16 @@ async def get_client(db, user_id, client_id):
 
 
 async def update_client(db, client, fields, *, commit=False):
-    for field, value in fields.items():
-        setattr(client, field, value)
+    await core_data(db, client.user_id).clients.update(client.id, fields)
     if commit:
         await db.commit()
-    else:
-        await db.flush()
+    await db.refresh(client)
     return client
 
 
 async def delete_client(db, client, *, commit=False):
     client_id, name = client.id, client.name
-    await db.delete(client)
+    await core_data(db, client.user_id).clients.delete(client_id)
     if commit:
         await db.commit()
-    else:
-        await db.flush()
     return client_id, name

@@ -1,6 +1,8 @@
 fastapi>=0.111.0
 uvicorn[standard]>=0.29.0
 sqlalchemy>=2.0.0
+# Core 的 SQLite 后端；Core 本地包通过 make deps / 独立安装步骤装配。
+aiosqlite>=0.20,<1
 greenlet>=3.0.0
 alembic>=1.13.0
 asyncpg>=0.29.0

@@ -9,7 +9,7 @@ import gugu_core
 def test_core_domain_and_application_do_not_import_framework_or_host():
     root = Path(gugu_core.__file__).parent
     for path in root.rglob("*.py"):
-        forbidden = {"app", "agent", "fastapi", "redis"}
+        forbidden = {"app", "agent", "fastapi", "redis", "gugu_desktop_host", "gugu_saas"}
         if path.relative_to(root).parts[0] in {"domain", "application"}:
             forbidden |= {"sqlalchemy", "aiosqlite", "gugu_core.data"}
         if path.relative_to(root).parts[0] == "domain":

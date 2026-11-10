@@ -2138,7 +2138,7 @@
   "backend/tests/core/test_local_runtime.py": {
     "domain": "core-project-runtime",
     "layer": "L1",
-    "owner": "backend/gugu_core/data/runtime.py",
+    "owner": "gugu-core/src/gugu_core/data/runtime.py",
     "productionEntry": "python -m gugu_core",
     "keyBehavior": "单用户文件库重开保持身份与版本；并发只提交一个改名；事务失败回滚；拒绝越权和隐式覆盖迁移",
     "ci": "backend-pytest"
@@ -2146,8 +2146,8 @@
   "backend/tests/core/test_dependency_boundaries.py": {
     "domain": "core-project-runtime",
     "layer": "L0",
-    "owner": "backend/gugu_core",
-    "productionEntry": "backend/gugu_core/domain 与 application",
+    "owner": "gugu-core/src/gugu_core",
+    "productionEntry": "gugu-core/src/gugu_core/domain 与 application",
     "keyBehavior": "Core 不反向导入宿主，领域与用例不依赖 SQL、Web、Redis 或端侧适配",
     "ci": "backend-pytest"
   },
@@ -2162,9 +2162,41 @@
   "backend/tests/core/test_postgres_projects.py": {
     "domain": "core-project-runtime",
     "layer": "L2",
-    "owner": "backend/gugu_core/data/projects.py",
-    "productionEntry": "backend/gugu_core/application/projects.py",
+    "owner": "gugu-core/src/gugu_core/data/projects.py",
+    "productionEntry": "gugu-core/src/gugu_core/application/projects.py",
     "keyBehavior": "真实 PostgreSQL 临时 schema 验证事务回滚、客户列别名、aware UTC、过期版本拒绝和用户隔离",
     "ci": "backend-pytest"
+  },
+  "backend/tests/core/test_data_runtime.py": {
+    "domain": "core-data-runtime",
+    "layer": "L1",
+    "owner": "gugu-core/src/gugu_core/data/unit_of_work.py",
+    "productionEntry": "gugu-core/src/gugu_core/data/runtime.py",
+    "keyBehavior": "项目和联系人跨域提交回滚、取消恢复、上下文隔离；显式升级备份并在 DDL 故障后保留旧库",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/projects/test_core_data_bridge.py": {
+    "domain": "core-data-runtime",
+    "layer": "L1",
+    "owner": "backend/app/services/core_data.py",
+    "productionEntry": "backend/app/services/clients.py",
+    "keyBehavior": "Web 借用现有事务，项目联系人共同回滚，联系人读写沿用用户隔离与原有 schema",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/core/test_desktop_ipc.py": {
+    "domain": "desktop-core-ipc",
+    "layer": "L2",
+    "owner": "gugu-desktop/python/gugu_desktop_host/__main__.py",
+    "productionEntry": "gugu-desktop/src-tauri/src/core_host.rs",
+    "keyBehavior": "真实子进程跨重启持久化、拒绝旧版本及身份覆盖；白名单阻止 Shell/FS，超长帧退出并回收连接",
+    "ci": "backend-pytest"
+  },
+  "frontend/tests/desktop/DesktopWorkbench.test.ts": {
+    "domain": "desktop-core-ipc",
+    "layer": "L1",
+    "owner": "frontend/src/desktop/DesktopWorkbench.vue",
+    "productionEntry": "frontend/desktop.html",
+    "keyBehavior": "通过原生业务桥创建后补读本地列表，不依赖 HTTP；缺少桥时显示错误并恢复交互",
+    "ci": "frontend-vitest"
   }
 }

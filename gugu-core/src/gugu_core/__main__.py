@@ -4,6 +4,7 @@ from pathlib import Path
 import argparse
 import asyncio
 import json
+import sqlite3
 import sys
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -13,6 +14,10 @@ from gugu_core.data.runtime import LocalRuntime, RuntimeSchemaError
 
 
 async def run(args) -> None:
+    if args.command == "migrate":
+        backup = await LocalRuntime.migrate(args.database)
+        print(json.dumps({"migrated": True, "backup": str(backup)}, ensure_ascii=False))
+        return
     if args.command == "init":
         runtime = await LocalRuntime.initialize(args.database)
     else:
@@ -39,6 +44,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Core 本地项目数据运行时（实验性）")
     parser.add_argument("--database", type=Path, required=True, help="显式指定 SQLite 文件")
     commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("migrate", help="备份后显式升级已有本地库")
     commands.add_parser("init", help="初始化全新数据库，不覆盖已有文件")
     commands.add_parser("list", help="列出项目").add_argument("--archived", action="store_true")
     commands.add_parser("create", help="创建项目").add_argument("name")
@@ -54,7 +60,7 @@ def main() -> None:
         parser.exit(2, f"{exc}\n")
     except OSError:
         parser.exit(2, "数据库文件无法访问，请检查路径或是否已经初始化\n")
-    except SQLAlchemyError:
+    except (SQLAlchemyError, sqlite3.Error):
         parser.exit(2, "数据库操作失败，请检查文件格式、完整性和并发访问状态\n")
 
 

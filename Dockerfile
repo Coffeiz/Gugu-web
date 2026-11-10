@@ -71,6 +71,11 @@ RUN --mount=type=cache,target=/root/.cache/pip \
         "msgpack==1.2.3" "setuptools==84.0.0" \
     && /opt/venv/bin/python -c "from importlib.metadata import version; assert version('msgpack') == '1.2.3'; assert version('setuptools') == '84.0.0'"
 
+# Core 独立打包后并入应用制品，使应用包更新同时携带匹配的 Core。
+COPY gugu-core /core-build
+RUN --mount=type=cache,target=/root/.cache/pip \
+    /opt/venv/bin/pip install -i "${PIP_INDEX_URL}" --no-deps --target /core-package /core-build
+
 COPY backend/agent ./agent
 
 # 两个生产 Cython 扩展都在带编译器的依赖构建层生成；最终应用层只接收 ABI 匹配的原生模块。
@@ -218,8 +223,8 @@ ENV PATH=/opt/venv/bin:${PATH} \
 COPY --from=backend-deps /opt/venv /opt/venv
 
 # 只复制运行时所需的后端模块和迁移文件，明确排除 tests/、test_*.py、docs/ 等。
+COPY --from=backend-deps /core-package/ ./
 COPY backend/app ./app
-COPY backend/gugu_core ./gugu_core
 COPY backend/updater ./updater
 COPY backend/agent ./agent
 COPY --from=backend-deps /build/agent/rag/cython_native*.so ./agent/rag/

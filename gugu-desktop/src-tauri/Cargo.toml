@@ -1,0 +1,29 @@
+[package]
+name = "gugu-desktop"
+version = "0.1.0"
+edition = "2021"
+description = "咕咕桌面宿主与原生执行能力验证"
+
+[lib]
+name = "gugu_desktop"
+path = "src/lib.rs"
+
+[features]
+default = ["desktop"]
+desktop = ["dep:tauri"]
+custom-protocol = ["desktop", "tauri/custom-protocol"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", optional = true, features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["process", "io-util", "sync", "time", "rt-multi-thread", "macros"] }
+mxc-sdk = "=1.0.1"
+
+[[bin]]
+name = "gugu-desktop"
+path = "src/main.rs"
+required-features = ["desktop"]

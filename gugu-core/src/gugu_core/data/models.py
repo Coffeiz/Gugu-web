@@ -63,3 +63,20 @@ class RuntimeMetadata(LocalBase):
     __tablename__ = "core_runtime_meta"
     key: Mapped[str] = mapped_column(String(50), primary_key=True)
     value: Mapped[str] = mapped_column(String(100))
+
+
+class ClientColumns:
+    """联系人业务列；登录用户外键由多用户宿主声明。"""
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(Uuid, index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    contact: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    email: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+
+
+class LocalClient(ClientColumns, LocalBase):
+    __tablename__ = "clients"

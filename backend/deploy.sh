@@ -63,7 +63,7 @@ hr; log "步骤 1/6 — 环境校验"
 
 cd "$APP_DIR"
 if [ ! -d ".venv" ] && [ ! -d "venv" ]; then
-    err "未找到 venv，请先创建：python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"
+    err "未找到 venv，请先创建：python3 -m venv .venv && .venv/bin/pip install -r requirements.txt -e '../gugu-core[postgres]'"
     exit 1
 fi
 if [ ! -f "config.override.json" ]; then
@@ -91,7 +91,7 @@ ok "完整备份已生成：$BACKUP_DIR"
 hr; log "步骤 3/6 — 同步 Python 依赖"
 cd "$APP_DIR"
 "$VENV_BIN/pip" install --upgrade pip -q
-"$VENV_BIN/pip" install -r requirements.txt -q
+"$VENV_BIN/pip" install -r requirements.txt -e "../gugu-core[postgres]" -q
 ok "依赖已同步"
 
 # ── 4. 数据库迁移 ────────────────────────────────────────

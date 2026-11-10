@@ -64,3 +64,49 @@ async def test_postgres_project_transaction_alias_utc_and_version_contract():
             async with admin.begin() as connection:
                 await connection.execute(DropSchema(schema, cascade=True))
         await admin.dispose()
+
+
+async def test_postgres_unified_runtime_commits_domains_and_isolates_contexts():
+    from datetime import timedelta
+    from sqlalchemy import text
+    from gugu_core.application.context import DataContext
+    from gugu_core.data.config import DataRuntimeConfig
+    from gugu_core.data.unit_of_work import SqlDataRuntime
+
+    url = os.environ["GUGU_CORE_TEST_POSTGRES_URL"]
+    schema = "core_test_" + uuid4().hex
+    admin = create_async_engine(url)
+    runtime = None
+    created = False
+    try:
+        async with admin.begin() as connection:
+            await connection.execute(CreateSchema(schema))
+        created = True
+        runtime = SqlDataRuntime.connect(DataRuntimeConfig.postgres(url, schema=schema))
+        async with runtime.engine.begin() as connection:
+            await connection.run_sync(LocalBase.metadata.create_all)
+            timeout = (await connection.execute(text(
+                "SELECT current_setting('idle_in_transaction_session_timeout')::interval"
+            ))).scalar_one()
+            assert timeout == timedelta(minutes=1)
+        owner, outsider = DataContext(uuid4()), DataContext(uuid4())
+        async with runtime.transaction(owner) as data:
+            await data.projects.create({"name": "统一项目"})
+            await data.clients.create({"name": "统一联系人"})
+        with pytest.raises(ValueError, match="联系人名称不能为空"):
+            async with runtime.transaction(owner) as data:
+                await data.projects.create({"name": "回滚项目"})
+                await data.clients.create({"name": ""})
+        async with runtime.transaction(owner) as data:
+            assert [row.name for row in await data.projects.list()] == ["统一项目"]
+            assert [row.name for row in await data.clients.list()] == ["统一联系人"]
+        async with runtime.transaction(outsider) as data:
+            assert await data.projects.list() == []
+            assert await data.clients.list() == []
+    finally:
+        if runtime is not None:
+            await runtime.close()
+        if created:
+            async with admin.begin() as connection:
+                await connection.execute(DropSchema(schema, cascade=True))
+        await admin.dispose()
