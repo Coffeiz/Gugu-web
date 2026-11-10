@@ -1,6 +1,7 @@
 """IM 入队幂等回归：重复平台事件不能启动第二个 run。"""
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -49,10 +50,13 @@ async def test_async_enqueue_atomically_deduplicates_and_appends():
 
     assert result == b"1234-0"
     args = client.eval.call_args.args
-    assert args[:3] == (R._ENQUEUE_SCRIPT, 2, _dedup_key(_PAYLOAD_BASE))
+    assert args[:3] == (R._ENQUEUE_SCRIPT, 4, _dedup_key(_PAYLOAD_BASE))
     assert args[3] == R.IM_INBOUND_STREAM
-    assert args[4] == 10000
-    assert args[6] == _DEDUP_TTL_SECONDS
+    assert args[4] == R.attention_scope_stream_key("qq", "bot-1", "group-1")
+    assert args[5] == R.attention_scope_start_key("qq", "bot-1", "group-1")
+    assert args[6] == 10000
+    assert args[8] == _DEDUP_TTL_SECONDS
+    assert args[9] == R.IM_ATTENTION_SCOPE_TTL_SECONDS
 
 
 @pytest.mark.asyncio
@@ -75,9 +79,10 @@ def test_sync_enqueue_uses_same_atomic_deduplication():
 
     assert result == b"5678-0"
     args = client.eval.call_args.args
-    assert args[:3] == (R._ENQUEUE_SCRIPT, 2, _dedup_key(_PAYLOAD_BASE))
+    assert args[:3] == (R._ENQUEUE_SCRIPT, 4, _dedup_key(_PAYLOAD_BASE))
     assert args[3] == R.IM_INBOUND_STREAM
-    assert args[6] == _DEDUP_TTL_SECONDS
+    assert args[4] == R.attention_scope_stream_key("qq", "bot-1", "group-1")
+    assert args[8] == _DEDUP_TTL_SECONDS
 
 
 @pytest.mark.asyncio
@@ -89,3 +94,32 @@ async def test_non_inbound_stream_does_not_use_im_message_deduplication():
         result = await R.produce("memory:reflection", dict(_PAYLOAD_BASE))
     assert result == b"9876-0"
     assert client.eval.call_args.args[2] == ""
+
+
+@pytest.mark.asyncio
+async def test_group_enqueue_indexes_same_event_in_scoped_attention_stream(monkeypatch):
+    """群消息和队列入站原子入索引；重复投递不重复写，其他群不会混入。"""
+    import fakeredis.aioredis
+
+    client = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    monkeypatch.setattr(R, "get_redis", lambda: client)
+    payload = {**_PAYLOAD_BASE, "message_id": "scope-test-1", "text": "group message"}
+    global_id = await R.produce(R.IM_INBOUND_STREAM, payload)
+    scoped_key = R.attention_scope_stream_key("qq", "bot-1", "group-1")
+
+    assert global_id
+    assert await client.xrange(scoped_key) == [(global_id, {"data": json.dumps(payload, ensure_ascii=False)})]
+    assert await client.get(R.attention_scope_start_key("qq", "bot-1", "group-1")) == global_id.split("-")[0]
+    assert await R.produce(R.IM_INBOUND_STREAM, payload) is None
+    assert len(await client.xrange(scoped_key)) == 1
+    await client.aclose()
+
+
+def test_attention_stream_is_scoped_to_platform_bot_and_group():
+    key = R.attention_scope_stream_key("qq", "bot-1", "group-1")
+    assert key.startswith(R.IM_ATTENTION_SCOPE_PREFIX)
+    assert key != R.attention_scope_stream_key("qq", "bot-2", "group-1")
+    assert key != R.attention_scope_stream_key("qq", "bot-1", "group-2")
+    assert R.attention_scope_start_key("qq", "bot-2", "group-1") != R.attention_scope_start_key(
+        "qq", "bot-1", "group-1",
+    )

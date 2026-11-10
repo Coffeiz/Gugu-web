@@ -9,9 +9,16 @@ import logging
 from contextvars import ContextVar
 from typing import Any
 
-from sqlalchemy import case, func, or_, select
+from sqlalchemy import LargeBinary, Text, case, cast, func, or_, select
 
 logger = logging.getLogger(__name__)
+
+# 历史图片快照会包含 base64。正文历史仍按原有策略完整加载；图片仅从最近 48 条
+# 用户消息中挑选，最多回放 12 个图片块且限制总读取量，避免多图消息绕过图片上限。
+_MAX_HISTORY_IMAGE_SNAPSHOT_MESSAGES = 12
+_MAX_HISTORY_IMAGE_BLOCKS = 12
+_MAX_HISTORY_IMAGE_BYTES = 8 * 1024 * 1024
+_HISTORY_IMAGE_BLOCK_TYPES = frozenset({"image", "image_url"})
 
 
 def _history_order_key(message):
@@ -68,6 +75,105 @@ async def _hydrate_loaded_reference_contexts(db, session_id: int, history: list)
     )
     if owner_id is not None:
         await hydrate_reference_history(db, owner_id, history)
+
+
+def _recent_image_candidate_ids(history: list) -> list[int]:
+    """只检查最近 48 条用户消息；更早图片不保证跨长文本对话回放。"""
+    return [
+        int(message.id) for message in reversed(history)
+        if getattr(message, "role", None) == "user"
+        and getattr(message, "id", None) is not None
+    ][:_MAX_HISTORY_IMAGE_SNAPSHOT_MESSAGES * 4]
+
+
+def _select_image_ids_within_budget(candidate_ids: list[int], size_by_id: dict[int, int]):
+    selected_ids: list[int] = []
+    used_bytes = 0
+    for message_id in candidate_ids:
+        size = size_by_id.get(message_id)
+        if size is None or size > _MAX_HISTORY_IMAGE_BYTES - used_bytes:
+            continue
+        selected_ids.append(message_id)
+        used_bytes += size
+        if len(selected_ids) >= _MAX_HISTORY_IMAGE_SNAPSHOT_MESSAGES:
+            break
+    return selected_ids, used_bytes
+
+
+def _limit_image_blocks(payload: list, remaining: int) -> tuple[list, int]:
+    """保留非图片内容，并将图片块裁剪到剩余的历史图片预算内。"""
+    limited: list = []
+    image_count = 0
+    for block in payload:
+        if not isinstance(block, dict) or block.get("type") not in _HISTORY_IMAGE_BLOCK_TYPES:
+            limited.append(block)
+            continue
+        if image_count >= remaining:
+            continue
+        limited.append(block)
+        image_count += 1
+    return limited, image_count
+
+
+async def _hydrate_recent_provider_images(db, history: list) -> tuple[int, int]:
+    """只取最近且受总字节预算约束的图片快照，不 eager-load 全部 JSON。"""
+    from app.models import ConversationMessage
+
+    candidate_ids = _recent_image_candidate_ids(history)
+    if not candidate_ids:
+        return 0, 0
+
+    dialect_name = getattr(getattr(getattr(db, "bind", None), "dialect", None), "name", None)
+    stored_value = cast(
+        ConversationMessage.provider_image_content,
+        LargeBinary if dialect_name == "sqlite" else Text,
+    )
+    size_function = func.length if dialect_name == "sqlite" else func.octet_length
+    sizes_result = await db.execute(
+        select(
+            ConversationMessage.id,
+            size_function(stored_value),
+        ).where(
+            ConversationMessage.id.in_(candidate_ids),
+            ConversationMessage.provider_image_content.is_not(None),
+        )
+    )
+    size_by_id = {
+        int(message_id): max(0, int(size or 0))
+        for message_id, size in sizes_result.all()
+    }
+    selected_ids, used_bytes = _select_image_ids_within_budget(candidate_ids, size_by_id)
+    if not selected_ids:
+        return 0, 0
+
+    payload_result = await db.execute(
+        select(ConversationMessage.id, ConversationMessage.provider_image_content)
+        .where(ConversationMessage.id.in_(selected_ids))
+    )
+    payload_by_id = {
+        int(message_id): payload
+        for message_id, payload in payload_result.all()
+        if isinstance(payload, list)
+    }
+    # selected_ids 按最近优先排列。先给较新的消息分配图片预算，再按原历史顺序
+    # 将裁剪后的快照挂回 ORM 对象，确保多图消息不能把 12 张上限扩成 12 条消息。
+    remaining_images = _MAX_HISTORY_IMAGE_BLOCKS
+    limited_payload_by_id: dict[int, list] = {}
+    for message_id in selected_ids:
+        payload = payload_by_id.get(message_id)
+        if payload is None or remaining_images <= 0:
+            continue
+        limited_payload, image_count = _limit_image_blocks(payload, remaining_images)
+        if image_count:
+            limited_payload_by_id[message_id] = limited_payload
+            remaining_images -= image_count
+
+    for message in history:
+        payload = limited_payload_by_id.get(int(getattr(message, "id", 0) or 0))
+        if payload is not None:
+            # 直接写入 ORM instance state，避免触发 deferred column 的隐式异步 I/O。
+            vars(message)["provider_image_content"] = payload
+    return len(limited_payload_by_id), used_bytes
 
 
 async def load_session_history(
@@ -155,6 +261,7 @@ async def load_session_history(
         if effective_baseline <= 0:
             limit = max(0, limit - len(summary))
         history = history[-limit:] if limit else []
+    image_count, image_bytes = await _hydrate_recent_provider_images(db, history)
     await _hydrate_loaded_reference_contexts(db, session_id, history)
     _last_history_stats.set({
         "history_loaded_count": len(newest),
@@ -164,6 +271,8 @@ async def load_session_history(
         "history_baseline_message_seq": passed_baseline,
         "history_effective_baseline_seq": effective_baseline,
         "history_summary_covers_until_seq": covers_until or None,
+        "history_image_snapshots_loaded": image_count,
+        "history_image_snapshot_bytes": image_bytes,
         "history_oldest_selected_seq": (
             getattr(history[0], "history_anchor_seq", None)
             or getattr(history[0], "conversation_seq", None)

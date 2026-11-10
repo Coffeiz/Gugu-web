@@ -1,4 +1,4 @@
-"""Python 侧 TS RAG source projection 等价实现（迁移期，不接生产写入路径）。"""
+"""把已授权的业务来源记录投影为统一 Cython RAG 文档。"""
 from __future__ import annotations
 
 import hashlib
@@ -10,65 +10,12 @@ from agent.rag.models import IndexDocument, Scope
 
 MAX_CHARS = 1000
 OVERLAP_CHARS = 150
-RAG_WORKER_VERSION = "0.6.1"
-
-
-def adapt_source_records(owner_user_id: object, source_type: str, records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    """复刻 TS ``adapt`` operation 的结果和错误边界。
-
-    ``project_source_records_from_wire`` 是严格内部 primitive；协议层则保留 TS
-    的特殊语义：文件明确拒绝，未知来源作为空批次成功，不会泄漏成 Python 异常。
-    """
-    if source_type == "file":
-        return {"status": "error", "code": "unsupported_source", "message": "文件不属于 RAG 来源"}
-    projected_documents: list[tuple[IndexDocument, Mapping[str, Any]]] = []
-    if source_type not in {
-        "memory", "project", "knowledge", "note", "canvas", "calendar",
-        "scheduled_task", "conversation",
-    }:
-        documents = []
-    else:
-        documents = []
-        # Keep the optional-vs-empty distinction from each wire record's scope. The
-        # IndexDocument model normalizes both to empty strings, while TS JSON omits
-        # fields that the source adapter never supplied.
-        for record in records:
-            raw_scope = record.get("scope") if isinstance(record.get("scope"), Mapping) else {}
-            projected_documents.extend(
-                (document, raw_scope)
-                for document in project_source_records_from_wire(owner_user_id, source_type, [record])
-            )
-
-    from agent.rag.cython_backend import _worker_document_wire
-    from agent.rag.delta import chunk_slot_key
-
-    wire_documents = []
-    for document, raw_scope in projected_documents:
-        wire = _worker_document_wire(document, chunk_slot_key(document))
-        if not document.metadata:
-            wire.pop("metadata", None)
-        if document.updated_at is None:
-            wire.pop("updated_at", None)
-        if not document.version:
-            wire.pop("document_version", None)
-        # Empty scope strings are meaningful only when explicitly present in the
-        # wire input; otherwise TS serialization omits the undefined property.
-        for field in ("platform", "bot_id", "group_id"):
-            if field not in raw_scope:
-                wire.pop(field, None)
-        wire_documents.append(wire)
-    return {
-        "status": "ok", "version": RAG_WORKER_VERSION,
-        "documents": wire_documents, "document_count": len(wire_documents),
-    }
-
-
 def project_source_records(
     owner_user_id: object,
     source_type: str,
     records: Sequence[tuple[Mapping[str, Any], Scope]],
 ) -> list[IndexDocument]:
-    """把与 TS ``buildSourceDocuments`` 相同的 source records 投影为 chunks。
+    """把已授权的 source records 投影为可检索 chunks。
 
     调用方必须先完成数据库/StorageReader 归属和 scope 授权。该函数只接受
     已授权的 record+Scope，不读取数据、不查询权限，也不修改生产索引。
@@ -89,51 +36,6 @@ def project_source_records(
             continue
         projected_source_type = projected.pop("source_type", source_type)
         output.extend(_build_documents(owner, source_type=projected_source_type, **projected))
-    return output
-
-
-def project_source_records_from_wire(
-    owner_user_id: object,
-    source_type: str,
-    records: Sequence[Mapping[str, Any]],
-) -> list[IndexDocument]:
-    """实现 TS ``adapt`` 的输入边界：wire scope 绑定 owner 后再做 canonical 投影。"""
-    owner = str(owner_user_id)
-    scoped_records: list[tuple[Mapping[str, Any], Scope]] = []
-    for record in records:
-        raw_scope = record.get("scope")
-        if not isinstance(raw_scope, Mapping):
-            continue
-        scope = Scope(
-            owner_user_id=owner,
-            platform=str(raw_scope.get("platform") or ""),
-            bot_id=str(raw_scope.get("bot_id") or ""),
-            group_id=str(raw_scope.get("group_id") or ""),
-            scope_type=str(raw_scope.get("scope_type") or ""),
-            scope_id=str(raw_scope.get("scope_id") or ""),
-        )
-        scoped_records.append((record, scope))
-    return project_source_records(owner, source_type, scoped_records)
-
-
-def project_source_batch(
-    owner_user_id: object,
-    batch: Mapping[str, Sequence[Mapping[str, Any]]],
-) -> list[IndexDocument]:
-    """与 TS ``buildSourceDocuments`` 相同顺序处理 batch，供 build/index 组合复用。"""
-    output: list[IndexDocument] = []
-    for batch_key, source_type in (
-        ("memory", "memory"),
-        ("project", "project"),
-        ("note", "note"),
-        ("canvas", "canvas"),
-        ("calendar", "calendar"),
-        ("scheduled_task", "scheduled_task"),
-        ("conversations", "conversation"),
-        ("knowledge", "knowledge"),
-    ):
-        records = batch.get(batch_key) or ()
-        output.extend(project_source_records_from_wire(owner_user_id, source_type, records))
     return output
 
 
@@ -314,7 +216,7 @@ def _build_documents(
 
 
 def _chunk_text(text: str) -> list[str]:
-    """按 worker adapters/base.ts 的段落、句界与码点预算切块。"""
+    """按段落、句界与字符预算切块。"""
     normalized = str(text or "").strip()
     if not normalized:
         return []
@@ -377,7 +279,4 @@ def _valid_scope(scope: Scope) -> bool:
     return bool(scope.scope_type) and (scope.scope_type != "group" or bool(scope.scope_id))
 
 
-__all__ = [
-    "MAX_CHARS", "OVERLAP_CHARS", "RAG_WORKER_VERSION", "adapt_source_records", "project_source_batch",
-    "project_source_records", "project_source_records_from_wire",
-]
+__all__ = ["MAX_CHARS", "OVERLAP_CHARS", "project_source_records"]

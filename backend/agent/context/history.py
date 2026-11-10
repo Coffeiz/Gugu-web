@@ -19,6 +19,7 @@ from .summary_format import format_compacted_summary
 _TIME_CONTEXT_RE = re.compile(
     r"^\[system-reminder\]\n(?:当前时间：)?[^\n]+\n\[/system-reminder\]$"
 )
+USER_IMAGE_TYPES = frozenset({"image", "image_url"})
 
 
 def build_canonical_history_envelopes(history: Iterable, *, source: str | None = None) -> list[HistoryEnvelope]:
@@ -39,6 +40,7 @@ def canonical_restore_record(message) -> dict:
         "role": str(getattr(message, "role", "user") or "user"),
         "content": str(getattr(message, "content", "") or ""),
         "content_json": content_json,
+        "provider_image_content": vars(message).get("provider_image_content"),
         "sent_at": getattr(message, "sent_at", None).isoformat()
         if getattr(message, "sent_at", None) is not None else None,
         "created_at": getattr(message, "created_at", None).isoformat()
@@ -265,6 +267,52 @@ def _ordered_canonical_content(
     return content
 
 
+def _anthropic_image_to_openai(block: dict) -> dict | None:
+    source = block.get("source") or {}
+    if source.get("type") != "base64" or not source.get("data"):
+        return None
+    media_type = str(source.get("media_type") or "image/jpeg")
+    return {
+        "type": "image_url",
+        "image_url": {
+            "url": f"data:{media_type};base64,{source['data']}",
+            "detail": "auto",
+        },
+    }
+
+
+def _openai_image_to_anthropic(block: dict) -> dict | None:
+    import re
+
+    image_url = block.get("image_url") or {}
+    url = image_url.get("url") if isinstance(image_url, dict) else None
+    match = re.fullmatch(r"data:([^;,]+);base64,(.+)", str(url or ""), re.DOTALL)
+    if not match:
+        return None
+    return {
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": match.group(1),
+            "data": match.group(2),
+        },
+    }
+
+
+def _adapt_saved_image_content(saved: list[dict], *, use_anthropic: bool) -> list[dict]:
+    """把首次发送时保存的图片快照转换为当前 Provider 的图片块格式。"""
+    adapted = []
+    for block in saved:
+        block_type = block.get("type")
+        if block_type == "image" and not use_anthropic:
+            adapted.append(_anthropic_image_to_openai(block) or dict(block))
+        elif block_type == "image_url" and use_anthropic:
+            adapted.append(_openai_image_to_anthropic(block) or dict(block))
+        else:
+            adapted.append(dict(block))
+    return adapted
+
+
 def _openai_history_message(message, request, *, strip_thinking: bool = False,
                             content_json=None, strip_history_images: bool = True,
                             allow_tool_images: bool = False) -> list[dict]:
@@ -405,6 +453,18 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
         content_json = getattr(message, "_reference_content_json", None)
         if content_json is None:
             content_json = getattr(message, "content_json", None)
+        saved = vars(message).get("provider_image_content")
+        if message.role == "user" and saved and allow_tool_images:
+            has_saved_image = any(
+                block.get("type") in {"image", "image_url"} for block in saved
+            )
+            if has_saved_image:
+                # 快照保留首次发送时的完整正文、时间和引用；图片块在当前 Provider
+                # 边界转换，避免切换 OpenAI/Anthropic 后丢失历史图片。
+                adapted = _adapt_saved_image_content(saved, use_anthropic=use_anthropic)
+                content = adapted if use_anthropic else _ordered_canonical_content(adapted)
+                parts.append({"role": "user", "content": content})
+                continue
         if isinstance(content_json, list):
             # 旧数据可能把时间 reminder 存成 text；在 provider 分支前统一恢复
             # canonical 类型，确保跨 run 的消息结构不会漂移。
@@ -556,6 +616,7 @@ def render_canonical_area_snapshot(snapshot, *, source=None, options=None):
             role=record.get("role", "user"),
             content=content,
             content_json=content_json,
+            provider_image_content=record.get("provider_image_content"),
             sent_at=sent_at,
             created_at=created_at,
             im_platform_sent_ms=record.get("im_platform_sent_ms"),

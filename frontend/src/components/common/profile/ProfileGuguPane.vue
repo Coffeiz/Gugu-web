@@ -37,11 +37,6 @@
       </div>
     </div>
     <div class="pm-sep"></div>
-    <div class="pm-section">
-      <div class="pm-section-label">{{ t('profileGuguUi.replyStyle') }}</div>
-      <div v-for="setting in styleSettings" :key="setting.key" class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">{{ setting.label }}</span><span class="pm-field-hint">{{ setting.hint }}</span></div><div class="pm-style-group"><button v-for="opt in setting.options" :key="opt.value" class="pm-style-chip" :class="{ active: setting.current === opt.value }" @click="setting.select(opt.value)">{{ opt.label }}</button></div></div>
-    </div>
-    <div class="pm-sep"></div>
     <ProfilePersonalityPane />
     <div class="pm-sep"></div>
     <div class="pm-section"><div class="pm-section-label">{{ t('profileGuguUi.conversation') }}</div><div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileGuguUi.reopen') }}</span><span class="pm-field-hint">{{ t('profileGuguUi.reopenHint') }}</span></div><div class="pm-style-group"><button class="pm-style-chip" :class="{ active: reopenResume }" @click="setReopenResume(true)">{{ t('profileGuguUi.resume') }}</button><button class="pm-style-chip" :class="{ active: !reopenResume }" @click="setReopenResume(false)">{{ t('profileGuguUi.newConversation') }}</button></div></div></div>
@@ -69,8 +64,6 @@ import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
 const { t } = useI18n()
 
 const prefsStore = usePreferencesStore()
-const TONE_OPTS = computed(() => [{ value: 'natural', label: t('profileGuguUi.natural') }, { value: 'formal', label: t('profileGuguUi.formal') }, { value: 'lively', label: t('profileGuguUi.lively') }])
-const LENGTH_OPTS = computed(() => [{ value: 'medium', label: t('profileGuguUi.medium') }, { value: 'short', label: t('profileGuguUi.short') }, { value: 'detailed', label: t('profileGuguUi.detailed') }])
 const reopenResume = ref(localStorage.getItem('gugu_reopen_resume') === '1')
 function setReopenResume(value: boolean) { reopenResume.value = value; localStorage.setItem('gugu_reopen_resume', value ? '1' : '0') }
 
@@ -95,10 +88,6 @@ async function clearMemory() { if (!await confirmDialog({ title: t('profileGuguU
 const attachClearing = ref(false); const attachMsg = ref(''); const attachMsgType = ref('ok')
 async function clearAttachments() { if (!await confirmDialog({ title: t('profileGuguUi.deleteAttachments'), message: t('profileGuguUi.deleteAttachmentsConfirm'), tone: 'danger', confirmText: t('profileGuguUi.deleteFiles') })) return; attachClearing.value = true; attachMsg.value = ''; try { const result = await agentApi.clearAttachments(); attachMsg.value = result.deleted > 0 ? t('profileGuguUi.attachmentsDeleted', { count: result.deleted }) : t('profileGuguUi.noAttachments'); attachMsgType.value = 'ok' } catch (error) { attachMsg.value = (error instanceof Error ? error.message : '') || t('profileGuguUi.deleteFailed'); attachMsgType.value = 'err' } finally { attachClearing.value = false } }
 
-const styleSettings = computed(() => [
-  { key: 'tone', label: t('profileGuguUi.tone'), hint: t('profileGuguUi.toneHint'), current: prefsStore.replyTone ?? 'natural', options: TONE_OPTS.value, select: (value: string) => prefsStore.saveStyle({ tone: value === 'natural' ? null : value }) },
-  { key: 'length', label: t('profileGuguUi.replyLength'), hint: t('profileGuguUi.replyLengthHint'), current: prefsStore.replyLength ?? 'medium', options: LENGTH_OPTS.value, select: (value: string) => prefsStore.saveStyle({ length: value === 'medium' ? null : value }) },
-])
 onMounted(() => { loadQuota(); reopenResume.value = localStorage.getItem('gugu_reopen_resume') === '1'; window.addEventListener('gugu-quota-changed', onQuotaChanged) })
 onUnmounted(() => window.removeEventListener('gugu-quota-changed', onQuotaChanged))
 </script>

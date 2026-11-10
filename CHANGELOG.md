@@ -7,6 +7,62 @@
 
 ## [Unreleased]
 
+## [1.7.9] - 2026-11-10
+
+### What's New
+
+#### New Features
+
+- Add a monthly active user metric to the Admin data page.
+
+#### Improvements
+
+- Use the configured model Provider for web search by default, removing the need to deploy a separate self-hosted search service while preserving similar-image search.
+- Base context compaction and memory maintenance on Provider-reported usage, adapt maintenance batches to smaller model windows, and show a completion status after IM context cleanup.
+- Preserve recent image context across runs within explicit message and size limits.
+
+#### Fixes
+
+- Recover oversized chat requests with one bounded retry while preserving the user's original message and attachments; provide actionable guidance when the request still exceeds the model limit.
+- Retry Admin memory maintenance with smaller complete-message batches after a Provider reports an input limit, without overwriting existing memory when the retry cannot finish.
+- Restore chat history and interaction cards in chronological order when messages arrive during an active run.
+
+#### Contributors
+
+- Thank you to [@Coffeiz](https://github.com/Coffeiz) for PR #113.
+
+#### Feedback & Issue Reporters
+
+- None.
+
+### 更新内容
+
+#### 新功能
+
+- 管理数据页增加月活跃用户统计。
+
+#### 改进
+
+- 默认使用已配置模型服务商提供的网页搜索，无需另行部署自托管搜索服务，同时保留相似图片搜索。
+- 上下文整理和记忆维护依据服务商实际用量；记忆维护适配较小的模型上下文，并在 IM 上下文整理完成后反馈状态。
+- 在明确的消息数量和大小限制内，跨轮保留近期图片上下文。
+
+#### 修复
+
+- 聊天请求超限时进行一次有界恢复，保留用户原始消息和附件；仍超限时给出可执行的处理建议。
+- 服务商报告输入超限后，管理端记忆维护会缩小完整消息批次重试；重试仍失败时不会覆盖已有记忆。
+- 活跃回复期间有新消息到达时，聊天历史和交互卡片仍按时间顺序恢复。
+
+#### 贡献者
+
+- 感谢 [@Coffeiz](https://github.com/Coffeiz) 提交 PR #113。
+
+#### 反馈与问题报告
+
+- 暂无。
+
+## [1.7.8] - 2026-11-05
+
 ### What's New
 
 #### New Features
@@ -21,6 +77,7 @@
 - Preserve chronological message order and stable conversation prefixes when group messages arrive during a running reply.
 - Propagate run cancellation through in-flight model and tool work, and report a consistent terminal state.
 - Batch and cache knowledge retrieval to reduce repeated work during context injection.
+- Unify knowledge retrieval and indexing on Python/Cython while preserving existing recall and access-control behavior.
 - Use a consistent scrollable card layout across scheduled tasks, skills, and MCP services.
 - Improve outbound web request header handling and destination validation.
 - Coordinate concurrent background reflection requests that share a provider cache prefix.
@@ -37,6 +94,7 @@
 - Retry transient MiniMax web-search failures with a bounded delay.
 - Keep a sent user message visible while its run starts, and save file edits against the latest file version.
 - Avoid interpreting dollar-denominated prices as inline math when Markdown math is enabled.
+- Keep MCP tool and task requests bounded by their configured request timeout.
 
 #### Fixes
 
@@ -51,6 +109,7 @@
 - Smoke-start the Mermaid diagram worker during image builds so missing modules or fonts fail the build instead of breaking rendering at runtime.
 - Deliver the final QQ streamed reply reliably when earlier streaming content was only partially delivered, and report missing stream terminal events as errors.
 - Avoid duplicate QQ messages when a terminal reply revises buffered streaming text.
+- Ensure production images include both Cython RAG extensions so initial retrieval works without a runtime compiler.
 - Keep tool activity synchronized when switching between chat sessions.
 - Keep localized cancellation status messages consistent across supported languages.
 - Resolve group @mentions to the correct bot name instead of displaying another bot as Gugu.
@@ -60,7 +119,7 @@
 
 #### Contributors
 
-- Thank you to [@Coffeiz](https://github.com/Coffeiz) for PR #109.
+- Thank you to [@Coffeiz](https://github.com/Coffeiz) for PR #109 and PR #112.
 
 #### Feedback & Issue Reporters
 
@@ -80,6 +139,7 @@
 - 群聊消息在回复运行期间到达时，保持历史时间顺序和会话前缀稳定。
 - 将取消信号传递到运行中的模型和工具任务，并统一反馈任务终态。
 - 对知识检索进行批处理和缓存，减少上下文注入时的重复工作。
+- 将知识检索与索引统一到 Python/Cython 实现，保持现有召回和访问控制行为。
 - 定时任务、技能和 MCP 服务统一使用可滚动卡片布局。
 - 改进联网请求头处理与目标地址校验。
 - 协调共享 Provider 缓存前缀的并发后台反思请求，减少缓存竞争。
@@ -96,6 +156,7 @@
 - 对 MiniMax 联网搜索的临时故障进行有限间隔重试。
 - 修复 Run 启动时用户消息气泡短暂消失的问题，并确保文件编辑使用最新文件版本保存。
 - 启用 Markdown 行内公式时，避免将美元金额误识别为公式。
+- 为 MCP 工具和任务请求应用配置的请求超时，避免服务端无响应时调用持续等待。
 
 #### 修复
 
@@ -116,6 +177,7 @@
 - 修复重命名或切换会话后标题未及时更新的问题。
 - 修复群反思任务遇到空消息范围或 Worker 停止时无事件循环而反复失败的问题。
 - IM 任务取消已发送确认后，不再重复提示“远端执行状态未知”。
+- 确保生产镜像包含 Cython RAG 的两个扩展，首次检索无需在运行时编译。
 
 #### 贡献者
 

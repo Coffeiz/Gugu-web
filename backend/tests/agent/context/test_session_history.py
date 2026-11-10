@@ -5,9 +5,7 @@ import re
 
 import pytest
 
-from agent.context.budget import ContextBudget
 from agent.context.session_history import consume_history_stats, load_session_history
-from agent.context.tokens import estimate_tokens
 from app.models import ConversationMessage, ConversationSession
 
 
@@ -32,6 +30,8 @@ class _Db:
     async def execute(self, query):
         self.last_queries.append(str(query))
         sql = str(query.compile(compile_kwargs={"literal_binds": True}))
+        if "length(" in sql.lower() or "octet_length(" in sql.lower():
+            return _Result([])
         match = re.search(r"\bLIMIT\s+(\d+)\b", sql, re.IGNORECASE)
         limit = int(match.group(1)) if match else None
         self.query_limits.append(limit)
@@ -151,12 +151,148 @@ async def test_history_reload_preserves_prefix_beyond_old_window(db, user_a, sou
     assert after[-1].content == "新消息"
 
 
-def test_context_budget_reserves_fixed_context_and_turn_batch():
-    full = ContextBudget.from_parts(120_000)
-    reserved = ContextBudget.from_parts(
-        120_000,
-        system_prompt_tokens=estimate_tokens("系统提示" * 1000 + "群记忆" * 1000),
-        turn_batch_tokens=800,
-    )
-    assert reserved.history_capacity_tokens < full.history_capacity_tokens
-    assert reserved.history_capacity_tokens > 1
+@pytest.mark.asyncio
+async def test_history_hydrates_only_recent_bounded_image_snapshots(db, user_a):
+    """历史正文保持完整，但图片快照只回读最近预算内的有限条目。"""
+    session = ConversationSession(user_id=user_a.id, title="图片历史", source="web")
+    db.add(session)
+    await db.flush()
+    db.add_all([
+        ConversationMessage(
+            session_id=session.id,
+            role="user",
+            content=f"图片消息 {index}",
+            content_json=[{"type": "text", "text": f"图片消息 {index}"}],
+            provider_image_content=[
+                {"type": "text", "text": f"图片消息 {index}"},
+                {"type": "image", "source": {
+                    "type": "base64", "media_type": "image/png", "data": "x" * 128}},
+            ],
+        )
+        for index in range(20)
+    ])
+    await db.commit()
+
+    history = await load_session_history(db, session.id)
+    stats = consume_history_stats()
+    loaded_images = [
+        item for item in history
+        if "provider_image_content" in vars(item)
+    ]
+
+    assert len(history) == 20
+    assert len(loaded_images) == 12
+    assert [item.content for item in loaded_images] == [
+        f"图片消息 {index}" for index in range(8, 20)
+    ]
+    assert stats["history_image_snapshots_loaded"] == 12
+    assert stats["history_image_snapshot_bytes"] <= 8 * 1024 * 1024
+
+
+@pytest.mark.asyncio
+async def test_history_image_block_limit_applies_across_multi_image_messages(db, user_a):
+    """多图消息按图片块总数裁剪，且预算优先留给最近消息。"""
+    session = ConversationSession(user_id=user_a.id, title="多图历史", source="web")
+    db.add(session)
+    await db.flush()
+    db.add_all([
+        ConversationMessage(
+            session_id=session.id,
+            role="user",
+            content=f"多图消息 {index}",
+            provider_image_content=[
+                {"type": "text", "text": f"多图消息 {index}"},
+                *[
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{index}-{image}"}}
+                    for image in range(5)
+                ],
+            ],
+        )
+        for index in range(12)
+    ])
+    await db.commit()
+
+    history = await load_session_history(db, session.id)
+    stats = consume_history_stats()
+    restored = [item for item in history if "provider_image_content" in vars(item)]
+    restored_image_blocks = [
+        block
+        for item in restored
+        for block in vars(item)["provider_image_content"]
+        if isinstance(block, dict) and block.get("type") in {"image", "image_url"}
+    ]
+
+    assert len(restored_image_blocks) == 12
+    assert [item.content for item in restored] == [
+        "多图消息 9", "多图消息 10", "多图消息 11",
+    ]
+    assert [
+        sum(
+            isinstance(block, dict) and block.get("type") in {"image", "image_url"}
+            for block in vars(item)["provider_image_content"]
+        )
+        for item in restored
+    ] == [2, 5, 5]
+    assert vars(restored[0])["provider_image_content"][0] == {
+        "type": "text", "text": "多图消息 9",
+    }
+    assert stats["history_image_snapshots_loaded"] == 3
+    assert stats["history_image_snapshot_bytes"] <= 8 * 1024 * 1024
+
+
+@pytest.mark.asyncio
+async def test_history_image_snapshot_candidates_stop_after_48_user_messages(db, user_a):
+    """图片候选范围是最近 48 条用户消息；更早图片不会穿过长文本对话回放。"""
+    session = ConversationSession(user_id=user_a.id, title="长文本后的图片", source="web")
+    db.add(session)
+    await db.flush()
+    db.add(ConversationMessage(
+        session_id=session.id,
+        role="user",
+        content="较早的图片",
+        provider_image_content=[{"type": "image", "source": {
+            "type": "base64", "media_type": "image/png", "data": "c25hcHNob3Q="}}],
+    ))
+    db.add_all([
+        ConversationMessage(
+            session_id=session.id,
+            role="user",
+            content=f"后续文本 {index}",
+        )
+        for index in range(48)
+    ])
+    await db.commit()
+
+    history = await load_session_history(db, session.id)
+
+    assert len(history) == 49
+    assert not any("provider_image_content" in vars(item) for item in history)
+
+
+@pytest.mark.asyncio
+async def test_history_image_snapshot_hydration_obeys_byte_budget(db, user_a, monkeypatch):
+    """单条快照超过剩余预算时不读取 payload，避免少数大图打穿总量限制。"""
+    import agent.context.session_history as session_history
+
+    monkeypatch.setattr(session_history, "_MAX_HISTORY_IMAGE_BYTES", 400)
+    session = ConversationSession(user_id=user_a.id, title="大图历史", source="web")
+    db.add(session)
+    await db.flush()
+    db.add_all([
+        ConversationMessage(
+            session_id=session.id,
+            role="user",
+            content=f"大图 {index}",
+            provider_image_content=[{"type": "image", "source": {
+                "type": "base64", "media_type": "image/png", "data": "x" * 256}}],
+        )
+        for index in range(3)
+    ])
+    await db.commit()
+
+    history = await load_session_history(db, session.id)
+    stats = consume_history_stats()
+
+    assert len(history) == 3
+    assert sum("provider_image_content" in vars(item) for item in history) == 1
+    assert stats["history_image_snapshot_bytes"] <= 400

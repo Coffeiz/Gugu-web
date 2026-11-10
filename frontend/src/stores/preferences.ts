@@ -11,8 +11,6 @@ export const usePreferencesStore = defineStore('preferences', () => {
   // 偏好里的松结构数组（阶段/模板元素类型待后端入 OpenAPI 后 gen:types 收紧），暂 any[]
   const lastStages       = ref<any[]>([])
   const stageTemplates   = ref<any[]>([])
-  const replyTone        = ref<string | null>(null)   // natural(null) / formal / lively
-  const replyLength      = ref<string | null>(null)   // medium(null) / short / detailed
   const pmStagesExpanded  = ref(false)  // 项目编辑卡阶段区展开版面记忆
   const calendarWeekStart = ref('monday') // 'monday' 或 'sunday'
   const calendarDoneMode  = ref('done') // 'done' = 已完成项目显示到完成日；'deadline' = 显示到截止日
@@ -76,8 +74,6 @@ export const usePreferencesStore = defineStore('preferences', () => {
       const data = await preferencesApi.get()
       lastStages.value       = data.lastStages     ?? []
       stageTemplates.value   = data.stageTemplates ?? []
-      replyTone.value        = data.replyTone      ?? null
-      replyLength.value      = data.replyLength    ?? null
       pmStagesExpanded.value = data.pmStagesExpanded ?? false
       calendarWeekStart.value = (data as any).calendarWeekStart ?? 'monday'
       calendarDoneMode.value = (data as any).calendarDoneMode ?? 'done'   // 类型待后端 calendarDoneMode 入 OpenAPI 后 gen:types 收回
@@ -294,20 +290,8 @@ export const usePreferencesStore = defineStore('preferences', () => {
     try { await preferencesApi.update({ stageTemplates: templates }) } catch {}
   }
 
-  async function saveStyle({ tone, length }: { tone?: string | null; length?: string | null }) {
-    const previous = { tone: replyTone.value, length: replyLength.value }
-    const next = { tone: tone !== undefined ? tone : replyTone.value, length: length !== undefined ? length : replyLength.value }
-    await saveOptimistically('style', { replyTone: next.tone, replyLength: next.length }, () => {
-      replyTone.value = next.tone
-      replyLength.value = next.length
-    }, () => {
-      replyTone.value = previous.tone
-      replyLength.value = previous.length
-    })
-  }
-
   return {
-    lastStages, stageTemplates, replyTone, replyLength, pmStagesExpanded, calendarWeekStart, calendarDoneMode, defaultView, shellEnabled, shellSystemEnabled, shellDangerousEnabled, automaticModeEnabled, decisionGuardEnabled, imToolDisplayMode, showIntermediateReplies, toolInjectionMode, customReplyStyle, customReplyStyleEnabled, personalityPreference, personalityPreferenceEnabled, groupPersonalityPreference, groupPersonalityPreferenceEnabled, personalityPreferenceAvailable, personalityPreferenceRevision, emailChangeEnabled, locale,
-    loaded, fetch, refreshAutomaticModeEnabled, notifyAutomaticModeChanged, refreshEmailChangeEnabled, saveLocale, saveLastStages, saveTemplates, saveStyle, savePmStagesExpanded, saveCalendarWeekStart, saveCalendarDoneMode, saveDefaultView, saveShellEnabled, saveShellSystemEnabled, saveShellDangerousEnabled, saveAutomaticModeEnabled, saveDecisionGuardEnabled, saveImToolDisplayMode, saveShowIntermediateReplies, saveToolInjectionMode, saveCustomReplyStyle, saveCustomReplyStyleEnabled, uploadCustomReplyStyle, savePersonalityPreference, uploadPersonalityFile, saveGroupPersonalityPreference, uploadGroupPersonalityFile,
+    lastStages, stageTemplates, pmStagesExpanded, calendarWeekStart, calendarDoneMode, defaultView, shellEnabled, shellSystemEnabled, shellDangerousEnabled, automaticModeEnabled, decisionGuardEnabled, imToolDisplayMode, showIntermediateReplies, toolInjectionMode, customReplyStyle, customReplyStyleEnabled, personalityPreference, personalityPreferenceEnabled, groupPersonalityPreference, groupPersonalityPreferenceEnabled, personalityPreferenceAvailable, personalityPreferenceRevision, emailChangeEnabled, locale,
+    loaded, fetch, refreshAutomaticModeEnabled, notifyAutomaticModeChanged, refreshEmailChangeEnabled, saveLocale, saveLastStages, saveTemplates, savePmStagesExpanded, saveCalendarWeekStart, saveCalendarDoneMode, saveDefaultView, saveShellEnabled, saveShellSystemEnabled, saveShellDangerousEnabled, saveAutomaticModeEnabled, saveDecisionGuardEnabled, saveImToolDisplayMode, saveShowIntermediateReplies, saveToolInjectionMode, saveCustomReplyStyle, saveCustomReplyStyleEnabled, uploadCustomReplyStyle, savePersonalityPreference, uploadPersonalityFile, saveGroupPersonalityPreference, uploadGroupPersonalityFile,
   }
 })

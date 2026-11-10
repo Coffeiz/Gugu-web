@@ -40,7 +40,7 @@ DaoCloud 和 1ms 都是第三方加速服务，可能未收录该镜像或未及
 docker save -o gugu-web.tar coffeiz/gugu-web:latest
 ```
 
-若从 GHCR 拉取，请先将镜像标记为 `coffeiz/gugu-web:latest` 再导出。显式使用 DaoCloud 或 1ms 前缀只影响 `gugu-web`；Compose 额外使用的 SearXNG 是否能拉取，取决于 NAS Docker daemon 的镜像源配置。
+若从 GHCR 拉取，请先将镜像标记为 `coffeiz/gugu-web:latest` 再导出。显式使用 DaoCloud 或 1ms 前缀只影响 `gugu-web`；
 
 ## 前置要求
 
@@ -70,7 +70,7 @@ docker run -d --name gugu-web \
 
 `Gugu-data` 保存用户数据和运行配置，`Gugu-config` 保存 Admin 配置。升级前备份这两个目录和数据库；拉取目标镜像后停止旧容器，再用原端口和目录映射运行新容器。数据库 schema 迁移会在应用启动时自动执行。不要删除数据目录。正式部署应使用固定版本标签或 digest，避免 `latest` 在两次部署间指向不同版本。
 
-单容器镜像包含完整站点、内置 PostgreSQL/Redis、内部 Rootless Docker、沙盒管理器和 Shell 执行镜像。Shell 沙盒默认启用，不需要单独部署 `sandboxd`、导入执行镜像或挂载宿主 Docker Socket。SearXNG 不包含在单容器镜像中，因此联网搜索功能不可用。
+单容器镜像包含完整站点、内置 PostgreSQL/Redis、内部 Rootless Docker、沙盒管理器和 Shell 执行镜像。Shell 沙盒默认启用，不需要单独部署 `sandboxd`、导入执行镜像或挂载宿主 Docker Socket。联网搜索由当前模型 Provider 提供。
 
 单容器更新分为两层：Admin「版本更新」只允许下载并验签不含数据库迁移、且明确支持安全代码回滚的 Gugu 应用包，在容器内切换应用代码并重启服务；包含数据库迁移的 Release 必须通过 Docker/NAS 管理器更新完整镜像。应用包更新失败时，只有在数据库 schema 未变化且 Release 声明支持回滚时才恢复旧代码，避免新旧代码与数据库 schema 不兼容。基础系统、Rootless Docker、Shell 执行镜像及其他基础运行时也由 Docker 管理器更新。请保留原有 `/data`、`/config` 映射。旧版镜像需先通过 Docker 管理器更新到包含应用包更新运行时的版本。
 
@@ -78,7 +78,7 @@ docker run -d --name gugu-web \
 
 ## 可选：使用 Compose 并启用联网搜索
 
-`docker-compose.yml` 同样使用 Docker Hub 的一体化应用镜像，并额外拉取 SearXNG 提供联网搜索。Compose 不部署独立 updater 服务，也不挂载宿主 Docker Socket；app 在 privileged 外层容器内运行 Rootless Docker。
+`docker-compose.yml` 使用 Docker Hub 的一体化应用镜像。Compose 不部署独立 updater 服务，也不挂载宿主 Docker Socket；app 在 privileged 外层容器内运行 Rootless Docker。
 
 如需此路径，从 GitHub 下载 Compose 文件和环境变量模板，填写 `GUGU_DB_PASSWORD` 后启动：
 

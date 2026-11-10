@@ -44,7 +44,6 @@
           <div><span>{{ t('reflection.input') }}</span><b>{{ fmt(number(probe(run).input_tokens)) }}</b></div>
           <div><span>{{ t('reflection.cacheRead') }}</span><b>{{ fmt(number(probe(run).cache_read_tokens)) }}</b></div>
           <div><span>{{ t('reflection.cacheWrite') }}</span><b>{{ fmt(number(probe(run).cache_write_tokens)) }}</b></div>
-          <div><span>{{ t('reflection.prefixEstimate') }}</span><b>{{ fmt(number(probe(run).stable_prefix_tokens_estimate)) }}</b></div>
           <div><span>{{ probe(run).request_outcome === 'error' ? `${t('reflection.failure')} ${probe(run).request_error_status || ''}` : t('reflection.requestDuration') }}</span><b>{{ duration(probe(run).request_duration_ms) }}</b></div>
           <div><span>{{ t('reflection.gap') }}</span><b>{{ gap(probe(run).origin_gap_seconds) }}</b></div>
         </div>

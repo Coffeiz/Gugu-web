@@ -173,7 +173,7 @@ const selectedLoaded = computed(() => Boolean(props.details?.[selectedId.value]?
 const usage = computed<TokenUsage>(() => resolveUsage(selected.value))
 const usageSourceLabel = computed(() => {
   if (hasProviderUsage(selected.value)) return 'provider reported prompt tokens'
-  return Object.keys(usage.value).length ? 'local estimate' : 'no model usage'
+  return 'no model usage'
 })
 const cacheRatio = computed(() => usage.value.input ? Math.min((usage.value.cache_read ?? 0) / usage.value.input, 1) : 0)
 const cachePercent = computed(() => usage.value.input ? `${(cacheRatio.value * 100).toFixed(1)}%` : '—')
@@ -305,21 +305,20 @@ function resolveUsage(run: TraceRun | TraceRunSummary | null): TokenUsage {
 
   const total = spans.reduce<TokenUsage>((sum, span) => {
     const usage = normalizeUsage(span.usage)
-    const impact = span.token_impact ?? {}
-    const hasUsage = hasPositiveUsage(usage)
-    const measuredInput = hasUsage ? usage.input ?? (
+    if (!hasPositiveUsage(usage)) return sum
+    const measuredInput = usage.input ?? (
       usage.fresh_input !== undefined || usage.cache_read !== undefined || usage.cache_write !== undefined
         ? Number(usage.fresh_input ?? 0) + Number(usage.cache_read ?? 0) + Number(usage.cache_write ?? 0)
         : undefined
-    ) : undefined
-    sum.input = (sum.input ?? 0) + (measuredInput ?? Number(impact.prompt_tokens_estimate ?? impact.estimated_input_tokens ?? 0))
-    sum.output = (sum.output ?? 0) + ((hasUsage ? usage.output : undefined) ?? Number(impact.output_tokens_estimate ?? 0))
+    )
+    sum.input = (sum.input ?? 0) + (measuredInput ?? 0)
+    sum.output = (sum.output ?? 0) + (usage.output ?? 0)
     sum.cache_read = (sum.cache_read ?? 0) + (usage.cache_read ?? 0)
     sum.cache_write = (sum.cache_write ?? 0) + (usage.cache_write ?? 0)
     return sum
   }, {})
   if (total.input || total.output || total.cache_read || total.cache_write) {
-    total.fresh_input = Math.max((total.input ?? 0) - (total.cache_read ?? 0), 0)
+    total.fresh_input = Math.max((total.input ?? 0) - (total.cache_read ?? 0) - (total.cache_write ?? 0), 0)
     total.total = (total.input ?? 0) + (total.output ?? 0)
     total.cache_ratio = total.input ? (total.cache_read ?? 0) / total.input : 0
     return total

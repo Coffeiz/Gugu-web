@@ -807,10 +807,15 @@ async def _send_file_qq(
     if len(data) > QQ_ATTACHMENT_MAX_BYTES:
         return False
     # 文件始终主动发送，不消耗触发本轮任务的被动回复次数。
+    receipt = payload.get("_im_file_receipt")
+    extra = {"return_outcome": True} if isinstance(receipt, dict) else {}
     ok = await qq.send_file(
         openid, data, display_name, ext, payload.get("channel_id"),
-        None, group=is_group,
+        None, group=is_group, **extra,
     )
+    if isinstance(receipt, dict):
+        receipt["state"] = ok
+        return ok == "sent"
     return ok
 
 

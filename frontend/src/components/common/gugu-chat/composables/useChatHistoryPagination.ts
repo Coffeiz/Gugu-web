@@ -1,7 +1,7 @@
 import { computed, onScopeDispose, ref, watch, type Ref } from 'vue'
 import { agentApi } from '@/services/api'
 import type { ChatMessage } from '../chatTypes'
-import { mapSessionMessageDelta, mergeSessionMessageDelta, sortSessionTimelineMessages } from './sessionMessageSync'
+import { mapSessionMessageDelta, mergeSessionMessageDelta } from './sessionMessageSync'
 
 export interface ChatHistoryState { hasMore: boolean; loading: boolean; error: boolean }
 interface HistoryPage { hasMore?: boolean; oldestId?: number | null }
@@ -42,13 +42,14 @@ export function useChatHistoryPagination(options: {
     loading.value = true
     error.value = false
     try {
-      const data = await agentApi.getMessagesBefore(String(session), cursor, 50)
+      const data = await agentApi.getMessages(session, { beforeId: cursor, limit: 50 })
       if (!isCurrent()) return
       const next = data.pagination?.oldestId as number | null | undefined
-      if (data.messages?.length && (next == null || next >= cursor)) throw new Error('历史游标未前进')
+      // 游标按发生时间前进，较早到达的 IM 消息可能有更大的数据库 ID。
+      if (next === cursor || (data.pagination?.hasMore && next == null)) throw new Error('历史游标未前进')
       const incoming = mapSessionMessageDelta(data, options.mkid, options.resolveSpeaker)
       options.beforeMerge()
-      options.messages.value = sortSessionTimelineMessages(mergeSessionMessageDelta(options.messages.value, incoming))
+      options.messages.value = mergeSessionMessageDelta(options.messages.value, incoming)
       oldestId = next ?? null
       hasMore.value = Boolean(data.pagination?.hasMore && oldestId != null)
     } catch {

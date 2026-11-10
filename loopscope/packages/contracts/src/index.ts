@@ -21,17 +21,8 @@ export const TokenUsageSchema = z.object({
 }).passthrough()
 
 export const TokenImpactSchema = z.object({
-  source_tokens: z.number().optional(),
-  included_tokens: z.number().optional(),
-  argument_tokens: z.number().optional(),
-  result_tokens: z.number().optional(),
-  prompt_tokens_estimate: z.number().optional(),
-  prompt_growth_estimate: z.number().optional(),
-  system_tokens_estimate: z.number().optional(),
-  messages_tokens_estimate: z.number().optional(),
-  estimated_input_tokens: z.number().optional(),
-  followup_tokens: z.number().optional(),
-  output_tokens_estimate: z.number().optional(),
+  prompt_tokens_actual: z.number().optional(),
+  prompt_tokens_source: z.string().optional(),
 }).passthrough()
 
 export const TraceSpanInputSchema = z.object({

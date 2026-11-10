@@ -1,27 +1,7 @@
-"""上下文正文规范化与诊断估算工具。
-
-本地估算只允许用于诊断、回归测试、provider overflow 后的兼容旧接口，以及
-没有普通 provider usage 事件的静默反思预检；不得替代正常 run 的 provider
-权威预算或决定普通历史组装/重试。正式压缩仍由统一的 baseline 压缩入口执行。
-"""
+"""规范化上下文中的文本与消息结构。"""
 from __future__ import annotations
 
 import json
-
-def estimate_tokens(text: str) -> int:
-    """CJK 感知的 token 估算。宁可略高估，避免超窗。"""
-    if not text:
-        return 0
-    cjk = 0
-    for ch in text:
-        o = ord(ch)
-        # CJK 统一表意 + 扩展A + 假名 + 全角标点
-        if (0x4E00 <= o <= 0x9FFF or 0x3400 <= o <= 0x4DBF
-                or 0x3040 <= o <= 0x30FF or 0xFF00 <= o <= 0xFFEF):
-            cjk += 1
-    other = len(text) - cjk
-    return int(cjk * 1.3 + other / 4) + 1
-
 
 def _json_content(value) -> str:
     try:
@@ -71,11 +51,3 @@ def message_text(message: dict) -> str:
         if value:
             parts.append(f"[{key}]\n{content_text(value)}")
     return "\n".join(part for part in parts if part)
-
-
-def msg_tokens(m) -> int:
-    """一条 ConversationMessage 的估算 token——含 content_json（工具轮次正文在此，不在 content）。"""
-    cj = getattr(m, "content_json", None)
-    if cj is not None:
-        return estimate_tokens(content_text(cj))
-    return estimate_tokens(getattr(m, "content", "") or "")

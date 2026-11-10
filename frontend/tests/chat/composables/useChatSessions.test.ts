@@ -7,7 +7,6 @@ import type { ChatMessage, ChatSession } from '@/components/common/gugu-chat/cha
 vi.mock('@/services/api', () => ({
   agentApi: {
     getMessages: vi.fn(),
-    listSessionInteractions: vi.fn(),
   },
 }))
 
@@ -63,28 +62,27 @@ function createSessionManager() {
 describe('会话加载代次', () => {
   afterEach(() => vi.resetAllMocks())
 
-  it('启动恢复 A 等待交互卡片期间切到 B 后，A 不能覆盖 B 的消息', async () => {
-    const interactions = deferred<{ items: [] }>()
+  it('A 的消息与交互同页在途时切到 B，迟到页不能覆盖 B', async () => {
     const response = (content: string) => ({
       messages: [{ id: 1, role: 'user', content, createdAt: '2026-10-15T00:00:00Z' }],
       timelineEvents: [], pagination: { newestId: 1 }, active: false,
     } as any)
-    vi.mocked(agentApi.getMessages).mockImplementation(async (id) => response(`会话 ${id === '101' ? 'A' : 'B'}`))
-    vi.mocked(agentApi.listSessionInteractions).mockImplementation((id) =>
-      id === '101' ? interactions.promise as any : Promise.resolve({ items: [] }),
+    const pageA = deferred<ReturnType<typeof response>>()
+    vi.mocked(agentApi.getMessages).mockImplementation((id) =>
+      id === 101 ? pageA.promise : Promise.resolve(response('会话 B')),
     )
 
     const { scope, sessionId, messages, sessions } = createSessionManager()
 
     const restoreA = sessions.loadSession(101, true)
-    await vi.waitFor(() => expect(agentApi.listSessionInteractions).toHaveBeenCalledWith('101'))
+    await vi.waitFor(() => expect(agentApi.getMessages).toHaveBeenCalledWith(101, { restoreInteractions: true }))
 
     // B 的导航使 A 的视图代次失效，并完整加载 B。
     await expect(sessions.loadSession(202, true)).resolves.toBe('loaded')
     expect(sessionId.value).toBe(202)
     expect(messages.value.map((message) => message.text)).toEqual(['会话 B'])
 
-    interactions.resolve({ items: [] })
+    pageA.resolve({ ...response('会话 A'), interactions: [{ id: 90, title: '旧会话交互卡' }] })
     await expect(restoreA).resolves.toBe('superseded')
     expect(sessionId.value).toBe(202)
     expect(messages.value.map((message) => message.text)).toEqual(['会话 B'])
@@ -111,9 +109,8 @@ describe('会话加载代次', () => {
     ]
     vi.mocked(agentApi.getMessages).mockImplementation(async (id) => ({
       messages: [{ id: Number(id), role: 'user', content: '会话内容', createdAt: '2026-10-15T00:00:00Z' }],
-      timelineEvents: [], pagination: { newestId: Number(id) }, active: id === '101' && sessionId.value == null,
+      timelineEvents: [], pagination: { newestId: Number(id) }, active: id === 101 && sessionId.value == null,
     } as any))
-    vi.mocked(agentApi.listSessionInteractions).mockResolvedValue({ items: [] } as any)
 
     await sessions.loadSession(101)
     messages.value = [{ id: 7, dbId: 7, role: 'ai', text: '缓存中的回复', time: '12:00' }]

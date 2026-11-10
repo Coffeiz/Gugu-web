@@ -414,13 +414,6 @@ class QuotaSettings(BaseModel):
     default_search_limit_daily:  Optional[int] = Field(None, description="全局每日联网搜索次数上限（None=不限制）")
 
 
-DEFAULT_SEARXNG_IMAGE_ENGINES = (
-    "baidu images,quark images,sogou images,bing images,brave.images,"
-    "duckduckgo images,google images,qwant images,yandex images,pinterest,"
-    "wikicommons.images,openverse,flickr,imgur,artstation"
-)
-
-
 class SearchSettings(BaseModel):
     rag_enabled: bool = Field(True, description="是否启用 Agent 自动知识召回（RAG）")
     rag_auto_sources: list[Literal["memory", "knowledge", "project", "canvas", "note", "calendar", "scheduled_task", "conversation"]] = Field(
@@ -435,10 +428,6 @@ class SearchSettings(BaseModel):
         if isinstance(value, (list, tuple)):
             return [source for source in value if source != "file"]
         return value
-    ts_rank_scoring_version: Literal["confidence-v4", "confidence-v1"] = Field(
-        "confidence-v4",
-        description="TS 候选评分器版本；confidence-v4 为生产默认，confidence-v1 仅作短期回滚开关",
-    )
     capability_rag_enabled: bool = Field(False, description="是否启用能力目录 RAG 软推荐；只调整目录顺序，不裁剪授权工具")
     capability_rag_shadow: bool = Field(True, description="能力目录 RAG 是否只记录推荐而不改变目录顺序")
     capability_rag_limit: int = Field(5, ge=1, le=20, description="每轮能力目录最多推荐的工具数")
@@ -446,41 +435,21 @@ class SearchSettings(BaseModel):
     tavily_api_key: str = Field("", description="Tavily API Key（空=禁用 deep_research 深度研究）")
     deep_research_baidu_api_key: str = Field("", description="百度普通搜索 API Key")
     deep_research_you_api_key: str = Field("", description="You.com Research API Key")
-    searxng_url:    str = Field("", description="自建 SearXNG 实例地址（空=禁用 xng_search 通用搜索），如 http://127.0.0.1:8888")
-    searxng_engines: str = Field(
-        "baidu,sogou,quark,360search,yandex,duckduckgo web,mwmbl,gabanza,reloado,searchch,privacywall,gmx,zapmeta,google",
-        description="SearXNG 启用的通用网页搜索引擎（逗号分隔）",
-    )
-    searxng_image_engines: str = Field(
-        DEFAULT_SEARXNG_IMAGE_ENGINES,
-        description="SearXNG XNG 搜索 mode=images 启用的引擎（逗号分隔）；默认兼顾国内外来源，可按部署环境测试后调整；留空时使用此默认名单",
-    )
     max_results:    int = Field(5, description="默认返回结果数")
-    rag_backend: Literal["typescript", "cython"] = Field(
-        "typescript", description="统一 RAG 查询运行时；启用 sidecar 时 Cython 索引由常驻宿主共享，TS 保留为手动回滚基线",
-    )
-    ts_sidecar_command: str = Field("", description="TypeScript RAG worker 命令；为空则使用项目内置构建物")
-    ts_index_sync_mode: Literal["incremental", "full"] = Field(
-        "incremental",
-        description="索引生命周期同步模式：incremental=worker 按水位增量同步（墓碑契约）；"
-        "full=回退每次全量装载（回滚开关）",
-    )
-    ts_sidecar_socket: str = Field(
+    rag_sidecar_socket: str = Field(
         "",
-        description="gugu-rag-sidecar 常驻宿主的 unix socket 路径；为空时 TypeScript/Cython 使用各自的进程内实现。"
-        "配置后由 sidecar 统一托管对应索引，多个后端进程共享热索引",
+        description="Cython RAG 常驻宿主的 unix socket 路径；为空时使用进程内索引",
     )
-    ts_sidecar_index_ttl_seconds: int = Field(
+    rag_index_ttl_seconds: int = Field(
         30 * 24 * 3600,
         ge=7 * 24 * 3600,
         le=365 * 24 * 3600,
-        description="TypeScript RAG 用户索引缓存保留时间；仅清理长期未使用的可重建索引",
+        description="Cython RAG 磁盘快照保留时间；仅清理长期未使用的可重建索引",
     )
     rag_query_mode: Literal["unified"] = Field(
         "unified",
-        description="RAG 查询交付链：unified 为 TS worker 统一查询主链（唯一保留档；legacy/batch/shadow 灰度档已随旧 Python 查询链删除，显式配置旧值会在启动时报校验错误）",
+        description="使用统一 Cython 检索链",
     )
-    ts_sidecar_timeout_ms: int = Field(30_000, ge=50, le=30_000, description="TypeScript worker 单次查询请求超时毫秒数")
     similar_image_provider: Literal["baidu_qianfan"] = Field("baidu_qianfan", description="相似图搜索 Provider；有效 API Key 即表示启用")
     similar_image_enabled: bool = Field(False, description="旧版相似图搜索开关，仅保留配置兼容，不再作为启用条件")
     baidu_qianfan_api_key: str = Field("", description="百度千帆 API Key（空=禁用相似图搜索）")
@@ -490,7 +459,7 @@ class SearchSettings(BaseModel):
 
 
 class StateLabelSettings(BaseModel):
-    """对话里「状态指示」的自定义命名。key=工具名（xng_search…）或特殊状态键（_thinking/_preparing/
+    """对话里「状态指示」的自定义命名。key=工具名（web_search…）或特殊状态键（_thinking/_preparing/
     _verify_prefix），value=自定义显示名；未设的 key 自动回退到代码默认（工具的 label / 内置默认）。
     后台「状态命名」面板写入，core/前端热读。"""
     overrides: dict[str, str] = Field(default_factory=dict, description="状态显示名覆盖表（key→自定义名）")

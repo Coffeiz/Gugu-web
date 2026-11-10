@@ -46,48 +46,6 @@ def _skills_index_block(skill_names: list[str] | None) -> str:
     return "\n".join(lines)
 
 
-def _style_block(prefs: dict) -> str:
-    tone = {
-        "natural": (
-            "自然。使用清晰、亲切、自然的表达，可以适度口语化，但不要刻意卖萌、"
-            "堆叠语气词或玩笑；保持真诚、克制，不冷淡，也不过度热情。"
-        ),
-        "formal": (
-            "正式。必须使用严谨、克制、完整的表达，优先使用书面语，减少口语化表达、"
-            "语气词和玩笑；面对问题先给明确结论，再补充必要依据。"
-        ),
-        "lively": (
-            "活泼。使用轻松、积极、自然的表达，可以适度使用语气词、比喻或轻松措辞；"
-            "活泼必须建立在清晰和准确之上，不连续堆叠语气词，不靠玩笑、夸张反应或 emoji 制造活泼感。"
-        ),
-    }
-    length = {
-        "medium": (
-            "适中。根据任务复杂度组织内容；简单问题直接回答，搜索、对比、排查类任务"
-            "补充必要依据和结果；可以使用列表、表格或多段内容，但不重复或扩展无关信息。"
-        ),
-        "short": (
-            "简短。先给出直接结论，再提供完成当前任务所必需的依据或结果；"
-            "删除重复解释、泛泛背景、无关扩展和过程性流水账。搜索、对比、排查和多项任务"
-            "可以使用列表、表格或多段内容，不限制段落数量；不得为了简短而遗漏关键条件、风险、失败项或下一步操作。"
-        ),
-        "detailed": (
-            "详细。除结论外，补充必要的原因、过程、影响、注意事项和可执行步骤；"
-            "对复杂任务完整覆盖各个方面，必要时使用列表、表格或示例；不得省略关键细节，"
-            "但仍只围绕用户问题展开。"
-        ),
-    }
-    lines = []
-    if value := tone.get(prefs.get("reply_tone") or "natural"):
-        lines.append(f"- 语气：{value}")
-    if value := length.get(prefs.get("reply_length") or "medium"):
-        lines.append(f"- 回复长度：{value}")
-    return ("## 用户回复风格要求\n\n"
-            "除非用户当前消息明确要求其他表达方式，否则必须遵守以下风格设置。"
-            "这些设置只影响表达方式，不得改变事实、权限、安全规则，也不得省略完成任务所必需的信息。\n\n"
-            + "\n".join(lines))
-
-
 def _personality_block(prefs: dict) -> str:
     if prefs.get("group_chat"):
         if not prefs.get("group_personality_preference_enabled"):
@@ -147,10 +105,8 @@ def build_static_prompt(prompt_name: str, user_name: str, *,
             text = ""
         if text:
             parts.append(text)
-    if style := _style_block(style_prefs):
-        parts.append(style)
     if style_prefs.get("custom_reply_style_enabled") and (custom_style := str(style_prefs.get("custom_reply_style") or "").strip()):
-        parts.append("## 用户自定义回复风格\n\n只调整表达方式，不改变人格设定、事实、安全规则或权限。与预设语气或长度冲突时优先遵循此风格；当前用户的明确表达要求优先。\n\n" + custom_style)
+        parts.append("## 用户自定义回复风格\n\n只调整表达方式，不改变人格设定、事实、安全规则或权限。当前用户的明确表达要求优先。\n\n" + custom_style)
     if skill_index := _skills_index_block(skills):
         parts.append(skill_index)
     return "\n\n---\n\n".join(parts)

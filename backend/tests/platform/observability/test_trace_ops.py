@@ -246,7 +246,7 @@ async def test_finish_run_fills_empty_published_response_from_last_llm_draft(mon
 
     assert final.output == {"text": "好，去吧。"}
     assert final.attributes == {"source": "trace.finish_run", "fallback": True}
-    assert final.token_impact["output_tokens_estimate"] > 0
+    assert not final.token_impact
     await asyncio.gather(*list(trace_state._send_tasks), return_exceptions=True)
 
 

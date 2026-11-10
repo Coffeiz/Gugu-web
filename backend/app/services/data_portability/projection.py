@@ -323,7 +323,7 @@ async def project_record(
 
         allowed = {
             "locale", "theme", "theme_family", "palette", "last_stages", "stage_templates",
-            "reply_tone", "reply_length", "custom_reply_style_enabled", "pm_stages_expanded", "calendar_week_start",
+            "custom_reply_style_enabled", "pm_stages_expanded", "calendar_week_start",
             "default_view", "im_tool_display_mode", "show_intermediate_replies",
             "tool_injection_mode",
         }

@@ -126,7 +126,7 @@
                 <ProfileByokPane compact onboarding capability="llm" />
               </div>
 
-              <div v-show="step === 'im'" class="content-options">
+              <div v-show="step === 'im'" class="content-options onboarding-im-options">
                 <OnboardingImSetup />
               </div>
 
@@ -650,6 +650,11 @@ async function next() {
   min-width: 0;
   min-height: 0;
   margin: 0;
+}
+
+.onboarding-im-options {
+  display: flex;
+  align-items: center;
 }
 
 .onboarding-model-pane {

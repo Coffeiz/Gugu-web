@@ -113,8 +113,6 @@ def _to_response(
         palette=normalize_theme_palette(data.get("palette")),
         lastStages=data.get("last_stages", []),
         stageTemplates=data.get("stage_templates", []),
-        replyTone=data.get("reply_tone"),
-        replyLength=data.get("reply_length"),
         customReplyStyle=reply_style,
         customReplyStyleEnabled=bool(data.get("custom_reply_style_enabled", False)),
         pmStagesExpanded=data.get("pm_stages_expanded", False),
@@ -376,18 +374,6 @@ async def update_preferences(
         data["theme_family"] = body.themeFamily
     if body.palette is not None:
         data["palette"] = body.palette
-    if "replyTone" in body.model_fields_set:
-        style_changed = True
-        if body.replyTone is None:
-            data.pop("reply_tone", None)   # null = 重置为默认（自然）
-        else:
-            data["reply_tone"] = body.replyTone
-    if "replyLength" in body.model_fields_set:
-        style_changed = True
-        if body.replyLength is None:
-            data.pop("reply_length", None) # null = 重置为默认（适中）
-        else:
-            data["reply_length"] = body.replyLength
     if body.customReplyStyleEnabled is not None:
         style_changed = style_changed or bool(body.customReplyStyleEnabled) != bool(data.get("custom_reply_style_enabled", False))
         data["custom_reply_style_enabled"] = bool(body.customReplyStyleEnabled)

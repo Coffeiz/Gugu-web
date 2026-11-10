@@ -4,8 +4,6 @@ from __future__ import annotations
 import asyncio
 import gzip
 import json
-from pathlib import Path
-import subprocess
 
 import httpx
 import pytest
@@ -132,27 +130,6 @@ def test_query_embedding_rejects_invalid_provider_vectors(payload):
     assert embedding._extract_query_vector(payload, "openai") is None
 
 
-async def _run_ts_query_embedding(settings: dict, text: str, timeout_ms: int) -> dict:
-    source = (
-        'import { embedQuery } from "./ts/workers/rag/src/query-embedding.ts";'
-        'let input=""; for await (const chunk of process.stdin) input += chunk;'
-        'const request=JSON.parse(input);'
-        'const result=await embedQuery(request.settings, request.text, request.timeout_ms);'
-        'process.stdout.write(JSON.stringify(result));'
-    )
-    process = await asyncio.create_subprocess_exec(
-        "node", "--experimental-strip-types", "--input-type=module", "-e", source,
-        cwd=Path(__file__).parents[3],
-        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await process.communicate(json.dumps({
-        "settings": settings, "text": text, "timeout_ms": timeout_ms,
-    }).encode())
-    assert process.returncode == 0, stderr.decode("utf-8", errors="replace")
-    return json.loads(stdout)
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize((
     "response_status", "response_body", "delay", "invalid_key", "connection_failure", "compressed", "expected",
@@ -181,10 +158,10 @@ async def _run_ts_query_embedding(settings: dict, text: str, timeout_ms: int) ->
      {"vector": [], "outcome": "invalid_response", "http_status": 200}),
 ], ids=["success", "http-error", "redirect", "invalid-json", "invalid-vector", "response-too-large",
        "timeout", "network-error", "newline-api-key", "non-ascii-api-key", "compressed-response"])
-async def test_query_embedding_error_matrix_matches_ts_runtime(
+async def test_query_embedding_error_matrix_is_safe_and_deterministic(
     monkeypatch, response_status, response_body, delay, invalid_key, connection_failure, compressed, expected,
 ):
-    """同一本机 HTTP 行为下，Python 与 TS 的 query embedding 结果必须逐字段一致。"""
+    """固定本机 HTTP 响应验证 embedding 错误分类、大小限制和凭据处理。"""
     async def serve(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
             request_line = await reader.readline()
@@ -233,12 +210,9 @@ async def test_query_embedding_error_matrix_matches_ts_runtime(
         server.close()
         await server.wait_closed()
     try:
-        ts_result = await _run_ts_query_embedding(settings, "differential query", 15 if delay else 1000)
         monkeypatch.setattr(embedding, "QUERY_EMBEDDING_TIMEOUT_SECONDS", 0.015 if delay else 4.0)
         python_result = await embedding.embed_query("differential query", settings=settings)
-        assert ts_result == expected
         assert python_result == expected
-        assert ts_result == python_result
     finally:
         server.close()
         await server.wait_closed()
@@ -255,8 +229,8 @@ async def test_query_embedding_error_matrix_matches_ts_runtime(
     ("invalid_pin", "synthetic query"),
     ("empty_query", "  \n"),
 ], ids=["blank-model", "unsupported-scheme", "url-credentials", "url-query", "invalid-pin", "empty-query"])
-async def test_query_embedding_rejects_invalid_wire_config_like_ts(change, text):
-    """无效 query/settings 在 TS 与 Python facade 中都应在发网前安全拒绝。"""
+async def test_query_embedding_rejects_invalid_wire_config(change, text):
+    """无效 query/settings 必须在发网前安全拒绝。"""
     settings = {
         "provider": "local", "base_url": "http://embedding.test:1/v1",
         "pinned_ip": "127.0.0.1", "model": "differential-test", "dimensions": 2,
@@ -274,8 +248,5 @@ async def test_query_embedding_rejects_invalid_wire_config_like_ts(change, text)
         settings["pinned_ip"] = "not-an-ip"
 
     expected = {"vector": [], "outcome": "invalid_config"}
-    ts_result = await _run_ts_query_embedding(settings, text, 1000)
     python_result = await embedding.embed_query(text, settings=settings)
-    assert ts_result == expected
     assert python_result == expected
-    assert ts_result == python_result

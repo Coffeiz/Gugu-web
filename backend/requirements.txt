@@ -31,6 +31,10 @@ anthropic>=1.14.0,<2.0.0
 oss2>=2.18.0
 # IM 平台接入（飞书 WebSocket 长连 + API）
 lark-oapi>=1.7.4,<2.0.0
+# 官方 MCP Python SDK：协议会话、Streamable HTTP 与标准消息类型。
+mcp==2.3.0
+# 官方 SDK transport 使用的 HTTPX2 类型同时作为 Gugu 安全传输桥接接口。
+httpx2>=2.10.0,<3.0.0
 # QQ 官方机器人接收/发送均为自建 raw WebSocket + raw HTTP，不再依赖 qq-botpy
 # Utils
 # 固定安全版本，避免基础镜像残留旧元数据被生产扫描识别。
@@ -39,7 +43,6 @@ setuptools==84.0.0
 # RAG 中文分词使用 jieba-rs 的 PyO3 绑定；词项适配规则见 agent/rag/cython_tokenizer.py。
 rjieba==0.2.2
 # 可选本地 tokenizer：LoopScope 配置 tokenizer.json 后按模型精确估算；未配置时自动回退启发式
-tokenizers>=0.20.3,<1.0.0
 python-dotenv>=1.0.0
 pypinyin>=0.50.0
 SudachiPy>=0.6.11

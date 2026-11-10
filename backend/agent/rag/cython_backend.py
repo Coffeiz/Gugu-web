@@ -51,7 +51,7 @@ class CythonSearchDiagnostics:
 
 @dataclass(frozen=True, slots=True)
 class CythonLexicalIndex:
-    """TS worker lexical search 的只读 Python facade。"""
+    """Cython lexical search 的 Python facade。"""
 
     documents: tuple[IndexDocument, ...]
     document_keys: tuple[str, ...]
@@ -281,7 +281,7 @@ class CythonLexicalIndex:
             return [], diagnostics
 
         # 必须在全索引语料统计 IDF 后过滤。若仅把 eligible 文档建索引，scope
-        # 查询的 BM25 分数会与 TS worker 不同；先取全部命中再应用过滤和 Top-K。
+        # 先在完整索引语料统计 IDF，再应用 scope 过滤和 Top-K，确保分数口径稳定。
         has_duplicate_keys = len(set(self.document_keys)) != len(self.document_keys)
         if prepared_hits is not None:
             hits = prepared_hits
@@ -436,8 +436,8 @@ class CythonRagEngine:
     ) -> None:
         normalized_revision = str(revision or "")
         if revision_is_content_addressed:
-            # prepare_memory 的 SHA revision 覆盖完整文档状态；像 TS worker 一样，
-            # 它既可跳过相同 revision 的比较，也可替代逐文档词法指纹计算。
+            # prepare_memory 的 SHA revision 覆盖完整文档状态，可跳过相同 revision
+            # 的比较和逐文档词法指纹计算。
             if self._transient.revision != normalized_revision:
                 snapshot = tuple(documents)
                 self._transient = CythonLexicalIndex.build(snapshot, normalized_revision)
@@ -581,7 +581,7 @@ class CythonRagEngine:
                     "id": keys_by_identity[id(row.document)],
                     "score": row.score, "source_type": row.document.source_type,
                     "document_version": row.document.version,
-                    "document": _worker_document_wire(
+                    "document": _index_document_wire(
                         row.document, keys_by_identity[id(row.document)], index.database_projection,
                     ),
                 } for row in results],
@@ -637,7 +637,7 @@ class CythonRagEngine:
         results = []
         for item in ranked:
             key = str(item["id"])
-            document = _worker_document_wire(documents_by_key[key], key, self._persistent.database_projection)
+            document = _index_document_wire(documents_by_key[key], key, self._persistent.database_projection)
             document["text"] = item["text"]
             results.append(document)
         return {
@@ -687,9 +687,7 @@ class CythonRagEngine:
                 [self._transient.bm25] if has_transient else []
             )]),
         )
-        # Match TS worker response assembly: state.documentsById is consulted before
-        # transient.documentsById. Legacy persistent memory slots may collide with a
-        # transient memory slot; keep the same persistent-first projection for parity.
+        # 持久与瞬态记忆槽位可能冲突，组装结果时保持持久文档优先。
         documents_by_key = {
             key: document
             for key, document in zip(
@@ -701,7 +699,7 @@ class CythonRagEngine:
         for item in selected:
             key = str(item.get("document_key") or "")
             document = documents_by_key[key]
-            item["document"] = _worker_document_wire(
+            item["document"] = _index_document_wire(
                 document, key, self._persistent.database_projection and key in self._persistent._last_position_by_key,
             )
             item["raw_score"] = _candidate_raw_score(candidates, str(item.get("id") or ""))
@@ -955,7 +953,7 @@ def _ranking_text(document: IndexDocument, database_projection: bool = False) ->
 
 
 def _lexical_fingerprint(document: IndexDocument, database_projection: bool = False) -> str:
-    """复刻 TS worker 的词法指纹；版本和更新时间变化不触发重新安装。"""
+    """计算词法内容指纹；版本和更新时间变化不触发重复安装。"""
     context = (
         document.contextual_content()
         if document.source_type == "conversation" and document.metadata.get("kind") == "message"
@@ -991,6 +989,8 @@ def _matches_worker_scope(document: IndexDocument, scope: Scope | None) -> bool:
     if scope is None:
         return True
     actual = document.scope
+    if actual.owner_user_id != scope.owner_user_id:
+        return False
     if scope.scope_type in {"project", "folder"}:
         if actual.scope_type != "owner":
             return False
@@ -1019,8 +1019,8 @@ def _is_after_conversation_watermark(document: IndexDocument, before_message_id:
     return not (math.isfinite(message_id) and message_id < before_message_id)
 
 
-def _worker_document_wire(document: IndexDocument, key: str, database_projection: bool = False) -> dict[str, object]:
-    """返回 TS worker selected.document 的文档字段形状。"""
+def _index_document_wire(document: IndexDocument, key: str, database_projection: bool = False) -> dict[str, object]:
+    """返回检索结果与本机 sidecar 共用的文档结构。"""
     text_parts = [document.title]
     content = document.content.strip()
     if document.summary and (database_projection or not content.startswith(document.summary)):
@@ -1056,7 +1056,7 @@ def _worker_document_wire(document: IndexDocument, key: str, database_projection
 
 
 def _rank_wire_document(document: IndexDocument, key: str, source: str, database_projection: bool = False) -> dict[str, object]:
-    wire = _worker_document_wire(document, key, database_projection)
+    wire = _index_document_wire(document, key, database_projection)
     if source == "conversation":
         wire["ranking_text"] = document.content if database_projection else str(document.metadata.get("context_current") or document.content)
         if document.metadata.get("kind") == "message":
@@ -1079,7 +1079,7 @@ def _merged_statistics(indices: Sequence[CythonBM25Index]) -> dict[str, object]:
         "document_count": document_count,
         "average_length": total_length / document_count if document_count else 0.0,
         "document_frequency": dict(frequencies),
-        "source": "combined_ts_index" if len(indices) > 1 else "full_ts_index",
+        "source": "combined_cython_index" if len(indices) > 1 else "full_cython_index",
     }
 
 

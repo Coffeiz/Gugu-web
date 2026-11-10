@@ -7,7 +7,6 @@ import app.api.v1.config as config_api
 import agent.rag.index_cache as index_cache
 import agent.rag.pipeline as pipeline
 import app.db.session as db_session
-from agent.memory import embedding
 
 
 class _FakeRedis:
@@ -26,18 +25,14 @@ class _FakeDbContext:
         return False
 
 
-class _FakeTsClient:
-    def __init__(self):
-        self.loads = []
-
-    async def load_index_from_database(self, user_id, revision, vector_tag):
-        self.loads.append((str(user_id), revision, vector_tag))
-        return {"document_count": 1}
-
-
 class _FakeCache:
     def __init__(self):
+        self.loads = []
         self.invalidations = []
+
+    async def get(self, db, user_id, source_type, *, baseline_revision, force):
+        self.loads.append((str(user_id), source_type, baseline_revision, force))
+        return object()
 
     def invalidate(self, user_id, *, include_snapshot=False):
         self.invalidations.append((str(user_id), include_snapshot))
@@ -45,9 +40,8 @@ class _FakeCache:
 
 
 @pytest.mark.asyncio
-async def test_index_rebuild_reprojects_all_sources_and_reloads_ts_index(monkeypatch):
+async def test_index_rebuild_reprojects_all_sources_and_preloads_cython_index(monkeypatch):
     fake_redis = _FakeRedis()
-    fake_client = _FakeTsClient()
     fake_cache = _FakeCache()
     calls = []
 
@@ -62,16 +56,11 @@ async def test_index_rebuild_reprojects_all_sources_and_reloads_ts_index(monkeyp
     async def _revision(db, user_id):
         return "rag:v2:revision-1"
 
-    async def _client(user_id):
-        return fake_client
-
     monkeypatch.setattr("app.core.redis.get_redis", lambda: fake_redis)
     monkeypatch.setattr(pipeline, "rebuild_memory_index", _rebuild_memory)
     monkeypatch.setattr(pipeline, "rebuild_source_index", _rebuild_source)
     monkeypatch.setattr(pipeline, "_owner_revision", _revision)
-    monkeypatch.setattr(pipeline, "_knowledge_client", _client)
     monkeypatch.setattr(index_cache, "get_index_cache", lambda: fake_cache)
-    monkeypatch.setattr(embedding, "is_enabled", lambda: False)
     monkeypatch.setattr(db_session, "ensure_engine", lambda: object())
     monkeypatch.setattr(db_session, "_SessionLocal", _FakeDbContext)
 
@@ -81,7 +70,7 @@ async def test_index_rebuild_reprojects_all_sources_and_reloads_ts_index(monkeyp
     assert "file" not in pipeline.INDEX_REBUILD_SOURCE_TYPES
     assert len(calls) == len(pipeline.INDEX_REBUILD_SOURCE_TYPES)
     assert all(operation == "admin-index-rebuild" for _, _, operation in calls)
-    assert fake_client.loads == [("user-1", "rag:v2:revision-1", "")]
+    assert fake_cache.loads == [("user-1", "all", "rag:v2:revision-1", True)]
     assert fake_cache.invalidations == [("user-1", True)]
 
     status = json.loads(fake_redis.values[config_api._INDEX_REBUILD_KEY])
@@ -96,7 +85,7 @@ async def test_index_rebuild_reprojects_all_sources_and_reloads_ts_index(monkeyp
 @pytest.mark.asyncio
 async def test_index_rebuild_continues_after_source_failure(monkeypatch):
     fake_redis = _FakeRedis()
-    fake_client = _FakeTsClient()
+    fake_cache = _FakeCache()
 
     async def _rebuild_memory(user_id, *, operation):
         raise RuntimeError("memory source unavailable")
@@ -107,16 +96,11 @@ async def test_index_rebuild_continues_after_source_failure(monkeypatch):
     async def _revision(db, user_id):
         return "rag:v2:revision-2"
 
-    async def _client(user_id):
-        return fake_client
-
     monkeypatch.setattr("app.core.redis.get_redis", lambda: fake_redis)
     monkeypatch.setattr(pipeline, "rebuild_memory_index", _rebuild_memory)
     monkeypatch.setattr(pipeline, "rebuild_source_index", _rebuild_source)
     monkeypatch.setattr(pipeline, "_owner_revision", _revision)
-    monkeypatch.setattr(pipeline, "_knowledge_client", _client)
-    monkeypatch.setattr(index_cache, "get_index_cache", lambda: _FakeCache())
-    monkeypatch.setattr(embedding, "is_enabled", lambda: False)
+    monkeypatch.setattr(index_cache, "get_index_cache", lambda: fake_cache)
     monkeypatch.setattr(db_session, "ensure_engine", lambda: object())
     monkeypatch.setattr(db_session, "_SessionLocal", _FakeDbContext)
     monkeypatch.setattr(config_api, "diag_log", lambda *_args: None)
@@ -127,4 +111,4 @@ async def test_index_rebuild_continues_after_source_failure(monkeypatch):
     assert status["status"] == "error"
     assert status["failed_users"] == 1
     assert status["failed_sources"] == 1
-    assert fake_client.loads == [("user-1", "rag:v2:revision-2", "")]
+    assert fake_cache.loads == [("user-1", "all", "rag:v2:revision-2", True)]

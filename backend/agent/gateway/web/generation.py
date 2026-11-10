@@ -428,7 +428,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             logger.warning("会话 %s 在生成期间被删除，跳过本次持久化", session_id)
 
         # 回复正文已经持久化后，聊天流就应当结束。标题、总结和反思仍是后台收尾；
-        # 上下文压缩已经在 provider round 达到 90% 时完成。
+        # 上下文压缩已经在 provider round 达到阈值时完成。
         await _pub({"type": "done"})
         run_completed = True
 

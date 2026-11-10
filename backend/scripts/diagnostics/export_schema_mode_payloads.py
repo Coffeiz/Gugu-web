@@ -7,7 +7,6 @@ from pathlib import Path
 
 from agent.capabilities.injector import FIXED_ADAPTER_TOOL_NAMES, build_fixed_adapter_context, catalog_block
 from agent.capabilities.defaults import all_system_tool_names
-from agent.runtime.loopscope_trace.utils import _estimate_tokens
 from agent.tools import registry
 
 
@@ -30,11 +29,11 @@ def _payload(mode: str) -> dict:
         "anthropic_tools": anthropic_tools,
         "metrics": {
             "catalog_chars": len(catalog),
-            "catalog_token_estimate": _estimate_tokens(catalog, "glm-4.5-air") if catalog else 0,
+            "catalog_bytes": len(catalog.encode("utf-8")) if catalog else 0,
             "openai_schema_chars": len(openai_text),
-            "openai_schema_token_estimate": _estimate_tokens(openai_text, "glm-4.5-air"),
+            "openai_schema_bytes": len(openai_text.encode("utf-8")),
             "anthropic_schema_chars": len(anthropic_text),
-            "anthropic_schema_token_estimate": _estimate_tokens(anthropic_text, "glm-4.5-air"),
+            "anthropic_schema_bytes": len(anthropic_text.encode("utf-8")),
         },
     }
 

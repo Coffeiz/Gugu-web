@@ -12,12 +12,14 @@ from app.models import Project
 
 
 @pytest.fixture(autouse=True)
-def _mock_ts_ranker(monkeypatch):
-    """服务单测隔离进程边界；完整 TS 选择算法由 Worker protocol 测试覆盖。"""
-    from agent.rag import index_cache
-    monkeypatch.setattr(index_cache, "_selected_backend", lambda _settings: "typescript")
-
-    async def rank(_owner, _query, candidates, *, limit, max_chars, max_per_source, max_per_parent, selection_mode="confidence"):
+def _mock_cython_ranker(monkeypatch):
+    """服务单测隔离评分边界；生产 Cython 排序器单独覆盖。"""
+    async def rank(_query, candidates, options):
+        limit = options.get("limit", 5)
+        max_chars = options.get("max_chars", 3000)
+        max_per_source = options.get("max_per_source", 3)
+        max_per_parent = options.get("max_per_parent", 3)
+        selection_mode = options.get("selection_mode", "confidence")
         selected = []
         hashes = set()
         source_counts = {}
@@ -69,7 +71,7 @@ def _mock_ts_ranker(monkeypatch):
             "selection_mode": selection_mode,
             "scoring_version": "confidence-v4", "elapsed_ms": 0,
         }
-    monkeypatch.setattr(rag_service, "rank_candidates_with_cache", rank)
+    monkeypatch.setattr(rag_service, "rank_candidates_for_query", rank)
 
 
 class FakeRetriever:
@@ -97,7 +99,7 @@ class FakeRetriever:
 class _StubMultiRetriever:
     """把多个来源批次原样返回的最小检索器桩；供通用装配路径单测使用。
 
-    生产代码的多来源调度已统一走 TS worker（UnifiedQueryRetriever）；
+    生产代码的多来源调度已统一走 Cython（UnifiedQueryRetriever）；
     这里只复刻「返回一批次列表」的接口形状。
     """
 
@@ -117,8 +119,8 @@ class _StubMultiRetriever:
 async def test_explicit_search_uses_top_k_but_passive_search_keeps_confidence_filter(monkeypatch):
     modes = []
 
-    async def rank(_owner, _query, _candidates, *, limit, max_chars, max_per_source,
-                   max_per_parent, selection_mode="confidence", **_kwargs):
+    async def rank(_query, _candidates, options):
+        selection_mode = options.get("selection_mode", "confidence")
         modes.append(selection_mode)
         return [], {
             "candidate_count": 1, "accepted_count": 0,
@@ -130,7 +132,7 @@ async def test_explicit_search_uses_top_k_but_passive_search_keeps_confidence_fi
             "scoring_version": "confidence-v4", "elapsed_ms": 0,
         }
 
-    monkeypatch.setattr(rag_service, "rank_candidates_with_cache", rank)
+    monkeypatch.setattr(rag_service, "rank_candidates_for_query", rank)
     service = UnifiedRecallService(_StubMultiRetriever(FakeRetriever()))
     await service.search("缓存", source="fake", scope=owner_scope("user-a"), mode="tool")
     await service.search("缓存", source="fake", scope=owner_scope("user-a"), mode="passive")
@@ -143,15 +145,7 @@ async def test_cython_backend_ranks_direct_retriever_and_reports_engine(monkeypa
     """独立来源（如历史会话）应使用已选的 Cython 排序器，并如实标注运行时。"""
     from types import SimpleNamespace
     from agent.rag import cython_rank
-    from agent.rag import index_cache
 
-    monkeypatch.setattr(index_cache, "_selected_backend", lambda _settings: "cython")
-    monkeypatch.setattr(
-        "app.core.config.get_settings",
-        lambda: SimpleNamespace(search=SimpleNamespace(
-            rag_backend="cython", ts_rank_scoring_version="confidence-v4",
-        )),
-    )
     seen = {}
     cython_rank_impl = cython_rank.rank_candidates
 
@@ -159,11 +153,18 @@ async def test_cython_backend_ranks_direct_retriever_and_reports_engine(monkeypa
         seen.update(query=query, candidates=candidates, options=options)
         return cython_rank_impl(query, candidates, **options)
 
-    async def ts_rank_must_not_run(*_args, **_kwargs):
-        raise AssertionError("选择 Cython 时不得调用 TS rank sidecar")
+    async def rank_via_cython(query, candidates, options):
+        by_id, payload = rag_service._cython_rank_payload(candidates)
+        selected, stats = await asyncio.to_thread(
+            rank, query, payload, **options, scoring_version="confidence-v4",
+        )
+        return [
+            (by_id[item["id"]], item.get("text", ""), item)
+            for item in selected
+        ], stats
 
     monkeypatch.setattr(cython_rank, "rank_candidates", rank)
-    monkeypatch.setattr(rag_service, "rank_candidates_with_cache", ts_rank_must_not_run)
+    monkeypatch.setattr(rag_service, "rank_candidates_for_query", rank_via_cython)
     result = await UnifiedRecallService(
         _StubMultiRetriever(FakeRetriever())
     ).search("缓存", source="fake", scope=owner_scope("user-a"), mode="tool")
@@ -361,7 +362,7 @@ def test_recall_diagnostics_creates_redacted_loopscope_span(monkeypatch):
         record_recall(
             namespace="knowledge", source_type="memory", candidate_count=12,
             hit_count=3, elapsed_ms=17, fallback_reason="embedding_disabled",
-            index_version="memory-rag-v1", mode="passive", engine="typescript",
+            index_version="memory-rag-v1", mode="passive", engine="cython",
             cache_hit=True, cache_entries=1,
             rank_details=[{
                 "rank": 1,
@@ -384,7 +385,7 @@ def test_recall_diagnostics_creates_redacted_loopscope_span(monkeypatch):
     assert span.kind == "rag"
     assert span.name == "Knowledge RAG recall"
     assert span.attributes["mode"] == "passive"
-    assert span.attributes["engine"] == "typescript"
+    assert span.attributes["engine"] == "cython"
     assert span.attributes["cache_hit"] is True
     assert span.attributes["cache_entries"] == 1
     assert span.attributes["rank_details"][0]["fused_score"] == 0.42

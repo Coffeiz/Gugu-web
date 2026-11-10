@@ -225,12 +225,21 @@ async def test_final_response_cannot_replace_acknowledged_qq_prefix(monkeypatch)
     stream = outbound.create_private_text_stream('synthetic-user', channel_id='synthetic-bot', message_id='synthetic-message')
     stream.push('已发送\n')
     await stream._flush()
-    with pytest.raises(QQStreamPrefixMismatchError):
+    with pytest.raises(QQStreamPrefixMismatchError) as raised:
         await stream.finish('最终回答\n', allow_rewrite=True)
 
+    assert raised.value.closed_confirmed is True
     assert [frame['input_state'] for frame in frames] == [1, 10]
     assert [frame['content_raw'] for frame in frames] == ['已发送\n', '已发送\n']
     assert frames[-1]['stream_msg_id'] == 'synthetic-stream'
+
+
+def test_send_file_tool_status_describes_preparation_not_delivery():
+    from agent.tool_messages import format_tool_event
+
+    event = {'type': 'tool_done', 'name': 'send_file', 'label': '发送文件', 'status': 'success'}
+    assert '尝试发送' in format_tool_event(event, markdown=False)
+    assert '尝试发送' in format_tool_event(event, markdown=True)
 
 
 async def test_final_markdown_normalization_keeps_sent_prefix_and_delivers_tail(monkeypatch):

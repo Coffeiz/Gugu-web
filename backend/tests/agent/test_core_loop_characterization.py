@@ -148,7 +148,7 @@ async def test_progress_only_round_is_retried_but_draft_remains_visible(monkeypa
 
 
 async def test_final_reply_compacts_at_provider_threshold(monkeypatch):
-    """无工具的最终回复达到 90% 时，也必须在结束前走同一压缩路径。"""
+    """无工具的最终回复达到 85% 时，也必须在结束前走同一压缩路径。"""
     calls = []
 
     async def fake_compact(messages, *args, **kwargs):
@@ -157,7 +157,7 @@ async def test_final_reply_compacts_at_provider_threshold(monkeypatch):
 
     monkeypatch.setattr(compaction, "compact_context", fake_compact)
     final = msg([TX("最终回复")])
-    final.usage.input_tokens = 950
+    final.usage.input_tokens = 850
     patch_anthropic(monkeypatch, [final])
     ai = SimpleNamespace(**{**AI.__dict__, "context_tokens": 1000})
     runner = make_runner(settings=SimpleNamespace(ai=ai))
@@ -225,7 +225,7 @@ async def test_long_compaction_keeps_qq_busy_and_stops_without_error(monkeypatch
     monkeypatch.setattr("agent.runtime.cancellation._CANCEL_POLL_INTERVAL", 0.001)
     monkeypatch.setattr(compaction, "compact_context", compact)
     final = msg([TX("最终回复")])
-    final.usage.input_tokens = 950
+    final.usage.input_tokens = 850
     patch_anthropic(monkeypatch, [final])
     ai = SimpleNamespace(**{**AI.__dict__, "context_tokens": 1000})
     task = asyncio.create_task(drain(make_runner()._run_anthropic(
@@ -739,6 +739,7 @@ async def test_mcp_confirm_replay_enters_credential_prompt_without_loop(monkeypa
             title="补全 MCP 服务凭据",
             body="请输入凭据",
             schema_json={"secret_fields": credential_form["secret_fields"], "allow_text_input": False},
+            created_at=SimpleNamespace(isoformat=lambda: "2026-09-10T20:00:00+08:00"),
             expires_at=SimpleNamespace(isoformat=lambda: "2026-09-10T21:00:00+08:00"),
         ), []
 
@@ -798,6 +799,7 @@ async def test_resolved_user_interaction_closes_waiting_tool_event(monkeypatch, 
             title="补全信息",
             body="请填写信息",
             schema_json={"allow_text_input": True},
+            created_at=SimpleNamespace(isoformat=lambda: "2026-10-12T22:00:00+08:00"),
             expires_at=SimpleNamespace(isoformat=lambda: "2026-10-12T23:00:00+08:00"),
         ), []
 
@@ -2062,3 +2064,47 @@ async def test_continuation_recovery_refires_only_without_round_start(monkeypatc
     out, refires = await _recover_frames(settled, monkeypatch)
     assert refires == 0, "续轮已开始（round_start）就不该再发模型请求"
     assert [json.loads(l[len("data: "):])["type"] for l in out] == ["_new_round", "round_start"]
+
+
+@pytest.mark.parametrize("outcome", ["single_input", "retry_fails", "retry_succeeds"])
+async def test_overflow_reports_recovery_only_after_provider_accepts_retry(monkeypatch, outcome):
+    """原文超限时原样收尾，历史可缩减时也只重试一次，并以实际响应判定恢复。"""
+    prompt = "当前合成消息" * 4000
+    messages = [
+        {"role": "user", "content": "旧历史"},
+        {"role": "assistant", "content": "旧回复"},
+    ] if outcome != "single_input" else []
+    messages.append({"role": "user", "content": prompt})
+    requests = []
+
+    async def fake_stream_round(_client, kwargs, adapter=None):
+        requests.append(kwargs["messages"])
+        if len(requests) == 1 or outcome != "retry_succeeds":
+            error = ValueError("maximum context length exceeded")
+            if outcome == "retry_fails":
+                raise core.RetryableError("llm.stream_exhausted", "合成上游错误", cause=error)
+            raise error
+        yield "final", msg([TX("恢复成功。")])
+
+    async def no_summary(*_args, **_kwargs):
+        return [], False
+
+    monkeypatch.setattr(core, "_stream_round", fake_stream_round)
+    monkeypatch.setattr(compaction, "compact_context", no_summary)
+
+    events = [
+        json.loads(chunk[6:]) async for chunk in make_runner()._run_anthropic("u", "sys", messages, AI)
+        if chunk.startswith("data: ")
+    ]
+    assert len(requests) == (1 if outcome == "single_input" else 2)
+    assert all(prompt in str(request) for request in requests)
+    status = [event for event in events if event.get("type") == "_context_compaction"]
+    assert [event["phase"] for event in status] == ["started", "completed"]
+    assert status[-1]["applied"] is (outcome == "retry_succeeds")
+    errors = [event for event in events if event.get("type") == "error"]
+    if outcome != "retry_succeeds":
+        assert len(errors) == 1
+        assert errors[0]["error_code"] == "provider_input_too_large"
+        assert "缩短消息" in errors[0]["detail"]
+    else:
+        assert not errors

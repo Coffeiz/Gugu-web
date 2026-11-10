@@ -60,7 +60,8 @@ def _silent_group_reply_response(req, outcome, session_id):
 
 
 async def _run_collect_unlocked(
-    req: AgentRequest, *, on_interaction=None, on_tool_event=None, on_round=None, on_display=None
+    req: AgentRequest, *, on_interaction=None, on_tool_event=None, on_round=None,
+    on_display=None, on_event=None,
 ) -> AgentResponse:
     """共享准备 → 跑工具循环 → 攒完整回复 + 存盘 + 反思。"""
     exec_ = await prepare_agent_run(req, non_streaming=True)
@@ -113,7 +114,8 @@ async def _run_collect_unlocked(
     try:
         async for _ in consume_agent_events(
             gen, model_cfg=exec_.model_cfg, outcome=outcome,
-            sink=CollectSink(on_tool_event=on_tool_event, on_round=on_round, on_display=on_display, user_message_id=req.user_message_id or 0,
+            sink=CollectSink(on_tool_event=on_tool_event, on_round=on_round, on_display=on_display,
+                             on_event=on_event, user_message_id=req.user_message_id or 0,
                              on_checkpoint=(None if req.group_auto_reply else checkpoint_callback(req, exec_))),
         ):
             pass
@@ -161,13 +163,14 @@ async def _run_collect_unlocked(
 
 
 async def run_collect(
-    req: AgentRequest, *, on_interaction=None, on_tool_event=None, on_round=None, on_display=None
+    req: AgentRequest, *, on_interaction=None, on_tool_event=None, on_round=None,
+    on_display=None, on_event=None,
 ) -> AgentResponse:
     """同一 session 串行生成；不同 session 仍可并行。"""
     async with compress_conv.session_run_gate(req):
         return await _run_collect_unlocked(
             req, on_interaction=on_interaction, on_tool_event=on_tool_event,
-            on_round=on_round, on_display=on_display,
+            on_round=on_round, on_display=on_display, on_event=on_event,
         )
 
 

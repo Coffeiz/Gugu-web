@@ -296,7 +296,7 @@
             </div>
           </div>
 
-          <div class="subhead"><div><h3>Choice capsule</h3><p>个人设置中的主题、模式、回复风格、多选工具统一调用。</p></div><code>--choice-chip-*</code></div>
+          <div class="subhead"><div><h3>Choice capsule</h3><p>个人设置中的主题、模式、多选工具统一调用。</p></div><code>--choice-chip-*</code></div>
           <div class="chip-demo preview-card">
             <button class="choice-chip">默认</button>
             <button class="choice-chip active">已选择</button>

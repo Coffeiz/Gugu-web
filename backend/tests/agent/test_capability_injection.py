@@ -667,12 +667,12 @@ def test_scheduled_tasks_skill_documents_interval_window_semantics():
     assert "修改调度类型时必须同时提供新类型所需字段" in update.description
 
 
-def test_xng_search_skill_contains_freshness_verification_protocol():
+def test_web_search_skill_contains_freshness_verification_protocol():
     from agent.skills import load_skill
 
     content = load_skill("S13")
     assert content is not None
-    assert "事实准确性与时效核验" in content
-    assert "未来事件" in content
-    assert "来源发布时间" in content
-    assert "事件实际发生时间" in content
+    assert "时效信息" in content
+    assert "来源时间" in content
+    assert "事件时间" in content
+    assert "当前状态" in content

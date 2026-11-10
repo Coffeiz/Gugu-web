@@ -1,183 +1,33 @@
 """agent/tools/search.py 单元补测（CRAP 治理 P1）。
 
-覆盖：SearXNG 通用/图片搜索的状态与降级路径、相似图搜索的图片解析守卫、
-百度通路的配置守卫与配额、deep_research 的凭据/配额/兜底。
-httpx 用假客户端（预设响应/异常），配额与凭据模块级打桩，不触真实网络。
+覆盖：相似图搜索的图片解析守卫、百度通路配置与配额、deep_research 的凭据和配额。
 """
+import base64
 import io
 from types import SimpleNamespace
-from urllib.parse import parse_qs, urlsplit
 
-import httpx
 import pytest
 
 from agent.tools import search as search_mod
-from agent.tools.search import _normalize_failure_reason
-from app.core.config import SearchSettings
+
+
+def _png_bytes():
+    """返回最小有效 PNG，供相似图输入路径验证真实图片解析。"""
+    return base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    )
 
 
 def _settings(**search_overrides):
     search = SimpleNamespace(
-        searxng_url="http://searx", searxng_engines="sogou,quark",
-        searxng_image_engines="", max_results=5,
-        baidu_qianfan_api_key="key-1", similar_image_provider="baidu_qianfan",
-        similar_image_default_count=3, similar_image_limit_daily=5,
-        similar_image_timeout_seconds=10,
+        max_results=5, baidu_qianfan_api_key="key-1", similar_image_provider="baidu_qianfan",
+        similar_image_default_count=3, similar_image_limit_daily=5, similar_image_timeout_seconds=10,
         deep_research_provider="tavily", tavily_api_key="tv-key",
         deep_research_baidu_api_key="", deep_research_you_api_key="",
     )
     for key, value in search_overrides.items():
         setattr(search, key, value)
-    return SimpleNamespace(search=search,
-                           quota=SimpleNamespace(default_search_limit_daily=10))
-
-
-class FakeClient:
-    """替身 httpx.AsyncClient：按类属性吐响应或抛异常（图片搜索重试序列用）。"""
-    response = None
-    raise_first = None
-    raise_always = None
-
-    def __init__(self, **_kwargs):
-        pass
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *args):
-        return False
-
-    async def get(self, _url):
-        if type(self).raise_always is not None:
-            raise type(self).raise_always
-        if type(self).raise_first is not None:
-            exc, type(self).raise_first = type(self).raise_first, None
-            raise exc
-        return type(self).response
-
-
-def _wire_http(monkeypatch, response=None, raise_first=None, raise_always=None):
-    FakeClient.response = response
-    FakeClient.raise_first = raise_first
-    FakeClient.raise_always = raise_always
-    monkeypatch.setattr(search_mod.httpx, "AsyncClient", FakeClient)
-
-
-def _png_bytes(size=(2, 2)):
-    from PIL import Image
-
-    buf = io.BytesIO()
-    Image.new("RGB", size).save(buf, format="PNG")
-    return buf.getvalue()
-
-
-# ── _normalize_failure_reason：故障归一 ───────────────────────────────────
-
-def test_normalize_failure_reason_tokens():
-    assert _normalize_failure_reason(None) == "unknown"
-    assert _normalize_failure_reason("  ") == "unknown"
-    assert _normalize_failure_reason("Blocked by CAPTCHA") == "captcha"
-    assert _normalize_failure_reason("JS challenge required") == "captcha"
-    assert _normalize_failure_reason("Too Many Requests") == "rate_limited"
-    assert _normalize_failure_reason("engine RateLimit hit (429)") == "rate_limited"
-    assert _normalize_failure_reason("account suspended") == "suspended"
-    assert _normalize_failure_reason("Read TIMEOUT after 15s") == "timeout"
-    assert _normalize_failure_reason("connection refused") == "unavailable"
-    assert _normalize_failure_reason("HTTP 502 bad gateway") == "unavailable"
-    assert _normalize_failure_reason("weird failure") == "unknown"
-
-
-# ── _xng_search：网页搜索状态机 ──────────────────────────────────────────
-
-async def test_xng_search_guards_without_paid_fallback(db, user_a, monkeypatch):
-    monkeypatch.setattr(search_mod, "get_settings",
-                        lambda: _settings(searxng_url=""))
-    assert "尚未配置 XNG Search" in (await search_mod._xng_search(db, user_a.id, {"q": "x"}))["error"]
-
-    monkeypatch.setattr(search_mod, "get_settings", lambda: _settings())
-    assert "需要提供搜索关键词" in (await search_mod._xng_search(db, user_a.id, {}))["error"]
-
-    _wire_http(monkeypatch, response=httpx.Response(403))
-    assert "403" in (await search_mod._xng_search(db, user_a.id, {"query": "x"}))["error"]
-
-    _wire_http(monkeypatch, response=httpx.Response(500))
-    assert "HTTP 500" in (await search_mod._xng_search(db, user_a.id, {"query": "x"}))["error"]
-
-    _wire_http(monkeypatch, response=httpx.Response(200, text="not-json"))
-    assert "无法解析" in (await search_mod._xng_search(db, user_a.id, {"query": "x"}))["error"]
-
-    # 网络异常不得隐式消耗已配置的付费研究额度。
-    _wire_http(monkeypatch, raise_first=httpx.ConnectError("boom"))
-
-    async def fake_deep(db, user_id, args):
-        raise AssertionError("免费搜索不得自动调用付费研究")
-
-    monkeypatch.setattr(search_mod, "_deep_research", fake_deep)
-    result = await search_mod._xng_search(db, user_a.id, {"query": "天气"})
-    assert "XNG Search 暂时不可用" in result["error"]
-
-    data = {"results": [
-        {"title": "结果一", "url": "https://a", "content": "长" * 400},
-        {"title": "无正文", "url": "https://b"},
-    ]}
-    _wire_http(monkeypatch, response=httpx.Response(200, json=data))
-    payload = await search_mod._xng_search(db, user_a.id, {"query": "天气"})
-    assert payload["results"][0]["content"] == "长" * 300                # 摘要截断 300
-    assert payload["results"][1]["content"] == ""
-    assert payload["search_status"]["state"] == "ok"
-
-
-# ── _xng_search(mode=images)：图像结果整形 ────────────────────────────────
-
-async def test_xng_image_search_shapes_results(db, user_a, monkeypatch):
-    monkeypatch.setattr(search_mod, "get_settings", lambda: _settings())
-    assert "需要提供搜索关键词" in (await search_mod._xng_search(db, user_a.id, {"mode": "images"}))["error"]
-
-    _wire_http(monkeypatch, raise_always=httpx.ConnectError("down"))
-    payload = await search_mod._xng_search(db, user_a.id, {"query": "猫", "mode": "images"})
-    assert "XNG Search 暂时不可用" in payload["error"]
-
-    _wire_http(monkeypatch, response=httpx.Response(200, json={"results": [
-        {"title": "有图", "url": "https://page", "img_src": "https://img/1.jpg"},
-        {"title": "无图", "url": "https://page2"},                        # 无 img_src 被过滤
-        {"title": "缩略图", "url": "https://p3", "img_src": "https://img/3",
-         "thumbnail": "https://thumb/3"},
-    ]}))
-    payload = await search_mod._xng_search(db, user_a.id, {"query": "猫", "mode": "images"})
-    # result_id 是源顺序索引（含被过滤项），过滤后不重排
-    assert [r["result_id"] for r in payload["results"]] == ["image-1", "image-3"]
-    assert payload["results"][1]["thumbnail"] == "https://thumb/3"
-
-
-async def test_xng_image_search_uses_default_domestic_and_international_engines(db, user_a, monkeypatch):
-    settings = SearchSettings()
-    monkeypatch.setattr(
-        search_mod,
-        "get_settings",
-        lambda: _settings(searxng_image_engines=""),
-    )
-    requested_urls = []
-
-    class RecordingClient:
-        def __init__(self, **_kwargs):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return False
-
-        async def get(self, url):
-            requested_urls.append(url)
-            return httpx.Response(200, json={"results": []})
-
-    monkeypatch.setattr(search_mod.httpx, "AsyncClient", RecordingClient)
-    await search_mod._xng_search(db, user_a.id, {"query": "猫", "mode": "images"})
-
-    params = parse_qs(urlsplit(requested_urls[0]).query)
-    assert params["categories"] == ["images"]
-    assert set(params["engines"][0].split(",")) == set(settings.searxng_image_engines.split(","))
+    return SimpleNamespace(search=search, quota=SimpleNamespace(default_search_limit_daily=10))
 
 
 # ── _resolve_similar_image：图片字节解析守卫 ──────────────────────────────

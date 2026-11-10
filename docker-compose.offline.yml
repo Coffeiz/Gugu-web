@@ -5,7 +5,3 @@ services:
   app:
     image: ${GUGU_WEB_IMAGE:-coffeiz/gugu-web:latest}
     pull_policy: never
-
-  searxng:
-    image: ${GUGU_SEARCH_IMAGE:-searxng/searxng:latest}
-    pull_policy: never

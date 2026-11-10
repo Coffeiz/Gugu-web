@@ -75,22 +75,25 @@ def _write_snapshot_state(index_dir: str | Path, state: _SnapshotState) -> dict[
     )
     payload["database_projection"] = state.lexical_index.database_projection
     directory = Path(index_dir)
-    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-    target = directory / "index.json"
-    descriptor, temporary_name = tempfile.mkstemp(prefix=".index-", suffix=".tmp", dir=directory)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            os.fchmod(stream.fileno(), 0o600)
-            cython_native.dump_snapshot(stream, payload)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary_name, target)
-    except BaseException:
+    from agent.rag.snapshot_storage import snapshot_lock
+
+    with snapshot_lock(directory, exclusive=True):
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        target = directory / "index.json"
+        descriptor, temporary_name = tempfile.mkstemp(prefix=".index-", suffix=".tmp", dir=directory)
         try:
-            os.unlink(temporary_name)
-        except FileNotFoundError:
-            pass
-        raise
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                os.fchmod(stream.fileno(), 0o600)
+                cython_native.dump_snapshot(stream, payload)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary_name, target)
+        except BaseException:
+            try:
+                os.unlink(temporary_name)
+            except FileNotFoundError:
+                pass
+            raise
     return {
         "status": "saved", "document_count": len(payload["documents"]),
         "vector_count": len(payload["vectors"]), "revision": state.revision,
@@ -308,6 +311,10 @@ class CythonRagLifecycle:
         from agent.rag.storage import _document_from_record
 
         target = Path(index_dir) / "index.json"
+        from agent.rag.snapshot_storage import touch_snapshot_access
+
+        if target.is_file():
+            touch_snapshot_access(index_dir)
         try:
             payload = json.loads(target.read_text(encoding="utf-8"))
         except FileNotFoundError:
@@ -860,7 +867,7 @@ def _validate_memory_scopes(owner_id: str, scopes) -> list:
         if scope.scope_type not in {"owner", "group", "member"}:
             raise ValueError("Memory scope 类型不受支持")
         if scope.scope_type == "owner":
-            # TsSidecarClient 会把 owner scope 的空 id 规范化为绑定 owner 后再发给 TS。
+            # IPC 边界会把 owner scope 的空 id 规范化为绑定 owner 后再发送。
             if str(scope.scope_id or "") not in {"", owner_id}:
                 raise ValueError("Memory owner scope 不匹配")
             if not scope.scope_id:

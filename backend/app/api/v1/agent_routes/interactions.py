@@ -6,10 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.ownership import get_owned
 from app.core.security import get_current_user
 from app.db.session import get_db
-from app.models import ConversationSession, User
+from app.models import User
 from app.services import interactions
 
 router = APIRouter()
@@ -25,18 +24,6 @@ class InteractionTextRequest(BaseModel):
 
 class SecretInteractionRequest(BaseModel):
     values: dict[str, str] = Field(default_factory=dict)
-
-@router.get("/sessions/{session_id}/interactions")
-async def list_session_interactions(
-    session_id: int,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """列出会话交互历史；活动项带一次性 token，历史项只用于恢复气泡。"""
-    session = await get_owned(db, ConversationSession, session_id, current_user.id)
-    if session is None:
-        raise HTTPException(404, "会话不存在")
-    return {"items": await interactions.list_history(db, user_id=current_user.id, session_id=session_id)}
 
 @router.get("/interactions/{prompt_id}/session")
 async def get_interaction_session(

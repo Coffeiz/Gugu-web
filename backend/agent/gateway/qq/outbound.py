@@ -230,6 +230,30 @@ class QQPrivateTextStream:
                     raw = self.last_sent_text + raw[len(normalized):]
                     content = prepare_qq_text(raw)
             if not content.startswith(self.last_sent_content):
+                from agent.security.logsafe import fingerprint
+
+                diag_log_raw(
+                    "agent.gateway.qq.stream_prefix_mismatch",
+                    json.dumps(
+                        {
+                            "source": "local_prefix_guard",
+                            "input_state": input_state,
+                            "allow_rewrite": allow_rewrite,
+                            "content_type": self.content_type,
+                            "stream_id_present": bool(self.stream_msg_id),
+                            "sent_prefix_len": len(self.last_sent_content),
+                            "sent_prefix_fp": fingerprint(self.last_sent_content),
+                            "candidate_len": len(content),
+                            "candidate_fp": fingerprint(content),
+                            "raw_len": len(raw),
+                            "raw_fp": fingerprint(raw),
+                            "last_sent_text_len": len(self.last_sent_text),
+                            "last_sent_text_fp": fingerprint(self.last_sent_text),
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                )
                 raise QQStreamPrefixMismatchError("QQ 流式正文改写已发送前缀，已阻止出站")
         # QQ C2C 原生 Markdown 流要求每个分片以换行结束。中间帧由
         # complete_qq_lines 保证；最终帧包含尚未换行的尾行时也要补齐，
@@ -289,6 +313,27 @@ class QQPrivateTextStream:
         code = str(body.get("code") or body.get("err_code")) if isinstance(body, dict) else ""
         prefix_mismatch = isinstance(error, QQStreamPrefixMismatchError) or code == "40007"
         rejected = prefix_mismatch or code == "40034028"
+        if prefix_mismatch:
+            from agent.security.logsafe import fingerprint
+
+            diag_log_raw(
+                "agent.gateway.qq.stream_prefix_mismatch",
+                json.dumps(
+                    {
+                        "source": "qq_rejected_prefix",
+                        "input_state": 10,
+                        "stream_id_present": bool(self.stream_msg_id),
+                        "sent_prefix_len": len(self.last_sent_content),
+                        "sent_prefix_fp": fingerprint(self.last_sent_content),
+                        "candidate_len": len(self.full_text),
+                        "candidate_fp": fingerprint(self.full_text),
+                        "error_type": type(error).__name__,
+                        "upstream_code": code if code.isdecimal() else None,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+            )
         if not rejected or not self.stream_msg_id or not self.last_sent_content:
             self._log_finalization_failure(error)
             raise QQStreamFinalizationError("QQ 流式消息关闭未获确认") from error
@@ -301,7 +346,7 @@ class QQPrivateTextStream:
             self._log_finalization_failure(close_error, original_error=error)
             raise QQStreamFinalizationError("QQ 流式消息关闭未获确认") from close_error
         if prefix_mismatch:
-            raise QQStreamPrefixMismatchError("QQ 前缀不匹配，已关闭最后送达的内容") from error
+            raise QQStreamPrefixMismatchError("QQ 前缀不匹配，已关闭最后送达的内容", closed_confirmed=True) from error
         raise QQStreamDeliveryError("QQ 部分正文被拒绝，已关闭最后送达的内容") from error
 
     def _log_finalization_failure(
@@ -882,18 +927,26 @@ _IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "bmp"}
 
 async def send_file(openid: str, data: bytes | None, name: str, ext: str,
                     channel_id: str | None = None, msg_id: str | None = None,
-                    group: bool = False) -> bool:
+                    group: bool = False, *, return_outcome: bool = False) -> bool | str:
     """向 QQ 上传并发送附件。"""
+    def outcome(state: str) -> bool | str:
+        return state if return_outcome else state == "sent"
+
+    def error_outcome(error: Exception) -> bool | str:
+        if isinstance(error, QQAPIError) and 400 <= error.status < 500 and error.status != 408:
+            return outcome("failed")
+        return outcome("unknown")
+
     ext_l = (ext or "").lower()
     is_img = ext_l in _IMAGE_EXTS
     file_type = 1 if is_img else 4
     fname = f"{name}.{ext_l}" if ext_l else name
     if data is None:
-        return False
+        return outcome("failed")
     from agent.platform_limits import QQ_ATTACHMENT_MAX_BYTES
     if len(data) > QQ_ATTACHMENT_MAX_BYTES:
         _log.warning("[qq] 文件超过 30 MiB 上传上限: bytes=%d", len(data))
-        return False
+        return outcome("failed")
     target = "groups" if group else "users"
     try:
         # 超时不重传。
@@ -906,13 +959,13 @@ async def send_file(openid: str, data: bytes | None, name: str, ext: str,
             # 只打字段名，不打响应内容，避免泄露上游回显的数据。
             keys = sorted(media.keys())
             print(f"[qq] 富媒体上传无 file_info: keys={keys}", flush=True)
-            return False
+            return outcome("failed")
     except Exception as error:
         diag_log("agent.gateway.qq.send_file.upload", error)
         _log.warning("[qq] 文件上传失败: %s", redact(f"{type(error).__name__}: {error}"))
         if isinstance(error, QQAPIError) and error.status == 401:
             _send_tokens.pop(channel_id, None)
-        return False
+        return error_outcome(error)
 
     msg_body = {
         "msg_type": 7,
@@ -925,8 +978,7 @@ async def send_file(openid: str, data: bytes | None, name: str, ext: str,
         msg_body["content"] = fname
     message_path = f"/v2/{target}/{openid}/messages"
     try:
-        await _qq_request(channel_id, "POST", message_path, json_body=msg_body)
-        return True
+        response = await _qq_request(channel_id, "POST", message_path, json_body=msg_body)
     except Exception as message_error:
         if not (
             group
@@ -935,15 +987,22 @@ async def send_file(openid: str, data: bytes | None, name: str, ext: str,
         ):
             diag_log("agent.gateway.qq.send_file.message", message_error)
             _log.warning("[qq] 文件消息发送失败: %s", redact(f"{type(message_error).__name__}: {message_error}"))
-            return False
+            return error_outcome(message_error)
         _log.warning("[qq] 群文件被动回复受限，降级为主动消息")
         active_body = dict(msg_body)
         active_body.pop("msg_id", None)
         active_body["msg_seq"] = await _next_seq(None)
         try:
-            await _qq_request(channel_id, "POST", message_path, json_body=active_body)
-            return True
+            response = await _qq_request(channel_id, "POST", message_path, json_body=active_body)
         except Exception as fallback_error:
             diag_log("agent.gateway.qq.send_file.active_fallback", fallback_error)
             _log.warning("[qq] 群文件主动发送失败: %s", redact(f"{type(fallback_error).__name__}: {fallback_error}"))
-            return False
+            return error_outcome(fallback_error)
+
+    message_id = response.get("id") if isinstance(response, dict) else None
+    if not isinstance(message_id, str) or not message_id.strip():
+        from agent.runtime import trace
+
+        _log.warning("[qq-file] 接口成功响应缺少消息 ID: trace=%s target=%s", trace.get_trace() or "-", target)
+        return outcome("unknown")
+    return outcome("sent")

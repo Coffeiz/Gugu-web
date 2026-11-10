@@ -140,40 +140,8 @@ async def test_owner_passive_buffer_neither_arms_nor_extends_idle(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("estimated,expected", [(899, False), (900, True), (901, True)])
-async def test_passive_pressure_at_ninety_percent_enqueues_both_scopes_below_fifty(
-    db, user_a, monkeypatch, estimated, expected,
-):
-    from agent.memory import group_pressure, im_reflection
-
-    now = now_utc()
-    scope = MemoryScope(user_a.id, "qq", "bot-synthetic", "group", "group-pressure")
-    session = ConversationSession(user_id=user_a.id, source="qq", bot_id=scope.bot_id, chat_id=scope.scope_id, chat_type="group")
-    db.add(session)
-    await db.flush()
-    message = ConversationMessage(session_id=session.id, role="user", content="一条较长的背景消息", platform_user_id="member-synthetic")
-    db.add(message)
-    await db.commit()
-    await reflection_jobs.observe_group_message(scope, message.id, now, now=now)
-    model = SimpleNamespace(context_tokens=1000, max_tokens=100)
-    monkeypatch.setattr("agent.llm.llm_select.resolve_run_config_for_user", AsyncMock(return_value=SimpleNamespace(model=model)))
-    monkeypatch.setattr(im_reflection, "_rebuild_session_snapshot", AsyncMock(return_value=SimpleNamespace(history=(), system_prompt="")))
-    monkeypatch.setattr(group_pressure.ContextBudget, "from_messages", lambda *a, **kw: SimpleNamespace(total_tokens=estimated))
-    dispatch = AsyncMock()
-    monkeypatch.setattr(reflection_jobs, "_dispatch_job", dispatch)
-    assert await group_pressure.observe_passive_context_pressure(scope, session.id) is expected
-    jobs = (await db.execute(select(MemoryReflectionJob))).scalars().all()
-    assert {job.task_type for job in jobs} == ({"group", "member-batch"} if expected else set())
-    assert all(job.reason == "context-pressure" for job in jobs)
-    if expected:
-        assert await group_pressure.observe_passive_context_pressure(scope, session.id) is False
-        assert dispatch.await_count == 2
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("can_compact", [True, False])
-async def test_pressure_job_rebuilds_stale_run_then_compacts_before_reflecting(db, user_a, monkeypatch, can_compact):
-    """贯穿任务执行器和真实预算预检；被动增量不能沿用旧 run 的低用量/已压缩标记。"""
+async def test_existing_pressure_job_reflects_without_estimating_rebuilt_history(db, user_a, monkeypatch):
+    """迁移前入队的压力任务仍可消费；重建历史没有 Provider 用量时不触发压缩。"""
     from agent.context import compress_conv
     from agent.context.branch_types import BranchInput
     from agent.memory import im_reflection
@@ -194,21 +162,15 @@ async def test_pressure_job_rebuilds_stale_run_then_compacts_before_reflecting(d
     model = SimpleNamespace(context_tokens=1000, max_tokens=100)
     stale = SimpleNamespace(provider_context_input=1, provider_compacted=True)
     large = SimpleNamespace(history=({"role": "user", "content": message.content},), system_prompt="")
-    small = SimpleNamespace(history=({"role": "user", "content": "已压缩摘要"},), system_prompt="")
     monkeypatch.setattr("agent.llm.llm_select.resolve_run_config_for_user", AsyncMock(return_value=SimpleNamespace(model=model)))
     monkeypatch.setattr("app.byok.service.resolve_and_bind_user_embedding", AsyncMock())
     monkeypatch.setattr("agent.context.reflection_snapshot.peek_reflection_snapshot", lambda *args: stale)
-    rebuild = AsyncMock(side_effect=[large, small])
+    rebuild = AsyncMock(return_value=large)
     monkeypatch.setattr(im_reflection, "_rebuild_session_snapshot", rebuild)
     operations = []
-
-    async def compact(*args, **kwargs):
-        assert kwargs["only_if_idle"] is True
-        assert kwargs["cache_snapshot"] is large
-        operations.append("compress")
-        return can_compact
-
+    compact = AsyncMock()
     monkeypatch.setattr(compress_conv, "compress_if_needed", compact)
+
     monkeypatch.setattr(im_reflection, "_aggregate_members", AsyncMock(return_value={}))
     monkeypatch.setattr(im_reflection, "read_scope_json", AsyncMock(return_value={}))
     monkeypatch.setattr(im_reflection, "write_scope_json", AsyncMock())
@@ -216,7 +178,7 @@ async def test_pressure_job_rebuilds_stale_run_then_compacts_before_reflecting(d
     monkeypatch.setattr(im_reflection, "_apply_member_batch_output", AsyncMock())
 
     def build(*args, **kwargs):
-        assert kwargs["snapshot"] is small
+        assert kwargs["snapshot"] is large
         return BranchInput(stable_system="合成提示")
 
     async def reflect(*args, **kwargs):
@@ -225,17 +187,18 @@ async def test_pressure_job_rebuilds_stale_run_then_compacts_before_reflecting(d
 
     monkeypatch.setattr(im_reflection, "_build_append_branch_input", build)
     monkeypatch.setattr(im_reflection, "run_reflection_branch", reflect)
-    assert await im_reflection._execute_job_locked(job.id, SimpleNamespace()) is can_compact
+    assert await im_reflection._execute_job_locked(job.id, SimpleNamespace()) is True
     await db.refresh(job)
-    assert operations == (["compress", "reflect"] if can_compact else ["compress"])
-    assert job.status == ("completed" if can_compact else "pending")
-    assert rebuild.await_count == (2 if can_compact else 1)
+    compact.assert_not_awaited()
+    assert operations == ["reflect"]
+    assert job.status == "completed"
+    rebuild.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("body_length,job_count", [(500, 0), (2000, 2)])
-async def test_passive_recording_dispatches_pressure_jobs_without_waiting_for_fifty(db, user_a, monkeypatch, body_length, job_count):
-    """从真实被动入库入口经过真实预算估算，长消息立即产生持久任务，不调用模型。"""
+@pytest.mark.parametrize("body_length", [500, 20000])
+async def test_passive_recording_does_not_estimate_context_pressure(db, user_a, monkeypatch, body_length):
+    """长消息入库时继续累积条数，没有 Provider 用量时不触发压力任务。"""
     from agent.im import conversation
     from agent.memory import im_reflection, reflection
 
@@ -256,9 +219,8 @@ async def test_passive_recording_dispatches_pressure_jobs_without_waiting_for_fi
     monkeypatch.setattr(reflection_jobs, "_dispatch_job", dispatch)
     session_id = await conversation.record_passive_im_message(request)
     jobs = (await db.execute(select(MemoryReflectionJob))).scalars().all()
-    assert len(jobs) == job_count
-    assert all(job.reason == "context-pressure" for job in jobs)
-    assert dispatch.await_count == job_count
+    assert jobs == []
+    dispatch.assert_not_awaited()
     cursor = (await db.execute(select(MemoryReflectionCursor))).scalars().one()
     assert cursor.pending_passive_count == 1
     assert cursor.pending_agent_count == 0

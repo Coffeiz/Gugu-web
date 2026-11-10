@@ -133,7 +133,7 @@
                 <div class="setting-choice-row__options">
                   <ToggleSwitch :model-value="draft.web_search_enabled"
                     :aria-label="t('llmExtraUi.webSearch')"
-                    @update:model-value="draft.web_search_enabled = $event" />
+                    @update:model-value="$emit('set-web-search', $event)" />
                 </div>
               </div>
             </div>
@@ -345,6 +345,7 @@ const reasoningPersistenceOptions = computed(() => [
 const $emit = defineEmits<{
   (event: 'close'): void; (event: 'after-close'): void; (event: 'save'): void; (event: 'set-provider', key: string): void; (event: 'open-model-menu'): void; (event: 'close-model-menu'): void
   (event: 'fetch-model-list'): void; (event: 'select-model', model: string): void; (event: 'pick-api-format', format: string): void
+  (event: 'set-web-search', enabled: boolean): void
   (event: 'set-capability-override', key: string, enabled: boolean): void; (event: 'probe-capabilities', id: string): void; (event: 'probe-media', id: string | number | undefined, dim: string): void
 }>()
 watch(

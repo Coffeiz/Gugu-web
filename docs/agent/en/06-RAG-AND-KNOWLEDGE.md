@@ -12,7 +12,7 @@ These systems provide structured context to Context Assembly. They do not bypass
 
 source and scope filtering -> document projection -> lexical index lookup -> candidate ranking -> confidence and diversity filters -> context injection
 
-The TypeScript lexical worker supplies persistent indexing and search support. Index versions, scope digests, cache state, candidate counts, accepted/rejected counts, confidence thresholds, and timing belong to diagnostics.
+Python manages RAG projection, cache, snapshots, and retrieval orchestration; the Cython kernel provides lexical indexing and search. Index versions, scope digests, cache state, candidate counts, accepted/rejected counts, confidence thresholds, and timing belong to diagnostics.
 
 No-hit, low-confidence, unauthorized, duplicate, or stale candidates must not be injected as facts. A disabled or unavailable index must produce an explicit fallback or retryable state, not a false success.
 

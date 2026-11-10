@@ -24,7 +24,7 @@ from agent.knowledge.models import KnowledgeEntry, KnowledgeScope, KnowledgeSour
 from agent.knowledge.store import KnowledgeStore
 from agent.rag.adapters.knowledge import KnowledgeAdapter
 from agent.rag.models import RecallCandidate, Scope
-from agent.rag.ts_sidecar import rank_candidates_with_cache
+from agent.rag.service import rank_candidates_for_query
 
 
 USER_ID = "mock-user"
@@ -101,10 +101,10 @@ async def quality_view(owner_id: str, query: str, results, top_k: int) -> tuple[
         RecallCandidate.from_result(item, rank=index)
         for index, item in enumerate(results, start=1)
     ]
-    selected, stats = await rank_candidates_with_cache(
-        owner_id, query, candidates, limit=top_k, max_chars=3000,
-        max_per_source=3, max_per_parent=3,
-    )
+    selected, stats = await rank_candidates_for_query(query, candidates, {
+        "limit": top_k, "max_chars": 3000,
+        "max_per_source": 3, "max_per_parent": 3,
+    })
     return [result_view(item) for item, _, _ in selected], stats
 
 
@@ -123,7 +123,7 @@ async def run_probe(top_k: int) -> dict:
             batch = await adapter.retrieve(
                 query, scope=scope, strategy="bm25", candidate_limit=top_k,
             )
-            engine = str(batch.metadata.get("engine") or "typescript")
+            engine = str(batch.metadata.get("engine") or "cython")
             elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
             accepted, quality = await quality_view(USER_ID, query, batch.results, top_k)
             output.append({

@@ -39,26 +39,6 @@ def _fake_projection(records):
     return documents
 
 
-class FakeWorker:
-    def __init__(self):
-        self.calls: list[tuple[str, dict]] = []
-        self.revision: str | None = "seed"
-
-    async def patch(self, upserts, deletes, revision, base_revision, *, vectors=None, vector_version="", storage_owner_id=None):
-        self.calls.append(("patch", {"upserts": [d.chunk_id for d in upserts], "deletes": list(deletes)}))
-        self.revision = revision
-
-    async def replace(self, documents, revision, *, vectors=None, vector_version="", storage_owner_id=None):
-        self.calls.append(("replace", {"chunks": [d.chunk_id for d in documents]}))
-        self.revision = revision
-
-    async def close(self):
-        return None
-
-    def ops(self):
-        return [op for op, _ in self.calls]
-
-
 @pytest_asyncio.fixture
 async def fp_env(monkeypatch, tmp_path):
     engine = create_async_engine(
@@ -81,14 +61,10 @@ async def fp_env(monkeypatch, tmp_path):
     monkeypatch.setattr(db_session, "_SessionLocal", session_factory, raising=False)
     monkeypatch.setattr(db_session, "_engine_loop", _asyncio.get_running_loop())
 
-    worker = FakeWorker()
-    async def fake_client(_user_id):
-        return worker
-    monkeypatch.setattr(pipeline, "_knowledge_client", fake_client)
     async def fake_project(owner_user_id, source_type, records, **_kwargs):
         return _fake_projection(records)
     monkeypatch.setattr(pipeline, "records_to_write_documents", fake_project)
-    yield owner_id, worker, session_factory
+    yield owner_id, session_factory
     await engine.dispose()
 
 
@@ -103,7 +79,7 @@ async def _full_seed(db, owner_id: object) -> None:
 
 @pytest.mark.asyncio
 async def test_project_field_and_stage_change_incremental(fp_env):
-    owner_id, worker, session_factory = fp_env
+    owner_id, session_factory = fp_env
     async with session_factory() as db:
         project = Project(user_id=owner_id, name="项目甲", status="active",
                           stages_json='[{"name":"阶段一"}]')
@@ -120,9 +96,8 @@ async def test_project_field_and_stage_change_incremental(fp_env):
         await db.commit()
     stats: dict = {}
     count = await pipeline.update_document(owner_id, "project", str(project_id), stats_out=stats)
-    assert stats["mode"] == "document_patch" and stats["status"] == "ready"
+    assert stats["mode"] == "document_patch" and stats["status"] == "index_invalidated"
     assert count >= 1
-    assert worker.ops() == ["patch"]
     async with session_factory() as db:
         rows = await load_parent_documents(db, owner_id, "project", str(project_id))
     joined = "\n".join(r.content for r in rows)
@@ -133,7 +108,7 @@ async def test_project_field_and_stage_change_incremental(fp_env):
 
 @pytest.mark.asyncio
 async def test_project_delete_removes_chunks(fp_env):
-    owner_id, worker, session_factory = fp_env
+    owner_id, session_factory = fp_env
     async with session_factory() as db:
         project = Project(user_id=owner_id, name="待删项目", status="active")
         db.add(project)

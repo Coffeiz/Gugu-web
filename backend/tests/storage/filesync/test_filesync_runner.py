@@ -130,11 +130,12 @@ def test_user_root_reconcile_only_projects_canonical_library_folders(
 
 @pytest.mark.asyncio
 async def test_initialize_task_imports_disk_files_and_persists_terminal_results(
-    db, user_a, monkeypatch,
+    filesync_runner_db, user_a, monkeypatch,
 ):
     import app.services.filesync.runner as runner
     import app.services.filesync.targeted as targeted
 
+    db = filesync_runner_db
     settings = runner.get_settings()
     storage_root = Path(settings.storage.local_path).expanduser().resolve()
     root = storage_root / str(user_a.id)
@@ -253,13 +254,14 @@ async def test_initialize_task_imports_disk_files_and_persists_terminal_results(
 
 @pytest.mark.asyncio
 async def test_permission_excluded_subtree_cannot_finish_reconcile_as_success(
-    db, user_a, monkeypatch,
+    filesync_runner_db, user_a, monkeypatch,
 ):
     """可读文件可以投影，但无法覆盖的子树必须保留失败和缺口，不误删旧记录。"""
     import app.services.filesync.runner as runner
     import app.services.filesync.scan as scan
     import app.services.filesync.targeted as targeted
 
+    db = filesync_runner_db
     root = Path(runner.get_settings().storage.local_path).resolve() / str(user_a.id)
     personal = root / "个人文件"
     locked = personal / "受限"
@@ -350,10 +352,11 @@ async def test_user_root_with_only_workspace_records_is_an_empty_library_scope(
 
 
 @pytest.mark.asyncio
-async def test_dry_run_reports_plan_without_business_side_effects(db, user_a, monkeypatch):
+async def test_dry_run_reports_plan_without_business_side_effects(filesync_runner_db, user_a, monkeypatch):
     import app.services.filesync.runner as runner
     import app.services.filesync.targeted as targeted
 
+    db = filesync_runner_db
     storage_root = Path(runner.get_settings().storage.local_path).expanduser().resolve()
     root = storage_root / str(user_a.id)
     (root / "个人文件").mkdir(parents=True)
@@ -408,12 +411,13 @@ async def test_dry_run_reports_plan_without_business_side_effects(db, user_a, mo
 
 
 @pytest.mark.asyncio
-async def test_repair_recreates_only_a_missing_empty_workspace_root(db, user_a, monkeypatch):
+async def test_repair_recreates_only_a_missing_empty_workspace_root(filesync_runner_db, user_a, monkeypatch):
     """恢复数据库后只允许重建确认为无旧 File/Folder 记录的空工作区目录。"""
     from app.core.config import get_settings
     import app.services.filesync.runner as runner
     import app.services.filesync.targeted as targeted
 
+    db = filesync_runner_db
     settings = get_settings()
     monkeypatch.setattr(settings.storage, "backend", "local")
     storage_root = Path(settings.storage.local_path).expanduser().resolve()
@@ -466,12 +470,15 @@ async def test_repair_recreates_only_a_missing_empty_workspace_root(db, user_a, 
 
 
 @pytest.mark.asyncio
-async def test_repair_refreshes_fingerprint_for_existing_empty_workspace_root(db, user_a, monkeypatch):
+async def test_repair_refreshes_fingerprint_for_existing_empty_workspace_root(
+    filesync_runner_db, user_a, monkeypatch,
+):
     """数据库恢复后，空且无 File/Folder 记录的目录可只更新绑定指纹。"""
     from app.core.config import get_settings
     import app.services.filesync.runner as runner
     import app.services.filesync.targeted as targeted
 
+    db = filesync_runner_db
     settings = get_settings()
     monkeypatch.setattr(settings.storage, "backend", "local")
     storage_root = Path(settings.storage.local_path).expanduser().resolve()
@@ -526,13 +533,14 @@ async def test_repair_refreshes_fingerprint_for_existing_empty_workspace_root(db
 
 @pytest.mark.asyncio
 async def test_repair_refreshes_stale_fingerprint_for_canonical_nonempty_workspace_without_deleting_records(
-    db, user_a, monkeypatch,
+    filesync_runner_db, user_a, monkeypatch,
 ):
     """现存 canonical 根可刷新绑定指纹；旧记录和物理内容保持不变。"""
     from app.core.config import get_settings
     import app.services.filesync.runner as runner
     import app.services.filesync.targeted as targeted
 
+    db = filesync_runner_db
     settings = get_settings()
     monkeypatch.setattr(settings.storage, "backend", "local")
     storage_root = Path(settings.storage.local_path).expanduser().resolve()
@@ -598,12 +606,15 @@ async def test_repair_refreshes_stale_fingerprint_for_canonical_nonempty_workspa
 
 
 @pytest.mark.asyncio
-async def test_repair_rejects_symlink_when_it_overlaps_existing_library_record(db, user_a, monkeypatch, tmp_path):
+async def test_repair_rejects_symlink_when_it_overlaps_existing_library_record(
+    filesync_runner_db, user_a, monkeypatch, tmp_path,
+):
     """链接路径覆盖 File 记录时整轮不投影，避免链接被误当成缺失文件。"""
     from app.core.config import get_settings
     import app.services.filesync.runner as runner
     import app.services.filesync.targeted as targeted
 
+    db = filesync_runner_db
     settings = get_settings()
     monkeypatch.setattr(settings.storage, "backend", "local")
     storage_root = Path(settings.storage.local_path).expanduser().resolve()
@@ -670,11 +681,12 @@ async def test_repair_rejects_symlink_when_it_overlaps_existing_library_record(d
 @pytest.mark.asyncio
 @pytest.mark.parametrize("record_kind", ["file", "folder"])
 async def test_repair_does_not_recreate_missing_root_when_old_records_exist(
-    db, user_a, monkeypatch, record_kind,
+    filesync_runner_db, user_a, monkeypatch, record_kind,
 ):
     """缺失根目录下仍有关联记录时拒绝空目录恢复，不改动旧记录。"""
     from app.core.config import get_settings
 
+    db = filesync_runner_db
     settings = get_settings()
     monkeypatch.setattr(settings.storage, "backend", "local")
     storage_root = Path(settings.storage.local_path).expanduser().resolve()
@@ -731,12 +743,13 @@ async def test_repair_does_not_recreate_missing_root_when_old_records_exist(
 
 @pytest.mark.asyncio
 async def test_complete_empty_scan_soft_deletes_missing_file_record(
-    db, user_a, monkeypatch,
+    filesync_runner_db, user_a, monkeypatch,
 ):
     """根目录身份有效且完整扫描确认文件缺失时，自动软删除对应 File 记录。"""
     import app.services.filesync.runner as runner
     import app.services.filesync.targeted as targeted
 
+    db = filesync_runner_db
     storage_root = Path(runner.get_settings().storage.local_path).expanduser().resolve()
     root = storage_root / str(user_a.id)
     root.mkdir(parents=True)
@@ -803,12 +816,13 @@ async def test_complete_empty_scan_soft_deletes_missing_file_record(
 
 @pytest.mark.asyncio
 async def test_manifest_budget_failure_does_not_delete_db_orphan(
-    db, user_a, monkeypatch,
+    filesync_runner_db, user_a, monkeypatch,
 ):
     """完整扫描清单超预算时失败收尾，不能把未完成清单用于缺失删除。"""
     import app.services.filesync.runner as runner
     import app.services.filesync.targeted as targeted
 
+    db = filesync_runner_db
     storage_root = Path(runner.get_settings().storage.local_path).expanduser().resolve()
     root = storage_root / str(user_a.id)
     personal = root / "个人文件"

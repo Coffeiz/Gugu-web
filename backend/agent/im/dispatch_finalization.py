@@ -196,7 +196,18 @@ async def finalize_im_dispatch(
         # 未流式发送的最终回复保留入站 msg_id：网关先发被动消息，失败时再主动重试。
         if stream_reply_text is None:
             # 流已确认发送最终正文前缀，但尾部恢复失败；重发全文会重复前缀，
-            # 因此将 Run 标记为交付失败，不再盲目重发。
+            # 因此将 Run 标记为交付失败，但附件仍须独立尝试投递。
+            if response.files and payload.get("_qq_stream_closed_partial") is True:
+                from agent.im.files import send_files
+
+                file_result = await send_files({**payload, "message_id": None}, response.files)
+                payload.setdefault("_attachment_delivery_results", []).append({
+                    "requested": int(file_result.requested),
+                    "sent": int(file_result.sent),
+                    "failed": int(file_result.failed),
+                })
+                if file_result.failed:
+                    await send_text(payload, file_result.reason or "附件没有成功发出，你可以去网页或文件库查看。")
             reply_text = None
         else:
             # 已由 QQ 私聊流式接口交付的正文不能再走被动出口；未流式正文应优先

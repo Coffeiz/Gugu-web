@@ -93,7 +93,12 @@ class ProviderRoundRuntime:
 
     async def stream(self) -> AsyncGenerator[ProviderRoundEvent, None]:
         """流出 token/retry/final 事件，并在 finally 中及时关闭底层生成器。"""
+        import time
+        from agent.runtime.loopscope_trace.state import record_phase_timing
+
+        started = time.time()
         self._refresh_tools()
+        record_phase_timing("Round tool schemas refreshed", started)
         while True:
             round_gen = None
             token_count = 0

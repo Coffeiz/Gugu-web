@@ -20,7 +20,6 @@ from typing import Any, Literal
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import (
-    DEFAULT_SEARXNG_IMAGE_ENGINES,
     FileSyncSettings,
     IMPlatformSettings,
     SmtpSettings,
@@ -766,13 +765,10 @@ async def test_connection(body: TestConnectionRequest):
     return {"ok": False, "message": "未知连接类型"}
 
 
-# ── 搜索测试（SearXNG / Tavily）──────────────────────────────────────────────
+# ── 搜索测试 ────────────────────────────────────────────────────────────────
 
 class SearchTestRequest(BaseModel):
-    target:          Literal["searxng", "searxng_images", "tavily", "deep_research", "baidu_similar_images"]
-    searxng_url:     str = ""   # 留空=用已存配置
-    searxng_engines: str = ""
-    searxng_image_engines: str = ""
+    target:          Literal["tavily", "deep_research", "baidu_similar_images"]
     tavily_api_key:  str = ""   # 留空=用已存配置
     baidu_qianfan_api_key: str = ""   # 留空=用已存配置
     deep_research_provider: str = ""
@@ -784,48 +780,7 @@ class SearchTestRequest(BaseModel):
 async def test_search(body: SearchTestRequest):
     cfg = get_settings()
 
-    if body.target in ("searxng", "searxng_images"):
-        url = (body.searxng_url or cfg.search.searxng_url or "").rstrip("/")
-        if not url:
-            return {"ok": False, "message": "未填 SearXNG 地址"}
-        is_images = body.target == "searxng_images"
-        if is_images:
-            engines = (
-                (
-                    body.searxng_image_engines
-                    or cfg.search.searxng_image_engines
-                    or ""
-                ).strip()
-                or DEFAULT_SEARXNG_IMAGE_ENGINES
-            )
-        else:
-            engines = body.searxng_engines or cfg.search.searxng_engines
-        params = {"q": "test", "format": "json", "engines": engines}
-        if is_images:
-            params["categories"] = "images"
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(12.0)) as client:
-                resp = await client.get(f"{url}/search", params=params)
-        except Exception as e:
-            return {"ok": False, "message": f"连不上：{type(e).__name__}: {str(e)[:80]}"}
-        if resp.status_code == 403:
-            return {"ok": False, "message": "403 — SearXNG 未开启 JSON 输出。请在其 settings.yml 的 search.formats 加上 json（并设 server.limiter: false），重启容器后再试"}
-        if resp.status_code != 200:
-            return {"ok": False, "message": f"HTTP {resp.status_code}（非 200）"}
-        try:
-            data = resp.json()
-        except Exception:
-            return {"ok": False, "message": "返回的不是 JSON（多半未开启 json 格式）"}
-        n = len(data.get("results") or [])
-        dead = [e[0] for e in (data.get("unresponsive_engines") or [])]
-        if n == 0:
-            return {"ok": False, "message": f"能连上但返回 0 条结果（引擎可能被限/不可达；超时引擎：{dead or '无'}）"}
-        msg = f"OK — 返回 {n} 条结果"
-        if dead:
-            msg += f"（超时引擎：{'、'.join(dead)}）"
-        return {"ok": True, "message": msg}
-
-    elif body.target == "deep_research":
+    if body.target == "deep_research":
         provider = body.deep_research_provider or cfg.search.deep_research_provider
         key = {
             "tavily": body.tavily_api_key or cfg.search.tavily_api_key,
@@ -1151,12 +1106,11 @@ async def embedding_rebuild_status():
 
 
 async def _rebuild_index_worker(user_ids: list[str]) -> None:
-    """后台按用户完整重投影 RAG 来源并强制刷新 TS 持久索引。
+    """后台按用户重投影 RAG 来源并预热 Cython 索引缓存。
 
     这是派生索引维护，不修改文件、对话等主数据；每个来源独立失败并继续，
     让管理员能在一次任务中尽量收敛所有用户，同时得到明确的失败计数。
     """
-    from agent.memory import embedding
     from agent.rag.index_cache import get_index_cache
     from agent.rag import pipeline as rag_pipeline
     from app.core import redis as redis_mod
@@ -1199,20 +1153,22 @@ async def _rebuild_index_worker(user_ids: list[str]) -> None:
                     failed_sources += 1
                     diag_log("app.api.v1.config.index_rebuild.source", exc)
 
-            # 来源写库完成后，直接执行一次全量数据库装载，确保 TS 磁盘索引不再
-            # 依赖下一次查询触发增量同步，也避免旧缓存只保留旧正文。
+            # 来源写库后失效旧 Cython 快照，再按最新数据库 revision 预装索引，
+            # 避免管理员重建结束后仍复用旧正文。
             try:
                 db_session.ensure_engine()
+                cache = get_index_cache()
+                cache.invalidate(user_id, include_snapshot=True)
                 async with db_session._SessionLocal() as db:
                     revision = await rag_pipeline._owner_revision(db, user_id)
                 if revision:
-                    client = await rag_pipeline._knowledge_client(user_id)
-                    vector_tag = embedding.model_tag() if embedding.is_enabled() else ""
-                    await client.load_index_from_database(user_id, revision, vector_tag)
-                    get_index_cache().invalidate(user_id, include_snapshot=True)
+                    async with db_session._SessionLocal() as db:
+                        await cache.get(
+                            db, user_id, "all", baseline_revision=revision, force=True,
+                        )
             except Exception as exc:
                 user_failed = True
-                diag_log("app.api.v1.config.index_rebuild.ts_index", exc)
+                diag_log("app.api.v1.config.index_rebuild.cython_index", exc)
 
             done += 1
             if user_failed:

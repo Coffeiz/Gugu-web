@@ -16,17 +16,17 @@ def test_index_invalidation_keeps_snapshot_baseline():
     import time
 
     cache = KnowledgeIndexCache()
-    cache._entries[("user-a", "python", "all")] = _Entry(
+    cache._entries[("user-a", "cython", "all")] = _Entry(
         object(), 1, "current", "python", time.monotonic(),
     )
-    cache._entries[("user-a", "typescript", "shared:snapshot:7")] = _Entry(
-        object(), 1, "7", "typescript", time.monotonic(),
+    cache._entries[("user-a", "cython", "shared:snapshot:7")] = _Entry(
+        object(), 1, "7", "cython", time.monotonic(),
     )
 
     cache.invalidate("user-a")
 
-    assert ("user-a", "python", "all") not in cache._entries
-    assert ("user-a", "typescript", "shared:snapshot:7") in cache._entries
+    assert ("user-a", "cython", "all") not in cache._entries
+    assert ("user-a", "cython", "shared:snapshot:7") in cache._entries
 
 
 @pytest.mark.asyncio
@@ -38,14 +38,10 @@ async def test_cython_backend_is_selected_once_for_unified_query(monkeypatch):
     from agent.rag import cython_runtime
     from agent.rag.index_cache import KnowledgeIndexCache
 
-    settings = SimpleNamespace(search=SimpleNamespace(rag_backend="cython"))
+    settings = SimpleNamespace(search=SimpleNamespace())
     monkeypatch.setattr("app.core.config.get_settings", lambda: settings)
     monkeypatch.setattr("agent.memory.embedding.is_enabled", lambda: False)
     monkeypatch.setattr("agent.memory.embedding.model_tag", lambda: "")
-    monkeypatch.setattr(
-        "agent.rag.index_cache.get_lexical_client",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("TS 不应被调用")),
-    )
 
     document = IndexDocument(
         "knowledge:airport", "knowledge", "knowledge", Scope("user-a"),
@@ -96,7 +92,7 @@ async def test_cython_transient_search_returns_recall_results(monkeypatch):
 
     monkeypatch.setattr(
         "app.core.config.get_settings",
-        lambda: SimpleNamespace(search=SimpleNamespace(rag_backend="cython")),
+        lambda: SimpleNamespace(search=SimpleNamespace()),
     )
     monkeypatch.setattr(index_cache, "_CACHE", index_cache.KnowledgeIndexCache())
     documents = [IndexDocument(

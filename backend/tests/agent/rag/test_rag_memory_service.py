@@ -1,6 +1,6 @@
 """search_memory 统一查询链契约：Memory-only 瞬态规格、来源过滤与语料收口。
 
-旧 legacy 交付链的预算/截断断言已随链删除；字符预算由 TS worker 的排序
+旧 legacy 交付链的预算/截断断言已随链删除；字符预算由 Cython 统一排序
 契约负责（worker protocol 测试覆盖）。
 """
 from contextlib import asynccontextmanager
@@ -45,10 +45,10 @@ def _install_unified_memory_stubs(monkeypatch, *, documents, selected=None):
     参数，文档不再经过 Python 装载通道；documents_by_id 仅用于选中行回连。
     """
     from agent.rag import batch_retriever as br
-    from agent.rag.ts_sidecar import _worker_document_key
+    from agent.rag.delta import chunk_slot_key
 
     calls = {}
-    keys = {_worker_document_key(doc): doc for doc in documents}
+    keys = {chunk_slot_key(doc): doc for doc in documents}
 
     async def prepare_memory(owner, scopes, *, source_filter, snapshot_revision,
                              snapshot_text, vector_version):
@@ -97,12 +97,12 @@ def _install_unified_memory_stubs(monkeypatch, *, documents, selected=None):
 async def test_memory_only_query_delivers_worker_selection(monkeypatch):
     """Memory-only 显式查询走统一链：只发瞬态规格，交付 worker 选中行。"""
     from agent.rag.service import search_memory
-    from agent.rag.ts_sidecar import _worker_document_key
+    from agent.rag.delta import chunk_slot_key
 
     doc = _memory_doc()
     calls, _keys = _install_unified_memory_stubs(
         monkeypatch, documents=[doc],
-        selected=[_selected_row(doc, _worker_document_key(doc))])
+        selected=[_selected_row(doc, chunk_slot_key(doc))])
 
     result = await search_memory("user-a", "缓存", limit=5)
 
@@ -117,7 +117,7 @@ async def test_memory_only_query_delivers_worker_selection(monkeypatch):
     assert item["confidence"] == 0.9
     assert item["citation"] == {"chunk_id": doc.chunk_id}
     assert item["citations"] == [{"chunk_id": doc.chunk_id}]
-    assert result["engine"] == "typescript"
+    assert result["engine"] == "cython"
 
 
 @pytest.mark.asyncio
@@ -135,7 +135,7 @@ async def test_memory_search_passes_source_filter_and_unknown_source_stays_empty
                     "selection_mode": "top_k", "scoring_version": "confidence-v4",
                     "elapsed_ms": 0}
 
-    monkeypatch.setattr(service, "rank_candidates_with_cache", empty_rank)
+    monkeypatch.setattr(service, "rank_candidates_for_query", empty_rank)
     result = await service.search_memory("user-a", "缓存", source="daily", limit=5)
     assert result["results"] == []
 

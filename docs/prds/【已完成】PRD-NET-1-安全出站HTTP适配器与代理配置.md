@@ -7,7 +7,7 @@
 
 本 PRD 定义的安全出站适配器、Admin 代理配置、模型可控公网内容工具接入及其他出站客户端边界评估均已完成并通过验收。Provider API、MCP 等固定端点是否使用代理属于独立用途决策，不是本 PRD 的未完成项。
 
-> 范围补充（2026-10-28）：已将 Admin 代理选择扩展到固定 Provider 搜索端点。启用有效代理后，`http_get`、`web_download`、网络 URL 的 `send_file`、`web_search`、`deep_research` 和 `similar_image_search` 的工具 Schema 会增加可选 `use_proxy`；未传时沿用 Admin 代理设置，`false` 仅对当前工具请求直连，仍执行目标校验和 IP 钉扎。Provider API 继续使用代码固定且经过 allowlist 校验的官方端点；不扩展到任意 Provider Base URL、模型主请求、MCP、平台网关、SearXNG 或内部服务。
+> 范围补充（2026-10-28）：已将 Admin 代理选择扩展到固定 Provider 搜索端点。启用有效代理后，`http_get`、`web_download`、网络 URL 的 `send_file`、`web_search`、`deep_research` 和 `similar_image_search` 的工具 Schema 会增加可选 `use_proxy`；未传时沿用 Admin 代理设置，`false` 仅对当前工具请求直连，仍执行目标校验和 IP 钉扎。Provider API 继续使用代码固定且经过 allowlist 校验的官方端点；不扩展到任意 Provider Base URL、模型主请求、MCP、平台网关或内部服务。
 
 ## 0. 决策摘要
 
@@ -184,7 +184,7 @@ PoC 必须同时验证连接确实钉扎目标 IP。代理不支持时停止并�
 
 **Phase 2 实施结果（2026-10-02）**：两个下载入口已改为调用 `SafeEgressClient`；图片下载器仍手动最多跟随 3 次重定向，每跳重新解析和验证，继续保留 Content-Length 提前拒绝、流式累计上限和附件生命周期约束。移除了下载器重复实现的 IP pin 请求构造函数，统一由共享适配器维护连接与 TLS 身份。
 
-本阶段未迁移配置型 SearXNG endpoint 或 Tavily/You/Baidu 固定 Provider API：前者可能是本地服务，后者携带各自供应商凭据；后续须使用固定 endpoint allowlist 与独立代理授权，不套用任意 URL 策略。该边界转入 Phase 3。
+本阶段未迁移 Tavily、百度和 You.com 固定 Provider API；这些请求携带各自供应商凭据，须使用固定 endpoint allowlist 与独立代理授权，不套用任意 URL 策略。该边界转入 Phase 3。
 
 行为验证：安全出站、`http_get` 重试/截断、下载分块限额、Content-Length 预拒绝、重定向逐跳重验及旧 URL 安全契约相关测试共 36 项通过。
 
@@ -202,7 +202,7 @@ PoC 必须同时验证连接确实钉扎目标 IP。代理不支持时停止并�
 | MCP HTTP | endpoint 是用户配置，当前每次请求先校验并钉扎公网 IP、拒绝自动重定向；stdio MCP 走本地 sandbox socket。 | HTTP 代理可作为独立的 MCP server 传输选项，但要保留 endpoint 级授权、凭据头/query 注入及响应流协议。不能让本地 stdio 或内部 endpoint 继承公网代理策略。 |
 | 平台 gateway / IM | QQ、飞书等有固定 API、长连接/回调、签名和重试契约。 | 不进入通用工具出站代理。若有部署网络需求，另做 gateway 专属代理和连接器配置，不能改变回调入站或长连接生命周期。 |
 | 媒体与语音 API | 有固定厂商 endpoint 和凭据；图片 URL 下载已统一归入 Phase 2 任意 URL 路径。 | 固定媒体/语音 API 随对应 Provider API 用途评估；图片 URL 读取沿用 `agent_web_fetch`。 |
-| 搜索服务 | SearXNG endpoint 由管理员配置，允许本地部署；深度研究/相似图搜索调用固定第三方 API 并携带各自 Key。 | SearXNG 保持现有直连语义；第三方 API 归到独立 Provider endpoint policy，不接受任意目标，也不使用 `http_get` 的普通网页 SSRF 授权。 |
+| 搜索服务 | 深度研究和相似图搜索调用固定第三方 API 并携带各自 Key。 | Provider API 使用独立 endpoint policy，不接受任意目标，也不使用 `http_get` 的普通网页 SSRF 授权。 |
 
 本阶段没有剩余实现提交。后续若需要代理 Provider API/MCP，由独立需求明确用途开关、受信目的地址来源和本地 endpoint 行为，再分别实现；不扩大当前默认范围。
 

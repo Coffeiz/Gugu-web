@@ -67,6 +67,7 @@ test('TraceStore 对重复 run 上报保持幂等并可读回 spans', () => {
     assert.ok(run && 'spans' in run)
     assert.equal(run.spans.length, 1)
     assert.equal(store.listContext('run-test-1')[0]?.content_markdown, '固定上下文')
+    assert.equal(store.listContext('run-test-1')[0]?.token_count, null)
     assert.equal(store.listUsage('run-test-1').length, 2)
   } finally {
     store.close()

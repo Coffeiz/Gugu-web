@@ -151,7 +151,7 @@ PostgreSQL、Redis、`pgdata`、`gugu_data`、`gugu_config`、用户上传内容
 
 ### FR-UPD-008：可选组件边界
 
-Docker/Compose 管理器更新 Compose 项目中的应用镜像；默认不更新 PostgreSQL、Redis、SearXNG 和其他基础服务，除非它们被明确纳入发布且经过兼容性验证。Admin 只呈现手动更新说明，不对 Compose 镜像执行检查或变更。
+Docker/Compose 管理器更新 Compose 项目中的应用镜像；默认不更新 PostgreSQL、Redis 和其他基础服务，除非它们被明确纳入发布且经过兼容性验证。Admin 只呈现手动更新说明，不对 Compose 镜像执行检查或变更。
 
 Shell sandbox 是可选 profile。普通更新不因为用户未开启 sandbox 而拉取 Debian 或 sandbox 运行镜像；只有管理员明确开启或更新 sandbox profile 时，才执行对应的镜像预检和拉取。
 

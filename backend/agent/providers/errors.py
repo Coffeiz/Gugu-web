@@ -242,6 +242,10 @@ def openai_transient_error(exc: BaseException) -> bool:
     import openai
     import httpx
 
+    from agent.context.budget import is_context_overflow_error
+
+    if is_context_overflow_error(exc):
+        return False
     if isinstance(exc, (openai.RateLimitError, openai.APITimeoutError,
                         openai.APIConnectionError, openai.InternalServerError,
                         httpx.TimeoutException, httpx.NetworkError,

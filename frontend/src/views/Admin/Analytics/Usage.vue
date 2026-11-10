@@ -107,6 +107,29 @@
           <div class="chart-card">
             <div class="chart-header">
               <div class="chart-title">
+                <Icon name="communication.chat" size="xs" class="ct-icon ic-blue-raw" />
+                {{ t('adminAnalyticsUi.interactionsByChannel') }}
+              </div>
+              <div class="chart-stats">
+                <span class="cs-item">
+                  <span class="cs-lbl">{{ t('adminAnalyticsUi.recentDays', { days: rangeDays }) }}</span>
+                  <span class="cs-val">{{ sumArr(vis.channel_total) }}</span>
+                </span>
+                <span class="cs-sep">·</span>
+                <span class="cs-item">
+                  <span class="cs-lbl">{{ t('adminAnalyticsUi.dailyAverage') }}</span>
+                  <span class="cs-val">{{ dailyAvg(vis.channel_total) }}</span>
+                </span>
+              </div>
+            </div>
+            <div class="chart-wrap">
+              <Line :data="interactionsChart" :options="lineOpts(false, true)" :plugins="chartPlugins" />
+            </div>
+          </div>
+
+          <div class="chart-card">
+            <div class="chart-header">
+              <div class="chart-title">
                 <Icon name="admin.pulse" size="xs" class="ct-icon ic-amber-raw"/>
                 {{ t('adminAnalyticsUi.tokenUsage') }}
               </div>
@@ -251,7 +274,7 @@ import { browserTz } from '@/utils/dateAttribution'
 import { barChartOptions, chartThemeKey, cssVar } from '@/utils/chartKit'
 import {
   excludeDev, includeByok, usageQuery, chartPlugins, mkDataset, lineOpts, donutOpts, donutColors,
-  BLUE, AMBER, TEAL, fmtTok, sumArr, dailyAvg,
+  BLUE, AMBER, TEAL, CORAL, fmtTok, sumArr, dailyAvg,
 } from './_shared'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, ArcElement, Tooltip, Filler)
@@ -280,6 +303,14 @@ const visibleTools = computed(() =>
   toolExpanded.value ? toolDist.value : toolDist.value.slice(0, 10))
 
 const dimensions = computed(() => dims.value?.dimensions ?? [])
+const interactionSources = computed(() => [
+  { key: 'web', label: t('adminAnalyticsUi.web'), color: BLUE },
+  { key: 'qq', label: t('adminAnalyticsUi.qq'), color: AMBER },
+  { key: 'feishu', label: t('adminAnalyticsUi.feishu'), color: TEAL },
+  { key: 'telegram', label: t('adminAnalyticsUi.telegram'), color: CORAL },
+  { key: 'wechat', label: t('adminAnalyticsUi.wechat'), color: 'rgba(100,160,210,1)' },
+  { key: 'other', label: t('adminAnalyticsUi.other'), color: 'rgba(160,130,200,1)' },
+])
 
 function dimIcon(key: string) {
   return ({ chat: 'communication.chat', project: 'admin.folders', calendar: 'navigation.calendar',
@@ -297,6 +328,12 @@ const vis = computed(() => {
     user_registrations:  t.user_registrations.slice(-n),
     project_completions: t.project_completions.slice(-n),
     project_creations:   (t.project_creations ?? []).slice(-n),
+    interactions_by_source: t.interactions_by_source ?? {},
+    channel_total: interactionSources.value.reduce((daily, source) => {
+      const values = (t.interactions_by_source?.[source.key] ?? []).slice(-n)
+      values.forEach((value: number, index: number) => { daily[index] += value })
+      return daily
+    }, Array.from({ length: n }, () => 0) as number[]),
   }
 })
 
@@ -305,6 +342,13 @@ const agentTokensChart = computed(() => ({ labels: vis.value?.labels ?? [], data
 const userRegsChart    = computed(() => ({ labels: vis.value?.labels ?? [], datasets: [mkDataset(vis.value?.user_registrations ?? [], TEAL)] }))
 const projDoneChart    = computed(() => ({ labels: vis.value?.labels ?? [], datasets: [mkDataset(vis.value?.project_completions ?? [], TEAL)] }))
 const projNewChart     = computed(() => ({ labels: vis.value?.labels ?? [], datasets: [mkDataset(vis.value?.project_creations ?? [], TEAL)] }))
+const interactionsChart = computed(() => ({
+  labels: vis.value?.labels ?? [],
+  datasets: interactionSources.value.map(item => ({
+    ...mkDataset((vis.value?.interactions_by_source?.[item.key] ?? []).slice(-rangeDays.value), item.color),
+    label: item.label,
+  })),
+}))
 
 const donutChart = computed(() => {
   const models = usage.value?.by_model ?? []

@@ -325,7 +325,11 @@ class QQStreamDeliveryError(QQStreamFinalizationError):
 
 
 class QQStreamPrefixMismatchError(QQStreamDeliveryError):
-    """流已关闭，但最终正文与已送达前缀无法直接续接。"""
+    """最终正文与已送达前缀无法直接续接。"""
+
+    def __init__(self, message: str, *, closed_confirmed: bool = False):
+        super().__init__(message)
+        self.closed_confirmed = closed_confirmed
 
 
 class QQAPIError(Exception):

@@ -8,7 +8,7 @@
 #    2. 备份关键数据（config.override.json、Gugu-data/users/、PostgreSQL）
 #    3. 同步 Python 依赖（pip install -r requirements.txt）
 #    4. 跑数据库迁移（alembic upgrade head，DB 不通则跳过）
-#    5. 可选：构建 TS RAG 固定制品与前端（--no-build 跳过）
+#    5. 可选：构建文件监听 worker 与前端（--no-build 跳过）
 #    6. 重启后端服务（./start.sh restart）
 #    7. 健康检查
 #
@@ -120,14 +120,14 @@ else
 fi
 
 # ── 5. 构建固定制品（可选） ──────────────────────────────
-hr; log "步骤 5/6 — 构建 TS RAG 固定制品与前端"
+hr; log "步骤 5/6 — 构建文件监听 worker 与前端"
 if $DO_BUILD; then
     if command -v pnpm >/dev/null 2>&1 || command -v corepack >/dev/null 2>&1; then
-        log "构建 TypeScript 文件监听与 RAG worker 固定制品 ..."
-        make rag-ts-build
-        ok "TS 文件监听与 RAG 固定制品已更新"
+        log "构建 TypeScript 文件监听 worker 固定制品 ..."
+        make filesync-ts-build
+        ok "TS 文件监听 worker 固定制品已更新"
     else
-        err "未找到 pnpm 或 corepack，无法构建 TS RAG 固定制品"
+        err "未找到 pnpm 或 corepack，无法构建 TS 文件监听 worker 制品"
         exit 1
     fi
     if [ -d "$FRONTEND_DIR" ]; then

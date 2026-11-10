@@ -128,7 +128,7 @@ jobs:
 
   backend:
     runs-on: ubuntu-latest
-    # 后端完整 pytest 覆盖依赖真实 PostgreSQL/Redis；RAG 测试另行构建 TS worker。
+    # 后端完整 pytest 覆盖依赖真实 PostgreSQL/Redis；RAG 已由 Python/Cython 提供。
     services:
       postgres:
         image: postgres:latest
@@ -186,35 +186,13 @@ jobs:
         working-directory: backend
         run: .venv/bin/python -m pip install -r requirements.txt -r requirements-dev.txt
 
-      - name: Setup Node and build RAG worker
+      - name: Setup Node for file sync worker tests
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
-      - name: Install RAG and file sync worker dependencies
-        # worker 用相对路径直接打包 data-runtime 源码（不声明包依赖），filter 必须
-        # 显式带上 @gugu/data-runtime，否则它的 postgres/ali-oss 不会进安装面，
-        # esbuild 从 data-runtime 源码目录解析不到这两个包（CI 首跑即红）。
-        # @gugu/backend-ts 提供 sidecar 测试拉起 worker 用的 tsx loader。
-        run: corepack enable && corepack prepare pnpm@10.15.0 --activate && pnpm install --filter gugu-rag-ts-worker... --filter @gugu/data-runtime --filter @gugu/backend-ts --filter @gugu/filesync-watcher... --frozen-lockfile
-
-      - name: Expose RAG worker runtime dependencies
-        # 制品输出在 backend/bin；把 wrapper 和 Linux 原生包直接安装到制品旁边，
-        # 避免依赖 pnpm workspace 的符号链接层级。
-        run: |
-          mkdir -p "$GITHUB_WORKSPACE/backend/bin/node_modules"
-          npm install --prefix "$GITHUB_WORKSPACE/backend/bin" --no-save --include=optional \
-            --ignore-scripts --no-fund --no-audit \
-            @node-rs/jieba@2.0.1 @node-rs/jieba-linux-x64-gnu@2.0.1
-
-      - name: Build RAG worker
-        run: pnpm --filter gugu-rag-ts-worker build
-
-      - name: RAG worker smoke test
-        working-directory: backend
-        run: |
-          printf '%s\n' '{"op":"tokenize","text":"部署上线"}' | node bin/gugu-rag-ts-worker.mjs > /tmp/rag-worker-smoke.jsonl
-          node -e "const fs = require('fs'); const line = fs.readFileSync('/tmp/rag-worker-smoke.jsonl', 'utf8').trim(); const result = JSON.parse(line); if (result.status !== 'ok' || !Array.isArray(result.tokens) || result.tokens.length === 0) { throw new Error('RAG worker smoke test failed: ' + line) }"
+      - name: Install file sync worker dependencies
+        run: corepack enable && corepack prepare pnpm@10.15.0 --activate && pnpm install --filter @gugu/backend-ts --filter @gugu/filesync-watcher... --frozen-lockfile
 
       - name: Install frontend dependencies for affected tests
         if: github.event_name == 'pull_request'

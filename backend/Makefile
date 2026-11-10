@@ -10,7 +10,7 @@
 
 SHELL := /bin/bash
 .SILENT:
-.PHONY: help start stop restart status logs fg foreground dev-web dev-worker deploy install uninstall update makeupdate migrate backup clean deps deps-dev rag-ts-build filesync-ts-build sandbox-acl-plan sandbox-acl-apply sandbox-acl-prepare compose-up check-context-compaction
+.PHONY: help start stop restart status logs fg foreground dev-web dev-worker deploy install uninstall update makeupdate migrate backup clean deps deps-dev filesync-ts-build sandbox-acl-plan sandbox-acl-apply sandbox-acl-prepare compose-up check-context-compaction
 
 # 非 Compose 的宿主机 ACL 默认不自动修改；Compose sandbox profile 会由 bootstrap 自动初始化。
 SANDBOX_ACL ?= 0
@@ -34,7 +34,7 @@ endif
 help:        ## 显示帮助
 	@echo "常用：make start | stop | restart | status | logs | fg | dev-web | dev-worker | deploy | install"
 	@echo "开发：make dev-web（Web 热重载）| make deps-dev && make dev-worker（Worker 热重载）"
-	@echo "生产：make install 后 make start | stop | restart | status 管理 RAG sidecar、egress、Python/FastAPI、IM 与 sandboxd；TS/Cython 索引由 sidecar 常驻共享"
+	@echo "生产：make install 后 make start | stop | restart | status 管理 Cython RAG sidecar、egress、Python/FastAPI、IM 与 sandboxd"
 	@echo "沙盒：make sandbox-acl-plan；make install SANDBOX_ACL=1 显式初始化 Rootless ACL"
 	@echo "Compose：make compose-up（轻量模式）；make compose-up SANDBOX_ACL=1 开启 sandbox profile（ACL 由 bootstrap 自动初始化）"
 	@echo "开发：GUGU_SERVICE_MODE=local make start | stop | restart | status 强制使用本地 PID 模式"
@@ -104,21 +104,6 @@ filesync-ts-build: ## 构建固定的 TypeScript 文件监听 worker 制品（�
 	@cd .. && pnpm --filter @gugu/filesync-watcher build
 	@chmod 755 bin/gugu-filesync-ts-worker.cjs
 	@node bin/gugu-filesync-ts-worker.cjs </dev/null
-
-rag-ts-build: filesync-ts-build ## 构建固定的 TypeScript RAG worker 制品（不在运行时编译）
-	@CI=1 pnpm --dir ts install --frozen-lockfile --prod --ignore-scripts --reporter=silent
-	@cd ts && \
-	case "$$(uname -s):$$(uname -m)" in \
-		Linux:x86_64) npm install --no-save --include=optional --ignore-scripts --no-fund --no-audit @node-rs/jieba@2.0.1 @node-rs/jieba-linux-x64-gnu@2.0.1 ;; \
-		Linux:aarch64|Linux:arm64) npm install --no-save --include=optional --ignore-scripts --no-fund --no-audit @node-rs/jieba@2.0.1 @node-rs/jieba-linux-arm64-gnu@2.0.1 ;; \
-		Darwin:x86_64) npm install --no-save --include=optional --ignore-scripts --no-fund --no-audit @node-rs/jieba@2.0.1 @node-rs/jieba-darwin-x64@2.0.1 ;; \
-		Darwin:arm64) npm install --no-save --include=optional --ignore-scripts --no-fund --no-audit @node-rs/jieba@2.0.1 @node-rs/jieba-darwin-arm64@2.0.1 ;; \
-		esac
-	@node ts/workers/rag/build.mjs
-	@rm -rf bin/node_modules
-	@cp -R ts/node_modules bin/node_modules
-	@chmod 755 bin/gugu-rag-ts-worker.mjs
-	@node bin/gugu-rag-ts-worker.mjs --version
 
 update:      ## 装依赖并跑数据库迁移（不用 git，适合 scp/rsync 部署）
 	@$(MAKE) deps

@@ -745,10 +745,10 @@ async def test_dispatch_rolls_back_failed_task_transaction(db, user_a):
 
 def test_internal_error_text_only_maps_registered_types():
     """已登记的内部异常给人话；未登记返回 None，让调用方按原格式透出类名。"""
-    from agent.rag.ts_sidecar import TsSidecarUnavailable
+    from agent.rag.sidecar_protocol import RagSidecarUnavailable
     from agent.tools.tool_contract import internal_error_text
 
-    assert internal_error_text(TsSidecarUnavailable("boom")) == (
+    assert internal_error_text(RagSidecarUnavailable("boom")) == (
         "知识检索索引正在重建，暂时不可用；请稍后重试，不要重复提交同一查询。"
     )
     assert internal_error_text(RuntimeError("boom")) is None
@@ -756,23 +756,23 @@ def test_internal_error_text_only_maps_registered_types():
 
 async def test_dispatch_hides_registered_internal_exception_from_model(monkeypatch):
     """注册过的内部异常：模型/用户只看到人话，类名与原始消息只进 gugu-diag.log。"""
-    from agent.rag.ts_sidecar import TsSidecarUnavailable
+    from agent.rag.sidecar_protocol import RagSidecarUnavailable
 
     diag: list[tuple] = []
     monkeypatch.setattr(tool_base, "diag_log", lambda *args: diag.append(args))
 
     async def handler(db, user_id, args):
-        raise TsSidecarUnavailable("TS 统一查询索引版本不一致", code="revision_mismatch")
+        raise RagSidecarUnavailable("统一查询索引版本不一致", code="revision_mismatch")
 
     reg, _ = _make_registry({"type": "object"}, handler)
     raw, _ = await reg.dispatch("not-a-uuid", "schema_test_tool", {})
     payload = json.loads(raw)
 
-    assert "TsSidecarUnavailable" not in payload["error"]
+    assert "RagSidecarUnavailable" not in payload["error"]
     assert payload["error"].startswith("知识检索索引正在重建")
     assert payload["usage_hint"] and payload["next_action"]
     # 原始异常仍完整落进受限诊断出口。
-    assert diag and isinstance(diag[0][1], TsSidecarUnavailable)
+    assert diag and isinstance(diag[0][1], RagSidecarUnavailable)
 
 
 @pytest.mark.parametrize("exception_kind", ["runtime", "database"])

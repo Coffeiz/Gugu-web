@@ -9,7 +9,7 @@ The web UI and IM gateways are input/output adapters, not the Agent itself. Mode
 - Vue 3 and TypeScript provide the frontend and browser workflows.
 - Python, FastAPI, SQLAlchemy, PostgreSQL, and Redis provide business APIs, persistence, workers, and orchestration.
 - backend/agent owns routing, context, providers, tools, skills, memory, RAG, and interactions.
-- TypeScript services provide the lexical RAG worker and LoopScope collector; they are not a complete TypeScript Agent backend.
+- TypeScript services provide independent LoopScope, file-sync, and canvas-rendering workers. RAG is implemented in Python/Cython; TypeScript is not a complete Agent backend.
 - sandboxd and Docker enforce Shell execution boundaries, permissions, and quotas.
 
 ## Core Capabilities

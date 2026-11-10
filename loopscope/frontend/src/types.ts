@@ -51,19 +51,8 @@ export interface TokenUsage {
 }
 
 export interface TokenImpact {
-  source_tokens?: number
-  included_tokens?: number
-  argument_tokens?: number
-  result_tokens?: number
-  prompt_tokens_estimate?: number
   prompt_tokens_actual?: number
-  prompt_tokens_source?: 'provider' | 'estimate' | string
-  prompt_growth_estimate?: number
-  system_tokens_estimate?: number
-  messages_tokens_estimate?: number
-  estimated_input_tokens?: number
-  followup_tokens?: number
-  output_tokens_estimate?: number
+  prompt_tokens_source?: 'provider' | string
   [key: string]: unknown
 }
 

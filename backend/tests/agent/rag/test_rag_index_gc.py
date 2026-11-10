@@ -1,4 +1,8 @@
 from datetime import timedelta
+import asyncio
+import os
+import threading
+import time
 
 import pytest
 
@@ -7,27 +11,40 @@ from app.core.tz import now_utc
 
 
 @pytest.mark.asyncio
-async def test_sweep_ts_index_cache_removes_only_stale_owner_indexes(tmp_path, monkeypatch):
-    root = tmp_path / "rag-index"
-    stale = root / ("a" * 32)
-    fresh = root / ("b" * 32)
-    ignored = root / "not-an-owner"
-    for directory in (stale, fresh, ignored):
+async def test_sweep_removes_only_stale_cython_snapshots(tmp_path, monkeypatch):
+    root = tmp_path / "cython"
+    stale = root / ("a" * 20)
+    fresh = root / ("b" * 20)
+    malformed = root / "not-a-cache-tag"
+    incomplete = root / ("c" * 20)
+    active = root / ("d" * 20)
+    writing = root / ("e" * 20)
+    for directory in (stale, fresh, malformed, incomplete, active, writing):
         directory.mkdir(parents=True)
     (stale / "index.json").write_text("{}")
     (fresh / "index.json").write_text("{}")
-    (ignored / "index.json").write_text("{}")
+    (malformed / "index.json").write_text("{}")
+    (incomplete / "index.json.tmp").write_text("{}")
+    (active / "index.json").write_text("{}")
+    (writing / "index.json").write_text("{}")
+    (writing / ".index-123.tmp").write_text("partial")
     old = (now_utc() - timedelta(days=31)).timestamp()
-    import os
     os.utime(stale / "index.json", (old, old))
+    os.utime(incomplete / "index.json.tmp", (old, old))
+    os.utime(active / "index.json", (old, old))
+    os.utime(writing / "index.json", (old, old))
+    access = root / ".locks" / f"{active.name}.access"
+    access.parent.mkdir()
+    access.write_text("")
+    os.utime(access, None)
 
     monkeypatch.setattr(rag_index_gc, "_index_roots", lambda: [root])
     monkeypatch.setattr(rag_index_gc, "_configured_ttl", lambda: 30 * 24 * 3600)
-    monkeypatch.setattr("agent.rag.ts_sidecar.active_index_dirs", lambda: set())
 
     class Lock:
         async def acquire(self, blocking=False):
             return True
+
         async def release(self):
             return None
 
@@ -36,36 +53,34 @@ async def test_sweep_ts_index_cache_removes_only_stale_owner_indexes(tmp_path, m
             return Lock()
 
     monkeypatch.setattr("app.core.redis.get_redis", lambda: Redis())
-    assert await rag_index_gc.sweep_ts_index_cache() == 1
+    assert await rag_index_gc.sweep_cython_index_cache() == 1
     assert not stale.exists()
     assert fresh.exists()
-    assert ignored.exists()
+    assert malformed.exists()
+    assert incomplete.exists()
+    assert active.exists()
+    assert writing.exists()
 
 
 @pytest.mark.asyncio
-async def test_sweep_removes_old_version_index_even_when_fresh(tmp_path, monkeypatch):
-    """旧制品写下的索引当前 worker 会判 version_mismatch 丢弃重建：属死数据，不必等 TTL。"""
-    root = tmp_path / "rag-index"
-    outdated = root / ("c" * 32)
-    current = root / ("d" * 32)
-    unstamped = root / ("e" * 32)
-    active_old = root / ("f" * 32)
-    for directory in (outdated, current, unstamped, active_old):
-        directory.mkdir(parents=True)
-    (outdated / "index.json").write_text('{"version": "0.2.0", "revision": "r"}')
-    (current / "index.json").write_text('{"version": "0.3.3", "revision": "r"}')
-    # 无版本戳（旧格式/手工造物）：比对不了就只按 TTL 处理，绝不能误删。
-    (unstamped / "index.json").write_text('{"revision": "r"}')
-    (active_old / "index.json").write_text('{"version": "0.2.0", "revision": "r"}')
+async def test_gc_waits_for_snapshot_writer_and_rechecks_freshness(tmp_path, monkeypatch):
+    """GC 与原子快照写入共用目录锁，写入完成后按新时间戳重新判定。"""
+    from agent.rag.snapshot_storage import snapshot_lock
 
+    root = tmp_path / "cython"
+    snapshot = root / ("f" * 20)
+    snapshot.mkdir(parents=True)
+    index_file = snapshot / "index.json"
+    index_file.write_text("old")
+    old = (now_utc() - timedelta(days=31)).timestamp()
+    os.utime(index_file, (old, old))
     monkeypatch.setattr(rag_index_gc, "_index_roots", lambda: [root])
     monkeypatch.setattr(rag_index_gc, "_configured_ttl", lambda: 30 * 24 * 3600)
-    monkeypatch.setattr("agent.rag.ts_sidecar.active_index_dirs", lambda: {active_old.resolve()})
-    monkeypatch.setattr("agent.rag.ts_sidecar.worker_artifact_version", lambda: "0.3.3")
 
     class Lock:
         async def acquire(self, blocking=False):
             return True
+
         async def release(self):
             return None
 
@@ -74,102 +89,21 @@ async def test_sweep_removes_old_version_index_even_when_fresh(tmp_path, monkeyp
             return Lock()
 
     monkeypatch.setattr("app.core.redis.get_redis", lambda: Redis())
-    assert await rag_index_gc.sweep_ts_index_cache() == 1
-    assert not outdated.exists()
-    assert current.exists()
-    assert unstamped.exists()
-    assert active_old.exists()
+    writer_locked = threading.Event()
 
+    def write_snapshot():
+        with snapshot_lock(snapshot, exclusive=True):
+            writer_locked.set()
+            time.sleep(0.1)
+            index_file.write_text("fresh")
 
-@pytest.mark.asyncio
-async def test_sweep_keeps_newer_version_index_after_downgrade(tmp_path, monkeypatch):
-    """制品回滚后新版本写下的索引必须留着：清掉只会让升级回去时全部冷重建。"""
-    root = tmp_path / "rag-index"
-    newer = root / ("a" * 32)
-    newer.mkdir(parents=True)
-    (newer / "index.json").write_text('{"version": "0.4.0", "revision": "r"}')
+    writer = threading.Thread(target=write_snapshot)
+    writer.start()
+    assert await asyncio.to_thread(writer_locked.wait, 2)
+    sweep = asyncio.create_task(rag_index_gc.sweep_cython_index_cache())
+    await asyncio.sleep(0.02)
+    assert not sweep.done()
+    await asyncio.to_thread(writer.join, 2)
 
-    monkeypatch.setattr(rag_index_gc, "_index_roots", lambda: [root])
-    monkeypatch.setattr(rag_index_gc, "_configured_ttl", lambda: 30 * 24 * 3600)
-    monkeypatch.setattr("agent.rag.ts_sidecar.active_index_dirs", lambda: set())
-    monkeypatch.setattr("agent.rag.ts_sidecar.worker_artifact_version", lambda: "0.3.3")
-
-    class Lock:
-        async def acquire(self, blocking=False):
-            return True
-        async def release(self):
-            return None
-
-    class Redis:
-        def lock(self, *args, **kwargs):
-            return Lock()
-
-    monkeypatch.setattr("app.core.redis.get_redis", lambda: Redis())
-    assert await rag_index_gc.sweep_ts_index_cache() == 0
-    assert newer.exists()
-
-
-def test_version_ordering_guard_falls_back_when_unparseable():
-    """三态比较：True=更新、False=更旧、None=无法比较（不能猜大小）。"""
-    assert rag_index_gc._is_newer_version("0.4.0", "0.3.3") is True
-    assert rag_index_gc._is_newer_version("0.3.10", "0.3.9") is True
-    assert rag_index_gc._is_newer_version("0.2.0", "0.3.3") is False
-    assert rag_index_gc._is_newer_version("nightly", "0.3.3") is None
-    assert rag_index_gc._is_newer_version("0.3.3", "nightly") is None
-    assert rag_index_gc._is_newer_version("0.3.3", "0.3.3") is False
-
-
-@pytest.mark.asyncio
-async def test_sweep_keeps_unparseable_version_index(tmp_path, monkeypatch):
-    """版本串解析不了的索引按未知处理：不因比对不了就删，留给 TTL。"""
-    root = tmp_path / "rag-index"
-    unknown = root / ("b" * 32)
-    unknown.mkdir(parents=True)
-    (unknown / "index.json").write_text('{"version": "nightly", "revision": "r"}')
-
-    monkeypatch.setattr(rag_index_gc, "_index_roots", lambda: [root])
-    monkeypatch.setattr(rag_index_gc, "_configured_ttl", lambda: 30 * 24 * 3600)
-    monkeypatch.setattr("agent.rag.ts_sidecar.active_index_dirs", lambda: set())
-    monkeypatch.setattr("agent.rag.ts_sidecar.worker_artifact_version", lambda: "0.3.3")
-
-    class Lock:
-        async def acquire(self, blocking=False):
-            return True
-        async def release(self):
-            return None
-
-    class Redis:
-        def lock(self, *args, **kwargs):
-            return Lock()
-
-    monkeypatch.setattr("app.core.redis.get_redis", lambda: Redis())
-    assert await rag_index_gc.sweep_ts_index_cache() == 0
-    assert unknown.exists()
-
-
-@pytest.mark.asyncio
-async def test_sweep_keeps_old_version_index_when_artifact_version_unknown(tmp_path, monkeypatch):
-    """取不到制品版本时按未知处理：只按 TTL 清理，不因比对不了就删数据。"""
-    root = tmp_path / "rag-index"
-    outdated = root / ("a" * 32)
-    outdated.mkdir(parents=True)
-    (outdated / "index.json").write_text('{"version": "0.1.0", "revision": "r"}')
-
-    monkeypatch.setattr(rag_index_gc, "_index_roots", lambda: [root])
-    monkeypatch.setattr(rag_index_gc, "_configured_ttl", lambda: 30 * 24 * 3600)
-    monkeypatch.setattr("agent.rag.ts_sidecar.active_index_dirs", lambda: set())
-    monkeypatch.setattr("agent.rag.ts_sidecar.worker_artifact_version", lambda: None)
-
-    class Lock:
-        async def acquire(self, blocking=False):
-            return True
-        async def release(self):
-            return None
-
-    class Redis:
-        def lock(self, *args, **kwargs):
-            return Lock()
-
-    monkeypatch.setattr("app.core.redis.get_redis", lambda: Redis())
-    assert await rag_index_gc.sweep_ts_index_cache() == 0
-    assert outdated.exists()
+    assert await sweep == 0
+    assert index_file.read_text() == "fresh"

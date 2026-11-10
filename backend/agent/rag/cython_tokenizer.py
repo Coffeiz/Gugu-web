@@ -1,7 +1,7 @@
-"""与 TS RAG 词项规则对齐的 jieba-rs tokenizer adapter。
+"""Cython RAG 的 jieba-rs tokenizer adapter。
 
 中文分词委托给 rjieba（jieba-rs 的 PyO3 绑定）；ASCII 实体、紧邻字母数字
-压缩和日期月份别名保持 TS tokenizer 的投影规则。
+压缩和日期月份别名保持统一词项投影规则。
 """
 from __future__ import annotations
 
@@ -99,7 +99,7 @@ def _segment_chinese(token: str) -> tuple[str, ...]:
 
 
 def tokenize_raw(text: str) -> list[str]:
-    """通过编译后的批处理内核复刻 TS `tokenizeRaw` 的词项规则。"""
+    """通过编译后的批处理内核生成统一词项。"""
     try:
         from agent.rag import cython_native
     except ImportError as error:

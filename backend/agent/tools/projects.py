@@ -724,8 +724,8 @@ class ProjectsSkill(BaseSkill):
         Tool(
             name="update_project",
             label="更新项目",
-            description_short="修改项目；可调整优先级，none 清除优先级。",
-            description="使用 project_name 修改项目名称；也可修改状态、截止日期、开始日期、联系人名称、优先级或项目摘要。summary 是给咕咕维护的项目近况，最多 200 个字符，传空字符串或 null 清空；它不替代 status、阶段或日期。start_date/deadline 传日期字符串，系统统一归一为 YYYY-MM-DD。",
+            description_short="修改项目状态、日期、优先级或项目摘要；优先级传 none 可清除。",
+            description="使用 project_name 修改项目名称；也可修改状态、截止日期、开始日期、联系人名称、优先级或项目摘要。summary 用最多 200 个字符记录已确认的当前进展、主要阻塞和明确下一步，有实质变化时当轮更新。省略 summary 保留原值，传空字符串或 null 清空。状态、阶段和日期各用对应字段或工具。start_date/deadline 传日期字符串，系统统一归一为 YYYY-MM-DD。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -748,7 +748,7 @@ class ProjectsSkill(BaseSkill):
             name="create_project",
             label="新建项目",
             description_short='创建项目；stages 可用名称数组 ["开发","上线"]，也可用带待办的对象数组；省略时使用默认阶段',
-            description="创建项目，使用 project_name 填项目名称；必须填写开始日期和截止日期（YYYY-MM-DD），可设置颜色、优先级、阶段和最多 200 字符的项目摘要。summary 是给咕咕维护的近况，不替代项目状态或阶段。stages 必须是非空数组，可用名称简写 [\"开发\",\"上线\"]，或对象 {label: 阶段名, todos: [待办文本]}，例如 [{\"label\":\"设计\",\"todos\":[\"整理需求\"]}]；省略 stages 时使用默认阶段。color 只能传语义色名 amber、sage、teal、sky、indigo、lavender、rose、sunset；不要传 CSS、十六进制或视觉描述。",
+            description="创建项目，使用 project_name 填项目名称；必须填写开始日期和截止日期（YYYY-MM-DD），可设置颜色、优先级和阶段。目标或当前起点明确时一并填写 summary（最多 200 个字符）。stages 必须是非空数组，可用名称简写 [\"开发\",\"上线\"]，或对象 {label: 阶段名, todos: [待办文本]}，例如 [{\"label\":\"设计\",\"todos\":[\"整理需求\"]}]；省略 stages 时使用默认阶段。color 只能传语义色名 amber、sage、teal、sky、indigo、lavender、rose、sunset；不要传 CSS、十六进制或视觉描述。",
             input_schema={
                 "type": "object",
                 "properties": {

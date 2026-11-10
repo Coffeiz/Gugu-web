@@ -99,9 +99,9 @@ export function mkDataset(data: number[], color: string) {
 }
 
 /** 读取设计 token 的计算值（chart.js canvas 不继承 CSS 颜色，需运行时解析）。 */
-export function lineOpts(isTok: boolean) {
+export function lineOpts(isTok: boolean, showLegend = false) {
   // 统一走公共折线图工厂（令牌配色 + 首尾点对齐 + tooltip 防重叠）。
-  return lineChartOptions({ isTok })
+  return lineChartOptions({ isTok, showLegend })
 }
 
 export function donutOpts() {

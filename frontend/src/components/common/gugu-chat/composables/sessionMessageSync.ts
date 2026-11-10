@@ -3,6 +3,7 @@ import { displayQQFaces } from '../messageDisplay'
 import { effectiveTimezone } from '@/utils/userTimezone'
 import { nextTick, type Ref } from 'vue'
 import { agentApi } from '@/services/api'
+import { i18n } from '@/i18n'
 
 type SpeakerResolver = (
   role: string,
@@ -98,7 +99,44 @@ export function mapSessionMessageDelta(
         _createdAt: event.createdAt, _updatedAt: event.updatedAt,
         _syncKey: displayEventKey(event),
       })
-  return [...messages, ...timeline]
+  const toolRuns = new Map(timeline.filter(item => item.toolCallId).map(item => [item.toolCallId, item.runId]))
+  const interactions: ChatMessage[] = []
+  for (const item of data.interactions || []) {
+    const card = mapSessionInteraction({ ...item, run_id: toolRuns.get(item.tool_call_id) }, mkid)
+    if (card) interactions.push(card)
+  }
+  return [...messages, ...timeline, ...interactions]
+}
+
+/** 将历史和实时交互投影为同一种时间线卡片。 */
+export function mapSessionInteraction(item: any, mkid: () => number, existing?: ChatMessage): ChatMessage | null {
+  const promptId = Number(item.id ?? item.prompt_id)
+  if (!Number.isSafeInteger(promptId) || promptId <= 0) return null
+  const previous = existing?.interaction
+  const createdAt = item.created_at || existing?._createdAt
+  return {
+    ...existing,
+    id: existing?.id ?? mkid(), role: 'interaction', text: '', _syncKey: `interaction:${promptId}`,
+    time: displayTime(createdAt || new Date().toISOString()), _createdAt: createdAt,
+    ...(item.run_id ? { runId: item.run_id } : {}),
+    ...(item.round_id ? { roundId: item.round_id } : {}),
+    interaction: {
+      promptId, kind: String(item.kind || previous?.kind || 'confirm'),
+      toolCallId: item.tool_call_id ? String(item.tool_call_id) : previous?.toolCallId ?? null,
+      title: String(item.title || previous?.title || i18n.global.t('chatUi.confirmRequired')),
+      body: String(item.body ?? previous?.body ?? ''),
+      options: item.resolved === undefined && previous?.resolved ? previous.options
+        : Array.isArray(item.options) ? item.options : previous?.options ?? [],
+      allowTextInput: Boolean(item.allow_text_input ?? previous?.allowTextInput),
+      customInputActive: Boolean(item.custom_input_active ?? previous?.customInputActive),
+      taskPaused: Boolean(item.task_paused ?? previous?.taskPaused),
+      secretFields: Array.isArray(item.secret_fields) ? item.secret_fields : previous?.secretFields,
+      resolved: Boolean(item.resolved ?? previous?.resolved),
+      selectedOptionId: item.selected_option_id ?? previous?.selectedOptionId ?? null,
+      responseText: item.response_text ?? previous?.responseText ?? null,
+      expiresAt: item.expires_at ? String(item.expires_at) : previous?.expiresAt,
+    },
+  }
 }
 
 function preserveToolDetails(existing: ChatMessage, incoming: ChatMessage): Partial<ChatMessage> {
@@ -195,7 +233,7 @@ export function mergeSessionMessageDelta(
   // 随后临时气泡才获得相同 _syncKey。先折叠当前列表中的重复身份，不能只防新增重复。
   const result = foldExistingMessages(current, indexByKey)
   for (const message of incoming) mergeIncomingMessage(result, indexByKey, message)
-  return result
+  return sortSessionTimelineMessages(result)
 }
 
 /** run 终态以已提交历史原位接替临时展示；重复通知不会追加副本。 */
@@ -210,7 +248,10 @@ export function replaceRunHistory(current: ChatMessage[], incoming: ChatMessage[
       ...(existing?.role === 'tool' ? preserveToolDetails(existing, item) : {}),
     }
   })
-  return sortSessionTimelineMessages([...current.filter(item => item.runId !== runId), ...history])
+  // 本地 user 气泡可能尚无 runId；终态历史必须按稳定身份认领它，避免先追加再去重。
+  return mergeSessionMessageDelta(
+    current.filter(item => item.runId !== runId || item.role === 'interaction'), history,
+  )
 }
 
 /** 搜索命中较早历史消息时，按目标 ID 一次读取有界历史页并并入当前时间线。 */
@@ -224,13 +265,11 @@ export async function ensureSessionMessageLoaded(options: {
 }): Promise<boolean> {
   if (options.messages.value.some(message => message.dbId === options.messageId)) return true
   if (options.isCurrent && !options.isCurrent()) return false
-  const data = await agentApi.getMessagesBefore(String(options.sessionId), options.messageId + 1, 200)
+  const data = await agentApi.getMessages(options.sessionId, { throughId: options.messageId, limit: 200 })
   if (options.isCurrent && !options.isCurrent()) return false
   const incoming = mapSessionMessageDelta(data, options.mkid, options.resolveSpeaker)
   if (!incoming.some(message => message.dbId === options.messageId)) return false
-  options.messages.value = sortSessionTimelineMessages(
-    mergeSessionMessageDelta(options.messages.value, incoming),
-  )
+  options.messages.value = mergeSessionMessageDelta(options.messages.value, incoming)
   return options.messages.value.some(message => message.dbId === options.messageId)
 }
 
@@ -263,20 +302,18 @@ export function createSessionMessageSynchronizer(options: {
         let cursor = cursors.get(sessionId) ?? 0
         try {
           // 检查点在同一行原位更新，不能只用自增行 ID 查增量；重连先校准最新窗口。
-          const snapshot = await agentApi.getMessages(String(sessionId), undefined, 200)
+          const snapshot = await agentApi.getMessages(sessionId, { limit: 200 })
           if (options.sessionId.value !== sessionId) return
-          options.messages.value = sortSessionTimelineMessages(mergeSessionMessageDelta(options.messages.value,
-            mapSessionMessageDelta(snapshot, options.mkid, options.resolveSpeaker)))
+          options.messages.value = mergeSessionMessageDelta(options.messages.value,
+            mapSessionMessageDelta(snapshot, options.mkid, options.resolveSpeaker))
           while (options.sessionId.value === sessionId) {
-            const data = await agentApi.getMessages(String(sessionId), cursor, 200)
+            const data = await agentApi.getMessages(sessionId, { afterId: cursor, limit: 200 })
             if (options.sessionId.value !== sessionId) return
             const incoming = mapSessionMessageDelta(data, options.mkid, options.resolveSpeaker)
             const nextCursor = Number(data.pagination?.newestId)
-            const newestIdAdvanced = Number.isFinite(nextCursor) && nextCursor > cursor
+            const newestIdAdvanced = Number.isSafeInteger(nextCursor) && nextCursor > 0 && nextCursor !== cursor
             if (incoming.length) {
-              options.messages.value = sortSessionTimelineMessages(
-                mergeSessionMessageDelta(options.messages.value, incoming),
-              )
+              options.messages.value = mergeSessionMessageDelta(options.messages.value, incoming)
               await nextTick()
               await options.scrollBottom()
             }

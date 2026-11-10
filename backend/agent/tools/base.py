@@ -452,7 +452,7 @@ class ToolRegistrySnapshot:
         for name, tool in source._tools.items():
             frozen = copy.copy(tool)
             frozen.input_schema = copy.deepcopy(tool.input_schema_for(model_cfg))
-            if frozen.input_schema != tool.input_schema or (model_cfg is not None and tool.input_schema_factory):
+            if frozen.input_schema != tool.input_schema:
                 frozen._input_validator = build_validator(frozen.input_schema)
             tools[name] = frozen
         # 动态工具只属于当前 run 的派生快照，不能写回 source._tools，也不能改变
@@ -781,6 +781,26 @@ class SkillRegistry:
         # 确认门是跨工具的协议：无论 handler 直接返回 JSON，还是把它包进 error，
         # 从 dispatch 边界出去都统一为顶层载荷，避免下游各自猜包装形状。
         result = normalize_confirmation_result(result)
+
+        # 文件准备成功后，在工具结果交给模型前完成符合策略的 IM 投递。
+        if name == "send_file" and isinstance(result, dict) and isinstance(result.get("_artifact"), dict) and current_im:
+            artifact = result["_artifact"]
+            deliver = current_im.get("immediate_file_delivery")
+            if deliver is not None:
+                delivery_state = await deliver(artifact)
+                if delivery_state != "deferred":
+                    artifact["_im_delivery_state"] = delivery_state
+                    result["delivery_status"] = delivery_state
+                    result["ok"] = delivery_state == "sent"
+                    if delivery_state == "failed":
+                        result["status"] = "failed"
+                    result["message"] = (
+                        "平台接口已接受文件消息。请只告知已提交，收件人确认前不要说已送达。"
+                        if delivery_state == "sent"
+                        else "文件未能发送，请检查原因后重新发起请求；本轮不会自动重试。"
+                        if delivery_state == "failed"
+                        else "文件发送结果未确认，系统不会自动重复发送；请先向用户确认是否收到。"
+                    )
 
         # 成功回执显式报告兼容转换，只包含固定规则/字段路径，不回显原始输入。
         if isinstance(result, dict) and not result.get("error") \

@@ -1317,26 +1317,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/agent/sessions/{session_id}/interactions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Session Interactions
-         * @description 列出会话交互历史；活动项带一次性 token，历史项只用于恢复气泡。
-         */
-        get: operations["list_session_interactions_api_v1_agent_sessions__session_id__interactions_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/agent/interactions/{prompt_id}/session": {
         parameters: {
             query?: never;
@@ -6764,11 +6744,8 @@ export interface components {
              * @enum {string}
              */
             reasoning_persistence: "off" | "continuation";
-            /**
-             * Web Search Enabled
-             * @default false
-             */
-            web_search_enabled: boolean;
+            /** Web Search Enabled */
+            web_search_enabled?: boolean | null;
             /**
              * Image
              * @default false
@@ -8157,10 +8134,6 @@ export interface components {
             stageTemplates: {
                 [key: string]: unknown;
             }[];
-            /** Replytone */
-            replyTone?: string | null;
-            /** Replylength */
-            replyLength?: string | null;
             /** Customreplystyle */
             customReplyStyle?: string | null;
             /**
@@ -8265,10 +8238,6 @@ export interface components {
             stageTemplates?: {
                 [key: string]: unknown;
             }[] | null;
-            /** Replytone */
-            replyTone?: string | null;
-            /** Replylength */
-            replyLength?: string | null;
             /** Customreplystyleenabled */
             customReplyStyleEnabled?: boolean | null;
             /** Pmstagesexpanded */
@@ -8365,11 +8334,8 @@ export interface components {
              * @default false
              */
             audio: boolean;
-            /**
-             * Web Search Enabled
-             * @default false
-             */
-            web_search_enabled: boolean;
+            /** Web Search Enabled */
+            web_search_enabled?: boolean | null;
             /**
              * Api Format
              * @default
@@ -8783,22 +8749,7 @@ export interface components {
              * Target
              * @enum {string}
              */
-            target: "searxng" | "searxng_images" | "tavily" | "deep_research" | "baidu_similar_images";
-            /**
-             * Searxng Url
-             * @default
-             */
-            searxng_url: string;
-            /**
-             * Searxng Engines
-             * @default
-             */
-            searxng_engines: string;
-            /**
-             * Searxng Image Engines
-             * @default
-             */
-            searxng_image_engines: string;
+            target: "tavily" | "deep_research" | "baidu_similar_images";
             /**
              * Tavily Api Key
              * @default
@@ -12377,37 +12328,6 @@ export interface operations {
             };
         };
     };
-    list_session_interactions_api_v1_agent_sessions__session_id__interactions_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                session_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_interaction_session_api_v1_agent_interactions__prompt_id__session_get: {
         parameters: {
             query?: never;
@@ -13007,7 +12927,9 @@ export interface operations {
                 limit?: number;
                 before_id?: number | null;
                 after_id?: number | null;
+                through_id?: number | null;
                 run_id?: string | null;
+                restore_interactions?: boolean;
             };
             header?: never;
             path: {

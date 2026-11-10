@@ -84,32 +84,22 @@ async def main(*, allow_real_network: bool):
     bad, _ = await registry.dispatch(_UID, "http_get", {"url": "http://192.168.1.50:6379"})
     check("http_get 内网被拦", '"error"' in bad, bad[:120])
 
-    print("【7】搜索工具：xng_search(SearXNG) / deep_research(Tavily)")
+    print("【7】搜索工具注册")
     names = all_system_tool_names()
-    check("xng_search 注册（SearXNG）", "xng_search" in names)
-    check("deep_research 注册（Tavily）", "deep_research" in names)
+    check("Provider 网页搜索注册", "web_search" in names)
+    check("深度研究注册", "deep_research" in names)
+    check("相似图搜索注册", "similar_image_search" in names)
     check("未知系统 Skill ID 不会加载", skills.load_skill("S999") is None)
-    from app.core.config import get_settings
     if allow_real_network:
-        print("已显式允许外网：执行真实 HTTP 与搜索检查")
+        print("已显式允许外网：执行真实 HTTP 检查；搜索需由当前模型 Provider 提供")
         pub, _ = await registry.dispatch(_UID, "http_get", {"url": "https://wttr.in/Beijing?format=3"})
         pubd = json.loads(pub)
         check("http_get 抓到 200 + 内容", pubd.get("status") == 200 and bool(pubd.get("body")), pub[:120])
         cn, _ = await registry.dispatch(_UID, "http_get", {"url": "https://wttr.in/北京?format=3"})
         cnd = json.loads(cn)
         check("http_get 中文城市 URL", cnd.get("status") == 200 and bool(cnd.get("body")), cn[:120])
-        ws, _ = await registry.dispatch(_UID, "xng_search", {"query": "Vue3 文档"})
-        wsd = ws if isinstance(ws, dict) else json.loads(ws)
-        if get_settings().search.searxng_url:
-            check("xng_search 实搜有结果", bool(wsd.get("results")), str(wsd)[:120])
-        else:
-            check("xng_search 未配置时返回配置提示", "XNG Search" in (wsd.get("error", "")), str(wsd)[:120])
-    elif not get_settings().search.searxng_url:
-        ws, _ = await registry.dispatch(_UID, "xng_search", {"query": "Vue3 文档"})
-        wsd = ws if isinstance(ws, dict) else json.loads(ws)
-        check("xng_search 未配置时返回配置提示", "XNG Search" in (wsd.get("error", "")), str(wsd)[:120])
     else:
-        print("跳过真实搜索（需显式传入 --allow-real-network）")
+        print("跳过真实网络检查（需显式传入 --allow-real-network）")
 
     print(f"\n结果：{len(PASS)} 通过 / {len(FAIL)} 失败")
     if FAIL:

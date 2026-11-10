@@ -234,6 +234,7 @@ onUnmounted(() => {
   line-height: 1.3;
 }
 .nb-content {
+  --scrollbar-overlay-right-offset: var(--space-sm);
   /* 文字与 GuguChat 小窗正文一致（全局变量，所有通知气泡共用）*/
   font-size: var(--gugu-body-size); color: var(--text-primary);
   line-height: var(--gugu-body-line);

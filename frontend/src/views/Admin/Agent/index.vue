@@ -189,6 +189,7 @@
         @fetch-model-list="fetchModelList"
         @select-model="selectModel"
         @pick-api-format="pickApiFormat"
+        @set-web-search="setPresetWebSearch"
         @set-capability-override="setCapabilityOverride"
         @probe-capabilities="probeCapabilities"
         @probe-media="probeMedia"
@@ -269,66 +270,6 @@
         </div>
 
         <div class="behavior-grid">
-          <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label">
-              <span>{{ t('agentConfigUi.searchAddress') }}</span>
-              <span class="behavior-desc">{{ t('agentConfigUi.searchAddressHint') }}</span>
-            </div>
-            <div style="display:flex; align-items:center; gap:10px; justify-content:flex-end; min-width:0;">
-              <span v-if="searchTest.searxng.msg" :title="searchTest.searxng.msg"
-                    :style="{ color: searchTest.searxng.ok ? '#4caf7d' : '#e07070', fontSize:'12px', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', minWidth:0 }">
-                {{ searchTest.searxng.msg }}
-              </span>
-              <button class="btn-ghost" style="flex-shrink:0;" :disabled="searchTest.searxng.loading" @click="testSearch('searxng')">
-                {{ searchTest.searxng.loading ? t('agentConfigUi.testing') : t('agentConfigUi.test') }}
-              </button>
-              <input
-                type="text"
-                class="behavior-input"
-                style="width: 280px; flex-shrink:0;"
-                v-model="generalSearchDraft.searxng_url"
-                :placeholder="t('agentConfigUi.searchUrlPlaceholder')"
-              />
-            </div>
-          </div>
-
-          <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label">
-              <span>{{ t('agentConfigUi.searchEngine') }}</span>
-              <span class="behavior-desc">{{ t('agentConfigUi.searchEngineHint') }}</span>
-            </div>
-            <input
-              type="text"
-              class="behavior-input"
-              style="width: 280px;"
-              v-model="generalSearchDraft.searxng_engines"
-              placeholder="baidu,sogou,quark,360search,yandex,duckduckgo web,mwmbl,gabanza,reloado,searchch,privacywall,gmx,zapmeta,google"
-            />
-          </div>
-
-          <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label">
-              <span>{{ t('agentConfigUi.imageEngine') }}</span>
-              <span class="behavior-desc">{{ t('agentConfigUi.imageEngineHint') }}</span>
-            </div>
-            <div style="display:flex; align-items:center; gap:10px; justify-content:flex-end; min-width:0;">
-              <span v-if="searchTest.searxng_images.msg" :title="searchTest.searxng_images.msg"
-                    :style="{ color: searchTest.searxng_images.ok ? '#4caf7d' : '#e07070', fontSize:'12px', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', minWidth:0 }">
-                {{ searchTest.searxng_images.msg }}
-              </span>
-              <button class="btn-ghost" style="flex-shrink:0;" :disabled="searchTest.searxng_images.loading" @click="testSearch('searxng_images')">
-                {{ searchTest.searxng_images.loading ? t('agentConfigUi.testing') : t('agentConfigUi.test') }}
-              </button>
-              <input
-                type="text"
-                class="behavior-input"
-                style="width: 280px; flex-shrink:0;"
-                v-model="generalSearchDraft.searxng_image_engines"
-                :placeholder="t('agentConfigUi.imageEnginePlaceholder')"
-              />
-            </div>
-          </div>
-
           <div class="behavior-item">
             <div class="behavior-label">
               <span>{{ t('agentConfigUi.defaultResults') }}</span>
@@ -419,6 +360,7 @@ import { useMultimodalProbe } from './llm/useMultimodalProbe'
 import VoiceModelConfig from './runtime-config/components/VoiceModelConfig.vue'
 import { useI18n } from 'vue-i18n'
 import { MODEL_PROVIDERS } from '@/utils/modelProviders'
+import { usePresetWebSearchDefault } from './llm/usePresetWebSearchDefault'
 import { RESOURCE_REFRESH_EVENTS } from '@/services/resourceRefreshEvents'
 import { excludeDev, includeByok } from '../Analytics/_shared'
 
@@ -539,6 +481,7 @@ interface LlmPresetDraft extends Partial<LlmPresetRecord> {
 const editTarget   = ref<LlmPresetDraft | null>(null)
 const editClosing  = ref(false)
 const editIsNew    = ref(false)
+const webSearchDefault = usePresetWebSearchDefault()
 const editSaving   = ref(false)
 const editError    = ref('')
 const modelOptions = ref<string[]>([])
@@ -565,6 +508,7 @@ async function togglePool(p: LlmPresetRecord) {
 function openNewPreset() {
   editClosing.value = false
   editIsNew.value  = true
+  webSearchDefault.reset()
   editTarget.value = { name: '', provider: 'openai', api_key: '', base_url: PROVIDERS.value[0].base_url, model: PROVIDERS.value[0].model, max_tokens: 25600, context_tokens: 128000, thinking: '', reasoning_effort: '', reasoning_persistence: 'off', web_search_enabled: false, image: false, image_detail: 'auto', video: false, audio: false, api_format: '', ollama_mode: 'local', ollama_api_mode: 'native', ollama_keep_alive: '5m', deployment_mode: 'cloud', local_runtime: 'other', capability_overrides: {} }
   editError.value  = ''
   modelOptions.value = []
@@ -576,6 +520,7 @@ function openNewPreset() {
 function openEditPreset(p: LlmPresetRecord) {
   editClosing.value = false
   editIsNew.value  = false
+  webSearchDefault.reset()
   editTarget.value = { ...p, api_key: '', max_tokens: p.max_tokens ?? 25600, context_tokens: p.context_tokens ?? 128000, reasoning_persistence: p.reasoning_persistence === 'continuation' ? 'continuation' : 'off', web_search_enabled: Boolean(p.web_search_enabled), image_detail: p.image_detail || 'auto', ollama_mode: p.ollama_mode || 'local', ollama_api_mode: p.ollama_api_mode || 'native', ollama_keep_alive: p.ollama_keep_alive || '5m', deployment_mode: p.deployment_mode || (p.provider === 'local' ? 'local' : 'cloud'), local_runtime: p.local_runtime || 'other', capability_overrides: p.capability_overrides || {} } as unknown as LlmPresetDraft
   editError.value  = ''
   modelOptions.value = []
@@ -637,7 +582,16 @@ async function probeCapabilities(id: string) {
 function selectModel(model: string) {
   if (!editTarget.value) return
   editTarget.value.model = model
+  syncDefaultWebSearch()
   modelMenuOpen.value = false
+}
+
+function syncDefaultWebSearch() {
+  webSearchDefault.sync(editTarget.value, editIsNew.value)
+}
+
+function setPresetWebSearch(enabled: boolean) {
+  webSearchDefault.set(editTarget.value, enabled)
 }
 
 async function fetchModelList() {
@@ -692,6 +646,7 @@ function setEditProvider(key: string) {
     target.ollama_api_mode = 'native'
     target.ollama_keep_alive = target.ollama_keep_alive || '5m'
   }
+  syncDefaultWebSearch()
   modelOptions.value = []
   modelListError.value = ''
 }
@@ -710,6 +665,7 @@ function setEditProviderSelection(selection: string) {
   } else if (provider === 'ollama' && (variant === 'local' || variant === 'cloud')) {
     setOllamaMode(variant)
   }
+  syncDefaultWebSearch()
 }
 
 function setOllamaMode(mode: 'local' | 'cloud') {
@@ -717,6 +673,7 @@ function setOllamaMode(mode: 'local' | 'cloud') {
   editTarget.value.ollama_mode = mode
   editTarget.value.base_url = ''
   if (mode === 'local') editTarget.value.api_key = ''
+  syncDefaultWebSearch()
   modelOptions.value = []
   modelListError.value = ''
 }
@@ -727,6 +684,7 @@ function pickApiFormat(fmt: string) {
   if (!target) return
   if (target.provider === 'glm' && (target.base_url || '').includes('/api/coding/')) target.provider = 'glm-coding'
   target.api_format = fmt
+  syncDefaultWebSearch()
   modelOptions.value = []
   modelListError.value = ''
 }

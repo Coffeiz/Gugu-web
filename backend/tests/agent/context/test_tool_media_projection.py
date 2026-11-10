@@ -1,5 +1,5 @@
 from agent.context.assembly import MessageArea, MessageBatch
-from agent.context.tokens import content_text, estimate_tokens
+from agent.context.tokens import content_text
 
 
 def _tool_area(*, allow_tool_images: bool) -> MessageArea:
@@ -60,8 +60,8 @@ def test_non_visual_tool_history_never_serializes_image_payload_as_text():
     )
 
 
-def test_media_payloads_do_not_inflate_text_token_estimates():
+def test_media_payloads_do_not_leak_into_text():
     image = {"type": "image", "source": {"type": "base64", "data": "AQID" * 100_000}}
 
     assert content_text(image) == "[图片]"
-    assert estimate_tokens(content_text(image)) < 10
+    assert content_text(image) == "[图片]"

@@ -242,8 +242,7 @@ async def embed_query(text: str, *, settings: dict | None = None) -> dict:
                 if response.status_code != 200:
                     return {"vector": [], "outcome": "http_error", "http_status": response.status_code}
                 body = bytearray()
-                # TS worker 按原始 HTTP body 计数并 JSON.parse，不会透明解压；
-                # 这里也读取 wire bytes，避免压缩响应改变大小上限或解析结果。
+                # 按原始 HTTP body 限制响应大小，避免透明解压绕过上限。
                 async for chunk in response.aiter_raw():
                     body.extend(chunk)
                     if len(body) > QUERY_EMBEDDING_MAX_RESPONSE_BYTES:

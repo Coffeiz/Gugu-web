@@ -24,6 +24,7 @@ from agent.im.presentation import (
     _create_feishu_tool_summary,
     _im_display_preferences,
     _send_interaction_prompts,
+    display_context_compaction,
     display_tool_event,
 )
 from agent.im.request_preparation import (
@@ -680,6 +681,14 @@ async def dispatch_im_message(payload: dict):
         if qq_private_streaming:
             from agent.im.streaming.qq import QQToolEventBoundary
             qq_tool_event_boundary = QQToolEventBoundary()
+    from agent.im import imctx
+    from agent.im.immediate_files import ImmediateFileDelivery
+
+    im_context = imctx.get_im()
+    if im_context is not None and not req.group_auto_reply:
+        im_context["immediate_file_delivery"] = ImmediateFileDelivery(
+            payload, boundary=qq_tool_event_boundary,
+        )
     telegram_stream_tool_events = asyncio.Queue() if (
         platform == "telegram" and payload.get("chat_type") == "c2c"
     ) else None
@@ -695,6 +704,30 @@ async def dispatch_im_message(payload: dict):
             if qq_tool_event_boundary is not None else None
         ),
     )
+
+    compaction_failure_reported = False
+
+    async def _run_event_callback(event: dict) -> None:
+        """镜像 Run 状态，并按 IM 展示偏好提示上下文压缩。"""
+        nonlocal compaction_failure_reported
+        await stream_bridge.publish(event)
+        if event.get("type") != "_context_compaction":
+            return
+        if event.get("phase") == "completed" and event.get("applied") is True:
+            compaction_failure_reported = False
+        elif compaction_failure_reported:
+            return
+        elif event.get("phase") == "completed" and event.get("applied") is False:
+            compaction_failure_reported = True
+        await display_context_compaction(
+            payload,
+            event,
+            tool_display_mode=tool_display_mode,
+            before_platform_event=(
+                qq_tool_event_boundary.before_platform_event
+                if qq_tool_event_boundary is not None else None
+            ),
+        )
 
     async def _show_round(text: str) -> bool:
         """立即发送已结束的正文 round，成功后从最终收尾中跳过。"""
@@ -756,7 +789,7 @@ async def dispatch_im_message(payload: dict):
                 req,
                 on_interaction=_show_im_interaction,
                 on_tool_event=tool_event_callback,
-                on_event=stream_bridge.publish,
+                on_event=_run_event_callback,
                 on_display=stream_bridge.publish_display,
             )
             stream_sent, resp = await feishu.send_text_stream(
@@ -778,6 +811,7 @@ async def dispatch_im_message(payload: dict):
                     on_tool_event=tool_event_callback,
                     on_display=stream_bridge.publish_display,
                     on_round=_show_round,
+                    on_event=_run_event_callback,
                 )
             reply_text = ""
         elif qq_private_streaming:
@@ -786,7 +820,7 @@ async def dispatch_im_message(payload: dict):
                 req,
                 on_interaction=_show_im_interaction,
                 on_tool_event=tool_event_callback,
-                on_event=stream_bridge.publish,
+                on_event=_run_event_callback,
                 on_display=stream_bridge.publish_display,
             )
             stream_sent, resp, reply_text = await send_qq_stream_by_round(
@@ -800,7 +834,7 @@ async def dispatch_im_message(payload: dict):
                 req,
                 on_interaction=_show_im_interaction,
                 on_tool_event=tool_event_callback,
-                on_event=stream_bridge.publish,
+                on_event=_run_event_callback,
                 on_display=stream_bridge.publish_display,
             )
             resp, telegram_sent_rounds = await send_telegram_stream_by_round(
@@ -817,6 +851,7 @@ async def dispatch_im_message(payload: dict):
                 on_tool_event=tool_event_callback,
                 on_display=stream_bridge.publish_display,
                 on_round=_show_round,
+                on_event=_run_event_callback,
             )
             reply_text = ""
         if resp.errored:

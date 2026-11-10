@@ -14,7 +14,7 @@ from agent.rag.models import Scope
 from agent.rag.observation import await_probe, probe_complete, probe_finish, probe_update, progress
 from agent.rag.retriever import RetrievalBatch, UnifiedRetriever
 from agent.rag.scope import normalize_memory_scopes
-from agent.rag.ts_sidecar import TsSidecarUnavailable
+from agent.rag.sidecar_protocol import RagSidecarUnavailable
 
 
 @dataclass(frozen=True)
@@ -155,10 +155,7 @@ class UnifiedQueryRetriever(UnifiedRetriever):
                 )
                 engine_name = str(metadata.get("engine") or "")
                 if not engine_name:
-                    from app.core.config import get_settings
-                    from agent.rag.index_cache import _selected_backend
-
-                    engine_name = _selected_backend(get_settings().search)
+                    engine_name = "cython"
                 probe_update(index_cache={
                     key: metadata[key]
                     for key in (
@@ -257,7 +254,7 @@ class UnifiedQueryRetriever(UnifiedRetriever):
                     response = await await_probe(
                         "rag_unified_query", index.unified_query(query, **query_kwargs),
                     )
-                except TsSidecarUnavailable as exc:
+                except RagSidecarUnavailable as exc:
                     if self._defer_cold_index and exc.code == "revision_mismatch":
                         from agent.rag.index_cache import IndexNotReady
 
@@ -343,7 +340,7 @@ class UnifiedQueryRetriever(UnifiedRetriever):
         )]
 
     async def _resync_and_retry(
-        self, exc: TsSidecarUnavailable, *, query: str, query_kwargs: dict, db,
+        self, exc: RagSidecarUnavailable, *, query: str, query_kwargs: dict, db,
         owner, scope, transient: "_TransientCorpus | None", metadata: dict,
     ):
         """revision 不一致时作废缓存、全量重同步并按同参数重试一次。
@@ -388,7 +385,7 @@ class UnifiedQueryRetriever(UnifiedRetriever):
             response = await await_probe(
                 "revision_resync_query", index.unified_query(query, **query_kwargs),
             )
-        except TsSidecarUnavailable as retry_error:
+        except RagSidecarUnavailable as retry_error:
             probe_update(revision_resync={
                 "outcome": "retry_error",
                 "retry_error_code": (
@@ -454,9 +451,9 @@ class UnifiedQueryRetriever(UnifiedRetriever):
         for row in response.get("selected") or []:
             document = documents_by_key.get(str(row.get("document_key") or ""))
             if document is None and isinstance(row.get("document"), dict):
-                from agent.rag.ts_sidecar import _from_wire_document
+                from agent.rag.sidecar_protocol import from_wire_document
 
-                document = _from_wire_document(
+                document = from_wire_document(
                     row["document"], owner,
                 )
             if document is None:

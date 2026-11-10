@@ -460,26 +460,29 @@ def _validated_receipt_payload(receipt: dict) -> str | None:
 
 async def _recent_stream_messages(*, scope, cutoff_ms: int, watermark_ms: int,
                                   current_ids: set[str]) -> tuple[list[AttentionMessage], bool, bool | None]:
-    """补入尚未落库的入站消息，并证明 Redis Stream 覆盖了完整话题 TTL 窗口。"""
+    """从按 Bot/群隔离的短期 Stream 补消息，并报告完整窗口覆盖情况。"""
     import json
     from app.core import redis as R
 
+    if scope is None:
+        return [], False, None
     redis = R.get_redis()
-    first_entries = await redis.xrange(R.IM_INBOUND_STREAM, min="-", max="+", count=1)
-    if not first_entries:
-        return [], False, None
-    first_id = str(first_entries[0][0])
-    try:
-        first_ms = int(first_id.partition("-")[0])
-    except (TypeError, ValueError):
-        return [], False, None
-    covers_window = first_ms <= cutoff_ms
-    window_truncated = first_ms > cutoff_ms
-    rows = await redis.xrange(
-        R.IM_INBOUND_STREAM,
-        min=f"{cutoff_ms}-0",
-        max=f"{watermark_ms}-9999999",
+    scoped_stream = R.attention_scope_stream_key(
+        scope.platform,
+        scope.bot_id,
+        scope.group_id,
     )
+    started_at = await redis.get(R.attention_scope_start_key(
+        scope.platform,
+        scope.bot_id,
+        scope.group_id,
+    ))
+    try:
+        covers_window = int(started_at) <= cutoff_ms if started_at is not None else False
+    except (TypeError, ValueError):
+        covers_window = False
+    window_truncated = not covers_window
+    rows = await redis.xrange(scoped_stream, min=f"{cutoff_ms}-0", max=f"{watermark_ms}-9999999")
     output: list[AttentionMessage] = []
     for event_id, fields in rows:
         event_id = str(event_id)
@@ -494,13 +497,13 @@ async def _recent_stream_messages(*, scope, cutoff_ms: int, watermark_ms: int,
         if not isinstance(payload, dict):
             covers_window = False
             continue
-        if (
-            str(payload.get("platform") or "") != str(scope.platform if scope else "")
-            or str(payload.get("channel_id") or payload.get("bot_id") or "")
-            != str(scope.bot_id if scope else "")
-            or str(payload.get("chat_id") or "") != str(scope.group_id if scope else "")
-            or payload.get("chat_type") != "group"
-        ):
+        if (str(payload.get("platform") or "") != str(scope.platform)
+                or str(payload.get("channel_id") or payload.get("bot_id") or "")
+                != str(scope.bot_id)
+                or str(payload.get("chat_id") or "") != str(scope.group_id)
+                or payload.get("chat_type") != "group"):
+            covers_window = False
+            window_truncated = True
             continue
         try:
             output.append(AttentionMessage.from_payload(event_id, payload))

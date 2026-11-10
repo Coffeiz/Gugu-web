@@ -5,7 +5,7 @@
     <template v-else>
       <div class="personality-heading">
         <div class="pm-field-desc">
-          <span class="pm-field-name">persona.md</span>
+          <span class="pm-field-name">{{ t('personalityUi.personalPersona') }}</span>
           <span class="pm-field-hint">{{ t('personalityUi.hint') }}</span>
         </div>
         <div class="personality-toggle">
@@ -16,7 +16,7 @@
       <div class="personality-file-card">
         <div class="personality-file-icon">MD</div>
         <div class="personality-file-info">
-          <div class="personality-file-name">persona.md</div>
+          <div class="personality-file-name">{{ t('personalityUi.personalPersona') }}</div>
           <div class="personality-file-meta">{{ hasContent ? t('personalityUi.characters', { count: characterCount }) : t('personalityUi.notCreated') }} · {{ t('personalityUi.hidden') }}</div>
         </div>
         <div class="personality-file-actions">

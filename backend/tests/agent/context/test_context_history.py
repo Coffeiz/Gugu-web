@@ -55,6 +55,44 @@ def test_inline_message_time_does_not_nest_existing_body_wrapper():
     ]
 
 
+def test_saved_anthropic_image_is_replayed_to_openai_after_provider_switch():
+    message = _message("user", [{"type": "text", "text": "看这张图"}])
+    message.provider_image_content = [
+        {"type": "text", "text": "看这张图"},
+        {"type": "image", "source": {
+            "type": "base64", "media_type": "image/png", "data": "c25hcHNob3Q="}},
+    ]
+
+    result = build_history_parts(
+        [message], None, use_anthropic=False, allow_tool_images=True,
+    )
+
+    assert result[0]["content"] == [
+        {"type": "text", "text": "看这张图"},
+        {"type": "image_url", "image_url": {
+            "url": "data:image/png;base64,c25hcHNob3Q=", "detail": "auto"}},
+    ]
+
+
+def test_saved_openai_image_is_replayed_to_anthropic_after_provider_switch():
+    message = _message("user", [{"type": "text", "text": "看这张图"}])
+    message.provider_image_content = [
+        {"type": "text", "text": "看这张图"},
+        {"type": "image_url", "image_url": {
+            "url": "data:image/webp;base64,c25hcHNob3Q=", "detail": "high"}},
+    ]
+
+    result = build_history_parts(
+        [message], None, use_anthropic=True, allow_tool_images=True,
+    )
+
+    assert result == [{"role": "user", "content": [
+        {"type": "text", "text": "看这张图"},
+        {"type": "image", "source": {
+            "type": "base64", "media_type": "image/webp", "data": "c25hcHNob3Q="}},
+    ]}]
+
+
 @pytest.mark.parametrize("use_anthropic", [False, True])
 def test_history_skips_empty_assistant_display_only_row(use_anthropic):
     from agent.models import AgentRequest

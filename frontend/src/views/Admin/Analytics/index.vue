@@ -49,6 +49,11 @@
                   <span class="cs-lbl">WAU</span>
                   <span class="cs-val">{{ data.users.wau }}</span>
                 </span>
+                <span class="cs-sep">·</span>
+                <span class="cs-item">
+                  <span class="cs-lbl">MAU</span>
+                  <span class="cs-val">{{ data.users.active_30d }}</span>
+                </span>
               </div>
             </div>
             <div class="chart-wrap">
@@ -181,13 +186,24 @@
           <div class="card-icon ic-blue"><Icon name="admin.pulse" size="md" /></div>
           <div class="card-val">{{ data.users.wau }}<span class="card-unit"> {{ t('adminAnalytics.people') }}</span></div>
           <div class="card-lbl">{{ t('adminAnalytics.weeklyActive') }}</div>
-          <div class="card-sub">{{ t('adminAnalytics.active30', { count: data.users.active_30d }) }}</div>
+        </div>
+        <div class="card">
+          <div class="card-icon ic-blue"><Icon name="admin.pulse" size="md" /></div>
+          <div class="card-val">{{ data.users.active_30d }}<span class="card-unit"> {{ t('adminAnalytics.people') }}</span></div>
+          <div class="card-lbl">{{ t('adminAnalytics.monthlyActive') }}</div>
+          <div class="card-sub">{{ t('adminAnalytics.rolling30Days') }}</div>
         </div>
         <div class="card">
           <div class="card-icon ic-blue"><Icon name="communication.chat" size="md" /></div>
           <div class="card-val">{{ pct(data.im_bots.adoption_rate) }}<span class="card-unit">%</span></div>
           <div class="card-lbl">{{ t('adminAnalytics.imAdoption') }}</div>
           <div class="card-sub">{{ t('adminAnalytics.connectedUsers', { count: data.im_bots.users_with_bot }) }}</div>
+        </div>
+        <div v-for="platform in imPlatforms" :key="platform.key" class="card">
+          <div class="card-icon ic-blue"><Icon name="communication.chat" size="md" /></div>
+          <div class="card-val">{{ data.im_bots.users_by_platform?.[platform.key] ?? 0 }}<span class="card-unit"> {{ t('adminAnalytics.people') }}</span></div>
+          <div class="card-lbl">{{ platform.label }}</div>
+          <div class="card-sub">{{ t('adminAnalytics.connectedPlatformUsers') }}</div>
         </div>
         <div class="card">
           <div class="card-icon ic-blue"><Icon name="admin.folders" size="md" /></div>
@@ -255,6 +271,10 @@ const ranges = computed(() => [
 ])
 
 const rm = computed(() => data.value?.retention_metrics ?? {})
+const imPlatforms = computed(() => [
+  { key: 'qq', label: t('adminAnalytics.qq') }, { key: 'feishu', label: t('adminAnalytics.feishu') },
+  { key: 'telegram', label: t('adminAnalytics.telegram') }, { key: 'wechat', label: t('adminAnalytics.wechat') },
+])
 
 // ── 漏斗 ──────────────────────────────────────────────────────────────────
 const funnelSteps = computed(() => {

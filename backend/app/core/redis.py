@@ -17,6 +17,9 @@ from app.core.config import get_settings
 
 # IM 消息入站队列（网关 produce、worker consume 共用）
 IM_INBOUND_STREAM = "im:inbound"
+IM_ATTENTION_SCOPE_START_PREFIX = "im:attention:scope-start:v1:"
+IM_ATTENTION_SCOPE_PREFIX = "im:attention:scope:v1:"
+IM_ATTENTION_SCOPE_TTL_SECONDS = 1800
 
 _client: Optional[aioredis.Redis] = None
 
@@ -65,7 +68,6 @@ async def ensure_group(stream: str, group: str) -> None:
 
 
 _DEDUP_TTL_SECONDS = 600   # 10 分钟（QQ 协议 resume 窗口 5min，留余量）
-
 _ENQUEUE_SCRIPT = """
 local dedup_key = KEYS[1]
 local stream = KEYS[2]
@@ -77,8 +79,46 @@ if dedup_key ~= '' then
         return false
     end
 end
-return redis.call('XADD', stream, 'MAXLEN', '~', maxlen, '*', 'data', payload)
+local entry_id = redis.call('XADD', stream, 'MAXLEN', '~', maxlen, '*', 'data', payload)
+if KEYS[3] then
+    local event_ms = string.match(entry_id, '^(%d+)-')
+    redis.call('SET', KEYS[4], event_ms, 'EX', ARGV[4], 'NX')
+    redis.call('XADD', KEYS[3], entry_id, 'data', payload)
+    local attention_ttl = tonumber(ARGV[4])
+    local cutoff_ms = math.max(0, tonumber(event_ms) - attention_ttl * 1000)
+    redis.call('XTRIM', KEYS[3], 'MINID', '~', tostring(cutoff_ms) .. '-0')
+    redis.call('EXPIRE', KEYS[3], attention_ttl)
+    redis.call('EXPIRE', KEYS[4], attention_ttl)
+end
+return entry_id
 """
+
+
+def attention_scope_stream_key(platform: object, bot_id: object, group_id: object) -> str:
+    """返回按平台/Bot/群隔离的短期注意力 Stream 键。"""
+    from hashlib import sha256
+
+    scope = "\x1f".join(str(value or "").strip() for value in (platform, bot_id, group_id))
+    digest = sha256(scope.encode("utf-8")).hexdigest()
+    return f"{IM_ATTENTION_SCOPE_PREFIX}{digest}"
+
+
+def attention_scope_start_key(platform: object, bot_id: object, group_id: object) -> str:
+    """返回该平台/Bot/群注意力 Stream 的覆盖起始时间键。"""
+    stream_key = attention_scope_stream_key(platform, bot_id, group_id)
+    digest = stream_key.rsplit(":", 1)[-1]
+    return f"{IM_ATTENTION_SCOPE_START_PREFIX}{digest}"
+
+
+def _attention_scope_key(payload: dict) -> str:
+    if payload.get("chat_type") != "group":
+        return ""
+    platform = payload.get("platform")
+    bot_id = payload.get("channel_id") or payload.get("bot_id")
+    group_id = payload.get("chat_id")
+    if not all(str(value or "").strip() for value in (platform, bot_id, group_id)):
+        return ""
+    return attention_scope_stream_key(platform, bot_id, group_id)
 
 
 def _dedup_key(payload: dict) -> str:
@@ -98,13 +138,24 @@ def _dedup_key(payload: dict) -> str:
     return f"im:seen:{digest}"
 
 
+def _enqueue_eval_args(stream: str, payload: dict, maxlen: int) -> tuple:
+    dedup_key = _dedup_key(payload) if stream == IM_INBOUND_STREAM else ""
+    keys = [dedup_key, stream]
+    args = [int(maxlen), json.dumps(payload, ensure_ascii=False), _DEDUP_TTL_SECONDS]
+    if stream == IM_INBOUND_STREAM:
+        scoped_stream = _attention_scope_key(payload)
+        if scoped_stream:
+            platform = payload.get("platform")
+            bot_id = payload.get("channel_id") or payload.get("bot_id")
+            group_id = payload.get("chat_id")
+            keys.extend((scoped_stream, attention_scope_start_key(platform, bot_id, group_id)))
+            args.append(IM_ATTENTION_SCOPE_TTL_SECONDS)
+    return (_ENQUEUE_SCRIPT, len(keys), *keys, *args)
+
+
 async def produce(stream: str, payload: dict, maxlen: int = 10000) -> str | None:
     """原子去重并入队；重复平台消息返回 None，不会留下未入队的去重标记。"""
-    dedup_key = _dedup_key(payload) if stream == IM_INBOUND_STREAM else ""
-    result = await get_redis().eval(
-        _ENQUEUE_SCRIPT, 2, dedup_key, stream, int(maxlen),
-        json.dumps(payload, ensure_ascii=False), _DEDUP_TTL_SECONDS,
-    )
+    result = await get_redis().eval(*_enqueue_eval_args(stream, payload, maxlen))
     return result or None
 
 
@@ -152,11 +203,7 @@ def get_redis_sync():
 
 def produce_sync(stream: str, payload: dict, maxlen: int = 10000) -> str | None:
     """同步版原子去重并入队（供同步平台 handler 使用）。"""
-    dedup_key = _dedup_key(payload) if stream == IM_INBOUND_STREAM else ""
-    result = get_redis_sync().eval(
-        _ENQUEUE_SCRIPT, 2, dedup_key, stream, int(maxlen),
-        json.dumps(payload, ensure_ascii=False), _DEDUP_TTL_SECONDS,
-    )
+    result = get_redis_sync().eval(*_enqueue_eval_args(stream, payload, maxlen))
     return result or None
 
 

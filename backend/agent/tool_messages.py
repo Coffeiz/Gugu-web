@@ -48,12 +48,33 @@ def format_tool_event(event: dict, *, markdown: bool = True) -> str:
     label = str(event.get("label") or event.get("name") or "工具").strip()
     event_type = str(event.get("type") or "")
     status = str(event.get("status") or "")
+    file_result = event.get("name") == "send_file" and event_type == "tool_done"
+    file_prepared = file_result and status in {"success", "ok"}
+    file_delivery_status = None
+    if file_result:
+        result = event.get("result")
+        if isinstance(result, str):
+            try:
+                result = json.loads(result)
+            except (TypeError, ValueError):
+                result = None
+        if isinstance(result, dict):
+            file_delivery_status = result.get("delivery_status")
     if not markdown:
         delivery_status = _link_button_delivery_status(event)
         if delivery_status:
             return delivery_status
         if event_type == "tool_call":
             return ""
+        if file_result:
+            if file_delivery_status == "sent":
+                return "✅ 平台已接受文件发送"
+            if file_delivery_status == "unknown":
+                return "⚠️ 文件发送结果未确认，请先检查是否收到"
+            if file_delivery_status == "failed":
+                return "⚠️ 文件未能发送，请检查原因后重新发起请求"
+            if file_prepared:
+                return "📎 文件已准备，将在回复结束后尝试发送"
         if status in {"success", "ok"}:
             return f"✅ {label}完成"
         if status == "waiting":
@@ -68,7 +89,13 @@ def format_tool_event(event: dict, *, markdown: bool = True) -> str:
         return "\n\n".join(body)
     if status == "waiting":
         return f"{title}\n\n**状态**：任务已暂停，等待确认"
-    status_text = "已完成" if status in {"success", "ok"} else "未完成"
+    status_text = (
+        "平台已接受文件发送" if file_delivery_status == "sent"
+        else "文件发送结果未确认，请先检查是否收到" if file_delivery_status == "unknown"
+        else "文件未能发送，请检查原因后重新发起请求" if file_delivery_status == "failed"
+        else "文件已准备，将在回复结束后尝试发送" if file_prepared
+        else "已完成" if status in {"success", "ok"} else "未完成"
+    )
     body = [title, f"**状态**：{status_text}"]
     if event.get("result") is not None:
         body.extend(("**输出**", tool_code_block(event.get("result"))))

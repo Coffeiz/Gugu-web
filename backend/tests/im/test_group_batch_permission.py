@@ -76,7 +76,7 @@ async def test_multi_speaker_batch_with_unknown_speaker_falls_back_to_weakest():
 
     resolver, _calls = _access_resolver({
         "owner-1": ("owner", None),
-        "unknown-1": ("unknown", ["xng_search"]),
+        "unknown-1": ("unknown", ["web_search"]),
     })
     payload = _payload([
         {"platform_user_id": "owner-1", "platform_user_name": "主人"},
@@ -88,7 +88,7 @@ async def test_multi_speaker_batch_with_unknown_speaker_falls_back_to_weakest():
     )
 
     assert actor.role == "unknown"
-    assert actor.allowed_tool_names == ["xng_search"]
+    assert actor.allowed_tool_names == ["web_search"]
 
 
 async def test_missing_speaker_cannot_inherit_owner_permissions():

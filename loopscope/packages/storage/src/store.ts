@@ -20,15 +20,6 @@ function numeric(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
-function tokenContribution(span: TraceRunInput['spans'][number]): number | undefined {
-  const impact = record(span.token_impact)
-  for (const key of ['included_tokens', 'source_tokens', 'estimated_input_tokens', 'prompt_tokens_estimate', 'result_tokens']) {
-    const value = numeric(impact[key])
-    if (value !== undefined) return Math.round(value)
-  }
-  return undefined
-}
-
 function normalizeUsage(value: unknown): TokenUsage {
   const u = record(value)
   const input = numeric(u.input)
@@ -170,7 +161,6 @@ export class TraceStore {
             title: span.name,
             contentMarkdown: content,
             rawJson: span.output,
-            tokenCount: tokenContribution(span) ?? null,
             sourceJson: { code, attributes: attrs },
             ordinal,
           }).run()

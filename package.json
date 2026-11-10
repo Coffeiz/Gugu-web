@@ -1,6 +1,6 @@
 {
   "name": "gugu-web-workspace",
-  "version": "1.7.7",
+  "version": "1.7.9",
   "private": true,
   "packageManager": "pnpm@10.15.0",
   "engines": {
@@ -10,7 +10,6 @@
     "dev:web": "corepack pnpm --filter gugu-web dev",
     "dev:loopscope": "corepack pnpm --filter loopscope-web dev",
     "build:web": "corepack pnpm --filter gugu-web build",
-    "build:rag": "corepack pnpm --filter gugu-rag-ts-worker build",
     "build": "corepack pnpm -r --if-present build",
     "typecheck": "corepack pnpm -r --if-present typecheck",
     "test": "corepack pnpm -r --if-present test",

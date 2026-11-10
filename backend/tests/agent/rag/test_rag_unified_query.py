@@ -73,7 +73,7 @@ def _canned_response(knowledge_doc, memory_doc, knowledge_key, memory_key, *, fa
 
 def _install_unified_stubs(monkeypatch, *, canned, vector_map=None, model_tag="prov:model:2",
                            memory_documents=None, embedding_enabled=True,
-                           engine_name="typescript"):
+                           engine_name="cython"):
     """打桩索引准备、瞬态语料上传、TS query embedding 与统一查询 IPC。"""
     import agent.memory.embedding as embedding_mod
     from agent.rag import batch_retriever as br
@@ -146,12 +146,12 @@ async def test_unified_retriever_single_ipc_delivers_rank_rows(monkeypatch):
         reset_conversation_before_message_id, set_conversation_before_message_id,
     )
     from agent.rag import batch_retriever as br
-    from agent.rag.ts_sidecar import _worker_document_key
+    from agent.rag.delta import chunk_slot_key
 
     probe_updates = []
     monkeypatch.setattr(br, "probe_update", lambda **values: probe_updates.append(values))
     knowledge_doc, memory_doc = _knowledge_doc(), _memory_doc()
-    knowledge_key, memory_key = _worker_document_key(knowledge_doc), _worker_document_key(memory_doc)
+    knowledge_key, memory_key = chunk_slot_key(knowledge_doc), chunk_slot_key(memory_doc)
     canned = _canned_response(knowledge_doc, memory_doc, knowledge_key, memory_key)
     calls, index = _install_unified_stubs(
         monkeypatch, canned=canned, vector_map={memory_key: [0.3, 0.4]},
@@ -182,15 +182,13 @@ async def test_unified_retriever_single_ipc_delivers_rank_rows(monkeypatch):
     assert [spec.get("corpus") for spec in calls["query"]["searches"]] == [None, "transient"]
     assert any(update.get("memory", {}).get("prepare", {}).get("stage_ms", {}).get(
         "owner_document_read_and_adapt") == 12 for update in probe_updates)
-    assert any(update.get("worker", {}).get("stage_ms", {}).get("bm25_scoring") == 4
-               for update in probe_updates)
 
     assert len(batches) == 1
     batch = batches[0]
     assert batch.source_type == "unified"
     assert batch.fallback_reason is None
     assert batch.candidate_count == 2
-    assert batch.metadata["engine"] == "typescript"
+    assert batch.metadata["engine"] == "cython"
     assert batch.metadata["unified_query"] == "True"
     assert batch.rank_stats["candidate_count"] == 2
     assert len(batch.rank_rows) == 2
@@ -209,12 +207,12 @@ async def test_cython_unified_trace_reports_cython_runtime_not_sidecar(monkeypat
     from agent.rag import batch_retriever as br
     from agent.rag.batch_retriever import UnifiedQueryRetriever
     from agent.rag.context import reset_conversation_before_message_id, set_conversation_before_message_id
-    from agent.rag.ts_sidecar import _worker_document_key
+    from agent.rag.delta import chunk_slot_key
 
     updates = []
     monkeypatch.setattr(br, "probe_update", lambda **values: updates.append(values))
     knowledge_doc, memory_doc = _knowledge_doc(), _memory_doc()
-    knowledge_key, memory_key = _worker_document_key(knowledge_doc), _worker_document_key(memory_doc)
+    knowledge_key, memory_key = chunk_slot_key(knowledge_doc), chunk_slot_key(memory_doc)
     canned = _canned_response(knowledge_doc, memory_doc, knowledge_key, memory_key)
     expected_diagnostics = {"candidate_pool": 2, "ranked": 2}
     canned["search_diagnostics"] = expected_diagnostics
@@ -249,11 +247,11 @@ async def test_cython_retriever_overlaps_query_embedding_with_memory_preparation
     from agent.rag.batch_retriever import UnifiedQueryRetriever
 
     knowledge_doc, memory_doc = _knowledge_doc(), _memory_doc()
-    from agent.rag.ts_sidecar import _worker_document_key
+    from agent.rag.delta import chunk_slot_key
 
     canned = _canned_response(
         knowledge_doc, memory_doc,
-        _worker_document_key(knowledge_doc), _worker_document_key(memory_doc),
+        chunk_slot_key(knowledge_doc), chunk_slot_key(memory_doc),
     )
     calls, index = _install_unified_stubs(
         monkeypatch, canned=canned, memory_documents=[memory_doc],
@@ -404,7 +402,7 @@ def _pre_ranked_batch(triples, *, metadata=None):
             "selection_mode": "confidence", "scoring_version": "confidence-v4",
             "elapsed_ms": 2,
         },
-        metadata=metadata or {"engine": "typescript", "cache_hit": "True",
+        metadata=metadata or {"engine": "cython", "cache_hit": "True",
                               "retrieve_ms": "5", "fusion": "hybrid-rrf"},
         candidate_count=len(triples), index_source="persistent-ts",
     )
@@ -429,7 +427,7 @@ async def test_service_assembles_pre_ranked_result():
 
     response = await UnifiedRecallService(SimpleNamespace(retrieve=retrieve)).search(
         "缓存", scope=SCOPE)
-    assert response["engine"] == "typescript"
+    assert response["engine"] == "cython"
     assert response["sources"] == ["unified"]
     assert response["strategy"] == "hybrid"
     assert response["accepted_count"] == 1
@@ -437,7 +435,7 @@ async def test_service_assembles_pre_ranked_result():
     assert response["cache_entries"] == 1
     assert response["sidecar_reused"] is None
     assert response["stage_ms"]["unified.retrieve_ms"] == 5
-    assert response["source_diagnostics"]["unified"]["engine"] == "typescript"
+    assert response["source_diagnostics"]["unified"]["engine"] == "cython"
     item = response["results"][0]
     assert item["text"] == knowledge_doc.content
     assert item["confidence"] == 0.9

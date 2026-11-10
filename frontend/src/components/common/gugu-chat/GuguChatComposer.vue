@@ -162,10 +162,7 @@ function insertReferenceChip(reference: ChatReference) {
     .run()
 }
 
-useRuntimeAction(async action => {
-  if (action.type !== 'move' && action.type !== 'move-group') return
-  if (action.toSurfaceId !== CHAT_REF_SURFACE_ID) return
-  const objectIds = action.type === 'move-group' ? action.objectIds : [action.objectId]
+async function handleRuntimeReferenceDrop(objectIds: readonly string[]) {
   const references = objectIds.map(objectId => {
     const element = runtime.objects.get(objectId)?.element
     const nodeId = Number(element?.closest<HTMLElement>('[data-node-id]')?.dataset.nodeId)
@@ -188,6 +185,12 @@ useRuntimeAction(async action => {
   // 落地动画结束后源卡片是瞬间显形的；给它补一段「从松手位置缩放淡入回归」的
   // 入场动画，等 Runtime 结束对该对象的视觉接管后播放。
   for (const objectId of objectIds) animateSourceReturn(objectId)
+}
+
+useRuntimeAction(async action => {
+  if (action.type !== 'move' && action.type !== 'move-group') return
+  if (action.toSurfaceId !== CHAT_REF_SURFACE_ID) return
+  await handleRuntimeReferenceDrop(action.type === 'move-group' ? action.objectIds : [action.objectId])
 })
 
 /** 落地收尾后源卡片会直接显形，这里等 Runtime 交还视觉所有权，再补一个短促的
@@ -457,6 +460,7 @@ function fitTextarea(_isExpanded = props.expanded) {
 defineExpose({
   focus: () => chatEditor.value?.commands.focus(),
   focusEnd: () => chatEditor.value?.commands.focus('end'),
+  handleRuntimeReferenceDrop,
   fitTextarea,
   resetHeight: () => { if (chatEditor.value) chatEditor.value.view.dom.style.height = 'auto' },
 })
@@ -563,7 +567,7 @@ defineExpose({
 }
 .chat-input-editor { position: relative; flex: 1; min-width: 0; }
 .chat-input-editor :deep(.ProseMirror) {
-  min-height: 24px; max-height: 120px; overflow-y: auto; outline: none;
+  min-height: 24px; max-height: 120px; overflow-x: hidden; overflow-y: auto; outline: none;
   padding: 4px 0; color: var(--text-primary); font: 14px/1.5 var(--font-sans);
   white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;
 }
@@ -576,6 +580,8 @@ defineExpose({
      1px 会把行盒撑到 23px（autogrow 量到 scrollHeight 变大 → 输入行变高）。
      20px + 上下 -2px 负 margin 把行盒贡献收回行框内：行高恒定且视觉居中。 */
   height: 20px; line-height: 1; font-size: 12px; white-space: nowrap;
+  /* 标题过长时在胶囊内省略，并给两侧 margin 和末尾光标留出空间。 */
+  max-inline-size: calc(100% - 4px - 1ch);
   /* 上 -3 / 下 -1：净值仍 -2（行盒不变），但把 chip 内容相对 middle 中线上抬 1px，
      与图标/发送按钮的垂直中心对齐（它们都在行中心 +1px 处，见 border-top 偏移）。 */
   margin: -3px 2px -1px 2px;
@@ -585,7 +591,7 @@ defineExpose({
   user-select: text;
 }
 .chat-input-editor :deep(.ProseMirror .mind-ref-icon) { flex: 0 0 auto; width: 11px; height: 11px; }
-.chat-input-editor :deep(.ProseMirror .mind-ref-label) { overflow: hidden; text-overflow: ellipsis; }
+.chat-input-editor :deep(.ProseMirror .mind-ref-label) { min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; }
 
 .exp-send-btn { width: 28px; height: 28px; border-radius: 8px; }
 

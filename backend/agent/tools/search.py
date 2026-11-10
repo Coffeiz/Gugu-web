@@ -1,6 +1,5 @@
 """联网搜索工具集：
 
-- `xng_search`：通用网页、图像或混合搜索，走自建 **SearXNG**（免费、快）。
 - `web_search`：使用当前启用的模型 Provider 原生联网搜索；支持 MiniMax、GLM、Qwen 百炼、DeepSeek、MiMo 与 Ollama Cloud。
 - `deep_research`：按 Admin 选择的 Provider 查询外部资料。Tavily / You.com 返回研究答案；百度使用普通百度搜索并返回网页引用，适合
   需要"读内容并总结/比较/研究/给引用"的任务。有每日次数配额（SearchUsage）。
@@ -8,26 +7,21 @@
   默认只返回候选（标题+来源页+图片直链），**不会自动读取或发送**；需要视觉分析时用 `read_file(items=[...])` 批量读取选中的图片。
   真要把图发进对话/IM，接着调 `files.py` 的 `send_file(url=候选的 img_src)`。
 
-成本梯队（见 `agent/skills/web-search.md`）：专有技能 → 简单任务优先免费 xng_search(SearXNG) → 大部分信息检索用 Provider 原生 web_search → 复杂任务混合普通搜索、原文阅读与 deep_research 聚合分析（Admin 选择的 Provider）。
-SearXNG 部署在后端同机（127.0.0.1），由 settings.search.searxng_url 配；国内服务器只有
-sogou/quark/360search 可达，固定带 engines 避开会超时的 google/bing 等。图片搜索能用的引擎不一定
-是同一批（`settings.search.searxng_image_engines`，留空回退文本引擎列表）。
+搜索策略见 `agent/skills/web-search.md`。网页搜索由当前模型 Provider 提供；深度研究使用 Admin 配置的独立 Provider。
 """
 from datetime import datetime
 
 import base64
-from collections import Counter
 import io
 import json
 import logging
 import random
-from urllib.parse import urlencode
 
 from app.core.tz import local_day_start_utc
 from app.core.credentials import normalize_ascii_api_key
 
 import httpx
-from app.core.config import DEFAULT_SEARXNG_IMAGE_ENGINES, get_settings
+from app.core.config import get_settings
 from app.core import chat_attach
 from app.byok.service import decrypt_value, get_active_credential
 from app.services.search import (
@@ -42,11 +36,7 @@ from agent.tools.base import BaseSkill, Tool
 
 _search_log = logging.getLogger("agent.search")
 
-_SEARCH_QUERY_DESCRIPTION = (
-    "简短检索词；保留实体名、产品名、版本号、日期和关键术语，不要复制完整问题。"
-)
-
-SEARCH_TOOL_NAMES = frozenset({"xng_search", "web_search", "deep_research", "similar_image_search"})
+SEARCH_TOOL_NAMES = frozenset({"web_search", "deep_research", "similar_image_search"})
 
 
 async def _deep_research_config(db, user_id, settings):
@@ -68,8 +58,6 @@ async def _deep_research_config(db, user_id, settings):
 async def search_tool_is_configured(name: str, *, db=None, user_id=None, settings=None, model_cfg=None) -> bool:
     """只按当前用户可实际使用的配置判断搜索工具是否应暴露。"""
     settings = settings or get_settings()
-    if name == "xng_search":
-        return bool((settings.search.searxng_url or "").strip())
     if name == "deep_research":
         _, key = await _deep_research_config(db, user_id, settings)
         return bool(key)
@@ -108,271 +96,6 @@ async def filter_configured_search_tools(tool_names, *, db=None, user_id=None, s
     return configured
 
 
-def _parse_requested_engines(raw: str | None) -> list[str]:
-    """把后台逗号分隔的引擎配置转成有序、去重列表。"""
-    out: list[str] = []
-    seen: set[str] = set()
-    for part in str(raw or "").split(","):
-        name = part.strip()
-        key = name.casefold()
-        if name and key not in seen:
-            seen.add(key)
-            out.append(name)
-    return out
-
-
-def _build_searxng_search_url(base: str, params: dict) -> str:
-    """用 UTF-8 显式编码查询参数，避免生产环境 ASCII locale 处理中文时抛错。"""
-    query = urlencode(params, encoding="utf-8", errors="strict")
-    return f"{base}/search?{query}"
-
-
-def _normalize_failure_reason(raw_reason) -> str:
-    text = str(raw_reason or "").strip().lower()
-    if not text:
-        return "unknown"
-    if "captcha" in text or "challenge" in text:
-        return "captcha"
-    if "too many requests" in text or "rate limit" in text or "ratelimit" in text or "429" in text:
-        return "rate_limited"
-    if "suspend" in text:
-        return "suspended"
-    if "timeout" in text or "timed out" in text:
-        return "timeout"
-    if any(token in text for token in (
-        "unavailable", "connection", "network", "forbidden", "access denied",
-        "accessdenied", "blocked", "403", "502", "503", "504",
-    )):
-        return "unavailable"
-    return "unknown"
-
-
-def _normalize_engine_failures(data: dict) -> list[dict[str, str]]:
-    """容错读取 SearXNG 的 ``unresponsive_engines``，只保留 engine + 归一化 reason。
-
-    SearXNG 版本/引擎实现可能返回 list/tuple/dict 等不同形态；诊断字段坏掉不能影响
-    已拿到的正常 results，所以任何无法识别的项都忽略或归入 unknown，不向上抛。
-    """
-    if not isinstance(data, dict):
-        return []
-    raw = data.get("unresponsive_engines")
-    if not raw:
-        return []
-
-    if isinstance(raw, dict):
-        entries = [{"engine": engine, "reason": reason} for engine, reason in raw.items()]
-    elif isinstance(raw, (list, tuple)):
-        entries = list(raw)
-    else:
-        return []
-
-    out_by_key: dict[str, dict[str, str]] = {}
-    order: list[str] = []
-    for item in entries:
-        engine = None
-        reason_raw = None
-        if isinstance(item, dict):
-            engine = item.get("engine") or item.get("name")
-            reason_raw = item.get("reason") or item.get("error") or item.get("message")
-        elif isinstance(item, (list, tuple)) and item:
-            engine = item[0]
-            reason_raw = " ".join(str(part) for part in item[1:] if part is not None)
-        elif isinstance(item, str):
-            if ":" in item:
-                engine, reason_raw = item.split(":", 1)
-            else:
-                engine = item
-
-        name = str(engine or "").strip()
-        if not name:
-            continue
-        key = name.casefold()
-        normalized = _normalize_failure_reason(reason_raw)
-        if key not in out_by_key:
-            order.append(key)
-            out_by_key[key] = {"engine": name, "reason": normalized}
-        elif out_by_key[key]["reason"] == "unknown" and normalized != "unknown":
-            out_by_key[key] = {"engine": name, "reason": normalized}
-
-    return [out_by_key[key] for key in order]
-
-
-def _build_search_status(
-    results: list[dict],
-    requested_engines: list[str],
-    failures: list[dict[str, str]],
-) -> dict:
-    requested_keys = {name.casefold() for name in requested_engines}
-    # SearXNG 可能返回本次请求之外的引擎故障（例如配置只请求 sogou，响应却带了
-    # bing 的 timeout）。这些故障不能改变本次请求的状态，也不能被展示成当前搜索引擎失败。
-    relevant_failures = [
-        item for item in failures
-        if not requested_keys or str(item.get("engine", "")).casefold() in requested_keys
-    ]
-    failed_keys = {
-        str(item["engine"]).casefold()
-        for item in relevant_failures
-        if item.get("engine")
-    }
-    failed_requested = requested_keys & failed_keys
-    all_requested_failed = bool(requested_keys) and requested_keys.issubset(failed_keys)
-
-    if relevant_failures:
-        # 有实际结果时即便所有配置引擎都报告过异常，也至少不是“完全没法搜”；保留结果并标 degraded。
-        state = "unavailable" if not results and all_requested_failed else "degraded"
-    else:
-        state = "ok" if results else "empty"
-
-    working_count = (
-        max(len(requested_engines) - len(failed_requested), 0)
-        if requested_engines else None
-    )
-    return {
-        "state": state,
-        "requested_engines": requested_engines,
-        "failed_engines": relevant_failures,
-        "working_engine_count": working_count,
-        "result_count": len(results),
-    }
-
-
-def _search_note(state: str, *, kind: str, has_results: bool) -> str | None:
-    noun = "图片" if kind == "image" else "结果"
-    if state == "ok":
-        return None
-    if state == "empty":
-        return f"当前可用搜索引擎没有返回{noun}；可以换一组更短/更宽的关键词再搜一次。"
-    if state == "unavailable":
-        prefix = "当前配置的 SearXNG 图片搜索引擎均不可用" if kind == "image" else "当前配置的 SearXNG 搜索引擎均不可用"
-        return f"{prefix}；这不代表没有相关结果。请改用 deep_research 兜底。"
-    if has_results:
-        return "部分搜索引擎不可用，当前结果覆盖可能不完整；已有结果仍可使用。"
-    return "本次没有返回结果，但部分搜索引擎不可用，不能据此判断网上没有相关内容；可换关键词重试一次，或改用 deep_research。"
-
-
-def _log_search_health(kind: str, query: str, status: dict) -> None:
-    """只记搜索健康元数据，不新增 query 原文日志。"""
-    try:
-        reason_counts = Counter(
-            item.get("reason", "unknown") for item in status.get("failed_engines", [])
-        )
-        _search_log.info(json.dumps({
-            "t": "search_health",
-            "kind": kind,
-            "state": status.get("state"),
-            "requested_engine_count": len(status.get("requested_engines") or []),
-            "failed_engine_count": len(status.get("failed_engines") or []),
-            "failure_reasons": dict(reason_counts),
-            "result_count": status.get("result_count", 0),
-            "query_len": len(query),
-        }, ensure_ascii=False))
-    except Exception:
-        pass
-
-
-def _build_search_response(
-    query: str,
-    results: list[dict],
-    engines_config: str | None,
-    data: dict,
-    *,
-    kind: str,
-) -> dict:
-    requested = _parse_requested_engines(engines_config)
-    failures = _normalize_engine_failures(data)
-    status = _build_search_status(results, requested, failures)
-    payload = {"query": query, "results": results, "search_status": status}
-    note = _search_note(status["state"], kind=kind, has_results=bool(results))
-    if note:
-        payload["note"] = note
-    _log_search_health(kind, query, status)
-    return payload
-
-
-# ── xng_search：SearXNG 网页/图像搜索────────────────────────────────────────
-async def _xng_search(db, user_id, args: dict):
-    settings = get_settings()
-    base = (settings.search.searxng_url or "").rstrip("/")
-    if not base:
-        return {"error": "管理员尚未配置 XNG Search"}
-    query = (args.get("query") or "").strip()
-    if not query:
-        return {"error": "需要提供搜索关键词 query"}
-
-    mode = str(args.get("mode") or "web").strip().lower()
-    if mode not in {"web", "images", "both"}:
-        return {"error": "mode 必须是 web、images 或 both"}
-    max_results = args.get("max_results") or settings.search.max_results
-    web_engines = settings.search.searxng_engines
-    image_engines = (
-        (settings.search.searxng_image_engines or "").strip()
-        or DEFAULT_SEARXNG_IMAGE_ENGINES
-    )
-    if mode == "web":
-        engines = web_engines
-        categories = "general"
-    elif mode == "images":
-        engines = image_engines
-        categories = "images"
-    else:
-        engines = ",".join(_parse_requested_engines(f"{web_engines},{image_engines}"))
-        categories = "general,images"
-    params = {"q": query, "format": "json", "categories": categories, "engines": engines}
-    request_url = _build_searxng_search_url(base, params)
-    try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=5.0, read=20.0, write=5.0, pool=5.0)
-        ) as client:
-            resp = await client.get(request_url)
-    except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError):
-        return {"error": "XNG Search 暂时不可用，请稍后重试"}
-    except Exception as e:
-        return {"error": f"XNG Search 暂时失败（{type(e).__name__}）"}
-    if resp.status_code == 403:
-        return {"error": "XNG Search 返回 403：实例未启用 JSON 输出格式"}
-    if resp.status_code != 200:
-        return {"error": f"XNG Search 失败（HTTP {resp.status_code}）"}
-    try:
-        data = resp.json()
-    except Exception:
-        return {"error": "XNG Search 返回了无法解析的响应"}
-
-    raw_results = data.get("results") or []
-    web_results = [
-        {"title": item.get("title"), "url": item.get("url"), "content": (item.get("content") or "")[:300]}
-        for item in raw_results if isinstance(item, dict) and not item.get("img_src")
-    ][:max_results]
-    image_results = [
-        {
-            "result_id": f"image-{index}",
-            "title": item.get("title"),
-            "url": item.get("url"),
-            "img_src": item.get("img_src"),
-            "thumbnail": item.get("thumbnail_src") or item.get("thumbnail"),
-        }
-        for index, item in enumerate(raw_results, start=1)
-        if isinstance(item, dict) and item.get("img_src")
-    ][:max_results]
-
-    if mode == "both":
-        web_payload = _build_search_response(query, web_results, web_engines, data, kind="web")
-        image_payload = _build_search_response(query, image_results, image_engines, data, kind="image")
-        return {
-            "query": query,
-            "mode": mode,
-            "web_results": web_payload["results"],
-            "image_results": image_payload["results"],
-            "search_status": {
-                "web": web_payload["search_status"],
-                "images": image_payload["search_status"],
-            },
-            **({"notes": [note for note in (web_payload.get("note"), image_payload.get("note")) if note]}),
-        }
-    if mode == "web":
-        return _build_search_response(query, web_results, engines, data, kind="web")
-    return _build_search_response(query, image_results, engines, data, kind="image")
-
-
 # ── deep_research：可配置 Provider（深度、有配额）────────────────────────────
 async def _deep_research(db, user_id, args: dict):
     settings = get_settings()
@@ -392,7 +115,7 @@ async def _deep_research(db, user_id, args: dict):
         day_start = local_day_start_utc()
         used = await count_daily_search_usage(db, user_id, day_start)
         if used >= limit:
-            return json.dumps({"error": f"今天的深度研究次数已用完（上限 {limit} 次/天）；普通查找可用 xng_search"})
+            return json.dumps({"error": f"今天的深度研究次数已用完（上限 {limit} 次/天）；普通查找可用 web_search"})
 
     max_results = args.get("max_results") or settings.search.max_results
     try:
@@ -568,36 +291,17 @@ async def _web_search(db, user_id, args: dict):
 
 
 class SearchSkill(BaseSkill):
-    name = "xng_search"
+    name = "search"
     tools = [
         Tool(
             name="web_search", label="联网搜索",
             description_short="适合大部分信息检索的 Provider 联网搜索，调用可能收费。",
-            description="联网搜索工具由当前模型 Provider 提供，使用当前模型配置的 API Key，调用可能产生搜索服务和模型费用，按 Provider 规则计费。参数遵循该 Provider 的原生 Schema。适合大部分信息检索、近期动态和多条件事实核验；简单查找优先使用免费的 xng_search。",
+            description="联网搜索工具由当前模型 Provider 提供，使用当前模型配置的 API Key，调用可能产生搜索服务和模型费用，按 Provider 规则计费。参数遵循该 Provider 的原生 Schema，适合信息检索、近期动态和事实核验。",
             input_schema={"type": "object", "properties": {}, "additionalProperties": False},
             input_schema_factory=_provider_web_search_schema,
             handler=_web_search,
             proxy_selectable=True,
             start_message=lambda args: random.choice(["我用当前模型的联网搜索查一下。", "我查一下最新网页资料。"]),
-            parallel_safe=True,
-        ),
-        Tool(
-            name="xng_search", label="XNG 搜索",
-            description_short='免费搜索引擎，简单查找和关键词搜图优先使用。',
-            description="免费的 XNG 搜索引擎，简单查找、官网/文档定位和关键词搜图优先使用；大部分信息检索与较复杂的事实核验使用 web_search。mode=web 搜网页，mode=images 搜图像，mode=both 同时搜索两类；返回图像候选，不会自动读取或发送。单篇正文用 http_get；跨来源聚合分析用 deep_research，关键事实应比较独立来源。",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": _SEARCH_QUERY_DESCRIPTION},
-                    "mode": {"type": "string", "enum": ["web", "images", "both"], "default": "web"},
-                    "max_results": {
-                        "type": "integer", "minimum": 1, "maximum": 20,
-                    },
-                },
-                "required": ["query"],
-            },
-            handler=_xng_search,
-            start_message=lambda args: random.choice(["我去查一下。", "我搜一下最新的资料。", "我确认一下这个。"]),
             parallel_safe=True,
         ),
         Tool(
@@ -622,7 +326,7 @@ class SearchSkill(BaseSkill):
         Tool(
             name="deep_research", label="深度研究",
             description_short='对指定主题进行深度研究。',
-            description="阅读和研究外部资料，返回总结或引用；简单查找优先免费 xng_search，大部分信息检索用 web_search；复杂任务应结合普通搜索与原文阅读，使用本工具聚合分析，再对关键结论和分歧补充独立来源核验。",
+            description="阅读和研究外部资料，返回总结或引用；复杂任务应结合网页搜索与原文阅读，使用本工具聚合分析，再对关键结论和分歧补充独立来源核验。",
             input_schema={
                 "type": "object",
                 "properties": {

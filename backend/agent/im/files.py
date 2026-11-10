@@ -19,6 +19,7 @@ class FileSendResult:
     sent: int = 0
     failed: int = 0
     reason: str = ""
+    unconfirmed: bool = False
 
     @property
     def all_sent(self) -> bool:
@@ -128,6 +129,8 @@ async def send_files(payload: dict, files: list) -> FileSendResult:
     for item in files:
         if not isinstance(item, dict):
             continue
+        if item.get("_im_delivery_state") in {"sent", "unknown", "failed"}:
+            continue
         raw_file_id = item.get("file_id")
         if isinstance(raw_file_id, bool) or not isinstance(raw_file_id, (int, str)):
             continue
@@ -157,12 +160,26 @@ async def send_files(payload: dict, files: list) -> FileSendResult:
     attach_ids = [
         item.get("attach_id") for item in files
         if isinstance(item, dict) and item.get("attach_id")
+        and item.get("_im_delivery_state") not in {"sent", "unknown", "failed"}
     ]
     attach_meta = await chat_attach.get_meta_many(owner, attach_ids) if owner else {}
 
     for file_item in files:
         if not isinstance(file_item, dict):
             result.failed += 1
+            continue
+        delivery_state = file_item.get("_im_delivery_state")
+        if delivery_state == "sent":
+            result.sent += 1
+            continue
+        if delivery_state == "unknown":
+            result.failed += 1
+            result.unconfirmed = True
+            result.reason = "附件发送结果未确认，请先检查是否收到，系统不会自动重复发送。"
+            continue
+        if delivery_state == "failed":
+            result.failed += 1
+            result.reason = "附件未能发送，请检查文件后重试。"
             continue
         file_size = 0
         file_id = file_item.get("file_id")
@@ -214,8 +231,10 @@ async def send_files(payload: dict, files: list) -> FileSendResult:
                 result.sent += 1
             else:
                 result.failed += 1
+                result.unconfirmed = True
         except Exception as exc:
             result.failed += 1
+            result.unconfirmed = True
             result.reason = "附件发送失败，你可以去网页或文件库查看。"
             print(f"[im] 发文件出错: {type(exc).__name__}", flush=True)
     if result.failed and not result.reason:

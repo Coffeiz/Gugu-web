@@ -1,4 +1,5 @@
 """v3 准入的快照装载、无频率额度与无明文诊断回归。"""
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -14,6 +15,50 @@ def _payload(event_id: str, text: str, mode: str = "natural") -> dict:
         "event_id": event_id, "platform_user_id": "member-1",
         "sender_is_bot": False, "text": text,
     }
+
+
+@pytest.mark.asyncio
+async def test_recent_attention_messages_read_only_the_scoped_stream(monkeypatch):
+    from app.core import redis as redis_module
+
+    event_id = "1761746401000-2"
+    scope = runtime.AttentionMessage.from_payload(event_id, _payload(event_id, "问题"))
+    scoped_key = redis_module.attention_scope_stream_key("qq", "bot-1", "group-1")
+    row_payload = {
+        **_payload("ignored", "邻近群消息"),
+        "channel_id": "bot-1", "chat_id": "group-1", "chat_type": "group",
+    }
+
+    class Redis:
+        def __init__(self, started_at):
+            self.started_at = started_at
+            self.reads = []
+
+        async def get(self, key):
+            assert key == redis_module.attention_scope_start_key("qq", "bot-1", "group-1")
+            return self.started_at
+
+        async def xrange(self, key, *, min, max):
+            self.reads.append((key, min, max))
+            return [(event_id, {"data": json.dumps(row_payload)})]
+
+    redis = Redis("1761745800000")
+    monkeypatch.setattr(redis_module, "get_redis", lambda: redis)
+    messages, complete, truncated = await runtime._recent_stream_messages(
+        scope=scope, cutoff_ms=1761745800000, watermark_ms=1761746402000,
+        current_ids=set(),
+    )
+
+    assert [message.raw_text for message in messages] == ["邻近群消息"]
+    assert complete is True and truncated is False
+    assert redis.reads == [(scoped_key, "1761745800000-0", "1761746402000-9999999")]
+
+    redis.started_at = "1761746000000"
+    _messages, complete, truncated = await runtime._recent_stream_messages(
+        scope=scope, cutoff_ms=1761745800000, watermark_ms=1761746402000,
+        current_ids=set(),
+    )
+    assert complete is False and truncated is True
 
 
 @pytest.mark.asyncio

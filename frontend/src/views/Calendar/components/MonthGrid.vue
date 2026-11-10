@@ -166,10 +166,10 @@ const emit = defineEmits<{
 .month-cell.is-today.is-weekend { background: var(--calendar-weekend-hover-bg); }
 .month-cell.is-today .cell-num { background: var(--calendar-today-date-bg); color: var(--content-on-accent); font-weight: 700; border-radius: 6px; }
 .month-cell.is-today.is-weekend .cell-num { background: var(--calendar-weekend-date-bg); }
-.month-cell.is-selected { background: var(--calendar-selected-cell-bg); }
-.month-cell.is-selected.is-weekend { background: var(--calendar-weekend-selected-bg); }
-.month-cell.is-selected:not(.is-today) .cell-num { background: var(--calendar-range-cell-bg); color: var(--color-primary); font-weight: 700; border-radius: 6px; }
-.month-cell.is-selected:not(.is-today).is-weekend .cell-num { background: var(--calendar-weekend-date-bg); color: var(--calendar-weekend-fg); }
+.month-cell.is-selected { background: var(--calendar-range-edge-bg); }
+.month-cell.is-selected.is-weekend { background: var(--calendar-weekend-range-edge-bg); }
+.month-cell.is-selected:not(.is-today) .cell-num { background: var(--calendar-range-edge-bg); color: var(--color-primary); font-weight: 700; border-radius: 6px; }
+.month-cell.is-selected:not(.is-today).is-weekend .cell-num { background: var(--calendar-weekend-range-edge-bg); color: var(--calendar-weekend-fg); }
 .month-cell.is-selected:not(.is-today).is-workday .cell-num { color: var(--color-primary); }
 .month-cell.in-range { background: var(--calendar-range-cell-bg); }
 .month-cell.in-range.is-weekend { background: var(--calendar-weekend-hover-bg); }

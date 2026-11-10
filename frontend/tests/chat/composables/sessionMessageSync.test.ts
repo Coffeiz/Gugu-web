@@ -4,13 +4,23 @@ import type { ChatMessage } from '@/components/common/gugu-chat/chatTypes'
 import { agentApi } from '@/services/api'
 import { createSessionMessageSynchronizer, ensureSessionMessageLoaded, mapSessionMessageDelta, mergeSessionMessageDelta, replaceRunHistory, sortSessionTimelineMessages } from '@/components/common/gugu-chat/composables/sessionMessageSync'
 
-vi.mock('@/services/api', () => ({ agentApi: { getMessages: vi.fn(), getMessagesBefore: vi.fn() } }))
+vi.mock('@/services/api', () => ({ agentApi: { getMessages: vi.fn() } }))
 
 const message = (id: number, key: string, text: string): ChatMessage => ({
   id, role: 'ai', text, time: '', _syncKey: key,
 })
 
 describe('mergeSessionMessageDelta', () => {
+  it('claims the local user bubble atomically when final history gains a run identity', () => {
+    const local: ChatMessage = { ...message(1, 'client:request-a', '测试'), role: 'user', clientMessageId: 'request-a' }
+    const persisted: ChatMessage = { ...local, id: 2, dbId: 10, runId: 'run-a' }
+    const reply = { ...message(3, 'event:reply-a', '收到'), runId: 'run-a' }
+    const result = replaceRunHistory([local], [persisted, reply], 'run-a')
+    expect(result).toHaveLength(2)
+    expect(result[0]).toMatchObject({ id: 1, dbId: 10, role: 'user', runId: 'run-a' })
+    expect(replaceRunHistory(result, [persisted, reply], 'run-a')).toEqual(result)
+  })
+
   it('appends unseen persisted messages without duplicating local bubbles', () => {
     const current = [message(1, 'message:10', 'hello')]
     const merged = mergeSessionMessageDelta(current, [
@@ -162,7 +172,6 @@ describe('mergeSessionMessageDelta', () => {
 describe('session message refresh', () => {
   beforeEach(() => {
     vi.mocked(agentApi.getMessages).mockReset()
-    vi.mocked(agentApi.getMessagesBefore).mockReset()
   })
 
   it('原位更新的检查点与自增消息增量一起校准', async () => {
@@ -182,7 +191,7 @@ describe('session message refresh', () => {
 
     await sync.refresh(12)
 
-    expect(agentApi.getMessages).toHaveBeenCalledWith('12', 40, 200)
+    expect(agentApi.getMessages).toHaveBeenCalledWith(12, { afterId: 40, limit: 200 })
     expect(messages.value.map(item => item.text)).toEqual(['already shown', 'new'])
     expect(messages.value[1]._syncKey).toBe('message:41')
     expect(messages.value[0].runOutcome?.status).toBe('interrupted')
@@ -211,7 +220,7 @@ describe('search result message loading', () => {
       ...message(1, 'message:500', 'latest'), dbId: 500,
       _createdAt: '2026-09-02T00:00:00Z', _timelineOrder: 500000,
     }])
-    vi.mocked(agentApi.getMessagesBefore).mockResolvedValue({
+    vi.mocked(agentApi.getMessages).mockResolvedValue({
       messages: [{ id: 17, role: 'user', content: 'older hit', createdAt: '2026-09-01T00:00:00Z' }],
       timelineEvents: [],
     } as any)
@@ -225,14 +234,14 @@ describe('search result message loading', () => {
     })
 
     expect(found).toBe(true)
-    expect(agentApi.getMessagesBefore).toHaveBeenCalledWith('12', 18, 200)
+    expect(agentApi.getMessages).toHaveBeenCalledWith(12, { throughId: 17, limit: 200 })
     expect(messages.value.map(item => item.dbId)).toEqual([17, 500])
     expect(messages.value.find(item => item.dbId === 17)?.text).toBe('older hit')
   })
 
   it('does not claim a search hit was loaded when it is outside the owned session page', async () => {
     const messages = ref<ChatMessage[]>([])
-    vi.mocked(agentApi.getMessagesBefore).mockResolvedValue({ messages: [], timelineEvents: [] } as any)
+    vi.mocked(agentApi.getMessages).mockResolvedValue({ messages: [], timelineEvents: [] } as any)
 
     const found = await ensureSessionMessageLoaded({
       sessionId: 12,
@@ -249,7 +258,7 @@ describe('search result message loading', () => {
   it('discards a history page if the user switches sessions before it returns', async () => {
     const messages = ref<ChatMessage[]>([])
     let finish!: (value: any) => void
-    vi.mocked(agentApi.getMessagesBefore).mockReturnValue(new Promise(resolve => { finish = resolve }) as any)
+    vi.mocked(agentApi.getMessages).mockReturnValue(new Promise(resolve => { finish = resolve }) as any)
     const activeSession = ref(12)
     const loading = ensureSessionMessageLoaded({
       sessionId: 12,

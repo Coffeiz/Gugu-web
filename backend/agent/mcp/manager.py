@@ -884,6 +884,9 @@ class McpToolManager:
             }
             if query_params:
                 client_kwargs["query_params"] = query_params
+            from agent.mcp.github.compat import GithubCopilotMcpClient, is_github_copilot_endpoint
+            if is_github_copilot_endpoint(endpoint):
+                return GithubCopilotMcpClient(endpoint, **client_kwargs)
             return McpClient(endpoint, **client_kwargs)
         from app.db import session as db_session
         from app.services.workspaces import resolve_sandbox_root

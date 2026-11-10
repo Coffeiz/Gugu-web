@@ -1,4 +1,4 @@
-"""离线 RAG 质量诊断的参考融合实现；线上检索统一由 TS worker 执行。"""
+"""RAG 混合检索与向量融合实现。"""
 from __future__ import annotations
 
 from agent.rag.models import IndexDocument, RecallResult

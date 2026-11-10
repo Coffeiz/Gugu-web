@@ -1265,22 +1265,11 @@ async def _compact_reflection_snapshot(
         return snapshot, "not_needed"
     from agent.context import compress_conv
 
-    reflection_delta = json.dumps(
-        [
-            {
-                "user_msg": turn.get("user_msg", ""),
-                "assistant_reply": turn.get("assistant_reply", ""),
-            }
-            for turn in turns
-        ],
-        ensure_ascii=False,
-    )
     status = await compress_conv.compact_for_reflection(
         int(session_id),
         user_id,
         settings,
         snapshot=snapshot,
-        extra_text=reflection_delta,
         model_cfg=model_cfg,
     )
     if status != "compacted":

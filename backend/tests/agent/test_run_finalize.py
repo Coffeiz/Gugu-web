@@ -35,6 +35,45 @@ class _Db:
         return None
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_anthropic", [True, False])
+async def test_user_image_history_replays_the_same_provider_message(db, user_a, use_anthropic):
+    from agent.chat.attachments import build_user_content
+    from agent.context.message_area_repository import commit_delta, restore_entries
+    from agent.context.history import render_canonical_area_snapshot
+
+    session = ConversationSession(user_id=user_a.id, title="图片回放", source="qq")
+    db.add(session)
+    await db.flush()
+    row_session_id = session.id
+    row = ConversationMessage(session_id=row_session_id, role="user", content="看这张图")
+    db.add(row)
+    await db.flush()
+    area = MessageArea()
+    content = build_user_content("看这张图", [{"media_type": "image/png", "b64": "AA=="}], use_anthropic)
+    batch, _ = assemble_turn(
+        current_user={"role": "user", "content": content},
+        message_time="2026-11-08 03:44",
+    )
+    batch.update_area_entry("current_user", persisted_message_id=row.id)
+    area.append_batch(batch)
+    options = {"api_format": "anthropic" if use_anthropic else "openai", "allow_tool_images": True}
+    original = render_canonical_area_snapshot(area.snapshot(), options=options).to_messages()
+    await commit_delta(
+        db, session_id=session.id, delta=area.persistence_delta(outcome="success"),
+        run_id=None, default_round_id=None, user_message=row, interrupted=False,
+        area_entries=area.entries,
+    )
+    await db.commit()
+    db.expire_all()
+    restored = restore_entries(await load_session_history(db, row_session_id))
+    assert render_canonical_area_snapshot(restored.snapshot(), options=options).to_messages() == original
+    assert "AA==" in str(original)
+    options["allow_tool_images"] = False
+    assert "AA==" not in str(render_canonical_area_snapshot(restored.snapshot(), options=options).to_messages())
+
+
+
 class _DbContext:
     def __init__(self, db):
         self.db = db
@@ -420,12 +459,6 @@ async def test_finalize_run_reuses_run_summary_for_baseline(monkeypatch):
     }]
 
 
-def _summary_model(**overrides):
-    values = {"model": "test-model", "provider": "test", "context_tokens": 80000, "max_tokens": 4000}
-    values.update(overrides)
-    return SimpleNamespace(**values)
-
-
 def test_run_summary_reuse_excludes_merged_current_user_block():
     """摘要与当前用户请求合并为文本块时，只复用摘要正文。"""
     from agent.context.run_finalize import _run_compaction_summary
@@ -435,7 +468,7 @@ def test_run_summary_reuse_excludes_merged_current_user_block():
         {"type": "text", "text": format_compacted_summary("已完成设计")},
         {"type": "text", "text": "现在开始开发"},
     ]}]
-    assert _run_compaction_summary(messages, _summary_model(), 321) == "已完成设计"
+    assert _run_compaction_summary(messages, 321) == "已完成设计"
 
 
 def test_run_compaction_summary_requires_summary_shaped_candidate():
@@ -443,14 +476,13 @@ def test_run_compaction_summary_requires_summary_shaped_candidate():
     from agent.context.run_finalize import _run_compaction_summary
     from agent.context.summary_format import format_compacted_summary
 
-    model = _summary_model()
     assert _run_compaction_summary(
         [{"role": "user", "content": "帮我看下 <compacted-summary> 是什么格式"}],
-        model, 321,
+        321,
     ) is None
     assert _run_compaction_summary(
         [{"role": "user", "content": format_compacted_summary("正文")}],
-        model, 321,
+        321,
     ) == "正文"
     # 多次压缩取最后一条（最新一版已把上一版滚动合并进去）。
     assert _run_compaction_summary(
@@ -459,24 +491,18 @@ def test_run_compaction_summary_requires_summary_shaped_candidate():
             {"role": "assistant", "content": "…"},
             {"role": "user", "content": format_compacted_summary("新版")},
         ],
-        model, 321,
+        321,
     ) == "新版"
 
 
 def test_run_compaction_summary_falls_back_without_reusable_candidate():
-    """缺少摘要、缺少本轮消息 id、或预算不可解析时都必须退回旧路径。"""
+    """缺少摘要或缺少本轮消息 id 时都必须退回旧路径。"""
     from agent.context.run_finalize import _run_compaction_summary
     from agent.context.summary_format import format_compacted_summary
 
     wrapped = format_compacted_summary("正文")
-    assert _run_compaction_summary([{"role": "user", "content": wrapped}], _summary_model(), None) is None
-    assert _run_compaction_summary([{"role": "assistant", "content": "无摘要"}], _summary_model(), 321) is None
-    assert _run_compaction_summary([{"role": "user", "content": wrapped}], SimpleNamespace(), 321) is None
-    # 摘要超过输出预算时同样不复用，避免把超限文本写进持久 baseline。
-    assert _run_compaction_summary(
-        [{"role": "user", "content": format_compacted_summary("细节" * 5000)}],
-        _summary_model(max_tokens=16), 321,
-    ) is None
+    assert _run_compaction_summary([{"role": "user", "content": wrapped}], None) is None
+    assert _run_compaction_summary([{"role": "assistant", "content": "无摘要"}], 321) is None
 
 
 @pytest.mark.asyncio
@@ -855,7 +881,7 @@ async def test_synthetic_tool_round_survives_canonical_persistence_and_restore(
     arguments = {"max_results": 3, "query": "合成查询", "options": {"z": 1, "a": 2}}
     call = NormalizedToolCall(
         id="call-synthetic-order",
-        name="xng_search",
+        name="web_search",
         input=arguments,
         raw_arguments=json.dumps(arguments, ensure_ascii=False, separators=(",", ":")),
     )

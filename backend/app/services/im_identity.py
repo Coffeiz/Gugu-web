@@ -15,9 +15,9 @@ from app.core.config import get_settings
 from app.core.tz import now_utc
 from app.models import UserBot
 
-DEFAULT_GROUP_ALLOWED_TOOLS: List[str] = ["xng_search", "http_get", "similar_image_search", "read_file", "send_file", "group_context_search"]
+DEFAULT_GROUP_ALLOWED_TOOLS: List[str] = ["web_search", "http_get", "similar_image_search", "read_file", "send_file", "group_context_search"]
 GROUP_ALLOWED_TOOLS = frozenset({
-    "xng_search", "web_search", "http_get", "similar_image_search",
+    "web_search", "http_get", "similar_image_search",
     "read_file", "send_file", "group_context_search",
 })
 
@@ -28,8 +28,6 @@ def normalize_group_allowed_tools(configured: object) -> List[str]:
         return list(DEFAULT_GROUP_ALLOWED_TOOLS)
     allowed = [name for name in configured if isinstance(name, str) and name in GROUP_ALLOWED_TOOLS]
     allowed = list(dict.fromkeys(allowed))
-    if "xng_search" in allowed and "http_get" not in allowed:
-        allowed.insert(allowed.index("xng_search") + 1, "http_get")
     if "web_search" in allowed and "http_get" not in allowed:
         allowed.insert(allowed.index("web_search") + 1, "http_get")
     # 图片读取是搜图能力的子能力；read_file 仍会按群成员身份限制为图片。

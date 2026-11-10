@@ -16,7 +16,7 @@ from .state import (
     record_context_layout, record_tool_schema_error,
 )
 from .utils import (
-    _classify_followup, _code_ref, _estimate_tokens, _extract_last_user,
+    _classify_followup, _code_ref, _extract_last_user,
     _jsonable, _prompt_digest, _round_result, _system_message_text,
     _cache_diagnostics, provider_message_rows,
 )
@@ -197,7 +197,6 @@ def _skill_result_metadata(value: Any) -> dict[str, Any]:
         "skill": skill_id,
         "content_chars": len(body),
         "content_digest": hashlib.sha256(body.encode("utf-8")).hexdigest()[:16],
-        "content_tokens_estimate": _estimate_tokens(body),
         "source": str((payload.get("_capability_usage") or {}).get("source") or "builtin"),
         "owner_fingerprint": str((payload.get("_capability_usage") or {}).get("owner_fingerprint") or ""),
     }
@@ -263,7 +262,6 @@ def ensure_hooks() -> None:
                     out = run.span(
                         "output", "Final response", {"source": "genstream.publish"},
                         code=_code_ref(original_publish),
-                        token_impact={"output_tokens_estimate": _estimate_tokens(run.output_text)},
                     )
                     out.finish({"text": run.output_text})
                     # IM 的 done 只代表模型生成结束，平台投递仍在
@@ -298,7 +296,6 @@ def ensure_hooks() -> None:
         span = run.span(
             "tool", str(name), {"arguments": _trace_tool_input(str(name), args)},
             code=_code_ref(handler or original_dispatch),
-            token_impact={"argument_tokens": _estimate_tokens(args)},
             **_tool_trace_attributes(tool, str(name)),
         ) if run else None
         try:
@@ -323,7 +320,6 @@ def ensure_hooks() -> None:
                         arguments=args,
                         parent_span_id=run.spans[-2].id if run and len(run.spans) >= 2 else None,
                     )
-                span.token_impact["result_tokens"] = _estimate_tokens(tool_result)
                 span.finish(
                     {"result": _jsonable(tool_result), "artifact": _jsonable(artifact)},
                     status="error" if isinstance(recovery, dict) and recovery.get("needed") is True else "success",
@@ -336,9 +332,6 @@ def ensure_hooks() -> None:
                             "Skill context injected",
                             metadata,
                             code=_code_ref(handler or original_dispatch),
-                            token_impact={
-                                "included_tokens": metadata.get("content_tokens_estimate", 0),
-                            },
                             context_source="skill_body",
                             skill=metadata.get("skill", ""),
                             action="loaded",
@@ -388,7 +381,6 @@ def ensure_hooks() -> None:
         active_round_driver = driver
         active_round_callable = original_round
         round_index = 0
-        previous_prompt_estimate = 0
         tool_schema_context_recorded = False
         capability_context_recorded = False
         previous_round_messages = None
@@ -403,7 +395,6 @@ def ensure_hooks() -> None:
         system_assembly = {
             "location": system_location,
             "digest": _prompt_digest(effective_system),
-            "tokens_estimate": _estimate_tokens(effective_system),
             "source": "context.system_prompt" if plain_system else "context.messages[0]",
         }
         if run:
@@ -421,9 +412,6 @@ def ensure_hooks() -> None:
             })
             from .state import _queue_snapshot
             _queue_snapshot(run, force=True)
-            model_name = str(getattr(ai, "model", "") or "")
-            system_est = _estimate_tokens(plain_system, model_name)
-            messages_est = _estimate_tokens(messages, model_name)
             from agent.run.preparation import prepare_agent_run
 
             preparation_span = run.span(
@@ -452,9 +440,6 @@ def ensure_hooks() -> None:
                 parent_span_id=preparation_span.id,
                 code=_code_ref(original_builder_build),
                 token_impact={
-                    "system_tokens_estimate": system_est,
-                    "messages_tokens_estimate": messages_est,
-                    "estimated_input_tokens": system_est + messages_est,
                 },
                 note="Full application-visible prompt, snapshot, and history at loop entry",
             )
@@ -511,15 +496,15 @@ def ensure_hooks() -> None:
                 {"messages": _trace_conversation_messages(messages, system_location)},
                 parent_span_id=ctx_span.id,
                 code=_code_ref(original_run_loop),
-                token_impact={"included_tokens": messages_est},
             )
             history.finish({"message_count": len(provider_message_rows(messages))})
 
         async def traced_round(client, ctx, round_messages, stream_round=None):
+            nonlocal round_index, tool_schema_context_recorded, capability_context_recorded
+            nonlocal previous_round_messages, previous_cache_round
             # stream_round 由 core 注入（PRD-LLM-25）：转发给被包裹的原 run_round。
             round_driver = active_round_driver
             round_callable = active_round_callable
-            nonlocal round_index, previous_prompt_estimate, tool_schema_context_recorded, capability_context_recorded, previous_round_messages, previous_cache_round
             round_index += 1
             round_started_at = _now()
             # LoopScope 的 round input、cache digest 和上一轮对比都必须基于
@@ -558,11 +543,6 @@ def ensure_hooks() -> None:
             round_snapshot = _trace_snapshot(round_wire_messages)
             round_system = effective_system
             model_name = str(getattr(ai, "model", "") or "")
-            round_prompt_est = (
-                _estimate_tokens(round_visible_messages, model_name)
-                + _estimate_tokens(round_system, model_name)
-            )
-            growth = max(round_prompt_est - previous_prompt_estimate, 0) if previous_prompt_estimate else 0
             cache_diag = _cache_diagnostics(
                 round_wire_messages, ctx, model_name,
             )
@@ -607,7 +587,6 @@ def ensure_hooks() -> None:
                 # 观测应反映 provider 实际收到的 Schema 数量，不因选择元数据缺失显示为 0。
                 if not selected_tool_names:
                     selected_tool_names = _tool_names_from_schemas(getattr(ctx, "tools", None))
-                schema_tokens = int(cache_diag.get("tool_schema_tokens_estimate", 0) or 0)
                 schema_bytes = int(cache_diag.get("tool_schema_bytes", 0) or 0)
                 mcp_tool_names = [name for name in selected_tool_names if name.startswith("mcp_")]
                 tool_context = run.span(
@@ -622,17 +601,12 @@ def ensure_hooks() -> None:
                     },
                     parent_span_id=ctx_span.id,
                     code=_code_ref(round_callable),
-                    token_impact={
-                        "included_tokens": schema_tokens,
-                        "estimate_source": "loopscope_tokenizer",
-                    },
                     context_source="tool_schema",
                     api_format=getattr(round_driver, "api_format", ""),
                 )
                 tool_context.finish({
                     "tool_count": cache_diag.get("tool_count", 0),
                     "schema_bytes": schema_bytes,
-                    "schema_tokens_estimate": schema_tokens,
                 })
             if run and not capability_context_recorded:
                 capability_context_recorded = True
@@ -679,17 +653,10 @@ def ensure_hooks() -> None:
                     },
                 },
                 code=_code_ref(round_callable),
-                token_impact={
-                    "prompt_tokens_estimate": round_prompt_est,
-                    "prompt_growth_estimate": growth,
-                    "tool_schema_tokens_estimate": cache_diag.get("tool_schema_tokens_estimate", 0),
-                    "stable_prefix_tokens_estimate": cache_diag.get("stable_prefix_tokens_estimate", 0),
-                },
                 round=round_index,
                 provider=getattr(ai, "provider", ""),
                 model=getattr(ai, "model", ""),
             ) if run else None
-            previous_prompt_estimate = round_prompt_est
             # 下一轮诊断的 previous_messages 必须保存同一 provider projection，
             # 不能保存未渲染的 canonical MessageArea。
             previous_round_messages = round_wire_messages
@@ -718,14 +685,10 @@ def ensure_hooks() -> None:
                                         parent_span_id=span.id,
                                     )
                             span.usage = _jsonable(details.get("usage") or {})
-                            # 估算值用于请求开始前的可视化；LLM 返回后补上供应商实际口径，
-                            # 避免 LoopScope 把本地估算误看成 provider prompt token。
                             provider_input = span.usage.get("input")
                             if isinstance(provider_input, (int, float)) and provider_input > 0:
                                 span.token_impact["prompt_tokens_actual"] = int(provider_input)
                                 span.token_impact["prompt_tokens_source"] = "provider"
-                            else:
-                                span.token_impact["prompt_tokens_source"] = "estimate"
                             span.finish(details)
                             run.add_usage(span.usage)
                             record_adapter_result(run, "success")
@@ -806,7 +769,6 @@ def ensure_hooks() -> None:
                         transition = run.span(
                             "guard", _classify_followup(prompt), {"followup_prompt": prompt},
                             code=_code_ref(original_run_loop),
-                            token_impact={"followup_tokens": _estimate_tokens(prompt)},
                         )
                     else:
                         transition = run.span(

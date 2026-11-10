@@ -53,7 +53,10 @@ def qq_reply_transport(monkeypatch):
                 })
             seen.add(key)
         delivered.append((path, body))
-        return {"stream_msg_id": f"synthetic-stream-{len(seen)}"}
+        return {
+            "id": f"synthetic-message-{len(seen)}",
+            "stream_msg_id": f"synthetic-stream-{len(seen)}",
+        }
 
     monkeypatch.setattr(outbound.R, "get_redis", lambda: redis)
     monkeypatch.setattr(outbound, "_qq_request", request)

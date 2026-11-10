@@ -1,4 +1,5 @@
 FROM node:latest
+ENV NODE_OPTIONS=--use-bundled-ca
 WORKDIR /app
 RUN npm install --global pnpm@10.15.0
 # better-sqlite3 没有适配当前 Node ABI 时需要在镜像内编译原生 binding。

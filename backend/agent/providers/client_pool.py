@@ -167,3 +167,13 @@ def config_key(kind: str, *, base_url: str, api_key: str, headers: dict[str, str
 
 
 provider_client_pool = ProviderClientPool()
+
+
+async def preload_provider_sdks() -> None:
+    """启动时加载两种 SDK 及客户端依赖，不发送网络请求或读取用户凭据。"""
+    from anthropic import AsyncAnthropic
+    from openai import AsyncOpenAI
+
+    for client_type in (AsyncAnthropic, AsyncOpenAI):
+        client = client_type(api_key="startup-placeholder", max_retries=0)
+        await client.close()

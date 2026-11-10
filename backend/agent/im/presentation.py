@@ -47,6 +47,42 @@ async def display_tool_event(
         await send_tool_event(payload, event)
 
 
+async def display_context_compaction(
+    payload: dict,
+    event: dict,
+    *,
+    tool_display_mode: str,
+    before_platform_event=None,
+) -> None:
+    """按 IM 工具状态偏好提示上下文压缩开始与生效。"""
+    if tool_display_mode == "off" or event.get("type") != "_context_compaction":
+        return
+    phase = event.get("phase")
+    if phase == "started":
+        text = "上下文较长，正在整理后继续处理。"
+    elif phase == "completed" and event.get("applied") is True:
+        text = "上下文整理完成。"
+    elif phase == "completed" and event.get("applied") is False:
+        text = "本次未能整理上下文，继续处理。"
+    else:
+        return
+    if before_platform_event is not None and not await before_platform_event(event):
+        return
+
+    from agent.im.replies import send_text
+    from app.core.redaction import diag_log
+
+    event_payload = {**payload, "_attention_delivery_role": "tool"}
+    if payload.get("platform") == "qq":
+        # 进度状态不能占用触发消息的被动回复机会。
+        event_payload["message_id"] = None
+    try:
+        await send_text(event_payload, text)
+    except Exception as exc:
+        # 状态提示失败不应中断压缩或当前 Agent Run。
+        diag_log("agent.im.context_compaction_display", exc)
+
+
 def _create_feishu_tool_summary(platform: str, chat_type: str | None, enabled: bool):
     if platform != "feishu" or not enabled:
         return None

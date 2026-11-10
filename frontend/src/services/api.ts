@@ -1026,22 +1026,24 @@ export const agentApi = {
   getUiLabels:     ()                  => get<{ thinking?: string[]; contextCompacting?: string[] }>('/agent/ui-labels'),
   getVoiceAvailability: ()             => get<{ available: boolean }>('/agent/voice-availability'),
   greeting:        (locale: SupportedLocale = getLocale()) => get<{ text?: string; enabled?: boolean }>(`/agent/greeting?locale=${encodeURIComponent(locale)}`), // 对话框默认问候（咕咕据近期记忆生成）
-  getMessages:     (sessionId: string, afterId?: number, limit?: number) => {
+  getMessages: (sessionId: string | number, page: {
+    beforeId?: number; afterId?: number; throughId?: number; runId?: string
+    limit?: number; restoreInteractions?: boolean
+  } = {}) => {
     const params = new URLSearchParams()
-    if (afterId != null) params.set('after_id', String(afterId))
-    if (limit != null) params.set('limit', String(limit))
+    if (page.beforeId != null) params.set('before_id', String(page.beforeId))
+    if (page.afterId != null) params.set('after_id', String(page.afterId))
+    if (page.throughId != null) params.set('through_id', String(page.throughId))
+    if (page.runId != null) params.set('run_id', page.runId)
+    if (page.limit != null) params.set('limit', String(page.limit))
+    if (page.restoreInteractions) params.set('restore_interactions', 'true')
     const query = params.toString()
     return get(`/agent/sessions/${sessionId}/messages${query ? `?${query}` : ''}`)
   },
-  getMessagesBefore: (sessionId: string, beforeId: number, limit = 200) =>
-    get(`/agent/sessions/${sessionId}/messages?before_id=${encodeURIComponent(String(beforeId))}&limit=${encodeURIComponent(String(limit))}`),
-  getRunMessages: (sessionId: number, runId: string) =>
-    get(`/agent/sessions/${sessionId}/messages?run_id=${encodeURIComponent(runId)}&limit=200`),
   getToolEventDetails: (sessionId: number, source: { kind: 'timeline'; messageId: number; index: number }) => {
     const params = new URLSearchParams({ source: 'timeline', message_id: String(source.messageId), timeline_index: String(source.index) })
     return get<{ toolInput?: unknown; toolResult?: unknown }>(`/agent/sessions/${sessionId}/tool-event-details?${params.toString()}`)
   },
-  listSessionInteractions: (sessionId: string) => get<{ items: Array<Record<string, any>> }>(`/agent/sessions/${sessionId}/interactions`),
   getInteractionSession: (promptId: number) => get<{ session_id: number }>(`/agent/interactions/${promptId}/session`),
   getPendingQueue: (queueId: string) => get<{ sessionId: number | null; items: Array<{ key: number; queue_id: string; session_id: number | null; claimed: boolean; text: string; attachments: any[]; references: any[] }> }>(`/agent/pending-queues/${encodeURIComponent(queueId)}`),
   listImportedDraftQueues: () => get<{ queues: Array<{ queue_id: string; items: Array<{ key: number; queue_id: string; session_id: null; claimed: boolean; text: string; attachments: any[]; references: any[] }> }> }>('/agent/pending-queues/imported-drafts'),

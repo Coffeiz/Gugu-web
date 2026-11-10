@@ -8,8 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tz import now_utc, resolve_tz
 from app.db.session import get_db
+from app.services.admin_analytics_metrics import (
+    enabled_bot_users_by_platform,
+    interaction_calls_by_source,
+)
 from app.models import (
-    User, Project, ConversationSession, AgentUsage, UserBot, FrontendEvent,
+    User, Project, ConversationSession, AgentUsage, FrontendEvent,
     CalendarEvent, File, ScheduledTask,
 )
 from onboarding.models import OnboardingState
@@ -117,10 +121,9 @@ async def get_summary(exclude_dev: bool = Query(False),
     )).scalar() or 0
 
     # ── IM Bot ────────────────────────────────────────────────────────────────
-    users_with_bot = (await db.execute(_xd(
-        select(func.count(distinct(UserBot.user_id))).where(UserBot.enabled == True),
-        UserBot.user_id, xd)
-    )).scalar() or 0
+    users_with_bot, bots_by_platform = await enabled_bot_users_by_platform(
+        db, exclude_dev=xd,
+    )
 
     # ── Agent 用量 ─────────────────────────────────────────────────────────────
     def _usage_stmt(where=None):
@@ -230,6 +233,7 @@ async def get_summary(exclude_dev: bool = Query(False),
         "im_bots": {
             "users_with_bot": users_with_bot,
             "adoption_rate":  round(users_with_bot / total_users, 4) if total_users else 0,
+            "users_by_platform": bots_by_platform,
         },
         "agent": {
             "total_calls":    all_row.calls     if all_row else 0,
@@ -284,6 +288,16 @@ async def get_trends(days: int = Query(default=30, ge=7, le=90),
     """), {"start": start_utc})).all()
     agent_map = {r.d: (r.calls, int(r.tokens)) for r in agent_rows}
 
+    # Agent 请求通过 session_id 归属来源；未关联会话的记录归入 other。
+    interaction_map = await interaction_calls_by_source(
+        db,
+        start_utc=start_utc,
+        timezone_sql=tz_expr,
+        exclude_dev=exclude_dev,
+        include_byok=include_byok,
+    )
+    interaction_sources = ("web", "qq", "feishu", "telegram", "wechat", "other")
+
     _u_dev = " AND NOT is_developer " if exclude_dev else ""
     user_rows = (await db.execute(text(f"""
         SELECT DATE(created_at AT TIME ZONE {tz_expr}) AS d, COUNT(*)::int AS cnt
@@ -331,6 +345,10 @@ async def get_trends(days: int = Query(default=30, ge=7, le=90),
         "labels":              labels,
         "agent_calls":         [agent_map.get(d, (0, 0))[0] for d in local_date_list],
         "agent_tokens":        [agent_map.get(d, (0, 0))[1] for d in local_date_list],
+        "interactions_by_source": {
+            source: [interaction_map.get((d, source), 0) for d in local_date_list]
+            for source in interaction_sources
+        },
         "user_registrations":  [user_map.get(d, 0) for d in local_date_list],
         "project_completions": [proj_map.get(d, 0) for d in local_date_list],
         "project_creations":   [proj_new_map.get(d, 0) for d in local_date_list],

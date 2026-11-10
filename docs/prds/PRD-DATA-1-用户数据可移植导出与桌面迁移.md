@@ -218,7 +218,7 @@ backend/tests/test_data_imports.py                 【新增】增量幂等、�
 backend/tests/test_data_export_archive.py          【新增】归档格式、关系闭合与 checksum 回归
 ```
 
-以当前代码所在的服务边界为准；不得在 `TS RAG worker` 实现公开导出 API，不得复制另一份 StorageBackend 或账户归属校验。Admin profile 以外的用户设置沿用现有 ProfileModal 和 pane 组合。数据库迁移通过 Alembic；前端使用现有 API 服务/Toast/ConfirmDialog 体系。
+以当前代码所在的服务边界为准；不得在 RAG 检索服务实现公开导出 API，不得复制另一份 StorageBackend 或账户归属校验。Admin profile 以外的用户设置沿用现有 ProfileModal 和 pane 组合。数据库迁移通过 Alembic；前端使用现有 API 服务/Toast/ConfirmDialog 体系。
 
 后续 Phase 6 基于当前实现边界迭代，不再新建一套导入/导出服务：
 

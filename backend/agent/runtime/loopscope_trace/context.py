@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .state import _now, record_context_source
-from .utils import _display_source_path, _estimate_tokens, _jsonable
+from .utils import _display_source_path, _jsonable
 
 def _loader_input(name: str, args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str, Any]:
     # db/session 本身不序列化；只留 user/query/limit/tz 等真正影响结果的参数。
@@ -37,7 +37,6 @@ def _wrap_context_loader(module: Any, name: str, kind: str, label: str) -> None:
             output=_jsonable(result),
             attributes={"loader": name, "rows": _loader_rows(result)},
             code_target=original,
-            source_value=result,
             started_at=start,
             ended_at=end,
         )
@@ -70,8 +69,6 @@ def record_shell_prompt_sources(dynamic_prompt: str, *, code_target: Any = None)
                 "role": "stable_protocol",
             },
             code_target=code_target,
-            source_value=stable_prompt,
-            included_value=stable_prompt,
         )
     if dynamic_prompt:
         record_context_source(
@@ -84,8 +81,6 @@ def record_shell_prompt_sources(dynamic_prompt: str, *, code_target: Any = None)
                 "role": "dynamic_permissions",
             },
             code_target=code_target,
-            source_value=dynamic_prompt,
-            included_value=dynamic_prompt,
         )
 
 
@@ -101,7 +96,6 @@ def _record_builder_sources(context_builder: Any, original_build: Any, bound: in
         events = args.get("events") or []
         files = args.get("files") or {}
         memory = args.get("memory") or {}
-        style_prefs = args.get("style_prefs") or {}
         skills = args.get("skills")
         source = args.get("source")
         im_channels = args.get("im_channels") or {}
@@ -144,8 +138,6 @@ def _record_builder_sources(context_builder: Any, original_build: Any, bound: in
                     output={"content": content},
                     attributes={"path": _prompt_file_path(path), "role": role},
                     code_target=original_build,
-                    source_value=content,
-                    included_value=content if role != "prompt_template" else None,
                     started_at=start,
                     ended_at=end,
                 )
@@ -170,7 +162,6 @@ def _record_builder_sources(context_builder: Any, original_build: Any, bound: in
                 output={"content": block},
                 attributes={"source": "projects", "rows": len(projects[:25])},
                 code_target=original_build,
-                included_value=block,
             )
 
         if include_calendar:
@@ -181,7 +172,6 @@ def _record_builder_sources(context_builder: Any, original_build: Any, bound: in
                 output={"content": block},
                 attributes={"source": "calendar", "rows": len(events[:10])},
                 code_target=original_build,
-                included_value=block,
             )
 
         if include_files:
@@ -194,7 +184,6 @@ def _record_builder_sources(context_builder: Any, original_build: Any, bound: in
                     output={"content": block},
                     attributes={"source": "files"},
                     code_target=original_build,
-                    included_value=block,
                 )
             except Exception:
                 pass
@@ -208,7 +197,6 @@ def _record_builder_sources(context_builder: Any, original_build: Any, bound: in
                     output={"content": mem_block},
                     attributes={"source": "memory", "assembled": True},
                     code_target=original_build,
-                    included_value=mem_block,
                 )
             except Exception:
                 pass
@@ -228,11 +216,9 @@ def _record_builder_sources(context_builder: Any, original_build: Any, bound: in
                         output={"content": value.strip()},
                         attributes={"memory_key": key, "component": True},
                         code_target=original_build,
-                        source_value=value.strip(),
                     )
 
         for label, fn, params in (
-            ("Reply style", getattr(context_builder, "_style_block", None), (style_prefs,)),
             ("Skill index", getattr(context_builder, "_skills_index_block", None), (skills,)),
             ("Conversation source", getattr(context_builder, "_source_block", None), (source, im_channels)),
         ):
@@ -268,7 +254,6 @@ def _record_builder_sources(context_builder: Any, original_build: Any, bound: in
                     output={"content": block},
                     attributes=attributes,
                     code_target=original_build,
-                    included_value=block,
                 )
 
         # build_split 已是唯一组装入口，直接记录其真实三段返回值。
@@ -286,7 +271,6 @@ def _record_builder_sources(context_builder: Any, original_build: Any, bound: in
                         output={"content": content},
                         attributes={"cache_role": role},
                         code_target=original_build,
-                        included_value=content,
                     )
     except Exception:
         pass

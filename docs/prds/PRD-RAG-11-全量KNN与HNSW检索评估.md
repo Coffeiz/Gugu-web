@@ -3,14 +3,14 @@
 > 状态：评估计划已定义，尚未执行；不包含生产检索路径变更
 > 创建：2026-10-13
 > 最近更新：2026-10-13
-> 关联模块：`backend/ts/workers/rag/src/index.ts`、`backend/agent/rag/README.md`、`backend/agent/memory/embedding.py`
+> 关联模块：`backend/agent/rag/cython_backend.py`、`backend/agent/rag/README.md`、`backend/agent/memory/embedding.py`
 > 背景参考：[`PRD-RAG-1`](./【已完成】PRD-RAG-1-统一知识召回与索引.md)、[`PRD-RAG-4`](./【已完成】PRD-RAG-4-召回评分过滤与质量控制.md)、[pgvector](https://github.com/pgvector/pgvector)、[USearch](https://github.com/unum-cloud/USearch)
 
 ## 0. 实际状态
 
 | 能力/结果 | 状态 | 说明 |
 |---|---|---|
-| BM25 候选后的精确余弦重排 | ✅ 已完成 | 当前 TS RAG 在 BM25 候选集合上计算精确向量相似度；这不是全语料精确 KNN。 |
+| BM25 候选后的精确余弦重排 | ✅ 已完成 | 当前 Python/Cython RAG 在 BM25 候选集合上计算精确向量相似度；这不是全语料精确 KNN。 |
 | 全语料精确 KNN 对照组 | 🔲 待评估 | 尚未验证其质量收益、查询成本和内存峰值。 |
 | HNSW 近似检索 | 🔲 待评估 | 尚未选定库，也未验证索引生命周期、隔离和资源开销。 |
 | 生产 RAG 检索链路切换 | 🔲 待评估 | 本文只定义评估方法，不授权或要求切换生产实现。 |
@@ -72,7 +72,7 @@ B 对目标授权语料中的全部有效向量做精确相似度计算。C 的 
 
 - **全量精确 KNN**：先在 worker 中对已授权、同模型空间的全部向量做精确计算，作为无近似误差基准；测量其 CPU、内存和查询耗时增长曲线。
 - **pgvector HNSW**：评估与现有 PostgreSQL 的运维整合、扩展可用性、索引构建/内存成本、维度约束以及过滤条件下的召回率和查询计划。
-- **进程内 HNSW 库（如 USearch）**：评估 TS worker 可用性、索引文件保存/加载、外部元数据过滤、增量删除、崩溃恢复和 worker 级内存占用。
+- **进程内 HNSW 库（如 USearch）**：评估 Cython 检索链的索引文件保存/加载、外部元数据过滤、增量删除、崩溃恢复和进程级内存占用。
 
 候选方案不得绕过现有 Python 所有权校验、TS Data Runtime 的数据读取边界或 RAG 最终 scope 校验。向量索引属于可重建的派生数据；权威来源和当前向量缓存继续按现有数据流维护，直到后续独立方案明确批准数据模型变更。
 

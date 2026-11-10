@@ -48,13 +48,13 @@ Open <http://localhost:9595>; the Admin interface is at <http://localhost:9595/a
 
 `Gugu-data` stores user data and runtime configuration; `Gugu-config` stores Admin configuration. Back up both directories and the database before upgrading. Pull the target image, stop the old container, and recreate the app with the original port and directory mappings. Database schema migrations run automatically at startup. Keep the data directories. For production, use a fixed version tag or digest.
 
-The image includes the complete site, embedded PostgreSQL/Redis, an internal Rootless Docker runtime, the sandbox manager, and the Shell execution image. Shell is enabled by default; no separate `sandboxd`, execution-image import, or host Docker socket mount is needed. SearXNG is not included, so web search is unavailable in single-container mode.
+The image includes the complete site, embedded PostgreSQL/Redis, an internal Rootless Docker runtime, the sandbox manager, and the Shell execution image. Shell is enabled by default; no separate `sandboxd`, execution-image import, or host Docker socket mount is needed. Web search is provided by the active model Provider.
 
 > **Security:** privileged mode increases host risk if the outer app container is compromised. Internal Rootless only isolates the Shell execution containers; it does not remove the host risk of the outer app. This mode is intended for trusted personal, single-user deployments—not multi-tenant, public-facing, or business servers.
 
 ## Optional: Compose with web search
 
-`docker-compose.yml` also uses the unified `coffeiz/gugu-web` app image and adds SearXNG for web search. It does not deploy an updater sidecar or mount the host Docker socket; the app runs Rootless Docker inside its privileged outer container.
+`docker-compose.yml` also uses the unified `coffeiz/gugu-web` app image. It does not deploy an updater sidecar or mount the host Docker socket; the app runs Rootless Docker inside its privileged outer container.
 
 To use this path, download the Compose file and environment template from GitHub, set `GUGU_DB_PASSWORD`, and start the stack:
 

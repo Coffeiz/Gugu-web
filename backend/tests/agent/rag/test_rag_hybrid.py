@@ -1,4 +1,4 @@
-"""离线 RAG 融合参考实现回归；线上统一查询由 TS worker 覆盖。"""
+"""Cython RAG 混合检索回归。"""
 from agent.rag.hybrid import hybrid_results
 from agent.rag.models import IndexDocument, RecallResult, Scope
 

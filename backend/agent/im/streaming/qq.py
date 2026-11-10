@@ -23,7 +23,7 @@ class _FinalDeliveryState:
 
 
 class QQToolEventBoundary:
-    """在独立工具消息发出前确认当前 QQ 文本流已结束。"""
+    """在独立平台状态消息发出前确认当前 QQ 文本流已结束。"""
 
     def __init__(self) -> None:
         self.sender: QQChartRound | None = None
@@ -36,7 +36,12 @@ class QQToolEventBoundary:
     async def before_platform_event(self, event: dict) -> bool:
         if self.error is not None:
             return False
-        if event.get("type") != "tool_call":
+        is_tool_call = event.get("type") == "tool_call"
+        is_compaction_start = (
+            event.get("type") == "_context_compaction"
+            and event.get("phase") == "started"
+        )
+        if not (is_tool_call or is_compaction_start):
             return True
         if self.sender is None:
             return True
@@ -542,6 +547,9 @@ async def _finish_qq_stream_run(sender, response, transport_error, fix_loose_bol
         from app.core.redaction import diag_log
 
         diag_log("agent.im.qq_stream_transport", transport_error)
+        if isinstance(transport_error, QQStreamPrefixMismatchError) and transport_error.closed_confirmed:
+            sender.payload["_qq_stream_closed_partial"] = True
+            return False, response, None
         if isinstance(transport_error, QQStreamFinalizationError):
             raise transport_error
     # 错误终态由 dispatch_finalization 作为普通消息发送。若把 response.text
@@ -549,11 +557,17 @@ async def _finish_qq_stream_run(sender, response, transport_error, fix_loose_bol
     stream_final_text = "" if response.errored else last_text
     try:
         stream_sent, last_text = await sender.finish_response(stream_final_text)
-    except QQStreamPrefixMismatchError:
+    except QQStreamPrefixMismatchError as exc:
         # 只有流已经成功关闭且尾部能与确认前缀对齐时，才补发未送达部分。
-        if sender.final_delivery.uncertain or not sender.segment_text:
+        if not exc.closed_confirmed:
             raise
+        if sender.final_delivery.uncertain or not sender.segment_text:
+            # 已关闭但无法可靠拼接正文；继续收尾附件，避免重发已见正文。
+            sender.payload["_qq_stream_closed_partial"] = True
+            return False, response, None
         sent = await sender.recover_after_stream_error()
+        if sender.final_delivery.uncertain:
+            sender.payload["_qq_stream_closed_partial"] = True
         return sent, response, None if sender.final_delivery.uncertain else last_text
     except QQStreamFinalizationError:
         # 可见前缀不代表流已关闭；不能回退后把该 Run 标记为成功送达。

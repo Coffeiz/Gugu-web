@@ -1,5 +1,5 @@
 [Unit]
-Description=Gugu RAG Sidecar Host (shared TS/Cython index workers)
+Description=Gugu Cython RAG Sidecar Host
 After=network.target
 Before=gugu-backend.service gugu-worker.service gugu-gateway.service
 StartLimitIntervalSec=60
@@ -11,12 +11,16 @@ Type=simple
 User=__RUN_USER__
 Group=__RUN_USER__
 TimeoutStopSec=25s
+# 首次 Cython 编译与预热可能较慢；为 120 秒 socket 就绪等待留出启动余量。
+TimeoutStartSec=130s
 # 以下路径由 start.sh install 按实际安装目录(APP_DIR)自动填入，勿手改占位符
 WorkingDirectory=__APP_DIR__
 Environment="PATH=__APP_DIR__/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-# socket 路径必须与后端的 search.ts_sidecar_socket 配置一致（start.sh install 会校验）
+# socket 路径必须与后端的 search.rag_sidecar_socket 配置一致（start.sh install 会校验）
 Environment="GUGU_RAG_SIDECAR_SOCKET=/run/user/__RUN_UID__/gugu-rag-sidecar.sock"
 ExecStart=__APP_DIR__/.venv/bin/python -m agent.rag.sidecar_host --socket /run/user/__RUN_UID__/gugu-rag-sidecar.sock
+# 依赖方只有在 Unix socket 可连接后才启动；单看 socket 文件会误认残留文件已就绪。
+ExecStartPost=__APP_DIR__/.venv/bin/python __APP_DIR__/scripts/wait_for_unix_socket.py --timeout 120 /run/user/__RUN_UID__/gugu-rag-sidecar.sock
 Restart=on-failure
 RestartSec=3
 
@@ -29,7 +33,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 # 运行时需要写的目标（必须真实存在，否则 systemd namespace 报 226）：
-# socket 目录 + 用户存储根（TS worker 写索引目录/读向量缓存）
+# socket 目录 + 用户存储根（Cython sidecar 写索引目录/读向量缓存）
 ReadWritePaths=__DATA_DIR__ __APP_DIR__/logs __APP_DIR__/var/rag-index /run/user/__RUN_UID__
 
 [Install]

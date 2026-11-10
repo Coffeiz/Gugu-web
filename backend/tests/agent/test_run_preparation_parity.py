@@ -7,6 +7,9 @@
 from __future__ import annotations
 
 import dataclasses
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -14,6 +17,96 @@ from agent.models import AgentRequest
 from agent.context import run_context
 from agent.context.assembly import MessageArea
 from agent.context.session_system import NON_STREAMING_BLOCK
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_anthropic", [True, False])
+async def test_early_persisted_group_image_reaches_model_in_original_position(
+    db, user_a, monkeypatch, use_anthropic,
+):
+    """复用早落库消息时，原图随所属群消息进入模型并能在下一轮回放。"""
+    from agent.context.session_history import load_session_history
+    from agent.context.tokens import message_text
+    from agent.im.inbound_recovery import pending_user_run_key
+    from agent.run import preparation
+    from agent.run.contract import PreparedExecution
+    from app.models import ConversationMessage, ConversationSession
+
+    group = ConversationSession(
+        user_id=user_a.id, title="合成群", source="qq",
+        bot_id="synthetic-bot", chat_id="synthetic-group", chat_type="group",
+    )
+    db.add(group)
+    await db.flush()
+    now = datetime(2026, 10, 1, 8, tzinfo=timezone.utc)
+    image_message = ConversationMessage(
+        session_id=group.id, role="user", content="请看这张图",
+        run_id=pending_user_run_key("1000-0"), chat_type="group",
+        created_at=now, sent_at=now,
+    )
+    later_reply = ConversationMessage(
+        session_id=group.id, role="assistant", content="上一轮稍后回复",
+        created_at=now + timedelta(seconds=1), sent_at=now + timedelta(seconds=1),
+    )
+    db.add_all([image_message, later_reply])
+    await db.commit()
+
+    model = preparation.get_settings().ai.model_copy(update={
+        "provider": "minimax" if use_anthropic else "openai",
+        "api_format": "anthropic" if use_anthropic else "openai",
+        "image": True,
+    })
+    monkeypatch.setattr(preparation, "resolve_run_config_for_user", AsyncMock(
+        return_value=SimpleNamespace(model=model, use_anthropic=use_anthropic),
+    ))
+    monkeypatch.setattr(preparation, "resolve_for_message", AsyncMock(return_value=(
+        "请看这张图",
+        [{"attach_id": "synthetic-image", "kind": "image", "ext": "png"}],
+        [{"media_type": "image/png", "b64": "AAAA"}],
+        [],
+    )))
+    monkeypatch.setattr("app.core.chat_attach.claim_attachments", AsyncMock())
+    monkeypatch.setattr(preparation, "load_mcp_tools_and_rag_context", AsyncMock(
+        return_value=([], {"tail": []}),
+    ))
+    monkeypatch.setattr(preparation, "prepare_run_capabilities", AsyncMock(
+        return_value=([], "测试规则", "", None),
+    ))
+
+    request = AgentRequest(
+        message=image_message.content, user_id=user_a.id, user_name="小北",
+        source="qq", chat_id=group.chat_id, platform_bot_id=group.bot_id,
+        session_id=group.id, early_message_ids=[image_message.id],
+        inbound_batch_key="a" * 64,
+        im_batch_messages=[{
+            "text": image_message.content, "chat_type": "group",
+            "early_id": image_message.id, "event_id": "1000-0",
+            "platform_sent_ms": int(now.timestamp() * 1000),
+            "attachments": ["synthetic-image"],
+        }],
+    )
+    execution = await preparation.prepare_agent_run(request, non_streaming=False)
+    assert isinstance(execution, PreparedExecution)
+    messages = execution.prepared.message_area.provider_projection().to_messages()
+    image_rows = [m for m in messages if "请看这张图" in message_text(m)]
+    assert len(image_rows) == 1
+    assert messages.index(image_rows[0]) < next(
+        i for i, m in enumerate(messages) if message_text(m) == "上一轮稍后回复"
+    )
+    image_type = "image" if use_anthropic else "image_url"
+    content = image_rows[0]["content"]
+    blocks = [b for b in content if b.get("type") == image_type] if isinstance(content, list) else []
+    assert len(blocks) == 1
+    if use_anthropic:
+        assert blocks[0]["source"]["data"] == "AAAA"
+    else:
+        assert blocks[0]["image_url"]["url"] == "data:image/png;base64,AAAA"
+
+    history = await load_session_history(db, group.id)
+    replay = run_context.build_history_parts(
+        history, request, use_anthropic=use_anthropic, allow_tool_images=True,
+    )
+    assert next(m for m in replay if "请看这张图" in message_text(m)) == image_rows[0]
 
 
 @pytest.mark.asyncio
