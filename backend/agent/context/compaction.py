@@ -1,6 +1,6 @@
 """上下文压缩模块。
 
-每个 provider round 返回后，实际输入达到 90% 时压缩较早 history；明确溢出时
+每个 provider round 返回后，实际输入达到 85% 时压缩较早 history；明确溢出时
 压缩并重试当前 round，避免用本地估算提前改变上下文。压力压缩也处理当前 run
 已完成的旧执行轮，保留用户最后原文及最近完整执行轮，其余旧 history
 一次生成摘要；只有 provider 明确报告上下文超限时，才先清空工具输入、
@@ -14,7 +14,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .tokens import content_text, message_text
-from .tokens import estimate_tokens
 from .audit import summary_change
 from .canonical_context import tool_call_ids, tool_result_ids
 from .retention import protected_unit_offset
@@ -57,7 +56,7 @@ def resolve_compaction_limits(model_cfg) -> CompactionLimits:
 
 
 def compaction_trigger_tokens(context_tokens: int) -> int:
-    """主对话实际输入达到上下文窗口的 90% 时触发压缩。"""
+    """主对话实际输入达到上下文窗口的 85% 时触发压缩。"""
     from .compress_conv import AUTO_COMPACTION_RATIO
 
     context = max(1, int(context_tokens or 0))
@@ -117,18 +116,18 @@ def _previous_summary_text(summary_msg):
     return unwrap_message_body_text(message_text(summary_msg))
 
 
+_EMERGENCY_SUMMARY_MAX_CHARS = 12_000
+
+
 def _deterministic_summary(
     content_list: list[str],
     previous: str | None,
-    *,
-    max_output_tokens: int,
 ) -> str:
     """Provider 不可用时生成有界的本地摘要，避免同一历史反复触发压缩。
 
     这是故障保护，不试图替代模型摘要：保留已有摘要、最早片段和最新片段，
     并严格限制大小。原始消息仍在数据库中，下一次正常加载可以继续恢复。
     """
-    budget = max(32, int(max_output_tokens))
     parts = []
     if previous and previous.strip():
         # previous 来自已持久化的 provider-facing 摘要，通常已经带统一包装；
@@ -142,11 +141,8 @@ def _deterministic_summary(
         if len(content_list) > 4:
             parts.append("……")
         parts.extend(unwrap_compacted_summary(item) for item in content_list[-2:])
-    text = "\n".join(parts).strip()
-    # 估算器对中文偏保守；逐步缩短，确保结果一定能通过同一校验。
-    while text and estimate_tokens(text) > budget:
-        text = text[:max(1, int(len(text) * 0.8))].rstrip()
-    return text
+    # 本地应急摘要仅受字符上限约束，不报告模型 token 用量。
+    return "\n".join(parts)[:_EMERGENCY_SUMMARY_MAX_CHARS].strip()
 
 
 async def compact_context(
@@ -174,7 +170,6 @@ async def compact_context(
         session_id,
         {"providerUsage": "required"},
     )
-    limits = resolve_compaction_limits(model_cfg)
     # 保留窗口是历史结构策略，不等同于摘要请求的输入预算。
 
     from agent.context.assembly.area import MessageArea
@@ -347,17 +342,13 @@ async def compact_context(
         compact_summary = _deterministic_summary(
             compressible_content,
             _previous_summary_text(summary_msg),
-            max_output_tokens=limits.output_tokens,
         )
         logger.warning(
             "[compaction] session=%s Provider 摘要不可用，使用本地有界摘要",
             session_id,
         )
 
-    summary_ok, summary_reason = validate_compact_summary(
-        compact_summary,
-        max_output_tokens=limits.output_tokens,
-    )
+    summary_ok, summary_reason = validate_compact_summary(compact_summary)
     if not summary_ok:
         logger.warning("[compaction] session=%s 摘要候选校验失败: %s", session_id, summary_reason)
         result = _result(messages, False, "summary_validation_failed", None)
@@ -568,8 +559,6 @@ def validate_compacted_shape(new_messages: list) -> tuple[bool, str]:
 
 def validate_compact_summary(
     summary: object,
-    *,
-    max_output_tokens: int,
 ) -> tuple[bool, str]:
     """校验模型返回的摘要候选，避免坏结果进入 inline history 或 baseline。
 
@@ -579,8 +568,6 @@ def validate_compact_summary(
     if not isinstance(summary, str) or not summary.strip():
         return False, "摘要为空"
     value = summary.strip()
-    if estimate_tokens(value) > max_output_tokens:
-        return False, "摘要超过模型输出预算"
     if SUMMARY_OPEN in value or SUMMARY_CLOSE in value:
         return False, "摘要包含外层包裹标记"
     if _APPEND_TASK_PREFACE.rstrip() in value or "只输出摘要正文，不要添加前缀或解释，也不要调用任何工具。" in value:
@@ -730,7 +717,7 @@ async def _generate_append_summary(
         logger.warning("[compaction] 追加式摘要生成失败: %s", type(exc).__name__)
         return ""
     if result.ok and _summary_output_exhausted(result, limits.output_tokens):
-        logger.warning("[compaction] 摘要输出达到 %d tokens 上限，拒绝不完整摘要", limits.output_tokens)
+        logger.warning("[compaction] 摘要被 Provider 截断或达到 %d tokens 上限，拒绝候选", limits.output_tokens)
         return ""
     if result.ok:
         return str(result.output or "").strip()
@@ -753,22 +740,18 @@ async def _generate_append_summary(
             logger.warning("[compaction] 省略工具参数后摘要生成失败: %s", type(exc).__name__)
             return ""
         if result.ok and _summary_output_exhausted(result, limits.output_tokens):
-            logger.warning("[compaction] 摘要输出达到 %d tokens 上限，拒绝不完整摘要", limits.output_tokens)
+            logger.warning("[compaction] 摘要被 Provider 截断或达到 %d tokens 上限，拒绝候选", limits.output_tokens)
             return ""
         if result.ok:
             return str(result.output or "").strip()
         if not getattr(result, "context_overflow", False):
             return ""
 
-    # 本地估算仅在 provider 已确认超限后用于决定应急裁切位置，不参与正常触发。
-    budget = max(1, limits.input_tokens - estimate_tokens(retry_delta)
-                 - estimate_tokens(append_system))
-    trimmed, dropped, removed_tokens = _trim_oldest_history(retry_history, budget)
+    trimmed, dropped = _trim_oldest_history(retry_history)
     if not dropped:
         logger.warning("[compaction] 输入超限且没有可裁切的旧历史")
         return ""
-    logger.warning("[compaction] 输入超限，裁切旧历史 %d 条，估算 %d tokens 后重试",
-                   dropped, removed_tokens)
+    logger.warning("[compaction] 输入超限，裁切最早的 %d 条旧消息后重试", dropped)
     try:
         trimmed_delta = (
             retry_delta + "\n\n注意：因输入超限，最旧的部分历史未随本次请求发送。"
@@ -782,7 +765,7 @@ async def _generate_append_summary(
         logger.warning("[compaction] 裁切后摘要生成失败: %s", type(exc).__name__)
         return ""
     if result.ok and _summary_output_exhausted(result, limits.output_tokens):
-        logger.warning("[compaction] 裁切后摘要输出达到 %d tokens 上限，拒绝不完整摘要",
+        logger.warning("[compaction] 裁切后摘要被 Provider 截断或达到 %d tokens 上限，拒绝候选",
                        limits.output_tokens)
         return ""
     return str(result.output or "").strip() if result.ok else ""
@@ -790,7 +773,13 @@ async def _generate_append_summary(
 
 def _summary_output_exhausted(result, output_limit: int) -> bool:
     usage = getattr(result, "provider_usage", None)
-    return isinstance(usage, dict) and int(usage.get("output") or 0) >= output_limit
+    if not isinstance(usage, dict):
+        return False
+    finish_reason = usage.get("finish_reason")
+    output = int(usage.get("output") or 0)
+    if finish_reason in {"length", "max_tokens", "incomplete"} or output > output_limit:
+        return True
+    return output == output_limit and finish_reason not in {"stop", "end_turn", "stop_sequence", "completed"}
 
 
 def _strip_tool_call_inputs(history) -> tuple[object, int]:
@@ -846,29 +835,21 @@ def _strip_tool_call_inputs(history) -> tuple[object, int]:
     return (source.with_messages(stripped), changed_calls) if source is not None else (stripped, changed_calls)
 
 
-def _trim_oldest_history(history, budget: int) -> tuple[object, int, int]:
-    """超限后按完整工具往返裁切旧消息，保留 system、已有摘要和最后单元。"""
+def _trim_oldest_history(history) -> tuple[object, int]:
+    """Provider 报超限后，移除一半可裁切的最早完整消息单元。"""
     from agent.context.provider_conversation import ProviderConversation
+
     source = history if isinstance(history, ProviderConversation) else None
     values = source.to_messages() if source is not None else history
-    units = _atomic_message_units(values)
-    total = sum(estimate_tokens(message_text(message)) for message in values)
-    # provider 已确认超限，至少去掉约一成旧历史，避免估算偏低后重试仍超限。
-    target = min(max(1, budget), max(1, int(total * 0.9)))
-    to_drop: set[int] = set()
-    for unit in units[:-1]:
-        if total <= target:
-            break
-        if any(
+    removable = [
+        unit for unit in _atomic_message_units(values)[:-1]
+        if not any(
             values[index].get("role") in {"system", "summary"}
             or SUMMARY_OPEN in message_text(values[index])
             or _is_system_injection(message_text(values[index]))
             for index in unit
-        ):
-            continue
-        to_drop.update(unit)
-        total -= sum(estimate_tokens(message_text(values[index])) for index in unit)
-    removed_tokens = sum(estimate_tokens(message_text(values[index])) for index in to_drop)
+        )
+    ]
+    to_drop = {index for unit in removable[:(len(removable) + 1) // 2] for index in unit}
     trimmed = [message for index, message in enumerate(values) if index not in to_drop]
-    return (source.with_messages(trimmed) if source is not None else trimmed,
-            len(to_drop), removed_tokens)
+    return (source.with_messages(trimmed) if source is not None else trimmed, len(to_drop))

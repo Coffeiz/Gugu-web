@@ -112,6 +112,16 @@ def describe_llm_error(
     params = {"tag": tag, "attempts": attempts}
     retried = f"已自动重试 {attempts} 次"
 
+    from agent.context.budget import is_context_overflow_error
+
+    if is_context_overflow_error(error) and not (minimax_details and minimax_details.context_overflow):
+        return LLMErrorPresentation(
+            code="provider_input_too_large",
+            message_key="chatUi.providerInputTooLarge",
+            message_params={"diagnostic_id": diagnostic_id},
+            text="这次发给模型的内容太长。请缩短消息、减少附件，或分段发送。",
+        )
+
     if provider_error and minimax_details is not None:
         error_type = minimax_details.error_type or "-"
         request_id = minimax_details.request_id or "-"

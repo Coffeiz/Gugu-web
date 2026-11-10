@@ -148,10 +148,9 @@ async def test_baidu_provider_classifies_auth_failure(monkeypatch):
 def test_search_tools_have_canonical_names_without_legacy_aliases():
     from agent.tools.base import registry
 
-    assert registry.get("xng_search") is not None
-    assert registry.get("similar_image_search") is not None
     assert registry.get("web_search") is not None
-    assert registry.get("web_search").handler is not registry.get("xng_search").handler
+    assert registry.get("deep_research") is not None
+    assert registry.get("similar_image_search") is not None
     assert registry.get("image_search") is None
     assert registry.get("search_similar_images") is None
 
@@ -162,12 +161,9 @@ def test_similar_image_tool_uses_reverse_image_handler():
     assert registry.get("similar_image_search").handler is search_tools._similar_image_search
 
 
-def test_xng_and_similar_image_schemas_have_distinct_contracts():
+def test_similar_image_schema_requires_an_image_source():
     from agent.tools.base import registry
 
-    xng_schema = registry.get("xng_search").input_schema
-    assert xng_schema["properties"]["mode"]["enum"] == ["web", "images", "both"]
-    assert xng_schema["required"] == ["query"]
     similar_schema = registry.get("similar_image_search").input_schema
     assert "query" not in similar_schema["properties"]
     assert "attach_id" in similar_schema["properties"]

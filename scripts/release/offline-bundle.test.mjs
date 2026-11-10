@@ -10,12 +10,11 @@ test('offline bundle builder saves only the app and optional integration images'
   assert.match(script, /--output/)
   assert.match(script, /docker save/)
   assert.match(script, /GUGU_WEB_IMAGE/)
-  assert.match(script, /GUGU_SEARCH_IMAGE/)
   assert.doesNotMatch(script, /SANDBOX|egress-proxy|sandbox-bundle-manifest/)
 
   const workflow = await readFile(new URL('../../.github/workflows/docker-release.yml', import.meta.url), 'utf8')
   const offlineJob = workflow.slice(workflow.indexOf('\n  offline-bundle:'))
-  assert.match(offlineJob, /--image coffeiz\/gugu-web:latest[\s\S]*--image searxng\/searxng:latest/)
+  assert.match(offlineJob, /--image coffeiz\/gugu-web:latest/)
   assert.doesNotMatch(offlineJob, /gugu-sandbox|ubuntu\/squid|sandbox-bundle-manifest/)
 })
 

@@ -20,6 +20,7 @@ from agent.runtime.cancellation import current_cancellation, RunCancellationRequ
 _log = logging.getLogger("agent.core")
 # 仅在实际用量达阈值或明确溢出后缩小保留窗口；普通历史恢复仍保留十轮。
 _PRESSURE_KEEP_ROUNDS = 1
+_COMPACTION_RETRY_GROWTH_TOKENS = 8000
 
 
 @dataclass
@@ -34,7 +35,7 @@ class ContextRuntime:
     run_start_index: int
     branch_tools: Any = None
     reasoning_state: Any = None
-    last_no_progress_length: int | None = None
+    failed_compaction_input: int | None = None
     provider_compacted: bool = False
     pending_event: dict[str, Any] | None = field(default=None, init=False)
 
@@ -152,7 +153,7 @@ class ContextRuntime:
                 protected_start_index,
                 protected_source_start,
             )
-        self.last_no_progress_length = None
+        self.failed_compaction_input = None
         if self.reasoning_state is not None:
             await self.reasoning_state.boundary_changed("baseline_changed")
         self.pending_event = {
@@ -168,8 +169,6 @@ class ContextRuntime:
         protected_from = self._protected_from()
         result = budget.enforce_provider_overflow_fallback(
             self.messages,
-            self.system_text or "",
-            getattr(self.ai, "context_tokens", 256000),
             protected_from=protected_from,
             protected_anchor_index=self.run_start_index,
         )
@@ -191,7 +190,7 @@ class ContextRuntime:
                 protected_start_index,
                 protected_source_start,
             )
-        self.last_no_progress_length = None
+        self.failed_compaction_input = None
         if self.reasoning_state is not None:
             await self.reasoning_state.boundary_changed("baseline_changed")
         self.pending_event = {
@@ -203,11 +202,14 @@ class ContextRuntime:
         return True
 
     def usage_compaction_due(self) -> bool:
-        conversation = self.messages.provider_projection().to_messages()
         return is_usage_compaction_due(
             run_context_usage=self.run_state.run_context_usage,
             context_tokens=int(getattr(self.ai, "context_tokens", 0) or 0),
-            no_progress=self.last_no_progress_length == len(conversation),
+            no_progress=(
+                self.failed_compaction_input is not None
+                and self.run_state.run_context_usage
+                < self.failed_compaction_input + _COMPACTION_RETRY_GROWTH_TOKENS
+            ),
         )
 
     async def compact_after_usage_threshold(self) -> bool:
@@ -216,8 +218,8 @@ class ContextRuntime:
             return False
         if await self.compact_now():
             return True
-        self.last_no_progress_length = len(self.messages.provider_projection())
-        _log.info("provider usage 达到 90%，本次摘要未应用，保留当前历史窗口")
+        self.failed_compaction_input = self.run_state.run_context_usage
+        _log.info("provider 实际用量达到自动压缩阈值，本次摘要未应用，保留当前历史窗口")
         return False
 
     def take_event(self) -> dict[str, Any] | None:

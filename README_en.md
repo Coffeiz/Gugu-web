@@ -160,7 +160,7 @@ Open <http://localhost:9595>; the Admin interface is at <http://localhost:9595/a
 
 `Gugu-data` stores user data and runtime configuration; `Gugu-config` stores Admin configuration. Keep both directories when upgrading or recreating the container. For production, replace `latest` with a fixed release tag.
 
-Shell runs through the Rootless Docker daemon and sandbox manager bundled in the image; do not mount the host Docker socket. The outer app container must run with `--privileged`. This mode is intended for trusted personal, single-user deployments, not multi-tenant, public-facing, or business servers. The single-container image does not include SearXNG, so web search is unavailable. For web search or Compose management, use the Compose path in the [quick deployment guide](docs/quick-deploy_en.md).
+Shell runs through the Rootless Docker daemon and sandbox manager bundled in the image; do not mount the host Docker socket. The outer app container must run with `--privileged`. This mode is intended for trusted personal, single-user deployments, not multi-tenant, public-facing, or business servers. Web search is provided by the active model Provider. See the [quick deployment guide](docs/quick-deploy_en.md) for Compose management.
 
 Split production Compose continues to use a separate Rootless `sandboxd`; for deployment boundaries, the Compose path, and NAS graphical setup, see the [quick deployment guide](docs/quick-deploy_en.md).
 
@@ -186,7 +186,7 @@ The README keeps configuration at index level. See the [Deployment Guide](docs/q
 | Database | Primary data storage, using PostgreSQL by default |
 | Redis | Messages, sessions, and Runtime state |
 | LLM / BYOK | Model providers and personal API keys |
-| Search | Bundled SearXNG web search and in-app search |
+| Search | Provider web search and in-app search |
 | Mail | Admin system SMTP and personal SMTP; proactive Agent email and scheduled-task reports; Admin templates, previews, test sends, and Chinese/Japanese/English update emails with subscription controls |
 | IM | QQ, WeChat, Feishu, and Telegram connections |
 | LoopScope | Agent traces and performance observability |

@@ -64,3 +64,13 @@ def test_request_size_errors_are_not_reported_as_context_overflow():
 
 def test_non_minimax_error_is_not_classified():
     assert minimax_error_details(ValueError("本地组装失败")) is None
+
+
+def test_minimax_request_size_error_gives_actionable_input_guidance():
+    from agent.errors import describe_llm_error
+
+    event = describe_llm_error(
+        _MiniMaxBadRequest("request entity too large (2013)", status_code=413),
+    ).as_event()
+    assert event["error_code"] == "provider_input_too_large"
+    assert "缩短消息" in event["detail"]

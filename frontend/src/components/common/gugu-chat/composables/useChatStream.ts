@@ -13,10 +13,10 @@ import type GuguChatComposer from '../GuguChatComposer.vue'
 import { createPendingQueueKey, getDraftPendingQueueId, getSessionPendingQueueId, setPendingQueueRecoveryNeeded } from './chatPendingQueueStorage'
 import { dispatchPendingQueueItem } from './chatPendingQueueDispatch'
 import {
+  mapSessionInteraction,
   mapSessionMessageDelta,
   mergeSessionMessageDelta,
   replaceRunHistory,
-  sortSessionTimelineMessages,
 } from './sessionMessageSync'
 
 interface StatusItem { kind: 'text' | 'dots' | 'hide'; label?: string }
@@ -489,9 +489,6 @@ export function useChatStream(options: {
         : messages.value.findIndex(item => item.id === aiMessageId)
       return aiIdx
     }
-    const sortLiveTimeline = () => {
-      sortSessionTimelineMessages(messages.value)
-    }
     // 当前看的还是本流的会话吗？切走后置 detached（之后切回靠 loadSession 干净重载，不半路重接）
     const live = () => {
       if (detached || viewGeneration !== options.getViewGeneration()) {
@@ -506,14 +503,30 @@ export function useChatStream(options: {
       return true
     }
 
+    let settledRunId: string | undefined
+    let sawStreamError = false
     async function settleHistory() {
-      if (!currentRunId || sid == null) return
+      if (!currentRunId || sid == null || currentRunId === settledRunId) return
       const finishingRun = currentRunId
       try {
-        const snapshot = await agentApi.getRunMessages(sid, finishingRun)
-        if (!live()) return
-        const timeline = mapSessionMessageDelta(snapshot, mkid, role => ({ role: role === 'assistant' ? 'ai' : role }))
+        const timeline: ChatMessage[] = []
+        let beforeId: number | undefined
+        const seenCursors = new Set<number>()
+        while (true) {
+          const snapshot = await agentApi.getMessages(sid, {
+            runId: finishingRun, limit: 200, ...(beforeId === undefined ? {} : { beforeId }),
+          })
+          if (!live()) return
+          timeline.push(...mapSessionMessageDelta(snapshot, mkid, role => ({ role: role === 'assistant' ? 'ai' : role })))
+          if (!snapshot.pagination?.hasMore) break
+          const next = snapshot.pagination.oldestId
+          if (typeof next !== 'number' || seenCursors.has(next)) return
+          seenCursors.add(next)
+          beforeId = next
+        }
+        if (!timeline.some(item => item.runId === finishingRun)) return
         messages.value = replaceRunHistory(messages.value, timeline, finishingRun)
+        settledRunId = finishingRun
       } catch {
         // 保留最后已知展示；重连最新窗口校准会重试，不把传输失败伪装成任务失败。
       }
@@ -594,7 +607,6 @@ export function useChatStream(options: {
               aiMessageId = messages.value.find(message => message._syncKey === `event:${item.eventId}`)?.id ?? null
               syncAiIndex()
             }
-            sortLiveTimeline()
             scheduleStreamScroll()
           } else if (evt.type === 'tool_done') {
             if (evt.name === 'present_file' && evt.status === 'success') {
@@ -617,39 +629,18 @@ export function useChatStream(options: {
               const existing = messages.value.find(item =>
                 item.role === 'interaction' && item.interaction?.promptId === promptId,
               )
-              if (existing?.interaction) {
-                // loadSession 先恢复历史、resumeStream 再收到快照时会命中这里；
-                // 合并而不是追加，避免刷新后同一个交互出现两张卡。
-                existing.runId = evt.core_run_id || currentRunId || existing.runId
-                existing.roundId = evt.round_id
-                existing.interaction.toolCallId = evt.tool_call_id ? String(evt.tool_call_id) : existing.interaction.toolCallId
-                existing.interaction.title = String(evt.title || existing.interaction.title || i18n.global.t('chatUi.confirmRequired'))
-                existing.interaction.body = String(evt.body || existing.interaction.body || '')
-                existing.interaction.expiresAt = evt.expires_at ? String(evt.expires_at) : existing.interaction.expiresAt
-                existing.interaction.allowTextInput = Boolean(evt.allow_text_input ?? existing.interaction.allowTextInput)
-                existing.interaction.customInputActive = Boolean(evt.custom_input_active ?? existing.interaction.customInputActive)
-                existing.interaction.taskPaused = Boolean(evt.task_paused ?? existing.interaction.taskPaused)
-                if (Array.isArray(evt.secret_fields)) existing.interaction.secretFields = evt.secret_fields
-                if (!existing.interaction.resolved) existing.interaction.options = evt.options
-              } else {
-                messages.value.push({
-                  id: mkid(), role: 'interaction', text: '', time: now(),
-                  _timelineOrder: nextTimelineOrder(),
-                  runId: evt.core_run_id || currentRunId || evt.run_id, roundId: evt.round_id || currentRoundId,
-                  interaction: {
-                    promptId, kind: String(evt.kind || 'confirm'),
-                    toolCallId: evt.tool_call_id ? String(evt.tool_call_id) : null,
-                    title: String(evt.title || i18n.global.t('chatUi.confirmRequired')), body: String(evt.body || ''),
-                    options: evt.options,
-                    allowTextInput: Boolean(evt.allow_text_input),
-                    customInputActive: Boolean(evt.custom_input_active),
-                    taskPaused: Boolean(evt.task_paused),
-                    secretFields: Array.isArray(evt.secret_fields) ? evt.secret_fields : undefined,
-                    expiresAt: evt.expires_at ? String(evt.expires_at) : undefined,
-                  },
-                })
-                sortLiveTimeline()
+              const card = mapSessionInteraction({
+                ...evt,
+                // 续看可能重放轮换前的按钮凭据；已经恢复的卡片保留当前凭据。
+                options: !onSessionId && existing?.interaction ? existing.interaction.options : evt.options,
+                run_id: evt.core_run_id || currentRunId || evt.run_id,
+                round_id: evt.round_id || currentRoundId,
+              }, mkid, existing)
+              if (card) {
+                card._timelineOrder ??= nextTimelineOrder()
+                messages.value = mergeSessionMessageDelta(messages.value, [card])
               }
+              if (!card || card.interaction?.resolved) continue
               options.setStatus({
                 kind: 'text',
                 label: evt.task_paused
@@ -720,7 +711,7 @@ export function useChatStream(options: {
             // 失败流也可能先于/替代 completed live 通知结束；刷新列表以收敛运行态。
             void options.fetchSessions()
             if (live()) {
-              await settleHistory()
+              sawStreamError = true
               options.clearStatus()
               playGuguSfx('error')
               if (evt.run_outcome && typeof evt.run_outcome === 'object') {
@@ -748,6 +739,7 @@ export function useChatStream(options: {
           }
         }
       }
+      if (sawStreamError && live()) await settleHistory()
     } finally {
       if (streamScrollRaf !== null) {
         window.cancelAnimationFrame(streamScrollRaf)
@@ -823,7 +815,7 @@ export function useChatStream(options: {
     const sid = controller ? sessionIdForRun(controller) : sessionId.value
     if (sid == null) return
     try {
-      const state = await agentApi.getMessages(String(sid)) as { active?: boolean }
+      const state = await agentApi.getSessionState(String(sid))
       if (expectedViewGeneration !== options.getViewGeneration()) return
       if (abortCtrl.value !== controller) return
       if ((controller ? sessionIdForRun(controller) : sessionId.value) !== sid) return

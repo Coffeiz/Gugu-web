@@ -26,6 +26,7 @@ from agent.media import gates
 from agent.media.images import image_ready
 from agent.context import builder, dynamic_tail, loaders, run_context, session_snapshot, session_history, session_system
 from agent.context.provider_history import clean_persisted_history, prepare_session
+from agent.context.references import prepend_reference_context
 from agent.core import LLMRunner
 from agent.capabilities.defaults import DEFAULT_PROMPT_NAME, SYSTEM_MEMORY_ENABLED, all_system_tool_names
 from agent.im.context_policy import IM_SOURCES, policy_for
@@ -709,6 +710,16 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
                     current_input["im_event_received_ms"] = row.im_event_received_ms
                     current_input["created_at"] = row.created_at
                     current_input["sent_at"] = row.sent_at
+                    if current_input["images"]:
+                        # 本批消息接下来会从历史原位回放；在重载前保存已解析的原生图片。
+                        content = build_user_content(
+                            current_input["text"], current_input["images"], run_config.use_anthropic,
+                            image_detail=model_cfg.image_detail,
+                        )
+                        row.provider_image_content = dynamic_tail.inline_message_time(
+                            prepend_reference_context(content, req.reference_context),
+                            dynamic_tail.message_time_reminder(dynamic_tail.message_timestamp(row), user_tz),
+                        )
         if user_message is None:
             user_message = ConversationMessage(session_id=session_id, role="user", content=req.message,
                                                files=attach_cards or None, quoted_text=getattr(req, "quoted_text", None),

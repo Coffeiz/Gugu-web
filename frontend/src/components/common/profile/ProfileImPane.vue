@@ -77,7 +77,7 @@ const groupAttentionOptions = [
   { key: 'autonomous', label: 'profileImUi.groupAttentionAutonomous' },
 ] as const
 const groupToolOptions = [
-  { key: 'xng_search', labelKey: 'webSearchTools', tools: ['xng_search', 'http_get', 'similar_image_search', 'read_file', 'send_file'] },
+  { key: 'web_tools', labelKey: 'webSearchTools', tools: ['web_search', 'http_get', 'similar_image_search', 'read_file', 'send_file'] },
   { key: 'web_search', labelKey: 'providerWebSearch', tools: ['web_search'] },
   { key: 'group_context_search', labelKey: 'groupContextSearch', tools: ['group_context_search'] },
 ] as const
@@ -304,7 +304,7 @@ function groupResponseMode(bot: Bot): string { return bot.group_response_mode ??
 function setGroupResponseMode(bot: Bot, mode: string) { void updateBotSetting(bot.id, { group_response_mode: mode }, '群聊回应方式设置失败') }
 function groupAttentionMode(bot: Bot): string { return bot.group_attention_mode ?? 'autonomous' }
 function setGroupAttentionMode(bot: Bot, mode: 'quiet' | 'natural' | 'active' | 'autonomous') { void updateBotSetting(bot.id, { group_attention_mode: mode }, '群聊参与度设置失败') }
-function groupTools(bot: Bot): string[] { return bot.group_allowed_tools ?? ['xng_search', 'http_get', 'similar_image_search', 'read_file', 'send_file', 'group_context_search'] }
+function groupTools(bot: Bot): string[] { return bot.group_allowed_tools ?? ['web_search', 'http_get', 'similar_image_search', 'read_file', 'send_file', 'group_context_search'] }
 function hasGroupTool(bot: Bot, option: (typeof groupToolOptions)[number]): boolean { return option.tools.every(t => groupTools(bot).includes(t)) }
 function toggleGroupTool(bot: Bot, option: (typeof groupToolOptions)[number]) {
   const current = botById(bot.id)

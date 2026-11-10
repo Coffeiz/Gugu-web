@@ -189,7 +189,7 @@ backend/
 | 表 | 用途 |
 |------|------|
 | `AgentUsage` | 每次 Agent 调用记一行：`tokens_in/out`、`model`、`provider`、`tools_used`（JSON），配额统计用 |
-| `SearchUsage` | 深度研究 Provider 用量计数，`web_search`（自建 SearXNG）不计配额 |
+| `SearchUsage` | 深度研究 Provider 用量计数 |
 | `UserBot` | 用户自带 IM 机器人凭据（BYO），目前用于 QQ（`platform=qq`） |
 | `AuditLog` | 管理员操作审计 |
 | `SystemLog` | 系统级错误/警告日志 |
@@ -268,7 +268,7 @@ GET    /api/v1/admin/config
 PATCH  /api/v1/admin/config                    热更新，写入 config.override.json，无需重启
 POST   /api/v1/admin/config/init-db
 POST   /api/v1/admin/config/test-connection    测试 DB / OSS 连通性
-POST   /api/v1/admin/config/test-search        测试 SearXNG / 深度研究 Provider / 相似图搜索
+POST   /api/v1/admin/config/test-search        测试深度研究 Provider / 相似图搜索
 POST   /api/v1/admin/config/test-smtp
 GET    /api/v1/admin/config/reconcile-storage         存储↔DB 对账（只读），见 STORAGE.md §十
 POST   /api/v1/admin/config/reconcile-storage/repair  对账修复
@@ -325,7 +325,7 @@ canonical tool history / interaction event / output
 | `agent` | Agent 行为：记忆开关、Reflection 阈值、worker 并发数、对话压缩开关等 |
 | `capabilities` / Agent 配置 | Tool/Skill 注册、按需能力、交互展示、模型与本地能力覆盖等 Admin 配置 |
 | `quota` | 全局默认配额上限（Token / 存储 / 搜索次数），None=不限 |
-| `search` | 外部研究/搜索 Provider 与 API Key + SearXNG 地址与引擎列表；百度 Provider 使用普通百度搜索 API |
+| `search` | 外部研究/搜索 Provider 与 API Key；百度 Provider 使用普通百度搜索 API |
 | `smtp` | 邮件发送配置（反馈通知、密码重置） |
 | `state_labels` | 对话中"状态指示"文案的自定义覆盖 |
 

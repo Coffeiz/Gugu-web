@@ -173,7 +173,7 @@ def test_compose_deployment_modes_match_embedded_rootless_and_external_contracts
     assert "egress-proxy" not in integrated_services
     assert "sandbox_socket" not in integrated.get("volumes", {})
 
-    assert set(offline["services"]) == {"app", "searxng"}
+    assert set(offline["services"]) == {"app"}
     assert "sandboxd" not in offline["services"]
     assert "egress-proxy" not in offline["services"]
 

@@ -241,24 +241,32 @@ async def test_set_stages_replaces_whole_list(db, user_a):
     assert [stage["label"] for stage in detail["stages"]] == result["stages"]
 
 
-async def test_set_stages_reorder_preserves_keys_and_current_stage(db, user_a):
+async def test_set_stages_reorder_preserves_stage_and_todo_identity(db, user_a):
     created = await _create(db, user_a.id, "保留阶段身份项目", stages=[
-        {"label": "准备"}, {"label": "开发"},
+        {"label": "准备", "todos": ["整理需求"]}, {"label": "开发", "todos": ["实现功能"]},
     ])
+    pid = created["project_id"]
     await projects_tools._update_stage(db, user_a.id, {
-        "project_id": created["project_id"], "stage": "s1",
+        "project_id": pid, "stage": "s1",
     })
+    before = await projects_tools._get_project(db, user_a.id, {"project_id": pid})
 
     result = await projects_tools._set_stages(db, user_a.id, {
-        "project_id": created["project_id"],
-        "stages": [{"key": "s1", "label": "开发"}, {"key": "s0", "label": "准备"}],
+        "project_id": pid,
+        "stages": [
+            {"key": "s1", "label": "开发"},
+            {"label": "验收", "todos": ["验收检查"]},
+            {"key": "s0", "label": "准备"},
+        ],
     })
 
-    detail = await projects_tools._get_project(db, user_a.id, {"project_id": created["project_id"]})
+    detail = await projects_tools._get_project(db, user_a.id, {"project_id": pid})
     assert result["success"] is True
-    assert [(stage["key"], stage["label"]) for stage in detail["stages"]] == [
-        ("s1", "开发"), ("s0", "准备"),
-    ]
+    assert [stage["label"] for stage in detail["stages"]] == ["开发", "验收", "准备"]
+    assert detail["stages"][0] == before["stages"][1]
+    assert detail["stages"][2] == before["stages"][0]
+    old_ids = {todo["id"] for stage in before["stages"] for todo in stage["todos"]}
+    assert detail["stages"][1]["todos"][0]["id"] not in old_ids
     assert detail["current_stage"] == "s1"
 
 

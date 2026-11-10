@@ -18,7 +18,6 @@ def _round(*, at, ratio, input_tokens=100_000, cache_read=None, **extra):
         "input_tokens": input_tokens,
         "cache_read_tokens": int(input_tokens * ratio) if cache_read is None else cache_read,
         "cache_hit_ratio": ratio,
-        "stable_prefix_tokens_estimate": 40_000,
         "stable_prefix_digest": "same-prefix",
         "tool_schema_digest": "same-tools",
         "system_digest": "same-system",
@@ -108,8 +107,8 @@ def test_cache_drop_attributes_provider_switch_and_never_copies_prompt_content()
 def test_cache_drop_ignores_cold_small_or_unsupported_requests():
     cold = detect_cache_drop(_round(at=100.0, ratio=0.1), _round(at=104.0, ratio=0.0))
     small = detect_cache_drop(
-        _round(at=100.0, ratio=0.9),
-        _round(at=104.0, ratio=0.0, input_tokens=10_000, stable_prefix_tokens_estimate=10_000),
+        _round(at=100.0, ratio=0.9, input_tokens=10_000),
+        _round(at=104.0, ratio=0.0, input_tokens=10_000),
     )
     unsupported = detect_cache_drop(
         _round(at=100.0, ratio=0.9),
@@ -183,7 +182,7 @@ def test_reflection_cache_observation_records_usage_and_only_prefix_fingerprints
     assert observation["snapshot_source"] == "persisted_history"
     assert observation["cache_hit_ratio"] == 0.85
     assert observation["cache_read_tokens"] == 17_000
-    assert observation["stable_prefix_tokens_estimate"] > 0
+    assert "stable_prefix_tokens_estimate" not in observation
     assert observation["stable_prefix_digest"]
     assert observation["system_digest"]
     assert observation["tool_schema_digest"]
@@ -228,9 +227,8 @@ def test_reflection_cache_ratio_uses_fresh_read_and_write_input_tokens():
         assert observation["cache_hit_ratio"] == 0.5
 
 
-def test_reflection_observation_flags_low_hit_only_for_supported_long_prefix(monkeypatch):
-    monkeypatch.setattr(cache_probe, "_estimate_tokens", lambda _value, _model: 32_000)
-    usage = {"input": 20_000, "cache_read": 100, "cache_ratio": 0.005}
+def test_reflection_observation_flags_low_hit_only_for_supported_large_request():
+    usage = {"input": 40_000, "cache_read": 100}
     supported_input, ai, supported_adapter = _reflection_observation_input(supported=True)
     unsupported_input, _, unsupported_adapter = _reflection_observation_input(supported=False)
     supported = cache_probe.build_reflection_sample(
@@ -246,7 +244,7 @@ def test_reflection_observation_flags_low_hit_only_for_supported_long_prefix(mon
     assert unsupported["cache_low_hit"] is False
 
 
-def test_round_probe_keeps_prefix_estimate_separate_from_provider_cache_usage():
+def test_round_probe_uses_provider_cache_usage():
     from agent.runtime.loopscope_trace.cache_probe import build_cache_round
 
     sample = build_cache_round(
@@ -256,7 +254,6 @@ def test_round_probe_keeps_prefix_estimate_separate_from_provider_cache_usage():
         api_format="responses",
         cache_diag={
             "cache_supported": False,
-            "stable_prefix_tokens_estimate": 62_758,
             "cache_prefix_digest": "stable-digest",
             "stable_message_count": 33,
         },
@@ -267,7 +264,7 @@ def test_round_probe_keeps_prefix_estimate_separate_from_provider_cache_usage():
     )
 
     assert sample["cache_supported"] is False
-    assert sample["stable_prefix_tokens_estimate"] == 62_758
+    assert "stable_prefix_tokens_estimate" not in sample
     assert sample["cache_read_tokens"] == 35_776
     assert "stable_prefix_tokens" not in sample
 
@@ -285,7 +282,7 @@ def test_reflection_probe_counts_full_provider_prefix_without_trace_truncation()
     observation = cache_probe.build_reflection_sample(
         branch, ai, adapter, {"fresh_input": 80_000, "cache_read": 128},
     )
-    assert observation["stable_prefix_tokens_estimate"] >= 32_000
+    assert observation["input_tokens"] == 80_128
     assert observation["history_message_count"] == 1
     assert observation["probe_eligible"] is True
     assert observation["cache_low_hit"] is True

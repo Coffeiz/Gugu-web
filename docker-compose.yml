@@ -9,43 +9,6 @@ x-json-file-logging: &json-file-logging
     max-size: "50m"
     max-file: "3"
 
-configs:
-  searxng-settings:
-    content: |
-      # Compose 内置 SearXNG 配置；JSON 是 Gugu web_search/image_search 的必需格式。
-      use_default_settings: true
-
-      server:
-        secret_key: "gugu-compose-dev-change-me"
-        limiter: false
-
-      search:
-        formats:
-          - html
-          - json
-
-      engines:
-        - name: baidu images
-          disabled: false
-        - name: quark images
-          disabled: false
-        - name: sogou images
-          disabled: false
-        - name: google images
-          disabled: false
-        - name: qwant images
-          disabled: false
-        - name: yandex images
-          disabled: false
-        - name: openverse
-          disabled: false
-        - name: flickr
-          disabled: false
-        - name: imgur
-          disabled: false
-        - name: artstation
-          disabled: false
-
 x-gugu-data-mount: &gugu-data-mount
   type: bind
   source: ${GUGU_DATA_HOST_DIR:-./Gugu-data}
@@ -94,7 +57,6 @@ x-app-environment: &app-environment
   FILESYNC__WATCH_LIMIT_SOCKET: /run/gugu-inotify-limitd/limitd.sock
   CREDENTIALS_MASTER_KEY_FILE: /data/byok/.byok-master-key
   GUGU_CONFIG_OVERRIDE_FILE: /config/config.override.json
-  SEARCH__SEARXNG_URL: http://searxng:8080
   GUGU_LOG_FILE: /app/logs/gugu.log
   # 一体化 app 内部运行 Rootless daemon 管理短生命周期沙箱。
   SANDBOX__ROOTLESS_REQUIRED: "true"
@@ -106,19 +68,6 @@ x-app-environment: &app-environment
   GUGU_SANDBOX_MANAGER_MODE: embedded
 
 services:
-  searxng:
-    image: searxng/searxng:latest
-    logging: *json-file-logging
-    configs:
-      - source: searxng-settings
-        target: /etc/searxng/settings.yml
-    environment:
-      SEARXNG_BASE_URL: ${SEARXNG_BASE_URL:-http://searxng:8080/}
-      UWSGI_WORKERS: 2
-      UWSGI_THREADS: 4
-    mem_limit: 512m
-    restart: unless-stopped
-
   app:
     image: ${GUGU_WEB_IMAGE:-coffeiz/gugu-web:latest}
     logging: *json-file-logging
@@ -140,9 +89,6 @@ services:
       - legacy_redisdata:/legacy-redisdata:ro
       - gugu_config:/config
       - gugu_logs:/app/logs
-    depends_on:
-      searxng:
-        condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://127.0.0.1:9595/health"]
       interval: 30s

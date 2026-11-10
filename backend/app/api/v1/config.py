@@ -20,7 +20,6 @@ from typing import Any, Literal
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import (
-    DEFAULT_SEARXNG_IMAGE_ENGINES,
     FileSyncSettings,
     IMPlatformSettings,
     SmtpSettings,
@@ -766,13 +765,10 @@ async def test_connection(body: TestConnectionRequest):
     return {"ok": False, "message": "未知连接类型"}
 
 
-# ── 搜索测试（SearXNG / Tavily）──────────────────────────────────────────────
+# ── 搜索测试 ────────────────────────────────────────────────────────────────
 
 class SearchTestRequest(BaseModel):
-    target:          Literal["searxng", "searxng_images", "tavily", "deep_research", "baidu_similar_images"]
-    searxng_url:     str = ""   # 留空=用已存配置
-    searxng_engines: str = ""
-    searxng_image_engines: str = ""
+    target:          Literal["tavily", "deep_research", "baidu_similar_images"]
     tavily_api_key:  str = ""   # 留空=用已存配置
     baidu_qianfan_api_key: str = ""   # 留空=用已存配置
     deep_research_provider: str = ""
@@ -784,48 +780,7 @@ class SearchTestRequest(BaseModel):
 async def test_search(body: SearchTestRequest):
     cfg = get_settings()
 
-    if body.target in ("searxng", "searxng_images"):
-        url = (body.searxng_url or cfg.search.searxng_url or "").rstrip("/")
-        if not url:
-            return {"ok": False, "message": "未填 SearXNG 地址"}
-        is_images = body.target == "searxng_images"
-        if is_images:
-            engines = (
-                (
-                    body.searxng_image_engines
-                    or cfg.search.searxng_image_engines
-                    or ""
-                ).strip()
-                or DEFAULT_SEARXNG_IMAGE_ENGINES
-            )
-        else:
-            engines = body.searxng_engines or cfg.search.searxng_engines
-        params = {"q": "test", "format": "json", "engines": engines}
-        if is_images:
-            params["categories"] = "images"
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(12.0)) as client:
-                resp = await client.get(f"{url}/search", params=params)
-        except Exception as e:
-            return {"ok": False, "message": f"连不上：{type(e).__name__}: {str(e)[:80]}"}
-        if resp.status_code == 403:
-            return {"ok": False, "message": "403 — SearXNG 未开启 JSON 输出。请在其 settings.yml 的 search.formats 加上 json（并设 server.limiter: false），重启容器后再试"}
-        if resp.status_code != 200:
-            return {"ok": False, "message": f"HTTP {resp.status_code}（非 200）"}
-        try:
-            data = resp.json()
-        except Exception:
-            return {"ok": False, "message": "返回的不是 JSON（多半未开启 json 格式）"}
-        n = len(data.get("results") or [])
-        dead = [e[0] for e in (data.get("unresponsive_engines") or [])]
-        if n == 0:
-            return {"ok": False, "message": f"能连上但返回 0 条结果（引擎可能被限/不可达；超时引擎：{dead or '无'}）"}
-        msg = f"OK — 返回 {n} 条结果"
-        if dead:
-            msg += f"（超时引擎：{'、'.join(dead)}）"
-        return {"ok": True, "message": msg}
-
-    elif body.target == "deep_research":
+    if body.target == "deep_research":
         provider = body.deep_research_provider or cfg.search.deep_research_provider
         key = {
             "tavily": body.tavily_api_key or cfg.search.tavily_api_key,

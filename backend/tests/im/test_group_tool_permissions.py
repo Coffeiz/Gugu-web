@@ -10,11 +10,11 @@ from app.services.im_identity import normalize_group_allowed_tools
 
 def test_provider_search_is_a_supported_group_permission_and_unknown_names_are_removed():
     allowed = normalize_group_allowed_tools([
-        "web_search", "xng_search", "http_get", "web_search", "inspect_images", "retired_tool",
+        "web_search", "http_get", "web_search", "inspect_images", "retired_tool",
     ])
 
-    assert allowed == ["web_search", "xng_search", "http_get"]
-    assert filter_tool_names(["web_search", "xng_search", "http_get"], allowed) == allowed
+    assert allowed == ["web_search", "http_get"]
+    assert filter_tool_names(["web_search", "http_get"], allowed) == allowed
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,6 @@
 <template>
-  <div class="ai-fab-shell" :class="{ 'ai-fab-shell--playing': rippleActive }" :style="{ zIndex: fabZ }">
+  <div ref="shellRef" class="ai-fab-shell" :class="{ 'ai-fab-shell--playing': rippleActive, 'ai-fab-shell--drop-hover': dropHover }" :style="{ zIndex: fabZ }"
+    @pointerover="onPointerOver" @pointerleave="dropHover = false">
     <button class="ai-fab" :class="{ 'ai-fab--playing': rippleActive }" @click="$emit('click')" :title="t('chatUi.gugu')">
       <span ref="svgRef"
             class="ai-fab-logo"
@@ -15,7 +16,7 @@
  * 悬浮球：纯展示 + 点击转发。转圈/涟漪/打字跳动都是外部状态驱动。
  * Design 页的 GuguChatMock 与这里共享同一组 --gugu-fab-* 令牌，避免样板另画一套。
  */
-import { ref, computed } from 'vue'
+import { ref, computed, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 defineProps<{
@@ -31,7 +32,15 @@ const { t } = useI18n()
 defineEmits<{ click: [] }>()
 
 const svgRef = ref<HTMLElement | null>(null)
-defineExpose({ svgEl: computed(() => svgRef.value) })
+const shellRef = ref<HTMLElement | null>(null)
+const dropHover = ref(false)
+function onPointerOver(event: PointerEvent) {
+  if ((event.buttons & 1) && document.querySelector('[data-runtime-active]')) dropHover.value = true
+}
+function onPointerUp() { dropHover.value = false }
+window.addEventListener('pointerup', onPointerUp, true)
+onUnmounted(() => window.removeEventListener('pointerup', onPointerUp, true))
+defineExpose({ svgEl: computed(() => svgRef.value), dropTargetEl: computed(() => shellRef.value) })
 </script>
 
 <style scoped>
@@ -74,6 +83,7 @@ defineExpose({ svgEl: computed(() => svgRef.value) })
   animation: fab-ripple 3.6s ease-out infinite;
 }
 .ai-fab-shell--playing::after { animation-delay: 1.8s; }
+.ai-fab-shell--drop-hover .ai-fab { transform: scale(1.12); box-shadow: var(--gugu-fab-hover-shadow), var(--control-focus-shadow); }
 .ai-fab:hover {
   transform: scale(1.08);
   box-shadow: var(--gugu-fab-hover-shadow);

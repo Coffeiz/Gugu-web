@@ -49,6 +49,11 @@
                   <span class="cs-lbl">WAU</span>
                   <span class="cs-val">{{ data.users.wau }}</span>
                 </span>
+                <span class="cs-sep">·</span>
+                <span class="cs-item">
+                  <span class="cs-lbl">MAU</span>
+                  <span class="cs-val">{{ data.users.active_30d }}</span>
+                </span>
               </div>
             </div>
             <div class="chart-wrap">
@@ -181,7 +186,12 @@
           <div class="card-icon ic-blue"><Icon name="admin.pulse" size="md" /></div>
           <div class="card-val">{{ data.users.wau }}<span class="card-unit"> {{ t('adminAnalytics.people') }}</span></div>
           <div class="card-lbl">{{ t('adminAnalytics.weeklyActive') }}</div>
-          <div class="card-sub">{{ t('adminAnalytics.active30', { count: data.users.active_30d }) }}</div>
+        </div>
+        <div class="card">
+          <div class="card-icon ic-blue"><Icon name="admin.pulse" size="md" /></div>
+          <div class="card-val">{{ data.users.active_30d }}<span class="card-unit"> {{ t('adminAnalytics.people') }}</span></div>
+          <div class="card-lbl">{{ t('adminAnalytics.monthlyActive') }}</div>
+          <div class="card-sub">{{ t('adminAnalytics.rolling30Days') }}</div>
         </div>
         <div class="card">
           <div class="card-icon ic-blue"><Icon name="communication.chat" size="md" /></div>

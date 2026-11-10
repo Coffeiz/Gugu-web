@@ -38,7 +38,7 @@ async def test_qq_group_member_only_gets_configured_allowlist(db, user_a):
         app_id="app-1",
         app_secret="secret",
         owner_platform_user_id="owner-1",
-        group_allowed_tools=["xng_search"],
+        group_allowed_tools=["web_search"],
     )
     db.add(bot)
     await db.commit()
@@ -47,7 +47,7 @@ async def test_qq_group_member_only_gets_configured_allowlist(db, user_a):
     access = await resolve_qq_group_access(db, bot.id, user_a.id, "member-1")
 
     assert access.role == "member"
-    assert access.allowed_tool_names == ["xng_search", "http_get"]
+    assert access.allowed_tool_names == ["web_search", "http_get"]
 
 
 async def test_qq_group_unknown_uses_minimum_allowlist(db, user_a):
@@ -64,7 +64,7 @@ async def test_qq_group_unknown_uses_minimum_allowlist(db, user_a):
     access = await resolve_qq_group_access(db, bot.id, user_a.id, "member-1")
 
     assert access.role == "unknown"
-    assert access.allowed_tool_names == ["xng_search", "http_get", "similar_image_search", "read_file", "send_file", "group_context_search"]
+    assert access.allowed_tool_names == ["web_search", "http_get", "similar_image_search", "read_file", "send_file", "group_context_search"]
     assert bot.group_requires_at is True
     assert "group_context_search" in bot.group_allowed_tools
 
@@ -145,9 +145,9 @@ def test_web_context_policy_keeps_full_context():
 def test_tool_permission_filter_and_dispatch_gate_share_the_same_rule():
     from agent.im.permissions import can_use_tool, filter_tool_names
 
-    assert filter_tool_names(["projects", "xng_search", "files"], ["xng_search", "missing"]) == ["xng_search"]
-    assert can_use_tool("xng_search", ["xng_search"]) is True
-    assert can_use_tool("files", ["xng_search"]) is False
+    assert filter_tool_names(["projects", "web_search", "files"], ["web_search", "missing"]) == ["web_search"]
+    assert can_use_tool("web_search", ["web_search"]) is True
+    assert can_use_tool("files", ["web_search"]) is False
     assert can_use_tool("files", None) is True
     assert can_use_tool("present_file", None, platform="telegram") is False
     assert can_use_tool("present_file", None, platform=None) is True
@@ -170,7 +170,7 @@ def test_safe_time_tool_is_available_to_restricted_group_members():
     from agent.im.permissions import can_use_tool, filter_tool_names
 
     assert can_use_tool("get_current_time", []) is True
-    assert filter_tool_names(["xng_search", "get_current_time"], []) == ["get_current_time"]
+    assert filter_tool_names(["web_search", "get_current_time"], []) == ["get_current_time"]
 
 
 def test_member_display_name_does_not_use_owner_account_name():
@@ -193,7 +193,7 @@ def test_actor_context_keeps_owner_and_platform_identity_separate():
         role="member",
         chat_type="group",
         chat_id="group-1",
-        allowed_tool_names=["xng_search"],
+        allowed_tool_names=["web_search"],
     )
 
     assert actor.owner_user_id != actor.platform_user_id
@@ -208,7 +208,7 @@ async def test_im_loop_prepares_actor_and_agent_request(monkeypatch):
 
     async def fake_access(*args, **kwargs):
         from agent.im.permissions import ImAccess
-        return ImAccess("member", ["xng_search"])
+        return ImAccess("member", ["web_search"])
 
     monkeypatch.setattr("agent.im.request_preparation.resolve_access", fake_access)
     message = PlatformMessage(
@@ -250,7 +250,7 @@ async def test_non_qq_group_defaults_to_unknown_minimal_access(monkeypatch):
 
     assert prepared.actor.role == "unknown"
     assert prepared.request.im_role == "unknown"
-    assert prepared.request.allowed_tool_names == ["xng_search", "http_get", "similar_image_search", "read_file", "send_file"]
+    assert prepared.request.allowed_tool_names == ["web_search", "http_get", "similar_image_search", "read_file", "send_file"]
     assert prepared.request.user_name == "群友"
     assert prepared.request.chat_id == "wx-group-1"
 
@@ -266,7 +266,7 @@ async def test_feishu_group_uses_bound_owner_open_id(db, user_a):
         app_id="feishu-app",
         app_secret="secret",
         owner_platform_user_id="ou-owner",
-        group_allowed_tools=["xng_search"],
+        group_allowed_tools=["web_search"],
     )
     db.add(bot)
     await db.commit()
@@ -300,7 +300,7 @@ async def test_feishu_group_uses_bound_owner_open_id(db, user_a):
     assert owner.request.im_role == "owner"
     assert owner.request.allowed_tool_names is None
     assert member.request.im_role == "member"
-    assert member.request.allowed_tool_names == ["xng_search", "http_get"]
+    assert member.request.allowed_tool_names == ["web_search", "http_get"]
 
 
 async def test_group_owner_keeps_privileges_only_for_single_bot_mention(db, user_a):
@@ -316,7 +316,7 @@ async def test_group_owner_keeps_privileges_only_for_single_bot_mention(db, user
         app_id="synthetic-app",
         app_secret="synthetic-secret",
         owner_platform_user_id="owner-1",
-        group_allowed_tools=["xng_search"],
+        group_allowed_tools=["web_search"],
     )
     db.add(bot)
     await db.commit()
@@ -357,7 +357,7 @@ async def test_group_owner_keeps_privileges_only_for_single_bot_mention(db, user
         message, common, user_a.id, "主人",
     )
     assert not_mentioned.request.im_role == "member"
-    assert not_mentioned.request.allowed_tool_names == ["xng_search", "http_get"]
+    assert not_mentioned.request.allowed_tool_names == ["web_search", "http_get"]
     assert not_mentioned.actor.owner_mention_authorized is False
 
     member_message = PlatformMessage(
@@ -381,7 +381,7 @@ async def test_group_owner_keeps_privileges_only_for_single_bot_mention(db, user
         "主人",
     )
     assert member_mention.request.im_role == "member"
-    assert member_mention.request.allowed_tool_names == ["xng_search", "http_get"]
+    assert member_mention.request.allowed_tool_names == ["web_search", "http_get"]
     assert member_mention.actor.owner_mention_authorized is False
 
 
@@ -397,7 +397,7 @@ async def test_owner_mention_in_mixed_batch_cannot_elevate_the_run(db, user_a):
         app_id="synthetic-app",
         app_secret="synthetic-secret",
         owner_platform_user_id="owner-1",
-        group_allowed_tools=["xng_search"],
+        group_allowed_tools=["web_search"],
     )
     db.add(bot)
     await db.commit()
@@ -429,7 +429,7 @@ async def test_owner_mention_in_mixed_batch_cannot_elevate_the_run(db, user_a):
     prepared = await prepare_request(message, payload, user_a.id, "主人")
 
     assert prepared.request.im_role == "member"
-    assert prepared.request.allowed_tool_names == ["xng_search", "http_get"]
+    assert prepared.request.allowed_tool_names == ["web_search", "http_get"]
     assert prepared.actor.owner_mention_authorized is False
     assert {speaker["role"] for speaker in prepared.request.im_turn_speakers} == {"member"}
 
@@ -659,5 +659,5 @@ def test_group_search_permissions_include_restricted_image_reading():
     from app.services.im_identity import normalize_group_allowed_tools
 
     assert normalize_group_allowed_tools([
-        "xng_search", "similar_image_search", "read_file", "send_file",
-    ]) == ["xng_search", "http_get", "similar_image_search", "read_file", "send_file"]
+        "web_search", "similar_image_search", "read_file", "send_file",
+    ]) == ["web_search", "http_get", "similar_image_search", "read_file", "send_file"]

@@ -212,7 +212,7 @@ CAP 仅判断消息是否值得启动 Agent Run，不负责判断受话对象，
 | 联系人 | 联系人、通讯录 | `list_clients`、`create_client`、`update_client`、`delete_client` |
 | 邮件 | 邮件、电子邮件、邮箱 | `send_email` |
 | 终端 | 终端、shell、命令行 | `shell` |
-| 联网搜索 | 网页、网页搜索、联网搜索 | `web_search`、`xng_search`、`deep_research` |
+| 联网搜索 | 网页、网页搜索、联网搜索 | `web_search`、`deep_research` |
 
 CAP 的全局动作词表示例包括：建/创建/新建/建立/添加/生成、记录/保存/整理、修改/更新/调整/编辑、设置/完成、搜索/查找/查看/读取/查询、删除/取消/停止/关闭、归档/分类/移动/复制、上传/下载/打开、分析/总结/补充/执行等。动词对所有能力对象通用；词表只用于 Run 准入，不预测工具调用。
 

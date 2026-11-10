@@ -5,9 +5,9 @@ import json
 import uuid
 from typing import Any
 
-from .utils import _estimate_tokens, _prompt_digest
+from .utils import _prompt_digest
 
-MIN_PREFIX_TOKENS = 32_000
+MIN_OBSERVED_CACHE_TOKENS = 32_000
 MIN_PREVIOUS_HIT_RATIO = 0.50
 MAX_CURRENT_HIT_RATIO = 0.05
 MIN_DROP_RATIO = 0.80
@@ -80,11 +80,6 @@ def build_cache_round(*, at: float, provider: str, model: str, api_format: str,
         "cache_read_tokens": int(usage.get("cache_read", 0) or 0),
         "cache_write_tokens": int(usage.get("cache_write", 0) or 0),
         "cache_hit_ratio": float(usage.get("cache_ratio", 0) or 0),
-        "stable_prefix_tokens_estimate": int(
-            cache_diag.get("stable_prefix_tokens_estimate", 0)
-            or cache_diag.get("cache_anchor_tokens_estimate", 0)
-            or 0
-        ),
         "stable_prefix_digest": str(cache_diag.get("cache_prefix_digest", "") or ""),
         "stable_message_count": int(cache_diag.get("stable_message_count", 0) or 0),
         "prefix_unchanged": prefix_unchanged,
@@ -123,14 +118,8 @@ def _eligible(previous: dict[str, Any] | None, current: dict[str, Any]) -> bool:
         previous
         and previous.get("cache_supported")
         and current.get("cache_supported")
-        and min(
-            int(previous.get(
-                "stable_prefix_tokens_estimate", previous.get("stable_prefix_tokens", 0),
-            ) or 0),
-            int(current.get(
-                "stable_prefix_tokens_estimate", current.get("stable_prefix_tokens", 0),
-            ) or 0),
-        ) >= MIN_PREFIX_TOKENS
+        and int(previous.get("cache_read_tokens", 0) or 0) >= MIN_OBSERVED_CACHE_TOKENS
+        and int(current.get("input_tokens", 0) or 0) > 0
         and float(previous.get("cache_hit_ratio", 0) or 0) >= MIN_PREVIOUS_HIT_RATIO
     )
 
@@ -188,7 +177,7 @@ def _event(previous: dict[str, Any], current: dict[str, Any], gap: float,
 def _usage_snapshot(value: dict[str, Any]) -> dict[str, Any]:
     keys = (
         "provider", "model", "api_format", "input_tokens", "cache_read_tokens",
-        "cache_write_tokens", "cache_hit_ratio", "stable_prefix_tokens_estimate",
+        "cache_write_tokens", "cache_hit_ratio",
         "stable_prefix_digest", "tool_schema_digest", "system_digest",
         "memory_digest", "summary_digest",
     )
@@ -240,11 +229,9 @@ def build_reflection_sample(
         input_tokens = _nonnegative_int(usage.get("input"))
         fresh_input = max(0, input_tokens - cache_read - cache_write)
     ratio = cache_read / input_tokens if input_tokens else 0.0
-    # _estimate_tokens 的对象路径使用 trace 展示裁剪，不能拿裁剪后的前缀判断告警资格。
-    prefix_json = json.dumps(prefix, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    prefix_tokens = _estimate_tokens(prefix_json, model)
     supported = bool(adapter.supports_active_cache(model))
-    eligible = supported and prefix_tokens >= MIN_PREFIX_TOKENS
+    prefix_json = json.dumps(prefix, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    eligible = supported and bool(history_messages) and input_tokens >= MIN_OBSERVED_CACHE_TOKENS
     source = trigger_context.get("trigger_source", "unknown")
     if source not in _REFLECTION_TRIGGER_SOURCES:
         source = "unknown"
@@ -271,7 +258,6 @@ def build_reflection_sample(
         "cache_read_tokens": cache_read,
         "cache_write_tokens": cache_write,
         "cache_hit_ratio": round(ratio, 6),
-        "stable_prefix_tokens_estimate": prefix_tokens,
         "stable_prefix_digest": _prompt_digest(prefix_json),
         "system_digest": _prompt_digest(stable_system or ""),
         "tool_schema_digest": _prompt_digest(tool_list),
@@ -500,7 +486,6 @@ def record_reflection_sample(
         {"reflection_cache_probe": safe},
         token_impact={
             "prompt_tokens_actual": safe["input_tokens"],
-            "stable_prefix_tokens_estimate": safe["stable_prefix_tokens_estimate"],
             "cache_read_tokens": safe["cache_read_tokens"],
         },
         scenario="reflection",
@@ -524,7 +509,7 @@ def record_reflection_sample(
     samples = bucket.setdefault("samples", [])
     samples.append({key: safe[key] for key in (
         "provider", "model", "api_format", "cache_hit_ratio",
-        "stable_prefix_tokens_estimate", "reflection_scope", "trigger_source",
+        "reflection_scope", "trigger_source",
         "snapshot_source",
         "origin_gap_seconds", "cache_low_hit", "request_started_at",
         "request_duration_ms", "wire_prefix_digest", "wire_prefix_row_count",
@@ -558,7 +543,7 @@ def _safe_reflection_observation(value: dict[str, Any]) -> dict[str, Any]:
     allowed = (
         "schema_version", "scenario", "provider", "model", "api_format",
         "cache_supported", "input_tokens", "fresh_input_tokens", "cache_read_tokens",
-        "cache_write_tokens", "cache_hit_ratio", "stable_prefix_tokens_estimate",
+        "cache_write_tokens", "cache_hit_ratio",
         "stable_prefix_digest", "system_digest", "tool_schema_digest",
         "history_message_count", "tool_count", "reflection_scope", "trigger_source", "origin_run_id",
         "origin_gap_seconds", "snapshot_source", "probe_eligible", "cache_low_hit", "attempt_index",
@@ -588,7 +573,7 @@ def _safe_reflection_observation(value: dict[str, Any]) -> dict[str, Any]:
     )
     for key in (
         "schema_version", "input_tokens", "fresh_input_tokens", "cache_read_tokens",
-        "cache_write_tokens", "stable_prefix_tokens_estimate", "history_message_count",
+        "cache_write_tokens", "history_message_count",
         "tool_count", "attempt_index",
     ):
         safe[key] = _nonnegative_int(safe.get(key))

@@ -45,9 +45,8 @@ def test_scope_is_explicit_repo_relative_and_files_exist():
     ]
     assert validated[0]["tests"] == [
         "backend/tests/agent/context/test_context_budget.py",
-        "backend/tests/agent/context/test_session_history.py",
     ]
-    assert validated[0]["function_tests"]["truncate_messages"] == [
+    assert validated[0]["function_tests"]["enforce_provider_overflow_fallback"] == [
         "backend/tests/agent/context/test_context_budget.py"
     ]
 

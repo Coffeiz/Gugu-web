@@ -14,7 +14,7 @@ LoopScope 是 Gugu monorepo 中暂存的独立 AgentLoop 开发工具。它拥�
 | Context Provenance | 查看 Prompt、Memory、RAG、DB loader、能力目录和最终 Provider 输入的来源、内容与 token 影响 |
 | Input / Assembly | 查看实际 Provider 输入、system 位置、消息数量、canonical layout 和上下文组装信息 |
 | Prefix Diff | 对比相邻 Round 或上一 Run，定位 Provider 输入最早发生变化的消息和变化原因 |
-| Token / Cache | 查看 input、output、cache read/write、fresh input、total、缓存率及本地估算与 Provider usage 来源 |
+| Token / Cache | 查看 input、output、cache read/write、fresh input、total、缓存率及 Provider usage 来源 |
 | Tool / Schema | 查看工具参数形状、结果、Schema digest、Schema 错误、模型看到的 Schema 和恢复信息 |
 | Skill | 查看 Skill 索引、正文是否首次加载或复用、正文长度及关联工具注入 |
 | Code Provenance | 定位 Python 文件、module、function、qualname 和行号 |

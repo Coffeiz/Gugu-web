@@ -17,7 +17,8 @@ class CredentialCreate(BaseModel):
     thinking: Literal["disabled", "adaptive"] | None = None
     reasoning_effort: Literal["", "none", "minimal", "low", "medium", "high", "xhigh", "max"] | None = None
     reasoning_persistence: Literal["off", "continuation"] = "off"
-    web_search_enabled: bool = False
+    # 未显式选择时，创建接口按 Provider 能力默认开启。
+    web_search_enabled: bool | None = None
     image: bool = False
     video: bool = False
     audio: bool = False

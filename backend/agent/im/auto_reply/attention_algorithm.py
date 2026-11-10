@@ -61,7 +61,7 @@ _CAPABILITY_REGISTRY = {
     "terminal": {"aliases": ("终端", "shell", "命令行"), "tools": ("shell",)},
     "web_search": {
         "aliases": ("网页搜索", "联网搜索", "网页"),
-        "tools": ("web_search", "xng_search", "deep_research"),
+        "tools": ("web_search", "deep_research"),
     },
 }
 _CAPABILITY_NOUNS = tuple(sorted(

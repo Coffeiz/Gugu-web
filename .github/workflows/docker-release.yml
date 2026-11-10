@@ -665,7 +665,6 @@ jobs:
         run: |
           set -euo pipefail
           docker pull "docker.io/coffeiz/gugu-web:${VERSION}"
-          docker pull searxng/searxng:latest
           docker tag "docker.io/coffeiz/gugu-web:${VERSION}" coffeiz/gugu-web:latest
 
       - name: Build one-file offline bundle
@@ -674,7 +673,6 @@ jobs:
           scripts/release/build-offline-sandbox-bundle.sh \
             --output release/offline/gugu-compose-bundle.tar \
             --image coffeiz/gugu-web:latest \
-            --image searxng/searxng:latest
 
       - name: Upload offline Compose bundle
         uses: actions/upload-artifact@v4
@@ -684,5 +682,4 @@ jobs:
             release/offline/gugu-compose-bundle.tar
             docker-compose.yml
             docker-compose.offline.yml
-            searxng/settings.yml
           if-no-files-found: error

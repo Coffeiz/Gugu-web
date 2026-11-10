@@ -53,7 +53,7 @@ function sseResponse(events: object[]) {
 describe('useChatStream 展示事件与生命周期', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
-    vi.spyOn(agentApi, 'getRunMessages').mockRejectedValue(new Error('合成断网'))
+    vi.spyOn(agentApi, 'getMessages').mockRejectedValue(new Error('合成断网'))
   })
   afterEach(() => {
     vi.restoreAllMocks()
@@ -94,15 +94,37 @@ describe('useChatStream 展示事件与生命周期', () => {
       { id: 1, role: 'user', text: '下一条消息', time: '10:00', _timelineOrder: 99000000 },
       { id: 2, role: 'ai', text: '其他 run', runId: 'run-other', time: '09:00', _timelineOrder: 1 },
     ])
-    const history = vi.spyOn(agentApi, 'getRunMessages').mockResolvedValue({ timelineEvents: [saved] } as never)
+    const history = vi.spyOn(agentApi, 'getMessages').mockResolvedValue({ timelineEvents: [saved] } as never)
     vi.stubGlobal('fetch', vi.fn(async () => sseResponse([
       { type: 'display_event', item: old },
       { type: 'display_event', item: item('temporary', 'assistant', 2, { text: '临时多余段' }) },
       { type: 'done' }, { type: 'done' },
     ])))
     await useChatStream(options).resumeStream(42)
-    expect(history).toHaveBeenCalledWith(42, 'run-a')
+    expect(history).toHaveBeenCalledExactlyOnceWith(42, { runId: 'run-a', limit: 200 })
     expect(options.messages.value.map(message => message.text)).toEqual(['其他 run', '最终内容', '下一条消息'])
+  })
+
+  it('续看重放时保留恢复的确认凭据，收尾时以已结束的历史卡片接替', async () => {
+    const tool = item('tool-a', 'tool', 1, { toolCallId: 'c1', toolStatus: 'success' })
+    const restored = {
+      id: 17, title: '合成确认卡', kind: 'confirm', tool_call_id: 'c1',
+      created_at: '2026-01-01T01:02:01Z', options: [{ id: 'confirm', token: 'renewed' }],
+    }
+    const options = createOptions(mapSessionMessageDelta({ interactions: [restored] }, () => 7, role => ({ role })))
+    const history = vi.spyOn(agentApi, 'getMessages').mockImplementation(async () => {
+      expect(options.messages.value.find(message => message.id === 7)?.interaction?.options[0]?.token).toBe('renewed')
+      return { timelineEvents: [tool], interactions: [{ ...restored, options: [], resolved: true }] } as never
+    })
+    vi.stubGlobal('fetch', vi.fn(async () => sseResponse([
+      { type: 'display_event', item: tool },
+      { type: 'interaction_required', prompt_id: 17, ...restored, options: [{ id: 'confirm', token: 'expired' }] },
+      { type: 'done' },
+    ])))
+    await useChatStream(options).resumeStream(42)
+    expect(history).toHaveBeenCalledOnce()
+    expect(options.messages.value.map(message => message.role)).toEqual(['tool', 'interaction'])
+    expect(options.messages.value[1]).toMatchObject({ id: 7, interaction: { resolved: true, options: [] } })
   })
 
   it('并行工具各自更新同一事件，不重置首次时间和顺序', async () => {

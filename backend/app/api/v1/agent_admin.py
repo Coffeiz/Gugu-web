@@ -466,13 +466,15 @@ def _merge_im_preview_outputs(outputs: list[dict]) -> dict:
 
 async def _im_model_preview_worker(cursors: list[dict], settings) -> None:
     """逐 scope 调用 IM 反思模型，只保存汇总进度，不保存正文或 scope 标识。"""
+    from collections import deque
     from types import SimpleNamespace
 
     from agent.context.branch import ContextBranch
     from agent.context.branch_types import BranchInput, BranchPolicy
+    from agent.llm.modelctx import effective_ai
     from agent.memory.im_reflection import _db_session, _message_text, _messages_for_job, _scope_prompt
     from agent.memory.maintenance_batches import (
-        MaintenanceBatch, bounded_scope_memory, message_batches, resolve_maintenance_budget, scope_revision,
+        MAX_BATCH_CHARS, bounded_scope_memory, message_batches, resolve_maintenance_budget, scope_revision,
     )
     from agent.memory.scoped_store import read_scope
     from agent.memory.scopes import MemoryScope
@@ -502,55 +504,67 @@ async def _im_model_preview_worker(cursors: list[dict], settings) -> None:
             async with await _db_session() as db:
                 messages = await _messages_for_job(db, job)
             current = await read_scope(scope)
+            def render(message) -> str:
+                timestamp = message.created_at.isoformat() if message.created_at else "未知时间"
+                return f"[{timestamp}] {_message_text(message)}"
+
+            budget = resolve_maintenance_budget(effective_ai(settings))
             batches = message_batches(
-                messages,
-                lambda message: f"[{message.created_at.isoformat() if message.created_at else '未知时间'}] {_message_text(message)}",
-                lambda message: str(message.id),
-                model_cfg=settings,
+                messages, render, lambda message: str(message.id), max_chars=budget.batch_chars,
             )
-            if not batches:
-                batches = [MaintenanceBatch(items=tuple(), source_ids=tuple(), estimated_input_tokens=0)]
-            total_batches += len(batches)
-            source_text = "\n".join(
-                f"[{m.created_at.isoformat() if m.created_at else '未知时间'}] {_message_text(m)}"
-                for m in messages
-            )
-            revision = scope_revision(current, [m.id for m in messages], source_text)
-            if any(batch.has_oversized_item for batch in batches):
-                truncated_batches += sum(1 for batch in batches if batch.has_oversized_item)
+            total_batches += len(batches) or 1
+            oversized = sum(batch.input_chars > MAX_BATCH_CHARS for batch in batches)
+            if oversized:
+                truncated_batches += oversized
                 failed += 1
                 done += 1
                 continue
+            source_text = "\n".join(render(message) for message in messages)
+            revision = scope_revision(current, [m.id for m in messages], source_text)
+            existing = bounded_scope_memory(current, max_chars=budget.existing_memory_chars)
+            stable_system = _scope_prompt(scope, task_type=task_type)
+            policy = BranchPolicy(
+                name="reflection-preview", output_mode="json",
+                max_tokens=budget.output_tokens, thinking="disabled",
+            )
+            pending = deque((batch.items, 0, existing) for batch in batches)
+            if not pending:
+                pending.append(((), 0, existing))
             outputs: list[dict] = []
-            for batch in batches:
-                payload = "\n".join(
-                    f"[{m.created_at.isoformat() if m.created_at else '未知时间'}] {_message_text(m)}"
-                    for m in batch.items
-                )
+            while pending:
+                entries, depth, memory = pending.popleft()
+                payload = "\n".join(render(message) for message in entries)
                 prompt_input = (
-                    f"已有群组/用户记忆（受限视图）：\n{bounded_scope_memory(current, model_cfg=settings)}\n\n"
+                    f"已有群组/用户记忆（受限视图）：\n{memory}\n\n"
                     f"本批新增消息：\n{payload or '（无新增消息；请仅检查现有记忆是否需要整理）'}"
                 )
                 branch = await ContextBranch().run(
-                    BranchInput(
-                        stable_system=_scope_prompt(scope, task_type=task_type),
-                        delta=prompt_input,
-                        scope=scope.scope_type,
-                    ),
-                    BranchPolicy(
-                        name="reflection-preview",
-                        output_mode="json",
-                        max_tokens=resolve_maintenance_budget(settings).output_tokens,
-                        thinking="disabled",
-                    ),
+                    BranchInput(stable_system=stable_system, delta=prompt_input, scope=scope.scope_type),
+                    policy,
                     settings,
                 )
-                if not branch.ok or not isinstance(branch.output, dict):
-                    failed += 1
-                    break
-                outputs.append(branch.output)
-                completed_batches += 1
-            if len(outputs) == len(batches):
+                if branch.ok and isinstance(branch.output, dict):
+                    output = branch.output
+                    if existing and not memory:
+                        # 未读取原记忆时，只允许追加内容。
+                        output = {key: value for key, value in output.items()
+                                  if key not in {"summary", "profile_remove"}}
+                    outputs.append(output)
+                    completed_batches += 1
+                    continue
+                if branch.context_overflow and len(entries) > 1 and depth < 4:
+                    mid = len(entries) // 2
+                    pending.appendleft((entries[mid:], depth + 1, memory))
+                    pending.appendleft((entries[:mid], depth + 1, memory))
+                    total_batches += 1
+                    continue
+                if branch.context_overflow and len(entries) <= 1 and memory:
+                    # 原消息保持完整；单条批次最多再试一次精简记忆视图。
+                    pending.appendleft((entries, depth, ""))
+                    continue
+                failed += 1
+                break
+            else:
                 output = _merge_im_preview_outputs(outputs)
                 needs_review += 1
                 plans.append({
@@ -560,7 +574,7 @@ async def _im_model_preview_worker(cursors: list[dict], settings) -> None:
                     "source_message_ids": [str(m.id) for m in messages],
                     "first_message_id": int(messages[0].id) if messages else 0,
                     "last_message_id": int(messages[-1].id) if messages else 0,
-                    "batch_count": len(batches),
+                    "batch_count": len(outputs),
                 })
         except Exception as exc:
             diag_log("admin.im_memory_model_preview.scope", exc)
@@ -1057,7 +1071,8 @@ class PresetCreate(BaseModel):
     image_detail: str = "auto"
     video: bool = False
     audio: bool = False
-    web_search_enabled: bool = False
+    # 未显式选择时，创建接口按 Provider 能力默认开启。
+    web_search_enabled: bool | None = None
     api_format: str = ""
     ollama_mode: str = "local"
     ollama_api_mode: str = "native"
@@ -1073,7 +1088,9 @@ class PresetCreate(BaseModel):
 async def create_llm_preset(body: PresetCreate, db: AsyncSession = Depends(get_db)):
     if body.max_tokens >= body.context_tokens:
         raise HTTPException(422, "最大输出 token 数必须小于模型总上下文窗口")
-    if body.web_search_enabled and not provider_web_search_supported(body.provider, body.api_format):
+    web_search_supported = provider_web_search_supported(body.provider, body.api_format)
+    web_search_enabled = web_search_supported if body.web_search_enabled is None else body.web_search_enabled
+    if web_search_enabled and not web_search_supported:
         raise HTTPException(422, "当前 Provider 或 API 格式不支持联网搜索")
     new_id = f"p_{_uuid.uuid4().hex[:8]}"
     item = {
@@ -1092,7 +1109,7 @@ async def create_llm_preset(body: PresetCreate, db: AsyncSession = Depends(get_d
         "image_detail": body.image_detail if body.image_detail in ("auto", "low", "high", "original") else "auto",
         "video": body.video,
         "audio": body.audio,
-        "web_search_enabled": body.web_search_enabled if provider_web_search_supported(body.provider, body.api_format) else False,
+        "web_search_enabled": web_search_enabled,
         "api_format": body.api_format,
         "ollama_mode": body.ollama_mode,
         "ollama_api_mode": body.ollama_api_mode,

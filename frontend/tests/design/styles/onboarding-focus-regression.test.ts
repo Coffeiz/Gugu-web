@@ -120,7 +120,7 @@ describe('onboarding 与重命名 focus 视觉回归', () => {
   })
 
   it('onboarding IM 使用独立平台卡片，不复用个人设置面板', () => {
-    expect(onboarding).toMatch(/<div v-show="step === 'im'" class="content-options">\s*<OnboardingImSetup\s*\/>\s*<\/div>/)
+    expect(onboarding).toMatch(/<div v-show="step === 'im'" class="content-options[^\"]*">\s*<OnboardingImSetup\s*\/>\s*<\/div>/)
     expect(onboarding).toContain('onboarding')
     expect(onboarding).not.toContain('ProfileImPane')
     expect(onboardingImSetup).toContain('bots.value = result.items || []')

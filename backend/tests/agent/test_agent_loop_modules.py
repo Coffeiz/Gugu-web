@@ -28,13 +28,13 @@ def test_usage_compaction_due_uses_threshold_and_no_progress_guard():
 
 
 def test_provider_full_input_controls_128k_compaction_threshold():
-    """缓存读取也占上下文；128k 的 90% 为 115,200。"""
+    """缓存读取也占上下文；128k 的 85% 为 108,800。"""
     driver = SimpleNamespace(api_format="anthropic")
     below = SimpleNamespace(
-        usage_in=20_000, cache_tokens=95_199, cache_write_tokens=0,
+        usage_in=20_000, cache_tokens=88_799, cache_write_tokens=0,
     )
     at_threshold = SimpleNamespace(
-        usage_in=20_000, cache_tokens=95_200, cache_write_tokens=0,
+        usage_in=20_000, cache_tokens=88_800, cache_write_tokens=0,
     )
     assert rounds.usage_compaction_due(
         run_context_usage=provider_context_usage(driver, below),

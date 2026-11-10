@@ -207,12 +207,6 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
                     message_row.created_at,
                 )
                 group_threshold_reached = group_job_id is not None
-                if not group_threshold_reached:
-                    from agent.memory.group_pressure import observe_passive_context_pressure
-
-                    group_threshold_reached = await observe_passive_context_pressure(
-                        group_scope, recorded_session_id,
-                    )
             if request.im_role == "owner":
                 from app.core.config import get_settings
                 from agent.memory import reflection

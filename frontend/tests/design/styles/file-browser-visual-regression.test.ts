@@ -217,7 +217,8 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
 
   it('亮色文件卡 hover 使用高光覆盖，不被调色板主色压暗', () => {
     expect(componentSurfaces).toContain('--file-card-hover-overlay: color-mix(in srgb,var(--theme-highlight-hover) 16%,transparent);')
-    expect(componentSurfaces).toContain('--file-card-hover-overlay: color-mix(in srgb,var(--action-primary) 6%,transparent);')
+    // 暗色也使用中性高光，避免用户调色板主色污染文件卡片 hover。
+    expect(componentSurfaces).toContain('--file-card-hover-overlay: color-mix(in srgb,var(--theme-highlight-hover) 30%,transparent);')
   })
 
   it('文件、文件夹、项目卡保留专属反馈，通用 hover 层不接管它们的阴影和过渡', () => {

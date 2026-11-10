@@ -126,10 +126,6 @@ def test_provider_projection_keeps_cache_state_outside_message_area():
     assert result["wire_role_sequence_digest"]
     assert result["wire_conversation_message_count"] == 2
     assert result["wire_turn_batch_count"] == 0
-    assert result["wire_total_token_estimate"] >= 3
-    assert result["wire_message_diagnostics"][-1]["cumulative_token_estimate"] == result[
-        "wire_total_token_estimate"
-    ]
     assert result["first_diff"] is None
     assert "hello" not in str(result)
     assert "time" not in str(result)
@@ -242,7 +238,7 @@ def test_diagnostics_reports_first_wire_difference_without_body():
     assert result["first_diff_index"] == 2
     assert result["first_diff"]["previous"]["shape"]["role"] == "user"
     assert result["first_diff"]["current"]["shape"]["role"] == "user"
-    assert result["first_diff"]["current"]["cumulative_token_estimate"] > 0
+    assert result["first_diff"]["current"]["digest"] != result["first_diff"]["previous"]["digest"]
     assert result["first_diff"]["reason"] == "content_changed"
     assert "old" not in str(result)
     assert "new" not in str(result)

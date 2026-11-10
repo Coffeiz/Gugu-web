@@ -19,6 +19,8 @@ LoopScope 是 Gugu 的开发、回归和运行排障工具，不是普通业务�
 
 ## 实现边界
 
+- token 数量仅来自 Provider usage。禁止引入本地 LLM tokenizer 或字符换算；缺失用量时不生成 token 指标。结构诊断可以记录字节数、字符数、消息数和摘要。
+
 - `_jsonable()` 是 trace 对象序列化工具，不是正文脱敏器；不要把它描述成 redact/sanitize。
 - `digest` 和 fingerprint 只用于结构比较、缓存诊断和关联，不代替可展开的开发正文。
 - 普通 Gugu 日志仍必须遵循后端安全规范，使用 `redact()`、`diag_log()` 或 `fingerprint()`；该规则不自动套用到 LoopScope trace。

@@ -13,6 +13,11 @@ from agent.security.sanitize import strip_think_blocks
 from app.core.retry import llm_provider_timeout
 
 
+def _branch_output_budget(ai, requested: int | None, reserve_reasoning_budget: bool) -> int | None:
+    """显式关闭推理的独立请求保留调用方的输出上限。"""
+    return output_budget(ai, requested) if reserve_reasoning_budget else requested
+
+
 def _history_starts_with_system(history: list[dict], system_text: str) -> bool:
     """识别已合并的基础 system，兼容字符串与原生 text block 前缀。"""
     if not history or history[0].get("role") != "system":
@@ -121,7 +126,7 @@ async def complete_messages(
 async def _non_anthropic(sys, user, ai, max_tokens, *, json_mode=False,
                          thinking=None, settings=None, history=None, tools=None,
                          usage_sink=None, probe_sink=None,
-                         cache_singleflight=False):
+                         cache_singleflight=False, reserve_reasoning_budget=True):
     """文本、JSON、追加分支共用协议路由，不载入主对话的推理状态。"""
     from agent import providers
 
@@ -135,7 +140,9 @@ async def _non_anthropic(sys, user, ai, max_tokens, *, json_mode=False,
             branch_ai.thinking = thinking
         return strip_think_blocks(await complete_branch(
             sys, history or (), user, branch_ai, settings,
-            max_output_tokens=output_budget(branch_ai, max_tokens),
+            max_output_tokens=_branch_output_budget(
+                branch_ai, max_tokens, reserve_reasoning_budget,
+            ),
             tools=tools,
             json_mode=json_mode,
             usage_sink=usage_sink,
@@ -146,7 +153,8 @@ async def _non_anthropic(sys, user, ai, max_tokens, *, json_mode=False,
                          thinking=thinking, settings=settings, history=history,
                          tools=tools, usage_sink=usage_sink,
                          probe_sink=probe_sink,
-                         cache_singleflight=cache_singleflight)
+                         cache_singleflight=cache_singleflight,
+                         reserve_reasoning_budget=reserve_reasoning_budget)
 
 
 async def complete_json(
@@ -165,14 +173,17 @@ async def complete_json(
     effective_thinking = (
         thinking if thinking is not None else getattr(ai, "thinking", None)
     )
+    reserve_reasoning_budget = thinking != "disabled"
     text = (
         await _anthropic(
-            sys, user, ai, max_tokens, thinking=effective_thinking,
-            settings=settings,
+            sys, user, ai, max_tokens, thinking=effective_thinking, settings=settings,
+            reserve_reasoning_budget=reserve_reasoning_budget,
         )
         if use_anthropic
-        else await _non_anthropic(sys, user, ai, max_tokens, json_mode=True,
-                           thinking=effective_thinking, settings=settings)
+        else await _non_anthropic(
+            sys, user, ai, max_tokens, json_mode=True, thinking=effective_thinking,
+            settings=settings, reserve_reasoning_budget=reserve_reasoning_budget,
+        )
     )
     return _parse_json(text)
 
@@ -190,6 +201,7 @@ async def _anthropic(
     usage_sink: list | None = None,
     probe_sink: list | None = None,
     cache_singleflight: bool = False,
+    reserve_reasoning_budget: bool = True,
 ) -> str:
     from agent import providers
 
@@ -198,7 +210,7 @@ async def _anthropic(
     if max_tokens is None:
         max_tokens = 32768
     else:
-        max_tokens = output_budget(ai, max_tokens)
+        max_tokens = _branch_output_budget(ai, max_tokens, reserve_reasoning_budget)
     # 与主对话一致的主动缓存：稳定 system 前缀打 ephemeral 断点（分支的 user
     # 消息带时间戳每轮必变，只有 system 前缀能命中）。
     from agent.llm.llm_select import supports_anthropic_active_cache
@@ -263,7 +275,8 @@ async def _anthropic(
     usage = normalize_anthropic_usage(usage)
     finish_usage_probe(probe, getattr(resp, "usage", None), usage)
     if usage_sink is not None:
-        usage_sink.append(usage)
+        finish_reason = getattr(resp, "stop_reason", None)
+        usage_sink.append({**usage, "finish_reason": finish_reason} if finish_reason else usage)
     await _record_usage(settings, ai, usage)
     return strip_think_blocks("".join(b.text for b in resp.content if getattr(b, "type", "") == "text"))
 
@@ -339,6 +352,7 @@ async def _openai(
     usage_sink: list | None = None,
     probe_sink: list | None = None,
     cache_singleflight: bool = False,
+    reserve_reasoning_budget: bool = True,
 ) -> str:
     from agent import providers
 
@@ -355,7 +369,9 @@ async def _openai(
         messages=projection,
     )
     if max_tokens is not None:
-        kwargs["max_tokens"] = output_budget(ai, max_tokens)
+        kwargs["max_tokens"] = _branch_output_budget(
+            ai, max_tokens, reserve_reasoning_budget,
+        )
     adapter = providers.adapter_for(ai)
     from agent.providers.message_utils import merge_openai_system_messages
     kwargs["messages"] = merge_openai_system_messages(kwargs["messages"])
@@ -395,7 +411,8 @@ async def _openai(
     usage = normalize_openai_usage(usage)
     finish_usage_probe(probe, getattr(resp, "usage", None), usage)
     if usage_sink is not None:
-        usage_sink.append(usage)
+        finish_reason = getattr(resp.choices[0], "finish_reason", None)
+        usage_sink.append({**usage, "finish_reason": finish_reason} if finish_reason else usage)
     await _record_usage(settings, ai, usage)
     return strip_think_blocks(resp.choices[0].message.content or "")
 

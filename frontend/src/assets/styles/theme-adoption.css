@@ -147,7 +147,6 @@ html[data-theme][data-family] .cal-sidebar .sidebar-ev-name { color: var(--conte
 html[data-theme][data-family] .cal-sidebar .sidebar-ev-desc,
 html[data-theme][data-family] .cal-sidebar .sidebar-empty,
 html[data-theme][data-family] .cal-sidebar .sidebar-section-title { color: var(--content-secondary); }
-html[data-theme][data-family] .cal-sidebar .sidebar-divider { background: var(--border-subtle); }
 html[data-theme][data-family] .cal-sidebar .ev-del-btn {
   color: var(--status-warning);
   background: var(--status-warning-bg);

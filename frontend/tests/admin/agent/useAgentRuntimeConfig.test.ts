@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
-  cfg: { agent: { enabled: true }, search: { searxng_url: 'initial', deep_research_provider: 'tavily', similar_image_provider: 'baidu_qianfan', tavily_api_key: '' } },
+  cfg: { agent: { enabled: true }, search: { deep_research_provider: 'tavily', similar_image_provider: 'baidu_qianfan', tavily_api_key: '' } },
   saveConfig: vi.fn(),
 }))
 vi.mock('@/stores/config', () => ({ useConfigStore: () => mocks }))

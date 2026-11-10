@@ -1,7 +1,10 @@
 """历史对话的查询边界。"""
-from sqlalchemy import Text, and_, case, cast, desc, func, or_, select
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy import Text, and_, case, cast, desc, func, literal, or_, select
 from sqlalchemy.orm import defer
 
+from agent.context.dynamic_tail import message_timestamp
 from app.core.ownership import get_owned
 from app.core.tz import now_utc
 from app.models import (
@@ -9,6 +12,7 @@ from app.models import (
     UserBot, Workspace,
 )
 from app.search.query import keyword_condition, keyword_score
+from app.services import interactions
 
 
 async def list_recent_sessions(db, user_id, limit):
@@ -244,10 +248,16 @@ async def load_display_message_page(
     *,
     before_id: int | None = None,
     after_id: int | None = None,
+    through_id: int | None = None,
     run_id: str | None = None,
 ):
     """读取分页展示消息与受大小限制的时间线投影。"""
     row_filters = _display_message_filters(session_id)
+    if run_id is not None:
+        row_filters += (or_(
+            ConversationMessage.run_id == run_id,
+            ConversationMessage.display_timeline[0]["runId"].as_string() == run_id,
+        ),)
     statement = select(
         ConversationMessage,
         ConversationMessage.content_json.is_(None).label("is_display_body"),
@@ -255,42 +265,31 @@ async def load_display_message_page(
         defer(ConversationMessage.display_timeline),
         defer(ConversationMessage.content_json),
     ).where(*row_filters)
-    if run_id is not None:
-        statement = statement.where(or_(
-            ConversationMessage.run_id == run_id,
-            ConversationMessage.display_timeline[0]["runId"].as_string() == run_id,
-        ))
     time_key = _display_time_order_expr()
-    if before_id is not None:
-        cursor_time = select(time_key).where(
-            ConversationMessage.id == before_id,
-            ConversationMessage.session_id == session_id,
-        ).scalar_subquery()
-        cursor_seq = select(ConversationMessage.conversation_seq).where(
-            ConversationMessage.id == before_id,
-            ConversationMessage.session_id == session_id,
-        ).scalar_subquery()
-        statement = statement.where(_display_cursor_predicate(
-            time_key, (cursor_time, cursor_seq, before_id), before=True,
-        )).order_by(desc(time_key), desc(ConversationMessage.conversation_seq))
-    elif after_id is not None:
-        cursor_time = select(time_key).where(
-            ConversationMessage.id == after_id,
-            ConversationMessage.session_id == session_id,
-        ).scalar_subquery()
-        cursor_seq = select(ConversationMessage.conversation_seq).where(
-            ConversationMessage.id == after_id,
-            ConversationMessage.session_id == session_id,
-        ).scalar_subquery()
-        statement = statement.where(_display_cursor_predicate(
-            time_key, (cursor_time, cursor_seq, after_id), before=False,
-        )).order_by(time_key, ConversationMessage.conversation_seq)
-    else:
-        statement = statement.order_by(desc(time_key), desc(ConversationMessage.conversation_seq))
+    cursor_id = through_id if through_id is not None else before_id if before_id is not None else after_id
+    forward = after_id is not None and before_id is None and through_id is None
+    cursor_at = None
+    if cursor_id is not None:
+        cursor = (await db.execute(select(time_key, ConversationMessage.conversation_seq).where(
+            ConversationMessage.id == cursor_id, ConversationMessage.session_id == session_id,
+        ))).one_or_none()
+        if cursor is not None:
+            cursor_ms, cursor_seq = cursor
+            cursor_at = datetime.fromtimestamp(float(cursor_ms) / 1000, timezone.utc)
+            predicate = _display_cursor_predicate(time_key, (literal(cursor_ms), cursor_seq, cursor_id), before=not forward)
+            if through_id is not None:
+                predicate = or_(predicate, ConversationMessage.id == through_id)
+        elif through_id is not None:
+            predicate = False
+        else:
+            predicate = ConversationMessage.id > cursor_id if forward else ConversationMessage.id < cursor_id
+        statement = statement.where(predicate)
+    order = (time_key, ConversationMessage.conversation_seq)
+    statement = statement.order_by(*(order if forward else tuple(desc(key) for key in order)))
     fetched_rows = (await db.execute(statement.limit(limit))).all()
     page_rows = [row[0] for row in fetched_rows]
     display_body_ids = {row[0].id for row in fetched_rows if row.is_display_body}
-    if before_id is not None or after_id is None:
+    if not forward:
         page_rows.reverse()
 
     display_timeline_by_id: dict[int, list | None] = {}
@@ -325,7 +324,7 @@ async def load_display_message_page(
             .limit(1)
         )
         has_more = older_probe.first() is not None
-        if after_id is not None and len(page_rows) == limit:
+        if forward and len(page_rows) == limit:
             newest = page_rows[-1]
             newest_time = select(time_key).where(
                 ConversationMessage.id == newest.id,
@@ -345,7 +344,43 @@ async def load_display_message_page(
         "oversized_timeline_ids": oversized_timeline_ids,
         "has_more": has_more,
         "has_newer": has_newer,
+        "cursor_at": cursor_at,
     }
+
+
+async def load_page_interactions(
+    db, *, user_id, session_id: int, page, before_id, after_id, through_id, run_id, restore_active: bool,
+):
+    """按消息页的时间窗口读取已结束卡片，包含相邻两页之间的时间空档。"""
+    messages = page["messages"]
+    cursor_at = page["cursor_at"]
+    if run_id is not None:
+        tool_call_ids = {
+            str(item["toolCallId"])
+            for timeline in page["timelines"].values() for item in (timeline or [])
+            if item.get("kind") == "tool" and item.get("toolCallId") and item.get("runId") == run_id
+        }
+        return await interactions.list_history(
+            db, user_id=user_id, session_id=session_id, restore_active=False, tool_call_ids=tool_call_ids,
+        ) if tool_call_ids else []
+    if not messages and any(cursor is not None for cursor in (before_id, after_id, through_id)):
+        return []
+
+    start_at = message_timestamp(messages[0]) if page["has_more"] else None
+    end_before = None
+    if through_id is not None:
+        end_before = cursor_at + timedelta(microseconds=1)
+    elif before_id is not None:
+        end_before = cursor_at if cursor_at is not None else message_timestamp(messages[-1]) + timedelta(microseconds=1)
+    elif after_id is not None:
+        start_at = cursor_at or start_at
+        if page["has_newer"]:
+            end_before = message_timestamp(messages[-1])
+
+    return await interactions.list_history(
+        db, user_id=user_id, session_id=session_id, restore_active=restore_active,
+        start_at=start_at, end_before=end_before,
+    )
 
 
 async def get_session_owner_platform_ids(db, user_id, platform: str, bot_id: int | None):

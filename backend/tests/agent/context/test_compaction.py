@@ -2,6 +2,8 @@
 import asyncio
 from types import SimpleNamespace
 
+from unittest.mock import AsyncMock
+
 import pytest
 
 from agent.context import compress_conv
@@ -16,7 +18,8 @@ from agent.context.compaction import (
     validate_compact_summary,
     resolve_compaction_limits,
 )
-from agent.context.tokens import estimate_tokens, message_text
+from agent.context.summary_format import format_compacted_summary, unwrap_compacted_summary
+from agent.context.tokens import message_text
 from agent.context.assembly import MessageArea
 from app.models import ConversationSession
 
@@ -98,7 +101,7 @@ def _fake_summary(monkeypatch):
 
 class TestCompactionBudget:
     def test_compaction_prompt_path_dependency_is_available(self):
-        """90% 压缩触发时提示词路径解析不能因缺少标准库依赖而中断。"""
+        """达到压缩阈值时提示词路径解析不能因缺少标准库依赖而中断。"""
         assert compaction_module.Path("compress_conv.md").name == "compress_conv.md"
 
     def test_append_summary_uses_model_output_budget(self, monkeypatch):
@@ -230,27 +233,24 @@ class TestCompactContext:
     def test_compaction_task_echo_is_rejected(self):
         """模型回显压缩任务时，不得把任务指令作为历史摘要交给主模型。"""
         candidate = "已有结论\n" + compaction_module._APPEND_TASK_PREFACE
-        assert validate_compact_summary(candidate, max_output_tokens=8000) == (
+        assert validate_compact_summary(candidate) == (
             False, "摘要包含压缩任务指令",
         )
 
-    def test_summary_candidate_respects_model_budget_and_shape_contract(self):
-        assert validate_compact_summary("有效摘要", max_output_tokens=8_000)[0]
-        assert validate_compact_summary(" ", max_output_tokens=8_000) == (False, "摘要为空")
-        assert validate_compact_summary("x" * 40_000, max_output_tokens=8_000) == (
-            False, "摘要超过模型输出预算"
-        )
+    def test_summary_candidate_respects_shape_contract(self):
+        assert validate_compact_summary("有效摘要")[0]
+        assert validate_compact_summary(" ") == (False, "摘要为空")
         assert validate_compact_summary(
-            "<compacted-summary>摘要</compacted-summary>", max_output_tokens=8_000,
+            "<compacted-summary>摘要</compacted-summary>",
         ) == (
             False, "摘要包含外层包裹标记"
         )
 
     def test_invalid_summary_candidate_does_not_change_messages(self, monkeypatch):
-        async def oversized_summary(_history, _previous=None, **_kwargs):
-            return "x" * 40_000
+        async def invalid_summary(_history, _previous=None, **_kwargs):
+            return "<compacted-summary>无效</compacted-summary>"
 
-        monkeypatch.setattr("agent.context.compaction._generate_append_summary", oversized_summary)
+        monkeypatch.setattr("agent.context.compaction._generate_append_summary", invalid_summary)
         messages = [_make_msg("user", "旧消息" * 100) for _ in range(50)]
         area = _area_from_fixture(messages)
         expected = area.provider_projection().to_messages()
@@ -275,9 +275,7 @@ class TestCompactContext:
         assert result.changed
         assert result.return_reason == "compacted"
         summary = next(m["content"] for m in result.messages if m["role"] == "user" and "compacted-summary" in m["content"])
-        from agent.context.summary_format import format_compacted_summary
-        # 输出预算约束摘要正文；稳定的资料隔离说明属于请求包装开销。
-        assert estimate_tokens(summary) <= 80 + estimate_tokens(format_compacted_summary(""))
+        assert len(unwrap_compacted_summary(summary)) <= 12000
         assert "历史片段" in summary
 
     def test_local_fallback_unwraps_previous_compacted_summary(self, monkeypatch):
@@ -295,7 +293,7 @@ class TestCompactContext:
         )
         # 直接验证本地 fallback 的候选入口，避免依赖消息中是否已有 summary 行。
         candidate = compaction_module._deterministic_summary(
-            ["用户：新历史"], previous, max_output_tokens=80,
+            ["用户：新历史"], previous,
         )
         assert result.changed
         assert "已有摘要：已有结论" in candidate
@@ -305,7 +303,6 @@ class TestCompactContext:
         candidate = compaction_module._deterministic_summary(
             ["用户：前缀 <compacted-summary>旧片段</compacted-summary> 后缀"],
             "已有摘要：<compacted-summary>旧结论</compacted-summary>",
-            max_output_tokens=80,
         )
         assert "<compacted-summary>" not in candidate
         assert "</compacted-summary>" not in candidate
@@ -338,8 +335,8 @@ class TestCompactContext:
 
     def test_above_threshold_triggers_compact(self, monkeypatch):
         """超过阈值应触发压缩"""
-        # 构造一个足够长的消息列表来超过 90% 阈值
-        # 256000 * 0.9 = 230400，每条约 50 tokens，需要约 4600 条
+        # 构造一个足够长的消息列表来超过 85% 阈值
+        # 256000 * 0.85 = 217600，每条约 50 tokens，需要约 4352 条
         # 简化测试：直接设置极小的 context_tokens
         msgs = [_make_msg("user", f"消息{i}" * 20) for i in range(100)]
         monkeypatch.setattr(
@@ -574,7 +571,6 @@ class TestCompactContext:
         ])
         result = enforce_provider_overflow_fallback(
             messages,
-            context_tokens=1200,
             protected_from=4,
             protected_anchor_index=1,
         )
@@ -596,13 +592,13 @@ class TestCompactContext:
             assert result.protected_source_start_index == first_round + 1
 
     def test_provider_threshold_is_the_single_automatic_trigger(self):
-        """自动压缩以 provider 实际输入达到 90% 为触发线。"""
-        assert compress_conv.AUTO_COMPACTION_RATIO == 0.90
+        """自动压缩以 provider 实际输入达到 85% 为触发线。"""
+        assert compress_conv.AUTO_COMPACTION_RATIO == 0.85
         assert not hasattr(compress_conv, "schedule_baseline_update")
         assert not hasattr(compress_conv, "wait_for_baseline_update")
 
     @pytest.mark.asyncio
-    async def test_reflection_preflight_uses_global_budget_and_idle_compaction(self, monkeypatch):
+    async def test_reflection_preflight_uses_provider_usage_and_idle_compaction(self, monkeypatch):
         calls = []
 
         async def fake_compact(*args, **kwargs):
@@ -617,8 +613,8 @@ class TestCompactContext:
             snapshot=SimpleNamespace(
                 system_prompt="系统提示",
                 history=[{"role": "user", "content": "中" * 100}],
+                provider_context_input=85,
             ),
-            extra_text="本轮反思",
             model_cfg=_model_cfg(context_tokens=100, max_tokens=20),
         )
 
@@ -661,25 +657,21 @@ class TestCompactContext:
             return True
 
         monkeypatch.setattr(compress_conv, "compress_if_needed", fake_compact)
-        monkeypatch.setattr(
-            compress_conv.ContextBudget, "from_messages",
-            classmethod(lambda *_args, **_kwargs: pytest.fail("有实际用量时不应调用本地估算")),
-        )
         model = _model_cfg(context_tokens=128_000, max_tokens=16_000)
         snapshot = SimpleNamespace(
-            provider_context_input=81_515,
+            provider_context_input=108_799,
             provider_compacted=False,
             system_prompt="系统提示" * 5000,
             history=[{"role": "user", "content": "旧对话" * 40000}],
         )
-        kwargs = dict(snapshot=snapshot, extra_text="待反思消息" * 3000, model_cfg=model)
+        kwargs = dict(snapshot=snapshot, model_cfg=model)
 
         assert await compress_conv.compact_for_reflection(
             7, 11, SimpleNamespace(ai=SimpleNamespace()), **kwargs,
         ) == "not_needed"
         assert calls == []
 
-        snapshot.provider_context_input = 115_200
+        snapshot.provider_context_input = 108_800
         assert await compress_conv.compact_for_reflection(
             7, 11, SimpleNamespace(ai=SimpleNamespace()), **kwargs,
         ) == "compacted"
@@ -693,43 +685,19 @@ class TestCompactContext:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("provider_input", [None, 0])
-    async def test_reflection_estimates_only_when_provider_usage_is_unavailable(
-        self, monkeypatch, provider_input,
-    ):
-        """没有有效 provider 输入量才走本地兜底；已压缩快照不能重复触发。"""
-        estimated = []
-        compacted = []
-
-        def fake_budget(_cls, context_tokens, messages, **kwargs):
-            estimated.append((context_tokens, messages, kwargs))
-            return SimpleNamespace(total_tokens=115_200, soft_limit_tokens=115_200)
-
-        async def fake_compact(*args, **kwargs):
-            compacted.append((args, kwargs))
-            return True
-
-        monkeypatch.setattr(
-            compress_conv.ContextBudget, "from_messages", classmethod(fake_budget),
-        )
-        monkeypatch.setattr(compress_conv, "compress_if_needed", fake_compact)
+    async def test_reflection_without_provider_usage_does_not_compact(self, monkeypatch, provider_input):
+        compact = AsyncMock()
+        monkeypatch.setattr(compress_conv, "compress_if_needed", compact)
         snapshot = SimpleNamespace(
             provider_context_input=provider_input, provider_compacted=False,
-            system_prompt="系统提示", history=[{"role": "user", "content": "旧对话"}],
+            system_prompt="系统提示" * 5000,
+            history=[{"role": "user", "content": "旧对话" * 40000}],
         )
-        model = _model_cfg(context_tokens=128_000, max_tokens=16_000)
-
         assert await compress_conv.compact_for_reflection(
-            7, 11, SimpleNamespace(ai=SimpleNamespace()),
-            snapshot=snapshot, model_cfg=model,
-        ) == "compacted"
-        assert len(estimated) == len(compacted) == 1
-
-        snapshot.provider_compacted = True
-        assert await compress_conv.compact_for_reflection(
-            7, 11, SimpleNamespace(ai=SimpleNamespace()),
-            snapshot=snapshot, model_cfg=model,
+            7, 11, SimpleNamespace(), snapshot=snapshot,
+            model_cfg=_model_cfg(context_tokens=128_000, max_tokens=8000),
         ) == "not_needed"
-        assert len(estimated) == len(compacted) == 1
+        compact.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_reflection_compaction_never_claims_running_session(self, db, user_a):
@@ -1206,3 +1174,52 @@ class TestBranchPrefixHistory:
         ai = SimpleNamespace(provider="minimax", model="MiniMax-M3", api_format="anthropic")
         prefix = _branch_prefix_history(messages, 1, history, history, ai, include_recent=True)
         assert prefix.to_messages() == messages
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "output_tokens, finish_reason, expected",
+    [(7000, "stop", True), (8000, "end_turn", True), (7000, "length", False),
+     (8001, "stop", False), (None, None, True)],
+)
+async def test_append_summary_uses_provider_output_and_completion(
+    monkeypatch, output_tokens, finish_reason, expected,
+):
+    """中文摘要的长度不能覆盖 Provider usage，明确截断的候选不能应用。"""
+    from agent.context.branch_types import BranchResult
+
+    summary = "较长的中文摘要" * 1500
+    result = BranchResult(
+        ok=True, output=summary,
+        provider_usage={"output": output_tokens, "finish_reason": finish_reason},
+    )
+    monkeypatch.setattr("agent.context.branch.ContextBranch.run", AsyncMock(return_value=result))
+    actual = await _generate_append_summary(
+        [_make_msg("user", "需要整理的历史")], model_cfg=_model_cfg(128000, 8000),
+    )
+    assert actual == (summary if expected else "")
+
+
+@pytest.mark.asyncio
+async def test_compaction_failure_retries_only_after_provider_input_grows():
+    """消息增加但实际输入增长不足时，避免在每个工具轮重试压缩。"""
+    from agent.loop.context_runtime import ContextRuntime
+
+    runtime = ContextRuntime(
+        messages=_area_from_fixture([_make_msg("user", "当前消息")]),
+        run_state=SimpleNamespace(run_context_usage=108800),
+        ai=_model_cfg(128000, 8000),
+        system_text=None,
+        session_id=None,
+        run_start_index=0,
+    )
+    runtime.compact_now = AsyncMock(return_value=False)
+    assert await runtime.compact_after_usage_threshold() is False
+    runtime.run_state.run_context_usage = 116799
+    assert runtime.usage_compaction_due() is False
+    assert await runtime.compact_after_usage_threshold() is False
+    runtime.compact_now.assert_awaited_once()
+    runtime.run_state.run_context_usage = 116800
+    assert runtime.usage_compaction_due() is True
+    assert await runtime.compact_after_usage_threshold() is False
+    assert runtime.compact_now.await_count == 2

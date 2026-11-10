@@ -98,7 +98,7 @@ function domainFor(file) {
     ['im', /(^|[/_])im|qq_|wechat|feishu|interaction|message_format|notifications|qface|feedback_email/],
     ['storage', /storage|file|folder|upload|trash|video|attachment|path_|key_strategy|web_download|p2b_|io_retry_contract/],
     ['agent-provider', /agent|provider|llm|tool_|schema|runner|stream|capability|behaviors|commands|byok|loop_driver|core_|local_deployment|minimax|valueerror|user_skills|preferences_/],
-    ['memory-rag', /memory|rag|knowledge|stance|search|searxng|compare_index|scoped_store/],
+    ['memory-rag', /memory|rag|knowledge|stance|search|compare_index|scoped_store/],
     ['mind-project', /mind|canvas|project/],
     ['schedule', /schedule|worker_shutdown|datetime|tz_|regressions/],
     ['terminal-runtime', /terminal|shell|docker|runtime|loopscope|process|systemd|trace_ops|run_finalize/],

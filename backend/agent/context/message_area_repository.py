@@ -83,10 +83,32 @@ async def commit_delta(
     default_round_id: str | None,
     user_message,
     interrupted: bool,
+    area_entries=(),
 ) -> dict[str, Any]:
     """按 Area 顺序原子提交 delta；相同 run 的重复 finalize 由 batch digest 去重。"""
     from agent import media
     from app.models import ConversationMessage
+    from agent.context.assembly.area import MessageSource, PersistencePolicy
+    from agent.context.canonical_context import MEDIA_BLOCK_TYPES
+    from agent.context.history import USER_IMAGE_TYPES
+
+    # 入站行已落库，只补模型实际使用的图片内容及其原始顺序。
+    for entry in area_entries:
+        if (entry.persisted_message_id is None
+                or entry.persistence_policy != PersistencePolicy.ALREADY_PERSISTED
+                or entry.source not in {MessageSource.USER, MessageSource.REFERENCE, MessageSource.ATTACHMENT}):
+            continue
+        content = entry.canonical_message.get("content")
+        if not isinstance(content, list):
+            continue
+        media_types = MEDIA_BLOCK_TYPES.intersection(
+            block.get("type") for block in content if isinstance(block, dict)
+        )
+        if not media_types or not media_types <= USER_IMAGE_TYPES:
+            continue
+        message = await db.get(ConversationMessage, entry.persisted_message_id)
+        if message is not None and message.session_id == session_id and message.role == "user":
+            message.provider_image_content = content
 
     entries = tuple(delta.entries)
     if not entries:

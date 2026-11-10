@@ -414,13 +414,6 @@ class QuotaSettings(BaseModel):
     default_search_limit_daily:  Optional[int] = Field(None, description="全局每日联网搜索次数上限（None=不限制）")
 
 
-DEFAULT_SEARXNG_IMAGE_ENGINES = (
-    "baidu images,quark images,sogou images,bing images,brave.images,"
-    "duckduckgo images,google images,qwant images,yandex images,pinterest,"
-    "wikicommons.images,openverse,flickr,imgur,artstation"
-)
-
-
 class SearchSettings(BaseModel):
     rag_enabled: bool = Field(True, description="是否启用 Agent 自动知识召回（RAG）")
     rag_auto_sources: list[Literal["memory", "knowledge", "project", "canvas", "note", "calendar", "scheduled_task", "conversation"]] = Field(
@@ -442,15 +435,6 @@ class SearchSettings(BaseModel):
     tavily_api_key: str = Field("", description="Tavily API Key（空=禁用 deep_research 深度研究）")
     deep_research_baidu_api_key: str = Field("", description="百度普通搜索 API Key")
     deep_research_you_api_key: str = Field("", description="You.com Research API Key")
-    searxng_url:    str = Field("", description="自建 SearXNG 实例地址（空=禁用 xng_search 通用搜索），如 http://127.0.0.1:8888")
-    searxng_engines: str = Field(
-        "baidu,sogou,quark,360search,yandex,duckduckgo web,mwmbl,gabanza,reloado,searchch,privacywall,gmx,zapmeta,google",
-        description="SearXNG 启用的通用网页搜索引擎（逗号分隔）",
-    )
-    searxng_image_engines: str = Field(
-        DEFAULT_SEARXNG_IMAGE_ENGINES,
-        description="SearXNG XNG 搜索 mode=images 启用的引擎（逗号分隔）；默认兼顾国内外来源，可按部署环境测试后调整；留空时使用此默认名单",
-    )
     max_results:    int = Field(5, description="默认返回结果数")
     rag_sidecar_socket: str = Field(
         "",
@@ -475,7 +459,7 @@ class SearchSettings(BaseModel):
 
 
 class StateLabelSettings(BaseModel):
-    """对话里「状态指示」的自定义命名。key=工具名（xng_search…）或特殊状态键（_thinking/_preparing/
+    """对话里「状态指示」的自定义命名。key=工具名（web_search…）或特殊状态键（_thinking/_preparing/
     _verify_prefix），value=自定义显示名；未设的 key 自动回退到代码默认（工具的 label / 内置默认）。
     后台「状态命名」面板写入，core/前端热读。"""
     overrides: dict[str, str] = Field(default_factory=dict, description="状态显示名覆盖表（key→自定义名）")

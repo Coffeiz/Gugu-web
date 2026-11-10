@@ -55,6 +55,14 @@
     "keyBehavior": "崩溃重领不重跑已开始任务；回复发送前落库，检查点保留中间轮和工具状态，正常收尾复用同一展示行",
     "ci": "backend-pytest"
   },
+  "backend/tests/im/test_immediate_files.py": {
+    "domain": "im-file-delivery",
+    "layer": "L1",
+    "owner": "backend/agent/im/immediate_files.py",
+    "productionEntry": "IM 工具文件发送入口",
+    "keyBehavior": "同一消息与文件并发只发送一次，UUID 所有者标识稳定去重，发送状态未知时不重试",
+    "ci": "backend-pytest"
+  },
   "backend/tests/im/test_im_commands.py": {
     "domain": "im-command-auth",
     "layer": "L1",
@@ -123,8 +131,8 @@
     "domain": "im-memory",
     "layer": "L1",
     "owner": "backend/agent/memory",
-    "productionEntry": "backend/agent/im/loop.py:record_passive_im_message、backend/agent/memory/group_pressure.py、reflection_jobs.py",
-    "keyBehavior": "群被动消息不登记或续期闲置，主动 run 完成后计时且保留较新水位；不足50条达到90%压力仍入队两类反思，重建旧快照后先压缩再反思，压缩被阻止则持久延后",
+    "productionEntry": "backend/agent/im/conversation.py:record_passive_im_message、backend/agent/memory/reflection_jobs.py 与 im_reflection.py",
+    "keyBehavior": "群被动消息累计条数但不启动或续期闲置；主动 Run 完成后计时且保留较新水位；没有 Provider 用量时不触发压力任务，旧版已入队的任务仍可重建历史后执行",
     "ci": "backend-test"
   },
   "frontend/tests/admin/agent/useAgentRuntimeConfig.test.ts": {
@@ -1036,7 +1044,7 @@
     "layer": "L3",
     "owner": "frontend/e2e",
     "productionEntry": "frontend/src/assets/styles/tokens/semantic.css",
-    "keyBehavior": "所有浅色配色和材质下分隔线及虚线边界均与浅色背景保持可见对比",
+    "keyBehavior": "浅色分隔线和虚线边界与背景保持可见对比，日历侧栏的组间分隔线在各主题下使用内容分隔线颜色",
     "ci": "runtime-integration"
   },
   "frontend/e2e/page-lifecycle.spec.ts": {
@@ -1101,6 +1109,14 @@
     "owner": "backend/agent/runtime/loopscope_trace",
     "productionEntry": "agent/runtime/loopscope_trace/provider_request.py 与 agent/providers/openai_responses.py",
     "keyBehavior": "仅失败轮捕获含原生 reasoning 的最终请求，拒绝保存凭据，深层 Schema 经 trace 数据库往返后摘要不变且只读回放不调用模型",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/observability/test_provider_token_usage_contract.py": {
+    "domain": "provider-token-usage-contract",
+    "layer": "L0",
+    "owner": "backend/agent/context",
+    "productionEntry": "agent/context/provider_runner.py 与上下文压缩流程",
+    "keyBehavior": "模型上下文与压缩决策只依据 Provider 实际用量，不重新引入本地 tokenizer 或 token 估算器",
     "ci": "backend-pytest"
   },
   "backend/tests/platform/test_im_platform_settings.py": {
@@ -1589,14 +1605,6 @@
     "owner": "backend/alembic",
     "productionEntry": "alembic/versions/20261018000001_migrate_search_tool_references.py",
     "keyBehavior": "真实 PostgreSQL 临时 schema 验证列约束、默认值和迁移升降级",
-    "ci": "backend-pytest"
-  },
-  "backend/tests/agent/knowledge/test_searxng_search_status.py": {
-    "domain": "search",
-    "layer": "L0",
-    "owner": "backend/agent/tools",
-    "productionEntry": "agent/tools/search.py",
-    "keyBehavior": "空结果、引擎故障和超时不隐式调用付费研究",
     "ci": "backend-pytest"
   },
   "backend/tests/storage/filesync/test_missing_batch.py": {
@@ -2109,14 +2117,6 @@
     "owner": "backend/agent/im/delivery_receipts.py",
     "productionEntry": "backend/agent/im/dispatch_finalization.py",
     "keyBehavior": "附件投递回执进入内部上下文，但不能跨会话或泄漏到其他用户历史",
-    "ci": "backend-pytest"
-  },
-  "backend/tests/platform/deployment/test_searxng_compose_defaults.py": {
-    "domain": "deployment-search-defaults",
-    "layer": "L1",
-    "owner": "docker-compose.yml 与 docker-compose.prod.yml",
-    "productionEntry": "SearXNG Compose 默认配置",
-    "keyBehavior": "Compose 默认启用 JSON 与配置的图片引擎，同时保留部署覆盖配置的行为",
     "ci": "backend-pytest"
   },
   "frontend/tests/interactions/runtime/setup.test.ts": {

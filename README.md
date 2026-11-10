@@ -180,7 +180,7 @@ docker run -d --name gugu-web \
 
 `Gugu-data` 保存用户数据和运行配置，`Gugu-config` 保存 Admin 配置；升级或重建容器时保留这两个目录。正式部署建议把 `latest` 换成固定版本标签。
 
-Shell 沙盒由镜像内的 Rootless Docker 和沙盒管理器运行，不需要挂载宿主 Docker Socket。外层 app 容器必须启用 `--privileged`；此方式面向可信个人单用户，不适用于多租户、公网或业务服务器。单容器镜像不包含 SearXNG，因此不提供联网搜索；如需联网搜索或 Compose 管理，请使用[快速部署指南中的 Compose 路径](docs/quick-deploy.md)。
+Shell 沙盒由镜像内的 Rootless Docker 和沙盒管理器运行，不需要挂载宿主 Docker Socket。外层 app 容器必须启用 `--privileged`；此方式面向可信个人单用户，不适用于多租户、公网或业务服务器。联网搜索由当前模型 Provider 提供；如需 Compose 管理，请使用[快速部署指南](docs/quick-deploy.md)。
 
 分体生产 Compose 继续使用独立 Rootless sandboxd；详细部署边界、Compose 路径和 NAS 图形界面步骤见[快速部署指南](docs/quick-deploy.md)。
 
@@ -206,7 +206,7 @@ README 只保留配置索引，完整变量和运行规则将在 `docs/configura
 | Database | 主数据存储，默认使用 PostgreSQL |
 | Redis | 消息、会话和 Runtime 状态 |
 | LLM / BYOK | 模型提供商和个人 API Key |
-| Search | 内置 SearXNG Web Search 与站内搜索后端 |
+| Search | Provider 网页搜索与站内搜索后端 |
 | Mail | 支持 Admin 系统 SMTP 和用户个人 SMTP；咕咕可按授权主动发邮件，定时任务可通过邮件汇报执行结果；Admin 还支持模板编辑、预览、测试发送和中日英多语言更新邮件，用户可在注册或偏好设置中管理订阅 |
 | IM | QQ、微信、飞书、Telegram 连接 |
 | LoopScope | Agent 链路和性能观测 |
@@ -406,7 +406,7 @@ LoopScope 是咕咕 Agent 的开发观测和排障工具，用来还原一次请
 | Token Usage | 查看 input、output、cache read/write、fresh input、total 和缓存率 |
 | Prefix Diff | 对比相邻 Round 或 Run 的提供商输入，定位稳定前缀最早从哪里发生变化 |
 | Tool Call | 查看工具名称、参数形状、结果摘要、耗时、父子关系和执行状态 |
-| Schema 诊断 | 查看实际注入的工具 Schema 数量、字节/token 估算、digest，以及 Schema 错误和恢复原因 |
+| Schema 诊断 | 查看实际注入的工具 Schema 数量、字节数、digest，以及 Schema 错误和恢复原因 |
 | Skill 诊断 | 查看 Skill 正文是否加载、加载耗时、内容长度和关联工具 Schema 注入情况 |
 | 性能与错误 | 定位 Prompt、Memory、RAG、数据库、工具、提供商、渠道和输出阶段的耗时、失败或取消 |
 | 导出与辅助页面 | 多选导出 `loopscope-run-export` v2 JSON，并使用 `/tokens`、`/changelog`、`/settings` |

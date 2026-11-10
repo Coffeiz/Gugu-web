@@ -67,9 +67,13 @@ async def test_nonchat_responses_uses_visible_message_and_never_replays_reasonin
 @pytest.mark.asyncio
 async def test_json_thinking_override_does_not_mutate_configured_model(responses_model):
     ai, client = responses_model
-    assert await provider_runner.complete_json("规则", "输入", None, thinking="disabled") == {"ok": True}
+    assert await provider_runner.complete_json(
+        "规则", "输入", None, max_tokens=1024, thinking="disabled",
+    ) == {"ok": True}
     assert ai.thinking == "adaptive"
-    assert "reasoning" not in client.responses.create.call_args.kwargs
+    request = client.responses.create.call_args.kwargs
+    assert "reasoning" not in request
+    assert request["max_output_tokens"] == 1024
 
 
 def test_budget_keeps_unlimited_setting_and_plain_model_budget():

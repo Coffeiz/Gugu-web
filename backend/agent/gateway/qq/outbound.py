@@ -978,8 +978,7 @@ async def send_file(openid: str, data: bytes | None, name: str, ext: str,
         msg_body["content"] = fname
     message_path = f"/v2/{target}/{openid}/messages"
     try:
-        await _qq_request(channel_id, "POST", message_path, json_body=msg_body)
-        return outcome("sent")
+        response = await _qq_request(channel_id, "POST", message_path, json_body=msg_body)
     except Exception as message_error:
         if not (
             group
@@ -994,9 +993,16 @@ async def send_file(openid: str, data: bytes | None, name: str, ext: str,
         active_body.pop("msg_id", None)
         active_body["msg_seq"] = await _next_seq(None)
         try:
-            await _qq_request(channel_id, "POST", message_path, json_body=active_body)
-            return outcome("sent")
+            response = await _qq_request(channel_id, "POST", message_path, json_body=active_body)
         except Exception as fallback_error:
             diag_log("agent.gateway.qq.send_file.active_fallback", fallback_error)
             _log.warning("[qq] 群文件主动发送失败: %s", redact(f"{type(fallback_error).__name__}: {fallback_error}"))
             return error_outcome(fallback_error)
+
+    message_id = response.get("id") if isinstance(response, dict) else None
+    if not isinstance(message_id, str) or not message_id.strip():
+        from agent.runtime import trace
+
+        _log.warning("[qq-file] 接口成功响应缺少消息 ID: trace=%s target=%s", trace.get_trace() or "-", target)
+        return outcome("unknown")
+    return outcome("sent")

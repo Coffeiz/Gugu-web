@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 
-BranchName = Literal["compaction", "reflection", "knowledge"]
+BranchName = Literal["compaction", "reflection", "reflection-preview", "knowledge"]
 OutputMode = Literal["text", "json"]
 # append_reuse：只读 sibling branch（PRD-LLM-27 §6.6），复用会话前缀但不修改
 # 主 continuation——分支响应不作为主会话下一轮的 Responses API 续接。

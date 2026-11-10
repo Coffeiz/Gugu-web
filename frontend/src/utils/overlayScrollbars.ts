@@ -23,28 +23,32 @@ type ScrollBinding = {
 
 const bindings = new WeakMap<HTMLElement, ScrollBinding>()
 
-function getTrackInsets(element: HTMLElement, thumb: HTMLElement, rect: DOMRect) {
+function getTrackGeometry(element: HTMLElement, { thumb, owner }: ScrollBinding) {
+  const rect = element.getBoundingClientRect()
+  const ownerRect = owner?.getBoundingClientRect()
+  // 宿主内的滑块使用宿主的布局坐标。开合缩放期间，先把屏幕上的距离换回布局距离。
+  const scaleX = owner && ownerRect && owner.offsetWidth ? ownerRect.width / owner.offsetWidth || 1 : 1
+  const scaleY = owner && ownerRect && owner.offsetHeight ? ownerRect.height / owner.offsetHeight || 1 : 1
   const styles = getComputedStyle(thumb)
   const baseInset = Math.max(0, parseFloat(styles.getPropertyValue('--scrollbar-overlay-track-inset')) || 0)
   const insetHeader = element.querySelector<HTMLElement>(TRACK_INSET_HEADER_SELECTOR)
   const headerBottom = insetHeader
-    ? Math.max(0, insetHeader.getBoundingClientRect().bottom - rect.top)
+    ? Math.max(0, (insetHeader.getBoundingClientRect().bottom - rect.top) / scaleY)
     : 0
-
+  const insetTop = headerBottom + baseInset
   return {
-    top: headerBottom > 0 ? headerBottom + baseInset : baseInset,
-    bottom: baseInset,
+    top: (rect.top - (ownerRect?.top ?? 0)) / scaleY + insetTop,
+    right: Math.max(0, ((ownerRect?.right ?? window.innerWidth) - rect.right) / scaleX),
+    height: Math.max(0, rect.height / scaleY - insetTop - baseInset),
+    minThumb: Math.max(1, parseFloat(styles.getPropertyValue('--scrollbar-min-thumb')) || 24),
+    scaleY,
   }
 }
 
 function updateThumb(element: HTMLElement, binding: ScrollBinding) {
   const viewport = element.clientHeight
   const content = element.scrollHeight
-  const rect = element.getBoundingClientRect()
-  const styles = getComputedStyle(binding.thumb)
-  const { top: trackInsetTop, bottom: trackInsetBottom } = getTrackInsets(element, binding.thumb, rect)
-  const minThumb = Math.max(1, parseFloat(styles.getPropertyValue('--scrollbar-min-thumb')) || 24)
-  const track = Math.max(0, rect.height - trackInsetTop - trackInsetBottom)
+  const { top, right, height: track, minThumb } = getTrackGeometry(element, binding)
   const maxScroll = content - viewport
 
   if (maxScroll <= 1 || track <= 1) {
@@ -57,14 +61,8 @@ function updateThumb(element: HTMLElement, binding: ScrollBinding) {
   const offset = maxScroll > 0 ? (element.scrollTop / maxScroll) * maxOffset : 0
   binding.thumb.hidden = false
   binding.thumb.style.height = `${thumbHeight}px`
-  if (binding.owner) {
-    const ownerRect = binding.owner.getBoundingClientRect()
-    binding.thumb.style.top = `${rect.top - ownerRect.top + trackInsetTop + offset}px`
-    binding.thumb.style.right = `calc(${Math.max(0, ownerRect.right - rect.right)}px - var(--scrollbar-overlay-right-offset))`
-  } else {
-    binding.thumb.style.top = `${rect.top + trackInsetTop + offset}px`
-    binding.thumb.style.right = `calc(${Math.max(0, window.innerWidth - rect.right)}px - var(--scrollbar-overlay-right-offset))`
-  }
+  binding.thumb.style.top = `${top + offset}px`
+  binding.thumb.style.right = `calc(${right}px - var(--scrollbar-overlay-right-offset))`
 
   const modal = element.closest<HTMLElement>('.bm-center')
   if (modal) {
@@ -132,11 +130,9 @@ function bind(element: HTMLElement) {
   }
   binding.onPointerMove = (event) => {
     if (binding.dragStartY === null) return
-    const rect = element.getBoundingClientRect()
-    const { top: trackInsetTop, bottom: trackInsetBottom } = getTrackInsets(element, thumb, rect)
-    const track = Math.max(0, rect.height - trackInsetTop - trackInsetBottom)
+    const { height, scaleY } = getTrackGeometry(element, binding)
     const thumbHeight = thumb.getBoundingClientRect().height
-    const maxOffset = Math.max(1, track - thumbHeight)
+    const maxOffset = Math.max(1, height * scaleY - thumbHeight)
     const maxScroll = Math.max(0, element.scrollHeight - element.clientHeight)
     element.scrollTop = binding.dragStartScrollTop + ((event.clientY - binding.dragStartY) / maxOffset) * maxScroll
   }

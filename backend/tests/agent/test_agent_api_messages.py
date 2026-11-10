@@ -5,11 +5,14 @@
 对应 CRAP-FULL 高危清单里最大的单体：get_session_messages（CC=50）。
 """
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from fastapi import HTTPException
 
 from app.api.v1 import agent as agent_api
-from app.models import ConversationMessage, ConversationSession, UserMcpServer
+from app.core.tz import now_utc
+from app.models import ConversationMessage, ConversationSession, InteractionRequest, UserMcpServer
 from app.db.migrations.chat_timeline import migrate_session_timeline
 from sqlalchemy import select
 
@@ -136,11 +139,30 @@ async def test_run_history_query_returns_only_target_run_after_commit(db, user_a
     session = await _mk_session(db, user_a)
     for run_id in ('run-target', 'run-next'):
         await _mk_message(db, session.id, 'assistant', '合成回复', run_id=run_id, display_timeline=[
-            {'kind': 'assistant', 'text': run_id, 'runId': run_id, 'roundId': 'r1'}])
+            {'kind': 'assistant', 'text': run_id, 'runId': run_id, 'roundId': 'r1'},
+            {'kind': 'tool', 'toolCallId': f'{run_id}-tool', 'runId': run_id, 'roundId': 'r1'},
+        ])
+        db.add(InteractionRequest(
+            session_id=session.id, user_id=user_a.id, title=run_id, status='resolved',
+            schema_json={'context': {'tool_call_id': f'{run_id}-tool'}}, expires_at=now_utc(),
+        ))
     await db.commit()
-    payload = await agent_api.get_session_messages(session.id, current_user=user_a, db=db, run_id='run-target')
-    assert [item['runId'] for item in payload['timelineEvents']] == ['run-target']
+    payload = await agent_api.get_session_messages(session.id, limit=1, current_user=user_a, db=db, run_id='run-target')
+    assert [item['runId'] for item in payload['timelineEvents']] == ['run-target', 'run-target']
     assert payload['timelineEvents'][0]['eventId']
+    assert [item['title'] for item in payload['interactions']] == ['run-target']
+    assert payload['pagination']['hasMore'] is False
+
+
+async def test_search_window_includes_exact_message_when_ids_disagree_with_platform_time(db, user_a):
+    session = await _mk_session(db, user_a)
+    target = await _mk_message(db, session.id, 'user', '目标消息', im_platform_sent_ms=1_800_000_010_000)
+    await _mk_message(db, session.id, 'user', '后入库但先发送', im_platform_sent_ms=1_800_000_000_000)
+    await _mk_message(db, session.id, 'user', '晚于目标', im_platform_sent_ms=1_800_000_020_000)
+    await db.commit()
+
+    payload = await agent_api.get_session_messages(session.id, through_id=target.id, current_user=user_a, db=db)
+    assert [item['content'] for item in payload['messages']] == ['后入库但先发送', '目标消息']
 
 
 async def test_web_secret_link_and_submit_are_owner_scoped_for_group_session(db, user_a, user_b):
@@ -226,6 +248,38 @@ async def test_get_session_messages_before_id_page_is_oldest_first(db, user_a):
     assert payload["pagination"]["hasMore"] is False
     assert payload["pagination"]["oldestId"] == payload["messages"][0]["id"]
     assert payload["pagination"]["newestId"] == payload["messages"][1]["id"]
+
+
+async def test_interaction_history_follows_message_pages_and_active_cards_restore_separately(db, user_a):
+    session = await _mk_session(db, user_a)
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    for offset in (0, 10, 20, 30):
+        await _mk_message(db, session.id, "user", "测试消息", created_at=start + timedelta(seconds=offset))
+    for offset, title, status in (
+        (5, "旧确认卡", "resolved"),
+        (15, "两页之间的提问卡", "resolved"),
+        (20, "分页边界的提问卡", "resolved"),
+        (25, "当前页确认卡", "resolved"),
+        (5, "仍待回答的旧卡", "active"),
+    ):
+        db.add(InteractionRequest(
+            session_id=session.id, user_id=user_a.id, title=title, status=status,
+            created_at=start + timedelta(seconds=offset), expires_at=now_utc() + timedelta(minutes=5),
+        ))
+    await db.commit()
+
+    recent = await agent_api.get_session_messages(session.id, limit=2, current_user=user_a, db=db)
+    assert [card["title"] for card in recent["interactions"]] == ["分页边界的提问卡", "当前页确认卡"]
+    older = await agent_api.get_session_messages(
+        session.id, limit=2, before_id=recent["pagination"]["oldestId"], current_user=user_a, db=db,
+    )
+    assert [card["title"] for card in older["interactions"]] == ["旧确认卡", "两页之间的提问卡"]
+    restored = await agent_api.get_session_messages(
+        session.id, limit=2, restore_interactions=True, current_user=user_a, db=db,
+    )
+    assert [card["title"] for card in restored["interactions"]] == [
+        "仍待回答的旧卡", "分页边界的提问卡", "当前页确认卡",
+    ]
 
 
 async def test_get_session_messages_emits_timeline_and_suppresses_tool_events(db, user_a):

@@ -183,7 +183,7 @@ class ActorResolver:
                         payload, str(platform_user_id or ""), str(chat_type or "")
                     )
                 if role == "unknown" and allowed_tool_names is None:
-                    allowed_tool_names = ["xng_search", "http_get", "similar_image_search", "read_file", "send_file"]
+                    allowed_tool_names = ["web_search", "http_get", "similar_image_search", "read_file", "send_file"]
 
                 # 一个批次可能有多位发言人（咕咕回复期间群里又来消息）。整轮只回一次，
                 # 也就只有一个权限主体：按**最弱**执行——成员消息不会借主人权限调用
@@ -223,7 +223,7 @@ class ActorResolver:
                     flush=True,
                 )
                 role = "unknown"
-                allowed_tool_names = ["xng_search", "http_get", "similar_image_search", "read_file", "send_file"]
+                allowed_tool_names = ["web_search", "http_get", "similar_image_search", "read_file", "send_file"]
                 verified_owner = False
         actor = ActorContext(
             owner_user_id=owner_user_id,

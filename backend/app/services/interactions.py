@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from datetime import datetime, timedelta
 import hashlib
 import json
 import secrets
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import and_, delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tz import now_utc
@@ -725,77 +725,6 @@ async def consume_custom_text(
     return None
 
 
-async def list_active(db: AsyncSession, *, user_id, session_id: int) -> list[dict]:
-    now = now_utc()
-    rows = (await db.execute(
-        select(InteractionRequest).where(
-            InteractionRequest.user_id == user_id,
-            InteractionRequest.session_id == session_id,
-            InteractionRequest.status == "active",
-            InteractionRequest.expires_at > now,
-        ).order_by(InteractionRequest.created_at.desc())
-    )).scalars().all()
-    result: list[dict] = []
-    for prompt in rows:
-        schema = _schema_dict(prompt.schema_json)
-        secret_target = (schema.get("context") or {}).get("secret_target") if isinstance(schema.get("context"), dict) else None
-        is_mcp_secret = bool(
-            schema.get("secret_fields")
-            and isinstance(secret_target, dict)
-            and secret_target.get("kind") == "mcp_credentials"
-        )
-        actions = (await db.execute(
-            select(InteractionAction).where(
-                InteractionAction.prompt_id == prompt.id,
-                InteractionAction.status == "pending",
-                InteractionAction.expires_at > now,
-            ).order_by(InteractionAction.id)
-        )).scalars().all()
-        options = []
-        has_private_secret_stage = False
-        if is_mcp_secret:
-            from app.models import McpSecretInput
-
-            has_private_secret_stage = bool(await db.scalar(select(McpSecretInput.id).where(
-                McpSecretInput.prompt_id == prompt.id,
-                McpSecretInput.status.in_(("pending_choice", "awaiting_secret")),
-                McpSecretInput.expires_at > now,
-            )))
-        for action in (actions if not is_mcp_secret or has_private_secret_stage else []):
-            token = secrets.token_urlsafe(24)
-            action.token_hash = _hash_token(token)
-            options.append({
-                "id": action.option_id,
-                "label": next(
-                    (str(item.get("label") or "") for item in schema.get("options", [])
-                     if str(item.get("id") or "") == action.option_id),
-                    action.option_id,
-                ),
-                "token": token,
-            })
-        tool_call_id = str((schema.get("context") or {}).get("tool_call_id") or "") or None
-        result.append({
-            "id": prompt.id,
-            "session_id": prompt.session_id,
-            "kind": prompt.kind,
-            "title": prompt.title,
-            "body": prompt.body,
-            # 交互由某次工具调用暂停产生。前端恢复时间线时需要这个关联，
-            # 才能稳定保持“工具气泡 -> 交互气泡”的实时顺序。
-            "tool_call_id": tool_call_id,
-            "task_paused": bool(prompt.kind == "confirm" and tool_call_id),
-            "options": options,
-            # 只回传字段名/标签/类型，不回传任何凭据值。
-            "secret_fields": list(schema.get("secret_fields") or []),
-            "allow_text_input": bool(schema.get("source") == "agent" and schema.get("allow_text_input")),
-            "custom_input_active": bool(schema.get("custom_input_active")),
-            "expires_at": prompt.expires_at.isoformat(),
-        })
-    if result:
-        await db.commit()
-    return result
-
-
 async def trim_finished_interactions(
     db: AsyncSession, *, session_id: int, created_before=None,
 ) -> int:
@@ -814,18 +743,33 @@ async def trim_finished_interactions(
     return result.rowcount or 0
 
 
-async def list_history(db: AsyncSession, *, user_id, session_id: int) -> list[dict]:
-    """返回会话全部交互气泡；活动项轮换 token，已完成项只保留展示数据。"""
+async def list_history(
+    db: AsyncSession, *, user_id, session_id: int,
+    restore_active: bool = True,
+    start_at: datetime | None = None, end_before: datetime | None = None,
+    tool_call_ids: set[str] | None = None,
+) -> list[dict]:
+    """读取会话交互；历史窗口左闭右开，活动项轮换 token。"""
     now = now_utc()
-    prompts = (await db.execute(
-        select(InteractionRequest).where(
-            InteractionRequest.user_id == user_id,
-            InteractionRequest.session_id == session_id,
-        ).order_by(InteractionRequest.created_at)
-    )).scalars().all()
+    statement = select(InteractionRequest).where(
+        InteractionRequest.user_id == user_id,
+        InteractionRequest.session_id == session_id,
+    )
+    is_active = and_(InteractionRequest.status == "active", InteractionRequest.expires_at > now)
+    window = []
+    if start_at is not None:
+        window.append(InteractionRequest.created_at >= start_at)
+    if end_before is not None:
+        window.append(InteractionRequest.created_at < end_before)
+    if tool_call_ids is not None:
+        window.append(InteractionRequest.schema_json["context"]["tool_call_id"].as_string().in_(tool_call_ids))
+    historical = and_(~is_active, *window)
+    statement = statement.where(or_(historical, is_active) if restore_active else historical)
+    prompts = (await db.scalars(statement.order_by(InteractionRequest.created_at, InteractionRequest.id))).all()
     result: list[dict] = []
     changed = False
     for prompt in prompts:
+        active = prompt.status == "active" and prompt.expires_at > now
         schema = _schema_dict(prompt.schema_json)
         secret_target = (schema.get("context") or {}).get("secret_target") if isinstance(schema.get("context"), dict) else None
         is_mcp_secret = bool(
@@ -848,7 +792,7 @@ async def list_history(db: AsyncSession, *, user_id, session_id: int) -> list[di
             if action.status == "consumed":
                 selected = action.option_id
                 continue
-            if prompt.status == "active" and action.expires_at > now and action.status == "pending":
+            if active and action.expires_at > now and action.status == "pending":
                 token = secrets.token_urlsafe(24)
                 action.token_hash = _hash_token(token)
                 changed = True
@@ -869,7 +813,7 @@ async def list_history(db: AsyncSession, *, user_id, session_id: int) -> list[di
             "secret_fields": list(schema.get("secret_fields") or []),
             "allow_text_input": bool(schema.get("source") == "agent" and schema.get("allow_text_input")),
             "custom_input_active": bool(schema.get("custom_input_active")),
-            "resolved": prompt.status != "active" or prompt.expires_at <= now,
+            "resolved": not active,
             "selected_option_id": selected,
             "response_text": (schema.get("resolved_result") or {}).get("text") if isinstance(schema.get("resolved_result"), dict) else None,
             "expires_at": prompt.expires_at.isoformat(),
@@ -956,6 +900,7 @@ async def create_tool_confirmation(
             "body": prompt.body,
             "options": actions,
             "task_paused": True,
+            "created_at": prompt.created_at.isoformat(),
             "expires_at": prompt.expires_at.isoformat(),
         }
 
@@ -1003,5 +948,6 @@ async def create_tool_interaction(
         "options": actions,
         "allow_text_input": bool(schema.get("allow_text_input", False)),
         "secret_fields": list(schema.get("secret_fields") or []),
+        "created_at": prompt.created_at.isoformat(),
         "expires_at": prompt.expires_at.isoformat(),
     }

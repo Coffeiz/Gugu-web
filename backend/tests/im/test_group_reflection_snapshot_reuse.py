@@ -195,6 +195,7 @@ async def test_group_snapshot_appends_passive_tail_to_original_provider_history(
     snapshot = replace(
         _captured_snapshot(base, user_a.id, session.id, model),
         persisted_message_ids=tuple(sorted(covered_ids)),
+        provider_context_input=110000,
     )
     tail = ConversationMessage(
         session_id=session.id,
@@ -213,6 +214,7 @@ async def test_group_snapshot_appends_passive_tail_to_original_provider_history(
 
     assert extended is not None
     assert extended.source == "in_memory_extended"
+    assert extended.provider_context_input is None
     assert extended.history.to_messages()[:len(base_messages)] == base_messages
     extended_tail = extended.history.to_messages()[-1]["content"]
     assert "【消息时间】合成时间上下文" in extended_tail

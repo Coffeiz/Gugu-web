@@ -487,7 +487,10 @@ onBeforeUnmount(() => {
   display: flex; align-items: center; gap: 4px;
   padding: 6px 2px 4px;   /* 挪到正文下方了：上边距隔开文字，下边距接到后面的操作行 */
 }
-.ne-toolbar-main { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 1 1 auto; }
+.ne-toolbar-main {
+  display: flex; align-items: center; gap: var(--ne-toolbar-gap, 4px);
+  min-width: 0; flex: 1 1 auto;
+}
 /* 浮动态（画布便签）：脱出卡片本身悬在下方（或翻到上方，见 .flipped），不再是卡片纸面
    的一部分，得自己长一副独立的浮层皮——跟公共引用补全菜单同一套玻璃质感语言，
    两者本来就经常同时出现在屏幕上（点了 @ 工具栏按钮，下拉紧跟着弹出来），视觉上得是
@@ -514,7 +517,9 @@ onBeforeUnmount(() => {
 .ne-toolbar-floating.pending { opacity: 0; filter: blur(6px); pointer-events: none; }
 .ne-tool {
   display: inline-flex; align-items: center; justify-content: center;
-  min-width: 26px; height: 24px; padding: 0 7px;
+  box-sizing: border-box; flex: 0 0 var(--ne-tool-size, 26px);
+  width: var(--ne-tool-size, 26px); min-width: var(--ne-tool-size, 26px);
+  height: var(--ne-tool-size, 26px); padding: 0;
   border: 1px solid transparent; border-radius: 6px;
   background: transparent; color: var(--text-secondary);
   font-size: 11.5px; font-weight: 600; cursor: pointer;
@@ -530,15 +535,14 @@ onBeforeUnmount(() => {
 
 /* 普通笔记卡片宽度有限：只压缩左侧工具，不压缩右侧完成按钮，保证它始终固定在最右侧。
    画布工具栏是独立浮层，继续使用上面的默认尺寸。 */
-.ne-toolbar:not(.ne-toolbar-floating) .ne-toolbar-main { gap: 2px; }
-.ne-toolbar:not(.ne-toolbar-floating) .ne-toolbar-main > .ne-tool,
-.ne-toolbar:not(.ne-toolbar-floating) .ne-toolbar-main .ne-drawer > .ne-tool {
-  min-width: 22px; padding: 0 4px;
+.ne-toolbar:not(.ne-toolbar-floating) {
+  --ne-tool-size: 22px; --ne-toolbar-gap: 2px; --ne-drawer-max-width: 150px;
 }
-.ne-toolbar:not(.ne-toolbar-floating) .ne-style-item { width: 22px; }
-.ne-toolbar:not(.ne-toolbar-floating) .ne-drawer.open { gap: 2px; }
-.ne-toolbar:not(.ne-toolbar-floating) .ne-drawer-items { gap: 2px; }
-.ne-toolbar:not(.ne-toolbar-floating) .ne-drawer.open .ne-drawer-items { max-width: 150px; }
+.ne-toolbar:not(.ne-toolbar-floating) .ne-drawer.open { gap: var(--ne-toolbar-gap); }
+.ne-toolbar:not(.ne-toolbar-floating) .ne-drawer-items { gap: var(--ne-toolbar-gap); }
+.ne-toolbar:not(.ne-toolbar-floating) .ne-drawer.open .ne-drawer-items {
+  max-width: var(--ne-drawer-max-width, 150px);
+}
 
 /* 跟 NoteCard.vue 里只读态用的 .md-preview 同一套字号/行高/间距，编辑和显示才是同一件事 */
 .ne-body { font-size: 13px; line-height: 1.6; color: var(--text-primary); }
@@ -564,17 +568,22 @@ onBeforeUnmount(() => {
    （4 个间隔 × 30ms + 图标自身 150ms = 270ms）——容器缩太快会在图标还没淡完的时候把它
    硬裁掉，看起来是硬切而不是淡出。这个 270ms 也是 script 里 DRAWER_CLOSE_MS 的来源，
    两边必须对上。 */
-.ne-drawer { display: inline-flex; align-items: center; gap: 0; transition: gap 0.27s cubic-bezier(0.65,0,0.35,1); }
-.ne-drawer.open { gap: 4px; }
+.ne-drawer {
+  display: inline-flex; align-items: center; gap: 0;
+  transition: gap 0.27s cubic-bezier(0.65,0,0.35,1);
+}
+.ne-drawer.open { gap: var(--ne-toolbar-gap, 4px); }
 .ne-drawer-items {
-  display: flex; align-items: center; gap: 4px; overflow: hidden; white-space: nowrap;
+  display: flex; align-items: center; gap: var(--ne-toolbar-gap, 4px);
+  overflow: hidden; white-space: nowrap;
   max-width: 0;
   transition: max-width 0.27s cubic-bezier(0.65,0,0.35,1);
 }
-.ne-drawer.open .ne-drawer-items { max-width: 220px; }
+.ne-drawer.open .ne-drawer-items { max-width: var(--ne-drawer-max-width, 220px); }
 .ne-style-item {
   display: inline-flex; align-items: center; justify-content: center;
-  flex-shrink: 0; width: 26px; height: 24px;
+  box-sizing: border-box; flex: 0 0 var(--ne-tool-size, 26px);
+  width: var(--ne-tool-size, 26px); height: var(--ne-tool-size, 26px); padding: 0;
   border: 1px solid transparent; border-radius: 6px;
   background: transparent; color: var(--text-secondary); cursor: pointer;
   --stagger-delay: 0s;

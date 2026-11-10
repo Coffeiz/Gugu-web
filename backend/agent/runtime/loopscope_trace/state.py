@@ -16,7 +16,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-from .utils import _code_ref, _estimate_tokens, _jsonable, provider_message_rows
+from .utils import _code_ref, _jsonable, provider_message_rows
 
 _trace: ContextVar[str] = ContextVar("trace_id", default="")
 _scope_run: ContextVar["_ScopeRun | None"] = ContextVar("loopscope_run", default=None)
@@ -412,8 +412,7 @@ def record_anthropic_request_diagnostics(
         cache_keys = (
             "cache_supported", "conversation_messages", "cache_anchor_count",
             "cache_anchor_indices", "cache_anchor_last_index",
-            "stable_prefix_tokens_estimate", "cache_state_revision",
-            "cache_baseline_digest", "cache_latest_digest", "cache_prefix_digest",
+            "cache_state_revision", "cache_baseline_digest", "cache_latest_digest", "cache_prefix_digest",
             "cache_base_prefix_digest", "stable_message_count", "stable_prefix_digest",
             "tool_schema_digest",
         )
@@ -997,8 +996,6 @@ def record_context_source(
     output: Any = None,
     attributes: dict[str, Any] | None = None,
     code_target: Any = None,
-    source_value: Any = None,
-    included_value: Any = None,
     started_at: float | None = None,
     ended_at: float | None = None,
 ) -> None:
@@ -1011,11 +1008,6 @@ def record_context_source(
     try:
         start = started_at or _now()
         end = ended_at or _now()
-        impact: dict[str, Any] = {}
-        if source_value is not None:
-            impact["source_tokens"] = _estimate_tokens(source_value)
-        if included_value is not None:
-            impact["included_tokens"] = _estimate_tokens(included_value)
         span = _Span(
             id=f"{run.id}:ctx{len(run.pending_context_spans)+1}",
             kind=kind,
@@ -1028,7 +1020,6 @@ def record_context_source(
             output=_jsonable(output if output is not None else {}),
             attributes=_jsonable({"context_source": True, **(attributes or {})}),
             code=_code_ref(code_target) if code_target is not None else _code_ref(frame_depth=2),
-            token_impact=impact,
         )
         run.pending_context_spans.append(span)
     except Exception:
@@ -1264,13 +1255,11 @@ def _finish_run(run: _ScopeRun, status: str) -> None:
                     # 已创建的空 Final response span 阻止从最后一轮 LLM draft 恢复。
                     final_span.output = _jsonable({"text": final_text})
                     final_span.attributes.update({"source": "trace.finish_run", "fallback": True})
-                    final_span.token_impact["output_tokens_estimate"] = _estimate_tokens(final_text)
         elif final_text.strip():
             final = run.span(
                 "output",
                 "Final response",
                 {"source": "trace.finish_run", "fallback": True},
-                token_impact={"output_tokens_estimate": _estimate_tokens(final_text)},
             )
             final.finish({"text": final_text})
     run.status = status

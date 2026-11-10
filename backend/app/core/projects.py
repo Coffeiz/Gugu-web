@@ -155,7 +155,7 @@ def replace_project_stages(
         old_by_label.setdefault(old_stage.get("label"), []).append(old_stage)
     stages: List[Dict[str, Any]] = []
     used_keys: set[str] = set()
-    todo_number = 0
+    todo_number = next_project_todo_number(old_stages)
     for index, item in enumerate(raw):
         if isinstance(item, str):
             item = {"label": item}
@@ -189,25 +189,19 @@ def replace_project_stages(
             raise ValueError(f"阶段 key 不能重复: {stage_key}")
         used_keys.add(stage_key)
 
-        todo_source = item.get("todos", [])
-        has_todos = "todos" in item
-        if not isinstance(todo_source, list):
-            raise ValueError(f"阶段「{label}」的 todos 必须是列表")
-        if has_todos:
-            source = [{"text": todo, "done": False} for todo in todo_source]
-        elif previous is not None:
-            source = [
-                {"text": todo.get("text"), "done": todo.get("done", False)}
-                for todo in previous.get("todos", [])
-            ]
-        else:
-            source = []
         todos: List[Dict[str, Any]] = []
-        for todo_index, todo in enumerate(source):
-            if not isinstance(todo.get("text"), str) or not todo["text"].strip():
-                raise ValueError(f"阶段「{label}」的第 {todo_index + 1} 个待办必须是非空文本")
-            todo_number += 1
-            todos.append({"id": f"t{todo_number}", "text": todo["text"].strip(), "done": bool(todo.get("done"))})
+        if "todos" in item:
+            todo_source = item["todos"]
+            if not isinstance(todo_source, list):
+                raise ValueError(f"阶段「{label}」的 todos 必须是列表")
+            for todo_index, text in enumerate(todo_source):
+                if not isinstance(text, str) or not text.strip():
+                    raise ValueError(f"阶段「{label}」的第 {todo_index + 1} 个待办必须是非空文本")
+                todo_number += 1
+                todos.append({"id": f"t{todo_number}", "text": text.strip(), "done": False})
+        elif previous is not None:
+            # 阶段改名或重排时，沿用原待办身份和完成状态。
+            todos = [dict(todo) for todo in previous.get("todos", [])]
         stages.append({"key": stage_key, "label": label, "todos": todos})
     if not stages:
         raise ValueError("stages 解析后为空")

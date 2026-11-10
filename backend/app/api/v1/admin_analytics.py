@@ -8,8 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tz import now_utc, resolve_tz
 from app.db.session import get_db
+from app.services.admin_analytics_metrics import (
+    enabled_bot_users_by_platform,
+    interaction_calls_by_source,
+)
 from app.models import (
-    User, Project, ConversationSession, AgentUsage, UserBot, FrontendEvent,
+    User, Project, ConversationSession, AgentUsage, FrontendEvent,
     CalendarEvent, File, ScheduledTask,
 )
 from onboarding.models import OnboardingState
@@ -117,16 +121,9 @@ async def get_summary(exclude_dev: bool = Query(False),
     )).scalar() or 0
 
     # ── IM Bot ────────────────────────────────────────────────────────────────
-    users_with_bot = (await db.execute(_xd(
-        select(func.count(distinct(UserBot.user_id))).where(UserBot.enabled == True),
-        UserBot.user_id, xd)
-    )).scalar() or 0
-    bot_platform_rows = (await db.execute(_xd(
-        select(UserBot.platform, func.count(distinct(UserBot.user_id)))
-        .where(UserBot.enabled == True).group_by(UserBot.platform),
-        UserBot.user_id, xd)
-    )).all()
-    bots_by_platform = {str(platform): int(count) for platform, count in bot_platform_rows}
+    users_with_bot, bots_by_platform = await enabled_bot_users_by_platform(
+        db, exclude_dev=xd,
+    )
 
     # ── Agent 用量 ─────────────────────────────────────────────────────────────
     def _usage_stmt(where=None):
@@ -291,23 +288,14 @@ async def get_trends(days: int = Query(default=30, ge=7, le=90),
     """), {"start": start_utc})).all()
     agent_map = {r.d: (r.calls, int(r.tokens)) for r in agent_rows}
 
-    # Agent 请求通过 session_id 归属来源：web、qq、feishu、telegram、wechat。
-    # 没有关联会话的历史/后台请求不伪装成某个平台，单独作为 other 展示。
-    interaction_rows = (await db.execute(text(f"""
-        SELECT DATE(a.created_at AT TIME ZONE {tz_expr}) AS d,
-               CASE WHEN s.source IN ('web', 'qq', 'feishu', 'telegram', 'wechat')
-                    THEN s.source ELSE 'other' END AS source,
-               COUNT(*)::int AS calls
-        FROM agent_usage a
-        LEFT JOIN conversation_sessions s ON s.id = a.session_id
-        WHERE a.created_at >= :start
-          {('AND a.user_id NOT IN (SELECT id FROM users WHERE is_developer)' if exclude_dev else '')}
-          {('AND NOT a.is_byok' if not include_byok else '')}
-        GROUP BY d, source
-    """), {"start": start_utc})).all()
-    interaction_map: dict[tuple[object, str], int] = {
-        (row.d, str(row.source)): int(row.calls) for row in interaction_rows
-    }
+    # Agent 请求通过 session_id 归属来源；未关联会话的记录归入 other。
+    interaction_map = await interaction_calls_by_source(
+        db,
+        start_utc=start_utc,
+        timezone_sql=tz_expr,
+        exclude_dev=exclude_dev,
+        include_byok=include_byok,
+    )
     interaction_sources = ("web", "qq", "feishu", "telegram", "wechat", "other")
 
     _u_dev = " AND NOT is_developer " if exclude_dev else ""
