@@ -11,6 +11,8 @@
 
 本轮进展见 [顶层 Core 与数据统一层](Gugu-Core顶层包与数据统一层.md)、[桌面壳与 MXC 验证](Gugu-Desktop与MXC验证.md)。P1 两平台可安装制品和完整沙箱验收尚未完成。
 
+2026-11-11 新增 [Node.js / TypeScript 迁移方案](Gugu-Core迁移Node与TypeScript方案.md)，提议替换本文的 Python Core 技术路线。当前已实现的 Core 仍是 Python；Node 方案尚未实施，产品职责和平台权限边界继续沿用本文。
+
 ## 1. 架构结论与范围
 
 建议采用 **入口不拥有业务事实数据、各 Host 运行同一套 Core Runtime、平台能力由各端 Broker 提供** 的结构。Core 统一业务数据、数据运行时和 Agent；桌面是默认家节点，首发目标平台为 macOS 和 Windows。SaaS 是可选付费的 7×24 常驻 Runtime 副本，提供云端数据、同步与任务转交，长期不持有用户 FS，首版可保留现有 FS 作为兼容路径。
