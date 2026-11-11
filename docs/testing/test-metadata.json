@@ -2204,7 +2204,7 @@
     "layer": "L1",
     "owner": "gugu-core/src/domain",
     "productionEntry": "gugu-core/src/contracts/index.ts",
-    "keyBehavior": "Unicode/日期、缺省字段、阶段待办身份保持领域契约，拒绝 Node/SQL 反向依赖",
+    "keyBehavior": "Unicode/日期与 UTC 年份边界、缺省字段、阶段待办身份及编号溢出保护，拒绝 Node/SQL 反向依赖",
     "ci": "core-node"
   },
   "gugu-core/tests/data.test.ts": {
@@ -2212,7 +2212,7 @@
     "layer": "L1",
     "owner": "gugu-core/src/data/runtime.ts",
     "productionEntry": "gugu-core/src/data/sqlite.ts",
-    "keyBehavior": "跨域提交/取消回滚、所有者与 CAS、收据原子性、备份 DDL 故障恢复及连接回收",
+    "keyBehavior": "跨域提交/取消回滚、所有者与 CAS、收据原子性、完整唯一约束、备份 DDL 故障恢复及连接回收",
     "ci": "core-node"
   },
   "gugu-core/tests/postgres.test.ts": {
@@ -2228,7 +2228,7 @@
     "layer": "L2",
     "owner": "gugu-core/src/runtime/stdio.ts",
     "productionEntry": "gugu-core/src/runtime/local.ts",
-    "keyBehavior": "真实进程重启及回包丢失后查询收据，不重复创建，拒绝越权/超长帧/非法能力并隔离 Worker",
+    "keyBehavior": "真实进程重启及回包丢失后查询收据，满队列并发关闭正确释放，拒绝越权/超长帧/非法能力并隔离 Worker",
     "ci": "core-node"
   },
   "gugu-core/tests/golden/python-interop.test.ts": {

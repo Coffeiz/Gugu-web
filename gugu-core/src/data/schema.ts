@@ -1,28 +1,99 @@
 import type { Generated } from 'kysely'
 
 export interface ProjectTable {
-  id: Generated<number>; user_id: string; name: string; summary: string | null; contact_name: string | null
-  status: string; start_date: string | null; deadline: string | null; color: string; progress: number
-  stages_json: string; current_stage: string | null; priority: string | null; version: number
-  archived: boolean | number; done_at: string | null; created_at: string; updated_at: string; deleted_at: string | null
-  idempotency_key: string | null; idempotency_fingerprint: string | null
+  id: Generated<number>
+  user_id: string
+  name: string
+  summary: string | null
+  contact_name: string | null
+  status: string
+  start_date: string | null
+  deadline: string | null
+  color: string
+  progress: number
+  stages_json: string
+  current_stage: string | null
+  priority: string | null
+  version: number
+  archived: boolean | number
+  done_at: string | null
+  created_at: string
+  updated_at: string
+  deleted_at: string | null
+  idempotency_key: string | null
+  idempotency_fingerprint: string | null
 }
 export interface ClientTable {
-  id: Generated<number>; user_id: string; name: string; contact: string | null; email: string | null
-  phone: string | null; notes: string; created_at: string
+  id: Generated<number>
+  user_id: string
+  name: string
+  contact: string | null
+  email: string | null
+  phone: string | null
+  notes: string
+  created_at: string
 }
 export interface ReceiptTable {
-  owner_id: string; operation_id: string; fingerprint: string; method: string; result_json: string; created_at: string
+  owner_id: string
+  operation_id: string
+  fingerprint: string
+  method: string
+  result_json: string
+  created_at: string
 }
 export interface Database {
-  projects: ProjectTable; clients: ClientTable; core_runtime_meta: { key: string; value: string }
+  projects: ProjectTable
+  clients: ClientTable
+  core_runtime_meta: { key: string; value: string }
   core_operation_receipts: ReceiptTable
 }
-export const PROJECT_COLUMNS = ['id', 'user_id', 'name', 'summary', 'contact_name', 'status', 'start_date', 'deadline', 'color', 'progress', 'stages_json', 'current_stage', 'priority', 'version', 'archived', 'done_at', 'created_at', 'updated_at', 'deleted_at', 'idempotency_key', 'idempotency_fingerprint']
-export const CLIENT_COLUMNS = ['id', 'user_id', 'name', 'contact', 'email', 'phone', 'notes', 'created_at']
-export const RECEIPT_COLUMNS = ['owner_id', 'operation_id', 'fingerprint', 'method', 'result_json', 'created_at']
+export const PROJECT_COLUMNS = [
+  'id',
+  'user_id',
+  'name',
+  'summary',
+  'contact_name',
+  'status',
+  'start_date',
+  'deadline',
+  'color',
+  'progress',
+  'stages_json',
+  'current_stage',
+  'priority',
+  'version',
+  'archived',
+  'done_at',
+  'created_at',
+  'updated_at',
+  'deleted_at',
+  'idempotency_key',
+  'idempotency_fingerprint',
+]
+export const CLIENT_COLUMNS = [
+  'id',
+  'user_id',
+  'name',
+  'contact',
+  'email',
+  'phone',
+  'notes',
+  'created_at',
+]
+export const RECEIPT_COLUMNS = [
+  'owner_id',
+  'operation_id',
+  'fingerprint',
+  'method',
+  'result_json',
+  'created_at',
+]
 export const SCHEMA_VERSION = '3'
-export function tablesSql(backend: 'sqlite' | 'postgres'): { projects: string; clients: string; receipts: string } {
+export function tablesSql(backend: 'sqlite' | 'postgres'): {
+  projects: string
+  clients: string
+  receipts: string
+} {
   const id = backend === 'sqlite' ? 'INTEGER PRIMARY KEY NOT NULL' : 'SERIAL PRIMARY KEY'
   const owner = backend === 'sqlite' ? 'CHAR(32)' : 'UUID'
   const timestamp = backend === 'sqlite' ? 'DATETIME' : 'TIMESTAMPTZ'

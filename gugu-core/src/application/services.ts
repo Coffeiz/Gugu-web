@@ -19,14 +19,21 @@ export interface ClientRepository {
 }
 export class ProjectService {
   constructor(readonly repository: ProjectRepository) {}
-  list(archived = false): Promise<ProjectRecord[]> { return this.repository.list(archived) }
-  create(fields: Fields): Promise<ProjectRecord> { return this.repository.create(prepareProjectCreate(fields)) }
+  list(archived = false): Promise<ProjectRecord[]> {
+    return this.repository.list(archived)
+  }
+  create(fields: Fields): Promise<ProjectRecord> {
+    return this.repository.create(prepareProjectCreate(fields))
+  }
   async update(id: number, version: number, fields: Fields): Promise<ProjectRecord> {
-    safeInteger(id); safeInteger(version)
+    safeInteger(id)
+    safeInteger(version)
     const existing = await this.repository.get(id)
     if (!existing) throw new CoreError('not_found', '项目不存在')
-    if (!Object.keys(fields).length) throw new CoreError('invalid_request', '请提供需要更新的项目字段')
-    if (!await this.repository.update(id, version, prepareProjectUpdate(fields, existing))) throw new CoreError('conflict', '项目已变化，请重新读取后再修改')
+    if (!Object.keys(fields).length)
+      throw new CoreError('invalid_request', '请提供需要更新的项目字段')
+    if (!(await this.repository.update(id, version, prepareProjectUpdate(fields, existing))))
+      throw new CoreError('conflict', '项目已变化，请重新读取后再修改')
     const updated = await this.repository.get(id)
     if (!updated) throw new CoreError('not_found', '项目不存在')
     return updated
@@ -34,16 +41,29 @@ export class ProjectService {
 }
 export class ClientService {
   constructor(readonly repository: ClientRepository) {}
-  list(): Promise<ClientRecord[]> { return this.repository.list() }
-  create(fields: Fields): Promise<ClientRecord> { return this.repository.create(prepareClientFields(fields, true)) }
+  list(): Promise<ClientRecord[]> {
+    return this.repository.list()
+  }
+  create(fields: Fields): Promise<ClientRecord> {
+    return this.repository.create(prepareClientFields(fields, true))
+  }
   async update(id: number, fields: Fields): Promise<ClientRecord> {
-    safeInteger(id); const values = prepareClientFields(fields)
-    if (!Object.keys(values).length) throw new CoreError('invalid_request', '请提供需要更新的联系人字段')
-    if (!await this.repository.update(id, values)) throw new CoreError('not_found', '联系人不存在')
+    safeInteger(id)
+    const values = prepareClientFields(fields)
+    if (!Object.keys(values).length)
+      throw new CoreError('invalid_request', '请提供需要更新的联系人字段')
+    if (!(await this.repository.update(id, values)))
+      throw new CoreError('not_found', '联系人不存在')
     const updated = await this.repository.get(id)
     if (!updated) throw new CoreError('not_found', '联系人不存在')
     return updated
   }
-  async delete(id: number): Promise<void> { safeInteger(id); if (!await this.repository.delete(id)) throw new CoreError('not_found', '联系人不存在') }
+  async delete(id: number): Promise<void> {
+    safeInteger(id)
+    if (!(await this.repository.delete(id))) throw new CoreError('not_found', '联系人不存在')
+  }
 }
-export interface DataServices { projects: ProjectService; clients: ClientService }
+export interface DataServices {
+  projects: ProjectService
+  clients: ClientService
+}
