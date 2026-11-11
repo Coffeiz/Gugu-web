@@ -105,6 +105,7 @@ async def test_owner_daily_compacts_all_entries_at_fifty_and_clears_daily(monkey
 async def test_memory_compaction_retries_and_records_usage_separately_from_chat(
     monkeypatch, storage, db, user_a,
 ):
+    """验证沉淀重试的用量归入压缩，且后续主对话沿用原会话与场景。"""
     from sqlalchemy import select
 
     from agent.llm.modelctx import usage_context_scope
@@ -122,6 +123,7 @@ async def test_memory_compaction_retries_and_records_usage_separately_from_chat(
     calls = 0
 
     async def flaky_complete(*_args, **_kwargs):
+        """首次模拟上游超时，重试成功后用实际记账入口记录用量。"""
         nonlocal calls
         calls += 1
         if calls == 1:
