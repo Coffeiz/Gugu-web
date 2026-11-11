@@ -41,7 +41,10 @@ try {
         let result: unknown
         if (job.method === 'operations.get') {
           validateCommandParams(job.method, job.params)
-          result = await runtime.receipt(context, String(job.params.operation_id))
+          const operationId = job.params.operation_id
+          if (typeof operationId !== 'string')
+            throw new CoreError('invalid_request', '操作标识必须是文本')
+          result = await runtime.receipt(context, operationId)
         } else if (job.operationId && isMutation(job.method))
           result = await runtime.operation(
             context,

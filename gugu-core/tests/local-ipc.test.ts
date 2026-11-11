@@ -43,10 +43,11 @@ afterEach(() => {
     rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 })
 describe('独立 Node Host 与 SQLite Worker', () => {
-  it('直接 Worker 调用同样拒绝收据的额外字段、身份覆盖和未知能力', async () => {
+  it('直接 Worker 调用同样拒绝非法收据参数、身份覆盖和未知控制能力', async () => {
     const runtime = await LocalRuntime.initialize(file())
     try {
       for (const params of [
+        { operation_id: [randomUUID()] },
         { operation_id: randomUUID(), extra: true },
         { operation_id: randomUUID(), owner_id: randomUUID() },
       ]) {
