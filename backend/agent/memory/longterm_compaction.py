@@ -6,6 +6,7 @@ import math
 from pathlib import Path
 
 from agent.context.provider_runner import complete_json
+from agent.llm.modelctx import get_usage_context, usage_context_scope
 from agent.memory import store
 
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
@@ -20,6 +21,14 @@ def _prompt(name: str) -> str:
 
 def _memory_input(items: list[dict]) -> str:
     return "\n".join(f"[{index}] {json.dumps(item, ensure_ascii=False)}" for index, item in enumerate(items))
+
+
+async def _complete_maintenance(user_id, prompt: str, items: list[dict], settings) -> dict:
+    """将自动画像和行为整理归入压缩，保留同用户的触发会话。"""
+    parent = get_usage_context()
+    session_id = parent.session_id if parent is not None and parent.user_id == user_id else None
+    with usage_context_scope(user_id, session_id, scenario="compaction"):
+        return await complete_json(_prompt(prompt), _memory_input(items), settings, max_tokens=4000)
 
 
 def _pattern_strength(item: dict) -> tuple[int, float, int, float]:
@@ -89,7 +98,7 @@ async def compact_profile(user_id, settings) -> bool:
     if len(items) < COMPACTION_THRESHOLD:
         return False
     source_digest = store.profile_list_digest(items)
-    result = await complete_json(_prompt("profile_compact.md"), _memory_input(items), settings, max_tokens=4000)
+    result = await _complete_maintenance(user_id, "profile_compact.md", items, settings)
     if not isinstance(result, dict):
         return False
     profile = _valid_profile(result.get("profile"), items)
@@ -110,7 +119,7 @@ async def compact_pattern(user_id, settings) -> bool:
     if len(items) < COMPACTION_THRESHOLD:
         return False
     source_digest = store.pattern_list_digest(items)
-    result = await complete_json(_prompt("pattern_compact.md"), _memory_input(items), settings, max_tokens=4000)
+    result = await _complete_maintenance(user_id, "pattern_compact.md", items, settings)
     if not isinstance(result, dict):
         return False
     patterns = _valid_pattern(result.get("pattern"), items)

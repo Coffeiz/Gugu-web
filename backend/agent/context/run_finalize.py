@@ -75,6 +75,7 @@ async def finalize_run(
     cache_read: int = 0,
     cache_write: int = 0,
     tools_used: list[str] | None = None,
+    provider_rounds: list[dict] | None = None,
     compaction_applied: bool = False,
     session_exists_required: bool = False,
     user_message_id: int | None = None,
@@ -227,6 +228,7 @@ async def finalize_run(
             cache_read=cache_read,
             cache_write=cache_write,
             tools_used=tools_used,
+            provider_rounds=provider_rounds,
         )
         coordinator = message_area.reasoning_state
         if session_alive and not interrupted and coordinator is not None and persist_message_delta:

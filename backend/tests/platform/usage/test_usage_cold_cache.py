@@ -1,16 +1,19 @@
-"""场景统计区分零命中请求，非冷缓存率按输入 token 加权。"""
+"""场景统计区分低命中请求，非冷缓存率按输入 token 加权。"""
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 
 from app.api.v1.agent_admin import _scenario_usage, _usage_filters
 from app.models import AgentUsage
+from agent.usage import record_usage
 
 
 @pytest.mark.asyncio
-async def test_scenario_cache_rate_excludes_only_zero_hit_input_and_keeps_weighting(db, user_a):
+async def test_scenario_cache_rate_excludes_reads_below_one_percent_and_keeps_weighting(db, user_a):
     start = datetime(2026, 10, 18, tzinfo=timezone.utc)
-    for fresh, cached, written in [(1000, 0, 0), (100, 0, 50), (1000, 9000, 0), (9, 1, 0)]:
+    for fresh, cached, written in [(1000, 0, 0), (100, 0, 50), (1000, 9000, 0),
+                                   (99, 1, 0), (15872, 128, 0)]:
         db.add(AgentUsage(user_id=user_a.id, model="synthetic-model", provider="minimax",
                           scenario="reflection", tokens_in=fresh, cache_read=cached,
                           cache_write=written, created_at=start))
@@ -20,14 +23,36 @@ async def test_scenario_cache_rate_excludes_only_zero_hit_input_and_keeps_weight
     await db.flush()
     rows = {row["scenario"]: row for row in await _scenario_usage(db, start, start + timedelta(days=1), [])}
     reflection = rows["reflection"]
-    assert reflection["calls"] == 4
-    assert reflection["cold_calls"] == 2
-    assert reflection["tokens_in"] == 11160
-    assert reflection["warm_tokens_in"] == 10010
-    assert reflection["cache_ratio"] == round(9001 / 11160, 6)
-    assert reflection["warm_cache_ratio"] == round(9001 / 10010, 6)
+    assert reflection["calls"] == 5
+    assert reflection["cold_calls"] == 3
+    assert reflection["tokens_in"] == 27250
+    assert reflection["warm_tokens_in"] == 10100
+    assert reflection["cache_ratio"] == round(9129 / 27250, 6)
+    assert reflection["warm_cache_ratio"] == round(9001 / 10100, 6)
     assert rows["mcp"]["cold_calls"] == 0
     assert rows["mcp"]["warm_cache_ratio"] is None
+
+
+@pytest.mark.asyncio
+async def test_cold_tool_round_is_excluded_even_when_run_is_warm(db, user_a):
+    settings = SimpleNamespace(quota=SimpleNamespace(default_token_limit_6h=None))
+    model = SimpleNamespace(provider="minimax", model="synthetic-model", is_byok=True)
+    start = datetime.now(timezone.utc) - timedelta(minutes=1)
+    await record_usage(
+        user_a.id, settings, model, db=db, tokens_in=16872, cache_read=9128,
+        provider_rounds=[
+            {"input": 15872, "cache_read": 128},
+            {"input": 1000, "cache_read": 9000},
+            {"output": 10},
+        ],
+    )
+    await db.flush()
+    row, = await _scenario_usage(db, start, start + timedelta(days=1), [])
+    assert row["calls"] == 1
+    assert row["cold_calls"] == 1
+    assert row["tokens_in"] == 26000
+    assert row["warm_tokens_in"] == 10000
+    assert row["warm_cache_ratio"] == 0.9
 
 
 @pytest.mark.asyncio

@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, Callable, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import case, select, func, text
+from sqlalchemy import BigInteger, case, select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import (
@@ -705,10 +705,17 @@ def _usage_local_hour(created_at: datetime, user_tz) -> int:
 
 
 async def _scenario_usage(db, since, until, filters: list) -> list[dict]:
-    """按场景统计冷请求及非冷请求的加权缓存率，复用既有完整输入口径。"""
+    """优先按 Provider 轮次统计，旧记录按账本完整输入判断。"""
+    from agent.usage import CACHE_COLD_READ_MULTIPLIER
+
     full_input = _effective_input_expr()
-    cold = (full_input > 0) & (func.coalesce(AgentUsage.cache_read, 0) == 0)
-    warm_input = case((AgentUsage.cache_read > 0, full_input), else_=0)
+    cache_read = func.coalesce(AgentUsage.cache_read, 0)
+    cold = (full_input > 0) & (cache_read.cast(BigInteger) * CACHE_COLD_READ_MULTIPLIER < full_input)
+    warm = (full_input > 0) & ~cold
+    stats = AgentUsage.cache_round_stats
+    cold_calls = func.coalesce(stats["cold_calls"].as_integer(), case((cold, 1), else_=0))
+    warm_input = func.coalesce(stats["warm_input"].as_integer(), case((warm, full_input), else_=0))
+    warm_read = func.coalesce(stats["warm_read"].as_integer(), case((warm, cache_read), else_=0))
     rows = await db.execute(select(  # orm-exempt: Admin 跨用户用量聚合，沿用现有筛选与鉴权边界
         AgentUsage.scenario,
         func.count(AgentUsage.id),
@@ -716,8 +723,9 @@ async def _scenario_usage(db, since, until, filters: list) -> list[dict]:
         func.coalesce(func.sum(AgentUsage.tokens_out), 0),
         func.coalesce(func.sum(AgentUsage.cache_read), 0),
         func.coalesce(func.sum(AgentUsage.cache_write), 0),
-        func.coalesce(func.sum(case((cold, 1), else_=0)), 0),
+        func.coalesce(func.sum(cold_calls), 0),
         func.coalesce(func.sum(warm_input), 0),
+        func.coalesce(func.sum(warm_read), 0),
     ).where(
         AgentUsage.created_at >= since, AgentUsage.created_at < until, *filters,
     ).group_by(AgentUsage.scenario).order_by(func.count(AgentUsage.id).desc()))
@@ -726,7 +734,7 @@ async def _scenario_usage(db, since, until, filters: list) -> list[dict]:
         "tokens_out": row[3], "cache_read": row[4], "cache_write": row[5],
         "cache_ratio": round(row[4] / row[2], 6) if row[2] else 0,
         "cold_calls": row[6], "warm_tokens_in": row[7],
-        "warm_cache_ratio": round(row[4] / row[7], 6) if row[7] else None,
+        "warm_cache_ratio": round(row[8] / row[7], 6) if row[7] else None,
     } for row in rows.all()]
 
 

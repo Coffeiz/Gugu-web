@@ -128,3 +128,26 @@ async def test_profile_threshold_schedules_profile_compaction(monkeypatch):
 
 def _patterns(count: int) -> list[dict]:
     return [{"id": str(index), "text": f"模式 {index}"} for index in range(count)]
+
+
+@pytest.mark.asyncio
+async def test_scheduled_maintenance_uses_compaction_scenario_even_if_output_is_invalid(monkeypatch):
+    from agent.llm.modelctx import get_usage_context, usage_context_scope
+
+    monkeypatch.setattr(periodic.store, "read_pattern_list", AsyncMock(return_value=_patterns(100)))
+    monkeypatch.setattr(periodic.store, "read_profile_list", AsyncMock(return_value=_patterns(100)))
+    monkeypatch.setattr(periodic.store, "read_pattern_maintenance", AsyncMock(return_value={}))
+    seen = []
+
+    async def invalid_completion(*_args, **_kwargs):
+        seen.append(get_usage_context())
+        return {}
+
+    monkeypatch.setattr(periodic.longterm_compaction, "complete_json", invalid_completion)
+    with usage_context_scope("u1", 7, scenario="chat"):
+        assert await periodic.maybe_schedule("u1", None)
+        await asyncio.gather(*periodic._tasks)
+        assert get_usage_context().scenario == "chat"
+    assert [(item.user_id, item.session_id, item.scenario) for item in seen] == [
+        ("u1", 7, "compaction"), ("u1", 7, "compaction"),
+    ]

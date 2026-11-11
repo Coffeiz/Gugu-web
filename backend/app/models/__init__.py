@@ -1496,6 +1496,7 @@ class AgentUsage(Base):
     tokens_out: Mapped[int]           = mapped_column(Integer, default=0)
     cache_read: Mapped[int]           = mapped_column(Integer, default=0)
     cache_write: Mapped[int]          = mapped_column(Integer, default=0)
+    cache_round_stats: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
     model:      Mapped[str]           = mapped_column(String(100))
     provider:   Mapped[str]           = mapped_column(String(50))
     is_byok:    Mapped[bool]           = mapped_column(Boolean, default=False, nullable=False, index=True)
