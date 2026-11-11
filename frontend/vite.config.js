@@ -157,6 +157,10 @@ export default defineConfig({
     // 不碰 DOM 的测试文件首行加 `// @vitest-environment node` 跳过 jsdom——
     // 环境搭建是测试耗时大头，全量 33s → 15s（2026-09-17 实测）；新测试文件默认照此办理。
     environment: 'jsdom',
+    // Node 26 的全局 Web Storage 会遮蔽 jsdom 的按页面隔离存储。
+    // 测试使用 jsdom 实现，保留真实的持久化/不可用路径断言。
+    // https://github.com/vitest-dev/vitest/issues/10867
+    execArgv: ['--no-experimental-webstorage'],
     include: ['tests/**/*.{test,spec}.{js,ts}'],
   },
 })

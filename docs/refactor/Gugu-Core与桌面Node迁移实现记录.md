@@ -41,6 +41,8 @@ Web 继续借用原 Python Session，保留同事务撤销、幂等、文件联�
 
 Runtime integration 增加专用 Core/Golden/PG job，以及 Windows x64、macOS arm64/x64 桌面矩阵，检查原生 Rust IPC、制品独立运行和 Tauri 构建；macOS 额外检查 app 内的 Node 资源。保留既有前后端/Runtime/LoopScope/E2E 和 Docker release 的构建与安全扫描。
 
+首轮 CI 发现 Node 26 的全局 Web Storage 遮蔽了 Vitest 4 的 jsdom 存储。前端测试进程显式关闭 Node 的实验性 Web Storage，让 jsdom 提供按页面隔离的真实实现；保留主题、缩放、会话等原有持久化和不可用路径断言。问题机制见 [Vitest 上游记录](https://github.com/vitest-dev/vitest/issues/10867)，没有为恢复绿色删除或放宽测试。
+
 平台制品为验证用途。正式 Apple Developer ID/公证、Windows Authenticode、Windows ARM64、最低 OS 实机、完整 Agent 工具链尚须发行验收。当前 macOS 使用 ad-hoc 签名；不把它描述为正式签名发行版。
 
 Windows MXC 仍沿用原生 Rust Adapter。可信 Node Core 在执行沙箱外访问自己的数据库；不可信 Node/MCP/PTY 仍需单独验证。此前严格 UI 策略下 Node 负载初始化失败的缺口没有因 Core 迁移而消失，也没有自动放宽隔离。
