@@ -14,7 +14,7 @@ function run(label, command, commandArgs, cwd, env = {}) {
     cwd,
     env: { ...process.env, ...env },
     stdio: 'inherit',
-    shell: process.platform === 'win32' && command === 'corepack',
+    shell: process.platform === 'win32' && command === 'pnpm',
   })
   if (result.status !== 0) process.exit(result.status ?? 1)
 }
@@ -31,7 +31,7 @@ if (!['unit', 'integration', 'e2e', 'all'].includes(tier)) {
 
 if (tier === 'unit' || tier === 'all') {
   backendPytest('后端 L0/L1 单元测试', 'not slow and not external_service and not process and not e2e_support')
-  run('前端单元测试', 'corepack', ['pnpm', '--filter', 'gugu-web', 'run', 'test:run'], root)
+  run('前端单元测试', 'pnpm', ['--filter', 'gugu-web', 'run', 'test:run'], root)
 }
 
 if (tier === 'integration' || tier === 'all') {
@@ -39,16 +39,16 @@ if (tier === 'integration' || tier === 'all') {
 }
 
 if (tier === 'e2e' || (tier === 'all' && !args.has('--skip-e2e'))) {
-  run('稳定 E2E', 'corepack', ['pnpm', '--filter', 'gugu-web', 'run', 'test:e2e:stable'], root)
+  run('稳定 E2E', 'pnpm', ['--filter', 'gugu-web', 'run', 'test:e2e:stable'], root)
 }
 
 if (tier === 'all') {
-  run('前端类型检查', 'corepack', ['pnpm', '--filter', 'gugu-web', 'run', 'typecheck'], root)
-  run('前端严格类型检查', 'corepack', ['pnpm', '--filter', 'gugu-web', 'run', 'typecheck:strict'], root)
-  run('前端构建', 'corepack', ['pnpm', '--filter', 'gugu-web', 'run', 'build'], root)
-  run('前端 i18n 检查', 'corepack', ['pnpm', '--filter', 'gugu-web', 'run', 'i18n:scan'], root)
-  run('前端 CSS 回归检查', 'corepack', ['pnpm', '--filter', 'gugu-web', 'run', 'test:css-glass'], root)
-  run('前端弹窗回归检查', 'corepack', ['pnpm', '--filter', 'gugu-web', 'run', 'test:ui-dialogs'], root)
+  run('前端类型检查', 'pnpm', ['--filter', 'gugu-web', 'run', 'typecheck'], root)
+  run('前端严格类型检查', 'pnpm', ['--filter', 'gugu-web', 'run', 'typecheck:strict'], root)
+  run('前端构建', 'pnpm', ['--filter', 'gugu-web', 'run', 'build'], root)
+  run('前端 i18n 检查', 'pnpm', ['--filter', 'gugu-web', 'run', 'i18n:scan'], root)
+  run('前端 CSS 回归检查', 'pnpm', ['--filter', 'gugu-web', 'run', 'test:css-glass'], root)
+  run('前端弹窗回归检查', 'pnpm', ['--filter', 'gugu-web', 'run', 'test:ui-dialogs'], root)
   run('测试资产边界检查', 'node', ['scripts/tests/check-test-boundaries.mjs'], root)
 }
 

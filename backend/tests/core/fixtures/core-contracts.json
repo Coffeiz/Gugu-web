@@ -1,0 +1,16 @@
+[
+  {"method":"normalize","input":["准备",{"label":"执行","todos":["整理资料","复核"]}]},
+  {"method":"normalize","input":[{"label":"准备","todos":null}]},
+  {"method":"create","input":{"name":"准备计划","summary":"  简述  ","progress":0,"archived":false}},
+  {"method":"create","input":{"name":"日期计划","deadline":"2026-02-29"}},
+  {"method":"create","input":{"name":"日期计划","start_date":"2026-11-12","deadline":"2026-11-11"}},
+  {"method":"create","input":{"name":"空阶段计划","current_stage":"s0"}},
+  {"method":"create","input":{"name":"计划","stages":[{"key":"s0","label":"准备","todos":[{"id":"t1","text":"复核","done":false}]}],"current_stage":"s0"}},
+  {"method":"create","input":{"name":"计划","stages":[{"key":"s0","label":"准备"},{"key":"s0","label":"重复"}]}},
+  {"method":"client","input":{"name":" 小北 ","phone":null,"notes":""}},
+  {"method":"client","input":{"name":"小北","extra":"拒绝"}},
+  {"method":"client","input":{"name":"   "}},
+  {"method":"replace","input":[{"key":"s1","label":"归档"},{"key":"s0","label":"启动"}],"old":[{"key":"s0","label":"准备","todos":[{"id":"t1","text":"整理","done":true}]},{"key":"s1","label":"完成","todos":[]}],"current":"s0"},
+  {"method":"replace","input":[{"key":"s0","label":"准备","todos":["重新整理"]}],"old":[{"key":"s0","label":"准备","todos":[{"id":"t1","text":"整理","done":true}]}],"current":"s0"},
+  {"method":"replace","input":[{"label":"同名"}],"old":[{"key":"s0","label":"同名","todos":[]},{"key":"s1","label":"同名","todos":[]}],"current":"s0"}
+]

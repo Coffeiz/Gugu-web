@@ -5,7 +5,7 @@ pub mod sandbox;
 pub fn run() {
     use core_host::CoreHost;
     use serde_json::Value;
-    use std::{path::PathBuf, sync::Arc};
+    use std::sync::Arc;
     use tauri::Manager;
     use tokio::sync::Mutex;
 
@@ -40,16 +40,17 @@ pub fn run() {
     }
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+            if let Some(window) = app.get_webview_window("main") { let _ = window.show(); let _ = window.set_focus(); }
+        }))
         .setup(|app| {
             let database = app.path().app_data_dir()?.join("core.db");
-            let python = PathBuf::from(std::env::var("GUGU_DESKTOP_PYTHON").unwrap_or_else(|_| {
-                if cfg!(windows) {
-                    "python".into()
-                } else {
-                    "python3".into()
-                }
-            }));
-            let host = tauri::async_runtime::block_on(CoreHost::launch(&python, &database))
+            #[cfg(debug_assertions)]
+            let resource_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/core-sidecar");
+            #[cfg(not(debug_assertions))]
+            let resource_root = app.path().resource_dir()?.join("core-sidecar");
+            let (node, entry) = core_host::artifact_paths(&resource_root).map_err(std::io::Error::other)?;
+            let host = tauri::async_runtime::block_on(CoreHost::launch(&node, &entry, &database))
                 .map_err(std::io::Error::other)?;
             app.manage(Arc::new(Mutex::new(host)));
             Ok(())

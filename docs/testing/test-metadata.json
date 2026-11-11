@@ -2138,7 +2138,7 @@
   "backend/tests/core/test_local_runtime.py": {
     "domain": "core-project-runtime",
     "layer": "L1",
-    "owner": "gugu-core/src/gugu_core/data/runtime.py",
+    "owner": "compat/core-python/src/gugu_core/data/runtime.py",
     "productionEntry": "python -m gugu_core",
     "keyBehavior": "单用户文件库重开保持身份与版本；并发只提交一个改名；事务失败回滚；拒绝越权和隐式覆盖迁移",
     "ci": "backend-pytest"
@@ -2146,8 +2146,8 @@
   "backend/tests/core/test_dependency_boundaries.py": {
     "domain": "core-project-runtime",
     "layer": "L0",
-    "owner": "gugu-core/src/gugu_core",
-    "productionEntry": "gugu-core/src/gugu_core/domain 与 application",
+    "owner": "compat/core-python/src/gugu_core",
+    "productionEntry": "compat/core-python/src/gugu_core/domain 与 application",
     "keyBehavior": "Core 不反向导入宿主，领域与用例不依赖 SQL、Web、Redis 或端侧适配",
     "ci": "backend-pytest"
   },
@@ -2162,16 +2162,16 @@
   "backend/tests/core/test_postgres_projects.py": {
     "domain": "core-project-runtime",
     "layer": "L2",
-    "owner": "gugu-core/src/gugu_core/data/projects.py",
-    "productionEntry": "gugu-core/src/gugu_core/application/projects.py",
+    "owner": "compat/core-python/src/gugu_core/data/projects.py",
+    "productionEntry": "compat/core-python/src/gugu_core/application/projects.py",
     "keyBehavior": "真实 PostgreSQL 临时 schema 验证事务回滚、客户列别名、aware UTC、过期版本拒绝和用户隔离",
     "ci": "backend-pytest"
   },
   "backend/tests/core/test_data_runtime.py": {
     "domain": "core-data-runtime",
     "layer": "L1",
-    "owner": "gugu-core/src/gugu_core/data/unit_of_work.py",
-    "productionEntry": "gugu-core/src/gugu_core/data/runtime.py",
+    "owner": "compat/core-python/src/gugu_core/data/unit_of_work.py",
+    "productionEntry": "compat/core-python/src/gugu_core/data/runtime.py",
     "keyBehavior": "项目和联系人跨域提交回滚、取消恢复、上下文隔离；显式升级备份并在 DDL 故障后保留旧库",
     "ci": "backend-pytest"
   },
@@ -2186,7 +2186,7 @@
   "backend/tests/core/test_desktop_ipc.py": {
     "domain": "desktop-core-ipc",
     "layer": "L2",
-    "owner": "gugu-desktop/python/gugu_desktop_host/__main__.py",
+    "owner": "compat/desktop-python/python/gugu_desktop_host/__main__.py",
     "productionEntry": "gugu-desktop/src-tauri/src/core_host.rs",
     "keyBehavior": "真实子进程跨重启持久化、拒绝旧版本及身份覆盖；白名单阻止 Shell/FS，超长帧退出并回收连接",
     "ci": "backend-pytest"
@@ -2198,5 +2198,45 @@
     "productionEntry": "frontend/desktop.html",
     "keyBehavior": "通过原生业务桥创建后补读本地列表，不依赖 HTTP；缺少桥时显示错误并恢复交互",
     "ci": "frontend-vitest"
+  },
+  "gugu-core/tests/domain.test.ts": {
+    "domain": "core-node-domain",
+    "layer": "L1",
+    "owner": "gugu-core/src/domain",
+    "productionEntry": "gugu-core/src/contracts/index.ts",
+    "keyBehavior": "Unicode/日期、缺省字段、阶段待办身份保持领域契约，拒绝 Node/SQL 反向依赖",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/data.test.ts": {
+    "domain": "core-node-data",
+    "layer": "L1",
+    "owner": "gugu-core/src/data/runtime.ts",
+    "productionEntry": "gugu-core/src/data/sqlite.ts",
+    "keyBehavior": "跨域提交/取消回滚、所有者与 CAS、收据原子性、备份 DDL 故障恢复及连接回收",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/postgres.test.ts": {
+    "domain": "core-node-data",
+    "layer": "L2",
+    "owner": "gugu-core/src/data/postgres.ts",
+    "productionEntry": "gugu-core/src/data/runtime.ts",
+    "keyBehavior": "真实 PostgreSQL 保留微秒/用户外键、事务隔离、CAS、重复操作与连接超时保护",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/local-ipc.test.ts": {
+    "domain": "core-node-ipc",
+    "layer": "L2",
+    "owner": "gugu-core/src/runtime/stdio.ts",
+    "productionEntry": "gugu-core/src/runtime/local.ts",
+    "keyBehavior": "真实进程重启及回包丢失后查询收据，不重复创建，拒绝越权/超长帧/非法能力并隔离 Worker",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/golden/python-interop.test.ts": {
+    "domain": "core-node-golden",
+    "layer": "L2",
+    "owner": "gugu-core/src/domain",
+    "productionEntry": "backend/tests/core/fixtures/node_golden.py",
+    "keyBehavior": "同一合成规则语料跨语言一致，Python v2 与 Node 双向读写、显式 v3 升级备份保留身份和数据",
+    "ci": "core-node"
   }
 }

@@ -4,15 +4,15 @@
   "private": true,
   "packageManager": "pnpm@10.15.0",
   "engines": {
-    "node": ">=22"
+    "node": ">=26.13.0 <27"
   },
   "scripts": {
-    "dev:web": "corepack pnpm --filter gugu-web dev",
-    "dev:loopscope": "corepack pnpm --filter loopscope-web dev",
-    "build:web": "corepack pnpm --filter gugu-web build",
-    "build": "corepack pnpm -r --if-present build",
-    "typecheck": "corepack pnpm -r --if-present typecheck",
-    "test": "corepack pnpm -r --if-present test",
+    "dev:web": "pnpm --filter gugu-web dev",
+    "dev:loopscope": "pnpm --filter loopscope-web dev",
+    "build:web": "pnpm --filter gugu-web build",
+    "build": "pnpm -r --if-present build",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm -r --if-present test",
     "test:fast": "node scripts/tests/run-fast-tests.mjs",
     "test:unit": "TEST_TIER=unit node scripts/tests/run-test-tier.mjs",
     "test:integration": "TEST_TIER=integration node scripts/tests/run-test-tier.mjs",
@@ -26,6 +26,7 @@
     "test:inventory:domain-details": "node scripts/tests/generate-domain-details.mjs",
     "test:inventory:helpers": "node scripts/tests/audit-test-helpers.mjs",
     "test:inventory:domains": "node scripts/tests/generate-domain-audit.mjs",
-    "test:boundaries": "node scripts/tests/check-test-boundaries.mjs"
+    "test:boundaries": "node scripts/tests/check-test-boundaries.mjs",
+    "test:core": "pnpm --filter @gugu/core test"
   }
 }

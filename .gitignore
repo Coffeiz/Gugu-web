@@ -12,6 +12,13 @@ backend/dist/
 gugu-core/.venv/
 gugu-core/build/
 gugu-core/dist/
+gugu-core/node_modules/
+compat/core-python/build/
+compat/core-python/dist/
+compat/core-python/src/*.egg-info/
+compat/desktop-python/build/
+compat/desktop-python/python/*.egg-info/
+gugu-desktop/src-tauri/resources/core-sidecar/
 gugu-core/src/*.egg-info/
 gugu-desktop/.tools/
 gugu-desktop/node_modules/

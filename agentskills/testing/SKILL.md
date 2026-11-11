@@ -64,6 +64,8 @@ description: 测试约定。pytest 基座、vitest 要求、E2E Playwright 标�
 
 ## 前端单测（vitest）
 
+独立 TS Core 的回归放在 `gugu-core/tests/`，执行 `pnpm --filter @gugu/core test`；Python 对照测试执行 `test:golden`，必须显式提供安装了兼容包的 `GUGU_CORE_GOLDEN_PYTHON`。对应 Node job 单独连接隔离 PostgreSQL。保留 `backend/tests/core/` 的 Python 参考回归；新增 Core 测试同样登记元数据，不混入前端套件。
+
 - 跑法：`corepack pnpm --filter gugu-web run test:run`（一次性）或 `corepack pnpm --filter gugu-web run test`（watch）。
 - 所有前端 Vitest 测试统一放在 `frontend/tests/<功能域>/`，按产品功能或跨模块领域归档；需要细分时在功能域下建立子目录。`frontend/src/` 只放生产代码，禁止在源码旁新建 `*.test.*` / `*.spec.*`；旧的 `frontend/test/` 扁平目录不再使用。Vitest 与 `test:fast` 只发现 `frontend/tests/`。
 - 新测试优先使用 `@/` alias 引用 `src/` 生产模块，避免测试搬迁后相对路径失效；同一测试域的辅助夹具放在 `frontend/tests/<功能域>/` 内，不与生产代码混放。文件名使用被保护行为或模块名加 `.test.ts`；浏览器端交互验收仍归 `frontend/e2e/`，不混入 Vitest。

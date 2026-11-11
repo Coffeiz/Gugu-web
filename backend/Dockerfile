@@ -64,9 +64,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
         "msgpack==1.2.3" "setuptools==84.0.0" \
     && python -c "from importlib.metadata import version; assert version('msgpack') == '1.2.3'; assert version('setuptools') == '84.0.0'"
 
-COPY gugu-core /gugu-core
+COPY compat/core-python /core-python
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install -i "${PIP_INDEX_URL}" -e '/gugu-core[postgres]'
+    pip install -i "${PIP_INDEX_URL}" -e '/core-python[postgres]'
 COPY backend .
 COPY backend/scripts/runtime/prepare_rootless_storage.py /usr/local/bin/prepare_rootless_storage.py
 RUN mkdir -p logs

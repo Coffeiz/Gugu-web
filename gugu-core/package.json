@@ -1,0 +1,32 @@
+{
+  "name": "@gugu/core",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "engines": { "node": ">=26.13.0 <27" },
+  "exports": {
+    ".": "./dist/index.js",
+    "./contracts": "./dist/contracts/index.js",
+    "./domain": "./dist/domain/index.js",
+    "./data": "./dist/data/index.js",
+    "./local": "./dist/runtime/local.js"
+  },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm build && vitest run",
+    "test:golden": "pnpm build && vitest run --config vitest.golden.config.ts",
+    "cli": "node dist/cli.js"
+  },
+  "dependencies": { "kysely": "0.29.8", "zod": "4.6.7" },
+  "optionalDependencies": { "better-sqlite3": "13.0.3", "pg": "8.23.1" },
+  "devDependencies": {
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "26.6.6",
+    "@types/pg": "8.23.1",
+    "typescript": "6.0.3",
+    "vitest": "4.1.12"
+  }
+}

@@ -12,7 +12,7 @@ pytestmark = pytest.mark.process
 
 
 def exchange(database, requests, *, raw=None):
-    env = dict(os.environ, PYTHONPATH=str(ROOT / "gugu-desktop/python"), PYTHONUTF8="1")
+    env = dict(os.environ, PYTHONPATH=str(ROOT / "compat/desktop-python/python"), PYTHONUTF8="1")
     frames = raw if raw is not None else b"".join((json.dumps(item, ensure_ascii=False) + "\n").encode() for item in requests)
     result = subprocess.run(
         [sys.executable, "-m", "gugu_desktop_host", "--database", str(database)],

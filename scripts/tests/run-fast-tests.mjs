@@ -11,7 +11,7 @@ function run(label, command, args, cwd) {
   const result = spawnSync(command, args, {
     cwd,
     stdio: 'inherit',
-    shell: process.platform === 'win32' && command === 'corepack',
+    shell: process.platform === 'win32' && command === 'pnpm',
   })
   if (result.status !== 0) process.exit(result.status ?? 1)
 }
@@ -23,8 +23,7 @@ run('Agent ORM 严格守卫', python, [
   'scripts/checks/check_orm_boundaries.py',
   '--agent-strict',
 ], path.join(root, 'backend'))
-run('文件同步 TS watcher 依赖', 'corepack', [
-  'pnpm',
+run('文件同步 TS watcher 依赖', 'pnpm', [
   'install',
   '--filter',
   '@gugu/filesync-watcher...',
@@ -36,8 +35,8 @@ run(
   ['-m', 'pytest', '-q', '-m', 'not slow and not external_service and not process and not e2e_support'],
   path.join(root, 'backend'),
 )
-run('前端 L0 Vitest', 'corepack', ['pnpm', '--filter', 'gugu-web', 'run', 'test:fast'], root)
-run('前端 i18n 静态检查', 'corepack', ['pnpm', '--filter', 'gugu-web', 'run', 'i18n:scan'], root)
-run('前端对话框静态检查', 'corepack', ['pnpm', '--filter', 'gugu-web', 'run', 'test:ui-dialogs'], root)
+run('前端 L0 Vitest', 'pnpm', ['--filter', 'gugu-web', 'run', 'test:fast'], root)
+run('前端 i18n 静态检查', 'pnpm', ['--filter', 'gugu-web', 'run', 'i18n:scan'], root)
+run('前端对话框静态检查', 'pnpm', ['--filter', 'gugu-web', 'run', 'test:ui-dialogs'], root)
 
 console.log('[快速门禁] 全部通过')

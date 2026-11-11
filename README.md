@@ -148,10 +148,10 @@
 
 ```bash
 # pnpm / npm 依赖
-corepack pnpm install --registry=https://registry.npmmirror.com
+pnpm install --registry=https://registry.npmmirror.com
 
 # 本地安装 Python 依赖
-python -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r backend/requirements.txt -e "./gugu-core[postgres]"
+python -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r backend/requirements.txt -e "./compat/core-python[postgres]"
 
 # Dev Compose 重新构建镜像时使用清华 PyPI 镜像
 PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
@@ -470,8 +470,9 @@ gugu/
 ### 环境准备
 
 ```bash
-corepack enable
-corepack pnpm install
+# Node 26.13+ LTS
+npm install --global pnpm@10.15.0
+pnpm install
 ```
 
 ### 设计规范
@@ -481,7 +482,7 @@ corepack pnpm install
 ### 启动前端
 
 ```bash
-corepack pnpm --filter gugu-web dev
+pnpm --filter gugu-web dev
 ```
 
 ### 启动后端
@@ -490,16 +491,16 @@ corepack pnpm --filter gugu-web dev
 cd backend
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt -e "../gugu-core[postgres]"
+pip install -r requirements.txt -e "../compat/core-python[postgres]"
 make dev-web
 ```
 
 ### 常用检查
 
 ```bash
-corepack pnpm --dir frontend typecheck
-corepack pnpm --dir frontend test:run
-corepack pnpm --dir frontend build
+pnpm --dir frontend typecheck
+pnpm --dir frontend test:run
+pnpm --dir frontend build
 cd backend && PYTHONPATH=. .venv/bin/pytest
 ```
 
@@ -529,9 +530,9 @@ cd backend && PYTHONPATH=. .venv/bin/pytest
 提交前建议完成：
 
 ```bash
-corepack pnpm --dir frontend typecheck
-corepack pnpm --dir frontend test:run
-corepack pnpm --dir frontend build
+pnpm --dir frontend typecheck
+pnpm --dir frontend test:run
+pnpm --dir frontend build
 cd backend && PYTHONPATH=. .venv/bin/pytest
 ```
 

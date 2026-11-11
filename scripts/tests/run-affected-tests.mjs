@@ -19,7 +19,7 @@ function run(label, command, args, cwd, env = {}) {
     cwd,
     env: { ...process.env, ...env },
     stdio: 'inherit',
-    shell: process.platform === 'win32' && command === 'corepack',
+    shell: process.platform === 'win32' && command === 'pnpm',
   })
   if (result.status !== 0) process.exit(result.status ?? 1)
 }
@@ -57,11 +57,11 @@ if (backendChanged) {
 }
 
 if (frontendChanged) {
-  run('前端受影响 L0/L1', 'corepack', ['pnpm', '--filter', 'gugu-web', 'run', 'test:run'], root)
+  run('前端受影响 L0/L1', 'pnpm', ['--filter', 'gugu-web', 'run', 'test:run'], root)
 }
 
 if (runtimeChanged) {
-  run('LoopScope/Runtime 受影响测试', 'corepack', ['pnpm', '--dir', 'loopscope', 'test'], root)
+  run('LoopScope/Runtime 受影响测试', 'pnpm', ['--dir', 'loopscope', 'test'], root)
 }
 
 console.log('[受影响测试] 完成')

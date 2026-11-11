@@ -151,7 +151,7 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
-      - ./gugu-core:/gugu-core:ro
+      - ./compat/core-python:/core-python:ro
       - *gugu-data-mount
 
   backend:
@@ -211,7 +211,7 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
-      - ./gugu-core:/gugu-core:ro
+      - ./compat/core-python:/core-python:ro
       - *gugu-data-mount
       - sandbox_socket:/run/gugu
 
@@ -266,7 +266,7 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
-      - ./gugu-core:/gugu-core:ro
+      - ./compat/core-python:/core-python:ro
       - *gugu-data-mount
       - sandbox_socket:/run/gugu
 
@@ -311,7 +311,7 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
-      - ./gugu-core:/gugu-core:ro
+      - ./compat/core-python:/core-python:ro
       - *gugu-data-mount
 
   # 工具执行随 backend/worker 镜像提供，生产 Shell 沙盒由这个可选进程承接。
