@@ -196,7 +196,7 @@ SQLite 内部数据文件、初始化与备份属于 Data Adapter，不等于提
 
 - [x] 确定顶层 Core、端侧 FS/沙箱、桌面单用户和服务端多用户边界。
 - [x] 确定 TS/Node 方向；当前使用 Node 26 LTS、pnpm 10.15、Kysely、Zod、better-sqlite3 与 pg，版本由 lockfile 固定。
-- [x] 桌面目标改为 Electron + TS Host；复用 Vue 入口、独立 Node Core 和原生 Broker 边界，记录迁移任务，尚未切换实现。
+- [x] 桌面切换到 Electron + TS Host 验证实现；复用 Vue 入口、独立 Node Core 和原生 Broker 边界，完整产品与发行另行验收。
 - [x] 建立可移植 Domain/Contracts、独立 Core 包和依赖边界检查。
 - [x] 保留 Python 参考实现及首批共享合成语料。
 - [x] 建立现有 Node Core 对应 Python 行为映射与有意差异登记，见测试专题。
