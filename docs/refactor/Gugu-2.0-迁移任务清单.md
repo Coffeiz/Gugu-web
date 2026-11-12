@@ -39,9 +39,10 @@
 
 ### N2——Node Web/NAS 后端迁移
 
-**当前基线**：`gugu-webui/` Node 26 镜像已在 devserver 连到专用 `gugu2` 数据库运行；health/readiness 均为 200，未认证的认证、项目、日历和客户路由均拒绝为 401。WebUI 32 项回归（含真实 PostgreSQL 随机隔离 schema）全通过，覆盖用户读取与活跃时间更新、项目活动/回收站列表及详情/文件计数 owner 隔离、30 天回收边界与零计数、日历日期筛选/软删除/owner 隔离、客户创建/列表/跨用户删除拒绝/删除；Core 数据查询另有 8 项 SQLite 数据契约测试通过。当前 API 有 `GET /api/v1/auth/me`、项目活动/回收站列表、详情、文件计数、日历列表/详情读取和客户列表/创建/删除；认证读取尚未迁移 Redis 可达渠道、节流、头像文件服务等完整行为。其余认证写 API、业务 API/SSE、静态前端和 Worker 均未接入，不能承担 Web 流量，也不代表任何业务写域已切换。
+**当前基线**：`gugu-webui/` Node 26 镜像已在 devserver 连到专用 `gugu2` 数据库运行；health/readiness 均为 200，未认证的认证、项目、日历和客户路由均拒绝为 401。WebUI 33 项回归（含真实 PostgreSQL 随机隔离 schema）全通过，覆盖用户读取与活跃时间更新、项目活动/回收站列表及详情/文件计数 owner 隔离、30 天回收边界与零计数、日历日期筛选/软删除/owner 隔离、客户创建/列表/跨用户删除拒绝/删除，以及 FastAPI 尾斜杠兼容；Core 数据查询另有 8 项 SQLite 数据契约测试通过。当前 API 有 `GET /api/v1/auth/me`、项目活动/回收站列表、详情、文件计数、日历列表/详情读取和客户列表/创建/删除；认证读取尚未迁移 Redis 可达渠道、节流、头像文件服务等完整行为。其余认证写 API、业务 API/SSE、静态前端和 Worker 均未接入，不能承担 Web 流量，也不代表任何业务写域已切换。Python 当前 390 个字面 HTTP/WebSocket 路由操作及 Node method/path 状态见 [Node WebUI API 迁移清单](Gugu-2.0-Node-WebUI-API迁移清单.md)；Agent 工具、Worker/调度、撤销和迁移写入口仍待盘点。
 
 - [ ] 建立独立 Node HTTP Host，接入 `gugu-core` 与 PostgreSQL，并承担 Web/NAS API 请求；不把桌面 Electron Host 当作服务端。
+- [x] 盘点 Python 当前字面 HTTP/WebSocket 路由并映射 Node method/path 与已有回归；详见 [Node WebUI API 迁移清单](Gugu-2.0-Node-WebUI-API迁移清单.md)。此项不代表接口行为等价或覆盖完整。
 - [ ] 盘点 API、Agent 工具、Worker/调度、撤销和迁移的所有写入口。
 - [ ] 保持现有 HTTP/SSE、可信身份到 DataContext、错误与字段映射契约兼容。
 - [ ] 完整命令中的幂等、撤销、版本、关联记录、文件联动与提交后事件一起迁移。

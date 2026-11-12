@@ -59,6 +59,25 @@ test('GET /api/v1/projects binds the authenticated owner and archived filter', a
   }
 })
 
+test('GET /api/v1/projects/ preserves FastAPI trailing-slash route compatibility', async () => {
+  let calls = 0
+  const app = makeApp(async () => {
+    calls += 1
+    return [{ id: 10, archived: false }]
+  })
+  try {
+    const response = await app.inject({
+      method: 'GET', url: '/api/v1/projects/',
+      headers: { authorization: `Bearer ${signedUserToken(secret, userId)}` },
+    })
+    assert.equal(response.statusCode, 200)
+    assert.deepEqual(response.json(), [{ id: 10, archived: false }])
+    assert.equal(calls, 1)
+  } finally {
+    await app.close()
+  }
+})
+
 test('GET /api/v1/projects returns the owner trash and rejects unauthenticated or conflicting filters', async () => {
   const calls: Array<[string, boolean, boolean | undefined]> = []
   const app = makeApp(async (ownerId, archived, deleted) => {

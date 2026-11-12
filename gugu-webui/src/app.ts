@@ -246,7 +246,7 @@ function registerEventRoutes(app: FastifyInstance, auth: UserAuthOptions, events
 }
 
 export function createApp(options: WebUiOptions) {
-  const app = Fastify({ logger: false })
+  const app = Fastify({ logger: false, routerOptions: { ignoreTrailingSlash: true } })
   app.get('/health', async () => ({ status: 'ok', app: options.appName }))
   app.get('/health/ready', async (_request, reply) => {
     try {
