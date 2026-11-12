@@ -6,11 +6,13 @@
 
 | 文档 | 职责 |
 | --- | --- |
-| [架构与迁移任务清单](Gugu-2.0-架构与迁移任务清单.md) | 唯一主文档：目标架构、目录职责、完成状态、迁移顺序及当前 T1 测试任务 |
+| [架构与迁移任务清单](Gugu-2.0-架构与迁移任务清单.md) | 唯一主文档：多端与 Electron 目标架构、目录职责、完成状态、迁移顺序及当前 T1 测试任务 |
 | [Python → Node 依赖迁移矩阵](Gugu-2.0-Python-to-Node-Dependency-Migration.md) | 依赖盘点、候选库和逐项验收门槛；不单独维护整体完成状态 |
 | [历史方案与验证记录](_archive/gugu-2.0/README.md) | 原多端/职责方案、Python 切片、Node 方案与桌面/MXC 实验，供追溯使用 |
 
 当前优先任务是补齐现有 Node Core 与 Python 后端同逻辑的回归，并按 pytest 标记语义分层。任务范围、计划命令与完成条件统一维护在主文档；本次文档整合没有实施该任务或修改测试命令。
+
+桌面目标已改为 **Electron + TypeScript Main/Preload + 独立 Node Core**，复用现有 Vue 入口与原生 Broker 边界。现有代码仍为 Tauri 验证实现；Electron 替换待办统一见主文档 N2，旧 Tauri 的 CI/制品结果不视为 Electron 验收。
 
 ## 其他重构文档
 

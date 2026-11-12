@@ -2,12 +2,13 @@
 
 > **专题参考**：整体架构、目录职责、完成状态与当前任务统一见 [架构与迁移任务清单](Gugu-2.0-架构与迁移任务清单.md)。本表不作为另一份实施路线或完成率清单。
 > **2026-11-12 对齐**：首批 Core 已采用 Kysely、Zod、better-sqlite3、pg 与 Node 26；Drizzle 等并列项保留为原始候选，不代表同时采用。其他依赖只有存在真实迁移调用链及验收结果时才能标为已替换。
+> **桌面路线更新**：目标为 Electron + TS Main/Preload + 独立 Node Core；现有 Tauri 壳仅保留为迁移来源和验证证据。Electron 尚未实现，具体职责与待办统一见主清单 §1.4 / N2。
 > 下文的 PR #116 和 Python 包位置是盘点基线；原 Python Core/Desktop 包当前分别位于 `compat/core-python/`、`compat/desktop-python/`。仍有调用方的 Python 依赖不能直接删除。
 
 > 状态：技术迁移计划草案（待 PoC 与回归确认）\
 > 基准：`Coffeiz/Gugu-web` PR #116，`codex/core-data-desktop-v2`，提交 `020ed06100bbd1f946ee2f277afa2b537fd64677`\
 > 编制日期：2026-11-11\
-> 目标：以 TypeScript 为统一业务/Agent Core，Node.js 承载 SaaS 和桌面 Runtime，Vue 3 + Vite UI 与 Tauri 2 尽量保持。移动端共享**可移植 TS Core**，不假定可运行完整 Node.js。\
+> 目标：以 TypeScript 为统一业务/Agent Core，Node.js 承载 SaaS 和桌面 Runtime，Vue 3 + Vite UI 保留，桌面壳改用 Electron。移动端共享**可移植 TS Core**，不假定可运行完整 Node.js。\
 > 本文是**依赖替换与迁移验收清单**，不是“npm 包功能已经与 Python 完全等价”的声明。
 
 ## 0. 范围、原则与标记
@@ -18,7 +19,7 @@
 - `backend/requirements-dev.txt`：全部开发与测试依赖。
 - `gugu-core/pyproject.toml`：`sqlalchemy[asyncio]`、`aiosqlite`、可选 `asyncpg`、构建系统。
 - `gugu-desktop/pyproject.toml`：Python Desktop Host 及其 `gugu-core` 依赖。
-- 系统级/运行时：FFmpeg、Poppler、Cython 原生内核、数据库、Redis、MXC、文件监听、Tauri Sidecar 与进程管理。
+- 系统级/运行时：FFmpeg、Poppler、Cython 原生内核、数据库、Redis、MXC、文件监听、Electron Host、随包 Node 与原生进程管理。
 - 依据现有代码路径标注行为兼容要点。**没有完成全仓动态 import 与 transitive dependency 穷举**；应在实施时自动化扫描并锁定最终 npm 依赖树。
 
 **迁移等级**
@@ -138,21 +139,25 @@
 
 > **不要**因 TS 迁移而简单删除现有 5,000+ Python 测试；保留 Python Golden Runner，直至对应功能的 TS 差分测试及生产回归达标。
 
-## 3. PR #116 新增包与桌面 Host 的迁移表
+## 3. 原 Python 包与桌面 Host 的迁移表
 
-| 当前部分 | 目标 | 处理方式 | 风险 |
+以 PR #116 的 Python/Tauri 实现为盘点来源；下表结合当前 Node 实现及新的 Electron 目标修订，完成状态以主清单为准。
+
+| 盘点部分 | 目标 | 处理方式 | 风险 |
 |---|---|---|---|
-| `gugu-core` Python wheel | `packages/core` TypeScript | Domain/Application 逐域迁移 | 中 |
-| `gugu_core/data` SQLAlchemy | `packages/data` + Drizzle/Kysely | **跨域事务整体迁移**，不得 Python/Node 双写 | 高 |
+| `gugu-core` Python wheel | 顶层 `gugu-core/` TypeScript | 项目/联系人首批已迁；其余 Domain/Application 逐域迁移 | 中 |
+| `gugu_core/data` SQLAlchemy | `gugu-core/src/data/` + Kysely | 首批已落地；后续仍须**跨域事务整体迁移**，不得 Python/Node 双写 | 高 |
 | `gugu_core.data.runtime.LocalRuntime` | Node SQLite Host | 显式 initialize/open/migrate/close | 高 |
-| `gugu_core.data.migrations` | SQLite 增量迁移器 | 现有 v1→v2 路径、备份恢复继续有效 | 高 |
-| `gugu-desktop-host` Python 管道进程 | Node Sidecar | 保留 Tauri Rust IPC，替换底层子进程 | 中 |
-| `gugu-desktop` Tauri 2 / Rust | **复用** | 只修改 Sidecar 的启动/通信层 | 低～中 |
-| `@microsoft/mxc-sdk@1.0.1` | **复用（PoC）** | 继续独立验证 Windows 原生隔离 | 高 |
-| `@tauri-apps/cli@2.12.4` | **复用** | 升级时检查 Tauri 版本和权限模型 | 低 |
-| Vue `frontend/` 独立 desktop 入口 | **复用** | 调用统一的 Core Client/DTO | 低 |
-| `gugu-desktop` Node engines 约束 | 统一 Node LTS 选型 | 冻结 CI、构建、Runtime 的 Node 主版本 | 中 |
-| Tauri Desktop Node sidecar | 自包含可执行包 / 内嵌 Node | Windows/macOS 双架构打包签名验收 | 高 |
+| `gugu_core.data.migrations` | SQLite 增量迁移器 | 当前本地 schema 3；v1/v2 显式备份升级及回滚验收，不因换壳升级 schema | 高 |
+| `gugu-desktop-host` Python 管道进程 | 独立 Node 26 Core 进程 | Node 已替换 Python；Electron Main 继续使用 NDJSON v2、Worker 与收据契约 | 中 |
+| `gugu-desktop` Tauri 2 / Rust 壳 | Electron + TS Main/Preload | 重写窗口/生命周期与 IPC，迁入原 Host 的安全和恢复契约；Core 不依赖 Electron | 高 |
+| `@microsoft/mxc-sdk@1.0.1` | **复用（PoC）** | 抽离为独立原生 helper，版本化能力协议；继续验证严格 Windows 隔离 | 高 |
+| `@tauri-apps/cli@2.12.4` | `electron` + Electron Forge | 新壳等价验收后删除旧 CLI/配置；先验证 pnpm 依赖收集和资源打包，再固定版本 | 中～高 |
+| Vue `frontend/` 独立 desktop 入口 | **复用** | 将 Tauri bridge 改为最小 Preload API；不暴露通用 IPC/FS/进程接口 | 中 |
+| `gugu-desktop` Node engines 约束 | 构建 Node、Electron 内嵌 Node、Core Node 分别声明 | Core 保持已声明的 Node 26；不假设 Electron 内嵌版本相同 | 中 |
+| 现有 Node sidecar 制品 | Electron 真实资源目录中的独立 Node/Core 制品 | 重用装配/完整性契约；原生依赖按独立 Node ABI 构建，安装后脱离开发目录验证 | 高 |
+
+Electron/Forge 依赖尚未加入锁文件。`better-sqlite3` 不进入 Electron Main/Preload；若后续选择内嵌 Node/`utilityProcess`，必须重新验证 Core engines 和原生模块 ABI，不能直接复用独立 Node 的 `.node` 文件。参见 [Electron 原生模块说明](https://www.electronjs.org/docs/latest/tutorial/using-native-node-modules)。
 
 **特别说明**：桌面 Node Sidecar 是桌面方案，不能推导出 Android/iOS 也能运行同一 Node 宿主。移动端必须分离 `portable` 业务协议/规则与 Node 特有的 FS、数据库驱动、进程、沙箱及定时任务适配。
 
@@ -169,7 +174,7 @@
 | Cython 原生 RAG 内核 | 现有 Python/Cython 算法 | TS / `@node-rs/jieba` / Rust N-API | BM25、分词/投影、索引版本 |
 | Python RAG/记忆对象文件 | 非全部存在 DB | 统一 Node 内容 Store | 数据迁移完整性、删除屏障 |
 | Linux sandboxd/容器 | Web/NAS 执行隔离 | 保留或实现同协议 Adapter | 防止 Host fallback |
-| Windows MXC | PR #116 有受限验证 | 保留 Rust SDK/能力端口 | Node/MCP/PTY 严格隔离尚未证明 |
+| Windows MXC | PR #116 有受限验证 | 保留原生 SDK/能力端口，从 Tauri 绑定抽离 helper | Node/MCP/PTY 严格隔离尚未证明；Electron Renderer sandbox 不替代它 |
 | macOS sandbox | 尚未验收 | 原生 Adapter（待选型） | 签名、公证、文件授权、进程树 |
 | 文件监听 | Python watcher / TS Sidecar | `chokidar` 或 OS watcher Adapter | rename、丢事件、恢复对账 |
 | CLI、Shell、PTY、MCP stdio | sandboxd/Unix socket 与 Python 桥 | Node `spawn` + OS Sandbox Broker | 取消、stdio、终止信号、权限 |
@@ -197,30 +202,13 @@
 
 ## 6. 推荐目标栈（候选，并非锁定清单）
 
-```text
-apps/
-  web/                  Vue 3 + Vite
-  api/                  Fastify + Zod/OpenAPI
-  worker/               Node.js runtime + Redis Streams
-  desktop/              Tauri 2 + Node Sidecar + SQLite
-  mobile/               Capacitor + portable TS Core + native adapters（后续）
-
-packages/
-  protocol/             DTO / JSON Schema / Zod / Capabilities
-  core/                 Domain / Application / Agent（不依赖 Node 私有 API）
-  data/                 PostgreSQL + SQLite + migrations / UoW
-  runtime-node/         Agent Host / Scheduler / IM / Process Lifecycle
-  execution/            Broker Port 与隔离适配
-  retrieval/            Jieba / BM25 / CJK 规则
-  content/              文件、附件与文档抽取
-  testing-contracts/    Python/TS 差分输入输出与故障场景
-```
+目录统一采用主清单的 `gugu-core/`、`gugu-desktop/`、未来 `gugu-saas/` 与 `gugu-mobile/`，保留 `frontend/`；不再维护另一套 `apps/` / `packages/` 搬迁布局。领域、数据、Runtime 和平台契约的具体文件职责见主清单 §2。
 
 - Web：优先 **Vue 3 + Vite**；不为“全 TS”而强制换 Nuxt 或 Next.js。
 - API：`fastify` 优先，原因是独立 Node 服务更贴近现有 FastAPI/Worker 边界；可另做 Hono PoC。
-- 数据层：Drizzle/Kysely **只选其一**，先验证现有 SQL 和 Alembic 迁移的兼容策略。
+- 数据层：首批已选 **Kysely + better-sqlite3 / pg**；Drizzle、`node:sqlite` 只保留为原始候选。完整 schema/Alembic 交接仍待验收。
 - 进程/任务：不要把耗时 Agent Run 放到 HTTP handler 内；独立 Worker、租约与持久 Job。
-- 桌面：复用 PR #116 的 Rust IPC 与 Tauri 2；替换 Python 管道 Host 为 Node Sidecar。
+- 桌面：**Electron + TS Main/Preload + 独立 Node 26 Core + SQLite Worker**；Vue 留在现有入口，Host 负责可信身份、系统能力和生命周期，原生隔离 helper 独立。目标打包工具为 [Electron Forge](https://www.electronforge.io/)，需验证 pnpm 装配约束；Electron/Forge 的精确版本待 N2 实施时固定。
 - Mobile：首先作为入口/远程 Runtime 客户端，随后仅移植 Portable Core 与本地受限能力。
 
 ## 7. 切片迁移次序与退出门槛
@@ -229,14 +217,14 @@ packages/
 |---|---|---|
 | M0 | 冻结 #116 Python Golden Baseline | 关键数据/权限/IPC/Agent 行为快照可复现 |
 | M1 | 项目+联系人 Domain / Data / SQLite | TS 与 Python 写入、CAS、回滚、失败恢复等价 |
-| M2 | Tauri Node Sidecar | 实际 Windows/macOS 二进制、签名/更新/重启、无 Python 安装 |
+| M2 | Electron Host + 随包 Node Core | Main/Preload 权限、旧数据连续性、未知结果恢复及 Windows/macOS 安装/签名/更新/重启；无 Python 安装 |
 | M3 | Web 项目/联系人事务切换 | 由 Node 唯一写入，PG 历史数据不变，事件/权限/撤销一致 |
 | M4 | 会话、Job、调度、事件总线 | Canonical History、Redis Stream、幂等、恢复一致 |
 | M5 | RAG、记忆、媒体、Office | 质量基准通过，旧索引有明确重建路径 |
 | M6 | Agent Loop、Provider、工具、IM | 跨 provider 流式 Golden Tests、IM 接入与安全门通过 |
 | M7 | 全量切换与撤除 Python | 无 Python 生产入口、可回滚制品、安全/许可证复核通过 |
 
-**每个切片只能有一个写入真源。** 迁移中可以短期双读/影子计算，但不允许没有事务协议的双写；若需并行运行，采用旧 Python 作为参考实现，Node 干跑比对，不提交副作用。
+本表仅解释依赖切片的退出条件，实时顺序和勾选统一见主清单 N0–N5；当前任务仍为 T1，Electron 替换承接 N2。**每个切片只能有一个写入真源。** 迁移中可以短期双读/影子计算，但不允许没有事务协议的双写；若需并行运行，采用旧 Python 作为参考实现，Node 干跑比对，不提交副作用。
 
 ## 8. 建议建立的验证数据集
 
@@ -249,14 +237,14 @@ packages/
 - **安全**：跨用户越权、资源枚举、破坏性确认、FS 授权、沙箱降级禁用、密钥不泄漏。
 - **打包**：Windows x64/ARM64、macOS Intel/Apple Silicon；Node 原生模块与可执行依赖完整性。
 
-## 9. 未冻结的关键选型（需专门 PoC）
+## 9. 待补齐的选型验证与兼容性
 
-1. **Drizzle vs Kysely**：先在真实项目跨表事务、PG JSONB、SQLite CAS、历史迁移上对比。
-2. **SQLite driver**：`better-sqlite3`、`node:sqlite` 的 Node 版本、线程与打包兼容性。
+1. **Kysely 扩展验收**：首批已采用；完整业务跨表事务、PG JSONB 和历史迁移仍需验证，不重新引入第二套 ORM。
+2. **SQLite driver**：首批已采用 `better-sqlite3`；继续验证 Node 26 各目标架构及 Electron 随包制品中的独立 ABI/资源路径，`node:sqlite` 仅为备选。
 3. **Sudachi / 日语**：同源分词绑定能否降低现有搜索语义差异。
 4. **SILK decoder**：可用二进制/WASM 与许可证是否允许商业分发。
 5. **Office 提取**：PPTX、RTF、ODF、旧 XLS 不能以“库存在”代替内容质量验收。
-6. **Node Sidecar 打包**：Tauri Windows/macOS 发布可行性、调试信息、更新与漏洞扫描。
+6. **Electron 打包**：Forge/pnpm 装配、Main/Preload 边界、独立 Node/Core 与原生 helper 资源、签名/公证、旧数据/单实例、更新回滚、包体及漏洞扫描。
 7. **迁移历史**：Alembic 与新 TS migration 账本共存/交接策略，绝对不能重放建表或重置生产库。
 8. **MCP TS v2**：选择与 Python 版 `mcp==2.3.0` 的协议兼容边界，并保证安全 HTTP transport。
 9. **SaaS FS 退出**：用户文件/长期记忆原始字节的未来权威归属与同步范围尚待确认。
@@ -279,7 +267,12 @@ packages/
 **官方文档/代码参考**
 
 - [MCP TypeScript SDK v2](https://github.com/modelcontextprotocol/typescript-sdk)
-- [Tauri 2 Node.js Sidecar 文档](https://v2.tauri.app/learn/sidecar-nodejs/)
+- [Electron 进程模型](https://www.electronjs.org/docs/latest/tutorial/process-model)
+- [Electron 安全建议](https://www.electronjs.org/docs/latest/tutorial/security)
+- [Electron Context Isolation](https://www.electronjs.org/docs/latest/tutorial/context-isolation)
+- [Electron 原生模块与 ABI](https://www.electronjs.org/docs/latest/tutorial/using-native-node-modules)
+- [Electron ASAR 限制](https://www.electronjs.org/docs/latest/tutorial/asar-archives)
+- [Electron Forge](https://www.electronforge.io/)
 - [Sharp 图像处理文档](https://sharp.pixelplumbing.com/)
 - [Drizzle ORM](https://orm.drizzle.team/)
 - [Kysely](https://kysely.dev/)
