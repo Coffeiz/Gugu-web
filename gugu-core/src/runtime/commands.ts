@@ -129,7 +129,9 @@ export async function execute(
     case 'projects.list':
       if ('archived' in params && typeof params.archived !== 'boolean')
         throw new CoreError('invalid_request', '归档状态无效')
-      return data.projects.list(params.archived as boolean | undefined)
+      return (await data.projects.list(params.archived as boolean | undefined)).map(
+        ({ id, name, version }) => ({ id, name, version }),
+      )
     case 'projects.create':
       return data.projects.create(params)
     case 'projects.rename':
@@ -144,7 +146,7 @@ export async function execute(
         params.fields,
       )
     case 'clients.list':
-      return data.clients.list()
+      return (await data.clients.list()).map(({ id, name }) => ({ id, name }))
     case 'clients.create':
       return data.clients.create(params)
     case 'clients.update':

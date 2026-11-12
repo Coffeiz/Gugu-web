@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { desktopData } from './bridge'
+import { desktopData, DesktopBridgeError } from './bridge'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import type { ClientRow, ProjectRow, SandboxStatus } from './bridge'
 
@@ -13,13 +13,22 @@ const error = ref('')
 const connected = ref(false)
 const sandbox = ref<SandboxStatus | null>(null)
 const sandboxMessage = ref('')
+const pendingOperation = ref('')
+const PENDING_OPERATION_KEY = 'gugu.desktop.pending-operation'
 
 async function perform(action: () => Promise<void>) {
   if (busy.value) return
   busy.value = true
   error.value = ''
   try { await action() }
-  catch (reason) { error.value = reason instanceof Error ? reason.message : String(reason) }
+  catch (reason) {
+    error.value = reason instanceof Error ? reason.message : String(reason)
+    if (reason instanceof DesktopBridgeError && reason.code === 'unknown_result' && reason.operationId) {
+      pendingOperation.value = reason.operationId
+      localStorage.setItem(PENDING_OPERATION_KEY, reason.operationId)
+      error.value = `${error.value}。操作标识 ${reason.operationId}，请先查询操作结果`
+    }
+  }
   finally { busy.value = false }
 }
 
@@ -28,6 +37,19 @@ async function refresh() {
   projects.value = projectRows
   clients.value = clientRows
   connected.value = true
+}
+
+async function recoverPendingOperation() {
+  if (!pendingOperation.value) return
+  const receipt = await desktopData.receipt(pendingOperation.value)
+  if (receipt === null) {
+    error.value = '暂未找到操作收据，操作状态仍需确认；请刷新数据后再决定下一步'
+    return
+  }
+  pendingOperation.value = ''
+  localStorage.removeItem(PENDING_OPERATION_KEY)
+  await refresh()
+  error.value = '已查询到操作收据，本地数据已刷新'
 }
 
 function createProject() {
@@ -55,6 +77,8 @@ function checkSandbox() {
 }
 
 onMounted(() => perform(async () => {
+  pendingOperation.value = localStorage.getItem(PENDING_OPERATION_KEY) ?? ''
+  if (pendingOperation.value) await recoverPendingOperation()
   await refresh()
   sandbox.value = await desktopData.sandboxStatus()
 }))
@@ -67,6 +91,7 @@ onMounted(() => perform(async () => {
       <span class="desktop-state">{{ connected ? 'Core 已连接' : '正在连接 Core' }}</span>
     </header>
     <p v-if="error" class="desktop-error" role="alert">{{ error }}</p>
+    <ActionButton v-if="pendingOperation" fit variant="secondary" :disabled="busy" @click="perform(recoverPendingOperation)">查询待确认操作</ActionButton>
     <div class="desktop-columns">
       <section class="desktop-panel" aria-labelledby="desktop-projects">
         <h2 id="desktop-projects">项目 <span>{{ projects.length }}</span></h2>

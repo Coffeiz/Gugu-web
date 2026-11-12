@@ -302,9 +302,16 @@ export class CoreHost {
             conflict: '项目已变化，请刷新后重试',
             not_found: '数据不存在',
             invalid_request: '请求无效，请检查输入',
+            busy: '本地数据队列已满，请稍后重试',
+            cancelled: '操作已取消',
+            result_too_large: '返回结果超出桌面协议限制',
+            schema_upgrade_required: '数据库需要升级，请运行 Core migrate',
+            database_in_use: '数据库正由其他运行时使用，请先关闭其他实例',
+            storage_error: '本地数据操作失败，请刷新数据确认状态',
+            closed: 'Core 已停止，请重新启动应用',
           }
           if (Object.hasOwn(messages, error.code))
-            throw new DesktopError(error.code, messages[error.code]!)
+            throw new DesktopError(error.code, messages[error.code]!, undefined)
           throw new DesktopError(
             'unknown_result',
             '本地数据操作结果未确认，请查询操作收据或读取已保存数据，勿重复提交',

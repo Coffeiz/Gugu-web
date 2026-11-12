@@ -128,7 +128,9 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
         method: 'projects.create',
         result: { name: '已提交但无回包', version: 1 },
       })
-      expect(await reopened.request('projects.list')).toEqual([receipt.result])
+      expect(await reopened.request('projects.list')).toEqual([
+        { id: receipt.result.id, name: receipt.result.name, version: receipt.result.version },
+      ])
     } finally {
       await reopened.close()
     }
@@ -178,8 +180,6 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
     ['({v:2,id:request.id+1,result:{}})', true],
     ['({v:2,id:request.id})', true],
     ["({v:2,id:request.id,result:{},error:{code:'conflict'}})", true],
-    ["({v:2,id:request.id,error:{code:'storage_error',message:'合成敏感正文'}})", false],
-    ["({v:2,id:request.id,error:{code:'result_too_large'}})", false],
   ])('未知写入结果保留操作 ID，损坏协议终止 Host %#', async (response, fatal) => {
     const host = await fake(response as string)
     try {
@@ -200,6 +200,19 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
             operation_id: error.operationId,
           }),
         ).toBeNull()
+    } finally {
+      await host.close()
+    }
+  })
+  it.each([
+    ['busy', '本地数据队列已满，请稍后重试'],
+    ['cancelled', '操作已取消'],
+    ['result_too_large', '返回结果超出桌面协议限制'],
+    ['storage_error', '本地数据操作失败，请刷新数据确认状态'],
+  ])('Core 明确返回 %s 时保留确定失败语义', async (code, message) => {
+    const host = await fake(`({v:2,id:request.id,error:{code:'${code}',message:'合成错误'}})`)
+    try {
+      await expect(host.request('projects.list')).rejects.toMatchObject({ code, message })
     } finally {
       await host.close()
     }

@@ -25,6 +25,7 @@ afterEach(() => {
   app?.unmount()
   host?.remove()
   delete (window as any).guguDesktop
+  localStorage.removeItem('gugu.desktop.pending-operation')
   vi.unstubAllGlobals()
 })
 
@@ -72,6 +73,24 @@ describe('桌面本地工作台', () => {
     expect(createProject).toHaveBeenCalledTimes(1)
     expect(input.value).toBe('待确认计划')
     expect(element.querySelector('[role="alert"]')?.textContent).toContain('00000000-0000-4000-8000-000000000001')
+    expect(localStorage.getItem('gugu.desktop.pending-operation')).toBe('00000000-0000-4000-8000-000000000001')
+    expect(element.textContent).toContain('查询待确认操作')
     expect(element.querySelector('button')?.disabled).toBe(false)
+  })
+
+  it('重启后查到持久收据时刷新权威列表并清除待确认标识', async () => {
+    localStorage.setItem('gugu.desktop.pending-operation', '00000000-0000-4000-8000-000000000001')
+    const receipt = vi.fn(async () => ({ ok: true, result: { method: 'projects.create', result: { id: 1 } } }))
+    ;(window as any).guguDesktop = {
+      projects: async () => ({ ok: true, result: [{ id: 1, name: '收据中的项目', version: 1 }] }),
+      clients: async () => ({ ok: true, result: [] }),
+      receipt,
+      sandboxStatus: async () => ({ ok: true, result: { supported: false, methods: [], checkAvailable: false } }),
+    }
+    const element = mountWorkbench()
+    await flushUi()
+    expect(receipt).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000001')
+    expect(element.textContent).toContain('收据中的项目')
+    expect(localStorage.getItem('gugu.desktop.pending-operation')).toBeNull()
   })
 })
