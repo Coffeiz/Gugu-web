@@ -2,7 +2,7 @@
 
 `gugu-webui` 是 2.0 的独立 Node HTTP Host。它不启动 Python Web 进程；PostgreSQL 由外部服务提供。
 
-当前实现范围是启动配置、PostgreSQL schema readiness、健康检查、用户令牌校验、`GET /api/v1/auth/me`、基于 `gugu-core` 的项目列表/详情读取、项目文件计数读取，以及客户列表/创建/删除。项目软删除列表暂不支持。登录/注册、其他业务 API/SSE、前端静态资源、Worker 和剩余 Python 行为仍在迁移中，因此当前构建用于开发验收，不作为完整 Web 替代版。
+当前实现范围是启动配置、PostgreSQL schema readiness、健康检查、用户令牌校验、`GET /api/v1/auth/me`、基于 `gugu-core` 的项目活动/回收站列表与详情读取、项目文件计数读取，以及客户列表/创建/删除。回收站列表按 30 天保留期过滤。登录/注册、其他业务 API/SSE、前端静态资源、Worker 和剩余 Python 行为仍在迁移中，因此当前构建用于开发验收，不作为完整 Web 替代版。
 
 ## Docker Compose
 

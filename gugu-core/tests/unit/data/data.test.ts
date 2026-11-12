@@ -152,6 +152,47 @@ describe('共享 SQL 数据契约', () => {
       await runtime.close()
     }
   })
+  it('回收站列表含 cutoff 边界且仅列出当前所有者的近期 tombstone', async () => {
+    const path = file()
+    await initializeSqlite(path)
+    const initial = await openSqliteRuntime(path, {
+      clock: () => '2026-11-10T10:00:00.000Z',
+    })
+    const owner = dataContext(initial.ownerId)
+    const other = dataContext(randomUUID())
+    let recentId = 0
+    let expiredId = 0
+    let otherId = 0
+    try {
+      recentId = (await initial.runtime.transaction(owner, (data) =>
+        data.projects.create({ name: '保留边界内项目' }),
+      )).id
+      expiredId = (await initial.runtime.transaction(owner, (data) =>
+        data.projects.create({ name: '过期项目' }),
+      )).id
+      otherId = (await initial.runtime.transaction(other, (data) =>
+        data.projects.create({ name: '其他用户项目' }),
+      )).id
+    } finally {
+      await initial.runtime.close()
+    }
+    const database = new SQLite(path)
+    const setDeletedAt = database.prepare('UPDATE projects SET deleted_at = ? WHERE id = ?')
+    setDeletedAt.run('2026-10-11 10:00:00.000000', recentId)
+    setDeletedAt.run('2026-10-10 10:00:00.000000', expiredId)
+    setDeletedAt.run('2026-10-11 10:00:00.000000', otherId)
+    database.close()
+    const reopened = await openSqliteRuntime(path)
+    try {
+      const deleted = await reopened.runtime.transaction(owner, (data) =>
+        data.projects.listDeleted('2026-10-11T10:00:00.000Z'),
+      )
+      expect(deleted.map((project) => project.id)).toEqual([recentId])
+      expect(await reopened.runtime.transaction(owner, (data) => data.projects.list())).toEqual([])
+    } finally {
+      await reopened.runtime.close()
+    }
+  })
   it('收据与写入同事务，重试不重复创建，跨用户不可读且不同内容冲突', async () => {
     const path = file()
     await initializeSqlite(path)

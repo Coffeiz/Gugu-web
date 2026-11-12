@@ -1,5 +1,5 @@
 import { sql } from 'kysely'
-import type { Insertable, Kysely, Transaction, Updateable } from 'kysely'
+import type { Insertable, Kysely, Selectable, SelectQueryBuilder, Transaction, Updateable } from 'kysely'
 import type { ClientRecord, Fields, ProjectRecord } from '../contracts/index.js'
 import { ProjectService, ClientService } from '../application/services.js'
 import type { ClientRepository, DataServices, ProjectRepository } from '../application/services.js'
@@ -17,17 +17,34 @@ export class SqlProjectRepository implements ProjectRepository {
     private backend: Backend,
     private clock: Clock,
   ) {}
-  async list(archived = false): Promise<ProjectRecord[]> {
-    const rows = await this.db
+  private projectRows() {
+    return this.db
       .selectFrom('projects')
       .selectAll()
       .where('user_id', '=', this.owner)
-      .where('deleted_at', 'is', null)
-      .where('archived', '=', this.backend === 'sqlite' ? Number(archived) : archived)
-      .orderBy('created_at', 'desc')
-      .orderBy('id', 'desc')
-      .execute()
+  }
+  private async listRows(
+    query: SelectQueryBuilder<Database, 'projects', Selectable<ProjectTable>>,
+    orderBy: 'created_at' | 'deleted_at' = 'created_at',
+  ): Promise<ProjectRecord[]> {
+    const rows = await query.orderBy(orderBy, 'desc').orderBy('id', 'desc').execute()
     return rows.map((row) => projectRecord(row))
+  }
+  async list(archived = false): Promise<ProjectRecord[]> {
+    return this.listRows(
+      this.projectRows()
+        .where('deleted_at', 'is', null)
+        .where('archived', '=', this.backend === 'sqlite' ? Number(archived) : archived),
+    )
+  }
+  async listDeleted(since: string): Promise<ProjectRecord[]> {
+    const cutoff = databaseTime(since, this.backend)
+    return this.listRows(
+      this.projectRows()
+        .where('deleted_at', 'is not', null)
+        .where('deleted_at', '>=', cutoff),
+      'deleted_at',
+    )
   }
   async get(id: number): Promise<ProjectRecord | null> {
     const row = await this.db

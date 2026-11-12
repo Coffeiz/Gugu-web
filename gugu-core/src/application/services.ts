@@ -6,6 +6,7 @@ import { safeInteger } from '../domain/values.js'
 
 export interface ProjectRepository {
   list(archived?: boolean): Promise<ProjectRecord[]>
+  listDeleted(since: string): Promise<ProjectRecord[]>
   get(id: number): Promise<ProjectRecord | null>
   create(values: Fields): Promise<ProjectRecord>
   update(id: number, version: number, values: Fields): Promise<boolean>
@@ -25,6 +26,9 @@ export class ProjectService {
   }
   list(archived = false): Promise<ProjectRecord[]> {
     return this.repository.list(archived)
+  }
+  listDeleted(since: string): Promise<ProjectRecord[]> {
+    return this.repository.listDeleted(since)
   }
   create(fields: Fields): Promise<ProjectRecord> {
     return this.repository.create(prepareProjectCreate(fields))

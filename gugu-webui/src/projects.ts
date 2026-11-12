@@ -39,10 +39,12 @@ async function projectFileCounts(pool: Pool, ownerId: string, projectIds: number
 }
 
 export function createProjectListing(core: SqlDataRuntime, pool: Pool) {
-  return async (ownerId: string, archived: boolean): Promise<unknown[]> => {
+  return async (ownerId: string, archived: boolean, deleted = false): Promise<unknown[]> => {
     const projects = await core.transaction(
       dataContext(ownerId),
-      (data) => data.projects.list(archived),
+      (data) => deleted
+        ? data.projects.listDeleted(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+        : data.projects.list(archived),
     )
     if (projects.length === 0) return []
     const ids = projects.map((project) => project.id)

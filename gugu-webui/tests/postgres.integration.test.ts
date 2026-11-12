@@ -207,6 +207,25 @@ test('Node auth, projects, and clients preserve owner boundaries in isolated Pos
         headers: { authorization: `Bearer ${signedUserToken(secret, userId, 4)}` },
       })
       assert.equal(otherProjectDetail.statusCode, 404)
+      const recentDeletedProjectId = await insertProject(userId, 'Recent deleted project', false)
+      const expiredDeletedProjectId = await insertProject(userId, 'Expired deleted project', false)
+      const otherDeletedProjectId = await insertProject(otherUserId, 'Other owner deleted project', false)
+      await pool.query('UPDATE projects SET deleted_at = $1 WHERE id = $2', [
+        new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(), recentDeletedProjectId,
+      ])
+      await pool.query('UPDATE projects SET deleted_at = $1 WHERE id = $2', [
+        new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString(), expiredDeletedProjectId,
+      ])
+      await pool.query('UPDATE projects SET deleted_at = $1 WHERE id = $2', [
+        new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(), otherDeletedProjectId,
+      ])
+      const deletedProjects = await projectApp.inject({
+        method: 'GET',
+        url: '/api/v1/projects?deleted=true',
+        headers: { authorization: `Bearer ${signedUserToken(secret, userId, 4)}` },
+      })
+      assert.equal(deletedProjects.statusCode, 200)
+      assert.deepEqual(deletedProjects.json().map((project: { id: number }) => project.id), [recentDeletedProjectId])
     } finally {
       await projectApp.close()
     }

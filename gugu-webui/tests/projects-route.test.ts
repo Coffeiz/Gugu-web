@@ -7,7 +7,7 @@ const secret = 'synthetic-project-route-secret'
 const userId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
 
 function makeApp(
-  projects: (ownerId: string, archived: boolean) => Promise<unknown[]>,
+  projects: (ownerId: string, archived: boolean, deleted?: boolean) => Promise<unknown[]>,
   getProject?: (ownerId: string, projectId: number) => Promise<unknown | null>,
   listProjectFileCounts?: (ownerId: string) => Promise<unknown[]>,
 ) {
@@ -59,8 +59,12 @@ test('GET /api/v1/projects binds the authenticated owner and archived filter', a
   }
 })
 
-test('GET /api/v1/projects rejects unauthenticated access and unsupported deleted views', async () => {
-  const app = makeApp(async () => [])
+test('GET /api/v1/projects returns the owner trash and rejects unauthenticated or conflicting filters', async () => {
+  const calls: Array<[string, boolean, boolean | undefined]> = []
+  const app = makeApp(async (ownerId, archived, deleted) => {
+    calls.push([ownerId, archived, deleted])
+    return deleted ? [{ id: 10, name: 'Recent deleted project' }] : []
+  })
   try {
     const missing = await app.inject({ method: 'GET', url: '/api/v1/projects' })
     const deleted = await app.inject({
@@ -71,8 +75,10 @@ test('GET /api/v1/projects rejects unauthenticated access and unsupported delete
       headers: { authorization: `Bearer ${signedUserToken(secret, userId)}` },
     })
     assert.equal(missing.statusCode, 401)
-    assert.equal(deleted.statusCode, 501)
+    assert.equal(deleted.statusCode, 200)
+    assert.deepEqual(deleted.json(), [{ id: 10, name: 'Recent deleted project' }])
     assert.equal(conflicting.statusCode, 400)
+    assert.deepEqual(calls, [[userId, false, true]])
   } finally {
     await app.close()
   }

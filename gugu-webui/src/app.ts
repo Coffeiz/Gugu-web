@@ -36,7 +36,7 @@ export interface WebUiOptions {
   isReady: () => Promise<boolean>
   onReadinessError?: () => void
   userAuth?: UserAuthOptions
-  listProjects?: (ownerId: string, archived: boolean) => Promise<unknown[]>
+  listProjects?: (ownerId: string, archived: boolean, deleted?: boolean) => Promise<unknown[]>
   listProjectFileCounts?: (ownerId: string) => Promise<unknown[]>
   getProject?: (ownerId: string, projectId: number) => Promise<unknown | null>
   clients?: ClientOptions
@@ -141,9 +141,7 @@ function registerProjectRoute(
       return reply.code(422).send({ detail: '查询参数必须是 true 或 false' })
     if (archived && deleted)
       return reply.code(400).send({ detail: 'archived 和 deleted 不能同时为 true' })
-    if (deleted)
-      return reply.code(501).send({ detail: 'Node 后端暂不支持已删除项目列表' })
-    return listProjects(user.id, archived)
+    return listProjects(user.id, archived, deleted)
   })
 }
 
