@@ -4,7 +4,8 @@ WORKDIR /workspace
 
 RUN npm install --global pnpm@10.15.0
 COPY . .
-RUN pnpm install --filter @gugu/webui --filter @gugu/core --frozen-lockfile \
+RUN --mount=type=cache,id=gugu2-pnpm-store,target=/root/.local/share/pnpm/store \
+    pnpm install --filter @gugu/webui --filter @gugu/core --frozen-lockfile \
     && pnpm --filter @gugu/core build \
     && pnpm --filter @gugu/webui build \
     && pnpm install --filter @gugu/webui --prod --frozen-lockfile
