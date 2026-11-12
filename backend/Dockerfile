@@ -53,10 +53,10 @@ WORKDIR /app
 # 巨大的包能拖到 25+ 分钟甚至失败；换清华 TUNA 镜像后同一个包 <1s 跑满带宽）——但这是网络环境
 # 差异，不是所有部署者都会遇到，写死镜像源对官方源本就够快的用户反而更慢/不必要地依赖第三方源。
 # 默认走官方源，网络不佳时按需覆盖：
-#   docker build --build-arg PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple ./backend
+#   docker build --build-arg PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple -f backend/Dockerfile .
 # 或用 docker-compose.yml 里同名 build arg（读同名环境变量，见其注释）。
 ARG PIP_INDEX_URL=https://pypi.org/simple
-COPY requirements.txt .
+COPY backend/requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -i "${PIP_INDEX_URL}" -r requirements.txt \
     && pip install --no-cache-dir --upgrade --force-reinstall \
@@ -64,8 +64,11 @@ RUN --mount=type=cache,target=/root/.cache/pip \
         "msgpack==1.2.3" "setuptools==84.0.0" \
     && python -c "from importlib.metadata import version; assert version('msgpack') == '1.2.3'; assert version('setuptools') == '84.0.0'"
 
-COPY . .
-COPY scripts/runtime/prepare_rootless_storage.py /usr/local/bin/prepare_rootless_storage.py
+COPY compat/core-python /core-python
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -i "${PIP_INDEX_URL}" -e '/core-python[postgres]'
+COPY backend .
+COPY backend/scripts/runtime/prepare_rootless_storage.py /usr/local/bin/prepare_rootless_storage.py
 RUN mkdir -p logs
 RUN chmod 755 /usr/local/bin/prepare_rootless_storage.py
 

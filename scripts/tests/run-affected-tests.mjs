@@ -6,7 +6,7 @@ import path from 'node:path'
 
 const root = path.resolve(import.meta.dirname, '../..')
 const backend = path.join(root, 'backend')
-const python = path.join(backend, '.venv/bin/python')
+const python = process.env.GUGU_TEST_PYTHON || path.join(backend, process.platform === 'win32' ? '.venv/Scripts/python.exe' : '.venv/bin/python')
 const baseArg = process.argv.find(arg => arg.startsWith('--base='))?.slice('--base='.length)
 
 function git(args) {
@@ -14,12 +14,14 @@ function git(args) {
 }
 
 function run(label, command, args, cwd, env = {}) {
+  if (command === 'pnpm' && process.env.npm_execpath && process.env.npm_config_user_agent?.startsWith('pnpm/')) { args = [process.env.npm_execpath, ...args]; command = process.execPath }
+  if (command === 'node') command = process.execPath
   console.log(`[受影响测试] ${label}`)
   const result = spawnSync(command, args, {
     cwd,
     env: { ...process.env, ...env },
     stdio: 'inherit',
-    shell: process.platform === 'win32' && command === 'corepack',
+    shell: process.platform === 'win32' && command === 'pnpm',
   })
   if (result.status !== 0) process.exit(result.status ?? 1)
 }
@@ -46,6 +48,14 @@ const inventory = JSON.parse(fs.readFileSync(inventoryPath, 'utf8'))
 const backendChanged = changed.some(file => file.startsWith('backend/'))
 const frontendChanged = changed.some(file => file.startsWith('frontend/'))
 const runtimeChanged = changed.some(file => file.startsWith('loopscope/') || file.startsWith('backend/ts/'))
+const coreChanged = changed.some(file => /^(gugu-core\/|compat\/core-python\/|scripts\/tests\/|pnpm-lock\.yaml|pnpm-workspace\.yaml)/.test(file))
+const desktopChanged = changed.some(file => /^(gugu-desktop\/|frontend\/src\/desktop\/)/.test(file))
+
+if (coreChanged || desktopChanged) {
+  run('Node Core 受影响快速回归', 'pnpm', ['--filter', '@gugu/core', 'test:unit'], root)
+  run('Node Core 受影响进程回归', 'pnpm', ['--filter', '@gugu/core', 'test:ipc'], root)
+}
+if (desktopChanged) run('Electron Host 受影响回归', 'pnpm', ['--filter', 'gugu-desktop', 'test'], root)
 
 if (backendChanged) {
   const targets = inventory.items
@@ -57,11 +67,11 @@ if (backendChanged) {
 }
 
 if (frontendChanged) {
-  run('前端受影响 L0/L1', 'corepack', ['pnpm', '--filter', 'gugu-web', 'run', 'test:run'], root)
+  run('前端受影响 L0/L1', 'pnpm', ['--filter', 'gugu-web', 'run', 'test:run'], root)
 }
 
 if (runtimeChanged) {
-  run('LoopScope/Runtime 受影响测试', 'corepack', ['pnpm', '--dir', 'loopscope', 'test'], root)
+  run('LoopScope/Runtime 受影响测试', 'pnpm', ['--dir', 'loopscope', 'test'], root)
 }
 
 console.log('[受影响测试] 完成')

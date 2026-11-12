@@ -64,6 +64,10 @@ description: 测试约定。pytest 基座、vitest 要求、E2E Playwright 标�
 
 ## 前端单测（vitest）
 
+独立 TS Core 的回归放在 `gugu-core/tests/`，执行 `pnpm --filter @gugu/core test`；Python 对照测试执行 `test:golden`，必须显式提供安装了兼容包的 `GUGU_CORE_GOLDEN_PYTHON`。对应 Node job 单独连接隔离 PostgreSQL。保留 `backend/tests/core/` 的 Python 参考回归；新增 Core 测试同样登记元数据，不混入前端套件。
+
+Node Core 以 `tests/suites.json` 显式分类，已提供 unit/integration/ipc/postgres/parity/all；与 pytest 相同，process/external_service 自动归 slow。快速层不启动 Worker、进程或服务，显式选择的 PG/Python 缺依赖即失败。具体行为映射及严格校验差异见 [回归对照清单](../../docs/testing/node-core-parity.md)，整体状态见 [T1](../../docs/refactor/Gugu-2.0-架构与迁移任务清单.md#core-test-parity)。移动和新增时保留原断言，同步分类、元数据、清单与 CI；不能把当前项目/联系人切片描述为全量后端等价。Electron Host 回归放在 `gugu-desktop/tests/`，真实制品 smoke 使用新建临时目录；旧 Tauri 源码仅保留在 compat 供追溯。
+
 - 跑法：`corepack pnpm --filter gugu-web run test:run`（一次性）或 `corepack pnpm --filter gugu-web run test`（watch）。
 - 所有前端 Vitest 测试统一放在 `frontend/tests/<功能域>/`，按产品功能或跨模块领域归档；需要细分时在功能域下建立子目录。`frontend/src/` 只放生产代码，禁止在源码旁新建 `*.test.*` / `*.spec.*`；旧的 `frontend/test/` 扁平目录不再使用。Vitest 与 `test:fast` 只发现 `frontend/tests/`。
 - 新测试优先使用 `@/` alias 引用 `src/` 生产模块，避免测试搬迁后相对路径失效；同一测试域的辅助夹具放在 `frontend/tests/<功能域>/` 内，不与生产代码混放。文件名使用被保护行为或模块名加 `.test.ts`；浏览器端交互验收仍归 `frontend/e2e/`，不混入 Vitest。

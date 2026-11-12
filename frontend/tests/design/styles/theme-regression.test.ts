@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 function load(relativePath: string) {
-  return readFileSync(resolve(process.cwd(), 'src/assets/styles', relativePath), 'utf8')
+  return readFileSync(resolve(process.cwd(), 'src/assets/styles', relativePath), 'utf8').replace(/\r\n/g, '\n')
 }
 
 function cssBlock(css: string, selectorNeedle: string) {

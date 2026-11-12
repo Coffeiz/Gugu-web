@@ -1,0 +1,36 @@
+appId: com.gugu.desktop.preview
+productName: 咕咕桌面验证
+artifactName: gugu-desktop-${version}-${os}-${arch}.${ext}
+asar: true
+npmRebuild: false
+directories:
+  output: release
+  buildResources: assets
+files:
+  - dist/**
+  - ui/**
+  - node_modules/**
+  - package.json
+  - LICENSE
+extraResources:
+  - from: resources/core-sidecar
+    to: core-sidecar
+publish: null
+win:
+  target: nsis
+  icon: assets/icon.ico
+  signExecutable: false
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: false
+  allowToChangeInstallationDirectory: true
+mac:
+  target: [dmg, zip]
+  icon: assets/icon.icns
+  category: public.app-category.productivity
+  minimumSystemVersion: '13.5'
+  identity: '-'
+  hardenedRuntime: false
+  signIgnore:
+    - core-sidecar/

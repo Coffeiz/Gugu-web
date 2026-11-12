@@ -445,8 +445,9 @@ The backend is still evolving; use the [Backend overview](docs/backend/OVERVIEW.
 ### Setup
 
 ```bash
-corepack enable
-corepack pnpm install
+# Node 26.13+ LTS
+npm install --global pnpm@10.15.0
+pnpm install
 ```
 
 ### Design Guidelines
@@ -456,7 +457,7 @@ When adding or changing frontend UI, reuse the existing design tokens, shared co
 ### Start the frontend
 
 ```bash
-corepack pnpm --filter gugu-web dev
+pnpm --filter gugu-web dev
 ```
 
 ### Start the backend
@@ -465,16 +466,16 @@ corepack pnpm --filter gugu-web dev
 cd backend
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt -e "../compat/core-python[postgres]"
 make dev-web
 ```
 
 ### Checks
 
 ```bash
-corepack pnpm --dir frontend typecheck
-corepack pnpm --dir frontend test:run
-corepack pnpm --dir frontend build
+pnpm --dir frontend typecheck
+pnpm --dir frontend test:run
+pnpm --dir frontend build
 cd backend && PYTHONPATH=. .venv/bin/pytest
 ```
 
@@ -504,9 +505,9 @@ Issues, suggestions, and pull requests are welcome.
 Before submitting a change, please run the relevant checks:
 
 ```bash
-corepack pnpm --dir frontend typecheck
-corepack pnpm --dir frontend test:run
-corepack pnpm --dir frontend build
+pnpm --dir frontend typecheck
+pnpm --dir frontend test:run
+pnpm --dir frontend build
 cd backend && PYTHONPATH=. .venv/bin/pytest
 ```
 

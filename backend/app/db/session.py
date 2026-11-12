@@ -1,7 +1,8 @@
 import asyncio
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession
+from gugu_core.data.config import DataRuntimeConfig, create_runtime_engine, create_session_factory
 from typing import AsyncGenerator
 from app.core.config import get_settings
 from app.core.redaction import diag_log
@@ -10,9 +11,6 @@ _engine = None
 _SessionLocal = None
 _engine_loop = None   # 引擎创建时绑定的事件循环，见 ensure_engine() 的跨循环检测
 _MIGRATION_LOCK_KEY = 834271
-# 查询完成后仍停留在事务中的连接会持有 AccessShareLock，阻塞 ALTER TABLE。
-# 正常业务事务不会在这里超时；只限制真正 idle in transaction 的连接。
-_IDLE_IN_TRANSACTION_TIMEOUT_MS = "60000"
 
 
 def _current_loop():
@@ -30,21 +28,8 @@ def _build_engine():
 
     register_romaji_search_alias_listener()
     settings = get_settings()
-    _engine = create_async_engine(
-        settings.db.url,
-        echo=settings.debug,
-        connect_args={
-            "server_settings": {
-                "idle_in_transaction_session_timeout": _IDLE_IN_TRANSACTION_TIMEOUT_MS,
-            },
-        },
-        pool_pre_ping=True,
-        pool_size=15,       # 稳定保持连接数
-        max_overflow=25,    # 峰值最多 40/进程；web+worker ≤ 80，留 20 给 pgAdmin
-        pool_timeout=10,
-        pool_recycle=1800,
-    )
-    _SessionLocal = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
+    _engine = create_runtime_engine(DataRuntimeConfig.postgres(settings.db.url, echo=settings.debug))
+    _SessionLocal = create_session_factory(_engine)
     _engine_loop = _current_loop()
 
 

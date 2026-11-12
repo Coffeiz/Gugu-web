@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 import app.db.session as db_session
+import gugu_core.data.config as core_config
 
 
 def test_build_engine_reaps_idle_transactions(monkeypatch):
@@ -21,8 +22,8 @@ def test_build_engine_reaps_idle_transactions(monkeypatch):
         captured["sessionmaker"] = kwargs
         return object()
 
-    monkeypatch.setattr(db_session, "create_async_engine", fake_create_engine)
-    monkeypatch.setattr(db_session, "async_sessionmaker", fake_sessionmaker)
+    monkeypatch.setattr(core_config, "create_async_engine", fake_create_engine)
+    monkeypatch.setattr(core_config, "async_sessionmaker", fake_sessionmaker)
     monkeypatch.setattr(
         db_session,
         "get_settings",

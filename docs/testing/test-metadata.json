@@ -2134,5 +2134,197 @@
     "productionEntry": "思维导图项目抽屉拖入画布交互",
     "keyBehavior": "项目卡片落地时保留代理卡片外观，避免目标视觉 morph 将毛玻璃模糊插值消失",
     "ci": "frontend-vitest"
+  },
+  "backend/tests/core/test_local_runtime.py": {
+    "domain": "core-project-runtime",
+    "layer": "L1",
+    "owner": "compat/core-python/src/gugu_core/data/runtime.py",
+    "productionEntry": "python -m gugu_core",
+    "keyBehavior": "单用户文件库重开保持身份与版本；并发只提交一个改名；事务失败回滚；拒绝越权和隐式覆盖迁移",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/core/test_dependency_boundaries.py": {
+    "domain": "core-project-runtime",
+    "layer": "L0",
+    "owner": "compat/core-python/src/gugu_core",
+    "productionEntry": "compat/core-python/src/gugu_core/domain 与 application",
+    "keyBehavior": "Core 不反向导入宿主，领域与用例不依赖 SQL、Web、Redis 或端侧适配",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/projects/test_core_project_bridge.py": {
+    "domain": "core-project-runtime",
+    "layer": "L1",
+    "owner": "backend/app/core/projects.py",
+    "productionEntry": "backend/app/api/v1/projects.py",
+    "keyBehavior": "Web 与 Core 映射共用项目行、客户列别名和版本锁；用户外键和事务提交边界保留",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/core/test_postgres_projects.py": {
+    "domain": "core-project-runtime",
+    "layer": "L2",
+    "owner": "compat/core-python/src/gugu_core/data/projects.py",
+    "productionEntry": "compat/core-python/src/gugu_core/application/projects.py",
+    "keyBehavior": "真实 PostgreSQL 临时 schema 验证事务回滚、客户列别名、aware UTC、过期版本拒绝和用户隔离",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/core/test_data_runtime.py": {
+    "domain": "core-data-runtime",
+    "layer": "L1",
+    "owner": "compat/core-python/src/gugu_core/data/unit_of_work.py",
+    "productionEntry": "compat/core-python/src/gugu_core/data/runtime.py",
+    "keyBehavior": "项目和联系人跨域提交回滚、取消恢复、上下文隔离；显式升级备份并在 DDL 故障后保留旧库",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/projects/test_core_data_bridge.py": {
+    "domain": "core-data-runtime",
+    "layer": "L1",
+    "owner": "backend/app/services/core_data.py",
+    "productionEntry": "backend/app/services/clients.py",
+    "keyBehavior": "Web 借用现有事务，项目联系人共同回滚，联系人读写沿用用户隔离与原有 schema",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/core/test_desktop_ipc.py": {
+    "domain": "desktop-core-ipc",
+    "layer": "L2",
+    "owner": "compat/desktop-python/python/gugu_desktop_host/__main__.py",
+    "productionEntry": "compat/desktop-python/python/gugu_desktop_host/__main__.py",
+    "keyBehavior": "真实子进程跨重启持久化、拒绝旧版本及身份覆盖；白名单阻止 Shell/FS，超长帧退出并回收连接",
+    "ci": "backend-pytest"
+  },
+  "frontend/tests/desktop/DesktopWorkbench.test.ts": {
+    "domain": "desktop-core-ipc",
+    "layer": "L1",
+    "owner": "frontend/src/desktop/DesktopWorkbench.vue",
+    "productionEntry": "frontend/desktop.html",
+    "keyBehavior": "通过原生业务桥创建后补读本地列表，不依赖 HTTP；缺少桥时显示错误并恢复交互",
+    "ci": "frontend-vitest"
+  },
+  "gugu-core/tests/golden/python-interop.test.ts": {
+    "domain": "core-node-golden",
+    "layer": "L2",
+    "owner": "gugu-core/src/domain",
+    "productionEntry": "backend/tests/core/fixtures/node_golden.py",
+    "keyBehavior": "同一合成规则语料跨语言一致，Python v2 与 Node 双向读写、显式 v3 升级备份保留身份和数据",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/unit/domain/domain.test.ts": {
+    "domain": "core-node-domain",
+    "layer": "L1",
+    "owner": "gugu-core/src/domain",
+    "productionEntry": "gugu-core/src/contracts/index.ts",
+    "keyBehavior": "Unicode/日期与 UTC 年份边界、缺省字段、阶段待办身份及编号溢出保护，拒绝 Node/SQL 反向依赖",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/unit/data/data.test.ts": {
+    "domain": "core-node-data",
+    "layer": "L1",
+    "owner": "gugu-core/src/data/runtime.ts",
+    "productionEntry": "gugu-core/src/data/sqlite.ts",
+    "keyBehavior": "跨域提交/取消回滚、所有者与 CAS、收据原子性、完整唯一约束、备份 DDL 故障恢复及连接回收",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/integration/postgres/postgres.test.ts": {
+    "domain": "core-node-data",
+    "layer": "L2",
+    "owner": "gugu-core/src/data/postgres.ts",
+    "productionEntry": "gugu-core/src/data/runtime.ts",
+    "keyBehavior": "真实 PostgreSQL 保留微秒/用户外键、事务隔离、CAS、重复操作与连接超时保护",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/integration/runtime/local-ipc.test.ts": {
+    "domain": "core-node-ipc",
+    "layer": "L2",
+    "owner": "gugu-core/src/runtime/transport/stdio.ts",
+    "productionEntry": "gugu-core/src/runtime/local.ts",
+    "keyBehavior": "真实进程重启及回包丢失后查询收据，满队列并发关闭正确释放，拒绝越权/超长帧/非法能力并隔离 Worker",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/unit/data/contract.test.ts": {
+    "domain": "core-node-contract",
+    "layer": "L1",
+    "owner": "gugu-core",
+    "productionEntry": "gugu-core/src/application/services.ts",
+    "keyBehavior": "双库联系人维护/隔离/回滚、收据内容规范化与冲突、同 UUID 跨用户隔离、CAS 失败恢复及重放不递增",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/integration/postgres/contract.test.ts": {
+    "domain": "core-node-contract",
+    "layer": "L2",
+    "owner": "gugu-core",
+    "productionEntry": "gugu-core/src/application/services.ts",
+    "keyBehavior": "双库联系人维护/隔离/回滚、收据内容规范化与冲突、同 UUID 跨用户隔离、CAS 失败恢复及重放不递增",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/unit/domain/fields.test.ts": {
+    "domain": "core-node-contract",
+    "layer": "L0",
+    "owner": "gugu-core",
+    "productionEntry": "gugu-core/src/application/services.ts",
+    "keyBehavior": "同一合成输入在双库保护字段、联系人维护、跨用户隔离和原子回滚",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/unit/domain/test-selection.test.ts": {
+    "domain": "test-governance",
+    "layer": "L0",
+    "owner": "gugu-core",
+    "productionEntry": "gugu-core/scripts/test-suites.mjs",
+    "keyBehavior": "快速/集成并集完整且无交集，进程/服务标记自动归慢速，IPC 排除 Python 对照",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/integration/runtime/transport.test.ts": {
+    "domain": "core-desktop",
+    "layer": "L2",
+    "owner": "gugu-core",
+    "productionEntry": "gugu-core/src/runtime/transport/ipc.ts",
+    "keyBehavior": "真实消息端口保留身份/操作收据/命令白名单，关闭释放 Worker",
+    "ci": "core-node"
+  },
+  "gugu-desktop/tests/core-host.test.ts": {
+    "domain": "core-desktop",
+    "layer": "L2",
+    "owner": "gugu-desktop",
+    "productionEntry": "gugu-desktop/src/main/core-host.ts",
+    "keyBehavior": "真实双 Host 独占拒绝与释放接管、提交后断线的收据恢复、不自动重放、错误脱敏与制品边界",
+    "ci": "desktop-node"
+  },
+  "gugu-desktop/tests/lifecycle-window-update.test.ts": {
+    "domain": "core-desktop",
+    "layer": "L1",
+    "owner": "gugu-desktop",
+    "productionEntry": "gugu-desktop/src/main/lifecycle.ts",
+    "keyBehavior": "并发启动/休眠退出回收、窗口来源/权限边界、更新取消与先停写后安装",
+    "ci": "desktop-node"
+  },
+  "gugu-desktop/tests/preload.test.ts": {
+    "domain": "core-desktop",
+    "layer": "L0",
+    "owner": "gugu-desktop",
+    "productionEntry": "gugu-desktop/src/preload/index.ts",
+    "keyBehavior": "只暴露固定业务方法，不透传通用 IPC 或 Electron 对象",
+    "ci": "desktop-node"
+  },
+  "gugu-core/tests/unit/domain/executor.test.ts": {
+    "domain": "security",
+    "layer": "L1",
+    "owner": "gugu-core",
+    "productionEntry": "gugu-core/src/agent/executor",
+    "keyBehavior": "授权绑定/确认门、禁止降级或重放、原生取消与输出限制、错误脱敏",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/golden/service-sequence.test.ts": {
+    "domain": "core-node-parity",
+    "layer": "L2",
+    "owner": "gugu-core",
+    "productionEntry": "gugu-core/src/application/services.ts",
+    "keyBehavior": "Python/Node 同序列比对联系人维护、原子回滚、项目 CAS/归档和错误类别",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/unit/data/exclusive.test.ts": {
+    "domain": "core-node-data",
+    "layer": "L1",
+    "owner": "gugu-core",
+    "productionEntry": "gugu-core/src/data/sqlite.ts",
+    "keyBehavior": "桌面独占连接拒绝第二个连接读取/写入，释放后保留稳定 owner 和已提交数据",
+    "ci": "core-node"
   }
 }

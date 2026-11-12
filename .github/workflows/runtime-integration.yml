@@ -15,6 +15,110 @@ env:
   RUNTIME_REPOSITORY: Coffeiz/Gugu-interaction-runtime
 
 jobs:
+  core-node:
+    name: Node Core 与跨语言契约
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: core_test
+          POSTGRES_DB: core_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U core_test -d core_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      GUGU_CORE_TEST_POSTGRES_URL: postgres://core_test@127.0.0.1:5432/core_test
+      GUGU_CORE_GOLDEN_PYTHON: python
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 安装 Core 与 Python 参考实现
+        run: |
+          pnpm --filter @gugu/core install --frozen-lockfile
+          python -m pip install -e ./compat/core-python
+      - name: 分层清单与完整双库/进程/Python 对照（集合去重）
+        run: |
+          pnpm --filter @gugu/core test:list
+          pnpm --filter @gugu/core typecheck:tests
+          pnpm --filter @gugu/core test:all
+      - name: 元数据与测试边界
+        run: |
+          node scripts/tests/check-test-metadata.mjs
+          node scripts/tests/check-test-boundaries.mjs
+
+  desktop-node:
+    name: Electron / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, macos-15-intel]
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+      - name: 安装 Electron、Core 与现有前端依赖
+        run: |
+          pnpm --filter gugu-desktop... --filter gugu-web install --frozen-lockfile
+          node gugu-desktop/node_modules/electron/install.js
+      - name: Core 快速层与 Node IPC（不依赖 Python/PG）
+        run: |
+          pnpm --filter @gugu/core test:unit
+          pnpm --filter @gugu/core test:ipc
+      - name: Electron Host、窗口/权限/生命周期/更新与故障回归
+        run: |
+          pnpm --filter gugu-desktop typecheck
+          pnpm --filter gugu-desktop test
+      - name: 构建安装制品与完整独立 Core
+        run: pnpm --dir gugu-desktop build
+      - name: 真实应用创建、重启、收据与 Renderer 隔离
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            executable=$(find gugu-desktop/release/win-unpacked -maxdepth 1 -name '*.exe' -print -quit)
+          else
+            application=$(find gugu-desktop/release -maxdepth 2 -name '*.app' -type d -print -quit)
+            test -n "$application"
+            executable="$application/Contents/MacOS/咕咕桌面验证"
+            node gugu-desktop/scripts/smoke-sidecar.mjs --root "$application/Contents/Resources/core-sidecar"
+          fi
+          test -n "$executable"
+          node gugu-desktop/scripts/smoke.ts --app "$executable"
+      - name: 保留平台安装制品
+        shell: bash
+        run: tar -czf desktop-electron-${{ runner.os }}-${{ runner.arch }}.tar.gz -C gugu-desktop/release .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-electron-${{ runner.os }}-${{ runner.arch }}
+          path: desktop-electron-${{ runner.os }}-${{ runner.arch }}.tar.gz
+          if-no-files-found: error
+
   frontend:
     runs-on: ubuntu-latest
     env:
@@ -43,10 +147,10 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 26
 
       - name: Setup pnpm
-        run: corepack enable && corepack prepare pnpm@10.15.0 --activate
+        run: npm install --global pnpm@10.15.0
 
       # 集成 job 通过 VITE_USE_LOCAL_RUNTIME=1 显式验证 pinned Runtime 构建产物；
       # Gugu-web workspace 依赖由根 pnpm lockfile 管理，外部 Runtime 仓库仍用自身 npm lockfile。
@@ -106,7 +210,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 26
           cache: npm
           cache-dependency-path: gugu-interaction-runtime/package-lock.json
 
@@ -177,6 +281,7 @@ jobs:
           cache-dependency-path: |
             backend/requirements.txt
             backend/requirements-dev.txt
+            compat/core-python/pyproject.toml
 
       - name: Create backend virtual environment
         working-directory: backend
@@ -184,15 +289,15 @@ jobs:
 
       - name: Install backend dependencies
         working-directory: backend
-        run: .venv/bin/python -m pip install -r requirements.txt -r requirements-dev.txt
+        run: .venv/bin/python -m pip install -r requirements.txt -r requirements-dev.txt -e "../compat/core-python[postgres]"
 
       - name: Setup Node for file sync worker tests
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 26
 
       - name: Install file sync worker dependencies
-        run: corepack enable && corepack prepare pnpm@10.15.0 --activate && pnpm install --filter @gugu/backend-ts --filter @gugu/filesync-watcher... --frozen-lockfile
+        run: npm install --global pnpm@10.15.0 && pnpm install --filter @gugu/backend-ts --filter @gugu/filesync-watcher... --frozen-lockfile
 
       - name: Install frontend dependencies for affected tests
         if: github.event_name == 'pull_request'
@@ -201,12 +306,12 @@ jobs:
       - name: Install LoopScope dependencies for affected tests
         if: github.event_name == 'pull_request'
         working-directory: loopscope
-        run: corepack pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Build LoopScope packages for affected tests
         if: github.event_name == 'pull_request'
         working-directory: loopscope
-        run: corepack pnpm run build
+        run: pnpm run build
 
       - name: Create database schema
         working-directory: backend
@@ -216,7 +321,7 @@ jobs:
 
       - name: Python compileall
         working-directory: backend
-        run: python -m compileall -q app agent
+        run: python -m compileall -q app agent ../compat/core-python/src
 
       - name: License generator tests
         run: backend/.venv/bin/python -m pytest -q scripts/licenses/tests
@@ -353,10 +458,11 @@ jobs:
           cache-dependency-path: |
             backend/requirements.txt
             backend/requirements-dev.txt
+            compat/core-python/pyproject.toml
 
       - name: Install backend dependencies
         working-directory: backend
-        run: python -m pip install -r requirements.txt -r requirements-dev.txt
+        run: python -m pip install -r requirements.txt -r requirements-dev.txt -e "../compat/core-python[postgres]"
 
       - name: Start mock LLM server
         working-directory: backend
@@ -389,10 +495,10 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 26
 
       - name: Setup pnpm
-        run: corepack enable && corepack prepare pnpm@10.15.0 --activate
+        run: npm install --global pnpm@10.15.0
 
       - name: Install Runtime dependencies for integration alias
         working-directory: gugu-interaction-runtime
@@ -476,11 +582,11 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 26
 
       - name: Install LoopScope dependencies
         working-directory: loopscope
-        run: corepack enable && corepack prepare pnpm@10.15.0 --activate && pnpm install --frozen-lockfile
+        run: npm install --global pnpm@10.15.0 && pnpm install --frozen-lockfile
 
       - name: Build LoopScope native dependencies
         working-directory: loopscope
@@ -495,7 +601,7 @@ jobs:
         run: pnpm test
 
       - name: Install LoopScope frontend dependencies
-        run: corepack pnpm install --filter loopscope-web --frozen-lockfile
+        run: pnpm install --filter loopscope-web --frozen-lockfile
 
       - name: LoopScope frontend typecheck
         working-directory: loopscope/frontend

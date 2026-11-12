@@ -16,9 +16,10 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
 
+from gugu_core.data.models import ClientColumns, ProjectColumns
+
 from app.core.tz import now_utc
 from app.core.crypto import EncryptedString
-from app.core.project_colors import DEFAULT_PROJECT_COLOR
 from app.db.types import UtcDateTime
 from app.db.base import Base
 
@@ -545,33 +546,16 @@ class TerminalEventRecord(Base):
 
 # ── Project ──────────────────────────────────────────────────────────────────
 
-class Project(Base):
+class Project(ProjectColumns, Base):
     __tablename__ = "projects"
     __table_args__ = (
         UniqueConstraint("user_id", "idempotency_key", name="uq_projects_user_idempotency_key"),
     )
 
-    id:            Mapped[int]           = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id:       Mapped[UUID]          = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    name:          Mapped[str]           = mapped_column(String(200))
-    summary:       Mapped[Optional[str]] = mapped_column(String(200), nullable=True, default=None)
-    client:        Mapped[Optional[str]] = mapped_column("contact_name", String(200), nullable=True)
-    status:        Mapped[str]           = mapped_column(String(20),  default="pending")
-    start_date:    Mapped[Optional[str]] = mapped_column(String(10),  nullable=True)
-    deadline:      Mapped[Optional[str]] = mapped_column(String(10),  nullable=True)
-    color:         Mapped[str]           = mapped_column(String(300), default=DEFAULT_PROJECT_COLOR)
-    progress:      Mapped[int]           = mapped_column(Integer,     default=0)
-    stages_json:   Mapped[str]           = mapped_column(Text,        default="[]")
-    current_stage: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    priority:      Mapped[Optional[str]] = mapped_column(String(20),  nullable=True)
-    version:       Mapped[int]           = mapped_column(Integer,     default=1)
-    archived:      Mapped[bool]          = mapped_column(Boolean,     default=False)
-    done_at:       Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
-    created_at:    Mapped[datetime]      = mapped_column(UtcDateTime,    default=now_utc)
-    updated_at:    Mapped[datetime]      = mapped_column(UtcDateTime,    default=now_utc, onupdate=now_utc)
-    deleted_at:    Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None, index=True)
-    idempotency_key: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    idempotency_fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # 用户外键和跨领域关系属于 Web 宿主；其余列来自 Core。
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
 
     owner:   Mapped["User"]          = relationship(back_populates="projects")
     files:   Mapped[list["File"]]    = relationship(back_populates="project", lazy="select")
@@ -921,17 +905,11 @@ class CalendarEvent(Base):
 
 # ── Client ────────────────────────────────────────────────────────────────────
 
-class Client(Base):
+class Client(ClientColumns, Base):
     __tablename__ = "clients"
 
-    id:         Mapped[int]           = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id:    Mapped[UUID]          = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    name:       Mapped[str]           = mapped_column(String(200))
-    contact:    Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
-    email:      Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
-    phone:      Mapped[Optional[str]] = mapped_column(String(50),  nullable=True)
-    notes:      Mapped[str]           = mapped_column(Text,        default="")
-    created_at: Mapped[datetime]      = mapped_column(UtcDateTime,    default=now_utc)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
 
     owner: Mapped["User"] = relationship(back_populates="clients")
 

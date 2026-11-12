@@ -8,7 +8,7 @@
 # 平台：linux/amd64（多架构暂不支持，见 PRD-DEPLOY-1）。
 
 # ── Stage 1：前端构建 ────────────────────────────────────────────────────────
-FROM node:22-trixie AS frontend-build
+FROM node:26-trixie AS frontend-build
 ENV NODE_OPTIONS=--use-bundled-ca
 
 WORKDIR /workspace
@@ -28,7 +28,7 @@ COPY backend/ts/workers/chart-renderer/diagram-source.mjs backend/ts/workers/cha
 RUN cd frontend && pnpm build
 
 # ── Stage 1.5：图表渲染 Worker 运行时依赖 ───────────────────────────────────
-FROM node:22-trixie AS chart-runtime
+FROM node:26-trixie AS chart-runtime
 ENV NODE_OPTIONS=--use-bundled-ca
 
 WORKDIR /chart
@@ -70,6 +70,11 @@ RUN --mount=type=cache,target=/root/.cache/pip \
         -i "${PIP_INDEX_URL}" \
         "msgpack==1.2.3" "setuptools==84.0.0" \
     && /opt/venv/bin/python -c "from importlib.metadata import version; assert version('msgpack') == '1.2.3'; assert version('setuptools') == '84.0.0'"
+
+# Core 独立打包后并入应用制品，使应用包更新同时携带匹配的 Core。
+COPY compat/core-python /core-build
+RUN --mount=type=cache,target=/root/.cache/pip \
+    /opt/venv/bin/pip install -i "${PIP_INDEX_URL}" --no-deps --target /core-package /core-build
 
 COPY backend/agent ./agent
 
@@ -218,6 +223,7 @@ ENV PATH=/opt/venv/bin:${PATH} \
 COPY --from=backend-deps /opt/venv /opt/venv
 
 # 只复制运行时所需的后端模块和迁移文件，明确排除 tests/、test_*.py、docs/ 等。
+COPY --from=backend-deps /core-package/ ./
 COPY backend/app ./app
 COPY backend/updater ./updater
 COPY backend/agent ./agent

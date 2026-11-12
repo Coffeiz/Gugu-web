@@ -1,0 +1,67 @@
+{
+  "tests/unit/domain/domain.test.ts": {
+    "markers": [],
+    "layer": "L0",
+    "purpose": "contract"
+  },
+  "tests/unit/data/data.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/integration/runtime/local-ipc.test.ts": {
+    "markers": ["process"],
+    "layer": "L2",
+    "purpose": "ipc"
+  },
+  "tests/integration/postgres/postgres.test.ts": {
+    "markers": ["external_service"],
+    "layer": "L2",
+    "purpose": "postgres"
+  },
+  "tests/golden/python-interop.test.ts": {
+    "markers": ["process"],
+    "layer": "L2",
+    "purpose": "parity"
+  },
+  "tests/unit/data/contract.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/integration/postgres/contract.test.ts": {
+    "markers": ["external_service"],
+    "layer": "L2",
+    "purpose": "postgres"
+  },
+  "tests/unit/domain/fields.test.ts": {
+    "markers": [],
+    "layer": "L0",
+    "purpose": "contract"
+  },
+  "tests/unit/domain/test-selection.test.ts": {
+    "markers": [],
+    "layer": "L0",
+    "purpose": "contract"
+  },
+  "tests/integration/runtime/transport.test.ts": {
+    "markers": ["process"],
+    "layer": "L2",
+    "purpose": "ipc"
+  },
+  "tests/unit/domain/executor.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/golden/service-sequence.test.ts": {
+    "markers": ["process"],
+    "layer": "L2",
+    "purpose": "parity"
+  },
+  "tests/unit/data/exclusive.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  }
+}

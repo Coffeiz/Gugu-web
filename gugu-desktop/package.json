@@ -1,0 +1,43 @@
+{
+  "name": "gugu-desktop",
+  "version": "0.2.0",
+  "private": true,
+  "description": "咕咕本地桌面工作台",
+  "license": "Apache-2.0",
+  "author": "咕咕开发者",
+  "type": "module",
+  "main": "dist/main/index.cjs",
+  "engines": {
+    "node": ">=26.13.0 <27"
+  },
+  "scripts": {
+    "prepare:sidecar": "node scripts/prepare-sidecar.mjs",
+    "smoke:sidecar": "node scripts/smoke-sidecar.mjs",
+    "dev": "pnpm build:host && pnpm --filter gugu-web build:desktop && pnpm prepare:sidecar && electron .",
+    "build": "node scripts/package.ts",
+    "build:host": "pnpm --filter @gugu/core build && node scripts/build.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "smoke": "node scripts/smoke.ts",
+    "probe:mxc": "node scripts/probe-mxc.mjs",
+    "smoke:mxc": "node scripts/smoke-mxc.mjs --run"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "dependencies": {
+    "electron-updater": "6.8.11"
+  },
+  "devDependencies": {
+    "@gugu/core": "workspace:*",
+    "@microsoft/mxc-sdk": "1.0.1",
+    "@types/node": "26.6.6",
+    "playwright": "1.62.1",
+    "electron": "45.3.1",
+    "electron-builder": "26.18.0",
+    "esbuild": "0.28.2",
+    "typescript": "6.0.3",
+    "vitest": "4.1.12"
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "咕咕桌面验证",
+  "version": "0.2.0",
+  "identifier": "com.gugu.desktop.preview",
+  "build": {
+    "beforeDevCommand": "pnpm run prepare:sidecar && pnpm --dir ../frontend run dev --host 127.0.0.1",
+    "devUrl": "http://127.0.0.1:5173/desktop.html",
+    "beforeBuildCommand": "pnpm run prepare:sidecar && pnpm --dir ../frontend run build:desktop",
+    "frontendDist": "../../frontend/dist-desktop"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "咕咕桌面验证",
+        "url": "desktop.html",
+        "width": 1024,
+        "height": 740,
+        "minWidth": 680
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost; img-src 'self' data:; object-src 'none'; frame-src 'none'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "resources": { "resources/core-sidecar/": "core-sidecar/" },
+    "macOS": { "minimumSystemVersion": "13.5", "signingIdentity": "-" },
+    "icon": [
+      "icons/icon.png",
+      "icons/icon.ico",
+      "icons/icon.icns"
+    ]
+  }
+}

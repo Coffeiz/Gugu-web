@@ -46,7 +46,7 @@ detect_venv() {
     if [ -d "$VENV_DIR" ]; then return 0; fi
     if [ -d "${APP_DIR}/venv" ]; then VENV_DIR="${APP_DIR}/venv"; return 0; fi
     err "未找到 venv，请先创建："
-    err "  cd $APP_DIR && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt"
+    err "  cd $APP_DIR && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt -e '../compat/core-python[postgres]'"
     exit 1
 }
 
@@ -378,6 +378,7 @@ cmd_foreground() {
         --host "$HOST" --port "$PORT" --reload \
         --reload-dir "$APP_DIR/app" \
         --reload-dir "$APP_DIR/agent" \
+        --reload-dir "$APP_DIR/../compat/core-python/src" \
         --reload-dir "$APP_DIR/onboarding" \
         --timeout-graceful-shutdown 1
 }
