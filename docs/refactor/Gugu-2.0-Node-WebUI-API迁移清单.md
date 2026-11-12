@@ -5,7 +5,7 @@
 ## 当前覆盖
 
 - 源码静态盘点：**390** 个字面路由操作，分布在 **57** 个模块。
-- Node 当前路由匹配：**15** 个 method/path（其中项目列表包含活动/归档/回收站查询变体）；其余 **375** 个待迁移。
+- Node 当前路由匹配：**16** 个 method/path（其中项目列表包含活动/归档/回收站查询变体）；其余 **374** 个待迁移。
 - `health` 与 `health/ready` 是 Node Host 自身端点，不属于 Python `/api/v1` 路由计数。
 - Node Host 配置了 Fastify `routerOptions.ignoreTrailingSlash`，用于兼容 Python 路由常见的带/不带尾斜杠调用形式。
 - 本表仅盘点 HTTP/WebSocket 路由；Agent 工具、Worker/调度、撤销副作用和数据迁移写入口需要另建清单，不能由 HTTP 路由数推断覆盖。
@@ -123,7 +123,7 @@
 | `backend/app/api/v1/auth.py` | `POST` | `/api/v1/auth/email-change/resend` | `resend_email_change` | 待迁移 |
 | `backend/app/api/v1/auth.py` | `POST` | `/api/v1/auth/email-change/verify` | `verify_email_change` | 待迁移 |
 | `backend/app/api/v1/auth.py` | `POST` | `/api/v1/auth/forgot-password` | `forgot_password` | 待迁移 |
-| `backend/app/api/v1/auth.py` | `POST` | `/api/v1/auth/login` | `login` | 待迁移 |
+| `backend/app/api/v1/auth.py` | `POST` | `/api/v1/auth/login` | `login` | Node 已接入 |
 | `backend/app/api/v1/auth.py` | `POST` | `/api/v1/auth/logout` | `logout` | 待迁移 |
 | `backend/app/api/v1/auth.py` | `POST` | `/api/v1/auth/register` | `register` | 待迁移 |
 | `backend/app/api/v1/auth.py` | `POST` | `/api/v1/auth/registration-code` | `send_registration_code` | 待迁移 |
@@ -414,6 +414,7 @@
 | `GET /api/v1/site-config` | `gugu-webui/src/app.ts`, `src/config.ts`, `src/site-config.ts` | `tests/site-config-route.test.ts`, `tests/config.test.ts` |
 | `POST /api/v1/track` | `gugu-webui/src/app.ts`, `src/track.ts` | `tests/track-route.test.ts`, isolated PostgreSQL integration |
 | `GET /api/v1/notifications`, `GET /api/v1/notifications/bubble`, `POST /api/v1/notifications/read`, `DELETE /api/v1/notifications` | `gugu-webui/src/app.ts`, `src/notifications.ts` | `tests/notifications-route.test.ts`, isolated PostgreSQL integration |
+| `POST /api/v1/auth/login` | `gugu-webui/src/app.ts`, `src/auth.ts`, `src/users.ts` | `tests/auth-login.test.ts`, isolated PostgreSQL integration (bcrypt, activity event, token) |
 | `GET /api/v1/auth/me` | `gugu-webui/src/app.ts`, `src/auth.ts`, `src/users.ts` | `tests/auth-route.test.ts`, PostgreSQL integration |
 | `GET /api/v1/projects`, `GET /api/v1/projects/{pid}`, `GET /api/v1/projects/file-counts` | `gugu-webui/src/app.ts`, `src/projects.ts` | `tests/projects-route.test.ts`, PostgreSQL integration |
 | `GET /api/v1/clients`, `POST /api/v1/clients`, `DELETE /api/v1/clients/{cid}` | `gugu-webui/src/app.ts`, `src/clients.ts` | `tests/clients-route.test.ts`, PostgreSQL integration |
@@ -423,4 +424,5 @@
 
 - 迁移接口时先补本地 route contract 与隔离 PostgreSQL 回归，再将状态改为 Node 已接入。
 - 单独列出仍由 Python 完成的完整副作用（幂等、Undo、事件、存储、Worker）；不能把仅路由可访问标成行为等价。
+- `/api/v1/auth/login` 当前 Node 固定窗口限流仅存在于单进程内存；Python 使用 Redis，故多进程共享限流仍待迁移。
 - 只有所有 Web 必需 HTTP、SSE、静态资源和后台调用方均有等价实现与实机证据后，才推进默认 Node Web 切换。

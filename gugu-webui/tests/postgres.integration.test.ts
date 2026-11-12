@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import test from 'node:test'
 import { createPostgresRuntime, type SqlDataRuntime } from '@gugu/core/data'
+import bcrypt from 'bcryptjs'
 import { createApp } from '../src/app.js'
 import { createClientOperations } from '../src/clients.js'
 import { createEventOperations } from '../src/events.js'
@@ -37,6 +38,7 @@ test('Node auth, project, client, calendar, and notification routes preserve Pos
       CREATE TABLE users (
         id uuid PRIMARY KEY,
         username varchar(100) NOT NULL,
+        hashed_password varchar(200) NOT NULL DEFAULT '$2b$04$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy',
         display_name varchar(100),
         email varchar(300) NOT NULL,
         is_active boolean NOT NULL,
@@ -116,7 +118,7 @@ test('Node auth, project, client, calendar, and notification routes preserve Pos
         email varchar(300),
         phone varchar(50),
         notes text NOT NULL,
-        created_at timestamptz NOT NULL
+        created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
     `)
     await pool.query(`
@@ -157,7 +159,7 @@ test('Node auth, project, client, calendar, and notification routes preserve Pos
         user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         event varchar(64) NOT NULL,
         properties jsonb,
-        created_at timestamptz NOT NULL
+        created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
     `)
     const userId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
@@ -172,6 +174,10 @@ test('Node auth, project, client, calendar, and notification routes preserve Pos
       'INSERT INTO user_bots (user_id, platform, enabled) VALUES ($1, $2, TRUE)',
       [userId, 'qq'],
     )
+    await pool.query('UPDATE users SET hashed_password = $2 WHERE id = $1', [
+      userId,
+      await bcrypt.hash('synthetic-login-password', 4),
+    ])
 
     const otherUserId = 'ad0902a0-c899-44ee-b180-d54eb04e4604'
     await pool.query(
@@ -554,6 +560,21 @@ test('Node auth, project, client, calendar, and notification routes preserve Pos
     } finally {
       await clientApp.close()
     }
+
+    const login = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/login',
+      payload: { username: 'integration-user', password: 'synthetic-login-password' },
+    })
+    assert.equal(login.statusCode, 200)
+    assert.equal(login.json().user.id, userId)
+    assert.equal(login.json().user.im_channels[0], 'qq')
+    assert.equal(typeof login.json().access_token, 'string')
+    const recordedLogin = await pool.query<{ event: string }>(
+      "SELECT event FROM frontend_events WHERE user_id = $1 AND event = 'web_login' ORDER BY id",
+      [userId],
+    )
+    assert.deepEqual(recordedLogin.rows.map((row) => row.event), ['web_login'])
 
     const response = await app.inject({
       method: 'GET',

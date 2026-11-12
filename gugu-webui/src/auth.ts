@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'node:crypto'
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 
 const accessCookie = 'gugu_user_access_token'
 const csrfCookie = 'gugu_user_csrf_token'
@@ -119,6 +119,29 @@ export function verifyUserToken(token: string, secret: string, nowMs = Date.now(
   } catch {
     throw new AuthenticationError('Token 无效或已过期')
   }
+}
+
+export function createUserToken(
+  userId: string,
+  securityVersion: number,
+  secret: string,
+  nowMs = Date.now(),
+  expiresInMinutes = 10080,
+): string {
+  const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url')
+  const payload = Buffer.from(JSON.stringify({
+    sub: userId,
+    role: 'user',
+    sv: securityVersion,
+    exp: Math.floor(nowMs / 1000) + expiresInMinutes * 60,
+  })).toString('base64url')
+  const content = `${header}.${payload}`
+  const signature = createHmac('sha256', secret).update(content).digest('base64url')
+  return `${content}.${signature}`
+}
+
+export function createCsrfToken(): string {
+  return randomBytes(32).toString('base64url')
 }
 
 export async function authenticateUser<T extends AuthenticatedUserRecord>(

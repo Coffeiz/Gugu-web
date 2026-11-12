@@ -1,4 +1,5 @@
 import type { Pool } from 'pg'
+import bcrypt from 'bcryptjs'
 import type { PublicUserRecord } from './auth.js'
 
 interface UserRow {
@@ -18,9 +19,10 @@ interface UserRow {
 export function createUserRepository(pool: Pool): {
   lookupUser: (userId: string) => Promise<PublicUserRecord | null>
   markUserActive: (userId: string) => Promise<void>
+  authenticateCredentials: (username: string, password: string) => Promise<PublicUserRecord | null>
+  recordLogin: (userId: string) => Promise<void>
 } {
-  return {
-    async lookupUser(userId) {
+  async function lookupUser(userId: string): Promise<PublicUserRecord | null> {
       const { rows } = await pool.query<UserRow>(
         `SELECT id::text, username, display_name, email, is_active, account_status,
                 security_version, avatar,
@@ -56,6 +58,21 @@ export function createUserRepository(pool: Pool): {
         emailSubscribed: row.email_subscribed ?? false,
         imChannels: bots.map((bot) => bot.platform),
       }
+  }
+
+  return {
+    lookupUser,
+    async authenticateCredentials(username, password) {
+      const { rows } = await pool.query<{ id: string; hashed_password: string }>(
+        `SELECT id::text, hashed_password FROM users
+         WHERE username = $1 OR email = $1 LIMIT 1`,
+        [username],
+      )
+      const row = rows[0]
+      const passwordMatches = await bcrypt.compare(password, row?.hashed_password
+        ?? '$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy')
+      if (!row || !passwordMatches) return null
+      return lookupUser(row.id)
     },
     async markUserActive(userId) {
       await pool.query(
@@ -63,6 +80,16 @@ export function createUserRepository(pool: Pool): {
          SET last_active_at = CURRENT_TIMESTAMP
          WHERE id = $1
            AND (last_active_at IS NULL OR last_active_at < CURRENT_TIMESTAMP - INTERVAL '1 hour')`,
+        [userId],
+      )
+    },
+    async recordLogin(userId) {
+      await pool.query(
+        `WITH active_user AS (
+           UPDATE users SET last_active_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING id
+         )
+         INSERT INTO frontend_events (user_id, event)
+         SELECT id, 'web_login' FROM active_user`,
         [userId],
       )
     },

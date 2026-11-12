@@ -15,6 +15,7 @@
   "dependencies": {
     "@fastify/static": "10.1.5",
     "@gugu/core": "workspace:*",
+    "bcryptjs": "3.0.2",
     "fastify": "5.12.8",
     "pg": "8.23.1"
   },

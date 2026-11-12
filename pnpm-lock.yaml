@@ -378,6 +378,9 @@ importers:
       '@gugu/core':
         specifier: workspace:*
         version: link:../gugu-core
+      bcryptjs:
+        specifier: 3.0.2
+        version: 3.0.2
       fastify:
         specifier: 5.12.8
         version: 5.12.8
@@ -2742,6 +2745,10 @@ packages:
   baseline-browser-mapping@2.11.23:
     resolution: {integrity: sha512-le521dGVfxM7yRX0EikCoSz+rOK+hHzdDt/E7mG1jOJB/6WAAUuwVroLwaB7ApaUsz5Q0kFlDXLSA9MheUIfRQ==}
     engines: {node: '>=6.0.0'}
+    hasBin: true
+
+  bcryptjs@3.0.2:
+    resolution: {integrity: sha512-k38b3XOZKv60C4E2hVsXTolJWfkGRMbILBIe2IBITXciy5bOsTKot5kDrf3ZfufQtQOUN5mXceUEpU1rTl9Uog==}
     hasBin: true
 
   better-sqlite3@13.0.3:
@@ -7854,6 +7861,8 @@ snapshots:
   base64-js@1.5.1: {}
 
   baseline-browser-mapping@2.11.23: {}
+
+  bcryptjs@3.0.2: {}
 
   better-sqlite3@13.0.3:
     dependencies:

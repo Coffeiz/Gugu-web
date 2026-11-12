@@ -1,6 +1,13 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify'
+import { createHash } from 'node:crypto'
 import { CoreError } from '@gugu/core'
-import { authenticateUser, AuthenticationError, type PublicUserRecord } from './auth.js'
+import {
+  authenticateUser,
+  AuthenticationError,
+  createCsrfToken,
+  createUserToken,
+  type PublicUserRecord,
+} from './auth.js'
 import { DEFAULT_PUBLIC_SITE_CONFIG, type PublicSiteConfig } from './site-config.js'
 import { registerStaticFrontend } from './static.js'
 
@@ -8,6 +15,8 @@ export interface UserAuthOptions {
   secret: string
   lookupUser: (userId: string) => Promise<PublicUserRecord | null>
   markUserActive?: (userId: string) => Promise<void>
+  authenticateCredentials?: (username: string, password: string) => Promise<PublicUserRecord | null>
+  recordLogin?: (userId: string) => Promise<void>
 }
 
 export interface ClientResponse {
@@ -63,6 +72,81 @@ export interface WebUiOptions {
   events?: EventOptions
   notifications?: NotificationOptions
   track?: TrackOptions
+}
+
+const loginAttempts = new Map<string, { count: number; resetAt: number }>()
+const LOGIN_LIMIT = 10
+const LOGIN_WINDOW_MS = 5 * 60 * 1000
+
+function loginRateLimitKey(request: FastifyRequest, username: string): string {
+  const forwardedFor = request.headers['x-forwarded-for']
+  const forwardedPeer = typeof forwardedFor === 'string'
+    ? forwardedFor.split(',').map((part) => part.trim()).filter(Boolean).at(-1)
+    : undefined
+  const address = forwardedPeer || request.ip || 'unknown'
+  return createHash('sha256').update(`${address}\0${username}`).digest('hex')
+}
+
+function isLoginRateLimited(request: FastifyRequest, username: string, now = Date.now()): boolean {
+  const key = loginRateLimitKey(request, username)
+  const current = loginAttempts.get(key)
+  if (!current || current.resetAt <= now) {
+    loginAttempts.set(key, { count: 1, resetAt: now + LOGIN_WINDOW_MS })
+    if (loginAttempts.size > 4096) {
+      for (const [candidate, entry] of loginAttempts) {
+        if (entry.resetAt <= now) loginAttempts.delete(candidate)
+      }
+      while (loginAttempts.size > 4096) loginAttempts.delete(loginAttempts.keys().next().value as string)
+    }
+    return false
+  }
+  if (current.count >= LOGIN_LIMIT) return true
+  current.count += 1
+  return false
+}
+
+function parseLoginBody(body: unknown): { username: string; password: string } | null {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return null
+  const value = body as Record<string, unknown>
+  if (typeof value.username !== 'string' || typeof value.password !== 'string') return null
+  return { username: value.username, password: value.password }
+}
+
+function registerLoginRoute(app: FastifyInstance, auth: UserAuthOptions) {
+  const authenticateCredentials = auth.authenticateCredentials
+  const recordLogin = auth.recordLogin
+  if (!authenticateCredentials || !recordLogin) return
+  app.post('/api/v1/auth/login', async (request, reply) => {
+    const input = parseLoginBody(request.body)
+    if (!input) return reply.code(422).send({ detail: '登录请求字段无效' })
+    if (isLoginRateLimited(request, input.username))
+      return reply.code(429).send({ detail: '操作过于频繁，请稍后再试' })
+
+    const user = await authenticateCredentials(input.username, input.password)
+    if (!user) return reply.code(401).send({ detail: '用户名或密码错误' })
+    if (!user.isActive)
+      return reply.code(403).send({ detail: '账号已停用，请联系管理员' })
+
+    await recordLogin(user.id)
+    const securityVersion = user.securityVersion || 1
+    const token = createUserToken(user.id, securityVersion, auth.secret)
+    const maxAge = 10080 * 60
+    const forwardedProtocol = request.headers['x-forwarded-proto']
+    const secure = request.protocol === 'https'
+      || (typeof forwardedProtocol === 'string'
+        && forwardedProtocol.split(',', 1)[0]?.trim().toLowerCase() === 'https')
+    const secureSuffix = secure ? '; Secure' : ''
+    const csrfToken = createCsrfToken()
+    reply.header('set-cookie', [
+      `gugu_user_access_token=${token}; Max-Age=${maxAge}; Path=/; HttpOnly${secureSuffix}; SameSite=Lax`,
+      `gugu_user_csrf_token=${csrfToken}; Max-Age=${maxAge}; Path=/${secureSuffix}; SameSite=Lax`,
+    ])
+    return {
+      access_token: request.headers['x-auth-transport'] === 'cookie' ? null : token,
+      token_type: 'bearer',
+      user: userResponse(user),
+    }
+  })
 }
 
 function userResponse(user: PublicUserRecord) {
@@ -337,6 +421,7 @@ function registerTrackRoute(app: FastifyInstance, auth: UserAuthOptions, track: 
 function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
   const auth = options.userAuth
   if (!auth) return
+  registerLoginRoute(app, auth)
   app.get('/api/v1/auth/me', (request, reply) => getCurrentUser(request, reply, auth))
   if (options.listProjects) registerProjectRoute(app, auth, options.listProjects)
   if (options.listProjectFileCounts)
