@@ -9,6 +9,7 @@ const userId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
 function makeApp(
   projects: (ownerId: string, archived: boolean) => Promise<unknown[]>,
   getProject?: (ownerId: string, projectId: number) => Promise<unknown | null>,
+  listProjectFileCounts?: (ownerId: string) => Promise<unknown[]>,
 ) {
   return createApp({
     appName: 'Gugu',
@@ -32,6 +33,7 @@ function makeApp(
     },
     listProjects: projects,
     ...(getProject ? { getProject } : {}),
+    ...(listProjectFileCounts ? { listProjectFileCounts } : {}),
   })
 }
 
@@ -84,6 +86,27 @@ test('GET /api/v1/projects rejects malformed boolean query values', async () => 
       headers: { authorization: `Bearer ${signedUserToken(secret, userId)}` },
     })
     assert.equal(response.statusCode, 422)
+  } finally {
+    await app.close()
+  }
+})
+
+test('GET /api/v1/projects/file-counts binds the authenticated owner', async () => {
+  const calls: string[] = []
+  const app = makeApp(async () => [], undefined, async (ownerId) => {
+    calls.push(ownerId)
+    return [{ projectId: 10, fileCount: 3 }, { projectId: 11, fileCount: 0 }]
+  })
+  try {
+    const response = await app.inject({
+      method: 'GET', url: '/api/v1/projects/file-counts',
+      headers: { authorization: `Bearer ${signedUserToken(secret, userId)}` },
+    })
+    const unauthenticated = await app.inject({ method: 'GET', url: '/api/v1/projects/file-counts' })
+    assert.equal(response.statusCode, 200)
+    assert.deepEqual(response.json(), [{ projectId: 10, fileCount: 3 }, { projectId: 11, fileCount: 0 }])
+    assert.equal(unauthenticated.statusCode, 401)
+    assert.deepEqual(calls, [userId])
   } finally {
     await app.close()
   }

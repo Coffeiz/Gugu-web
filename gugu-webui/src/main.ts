@@ -6,7 +6,7 @@ import { createApp, type UserAuthOptions } from './app.js'
 import { loadConfig, type WebUiConfig } from './config.js'
 import { checkDatabaseReadiness } from './database.js'
 import { createUserRepository } from './users.js'
-import { createProjectGetter, createProjectListing } from './projects.js'
+import { createProjectFileCountListing, createProjectGetter, createProjectListing } from './projects.js'
 import { createClientOperations } from './clients.js'
 
 function createPool(config: WebUiConfig): Pool {
@@ -32,6 +32,7 @@ function createWebUiApp(config: WebUiConfig, pool: Pool, core: SqlDataRuntime) {
     onReadinessError: () => console.error('gugu-webui PostgreSQL readiness check failed'),
     userAuth: createUserAuth(pool, config.secretKey),
     listProjects: createProjectListing(core, pool),
+    listProjectFileCounts: createProjectFileCountListing(pool),
     getProject: createProjectGetter(core, pool),
     clients: createClientOperations(core),
   })

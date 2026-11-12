@@ -37,6 +37,7 @@ export interface WebUiOptions {
   onReadinessError?: () => void
   userAuth?: UserAuthOptions
   listProjects?: (ownerId: string, archived: boolean) => Promise<unknown[]>
+  listProjectFileCounts?: (ownerId: string) => Promise<unknown[]>
   getProject?: (ownerId: string, projectId: number) => Promise<unknown | null>
   clients?: ClientOptions
 }
@@ -164,6 +165,18 @@ function registerProjectGetRoute(
   })
 }
 
+function registerProjectFileCountsRoute(
+  app: FastifyInstance,
+  auth: UserAuthOptions,
+  listProjectFileCounts: NonNullable<WebUiOptions['listProjectFileCounts']>,
+) {
+  app.get('/api/v1/projects/file-counts', async (request, reply) => {
+    const user = await authenticateRequest(request, reply, auth)
+    if (!user) return
+    return listProjectFileCounts(user.id)
+  })
+}
+
 function registerClientRoutes(app: FastifyInstance, auth: UserAuthOptions, clients: ClientOptions) {
   app.get('/api/v1/clients', async (request, reply) => {
     const user = await authenticateRequest(request, reply, auth)
@@ -210,6 +223,8 @@ export function createApp(options: WebUiOptions) {
   if (options.userAuth) {
     app.get('/api/v1/auth/me', (request, reply) => getCurrentUser(request, reply, options.userAuth!))
     if (options.listProjects) registerProjectRoute(app, options.userAuth, options.listProjects)
+    if (options.listProjectFileCounts)
+      registerProjectFileCountsRoute(app, options.userAuth, options.listProjectFileCounts)
     if (options.getProject) registerProjectGetRoute(app, options.userAuth, options.getProject)
     if (options.clients) registerClientRoutes(app, options.userAuth, options.clients)
   }

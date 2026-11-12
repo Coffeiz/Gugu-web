@@ -59,3 +59,20 @@ export function createProjectGetter(core: SqlDataRuntime, pool: Pool) {
     return projectResponse(project, counts.get(project.id) ?? 0)
   }
 }
+
+export function createProjectFileCountListing(pool: Pool) {
+  return async (ownerId: string): Promise<{ projectId: number; fileCount: number }[]> => {
+    const result = await pool.query<{ project_id: number; file_count: string }>(
+      `SELECT projects.id AS project_id, COALESCE(counts.file_count, 0) AS file_count
+       FROM projects
+       LEFT JOIN project_file_counts AS counts ON counts.project_id = projects.id
+       WHERE projects.user_id = $1
+       ORDER BY projects.id`,
+      [ownerId],
+    )
+    return result.rows.map((row) => ({
+      projectId: row.project_id,
+      fileCount: Number(row.file_count),
+    }))
+  }
+}
