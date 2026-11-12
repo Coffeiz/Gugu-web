@@ -1,6 +1,6 @@
 # Gugu Core 迁移 Node.js / TypeScript 方案
 
-> **历史归档（2026-11-12）**：当前架构、完成状态和任务统一见 [架构与迁移任务清单](../../Gugu-2.0-架构与迁移任务清单.md)。
+> **历史归档（2026-11-12）**：当前架构、完成状态和任务统一见 [当前任务清单](../../Gugu-2.0-迁移任务清单.md)与[架构说明](../../Gugu-2.0-架构说明.md)。
 > 本文保留原时点的设计/实现/验证，不维护实时状态；正文中的旧技术路线和待办不能作为当前实施依据。
 
 > 状态：待评审的迁移方案，尚未实施。
@@ -12,7 +12,7 @@
 
 建议把顶层 `gugu-core` 改为 **TypeScript 编写、Node.js 承载的共享领域与数据运行时**。先迁移已经实现的项目、联系人、数据事务、SQLite/PostgreSQL 适配和桌面管道 Host，再逐域迁移 Agent、会话与调度。
 
-桌面继续采用 Tauri/Vue，Rust 负责窗口、可信进程生命周期、目录授权和原生执行 Broker。Core 使用随应用分发的 Node 进程；前端只导入协议类型，通过业务 IPC 调用 Core。Node 化不改变 FS、沙箱、登录和同步的产品边界。
+桌面继续采用 旧 Rust Host 与 Vue，Rust 负责窗口、可信进程生命周期、目录授权和原生执行 Broker。Core 使用随应用分发的 Node 进程；前端只导入协议类型，通过业务 IPC 调用 Core。Node 化不改变 FS、沙箱、登录和同步的产品边界。
 
 首个可交付结果必须同时满足：
 
@@ -33,7 +33,7 @@
 | `data/models.py`、`projects.py`、`clients.py` | 共享列、SQL 查询、所有者过滤、版本 CAS | 迁为类型化行映射与 SQL Adapter，保留实际列和约束 |
 | `data/runtime.py`、`migrations.py` | 本地唯一身份、schema v2、v1 备份升级 | 迁为显式 Node API/CLI，先兼容已有文件库 |
 | `gugu-desktop/python/gugu_desktop_host/` | 6 个业务方法、NDJSON v1、启动与 EOF 生命周期 | 由 Node 入口接替；不是继续用 Node 包装 Python Core |
-| `gugu-desktop/src-tauri/src/core_host.rs` | 启动 Python、白名单、序号、64 KiB 帧与超时 | 改为启动随包 Node 和编译后入口，保留限制与错误边界 |
+| `gugu-desktop/native-host/src/core_host.rs` | 启动 Python、白名单、序号、64 KiB 帧与超时 | 改为启动随包 Node 和编译后入口，保留限制与错误边界 |
 | `backend/app/core/projects.py`、`services/core_data.py` | 以当前请求 Session 装配 Python Core | 暂留兼容实现；按完整业务命令切换 |
 | `backend/app/api/v1/projects.py`、`agent/tools/projects.py` | 幂等、撤销、文件联动、提交后事件等宿主编排 | 逐入口盘点并迁移，不能只替换 Repository |
 | `backend/agent/`、现有 Cython RAG | 尚未抽入本轮 Core 的运行链路 | 独立阶段迁移，现有实现继续作为验收基线 |
@@ -62,8 +62,8 @@ gugu-core/                        @gugu/core，纯 TS 源码、Node 运行时
     agent/                       后续阶段迁入
   tests/                         新的 Core 契约与数据集成测试
 
-gugu-desktop/                     Tauri Rust Host、原生 Broker、安装制品
-  src-tauri/
+gugu-desktop/                     旧 Rust Host、原生 Broker、安装制品
+  native-host/（历史目录）
 
 backend/                         迁移期 Web/NAS 宿主、鉴权与兼容 Adapter
 compat/core-python/              迁移期冻结的 Python Core 包，达标后删除
@@ -172,7 +172,7 @@ interface DataRuntime {
 
 ```mermaid
 flowchart LR
-    UI[Vue 桌面入口] --> RH[Tauri Rust Host]
+    UI[Vue 桌面入口] --> RH[旧 Rust Host]
     RH -->|私有 NDJSON v1| NC[随包 Node 与 Core 控制通道]
     NC -->|有界完整业务命令| SW[Core 用例与 SQLite Worker]
     SW --> DB[(本地 SQLite)]
@@ -184,7 +184,7 @@ flowchart LR
 
 业务方法不接收 owner/user 覆盖、数据库路径、SQL 或任意命令。启动时核对宿主/Core/协议/schema 兼容范围；不匹配明确拒绝。v1 大列表仍有结果长度边界，分页另定义版本化协议，不能静默截断成成功。
 
-Rust 从应用资源装配 Node 与 JS 入口，不通过 Shell 拼命令。发布版使用随包解释器，不依赖 PATH，也不沿用当前 `GUGU_DESKTOP_PYTHON`。开发版可显式指定 Node，发布版不因环境变量缺省而下载运行时。Node 与 native addon 及 Worker JS 必须逐目标架构交付；安装包签名、资源完整性、只读执行区、数据可写区和版本清单一起验收。[Tauri sidecar 分发要求](https://v2.tauri.app/develop/sidecar/)。
+Rust 从应用资源装配 Node 与 JS 入口，不通过 Shell 拼命令。发布版使用随包解释器，不依赖 PATH，也不沿用当前 `GUGU_DESKTOP_PYTHON`。开发版可显式指定 Node，发布版不因环境变量缺省而下载运行时。Node 与 native addon 及 Worker JS 必须逐目标架构交付；安装包签名、资源完整性、只读执行区、数据可写区和版本清单一起验收。随包运行时分发要求。
 
 首批采用“官方 Node 二进制 + 编译 JS + 明确的运行依赖”装配，不直接把开发 node_modules 全量复制到安装包。SEA 单文件作为后续制品实验，原生扩展、Worker 资源和动态加载逐项验证后再决定，不能只因能生成单文件就宣称可发布。[Node SEA 文档](https://github.com/nodejs/node/blob/v26.13.0/doc/api/single-executable-applications.md)。
 
@@ -276,7 +276,7 @@ N1、N2 是把当前已做的 Core 转成 Node/TS 的第一组实施 PR；N3 是
 - SQLite：Python v2 → Node 读写 → 旧 Python 重读；v1 显式迁移、WAL 下备份、DDL/提交失败恢复、坏库拒绝。
 - PostgreSQL：临时 schema、现有用户外键、双用户数据、CAS/幂等并发、连接耗尽与回收、事务与撤销同进退。
 - 进程：UTF-8 分块/超长帧、背压、版本不符、EOF、崩溃、取消与提交竞态、丢失响应后的重读，不自动重放写入。
-- 桌面：macOS/Windows 真实 Tauri；首次启动、现有库、退出/重启、单实例与多窗口；安装后离线运行，无现场编译与依赖下载。
+- 桌面：macOS/Windows 真实 旧桌面壳；首次启动、现有库、退出/重启、单实例与多窗口；安装后离线运行，无现场编译与依赖下载。
 - 沙箱：正向启动控制、授权/越界 FS、网络拒绝、Node/MCP 负载、输出限额、超时、取消与进程树回收；Core 启动测试不能替代该矩阵。
 
 ### 10.3 CI 与制品

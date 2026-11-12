@@ -1,6 +1,6 @@
 # Gugu Core 与桌面端职责划分方案
 
-> **历史归档（2026-11-12）**：当前架构、完成状态和任务统一见 [架构与迁移任务清单](../../Gugu-2.0-架构与迁移任务清单.md)。
+> **历史归档（2026-11-12）**：当前架构、完成状态和任务统一见 [当前任务清单](../../Gugu-2.0-迁移任务清单.md)与[架构说明](../../Gugu-2.0-架构说明.md)。
 > 本文保留原时点的设计/实现/验证，不维护实时状态；正文中的旧技术路线和待办不能作为当前实施依据。
 
 > **文档类型**：架构方案
@@ -32,7 +32,7 @@
 | 桌面形态 | 本地优先；macOS、Windows；桌面应用内单用户 | 按本轮需求设计 |
 | 用户模型 | SaaS、Linux / NAS 保留多用户；桌面端单用户；Mobile 目标形态为独立本地实例 | 按已有用户决策及产品拓扑图设计 |
 | 默认家节点 | 默认 Desktop；用户可直连自己的 Runtime，SaaS 不成为必经入口 | 按所提供的产品拓扑图设计 |
-| 桌面承载 | 优先验证 Tauri 2 + 现有 Vue UI + Python Core sidecar；原生 Broker 承接平台能力 | 技术建议 |
+| 桌面承载 | 优先验证 旧 Rust 桌面壳 + 现有 Vue UI + Python Core sidecar；原生 Broker 承接平台能力 | 技术建议 |
 | 桌面数据库 | 优先验证 SQLite；Web 保留 PostgreSQL；驱动实现统一在 Core 数据包维护 | 技术建议，须通过持久化验证 |
 | 桌面命令隔离 | 原生平台 Adapter，首发不依赖 Docker、WSL 或虚拟机 | 技术建议，须通过两平台验证 |
 | 首期交付 | 建立边界并完成项目、会话与受控执行的纵向链路 | 分阶段推进，本文不启动实现 |
@@ -358,9 +358,9 @@ Shell、PTY、MCP stdio 和第三方执行型插件都必须经过该入口。�
        └─ 受限执行进程（按授权隔离的 Shell / PTY / MCP）
 ```
 
-优先做 Tauri 2 PoC：复用 Vue，Rust Host 实现 Broker，必要时通过 Swift/系统 API 衔接 macOS。Core 继续 Python，不为桌面重写 Agent；Cython 随目标平台预编译，用户安装后不现场编译。
+优先做 旧 Rust 桌面壳 PoC：复用 Vue，Rust Host 实现 Broker，必要时通过 Swift/系统 API 衔接 macOS。Core 继续 Python，不为桌面重写 Agent；Cython 随目标平台预编译，用户安装后不现场编译。
 
-Tauri 支持外部 sidecar 及调用权限配置，适合作为此结构的候选承载；它不会自动将外部执行进程变成 OS 沙箱。前端只开放业务 IPC，不授予通用 Shell/FS 插件权限。若打包、WebView 兼容或原生桥验证不通过，再记录 Electron 替代决策，避免同时维护两套桌面壳。[Tauri sidecar 文档](https://v2.tauri.app/develop/sidecar/)、[Shell 权限文档](https://v2.tauri.app/plugin/shell/)。
+历史 Rust Host 方案通过 sidecar 承载外部进程，但这不会自动形成 OS 沙箱。前端只开放业务 IPC，不授予通用 Shell/FS 插件权限。若打包、WebView 兼容或原生桥验证不通过，应记录 Electron 替代决策，避免同时维护两套桌面壳。
 
 Host 与 Core 优先使用受限的本地 IPC，首期可用父子进程专属管道承载有版本的帧协议；stdout 保留给协议，诊断另走受限出口。禁止通过 Shell 拼接启动参数或使用 URL 传递令牌。若后续使用 Unix socket/Named Pipe，应验证对端与 ACL；不向浏览器暴露无认证的本地服务。
 
@@ -510,7 +510,7 @@ P6 / P7 是目标产品阶段，不因本次边界调整就提前移除 SaaS 首
 1. 入口与各 Runtime 的配对、直连、鉴权和家节点切换规则。
 2. macOS/Windows 最低版本、CPU 架构、安装包分发方式和最低工具兼容集合。
 3. macOS 原生执行的可发布路线，以及若无法满足隔离时首发裁剪哪些能力。
-4. SQLite 的生产语义验证结论、Tauri 打包结果、watcher 与 Cython 的跨平台制品方案。
+4. SQLite 的生产语义验证结论、旧桌面壳 打包结果、watcher 与 Cython 的跨平台制品方案。
 5. 附件字节是否需要云端对象同步，以及哪些数据仅保留端侧。
 6. 云同步首批领域、冲突规则、任务执行归属，以及 SaaS 既有文件和记忆的迁移去向。
 7. Mobile 的首发系统、Runtime 技术承载、后台生命周期和可执行任务范围。

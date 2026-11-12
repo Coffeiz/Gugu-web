@@ -6,13 +6,14 @@
 
 | 文档 | 职责 |
 | --- | --- |
-| [架构与迁移任务清单](Gugu-2.0-架构与迁移任务清单.md) | 唯一主文档：多端与 Electron 目标架构、目录职责、完成状态、迁移顺序及当前 T1 测试任务 |
+| [架构说明](Gugu-2.0-架构说明.md) | 多端与 Electron 目标架构、目录职责、依赖边界和数据约束 |
+| [迁移任务清单](Gugu-2.0-迁移任务清单.md) | 当前完成状态、先迁 Web Node 后端再产品化桌面的执行顺序、验收证据与待办 |
 | [Python → Node 依赖迁移矩阵](Gugu-2.0-Python-to-Node-Dependency-Migration.md) | 依赖盘点、候选库和逐项验收门槛；不单独维护整体完成状态 |
 | [历史方案与验证记录](_archive/gugu-2.0/README.md) | 原多端/职责方案、Python 切片、Node 方案与桌面/MXC 实验，供追溯使用 |
 
-本轮已落地项目/联系人 Core 同逻辑回归和 pytest 语义分层、Electron 验证 Host 与共用 Executor 边界。具体行为及差异见 [测试对照清单](../testing/node-core-parity.md)；实现、CI 通过、合并与正式发行分别记录，精确提交结果以 PR #118 为准。
+本轮已落地项目/联系人 Core 同逻辑回归和 pytest 语义分层、Electron 验证 Host 与共用 Executor 边界。具体行为及差异见 [测试对照清单](../testing/node-core-parity.md)；实现、CI 通过、合并与正式发行分别记录。
 
-桌面目标已改为 **Electron + TypeScript Main/Preload + 独立 Node Core**，使用 `electron-builder.yml` 与 package/smoke 脚本打包验证。目录统一采用主文档 §2：Core 的 `runtime/transport/` 分离传输，`agent/executor/` 复用执行契约/策略/平台适配；Desktop 的 `sandbox/` 仅诊断，Host 注入端侧授权与原生能力。当前活动实现为 Electron，旧源码保留在 `compat/desktop-tauri/`。后续平台和发行门槛统一见 N2，旧 Tauri 的 CI/制品结果不视为 Electron 验收。
+桌面目标已改为 **Electron + TypeScript Main/Preload + 独立 Node Core**，使用 `electron-builder.yml` 与 package/smoke 脚本打包验证。目录统一见[架构说明](Gugu-2.0-架构说明.md)：Core 的 `runtime/transport/` 分离传输，`agent/executor/` 复用执行契约/策略/平台适配；Desktop 的 `sandbox/` 仅诊断，Host 注入端侧授权与原生能力。当前活动实现为 Electron。平台和发行门槛见[迁移任务清单 N4](Gugu-2.0-迁移任务清单.md#n4桌面产品化与发行准备)，旧 Rust Host 的 CI/制品结果不视为 Electron 验收。
 
 ## 其他重构文档
 

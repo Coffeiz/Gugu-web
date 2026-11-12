@@ -2,7 +2,7 @@
 
 ## 范围与职责
 
-本轮在 [PR #118](https://github.com/Coffeiz/Gugu-web/pull/118) 继续实现统一迁移清单的 T1 与 N2 验证切片，目标分支为 `v2.0`。Core 继续拥有领域、统一双库数据运行时及执行契约；Electron Host 装配窗口、单实例、数据目录、Node 子进程、权限与更新生命周期。旧 Tauri 源码原样保留在 `compat/desktop-tauri/`，不再参与当前构建。
+本轮在 [PR #118](https://github.com/Coffeiz/Gugu-web/pull/118) 继续实现统一迁移清单的 T1 与 N2 验证切片，目标分支为 `v2.0`。Core 继续拥有领域、统一双库数据运行时及执行契约；Electron Host 装配窗口、单实例、数据目录、Node 子进程、权限与更新生命周期。原 Rust Host 已退出当前构建，桌面活动实现统一为 Electron。
 
 ## 行为与回归
 
@@ -25,7 +25,7 @@
 
 Runtime integration 接入 Linux 真实 PostgreSQL/完整 Core 测试，以及 Windows、macOS arm64/x64 的 Electron 安装制品与真实应用冒烟。Docker release 保留既有完整兼容验证。最终精确提交的运行链接与结论以 PR 为准，接入流水线不等于已经通过。
 
-当前只完成项目/联系人数据切片和桌面验证 Host。Web Session/撤销/文件联动、其他数据域、完整 Agent、同步、移动端及正式发行继续按照 [迁移清单](../refactor/Gugu-2.0-架构与迁移任务清单.md) 的后续阶段推进；没有改写用户运行配置或迁移真实数据。
+当前只完成项目/联系人数据切片和桌面验证 Host。Web Session/撤销/文件联动、其他数据域、完整 Agent、同步、移动端及正式发行继续按照 [迁移清单](../refactor/Gugu-2.0-迁移任务清单.md) 的后续阶段推进；没有改写用户运行配置或迁移真实数据。
 
 ## 对照文档补测
 

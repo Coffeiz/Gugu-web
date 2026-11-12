@@ -1,6 +1,6 @@
 # Core 与桌面 Node 首批迁移实现
 
-> **历史归档（2026-11-12）**：当前架构、完成状态和任务统一见 [架构与迁移任务清单](../../Gugu-2.0-架构与迁移任务清单.md)。
+> **历史归档（2026-11-12）**：当前架构、完成状态和任务统一见 [当前任务清单](../../Gugu-2.0-迁移任务清单.md)与[架构说明](../../Gugu-2.0-架构说明.md)。
 > 本文保留原时点的设计/实现/验证，不维护实时状态；正文中的旧技术路线和待办不能作为当前实施依据。
 
 > 日期：2026-11-11。范围按用户确认的 N0–N2 首批切片执行：已有 Core 数据能力与桌面 Host。Web、Agent、RAG 等按后续阶段迁移。
@@ -42,7 +42,7 @@ Web 继续借用原 Python Session，保留同事务撤销、幂等、文件联�
 
 本地已运行的验证包括：Node 严格编译与领域/真实 SQLite/Worker/进程测试；真实隔离 PostgreSQL 契约；Python/TS 同语料差分与文件库互读；原 Python Core 回归；Windows 与 Linux 自包含资源冒烟；Rust 与随包 Node 真实管道的创建及重启读回。具体最终数量与精确提交的 CI 结果以本 PR 正文为准，不把中间提交的绿灯当作最终结论。
 
-Runtime integration 增加专用 Core/Golden/PG job，以及 Windows x64、macOS arm64/x64 桌面矩阵，检查原生 Rust IPC、制品独立运行和 Tauri 构建；macOS 额外检查 app 内的 Node 资源。保留既有前后端/Runtime/LoopScope/E2E 和 Docker release 的构建与安全扫描。
+Runtime integration 增加专用 Core/Golden/PG job，以及 Windows x64、macOS arm64/x64 桌面矩阵，检查原生 Rust IPC、制品独立运行和 旧桌面壳 构建；macOS 额外检查 app 内的 Node 资源。保留既有前后端/Runtime/LoopScope/E2E 和 Docker release 的构建与安全扫描。
 
 首轮 CI 发现 Node 26 的全局 Web Storage 遮蔽了 Vitest 4 的 jsdom 存储。前端测试进程显式关闭 Node 的实验性 Web Storage，让 jsdom 提供按页面隔离的真实实现；保留主题、缩放、会话等原有持久化和不可用路径断言。问题机制见 [Vitest 上游记录](https://github.com/vitest-dev/vitest/issues/10867)，没有为恢复绿色删除或放宽测试。
 

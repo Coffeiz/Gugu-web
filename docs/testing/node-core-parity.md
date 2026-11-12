@@ -11,7 +11,7 @@
 | Worker、stdio、取消/关闭、崩溃与未知提交状态 | `test_desktop_ipc.py`、`test_local_runtime.py` | `integration/runtime/local-ipc.test.ts`、`transport.test.ts`；桌面 `core-host.test.ts` | process / slow / L2；保留满队列、并发关闭及旧协议安全断言 |
 | 收据与执行策略等 Node 新边界 | Python 无同款 schema v3 收据/Executor | 收据、端口对照、Executor 授权/确认/不降级/限额/取消、Host 脱敏 | 独立契约，不为机械对照删除保护 |
 | 相同维护序列的结果与错误类别 | `backend/tests/core/fixtures/node_golden.py` 使用冻结 Python Core | `golden/service-sequence.test.ts` 的 16 步维护序列 | process / slow / parity，另有独立终态断言 |
-| Electron 进程、Preload、来源与更新 | 旧 Host 源码保留在 `compat/desktop-tauri/` | `gugu-desktop/tests/` 与真实目录包 `scripts/smoke.ts` | Host 契约及三平台真实制品；不把 mock 当 OS 隔离证明 |
+| Electron 进程、Preload、来源与更新 | 复用的 Host 安全与恢复契约 | `gugu-desktop/tests/` 与真实目录包 `scripts/smoke.ts` | Host 契约及三平台真实制品；不把 mock 当 OS 隔离证明 |
 
 Node 路径均在 `gugu-core/tests/`，桌面行除外。`layer` 与依赖 marker 分开；Golden 是用途，不替代 process 标记。只使用合成输入、新建临时目录/隔离 schema，不连接用户配置、数据库或真实 Provider。
 

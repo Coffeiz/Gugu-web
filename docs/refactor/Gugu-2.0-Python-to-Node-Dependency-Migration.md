@@ -1,8 +1,8 @@
 # Gugu 2.0 — Python → Node.js / TypeScript 全量依赖迁移矩阵
 
-> **专题参考**：整体架构、目录职责、完成状态与当前任务统一见 [架构与迁移任务清单](Gugu-2.0-架构与迁移任务清单.md)。本表不作为另一份实施路线或完成率清单。
+> **专题参考**：目标架构与目录职责见[架构说明](Gugu-2.0-架构说明.md)；实施顺序、完成状态与当前任务见[迁移任务清单](Gugu-2.0-迁移任务清单.md)。本表不作为另一份实施路线或完成率清单。
 > **2026-11-12 对齐**：首批 Core 已采用 Kysely、Zod、better-sqlite3、pg 与 Node 26；Drizzle 等并列项保留为原始候选，不代表同时采用。其他依赖只有存在真实迁移调用链及验收结果时才能标为已替换。
-> **桌面路线更新**：目标为 Electron + TS Main/Preload + 独立 Node Core，使用 `electron-builder.yml` 打包；执行契约/策略/平台适配归入 Core `agent/executor/`，桌面 `sandbox/` 只做诊断。现有 Tauri 壳仅保留为迁移来源和验证证据。Electron 验证切片已实现；旧源码保留在 `compat/desktop-tauri/`。目录与剩余验收统一见主清单 §2 / N2。
+> **桌面路线更新**：目标为 Electron + TS Main/Preload + 独立 Node Core，使用 `electron-builder.yml` 打包；执行契约/策略/平台适配归入 Core `agent/executor/`，桌面 `sandbox/` 只做诊断。旧 Rust Host、依赖与构建配置已清除；Electron 验证切片已实现。目录与剩余验收见[架构说明](Gugu-2.0-架构说明.md)和[迁移任务清单](Gugu-2.0-迁移任务清单.md)。
 > 下文的 PR #116 和 Python 包位置是盘点基线；原 Python Core/Desktop 包当前分别位于 `compat/core-python/`、`compat/desktop-python/`。仍有调用方的 Python 依赖不能直接删除。
 
 > 状态：技术迁移计划草案（待 PoC 与回归确认）\
@@ -141,7 +141,7 @@
 
 ## 3. 原 Python 包与桌面 Host 的迁移表
 
-以 PR #116 的 Python/Tauri 实现为盘点来源；下表结合当前 Node 实现及新的 Electron 目标修订，完成状态以主清单为准。
+以 PR #116 的 Python 与旧 Rust 桌面 Host 实现为盘点来源；下表结合当前 Node 实现及新的 Electron 目标修订，完成状态以主清单为准。
 
 | 盘点部分 | 目标 | 处理方式 | 风险 |
 |---|---|---|---|
@@ -150,10 +150,10 @@
 | `gugu_core.data.runtime.LocalRuntime` | Node SQLite Host | 显式 initialize/open/migrate/close | 高 |
 | `gugu_core.data.migrations` | SQLite 增量迁移器 | 当前本地 schema 3；v1/v2 显式备份升级及回滚验收，不因换壳升级 schema | 高 |
 | `gugu-desktop-host` Python 管道进程 | 独立 Node 26 Core 进程 | Node 已替换 Python；Electron Main 继续使用 NDJSON v2、Worker 与收据契约 | 中 |
-| `gugu-desktop` Tauri 2 / Rust 壳 | Electron + TS Main/Preload | 重写窗口/生命周期与 IPC，迁入原 Host 的安全和恢复契约；Core 不依赖 Electron | 高 |
+| 旧 Rust 桌面 Host | Electron + TS Main/Preload | 已迁入窗口/生命周期与 IPC 的安全、恢复契约；Core 不依赖 Electron | 高 |
 | `@microsoft/mxc-sdk@1.0.1` | **复用（PoC）** | 通过 Core `agent/executor/mxc.ts` 适配 Host 注入的原生后端；保留有界协议/能力校验，不导入 Electron | 高 |
-| `@tauri-apps/cli@2.12.4` | `electron` + `electron-builder` | 活动依赖已退出旧 CLI，旧源码保留 compat；用 `electron-builder.yml` 及 `scripts/package.ts` / `smoke.ts` 验证依赖与资源，再固定版本 | 中～高 |
-| Vue `frontend/` 独立 desktop 入口 | **复用** | 将 Tauri bridge 改为最小 Preload API；不暴露通用 IPC/FS/进程接口 | 中 |
+| 旧 Rust 桌面构建 CLI | `electron` + `electron-builder` | 已从活动依赖、源码和构建链移除；用 `electron-builder.yml` 及 `scripts/package.ts` / `smoke.ts` 验证依赖与资源 | 中～高 |
+| Vue `frontend/` 独立 desktop 入口 | **复用** | 将旧桌面 bridge 改为最小 Preload API；不暴露通用 IPC/FS/进程接口 | 中 |
 | `gugu-desktop` Node engines 约束 | 构建 Node、Electron 内嵌 Node、Core Node 分别声明 | Core 保持已声明的 Node 26；不假设 Electron 内嵌版本相同 | 中 |
 | 现有 Node sidecar 制品 | Electron 真实资源目录中的独立 Node/Core 制品 | 重用装配/完整性契约；原生依赖按独立 Node ABI 构建，安装后脱离开发目录验证 | 高 |
 
@@ -176,7 +176,7 @@ Core 的 `runtime/transport/stdio.ts` / `ipc.ts` 仅适配传输，复用 `runti
 | Cython 原生 RAG 内核 | 现有 Python/Cython 算法 | TS / `@node-rs/jieba` / Rust N-API | BM25、分词/投影、索引版本 |
 | Python RAG/记忆对象文件 | 非全部存在 DB | 统一 Node 内容 Store | 数据迁移完整性、删除屏障 |
 | Linux sandboxd/容器 | Web/NAS 执行隔离 | 保留或实现同协议 Adapter | 防止 Host fallback |
-| Windows MXC | PR #116 有受限验证 | 从 Tauri 绑定抽离后端，经 Core `executor/mxc.ts` 适配；桌面仅装配/诊断 | Node/MCP/PTY 严格隔离尚未证明；Electron Renderer sandbox 不替代它 |
+| Windows MXC | PR #116 有受限验证 | 从旧桌面 Host 绑定抽离后端，经 Core `executor/mxc.ts` 适配；桌面仅装配/诊断 | Node/MCP/PTY 严格隔离尚未证明；Electron Renderer sandbox 不替代它 |
 | macOS sandbox | 尚未验收 | 原生 Adapter（待选型） | 签名、公证、文件授权、进程树 |
 | 文件监听 | Python watcher / TS Sidecar | `chokidar` 或 OS watcher Adapter | rename、丢事件、恢复对账 |
 | CLI、Shell、PTY、MCP stdio | sandboxd/Unix socket 与 Python 桥 | Node `spawn` + OS Sandbox Broker | 取消、stdio、终止信号、权限 |
@@ -264,7 +264,7 @@ Core 的 `runtime/transport/stdio.ts` / `ipc.ts` 仅适配传输，复用 `runti
 - [中日文读音](https://github.com/Coffeiz/Gugu-web/blob/020ed06100bbd1f946ee2f277afa2b537fd64677/backend/app/utils/romaji.py)
 - [音频转码](https://github.com/Coffeiz/Gugu-web/blob/020ed06100bbd1f946ee2f277afa2b537fd64677/backend/app/core/media_transcode.py)
 - [Core 数据装配](https://github.com/Coffeiz/Gugu-web/blob/020ed06100bbd1f946ee2f277afa2b537fd64677/gugu-core/src/gugu_core/data/unit_of_work.py)
-- [桌面 IPC](https://github.com/Coffeiz/Gugu-web/blob/020ed06100bbd1f946ee2f277afa2b537fd64677/gugu-desktop/src-tauri/src/core_host.rs)
+- [桌面 IPC](https://github.com/Coffeiz/Gugu-web/blob/020ed06100bbd1f946ee2f277afa2b537fd64677/gugu-desktop/native-host/src/core_host.rs)
 
 **官方文档/代码参考**
 

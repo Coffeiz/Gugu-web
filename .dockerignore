@@ -40,11 +40,9 @@ compat/core-python/build
 compat/core-python/dist
 compat/core-python/src/*.egg-info
 compat/desktop-python/python/*.egg-info
-gugu-desktop/src-tauri/resources/core-sidecar
 gugu-core/src/*.egg-info
 gugu-core/**/__pycache__/
 gugu-core/**/*.pyc
 gugu-desktop/.tools
 gugu-desktop/node_modules
-gugu-desktop/src-tauri/target
 gugu-desktop/**/__pycache__/

@@ -2,7 +2,7 @@
 
 Electron 45.3.1 的 TS Main/Preload 复用 `frontend/src/desktop/`，经私有 NDJSON v2 调用随包 Node 26 Core；SQLite 用例在独立 Worker 执行。桌面单用户，支持项目/联系人创建和重读，不依赖 Web 登录、系统 Node 或 Python。职责与阶段状态见 [统一任务清单](../docs/refactor/Gugu-2.0-架构与迁移任务清单.md)。
 
-旧 Tauri 源码保留在 [compat/desktop-tauri](../compat/desktop-tauri/README.md)，已退出活动构建、依赖和 CI。
+当前桌面 Host、依赖、打包与 CI 均以 Electron 实现。
 
 ## 开发与构建
 

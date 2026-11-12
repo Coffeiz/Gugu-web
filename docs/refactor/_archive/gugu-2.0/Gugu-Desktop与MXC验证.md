@@ -1,6 +1,6 @@
 # 桌面壳与 MXC 验证记录
 
-> **历史归档（2026-11-12）**：当前架构、完成状态和任务统一见 [架构与迁移任务清单](../../Gugu-2.0-架构与迁移任务清单.md)。
+> **历史归档（2026-11-12）**：当前架构、完成状态和任务统一见 [当前任务清单](../../Gugu-2.0-迁移任务清单.md)与[架构说明](../../Gugu-2.0-架构说明.md)。
 > 本文保留原时点的设计/实现/验证，不维护实时状态；正文中的旧技术路线和待办不能作为当前实施依据。
 
 > 本轮同时交付桌面壳和 MXC 验证；目标平台仍是 Windows/macOS。Linux 图形环境用于验证真实窗口与 IPC，不改变 Linux/NAS 保留多用户的产品决定。
@@ -9,13 +9,13 @@
 
 ```text
 frontend/desktop.html + Vue 工作台
-    → Tauri Rust Host：白名单业务 IPC、进程生命周期
+    → 旧 Rust Host：白名单业务 IPC、进程生命周期
     → 私有 stdin/stdout NDJSON v1
     → gugu_desktop_host：固定本地身份、Core 装配
     → gugu-core：项目/联系人用例、数据事务
     → SQLite
 
-Tauri Rust Host → MXC 1.0.1 → 固定合成文件任务
+旧 Rust Host → MXC 1.0.1 → 固定合成文件任务
 ```
 
 `gugu-desktop/` 是独立宿主目录，前端仍留在 `frontend/`，没有提前拆成新前端工程。Core 不导入桌面包。Python Host 是单独 wheel，只依赖 Core；实际在不含 Web/FastAPI/Redis 的新环境中安装并验证了 IPC 写入。
@@ -53,15 +53,15 @@ Node SDK 要求受支持的 Node 版本，测试使用满足要求且通过官�
 | 独立 Core/IPC（Windows） | 23 通过、2 个 PostgreSQL 测试跳过；PostgreSQL 在上述 Linux 环境验证 |
 | 桌面 Vue 组件 | 2 通过：创建后刷新、无原生桥时释放忙状态；校验不调用 fetch |
 | 前端类型与桌面构建 | `pnpm typecheck`、`pnpm build:desktop` 通过 |
-| Rust | `cargo test --no-default-features` 通过；完整 Tauri `cargo check`、嵌入前端的 `cargo build --features custom-protocol` 通过 |
+| Rust | `cargo test --no-default-features` 通过；完整桌面 Host `cargo check`、嵌入前端的 `cargo build --features custom-protocol` 通过 |
 | 真实窗口 | 隔离 Linux 图形会话中，输入中文项目名并提交，经过 Vue → Rust → Python → SQLite，数据库存在相同名称和初始版本 |
 | 包制品 | Core、Desktop Host wheel 构建通过，在独立环境安装后经 IPC 创建项目 |
 | 安全与语法 | 所有者过滤、confirm 门、测试元数据、依赖边界、compileall、Shell 语法和 diff 空白检查通过 |
 | 开发 Compose | 使用独立空环境文件并禁用 service env 解析，`config --quiet` 通过 |
 
-图形验证使用真实 Tauri/WebKit 窗口和软件渲染，没有禁用 WebKit 沙箱。窗口标题的测试定位曾受临时会话编码影响，改用窗口类名定位后完成验证；未修改应用逻辑规避错误。构建和测试仅使用隔离配置，不读取或覆盖用户运行配置。
+图形验证使用真实 旧桌面壳/WebKit 窗口和软件渲染，没有禁用 WebKit 沙箱。窗口标题的测试定位曾受临时会话编码影响，改用窗口类名定位后完成验证；未修改应用逻辑规避错误。构建和测试仅使用隔离配置，不读取或覆盖用户运行配置。
 
-本轮没有 Windows Rust/MSVC 构建环境或 macOS 原生环境，因此没有执行 Windows/macOS Tauri 二进制、安装、签名和原生发布验证，devserver 也未验收。用户后续已授权运行 `Runtime integration` 和 `Docker release`；CI 结论以 [PR #116](https://github.com/Coffeiz/Gugu-web/pull/116) 正文所列同一最新提交的运行结果为准。
+本轮没有 Windows Rust/MSVC 构建环境或 macOS 原生环境，因此没有执行 Windows/macOS 旧桌面壳 二进制、安装、签名和原生发布验证，devserver 也未验收。用户后续已授权运行 `Runtime integration` 和 `Docker release`；CI 结论以 [PR #116](https://github.com/Coffeiz/Gugu-web/pull/116) 正文所列同一最新提交的运行结果为准。
 
 首次 CI 的全站表单规范检查发现桌面输入标题使用了 `label for`，已改为非交互标题加 `aria-labelledby`，并复用公共 `.form-input` 样式。原有规范测试未改断言；桌面组件与全站标题规范定向回归合计 3 项通过。详见 [CI 修复记录](../../../devlog/2026-11-11-桌面表单CI规范修复.md)。
 
@@ -79,4 +79,4 @@ Node SDK 要求受支持的 Node 版本，测试使用满足要求且通过官�
 - [MXC Rust v1 API](https://github.com/microsoft/mxc/blob/v1.0.1/docs/api-reference/rust/v1/api.md)、[类型与策略](https://github.com/microsoft/mxc/blob/v1.0.1/docs/api-reference/rust/v1/types.md)
 - [Windows MXC 快速开始](https://learn.microsoft.com/en-us/windows/apps/develop/mxc/quickstart)
 - [Windows NTSTATUS 定义](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/596a1078-e883-4972-9bbc-49e60bebca55)
-- [Tauri 平台构建依赖](https://v2.tauri.app/start/prerequisites/)
+- 旧桌面壳平台构建依赖
