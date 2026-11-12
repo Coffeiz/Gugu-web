@@ -1,0 +1,98 @@
+import assert from 'node:assert/strict'
+import { createHmac } from 'node:crypto'
+import test from 'node:test'
+import { createApp } from '../src/app.js'
+
+const secret = 'synthetic-project-route-secret'
+const userId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
+
+function token(): string {
+  const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url')
+  const payload = Buffer.from(JSON.stringify({
+    sub: userId,
+    role: 'user',
+    sv: 1,
+    exp: Math.floor(Date.now() / 1000) + 60,
+  })).toString('base64url')
+  const content = `${header}.${payload}`
+  return `${content}.${createHmac('sha256', secret).update(content).digest('base64url')}`
+}
+
+function makeApp(projects: (ownerId: string, archived: boolean) => Promise<unknown[]>) {
+  return createApp({
+    appName: 'Gugu',
+    isReady: async () => true,
+    userAuth: {
+      secret,
+      lookupUser: async (id) => ({
+        id,
+        username: 'synthetic-user',
+        displayName: null,
+        email: 'synthetic@example.test',
+        isActive: true,
+        accountStatus: 'active',
+        securityVersion: 1,
+        avatarUrl: null,
+        createdAt: null,
+        timezone: null,
+        emailSubscribed: false,
+        imChannels: [],
+      }),
+    },
+    listProjects: projects,
+  })
+}
+
+test('GET /api/v1/projects binds the authenticated owner and archived filter', async () => {
+  const calls: Array<[string, boolean]> = []
+  const app = makeApp(async (ownerId, archived) => {
+    calls.push([ownerId, archived])
+    return [{ id: 10, archived }]
+  })
+  try {
+    const active = await app.inject({
+      method: 'GET', url: '/api/v1/projects', headers: { authorization: `Bearer ${token()}` },
+    })
+    const archived = await app.inject({
+      method: 'GET', url: '/api/v1/projects?archived=true', headers: { authorization: `Bearer ${token()}` },
+    })
+    assert.equal(active.statusCode, 200)
+    assert.deepEqual(active.json(), [{ id: 10, archived: false }])
+    assert.equal(archived.statusCode, 200)
+    assert.deepEqual(calls, [[userId, false], [userId, true]])
+  } finally {
+    await app.close()
+  }
+})
+
+test('GET /api/v1/projects rejects unauthenticated access and unsupported deleted views', async () => {
+  const app = makeApp(async () => [])
+  try {
+    const missing = await app.inject({ method: 'GET', url: '/api/v1/projects' })
+    const deleted = await app.inject({
+      method: 'GET', url: '/api/v1/projects?deleted=true', headers: { authorization: `Bearer ${token()}` },
+    })
+    const conflicting = await app.inject({
+      method: 'GET', url: '/api/v1/projects?archived=true&deleted=true',
+      headers: { authorization: `Bearer ${token()}` },
+    })
+    assert.equal(missing.statusCode, 401)
+    assert.equal(deleted.statusCode, 501)
+    assert.equal(conflicting.statusCode, 400)
+  } finally {
+    await app.close()
+  }
+})
+
+test('GET /api/v1/projects rejects malformed boolean query values', async () => {
+  const app = makeApp(async () => [])
+  try {
+    const response = await app.inject({
+      method: 'GET', url: '/api/v1/projects?archived=sometimes',
+      headers: { authorization: `Bearer ${token()}` },
+    })
+    assert.equal(response.statusCode, 422)
+  } finally {
+    await app.close()
+  }
+})

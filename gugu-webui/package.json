@@ -13,6 +13,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@gugu/core": "workspace:*",
     "fastify": "5.12.8",
     "pg": "8.23.1"
   },

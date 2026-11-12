@@ -46,3 +46,7 @@ gugu-core/**/*.pyc
 gugu-desktop/.tools
 gugu-desktop/node_modules
 gugu-desktop/**/__pycache__/
+gugu-webui/node_modules
+gugu-webui/dist
+gugu-webui/.env
+gugu-webui/.env.*.local

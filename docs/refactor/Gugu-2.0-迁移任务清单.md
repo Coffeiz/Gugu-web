@@ -39,7 +39,7 @@
 
 ### N2——Node Web/NAS 后端迁移
 
-**当前基线**：`gugu-webui/` workspace 已建立，具备 Fastify `/health`、PostgreSQL `SELECT 1` readiness、启动配置校验和优雅关闭；尚未接入认证、业务 API/SSE、静态前端或 Worker。该骨架不能承担 Web 流量，也不代表任何业务写域已切换。
+**当前基线**：`gugu-webui/` workspace 已建立，具备 Fastify `/health`、认证和项目列表读取所需 PostgreSQL schema readiness、Node HS256 用户认证（Bearer、Cookie/CSRF、账户状态与安全版本）、`GET /api/v1/auth/me` 与基于 Node Core 的 `GET /api/v1/projects`（owner 隔离、归档过滤、文件计数）。项目软删除列表暂返回 501；认证路由尚未迁移 Redis 可达渠道、节流、头像文件服务等完整行为。devserver 专用的 `gugu2` 数据库已初始化，Node 26 实机冒烟验证了 health/readiness 与未授权拒绝；其余认证写 API、业务 API/SSE、静态前端和 Worker 均未接入，不能承担 Web 流量，也不代表任何业务写域已切换。
 
 - [ ] 建立独立 Node HTTP Host，接入 `gugu-core` 与 PostgreSQL，并承担 Web/NAS API 请求；不把桌面 Electron Host 当作服务端。
 - [ ] 盘点 API、Agent 工具、Worker/调度、撤销和迁移的所有写入口。

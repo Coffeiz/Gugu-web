@@ -1,33 +1,98 @@
 import { pathToFileURL } from 'node:url'
 import { resolve } from 'node:path'
 import { Pool } from 'pg'
-import { createApp } from './app.js'
-import { loadConfig } from './config.js'
+import { dataContext } from '@gugu/core'
+import { createPostgresRuntime, type SqlDataRuntime } from '@gugu/core/data'
+import { createApp, type UserAuthOptions } from './app.js'
+import { loadConfig, type WebUiConfig } from './config.js'
+import { checkDatabaseReadiness } from './database.js'
+import { createUserRepository } from './users.js'
 
-export async function startServer(env: NodeJS.ProcessEnv = process.env) {
-  const config = loadConfig(env)
-  const pool = new Pool({
+function createPool(config: WebUiConfig): Pool {
+  return new Pool({
     connectionString: config.databaseUrl,
     max: config.postgresPoolMax,
     connectionTimeoutMillis: 10_000,
     idleTimeoutMillis: 30_000,
   })
-  const app = createApp({
+}
+
+function createUserAuth(pool: Pool, secret: string): UserAuthOptions {
+  return { secret, ...createUserRepository(pool) }
+}
+
+function createWebUiApp(config: WebUiConfig, pool: Pool, core: SqlDataRuntime) {
+  return createApp({
     appName: config.appName,
-    isReady: async () => {
-      await pool.query('SELECT 1')
+    async isReady() {
+      await checkDatabaseReadiness((statement) => pool.query(statement))
       return true
     },
     onReadinessError: () => console.error('gugu-webui PostgreSQL readiness check failed'),
+    userAuth: createUserAuth(pool, config.secretKey),
+    async listProjects(ownerId, archived) {
+      const projects = await core.transaction(dataContext(ownerId), (data) => data.projects.list(archived))
+      if (projects.length === 0) return []
+      const ids = projects.map((project) => project.id)
+      const counts = await pool.query<{ project_id: number; file_count: string }>(
+        `SELECT counts.project_id, counts.file_count
+         FROM project_file_counts AS counts
+         JOIN projects ON projects.id = counts.project_id
+         WHERE projects.user_id = $1 AND counts.project_id = ANY($2::integer[])`,
+        [ownerId, ids],
+      )
+      const fileCounts = new Map(counts.rows.map((row) => [row.project_id, Number(row.file_count)]))
+      return projects.map((project) => ({
+        id: project.id,
+        name: project.name,
+        client: project.client,
+        status: project.status,
+        startDate: project.start_date,
+        deadline: project.deadline,
+        color: project.color,
+        progress: project.progress,
+        stages: JSON.parse(project.stages_json),
+        currentStage: project.current_stage,
+        archived: project.archived,
+        priority: project.priority,
+        version: project.version || 1,
+        doneAt: project.done_at,
+        updatedAt: project.updated_at,
+        deletedAt: project.deleted_at,
+        createdAt: project.created_at.slice(0, 10),
+        fileCount: fileCounts.get(project.id) ?? 0,
+      }))
+    },
   })
+}
 
+async function listen(app: ReturnType<typeof createWebUiApp>, host: string, port: number): Promise<void> {
   try {
-    const address = await app.listen({ host: config.host, port: config.port })
+    const address = await app.listen({ host, port })
     console.info(`gugu-webui listening at ${address}`)
   } catch {
     await app.close().catch(() => undefined)
-    await pool.end().catch(() => undefined)
     throw new Error('gugu-webui HTTP server failed to listen')
+  }
+}
+
+export async function startServer(env: NodeJS.ProcessEnv = process.env) {
+  const config = loadConfig(env)
+  const pool = createPool(config)
+  let core: SqlDataRuntime
+  try {
+    core = await createPostgresRuntime({ url: config.databaseUrl, maxConnections: config.postgresPoolMax })
+  } catch (error) {
+    await pool.end().catch(() => undefined)
+    throw error
+  }
+  const app = createWebUiApp(config, pool, core)
+  try {
+    await listen(app, config.host, config.port)
+  } catch (error) {
+    await core.close().catch(() => undefined)
+    await pool.end().catch(() => undefined)
+    throw error
   }
 
   let closePromise: Promise<void> | undefined
@@ -37,6 +102,7 @@ export async function startServer(env: NodeJS.ProcessEnv = process.env) {
     close() {
       closePromise ??= (async () => {
         await app.close()
+        await core.close()
         await pool.end()
       })()
       return closePromise

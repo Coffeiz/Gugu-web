@@ -372,6 +372,9 @@ importers:
 
   gugu-webui:
     dependencies:
+      '@gugu/core':
+        specifier: workspace:*
+        version: link:../gugu-core
       fastify:
         specifier: 5.12.8
         version: 5.12.8

@@ -127,9 +127,12 @@ gugu-desktop/
 gugu-webui/                        # Linux/NAS 自托管版 Node HTTP Host 与部署装配；当前为启动骨架
   package.json                     # workspace 包；业务接入后依赖 @gugu/core，不复制 Core 源码
   src/
-    app.ts                         # Fastify app；当前实现健康检查，业务路由/Host 装配待迁入
+    app.ts                         # Fastify app；当前实现健康检查与首个认证用户只读路由
     main.ts                        # 启动、信号处理与优雅关闭
     config.ts                      # 环境变量解析与启动前校验
+    auth.ts                        # 当前实现 HS256 用户令牌、Cookie CSRF 与账户版本校验
+    database.ts                    # 当前 readiness 核对认证读取依赖的 PostgreSQL 表/列
+    users.ts                       # 当前用户只读查询、IM bot 投影及活跃时间仓储
     config/
       capabilities.ts              # 本部署显式启用的能力
     http/
@@ -154,6 +157,10 @@ gugu-webui/                        # Linux/NAS 自托管版 Node HTTP Host 与�
   tests/
     app.test.ts                    # 当前保护 /health 契约及 readiness 响应
     config.test.ts                 # 当前保护启动配置校验与连接串处理
+    auth.test.ts                   # 当前保护令牌、Bearer/Cookie、CSRF 与撤销行为
+    auth-route.test.ts             # 当前保护 GET /api/v1/auth/me 用户响应契约
+    database.test.ts               # 当前保护 readiness 对必需 PostgreSQL schema 的核对
+    postgres.integration.test.ts   # 显式测试 URL 下以随机隔离 schema 验证真实 PG 用户读取
   .env.example                     # 配置项示例，不包含真实凭据
   README.md                        # Linux/NAS 安装、升级、备份与恢复
 gugu-saas/                         # 〔规划〕SaaS Gateway、身份、同步与云端部署装配
