@@ -15,6 +15,10 @@ const requiredSchemaQueries = [
   `SELECT id, user_id, title, date, time, end_time, type, contact_name, project_id,
           description, version, deleted_at FROM calendar_events LIMIT 0`,
   'SELECT id, user_id, name, contact, email, phone, notes, created_at FROM clients LIMIT 0',
+  `SELECT id, title, content, color, target, bubble, persist, bubble_expire_at, created_at
+   FROM site_notifications LIMIT 0`,
+  'SELECT id, user_id, notification_id, read_at FROM notification_reads LIMIT 0',
+  'SELECT id, user_id, notification_id, dismissed_at FROM notification_dismissals LIMIT 0',
 ] as const
 
 export async function checkDatabaseReadiness(query: DatabaseReadinessQuery): Promise<void> {

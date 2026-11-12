@@ -6,6 +6,7 @@ import { createPostgresRuntime, type SqlDataRuntime } from '@gugu/core/data'
 import { createApp } from '../src/app.js'
 import { createClientOperations } from '../src/clients.js'
 import { createEventOperations } from '../src/events.js'
+import { createNotificationOperations } from '../src/notifications.js'
 import { createProjectFileCountListing, createProjectGetter, createProjectListing } from '../src/projects.js'
 import { signedUserToken } from './helpers/auth.js'
 import { createUserRepository } from '../src/users.js'
@@ -13,7 +14,7 @@ import { createUserRepository } from '../src/users.js'
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const secret = 'synthetic-postgres-integration-secret'
 
-test('Node auth, projects, and clients preserve owner boundaries in isolated PostgreSQL', {
+test('Node auth, project, client, calendar, and notification routes preserve PostgreSQL contracts', {
   skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL integration',
 }, async () => {
   const schema = `gugu_webui_test_${randomUUID().replaceAll('-', '')}`
@@ -117,13 +118,45 @@ test('Node auth, projects, and clients preserve owner boundaries in isolated Pos
         created_at timestamptz NOT NULL
       )
     `)
+    await pool.query(`
+      CREATE TABLE site_notifications (
+        id serial PRIMARY KEY,
+        title varchar(200) NOT NULL,
+        content text NOT NULL,
+        color varchar(50) NOT NULL,
+        target varchar(50) NOT NULL,
+        bubble boolean NOT NULL DEFAULT true,
+        persist boolean NOT NULL DEFAULT true,
+        bubble_expire_at timestamptz,
+        created_by varchar(100) NOT NULL DEFAULT 'admin',
+        created_at timestamptz NOT NULL
+      )
+    `)
+    await pool.query(`
+      CREATE TABLE notification_reads (
+        id serial PRIMARY KEY,
+        user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        notification_id integer NOT NULL REFERENCES site_notifications(id) ON DELETE CASCADE,
+        read_at timestamptz NOT NULL,
+        UNIQUE (user_id, notification_id)
+      )
+    `)
+    await pool.query(`
+      CREATE TABLE notification_dismissals (
+        id serial PRIMARY KEY,
+        user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        notification_id integer NOT NULL REFERENCES site_notifications(id) ON DELETE CASCADE,
+        dismissed_at timestamptz NOT NULL,
+        UNIQUE (user_id, notification_id)
+      )
+    `)
     const userId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
     await pool.query(
       `INSERT INTO users
         (id, username, display_name, email, is_active, account_status, security_version,
          created_at, timezone, email_subscribed)
        VALUES ($1, $2, $3, $4, TRUE, 'active', 4, $5, $6, FALSE)`,
-      [userId, 'integration-user', '合成集成用户', 'integration@example.test', '2026-11-02T00:00:00Z', 'Asia/Shanghai'],
+      [userId, 'integration-user', '合成集成用户', 'integration@example.test', '2026-11-02T00:00:00.123456Z', 'Asia/Shanghai'],
     )
     await pool.query(
       'INSERT INTO user_bots (user_id, platform, enabled) VALUES ($1, $2, TRUE)',
@@ -159,6 +192,117 @@ test('Node auth, projects, and clients preserve owner boundaries in isolated Pos
       'INSERT INTO project_file_counts (project_id, file_count) VALUES ($1, 2), ($2, 99)',
       [activeProjectId, otherProjectId],
     )
+
+    const insertNotification = async (
+      title: string,
+      target: string,
+      createdAt: string,
+      options: { bubble?: boolean; persist?: boolean; expiresAt?: string | null } = {},
+    ) => {
+      const result = await pool.query<{ id: number }>(
+        `INSERT INTO site_notifications
+           (title, content, color, target, bubble, persist, bubble_expire_at, created_at)
+         VALUES ($1, $2, '#789abc', $3, $4, $5, $6, $7)
+         RETURNING id`,
+        [title, `content:${title}`, target, options.bubble ?? true, options.persist ?? true,
+          options.expiresAt ?? null, createdAt],
+      )
+      return result.rows[0]!.id
+    }
+    const registrationBoundaryId = await insertNotification(
+      'At registration timestamp', 'all', '2026-11-02T00:00:00.123456Z',
+    )
+    const beforeRegistrationBoundaryId = await insertNotification(
+      'One microsecond before registration', 'all', '2026-11-02T00:00:00.123455Z',
+    )
+    const preRegistrationId = await insertNotification('Before registration', 'all', '2026-11-01T08:00:00Z')
+    const sharedId = await insertNotification('Shared notice', 'all', '2026-11-04T08:00:00Z')
+    const targetedId = await insertNotification('Targeted notice', userId, '2026-11-05T08:00:00Z')
+    const otherTargetId = await insertNotification('Other target', otherUserId, '2026-11-06T08:00:00Z')
+    const transientId = await insertNotification('Transient bubble', 'all', '2026-11-07T08:00:00Z', { persist: false })
+    const expiredId = await insertNotification('Expired bubble', 'all', '2026-11-08T08:00:00Z', {
+      expiresAt: '2026-11-10T00:00:00Z',
+    })
+    const dismissedId = await insertNotification('Hidden notice', 'all', '2026-11-09T08:00:00Z')
+    const recentBubbleId = await insertNotification('Recent bubble', 'all', '2026-11-10T08:00:00Z', {
+      expiresAt: '2026-11-15T00:00:00Z',
+    })
+    await pool.query(
+      'INSERT INTO notification_reads (user_id, notification_id, read_at) VALUES ($1, $2, $3)',
+      [userId, targetedId, '2026-11-11T00:00:00Z'],
+    )
+    await pool.query(
+      'INSERT INTO notification_dismissals (user_id, notification_id, dismissed_at) VALUES ($1, $2, $3)',
+      [userId, dismissedId, '2026-11-11T00:00:00Z'],
+    )
+    const notificationsApp = createApp({
+      appName: 'Gugu',
+      isReady: async () => true,
+      userAuth: { secret, ...createUserRepository(pool) },
+      notifications: createNotificationOperations(pool),
+    })
+    try {
+      const headers = { authorization: `Bearer ${signedUserToken(secret, userId, 4)}` }
+      const list = await notificationsApp.inject({
+        method: 'GET', url: '/api/v1/notifications?limit=2', headers,
+      })
+      assert.equal(list.statusCode, 200, list.body)
+      assert.deepEqual(list.json(), [
+        {
+          id: recentBubbleId, title: 'Recent bubble', content: 'content:Recent bubble',
+          color: '#789abc', time: '2026-11-10T08:00:00+00:00', unread: true,
+        },
+        {
+          id: expiredId, title: 'Expired bubble', content: 'content:Expired bubble',
+          color: '#789abc', time: '2026-11-08T08:00:00+00:00', unread: true,
+        },
+      ])
+      const fullList = await notificationsApp.inject({
+        method: 'GET', url: '/api/v1/notifications?limit=100', headers,
+      })
+      const fullListIds = fullList.json().map((notification: { id: number }) => notification.id)
+      assert.equal(fullListIds.includes(registrationBoundaryId), true)
+      assert.equal(fullListIds.includes(beforeRegistrationBoundaryId), false)
+      assert.equal(fullListIds.includes(preRegistrationId), false)
+      assert.equal(fullListIds.includes(otherTargetId), false)
+      const bubble = await notificationsApp.inject({ method: 'GET', url: '/api/v1/notifications/bubble', headers })
+      assert.equal(bubble.statusCode, 200)
+      assert.deepEqual(bubble.json(), {
+        bubble: { id: recentBubbleId, title: 'Recent bubble', content: 'content:Recent bubble', color: '#789abc' },
+      })
+      await pool.query(
+        'INSERT INTO notification_reads (user_id, notification_id, read_at) VALUES ($1, $2, $3)',
+        [userId, recentBubbleId, '2026-11-11T00:00:00Z'],
+      )
+      const nextBubble = await notificationsApp.inject({ method: 'GET', url: '/api/v1/notifications/bubble', headers })
+      assert.deepEqual(nextBubble.json(), {
+        bubble: { id: transientId, title: 'Transient bubble', content: 'content:Transient bubble', color: '#789abc' },
+      })
+      const firstRead = await notificationsApp.inject({
+        method: 'POST', url: '/api/v1/notifications/read', headers, payload: { ids: [sharedId, sharedId] },
+      })
+      assert.equal(firstRead.statusCode, 200)
+      assert.deepEqual(firstRead.json(), { ok: true, marked: 1 })
+      const duplicateRead = await notificationsApp.inject({
+        method: 'POST', url: '/api/v1/notifications/read', headers, payload: { ids: [sharedId] },
+      })
+      assert.deepEqual(duplicateRead.json(), { ok: true, marked: 0 })
+      const markAll = await notificationsApp.inject({
+        method: 'POST', url: '/api/v1/notifications/read', headers, payload: { ids: [] },
+      })
+      assert.deepEqual(markAll.json(), { ok: true, marked: 4 })
+      const clear = await notificationsApp.inject({ method: 'DELETE', url: '/api/v1/notifications', headers })
+      assert.deepEqual(clear.json(), { ok: true, dismissed: 5 })
+      const afterClear = await notificationsApp.inject({ method: 'GET', url: '/api/v1/notifications', headers })
+      assert.deepEqual(afterClear.json(), [])
+      const preserved = await pool.query<{ count: string }>(
+        'SELECT count(*) AS count FROM site_notifications WHERE id = ANY($1::integer[])',
+        [[preRegistrationId, otherTargetId, transientId]],
+      )
+      assert.equal(preserved.rows[0]?.count, '3')
+    } finally {
+      await notificationsApp.close()
+    }
     core = await createPostgresRuntime({ url: databaseUrl!, schema, maxConnections: 2 })
     const projectApp = createApp({
       appName: 'Gugu',

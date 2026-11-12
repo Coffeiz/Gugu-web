@@ -10,7 +10,7 @@ interface UserRow {
   account_status: string | null
   security_version: number | null
   avatar: string | null
-  created_at: Date | null
+  created_at: string | null
   timezone: string | null
   email_subscribed: boolean | null
 }
@@ -23,7 +23,12 @@ export function createUserRepository(pool: Pool): {
     async lookupUser(userId) {
       const { rows } = await pool.query<UserRow>(
         `SELECT id::text, username, display_name, email, is_active, account_status,
-                security_version, avatar, created_at, timezone, email_subscribed
+                security_version, avatar,
+                to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS') ||
+                  CASE WHEN date_trunc('second', created_at) = created_at
+                       THEN '' ELSE '.' || to_char(created_at AT TIME ZONE 'UTC', 'US') END || '+00:00'
+                  AS created_at,
+                timezone, email_subscribed
          FROM users WHERE id = $1 LIMIT 1`,
         [userId],
       )

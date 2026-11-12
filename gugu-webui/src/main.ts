@@ -9,6 +9,7 @@ import { createUserRepository } from './users.js'
 import { createProjectFileCountListing, createProjectGetter, createProjectListing } from './projects.js'
 import { createClientOperations } from './clients.js'
 import { createEventOperations } from './events.js'
+import { createNotificationOperations } from './notifications.js'
 
 function createPool(config: WebUiConfig): Pool {
   return new Pool({
@@ -37,6 +38,7 @@ function createWebUiApp(config: WebUiConfig, pool: Pool, core: SqlDataRuntime) {
     getProject: createProjectGetter(core, pool),
     clients: createClientOperations(core),
     events: createEventOperations(pool),
+    notifications: createNotificationOperations(pool),
   })
 }
 

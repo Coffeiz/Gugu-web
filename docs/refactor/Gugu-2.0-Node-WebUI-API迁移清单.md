@@ -5,7 +5,7 @@
 ## 当前覆盖
 
 - 源码静态盘点：**390** 个字面路由操作，分布在 **57** 个模块。
-- Node 当前路由匹配：**9** 个 method/path（其中项目列表包含活动/归档/回收站查询变体）；其余 **381** 个待迁移。
+- Node 当前路由匹配：**13** 个 method/path（其中项目列表包含活动/归档/回收站查询变体）；其余 **377** 个待迁移。
 - `health` 与 `health/ready` 是 Node Host 自身端点，不属于 Python `/api/v1` 路由计数。
 - Node Host 配置了 Fastify `routerOptions.ignoreTrailingSlash`，用于兼容 Python 路由常见的带/不带尾斜杠调用形式。
 - 本表仅盘点 HTTP/WebSocket 路由；Agent 工具、Worker/调度、撤销副作用和数据迁移写入口需要另建清单，不能由 HTTP 路由数推断覆盖。
@@ -283,10 +283,10 @@
 | `backend/app/api/v1/mind.py` | `POST` | `/api/v1/mind/nodes/ref` | `create_ref_node` | 待迁移 |
 | `backend/app/api/v1/mind.py` | `POST` | `/api/v1/mind/notes` | `create_note` | 待迁移 |
 | `backend/app/api/v1/mind.py` | `POST` | `/api/v1/mind/relations` | `create_relation` | 待迁移 |
-| `backend/app/api/v1/notifications.py` | `DELETE` | `/api/v1/notifications/` | `clear_notifications` | 待迁移 |
-| `backend/app/api/v1/notifications.py` | `GET` | `/api/v1/notifications/` | `list_notifications` | 待迁移 |
-| `backend/app/api/v1/notifications.py` | `GET` | `/api/v1/notifications/bubble` | `latest_bubble` | 待迁移 |
-| `backend/app/api/v1/notifications.py` | `POST` | `/api/v1/notifications/read` | `mark_read` | 待迁移 |
+| `backend/app/api/v1/notifications.py` | `DELETE` | `/api/v1/notifications/` | `clear_notifications` | Node 已接入 |
+| `backend/app/api/v1/notifications.py` | `GET` | `/api/v1/notifications/` | `list_notifications` | Node 已接入 |
+| `backend/app/api/v1/notifications.py` | `GET` | `/api/v1/notifications/bubble` | `latest_bubble` | Node 已接入 |
+| `backend/app/api/v1/notifications.py` | `POST` | `/api/v1/notifications/read` | `mark_read` | Node 已接入 |
 | `backend/app/api/v1/notifications_admin.py` | `DELETE` | `/api/v1/admin/notifications/history/{nid}` | `delete_record` | 待迁移 |
 | `backend/app/api/v1/notifications_admin.py` | `GET` | `/api/v1/admin/notifications/history` | `history` | 待迁移 |
 | `backend/app/api/v1/notifications_admin.py` | `POST` | `/api/v1/admin/notifications/broadcast` | `broadcast` | 待迁移 |
@@ -411,6 +411,7 @@
 
 | method/path | 实现 | 主要回归 |
 | --- | --- | --- |
+| `GET /api/v1/notifications`, `GET /api/v1/notifications/bubble`, `POST /api/v1/notifications/read`, `DELETE /api/v1/notifications` | `gugu-webui/src/app.ts`, `src/notifications.ts` | `tests/notifications-route.test.ts`, isolated PostgreSQL integration |
 | `GET /api/v1/auth/me` | `gugu-webui/src/app.ts`, `src/auth.ts`, `src/users.ts` | `tests/auth-route.test.ts`, PostgreSQL integration |
 | `GET /api/v1/projects`, `GET /api/v1/projects/{pid}`, `GET /api/v1/projects/file-counts` | `gugu-webui/src/app.ts`, `src/projects.ts` | `tests/projects-route.test.ts`, PostgreSQL integration |
 | `GET /api/v1/clients`, `POST /api/v1/clients`, `DELETE /api/v1/clients/{cid}` | `gugu-webui/src/app.ts`, `src/clients.ts` | `tests/clients-route.test.ts`, PostgreSQL integration |

@@ -36,6 +36,13 @@ export interface EventOptions {
   get: (ownerId: string, eventId: number) => Promise<unknown | null>
 }
 
+export interface NotificationOptions {
+  list: (ownerId: string, userCreatedAt: Date | string, limit: number) => Promise<unknown[]>
+  latestBubble: (ownerId: string, userCreatedAt: Date | string) => Promise<unknown>
+  markRead: (ownerId: string, userCreatedAt: Date | string, ids: number[] | null) => Promise<number>
+  clear: (ownerId: string, userCreatedAt: Date | string) => Promise<number>
+}
+
 export interface WebUiOptions {
   appName: string
   isReady: () => Promise<boolean>
@@ -46,6 +53,7 @@ export interface WebUiOptions {
   getProject?: (ownerId: string, projectId: number) => Promise<unknown | null>
   clients?: ClientOptions
   events?: EventOptions
+  notifications?: NotificationOptions
 }
 
 function userResponse(user: PublicUserRecord) {
@@ -245,6 +253,54 @@ function registerEventRoutes(app: FastifyInstance, auth: UserAuthOptions, events
   })
 }
 
+function notificationOwnerCreatedAt(user: PublicUserRecord) {
+  if (!user.createdAt) throw new Error('用户注册时间缺失')
+  return user.createdAt
+}
+
+function parseNotificationRead(body: unknown): number[] | null | undefined {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return undefined
+  const ids = (body as Record<string, unknown>).ids
+  if (ids === undefined || ids === null) return null
+  if (!Array.isArray(ids)) return undefined
+  const parsed: number[] = []
+  for (const id of ids) {
+    const value = typeof id === 'number' ? id : typeof id === 'string' && /^-?\d+$/.test(id) ? Number(id) : Number.NaN
+    if (!Number.isSafeInteger(value)) return undefined
+    parsed.push(value)
+  }
+  return parsed
+}
+
+function registerNotificationRoutes(app: FastifyInstance, auth: UserAuthOptions, notifications: NotificationOptions) {
+  app.get('/api/v1/notifications', async (request, reply) => {
+    const user = await authenticateRequest(request, reply, auth)
+    if (!user) return
+    const rawLimit = queryInteger(request.query as Record<string, unknown>, 'limit')
+    if (rawLimit === null) return reply.code(422).send({ detail: 'limit 必须是整数' })
+    return notifications.list(user.id, notificationOwnerCreatedAt(user), rawLimit ?? 30)
+  })
+  app.get('/api/v1/notifications/bubble', async (request, reply) => {
+    const user = await authenticateRequest(request, reply, auth)
+    if (!user) return
+    return notifications.latestBubble(user.id, notificationOwnerCreatedAt(user))
+  })
+  app.post('/api/v1/notifications/read', async (request, reply) => {
+    const user = await authenticateRequest(request, reply, auth)
+    if (!user) return
+    const ids = parseNotificationRead(request.body)
+    if (ids === undefined) return reply.code(422).send({ detail: '通知已读请求无效' })
+    const marked = await notifications.markRead(user.id, notificationOwnerCreatedAt(user), ids)
+    return { ok: true, marked }
+  })
+  app.delete('/api/v1/notifications', async (request, reply) => {
+    const user = await authenticateRequest(request, reply, auth)
+    if (!user) return
+    const dismissed = await notifications.clear(user.id, notificationOwnerCreatedAt(user))
+    return { ok: true, dismissed }
+  })
+}
+
 export function createApp(options: WebUiOptions) {
   const app = Fastify({ logger: false, routerOptions: { ignoreTrailingSlash: true } })
   app.get('/health', async () => ({ status: 'ok', app: options.appName }))
@@ -264,6 +320,7 @@ export function createApp(options: WebUiOptions) {
     if (options.getProject) registerProjectGetRoute(app, options.userAuth, options.getProject)
     if (options.clients) registerClientRoutes(app, options.userAuth, options.clients)
     if (options.events) registerEventRoutes(app, options.userAuth, options.events)
+    if (options.notifications) registerNotificationRoutes(app, options.userAuth, options.notifications)
   }
   return app
 }
