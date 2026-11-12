@@ -57,4 +57,4 @@ pnpm --filter @gugu/core test:golden
 
 `GUGU_CORE_GOLDEN_PYTHON` 指向安装了参考包的解释器。PostgreSQL 回归只在显式提供 `GUGU_CORE_TEST_POSTGRES_URL` 时连接隔离测试库，使用随机临时 schema；不要提供用户部署数据库。
 
-细节见 [迁移方案](../docs/refactor/Gugu-Core迁移Node与TypeScript方案.md)、[本轮实现记录](../docs/refactor/Gugu-Core与桌面Node迁移实现记录.md)。
+目标架构、目录职责、迁移 checklist 与当前回归测试对齐任务统一见 [架构与迁移任务清单](../docs/refactor/Gugu-2.0-架构与迁移任务清单.md)。历史方案和验证记录见 [归档索引](../docs/refactor/_archive/gugu-2.0/README.md)。

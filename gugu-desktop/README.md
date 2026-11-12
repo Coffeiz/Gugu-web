@@ -43,4 +43,4 @@ pnpm --dir gugu-desktop run smoke:mxc -- --compare-ui
 
 可信 Node Core 在沙箱外访问自己的数据库；不可信脚本、MCP、PTY 必须走执行端口。此前严格禁用 UI 时的 MXC Node 初始化兼容问题仍未解除，默认策略未放宽。
 
-本轮验证范围见 [实现记录](../docs/refactor/Gugu-Core与桌面Node迁移实现记录.md)。CI 覆盖 Windows x64、macOS arm64/x64 的 Node/原生 Host 与平台构建；正式 Developer ID/Authenticode、Apple 公证、Windows ARM64、目标最低 OS 实机及完整 Agent 工具链另行验收。当前 ad-hoc/未签名验收制品不等于商业发行版。
+当前架构、迁移状态和平台验收范围见 [统一任务清单](../docs/refactor/Gugu-2.0-架构与迁移任务清单.md)，MXC 原始实测见 [历史验证记录](../docs/refactor/_archive/gugu-2.0/Gugu-Desktop与MXC验证.md)。CI 覆盖 Windows x64、macOS arm64/x64 的 Node/原生 Host 与平台构建；正式 Developer ID/Authenticode、Apple 公证、Windows ARM64、目标最低 OS 实机及完整 Agent 工具链另行验收。当前 ad-hoc/未签名验收制品不等于商业发行版。

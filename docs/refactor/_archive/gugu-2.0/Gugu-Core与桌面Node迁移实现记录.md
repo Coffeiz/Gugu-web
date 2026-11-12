@@ -1,7 +1,10 @@
 # Core 与桌面 Node 首批迁移实现
 
+> **历史归档（2026-11-12）**：当前架构、完成状态和任务统一见 [架构与迁移任务清单](../../Gugu-2.0-架构与迁移任务清单.md)。
+> 本文保留原时点的设计/实现/验证，不维护实时状态；正文中的旧技术路线和待办不能作为当前实施依据。
+
 > 日期：2026-11-11。范围按用户确认的 N0–N2 首批切片执行：已有 Core 数据能力与桌面 Host。Web、Agent、RAG 等按后续阶段迁移。
-> 方案：[Node/TS 迁移方案](Gugu-Core迁移Node与TypeScript方案.md)。输入清单：[全量依赖迁移矩阵](Gugu-2.0-Python-to-Node-Dependency-Migration.md)。
+> 方案：[Node/TS 迁移方案](Gugu-Core迁移Node与TypeScript方案.md)。输入清单：[全量依赖迁移矩阵](../../Gugu-2.0-Python-to-Node-Dependency-Migration.md)。
 
 ## 本轮落地
 

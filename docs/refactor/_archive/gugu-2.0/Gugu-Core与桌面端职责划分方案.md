@@ -1,11 +1,14 @@
 # Gugu Core 与桌面端职责划分方案
 
+> **历史归档（2026-11-12）**：当前架构、完成状态和任务统一见 [架构与迁移任务清单](../../Gugu-2.0-架构与迁移任务清单.md)。
+> 本文保留原时点的设计/实现/验证，不维护实时状态；正文中的旧技术路线和待办不能作为当前实施依据。
+
 > **文档类型**：架构方案
 > **状态**：架构持续评审；顶层 Core、项目/联系人数据底座及桌面壳已有实验性实现
 > **创建及更新**：2026-11-10 / 2026-11-11
 > **代码基线**：`main` 的 1.7.9 squash 提交 `c7f3f6de`，与 `dev` 的 `11757f15` 文件树一致
 > **评审目标**：独立 `v2.0` 分支
-> **历史方案**：[Gugu Core 多端统一架构重构方案](./Gugu-Core多端统一架构重构方案.md)
+> **历史方案**：[Gugu Core 多端统一架构重构方案](Gugu-Core多端统一架构重构方案.md)
 
 首批代码范围与未完成验收见 [Core 项目数据切片实现说明](Gugu-Core项目数据切片实现说明.md)。
 
@@ -68,15 +71,15 @@ Mobile 的入口与 Runtime 是两种角色，可以在同一个 App 内组合�
 
 | 当前入口 | 已有职责与耦合 | 对拆分的影响 |
 | --- | --- | --- |
-| [run/preparation.py](../../backend/agent/run/preparation.py)、[run/finalization.py](../../backend/agent/run/finalization.py) | 已共享准备和收尾，但仍读取应用配置、数据库、权限及通知实现 | 保留统一生命周期，将宿主依赖改为显式装配 |
-| [app/db/session.py](../../backend/app/db/session.py)、[app/models](../../backend/app/models/__init__.py)、[projects.py](../../backend/app/services/projects.py) | 连接池、迁移、ORM 与业务查询仍处于应用目录 | 数据实现应成为共用 Core 的一部分，避免各 Host 复制 |
-| [events.py](../../backend/app/core/events.py)、[runtime_state.py](../../backend/agent/runtime/runtime_state.py) | 用户级通知、revision、取消及运行协调直接使用 Redis | 先区分持久状态、协调状态与即时通知，再提供运行后端 |
-| [RAG README](../../backend/agent/rag/README.md) | 当前检索、投影、排序及索引生命周期为 Python/Cython；索引可重建 | 复用当前引擎，不恢复历史 TypeScript Data Runtime |
-| [StorageBackend](../../backend/app/services/storage/__init__.py)、[FileService](../../backend/app/services/storage/file_service/files.py) | 文件字节访问、Rootless 权限、对象存储及元数据编排交织 | 业务规则与物理文件实现分别归属 Core 和 Host |
-| [filesystem_authorization.py](../../backend/app/services/filesystem_authorization.py)、[filesystem_policy.py](../../backend/agent/tools/filesystem_policy.py) | Shell 的 workspace 授权与文件库工具规则不同 | 拆分时保留现有 Web 行为，不能把两个授权范围合并 |
-| [Sandbox](../../backend/agent/sandbox/client.py)、[Terminal](../../backend/agent/terminal/contracts.py)、[MCP stdio](../../backend/agent/mcp/stdio_client.py) | 当前执行连接依赖 sandboxd、Unix socket 和容器环境 | Shell、PTY、MCP stdio 共用平台执行入口，避免旁路 |
-| [文件监听桥](../../backend/app/services/filesync/ts_sidecar.py) | Linux 使用 Python watcher，其他平台当前分支走 Node 制品 | 桌面发布必须显式处理 watcher，不能只打包 Python 就宣称可用 |
-| [数据迁移 PRD](../prds/PRD-DATA-1-用户数据可移植导出与桌面迁移.md) | Web 可移植归档已实现，桌面原生导入器未实现；长期记忆还包含对象文件 | 沿用归档契约，不以复制数据库代替完整数据迁移 |
+| [run/preparation.py](../../../../backend/agent/run/preparation.py)、[run/finalization.py](../../../../backend/agent/run/finalization.py) | 已共享准备和收尾，但仍读取应用配置、数据库、权限及通知实现 | 保留统一生命周期，将宿主依赖改为显式装配 |
+| [app/db/session.py](../../../../backend/app/db/session.py)、[app/models](../../../../backend/app/models/__init__.py)、[projects.py](../../../../backend/app/services/projects.py) | 连接池、迁移、ORM 与业务查询仍处于应用目录 | 数据实现应成为共用 Core 的一部分，避免各 Host 复制 |
+| [events.py](../../../../backend/app/core/events.py)、[runtime_state.py](../../../../backend/agent/runtime/runtime_state.py) | 用户级通知、revision、取消及运行协调直接使用 Redis | 先区分持久状态、协调状态与即时通知，再提供运行后端 |
+| [RAG README](../../../../backend/agent/rag/README.md) | 当前检索、投影、排序及索引生命周期为 Python/Cython；索引可重建 | 复用当前引擎，不恢复历史 TypeScript Data Runtime |
+| [StorageBackend](../../../../backend/app/services/storage/__init__.py)、[FileService](../../../../backend/app/services/storage/file_service/files.py) | 文件字节访问、Rootless 权限、对象存储及元数据编排交织 | 业务规则与物理文件实现分别归属 Core 和 Host |
+| [filesystem_authorization.py](../../../../backend/app/services/filesystem_authorization.py)、[filesystem_policy.py](../../../../backend/agent/tools/filesystem_policy.py) | Shell 的 workspace 授权与文件库工具规则不同 | 拆分时保留现有 Web 行为，不能把两个授权范围合并 |
+| [Sandbox](../../../../backend/agent/sandbox/client.py)、[Terminal](../../../../backend/agent/terminal/contracts.py)、[MCP stdio](../../../../backend/agent/mcp/stdio_client.py) | 当前执行连接依赖 sandboxd、Unix socket 和容器环境 | Shell、PTY、MCP stdio 共用平台执行入口，避免旁路 |
+| [文件监听桥](../../../../backend/app/services/filesync/ts_sidecar.py) | Linux 使用 Python watcher，其他平台当前分支走 Node 制品 | 桌面发布必须显式处理 watcher，不能只打包 Python 就宣称可用 |
+| [数据迁移 PRD](../../../prds/PRD-DATA-1-用户数据可移植导出与桌面迁移.md) | Web 可移植归档已实现，桌面原生导入器未实现；长期记忆还包含对象文件 | 沿用归档契约，不以复制数据库代替完整数据迁移 |
 
 当前 `backend/app/core` 是历史目录名，不等于本方案的 Gugu Core。新边界按依赖和职责判断，不直接整体搬走该目录。
 
@@ -340,7 +343,7 @@ Desktop 是默认家节点，表示默认的本地资源归属和任务路由偏
 
 Host Broker 在每次调用时重新校验授权和策略。能力协商只说明能否执行，不授予权限。请求了平台不能强制的网络、文件或资源约束时返回明确错误，不静默降低隔离强度。
 
-Shell、PTY、MCP stdio 和第三方执行型插件都必须经过该入口。不能只限制 Shell，却让 MCP 直接 `Popen`；也不能把当前 [LocalWorkspaceExecutor](../../backend/agent/sandbox/local_executor.py) 的路径/参数预检认作 OS 沙箱，它自身已声明不提供不受信代码的安全隔离。
+Shell、PTY、MCP stdio 和第三方执行型插件都必须经过该入口。不能只限制 Shell，却让 MCP 直接 `Popen`；也不能把当前 [LocalWorkspaceExecutor](../../../../backend/agent/sandbox/local_executor.py) 的路径/参数预检认作 OS 沙箱，它自身已声明不提供不受信代码的安全隔离。
 
 ## 8. 桌面承载与单用户
 
@@ -469,7 +472,7 @@ P6 / P7 是目标产品阶段，不因本次边界调整就提前移除 SaaS 首
 
 ### 12.1 迁移原则
 
-沿用 [PRD-DATA-1](../prds/PRD-DATA-1-用户数据可移植导出与桌面迁移.md) 的版本化加密归档和字段白名单。Web 用户导出的业务数据映射到桌面本地所有者，重建实体 ID/引用；不导入站点身份、密码、凭据、确认授权、旧运行租约、Provider 私有推理状态或旧机器路径。
+沿用 [PRD-DATA-1](../../../prds/PRD-DATA-1-用户数据可移植导出与桌面迁移.md) 的版本化加密归档和字段白名单。Web 用户导出的业务数据映射到桌面本地所有者，重建实体 ID/引用；不导入站点身份、密码、凭据、确认授权、旧运行租约、Provider 私有推理状态或旧机器路径。
 
 归档迁移是一次性数据转移，云同步是持续复制与冲突处理，二者共用领域映射但不混用协议。同步建议使用稳定实体标识、明确的版本 / 游标与删除标记；冲突规则按领域确定，不能对所有记录直接采用最后写入覆盖，也不能把本机授权随任务或 workspace 记录复制到云端。
 

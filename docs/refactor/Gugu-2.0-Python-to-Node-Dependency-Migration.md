@@ -1,5 +1,9 @@
 # Gugu 2.0 — Python → Node.js / TypeScript 全量依赖迁移矩阵
 
+> **专题参考**：整体架构、目录职责、完成状态与当前任务统一见 [架构与迁移任务清单](Gugu-2.0-架构与迁移任务清单.md)。本表不作为另一份实施路线或完成率清单。
+> **2026-11-12 对齐**：首批 Core 已采用 Kysely、Zod、better-sqlite3、pg 与 Node 26；Drizzle 等并列项保留为原始候选，不代表同时采用。其他依赖只有存在真实迁移调用链及验收结果时才能标为已替换。
+> 下文的 PR #116 和 Python 包位置是盘点基线；原 Python Core/Desktop 包当前分别位于 `compat/core-python/`、`compat/desktop-python/`。仍有调用方的 Python 依赖不能直接删除。
+
 > 状态：技术迁移计划草案（待 PoC 与回归确认）\
 > 基准：`Coffeiz/Gugu-web` PR #116，`codex/core-data-desktop-v2`，提交 `020ed06100bbd1f946ee2f277afa2b537fd64677`\
 > 编制日期：2026-11-11\
