@@ -21,6 +21,114 @@ export function dataContract(label: string, create: () => Promise<ContractFixtur
     afterEach(async () => {
       await fixture?.close()
     })
+    it('同内容收据忽略字段顺序，方法或内容变化冲突且不产生额外数据', async () => {
+      const { runtime, owner } = fixture,
+        context = dataContext(owner),
+        operation = randomUUID(),
+        params = { name: '仅一次联系人', notes: '原始资料' }
+      const created = await runtime.operation(
+        context,
+        operation,
+        'clients.create',
+        params,
+        (data) => data.clients.create(params),
+      )
+      const reordered = { notes: '原始资料', name: '仅一次联系人' }
+      expect(
+        await runtime.operation(context, operation, 'clients.create', reordered, (data) =>
+          data.clients.create(reordered),
+        ),
+      ).toEqual(created)
+      for (const changed of [
+        { method: 'clients.update', params },
+        { method: 'clients.create', params: { ...params, notes: '不同资料' } },
+      ])
+        await expect(
+          runtime.operation(context, operation, changed.method, changed.params, (data) =>
+            data.clients.create({ name: '不应创建' }),
+          ),
+        ).rejects.toMatchObject({ code: 'conflict' })
+      expect(await runtime.receipt(context, operation)).toEqual({
+        method: 'clients.create',
+        result: created,
+      })
+      expect(await runtime.transaction(context, (data) => data.clients.list())).toEqual([
+        created,
+      ])
+    })
+    it('不同所有者可以使用相同操作 UUID，各自收据和持久数据互不泄漏', async () => {
+      const { runtime, owner, other } = fixture,
+        context = dataContext(owner),
+        stranger = dataContext(other),
+        operation = randomUUID()
+      const first = await runtime.operation(
+        context,
+        operation,
+        'clients.create',
+        { name: '甲的联系人' },
+        (data) => data.clients.create({ name: '甲的联系人' }),
+      )
+      expect(await runtime.receipt(stranger, operation)).toBeNull()
+      const second = await runtime.operation(
+        stranger,
+        operation,
+        'clients.create',
+        { name: '乙的联系人' },
+        (data) => data.clients.create({ name: '乙的联系人' }),
+      )
+      expect(second.id).not.toBe(first.id)
+      for (const [scope, record] of [
+        [context, first],
+        [stranger, second],
+      ] as const) {
+        expect(await runtime.receipt(scope, operation)).toEqual({
+          method: 'clients.create',
+          result: record,
+        })
+        expect(await runtime.transaction(scope, (data) => data.clients.list())).toEqual([
+          record,
+        ])
+      }
+    })
+    it('CAS 失败不消耗操作 UUID，重读后可提交，成功重放不再次递增版本', async () => {
+      const { runtime, owner } = fixture,
+        context = dataContext(owner),
+        operation = randomUUID()
+      const initial = await runtime.transaction(context, (data) =>
+        data.projects.create({ name: '初始计划' }),
+      )
+      const latest = await runtime.transaction(context, (data) =>
+        data.projects.update(initial.id, 1, { name: '其他修改' }),
+      )
+      await expect(
+        runtime.operation(
+          context,
+          operation,
+          'projects.rename',
+          { id: initial.id, version: 1, name: '过期修改' },
+          (data) => data.projects.update(initial.id, 1, { name: '过期修改' }),
+        ),
+      ).rejects.toMatchObject({ code: 'conflict' })
+      expect(await runtime.receipt(context, operation)).toBeNull()
+      expect(await runtime.transaction(context, (data) => data.projects.list())).toEqual([
+        latest,
+      ])
+      const params = { id: latest.id, version: latest.version, name: '最终计划' }
+      const retry = () =>
+        runtime.operation(context, operation, 'projects.rename', params, (data) =>
+          data.projects.update(params.id, params.version, { name: params.name }),
+        )
+      const committed = await retry()
+      expect(committed).toMatchObject({ name: '最终计划', version: 3 })
+      expect(await retry()).toEqual(committed)
+      expect(await runtime.receipt(context, operation)).toEqual({
+        method: 'projects.rename',
+        result: committed,
+      })
+      expect(await runtime.transaction(context, (data) => data.projects.list())).toEqual([
+        committed,
+      ])
+    })
     it('联系人更新只改变提交的字段，显式 null 清空且重读结果持久化', async () => {
       const { runtime, owner } = fixture,
         context = dataContext(owner)

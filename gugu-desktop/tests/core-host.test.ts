@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join, dirname, resolve } from 'node:path'
 import { createHash } from 'node:crypto'
+import { pathToFileURL } from 'node:url'
 import {
   CoreHost,
   DesktopError,
@@ -36,6 +37,102 @@ function fake(response: string) {
   return CoreHost.launch(process.execPath, entry, join(root, 'core.db'))
 }
 describe('Electron 与独立 Node Core 的真实边界', () => {
+  it('第二个 Host 拒绝打开同一数据库，原 Host 仍可写入且释放后可重新接管', async () => {
+    const root = directory(),
+      database = join(root, 'core.db'),
+      entry = resolve(
+        import.meta.dirname,
+        '../../gugu-core/dist/runtime/transport/stdio.js',
+      )
+    const first = await CoreHost.launch(process.execPath, entry, database)
+    let unexpected: CoreHost | undefined
+    try {
+      await first.request('projects.create', { name: '接管前计划' })
+      await expect(
+        CoreHost.launch(process.execPath, entry, database).then((host) => {
+          unexpected = host
+          return host
+        }),
+      ).rejects.toMatchObject({ code: 'database_in_use' })
+      await first.request('clients.create', { name: '拒绝第二实例后仍可写入' })
+      expect(await first.request('projects.list')).toMatchObject([{ name: '接管前计划' }])
+    } finally {
+      await unexpected?.close()
+      await first.close()
+    }
+    const reopened = await CoreHost.launch(process.execPath, entry, database)
+    try {
+      expect(await reopened.request('projects.list')).toMatchObject([
+        { name: '接管前计划' },
+      ])
+      expect(await reopened.request('clients.list')).toMatchObject([
+        { name: '拒绝第二实例后仍可写入' },
+      ])
+    } finally {
+      await reopened.close()
+    }
+  })
+  it('实际提交后丢失回包保留操作 UUID，重启仅查询收据即可恢复且不重复写入', async () => {
+    const root = directory(),
+      database = join(root, 'core.db'),
+      entry = join(root, 'commit-drop.mjs'),
+      local = pathToFileURL(
+        resolve(import.meta.dirname, '../../gugu-core/dist/runtime/local.js'),
+      ).href
+    writeFileSync(
+      entry,
+      `
+      import {createInterface} from 'node:readline';
+      const {LocalRuntime} = await import(${JSON.stringify(local)});
+      const database = process.argv[process.argv.indexOf('--database') + 1];
+      const runtime = await LocalRuntime.initialize(database, {exclusive:true});
+      process.stdout.write(JSON.stringify({v:2,event:'ready',schema:'3',capabilities:['operation_receipts']})+'\\n');
+      for await (const line of createInterface({input:process.stdin})) {
+        const request = JSON.parse(line);
+        await runtime.call(request.method, request.params, {operationId:request.operation_id});
+        await runtime.close();
+        process.exit(23);
+      }
+    `,
+    )
+    const host = await CoreHost.launch(process.execPath, entry, database)
+    let operation: string | undefined
+    try {
+      const failure: unknown = await host
+        .request('projects.create', { name: '已提交但无回包' })
+        .catch((error: unknown) => error)
+      expect(failure).toBeInstanceOf(DesktopError)
+      if (!(failure instanceof DesktopError)) throw new Error('未收到可恢复的桌面错误')
+      expect(failure).toMatchObject({
+        code: 'unknown_result',
+        operationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      })
+      operation = failure.operationId
+      await expect(
+        host.request('projects.create', { name: '不得自动重放' }),
+      ).rejects.toMatchObject({ code: 'closed' })
+    } finally {
+      await host.close()
+    }
+    const reopened = await CoreHost.launch(
+      process.execPath,
+      resolve(import.meta.dirname, '../../gugu-core/dist/runtime/transport/stdio.js'),
+      database,
+    )
+    try {
+      const receipt = await reopened.request<{ method: string; result: { name: string } }>(
+        'operations.get',
+        { operation_id: operation },
+      )
+      expect(receipt).toMatchObject({
+        method: 'projects.create',
+        result: { name: '已提交但无回包', version: 1 },
+      })
+      expect(await reopened.request('projects.list')).toEqual([receipt.result])
+    } finally {
+      await reopened.close()
+    }
+  })
   it('排队请求固定调用时的参数快照，不受随后对象修改影响', async () => {
     const host = await fake('({v:2,id:request.id,result:request.params})')
     try {
