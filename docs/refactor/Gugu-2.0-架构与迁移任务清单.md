@@ -12,7 +12,7 @@
 ### 1.1 已确定的方向
 
 - 业务领域、应用用例、统一数据运行时和 Agent 编排逐步集中到顶层 `gugu-core/`，目标语言为 TypeScript，完整桌面/服务端 Runtime 由 Node 承载。
-- `gugu-desktop/` 使用 Electron + TypeScript 装配桌面 Host，替换现有 Tauri 窗口与 Rust IPC 层；原生执行 Adapter 可保留独立 Rust helper。`gugu-saas/` 是未来的服务端 Host 目录，具备独立构建边界后可迁入私有仓库。Core 不反向依赖 SaaS 或 Electron 源码。
+- `gugu-desktop/` 使用 Electron + TypeScript 装配桌面 Host，替换现有 Tauri 窗口与 Rust IPC 层。可复用的执行契约、策略与平台适配收敛到 Core 的 `agent/executor/`；端侧 Host 注入授权与原生后端，必要时使用独立原生 helper。`gugu-saas/` 是未来的服务端 Host 目录，具备独立构建边界后可迁入私有仓库。Core 不反向依赖 SaaS 或 Electron 源码。
 - `frontend/` 暂时保留，共享现有 Vue UI，不在本轮重命名或整体搬迁。
 - macOS、Windows 桌面采用本地优先、应用内单用户；Linux/NAS 与 SaaS 保留多用户。桌面是默认家节点，SaaS 不是必经中转。
 - SaaS 长期以多用户 DB、云同步及相应消息/任务路由为职责，不持有用户 FS，也不装配本机用户目录、watcher 或通用 Shell。首版可保留旧 FS 兼容链路，须完成数据去向和恢复验收后再退出。
@@ -56,8 +56,9 @@ flowchart LR
     Main -->|私有 NDJSON v2| Core["随包 Node 26：独立 Core 进程"]
     Core --> Worker["SQLite Worker：完整业务事务"]
     Worker --> DB[("本地 SQLite")]
-    Core -->|平台 Port 经 Host 路由| Main
-    Main --> Broker["原生 Broker：Windows MXC / macOS Adapter"]
+    Core --> Executor["Core Executor：契约、策略与可选平台适配"]
+    Executor -->|Host 注入的原生后端与授权| Broker["端侧 Broker：Windows MXC / macOS Adapter"]
+    Main -. 注入能力 .-> Core
     Broker --> Task["授权范围内的不可信工具进程"]
 ```
 
@@ -65,14 +66,17 @@ flowchart LR
 - **Main**：管理窗口、单实例、菜单、系统对话框、私有数据位置、授权、子进程及退出回收；将现有 Rust Host 的白名单、完整性校验、有界通信、未知结果恢复等契约迁入 TS。业务事务仍由 Core 执行。主进程与渲染进程职责依据 [Electron 进程模型](https://www.electronjs.org/docs/latest/tutorial/process-model)。
 - **Core 进程**：首个 Electron 版本继续随包独立 Node 26，通过固定可执行路径、固定参数和 `shell: false` 启动，清理环境注入；复用现有 NDJSON v2、Worker、schema 3 和操作收据。Core 不导入 Electron，不在 UI/Main 执行同步数据库工作，不启动 localhost HTTP 服务或依赖系统 PATH。
 - **运行时版本与 ABI**：Electron 自带 Node 的版本不等于 Core 声明的 Node 26。本阶段保留独立 Node，接受新增包体成本并纳入 N0 预算；`better-sqlite3` 仅在独立 Node 的 Worker 加载，按该 Node ABI 和目标架构装配。未来若改为 Electron `utilityProcess`，须先验证内嵌 Node、Core engines 和原生模块 ABI，再单独决策；启动失败不能自动切换运行时。Electron 原生模块的 ABI 差异见 [官方说明](https://www.electronjs.org/docs/latest/tutorial/using-native-node-modules)。
-- **原生 Broker**：MXC/macOS 隔离能力保留端侧 Port，经 Host 校验后调用固定原生 helper；从 Tauri command 中抽离平台实现，helper 使用版本化、有界协议并返回实际可落实的能力。Electron 渲染沙箱不提供 Agent 工具所需的文件/网络/进程隔离，也不能据此放宽现有 MXC 策略。
-- **装配与发行**：目标使用 Electron Forge 构建/打包，复用现有 Core 制品与冒烟契约，固定 Electron/Forge 版本及平台矩阵后再改锁文件。UI/Main/Preload 可放 ASAR，独立 Node、Core/Worker、生产依赖及原生 helper 放真实资源目录；独立 Node 不依赖 Electron 的 ASAR 虚拟文件系统。Forge 的 pnpm 依赖收集约束在隔离装配目录验证，避免修改整个仓库的依赖布局。参见 [Forge](https://www.electronforge.io/) 与 [ASAR 限制](https://www.electronjs.org/docs/latest/tutorial/asar-archives)。
+- **Executor / 原生 Broker**：Core 的 `agent/executor/` 定义执行请求、确认/取消、策略与能力协商，并提供可选的 MXC/平台适配；授权材料、真实目录和可用原生后端由 Host 注入。`mxc.ts` 封装 SDK 或版本化 native bridge 调用，不依赖 Electron/Tauri；`platform.ts` 仅选择已授权且能落实策略的 Adapter。必要的原生 helper 保持有界协议和能力校验。桌面 `sandbox/diagnostics.ts` 只负责探测与脱敏诊断，不再复制执行策略或另建业务执行器。Electron 渲染沙箱不能据此替代 OS 隔离或放宽 MXC 策略。
+- **装配与发行**：按 `electron-builder.yml` 使用 **electron-builder**，由 `scripts/package.ts` 装配 Core 制品、目标架构依赖与许可证，并生成安装包；`scripts/smoke.ts` 运行独立制品冒烟。固定 Electron、electron-builder 及后续更新依赖的稳定版本后再改锁文件。UI/Main/Preload 可放 ASAR；独立 Node、Core/Worker、生产依赖及原生 helper 通过真实资源目录分发，独立 Node 不依赖 Electron 的 ASAR 虚拟文件系统。pnpm workspace 依赖收集、资源摘要和安装后路径必须实测。参见 [electron-builder 稳定版配置](https://www.electron.build/v26/docs/configuration/) 与 [ASAR 限制](https://www.electronjs.org/docs/latest/tutorial/asar-archives)。
+- **更新**：`main/updater.ts` 管理版本检查、下载/校验及用户确认安装；调用 `lifecycle.ts` 停止接收写入、收敛未完成操作并退出 Core 后再安装。发行签名、更新来源校验、失败后的可启动版本及数据 schema 回滚分别验收；验证版不默认开启生产更新通道。后续可接入 `electron-updater`，具体格式及平台要求按 [官方更新文档](https://www.electron.build/v26/docs/features/auto-update/) 冻结。
 
 替换窗口壳不升级数据 schema。Electron 必须复用既有稳定 owner 和数据位置；若两种壳的数据目录规则不同，须显式停写、备份、确认并验证搬迁，不能启动成空库。迁移期两种壳不得同时写同一库；新壳的等价回归和打包验收通过后才移除 Tauri 依赖、构建配置及旧 IPC 桥。
 
+<a id="directory-plan"></a>
+
 ## 2. 目标目录与职责
 
-下列是最终组织方向，`〔规划〕` 目录尚不存在或尚未迁入对应能力；不能根据目录规划勾选完成状态。
+按本轮确定的目录组织如下。`〔规划〕` 表示目录/文件尚不存在或尚未迁入对应能力；本轮仅补文档，不创建空壳模块，也不根据目录规划勾选实现完成。
 
 ```text
 gugu-core/                         # 公开、可独立构建的 TS Core
@@ -91,34 +95,46 @@ gugu-core/                         # 公开、可独立构建的 TS Core
     runtime/
       local.ts                     # Node Host 的 Worker 客户端与有界请求生命周期
       worker.ts                    # 完整用例排队执行；不按每条 SQL 做 RPC
-      stdio.ts                     # 受限、版本化 NDJSON 传输
       commands.ts                  # 命令分派与共用参数边界
+      transport/                   # 〔规划〕独立传输适配，不放业务分派
+        stdio.ts                   # 〔规划〕迁入现有 NDJSON v2；保留限额和错误契约
+        ipc.ts                     # 〔规划〕可注入消息端口的进程 IPC；不导入 Electron
       jobs/                        # 〔规划〕持久 Job、租约、恢复及调度
-    agent/                         # 〔规划〕Agent 状态机、Provider、上下文与工具编排
+    agent/                         # 〔规划〕Agent 能力逐域迁移
+      harness/                     # 〔规划〕Run 状态机、Canonical 历史、上下文与流式编排
+      providers/                   # 〔规划〕模型协议、事件映射、用量和错误契约
+      tools/                       # 〔规划〕工具定义、参数校验、确认与执行协调
+      executor/                    # 〔规划〕执行边界；可移植契约与可选 Node/原生适配分离
+        contracts.ts               # 〔规划〕请求、结果、能力、取消与 native bridge 契约
+        policy.ts                  # 〔规划〕由可信授权计算执行限制，缺能力即拒绝
+        mxc.ts                     # 〔规划〕Windows MXC 适配；由 Host 注入后端与授权
+        platform.ts                # 〔规划〕按能力选择适配器，不隐式提升权限或回退宿主
   tests/                           # 独立 Core 的回归；T1 再按类型整理
 gugu-desktop/
   src/                             # 〔规划〕Electron Host，不放领域/数据库实现
     main/
-      index.ts                     # 〔规划〕应用、窗口、单实例与退出生命周期
-      core-host.ts                 # 〔规划〕随包 Node 启停、NDJSON、完整性与恢复提示
-      ipc.ts                       # 〔规划〕调用来源、DTO、能力和可信身份校验
-      platform/                    # 〔规划〕FS、凭据、watcher 与执行 Broker 装配
-    preload/index.ts               # 〔规划〕最小 contextBridge API；无通用 IPC 透传
-    shared/desktop-ipc.ts           # 〔规划〕桌面桥协议；不泄漏 Electron 到 Core
-  native/                          # 〔规划〕从 Tauri 抽离的原生隔离 helper
-  forge.config.ts                  # 〔规划〕Electron 打包、资源、签名与平台制品
-  resources/core-sidecar/           # 〔规划〕生成资源，不入 Git；固定 Node + Core/Worker
-  scripts/                         # 现有制品/冒烟/MXC 脚本；路径与装配待适配 Electron
-  src-tauri/                       # 现有验证实现；Electron 等价验收后移除壳层
+      index.ts                     # 〔规划〕组合各模块、注册应用入口与桥接
+      windows.ts                   # 〔规划〕窗口、安全配置、导航与窗口来源管理
+      core-host.ts                 # 〔规划〕可信 IPC 边界、随包 Core 通信与完整性/恢复
+      lifecycle.ts                 # 〔规划〕单实例、Core 启停、休眠/退出和资源回收
+      updater.ts                   # 〔规划〕更新检查、制品校验、确认安装与恢复
+    preload/
+      index.ts                     # 〔规划〕最小 contextBridge API；无通用 IPC 透传
+    sandbox/
+      diagnostics.ts               # 〔规划〕平台能力/版本探测与脱敏诊断，无执行策略副本
+  scripts/
+    package.ts                     # 〔规划〕装配 Core/原生资源、依赖与许可证，调用打包
+    smoke.ts                       # 〔规划〕干净临时环境中的安装资源与重启/故障冒烟
+  electron-builder.yml             # 〔规划〕资源布局、平台安装包、签名与更新配置
 gugu-saas/                         # 〔规划〕API/Gateway、多用户身份、同步与部署装配
 gugu-mobile/                       # 〔规划〕移动 Host 与系统能力 Adapter
 frontend/                          # 保留 Vue/Web 与 src/desktop；桌面 bridge 待接 preload
 backend/                           # 迁移期 Python Web/Agent/Worker 与现有业务
-compat/core-python/                # Web 仍使用的 Python Core 参考与兼容包
-compat/desktop-python/             # 历史 Python 桌面 Host，供兼容/参考验证
-docs/refactor/                     # 本清单、依赖矩阵与历史归档入口
-docs/testing/                      # 分层规则、测试元数据及后续 Python/Node 对齐清单
+compat/                            # core-python / desktop-python 等参考与兼容实现
+docs/                              # refactor 主清单/矩阵/归档，testing 分层规范与映射
 ```
+
+现有 `gugu-core/src/runtime/stdio.ts`、`gugu-desktop/src-tauri/` 及 `.mjs` 脚本仍是可执行入口，迁移验收后再移动/替换。生成的 Node/Core/原生资源放打包暂存及应用资源目录，不作为新的源代码职责层，也不提交 Git。
 
 ### 2.1 关键职责不能混淆
 
@@ -127,11 +143,23 @@ docs/testing/                      # 分层规则、测试元数据及后续 Pyt
 | Core Domain / Application | 领域不变量、业务用例、所有权规则、确认与副作用语义 | Host 建立可信身份、展示确认并验证调用来源 |
 | Core Data Runtime | 仓储、schema、事务、精度、CAS、操作收据及迁移实现 | Host 停写、备份编排、独占升级、启动和运维配置 |
 | Core Agent | Canonical 历史、Provider 适配、上下文、工具及 Run 编排 | Host 注入凭据、网络/进程能力与入口交付 |
+| Core Runtime / Transport | `commands.ts` 统一命令边界；stdio/进程 IPC 只处理编码、消息、背压、超时与错误终态 | Electron IPC 的窗口/frame 来源校验和 Preload 暴露由 Desktop 负责 |
+| Core Executor | 共用执行契约、策略计算、能力协商、MXC/平台适配及执行终态 | Host 注入真实授权、原生后端、私有资源与生命周期；OS 后端强制隔离 |
 | Host Broker | 数据及平台 Adapter 装配、能力协商、进程和资源生命周期 | 业务数据规则继续由 Core 统一维护 |
 | FS Adapter | 真实目录、句柄/bookmark、读写、监听与路径强制边界 | Core 保存逻辑引用和业务用途；机器授权材料不跨设备复制 |
 | Execution Adapter | Shell/PTY/MCP stdio 隔离、网络/资源限制、取消与进程树回收 | Core 决定调用意图和授权要求；模型字段不能成为权限凭据 |
 
 SQLite 内部数据文件、初始化与备份属于 Data Adapter，不等于提供用户工作目录 FS。数据库查询不经过命令执行沙箱；可信 Core 的数据库和密钥也不能随工作区授权暴露给待执行进程。
+
+### 2.2 Transport、Executor 与桌面装配边界
+
+`runtime/transport/ipc.ts` 是 Core 进程消息传输适配，与 Renderer → Preload → Main 的 Electron IPC 属于两个边界。它通过注入端口连接，不 import Electron，不把原始 IPC 对象交给工具/界面。stdio 与 IPC 复用同一命令、收据、限额和错误契约；每个 Host 在装配时显式选择一种传输，不在异常时自动切换或重放修改。首个 Electron 版本继续使用已验证的 NDJSON v2，IPC 适配单独验收后再接入。
+
+`agent/executor/` 位于 Core 的可选外层：`contracts.ts` / `policy.ts` 不依赖 Electron 或平台 SDK；`mxc.ts` 及平台后端仅由获准的 Node Host 显式装配。可移植 Core 入口不主动导入 MXC、Node 进程或原生模块；Linux/NAS、无 FS 的 SaaS、Mobile 按各自能力集选择实现，不能因为共享包中有 `mxc.ts` 就获得桌面权限。`policy.ts` 只能收紧可信 Host 授权并检查可落实能力，最终文件/网络/进程限制仍须由 OS 后端强制执行。
+
+`agent/harness/` 管理 Agent Run 与事件顺序，`providers/` 适配模型协议，`tools/` 描述工具意图并通过确认门调用 Executor；三者不自行绕过执行边界。桌面 `diagnostics.ts` 只显示脱敏后的能力/版本与拒绝原因，不运行任意命令、不改 ACL，也不通过诊断结果自动放宽策略。真实目录授权、watcher、系统凭据仍是端侧能力，由 Host 注入，具体平台文件待功能切片时补充，不在主进程入口堆叠实现。
+
+`main/index.ts` 只组合模块；窗口创建与来源管理归 `windows.ts`，Core 通信与可信请求边界归 `core-host.ts`，单实例/启停/退出回收归 `lifecycle.ts`，更新流程归 `updater.ts`。这些模块共享同一个 Core 生命周期，更新器不另起数据写入进程。`electron-builder.yml` 只声明打包/签名/更新规则，证书和密钥从安全存储或临时环境变量注入，不写入配置或生成资源。
 
 ## 3. 数据统一与 Node 迁移规则
 
@@ -197,11 +225,13 @@ SQLite 内部数据文件、初始化与备份属于 Data Adapter，不等于提
 
 **Electron 迁移待办（T1 完成后承接；本轮只变更方案）：**
 
-- [ ] 固定 Electron/Forge 版本、构建工具 Node 与 Core Node 版本边界；验证 pnpm 装配、Windows x64 和 macOS arm64/x64 资源布局及包体预算。
-- [ ] 实现 TS Main/Preload、可信来源和能力白名单；将 `frontend/src/desktop/bridge.ts` 从 Tauri 接到最小类型化 API。
+- [ ] 固定 Electron/electron-builder 版本、构建工具 Node 与 Core Node 版本边界；通过 `electron-builder.yml`、`scripts/package.ts` / `smoke.ts` 验证 pnpm 装配、Windows x64 和 macOS arm64/x64 资源布局及包体预算。
+- [ ] 按 `index.ts` / `windows.ts` / `core-host.ts` / `lifecycle.ts` 拆分 TS Main，接入最小 Preload API、可信来源和能力白名单；替换 `frontend/src/desktop/bridge.ts` 的 Tauri 调用。
+- [ ] 将现有 stdio 移入 `runtime/transport/`，保留 NDJSON v2 契约；新增不依赖 Electron 的 `ipc.ts` 并验证传输等价，接入前仍使用 stdio。
 - [ ] 迁入 Core Host 的单实例、固定 Node 启停、摘要/版本/ABI 校验、NDJSON 限额、收据查询、未知结果提示和进程回收。
 - [ ] 保留数据目录/稳定 owner；覆盖旧库打开、显式升级、两种壳互斥及搬迁失败恢复，不自动建空库掩盖兼容错误。
-- [ ] 将原生 Broker 从 Tauri command 抽离为独立 helper，补请求校验/能力协商及 MXC 等价验证；不改变隔离策略。
+- [ ] 建立 `agent/executor/` 的契约/策略/平台适配和 Host 注入边界；从 Tauri 抽离原生后端，补 MXC 等价验证与 portable 入口依赖检查；桌面 `sandbox/diagnostics.ts` 仅接诊断。
+- [ ] 实现 `main/updater.ts` 与生命周期联动，验收签名/来源校验、确认安装、停写退出、更新失败恢复及数据升级/回滚边界。
 - [ ] 增加 Electron 主进程/Preload 安全回归、真实 UI 与 Core 故障恢复、三平台安装资源/离线重启验证，接入 CI；旧 Rust/Node CI 不能代替这些检查。
 - [ ] Electron 等价验收后移除 Tauri 壳、CLI、旧桥和重复装配，保留 Core 与仍需使用的原生 helper。
 
@@ -223,6 +253,7 @@ SQLite 内部数据文件、初始化与备份属于 Data Adapter，不等于提
 
 - [ ] 会话/消息/附件引用、Canonical 历史与顺序规则。
 - [ ] Run/Job、确认授权、租约、持久调度、outbox 和重启恢复。
+- [ ] 按 `agent/harness/`、`providers/`、`tools/` 拆分 Agent 实现，调用共用 Executor；保证测试和可移植入口不隐式装载平台后端。
 - [ ] Provider/流式事件、工具、取消与背压；代码权限、confirm、URL 安全和脱敏边界。
 - [ ] 原生 wire/thinking/signature、上下文压缩、反思及缓存/用量契约。
 - [ ] 便签/画布/日历、长期记忆/RAG、媒体/Office 按依赖矩阵逐域迁移和验收。

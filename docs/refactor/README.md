@@ -12,7 +12,7 @@
 
 当前优先任务是补齐现有 Node Core 与 Python 后端同逻辑的回归，并按 pytest 标记语义分层。任务范围、计划命令与完成条件统一维护在主文档；本次文档整合没有实施该任务或修改测试命令。
 
-桌面目标已改为 **Electron + TypeScript Main/Preload + 独立 Node Core**，复用现有 Vue 入口与原生 Broker 边界。现有代码仍为 Tauri 验证实现；Electron 替换待办统一见主文档 N2，旧 Tauri 的 CI/制品结果不视为 Electron 验收。
+桌面目标已改为 **Electron + TypeScript Main/Preload + 独立 Node Core**，使用 `electron-builder.yml` 与 package/smoke 脚本打包验证。目录统一采用主文档 §2：Core 的 `runtime/transport/` 分离传输，`agent/executor/` 复用执行契约/策略/平台适配；Desktop 的 `sandbox/` 仅诊断，Host 注入端侧授权与原生能力。现有代码仍为 Tauri 验证实现；Electron 替换待办统一见 N2，旧 Tauri 的 CI/制品结果不视为 Electron 验收。
 
 ## 其他重构文档
 

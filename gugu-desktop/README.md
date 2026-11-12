@@ -2,6 +2,8 @@
 
 > **目标路线已改为 Electron**：后续由 TS Main/Preload 管理窗口、权限和随包 Node Core，Vue 入口仍留在 `frontend/`，原生执行保留独立 Broker。当前目录的代码、命令和下述验证结果仍属于 Tauri 实现，Electron 尚未落地。目标架构、目录和迁移验收见 [统一任务清单 §1.4 / N2](../docs/refactor/Gugu-2.0-架构与迁移任务清单.md)。
 
+目标目录按 [主清单 §2](../docs/refactor/Gugu-2.0-架构与迁移任务清单.md#directory-plan) 拆为 `main/index.ts`、`windows.ts`、`core-host.ts`、`lifecycle.ts`、`updater.ts` 及 `preload/index.ts`；`sandbox/diagnostics.ts` 仅提供诊断，执行契约/策略/平台适配归 Core `agent/executor/`，由 Host 注入授权和后端。打包采用 `scripts/package.ts`、`scripts/smoke.ts` 与 `electron-builder.yml`；这些文件和迁移尚未实现，不能使用下述现有命令推断新壳已可运行。
+
 Tauri 2 / Rust Host 复用 `frontend/` 的桌面入口，通过私有 NDJSON v2 调用随包 Node Core，SQLite Worker 执行业务事务。桌面单用户，可创建和查看项目、联系人；没有登录或账户切换。
 
 ## 现有验证版的开发与构建
