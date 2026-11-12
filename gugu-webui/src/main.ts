@@ -28,6 +28,8 @@ function createUserAuth(pool: Pool, secret: string): UserAuthOptions {
 function createWebUiApp(config: WebUiConfig, pool: Pool, core: SqlDataRuntime) {
   return createApp({
     appName: config.appName,
+    publicSiteConfig: config.publicSiteConfig,
+    staticRoot: config.staticRoot,
     async isReady() {
       await checkDatabaseReadiness((statement) => pool.query(statement))
       return true

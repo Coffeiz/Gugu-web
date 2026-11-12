@@ -2,7 +2,7 @@
 
 `gugu-webui` 是 2.0 的独立 Node HTTP Host。它不启动 Python Web 进程；PostgreSQL 由外部服务提供。
 
-当前实现范围是启动配置、PostgreSQL schema readiness、健康检查、用户令牌校验、`GET /api/v1/auth/me`、基于 `gugu-core` 的项目活动/回收站列表与详情读取、项目文件计数读取、日历事件列表/详情、客户列表/创建/删除、站内通知列表/气泡/标已读/个人隐藏，以及 `POST /api/v1/track` 前端行为埋点。项目回收站列表按 30 天保留期过滤；通知读写保留注册时间可见边界、持久态、已读和仅对当前用户生效的隐藏状态。登录/注册、其他业务 API/SSE、前端静态资源、Worker 和剩余 Python 行为仍在迁移中，因此当前构建用于开发验收，不作为完整 Web 替代版。
+当前实现范围是启动配置、PostgreSQL schema readiness、健康检查、主站/Admin Vue 静态资源及 history fallback、公开站点配置 `GET /api/v1/site-config`、用户令牌校验、`GET /api/v1/auth/me`、基于 `gugu-core` 的项目活动/回收站列表与详情读取、项目文件计数读取、日历事件列表/详情、客户列表/创建/删除、站内通知列表/气泡/标已读/个人隐藏，以及 `POST /api/v1/track` 前端行为埋点。静态资源来自 `frontend/dist`，API 和 health 未命中仍返回 JSON 404。站点配置仅公开备案信息和 SMTP 能力布尔值，不返回邮件账号或密钥；备案信息从 `GUGU_SITE_ICP_NUMBER` / `GUGU_SITE_ICP_URL` 读取，SMTP 能力使用 `SMTP__*` 环境变量计算。项目回收站列表按 30 天保留期过滤；通知读写保留注册时间可见边界、持久态、已读和仅对当前用户生效的隐藏状态。登录/注册、其他业务 API/SSE、Worker 和剩余 Python 行为仍在迁移中，因此当前构建用于开发验收，不作为完整 Web 替代版。
 
 ## Docker Compose
 
@@ -32,6 +32,7 @@ curl -fsS http://127.0.0.1:9595/health/ready
 ```sh
 corepack pnpm install --filter @gugu/webui --frozen-lockfile
 corepack pnpm --filter @gugu/core build
+corepack pnpm --filter gugu-web build
 corepack pnpm --filter @gugu/webui typecheck
 corepack pnpm --filter @gugu/webui test
 corepack pnpm --filter @gugu/webui build

@@ -1,6 +1,8 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify'
 import { CoreError } from '@gugu/core'
 import { authenticateUser, AuthenticationError, type PublicUserRecord } from './auth.js'
+import { DEFAULT_PUBLIC_SITE_CONFIG, type PublicSiteConfig } from './site-config.js'
+import { registerStaticFrontend } from './static.js'
 
 export interface UserAuthOptions {
   secret: string
@@ -49,6 +51,8 @@ export interface TrackOptions {
 
 export interface WebUiOptions {
   appName: string
+  publicSiteConfig?: PublicSiteConfig
+  staticRoot?: string
   isReady: () => Promise<boolean>
   onReadinessError?: () => void
   userAuth?: UserAuthOptions
@@ -355,6 +359,8 @@ export function createApp(options: WebUiOptions) {
     }
     return reply.code(503).send({ status: 'not_ready' })
   })
+  app.get('/api/v1/site-config', async () => options.publicSiteConfig ?? DEFAULT_PUBLIC_SITE_CONFIG)
   registerUserRoutes(app, options)
+  if (options.staticRoot) registerStaticFrontend(app, options.staticRoot)
   return app
 }

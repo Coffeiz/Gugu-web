@@ -21,7 +21,7 @@
 | 产品/入口 | 数据与运行职责 | FS / 执行职责 | 当前状态 |
 | --- | --- | --- | --- |
 | macOS / Windows Desktop | Electron Host 装配本地 Node Core、SQLite、稳定本地所有者；默认家节点 | 授权目录内直接读写文件；系统凭据和原生执行 Broker | Electron + Node 数据验证壳已实现；完整 Agent、FS 产品接入和正式发行未完成 |
-| Linux / NAS 自托管 | `gugu-webui` Node HTTP Host、多用户 Core Runtime、PostgreSQL；按部署需要使用 Redis | MXC 调用受授权的系统环境；保留多用户执行隔离，Linux Docker 执行沙箱不再作为 2.0 维护目标 | Node Host 首个可启动切片已在 devserver 和 Docker 容器验证；目前有 health、认证用户读取、项目活动/回收站列表、详情/文件计数读取、日历列表/详情及客户列表/创建/删除，主要业务仍运行在 Python Web/Worker |
+| Linux / NAS 自托管 | `gugu-webui` Node HTTP Host、多用户 Core Runtime、PostgreSQL；按部署需要使用 Redis | MXC 调用受授权的系统环境；保留多用户执行隔离，Linux Docker 执行沙箱不再作为 2.0 维护目标 | Node Host 的 Linux 部署切片已在 devserver 和 Node 26 容器验证；主站/Admin Vue 静态产物由镜像构建并由 Node Host 提供，另有健康检查、公开站点配置、认证用户读取、项目活动/回收站列表、详情/文件计数读取、日历列表/详情、客户列表/创建/删除、通知和埋点路由；多数业务 API、SSE 和 Worker 仍运行在 Python |
 | SaaS | 多用户 PostgreSQL、云同步、连接路由；按启用能力装配常驻 Core Runtime 副本 | 不装配 Linux 自部署的 MXC 执行后端；长期无用户 FS，需要端侧资源时走显式授权的任务转交 | 新 Node SaaS Host 与云同步尚未实现；旧 FS 仅为过渡兼容 |
 | Mobile | 可作为远端入口，后续也可承载独立本地数据/Runtime | 仅实现移动平台允许的文件和系统能力 | 目标方案；只承诺共享可移植 TS 边界，不假定能运行完整 Node、桌面原生模块或任意 Shell |
 | Web 控制台、IM 等入口 | 请求转换、连接、展示；业务事实由选定 Runtime 持久化 | 不因能够连接 Runtime 而获得端侧权限 | 现有入口保留；跨设备绑定/路由待实现 |

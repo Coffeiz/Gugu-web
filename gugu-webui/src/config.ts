@@ -1,3 +1,7 @@
+import { createPublicSiteConfig, type PublicSiteConfig } from './site-config.js'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 export interface WebUiConfig {
   readonly appName: string
   readonly host: string
@@ -5,6 +9,8 @@ export interface WebUiConfig {
   readonly databaseUrl: string
   readonly secretKey: string
   readonly postgresPoolMax: number
+  readonly publicSiteConfig: PublicSiteConfig
+  readonly staticRoot: string
 }
 
 function integerSetting(
@@ -20,6 +26,28 @@ function integerSetting(
   if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum)
     throw new Error(error)
   return parsed
+}
+
+function booleanSetting(value: string | undefined, fallback: boolean, error: string): boolean {
+  if (value === undefined || value === '') return fallback
+  switch (value.trim().toLowerCase()) {
+    case '1':
+    case 'true':
+    case 't':
+    case 'yes':
+    case 'y':
+    case 'on':
+      return true
+    case '0':
+    case 'false':
+    case 'f':
+    case 'no':
+    case 'n':
+    case 'off':
+      return false
+    default:
+      throw new Error(error)
+  }
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv): WebUiConfig {
@@ -52,6 +80,23 @@ export function loadConfig(env: NodeJS.ProcessEnv): WebUiConfig {
       100,
       'GUGU_WEBUI_PG_POOL_MAX 连接池参数无效',
     ),
+    publicSiteConfig: createPublicSiteConfig({
+      icpNumber: env.GUGU_SITE_ICP_NUMBER ?? '',
+      icpUrl: env.GUGU_SITE_ICP_URL ?? 'https://beian.miit.gov.cn/',
+      smtpHost: env.SMTP__HOST ?? '',
+      smtpUser: env.SMTP__USER ?? '',
+      smtpPassword: env.SMTP__PASSWORD ?? '',
+      smtpFromAddress: env.SMTP__FROM_ADDR ?? '',
+      smtpEnabled: booleanSetting(env.SMTP__ENABLED, true, 'SMTP__ENABLED 配置无效'),
+      registrationVerificationEnabled: booleanSetting(
+        env.SMTP__REGISTRATION_VERIFICATION_ENABLED,
+        true,
+        'SMTP__REGISTRATION_VERIFICATION_ENABLED 配置无效',
+      ),
+    }),
+    staticRoot: env.GUGU_WEBUI_STATIC_DIR?.trim()
+      ? resolve(env.GUGU_WEBUI_STATIC_DIR.trim())
+      : resolve(dirname(fileURLToPath(import.meta.url)), '../../frontend/dist'),
   }
   Object.defineProperty(config, 'databaseUrl', {
     value: databaseUrl,
