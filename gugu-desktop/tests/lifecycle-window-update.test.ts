@@ -8,7 +8,8 @@ import {
   secureWindow,
   uiResourcePath,
 } from '../src/main/windows.js'
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, symlinkSync } from 'node:fs'
+import { realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -19,15 +20,24 @@ describe('桌面生命周期、窗口与更新边界', () => {
     mkdirSync(ui)
     writeFileSync(join(ui, 'desktop.html'), '合成界面')
     writeFileSync(join(root, 'private.txt'), '合成私有资料')
+    const outside = join(root, 'outside')
+    mkdirSync(outside)
+    writeFileSync(join(outside, 'private.txt'), '合成私有资料')
+    symlinkSync(
+      outside,
+      join(ui, 'link'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    )
     try {
       expect(await uiResourcePath('gugu-desktop://app/desktop.html', ui)).toBe(
-        join(ui, 'desktop.html'),
+        await realpath(join(ui, 'desktop.html')),
       )
       for (const address of [
         'https://example.invalid/desktop.html',
         'gugu-desktop://other/desktop.html',
         'gugu-desktop://app/%2e%2e%2fprivate.txt',
         'gugu-desktop://app/%5cprivate.txt',
+        'gugu-desktop://app/link/private.txt',
       ])
         await expect(uiResourcePath(address, ui)).rejects.toThrow()
     } finally {
