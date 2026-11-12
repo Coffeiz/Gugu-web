@@ -2,12 +2,13 @@ import { describe, expect, it } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { sql } from 'kysely'
 import pg from 'pg'
-import { createPostgresRuntime } from '../src/data/postgres.js'
-import { dataContext } from '../src/contracts/index.js'
-import { tablesSql } from '../src/data/schema.js'
+import { createPostgresRuntime } from '../../../src/data/postgres.js'
+import { dataContext } from '../../../src/contracts/index.js'
+import { tablesSql } from '../../../src/data/schema.js'
 
 const url = process.env.GUGU_CORE_TEST_POSTGRES_URL
-describe.runIf(Boolean(url))('真实 PostgreSQL 的相同业务契约', () => {
+if (!url) throw new Error('PG 契约必须显式提供隔离的 GUGU_CORE_TEST_POSTGRES_URL')
+describe('真实 PostgreSQL 的相同业务契约', () => {
   it('微秒/用户外键、跨域回滚、CAS 和持久幂等均保持一致', async () => {
     const schema = `gugu_core_node_${randomUUID().replaceAll('-', '')}`,
       owner = randomUUID(),
@@ -37,7 +38,10 @@ describe.runIf(Boolean(url))('真实 PostgreSQL 的相同业务契约', () => {
       ).rejects.toThrow()
       const project = await runtime.transaction(context, async (data) => {
         expect(await data.projects.list()).toEqual([])
-        const project = await data.projects.create({ name: 'PG 计划', client: '小北' })
+        const project = await data.projects.create({
+          name: 'PG 计划',
+          client: '小北',
+        })
         await data.clients.create({ name: '小北' })
         return project
       })
@@ -45,20 +49,28 @@ describe.runIf(Boolean(url))('真实 PostgreSQL 的相同业务契约', () => {
       expect(project.client).toBe('小北')
       await runtime.transaction(dataContext(other), async (data) => {
         expect(await data.projects.list()).toEqual([])
-        await expect(data.projects.update(project.id, 1, { name: '越权' })).rejects.toMatchObject({
+        await expect(
+          data.projects.update(project.id, 1, { name: '越权' }),
+        ).rejects.toMatchObject({
           code: 'not_found',
         })
       })
       const winners = await Promise.allSettled(
         ['甲', '乙'].map((name) =>
-          runtime.transaction(context, (data) => data.projects.update(project.id, 1, { name })),
+          runtime.transaction(context, (data) =>
+            data.projects.update(project.id, 1, { name }),
+          ),
         ),
       )
       expect(winners.filter((item) => item.status === 'fulfilled')).toHaveLength(1)
       const operationId = randomUUID(),
         create = () =>
-          runtime.operation(context, operationId, 'clients.create', { name: '仅一次' }, (data) =>
-            data.clients.create({ name: '仅一次' }),
+          runtime.operation(
+            context,
+            operationId,
+            'clients.create',
+            { name: '仅一次' },
+            (data) => data.clients.create({ name: '仅一次' }),
           )
       const receipts = await Promise.all([create(), create()])
       expect(receipts[0]).toEqual(receipts[1])
@@ -76,7 +88,8 @@ describe.runIf(Boolean(url))('真实 PostgreSQL 的相同业务契约', () => {
       ).rejects.toThrow()
     } finally {
       await runtime.close()
-      if (!/^gugu_core_node_[a-f0-9]{32}$/.test(schema)) throw new Error('测试 schema 范围无效')
+      if (!/^gugu_core_node_[a-f0-9]{32}$/.test(schema))
+        throw new Error('测试 schema 范围无效')
       await admin.query(`DROP SCHEMA ${schema} CASCADE`)
       await admin.end()
     }

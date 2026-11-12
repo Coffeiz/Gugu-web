@@ -4,6 +4,7 @@ import base from './vite.config.js'
 
 export default defineConfig({
   ...base,
+  base: './',
   build: {
     ...base.build,
     outDir: 'dist-desktop',

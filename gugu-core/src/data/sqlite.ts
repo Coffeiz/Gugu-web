@@ -42,7 +42,9 @@ class ImmediateDialect extends SqliteDialect {
   }
 }
 function columns(db: SQLite.Database, table: string): string[] {
-  return (db.pragma(`table_info(${table})`) as { name: string }[]).map((row) => row.name).sort()
+  return (db.pragma(`table_info(${table})`) as { name: string }[])
+    .map((row) => row.name)
+    .sort()
 }
 function matchColumns(db: SQLite.Database, table: string, expected: string[]): void {
   if (JSON.stringify(columns(db, table)) !== JSON.stringify([...expected].sort()))
@@ -59,7 +61,11 @@ function uniqueColumns(db: SQLite.Database, table: string, expected: string[]): 
       index.unique === 1 &&
       index.partial === 0 &&
       JSON.stringify(
-        (db.pragma(`index_info("${index.name.replaceAll('"', '""')}")`) as { name: string }[])
+        (
+          db.pragma(`index_info("${index.name.replaceAll('"', '""')}")`) as {
+            name: string
+          }[]
+        )
           .map((column) => column.name)
           .sort(),
       ) === JSON.stringify([...expected].sort()),
@@ -68,7 +74,9 @@ function uniqueColumns(db: SQLite.Database, table: string, expected: string[]): 
 }
 function metadata(db: SQLite.Database): { owner: string; version: string } {
   const tables = (
-    db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]
+    db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {
+      name: string
+    }[]
   ).map((row) => row.name)
   if (!tables.includes('core_runtime_meta') || !tables.includes('projects'))
     throw new CoreError('storage_error', '此文件不是已初始化的 Core 数据库')
@@ -77,7 +85,9 @@ function metadata(db: SQLite.Database): { owner: string; version: string } {
     value: string
   }[]
   if (
-    ['owner_id', 'schema_version'].some((key) => rows.filter((row) => row.key === key).length !== 1)
+    ['owner_id', 'schema_version'].some(
+      (key) => rows.filter((row) => row.key === key).length !== 1,
+    )
   )
     throw new CoreError('storage_error', '本地数据库元数据缺失或重复')
   const values = Object.fromEntries(rows.map((row) => [row.key, row.value]))
@@ -102,14 +112,33 @@ function pragmas(db: SQLite.Database): void {
 }
 export async function openSqliteRuntime(
   path: string,
-  options: { allowLegacySchema?: boolean; clock?: Clock } = {},
-): Promise<{ runtime: SqlDataRuntime; ownerId: string; schemaVersion: string }> {
+  options: {
+    allowLegacySchema?: boolean
+    clock?: Clock
+    exclusive?: boolean
+  } = {},
+): Promise<{
+  runtime: SqlDataRuntime
+  ownerId: string
+  schemaVersion: string
+}> {
   const Driver = await driver(),
     db = new Driver(resolve(path), { fileMustExist: true })
   try {
     pragmas(db)
+    if (options.exclusive) {
+      try {
+        db.pragma('locking_mode = EXCLUSIVE')
+        db.exec('BEGIN EXCLUSIVE; COMMIT')
+      } catch {
+        throw new CoreError('database_in_use', '数据库正由其他运行时使用，请先关闭其他实例')
+      }
+    }
     const info = metadata(db)
-    if (info.version !== SCHEMA_VERSION && !(options.allowLegacySchema && info.version === '2'))
+    if (
+      info.version !== SCHEMA_VERSION &&
+      !(options.allowLegacySchema && info.version === '2')
+    )
       throw new CoreError(
         'schema_upgrade_required',
         '本地数据库需要显式迁移，请先备份并运行 migrate',

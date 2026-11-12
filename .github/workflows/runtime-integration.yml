@@ -54,28 +54,25 @@ jobs:
         run: |
           pnpm --filter @gugu/core install --frozen-lockfile
           python -m pip install -e ./compat/core-python
-      - name: 严格类型、双库行为与进程回归
-        run: pnpm --filter @gugu/core test
-      - name: Python 与 TS 差分、旧库互读与升级恢复
-        run: pnpm --filter @gugu/core test:golden
+      - name: 分层清单与完整双库/进程/Python 对照（集合去重）
+        run: |
+          pnpm --filter @gugu/core test:list
+          pnpm --filter @gugu/core typecheck:tests
+          pnpm --filter @gugu/core test:all
       - name: 元数据与测试边界
         run: |
           node scripts/tests/check-test-metadata.mjs
           node scripts/tests/check-test-boundaries.mjs
 
   desktop-node:
-    name: 桌面 Node / ${{ matrix.os }}
+    name: Electron / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: windows-latest
-            bundle: nsis
-          - os: macos-latest
-            bundle: app
-          - os: macos-15-intel
-            bundle: app
+        os: [windows-latest, macos-latest, macos-15-intel]
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -86,38 +83,40 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 10.15.0
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: gugu-desktop/src-tauri
-      - name: 安装桌面、Core 与现有前端依赖
-        run: pnpm --filter gugu-desktop... --filter gugu-web install --frozen-lockfile
-      - name: Node Core 单测与真实进程回归
-        run: pnpm --filter @gugu/core test
-      - name: 装配并检查独立 Node 制品
+      - name: 安装 Electron、Core 与现有前端依赖
         run: |
-          pnpm --dir gugu-desktop run prepare:sidecar
-          pnpm --dir gugu-desktop run smoke:sidecar
-      - name: Rust 与随包 Node 的真实 IPC
-        env:
-          GUGU_DESKTOP_TEST_SIDECAR: ${{ github.workspace }}/gugu-desktop/src-tauri/resources/core-sidecar
-        run: cargo test --locked --no-default-features --manifest-path gugu-desktop/src-tauri/Cargo.toml
-      - name: 构建 Tauri 平台制品
-        run: pnpm --dir gugu-desktop exec tauri build --bundles ${{ matrix.bundle }}
-      - name: 核验 macOS app 内的完整运行时
-        if: runner.os == 'macOS'
+          pnpm --filter gugu-desktop... --filter gugu-web install --frozen-lockfile
+          node gugu-desktop/node_modules/electron/install.js
+      - name: Core 快速层与 Node IPC（不依赖 Python/PG）
+        run: |
+          pnpm --filter @gugu/core test:unit
+          pnpm --filter @gugu/core test:ipc
+      - name: Electron Host、窗口/权限/生命周期/更新与故障回归
+        run: |
+          pnpm --filter gugu-desktop typecheck
+          pnpm --filter gugu-desktop test
+      - name: 构建安装制品与完整独立 Core
+        run: pnpm --dir gugu-desktop build
+      - name: 真实应用创建、重启、收据与 Renderer 隔离
         shell: bash
         run: |
-          app=$(find gugu-desktop/src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -type d -print -quit)
-          test -n "$app"
-          node gugu-desktop/scripts/smoke-sidecar.mjs --root "$app/Contents/Resources/core-sidecar"
-      - name: 保留可执行权限打包验收制品
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            executable=$(find gugu-desktop/release/win-unpacked -maxdepth 1 -name '*.exe' -print -quit)
+          else
+            application=$(find gugu-desktop/release -maxdepth 2 -name '*.app' -type d -print -quit)
+            test -n "$application"
+            executable="$application/Contents/MacOS/咕咕桌面验证"
+            node gugu-desktop/scripts/smoke-sidecar.mjs --root "$application/Contents/Resources/core-sidecar"
+          fi
+          test -n "$executable"
+          node gugu-desktop/scripts/smoke.ts --app "$executable"
+      - name: 保留平台安装制品
         shell: bash
-        run: tar -czf desktop-node-${{ runner.os }}-${{ runner.arch }}.tar.gz -C gugu-desktop/src-tauri/target/release/bundle .
+        run: tar -czf desktop-electron-${{ runner.os }}-${{ runner.arch }}.tar.gz -C gugu-desktop/release .
       - uses: actions/upload-artifact@v4
         with:
-          name: desktop-node-${{ runner.os }}-${{ runner.arch }}
-          path: desktop-node-${{ runner.os }}-${{ runner.arch }}.tar.gz
+          name: desktop-electron-${{ runner.os }}-${{ runner.arch }}
+          path: desktop-electron-${{ runner.os }}-${{ runner.arch }}.tar.gz
           if-no-files-found: error
 
   frontend:

@@ -17,6 +17,7 @@ const testLike = files.filter(file =>
 const known = file => (
   /^backend\/tests\/.+\.py$/.test(file)
   || /^gugu-core\/tests\/.+\.test\.ts$/.test(file)
+  || /^gugu-desktop\/tests\/.+\.test\.ts$/.test(file)
   || /^backend\/test_[^/]+\.py$/.test(file)
   || /^scripts\/release\/test_[^/]+\.py$/.test(file)
   || /^scripts\/quality\/test_[^/]+\.py$/.test(file)

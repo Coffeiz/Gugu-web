@@ -5,10 +5,12 @@ import path from 'node:path'
 
 const root = path.resolve(import.meta.dirname, '../..')
 const backend = path.join(root, 'backend')
-const python = path.join(backend, '.venv/bin/python')
+const python = process.env.GUGU_TEST_PYTHON || path.join(backend, process.platform === 'win32' ? '.venv/Scripts/python.exe' : '.venv/bin/python')
 const args = new Set(process.argv.slice(2))
 
 function run(label, command, commandArgs, cwd, env = {}) {
+  if (command === 'pnpm' && process.env.npm_execpath && process.env.npm_config_user_agent?.startsWith('pnpm/')) { commandArgs = [process.env.npm_execpath, ...commandArgs]; command = process.execPath }
+  if (command === 'node') command = process.execPath
   console.log(`[测试分层] ${label}`)
   const result = spawnSync(command, commandArgs, {
     cwd,
@@ -23,18 +25,20 @@ function backendPytest(label, marker) {
   run(label, python, ['-m', 'pytest', '-q', '-m', marker], backend, { PYTHONPATH: '.' })
 }
 
-const tier = process.env.TEST_TIER ?? process.argv.find(arg => !arg.startsWith('-'))
+const tier = process.argv.slice(2).find(arg => !arg.startsWith('-')) ?? process.env.TEST_TIER
 if (!['unit', 'integration', 'e2e', 'all'].includes(tier)) {
   console.error('用法：TEST_TIER=unit|integration|e2e|all node scripts/tests/run-test-tier.mjs [--skip-e2e]')
   process.exit(2)
 }
 
 if (tier === 'unit' || tier === 'all') {
+  run('Node Core 快速隔离回归', 'pnpm', ['--filter', '@gugu/core', 'test:unit'], root)
   backendPytest('后端 L0/L1 单元测试', 'not slow and not external_service and not process and not e2e_support')
   run('前端单元测试', 'pnpm', ['--filter', 'gugu-web', 'run', 'test:run'], root)
 }
 
 if (tier === 'integration' || tier === 'all') {
+  run('Node Core 进程、真实 PG 与 Python 对照', 'pnpm', ['--filter', '@gugu/core', 'test:integration'], root)
   backendPytest('后端集成与外部边界测试', 'slow or external_service or process or e2e_support')
 }
 

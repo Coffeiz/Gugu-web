@@ -7,7 +7,8 @@
 | 类型 | 放置位置 | 自动运行边界 |
 | --- | --- | --- |
 | 后端回归测试 | `backend/tests/<功能域>/` | `backend/pytest.ini` 的 `testpaths`；可按标记分层 |
-| 独立 Node Core 回归 | `gugu-core/tests/` | 当前由包的 `test` / `test:golden` 调用；与 pytest 对齐的分层调度尚待 T1 实施 |
+| 独立 Node Core 回归 | `gugu-core/tests/` | 由 `tests/suites.json` 显式分类，unit/integration/ipc/postgres/parity/all 与根分层调度接入 |
+| Electron Host 回归 | `gugu-desktop/tests/` | Node 环境测试 Host/Preload/来源/生命周期/更新；真实目录包另跑主动 smoke |
 | 前端单元/集成回归 | `frontend/tests/<功能域>/` | Vitest 的 `tests/` 范围 |
 | 浏览器 E2E 回归 | `frontend/e2e/` | 仅由 `frontend/package.json` 明确列入的稳定命令进入 CI；实验用例用独立命令 |
 | 包内/工具回归测试 | `backend/ts/**/test/`、`loopscope/**/*.test.ts`、`scripts/release/*.test.mjs`、`scripts/quality/test_*.py`、`scripts/licenses/tests/` | 由各包或仓库 CI 的明确命令调用；保持靠近独立包和被测工具 |
@@ -18,7 +19,7 @@
 
 新增人工脚本使用表示动作和风险的名称：诊断用 `probe_`，对照用 `compare_`，性能测量用 `bench_`，冒烟用 `smoke_`；不要用 `test_*.py`、`*_test.py`、`.test.*` 或 `.spec.*`，避免被工具识别为测试。新增自动回归测试则使用 pytest 的 `test_*.py`、Vitest 的 `*.test.ts` 或 Playwright 的 `*.spec.ts`，并放在对应测试目录。
 
-Node Core 当前任务是补齐已迁移业务的 Python 同逻辑回归，并沿用 `slow`、`external_service`、`process`、`e2e_support` 的语义。任务范围、Python/Node 映射、目标目录和计划命令见 [统一任务清单的 T1](../refactor/Gugu-2.0-架构与迁移任务清单.md#core-test-parity)。计划入口尚未实现；根 `test:unit` / `test:integration` / `test:all` 目前还未调度 Node Core。
+Node Core 已接入与 pytest 相同的 `slow`、`external_service`、`process`、`e2e_support` 语义；根 unit/integration/all、fast/affected 和清单工具同步接入。范围、差异及映射见 [回归对照清单](node-core-parity.md)，总体状态见 [T1](../refactor/Gugu-2.0-架构与迁移任务清单.md#core-test-parity)。`test:all` 去重覆盖全部分类，显式 PG/Python 入口缺依赖时失败；快速层不启动 Worker/子进程/外部服务。
 
 脚本若发现稳定回归，应在相应测试目录新增行为断言；不要把一次性真实 Provider 调用、基准结果或诊断探针直接接入 CI。搬移或改名时更新所有命令、导入、文档链接及元数据；历史报告可保留运行时的原始证据，但当前可执行入口应指向新路径。
 

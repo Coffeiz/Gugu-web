@@ -13,24 +13,21 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs'
-import { createRequire } from 'node:module'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const desktop = resolve(fileURLToPath(new URL('..', import.meta.url))),
   root = resolve(desktop, '..')
-const core = join(root, 'gugu-core'),
-  require = createRequire(join(core, 'package.json'))
+const core = join(root, 'gugu-core')
 const pnpm = process.env.npm_execpath
 if (!pnpm || !existsSync(pnpm)) throw new Error('请通过 pnpm run prepare:sidecar 装配制品')
 if (!/^v26\./.test(process.version) || Number(process.versions.node.split('.')[1]) < 13)
   throw new Error('桌面制品需要固定的 Node 26.13 或更新的 26 LTS')
-execFileSync(
-  process.execPath,
-  [require.resolve('typescript/bin/tsc'), '-p', join(core, 'tsconfig.json')],
-  { cwd: root, stdio: 'inherit' },
-)
-const resourceParent = join(desktop, 'src-tauri/resources'),
+execFileSync(process.execPath, [join(core, 'scripts/build.mjs')], {
+  cwd: root,
+  stdio: 'inherit',
+})
+const resourceParent = join(desktop, 'resources'),
   target = join(resourceParent, 'core-sidecar')
 mkdirSync(resourceParent, { recursive: true })
 mkdirSync(join(desktop, '.tools'), { recursive: true })
@@ -101,19 +98,23 @@ try {
   const manifest = {
     coreVersion: JSON.parse(readFileSync(join(core, 'package.json'), 'utf8')).version,
     nodeVersion: process.versions.node,
+    nodeAbi: process.versions.modules,
     platform: process.platform,
     arch: process.arch,
     protocol: 2,
     schema: 3,
     executable,
-    entry: 'host/dist/runtime/stdio.js',
+    entry: 'host/dist/runtime/transport/stdio.js',
     dependencies: [...dependencies.values()],
     files,
   }
   writeFileSync(join(stage, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n')
   // 只允许覆盖本脚本先前创建且有标记的制品目录。
   if (existsSync(target)) {
-    if (realpathSync(target) !== resolve(target) || !existsSync(join(target, 'manifest.json')))
+    if (
+      realpathSync(target) !== resolve(target) ||
+      !existsSync(join(target, 'manifest.json'))
+    )
       throw new Error('目标不是可替换的生成制品')
     rmSync(owned(target), { recursive: true, force: true })
   }

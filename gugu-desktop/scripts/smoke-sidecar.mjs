@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { cpSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -11,7 +11,7 @@ const rootIndex = process.argv.indexOf('--root')
 const root =
   rootIndex >= 0
     ? resolve(process.argv[rootIndex + 1])
-    : resolve(fileURLToPath(new URL('../src-tauri/resources/core-sidecar/', import.meta.url)))
+    : resolve(fileURLToPath(new URL('../resources/core-sidecar/', import.meta.url)))
 const manifest = JSON.parse(readFileSync(join(root, 'manifest.json'), 'utf8'))
 assert.equal(manifest.platform, process.platform)
 assert.equal(manifest.arch, process.arch)
@@ -24,10 +24,12 @@ const directory = mkdtempSync(join(tmpdir(), 'gugu-sidecar-check-')),
   database = join(directory, 'core.db'),
   operation = randomUUID()
 try {
+  const isolated = join(directory, 'runtime')
+  cpSync(root, isolated, { recursive: true, dereference: true })
   const run = (frames) => {
     const result = spawnSync(
-      join(root, manifest.executable),
-      [join(root, manifest.entry), '--database', database, '--protocol', '2'],
+      join(isolated, manifest.executable),
+      [join(isolated, manifest.entry), '--database', database, '--protocol', '2'],
       {
         cwd: directory,
         input: frames.map((item) => JSON.stringify(item) + '\n').join(''),
@@ -53,7 +55,12 @@ try {
     },
   ])
   const reopened = run([
-    { v: 2, id: 2, method: 'operations.get', params: { operation_id: operation } },
+    {
+      v: 2,
+      id: 2,
+      method: 'operations.get',
+      params: { operation_id: operation },
+    },
     { v: 2, id: 3, method: 'projects.list', params: {} },
   ])
   assert.equal(created[1].result.name, '独立制品计划')
@@ -69,5 +76,10 @@ try {
   )
 } finally {
   assert.equal(dirname(directory), tmpdir())
-  rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+  rmSync(directory, {
+    recursive: true,
+    force: true,
+    maxRetries: 5,
+    retryDelay: 100,
+  })
 }

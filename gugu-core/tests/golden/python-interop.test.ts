@@ -16,20 +16,30 @@ import { migrateSqlite } from '../../src/data/sqlite.js'
 const root = fileURLToPath(new URL('../../../', import.meta.url)),
   folders: string[] = []
 const python = process.env.GUGU_CORE_GOLDEN_PYTHON
-if (!python) throw new Error('差分测试必须显式提供已安装 Python 兼容包的 GUGU_CORE_GOLDEN_PYTHON')
+if (!python)
+  throw new Error('差分测试必须显式提供已安装 Python 兼容包的 GUGU_CORE_GOLDEN_PYTHON')
 function golden(request: object): any {
-  const result = spawnSync(python!, [join(root, 'backend/tests/core/fixtures/node_golden.py')], {
-    input: JSON.stringify(request),
-    encoding: 'utf8',
-    env: { ...process.env, PYTHONUTF8: '1' },
-    timeout: 20_000,
-  })
+  const result = spawnSync(
+    python!,
+    [join(root, 'backend/tests/core/fixtures/node_golden.py')],
+    {
+      input: JSON.stringify(request),
+      encoding: 'utf8',
+      env: { ...process.env, PYTHONUTF8: '1' },
+      timeout: 20_000,
+    },
+  )
   if (result.status !== 0) throw new Error('Python Golden 参考进程执行失败')
   return JSON.parse(result.stdout)
 }
 afterEach(() => {
   for (const folder of folders.splice(0))
-    rmSync(folder, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    rmSync(folder, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    })
 })
 it('同一合成语料在 Python 和 TS 上保留字段、阶段身份与错误类别', () => {
   const cases = JSON.parse(
@@ -44,31 +54,49 @@ it('同一合成语料在 Python 和 TS 上保留字段、阶段身份与错误�
           : item.method === 'create'
             ? prepareProjectCreate(item.input)
             : item.method === 'client'
-              ? prepareClientFields(item.input, true)
+              ? prepareClientFields(item.input, item.creating ?? true)
               : replaceProjectStages(item.old, item.current, item.input)
       return { result }
     } catch {
       return { error: 'invalid_request' }
     }
   })
-  expect(actual).toEqual(expected)
+  for (const [index, item] of cases.entries()) {
+    if (item.difference === 'project-name-limit' || item.difference === 'archive-boolean') {
+      // 已有 Node 契约更严格：分别锁定两端结果，不能抹去或忽略差异。
+      expect(expected[index]).toEqual({ result: item.input })
+      expect(actual[index]).toEqual({ error: 'invalid_request' })
+    } else {
+      expect(item.difference).toBeUndefined()
+      expect(actual[index]).toEqual(expected[index])
+    }
+  }
 })
 it('Python v2 库经 Node 更新后仍能由旧包重读；升级 v3 保留可恢复 v2 备份', async () => {
   const folder = mkdtempSync(join(tmpdir(), 'gugu-core-golden-'))
   folders.push(folder)
   const database = join(folder, '跨语言.db'),
     original = golden({ action: 'initialize', database })
-  const runtime = await LocalRuntime.open(database, { allowLegacySchema: true })
+  const runtime = await LocalRuntime.open(database, {
+    allowLegacySchema: true,
+  })
   expect(runtime.ownerId).toBe(original.owner)
   try {
-    await runtime.call('projects.rename', { id: 1, version: 1, name: 'Node 更新计划' })
+    await runtime.call('projects.rename', {
+      id: 1,
+      version: 1,
+      name: 'Node 更新计划',
+    })
     await runtime.call('clients.create', { name: '小南' })
   } finally {
     await runtime.close()
   }
   const restored = golden({ action: 'read', database })
   expect(restored.owner).toBe(original.owner)
-  expect(restored.projects[0]).toMatchObject({ name: 'Node 更新计划', version: 2 })
+  expect(restored.projects[0]).toMatchObject({
+    name: 'Node 更新计划',
+    version: 2,
+  })
   expect(restored.clients.map((row: any) => row.name)).toEqual(['小南', '小北'])
   const backup = await migrateSqlite(database)
   expect(golden({ action: 'read', database: backup })).toEqual(restored)

@@ -7,18 +7,26 @@ import {
   normalizeProjectStages,
   replaceProjectStages,
   nextProjectStageKey,
-} from '../src/domain/index.js'
-import { utc } from '../src/data/codec.js'
-import { requestJsonSchema } from '../src/contracts/index.js'
+} from '../../../src/domain/index.js'
+import { utc } from '../../../src/data/codec.js'
+import { requestJsonSchema } from '../../../src/contracts/index.js'
 
 describe('领域输入与可移植边界', () => {
   it('阶段和待办编号耗尽安全整数范围时拒绝生成失真的身份', () => {
     const maximum = Number.MAX_SAFE_INTEGER
-    expect(nextProjectStageKey([{ key: `s${maximum - 1}`, label: '临界阶段' }])).toBe(`s${maximum}`)
-    expect(() => nextProjectStageKey([{ key: `s${maximum}`, label: '已耗尽阶段' }])).toThrow(
-      '安全范围',
+    expect(nextProjectStageKey([{ key: `s${maximum - 1}`, label: '临界阶段' }])).toBe(
+      `s${maximum}`,
     )
-    const old = [{ key: 's0', label: '准备', todos: [{ id: `t${maximum}`, text: '已有待办' }] }]
+    expect(() =>
+      nextProjectStageKey([{ key: `s${maximum}`, label: '已耗尽阶段' }]),
+    ).toThrow('安全范围')
+    const old = [
+      {
+        key: 's0',
+        label: '准备',
+        todos: [{ id: `t${maximum}`, text: '已有待办' }],
+      },
+    ]
     expect(() =>
       replaceProjectStages(old, 's0', [{ key: 's0', label: '准备', todos: ['新增待办'] }]),
     ).toThrow('安全范围')
@@ -32,7 +40,9 @@ describe('领域输入与可移植边界', () => {
     }
   })
   it('按 Unicode 码点限制联系人长度，保留空值和未经 trim 的名称', () => {
-    expect(prepareClientFields({ name: '😀'.repeat(200), phone: null }, true).phone).toBeNull()
+    expect(
+      prepareClientFields({ name: '😀'.repeat(200), phone: null }, true).phone,
+    ).toBeNull()
     expect(() => prepareClientFields({ name: '😀'.repeat(201) }, true)).toThrow('长度')
     expect(prepareClientFields({ name: ' 小北 ', notes: '' }, true)).toEqual({
       name: ' 小北 ',
@@ -46,18 +56,32 @@ describe('领域输入与可移植边界', () => {
       'YYYY-MM-DD',
     )
     expect(() =>
-      prepareProjectCreate({ name: '计划', start_date: '2026-11-12', deadline: '2026-11-11' }),
+      prepareProjectCreate({
+        name: '计划',
+        start_date: '2026-11-12',
+        deadline: '2026-11-11',
+      }),
     ).toThrow('不能晚于')
-    expect(() => prepareProjectCreate({ name: '计划', current_stage: 's0' })).toThrow('阶段列表')
+    expect(() => prepareProjectCreate({ name: '计划', current_stage: 's0' })).toThrow(
+      '阶段列表',
+    )
     expect(() => prepareProjectCreate({ name: '计划', progress: true })).toThrow('整数')
     expect(() => prepareProjectCreate({ name: '😀'.repeat(201) })).toThrow('200')
     expect(() => normalizeProjectStages([{ label: '准备', todos: null }])).toThrow()
     expect(
-      prepareProjectCreate({ name: '计划', summary: '  ', progress: 0, archived: false }),
+      prepareProjectCreate({
+        name: '计划',
+        summary: '  ',
+        progress: 0,
+        archived: false,
+      }),
     ).toMatchObject({ summary: null, progress: 0, archived: false })
   })
   it('阶段重排与改名保留待办身份，显式替换才生成新编号', () => {
-    const old = normalizeProjectStages([{ label: '准备', todos: ['整理'] }, { label: '完成' }])
+    const old = normalizeProjectStages([
+      { label: '准备', todos: ['整理'] },
+      { label: '完成' },
+    ])
     old[0]!.todos![0]!.done = true
     const [renamed, current] = replaceProjectStages(old, 's0', [
       { key: 's1', label: '归档' },
@@ -66,8 +90,9 @@ describe('领域输入与可移植边界', () => {
     expect(current).toBe('s0')
     expect(renamed[1]!.todos).toEqual([{ id: 't1', text: '整理', done: true }])
     expect(
-      replaceProjectStages(old, 's0', [{ key: 's0', label: '准备', todos: ['重新整理'] }])[0][0]!
-        .todos![0]!.id,
+      replaceProjectStages(old, 's0', [
+        { key: 's0', label: '准备', todos: ['重新整理'] },
+      ])[0][0]!.todos![0]!.id,
     ).toBe('t2')
     expect(() =>
       replaceProjectStages(old, null, [
@@ -83,13 +108,20 @@ describe('领域输入与可移植边界', () => {
     expect(() => utc('2026-02-30 10:00:00')).toThrow('格式无效')
   })
   it('可移植目录不依赖 Node、SQL 或宿主，协议可生成 JSON Schema', () => {
-    for (const directory of ['domain', 'contracts']) {
-      for (const name of readdirSync(new URL(`../src/${directory}/`, import.meta.url)).filter(
-        (name) => name.endsWith('.ts'),
-      )) {
+    for (const directory of ['domain', 'contracts', 'agent/executor']) {
+      const files =
+        directory === 'agent/executor'
+          ? ['contracts.ts', 'policy.ts']
+          : readdirSync(new URL(`../../../src/${directory}/`, import.meta.url)).filter(
+              (name) => name.endsWith('.ts'),
+            )
+      for (const name of files) {
         const source = ts.createSourceFile(
           name,
-          readFileSync(new URL(`../src/${directory}/${name}`, import.meta.url), 'utf8'),
+          readFileSync(
+            new URL(`../../../src/${directory}/${name}`, import.meta.url),
+            'utf8',
+          ),
           ts.ScriptTarget.Latest,
           true,
         )
@@ -98,11 +130,16 @@ describe('领域输入与可移植边界', () => {
           .map((item) => (item.moduleSpecifier as ts.StringLiteral).text)
         expect(
           imports.filter((item) =>
-            /^(node:|kysely|pg$|better-sqlite3)|\/(data|runtime|application)\//.test(item),
+            /^(node:|electron|@microsoft\/|kysely|pg$|better-sqlite3)|\/(data|runtime|application)\//.test(
+              item,
+            ),
           ),
         ).toEqual([])
       }
     }
-    expect(requestJsonSchema).toMatchObject({ type: 'object', additionalProperties: false })
+    expect(requestJsonSchema).toMatchObject({
+      type: 'object',
+      additionalProperties: false,
+    })
   })
 })

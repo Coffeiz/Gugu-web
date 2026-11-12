@@ -1,50 +1,51 @@
-# gugu-desktop（现有 Tauri / Node 验证版）
+# gugu-desktop：Electron / Node 验证版
 
-> **目标路线已改为 Electron**：后续由 TS Main/Preload 管理窗口、权限和随包 Node Core，Vue 入口仍留在 `frontend/`，原生执行保留独立 Broker。当前目录的代码、命令和下述验证结果仍属于 Tauri 实现，Electron 尚未落地。目标架构、目录和迁移验收见 [统一任务清单 §1.4 / N2](../docs/refactor/Gugu-2.0-架构与迁移任务清单.md)。
+Electron 45.3.1 的 TS Main/Preload 复用 `frontend/src/desktop/`，经私有 NDJSON v2 调用随包 Node 26 Core；SQLite 用例在独立 Worker 执行。桌面单用户，支持项目/联系人创建和重读，不依赖 Web 登录、系统 Node 或 Python。职责与阶段状态见 [统一任务清单](../docs/refactor/Gugu-2.0-架构与迁移任务清单.md)。
 
-目标目录按 [主清单 §2](../docs/refactor/Gugu-2.0-架构与迁移任务清单.md#directory-plan) 拆为 `main/index.ts`、`windows.ts`、`core-host.ts`、`lifecycle.ts`、`updater.ts` 及 `preload/index.ts`；`sandbox/diagnostics.ts` 仅提供诊断，执行契约/策略/平台适配归 Core `agent/executor/`，由 Host 注入授权和后端。打包采用 `scripts/package.ts`、`scripts/smoke.ts` 与 `electron-builder.yml`；这些文件和迁移尚未实现，不能使用下述现有命令推断新壳已可运行。
+旧 Tauri 源码保留在 [compat/desktop-tauri](../compat/desktop-tauri/README.md)，已退出活动构建、依赖和 CI。
 
-Tauri 2 / Rust Host 复用 `frontend/` 的桌面入口，通过私有 NDJSON v2 调用随包 Node Core，SQLite Worker 执行业务事务。桌面单用户，可创建和查看项目、联系人；没有登录或账户切换。
+## 开发与构建
 
-## 现有验证版的开发与构建
-
-需要 Node 26.13+ 的 26 LTS、pnpm 10.15.0、Rust stable 和 [Tauri 平台依赖](https://v2.tauri.app/start/prerequisites/)。Windows 需要 MSVC/WebView2，macOS 最低目标为 13.5。源码构建从仓库根执行：
+使用 Node 26.13+ 的 26 LTS 和 pnpm 10.15.0，从仓库根执行：
 
 ```bash
 pnpm --filter gugu-desktop... --filter gugu-web install --frozen-lockfile
-pnpm --dir gugu-desktop run dev
+node gugu-desktop/node_modules/electron/install.js
+pnpm --dir gugu-desktop dev
+pnpm --filter gugu-desktop typecheck
+pnpm --filter gugu-desktop test
+pnpm --dir gugu-desktop build
+# 只生成目录包
+pnpm --dir gugu-desktop build -- --dir
+# 源码运行的真实界面/重启回归
+pnpm --dir gugu-desktop smoke
+# 从仓库根验证 Windows 目录包
+node gugu-desktop/scripts/smoke.ts --app gugu-desktop/release/win-unpacked/咕咕桌面验证.exe
 ```
 
-Tauri 钩子先装配独立 Node 制品，再启动/构建现有 Vue 桌面入口。发布程序使用应用资源中的 Node，不依赖系统 PATH，不下载解释器，不读取 `GUGU_DESKTOP_PYTHON`。Rust 校验平台/架构、协议/schema 及逐文件摘要，失配时拒绝启动。
+`dev` 构建 Main/Preload、Vue 与 Core 后打开应用。`scripts/package.ts` 调用 electron-builder 26.18.0，先装配并冒烟 Core，再装配应用；构建始终 `--publish never`。生成资源在 `resources/core-sidecar/`，平台制品在 `release/`，均不入 Git。
+
+Core 制品包含固定 Node、编译后的 Core/Worker、生产依赖、许可证、版本/ABI 与逐文件摘要。Main/Preload 不加载 SQLite/MXC 原生模块，它们只在独立 Node 使用相应 ABI。运行不下载解释器或从系统 PATH 查找 Node。
+
+`scripts/smoke.ts` 将目录包复制到仓库外的新建临时目录，隐藏窗口完成创建、重启、收据查询、导航拒绝和 Renderer 无 Node 验证；子进程 PATH 不含开发 Node/Python。显式测试目录必须有冒烟标记，不可指向用户数据。`smoke:sidecar` 也在临时副本中运行。
+
+## 进程、数据与恢复
+
+Main 的入口、窗口、Core 通信、生命周期与更新分别位于 `index.ts`、`windows.ts`、`core-host.ts`、`lifecycle.ts`、`updater.ts`。Preload 只暴露六个业务函数，不透传通用 IPC、Shell、SQL 或 FS。每次调用校验窗口、主 frame 和随包 UI 来源；自定义 UI 协议只读取 UI 根目录，拒绝路径穿越及外部导航。
+
+数据继续使用原 `com.gugu.desktop.preview` 位置及 `core.db` 中的稳定 owner。Electron 单实例和 Core SQLite 独占连接共同保护本地数据；退出/暂停先拒绝新增调用，再关闭数据进程。平台、协议/schema、版本/ABI 或摘要失配时拒绝启动。
+
+schema 仍为 3。修改生成稳定操作 UUID；未知结果保留标识，不自动重放。重启后读取权威数据，或通过固定收据 API / Core CLI 查询。v1/v2 库仍须停应用后显式备份升级；旧 Python 不写 v3，回滚恢复升级前备份，见 [Core README](../gugu-core/README.md)。
+
+## 原生执行与发行边界
+
+执行契约、策略与 MXC/平台适配归 Core `agent/executor/`；Host 注入可信授权及后端。桌面 `sandbox/diagnostics.ts` 仅探测并显示脱敏结果，不执行任意命令或修改 ACL。可信 Core 的数据库和密钥不属于工具工作区授权。
 
 ```bash
-pnpm --dir gugu-desktop run prepare:sidecar
-pnpm --dir gugu-desktop run smoke:sidecar
-# Windows 安装制品
-pnpm --dir gugu-desktop exec tauri build --bundles nsis
-# macOS app（当前为 ad-hoc 验证签名）
-pnpm --dir gugu-desktop exec tauri build --bundles app
+pnpm --dir gugu-desktop probe:mxc
+pnpm --dir gugu-desktop smoke:mxc
 ```
 
-生成资源位于 `src-tauri/resources/core-sidecar/`，包含固定 Node、编译后的 Core/Worker、生产依赖、Node/包许可证和完整性/依赖清单；不提交 Git。制品冒烟在新建临时目录中运行，不依赖开发 node_modules 或 Python，并验证创建、重启与收据查询。Rust IPC 回归要求显式设置 `GUGU_DESKTOP_TEST_SIDECAR` 为本轮生成资源目录，再运行 `cargo test --no-default-features`。
+原生主动验证只操作新建合成资料，覆盖授权写入、只读/越界/网络拒绝、超时和进程终止。严格禁 UI 时 Node 初始化缺口仍存在，未放宽策略；macOS 执行 Adapter、MCP/PTY 和完整 Agent 工具链仍待后续验收。
 
-## 数据与升级
-
-Rust 选择应用数据目录中的 `core.db`，不从渲染进程接收路径、身份或任意命令。单实例插件避免多个桌面进程抢占同一个数据 Host。
-
-新库为 schema 3，业务写入带稳定操作 ID；结果丢失后可调用 `operations.get` 或 Core CLI 的 `receipt` 查询，不重新创建。Rust 通信中断后显示操作标识并停止写入，重启后读取数据库。数据进程和管道有长度、队列和超时上限。
-
-原 Python 验证版的 v1/v2 库需要停应用后，用 Core CLI 显式 `migrate`：先校验备份、再升级。旧版本不能直接写 v3；回滚恢复升级前备份。不会自动升级或覆盖用户库，见 [Core README](../gugu-core/README.md)。
-
-## 原生执行与平台验证
-
-原生沙箱仍由 Rust Broker 提供。Windows 固定任务复用 MXC 1.0.1，只操作应用缓存中的合成文件；不接受 UI 任意 Shell/FS 请求，不自动调整 ACL，不回退宿主执行。
-
-```bash
-pnpm --dir gugu-desktop run probe:mxc
-pnpm --dir gugu-desktop run smoke:mxc -- --compare-ui
-```
-
-可信 Node Core 在沙箱外访问自己的数据库；不可信脚本、MCP、PTY 必须走执行端口。此前严格禁用 UI 时的 MXC Node 初始化兼容问题仍未解除，默认策略未放宽。
-
-当前架构、迁移状态和平台验收范围见 [统一任务清单](../docs/refactor/Gugu-2.0-架构与迁移任务清单.md)，MXC 原始实测见 [历史验证记录](../docs/refactor/_archive/gugu-2.0/Gugu-Desktop与MXC验证.md)。CI 覆盖 Windows x64、macOS arm64/x64 的 Node/原生 Host 与平台构建；正式 Developer ID/Authenticode、Apple 公证、Windows ARM64、目标最低 OS 实机及完整 Agent 工具链另行验收。当前 ad-hoc/未签名验收制品不等于商业发行版。
+更新状态机支持检查、下载校验、取消安装及确认后的停写退出；验证制品未配置生产更新通道。Windows 未配置正式签名，macOS 为 ad-hoc 验证签名。macOS 预览构建保留 Core 资源字节以维护摘要；正式签名/公证需统一嵌套代码签名与清单生成顺序。最低 OS 实机、Windows ARM64、干净安装/升级回滚与商业发行另行验收。最终 CI 与合并状态以 [PR #118](https://github.com/Coffeiz/Gugu-web/pull/118) 的精确提交记录为准。

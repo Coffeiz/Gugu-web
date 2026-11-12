@@ -1,0 +1,18 @@
+[
+  {"method":"clients.create","fields":{"name":"合成联系人","email":"test@example.invalid","notes":"原始内容"}},
+  {"method":"clients.update","id":1,"fields":{"notes":"已更新","phone":null}},
+  {"method":"clients.update","id":1,"fields":{}},
+  {"batch":[{"method":"clients.update","id":1,"fields":{"notes":"不得提交"}},{"method":"clients.create","fields":{"name":""}}]},
+  {"method":"clients.list"},
+  {"method":"clients.delete","id":999},
+  {"method":"projects.create","fields":{"name":"非法/名称"}},
+  {"method":"projects.create","fields":{"name":"合成计划","start_date":"2026-01-10","deadline":"2026-01-20"}},
+  {"method":"projects.update","id":1,"version":1,"fields":{"deadline":"2026-01-09"}},
+  {"method":"projects.update","id":1,"version":1,"fields":{"archived":true}},
+  {"method":"projects.update","id":1,"version":1,"fields":{"name":"过期写入"}},
+  {"method":"projects.list"},
+  {"method":"projects.list","archived":true},
+  {"method":"clients.delete","id":1},
+  {"method":"clients.update","id":1,"fields":{"notes":"已删除"}},
+  {"method":"clients.list"}
+]

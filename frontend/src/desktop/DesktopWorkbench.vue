@@ -48,9 +48,9 @@ function createClient() {
 
 function checkSandbox() {
   return perform(async () => {
-    sandboxMessage.value = '正在验证…'
-    const result = await desktopData.checkSandbox()
-    sandboxMessage.value = result.passed ? '受限写入验证通过' : '验证未通过，请查看运行环境'
+    sandboxMessage.value = '正在检测…'
+    sandbox.value = await desktopData.sandboxStatus()
+    sandboxMessage.value = sandbox.value.reason ?? (sandbox.value.supported ? '已检测到原生隔离能力' : '当前环境未提供原生隔离能力')
   })
 }
 
@@ -91,7 +91,7 @@ onMounted(() => perform(async () => {
     </div>
     <section class="desktop-panel desktop-sandbox">
       <div><h2>执行隔离</h2><p>{{ sandbox?.supported ? '已检测到原生隔离能力' : '当前环境未提供原生隔离能力' }}</p><p v-if="sandboxMessage" role="status">{{ sandboxMessage }}</p></div>
-      <ActionButton fit variant="secondary" :disabled="busy || !sandbox?.checkAvailable" @click="checkSandbox">运行验证</ActionButton>
+      <ActionButton fit variant="secondary" :disabled="busy" @click="checkSandbox">重新检测</ActionButton>
     </section>
     <ActionButton fit variant="secondary" class="desktop-refresh" :disabled="busy" @click="perform(refresh)">{{ busy ? '处理中…' : '刷新本地数据' }}</ActionButton>
   </main>

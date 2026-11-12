@@ -3,6 +3,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
+import { testSuites } from '../../gugu-core/scripts/test-suites.mjs'
 
 const root = path.resolve(import.meta.dirname, '../..')
 const workflowDirectory = path.join(root, '.github/workflows')
@@ -11,6 +12,8 @@ const workflow = fs.readdirSync(workflowDirectory)
   .map(file => fs.readFileSync(path.join(workflowDirectory, file), 'utf8'))
   .join('\n')
 const frontendPackage = JSON.parse(fs.readFileSync(path.join(root, 'frontend/package.json'), 'utf8'))
+const metadata = JSON.parse(fs.readFileSync(path.join(root, 'docs/testing/test-metadata.json'), 'utf8'))
+const coreSuites = Object.fromEntries(testSuites('all').map(item => [item.file, item]))
 const outputPath = process.argv.slice(2).find(arg => arg.startsWith('--output='))?.slice('--output='.length)
 
 function gitFiles(glob) {
@@ -143,7 +146,11 @@ function inventoryItem(file, kind) {
       : kind === 'pytest'
         ? countMatches(source, /^\s*(?:async\s+)?def\s+test_[A-Za-z0-9_]+\s*\(/gm)
         : countMatches(source, /\b(?:it|test)(?:\.each|\.skip|\.only)?\s*\(/g)
-  const ci = isE2e
+  const nodePackage = file.startsWith('gugu-core/') ? '@gugu/core' : file.startsWith('gugu-desktop/') ? 'gugu-desktop' : null
+  const declared = nodePackage ? metadata[file] : undefined
+  const ci = nodePackage
+    ? workflow.includes(`pnpm --filter ${nodePackage} test`)
+    : isE2e
     ? workflow.includes('test:e2e:stable') && frontendPackage.scripts?.['test:e2e:stable']?.includes(path.basename(file))
     : kind === 'vitest'
       ? workflow.includes('pnpm --filter gugu-web run test:run') || workflow.includes('pnpm --filter gugu-web test:run')
@@ -164,13 +171,14 @@ function inventoryItem(file, kind) {
               : kind === 'static-check'
                 ? workflow.includes(path.basename(file))
                 : false
-  const domain = domainFor(file)
+  const domain = declared?.domain ?? domainFor(file)
   return {
     file,
     kind,
-    layer: layerFor(file, kind),
+    layer: declared?.layer ?? layerFor(file, kind),
     domain,
-    owner: ownerFor(file, kind, domain),
+    owner: declared?.owner ?? ownerFor(file, kind, domain),
+    ...(coreSuites[file.replace(/^gugu-core\//, '')] ? { markers: coreSuites[file.replace(/^gugu-core\//, '')].markers } : {}),
     ownerReview: domain === 'other' ? '待复核' : '自动归类',
     declaredTestCount,
     ci,
@@ -197,6 +205,8 @@ const items = [
   ...gitFiles('loopscope').filter(file => /\.test\.(ts|mjs)$/.test(file)).map(file => inventoryItem(file, 'node-test')),
   ...gitFiles('scripts/release').filter(file => /\.test\.mjs$/.test(file)).map(file => inventoryItem(file, 'node-test')),
   ...gitFiles('frontend/tests').filter(file => file.endsWith('.test.ts')).map(file => inventoryItem(file, 'vitest')),
+  ...gitFiles('gugu-core/tests').filter(file => file.endsWith('.test.ts')).map(file => inventoryItem(file, 'vitest')),
+  ...gitFiles('gugu-desktop/tests').filter(file => file.endsWith('.test.ts')).map(file => inventoryItem(file, 'vitest')),
   ...gitFiles('frontend/e2e/*.spec.ts').map(file => inventoryItem(file, 'playwright')),
   ...gitFiles('frontend/scripts').filter(file => /\/check-[^/]+\.mjs$/.test(file)).map(file => inventoryItem(file, 'static-check')),
   ...gitFiles('scripts/licenses').filter(file => /\/check-[^/]+\.mjs$/.test(file)).map(file => inventoryItem(file, 'static-check')),

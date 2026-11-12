@@ -36,12 +36,17 @@ export class LocalRuntime {
     this.schemaVersion = info.schemaVersion
     worker.on(
       'message',
-      (frame: { id: number; result?: unknown; error?: { code: ErrorCode; message: string } }) => {
+      (frame: {
+        id: number
+        result?: unknown
+        error?: { code: ErrorCode; message: string }
+      }) => {
         const pending = this.pending.get(frame.id)
         if (!pending) return
         this.pending.delete(frame.id)
         pending.dispose()
-        if (frame.error) pending.reject(new CoreError(frame.error.code, frame.error.message))
+        if (frame.error)
+          pending.reject(new CoreError(frame.error.code, frame.error.message))
         else pending.resolve(frame.result)
       },
     )
@@ -62,9 +67,15 @@ export class LocalRuntime {
     database: string,
     initialize: boolean,
     allowLegacySchema = false,
+    exclusive = false,
   ): Promise<LocalRuntime> {
     const worker = new Worker(new URL('./worker.js', import.meta.url), {
-      workerData: { database: resolve(database), initialize, allowLegacySchema },
+      workerData: {
+        database: resolve(database),
+        initialize,
+        allowLegacySchema,
+        exclusive,
+      },
     })
     return new Promise((resolve, reject) => {
       const cleanup = (): void => {
@@ -102,25 +113,43 @@ export class LocalRuntime {
       worker.once('message', ready)
     })
   }
-  static initialize(database: string): Promise<LocalRuntime> {
-    return this.start(database, true)
+  static initialize(
+    database: string,
+    options: { exclusive?: boolean } = {},
+  ): Promise<LocalRuntime> {
+    return this.start(database, true, false, options.exclusive ?? false)
   }
   static open(
     database: string,
-    options: { allowLegacySchema?: boolean } = {},
+    options: { allowLegacySchema?: boolean; exclusive?: boolean } = {},
   ): Promise<LocalRuntime> {
-    return this.start(database, false, options.allowLegacySchema ?? false)
+    return this.start(
+      database,
+      false,
+      options.allowLegacySchema ?? false,
+      options.exclusive ?? false,
+    )
   }
-  call<T = unknown>(method: string, params: Fields = {}, options: CallOptions = {}): Promise<T> {
+  call<T = unknown>(
+    method: string,
+    params: Fields = {},
+    options: CallOptions = {},
+  ): Promise<T> {
     if (this.closed || !this.healthy)
       return Promise.reject(new CoreError('closed', '数据运行时已关闭'))
     if (method === 'runtime.close')
       return Promise.reject(new CoreError('invalid_request', '请通过 close 关闭运行时'))
-    if (this.pending.size >= 128) return Promise.reject(new CoreError('busy', '本地数据队列已满'))
+    if (this.pending.size >= 128)
+      return Promise.reject(new CoreError('busy', '本地数据队列已满'))
     return this.enqueue<T>(method, params, options)
   }
-  private enqueue<T>(method: string, params: Fields, options: CallOptions = {}): Promise<T> {
-    if (options.signal?.aborted) return Promise.reject(new CoreError('cancelled', '操作已取消'))
+  private enqueue<T>(
+    method: string,
+    params: Fields,
+    options: CallOptions = {},
+  ): Promise<T> {
+    if (options.signal?.aborted)
+      return Promise.reject(new CoreError('cancelled', '操作已取消'))
     const id = ++this.sequence,
       flag = new Int32Array(new SharedArrayBuffer(4)),
       timeoutMs = options.timeoutMs ?? 12_000

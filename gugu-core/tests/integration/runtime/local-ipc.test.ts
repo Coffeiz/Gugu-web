@@ -5,18 +5,26 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { ProjectRecord } from '../src/contracts/index.js'
-import { LocalRuntime } from '../dist/runtime/local.js'
+import type { ProjectRecord } from '../../../src/contracts/index.js'
+import { LocalRuntime } from '../../../dist/runtime/local.js'
 
 const folders: string[] = []
-const entry = fileURLToPath(new URL('../dist/runtime/stdio.js', import.meta.url))
+const entry = fileURLToPath(
+  new URL('../../../dist/runtime/transport/stdio.js', import.meta.url),
+)
 function file(): string {
   const root = mkdtempSync(join(tmpdir(), 'gugu-core-ipc-'))
   folders.push(root)
   return join(root, '本地.db')
 }
 function request(id: number, method: string, params = {}, operation_id?: string): object {
-  return { v: 2, id, method, params, ...(operation_id ? { operation_id } : {}) }
+  return {
+    v: 2,
+    id,
+    method,
+    params,
+    ...(operation_id ? { operation_id } : {}),
+  }
 }
 function exchange(
   database: string,
@@ -40,7 +48,12 @@ function exchange(
 }
 afterEach(() => {
   for (const root of folders.splice(0))
-    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    rmSync(root, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    })
 })
 describe('独立 Node Host 与 SQLite Worker', () => {
   it('直接 Worker 调用同样拒绝非法收据参数、身份覆盖和未知控制能力', async () => {
@@ -55,8 +68,12 @@ describe('独立 Node Host 与 SQLite Worker', () => {
           code: 'invalid_request',
         })
       }
-      await expect(runtime.call('__proto__')).rejects.toMatchObject({ code: 'invalid_request' })
-      await expect(runtime.call('runtime.close')).rejects.toMatchObject({ code: 'invalid_request' })
+      await expect(runtime.call('__proto__')).rejects.toMatchObject({
+        code: 'invalid_request',
+      })
+      await expect(runtime.call('runtime.close')).rejects.toMatchObject({
+        code: 'invalid_request',
+      })
       expect(await runtime.call('projects.list')).toEqual([])
     } finally {
       await runtime.close()
@@ -70,7 +87,9 @@ describe('独立 Node Host 与 SQLite Worker', () => {
     )
     const closing = Promise.allSettled([runtime.close(), runtime.close()])
     try {
-      await expect(runtime.call('projects.list')).rejects.toMatchObject({ code: 'closed' })
+      await expect(runtime.call('projects.list')).rejects.toMatchObject({
+        code: 'closed',
+      })
       expect((await closing).every((result) => result.status === 'fulfilled')).toBe(true)
     } finally {
       await pending
@@ -106,8 +125,8 @@ describe('独立 Node Host 与 SQLite Worker', () => {
         '--eval',
         script,
         path,
-        new URL('../dist/data/sqlite.js', import.meta.url).href,
-        new URL('../dist/contracts/index.js', import.meta.url).href,
+        new URL('../../../dist/data/sqlite.js', import.meta.url).href,
+        new URL('../../../dist/contracts/index.js', import.meta.url).href,
       ],
       { encoding: 'utf8', timeout: 20_000 },
     )
@@ -125,7 +144,9 @@ describe('独立 Node Host 与 SQLite Worker', () => {
     const path = file(),
       creation = randomUUID(),
       rename = randomUUID()
-    const first = exchange(path, [request(1, 'projects.create', { name: '桌面计划' }, creation)])
+    const first = exchange(path, [
+      request(1, 'projects.create', { name: '桌面计划' }, creation),
+    ])
     expect(first.code).toBe(0)
     expect(first.error).toBe('')
     expect(first.frames[0]).toMatchObject({ v: 2, event: 'ready' })
@@ -141,22 +162,30 @@ describe('独立 Node Host 与 SQLite Worker', () => {
     expect(second.frames[3].result.version).toBe(2)
     expect(second.frames[4].result.result.name).toBe('已更新')
     expect(second.frames[5].result).toHaveLength(1)
-    expect(second.frames[5].result[0]).toMatchObject({ name: '已更新', version: 2 })
+    expect(second.frames[5].result[0]).toMatchObject({
+      name: '已更新',
+      version: 2,
+    })
   })
   it('拒绝 Shell、FS、身份覆盖、缺少操作 ID、错误版本和非法 UTF-8/超长帧', () => {
     const path = file(),
       result = exchange(path, [
         request(1, 'shell.run'),
         request(2, 'fs.read'),
-        request(3, 'projects.create', { name: '覆盖身份', owner_id: randomUUID() }, randomUUID()),
+        request(
+          3,
+          'projects.create',
+          { name: '覆盖身份', owner_id: randomUUID() },
+          randomUUID(),
+        ),
         request(4, 'projects.create', { name: '无收据' }),
         { v: 3, id: 5, method: 'projects.list', params: {} },
         request(6, 'projects.list'),
       ])
     expect(result.code).toBe(0)
-    expect(result.frames.slice(1, 6).every((frame) => frame.error.code === 'invalid_request')).toBe(
-      true,
-    )
+    expect(
+      result.frames.slice(1, 6).every((frame) => frame.error.code === 'invalid_request'),
+    ).toBe(true)
     expect(result.frames[6].result).toEqual([])
     expect(exchange(file(), [], Buffer.alloc(65_538, 120)).code).toBe(2)
     expect(exchange(file(), [], Buffer.from([255, 10])).frames[1].error.code).toBe(
@@ -170,7 +199,8 @@ describe('独立 Node Host 与 SQLite Worker', () => {
       stdio: ['pipe', 'pipe', 'pipe'],
     })
     child.stdin.end(
-      JSON.stringify(request(1, 'projects.create', { name: '丢失回包计划' }, operationId)) + '\n',
+      JSON.stringify(request(1, 'projects.create', { name: '丢失回包计划' }, operationId)) +
+        '\n',
     )
     // 不消费业务结果；进程完成代表提交成功，下一次请求仅查询收据，不重新写入。
     child.stdout.resume()
@@ -219,6 +249,8 @@ describe('独立 Node Host 与 SQLite Worker', () => {
     } finally {
       await runtime.close()
     }
-    await expect(runtime.call('projects.list')).rejects.toMatchObject({ code: 'closed' })
+    await expect(runtime.call('projects.list')).rejects.toMatchObject({
+      code: 'closed',
+    })
   })
 })

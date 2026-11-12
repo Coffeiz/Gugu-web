@@ -4,8 +4,12 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import SQLite from 'better-sqlite3'
-import { dataContext } from '../src/contracts/index.js'
-import { initializeSqlite, migrateSqlite, openSqliteRuntime } from '../src/data/sqlite.js'
+import { dataContext } from '../../../src/contracts/index.js'
+import {
+  initializeSqlite,
+  migrateSqlite,
+  openSqliteRuntime,
+} from '../../../src/data/sqlite.js'
 
 const temporary: string[] = []
 function file(): string {
@@ -16,7 +20,12 @@ function file(): string {
 afterEach(() => {
   vi.restoreAllMocks()
   for (const folder of temporary.splice(0))
-    rmSync(folder, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    rmSync(folder, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    })
 })
 
 describe('共享 SQL 数据契约', () => {
@@ -107,7 +116,9 @@ describe('共享 SQL 数据契约', () => {
       )
       await runtime.transaction(other, async (data) => {
         expect(await data.projects.list()).toEqual([])
-        await expect(data.projects.update(project.id, 1, { name: '越权' })).rejects.toMatchObject({
+        await expect(
+          data.projects.update(project.id, 1, { name: '越权' }),
+        ).rejects.toMatchObject({
           code: 'not_found',
         })
       })
@@ -144,13 +155,21 @@ describe('共享 SQL 数据契约', () => {
       operationId = randomUUID()
     try {
       const create = () =>
-        runtime.operation(context, operationId, 'projects.create', { name: '一次创建' }, (data) =>
-          data.projects.create({ name: '一次创建' }),
+        runtime.operation(
+          context,
+          operationId,
+          'projects.create',
+          { name: '一次创建' },
+          (data) => data.projects.create({ name: '一次创建' }),
         )
       expect(await create()).toEqual(await create())
       await expect(
-        runtime.operation(context, operationId, 'projects.create', { name: '不同内容' }, (data) =>
-          data.projects.create({ name: '不同内容' }),
+        runtime.operation(
+          context,
+          operationId,
+          'projects.create',
+          { name: '不同内容' },
+          (data) => data.projects.create({ name: '不同内容' }),
         ),
       ).rejects.toMatchObject({ code: 'conflict' })
       expect(await runtime.receipt(dataContext(randomUUID()), operationId)).toBeNull()
@@ -162,7 +181,9 @@ describe('共享 SQL 数据契约', () => {
         }),
       ).rejects.toThrow()
       expect(await runtime.receipt(context, failedId)).toBeNull()
-      expect(await runtime.transaction(context, (data) => data.projects.list())).toHaveLength(1)
+      expect(
+        await runtime.transaction(context, (data) => data.projects.list()),
+      ).toHaveLength(1)
     } finally {
       await runtime.close()
     }
@@ -175,7 +196,9 @@ describe('共享 SQL 数据契约', () => {
       "DROP TABLE core_operation_receipts; UPDATE core_runtime_meta SET value='2' WHERE key='schema_version'",
     )
     db.close()
-    await expect(openSqliteRuntime(path)).rejects.toMatchObject({ code: 'schema_upgrade_required' })
+    await expect(openSqliteRuntime(path)).rejects.toMatchObject({
+      code: 'schema_upgrade_required',
+    })
     const originalExec = SQLite.prototype.exec
     vi.spyOn(SQLite.prototype, 'exec').mockImplementation(function (
       this: SQLite.Database,
@@ -189,15 +212,20 @@ describe('共享 SQL 数据契约', () => {
     vi.restoreAllMocks()
     const old = new SQLite(path)
     expect(
-      old.prepare("SELECT value FROM core_runtime_meta WHERE key='schema_version'").pluck().get(),
+      old
+        .prepare("SELECT value FROM core_runtime_meta WHERE key='schema_version'")
+        .pluck()
+        .get(),
     ).toBe('2')
     expect(
-      old.prepare("SELECT name FROM sqlite_master WHERE name='core_operation_receipts'").get(),
+      old
+        .prepare("SELECT name FROM sqlite_master WHERE name='core_operation_receipts'")
+        .get(),
     ).toBeUndefined()
     old.close()
-    expect(readdirSync(join(path, '..')).filter((name) => name.includes('.backup-'))).toHaveLength(
-      1,
-    )
+    expect(
+      readdirSync(join(path, '..')).filter((name) => name.includes('.backup-')),
+    ).toHaveLength(1)
     const backup = await migrateSqlite(path)
     const checked = new SQLite(backup, { readonly: true })
     expect(checked.pragma('integrity_check', { simple: true })).toBe('ok')

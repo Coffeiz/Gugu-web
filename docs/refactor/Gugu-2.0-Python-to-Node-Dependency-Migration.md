@@ -2,7 +2,7 @@
 
 > **专题参考**：整体架构、目录职责、完成状态与当前任务统一见 [架构与迁移任务清单](Gugu-2.0-架构与迁移任务清单.md)。本表不作为另一份实施路线或完成率清单。
 > **2026-11-12 对齐**：首批 Core 已采用 Kysely、Zod、better-sqlite3、pg 与 Node 26；Drizzle 等并列项保留为原始候选，不代表同时采用。其他依赖只有存在真实迁移调用链及验收结果时才能标为已替换。
-> **桌面路线更新**：目标为 Electron + TS Main/Preload + 独立 Node Core，使用 `electron-builder.yml` 打包；执行契约/策略/平台适配归入 Core `agent/executor/`，桌面 `sandbox/` 只做诊断。现有 Tauri 壳仅保留为迁移来源和验证证据。Electron 尚未实现，目录职责与待办统一见主清单 §2 / N2。
+> **桌面路线更新**：目标为 Electron + TS Main/Preload + 独立 Node Core，使用 `electron-builder.yml` 打包；执行契约/策略/平台适配归入 Core `agent/executor/`，桌面 `sandbox/` 只做诊断。现有 Tauri 壳仅保留为迁移来源和验证证据。Electron 验证切片已实现；旧源码保留在 `compat/desktop-tauri/`。目录与剩余验收统一见主清单 §2 / N2。
 > 下文的 PR #116 和 Python 包位置是盘点基线；原 Python Core/Desktop 包当前分别位于 `compat/core-python/`、`compat/desktop-python/`。仍有调用方的 Python 依赖不能直接删除。
 
 > 状态：技术迁移计划草案（待 PoC 与回归确认）\
@@ -152,14 +152,14 @@
 | `gugu-desktop-host` Python 管道进程 | 独立 Node 26 Core 进程 | Node 已替换 Python；Electron Main 继续使用 NDJSON v2、Worker 与收据契约 | 中 |
 | `gugu-desktop` Tauri 2 / Rust 壳 | Electron + TS Main/Preload | 重写窗口/生命周期与 IPC，迁入原 Host 的安全和恢复契约；Core 不依赖 Electron | 高 |
 | `@microsoft/mxc-sdk@1.0.1` | **复用（PoC）** | 通过 Core `agent/executor/mxc.ts` 适配 Host 注入的原生后端；保留有界协议/能力校验，不导入 Electron | 高 |
-| `@tauri-apps/cli@2.12.4` | `electron` + `electron-builder` | 新壳等价验收后删除旧 CLI/配置；用 `electron-builder.yml` 及 `scripts/package.ts` / `smoke.ts` 验证依赖与资源，再固定版本 | 中～高 |
+| `@tauri-apps/cli@2.12.4` | `electron` + `electron-builder` | 活动依赖已退出旧 CLI，旧源码保留 compat；用 `electron-builder.yml` 及 `scripts/package.ts` / `smoke.ts` 验证依赖与资源，再固定版本 | 中～高 |
 | Vue `frontend/` 独立 desktop 入口 | **复用** | 将 Tauri bridge 改为最小 Preload API；不暴露通用 IPC/FS/进程接口 | 中 |
 | `gugu-desktop` Node engines 约束 | 构建 Node、Electron 内嵌 Node、Core Node 分别声明 | Core 保持已声明的 Node 26；不假设 Electron 内嵌版本相同 | 中 |
 | 现有 Node sidecar 制品 | Electron 真实资源目录中的独立 Node/Core 制品 | 重用装配/完整性契约；原生依赖按独立 Node ABI 构建，安装后脱离开发目录验证 | 高 |
 
-Electron/electron-builder 及后续更新依赖尚未加入锁文件。`better-sqlite3` 不进入 Electron Main/Preload；若后续选择内嵌 Node/`utilityProcess`，必须重新验证 Core engines 和原生模块 ABI，不能直接复用独立 Node 的 `.node` 文件。参见 [Electron 原生模块说明](https://www.electronjs.org/docs/latest/tutorial/using-native-node-modules)。
+Electron 45.3.1、electron-builder 26.18.0、electron-updater 6.8.11 已固定到锁文件。`better-sqlite3` 不进入 Electron Main/Preload；若后续选择内嵌 Node/`utilityProcess`，必须重新验证 Core engines 和原生模块 ABI，不能直接复用独立 Node 的 `.node` 文件。参见 [Electron 原生模块说明](https://www.electronjs.org/docs/latest/tutorial/using-native-node-modules)。
 
-Core 的 `runtime/transport/stdio.ts` / `ipc.ts` 仅适配传输，复用 `runtime/commands.ts` 的命令与限额；其中 IPC 不依赖 Electron，也不代替 Main 对窗口/frame 来源的校验。首版仍用现有 NDJSON v2，迁目录和新增 IPC 均未实施。Core `agent/executor/` 的可移植契约/策略与可选原生 Adapter 分开导出，SaaS/Mobile 不隐式加载 MXC；Host 注入身份、授权、真实资源和平台后端。
+Core 的 `runtime/transport/stdio.ts` / `ipc.ts` 仅适配传输，复用 `runtime/commands.ts` 的命令与限额；其中 IPC 不依赖 Electron，也不代替 Main 对窗口/frame 来源的校验。首版仍用现有 NDJSON v2，stdio 已迁入 transport，通用 IPC 已独立回归；Electron Host 仍使用 NDJSON。Core `agent/executor/` 的可移植契约/策略与可选原生 Adapter 分开导出，SaaS/Mobile 不隐式加载 MXC；Host 注入身份、授权、真实资源和平台后端。
 
 **特别说明**：桌面 Node Sidecar 是桌面方案，不能推导出 Android/iOS 也能运行同一 Node 宿主。移动端必须分离 `portable` 业务协议/规则与 Node 特有的 FS、数据库驱动、进程、沙箱及定时任务适配。
 
@@ -210,7 +210,7 @@ Core 的 `runtime/transport/stdio.ts` / `ipc.ts` 仅适配传输，复用 `runti
 - API：`fastify` 优先，原因是独立 Node 服务更贴近现有 FastAPI/Worker 边界；可另做 Hono PoC。
 - 数据层：首批已选 **Kysely + better-sqlite3 / pg**；Drizzle、`node:sqlite` 只保留为原始候选。完整 schema/Alembic 交接仍待验收。
 - 进程/任务：不要把耗时 Agent Run 放到 HTTP handler 内；独立 Worker、租约与持久 Job。
-- 桌面：**Electron + TS Main/Preload + 独立 Node 26 Core + SQLite Worker**；Vue 留在现有入口，Host 负责可信身份、系统能力和生命周期，Core Executor 复用策略/平台适配。打包改为 [electron-builder](https://www.electron.build/v26/docs/configuration/)，通过 `electron-builder.yml` 与 package/smoke 脚本装配；`main/updater.ts` 后续接更新校验和停写安装。版本在 N2 实施时固定，pnpm 装配与更新通道须通过验收。
+- 桌面：**Electron + TS Main/Preload + 独立 Node 26 Core + SQLite Worker**；Vue 留在现有入口，Host 负责可信身份、系统能力和生命周期，Core Executor 复用策略/平台适配。打包改为 [electron-builder](https://www.electron.build/v26/docs/configuration/)，通过 `electron-builder.yml` 与 package/smoke 脚本装配；`main/updater.ts` 后续接更新校验和停写安装。依赖已固定，Windows 独立目录包已本机验证；三平台 CI 与生产更新通道分别验收。
 - Mobile：首先作为入口/远程 Runtime 客户端，随后仅移植 Portable Core 与本地受限能力。
 
 ## 7. 切片迁移次序与退出门槛
@@ -226,7 +226,7 @@ Core 的 `runtime/transport/stdio.ts` / `ipc.ts` 仅适配传输，复用 `runti
 | M6 | Agent Loop、Provider、工具、IM | 跨 provider 流式 Golden Tests、IM 接入与安全门通过 |
 | M7 | 全量切换与撤除 Python | 无 Python 生产入口、可回滚制品、安全/许可证复核通过 |
 
-本表仅解释依赖切片的退出条件，实时顺序和勾选统一见主清单 N0–N5；当前任务仍为 T1，Electron 替换承接 N2。**每个切片只能有一个写入真源。** 迁移中可以短期双读/影子计算，但不允许没有事务协议的双写；若需并行运行，采用旧 Python 作为参考实现，Node 干跑比对，不提交副作用。
+本表仅解释依赖切片的退出条件，实时顺序和勾选统一见主清单 N0–N5；T1/Electron 验证切片已实现，最终 CI 与其余 N2 产品门槛分别验收。**每个切片只能有一个写入真源。** 迁移中可以短期双读/影子计算，但不允许没有事务协议的双写；若需并行运行，采用旧 Python 作为参考实现，Node 干跑比对，不提交副作用。
 
 ## 8. 建议建立的验证数据集
 

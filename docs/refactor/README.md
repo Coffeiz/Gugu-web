@@ -10,9 +10,9 @@
 | [Python → Node 依赖迁移矩阵](Gugu-2.0-Python-to-Node-Dependency-Migration.md) | 依赖盘点、候选库和逐项验收门槛；不单独维护整体完成状态 |
 | [历史方案与验证记录](_archive/gugu-2.0/README.md) | 原多端/职责方案、Python 切片、Node 方案与桌面/MXC 实验，供追溯使用 |
 
-当前优先任务是补齐现有 Node Core 与 Python 后端同逻辑的回归，并按 pytest 标记语义分层。任务范围、计划命令与完成条件统一维护在主文档；本次文档整合没有实施该任务或修改测试命令。
+本轮已落地项目/联系人 Core 同逻辑回归和 pytest 语义分层、Electron 验证 Host 与共用 Executor 边界。具体行为及差异见 [测试对照清单](../testing/node-core-parity.md)；实现、CI 通过、合并与正式发行分别记录，精确提交结果以 PR #118 为准。
 
-桌面目标已改为 **Electron + TypeScript Main/Preload + 独立 Node Core**，使用 `electron-builder.yml` 与 package/smoke 脚本打包验证。目录统一采用主文档 §2：Core 的 `runtime/transport/` 分离传输，`agent/executor/` 复用执行契约/策略/平台适配；Desktop 的 `sandbox/` 仅诊断，Host 注入端侧授权与原生能力。现有代码仍为 Tauri 验证实现；Electron 替换待办统一见 N2，旧 Tauri 的 CI/制品结果不视为 Electron 验收。
+桌面目标已改为 **Electron + TypeScript Main/Preload + 独立 Node Core**，使用 `electron-builder.yml` 与 package/smoke 脚本打包验证。目录统一采用主文档 §2：Core 的 `runtime/transport/` 分离传输，`agent/executor/` 复用执行契约/策略/平台适配；Desktop 的 `sandbox/` 仅诊断，Host 注入端侧授权与原生能力。当前活动实现为 Electron，旧源码保留在 `compat/desktop-tauri/`。后续平台和发行门槛统一见 N2，旧 Tauri 的 CI/制品结果不视为 Electron 验收。
 
 ## 其他重构文档
 

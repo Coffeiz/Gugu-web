@@ -7,10 +7,10 @@ let app: ReturnType<typeof createApp> | undefined
 let host: HTMLDivElement | undefined
 
 async function flushUi() {
-  await Promise.resolve()
-  await nextTick()
-  await Promise.resolve()
-  await nextTick()
+  await vi.waitFor(async () => {
+    await nextTick()
+    expect(host?.querySelector('button')?.disabled).toBe(false)
+  })
 }
 
 function mountWorkbench() {
@@ -24,23 +24,21 @@ function mountWorkbench() {
 afterEach(() => {
   app?.unmount()
   host?.remove()
-  delete (window as any).__TAURI__
+  delete (window as any).guguDesktop
   vi.unstubAllGlobals()
 })
 
 describe('桌面本地工作台', () => {
   it('创建后从 Core 重读列表，不依赖 Web 登录或 HTTP', async () => {
     const rows: { id: number; name: string; version: number }[] = []
-    const invoke = vi.fn(async (command, args) => {
-      if (command === 'sandbox_status') return { supported: false, methods: [], checkAvailable: false }
-      if (args.method === 'projects.create') { rows.push({ id: 1, name: args.params.name, version: 1 }); return rows[0] }
-      if (args.method === 'projects.list') return [...rows]
-      if (args.method === 'clients.list') return []
-      throw new Error('不支持的测试请求')
-    })
+    const createProject = vi.fn(async (name: string) => { rows.push({ id: 1, name, version: 1 }); return { ok: true, result: rows[0] } })
     const fetch = vi.fn()
     vi.stubGlobal('fetch', fetch)
-    ;(window as any).__TAURI__ = { core: { invoke } }
+    ;(window as any).guguDesktop = {
+      projects: async () => ({ ok: true, result: [...rows] }), createProject,
+      clients: async () => ({ ok: true, result: [] }),
+      sandboxStatus: async () => ({ ok: true, result: { supported: false, methods: [], checkAvailable: false } }),
+    }
     const element = mountWorkbench()
     await flushUi()
     const input = element.querySelector<HTMLInputElement>('#project-name')!
@@ -50,7 +48,7 @@ describe('桌面本地工作台', () => {
     await flushUi()
     expect(element.textContent).toContain('本地项目')
     expect(element.textContent).toContain('Core 已连接')
-    expect(invoke).toHaveBeenCalledWith('core_request', { method: 'projects.create', params: { name: '本地项目' } })
+    expect(createProject).toHaveBeenCalledWith('本地项目')
     expect(input.value).toBe('')
     expect(fetch).not.toHaveBeenCalled()
   })
@@ -59,6 +57,21 @@ describe('桌面本地工作台', () => {
     const element = mountWorkbench()
     await flushUi()
     expect(element.querySelector('[role="alert"]')?.textContent).toContain('请在咕咕桌面应用中打开')
+    expect(element.querySelector('button')?.disabled).toBe(false)
+  })
+
+  it('未知写入结果保留操作标识和输入，结束忙碌且不自动再次提交', async () => {
+    const createProject = vi.fn(async () => ({ ok: false, error: { code: 'unknown_result', message: '结果未确认，请查询操作收据', operationId: '00000000-0000-4000-8000-000000000001' } }))
+    ;(window as any).guguDesktop = { projects: async () => ({ ok: true, result: [] }), clients: async () => ({ ok: true, result: [] }), createProject, sandboxStatus: async () => ({ ok: true, result: { supported: false, methods: [], checkAvailable: false } }) }
+    const element = mountWorkbench()
+    await flushUi()
+    const input = element.querySelector<HTMLInputElement>('#project-name')!
+    input.value = '待确认计划'; input.dispatchEvent(new Event('input', { bubbles: true }))
+    element.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await flushUi()
+    expect(createProject).toHaveBeenCalledTimes(1)
+    expect(input.value).toBe('待确认计划')
+    expect(element.querySelector('[role="alert"]')?.textContent).toContain('00000000-0000-4000-8000-000000000001')
     expect(element.querySelector('button')?.disabled).toBe(false)
   })
 })

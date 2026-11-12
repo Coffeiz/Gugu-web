@@ -14,10 +14,16 @@ interface Job {
 }
 const port = parentPort!
 try {
-  const config = workerData as { database: string; initialize: boolean; allowLegacySchema: boolean }
+  const config = workerData as {
+    database: string
+    initialize: boolean
+    allowLegacySchema: boolean
+    exclusive: boolean
+  }
   if (config.initialize) await initializeSqlite(config.database)
   const { runtime, ownerId, schemaVersion } = await openSqliteRuntime(config.database, {
     allowLegacySchema: config.allowLegacySchema,
+    exclusive: config.exclusive,
   })
   const context = dataContext(ownerId)
   port.postMessage({ event: 'ready', ownerId, schemaVersion })
@@ -78,7 +84,10 @@ try {
     error:
       error instanceof CoreError
         ? { code: error.code, message: error.message }
-        : { code: 'storage_error', message: '本地数据无法打开，请检查版本与文件权限' },
+        : {
+            code: 'storage_error',
+            message: '本地数据无法打开，请检查版本与文件权限',
+          },
   })
   port.close()
 }

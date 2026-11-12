@@ -11,6 +11,7 @@ export type ErrorCode =
   | 'closed'
   | 'cancelled'
   | 'busy'
+  | 'database_in_use'
 
 export class CoreError extends Error {
   constructor(
