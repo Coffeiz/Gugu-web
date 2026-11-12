@@ -1,28 +1,18 @@
 import assert from 'node:assert/strict'
-import { createHmac, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import test from 'node:test'
 import { createPostgresRuntime, type SqlDataRuntime } from '@gugu/core/data'
 import { createApp } from '../src/app.js'
+import { createClientOperations } from '../src/clients.js'
 import { createProjectListing } from '../src/projects.js'
+import { signedUserToken } from './helpers/auth.js'
 import { createUserRepository } from '../src/users.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const secret = 'synthetic-postgres-integration-secret'
 
-function userToken(userId: string): string {
-  const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url')
-  const payload = Buffer.from(JSON.stringify({
-    sub: userId,
-    role: 'user',
-    sv: 4,
-    exp: Math.floor(Date.now() / 1000) + 60,
-  })).toString('base64url')
-  const content = `${header}.${payload}`
-  return `${content}.${createHmac('sha256', secret).update(content).digest('base64url')}`
-}
-
-test('Node /auth/me reads an isolated PostgreSQL user and updates activity after authentication', {
+test('Node auth, projects, and clients preserve owner boundaries in isolated PostgreSQL', {
   skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL integration',
 }, async () => {
   const schema = `gugu_webui_test_${randomUUID().replaceAll('-', '')}`
@@ -95,6 +85,18 @@ test('Node /auth/me reads an isolated PostgreSQL user and updates activity after
         file_count bigint NOT NULL CHECK (file_count > 0)
       )
     `)
+    await pool.query(`
+      CREATE TABLE clients (
+        id serial PRIMARY KEY,
+        user_id uuid NOT NULL,
+        name varchar(200) NOT NULL,
+        contact varchar(200),
+        email varchar(300),
+        phone varchar(50),
+        notes text NOT NULL,
+        created_at timestamptz NOT NULL
+      )
+    `)
     const userId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
     await pool.query(
       `INSERT INTO users
@@ -109,6 +111,13 @@ test('Node /auth/me reads an isolated PostgreSQL user and updates activity after
     )
 
     const otherUserId = 'ad0902a0-c899-44ee-b180-d54eb04e4604'
+    await pool.query(
+      `INSERT INTO users
+        (id, username, display_name, email, is_active, account_status, security_version,
+         created_at, timezone, email_subscribed)
+       VALUES ($1, $2, NULL, $3, TRUE, 'active', 4, $4, NULL, FALSE)`,
+      [otherUserId, 'other-integration-user', 'other@example.test', '2026-11-02T00:00:00Z'],
+    )
     const insertProject = async (owner: string, name: string, archived: boolean) => {
       const result = await pool.query<{ id: number }>(
         `INSERT INTO projects
@@ -142,7 +151,7 @@ test('Node /auth/me reads an isolated PostgreSQL user and updates activity after
       const activeResponse = await projectApp.inject({
         method: 'GET',
         url: '/api/v1/projects',
-        headers: { authorization: `Bearer ${userToken(userId)}` },
+        headers: { authorization: `Bearer ${signedUserToken(secret, userId, 4)}` },
       })
       assert.equal(activeResponse.statusCode, 200)
       assert.deepEqual(activeResponse.json(), [{
@@ -168,7 +177,7 @@ test('Node /auth/me reads an isolated PostgreSQL user and updates activity after
       const archivedResponse = await projectApp.inject({
         method: 'GET',
         url: '/api/v1/projects?archived=true',
-        headers: { authorization: `Bearer ${userToken(userId)}` },
+        headers: { authorization: `Bearer ${signedUserToken(secret, userId, 4)}` },
       })
       assert.equal(archivedResponse.statusCode, 200)
       assert.deepEqual(archivedResponse.json().map((project: { id: number }) => project.id), [archivedProjectId])
@@ -176,10 +185,71 @@ test('Node /auth/me reads an isolated PostgreSQL user and updates activity after
       await projectApp.close()
     }
 
+    const clientApp = createApp({
+      appName: 'Gugu',
+      isReady: async () => true,
+      userAuth: { secret, ...createUserRepository(pool) },
+      clients: createClientOperations(core),
+    })
+    try {
+      const invalidCreate = await clientApp.inject({
+        method: 'POST',
+        url: '/api/v1/clients',
+        headers: { authorization: `Bearer ${signedUserToken(secret, userId, 4)}` },
+        payload: { name: '   ' },
+      })
+      assert.equal(invalidCreate.statusCode, 422)
+      const createResponse = await clientApp.inject({
+        method: 'POST',
+        url: '/api/v1/clients',
+        headers: { authorization: `Bearer ${signedUserToken(secret, userId, 4)}` },
+        payload: { name: 'Synthetic Core client', contact: 'Test contact' },
+      })
+      assert.equal(createResponse.statusCode, 201)
+      const createdClient = createResponse.json()
+      assert.deepEqual(createdClient, {
+        id: createdClient.id,
+        name: 'Synthetic Core client',
+        contact: 'Test contact',
+        email: null,
+        phone: null,
+        notes: '',
+      })
+      const otherClient = await pool.query<{ id: number }>(
+        `INSERT INTO clients (user_id, name, contact, email, phone, notes, created_at)
+         VALUES ($1, 'Other owner client', NULL, NULL, NULL, '', '2026-11-02T00:00:00Z')
+         RETURNING id`,
+        [otherUserId],
+      )
+      const ownerList = await clientApp.inject({
+        method: 'GET',
+        url: '/api/v1/clients',
+        headers: { authorization: `Bearer ${signedUserToken(secret, userId, 4)}` },
+      })
+      assert.equal(ownerList.statusCode, 200)
+      assert.deepEqual(ownerList.json().map((client: { id: number }) => client.id), [createdClient.id])
+      const crossOwnerDelete = await clientApp.inject({
+        method: 'DELETE',
+        url: `/api/v1/clients/${otherClient.rows[0]!.id}`,
+        headers: { authorization: `Bearer ${signedUserToken(secret, userId, 4)}` },
+      })
+      assert.equal(crossOwnerDelete.statusCode, 404)
+      const ownDelete = await clientApp.inject({
+        method: 'DELETE',
+        url: `/api/v1/clients/${createdClient.id}`,
+        headers: { authorization: `Bearer ${signedUserToken(secret, userId, 4)}` },
+      })
+      assert.equal(ownDelete.statusCode, 204)
+      const remaining = await pool.query<{ name: string }>('SELECT name FROM clients ORDER BY id')
+      assert.deepEqual(remaining.rows.map((row) => row.name), ['Other owner client'])
+    } finally {
+      await clientApp.close()
+    }
+
     const response = await app.inject({
       method: 'GET',
       url: '/api/v1/auth/me',
-      headers: { authorization: `Bearer ${userToken(userId)}` },
+      headers: { authorization: `Bearer ${signedUserToken(secret, userId, 4)}` },
     })
     assert.equal(response.statusCode, 200)
     assert.deepEqual(response.json(), {

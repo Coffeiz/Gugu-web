@@ -1,22 +1,10 @@
 import assert from 'node:assert/strict'
-import { createHmac } from 'node:crypto'
 import test from 'node:test'
 import { createApp } from '../src/app.js'
+import { signedUserToken } from './helpers/auth.js'
 
 const secret = 'synthetic-project-route-secret'
 const userId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
-
-function token(): string {
-  const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url')
-  const payload = Buffer.from(JSON.stringify({
-    sub: userId,
-    role: 'user',
-    sv: 1,
-    exp: Math.floor(Date.now() / 1000) + 60,
-  })).toString('base64url')
-  const content = `${header}.${payload}`
-  return `${content}.${createHmac('sha256', secret).update(content).digest('base64url')}`
-}
 
 function makeApp(projects: (ownerId: string, archived: boolean) => Promise<unknown[]>) {
   return createApp({
@@ -51,10 +39,10 @@ test('GET /api/v1/projects binds the authenticated owner and archived filter', a
   })
   try {
     const active = await app.inject({
-      method: 'GET', url: '/api/v1/projects', headers: { authorization: `Bearer ${token()}` },
+      method: 'GET', url: '/api/v1/projects', headers: { authorization: `Bearer ${signedUserToken(secret, userId)}` },
     })
     const archived = await app.inject({
-      method: 'GET', url: '/api/v1/projects?archived=true', headers: { authorization: `Bearer ${token()}` },
+      method: 'GET', url: '/api/v1/projects?archived=true', headers: { authorization: `Bearer ${signedUserToken(secret, userId)}` },
     })
     assert.equal(active.statusCode, 200)
     assert.deepEqual(active.json(), [{ id: 10, archived: false }])
@@ -70,11 +58,11 @@ test('GET /api/v1/projects rejects unauthenticated access and unsupported delete
   try {
     const missing = await app.inject({ method: 'GET', url: '/api/v1/projects' })
     const deleted = await app.inject({
-      method: 'GET', url: '/api/v1/projects?deleted=true', headers: { authorization: `Bearer ${token()}` },
+      method: 'GET', url: '/api/v1/projects?deleted=true', headers: { authorization: `Bearer ${signedUserToken(secret, userId)}` },
     })
     const conflicting = await app.inject({
       method: 'GET', url: '/api/v1/projects?archived=true&deleted=true',
-      headers: { authorization: `Bearer ${token()}` },
+      headers: { authorization: `Bearer ${signedUserToken(secret, userId)}` },
     })
     assert.equal(missing.statusCode, 401)
     assert.equal(deleted.statusCode, 501)
@@ -89,7 +77,7 @@ test('GET /api/v1/projects rejects malformed boolean query values', async () => 
   try {
     const response = await app.inject({
       method: 'GET', url: '/api/v1/projects?archived=sometimes',
-      headers: { authorization: `Bearer ${token()}` },
+      headers: { authorization: `Bearer ${signedUserToken(secret, userId)}` },
     })
     assert.equal(response.statusCode, 422)
   } finally {

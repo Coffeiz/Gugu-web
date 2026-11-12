@@ -1,22 +1,10 @@
 import assert from 'node:assert/strict'
-import { createHmac } from 'node:crypto'
 import test from 'node:test'
 import { createApp } from '../src/app.js'
+import { signedUserToken } from './helpers/auth.js'
 
 const secret = 'synthetic-test-secret-with-sufficient-length'
 const userId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
-
-function token(): string {
-  const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url')
-  const payload = Buffer.from(JSON.stringify({
-    sub: userId,
-    role: 'user',
-    sv: 2,
-    exp: Math.floor(Date.now() / 1000) + 60,
-  })).toString('base64url')
-  const content = `${header}.${payload}`
-  return `${content}.${createHmac('sha256', secret).update(content).digest('base64url')}`
-}
 
 test('GET /api/v1/auth/me returns the existing public user fields for an active user', async () => {
   let markedActive: string | undefined
@@ -47,7 +35,7 @@ test('GET /api/v1/auth/me returns the existing public user fields for an active 
     const response = await app.inject({
       method: 'GET',
       url: '/api/v1/auth/me',
-      headers: { authorization: `Bearer ${token()}` },
+      headers: { authorization: `Bearer ${signedUserToken(secret, userId, 2)}` },
     })
     assert.equal(response.statusCode, 200)
     assert.equal(markedActive, userId)
@@ -101,7 +89,7 @@ test('GET /api/v1/auth/me rejects missing and revoked credentials without exposi
     const revoked = await app.inject({
       method: 'GET',
       url: '/api/v1/auth/me',
-      headers: { authorization: `Bearer ${token()}` },
+      headers: { authorization: `Bearer ${signedUserToken(secret, userId, 2)}` },
     })
     assert.equal(revoked.statusCode, 401)
     assert.deepEqual(revoked.json(), { detail: '用户不存在或已停用' })
