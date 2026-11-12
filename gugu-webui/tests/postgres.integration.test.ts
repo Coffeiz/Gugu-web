@@ -5,7 +5,7 @@ import test from 'node:test'
 import { createPostgresRuntime, type SqlDataRuntime } from '@gugu/core/data'
 import { createApp } from '../src/app.js'
 import { createClientOperations } from '../src/clients.js'
-import { createProjectListing } from '../src/projects.js'
+import { createProjectGetter, createProjectListing } from '../src/projects.js'
 import { signedUserToken } from './helpers/auth.js'
 import { createUserRepository } from '../src/users.js'
 
@@ -145,6 +145,7 @@ test('Node auth, projects, and clients preserve owner boundaries in isolated Pos
       isReady: async () => true,
       userAuth: { secret, ...createUserRepository(pool) },
       listProjects: createProjectListing(core, pool),
+      getProject: createProjectGetter(core, pool),
     })
 
     try {
@@ -181,6 +182,20 @@ test('Node auth, projects, and clients preserve owner boundaries in isolated Pos
       })
       assert.equal(archivedResponse.statusCode, 200)
       assert.deepEqual(archivedResponse.json().map((project: { id: number }) => project.id), [archivedProjectId])
+      const projectDetail = await projectApp.inject({
+        method: 'GET',
+        url: `/api/v1/projects/${activeProjectId}`,
+        headers: { authorization: `Bearer ${signedUserToken(secret, userId, 4)}` },
+      })
+      assert.equal(projectDetail.statusCode, 200)
+      assert.equal(projectDetail.json().id, activeProjectId)
+      assert.equal(projectDetail.json().fileCount, 2)
+      const otherProjectDetail = await projectApp.inject({
+        method: 'GET',
+        url: `/api/v1/projects/${otherProjectId}`,
+        headers: { authorization: `Bearer ${signedUserToken(secret, userId, 4)}` },
+      })
+      assert.equal(otherProjectDetail.statusCode, 404)
     } finally {
       await projectApp.close()
     }

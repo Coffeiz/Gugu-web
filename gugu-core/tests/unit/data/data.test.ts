@@ -114,8 +114,13 @@ describe('共享 SQL 数据契约', () => {
       const project = await runtime.transaction(owner, (data) =>
         data.projects.create({ name: '初始计划', client: '小北' }),
       )
+      expect(await runtime.transaction(owner, (data) => data.projects.get(project.id))).toMatchObject({
+        id: project.id,
+        name: '初始计划',
+      })
       await runtime.transaction(other, async (data) => {
         expect(await data.projects.list()).toEqual([])
+        expect(await data.projects.get(project.id)).toBeNull()
         await expect(
           data.projects.update(project.id, 1, { name: '越权' }),
         ).rejects.toMatchObject({

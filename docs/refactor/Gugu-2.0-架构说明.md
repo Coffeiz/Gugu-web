@@ -127,13 +127,13 @@ gugu-desktop/
 gugu-webui/                        # Linux/NAS 自托管版 Node HTTP Host 与部署装配；当前为首个业务读取切片
   package.json                     # workspace 包；依赖 @gugu/core，不复制 Core 源码
   src/
-    app.ts                         # Fastify app；健康检查、认证用户读取与项目列表路由
+    app.ts                         # Fastify app；健康检查、认证用户读取、项目列表/详情与客户路由
     main.ts                        # PostgreSQL/Core 装配、启动、信号处理与优雅关闭
     config.ts                      # 环境变量解析与启动前校验
     auth.ts                        # 当前实现 HS256 用户令牌、Cookie CSRF 与账户版本校验
     database.ts                    # readiness 核对认证和项目读取依赖的 PostgreSQL 表/列
     users.ts                       # 当前用户只读查询、IM bot 投影及活跃时间仓储
-    projects.ts                    # 使用 Core 项目查询并读取项目文件计数投影
+    projects.ts                    # 使用 Core 项目列表/详情查询并读取项目文件计数投影
     clients.ts                     # 使用 Core Runtime 提供客户列表、创建和删除
     config/
       capabilities.ts              # 本部署显式启用的能力
@@ -162,7 +162,7 @@ gugu-webui/                        # Linux/NAS 自托管版 Node HTTP Host 与�
     auth.test.ts                   # 当前保护令牌、Bearer/Cookie、CSRF 与撤销行为
     auth-route.test.ts             # 当前保护 GET /api/v1/auth/me 用户响应契约
     database.test.ts               # 当前保护 readiness 对必需 PostgreSQL schema 的核对
-    projects-route.test.ts         # 当前保护项目路由认证、参数和 owner 绑定
+    projects-route.test.ts         # 当前保护项目列表/详情认证、参数和 owner 绑定
     clients-route.test.ts          # 当前保护客户列表、创建、删除与 HTTP 错误映射
     postgres.integration.test.ts   # 显式测试 URL 下以随机隔离 schema 验证真实 PG 用户和项目列表读取
   .env.example                     # 配置项示例，不包含真实凭据

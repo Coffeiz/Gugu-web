@@ -19,6 +19,10 @@ export interface ClientRepository {
 }
 export class ProjectService {
   constructor(readonly repository: ProjectRepository) {}
+  get(id: number): Promise<ProjectRecord | null> {
+    safeInteger(id)
+    return this.repository.get(id)
+  }
   list(archived = false): Promise<ProjectRecord[]> {
     return this.repository.list(archived)
   }

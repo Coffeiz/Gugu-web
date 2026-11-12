@@ -6,7 +6,10 @@ import { signedUserToken } from './helpers/auth.js'
 const secret = 'synthetic-project-route-secret'
 const userId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
 
-function makeApp(projects: (ownerId: string, archived: boolean) => Promise<unknown[]>) {
+function makeApp(
+  projects: (ownerId: string, archived: boolean) => Promise<unknown[]>,
+  getProject?: (ownerId: string, projectId: number) => Promise<unknown | null>,
+) {
   return createApp({
     appName: 'Gugu',
     isReady: async () => true,
@@ -28,6 +31,7 @@ function makeApp(projects: (ownerId: string, archived: boolean) => Promise<unkno
       }),
     },
     listProjects: projects,
+    ...(getProject ? { getProject } : {}),
   })
 }
 
@@ -80,6 +84,37 @@ test('GET /api/v1/projects rejects malformed boolean query values', async () => 
       headers: { authorization: `Bearer ${signedUserToken(secret, userId)}` },
     })
     assert.equal(response.statusCode, 422)
+  } finally {
+    await app.close()
+  }
+})
+
+test('GET /api/v1/projects/:pid binds the owner and preserves 404 and 422 responses', async () => {
+  const calls: Array<[string, number]> = []
+  const app = makeApp(async () => [], async (ownerId, projectId) => {
+    calls.push([ownerId, projectId])
+    return projectId === 10 ? { id: 10, name: 'Owned project', fileCount: 3 } : null
+  })
+  try {
+    const found = await app.inject({
+      method: 'GET', url: '/api/v1/projects/10',
+      headers: { authorization: `Bearer ${signedUserToken(secret, userId)}` },
+    })
+    const missing = await app.inject({
+      method: 'GET', url: '/api/v1/projects/99',
+      headers: { authorization: `Bearer ${signedUserToken(secret, userId)}` },
+    })
+    const invalid = await app.inject({
+      method: 'GET', url: '/api/v1/projects/not-an-id',
+      headers: { authorization: `Bearer ${signedUserToken(secret, userId)}` },
+    })
+    const unauthenticated = await app.inject({ method: 'GET', url: '/api/v1/projects/10' })
+    assert.equal(found.statusCode, 200)
+    assert.deepEqual(found.json(), { id: 10, name: 'Owned project', fileCount: 3 })
+    assert.equal(missing.statusCode, 404)
+    assert.equal(invalid.statusCode, 422)
+    assert.equal(unauthenticated.statusCode, 401)
+    assert.deepEqual(calls, [[userId, 10], [userId, 99]])
   } finally {
     await app.close()
   }

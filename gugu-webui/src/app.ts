@@ -37,6 +37,7 @@ export interface WebUiOptions {
   onReadinessError?: () => void
   userAuth?: UserAuthOptions
   listProjects?: (ownerId: string, archived: boolean) => Promise<unknown[]>
+  getProject?: (ownerId: string, projectId: number) => Promise<unknown | null>
   clients?: ClientOptions
 }
 
@@ -145,6 +146,24 @@ function registerProjectRoute(
   })
 }
 
+function registerProjectGetRoute(
+  app: FastifyInstance,
+  auth: UserAuthOptions,
+  getProject: NonNullable<WebUiOptions['getProject']>,
+) {
+  app.get('/api/v1/projects/:projectId', async (request, reply) => {
+    const user = await authenticateRequest(request, reply, auth)
+    if (!user) return
+    const rawId = (request.params as { projectId: string }).projectId
+    const projectId = Number(rawId)
+    if (!/^\d+$/.test(rawId) || !Number.isSafeInteger(projectId) || projectId < 1)
+      return reply.code(422).send({ detail: '项目标识无效' })
+    const project = await getProject(user.id, projectId)
+    if (project === null) return reply.code(404).send({ detail: '项目不存在' })
+    return project
+  })
+}
+
 function registerClientRoutes(app: FastifyInstance, auth: UserAuthOptions, clients: ClientOptions) {
   app.get('/api/v1/clients', async (request, reply) => {
     const user = await authenticateRequest(request, reply, auth)
@@ -191,6 +210,7 @@ export function createApp(options: WebUiOptions) {
   if (options.userAuth) {
     app.get('/api/v1/auth/me', (request, reply) => getCurrentUser(request, reply, options.userAuth!))
     if (options.listProjects) registerProjectRoute(app, options.userAuth, options.listProjects)
+    if (options.getProject) registerProjectGetRoute(app, options.userAuth, options.getProject)
     if (options.clients) registerClientRoutes(app, options.userAuth, options.clients)
   }
   return app
