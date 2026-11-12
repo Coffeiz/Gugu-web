@@ -124,13 +124,13 @@ gugu-desktop/
     package.ts                     # 装配 Core/原生资源、依赖与许可证，调用打包
     smoke.ts                       # 干净临时环境中的安装资源与重启/故障冒烟
   electron-builder.yml             # 资源布局、平台安装包、签名与更新配置
-gugu-webui/                        # 〔规划〕Linux/NAS 自托管版 Node HTTP Host 与部署装配
-  package.json                     # workspace 包；依赖 @gugu/core，不复制 Core 源码
+gugu-webui/                        # Linux/NAS 自托管版 Node HTTP Host 与部署装配；当前为启动骨架
+  package.json                     # workspace 包；业务接入后依赖 @gugu/core，不复制 Core 源码
   src/
+    app.ts                         # Fastify app；当前实现健康检查，业务路由/Host 装配待迁入
     main.ts                        # 启动、信号处理与优雅关闭
-    app.ts                         # HTTP Host、Core、数据库和能力的组合入口
+    config.ts                      # 环境变量解析与启动前校验
     config/
-      env.ts                       # 环境变量解析与启动前校验
       capabilities.ts              # 本部署显式启用的能力
     http/
       server.ts                    # HTTP 服务生命周期
@@ -151,6 +151,9 @@ gugu-webui/                        # 〔规划〕Linux/NAS 自托管版 Node HTT
   scripts/
     build-web.mjs                  # 构建 frontend 并装配静态资源
     smoke.mjs                      # 临时环境中的部署启动冒烟
+  tests/
+    app.test.ts                    # 当前保护 /health 契约及 readiness 响应
+    config.test.ts                 # 当前保护启动配置校验与连接串处理
   .env.example                     # 配置项示例，不包含真实凭据
   README.md                        # Linux/NAS 安装、升级、备份与恢复
 gugu-saas/                         # 〔规划〕SaaS Gateway、身份、同步与云端部署装配

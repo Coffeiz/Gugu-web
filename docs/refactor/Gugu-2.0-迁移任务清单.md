@@ -39,6 +39,8 @@
 
 ### N2——Node Web/NAS 后端迁移
 
+**当前基线**：`gugu-webui/` workspace 已建立，具备 Fastify `/health`、PostgreSQL `SELECT 1` readiness、启动配置校验和优雅关闭；尚未接入认证、业务 API/SSE、静态前端或 Worker。该骨架不能承担 Web 流量，也不代表任何业务写域已切换。
+
 - [ ] 建立独立 Node HTTP Host，接入 `gugu-core` 与 PostgreSQL，并承担 Web/NAS API 请求；不把桌面 Electron Host 当作服务端。
 - [ ] 盘点 API、Agent 工具、Worker/调度、撤销和迁移的所有写入口。
 - [ ] 保持现有 HTTP/SSE、可信身份到 DataContext、错误与字段映射契约兼容。

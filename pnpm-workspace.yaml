@@ -1,6 +1,7 @@
 packages:
   - "gugu-core"
   - "gugu-desktop"
+  - "gugu-webui"
   - "frontend"
   - "loopscope/frontend"
   - "loopscope/apps/*"

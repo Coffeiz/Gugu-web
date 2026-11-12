@@ -23,6 +23,8 @@ gugu-desktop/.tools/
 gugu-desktop/node_modules/
 gugu-desktop/build/
 gugu-desktop/dist/
+gugu-webui/node_modules/
+gugu-webui/dist/
 gugu-desktop/resources/
 gugu-desktop/release/
 gugu-desktop/python/*.egg-info/
