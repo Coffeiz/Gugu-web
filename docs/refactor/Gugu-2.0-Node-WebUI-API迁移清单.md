@@ -5,7 +5,7 @@
 ## 当前覆盖
 
 - 源码静态盘点：**390** 个字面路由操作，分布在 **57** 个模块。
-- Node 当前路由匹配：**13** 个 method/path（其中项目列表包含活动/归档/回收站查询变体）；其余 **377** 个待迁移。
+- Node 当前路由匹配：**14** 个 method/path（其中项目列表包含活动/归档/回收站查询变体）；其余 **376** 个待迁移。
 - `health` 与 `health/ready` 是 Node Host 自身端点，不属于 Python `/api/v1` 路由计数。
 - Node Host 配置了 Fastify `routerOptions.ignoreTrailingSlash`，用于兼容 Python 路由常见的带/不带尾斜杠调用形式。
 - 本表仅盘点 HTTP/WebSocket 路由；Agent 工具、Worker/调度、撤销副作用和数据迁移写入口需要另建清单，不能由 HTTP 路由数推断覆盖。
@@ -359,7 +359,7 @@
 | `backend/app/api/v1/terminals.py` | `POST` | `/api/v1/terminals/{terminal_id}/reset` | `reset_terminal_view` | 待迁移 |
 | `backend/app/api/v1/terminals.py` | `POST` | `/api/v1/terminals/{terminal_id}/terminate` | `terminate_terminal_view` | 待迁移 |
 | `backend/app/api/v1/terminals.py` | `WEBSOCKET` | `/api/v1/terminals/{terminal_id}/ws` | `terminal_websocket` | 待迁移 |
-| `backend/app/api/v1/track.py` | `POST` | `/api/v1/track/` | `track` | 待迁移 |
+| `backend/app/api/v1/track.py` | `POST` | `/api/v1/track/` | `track` | Node 已接入 |
 | `backend/app/api/v1/trash.py` | `DELETE` | `/api/v1/trash/` | `empty_trash` | 待迁移 |
 | `backend/app/api/v1/trash.py` | `DELETE` | `/api/v1/trash/folders/{fid}` | `hard_delete_folder` | 待迁移 |
 | `backend/app/api/v1/trash.py` | `DELETE` | `/api/v1/trash/{fid}` | `hard_delete_file` | 待迁移 |
@@ -411,6 +411,7 @@
 
 | method/path | 实现 | 主要回归 |
 | --- | --- | --- |
+| `POST /api/v1/track` | `gugu-webui/src/app.ts`, `src/track.ts` | `tests/track-route.test.ts`, isolated PostgreSQL integration |
 | `GET /api/v1/notifications`, `GET /api/v1/notifications/bubble`, `POST /api/v1/notifications/read`, `DELETE /api/v1/notifications` | `gugu-webui/src/app.ts`, `src/notifications.ts` | `tests/notifications-route.test.ts`, isolated PostgreSQL integration |
 | `GET /api/v1/auth/me` | `gugu-webui/src/app.ts`, `src/auth.ts`, `src/users.ts` | `tests/auth-route.test.ts`, PostgreSQL integration |
 | `GET /api/v1/projects`, `GET /api/v1/projects/{pid}`, `GET /api/v1/projects/file-counts` | `gugu-webui/src/app.ts`, `src/projects.ts` | `tests/projects-route.test.ts`, PostgreSQL integration |

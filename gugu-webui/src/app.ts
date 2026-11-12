@@ -43,6 +43,10 @@ export interface NotificationOptions {
   clear: (ownerId: string, userCreatedAt: Date | string) => Promise<number>
 }
 
+export interface TrackOptions {
+  track: (ownerId: string, event: string, properties: Record<string, unknown> | null) => Promise<void>
+}
+
 export interface WebUiOptions {
   appName: string
   isReady: () => Promise<boolean>
@@ -54,6 +58,7 @@ export interface WebUiOptions {
   clients?: ClientOptions
   events?: EventOptions
   notifications?: NotificationOptions
+  track?: TrackOptions
 }
 
 function userResponse(user: PublicUserRecord) {
@@ -301,6 +306,44 @@ function registerNotificationRoutes(app: FastifyInstance, auth: UserAuthOptions,
   })
 }
 
+function parseTrackBody(body: unknown): { event: string; properties: Record<string, unknown> | null } | null {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null
+  const value = body as Record<string, unknown>
+  if (typeof value.event !== 'string') return null
+  const properties = value.properties
+  if (properties !== undefined && properties !== null
+    && (typeof properties !== 'object' || Array.isArray(properties))) return null
+  return {
+    event: [...value.event].slice(0, 64).join(''),
+    properties: properties as Record<string, unknown> | null ?? null,
+  }
+}
+
+function registerTrackRoute(app: FastifyInstance, auth: UserAuthOptions, track: TrackOptions) {
+  app.post('/api/v1/track', async (request, reply) => {
+    const user = await authenticateRequest(request, reply, auth)
+    if (!user) return
+    const input = parseTrackBody(request.body)
+    if (!input) return reply.code(422).send({ detail: '埋点请求字段无效' })
+    await track.track(user.id, input.event, input.properties)
+    return { ok: true }
+  })
+}
+
+function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
+  const auth = options.userAuth
+  if (!auth) return
+  app.get('/api/v1/auth/me', (request, reply) => getCurrentUser(request, reply, auth))
+  if (options.listProjects) registerProjectRoute(app, auth, options.listProjects)
+  if (options.listProjectFileCounts)
+    registerProjectFileCountsRoute(app, auth, options.listProjectFileCounts)
+  if (options.getProject) registerProjectGetRoute(app, auth, options.getProject)
+  if (options.clients) registerClientRoutes(app, auth, options.clients)
+  if (options.events) registerEventRoutes(app, auth, options.events)
+  if (options.notifications) registerNotificationRoutes(app, auth, options.notifications)
+  if (options.track) registerTrackRoute(app, auth, options.track)
+}
+
 export function createApp(options: WebUiOptions) {
   const app = Fastify({ logger: false, routerOptions: { ignoreTrailingSlash: true } })
   app.get('/health', async () => ({ status: 'ok', app: options.appName }))
@@ -312,15 +355,6 @@ export function createApp(options: WebUiOptions) {
     }
     return reply.code(503).send({ status: 'not_ready' })
   })
-  if (options.userAuth) {
-    app.get('/api/v1/auth/me', (request, reply) => getCurrentUser(request, reply, options.userAuth!))
-    if (options.listProjects) registerProjectRoute(app, options.userAuth, options.listProjects)
-    if (options.listProjectFileCounts)
-      registerProjectFileCountsRoute(app, options.userAuth, options.listProjectFileCounts)
-    if (options.getProject) registerProjectGetRoute(app, options.userAuth, options.getProject)
-    if (options.clients) registerClientRoutes(app, options.userAuth, options.clients)
-    if (options.events) registerEventRoutes(app, options.userAuth, options.events)
-    if (options.notifications) registerNotificationRoutes(app, options.userAuth, options.notifications)
-  }
+  registerUserRoutes(app, options)
   return app
 }

@@ -7,6 +7,7 @@ import { createApp } from '../src/app.js'
 import { createClientOperations } from '../src/clients.js'
 import { createEventOperations } from '../src/events.js'
 import { createNotificationOperations } from '../src/notifications.js'
+import { createTrackOperations } from '../src/track.js'
 import { createProjectFileCountListing, createProjectGetter, createProjectListing } from '../src/projects.js'
 import { signedUserToken } from './helpers/auth.js'
 import { createUserRepository } from '../src/users.js'
@@ -148,6 +149,15 @@ test('Node auth, project, client, calendar, and notification routes preserve Pos
         notification_id integer NOT NULL REFERENCES site_notifications(id) ON DELETE CASCADE,
         dismissed_at timestamptz NOT NULL,
         UNIQUE (user_id, notification_id)
+      )
+    `)
+    await pool.query(`
+      CREATE TABLE frontend_events (
+        id serial PRIMARY KEY,
+        user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        event varchar(64) NOT NULL,
+        properties jsonb,
+        created_at timestamptz NOT NULL
       )
     `)
     const userId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
@@ -302,6 +312,40 @@ test('Node auth, project, client, calendar, and notification routes preserve Pos
       assert.equal(preserved.rows[0]?.count, '3')
     } finally {
       await notificationsApp.close()
+    }
+
+    const trackApp = createApp({
+      appName: 'Gugu',
+      isReady: async () => true,
+      userAuth: { secret, ...createUserRepository(pool) },
+      track: createTrackOperations(pool),
+    })
+    try {
+      const headers = { authorization: `Bearer ${signedUserToken(secret, userId, 4)}` }
+      const firstTrack = await trackApp.inject({
+        method: 'POST', url: '/api/v1/track', headers,
+        payload: { event: 'chat_open', properties: { source: 'dialog', amount: 2 }, userId: otherUserId },
+      })
+      assert.equal(firstTrack.statusCode, 200)
+      assert.deepEqual(firstTrack.json(), { ok: true })
+      const secondTrack = await trackApp.inject({
+        method: 'POST', url: '/api/v1/track', headers,
+        payload: { event: `${'x'.repeat(63)}🙂z` },
+      })
+      assert.equal(secondTrack.statusCode, 200)
+      const tracked = await pool.query<{ user_id: string; event: string; properties: unknown }>(
+        'SELECT user_id::text, event, properties FROM frontend_events ORDER BY id',
+      )
+      assert.deepEqual(tracked.rows, [
+        { user_id: userId, event: 'chat_open', properties: { source: 'dialog', amount: 2 } },
+        { user_id: userId, event: `${'x'.repeat(63)}🙂`, properties: null },
+      ])
+      const unauthenticated = await trackApp.inject({
+        method: 'POST', url: '/api/v1/track', payload: { event: 'chat_open' },
+      })
+      assert.equal(unauthenticated.statusCode, 401)
+    } finally {
+      await trackApp.close()
     }
     core = await createPostgresRuntime({ url: databaseUrl!, schema, maxConnections: 2 })
     const projectApp = createApp({

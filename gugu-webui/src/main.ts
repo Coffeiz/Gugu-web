@@ -10,6 +10,7 @@ import { createProjectFileCountListing, createProjectGetter, createProjectListin
 import { createClientOperations } from './clients.js'
 import { createEventOperations } from './events.js'
 import { createNotificationOperations } from './notifications.js'
+import { createTrackOperations } from './track.js'
 
 function createPool(config: WebUiConfig): Pool {
   return new Pool({
@@ -39,6 +40,7 @@ function createWebUiApp(config: WebUiConfig, pool: Pool, core: SqlDataRuntime) {
     clients: createClientOperations(core),
     events: createEventOperations(pool),
     notifications: createNotificationOperations(pool),
+    track: createTrackOperations(pool),
   })
 }
 
