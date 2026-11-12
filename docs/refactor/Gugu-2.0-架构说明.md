@@ -21,7 +21,7 @@
 | 产品/入口 | 数据与运行职责 | FS / 执行职责 | 当前状态 |
 | --- | --- | --- | --- |
 | macOS / Windows Desktop | Electron Host 装配本地 Node Core、SQLite、稳定本地所有者；默认家节点 | 授权目录内直接读写文件；系统凭据和原生执行 Broker | Electron + Node 数据验证壳已实现；完整 Agent、FS 产品接入和正式发行未完成 |
-| Linux / NAS 自托管 | `gugu-webui` Node HTTP Host、多用户 Core Runtime、PostgreSQL；按部署需要使用 Redis | MXC 调用受授权的系统环境；保留多用户执行隔离，Linux Docker 执行沙箱不再作为 2.0 维护目标 | Node Host 首个可启动切片已在 devserver 和 Docker 容器验证；目前有 health、认证用户读取、项目活动/回收站列表、详情/文件计数读取及客户列表/创建/删除，主要业务仍运行在 Python Web/Worker |
+| Linux / NAS 自托管 | `gugu-webui` Node HTTP Host、多用户 Core Runtime、PostgreSQL；按部署需要使用 Redis | MXC 调用受授权的系统环境；保留多用户执行隔离，Linux Docker 执行沙箱不再作为 2.0 维护目标 | Node Host 首个可启动切片已在 devserver 和 Docker 容器验证；目前有 health、认证用户读取、项目活动/回收站列表、详情/文件计数读取、日历列表/详情及客户列表/创建/删除，主要业务仍运行在 Python Web/Worker |
 | SaaS | 多用户 PostgreSQL、云同步、连接路由；按启用能力装配常驻 Core Runtime 副本 | 不装配 Linux 自部署的 MXC 执行后端；长期无用户 FS，需要端侧资源时走显式授权的任务转交 | 新 Node SaaS Host 与云同步尚未实现；旧 FS 仅为过渡兼容 |
 | Mobile | 可作为远端入口，后续也可承载独立本地数据/Runtime | 仅实现移动平台允许的文件和系统能力 | 目标方案；只承诺共享可移植 TS 边界，不假定能运行完整 Node、桌面原生模块或任意 Shell |
 | Web 控制台、IM 等入口 | 请求转换、连接、展示；业务事实由选定 Runtime 持久化 | 不因能够连接 Runtime 而获得端侧权限 | 现有入口保留；跨设备绑定/路由待实现 |
@@ -127,13 +127,14 @@ gugu-desktop/
 gugu-webui/                        # Linux/NAS 自托管版 Node HTTP Host 与部署装配；当前为首个业务读取切片
   package.json                     # workspace 包；依赖 @gugu/core，不复制 Core 源码
   src/
-    app.ts                         # Fastify app；健康检查、认证用户读取、项目列表/详情/文件计数与客户路由
+    app.ts                         # Fastify app；健康检查、认证用户读取、项目/日历读取与客户路由
     main.ts                        # PostgreSQL/Core 装配、启动、信号处理与优雅关闭
     config.ts                      # 环境变量解析与启动前校验
     auth.ts                        # 当前实现 HS256 用户令牌、Cookie CSRF 与账户版本校验
     database.ts                    # readiness 核对认证和项目读取依赖的 PostgreSQL 表/列
     users.ts                       # 当前用户只读查询、IM bot 投影及活跃时间仓储
     projects.ts                    # 使用 Core 项目查询及 PostgreSQL 项目文件计数投影
+    events.ts                      # PostgreSQL 日历事件 owner-scoped 列表/详情读取
     clients.ts                     # 使用 Core Runtime 提供客户列表、创建和删除
     config/
       capabilities.ts              # 本部署显式启用的能力
@@ -163,8 +164,9 @@ gugu-webui/                        # Linux/NAS 自托管版 Node HTTP Host 与�
     auth-route.test.ts             # 当前保护 GET /api/v1/auth/me 用户响应契约
     database.test.ts               # 当前保护 readiness 对必需 PostgreSQL schema 的核对
     projects-route.test.ts         # 当前保护项目列表/详情/文件计数认证、参数和 owner 绑定
+    events-route.test.ts           # 当前保护日历列表筛选、详情参数和 owner 绑定
     clients-route.test.ts          # 当前保护客户列表、创建、删除与 HTTP 错误映射
-    postgres.integration.test.ts   # 显式测试 URL 下以随机隔离 schema 验证真实 PG 用户、项目查询和文件计数
+    postgres.integration.test.ts   # 显式测试 URL 下以随机隔离 schema 验证真实 PG 用户、项目/日历查询和文件计数
   .env.example                     # 配置项示例，不包含真实凭据
   README.md                        # Linux/NAS 安装、升级、备份与恢复
 gugu-saas/                         # 〔规划〕SaaS Gateway、身份、同步与云端部署装配

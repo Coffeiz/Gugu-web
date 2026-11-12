@@ -31,6 +31,11 @@ export interface ClientOptions {
   delete: (ownerId: string, clientId: number) => Promise<void>
 }
 
+export interface EventOptions {
+  list: (ownerId: string, year?: number, month?: number) => Promise<unknown[]>
+  get: (ownerId: string, eventId: number) => Promise<unknown | null>
+}
+
 export interface WebUiOptions {
   appName: string
   isReady: () => Promise<boolean>
@@ -40,6 +45,7 @@ export interface WebUiOptions {
   listProjectFileCounts?: (ownerId: string) => Promise<unknown[]>
   getProject?: (ownerId: string, projectId: number) => Promise<unknown | null>
   clients?: ClientOptions
+  events?: EventOptions
 }
 
 function userResponse(user: PublicUserRecord) {
@@ -126,6 +132,14 @@ function queryBoolean(query: Record<string, unknown>, key: string): boolean | un
   return undefined
 }
 
+function queryInteger(query: Record<string, unknown>, key: string): number | null | undefined {
+  const value = query[key]
+  if (value === undefined) return undefined
+  if (typeof value !== 'string' || !/^-?\d+$/.test(value)) return null
+  const result = Number(value)
+  return Number.isSafeInteger(result) ? result : null
+}
+
 function registerProjectRoute(
   app: FastifyInstance,
   auth: UserAuthOptions,
@@ -207,6 +221,30 @@ function registerClientRoutes(app: FastifyInstance, auth: UserAuthOptions, clien
   })
 }
 
+function registerEventRoutes(app: FastifyInstance, auth: UserAuthOptions, events: EventOptions) {
+  app.get('/api/v1/events', async (request, reply) => {
+    const user = await authenticateRequest(request, reply, auth)
+    if (!user) return
+    const query = request.query as Record<string, unknown>
+    const year = queryInteger(query, 'year')
+    const month = queryInteger(query, 'month')
+    if (year === null || month === null)
+      return reply.code(422).send({ detail: '年份或月份无效' })
+    return events.list(user.id, year, month)
+  })
+  app.get('/api/v1/events/:eventId', async (request, reply) => {
+    const user = await authenticateRequest(request, reply, auth)
+    if (!user) return
+    const rawId = (request.params as { eventId: string }).eventId
+    const eventId = /^\d+$/.test(rawId) ? Number(rawId) : Number.NaN
+    if (!Number.isSafeInteger(eventId) || eventId < 1)
+      return reply.code(422).send({ detail: '事件标识无效' })
+    const event = await events.get(user.id, eventId)
+    if (event === null) return reply.code(404).send({ detail: '事件不存在' })
+    return event
+  })
+}
+
 export function createApp(options: WebUiOptions) {
   const app = Fastify({ logger: false })
   app.get('/health', async () => ({ status: 'ok', app: options.appName }))
@@ -225,6 +263,7 @@ export function createApp(options: WebUiOptions) {
       registerProjectFileCountsRoute(app, options.userAuth, options.listProjectFileCounts)
     if (options.getProject) registerProjectGetRoute(app, options.userAuth, options.getProject)
     if (options.clients) registerClientRoutes(app, options.userAuth, options.clients)
+    if (options.events) registerEventRoutes(app, options.userAuth, options.events)
   }
   return app
 }

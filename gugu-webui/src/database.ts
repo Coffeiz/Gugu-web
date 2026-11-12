@@ -12,6 +12,8 @@ const requiredSchemaQueries = [
           done_at, created_at, updated_at, deleted_at, idempotency_key,
           idempotency_fingerprint FROM projects LIMIT 0`,
   'SELECT project_id, file_count FROM project_file_counts LIMIT 0',
+  `SELECT id, user_id, title, date, time, end_time, type, contact_name, project_id,
+          description, version, deleted_at FROM calendar_events LIMIT 0`,
   'SELECT id, user_id, name, contact, email, phone, notes, created_at FROM clients LIMIT 0',
 ] as const
 

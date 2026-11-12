@@ -9,14 +9,16 @@ test('database readiness verifies the tables and columns required by Node auth a
     return { rows: [] }
   })
 
-  assert.equal(statements.length, 6)
+  assert.equal(statements.length, 7)
   assert.match(statements[0], /SELECT 1/)
   assert.match(statements[1], /FROM users LIMIT 0/)
   assert.match(statements[1], /account_status/)
   assert.match(statements[2], /FROM user_bots LIMIT 0/)
   assert.match(statements[3], /FROM projects LIMIT 0/)
   assert.match(statements[4], /FROM project_file_counts LIMIT 0/)
-  assert.match(statements[5], /FROM clients LIMIT 0/)
+  assert.match(statements[5], /FROM calendar_events LIMIT 0/)
+  assert.match(statements[5], /end_time/)
+  assert.match(statements[6], /FROM clients LIMIT 0/)
 })
 
 test('database readiness fails closed when the expected application schema is missing', async () => {

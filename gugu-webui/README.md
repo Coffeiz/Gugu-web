@@ -2,7 +2,7 @@
 
 `gugu-webui` 是 2.0 的独立 Node HTTP Host。它不启动 Python Web 进程；PostgreSQL 由外部服务提供。
 
-当前实现范围是启动配置、PostgreSQL schema readiness、健康检查、用户令牌校验、`GET /api/v1/auth/me`、基于 `gugu-core` 的项目活动/回收站列表与详情读取、项目文件计数读取，以及客户列表/创建/删除。回收站列表按 30 天保留期过滤。登录/注册、其他业务 API/SSE、前端静态资源、Worker 和剩余 Python 行为仍在迁移中，因此当前构建用于开发验收，不作为完整 Web 替代版。
+当前实现范围是启动配置、PostgreSQL schema readiness、健康检查、用户令牌校验、`GET /api/v1/auth/me`、基于 `gugu-core` 的项目活动/回收站列表与详情读取、项目文件计数读取、日历事件列表/详情，以及客户列表/创建/删除。项目回收站列表按 30 天保留期过滤。登录/注册、其他业务 API/SSE、前端静态资源、Worker 和剩余 Python 行为仍在迁移中，因此当前构建用于开发验收，不作为完整 Web 替代版。
 
 ## Docker Compose
 
@@ -12,7 +12,7 @@
 cp gugu-webui/.env.example gugu-webui/.env
 ```
 
-编辑 `gugu-webui/.env`，填写专用 PostgreSQL 连接地址及与现有 Gugu JWT 一致的 `SECRET_KEY`。不要提交 `.env`。数据库应先通过仓库维护的 PostgreSQL schema bootstrap/migration 准备；readiness 会检查用户认证、Core 项目读取、客户读写及项目文件计数投影依赖的表和列。
+编辑 `gugu-webui/.env`，填写专用 PostgreSQL 连接地址及与现有 Gugu JWT 一致的 `SECRET_KEY`。不要提交 `.env`。数据库应先通过仓库维护的 PostgreSQL schema bootstrap/migration 准备；readiness 会检查用户认证、Core 项目读取、日历读取、客户读写及项目文件计数投影依赖的表和列。
 
 启动和检查：
 

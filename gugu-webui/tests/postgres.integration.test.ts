@@ -5,6 +5,7 @@ import test from 'node:test'
 import { createPostgresRuntime, type SqlDataRuntime } from '@gugu/core/data'
 import { createApp } from '../src/app.js'
 import { createClientOperations } from '../src/clients.js'
+import { createEventOperations } from '../src/events.js'
 import { createProjectFileCountListing, createProjectGetter, createProjectListing } from '../src/projects.js'
 import { signedUserToken } from './helpers/auth.js'
 import { createUserRepository } from '../src/users.js'
@@ -86,6 +87,25 @@ test('Node auth, projects, and clients preserve owner boundaries in isolated Pos
       )
     `)
     await pool.query(`
+      CREATE TABLE calendar_events (
+        id serial PRIMARY KEY,
+        user_id uuid NOT NULL,
+        title varchar(300) NOT NULL,
+        date varchar(10) NOT NULL,
+        time varchar(5),
+        end_time varchar(5),
+        type varchar(50) NOT NULL,
+        contact_name varchar(200),
+        project_id integer,
+        description text,
+        version integer NOT NULL,
+        created_at timestamptz NOT NULL,
+        deleted_at timestamptz,
+        idempotency_key varchar(64),
+        idempotency_fingerprint varchar(64)
+      )
+    `)
+    await pool.query(`
       CREATE TABLE clients (
         id serial PRIMARY KEY,
         user_id uuid NOT NULL,
@@ -147,6 +167,7 @@ test('Node auth, projects, and clients preserve owner boundaries in isolated Pos
       listProjects: createProjectListing(core, pool),
       listProjectFileCounts: createProjectFileCountListing(pool),
       getProject: createProjectGetter(core, pool),
+      events: createEventOperations(pool),
     })
 
     try {
@@ -226,6 +247,61 @@ test('Node auth, projects, and clients preserve owner boundaries in isolated Pos
       })
       assert.equal(deletedProjects.statusCode, 200)
       assert.deepEqual(deletedProjects.json().map((project: { id: number }) => project.id), [recentDeletedProjectId])
+
+      const insertEvent = async (owner: string, title: string, date: string, deletedAt: string | null = null) => {
+        const result = await pool.query<{ id: number }>(
+          `INSERT INTO calendar_events
+            (user_id, title, date, time, end_time, type, contact_name, project_id, description,
+             version, created_at, deleted_at, idempotency_key, idempotency_fingerprint)
+           VALUES ($1, $2, $3, '09:15', '10:00', 'event', 'Synthetic contact', NULL,
+                   'Synthetic description', 1, '2026-11-02T00:00:00Z', $4, NULL, NULL)
+           RETURNING id`,
+          [owner, title, date, deletedAt],
+        )
+        return result.rows[0]!.id
+      }
+      const octoberEventId = await insertEvent(userId, 'October owned event', '2026-10-03')
+      const novemberEventId = await insertEvent(userId, 'November owned event', '2026-11-12')
+      const deletedEventId = await insertEvent(userId, 'Deleted owned event', '2026-11-13', new Date().toISOString())
+      const otherEventId = await insertEvent(otherUserId, 'Other owner event', '2026-11-14')
+      const events = await projectApp.inject({
+        method: 'GET', url: '/api/v1/events',
+        headers: { authorization: `Bearer ${signedUserToken(secret, userId, 4)}` },
+      })
+      assert.equal(events.statusCode, 200)
+      assert.deepEqual(events.json().map((event: { id: number }) => event.id), [octoberEventId, novemberEventId])
+      const novemberEvents = await projectApp.inject({
+        method: 'GET', url: '/api/v1/events?year=2026&month=11',
+        headers: { authorization: `Bearer ${signedUserToken(secret, userId, 4)}` },
+      })
+      assert.equal(novemberEvents.statusCode, 200)
+      assert.deepEqual(novemberEvents.json(), [{
+        id: novemberEventId,
+        title: 'November owned event',
+        date: '2026-11-12',
+        time: '09:15',
+        endTime: '10:00',
+        type: 'event',
+        client: 'Synthetic contact',
+        projectId: null,
+        description: 'Synthetic description',
+        version: 1,
+      }])
+      const ownEvent = await projectApp.inject({
+        method: 'GET', url: `/api/v1/events/${novemberEventId}`,
+        headers: { authorization: `Bearer ${signedUserToken(secret, userId, 4)}` },
+      })
+      assert.equal(ownEvent.statusCode, 200)
+      const otherEvent = await projectApp.inject({
+        method: 'GET', url: `/api/v1/events/${otherEventId}`,
+        headers: { authorization: `Bearer ${signedUserToken(secret, userId, 4)}` },
+      })
+      assert.equal(otherEvent.statusCode, 404)
+      const deletedEvent = await projectApp.inject({
+        method: 'GET', url: `/api/v1/events/${deletedEventId}`,
+        headers: { authorization: `Bearer ${signedUserToken(secret, userId, 4)}` },
+      })
+      assert.equal(deletedEvent.statusCode, 404)
     } finally {
       await projectApp.close()
     }
