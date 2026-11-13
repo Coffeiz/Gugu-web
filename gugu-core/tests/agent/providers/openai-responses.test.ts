@@ -1,14 +1,91 @@
-import { describe, expect, it } from 'vitest'
-import type { CanonicalMessage } from '../../../src/agent/harness/contracts.js'
-import type { JsonObject } from '../../../src/agent/providers/contracts.js'
+import { describe, expect, it, vi } from 'vitest'
+import type { CanonicalHarnessContext, CanonicalMessage } from '../../../src/agent/harness/contracts.js'
+import type { CanonicalContextPorts, HarnessPorts } from '../../../src/agent/harness/ports.js'
+import { createCanonicalHarness } from '../../../src/agent/harness/index.js'
+import { createReflectionFinalizer, ReflectionSnapshots } from '../../../src/agent/harness/context/reflection.js'
+import { connectProviderHarness } from '../../../src/agent/providers/runtime.js'
+import type { JsonObject, ProviderConfig, ProviderHttpRequest, ProviderWire } from '../../../src/agent/providers/contracts.js'
 import { ProviderError } from '../../../src/agent/providers/errors.js'
 import { streamWithRetry } from '../../../src/agent/providers/retry.js'
 import { providerSelection } from '../../../src/agent/providers/registry.js'
 import { insertResponsesReasoning, responsesContent, responsesDriver, responsesInput, responsesInstructions, responsesOutputText, responsesTools } from '../../../src/agent/providers/openai-responses.js'
 import { openaiPolicy } from '../../../src/agent/providers/openai.js'
 import { customPolicy, digest, events, invocation, sse, tool, transport } from './openai-fixtures.js'
+import { collect, fixture, identity } from '../harness/run/fixtures.js'
+
+/** 只替换存储及HTTP边界；上下文准备、工具轮、Provider和收尾均走生产组合。 */
+function responsesHarness(scripts: readonly string[], continuation: boolean) {
+  let id = 0, next = 0
+  const sent: ProviderHttpRequest[] = []
+  const prefix: CanonicalMessage[] = [{ role: 'system', content: '[system-reminder]\n会话快照' }]
+  const config: ProviderConfig = { provider: 'openai', model: 'gpt-test', api_format: 'responses', reasoning_persistence: continuation ? 'continuation' : 'off' }
+  const complete = vi.fn<CanonicalContextPorts['finalization']['complete']>(async () => undefined)
+  const context: CanonicalContextPorts = {
+    digest, nextId: () => `responses-entry-${++id}`,
+    load: async () => ({ modelIdentity: 'model-a', contextWindow: 10000, accessScopeHash: digest(identity), capabilities: { toolNames: ['lookup'], tools: [{ name: 'lookup', schema: tool }] },
+      input: { ...identity, fixedPrefix: prefix, history: [], preparedRag: { tail: [] }, currentUser: { persistedMessageId: 'current', message: { role: 'user', content: '读取合成信息' } } } }),
+    preparation: { buildRag: async () => ({ tail: [] }) }, prepareRequest: async () => ({ prefix, dynamicTail: [] }),
+    references: { dehydrate: async entry => structuredClone(entry.message), hydrate: async entry => structuredClone(entry.message) },
+    compaction: { summarize: async () => { throw new Error('本用例不应压缩') } }, finalization: { complete },
+    currentRequest: () => { throw new Error('必须接实际Provider冻结请求') },
+    stageContinuation: async () => { throw new Error('必须接实际Provider续接') }, releaseContinuations: async () => undefined, diagnoseCompactionFailure: () => undefined,
+  }
+  const connected = connectProviderHarness(context, {
+    transport: { request: async (request, signal) => {
+      sent.push(structuredClone(request))
+      const script = scripts[next++]
+      if (script === undefined) throw new Error('合成Responses脚本耗尽')
+      return transport(script, { raw: true }).deps.transport.request(request, signal)
+    } },
+    resolve: async () => ({ modelIdentity: 'model-a', accessScopeHash: digest(identity), config, systemPrompt: '基础人格' }),
+    clock: { now: () => 0, sleep: async () => undefined },
+  })
+  const external = fixture([]), runtime = external.ports as unknown as HarnessPorts<CanonicalHarnessContext>
+  const harness = createCanonicalHarness({ context: connected.context, executor: { authorize: async () => { throw new Error('不得进入系统执行器') }, executor: { execute: async () => { throw new Error('不得执行进程') } } }, runtime: { ...runtime, provider: connected.provider } })
+  return { ...connected, harness, sent, complete, external, config }
+}
 
 describe('Responses独立item、媒体及原生前缀协议', () => {
+  it('Responses摘要清参和裁旧保留原生item身份，reasoning及工具图片随并行调用和全部结果同组裁切', async () => {
+    const history: JsonObject[] = [
+      { type: 'reasoning', id: 'rs-old', encrypted_content: 'old-encrypted', status: 'completed' }, { role: 'assistant', content: '旧轮说明' },
+      { type: 'function_call', id: 'fc-a', call_id: 'a', name: 'lookup', arguments: '{ "q": "旧a" }' },
+      { type: 'function_call', id: 'fc-b', call_id: 'b', name: 'lookup', arguments: '{"q":"旧b"}' },
+      { type: 'function_call_output', call_id: 'b', output: '{"arguments":{"这是":"结果"}}' }, { type: 'function_call_output', call_id: 'a', output: '旧完整回执' },
+      { role: 'user', content: [{ type: 'input_text', text: '工具返回了以下图片，请结合工具文字结果继续处理。' }, { type: 'input_image', image_url: 'data:image/png;base64,AQID', detail: 'auto' }] },
+      { role: 'user', content: '较新问题' },
+      { type: 'reasoning', id: 'rs-latest', encrypted_content: 'latest-encrypted', status: 'completed' },
+      { type: 'function_call', id: 'fc-latest', call_id: 'latest', name: 'lookup', arguments: '{ "q": "最新" }' }, { type: 'function_call_output', call_id: 'latest', output: '最新完整回执' },
+    ]
+    const original = structuredClone(history), stripped = responsesDriver.transformHistory(history, 'strip-tool-inputs', 0)
+    expect(stripped.changedMessages).toBe(3)
+    const expected = structuredClone(original)
+    for (const index of [2, 3, 9]) expected[index]!.arguments = '{}'
+    expect(stripped.messages).toEqual(expected)
+    const trimmed = responsesDriver.transformHistory(stripped.messages, 'trim-oldest-units', 0)
+    expect(trimmed).toEqual({ messages: expected.slice(7), changedMessages: 7 })
+    const protectedGroup = responsesDriver.transformHistory(stripped.messages, 'trim-oldest-units', 1)
+    expect(protectedGroup.messages).toEqual([...expected.slice(0, 7), ...expected.slice(8)])
+    expect(protectedGroup.changedMessages).toBe(1)
+    for (const stage of [stripped, trimmed]) {
+      const f = transport({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: '摘要完成' }] }] })
+      await responsesDriver.complete(invocation({ history: stage.messages, wireSystem: '原生冻结指令', purpose: 'branch', hasHistory: true, config: { provider: 'openai', model: 'gpt-test', image: true } }), f.deps)
+      const body = f.requests[0]!.body as JsonObject
+      expect(body.input).toEqual(stage.messages); expect(body.instructions).toBe('原生冻结指令')
+    }
+    expect(history).toEqual(original)
+    expect(responsesDriver.transformHistory(stripped.messages, 'strip-tool-inputs', 0).changedMessages).toBe(0)
+  })
+  it('Responses孤儿reasoning、错配回执和未完成工具组不单独裁掉，最新正文前reasoning同组保护', () => {
+    const history: JsonObject[] = [{ type: 'reasoning', id: 'rs-broken', encrypted_content: '保留异常组' },
+      { type: 'function_call', id: 'fc-broken', call_id: 'broken', name: 'lookup', arguments: '{}' }, { type: 'function_call_output', call_id: 'foreign', output: '错配回执' },
+      { role: 'user', content: '最旧可删正文' }, { role: 'user', content: '较新正文' },
+      { type: 'reasoning', id: 'rs-latest', encrypted_content: '保留最新私有状态' }, { role: 'assistant', content: '最新回答' },
+      { type: 'reasoning', id: 'rs-orphan', encrypted_content: '独立不明归属' }]
+    const result = responsesDriver.transformHistory(history, 'trim-oldest-units', 0)
+    expect(result.messages).toEqual([...history.slice(0, 3), ...history.slice(4)])
+    expect(result.changedMessages).toBe(1)
+  })
   it('canonical工具回放产生稳定item id，call id与原始参数不变，不修改源消息', () => {
     const raw = '{ "q": "合成搜索" }', canonical: CanonicalMessage[] = [
       { role: 'assistant', content: [{ type: 'text', text: '查询' }, { type: 'tool_call', id: 'call-a', name: 'lookup', arguments: raw }] },
@@ -152,6 +229,79 @@ describe('Responses独立item、媒体及原生前缀协议', () => {
 })
 
 describe('Responses真实请求与流终态', () => {
+  it('标准Canonical Harness准备的system snapshot实际进入首轮Responses instructions且保持冻结请求身份', async () => {
+    const value = responsesHarness([sse({ type: 'response.output_text.delta', delta: '已读取合成信息。' }, { type: 'response.completed', response: { status: 'completed', output: [], usage: { input_tokens: 12, output_tokens: 3 } } })], false)
+    try {
+      const result = await collect(value.harness.start(identity))
+      expect(result.state.status).toBe('completed'); expect(value.sent).toHaveLength(1)
+      const body = value.sent[0]!.body as JsonObject
+      expect(body.instructions).toBe('基础人格\n\n---\n\n[system-reminder]\n会话快照')
+      // 与Python标准上下文一致：当前用户经正式准备后保留消息正文封套。
+      expect(body.input).toEqual([{ role: 'user', content: '【消息正文】\n读取合成信息' }])
+      expect(value.complete).toHaveBeenCalledTimes(1)
+      const completed = value.complete.mock.calls[0]![0]
+      expect(completed.requestSystemPrompt).toBe('基础人格')
+      expect(completed.projection).toMatchObject({ modelIdentity: 'model-a', dynamicTailSize: 0, wire: { protocol: 'responses', system: body.instructions, messages: body.input } })
+      expect(completed.request!.area.matchesProjection(completed.projection!, 'model-a')).toBe(true)
+      expect(completed.request!.area.requestPrefix).toEqual([{ role: 'system', content: '[system-reminder]\n会话快照' }])
+    } finally { await value.provider.close() }
+  })
+  it('Qwen Responses同一真实HTTP保留原生工具schema、low推理、100预算及标准化cache usage', async () => {
+    const selected = providerSelection({ provider: 'qwen', model: 'qwen3.8-max', api_format: 'responses', thinking: 'adaptive', reasoning_effort: 'low' })
+    const tools: JsonObject[] = [{ type: 'function', name: 'read_file', parameters: { type: 'object' } }]
+    const f = transport({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: '{"summary":"ok"}' }] }], usage: { input_tokens: 12, output_tokens: 3, input_tokens_details: { cached_tokens: 7 } } })
+    const result = await selected.driver.complete(invocation({ config: selected.config, policy: selected.policy, system: 'stable system',
+      history: [{ role: 'user', content: '【消息正文】\n历史' }, { role: 'user', content: '压缩指令' }], tools, maxOutputTokens: 100, purpose: 'branch', hasHistory: true, outputMode: 'json' }), f.deps)
+    expect(JSON.parse(result.text)).toEqual({ summary: 'ok' })
+    expect(result.usage).toEqual({ input: 5, output: 3, cacheRead: 7, cacheWrite: 0, contextInput: 12 })
+    const request = f.requests[0]!, body = request.body as JsonObject
+    expect(request.url).toBe('https://dashscope.aliyuncs.com/compatible-mode/v1/responses')
+    expect(body).toMatchObject({ instructions: 'stable system', input: [{ role: 'user', content: '【消息正文】\n历史' }, { role: 'user', content: '压缩指令' }], tools, max_output_tokens: 100, store: false, reasoning: { effort: 'low' } })
+    expect(body.previous_response_id).toBeUndefined(); expect(body.response_format).toBeUndefined(); expect(body.text).toBeUndefined()
+    expect(f.requests).toHaveLength(1)
+  })
+  it.each([true, false])('实际Harness工具轮冻结请求经ReflectionSnapshots再追加分支保留Responses前缀，continuation=%s', async enabled => {
+    const reasoning: JsonObject = { type: 'reasoning', id: 'rs-main', status: 'completed', encrypted_content: 'synthetic-encrypted-prefix' }
+    const value = responsesHarness([
+      sse({ type: 'response.completed', response: { status: 'completed', output: [reasoning, { type: 'function_call', id: 'fc-main', call_id: 'call-main', name: 'lookup', arguments: '{ "q": "合成" }' }], usage: { input_tokens: 5, output_tokens: 2 } } }),
+      sse({ type: 'response.output_text.delta', delta: '已整理合成结果。' }, { type: 'response.completed', response: { status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: '已整理合成结果。' }] }], usage: { input_tokens: 12, output_tokens: 3 } } }),
+      JSON.stringify({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: '{"summary":"合成摘要"}' }] }], usage: { input_tokens: 13, output_tokens: 4 } }),
+    ], enabled)
+    let serial = 0
+    const snapshots = new ReflectionSnapshots<ProviderWire>({ digest, nextId: () => `reflection-${++serial}` }, () => 0)
+    try {
+      const projection = await value.provider.reflectionProjection(identity, 'model-a')
+      const ready = vi.fn(async () => undefined)
+      const finalizer = createReflectionFinalizer({ snapshots, projection, policy: async () => ({ enabled: true, scope: 'owner' }), notifyReady: ready })
+      value.complete.mockImplementation(input => finalizer.complete(input))
+      const result = await collect(value.harness.start(identity))
+      expect(result.state.status).toBe('completed'); expect(value.external.ports.tools.dispatch).toHaveBeenCalledTimes(1)
+      expect(value.sent).toHaveLength(2)
+      const main = value.sent[1]!.body as JsonObject, mainRows = main.input as JsonObject[]
+      const completion = value.complete.mock.calls[0]![0]
+      expect(completion.projection).toMatchObject({ wire: { messages: mainRows, system: main.instructions } })
+      expect(mainRows.some(row => row.type === 'reasoning')).toBe(enabled)
+      expect(main.include).toEqual(enabled ? ['reasoning.encrypted_content'] : undefined)
+      expect(mainRows.find(row => row.type === 'function_call')).toMatchObject({ id: 'fc-main', call_id: 'call-main', arguments: '{ "q": "合成" }' })
+      const snapshot = snapshots.peek(identity, 'model-a', digest(identity))
+      expect(snapshot).not.toBeNull()
+      if (!snapshot) throw new Error('正式成功收尾必须捕获可复用反思快照')
+      const before = structuredClone(snapshot)
+      expect(ready).toHaveBeenCalledWith(expect.objectContaining({ recovery: 'reuse', snapshotDigest: snapshot.digest, hadTools: true }))
+      expect(snapshot.projection.wire.messages).toEqual([...mainRows, { role: 'assistant', content: '已整理合成结果。' }])
+      const branch = await value.provider.completeBranch({ ...identity, modelIdentity: 'model-a', stableSystem: snapshot.systemPrompt, delta: '请输出反思摘要', tools: snapshot.tools, projection: snapshot.projection, outputMode: 'json' })
+      expect(JSON.parse(String(branch.output))).toEqual({ summary: '合成摘要' })
+      const body = value.sent[2]!.body as JsonObject
+      expect(body.instructions).toBe(main.instructions); expect(body.tools).toEqual(main.tools)
+      expect(body.prompt_cache_key).toBe(main.prompt_cache_key)
+      expect(body.reasoning).toEqual(main.reasoning); expect(body.store).toBe(false); expect(main.store).toBe(false)
+      expect(body.input).toEqual([...snapshot.projection.wire.messages, { role: 'user', content: '请输出反思摘要' }])
+      expect((body.input as JsonObject[]).slice(0, mainRows.length)).toEqual(mainRows)
+      expect(body.previous_response_id).toBeUndefined(); expect(body.text).toBeUndefined(); expect(body.include).toBeUndefined()
+      expect(snapshots.peek(identity, 'model-a', digest(identity))).toEqual(before)
+      expect(JSON.stringify(result.state)).not.toContain('synthetic-encrypted-prefix')
+    } finally { await value.provider.close() }
+  })
   it('request使用input/instructions，官方store=false及cache key不含当前query，工具变更使key变化', async () => {
     const keys: unknown[] = []
     for (const [query, snapshot, tools] of [['一', '快照', []], ['二', '快照', []], ['二', '新快照', []], ['二', '新快照', [tool]]] as const) {
@@ -161,6 +311,7 @@ describe('Responses真实请求与流终态', () => {
       const request = f.requests[0]!, body = request.body as Record<string, unknown>
       expect(request.url).toBe('https://api.openai.com/v1/responses')
       expect(body.instructions).toBe(`固定规则\n\n---\n\n${snapshot}`); expect(body.messages).toBeUndefined(); expect(body.store).toBe(false)
+      expect(body.tools).toEqual(tools.length ? [{ type: 'function', name: 'lookup', description: '合成查询', parameters: { type: 'object', properties: { q: { type: 'string' } } } }] : [])
       expect(body.max_output_tokens).toBe(123); keys.push(body.prompt_cache_key)
     }
     expect(keys[0]).toBe(keys[1]); expect(keys[1]).toBe(keys[2]); expect(keys[2]).not.toBe(keys[3])
@@ -208,7 +359,8 @@ describe('Responses真实请求与流终态', () => {
     expect(f.diagnose).toHaveBeenCalled(); expect(f.cancel).toHaveBeenCalledTimes(1)
     for (const kind of ['response.failed', 'error']) for (const afterOutput of [false, true]) {
       const error = { code: 'internal_error', message: '合成私有错误正文' }
-      const failure = transport(sse(...(afterOutput ? [{ type: 'response.output_text.delta', delta: '已有正文' }] : []),
+      const failure = transport(sse(...(afterOutput ? [{ type: 'response.output_text.delta', delta: '已有正文' },
+        { type: 'response.output_item.done', item: { type: 'function_call', id: 'fc-failed', call_id: 'call-failed', name: 'lookup', arguments: '{"q":"合成"}' } }] : []),
         kind === 'response.failed' ? { type: kind, response: { status: 'failed', error } } : { type: kind, ...error }), { raw: true })
       const emitted: import('../../../src/agent/harness/contracts.js').ProviderEvent[] = []
       await expect((async () => { for await (const event of responsesDriver.stream(invocation(), failure.deps)) emitted.push(event) })()).rejects.toMatchObject({ code: 'upstream' })
@@ -227,7 +379,7 @@ describe('Responses真实请求与流终态', () => {
     { status: 400, message: 'invalid temperature', expected: false },
   ])('只有明确Responses兼容错误才标注协议不兼容：%j', async ({ status, message, expected }) => {
     const f = transport({ error: { message } }, { status })
-    await expect(responsesDriver.complete(invocation(), f.deps)).rejects.toMatchObject({ options: { protocolIncompatible: expected } })
+    await expect(responsesDriver.complete(invocation(), f.deps)).rejects.toMatchObject({ options: { protocolIncompatible: expected, status } })
   })
   it('上下文超限优先于Responses兼容标记，不得要求清理可恢复的私有状态', async () => {
     const f = transport({ error: { code: 'context_length_exceeded', message: 'Responses endpoint maximum context length exceeded' } }, { status: 400 })

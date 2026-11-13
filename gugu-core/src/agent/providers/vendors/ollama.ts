@@ -6,6 +6,7 @@ import type { JsonObject, ProtocolDriver, ProviderCompletion, ProviderConfig, Pr
 import { classifyProviderError, ProviderError } from '../errors.js'
 import { endpoint, requestJson, requestNdjson } from '../http.js'
 import { array, clone, finite, object, record, reportUsage, text } from '../values.js'
+import { transformOpenaiWireHistory } from '../openai-history.js'
 
 function parsedArguments(value: unknown): JsonObject {
   if (typeof value === 'string') {
@@ -150,6 +151,7 @@ function continuation(input: ProviderInvocation, thinking: string, calls: readon
 export const ollamaDriver: ProtocolDriver = {
   protocol: 'ollama', project: (messages, config, _policy, options) => projectOllamaHistory(messages, config, options),
   buildRequest: (input, _dependencies, streaming) => request(input, streaming),
+  transformHistory: (history, stage, protectedPrefixRows) => transformOpenaiWireHistory(history, stage, protectedPrefixRows, 'ollama'),
   async *stream(input: ProviderInvocation, dependencies: ProviderDriverDependencies): AsyncIterable<ProviderEvent> {
     let content = '', thinking = '', finished = false
     const calls: ToolCall[] = [], wire: JsonObject[] = []

@@ -1,8 +1,8 @@
 import { throwIfCancelled } from './errors.js'
-import type { BranchProviderPort, CanonicalContextPorts, ContextReferenceCodec, ContextServices, ProviderPort } from '../harness/ports.js'
+import type { BranchProviderPort, CanonicalContextPorts, ContextReferenceCodec, ContextServices, ProviderPort, ReflectionProjectionPort, SummaryGenerationPorts } from '../harness/ports.js'
 import type { BranchInput, CanonicalHarnessContext, FrozenProviderRequest, Json, ProviderEvent, ProviderRequest, RunIdentity } from '../harness/contracts.js'
 import { hasInitialInlineImage,restorePreparedContext } from '../harness/history/attachment-refs.js'
-import type { JsonObject, ProviderCompletion, ProviderConfig, ProviderDriverDependencies, ProviderInvocation, ProviderProjection, ProviderTransport, ProviderWire } from './contracts.js'
+import type { HistorySanitization, JsonObject, ProviderCompletion, ProviderConfig, ProviderDriverDependencies, ProviderInvocation, ProviderProjection, ProviderTransport, ProviderTransportFactory, ProviderWire } from './contracts.js'
 import { providerSelection } from './registry.js'
 import { ProviderError, classifyProviderError } from './errors.js'
 import { clone, observe, record } from './values.js'
@@ -17,6 +17,7 @@ import { RequestProbe } from './cache-probe.js'
 import type { ProviderProbeSink } from './cache-probe.js'
 import { outputBudget, parseStructuredJson } from './standalone.js'
 import { filterReasoningConfig } from './base.js'
+import { stripCacheControl } from './openai-history.js'
 
 export interface ProviderRuntimeOptions extends ContextServices {
   /** 由Host的可信选模/BYOK解析器提供，必须与Harness冻结模型身份一致。 */
@@ -25,6 +26,7 @@ export interface ProviderRuntimeOptions extends ContextServices {
   readonly prepareRequest: CanonicalContextPorts['prepareRequest']
   readonly transport?: ProviderTransport
   readonly createTransport?: (config: ProviderConfig) => ProviderTransport & { close(): Promise<void> }
+  readonly transportFactory?: ProviderTransportFactory
   readonly networkIdentity?: string
   readonly diagnose?: (code: string, error: unknown) => void
   readonly clock?: RetryClock
@@ -37,6 +39,22 @@ export interface ProviderRuntimeOptions extends ContextServices {
 }
 interface PrivateContinuation { identity: RunIdentity; modelIdentity: string; accessScopeHash: string; value: unknown; expiresAt: number; bytes: number }
 
+/** cache标记可能把字符串包成单个text块；这里只证明同构，复用时仍发送原始wire。 */
+function comparableWire(value: Json): Json {
+  const clean = stripCacheControl(value)
+  if (Array.isArray(clean)) return clean.map(comparableWire)
+  if (clean && typeof clean === 'object') {
+    const result = Object.fromEntries(Object.entries(clean).map(([key, item]) => [key, comparableWire(item)]))
+    const content = result.content
+    if (Array.isArray(content) && content.length === 1) {
+      const block = record(content[0])
+      if (block.type === 'text' && typeof block.text === 'string' && Object.keys(block).every(key => ['type', 'text'].includes(key))) result.content = block.text
+    }
+    return result
+  }
+  return clean
+}
+
 /** 可实际装配到Harness的Provider运行时；仅存协议私有材料，不接管Run状态或数据事务。 */
 export class ProviderRuntime implements ProviderPort<CanonicalHarnessContext> {
   readonly #requests = new Map<string, FrozenProviderRequest>()
@@ -47,7 +65,7 @@ export class ProviderRuntime implements ProviderPort<CanonicalHarnessContext> {
   #continuationBytes = 0
   readonly #diagnose = (code: string, error: unknown): void => { observe(() => this.options.diagnose?.(code, error)) }
   constructor(readonly options: ProviderRuntimeOptions) {
-    if (!options.transport && !options.createTransport) throw new ProviderError('unsupported')
+    if (!options.transport && !options.createTransport && !options.transportFactory) throw new ProviderError('unsupported')
     for (const limit of [options.continuationTtlMs, options.maxContinuationEntries, options.maxContinuationBytes, options.maxContinuationTotalBytes])
       if (limit !== undefined && (!Number.isSafeInteger(limit) || limit <= 0)) throw new ProviderError('input_rejected')
     this.#pool = new ProviderClientPool({ diagnose: error => this.#diagnose('provider_client_close', error) })
@@ -81,10 +99,11 @@ export class ProviderRuntime implements ProviderPort<CanonicalHarnessContext> {
   }
   #transport(identity: RunIdentity, config: ProviderConfig, policy: ProviderInvocation['policy'], scope = this.#key(identity)): ProviderTransport {
     if (this.options.transport) return this.options.transport
-    const key = providerConfigKey(policy.protocol(config), { baseUrl: policy.baseUrl(config), apiKey: config.api_key ?? '', headers: policy.headers(config), timeout: config.timeout_ms, networkIdentity: this.options.networkIdentity }, this.options.digest)
-    return this.#pool.get(scope, key, () => this.options.createTransport!(config))
+    const snapshot = this.options.transportFactory?.snapshot(config)
+    const key = providerConfigKey(policy.protocol(config), { baseUrl: policy.baseUrl(config), apiKey: config.api_key ?? '', headers: policy.headers(config), timeout: config.timeout_ms, networkIdentity: snapshot?.networkIdentity ?? this.options.networkIdentity }, this.options.digest)
+    return this.#pool.get(scope, key, () => snapshot ? snapshot.create() : this.options.createTransport!(config))
   }
-  async #shortCall(identity: RunIdentity, config: ProviderConfig, policy: ProviderInvocation['policy'], operation: (dependencies: ProviderDriverDependencies) => Promise<ProviderCompletion>): Promise<ProviderCompletion> {
+  async #shortCall(identity: RunIdentity, config: ProviderConfig, policy: ProviderInvocation['policy'], operation: (dependencies: ProviderDriverDependencies) => Promise<ProviderCompletion>, dynamicRows = 0): Promise<ProviderCompletion> {
     const scope = `short:${this.options.nextId()}`
     const probe: { current?: RequestProbe } = {}
     try {
@@ -94,7 +113,8 @@ export class ProviderRuntime implements ProviderPort<CanonicalHarnessContext> {
         transport: { request: async (request, signal) => {
           if (this.options.probeSink) {
             probe.current?.fail(new ProviderError('stream_incomplete'))
-            probe.current = this.#probe(record(request.body) as JsonObject, config)
+            const body = record(request.body), rows = body.messages ?? body.input
+            probe.current = this.#probe(body as JsonObject, config, policy, Array.isArray(rows) ? Math.max(0, rows.length - dynamicRows) : undefined)
           }
           return transport.request(request, signal)
         } },
@@ -104,9 +124,9 @@ export class ProviderRuntime implements ProviderPort<CanonicalHarnessContext> {
     } catch (raw) { const error = classifyProviderError(raw); probe.current?.fail(error); throw error }
     finally { this.#pool.finish(scope) }
   }
-  #probe(body: JsonObject, config: ProviderConfig): RequestProbe {
+  #probe(body: JsonObject, config: ProviderConfig, policy: ProviderInvocation['policy'], stableRowCount?: number, historySanitization?: HistorySanitization): RequestProbe {
     return new RequestProbe(body, { id: this.options.nextId(), digest: this.options.digest, now: () => this.#now(), sink: this.options.probeSink!,
-      secrets: config.api_key ? [config.api_key] : [], diagnose: error => this.#diagnose('provider_probe_sink', error) })
+      secrets: config.api_key ? [config.api_key] : [], diagnose: error => this.#diagnose('provider_probe_sink', error), cacheSupported: policy.capabilities(config).cache_mode === 'active', stableRowCount, historySanitization })
   }
   #continuation(context: CanonicalHarnessContext): unknown {
     if (!context.continuationRef) return undefined
@@ -152,7 +172,8 @@ export class ProviderRuntime implements ProviderPort<CanonicalHarnessContext> {
     const stableMessages = [...area.requestPrefix, ...area.messages]
     const projectionOptions = { continuation, digest: this.options.digest, preserveNativeThinking: true, dynamicTailSize: area.dynamicTail.length }
     const stableHistory = driver.project(stableMessages, config, policy, { ...projectionOptions, dynamicTailSize: 0 })
-    const history = driver.project([...stableMessages, ...area.dynamicTail], config, policy, projectionOptions)
+    let historySanitization: HistorySanitization | undefined
+    const history = driver.project([...stableMessages, ...area.dynamicTail], config, policy, { ...projectionOptions, onSanitization: value => { historySanitization = value } })
     const anchor: unknown = context.providerCacheAnchor?.anchor
     let actualCacheAnchor: unknown
     const scope = { ...identity, round: request.round, modelIdentity: context.modelIdentity, accessScopeHash: context.accessScopeHash }
@@ -174,19 +195,33 @@ export class ProviderRuntime implements ProviderPort<CanonicalHarnessContext> {
             actualCacheAnchor = { modelIdentity: context.modelIdentity, anchor: cached.anchor }
           }
           const rows = body.messages ?? body.input
-          if (this.options.probeSink && Array.isArray(rows)) {
-            probe.current?.fail(new ProviderError('stream_incomplete'))
-            probe.current = this.#probe(body as JsonObject, config)
-          }
+          let diagnosticStableRows: number | undefined
           if (Array.isArray(rows)) {
             const wireSystem = body.system ?? body.instructions
-            const projection: ProviderProjection = { ...area.identity(context.modelIdentity), dynamicTailSize: area.dynamicTail.length, wire: { protocol: driver.protocol, provider: policy.name, identity: { ownerId: identity.ownerId, sessionId: identity.sessionId }, accessScopeHash, messages: clone(rows) as JsonObject[], ...(wireSystem === undefined ? {} : { system: clone(wireSystem) as Json }) } }
-            this.#requests.set(this.#key(identity), {
+            const stableBody = record(driver.buildRequest({ ...input, history: stableHistory, stableHistoryCount: stableHistory.length }, dependencies, true).body)
+            const stableRows = stableBody.messages ?? stableBody.input
+            const stableSystem = stableBody.system ?? stableBody.instructions
+            const same = (left: unknown, right: unknown) => this.options.digest(comparableWire((left ?? null) as Json)) === this.options.digest(comparableWire((right ?? null) as Json))
+            const stableRowCount = Array.isArray(stableRows) && stableRows.length <= rows.length
+              && same(rows.slice(0, stableRows.length), stableRows) && same(wireSystem, stableSystem) ? stableRows.length : null
+            const prefix = driver.project(area.requestPrefix, config, policy, { digest: this.options.digest, preserveNativeThinking: true })
+            const prefixRows = driver.protocol === 'responses' ? prefix.filter(row => row.role !== 'system')
+              : record(driver.buildRequest({ ...input, history: prefix, continuation: undefined, stableHistoryCount: prefix.length }, dependencies, true).body).messages
+            const protectedPrefixRowCount = Array.isArray(prefixRows) && same(rows.slice(0, prefixRows.length), prefixRows) ? prefixRows.length : undefined
+            diagnosticStableRows = stableRowCount ?? undefined
+            const projection: ProviderProjection = { ...area.identity(context.modelIdentity), dynamicTailSize: area.dynamicTail.length, wire: { protocol: driver.protocol, provider: policy.name, identity: { ownerId: identity.ownerId, sessionId: identity.sessionId }, accessScopeHash, messages: clone(rows) as JsonObject[], ...(stableRowCount === null ? {} : { stableRowCount }), ...(protectedPrefixRowCount === undefined ? {} : { protectedPrefixRowCount }), ...(wireSystem === undefined ? {} : { system: clone(wireSystem) as Json }) } }
+            this.#requests.delete(this.#key(identity))
+            // 动态系统内容若已并入稳定wire且无法证明分界，不伪造可复用快照。
+            if (stableRowCount !== null) this.#requests.set(this.#key(identity), {
               sourceCheckpointDigest: context.prepared.digest, accessScopeHash: context.accessScopeHash,
               area: area.snapshot(), requestPrefix: area.requestPrefix, dynamicTail: area.dynamicTail, projection,
               systemPrompt,
               tools: clone(Array.isArray(body.tools) ? body.tools : input.tools) as Json[],
             })
+          }
+          if (this.options.probeSink && Array.isArray(rows)) {
+            probe.current?.fail(new ProviderError('stream_incomplete'))
+            probe.current = this.#probe(body as JsonObject, config, policy, diagnosticStableRows, historySanitization)
           }
           try { return await transport.request({ ...outgoing, allowLocal: outgoing.allowLocal === true && ['local', 'ollama'].includes((config.provider ?? '').trim().toLowerCase()) }, outgoingSignal) }
           catch (error) { probe.current?.fail(classifyProviderError(error)); throw error }
@@ -222,7 +257,9 @@ export class ProviderRuntime implements ProviderPort<CanonicalHarnessContext> {
     const config = input.thinking === undefined ? selected.config : filterReasoningConfig({ ...selected.config, thinking: input.thinking }, policy)
     if (input.projection && (input.projection.modelIdentity !== input.modelIdentity || input.projection.wire.protocol !== driver.protocol || input.projection.wire.provider !== policy.name
       || input.projection.wire.identity?.ownerId !== input.ownerId || input.projection.wire.identity?.sessionId !== input.sessionId || input.projection.wire.accessScopeHash !== accessScopeHash)) throw new ProviderError('input_rejected')
-    const stable = input.projection ? clone(input.projection.wire.messages) : driver.project(input.canonicalHistory ?? [], config, policy, { digest: this.options.digest })
+    const count = input.projection ? input.projection.wire.stableRowCount ?? (input.projection.dynamicTailSize === 0 ? input.projection.wire.messages.length : -1) : 0
+    if (input.projection && (!Number.isSafeInteger(count) || count < 0 || count > input.projection.wire.messages.length)) throw new ProviderError('input_rejected')
+    const stable = input.projection ? clone(input.projection.wire.messages.slice(0, count)) : driver.project(input.canonicalHistory ?? [], config, policy, { digest: this.options.digest })
     const delta = driver.project([{ role: 'user', content: input.delta }], config, policy, { digest: this.options.digest })
     const invocation: ProviderInvocation = { config, policy, history: [...stable, ...delta], system: input.stableSystem, wireSystem: input.projection?.wire.system, tools: input.tools as JsonObject[], signal,
       scope: { ...identity, round: 0, modelIdentity: input.modelIdentity, accessScopeHash: '' }, purpose: 'branch', hasHistory: stable.length > 0,
@@ -233,15 +270,28 @@ export class ProviderRuntime implements ProviderPort<CanonicalHarnessContext> {
       const rowsKey = Array.isArray(body.messages) ? 'messages' : 'input'
       const rows = Array.isArray(body[rowsKey]) ? body[rowsKey] as JsonObject[] : []
       const stableCount = Math.max(0, rows.length - delta.length)
-      if (driver.protocol === 'anthropic') body = { ...body, messages: prepareAnthropicCache(rows, policy, config, this.options.digest, stableCount).messages }
+      if (input.projection && !policy.singleHistoryCacheAnchor(config)) {
+        // 原生快照已有主请求断点；重新计划会移动旧锚点并破坏前缀。只追加分支末尾断点。
+        if (stableCount !== stable.length || this.options.digest(comparableWire(rows.slice(0, stableCount))) !== this.options.digest(comparableWire(stable))) throw new ProviderError('input_rejected')
+        const frozen = clone(stable), last = frozen.at(-1)
+        if (last && policy.capabilities(config).cache_mode === 'active' && ['openai', 'anthropic'].includes(driver.protocol)) {
+          if (typeof last.content === 'string') last.content = [{ type: 'text', text: last.content, cache_control: { type: 'ephemeral' } }]
+          else if (Array.isArray(last.content) && last.content.length) {
+            const block = last.content.at(-1)
+            if (block && typeof block === 'object' && !Array.isArray(block)) last.content[last.content.length - 1] = { ...block, cache_control: { type: 'ephemeral' } }
+          }
+        }
+        body = { ...body, [rowsKey]: [...frozen, ...rows.slice(stableCount)] }
+      }
+      else if (driver.protocol === 'anthropic') body = { ...body, messages: prepareAnthropicCache(rows, policy, config, this.options.digest, stableCount).messages }
       const fingerprint = input.cacheSingleflight && providerCacheSupported(policy, config)
         ? stableRequestFingerprint(body, rowsKey, stable.length ? stableCount : 0, this.options.digest) : null
       const operation = () => driver.complete(invocation, { ...dependencies, transport: { request: (_request, outgoingSignal) => dependencies.transport.request({ ...outbound, body }, outgoingSignal) } })
       return fingerprint
         ? this.#coordinator.run(this.options.digest({ owner: identity.ownerId, provider: policy.name, protocol: driver.protocol, endpoint: outbound.url, credential: config.api_key ?? '', fingerprint }), signal, operation)
         : operation()
-    })
-    return { output: stripThinking(result.text).trim(), usage: clone(result.usage) as unknown as Json }
+    }, delta.length)
+    return { output: stripThinking(result.text).trim(), usage: { ...clone(result.usage), finish_reason: result.finishReason, incomplete_reason: result.incompleteReason ?? null } as Json }
   }
   branchProvider(modelIdentity: string): BranchProviderPort<ProviderWire> {
     return {
@@ -251,6 +301,33 @@ export class ProviderRuntime implements ProviderPort<CanonicalHarnessContext> {
         return { ...result, output: input.outputMode === 'json' ? parseStructuredJson(result.output) : result.output }
       },
     }
+  }
+  async reflectionProjection(identity: RunIdentity, modelIdentity: string, signal = new AbortController().signal): Promise<ReflectionProjectionPort<ProviderWire>> {
+    const { config, policy, driver, accessScopeHash } = await this.#selection(identity, modelIdentity, signal)
+    return { append: (projection, tail) => {
+      const wire = projection.wire
+      if (projection.modelIdentity !== modelIdentity || wire.protocol !== driver.protocol || wire.provider !== policy.name
+        || wire.identity.ownerId !== identity.ownerId || wire.identity.sessionId !== identity.sessionId || wire.accessScopeHash !== accessScopeHash)
+        throw new ProviderError('input_rejected')
+      const count = wire.stableRowCount ?? (projection.dynamicTailSize === 0 ? wire.messages.length : -1)
+      if (!Number.isSafeInteger(count) || count < 0 || count > wire.messages.length) throw new ProviderError('input_rejected')
+      const messages = [...clone(wire.messages.slice(0, count)), ...driver.project(tail, config, policy, { digest: this.options.digest, preserveNativeThinking: true })]
+      return { ...clone(projection), dynamicTailSize: 0, wire: { ...clone(wire), messages, stableRowCount: messages.length } }
+    } }
+  }
+  async summaryProjection(identity: RunIdentity, modelIdentity: string, signal = new AbortController().signal): Promise<Pick<SummaryGenerationPorts<ProviderWire>, 'transformProjection'>> {
+    const { policy, driver, accessScopeHash } = await this.#selection(identity, modelIdentity, signal)
+    return { transformProjection: (projection, stage) => {
+      const wire = projection.wire
+      if (projection.modelIdentity !== modelIdentity || wire.protocol !== driver.protocol || wire.provider !== policy.name
+        || wire.identity.ownerId !== identity.ownerId || wire.identity.sessionId !== identity.sessionId || wire.accessScopeHash !== accessScopeHash)
+        throw new ProviderError('input_rejected')
+      const stable = wire.stableRowCount ?? (projection.dynamicTailSize === 0 ? wire.messages.length : -1), prefix = wire.protectedPrefixRowCount
+      if (!Number.isSafeInteger(stable) || stable < 0 || stable > wire.messages.length || prefix === undefined || !Number.isSafeInteger(prefix) || prefix < 0 || prefix > stable)
+        throw new ProviderError('input_rejected')
+      const transformed = driver.transformHistory(wire.messages.slice(0, stable), stage, prefix)
+      return { projection: { ...clone(projection), dynamicTailSize: 0, wire: { ...clone(wire), messages: transformed.messages, stableRowCount: transformed.messages.length } }, changedMessages: transformed.changedMessages }
+    } }
   }
   async completeText(identity: RunIdentity, modelIdentity: string, prompt: string, maxTokens: number | null = 800, signal = new AbortController().signal): Promise<string> {
     const { config, policy, driver } = await this.#selection(identity, modelIdentity, signal)

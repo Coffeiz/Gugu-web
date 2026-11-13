@@ -1,0 +1,2898 @@
+{
+  "schemaVersion": 1,
+  "updated": "2026-11-13",
+  "auditKind": "provider-asr-implementation-and-network-review",
+  "includeInParityDefinitionCount": true,
+  "definitions": [
+    {
+      "pythonNode": "backend/tests/platform/test_io_retry_contract.py::test_voice_transcribe_retries_on_timeout_then_succeeds",
+      "pythonLine": 174,
+      "pythonAssertCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "兼容ASR超时后只退避一次并第二次成功，未知内部错误不重试"
+        }
+      ],
+      "protectedAssertions": [
+        "超时后第二次返回识别文本，恰好两次调用及一次1000ms退避"
+      ],
+      "gap": "原Python定义在隔离Linux实际执行通过；对应Node协议/重试/响应提取回归通过。",
+      "status": "已实现并通过基准"
+    },
+    {
+      "pythonNode": "backend/tests/platform/test_io_retry_contract.py::test_voice_transcribe_exhausts_retries_returns_empty_not_raise",
+      "pythonLine": 199,
+      "pythonAssertCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "%s网络重试最多三次，默认空串与显式安全异常分别保留"
+        }
+      ],
+      "protectedAssertions": [
+        "连接故障默认重试用尽返回空串、不抛出，最多三次调用及1000/2000ms退避"
+      ],
+      "gap": "原Python定义在隔离Linux实际执行通过；对应Node协议/重试/响应提取回归通过。",
+      "status": "已实现并通过基准"
+    },
+    {
+      "pythonNode": "backend/tests/platform/test_io_retry_contract.py::test_voice_transcribe_does_not_retry_on_permanent_error",
+      "pythonLine": 221,
+      "pythonAssertCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "兼容ASR超时后只退避一次并第二次成功，未知内部错误不重试"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "HTTP%s为永久失败，两种协议只请求一次且不泄漏上游正文"
+        }
+      ],
+      "protectedAssertions": [
+        "未知内部错误默认空串且仅一次调用；HTTP永久状态不重试，不能把任意异常当网络故障"
+      ],
+      "gap": "原Python定义在隔离Linux实际执行通过；对应Node协议/重试/响应提取回归通过。",
+      "status": "已实现并通过基准"
+    },
+    {
+      "pythonNode": "backend/tests/platform/test_io_retry_contract.py::test_voice_transcribe_qwen_audio_30_uses_dashscope_native_api",
+      "pythonLine": 241,
+      "pythonAssertCount": 5,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "DashScope产品线%s实际发送各自原生body，不从模型名推协议"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "原生ASR响应%j提取结果%s，不把非文本块拼进转写"
+        }
+      ],
+      "protectedAssertions": [
+        "完整原生endpoint、input_audio dataURL、format=wav/sample_rate=16000和原生响应文本提取"
+      ],
+      "gap": "原Python定义在隔离Linux实际执行通过；对应Node协议/重试/响应提取回归通过。",
+      "status": "已实现并通过基准"
+    },
+    {
+      "pythonNode": "backend/tests/platform/test_io_retry_contract.py::test_dashscope_transcript_reads_qwen_audio_output_text",
+      "pythonLine": 290,
+      "pythonAssertCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "原生ASR响应%j提取结果%s，不把非文本块拼进转写"
+        }
+      ],
+      "protectedAssertions": [
+        "output.text优先提取并strip，不要求choices封套"
+      ],
+      "gap": "原Python定义在隔离Linux实际执行通过；对应Node协议/重试/响应提取回归通过。",
+      "status": "已实现并通过基准"
+    },
+    {
+      "pythonNode": "backend/tests/platform/test_io_retry_contract.py::test_voice_transcribe_qwen3_asr_uses_native_asr_payload",
+      "pythonLine": 296,
+      "pythonAssertCount": 3,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "DashScope产品线%s实际发送各自原生body，不从模型名推协议"
+        }
+      ],
+      "protectedAssertions": [
+        "qwen3-asr使用audio dataURL而非input_audio；parameters.asr_options.enable_itn=false"
+      ],
+      "gap": "原Python定义在隔离Linux实际执行通过；对应Node协议/重试/响应提取回归通过。",
+      "status": "已实现并通过基准"
+    },
+    {
+      "pythonNode": "backend/tests/platform/test_io_retry_contract.py::test_voice_transcribe_fun_asr_uses_dashscope_audio_payload",
+      "pythonLine": 343,
+      "pythonAssertCount": 5,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "DashScope产品线%s实际发送各自原生body，不从模型名推协议"
+        }
+      ],
+      "protectedAssertions": [
+        "Fun-ASR使用input_audio并发送format=wav/sample_rate=16000，endpoint保持完整原生路径"
+      ],
+      "gap": "原Python定义在隔离Linux实际执行通过；对应Node协议/重试/响应提取回归通过。",
+      "status": "已实现并通过基准"
+    },
+    {
+      "pythonNode": "backend/tests/platform/test_io_retry_contract.py::test_voice_transcribe_uses_explicit_dashscope_service_not_model_prefix",
+      "pythonLine": 392,
+      "pythonAssertCount": 3,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "显式qwen-audio产品线压过qwen3模型名前缀，实际请求仍是input_audio"
+        }
+      ],
+      "protectedAssertions": [
+        "即使model名以qwen3-asr开头，显式qwen-audio服务仍生成input_audio和格式参数"
+      ],
+      "gap": "原Python定义在隔离Linux实际执行通过；对应Node协议/重试/响应提取回归通过。",
+      "status": "已实现并通过基准"
+    },
+    {
+      "pythonNode": "backend/tests/platform/test_io_retry_contract.py::test_voice_transcribe_accepts_dict_settings",
+      "pythonLine": 436,
+      "pythonAssertCount": 1,
+      "classification": "相邻HostData",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "兼容ASR实际请求只含音频和ITN参数，不复用聊天thinking生成参数且输入不变"
+        }
+      ],
+      "protectedAssertions": [
+        "已解析plain config能实际完成兼容ASR；旧settings.voice字典包装读取不属于此Provider API"
+      ],
+      "gap": "Provider API只接已选config，原_voice_settings/settings.voice字典归一化、预设、BYOK和业务路由仍由Host/Voice调用方负责，不能称原包装入口已迁。",
+      "status": "部分覆盖"
+    }
+  ],
+  "status": "网络快照、CA、池身份与兼容/DashScope ASR均有生产实现及独立回归；真实Host未装配。",
+  "scope": "Provider网络配置及47生产消费者配置来源/实际接线审计",
+  "snapshotLimit": "最初只读网络审查与本轮授权的ASR实现分开记录；本轮只改asr.ts、vendors/index.ts、现有policies.test.ts及此独占报告，未改共享模块/主清单。",
+  "method": [
+    "读取Python客户端/pinned_http/SafeEgress生产链及原pytest断言。",
+    "逐47文件定位导入/调用和配置来源；AST仅定位，不按导入数量推定迁移。",
+    "搜索gugu-core/src、gugu-desktop/src、gugu-webui/src真实Node调用容器，区分模块导出与生产Host接线。"
+  ],
+  "findings": [
+    {
+      "id": "ambient-options",
+      "priority": "P1",
+      "responsibility": "Node Provider传输本体",
+      "initialFinding": "原构造器仅完全省略options时读环境代理，传入allowLocal/超时等对象会丢环境代理。",
+      "currentSnapshot": "主Agent并行新增networkSnapshot/trustEnvironment，缺口已进入修复，待其独立运行验证；本报告不抢验收。",
+      "evidence": [
+        {
+          "file": "gugu-core/src/agent/providers/transport/node.ts",
+          "line": 54,
+          "symbol": "function networkSnapshot"
+        },
+        {
+          "file": "backend/agent/providers/client_pool.py",
+          "line": 92,
+          "symbol": "http_client = httpx2.AsyncClient"
+        }
+      ],
+      "requiredBehavior": [
+        "{}、undefined及其他非代理options不改变默认环境代理语义；显式trustEnvironment=false不继承环境。",
+        "显式proxy优先级确定，配置非法/代理故障必须安全失败，不静默改直连。"
+      ],
+      "regressions": [
+        "合成环境+本地测试代理分别经过无options/空options/超时options；明确禁环境不连代理。"
+      ],
+      "resolution": "已实现并经主Agent真实TCP/TLS/代理及Runtime池回归通过：默认环境继承、显式关闭、SSL_CERT_FILE/DIR、网络配置快照哈希及冻结创建。"
+    },
+    {
+      "id": "ca-file-directory",
+      "priority": "P1",
+      "responsibility": "Node Provider环境适配，FS仅Node专属模块",
+      "initialFinding": "原Node只有ca字符串，SSL_CERT_FILE/DIR自动加载未实现；Python池键显式包含两变量。",
+      "currentSnapshot": "主Agent已新增环境CA解析，当前读取目录/文件尚见无条目数/单文件/总量预算；只能说进入实现，不能把匹配扩展名与OpenSSL哈希目录精确同构混写。",
+      "evidence": [
+        {
+          "file": "gugu-core/src/agent/providers/transport/node.ts",
+          "line": 33,
+          "symbol": "function environmentCa"
+        },
+        {
+          "file": "backend/agent/providers/client_pool.py",
+          "line": 157,
+          "symbol": "\"SSL_CERT_FILE\", \"SSL_CERT_DIR\""
+        }
+      ],
+      "requiredBehavior": [
+        "明确FILE与DIR/显式ca优先级及目录筛选规则，坏/不存在路径给固定安全错误，不输出路径/PEM。",
+        "有界枚举、stat后有界读取；考虑symlink、特殊文件和读时变更，不能用无界readFileSync读取不可信大小。",
+        "证书验证/SNI/hostname始终开启；目标与HTTPS代理的信任配置分别正确。"
+      ],
+      "regressions": [
+        "临时合成CA文件/目录、坏PEM/空目录/权限错误/超限文件、目录无关条目。",
+        "真实本地HTTPS目标和HTTPS代理受信/不受信CA及错域名拒绝。"
+      ],
+      "parityLimit": "仓库没有正向SSL_CERT环境pytest；httpx2依赖默认CA细节未在此报告执行验证，不能虚称旧pytest已覆盖。",
+      "resolution": "已实现并经主Agent真实TCP/TLS/代理及Runtime池回归通过：默认环境继承、显式关闭、SSL_CERT_FILE/DIR、网络配置快照哈希及冻结创建。"
+    },
+    {
+      "id": "effective-network-key",
+      "priority": "P1",
+      "responsibility": "Provider池与Node传输工厂组合",
+      "initialFinding": "原Runtime仅可选手工networkIdentity，未保证它匹配实际代理/CA快照；配置改变可能复用旧transport。",
+      "currentSnapshot": "主Agent新增factory.snapshot和networkIdentity派生；当前源码已从同一effective snapshot创建transport并把身份纳入pool key，待真实组合回归。",
+      "evidence": [
+        {
+          "file": "backend/agent/providers/client_pool.py",
+          "line": 154,
+          "symbol": "name: os.environ.get(name)"
+        },
+        {
+          "file": "gugu-core/src/agent/providers/runtime.ts",
+          "line": 87,
+          "symbol": "snapshot?.networkIdentity"
+        },
+        {
+          "file": "gugu-core/src/agent/providers/transport/node.ts",
+          "line": 67,
+          "symbol": "createNodeProviderTransportFactory"
+        }
+      ],
+      "requiredBehavior": [
+        "实际生效HTTP/HTTPS/ALL_PROXY、认证、NO_PROXY、CA材料/版本、禁环境与超时/本地授权进入同一不可变身份快照。",
+        "portable Runtime只消费注入工厂/身份，Node环境及文件读取留Node模块。",
+        "身份仅不可逆digest，API key、代理密码、证书和路径不进入展示/错误/probe。"
+      ],
+      "regressions": [
+        "同配置身份稳定；代理/认证/NO_PROXY/CA/大小写优先级变化使身份相应改变。",
+        "实际两个factory快照+两测试代理/CA验证配置切换不复用旧认证或连接；显式传输调用方的生命周期权属另验。"
+      ],
+      "resolution": "已实现并经主Agent真实TCP/TLS/代理及Runtime池回归通过：默认环境继承、显式关闭、SSL_CERT_FILE/DIR、网络配置快照哈希及冻结创建。"
+    },
+    {
+      "id": "socks-scope",
+      "priority": "P2",
+      "responsibility": "如果承诺支持则属于Node Provider网络，不属于Admin/DB",
+      "initialFinding": "Node环境代理仅接受http/https，SOCKS返回unsupported。",
+      "currentSnapshot": "本次只读所见仍只支持HTTP(S)；原库无SOCKS正向Provider pytest、requirements未声明[socks]，故成功基线尚未证明。",
+      "evidence": [
+        {
+          "file": "gugu-core/src/agent/providers/transport/proxy.ts",
+          "line": 33,
+          "symbol": "['http:', 'https:'].includes(url.protocol)"
+        },
+        {
+          "file": "backend/requirements.txt",
+          "line": 39,
+          "symbol": "httpx2>="
+        }
+      ],
+      "requiredBehavior": [
+        "先界定socks5等支持范围及认证/IPv6；不要把SDK可能支持当已有原pytest成功。",
+        "目标使用已校验固定IP，socks5h/4a远端DNS不得在公有地址检查之后再解析原域名；不安全DNS模式应明确拒绝或记录安全收紧。",
+        "握手失败/认证失败/取消不得回退直连，凭据不写URL/可见错误。"
+      ],
+      "regressions": [
+        "合成SOCKS服务断实际目标IP/认证/分片/超时/取消，HTTPS保留目标hostname/SNI。",
+        "私有/混合公私/IPv4映射IPv6继续拒绝，本地授权仍双开关。"
+      ],
+      "resolution": "明确拒绝SOCKS；原Python依赖未安装socks extra，基准无正向SOCKS契约，不冒称支持；Host若需此能力须另行实现并验收。"
+    },
+    {
+      "id": "safe-egress-separation",
+      "priority": "P1",
+      "responsibility": "网络策略来源的安全分界，保留既有端口而非新Host层",
+      "evidence": [
+        {
+          "file": "backend/app/core/pinned_http.py",
+          "line": 45,
+          "symbol": "super().__init__(trust_env=False)"
+        },
+        {
+          "file": "backend/app/core/safe_egress.py",
+          "line": 163,
+          "symbol": "trust_env=False,"
+        },
+        {
+          "file": "backend/agent/providers/search_http.py",
+          "line": 57,
+          "symbol": "SafeEgressClient().stream("
+        }
+      ],
+      "initialFinding": "普通模型SDK默认网络与搜索受控出口不同：搜索/固定IP传输显式禁环境，代理来自管理员受控服务。",
+      "currentSnapshot": "主Agent新增trustEnvironment选项是正确方向；没有Host safe-egress真实装配前，不能声明搜索已继承相同管理员出口规则。",
+      "requiredBehavior": [
+        "普通模型工厂环境默认与受控搜索显式策略分开；不得把ambient代理自动注入trust_env=False调用。",
+        "目标固定验证IP、Host/SNI保留原域名、禁止自动跟随未验证重定向。",
+        "代理认证不转发目标、目标API key不进代理头；受信内网代理不赋予模型目标local授权。"
+      ],
+      "regressions": [
+        "存在环境代理时受控出口显式禁用仍不继承，默认模型按其策略连代理。"
+      ],
+      "resolution": "Node trustEnvironment=false实际绕过环境代理；搜索生产Host尚未迁入，必须保留Python SafeEgress的trust_env=False及可信管理员代理边界。"
+    },
+    {
+      "id": "47-callers",
+      "priority": "P1",
+      "responsibility": "逐调用审计证据",
+      "initialFinding": "原47项只有pythonFile+泛化disposition；没有逐项配置来源/Node真实调用点，混合helper/常量/网络入口。",
+      "currentSnapshot": "本报告逐47项补配置来源、Python行/函数、可用Node能力及真实Host未接信息；不据此声称生产切换。",
+      "requiredBehavior": [
+        "调用方实际迁移时补owner/模型配置来源、冻结身份、Node业务调用点及相应运行证据。",
+        "常量、异常类型、SDK预加载分别处理；不强迫所有文件新建Host代码。"
+      ],
+      "resolution": "47文件配置来源、实际调用位置、可用Core目标及未接线Host逐条纳入主清单；0条被假报为Host切换。"
+    },
+    {
+      "id": "voice-provider-network",
+      "priority": "P1",
+      "responsibility": "Provider网络候选缺口与Media/Host分拆",
+      "evidence": [
+        {
+          "file": "backend/agent/voice.py",
+          "line": 203,
+          "symbol": "native_dashscope ="
+        },
+        {
+          "file": "backend/agent/voice.py",
+          "line": 157,
+          "symbol": "resolve_capability_settings"
+        },
+        {
+          "file": "gugu-core/src/agent/providers/vendors/asr.ts",
+          "line": 48,
+          "symbol": "transcribeMiniMax"
+        }
+      ],
+      "initialFinding": "voice.py除MiniMax ASR还有DashScope qwen3-asr/qwen-audio/fun-asr和OpenAI兼容ASR，包含不同payload、enable_itn=False、响应提取及窄重试。",
+      "currentSnapshot": "现有asr.ts已实现兼容/DashScope三线网络，现有policies.test新增37条展开用例；发现9条目录外旧Voice pytest并逐条映射，待主Agent补Python基准与主清单合并。",
+      "requiredBehavior": [
+        "网络payload/错误/重试若属本轮Provider范围应在厂商模块实现；转码/预设/凭据解析留既有Media/Host端口。",
+        "先找现有pytest或明确新增行为基线，不擅自提升405定义已迁状态。"
+      ],
+      "status": "网络本体与Python基准通过，Host包装仍部分覆盖。",
+      "resolution": "兼容及DashScope三产品线已实现；原Python9条与Node对应回归均实际通过，Voice预设/BYOK/转码部署仍是Host责任。"
+    }
+  ],
+  "existingTestEvidence": [
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_client_pool.py::test_provider_config_key_does_not_contain_api_key",
+      "protects": "仅secret不在key与长度64；不证明环境代理/CA切换。"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_client_pool.py::test_provider_builders_share_sdk_transport_with_ten_minute_idle_limit",
+      "protects": "对象复用/600秒属性/scope关闭；没有SOCKS或CA环境成功基线。"
+    },
+    {
+      "pythonNode": "backend/tests/platform/security/test_url_security.py::test_web_pinned_backend_uses_resolved_ip",
+      "protects": "已解析IP即真实连接目标；不在旧43 Provider文件清单。"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_provider_web_search.py::test_search_http_does_not_follow_redirect_or_expose_upstream_errors",
+      "protects": "受控出口重定向/错误正文边界。"
+    },
+    {
+      "tsTest": {
+        "file": "gugu-core/tests/agent/providers/transport.test.ts",
+        "name": "HTTPS代理隧道仍校验目标TLS域名和可信CA，SNI不被固定IP替换"
+      },
+      "protects": "显式HTTPS代理/CA/hostname/SNI，不证明自动CA环境加载。"
+    },
+    {
+      "tsTest": {
+        "file": "gugu-core/tests/agent/providers/transport.test.ts",
+        "name": "真实代理CONNECT使用固定目标IP，代理认证不转发目标，NO_PROXY按域及端口绕过"
+      },
+      "protects": "HTTP CONNECT/IP/凭据隔离和规则，不证明任意options或热切换。"
+    }
+  ],
+  "callers": [
+    {
+      "pythonFile": "backend/agent/context/branch.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "error",
+      "configurationSourceAndHandling": "只对传入分支异常做ProviderInputRejected判别，不选模型/不创建网络客户端；真实分支请求由上层runner传配置。",
+      "pythonProviderCallSites": [
+        {
+          "line": 118,
+          "enclosing": "ContextBranch.run",
+          "expression": "is_provider_input_rejected(exc)"
+        }
+      ],
+      "configurationEvidence": [
+        {
+          "line": 166,
+          "code": "record_reuse_outcome(effective_ai(settings),"
+        }
+      ],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/errors.ts",
+          "line": 33,
+          "symbol": "classifyProviderError"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/context/compaction.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "branch",
+      "configurationSourceAndHandling": "adapter使用传入model_cfg，另有get_settings压缩入口；Core分支可用不代表原压缩选模/写回任务已迁。",
+      "pythonProviderCallSites": [
+        {
+          "line": 320,
+          "enclosing": "compact_context",
+          "expression": "providers.adapter_for(model_cfg).protocol_format(model_cfg)"
+        },
+        {
+          "line": 320,
+          "enclosing": "compact_context",
+          "expression": "providers.adapter_for(model_cfg)"
+        }
+      ],
+      "configurationEvidence": [
+        {
+          "line": 692,
+          "code": "settings = get_settings()"
+        }
+      ],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/runtime.ts",
+          "line": 232,
+          "symbol": "completeBranch"
+        },
+        {
+          "file": "gugu-core/src/agent/harness/context/reflection.ts",
+          "line": 335,
+          "symbol": "runContextBranch"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/context/compress_conv.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "branch",
+      "configurationSourceAndHandling": "显式model_cfg优先，否则effective_ai(settings)使用当前modelctx或settings.ai；原压缩持久化/生产调度未切换。",
+      "pythonProviderCallSites": [
+        {
+          "line": 797,
+          "enclosing": "_compress_if_needed_unlocked",
+          "expression": "providers.adapter_for(model_cfg)"
+        }
+      ],
+      "configurationEvidence": [
+        {
+          "line": 518,
+          "code": "model_cfg = model_cfg or effective_ai(settings)"
+        },
+        {
+          "line": 742,
+          "code": "model_cfg = effective_ai(settings)"
+        }
+      ],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/runtime.ts",
+          "line": 232,
+          "symbol": "completeBranch"
+        },
+        {
+          "file": "gugu-core/src/agent/harness/context/reflection.ts",
+          "line": 335,
+          "symbol": "runContextBranch"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/context/context_diagnostics.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "history",
+      "configurationSourceAndHandling": "接收messages/adapter渲染布局，不自行选模；Core投影能力已有，诊断消费者不是已接Node。",
+      "pythonProviderCallSites": [
+        {
+          "line": 175,
+          "enclosing": "request_diagnostics",
+          "expression": "render_openai_request_history(messages, adapter, with_diagnostics=True)"
+        }
+      ],
+      "configurationEvidence": [],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/openai-history.ts",
+          "line": 154,
+          "symbol": "projectOpenai"
+        },
+        {
+          "file": "gugu-core/src/agent/providers/anthropic-history.ts",
+          "line": 89,
+          "symbol": "projectAnthropicHistory"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/context/history.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "history",
+      "configurationSourceAndHandling": "工具结果及allow_images由参数传入，不自行读取模型配置；Core工具媒体投影已有，上层历史存储另验。",
+      "pythonProviderCallSites": [
+        {
+          "line": 353,
+          "enclosing": "_openai_history_message",
+          "expression": "_openai_tool_result(block.get('content', ''), allow_images=allow_tool_images and (not strip_history_images))"
+        }
+      ],
+      "configurationEvidence": [],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/openai-history.ts",
+          "line": 154,
+          "symbol": "projectOpenai"
+        },
+        {
+          "file": "gugu-core/src/agent/providers/anthropic-history.ts",
+          "line": 89,
+          "symbol": "projectAnthropicHistory"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/context/prefix_history.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "history",
+      "configurationSourceAndHandling": "显式ai经adapter_for选择协议；必须传同一冻结模型身份，Node可投影但旧调用入口未切换。",
+      "pythonProviderCallSites": [
+        {
+          "line": 20,
+          "enclosing": "render_branch_prefix",
+          "expression": "adapter_for(ai)"
+        }
+      ],
+      "configurationEvidence": [],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/openai-history.ts",
+          "line": 154,
+          "symbol": "projectOpenai"
+        },
+        {
+          "file": "gugu-core/src/agent/providers/anthropic-history.ts",
+          "line": 89,
+          "symbol": "projectAnthropicHistory"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/context/provider_history.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "history",
+      "configurationSourceAndHandling": "显式ai决定adapter与协议，输入来自上下文准备；Node历史投影已有，旧ProviderConversation入口未切换。",
+      "pythonProviderCallSites": [
+        {
+          "line": 42,
+          "enclosing": "state_for",
+          "expression": "providers.adapter_for(ai)"
+        }
+      ],
+      "configurationEvidence": [],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/openai-history.ts",
+          "line": 154,
+          "symbol": "projectOpenai"
+        },
+        {
+          "file": "gugu-core/src/agent/providers/anthropic-history.ts",
+          "line": 89,
+          "symbol": "projectAnthropicHistory"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/context/provider_runner.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "branch",
+      "configurationSourceAndHandling": "effective_ai(settings)来自显式settings和modelctx；thinking/预算由本轮配置+显式分支参数；Node completeBranch真实协议可调用，旧usage/trace及调用方尚未接。",
+      "pythonProviderCallSites": [
+        {
+          "line": 18,
+          "enclosing": "_branch_output_budget",
+          "expression": "output_budget(ai, requested)"
+        },
+        {
+          "line": 133,
+          "enclosing": "_non_anthropic",
+          "expression": "providers.adapter_for(ai).protocol_format(ai)"
+        },
+        {
+          "line": 133,
+          "enclosing": "_non_anthropic",
+          "expression": "providers.adapter_for(ai)"
+        },
+        {
+          "line": 141,
+          "enclosing": "_non_anthropic",
+          "expression": "complete_branch(sys, history or (), user, branch_ai, settings, max_output_tokens=_branch_output_budget(branch_ai, max_tokens, reserve_reasoning_budget), tools=tools, json_mode=json_mode, usage_sink=usage_sink, probe_sink=probe_sink, cache_s"
+        },
+        {
+          "line": 208,
+          "enclosing": "_anthropic",
+          "expression": "providers.build_anthropic_client(ai, llm_provider_timeout())"
+        },
+        {
+          "line": 255,
+          "enclosing": "_anthropic",
+          "expression": "adapter_for(ai)"
+        },
+        {
+          "line": 259,
+          "enclosing": "_anthropic",
+          "expression": "providers.adapter_for(ai).build_anthropic_thinking_params(ai, thinking=thinking)"
+        },
+        {
+          "line": 259,
+          "enclosing": "_anthropic",
+          "expression": "providers.adapter_for(ai)"
+        },
+        {
+          "line": 261,
+          "enclosing": "_anthropic",
+          "expression": "start_request_probe(probe_sink, kwargs)"
+        },
+        {
+          "line": 264,
+          "enclosing": "_anthropic",
+          "expression": "providers.adapter_for(ai)"
+        },
+        {
+          "line": 265,
+          "enclosing": "_anthropic",
+          "expression": "run_provider_branch_request(lambda: client.messages.create(**kwargs), kwargs, probe, stable_row_count=stable_message_count, cache_supported=bool(cache_singleflight and cache_supported), namespace=f'{cache_adapter.name}:{cache_adapter.protoc"
+        },
+        {
+          "line": 276,
+          "enclosing": "_anthropic",
+          "expression": "finish_usage_probe(probe, getattr(resp, 'usage', None), usage)"
+        },
+        {
+          "line": 324,
+          "enclosing": "_with_trailing_cache_anchor",
+          "expression": "_apply_history_cache(messages, branch_plan, single_anchor=False)"
+        },
+        {
+          "line": 359,
+          "enclosing": "_openai",
+          "expression": "providers.build_openai_client(ai, llm_provider_timeout())"
+        },
+        {
+          "line": 366,
+          "enclosing": "_openai",
+          "expression": "render_openai_request_history(projection, providers.adapter_for(ai))"
+        },
+        {
+          "line": 366,
+          "enclosing": "_openai",
+          "expression": "providers.adapter_for(ai)"
+        },
+        {
+          "line": 375,
+          "enclosing": "_openai",
+          "expression": "providers.adapter_for(ai)"
+        },
+        {
+          "line": 377,
+          "enclosing": "_openai",
+          "expression": "merge_openai_system_messages(kwargs['messages'])"
+        },
+        {
+          "line": 385,
+          "enclosing": "_openai",
+          "expression": "_with_system_cache_control(kwargs['messages'])"
+        },
+        {
+          "line": 395,
+          "enclosing": "_openai",
+          "expression": "start_request_probe(probe_sink, kwargs)"
+        },
+        {
+          "line": 399,
+          "enclosing": "_openai",
+          "expression": "run_provider_branch_request(lambda: client.chat.completions.create(**kwargs), kwargs, probe, stable_row_count=stable_message_count, cache_supported=bool(cache_singleflight and provider_branch_cache_supported(adapter, ai)), namespace=f'{adap"
+        },
+        {
+          "line": 405,
+          "enclosing": "_openai",
+          "expression": "provider_branch_cache_supported(adapter, ai)"
+        },
+        {
+          "line": 412,
+          "enclosing": "_openai",
+          "expression": "finish_usage_probe(probe, getattr(resp, 'usage', None), usage)"
+        }
+      ],
+      "configurationEvidence": [
+        {
+          "line": 69,
+          "code": "ai = effective_ai(settings)"
+        },
+        {
+          "line": 108,
+          "code": "ai = effective_ai(settings)"
+        },
+        {
+          "line": 170,
+          "code": "ai = effective_ai(settings)"
+        }
+      ],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/runtime.ts",
+          "line": 232,
+          "symbol": "completeBranch"
+        },
+        {
+          "file": "gugu-core/src/agent/harness/context/reflection.ts",
+          "line": 335,
+          "symbol": "runContextBranch"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/context/reasoning_runtime.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "reasoning",
+      "configurationSourceAndHandling": "构造时保存self.model_cfg，后续adapter不回读全局配置；Node私有续接可用，原持久私有状态/恢复策略未迁。",
+      "pythonProviderCallSites": [
+        {
+          "line": 124,
+          "enclosing": "ReasoningStateCoordinator.prepared",
+          "expression": "providers.adapter_for(self.model_cfg)"
+        }
+      ],
+      "configurationEvidence": [
+        {
+          "line": 44,
+          "code": "self.model_cfg = model_cfg"
+        }
+      ],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/runtime.ts",
+          "line": 127,
+          "symbol": "stageContinuation"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/context/reasoning_state.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "reasoning",
+      "configurationSourceAndHandling": "model_state_fingerprints接显式ai，Responses store进入配置指纹；Node身份绑定已有，旧持久信封/DTO不全量等同。",
+      "pythonProviderCallSites": [
+        {
+          "line": 86,
+          "enclosing": "model_state_fingerprints",
+          "expression": "providers.responses_store_value(ai)"
+        }
+      ],
+      "configurationEvidence": [],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/runtime.ts",
+          "line": 127,
+          "symbol": "stageContinuation"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/context/run_context.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "history",
+      "configurationSourceAndHandling": "使用已传model_cfg判断协议，准备阶段负责冻结；Core上下文/投影能力已有，原生产入口未切换。",
+      "pythonProviderCallSites": [
+        {
+          "line": 245,
+          "enclosing": "prepare_run",
+          "expression": "providers.adapter_for(model_cfg).protocol_format(model_cfg)"
+        },
+        {
+          "line": 245,
+          "enclosing": "prepare_run",
+          "expression": "providers.adapter_for(model_cfg)"
+        }
+      ],
+      "configurationEvidence": [],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/openai-history.ts",
+          "line": 154,
+          "symbol": "projectOpenai"
+        },
+        {
+          "file": "gugu-core/src/agent/providers/anthropic-history.ts",
+          "line": 89,
+          "symbol": "projectAnthropicHistory"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/conversation/session_metadata.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "standalone",
+      "configurationSourceAndHandling": "标题显式ai优先，否则effective_ai(settings)，摘要同样effective_ai；Node completeText存在，后台调度/owner/DB写回未迁。",
+      "pythonProviderCallSites": [
+        {
+          "line": 60,
+          "enclosing": "generate_title",
+          "expression": "complete_text(ai, prompt, max_tokens=40)"
+        },
+        {
+          "line": 81,
+          "enclosing": "generate_summary",
+          "expression": "complete_text(ai, prompt, max_tokens=80)"
+        }
+      ],
+      "configurationEvidence": [
+        {
+          "line": 58,
+          "code": "ai = ai or effective_ai(settings)"
+        },
+        {
+          "line": 79,
+          "code": "ai = effective_ai(settings)"
+        }
+      ],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/runtime.ts",
+          "line": 282,
+          "symbol": "completeText"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/core.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "stream",
+      "configurationSourceAndHandling": "显式model_cfg/ai优先，否则self.settings.ai；Node Runtime到Harness可组合运行，原Agent/真实Host容器未切换。",
+      "pythonProviderCallSites": [
+        {
+          "line": 489,
+          "enclosing": "LLMRunner._run_responses",
+          "expression": "OpenAIResponsesDriver()"
+        }
+      ],
+      "configurationEvidence": [],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/runtime.ts",
+          "line": 148,
+          "symbol": "stream("
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/errors.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "error",
+      "configurationSourceAndHandling": "仅传入异常/响应元数据，不选模型/不建网络；Node安全错误与业务码已有，Web/IM展示链另验。",
+      "pythonProviderCallSites": [
+        {
+          "line": 91,
+          "enclosing": "describe_llm_error",
+          "expression": "diagnostic_metadata(error)"
+        },
+        {
+          "line": 102,
+          "enclosing": "describe_llm_error",
+          "expression": "minimax_error_details(error)"
+        },
+        {
+          "line": 103,
+          "enclosing": "describe_llm_error",
+          "expression": "is_provider_http_error(error)"
+        },
+        {
+          "line": 108,
+          "enclosing": "describe_llm_error",
+          "expression": "upstream_status_tag(error)"
+        },
+        {
+          "line": 111,
+          "enclosing": "describe_llm_error",
+          "expression": "upstream_status_code(error)"
+        },
+        {
+          "line": 145,
+          "enclosing": "describe_llm_error",
+          "expression": "is_responses_stream_error(error)"
+        },
+        {
+          "line": 146,
+          "enclosing": "describe_llm_error",
+          "expression": "anthropic_stream_protocol_details(error)"
+        }
+      ],
+      "configurationEvidence": [],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/errors.ts",
+          "line": 33,
+          "symbol": "classifyProviderError"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/gateway/web/stream.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "host",
+      "configurationSourceAndHandling": "settings=get_settings后resolve_run_config或resolve_run_config_for_user(settings,db,user_id,req)得到model_cfg；真实Web路由/鉴权/BYOK解析未迁。",
+      "pythonProviderCallSites": [
+        {
+          "line": 279,
+          "enclosing": "stream",
+          "expression": "minimax_error_details(error)"
+        }
+      ],
+      "configurationEvidence": [
+        {
+          "line": 20,
+          "code": "from agent.llm.llm_select import resolve_run_config, resolve_run_config_for_user"
+        },
+        {
+          "line": 29,
+          "code": "settings = get_settings()"
+        },
+        {
+          "line": 32,
+          "code": "model_cfg = resolve_run_config(settings, req).model"
+        },
+        {
+          "line": 41,
+          "code": "run_config = await resolve_run_config_for_user(settings, db, user_id, req)"
+        }
+      ],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/runtime.ts",
+          "line": 22,
+          "symbol": "ProviderRuntimeOptions"
+        },
+        {
+          "file": "gugu-core/src/agent/providers/registry.ts",
+          "line": 40,
+          "symbol": "capabilitySnapshot"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/greeting.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "standalone",
+      "configurationSourceAndHandling": "按user_id和DB resolve_run_config_for_user，再绑定modelctx并effective_ai(settings)交complete_text；Node独立协议有实现，问候缓存/DB/绑定和后台入口未迁。",
+      "pythonProviderCallSites": [
+        {
+          "line": 187,
+          "enclosing": "_generate_uncached",
+          "expression": "complete_text(ai, prompt, max_tokens=180)"
+        }
+      ],
+      "configurationEvidence": [
+        {
+          "line": 173,
+          "code": "from agent.llm.llm_select import resolve_run_config_for_user"
+        },
+        {
+          "line": 177,
+          "code": "model = (await resolve_run_config_for_user(settings, db, user_id, None)).model"
+        },
+        {
+          "line": 186,
+          "code": "ai = effective_ai(settings)"
+        }
+      ],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/runtime.ts",
+          "line": 282,
+          "symbol": "completeText"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/im/media_ingress.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "media",
+      "configurationSourceAndHandling": "原入口直接get_settings().ai；不能与其他IM effective_ai入口混写；厂商媒体规则有实现，QQ入站授权/实际处理未迁。",
+      "pythonProviderCallSites": [
+        {
+          "line": 245,
+          "enclosing": "ingest_qq_media",
+          "expression": "providers.adapter_for(get_settings().ai)"
+        }
+      ],
+      "configurationEvidence": [
+        {
+          "line": 245,
+          "code": "data, ext, mime, providers.adapter_for(get_settings().ai))"
+        }
+      ],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/vendors/media.ts",
+          "line": 8,
+          "symbol": "DEFAULT_MEDIA_LIMITS"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/im/media_ingress_feishu.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "media",
+      "configurationSourceAndHandling": "effective_ai(get_settings())保留当前modelctx覆盖；厂商规则已有，飞书入站授权/下载/转码未接Node。",
+      "pythonProviderCallSites": [
+        {
+          "line": 41,
+          "enclosing": "download_and_stage",
+          "expression": "providers.adapter_for(effective_ai(get_settings()))"
+        }
+      ],
+      "configurationEvidence": [
+        {
+          "line": 41,
+          "code": "providers.adapter_for(effective_ai(get_settings())))"
+        }
+      ],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/vendors/media.ts",
+          "line": 8,
+          "symbol": "DEFAULT_MEDIA_LIMITS"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/im/media_ingress_telegram.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "media",
+      "configurationSourceAndHandling": "effective_ai(get_settings())保留当前modelctx覆盖；厂商规则已有，Telegram入站授权/下载/转码未接Node。",
+      "pythonProviderCallSites": [
+        {
+          "line": 184,
+          "enclosing": "ingest_telegram_media",
+          "expression": "providers.adapter_for(effective_ai(get_settings()))"
+        }
+      ],
+      "configurationEvidence": [
+        {
+          "line": 184,
+          "code": "data, ext, mime, providers.adapter_for(effective_ai(get_settings()))"
+        }
+      ],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/vendors/media.ts",
+          "line": 8,
+          "symbol": "DEFAULT_MEDIA_LIMITS"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/llm/llm_select.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "selection",
+      "configurationSourceAndHandling": "settings预设/settings.ai选模，用户入口解析DB BYOK凭据/目的地，再filter_reasoning_config并modelctx绑定/释放；Node纯能力/过滤已有，可信来源及持久策略未迁。",
+      "pythonProviderCallSites": [
+        {
+          "line": 45,
+          "enclosing": "_is_mimo",
+          "expression": "providers.adapter_for(ai)"
+        },
+        {
+          "line": 49,
+          "enclosing": "_is_deepseek",
+          "expression": "providers.adapter_for(ai)"
+        },
+        {
+          "line": 54,
+          "enclosing": "is_minimax",
+          "expression": "providers.adapter_for(ai)"
+        },
+        {
+          "line": 62,
+          "enclosing": "supports_anthropic_active_cache",
+          "expression": "providers.adapter_for(ai).supports_active_cache(getattr(ai, 'model', '') or '')"
+        },
+        {
+          "line": 62,
+          "enclosing": "supports_anthropic_active_cache",
+          "expression": "providers.adapter_for(ai)"
+        },
+        {
+          "line": 68,
+          "enclosing": "supports_thinking_toggle",
+          "expression": "providers.adapter_for(ai)"
+        },
+        {
+          "line": 80,
+          "enclosing": "use_anthropic_for",
+          "expression": "providers.adapter_for(ai).protocol_format(ai)"
+        },
+        {
+          "line": 80,
+          "enclosing": "use_anthropic_for",
+          "expression": "providers.adapter_for(ai)"
+        },
+        {
+          "line": 147,
+          "enclosing": "_reasoning_persistence_for_model",
+          "expression": "providers.adapter_for(model).protocol_format(model)"
+        },
+        {
+          "line": 147,
+          "enclosing": "_reasoning_persistence_for_model",
+          "expression": "providers.adapter_for(model)"
+        },
+        {
+          "line": 159,
+          "enclosing": "resolve_run_config",
+          "expression": "filter_reasoning_config(model)"
+        },
+        {
+          "line": 219,
+          "enclosing": "resolve_run_config_for_user",
+          "expression": "filter_reasoning_config(model)"
+        }
+      ],
+      "configurationEvidence": [
+        {
+          "line": 155,
+          "code": "def resolve_run_config(settings, ctx=None) -> ModelRunConfig:"
+        },
+        {
+          "line": 168,
+          "code": "async def resolve_run_config_for_user(settings, db, user_id, ctx=None) -> ModelRunConfig:"
+        },
+        {
+          "line": 170,
+          "code": "config = resolve_run_config(settings, ctx)"
+        }
+      ],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/registry.ts",
+          "line": 16,
+          "symbol": "adapterFor"
+        },
+        {
+          "file": "gugu-core/src/agent/providers/base.ts",
+          "line": 82,
+          "symbol": "filterReasoningConfig"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/loop/provider.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "error",
+      "configurationSourceAndHandling": "只处理传入Provider异常/重试决策，不重新选模型；Node分类/重试有实现，旧Loop调度及展示入口保留。",
+      "pythonProviderCallSites": [
+        {
+          "line": 28,
+          "enclosing": "_non_streaming_round",
+          "expression": "anthropic_stream_protocol_details(cause)"
+        },
+        {
+          "line": 45,
+          "enclosing": "_recoverable_stream_error",
+          "expression": "anthropic_stream_protocol_details(error)"
+        },
+        {
+          "line": 87,
+          "enclosing": "stream_round._error_kind",
+          "expression": "minimax_error_details(exc)"
+        },
+        {
+          "line": 137,
+          "enclosing": "stream_round",
+          "expression": "is_retryable_error(e)"
+        }
+      ],
+      "configurationEvidence": [],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/errors.ts",
+          "line": 33,
+          "symbol": "classifyProviderError"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/loop/round_runtime.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "error",
+      "configurationSourceAndHandling": "ResponsesCompatibilityError是异常类型导入/处理，无直接Provider网络工厂调用；旧异常类由安全ProviderError替代，不能误算网络入口。",
+      "pythonProviderCallSites": [],
+      "configurationEvidence": [],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/errors.ts",
+          "line": 33,
+          "symbol": "classifyProviderError"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/loop/runner.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "lifecycle",
+      "configurationSourceAndHandling": "按当前Run建立/激活/结束provider_client_pool scope；模型来自准备Run，注释禁止回读静态settings.ai；Node显式scope实现已有，原Runner入口未切换。",
+      "pythonProviderCallSites": [
+        {
+          "line": 123,
+          "enclosing": "_with_provider_client_scope.wrapped",
+          "expression": "provider_client_pool.new_run_scope()"
+        },
+        {
+          "line": 128,
+          "enclosing": "_with_provider_client_scope.wrapped",
+          "expression": "provider_client_pool.activate(scope)"
+        },
+        {
+          "line": 135,
+          "enclosing": "_with_provider_client_scope.wrapped",
+          "expression": "provider_client_pool.activate(scope)"
+        },
+        {
+          "line": 138,
+          "enclosing": "_with_provider_client_scope.wrapped",
+          "expression": "provider_client_pool.finish_run_scope(scope)"
+        }
+      ],
+      "configurationEvidence": [
+        {
+          "line": 167,
+          "code": "# \"当前模型支持什么\"必须看这个，不能重新读静态的 get_settings().ai。"
+        }
+      ],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/client-pool.ts",
+          "line": 8,
+          "symbol": "ProviderClientPool"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/loop_drivers.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "stream",
+      "configurationSourceAndHandling": "prepare接显式ai，ctx.ai用于同一轮capability/参数/客户端/投影；Node各协议驱动有实现，Host未接旧Agent Runner。",
+      "pythonProviderCallSites": [
+        {
+          "line": 163,
+          "enclosing": "_anthropic_history_tool_use_ids",
+          "expression": "render_provider_history(messages, adapter)"
+        },
+        {
+          "line": 298,
+          "enclosing": "AnthropicDriver.prepare",
+          "expression": "providers.adapter_for(ai)"
+        },
+        {
+          "line": 299,
+          "enclosing": "AnthropicDriver.prepare",
+          "expression": "providers.build_anthropic_client(ai, _timeout)"
+        },
+        {
+          "line": 300,
+          "enclosing": "AnthropicDriver.prepare",
+          "expression": "providers.generic_thinking_params(ai, 'anthropic')"
+        },
+        {
+          "line": 340,
+          "enclosing": "AnthropicDriver.run_round",
+          "expression": "render_provider_history(messages, ctx.adapter)"
+        },
+        {
+          "line": 370,
+          "enclosing": "AnthropicDriver.run_round",
+          "expression": "_with_history_cache(outbound, getattr(ctx, 'cache_state', None), provider=str(getattr(ctx.adapter, 'name', 'unknown')), api_format=str(getattr(ctx.adapter, 'api_format', 'anthropic')), model=ctx.model)"
+        },
+        {
+          "line": 588,
+          "enclosing": "OpenAIDriver.prepare",
+          "expression": "providers.adapter_for(ai)"
+        },
+        {
+          "line": 593,
+          "enclosing": "OpenAIDriver.prepare",
+          "expression": "providers.capability_snapshot(ai)"
+        },
+        {
+          "line": 597,
+          "enclosing": "OpenAIDriver.prepare",
+          "expression": "providers.build_openai_client(ai, _timeout)"
+        },
+        {
+          "line": 599,
+          "enclosing": "OpenAIDriver.prepare",
+          "expression": "providers.generic_thinking_params(ai, 'openai')"
+        },
+        {
+          "line": 609,
+          "enclosing": "OpenAIDriver.prepare",
+          "expression": "providers.generic_thinking_params(disabled_ai, 'openai')"
+        },
+        {
+          "line": 632,
+          "enclosing": "OpenAIDriver.update_tools",
+          "expression": "providers.capability_snapshot(ctx.ai).get('tools', True)"
+        },
+        {
+          "line": 632,
+          "enclosing": "OpenAIDriver.update_tools",
+          "expression": "providers.capability_snapshot(ctx.ai)"
+        },
+        {
+          "line": 638,
+          "enclosing": "OpenAIDriver.run_round",
+          "expression": "render_provider_history(messages, ctx.adapter)"
+        },
+        {
+          "line": 640,
+          "enclosing": "OpenAIDriver.run_round",
+          "expression": "render_openai_request_history(outbound, ctx.adapter)"
+        },
+        {
+          "line": 642,
+          "enclosing": "OpenAIDriver.run_round",
+          "expression": "strip_responses_item_ids(outbound)"
+        },
+        {
+          "line": 658,
+          "enclosing": "OpenAIDriver.run_round",
+          "expression": "_with_system_cache_control(outbound)"
+        },
+        {
+          "line": 660,
+          "enclosing": "OpenAIDriver.run_round",
+          "expression": "_with_single_history_cache(outbound, getattr(ctx, 'cache_state', None), provider=str(getattr(ctx.adapter, 'name', 'unknown')), api_format=str(getattr(ctx.adapter, 'api_format', 'openai')), model=ctx.model)"
+        },
+        {
+          "line": 667,
+          "enclosing": "OpenAIDriver.run_round",
+          "expression": "_with_history_cache(outbound, getattr(ctx, 'cache_state', None), provider=str(getattr(ctx.adapter, 'name', 'unknown')), api_format=str(getattr(ctx.adapter, 'api_format', 'openai')), model=ctx.model)"
+        },
+        {
+          "line": 759,
+          "enclosing": "OpenAIDriver.run_round",
+          "expression": "openai_transient_error(exc)"
+        },
+        {
+          "line": 774,
+          "enclosing": "OpenAIDriver.run_round",
+          "expression": "openai_error_kind(exc)"
+        },
+        {
+          "line": 837,
+          "enclosing": "OpenAIDriver.build_tool_round",
+          "expression": "_openai_tool_result(res, allow_images=allow_images, allow_audio_video=True)"
+        },
+        {
+          "line": 936,
+          "enclosing": "OllamaDriver.prepare",
+          "expression": "providers.adapter_for(ai)"
+        },
+        {
+          "line": 940,
+          "enclosing": "OllamaDriver.prepare",
+          "expression": "providers.build_ollama_client(ai, timeout)"
+        },
+        {
+          "line": 964,
+          "enclosing": "OllamaDriver.run_round",
+          "expression": "render_provider_history(messages, ctx.adapter)"
+        },
+        {
+          "line": 1041,
+          "enclosing": "OllamaDriver.build_tool_round",
+          "expression": "_openai_tool_result(res, allow_images=allow_images)"
+        }
+      ],
+      "configurationEvidence": [],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/runtime.ts",
+          "line": 148,
+          "symbol": "stream("
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/media/audio.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "media",
+      "configurationSourceAndHandling": "显式model_cfg优先，缺省get_settings().ai决定audio_native_exts；格式能力已迁，实际转码/其配置来源未迁。",
+      "pythonProviderCallSites": [
+        {
+          "line": 22,
+          "enclosing": "native_audio_extensions",
+          "expression": "providers.adapter_for(model_cfg).audio_native_exts()"
+        },
+        {
+          "line": 22,
+          "enclosing": "native_audio_extensions",
+          "expression": "providers.adapter_for(model_cfg)"
+        }
+      ],
+      "configurationEvidence": [
+        {
+          "line": 16,
+          "code": "model_cfg = get_settings().ai"
+        }
+      ],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/vendors/media.ts",
+          "line": 8,
+          "symbol": "DEFAULT_MEDIA_LIMITS"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/media/constants.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "media",
+      "configurationSourceAndHandling": "MediaLimits()静态默认常量，无用户/模型配置读取；Node DEFAULT_MEDIA_LIMITS已迁，不是网络或Host入口。",
+      "pythonProviderCallSites": [
+        {
+          "line": 12,
+          "enclosing": "<module>",
+          "expression": "MediaLimits()"
+        }
+      ],
+      "configurationEvidence": [],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/vendors/media.ts",
+          "line": 8,
+          "symbol": "DEFAULT_MEDIA_LIMITS"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/media/gates.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "media",
+      "configurationSourceAndHandling": "显式model_cfg/ai优先，便捷入口可回退get_settings().ai；Node能力/limits已有，不能把gate清单等同通用媒体流水线。",
+      "pythonProviderCallSites": [
+        {
+          "line": 22,
+          "enclosing": "image_enabled",
+          "expression": "providers.adapter_for(ai).capabilities(getattr(ai, 'model', '') or '')"
+        },
+        {
+          "line": 22,
+          "enclosing": "image_enabled",
+          "expression": "providers.adapter_for(ai)"
+        },
+        {
+          "line": 56,
+          "enclosing": "audio_enabled",
+          "expression": "providers.adapter_for(model_cfg)"
+        },
+        {
+          "line": 61,
+          "enclosing": "audio_enabled",
+          "expression": "providers.capability_snapshot(model_cfg).get('audio', False)"
+        },
+        {
+          "line": 61,
+          "enclosing": "audio_enabled",
+          "expression": "providers.capability_snapshot(model_cfg)"
+        },
+        {
+          "line": 66,
+          "enclosing": "audio_enabled",
+          "expression": "providers.adapter_for(ai)"
+        },
+        {
+          "line": 69,
+          "enclosing": "audio_enabled",
+          "expression": "providers.capability_snapshot(ai).get('audio', False)"
+        },
+        {
+          "line": 69,
+          "enclosing": "audio_enabled",
+          "expression": "providers.capability_snapshot(ai)"
+        },
+        {
+          "line": 86,
+          "enclosing": "minimax_video_enabled",
+          "expression": "providers.adapter_for(model_cfg)"
+        },
+        {
+          "line": 98,
+          "enclosing": "media_limits_for",
+          "expression": "MediaLimits()"
+        },
+        {
+          "line": 100,
+          "enclosing": "media_limits_for",
+          "expression": "providers.adapter_for(model_cfg)"
+        },
+        {
+          "line": 107,
+          "enclosing": "video_transport_for",
+          "expression": "providers.adapter_for(model_cfg)"
+        }
+      ],
+      "configurationEvidence": [
+        {
+          "line": 21,
+          "code": "ai = model_cfg or get_settings().ai"
+        },
+        {
+          "line": 40,
+          "code": "ai = get_settings().ai"
+        },
+        {
+          "line": 63,
+          "code": "ai = get_settings().ai"
+        },
+        {
+          "line": 96,
+          "code": "model_cfg = get_settings().ai"
+        }
+      ],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/vendors/media.ts",
+          "line": 8,
+          "symbol": "DEFAULT_MEDIA_LIMITS"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/media/video.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "media",
+      "configurationSourceAndHandling": "准备/校验接model_cfg，adapter取该配置；MiniMax门控/上传有实现，FS/probe/ffmpeg及通用内存预算未由Provider替代。",
+      "pythonProviderCallSites": [
+        {
+          "line": 220,
+          "enclosing": "compress_video",
+          "expression": "MediaLimits()"
+        },
+        {
+          "line": 276,
+          "enclosing": "should_compress_video",
+          "expression": "MediaLimits()"
+        },
+        {
+          "line": 404,
+          "enclosing": "_upload_via_provider",
+          "expression": "providers.adapter_for(model_cfg)"
+        }
+      ],
+      "configurationEvidence": [],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/vendors/media.ts",
+          "line": 8,
+          "symbol": "DEFAULT_MEDIA_LIMITS"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/media/video_source.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "media",
+      "configurationSourceAndHandling": "显式model_cfg，上传缓存scope哈希user_id+provider/model/base_url/api_key+文件身份，前后stat防TOCTOU；Node上传可调用，路径授权/Redis缓存/文件一致性未接。",
+      "pythonProviderCallSites": [
+        {
+          "line": 58,
+          "enclosing": "prepare_video_path",
+          "expression": "providers.adapter_for(model_cfg).upload_media_path(path, name, model_cfg, mime=mime, purpose=VIDEO_MMFILE_PURPOSE)"
+        },
+        {
+          "line": 58,
+          "enclosing": "prepare_video_path",
+          "expression": "providers.adapter_for(model_cfg)"
+        }
+      ],
+      "configurationEvidence": [],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/vendors/media.ts",
+          "line": 8,
+          "symbol": "DEFAULT_MEDIA_LIMITS"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/memory/im_reflection.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "branch",
+      "configurationSourceAndHandling": "resolve_run_config_for_user按scope.owner_user_id和DB选模；Core反思分支有实现，owner DB/真实记忆写回/后台调度未迁。",
+      "pythonProviderCallSites": [
+        {
+          "line": 735,
+          "enclosing": "_execute_job_locked",
+          "expression": "ProviderInputRejected()"
+        }
+      ],
+      "configurationEvidence": [
+        {
+          "line": 627,
+          "code": "from agent.llm.llm_select import resolve_run_config_for_user"
+        },
+        {
+          "line": 629,
+          "code": "run_config = await resolve_run_config_for_user(settings, db, scope.owner_user_id, None)"
+        }
+      ],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/runtime.ts",
+          "line": 232,
+          "symbol": "completeBranch"
+        },
+        {
+          "file": "gugu-core/src/agent/harness/context/reflection.ts",
+          "line": 335,
+          "symbol": "runContextBranch"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/run/execution.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "stream",
+      "configurationSourceAndHandling": "使用已准备model_cfg，不重新静态选模；Core Runtime到Harness有组合回归，真实Run准备/Host入口未切换。",
+      "pythonProviderCallSites": [
+        {
+          "line": 112,
+          "enclosing": "consume_agent_events",
+          "expression": "providers.adapter_for(model_cfg)"
+        }
+      ],
+      "configurationEvidence": [],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/runtime.ts",
+          "line": 148,
+          "symbol": "stream("
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/run/preparation.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "host",
+      "configurationSourceAndHandling": "get_settings后resolve_run_config或resolve_run_config_for_user(settings,db,user_id,req)冻结配置；可信凭据/owner/生产入站归Host，不用fake resolve替代。",
+      "pythonProviderCallSites": [
+        {
+          "line": 828,
+          "enclosing": "prepare_agent_run",
+          "expression": "minimax_error_details(error)"
+        }
+      ],
+      "configurationEvidence": [
+        {
+          "line": 42,
+          "code": "from agent.llm.llm_select import resolve_run_config, resolve_run_config_for_user, release as _release_model"
+        },
+        {
+          "line": 549,
+          "code": "settings = get_settings()"
+        },
+        {
+          "line": 553,
+          "code": "run_config = resolve_run_config(settings, req)"
+        },
+        {
+          "line": 564,
+          "code": "run_config = await resolve_run_config_for_user(settings, db, user_id, req)"
+        }
+      ],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/runtime.ts",
+          "line": 22,
+          "symbol": "ProviderRuntimeOptions"
+        },
+        {
+          "file": "gugu-core/src/agent/providers/registry.ts",
+          "line": 40,
+          "symbol": "capabilitySnapshot"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/runtime/loopscope_trace/cache_probe.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "observability",
+      "configurationSourceAndHandling": "显式ai决定能力/布局，安全反思观测另过滤字段；Node RequestProbe已有，LoopScope白名单/消费者未自动迁。",
+      "pythonProviderCallSites": [
+        {
+          "line": 310,
+          "enclosing": "record_reflection_usage",
+          "expression": "providers.adapter_for(ai)"
+        },
+        {
+          "line": 343,
+          "enclosing": "record_compaction_probe",
+          "expression": "providers.adapter_for(ai)"
+        }
+      ],
+      "configurationEvidence": [
+        {
+          "line": 309,
+          "code": "ai = effective_ai(settings)"
+        },
+        {
+          "line": 342,
+          "code": "ai = effective_ai(settings)"
+        }
+      ],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/cache-probe.ts",
+          "line": 52,
+          "symbol": "RequestProbe"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/runtime/loopscope_trace/hooks.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "observability",
+      "configurationSourceAndHandling": "hook接运行中ai/adapter与捕获消息，不能重新选择配置；Node actual-wire probe已有，span/持久化/展示消费者未迁。",
+      "pythonProviderCallSites": [
+        {
+          "line": 406,
+          "enclosing": "ensure_hooks.run_loop",
+          "expression": "adapter_for(ai)"
+        },
+        {
+          "line": 465,
+          "enclosing": "ensure_hooks.run_loop",
+          "expression": "render_provider_history(messages, _adapter)"
+        },
+        {
+          "line": 477,
+          "enclosing": "ensure_hooks.run_loop",
+          "expression": "render_openai_request_history(provider_layout_messages, _adapter, with_diagnostics=True)"
+        },
+        {
+          "line": 534,
+          "enclosing": "ensure_hooks.run_loop.traced_round",
+          "expression": "render_openai_request_history(round_messages, adapter, with_diagnostics=True)"
+        }
+      ],
+      "configurationEvidence": [],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/cache-probe.ts",
+          "line": 52,
+          "symbol": "RequestProbe"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/tools/search.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "search",
+      "configurationSourceAndHandling": "Schema用model_cfg或modelctx.get_model_cfg，执行读modelctx；settings.search另管独立搜索开关；Node searchProvider网络已有，工具注册/权限/切换/受控出口未由该函数替代。",
+      "pythonProviderCallSites": [
+        {
+          "line": 70,
+          "enclosing": "search_tool_is_configured",
+          "expression": "supports_web_search(cfg)"
+        },
+        {
+          "line": 287,
+          "enclosing": "_web_search",
+          "expression": "search(cfg, args)"
+        }
+      ],
+      "configurationEvidence": [
+        {
+          "line": 60,
+          "code": "settings = settings or get_settings()"
+        },
+        {
+          "line": 66,
+          "code": "cfg = model_cfg or modelctx.get_model_cfg()"
+        },
+        {
+          "line": 89,
+          "code": "settings = settings or get_settings()"
+        },
+        {
+          "line": 101,
+          "code": "settings = get_settings()"
+        },
+        {
+          "line": 244,
+          "code": "settings = get_settings()"
+        },
+        {
+          "line": 283,
+          "code": "cfg = modelctx.get_model_cfg()"
+        }
+      ],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/vendors/search.ts",
+          "line": 140,
+          "symbol": "searchProvider"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/voice.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "voice",
+      "configurationSourceAndHandling": "_vm(settings)选语音预设，有db/user_id时resolve_capability_settings覆盖speech_to_text；api_format/dashscope_service显式选协议；Node现已实现MiniMax独立ASR及transcribeCompatibleAsr的兼容/DashScope三线网络；Voice预设、BYOK、转码部署和业务路由未迁。",
+      "pythonProviderCallSites": [
+        {
+          "line": 131,
+          "enclosing": "supports_configured_voice_model",
+          "expression": "supports_model(getattr(vm, 'model', ''))"
+        },
+        {
+          "line": 137,
+          "enclosing": "_is_minimax_error",
+          "expression": "is_minimax_error(error)"
+        },
+        {
+          "line": 142,
+          "enclosing": "_log_transcription_error",
+          "expression": "log_transcription_error(context, error, defer=defer_minimax)"
+        },
+        {
+          "line": 165,
+          "enclosing": "transcribe",
+          "expression": "minimax_transcribe(media or [], vm, to_wav=_to_wav, raise_errors=raise_errors)"
+        },
+        {
+          "line": 207,
+          "enclosing": "transcribe",
+          "expression": "providers.build_openai_client(vm, llm_provider_timeout())"
+        }
+      ],
+      "configurationEvidence": [
+        {
+          "line": 117,
+          "code": "vm = _vm(settings)"
+        },
+        {
+          "line": 155,
+          "code": "vm = _vm(settings)"
+        },
+        {
+          "line": 157,
+          "code": "from app.byok.service import resolve_capability_settings"
+        },
+        {
+          "line": 158,
+          "code": "vm = await resolve_capability_settings(db, user_id, \"speech_to_text\", vm)"
+        }
+      ],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/vendors/asr.ts",
+          "line": 175,
+          "symbol": "transcribeMiniMax"
+        },
+        {
+          "file": "gugu-core/src/agent/providers/vendors/asr.ts",
+          "symbol": "transcribeCompatibleAsr",
+          "line": 82
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/agent/voice_config.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "media",
+      "configurationSourceAndHandling": "get_settings/voice预设读取+MiniMax限制常量，不直接请求网络；常量已有，预设生效/用户凭据绑定未迁。",
+      "pythonProviderCallSites": [],
+      "configurationEvidence": [
+        {
+          "line": 37,
+          "code": "return _voice.is_configured(get_settings())"
+        },
+        {
+          "line": 53,
+          "code": "settings = get_settings()"
+        }
+      ],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/vendors/media.ts",
+          "line": 8,
+          "symbol": "DEFAULT_MEDIA_LIMITS"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/app/api/v1/agent_admin.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "host",
+      "configurationSourceAndHandling": "Body或已保存预设构造SimpleNamespace/ai，能力快照供Admin展示/预览；纯规则已有，路由/权限/保存/凭据屏蔽未迁。",
+      "pythonProviderCallSites": [
+        {
+          "line": 999,
+          "enclosing": "list_llm_presets",
+          "expression": "capability_snapshot(ai)"
+        },
+        {
+          "line": 1011,
+          "enclosing": "preview_llm_capabilities",
+          "expression": "capability_snapshot(SimpleNamespace(**body.model_dump()))"
+        },
+        {
+          "line": 1261,
+          "enclosing": "_probe_local_capabilities",
+          "expression": "providers.adapter_for(ai)"
+        },
+        {
+          "line": 1353,
+          "enclosing": "probe_llm_capabilities",
+          "expression": "providers.capability_snapshot(SimpleNamespace(**item))"
+        },
+        {
+          "line": 1397,
+          "enclosing": "_fetch_provider_models",
+          "expression": "providers.adapter_for(_ns)"
+        },
+        {
+          "line": 1525,
+          "enclosing": "probe_media_preset",
+          "expression": "capability_snapshot(SimpleNamespace(**item))"
+        }
+      ],
+      "configurationEvidence": [
+        {
+          "line": 511,
+          "code": "budget = resolve_maintenance_budget(effective_ai(settings))"
+        },
+        {
+          "line": 1666,
+          "code": "asyncio.create_task(_im_model_preview_worker(cursors, get_settings()))"
+        },
+        {
+          "line": 1705,
+          "code": "settings = get_settings()"
+        }
+      ],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/runtime.ts",
+          "line": 22,
+          "symbol": "ProviderRuntimeOptions"
+        },
+        {
+          "file": "gugu-core/src/agent/providers/registry.ts",
+          "line": 40,
+          "symbol": "capabilitySnapshot"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/app/api/v1/agent_routes/attachments.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "media",
+      "configurationSourceAndHandling": "原附件接口直接get_settings().ai选adapter；Node规则可复用，路由授权/文件处理/模型来源未迁。",
+      "pythonProviderCallSites": [
+        {
+          "line": 63,
+          "enclosing": "upload_attachment",
+          "expression": "providers.adapter_for(get_settings().ai)"
+        }
+      ],
+      "configurationEvidence": [
+        {
+          "line": 63,
+          "code": "providers.adapter_for(get_settings().ai))"
+        }
+      ],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/vendors/media.ts",
+          "line": 8,
+          "symbol": "DEFAULT_MEDIA_LIMITS"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/app/api/v1/byok.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "host",
+      "configurationSourceAndHandling": "当前用户credential或请求draft构造config，Host校验目的地变更/旧key复用；Node规则已有，真实owner/解密/DB API未迁。",
+      "pythonProviderCallSites": [
+        {
+          "line": 43,
+          "enclosing": "preview_provider_capabilities",
+          "expression": "capability_snapshot(config)"
+        },
+        {
+          "line": 87,
+          "enclosing": "_effective_origin",
+          "expression": "adapter_for(cfg)"
+        },
+        {
+          "line": 104,
+          "enclosing": "_protocol_default_origin",
+          "expression": "adapter_for(config)"
+        },
+        {
+          "line": 135,
+          "enclosing": "_can_reuse_key_for_protocol_switch",
+          "expression": "adapter_for(old_config)"
+        },
+        {
+          "line": 463,
+          "enclosing": "_test_minimax_asr_credential",
+          "expression": "minimax_error_details(exc)"
+        }
+      ],
+      "configurationEvidence": [
+        {
+          "line": 506,
+          "code": "result = await _call_baidu_similar_image(probe_png, api_key, 1, get_settings().search.similar_image_timeout_seconds)"
+        },
+        {
+          "line": 648,
+          "code": "cfg = await resolve_embedding_settings(db, user.id, get_settings().embedding)"
+        }
+      ],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/runtime.ts",
+          "line": 22,
+          "symbol": "ProviderRuntimeOptions"
+        },
+        {
+          "file": "gugu-core/src/agent/providers/registry.ts",
+          "line": 40,
+          "symbol": "capabilitySnapshot"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/app/api/v1/config.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "host",
+      "configurationSourceAndHandling": "use_config选择当前voice/embedding配置或请求draft；运行配置读写/测试API由Host控制，Node错误分类不代表配置保存迁移。",
+      "pythonProviderCallSites": [
+        {
+          "line": 973,
+          "enclosing": "test_voice",
+          "expression": "minimax_error_details(e)"
+        },
+        {
+          "line": 989,
+          "enclosing": "test_voice",
+          "expression": "minimax_error_details(e)"
+        }
+      ],
+      "configurationEvidence": [
+        {
+          "line": 68,
+          "code": "cfg = get_settings()"
+        },
+        {
+          "line": 85,
+          "code": "current_limit = get_settings().filesync.watch_hard_limit"
+        },
+        {
+          "line": 115,
+          "code": "settings = get_settings()"
+        },
+        {
+          "line": 131,
+          "code": "IMPlatformSettings.model_validate({**get_settings().im.model_dump(), **im_patch})"
+        },
+        {
+          "line": 155,
+          "code": "current_settings = get_settings()"
+        },
+        {
+          "line": 186,
+          "code": "else get_settings().sandbox.enabled"
+        },
+        {
+          "line": 190,
+          "code": "sandbox_ready, sandbox_reason = sandbox_readiness(get_settings().sandbox)"
+        },
+        {
+          "line": 258,
+          "code": "cfg = get_settings()"
+        },
+        {
+          "line": 704,
+          "code": "cfg = get_settings()"
+        },
+        {
+          "line": 781,
+          "code": "cfg = get_settings()"
+        },
+        {
+          "line": 860,
+          "code": "cfg = get_settings().embedding"
+        },
+        {
+          "line": 934,
+          "code": "cfg = get_settings().voice if body.use_config else None"
+        }
+      ],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/runtime.ts",
+          "line": 22,
+          "symbol": "ProviderRuntimeOptions"
+        },
+        {
+          "file": "gugu-core/src/agent/providers/registry.ts",
+          "line": 40,
+          "symbol": "capabilitySnapshot"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/app/api/v1/email_admin.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "standalone",
+      "configurationSourceAndHandling": "显式ai=get_settings().ai，原入口不经此处用户BYOK选模；Node独立请求可调用，邮件权限/输入/业务入口未迁。",
+      "pythonProviderCallSites": [
+        {
+          "line": 222,
+          "enclosing": "_translate_with_model.complete",
+          "expression": "complete_text(ai, request_prompt, max_tokens=5000)"
+        }
+      ],
+      "configurationEvidence": [
+        {
+          "line": 171,
+          "code": "settings = get_settings().smtp"
+        },
+        {
+          "line": 216,
+          "code": "settings = get_settings()"
+        },
+        {
+          "line": 298,
+          "code": "smtp_config=get_settings().smtp,"
+        }
+      ],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/runtime.ts",
+          "line": 282,
+          "symbol": "completeText"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/app/byok/service.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "selection",
+      "configurationSourceAndHandling": "provider+空base_url构造配置交adapter解析默认目的地，其余凭据/embedding解析由服务+DB完成；Node默认URL已有，凭据/用户绑定服务未迁。",
+      "pythonProviderCallSites": [
+        {
+          "line": 126,
+          "enclosing": "resolve_user_base_url",
+          "expression": "adapter_for(cfg)"
+        }
+      ],
+      "configurationEvidence": [
+        {
+          "line": 138,
+          "code": "async def resolve_capability_settings(db: AsyncSession, user_id: UUID, capability: str, base):"
+        },
+        {
+          "line": 191,
+          "code": "打炸。覆盖字段只有 embedding 相关五个；不使用 resolve_capability_settings"
+        }
+      ],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/registry.ts",
+          "line": 16,
+          "symbol": "adapterFor"
+        },
+        {
+          "file": "gugu-core/src/agent/providers/base.ts",
+          "line": 82,
+          "symbol": "filterReasoningConfig"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/app/core/media_transcode.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "media",
+      "configurationSourceAndHandling": "默认MimoAdapter()供转码策略，不是读取用户模型发网络；Node MiMo能力/limits已有，FFmpeg服务不属Provider客户端。",
+      "pythonProviderCallSites": [
+        {
+          "line": 23,
+          "enclosing": "_native_audio_exts",
+          "expression": "MimoAdapter()"
+        }
+      ],
+      "configurationEvidence": [],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/vendors/media.ts",
+          "line": 8,
+          "symbol": "DEFAULT_MEDIA_LIMITS"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/app/main.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "startup",
+      "configurationSourceAndHandling": "preload_provider_sdks仅startup-placeholder构建并close，无真实凭据/无模型请求；Python SDK预加载可退役，不需Node伪造SDK客户端。",
+      "pythonProviderCallSites": [
+        {
+          "line": 210,
+          "enclosing": "lifespan",
+          "expression": "preload_provider_sdks()"
+        }
+      ],
+      "configurationEvidence": [
+        {
+          "line": 78,
+          "code": "settings = get_settings()"
+        }
+      ],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/registry.ts",
+          "line": 28,
+          "symbol": "providerSelection"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/app/services/multimodal_probe.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "diagnostics",
+      "configurationSourceAndHandling": "调用方显式target按dim/协议构造客户端及store参数，不在此保存配置；Node基础诊断已有，多模态探测payload/结果分类/Host组合仍需逐项映射。",
+      "pythonProviderCallSites": [
+        {
+          "line": 196,
+          "enclosing": "probe_multimodal_capability",
+          "expression": "providers.adapter_for(target)"
+        },
+        {
+          "line": 218,
+          "enclosing": "probe_multimodal_capability",
+          "expression": "providers.build_anthropic_client(target, timeout)"
+        },
+        {
+          "line": 228,
+          "enclosing": "probe_multimodal_capability",
+          "expression": "providers.build_openai_client(target, timeout)"
+        },
+        {
+          "line": 237,
+          "enclosing": "probe_multimodal_capability",
+          "expression": "providers.responses_store_params(target)"
+        }
+      ],
+      "configurationEvidence": [],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/diagnostics.ts",
+          "line": 13,
+          "symbol": "providerDiagnosticRequest"
+        },
+        {
+          "file": "gugu-core/src/agent/providers/diagnostics.ts",
+          "line": 30,
+          "symbol": "listProviderModels"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    },
+    {
+      "pythonFile": "backend/app/services/provider_diagnostics.py",
+      "originalManifestFields": [
+        "disposition",
+        "pythonFile"
+      ],
+      "category": "diagnostics",
+      "configurationSourceAndHandling": "显式ai或临时provider/api_key/base_url参数构造config，不读写运行配置；Node基础请求/模型列表已有，Responses能力探测业务与Admin组合未全迁。",
+      "pythonProviderCallSites": [
+        {
+          "line": 18,
+          "enclosing": "probe_responses_capabilities",
+          "expression": "providers.adapter_for(ai)"
+        },
+        {
+          "line": 24,
+          "enclosing": "probe_responses_capabilities",
+          "expression": "output_budget(ai, 128)"
+        },
+        {
+          "line": 62,
+          "enclosing": "test_provider_credential",
+          "expression": "providers.adapter_for(config)"
+        },
+        {
+          "line": 63,
+          "enclosing": "test_provider_credential",
+          "expression": "providers.capability_snapshot(config)"
+        }
+      ],
+      "configurationEvidence": [],
+      "nodeAvailableCoreTargets": [
+        {
+          "file": "gugu-core/src/agent/providers/diagnostics.ts",
+          "line": 13,
+          "symbol": "providerDiagnosticRequest"
+        },
+        {
+          "file": "gugu-core/src/agent/providers/diagnostics.ts",
+          "line": 30,
+          "symbol": "listProviderModels"
+        }
+      ],
+      "nodeProductionHostEntry": null,
+      "nodeIntegrationGap": "所审gugu-core/src、gugu-desktop/src、gugu-webui/src未发现此旧业务入口对ProviderRuntime或厂商出口的真实容器装配；能力目标与已接线Host分开记录。",
+      "callSiteLimit": "AST仅定位语法调用；同一行嵌套adapter可出现多项，常量/类型/错误helper不是网络请求。"
+    }
+  ],
+  "summary": {
+    "productionCallerFiles": 47,
+    "originalRowsWithConfigSource": 0,
+    "originalRowsWithNodeCallPoint": 0,
+    "categoryCounts": {
+      "error": 4,
+      "branch": 4,
+      "history": 5,
+      "reasoning": 2,
+      "standalone": 3,
+      "stream": 3,
+      "host": 5,
+      "media": 11,
+      "selection": 2,
+      "lifecycle": 1,
+      "observability": 2,
+      "search": 1,
+      "voice": 1,
+      "startup": 1,
+      "diagnostics": 2
+    },
+    "nodeProductionHostEntryFound": 0,
+    "limits": "原43文件517项之外，仅新增文件9条ASR定义被实际执行及审计，未扩充该文件其余14条IO/Tools责任。",
+    "additionalPythonDefinitions": 9,
+    "additionalProviderDefinitions": 8,
+    "additionalAdjacentDefinitions": 1,
+    "statusCounts": {
+      "已实现并通过基准": 8,
+      "部分覆盖": 1
+    }
+  },
+  "notChanged": [
+    "共享Contracts/Runtime/registry/HTTP",
+    "primary/shared等报告",
+    "运行配置",
+    "Git提交/推送/CI"
+  ],
+  "nonMiniMaxAsrImplementation": {
+    "files": [
+      "gugu-core/src/agent/providers/vendors/asr.ts",
+      "gugu-core/src/agent/providers/vendors/index.ts",
+      "gugu-core/tests/agent/providers/vendors/policies.test.ts"
+    ],
+    "api": {
+      "function": "transcribeCompatibleAsr(media, config, dependencies, signal, { raiseErrors? }) => Promise<string>",
+      "dependencies": "ProviderDriverDependencies + toWav(raw, signal) + optional sleep(milliseconds, signal)",
+      "helpers": [
+        "dashscopeAsrEndpoint(baseUrl)",
+        "dashscopeAsrTranscript(payload)"
+      ],
+      "sharedContractsChanged": false
+    },
+    "pythonProductionReference": {
+      "file": "backend/agent/voice.py",
+      "symbols": [
+        "transcribe",
+        "_dashscope_generation_url",
+        "_dashscope_transcript"
+      ],
+      "pytestLimit": "已找到platform目录的9条原Voice定义，前8网络行为有直接映射，第9保留Host包装读取部分缺口。原“未发现独立pytest”是只搜agent目录的阶段判断，已纠正。",
+      "pytestFile": "backend/tests/platform/test_io_retry_contract.py"
+    },
+    "behavior": [
+      "OpenAI兼容chat/completions实际body只有model、单user纯input_audio及顶层asr_options.enable_itn=false，不发送thinking、reasoning_effort、温度、工具或聊天预算。",
+      "DashScope api_format和dashscope_service显式选择；qwen3-asr发送audio dataURL及asr_options，qwen-audio/fun-asr发送input_audio与format=wav/sample_rate=16000；完整endpoint保留地域/Workspace前缀，不自动补compatible-mode路径。",
+      "授权raw/base64输入，wav/x-wav/mpeg/mp3直接发送，其余通过注入toWav；转换返回null/默认异常时跳过该音频；raiseErrors=true的异常转固定安全ProviderError，视频不混入ASR，输入/config保持不变。",
+      "三个原生响应分支：output.text、output.sentence.text、choices.message.content字符串/列表；兼容response.choices.message.content。",
+      "429/5xx及可重试连接/超时最多三次请求，退避1000/2000ms；其他4xx、协议错误、未知内部异常不重试；默认失败空串，raiseErrors暴露固定安全ProviderError。",
+      "预取消、转换/请求/退避期间取消停止后续HTTP并使用固定取消错误；受限诊断端口接原始异常，诊断故障不破坏结果。",
+      "allowLocal仅显式provider为local/ollama，不根据URL猜测授权。",
+      "DashScope凭据query键在注入/自定义transport之前拒绝，包含编码键和大小写；region/workspace等非凭据参数保留。"
+    ],
+    "intentionalBoundaries": [
+      "不读取settings/FS/用户预设，不做BYOK解密、工具注册或Voice业务路由。",
+      "MiniMax原有500秒/50MB探测与上传入口保持独立；兼容ASR不冒用MiniMax专有限制。",
+      "完整endpoint/格式配置及非法base64可在请求前明确拒绝；不从模型名猜产品线、不自动回退聊天协议。",
+      "Node URL安全/代理/CA/环境身份均复用注入transport，不另建网络层。"
+    ],
+    "tests": [
+      {
+        "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+        "name": "兼容ASR实际请求只含音频和ITN参数，不复用聊天thinking生成参数且输入不变"
+      },
+      {
+        "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+        "name": "DashScope产品线%s实际发送各自原生body，不从模型名推协议"
+      },
+      {
+        "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+        "name": "原生端点只接受完整路径，Workspace前缀保留且兼容模式地址不会被自动补齐"
+      },
+      {
+        "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+        "name": "原生ASR响应%j提取结果%s，不把非文本块拼进转写"
+      },
+      {
+        "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+        "name": "兼容ASR容器%s直传，不调用转码或时长探测"
+      },
+      {
+        "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+        "name": "不支持容器通过注入转WAV，失败项和视频不发送，原始音频大块编码不截断"
+      },
+      {
+        "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+        "name": "无音频或转码均失败时不联网，不读取主模型或替换配置"
+      },
+      {
+        "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+        "name": "转码端口异常只跳过该音频，退避端口异常不会泄漏路径或误发下一请求"
+      },
+      {
+        "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+        "name": "非法base64、协议或原生产品线在请求前拒绝，不能偷偷换聊天协议"
+      },
+      {
+        "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+        "name": "%s ASR仅瞬时429和5xx退避1秒2秒，第三次成功且每次响应关闭"
+      },
+      {
+        "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+        "name": "HTTP%s为永久失败，两种协议只请求一次且不泄漏上游正文"
+      },
+      {
+        "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+        "name": "%s网络重试最多三次，默认空串与显式安全异常分别保留"
+      },
+      {
+        "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+        "name": "响应结构错误不按网络失败重试，空转写保持空串"
+      },
+      {
+        "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+        "name": "ASR%s期间取消立即终止，不继续发请求或泄漏取消原因"
+      },
+      {
+        "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+        "name": "ASR本地授权只认显式%s配置，不继承URL推断身份"
+      },
+      {
+        "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+        "name": "显式qwen-audio产品线压过qwen3模型名前缀，实际请求仍是input_audio"
+      },
+      {
+        "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+        "name": "原生ASR凭据query在自定义transport之前拒绝，普通region和workspace仍保留"
+      },
+      {
+        "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+        "name": "兼容ASR超时后只退避一次并第二次成功，未知内部错误不重试"
+      }
+    ],
+    "validation": [
+      {
+        "kind": "Node单文件阶段回归",
+        "passed": 121,
+        "failed": 0,
+        "skipped": 0,
+        "time": "2026-11-13 18:22:24",
+        "note": "此后补转码/退避端口异常及产品线空白边界。"
+      },
+      {
+        "kind": "Node最终厂商两文件",
+        "files": [
+          "tests/agent/providers/vendors/policies.test.ts",
+          "tests/agent/providers/vendors/ollama.test.ts"
+        ],
+        "passed": 177,
+        "failed": 0,
+        "skipped": 0,
+        "time": "2026-11-13 18:24:46",
+        "durationSeconds": 0.685,
+        "note": "新增兼容ASR34项；实际构造HTTP请求并经requestJson读取响应字节/关闭，无fake SDK或直接完成事件，无真实外部服务。"
+      },
+      {
+        "kind": "Core源tsc和测试tsc",
+        "status": "通过",
+        "note": "最终ASR改动后，两配置分别--noEmit实际通过。"
+      },
+      {
+        "kind": "Node最终厂商两文件及两份TypeScript检查",
+        "files": [
+          "tests/agent/providers/vendors/policies.test.ts",
+          "tests/agent/providers/vendors/ollama.test.ts"
+        ],
+        "passed": 180,
+        "failed": 0,
+        "skipped": 0,
+        "time": "2026-11-13 18:28:17",
+        "durationSeconds": 0.733,
+        "types": "Core源tsc及测试tsc最终--noEmit均通过",
+        "note": "37条新增ASR展开用例；覆盖最终query预检、两种端口安全异常、原timeout第二次成功和明确产品线优先级。"
+      }
+    ],
+    "newExpandedCases": 37
+  },
+  "pythonFileScope": {
+    "file": "backend/tests/platform/test_io_retry_contract.py",
+    "reviewedDefinitions": [
+      "test_voice_transcribe_retries_on_timeout_then_succeeds",
+      "test_voice_transcribe_exhausts_retries_returns_empty_not_raise",
+      "test_voice_transcribe_does_not_retry_on_permanent_error",
+      "test_voice_transcribe_qwen_audio_30_uses_dashscope_native_api",
+      "test_dashscope_transcript_reads_qwen_audio_output_text",
+      "test_voice_transcribe_qwen3_asr_uses_native_asr_payload",
+      "test_voice_transcribe_fun_asr_uses_dashscope_audio_payload",
+      "test_voice_transcribe_uses_explicit_dashscope_service_not_model_prefix",
+      "test_voice_transcribe_accepts_dict_settings"
+    ],
+    "fileTotalTopLevelTestDefinitions": 23,
+    "limits": "本次只审Voice 9定义；文件其余IO/Tools行为不因同文件基准执行自动计Provider迁移或已审。"
+  },
+  "independentPythonValidation": {
+    "id": "provider-asr-python-9",
+    "files": 1,
+    "selectedDefinitions": 9,
+    "passed": 9,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "durationSeconds": 0.789,
+    "time": "2026-11-13 18:28:58",
+    "environment": "本地原生Linux隔离副本"
+  },
+  "rootFinalIntegration": {
+    "providerNode": {
+      "id": "provider-node-final-457",
+      "reportedBy": "主Agent独立执行",
+      "environment": "本地原生Node 26",
+      "files": 7,
+      "passed": 457,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "time": "2026-11-13 18:58:10",
+      "durationSeconds": 2.75,
+      "notes": "四协议摘要三阶段、截断拒收；Anthropic/MiniMax实际双工具反思分支；真实TLS/代理/CA和池身份。"
+    },
+    "coreUnit": {
+      "id": "core-unit-final-943",
+      "reportedBy": "主Agent独立执行",
+      "files": 36,
+      "passed": 943,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "time": "2026-11-13 18:58:55",
+      "durationSeconds": 12.37
+    },
+    "types": "tsconfig.tests严格检查通过",
+    "coreBuild": "最终生产源码构建通过；随后仅补测试及文档。",
+    "limits": "整合通过只升级逐项已有直接证据的定义，Host/外部服务及已接受API差异不批量关闭。"
+  }
+}

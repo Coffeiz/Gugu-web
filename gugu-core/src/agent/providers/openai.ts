@@ -4,7 +4,7 @@ import { configuredResponsesInput, createPolicy, DEFAULT_CAPABILITIES, DEFAULT_R
 import type { JsonObject, ProtocolDriver, ProviderConfig, ProviderDriverDependencies, ProviderHttpRequest, ProviderInvocation, ReasoningCapabilities } from './contracts.js'
 import { classifyProviderError, ProviderError } from './errors.js'
 import { endpoint, requestEvents, requestJson } from './http.js'
-import { mergeOpenaiSystemMessages, prepareOpenAiCache, projectOpenai, sanitizeOpenaiToolHistory } from './openai-history.js'
+import { mergeOpenaiSystemMessages, prepareOpenAiCache, projectOpenai, sanitizeOpenaiToolHistory, transformOpenaiWireHistory } from './openai-history.js'
 import { array, clone, finite, record, reportUsage, text } from './values.js'
 
 function official(config: ProviderConfig): boolean {
@@ -129,6 +129,7 @@ async function* stream(input: ProviderInvocation, deps: ProviderDriverDependenci
 
 export const openaiDriver: ProtocolDriver = {
   protocol: 'openai',
+  transformHistory: (history, stage, protectedPrefixRows) => transformOpenaiWireHistory(history, stage, protectedPrefixRows),
   buildRequest: (input, deps, streaming) => openaiHttpRequest(input, requestBody(input, deps, streaming).body, 'chat/completions'),
   project: (messages, config, policy, options) => {
     const result = projectOpenai(messages, config, policy, options)

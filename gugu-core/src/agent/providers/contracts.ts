@@ -4,6 +4,7 @@ export type { Json } from '../harness/contracts.js'
 export type JsonObject = { [key: string]: Json }
 export type ProviderProtocol = 'openai' | 'responses' | 'anthropic' | 'ollama'
 export type RequestPurpose = 'chat' | 'branch' | 'standalone'
+export type WireTransformStage = 'strip-tool-inputs' | 'trim-oldest-units'
 
 /** 已通过可信配置解析的模型；保留既有配置字段名，不读取全局配置或凭据存储。 */
 export interface ProviderConfig {
@@ -127,6 +128,13 @@ export interface ProviderTransport {
   request(request: ProviderHttpRequest, signal: AbortSignal): Promise<ProviderHttpResponse>
   close?(): Promise<void>
 }
+/** 网络配置必须与创建动作来自同一快照，池不能复用旧代理或CA。 */
+export interface ProviderTransportFactory {
+  snapshot(config: ProviderConfig): {
+    readonly networkIdentity: string
+    create(): ProviderTransport & { close(): Promise<void> }
+  }
+}
 export interface ProviderDriverDependencies {
   readonly transport: ProviderTransport
   /** 原始错误仅可进入受限诊断；驱动不能将其拷贝到事件。 */
@@ -135,16 +143,25 @@ export interface ProviderDriverDependencies {
   /** HTTP JSON原始usage只交受控Provider探针，不作为SDK对象传入Harness事件。 */
   readonly onUsage?: (rawUsage: unknown, normalizedUsage: Usage) => void
 }
+export interface HistorySanitization {
+  readonly applied: boolean
+  readonly changed: boolean
+  readonly removed_messages: number
+  readonly modified_messages: number
+  readonly first_changed_index: number | null
+}
 export interface ProjectionOptions {
   readonly digest?: (value: unknown) => string
   readonly preserveNativeThinking?: boolean
   readonly continuation?: unknown
   readonly dynamicTailSize?: number
+  readonly onSanitization?: (value: HistorySanitization) => void
 }
 export interface ProtocolDriver {
   readonly protocol: ProviderProtocol
   /** 与实际发送共用的纯请求构建，用于最终wire指纹和能力协调。 */
   buildRequest(input: ProviderInvocation, dependencies: ProviderDriverDependencies, streaming: boolean): ProviderHttpRequest
+  transformHistory(history: readonly JsonObject[], stage: WireTransformStage, protectedPrefixRows: number): { messages: JsonObject[]; changedMessages: number }
   project(messages: readonly CanonicalMessage[], config: ProviderConfig, policy: ProviderPolicy, options?: ProjectionOptions): JsonObject[]
   stream(input: ProviderInvocation, dependencies: ProviderDriverDependencies): AsyncIterable<ProviderEvent>
   complete(input: ProviderInvocation, dependencies: ProviderDriverDependencies): Promise<ProviderCompletion>
@@ -154,6 +171,9 @@ export interface ProviderWire {
   readonly protocol: ProviderProtocol
   readonly provider: string
   readonly messages: readonly JsonObject[]
+  /** 最终HTTP wire的稳定行数；与Canonical dynamicTailSize不使用同一坐标。 */
+  readonly stableRowCount?: number
+  readonly protectedPrefixRowCount?: number
   readonly system?: Json
   readonly identity: Pick<RunIdentity, 'ownerId' | 'sessionId'>
   readonly accessScopeHash: string

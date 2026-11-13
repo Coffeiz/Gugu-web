@@ -4,16 +4,17 @@
   "nodeValidation": {
     "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
     "command": "node node_modules/vitest/vitest.mjs run tests/agent/providers/anthropic.test.ts",
-    "passed": 70,
+    "passed": 86,
     "failed": 0,
     "skipped": 0,
-    "notes": "17:52:07实际单文件70项通过。最终扩展三轮原生签名与两次实际complete/restore；未重跑Python，既有主Agent基准结果保留原记录。",
-    "stage": "子任务历史执行快照；最终执行结果见integratedValidation。"
+    "notes": "18:34:17实际单文件86项通过；新增原生wire清参/完整单元裁旧/异常配对拒绝及多行工具结果真实HTTP回归。随后完整Core tsconfig.tests tsc --noEmit通过。",
+    "stage": "摘要wire转换子任务定向，Runtime三次HTTP整合由主Agent独立运行。"
   },
   "statusCounts": {
-    "部分覆盖": 13,
-    "已实现并通过基准": 32,
-    "边界延后": 11
+    "部分覆盖": 9,
+    "已实现并通过基准": 34,
+    "边界延后": 11,
+    "已实现待Python": 2
   },
   "definitions": [
     {
@@ -779,18 +780,32 @@
           "file": "gugu-core/tests/agent/providers/runtime.test.ts",
           "name": "无输出限流退避一次，重试码供Harness识别；新attempt的usage明确归零为未知",
           "coverage": "相邻行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "真实%s的连续HTTP529只耗尽共享次数或墙钟预算，正文与用量不伪成功",
+          "coverage": "真实HTTP驱动+共享重试，普通Anthropic与MiniMax两参数"
         }
       ],
       "protectedAssertions": [
         "HTTP529分类为上游忙碌，普通重试为首次+最多五次",
-        "重试次数与安全错误码由共享层控制，不嵌套SDK重试"
+        "重试次数与安全错误码由共享层控制，不嵌套SDK重试",
+        "实际连续529首次+5次重试共6次；每次相同请求，全部响应关闭，5秒节奏、upstream_busy归一标签与未知usage。",
+        "墙钟10000ms先耗尽时仅2次HTTP与2次退避，不开始第3次请求；无token/complete或敏感正文。"
       ],
-      "gap": "现有Node分类与完整预算分别验证；实际Anthropic HTTP529响应连续耗尽整合未专门单列，SDK cause类型不对外保留。",
-      "status": "部分覆盖",
+      "gap": "SDK OverloadedError/cause类已退役；实际协议与共享预算组合已补并通过B定向，待主Agent独立整合。",
+      "status": "已实现待Python",
       "assertionAudit": {
         "explicitPythonAssertCount": 2,
         "reviewedAssertionsAndRaises": true
-      }
+      },
+      "reviewHistory": [
+        {
+          "stage": "补连续真实HTTP529前",
+          "status": "部分覆盖",
+          "gap": "现有Node分类与完整预算分别验证；实际Anthropic HTTP529响应连续耗尽整合未专门单列，SDK cause类型不对外保留。"
+        }
+      ]
     },
     {
       "pythonNode": "backend/tests/agent/providers/test_stream_round_retry.py::test_retry_wall_clock_cap_stops_before_attempt_budget",
@@ -928,17 +943,28 @@
           "file": "gugu-core/tests/agent/providers/openai.test.ts",
           "name": "仅部分工具参数或私有思考后断流也标记已输出，不能按无可见token重放",
           "coverage": "相邻行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "原始%s在真实Chat/Responses流中按输出事实重试，诊断别名不导致异常重放"
         }
       ],
       "protectedAssertions": [
         "直接HTTP读超时/读故障/远端协议故障为可重试传输错误，业务ValueError不能误重试"
       ],
-      "gap": "OpenAI/共享分类由主Agent/A拥有；Node标准ECONN等路径已有回归，但旧ReadError/RemoteProtocolError名字别名及每种分类的精确表仍需公共层审计。",
-      "status": "部分覆盖",
+      "gap": "ReadTimeout/ReadError/RemoteProtocolError/WriteError/CloseError在真实驱动中按尚无输出重试；已输出拒绝重放。",
+      "status": "已实现并通过基准",
       "assertionAudit": {
         "explicitPythonAssertCount": 3,
         "reviewedAssertionsAndRaises": true
-      }
+      },
+      "reviewHistory": [
+        {
+          "status": "部分覆盖",
+          "gap": "OpenAI/共享分类由主Agent/A拥有；Node标准ECONN等路径已有回归，但旧ReadError/RemoteProtocolError名字别名及每种分类的精确表仍需公共层审计。"
+        }
+      ],
+      "behaviorGap": false
     },
     {
       "pythonNode": "backend/tests/agent/providers/test_stream_round_retry.py::test_openai_stream_read_timeout_respects_output_boundary",
@@ -954,18 +980,29 @@
           "file": "gugu-core/tests/agent/providers/runtime.test.ts",
           "name": "无输出限流退避一次，重试码供Harness识别；新attempt的usage明确归零为未知",
           "coverage": "相邻行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "原始%s在真实Chat/Responses流中按输出事实重试，诊断别名不导致异常重放"
         }
       ],
       "protectedAssertions": [
         "OpenAI已建流后未输出可重试、已输出必须退出",
         "失败流关闭，成功重试不重复旧token"
       ],
-      "gap": "由A与公共Runtime负责；当前引用保护相邻边界，不据此声称两个原参数及exact请求/close计数全部等价。",
-      "status": "部分覆盖",
+      "gap": "两种实际协议中，超时前后是否收到正文分别验证请求和关闭次数，不能恢复重复token。",
+      "status": "已实现并通过基准",
       "assertionAudit": {
         "explicitPythonAssertCount": 5,
         "reviewedAssertionsAndRaises": true
-      }
+      },
+      "reviewHistory": [
+        {
+          "status": "部分覆盖",
+          "gap": "由A与公共Runtime负责；当前引用保护相邻边界，不据此声称两个原参数及exact请求/close计数全部等价。"
+        }
+      ],
+      "behaviorGap": false
     },
     {
       "pythonNode": "backend/tests/agent/providers/test_stream_round_retry.py::test_openai_driver_retries_transient_then_succeeds",
@@ -1025,17 +1062,34 @@
           "file": "gugu-core/tests/agent/providers/runtime.test.ts",
           "name": "无输出限流退避一次，重试码供Harness识别；新attempt的usage明确归零为未知",
           "coverage": "相邻行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "真实%s的连续HTTP529只耗尽共享次数或墙钟预算，正文与用量不伪成功",
+          "coverage": "真实HTTP529两策略"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "真实%s的HTTP500是普通可重试上游错误，不伪装成忙碌或泄漏上游正文",
+          "coverage": "真实HTTP500两策略"
         }
       ],
       "protectedAssertions": [
         "Anthropic529/OpenAI429视为busy，普通500不视为busy标签"
       ],
-      "gap": "统一ProviderError分别保留busy/rate_limit/upstream；普通500的非busy断言尚未在所列Node测试直接核对，错误类变化不等于业务标签全部已验。",
-      "status": "部分覆盖",
+      "gap": "529→busy、500→upstream且retryable通过实际HTTP断言；OpenAI429由A真实Chat重试节点保护。SDK类退役，固定安全ProviderError代替。",
+      "status": "已实现待Python",
       "assertionAudit": {
         "explicitPythonAssertCount": 3,
         "reviewedAssertionsAndRaises": true
-      }
+      },
+      "reviewHistory": [
+        {
+          "stage": "补真实HTTP500前",
+          "status": "部分覆盖",
+          "gap": "统一ProviderError分别保留busy/rate_limit/upstream；普通500的非busy断言尚未在所列Node测试直接核对，错误类变化不等于业务标签全部已验。"
+        }
+      ]
     },
     {
       "pythonNode": "backend/tests/agent/providers/test_stream_round_retry.py::test_index_error_falls_back_to_non_streaming",
@@ -1562,9 +1616,10 @@
     "definitions": 56,
     "uniqueDefinitions": 56,
     "statusCounts": {
-      "部分覆盖": 13,
-      "已实现并通过基准": 32,
-      "边界延后": 11
+      "部分覆盖": 9,
+      "已实现并通过基准": 34,
+      "边界延后": 11,
+      "已实现待Python": 2
     },
     "pythonFiles": [
       "backend/tests/agent/providers/test_anthropic_roundtrip.py",
@@ -1601,18 +1656,169 @@
         {
           "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
           "name": "三轮已持久Canonical工具恢复各自签名且重复恢复幂等，跨Run重建剔除历史外续接call"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "旧轮签名与当前thinking/redacted双工具按原位恢复两次，私有块仅绑定首call且总数为三"
         }
       ],
       "protectedAssertions": [
         "每轮提取thinking及response两份map都明确断言call-0至当前call键集合，不丢旧轮。",
-        "两次恢复后的key集合均保持三项，原生thinking块总数显式等于3。"
+        "两次恢复后的key集合均保持三项，原生thinking块总数显式等于3。",
+        "旧轮1个thinking加当前thinking/redacted共3块，显式断private history首call绑定和原位position，不只是三个单thinking轮的近似。"
       ],
-      "gap": "私有state的summary.state_block_count旧DTO不复刻；保护其实际不丢prior blocks的领域行为。Host真实加密持久化仍延期。",
+      "gap": "真实双工具/含redacted提取恢复及3块总数已保护；仅旧summary.state_block_count DTO字段退役，不代表领域计数缺回归。Host加密持久化继续延期。",
       "status": "部分覆盖"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_anthropic_state_restore_drops_persisted_tool_use_only_payload",
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "旧tool_use-only持久payload不能插入重复调用，N3响应边界快照只复用Canonical中已有工具"
+        }
+      ],
+      "protectedAssertions": [
+        "旧blocks-only、带身份envelope的旧blocks及伪thinking map内tool_use三种续接都不插入重复工具；实际出站messages保持原Canonical投影。",
+        "N3合法原生纯tool响应可保response分段快照；回放仅替换Canonical确实已有的同id工具块，不增加工具或伪造thinking。"
+      ],
+      "gap": "旧restore_provider_state布尔返回/ctx.restored_blocks退役；保护不重复插入已持久工具的真实行为。",
+      "status": "已实现待主Agent整合"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_anthropic_state_extract_restore_keeps_thinking_blocks_only",
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "旧轮签名与当前thinking/redacted双工具按原位恢复两次，私有块仅绑定首call且总数为三"
+        }
+      ],
+      "protectedAssertions": [
+        "实际SSE双工具轮只有首call关联thinking/redacted私有块，位置1/2；旧轮位置0仍在。",
+        "Canonical不保存signature/redacted，真实HTTP反复恢复仍保私有块及tool分段且不重复。"
+      ],
+      "gap": "旧ctx/restored_blocks/summary计数DTO退役；N3另有完整response wire快照专为分段，不将它错误归为thinking持久payload。",
+      "status": "领域行为已实现待主Agent整合"
     }
   ],
   "finalAdditionalAssertions": [
     "普通固定system在主动缓存分支转ephemeral块；无tools分支不发送tools字段。",
     "三轮原生签名重复恢复两次，私有key集合和总块数直接断言；静态尾锚点保留，最末动态任务保持未缓存。"
-  ]
+  ],
+  "followupDriverCombination": {
+    "tsTests": [
+      {
+        "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+        "name": "%s驱动从Canonical形成实际wire后追加分支，原工具行和缓存锚点不二次渲染"
+      }
+    ],
+    "protectedAssertions": [
+      "普通Anthropic与MiniMax均从真实SSE提取工具→Canonical→主动cache准备→实际出站body快照→append最终delta→实际非流请求。",
+      "原签名、工具行、schema、system与末稳定cache锚点不变；最终user delta未加cache；Canonical/digest不变。"
+    ],
+    "scopeLimit": "仅真实driver/HTTP组合，不冒充Harness checkpoint/projection冻结或真实Host持久存储；已向主Agent建议补Runtime实际Harness路径。"
+  },
+  "sharedAliasRecommendation": {
+    "source": "backend/agent/providers/errors.py::openai_error_kind/openai_transient_error",
+    "timeout": [
+      "APITimeoutError",
+      "TimeoutException",
+      "ConnectTimeout",
+      "ReadTimeout",
+      "WriteTimeout",
+      "PoolTimeout"
+    ],
+    "network": [
+      "APIConnectionError",
+      "NetworkError",
+      "ConnectError",
+      "ReadError",
+      "WriteError",
+      "CloseError",
+      "RemoteProtocolError"
+    ],
+    "negative": "ValueError/未知内部程序错误不可盲重试",
+    "ownership": "已告主Agent处理共享源与A真实Chat/Responses回归；B未修改共享classifier",
+    "difference": "旧server_error/http_500归一为upstream，当前共享retry把未覆盖upstream映射timeout事件标签须由主Agent明确处理，不能当旧标签完全等价。"
+  },
+  "wireCompactionTransform": {
+    "implementation": [
+      "gugu-core/src/agent/providers/anthropic-history.ts::transformAnthropicWireHistory",
+      "gugu-core/src/agent/providers/anthropic.ts::anthropicDriver.transformHistory"
+    ],
+    "pythonProductionSource": [
+      "backend/agent/context/compaction.py::_generate_append_summary",
+      "backend/agent/context/compaction.py::_strip_tool_call_inputs",
+      "backend/agent/context/compaction.py::_trim_oldest_history"
+    ],
+    "tsTests": [
+      {
+        "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+        "name": "原生wire清参仅改变assistant行的tool输入，签名/分段/多行结果及缓存原样进入真实HTTP"
+      },
+      {
+        "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+        "name": "原生wire裁旧按多工具完整单元减半，保护前缀交叉组/系统摘要提醒/最新组且不单裁thinking"
+      },
+      {
+        "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+        "name": "异常wire配对%j不靠裁切或清参静默修复成成功"
+      },
+      {
+        "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+        "name": "wire转换拒绝无效保护行边界%i而不修改历史"
+      }
+    ],
+    "protectedAssertions": [
+      "清参只修改assistant的非空tool_use.input对象；同一assistant两个调用只计一条变更wire行；重复清参changedMessages=0。",
+      "原生thinking/signature/redacted/text分段、id/name、所有结果内容和cache_control保持；原wire与digest不变。",
+      "裁最旧可删单元一半：assistant并行多工具及连续全部user结果不可分；保护前缀横跨组整组保留、system/summary/reminder与最新单元保留。",
+      "重复/孤儿/未完成工具输入不靠裁切静默转成功；边界索引必须安全整数且不越界。",
+      "实际HTTP发送仍保留多user结果而不是仅helper输出正确。"
+    ],
+    "scopeLimit": "Provider真实wire变换已实现；Runtime→createCompactionSummarizer→实际连续超窗三次HTTP整合由主Agent负责，本报告不以单测冒充完整Harness装配。",
+    "difference": "changedMessages统一为实际变化/删除wire行数，旧changed_calls内部计数DTO退役；输入本就孤儿或未完成配对时明确protocol属于安全收紧。",
+    "status": "Provider实现及86项定向通过，待主Agent整合",
+    "rootIntegration": "生产ProviderRuntime.summaryProjection已接入真实createCompactionSummarizer；四协议实际Harness快照经两次HTTP超窗后第三次恢复成功，原生签名/工具结果/固定前缀不丢；截断摘要拒收。"
+  },
+  "nativeMultiResultFix": {
+    "problem": "原sanitizeAnthropicHistory仅看紧邻一行，双工具分别落连续两行user结果时会误删第二工具和第二结果。",
+    "fix": "在连续user结果内共享pending集合，逐块保持顺序与边界；不按全局id绕过中断消息配对。",
+    "regression": {
+      "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+      "name": "原生wire清参仅改变assistant行的tool输入，签名/分段/多行结果及缓存原样进入真实HTTP"
+    },
+    "status": "实际HTTP请求逐项断言已通过"
+  },
+  "rootFinalIntegration": {
+    "providerNode": {
+      "id": "provider-node-final-457",
+      "reportedBy": "主Agent独立执行",
+      "environment": "本地原生Node 26",
+      "files": 7,
+      "passed": 457,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "time": "2026-11-13 18:58:10",
+      "durationSeconds": 2.75,
+      "notes": "四协议摘要三阶段、截断拒收；Anthropic/MiniMax实际双工具反思分支；真实TLS/代理/CA和池身份。"
+    },
+    "coreUnit": {
+      "id": "core-unit-final-943",
+      "reportedBy": "主Agent独立执行",
+      "files": 36,
+      "passed": 943,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "time": "2026-11-13 18:58:55",
+      "durationSeconds": 12.37
+    },
+    "types": "tsconfig.tests严格检查通过",
+    "coreBuild": "最终生产源码构建通过；随后仅补测试及文档。",
+    "limits": "整合通过只升级逐项已有直接证据的定义，Host/外部服务及已接受API差异不批量关闭。"
+  }
 }

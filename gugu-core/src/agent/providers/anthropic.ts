@@ -4,7 +4,7 @@ import { createPolicy, DEFAULT_CAPABILITIES, DEFAULT_REASONING, genericThinkingP
 import type { JsonObject, ProviderCompletion, ProviderConfig, ProviderDriverDependencies, ProviderHttpRequest, ProviderInvocation, ProtocolDriver, ReasoningCapabilities } from './contracts.js'
 import { classifyProviderError, ProviderError } from './errors.js'
 import { endpoint, requestEvents, requestJson } from './http.js'
-import { projectAnthropicHistory, sanitizeAnthropicHistory } from './anthropic-history.js'
+import { projectAnthropicHistory, sanitizeAnthropicHistory, transformAnthropicWireHistory } from './anthropic-history.js'
 import { parsePartialAnthropicObject } from './anthropic-json.js'
 import { abort, array, clone, finite, object, record, reportUsage, text } from './values.js'
 
@@ -339,6 +339,7 @@ export const anthropicDriver: ProtocolDriver = {
   protocol: 'anthropic',
   buildRequest: (input, _dependencies, streaming) => anthropicRequest(input, streaming),
   project: projectAnthropicHistory,
+  transformHistory: transformAnthropicWireHistory,
   stream,
   async complete(input, dependencies) { return result(await requestJson(dependencies, anthropicRequest(input, false), input.signal), input, dependencies) },
 }

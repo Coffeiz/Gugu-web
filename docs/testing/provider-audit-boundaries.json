@@ -3301,5 +3301,34 @@
       "backend/tests/agent/providers/test_rag_query_embedding.py"
     ],
     "countingRule": "按pytest定义计数，参数化执行个数另见517；已实现并通过基准不表示线上服务或生产Host迁移。"
+  },
+  "rootFinalIntegration": {
+    "providerNode": {
+      "id": "provider-node-final-457",
+      "reportedBy": "主Agent独立执行",
+      "environment": "本地原生Node 26",
+      "files": 7,
+      "passed": 457,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "time": "2026-11-13 18:58:10",
+      "durationSeconds": 2.75,
+      "notes": "四协议摘要三阶段、截断拒收；Anthropic/MiniMax实际双工具反思分支；真实TLS/代理/CA和池身份。"
+    },
+    "coreUnit": {
+      "id": "core-unit-final-943",
+      "reportedBy": "主Agent独立执行",
+      "files": 36,
+      "passed": 943,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "time": "2026-11-13 18:58:55",
+      "durationSeconds": 12.37
+    },
+    "types": "tsconfig.tests严格检查通过",
+    "coreBuild": "最终生产源码构建通过；随后仅补测试及文档。",
+    "limits": "整合通过只升级逐项已有直接证据的定义，Host/外部服务及已接受API差异不批量关闭。"
   }
 }

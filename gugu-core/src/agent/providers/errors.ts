@@ -69,6 +69,6 @@ export function classifyProviderError(error: unknown, options: ConstructorParame
   if (status === 529 || status === 503 || /overload|busy/.test(label)) return new ProviderError('busy', { retryable: true, ...flags })
   if (status === 400 || status === 413 || status === 422 || /invalid_request|invalid_argument/.test(label)) return new ProviderError('input_rejected', { ...flags, retryable: false })
   if (status !== undefined) return new ProviderError('upstream', { retryable: status >= 500, ...flags })
-  if (/econnreset|enotfound|econnrefused|eai_again|connection|network|fetch|readerror|remoteprotocolerror|connecterror/.test(label)) return new ProviderError('network', { retryable: true, ...flags })
+  if (/econnreset|enotfound|econnrefused|eai_again|connection|network|fetch|readerror|writeerror|closeerror|remoteprotocolerror|connecterror/.test(label)) return new ProviderError('network', { retryable: true, ...flags })
   return new ProviderError('upstream', { ...flags, retryable: false })
 }

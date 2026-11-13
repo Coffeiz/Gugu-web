@@ -36,7 +36,7 @@ export async function* streamWithRetry(open: () => AsyncIterable<ProviderEvent>,
       const error = classifyProviderError(raw)
       if (emitted || error.options.outputStarted || !error.options.retryable || attempt >= max || clock.now() - started >= (options.maxWallMs ?? 900_000)) throw error
       previousError = error
-      const errorCode = error.code === 'rate_limit' ? 'rate_limited' : error.code === 'busy' ? 'upstream_busy' : error.code === 'network' ? 'transport' : 'timeout'
+      const errorCode = error.code === 'rate_limit' ? 'rate_limited' : error.code === 'busy' ? 'upstream_busy' : error.code === 'timeout' ? 'timeout' : 'transport'
       yield { type: 'retry', attempt: attempt + 1, maxRetries: max, nextRetryMs: pause, errorCode }
       await clock.sleep(pause, signal)
     }

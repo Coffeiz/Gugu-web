@@ -3,7 +3,10 @@ import { Agent as HttpAgent, request as httpRequest } from 'node:http'
 import { Agent as HttpsAgent, request as httpsRequest } from 'node:https'
 import { once } from 'node:events'
 import { createBrotliDecompress, createGunzip, createInflate } from 'node:zlib'
-import type { ProviderHttpRequest, ProviderHttpResponse, ProviderTransport } from '../contracts.js'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { delimiter, join } from 'node:path'
+import { createHash, X509Certificate } from 'node:crypto'
+import type { ProviderHttpRequest, ProviderHttpResponse, ProviderTransport, ProviderTransportFactory } from '../contracts.js'
 import { classifyProviderError, ProviderError } from '../errors.js'
 import { resolvePinnedTarget } from './network.js'
 import type { AddressResolver } from './network.js'
@@ -22,6 +25,51 @@ export interface NodeProviderTransportOptions {
   readonly idleTimeoutMs?: number
   readonly proxy?: ProviderProxyOptions
   readonly ca?: string
+  /** 搜索等受控出口可显式禁用环境代理/CA；普通模型客户端默认遵循环境。 */
+  readonly trustEnvironment?: boolean
+  readonly environment?: () => Readonly<Record<string, string | undefined>>
+}
+
+function environmentCa(environment: Readonly<Record<string, string | undefined>>): string | undefined {
+  const files: string[] = []
+  if (environment.SSL_CERT_FILE) files.push(environment.SSL_CERT_FILE)
+  for (const directory of (environment.SSL_CERT_DIR ?? '').split(delimiter).filter(Boolean))
+    for (const name of readdirSync(directory).sort()) if (/\.(pem|crt)$/i.test(name) || /^[a-f0-9]{8}\.\d+$/i.test(name)) files.push(join(directory, name))
+  if (files.length > 4096) throw new ProviderError('input_rejected')
+  const certificates = new Set<string>()
+  let bytes = 0
+  for (const file of files) {
+    const stat = statSync(file)
+    bytes += stat.size
+    if (!stat.isFile() || stat.size > 16 * 1024 * 1024 || bytes > 64 * 1024 * 1024) throw new ProviderError('input_rejected')
+    const content = readFileSync(file, 'utf8'), blocks = content.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g)
+    if (!blocks?.length) throw new ProviderError('input_rejected')
+    for (const block of blocks) { new X509Certificate(block); certificates.add(block) }
+  }
+  if (!certificates.size && (environment.SSL_CERT_FILE || environment.SSL_CERT_DIR)) throw new ProviderError('input_rejected')
+  return certificates.size ? [...certificates].join('\n') : undefined
+}
+
+/** CA和代理从同一环境快照解析；错误不回显路径或代理凭据。 */
+function networkSnapshot(options: NodeProviderTransportOptions): NodeProviderTransportOptions {
+  try {
+    const environment = options.trustEnvironment === false ? {} : (options.environment?.() ?? process.env)
+    if (options.ca !== undefined && !options.ca.trim()) throw new ProviderError('input_rejected')
+    const ca = options.ca ?? environmentCa(environment)
+    const selected = options.proxy ?? proxyOptionsFromEnvironment(environment)
+    const proxy = { ...selected }
+    for (const key of ['http', 'https', 'all'] as const) if (proxy[key]) proxy[key] = { ...proxy[key]!, ...(proxy[key]!.ca === undefined && ca ? { ca } : {}) }
+    return { ...options, proxy, ca, trustEnvironment: false, environment: undefined }
+  } catch (error) { throw error instanceof ProviderError ? error : new ProviderError('input_rejected') }
+}
+
+/** 每次Run取真实网络配置快照；身份只含哈希，创建动作使用同一份代理与证书。 */
+export function createNodeProviderTransportFactory(options: NodeProviderTransportOptions = {}): ProviderTransportFactory {
+  return { snapshot: () => {
+    const effective = networkSnapshot(options)
+    const { environment: _environment, resolve: _resolve, ...identity } = effective
+    return { networkIdentity: createHash('sha256').update(JSON.stringify(identity)).digest('hex'), create: () => new NodeProviderTransport(effective) }
+  } }
 }
 
 /** Node专属入口显式加载；portable Provider索引不依赖Node HTTP/DNS模块。 */
@@ -31,7 +79,10 @@ export class NodeProviderTransport implements ProviderTransport {
   readonly #closing = new AbortController()
   readonly #limits = new Map<string, { active: number; queue: Set<() => void> }>()
   #closed = false
-  constructor(readonly options: NodeProviderTransportOptions = { proxy: proxyOptionsFromEnvironment(process.env) }) {
+  readonly options: NodeProviderTransportOptions
+  constructor(options: NodeProviderTransportOptions = {}) {
+    options = networkSnapshot(options)
+    this.options = options
     for (const value of [options.maxSockets, options.connectTimeoutMs, options.poolTimeoutMs, options.writeTimeoutMs, options.idleTimeoutMs])
       if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0)) throw new ProviderError('input_rejected')
     const limits = { keepAlive: true, timeout: options.idleTimeoutMs ?? 600_000, maxSockets: options.maxSockets ?? 32, maxFreeSockets: 8 }

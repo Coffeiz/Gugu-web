@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { ProviderConfig, ProviderProtocol } from '../../../../src/agent/providers/contracts.js'
 import { deepseekPolicy, glmPolicy, glmCodingPolicy, localPolicy, minimaxPolicy, mimoPolicy, ollamaNativeBaseUrl, ollamaPolicy, qwenPolicy, validateLocalBaseUrl, vendorPolicies } from '../../../../src/agent/providers/vendors/policies.js'
 import { DEFAULT_MEDIA_LIMITS, MINIMAX_M3_MEDIA_LIMITS, prepareMiniMaxVideo, uploadMiniMaxVideo, validateVendorImage } from '../../../../src/agent/providers/vendors/media.js'
-import { minimaxAsrEndpoint, transcribeMiniMax, MINIMAX_ASR_MAX_DURATION_SECONDS, MINIMAX_ASR_MAX_FILE_BYTES } from '../../../../src/agent/providers/vendors/asr.js'
+import { dashscopeAsrEndpoint, dashscopeAsrTranscript, minimaxAsrEndpoint, transcribeCompatibleAsr, transcribeMiniMax, MINIMAX_ASR_MAX_DURATION_SECONDS, MINIMAX_ASR_MAX_FILE_BYTES } from '../../../../src/agent/providers/vendors/asr.js'
 import { minimaxErrorDetails } from '../../../../src/agent/providers/vendors/minimax-errors.js'
 import { fakeDependencies, fakeResponse, invocation, readRequestBody, requestJsonBody } from './fixtures.js'
 import { adapterFor, capabilitySnapshot, providerSelection } from '../../../../src/agent/providers/registry.js'
@@ -414,5 +414,159 @@ describe('MiniMax错误只暴露白名单语义', () => {
     Object.defineProperty(body, 'error', { enumerable: true, get() { accessed++; throw new Error('合成访问器不能执行') } })
     expect(minimaxErrorDetails({ body })).toMatchObject({ code: '2013', context_overflow: false })
     expect(accessed).toBe(0)
+  })
+})
+
+
+describe('兼容及DashScope ASR独立网络契约', () => {
+  const raw = new Uint8Array([1, 2, 3])
+  const media = [{ type: 'audio', mime: 'audio/wav', raw }]
+  const nativeUrl = 'https://voice.example/api/v1/services/aigc/multimodal-generation/generation'
+  const ai = (format = 'openai', more: Partial<ProviderConfig> = {}): ProviderConfig => config('qwen', 'synthetic-asr', { api_format: format, api_key: 'synthetic-key', base_url: format === 'dashscope' ? nativeUrl : 'https://voice.example/v1', ...more })
+  const complete = (value = '识别结果') => ({ choices: [{ message: { content: value } }] })
+  const signal = () => new AbortController().signal
+  const toWav = async () => new Uint8Array([4, 5, 6])
+
+  it('兼容ASR实际请求只含音频和ITN参数，不复用聊天thinking生成参数且输入不变', async () => {
+    const response = fakeResponse(complete('  合成转写  ')), f = fakeDependencies([response])
+    const cfg = ai('openai', { thinking: 'adaptive', reasoning_effort: 'high', temperature: 0.8, max_tokens: 7, timeout_ms: 1234 })
+    const original = structuredClone({ cfg, media })
+    expect(await transcribeCompatibleAsr(media, cfg, { ...f.dependencies, toWav }, signal(), { raiseErrors: true })).toBe('合成转写')
+    expect(f.requests).toHaveLength(1)
+    expect(f.requests[0]).toMatchObject({ url: 'https://voice.example/v1/chat/completions', method: 'POST', headers: { Authorization: 'Bearer synthetic-key' }, timeoutMs: 1234, allowLocal: false })
+    expect(requestJsonBody(f.requests[0]!)).toEqual({ model: 'synthetic-asr', messages: [{ role: 'user', content: [{ type: 'input_audio', input_audio: { data: 'data:audio/wav;base64,AQID' } }] }], asr_options: { enable_itn: false } })
+    expect({ cfg, media }).toEqual(original); expect(response.closed).toBe(true)
+  })
+  it.each(['qwen3-asr', 'qwen-audio', 'fun-asr'])('DashScope产品线%s实际发送各自原生body，不从模型名推协议', async service => {
+    const response = fakeResponse({ output: { sentence: { text: '  原生转写  ' } } }), f = fakeDependencies([response])
+    const cfg = ai('dashscope', { model: 'mimo-v2.5-asr', dashscope_service: service, thinking: 'adaptive', base_url: nativeUrl + '/?workspace=synthetic#fragment' })
+    expect(await transcribeCompatibleAsr(media, cfg, { ...f.dependencies, toWav }, signal())).toBe('原生转写')
+    expect(f.requests[0]).toMatchObject({ url: nativeUrl + '?workspace=synthetic', headers: { Authorization: 'Bearer synthetic-key', 'X-DashScope-SSE': 'disable' } })
+    const content = service === 'qwen3-asr' ? [{ audio: 'data:audio/wav;base64,AQID' }] : [{ type: 'input_audio', input_audio: { data: 'data:audio/wav;base64,AQID' } }]
+    expect(requestJsonBody(f.requests[0]!)).toEqual({ model: 'mimo-v2.5-asr', input: { messages: [{ role: 'user', content }] }, parameters: service === 'qwen3-asr' ? { asr_options: { enable_itn: false } } : { format: 'wav', sample_rate: 16000 } })
+    expect(response.closed).toBe(true)
+  })
+  it('显式qwen-audio产品线压过qwen3模型名前缀，实际请求仍是input_audio', async () => {
+    const f = fakeDependencies([fakeResponse({ output: { text: 'ok' } })])
+    expect(await transcribeCompatibleAsr(media, ai('dashscope', { model: 'qwen3-asr-flash-custom', dashscope_service: 'qwen-audio' }), { ...f.dependencies, toWav }, signal())).toBe('ok')
+    expect(requestJsonBody(f.requests[0]!)).toEqual({ model: 'qwen3-asr-flash-custom', input: { messages: [{ role: 'user', content: [{ type: 'input_audio', input_audio: { data: 'data:audio/wav;base64,AQID' } }] }] }, parameters: { format: 'wav', sample_rate: 16000 } })
+  })
+  it('原生端点只接受完整路径，Workspace前缀保留且兼容模式地址不会被自动补齐', () => {
+    expect(dashscopeAsrEndpoint('https://voice.example/workspaces/synthetic/api/v1/services/aigc/multimodal-generation/generation/')).toBe('https://voice.example/workspaces/synthetic/api/v1/services/aigc/multimodal-generation/generation')
+    for (const url of ['', 'https://voice.example/compatible-mode/v1', 'https://user:secret@voice.example' + new URL(nativeUrl).pathname, 'file:///api/v1/services/aigc/multimodal-generation/generation']) expect(() => dashscopeAsrEndpoint(url)).toThrow()
+  })
+  it('原生ASR凭据query在自定义transport之前拒绝，普通region和workspace仍保留', async () => {
+    const f = fakeDependencies([])
+    for (const key of ['api_key', 'api-key', 'APIKEY', 'x-api-key', 'key', 'token', 'access_token', 'access-token', 'secret', 'authorization', 'auth', 'api%5Fkey']) {
+      await expect(transcribeCompatibleAsr(media, ai('dashscope', { base_url: nativeUrl + `?${key}=synthetic-secret` }), { ...f.dependencies, toWav }, signal())).rejects.toMatchObject({ code: 'input_rejected', message: '模型拒绝了当前输入' })
+    }
+    expect(f.requests).toEqual([])
+    expect(dashscopeAsrEndpoint(nativeUrl + '?region=synthetic&workspace=synthetic')).toBe(nativeUrl + '?region=synthetic&workspace=synthetic')
+  })
+  it.each([
+    [{ output: { text: '  文本  ', sentence: { text: '不应覆盖' } } }, '文本'],
+    [{ output: { sentence: { text: '  句子  ' } } }, '句子'],
+    [{ output: { choices: [{ message: { content: '  字符串  ' } }] } }, '字符串'],
+    [{ output: { choices: [{ message: { content: [{ text: ' 分段' }, { audio: '忽略音频' }, { text: '文本 ' }] } }] } }, '分段文本'],
+    [{ output: {} }, ''],
+  ])('原生ASR响应%j提取结果%s，不把非文本块拼进转写', async (payload, expected) => {
+    const f = fakeDependencies([fakeResponse(payload)])
+    expect(dashscopeAsrTranscript(payload)).toBe(expected)
+    expect(await transcribeCompatibleAsr(media, ai('dashscope'), { ...f.dependencies, toWav }, signal())).toBe(expected)
+  })
+  it.each(['audio/wav', 'audio/x-wav', 'audio/mpeg', 'audio/mp3'])('兼容ASR容器%s直传，不调用转码或时长探测', async mime => {
+    let converted = 0
+    const f = fakeDependencies([fakeResponse(complete())])
+    await transcribeCompatibleAsr([{ type: 'audio', mime, b64: 'AQID' }], ai(), { ...f.dependencies, toWav: async () => { converted++; return null } }, signal())
+    expect(converted).toBe(0)
+    expect(JSON.stringify(requestJsonBody(f.requests[0]!))).toContain(`data:${mime};base64,AQID`)
+  })
+  it('不支持容器通过注入转WAV，失败项和视频不发送，原始音频大块编码不截断', async () => {
+    const converted: number[] = [], f = fakeDependencies([fakeResponse(complete())])
+    await transcribeCompatibleAsr([{ type: 'video', raw }, { type: 'audio', mime: 'audio/webm', raw }, { type: 'audio', mime: 'audio/mp4', raw: new Uint8Array([9]) }], ai(), { ...f.dependencies, toWav: async value => { converted.push(value[0]!); return value[0] === 9 ? null : new Uint8Array([4, 5, 6]) } }, signal())
+    expect(converted).toEqual([1, 9])
+    expect(requestJsonBody(f.requests[0]!)).toEqual({ model: 'synthetic-asr', messages: [{ role: 'user', content: [{ type: 'input_audio', input_audio: { data: 'data:audio/wav;base64,BAUG' } }] }], asr_options: { enable_itn: false } })
+    const big = new Uint8Array(70_000).fill(65), large = fakeDependencies([fakeResponse(complete())])
+    await transcribeCompatibleAsr([{ type: 'audio', raw: big }], ai(), { ...large.dependencies, toWav }, signal())
+    const body = requestJsonBody(large.requests[0]!), encoded = ((body.messages as { content: { input_audio: { data: string } }[] }[])[0]!.content[0]!.input_audio.data).split(',')[1]!
+    expect(atob(encoded)).toBe('A'.repeat(70_000))
+  })
+  it('无音频或转码均失败时不联网，不读取主模型或替换配置', async () => {
+    const f = fakeDependencies([])
+    expect(await transcribeCompatibleAsr([{ type: 'video', raw }], ai(), { ...f.dependencies, toWav }, signal())).toBe('')
+    expect(await transcribeCompatibleAsr([{ type: 'audio', raw, mime: 'audio/webm' }], ai(), { ...f.dependencies, toWav: async () => null }, signal())).toBe('')
+    expect(f.requests).toEqual([])
+  })
+  it('转码端口异常只跳过该音频，退避端口异常不会泄漏路径或误发下一请求', async () => {
+    const f = fakeDependencies([])
+    expect(await transcribeCompatibleAsr([{ type: 'audio', raw, mime: 'audio/webm' }], ai(), { ...f.dependencies, toWav: async () => { throw new Error('synthetic-private-conversion-path') } }, signal())).toBe('')
+    await expect(transcribeCompatibleAsr([{ type: 'audio', raw, mime: 'audio/webm' }], ai(), { ...f.dependencies, toWav: async () => { throw new Error('synthetic-private-conversion-path') } }, signal(), { raiseErrors: true })).rejects.toMatchObject({ code: 'upstream', message: '模型服务请求失败' })
+    expect(f.requests).toEqual([])
+    const backoff = fakeDependencies([fakeResponse({}, { status: 503 })])
+    await expect(transcribeCompatibleAsr(media, ai(), { ...backoff.dependencies, toWav, sleep: async () => { throw new Error('synthetic-private-clock-path') } }, signal(), { raiseErrors: true })).rejects.toMatchObject({ code: 'upstream', message: '模型服务请求失败' })
+    expect(backoff.requests).toHaveLength(1)
+  })
+  it('非法base64、协议或原生产品线在请求前拒绝，不能偷偷换聊天协议', async () => {
+    const f = fakeDependencies([]), deps = { ...f.dependencies, toWav }
+    await expect(transcribeCompatibleAsr([{ type: 'audio', b64: '@@@', mime: 'audio/wav' }], ai(), deps, signal())).rejects.toHaveProperty('code', 'input_rejected')
+    await expect(transcribeCompatibleAsr(media, ai('responses'), deps, signal())).rejects.toHaveProperty('code', 'unsupported')
+    for (const service of ['guess-from-model', '   ', 7]) await expect(transcribeCompatibleAsr(media, ai('dashscope', { dashscope_service: service }), deps, signal())).rejects.toHaveProperty('code', 'unsupported')
+    await expect(transcribeCompatibleAsr(media, ai('dashscope', { api_key: '合成非ASCII' }), deps, signal())).rejects.toHaveProperty('code', 'input_rejected')
+    expect(f.requests).toEqual([])
+  })
+  it.each(['openai', 'dashscope'])('%s ASR仅瞬时429和5xx退避1秒2秒，第三次成功且每次响应关闭', async format => {
+    const responses = [fakeResponse({ error: '上游私有错误' }, { status: 429 }), fakeResponse({}, { status: 503 }), fakeResponse(format === 'dashscope' ? { output: { text: '重试成功' } } : complete('重试成功'))]
+    const originalResponses = [...responses], f = fakeDependencies(responses), pauses: number[] = []
+    expect(await transcribeCompatibleAsr(media, ai(format), { ...f.dependencies, toWav, sleep: async milliseconds => { pauses.push(milliseconds) } }, signal(), { raiseErrors: true })).toBe('重试成功')
+    expect(pauses).toEqual([1000, 2000]); expect(f.requests).toHaveLength(3); expect(originalResponses.every(response => response.closed)).toBe(true)
+    expect(f.requests.map(requestJsonBody)).toEqual([requestJsonBody(f.requests[0]!), requestJsonBody(f.requests[0]!), requestJsonBody(f.requests[0]!)])
+  })
+  it.each([400, 401, 403, 404, 422])('HTTP%s为永久失败，两种协议只请求一次且不泄漏上游正文', async status => {
+    for (const format of ['openai', 'dashscope']) {
+      const f = fakeDependencies([fakeResponse({ error: { message: 'synthetic-private-upstream-body' } }, { status })]), pauses: number[] = []
+      const deps = { ...f.dependencies, toWav, sleep: async (milliseconds: number) => { pauses.push(milliseconds) } }
+      await expect(transcribeCompatibleAsr(media, ai(format), deps, signal(), { raiseErrors: true })).rejects.not.toThrow('synthetic-private-upstream-body')
+      expect(f.requests).toHaveLength(1); expect(pauses).toEqual([])
+    }
+  })
+  it('兼容ASR超时后只退避一次并第二次成功，未知内部错误不重试', async () => {
+    let calls = 0
+    const f = fakeDependencies(async () => { if (++calls === 1) throw Object.assign(new Error('合成超时'), { code: 'ETIMEDOUT' }); return fakeResponse(complete('第二次成功')) }), pauses: number[] = []
+    expect(await transcribeCompatibleAsr(media, ai(), { ...f.dependencies, toWav, sleep: async ms => { pauses.push(ms) } }, signal())).toBe('第二次成功')
+    expect(f.requests).toHaveLength(2); expect(pauses).toEqual([1000])
+    const permanent = fakeDependencies(async () => { throw new Error('synthetic-private-key-error') })
+    expect(await transcribeCompatibleAsr(media, ai(), { ...permanent.dependencies, toWav, sleep: async () => { throw new Error('不应重试') } }, signal())).toBe('')
+    expect(permanent.requests).toHaveLength(1)
+  })
+  it.each(['openai', 'dashscope'])('%s网络重试最多三次，默认空串与显式安全异常分别保留', async format => {
+    for (const raiseErrors of [false, true]) {
+      const f = fakeDependencies(async () => { throw Object.assign(new Error('synthetic-private-network-body'), { code: 'ECONNRESET' }) }), pauses: number[] = []
+      const result = transcribeCompatibleAsr(media, ai(format), { ...f.dependencies, toWav, sleep: async milliseconds => { pauses.push(milliseconds) } }, signal(), { raiseErrors })
+      if (raiseErrors) await expect(result).rejects.toMatchObject({ code: 'network', message: '模型网络请求失败' })
+      else expect(await result).toBe('')
+      expect(f.requests).toHaveLength(3); expect(pauses).toEqual([1000, 2000])
+    }
+  })
+  it('响应结构错误不按网络失败重试，空转写保持空串', async () => {
+    const malformed = fakeDependencies([fakeResponse({ choices: [] })])
+    await expect(transcribeCompatibleAsr(media, ai(), { ...malformed.dependencies, toWav }, signal(), { raiseErrors: true })).rejects.toHaveProperty('code', 'protocol')
+    expect(malformed.requests).toHaveLength(1)
+    const empty = fakeDependencies([fakeResponse({ choices: [{ message: { content: null } }] })])
+    expect(await transcribeCompatibleAsr(media, ai(), { ...empty.dependencies, toWav }, signal())).toBe('')
+  })
+  it.each(['转换', '网络', '退避'])('ASR%s期间取消立即终止，不继续发请求或泄漏取消原因', async phase => {
+    const controller = new AbortController()
+    const f = fakeDependencies(async () => { if (phase === '网络') controller.abort(new Error('synthetic-private-cancel')); throw Object.assign(new Error('合成瞬时故障'), { code: 'ETIMEDOUT' }) })
+    const result = transcribeCompatibleAsr([{ type: 'audio', raw, mime: phase === '转换' ? 'audio/webm' : 'audio/wav' }], ai(), { ...f.dependencies,
+      toWav: async () => { controller.abort(new Error('synthetic-private-cancel')); return raw },
+      sleep: async () => { controller.abort(new Error('synthetic-private-cancel')) },
+    }, controller.signal)
+    await expect(result).rejects.toMatchObject({ code: 'cancelled', message: '模型请求已取消' })
+    expect(f.requests).toHaveLength(phase === '转换' ? 0 : 1)
+  })
+  it.each(['local', 'ollama', 'unknown'])('ASR本地授权只认显式%s配置，不继承URL推断身份', async provider => {
+    const f = fakeDependencies([fakeResponse(complete())])
+    await transcribeCompatibleAsr(media, ai('openai', { provider, base_url: 'http://127.0.0.1:11434/v1' }), { ...f.dependencies, toWav }, signal())
+    expect(f.requests[0]!.allowLocal).toBe(provider !== 'unknown')
   })
 })

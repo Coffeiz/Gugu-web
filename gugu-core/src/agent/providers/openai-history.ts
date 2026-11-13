@@ -1,6 +1,7 @@
 import type { CanonicalMessage, Json } from '../harness/contracts.js'
-import { renderCanonicalEvents } from '../harness/history/canonical-history.js'
-import type { JsonObject, ProjectionOptions, ProviderConfig, ProviderPolicy } from './contracts.js'
+import { renderCanonicalEvents, stableJson } from '../harness/history/canonical-history.js'
+import type { HistorySanitization, JsonObject, ProjectionOptions, ProviderConfig, ProviderPolicy, WireTransformStage } from './contracts.js'
+import { ProviderError } from './errors.js'
 import { array, clone, record, text } from './values.js'
 
 function resultContent(value: unknown, enabled?: { image: boolean; audio: boolean; video: boolean }): { content: string; media: JsonObject[] } {
@@ -73,12 +74,13 @@ export function renderOpenaiHistory(messages: readonly CanonicalMessage[], optio
 }
 
 /** 截断历史只保留完整的相邻调用/结果，重复 id 只保留首个；不会重排真实消息。 */
-export function sanitizeOpenaiToolHistory(messages: readonly JsonObject[]): JsonObject[] {
-  const output: JsonObject[] = []
+export function sanitizeOpenaiToolHistory(messages: readonly JsonObject[], onSanitization?: (value: HistorySanitization) => void): JsonObject[] {
+  const output: JsonObject[] = [], retained: number[] = []
+  const emit = (row: JsonObject, index: number) => { output.push(row); retained.push(index) }
   for (let index = 0; index < messages.length;) {
     const message = clone(messages[index]!), calls = array(message.tool_calls).map(record)
     if (message.role !== 'assistant' || !calls.length) {
-      if (message.role !== 'tool') output.push(message)
+      if (message.role !== 'tool') emit(message, index)
       index++; continue
     }
     const byId = new Map<string, Record<string, unknown>>()
@@ -88,11 +90,17 @@ export function sanitizeOpenaiToolHistory(messages: readonly JsonObject[]): Json
     const matched = new Set(results.map(row => text(row.tool_call_id)).filter(id => byId.has(id)))
     if (matched.size) {
       message.tool_calls = [...byId.entries()].filter(([id]) => matched.has(id)).map(([, call]) => call as JsonObject)
-      output.push(message)
+      emit(message, index)
       const emitted = new Set<string>()
-      for (const row of results) { const id = text(row.tool_call_id); if (matched.has(id) && !emitted.has(id)) { output.push(row); emitted.add(id) } }
-    } else if ((Array.isArray(message.content) ? message.content.length > 0 : !!message.content) && (typeof message.content !== 'string' || message.content.trim())) { delete message.tool_calls; output.push(message) }
+      results.forEach((row, offset) => { const id = text(row.tool_call_id); if (matched.has(id) && !emitted.has(id)) { emit(row, index + offset + 1); emitted.add(id) } })
+    } else if ((Array.isArray(message.content) ? message.content.length > 0 : !!message.content) && (typeof message.content !== 'string' || message.content.trim())) { delete message.tool_calls; emit(message, index) }
     index = cursor
+  }
+  if (onSanitization) {
+    const indexes = new Set(retained), removed = messages.flatMap((_, index) => indexes.has(index) ? [] : [index])
+    const modified = retained.filter((index, clean) => stableJson(messages[index]) !== stableJson(output[clean]))
+    const changed = [...removed, ...modified]
+    onSanitization({ applied: true, changed: changed.length > 0, removed_messages: removed.length, modified_messages: modified.length, first_changed_index: changed.length ? Math.min(...changed) : null })
   }
   return output
 }
@@ -154,7 +162,109 @@ export function prepareOpenAiCache(history: readonly JsonObject[], policy: Provi
 export function projectOpenai(messages: readonly CanonicalMessage[], config: ProviderConfig, policy: ProviderPolicy, options: ProjectionOptions = {}): JsonObject[] {
   const tail = Math.max(0, Math.min(options.dynamicTailSize ?? 0, messages.length)), split = messages.length - tail
   const toolMedia = { image: (config.capability_overrides?.image ?? config.image ?? policy.capabilities(config).image) === true, audio: true, video: true }
-  const projected = mergeOpenaiSystemMessages([...sanitizeOpenaiToolHistory(renderOpenaiHistory(messages.slice(0, split), options, toolMedia)), ...sanitizeOpenaiToolHistory(renderOpenaiHistory(messages.slice(split), options, toolMedia))])
+  const stable = renderOpenaiHistory(messages.slice(0, split), options, toolMedia), dynamic = renderOpenaiHistory(messages.slice(split), options, toolMedia)
+  const reports: HistorySanitization[] = []
+  const projected = mergeOpenaiSystemMessages([...sanitizeOpenaiToolHistory(stable, value => reports.push(value)), ...sanitizeOpenaiToolHistory(dynamic, value => reports.push(value))])
+  const first = [reports[0]!.first_changed_index, reports[1]!.first_changed_index === null ? null : stable.length + reports[1]!.first_changed_index!].filter((index): index is number => index !== null)
+  options.onSanitization?.({ applied: true, changed: reports.some(value => value.changed), removed_messages: reports.reduce((sum, value) => sum + value.removed_messages, 0), modified_messages: reports.reduce((sum, value) => sum + value.modified_messages, 0), first_changed_index: first.length ? Math.min(...first) : null })
   for (const row of projected) for (const call of array(row.tool_calls)) delete record(call).responses_item_id
   return projected
+}
+
+type TransformProtocol = 'openai' | 'responses' | 'ollama'
+interface WireUnit { indices: number[]; complete: boolean }
+
+function protectedWireRow(row: JsonObject): boolean {
+  if (row.role === 'system' || row.role === 'summary') return true
+  const content = plainContent(row.content).trim().replace(/^【消息时间】[^\n]*\n【消息正文】\n|^【消息正文】\n/, '')
+  return content.includes('<compacted-summary>') || /^(?:\[system-reminder\]|## (?:项目|日历|文件))/.test(content)
+}
+function toolMediaRow(row: JsonObject): boolean {
+  return row.role === 'user' && /^工具返回了以下(?:图片|多模态内容)/.test(plainContent(row.content))
+}
+function assistantItem(row: JsonObject): boolean {
+  return row.type === 'reasoning' || row.type === 'function_call' || row.role === 'assistant'
+}
+function wireMessage(row: JsonObject): boolean {
+  const content = typeof row.content === 'string' ? !!row.content.trim() : array(row.content).some(value => {
+    const block = record(value)
+    return ['text', 'input_text', 'output_text'].includes(text(block.type)) ? !!text(block.text).trim() : Object.keys(block).length > 0
+  })
+  return (row.role === 'user' || row.role === 'assistant') && (content || array(row.images).length > 0)
+}
+
+/** 已知wire中只有匹配的全部回执才能和调用组成可删除单元；异常孤儿整体保留。 */
+function wireUnits(messages: readonly JsonObject[], protocol: TransformProtocol): WireUnit[] {
+  const units: WireUnit[] = []
+  for (let cursor = 0; cursor < messages.length;) {
+    const indices: number[] = [], pending = new Map<string, string>()
+    const first = messages[cursor]!
+    let complete = true, invalid = false
+    if (protocol === 'responses' && assistantItem(first)) {
+      while (cursor < messages.length && assistantItem(messages[cursor]!)) {
+        const row = messages[cursor]!
+        indices.push(cursor++)
+        if (row.type === 'function_call') {
+          const id = text(row.call_id)
+          if (!id || pending.has(id)) invalid = true
+          else pending.set(id, text(row.name))
+        }
+      }
+      // 无assistant或工具的独立reasoning不能被当普通正文裁掉。
+      complete = indices.some(index => wireMessage(messages[index]!)) || pending.size > 0
+    } else {
+      indices.push(cursor++)
+      if (first.role === 'assistant') for (const value of array(first.tool_calls)) {
+        const call = record(value), id = text(call.id)
+        if (!id || pending.has(id)) invalid = true
+        else pending.set(id, text(record(call.function).name))
+      }
+      complete = pending.size > 0 || wireMessage(first)
+      if (first.role === 'tool' || first.type === 'function_call_output' || first.type && first.type !== 'message') complete = false
+    }
+    const hasCalls = pending.size > 0
+    if (hasCalls) while (cursor < messages.length) {
+      const row = messages[cursor]!
+      const result = protocol === 'responses' ? row.type === 'function_call_output' : row.role === 'tool'
+      if (!result) break
+      let id = text(protocol === 'responses' ? row.call_id : row.tool_call_id)
+      // Ollama实际wire仅回传tool_name，重复同名调用按已验证的连续回执逐个消费。
+      if (!id && protocol === 'ollama') id = [...pending].find(([, name]) => name && name === text(row.tool_name))?.[0] ?? ''
+      if (!id || !pending.has(id)) invalid = true
+      else pending.delete(id)
+      indices.push(cursor++)
+    }
+    if (hasCalls && !pending.size) while (cursor < messages.length && toolMediaRow(messages[cursor]!)) indices.push(cursor++)
+    units.push({ indices, complete: complete && !invalid && pending.size === 0 })
+  }
+  return units
+}
+
+/** 摘要超窗仅变换实际wire副本，不经过Canonical，也不修改签名/回执/工具身份。 */
+export function transformOpenaiWireHistory(history: readonly JsonObject[], stage: WireTransformStage, protectedPrefixRows: number, protocol: TransformProtocol = 'openai'): { messages: JsonObject[]; changedMessages: number } {
+  if (!Number.isSafeInteger(protectedPrefixRows) || protectedPrefixRows < 0 || protectedPrefixRows > history.length) throw new ProviderError('input_rejected')
+  const messages = clone([...history])
+  if (stage === 'strip-tool-inputs') {
+    let changedMessages = 0
+    for (const row of messages) {
+      let changed = false
+      const clear = (call: Record<string, unknown>) => {
+        if (!Object.hasOwn(call, 'arguments')) return
+        const value = call.arguments
+        const empty = protocol === 'ollama' ? value !== null && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0 : value === '{}'
+        if (!empty) { call.arguments = protocol === 'ollama' ? {} : '{}'; changed = true }
+      }
+      if (protocol === 'responses' && row.type === 'function_call') clear(row)
+      else if (row.role === 'assistant') for (const call of array(row.tool_calls)) clear(record(record(call).function))
+      if (changed) changedMessages++
+    }
+    return { messages, changedMessages }
+  }
+  if (stage !== 'trim-oldest-units') throw new ProviderError('input_rejected')
+  const units = wireUnits(messages, protocol)
+  const removable = units.filter(unit => unit.complete && !unit.indices.some(index => index < protectedPrefixRows || protectedWireRow(messages[index]!)))
+  // 末尾是system/reminder或异常孤儿时，也保住之前最新的完整正文/工具组。
+  removable.pop()
+  const dropped = new Set(removable.slice(0, Math.ceil(removable.length / 2)).flatMap(unit => unit.indices))
+  return { messages: messages.filter((_, index) => !dropped.has(index)), changedMessages: dropped.size }
 }

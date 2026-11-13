@@ -3,12 +3,13 @@ import { describe, expect, it, vi } from 'vitest'
 import type { CanonicalMessage, ProviderEvent } from '../../../src/agent/harness/contracts.js'
 import { canonicalToolRound } from '../../../src/agent/harness/history/canonical-history.js'
 import { anthropicDriver, anthropicPolicy, anthropicRequest, anthropicUsage, parseAnthropicToolInput } from '../../../src/agent/providers/anthropic.js'
-import { projectAnthropicHistory, sanitizeAnthropicHistory } from '../../../src/agent/providers/anthropic-history.js'
+import { projectAnthropicHistory, sanitizeAnthropicHistory, transformAnthropicWireHistory } from '../../../src/agent/providers/anthropic-history.js'
 import type { JsonObject, ProviderDriverDependencies, ProviderHttpRequest, ProviderInvocation } from '../../../src/agent/providers/contracts.js'
 import { ProviderError } from '../../../src/agent/providers/errors.js'
 import { record } from '../../../src/agent/providers/values.js'
 import { minimaxPolicy } from '../../../src/agent/providers/vendors/policies.js'
 import { streamWithRetry } from '../../../src/agent/providers/retry.js'
+import { prepareAnthropicCache } from '../../../src/agent/providers/cache.js'
 
 const scope = { ownerId: 'owner', sessionId: 'session', runId: 'run', round: 1, modelIdentity: 'model-identity', accessScopeHash: 'scope-hash' }
 function invocation(extra: Partial<ProviderInvocation> = {}): ProviderInvocation {
@@ -20,7 +21,7 @@ const blockStart = (index: number, content_block: unknown) => ({ type: 'content_
 const delta = (index: number, value: unknown) => ({ type: 'content_block_delta', index, delta: value })
 const stop = (index: number) => ({ type: 'content_block_stop', index })
 const end = { type: 'message_stop' }
-function fixture(responses: readonly ({ events: readonly unknown[] } | { json: unknown })[]) {
+function fixture(responses: readonly (({ events: readonly unknown[] } | { json: unknown }) & { status?: number })[]) {
   const requests: ProviderHttpRequest[] = [], closed: number[] = []
   const dependencies: ProviderDriverDependencies = {
     digest: value => createHash('sha256').update(JSON.stringify(value)).digest('hex'), diagnose: vi.fn(),
@@ -29,7 +30,7 @@ function fixture(responses: readonly ({ events: readonly unknown[] } | { json: u
       const response = responses[index]
       if (!response) throw new Error('不应有额外模型请求')
       const body = 'events' in response ? response.events.map(event => `event: ${String(record(event).type)}\ndata: ${JSON.stringify(event)}\n\n`).join('') : JSON.stringify(response.json)
-      return { status: 200, headers: { 'content-type': 'events' in response ? 'text/event-stream' : 'application/json' },
+      return { status: response.status ?? 200, headers: { 'content-type': 'events' in response ? 'text/event-stream' : 'application/json' },
         body: (async function* () { const bytes = new TextEncoder().encode(body); for (let i = 0; i < bytes.length; i += 7) yield bytes.slice(i, i + 7) })(),
         cancel: () => { if (!closed.includes(index)) closed.push(index) } }
     }) },
@@ -175,6 +176,36 @@ describe('Anthropic真实HTTP协议边界', () => {
     expect(sleeps).toEqual(Array.from({ length: Math.min(failTimes, 5) }, () => 5000))
     expect(events.filter(event => event.type === 'retry').every(event => event.type === 'retry' && event.errorCode === 'timeout')).toBe(true)
     expect(f.closed).toHaveLength(f.requests.length)
+  })
+
+  it.each([anthropicPolicy, minimaxPolicy])('真实%s的连续HTTP529只耗尽共享次数或墙钟预算，正文与用量不伪成功', async policy => {
+    for (const maxWallMs of [900_000, 10_000]) {
+      const f = fixture(Array.from({ length: 6 }, () => ({ status: 529, json: { error: { type: 'overloaded_error', message: '私有上游正文及synthetic-secret' } } })))
+      const input = invocation({ policy, config: { provider: policy.name, model: policy.name === 'minimax' ? 'MiniMax-M3' : 'claude-sonnet-4-6', api_key: 'synthetic-key' } })
+      const events: ProviderEvent[] = [], sleeps: number[] = []
+      let elapsed = 0
+      await expect((async () => {
+        for await (const event of streamWithRetry(() => anthropicDriver.stream(input, f.dependencies), input.signal, {
+          maxWallMs, clock: { now: () => elapsed, sleep: async ms => { sleeps.push(ms); elapsed += ms } },
+        })) events.push(event)
+      })()).rejects.toMatchObject({ code: 'busy', options: { status: 529, retryable: true, outputStarted: false } })
+      const attempts = maxWallMs === 900_000 ? 6 : 2, retries = maxWallMs === 900_000 ? 5 : 2
+      expect(f.requests).toHaveLength(attempts); expect(f.closed).toHaveLength(attempts)
+      expect(events.filter(event => event.type === 'retry')).toEqual(Array.from({ length: retries }, (_, index) => ({ type: 'retry', attempt: index + 1, maxRetries: 5, nextRetryMs: 5000, errorCode: 'upstream_busy' })))
+      expect(sleeps).toEqual(Array.from({ length: retries }, () => 5000))
+      expect(events.filter(event => event.type === 'token' || event.type === 'complete')).toEqual([])
+      expect(events.filter(event => event.type === 'usage').every(event => event.type === 'usage' && event.usage.contextInput === null)).toBe(true)
+      expect(JSON.stringify(events)).not.toContain('私有上游正文'); expect(JSON.stringify(events)).not.toContain('synthetic-secret')
+      for (const request of f.requests) expect(request.body).toEqual(f.requests[0]!.body)
+    }
+  })
+
+  it.each([anthropicPolicy, minimaxPolicy])('真实%s的HTTP500是普通可重试上游错误，不伪装成忙碌或泄漏上游正文', async policy => {
+    const f = fixture([{ status: 500, json: { error: { type: 'api_error', message: '私有服务错误及synthetic-secret' } } }])
+    const error: unknown = await collect(invocation({ policy, config: { provider: policy.name, model: 'synthetic-model' } }), f.dependencies).catch(value => value)
+    expect(error).toMatchObject({ code: 'upstream', options: { status: 500, retryable: true, outputStarted: false } })
+    expect(String(error)).not.toContain('私有服务错误'); expect(JSON.stringify(error)).not.toContain('synthetic-secret')
+    expect(f.requests).toHaveLength(1); expect(f.closed).toEqual([0])
   })
 
   it('Anthropic重试墙钟先于次数用尽，已出正文后读超时不重发或重复token', async () => {
@@ -400,6 +431,62 @@ describe('Anthropic能力、历史与私有续接', () => {
     expect(JSON.stringify(record(f.requests[2]!.body).messages)).not.toContain('synthetic-signature')
   })
 
+  it('旧tool_use-only持久payload不能插入重复调用，N3响应边界快照只复用Canonical中已有工具', async () => {
+    const canonical: CanonicalMessage[] = [{ role: 'assistant', content: [{ type: 'tool_call', id: 'actual-call', name: 'lookup', arguments: '{"q":1}' }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_call_id: 'actual-call', content: '合成结果' }] }]
+    const history = projectAnthropicHistory(canonical, invocation().config, anthropicPolicy), original = structuredClone(history)
+    const obsolete = { blocks: [{ type: 'tool_use', id: 'duplicate-call', name: 'write', input: {} }] }
+    const envelope = { state_kind: 'anthropic_thinking_blocks', model_identity: scope.modelIdentity, owner_id: scope.ownerId,
+      session_id: scope.sessionId, access_scope_hash: scope.accessScopeHash, provider: 'anthropic' }
+    const f = fixture(Array.from({ length: 3 }, () => ({ json: { content: [], stop_reason: 'end_turn' } })))
+    for (const continuation of [obsolete, { ...envelope, payload: obsolete }, { ...envelope, payload: { history_thinking_by_tool_id: { 'actual-call': obsolete.blocks }, tail_blocks: null } }]) {
+      const completed = await anthropicDriver.complete(invocation({ history, continuation, purpose: 'branch', hasHistory: true }), f.dependencies)
+      expect(record(f.requests.at(-1)!.body).messages).toEqual(original)
+      expect(completed.continuation).toBeUndefined()
+    }
+    expect(history).toEqual(original); expect(JSON.stringify(canonical)).not.toContain('duplicate-call')
+    // N3保存完整响应块是为保住wire分段，不能因此把旧blocks当合法thinking。
+    const native = fixture([{ events: [start(), blockStart(0, { type: 'tool_use', id: 'actual-call', name: 'lookup', input: { q: 1 } }), stop(0), end] },
+      { json: { content: [], stop_reason: 'end_turn' } }])
+    const continuation = final(await collect(invocation(), native.dependencies)).continuation
+    expect(record(record(continuation).payload).history_thinking_by_tool_id).toEqual({})
+    await anthropicDriver.complete(invocation({ history, continuation, purpose: 'branch', hasHistory: true }), native.dependencies)
+    expect(record(native.requests[1]!.body).messages).toEqual(original)
+    expect(history).toEqual(original)
+  })
+
+  it.each([anthropicPolicy, minimaxPolicy])('%s驱动从Canonical形成实际wire后追加分支，原工具行和缓存锚点不二次渲染', async policy => {
+    const config = { provider: policy.name, model: policy.name === 'minimax' ? 'MiniMax-M3' : 'claude-sonnet-4-6' }
+    const f = fixture([{ events: [start(), blockStart(0, { type: 'thinking', thinking: '合成检查', signature: 'synthetic-branch-signature' }), stop(0),
+      blockStart(1, { type: 'tool_use', id: 'branch-call', name: 'lookup', input: { q: '合成查询' } }), stop(1), end] },
+      { json: { content: [], stop_reason: 'end_turn' } }, { json: { content: [{ type: 'text', text: '分支完成' }], stop_reason: 'end_turn' } }])
+    const tools: JsonObject[] = [{ type: 'function', function: { name: 'lookup', parameters: { type: 'object' } } }]
+    const result = final(await collect(invocation({ policy, config, tools }), f.dependencies))
+    const call = result.calls[0]!
+    const canonical: CanonicalMessage[] = [{ role: 'user', content: '合成主问题' }, ...canonicalToolRound({ text: result.text,
+      calls: [{ ...call, input: record(call.input) as JsonObject }], dispatched: [{ callId: call.id, content: '合成工具结果' }] })]
+    const original = structuredClone(canonical), canonicalDigest = f.dependencies.digest(canonical)
+    const projected = projectAnthropicHistory(canonical, config, policy)
+    const cached = prepareAnthropicCache(projected, policy, config, f.dependencies.digest, projected.length)
+    await anthropicDriver.complete(invocation({ policy, config, tools, history: cached.messages, continuation: result.continuation }), f.dependencies)
+    // 使用真正发出的body作为冻结前缀，不能以投影helper的结果冒充实际wire。
+    const sent = record(f.requests[1]!.body), wire = structuredClone(sent.messages) as JsonObject[]
+    const frozenDigest = f.dependencies.digest(wire), delta = { role: 'user', content: '仅追加的最终分支任务' }
+    const completed = await anthropicDriver.complete(invocation({ policy, config, tools, purpose: 'branch', hasHistory: true,
+      history: [...wire, delta], wireSystem: sent.system as JsonObject[], outputMode: 'text' }), f.dependencies)
+    const branch = record(f.requests[2]!.body), messages = branch.messages as JsonObject[]
+    expect(completed.text).toBe('分支完成')
+    expect(messages.slice(0, -1)).toEqual(wire); expect(messages.at(-1)).toEqual(delta)
+    expect(messages.filter(message => message.role === 'assistant')).toEqual([{ role: 'assistant', content: [
+      { type: 'thinking', thinking: '合成检查', signature: 'synthetic-branch-signature' }, { type: 'tool_use', id: 'branch-call', name: 'lookup', input: { q: '合成查询' } },
+    ] }])
+    expect((messages.at(-2)!.content as JsonObject[]).at(-1)).toHaveProperty('cache_control', { type: 'ephemeral' })
+    expect(branch.tools).toEqual(sent.tools); expect(branch.system).toEqual(sent.system)
+    expect(f.dependencies.digest(wire)).toBe(frozenDigest); expect(canonical).toEqual(original)
+    expect(f.dependencies.digest(canonical)).toBe(canonicalDigest); expect(JSON.stringify(canonical)).not.toContain('synthetic-branch-signature')
+    expect(f.requests).toHaveLength(3)
+  })
+
   it.each([{ max_results: 15, query: '合成记录', filters: { z: null, a: [1, { z: 2, a: 3 }] } }, {}] as JsonObject[])('真实驱动参数%j经Canonical和键排序后回放保持原字节序，错误工具结果与Canonical一致', async argumentsValue => {
     const f = fixture([{ events: [start(), blockStart(0, { type: 'tool_use', id: 'call', name: 'lookup', input: argumentsValue }), stop(0), end] },
       { json: { content: [], stop_reason: 'end_turn' } }])
@@ -468,6 +555,116 @@ describe('Anthropic能力、历史与私有续接', () => {
     expect(history).toEqual(originalHistory); expect(f.dependencies.digest(history)).toBe(historyDigest)
     expect(JSON.stringify(canonical)).not.toContain('signature-'); expect(canonical).toEqual(original)
     expect(f.dependencies.digest(canonical)).toBe(originalDigest)
+  })
+
+  it('旧轮签名与当前thinking/redacted双工具按原位恢复两次，私有块仅绑定首call且总数为三', async () => {
+    const oldNative = { type: 'thinking', thinking: '较早轮检查', signature: 'synthetic-older-signature' }
+    const currentNative = { type: 'thinking', thinking: '当前轮检查', signature: 'synthetic-current-signature' }
+    const redacted = { type: 'redacted_thinking', data: 'synthetic-redacted-data' }
+    const oldTool = { type: 'tool_use', id: 'older-call', name: 'lookup', input: {} }
+    const firstTool = { type: 'tool_use', id: 'first-call', name: 'lookup', input: { q: 1 } }
+    const secondTool = { type: 'tool_use', id: 'second-call', name: 'lookup', input: { q: 2 } }
+    const currentBlocks = [{ type: 'text', text: '前文' }, currentNative, redacted, { type: 'text', text: '后文' }, firstTool, secondTool]
+    const events = (blocks: readonly JsonObject[]) => [start(), ...blocks.flatMap((block, index) => [blockStart(index, block), stop(index)]), end]
+    const f = fixture([{ events: events([oldNative, oldTool]) }, { events: events(currentBlocks) },
+      { json: { content: [], stop_reason: 'end_turn' } }, { json: { content: [], stop_reason: 'end_turn' } }])
+    const canonical: CanonicalMessage[] = [{ role: 'user', content: '合成多轮问题' }]
+    let continuation: unknown
+    for (let round = 0; round < 2; round++) {
+      const completed = final(await collect(invocation({ history: projectAnthropicHistory(canonical, invocation().config, anthropicPolicy), continuation, scope: { ...scope, round: round + 1 } }), f.dependencies))
+      continuation = completed.continuation
+      canonical.push(...canonicalToolRound({ text: completed.text, calls: completed.calls.map(call => ({ ...call, input: record(call.input) as JsonObject })),
+        dispatched: completed.calls.map(call => ({ callId: call.id, content: '合成工具回执' })) }))
+    }
+    const payload = record(record(continuation).payload), privateHistory = record(payload.history_thinking_by_tool_id)
+    expect(record(continuation).state_kind).toBe('anthropic_thinking_blocks')
+    expect(payload.tail_blocks).toBeNull()
+    expect(Object.keys(privateHistory)).toEqual(['older-call', 'first-call'])
+    expect(privateHistory['older-call']).toEqual([{ ...oldNative, _block_position: 0 }])
+    expect(privateHistory['first-call']).toEqual([{ ...currentNative, _block_position: 1 }, { ...redacted, _block_position: 2 }])
+    expect(Object.values(privateHistory).reduce<number>((count, blocks) => count + (blocks as JsonObject[]).length, 0)).toBe(3)
+    expect(Object.keys(record(payload.history_response_blocks_by_tool_id))).toEqual(['older-call', 'first-call', 'second-call'])
+    const original = structuredClone(canonical), digest = f.dependencies.digest(canonical)
+    let history = projectAnthropicHistory(canonical, invocation().config, anthropicPolicy)
+    for (let restore = 0; restore < 2; restore++) {
+      const originalHistory = structuredClone(history)
+      const completed = await anthropicDriver.complete(invocation({ history, continuation, purpose: 'branch', hasHistory: true }), f.dependencies)
+      const messages = record(f.requests[2 + restore]!.body).messages as JsonObject[]
+      const assistants = messages.filter(message => message.role === 'assistant')
+      expect(assistants).toEqual([{ role: 'assistant', content: [oldNative, oldTool] }, { role: 'assistant', content: currentBlocks }])
+      expect(history).toEqual(originalHistory)
+      expect(record(record(completed.continuation).payload).history_thinking_by_tool_id).toEqual(privateHistory)
+      history = messages; continuation = completed.continuation
+    }
+    expect(record(f.requests[3]!.body).messages).toEqual(record(f.requests[2]!.body).messages)
+    expect(canonical).toEqual(original); expect(f.dependencies.digest(canonical)).toBe(digest)
+    expect(JSON.stringify(canonical)).not.toContain('synthetic-older-signature'); expect(JSON.stringify(canonical)).not.toContain('synthetic-redacted-data')
+  })
+
+  it('原生wire清参仅改变assistant行的tool输入，签名/分段/多行结果及缓存原样进入真实HTTP', async () => {
+    const history: JsonObject[] = [{ role: 'assistant', content: [{ type: 'text', text: '前文' },
+      { type: 'thinking', thinking: '合成推理', signature: 'synthetic-wire-signature' }, { type: 'redacted_thinking', data: 'synthetic-redacted' },
+      { type: 'text', text: '后文' }, { type: 'tool_use', id: 'a', name: 'lookup', input: { q: 1 } },
+      { type: 'tool_use', id: 'b', name: 'lookup', input: { q: 2 }, cache_control: { type: 'ephemeral' } }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'a', content: '完整结果A' }] },
+      { role: 'user', content: [{ type: 'text', text: '结果附注' }, { type: 'tool_result', tool_use_id: 'b', content: '完整结果B', is_error: true }] }]
+    const original = structuredClone(history), f = fixture([{ json: { content: [], stop_reason: 'end_turn' } }]), digest = f.dependencies.digest(history)
+    const transformed = anthropicDriver.transformHistory!(history, 'strip-tool-inputs', 0)
+    expect(transformed.changedMessages).toBe(1)
+    const expected = structuredClone(original)
+    for (const block of expected[0]!.content as JsonObject[]) if (block.type === 'tool_use') block.input = {}
+    expect(transformed.messages).toEqual(expected)
+    expect(transformAnthropicWireHistory(transformed.messages, 'strip-tool-inputs', 0)).toEqual({ messages: expected, changedMessages: 0 })
+    await anthropicDriver.complete(invocation({ history: transformed.messages, purpose: 'branch', hasHistory: true }), f.dependencies)
+    expect(record(f.requests[0]!.body).messages).toEqual(expected)
+    expect(history).toEqual(original); expect(f.dependencies.digest(history)).toBe(digest)
+  })
+
+  it('原生wire裁旧按多工具完整单元减半，保护前缀交叉组/系统摘要提醒/最新组且不单裁thinking', async () => {
+    const call = (id: string): JsonObject => ({ type: 'tool_use', id, name: 'lookup', input: { q: id } })
+    const reply = (id: string): JsonObject => ({ role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: `结果${id}` }] })
+    const native: JsonObject = { type: 'thinking', thinking: '合成原位推理', signature: 'synthetic-preserved-signature' }
+    const history: JsonObject[] = [{ role: 'system', content: '系统' }, { role: 'user', content: [{ type: 'text', text: '<compacted-summary>摘要</compacted-summary>' }] },
+      { role: 'user', content: [{ type: 'text', text: '[system-reminder]提醒' }] },
+      { role: 'assistant', content: [native, call('prefix')] }, reply('prefix'),
+      { role: 'user', content: '最旧可删行' },
+      { role: 'assistant', content: [{ type: 'text', text: '原位前文' }, native, call('a'), call('b')] }, reply('a'), reply('b'),
+      { role: 'user', content: '较新可删行' }, { role: 'assistant', content: [{ type: 'text', text: '较新回复' }, native] },
+      { role: 'assistant', content: [native, call('latest')] }, reply('latest')]
+    const original = structuredClone(history), f = fixture([{ json: { content: [], stop_reason: 'end_turn' } }]), digest = f.dependencies.digest(history)
+    const transformed = anthropicDriver.transformHistory!(history, 'trim-oldest-units', 4)
+    // 可删单元共四个，删最旧两个：单行用户与三行双工具组；前缀保护跨至其结果行。
+    expect(transformed.changedMessages).toBe(4)
+    expect(transformed.messages).toEqual([...original.slice(0, 5), ...original.slice(9)])
+    const nativeAfter = transformed.messages.filter(message => message.role === 'assistant')
+    expect(nativeAfter).toEqual([original[3], original[10], original[11]])
+    const outgoing = transformed.messages.filter(message => message.role !== 'system')
+    await anthropicDriver.complete(invocation({ history: outgoing, purpose: 'branch', hasHistory: true }), f.dependencies)
+    expect(record(f.requests[0]!.body).messages).toEqual(outgoing)
+    expect(history).toEqual(original); expect(f.dependencies.digest(history)).toBe(digest)
+    expect(transformAnthropicWireHistory(history, 'trim-oldest-units', history.length).changedMessages).toBe(0)
+  })
+
+  it('Canonical封套和空尾行不能挤掉摘要裁旧中的提醒及最新完整正文保护', () => {
+    const history: JsonObject[] = [{ role: 'user', content: [{ type: 'text', text: '【消息正文】\n[system-reminder]提醒' }] }, { role: 'user', content: '旧正文' }, { role: 'assistant', content: [{ type: 'text', text: '最新完整正文' }] }, { role: 'assistant', content: [] }]
+    expect(transformAnthropicWireHistory(history, 'trim-oldest-units', 0)).toEqual({ messages: [history[0], history[2], history[3]], changedMessages: 1 })
+    expect(transformAnthropicWireHistory([history[0]!, history[2]!, history[3]!], 'trim-oldest-units', 0).changedMessages).toBe(0)
+  })
+
+  it.each(([
+    [{ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'orphan', content: '孤儿' }] }],
+    [{ role: 'assistant', content: [{ type: 'tool_use', id: 'missing', name: 'lookup', input: {} }] }],
+    [{ role: 'assistant', content: [{ type: 'tool_use', id: 'a', name: 'lookup', input: {} }, { type: 'tool_use', id: 'b', name: 'lookup', input: {} }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'a', content: '仅A' }] }],
+  ] as JsonObject[][]).map(history => ({ history })))('异常wire配对%j不靠裁切或清参静默修复成成功', ({ history }) => {
+    for (const stage of ['strip-tool-inputs', 'trim-oldest-units'] as const)
+      expect(() => transformAnthropicWireHistory(history, stage, 0)).toThrowError(ProviderError)
+  })
+
+  it.each([-1, 0.5, 2])('wire转换拒绝无效保护行边界%i而不修改历史', protectedPrefixRows => {
+    const history: JsonObject[] = [{ role: 'user', content: '保留' }]
+    expect(() => transformAnthropicWireHistory(history, 'trim-oldest-units', protectedPrefixRows)).toThrowError(ProviderError)
+    expect(history).toEqual([{ role: 'user', content: '保留' }])
   })
 
   it.each([['{"a":"合成', {}], ['{"a":[1,2', { a: [1, 2] }], ['{"a":1,', { a: 1 }], ['{', {}], ['{"a":1,"b":', { a: 1 }], ['{"a": tru', {}],

@@ -4,13 +4,13 @@ import type { JsonObject } from '../../../src/agent/providers/contracts.js'
 import type { ProviderConfig, ProviderWire } from '../../../src/agent/providers/contracts.js'
 import { ProviderRuntime } from '../../../src/agent/providers/runtime.js'
 import { runContextBranch } from '../../../src/agent/harness/context/reflection.js'
-import { outputBudget } from '../../../src/agent/providers/standalone.js'
+import { outputBudget, parseStructuredJson } from '../../../src/agent/providers/standalone.js'
 import { providerSelection } from '../../../src/agent/providers/registry.js'
 import { streamWithRetry } from '../../../src/agent/providers/retry.js'
 import { ProviderError } from '../../../src/agent/providers/errors.js'
 import { MessageArea, canonicalToolRound } from '../../../src/agent/harness/history/canonical-history.js'
 import { anthropicDriver, anthropicPolicy } from '../../../src/agent/providers/anthropic.js'
-import { mergeOpenaiSystemMessages, prepareOpenAiCache, projectOpenai, renderOpenaiHistory, sanitizeOpenaiToolHistory } from '../../../src/agent/providers/openai-history.js'
+import { mergeOpenaiSystemMessages, prepareOpenAiCache, projectOpenai, renderOpenaiHistory, sanitizeOpenaiToolHistory, transformOpenaiWireHistory } from '../../../src/agent/providers/openai-history.js'
 import { normalizedToolCall, normalizeOpenaiUsage, openaiDriver, openaiPolicy } from '../../../src/agent/providers/openai.js'
 import { customPolicy, digest, events, invocation, sse, tool, transport } from './openai-fixtures.js'
 
@@ -20,14 +20,73 @@ function branchRuntime(config: ProviderConfig, payload: unknown) {
     references: { dehydrate: async entry => structuredClone(entry.message), hydrate: async entry => structuredClone(entry.message) },
     prepareRequest: async () => ({ prefix: [], dynamicTail: [] }),
     resolve: async (_identity, modelIdentity) => ({ modelIdentity, accessScopeHash: 'scope-synthetic', config, systemPrompt: '规则' }) })
-  const branch = (hasHistory: boolean) => runContextBranch<ProviderWire>({ ownerId: 'owner-synthetic', sessionId: 'session-synthetic', runId: 'run-synthetic', stableSystem: '规则', delta: '追加任务', tools: [],
-    ...(hasHistory ? { canonicalHistory: [{ role: 'user', content: '历史问题' }] } : {}) }, { name: 'reflection', outputMode: 'json' },
+  const branch = (hasHistory: boolean, thinking?: string, maxOutputTokens?: number) => runContextBranch<ProviderWire>({ ownerId: 'owner-synthetic', sessionId: 'session-synthetic', runId: 'run-synthetic', stableSystem: '规则', delta: '追加任务', tools: [],
+    ...(hasHistory ? { canonicalHistory: [{ role: 'user', content: '历史问题' }] } : {}) }, { name: 'reflection', outputMode: 'json', maxOutputTokens },
   { digest, nextId: () => `branch-${++id}`, pauseBeforeRetry: async () => undefined, diagnostic: () => undefined,
-    provider: { isInputRejected: () => false, complete: request => runtime.completeBranch({ ...request, modelIdentity: 'model-synthetic' }) } })
+    provider: { isInputRejected: () => false, complete: request => runtime.completeBranch({ ...request, modelIdentity: 'model-synthetic', thinking }) } })
   return { ...f, runtime, branch }
 }
 
 describe('OpenAI协议能力与历史投影', () => {
+  it.each(['openai', 'ollama'] as const)('%s摘要wire清参只改调用参数，保留并行ID、思考和结果，重复变换不虚报改变', protocol => {
+    const history: JsonObject[] = [{ role: 'system', content: '固定前缀' },
+      { role: 'assistant', content: '读取说明', reasoning_content: 'synthetic-private', thinking: 'synthetic-native', tool_calls: [
+        { id: 'a', type: 'function', function: { name: 'read', arguments: protocol === 'ollama' ? { path: 'synthetic' } : '{ "path": "synthetic" }' } },
+        { id: 'b', type: 'function', function: { name: 'lookup', arguments: protocol === 'ollama' ? { q: '合成' } : '{"q":"合成"}' } },
+      ] }, { role: 'tool', tool_call_id: 'a', tool_name: 'read', content: '{"arguments":{"不得清除":"结果正文"}}' },
+      { role: 'tool', tool_call_id: 'b', tool_name: 'lookup', content: '完整回执' }, { role: 'assistant', content: '最新正文' }]
+    const original = structuredClone(history), transformed = transformOpenaiWireHistory(history, 'strip-tool-inputs', 1, protocol)
+    expect(transformed.changedMessages).toBe(1)
+    const expected = structuredClone(original)
+    for (const call of expected[1]!.tool_calls as JsonObject[]) (call.function as JsonObject).arguments = protocol === 'ollama' ? {} : '{}'
+    expect(transformed.messages).toEqual(expected); expect(history).toEqual(original)
+    expect(transformOpenaiWireHistory(transformed.messages, 'strip-tool-inputs', 1, protocol).changedMessages).toBe(0)
+  })
+  it('Chat摘要裁旧按并行调用和全部结果原子移除，固定前缀、summary/reminder及最新工具组保留', () => {
+    const history: JsonObject[] = [{ role: 'system', content: '固定前缀' }, { role: 'user', content: '受保护的前缀行' }, { role: 'user', content: '最旧问题' },
+      { role: 'assistant', reasoning_content: 'old-private', tool_calls: [{ id: 'a', function: { name: 'read', arguments: '{}' } }, { id: 'b', function: { name: 'lookup', arguments: '{}' } }] },
+      { role: 'tool', tool_call_id: 'b', content: 'b回执' }, { role: 'tool', tool_call_id: 'a', content: 'a回执' }, { role: 'user', content: '较新问题' },
+      { role: 'user', content: '[system-reminder]\n不可裁上下文' }, { role: 'user', content: '<compacted-summary>摘要</compacted-summary>' }, { role: 'user', content: '## 项目\n项目上下文' },
+      { role: 'assistant', reasoning_content: 'latest-private', tool_calls: [{ id: 'latest', function: { name: 'read', arguments: '{}' } }] }, { role: 'tool', tool_call_id: 'latest', content: '最新回执' }]
+    const original = structuredClone(history), transformed = transformOpenaiWireHistory(history, 'trim-oldest-units', 2)
+    expect(transformed.changedMessages).toBe(4)
+    expect(transformed.messages).toEqual([...original.slice(0, 2), ...original.slice(6)])
+    expect(JSON.stringify(transformed.messages)).not.toContain('old-private'); expect(history).toEqual(original)
+    const boundary = transformOpenaiWireHistory(history, 'trim-oldest-units', 4)
+    expect(boundary.messages).toContainEqual(original[3]); expect(boundary.messages).toContainEqual(original[4]); expect(boundary.messages).toContainEqual(original[5])
+  })
+  it('异常孤儿和未完成调用整组保护，Ollama仅tool_name回执仍与全部同名并行调用一起裁切', () => {
+    const broken: JsonObject[] = [{ role: 'assistant', tool_calls: [{ id: 'a', function: { name: 'read', arguments: '{}' } }] }, { role: 'tool', tool_call_id: 'foreign', content: '孤儿回执' },
+      { role: 'user', content: '可裁旧正文' }, { role: 'user', content: '较新正文' }, { role: 'assistant', content: '最新正文' }, { role: 'user', content: '[system-reminder]\n尾部上下文' }, { role: 'assistant', content: '' }]
+    const result = transformOpenaiWireHistory(broken, 'trim-oldest-units', 0)
+    expect(result.messages).toEqual([broken[0], broken[1], ...broken.slice(3)]); expect(result.changedMessages).toBe(1)
+    const native: JsonObject[] = [{ role: 'assistant', thinking: 'old-private', tool_calls: [{ id: 'a', function: { name: 'read', arguments: {} } }, { id: 'b', function: { name: 'read', arguments: {} } }] },
+      { role: 'tool', tool_name: 'read', content: '第一个回执' }, { role: 'tool', tool_name: 'read', content: '第二个回执' }, { role: 'user', content: '较新问题' }, { role: 'assistant', content: '最新正文' }]
+    expect(transformOpenaiWireHistory(native, 'trim-oldest-units', 0, 'ollama')).toEqual({ messages: native.slice(3), changedMessages: 3 })
+    expect(() => transformOpenaiWireHistory(native, 'trim-oldest-units', -1, 'ollama')).toThrow(ProviderError)
+  })
+  it('Chat driver实际HTTP采用清参和裁旧后的原生wire，私有思考与回执不被Canonical重投影', async () => {
+    const history: JsonObject[] = [{ role: 'system', content: '固定规则' }, { role: 'user', content: '最旧问题' },
+      { role: 'assistant', reasoning_content: 'old-private', tool_calls: [{ id: 'old', type: 'function', function: { name: 'lookup', arguments: '{"q":"旧"}' } }] }, { role: 'tool', tool_call_id: 'old', content: '旧回执' },
+      { role: 'user', content: '较新问题' }, { role: 'assistant', reasoning_content: 'latest-private', tool_calls: [{ id: 'latest', type: 'function', function: { name: 'lookup', arguments: '{ "q": "新" }' } }] }, { role: 'tool', tool_call_id: 'latest', content: '完整新回执' }]
+    const original = structuredClone(history), stripped = openaiDriver.transformHistory(history, 'strip-tool-inputs', 1), trimmed = openaiDriver.transformHistory(stripped.messages, 'trim-oldest-units', 1)
+    expect(stripped.changedMessages).toBe(2); expect(trimmed.changedMessages).toBe(3)
+    for (const stage of [stripped, trimmed]) {
+      const f = transport({ choices: [{ message: { content: '摘要完成' }, finish_reason: 'stop' }] })
+      await openaiDriver.complete(invocation({ history: stage.messages, system: '', policy: customPolicy({ explicitCache: () => false }), purpose: 'branch', hasHistory: true }), f.deps)
+      expect((f.requests[0]!.body as JsonObject).messages).toEqual(stage.messages)
+    }
+    expect(history).toEqual(original)
+  })
+  it('普通Chat真实流不声明Responses续接材料，配置continuation也不发送Responses状态字段', async () => {
+    const f = transport(sse({ choices: [{ delta: { content: '普通合成回复' }, finish_reason: 'stop' }] }), { raw: true })
+    const output = await events(openaiDriver.stream(invocation({ config: { provider: 'openai', model: 'gpt-test', reasoning_persistence: 'continuation' } }), f.deps))
+    expect(output.at(-1)).toMatchObject({ type: 'complete', text: '普通合成回复', calls: [] })
+    expect(output.at(-1)).not.toHaveProperty('continuation')
+    const body = f.requests[0]!.body as JsonObject
+    expect(body.previous_response_id).toBeUndefined(); expect(body.include).toBeUndefined()
+    expect(body.input).toBeUndefined(); expect(body.store).toBeUndefined()
+  })
   it('同一MessageArea跨OpenAI和Anthropic投影保持revision、digest及工具schema元数据，协议形状各自正确', () => {
     let sequence = 0
     const area = new MessageArea({ digest, nextId: () => `area-${++sequence}` })
@@ -319,10 +378,14 @@ describe('OpenAI缓存、分片与真实请求边界', () => {
       expect(await f.runtime.completeBranch({ ...identity, modelIdentity: 'model-synthetic', stableSystem: '规则', delta: '输入', tools: [], maxOutputTokens: 1024, thinking: 'disabled' })).toMatchObject({ output: '{"ok":true}' })
       const branch = f.requests[2]!.body as JsonObject
       expect(branch.max_output_tokens).toBe(1024); expect(branch.reasoning).toBeUndefined(); expect(config).toEqual(original)
+      expect(await f.branch(false, 'disabled', 1024)).toMatchObject({ ok: true, output: { ok: true } })
+      const json = f.requests[3]!.body as JsonObject
+      expect(json.max_output_tokens).toBe(1024); expect(json.reasoning).toBeUndefined(); expect(config).toEqual(original)
     } finally { await f.runtime.close() }
   })
   it('真实Provider分支JSON解析只读可见正文，不从完整或未闭合thinking中取对象', async () => {
     for (const [content, valid] of [['<think>{"ok":false}</think>{"ok":true}', true], ['<think>{"ok":false}', false]] as const) {
+      expect(parseStructuredJson(content)).toEqual(valid ? { ok: true } : {})
       const f = branchRuntime({ provider: 'openai', model: 'gpt-test' }, { choices: [{ message: { content }, finish_reason: 'stop' }] })
       try { expect(await f.branch(true)).toMatchObject({ ok: valid, output: valid ? { ok: true } : null }) }
       finally { await f.runtime.close() }

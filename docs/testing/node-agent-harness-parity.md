@@ -27,7 +27,7 @@
 | streaming/backpressure.ts | stream consumer及并行批次；慢消费、提前return、取消后资源排空 |
 | interactions/coordinator.ts | interactions/confirmation/resume；单次回执消费、等待队列与崩溃恢复 |
 
-真实 Provider wire/thinking/signature 投影、Tools registry/参数校验/dispatch 和共享持久 jobs/lease/outbox 实现不搬进 Harness；当前仓库尚无对应 TS 实现时保持明确端口依赖，不造空实现。
+真实 Provider wire/thinking/signature 投影、Tools registry/参数校验/dispatch 和共享持久 jobs/lease/outbox 实现不搬进 Harness。后续 Provider 切片现已提供实际反思追加、摘要 wire 转换和分支调用适配，并通过实际 Harness 快照的四协议三阶段摘要恢复；详见 [Provider 验收](node-agent-provider-parity.md)。Tools、持久 jobs/lease/outbox 仍保持明确端口依赖，不造空实现；本清单不据此批量升级旧 Host/Data 条目。
 
 ## 生产调用链和迁移责任
 

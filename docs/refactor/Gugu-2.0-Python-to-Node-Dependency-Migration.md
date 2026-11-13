@@ -73,7 +73,7 @@
 | `lark-oapi>=1.7.4,<2.0.0` | 飞书 WS 长连/API | `@larksuiteoapi/node-sdk` | M | 消息事件顺序、卡片交互、重连、媒体上传/下载 |
 | `oss2>=2.18.0` | 阿里云 OSS | `ali-oss`（候选） | M | 分片上传、签名 URL、分页、权限、迁移回滚 |
 
-2026-11-13 Provider 切片未新增 Node Provider SDK 依赖：Chat/Responses/Anthropic/Ollama 的 wire、usage、原生续接和错误映射由 `gugu-core/src/agent/providers/` 实际实现，Node 专属 HTTP/DNS/TLS/代理仅从独立入口装配。旧 SDK 内部累加器异常白名单、httpx/httpx2 对象桥接退役，不机械复制语言内部异常类；已收到正文/工具参数/私有推理后的请求禁止重放。URL/DNS 固定、重定向拒绝、分阶段超时、真实合成 TLS/代理和流取消有运行回归，但 SOCKS、自定义 CA 环境文件自动加载和 Host 网络配置热更新仍需独立接线。具体差异及未完成项见 [Provider 映射](../testing/node-agent-provider-parity.md)，不能据此宣称 M6 或生产入口已整体迁移。
+2026-11-13 Provider 切片未新增 Node Provider SDK 依赖：Chat/Responses/Anthropic/Ollama 的 wire、usage、原生续接和错误映射由 `gugu-core/src/agent/providers/` 实际实现，Node 专属 HTTP/DNS/TLS/代理仅从独立入口装配。旧 SDK 内部累加器异常白名单、httpx/httpx2 对象桥接退役，不机械复制语言内部异常类；已收到正文/工具参数/私有推理后的请求禁止重放。URL/DNS 固定、重定向拒绝、分阶段超时、真实合成 TLS/代理和流取消有运行回归，默认环境代理、CA 文件/目录读取及实际网络快照池键也已有生产实现和真实回归；搜索可显式关闭环境继承，SOCKS 明确不支持，真实 Host 网络配置热更新装配仍待验收。具体差异及未完成项见 [Provider 映射](../testing/node-agent-provider-parity.md)，不能据此宣称 M6 或生产入口已整体迁移。
 
 > QQ 目前为 raw WebSocket + HTTP；微信 iLink 有独立适配代码，它们**虽不是上述 pip 包**，仍须迁移消息、媒体、幂等、Gateway、trace_id 与重试逻辑。
 

@@ -4,7 +4,7 @@ import { isContextOverflowError } from '../harness/context/budget.js'
 import type { JsonObject, ProjectionOptions, ProtocolDriver, ProviderConfig, ProviderDriverDependencies, ProviderInvocation, ProviderPolicy, ResponsesInputCapabilities } from './contracts.js'
 import { classifyProviderError, ProviderError } from './errors.js'
 import { requestEvents, requestJson } from './http.js'
-import { plainContent, renderOpenaiHistory, stripCacheControl } from './openai-history.js'
+import { plainContent, renderOpenaiHistory, stripCacheControl, transformOpenaiWireHistory } from './openai-history.js'
 import { normalizedToolCall, normalizeOpenaiUsage, openaiHttpRequest, unknownUsage } from './openai.js'
 import { array, clone, finite, record, reportUsage, text } from './values.js'
 
@@ -185,6 +185,7 @@ async function* stream(input: ProviderInvocation, deps: ProviderDriverDependenci
 
 export const responsesDriver: ProtocolDriver = {
   protocol: 'responses',
+  transformHistory: (history, stage, protectedPrefixRows) => transformOpenaiWireHistory(history, stage, protectedPrefixRows, 'responses'),
   buildRequest: (input, deps, streaming) => openaiHttpRequest(input, requestBody(input, deps, streaming), 'responses'),
   project(messages: readonly CanonicalMessage[], config: ProviderConfig, policy: ProviderPolicy, options: ProjectionOptions = {}) {
     const media = policy.responsesInputCapabilities(config)

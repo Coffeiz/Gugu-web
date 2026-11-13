@@ -44,7 +44,7 @@ export function isContextOverflowError(error: unknown): boolean {
     pending.push(own(current, 'cause'), own(current, '__cause__'), own(current, '__context__'))
     const text = [own(current, 'message'), own(current, 'code'), own(current, 'type'), own(current, 'param'), bodyText(own(current, 'body'))]
       .filter((value): value is string => typeof value === 'string').join(' ').toLowerCase()
-    if (['request_too_large', 'context_length_exceeded', 'context_window_exceeded', 'input_too_long', 'prompt_too_long'].some(marker => text.includes(marker)))
+    if (['context_overflow', 'request_too_large', 'context_length_exceeded', 'context_window_exceeded', 'input_too_long', 'prompt_too_long'].some(marker => text.includes(marker)))
       return true
     if (['max_tokens', 'maximum output', 'output token limit'].some(marker => text.includes(marker)))
       continue
