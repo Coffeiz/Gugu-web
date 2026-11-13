@@ -9,6 +9,7 @@ from typing import Tuple
 from agent.gateway.qq.client import QQStreamFinalizationError, QQStreamPrefixMismatchError
 from agent.interactions.events import ROUND_END
 from agent.models import AgentResponse
+from agent.security.sanitize import strip_disallowed_emoji
 
 
 @dataclass(slots=True)
@@ -327,8 +328,10 @@ class QQChartRound:
             return
         self.stream_sent = True
         delivered = str(getattr(stream, "last_sent_text", "") or "")
-        normalized = self._fix_loose_bold(delivered) if delivered else ""
-        prefix = delivered if text.startswith(delivered) else normalized if text.startswith(normalized) else ""
+        cleaned = strip_disallowed_emoji(delivered)
+        normalized = self._fix_loose_bold(cleaned)
+        prefix = next((candidate for candidate in (delivered, cleaned, normalized)
+                       if candidate and text.startswith(candidate)), "")
         if prefix:
             self.segment_text = text[len(prefix):]
             self.final_delivery.prefix_sent = self.final_delivery.candidate
