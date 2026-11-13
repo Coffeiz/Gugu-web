@@ -1,6 +1,6 @@
-# PRD-RAG-11：RAG 全量迁移到 Python/Cython
+# PRD-RAG-11：RAG 全量迁移到 Python/Cython（历史方案，已被替代）
 
-> 状态：代码迁移与引用核对完成，测试验收待执行。本分支以远端 `main` 为基线，将生产 RAG 查询、索引投影、缓存和 sidecar 统一到 Python/Cython，并清理 TS RAG 专属代码。尚未提交；本轮未运行测试。
+> 状态：历史方案，已被 2026-11-13 的 2.0 架构决策替代。2.0 改为复用 Gugu 1.7.8 TypeScript RAG 作为 Node/Core 唯一生产检索路径；本 PRD 仅保留当时 Python/Cython 收敛方案的记录，不再作为 2.0 实施目标。新目标见 [架构说明](../refactor/Gugu-2.0-架构说明.md)、[迁移任务清单](../refactor/Gugu-2.0-迁移任务清单.md) 和 [Python → Node 依赖迁移矩阵](../refactor/Gugu-2.0-Python-to-Node-Dependency-Migration.md)。
 > 创建：2026-10-29　|　更新：2026-11-04
 
 ## 目标

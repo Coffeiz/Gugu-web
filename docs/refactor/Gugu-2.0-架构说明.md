@@ -13,6 +13,7 @@
 - macOS、Windows 桌面采用本地优先、应用内单用户；Linux/NAS 与 SaaS 保留多用户。桌面是默认家节点，SaaS 不是必经中转。
 - SaaS 长期以多用户 DB、云同步及相应消息/任务路由为职责，不持有用户 FS，也不装配本机用户目录、watcher 或通用 Shell。首版可保留旧 FS 兼容链路，须完成数据去向和恢复验收后再退出。
 - 文件正文以授权范围内的本地 FS 为唯一真源，业务读写直接通过 FS Adapter 完成；不再采用“本地文件与 DB 正文副本靠 watcher 同步”的方案。DB 不为本地文件单独生成持久对象 ID；需要索引、搜索或预览时，可保存可丢弃、可从文件重建的派生数据。文件以授权根目录下的相对路径定位，改名或移动后旧路径引用允许失效；watcher 仅可作为派生数据刷新的优化，不得作为一致性或数据恢复的前提。
+- RAG 目标复用 Gugu 1.7.8 的 TypeScript RAG 实现，作为 Node/Core 的唯一生产检索路径；不再把 Cython RAG 算法移植到 Node，也不长期维护 TS 与 Cython 两套生产引擎。Python/Cython 仅可在迁移期作为当前行为的参考基准，退出前以回归与质量集确认 TS 行为。
 - Linux/NAS 自部署保留多用户，执行后端目标改为 MXC 调用受授权的系统环境；2.0 不再维护 Linux Docker 执行沙箱。SaaS 不使用该 Linux 自部署执行方案，也不提供因此隐含的宿主机命令能力。MXC 必须在 Linux 上落实账号间的工作区、进程、资源和网络边界后，才可作为多用户通用执行后端启用；系统环境调用不等于无边界的宿主机 Shell。
 - 各 Host 使用同一套 Core 定义，但分别拥有数据实例和运行生命周期。代码共享、数据同步、远程任务转交是三件事，分别验收。
 
@@ -21,7 +22,7 @@
 | 产品/入口 | 数据与运行职责 | FS / 执行职责 | 当前状态 |
 | --- | --- | --- | --- |
 | macOS / Windows Desktop | Electron Host 装配本地 Node Core、SQLite、稳定本地所有者；默认家节点 | 授权目录内直接读写文件；系统凭据和原生执行 Broker | Electron + Node 数据验证壳已实现；完整 Agent、FS 产品接入和正式发行未完成 |
-| Linux / NAS 自托管 | `gugu-webui` Node HTTP Host、多用户 Core Runtime、PostgreSQL；按部署需要使用 Redis | MXC 调用受授权的系统环境；保留多用户执行隔离，Linux Docker 执行沙箱不再作为 2.0 维护目标 | Node Host 的 Linux 部署切片已在 devserver 和 Node 26 容器验证；主站/Admin Vue 静态产物由镜像构建并由 Node Host 提供，另有健康检查、公开站点配置、密码登录与认证用户读取、项目活动/回收站列表、详情/文件计数读取、日历列表/详情、客户列表/创建/删除、通知和埋点路由；多数业务 API、SSE 和 Worker 仍运行在 Python |
+| Linux / NAS 自托管 | `gugu-webui` Node HTTP Host、多用户 Core Runtime、PostgreSQL；按部署需要使用 Redis | MXC 调用受授权的系统环境；保留多用户执行隔离，Linux Docker 执行沙箱不再作为 2.0 维护目标 | Node Host 的 Linux 部署切片已在 devserver 和 Node 26 容器验证；主站/Admin Vue 静态产物由镜像构建并由 Node Host 提供，另有健康检查、公开站点配置、密码登录与认证用户读取、项目活动/回收站列表、详情/文件计数读取、工作区列表/声明与绑定、日历读写、客户读写、通知和埋点路由；登录限流可选用共享 Redis。工作区列表暂时将 sandbox readiness 设为不可用；注册仍返回显式 503。多数业务 API、SSE 和 Worker 仍运行在 Python |
 | SaaS | 多用户 PostgreSQL、云同步、连接路由；按启用能力装配常驻 Core Runtime 副本 | 不装配 Linux 自部署的 MXC 执行后端；长期无用户 FS，需要端侧资源时走显式授权的任务转交 | 新 Node SaaS Host 与云同步尚未实现；旧 FS 仅为过渡兼容 |
 | Mobile | 可作为远端入口，后续也可承载独立本地数据/Runtime | 仅实现移动平台允许的文件和系统能力 | 目标方案；只承诺共享可移植 TS 边界，不假定能运行完整 Node、桌面原生模块或任意 Shell |
 | Web 控制台、IM 等入口 | 请求转换、连接、展示；业务事实由选定 Runtime 持久化 | 不因能够连接 Runtime 而获得端侧权限 | 现有入口保留；跨设备绑定/路由待实现 |
@@ -124,31 +125,53 @@ gugu-desktop/
     package.ts                     # 装配 Core/原生资源、依赖与许可证，调用打包
     smoke.ts                       # 干净临时环境中的安装资源与重启/故障冒烟
   electron-builder.yml             # 资源布局、平台安装包、签名与更新配置
-gugu-webui/                        # Linux/NAS 自托管版 Node HTTP Host 与部署装配；当前为首个业务读取切片
+gugu-webui/                        # Linux/NAS 自托管版 Node HTTP Host 与部署装配
   package.json                     # workspace 包；依赖 @gugu/core，不复制 Core 源码
   src/
-    app.ts                         # Fastify app；健康检查、认证用户读取、项目/日历读取与客户路由
-    main.ts                        # PostgreSQL/Core 装配、启动、信号处理与优雅关闭
+    app.ts                         # Fastify Host 组合根；安装共享 HTTP 边界并注册域插件，不承载域业务实现
+    main.ts                        # PostgreSQL/Core/Redis 等 Adapter 装配、启动、信号处理与优雅关闭
     config.ts                      # 环境变量解析与启动前校验
-    auth.ts                        # 当前实现 HS256 用户令牌、Cookie CSRF 与账户版本校验
-    database.ts                    # readiness 核对认证和项目读取依赖的 PostgreSQL 表/列
-    users.ts                       # 当前用户只读查询、IM bot 投影及活跃时间仓储
-    projects.ts                    # 使用 Core 项目查询及 PostgreSQL 项目文件计数投影
-    events.ts                      # PostgreSQL 日历事件 owner-scoped 列表/详情读取
-    clients.ts                     # 使用 Core Runtime 提供客户列表、创建和删除
     config/
       capabilities.ts              # 本部署显式启用的能力
     http/
+      errors.ts                    # 统一映射 Core/HTTP 错误，保持 FastAPI {detail} 响应契约
+      authenticated-domain.ts      # 认证一次并向域插件提供可信 RequestContext
+      dto/                         # 〔规划〕共享请求/响应 DTO 与校验器
       server.ts                    # HTTP 服务生命周期
-      middleware/                  # 身份、请求上下文、错误映射与日志
-      routes/                      # 保持现有 API 契约的 Web 路由
       sse/                         # 流式事件与连接生命周期
-    identity/
-      request-identity.ts          # 可信认证身份映射到 Core DataContext
+    domains/
+      auth/                        # 用户/Admin 认证、资料、会话撤销及用户仓储
+        routes/                    # 认证 HTTP 入口
+        application/               # 认证用例
+        persistence/                # 用户与会话数据访问
+      projects/                    # 项目查询、创建、文件计数
+        routes/                    # 项目 HTTP 入口
+        application/               # 项目写用例
+        persistence/                # Core/PG 查询与写入 Adapter
+      workspaces/                  # workspace 声明、绑定、目录和授权边界
+        routes/                    # 工作区 HTTP 入口
+        persistence/                # 工作区与会话绑定数据访问
+      calendar/                    # 日历读写、提醒、Undo 快照及事件发布
+        routes/                    # 日历 HTTP 入口
+        application/               # 日历写用例
+        persistence/                # PostgreSQL 事务 Adapter
+      clients/                     # 联系人查询与维护
+        routes/                    # 联系人 HTTP 入口
+        persistence/                # Core Data Adapter
+      notifications/               # 站内通知读取/操作
+        routes/                    # 通知 HTTP 入口
+        persistence/                # 通知读写
+      site/                        # 公开站点配置与埋点
+        routes/                    # 站点 API 入口
+        persistence/                # 埋点存储
+      admin/                       # 管理端认证、只读分析、提示词与预设域
+      agent-sessions/              # Agent 会话 API、投影、交互与工具
     adapters/
       postgres/                    # 连接池与 Core PostgreSQL Adapter 装配
+      redis-events.ts              # 跨域 Redis 通知与 revision Adapter
       executor/                    # 〔规划〕Linux MXC；隔离验收后才允许装配
-    workers/                       # 〔规划〕迁入后的后台任务入口与生命周期
+    workers/                       # 队列/租约/消费生命周期；由 Host 注入运行时 Adapter
+    migrations/                    # WebUI 部署所需的显式数据库迁移
   web-dist/                        # frontend 构建生成的静态产物，不提交源码副本
   deploy/
     Dockerfile                     # Linux Web Host 镜像
@@ -173,10 +196,31 @@ gugu-webui/                        # Linux/NAS 自托管版 Node HTTP Host 与�
 gugu-saas/                         # 〔规划〕SaaS Gateway、身份、同步与云端部署装配
 gugu-mobile/                       # 〔规划〕移动 Host 与系统能力 Adapter
 frontend/                          # 保留 Vue/Web 与 src/desktop；桌面 bridge 待接 preload
+  src/api/
+    client.ts                      # 从 services/api.ts 收口通用请求、CSRF、错误处理和请求去重
+    auth.ts                        # 认证/账户 API
+    files.ts                       # files、folders、trash、workspace directories API
+    projects.ts                    # 项目 API
+    mind.ts                        # 思维 API
+    calendar.ts                    # events API
+    schedules.ts                   # 定时任务 API
+    agent.ts                       # Agent/会话 API
+    integrations.ts                # BYOK、MCP、IM 连接 API
+    preferences.ts                 # 用户偏好 API
+    admin/                          # Admin API，按业务域继续拆分
+      filesync.ts                  # 文件同步管理 API
+    types/                          # 仅跨领域共享类型；领域类型留在对应 API 模块
+    index.ts                       # 可选兼容导出
 backend/                           # 迁移期 Python Web/Agent/Worker 与现有业务
 compat/                            # 仍在使用的 Python 兼容包，不复制新能力
 docs/                              # refactor 主清单/矩阵/归档，testing 分层规范与映射
 ```
+
+WebUI 目录参照 Python `backend/app/api/v1/`、`backend/app/services/`、`backend/app/db/` 与 `backend/app/core/` 的职责边界：业务域作为路由/服务模块组织边界，域内按 `routes/`、`application/`、`persistence/` 拆分；共享认证身份、DTO 校验、HTTP 错误和日志归 `http/` 公共边界，跨域运行时 Adapter 放在 `adapters/`。域插件只能从 Host 收到显式依赖，不能自行读取请求头推断 owner、创建全局连接或绕过 Core 契约。`app.ts` 只负责安装共享 HTTP 能力并注册域插件，`main.ts` 负责构造并注入 PG/Redis/Core 等 Adapter。
+
+2026-11-13 已将现有认证、Admin、Agent 会话、项目、工作区、日历、联系人、通知和站点 API 模块从 `src/` 根目录移入 `src/domains/<domain>/`，并将共享 Redis 事件 Adapter 移入 `src/adapters/`；`app.ts`、`main.ts`、启动配置、数据库 readiness、静态资源、HTTP 边界、Worker 与 migrations 保持 Host/基础设施职责。当前部分 Admin 与 Agent 原型仍在单个模块中混合 route/service/persistence，后续在行为切片稳定和 Host 接线时按上述分层继续拆分，不做一次性全树重写。`src/http/` 是共享边界，不能把业务 SQL/服务塞入该目录。
+
+Vue 前端 API 客户端也按业务域组织在 `frontend/src/api/`：通用传输、CSRF、错误与请求去重由 `client.ts` 承担；`auth.ts`、`files.ts`、`projects.ts`、`mind.ts`、`calendar.ts`、`schedules.ts`、`agent.ts`、`integrations.ts`、`preferences.ts` 和 `admin/` 各自负责对应领域。领域类型放在所属 API 模块，`types/` 只收真正跨域共享类型。现有 `frontend/src/services/api.ts` 在迁移期作为兼容入口逐步收口到新模块，调用方分批迁移；`index.ts` 可提供短期兼容导出，不能重新成为所有业务 API 的集中实现。
 
 正式 stdio 已移入 `runtime/transport/stdio.ts`；原 `.mjs` 制品/主动验证脚本作为 package/smoke 的共用辅助保留。生成的 Node/Core/原生资源放打包暂存及应用资源目录，不作为新的源代码职责层，也不提交 Git。
 
@@ -187,6 +231,7 @@ docs/                              # refactor 主清单/矩阵/归档，testing 
 | Core Domain / Application | 领域不变量、业务用例、所有权规则、确认与副作用语义 | Host 建立可信身份、展示确认并验证调用来源 |
 | Core Data Runtime | 仓储、schema、事务、精度、CAS、操作收据及迁移实现 | Host 停写、备份编排、独占升级、启动和运维配置 |
 | Core Agent | Canonical 历史、Provider 适配、上下文、工具及 Run 编排 | Host 注入凭据、网络/进程能力与入口交付 |
+| Core RAG | 复用 1.7.8 TypeScript 检索与排序规则；索引为派生数据，可从授权 FS/Canonical 数据重建 | Host/Core Data Adapter 负责授权来源读取和索引持久化；Python/Cython 不作为 Node 生产执行路径 |
 | Core Runtime / Transport | `commands.ts` 统一命令边界；stdio/进程 IPC 只处理编码、消息、背压、超时与错误终态 | Electron IPC 的窗口/frame 来源校验和 Preload 暴露由 Desktop 负责 |
 | Core Executor | 共用执行契约、策略计算、能力协商、MXC/平台适配及执行终态 | Host 注入真实授权、原生后端、私有资源与生命周期；OS 后端强制隔离 |
 | Host Broker | 数据及平台 Adapter 装配、能力协商、进程和资源生命周期 | 业务数据规则继续由 Core 统一维护 |
@@ -197,6 +242,8 @@ docs/                              # refactor 主清单/矩阵/归档，testing 
 SQLite 内部数据文件、初始化与备份属于 Data Adapter，不等于提供用户工作目录 FS。数据库查询不经过命令执行沙箱；可信 Core 的数据库和密钥也不能随工作区授权暴露给待执行进程。
 
 本地文件正文不进入 DB 作为同步副本。派生索引或缓存必须能丢弃并从源文件重建，不能在 DB 与文件不一致时回写旧内容覆盖源文件。需要持久化的文件引用使用授权根目录及相对路径；路径改变后引用可以失效，由用户重新定位，不通过 watcher 推断或重建文件身份。
+
+RAG 复用既有 TypeScript 算法实现，不从 Cython 重写算法。迁移重点是接入 Node/Core 的授权数据读取、来源适配、派生索引生命周期和重建流程，并以当前 Python/Cython 回归及固定质量语料验证召回来源、Token、候选、排序、confidence 与 ACL 过滤；索引格式或 tokenizer 版本变化时须明确重建策略。迁移期间 Python/Cython 仅用于差分参考，不与 TS 同时成为线上权威结果。
 
 ### 2.2 Transport、Executor 与桌面装配边界
 

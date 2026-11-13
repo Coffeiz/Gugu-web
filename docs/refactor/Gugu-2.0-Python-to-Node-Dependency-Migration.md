@@ -127,7 +127,7 @@
 |---|---|---|---|
 | `pytest>=8.0` | `vitest` | M | 将行为契约转换为 TS 测试 |
 | `pytest-asyncio>=0.23` | Vitest async/Promise | E | 异步取消、竞态与失败注入 |
-| `Cython>=3.1` | 优先复用 TS/Rust RAG；必要时 N-API/WASM | H | `cython_native` 算法与排序行为等价 |
+| `Cython>=3.1` | 复用 Gugu 1.7.8 TypeScript RAG；Node 生产路径不引入 Cython/N-API/WASM RAG 内核 | M | 对照当前 Python/Cython 回归与质量语料，验证分词、BM25/混合排序、confidence、ACL、索引重建 |
 | `setuptools>=68` | TS 构建链；删除 `pyximport` | N/A | 无剩余构建时 Python import |
 | `aiosqlite>=0.20` | 本地 SQLite 测试与测试数据库 | M | 事务、WAL、并发一致性 |
 | `fakeredis[lua]>=2.30` | 真实隔离 Redis 优先；`ioredis-mock` 仅做单元 mock | M | Lua 锁、Streams 不可仅靠 mock 证明 |
@@ -173,8 +173,8 @@ Core 的 `runtime/transport/stdio.ts` / `ipc.ts` 仅适配传输，复用 `runti
 | PostgreSQL | SaaS 多用户事实库 | **保留** | 兼容历史数据/Alembic、零重建 |
 | Redis | SaaS IM/协调/通知 | **保留** | Streams 重试、锁、通知 |
 | SQLite | Desktop 数据库 | **保留** | WAL/备份/恢复/迁移 |
-| Cython 原生 RAG 内核 | 现有 Python/Cython 算法 | TS / `@node-rs/jieba` / Rust N-API | BM25、分词/投影、索引版本 |
-| Python RAG/记忆对象文件 | 非全部存在 DB | 统一 Node 内容 Store | 数据迁移完整性、删除屏障 |
+| Cython 原生 RAG 内核 | 当前 Python 参考实现 | 复用 1.7.8 TypeScript RAG；迁移后 Node 只运行 TS 检索路径 | Python/Cython 差分回归、分词/排序/权限过滤、性能与索引重建 |
+| RAG 来源正文与文件/记忆内容 | 本地文件或既有 Canonical 来源 | 通过授权 FS / Core 来源 Adapter 按需读取；DB 只存可重建的派生索引/缓存，不复制文件正文或创建独立本地文件对象 ID | 路径授权、来源变更后的失效/重建、删除屏障、ACL 过滤 |
 | Linux sandboxd/容器 | Web/NAS 执行隔离 | 保留或实现同协议 Adapter | 防止 Host fallback |
 | Windows MXC | PR #116 有受限验证 | 从旧桌面 Host 绑定抽离后端，经 Core `executor/mxc.ts` 适配；桌面仅装配/诊断 | Node/MCP/PTY 严格隔离尚未证明；Electron Renderer sandbox 不替代它 |
 | macOS sandbox | 尚未验收 | 原生 Adapter（待选型） | 签名、公证、文件授权、进程树 |
@@ -222,7 +222,7 @@ Core 的 `runtime/transport/stdio.ts` / `ipc.ts` 仅适配传输，复用 `runti
 | M2 | Electron Host + 随包 Node Core | Main/Preload 权限、旧数据连续性、未知结果恢复及 Windows/macOS 安装/签名/更新/重启；无 Python 安装 |
 | M3 | Web 项目/联系人事务切换 | 由 Node 唯一写入，PG 历史数据不变，事件/权限/撤销一致 |
 | M4 | 会话、Job、调度、事件总线 | Canonical History、Redis Stream、幂等、恢复一致 |
-| M5 | RAG、记忆、媒体、Office | 质量基准通过，旧索引有明确重建路径 |
+| M5 | 复用 1.7.8 TypeScript RAG，迁移记忆、媒体、Office 来源适配 | Python/Cython 回归与质量集对照通过；Node 单一生产检索路径；授权 FS 直读、派生索引可重建；旧索引有明确重建路径 |
 | M6 | Agent Loop、Provider、工具、IM | 跨 provider 流式 Golden Tests、IM 接入与安全门通过 |
 | M7 | 全量切换与撤除 Python | 无 Python 生产入口、可回滚制品、安全/许可证复核通过 |
 
@@ -231,7 +231,7 @@ Core 的 `runtime/transport/stdio.ts` / `ipc.ts` 仅适配传输，复用 `runti
 ## 8. 建议建立的验证数据集
 
 - **数据库**：同一套项目、联系人、归档、回收站、乐观锁、批量跨域提交；SQLite/PG 各运行一遍。
-- **RAG**：中文日期/月份、英语实体、拼音、日语专有名词、未登录词；记录 Token 列表、候选、排序和 ACL。
+- **RAG**：以 1.7.8 TypeScript RAG 为目标实现，使用当前 Python/Cython 作为迁移期回归基准；覆盖中文日期/月份、英语实体、拼音、日语专有名词、未登录词；记录 Token 列表、候选、排序、confidence 和 ACL，并验证 FS 来源变化后的索引失效与重建。
 - **HTTP/LLM**：重定向 SSRF、DNS rebinding、代理、超时；部分 SSE chunk、tool_calls 截断、事件乱序。
 - **媒体**：QQ/微信 SILK、Feishu Opus、损坏文件、iPhone HEIC、超大 PNG、视频取帧。
 - **Office**：DOCX、XLS/XLSX、PPTX、ODT/ODS/ODP、RTF，中文/日文、表格、公式、备注。
