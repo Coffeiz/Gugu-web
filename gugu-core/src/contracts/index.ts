@@ -43,6 +43,27 @@ export function dataContext(ownerId: string): DataContext {
   return Object.freeze({ ownerId: ownerSchema.parse(ownerId).toLowerCase() })
 }
 
+export interface RequestIdentity {
+  readonly userId: string
+  readonly securityVersion: number
+}
+
+/** Trusted HTTP identity paired with the only data scope the request may use. */
+export interface RequestContext {
+  readonly identity: RequestIdentity
+  readonly data: DataContext
+}
+
+export function requestContext(identity: RequestIdentity): RequestContext {
+  if (!Number.isSafeInteger(identity.securityVersion) || identity.securityVersion < 1)
+    throw new CoreError('invalid_request', '用户安全版本无效')
+  const normalized = Object.freeze({
+    userId: ownerSchema.parse(identity.userId).toLowerCase(),
+    securityVersion: identity.securityVersion,
+  })
+  return Object.freeze({ identity: normalized, data: dataContext(normalized.userId) })
+}
+
 export interface Todo {
   id: string
   text?: string

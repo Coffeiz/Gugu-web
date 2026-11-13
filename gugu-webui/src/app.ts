@@ -1,22 +1,70 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify'
-import { createHash } from 'node:crypto'
-import { CoreError } from '@gugu/core'
+import { requestContext } from '@gugu/core'
+import type { RequestContext } from '@gugu/core'
+import type { WorkspaceBindingOperations } from './domains/workspaces/persistence/workspace-bindings.js'
+import type { WorkspaceDirectoryOperations } from './domains/workspaces/workspace-directories.js'
 import {
   authenticateUser,
   AuthenticationError,
-  createCsrfToken,
-  createUserToken,
   type PublicUserRecord,
-} from './auth.js'
-import { DEFAULT_PUBLIC_SITE_CONFIG, type PublicSiteConfig } from './site-config.js'
+} from './domains/auth/auth.js'
+import type { UserAuthOptions } from './domains/auth/contracts.js'
+import { DEFAULT_PUBLIC_SITE_CONFIG, type PublicSiteConfig } from './domains/site/site-config.js'
 import { registerStaticFrontend } from './static.js'
+import { registerCurrentUserRoute, registerLoginRoute } from './domains/auth/routes/auth.js'
+import { registerLogoutRoute } from './domains/auth/routes/auth-logout.js'
+import { registerUserRoute, type RegisterUserRouteOptions } from './domains/auth/routes/auth-register.js'
+import {
+  registerRegistrationCodeRoute,
+  type RegistrationCodeRouteOptions,
+} from './domains/auth/routes/auth-registration-code.js'
+import { registerProfileRoute, type ProfileRouteOptions } from './domains/auth/routes/auth-profile.js'
+import { registerSiteConfigRoute } from './domains/site/routes/site-config.js'
+import { installHttpErrorHandler } from './http/errors.js'
+import { registerAuthenticatedDomain } from './http/authenticated-domain.js'
+import { registerProjectRoutes } from './domains/projects/routes/projects.js'
+import { registerClientRoutes } from './domains/clients/routes/clients.js'
+import { registerEventRoutes } from './domains/calendar/routes/events.js'
+import { registerNotificationRoutes } from './domains/notifications/routes/notifications.js'
+import { registerTrackRoute } from './domains/site/routes/track.js'
+import { registerWorkspaceRoutes } from './domains/workspaces/routes/workspaces.js'
+import { registerWorkspaceDirectoryRoutes } from './domains/workspaces/workspace-directories.js'
+import type { AdminAuthAdapter } from './domains/admin/admin-auth.js'
+import { registerAdminUsersRoute, type AdminUsersOptions } from './domains/admin/admin-users.js'
+import {
+  registerAdminUserStatusRoutes,
+  type AdminUserStatusRouteOptions,
+} from './domains/admin/admin-users.js'
+import {
+  registerAdminDebugLogRoutes,
+  type AdminDebugLogOptions,
+} from './domains/admin/admin-debug-logs.js'
+import {
+  registerAdminStorageSnapshotsRoute,
+  type AdminStorageSnapshotOptions,
+} from './domains/admin/admin-storage-snapshots.js'
+import {
+  registerAdminSecurityEventRoutes,
+  type AdminSecurityEventOptions,
+} from './domains/admin/admin-audit-log.js'
+import {
+  registerAdminUserSecurityEventRoute,
+  type AdminUserSecurityEventOptions,
+} from './domains/admin/admin-user-security-events.js'
+import { registerAdminUserRiskRoute, type AdminUserRiskOptions } from './domains/admin/admin-user-risk.js'
 
-export interface UserAuthOptions {
-  secret: string
-  lookupUser: (userId: string) => Promise<PublicUserRecord | null>
-  markUserActive?: (userId: string) => Promise<void>
-  authenticateCredentials?: (username: string, password: string) => Promise<PublicUserRecord | null>
-  recordLogin?: (userId: string) => Promise<void>
+export type { UserAuthOptions } from './domains/auth/contracts.js'
+
+export interface AuthenticatedWebUser extends PublicUserRecord {
+  readonly requestContext: RequestContext
+}
+
+export type UserFromRequest = (request: FastifyRequest) => AuthenticatedWebUser
+
+export interface WriteRequestMetadata {
+  readonly idempotencyKey: string | null
+  readonly undoContextId: string | null
+  readonly clientId: string | null
 }
 
 export interface ClientResponse {
@@ -45,6 +93,9 @@ export interface ClientOptions {
 export interface EventOptions {
   list: (ownerId: string, year?: number, month?: number) => Promise<unknown[]>
   get: (ownerId: string, eventId: number) => Promise<unknown | null>
+  create?: (context: RequestContext, input: unknown, metadata: WriteRequestMetadata) => Promise<unknown>
+  delete?: (context: RequestContext, eventId: number, version: number, metadata: WriteRequestMetadata) => Promise<void>
+  update?: (context: RequestContext, eventId: number, body: unknown, metadata: WriteRequestMetadata) => Promise<unknown>
 }
 
 export interface NotificationOptions {
@@ -65,115 +116,48 @@ export interface WebUiOptions {
   isReady: () => Promise<boolean>
   onReadinessError?: () => void
   userAuth?: UserAuthOptions
+  registration?: RegisterUserRouteOptions
+  registrationCode?: RegistrationCodeRouteOptions
   listProjects?: (ownerId: string, archived: boolean, deleted?: boolean) => Promise<unknown[]>
   listProjectFileCounts?: (ownerId: string) => Promise<unknown[]>
   getProject?: (ownerId: string, projectId: number) => Promise<unknown | null>
+  createProject?: (context: RequestContext, input: unknown, metadata: WriteRequestMetadata) => Promise<unknown>
+  updateProject?: (
+    ownerId: string,
+    projectId: number,
+    input: unknown,
+    metadata: WriteRequestMetadata,
+  ) => Promise<unknown>
+  deleteProject?: (ownerId: string, projectId: number, metadata: WriteRequestMetadata) => Promise<void>
+  restoreProject?: (ownerId: string, projectId: number, metadata: WriteRequestMetadata) => Promise<unknown>
   clients?: ClientOptions
   events?: EventOptions
   notifications?: NotificationOptions
   track?: TrackOptions
-}
-
-const loginAttempts = new Map<string, { count: number; resetAt: number }>()
-const LOGIN_LIMIT = 10
-const LOGIN_WINDOW_MS = 5 * 60 * 1000
-
-function loginRateLimitKey(request: FastifyRequest, username: string): string {
-  const forwardedFor = request.headers['x-forwarded-for']
-  const forwardedPeer = typeof forwardedFor === 'string'
-    ? forwardedFor.split(',').map((part) => part.trim()).filter(Boolean).at(-1)
-    : undefined
-  const address = forwardedPeer || request.ip || 'unknown'
-  return createHash('sha256').update(`${address}\0${username}`).digest('hex')
-}
-
-function isLoginRateLimited(request: FastifyRequest, username: string, now = Date.now()): boolean {
-  const key = loginRateLimitKey(request, username)
-  const current = loginAttempts.get(key)
-  if (!current || current.resetAt <= now) {
-    loginAttempts.set(key, { count: 1, resetAt: now + LOGIN_WINDOW_MS })
-    if (loginAttempts.size > 4096) {
-      for (const [candidate, entry] of loginAttempts) {
-        if (entry.resetAt <= now) loginAttempts.delete(candidate)
-      }
-      while (loginAttempts.size > 4096) loginAttempts.delete(loginAttempts.keys().next().value as string)
-    }
-    return false
-  }
-  if (current.count >= LOGIN_LIMIT) return true
-  current.count += 1
-  return false
-}
-
-function parseLoginBody(body: unknown): { username: string; password: string } | null {
-  if (body === null || typeof body !== 'object' || Array.isArray(body)) return null
-  const value = body as Record<string, unknown>
-  if (typeof value.username !== 'string' || typeof value.password !== 'string') return null
-  return { username: value.username, password: value.password }
-}
-
-function registerLoginRoute(app: FastifyInstance, auth: UserAuthOptions) {
-  const authenticateCredentials = auth.authenticateCredentials
-  const recordLogin = auth.recordLogin
-  if (!authenticateCredentials || !recordLogin) return
-  app.post('/api/v1/auth/login', async (request, reply) => {
-    const input = parseLoginBody(request.body)
-    if (!input) return reply.code(422).send({ detail: '登录请求字段无效' })
-    if (isLoginRateLimited(request, input.username))
-      return reply.code(429).send({ detail: '操作过于频繁，请稍后再试' })
-
-    const user = await authenticateCredentials(input.username, input.password)
-    if (!user) return reply.code(401).send({ detail: '用户名或密码错误' })
-    if (!user.isActive)
-      return reply.code(403).send({ detail: '账号已停用，请联系管理员' })
-
-    await recordLogin(user.id)
-    const securityVersion = user.securityVersion || 1
-    const token = createUserToken(user.id, securityVersion, auth.secret)
-    const maxAge = 10080 * 60
-    const forwardedProtocol = request.headers['x-forwarded-proto']
-    const secure = request.protocol === 'https'
-      || (typeof forwardedProtocol === 'string'
-        && forwardedProtocol.split(',', 1)[0]?.trim().toLowerCase() === 'https')
-    const secureSuffix = secure ? '; Secure' : ''
-    const csrfToken = createCsrfToken()
-    reply.header('set-cookie', [
-      `gugu_user_access_token=${token}; Max-Age=${maxAge}; Path=/; HttpOnly${secureSuffix}; SameSite=Lax`,
-      `gugu_user_csrf_token=${csrfToken}; Max-Age=${maxAge}; Path=/${secureSuffix}; SameSite=Lax`,
-    ])
-    return {
-      access_token: request.headers['x-auth-transport'] === 'cookie' ? null : token,
-      token_type: 'bearer',
-      user: userResponse(user),
-    }
-  })
-}
-
-function userResponse(user: PublicUserRecord) {
-  const createdAt = user.createdAt instanceof Date
-    ? user.createdAt.toISOString().slice(0, 10)
-    : user.createdAt?.slice(0, 10) ?? ''
-  return {
-    id: user.id,
-    username: user.username,
-    display_name: user.displayName,
-    email: user.email,
-    is_active: user.isActive,
-    avatar_url: user.avatarUrl,
-    created_at: createdAt,
-    im_channels: user.imChannels,
-    timezone: user.timezone,
-    email_subscribed: user.emailSubscribed,
-  }
+  profile?: Omit<ProfileRouteOptions, 'authenticate'>
+  createWorkspace?: (ownerId: string, input: unknown) => Promise<unknown>
+  listWorkspaces?: (ownerId: string) => Promise<unknown>
+  workspaceBindings?: WorkspaceBindingOperations
+  updateWorkspace?: (ownerId: string, workspaceId: number, input: unknown) => Promise<unknown>
+  deleteWorkspace?: (ownerId: string, workspaceId: number) => Promise<unknown>
+  workspaceDirectories?: WorkspaceDirectoryOperations
+  adminAuth?: AdminAuthAdapter
+  adminStorageSnapshots?: Omit<AdminStorageSnapshotOptions, 'requireAdmin'>
+  adminUsers?: Omit<AdminUsersOptions, 'requireAdmin'>
+  adminUserStatus?: Omit<AdminUserStatusRouteOptions, 'requireAdmin'>
+  adminDebugLogs?: Omit<AdminDebugLogOptions, 'requireAdmin' | 'verifyAdmin'>
+  adminSecurityEvents?: Omit<AdminSecurityEventOptions, 'requireAdmin'>
+  adminUserSecurityEvents?: Omit<AdminUserSecurityEventOptions, 'requireAdmin'>
+  adminUserRisk?: Omit<AdminUserRiskOptions, 'requireAdmin'>
 }
 
 async function authenticateRequest(
   request: FastifyRequest,
   reply: FastifyReply,
   auth: UserAuthOptions,
-): Promise<PublicUserRecord | null> {
+): Promise<AuthenticatedWebUser | null> {
   try {
-    const { user } = await authenticateUser({
+    const { identity, user } = await authenticateUser({
       method: request.method,
       authorization: typeof request.headers.authorization === 'string'
         ? request.headers.authorization
@@ -184,7 +168,13 @@ async function authenticateRequest(
         : undefined,
     }, auth.secret, auth.lookupUser)
     await auth.markUserActive?.(user.id)
-    return user
+    return {
+      ...user,
+      requestContext: requestContext({
+        userId: identity.userId,
+        securityVersion: identity.securityVersion,
+      }),
+    }
   } catch (error) {
     if (error instanceof AuthenticationError) {
       reply.code(error.statusCode).send({ detail: error.message })
@@ -194,247 +184,108 @@ async function authenticateRequest(
   }
 }
 
-async function getCurrentUser(request: FastifyRequest, reply: FastifyReply, auth: UserAuthOptions) {
-  const user = await authenticateRequest(request, reply, auth)
-  return user ? userResponse(user) : undefined
-}
-
-function parseClientCreate(body: unknown): ClientCreateInput | null {
-  if (body === null || typeof body !== 'object' || Array.isArray(body)) return null
-  const value = body as Record<string, unknown>
-  if (typeof value.name !== 'string') return null
-  for (const key of ['contact', 'email', 'phone']) {
-    const field = value[key]
-    if (field !== undefined && field !== null && typeof field !== 'string') return null
-  }
-  if (value.notes !== undefined && typeof value.notes !== 'string') return null
-  return {
-    name: value.name,
-    ...(value.contact === undefined ? {} : { contact: value.contact as string | null }),
-    ...(value.email === undefined ? {} : { email: value.email as string | null }),
-    ...(value.phone === undefined ? {} : { phone: value.phone as string | null }),
-    notes: (value.notes as string | undefined) ?? '',
-  }
-}
-
-function sendCoreError(reply: FastifyReply, error: unknown) {
-  if (!(error instanceof CoreError)) throw error
-  const status = error.code === 'invalid_request' ? 422
-    : error.code === 'not_found' ? 404
-      : error.code === 'conflict' ? 409 : undefined
-  if (status === undefined) throw error
-  return reply.code(status).send({ detail: error.message })
-}
-
-function queryBoolean(query: Record<string, unknown>, key: string): boolean | undefined {
-  const value = query[key]
-  if (value === undefined || value === 'false') return false
-  if (value === 'true') return true
-  return undefined
-}
-
-function queryInteger(query: Record<string, unknown>, key: string): number | null | undefined {
-  const value = query[key]
-  if (value === undefined) return undefined
-  if (typeof value !== 'string' || !/^-?\d+$/.test(value)) return null
-  const result = Number(value)
-  return Number.isSafeInteger(result) ? result : null
-}
-
-function registerProjectRoute(
+function registerProtectedDomain(
   app: FastifyInstance,
   auth: UserAuthOptions,
-  listProjects: NonNullable<WebUiOptions['listProjects']>,
+  registerRoutes: Parameters<typeof registerAuthenticatedDomain<AuthenticatedWebUser>>[2],
 ) {
-  app.get('/api/v1/projects', async (request, reply) => {
-    const user = await authenticateRequest(request, reply, auth)
-    if (!user) return
-    const query = request.query as Record<string, unknown>
-    const archived = queryBoolean(query, 'archived')
-    const deleted = queryBoolean(query, 'deleted')
-    if (archived === undefined || deleted === undefined)
-      return reply.code(422).send({ detail: '查询参数必须是 true 或 false' })
-    if (archived && deleted)
-      return reply.code(400).send({ detail: 'archived 和 deleted 不能同时为 true' })
-    return listProjects(user.id, archived, deleted)
-  })
-}
-
-function registerProjectGetRoute(
-  app: FastifyInstance,
-  auth: UserAuthOptions,
-  getProject: NonNullable<WebUiOptions['getProject']>,
-) {
-  app.get('/api/v1/projects/:projectId', async (request, reply) => {
-    const user = await authenticateRequest(request, reply, auth)
-    if (!user) return
-    const rawId = (request.params as { projectId: string }).projectId
-    const projectId = Number(rawId)
-    if (!/^\d+$/.test(rawId) || !Number.isSafeInteger(projectId) || projectId < 1)
-      return reply.code(422).send({ detail: '项目标识无效' })
-    const project = await getProject(user.id, projectId)
-    if (project === null) return reply.code(404).send({ detail: '项目不存在' })
-    return project
-  })
-}
-
-function registerProjectFileCountsRoute(
-  app: FastifyInstance,
-  auth: UserAuthOptions,
-  listProjectFileCounts: NonNullable<WebUiOptions['listProjectFileCounts']>,
-) {
-  app.get('/api/v1/projects/file-counts', async (request, reply) => {
-    const user = await authenticateRequest(request, reply, auth)
-    if (!user) return
-    return listProjectFileCounts(user.id)
-  })
-}
-
-function registerClientRoutes(app: FastifyInstance, auth: UserAuthOptions, clients: ClientOptions) {
-  app.get('/api/v1/clients', async (request, reply) => {
-    const user = await authenticateRequest(request, reply, auth)
-    if (!user) return
-    return clients.list(user.id)
-  })
-  app.post('/api/v1/clients', async (request, reply) => {
-    const user = await authenticateRequest(request, reply, auth)
-    if (!user) return
-    const input = parseClientCreate(request.body)
-    if (!input) return reply.code(422).send({ detail: '联系人请求字段无效' })
-    try {
-      return reply.code(201).send(await clients.create(user.id, input))
-    } catch (error) {
-      return sendCoreError(reply, error)
-    }
-  })
-  app.delete('/api/v1/clients/:clientId', async (request, reply) => {
-    const user = await authenticateRequest(request, reply, auth)
-    if (!user) return
-    const rawId = (request.params as { clientId: string }).clientId
-    if (!/^\d+$/.test(rawId) || !Number.isSafeInteger(Number(rawId)) || Number(rawId) < 1)
-      return reply.code(422).send({ detail: '联系人标识无效' })
-    try {
-      await clients.delete(user.id, Number(rawId))
-      return reply.code(204).send()
-    } catch (error) {
-      return sendCoreError(reply, error)
-    }
-  })
-}
-
-function registerEventRoutes(app: FastifyInstance, auth: UserAuthOptions, events: EventOptions) {
-  app.get('/api/v1/events', async (request, reply) => {
-    const user = await authenticateRequest(request, reply, auth)
-    if (!user) return
-    const query = request.query as Record<string, unknown>
-    const year = queryInteger(query, 'year')
-    const month = queryInteger(query, 'month')
-    if (year === null || month === null)
-      return reply.code(422).send({ detail: '年份或月份无效' })
-    return events.list(user.id, year, month)
-  })
-  app.get('/api/v1/events/:eventId', async (request, reply) => {
-    const user = await authenticateRequest(request, reply, auth)
-    if (!user) return
-    const rawId = (request.params as { eventId: string }).eventId
-    const eventId = /^\d+$/.test(rawId) ? Number(rawId) : Number.NaN
-    if (!Number.isSafeInteger(eventId) || eventId < 1)
-      return reply.code(422).send({ detail: '事件标识无效' })
-    const event = await events.get(user.id, eventId)
-    if (event === null) return reply.code(404).send({ detail: '事件不存在' })
-    return event
-  })
-}
-
-function notificationOwnerCreatedAt(user: PublicUserRecord) {
-  if (!user.createdAt) throw new Error('用户注册时间缺失')
-  return user.createdAt
-}
-
-function parseNotificationRead(body: unknown): number[] | null | undefined {
-  if (!body || typeof body !== 'object' || Array.isArray(body)) return undefined
-  const ids = (body as Record<string, unknown>).ids
-  if (ids === undefined || ids === null) return null
-  if (!Array.isArray(ids)) return undefined
-  const parsed: number[] = []
-  for (const id of ids) {
-    const value = typeof id === 'number' ? id : typeof id === 'string' && /^-?\d+$/.test(id) ? Number(id) : Number.NaN
-    if (!Number.isSafeInteger(value)) return undefined
-    parsed.push(value)
-  }
-  return parsed
-}
-
-function registerNotificationRoutes(app: FastifyInstance, auth: UserAuthOptions, notifications: NotificationOptions) {
-  app.get('/api/v1/notifications', async (request, reply) => {
-    const user = await authenticateRequest(request, reply, auth)
-    if (!user) return
-    const rawLimit = queryInteger(request.query as Record<string, unknown>, 'limit')
-    if (rawLimit === null) return reply.code(422).send({ detail: 'limit 必须是整数' })
-    return notifications.list(user.id, notificationOwnerCreatedAt(user), rawLimit ?? 30)
-  })
-  app.get('/api/v1/notifications/bubble', async (request, reply) => {
-    const user = await authenticateRequest(request, reply, auth)
-    if (!user) return
-    return notifications.latestBubble(user.id, notificationOwnerCreatedAt(user))
-  })
-  app.post('/api/v1/notifications/read', async (request, reply) => {
-    const user = await authenticateRequest(request, reply, auth)
-    if (!user) return
-    const ids = parseNotificationRead(request.body)
-    if (ids === undefined) return reply.code(422).send({ detail: '通知已读请求无效' })
-    const marked = await notifications.markRead(user.id, notificationOwnerCreatedAt(user), ids)
-    return { ok: true, marked }
-  })
-  app.delete('/api/v1/notifications', async (request, reply) => {
-    const user = await authenticateRequest(request, reply, auth)
-    if (!user) return
-    const dismissed = await notifications.clear(user.id, notificationOwnerCreatedAt(user))
-    return { ok: true, dismissed }
-  })
-}
-
-function parseTrackBody(body: unknown): { event: string; properties: Record<string, unknown> | null } | null {
-  if (!body || typeof body !== 'object' || Array.isArray(body)) return null
-  const value = body as Record<string, unknown>
-  if (typeof value.event !== 'string') return null
-  const properties = value.properties
-  if (properties !== undefined && properties !== null
-    && (typeof properties !== 'object' || Array.isArray(properties))) return null
-  return {
-    event: [...value.event].slice(0, 64).join(''),
-    properties: properties as Record<string, unknown> | null ?? null,
-  }
-}
-
-function registerTrackRoute(app: FastifyInstance, auth: UserAuthOptions, track: TrackOptions) {
-  app.post('/api/v1/track', async (request, reply) => {
-    const user = await authenticateRequest(request, reply, auth)
-    if (!user) return
-    const input = parseTrackBody(request.body)
-    if (!input) return reply.code(422).send({ detail: '埋点请求字段无效' })
-    await track.track(user.id, input.event, input.properties)
-    return { ok: true }
-  })
+  return registerAuthenticatedDomain<AuthenticatedWebUser>(
+    app,
+    (request, reply) => authenticateRequest(request, reply, auth),
+    registerRoutes,
+  )
 }
 
 function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
   const auth = options.userAuth
+  if (options.registrationCode) registerRegistrationCodeRoute(app, options.registrationCode)
+  else {
+    app.post('/api/v1/auth/registration-code', async (_request, reply) =>
+      reply.code(503).send({ detail: '邮箱验证码注册当前不可用' }),
+    )
+  }
+  if (options.registration) registerUserRoute(app, options.registration)
+  else {
+    // Keep the public route explicit while registration dependencies are not configured.
+    // Returning a clear unavailable response is safer than Fastify's misleading 404.
+    app.post('/api/v1/auth/register', async (_request, reply) =>
+      reply.code(503).send({ detail: '注册服务暂不可用，请稍后重试' }),
+    )
+  }
   if (!auth) return
   registerLoginRoute(app, auth)
-  app.get('/api/v1/auth/me', (request, reply) => getCurrentUser(request, reply, auth))
-  if (options.listProjects) registerProjectRoute(app, auth, options.listProjects)
-  if (options.listProjectFileCounts)
-    registerProjectFileCountsRoute(app, auth, options.listProjectFileCounts)
-  if (options.getProject) registerProjectGetRoute(app, auth, options.getProject)
-  if (options.clients) registerClientRoutes(app, auth, options.clients)
-  if (options.events) registerEventRoutes(app, auth, options.events)
-  if (options.notifications) registerNotificationRoutes(app, auth, options.notifications)
-  if (options.track) registerTrackRoute(app, auth, options.track)
+  registerProtectedDomain(app, auth, (routes, userFromRequest) => {
+    registerCurrentUserRoute(routes, userFromRequest)
+  })
+  if (auth.revokeUserSessions && auth.publishAuthStateChanged) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => {
+      registerLogoutRoute(routes, {
+        async authenticate(request) {
+          return { id: userFromRequest(request).id }
+        },
+        revokeUserSessions: auth.revokeUserSessions!,
+        publishAuthStateChanged: auth.publishAuthStateChanged!,
+      })
+    })
+  }
+  if (options.profile) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => {
+      registerProfileRoute(routes, {
+        ...options.profile!,
+        authenticate: async (request) => ({ id: userFromRequest(request).id }),
+      })
+    })
+  }
+  if (options.listProjects || options.createProject || options.listProjectFileCounts || options.getProject
+    || options.updateProject || options.deleteProject || options.restoreProject) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => {
+      registerProjectRoutes(routes, userFromRequest, options)
+    })
+  }
+  if (options.clients)
+    registerProtectedDomain(app, auth, (routes, userFromRequest) =>
+      registerClientRoutes(routes, userFromRequest, options.clients!),
+    )
+  if (options.events)
+    registerProtectedDomain(app, auth, (routes, userFromRequest) =>
+      registerEventRoutes(routes, userFromRequest, options.events!),
+    )
+  if (options.notifications)
+    registerProtectedDomain(app, auth, (routes, userFromRequest) =>
+      registerNotificationRoutes(routes, userFromRequest, options.notifications!),
+    )
+  if (options.track)
+    registerProtectedDomain(app, auth, (routes, userFromRequest) =>
+      registerTrackRoute(routes, userFromRequest, options.track!),
+    )
+  if (options.createWorkspace || options.listWorkspaces || options.workspaceBindings
+    || options.updateWorkspace || options.deleteWorkspace) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) =>
+      registerWorkspaceRoutes(
+        routes,
+        userFromRequest,
+        options.createWorkspace,
+        options.workspaceBindings,
+        options.updateWorkspace,
+        options.listWorkspaces,
+        options.deleteWorkspace,
+      ),
+    )
+  }
+  if (options.workspaceDirectories) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) =>
+      registerWorkspaceDirectoryRoutes(routes, {
+        requireUser: async (request) => { void userFromRequest(request) },
+        ownerIdFromRequest: (request) => userFromRequest(request).requestContext.data.ownerId,
+        operations: options.workspaceDirectories!,
+      }),
+    )
+  }
 }
 
 export function createApp(options: WebUiOptions) {
   const app = Fastify({ logger: false, routerOptions: { ignoreTrailingSlash: true } })
+  installHttpErrorHandler(app)
   app.get('/health', async () => ({ status: 'ok', app: options.appName }))
   app.get('/health/ready', async (_request, reply) => {
     try {
@@ -444,8 +295,52 @@ export function createApp(options: WebUiOptions) {
     }
     return reply.code(503).send({ status: 'not_ready' })
   })
-  app.get('/api/v1/site-config', async () => options.publicSiteConfig ?? DEFAULT_PUBLIC_SITE_CONFIG)
+  registerSiteConfigRoute(app, options.publicSiteConfig ?? DEFAULT_PUBLIC_SITE_CONFIG)
   registerUserRoutes(app, options)
+  options.adminAuth?.registerRoutes(app)
+  if (options.adminAuth && options.adminStorageSnapshots) {
+    registerAdminStorageSnapshotsRoute(app, {
+      ...options.adminStorageSnapshots,
+      requireAdmin: options.adminAuth.requireAdmin,
+    })
+  }
+  if (options.adminAuth && options.adminUsers) {
+    registerAdminUsersRoute(app, {
+      ...options.adminUsers,
+      requireAdmin: options.adminAuth.requireAdmin,
+    })
+  }
+  if (options.adminAuth && options.adminUserStatus) {
+    registerAdminUserStatusRoutes(app, {
+      ...options.adminUserStatus,
+      requireAdmin: options.adminAuth.requireAdmin,
+    })
+  }
+  if (options.adminAuth && options.adminDebugLogs) {
+    registerAdminDebugLogRoutes(app, {
+      ...options.adminDebugLogs,
+      requireAdmin: options.adminAuth.requireAdmin,
+      verifyAdmin: options.adminAuth.verifyAdmin,
+    })
+  }
+  if (options.adminAuth && options.adminSecurityEvents) {
+    registerAdminSecurityEventRoutes(app, {
+      ...options.adminSecurityEvents,
+      requireAdmin: options.adminAuth.requireAdmin,
+    })
+  }
+  if (options.adminAuth && options.adminUserSecurityEvents) {
+    registerAdminUserSecurityEventRoute(app, {
+      ...options.adminUserSecurityEvents,
+      requireAdmin: options.adminAuth.requireAdmin,
+    })
+  }
+  if (options.adminAuth && options.adminUserRisk) {
+    registerAdminUserRiskRoute(app, {
+      ...options.adminUserRisk,
+      requireAdmin: options.adminAuth.requireAdmin,
+    })
+  }
   if (options.staticRoot) registerStaticFrontend(app, options.staticRoot)
   return app
 }

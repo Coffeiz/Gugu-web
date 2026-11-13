@@ -29,6 +29,11 @@ interface MessageRow {
   created_at: Date
 }
 
+interface SessionRow {
+  id: number
+  source: string | null
+}
+
 interface CursorRow {
   time_key: string
   conversation_seq: string
@@ -86,15 +91,41 @@ export function projectTimelineEvents(
   return events
 }
 
-export function projectMessageBodies(messages: MessageRow[]) {
+function normalizeQqAttachmentPlaceholders(text: string, files: unknown): string {
+  if (!text || !Array.isArray(files) || files.length === 0) return text
+  let changed = false
+  const normalized = text.replace(
+    /<attachmentType="([A-Za-z0-9.+-]+\/[A-Za-z0-9.+-]+)",attachmentIndex=(\d+),description="[^"]*">/g,
+    (placeholder, expectedMime: string, rawIndex: string) => {
+      const index = Number(rawIndex)
+      if (!Number.isSafeInteger(index) || index >= files.length) return placeholder
+      const attachment = files[index]
+      if (!attachment || typeof attachment !== 'object' || Array.isArray(attachment)) return placeholder
+      const record = attachment as Record<string, unknown>
+      if (record.quoted !== false) return placeholder
+      const rawMime = record.content_type || record.mime || record.type || ''
+      const actualMime = String(rawMime).split(';', 1)[0]!.trim().toLowerCase()
+      if (actualMime !== expectedMime.toLowerCase()) return placeholder
+      changed = true
+      return ''
+    },
+  )
+  return changed ? normalized.trim() : text
+}
+
+export function projectMessageBodies(messages: MessageRow[], source?: string) {
   return messages.flatMap((message) => {
     if (!message.is_display_body || (message.has_display_timeline && message.display_timeline !== null))
       return []
+    const files = message.files ?? []
+    const content = typeof message.content === 'string' && source === 'qq'
+      ? normalizeQqAttachmentPlaceholders(message.content, files)
+      : message.content
     return [{
       id: message.id,
       role: message.role,
-      content: message.content,
-      files: message.files,
+      content,
+      files,
       runId: message.run_id,
       roundId: message.round_id,
       createdAt: message.created_at.toISOString(),
@@ -110,11 +141,12 @@ export function projectMessageBodies(messages: MessageRow[]) {
 export function createAgentMessageHistory(pool: Pool) {
   return {
     async list(ownerId: string, sessionId: number, options: AgentMessagePageOptions) {
-      const owned = await pool.query(
-        'SELECT id FROM conversation_sessions WHERE id = $1 AND user_id = $2',
+      const owned = await pool.query<SessionRow>(
+        'SELECT id, source FROM conversation_sessions WHERE id = $1 AND user_id = $2',
         [sessionId, ownerId],
       )
       if (!owned.rowCount) throw new AgentSessionNotFoundError()
+      const session = owned.rows[0]!
 
       const limit = Math.min(200, Math.max(1, options.limit ?? 50))
       const params: unknown[] = [sessionId]
@@ -210,7 +242,7 @@ export function createAgentMessageHistory(pool: Pool) {
         if (forward && messages.length === limit) hasNewer = await probe(newer)
       }
       return {
-        messages: projectMessageBodies(messages),
+        messages: projectMessageBodies(messages, session.source ?? undefined),
         timelineEvents: projectTimelineEvents(messages.map((message) => ({
           id: message.id,
           displayTimeline: message.display_timeline,

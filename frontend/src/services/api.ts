@@ -915,11 +915,39 @@ export interface WorkspaceDirectory {
   boundTaskCount: number
 }
 
+interface WorkspaceDirectoryPreviewWire {
+  id: number
+  name: string
+  directory_name: string
+  is_default: boolean
+  is_system: boolean
+  file_count: number
+  folder_count: number
+  bound_session_count: number
+  bound_task_count: number
+}
+
+function workspaceDirectoryPreviewResponse(row: WorkspaceDirectoryPreviewWire): WorkspaceDirectory {
+  return {
+    id: row.id,
+    name: row.name,
+    directoryName: row.directory_name,
+    isDefault: row.is_default,
+    isSystem: row.is_system,
+    fileCount: row.file_count,
+    folderCount: row.folder_count,
+    boundSessionCount: row.bound_session_count,
+    boundTaskCount: row.bound_task_count,
+  }
+}
+
 export const workspaceDirectoriesApi = {
   list: () => get<WorkspaceDirectory[]>('/workspace-directories'),
   create: (name: string) => post<WorkspaceDirectory>('/workspace-directories', { name }),
   update: (id: number, name: string) => request<WorkspaceDirectory>('PATCH', `/workspace-directories/${id}`, { name }),
-  previewDelete: (id: number) => get<WorkspaceDirectory>(`/workspace-directories/${id}/delete-preview`),
+  previewDelete: async (id: number) => workspaceDirectoryPreviewResponse(
+    await get<WorkspaceDirectoryPreviewWire>(`/workspace-directories/${id}/delete-preview`),
+  ),
   delete: (id: number) => del(`/workspace-directories/${id}`),
 }
 

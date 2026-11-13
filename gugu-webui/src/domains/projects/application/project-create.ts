@@ -83,15 +83,19 @@ function idempotencyValues(key: string | null | undefined, payload: unknown) {
 function createPayload(input: Fields, includeAgentFields: boolean): Fields {
   if (!input || typeof input !== 'object' || Array.isArray(input))
     throw new CoreError('invalid_request', '请求内容必须是对象')
+  // HTTP callers send Python's CamelModel aliases; internal callers still use snake_case.
+  // Prefer the public camelCase property if both spellings are supplied, including explicit null.
+  const startDate = input.startDate === undefined ? input.start_date : input.startDate
+  const currentStage = input.currentStage === undefined ? input.current_stage : input.currentStage
   const payload: Fields = {
     name: input.name,
     client: input.client === undefined ? null : input.client,
     status: input.status === undefined ? 'pending' : input.status,
-    start_date: input.start_date === undefined ? null : input.start_date,
+    start_date: startDate === undefined ? null : startDate,
     deadline: input.deadline === undefined ? null : input.deadline,
     color: input.color === undefined ? DEFAULT_PROJECT_COLOR : input.color,
     stages: input.stages === undefined ? [] : input.stages,
-    current_stage: input.current_stage === undefined ? null : input.current_stage,
+    current_stage: currentStage === undefined ? null : currentStage,
     progress: input.progress === undefined ? 0 : input.progress,
   }
   if (includeAgentFields) {
