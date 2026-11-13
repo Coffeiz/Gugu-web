@@ -376,7 +376,8 @@ def test_note_schema_recovery_explains_flat_block_shape():
 
     payload = invalid_input_payload("note_create", issues, schema={"properties": {"blocks": schema}})
 
-    assert "重建完整 blocks" in payload["next_action"]
+    assert "markdown/append_markdown 字符串" in payload["next_action"]
+    assert any("只有需要引用或结构化块时" in hint for hint in payload["schema_hints"])
     assert any("扁平项" in hint for hint in payload["schema_hints"])
     assert any("item" in hint for hint in payload["schema_hints"])
 

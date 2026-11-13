@@ -22,6 +22,15 @@ emoji: 📝
 - `canvas_search` 只搜索指定画布内容，需要 `canvas_id`；它不是普通笔记搜索工具。
 - 工具名必须逐字使用 canonical name，不要把 `note_search` 改写成 `search_notes`，也不要猜测 `list_notes`、`read_note` 等别名。
 
+普通文字笔记优先使用字符串参数，避免手工构造多层块数组：
+
+```json
+{"markdown":"# 标题\n\n正文"}
+{"node_id":123,"append_markdown":"追加正文"}
+```
+
+只有需要可点击引用、格式化行内标记或结构化待办时才使用 `blocks` / `append_blocks`。引用仍须先查到真实对象 ID。普通 Markdown 路径不接受 `blocks`；更新正文时 `append_markdown`、`append_blocks`、`line_edits` 只能选一种。
+
 `blocks` 由工具 Schema 和服务端共同严格校验。**只使用下面的对象层级，不要自行递归或包装数组**。
 
 硬性规则：列表和待办只支持扁平结构；列表项内不能继续出现列表、`content` 或 `paragraphs` 对象。`content` 数组里的每个行内对象都必须带 `type`。`blocks`、`items`、`paragraphs`、`content` 都必须保持数组，禁止改成 `{item:[...]}`。
@@ -72,9 +81,9 @@ emoji: 📝
 2. **`task_list` 的每一项必须带 `checked`（布尔值）**，漏了会报"待办项必须包含 checked 布尔值"。
 3. **`reference` 的 `ref_id` 必须是整数**，不能传字符串（`"60"` 不行，要 `60`）；`ref_type` 只能是小写的 `project`/`file`/`event`。
 
-一旦收到 schema 报错，**重新生成完整的 `blocks`/`append_blocks`**，不要只给某个嵌套对象补字段，也不要把数组改成 `item` 对象。无法确定的内容不要猜，先向用户确认。
+一旦收到 schema 报错，先按错误提示修正；普通文字改用 `markdown` / `append_markdown`，不要为简单正文反复重建块数组。需要结构化内容时才重建完整 `blocks` / `append_blocks`，不要把数组改成 `item` 对象。无法确定的内容不要猜，先向用户确认。
 
-`note_update` 每次都必须包含 `node_id`。若错误提示缺少它，先用 `note_search` 找到目标并用 `note_get` 确认；不要连续重发同一组参数，也不要根据标题自行猜 ID。追加一段普通文字的最小结构是：
+`note_update` 每次都必须包含 `node_id`。若错误提示缺少它，先用 `note_search` 找到目标并用 `note_get` 确认；不要连续重发同一组参数，也不要根据标题自行猜 ID。普通文字追加优先使用 `append_markdown`；需要结构化块时才用下面的数组格式：
 
 ```json
 {"node_id":123,"append_blocks":[{"type":"paragraph","content":[{"type":"text","text":"追加内容"}]}]}
@@ -103,4 +112,4 @@ emoji: 📝
 1. 先用 `note_create` 起个头（比如第一段或前几个块），拿到 `node_id` 和 `version`。
 2. 再用一次或几次 `note_update` 的 `append_blocks` 往后续写，每次只追加一小段。
 
-这样任何一次调用的参数体量都比较小，不容易撞到输出长度上限，出错了也只影响这一小段、不用整篇重来。
+纯文字长笔记也可以用 `append_markdown` 分段追加，避免生成深层数组；需要结构化引用时再用块数组。
