@@ -1,5 +1,5 @@
 import { createPolicy, DEFAULT_REASONING } from '../base.js'
-import type { ProviderConfig, ProviderProtocol, ReasoningCapabilities } from '../contracts.js'
+import type { JsonObject, ProviderConfig, ProviderProtocol, ReasoningCapabilities } from '../contracts.js'
 import * as shared from '../policy-utils.js'
 
 const deepseekReasoning = (config: ProviderConfig) => /^(deepseek-flash|deepseek-v4-pro|deepseek-v4-flash)/.test(shared.model(config))

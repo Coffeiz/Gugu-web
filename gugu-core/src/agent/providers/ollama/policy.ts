@@ -1,5 +1,5 @@
 import { createPolicy, genericThinkingParams, DEFAULT_REASONING } from '../base.js'
-import type { JsonObject, ProviderConfig, ProviderProtocol, ReasoningCapabilities } from '../contracts.js'
+import type { JsonObject, ProviderConfig } from '../contracts.js'
 import { validateLocalBaseUrl } from '../local/policy.js'
 import * as shared from '../policy-utils.js'
 

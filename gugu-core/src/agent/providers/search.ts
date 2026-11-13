@@ -23,7 +23,8 @@ function adapterForSearch(config: ProviderConfig): ProviderSearchAdapter | undef
 /** 只负责选择当前 Provider 的原生搜索适配器；不统一改写各家的参数格式。 */
 export const supportsProviderSearch = (config: ProviderConfig): boolean => adapterForSearch(config)?.supports(config) ?? false
 export function providerSearchSchema(config: ProviderConfig): JsonObject {
-  return adapterForSearch(config)?.schema(config) ?? { type: 'object', properties: {}, additionalProperties: false }
+  const schema = adapterForSearch(config)?.schema(config) ?? { type: 'object', properties: {}, additionalProperties: false }
+  return structuredClone(schema)
 }
 export async function searchProvider(config: ProviderConfig, args: JsonObject, dependencies: ProviderSearchDependencies, signal: AbortSignal): Promise<JsonObject> {
   const adapter = adapterForSearch(config)

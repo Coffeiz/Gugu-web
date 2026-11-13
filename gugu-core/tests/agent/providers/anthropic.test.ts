@@ -7,7 +7,7 @@ import { projectAnthropicHistory, sanitizeAnthropicHistory, transformAnthropicWi
 import type { JsonObject, ProviderDriverDependencies, ProviderHttpRequest, ProviderInvocation } from '../../../src/agent/providers/contracts.js'
 import { ProviderError } from '../../../src/agent/providers/errors.js'
 import { record } from '../../../src/agent/providers/values.js'
-import { minimaxPolicy } from '../../../src/agent/providers/provider-policies.js'
+import { minimaxPolicy } from '../../../src/agent/providers/minimax/policy.js'
 import { streamWithRetry } from '../../../src/agent/providers/retry.js'
 import { prepareAnthropicCache } from '../../../src/agent/providers/cache.js'
 

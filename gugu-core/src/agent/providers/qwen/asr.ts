@@ -1,4 +1,4 @@
-import { ProviderError, throwIfCancelled } from '../errors.js'
+import { classifyProviderError, ProviderError, throwIfCancelled } from '../errors.js'
 import type { JsonObject, ProviderConfig } from '../contracts.js'
 import { requestJson } from '../http.js'
 import { normalizedApiKey } from '../diagnostics.js'
@@ -63,8 +63,9 @@ export async function transcribeDashscopeAsr(
     parameters: service === 'qwen3-asr' ? { asr_options: { enable_itn: false } } : { format: 'wav', sample_rate: 16000 },
   }
   const headers = { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'X-DashScope-SSE': 'disable' }
+  const url = dashscopeAsrEndpoint(config.base_url)
   return requestCompatibleAsr(dependencies, signal, options, () => requestJson(dependencies, {
-    url: dashscopeAsrEndpoint(config.base_url), method: 'POST', headers, body,
+    url, method: 'POST', headers, body,
     timeoutMs: config.timeout_ms,
   }, signal), dashscopeAsrTranscript)
 }

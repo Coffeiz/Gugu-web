@@ -1,5 +1,5 @@
 import { createPolicy, genericThinkingParams } from '../base.js'
-import type { JsonObject, ProviderConfig, ProviderProtocol } from '../contracts.js'
+import type { JsonObject } from '../contracts.js'
 import { ProviderError } from '../errors.js'
 import * as shared from '../policy-utils.js'
 

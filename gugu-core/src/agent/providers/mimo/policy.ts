@@ -1,5 +1,5 @@
-import { createPolicy, DEFAULT_REASONING, configuredResponsesInput } from '../base.js'
-import type { JsonObject, ProviderConfig, ProviderProtocol, ReasoningCapabilities } from '../contracts.js'
+import { createPolicy, configuredResponsesInput } from '../base.js'
+import type { JsonObject } from '../contracts.js'
 import * as shared from '../policy-utils.js'
 
 export const mimoPolicy = createPolicy('mimo', {

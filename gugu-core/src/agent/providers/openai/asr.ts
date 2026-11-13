@@ -1,4 +1,4 @@
-import { ProviderError, throwIfCancelled } from '../errors.js'
+import { classifyProviderError, ProviderError, throwIfCancelled } from '../errors.js'
 import type { ProviderConfig } from '../contracts.js'
 import { endpoint, requestJson } from '../http.js'
 import { adapterFor } from '../registry.js'

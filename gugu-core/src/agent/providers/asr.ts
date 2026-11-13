@@ -14,7 +14,7 @@ export {
 } from './minimax/asr.js'
 
 /** 兼容旧调用点；按原生 API 格式分派到 Provider 适配器。 */
-export function transcribeCompatibleAsr(
+export async function transcribeCompatibleAsr(
   media: readonly AsrMedia[], config: ProviderConfig, dependencies: CompatibleAsrDependencies,
   signal: AbortSignal, options: { readonly raiseErrors?: boolean } = {},
 ): Promise<string> {
