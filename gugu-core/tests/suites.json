@@ -1,4 +1,104 @@
 {
+  "tests/agent/harness/run/canonical-cancel.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/harness/run/execution.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/harness/streaming/portable-boundary.test.ts": {
+    "markers": [],
+    "layer": "L0",
+    "purpose": "contract"
+  },
+  "tests/agent/harness/context/finalization.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/harness/context/loading-reflection.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/harness/context/sources.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/harness/history/tool-result-checkpoint.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/harness/streaming/tool-result.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/harness/run/policy-reply.test.ts": {
+    "markers": [],
+    "layer": "L0",
+    "purpose": "contract"
+  },
+  "tests/agent/harness/context/preparation.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/harness/context/context-runtime.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/harness/context/session-snapshot.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/harness/history/canonical-area.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/harness/context/history-preparation.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/harness/context/budget-compaction-reflection.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/harness/run/engine.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/harness/streaming/tool-scheduler.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/harness/run/reply.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/harness/streaming/display.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/harness/history/checkpoint-branch.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
   "tests/unit/domain/domain.test.ts": {
     "markers": [],
     "layer": "L0",
@@ -10,17 +110,23 @@
     "purpose": "contract"
   },
   "tests/integration/runtime/local-ipc.test.ts": {
-    "markers": ["process"],
+    "markers": [
+      "process"
+    ],
     "layer": "L2",
     "purpose": "ipc"
   },
   "tests/integration/postgres/postgres.test.ts": {
-    "markers": ["external_service"],
+    "markers": [
+      "external_service"
+    ],
     "layer": "L2",
     "purpose": "postgres"
   },
   "tests/golden/python-interop.test.ts": {
-    "markers": ["process"],
+    "markers": [
+      "process"
+    ],
     "layer": "L2",
     "purpose": "parity"
   },
@@ -30,7 +136,9 @@
     "purpose": "contract"
   },
   "tests/integration/postgres/contract.test.ts": {
-    "markers": ["external_service"],
+    "markers": [
+      "external_service"
+    ],
     "layer": "L2",
     "purpose": "postgres"
   },
@@ -45,7 +153,9 @@
     "purpose": "contract"
   },
   "tests/integration/runtime/transport.test.ts": {
-    "markers": ["process"],
+    "markers": [
+      "process"
+    ],
     "layer": "L2",
     "purpose": "ipc"
   },
@@ -55,11 +165,28 @@
     "purpose": "contract"
   },
   "tests/golden/service-sequence.test.ts": {
-    "markers": ["process"],
+    "markers": [
+      "process"
+    ],
     "layer": "L2",
     "purpose": "parity"
   },
   "tests/unit/data/exclusive.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/harness/interactions/coordinator.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/harness/streaming/coordinator.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/harness/run/lifecycle.test.ts": {
     "markers": [],
     "layer": "L1",
     "purpose": "contract"

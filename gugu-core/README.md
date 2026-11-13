@@ -70,4 +70,16 @@ pnpm --filter @gugu/core test:golden
 
 正式桌面 stdio 位于 `runtime/transport/stdio.ts`，以独占连接防止同一库被多个数据进程并行使用；可注入的进程 IPC 适配复用同一命令/收据契约，不依赖 Electron，也不自动切换传输。Executor 只接受 Host 已建立的授权，实际隔离交给选定后端；不提供无沙箱回退。当前执行去重属于进程内保护，持久 Job/Run 恢复仍属后续 Agent 阶段。
 
+## Agent Harness 迁移切片
+
+固定实现树为 `harness.ts` 薄协调、`contracts.ts` 领域类型、`ports.ts` 依赖接口，以及 `run/`、`history/`、`context/`、`streaming/`、`interactions/`。对应测试统一位于 `tests/agent/harness/` 的这五个职责目录。Provider 协议和工具分发实现由外部模块提供，持久 Job、租约与 outbox 的真实共用实现也只通过端口接入；Harness 不建立平台或数据库后端。
+
+`@gugu/core/harness` 提供可移植的 Canonical 上下文与 Run 编排；`createCanonicalContextPort` 连接历史准备、稳定引用 checkpoint、工具轮次、交互结果替换和预算/压缩，`createRunHarness` 协调启动/恢复/取消、工具调度、终态与 outbox。`@gugu/core/executor/runtime` 是现有共用 Executor 的可移植协调器，原 `/executor/platform` 保留同一类的兼容导出；原生后端仍由 Host 显式装配。
+
+推荐通过 `createCanonicalHarness` 的 `runPreparation` 接入标准准备主链：owned 来源读取后并发发现工具与召回 RAG，再按可信入口/主体过滤能力、组装系统规则和技能快照，最后进入 Canonical。能力目录只接收过滤后 Schema 与当前 query；用户 Skill 元数据随首次 session snapshot 候选冻结，后续 Run 复用。定时任务不注入交互历史或 RAG，当前输入仅用于请求。选择后的名称和公开 schema 随 Run context 冻结，Provider 必须使用这一快照；未开放的工具声明在实际派发前拒绝。端口查询须响应取消并在返回前释放资源。自定义完整 `context.load` 可以省略标准准备选项，但必须提供同等准备结果及能力快照，缺失时入口明确失败。
+
+这些入口不自动创建数据库、连接 Provider、注册工具或接管 Web/IM。生产装配必须实现 owner/session 互斥租约、fenced CAS RunStore、单次交互授权、Provider 归一事件与续接、稳定附件引用、错误清洗和事件发布。`prepareRequest` 必须按 Run 身份恢复同一冻结前缀，不能重启后套用新配置。成功 finalize 的 Canonical delta、用量、摘要水位与 outbox 必须同事务；中间 checkpoint 仅保留可恢复状态，失败不应用待提交压缩，取消只保存允许的中断 delta。工具处于未知状态时只查询收据，不自动重发修改。
+
+完整反思 wire 快照仅保留进程内；Run checkpoint 不含媒体载荷、签名 URL、私有推理或授权材料。续接记录 ID 不是实现完成的证明，真实 Provider/Reasoning/Data 适配及重启恢复仍需独立验收。各 Python 行为与实际 TS 测试状态见 [Harness 映射](../docs/testing/node-agent-harness-parity.md)，未闭合项不得解释为全部 Agent 已迁移或允许切换生产调用方。
+
 目标架构、目录职责、迁移 checklist 与当前回归测试对齐任务统一见 [架构与迁移任务清单](../docs/refactor/Gugu-2.0-架构与迁移任务清单.md)。历史方案和验证记录见 [归档索引](../docs/refactor/_archive/gugu-2.0/README.md)。

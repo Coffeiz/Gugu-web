@@ -1,12 +1,6 @@
 import { ExecutionError } from './contracts.js'
-import type {
-  ExecutionBackend,
-  ExecutionGrant,
-  ExecutionRequest,
-  ExecutionResult,
-} from './contracts.js'
-import { executionPolicy } from './policy.js'
 import { MxcExecutor } from './mxc.js'
+export { Executor } from './executor.js'
 
 // 入口由 Node Host 显式加载；portable 契约不会导入本模块或原生 SDK。
 export async function mxcDiagnostics() {
@@ -49,22 +43,4 @@ export async function createMxcExecutor(): Promise<MxcExecutor> {
     throw new ExecutionError('unsupported', '严格 MXC 隔离不可用')
   const sdk = await import('@microsoft/mxc-sdk/v1')
   return new MxcExecutor((request) => sdk.spawn(request, { telemetry: { enabled: false } }))
-}
-export class Executor {
-  private attempted = new Set<string>()
-  constructor(private backends: readonly ExecutionBackend[]) {}
-  async execute(
-    request: ExecutionRequest,
-    grant: ExecutionGrant,
-    signal?: AbortSignal,
-  ): Promise<ExecutionResult> {
-    const backend = this.backends.find((item) => item.id === grant.backend)
-    if (!backend) throw new ExecutionError('unsupported', 'Host 未装配已授权的执行后端')
-    const policy = executionPolicy(request, grant, backend.capabilities)
-    if (this.attempted.has(request.id))
-      throw new ExecutionError('denied', '执行结果可能已有副作用，禁止自动重放')
-    if (signal?.aborted) throw new ExecutionError('cancelled', '执行已取消')
-    this.attempted.add(request.id)
-    return backend.execute(policy, signal)
-  }
 }

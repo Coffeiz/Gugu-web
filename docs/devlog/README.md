@@ -6,6 +6,10 @@
 
 ## 按日期浏览
 
+### 2026-11-13
+
+- [N3 Agent Harness 可移植迁移](./2026-11-13-N3-Agent-Harness可移植迁移.md)
+
 ### 2026-11-12
 
 - [Core 测试分层与 Electron 迁移](./2026-11-12-Core测试分层与Electron迁移.md)

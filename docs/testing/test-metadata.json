@@ -1,4 +1,12 @@
 {
+  "gugu-core/tests/agent/harness/run/canonical-cancel.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "gugu-core/src/agent/harness",
+    "productionEntry": "gugu-core/src/agent/harness/harness.ts",
+    "keyBehavior": "真实Canonical取消保留完整工具pair与部分正文、不推进摘要水位，下一Run按持久顺序回放",
+    "ci": "core-node"
+  },
   "backend/tests/agent/test_display_event_contract.py": {
     "domain": "chat-display-events",
     "layer": "L1",
@@ -2303,6 +2311,158 @@
     "keyBehavior": "只暴露固定业务方法，不透传通用 IPC 或 Electron 对象",
     "ci": "desktop-node"
   },
+  "gugu-core/tests/agent/harness/context/finalization.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "gugu-core/src/agent/harness",
+    "productionEntry": "gugu-core/src/agent/harness/context/reflection.ts",
+    "keyBehavior": "成功主Run捕获原请求反思快照、原生前缀与回复不重复、策略禁用和缺快照延后、通知不含正文或wire",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/agent/harness/context/loading-reflection.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "gugu-core/src/agent/harness/context",
+    "productionEntry": "gugu-core/src/agent/harness/context/prepare.ts",
+    "keyBehavior": "多源上下文DB串行非DB并发、受限群成员隔离、反思被动尾部复用、显式重建租约与压力门",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/agent/harness/context/sources.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "gugu-core/src/agent/harness/context",
+    "productionEntry": "gugu-core/src/agent/harness/context/prepare.ts",
+    "keyBehavior": "标准来源loader串起owner快照、上下文域加载、连续历史与当前输入，命中不重读且RAG只一次，快照只交原子CAS候选",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/agent/harness/history/tool-result-checkpoint.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "gugu-core/src/agent/harness/context",
+    "productionEntry": "gugu-core/src/agent/harness/history/attachment-refs.ts",
+    "keyBehavior": "工具结果媒体固化后按owner/run/round/call与控制指纹恢复，篡改在codec前拒绝且当前Provider媒体不丢失",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/agent/harness/streaming/tool-result.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "gugu-core/src/agent/harness/runtime",
+    "productionEntry": "gugu-core/src/agent/harness/streaming/coordinator.ts",
+    "keyBehavior": "工具卡安全结果详情、递归媒体占位、error脱敏而正常正文不误删、制品仅持久化稳定引用",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/agent/harness/run/policy-reply.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L0",
+    "owner": "gugu-core/src/agent/harness/policy",
+    "productionEntry": "gugu-core/src/agent/harness/run/lifecycle.ts",
+    "keyBehavior": "中英日真实语义分类、问句和第三方事实不误判、QQ引用隔离、显式decision opt-in与当轮requiresTools元数据",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/agent/harness/streaming/portable-boundary.test.ts": {
+    "domain": "security",
+    "layer": "L0",
+    "owner": "gugu-core/src/agent/harness",
+    "productionEntry": "gugu-core/src/agent/harness/index.ts",
+    "keyBehavior": "通过AST遍历运行依赖闭包，防止可移植Harness入口隐式装载Node平台、数据库驱动或原生SDK",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/agent/harness/run/execution.test.ts": {
+    "domain": "security",
+    "layer": "L1",
+    "owner": "gugu-core/src/agent/harness",
+    "productionEntry": "gugu-core/src/agent/executor/executor.ts",
+    "keyBehavior": "可信Run身份、每调用授权、Executor确认和隔离、未知副作用不重放、取消和错误脱敏",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/agent/harness/context/preparation.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "gugu-core/src/agent/harness",
+    "productionEntry": "gugu-core/src/agent/harness/context/prepare.ts",
+    "keyBehavior": "MCP与RAG并行准备失败取消收尾、Shell状态仅system、保留会话或任务授权主体和目录边界",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/agent/harness/context/context-runtime.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "gugu-core/src/agent/harness",
+    "productionEntry": "gugu-core/src/agent/harness/context/assemble.ts",
+    "keyBehavior": "Canonical与Run真实组合、持久化先于final、交互结果唯一、冻结前缀与续接材料隔离、滚动压缩水位",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/agent/harness/context/session-snapshot.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "gugu-core/src/agent/harness/context",
+    "productionEntry": "gugu-core/src/agent/harness/context/prepare.ts",
+    "keyBehavior": "会话快照TTL和epoch候选、locale和workspace绑定失效、重建保留控制字段和owner隔离",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/agent/harness/history/canonical-area.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "gugu-core/src/agent/harness/context",
+    "productionEntry": "gugu-core/src/agent/harness/history/canonical-history.ts",
+    "keyBehavior": "Canonical消息序号、不可变投影、revision与批次持久化摘要、工具配对和请求边界",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/agent/harness/context/history-preparation.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "gugu-core/src/agent/harness/context",
+    "productionEntry": "gugu-core/src/agent/harness/context/assemble.ts",
+    "keyBehavior": "owner隔离、摘要水位和历史顺序、附件稳定引用、当前消息去重与动态上下文布局",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/agent/harness/run/engine.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "gugu-core/src/agent/harness/runtime",
+    "productionEntry": "gugu-core/src/agent/harness/run/lifecycle.ts",
+    "keyBehavior": "Run启动恢复、持久化先于final、取消中断历史、错误终态、owner隔离、背压和未知结果禁止重放",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "gugu-core/src/agent/harness/context",
+    "productionEntry": "gugu-core/src/agent/harness/context/compaction.ts",
+    "keyBehavior": "仅实际用量85%触发、工具单元边界、压缩水位与CAS、同模型反思前缀复用和群缺快照延后",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/agent/harness/run/reply.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "gugu-core/src/agent/harness/runtime",
+    "productionEntry": "gugu-core/src/agent/harness/run/lifecycle.ts",
+    "keyBehavior": "空回复重试额度、工具进展重置、回复守卫优先序、旁白和冒号续轮抑制",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/agent/harness/streaming/display.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "gugu-core/src/agent/harness/runtime",
+    "productionEntry": "gugu-core/src/agent/harness/streaming/coordinator.ts",
+    "keyBehavior": "展示事件稳定身份和顺序、工具状态原位置更新、取消封存打开气泡",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/agent/harness/streaming/tool-scheduler.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "gugu-core/src/agent/harness/runtime",
+    "productionEntry": "gugu-core/src/agent/harness/streaming/backpressure.ts",
+    "keyBehavior": "有界并发、模型顺序提交、失败隔离、共享取消等待已启动工具清理和未启动任务延后",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/agent/harness/history/checkpoint-branch.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "gugu-core/src/agent/harness/context",
+    "productionEntry": "gugu-core/src/agent/harness/history/attachment-refs.ts",
+    "keyBehavior": "稳定附件引用checkpoint、owner和指纹复验、临时材料拒绝、分支重试取消与Provider wire边界",
+    "ci": "core-node"
+  },
   "gugu-core/tests/unit/domain/executor.test.ts": {
     "domain": "security",
     "layer": "L1",
@@ -2325,6 +2485,30 @@
     "owner": "gugu-core",
     "productionEntry": "gugu-core/src/data/sqlite.ts",
     "keyBehavior": "桌面独占连接拒绝第二个连接读取/写入，释放后保留稳定 owner 和已提交数据",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/agent/harness/interactions/coordinator.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "gugu-core/src/agent/harness/runtime",
+    "productionEntry": "gugu-core/src/agent/harness/interactions/coordinator.ts",
+    "keyBehavior": "Run启动恢复、持久化先于final、取消中断历史、错误终态、owner隔离、背压和未知结果禁止重放",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/agent/harness/streaming/coordinator.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "gugu-core/src/agent/harness/runtime",
+    "productionEntry": "gugu-core/src/agent/harness/streaming/coordinator.ts",
+    "keyBehavior": "Run启动恢复、持久化先于final、取消中断历史、错误终态、owner隔离、背压和未知结果禁止重放",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/agent/harness/run/lifecycle.test.ts": {
+    "domain": "agent-harness",
+    "layer": "L1",
+    "owner": "gugu-core/src/agent/harness/run/lifecycle.ts",
+    "productionEntry": "gugu-core/src/agent/harness/harness.ts",
+    "keyBehavior": "终态不得重开，准备、交互等待和恢复不能绕过合法状态转换",
     "ci": "core-node"
   }
 }
