@@ -128,6 +128,7 @@ async def record_usage(
     session_id: int | None = None,
     tools_used: list[str] | None = None,
     scenario: str = "chat",
+    input_source: str | None = None,
     provider_rounds: list[dict] | None = None,
     db=None,
 ) -> UsageResult:
@@ -163,6 +164,7 @@ async def record_usage(
             is_byok=bool(getattr(model_cfg, "is_byok", False)),
             tools_used=tools_used or None,
             scenario=scenario or "chat",
+            input_source=input_source,
         ))
         return UsageResult(tokens_in=capped_in, tokens_out=capped_out)
 

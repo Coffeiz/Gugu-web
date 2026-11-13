@@ -123,7 +123,7 @@
               </div>
             </div>
             <div class="chart-wrap">
-              <Line :data="interactionsChart" :options="lineOpts(false, true)" :plugins="chartPlugins" />
+              <Line :data="interactionsChart" :options="lineOpts(false, true)" :plugins="channelChartPlugins" />
             </div>
           </div>
 
@@ -264,7 +264,7 @@ import { useI18n } from 'vue-i18n'
 import { Line, Bar, Doughnut } from 'vue-chartjs'
 import {
   Chart as ChartJS, CategoryScale, LinearScale, PointElement,
-  LineElement, BarElement, ArcElement, Tooltip, Filler
+  LineElement, BarElement, ArcElement, Tooltip, Filler, Legend
 } from 'chart.js'
 import { useAdminStore } from '@/stores/admin'
 import Checkbox from '@/components/common/controls/Checkbox.vue'
@@ -278,6 +278,7 @@ import {
 } from './_shared'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, ArcElement, Tooltip, Filler)
+const channelChartPlugins = [...chartPlugins, Legend]
 
 const admin = useAdminStore()
 const { t } = useI18n()
@@ -309,7 +310,6 @@ const interactionSources = computed(() => [
   { key: 'feishu', label: t('adminAnalyticsUi.feishu'), color: TEAL },
   { key: 'telegram', label: t('adminAnalyticsUi.telegram'), color: CORAL },
   { key: 'wechat', label: t('adminAnalyticsUi.wechat'), color: 'rgba(100,160,210,1)' },
-  { key: 'other', label: t('adminAnalyticsUi.other'), color: 'rgba(160,130,200,1)' },
 ])
 
 function dimIcon(key: string) {

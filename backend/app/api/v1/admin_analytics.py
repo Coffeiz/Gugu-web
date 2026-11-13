@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.tz import now_utc, resolve_tz
 from app.db.session import get_db
 from app.services.admin_analytics_metrics import (
+    INTERACTION_INPUT_SOURCES,
     enabled_bot_users_by_platform,
     interaction_calls_by_source,
 )
@@ -288,7 +289,7 @@ async def get_trends(days: int = Query(default=30, ge=7, le=90),
     """), {"start": start_utc})).all()
     agent_map = {r.d: (r.calls, int(r.tokens)) for r in agent_rows}
 
-    # Agent 请求通过 session_id 归属来源；未关联会话的记录归入 other。
+    # 入口趋势只统计可识别输入来源的主对话。
     interaction_map = await interaction_calls_by_source(
         db,
         start_utc=start_utc,
@@ -296,7 +297,6 @@ async def get_trends(days: int = Query(default=30, ge=7, le=90),
         exclude_dev=exclude_dev,
         include_byok=include_byok,
     )
-    interaction_sources = ("web", "qq", "feishu", "telegram", "wechat", "other")
 
     _u_dev = " AND NOT is_developer " if exclude_dev else ""
     user_rows = (await db.execute(text(f"""
@@ -347,7 +347,7 @@ async def get_trends(days: int = Query(default=30, ge=7, le=90),
         "agent_tokens":        [agent_map.get(d, (0, 0))[1] for d in local_date_list],
         "interactions_by_source": {
             source: [interaction_map.get((d, source), 0) for d in local_date_list]
-            for source in interaction_sources
+            for source in INTERACTION_INPUT_SOURCES
         },
         "user_registrations":  [user_map.get(d, 0) for d in local_date_list],
         "project_completions": [proj_map.get(d, 0) for d in local_date_list],

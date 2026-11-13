@@ -40,6 +40,7 @@ async def test_cold_tool_round_is_excluded_even_when_run_is_warm(db, user_a):
     start = datetime.now(timezone.utc) - timedelta(minutes=1)
     await record_usage(
         user_a.id, settings, model, db=db, tokens_in=16872, cache_read=9128,
+        input_source="qq",
         provider_rounds=[
             {"input": 15872, "cache_read": 128},
             {"input": 1000, "cache_read": 9000},
@@ -47,6 +48,9 @@ async def test_cold_tool_round_is_excluded_even_when_run_is_warm(db, user_a):
         ],
     )
     await db.flush()
+    from sqlalchemy import select
+
+    assert (await db.execute(select(AgentUsage.input_source))).scalar_one() == "qq"
     row, = await _scenario_usage(db, start, start + timedelta(days=1), [])
     assert row["calls"] == 1
     assert row["cold_calls"] == 1

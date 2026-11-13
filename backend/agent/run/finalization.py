@@ -40,6 +40,7 @@ async def finalize_silent_group_reply(req, exec_, outcome: RunOutcome) -> None:
         cache_read=outcome.cache_read,
         cache_write=outcome.cache_write,
         provider_rounds=outcome.provider_rounds,
+        input_source=req.source,
         tools_used=outcome.tool_names,
         persist_message_delta=False,
         inbound_batch_key=req.inbound_batch_key,
@@ -73,6 +74,7 @@ async def persist_interrupted_agent_run(req, exec_, outcome: RunOutcome) -> None
         cache_read=outcome.cache_read,
         cache_write=outcome.cache_write,
         provider_rounds=outcome.provider_rounds,
+        input_source=req.source,
         tools_used=outcome.tool_names,
         user_message_id=getattr(exec_.user_message, "id", None),
         inbound_batch_key=req.inbound_batch_key,
@@ -157,6 +159,7 @@ async def finalize_agent_run(
         cache_read=outcome.cache_read,
         cache_write=outcome.cache_write,
         provider_rounds=outcome.provider_rounds,
+        input_source=req.source,
         compaction_applied=outcome.compaction_applied,
     )
 

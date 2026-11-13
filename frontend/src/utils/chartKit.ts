@@ -33,7 +33,7 @@ export type LineChartOptionsInput = {
   isTok?: boolean
   /** 固定 Y 轴上限；适用于百分比等有明确范围的指标。 */
   yMax?: number
-  /** 自定义 tooltip 每行文案；缺省按 dataset 原始值输出。 */
+  /** 自定义 tooltip 每行文案；图例启用时默认显示数据系列名称。 */
   tooltipLabel?: (ctx: any) => string
   /** tooltip 主体之后的附加行（如输入/输出拆分）。 */
   afterBody?: (items: any[]) => string[]
@@ -45,6 +45,7 @@ export type LineChartOptionsInput = {
 export function lineChartOptions(input: LineChartOptionsInput = {}) {
   void chartThemeKey.value   // 建立主题响应式依赖：主题切换时重新求值配色
   const isTok = input.isTok ?? false
+  const showLegend = input.showLegend ?? false
   const grid = cssVar('--chart-grid-line', 'rgba(255,255,255,0.04)')
   const tick = cssVar('--chart-tick', 'rgba(255,255,255,0.25)')
   return {
@@ -55,14 +56,14 @@ export function lineChartOptions(input: LineChartOptionsInput = {}) {
     layout: { padding: { top: 4, left: 8, right: 8 } },
     plugins: {
       legend: {
-        display: input.showLegend ?? false,
+        display: showLegend,
         position: 'bottom' as const,
-        labels: { color: tick, boxWidth: 10, font: { size: 11 } },
+        labels: { color: cssVar('--content-secondary', tick), boxWidth: 10, font: { size: 11 } },
       },
       tooltip: {
         mode: 'index' as const,
         intersect: false,
-        displayColors: false,
+        displayColors: showLegend,
         caretSize: 6,
         caretPadding: 10,
         backgroundColor: cssVar('--surface-floating', 'rgba(10,10,22,0.92)'),
@@ -72,7 +73,11 @@ export function lineChartOptions(input: LineChartOptionsInput = {}) {
         bodyColor: cssVar('--content-primary', 'rgba(255,255,255,0.85)'),
         padding: 10,
         callbacks: {
-          label: input.tooltipLabel ?? ((ctx: any) => (isTok ? fmtTok(ctx.raw) : String(ctx.raw))),
+          label: input.tooltipLabel ?? ((ctx: any) => {
+            const value = isTok ? fmtTok(ctx.raw) : String(ctx.raw)
+            const name = showLegend ? ctx.dataset.label : ''
+            return name ? `${name}: ${value}` : value
+          }),
           ...(input.afterBody ? { afterBody: input.afterBody } : {}),
         },
       },
