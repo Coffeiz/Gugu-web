@@ -3,7 +3,7 @@ import { vi } from 'vitest'
 import type { Mock } from 'vitest'
 import type { ProviderEvent } from '../../../src/agent/harness/contracts.js'
 import type { JsonObject, ProviderDriverDependencies, ProviderHttpRequest, ProviderInvocation, ProviderPolicy } from '../../../src/agent/providers/contracts.js'
-import { openaiPolicy } from '../../../src/agent/providers/openai.js'
+import { openaiPolicy } from '../../../src/agent/providers/openai/driver.js'
 
 export const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 export function invocation(overrides: Partial<ProviderInvocation> = {}): ProviderInvocation {

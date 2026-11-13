@@ -1,5 +1,5 @@
 import { isContextOverflowError } from '../harness/context/budget.js'
-import { minimaxErrorDetails } from './vendors/minimax-errors.js'
+import { minimaxErrorDetails } from './minimax/errors.js'
 
 export type ProviderErrorCode = 'cancelled' | 'timeout' | 'authentication' | 'rate_limit' | 'busy' | 'network' | 'input_rejected' | 'context_overflow' | 'unsupported' | 'protocol' | 'stream_incomplete' | 'upstream'
 

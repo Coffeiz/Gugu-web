@@ -5,7 +5,7 @@ import type { CanonicalHarnessContext, CanonicalMessage, Json, ProviderEvent } f
 import { createCanonicalContextPort, createCanonicalHarness, createCompactionSummarizer, isEarlyExit, stableJson } from '../../../src/agent/harness/index.js'
 import { connectProviderHarness } from '../../../src/agent/providers/runtime.js'
 import { ProviderError, classifyProviderError } from '../../../src/agent/providers/errors.js'
-import { openaiPolicy } from '../../../src/agent/providers/openai.js'
+import { openaiPolicy } from '../../../src/agent/providers/openai/driver.js'
 import { streamWithRetry } from '../../../src/agent/providers/retry.js'
 import { InProcessPrefixCoordinator, providerCacheSupported } from '../../../src/agent/providers/cache.js'
 import type { PrefixCoordinator } from '../../../src/agent/providers/cache.js'

@@ -206,12 +206,12 @@
     "layer": "L1",
     "purpose": "contract"
   },
-  "tests/agent/providers/vendors/ollama.test.ts": {
+  "tests/agent/providers/ollama.test.ts": {
     "markers": [],
     "layer": "L1",
     "purpose": "contract"
   },
-  "tests/agent/providers/vendors/policies.test.ts": {
+  "tests/agent/providers/policies.test.ts": {
     "markers": [],
     "layer": "L1",
     "purpose": "contract"

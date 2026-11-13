@@ -9,9 +9,9 @@ import { providerSelection } from '../../../src/agent/providers/registry.js'
 import { streamWithRetry } from '../../../src/agent/providers/retry.js'
 import { ProviderError } from '../../../src/agent/providers/errors.js'
 import { MessageArea, canonicalToolRound } from '../../../src/agent/harness/history/canonical-history.js'
-import { anthropicDriver, anthropicPolicy } from '../../../src/agent/providers/anthropic.js'
-import { mergeOpenaiSystemMessages, prepareOpenAiCache, projectOpenai, renderOpenaiHistory, sanitizeOpenaiToolHistory, transformOpenaiWireHistory } from '../../../src/agent/providers/openai-history.js'
-import { normalizedToolCall, normalizeOpenaiUsage, openaiDriver, openaiPolicy } from '../../../src/agent/providers/openai.js'
+import { anthropicDriver, anthropicPolicy } from '../../../src/agent/providers/anthropic/driver.js'
+import { mergeOpenaiSystemMessages, prepareOpenAiCache, projectOpenai, renderOpenaiHistory, sanitizeOpenaiToolHistory, transformOpenaiWireHistory } from '../../../src/agent/providers/openai/history.js'
+import { normalizedToolCall, normalizeOpenaiUsage, openaiDriver, openaiPolicy } from '../../../src/agent/providers/openai/driver.js'
 import { customPolicy, digest, events, invocation, sse, tool, transport } from './openai-fixtures.js'
 
 function branchRuntime(config: ProviderConfig, payload: unknown) {

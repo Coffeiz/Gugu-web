@@ -8,8 +8,8 @@ import type { JsonObject, ProviderConfig, ProviderHttpRequest, ProviderWire } fr
 import { ProviderError } from '../../../src/agent/providers/errors.js'
 import { streamWithRetry } from '../../../src/agent/providers/retry.js'
 import { providerSelection } from '../../../src/agent/providers/registry.js'
-import { insertResponsesReasoning, responsesContent, responsesDriver, responsesInput, responsesInstructions, responsesOutputText, responsesTools } from '../../../src/agent/providers/openai-responses.js'
-import { openaiPolicy } from '../../../src/agent/providers/openai.js'
+import { insertResponsesReasoning, responsesContent, responsesDriver, responsesInput, responsesInstructions, responsesOutputText, responsesTools } from '../../../src/agent/providers/openai/responses.js'
+import { openaiPolicy } from '../../../src/agent/providers/openai/driver.js'
 import { customPolicy, digest, events, invocation, sse, tool, transport } from './openai-fixtures.js'
 import { collect, fixture, identity } from '../harness/run/fixtures.js'
 

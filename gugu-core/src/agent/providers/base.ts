@@ -1,6 +1,6 @@
 import type { JsonObject, ProviderCapabilities, ProviderConfig, ProviderPolicy, ProviderProtocol, ReasoningCapabilities, ResponsesInputCapabilities } from './contracts.js'
 import { ProviderError } from './errors.js'
-import { DEFAULT_MEDIA_LIMITS } from './vendors/media.js'
+import { DEFAULT_MEDIA_LIMITS } from './media.js'
 
 export const DEFAULT_CAPABILITIES: ProviderCapabilities = Object.freeze({ api_format: 'openai', cache_mode: 'none', thinking: false, structured_json: false, structured_schema: false, tools: true, parallel_tools: false, image: false, audio: false, video: false })
 export const DEFAULT_REASONING: ReasoningCapabilities = Object.freeze({ modes: [], efforts: [], supports_adaptive_thinking: false })

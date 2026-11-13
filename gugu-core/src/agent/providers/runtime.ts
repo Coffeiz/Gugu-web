@@ -17,7 +17,7 @@ import { RequestProbe } from './cache-probe.js'
 import type { ProviderProbeSink } from './cache-probe.js'
 import { outputBudget, parseStructuredJson } from './standalone.js'
 import { filterReasoningConfig } from './base.js'
-import { stripCacheControl } from './openai-history.js'
+import { stripCacheControl } from './openai/history.js'
 
 export interface ProviderRuntimeOptions extends ContextServices {
   /** 由Host的可信选模/BYOK解析器提供，必须与Harness冻结模型身份一致。 */

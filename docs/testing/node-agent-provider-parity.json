@@ -44,7 +44,7 @@
         "AnthropicAdapter"
       ],
       "targets": [
-        "gugu-core/src/agent/providers/anthropic.ts"
+        "gugu-core/src/agent/providers/anthropic/driver.ts"
       ],
       "targetFilesExist": true,
       "deferredOrRetiredResponsibility": "真实厂商线上调用验收另列，不以合成SSE代替",
@@ -62,7 +62,7 @@
         "AnthropicHistoryAdapter"
       ],
       "targets": [
-        "gugu-core/src/agent/providers/anthropic-history.ts"
+        "gugu-core/src/agent/providers/anthropic/history.ts"
       ],
       "targetFilesExist": true,
       "deferredOrRetiredResponsibility": "旧持久thinking清理及SQL provenance未迁",
@@ -193,14 +193,14 @@
     },
     {
       "pythonFile": "backend/agent/providers/deepseek/__init__.py",
-      "owner": "vendors",
+      "owner": "deepseek",
       "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
       "status": "有实现落点，待逐符号/外部边界验收",
       "symbols": [
         "DeepSeekAdapter"
       ],
       "targets": [
-        "gugu-core/src/agent/providers/vendors/policies.ts"
+        "gugu-core/src/agent/providers/deepseek/policy.ts"
       ],
       "targetFilesExist": true,
       "deferredOrRetiredResponsibility": "策略能力与HTTP协议驱动组合；真实线上模型验收另列",
@@ -211,7 +211,7 @@
     },
     {
       "pythonFile": "backend/agent/providers/deepseek/web_search.py",
-      "owner": "vendors",
+      "owner": "deepseek",
       "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
       "status": "有实现落点，待逐符号/外部边界验收",
       "symbols": [
@@ -220,8 +220,9 @@
         "search"
       ],
       "targets": [
-        "gugu-core/src/agent/providers/vendors/search.ts",
-        "gugu-core/src/agent/providers/vendors/search-schemas.ts"
+        "gugu-core/src/agent/providers/search.ts",
+        "gugu-core/src/agent/providers/deepseek/search.ts",
+        "gugu-core/src/agent/providers/deepseek/search-schema.ts"
       ],
       "targetFilesExist": true,
       "deferredOrRetiredResponsibility": "Tools注册/执行授权不属于Provider搜索请求",
@@ -263,7 +264,7 @@
     },
     {
       "pythonFile": "backend/agent/providers/glm/__init__.py",
-      "owner": "vendors",
+      "owner": "glm",
       "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
       "status": "有实现落点，待逐符号/外部边界验收",
       "symbols": [
@@ -271,7 +272,7 @@
         "GlmCodingAdapter"
       ],
       "targets": [
-        "gugu-core/src/agent/providers/vendors/policies.ts"
+        "gugu-core/src/agent/providers/glm/policy.ts"
       ],
       "targetFilesExist": true,
       "deferredOrRetiredResponsibility": "线上Coding Plan账号/路由验收另列",
@@ -282,7 +283,7 @@
     },
     {
       "pythonFile": "backend/agent/providers/glm/web_search.py",
-      "owner": "vendors",
+      "owner": "glm",
       "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
       "status": "有实现落点，待逐符号/外部边界验收",
       "symbols": [
@@ -291,8 +292,9 @@
         "search"
       ],
       "targets": [
-        "gugu-core/src/agent/providers/vendors/search.ts",
-        "gugu-core/src/agent/providers/vendors/search-schemas.ts"
+        "gugu-core/src/agent/providers/search.ts",
+        "gugu-core/src/agent/providers/glm/search.ts",
+        "gugu-core/src/agent/providers/glm/search-schema.ts"
       ],
       "targetFilesExist": true,
       "deferredOrRetiredResponsibility": "搜索结果进入Tools/Host注册与发布待实际入口",
@@ -303,7 +305,7 @@
     },
     {
       "pythonFile": "backend/agent/providers/local.py",
-      "owner": "vendors",
+      "owner": "local",
       "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
       "status": "有实现落点，待逐符号/外部边界验收",
       "symbols": [
@@ -311,7 +313,7 @@
         "LocalAdapter"
       ],
       "targets": [
-        "gugu-core/src/agent/providers/vendors/policies.ts",
+        "gugu-core/src/agent/providers/local/policy.ts",
         "gugu-core/src/agent/providers/transport/network.ts"
       ],
       "targetFilesExist": true,
@@ -323,14 +325,14 @@
     },
     {
       "pythonFile": "backend/agent/providers/media.py",
-      "owner": "vendors",
+      "owner": "shared",
       "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
       "status": "有实现落点，待逐符号/外部边界验收",
       "symbols": [
         "MediaLimits"
       ],
       "targets": [
-        "gugu-core/src/agent/providers/vendors/media.ts"
+        "gugu-core/src/agent/providers/media.ts"
       ],
       "targetFilesExist": true,
       "deferredOrRetiredResponsibility": "真实文件读取/ffmpeg/持久存储/所有权校验由Host提供，回调不能替代验收",
@@ -373,9 +375,9 @@
         "_openai_tool_result"
       ],
       "targets": [
-        "gugu-core/src/agent/providers/anthropic-history.ts",
-        "gugu-core/src/agent/providers/openai-history.ts",
-        "gugu-core/src/agent/providers/anthropic-json.ts"
+        "gugu-core/src/agent/providers/anthropic/history.ts",
+        "gugu-core/src/agent/providers/openai/history.ts",
+        "gugu-core/src/agent/providers/anthropic/json.ts"
       ],
       "targetFilesExist": true,
       "deferredOrRetiredResponsibility": "Canonical领域历史在Harness/history；旧数据库迁移由Host/Data执行",
@@ -386,14 +388,14 @@
     },
     {
       "pythonFile": "backend/agent/providers/mimo/__init__.py",
-      "owner": "vendors",
+      "owner": "mimo",
       "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
       "status": "有实现落点，待逐符号/外部边界验收",
       "symbols": [
         "MimoAdapter"
       ],
       "targets": [
-        "gugu-core/src/agent/providers/vendors/policies.ts"
+        "gugu-core/src/agent/providers/mimo/policy.ts"
       ],
       "targetFilesExist": true,
       "deferredOrRetiredResponsibility": "不把通用能力override当默认支持",
@@ -404,7 +406,7 @@
     },
     {
       "pythonFile": "backend/agent/providers/mimo/media.py",
-      "owner": "vendors",
+      "owner": "mimo",
       "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
       "status": "有实现落点，待逐符号/外部边界验收",
       "symbols": [
@@ -413,7 +415,7 @@
         "responses_input_capabilities"
       ],
       "targets": [
-        "gugu-core/src/agent/providers/vendors/media.ts"
+        "gugu-core/src/agent/providers/media.ts"
       ],
       "targetFilesExist": true,
       "deferredOrRetiredResponsibility": "实际文件权限/转码/持久索引由Host/Media提供",
@@ -424,7 +426,7 @@
     },
     {
       "pythonFile": "backend/agent/providers/mimo/web_search.py",
-      "owner": "vendors",
+      "owner": "mimo",
       "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
       "status": "有实现落点，待逐符号/外部边界验收",
       "symbols": [
@@ -433,8 +435,9 @@
         "search"
       ],
       "targets": [
-        "gugu-core/src/agent/providers/vendors/search.ts",
-        "gugu-core/src/agent/providers/vendors/search-schemas.ts"
+        "gugu-core/src/agent/providers/search.ts",
+        "gugu-core/src/agent/providers/mimo/search.ts",
+        "gugu-core/src/agent/providers/mimo/search-schema.ts"
       ],
       "targetFilesExist": true,
       "deferredOrRetiredResponsibility": "Tools注册与外部服务验收另列",
@@ -445,7 +448,7 @@
     },
     {
       "pythonFile": "backend/agent/providers/minimax/__init__.py",
-      "owner": "vendors",
+      "owner": "minimax",
       "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
       "status": "有实现落点，待逐符号/外部边界验收",
       "symbols": [
@@ -456,8 +459,8 @@
         "MiniMaxAdapter"
       ],
       "targets": [
-        "gugu-core/src/agent/providers/vendors/policies.ts",
-        "gugu-core/src/agent/providers/vendors/minimax-errors.ts"
+        "gugu-core/src/agent/providers/minimax/policy.ts",
+        "gugu-core/src/agent/providers/minimax/errors.ts"
       ],
       "targetFilesExist": true,
       "deferredOrRetiredResponsibility": "原生Thinking仅私有内存续接；真实旧存储清理另列",
@@ -468,7 +471,7 @@
     },
     {
       "pythonFile": "backend/agent/providers/minimax/asr.py",
-      "owner": "vendors",
+      "owner": "minimax",
       "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
       "status": "有实现落点，待逐符号/外部边界验收",
       "symbols": [
@@ -480,7 +483,10 @@
         "transcribe"
       ],
       "targets": [
-        "gugu-core/src/agent/providers/vendors/asr.ts"
+        "gugu-core/src/agent/providers/minimax/asr.ts",
+        "gugu-core/src/agent/providers/asr/shared.ts",
+        "gugu-core/src/agent/providers/minimax/asr.ts",
+        "gugu-core/src/agent/providers/asr/shared.ts"
       ],
       "targetFilesExist": true,
       "deferredOrRetiredResponsibility": "原生HTTP协议已建；真实转码/附件所有权与落库由Host/Media提供",
@@ -491,7 +497,7 @@
     },
     {
       "pythonFile": "backend/agent/providers/minimax/media.py",
-      "owner": "vendors",
+      "owner": "minimax",
       "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
       "status": "有实现落点，待逐符号/外部边界验收",
       "symbols": [
@@ -503,7 +509,9 @@
         "upload_video_path"
       ],
       "targets": [
-        "gugu-core/src/agent/providers/vendors/media.ts"
+        "gugu-core/src/agent/providers/minimax/media.ts",
+        "gugu-core/src/agent/providers/minimax/media.ts",
+        "gugu-core/src/agent/providers/media.ts"
       ],
       "targetFilesExist": true,
       "deferredOrRetiredResponsibility": "上传HTTP/预算已建；ffprobe与实际附件读取授权仍由Host提供",
@@ -514,7 +522,7 @@
     },
     {
       "pythonFile": "backend/agent/providers/minimax/web_search.py",
-      "owner": "vendors",
+      "owner": "minimax",
       "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
       "status": "有实现落点，待逐符号/外部边界验收",
       "symbols": [
@@ -524,8 +532,9 @@
         "search"
       ],
       "targets": [
-        "gugu-core/src/agent/providers/vendors/search.ts",
-        "gugu-core/src/agent/providers/vendors/search-schemas.ts"
+        "gugu-core/src/agent/providers/search.ts",
+        "gugu-core/src/agent/providers/minimax/search.ts",
+        "gugu-core/src/agent/providers/minimax/search-schema.ts"
       ],
       "targetFilesExist": true,
       "deferredOrRetiredResponsibility": "搜索工具实际注册/授权由Tools调用方负责",
@@ -536,15 +545,15 @@
     },
     {
       "pythonFile": "backend/agent/providers/ollama/__init__.py",
-      "owner": "vendors",
+      "owner": "ollama",
       "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
       "status": "有实现落点，待逐符号/外部边界验收",
       "symbols": [
         "OllamaAdapter"
       ],
       "targets": [
-        "gugu-core/src/agent/providers/vendors/policies.ts",
-        "gugu-core/src/agent/providers/vendors/ollama.ts"
+        "gugu-core/src/agent/providers/ollama/policy.ts",
+        "gugu-core/src/agent/providers/ollama/driver.ts"
       ],
       "targetFilesExist": true,
       "deferredOrRetiredResponsibility": "本地daemon安装/启动/用户配置由Host提供",
@@ -555,7 +564,7 @@
     },
     {
       "pythonFile": "backend/agent/providers/ollama/web_search.py",
-      "owner": "vendors",
+      "owner": "ollama",
       "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
       "status": "有实现落点，待逐符号/外部边界验收",
       "symbols": [
@@ -564,8 +573,9 @@
         "search"
       ],
       "targets": [
-        "gugu-core/src/agent/providers/vendors/search.ts",
-        "gugu-core/src/agent/providers/vendors/search-schemas.ts"
+        "gugu-core/src/agent/providers/search.ts",
+        "gugu-core/src/agent/providers/ollama/search.ts",
+        "gugu-core/src/agent/providers/ollama/search-schema.ts"
       ],
       "targetFilesExist": true,
       "deferredOrRetiredResponsibility": "不能因URL推断Ollama而自动授权私网访问",
@@ -583,7 +593,7 @@
         "OpenAIAdapter"
       ],
       "targets": [
-        "gugu-core/src/agent/providers/openai.ts",
+        "gugu-core/src/agent/providers/openai/driver.ts",
         "gugu-core/src/agent/providers/base.ts"
       ],
       "targetFilesExist": true,
@@ -602,7 +612,7 @@
         "OpenAIHistoryAdapter"
       ],
       "targets": [
-        "gugu-core/src/agent/providers/openai-history.ts"
+        "gugu-core/src/agent/providers/openai/history.ts"
       ],
       "targetFilesExist": true,
       "deferredOrRetiredResponsibility": "旧持久原生状态清理/provenance/加密跨进程续接由Host/Data负责",
@@ -642,7 +652,7 @@
         "OpenAIResponsesDriver"
       ],
       "targets": [
-        "gugu-core/src/agent/providers/openai-responses.ts"
+        "gugu-core/src/agent/providers/openai/responses.ts"
       ],
       "targetFilesExist": true,
       "deferredOrRetiredResponsibility": "SDK退役；Host选模reasoning策略无效值与跨Run恢复需明确",
@@ -653,7 +663,7 @@
     },
     {
       "pythonFile": "backend/agent/providers/qwen/__init__.py",
-      "owner": "vendors",
+      "owner": "qwen",
       "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
       "status": "有实现落点，待逐符号/外部边界验收",
       "symbols": [
@@ -663,7 +673,7 @@
         "QwenAdapter"
       ],
       "targets": [
-        "gugu-core/src/agent/providers/vendors/policies.ts"
+        "gugu-core/src/agent/providers/qwen/policy.ts"
       ],
       "targetFilesExist": true,
       "deferredOrRetiredResponsibility": "真实厂商区域/账号配置由Host提供",
@@ -674,7 +684,7 @@
     },
     {
       "pythonFile": "backend/agent/providers/qwen/web_search.py",
-      "owner": "vendors",
+      "owner": "qwen",
       "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
       "status": "有实现落点，待逐符号/外部边界验收",
       "symbols": [
@@ -684,8 +694,10 @@
         "search"
       ],
       "targets": [
-        "gugu-core/src/agent/providers/vendors/search.ts",
-        "gugu-core/src/agent/providers/vendors/search-schemas.ts"
+        "gugu-core/src/agent/providers/search.ts",
+        "gugu-core/src/agent/providers/qwen/search.ts",
+        "gugu-core/src/agent/providers/qwen/chat-search-schema.ts",
+        "gugu-core/src/agent/providers/qwen/responses-search-schema.ts"
       ],
       "targetFilesExist": true,
       "deferredOrRetiredResponsibility": "Tools实际分发与授权不在Provider内部新建",
@@ -696,7 +708,7 @@
     },
     {
       "pythonFile": "backend/agent/providers/search_http.py",
-      "owner": "vendors",
+      "owner": "shared",
       "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
       "status": "有实现落点，待逐符号/外部边界验收",
       "symbols": [
@@ -705,7 +717,8 @@
         "post_search"
       ],
       "targets": [
-        "gugu-core/src/agent/providers/vendors/search.ts",
+        "gugu-core/src/agent/providers/search/http.ts",
+        "gugu-core/src/agent/providers/search.ts",
         "gugu-core/src/agent/providers/transport/node.ts",
         "gugu-core/src/agent/providers/transport/network.ts"
       ],
@@ -718,7 +731,7 @@
     },
     {
       "pythonFile": "backend/agent/providers/search_limits.py",
-      "owner": "vendors",
+      "owner": "shared",
       "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
       "status": "有实现落点，待逐符号/外部边界验收",
       "symbols": [
@@ -727,7 +740,8 @@
         "limit_search_result"
       ],
       "targets": [
-        "gugu-core/src/agent/providers/vendors/search.ts"
+        "gugu-core/src/agent/providers/search/limits.ts",
+        "gugu-core/src/agent/providers/search.ts"
       ],
       "targetFilesExist": true,
       "deferredOrRetiredResponsibility": "限制规则纯Provider；不把结果裁切当完整业务响应成功",
@@ -758,7 +772,7 @@
     },
     {
       "pythonFile": "backend/agent/providers/web_search.py",
-      "owner": "vendors",
+      "owner": "shared",
       "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
       "status": "有实现落点，待逐符号/外部边界验收",
       "symbols": [
@@ -768,8 +782,7 @@
         "search"
       ],
       "targets": [
-        "gugu-core/src/agent/providers/vendors/search.ts",
-        "gugu-core/src/agent/providers/vendors/search-schemas.ts"
+        "gugu-core/src/agent/providers/search.ts"
       ],
       "targetFilesExist": true,
       "deferredOrRetiredResponsibility": "仅Provider路由/schema/请求；Tools注册与执行授权由既有Tools负责",
@@ -850,12 +863,12 @@
       "configurationSourceAndHandling": "接收messages/adapter渲染布局，不自行选模；Core投影能力已有，诊断消费者不是已接Node。",
       "nodeAvailableCoreTargets": [
         {
-          "file": "gugu-core/src/agent/providers/openai-history.ts",
+          "file": "gugu-core/src/agent/providers/openai/history.ts",
           "line": 154,
           "symbol": "projectOpenai"
         },
         {
-          "file": "gugu-core/src/agent/providers/anthropic-history.ts",
+          "file": "gugu-core/src/agent/providers/anthropic/history.ts",
           "line": 89,
           "symbol": "projectAnthropicHistory"
         }
@@ -873,12 +886,12 @@
       "configurationSourceAndHandling": "工具结果及allow_images由参数传入，不自行读取模型配置；Core工具媒体投影已有，上层历史存储另验。",
       "nodeAvailableCoreTargets": [
         {
-          "file": "gugu-core/src/agent/providers/openai-history.ts",
+          "file": "gugu-core/src/agent/providers/openai/history.ts",
           "line": 154,
           "symbol": "projectOpenai"
         },
         {
-          "file": "gugu-core/src/agent/providers/anthropic-history.ts",
+          "file": "gugu-core/src/agent/providers/anthropic/history.ts",
           "line": 89,
           "symbol": "projectAnthropicHistory"
         }
@@ -896,12 +909,12 @@
       "configurationSourceAndHandling": "显式ai经adapter_for选择协议；必须传同一冻结模型身份，Node可投影但旧调用入口未切换。",
       "nodeAvailableCoreTargets": [
         {
-          "file": "gugu-core/src/agent/providers/openai-history.ts",
+          "file": "gugu-core/src/agent/providers/openai/history.ts",
           "line": 154,
           "symbol": "projectOpenai"
         },
         {
-          "file": "gugu-core/src/agent/providers/anthropic-history.ts",
+          "file": "gugu-core/src/agent/providers/anthropic/history.ts",
           "line": 89,
           "symbol": "projectAnthropicHistory"
         }
@@ -919,12 +932,12 @@
       "configurationSourceAndHandling": "显式ai决定adapter与协议，输入来自上下文准备；Node历史投影已有，旧ProviderConversation入口未切换。",
       "nodeAvailableCoreTargets": [
         {
-          "file": "gugu-core/src/agent/providers/openai-history.ts",
+          "file": "gugu-core/src/agent/providers/openai/history.ts",
           "line": 154,
           "symbol": "projectOpenai"
         },
         {
-          "file": "gugu-core/src/agent/providers/anthropic-history.ts",
+          "file": "gugu-core/src/agent/providers/anthropic/history.ts",
           "line": 89,
           "symbol": "projectAnthropicHistory"
         }
@@ -1001,12 +1014,12 @@
       "configurationSourceAndHandling": "使用已传model_cfg判断协议，准备阶段负责冻结；Core上下文/投影能力已有，原生产入口未切换。",
       "nodeAvailableCoreTargets": [
         {
-          "file": "gugu-core/src/agent/providers/openai-history.ts",
+          "file": "gugu-core/src/agent/providers/openai/history.ts",
           "line": 154,
           "symbol": "projectOpenai"
         },
         {
-          "file": "gugu-core/src/agent/providers/anthropic-history.ts",
+          "file": "gugu-core/src/agent/providers/anthropic/history.ts",
           "line": 89,
           "symbol": "projectAnthropicHistory"
         }
@@ -1119,7 +1132,7 @@
       "configurationSourceAndHandling": "原入口直接get_settings().ai；不能与其他IM effective_ai入口混写；厂商媒体规则有实现，QQ入站授权/实际处理未迁。",
       "nodeAvailableCoreTargets": [
         {
-          "file": "gugu-core/src/agent/providers/vendors/media.ts",
+          "file": "gugu-core/src/agent/providers/media.ts",
           "line": 8,
           "symbol": "DEFAULT_MEDIA_LIMITS"
         }
@@ -1137,7 +1150,7 @@
       "configurationSourceAndHandling": "effective_ai(get_settings())保留当前modelctx覆盖；厂商规则已有，飞书入站授权/下载/转码未接Node。",
       "nodeAvailableCoreTargets": [
         {
-          "file": "gugu-core/src/agent/providers/vendors/media.ts",
+          "file": "gugu-core/src/agent/providers/media.ts",
           "line": 8,
           "symbol": "DEFAULT_MEDIA_LIMITS"
         }
@@ -1155,7 +1168,7 @@
       "configurationSourceAndHandling": "effective_ai(get_settings())保留当前modelctx覆盖；厂商规则已有，Telegram入站授权/下载/转码未接Node。",
       "nodeAvailableCoreTargets": [
         {
-          "file": "gugu-core/src/agent/providers/vendors/media.ts",
+          "file": "gugu-core/src/agent/providers/media.ts",
           "line": 8,
           "symbol": "DEFAULT_MEDIA_LIMITS"
         }
@@ -1268,7 +1281,7 @@
       "configurationSourceAndHandling": "显式model_cfg优先，缺省get_settings().ai决定audio_native_exts；格式能力已迁，实际转码/其配置来源未迁。",
       "nodeAvailableCoreTargets": [
         {
-          "file": "gugu-core/src/agent/providers/vendors/media.ts",
+          "file": "gugu-core/src/agent/providers/media.ts",
           "line": 8,
           "symbol": "DEFAULT_MEDIA_LIMITS"
         }
@@ -1286,7 +1299,7 @@
       "configurationSourceAndHandling": "MediaLimits()静态默认常量，无用户/模型配置读取；Node DEFAULT_MEDIA_LIMITS已迁，不是网络或Host入口。",
       "nodeAvailableCoreTargets": [
         {
-          "file": "gugu-core/src/agent/providers/vendors/media.ts",
+          "file": "gugu-core/src/agent/providers/media.ts",
           "line": 8,
           "symbol": "DEFAULT_MEDIA_LIMITS"
         }
@@ -1304,7 +1317,7 @@
       "configurationSourceAndHandling": "显式model_cfg/ai优先，便捷入口可回退get_settings().ai；Node能力/limits已有，不能把gate清单等同通用媒体流水线。",
       "nodeAvailableCoreTargets": [
         {
-          "file": "gugu-core/src/agent/providers/vendors/media.ts",
+          "file": "gugu-core/src/agent/providers/media.ts",
           "line": 8,
           "symbol": "DEFAULT_MEDIA_LIMITS"
         }
@@ -1322,7 +1335,7 @@
       "configurationSourceAndHandling": "准备/校验接model_cfg，adapter取该配置；MiniMax门控/上传有实现，FS/probe/ffmpeg及通用内存预算未由Provider替代。",
       "nodeAvailableCoreTargets": [
         {
-          "file": "gugu-core/src/agent/providers/vendors/media.ts",
+          "file": "gugu-core/src/agent/providers/media.ts",
           "line": 8,
           "symbol": "DEFAULT_MEDIA_LIMITS"
         }
@@ -1340,7 +1353,7 @@
       "configurationSourceAndHandling": "显式model_cfg，上传缓存scope哈希user_id+provider/model/base_url/api_key+文件身份，前后stat防TOCTOU；Node上传可调用，路径授权/Redis缓存/文件一致性未接。",
       "nodeAvailableCoreTargets": [
         {
-          "file": "gugu-core/src/agent/providers/vendors/media.ts",
+          "file": "gugu-core/src/agent/providers/media.ts",
           "line": 8,
           "symbol": "DEFAULT_MEDIA_LIMITS"
         }
@@ -1458,7 +1471,7 @@
       "configurationSourceAndHandling": "Schema用model_cfg或modelctx.get_model_cfg，执行读modelctx；settings.search另管独立搜索开关；Node searchProvider网络已有，工具注册/权限/切换/受控出口未由该函数替代。",
       "nodeAvailableCoreTargets": [
         {
-          "file": "gugu-core/src/agent/providers/vendors/search.ts",
+          "file": "gugu-core/src/agent/providers/search.ts",
           "line": 140,
           "symbol": "searchProvider"
         }
@@ -1476,14 +1489,19 @@
       "configurationSourceAndHandling": "_vm(settings)选语音预设，有db/user_id时resolve_capability_settings覆盖speech_to_text；api_format/dashscope_service显式选协议；Node现已实现MiniMax独立ASR及transcribeCompatibleAsr的兼容/DashScope三线网络；Voice预设、BYOK、转码部署和业务路由未迁。",
       "nodeAvailableCoreTargets": [
         {
-          "file": "gugu-core/src/agent/providers/vendors/asr.ts",
-          "line": 175,
+          "file": "gugu-core/src/agent/providers/minimax/asr.ts",
+          "line": 32,
           "symbol": "transcribeMiniMax"
         },
         {
-          "file": "gugu-core/src/agent/providers/vendors/asr.ts",
+          "file": "gugu-core/src/agent/providers/asr.ts",
           "symbol": "transcribeCompatibleAsr",
-          "line": 82
+          "line": 17
+        },
+        {
+          "file": "gugu-core/src/agent/providers/qwen/asr.ts",
+          "line": 42,
+          "symbol": "transcribeDashscopeAsr"
         }
       ],
       "nodeProductionHostEntry": null,
@@ -1499,7 +1517,7 @@
       "configurationSourceAndHandling": "get_settings/voice预设读取+MiniMax限制常量，不直接请求网络；常量已有，预设生效/用户凭据绑定未迁。",
       "nodeAvailableCoreTargets": [
         {
-          "file": "gugu-core/src/agent/providers/vendors/media.ts",
+          "file": "gugu-core/src/agent/providers/media.ts",
           "line": 8,
           "symbol": "DEFAULT_MEDIA_LIMITS"
         }
@@ -1540,7 +1558,7 @@
       "configurationSourceAndHandling": "原附件接口直接get_settings().ai选adapter；Node规则可复用，路由授权/文件处理/模型来源未迁。",
       "nodeAvailableCoreTargets": [
         {
-          "file": "gugu-core/src/agent/providers/vendors/media.ts",
+          "file": "gugu-core/src/agent/providers/media.ts",
           "line": 8,
           "symbol": "DEFAULT_MEDIA_LIMITS"
         }
@@ -1645,7 +1663,7 @@
       "configurationSourceAndHandling": "默认MimoAdapter()供转码策略，不是读取用户模型发网络；Node MiMo能力/limits已有，FFmpeg服务不属Provider客户端。",
       "nodeAvailableCoreTargets": [
         {
-          "file": "gugu-core/src/agent/providers/vendors/media.ts",
+          "file": "gugu-core/src/agent/providers/media.ts",
           "line": 8,
           "symbol": "DEFAULT_MEDIA_LIMITS"
         }
@@ -3646,7 +3664,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
         },
         {
@@ -4182,7 +4200,7 @@
       "status": "部分覆盖",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "模型列表鉴权失败给安全认证分类，上游错误正文和密钥只允许进入受限诊断"
         }
       ],
@@ -4203,15 +4221,15 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "file": "gugu-core/tests/agent/providers/ollama.test.ts",
           "name": "真实分片流按token→usage→complete输出并保留工具参数、thinking和实际用量"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "file": "gugu-core/tests/agent/providers/ollama.test.ts",
           "name": "仅有回执的工具进入投影，确认门后的未派发兄弟不留孤儿且Canonical原文不变"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "file": "gugu-core/tests/agent/providers/ollama.test.ts",
           "name": "旧历史多个完整轮复用ollama-call-0时仍逐轮恢复配对，不全局去重丢结果"
         }
       ],
@@ -4232,7 +4250,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
         }
       ],
@@ -4253,7 +4271,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
         }
       ],
@@ -4274,7 +4292,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
         }
       ],
@@ -4295,7 +4313,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
         }
       ],
@@ -4316,11 +4334,11 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
         }
       ],
@@ -4341,7 +4359,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
         }
       ],
@@ -4559,7 +4577,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "同2013错误按真实上下文语义分类：%s"
         }
       ],
@@ -4580,7 +4598,7 @@
       "status": "部分覆盖",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "同2013错误按真实上下文语义分类：%s"
         },
         {
@@ -4605,7 +4623,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "瞬时码须同时具备api_error类型，密钥和上游正文不得进详情"
         }
       ],
@@ -4626,7 +4644,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "同2013错误按真实上下文语义分类：%s"
         }
       ],
@@ -4647,7 +4665,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "同2013错误按真实上下文语义分类：%s"
         }
       ],
@@ -4668,7 +4686,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "大视频以原始异步源multipart分块上传，返回稳定file_id而非复制base64"
         }
       ],
@@ -4705,7 +4723,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "上传缺配置不联网，失败状态或缺file_id返回null并清理响应"
         }
       ],
@@ -4726,7 +4744,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "上传缺配置不联网，失败状态或缺file_id返回null并清理响应"
         }
       ],
@@ -4747,7 +4765,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "大视频以原始异步源multipart分块上传，返回稳定file_id而非复制base64"
         }
       ],
@@ -4768,11 +4786,11 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "未知视频时长必须探测，探测缺失不传文件，取消后不启动上传"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "M3视频时长%s非法或超限时在任何上传之前拒绝"
         }
       ],
@@ -4793,7 +4811,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开媒体规格使用通用默认和M3官方数值，ASR声明50MiB与500秒限制"
         }
       ],
@@ -4846,7 +4864,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开媒体规格使用通用默认和M3官方数值，ASR声明50MiB与500秒限制"
         }
       ],
@@ -4883,7 +4901,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "可信已知视频时长跳过重复探测，缺少时只调用一次注入探测并在读数据前拒绝超长文件"
         }
       ],
@@ -4936,7 +4954,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "M3视频%s秒保留原件base64，正好1800秒不误拒"
         }
       ],
@@ -4957,11 +4975,11 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "M3视频时长%s非法或超限时在任何上传之前拒绝"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "可信已知视频时长跳过重复探测，缺少时只调用一次注入探测并在读数据前拒绝超长文件"
         }
       ],
@@ -4982,11 +5000,11 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "M3视频时长%s非法或超限时在任何上传之前拒绝"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "可信已知视频时长跳过重复探测，缺少时只调用一次注入探测并在读数据前拒绝超长文件"
         }
       ],
@@ -5007,7 +5025,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "M3视频%s秒保留原件base64，正好1800秒不误拒"
         }
       ],
@@ -5028,7 +5046,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "ASR缺ext时%s推导%s供探测和multipart文件名"
         }
       ],
@@ -5065,7 +5083,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "ASR时长%s未知或超过500秒在任何请求前拒绝"
         }
       ],
@@ -5118,11 +5136,11 @@
       "status": "部分覆盖",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "旧DeepSeek模型不接收新thinking，Anthropic端点按协议而非URL关键字选择"
         }
       ],
@@ -5191,11 +5209,11 @@
       "status": "部分覆盖",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "旧DeepSeek模型不接收新thinking，Anthropic端点按协议而非URL关键字选择"
         }
       ],
@@ -5895,7 +5913,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "MiMo专用认证、原生音视频格式及Responses思考仅由自身声明"
         }
       ],
@@ -5916,11 +5934,11 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开媒体规格使用通用默认和M3官方数值，ASR声明50MiB与500秒限制"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "MiniMax能力与媒体规格保持M2/M3边界，Responses不虚报音视频"
         }
       ],
@@ -5941,11 +5959,11 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开媒体规格使用通用默认和M3官方数值，ASR声明50MiB与500秒限制"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "MiniMax能力与媒体规格保持M2/M3边界，Responses不虚报音视频"
         }
       ],
@@ -5966,11 +5984,11 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开媒体规格使用通用默认和M3官方数值，ASR声明50MiB与500秒限制"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "MiniMax能力与媒体规格保持M2/M3边界，Responses不虚报音视频"
         }
       ],
@@ -5991,11 +6009,11 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开媒体规格使用通用默认和M3官方数值，ASR声明50MiB与500秒限制"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "MiniMax能力与媒体规格保持M2/M3边界，Responses不虚报音视频"
         }
       ],
@@ -6497,7 +6515,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
         }
       ],
@@ -6518,15 +6536,15 @@
       "status": "部分覆盖",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "DeepSeek仅明确视觉模型%s声明图片，显式缓存保持关闭"
         }
       ],
@@ -6547,11 +6565,11 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "GLM的%s端点与Coding Plan身份分开，Coding不宣称视觉"
         }
       ],
@@ -6572,11 +6590,11 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "GLM的%s端点与Coding Plan身份分开，Coding不宣称视觉"
         }
       ],
@@ -6597,15 +6615,15 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "GLM的%s端点与Coding Plan身份分开，Coding不宣称视觉"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "GLM旧思考模型按自己的Chat参数，视觉不由厂商名一概打开"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
         }
       ],
@@ -6626,7 +6644,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "MiMo专用认证、原生音视频格式及Responses思考仅由自身声明"
         }
       ],
@@ -6647,7 +6665,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
         }
       ],
@@ -6668,15 +6686,15 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "MiMo专用认证、原生音视频格式及Responses思考仅由自身声明"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
         }
       ],
@@ -6697,11 +6715,11 @@
       "status": "部分覆盖",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
         },
         {
@@ -6709,7 +6727,7 @@
           "name": "缺块%s尚无正文时只用相同参数非流式恢复一次，恢复正文进入正常事件链"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "MiniMax已知缺块尚无输出时恢复一次，普通JS异常不扩散成可重试厂商故障"
         }
       ],
@@ -6730,7 +6748,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
         }
       ],
@@ -6751,11 +6769,11 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "file": "gugu-core/tests/agent/providers/ollama.test.ts",
           "name": "未知Provider%s经URL选择Ollama协议也不得授予内网访问，流与独立完成都保持未授权"
         }
       ],
@@ -6776,11 +6794,11 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "Ollama原生和OpenAI模式不自动互换，显式推理档位仅用于兼容模式"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开能力快照保留Local/Ollama选择、协议默认URL与未知模型无思考档位，凭据和探测不进入DTO"
         }
       ],
@@ -6801,15 +6819,15 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "旧DeepSeek模型不接收新thinking，Anthropic端点按协议而非URL关键字选择"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
         }
       ],
@@ -6830,15 +6848,15 @@
       "status": "部分覆盖",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "MiniMax已知缺块尚无输出时恢复一次，普通JS异常不扩散成可重试厂商故障"
         }
       ],
@@ -6859,7 +6877,7 @@
       "status": "部分覆盖",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
         },
         {
@@ -6867,7 +6885,7 @@
           "name": "缺块%s尚无正文时只用相同参数非流式恢复一次，恢复正文进入正常事件链"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "MiniMax已知缺块尚无输出时恢复一次，普通JS异常不扩散成可重试厂商故障"
         }
       ],
@@ -6888,7 +6906,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "MiniMax三代型号与三协议分别保留真实推理开关和档位"
         },
         {
@@ -6896,7 +6914,7 @@
           "name": "只向官方端点的%s发送其支持的推理档位"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开推理DTO与最终参数按模型和官方端点隔离，MiniMax跨协议不虚报adaptive"
         }
       ],
@@ -6917,7 +6935,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "MiniMax三代型号与三协议分别保留真实推理开关和档位"
         },
         {
@@ -6925,7 +6943,7 @@
           "name": "thinking与多段text原位恢复且未派发工具不复活，跨owner绑定失败不复用"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开推理DTO与最终参数按模型和官方端点隔离，MiniMax跨协议不虚报adaptive"
         }
       ],
@@ -6946,7 +6964,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "MiniMax能力与媒体规格保持M2/M3边界，Responses不虚报音视频"
         },
         {
@@ -6954,7 +6972,7 @@
           "name": "非流式分支原样使用带签名wire，既有history的JSON分支不改变主请求参数或工具"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "%s配置残留采样字段也不向Anthropic最终请求发送temperature或top_p"
         }
       ],
@@ -6975,7 +6993,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "Qwen旧型号不继承Qwen3思考或JSON，Anthropic只列已支持型号"
         }
       ],
@@ -6996,11 +7014,11 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "Qwen3.8的%s档位按协议映射%s，旧Qwen3无同名档位"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "Qwen disabled和none显式关思考，结构Schema包装与cache单锚点独立"
         }
       ],
@@ -7021,19 +7039,19 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "Qwen旧型号不继承Qwen3思考或JSON，Anthropic只列已支持型号"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "Qwen3.8的%s档位按协议映射%s，旧Qwen3无同名档位"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "诊断与模型列表保持协议路径和厂商认证，Qwen展开思考字段而非额外SDK包装"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
         }
       ],
@@ -7054,15 +7072,15 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "DeepSeek仅明确视觉模型%s声明图片，显式缓存保持关闭"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "Qwen disabled和none显式关思考，结构Schema包装与cache单锚点独立"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
         }
       ],
@@ -7083,7 +7101,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
         }
       ],
@@ -7104,19 +7122,19 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "MiniMax三代型号与三协议分别保留真实推理开关和档位"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "MiniMax能力与媒体规格保持M2/M3边界，Responses不虚报音视频"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开能力快照保留Local/Ollama选择、协议默认URL与未知模型无思考档位，凭据和探测不进入DTO"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开推理DTO与最终参数按模型和官方端点隔离，MiniMax跨协议不虚报adaptive"
         }
       ],
@@ -7137,7 +7155,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开能力快照保留Local/Ollama选择、协议默认URL与未知模型无思考档位，凭据和探测不进入DTO"
         }
       ],
@@ -7162,11 +7180,11 @@
           "name": "只向官方端点的%s发送其支持的推理档位"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "通用兼容开关不覆盖官方OpenAI或专属Qwen策略，默认状态不发送字段"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开推理DTO与最终参数按模型和官方端点隔离，MiniMax跨协议不虚报adaptive"
         }
       ],
@@ -7187,7 +7205,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "DeepSeek推理档位%s在Chat与Responses都映射%s"
         }
       ],
@@ -7208,15 +7226,15 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "DeepSeek推理档位%s在Chat与Responses都映射%s"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "旧DeepSeek模型不接收新thinking，Anthropic端点按协议而非URL关键字选择"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "禁用思考会在配置副本去掉档位，不污染原值或让DeepSeek禁用请求带effort"
         }
       ],
@@ -7237,11 +7255,11 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "DeepSeek仅明确视觉模型%s声明图片，显式缓存保持关闭"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
         }
       ],
@@ -7262,7 +7280,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "诊断与模型列表保持协议路径和厂商认证，Qwen展开思考字段而非额外SDK包装"
         }
       ],
@@ -7283,7 +7301,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "诊断与模型列表保持协议路径和厂商认证，Qwen展开思考字段而非额外SDK包装"
         }
       ],
@@ -7304,11 +7322,11 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "通用兼容开关不覆盖官方OpenAI或专属Qwen策略，默认状态不发送字段"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "兼容$provider的$format显式思考$enabled经过真实选择和HTTP构造，llama缓存仅Chat发送"
         }
       ],
@@ -7329,7 +7347,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "通用兼容开关不覆盖官方OpenAI或专属Qwen策略，默认状态不发送字段"
         }
       ],
@@ -7350,7 +7368,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "通用兼容开关不覆盖官方OpenAI或专属Qwen策略，默认状态不发送字段"
         }
       ],
@@ -7371,15 +7389,15 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "GLM5.3档位%s仅Responses映射%s，Chat不臆造thinking"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "GLM的%s端点与Coding Plan身份分开，Coding不宣称视觉"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
         }
       ],
@@ -7400,11 +7418,11 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "GLM旧思考模型按自己的Chat参数，视觉不由厂商名一概打开"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
         }
       ],
@@ -7425,11 +7443,11 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "Local不因运行时名称宣称工具能力，llama.cpp缓存不冒充主动计费缓存"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "兼容$provider的$format显式思考$enabled经过真实选择和HTTP构造，llama缓存仅Chat发送"
         }
       ],
@@ -7450,7 +7468,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "本地地址%s拒绝非HTTP、凭据或fragment"
         }
       ],
@@ -7471,7 +7489,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开能力快照保留Local/Ollama选择、协议默认URL与未知模型无思考档位，凭据和探测不进入DTO"
         }
       ],
@@ -7492,11 +7510,11 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开能力快照保留Local/Ollama选择、协议默认URL与未知模型无思考档位，凭据和探测不进入DTO"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "通用兼容开关不覆盖官方OpenAI或专属Qwen策略，默认状态不发送字段"
         }
       ],
@@ -7517,11 +7535,11 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "Local不因运行时名称宣称工具能力，llama.cpp缓存不冒充主动计费缓存"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开能力快照保留Local/Ollama选择、协议默认URL与未知模型无思考档位，凭据和探测不进入DTO"
         }
       ],
@@ -7542,11 +7560,11 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "MiMo专用认证、原生音视频格式及Responses思考仅由自身声明"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
         }
       ],
@@ -7567,11 +7585,11 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
         }
       ],
@@ -7592,11 +7610,11 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "MiniMax三代型号与三协议分别保留真实推理开关和档位"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "MiniMax能力与媒体规格保持M2/M3边界，Responses不虚报音视频"
         }
       ],
@@ -7617,7 +7635,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "MiniMax三代型号与三协议分别保留真实推理开关和档位"
         }
       ],
@@ -7638,7 +7656,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "MiniMax能力与媒体规格保持M2/M3边界，Responses不虚报音视频"
         },
         {
@@ -7646,7 +7664,7 @@
           "name": "非流式分支原样使用带签名wire，既有history的JSON分支不改变主请求参数或工具"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "%s配置残留采样字段也不向Anthropic最终请求发送temperature或top_p"
         }
       ],
@@ -7667,7 +7685,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "诊断与模型列表保持协议路径和厂商认证，Qwen展开思考字段而非额外SDK包装"
         }
       ],
@@ -7688,7 +7706,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "诊断与模型列表保持协议路径和厂商认证，Qwen展开思考字段而非额外SDK包装"
         }
       ],
@@ -7709,7 +7727,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "Ollama原生和OpenAI模式不自动互换，显式推理档位仅用于兼容模式"
         }
       ],
@@ -7730,15 +7748,15 @@
       "status": "部分覆盖",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "Ollama原生和OpenAI模式不自动互换，显式推理档位仅用于兼容模式"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "兼容$provider的$format显式思考$enabled经过真实选择和HTTP构造，llama缓存仅Chat发送"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
         }
       ],
@@ -7763,7 +7781,7 @@
           "name": "官方cache key/store/include能力不能扩散到兼容服务或相似域名"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "Responses只有官方端点%s的显式续接可请求加密reasoning=%s"
         },
         {
@@ -7788,7 +7806,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "兼容$provider的$format显式思考$enabled经过真实选择和HTTP构造，llama缓存仅Chat发送"
         }
       ],
@@ -7809,23 +7827,23 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "Qwen旧型号不继承Qwen3思考或JSON，Anthropic只列已支持型号"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "旧DeepSeek模型不接收新thinking，Anthropic端点按协议而非URL关键字选择"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "MiMo专用认证、原生音视频格式及Responses思考仅由自身声明"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
         }
       ],
@@ -7846,15 +7864,15 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "MiMo专用认证、原生音视频格式及Responses思考仅由自身声明"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "MiniMax能力与媒体规格保持M2/M3边界，Responses不虚报音视频"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
         }
       ],
@@ -7879,7 +7897,7 @@
           "name": "只向官方端点的%s发送其支持的推理档位"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开推理DTO与最终参数按模型和官方端点隔离，MiniMax跨协议不虚报adaptive"
         }
       ],
@@ -7900,7 +7918,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "Qwen旧型号不继承Qwen3思考或JSON，Anthropic只列已支持型号"
         },
         {
@@ -7908,7 +7926,7 @@
           "name": "独立complete返回可见正文，JSON追加分支不额外发送response_format"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
         },
         {
@@ -7941,15 +7959,15 @@
           "name": "官方cache key/store/include能力不能扩散到兼容服务或相似域名"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "MiniMax能力与媒体规格保持M2/M3边界，Responses不虚报音视频"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "Qwen disabled和none显式关思考，结构Schema包装与cache单锚点独立"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
         }
       ],
@@ -7970,7 +7988,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "禁用思考会在配置副本去掉档位，不污染原值或让DeepSeek禁用请求带effort"
         }
       ],
@@ -7991,7 +8009,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开能力快照保留Local/Ollama选择、协议默认URL与未知模型无思考档位，凭据和探测不进入DTO"
         }
       ],
@@ -8012,7 +8030,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
         }
       ],
@@ -9121,7 +9139,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "file": "gugu-core/tests/agent/providers/ollama.test.ts",
           "name": "仅有回执的工具进入投影，确认门后的未派发兄弟不留孤儿且Canonical原文不变"
         }
       ],
@@ -10151,7 +10169,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "file": "gugu-core/tests/agent/providers/ollama.test.ts",
           "name": "$provider的$api_format请求走实际transport并保留原生结果与计费字段"
         }
       ],
@@ -10172,7 +10190,7 @@
       "status": "部分覆盖",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "file": "gugu-core/tests/agent/providers/ollama.test.ts",
           "name": "搜索Schema按当前协议返回独立副本，不把厂商字段归一成通用query"
         }
       ],
@@ -10193,15 +10211,15 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "file": "gugu-core/tests/agent/providers/ollama.test.ts",
           "name": "$provider的$api_format请求走实际transport并保留原生结果与计费字段"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "file": "gugu-core/tests/agent/providers/ollama.test.ts",
           "name": "响应大小同时检查声明长度与实际流，超过2MiB后立即停止读取并取消"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "file": "gugu-core/tests/agent/providers/ollama.test.ts",
           "name": "模型结果预算计入结构，保留状态/用量，文本和数组显式截断，链接保持完整或省略"
         }
       ],
@@ -10222,11 +10240,11 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "file": "gugu-core/tests/agent/providers/ollama.test.ts",
           "name": "%s搜索拒绝foreign host，不把当前凭据转发给任意端点"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "file": "gugu-core/tests/agent/providers/ollama.test.ts",
           "name": "官方host仍拒绝重定向目标、嵌入凭据和非标准端口，Ollama local不借用云搜索"
         }
       ],
@@ -10247,11 +10265,11 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "file": "gugu-core/tests/agent/providers/ollama.test.ts",
           "name": "MiniMax错误码%s仅瞬时1033进行有限三次重试"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "file": "gugu-core/tests/agent/providers/ollama.test.ts",
           "name": "MiniMax第二次成功返回原结果，HTTP失败/重定向不按1033重放或回显上游"
         }
       ],
@@ -10272,7 +10290,7 @@
       "status": "部分覆盖",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "file": "gugu-core/tests/agent/providers/ollama.test.ts",
           "name": "%s搜索输出预算%s有默认与2048上限"
         }
       ],
@@ -10293,7 +10311,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "file": "gugu-core/tests/agent/providers/ollama.test.ts",
           "name": "$provider的$api_format请求走实际transport并保留原生结果与计费字段"
         }
       ],
@@ -10318,7 +10336,7 @@
           "name": "主准备链按当前模型registry刷新schema仅作本请求增量，旧调用仍解释为旧schema"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "file": "gugu-core/tests/agent/providers/ollama.test.ts",
           "name": "搜索Schema按当前协议返回独立副本，不把厂商字段归一成通用query"
         }
       ],
@@ -10339,7 +10357,7 @@
       "status": "部分覆盖",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "file": "gugu-core/tests/agent/providers/ollama.test.ts",
           "name": "搜索Schema按当前协议返回独立副本，不把厂商字段归一成通用query"
         }
       ],
@@ -10360,7 +10378,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "file": "gugu-core/tests/agent/providers/ollama.test.ts",
           "name": "MiniMax第二次成功返回原结果，HTTP失败/重定向不按1033重放或回显上游"
         },
         {
@@ -10385,11 +10403,11 @@
       "status": "部分覆盖",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "file": "gugu-core/tests/agent/providers/ollama.test.ts",
           "name": "官方host仍拒绝重定向目标、嵌入凭据和非标准端口，Ollama local不借用云搜索"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "file": "gugu-core/tests/agent/providers/ollama.test.ts",
           "name": "%s搜索拒绝foreign host，不把当前凭据转发给任意端点"
         }
       ],
@@ -10506,7 +10524,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "原生ASR响应%j提取结果%s，不把非文本块拼进转写"
         }
       ],
@@ -10527,7 +10545,7 @@
       "status": "部分覆盖",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "兼容ASR实际请求只含音频和ITN参数，不复用聊天thinking生成参数且输入不变"
         }
       ],
@@ -10548,11 +10566,11 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "兼容ASR超时后只退避一次并第二次成功，未知内部错误不重试"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "HTTP%s为永久失败，两种协议只请求一次且不泄漏上游正文"
         }
       ],
@@ -10573,7 +10591,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "%s网络重试最多三次，默认空串与显式安全异常分别保留"
         }
       ],
@@ -10594,7 +10612,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "DashScope产品线%s实际发送各自原生body，不从模型名推协议"
         }
       ],
@@ -10615,7 +10633,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "DashScope产品线%s实际发送各自原生body，不从模型名推协议"
         }
       ],
@@ -10636,11 +10654,11 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "DashScope产品线%s实际发送各自原生body，不从模型名推协议"
         },
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "原生ASR响应%j提取结果%s，不把非文本块拼进转写"
         }
       ],
@@ -10661,7 +10679,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "兼容ASR超时后只退避一次并第二次成功，未知内部错误不重试"
         }
       ],
@@ -10682,7 +10700,7 @@
       "status": "已实现并通过基准",
       "tsTests": [
         {
-          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "file": "gugu-core/tests/agent/providers/policies.test.ts",
           "name": "显式qwen-audio产品线压过qwen3模型名前缀，实际请求仍是input_audio"
         }
       ],

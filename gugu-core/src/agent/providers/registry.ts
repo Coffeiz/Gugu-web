@@ -1,13 +1,13 @@
-import { anthropicDriver, anthropicPolicy } from './anthropic.js'
-import { openaiDriver, openaiPolicy } from './openai.js'
-import { responsesDriver } from './openai-responses.js'
-import { vendorPolicies } from './vendors/policies.js'
-import { ollamaDriver } from './vendors/ollama.js'
+import { anthropicDriver, anthropicPolicy } from './anthropic/driver.js'
+import { openaiDriver, openaiPolicy } from './openai/driver.js'
+import { responsesDriver } from './openai/responses.js'
+import { providerPolicies } from './provider-policies.js'
+import { ollamaDriver } from './ollama/driver.js'
 import type { ProviderConfig, ProviderPolicy, ProviderProtocol, ProtocolDriver } from './contracts.js'
 import { filterReasoningConfig, genericThinkingToggleSupported, DEFAULT_REASONING } from './base.js'
 import { ProviderError } from './errors.js'
 
-const policies: Readonly<Record<string, ProviderPolicy>> = { ...vendorPolicies, openai: openaiPolicy, anthropic: anthropicPolicy }
+const policies: Readonly<Record<string, ProviderPolicy>> = { ...providerPolicies, openai: openaiPolicy, anthropic: anthropicPolicy }
 const drivers: Readonly<Record<ProviderProtocol, ProtocolDriver>> = { openai: openaiDriver, responses: responsesDriver, anthropic: anthropicDriver, ollama: ollamaDriver }
 const capabilityKeys = ['thinking', 'structured_json', 'structured_schema', 'tools', 'parallel_tools', 'image', 'audio', 'video']
 function capabilityOverrides(config: ProviderConfig) { return Object.fromEntries(Object.entries(config.capability_overrides ?? {}).filter(([key, item]) => capabilityKeys.includes(key) && typeof item === 'boolean')) }
@@ -15,13 +15,13 @@ function capabilityOverrides(config: ProviderConfig) { return Object.fromEntries
 /** 精确配置优先，兼容旧URL推断；只选择协议，网络授权仍由transport独立执行。 */
 export function adapterFor(config: ProviderConfig): ProviderPolicy {
   const name = (config.provider ?? '').trim().toLowerCase(), url = (config.base_url ?? '').toLowerCase()
-  if (['glm', 'glm-coding'].includes(name) && url.includes('bigmodel.cn') && url.includes('/api/coding/')) return vendorPolicies['glm-coding']!
+  if (['glm', 'glm-coding'].includes(name) && url.includes('bigmodel.cn') && url.includes('/api/coding/')) return providerPolicies['glm-coding']!
   if (policies[name]) return policies[name]
-  if (url.includes('xiaomimimo')) return vendorPolicies.mimo!
-  if (url.includes('minimaxi.com')) return vendorPolicies.minimax!
-  if (url.includes('deepseek')) return vendorPolicies.deepseek!
-  if (url.includes('bigmodel.cn')) return vendorPolicies[url.includes('/api/coding/') ? 'glm-coding' : 'glm']!
-  if (url.includes('ollama') || url.includes('11434')) return vendorPolicies.ollama!
+  if (url.includes('xiaomimimo')) return providerPolicies.mimo!
+  if (url.includes('minimaxi.com')) return providerPolicies.minimax!
+  if (url.includes('deepseek')) return providerPolicies.deepseek!
+  if (url.includes('bigmodel.cn')) return providerPolicies[url.includes('/api/coding/') ? 'glm-coding' : 'glm']!
+  if (url.includes('ollama') || url.includes('11434')) return providerPolicies.ollama!
   return openaiPolicy
 }
 
