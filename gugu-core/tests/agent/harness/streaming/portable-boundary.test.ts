@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
 import { expect,it } from 'vitest'
 
-it('Harness和共用Executor可移植入口的运行依赖闭包不装载平台、驱动或SDK', () => {
+it('Harness、Provider和共用Executor可移植入口的运行依赖闭包不装载平台、驱动或SDK', () => {
   const source = fileURLToPath(new URL('../../../../src/', import.meta.url))
   const visited = new Set<string>()
   const inspect = (file: string) => {
@@ -34,6 +34,7 @@ it('Harness和共用Executor可移植入口的运行依赖闭包不装载平台�
     }
   }
   inspect(resolve(source, 'agent/harness/index.ts'))
+  inspect(resolve(source, 'agent/providers/index.ts'))
   inspect(resolve(source, 'agent/executor/executor.ts'))
   expect(visited.size).toBeGreaterThan(2)
 })

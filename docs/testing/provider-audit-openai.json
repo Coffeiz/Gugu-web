@@ -1,0 +1,2347 @@
+{
+  "schemaVersion": 1,
+  "updated": "2026-11-13",
+  "scope": "A负责的OpenAI/Responses及8个指定相邻基线文件逐定义审查；Anthropic定义仅列可见证据和A审计边界，最终与B及主Agent整合。",
+  "statusDefinitions": {
+    "已实现待Python": "所列Provider行为已有实际TS运行断言，Python执行证据由主Agent核对；不是Host或真实付费API验收。",
+    "部分覆盖": "只证明原定义部分断言，gap逐项说明API差异或缺失组合。",
+    "边界延后": "原定义验证尚未迁移的Host/Data/LoopScope消费者，不能用Provider fake通过替代。",
+    "缺回归": "发现本体职责尚无足够实际TS断言或生产接线，不计迁移完成。",
+    "已实现并通过基准": "有逐断言TS映射且Python/Node对应基准已实际运行；不宣称差分全量或外部服务/Host验收。"
+  },
+  "validation": {
+    "nodeCommand": "在gugu-core以原生Node26运行vitest run tests/agent/providers/openai.test.ts tests/agent/providers/openai-responses.test.ts",
+    "latestObserved": {
+      "files": 2,
+      "passed": 105,
+      "failed": 0,
+      "skipped": 0,
+      "note": "17:52:52原生Node26实际执行，包含最终新增4项跨协议Area、同请求媒体及dispatch子集组合；2文件全部通过。"
+    },
+    "python": "本子任务未运行Python，由主Agent统一提供执行证据。",
+    "limits": "协议测试通过注入HTTP传输运行真实投影/请求/解析；不证明Host装配、持久reasoning加密或真实服务可用。",
+    "testTypecheck": "本次tsconfig.tests noEmit检查无A错误；当时唯一B新三轮回归reduce推导unknown已交B修复，最终整合检查由主Agent提供。",
+    "stage": "子任务历史执行快照；最终执行结果见integratedValidation。"
+  },
+  "definitions": [
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_history_adapters.py::test_rendering_does_not_mutate_canonical_messages_or_lose_context_metadata",
+      "pythonLine": 9,
+      "originalAssertionCount": 3,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "同一MessageArea跨OpenAI和Anthropic投影保持revision、digest及工具schema元数据，协议形状各自正确"
+        }
+      ],
+      "protectedAssertions": [
+        "同一非零revision的MessageArea经过两协议投影前后snapshot、revision、digest及identity一致",
+        "工具schema digest/version/implementation与batch round元数据保留，wire渲染canonical tool-schema文字"
+      ],
+      "gap": "Python canonical_context对象指针身份由N3显式Area identity/snapshot替代；对应不变性与元数据领域行为均有直接断言。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_history_adapters.py::test_openai_and_anthropic_render_same_canonical_history_without_changing_digest",
+      "pythonLine": 28,
+      "originalAssertionCount": 5,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "同一MessageArea跨OpenAI和Anthropic投影保持revision、digest及工具schema元数据，协议形状各自正确"
+        }
+      ],
+      "protectedAssertions": [
+        "同一Area同一Canonical输入经两协议投影仍保持原digest及工具schema元数据",
+        "OpenAI为function/tools与tool结果，Anthropic为tool_use/input与tool_result；原始参数和源消息不变"
+      ],
+      "gap": "同一Canonical上下文的跨协议直接回归已补；不复刻Python CanonicalRequest包装类。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_history_adapters.py::test_openai_adapter_passes_raw_string_arguments_verbatim",
+      "pythonLine": 49,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "原始工具参数字节不变，Canonical未被wire字段或媒体提取改写"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "canonical工具回放产生稳定item id，call id与原始参数不变，不修改源消息"
+        }
+      ],
+      "protectedAssertions": [
+        "OpenAI原始字符串arguments包括空白原样回放",
+        "Responses保留同一原始字符串"
+      ],
+      "gap": "所列Provider行为已有运行断言；Python基准由主Agent统一确认，真实Host与付费API不在此证据范围。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_history_adapters.py::test_anthropic_adapter_parses_raw_string_arguments_into_object",
+      "pythonLine": 67,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "history转换原始字符串参数为对象、system转user、按相邻位置移除孤儿且不修改原历史"
+        }
+      ],
+      "protectedAssertions": [
+        "原始字符串JSON参数在Anthropic副本中解析成对象",
+        "工具结果仍配对且源历史不变"
+      ],
+      "gap": "所列Provider行为已有运行断言；Python基准由主Agent统一确认，真实Host与付费API不在此证据范围。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_history_adapters.py::test_anthropic_adapter_coerces_malformed_string_arguments_to_empty_object",
+      "pythonLine": 85,
+      "originalAssertionCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "旧历史参数%s仅在投影副本中转空对象，配对结果及原字节保留"
+        }
+      ],
+      "protectedAssertions": [
+        "旧历史的非JSON、数组、null参数仅在投影副本中变为{}",
+        "源字符串和配对结果不变"
+      ],
+      "gap": "所列Provider行为已有运行断言；Python基准由主Agent统一确认，真实Host与付费API不在此证据范围。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_nonchat_llm_protocol.py::test_nonchat_responses_uses_visible_message_and_never_replays_reasoning",
+      "pythonLine": 46,
+      "originalAssertionCount": 4,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "独立Responses可见JSON与推理预算按真实模型处理，临时关闭思考不修改配置或发送续接"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "完成事件只有最终message也能交付可见正文，reasoning聚合不作为文本"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "兼容端点不发送未经确认的store/prompt_cache_key，独立调用不重放私有reasoning"
+        }
+      ],
+      "protectedAssertions": [
+        "真实Runtime独立文本取message可见JSON而非reasoning聚合",
+        "推理模型短预算至少4096",
+        "请求只有用户输入且无include或previous_response_id"
+      ],
+      "gap": "Core独立文本及分支已验；原定义5个入口中的会话title/summary业务入口尚未迁入，不能扩大为所有调用方等价。",
+      "status": "部分覆盖"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_nonchat_llm_protocol.py::test_json_thinking_override_does_not_mutate_configured_model",
+      "pythonLine": 68,
+      "originalAssertionCount": 4,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "独立Responses可见JSON与推理预算按真实模型处理，临时关闭思考不修改配置或发送续接"
+        }
+      ],
+      "protectedAssertions": [
+        "真实MiniMax-M3 Responses临时disabled不改变adaptive配置",
+        "该请求不发reasoning且保留1024上限",
+        "可见JSON与reasoning聚合分离"
+      ],
+      "gap": "Node低层completeBranch返回字符串+usage，由Harness解析为对象；不是Python complete_json字面API。",
+      "status": "部分覆盖"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_nonchat_llm_protocol.py::test_budget_keeps_unlimited_setting_and_plain_model_budget",
+      "pythonLine": 79,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "显式null输出预算保持provider默认，不被模型配置max_tokens覆盖"
+        }
+      ],
+      "protectedAssertions": [
+        "outputBudget显式null保持null",
+        "无推理档位普通模型80预算保持80",
+        "HTTP请求null不被config.max_tokens覆写"
+      ],
+      "gap": "所列Provider行为已有运行断言；Python基准由主Agent统一确认，真实Host与付费API不在此证据范围。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_nonchat_llm_protocol.py::test_json_parser_never_reads_an_object_from_thinking",
+      "pythonLine": 85,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "真实Provider分支JSON解析只读可见正文，不从完整或未闭合thinking中取对象"
+        }
+      ],
+      "protectedAssertions": [
+        "真实Provider→Runtime→Harness分支只解析think标签之后可见JSON",
+        "未闭合think中的对象不成为可应用结果"
+      ],
+      "gap": "Node使用BranchResult失败/null代替Python底层_parse_json返回{}；安全语义相同，API结果形状不同。",
+      "status": "部分覆盖"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_nonchat_llm_protocol.py::test_email_translation_uses_responses_and_keeps_source_urls",
+      "pythonLine": 91,
+      "originalAssertionCount": 2,
+      "classification": "相邻HostData",
+      "tsTests": [],
+      "protectedAssertions": [],
+      "gap": "邮件翻译/动作URL保留是尚未迁移的email_admin Host业务消费者，当前Provider文本调用不构成该入口验收。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_nonchat_llm_protocol.py::test_admin_responses_capabilities_probe_sends_native_requests",
+      "pythonLine": 108,
+      "originalAssertionCount": 6,
+      "classification": "相邻HostData",
+      "tsTests": [],
+      "protectedAssertions": [],
+      "gap": "Admin能力探测的5类请求、状态存储与返回UI未迁入；仅Provider协议driver存在不能替代该诊断入口。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_runner_cache.py::test_append_json_keeps_provider_cache_policy_and_json_validation",
+      "pythonLine": 65,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "%s/%s真实registry分支有历史=%s时保持JSON策略与业务校验"
+        }
+      ],
+      "protectedAssertions": [
+        "六厂商真实registry→Runtime→Harness路径验证12个有无历史组合",
+        "追加分支不发response_format，独立请求按厂商声明",
+        "业务JSON解析成功"
+      ],
+      "gap": "所列Provider行为已有运行断言；Python基准由主Agent统一确认，真实Host与付费API不在此证据范围。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_runner_cache.py::test_append_rejects_non_json_output",
+      "pythonLine": 97,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "%s追加分支非JSON不能变成可应用的反思结果"
+        }
+      ],
+      "protectedAssertions": [
+        "六厂商真实Provider响应为非JSON时Harness分支失败且output=null，不可应用反思"
+      ],
+      "gap": "所列Provider行为已有运行断言；Python基准由主Agent统一确认，真实Host与付费API不在此证据范围。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_runner_cache.py::test_anthropic_branch_marks_system_cache_control",
+      "pythonLine": 131,
+      "originalAssertionCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "非流式分支原样使用带签名wire，既有history的JSON分支不改变主请求参数或工具"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "分支系统缓存按同一厂商能力生成，thinking与generation参数跟随主请求策略而不手拼"
+        }
+      ],
+      "protectedAssertions": [
+        "非流式请求逐项保留已冻结system的text/cache_control/ttl",
+        "普通固定system在主动缓存非流式branch请求中生成唯一ephemeral text块"
+      ],
+      "gap": "最终B直接构造purpose=branch请求并精确断普通固定system转ephemeral块；已排除此前只有冻结wire保留或chat缓存断言的缺口。",
+      "status": "已实现并通过基准",
+      "reviewHistory": [
+        {
+          "stage": "最终B新增分支缓存直接断言",
+          "status": "部分覆盖",
+          "gap": "仅证明预先冻结system原样复用；A未确认从plain system自动加ephemeral的独立断言，需B审计补齐。"
+        }
+      ],
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_runner_cache.py::test_anthropic_branch_plain_system_without_active_cache",
+      "pythonLine": 144,
+      "originalAssertionCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "分支系统缓存按同一厂商能力生成，thinking与generation参数跟随主请求策略而不手拼"
+        }
+      ],
+      "protectedAssertions": [
+        "非active缓存厂商在分支请求保留纯字符串system"
+      ],
+      "gap": "实际请求生成器断言plain system与Python相同；外部HTTP传输与真实厂商缓存命中率不属于原定义。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_runner_cache.py::test_openai_branch_marks_system_cache_control_when_explicit",
+      "pythonLine": 155,
+      "originalAssertionCount": 3,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "无历史追加分支仍标记新增基础system，动态任务不进入缓存锚点且无空tools"
+        }
+      ],
+      "protectedAssertions": [
+        "真实HTTP分支将基础system和snapshot合并为单text并加ephemeral",
+        "动态任务维持普通user且不打锚点"
+      ],
+      "gap": "所列Provider行为已有运行断言；Python基准由主Agent统一确认，真实Host与付费API不在此证据范围。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_runner_cache.py::test_openai_branch_plain_messages_without_explicit_cache",
+      "pythonLine": 183,
+      "originalAssertionCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "无历史追加分支仍标记新增基础system，动态任务不进入缓存锚点且无空tools"
+        }
+      ],
+      "protectedAssertions": [
+        "explicitCache=false的真实HTTP请求保持system/user纯字符串且没有cache_control"
+      ],
+      "gap": "所列Provider行为已有运行断言；Python基准由主Agent统一确认，真实Host与付费API不在此证据范围。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_runner_cache.py::test_anthropic_branch_forwards_tools_without_tool_choice",
+      "pythonLine": 201,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "非流式分支原样使用带签名wire，既有history的JSON分支不改变主请求参数或工具"
+        }
+      ],
+      "protectedAssertions": [
+        "带签名分支实际接收显式工具Schema且未重新渲染前缀",
+        "实际branch请求tools原样传递且不含tool_choice"
+      ],
+      "gap": "最终B用例直接断实际非流式branch请求tools等于输入且不含tool_choice；原A未确认的缺口已由明确请求断言补齐。",
+      "status": "已实现并通过基准",
+      "reviewHistory": [
+        {
+          "stage": "最终整合前精确复核",
+          "status": "部分覆盖",
+          "gap": "现有B测试没有逐项断tools等于输入及不含tool_choice；A不从“传了tools参数”推断线上的完整断言。"
+        }
+      ],
+      "finalReview": "已直接阅读最终TS用例断言与生产调用位置；运行结果引用主Agent独立执行记录，未把注入HTTP成功扩为线上服务验收。",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_runner_cache.py::test_openai_branch_forwards_tools_like_main_run",
+      "pythonLine": 216,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "无历史追加分支仍标记新增基础system，动态任务不进入缓存锚点且无空tools"
+        }
+      ],
+      "protectedAssertions": [
+        "真实complete(purpose=branch)请求完整tools Schema和tool_choice=auto，与主流同builder及实际HTTP边界一致"
+      ],
+      "gap": "对应Provider语义已有实际TS断言，Python基准由主Agent统一确认；不等同真实Host或付费API验收。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_runner_cache.py::test_branch_without_tools_stays_unchanged",
+      "pythonLine": 235,
+      "originalAssertionCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "无历史追加分支仍标记新增基础system，动态任务不进入缓存锚点且无空tools"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "非流式实际raw usage与unknown分别交探针，显式null预算沿Python高预算而不回落配置"
+        }
+      ],
+      "protectedAssertions": [
+        "OpenAI无工具分支实际请求不含tools字段",
+        "Anthropic非流式实际请求空工具时不发tools字段"
+      ],
+      "gap": "最终B非流式实际请求直接断无tools字段，覆盖原Anthropic入口；与Chat对应边界共同保留。",
+      "status": "已实现并通过基准",
+      "reviewHistory": [
+        {
+          "stage": "最终整合前精确复核",
+          "status": "部分覆盖",
+          "gap": "原Python节点针对Anthropic无工具分支；A只证明Chat对应边界，Anthropic空tools行为此前已报给B/主Agent。"
+        }
+      ],
+      "finalReview": "已直接阅读最终TS用例断言与生产调用位置；运行结果引用主Agent独立执行记录，未把注入HTTP成功扩为线上服务验收。",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_runner_cache.py::test_anthropic_branch_omits_empty_system",
+      "pythonLine": 247,
+      "originalAssertionCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "非流式实际raw usage与unknown分别交探针，显式null预算沿Python高预算而不回落配置"
+        }
+      ],
+      "protectedAssertions": [
+        "实际非流式分支空system与tools字段均不发送"
+      ],
+      "gap": "实际driver经过注入HTTP传输验证空system不出站；Python基准由主Agent统一执行。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_runner_cache.py::test_complete_messages_omits_thinking_like_main_run",
+      "pythonLine": 259,
+      "originalAssertionCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "分支系统缓存按同一厂商能力生成，thinking与generation参数跟随主请求策略而不手拼"
+        }
+      ],
+      "protectedAssertions": [
+        "MiniMax-M3 adaptive分支遵循policy空参数，不另拼thinking字段"
+      ],
+      "gap": "请求生成器直接断言分支不含thinking；该定义本身不要求真实服务或缓存率证明。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_runner_cache.py::test_complete_messages_merges_main_run_generation_params",
+      "pythonLine": 280,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "分支系统缓存按同一厂商能力生成，thinking与generation参数跟随主请求策略而不手拼"
+        }
+      ],
+      "protectedAssertions": [
+        "chat与branch共同携带policy返回thinking.enabled和metadata.x=1"
+      ],
+      "gap": "生产请求生成器对两种purpose直接断言同源参数；Python基准由主Agent统一执行。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_runner_cache.py::test_anthropic_append_branch_sanitizes_history_before_appending_delta",
+      "pythonLine": 301,
+      "originalAssertionCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "分支修复孤儿时保留原生签名和redacted块，清除外协议推理且不改字符串形状"
+        }
+      ],
+      "protectedAssertions": [
+        "分支清理孤儿工具与外协议推理同时保留native签名及redacted块",
+        "输入wire未被改写"
+      ],
+      "gap": "原定义精确封套文本、请求末尾delta和ephemeral位置尚未在该TS用例一并核对。",
+      "status": "部分覆盖"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_runner_cache.py::test_minimax_anthropic_branch_sends_rendered_tool_history_without_reprojection",
+      "pythonLine": 344,
+      "originalAssertionCount": 6,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "非流式分支原样使用带签名wire，既有history的JSON分支不改变主请求参数或工具"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "分支修复孤儿时保留原生签名和redacted块，清除外协议推理且不改字符串形状"
+        }
+      ],
+      "protectedAssertions": [
+        "现成Anthropic wire不降回Canonical重投影",
+        "原生签名及合法配对保持"
+      ],
+      "gap": "缺MiniMax完整两工具行+末尾增量的同请求精确断言；A不以通用Anthropic case冒充全部厂商组合。",
+      "status": "部分覆盖"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_runner_cache.py::test_minimax_prefix_projection_remains_wire_shaped_through_branch_request",
+      "pythonLine": 378,
+      "originalAssertionCount": 5,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "history转换原始字符串参数为对象、system转user、按相邻位置移除孤儿且不修改原历史"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "非流式分支原样使用带签名wire，既有history的JSON分支不改变主请求参数或工具"
+        }
+      ],
+      "protectedAssertions": [
+        "Canonical转换与原生分支分别保护工具形状和源数据不变"
+      ],
+      "gap": "尚缺同一MiniMax Canonical→冻结wire→追加branch的完整组合，需B/主Agent对齐。",
+      "status": "部分覆盖"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_runner_cache.py::test_complete_messages_uses_responses_protocol_and_native_tool_schema",
+      "pythonLine": 416,
+      "originalAssertionCount": 9,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "request使用input/instructions，官方store=false及cache key不含当前query，工具变更使key变化"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "已冻结Responses前缀追加反思保持instructions和cache key，原生reasoning与工具item逐字节保留"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "Responses显式null预算不回落配置，实际原始usage独立上报且不进入Harness事件"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "完整历史重放原始用户任务及工具结果，空历史或只有system在网络前拒绝"
+        }
+      ],
+      "protectedAssertions": [
+        "真实Responses请求使用input/instructions、原生工具Schema、store政策",
+        "原始usage按cache归一且不使用previous_response_id"
+      ],
+      "gap": "原定义的qwen适配器特定reasoning=low/max100与旧账本snake_case DTO尚未作为同一个TS调用断言；Node领域Usage字段不同。",
+      "status": "部分覆盖"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_sdk_compat_streaming.py::test_openai_sdk_streams_tool_call_against_openai_compatible_transport",
+      "pythonLine": 15,
+      "originalAssertionCount": 7,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "真实Chat请求用正确工具schema、缓存用量与参数字节，工具按index重组而不输出思考"
+        }
+      ],
+      "protectedAssertions": [
+        "真实SSE字节解析工具参数、finish_reason=tool_calls",
+        "HTTP路径、stream和工具Schema正确"
+      ],
+      "gap": "PythonSDK对象类型已退役为Core HTTP解码；此项保护同一线上可观察协议，不证明Node SDK自身。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_sdk_compat_streaming.py::test_anthropic_sdk_streams_tool_call_against_anthropic_compatible_transport",
+      "pythonLine": 57,
+      "originalAssertionCount": 8,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "非流式分支原样使用带签名wire，既有history的JSON分支不改变主请求参数或工具"
+        }
+      ],
+      "protectedAssertions": [
+        "Anthropic实际HTTP分支保留原生块"
+      ],
+      "gap": "A未将B的完整SSE测试逐字段映射到此SDK对照；请合并B审计，此处不宣称Anthropic半已验。",
+      "status": "部分覆盖"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_sdk_compat_streaming.py::test_sdk_classifies_transport_timeout",
+      "pythonLine": 107,
+      "originalAssertionCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [],
+      "protectedAssertions": [],
+      "gap": "Python两SDK的具体异常类退役；Node安全timeout分类和阶段transport测试需主Agent独立映射；A未以类名等价冒充通过。",
+      "status": "部分覆盖"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_sdk_compat_streaming.py::test_provider_builders_translate_timeout_objects_for_sdk_major_versions",
+      "pythonLine": 138,
+      "originalAssertionCount": 3,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/transport.test.ts",
+          "name": "四协议实际请求共用五分钟读空闲及10秒连接/写、5秒池等待默认预算"
+        }
+      ],
+      "protectedAssertions": [
+        "实际四协议默认预算已通过真实TCP与注册计时器观察；SDK Timeout类转换层退役"
+      ],
+      "gap": "四协议实际TCP请求已验证300/10/10/5默认预算及独立pool等待；原httpx/httpx2 Timeout对象类型转换已退役，不复刻SDK DTO。不能继续称pool计入connect或没有四阶段预算；DTO退役差异仍明确保留。",
+      "status": "部分覆盖",
+      "reviewHistory": [
+        {
+          "stage": "最终整合前精确复核",
+          "status": "部分覆盖",
+          "gap": "httpx→httpx2 Timeout对象转换退役；Node有connect/read/write配置，原Python四阶段及pool字段未被A逐项对照。"
+        }
+      ],
+      "finalReview": "已直接阅读最终TS用例断言与生产调用位置；运行结果引用主Agent独立执行记录，未把注入HTTP成功扩为线上服务验收。"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_responses_reasoning_belongs_to_latest_tool_only_round",
+      "pythonLine": 60,
+      "originalAssertionCount": 4,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "reasoning置于最新整组assistant文本/多个function call之前，冻结wire重入不重复"
+        }
+      ],
+      "protectedAssertions": [
+        "最新工具轮即使没有assistant文字也把reasoning置于整组调用之前",
+        "原生items重入不重复且旧文本位置不变"
+      ],
+      "gap": "此Provider行为已有实际TS运行断言，Python基准由主Agent统一核对；不扩大到真实服务或Host。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_anthropic_private_state_restores_original_interleaved_order",
+      "pythonLine": 80,
+      "originalAssertionCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "三轮已持久Canonical工具恢复各自签名且重复恢复幂等，跨Run重建剔除历史外续接call"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "thinking与多段text原位恢复且未派发工具不复活，跨owner绑定失败不复用"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "分支修复孤儿时保留原生签名和redacted块，清除外协议推理且不改字符串形状"
+        }
+      ],
+      "protectedAssertions": [
+        "三轮text/thinking/text/tool各块精确原位恢复，重复恢复不改位置",
+        "带redacted_thinking的冻结wire分支单独保持原块"
+      ],
+      "gap": "原定义同轮thinking/text/redacted_thinking/tool四块交错一次性还原尚无精确组合；已验证多轮text/thinking交错及独立redacted保留，不将两个用例的并集误称原组合已验。",
+      "status": "部分覆盖"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_responses_input_converts_chat_text_blocks_without_changing_other_blocks",
+      "pythonLine": 97,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "媒体映射保留图片detail/视频fps，工具schema从Chat嵌套改为Responses顶层"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "显式声明%s时将data URL变为纯base64并保留格式"
+        }
+      ],
+      "protectedAssertions": [
+        "text变input_text保留source属性",
+        "原input_text不变",
+        "data音频拆出格式和base64",
+        "video保留fps/media_resolution",
+        "源数组不变"
+      ],
+      "gap": "此Provider行为已有实际TS运行断言，Python基准由主Agent统一核对；不扩大到真实服务或Host。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_responses_request_sends_projected_tool_image_as_input_image_not_text",
+      "pythonLine": 132,
+      "originalAssertionCount": 4,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "同一真实Responses请求依次发送工具结果、工具图片和当前音视频，图片不混入结果正文"
+        }
+      ],
+      "protectedAssertions": [
+        "实际单次Responses HTTP完整input顺序为function_call、function_call_output、工具图片user、当前音视频user",
+        "tool output仅保留文字无base64；图片caption/detail与当前音频data URL剥离、视频fps/media_resolution精确一致",
+        "原始Canonical不变"
+      ],
+      "gap": "使用真实MiMo policy选择和Responses driver请求，合成传输不调用付费服务；完整封套与媒体数组有精确断言。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_responses_input_omits_empty_messages_but_preserves_nonempty_structured_blocks",
+      "pythonLine": 210,
+      "originalAssertionCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "Responses过滤所有空文本形状但保留结构图片，显式item id与call id分别回放"
+        }
+      ],
+      "protectedAssertions": [
+        "空assistant、空白字符串、空数组和空input_text均不发送",
+        "结构图片与有效文字保留"
+      ],
+      "gap": "此Provider行为已有实际TS运行断言，Python基准由主Agent统一核对；不扩大到真实服务或Host。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_responses_input_converts_text_blocks_on_assistant_tool_call_messages",
+      "pythonLine": 230,
+      "originalAssertionCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "canonical工具回放产生稳定item id，call id与原始参数不变，不修改源消息"
+        }
+      ],
+      "protectedAssertions": [
+        "assistant工具消息的text转换为input_text",
+        "随后function_call保留原参数与稳定legacy id"
+      ],
+      "gap": "此Provider行为已有实际TS运行断言，Python基准由主Agent统一核对；不扩大到真实服务或Host。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_responses_input_replays_output_item_id_separately_from_call_id",
+      "pythonLine": 248,
+      "originalAssertionCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "Responses过滤所有空文本形状但保留结构图片，显式item id与call id分别回放"
+        }
+      ],
+      "protectedAssertions": [
+        "显式fc-saved作为output item id独立回放",
+        "call-a保留为call_id",
+        "不生成替代ID"
+      ],
+      "gap": "此Provider行为已有实际TS运行断言，Python基准由主Agent统一核对；不扩大到真实服务或Host。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_responses_input_assigns_stable_unique_ids_to_legacy_tool_calls",
+      "pythonLine": 269,
+      "originalAssertionCount": 3,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "旧历史重复call id按出现次数分配独立item id，缺digest不能用弱ID伪装冻结投影"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "canonical工具回放产生稳定item id，call id与原始参数不变，不修改源消息"
+        }
+      ],
+      "protectedAssertions": [
+        "重复call_id按出现次数生成不同且稳定的fc_legacy前缀id",
+        "重复投影一致且不修改Canonical"
+      ],
+      "gap": "此Provider行为已有实际TS运行断言，Python基准由主Agent统一核对；不扩大到真实服务或Host。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_responses_input_rejects_media_not_declared_by_provider",
+      "pythonLine": 285,
+      "originalAssertionCount": 0,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "能力未声明的媒体%j在网络调用前明确拒绝"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "音频声明与实际data URL不一致不能静默降级：%j"
+        }
+      ],
+      "protectedAssertions": [
+        "图片、视频、音频未声明时网络前拒绝",
+        "格式不受支持或data URL与声明不一致时明确拒绝"
+      ],
+      "gap": "此Provider行为已有实际TS运行断言，Python基准由主Agent统一核对；不扩大到真实服务或Host。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_official_openai_responses_audio_formats_are_explicitly_bounded",
+      "pythonLine": 316,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "Responses过滤所有空文本形状但保留结构图片，显式item id与call id分别回放"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "音频声明与实际data URL不一致不能静默降级：%j"
+        }
+      ],
+      "protectedAssertions": [
+        "OpenAI显式音频能力仅mp3/wav",
+        "即使video配置true也不虚报Responses视频",
+        "flac拒绝"
+      ],
+      "gap": "此Provider行为已有实际TS运行断言，Python基准由主Agent统一核对；不扩大到真实服务或Host。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_chat_completions_projection_strips_responses_item_metadata",
+      "pythonLine": 329,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "原始工具参数字节不变，Canonical未被wire字段或媒体提取改写"
+        }
+      ],
+      "protectedAssertions": [
+        "Chat冻结投影不含responses_item_id",
+        "源Canonical仍保留原id及raw arguments"
+      ],
+      "gap": "此Provider行为已有实际TS运行断言，Python基准由主Agent统一核对；不扩大到真实服务或Host。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_anthropic_state_extract_restore_keeps_thinking_blocks_only",
+      "pythonLine": 345,
+      "originalAssertionCount": 7,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "thinking与多段text原位恢复且未派发工具不复活，跨owner绑定失败不复用"
+        }
+      ],
+      "protectedAssertions": [
+        "私有thinking按原位置恢复且不会把未派发tool_use复活"
+      ],
+      "gap": "N3私有continuation对象替代Python state_kind/payload/tail_blocks/summary字段；A未逐项核验旧counts DTO，需合并B审计。",
+      "status": "部分覆盖"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_anthropic_history_restore_reinserts_signed_thinking_before_matching_tool_call",
+      "pythonLine": 361,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "三轮已持久Canonical工具恢复各自签名且重复恢复幂等，跨Run重建剔除历史外续接call"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "thinking与多段text原位恢复且未派发工具不复活，跨owner绑定失败不复用"
+        }
+      ],
+      "protectedAssertions": [
+        "三轮签名插入对应tool_use原位置，已恢复wire重复恢复后无重复",
+        "未派发工具不复活，跨owner私有块不复用"
+      ],
+      "gap": "此前缺幂等的描述已过时，B新真实用例直接断两次恢复相等；原定义同一个assistant中两个tool_use且只给第一个thinking+redacted两块的精确组合仍未直接断。",
+      "status": "部分覆盖"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_anthropic_history_restore_reinserts_every_historical_tool_round",
+      "pythonLine": 386,
+      "originalAssertionCount": 3,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "三轮已持久Canonical工具恢复各自签名且重复恢复幂等，跨Run重建剔除历史外续接call"
+        }
+      ],
+      "protectedAssertions": [
+        "三轮真实SSE提取私有状态，双map每轮键集合保留所有旧call",
+        "跨Run非流式两次恢复，同一已恢复wire再次输入后消息完全相同无重复",
+        "三轮text/thinking签名/text/tool原位置与缓存标记不变，历史及Canonical digest不变"
+      ],
+      "gap": "已读取B新三轮真实driver回归并匹配原逐轮恢复及幂等断言；不复刻Python私有helper入口。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_anthropic_state_extraction_keeps_prior_tool_rounds_across_run_rounds",
+      "pythonLine": 410,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "三轮已持久Canonical工具恢复各自签名且重复恢复幂等，跨Run重建剔除历史外续接call"
+        }
+      ],
+      "protectedAssertions": [
+        "三轮真实SSE捕获后每轮双map键集合等于累计call-0..current，旧轮不被覆盖",
+        "跨Run恢复后thinking块总数显式等于3，Canonical不保存私有块"
+      ],
+      "gap": "领域上的保留旧轮/键集合/实际块总数已有直接断言；原summary.state_block_count DTO退役，且旧例的older thinking + 当前thinking/redacted两块计数形状未逐字段复刻，明确保留此差异。",
+      "status": "部分覆盖"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_anthropic_state_restore_drops_persisted_tool_use_only_payload",
+      "pythonLine": 424,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "thinking与多段text原位恢复且未派发工具不复活，跨owner绑定失败不复用"
+        }
+      ],
+      "protectedAssertions": [
+        "未派发的tool_use不能从私有材料复活"
+      ],
+      "gap": "还需B对纯tool_use旧payload整体拒绝的直接断言；不能仅用丢一个未派发兄弟替代。",
+      "status": "部分覆盖"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_chat_completions_does_not_claim_responses_continuation",
+      "pythonLine": 435,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "原生reasoning只从显式续接材料回放，不从Canonical私有块漏给用户"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "实际出站wire快照供收尾反思使用，绑定checkpoint而非事后重渲染"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "私有续接%s后明确拒绝引用，不能静默丢签名继续模型请求"
+        }
+      ],
+      "protectedAssertions": [
+        "Chat私有reasoning只从独立材料注入、不读Canonical推理",
+        "实际wire快照不含api_key",
+        "过期、跨Run、成功终态后引用均input_rejected且网络请求数=0"
+      ],
+      "gap": "跨Run/TTL/成功收尾后的引用现在均在Runtime明确拒绝且不发请求。Python continuation_available=False/extract_provider_state(None)仍由N3同Run材料与私有引用API替代，DTO契约差异保留，不把引用安全拒绝说成原DTO同构。",
+      "status": "部分覆盖",
+      "reviewHistory": [
+        {
+          "stage": "最终整合前精确复核",
+          "status": "部分覆盖",
+          "gap": "Python continuation_available=False指跨Run持久续接；Nodecomplete可给同Run reasoning材料，类型含义不同。需Runtime跨Run引用拒绝用例证明不错误扩大持久能力。"
+        }
+      ],
+      "finalReview": "已直接阅读最终TS用例断言与生产调用位置；运行结果引用主Agent独立执行记录，未把注入HTTP成功扩为线上服务验收。"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_responses_instructions_keep_snapshot_separate_from_base_prompt",
+      "pythonLine": 442,
+      "originalAssertionCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "基础system和snapshot均进入instructions，不能静默丢snapshot或重复基础前缀"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "request使用input/instructions，官方store=false及cache key不含当前query，工具变更使key变化"
+        }
+      ],
+      "protectedAssertions": [
+        "基础system与snapshot按分隔符完整进入instructions且不重复base",
+        "input不把system伪装成用户"
+      ],
+      "gap": "此Provider行为已有实际TS运行断言，Python基准由主Agent统一核对；不扩大到真实服务或Host。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_responses_prepare_projects_message_area_before_collecting_snapshot_instructions",
+      "pythonLine": 452,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "canonical工具回放产生稳定item id，call id与原始参数不变，不修改源消息"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "基础system和snapshot均进入instructions，不能静默丢snapshot或重复基础前缀"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "request使用input/instructions，官方store=false及cache key不含当前query，工具变更使key变化"
+        }
+      ],
+      "protectedAssertions": [
+        "Canonical投影和真实请求各自保证snapshot system不丢失"
+      ],
+      "gap": "缺同一标准Harness准备→Responses请求的snapshot系统链路组合；A不以两段helper测试宣称完整入口等价。",
+      "status": "部分覆盖"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_responses_cache_key_parts_exclude_snapshot",
+      "pythonLine": 477,
+      "originalAssertionCount": 3,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "基础system和snapshot均进入instructions，不能静默丢snapshot或重复基础前缀"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "request使用input/instructions，官方store=false及cache key不含当前query，工具变更使key变化"
+        }
+      ],
+      "protectedAssertions": [
+        "HTTP instructions包含snapshot",
+        "改变snapshot不改变cache key，改变工具会改变key"
+      ],
+      "gap": "Node辅助函数不返回Python三元组中独立snapshot字段；已保护线上指令与key语义，非私有helper字面API等价。",
+      "status": "部分覆盖"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_responses_prompt_cache_key_ignores_snapshot_content",
+      "pythonLine": 490,
+      "originalAssertionCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "request使用input/instructions，官方store=false及cache key不含当前query，工具变更使key变化"
+        }
+      ],
+      "protectedAssertions": [
+        "同一base/tools不同query和不同snapshot所得prompt_cache_key相同",
+        "工具schema变化改变key"
+      ],
+      "gap": "此Provider行为已有实际TS运行断言，Python基准由主Agent统一核对；不扩大到真实服务或Host。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_responses_usage_normalizes_cached_input_tokens",
+      "pythonLine": 504,
+      "originalAssertionCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "捕获的reasoning只在显式continuation时随完整后续历史回放，off配置清除include与私有项"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "Responses显式null预算不回落配置，实际原始usage独立上报且不进入Harness事件"
+        }
+      ],
+      "protectedAssertions": [
+        "真实流100输入60cache报fresh40/output7",
+        "raw usage独立hook与归一Usage分开且总contextInput不重复累计"
+      ],
+      "gap": "此Provider行为已有实际TS运行断言，Python基准由主Agent统一核对；不扩大到真实服务或Host。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_responses_driver_preserves_incomplete_reason_and_output_budget",
+      "pythonLine": 548,
+      "originalAssertionCount": 4,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "incomplete保留实际终态与坏参数标记，没有completed/incomplete的EOF拒绝成功"
+        }
+      ],
+      "protectedAssertions": [
+        "真实incomplete保留max_output_tokens原因",
+        "HTTP预算10不变且usage.output=10",
+        "坏工具参数标记invalid_json"
+      ],
+      "gap": "Node把预算保留在请求输入，不复刻Python RoundResult.output_token_budget字段；finish/incomplete事件契约不同。",
+      "status": "部分覆盖"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_responses_driver_uses_provider_storage_policy",
+      "pythonLine": 583,
+      "originalAssertionCount": 3,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "%s/%s的真实Responses请求只发送已确认store政策，不自动续链"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "request使用input/instructions，官方store=false及cache key不含当前query，工具变更使key变化"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "兼容端点不发送未经确认的store/prompt_cache_key，独立调用不重放私有reasoning"
+        }
+      ],
+      "protectedAssertions": [
+        "OpenAI官方store=false、代理端省略",
+        "Qwen/GLM为false",
+        "DeepSeek/MiniMax/MiMo省略",
+        "七组都无previous_response_id且实际走registry选出的Responses driver"
+      ],
+      "gap": "原定义的线上Provider语义已由具体TS断言保护；Python执行由主Agent核对。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_responses_driver_sends_full_history_and_rejects_empty_input",
+      "pythonLine": 624,
+      "originalAssertionCount": 4,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "完整历史重放原始用户任务及工具结果，空历史或只有system在网络前拒绝"
+        }
+      ],
+      "protectedAssertions": [
+        "完整发送用户历史与工具意图/回执",
+        "不使用previous_response_id",
+        "空历史或只有system在请求前拒绝"
+      ],
+      "gap": "此Provider行为已有实际TS运行断言，Python基准由主Agent统一核对；不扩大到真实服务或Host。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_responses_driver_replays_user_intent_after_tool_result_instead_of_chaining",
+      "pythonLine": 658,
+      "originalAssertionCount": 5,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "完整历史重放原始用户任务及工具结果，空历史或只有system在网络前拒绝"
+        }
+      ],
+      "protectedAssertions": [
+        "首项保留原始用户任务和校验词",
+        "function_call及output紧随",
+        "不将请求缩成工具回执或previous_response_id续链"
+      ],
+      "gap": "此Provider行为已有实际TS运行断言，Python基准由主Agent统一核对；不扩大到真实服务或Host。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_responses_driver_rejects_empty_full_history_before_upstream_request",
+      "pythonLine": 706,
+      "originalAssertionCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "完整历史重放原始用户任务及工具结果，空历史或只有system在网络前拒绝"
+        }
+      ],
+      "protectedAssertions": [
+        "空数组及只有system都以input_rejected在transport前失败",
+        "fake请求列表为空"
+      ],
+      "gap": "此Provider行为已有实际TS运行断言，Python基准由主Agent统一核对；不扩大到真实服务或Host。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_responses_full_history_retry_keeps_same_input_after_transient_error",
+      "pythonLine": 724,
+      "originalAssertionCount": 5,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "Responses共享重试保持两次完整input不变，不改用previous_response_id或自动切协议"
+        }
+      ],
+      "protectedAssertions": [
+        "首请求429后仅一次retry",
+        "两次完整input深相等",
+        "无previous_response_id/协议切换",
+        "最终交付已恢复"
+      ],
+      "gap": "此Provider行为已有实际TS运行断言，Python基准由主Agent统一核对；不扩大到真实服务或Host。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_responses_driver_captures_and_replays_reasoning_items_with_full_history",
+      "pythonLine": 777,
+      "originalAssertionCount": 16,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "捕获的reasoning只在显式continuation时随完整后续历史回放，off配置清除include与私有项"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "流按output_index重建工具，保留Responses item身份和原始参数，reasoning仅进续接材料"
+        }
+      ],
+      "protectedAssertions": [
+        "实际流提取reasoning及fc/call独立id",
+        "100/60cache归一40",
+        "后轮完整历史原位插入reasoning",
+        "off配置即使给材料也不插入且无include"
+      ],
+      "gap": "此Provider行为已有实际TS运行断言，Python基准由主Agent统一核对；不扩大到真实服务或Host。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_responses_update_tools_refreshes_tool_state_digest",
+      "pythonLine": 869,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "request使用input/instructions，官方store=false及cache key不含当前query，工具变更使key变化"
+        }
+      ],
+      "protectedAssertions": [
+        "工具定义改变导致实际请求tools与prompt_cache_key同步变化"
+      ],
+      "gap": "Node无长期可变ctx.tool_state_digest字段，按每个真实请求工具快照重新计算；线上行为已保护，旧内存类API不复刻。",
+      "status": "部分覆盖"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_responses_driver_marks_full_request_protocol_error",
+      "pythonLine": 889,
+      "originalAssertionCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "只有明确Responses兼容错误才标注协议不兼容：%j"
+        }
+      ],
+      "protectedAssertions": [
+        "真实Responses HTTP400明确兼容错误带protocolIncompatible=true，不改协议重发"
+      ],
+      "gap": "Node安全ProviderError替代Python ResponsesCompatibilityError类；HTTP状态保存在options，异常类字面不同。",
+      "status": "部分覆盖"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_responses_driver_only_classifies_explicit_compatibility_errors",
+      "pythonLine": 921,
+      "originalAssertionCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "只有明确Responses兼容错误才标注协议不兼容：%j"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "上下文超限优先于Responses兼容标记，不得要求清理可恢复的私有状态"
+        }
+      ],
+      "protectedAssertions": [
+        "普通参数/模型不存在不标兼容",
+        "明确ResponseInput/Responses API等标记才标",
+        "上下文超限优先且不标协议不兼容"
+      ],
+      "gap": "此Provider行为已有实际TS运行断言，Python基准由主Agent统一核对；不扩大到真实服务或Host。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_responses_driver_keeps_tool_images_as_input_image_items",
+      "pythonLine": 951,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "真实工具图片投影到请求input_image，工具音视频保留不支持说明而非发给不兼容上游"
+        }
+      ],
+      "protectedAssertions": [
+        "工具正文与图片分离",
+        "真实HTTP input保留input_image/base64及旧提示文本",
+        "原投影与实际input相等"
+      ],
+      "gap": "此Provider行为已有实际TS运行断言，Python基准由主Agent统一核对；不扩大到真实服务或Host。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_responses_failure_never_becomes_success_or_replays_tools",
+      "pythonLine": 988,
+      "originalAssertionCount": 7,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "failed事件抛固定脱敏错误，即便已报usage也不能伪装成功空答"
+        }
+      ],
+      "protectedAssertions": [
+        "error/response.failed与有无已输出正文4组合均无complete",
+        "每组仅一次请求并关闭响应一次，先前正文只交一次",
+        "原始失败正文只到受限diagnose，不进入安全ProviderError"
+      ],
+      "gap": "Node统一安全错误类别upstream替代Python SDK ResponsesStreamError/describe_llm_error文案；允许额外独立usage事件，事件DTO存在明确差异。",
+      "status": "部分覆盖"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_loop_driver_vision.py::test_openai_tool_round_converts_anthropic_image_block",
+      "pythonLine": 36,
+      "originalAssertionCount": 3,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "原始工具参数字节不变，Canonical未被wire字段或媒体提取改写"
+        }
+      ],
+      "protectedAssertions": [
+        "工具结果文字进入role=tool",
+        "Anthropic base64图片变为独立user image_url，保留media_type、base64及detail=auto"
+      ],
+      "gap": "对应Provider语义已有实际TS断言，Python基准由主Agent统一确认；不等同真实Host或付费API验收。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_loop_driver_vision.py::test_openai_tool_round_forwards_native_audio_and_video_blocks",
+      "pythonLine": 61,
+      "originalAssertionCount": 3,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "原始工具参数字节不变，Canonical未被wire字段或媒体提取改写"
+        }
+      ],
+      "protectedAssertions": [
+        "工具媒体正文仍是tool字符串",
+        "独立user内容按text/input_audio/video_url顺序续传"
+      ],
+      "gap": "对应Provider语义已有实际TS断言，Python基准由主Agent统一确认；不等同真实Host或付费API验收。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_loop_driver_vision.py::test_responses_tool_round_does_not_forward_unsupported_audio_video_blocks",
+      "pythonLine": 80,
+      "originalAssertionCount": 3,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "仅工具音视频在真实Responses请求中只形成调用和文字回执两项，不增加空媒体消息"
+        }
+      ],
+      "protectedAssertions": [
+        "没有图片的纯工具音视频只产生调用和文字回执两项",
+        "音视频不支持提示保留，任何base64媒体内容不出站"
+      ],
+      "gap": "原定义严格两项与两条提示均由真实请求断言，已消除混图用例多user行组合差异。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_loop_driver_vision.py::test_openai_tool_round_keeps_text_result_shape",
+      "pythonLine": 105,
+      "originalAssertionCount": 3,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "原始工具参数字节不变，Canonical未被wire字段或媒体提取改写"
+        }
+      ],
+      "protectedAssertions": [
+        "纯字符串工具结果{count:0}逐字节保持，投影只有assistant与tool两行"
+      ],
+      "gap": "对应Provider语义已有实际TS断言，Python基准由主Agent统一确认；不等同真实Host或付费API验收。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_loop_driver_vision.py::test_openai_tool_round_drops_unprocessed_parallel_tool_calls",
+      "pythonLine": 115,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "实际dispatch子集构成Canonical工具轮后真实Chat请求不复活未派发的并行兄弟"
+        }
+      ],
+      "protectedAssertions": [
+        "实际dispatched子集经canonicalToolRound再过Chat真实HTTP，不含未派发兄弟id",
+        "已派发工具原始参数字节与配对回执保留，Canonical输入不变"
+      ],
+      "gap": "与原build_tool_round相同层级通过明确dispatched子集验证；本用例不声称执行真实工具副作用。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_loop_driver_vision.py::test_ollama_tool_round_drops_unprocessed_parallel_tool_calls",
+      "pythonLine": 132,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "name": "仅有回执的工具进入投影，确认门后的未派发兄弟不留孤儿且Canonical原文不变"
+        }
+      ],
+      "protectedAssertions": [
+        "Ollama仅把有回执的one调用送出并保持tool_name",
+        "two及孤儿结果不进入投影，源Canonical不变"
+      ],
+      "gap": "对应Provider语义已有实际TS断言，Python基准由主Agent统一确认；不等同真实Host或付费API验收。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_loop_driver_vision.py::test_openai_tool_round_drops_images_for_text_only_model",
+      "pythonLine": 153,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "原始工具参数字节不变，Canonical未被wire字段或媒体提取改写"
+        }
+      ],
+      "protectedAssertions": [
+        "显式image=false时工具图片不变base64正文或多发用户行，工具结果保留原文及视觉不支持提示"
+      ],
+      "gap": "对应Provider语义已有实际TS断言，Python基准由主Agent统一确认；不等同真实Host或付费API验收。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_loop_driver_vision.py::test_tool_image_gate_uses_actual_model_vision_setting",
+      "pythonLine": 170,
+      "originalAssertionCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "原始工具参数字节不变，Canonical未被wire字段或媒体提取改写"
+        }
+      ],
+      "protectedAssertions": [
+        "OpenAI policy尚未声明视觉时，显式config.image=true仍保留工具图片",
+        "false时转提示，不只依赖能力探测"
+      ],
+      "gap": "对应Provider语义已有实际TS断言，Python基准由主Agent统一确认；不等同真实Host或付费API验收。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_loop_driver_vision.py::test_deepseek_driver_keeps_system_message_plain_without_explicit_cache",
+      "pythonLine": 179,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "%s真实HTTP请求清理孤儿后才计算缓存，原始投影仍保留孤儿行"
+        }
+      ],
+      "protectedAssertions": [
+        "实际DeepSeek registry策略发HTTP时system/user是纯字符串",
+        "无cache_control，源历史没有被清洗或重写"
+      ],
+      "gap": "原定义的线上Provider语义已由具体TS断言保护；Python执行由主Agent核对。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_loop_driver_vision.py::test_openai_history_removes_orphan_tool_result_and_preserves_valid_pair",
+      "pythonLine": 225,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "孤儿结果与未完成调用被清理，重复调用/结果只保留首次，保留原模型顺序"
+        }
+      ],
+      "protectedAssertions": [
+        "移除孤儿role=tool，合法调用及结果保留且原数组孤儿行未被改写"
+      ],
+      "gap": "对应Provider语义已有实际TS断言，Python基准由主Agent统一确认；不等同真实Host或付费API验收。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_loop_driver_vision.py::test_openai_history_drops_only_unpaired_parallel_calls_and_keeps_prompt_metadata",
+      "pythonLine": 243,
+      "originalAssertionCount": 6,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "孤儿结果与未完成调用被清理，重复调用/结果只保留首次，保留原模型顺序"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "原始工具参数字节不变，Canonical未被wire字段或媒体提取改写"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "system在副本中按原序合并置顶，字符串与文本块等价，基础system不重复"
+        }
+      ],
+      "protectedAssertions": [
+        "部分并行无回执调用被移除",
+        "源消息、system和合法文字不变"
+      ],
+      "gap": "N3投影身份由外层OpaqueProjection承载；A没有在同一清洗case直接断fixed_prefix_size及最后用户封套位置。",
+      "status": "部分覆盖"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_loop_driver_vision.py::test_openai_history_is_cleaned_before_cache_anchors_and_diagnostics",
+      "pythonLine": 268,
+      "originalAssertionCount": 9,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "孤儿结果与未完成调用被清理，重复调用/结果只保留首次，保留原模型顺序"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "baseline跨请求稳定，图片后的消息与动态尾不推进缓存，单锚点策略只标最新稳定行"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "缓存probe接实际发送请求与当前usage，sink异常不阻塞成功且不输出凭据"
+        }
+      ],
+      "protectedAssertions": [
+        "孤儿修复和稳定缓存分别有行为断言",
+        "probe取实际发送请求而非Canonical原始数组"
+      ],
+      "gap": "尚缺同一含孤儿历史请求同时断sanitization计数/first_changed_index和最终cache_anchor_indices；不能只因helper皆存在标完整。",
+      "status": "部分覆盖"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_loop_driver_vision.py::test_openai_driver_sends_sanitized_provider_projection",
+      "pythonLine": 310,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "%s真实HTTP请求清理孤儿后才计算缓存，原始投影仍保留孤儿行"
+        }
+      ],
+      "protectedAssertions": [
+        "真实Chat/DeepSeek请求中没有源孤儿结果，仅保留system/user",
+        "源投影仍有原孤儿行"
+      ],
+      "gap": "原定义的线上Provider语义已由具体TS断言保护；Python执行由主Agent核对。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_loop_driver_vision.py::test_deepseek_driver_drops_orphan_tool_result_before_request",
+      "pythonLine": 356,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "%s真实HTTP请求清理孤儿后才计算缓存，原始投影仍保留孤儿行"
+        }
+      ],
+      "protectedAssertions": [
+        "DeepSeek最终messages恰为原system及封套user两行",
+        "原role=tool孤儿保留在来源数组而不发送"
+      ],
+      "gap": "原定义的线上Provider语义已由具体TS断言保护；Python执行由主Agent核对。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_loop_driver_vision.py::test_inline_image_stops_cache_checkpoint_before_image",
+      "pythonLine": 406,
+      "originalAssertionCount": 4,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "baseline跨请求稳定，图片后的消息与动态尾不推进缓存，单锚点策略只标最新稳定行"
+        }
+      ],
+      "protectedAssertions": [
+        "初始内联图之前的最后稳定行保留锚点",
+        "图片、图片后消息及动态尾都不打cache_control"
+      ],
+      "gap": "对应Provider语义已有实际TS断言，Python基准由主Agent统一确认；不等同真实Host或付费API验收。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_loop_driver_vision.py::test_anthropic_base64_image_is_volatile",
+      "pythonLine": 427,
+      "originalAssertionCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "baseline跨请求稳定，图片后的消息与动态尾不推进缓存，单锚点策略只标最新稳定行"
+        }
+      ],
+      "protectedAssertions": [
+        "将Anthropic image.source=base64形状作为缓存输入时无稳定anchor",
+        "不会把首图推进缓存前缀"
+      ],
+      "gap": "原定义的线上Provider语义已由具体TS断言保护；Python执行由主Agent核对。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_loop_driver_vision.py::test_initial_image_collapses_to_stable_text_after_first_round",
+      "pythonLine": 436,
+      "originalAssertionCount": 3,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "首轮消费初始图片后合法推进Canonical revision并保留正文，后续工具新图片仍正常发送"
+        }
+      ],
+      "protectedAssertions": [
+        "初始图仅在第一轮HTTP出站，第二轮不再包含其base64",
+        "初始Canonical内容修订为保留正文的字符串，entry revision递增",
+        "后续工具新图仍按媒体发送，最终持久状态不带base64"
+      ],
+      "gap": "实际Runtime→Harness工具轮证明消费信号及合法修订；此原定义只含一条初始带文字图片，不从此项扩大到所有历史、无文字或并发冲突组合。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_loop_driver_vision.py::test_cache_checkpoint_recovers_after_image_round",
+      "pythonLine": 451,
+      "originalAssertionCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "baseline跨请求稳定，图片后的消息与动态尾不推进缓存，单锚点策略只标最新稳定行"
+        }
+      ],
+      "protectedAssertions": [
+        "下一轮仅有稳定文字时最新assistant行恢复ephemeral锚点"
+      ],
+      "gap": "原pytest本身只验证无图稳定消息的缓存helper；首次消费/修订主链由另一个节点独立审计，不从此项扩大宣称。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_loop_driver_vision.py::test_cache_checkpoint_rebuilds_previous_turn_for_new_request",
+      "pythonLine": 462,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "baseline跨请求稳定，图片后的消息与动态尾不推进缓存，单锚点策略只标最新稳定行"
+        }
+      ],
+      "protectedAssertions": [
+        "无旧anchor新请求同时给上一真实user与当前最新user打ephemeral",
+        "后续请求显式旧baseline_digest仍稳定"
+      ],
+      "gap": "原定义的线上Provider语义已由具体TS断言保护；Python执行由主Agent核对。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_loop_driver_vision.py::test_cache_diagnostics_only_exposes_sizes_and_digests",
+      "pythonLine": 475,
+      "originalAssertionCount": 16,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "缓存probe接实际发送请求与当前usage，sink异常不阻塞成功且不输出凭据"
+        }
+      ],
+      "protectedAssertions": [
+        "真实请求probe仅交受控sink",
+        "sink失败不阻断成功且无api_key",
+        "实际用量与prefix关联"
+      ],
+      "gap": "原定义额外保护无token估算、图像易变索引、tool_schema_bytes/digest长度等全字段；主Agent公共cacheprobe需按断言映射，A不批量认定。",
+      "status": "部分覆盖"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_loop_driver_vision.py::test_cache_diagnostics_reports_effective_runtime_anchors",
+      "pythonLine": 509,
+      "originalAssertionCount": 3,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "缓存probe接实际发送请求与当前usage，sink异常不阻塞成功且不输出凭据"
+        }
+      ],
+      "protectedAssertions": [
+        "probe使用实际发送请求及归一usage"
+      ],
+      "gap": "未有直接断runtime有效锚点数量2、最后索引2及turn_batch_count=0的TS组合；需公共probe审计补齐。",
+      "status": "部分覆盖"
+    },
+    {
+      "pythonNode": "backend/tests/agent/context/test_branch_request_prefix.py::test_chat_completions_snapshot_does_not_duplicate_existing_system",
+      "pythonLine": 27,
+      "originalAssertionCount": 3,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "system在副本中按原序合并置顶，字符串与文本块等价，基础system不重复"
+        }
+      ],
+      "protectedAssertions": [
+        "真实Chat branch在字符串及text block已合并system前缀时不重复base",
+        "原前缀和末尾任务字面相同，源数组不变"
+      ],
+      "gap": "对应Provider语义已有实际TS断言，Python基准由主Agent统一确认；不等同真实Host或付费API验收。",
+      "status": "已实现并通过基准",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/context/test_branch_request_prefix.py::test_responses_driver_snapshot_branch_keeps_exact_input_prefix",
+      "pythonLine": 58,
+      "originalAssertionCount": 9,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "已冻结Responses前缀追加反思保持instructions和cache key，原生reasoning与工具item逐字节保留"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "捕获的reasoning只在显式continuation时随完整后续历史回放，off配置清除include与私有项"
+        }
+      ],
+      "protectedAssertions": [
+        "真实Responses已冻结input追加branch保持instructions/cache key/原生reasoning及工具item前缀",
+        "显式continuation/off另有真实跨调用断言"
+      ],
+      "gap": "完整ReflectionSnapshots捕获→ProviderRuntime.completeBranch与replay_enabled两参数的单一组合尚未由A重现；当前为driver边界证明，需主Agent整合补。",
+      "status": "部分覆盖"
+    },
+    {
+      "pythonNode": "backend/tests/agent/context/test_branch_request_prefix.py::test_anthropic_without_continuation_keeps_main_request_prefix",
+      "pythonLine": 121,
+      "originalAssertionCount": 10,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "非流式分支原样使用带签名wire，既有history的JSON分支不改变主请求参数或工具"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "分支修复孤儿时保留原生签名和redacted块，清除外协议推理且不改字符串形状"
+        }
+      ],
+      "protectedAssertions": [
+        "带签名wire和system原样进入非流式分支，修复仅作用副本"
+      ],
+      "gap": "原定义断旧锚点为新锚点子集、新latest锚点、dynamic尾不打锚，以及无continuation时不补thinking；A无法从通用wire测试证明这些组合。",
+      "status": "部分覆盖"
+    },
+    {
+      "pythonNode": "backend/tests/platform/observability/test_responses_request_capture.py::test_driver_failure_captures_exact_reasoning_request_and_success_does_not",
+      "pythonLine": 34,
+      "originalAssertionCount": 10,
+      "classification": "相邻HostData",
+      "tsTests": [],
+      "protectedAssertions": [],
+      "gap": "LoopScope失败时保存精确可重放请求、成功不增加span及parent关联是尚未迁入的Host Collector能力；Provider diagnose/probe不等价。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/platform/observability/test_responses_request_capture.py::test_sensitive_request_is_explicitly_unavailable_instead_of_redacted_replay",
+      "pythonLine": 109,
+      "originalAssertionCount": 1,
+      "classification": "相邻HostData",
+      "tsTests": [],
+      "protectedAssertions": [],
+      "gap": "凭据扫描后标replayable=false/credential_detected并禁止脱敏重放，属于LoopScope受控请求捕获；当前无Node该消费者，不用Provider固定错误替代。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/platform/observability/test_responses_request_capture.py::test_create_failure_capture_keeps_error_classification_without_exception_text",
+      "pythonLine": 120,
+      "originalAssertionCount": 3,
+      "classification": "相邻HostData",
+      "tsTests": [],
+      "protectedAssertions": [],
+      "gap": "受限trace捕获异常链白名单、request_id及不含原始异常正文是LoopScope序列化行为；当前Provider错误脱敏只是相邻边界。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/platform/observability/test_responses_request_capture.py::test_capture_can_roundtrip_through_trace_database_without_provider_call",
+      "pythonLine": 151,
+      "originalAssertionCount": 5,
+      "classification": "相邻HostData",
+      "tsTests": [],
+      "protectedAssertions": [],
+      "gap": "LoopScope SQLite读写、digest防篡改及离线dry-run拒绝历史重建不在Core Provider实现，需Observability Host/Data专项。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/platform/observability/test_responses_request_capture.py::test_capture_does_not_add_spans_when_disabled_or_round_has_ended",
+      "pythonLine": 193,
+      "originalAssertionCount": 1,
+      "classification": "相邻HostData",
+      "tsTests": [],
+      "protectedAssertions": [],
+      "gap": "Collector关闭及round生命周期span登记属于Host观测实现，当前Node没有等价接线。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/platform/observability/test_responses_request_capture.py::test_client_configuration_is_never_saved_in_trace",
+      "pythonLine": 204,
+      "originalAssertionCount": 2,
+      "classification": "相邻HostData",
+      "tsTests": [],
+      "protectedAssertions": [],
+      "gap": "完整Client配置被禁止存入trace snapshot，需要真实Collector捕获服务验收；无Node trace不能用普通诊断无api_key冒充完成。",
+      "status": "边界延后"
+    }
+  ],
+  "auditComplete": true,
+  "evidenceCatalog": {
+    "raw": {
+      "file": "gugu-core/tests/agent/providers/openai.test.ts",
+      "name": "原始工具参数字节不变，Canonical未被wire字段或媒体提取改写"
+    },
+    "sanitize": {
+      "file": "gugu-core/tests/agent/providers/openai.test.ts",
+      "name": "孤儿结果与未完成调用被清理，重复调用/结果只保留首次，保留原模型顺序"
+    },
+    "tail": {
+      "file": "gugu-core/tests/agent/providers/openai.test.ts",
+      "name": "动态尾部不能补配稳定历史中的半个工具轮"
+    },
+    "system": {
+      "file": "gugu-core/tests/agent/providers/openai.test.ts",
+      "name": "system在副本中按原序合并置顶，字符串与文本块等价，基础system不重复"
+    },
+    "chatReason": {
+      "file": "gugu-core/tests/agent/providers/openai.test.ts",
+      "name": "原生reasoning只从显式续接材料回放，不从Canonical私有块漏给用户"
+    },
+    "cache": {
+      "file": "gugu-core/tests/agent/providers/openai.test.ts",
+      "name": "baseline跨请求稳定，图片后的消息与动态尾不推进缓存，单锚点策略只标最新稳定行"
+    },
+    "chatStream": {
+      "file": "gugu-core/tests/agent/providers/openai.test.ts",
+      "name": "真实Chat请求用正确工具schema、缓存用量与参数字节，工具按index重组而不输出思考"
+    },
+    "chatBad": {
+      "file": "gugu-core/tests/agent/providers/openai.test.ts",
+      "name": "截断或非对象参数%s标记拒派发，而非空对象正常工具调用"
+    },
+    "chatUsage": {
+      "file": "gugu-core/tests/agent/providers/openai.test.ts",
+      "name": "缺usage不估算，兼容cache write不重复计入完整输入"
+    },
+    "chatJson": {
+      "file": "gugu-core/tests/agent/providers/openai.test.ts",
+      "name": "独立complete返回可见正文，JSON追加分支不额外发送response_format"
+    },
+    "branchCache": {
+      "file": "gugu-core/tests/agent/providers/openai.test.ts",
+      "name": "无历史追加分支仍标记新增基础system，动态任务不进入缓存锚点且无空tools"
+    },
+    "nullBudget": {
+      "file": "gugu-core/tests/agent/providers/openai.test.ts",
+      "name": "显式null输出预算保持provider默认，不被模型配置max_tokens覆盖"
+    },
+    "usageHook": {
+      "file": "gugu-core/tests/agent/providers/openai.test.ts",
+      "name": "实际usage独立交给受控hook，hook修改副本或失败不污染正常流和缺报语义"
+    },
+    "factoryJson": {
+      "file": "gugu-core/tests/agent/providers/openai.test.ts",
+      "name": "%s/%s真实registry分支有历史=%s时保持JSON策略与业务校验"
+    },
+    "factoryInvalid": {
+      "file": "gugu-core/tests/agent/providers/openai.test.ts",
+      "name": "%s追加分支非JSON不能变成可应用的反思结果"
+    },
+    "standalone": {
+      "file": "gugu-core/tests/agent/providers/openai.test.ts",
+      "name": "独立Responses可见JSON与推理预算按真实模型处理，临时关闭思考不修改配置或发送续接"
+    },
+    "thinkingJson": {
+      "file": "gugu-core/tests/agent/providers/openai.test.ts",
+      "name": "真实Provider分支JSON解析只读可见正文，不从完整或未闭合thinking中取对象"
+    },
+    "item": {
+      "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+      "name": "canonical工具回放产生稳定item id，call id与原始参数不变，不修改源消息"
+    },
+    "legacy": {
+      "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+      "name": "旧历史重复call id按出现次数分配独立item id，缺digest不能用弱ID伪装冻结投影"
+    },
+    "reasonPlace": {
+      "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+      "name": "reasoning置于最新整组assistant文本/多个function call之前，冻结wire重入不重复"
+    },
+    "instructions": {
+      "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+      "name": "基础system和snapshot均进入instructions，不能静默丢snapshot或重复基础前缀"
+    },
+    "audio": {
+      "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+      "name": "显式声明%s时将data URL变为纯base64并保留格式"
+    },
+    "denyMedia": {
+      "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+      "name": "能力未声明的媒体%j在网络调用前明确拒绝"
+    },
+    "badAudio": {
+      "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+      "name": "音频声明与实际data URL不一致不能静默降级：%j"
+    },
+    "media": {
+      "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+      "name": "媒体映射保留图片detail/视频fps，工具schema从Chat嵌套改为Responses顶层"
+    },
+    "emptyItems": {
+      "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+      "name": "Responses过滤所有空文本形状但保留结构图片，显式item id与call id分别回放"
+    },
+    "toolImage": {
+      "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+      "name": "真实工具图片投影到请求input_image，工具音视频保留不支持说明而非发给不兼容上游"
+    },
+    "request": {
+      "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+      "name": "request使用input/instructions，官方store=false及cache key不含当前query，工具变更使key变化"
+    },
+    "compatFields": {
+      "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+      "name": "兼容端点不发送未经确认的store/prompt_cache_key，独立调用不重放私有reasoning"
+    },
+    "responseStream": {
+      "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+      "name": "流按output_index重建工具，保留Responses item身份和原始参数，reasoning仅进续接材料"
+    },
+    "failed": {
+      "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+      "name": "failed事件抛固定脱敏错误，即便已报usage也不能伪装成功空答"
+    },
+    "incompatible": {
+      "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+      "name": "只有明确Responses兼容错误才标注协议不兼容：%j"
+    },
+    "overflow": {
+      "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+      "name": "上下文超限优先于Responses兼容标记，不得要求清理可恢复的私有状态"
+    },
+    "incomplete": {
+      "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+      "name": "incomplete保留实际终态与坏参数标记，没有completed/incomplete的EOF拒绝成功"
+    },
+    "visible": {
+      "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+      "name": "完成事件只有最终message也能交付可见正文，reasoning聚合不作为文本"
+    },
+    "responseJson": {
+      "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+      "name": "JSON追加分支不改变主前缀请求格式，独立请求可发送声明的JSON格式"
+    },
+    "responseRaw": {
+      "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+      "name": "Responses显式null预算不回落配置，实际原始usage独立上报且不进入Harness事件"
+    },
+    "frozen": {
+      "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+      "name": "已冻结Responses前缀追加反思保持instructions和cache key，原生reasoning与工具item逐字节保留"
+    },
+    "full": {
+      "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+      "name": "完整历史重放原始用户任务及工具结果，空历史或只有system在网络前拒绝"
+    },
+    "retry": {
+      "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+      "name": "Responses共享重试保持两次完整input不变，不改用previous_response_id或自动切协议"
+    },
+    "captureReason": {
+      "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+      "name": "捕获的reasoning只在显式continuation时随完整后续历史回放，off配置清除include与私有项"
+    },
+    "anthroWire": {
+      "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+      "name": "非流式分支原样使用带签名wire，既有history的JSON分支不改变主请求参数或工具"
+    },
+    "anthroHistory": {
+      "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+      "name": "history转换原始字符串参数为对象、system转user、按相邻位置移除孤儿且不修改原历史"
+    },
+    "anthroBad": {
+      "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+      "name": "旧历史参数%s仅在投影副本中转空对象，配对结果及原字节保留"
+    },
+    "anthroRepair": {
+      "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+      "name": "分支修复孤儿时保留原生签名和redacted块，清除外协议推理且不改字符串形状"
+    },
+    "anthroRestore": {
+      "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+      "name": "thinking与多段text原位恢复且未派发工具不复活，跨owner绑定失败不复用"
+    },
+    "runtimeWire": {
+      "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+      "name": "实际出站wire快照供收尾反思使用，绑定checkpoint而非事后重渲染"
+    },
+    "runtimeProbe": {
+      "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+      "name": "缓存probe接实际发送请求与当前usage，sink异常不阻塞成功且不输出凭据"
+    },
+    "branchInvalid": {
+      "file": "gugu-core/tests/agent/harness/history/checkpoint-branch.test.ts",
+      "name": "非法JSON响应%j归类为%s"
+    },
+    "branchNoMutation": {
+      "file": "gugu-core/tests/agent/harness/history/checkpoint-branch.test.ts",
+      "name": "只读分支Provider篡改请求不影响原始投影/工具或主continuation"
+    },
+    "ollamaPair": {
+      "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+      "name": "仅有回执的工具进入投影，确认门后的未派发兄弟不留孤儿且Canonical原文不变"
+    },
+    "actualSanitize": {
+      "file": "gugu-core/tests/agent/providers/openai.test.ts",
+      "name": "%s真实HTTP请求清理孤儿后才计算缓存，原始投影仍保留孤儿行"
+    },
+    "storeMatrix": {
+      "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+      "name": "%s/%s的真实Responses请求只发送已确认store政策，不自动续链"
+    },
+    "anthroBranchParams": {
+      "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+      "name": "分支系统缓存按同一厂商能力生成，thinking与generation参数跟随主请求策略而不手拼"
+    },
+    "anthroEmptySystem": {
+      "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+      "name": "非流式实际raw usage与unknown分别交探针，显式null预算沿Python高预算而不回落配置"
+    },
+    "anthroHistoricalRounds": {
+      "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+      "name": "三轮已持久Canonical工具恢复各自签名且重复恢复幂等，跨Run重建剔除历史外续接call"
+    },
+    "runtimeInitialImage": {
+      "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+      "name": "首轮消费初始图片后合法推进Canonical revision并保留正文，后续工具新图片仍正常发送"
+    },
+    "runtimeToolRoundRecovery": {
+      "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+      "name": "Anthropic缺块%s实际跨Harness工具轮，工具只派发一次且最终正文只输出一次"
+    },
+    "responsesOverflowBoundary": {
+      "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+      "name": "%s窗口超限在已有输出=%s时准确标注恢复边界，不输出完成或私有错误正文"
+    },
+    "sameArea": {
+      "file": "gugu-core/tests/agent/providers/openai.test.ts",
+      "name": "同一MessageArea跨OpenAI和Anthropic投影保持revision、digest及工具schema元数据，协议形状各自正确"
+    },
+    "dispatchedPrefix": {
+      "file": "gugu-core/tests/agent/providers/openai.test.ts",
+      "name": "实际dispatch子集构成Canonical工具轮后真实Chat请求不复活未派发的并行兄弟"
+    },
+    "combinedMedia": {
+      "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+      "name": "同一真实Responses请求依次发送工具结果、工具图片和当前音视频，图片不混入结果正文"
+    },
+    "unsupportedToolMedia": {
+      "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+      "name": "仅工具音视频在真实Responses请求中只形成调用和文字回执两项，不增加空媒体消息"
+    }
+  },
+  "summary": {
+    "pythonFiles": 8,
+    "pythonDefinitions": 95,
+    "statusCounts": {
+      "已实现并通过基准": 59,
+      "部分覆盖": 28,
+      "边界延后": 8
+    },
+    "classificationCounts": {
+      "Provider本体": 87,
+      "相邻HostData": 8
+    },
+    "note": "本报告按95个原定义逐断言计数；已补同一Area双协议不变性与同请求工具图片/当前音视频/dispatch子集，合并B三轮幂等新证据；剩余partial含明确未断组合或已退役DTO差异。",
+    "finalStatusCounts": {
+      "已实现并通过基准": 59,
+      "部分覆盖": 28,
+      "边界延后": 8
+    },
+    "subtaskSnapshotStatusCounts": {
+      "已实现待Python": 6,
+      "已实现并通过基准": 52,
+      "部分覆盖": 29,
+      "边界延后": 8,
+      "缺回归": 0
+    }
+  },
+  "reviewFixes": [
+    "标准Chat body的stableCount必须计入新增基础system，独立无历史分支仍打system缓存且动态任务不打。",
+    "Responses工具图提示恢复旧精确文字，避免与Python历史的稳定prefix差异。",
+    "Responses仅在config.reasoning_persistence=continuation时插入外部续接材料；off即使收到旧材料也不回放。",
+    "Chat/Responses接真实raw usage hook，缺报传null/unknown，hook异常和修改副本不污染业务流。",
+    "显式maxOutputTokens=null不回落config.max_tokens；公共Runtime standalone/分支预算及thinking覆盖另由主Agent实现。",
+    "真实六厂商追加JSON/无效JSON经Runtime→Harness行为验证，避免只验证body builder。",
+    "两次429第三次成功、maxRetries=2耗尽三次真实Chat请求已有直接回归，供B重试审计合并。",
+    "Responses流failure仅在已看到正文或原生输出项时标outputStarted；补response.failed/error各自有无部分正文的四项真实流回归，避免阻断无输出窗口超限恢复。"
+  ],
+  "additionalIntegrationEvidence": [
+    {
+      "scope": "相邻Anthropic tool_round_recovery主链；不计入本报告指定8文件95定义的迁移计数",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "Anthropic缺块%s实际跨Harness工具轮，工具只派发一次且最终正文只输出一次"
+        }
+      ],
+      "variants": [
+        "首轮恢复工具",
+        "次轮恢复正文"
+      ],
+      "protectedAssertions": [
+        "实际SSE缺块后改用非流式读取；工具只dispatch一次",
+        "工具前缺块时恢复出工具，再正常流式正文；工具后缺块时恢复出正文",
+        "三次HTTP请求stream标记与恢复位置一致；终态completed且正文只交付一次"
+      ],
+      "limits": "不证明真实Anthropic服务或SDK内部DTO；使用注入HTTP传输运行实际Provider与Harness。"
+    },
+    {
+      "scope": "Responses stream上下文超限失败事件是否允许Harness恢复",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "%s窗口超限在已有输出=%s时准确标注恢复边界，不输出完成或私有错误正文"
+        }
+      ],
+      "variants": [
+        "response.failed无输出",
+        "response.failed部分输出",
+        "error无输出",
+        "error部分输出"
+      ],
+      "protectedAssertions": [
+        "均抛context_overflow，outputStarted精确等于是否已交付正文",
+        "没有complete事件或错误正文泄漏，流均关闭且不自行重发"
+      ],
+      "limits": "测试真实driver错误边界；Harness缩窗调度回归由主Agent统一整合。"
+    }
+  ],
+  "integratedValidation": {
+    "providerNode": {
+      "id": "provider-node-final-366",
+      "reportedBy": "主Agent最终独立执行",
+      "environment": "本地原生Node 26",
+      "files": 7,
+      "passed": 366,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "time": "2026-11-13 17:55:53",
+      "notes": "所有源与测试已冻结后运行；包含真实socket复用/idle失效及A/B/Runtime最后补充断言。transport文件23项。"
+    },
+    "python": {
+      "id": "provider-python-517",
+      "reportedBy": "主Agent实际执行",
+      "environment": "本地原生Linux隔离副本",
+      "files": 43,
+      "passed": 517,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "durationSeconds": 13.75,
+      "notes": "补齐ffprobe后原跳过已实际执行；未使用devserver，未读取或改写运行配置。"
+    },
+    "coreUnit": {
+      "id": "core-unit-final-855",
+      "reportedBy": "主Agent最终独立执行",
+      "files": 36,
+      "passed": 855,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "time": "2026-11-13 17:57:23"
+    },
+    "types": {
+      "status": "通过",
+      "reportedBy": "主Agent最终实际执行",
+      "notes": "17:55后最终测试tsc通过，含B reduce<number>修正。"
+    },
+    "coreBuild": {
+      "status": "通过",
+      "reportedBy": "主Agent最终实际执行",
+      "notes": "17:55后最终Core build通过。"
+    },
+    "limits": [
+      "两侧测试各自执行通过与逐定义语义审计共同构成证据，不是自动差分运行或真实外部服务验收。",
+      "Provider协议与Core接线已经有真实生产实现；Host/Data/Redis/Tools/观测缺口不因合成HTTP或全套通过升级。"
+    ],
+    "latestTargeted": [
+      {
+        "id": "provider-runtime-final-25",
+        "reportedBy": "主Agent实际执行",
+        "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+        "passed": 25,
+        "failed": 0,
+        "skipped": 0,
+        "time": "2026-11-13 17:49:21",
+        "notes": "覆盖最终稳定正文/tools键、idle前后factory及TTL/跨Run/终态引用拒绝；随后tsc通过。"
+      },
+      {
+        "id": "provider-openai-final-105",
+        "reportedBy": "A实际执行",
+        "files": 2,
+        "passed": 105,
+        "failed": 0,
+        "skipped": 0,
+        "time": "2026-11-13 17:52:52",
+        "notes": "含新增4项真实组合用例，原6条partial缺口按断言证据闭合。"
+      },
+      {
+        "id": "provider-anthropic-final-70",
+        "reportedBy": "B实际执行",
+        "files": 1,
+        "passed": 70,
+        "failed": 0,
+        "skipped": 0,
+        "notes": "包含三历史轮重复恢复幂等和普通system主动缓存branch断言。"
+      },
+      {
+        "id": "provider-transport-socket-idle",
+        "reportedBy": "主Agent实际执行",
+        "file": "gugu-core/tests/agent/providers/transport.test.ts",
+        "time": "2026-11-13 17:54:36",
+        "status": "通过",
+        "name": "完整JSON读取后复用真实TCP连接，空闲过期后新建连接而非只复用fake对象"
+      }
+    ],
+    "freeze": "主Agent确认所有Provider源/测试停笔后执行；文档最终整合未再修改源或测试。"
+  },
+  "finalSummary": {
+    "definitions": 95,
+    "uniqueDefinitions": 95,
+    "statusCounts": {
+      "已实现并通过基准": 59,
+      "部分覆盖": 28,
+      "边界延后": 8
+    },
+    "pythonFiles": [
+      "backend/tests/agent/context/test_branch_request_prefix.py",
+      "backend/tests/agent/providers/test_nonchat_llm_protocol.py",
+      "backend/tests/agent/providers/test_provider_history_adapters.py",
+      "backend/tests/agent/providers/test_provider_runner_cache.py",
+      "backend/tests/agent/providers/test_sdk_compat_streaming.py",
+      "backend/tests/agent/test_loop_driver_vision.py",
+      "backend/tests/agent/test_phase2_reasoning_drivers.py",
+      "backend/tests/platform/observability/test_responses_request_capture.py"
+    ],
+    "countingRule": "按pytest定义计数，参数化执行个数另见517；已实现并通过基准不表示线上服务或生产Host迁移。"
+  }
+}

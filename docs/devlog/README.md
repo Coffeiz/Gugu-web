@@ -8,6 +8,7 @@
 
 ### 2026-11-13
 
+- [N3 Provider 协议迁移与 Harness 整合复查](./2026-11-13-N3-Provider协议迁移与Harness整合复查.md)
 - [N3 Agent Harness 可移植迁移](./2026-11-13-N3-Agent-Harness可移植迁移.md)
 
 ### 2026-11-12

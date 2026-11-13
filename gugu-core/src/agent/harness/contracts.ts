@@ -707,6 +707,14 @@ export interface ToolCall {
   readonly input: unknown
   readonly rawArguments?: string
   readonly responsesItemId?: string
+  /** Provider 已确认参数不是合法对象；保留调用以反馈模型，禁止派发空参数。 */
+  readonly parseError?: 'invalid_json' | 'not_object'
+}
+
+/** 首轮模型实际消费的内联图片；由Harness校验revision并修订Canonical，Provider不改ledger。 */
+export interface ConsumedInitialMedia {
+  readonly expectedRevision: number
+  readonly entryIds: readonly string[]
 }
 
 export interface PendingInteraction {
@@ -771,6 +779,7 @@ export type ProviderEvent = {
   readonly calls: readonly ToolCall[]
   readonly continuation?: unknown
   readonly cacheAnchor?: unknown
+  readonly consumedInitialMedia?: ConsumedInitialMedia
   readonly finishReason?: string | null
   readonly incompleteReason?: string | null
   readonly requiresTools?: boolean

@@ -1,0 +1,1618 @@
+{
+  "schemaVersion": 1,
+  "scope": "Anthropic协议/历史/重试及其直接调用方逐断言复核；SDK混合文件只选择Anthropic参数，OpenAI节点单列待主Agent/A复核",
+  "nodeValidation": {
+    "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+    "command": "node node_modules/vitest/vitest.mjs run tests/agent/providers/anthropic.test.ts",
+    "passed": 70,
+    "failed": 0,
+    "skipped": 0,
+    "notes": "17:52:07实际单文件70项通过。最终扩展三轮原生签名与两次实际complete/restore；未重跑Python，既有主Agent基准结果保留原记录。",
+    "stage": "子任务历史执行快照；最终执行结果见integratedValidation。"
+  },
+  "statusCounts": {
+    "部分覆盖": 13,
+    "已实现并通过基准": 32,
+    "边界延后": 11
+  },
+  "definitions": [
+    {
+      "pythonNode": "backend/tests/agent/providers/test_anthropic_stream_recovery.py::test_missing_block_recovers_once_with_identical_request_and_visible_text",
+      "pythonLine": 85,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "缺块%s尚无正文时只用相同参数非流式恢复一次，恢复正文进入正常事件链",
+          "coverage": "直接行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "缺块delta已携%s片段时先记录输出事实，再失败且禁止非流或普通重放",
+          "coverage": "明确安全收紧边界"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "content_block_stop在message_start之前是SDK事件顺序错误，不冒充已知缺块进行恢复",
+          "coverage": "SDK实际事件顺序边界"
+        }
+      ],
+      "protectedAssertions": [
+        "message_start之后缺失stop或空delta内容块时，未输出的轮次使用同样model/system/messages/tools/max_tokens恢复一次非流式；只去掉stream标记",
+        "恢复可见正文及新工具声明回归正常事件链，原输入不变，失败流与恢复响应均关闭"
+      ],
+      "gap": "旧pytest的delta=True参数携非空text但SDK先因缺块抛错，Python因此仍恢复；Node按收到任意正文/工具参数/thinking/signature即禁止重放，这是明确安全收紧，不能声称该参数行为等价。SDK实际无message_start的stop抛RuntimeError事件顺序错误，不是可恢复缺块。",
+      "status": "部分覆盖",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 6,
+        "reviewedAssertionsAndRaises": true
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_anthropic_stream_recovery.py::test_recovery_failure_is_not_replayed_and_reports_protocol_diagnostic",
+      "pythonLine": 101,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "已输出正文再缺块不重放；恢复请求失败也不暴露原始错误或重新进入重试",
+          "coverage": "直接行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "HTTP200的SSE上游错误只给固定安全分类，超限不被当成普通可重试故障",
+          "coverage": "直接行为"
+        }
+      ],
+      "protectedAssertions": [
+        "恢复失败只保留一次流请求与一次非流请求，不重新进入普通退避",
+        "原始恢复错误仅交受限diagnose；用户事件仅固定安全错误，不包含上游正文"
+      ],
+      "gap": "旧异常对象identity、anthropic_stream_protocol_details属性、provider_stream_error国际化键及diagnostic_id由旧Host错误DTO提供；Node使用安全ProviderError与独立diagnose，不声称旧DTO完全兼容。",
+      "status": "部分覆盖",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 7,
+        "reviewedAssertionsAndRaises": true
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_anthropic_stream_recovery.py::test_missing_block_after_visible_text_does_not_replay",
+      "pythonLine": 122,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "已输出正文再缺块不重放；恢复请求失败也不暴露原始错误或重新进入重试",
+          "coverage": "直接行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "已有私有或工具片段后的坏流不因尚无可见token而重放：%j",
+          "coverage": "直接行为"
+        }
+      ],
+      "protectedAssertions": [
+        "已交付正文保持一次，不重发流或非流请求",
+        "内部未知程序错误不能伪装成已知缺块重放"
+      ],
+      "gap": "旧IndexError异常类型/可见协议details属性退役；受限诊断仍可得到安全缺块位置。私有思考或工具片段后也不重放属于明确安全收紧。",
+      "status": "部分覆盖",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 5,
+        "reviewedAssertionsAndRaises": true
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_anthropic_stream_recovery.py::test_tool_round_recovery_delivers_text_and_executes_each_tool_once",
+      "pythonLine": 138,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "缺块%s尚无正文时只用相同参数非流式恢复一次，恢复正文进入正常事件链",
+          "coverage": "直接行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "Anthropic真实工具流等待回答后仍恢复原生签名，问题工具不重派且Canonical不存私有块",
+          "coverage": "真实Provider与Harness组合"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "Anthropic缺块%s实际跨Harness工具轮，工具只派发一次且最终正文只输出一次"
+        }
+      ],
+      "protectedAssertions": [
+        "缺块恢复出的工具声明或工具完成后的下一轮恢复不会重派已执行工具",
+        "真实Provider→Harness等待/回答恢复完成，Tools仅派发一次且Canonical无私有签名",
+        "首轮恢复工具、次轮恢复正文两参数均completed，工具dispatch恰好一次",
+        "三次HTTP请求与stream恢复位置对应，最终正文只交付一次"
+      ],
+      "gap": "已补原recover_tool_call两形状的真实Provider→Harness组合；三次实际HTTP的stream位置、恢复正文与Tools dispatch次数均直接断言。保留另外缺块非空delta参数的安全收紧差异。",
+      "status": "已实现并通过基准",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 6,
+        "reviewedAssertionsAndRaises": true
+      },
+      "reviewHistory": [
+        {
+          "stage": "最终整合前精确复核",
+          "status": "部分覆盖",
+          "gap": "现有整合直接覆盖普通工具等待恢复；旧节点recover_tool_call两参数与真实Harness的缺块非流恢复组合仍需精确整合，不能用calls长度冒充dispatch次数。"
+        }
+      ],
+      "finalReview": "已直接阅读最终TS用例断言与生产调用位置；运行结果引用主Agent独立执行记录，未把注入HTTP成功扩为线上服务验收。",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_anthropic_roundtrip.py::test_restored_tool_rows_keep_signed_thinking_in_next_run_request",
+      "pythonLine": 25,
+      "classification": "相邻HostData",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "三轮已持久Canonical工具恢复各自签名且重复恢复幂等，跨Run重建剔除历史外续接call",
+          "coverage": "直接行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "Anthropic真实工具流等待回答后仍恢复原生签名，问题工具不重派且Canonical不存私有块",
+          "coverage": "真实Provider与Harness组合"
+        }
+      ],
+      "protectedAssertions": [
+        "两轮私有签名按各call id恢复到后续请求，移除已不在历史中的call私有状态",
+        "Canonical快照不被改写且不保存thinking/redacted/signature"
+      ],
+      "gap": "Node真实Provider/Canonical恢复已保护；原节点真实数据库row envelope及加密续接读写仍需Data Adapter集成，不把测试内存状态当持久化。",
+      "status": "边界延后",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 7,
+        "reviewedAssertionsAndRaises": true
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_anthropic_roundtrip.py::test_anthropic_tool_input_keeps_wire_order_after_persistence",
+      "pythonLine": 106,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "真实驱动参数%j经Canonical和键排序后回放保持原字节序，错误工具结果与Canonical一致",
+          "coverage": "直接行为"
+        }
+      ],
+      "protectedAssertions": [
+        "实际模型响应解析后将原序参数固化为Canonical.arguments字符串",
+        "模拟JSONB递归重排对象键后，下一HTTP请求input与首轮参数JSON字节序保持一致，含嵌套null/数组及空对象"
+      ],
+      "gap": "明确仅验证协议/Canonical JSON语义；不宣称真实SQL驱动已验收。",
+      "status": "已实现并通过基准",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 2,
+        "reviewedAssertionsAndRaises": true
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_anthropic_roundtrip.py::test_anthropic_tool_round_preserves_all_response_blocks_and_signature",
+      "pythonLine": 138,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "thinking与多段text原位恢复且未派发工具不复活，跨owner绑定失败不复用",
+          "coverage": "直接行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "三轮已持久Canonical工具恢复各自签名且重复恢复幂等，跨Run重建剔除历史外续接call",
+          "coverage": "直接行为"
+        }
+      ],
+      "protectedAssertions": [
+        "原生thinking/signature与多段text块在同轮原位置回放",
+        "协议私有响应块不进入Canonical，实际保留的tool_use与结果配对"
+      ],
+      "gap": "Python直接返回含私有块的wire batch API由N3私有continuation替代；行为从实际下一次HTTP请求验证。",
+      "status": "已实现并通过基准",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 5,
+        "reviewedAssertionsAndRaises": true
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_anthropic_roundtrip.py::test_anthropic_error_tool_result_matches_canonical_error_state",
+      "pythonLine": 162,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "history转换原始字符串参数为对象、system转user、按相邻位置移除孤儿且不修改原历史",
+          "coverage": "直接行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "真实驱动参数%j经Canonical和键排序后回放保持原字节序，错误工具结果与Canonical一致",
+          "coverage": "直接行为"
+        }
+      ],
+      "protectedAssertions": [
+        "错误工具内容在Canonical与Anthropic tool_result保持同一正文",
+        "is_error=true及调用id被完整保留"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 3,
+        "reviewedAssertionsAndRaises": true
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_anthropic_roundtrip.py::test_anthropic_tool_round_drops_unprocessed_parallel_tool_uses",
+      "pythonLine": 196,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "thinking与多段text原位恢复且未派发工具不复活，跨owner绑定失败不复用",
+          "coverage": "直接行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "history转换原始字符串参数为对象、system转user、按相邻位置移除孤儿且不修改原历史",
+          "coverage": "直接行为"
+        }
+      ],
+      "protectedAssertions": [
+        "未派发的并行tool_use不能被私有原始响应复活",
+        "出站assistant调用与user.tool_result只包含真实保留call集合"
+      ],
+      "gap": "确认门激活和实际授权属于Harness/Tools；本映射只计Provider过滤及历史配对。",
+      "status": "已实现并通过基准",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 4,
+        "reviewedAssertionsAndRaises": true
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_anthropic_roundtrip.py::test_deactivate_llm_span_ignores_late_async_generator_context",
+      "pythonLine": 186,
+      "classification": "Observability",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "缓存probe接实际发送请求与当前usage，sink异常不阻塞成功且不输出凭据",
+          "coverage": "相邻行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "原始usage保留厂商元数据并合并最终output，只经探针交付且sink改写或失败不影响事件",
+          "coverage": "仅原始用量受控回调边界"
+        }
+      ],
+      "protectedAssertions": [
+        "跨异步生成器Context释放span不得产生未捕获异常"
+      ],
+      "gap": "Core有实际请求/用量probe和独立受限diagnose；尚无Node LoopScope span/contextvars/Collector结构事件适配，回调不算Collector或原trace结构已迁移。",
+      "status": "边界延后",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 0,
+        "reviewedAssertionsAndRaises": true
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_anthropic_roundtrip.py::test_anthropic_structure_probe_contains_only_safe_structure_and_digest",
+      "pythonLine": 222,
+      "classification": "Observability",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "缓存probe接实际发送请求与当前usage，sink异常不阻塞成功且不输出凭据",
+          "coverage": "相邻行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "原始usage保留厂商元数据并合并最终output，只经探针交付且sink改写或失败不影响事件",
+          "coverage": "仅原始用量受控回调边界"
+        }
+      ],
+      "protectedAssertions": [
+        "输出块类型/签名存在/工具名和response_digest；不包含思考正文"
+      ],
+      "gap": "Core有实际请求/用量probe和独立受限diagnose；尚无Node LoopScope span/contextvars/Collector结构事件适配，回调不算Collector或原trace结构已迁移。",
+      "status": "边界延后",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 3,
+        "reviewedAssertionsAndRaises": true
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_anthropic_roundtrip.py::test_anthropic_structure_digest_detects_non_identical_roundtrip",
+      "pythonLine": 240,
+      "classification": "Observability",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "缓存probe接实际发送请求与当前usage，sink异常不阻塞成功且不输出凭据",
+          "coverage": "相邻行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "原始usage保留厂商元数据并合并最终output，只经探针交付且sink改写或失败不影响事件",
+          "coverage": "仅原始用量受控回调边界"
+        }
+      ],
+      "protectedAssertions": [
+        "思考正文变化必须改变结构探针digest"
+      ],
+      "gap": "Core有实际请求/用量probe和独立受限diagnose；尚无Node LoopScope span/contextvars/Collector结构事件适配，回调不算Collector或原trace结构已迁移。",
+      "status": "边界延后",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 1,
+        "reviewedAssertionsAndRaises": true
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_anthropic_roundtrip.py::test_anthropic_structure_probe_requires_provider_projection",
+      "pythonLine": 246,
+      "classification": "Observability",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "缓存probe接实际发送请求与当前usage，sink异常不阻塞成功且不输出凭据",
+          "coverage": "相邻行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "原始usage保留厂商元数据并合并最终output，只经探针交付且sink改写或失败不影响事件",
+          "coverage": "仅原始用量受控回调边界"
+        }
+      ],
+      "protectedAssertions": [
+        "拒绝裸列表，接受身份绑定ProviderConversation；探针只记录安全结构"
+      ],
+      "gap": "Core有实际请求/用量probe和独立受限diagnose；尚无Node LoopScope span/contextvars/Collector结构事件适配，回调不算Collector或原trace结构已迁移。",
+      "status": "边界延后",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 3,
+        "reviewedAssertionsAndRaises": true
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_anthropic_roundtrip.py::test_anthropic_request_failure_trace_records_structure_without_payload",
+      "pythonLine": 279,
+      "classification": "Observability",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "缓存probe接实际发送请求与当前usage，sink异常不阻塞成功且不输出凭据",
+          "coverage": "相邻行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "原始usage保留厂商元数据并合并最终output，只经探针交付且sink改写或失败不影响事件",
+          "coverage": "仅原始用量受控回调边界"
+        }
+      ],
+      "protectedAssertions": [
+        "记录上游status/type/code、恢复位置、投影revision/digest",
+        "工具id仅指纹，标识重复调用、配对位置，不记录输入/结果/用户正文"
+      ],
+      "gap": "Core有实际请求/用量probe和独立受限diagnose；尚无Node LoopScope span/contextvars/Collector结构事件适配，回调不算Collector或原trace结构已迁移。",
+      "status": "边界延后",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 13,
+        "reviewedAssertionsAndRaises": true
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_anthropic_roundtrip.py::test_anthropic_request_failure_trace_unwraps_retry_error_without_recording_body",
+      "pythonLine": 344,
+      "classification": "Observability",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "缓存probe接实际发送请求与当前usage，sink异常不阻塞成功且不输出凭据",
+          "coverage": "相邻行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "原始usage保留厂商元数据并合并最终output，只经探针交付且sink改写或失败不影响事件",
+          "coverage": "仅原始用量受控回调边界"
+        }
+      ],
+      "protectedAssertions": [
+        "透过RetryableError记录底层状态码、业务码、wrapper与attempt",
+        "不保存原始响应正文或输入正文"
+      ],
+      "gap": "Core有实际请求/用量probe和独立受限diagnose；尚无Node LoopScope span/contextvars/Collector结构事件适配，回调不算Collector或原trace结构已迁移。",
+      "status": "边界延后",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 7,
+        "reviewedAssertionsAndRaises": true
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_anthropic_roundtrip.py::test_anthropic_driver_records_failure_trace_only_when_scoped",
+      "pythonLine": 385,
+      "classification": "Observability",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "缓存probe接实际发送请求与当前usage，sink异常不阻塞成功且不输出凭据",
+          "coverage": "相邻行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "原始usage保留厂商元数据并合并最终output，只经探针交付且sink改写或失败不影响事件",
+          "coverage": "仅原始用量受控回调边界"
+        }
+      ],
+      "protectedAssertions": [
+        "有trace scope时才登记失败结构及实际wire指纹",
+        "记录provider/protocol/status/code而不暴露正文"
+      ],
+      "gap": "Core有实际请求/用量probe和独立受限diagnose；尚无Node LoopScope span/contextvars/Collector结构事件适配，回调不算Collector或原trace结构已迁移。",
+      "status": "边界延后",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 8,
+        "reviewedAssertionsAndRaises": true
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_anthropic_roundtrip.py::test_anthropic_driver_records_final_cached_request_structure",
+      "pythonLine": 440,
+      "classification": "Observability",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "缓存probe接实际发送请求与当前usage，sink异常不阻塞成功且不输出凭据",
+          "coverage": "相邻行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "原始usage保留厂商元数据并合并最终output，只经探针交付且sink改写或失败不影响事件",
+          "coverage": "仅原始用量受控回调边界"
+        }
+      ],
+      "protectedAssertions": [
+        "记录实际恢复块位置/数量/digest及最终缓存anchor索引",
+        "记录system缓存索引和实际message_count，不记录私有签名及正文"
+      ],
+      "gap": "Core有实际请求/用量probe和独立受限diagnose；尚无Node LoopScope span/contextvars/Collector结构事件适配，回调不算Collector或原trace结构已迁移。",
+      "status": "边界延后",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 11,
+        "reviewedAssertionsAndRaises": true
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_history.py::test_native_anthropic_renders_internal_system_reminder_as_user",
+      "pythonLine": 24,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "消息级system reminder按%s转user后仍与真实输入保持独立边界",
+          "coverage": "直接行为"
+        }
+      ],
+      "protectedAssertions": [
+        "Anthropic与MiniMax均把消息级system reminder转user",
+        "提醒与真实用户输入仍保留两条独立消息边界，原Canonical不变"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 2,
+        "reviewedAssertionsAndRaises": true
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_history.py::test_strip_thinking_blocks_keeps_text_and_tools",
+      "pythonLine": 36,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "默认只在发送副本剥原生thinking，正文与成对工具仍保留；同协议显式wire投影可保签名",
+          "coverage": "直接行为"
+        }
+      ],
+      "protectedAssertions": [
+        "默认发送副本剥私有thinking，正文及成对工具不丢失",
+        "显式同协议wire投影可保留原生签名；原对象不改"
+      ],
+      "gap": "Node同时剥redacted_thinking与外协议reasoning_content，符合Canonical私有材料不入持久历史边界。",
+      "status": "已实现并通过基准",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 1,
+        "reviewedAssertionsAndRaises": true
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_history.py::test_prepare_session_only_marks_change_once",
+      "pythonLine": 45,
+      "classification": "相邻HostData",
+      "tsTests": [],
+      "protectedAssertions": [
+        "会话provider/API provenance首次切换标记后后续同配置不重复标记"
+      ],
+      "gap": "Provider不会直接改会话行；旧provenance字段及一次性迁移由Data/Host接入，当前无Node等价持久测试。",
+      "status": "边界延后",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 3,
+        "reviewedAssertionsAndRaises": true
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_history.py::test_history_thinking_cleanup_is_send_boundary_only",
+      "pythonLine": 56,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "默认只在发送副本剥原生thinking，正文与成对工具仍保留；同协议显式wire投影可保签名",
+          "coverage": "直接行为"
+        }
+      ],
+      "protectedAssertions": [
+        "清洗仅作用于出站副本，恢复的历史正文及原私有块副本不被原地删除"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 2,
+        "reviewedAssertionsAndRaises": true
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_history.py::test_clean_persisted_history_removes_old_blocks_once",
+      "pythonLine": 73,
+      "classification": "相邻HostData",
+      "tsTests": [],
+      "protectedAssertions": [
+        "旧持久消息私有块只清理一次且返回变更行数"
+      ],
+      "gap": "N3新Canonical禁止私有块持久化，但旧数据库清理迁移尚无真实Data实现；不能用投影丢弃代替写库迁移。",
+      "status": "边界延后",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 3,
+        "reviewedAssertionsAndRaises": true
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_history.py::test_anthropic_branch_history_removes_reasoning_and_orphan_tool_results",
+      "pythonLine": 83,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "分支修复孤儿时保留原生签名和redacted块，清除外协议推理且不改字符串形状",
+          "coverage": "直接行为"
+        }
+      ],
+      "protectedAssertions": [
+        "删除外协议reasoning_content及无相邻调用的tool_result，成对工具及其他消息原序保留",
+        "原Provider wire副本不变"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 2,
+        "reviewedAssertionsAndRaises": true
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_history.py::test_anthropic_branch_history_drops_unanswered_tool_use",
+      "pythonLine": 120,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "分支修复孤儿时保留原生签名和redacted块，清除外协议推理且不改字符串形状",
+          "coverage": "直接行为"
+        }
+      ],
+      "protectedAssertions": [
+        "无实际结果的孤立tool_use及仅含该调用的空消息被移除"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 1,
+        "reviewedAssertionsAndRaises": true
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_history.py::test_anthropic_branch_history_drops_messages_that_only_contain_reasoning",
+      "pythonLine": 134,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "分支修复孤儿时保留原生签名和redacted块，清除外协议推理且不改字符串形状",
+          "coverage": "直接行为"
+        }
+      ],
+      "protectedAssertions": [
+        "仅含外协议reasoning的消息移除，合法字符串正文形状不改"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 1,
+        "reviewedAssertionsAndRaises": true
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_history.py::test_branch_pair_repair_keeps_native_thinking_and_removes_foreign_reasoning",
+      "pythonLine": 181,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "分支修复孤儿时保留原生签名和redacted块，清除外协议推理且不改字符串形状",
+          "coverage": "直接行为"
+        }
+      ],
+      "protectedAssertions": [
+        "修复孤立结果时仍原样保留原生thinking/signature/redacted块",
+        "只剥外协议reasoning与未配对工具，不动成对结果"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 3,
+        "reviewedAssertionsAndRaises": true
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_history.py::test_append_branch_sends_native_signed_thinking_without_changing_cached_prefix",
+      "pythonLine": 149,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "非流式分支原样使用带签名wire，既有history的JSON分支不改变主请求参数或工具",
+          "coverage": "直接行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "分支修复孤儿时保留原生签名和redacted块，清除外协议推理且不改字符串形状",
+          "coverage": "直接行为"
+        }
+      ],
+      "protectedAssertions": [
+        "分支直接使用同模型原始wire中的thinking/redacted/signature，工具往返不二次Canonical渲染",
+        "system原生cache_control和工具声明不变，原wire副本不改"
+      ],
+      "gap": "当前测试直接保护wire及分支参数；具体反思任务的delta仅追加一次还由Runtime/Harness组合保护。",
+      "status": "已实现并通过基准",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 3,
+        "reviewedAssertionsAndRaises": true
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_stream_round_retry.py::test_minimax_attribute_error_retries_then_succeeds",
+      "pythonLine": 93,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "EOF不能冒充空成功，正常空message_stop保留空答供Harness重试",
+          "coverage": "直接行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "MiniMax Anthropic HTTP200 SSE业务码%s按真实厂商策略分类而不泄漏错误正文",
+          "coverage": "直接行为"
+        }
+      ],
+      "protectedAssertions": [
+        "MiniMax旧SDK usage=None触发的AttributeError兼容行为有明确处理",
+        "Node直接解析usage=None为unknown，不伪造token或把内部程序错误重试为网络故障"
+      ],
+      "gap": "退役项：不再依赖Anthropic SDK内部累加器，故旧AttributeError重放次数/RetryableError类不机械复制。真实网络/SSE业务故障由共享重试保护。",
+      "status": "部分覆盖",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 3,
+        "reviewedAssertionsAndRaises": true
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_stream_round_retry.py::test_minimax_attribute_error_exhausts_to_retryable",
+      "pythonLine": 101,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "EOF不能冒充空成功，正常空message_stop保留空答供Harness重试",
+          "coverage": "直接行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "MiniMax Anthropic HTTP200 SSE业务码%s按真实厂商策略分类而不泄漏错误正文",
+          "coverage": "直接行为"
+        }
+      ],
+      "protectedAssertions": [
+        "MiniMax旧SDK usage=None触发的AttributeError兼容行为有明确处理",
+        "Node直接解析usage=None为unknown，不伪造token或把内部程序错误重试为网络故障"
+      ],
+      "gap": "退役项：不再依赖Anthropic SDK内部累加器，故旧AttributeError重放次数/RetryableError类不机械复制。真实网络/SSE业务故障由共享重试保护。",
+      "status": "部分覆盖",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 0,
+        "reviewedAssertionsAndRaises": true
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_stream_round_retry.py::test_overloaded_529_retries_up_to_shared_budget",
+      "pythonLine": 107,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "MiniMax普通HTTP529不被业务码分类吞掉，2013窗口超限不重试",
+          "coverage": "相邻行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "真实Anthropic读取超时%i次遵循五次重试和5秒间隔，成功缺报usage不能借失败attempt",
+          "coverage": "直接行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "无输出限流退避一次，重试码供Harness识别；新attempt的usage明确归零为未知",
+          "coverage": "相邻行为"
+        }
+      ],
+      "protectedAssertions": [
+        "HTTP529分类为上游忙碌，普通重试为首次+最多五次",
+        "重试次数与安全错误码由共享层控制，不嵌套SDK重试"
+      ],
+      "gap": "现有Node分类与完整预算分别验证；实际Anthropic HTTP529响应连续耗尽整合未专门单列，SDK cause类型不对外保留。",
+      "status": "部分覆盖",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 2,
+        "reviewedAssertionsAndRaises": true
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_stream_round_retry.py::test_retry_wall_clock_cap_stops_before_attempt_budget",
+      "pythonLine": 144,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "Anthropic重试墙钟先于次数用尽，已出正文后读超时不重发或重复token",
+          "coverage": "直接行为"
+        }
+      ],
+      "protectedAssertions": [
+        "每次尝试耗满读超时，墙钟上限先到则不吃满次数",
+        "达到显式60秒测试墙钟后不等待或开启后续请求"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 1,
+        "reviewedAssertionsAndRaises": true
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_stream_round_retry.py::test_default_adapter_attribute_error_not_retried",
+      "pythonLine": 178,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "未知程序异常不能因%s策略而盲重试，也不能把原始错误暴露给Harness",
+          "coverage": "直接协议与共享重试组合"
+        }
+      ],
+      "protectedAssertions": [
+        "未知内部SDK程序错误不能被普通Provider当作瞬时故障盲重试"
+      ],
+      "gap": "Node实际传输程序异常只请求一次，固定安全upstream且无retry/token。SDK AttributeError类与adapter=None兼容入口退役，不能机械声称旧异常identity/API保留。",
+      "status": "部分覆盖",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 1,
+        "reviewedAssertionsAndRaises": true
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_stream_round_retry.py::test_no_adapter_attribute_error_not_retried",
+      "pythonLine": 187,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "未知程序异常不能因%s策略而盲重试，也不能把原始错误暴露给Harness",
+          "coverage": "直接协议与共享重试组合"
+        }
+      ],
+      "protectedAssertions": [
+        "未知内部SDK程序错误不能被普通Provider当作瞬时故障盲重试"
+      ],
+      "gap": "Node实际传输程序异常只请求一次，固定安全upstream且无retry/token。SDK AttributeError类与adapter=None兼容入口退役，不能机械声称旧异常identity/API保留。",
+      "status": "部分覆盖",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 1,
+        "reviewedAssertionsAndRaises": true
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_stream_round_retry.py::test_raw_read_timeout_retries_after_full_read_budget",
+      "pythonLine": 196,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "真实Anthropic读取超时%i次遵循五次重试和5秒间隔，成功缺报usage不能借失败attempt",
+          "coverage": "直接行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "Anthropic重试墙钟先于次数用尽，已出正文后读超时不重发或重复token",
+          "coverage": "直接行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/transport.test.ts",
+          "name": "真实连接的读空闲超时和主动取消关闭流，不用总时限截断持续数据",
+          "coverage": "Node真实连接"
+        }
+      ],
+      "protectedAssertions": [
+        "未输出的120秒读超时可依序重试五次，fail_times=1/5成功、6失败",
+        "重试attempt为1..5、间隔5000ms、errorCode为timeout",
+        "失败流关闭，成功缺usage时不能沿用失败请求输入量"
+      ],
+      "gap": "Python BRANCH_RETRY独立上限常量不在本Anthropic流映射中计验；主流900秒预算与显式较小wall上限已有行为保护。",
+      "status": "已实现并通过基准",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 9,
+        "reviewedAssertionsAndRaises": true
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_stream_round_retry.py::test_raw_read_timeout_after_text_never_replays",
+      "pythonLine": 243,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "Anthropic重试墙钟先于次数用尽，已出正文后读超时不重发或重复token",
+          "coverage": "直接行为"
+        }
+      ],
+      "protectedAssertions": [
+        "已有hello正文后读超时不再发送请求或重复token",
+        "失败流关闭，安全错误保持timeout分类"
+      ],
+      "gap": "Node返回安全ProviderError替代原HTTPX异常对象，是统一错误契约差异。",
+      "status": "已实现并通过基准",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 2,
+        "reviewedAssertionsAndRaises": true
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_stream_round_retry.py::test_openai_raw_stream_transport_errors_are_transient",
+      "pythonLine": 270,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/transport.test.ts",
+          "name": "真实连接的读空闲超时和主动取消关闭流，不用总时限截断持续数据",
+          "coverage": "Node真实连接"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "仅部分工具参数或私有思考后断流也标记已输出，不能按无可见token重放",
+          "coverage": "相邻行为"
+        }
+      ],
+      "protectedAssertions": [
+        "直接HTTP读超时/读故障/远端协议故障为可重试传输错误，业务ValueError不能误重试"
+      ],
+      "gap": "OpenAI/共享分类由主Agent/A拥有；Node标准ECONN等路径已有回归，但旧ReadError/RemoteProtocolError名字别名及每种分类的精确表仍需公共层审计。",
+      "status": "部分覆盖",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 3,
+        "reviewedAssertionsAndRaises": true
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_stream_round_retry.py::test_openai_stream_read_timeout_respects_output_boundary",
+      "pythonLine": 367,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "仅部分工具参数或私有思考后断流也标记已输出，不能按无可见token重放",
+          "coverage": "相邻行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "无输出限流退避一次，重试码供Harness识别；新attempt的usage明确归零为未知",
+          "coverage": "相邻行为"
+        }
+      ],
+      "protectedAssertions": [
+        "OpenAI已建流后未输出可重试、已输出必须退出",
+        "失败流关闭，成功重试不重复旧token"
+      ],
+      "gap": "由A与公共Runtime负责；当前引用保护相邻边界，不据此声称两个原参数及exact请求/close计数全部等价。",
+      "status": "部分覆盖",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 5,
+        "reviewedAssertionsAndRaises": true
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_stream_round_retry.py::test_openai_driver_retries_transient_then_succeeds",
+      "pythonLine": 403,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "真实Chat两次429后第三次成功，重试1/2沿共享节奏且Harness类别保持rate_limited",
+          "coverage": "直接Chat驱动与共享重试HTTP组合"
+        }
+      ],
+      "protectedAssertions": [
+        "两次OpenAI限流失败后第三次成功，重试attempt为1/2且分类限流"
+      ],
+      "gap": "A已补精确请求次数/attempt/5000ms间隔/终态及错误脱敏；B复核实际断言。Python SDK RetryableError/cause对象由固定安全ProviderError替代。",
+      "status": "已实现并通过基准",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 4,
+        "reviewedAssertionsAndRaises": true
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_stream_round_retry.py::test_openai_driver_exhausts_to_retryable",
+      "pythonLine": 416,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "真实Chat的maxRetries=2只发送三次429请求，耗尽安全失败而不泄漏上游正文",
+          "coverage": "直接Chat驱动与共享重试HTTP组合"
+        }
+      ],
+      "protectedAssertions": [
+        "OpenAI max_retries=2时总三次并返回可重试安全故障"
+      ],
+      "gap": "A已补精确请求次数/attempt/5000ms间隔/终态及错误脱敏；B复核实际断言。Python SDK RetryableError/cause对象由固定安全ProviderError替代。",
+      "status": "已实现并通过基准",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 2,
+        "reviewedAssertionsAndRaises": true
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_stream_round_retry.py::test_upstream_busy_status_matches_both_sdks",
+      "pythonLine": 429,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "MiniMax普通HTTP529不被业务码分类吞掉，2013窗口超限不重试",
+          "coverage": "相邻行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "无输出限流退避一次，重试码供Harness识别；新attempt的usage明确归零为未知",
+          "coverage": "相邻行为"
+        }
+      ],
+      "protectedAssertions": [
+        "Anthropic529/OpenAI429视为busy，普通500不视为busy标签"
+      ],
+      "gap": "统一ProviderError分别保留busy/rate_limit/upstream；普通500的非busy断言尚未在所列Node测试直接核对，错误类变化不等于业务标签全部已验。",
+      "status": "部分覆盖",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 3,
+        "reviewedAssertionsAndRaises": true
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_stream_round_retry.py::test_index_error_falls_back_to_non_streaming",
+      "pythonLine": 475,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "缺块%s尚无正文时只用相同参数非流式恢复一次，恢复正文进入正常事件链",
+          "coverage": "直接行为"
+        }
+      ],
+      "protectedAssertions": [
+        "已知无输出缺块错误不反复请求坏流，只做一次非流恢复"
+      ],
+      "gap": "SDK裸IndexError兼容入口退役；Node只识别结构化缺块事实，不把任意程序越界误当可恢复流。",
+      "status": "已实现并通过基准",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 4,
+        "reviewedAssertionsAndRaises": true
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_stream_round_retry.py::test_index_error_after_emitted_raises_through",
+      "pythonLine": 485,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "已输出正文再缺块不重放；恢复请求失败也不暴露原始错误或重新进入重试",
+          "coverage": "直接行为"
+        }
+      ],
+      "protectedAssertions": [
+        "已有可见正文后不做非流恢复，保持中断并仅输出一次"
+      ],
+      "gap": "Node安全protocol错误替代SDK IndexError类型，不暴露原始异常。",
+      "status": "已实现并通过基准",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 1,
+        "reviewedAssertionsAndRaises": true
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_stream_round_retry.py::test_minimax_index_error_keeps_transient_retry_semantics",
+      "pythonLine": 517,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "缺块%s尚无正文时只用相同参数非流式恢复一次，恢复正文进入正常事件链",
+          "coverage": "直接行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "已有私有或工具片段后的坏流不因尚无可见token而重放：%j",
+          "coverage": "直接行为"
+        }
+      ],
+      "protectedAssertions": [
+        "旧MiniMax裸SDK索引错误与确认的缺块协议错误有明确不同处理"
+      ],
+      "gap": "退役项：SDK裸IndexError白名单重试不存在。Node仅已知无输出缺块以同参非流恢复一次，已有私有/工具片段不重放；不宣称旧三次流请求数保留。",
+      "status": "部分覆盖",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 4,
+        "reviewedAssertionsAndRaises": true
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_sdk_compat_streaming.py::test_anthropic_sdk_streams_tool_call_against_anthropic_compatible_transport",
+      "pythonLine": 57,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "流拼接多工具JSON和原始键序，工具名按已知分隔符清洗，用量包含cache read/write",
+          "coverage": "直接行为"
+        }
+      ],
+      "protectedAssertions": [
+        "实际HTTP /v1/messages请求stream=true及Anthropic工具schema",
+        "SSE工具JSON分片组装到一个id/name/input，结束原因tool_use，只发送一次请求"
+      ],
+      "gap": "Python SDK封装层退役为真实HTTP/SSE驱动，未用fake直接构造最终ProviderEvent。",
+      "status": "已实现并通过基准",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 8,
+        "reviewedAssertionsAndRaises": true
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_sdk_compat_streaming.py::test_sdk_classifies_transport_timeout",
+      "pythonLine": 107,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/transport.test.ts",
+          "name": "真实连接的读空闲超时和主动取消关闭流，不用总时限截断持续数据",
+          "coverage": "Node真实连接"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "真实Anthropic读取超时%i次遵循五次重试和5秒间隔，成功缺报usage不能借失败attempt",
+          "coverage": "直接行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "Anthropic重试墙钟先于次数用尽，已出正文后读超时不重发或重复token",
+          "coverage": "直接行为"
+        }
+      ],
+      "protectedAssertions": [
+        "实际HTTP读取超时分类为timeout，取消会清理连接",
+        "超时前后是否已有输出决定能否重发"
+      ],
+      "gap": "不保留HTTPX/APITimeoutError类，统一安全ProviderError.code=timeout。",
+      "status": "已实现并通过基准",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 1,
+        "reviewedAssertionsAndRaises": true
+      },
+      "parameterScope": "sdk=anthropic；openai参数由A/主Agent合并",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_sdk_compat_streaming.py::test_provider_builders_translate_timeout_objects_for_sdk_major_versions",
+      "pythonLine": 138,
+      "classification": "相邻HostData",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/transport.test.ts",
+          "name": "真实连接的读空闲超时和主动取消关闭流，不用总时限截断持续数据",
+          "coverage": "Node真实连接"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/transport.test.ts",
+          "name": "对端停读的大请求由write超时终止，end入队不能误判已经发完",
+          "coverage": "Node真实连接"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/transport.test.ts",
+          "name": "四协议实际请求共用五分钟读空闲及10秒连接/写、5秒池等待默认预算"
+        }
+      ],
+      "protectedAssertions": [
+        "SDK主版本升级时connect/read/write/pool timeout对象转换有明确替代",
+        "实际四协议默认预算已通过真实TCP与注册计时器观察；SDK Timeout类转换层退役"
+      ],
+      "gap": "四协议实际TCP请求已验证300/10/10/5默认预算及独立pool等待；原httpx/httpx2 Timeout对象类型转换已退役，不复刻SDK DTO。不能继续称pool计入connect或没有四阶段预算；DTO退役差异仍明确保留。",
+      "status": "部分覆盖",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 3,
+        "reviewedAssertionsAndRaises": true
+      },
+      "parameterScope": "Anthropic read=20分支；OpenAI四字段分支由A/主Agent合并",
+      "reviewHistory": [
+        {
+          "stage": "最终整合前精确复核",
+          "status": "边界延后",
+          "gap": "SDK对象转换层退役；Node Host注入connect/write/read参数，pool排队包含连接预算而非原HTTPX独立pool字段，当前无四阶段值透传同构验收。"
+        }
+      ],
+      "finalReview": "已直接阅读最终TS用例断言与生产调用位置；运行结果引用主Agent独立执行记录，未把注入HTTP成功扩为线上服务验收。"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_runner_cache.py::test_anthropic_branch_marks_system_cache_control",
+      "pythonLine": 131,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "流拼接多工具JSON和原始键序，工具名按已知分隔符清洗，用量包含cache read/write",
+          "coverage": "直接行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "非流式分支原样使用带签名wire，既有history的JSON分支不改变主请求参数或工具",
+          "coverage": "直接行为"
+        }
+      ],
+      "protectedAssertions": [
+        "主动缓存时稳定system为text block并携ephemeral",
+        "原wireSystem TTL/块结构在分支原样保留"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 1,
+        "reviewedAssertionsAndRaises": true
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_runner_cache.py::test_anthropic_branch_plain_system_without_active_cache",
+      "pythonLine": 144,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "分支系统缓存按同一厂商能力生成，thinking与generation参数跟随主请求策略而不手拼",
+          "coverage": "直接行为"
+        }
+      ],
+      "protectedAssertions": [
+        "当前厂商/模型不主动缓存时system仍为普通字符串"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 1,
+        "reviewedAssertionsAndRaises": true
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_runner_cache.py::test_anthropic_branch_forwards_tools_without_tool_choice",
+      "pythonLine": 201,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "非流式分支原样使用带签名wire，既有history的JSON分支不改变主请求参数或工具",
+          "coverage": "直接行为"
+        }
+      ],
+      "protectedAssertions": [
+        "分支保留工具声明及input_schema，不自行加tool_choice"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 2,
+        "reviewedAssertionsAndRaises": true
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_runner_cache.py::test_branch_without_tools_stays_unchanged",
+      "pythonLine": 235,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "非流式实际raw usage与unknown分别交探针，显式null预算沿Python高预算而不回落配置",
+          "coverage": "直接行为"
+        }
+      ],
+      "protectedAssertions": [
+        "无工具声明的非chat分支省略tools，不发空数组改变兼容端请求"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 1,
+        "reviewedAssertionsAndRaises": true
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_runner_cache.py::test_anthropic_branch_omits_empty_system",
+      "pythonLine": 247,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "非流式实际raw usage与unknown分别交探针，显式null预算沿Python高预算而不回落配置",
+          "coverage": "直接行为"
+        }
+      ],
+      "protectedAssertions": [
+        "空system的追加分支省略该字段，避免兼容端拒绝"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 1,
+        "reviewedAssertionsAndRaises": true
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_runner_cache.py::test_complete_messages_omits_thinking_like_main_run",
+      "pythonLine": 259,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "分支系统缓存按同一厂商能力生成，thinking与generation参数跟随主请求策略而不手拼",
+          "coverage": "直接行为"
+        }
+      ],
+      "protectedAssertions": [
+        "主策略没有thinking时，分支不得凭config.thinking自行手拼"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 1,
+        "reviewedAssertionsAndRaises": true
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_runner_cache.py::test_complete_messages_merges_main_run_generation_params",
+      "pythonLine": 280,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "分支系统缓存按同一厂商能力生成，thinking与generation参数跟随主请求策略而不手拼",
+          "coverage": "直接行为"
+        }
+      ],
+      "protectedAssertions": [
+        "thinking/generation metadata由同一policy返回，主请求/分支均原样传递"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 2,
+        "reviewedAssertionsAndRaises": true
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_runner_cache.py::test_anthropic_append_branch_sanitizes_history_before_appending_delta",
+      "pythonLine": 301,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "分支修复孤儿时保留原生签名和redacted块，清除外协议推理且不改字符串形状",
+          "coverage": "直接行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "非流式分支原样使用带签名wire，既有history的JSON分支不改变主请求参数或工具",
+          "coverage": "直接行为"
+        }
+      ],
+      "protectedAssertions": [
+        "分支发送前剥foreign reasoning并修复孤立工具",
+        "合法wire消息与任务增量边界保持稳定"
+      ],
+      "gap": "原Python基于legacy裸history添加消息正文封套的逐字兼容由Canonical准备负责；Provider不重写已投影wire。",
+      "status": "已实现并通过基准",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 1,
+        "reviewedAssertionsAndRaises": true
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_runner_cache.py::test_minimax_anthropic_branch_sends_rendered_tool_history_without_reprojection",
+      "pythonLine": 344,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "分支修复孤儿时保留原生签名和redacted块，清除外协议推理且不改字符串形状",
+          "coverage": "直接行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "非流式分支原样使用带签名wire，既有history的JSON分支不改变主请求参数或工具",
+          "coverage": "直接行为"
+        }
+      ],
+      "protectedAssertions": [
+        "已投影Anthropic tool_use/tool_result及输入原样进入请求",
+        "工具调用id/结果配对保留，不把wire重新当Canonical渲染"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 6,
+        "reviewedAssertionsAndRaises": true
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_runner_cache.py::test_minimax_prefix_projection_remains_wire_shaped_through_branch_request",
+      "pythonLine": 378,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "真实驱动参数%j经Canonical和键排序后回放保持原字节序，错误工具结果与Canonical一致",
+          "coverage": "直接行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "分支修复孤儿时保留原生签名和redacted块，清除外协议推理且不改字符串形状",
+          "coverage": "直接行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "非流式分支原样使用带签名wire，既有history的JSON分支不改变主请求参数或工具",
+          "coverage": "直接行为"
+        }
+      ],
+      "protectedAssertions": [
+        "Canonical工具轮只投影一次，分支保留角色/工具块形状",
+        "原Canonical仍是tool_call，HTTP请求为tool_use/tool_result"
+      ],
+      "gap": "具体prefix projection公共identity绑定由Runtime独立保护，不在本节点机械复刻ProviderConversation Python类。",
+      "status": "已实现并通过基准",
+      "assertionAudit": {
+        "explicitPythonAssertCount": 5,
+        "reviewedAssertionsAndRaises": true
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    }
+  ],
+  "remainingOwnedChanges": "rawUsage hook保留实际厂商字段且隔离sink；branch显式None沿Python32768，chat/standalone null发送前unsupported；非chat空system/tools省略；无native/无既有state的普通正文不额外保存continuation。 缺块前先标记所有已接收私有/工具/正文片段；空delta可恢复，非空delta禁止重放；无message_start明确事件顺序错误。",
+  "contractDifferences": [
+    "Python SDK Message/tuple/HTTPX异常类退役，统一ProviderEvent/固定安全ProviderError；旧Host国际化error DTO和diagnostic id由Host后续适配。",
+    "部分私有thinking/工具参数出现后也禁止重放，较旧Python只看可见token边界更严格。",
+    "真实LoopScope Collector/span/contextvars、数据库provenance/旧私有历史清理及加密跨进程续接不由本Provider实现冒充。",
+    "Anthropic必填有限max_tokens：仅旧追加分支None显式映射32768；普通chat/standalone真正不限请求明确拒绝。",
+    "缺块delta携非空text时，旧Python在SDK缺块错误后可能恢复；Node按收到片段即禁止重放。无message_start的stop按实际SDK为事件顺序错误，不进入缺块恢复。"
+  ],
+  "adjacentValidation": {
+    "owner": "A",
+    "passed": 97,
+    "files": 2,
+    "notes": "A报告16:59:50两文件97项通过；B已直接阅读上述两项请求/次数/间隔/终态断言，主Agent仍须独立整合。"
+  },
+  "integratedValidation": {
+    "providerNode": {
+      "id": "provider-node-final-366",
+      "reportedBy": "主Agent最终独立执行",
+      "environment": "本地原生Node 26",
+      "files": 7,
+      "passed": 366,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "time": "2026-11-13 17:55:53",
+      "notes": "所有源与测试已冻结后运行；包含真实socket复用/idle失效及A/B/Runtime最后补充断言。transport文件23项。"
+    },
+    "python": {
+      "id": "provider-python-517",
+      "reportedBy": "主Agent实际执行",
+      "environment": "本地原生Linux隔离副本",
+      "files": 43,
+      "passed": 517,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "durationSeconds": 13.75,
+      "notes": "补齐ffprobe后原跳过已实际执行；未使用devserver，未读取或改写运行配置。"
+    },
+    "coreUnit": {
+      "id": "core-unit-final-855",
+      "reportedBy": "主Agent最终独立执行",
+      "files": 36,
+      "passed": 855,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "time": "2026-11-13 17:57:23"
+    },
+    "types": {
+      "status": "通过",
+      "reportedBy": "主Agent最终实际执行",
+      "notes": "17:55后最终测试tsc通过，含B reduce<number>修正。"
+    },
+    "coreBuild": {
+      "status": "通过",
+      "reportedBy": "主Agent最终实际执行",
+      "notes": "17:55后最终Core build通过。"
+    },
+    "limits": [
+      "两侧测试各自执行通过与逐定义语义审计共同构成证据，不是自动差分运行或真实外部服务验收。",
+      "Provider协议与Core接线已经有真实生产实现；Host/Data/Redis/Tools/观测缺口不因合成HTTP或全套通过升级。"
+    ],
+    "latestTargeted": [
+      {
+        "id": "provider-runtime-final-25",
+        "reportedBy": "主Agent实际执行",
+        "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+        "passed": 25,
+        "failed": 0,
+        "skipped": 0,
+        "time": "2026-11-13 17:49:21",
+        "notes": "覆盖最终稳定正文/tools键、idle前后factory及TTL/跨Run/终态引用拒绝；随后tsc通过。"
+      },
+      {
+        "id": "provider-openai-final-105",
+        "reportedBy": "A实际执行",
+        "files": 2,
+        "passed": 105,
+        "failed": 0,
+        "skipped": 0,
+        "time": "2026-11-13 17:52:52",
+        "notes": "含新增4项真实组合用例，原6条partial缺口按断言证据闭合。"
+      },
+      {
+        "id": "provider-anthropic-final-70",
+        "reportedBy": "B实际执行",
+        "files": 1,
+        "passed": 70,
+        "failed": 0,
+        "skipped": 0,
+        "notes": "包含三历史轮重复恢复幂等和普通system主动缓存branch断言。"
+      },
+      {
+        "id": "provider-transport-socket-idle",
+        "reportedBy": "主Agent实际执行",
+        "file": "gugu-core/tests/agent/providers/transport.test.ts",
+        "time": "2026-11-13 17:54:36",
+        "status": "通过",
+        "name": "完整JSON读取后复用真实TCP连接，空闲过期后新建连接而非只复用fake对象"
+      }
+    ],
+    "freeze": "主Agent确认所有Provider源/测试停笔后执行；文档最终整合未再修改源或测试。"
+  },
+  "finalSummary": {
+    "definitions": 56,
+    "uniqueDefinitions": 56,
+    "statusCounts": {
+      "部分覆盖": 13,
+      "已实现并通过基准": 32,
+      "边界延后": 11
+    },
+    "pythonFiles": [
+      "backend/tests/agent/providers/test_anthropic_roundtrip.py",
+      "backend/tests/agent/providers/test_anthropic_stream_recovery.py",
+      "backend/tests/agent/providers/test_provider_history.py",
+      "backend/tests/agent/providers/test_provider_runner_cache.py",
+      "backend/tests/agent/providers/test_sdk_compat_streaming.py",
+      "backend/tests/agent/providers/test_stream_round_retry.py"
+    ],
+    "countingRule": "按pytest定义计数，参数化执行个数另见517；已实现并通过基准不表示线上服务或生产Host迁移。"
+  },
+  "supplementalProviderEvidence": [
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_anthropic_history_restore_reinserts_every_historical_tool_round",
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "三轮已持久Canonical工具恢复各自签名且重复恢复幂等，跨Run重建剔除历史外续接call"
+        }
+      ],
+      "protectedAssertions": [
+        "三个真实SSE工具轮均生成并提取自己的签名，随后真实HTTP分支complete两次；第二次输入是第一次已恢复的wire，逐轮块位置/正文分段/签名/工具id严格相等且不增加块。",
+        "最终用户delta保持原位置且不加缓存；末个历史工具cache_control保留。",
+        "Canonical、原投影以及每次恢复输入的digest均不变，未派发/已压缩call键从续接清除。"
+      ],
+      "gap": "SDK函数/对象identity退役为真实HTTP驱动；不扩大到真实SQL、跨进程加密或线上厂商验收。",
+      "status": "已实现并通过基准"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_phase2_reasoning_drivers.py::test_anthropic_state_extraction_keeps_prior_tool_rounds_across_run_rounds",
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "三轮已持久Canonical工具恢复各自签名且重复恢复幂等，跨Run重建剔除历史外续接call"
+        }
+      ],
+      "protectedAssertions": [
+        "每轮提取thinking及response两份map都明确断言call-0至当前call键集合，不丢旧轮。",
+        "两次恢复后的key集合均保持三项，原生thinking块总数显式等于3。"
+      ],
+      "gap": "私有state的summary.state_block_count旧DTO不复刻；保护其实际不丢prior blocks的领域行为。Host真实加密持久化仍延期。",
+      "status": "部分覆盖"
+    }
+  ],
+  "finalAdditionalAssertions": [
+    "普通固定system在主动缓存分支转ephemeral块；无tools分支不发送tools字段。",
+    "三轮原生签名重复恢复两次，私有key集合和总块数直接断言；静态尾锚点保留，最末动态任务保持未缓存。"
+  ]
+}

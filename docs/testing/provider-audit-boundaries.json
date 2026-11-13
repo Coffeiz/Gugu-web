@@ -1,0 +1,3305 @@
+{
+  "schemaVersion": 1,
+  "scope": "primary库存未被A/B/C逐定义报告覆盖的115个节点；只读职责审查，不改生产代码、不声称实际Host实现完成",
+  "inventorySnapshot": {
+    "definitions": 341,
+    "uncoveredAtRead": 115,
+    "modules": 34
+  },
+  "statusCounts": {
+    "边界延后": 108,
+    "部分覆盖": 7
+  },
+  "responsibilityCounts": {
+    "相邻HostData": 108,
+    "Harness已有实现+相邻HostData": 7
+  },
+  "definitions": [
+    {
+      "pythonNode": "backend/tests/agent/providers/test_admin_voice_presets.py::test_voice_model_edit_reloads_with_matching_native_service_and_masked_key",
+      "pythonLine": 33,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "语音预设服务线/凭据遮罩/目的地绑定/保存不变及HTTP入口校验属于Host配置与凭据服务；厂商协议能力不能替代这些断言。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          36,
+          37,
+          38,
+          39,
+          40
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_admin_voice_presets.py::test_destination_change_rejects_old_key_without_mutating_saved_preset",
+      "pythonLine": 44,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "语音预设服务线/凭据遮罩/目的地绑定/保存不变及HTTP入口校验属于Host配置与凭据服务；厂商协议能力不能替代这些断言。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          48,
+          49
+        ],
+        "raisesLines": [
+          46
+        ],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_admin_voice_presets.py::test_models_preview_reuses_saved_key_only_for_its_destination",
+      "pythonLine": 53,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "语音预设服务线/凭据遮罩/目的地绑定/保存不变及HTTP入口校验属于Host配置与凭据服务；厂商协议能力不能替代这些断言。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          57,
+          58,
+          62
+        ],
+        "raisesLines": [
+          60
+        ],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_admin_voice_presets.py::test_qwen_compatible_voice_preset_is_not_forced_to_native",
+      "pythonLine": 66,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "语音预设服务线/凭据遮罩/目的地绑定/保存不变及HTTP入口校验属于Host配置与凭据服务；厂商协议能力不能替代这些断言。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          69
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_admin_voice_presets.py::test_byok_native_voice_does_not_inherit_platform_product_line",
+      "pythonLine": 73,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "语音预设服务线/凭据遮罩/目的地绑定/保存不变及HTTP入口校验属于Host配置与凭据服务；厂商协议能力不能替代这些断言。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          79,
+          80,
+          81
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_admin_voice_presets.py::test_byok_native_voice_test_uses_the_same_product_line_as_runtime",
+      "pythonLine": 85,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "语音预设服务线/凭据遮罩/目的地绑定/保存不变及HTTP入口校验属于Host配置与凭据服务；厂商协议能力不能替代这些断言。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          91,
+          93,
+          94,
+          95
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_admin_voice_presets.py::test_native_voice_model_list_uses_same_domain_catalog_without_changing_configuration",
+      "pythonLine": 99,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "语音预设服务线/凭据遮罩/目的地绑定/保存不变及HTTP入口校验属于Host配置与凭据服务；厂商协议能力不能替代这些断言。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          113,
+          114,
+          104
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_admin_voice_presets.py::test_models_preview_post_route_matches_and_rejects_missing_key_before_network",
+      "pythonLine": 118,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "语音预设服务线/凭据遮罩/目的地绑定/保存不变及HTTP入口校验属于Host配置与凭据服务；厂商协议能力不能替代这些断言。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          127,
+          130,
+          131
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_baseline_run_summary_reuse.py::test_compress_if_needed_reuses_run_summary_without_llm",
+      "pythonLine": 30,
+      "classification": "Harness已有实现+相邻HostData",
+      "responsibility": "Harness context/compaction.ts、context/reflection.ts与Host事务存储",
+      "protectedAssertions": [
+        "复用run摘要且不重复调用LLM；保护当前消息与完整run；替换旧摘要并单调推进持久水位；快照只复用准确匹配的持久前缀与原system/tools，截点不匹配须前移。"
+      ],
+      "pythonDocstring": "复用路径不得再调用摘要 LLM，水位停在保留窗口边界且不越过本轮消息。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          69,
+          70,
+          74,
+          75,
+          81
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "name": "滚动压缩保留之前run、当前用户锚点及最新完整执行轮，返回新坐标",
+          "coverage": "相邻部分行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "name": "候选生成不推进baseline，持久化后apply保留十单元且并发CAS拒绝旧结果",
+          "coverage": "相邻部分行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "name": "持久化前缀边界不精确匹配拒绝追加，sibling读取不消费原快照",
+          "coverage": "相邻部分行为"
+        }
+      ],
+      "gap": "已有保护窗/水位单调/准确前缀规则，但缺run摘要直接复用入口、旧summary行原子替换与SQL水位事务、未匹配截点前移的完整旧行为；不可用纯候选/fake存储声称完成。",
+      "status": "部分覆盖"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_baseline_run_summary_reuse.py::test_compress_if_needed_reuse_replaces_previous_summary_and_advances",
+      "pythonLine": 85,
+      "classification": "Harness已有实现+相邻HostData",
+      "responsibility": "Harness context/compaction.ts、context/reflection.ts与Host事务存储",
+      "protectedAssertions": [
+        "复用run摘要且不重复调用LLM；保护当前消息与完整run；替换旧摘要并单调推进持久水位；快照只复用准确匹配的持久前缀与原system/tools，截点不匹配须前移。"
+      ],
+      "pythonDocstring": "已有 baseline 与旧摘要时，复用只覆盖水位之后的历史并覆盖式替换摘要行。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          125,
+          128,
+          134
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "name": "滚动压缩保留之前run、当前用户锚点及最新完整执行轮，返回新坐标",
+          "coverage": "相邻部分行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "name": "候选生成不推进baseline，持久化后apply保留十单元且并发CAS拒绝旧结果",
+          "coverage": "相邻部分行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "name": "持久化前缀边界不精确匹配拒绝追加，sibling读取不消费原快照",
+          "coverage": "相邻部分行为"
+        }
+      ],
+      "gap": "已有保护窗/水位单调/准确前缀规则，但缺run摘要直接复用入口、旧summary行原子替换与SQL水位事务、未匹配截点前移的完整旧行为；不可用纯候选/fake存储声称完成。",
+      "status": "部分覆盖"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_baseline_run_summary_reuse.py::test_compress_if_needed_reuse_without_compressible_history_is_noop",
+      "pythonLine": 138,
+      "classification": "Harness已有实现+相邻HostData",
+      "responsibility": "Harness context/compaction.ts、context/reflection.ts与Host事务存储",
+      "protectedAssertions": [
+        "复用run摘要且不重复调用LLM；保护当前消息与完整run；替换旧摘要并单调推进持久水位；快照只复用准确匹配的持久前缀与原system/tools，截点不匹配须前移。"
+      ],
+      "pythonDocstring": "水位之后没有可压缩历史时不得写摘要，也不得调用 LLM。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          164,
+          165,
+          167
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "name": "滚动压缩保留之前run、当前用户锚点及最新完整执行轮，返回新坐标",
+          "coverage": "相邻部分行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "name": "候选生成不推进baseline，持久化后apply保留十单元且并发CAS拒绝旧结果",
+          "coverage": "相邻部分行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "name": "持久化前缀边界不精确匹配拒绝追加，sibling读取不消费原快照",
+          "coverage": "相邻部分行为"
+        }
+      ],
+      "gap": "已有保护窗/水位单调/准确前缀规则，但缺run摘要直接复用入口、旧summary行原子替换与SQL水位事务、未匹配截点前移的完整旧行为；不可用纯候选/fake存储声称完成。",
+      "status": "部分覆盖"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_baseline_run_summary_reuse.py::test_compress_if_needed_force_replays_history_through_append_summary",
+      "pythonLine": 171,
+      "classification": "Harness已有实现+相邻HostData",
+      "responsibility": "Harness context/compaction.ts、context/reflection.ts与Host事务存储",
+      "protectedAssertions": [
+        "复用run摘要且不重复调用LLM；保护当前消息与完整run；替换旧摘要并单调推进持久水位；快照只复用准确匹配的持久前缀与原system/tools，截点不匹配须前移。"
+      ],
+      "pythonDocstring": "/compact（force、无 run 摘要可复用）从 DB 行重建角色序列走追加式摘要。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          204,
+          207,
+          208,
+          209,
+          210,
+          212,
+          218
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "name": "滚动压缩保留之前run、当前用户锚点及最新完整执行轮，返回新坐标",
+          "coverage": "相邻部分行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "name": "候选生成不推进baseline，持久化后apply保留十单元且并发CAS拒绝旧结果",
+          "coverage": "相邻部分行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "name": "持久化前缀边界不精确匹配拒绝追加，sibling读取不消费原快照",
+          "coverage": "相邻部分行为"
+        }
+      ],
+      "gap": "已有保护窗/水位单调/准确前缀规则，但缺run摘要直接复用入口、旧summary行原子替换与SQL水位事务、未匹配截点前移的完整旧行为；不可用纯候选/fake存储声称完成。",
+      "status": "部分覆盖"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_baseline_run_summary_reuse.py::test_reflection_compaction_reuses_only_an_exact_persisted_prefix",
+      "pythonLine": 222,
+      "classification": "Harness已有实现+相邻HostData",
+      "responsibility": "Harness context/compaction.ts、context/reflection.ts与Host事务存储",
+      "protectedAssertions": [
+        "复用run摘要且不重复调用LLM；保护当前消息与完整run；替换旧摘要并单调推进持久水位；快照只复用准确匹配的持久前缀与原system/tools，截点不匹配须前移。"
+      ],
+      "pythonDocstring": "同进程快照与 DB 历史逐条对齐时，baseline 截点必须保留原 provider 前缀。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          281,
+          294,
+          295,
+          296,
+          313,
+          314,
+          330,
+          341,
+          347,
+          357
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "name": "滚动压缩保留之前run、当前用户锚点及最新完整执行轮，返回新坐标",
+          "coverage": "相邻部分行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "name": "候选生成不推进baseline，持久化后apply保留十单元且并发CAS拒绝旧结果",
+          "coverage": "相邻部分行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "name": "持久化前缀边界不精确匹配拒绝追加，sibling读取不消费原快照",
+          "coverage": "相邻部分行为"
+        }
+      ],
+      "gap": "已有保护窗/水位单调/准确前缀规则，但缺run摘要直接复用入口、旧summary行原子替换与SQL水位事务、未匹配截点前移的完整旧行为；不可用纯候选/fake存储声称完成。",
+      "status": "部分覆盖"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_baseline_run_summary_reuse.py::test_reflection_baseline_summary_uses_snapshot_system_tools_and_cutoff",
+      "pythonLine": 364,
+      "classification": "Harness已有实现+相邻HostData",
+      "responsibility": "Harness context/compaction.ts、context/reflection.ts与Host事务存储",
+      "protectedAssertions": [
+        "复用run摘要且不重复调用LLM；保护当前消息与完整run；替换旧摘要并单调推进持久水位；快照只复用准确匹配的持久前缀与原system/tools，截点不匹配须前移。"
+      ],
+      "pythonDocstring": "反思触发的 baseline 压缩应沿用同进程的原 system/tools/历史前缀。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          447,
+          448,
+          456,
+          457,
+          458,
+          459
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "name": "滚动压缩保留之前run、当前用户锚点及最新完整执行轮，返回新坐标",
+          "coverage": "相邻部分行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "name": "候选生成不推进baseline，持久化后apply保留十单元且并发CAS拒绝旧结果",
+          "coverage": "相邻部分行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "name": "持久化前缀边界不精确匹配拒绝追加，sibling读取不消费原快照",
+          "coverage": "相邻部分行为"
+        }
+      ],
+      "gap": "已有保护窗/水位单调/准确前缀规则，但缺run摘要直接复用入口、旧summary行原子替换与SQL水位事务、未匹配截点前移的完整旧行为；不可用纯候选/fake存储声称完成。",
+      "status": "部分覆盖"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_baseline_run_summary_reuse.py::test_reflection_compaction_moves_unmatched_cutoff_into_recent_tail",
+      "pythonLine": 463,
+      "classification": "Harness已有实现+相邻HostData",
+      "responsibility": "Harness context/compaction.ts、context/reflection.ts与Host事务存储",
+      "protectedAssertions": [
+        "复用run摘要且不重复调用LLM；保护当前消息与完整run；替换旧摘要并单调推进持久水位；快照只复用准确匹配的持久前缀与原system/tools，截点不匹配须前移。"
+      ],
+      "pythonDocstring": "截点工具消息无法回放时前移水位，继续复用已验证的主请求前缀。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          530,
+          535,
+          536
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "name": "滚动压缩保留之前run、当前用户锚点及最新完整执行轮，返回新坐标",
+          "coverage": "相邻部分行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "name": "候选生成不推进baseline，持久化后apply保留十单元且并发CAS拒绝旧结果",
+          "coverage": "相邻部分行为"
+        },
+        {
+          "file": "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts",
+          "name": "持久化前缀边界不精确匹配拒绝追加，sibling读取不消费原快照",
+          "coverage": "相邻部分行为"
+        }
+      ],
+      "gap": "已有保护窗/水位单调/准确前缀规则，但缺run摘要直接复用入口、旧summary行原子替换与SQL水位事务、未匹配截点前移的完整旧行为；不可用纯候选/fake存储声称完成。",
+      "status": "部分覆盖"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_config_override.py::test_byok_is_enabled_by_default",
+      "pythonLine": 8,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "BYOK默认启用且运行配置override解析成强类型设置；不因类型丢失而漏应用用户开关。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          9
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_config_override.py::test_byok_override_is_parsed_as_settings_model",
+      "pythonLine": 12,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "BYOK默认启用且运行配置override解析成强类型设置；不因类型丢失而漏应用用户开关。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          19,
+          20
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_embedding.py::test_unbound_falls_back_to_platform",
+      "pythonLine": 55,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "用户embedding配置、凭据/目的地不可混平台；绑定恢复、维度默认、逐用户重建、异步凭据查询与真实向量请求/诊断格式。"
+      ],
+      "pythonDocstring": "未绑定（无凭据用户/平台链路）：is_enabled/model_tag/embed 全部走平台配置。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          57,
+          58,
+          59
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_embedding.py::test_bound_override_enables_and_follows_tag",
+      "pythonLine": 62,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "用户embedding配置、凭据/目的地不可混平台；绑定恢复、维度默认、逐用户重建、异步凭据查询与真实向量请求/诊断格式。"
+      ],
+      "pythonDocstring": "BYOK 生效：不受平台 enabled 开关限制，tag 用用户的 provider/model/dimensions。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          67,
+          68,
+          65,
+          66
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_embedding.py::test_query_settings_pins_public_endpoint_and_keeps_credential_ephemeral",
+      "pythonLine": 71,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "用户embedding配置、凭据/目的地不可混平台；绑定恢复、维度默认、逐用户重建、异步凭据查询与真实向量请求/诊断格式。"
+      ],
+      "pythonDocstring": "交给 TS 的 query 配置在 Python 安全边界 pin 公网目标，且不改变共享写侧 embed。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          82
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_embedding.py::test_query_settings_does_not_forward_key_for_rejected_endpoint",
+      "pythonLine": 89,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "用户embedding配置、凭据/目的地不可混平台；绑定恢复、维度默认、逐用户重建、异步凭据查询与真实向量请求/诊断格式。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          98
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_embedding.py::test_query_settings_allows_explicit_local_provider_and_still_pins",
+      "pythonLine": 101,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "用户embedding配置、凭据/目的地不可混平台；绑定恢复、维度默认、逐用户重建、异步凭据查询与真实向量请求/诊断格式。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          115,
+          116,
+          117
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_embedding.py::test_embed_uses_user_endpoint_and_key",
+      "pythonLine": 120,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "用户embedding配置、凭据/目的地不可混平台；绑定恢复、维度默认、逐用户重建、异步凭据查询与真实向量请求/诊断格式。"
+      ],
+      "pythonDocstring": "embed 请求打到用户 base_url 的 /embeddings，带用户 key；dimensions=0 不传维度。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          125,
+          127,
+          128,
+          129,
+          130
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_embedding.py::test_embed_override_never_routes_to_platform_multimodal",
+      "pythonLine": 133,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "用户embedding配置、凭据/目的地不可混平台；绑定恢复、维度默认、逐用户重建、异步凭据查询与真实向量请求/诊断格式。"
+      ],
+      "pythonDocstring": "平台开了百炼多模态也不影响 BYOK：覆盖配置只走 OpenAI 兼容文本端点。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          138,
+          139
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_embedding.py::test_embed_missing_base_url_never_sends_user_key",
+      "pythonLine": 142,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "用户embedding配置、凭据/目的地不可混平台；绑定恢复、维度默认、逐用户重建、异步凭据查询与真实向量请求/诊断格式。"
+      ],
+      "pythonDocstring": "纵深防御：即使覆盖配置缺 base_url（目的地不明），embed() 也绝不发带用户\nKey 的请求——is_enabled 判定过不了，退回词法检索。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          155,
+          156
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_embedding.py::test_bind_resets_on_exception",
+      "pythonLine": 159,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "用户embedding配置、凭据/目的地不可混平台；绑定恢复、维度默认、逐用户重建、异步凭据查询与真实向量请求/诊断格式。"
+      ],
+      "pythonDocstring": "绑定异常路径也必须 reset，防止 ContextVar 泄漏到后续调用。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          164
+        ],
+        "raisesLines": [
+          161
+        ],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_embedding.py::test_resolve_full_override",
+      "pythonLine": 181,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "用户embedding配置、凭据/目的地不可混平台；绑定恢复、维度默认、逐用户重建、异步凭据查询与真实向量请求/诊断格式。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          187
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_embedding.py::test_resolve_never_inherits_platform_destination",
+      "pythonLine": 193,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "用户embedding配置、凭据/目的地不可混平台；绑定恢复、维度默认、逐用户重建、异步凭据查询与真实向量请求/诊断格式。"
+      ],
+      "pythonDocstring": "运行时目的地绑定收口：用户 Key 的 model/base_url 缺失时回落平台配置（None），\n绝不继承平台 URL/模型名——否则平台 dashscope URL 会拼上用户 OpenAI Key 发出去。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          200,
+          207,
+          208,
+          209,
+          210
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_embedding.py::test_resolve_empty_base_url_uses_provider_default_endpoint",
+      "pythonLine": 214,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "用户embedding配置、凭据/目的地不可混平台；绑定恢复、维度默认、逐用户重建、异步凭据查询与真实向量请求/诊断格式。"
+      ],
+      "pythonDocstring": "base_url 空串 = provider 官方默认端点（与保存链路 _effective_origin 同口径），\n不看平台配置；glm 有 adapter 默认端点，解析结果必须是大模型默认端点。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          221,
+          222,
+          223
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_embedding.py::test_resolve_incomplete_returns_none",
+      "pythonLine": 227,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "用户embedding配置、凭据/目的地不可混平台；绑定恢复、维度默认、逐用户重建、异步凭据查询与真实向量请求/诊断格式。"
+      ],
+      "pythonDocstring": "model 缺失且 base_url 解析不出默认端点 → 覆盖不完整，回落平台配置\n（None=不覆盖）。平台配置不参与补齐用户凭据的目的地字段。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          234
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_embedding.py::test_resolve_no_credential_or_decrypt_failure",
+      "pythonLine": 238,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "用户embedding配置、凭据/目的地不可混平台；绑定恢复、维度默认、逐用户重建、异步凭据查询与真实向量请求/诊断格式。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          240,
+          247
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_embedding.py::test_resolve_dimensions_zero_means_model_default",
+      "pythonLine": 251,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "用户embedding配置、凭据/目的地不可混平台；绑定恢复、维度默认、逐用户重建、异步凭据查询与真实向量请求/诊断格式。"
+      ],
+      "pythonDocstring": "dimensions=0/None = 用模型默认维度，不继承平台值。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          258
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_embedding.py::test_resolve_and_bind_swallows_resolver_failure",
+      "pythonLine": 263,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "用户embedding配置、凭据/目的地不可混平台；绑定恢复、维度默认、逐用户重建、异步凭据查询与真实向量请求/诊断格式。"
+      ],
+      "pythonDocstring": "绑定入口绝不抛：解析失败按 None 处理（回落平台），不影响 run。\n绑定与读取必须在同一任务上下文内（asyncio.run 的任务上下文是拷贝）。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          277,
+          287
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_embedding.py::test_rebuild_all_vecs_binds_per_user",
+      "pythonLine": 290,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "用户embedding配置、凭据/目的地不可混平台；绑定恢复、维度默认、逐用户重建、异步凭据查询与真实向量请求/诊断格式。"
+      ],
+      "pythonDocstring": "批量重建逐用户绑定：每个用户任务内读到自己的配置，任务外互不影响。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          308,
+          309,
+          310,
+          311
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_embedding.py::test_test_embedding_credential_pass_and_fail",
+      "pythonLine": 320,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "用户embedding配置、凭据/目的地不可混平台；绑定恢复、维度默认、逐用户重建、异步凭据查询与真实向量请求/诊断格式。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          342,
+          344,
+          345,
+          346,
+          352,
+          358,
+          364
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_embedding.py::test_resolve_awaits_real_credential_query",
+      "pythonLine": 368,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "用户embedding配置、凭据/目的地不可混平台；绑定恢复、维度默认、逐用户重建、异步凭据查询与真实向量请求/诊断格式。"
+      ],
+      "pythonDocstring": "回归：resolve 必须真正 await 凭据查询。\n\n漏 await 时 get_active_credential 返回 coroutine（永非 None），无凭据用户\n也会误入解密分支打 warning；此处不 mock 查询层，用 stub db 走真实代码路径，\n断言「无凭据 → 静默返回 None 且零 warning」。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          397,
+          398
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_patch_destination_binding.py::test_patch_provider_change_without_key_rejected_and_row_untouched",
+      "pythonLine": 40,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "凭据目的地改变必须提供新key；拒绝时数据行原样；同目的地仅改模型保留key；切无key本地清空旧云key。"
+      ],
+      "pythonDocstring": "cloud A → cloud B（minimax Key 绑到 deepseek）：422 且 row 完全不变。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          52,
+          55,
+          56,
+          57
+        ],
+        "raisesLines": [
+          47
+        ],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_patch_destination_binding.py::test_patch_same_provider_new_origin_without_key_rejected",
+      "pythonLine": 61,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "凭据目的地改变必须提供新key；拒绝时数据行原样；同目的地仅改模型保留key；切无key本地清空旧云key。"
+      ],
+      "pythonDocstring": "同 provider → 自建代理 endpoint，Key 留空：422，旧 Key 不发给代理。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          72,
+          75,
+          76
+        ],
+        "raisesLines": [
+          67
+        ],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_patch_destination_binding.py::test_patch_custom_endpoint_back_to_default_without_key_rejected",
+      "pythonLine": 80,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "凭据目的地改变必须提供新key；拒绝时数据行原样；同目的地仅改模型保留key；切无key本地清空旧云key。"
+      ],
+      "pythonDocstring": "custom endpoint → 清空 Base URL（落 provider 默认端点）：目的地同样视为变更。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          88,
+          91
+        ],
+        "raisesLines": [
+          86
+        ],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_patch_destination_binding.py::test_patch_same_destination_model_only_keeps_old_key",
+      "pythonLine": 95,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "凭据目的地改变必须提供新key；拒绝时数据行原样；同目的地仅改模型保留key；切无key本地清空旧云key。"
+      ],
+      "pythonDocstring": "同 provider + 同 effective origin，只改模型：成功，旧 Key 原样保留。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          105,
+          108
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_patch_destination_binding.py::test_patch_provider_change_with_explicit_new_key_succeeds",
+      "pythonLine": 112,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "凭据目的地改变必须提供新key；拒绝时数据行原样；同目的地仅改模型保留key；切无key本地清空旧云key。"
+      ],
+      "pythonDocstring": "provider/origin 变更 + 显式新 Key：成功，新 Key 生效。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          123,
+          126
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_patch_destination_binding.py::test_patch_cloud_to_keyless_local_with_empty_value_clears_key",
+      "pythonLine": 130,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "凭据目的地改变必须提供新key；拒绝时数据行原样；同目的地仅改模型保留key；切无key本地清空旧云key。"
+      ],
+      "pythonDocstring": "云端 → 无鉴权本地（显式 value=\"\"）：成功，旧 Key 被清掉（迁移闭环）。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          142,
+          145
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_security_phase4.py::test_envelope_never_stores_plaintext_and_round_trips",
+      "pythonLine": 15,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "凭据信封加密/轮换/按用户隔离/禁用策略/脱敏DTO/本地无key及目的地切换；解密失败不得转平台配额。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          21,
+          22,
+          23
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_security_phase4.py::test_master_key_rotation_reads_previous_version",
+      "pythonLine": 26,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "凭据信封加密/轮换/按用户隔离/禁用策略/脱敏DTO/本地无key及目的地切换；解密失败不得转平台配额。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          37
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_security_phase4.py::test_credentials_are_isolated_by_user",
+      "pythonLine": 41,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "凭据信封加密/轮换/按用户隔离/禁用策略/脱敏DTO/本地无key及目的地切换；解密失败不得转平台配额。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          55,
+          56,
+          57
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_security_phase4.py::test_master_key_status_is_scoped_to_user_and_empty_users_are_ready",
+      "pythonLine": 61,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "凭据信封加密/轮换/按用户隔离/禁用策略/脱敏DTO/本地无key及目的地切换；解密失败不得转平台配额。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          74,
+          75
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_security_phase4.py::test_master_key_status_does_not_require_key_without_credentials",
+      "pythonLine": 78,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "凭据信封加密/轮换/按用户隔离/禁用策略/脱敏DTO/本地无key及目的地切换；解密失败不得转平台配额。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          80
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_security_phase4.py::test_decrypt_failure_does_not_fall_back_to_platform_config",
+      "pythonLine": 84,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "凭据信封加密/轮换/按用户隔离/禁用策略/脱敏DTO/本地无key及目的地切换；解密失败不得转平台配额。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [],
+        "raisesLines": [
+          96
+        ],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_security_phase4.py::test_capability_settings_never_inherit_platform_base_url",
+      "pythonLine": 111,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "凭据信封加密/轮换/按用户隔离/禁用策略/脱敏DTO/本地无key及目的地切换；解密失败不得转平台配额。"
+      ],
+      "pythonDocstring": "运行时目的地绑定（stt）：用户 Key 的 base_url 只来自用户凭据——空串按\nprovider 官方默认端点解析，解析不出（目的地不明）→ 放弃覆盖回落平台配置。\n绝不继承平台 base_url，否则用户 Key 会被拼到平台 endpoint 发出去。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          130,
+          131,
+          139,
+          140,
+          149,
+          150
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_security_phase4.py::test_disabled_policy_blocks_all_byok_entry_points",
+      "pythonLine": 153,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "凭据信封加密/轮换/按用户隔离/禁用策略/脱敏DTO/本地无key及目的地切换；解密失败不得转平台配额。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          157
+        ],
+        "raisesLines": [
+          158
+        ],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_security_phase4.py::test_credential_view_contains_metadata_but_not_encrypted_fields",
+      "pythonLine": 162,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "凭据信封加密/轮换/按用户隔离/禁用策略/脱敏DTO/本地无key及目的地切换；解密失败不得转平台配额。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          172,
+          173,
+          174,
+          175,
+          176
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_security_phase4.py::test_credential_view_returns_dimensions_and_patch_preserves_it",
+      "pythonLine": 180,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "凭据信封加密/轮换/按用户隔离/禁用策略/脱敏DTO/本地无key及目的地切换；解密失败不得转平台配额。"
+      ],
+      "pythonDocstring": "回归：credential_view 曾漏返 dimensions，编辑器拿到的存量凭据维度是 null，\n前端保存时固定发 dimensions:0——哪怕只改 Base URL 也会把已存维度清零（静默\n数据损坏）。create→GET→只 patch base_url 后，维度必须原样保留。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          193,
+          196,
+          204
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_security_phase4.py::test_keyless_selfhosted_embedding_create_then_resolve_empty_key",
+      "pythonLine": 208,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "凭据信封加密/轮换/按用户隔离/禁用策略/脱敏DTO/本地无key及目的地切换；解密失败不得转平台配额。"
+      ],
+      "pythonDocstring": "回归：自托管 Embedding 空 Key 创建曾在 encrypt_envelope 里 ValueError\n未被捕获而 500。空 Key 必须能信封加密落库（allow_empty 显式语义，不落明文），\nresolve_embedding_settings 解析出 api_key 为空串；Ollama Cloud 与普通云\nprovider 的空 Key 返回 422 业务错误而不是 500。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          223,
+          227,
+          228,
+          229,
+          230,
+          242
+        ],
+        "raisesLines": [
+          240
+        ],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_security_phase4.py::test_patch_switch_to_local_clears_old_cloud_key",
+      "pythonLine": 246,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "凭据信封加密/轮换/按用户隔离/禁用策略/脱敏DTO/本地无key及目的地切换；解密失败不得转平台配额。"
+      ],
+      "pythonDocstring": "回归：云端 Embedding 切换成本地无鉴权服务时，旧 Key 曾因「编辑不回显 +\nfalsy 不进 PATCH」留在 row 上，embed() 会拿它给新 endpoint 发 Authorization\n（跨 Provider 凭据泄漏）。显式 PATCH value=\"\" 必须把旧 Key 清掉。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          264,
+          268,
+          269
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_security_phase4.py::test_patch_switch_to_cloud_provider_requires_new_key",
+      "pythonLine": 273,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "凭据信封加密/轮换/按用户隔离/禁用策略/脱敏DTO/本地无key及目的地切换；解密失败不得转平台配额。"
+      ],
+      "pythonDocstring": "回归：本地空 Key 切到云端 Provider 且未提供新 Key 时，曾会保存出\n「云端 Provider + 空 Key」的必然失败配置；后端按最终配置一致性拒绝（422）。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          291
+        ],
+        "raisesLines": [
+          286
+        ],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_test_preview.py::test_missing_key_without_credential_is_rejected",
+      "pythonLine": 36,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "诊断草稿仅同provider及origin可复用存量key；跨用户拒绝；本地无key合法；模型列表与媒体探测都经过相同绑定。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          39,
+          40
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_test_preview.py::test_draft_provider_change_refuses_stored_key",
+      "pythonLine": 44,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "诊断草稿仅同provider及origin可复用存量key；跨用户拒绝；本地无key合法；模型列表与媒体探测都经过相同绑定。"
+      ],
+      "pythonDocstring": "旧契约曾把 minimax 的 Key 发给 deepseek 草稿端点（跨服务商泄漏），现必须拒绝。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          54,
+          55
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_test_preview.py::test_same_provider_and_origin_reuses_stored_key",
+      "pythonLine": 59,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "诊断草稿仅同provider及origin可复用存量key；跨用户拒绝；本地无key合法；模型列表与媒体探测都经过相同绑定。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          75,
+          76
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_test_preview.py::test_same_provider_different_origin_refuses_stored_key",
+      "pythonLine": 82,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "诊断草稿仅同provider及origin可复用存量key；跨用户拒绝；本地无key合法；模型列表与媒体探测都经过相同绑定。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          91,
+          92
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_test_preview.py::test_keyless_local_embedding_draft_uses_empty_key",
+      "pythonLine": 96,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "诊断草稿仅同provider及origin可复用存量key；跨用户拒绝；本地无key合法；模型列表与媒体探测都经过相同绑定。"
+      ],
+      "pythonDocstring": "minimax 凭据切到本地无鉴权 embedding：用空串测试，绝不外带旧云厂商 Key。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          112,
+          113,
+          121,
+          122
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_test_preview.py::test_foreign_credential_is_rejected",
+      "pythonLine": 126,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "诊断草稿仅同provider及origin可复用存量key；跨用户拒绝；本地无key合法；模型列表与媒体探测都经过相同绑定。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          131
+        ],
+        "raisesLines": [
+          129
+        ],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_test_preview.py::test_embedding_draft_requires_base_url_and_model",
+      "pythonLine": 135,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "诊断草稿仅同provider及origin可复用存量key；跨用户拒绝；本地无key合法；模型列表与媒体探测都经过相同绑定。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          141,
+          142
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_test_preview.py::test_empty_draft_base_url_falls_to_provider_default_and_refuses",
+      "pythonLine": 146,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "诊断草稿仅同provider及origin可复用存量key；跨用户拒绝；本地无key合法；模型列表与媒体探测都经过相同绑定。"
+      ],
+      "pythonDocstring": "glm + 自定义代理 → 草稿清空 base_url 实际会请求官方默认端点，必须拒绝复用。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          155,
+          156
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_test_preview.py::test_saved_default_matches_explicit_default_url",
+      "pythonLine": 160,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "诊断草稿仅同provider及origin可复用存量key；跨用户拒绝；本地无key合法；模型列表与媒体探测都经过相同绑定。"
+      ],
+      "pythonDocstring": "已存 base_url 为空（走默认端点）与草稿显式填官方默认 URL 是同一目的地，允许复用。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          176,
+          177
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_test_preview.py::test_models_preview_refuses_cross_provider_reuse",
+      "pythonLine": 181,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "诊断草稿仅同provider及origin可复用存量key；跨用户拒绝；本地无key合法；模型列表与媒体探测都经过相同绑定。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          187,
+          188
+        ],
+        "raisesLines": [
+          185
+        ],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_test_preview.py::test_models_preview_reuses_key_for_same_destination",
+      "pythonLine": 192,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "诊断草稿仅同provider及origin可复用存量key；跨用户拒绝；本地无key合法；模型列表与媒体探测都经过相同绑定。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          205,
+          206
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_test_preview.py::test_media_capability_probe_refuses_cross_provider_reuse",
+      "pythonLine": 210,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "诊断草稿仅同provider及origin可复用存量key；跨用户拒绝；本地无key合法；模型列表与媒体探测都经过相同绑定。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          216,
+          217
+        ],
+        "raisesLines": [
+          214
+        ],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_test_preview.py::test_media_capability_probe_reuses_key_for_same_destination",
+      "pythonLine": 221,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "诊断草稿仅同provider及origin可复用存量key；跨用户拒绝；本地无key合法；模型列表与媒体探测都经过相同绑定。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          234,
+          235
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_test_preview.py::test_url_origin_normalization",
+      "pythonLine": 238,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "诊断草稿仅同provider及origin可复用存量key；跨用户拒绝；本地无key合法；模型列表与媒体探测都经过相同绑定。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          240,
+          241,
+          242,
+          243
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_user_embedding_rebuild.py::test_rebuild_without_credential_rejected",
+      "pythonLine": 59,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "按用户启动embedding/RAG重建，避免双启动，状态持久记录成功/失败与空闲；不得由Provider协议fake代替真实Job/数据更新。"
+      ],
+      "pythonDocstring": "没有生效 embedding 凭据 → 拒绝且不写任何 Redis 状态。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          65,
+          66,
+          67
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_user_embedding_rebuild.py::test_rebuild_starts_and_finishes",
+      "pythonLine": 71,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "按用户启动embedding/RAG重建，避免双启动，状态持久记录成功/失败与空闲；不得由Provider协议fake代替真实Job/数据更新。"
+      ],
+      "pythonDocstring": "有凭据 → 启动后台重建，pattern/memory 计数与 RAG 索引结果落到状态里。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          96,
+          98,
+          99,
+          100,
+          101,
+          102,
+          103,
+          105,
+          82
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_user_embedding_rebuild.py::test_rebuild_rag_failure_marks_error",
+      "pythonLine": 109,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "按用户启动embedding/RAG重建，避免双启动，状态持久记录成功/失败与空闲；不得由Provider协议fake代替真实Job/数据更新。"
+      ],
+      "pythonDocstring": "RAG 索引失败不吞掉：整体状态标 error，向量计数仍然上报。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          129,
+          130
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_user_embedding_rebuild.py::test_rebuild_double_start_guarded",
+      "pythonLine": 134,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "按用户启动embedding/RAG重建，避免双启动，状态持久记录成功/失败与空闲；不得由Provider协议fake代替真实Job/数据更新。"
+      ],
+      "pythonDocstring": "已有任务在跑 → 第二次启动被拒绝。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          148,
+          150,
+          151
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_user_embedding_rebuild.py::test_status_idle",
+      "pythonLine": 155,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "按用户启动embedding/RAG重建，避免双启动，状态持久记录成功/失败与空闲；不得由Provider协议fake代替真实Job/数据更新。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          157,
+          159
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_user_scope_guard.py::test_user_scoped_modules_do_not_read_settings_ai_directly",
+      "pythonLine": 60,
+      "classification": "相邻HostData",
+      "responsibility": "Host异步用户模型绑定与Tools调用上下文",
+      "protectedAssertions": [
+        "所有用户链路优先绑定本轮模型；未绑定的旧平台回落有哨兵；子任务继承用户/模型上下文，防跨用户配额混用。"
+      ],
+      "pythonDocstring": "用户链路模块不得直读 settings.ai 选模型，必须走 modelctx.effective_ai。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          76
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Core采用显式identity/modelIdentity与可信resolve，不实现旧ContextVar；Web/IM/定时/后台任务与工具入口的实际绑定未迁，接口不等于完成。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_user_scope_guard.py::test_effective_ai_prefers_bound_model_and_warns_on_user_scope_fallback",
+      "pythonLine": 83,
+      "classification": "相邻HostData",
+      "responsibility": "Host异步用户模型绑定与Tools调用上下文",
+      "protectedAssertions": [
+        "所有用户链路优先绑定本轮模型；未绑定的旧平台回落有哨兵；子任务继承用户/模型上下文，防跨用户配额混用。"
+      ],
+      "pythonDocstring": "effective_ai：绑定模型优先；用户链路未绑定时回落平台预设并打哨兵日志。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          100,
+          105,
+          106,
+          110,
+          111
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Core采用显式identity/modelIdentity与可信resolve，不实现旧ContextVar；Web/IM/定时/后台任务与工具入口的实际绑定未迁，接口不等于完成。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_byok_user_scope_guard.py::test_user_scope_and_binding_inherit_into_created_tasks",
+      "pythonLine": 116,
+      "classification": "相邻HostData",
+      "responsibility": "Host异步用户模型绑定与Tools调用上下文",
+      "protectedAssertions": [
+        "所有用户链路优先绑定本轮模型；未绑定的旧平台回落有哨兵；子任务继承用户/模型上下文，防跨用户配额混用。"
+      ],
+      "pythonDocstring": "create_task 派生的后台任务（反思/总结/压缩等）自动继承绑定与用户链路标记。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          134
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Core采用显式identity/modelIdentity与可信resolve，不实现旧ContextVar；Web/IM/定时/后台任务与工具入口的实际绑定未迁，接口不等于完成。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm15_preferences_api.py::test_tool_injection_mode_response_uses_only_canonical_values",
+      "pythonLine": 63,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "偏好默认与规范值、落库、人格/回复风格文件迁移、用户隔离与上下文失效；保存失败不得丢旧数据。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          70
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm15_preferences_api.py::test_tool_injection_mode_defaults_to_description",
+      "pythonLine": 73,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "偏好默认与规范值、落库、人格/回复风格文件迁移、用户隔离与上下文失效；保存失败不得丢旧数据。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          80
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm15_preferences_api.py::test_im_tool_display_mode_response_uses_unified_preference",
+      "pythonLine": 83,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "偏好默认与规范值、落库、人格/回复风格文件迁移、用户隔离与上下文失效；保存失败不得丢旧数据。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          89,
+          90,
+          96,
+          97
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm15_preferences_api.py::test_update_preferences_persists_intermediate_reply_preference",
+      "pythonLine": 101,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "偏好默认与规范值、落库、人格/回复风格文件迁移、用户隔离与上下文失效；保存失败不得丢旧数据。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          119,
+          120
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm15_preferences_api.py::test_decision_guard_preference_defaults_to_disabled",
+      "pythonLine": 123,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "偏好默认与规范值、落库、人格/回复风格文件迁移、用户隔离与上下文失效；保存失败不得丢旧数据。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          130
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm15_preferences_api.py::test_update_preferences_persists_decision_guard_preference",
+      "pythonLine": 134,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "偏好默认与规范值、落库、人格/回复风格文件迁移、用户隔离与上下文失效；保存失败不得丢旧数据。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          152,
+          153
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm15_preferences_api.py::test_update_preferences_persists_personality_and_invalidates_snapshot",
+      "pythonLine": 157,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "偏好默认与规范值、落库、人格/回复风格文件迁移、用户隔离与上下文失效；保存失败不得丢旧数据。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          186,
+          187,
+          188,
+          189,
+          190,
+          191
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm15_preferences_api.py::test_update_preferences_can_disable_personality_and_expire_snapshots",
+      "pythonLine": 195,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "偏好默认与规范值、落库、人格/回复风格文件迁移、用户隔离与上下文失效；保存失败不得丢旧数据。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          222,
+          223,
+          224,
+          225
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm15_preferences_api.py::test_update_preferences_rejects_personality_when_global_switch_is_off",
+      "pythonLine": 229,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "偏好默认与规范值、落库、人格/回复风格文件迁移、用户隔离与上下文失效；保存失败不得丢旧数据。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          242
+        ],
+        "raisesLines": [
+          235
+        ],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm15_preferences_api.py::test_group_personality_patch_is_saved_independently_and_invalidates_context",
+      "pythonLine": 246,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "偏好默认与规范值、落库、人格/回复风格文件迁移、用户隔离与上下文失效；保存失败不得丢旧数据。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          283,
+          284,
+          285,
+          286,
+          287,
+          288,
+          289,
+          290,
+          291
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm15_preferences_api.py::test_group_personality_upload_is_markdown_and_user_scoped",
+      "pythonLine": 295,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "偏好默认与规范值、落库、人格/回复风格文件迁移、用户隔离与上下文失效；保存失败不得丢旧数据。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          324,
+          325,
+          326,
+          327
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm15_preferences_api.py::test_upload_personality_rejects_invalid_input",
+      "pythonLine": 344,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "偏好默认与规范值、落库、人格/回复风格文件迁移、用户隔离与上下文失效；保存失败不得丢旧数据。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          352
+        ],
+        "raisesLines": [
+          348
+        ],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm15_preferences_api.py::test_upload_personality_is_user_scoped_and_invalidates_snapshot",
+      "pythonLine": 356,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "偏好默认与规范值、落库、人格/回复风格文件迁移、用户隔离与上下文失效；保存失败不得丢旧数据。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          388,
+          389,
+          390,
+          391,
+          392,
+          393
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm15_preferences_api.py::test_custom_reply_style_is_saved_and_can_be_disabled",
+      "pythonLine": 401,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "偏好默认与规范值、落库、人格/回复风格文件迁移、用户隔离与上下文失效；保存失败不得丢旧数据。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          419,
+          421,
+          422,
+          424,
+          425
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm15_preferences_api.py::test_legacy_reply_style_is_written_to_file_before_database_key_is_removed",
+      "pythonLine": 429,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "偏好默认与规范值、落库、人格/回复风格文件迁移、用户隔离与上下文失效；保存失败不得丢旧数据。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          453,
+          454,
+          455,
+          456
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm15_preferences_api.py::test_legacy_reply_style_is_preserved_when_file_migration_fails",
+      "pythonLine": 460,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "偏好默认与规范值、落库、人格/回复风格文件迁移、用户隔离与上下文失效；保存失败不得丢旧数据。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          477
+        ],
+        "raisesLines": [
+          474
+        ],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm15_preferences_api.py::test_reply_style_txt_upload_imports_plain_text_into_canonical_file",
+      "pythonLine": 481,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "偏好默认与规范值、落库、人格/回复风格文件迁移、用户隔离与上下文失效；保存失败不得丢旧数据。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          503,
+          504,
+          505
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm_preset_override_tolerance.py::test_legacy_invalid_preset_does_not_discard_whole_override",
+      "pythonLine": 33,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "旧无效预设按原值加载且不拖垮整份override；新建保存继续强校验；警告仅显示标识和验证消息、不泄密。"
+      ],
+      "pythonDocstring": "升级后原样不动的旧文件：ai 段和其他段必须照常生效，运行时仍指向用户配置的地址。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          42,
+          43,
+          44
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm_preset_override_tolerance.py::test_legacy_invalid_preset_is_kept_with_original_values",
+      "pythonLine": 47,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "旧无效预设按原值加载且不拖垮整份override；新建保存继续强校验；警告仅显示标识和验证消息、不泄密。"
+      ],
+      "pythonDocstring": "不合规预设按原值保留（不静默钳制、不丢弃），留给用户在后台修正。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          54,
+          55
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm_preset_override_tolerance.py::test_invalid_preset_does_not_block_valid_presets",
+      "pythonLine": 58,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "旧无效预设按原值加载且不拖垮整份override；新建保存继续强校验；警告仅显示标识和验证消息、不泄密。"
+      ],
+      "pythonDocstring": "「新建合规预设并激活、旧预设留着」是用户最自然的自救路径，不得因旧预设而失效。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          64,
+          65
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm_preset_override_tolerance.py::test_invalid_preset_warning_names_preset_without_leaking_key",
+      "pythonLine": 68,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "旧无效预设按原值加载且不拖垮整份override；新建保存继续强校验；警告仅显示标识和验证消息、不泄密。"
+      ],
+      "pythonDocstring": "不合规必须响亮可见，但输出里只能有预设 id 和校验消息，不得带出 api_key。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          75,
+          76,
+          77
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm_preset_override_tolerance.py::test_save_path_validation_is_unchanged",
+      "pythonLine": 80,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "旧无效预设按原值加载且不拖垮整份override；新建保存继续强校验；警告仅显示标识和验证消息、不泄密。"
+      ],
+      "pythonDocstring": "容错只发生在加载存量数据时；新建/保存路径的强校验不得被一并放宽。",
+      "assertionAudit": {
+        "explicitAssertLines": [],
+        "raisesLines": [
+          82
+        ],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm_select_destination_binding.py::test_user_key_without_base_url_uses_provider_default_not_platform_endpoint",
+      "pythonLine": 78,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "用户key只配用户provider默认或显式URL，绝不平台URL；空凭据回平台；多模态flag透传实际工具本轮模型。"
+      ],
+      "pythonDocstring": "用户 DeepSeek Key + base_url 空时使用 DeepSeek 默认端点，不继承平台 URL。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          82,
+          83,
+          84,
+          85,
+          86
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm_select_destination_binding.py::test_user_explicit_base_url_is_used_as_destination",
+      "pythonLine": 90,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "用户key只配用户provider默认或显式URL，绝不平台URL；空凭据回平台；多模态flag透传实际工具本轮模型。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          93,
+          94,
+          95,
+          96,
+          97,
+          98,
+          99
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm_select_destination_binding.py::test_user_empty_base_url_resolves_provider_default",
+      "pythonLine": 103,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "用户key只配用户provider默认或显式URL，绝不平台URL；空凭据回平台；多模态flag透传实际工具本轮模型。"
+      ],
+      "pythonDocstring": "有官方默认端点的 provider：空 base_url 落到 provider 默认端点（glm）。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          107,
+          108,
+          109
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm_select_destination_binding.py::test_byok_multimodal_flags_reach_the_runtime_model",
+      "pythonLine": 113,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "用户key只配用户provider默认或显式URL，绝不平台URL；空凭据回平台；多模态flag透传实际工具本轮模型。"
+      ],
+      "pythonDocstring": "BYOK 主对话配置应保留图片/视频/音频开关，供 read_file 按本轮模型判断能力。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          123,
+          124,
+          125,
+          126,
+          127,
+          128,
+          129,
+          132
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm_select_destination_binding.py::test_no_credential_returns_platform_config",
+      "pythonLine": 138,
+      "classification": "相邻HostData",
+      "responsibility": "Host配置/凭据/HTTP入口",
+      "protectedAssertions": [
+        "用户key只配用户provider默认或显式URL，绝不平台URL；空凭据回平台；多模态flag透传实际工具本轮模型。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          141,
+          142
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node Host未接真实配置/凭据/数据库入口；注入正确resolve或fake SDK不证明该旧行为已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_modelctx.py::test_get_model_cfg_defaults_to_none",
+      "pythonLine": 7,
+      "classification": "相邻HostData",
+      "responsibility": "Host异步用户模型绑定与Tools调用上下文",
+      "protectedAssertions": [
+        "本轮实际模型默认未绑定，显式绑定保持对象身份；需经Host/工具调用方传递且跨请求隔离。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          8
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Core采用显式identity/modelIdentity与可信resolve，不实现旧ContextVar；Web/IM/定时/后台任务与工具入口的实际绑定未迁，接口不等于完成。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_modelctx.py::test_set_and_get_model_cfg_roundtrip",
+      "pythonLine": 11,
+      "classification": "相邻HostData",
+      "responsibility": "Host异步用户模型绑定与Tools调用上下文",
+      "protectedAssertions": [
+        "本轮实际模型默认未绑定，显式绑定保持对象身份；需经Host/工具调用方传递且跨请求隔离。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          16
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Core采用显式identity/modelIdentity与可信resolve，不实现旧ContextVar；Web/IM/定时/后台任务与工具入口的实际绑定未迁，接口不等于完成。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_qface.py::test_qface_matches_emoji_id_and_prefers_apng_asset",
+      "pythonLine": 4,
+      "classification": "相邻HostData",
+      "responsibility": "Tools表情资产解析",
+      "protectedAssertions": [
+        "QQ表情资产选择优先精确emojiId与apng，拒绝市场类型及路径穿越；属于Tools资产解析而非模型Provider。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          16,
+          17
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "无对应TS资产选择器及调用方回归；明确Tools边界，不能计入Provider完成。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_qface.py::test_qface_rejects_market_type_and_unsafe_asset_path",
+      "pythonLine": 20,
+      "classification": "相邻HostData",
+      "responsibility": "Tools表情资产解析",
+      "protectedAssertions": [
+        "QQ表情资产选择优先精确emojiId与apng，拒绝市场类型及路径穿越；属于Tools资产解析而非模型Provider。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          21,
+          22
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "无对应TS资产选择器及调用方回归；明确Tools边界，不能计入Provider完成。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_qface.py::test_qface_prefers_exact_emoji_id_over_qzone_code_collision",
+      "pythonLine": 28,
+      "classification": "相邻HostData",
+      "responsibility": "Tools表情资产解析",
+      "protectedAssertions": [
+        "QQ表情资产选择优先精确emojiId与apng，拒绝市场类型及路径穿越；属于Tools资产解析而非模型Provider。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          42,
+          43
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "无对应TS资产选择器及调用方回归；明确Tools边界，不能计入Provider完成。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_rag_query_embedding.py::test_query_embedding_pins_destination_and_caches_vector_without_plaintext_key",
+      "pythonLine": 55,
+      "classification": "相邻HostData",
+      "responsibility": "Embedding协议+RAG数据缓存",
+      "protectedAssertions": [
+        "向量请求目的地固定、配置快照复用、凭据不入缓存明文、供应商向量结构/维度有限数校验及错误安全；属于Embedding/RAG协议与Data缓存。"
+      ],
+      "pythonDocstring": "查询向量请求固定已校验 IP、拒绝重定向，并按模型+查询短缓存结果。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          69,
+          70,
+          71,
+          72,
+          73,
+          74,
+          75,
+          76,
+          77,
+          78
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node聊天Provider尚无/embeddings及百炼多模态embedding生产实现；网络层SSRF回归不代表向量格式、缓存或逐用户绑定已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_rag_query_embedding.py::test_query_embedding_uses_supplied_validated_config_snapshot",
+      "pythonLine": 82,
+      "classification": "相邻HostData",
+      "responsibility": "Embedding协议+RAG数据缓存",
+      "protectedAssertions": [
+        "向量请求目的地固定、配置快照复用、凭据不入缓存明文、供应商向量结构/维度有限数校验及错误安全；属于Embedding/RAG协议与Data缓存。"
+      ],
+      "pythonDocstring": "本轮配置快照与全局设置不同步时，查询仍使用已校验的本轮 endpoint/model。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          99,
+          100,
+          101
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node聊天Provider尚无/embeddings及百炼多模态embedding生产实现；网络层SSRF回归不代表向量格式、缓存或逐用户绑定已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_rag_query_embedding.py::test_query_embedding_request_matches_bailian_multimodal_contract",
+      "pythonLine": 106,
+      "classification": "相邻HostData",
+      "responsibility": "Embedding协议+RAG数据缓存",
+      "protectedAssertions": [
+        "向量请求目的地固定、配置快照复用、凭据不入缓存明文、供应商向量结构/维度有限数校验及错误安全；属于Embedding/RAG协议与Data缓存。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          115
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node聊天Provider尚无/embeddings及百炼多模态embedding生产实现；网络层SSRF回归不代表向量格式、缓存或逐用户绑定已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_rag_query_embedding.py::test_query_embedding_rejects_invalid_provider_vectors",
+      "pythonLine": 129,
+      "classification": "相邻HostData",
+      "responsibility": "Embedding协议+RAG数据缓存",
+      "protectedAssertions": [
+        "向量请求目的地固定、配置快照复用、凭据不入缓存明文、供应商向量结构/维度有限数校验及错误安全；属于Embedding/RAG协议与Data缓存。"
+      ],
+      "pythonDocstring": "",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          130
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node聊天Provider尚无/embeddings及百炼多模态embedding生产实现；网络层SSRF回归不代表向量格式、缓存或逐用户绑定已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_rag_query_embedding.py::test_query_embedding_error_matrix_is_safe_and_deterministic",
+      "pythonLine": 161,
+      "classification": "相邻HostData",
+      "responsibility": "Embedding协议+RAG数据缓存",
+      "protectedAssertions": [
+        "向量请求目的地固定、配置快照复用、凭据不入缓存明文、供应商向量结构/维度有限数校验及错误安全；属于Embedding/RAG协议与Data缓存。"
+      ],
+      "pythonDocstring": "固定本机 HTTP 响应验证 embedding 错误分类、大小限制和凭据处理。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          215
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node聊天Provider尚无/embeddings及百炼多模态embedding生产实现；网络层SSRF回归不代表向量格式、缓存或逐用户绑定已迁。",
+      "status": "边界延后"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_rag_query_embedding.py::test_query_embedding_rejects_invalid_wire_config",
+      "pythonLine": 232,
+      "classification": "相邻HostData",
+      "responsibility": "Embedding协议+RAG数据缓存",
+      "protectedAssertions": [
+        "向量请求目的地固定、配置快照复用、凭据不入缓存明文、供应商向量结构/维度有限数校验及错误安全；属于Embedding/RAG协议与Data缓存。"
+      ],
+      "pythonDocstring": "无效 query/settings 必须在发网前安全拒绝。",
+      "assertionAudit": {
+        "explicitAssertLines": [
+          252
+        ],
+        "raisesLines": [],
+        "review": "读取原测试断言/异常边界并按生产职责分类；不以AST数量或套件绿色推定等价"
+      },
+      "tsTests": [],
+      "gap": "Node聊天Provider尚无/embeddings及百炼多模态embedding生产实现；网络层SSRF回归不代表向量格式、缓存或逐用户绑定已迁。",
+      "status": "边界延后"
+    }
+  ],
+  "modules": [
+    {
+      "pythonFile": "backend/agent/providers/__init__.py",
+      "targets": [
+        "gugu-core/src/agent/providers/registry.ts",
+        "gugu-core/src/agent/providers/base.ts",
+        "gugu-core/src/agent/providers/diagnostics.ts",
+        "gugu-core/src/agent/providers/transport/node.ts"
+      ],
+      "targetFilesExist": true,
+      "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
+      "deferredOrRetiredResponsibility": "旧SDK构建/预加载退役为原生HTTP；Host选模/BYOK凭据解析未迁",
+      "status": "有实现落点，待逐符号/外部边界验收",
+      "inventoryGap": "原primary module行未列目标及分拆职责；仅标迁入/实施中不足以表达完成"
+    },
+    {
+      "pythonFile": "backend/agent/providers/anthropic.py",
+      "targets": [
+        "gugu-core/src/agent/providers/anthropic.ts"
+      ],
+      "targetFilesExist": true,
+      "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
+      "deferredOrRetiredResponsibility": "真实厂商线上调用验收另列，不以合成SSE代替",
+      "status": "有实现落点，待逐符号/外部边界验收",
+      "inventoryGap": "原primary module行未列目标及分拆职责；仅标迁入/实施中不足以表达完成"
+    },
+    {
+      "pythonFile": "backend/agent/providers/anthropic_history_adapter.py",
+      "targets": [
+        "gugu-core/src/agent/providers/anthropic-history.ts"
+      ],
+      "targetFilesExist": true,
+      "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
+      "deferredOrRetiredResponsibility": "旧持久thinking清理及SQL provenance未迁",
+      "status": "有实现落点，待逐符号/外部边界验收",
+      "inventoryGap": "原primary module行未列目标及分拆职责；仅标迁入/实施中不足以表达完成"
+    },
+    {
+      "pythonFile": "backend/agent/providers/base.py",
+      "targets": [
+        "gugu-core/src/agent/providers/base.ts",
+        "gugu-core/src/agent/providers/contracts.ts"
+      ],
+      "targetFilesExist": true,
+      "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
+      "deferredOrRetiredResponsibility": "无Host全局设置读取",
+      "status": "有实现落点，待逐符号/外部边界验收",
+      "inventoryGap": "原primary module行未列目标及分拆职责；仅标迁入/实施中不足以表达完成"
+    },
+    {
+      "pythonFile": "backend/agent/providers/cache_probe.py",
+      "targets": [
+        "gugu-core/src/agent/providers/cache-probe.ts",
+        "gugu-core/src/agent/providers/runtime.ts"
+      ],
+      "targetFilesExist": true,
+      "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
+      "deferredOrRetiredResponsibility": "真实Collector/span/contextvars与agent_usage落库未接",
+      "status": "有实现落点，待逐符号/外部边界验收",
+      "inventoryGap": "原primary module行未列目标及分拆职责；仅标迁入/实施中不足以表达完成"
+    },
+    {
+      "pythonFile": "backend/agent/providers/cache_singleflight.py",
+      "targets": [
+        "gugu-core/src/agent/providers/cache.ts",
+        "gugu-core/src/agent/providers/runtime.ts"
+      ],
+      "targetFilesExist": true,
+      "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
+      "deferredOrRetiredResponsibility": "仅同进程协调；跨worker租约/续租/容灾交runtime/jobs与Host实现",
+      "status": "有实现落点，待逐符号/外部边界验收",
+      "inventoryGap": "原primary module行未列目标及分拆职责；仅标迁入/实施中不足以表达完成"
+    },
+    {
+      "pythonFile": "backend/agent/providers/client_pool.py",
+      "targets": [
+        "gugu-core/src/agent/providers/client-pool.ts",
+        "gugu-core/src/agent/providers/transport/node.ts"
+      ],
+      "targetFilesExist": true,
+      "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
+      "deferredOrRetiredResponsibility": "SDK预加载退役；真实物理连接空闲默认值验收待补",
+      "status": "有实现落点，待逐符号/外部边界验收",
+      "inventoryGap": "原primary module行未列目标及分拆职责；仅标迁入/实施中不足以表达完成"
+    },
+    {
+      "pythonFile": "backend/agent/providers/context_adapter.py",
+      "targets": [
+        "gugu-core/src/agent/providers/runtime.ts",
+        "gugu-core/src/agent/providers/contracts.ts"
+      ],
+      "targetFilesExist": true,
+      "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
+      "deferredOrRetiredResponsibility": "Host模型解析/凭据查询/作用域授权不是Provider实现",
+      "status": "有实现落点，待逐符号/外部边界验收",
+      "inventoryGap": "原primary module行未列目标及分拆职责；仅标迁入/实施中不足以表达完成"
+    },
+    {
+      "pythonFile": "backend/agent/providers/deepseek/__init__.py",
+      "targets": [
+        "gugu-core/src/agent/providers/vendors/policies.ts"
+      ],
+      "targetFilesExist": true,
+      "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
+      "deferredOrRetiredResponsibility": "策略能力与HTTP协议驱动组合；真实线上模型验收另列",
+      "status": "有实现落点，待逐符号/外部边界验收",
+      "inventoryGap": "原primary module行未列目标及分拆职责；仅标迁入/实施中不足以表达完成"
+    },
+    {
+      "pythonFile": "backend/agent/providers/deepseek/web_search.py",
+      "targets": [
+        "gugu-core/src/agent/providers/vendors/search.ts",
+        "gugu-core/src/agent/providers/vendors/search-schemas.ts"
+      ],
+      "targetFilesExist": true,
+      "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
+      "deferredOrRetiredResponsibility": "Tools注册/执行授权不属于Provider搜索请求",
+      "status": "有实现落点，待逐符号/外部边界验收",
+      "inventoryGap": "原primary module行未列目标及分拆职责；仅标迁入/实施中不足以表达完成"
+    },
+    {
+      "pythonFile": "backend/agent/providers/errors.py",
+      "targets": [
+        "gugu-core/src/agent/providers/errors.ts"
+      ],
+      "targetFilesExist": true,
+      "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
+      "deferredOrRetiredResponsibility": "旧Host HTTP/i18n DTO不机械保留，安全错误分类取代",
+      "status": "有实现落点，待逐符号/外部边界验收",
+      "inventoryGap": "原primary module行未列目标及分拆职责；仅标迁入/实施中不足以表达完成"
+    },
+    {
+      "pythonFile": "backend/agent/providers/glm/__init__.py",
+      "targets": [
+        "gugu-core/src/agent/providers/vendors/policies.ts"
+      ],
+      "targetFilesExist": true,
+      "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
+      "deferredOrRetiredResponsibility": "线上Coding Plan账号/路由验收另列",
+      "status": "有实现落点，待逐符号/外部边界验收",
+      "inventoryGap": "原primary module行未列目标及分拆职责；仅标迁入/实施中不足以表达完成"
+    },
+    {
+      "pythonFile": "backend/agent/providers/glm/web_search.py",
+      "targets": [
+        "gugu-core/src/agent/providers/vendors/search.ts",
+        "gugu-core/src/agent/providers/vendors/search-schemas.ts"
+      ],
+      "targetFilesExist": true,
+      "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
+      "deferredOrRetiredResponsibility": "搜索结果进入Tools/Host注册与发布待实际入口",
+      "status": "有实现落点，待逐符号/外部边界验收",
+      "inventoryGap": "原primary module行未列目标及分拆职责；仅标迁入/实施中不足以表达完成"
+    },
+    {
+      "pythonFile": "backend/agent/providers/local.py",
+      "targets": [
+        "gugu-core/src/agent/providers/vendors/policies.ts",
+        "gugu-core/src/agent/providers/transport/network.ts"
+      ],
+      "targetFilesExist": true,
+      "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
+      "deferredOrRetiredResponsibility": "显式本地授权；用户本地配置/进程生命周期由Host提供",
+      "status": "有实现落点，待逐符号/外部边界验收",
+      "inventoryGap": "原primary module行未列目标及分拆职责；仅标迁入/实施中不足以表达完成"
+    },
+    {
+      "pythonFile": "backend/agent/providers/media.py",
+      "targets": [
+        "gugu-core/src/agent/providers/vendors/media.ts"
+      ],
+      "targetFilesExist": true,
+      "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
+      "deferredOrRetiredResponsibility": "真实文件读取/ffmpeg/持久存储/所有权校验由Host提供，回调不能替代验收",
+      "status": "有实现落点，待逐符号/外部边界验收",
+      "inventoryGap": "原primary module行未列目标及分拆职责；仅标迁入/实施中不足以表达完成"
+    },
+    {
+      "pythonFile": "backend/agent/providers/message_utils.py",
+      "targets": [
+        "gugu-core/src/agent/providers/anthropic-history.ts",
+        "gugu-core/src/agent/providers/openai-history.ts",
+        "gugu-core/src/agent/providers/anthropic-json.ts"
+      ],
+      "targetFilesExist": true,
+      "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
+      "deferredOrRetiredResponsibility": "Canonical领域历史在Harness/history；旧数据库迁移由Host/Data执行",
+      "status": "有实现落点，待逐符号/外部边界验收",
+      "inventoryGap": "原primary module行未列目标及分拆职责；仅标迁入/实施中不足以表达完成"
+    },
+    {
+      "pythonFile": "backend/agent/providers/mimo/__init__.py",
+      "targets": [
+        "gugu-core/src/agent/providers/vendors/policies.ts"
+      ],
+      "targetFilesExist": true,
+      "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
+      "deferredOrRetiredResponsibility": "不把通用能力override当默认支持",
+      "status": "有实现落点，待逐符号/外部边界验收",
+      "inventoryGap": "原primary module行未列目标及分拆职责；仅标迁入/实施中不足以表达完成"
+    },
+    {
+      "pythonFile": "backend/agent/providers/mimo/media.py",
+      "targets": [
+        "gugu-core/src/agent/providers/vendors/media.ts"
+      ],
+      "targetFilesExist": true,
+      "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
+      "deferredOrRetiredResponsibility": "实际文件权限/转码/持久索引由Host/Media提供",
+      "status": "有实现落点，待逐符号/外部边界验收",
+      "inventoryGap": "原primary module行未列目标及分拆职责；仅标迁入/实施中不足以表达完成"
+    },
+    {
+      "pythonFile": "backend/agent/providers/mimo/web_search.py",
+      "targets": [
+        "gugu-core/src/agent/providers/vendors/search.ts",
+        "gugu-core/src/agent/providers/vendors/search-schemas.ts"
+      ],
+      "targetFilesExist": true,
+      "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
+      "deferredOrRetiredResponsibility": "Tools注册与外部服务验收另列",
+      "status": "有实现落点，待逐符号/外部边界验收",
+      "inventoryGap": "原primary module行未列目标及分拆职责；仅标迁入/实施中不足以表达完成"
+    },
+    {
+      "pythonFile": "backend/agent/providers/minimax/__init__.py",
+      "targets": [
+        "gugu-core/src/agent/providers/vendors/policies.ts",
+        "gugu-core/src/agent/providers/vendors/minimax-errors.ts"
+      ],
+      "targetFilesExist": true,
+      "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
+      "deferredOrRetiredResponsibility": "原生Thinking仅私有内存续接；真实旧存储清理另列",
+      "status": "有实现落点，待逐符号/外部边界验收",
+      "inventoryGap": "原primary module行未列目标及分拆职责；仅标迁入/实施中不足以表达完成"
+    },
+    {
+      "pythonFile": "backend/agent/providers/minimax/asr.py",
+      "targets": [
+        "gugu-core/src/agent/providers/vendors/asr.ts"
+      ],
+      "targetFilesExist": true,
+      "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
+      "deferredOrRetiredResponsibility": "原生HTTP协议已建；真实转码/附件所有权与落库由Host/Media提供",
+      "status": "有实现落点，待逐符号/外部边界验收",
+      "inventoryGap": "原primary module行未列目标及分拆职责；仅标迁入/实施中不足以表达完成"
+    },
+    {
+      "pythonFile": "backend/agent/providers/minimax/media.py",
+      "targets": [
+        "gugu-core/src/agent/providers/vendors/media.ts"
+      ],
+      "targetFilesExist": true,
+      "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
+      "deferredOrRetiredResponsibility": "上传HTTP/预算已建；ffprobe与实际附件读取授权仍由Host提供",
+      "status": "有实现落点，待逐符号/外部边界验收",
+      "inventoryGap": "原primary module行未列目标及分拆职责；仅标迁入/实施中不足以表达完成"
+    },
+    {
+      "pythonFile": "backend/agent/providers/minimax/web_search.py",
+      "targets": [
+        "gugu-core/src/agent/providers/vendors/search.ts",
+        "gugu-core/src/agent/providers/vendors/search-schemas.ts"
+      ],
+      "targetFilesExist": true,
+      "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
+      "deferredOrRetiredResponsibility": "搜索工具实际注册/授权由Tools调用方负责",
+      "status": "有实现落点，待逐符号/外部边界验收",
+      "inventoryGap": "原primary module行未列目标及分拆职责；仅标迁入/实施中不足以表达完成"
+    },
+    {
+      "pythonFile": "backend/agent/providers/ollama/__init__.py",
+      "targets": [
+        "gugu-core/src/agent/providers/vendors/policies.ts",
+        "gugu-core/src/agent/providers/vendors/ollama.ts"
+      ],
+      "targetFilesExist": true,
+      "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
+      "deferredOrRetiredResponsibility": "本地daemon安装/启动/用户配置由Host提供",
+      "status": "有实现落点，待逐符号/外部边界验收",
+      "inventoryGap": "原primary module行未列目标及分拆职责；仅标迁入/实施中不足以表达完成"
+    },
+    {
+      "pythonFile": "backend/agent/providers/ollama/web_search.py",
+      "targets": [
+        "gugu-core/src/agent/providers/vendors/search.ts",
+        "gugu-core/src/agent/providers/vendors/search-schemas.ts"
+      ],
+      "targetFilesExist": true,
+      "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
+      "deferredOrRetiredResponsibility": "不能因URL推断Ollama而自动授权私网访问",
+      "status": "有实现落点，待逐符号/外部边界验收",
+      "inventoryGap": "原primary module行未列目标及分拆职责；仅标迁入/实施中不足以表达完成"
+    },
+    {
+      "pythonFile": "backend/agent/providers/openai.py",
+      "targets": [
+        "gugu-core/src/agent/providers/openai.ts",
+        "gugu-core/src/agent/providers/base.ts"
+      ],
+      "targetFilesExist": true,
+      "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
+      "deferredOrRetiredResponsibility": "真实OpenAI兼容线上验收另列",
+      "status": "有实现落点，待逐符号/外部边界验收",
+      "inventoryGap": "原primary module行未列目标及分拆职责；仅标迁入/实施中不足以表达完成"
+    },
+    {
+      "pythonFile": "backend/agent/providers/openai_history_adapter.py",
+      "targets": [
+        "gugu-core/src/agent/providers/openai-history.ts"
+      ],
+      "targetFilesExist": true,
+      "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
+      "deferredOrRetiredResponsibility": "旧持久原生状态清理/provenance/加密跨进程续接由Host/Data负责",
+      "status": "有实现落点，待逐符号/外部边界验收",
+      "inventoryGap": "原primary module行未列目标及分拆职责；仅标迁入/实施中不足以表达完成"
+    },
+    {
+      "pythonFile": "backend/agent/providers/openai_responses.py",
+      "targets": [
+        "gugu-core/src/agent/providers/openai-responses.ts"
+      ],
+      "targetFilesExist": true,
+      "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
+      "deferredOrRetiredResponsibility": "SDK退役；Host选模reasoning策略无效值与跨Run恢复需明确",
+      "status": "有实现落点，待逐符号/外部边界验收",
+      "inventoryGap": "原primary module行未列目标及分拆职责；仅标迁入/实施中不足以表达完成"
+    },
+    {
+      "pythonFile": "backend/agent/providers/qwen/__init__.py",
+      "targets": [
+        "gugu-core/src/agent/providers/vendors/policies.ts"
+      ],
+      "targetFilesExist": true,
+      "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
+      "deferredOrRetiredResponsibility": "真实厂商区域/账号配置由Host提供",
+      "status": "有实现落点，待逐符号/外部边界验收",
+      "inventoryGap": "原primary module行未列目标及分拆职责；仅标迁入/实施中不足以表达完成"
+    },
+    {
+      "pythonFile": "backend/agent/providers/qwen/web_search.py",
+      "targets": [
+        "gugu-core/src/agent/providers/vendors/search.ts",
+        "gugu-core/src/agent/providers/vendors/search-schemas.ts"
+      ],
+      "targetFilesExist": true,
+      "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
+      "deferredOrRetiredResponsibility": "Tools实际分发与授权不在Provider内部新建",
+      "status": "有实现落点，待逐符号/外部边界验收",
+      "inventoryGap": "原primary module行未列目标及分拆职责；仅标迁入/实施中不足以表达完成"
+    },
+    {
+      "pythonFile": "backend/agent/providers/search_http.py",
+      "targets": [
+        "gugu-core/src/agent/providers/vendors/search.ts",
+        "gugu-core/src/agent/providers/transport/node.ts",
+        "gugu-core/src/agent/providers/transport/network.ts"
+      ],
+      "targetFilesExist": true,
+      "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
+      "deferredOrRetiredResponsibility": "真实网络服务可用性另验；安全DNS/重定向边界由原生transport执行",
+      "status": "有实现落点，待逐符号/外部边界验收",
+      "inventoryGap": "原primary module行未列目标及分拆职责；仅标迁入/实施中不足以表达完成"
+    },
+    {
+      "pythonFile": "backend/agent/providers/search_limits.py",
+      "targets": [
+        "gugu-core/src/agent/providers/vendors/search.ts"
+      ],
+      "targetFilesExist": true,
+      "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
+      "deferredOrRetiredResponsibility": "限制规则纯Provider；不把结果裁切当完整业务响应成功",
+      "status": "有实现落点，待逐符号/外部边界验收",
+      "inventoryGap": "原primary module行未列目标及分拆职责；仅标迁入/实施中不足以表达完成"
+    },
+    {
+      "pythonFile": "backend/agent/providers/standalone.py",
+      "targets": [
+        "gugu-core/src/agent/providers/standalone.ts",
+        "gugu-core/src/agent/providers/runtime.ts"
+      ],
+      "targetFilesExist": true,
+      "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
+      "deferredOrRetiredResponsibility": "Host用户模型解析与后台调用绑定未迁",
+      "status": "有实现落点，待逐符号/外部边界验收",
+      "inventoryGap": "原primary module行未列目标及分拆职责；仅标迁入/实施中不足以表达完成"
+    },
+    {
+      "pythonFile": "backend/agent/providers/web_search.py",
+      "targets": [
+        "gugu-core/src/agent/providers/vendors/search.ts",
+        "gugu-core/src/agent/providers/vendors/search-schemas.ts"
+      ],
+      "targetFilesExist": true,
+      "disposition": "Provider规则/协议迁入；相邻责任明确拆分",
+      "deferredOrRetiredResponsibility": "仅Provider路由/schema/请求；Tools注册与执行授权由既有Tools负责",
+      "status": "有实现落点，待逐符号/外部边界验收",
+      "inventoryGap": "原primary module行未列目标及分拆职责；仅标迁入/实施中不足以表达完成"
+    }
+  ],
+  "reasoningPolicyCrossCheck": {
+    "file": "backend/tests/agent/providers/test_model_reasoning_policy.py",
+    "existingReport": "已由A/C逐定义报告覆盖，此处补Host边界复核，不重复合并定义",
+    "findings": [
+      "纯协议选择不探测/不改写api_format属于Provider，registry/vendor测试已有落点。",
+      "selected model reasoning_persistence的off/continuation枚举校验与缺省属于Host选模配置；当前ProviderConfig为开放键，registry未显式拒绝summary，无效配置不能称已闭合。",
+      "旧pending_ask_resume禁止跨Run续接与新同Runquestion等待恢复签名是不同生命周期；需Host显式resume作用域策略，不能用后者测试替代前者。"
+    ],
+    "definitions": [
+      {
+        "pythonNode": "backend/tests/agent/providers/test_model_reasoning_policy.py::test_run_policy_comes_from_selected_model",
+        "classification": "相邻HostData",
+        "tsTests": [],
+        "gap": "llm_select/HostData可信选模、交互恢复及私有加密存储生命周期不在厂商Provider模块；Responses单请求开关不能替代这些断言。",
+        "status": "边界延后"
+      },
+      {
+        "pythonNode": "backend/tests/agent/providers/test_model_reasoning_policy.py::test_missing_model_policy_defaults_to_off",
+        "classification": "相邻HostData",
+        "tsTests": [],
+        "gap": "llm_select/HostData可信选模、交互恢复及私有加密存储生命周期不在厂商Provider模块；Responses单请求开关不能替代这些断言。",
+        "status": "边界延后"
+      },
+      {
+        "pythonNode": "backend/tests/agent/providers/test_model_reasoning_policy.py::test_chat_completions_disables_reasoning_persistence",
+        "classification": "相邻HostData",
+        "tsTests": [],
+        "gap": "llm_select/HostData可信选模、交互恢复及私有加密存储生命周期不在厂商Provider模块；Responses单请求开关不能替代这些断言。",
+        "status": "边界延后"
+      },
+      {
+        "pythonNode": "backend/tests/agent/providers/test_model_reasoning_policy.py::test_pending_ask_resume_disables_cross_run_reasoning_state",
+        "classification": "相邻HostData",
+        "tsTests": [],
+        "gap": "llm_select/HostData可信选模、交互恢复及私有加密存储生命周期不在厂商Provider模块；Responses单请求开关不能替代这些断言。",
+        "status": "边界延后"
+      },
+      {
+        "pythonNode": "backend/tests/agent/providers/test_model_reasoning_policy.py::test_known_openai_provider_empty_format_uses_chat_completions",
+        "classification": "相邻HostData",
+        "tsTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "旧DeepSeek模型不接收新thinking，Anthropic端点按协议而非URL关键字选择"
+          }
+        ],
+        "gap": "Provider选择只保护协议；原resolve_run_config_for_user的BYOK/不写配置/跨Run reasoning off待HostData接入。",
+        "status": "部分覆盖"
+      },
+      {
+        "pythonNode": "backend/tests/agent/providers/test_model_reasoning_policy.py::test_unknown_provider_does_not_switch_protocol_or_enable_chat_continuation",
+        "classification": "相邻HostData",
+        "tsTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "旧DeepSeek模型不接收新thinking，Anthropic端点按协议而非URL关键字选择"
+          }
+        ],
+        "gap": "Provider选择只保护协议；原resolve_run_config_for_user的BYOK/不写配置/跨Run reasoning off待HostData接入。",
+        "status": "部分覆盖"
+      },
+      {
+        "pythonNode": "backend/tests/agent/providers/test_model_reasoning_policy.py::test_explicit_chat_keeps_off_for_stale_persistence",
+        "classification": "相邻HostData",
+        "tsTests": [],
+        "gap": "llm_select/HostData可信选模、交互恢复及私有加密存储生命周期不在厂商Provider模块；Responses单请求开关不能替代这些断言。",
+        "status": "边界延后"
+      }
+    ]
+  },
+  "auditLimits": [
+    "本报告未执行pytest或TS测试；引用测试均阅读断言，结果由主Agent统一独立执行。",
+    "AST仅记录断言/raises行供追溯；职责结论依据原调用方、注释与TS实实现/测试，不从定义数推导覆盖率。",
+    "Host/Data/Tools边界延后表示真实生产责任未迁；不允许用可信resolve、fake数据库、空接口或合成HTTP成功冒充端到端验收。",
+    "本报告独占临时JSON；主parity由主Agent/C合并，避免覆盖并发修改。",
+    "审查期间C补入33个共享Provider定义报告，生成时排除这些已审节点，因此从最初148个待审收敛为115个相邻定义。共享缓存门控/物理连接与sanitizer的额外审查发现另列给主Agent，不丢回未知状态。"
+  ],
+  "additionalSharedFindings": [
+    {
+      "pythonNode": "backend/tests/agent/providers/test_cache_singleflight.py::test_provider_branch_coordination_requires_explicit_cache_support",
+      "finding": "读取时runtime.completeBranch仅按cacheSingleflight+stable.length协调，没有policy显式缓存能力门控；已即时报告主Agent，由其修复或保留差异。",
+      "status": "已修复并有直接回归",
+      "resolution": "能力gate已实现并经专门真假规则及真实Runtime分支回归；历史快照不是最终缺陷。"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_client_pool.py::test_provider_builders_share_sdk_transport_with_ten_minute_idle_limit",
+      "finding": "原生Node agent有keepAlive与600000ms设置，scope复用有测试；旧SDK对象类型退役，物理连接实际复用与空闲过期不能由pool fake对象证明。",
+      "status": "物理复用与显式idle已验；默认600秒精确值仍差异",
+      "resolution": "真实socket复用及显式idle过期已直接验证；默认600000ms仍仅源码值，SDK DTO退役，partial精确边界保留。"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm_read_timeout.py::test_primary_drivers_use_shared_five_minute_read_timeout",
+      "finding": "原生传输真实超时路径已测，但自定义短预算不等于四协议入口共享300/10/10/5默认值的逐参数证据。",
+      "status": "已修复并有直接回归",
+      "resolution": "四协议真实TCP默认预算用例已补并运行；原SDK DTO另列退役差异。"
+    }
+  ],
+  "integratedValidation": {
+    "providerNode": {
+      "id": "provider-node-final-366",
+      "reportedBy": "主Agent最终独立执行",
+      "environment": "本地原生Node 26",
+      "files": 7,
+      "passed": 366,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "time": "2026-11-13 17:55:53",
+      "notes": "所有源与测试已冻结后运行；包含真实socket复用/idle失效及A/B/Runtime最后补充断言。transport文件23项。"
+    },
+    "python": {
+      "id": "provider-python-517",
+      "reportedBy": "主Agent实际执行",
+      "environment": "本地原生Linux隔离副本",
+      "files": 43,
+      "passed": 517,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "durationSeconds": 13.75,
+      "notes": "补齐ffprobe后原跳过已实际执行；未使用devserver，未读取或改写运行配置。"
+    },
+    "coreUnit": {
+      "id": "core-unit-final-855",
+      "reportedBy": "主Agent最终独立执行",
+      "files": 36,
+      "passed": 855,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "time": "2026-11-13 17:57:23"
+    },
+    "types": {
+      "status": "通过",
+      "reportedBy": "主Agent最终实际执行",
+      "notes": "17:55后最终测试tsc通过，含B reduce<number>修正。"
+    },
+    "coreBuild": {
+      "status": "通过",
+      "reportedBy": "主Agent最终实际执行",
+      "notes": "17:55后最终Core build通过。"
+    },
+    "limits": [
+      "两侧测试各自执行通过与逐定义语义审计共同构成证据，不是自动差分运行或真实外部服务验收。",
+      "Provider协议与Core接线已经有真实生产实现；Host/Data/Redis/Tools/观测缺口不因合成HTTP或全套通过升级。"
+    ],
+    "latestTargeted": [
+      {
+        "id": "provider-runtime-final-25",
+        "reportedBy": "主Agent实际执行",
+        "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+        "passed": 25,
+        "failed": 0,
+        "skipped": 0,
+        "time": "2026-11-13 17:49:21",
+        "notes": "覆盖最终稳定正文/tools键、idle前后factory及TTL/跨Run/终态引用拒绝；随后tsc通过。"
+      },
+      {
+        "id": "provider-openai-final-105",
+        "reportedBy": "A实际执行",
+        "files": 2,
+        "passed": 105,
+        "failed": 0,
+        "skipped": 0,
+        "time": "2026-11-13 17:52:52",
+        "notes": "含新增4项真实组合用例，原6条partial缺口按断言证据闭合。"
+      },
+      {
+        "id": "provider-anthropic-final-70",
+        "reportedBy": "B实际执行",
+        "files": 1,
+        "passed": 70,
+        "failed": 0,
+        "skipped": 0,
+        "notes": "包含三历史轮重复恢复幂等和普通system主动缓存branch断言。"
+      },
+      {
+        "id": "provider-transport-socket-idle",
+        "reportedBy": "主Agent实际执行",
+        "file": "gugu-core/tests/agent/providers/transport.test.ts",
+        "time": "2026-11-13 17:54:36",
+        "status": "通过",
+        "name": "完整JSON读取后复用真实TCP连接，空闲过期后新建连接而非只复用fake对象"
+      }
+    ],
+    "freeze": "主Agent确认所有Provider源/测试停笔后执行；文档最终整合未再修改源或测试。"
+  },
+  "finalSummary": {
+    "definitions": 115,
+    "uniqueDefinitions": 115,
+    "statusCounts": {
+      "边界延后": 108,
+      "部分覆盖": 7
+    },
+    "pythonFiles": [
+      "backend/tests/agent/providers/test_admin_voice_presets.py",
+      "backend/tests/agent/providers/test_baseline_run_summary_reuse.py",
+      "backend/tests/agent/providers/test_byok_config_override.py",
+      "backend/tests/agent/providers/test_byok_embedding.py",
+      "backend/tests/agent/providers/test_byok_patch_destination_binding.py",
+      "backend/tests/agent/providers/test_byok_security_phase4.py",
+      "backend/tests/agent/providers/test_byok_test_preview.py",
+      "backend/tests/agent/providers/test_byok_user_embedding_rebuild.py",
+      "backend/tests/agent/providers/test_byok_user_scope_guard.py",
+      "backend/tests/agent/providers/test_llm15_preferences_api.py",
+      "backend/tests/agent/providers/test_llm_preset_override_tolerance.py",
+      "backend/tests/agent/providers/test_llm_select_destination_binding.py",
+      "backend/tests/agent/providers/test_modelctx.py",
+      "backend/tests/agent/providers/test_qface.py",
+      "backend/tests/agent/providers/test_rag_query_embedding.py"
+    ],
+    "countingRule": "按pytest定义计数，参数化执行个数另见517；已实现并通过基准不表示线上服务或生产Host迁移。"
+  }
+}
