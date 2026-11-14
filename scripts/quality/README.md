@@ -40,7 +40,7 @@ CRAP 报告和变异测试均为维护者周期性手动执行的质量检查，
 
 报告目录被限制在 `docs/reports/` 内，避免误写运行配置或用户数据。
 
-报告同日已存在时，必须显式添加 `--overwrite`。Mutmut 的 `backend/mutants/`、Stryker 的 `frontend/.stryker-tmp/` 与 `frontend/.stryker-report/` 是忽略的本地生成物，不进业务目录或 Git。Mutmut 不命中已登记的精确目标时会报告 `not_checked`，不能被算作成功。
+报告同日已存在时，必须显式添加 `--overwrite`。Mutmut 的 `backend/mutants/`、Stryker 的 `apps/web/.stryker-tmp/` 与 `apps/web/.stryker-report/` 是忽略的本地生成物，不进业务目录或 Git。Mutmut 不命中已登记的精确目标时会报告 `not_checked`，不能被算作成功。
 
 变异范围或测试关联的调整必须同步更新 `mutation_scope.json`，并说明原因。CRAP 与变异测试仍是维护者定期手动质量检查，不属于自动 CI，不触发、不阻断 push/PR/release workflow。
 
@@ -68,7 +68,7 @@ CRAP 报告和变异测试均为维护者周期性手动执行的质量检查，
 ## CRAP 全量扫描（2026-09-14 起）
 
 - 命令：`backend/.venv/bin/python scripts/quality/crap_report.py --full`。
-- 范围：`crap_scope.json` 的 `full_scan` 段声明目录（当前 backend/agent + backend/app、frontend/src）
+- 范围：`crap_scope.json` 的 `full_scan` 段声明目录（当前 backend/agent + backend/app、apps/web/src）
   内全部源文件；覆盖率来自整语言测试套件单次运行（pytest --cov=agent --cov=app / vitest --coverage.include=src/**）。
 - 报告：`docs/reports/{date}-VERIFY-PRD-TEST-2-CRAP-FULL.{json,md}`；中/高风险全量列出，低风险仅计数。
 - 全量模式同样手动运行、不进 CI；测试运行失败时仍提取已生成的覆盖率并标注 failed。

@@ -12,7 +12,7 @@
     ],
     "typeRoots": [
       "./node_modules/@types",
-      "../../frontend/node_modules/@types"
+      "../../apps/web/node_modules/@types"
     ]
   },
   "include": [

@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 
 const root = path.resolve(import.meta.dirname, '../..');
 const licensesDir = path.join(root, 'licenses');
-const frontendManifestPath = path.join(root, 'frontend/package.json');
+const frontendManifestPath = path.join(root, 'apps/web/package.json');
 const frontendVirtualStorePath = path.join(root, 'node_modules/.pnpm');
 const frontendOnly = process.argv.includes('--frontend-only');
 
@@ -78,7 +78,7 @@ function generateFrontendReport() {
     project: 'frontend',
     label: 'Gugu-web / 前端',
     packageManager: 'pnpm',
-    packageManifests: ['frontend/package.json', 'pnpm-lock.yaml'],
+    packageManifests: ['apps/web/package.json', 'pnpm-lock.yaml'],
     dependencies,
     directDependencies: Object.keys({ ...manifest.dependencies, ...manifest.devDependencies }).sort(),
   };
@@ -141,6 +141,6 @@ const markdown = [
   ]),
 ].join('\n');
 fs.writeFileSync(path.join(licensesDir, 'THIRD-PARTY-NOTICES.md'), `${markdown}\n`);
-fs.mkdirSync(path.join(root, 'frontend/public'), { recursive: true });
-writeJson(path.join(root, 'frontend/public/licenses.json'), { projects: reports });
+fs.mkdirSync(path.join(root, 'apps/web/public'), { recursive: true });
+writeJson(path.join(root, 'apps/web/public/licenses.json'), { projects: reports });
 console.log(`Generated license reports for ${reports.length} projects and ${allPackages.size} unique packages.`);

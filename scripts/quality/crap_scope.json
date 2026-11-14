@@ -27,13 +27,13 @@
     },
     {
       "language": "typescript",
-      "source": "frontend/src/utils/optimisticMutation.ts",
+      "source": "apps/web/src/utils/optimisticMutation.ts",
       "tests": [
-        "frontend/tests/files/optimisticMutation.test.ts"
+        "apps/web/tests/files/optimisticMutation.test.ts"
       ],
       "function_tests": {
         "optimisticMutation": [
-          "frontend/tests/files/optimisticMutation.test.ts"
+          "apps/web/tests/files/optimisticMutation.test.ts"
         ]
       },
       "domain": "文件库乐观更新时序",
@@ -51,7 +51,7 @@
     },
     "typescript": {
       "include_dirs": [
-        "frontend/src"
+        "apps/web/src"
       ],
       "exclude": []
     }

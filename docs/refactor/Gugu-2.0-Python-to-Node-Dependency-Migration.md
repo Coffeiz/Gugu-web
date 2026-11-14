@@ -17,8 +17,8 @@
 
 - `backend/requirements.txt`：全部生产直接声明及安全约束依赖。
 - `backend/requirements-dev.txt`：全部开发与测试依赖。
-- `gugu-core/pyproject.toml`：`sqlalchemy[asyncio]`、`aiosqlite`、可选 `asyncpg`、构建系统。
-- `gugu-desktop/pyproject.toml`：Python Desktop Host 及其 `gugu-core` 依赖。
+- `packages/core/pyproject.toml`：`sqlalchemy[asyncio]`、`aiosqlite`、可选 `asyncpg`、构建系统。
+- `apps/desktop/pyproject.toml`：Python Desktop Host 及其 `gugu-core` 依赖。
 - 系统级/运行时：FFmpeg、Poppler、Cython 原生内核、数据库、Redis、MXC、文件监听、Electron Host、随包 Node 与原生进程管理。
 - 依据现有代码路径标注行为兼容要点。**没有完成全仓动态 import 与 transitive dependency 穷举**；应在实施时自动化扫描并锁定最终 npm 依赖树。
 
@@ -73,7 +73,7 @@
 | `lark-oapi>=1.7.4,<2.0.0` | 飞书 WS 长连/API | `@larksuiteoapi/node-sdk` | M | 消息事件顺序、卡片交互、重连、媒体上传/下载 |
 | `oss2>=2.18.0` | 阿里云 OSS | `ali-oss`（候选） | M | 分片上传、签名 URL、分页、权限、迁移回滚 |
 
-2026-11-13 Provider 切片未新增 Node Provider SDK 依赖：Chat/Responses/Anthropic/Ollama 的 wire、usage、原生续接和错误映射由 `gugu-core/src/agent/providers/` 实际实现，Node 专属 HTTP/DNS/TLS/代理仅从独立入口装配。旧 SDK 内部累加器异常白名单、httpx/httpx2 对象桥接退役，不机械复制语言内部异常类；已收到正文/工具参数/私有推理后的请求禁止重放。URL/DNS 固定、重定向拒绝、分阶段超时、真实合成 TLS/代理和流取消有运行回归，默认环境代理、CA 文件/目录读取及实际网络快照池键也已有生产实现和真实回归；搜索可显式关闭环境继承，SOCKS 明确不支持，真实 Host 网络配置热更新装配仍待验收。具体差异及未完成项见 [Provider 映射](../testing/node-agent-provider-parity.md)，不能据此宣称 M6 或生产入口已整体迁移。
+2026-11-13 Provider 切片未新增 Node Provider SDK 依赖：Chat/Responses/Anthropic/Ollama 的 wire、usage、原生续接和错误映射由 `packages/core/src/agent/providers/` 实际实现，Node 专属 HTTP/DNS/TLS/代理仅从独立入口装配。旧 SDK 内部累加器异常白名单、httpx/httpx2 对象桥接退役，不机械复制语言内部异常类；已收到正文/工具参数/私有推理后的请求禁止重放。URL/DNS 固定、重定向拒绝、分阶段超时、真实合成 TLS/代理和流取消有运行回归，默认环境代理、CA 文件/目录读取及实际网络快照池键也已有生产实现和真实回归；搜索可显式关闭环境继承，SOCKS 明确不支持，真实 Host 网络配置热更新装配仍待验收。具体差异及未完成项见 [Provider 映射](../testing/node-agent-provider-parity.md)，不能据此宣称 M6 或生产入口已整体迁移。
 
 > QQ 目前为 raw WebSocket + HTTP；微信 iLink 有独立适配代码，它们**虽不是上述 pip 包**，仍须迁移消息、媒体、幂等、Gateway、trace_id 与重试逻辑。
 
@@ -147,15 +147,15 @@
 
 | 盘点部分 | 目标 | 处理方式 | 风险 |
 |---|---|---|---|
-| `gugu-core` Python wheel | 顶层 `gugu-core/` TypeScript | 项目/联系人首批已迁；其余 Domain/Application 逐域迁移 | 中 |
-| `gugu_core/data` SQLAlchemy | `gugu-core/src/data/` + Kysely | 首批已落地；后续仍须**跨域事务整体迁移**，不得 Python/Node 双写 | 高 |
+| `gugu-core` Python wheel | 顶层 `packages/core/` TypeScript | 项目/联系人首批已迁；其余 Domain/Application 逐域迁移 | 中 |
+| `gugu_core/data` SQLAlchemy | `packages/core/src/data/` + Kysely | 首批已落地；后续仍须**跨域事务整体迁移**，不得 Python/Node 双写 | 高 |
 | `gugu_core.data.runtime.LocalRuntime` | Node SQLite Host | 显式 initialize/open/migrate/close | 高 |
 | `gugu_core.data.migrations` | SQLite 增量迁移器 | 当前本地 schema 3；v1/v2 显式备份升级及回滚验收，不因换壳升级 schema | 高 |
 | `gugu-desktop-host` Python 管道进程 | 独立 Node 26 Core 进程 | Node 已替换 Python；Electron Main 继续使用 NDJSON v2、Worker 与收据契约 | 中 |
 | 旧 Rust 桌面 Host | Electron + TS Main/Preload | 已迁入窗口/生命周期与 IPC 的安全、恢复契约；Core 不依赖 Electron | 高 |
 | `@microsoft/mxc-sdk@1.0.1` | **复用（PoC）** | 通过 Core `agent/executor/mxc.ts` 适配 Host 注入的原生后端；保留有界协议/能力校验，不导入 Electron | 高 |
 | 旧 Rust 桌面构建 CLI | `electron` + `electron-builder` | 已从活动依赖、源码和构建链移除；用 `electron-builder.yml` 及 `scripts/package.ts` / `smoke.ts` 验证依赖与资源 | 中～高 |
-| Vue `frontend/` 独立 desktop 入口 | **复用** | 将旧桌面 bridge 改为最小 Preload API；不暴露通用 IPC/FS/进程接口 | 中 |
+| Vue `apps/web/` 独立 desktop 入口 | **复用** | 将旧桌面 bridge 改为最小 Preload API；不暴露通用 IPC/FS/进程接口 | 中 |
 | `gugu-desktop` Node engines 约束 | 构建 Node、Electron 内嵌 Node、Core Node 分别声明 | Core 保持已声明的 Node 26；不假设 Electron 内嵌版本相同 | 中 |
 | 现有 Node sidecar 制品 | Electron 真实资源目录中的独立 Node/Core 制品 | 重用装配/完整性契约；原生依赖按独立 Node ABI 构建，安装后脱离开发目录验证 | 高 |
 
@@ -206,7 +206,7 @@ Core 的 `runtime/transport/stdio.ts` / `ipc.ts` 仅适配传输，复用 `runti
 
 ## 6. 推荐目标栈（候选，并非锁定清单）
 
-目录统一采用主清单的 `gugu-core/`、`gugu-desktop/`、未来 `gugu-saas/` 与 `gugu-mobile/`，保留 `frontend/`；不再维护另一套 `apps/` / `packages/` 搬迁布局。领域、数据、Runtime 和平台契约的具体文件职责见主清单 §2。
+目录统一采用主清单的 `packages/core/`、`apps/desktop/`、未来 `gugu-saas/` 与 `gugu-mobile/`，保留 `apps/web/`；不再维护另一套 `apps/` / `packages/` 搬迁布局。领域、数据、Runtime 和平台契约的具体文件职责见主清单 §2。
 
 - Web：优先 **Vue 3 + Vite**；不为“全 TS”而强制换 Nuxt 或 Next.js。
 - API：`fastify` 优先，原因是独立 Node 服务更贴近现有 FastAPI/Worker 边界；可另做 Hono PoC。
@@ -260,13 +260,13 @@ Core 的 `runtime/transport/stdio.ts` / `ipc.ts` 仅适配传输，复用 `runti
 - [PR #116](https://github.com/Coffeiz/Gugu-web/pull/116)
 - [生产 requirements](https://github.com/Coffeiz/Gugu-web/blob/020ed06100bbd1f946ee2f277afa2b537fd64677/backend/requirements.txt)
 - [开发 requirements](https://github.com/Coffeiz/Gugu-web/blob/020ed06100bbd1f946ee2f277afa2b537fd64677/backend/requirements-dev.txt)
-- [Core package](https://github.com/Coffeiz/Gugu-web/blob/020ed06100bbd1f946ee2f277afa2b537fd64677/gugu-core/pyproject.toml)
-- [Desktop host package](https://github.com/Coffeiz/Gugu-web/blob/020ed06100bbd1f946ee2f277afa2b537fd64677/gugu-desktop/pyproject.toml)
+- [Core package](https://github.com/Coffeiz/Gugu-web/blob/020ed06100bbd1f946ee2f277afa2b537fd64677/packages/core/pyproject.toml)
+- [Desktop host package](https://github.com/Coffeiz/Gugu-web/blob/020ed06100bbd1f946ee2f277afa2b537fd64677/apps/desktop/pyproject.toml)
 - [RAG Jieba 适配](https://github.com/Coffeiz/Gugu-web/blob/020ed06100bbd1f946ee2f277afa2b537fd64677/backend/agent/rag/cython_tokenizer.py)
 - [中日文读音](https://github.com/Coffeiz/Gugu-web/blob/020ed06100bbd1f946ee2f277afa2b537fd64677/backend/app/utils/romaji.py)
 - [音频转码](https://github.com/Coffeiz/Gugu-web/blob/020ed06100bbd1f946ee2f277afa2b537fd64677/backend/app/core/media_transcode.py)
-- [Core 数据装配](https://github.com/Coffeiz/Gugu-web/blob/020ed06100bbd1f946ee2f277afa2b537fd64677/gugu-core/src/gugu_core/data/unit_of_work.py)
-- [桌面 IPC](https://github.com/Coffeiz/Gugu-web/blob/020ed06100bbd1f946ee2f277afa2b537fd64677/gugu-desktop/native-host/src/core_host.rs)
+- [Core 数据装配](https://github.com/Coffeiz/Gugu-web/blob/020ed06100bbd1f946ee2f277afa2b537fd64677/packages/core/src/gugu_core/data/unit_of_work.py)
+- [桌面 IPC](https://github.com/Coffeiz/Gugu-web/blob/020ed06100bbd1f946ee2f277afa2b537fd64677/apps/desktop/native-host/src/core_host.rs)
 
 **官方文档/代码参考**
 

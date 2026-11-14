@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # 默认 Compose 一体化应用镜像：前端 dist + 后端生产运行时，由统一应用服务提供站点。
-# 与 backend/Dockerfile.prod、frontend/Dockerfile.prod（供生产分离 Compose 使用）并存；
+# 与 backend/Dockerfile.prod、apps/web/Dockerfile.prod（供生产分离 Compose 使用）并存；
 # 构建上下文 = 仓库根目录。
 #
 # 产物只含生产运行时：不含前端源码、前端 node_modules、pnpm 缓存、测试代码与 docs/；
@@ -18,14 +18,14 @@ RUN npm install --global pnpm@10.15.0
 # 依赖单独一层：workspace 元数据和 manifest 未变时改代码不重装；
 # pnpm store 走 cache mount，lockfile 变更时只下载增量。
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
-COPY frontend/package.json ./frontend/package.json
+COPY apps/web/package.json ./apps/web/package.json
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     pnpm config set store-dir /pnpm/store \
     && pnpm install --filter gugu-web --frozen-lockfile
 
-COPY frontend/ ./frontend/
+COPY apps/web/ ./apps/web/
 COPY backend/ts/workers/chart-renderer/diagram-source.mjs backend/ts/workers/chart-renderer/diagram-source.d.mts backend/ts/workers/chart-renderer/svg-style.mjs backend/ts/workers/chart-renderer/theme.mjs backend/ts/workers/chart-renderer/theme.d.mts ./backend/ts/workers/chart-renderer/
-RUN cd frontend && pnpm build
+RUN cd apps/web && pnpm build
 
 # ── Stage 1.5：图表渲染 Worker 运行时依赖 ───────────────────────────────────
 FROM node:26-trixie AS chart-runtime
@@ -261,7 +261,7 @@ RUN mkdir -p ./bin
 COPY backend/bin/gugu-filesync-ts-worker.cjs ./bin/gugu-filesync-ts-worker.cjs
 COPY backend/ts/workers/chart-renderer/worker.mjs ./bin/gugu-chart-worker.mjs
 COPY backend/ts/workers/chart-renderer/diagram-source.mjs backend/ts/workers/chart-renderer/svg-style.mjs backend/ts/workers/chart-renderer/theme.mjs backend/ts/workers/chart-renderer/raster-dimensions.mjs ./bin/
-COPY frontend/public/fonts/Noto_Sans_SC/NotoSansSC-VariableFont_wght.ttf ./bin/fonts/NotoSansSC-VariableFont_wght.ttf
+COPY apps/web/public/fonts/Noto_Sans_SC/NotoSansSC-VariableFont_wght.ttf ./bin/fonts/NotoSansSC-VariableFont_wght.ttf
 COPY --from=chart-runtime /chart/node_modules ./bin/node_modules
 # 冒烟启动图表 Worker：解析它的全部同级依赖与 CJK 字体路径。缺任何一个都让镜像构建失败，
 # 而不是等到线上渲染时才 ERR_MODULE_NOT_FOUND。
@@ -286,7 +286,7 @@ RUN cd /opt/gugu/image-app && python3 -c "import updater.daemon, updater.client"
 RUN python -c "import importlib.util; assert importlib.util.find_spec('Cython') is None; from agent.rag import cython_native, cython_kernel; from agent.rag.cython_backend import build_text_index, search_text; index = build_text_index(['gugu rag bm25 smoke', 'unrelated document']); hits = search_text(index, 'bm25', limit=1); assert hits and hits[0][0] == 0, hits; print('Cython RAG BM25 runtime smoke passed')"
 
 # 前端静态产物：由 Nginx 直接托管，API/SSE/WebSocket 反代到容器内 Uvicorn。
-COPY --from=frontend-build /workspace/frontend/dist ./static/
+COPY --from=frontend-build /workspace/apps/web/dist ./static/
 COPY nginx/compose.conf /etc/nginx/nginx.conf
 COPY nginx/prepare-admin-entry.sh /usr/local/bin/prepare-admin-entry.sh
 RUN mkdir -p logs \

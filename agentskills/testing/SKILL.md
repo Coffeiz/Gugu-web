@@ -7,7 +7,7 @@ description: 测试约定。pytest 基座、vitest 要求、E2E Playwright 标�
 
 ## 回归测试与主动脚本分层
 
-- 自动回归断言与人工发起的诊断、基准、冒烟脚本分开存放。后端回归测试只放 `backend/tests/`；前端 Vitest 放 `frontend/tests/`；Playwright 放 `frontend/e2e/`。后端主动脚本按用途放 `backend/scripts/diagnostics/`、`benchmarks/`、`smoke/` 或 `checks/`。
+- 自动回归断言与人工发起的诊断、基准、冒烟脚本分开存放。后端回归测试只放 `backend/tests/`；前端 Vitest 放 `apps/web/tests/`；Playwright 放 `apps/web/e2e/`。后端主动脚本按用途放 `backend/scripts/diagnostics/`、`benchmarks/`、`smoke/` 或 `checks/`。
 - 主动脚本文件名用 `probe_*.py`、`compare_*.py`、`bench_*` 或 `smoke_*` 等动作名；禁止以 `test_*.py`、`*_test.py`、`*.test.*`、`*.spec.*` 命名，以免被测试收集和元数据审计误认。自动回归测试继续使用各框架的标准命名。
 - 主动脚本不应成为回归测试的唯一覆盖。发现稳定行为后，应将合成输入、可重复断言沉淀到对应回归套件；真实 Provider/数据探针留在人工脚本目录并明确成本、副作用和授权边界。
 - `scripts/tests/` 是测试分层调度和清单治理工具，不是产品测试用例目录。性能报告、临时复现输出和真实数据不得放进回归测试目录。
@@ -64,13 +64,13 @@ description: 测试约定。pytest 基座、vitest 要求、E2E Playwright 标�
 
 ## 前端单测（vitest）
 
-独立 TS Core 的回归放在 `gugu-core/tests/`，执行 `pnpm --filter @gugu/core test`；Python 对照测试执行 `test:golden`，必须显式提供安装了兼容包的 `GUGU_CORE_GOLDEN_PYTHON`。对应 Node job 单独连接隔离 PostgreSQL。保留 `backend/tests/core/` 的 Python 参考回归；新增 Core 测试同样登记元数据，不混入前端套件。
+独立 TS Core 的回归放在 `packages/core/tests/`，执行 `pnpm --filter @gugu/core test`；Python 对照测试执行 `test:golden`，必须显式提供安装了兼容包的 `GUGU_CORE_GOLDEN_PYTHON`。对应 Node job 单独连接隔离 PostgreSQL。保留 `backend/tests/core/` 的 Python 参考回归；新增 Core 测试同样登记元数据，不混入前端套件。
 
-Node Core 以 `tests/suites.json` 显式分类，已提供 unit/integration/ipc/postgres/parity/all；与 pytest 相同，process/external_service 自动归 slow。快速层不启动 Worker、进程或服务，显式选择的 PG/Python 缺依赖即失败。具体行为映射及严格校验差异见 [回归对照清单](../../docs/testing/node-core-parity.md)，整体状态见 [T1](../../docs/refactor/Gugu-2.0-架构与迁移任务清单.md#core-test-parity)。移动和新增时保留原断言，同步分类、元数据、清单与 CI；不能把当前项目/联系人切片描述为全量后端等价。Electron Host 回归放在 `gugu-desktop/tests/`，真实制品 smoke 使用新建临时目录。
+Node Core 以 `tests/suites.json` 显式分类，已提供 unit/integration/ipc/postgres/parity/all；与 pytest 相同，process/external_service 自动归 slow。快速层不启动 Worker、进程或服务，显式选择的 PG/Python 缺依赖即失败。具体行为映射及严格校验差异见 [回归对照清单](../../docs/testing/node-core-parity.md)，整体状态见 [T1](../../docs/refactor/Gugu-2.0-架构与迁移任务清单.md#core-test-parity)。移动和新增时保留原断言，同步分类、元数据、清单与 CI；不能把当前项目/联系人切片描述为全量后端等价。Electron Host 回归放在 `apps/desktop/tests/`，真实制品 smoke 使用新建临时目录。
 
 - 跑法：`corepack pnpm --filter gugu-web run test:run`（一次性）或 `corepack pnpm --filter gugu-web run test`（watch）。
-- 所有前端 Vitest 测试统一放在 `frontend/tests/<功能域>/`，按产品功能或跨模块领域归档；需要细分时在功能域下建立子目录。`frontend/src/` 只放生产代码，禁止在源码旁新建 `*.test.*` / `*.spec.*`；旧的 `frontend/test/` 扁平目录不再使用。Vitest 与 `test:fast` 只发现 `frontend/tests/`。
-- 新测试优先使用 `@/` alias 引用 `src/` 生产模块，避免测试搬迁后相对路径失效；同一测试域的辅助夹具放在 `frontend/tests/<功能域>/` 内，不与生产代码混放。文件名使用被保护行为或模块名加 `.test.ts`；浏览器端交互验收仍归 `frontend/e2e/`，不混入 Vitest。
+- 所有前端 Vitest 测试统一放在 `apps/web/tests/<功能域>/`，按产品功能或跨模块领域归档；需要细分时在功能域下建立子目录。`apps/web/src/` 只放生产代码，禁止在源码旁新建 `*.test.*` / `*.spec.*`；旧的 `apps/web/test/` 扁平目录不再使用。Vitest 与 `test:fast` 只发现 `apps/web/tests/`。
+- 新测试优先使用 `@/` alias 引用 `src/` 生产模块，避免测试搬迁后相对路径失效；同一测试域的辅助夹具放在 `apps/web/tests/<功能域>/` 内，不与生产代码混放。文件名使用被保护行为或模块名加 `.test.ts`；浏览器端交互验收仍归 `apps/web/e2e/`，不混入 Vitest。
 - 移动既有测试时保持行为断言不变，只改必要的导入、测试数据路径和质量工具映射；更新 `docs/testing/test-metadata.json` 中对应测试路径，不将纯搬迁误登记为新增测试。
 - 改完纯逻辑/composable 之后必须跑。
 - 测试失败时先定位实现、夹具和调用链，**不得直接改断言、删除用例、增加 `skip` 或放宽校验来恢复绿色**。
@@ -91,11 +91,11 @@ Node Core 以 `tests/suites.json` 显式分类，已提供 unit/integration/ipc/
 
 ## E2E（Playwright）
 
-配置在 `frontend/playwright.config.ts`，用例在 `frontend/e2e/*.spec.ts`。
+配置在 `apps/web/playwright.config.ts`，用例在 `apps/web/e2e/*.spec.ts`。
 
 ### CI 只接确定性的关键路径
 
-CI 的 Runtime integration workflow 执行 `test:e2e:stable`；当前稳定列表包含 `smoke`、`page-lifecycle`、`calendar`、`chat`、`file-lifecycle`、`file-drag-runtime`、`filesystem-phases`、`mind-canvas-runtime`、`scheduled-task-ui`、`scheduled-task-run`、`theme-divider`。文件系统 E2E 必须创建唯一 fixture，并在每例结束时精确清理，不能依赖测试账号已有文件或项目，也不能因缺少既有数据而跳过。以 `frontend/package.json` 的脚本和 workflow 调用为准，调整列表时同步更新本文。
+CI 的 Runtime integration workflow 执行 `test:e2e:stable`；当前稳定列表包含 `smoke`、`page-lifecycle`、`calendar`、`chat`、`file-lifecycle`、`file-drag-runtime`、`filesystem-phases`、`mind-canvas-runtime`、`scheduled-task-ui`、`scheduled-task-run`、`theme-divider`。文件系统 E2E 必须创建唯一 fixture，并在每例结束时精确清理，不能依赖测试账号已有文件或项目，也不能因缺少既有数据而跳过。以 `apps/web/package.json` 的脚本和 workflow 调用为准，调整列表时同步更新本文。
 
 项目文件区 Runtime 拖拽单独由 `test:e2e:experimental` 运行。当前浏览器复现中，项目文件卡片松手后代理没有结束、服务端移动请求也未发出；在修复该交互前不要把这两条用例纳入稳定 CI。
 
@@ -104,7 +104,7 @@ CI 的 Runtime integration workflow 执行 `test:e2e:stable`；当前稳定列�
 - 不接真实模型——CI 用 `backend/scripts/testing/mock_llm_server.py`。断言只验证"收到了 AI 回复"，不抠固定文字。
 - 不需要真实设备权限或第三方账号绑定。
 
-新增 CI 用例需同时改 `.spec.ts` 文件、`frontend/package.json` 的稳定 E2E 列表，并确认 workflow 调用 `pnpm --filter gugu-web run test:e2e:stable`。
+新增 CI 用例需同时改 `.spec.ts` 文件、`apps/web/package.json` 的稳定 E2E 列表，并确认 workflow 调用 `pnpm --filter gugu-web run test:e2e:stable`。
 
 ### 选择器约定
 

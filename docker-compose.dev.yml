@@ -374,7 +374,7 @@ services:
     logging: *json-file-logging
     build:
       context: .
-      dockerfile: frontend/Dockerfile
+      dockerfile: apps/web/Dockerfile
     ports:
       - "9595:5173"   # 宿主机 9595 → 容器内 vite dev server 仍然是 5173，容器内部端口不用改
     environment:
@@ -382,10 +382,10 @@ services:
       # 用 compose 服务名 backend 才能连到后端容器。
       VITE_API_PROXY_TARGET: http://backend:8000
     volumes:
-      - ./frontend:/workspace/frontend
-      # 源码目录挂载会覆盖镜像内的 frontend/node_modules；依赖卷必须挂在被覆盖的
+      - ./apps/web:/workspace/apps/web
+      # 源码目录挂载会覆盖镜像内的 apps/web/node_modules；依赖卷必须挂在被覆盖的
       # 子目录上，否则 pnpm dev 启动时找不到 Vite。
-      - /workspace/frontend/node_modules
+      - /workspace/apps/web/node_modules
     depends_on:
       - backend
 

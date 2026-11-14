@@ -32,6 +32,7 @@ if (!['unit', 'integration', 'e2e', 'all'].includes(tier)) {
 }
 
 if (tier === 'unit' || tier === 'all') {
+  run('共享 FS 回归', 'pnpm', ['--filter', '@gugu/fs', 'test'], root)
   run('Node Core 快速隔离回归', 'pnpm', ['--filter', '@gugu/core', 'test:unit'], root)
   backendPytest('后端 L0/L1 单元测试', 'not slow and not external_service and not process and not e2e_support')
   run('前端单元测试', 'pnpm', ['--filter', 'gugu-web', 'run', 'test:run'], root)

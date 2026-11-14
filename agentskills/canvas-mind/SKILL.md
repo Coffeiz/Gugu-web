@@ -27,7 +27,7 @@ description: 画布（Mind）和便签的开发指南。涵盖内容卡片约定
 
 ### 标题拆分规则
 
-只读视图共用 `frontend/src/composables/useMindEditor.ts` 的 `splitMindTitleBody()`：
+只读视图共用 `apps/web/src/composables/useMindEditor.ts` 的 `splitMindTitleBody()`：
 
 - 取 `content_md` 第一个非空行；
 - 若首行是 `# xxx`（一到六级标题）→ 摘出为卡片标题，其余为正文；

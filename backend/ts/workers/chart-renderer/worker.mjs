@@ -16,7 +16,7 @@ const MAX_PNG_BYTES = 3 * 1024 * 1024
 const MATH_IMAGE_PADDING = 16
 const CJK_FONT_FILE = [
   new URL('./fonts/NotoSansSC-VariableFont_wght.ttf', import.meta.url),
-  new URL('../../../../frontend/public/fonts/Noto_Sans_SC/NotoSansSC-VariableFont_wght.ttf', import.meta.url),
+  new URL('../../../../apps/web/public/fonts/Noto_Sans_SC/NotoSansSC-VariableFont_wght.ttf', import.meta.url),
   new URL('../../frontend/public/fonts/Noto_Sans_SC/NotoSansSC-VariableFont_wght.ttf', import.meta.url),
 ].map(fileURLToPath).find(existsSync)
 if (!CJK_FONT_FILE) throw new Error('cjk_font_unavailable')

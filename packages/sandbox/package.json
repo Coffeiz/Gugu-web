@@ -1,0 +1,28 @@
+{
+  "name": "@gugu/sandbox",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./contracts": "./dist/contracts.js",
+    "./executor": "./dist/executor.js",
+    "./mxc": "./dist/mxc.js",
+    "./platform": "./dist/platform.js",
+    "./policy": "./dist/policy.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "optionalDependencies": {
+    "@microsoft/mxc-sdk": "1.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.6",
+    "typescript": "6.0.3"
+  },
+  "license": "Apache-2.0",
+  "files": [
+    "dist"
+  ]
+}

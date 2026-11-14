@@ -153,7 +153,7 @@ COPY backend/ts/workers/chart-renderer/diagram-source.mjs ./bin/diagram-source.m
 COPY backend/ts/workers/chart-renderer/svg-style.mjs ./bin/svg-style.mjs
 COPY backend/ts/workers/chart-renderer/theme.mjs ./bin/theme.mjs
 COPY backend/ts/workers/chart-renderer/raster-dimensions.mjs ./bin/raster-dimensions.mjs
-COPY frontend/public/fonts/Noto_Sans_SC/NotoSansSC-VariableFont_wght.ttf ./bin/fonts/NotoSansSC-VariableFont_wght.ttf
+COPY apps/web/public/fonts/Noto_Sans_SC/NotoSansSC-VariableFont_wght.ttf ./bin/fonts/NotoSansSC-VariableFont_wght.ttf
 COPY --from=chart-runtime /chart/node_modules ./bin/node_modules
 # 冒烟启动图表 Worker：解析它的全部同级依赖与 CJK 字体路径。缺任何一个都让镜像构建失败，
 # 而不是等到线上渲染时才 ERR_MODULE_NOT_FOUND。

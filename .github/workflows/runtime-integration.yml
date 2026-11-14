@@ -52,10 +52,11 @@ jobs:
           python-version: '3.12'
       - name: 安装 Core 与 Python 参考实现
         run: |
-          pnpm --filter @gugu/core install --frozen-lockfile
+          pnpm --filter @gugu/core... --filter @gugu/fs install --frozen-lockfile
           python -m pip install -e ./compat/core-python
       - name: 分层清单与完整双库/进程/Python 对照（集合去重）
         run: |
+          pnpm --filter @gugu/fs test
           pnpm --filter @gugu/core test:list
           pnpm --filter @gugu/core typecheck:tests
           pnpm --filter @gugu/core test:all
@@ -86,7 +87,7 @@ jobs:
       - name: 安装 Electron、Core 与现有前端依赖
         run: |
           pnpm --filter gugu-desktop... --filter gugu-web install --frozen-lockfile
-          node gugu-desktop/node_modules/electron/install.js
+          node apps/desktop/node_modules/electron/install.js
       - name: Core 快速层与 Node IPC（不依赖 Python/PG）
         run: |
           pnpm --filter @gugu/core test:unit
@@ -96,23 +97,23 @@ jobs:
           pnpm --filter gugu-desktop typecheck
           pnpm --filter gugu-desktop test
       - name: 构建安装制品与完整独立 Core
-        run: pnpm --dir gugu-desktop build
+        run: pnpm --dir apps/desktop build
       - name: 真实应用创建、重启、收据与 Renderer 隔离
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then
-            executable=$(find gugu-desktop/release/win-unpacked -maxdepth 1 -name '*.exe' -print -quit)
+            executable=$(find apps/desktop/release/win-unpacked -maxdepth 1 -name '*.exe' -print -quit)
           else
-            application=$(find gugu-desktop/release -maxdepth 2 -name '*.app' -type d -print -quit)
+            application=$(find apps/desktop/release -maxdepth 2 -name '*.app' -type d -print -quit)
             test -n "$application"
             executable="$application/Contents/MacOS/咕咕桌面验证"
-            node gugu-desktop/scripts/smoke-sidecar.mjs --root "$application/Contents/Resources/core-sidecar"
+            node apps/desktop/scripts/smoke-sidecar.mjs --root "$application/Contents/Resources/core-sidecar"
           fi
           test -n "$executable"
-          node gugu-desktop/scripts/smoke.ts --app "$executable"
+          node apps/desktop/scripts/smoke.ts --app "$executable"
       - name: 保留平台安装制品
         shell: bash
-        run: tar -czf desktop-electron-${{ runner.os }}-${{ runner.arch }}.tar.gz -C gugu-desktop/release .
+        run: tar -czf desktop-electron-${{ runner.os }}-${{ runner.arch }}.tar.gz -C apps/desktop/release .
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-electron-${{ runner.os }}-${{ runner.arch }}
@@ -511,7 +512,7 @@ jobs:
         run: pnpm --filter gugu-web exec playwright install --with-deps chromium
 
       - name: Start frontend dev server
-        working-directory: frontend
+        working-directory: apps/web
         run: |
           nohup pnpm run dev -- --port 5173 --strictPort > /tmp/frontend.log 2>&1 &
           for i in $(seq 1 40); do
@@ -521,7 +522,7 @@ jobs:
           echo '::error::frontend dev server 未在预期时间内启动'; cat /tmp/frontend.log; exit 1
 
       - name: Check frontend API proxy login
-        working-directory: frontend
+        working-directory: apps/web
         run: |
           curl --fail-with-body --silent --show-error \
             -H 'Content-Type: application/json' \
@@ -530,7 +531,7 @@ jobs:
             http://127.0.0.1:5173/api/v1/auth/login
 
       - name: Run E2E (稳定关键路径)
-        working-directory: frontend
+        working-directory: apps/web
         # 按文件而非 --grep 选测试：chromium 项目依赖 setup 项目（登录态），
         # --grep 会连 setup 项目里那条不带 @ci 的登录用例一起过滤掉，导致
         # 依赖链断裂；按路径跑则 setup 依赖照常执行，只是被测文件收窄。
@@ -551,14 +552,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report
-          path: frontend/playwright-report/
+          path: apps/web/playwright-report/
 
       - name: Upload Playwright test results on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: playwright-test-results
-          path: frontend/test-results/
+          path: apps/web/test-results/
 
       - name: Failure classification summary
         if: failure()

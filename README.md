@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="frontend/public/Gugu-logo-colored.png" width="180" alt="咕咕 Logo">
+<img src="apps/web/public/Gugu-logo-colored.png" width="180" alt="咕咕 Logo">
 
 # 咕咕
 
@@ -12,7 +12,7 @@
 
 [![status](https://img.shields.io/badge/status-active-success?style=flat)](https://www.gugugu.site)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat)](LICENSE)
-[![Vue](https://img.shields.io/badge/frontend-Vue%203-42b883?style=flat)](frontend/)
+[![Vue](https://img.shields.io/badge/frontend-Vue%203-42b883?style=flat)](apps/web/)
 [![Python](https://img.shields.io/badge/backend-Python%20latest-3776ab?style=flat)](backend/)
 
 [中文](README.md) ｜ [English](README_en.md) ｜ [快速部署](docs/quick-deploy.md) ｜ [在线预览](https://www.gugugu.site)
@@ -56,19 +56,19 @@
 <table>
   <tr>
     <td width="50%" valign="top">
-      <img src="frontend/public/onboarding/kanban-drag-1.gif" width="100%" alt="看板跨列拖拽示例">
+      <img src="apps/web/public/onboarding/kanban-drag-1.gif" width="100%" alt="看板跨列拖拽示例">
       <h3>看板</h3>
       <p>项目、阶段、任务和截止日期组成真实的项目工作流。</p>
     </td>
     <td width="50%" valign="top">
-      <img src="frontend/public/onboarding/file-drag-1.gif" width="100%" alt="文件系统拖拽示例">
+      <img src="apps/web/public/onboarding/file-drag-1.gif" width="100%" alt="文件系统拖拽示例">
       <h3>文件系统</h3>
       <p>文件、项目和个人资料在同一套工作空间中持续沉淀，支持本地磁盘和 OSS 存储。</p>
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <img src="frontend/public/onboarding/canvas-drag-1.gif" width="100%" alt="画布自由落点拖拽示例">
+      <img src="apps/web/public/onboarding/canvas-drag-1.gif" width="100%" alt="画布自由落点拖拽示例">
       <h3>画布</h3>
       <p>把便签、项目、文件和日历活动放到自由画布中，建立可视化关系。</p>
     </td>
@@ -94,7 +94,7 @@
 <table>
   <tr>
     <td width="25%" valign="top">
-      <img src="frontend/public/onboarding/IM-messages-1.gif" width="100%" alt="咕咕管理日程示例">
+      <img src="apps/web/public/onboarding/IM-messages-1.gif" width="100%" alt="咕咕管理日程示例">
       <h3>管理日程</h3>
       <p>用自然语言创建和推进项目、安排日程，也可以把重复工作交给定时任务。</p>
     </td>
@@ -456,7 +456,7 @@ LoopScope 是咕咕 Agent 的开发观测和排障工具，用来还原一次请
 
 ```text
 gugu/
-├─ frontend/      Web 工作空间与 Admin 前端
+├─ apps/web/      Web 工作空间与 Admin 前端
 ├─ backend/       API、Agent、Memory、Tools 与数据服务
 ├─ loopscope/     Agent 可观测系统
 ├─ docker/        部署与运行环境

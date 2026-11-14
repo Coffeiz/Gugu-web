@@ -29,7 +29,7 @@ description: 产品设计规范摘要。Glassmorphism 视觉风格、色板系�
 ## 组件规范
 
 - 按钮：圆角 8-9px，主色填充或 ghost 描边
-- **卡片悬浮操作按钮**：跨域契约统一定义在 `frontend/src/assets/styles/components/card-actions.css`
+- **卡片悬浮操作按钮**：跨域契约统一定义在 `apps/web/src/assets/styles/components/card-actions.css`
   （`.file-card-btn` / `.file-list-btn`，file- 前缀仅为历史兼容）。实底 `--control-bg` +
   毛玻璃 + `--elevation-card` 投影，背景/前景 `0.15s` 淡入淡出；破坏性操作加 `del`（或
   `danger`）类取红色 hover。文件库/Dashboard/ProjectModal 直接挂类；画布卡片经
@@ -41,7 +41,7 @@ description: 产品设计规范摘要。Glassmorphism 视觉风格、色板系�
   `--status-danger` / `--status-danger-bg`，`:disabled` 半透明且不hover出药丸底。定时任务卡与
   技能卡共用这一份——发现两张卡片 hover 表现不一致时，先查是不是有人又写了本地 `.link`。
 - 输入框：`--control-bg` 背景，focus 时 `--border-focus` 描边 + `--control-focus-shadow` 光晕
-- 单选下拉：统一使用 `frontend/src/components/common/controls/SelectPopup.vue`；Admin 普通选项通过 `AdminSelect` 使用，Provider 分组等特殊场景在其基础上扩展，不使用页面专用原生 `<select>` 或重复绘制列表弹窗；保存中或不可用时使用公共组件的 `disabled` 状态。
+- 单选下拉：统一使用 `apps/web/src/components/common/controls/SelectPopup.vue`；Admin 普通选项通过 `AdminSelect` 使用，Provider 分组等特殊场景在其基础上扩展，不使用页面专用原生 `<select>` 或重复绘制列表弹窗；保存中或不可用时使用公共组件的 `disabled` 状态。
 - 卡片：`--surface-card-solid` 或静态半透明 tint，圆角 12-16px；常驻内容卡默认不做背景模糊
 - 侧边栏：200px 固定宽度，主站和 Admin 共用 `--sidebar-width`，使用半透明背景、边框与主题 blur
 
@@ -72,7 +72,7 @@ description: 产品设计规范摘要。Glassmorphism 视觉风格、色板系�
 
 ### 开合箭头统一组件 FlipChevron（方向语义全站默认，勿手写）
 
-所有「收起/展开」箭头一律使用公共组件 `frontend/src/components/common/controls/FlipChevron.vue`，
+所有「收起/展开」箭头一律使用公共组件 `apps/web/src/components/common/controls/FlipChevron.vue`，
 禁止在组件里手写 svg + `transform: rotate(...)` 复刻（历史上多次因方向写反返工）。方向语义：
 
 - **默认（不传 direction）= right-down：收起朝右（rotate -90°）、展开转回朝下（rotate 0°）**。

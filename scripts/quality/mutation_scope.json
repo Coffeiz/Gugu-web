@@ -69,12 +69,12 @@
     "tool": "stryker",
     "tool_version": "10.0.0",
     "runner": "vitest",
-    "config": "frontend/stryker.config.mjs",
+    "config": "apps/web/stryker.config.mjs",
     "targets": [
       {
-        "source": "frontend/src/utils/optimisticMutation.ts",
+        "source": "apps/web/src/utils/optimisticMutation.ts",
         "tests": [
-          "frontend/tests/files/optimisticMutation.test.ts"
+          "apps/web/tests/files/optimisticMutation.test.ts"
         ],
         "behavior": "乐观更新提交、回滚及更新意图结算时序"
       }

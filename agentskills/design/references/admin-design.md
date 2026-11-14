@@ -185,7 +185,7 @@ focus：`border-color: rgba(123,127,178,0.4); box-shadow: 0 0 0 3px rgba(123,127
 
 ### `AdminSelect`（暗色下拉选择器）
 
-- Admin 配置项、筛选项和表单单选下拉统一复用 `frontend/src/components/AdminSelect.vue`（基础能力来自 `frontend/src/components/common/controls/SelectPopup.vue`），不得在页面中另写原生 `<select>` 或重复实现列表弹窗。
+- Admin 配置项、筛选项和表单单选下拉统一复用 `apps/web/src/components/AdminSelect.vue`（基础能力来自 `apps/web/src/components/common/controls/SelectPopup.vue`），不得在页面中另写原生 `<select>` 或重复实现列表弹窗。
 - 触发器：filter-input 同款样式，`min-width: 120px`
 - 弹窗：使用 `<Teleport to="body">` + `getBoundingClientRect()` 定位，宽度与触发器一致
 - 弹窗样式：`.popup-menu-dark`（见下）

@@ -31,7 +31,7 @@ RISK_HIGH = 30.0
 RISK_MEDIUM = 15.0
 FULL_RUN_TIMEOUT_SECONDS = 900
 PYTHON_FULL_SCAN_DOMAIN = "全量扫描（backend/agent + backend/app）"
-TYPESCRIPT_FULL_SCAN_DOMAIN = "全量扫描（frontend/src）"
+TYPESCRIPT_FULL_SCAN_DOMAIN = "全量扫描（apps/web/src）"
 FULL_SCAN_LAYER = "全量测试套件覆盖率（手动）"
 FULL_SCAN_CI = "CRAP 报告仅周期性手动运行，不由自动 CI 触发"
 SENSITIVE_KEYS = {
@@ -160,7 +160,7 @@ def _run_full_test(language: str, full_scan: dict[str, dict[str, Any]], temp_dir
         coverage_path = coverage_dir / "coverage.json"
         display = "python -m pytest -q --disable-warnings --cov=agent --cov=app --cov-branch --cov-report=json:<TEMP>（全量测试套件）"
     else:
-        frontend = ROOT / "frontend"
+        frontend = ROOT / "apps" / "web"
         command = [
             "corepack", "pnpm", "exec", "vitest", "run",
             "--coverage.enabled", "--coverage.provider=v8",
@@ -350,16 +350,16 @@ def _run_test(language: str, entries: list[dict[str, Any]], temp_dir: Path) -> d
         display = f"python -m pytest -q --disable-warnings --cov={module} --cov-branch --cov-report=json:<TEMP> {', '.join(test_paths)}"
     else:
         source_paths = sorted({entry["source"] for entry in entries})
-        test_paths = sorted({str(Path(test).relative_to("frontend")) for entry in entries for test in entry["tests"]})
+        test_paths = sorted({str(Path(test).relative_to("apps/web")) for entry in entries for test in entry["tests"]})
         coverage_dir = temp_dir / "typescript-coverage"
-        source_patterns = ",".join(str(Path(path).relative_to("frontend")) for path in source_paths)
+        source_patterns = ",".join(str(Path(path).relative_to("apps/web")) for path in source_paths)
         command = [
             "corepack", "pnpm", "exec", "vitest", "run", *test_paths,
             "--coverage.enabled", "--coverage.provider=v8",
             f"--coverage.include={source_patterns}",
             "--coverage.reporter=json", f"--coverage.reportsDirectory={coverage_dir}",
         ]
-        cwd = ROOT / "frontend"
+        cwd = ROOT / "apps" / "web"
         env = _safe_env(temp_dir)
         coverage_path = coverage_dir / "coverage-final.json"
         display = f"corepack pnpm exec vitest run {' '.join(test_paths)} --coverage.enabled --coverage.provider=v8 --coverage.include={source_patterns} --coverage.reporter=json --coverage.reportsDirectory=<TEMP>"
@@ -396,7 +396,7 @@ def _coverage_for_file(path: Path, coverage_path: Path, language: str) -> tuple[
     data = json.loads(coverage_path.read_text(encoding="utf-8"))
     file_map = data.get("files", {}) if language == "python" else data
     source_resolved = path.resolve()
-    language_root = ROOT / ("backend" if language == "python" else "frontend")
+    language_root = ROOT / ("backend" if language == "python" else "apps/web")
     record = None
     for key, candidate in file_map.items():
         candidate_path = Path(key)
@@ -525,7 +525,7 @@ def _tool_versions() -> dict[str, str]:
         "pytest_cov": importlib.metadata.version("pytest-cov"),
         "coverage": importlib.metadata.version("coverage"),
     }
-    frontend = ROOT / "frontend"
+    frontend = ROOT / "apps" / "web"
     package_json = json.loads((frontend / "package.json").read_text(encoding="utf-8"))
     versions["vitest"] = _node_package_version(frontend / "node_modules/vitest/package.json")
     versions["vitest_coverage_v8"] = _node_package_version(frontend / "node_modules/@vitest/coverage-v8/package.json")

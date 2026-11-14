@@ -1,9 +1,9 @@
 {
-  "gugu-core/tests/agent/harness/run/canonical-cancel.test.ts": {
+  "packages/core/tests/agent/harness/run/canonical-cancel.test.ts": {
     "domain": "agent-harness",
     "layer": "L1",
-    "owner": "gugu-core/src/agent/harness",
-    "productionEntry": "gugu-core/src/agent/harness/harness.ts",
+    "owner": "packages/core/src/agent/harness",
+    "productionEntry": "packages/core/src/agent/harness/harness.ts",
     "keyBehavior": "真实Canonical取消保留完整工具pair与部分正文、不推进摘要水位，下一Run按持久顺序回放",
     "ci": "core-node"
   },
@@ -23,11 +23,11 @@
     "keyBehavior": "平台 tuple 不作为第二展示源，公共展示事件透传且不重新生成身份",
     "ci": "backend-pytest"
   },
-  "frontend/tests/chat/composables/useWebSessionBadges.test.ts": {
+  "apps/web/tests/chat/composables/useWebSessionBadges.test.ts": {
     "domain": "chat-session-status",
     "layer": "L1",
-    "owner": "frontend/src/components/common/gugu-chat/composables/useWebSessionBadges.ts",
-    "productionEntry": "frontend/src/components/common/gugu-chat/GuguChat.vue",
+    "owner": "apps/web/src/components/common/gugu-chat/composables/useWebSessionBadges.ts",
+    "productionEntry": "apps/web/src/components/common/gugu-chat/GuguChat.vue",
     "keyBehavior": "运行优先、后台完成未读、可见会话清除、刷新保留账号隔离已读版本，IM 不参与",
     "ci": "frontend-vitest"
   },
@@ -111,19 +111,19 @@
     "keyBehavior": "Web 与 Agent 并发更新拒绝旧版本覆盖；事件软删除与提醒停用使用版本保护",
     "ci": "backend-test"
   },
-  "frontend/tests/files/fileActionsVersion.test.ts": {
+  "apps/web/tests/files/fileActionsVersion.test.ts": {
     "domain": "files",
     "layer": "L1",
-    "owner": "frontend/composables/files",
-    "productionEntry": "frontend/src/composables/files/useFileActions.ts",
+    "owner": "apps/web/composables/files",
+    "productionEntry": "apps/web/src/composables/files/useFileActions.ts",
     "keyBehavior": "改名与移动提交缓存中的文件版本，成功后回填服务端新版本，避免后续操作继续使用旧版本",
     "ci": "frontend-test"
   },
-  "frontend/tests/calendar/DashboardCalendarPanel.test.ts": {
+  "apps/web/tests/calendar/DashboardCalendarPanel.test.ts": {
     "domain": "calendar",
     "layer": "L1",
-    "owner": "frontend/views/Dashboard",
-    "productionEntry": "frontend/src/views/Dashboard/components/CalendarPanel.vue",
+    "owner": "apps/web/views/Dashboard",
+    "productionEntry": "apps/web/src/views/Dashboard/components/CalendarPanel.vue",
     "keyBehavior": "快捷编辑提交打开时捕获的事件版本；服务端拒绝并发旧草稿后恢复乐观状态、展示冲突提示并刷新缓存",
     "ci": "frontend-test"
   },
@@ -143,51 +143,51 @@
     "keyBehavior": "群被动消息累计条数但不启动或续期闲置；主动 Run 完成后计时且保留较新水位；没有 Provider 用量时不触发压力任务，旧版已入队的任务仍可重建历史后执行",
     "ci": "backend-test"
   },
-  "frontend/tests/admin/agent/useAgentRuntimeConfig.test.ts": {
+  "apps/web/tests/admin/agent/useAgentRuntimeConfig.test.ts": {
     "domain": "agent-runtime-config",
     "layer": "L1",
-    "owner": "frontend/views/Admin/Agent/runtime-config",
-    "productionEntry": "frontend/src/views/Admin/Agent/runtime-config/useAgentRuntimeConfig.ts",
+    "owner": "apps/web/views/Admin/Agent/runtime-config",
+    "productionEntry": "apps/web/src/views/Admin/Agent/runtime-config/useAgentRuntimeConfig.ts",
     "keyBehavior": "五个配置分区只提交各自草案，保留在途状态、三秒成功提示、失败反馈与草案以及服务端归一化回填",
     "ci": "frontend-test"
   },
-  "frontend/tests/files/composables/useFilePasteCore.test.ts": {
+  "apps/web/tests/files/composables/useFilePasteCore.test.ts": {
     "domain": "file-copy",
     "layer": "L0",
-    "owner": "frontend/composables/files",
-    "productionEntry": "frontend/src/composables/files/useFilePasteCore.ts:findFileCopyConflicts",
+    "owner": "apps/web/composables/files",
+    "productionEntry": "apps/web/src/composables/files/useFilePasteCore.ts:findFileCopyConflicts",
     "keyBehavior": "文件库和项目目录复制按同名同后缀严格判定冲突，保留选择顺序与目标 ID，跳过缺失源和非目标目录文件",
     "ci": "frontend-test"
   },
-  "frontend/tests/preview/FloatPreviewWindowDrag.test.ts": {
+  "apps/web/tests/preview/FloatPreviewWindowDrag.test.ts": {
     "domain": "file-preview",
     "layer": "L1",
-    "owner": "frontend/components/common/layout",
-    "productionEntry": "frontend/src/components/common/layout/FloatPreviewWindow.vue",
+    "owner": "apps/web/components/common/layout",
+    "productionEntry": "apps/web/src/components/common/layout/FloatPreviewWindow.vue",
     "keyBehavior": "真实预览组件拖动保持顶部可见、左右与底部 25% 额外视口边界，最大化禁止拖动并可恢复；用隔离虚拟文本避免网络",
     "ci": "frontend-test"
   },
-  "frontend/tests/common/useWindowDrag.test.ts": {
+  "apps/web/tests/common/useWindowDrag.test.ts": {
     "domain": "window-interaction",
     "layer": "L1",
-    "owner": "frontend/composables/core",
-    "productionEntry": "frontend/src/composables/core/useWindowDrag.ts",
+    "owner": "apps/web/composables/core",
+    "productionEntry": "apps/web/src/composables/core/useWindowDrag.ts",
     "keyBehavior": "预览窗和信息弹层保留主键拖动、独立偏移和动态边界，松开或卸载停止监听且不干扰其他窗口",
     "ci": "frontend-test"
   },
-  "frontend/tests/files/runtimeFileObjects.test.ts": {
+  "apps/web/tests/files/runtimeFileObjects.test.ts": {
     "domain": "file-runtime",
     "layer": "L1",
-    "owner": "frontend/composables/files",
-    "productionEntry": "frontend/src/components/common/file-browser/RuntimeFileCard.vue 与 RuntimeFolderCard.vue、RuntimeListRow.vue、文件库 Runtime 列表行",
+    "owner": "apps/web/composables/files",
+    "productionEntry": "apps/web/src/components/common/file-browser/RuntimeFileCard.vue 与 RuntimeFolderCard.vue、RuntimeListRow.vue、文件库 Runtime 列表行",
     "keyBehavior": "五种文件包装器挂载绑定 DOM、同步选择和能力、卸载释放当前对象；旧 generation 不得更新或注销新对象与 surface",
     "ci": "frontend-test"
   },
-  "frontend/tests/files/thumbCache.test.ts": {
+  "apps/web/tests/files/thumbCache.test.ts": {
     "domain": "files",
     "layer": "L0",
-    "owner": "frontend/composables/shared",
-    "productionEntry": "frontend/src/composables/shared/useThumbCache.ts",
+    "owner": "apps/web/composables/shared",
+    "productionEntry": "apps/web/src/composables/shared/useThumbCache.ts",
     "keyBehavior": "文件和附件缩略图保持缓存与并发去重、Cookie 鉴权、失败重试、超时释放以及按文件回收 URL 和加载标记",
     "ci": "frontend-test"
   },
@@ -199,11 +199,11 @@
     "keyBehavior": "IM 记忆按用户平台机器人群与成员隔离；群与成员反思完整共享资料前缀，保留快照工具和各自规则，私聊范围不重复正文",
     "ci": "backend-pytest"
   },
-  "frontend/tests/admin/agent/UsageScenarioTable.test.ts": {
+  "apps/web/tests/admin/agent/UsageScenarioTable.test.ts": {
     "domain": "admin-usage",
     "layer": "L1",
-    "owner": "frontend/views/Admin/Agent",
-    "productionEntry": "frontend/src/views/Admin/Agent/observability/components/UsageScenarioTable.vue",
+    "owner": "apps/web/views/Admin/Agent",
+    "productionEntry": "apps/web/src/views/Admin/Agent/observability/components/UsageScenarioTable.vue",
     "keyBehavior": "场景表展示冷请求和服务端加权非冷缓存率，周期数据变化后更新，无非冷样本显示横线而非零",
     "ci": "frontend-test"
   },
@@ -231,11 +231,11 @@
     "keyBehavior": "上游 Responses 流失败与内部异常分开分类，Web 与 IM 错误一致且不泄露原始诊断正文",
     "ci": "backend-pytest"
   },
-  "frontend/tests/services/apiInFlightDedup.test.ts": {
+  "apps/web/tests/services/apiInFlightDedup.test.ts": {
     "domain": "frontend-api",
     "layer": "L0",
-    "owner": "frontend/services",
-    "productionEntry": "frontend/src/services/api.ts",
+    "owner": "apps/web/services",
+    "productionEntry": "apps/web/src/services/api.ts",
     "keyBehavior": "同一用户的完全相同并发 GET 合并为一个请求且各调用方获得独立结果；请求结束后刷新、不同用户或不同路径仍独立请求",
     "ci": "frontend-test"
   },
@@ -263,195 +263,195 @@
     "keyBehavior": "候选 app 必须保留基础配置并通过离线 bundle 与 Shell smoke 校验",
     "ci": "docker-release"
   },
-  "frontend/tests/filesystem/useFilesystemAuthorization.test.ts": {
+  "apps/web/tests/filesystem/useFilesystemAuthorization.test.ts": {
     "domain": "frontend-scheduling",
     "layer": "L0",
-    "owner": "frontend/composables",
-    "productionEntry": "frontend/src/composables/useFilesystemAuthorization.ts",
+    "owner": "apps/web/composables",
+    "productionEntry": "apps/web/src/composables/useFilesystemAuthorization.ts",
     "keyBehavior": "文件系统授权确认、完成与撤销遵循 API 边界",
     "ci": "frontend-test"
   },
-  "frontend/tests/admin/filesync/FileSyncAdminPanel.test.ts": {
+  "apps/web/tests/admin/filesync/FileSyncAdminPanel.test.ts": {
     "domain": "filesync",
     "layer": "L1",
-    "owner": "frontend/components/filesync",
-    "productionEntry": "frontend/src/components/filesync/FileSyncAdminPanel.vue",
+    "owner": "apps/web/components/filesync",
+    "productionEntry": "apps/web/src/components/filesync/FileSyncAdminPanel.vue",
     "keyBehavior": "异常绑定、任务状态和冲突批量结果可见；一键对账仅排入异常有效绑定，服务端复核后复用排队任务并跳过忙碌绑定；冲突列表截断时阻止批量处理",
     "ci": "frontend-test"
   },
-  "frontend/tests/files/composables/useFileBrowserWindow.test.ts": {
+  "apps/web/tests/files/composables/useFileBrowserWindow.test.ts": {
     "domain": "file-library",
     "layer": "L0",
-    "owner": "frontend/composables/files",
-    "productionEntry": "frontend/src/composables/files/useFileBrowserWindow.ts",
+    "owner": "apps/web/composables/files",
+    "productionEntry": "apps/web/src/composables/files/useFileBrowserWindow.ts",
     "keyBehavior": "大目录只渲染可见窗口且框选继续命中未挂载文件",
     "ci": "frontend-test"
   },
-  "frontend/tests/preview/VideoViewer.test.ts": {
+  "apps/web/tests/preview/VideoViewer.test.ts": {
     "domain": "file-preview",
     "layer": "L1",
-    "owner": "frontend/components/common/viewers",
-    "productionEntry": "frontend/src/components/common/viewers/VideoViewer.vue",
+    "owner": "apps/web/components/common/viewers",
+    "productionEntry": "apps/web/src/components/common/viewers/VideoViewer.vue",
     "keyBehavior": "播放或加载过期签名视频时刷新地址并恢复；切源竞态不串用播放进度；主动暂停中断 play 请求不会变成播放器错误",
     "ci": "frontend-test"
   },
-  "frontend/tests/preview/htmlPreview.test.ts": {
+  "apps/web/tests/preview/htmlPreview.test.ts": {
     "domain": "file-preview",
     "layer": "L0",
-    "owner": "frontend/utils",
-    "productionEntry": "frontend/src/utils/htmlPreview.ts",
+    "owner": "apps/web/utils",
+    "productionEntry": "apps/web/src/utils/htmlPreview.ts",
     "keyBehavior": "HTML 预览中的同页锚点保持在隔离文档内，不解析到宿主应用路由",
     "ci": "frontend-test"
   },
-  "frontend/tests/design/consoleBanner.test.ts": {
+  "apps/web/tests/design/consoleBanner.test.ts": {
     "domain": "frontend-ui",
     "layer": "L0",
-    "owner": "frontend/utils",
-    "productionEntry": "frontend/src/utils/consoleBanner.ts",
+    "owner": "apps/web/utils",
+    "productionEntry": "apps/web/src/utils/consoleBanner.ts",
     "keyBehavior": "主题切换不重复追加控制台横幅",
     "ci": "frontend-test"
   },
-  "frontend/tests/onboarding/progressSaver.test.ts": {
+  "apps/web/tests/onboarding/progressSaver.test.ts": {
     "domain": "onboarding",
     "layer": "L0",
-    "owner": "frontend/composables/onboarding",
-    "productionEntry": "frontend/src/composables/onboarding/progressSaver.ts",
+    "owner": "apps/web/composables/onboarding",
+    "productionEntry": "apps/web/src/composables/onboarding/progressSaver.ts",
     "keyBehavior": "引导步骤快速切换时进度写入合并且串行；旧响应不覆盖更新的本地进度和已完成步骤；退出时立即冲刷；相同模拟延迟的对照测试验证请求数和等待时间下降",
     "ci": "frontend-test"
   },
-  "frontend/tests/agent-configuration/llmThinkingOptions.test.ts": {
+  "apps/web/tests/agent-configuration/llmThinkingOptions.test.ts": {
     "domain": "agent-configuration",
     "layer": "L0",
-    "owner": "frontend/utils",
-    "productionEntry": "frontend/src/utils/llmThinkingOptions.ts",
+    "owner": "apps/web/utils",
+    "productionEntry": "apps/web/src/utils/llmThinkingOptions.ts",
     "keyBehavior": "思考选项按 Provider 与模型身份切换并保留有效选择",
     "ci": "frontend-test"
   },
-  "frontend/tests/agent-configuration/modelProviders.test.ts": {
+  "apps/web/tests/agent-configuration/modelProviders.test.ts": {
     "domain": "agent-configuration",
     "layer": "L0",
-    "owner": "frontend/utils",
-    "productionEntry": "frontend/src/utils/modelProviders.ts",
+    "owner": "apps/web/utils",
+    "productionEntry": "apps/web/src/utils/modelProviders.ts",
     "keyBehavior": "Provider API 协议选项与默认值符合端点能力且保留有效选择",
     "ci": "frontend-test"
   },
-  "frontend/tests/agent-configuration/ModelPicker.test.ts": {
+  "apps/web/tests/agent-configuration/ModelPicker.test.ts": {
     "domain": "agent-configuration",
     "layer": "L1",
-    "owner": "frontend/components/common/models",
-    "productionEntry": "frontend/src/components/common/models/ModelPicker.vue",
+    "owner": "apps/web/components/common/models",
+    "productionEntry": "apps/web/src/components/common/models/ModelPicker.vue",
     "keyBehavior": "模型列表和错误反馈始终显示在当前模型输入行下方，不脱离编辑器弹出",
     "ci": "frontend-test"
   },
-  "frontend/tests/agent-configuration/SpeechModelFields.test.ts": {
+  "apps/web/tests/agent-configuration/SpeechModelFields.test.ts": {
     "domain": "agent-configuration",
     "layer": "L1",
-    "owner": "frontend/components/common/models",
-    "productionEntry": "frontend/src/components/common/models/SpeechModelFields.vue",
+    "owner": "apps/web/components/common/models",
+    "productionEntry": "apps/web/src/components/common/models/SpeechModelFields.vue",
     "keyBehavior": "语音服务商切换同步协议与默认值、清除不适用于新目的地的草稿密钥，并忽略过期模型列表",
     "ci": "frontend-test"
   },
-  "frontend/tests/agent-configuration/VoiceModelConfig.test.ts": {
+  "apps/web/tests/agent-configuration/VoiceModelConfig.test.ts": {
     "domain": "agent-configuration",
     "layer": "L1",
-    "owner": "frontend/views/Admin/Agent/runtime-config",
-    "productionEntry": "frontend/src/views/Admin/Agent/runtime-config/components/VoiceModelConfig.vue",
+    "owner": "apps/web/views/Admin/Agent/runtime-config",
+    "productionEntry": "apps/web/src/views/Admin/Agent/runtime-config/components/VoiceModelConfig.vue",
     "keyBehavior": "关闭语音转写仅在用户确认后执行停用",
     "ci": "frontend-test"
   },
-  "frontend/tests/agent-configuration/useMultimodalProbe.test.ts": {
+  "apps/web/tests/agent-configuration/useMultimodalProbe.test.ts": {
     "domain": "agent-configuration",
     "layer": "L1",
-    "owner": "frontend/views/Admin/Agent/llm",
-    "productionEntry": "frontend/src/views/Admin/Agent/llm/useMultimodalProbe.ts",
+    "owner": "apps/web/views/Admin/Agent/llm",
+    "productionEntry": "apps/web/src/views/Admin/Agent/llm/useMultimodalProbe.ts",
     "keyBehavior": "模型检测反馈留在当前编辑器，且旧模型检测结果不会覆盖后续草稿",
     "ci": "frontend-test"
   },
-  "frontend/tests/agent-configuration/useVoicePresets.test.ts": {
+  "apps/web/tests/agent-configuration/useVoicePresets.test.ts": {
     "domain": "agent-configuration",
     "layer": "L1",
-    "owner": "frontend/views/Admin/Agent/runtime-config",
-    "productionEntry": "frontend/src/views/Admin/Agent/runtime-config/useVoicePresets.ts",
+    "owner": "apps/web/views/Admin/Agent/runtime-config",
+    "productionEntry": "apps/web/src/views/Admin/Agent/runtime-config/useVoicePresets.ts",
     "keyBehavior": "保存后以服务端列表和启用项为准；失败时保留草稿并显示错误",
     "ci": "frontend-test"
   },
-  "frontend/tests/agent-configuration/voiceActivationRefresh.test.ts": {
+  "apps/web/tests/agent-configuration/voiceActivationRefresh.test.ts": {
     "domain": "agent-configuration",
     "layer": "L1",
-    "owner": "frontend/views/Admin/Agent/runtime-config",
-    "productionEntry": "frontend/src/views/Admin/Agent/runtime-config/components/VoiceModelConfig.vue",
+    "owner": "apps/web/views/Admin/Agent/runtime-config",
+    "productionEntry": "apps/web/src/views/Admin/Agent/runtime-config/components/VoiceModelConfig.vue",
     "keyBehavior": "语音模型启停期间保留原卡片实例，异步刷新结束后才更新启用状态",
     "ci": "frontend-test"
   },
-  "frontend/tests/forms/field-label-focus.test.ts": {
+  "apps/web/tests/forms/field-label-focus.test.ts": {
     "domain": "frontend-accessibility",
     "layer": "L0",
-    "owner": "frontend/forms",
-    "productionEntry": "frontend/src 全站 Vue 模板",
+    "owner": "apps/web/forms",
+    "productionEntry": "apps/web/src 全站 Vue 模板",
     "keyBehavior": "字段标题不得通过 label 语义意外聚焦文本输入控件",
     "ci": "test:fast"
   },
-  "frontend/tests/skills/SkillForm.test.ts": {
+  "apps/web/tests/skills/SkillForm.test.ts": {
     "domain": "frontend-skills",
     "layer": "L0",
-    "owner": "frontend/skills",
-    "productionEntry": "frontend/src/views/Skills/components/SkillForm.vue",
+    "owner": "apps/web/skills",
+    "productionEntry": "apps/web/src/views/Skills/components/SkillForm.vue",
     "keyBehavior": "工具卡片长名称和说明可省略显示且悬停可读取全文",
     "ci": "test:fast"
   },
-  "frontend/tests/profile/ProfileDataPortabilityPane.test.ts": {
+  "apps/web/tests/profile/ProfileDataPortabilityPane.test.ts": {
     "domain": "data-portability",
     "layer": "L1",
-    "owner": "frontend/profile",
-    "productionEntry": "frontend/src/components/common/profile/ProfileDataPortabilityPane.vue",
+    "owner": "apps/web/profile",
+    "productionEntry": "apps/web/src/components/common/profile/ProfileDataPortabilityPane.vue",
     "keyBehavior": "预检和失败任务可删除，增量导入完成状态明确显示撤回限制",
     "ci": "frontend-test"
   },
-  "frontend/tests/filesync/admin-events.test.ts": {
+  "apps/web/tests/filesync/admin-events.test.ts": {
     "domain": "filesync-live-events",
     "layer": "L0",
-    "owner": "frontend/composables/filesync",
-    "productionEntry": "frontend/src/composables/filesync/useFileSyncAdminEvents.ts",
+    "owner": "apps/web/composables/filesync",
+    "productionEntry": "apps/web/src/composables/filesync/useFileSyncAdminEvents.ts",
     "keyBehavior": "Admin 首次连接与重连均触发权威快照补读，重复事件和旧修订不会导致多余刷新",
     "ci": "frontend-test"
   },
-  "frontend/tests/admin/storage-audit/GhostRecordCleanup.test.ts": {
+  "apps/web/tests/admin/storage-audit/GhostRecordCleanup.test.ts": {
     "domain": "storage-audit",
     "layer": "L2",
-    "owner": "frontend/views/Admin/StorageAudit/components/GhostRecordCleanup.vue",
-    "productionEntry": "frontend/src/views/Admin/StorageAudit/components/GhostRecordCleanup.vue",
+    "owner": "apps/web/views/Admin/StorageAudit/components/GhostRecordCleanup.vue",
+    "productionEntry": "apps/web/src/views/Admin/StorageAudit/components/GhostRecordCleanup.vue",
     "keyBehavior": "幽灵记录清理需确认后分批提交完整记录 ID、展示进度并刷新；取消确认不发请求",
     "ci": "frontend-test"
   },
-  "frontend/tests/mind/noteDraft.test.ts": {
+  "apps/web/tests/mind/noteDraft.test.ts": {
     "domain": "mind-notes",
     "layer": "L0",
-    "owner": "frontend/mind",
-    "productionEntry": "frontend/src/views/Mind/utils/noteDraft.ts",
+    "owner": "apps/web/mind",
+    "productionEntry": "apps/web/src/views/Mind/utils/noteDraft.ts",
     "keyBehavior": "未编辑空白草稿离开时不创建笔记；正文或仅标题草稿只持久化一次并保留 capturedAt",
     "ci": "frontend-test"
   },
-  "frontend/tests/projects/composables/useProjectCollectionModals.test.ts": {
+  "apps/web/tests/projects/composables/useProjectCollectionModals.test.ts": {
     "domain": "projects",
     "layer": "L1",
-    "owner": "frontend/composables/projects",
-    "productionEntry": "frontend/src/composables/projects/useProjectCollectionModals.ts",
+    "owner": "apps/web/composables/projects",
+    "productionEntry": "apps/web/src/composables/projects/useProjectCollectionModals.ts",
     "keyBehavior": "项目看板初次进入不请求归档与回收站列表，只有用户打开对应弹窗才加载",
     "ci": "frontend-test"
   },
-  "frontend/tests/projects/composables/useProjectFileCounts.test.ts": {
+  "apps/web/tests/projects/composables/useProjectFileCounts.test.ts": {
     "domain": "projects",
     "layer": "L1",
-    "owner": "frontend/composables/projects",
-    "productionEntry": "frontend/src/composables/projects/useProjectFileCounts.ts",
+    "owner": "apps/web/composables/projects",
+    "productionEntry": "apps/web/src/composables/projects/useProjectFileCounts.ts",
     "keyBehavior": "项目文件徽标使用聚合计数接口，并把连续文件变更合并为一次刷新而不加载全量清单",
     "ci": "frontend-test"
   },
-  "frontend/tests/projects/done/DoneGroup.test.ts": {
+  "apps/web/tests/projects/done/DoneGroup.test.ts": {
     "domain": "projects",
     "layer": "L1",
-    "owner": "frontend/views/Projects/components/done",
-    "productionEntry": "frontend/src/views/Projects/components/done/DoneGroup.vue",
+    "owner": "apps/web/views/Projects/components/done",
+    "productionEntry": "apps/web/src/views/Projects/components/done/DoneGroup.vue",
     "keyBehavior": "折叠的完成项目年月组不挂载内部卡片，展开后才创建卡片组件",
     "ci": "frontend-test"
   },
@@ -831,59 +831,59 @@
     "keyBehavior": "既有 Skill 迁移后仍由用户管理，缺失字段按兼容默认值填充",
     "ci": "backend-pytest"
   },
-  "frontend/tests/chat/GuguChatImConnect.test.ts": {
+  "apps/web/tests/chat/GuguChatImConnect.test.ts": {
     "domain": "im",
     "layer": "L1",
-    "owner": "frontend/components/common/gugu-chat",
-    "productionEntry": "frontend/src/components/common/gugu-chat/GuguChatImConnect.vue",
+    "owner": "apps/web/components/common/gugu-chat",
+    "productionEntry": "apps/web/src/components/common/gugu-chat/GuguChatImConnect.vue",
     "keyBehavior": "Telegram 连接入口跳转到个人设置并展示已有 Telegram 会话",
     "ci": "frontend-test"
   },
-  "frontend/tests/chat/composables/useChatImConnect.test.ts": {
+  "apps/web/tests/chat/composables/useChatImConnect.test.ts": {
     "domain": "im-platform-settings",
     "layer": "L1",
-    "owner": "frontend/components/common/gugu-chat/composables",
-    "productionEntry": "frontend/src/components/common/gugu-chat/composables/useChatImConnect.ts",
+    "owner": "apps/web/components/common/gugu-chat/composables",
+    "productionEntry": "apps/web/src/components/common/gugu-chat/composables/useChatImConnect.ts",
     "keyBehavior": "个人设置变更 IM 绑定后已打开的聊天侧栏重新读取 Bot 状态",
     "ci": "frontend-test"
   },
-  "frontend/tests/chat/TelegramTokenDialog.test.ts": {
+  "apps/web/tests/chat/TelegramTokenDialog.test.ts": {
     "domain": "im",
     "layer": "L1",
-    "owner": "frontend/components/common/gugu-chat",
-    "productionEntry": "frontend/src/components/common/gugu-chat/TelegramTokenDialog.vue",
+    "owner": "apps/web/components/common/gugu-chat",
+    "productionEntry": "apps/web/src/components/common/gugu-chat/TelegramTokenDialog.vue",
     "keyBehavior": "连接弹窗按钮按文案自然撑开，避免固定窄按钮裁切文字",
     "ci": "frontend-test"
   },
-  "frontend/tests/chat/chatInteractionState.test.ts": {
+  "apps/web/tests/chat/chatInteractionState.test.ts": {
     "domain": "chat-interactions",
     "layer": "L0",
-    "owner": "frontend/components/common/gugu-chat",
-    "productionEntry": "frontend/src/components/common/gugu-chat/chatTypes.ts",
+    "owner": "apps/web/components/common/gugu-chat",
+    "productionEntry": "apps/web/src/components/common/gugu-chat/chatTypes.ts",
     "keyBehavior": "恢复开放提问后自定义回答路由到原交互，不进入普通发送队列",
     "ci": "frontend-test"
   },
-  "frontend/tests/files/composables/useFileLibraryNavigation.test.ts": {
+  "apps/web/tests/files/composables/useFileLibraryNavigation.test.ts": {
     "domain": "file-library",
     "layer": "L1",
-    "owner": "frontend/composables/files",
-    "productionEntry": "frontend/src/composables/files/useFileLibraryNavigation.ts",
+    "owner": "apps/web/composables/files",
+    "productionEntry": "apps/web/src/composables/files/useFileLibraryNavigation.ts",
     "keyBehavior": "搜索跳转优先恢复目标工作区与文件夹路径，并处理目标目录加载失败和历史导航",
     "ci": "frontend-test"
   },
-  "frontend/tests/files/useProjectFileProjectSync.test.ts": {
+  "apps/web/tests/files/useProjectFileProjectSync.test.ts": {
     "domain": "projects",
     "layer": "L1",
-    "owner": "frontend/composables/files",
-    "productionEntry": "frontend/src/composables/files/useProjectFileProjectSync.ts",
+    "owner": "apps/web/composables/files",
+    "productionEntry": "apps/web/src/composables/files/useProjectFileProjectSync.ts",
     "keyBehavior": "项目文件首开仅加载根目录，进入子目录按需请求并复用已加载目录缓存",
     "ci": "frontend-test"
   },
-  "frontend/tests/skills/skillGroups.test.ts": {
+  "apps/web/tests/skills/skillGroups.test.ts": {
     "domain": "frontend-skills",
     "layer": "L0",
-    "owner": "frontend/views/Skills",
-    "productionEntry": "frontend/src/views/Skills/skillGroups.ts",
+    "owner": "apps/web/views/Skills",
+    "productionEntry": "apps/web/src/views/Skills/skillGroups.ts",
     "keyBehavior": "助手管理的 Skill 单独归组，旧记录与未标记记录默认归为用户管理",
     "ci": "frontend-test"
   },
@@ -1007,75 +1007,75 @@
     "keyBehavior": "文件与 Shell 用量按权威计量入账，增量核对不覆盖并发变更且配额上限隔离正确",
     "ci": "backend-pytest"
   },
-  "frontend/tests/admin/storage-audit/ReconciliationPanels.test.ts": {
+  "apps/web/tests/admin/storage-audit/ReconciliationPanels.test.ts": {
     "domain": "storage-audit",
     "layer": "L1",
-    "owner": "frontend/views/Admin/StorageAudit/components",
-    "productionEntry": "frontend/src/views/Admin/StorageAudit/components/FileObjectReconciliation.vue",
+    "owner": "apps/web/views/Admin/StorageAudit/components",
+    "productionEntry": "apps/web/src/views/Admin/StorageAudit/components/FileObjectReconciliation.vue",
     "keyBehavior": "文件扫描分开呈现幽灵记录与孤儿文件，目录错位只走目录修复接口且取消删除确认不发请求",
     "ci": "frontend-test"
   },
-  "frontend/tests/common/DatePicker.test.ts": {
+  "apps/web/tests/common/DatePicker.test.ts": {
     "domain": "frontend-ui",
     "layer": "L1",
-    "owner": "frontend/components/common/controls",
-    "productionEntry": "frontend/src/components/common/controls/DatePicker.vue",
+    "owner": "apps/web/components/common/controls",
+    "productionEntry": "apps/web/src/components/common/controls/DatePicker.vue",
     "keyBehavior": "今天快捷入口不受 allowed-dates 排除影响，且当前已是今天时仍通知调用方重新定位",
     "ci": "frontend-test"
   },
-  "frontend/tests/files/composables/useFileLibraryDirectory.test.ts": {
+  "apps/web/tests/files/composables/useFileLibraryDirectory.test.ts": {
     "domain": "file-library",
     "layer": "L1",
-    "owner": "frontend/composables/files",
-    "productionEntry": "frontend/src/composables/files/useFileLibraryDirectory.ts",
+    "owner": "apps/web/composables/files",
+    "productionEntry": "apps/web/src/composables/files/useFileLibraryDirectory.ts",
     "keyBehavior": "目录按需请求并复用已缓存快照，切换目标时先清除旧目录内容以免短暂显示错目录文件",
     "ci": "frontend-test"
   },
-  "frontend/tests/mind/noteEditCommit.test.ts": {
+  "apps/web/tests/mind/noteEditCommit.test.ts": {
     "domain": "mind-notes",
     "layer": "L0",
-    "owner": "frontend/composables/mind",
-    "productionEntry": "frontend/src/composables/mind/noteEditCommit.ts",
+    "owner": "apps/web/composables/mind",
+    "productionEntry": "apps/web/src/composables/mind/noteEditCommit.ts",
     "keyBehavior": "保存失败保留编辑态供重试，只有保存成功后才退出编辑",
     "ci": "frontend-test"
   },
-  "frontend/tests/profile/ProfileImPane.test.ts": {
+  "apps/web/tests/profile/ProfileImPane.test.ts": {
     "domain": "im",
     "layer": "L1",
-    "owner": "frontend/components/common/profile",
-    "productionEntry": "frontend/src/components/common/profile/ProfileImPane.vue",
+    "owner": "apps/web/components/common/profile",
+    "productionEntry": "apps/web/src/components/common/profile/ProfileImPane.vue",
     "keyBehavior": "平台群聊策略仅提交当前 Bot 对应字段；自动回复下按 Bot 保存注意力模式，切至仅响应 @ 后隐藏该选项；Telegram 连接和群策略入口正确呈现",
     "ci": "frontend-test"
   },
-  "frontend/tests/shared/liveRevisionRefresh.test.ts": {
+  "apps/web/tests/shared/liveRevisionRefresh.test.ts": {
     "domain": "live-events",
     "layer": "L0",
-    "owner": "frontend/composables/shared",
-    "productionEntry": "frontend/src/composables/shared/liveRevisionRefresh.ts",
+    "owner": "apps/web/composables/shared",
+    "productionEntry": "apps/web/src/composables/shared/liveRevisionRefresh.ts",
     "keyBehavior": "连续 revision 变化合并为一次权威刷新，停止监听后不再触发刷新",
     "ci": "frontend-test"
   },
-  "frontend/e2e/theme-divider.spec.ts": {
+  "apps/web/e2e/theme-divider.spec.ts": {
     "domain": "frontend-ui",
     "layer": "L3",
-    "owner": "frontend/e2e",
-    "productionEntry": "frontend/src/assets/styles/tokens/semantic.css",
+    "owner": "apps/web/e2e",
+    "productionEntry": "apps/web/src/assets/styles/tokens/semantic.css",
     "keyBehavior": "浅色分隔线和虚线边界与背景保持可见对比，日历侧栏的组间分隔线在各主题下使用内容分隔线颜色",
     "ci": "runtime-integration"
   },
-  "frontend/e2e/page-lifecycle.spec.ts": {
+  "apps/web/e2e/page-lifecycle.spec.ts": {
     "domain": "frontend-ui",
     "layer": "L3",
-    "owner": "frontend/e2e",
-    "productionEntry": "frontend/src/router/index.ts",
+    "owner": "apps/web/e2e",
+    "productionEntry": "apps/web/src/router/index.ts",
     "keyBehavior": "主导航顺序打开各页面并离开，确认视图加载完成、可关闭且无运行时异常",
     "ci": "runtime-integration"
   },
-  "frontend/e2e/project-file-drag-experimental.spec.ts": {
+  "apps/web/e2e/project-file-drag-experimental.spec.ts": {
     "domain": "file-library",
     "layer": "L3",
-    "owner": "frontend/e2e",
-    "productionEntry": "frontend/src/views/Projects/components/ProjectFilesPanel.vue",
+    "owner": "apps/web/e2e",
+    "productionEntry": "apps/web/src/views/Projects/components/ProjectFilesPanel.vue",
     "keyBehavior": "项目文件区拖拽完成目标命中、持久化移动和目标目录导航",
     "ci": "experimental"
   },
@@ -1175,51 +1175,51 @@
     "keyBehavior": "跨 Worker 终止通过共享 sandboxd 生效，PTY 关闭竞争不阻止成功状态与事件发布",
     "ci": "backend-pytest"
   },
-  "frontend/tests/admin/ImPlatformSettings.test.ts": {
+  "apps/web/tests/admin/ImPlatformSettings.test.ts": {
     "domain": "im-platform-settings",
     "layer": "L1",
-    "owner": "frontend/views/Admin/Config",
-    "productionEntry": "frontend/src/views/Admin/Config/components/ImPlatformSettings.vue",
+    "owner": "apps/web/views/Admin/Config",
+    "productionEntry": "apps/web/src/views/Admin/Config/components/ImPlatformSettings.vue",
     "keyBehavior": "管理员切换单个平台开关只更新被切换的平台并呈现当前配置状态",
     "ci": "frontend-test"
   },
-  "frontend/tests/admin/agent/LlmPresetEditor.test.ts": {
+  "apps/web/tests/admin/agent/LlmPresetEditor.test.ts": {
     "domain": "agent-configuration",
     "layer": "L1",
-    "owner": "frontend/views/Admin/Agent",
-    "productionEntry": "frontend/src/views/Admin/Agent/llm/components/LlmPresetEditor.vue",
+    "owner": "apps/web/views/Admin/Agent",
+    "productionEntry": "apps/web/src/views/Admin/Agent/llm/components/LlmPresetEditor.vue",
     "keyBehavior": "模型预设编辑、保存及多模态能力配置保持表单状态和提交数据一致",
     "ci": "frontend-test"
   },
-  "frontend/tests/files/composables/useFileLibraryFileActions.test.ts": {
+  "apps/web/tests/files/composables/useFileLibraryFileActions.test.ts": {
     "domain": "file-library",
     "layer": "L1",
-    "owner": "frontend/composables/files",
-    "productionEntry": "frontend/src/composables/files/useFileLibraryFileActions.ts",
+    "owner": "apps/web/composables/files",
+    "productionEntry": "apps/web/src/composables/files/useFileLibraryFileActions.ts",
     "keyBehavior": "删除请求确认成功前保留文件卡片和选择状态，成功后才同步缓存与目录视图",
     "ci": "frontend-test"
   },
-  "frontend/tests/profile/preferences-tool-injection.test.ts": {
+  "apps/web/tests/profile/preferences-tool-injection.test.ts": {
     "domain": "agent-preferences",
     "layer": "L1",
-    "owner": "frontend/stores",
-    "productionEntry": "frontend/src/stores/preferences.ts",
+    "owner": "apps/web/stores",
+    "productionEntry": "apps/web/src/stores/preferences.ts",
     "keyBehavior": "用户偏好加载时工具调用信息与中间回复使用产品约定默认值并正确注入状态",
     "ci": "frontend-test"
   },
-  "frontend/tests/schedules/ScheduleFormModal.test.ts": {
+  "apps/web/tests/schedules/ScheduleFormModal.test.ts": {
     "domain": "scheduled-tasks",
     "layer": "L1",
-    "owner": "frontend/views/Schedules",
-    "productionEntry": "frontend/src/views/Schedules/components/ScheduleFormModal.vue",
+    "owner": "apps/web/views/Schedules",
+    "productionEntry": "apps/web/src/views/Schedules/components/ScheduleFormModal.vue",
     "keyBehavior": "编辑任务时保留管理员暂时关闭的平台渠道，新建任务仍不能选择未开放平台",
     "ci": "frontend-test"
   },
-  "frontend/tests/utils/imDelivery.test.ts": {
+  "apps/web/tests/utils/imDelivery.test.ts": {
     "domain": "im-delivery",
     "layer": "L0",
-    "owner": "frontend/utils",
-    "productionEntry": "frontend/src/utils/imDelivery.ts",
+    "owner": "apps/web/utils",
+    "productionEntry": "apps/web/src/utils/imDelivery.ts",
     "keyBehavior": "即时通讯投递目标选项符合平台能力，未修改的既有目标不被重新序列化覆盖",
     "ci": "frontend-test"
   },
@@ -1231,35 +1231,35 @@
     "keyBehavior": "文件、文件夹与回收站分页稳定且游标绑定查询范围，不能跨用户复用或篡改",
     "ci": "backend-pytest"
   },
-  "frontend/e2e/file-library-bounded-pagination.spec.ts": {
+  "apps/web/e2e/file-library-bounded-pagination.spec.ts": {
     "domain": "file-library",
     "layer": "L3",
-    "owner": "frontend/e2e",
-    "productionEntry": "frontend/src/views/Files",
+    "owner": "apps/web/e2e",
+    "productionEntry": "apps/web/src/views/Files",
     "keyBehavior": "进入个人目录仅请求有界文件页，继续滚动时使用游标加载后续页",
     "ci": "experimental"
   },
-  "frontend/e2e/global-search-navigation.spec.ts": {
+  "apps/web/e2e/global-search-navigation.spec.ts": {
     "domain": "global-search",
     "layer": "L3",
-    "owner": "frontend/e2e",
-    "productionEntry": "frontend/src/components/common/gugu-chat",
+    "owner": "apps/web/e2e",
+    "productionEntry": "apps/web/src/components/common/gugu-chat",
     "keyBehavior": "全局搜索可按目标 ID 打开首屏外便签或定时任务，并正确消费路由参数",
     "ci": "experimental"
   },
-  "frontend/tests/mind/CanvasToolbar.test.ts": {
+  "apps/web/tests/mind/CanvasToolbar.test.ts": {
     "domain": "mind-canvas",
     "layer": "L1",
-    "owner": "frontend/mind",
-    "productionEntry": "frontend/src/views/Mind/components/CanvasToolbar.vue",
+    "owner": "apps/web/mind",
+    "productionEntry": "apps/web/src/views/Mind/components/CanvasToolbar.vue",
     "keyBehavior": "画布对象选择器排除不可加入的文件夹和会话，仅将可加入对象交给画布",
     "ci": "frontend-test"
   },
-  "frontend/tests/skills/composables/useMcpStatusLoader.test.ts": {
+  "apps/web/tests/skills/composables/useMcpStatusLoader.test.ts": {
     "domain": "skills-mcp",
     "layer": "L1",
-    "owner": "frontend/skills/composables",
-    "productionEntry": "frontend/src/views/Skills/composables/useMcpStatusLoader.ts",
+    "owner": "apps/web/skills/composables",
+    "productionEntry": "apps/web/src/views/Skills/composables/useMcpStatusLoader.ts",
     "keyBehavior": "启用且未加载的 MCP 状态受并发上限控制并逐项更新，取消后丢弃过期结果",
     "ci": "frontend-test"
   },
@@ -1399,95 +1399,95 @@
     "keyBehavior": "Web 流先持久化用户消息再转发后台 SSE 事件",
     "ci": "backend-pytest"
   },
-  "frontend/e2e/mermaid.spec.ts": {
+  "apps/web/e2e/mermaid.spec.ts": {
     "domain": "markdown-mermaid",
     "layer": "L3",
-    "owner": "frontend/e2e",
-    "productionEntry": "frontend/src/utils/chart/mermaidRenderer.ts",
+    "owner": "apps/web/e2e",
+    "productionEntry": "apps/web/src/utils/chart/mermaidRenderer.ts",
     "keyBehavior": "浏览器验证 Mermaid 路由样式、窄屏预览与导出 PNG 的用户可见结果",
     "ci": "frontend-e2e"
   },
-  "frontend/tests/chat/composables/sessionScrollLayout.test.ts": {
+  "apps/web/tests/chat/composables/sessionScrollLayout.test.ts": {
     "domain": "chat-rendering",
     "layer": "L0",
-    "owner": "frontend/chat",
-    "productionEntry": "frontend/src/components/common/gugu-chat/composables/sessionScrollLayout.ts",
+    "owner": "apps/web/chat",
+    "productionEntry": "apps/web/src/components/common/gugu-chat/composables/sessionScrollLayout.ts",
     "keyBehavior": "切换会话时仅在当前虚拟窗口 Markdown 尚未稳定时阻止滚动布局计算",
     "ci": "frontend-test"
   },
-  "frontend/tests/chat/composables/sessionReadiness.test.ts": {
+  "apps/web/tests/chat/composables/sessionReadiness.test.ts": {
     "domain": "chat-navigation",
     "layer": "L0",
-    "owner": "frontend/components/common/gugu-chat",
-    "productionEntry": "frontend/src/components/common/gugu-chat/composables/sessionReadiness.ts",
+    "owner": "apps/web/components/common/gugu-chat",
+    "productionEntry": "apps/web/src/components/common/gugu-chat/composables/sessionReadiness.ts",
     "keyBehavior": "同会话首次恢复结算期间等待后再定位，会话切换时解除过期等待",
     "ci": "frontend-test"
   },
-  "frontend/tests/chat/composables/chatNavigation.test.ts": {
+  "apps/web/tests/chat/composables/chatNavigation.test.ts": {
     "domain": "chat-navigation",
     "layer": "L0",
-    "owner": "frontend/components/common/gugu-chat",
-    "productionEntry": "frontend/src/components/common/gugu-chat/composables/chatNavigation.ts",
+    "owner": "apps/web/components/common/gugu-chat",
+    "productionEntry": "apps/web/src/components/common/gugu-chat/composables/chatNavigation.ts",
     "keyBehavior": "旧会话导航等待期间发起新导航后，旧请求不清除或定位新请求，最终定位最新目标",
     "ci": "frontend-test"
   },
-  "frontend/tests/chat/composables/startupSessionRestore.test.ts": {
+  "apps/web/tests/chat/composables/startupSessionRestore.test.ts": {
     "domain": "chat-navigation",
     "layer": "L0",
-    "owner": "frontend/components/common/gugu-chat",
-    "productionEntry": "frontend/src/components/common/gugu-chat/composables/startupSessionRestore.ts",
+    "owner": "apps/web/components/common/gugu-chat",
+    "productionEntry": "apps/web/src/components/common/gugu-chat/composables/startupSessionRestore.ts",
     "keyBehavior": "启动恢复被新导航取代时不重置新会话；仅明确的会话不可用清除恢复记录，临时失败保留记录",
     "ci": "frontend-test"
   },
-  "frontend/tests/chat/composables/useChatSessions.test.ts": {
+  "apps/web/tests/chat/composables/useChatSessions.test.ts": {
     "domain": "chat-navigation",
     "layer": "L0",
-    "owner": "frontend/components/common/gugu-chat",
-    "productionEntry": "frontend/src/components/common/gugu-chat/composables/useChatSessions.ts",
+    "owner": "apps/web/components/common/gugu-chat",
+    "productionEntry": "apps/web/src/components/common/gugu-chat/composables/useChatSessions.ts",
     "keyBehavior": "旧会话加载等待交互卡片恢复时发生会话切换，旧响应不得覆盖新会话消息",
     "ci": "frontend-test"
   },
-  "frontend/tests/markdown/mermaidInteraction.test.ts": {
+  "apps/web/tests/markdown/mermaidInteraction.test.ts": {
     "domain": "markdown-mermaid",
     "layer": "L0",
-    "owner": "frontend/utils",
-    "productionEntry": "frontend/src/utils/chart/mermaidInteraction.ts",
+    "owner": "apps/web/utils",
+    "productionEntry": "apps/web/src/utils/chart/mermaidInteraction.ts",
     "keyBehavior": "Mermaid 图表交互可绑定、更新和清理，避免重复监听与过期状态残留",
     "ci": "frontend-test"
   },
-  "frontend/tests/markdown/mermaidPng.test.ts": {
+  "apps/web/tests/markdown/mermaidPng.test.ts": {
     "domain": "markdown-mermaid",
     "layer": "L0",
-    "owner": "frontend/utils",
-    "productionEntry": "frontend/src/utils/chart/mermaidPng.ts",
+    "owner": "apps/web/utils",
+    "productionEntry": "apps/web/src/utils/chart/mermaidPng.ts",
     "keyBehavior": "Mermaid PNG 导出生成有效图像并在结束后释放临时资源",
     "ci": "frontend-test"
   },
-  "frontend/tests/markdown/mermaidRenderer.test.ts": {
+  "apps/web/tests/markdown/mermaidRenderer.test.ts": {
     "domain": "markdown-mermaid",
     "layer": "L0",
-    "owner": "frontend/utils",
-    "productionEntry": "frontend/src/utils/chart/mermaidRenderer.ts",
+    "owner": "apps/web/utils",
+    "productionEntry": "apps/web/src/utils/chart/mermaidRenderer.ts",
     "keyBehavior": "共享 Markdown Mermaid 渲染器更新图表且在卸载后清理 DOM 与交互资源",
     "ci": "frontend-test"
   },
-  "frontend/tests/profile/MessageFormatSettings.test.ts": {
+  "apps/web/tests/profile/MessageFormatSettings.test.ts": {
     "domain": "qq-message-format",
     "layer": "L1",
-    "owner": "frontend/profile",
-    "productionEntry": "frontend/src/components/common/profile/MessageFormatSettings.vue",
+    "owner": "apps/web/profile",
+    "productionEntry": "apps/web/src/components/common/profile/MessageFormatSettings.vue",
     "keyBehavior": "QQ 消息格式设置展示受支持选项并提交用户选择",
     "ci": "frontend-test"
   },
-  "frontend/tests/shared/resourceRefreshEvents.test.ts": {
+  "apps/web/tests/shared/resourceRefreshEvents.test.ts": {
     "domain": "live-resource-refresh",
     "layer": "L0",
-    "owner": "frontend/services",
-    "productionEntry": "frontend/src/services/resourceRefreshEvents.ts",
+    "owner": "apps/web/services",
+    "productionEntry": "apps/web/src/services/resourceRefreshEvents.ts",
     "keyBehavior": "跨端资源变化事件按类型通知订阅者并保持事件载荷一致",
     "ci": "frontend-test"
   },
-  "frontend/tests/loopscope/guguCsrf.test.ts": {
+  "apps/web/tests/loopscope/guguCsrf.test.ts": {
     "domain": "loopscope-auth",
     "layer": "L0",
     "owner": "loopscope/frontend/src/services",
@@ -1543,51 +1543,51 @@
     "keyBehavior": "OSS 源对象在摘要读取与复制之间变化时使用 ETag 条件复制并重试，确保目标内容与返回指纹一致",
     "ci": "backend-pytest"
   },
-  "frontend/tests/calendar/useCalendarNav.test.ts": {
+  "apps/web/tests/calendar/useCalendarNav.test.ts": {
     "domain": "calendar",
     "layer": "L0",
-    "owner": "frontend/composables/calendar",
-    "productionEntry": "frontend/src/composables/calendar/useCalendarNav.ts",
+    "owner": "apps/web/composables/calendar",
+    "productionEntry": "apps/web/src/composables/calendar/useCalendarNav.ts",
     "keyBehavior": "月/周视图选择可跨页面实例持久化恢复，非法存储值回退到月视图",
     "ci": "frontend-test"
   },
-  "frontend/tests/calendar/utils/calendarMoreItems.test.ts": {
+  "apps/web/tests/calendar/utils/calendarMoreItems.test.ts": {
     "domain": "calendar",
     "layer": "L0",
-    "owner": "frontend/views/Calendar",
-    "productionEntry": "frontend/src/views/Calendar/utils/calendarMoreItems.ts",
+    "owner": "apps/web/views/Calendar",
+    "productionEntry": "apps/web/src/views/Calendar/utils/calendarMoreItems.ts",
     "keyBehavior": "日历更多列表使用更新后的活动数据并移除已删除活动，同时保留项目项",
     "ci": "frontend-test"
   },
-  "frontend/tests/utils/clientVersionGate.test.ts": {
+  "apps/web/tests/utils/clientVersionGate.test.ts": {
     "domain": "frontend-preferences",
     "layer": "L0",
-    "owner": "frontend/utils",
-    "productionEntry": "frontend/src/utils/clientVersionGate.ts",
+    "owner": "apps/web/utils",
+    "productionEntry": "apps/web/src/utils/clientVersionGate.ts",
     "keyBehavior": "前端构建版本变化时保留用户界面偏好并清理旧认证与临时状态",
     "ci": "frontend-test"
   },
-  "frontend/tests/utils/chartKit.test.ts": {
+  "apps/web/tests/utils/chartKit.test.ts": {
     "domain": "admin-usage",
     "layer": "L0",
-    "owner": "frontend/utils",
-    "productionEntry": "frontend/src/utils/chartKit.ts:lineChartOptions",
+    "owner": "apps/web/utils",
+    "productionEntry": "apps/web/src/utils/chartKit.ts:lineChartOptions",
     "keyBehavior": "百分比折线图固定数值轴上限且无界指标仍使用自动刻度留白",
     "ci": "frontend-test"
   },
-  "frontend/tests/utils/providerWebSearch.test.ts": {
+  "apps/web/tests/utils/providerWebSearch.test.ts": {
     "domain": "provider-web-search",
     "layer": "L0",
-    "owner": "frontend/utils",
-    "productionEntry": "frontend/src/utils/providerWebSearch.ts",
+    "owner": "apps/web/utils",
+    "productionEntry": "apps/web/src/utils/providerWebSearch.ts",
     "keyBehavior": "根据 Provider、协议、模型和凭据来源决定是否展示原生联网搜索能力",
     "ci": "frontend-test"
   },
-  "frontend/tests/utils/spreadsheetZoomPreference.test.ts": {
+  "apps/web/tests/utils/spreadsheetZoomPreference.test.ts": {
     "domain": "file-preview",
     "layer": "L0",
-    "owner": "frontend/utils",
-    "productionEntry": "frontend/src/utils/spreadsheetZoomPreference.ts",
+    "owner": "apps/web/utils",
+    "productionEntry": "apps/web/src/utils/spreadsheetZoomPreference.ts",
     "keyBehavior": "表格预览缩放值可持久化恢复、限制在支持范围内，并在浏览器存储不可用时继续使用",
     "ci": "frontend-test"
   },
@@ -1631,11 +1631,11 @@
     "keyBehavior": "批量缺失预览仅限绑定；恢复文件、版本变化、根目录替换与跨用户预览不得删除；未确认不修改记录",
     "ci": "backend-pytest"
   },
-  "frontend/tests/admin/filesync/FileSyncMissingBatch.test.ts": {
+  "apps/web/tests/admin/filesync/FileSyncMissingBatch.test.ts": {
     "domain": "filesync",
     "layer": "L2",
-    "owner": "frontend/components/filesync",
-    "productionEntry": "frontend/src/components/filesync/FileSyncMissingBatch.vue",
+    "owner": "apps/web/components/filesync",
+    "productionEntry": "apps/web/src/components/filesync/FileSyncMissingBatch.vue",
     "keyBehavior": "缺失记录按绑定预览后确认，取消不提交，按25项分批并展示跳过项",
     "ci": "frontend-test"
   },
@@ -1647,11 +1647,11 @@
     "keyBehavior": "原生内核溢出必须上报缺口；ready保留溢出原因；仅根身份已记录且匹配时允许周期删除补偿；递归事件不跟随符号链接；意外失效的内核监听报告缺口并触发重建，主动解除保持静默",
     "ci": "backend-pytest"
   },
-  "frontend/tests/chat/composables/useChatHistoryPagination.test.ts": {
+  "apps/web/tests/chat/composables/useChatHistoryPagination.test.ts": {
     "domain": "chat-history",
     "layer": "L1",
-    "owner": "frontend/components/common/gugu-chat/composables",
-    "productionEntry": "frontend/src/components/common/gugu-chat/composables/useChatHistoryPagination.ts",
+    "owner": "apps/web/components/common/gugu-chat/composables",
+    "productionEntry": "apps/web/src/components/common/gugu-chat/composables/useChatHistoryPagination.ts",
     "keyBehavior": "历史游标逐页前进，时间线去重保持身份；请求去重、失败手动重试、空页停止、会话切换和卸载隔离迟到响应",
     "ci": "frontend-test"
   },
@@ -1663,10 +1663,10 @@
     "keyBehavior": "历史跨行工具去重且保留真实耗时、模型原文与调用隔离；数据库迁移可重复执行，新 run 收尾不遗留进行中状态",
     "ci": "backend-test"
   },
-  "frontend/tests/chat/GuguChatToolBubble.test.ts": {
+  "apps/web/tests/chat/GuguChatToolBubble.test.ts": {
     "domain": "chat-history",
     "layer": "L1",
-    "owner": "frontend/src/components/common/gugu-chat/GuguChatToolBubble.vue",
+    "owner": "apps/web/src/components/common/gugu-chat/GuguChatToolBubble.vue",
     "productionEntry": "工具卡片点击、异步详情加载与展开",
     "keyBehavior": "详情返回前保持折叠，就绪后只展开一次；缓存不重复请求，取消、失败重试和虚拟滚动卸载不误展开",
     "ci": "frontend-test"
@@ -1743,11 +1743,11 @@
     "keyBehavior": "模型跳过选择工具直接输出正文时，把协议错误回灌模型补选一次，上限一轮；超限落静默与 error 终态，群里零输出；decision 工具调用在 IM 侧静默而 Web 镜像保留",
     "ci": "backend-pytest"
   },
-  "frontend/tests/i18n/group-reply-error.test.ts": {
+  "apps/web/tests/i18n/group-reply-error.test.ts": {
     "domain": "i18n-error-copy",
     "layer": "L0",
-    "owner": "frontend/src/i18n/sections/common.ts",
-    "productionEntry": "frontend/src/components/common/gugu-chat/composables/useChatStream.ts",
+    "owner": "apps/web/src/i18n/sections/common.ts",
+    "productionEntry": "apps/web/src/components/common/gugu-chat/composables/useChatStream.ts",
     "keyBehavior": "群聊选择门失败按界面语言取 chatUi.groupReplyFailed 文案，三语言互不相同，且不引导用户重发、不暴露实现术语",
     "ci": "frontend-test"
   },
@@ -1887,10 +1887,10 @@
     "keyBehavior": "只有与真实附件匹配的占位标记会移除；无对应附件时保留用户正文",
     "ci": "backend-pytest"
   },
-  "frontend/tests/profile/preferences-group-personality.test.ts": {
+  "apps/web/tests/profile/preferences-group-personality.test.ts": {
     "domain": "profile-group-personality",
     "layer": "L1",
-    "owner": "frontend/src/components/common/profile",
+    "owner": "apps/web/src/components/common/profile",
     "productionEntry": "用户偏好设置中的群人格编辑区",
     "keyBehavior": "群人格文本、启用状态和上传独立保存，不覆盖个人人格配置",
     "ci": "frontend-vitest"
@@ -2031,7 +2031,7 @@
     "keyBehavior": "活动交互归属键规范化正确；过期或无效 owner 不进入快速通道，活动交互回复不等待会话锁",
     "ci": "backend-pytest"
   },
-  "frontend/tests/loopscope/monitorSelection.test.ts": {
+  "apps/web/tests/loopscope/monitorSelection.test.ts": {
     "domain": "loopscope-monitor",
     "layer": "L0",
     "owner": "loopscope/frontend/src/utils/monitorSelection.ts",
@@ -2135,10 +2135,10 @@
     "keyBehavior": "附件投递回执进入内部上下文，但不能跨会话或泄漏到其他用户历史",
     "ci": "backend-pytest"
   },
-  "frontend/tests/interactions/runtime/setup.test.ts": {
+  "apps/web/tests/interactions/runtime/setup.test.ts": {
     "domain": "mind-canvas-drag-runtime",
     "layer": "L1",
-    "owner": "frontend/src/interaction/runtime/setup.ts",
+    "owner": "apps/web/src/interaction/runtime/setup.ts",
     "productionEntry": "思维导图项目抽屉拖入画布交互",
     "keyBehavior": "项目卡片落地时保留代理卡片外观，避免目标视觉 morph 将毛玻璃模糊插值消失",
     "ci": "frontend-vitest"
@@ -2199,372 +2199,380 @@
     "keyBehavior": "真实子进程跨重启持久化、拒绝旧版本及身份覆盖；白名单阻止 Shell/FS，超长帧退出并回收连接",
     "ci": "backend-pytest"
   },
-  "frontend/tests/desktop/DesktopWorkbench.test.ts": {
+  "apps/web/tests/desktop/DesktopWorkbench.test.ts": {
     "domain": "desktop-core-ipc",
     "layer": "L1",
-    "owner": "frontend/src/desktop/DesktopWorkbench.vue",
-    "productionEntry": "frontend/desktop.html",
+    "owner": "apps/web/src/desktop/DesktopWorkbench.vue",
+    "productionEntry": "apps/web/desktop.html",
     "keyBehavior": "通过原生业务桥创建后补读本地列表，不依赖 HTTP；缺少桥时显示错误并恢复交互",
     "ci": "frontend-vitest"
   },
-  "gugu-core/tests/golden/python-interop.test.ts": {
+  "packages/core/tests/golden/python-interop.test.ts": {
     "domain": "core-node-golden",
     "layer": "L2",
-    "owner": "gugu-core/src/domain",
+    "owner": "packages/core/src/domain",
     "productionEntry": "backend/tests/core/fixtures/node_golden.py",
     "keyBehavior": "同一合成规则语料跨语言一致，Python v2 与 Node 双向读写、显式 v3 升级备份保留身份和数据",
     "ci": "core-node"
   },
-  "gugu-core/tests/unit/domain/domain.test.ts": {
+  "packages/core/tests/unit/domain/domain.test.ts": {
     "domain": "core-node-domain",
     "layer": "L1",
-    "owner": "gugu-core/src/domain",
-    "productionEntry": "gugu-core/src/contracts/index.ts",
+    "owner": "packages/core/src/domain",
+    "productionEntry": "packages/core/src/contracts/index.ts",
     "keyBehavior": "Unicode/日期与 UTC 年份边界、缺省字段、阶段待办身份及编号溢出保护，拒绝 Node/SQL 反向依赖",
     "ci": "core-node"
   },
-  "gugu-core/tests/unit/data/data.test.ts": {
+  "packages/core/tests/unit/data/data.test.ts": {
     "domain": "core-node-data",
     "layer": "L1",
-    "owner": "gugu-core/src/data/runtime.ts",
-    "productionEntry": "gugu-core/src/data/sqlite.ts",
+    "owner": "packages/core/src/data/runtime.ts",
+    "productionEntry": "packages/core/src/data/sqlite.ts",
     "keyBehavior": "跨域提交/取消回滚、所有者与 CAS、收据原子性、完整唯一约束、备份 DDL 故障恢复及连接回收",
     "ci": "core-node"
   },
-  "gugu-core/tests/integration/postgres/postgres.test.ts": {
+  "packages/core/tests/integration/postgres/postgres.test.ts": {
     "domain": "core-node-data",
     "layer": "L2",
-    "owner": "gugu-core/src/data/postgres.ts",
-    "productionEntry": "gugu-core/src/data/runtime.ts",
+    "owner": "packages/core/src/data/postgres.ts",
+    "productionEntry": "packages/core/src/data/runtime.ts",
     "keyBehavior": "真实 PostgreSQL 保留微秒/用户外键、事务隔离、CAS、重复操作与连接超时保护",
     "ci": "core-node"
   },
-  "gugu-core/tests/integration/runtime/local-ipc.test.ts": {
+  "packages/core/tests/integration/runtime/local-ipc.test.ts": {
     "domain": "core-node-ipc",
     "layer": "L2",
-    "owner": "gugu-core/src/runtime/transport/stdio.ts",
-    "productionEntry": "gugu-core/src/runtime/local.ts",
+    "owner": "packages/core/src/runtime/transport/stdio.ts",
+    "productionEntry": "packages/core/src/runtime/local.ts",
     "keyBehavior": "真实进程重启及回包丢失后查询收据，满队列并发关闭正确释放，拒绝越权/超长帧/非法能力并隔离 Worker",
     "ci": "core-node"
   },
-  "gugu-core/tests/unit/data/contract.test.ts": {
+  "packages/core/tests/unit/data/contract.test.ts": {
     "domain": "core-node-contract",
     "layer": "L1",
     "owner": "gugu-core",
-    "productionEntry": "gugu-core/src/application/services.ts",
+    "productionEntry": "packages/core/src/application/services.ts",
     "keyBehavior": "双库联系人维护/隔离/回滚、收据内容规范化与冲突、同 UUID 跨用户隔离、CAS 失败恢复及重放不递增",
     "ci": "core-node"
   },
-  "gugu-core/tests/integration/postgres/contract.test.ts": {
+  "packages/core/tests/integration/postgres/contract.test.ts": {
     "domain": "core-node-contract",
     "layer": "L2",
     "owner": "gugu-core",
-    "productionEntry": "gugu-core/src/application/services.ts",
+    "productionEntry": "packages/core/src/application/services.ts",
     "keyBehavior": "双库联系人维护/隔离/回滚、收据内容规范化与冲突、同 UUID 跨用户隔离、CAS 失败恢复及重放不递增",
     "ci": "core-node"
   },
-  "gugu-core/tests/unit/domain/fields.test.ts": {
+  "packages/core/tests/unit/domain/fields.test.ts": {
     "domain": "core-node-contract",
     "layer": "L0",
     "owner": "gugu-core",
-    "productionEntry": "gugu-core/src/application/services.ts",
+    "productionEntry": "packages/core/src/application/services.ts",
     "keyBehavior": "同一合成输入在双库保护字段、联系人维护、跨用户隔离和原子回滚",
     "ci": "core-node"
   },
-  "gugu-core/tests/unit/domain/test-selection.test.ts": {
+  "packages/core/tests/unit/domain/test-selection.test.ts": {
     "domain": "test-governance",
     "layer": "L0",
     "owner": "gugu-core",
-    "productionEntry": "gugu-core/scripts/test-suites.mjs",
+    "productionEntry": "packages/core/scripts/test-suites.mjs",
     "keyBehavior": "快速/集成并集完整且无交集，进程/服务标记自动归慢速，IPC 排除 Python 对照",
     "ci": "core-node"
   },
-  "gugu-core/tests/integration/runtime/transport.test.ts": {
+  "packages/core/tests/integration/runtime/transport.test.ts": {
     "domain": "core-desktop",
     "layer": "L2",
     "owner": "gugu-core",
-    "productionEntry": "gugu-core/src/runtime/transport/ipc.ts",
+    "productionEntry": "packages/core/src/runtime/transport/ipc.ts",
     "keyBehavior": "真实消息端口保留身份/操作收据/命令白名单，关闭释放 Worker",
     "ci": "core-node"
   },
-  "gugu-desktop/tests/core-host.test.ts": {
+  "apps/desktop/tests/core-host.test.ts": {
     "domain": "core-desktop",
     "layer": "L2",
     "owner": "gugu-desktop",
-    "productionEntry": "gugu-desktop/src/main/core-host.ts",
+    "productionEntry": "apps/desktop/src/main/core-host.ts",
     "keyBehavior": "真实双 Host 独占拒绝与释放接管、提交后断线的收据恢复、不自动重放、错误脱敏与制品边界",
     "ci": "desktop-node"
   },
-  "gugu-desktop/tests/lifecycle-window-update.test.ts": {
+  "apps/desktop/tests/lifecycle-window-update.test.ts": {
     "domain": "core-desktop",
     "layer": "L1",
     "owner": "gugu-desktop",
-    "productionEntry": "gugu-desktop/src/main/lifecycle.ts",
+    "productionEntry": "apps/desktop/src/main/lifecycle.ts",
     "keyBehavior": "并发启动/休眠退出回收、窗口来源/权限边界、更新取消与先停写后安装",
     "ci": "desktop-node"
   },
-  "gugu-desktop/tests/preload.test.ts": {
+  "apps/desktop/tests/preload.test.ts": {
     "domain": "core-desktop",
     "layer": "L0",
     "owner": "gugu-desktop",
-    "productionEntry": "gugu-desktop/src/preload/index.ts",
+    "productionEntry": "apps/desktop/src/preload/index.ts",
     "keyBehavior": "只暴露固定业务方法，不透传通用 IPC 或 Electron 对象",
     "ci": "desktop-node"
   },
-  "gugu-core/tests/agent/harness/context/finalization.test.ts": {
+  "packages/core/tests/agent/harness/context/finalization.test.ts": {
     "domain": "agent-harness",
     "layer": "L1",
-    "owner": "gugu-core/src/agent/harness",
-    "productionEntry": "gugu-core/src/agent/harness/context/reflection.ts",
+    "owner": "packages/core/src/agent/harness",
+    "productionEntry": "packages/core/src/agent/harness/context/reflection.ts",
     "keyBehavior": "成功主Run捕获原请求反思快照、原生前缀与回复不重复、策略禁用和缺快照延后、通知不含正文或wire",
     "ci": "core-node"
   },
-  "gugu-core/tests/agent/harness/context/loading-reflection.test.ts": {
+  "packages/core/tests/agent/harness/context/loading-reflection.test.ts": {
     "domain": "agent-harness",
     "layer": "L1",
-    "owner": "gugu-core/src/agent/harness/context",
-    "productionEntry": "gugu-core/src/agent/harness/context/prepare.ts",
+    "owner": "packages/core/src/agent/harness/context",
+    "productionEntry": "packages/core/src/agent/harness/context/prepare.ts",
     "keyBehavior": "多源上下文DB串行非DB并发、受限群成员隔离、反思被动尾部复用、显式重建租约与压力门",
     "ci": "core-node"
   },
-  "gugu-core/tests/agent/harness/context/sources.test.ts": {
+  "packages/core/tests/agent/harness/context/sources.test.ts": {
     "domain": "agent-harness",
     "layer": "L1",
-    "owner": "gugu-core/src/agent/harness/context",
-    "productionEntry": "gugu-core/src/agent/harness/context/prepare.ts",
+    "owner": "packages/core/src/agent/harness/context",
+    "productionEntry": "packages/core/src/agent/harness/context/prepare.ts",
     "keyBehavior": "标准来源loader串起owner快照、上下文域加载、连续历史与当前输入，命中不重读且RAG只一次，快照只交原子CAS候选",
     "ci": "core-node"
   },
-  "gugu-core/tests/agent/harness/history/tool-result-checkpoint.test.ts": {
+  "packages/core/tests/agent/harness/history/tool-result-checkpoint.test.ts": {
     "domain": "agent-harness",
     "layer": "L1",
-    "owner": "gugu-core/src/agent/harness/context",
-    "productionEntry": "gugu-core/src/agent/harness/history/attachment-refs.ts",
+    "owner": "packages/core/src/agent/harness/context",
+    "productionEntry": "packages/core/src/agent/harness/history/attachment-refs.ts",
     "keyBehavior": "工具结果媒体固化后按owner/run/round/call与控制指纹恢复，篡改在codec前拒绝且当前Provider媒体不丢失",
     "ci": "core-node"
   },
-  "gugu-core/tests/agent/harness/streaming/tool-result.test.ts": {
+  "packages/core/tests/agent/harness/streaming/tool-result.test.ts": {
     "domain": "agent-harness",
     "layer": "L1",
-    "owner": "gugu-core/src/agent/harness/runtime",
-    "productionEntry": "gugu-core/src/agent/harness/streaming/coordinator.ts",
+    "owner": "packages/core/src/agent/harness/runtime",
+    "productionEntry": "packages/core/src/agent/harness/streaming/coordinator.ts",
     "keyBehavior": "工具卡安全结果详情、递归媒体占位、error脱敏而正常正文不误删、制品仅持久化稳定引用",
     "ci": "core-node"
   },
-  "gugu-core/tests/agent/harness/run/policy-reply.test.ts": {
+  "packages/core/tests/agent/harness/run/policy-reply.test.ts": {
     "domain": "agent-harness",
     "layer": "L0",
-    "owner": "gugu-core/src/agent/harness/policy",
-    "productionEntry": "gugu-core/src/agent/harness/run/lifecycle.ts",
+    "owner": "packages/core/src/agent/harness/policy",
+    "productionEntry": "packages/core/src/agent/harness/run/lifecycle.ts",
     "keyBehavior": "中英日真实语义分类、问句和第三方事实不误判、QQ引用隔离、显式decision opt-in与当轮requiresTools元数据",
     "ci": "core-node"
   },
-  "gugu-core/tests/agent/harness/streaming/portable-boundary.test.ts": {
+  "packages/core/tests/agent/harness/streaming/portable-boundary.test.ts": {
     "domain": "security",
     "layer": "L0",
-    "owner": "gugu-core/src/agent/harness",
-    "productionEntry": "gugu-core/src/agent/harness/index.ts",
+    "owner": "packages/core/src/agent/harness",
+    "productionEntry": "packages/core/src/agent/harness/index.ts",
     "keyBehavior": "通过AST遍历运行依赖闭包，防止可移植Harness入口隐式装载Node平台、数据库驱动或原生SDK",
     "ci": "core-node"
   },
-  "gugu-core/tests/agent/harness/run/execution.test.ts": {
+  "packages/core/tests/agent/harness/run/execution.test.ts": {
     "domain": "security",
     "layer": "L1",
-    "owner": "gugu-core/src/agent/harness",
-    "productionEntry": "gugu-core/src/agent/executor/executor.ts",
+    "owner": "packages/core/src/agent/harness",
+    "productionEntry": "packages/core/src/agent/executor/executor.ts",
     "keyBehavior": "可信Run身份、每调用授权、Executor确认和隔离、未知副作用不重放、取消和错误脱敏",
     "ci": "core-node"
   },
-  "gugu-core/tests/agent/harness/context/preparation.test.ts": {
+  "packages/core/tests/agent/harness/context/preparation.test.ts": {
     "domain": "agent-harness",
     "layer": "L1",
-    "owner": "gugu-core/src/agent/harness",
-    "productionEntry": "gugu-core/src/agent/harness/context/prepare.ts",
+    "owner": "packages/core/src/agent/harness",
+    "productionEntry": "packages/core/src/agent/harness/context/prepare.ts",
     "keyBehavior": "MCP与RAG并行准备失败取消收尾、Shell状态仅system、保留会话或任务授权主体和目录边界",
     "ci": "core-node"
   },
-  "gugu-core/tests/agent/harness/context/context-runtime.test.ts": {
+  "packages/core/tests/agent/harness/context/context-runtime.test.ts": {
     "domain": "agent-harness",
     "layer": "L1",
-    "owner": "gugu-core/src/agent/harness",
-    "productionEntry": "gugu-core/src/agent/harness/context/assemble.ts",
+    "owner": "packages/core/src/agent/harness",
+    "productionEntry": "packages/core/src/agent/harness/context/assemble.ts",
     "keyBehavior": "Canonical与Run真实组合、持久化先于final、交互结果唯一、冻结前缀与续接材料隔离、滚动压缩水位",
     "ci": "core-node"
   },
-  "gugu-core/tests/agent/harness/context/session-snapshot.test.ts": {
+  "packages/core/tests/agent/harness/context/session-snapshot.test.ts": {
     "domain": "agent-harness",
     "layer": "L1",
-    "owner": "gugu-core/src/agent/harness/context",
-    "productionEntry": "gugu-core/src/agent/harness/context/prepare.ts",
+    "owner": "packages/core/src/agent/harness/context",
+    "productionEntry": "packages/core/src/agent/harness/context/prepare.ts",
     "keyBehavior": "会话快照TTL和epoch候选、locale和workspace绑定失效、重建保留控制字段和owner隔离",
     "ci": "core-node"
   },
-  "gugu-core/tests/agent/harness/history/canonical-area.test.ts": {
+  "packages/core/tests/agent/harness/history/canonical-area.test.ts": {
     "domain": "agent-harness",
     "layer": "L1",
-    "owner": "gugu-core/src/agent/harness/context",
-    "productionEntry": "gugu-core/src/agent/harness/history/canonical-history.ts",
+    "owner": "packages/core/src/agent/harness/context",
+    "productionEntry": "packages/core/src/agent/harness/history/canonical-history.ts",
     "keyBehavior": "Canonical消息序号、不可变投影、revision与批次持久化摘要、工具配对和请求边界",
     "ci": "core-node"
   },
-  "gugu-core/tests/agent/harness/context/history-preparation.test.ts": {
+  "packages/core/tests/agent/harness/context/history-preparation.test.ts": {
     "domain": "agent-harness",
     "layer": "L1",
-    "owner": "gugu-core/src/agent/harness/context",
-    "productionEntry": "gugu-core/src/agent/harness/context/assemble.ts",
+    "owner": "packages/core/src/agent/harness/context",
+    "productionEntry": "packages/core/src/agent/harness/context/assemble.ts",
     "keyBehavior": "owner隔离、摘要水位和历史顺序、附件稳定引用、当前消息去重与动态上下文布局",
     "ci": "core-node"
   },
-  "gugu-core/tests/agent/harness/run/engine.test.ts": {
+  "packages/core/tests/agent/harness/run/engine.test.ts": {
     "domain": "agent-harness",
     "layer": "L1",
-    "owner": "gugu-core/src/agent/harness/runtime",
-    "productionEntry": "gugu-core/src/agent/harness/run/lifecycle.ts",
+    "owner": "packages/core/src/agent/harness/runtime",
+    "productionEntry": "packages/core/src/agent/harness/run/lifecycle.ts",
     "keyBehavior": "Run启动恢复、持久化先于final、取消中断历史、错误终态、owner隔离、背压和未知结果禁止重放",
     "ci": "core-node"
   },
-  "gugu-core/tests/agent/harness/context/budget-compaction-reflection.test.ts": {
+  "packages/core/tests/agent/harness/context/budget-compaction-reflection.test.ts": {
     "domain": "agent-harness",
     "layer": "L1",
-    "owner": "gugu-core/src/agent/harness/context",
-    "productionEntry": "gugu-core/src/agent/harness/context/compaction.ts",
+    "owner": "packages/core/src/agent/harness/context",
+    "productionEntry": "packages/core/src/agent/harness/context/compaction.ts",
     "keyBehavior": "仅实际用量85%触发、工具单元边界、压缩水位与CAS、同模型反思前缀复用和群缺快照延后",
     "ci": "core-node"
   },
-  "gugu-core/tests/agent/harness/run/reply.test.ts": {
+  "packages/core/tests/agent/harness/run/reply.test.ts": {
     "domain": "agent-harness",
     "layer": "L1",
-    "owner": "gugu-core/src/agent/harness/runtime",
-    "productionEntry": "gugu-core/src/agent/harness/run/lifecycle.ts",
+    "owner": "packages/core/src/agent/harness/runtime",
+    "productionEntry": "packages/core/src/agent/harness/run/lifecycle.ts",
     "keyBehavior": "空回复重试额度、工具进展重置、回复守卫优先序、旁白和冒号续轮抑制",
     "ci": "core-node"
   },
-  "gugu-core/tests/agent/harness/streaming/display.test.ts": {
+  "packages/core/tests/agent/harness/streaming/display.test.ts": {
     "domain": "agent-harness",
     "layer": "L1",
-    "owner": "gugu-core/src/agent/harness/runtime",
-    "productionEntry": "gugu-core/src/agent/harness/streaming/coordinator.ts",
+    "owner": "packages/core/src/agent/harness/runtime",
+    "productionEntry": "packages/core/src/agent/harness/streaming/coordinator.ts",
     "keyBehavior": "展示事件稳定身份和顺序、工具状态原位置更新、取消封存打开气泡",
     "ci": "core-node"
   },
-  "gugu-core/tests/agent/harness/streaming/tool-scheduler.test.ts": {
+  "packages/core/tests/agent/harness/streaming/tool-scheduler.test.ts": {
     "domain": "agent-harness",
     "layer": "L1",
-    "owner": "gugu-core/src/agent/harness/runtime",
-    "productionEntry": "gugu-core/src/agent/harness/streaming/backpressure.ts",
+    "owner": "packages/core/src/agent/harness/runtime",
+    "productionEntry": "packages/core/src/agent/harness/streaming/backpressure.ts",
     "keyBehavior": "有界并发、模型顺序提交、失败隔离、共享取消等待已启动工具清理和未启动任务延后",
     "ci": "core-node"
   },
-  "gugu-core/tests/agent/harness/history/checkpoint-branch.test.ts": {
+  "packages/core/tests/agent/harness/history/checkpoint-branch.test.ts": {
     "domain": "agent-harness",
     "layer": "L1",
-    "owner": "gugu-core/src/agent/harness/context",
-    "productionEntry": "gugu-core/src/agent/harness/history/attachment-refs.ts",
+    "owner": "packages/core/src/agent/harness/context",
+    "productionEntry": "packages/core/src/agent/harness/history/attachment-refs.ts",
     "keyBehavior": "稳定附件引用checkpoint、owner和指纹复验、临时材料拒绝、分支重试取消与Provider wire边界",
     "ci": "core-node"
   },
-  "gugu-core/tests/unit/domain/executor.test.ts": {
+  "packages/core/tests/unit/domain/executor.test.ts": {
     "domain": "security",
     "layer": "L1",
     "owner": "gugu-core",
-    "productionEntry": "gugu-core/src/agent/executor",
+    "productionEntry": "packages/core/src/agent/executor",
     "keyBehavior": "授权绑定/确认门、禁止降级或重放、原生取消与输出限制、错误脱敏",
     "ci": "core-node"
   },
-  "gugu-core/tests/golden/service-sequence.test.ts": {
+  "packages/core/tests/golden/service-sequence.test.ts": {
     "domain": "core-node-parity",
     "layer": "L2",
     "owner": "gugu-core",
-    "productionEntry": "gugu-core/src/application/services.ts",
+    "productionEntry": "packages/core/src/application/services.ts",
     "keyBehavior": "Python/Node 同序列比对联系人维护、原子回滚、项目 CAS/归档和错误类别",
     "ci": "core-node"
   },
-  "gugu-core/tests/unit/data/exclusive.test.ts": {
+  "packages/core/tests/unit/data/exclusive.test.ts": {
     "domain": "core-node-data",
     "layer": "L1",
     "owner": "gugu-core",
-    "productionEntry": "gugu-core/src/data/sqlite.ts",
+    "productionEntry": "packages/core/src/data/sqlite.ts",
     "keyBehavior": "桌面独占连接拒绝第二个连接读取/写入，释放后保留稳定 owner 和已提交数据",
     "ci": "core-node"
   },
-  "gugu-core/tests/agent/harness/interactions/coordinator.test.ts": {
+  "packages/core/tests/agent/harness/interactions/coordinator.test.ts": {
     "domain": "agent-harness",
     "layer": "L1",
-    "owner": "gugu-core/src/agent/harness/runtime",
-    "productionEntry": "gugu-core/src/agent/harness/interactions/coordinator.ts",
+    "owner": "packages/core/src/agent/harness/runtime",
+    "productionEntry": "packages/core/src/agent/harness/interactions/coordinator.ts",
     "keyBehavior": "Run启动恢复、持久化先于final、取消中断历史、错误终态、owner隔离、背压和未知结果禁止重放",
     "ci": "core-node"
   },
-  "gugu-core/tests/agent/harness/streaming/coordinator.test.ts": {
+  "packages/core/tests/agent/harness/streaming/coordinator.test.ts": {
     "domain": "agent-harness",
     "layer": "L1",
-    "owner": "gugu-core/src/agent/harness/runtime",
-    "productionEntry": "gugu-core/src/agent/harness/streaming/coordinator.ts",
+    "owner": "packages/core/src/agent/harness/runtime",
+    "productionEntry": "packages/core/src/agent/harness/streaming/coordinator.ts",
     "keyBehavior": "Run启动恢复、持久化先于final、取消中断历史、错误终态、owner隔离、背压和未知结果禁止重放",
     "ci": "core-node"
   },
-  "gugu-core/tests/agent/harness/run/lifecycle.test.ts": {
+  "packages/core/tests/agent/harness/run/lifecycle.test.ts": {
     "domain": "agent-harness",
     "layer": "L1",
-    "owner": "gugu-core/src/agent/harness/run/lifecycle.ts",
-    "productionEntry": "gugu-core/src/agent/harness/harness.ts",
+    "owner": "packages/core/src/agent/harness/run/lifecycle.ts",
+    "productionEntry": "packages/core/src/agent/harness/harness.ts",
     "keyBehavior": "终态不得重开，准备、交互等待和恢复不能绕过合法状态转换",
     "ci": "core-node"
   },
-  "gugu-core/tests/agent/providers/openai.test.ts": {
+  "packages/core/tests/agent/providers/openai.test.ts": {
     "domain": "agent-provider",
     "layer": "L1",
-    "owner": "gugu-core/src/agent/providers",
-    "productionEntry": "gugu-core/src/agent/providers/openai/driver.ts",
+    "owner": "packages/core/src/agent/providers",
+    "productionEntry": "packages/core/src/agent/providers/openai/driver.ts",
     "keyBehavior": "OpenAI Chat真实请求参数、配对历史与缓存锚点、工具参数和usage归一化、空流/断流及输出后禁止重放",
     "ci": "core-node"
   },
-  "gugu-core/tests/agent/providers/openai-responses.test.ts": {
+  "packages/core/tests/agent/providers/openai-responses.test.ts": {
     "domain": "agent-provider",
     "layer": "L1",
-    "owner": "gugu-core/src/agent/providers",
-    "productionEntry": "gugu-core/src/agent/providers/openai/responses.ts",
+    "owner": "packages/core/src/agent/providers",
+    "productionEntry": "packages/core/src/agent/providers/openai/responses.ts",
     "keyBehavior": "Responses独立input/instructions、稳定item/call标识和原生推理续接、媒体能力拒绝、结构化输出及failed/incomplete/usage终态",
     "ci": "core-node"
   },
-  "gugu-core/tests/agent/providers/anthropic.test.ts": {
+  "packages/core/tests/agent/providers/anthropic.test.ts": {
     "domain": "agent-provider",
     "layer": "L1",
-    "owner": "gugu-core/src/agent/providers",
-    "productionEntry": "gugu-core/src/agent/providers/anthropic/driver.ts",
+    "owner": "packages/core/src/agent/providers",
+    "productionEntry": "packages/core/src/agent/providers/anthropic/driver.ts",
     "keyBehavior": "Anthropic内容块顺序、签名思考历史与工具JSON解析、已知缺块恢复边界、缓存usage和MiniMax业务错误分类",
     "ci": "core-node"
   },
-  "gugu-core/tests/agent/providers/runtime.test.ts": {
+  "packages/core/tests/agent/providers/runtime.test.ts": {
     "domain": "agent-provider",
     "layer": "L1",
-    "owner": "gugu-core/src/agent/providers",
-    "productionEntry": "gugu-core/src/agent/providers/runtime.ts",
+    "owner": "packages/core/src/agent/providers",
+    "productionEntry": "packages/core/src/agent/providers/runtime.ts",
     "keyBehavior": "Provider真实协议事件跨Harness工具轮及交互恢复，Canonical不存私有块；请求快照、probe、取消、退避、池复用和同前缀排队边界",
     "ci": "core-node"
   },
-  "gugu-core/tests/agent/providers/transport.test.ts": {
+  "packages/core/tests/agent/providers/transport.test.ts": {
     "domain": "agent-provider",
     "layer": "L1",
-    "owner": "gugu-core/src/agent/providers",
-    "productionEntry": "gugu-core/src/agent/providers/transport/node.ts",
+    "owner": "packages/core/src/agent/providers",
+    "productionEntry": "packages/core/src/agent/providers/transport/node.ts",
     "keyBehavior": "真实TCP验证DNS固定与SSRF拒绝、代理CONNECT/NO_PROXY、TLS域名及CA、重定向拒绝、gzip体积预算、读写空闲超时及取消释放",
     "ci": "core-node"
   },
-  "gugu-core/tests/agent/providers/policies.test.ts": {
+  "packages/core/tests/agent/providers/policies.test.ts": {
     "domain": "agent-provider",
     "layer": "L1",
-    "owner": "gugu-core/src/agent/providers",
-    "productionEntry": "gugu-core/src/agent/providers/provider-policies.ts、search.ts + search/、asr.ts + asr/shared.ts + openai/asr.ts + qwen/asr.ts + minimax/asr.ts、media.ts + minimax/media.ts + mimo/media.ts",
+    "owner": "packages/core/src/agent/providers",
+    "productionEntry": "packages/core/src/agent/providers/provider-policies.ts、search.ts + search/、asr.ts + asr/shared.ts + openai/asr.ts + qwen/asr.ts + minimax/asr.ts、media.ts + minimax/media.ts + mimo/media.ts",
     "keyBehavior": "厂商与模型能力/思考参数及协议选择、显式本地授权、MiniMax图片/视频时长和上传/ASR预检、业务码及安全错误边界",
     "ci": "core-node"
   },
-  "gugu-core/tests/agent/providers/ollama.test.ts": {
+  "packages/core/tests/agent/providers/ollama.test.ts": {
     "domain": "agent-provider",
     "layer": "L1",
-    "owner": "gugu-core/src/agent/providers",
-    "productionEntry": "gugu-core/src/agent/providers/ollama/driver.ts",
+    "owner": "packages/core/src/agent/providers",
+    "productionEntry": "packages/core/src/agent/providers/ollama/driver.ts",
     "keyBehavior": "Ollama原生NDJSON与工具历史配对、usage原始钩子和显式空输出预算、终止/取消；厂商搜索原生字段、官方主机凭据限制及结果体积预算",
+    "ci": "core-node"
+  },
+  "packages/fs/tests/node.test.ts": {
+    "domain": "storage",
+    "layer": "L1",
+    "owner": "packages/fs/src",
+    "productionEntry": "packages/fs/src/node.ts",
+    "keyBehavior": "只读打开限制在授权根下，拒绝路径穿越、符号链接和非普通文件",
     "ci": "core-node"
   }
 }

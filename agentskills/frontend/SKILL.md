@@ -10,9 +10,9 @@ description: 前端开发约定。Vue 3 script setup、TypeScript 严格模式�
 - Vue 3 使用 `<script setup>`；新增代码保持现有渐进式 TypeScript 风格。
 - `defineProps` 使用运行时对象写法，需要复杂类型时使用 `PropType`。
 - 模板中的 `$event.target` 访问 DOM 属性时显式转型。
-- 日期相减使用 `.getTime()`；日期归属复用 `frontend/src/utils/dateAttribution.ts`。
+- 日期相减使用 `.getTime()`；日期归属复用 `apps/web/src/utils/dateAttribution.ts`。
 - 空的 `ref(new Set())`、`ref([])` 显式标注元素类型。
-- 已加入 `frontend/tsconfig.strict.json` 的文件不得降回宽松类型。
+- 已加入 `apps/web/tsconfig.strict.json` 的文件不得降回宽松类型。
 
 ## 文件组织
 
@@ -20,7 +20,7 @@ description: 前端开发约定。Vue 3 script setup、TypeScript 严格模式�
 - UI 交互放在 `components/`，状态和异步流程放在 `composables/`，请求放在 `api/` 或 service，纯逻辑放在 `utils/`。
 - 新功能不要继续堆进入口文件；已有大文件按功能逐步收口。
 - 复用现有组件、Store、设计变量和设计文档，不要重复实现。
-- 单选下拉统一复用 `frontend/src/components/common/controls/SelectPopup.vue`；Admin 页面通过 `AdminSelect` 使用它，Provider 等特殊选择器也只能在此基础上扩展。不要在页面中重新实现原生 `<select>` 或单独的列表弹窗。
+- 单选下拉统一复用 `apps/web/src/components/common/controls/SelectPopup.vue`；Admin 页面通过 `AdminSelect` 使用它，Provider 等特殊选择器也只能在此基础上扩展。不要在页面中重新实现原生 `<select>` 或单独的列表弹窗。
 - `AdminSelect` 的加载中、不可用状态统一通过 `disabled` 传入；公共组件负责阻止交互和呈现禁用态，业务页面不重复编写禁用样式。
 
 ### 异步任务状态更新
@@ -28,7 +28,7 @@ description: 前端开发约定。Vue 3 script setup、TypeScript 严格模式�
 - 长时间运行且需要在页面展示进度/终态的任务，优先订阅现有用户级 SSE/live 状态事件；收到事件后更新本地状态，或按事件携带的资源/版本失效标记重新读取权威状态。不要为已有推送事件的任务另加固定间隔 `setInterval` 轮询。
 - 页面首次打开、切回前台或 SSE 重连后读取一次持久化状态，弥补连接前和断线期间的状态变化。推送是刷新触发器，服务端持久化状态/API 响应才是事实来源。
 - 只有上游没有可接入的推送渠道、且状态端点本身提供低成本检查时才采用轮询；使用退避/合理间隔，保证同一任务至多一个请求在途，页面隐藏时降频或暂停，并在卸载、取消及终态时停止计时器。不要用高频轮询掩盖丢失的状态事件。
-- 复用 `frontend/src/stores/live.ts` 和既有资源订阅/失效模式；需要新事件类型时先确认后端事件协议和重连补刷行为，不在组件里另开重复长连接。
+- 复用 `apps/web/src/stores/live.ts` 和既有资源订阅/失效模式；需要新事件类型时先确认后端事件协议和重连补刷行为，不在组件里另开重复长连接。
 
 ### Admin 页面拆分
 
@@ -56,7 +56,7 @@ Runtime 管理的元素，其业务或主题 CSS 不得使用 `!important` 强�
 
 ## HTML 与组件边界
 
-- 不可信 HTML 必须经过 `frontend/src/utils/markdown.ts` 的消毒函数，禁止直接使用 `v-html`。
+- 不可信 HTML 必须经过 `apps/web/src/utils/markdown.ts` 的消毒函数，禁止直接使用 `v-html`。
 - 不手写未经转义的 HTML 字符串来拼接链接、属性或错误提示。
 - 组件卸载后不要依赖 `emit()` 传递异步收尾事件；改用直接传入的函数引用。
 
@@ -71,7 +71,7 @@ Runtime 管理的元素，其业务或主题 CSS 不得使用 `!important` 强�
 ## 输入框标题交互
 
 - 这是全站输入设计规范：字段标题与文本、数字、日期、邮箱、URL、密码等输入控件分开布局，标题点击不得使输入框获得焦点；不要用包裹输入框的 `<label>` 或指向输入框的 `<label for>` 实现布局。使用 `aria-label` 或 `aria-labelledby` 为控件提供可访问名称。复选框和单选框仍可使用 label 作为可点击区域。
-- 每次新增或修改表单时检查该约束；全局回归测试 `frontend/tests/forms/field-label-focus.test.ts` 扫描所有 Vue 页面，禁止文本输入控件被 label 激活。功能目录中的组件测试只覆盖该功能自身行为，不替代全局规范测试。
+- 每次新增或修改表单时检查该约束；全局回归测试 `apps/web/tests/forms/field-label-focus.test.ts` 扫描所有 Vue 页面，禁止文本输入控件被 label 激活。功能目录中的组件测试只覆盖该功能自身行为，不替代全局规范测试。
 - 输入框使用公共 `.form-input` 样式与 `--input-*` 焦点令牌，包含背景、描边、焦点光晕及淡入淡出过渡；页面局部样式只负责尺寸和布局，不得另画瞬时 outline 或覆盖标准焦点状态。
 
 ## 验证

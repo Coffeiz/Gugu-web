@@ -3,7 +3,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
-import { testSuites } from '../../gugu-core/scripts/test-suites.mjs'
+import { testSuites } from '../../packages/core/scripts/test-suites.mjs'
 
 const root = path.resolve(import.meta.dirname, '../..')
 const workflowDirectory = path.join(root, '.github/workflows')
@@ -11,7 +11,7 @@ const workflow = fs.readdirSync(workflowDirectory)
   .filter(file => file.endsWith('.yml') || file.endsWith('.yaml'))
   .map(file => fs.readFileSync(path.join(workflowDirectory, file), 'utf8'))
   .join('\n')
-const frontendPackage = JSON.parse(fs.readFileSync(path.join(root, 'frontend/package.json'), 'utf8'))
+const frontendPackage = JSON.parse(fs.readFileSync(path.join(root, 'apps/web/package.json'), 'utf8'))
 const metadata = JSON.parse(fs.readFileSync(path.join(root, 'docs/testing/test-metadata.json'), 'utf8'))
 const coreSuites = Object.fromEntries(testSuites('all').map(item => [item.file, item]))
 const outputPath = process.argv.slice(2).find(arg => arg.startsWith('--output='))?.slice('--output='.length)
@@ -105,7 +105,7 @@ function domainFor(file) {
     ['mind-project', /mind|canvas|project/],
     ['schedule', /schedule|worker_shutdown|datetime|tz_|regressions/],
     ['terminal-runtime', /terminal|shell|docker|runtime|loopscope|process|systemd|trace_ops|run_finalize/],
-    ['frontend-ui', /frontend\/|calendar|markdown|iconregistry|affordances|byokcredentials|accountboundary|cardoptimistic|datescrubber|flipcoordinator|optimisticmutation|check-/],
+    ['frontend-ui', /apps\/web\/|calendar|markdown|iconregistry|affordances|byokcredentials|accountboundary|cardoptimistic|datescrubber|flipcoordinator|optimisticmutation|check-/],
     ['frontend-i18n-theme', /i18n|theme|style|token|formatters/],
   ]
   return domains.find(([, matcher]) => matcher.test(value))?.[0] ?? 'other'
@@ -122,7 +122,7 @@ function layerFor(file, kind) {
 }
 
 function ownerFor(file, kind, domain) {
-  if (kind === 'playwright') return 'frontend/e2e'
+  if (kind === 'playwright') return 'apps/web/e2e'
   if (kind === 'static-check') return '工程质量'
   if (kind === 'diagnostic-script') return 'backend/diagnostics'
   if (kind === 'benchmark-script') return 'backend/benchmarks'
@@ -130,7 +130,7 @@ function ownerFor(file, kind, domain) {
   if (kind === 'test-support') return '测试环境辅助'
   if (kind === 'test-governance') return '测试治理'
   if (kind === 'node-test') return file.startsWith('loopscope/') ? 'loopscope/runtime' : 'backend/ts'
-  if (kind === 'vitest') return `frontend/${domain}`
+  if (kind === 'vitest') return `apps/web/${domain}`
   return `backend/${domain}`
 }
 
@@ -146,7 +146,7 @@ function inventoryItem(file, kind) {
       : kind === 'pytest'
         ? countMatches(source, /^\s*(?:async\s+)?def\s+test_[A-Za-z0-9_]+\s*\(/gm)
         : countMatches(source, /\b(?:it|test)(?:\.each|\.skip|\.only)?\s*\(/g)
-  const nodePackage = file.startsWith('gugu-core/') ? '@gugu/core' : file.startsWith('gugu-desktop/') ? 'gugu-desktop' : null
+  const nodePackage = file.startsWith('packages/core/') ? '@gugu/core' : file.startsWith('apps/desktop/') ? 'gugu-desktop' : file.startsWith('packages/fs/') ? '@gugu/fs' : null
   const declared = nodePackage ? metadata[file] : undefined
   const ci = nodePackage
     ? workflow.includes(`pnpm --filter ${nodePackage} test`)
@@ -178,7 +178,7 @@ function inventoryItem(file, kind) {
     layer: declared?.layer ?? layerFor(file, kind),
     domain,
     owner: declared?.owner ?? ownerFor(file, kind, domain),
-    ...(coreSuites[file.replace(/^gugu-core\//, '')] ? { markers: coreSuites[file.replace(/^gugu-core\//, '')].markers } : {}),
+    ...(coreSuites[file.replace(/^packages\/core\//, '')] ? { markers: coreSuites[file.replace(/^packages\/core\//, '')].markers } : {}),
     ownerReview: domain === 'other' ? '待复核' : '自动归类',
     declaredTestCount,
     ci,
@@ -204,11 +204,12 @@ const items = [
   ...gitFiles('backend/ts').filter(file => /\.test\.(ts|mjs)$/.test(file)).map(file => inventoryItem(file, 'node-test')),
   ...gitFiles('loopscope').filter(file => /\.test\.(ts|mjs)$/.test(file)).map(file => inventoryItem(file, 'node-test')),
   ...gitFiles('scripts/release').filter(file => /\.test\.mjs$/.test(file)).map(file => inventoryItem(file, 'node-test')),
-  ...gitFiles('frontend/tests').filter(file => file.endsWith('.test.ts')).map(file => inventoryItem(file, 'vitest')),
-  ...gitFiles('gugu-core/tests').filter(file => file.endsWith('.test.ts')).map(file => inventoryItem(file, 'vitest')),
-  ...gitFiles('gugu-desktop/tests').filter(file => file.endsWith('.test.ts')).map(file => inventoryItem(file, 'vitest')),
-  ...gitFiles('frontend/e2e/*.spec.ts').map(file => inventoryItem(file, 'playwright')),
-  ...gitFiles('frontend/scripts').filter(file => /\/check-[^/]+\.mjs$/.test(file)).map(file => inventoryItem(file, 'static-check')),
+  ...gitFiles('apps/web/tests').filter(file => file.endsWith('.test.ts')).map(file => inventoryItem(file, 'vitest')),
+  ...gitFiles('packages/fs/tests').filter(file => file.endsWith('.test.ts')).map(file => inventoryItem(file, 'vitest')),
+  ...gitFiles('packages/core/tests').filter(file => file.endsWith('.test.ts')).map(file => inventoryItem(file, 'vitest')),
+  ...gitFiles('apps/desktop/tests').filter(file => file.endsWith('.test.ts')).map(file => inventoryItem(file, 'vitest')),
+  ...gitFiles('apps/web/e2e/*.spec.ts').map(file => inventoryItem(file, 'playwright')),
+  ...gitFiles('apps/web/scripts').filter(file => /\/check-[^/]+\.mjs$/.test(file)).map(file => inventoryItem(file, 'static-check')),
   ...gitFiles('scripts/licenses').filter(file => /\/check-[^/]+\.mjs$/.test(file)).map(file => inventoryItem(file, 'static-check')),
   ...gitFiles('scripts/tests').filter(file => /\/(check-|run-test-|run-fast-)[^/]+\.mjs$/.test(file)).map(file => inventoryItem(file, 'test-governance')),
 ].sort((left, right) => left.file.localeCompare(right.file))

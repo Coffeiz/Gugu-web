@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="frontend/public/Gugu-logo-colored.png" width="180" alt="Gugu Logo">
+<img src="apps/web/public/Gugu-logo-colored.png" width="180" alt="Gugu Logo">
 
 # Gugu
 
@@ -12,7 +12,7 @@ This is a *Vibe Coding project*. Issues and pull requests are welcome.
 
 [![status](https://img.shields.io/badge/status-active-success?style=flat)](https://www.gugugu.site)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat)](LICENSE)
-[![Vue](https://img.shields.io/badge/frontend-Vue%203-42b883?style=flat)](frontend/)
+[![Vue](https://img.shields.io/badge/frontend-Vue%203-42b883?style=flat)](apps/web/)
 [![Python](https://img.shields.io/badge/backend-Python%20latest-3776ab?style=flat)](backend/)
 
 [中文](README.md) ｜ [English](README_en.md) ｜ [Quick Deploy](docs/quick-deploy_en.md) ｜ [Live Demo](https://www.gugugu.site)
@@ -56,19 +56,19 @@ Try it at [www.gugugu.site](https://www.gugugu.site), or deploy it locally using
 <table>
   <tr>
     <td width="50%" valign="top">
-      <img src="frontend/public/onboarding/kanban-drag-1.gif" width="100%" alt="Kanban cross-column drag and drop">
+      <img src="apps/web/public/onboarding/kanban-drag-1.gif" width="100%" alt="Kanban cross-column drag and drop">
       <h3>Kanban</h3>
       <p>Projects, stages, tasks, and deadlines form a real project workflow.</p>
     </td>
     <td width="50%" valign="top">
-      <img src="frontend/public/onboarding/file-drag-1.gif" width="100%" alt="File workspace drag and drop">
+      <img src="apps/web/public/onboarding/file-drag-1.gif" width="100%" alt="File workspace drag and drop">
       <h3>File System</h3>
       <p>Files, projects, and personal materials continue to accumulate in one workspace, with local disk and OSS storage support.</p>
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <img src="frontend/public/onboarding/canvas-drag-1.gif" width="100%" alt="Canvas free-position drag and drop">
+      <img src="apps/web/public/onboarding/canvas-drag-1.gif" width="100%" alt="Canvas free-position drag and drop">
       <h3>Canvas</h3>
       <p>Place notes, projects, files, and calendar events on a freeform canvas to build visual relationships.</p>
     </td>
@@ -92,7 +92,7 @@ Try it at [www.gugugu.site](https://www.gugugu.site), or deploy it locally using
 <table>
   <tr>
     <td width="25%" valign="top">
-      <img src="frontend/public/onboarding/IM-messages-1.gif" width="100%" alt="Gugu managing a schedule">
+      <img src="apps/web/public/onboarding/IM-messages-1.gif" width="100%" alt="Gugu managing a schedule">
       <h3>Manage Schedule</h3>
       <p>Use natural language to create projects, plan schedules, and hand recurring work to scheduled tasks.</p>
     </td>
@@ -431,7 +431,7 @@ For implementation details, see the [Tools and Skills docs](docs/agent/05-TOOLS-
 
 ```text
 gugu/
-├─ frontend/      Web workspace and Admin frontend
+├─ apps/web/      Web workspace and Admin frontend
 ├─ backend/       API, Agent, Memory, Tools, and data services
 ├─ loopscope/     Agent observability system
 ├─ docker/        Deployment and runtime environments

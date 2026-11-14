@@ -71,7 +71,7 @@
 
 #### N3 Agent Harness 专项（2026-11-13，Core 切片已实现并完成本轮回归）
 
-本切片仅负责可移植 Harness，实现在 `gugu-core/src/agent/harness/`；不迁移具体 Provider 协议、工具业务、Web API 或桌面 Host。行为与逐项缺口见 [Harness 回归映射](../testing/node-agent-harness-parity.md) 和 [逐 Python 定义清单](../testing/node-agent-harness-parity.json)。
+本切片仅负责可移植 Harness，实现在 `packages/core/src/agent/harness/`；不迁移具体 Provider 协议、工具业务、Web API 或桌面 Host。行为与逐项缺口见 [Harness 回归映射](../testing/node-agent-harness-parity.md) 和 [逐 Python 定义清单](../testing/node-agent-harness-parity.json)。
 
 - 已实现源码切片：Canonical Area/批次与历史恢复、稳定附件引用 checkpoint、上下文并发准备、实际用量预算与压缩/分支、会话快照候选、反思原主请求快照；Run 启动/恢复/取消、交互与回执、顺序事件与背压、fenced CAS/outbox 端口、回复守卫与展示时间线。共用 Executor 协调器抽到可移植入口，原平台入口保留兼容导出，不加载第二条执行路径。
 - 工具历史按实际派发和回执建立同批调用/结果；未启动的取消不写孤立调用。凭据由独立交互服务消费，Harness 只保存安全状态和回执。纯回复和守卫说明不重复作为工具 Canonical delta 提交；成功 final 的历史事务先于通知，Provider 错误不提交本轮 Canonical，取消只保存允许的中断增量。
@@ -127,6 +127,9 @@
 
 ### N5——收敛与发行
 
+- [ ] 建立独立 `packages/fs/` 和 `packages/sandbox/`，迁移现有 Web Host 文件能力及 Core Executor 的可复用部分；Host 负责可信身份、授权根目录、执行后端与能力注入。现有部分实现不等于两包完成。
+- [ ] 完成 FS 授权边界、直接读写、原子写入与恢复验收；Linux MXC 须完成多用户、进程、资源和网络隔离验收后才能启用。
+
 - [ ] 按架构说明将 Vue 前端、Node Web Host、Electron Host 和共享 Core 迁入 `apps/web/`、`apps/web-host/`、`apps/desktop/`、`packages/core/`；目录搬迁与业务重写分开，更新 workspace、构建/部署、CI、测试清单和文档路径。
 - [ ] N2/N3 生产调用方切换后清理 `backend/` 中已退役的 Python API/业务实现；仍需独立运行的 Python Worker 只有在确有独立生命周期时才迁入 `apps/python-worker/`，否则随对应 Host 收敛或一并退出。
 - [ ] 将独立子项目 `loopscope/` 保持为自己的 workspace，不为了顶层目录形式统一而重排其内部包。
@@ -181,7 +184,7 @@
 **当前测试目录：**
 
 ```text
-gugu-core/tests/
+packages/core/tests/
   unit/domain/                     # 规则、字段与阶段/待办
   fixtures/                        # 共享双库数据契约与独立合成维护序列
   unit/data/                       # 隔离 SQLite、编码、事务与显式迁移

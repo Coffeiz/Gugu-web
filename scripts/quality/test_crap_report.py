@@ -41,7 +41,7 @@ def test_scope_is_explicit_repo_relative_and_files_exist():
     validated = validate_scope(config, ROOT)
     assert [(entry["language"], entry["source"]) for entry in validated] == [
         ("python", "backend/agent/context/budget.py"),
-        ("typescript", "frontend/src/utils/optimisticMutation.ts"),
+        ("typescript", "apps/web/src/utils/optimisticMutation.ts"),
     ]
     assert validated[0]["tests"] == [
         "backend/tests/agent/context/test_context_budget.py",
@@ -200,8 +200,8 @@ def test_test_timeout_has_its_own_status(monkeypatch, tmp_path):
     monkeypatch.setattr("scripts.quality.crap_report.subprocess.run", timeout)
     entry = {
         "language": "typescript",
-        "source": "frontend/src/utils/optimisticMutation.ts",
-        "tests": ["frontend/tests/files/optimisticMutation.test.ts"],
+        "source": "apps/web/src/utils/optimisticMutation.ts",
+        "tests": ["apps/web/tests/files/optimisticMutation.test.ts"],
         "domain": "测试",
         "layer": "L0",
         "ci": "不阻断",

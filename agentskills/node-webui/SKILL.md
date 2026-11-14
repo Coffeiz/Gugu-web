@@ -5,7 +5,7 @@ description: gugu-webui Node.js/Fastify 后端开发、Python API 迁移与实�
 
 # Node WebUI 开发与迁移约定
 
-适用范围：`gugu-webui/src/` 中的 Fastify Host、领域路由、应用服务、持久化和适配器。前端改动阅读 `frontend` skill，测试设计阅读 `testing` skill；本文件不重复通用安全、Git、环境配置和测试规则。
+适用范围：`apps/web-host/src/` 中的 Fastify Host、领域路由、应用服务、持久化和适配器。前端改动阅读 `frontend` skill，测试设计阅读 `testing` skill；本文件不重复通用安全、Git、环境配置和测试规则。
 
 ## 路由与业务边界
 
@@ -21,14 +21,14 @@ description: gugu-webui Node.js/Fastify 后端开发、Python API 迁移与实�
 
 | 契约 | 复用入口 |
 |---|---|
-| PostgreSQL 事务、唯一键错误 | `gugu-webui/src/adapters/postgres-transaction.ts`：`withPostgresTransaction`；`gugu-webui/src/adapters/postgres-errors.ts`：`isPostgresUniqueViolation` |
-| 路径包含判断、owner ID 规范化、提交后 best-effort | `gugu-webui/src/adapters/path-safety.ts`：`isPathWithin`；`gugu-webui/src/adapters/owner-context.ts`：`normalizeOwnerId`；`gugu-webui/src/adapters/best-effort.ts`：`runBestEffort` |
-| Cookie 解析、请求元数据 | `gugu-webui/src/http/cookies.ts`：`parseCookieHeader`；`gugu-webui/src/http/request.ts`：`writeRequestMetadata`（`limitHeaders` 用于 trim 并限制文件写入头长） |
-| 日期键与 UTC 时间格式化 | `gugu-webui/src/shared/date-time.ts`：`dateKeyInTimeZone`、`addUtcDaysToDateKey`、`startOfDateKeyInTimeZone`、`toUtcIsoWithOffset` |
-| Admin HTTP 错误、通用密钥遮蔽 | `gugu-webui/src/domains/admin/errors.ts`；`gugu-webui/src/shared/secret-mask.ts`：`maskSecret` |
-| Agent 媒体载荷清理 | `gugu-webui/src/domains/agent-sessions/media-payload.ts`：`sanitizeMediaPayload` |
-| 文件 owner 校验、正向 Undo 写入、项目查询与时间戳格式化 | `gugu-webui/src/domains/files/file-owner.ts`；`gugu-webui/src/domains/undo/persistence/forward-operation.ts`；`gugu-webui/src/domains/projects/persistence/projects.ts`：`readProjectFileCount`、`projectExistsForOwner`、`projectTimestamp` |
-| 日历事件投影与持有查询 | `gugu-webui/src/domains/calendar/event-projection.ts`：数据库行、DTO 与 Undo 快照投影；`gugu-webui/src/domains/calendar/persistence/events.ts`：`findOwnedActiveEvent` |
+| PostgreSQL 事务、唯一键错误 | `apps/web-host/src/adapters/postgres-transaction.ts`：`withPostgresTransaction`；`apps/web-host/src/adapters/postgres-errors.ts`：`isPostgresUniqueViolation` |
+| 路径包含判断、owner ID 规范化、提交后 best-effort | `apps/web-host/src/adapters/path-safety.ts`：`isPathWithin`；`apps/web-host/src/adapters/owner-context.ts`：`normalizeOwnerId`；`apps/web-host/src/adapters/best-effort.ts`：`runBestEffort` |
+| Cookie 解析、请求元数据 | `apps/web-host/src/http/cookies.ts`：`parseCookieHeader`；`apps/web-host/src/http/request.ts`：`writeRequestMetadata`（`limitHeaders` 用于 trim 并限制文件写入头长） |
+| 日期键与 UTC 时间格式化 | `apps/web-host/src/shared/date-time.ts`：`dateKeyInTimeZone`、`addUtcDaysToDateKey`、`startOfDateKeyInTimeZone`、`toUtcIsoWithOffset` |
+| Admin HTTP 错误、通用密钥遮蔽 | `apps/web-host/src/domains/admin/errors.ts`；`apps/web-host/src/shared/secret-mask.ts`：`maskSecret` |
+| Agent 媒体载荷清理 | `apps/web-host/src/domains/agent-sessions/media-payload.ts`：`sanitizeMediaPayload` |
+| 文件 owner 校验、正向 Undo 写入、项目查询与时间戳格式化 | `apps/web-host/src/domains/files/file-owner.ts`；`apps/web-host/src/domains/undo/persistence/forward-operation.ts`；`apps/web-host/src/domains/projects/persistence/projects.ts`：`readProjectFileCount`、`projectExistsForOwner`、`projectTimestamp` |
+| 日历事件投影与持有查询 | `apps/web-host/src/domains/calendar/event-projection.ts`：数据库行、DTO 与 Undo 快照投影；`apps/web-host/src/domains/calendar/persistence/events.ts`：`findOwnedActiveEvent` |
 
 新增稳定复用入口时，在本节补充契约与路径；删除或迁移入口时同步更新，避免清单过期。
 
