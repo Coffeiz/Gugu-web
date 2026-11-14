@@ -2510,5 +2510,61 @@
     "productionEntry": "gugu-core/src/agent/harness/harness.ts",
     "keyBehavior": "终态不得重开，准备、交互等待和恢复不能绕过合法状态转换",
     "ci": "core-node"
+  },
+  "gugu-core/tests/agent/providers/openai.test.ts": {
+    "domain": "agent-provider",
+    "layer": "L1",
+    "owner": "gugu-core/src/agent/providers",
+    "productionEntry": "gugu-core/src/agent/providers/openai/driver.ts",
+    "keyBehavior": "OpenAI Chat真实请求参数、配对历史与缓存锚点、工具参数和usage归一化、空流/断流及输出后禁止重放",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/agent/providers/openai-responses.test.ts": {
+    "domain": "agent-provider",
+    "layer": "L1",
+    "owner": "gugu-core/src/agent/providers",
+    "productionEntry": "gugu-core/src/agent/providers/openai/responses.ts",
+    "keyBehavior": "Responses独立input/instructions、稳定item/call标识和原生推理续接、媒体能力拒绝、结构化输出及failed/incomplete/usage终态",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/agent/providers/anthropic.test.ts": {
+    "domain": "agent-provider",
+    "layer": "L1",
+    "owner": "gugu-core/src/agent/providers",
+    "productionEntry": "gugu-core/src/agent/providers/anthropic/driver.ts",
+    "keyBehavior": "Anthropic内容块顺序、签名思考历史与工具JSON解析、已知缺块恢复边界、缓存usage和MiniMax业务错误分类",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/agent/providers/runtime.test.ts": {
+    "domain": "agent-provider",
+    "layer": "L1",
+    "owner": "gugu-core/src/agent/providers",
+    "productionEntry": "gugu-core/src/agent/providers/runtime.ts",
+    "keyBehavior": "Provider真实协议事件跨Harness工具轮及交互恢复，Canonical不存私有块；请求快照、probe、取消、退避、池复用和同前缀排队边界",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/agent/providers/transport.test.ts": {
+    "domain": "agent-provider",
+    "layer": "L1",
+    "owner": "gugu-core/src/agent/providers",
+    "productionEntry": "gugu-core/src/agent/providers/transport/node.ts",
+    "keyBehavior": "真实TCP验证DNS固定与SSRF拒绝、代理CONNECT/NO_PROXY、TLS域名及CA、重定向拒绝、gzip体积预算、读写空闲超时及取消释放",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/agent/providers/policies.test.ts": {
+    "domain": "agent-provider",
+    "layer": "L1",
+    "owner": "gugu-core/src/agent/providers",
+    "productionEntry": "gugu-core/src/agent/providers/provider-policies.ts、search.ts + search/、asr.ts + asr/shared.ts + openai/asr.ts + qwen/asr.ts + minimax/asr.ts、media.ts + minimax/media.ts + mimo/media.ts",
+    "keyBehavior": "厂商与模型能力/思考参数及协议选择、显式本地授权、MiniMax图片/视频时长和上传/ASR预检、业务码及安全错误边界",
+    "ci": "core-node"
+  },
+  "gugu-core/tests/agent/providers/ollama.test.ts": {
+    "domain": "agent-provider",
+    "layer": "L1",
+    "owner": "gugu-core/src/agent/providers",
+    "productionEntry": "gugu-core/src/agent/providers/ollama/driver.ts",
+    "keyBehavior": "Ollama原生NDJSON与工具历史配对、usage原始钩子和显式空输出预算、终止/取消；厂商搜索原生字段、官方主机凭据限制及结果体积预算",
+    "ci": "core-node"
   }
 }

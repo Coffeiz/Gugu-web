@@ -54,6 +54,21 @@ function fixture() {
 const call = { id: 'tool-1', name: 'synthetic_tool', input: { text: '合成参数' } }
 
 describe('Canonical上下文与Run运行时组合', () => {
+  it('非法工具参数标记经过Canonical检查点仍保留，恢复不能把空对象误当合法参数', async () => {
+    const { context } = fixture()
+    const state = await context.prepare(identity, signal())
+    const invalid = { ...call, input: {}, parseError: 'invalid_json' as const }
+    const next = await context.afterRound(state, { text: '', calls: [invalid] }, 1)
+    expect(structuredClone(next).pendingRound!.calls[0]).toMatchObject({ id: call.id, input: {}, parseError: 'invalid_json' })
+  })
+  it.each(['轮次', '旧revision', '未知entry', '重复entry', '正文entry'])('拒绝伪造初始图片消费%s且不改变原始上下文', async kind => {
+    const { context } = fixture()
+    const state = await context.prepare(identity, signal()), before = structuredClone(state)
+    const id = state.prepared.area.entries[0]!.entryId
+    const effect = { expectedRevision: state.prepared.area.revision + (kind === '旧revision' ? 1 : 0), entryIds: kind === '未知entry' ? ['missing'] : kind === '重复entry' ? [id, id] : [id] }
+    await expect(context.afterRound(state, { text: '合成回复', calls: [], consumedInitialMedia: effect }, kind === '轮次' ? 2 : 1)).rejects.toThrow()
+    expect(state).toEqual(before)
+  })
   it('成功压力压缩后相同输入重复检查不重写摘要，也不再次调用摘要模型', async () => {
     const { context, ports } = fixture()
     let state = await context.prepare(identity, signal())

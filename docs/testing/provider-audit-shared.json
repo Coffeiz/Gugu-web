@@ -1,0 +1,1044 @@
+{
+  "schemaVersion": 1,
+  "updated": "2026-11-13",
+  "scope": "共享Provider纯规则与Host边界逐定义只读审计：6个指定Python文件33个定义；不按参数化展开数统计。",
+  "auditComplete": true,
+  "validation": {
+    "mode": "逐定义阅读Python原断言及对应TS生产实现、实际测试断言；本审计未新增/修改共享生产或runtime测试。",
+    "python": "本子任务不运行Python，主Agent统一提供基准执行证据。",
+    "typescript": "不以此前全套绿灯证明精确断言；审查中主Agent可并行新增用例，相关行如实注明待统一执行。",
+    "referenceNames": "所有列出的file/name在本地当前源文件中存在。",
+    "stage": "子任务历史执行快照；最终执行结果见integratedValidation。"
+  },
+  "boundaries": {
+    "Core规则": "确定指纹、缓存能力gate、明确scope生命周期、HTTP状态安全提取、四阶段超时和文本清洗须在TS实现并运行断言；不得归Host延期。",
+    "HostData": "Redis跨Worker锁、续租/故障诊断、reflection trace允许字段由Host/共享runtime实现接入；PrefixCoordinator接口或inprocess queue不构成该行为验收。",
+    "Contextvars": "Python contextvars机制可由TS显式Run scope替代；行为相同即可，无需机械复刻。",
+    "Tools": "通用工具名恢复属于工具入口；Anthropic私有清洗只证明单协议，需声明跨协议生产落Canonical/dispatch边界。",
+    "显式缓存能力": "Python ProviderAdapter.supports_explicit_cache与TS base.explicitCache默认True；cache_mode=none不等于不支持显式缓存，不得据此误判MiMo/Local/Ollama。原协调测试使用专门fake adapter按型号返回False，须单独验证active||explicit。"
+  },
+  "definitions": [
+    {
+      "pythonNode": "backend/tests/agent/providers/test_cache_singleflight.py::test_wire_cache_fingerprint_ignores_dynamic_tail_but_captures_stable_request",
+      "pythonLine": 52,
+      "originalAssertionCount": 5,
+      "classification": "Provider本体",
+      "status": "已实现并通过基准",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "缓存指纹仅覆盖最后锚点前缀，动态尾部改变不使稳定前缀失配"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "真实%s分支按最终body参数协调，动态任务不改变键而输出预算改变键，无稳定历史不协调"
+        }
+      ],
+      "protectedAssertions": [
+        "RequestProbe锚点前缀不含动态尾，rowCount=1",
+        "RequestProbe稳定行数=1，动态尾不影响digest，稳定正文或tools改变digest",
+        "两协议真实最终HTTP body协调键随预算、稳定历史、tools变化而改变，动态任务不改变键"
+      ],
+      "productionLocations": [
+        "gugu-core/src/agent/providers/cache-probe.ts:RequestProbe",
+        "gugu-core/src/agent/providers/cache.ts:stableRequestFingerprint"
+      ],
+      "gap": "最终probe与真实Chat/Responses分支均直接比较稳定正文、tools变化必异及动态任务变化不异；不扩大为跨Worker锁验收。",
+      "reviewHistory": [
+        {
+          "stage": "最终整合前精确复核",
+          "status": "部分覆盖",
+          "gap": "实现有确定稳定行指纹；TS只断尾变化相等，未断稳定正文或tools变化必异、provider branch fingerprint两种比较。"
+        }
+      ],
+      "finalReview": "已直接阅读最终TS用例断言与生产调用位置；运行结果引用主Agent独立执行记录，未把注入HTTP成功扩为线上服务验收。",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_cache_singleflight.py::test_reflection_trace_keeps_only_cache_fingerprint_and_singleflight_diagnostics",
+      "pythonLine": 86,
+      "originalAssertionCount": 5,
+      "classification": "相邻HostData",
+      "status": "边界延后",
+      "tsTests": [],
+      "protectedAssertions": [
+        "原定义保护reflection trace仅允许fingerprint及协调诊断，绝不包含private prompt"
+      ],
+      "productionLocations": [
+        "gugu-core/src/agent/providers/cache-probe.ts:RequestProbe"
+      ],
+      "gap": "Core RequestProbe是受控完整payload sink，不是_safe_reflection_observation；未迁LoopScope反思trace消费者白名单与租约诊断，不能用probe安全错误断言替代。"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_cache_singleflight.py::test_responses_branch_fingerprint_excludes_task_tail_and_checks_cache_support",
+      "pythonLine": 105,
+      "originalAssertionCount": 3,
+      "classification": "Provider本体",
+      "status": "已实现并通过基准",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "缓存指纹仅覆盖最后锚点前缀，动态尾部改变不使稳定前缀失配"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "真实%s分支按最终body参数协调，动态任务不改变键而输出预算改变键，无稳定历史不协调"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "缓存协调按主动或显式缓存能力门控，none不等于明确禁止显式缓存"
+        }
+      ],
+      "protectedAssertions": [
+        "现有RequestProbe仅证明按cache_control锚点裁掉动态尾",
+        "真实Responses动态任务不改变前缀键，零稳定历史不进入coordinator",
+        "能力active或explicit为真才支持协调，none与explicit=false区别明确"
+      ],
+      "productionLocations": [
+        "gugu-core/src/agent/providers/cache.ts:stableRequestFingerprint",
+        "gugu-core/src/agent/providers/runtime.ts:completeBranch"
+      ],
+      "gap": "实际Responses分支发出六次请求，五次协调；无稳定历史不协调。缓存能力真假用最低层规则运行断言，真实Runtime生产路径调用同一规则。",
+      "reviewHistory": [
+        {
+          "stage": "最终整合前精确复核",
+          "status": "缺回归",
+          "gap": "Responses专用稳定input指纹与无稳定历史/不支持缓存时不协调缺精确实际调用断言；Runtime审查时仍以手拼canonical键协调，尚非最终HTTP body。缺口已交主Agent。"
+        }
+      ],
+      "finalReview": "已直接阅读最终TS用例断言与生产调用位置；运行结果引用主Agent独立执行记录，未把注入HTTP成功扩为线上服务验收。",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_cache_singleflight.py::test_provider_branch_coordination_requires_explicit_cache_support",
+      "pythonLine": 126,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "status": "已实现并通过基准",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "缓存协调按主动或显式缓存能力门控，none不等于明确禁止显式缓存"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "真实%s分支按最终body参数协调，动态任务不改变键而输出预算改变键，无稳定历史不协调"
+        }
+      ],
+      "protectedAssertions": [
+        "各厂商cache_mode能力声明已区分active/none，但这不是explicitCache的替代",
+        "原fixture的active=False，explicit按型号真假，要求二者逻辑或",
+        "缓存能力规则cached型号=true、uncached型号=false；Runtime最终body指纹仅在该规则通过后计算"
+      ],
+      "productionLocations": [
+        "gugu-core/src/agent/providers/runtime.ts:completeBranch"
+      ],
+      "gap": "已修为按active||explicit能力门控；Runtime调用该规则。专门无active策略按型号显式缓存真假与原Python fake adapter断言相同，不因none误禁MiMo/Local/Ollama。",
+      "reviewHistory": [
+        {
+          "stage": "最终整合前精确复核",
+          "status": "缺回归",
+          "gap": "审查时completeBranch只检查cacheSingleflight和stable.length，未按policy.active或explicitCache gate；主Agent正补。特别校正：Python/TS通用explicitCache默认True，MiMo、Local、Ollama继承，不能仅凭cache_mode=none判断应禁协调。当前缺原fake adapter按型号真假组合的精确回归。"
+        }
+      ],
+      "finalReview": "已直接阅读最终TS用例断言与生产调用位置；运行结果引用主Agent独立执行记录，未把注入HTTP成功扩为线上服务验收。",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_cache_singleflight.py::test_same_prefix_waits_across_workers_and_different_prefixes_run_parallel",
+      "pythonLine": 143,
+      "originalAssertionCount": 5,
+      "classification": "相邻HostData",
+      "status": "边界延后",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "排队调用取消立即退出但第三个请求不越过仍运行的首请求，也不共享答案"
+        }
+      ],
+      "protectedAssertions": [
+        "进程内同key队列取消后不越过leader且不共享答案"
+      ],
+      "productionLocations": [
+        "gugu-core/src/agent/providers/cache.ts:InProcessPrefixCoordinator",
+        "gugu-core/src/agent/providers/cache.ts:PrefixCoordinator"
+      ],
+      "gap": "Redis跨Worker锁和singleflight_state/wait_ms尚无生产adapter；注入接口及进程内队列不能证明跨Worker互斥。TS也未直接断不同key并行。"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_cache_singleflight.py::test_lock_is_released_after_provider_error_or_cancellation",
+      "pythonLine": 192,
+      "originalAssertionCount": 1,
+      "classification": "相邻HostData",
+      "status": "边界延后",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "排队调用取消立即退出但第三个请求不越过仍运行的首请求，也不共享答案"
+        }
+      ],
+      "protectedAssertions": [
+        "进程内排队取消立即退出且后继仍可执行"
+      ],
+      "productionLocations": [
+        "gugu-core/src/agent/providers/cache.ts:InProcessPrefixCoordinator"
+      ],
+      "gap": "原定义参数化error/cancel两种持有Redis锁退出后再次acquire；TS队列取消验证的是等待者，未覆盖持有者抛错/取消释放，更不能证明Redis lease。"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_cache_singleflight.py::test_redis_failure_does_not_fail_background_provider_call",
+      "pythonLine": 220,
+      "originalAssertionCount": 1,
+      "classification": "相邻HostData",
+      "status": "边界延后",
+      "tsTests": [],
+      "protectedAssertions": [
+        "原定义Redis获取失败仍进入Provider操作并标redis_unavailable"
+      ],
+      "productionLocations": [
+        "gugu-core/src/agent/providers/cache.ts:PrefixCoordinator"
+      ],
+      "gap": "无Redis Host实现或故障诊断schema；默认inprocess不接Redis不等于已验证Redis故障继续策略。"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_cache_singleflight.py::test_lock_lease_renews_during_long_provider_call",
+      "pythonLine": 231,
+      "originalAssertionCount": 1,
+      "classification": "相邻HostData",
+      "status": "边界延后",
+      "tsTests": [],
+      "protectedAssertions": [
+        "原定义长调用中续租至少一次并用replace_ttl"
+      ],
+      "productionLocations": [
+        "gugu-core/src/agent/providers/cache.ts:PrefixCoordinator"
+      ],
+      "gap": "无共享租约heartbeat或lease renewal metadata生产实现；需runtime jobs/Host可用机制接入，接口不计完成。"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm_cache_capability.py::test_minimax_m3_uses_anthropic_active_cache",
+      "pythonLine": 11,
+      "originalAssertionCount": 1,
+      "classification": "Provider本体",
+      "status": "已实现并通过基准",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
+        }
+      ],
+      "protectedAssertions": [
+        "MiniMax-M3 cache_mode=active"
+      ],
+      "productionLocations": [
+        "gugu-core/src/agent/providers/vendors/policies.ts:minimaxPolicy"
+      ],
+      "gap": "原单一能力断言已有实际policy运行覆盖；不声明Redis协调或缓存命中率。",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm_cache_capability.py::test_minimax_m2_keeps_anthropic_active_cache",
+      "pythonLine": 15,
+      "originalAssertionCount": 1,
+      "classification": "Provider本体",
+      "status": "已实现并通过基准",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
+        }
+      ],
+      "protectedAssertions": [
+        "MiniMax-M2.7 cache_mode=active"
+      ],
+      "productionLocations": [
+        "gugu-core/src/agent/providers/vendors/policies.ts:minimaxPolicy"
+      ],
+      "gap": "同一矩阵直接枚举M2.7与M3，不按代际相似性推定。",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm_cache_capability.py::test_mimo_does_not_receive_anthropic_cache_control",
+      "pythonLine": 19,
+      "originalAssertionCount": 1,
+      "classification": "Provider本体",
+      "status": "已实现并通过基准",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
+        }
+      ],
+      "protectedAssertions": [
+        "MiMo cache_mode=none，与原supports_anthropic_active_cache false语义一致"
+      ],
+      "productionLocations": [
+        "gugu-core/src/agent/providers/vendors/policies.ts:mimoPolicy"
+      ],
+      "gap": "原定义只断能力选择，不包含真实HTTP无cache_control的断言。",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm_cache_capability.py::test_anthropic_provider_keeps_existing_active_cache_behavior",
+      "pythonLine": 23,
+      "originalAssertionCount": 1,
+      "classification": "Provider本体",
+      "status": "已实现并通过基准",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
+        }
+      ],
+      "protectedAssertions": [
+        "Anthropic cache_mode=active"
+      ],
+      "productionLocations": [
+        "gugu-core/src/agent/providers/anthropic.ts:anthropicPolicy"
+      ],
+      "gap": "policy缓存能力声明与原定义相同；Python基准由主Agent统一核对。",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm_cache_capability.py::test_openai_compatible_qwen_uses_active_cache",
+      "pythonLine": 27,
+      "originalAssertionCount": 1,
+      "classification": "Provider本体",
+      "status": "已实现并通过基准",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
+        }
+      ],
+      "protectedAssertions": [
+        "Qwen公开默认及旧qwen-max cache_mode=active"
+      ],
+      "productionLocations": [
+        "gugu-core/src/agent/providers/vendors/policies.ts:qwenPolicy"
+      ],
+      "gap": "能力规则为全Qwen active；TS未用原qwen3.5-flash字面型号，但两种非同代型号与默认分支直接保护该普遍规则。",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm_cache_capability.py::test_openai_mimo_skips_active_cache",
+      "pythonLine": 32,
+      "originalAssertionCount": 1,
+      "classification": "Provider本体",
+      "status": "已实现并通过基准",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
+        }
+      ],
+      "protectedAssertions": [
+        "MiMo公开能力cache_mode=none"
+      ],
+      "productionLocations": [
+        "gugu-core/src/agent/providers/vendors/policies.ts:mimoPolicy"
+      ],
+      "gap": "对应Provider能力已有运行断言，不扩大为整合协调完成。",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm_read_timeout.py::test_primary_drivers_use_shared_five_minute_read_timeout",
+      "pythonLine": 26,
+      "originalAssertionCount": 6,
+      "classification": "Provider本体",
+      "status": "已实现并通过基准",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/transport.test.ts",
+          "name": "真实连接的读空闲超时和主动取消关闭流，不用总时限截断持续数据"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/transport.test.ts",
+          "name": "DNS等待可立即取消且晚到解析结果不继续请求，连接预算包含解析阶段"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/transport.test.ts",
+          "name": "对端停读的大请求由write超时终止，end入队不能误判已经发完"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/transport.test.ts",
+          "name": "连接池已满时使用独立pool预算，不把排队算成连接或整个Run超时"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/transport.test.ts",
+          "name": "四协议实际请求共用五分钟读空闲及10秒连接/写、5秒池等待默认预算"
+        }
+      ],
+      "protectedAssertions": [
+        "实际Node连接保护独立read/connect/write/pool阶段，持续数据不会被总时限截断",
+        "Chat/Responses/Anthropic/Ollama四个协议请求均实际注册300000ms读空闲",
+        "真实创建连接/写预算10000ms及各次排队5000ms计时器，主动取消后关闭连接"
+      ],
+      "productionLocations": [
+        "gugu-core/src/agent/providers/transport/node.ts:NodeProviderTransport.request",
+        "gugu-core/src/agent/providers/transport/network.ts:resolvePinnedTarget"
+      ],
+      "gap": "四协议buildRequest产物实际通过本地TCP进入Node传输；观察四次300000ms读空闲、10000ms连接/写计时器与四次5000ms池等待。不等待五分钟，不证明外部服务时延。",
+      "reviewHistory": [
+        {
+          "stage": "最终整合前精确复核",
+          "status": "部分覆盖",
+          "gap": "生产默认read=300000/connect=10000/write=10000/pool=5000与Python相同；现TS实HTTP使用缩短自定义预算，未直接断四协议默认时限传播。不是Host边界。"
+        }
+      ],
+      "finalReview": "已直接阅读最终TS用例断言与生产调用位置；运行结果引用主Agent独立执行记录，未把注入HTTP成功扩为线上服务验收。",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_client_pool.py::test_provider_client_reuses_between_runs_and_closes_after_idle_ttl",
+      "pythonLine": 17,
+      "originalAssertionCount": 5,
+      "classification": "Provider本体",
+      "status": "已实现并通过基准",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "客户端复用只发生在相同凭据/网络键，最后scope退出才延迟关闭且新scope可取消关闭"
+        }
+      ],
+      "protectedAssertions": [
+        "同key跨scope复用且新scope可取消延迟关闭，最终只close一次",
+        "两个活动scope复用同对象且未全释放不关闭",
+        "idle回调删除entry后全池close之前取得fresh对象，旧对象及fresh最终各close一次"
+      ],
+      "productionLocations": [
+        "gugu-core/src/agent/providers/client-pool.ts:ProviderClientPool"
+      ],
+      "gap": "最终用例先触发idle回调，再在全池close之前get fresh；真实pool先删旧entry，fresh与旧对象不同。可控timer替代实际等待，原pytest使用自定义短TTL，并不要求额外默认90秒断言。",
+      "reviewHistory": [
+        {
+          "stage": "最终整合前精确复核",
+          "status": "部分覆盖",
+          "gap": "源代码关闭时删entry，后续get会重建；TS未直接断真正idle过期后factory第二次及第三实例不同，也未断默认90秒。contextvars被显式scope替代，不是必须延期的Host职责。"
+        }
+      ],
+      "finalReview": "已直接阅读最终TS用例断言与生产调用位置；运行结果引用主Agent独立执行记录，未把注入HTTP成功扩为线上服务验收。",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_client_pool.py::test_provider_client_waits_until_all_active_runs_release_it",
+      "pythonLine": 50,
+      "originalAssertionCount": 3,
+      "classification": "Provider本体",
+      "status": "已实现并通过基准",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "客户端复用只发生在相同凭据/网络键，最后scope退出才延迟关闭且新scope可取消关闭"
+        }
+      ],
+      "protectedAssertions": [
+        "两个scope共享同client，首scope释放不关闭，最后scope释放后才定时关闭"
+      ],
+      "productionLocations": [
+        "gugu-core/src/agent/providers/client-pool.ts:ProviderClientPool"
+      ],
+      "gap": "假timer用于可控触发时间，运行真实pool与真实close副作用，足以验证该纯生命周期规则；不模拟SDK传输网络。",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_client_pool.py::test_provider_config_key_does_not_contain_api_key",
+      "pythonLine": 89,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "status": "已实现并通过基准",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "客户端复用只发生在相同凭据/网络键，最后scope退出才延迟关闭且新scope可取消关闭"
+        }
+      ],
+      "protectedAssertions": [
+        "不同合成凭据的providerConfigKey不同",
+        "config key为64位小写hex，明文secret不在结果且不同key不共用缓存键"
+      ],
+      "productionLocations": [
+        "gugu-core/src/agent/providers/client-pool.ts:providerConfigKey"
+      ],
+      "gap": "已直接断真实SHA256 digest的64hex格式、不含合成secret、不同凭据导致不同键。注入digest是算法端口，测试使用真实createHash。",
+      "reviewHistory": [
+        {
+          "stage": "最终整合前精确复核",
+          "status": "部分覆盖",
+          "gap": "实际key委托注入digest；测试digest是SHA256，但未显式断64hex或secret不在结果。无明文日志暴露生产问题证据，属必要安全断言缺口。"
+        }
+      ],
+      "finalReview": "已直接阅读最终TS用例断言与生产调用位置；运行结果引用主Agent独立执行记录，未把注入HTTP成功扩为线上服务验收。",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_client_pool.py::test_provider_builders_share_sdk_transport_with_ten_minute_idle_limit",
+      "pythonLine": 104,
+      "originalAssertionCount": 6,
+      "classification": "Provider本体",
+      "status": "部分覆盖",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "客户端复用只发生在相同凭据/网络键，最后scope退出才延迟关闭且新scope可取消关闭"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "池关闭和诊断同时失败仍回收scope，等待close不产生未处理拒绝"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/transport.test.ts",
+          "name": "完整JSON读取后复用真实TCP连接，空闲过期后新建连接而非只复用fake对象"
+        }
+      ],
+      "protectedAssertions": [
+        "真实通用pool按相同配置共享client并有界关闭；close失败及诊断失败不会漏scope",
+        "实际服务器记录socket：连续两请求集合大小1，显式idle失效后第三请求集合大小2；传输及服务器最终关闭"
+      ],
+      "productionLocations": [
+        "gugu-core/src/agent/providers/client-pool.ts:ProviderClientPool",
+        "gugu-core/src/agent/providers/transport/node.ts:NodeProviderTransport.constructor",
+        "gugu-core/src/agent/providers/runtime.ts:#transport"
+      ],
+      "gap": "真实TCP两次完整读取复用同socket，显式30ms idle后第三请求创建新socket，已消除仅fake对象证明物理复用的缺口。默认600000ms目前仅生产源码值，未等待或用注册值行为断言；原SDK客户端对象/600秒属性DTO不复刻，此精确差异仍部分覆盖。",
+      "reviewHistory": [
+        {
+          "stage": "新增真实socket行为验收前",
+          "status": "部分覆盖",
+          "gap": "Node生产agent设keepAlive和600000空闲限额，替代SDK；未见经过Runtime两个协议builder实际复用transport并在idle后close、或600000空闲生效的直接行为断言。SDK DTO不复刻，但此行为仍需回归。"
+        }
+      ]
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_errors.py::test_provider_http_error_detects_status_code",
+      "pythonLine": 11,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "status": "已实现并通过基准",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "MiniMax普通HTTP529不被业务码分类吞掉，2013窗口超限不重试"
+        }
+      ],
+      "protectedAssertions": [
+        "实际HTTP529映射busy与400 context overflow",
+        "HTTP边界399/400/503/599/600及无status内部Error直接运行断言"
+      ],
+      "productionLocations": [
+        "gugu-core/src/agent/providers/errors.ts:classifyProviderError"
+      ],
+      "gap": "实际运行分类器直接验证399/400/503/599/600范围及普通内部Error，只有400..599出现在安全options.status；保留response/cause读取回归。",
+      "reviewHistory": [
+        {
+          "stage": "最终整合前精确复核",
+          "status": "部分覆盖",
+          "gap": "已实现合法status_code与status提取；当前直接测试并非原400/503普通错误组合，HTTP predicate被安全分类替代，状态是否识别的可观察options.status可等价验证但未完整断。"
+        }
+      ],
+      "finalReview": "已直接阅读最终TS用例断言与生产调用位置；运行结果引用主Agent独立执行记录，未把注入HTTP成功扩为线上服务验收。",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_errors.py::test_provider_http_error_detects_wrapped_provider_error",
+      "pythonLine": 16,
+      "originalAssertionCount": 1,
+      "classification": "Provider本体",
+      "status": "已实现并通过基准",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "MiniMax普通HTTP529不被业务码分类吞掉，2013窗口超限不重试"
+        }
+      ],
+      "protectedAssertions": [
+        "cause.response.status_code=401正确认证分类且保留status"
+      ],
+      "productionLocations": [
+        "gugu-core/src/agent/providers/errors.ts:classifyProviderError"
+      ],
+      "gap": "审查中发现cause/response组合遗漏后主Agent已加实际断言；相比原cause.status_code=400更深的链路组合得到直接验证。",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_errors.py::test_provider_http_error_accepts_only_http_error_status_range",
+      "pythonLine": 26,
+      "originalAssertionCount": 1,
+      "classification": "Provider本体",
+      "status": "已实现并通过基准",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "MiniMax普通HTTP529不被业务码分类吞掉，2013窗口超限不重试"
+        }
+      ],
+      "protectedAssertions": [
+        "status_code=600不作为合法HTTP错误status",
+        "HTTP边界399/400/503/599/600及无status内部Error直接运行断言"
+      ],
+      "productionLocations": [
+        "gugu-core/src/agent/providers/errors.ts:classifyProviderError"
+      ],
+      "gap": "实际运行分类器直接验证399/400/503/599/600范围及普通内部Error，只有400..599出现在安全options.status；保留response/cause读取回归。",
+      "reviewHistory": [
+        {
+          "stage": "最终整合前精确复核",
+          "status": "部分覆盖",
+          "gap": "主Agent已修合法400..599范围并补600断言；原参数化399/400/599/600四点边界仍未全部直接覆盖。"
+        }
+      ],
+      "finalReview": "已直接阅读最终TS用例断言与生产调用位置；运行结果引用主Agent独立执行记录，未把注入HTTP成功扩为线上服务验收。",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_errors.py::test_provider_http_error_reads_status_from_response_object",
+      "pythonLine": 31,
+      "originalAssertionCount": 1,
+      "classification": "Provider本体",
+      "status": "已实现并通过基准",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "MiniMax普通HTTP529不被业务码分类吞掉，2013窗口超限不重试"
+        }
+      ],
+      "protectedAssertions": [
+        "response.status_code=429映射rate_limit、status=429及retryable=true"
+      ],
+      "productionLocations": [
+        "gugu-core/src/agent/providers/errors.ts:classifyProviderError"
+      ],
+      "gap": "本审查发现缺陷后主Agent已补response/cause提取与同一runtime用例断言；待统一运行证据。",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_errors.py::test_provider_http_error_does_not_classify_internal_error",
+      "pythonLine": 38,
+      "originalAssertionCount": 1,
+      "classification": "Provider本体",
+      "status": "已实现并通过基准",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "收到正文或私有输出事实后即使上游繁忙也不重放，错误正文不进入安全错误"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "MiniMax普通HTTP529不被业务码分类吞掉，2013窗口超限不重试"
+        }
+      ],
+      "protectedAssertions": [
+        "没有原始私有错误内容进入安全异常",
+        "HTTP边界399/400/503/599/600及无status内部Error直接运行断言"
+      ],
+      "productionLocations": [
+        "gugu-core/src/agent/providers/errors.ts:classifyProviderError"
+      ],
+      "gap": "实际运行分类器直接验证399/400/503/599/600范围及普通内部Error，只有400..599出现在安全options.status；保留response/cause读取回归。",
+      "reviewHistory": [
+        {
+          "stage": "最终整合前精确复核",
+          "status": "部分覆盖",
+          "gap": "纯内部Error无HTTP status代码会映射upstream且options.status缺失，源代码已保持区分；没有普通RuntimeError对外部HTTP判别的精确运行断言，不能用脱敏同义替代。"
+        }
+      ],
+      "finalReview": "已直接阅读最终TS用例断言与生产调用位置；运行结果引用主Agent独立执行记录，未把注入HTTP成功扩为线上服务验收。",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_stream_sanitize.py::test_minimax_truncates_confirmed_e_tilde_leak_across_token_boundaries",
+      "pythonLine": 8,
+      "originalAssertionCount": 3,
+      "classification": "Provider本体",
+      "status": "已实现并通过基准",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "MiniMax尾标记跨增量截断且不吞普通厂商同字面文本，思考精确标签不误伤正文"
+        }
+      ],
+      "protectedAssertions": [
+        "```代码块后[e/~[跨delta拼接确认截断，flush不释放尾部"
+      ],
+      "productionLocations": [
+        "gugu-core/src/agent/providers/sanitize.ts:ProviderStreamSanitizer"
+      ],
+      "gap": "真实sanitizer与原逐feed/flush输出精确一致。",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_stream_sanitize.py::test_non_minimax_keeps_e_tilde_text_untouched",
+      "pythonLine": 16,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "status": "已实现并通过基准",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "MiniMax尾标记跨增量截断且不吞普通厂商同字面文本，思考精确标签不误伤正文"
+        }
+      ],
+      "protectedAssertions": [
+        "普通provider完整[e~[字面文本不变"
+      ],
+      "productionLocations": [
+        "gugu-core/src/agent/providers/sanitize.ts:ProviderStreamSanitizer"
+      ],
+      "gap": "通用无marker实例运行该原字面输入，不套用MiniMax清洗。",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_stream_sanitize.py::test_normal_reply_start_is_not_delayed_or_changed",
+      "pythonLine": 23,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "status": "已实现并通过基准",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "MiniMax尾标记跨增量截断且不吞普通厂商同字面文本，思考精确标签不误伤正文"
+        }
+      ],
+      "protectedAssertions": [
+        "普通provider包含普通文字的完整首chunk立即输出不变",
+        "普通正文即时输出；精确标签去除但普通thinking保留；未闭合完整标签后的私有正文不在flush泄漏"
+      ],
+      "productionLocations": [
+        "gugu-core/src/agent/providers/sanitize.ts:ProviderStreamSanitizer"
+      ],
+      "gap": "最终真实sanitizer用例增加正常回复即时输出且flush为空、同feed中普通thinking单词与完整标签共存、完整已进入隐藏状态的未闭合think正文flush为空。",
+      "reviewHistory": [
+        {
+          "stage": "最终整合前精确复核",
+          "status": "部分覆盖",
+          "gap": "原单纯正常回复与flush为空未单独断，现组合中的同义即时输出可防大范围延迟，但精确无marker完整flush组合仍未直接覆盖。"
+        }
+      ],
+      "finalReview": "已直接阅读最终TS用例断言与生产调用位置；运行结果引用主Agent独立执行记录，未把注入HTTP成功扩为线上服务验收。",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_stream_sanitize.py::test_think_tags_are_removed_without_matching_normal_thinking_words",
+      "pythonLine": 29,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "status": "已实现并通过基准",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "MiniMax尾标记跨增量截断且不吞普通厂商同字面文本，思考精确标签不误伤正文"
+        }
+      ],
+      "protectedAssertions": [
+        "非流式stripThinking保留普通thinking单词，仅移除精确标签",
+        "流式分割标签只输出标签外前后文",
+        "普通正文即时输出；精确标签去除但普通thinking保留；未闭合完整标签后的私有正文不在flush泄漏"
+      ],
+      "productionLocations": [
+        "gugu-core/src/agent/providers/sanitize.ts:ThinkingTextFilter",
+        "gugu-core/src/agent/providers/sanitize.ts:stripThinking"
+      ],
+      "gap": "最终真实sanitizer用例增加正常回复即时输出且flush为空、同feed中普通thinking单词与完整标签共存、完整已进入隐藏状态的未闭合think正文flush为空。",
+      "reviewHistory": [
+        {
+          "stage": "最终整合前精确复核",
+          "status": "部分覆盖",
+          "gap": "stream与nonstream分别保护两个性质，尚未在同一次stream feed中断普通thinking单词与完整think标签共存。"
+        }
+      ],
+      "finalReview": "已直接阅读最终TS用例断言与生产调用位置；运行结果引用主Agent独立执行记录，未把注入HTTP成功扩为线上服务验收。",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_stream_sanitize.py::test_think_tags_can_be_split_across_stream_deltas",
+      "pythonLine": 38,
+      "originalAssertionCount": 5,
+      "classification": "Provider本体",
+      "status": "已实现并通过基准",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "MiniMax尾标记跨增量截断且不吞普通厂商同字面文本，思考精确标签不误伤正文"
+        }
+      ],
+      "protectedAssertions": [
+        "<thi/nk>与</thi/nk>跨四delta，内部正文不输出，前后文保留"
+      ],
+      "productionLocations": [
+        "gugu-core/src/agent/providers/sanitize.ts:ThinkingTextFilter"
+      ],
+      "gap": "原分片标签行为有精确逐feed及flush运行断言。",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_stream_sanitize.py::test_unclosed_think_block_is_not_released_at_stream_end",
+      "pythonLine": 48,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "status": "已实现并通过基准",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "MiniMax尾标记跨增量截断且不吞普通厂商同字面文本，思考精确标签不误伤正文"
+        }
+      ],
+      "protectedAssertions": [
+        "现有测试只断部分开标签<thi在flush不释放",
+        "普通正文即时输出；精确标签去除但普通thinking保留；未闭合完整标签后的私有正文不在flush泄漏"
+      ],
+      "productionLocations": [
+        "gugu-core/src/agent/providers/sanitize.ts:ThinkingTextFilter.flush"
+      ],
+      "gap": "最终真实sanitizer用例增加正常回复即时输出且flush为空、同feed中普通thinking单词与完整标签共存、完整已进入隐藏状态的未闭合think正文flush为空。",
+      "reviewHistory": [
+        {
+          "stage": "最终整合前精确复核",
+          "status": "缺回归",
+          "gap": "实现hidden时flush返回空，但没有完整<think>已进入隐藏状态后带内部正文并flush的精确流式回归；非流式未闭合断言不能替代。纯规则测试缺口已报告主Agent。"
+        }
+      ],
+      "finalReview": "已直接阅读最终TS用例断言与生产调用位置；运行结果引用主Agent独立执行记录，未把注入HTTP成功扩为线上服务验收。",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_stream_sanitize.py::test_non_stream_think_cleaner_removes_only_exact_tags",
+      "pythonLine": 55,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "status": "已实现并通过基准",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "MiniMax尾标记跨增量截断且不吞普通厂商同字面文本，思考精确标签不误伤正文"
+        }
+      ],
+      "protectedAssertions": [
+        "普通thinking单词保留，完整及未闭合<think>内容移除，大写字面标签保留"
+      ],
+      "productionLocations": [
+        "gugu-core/src/agent/providers/sanitize.ts:stripThinking"
+      ],
+      "gap": "实际stripThinking断言包含原两个分支与额外大小写边界。",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_stream_sanitize.py::test_plain_less_than_at_end_is_not_lost",
+      "pythonLine": 60,
+      "originalAssertionCount": 2,
+      "classification": "Provider本体",
+      "status": "已实现并通过基准",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "MiniMax尾标记跨增量截断且不吞普通厂商同字面文本，思考精确标签不误伤正文"
+        }
+      ],
+      "protectedAssertions": [
+        "1 <首feed暂存单个<，flush准确交付<"
+      ],
+      "productionLocations": [
+        "gugu-core/src/agent/providers/sanitize.ts:ThinkingTextFilter.flush"
+      ],
+      "gap": "与原测试前缀措辞不同但同一尾字符行为精确运行。",
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_stream_sanitize.py::test_salvage_tool_name_removes_provider_marker_before_history_persistence",
+      "pythonLine": 67,
+      "originalAssertionCount": 2,
+      "classification": "相邻Tools",
+      "status": "部分覆盖",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "流拼接多工具JSON和原始键序，工具名按已知分隔符清洗，用量包含cache read/write"
+        }
+      ],
+      "protectedAssertions": [
+        "Anthropic真实流的lookup]<]minimax[清洗为lookup并进入complete调用"
+      ],
+      "productionLocations": [
+        "gugu-core/src/agent/providers/anthropic.ts:normalizedToolName",
+        "gugu-core/src/agent/providers/openai.ts:normalizedToolCall"
+      ],
+      "gap": "只有Anthropic私有名清洗；通用tools.base.salvage_tool_name和create_file\"><target>断言尚无对应。Chat/Responses/Ollama原样保留name，若要求跨协议dispatch前统一清洗存在相邻Tools主链接线缺口，不能由单协议helper冒充完成。"
+    }
+  ],
+  "summary": {
+    "pythonFiles": 6,
+    "pythonDefinitions": 33,
+    "statusCounts": {
+      "已实现并通过基准": 26,
+      "边界延后": 5,
+      "部分覆盖": 2
+    },
+    "classificationCounts": {
+      "Provider本体": 27,
+      "相邻HostData": 5,
+      "相邻Tools": 1
+    },
+    "finalStatusCounts": {
+      "已实现并通过基准": 26,
+      "边界延后": 5,
+      "部分覆盖": 2
+    },
+    "subtaskSnapshotStatusCounts": {
+      "部分覆盖": 11,
+      "边界延后": 5,
+      "缺回归": 3,
+      "已实现待Python": 14
+    }
+  },
+  "reportedFindings": [
+    "HTTP错误response.status_code漏读与非法状态范围已通知主Agent；其已在审查中补实现与部分直接断言。",
+    "completeBranch缓存协调缺能力gate，键没有实际最终body的generation/thinking/预算等参数，已通知主Agent处理。",
+    "四协议默认超时、Pool过期后重建及key无明文、完整未闭合流think缺精确回归，已通知主Agent。",
+    "通用工具名清洗不能由Anthropic私有实现证明；相邻Tools缺口已通知主Agent。"
+  ],
+  "integratedValidation": {
+    "providerNode": {
+      "id": "provider-node-final-366",
+      "reportedBy": "主Agent最终独立执行",
+      "environment": "本地原生Node 26",
+      "files": 7,
+      "passed": 366,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "time": "2026-11-13 17:55:53",
+      "notes": "所有源与测试已冻结后运行；包含真实socket复用/idle失效及A/B/Runtime最后补充断言。transport文件23项。"
+    },
+    "python": {
+      "id": "provider-python-517",
+      "reportedBy": "主Agent实际执行",
+      "environment": "本地原生Linux隔离副本",
+      "files": 43,
+      "passed": 517,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "durationSeconds": 13.75,
+      "notes": "补齐ffprobe后原跳过已实际执行；未使用devserver，未读取或改写运行配置。"
+    },
+    "coreUnit": {
+      "id": "core-unit-final-855",
+      "reportedBy": "主Agent最终独立执行",
+      "files": 36,
+      "passed": 855,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "time": "2026-11-13 17:57:23"
+    },
+    "types": {
+      "status": "通过",
+      "reportedBy": "主Agent最终实际执行",
+      "notes": "17:55后最终测试tsc通过，含B reduce<number>修正。"
+    },
+    "coreBuild": {
+      "status": "通过",
+      "reportedBy": "主Agent最终实际执行",
+      "notes": "17:55后最终Core build通过。"
+    },
+    "limits": [
+      "两侧测试各自执行通过与逐定义语义审计共同构成证据，不是自动差分运行或真实外部服务验收。",
+      "Provider协议与Core接线已经有真实生产实现；Host/Data/Redis/Tools/观测缺口不因合成HTTP或全套通过升级。"
+    ],
+    "latestTargeted": [
+      {
+        "id": "provider-runtime-final-25",
+        "reportedBy": "主Agent实际执行",
+        "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+        "passed": 25,
+        "failed": 0,
+        "skipped": 0,
+        "time": "2026-11-13 17:49:21",
+        "notes": "覆盖最终稳定正文/tools键、idle前后factory及TTL/跨Run/终态引用拒绝；随后tsc通过。"
+      },
+      {
+        "id": "provider-openai-final-105",
+        "reportedBy": "A实际执行",
+        "files": 2,
+        "passed": 105,
+        "failed": 0,
+        "skipped": 0,
+        "time": "2026-11-13 17:52:52",
+        "notes": "含新增4项真实组合用例，原6条partial缺口按断言证据闭合。"
+      },
+      {
+        "id": "provider-anthropic-final-70",
+        "reportedBy": "B实际执行",
+        "files": 1,
+        "passed": 70,
+        "failed": 0,
+        "skipped": 0,
+        "notes": "包含三历史轮重复恢复幂等和普通system主动缓存branch断言。"
+      },
+      {
+        "id": "provider-transport-socket-idle",
+        "reportedBy": "主Agent实际执行",
+        "file": "gugu-core/tests/agent/providers/transport.test.ts",
+        "time": "2026-11-13 17:54:36",
+        "status": "通过",
+        "name": "完整JSON读取后复用真实TCP连接，空闲过期后新建连接而非只复用fake对象"
+      }
+    ],
+    "freeze": "主Agent确认所有Provider源/测试停笔后执行；文档最终整合未再修改源或测试。"
+  },
+  "finalSummary": {
+    "definitions": 33,
+    "uniqueDefinitions": 33,
+    "statusCounts": {
+      "已实现并通过基准": 26,
+      "边界延后": 5,
+      "部分覆盖": 2
+    },
+    "pythonFiles": [
+      "backend/tests/agent/providers/test_cache_singleflight.py",
+      "backend/tests/agent/providers/test_llm_cache_capability.py",
+      "backend/tests/agent/providers/test_llm_read_timeout.py",
+      "backend/tests/agent/providers/test_provider_client_pool.py",
+      "backend/tests/agent/providers/test_provider_errors.py",
+      "backend/tests/agent/providers/test_stream_sanitize.py"
+    ],
+    "countingRule": "按pytest定义计数，参数化执行个数另见517；已实现并通过基准不表示线上服务或生产Host迁移。"
+  },
+  "reportedFindingsFinalResolution": "有效网络快照身份、默认环境/CA、真实socket复用/idle、清洗诊断、超窗和终态用量有实际生产回归。Redis/观测/通用Tools和旧SDK属性DTO差异仍按逐项gap保留。",
+  "rootFinalIntegration": {
+    "providerNode": {
+      "id": "provider-node-final-457",
+      "reportedBy": "主Agent独立执行",
+      "environment": "本地原生Node 26",
+      "files": 7,
+      "passed": 457,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "time": "2026-11-13 18:58:10",
+      "durationSeconds": 2.75,
+      "notes": "四协议摘要三阶段、截断拒收；Anthropic/MiniMax实际双工具反思分支；真实TLS/代理/CA和池身份。"
+    },
+    "coreUnit": {
+      "id": "core-unit-final-943",
+      "reportedBy": "主Agent独立执行",
+      "files": 36,
+      "passed": 943,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "time": "2026-11-13 18:58:55",
+      "durationSeconds": 12.37
+    },
+    "types": "tsconfig.tests严格检查通过",
+    "coreBuild": "最终生产源码构建通过；随后仅补测试及文档。",
+    "limits": "整合通过只升级逐项已有直接证据的定义，Host/外部服务及已接受API差异不批量关闭。"
+  }
+}

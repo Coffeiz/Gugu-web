@@ -1,4 +1,5 @@
 export { normalizePersistentArtifact } from './history/attachment-refs.js'
+export type { ConsumedInitialMedia } from './contracts.js'
 export { sameToolResultControl,snapshotInteraction,snapshotToolResult } from './history/canonical-history.js'
 export { partitionToolPlan } from './streaming/coordinator.js'
 /** 固定Harness对外API；不隐式加载平台实现。 */

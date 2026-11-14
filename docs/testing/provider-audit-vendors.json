@@ -1,0 +1,4361 @@
+{
+  "schemaVersion": 1,
+  "updated": "2026-11-13",
+  "scope": "厂商策略、MiniMax媒体/ASR、原生Ollama、Provider搜索及相邻调用方逐pytest定义审计",
+  "status": "119定义已逐项审计；完整覆盖项补Python基准证据，部分/延后项不升级。",
+  "definitions": [
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_adapter_for_minimax",
+      "pythonLine": 23,
+      "pythonAssertCount": 5,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "缺块%s尚无正文时只用相同参数非流式恢复一次，恢复正文进入正常事件链"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "MiniMax已知缺块尚无输出时恢复一次，普通JS异常不扩散成可重试厂商故障"
+        }
+      ],
+      "protectedAssertions": [
+        "显式MiniMax选择默认Anthropic",
+        "坏流恢复限定在协议尚无输出的已知缺块故障"
+      ],
+      "gap": "SDK异常类元组不复刻，改为显式流状态分类与一次恢复；不是对JS TypeError无条件重试。",
+      "status": "部分覆盖",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "MiniMax已知缺块尚无输出时恢复一次，普通JS异常不扩散成可重试厂商故障"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": [
+          {
+            "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+            "name": "缺块%s尚无正文时只用相同参数非流式恢复一次，恢复正文进入正常事件链"
+          }
+        ]
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_adapter_for_minimax_m2_vs_m3_cache",
+      "pythonLine": 32,
+      "pythonAssertCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
+        }
+      ],
+      "protectedAssertions": [
+        "M2.7与M3均声明主动前缀缓存"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_adapter_for_qwen_keeps_known_openai_cache_capability",
+      "pythonLine": 37,
+      "pythonAssertCount": 4,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "旧DeepSeek模型不接收新thinking，Anthropic端点按协议而非URL关键字选择"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
+        }
+      ],
+      "protectedAssertions": [
+        "Qwen默认OpenAI且qwen-max仍有主动缓存",
+        "显式已知厂商的空api_format不从URL猜Anthropic"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "旧DeepSeek模型不接收新thinking，Anthropic端点按协议而非URL关键字选择"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_responses_prompt_cache_key_is_scoped_to_declared_provider_support",
+      "pythonLine": 46,
+      "pythonAssertCount": 5,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "官方cache key/store/include能力不能扩散到兼容服务或相似域名"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "MiniMax能力与媒体规格保持M2/M3边界，Responses不虚报音视频"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "Qwen disabled和none显式关思考，结构Schema包装与cache单锚点独立"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
+        }
+      ],
+      "protectedAssertions": [
+        "官方OpenAI可发prompt cache key",
+        "兼容域名不能继承",
+        "MiniMax仅Responses声明cache key且Qwen不声明"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "MiniMax能力与媒体规格保持M2/M3边界，Responses不虚报音视频"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "Qwen disabled和none显式关思考，结构Schema包装与cache单锚点独立"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": [
+          {
+            "file": "gugu-core/tests/agent/providers/openai.test.ts",
+            "name": "官方cache key/store/include能力不能扩散到兼容服务或相似域名"
+          }
+        ]
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_bailian_qwen3_capabilities_and_thinking_toggle",
+      "pythonLine": 66,
+      "pythonAssertCount": 12,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "Qwen3.8的%s档位按协议映射%s，旧Qwen3无同名档位"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "Qwen disabled和none显式关思考，结构Schema包装与cache单锚点独立"
+        }
+      ],
+      "protectedAssertions": [
+        "Qwen3思考和JSON schema按模型开放",
+        "disabled/none关闭",
+        "adaptive保留原生thinking",
+        "档位别名及Schema包装",
+        "历史单缓存锚点"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "Qwen3.8的%s档位按协议映射%s，旧Qwen3无同名档位"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "Qwen disabled和none显式关思考，结构Schema包装与cache单锚点独立"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_bailian_qwen_anthropic_protocol_endpoint_and_reasoning",
+      "pythonLine": 104,
+      "pythonAssertCount": 8,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "Qwen旧型号不继承Qwen3思考或JSON，Anthropic只列已支持型号"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "Qwen3.8的%s档位按协议映射%s，旧Qwen3无同名档位"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "诊断与模型列表保持协议路径和厂商认证，Qwen展开思考字段而非额外SDK包装"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
+        }
+      ],
+      "protectedAssertions": [
+        "仅已列Qwen型号提供Anthropic",
+        "Anthropic档位和enabled/disabled分别映射",
+        "诊断按v1/messages路径与x-api-key"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "Qwen旧型号不继承Qwen3思考或JSON，Anthropic只列已支持型号"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "Qwen3.8的%s档位按协议映射%s，旧Qwen3无同名档位"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "诊断与模型列表保持协议路径和厂商认证，Qwen展开思考字段而非额外SDK包装"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_bailian_legacy_qwen_does_not_receive_qwen3_parameters",
+      "pythonLine": 133,
+      "pythonAssertCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "Qwen旧型号不继承Qwen3思考或JSON，Anthropic只列已支持型号"
+        }
+      ],
+      "protectedAssertions": [
+        "旧qwen-max不接Qwen3 thinking或JSON参数"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "Qwen旧型号不继承Qwen3思考或JSON，Anthropic只列已支持型号"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_adapter_for_mimo_by_provider",
+      "pythonLine": 140,
+      "pythonAssertCount": 6,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "MiMo专用认证、原生音视频格式及Responses思考仅由自身声明"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
+        }
+      ],
+      "protectedAssertions": [
+        "MiMo为OpenAI默认且声明三公共协议",
+        "无主动缓存",
+        "专属api-key认证"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "MiMo专用认证、原生音视频格式及Responses思考仅由自身声明"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_adapter_for_mimo_by_base_url_fallback",
+      "pythonLine": 151,
+      "pythonAssertCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
+        }
+      ],
+      "protectedAssertions": [
+        "未配置provider时按xiaomimimo URL兼容识别MiMo"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_adapter_for_mimo_auth_headers_uses_api_key",
+      "pythonLine": 157,
+      "pythonAssertCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "MiMo专用认证、原生音视频格式及Responses思考仅由自身声明"
+        }
+      ],
+      "protectedAssertions": [
+        "MiMo使用api-key字段传递注入凭据"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "MiMo专用认证、原生音视频格式及Responses思考仅由自身声明"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_adapter_for_deepseek_by_provider",
+      "pythonLine": 162,
+      "pythonAssertCount": 5,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "DeepSeek仅明确视觉模型%s声明图片，显式缓存保持关闭"
+        }
+      ],
+      "protectedAssertions": [
+        "DeepSeek选择OpenAI默认",
+        "自动缓存开启但显式cache_control禁用",
+        "模型级thinking收窄"
+      ],
+      "gap": "旧supports_thinking_toggle适配器级别属性由模型能力替代，不复制SDK facade字段。",
+      "status": "部分覆盖",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "DeepSeek仅明确视觉模型%s声明图片，显式缓存保持关闭"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_unknown_openai_compatible_provider_uses_explicit_history_cache",
+      "pythonLine": 171,
+      "pythonAssertCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
+        }
+      ],
+      "protectedAssertions": [
+        "未知兼容厂商保持自动缓存及显式cache_control声明"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_adapter_for_glm_uses_openai_compatible_endpoint",
+      "pythonLine": 177,
+      "pythonAssertCount": 6,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "GLM的%s端点与Coding Plan身份分开，Coding不宣称视觉"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "GLM旧思考模型按自己的Chat参数，视觉不由厂商名一概打开"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
+        }
+      ],
+      "protectedAssertions": [
+        "GLM默认OpenAI端点",
+        "新模型可thinking和tools且不声明自动缓存"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "GLM的%s端点与Coding Plan身份分开，Coding不宣称视觉"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "GLM旧思考模型按自己的Chat参数，视觉不由厂商名一概打开"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_generic_compatibility_thinking_toggle_uses_protocol_mapping_only",
+      "pythonLine": 188,
+      "pythonAssertCount": 9,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "通用兼容开关不覆盖官方OpenAI或专属Qwen策略，默认状态不发送字段"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "兼容$provider的$format显式思考$enabled经过真实选择和HTTP构造，llama缓存仅Chat发送"
+        }
+      ],
+      "protectedAssertions": [
+        "通用端点默认省略思考参数",
+        "显式adaptive/disabled按Chat/Responses/Anthropic映射"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "通用兼容开关不覆盖官方OpenAI或专属Qwen策略，默认状态不发送字段"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "兼容$provider的$format显式思考$enabled经过真实选择和HTTP构造，llama缓存仅Chat发送"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_generic_thinking_toggle_does_not_override_known_provider_mapping",
+      "pythonLine": 215,
+      "pythonAssertCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "通用兼容开关不覆盖官方OpenAI或专属Qwen策略，默认状态不发送字段"
+        }
+      ],
+      "protectedAssertions": [
+        "官方OpenAI与专属Qwen不被通用兼容开关覆盖"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "通用兼容开关不覆盖官方OpenAI或专属Qwen策略，默认状态不发送字段"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_generic_config_filter_removes_effort_but_keeps_explicit_toggle",
+      "pythonLine": 229,
+      "pythonAssertCount": 4,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "通用兼容开关不覆盖官方OpenAI或专属Qwen策略，默认状态不发送字段"
+        }
+      ],
+      "protectedAssertions": [
+        "通用兼容配置副本保留显式开关并去掉专属档位",
+        "原配置不变"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "通用兼容开关不覆盖官方OpenAI或专属Qwen策略，默认状态不发送字段"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_openai_and_anthropic_drivers_apply_generic_toggle_to_request_context",
+      "pythonLine": 241,
+      "pythonAssertCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "兼容$provider的$format显式思考$enabled经过真实选择和HTTP构造，llama缓存仅Chat发送"
+        }
+      ],
+      "protectedAssertions": [
+        "真实选择后最终HTTP体携带通用Chat/Anthropic开关",
+        "不只检查helper结果"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "兼容$provider的$format显式思考$enabled经过真实选择和HTTP构造，llama缓存仅Chat发送"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_supported_reasoning_effort_requires_adaptive_mode",
+      "pythonLine": 263,
+      "pythonAssertCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "禁用思考会在配置副本去掉档位，不污染原值或让DeepSeek禁用请求带effort"
+        }
+      ],
+      "protectedAssertions": [
+        "disabled时副本移除effort且DeepSeek最终请求只传disabled"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "禁用思考会在配置副本去掉档位，不污染原值或让DeepSeek禁用请求带effort"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_unknown_model_capability_snapshot_offers_default_without_reasoning_controls",
+      "pythonLine": 275,
+      "pythonAssertCount": 6,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开能力快照保留Local/Ollama选择、协议默认URL与未知模型无思考档位，凭据和探测不进入DTO"
+        }
+      ],
+      "protectedAssertions": [
+        "旧Qwen型号无思考模式和档位",
+        "可选协议/默认URL与provider_declared来源完整"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "公开能力快照保留Local/Ollama选择、协议默认URL与未知模型无思考档位，凭据和探测不进入DTO"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_glm_53_protocols_effort_and_protocol_specific_endpoints",
+      "pythonLine": 288,
+      "pythonAssertCount": 16,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "GLM5.3档位%s仅Responses映射%s，Chat不臆造thinking"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "GLM的%s端点与Coding Plan身份分开，Coding不宣称视觉"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
+        }
+      ],
+      "protectedAssertions": [
+        "GLM5.3 Chat不臆造档位",
+        "Responses none与别名映射",
+        "通用/Coding各协议端点及coding URL身份"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "GLM5.3档位%s仅Responses映射%s，Chat不臆造thinking"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "GLM的%s端点与Coding Plan身份分开，Coding不宣称视觉"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_glm_thinking_parameters_are_model_scoped",
+      "pythonLine": 346,
+      "pythonAssertCount": 3,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "GLM旧思考模型按自己的Chat参数，视觉不由厂商名一概打开"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
+        }
+      ],
+      "protectedAssertions": [
+        "GLM已支持模型映射thinking",
+        "视觉只属于已声明模型"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "GLM旧思考模型按自己的Chat参数，视觉不由厂商名一概打开"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_adapter_for_glm_by_base_url_fallback",
+      "pythonLine": 359,
+      "pythonAssertCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "GLM的%s端点与Coding Plan身份分开，Coding不宣称视觉"
+        }
+      ],
+      "protectedAssertions": [
+        "GLM通用和Coding URL分别选择",
+        "Coding不声明图片",
+        "默认端点按套餐和协议区分"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "GLM的%s端点与Coding Plan身份分开，Coding不宣称视觉"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_adapter_for_glm_coding_plan_uses_dedicated_endpoint",
+      "pythonLine": 363,
+      "pythonAssertCount": 5,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "GLM的%s端点与Coding Plan身份分开，Coding不宣称视觉"
+        }
+      ],
+      "protectedAssertions": [
+        "GLM通用和Coding URL分别选择",
+        "Coding不声明图片",
+        "默认端点按套餐和协议区分"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "GLM的%s端点与Coding Plan身份分开，Coding不宣称视觉"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_cache_capabilities_are_separate_by_provider",
+      "pythonLine": 373,
+      "pythonAssertCount": 3,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "DeepSeek仅明确视觉模型%s声明图片，显式缓存保持关闭"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "Qwen disabled和none显式关思考，结构Schema包装与cache单锚点独立"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
+        }
+      ],
+      "protectedAssertions": [
+        "DeepSeek自动但不显式缓存",
+        "Qwen自动显式并用单历史锚点",
+        "MiniMax自动缓存"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "DeepSeek仅明确视觉模型%s声明图片，显式缓存保持关闭"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "Qwen disabled和none显式关思考，结构Schema包装与cache单锚点独立"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_adapter_for_deepseek_by_base_url_fallback",
+      "pythonLine": 382,
+      "pythonAssertCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
+        }
+      ],
+      "protectedAssertions": [
+        "DeepSeek URL兼容选择维持对应策略"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_deepseek_vision_capability_includes_current_and_legacy_vision_models",
+      "pythonLine": 387,
+      "pythonAssertCount": 4,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "DeepSeek仅明确视觉模型%s声明图片，显式缓存保持关闭"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
+        }
+      ],
+      "protectedAssertions": [
+        "新旧两个明确视觉模型可图片",
+        "普通deepseek-chat拒视觉"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "DeepSeek仅明确视觉模型%s声明图片，显式缓存保持关闭"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_deepseek_thinking_uses_official_openai_parameter_split",
+      "pythonLine": 395,
+      "pythonAssertCount": 7,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "DeepSeek推理档位%s在Chat与Responses都映射%s"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "旧DeepSeek模型不接收新thinking，Anthropic端点按协议而非URL关键字选择"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "禁用思考会在配置副本去掉档位，不污染原值或让DeepSeek禁用请求带effort"
+        }
+      ],
+      "protectedAssertions": [
+        "DeepSeek思考开关和effort分开",
+        "Responses别名与Anthropic output_config",
+        "disabled不用max档位"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "DeepSeek推理档位%s在Chat与Responses都映射%s"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "旧DeepSeek模型不接收新thinking，Anthropic端点按协议而非URL关键字选择"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "禁用思考会在配置副本去掉档位，不污染原值或让DeepSeek禁用请求带effort"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_minimax_temperature_is_not_sent_at_all",
+      "pythonLine": 423,
+      "pythonAssertCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "MiniMax能力与媒体规格保持M2/M3边界，Responses不虚报音视频"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "非流式分支原样使用带签名wire，既有history的JSON分支不改变主请求参数或工具"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "%s配置残留采样字段也不向Anthropic最终请求发送temperature或top_p"
+        }
+      ],
+      "protectedAssertions": [
+        "MiniMax/Anthropic请求不携带已退役采样字段"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "MiniMax能力与媒体规格保持M2/M3边界，Responses不虚报音视频"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "%s配置残留采样字段也不向Anthropic最终请求发送temperature或top_p"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": [
+          {
+            "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+            "name": "非流式分支原样使用带签名wire，既有history的JSON分支不改变主请求参数或工具"
+          }
+        ]
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_anthropic_temperature_is_not_sent_to_sdk_stream",
+      "pythonLine": 429,
+      "pythonAssertCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "MiniMax能力与媒体规格保持M2/M3边界，Responses不虚报音视频"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "非流式分支原样使用带签名wire，既有history的JSON分支不改变主请求参数或工具"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "%s配置残留采样字段也不向Anthropic最终请求发送temperature或top_p"
+        }
+      ],
+      "protectedAssertions": [
+        "MiniMax/Anthropic请求不携带已退役采样字段"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "MiniMax能力与媒体规格保持M2/M3边界，Responses不虚报音视频"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "%s配置残留采样字段也不向Anthropic最终请求发送temperature或top_p"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": [
+          {
+            "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+            "name": "非流式分支原样使用带签名wire，既有history的JSON分支不改变主请求参数或工具"
+          }
+        ]
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_adapter_for_ollama_local_and_cloud_defaults",
+      "pythonLine": 434,
+      "pythonAssertCount": 10,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "Ollama原生和OpenAI模式不自动互换，显式推理档位仅用于兼容模式"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开能力快照保留Local/Ollama选择、协议默认URL与未知模型无思考档位，凭据和探测不进入DTO"
+        }
+      ],
+      "protectedAssertions": [
+        "Ollama本地/Cloud原生默认URL",
+        "公开API可选择native与三公共协议",
+        "默认URL按协议完整"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "Ollama原生和OpenAI模式不自动互换，显式推理档位仅用于兼容模式"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "公开能力快照保留Local/Ollama选择、协议默认URL与未知模型无思考档位，凭据和探测不进入DTO"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_local_capability_snapshot_distinguishes_user_selectable_formats_and_default_urls",
+      "pythonLine": 454,
+      "pythonAssertCount": 8,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开能力快照保留Local/Ollama选择、协议默认URL与未知模型无思考档位，凭据和探测不进入DTO"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "通用兼容开关不覆盖官方OpenAI或专属Qwen策略，默认状态不发送字段"
+        }
+      ],
+      "protectedAssertions": [
+        "Local三可选协议同一默认vLLM地址",
+        "通用端点保留开关但无专属reasoning档位"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "公开能力快照保留Local/Ollama选择、协议默认URL与未知模型无思考档位，凭据和探测不进入DTO"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "通用兼容开关不覆盖官方OpenAI或专属Qwen策略，默认状态不发送字段"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_ollama_openai_compatibility_keeps_v1_endpoint",
+      "pythonLine": 476,
+      "pythonAssertCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "Ollama原生和OpenAI模式不自动互换，显式推理档位仅用于兼容模式"
+        }
+      ],
+      "protectedAssertions": [
+        "Ollama兼容模式保留/v1默认基址"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "Ollama原生和OpenAI模式不自动互换，显式推理档位仅用于兼容模式"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_ollama_native_request_builders",
+      "pythonLine": 483,
+      "pythonAssertCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "诊断与模型列表保持协议路径和厂商认证，Qwen展开思考字段而非额外SDK包装"
+        }
+      ],
+      "protectedAssertions": [
+        "Ollama原生连通性使用/chat且不思考",
+        "模型列表使用/tags"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "诊断与模型列表保持协议路径和厂商认证，Qwen展开思考字段而非额外SDK包装"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_adapter_for_ollama_by_local_base_url",
+      "pythonLine": 490,
+      "pythonAssertCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "name": "未知Provider%s经URL选择Ollama协议也不得授予内网访问，流与独立完成都保持未授权"
+        }
+      ],
+      "protectedAssertions": [
+        "旧Ollama本地URL仍可选择协议",
+        "兼容选择不能授予内网权限"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+            "name": "未知Provider%s经URL选择Ollama协议也不得授予内网访问，流与独立完成都保持未授权"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_ollama_openai_compatibility_parameters",
+      "pythonLine": 494,
+      "pythonAssertCount": 5,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "Ollama原生和OpenAI模式不自动互换，显式推理档位仅用于兼容模式"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "兼容$provider的$format显式思考$enabled经过真实选择和HTTP构造，llama缓存仅Chat发送"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
+        }
+      ],
+      "protectedAssertions": [
+        "Ollama实际兼容请求采用通用思考开关",
+        "JSON输出由协议入口发送"
+      ],
+      "gap": "旧SDK build_thinking_params的独立effort/fallback=medium形状不复制；N3 policy表达生产驱动优先generic开关的最终HTTP参数，JSON声明已有直接断言。该API差异仍单独保留。",
+      "status": "部分覆盖",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "Ollama原生和OpenAI模式不自动互换，显式推理档位仅用于兼容模式"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "兼容$provider的$format显式思考$enabled经过真实选择和HTTP构造，llama缓存仅Chat发送"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_local_runtime_defaults_and_conservative_capabilities",
+      "pythonLine": 512,
+      "pythonAssertCount": 4,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "Local不因运行时名称宣称工具能力，llama.cpp缓存不冒充主动计费缓存"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开能力快照保留Local/Ollama选择、协议默认URL与未知模型无思考档位，凭据和探测不进入DTO"
+        }
+      ],
+      "protectedAssertions": [
+        "Local默认vLLM地址与三协议声明",
+        "工具保持保守关闭"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "Local不因运行时名称宣称工具能力，llama.cpp缓存不冒充主动计费缓存"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "公开能力快照保留Local/Ollama选择、协议默认URL与未知模型无思考档位，凭据和探测不进入DTO"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_local_base_url_rejects_embedded_credentials_and_non_http",
+      "pythonLine": 523,
+      "pythonAssertCount": 0,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "本地地址%s拒绝非HTTP、凭据或fragment"
+        }
+      ],
+      "protectedAssertions": [
+        "Local拒绝凭据、非HTTP及fragment"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "本地地址%s拒绝非HTTP、凭据或fragment"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_local_capability_override_is_exposed_without_credentials",
+      "pythonLine": 531,
+      "pythonAssertCount": 4,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开能力快照保留Local/Ollama选择、协议默认URL与未知模型无思考档位，凭据和探测不进入DTO"
+        }
+      ],
+      "protectedAssertions": [
+        "公开Local能力允许合法覆盖且DTO不含凭据"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "公开能力快照保留Local/Ollama选择、协议默认URL与未知模型无思考档位，凭据和探测不进入DTO"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_llama_cpp_enables_runtime_prompt_cache_without_active_provider_cache",
+      "pythonLine": 541,
+      "pythonAssertCount": 3,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "Local不因运行时名称宣称工具能力，llama.cpp缓存不冒充主动计费缓存"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "兼容$provider的$format显式思考$enabled经过真实选择和HTTP构造，llama缓存仅Chat发送"
+        }
+      ],
+      "protectedAssertions": [
+        "llama.cpp cache_prompt只在Chat进入请求",
+        "不声称自动计费缓存"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "Local不因运行时名称宣称工具能力，llama.cpp缓存不冒充主动计费缓存"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "兼容$provider的$format显式思考$enabled经过真实选择和HTTP构造，llama缓存仅Chat发送"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_adapter_for_unknown_provider_falls_back_to_default",
+      "pythonLine": 552,
+      "pythonAssertCount": 3,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "缺块%s尚无正文时只用相同参数非流式恢复一次，恢复正文进入正常事件链"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "MiniMax已知缺块尚无输出时恢复一次，普通JS异常不扩散成可重试厂商故障"
+        }
+      ],
+      "protectedAssertions": [
+        "Anthropic与普通未知厂商不使用MiniMax SDK容错类型表"
+      ],
+      "gap": "SDK异常类API退役；TS状态机仅对明确缺块恢复，其它异常通过公共分类而非吞错。",
+      "status": "部分覆盖",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "MiniMax已知缺块尚无输出时恢复一次，普通JS异常不扩散成可重试厂商故障"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": [
+          {
+            "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+            "name": "缺块%s尚无正文时只用相同参数非流式恢复一次，恢复正文进入正常事件链"
+          }
+        ]
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_adapter_for_truly_unknown_provider_also_falls_back_to_default",
+      "pythonLine": 562,
+      "pythonAssertCount": 4,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "MiniMax已知缺块尚无输出时恢复一次，普通JS异常不扩散成可重试厂商故障"
+        }
+      ],
+      "protectedAssertions": [
+        "真正未知厂商回到unknown兼容策略并保留自动/显式缓存"
+      ],
+      "gap": "SDK transient_exceptions元组退役，不复制语言异常类型清单。",
+      "status": "部分覆盖",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "MiniMax已知缺块尚无输出时恢复一次，普通JS异常不扩散成可重试厂商故障"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_provider_capabilities_and_request_builders_are_model_scoped",
+      "pythonLine": 570,
+      "pythonAssertCount": 5,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "Qwen旧型号不继承Qwen3思考或JSON，Anthropic只列已支持型号"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "旧DeepSeek模型不接收新thinking，Anthropic端点按协议而非URL关键字选择"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "MiMo专用认证、原生音视频格式及Responses思考仅由自身声明"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
+        }
+      ],
+      "protectedAssertions": [
+        "MiMo独立JSON、DeepSeek新旧思考及Qwen旧模型不接新参数"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "Qwen旧型号不继承Qwen3思考或JSON，Anthropic只列已支持型号"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "旧DeepSeek模型不接收新thinking，Anthropic端点按协议而非URL关键字选择"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "MiMo专用认证、原生音视频格式及Responses思考仅由自身声明"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_provider_media_and_stream_capabilities_are_centralized",
+      "pythonLine": 587,
+      "pythonAssertCount": 3,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "MiMo专用认证、原生音视频格式及Responses思考仅由自身声明"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "MiniMax能力与媒体规格保持M2/M3边界，Responses不虚报音视频"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
+        }
+      ],
+      "protectedAssertions": [
+        "MiMo原生音频格式与MiniMax视频集中声明"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "MiMo专用认证、原生音视频格式及Responses思考仅由自身声明"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "MiniMax能力与媒体规格保持M2/M3边界，Responses不虚报音视频"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_capability_matrix_for_supported_providers_is_explicit",
+      "pythonLine": 596,
+      "pythonAssertCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
+        }
+      ],
+      "protectedAssertions": [
+        "六厂商公开默认能力矩阵逐项验证，不由厂商名泛化模型能力"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_mimo_api_formats_have_protocol_specific_endpoints_and_thinking_params",
+      "pythonLine": 614,
+      "pythonAssertCount": 7,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "MiMo专用认证、原生音视频格式及Responses思考仅由自身声明"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
+        }
+      ],
+      "protectedAssertions": [
+        "MiMo Anthropic和Responses端点与思考开关独立"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "MiMo专用认证、原生音视频格式及Responses思考仅由自身声明"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_capability_snapshot_keeps_probe_separate_and_contains_no_credentials",
+      "pythonLine": 641,
+      "pythonAssertCount": 4,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开能力快照保留Local/Ollama选择、协议默认URL与未知模型无思考档位，凭据和探测不进入DTO"
+        }
+      ],
+      "protectedAssertions": [
+        "公开能力DTO只包含声明，不含probe或API Key"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "公开能力快照保留Local/Ollama选择、协议默认URL与未知模型无思考档位，凭据和探测不进入DTO"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_reasoning_capabilities_are_model_and_api_format_scoped",
+      "pythonLine": 650,
+      "pythonAssertCount": 4,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "只向官方端点的%s发送其支持的推理档位"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开推理DTO与最终参数按模型和官方端点隔离，MiniMax跨协议不虚报adaptive"
+        }
+      ],
+      "protectedAssertions": [
+        "官方OpenAI档位按具体模型和协议区分",
+        "兼容端点不继承"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "公开推理DTO与最终参数按模型和官方端点隔离，MiniMax跨协议不虚报adaptive"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": [
+          {
+            "file": "gugu-core/tests/agent/providers/openai.test.ts",
+            "name": "只向官方端点的%s发送其支持的推理档位"
+          }
+        ]
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_compatible_endpoints_do_not_inherit_official_provider_reasoning_options",
+      "pythonLine": 664,
+      "pythonAssertCount": 8,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "只向官方端点的%s发送其支持的推理档位"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "通用兼容开关不覆盖官方OpenAI或专属Qwen策略，默认状态不发送字段"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开推理DTO与最终参数按模型和官方端点隔离，MiniMax跨协议不虚报adaptive"
+        }
+      ],
+      "protectedAssertions": [
+        "OpenAI兼容端点不继承官方档位",
+        "通用配置不保留专属effort"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "通用兼容开关不覆盖官方OpenAI或专属Qwen策略，默认状态不发送字段"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "公开推理DTO与最终参数按模型和官方端点隔离，MiniMax跨协议不虚报adaptive"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": [
+          {
+            "file": "gugu-core/tests/agent/providers/openai.test.ts",
+            "name": "只向官方端点的%s发送其支持的推理档位"
+          }
+        ]
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_only_official_openai_endpoint_requests_encrypted_reasoning_items",
+      "pythonLine": 696,
+      "pythonAssertCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "官方cache key/store/include能力不能扩散到兼容服务或相似域名"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "Responses只有官方端点%s的显式续接可请求加密reasoning=%s"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+          "name": "捕获的reasoning只在显式continuation时随完整后续历史回放，off配置清除include与私有项"
+        }
+      ],
+      "protectedAssertions": [
+        "官方端点与相似域名的存储/cache声明隔离"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "Responses只有官方端点%s的显式续接可请求加密reasoning=%s"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": [
+          {
+            "file": "gugu-core/tests/agent/providers/openai.test.ts",
+            "name": "官方cache key/store/include能力不能扩散到兼容服务或相似域名"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/openai-responses.test.ts",
+            "name": "捕获的reasoning只在显式continuation时随完整后续历史回放，off配置清除include与私有项"
+          }
+        ]
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_anthropic_and_minimax_efforts_use_anthropic_wire_parameters",
+      "pythonLine": 711,
+      "pythonAssertCount": 6,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "MiniMax三代型号与三协议分别保留真实推理开关和档位"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+          "name": "thinking与多段text原位恢复且未派发工具不复活，跨owner绑定失败不复用"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开推理DTO与最终参数按模型和官方端点隔离，MiniMax跨协议不虚报adaptive"
+        }
+      ],
+      "protectedAssertions": [
+        "MiniMax3.1 Flash只发output_config effort",
+        "同模型原生thinking原位恢复"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "MiniMax三代型号与三协议分别保留真实推理开关和档位"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "公开推理DTO与最终参数按模型和官方端点隔离，MiniMax跨协议不虚报adaptive"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": [
+          {
+            "file": "gugu-core/tests/agent/providers/anthropic.test.ts",
+            "name": "thinking与多段text原位恢复且未派发工具不复活，跨owner绑定失败不复用"
+          }
+        ]
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_deepseek_effort_aliases_are_shared_across_chat_and_responses_contracts",
+      "pythonLine": 740,
+      "pythonAssertCount": 3,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "DeepSeek推理档位%s在Chat与Responses都映射%s"
+        }
+      ],
+      "protectedAssertions": [
+        "DeepSeek xhigh在Chat/Responses映射high，disabled明确none"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "DeepSeek推理档位%s在Chat与Responses都映射%s"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_capability_snapshot_exposes_protocol_scoped_reasoning_options",
+      "pythonLine": 758,
+      "pythonAssertCount": 7,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "MiniMax三代型号与三协议分别保留真实推理开关和档位"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "MiniMax能力与媒体规格保持M2/M3边界，Responses不虚报音视频"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开能力快照保留Local/Ollama选择、协议默认URL与未知模型无思考档位，凭据和探测不进入DTO"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开推理DTO与最终参数按模型和官方端点隔离，MiniMax跨协议不虚报adaptive"
+        }
+      ],
+      "protectedAssertions": [
+        "MiniMax协议和模型级reasoning模式已声明",
+        "公开DTO有完整协议元数据"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "MiniMax三代型号与三协议分别保留真实推理开关和档位"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "MiniMax能力与媒体规格保持M2/M3边界，Responses不虚报音视频"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "公开能力快照保留Local/Ollama选择、协议默认URL与未知模型无思考档位，凭据和探测不进入DTO"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "公开推理DTO与最终参数按模型和官方端点隔离，MiniMax跨协议不虚报adaptive"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_adaptive_thinking_is_exposed_only_for_explicitly_supported_provider_protocols",
+      "pythonLine": 771,
+      "pythonAssertCount": 7,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "MiniMax三代型号与三协议分别保留真实推理开关和档位"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "只向官方端点的%s发送其支持的推理档位"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开推理DTO与最终参数按模型和官方端点隔离，MiniMax跨协议不虚报adaptive"
+        }
+      ],
+      "protectedAssertions": [
+        "MiniMax M3 Chat明确adaptive，M3.1不继承",
+        "官方端点能力独立"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "MiniMax三代型号与三协议分别保留真实推理开关和档位"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "公开推理DTO与最终参数按模型和官方端点隔离，MiniMax跨协议不虚报adaptive"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": [
+          {
+            "file": "gugu-core/tests/agent/providers/openai.test.ts",
+            "name": "只向官方端点的%s发送其支持的推理档位"
+          }
+        ]
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_minimax_protocols_are_available_before_model_selection",
+      "pythonLine": 801,
+      "pythonAssertCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
+        }
+      ],
+      "protectedAssertions": [
+        "MiniMax默认协议和缓存按模型声明"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "公开能力矩阵按厂商和模型分别声明缓存、工具和媒体，MiniMax M2/M3均有自动缓存"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_minimax_responses_protocol_capabilities_and_defaults",
+      "pythonLine": 808,
+      "pythonAssertCount": 8,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "MiniMax三代型号与三协议分别保留真实推理开关和档位"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "MiniMax能力与媒体规格保持M2/M3边界，Responses不虚报音视频"
+        }
+      ],
+      "protectedAssertions": [
+        "MiniMax Responses默认URL/cache key与3.1 effort构造已验"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "MiniMax三代型号与三协议分别保留真实推理开关和档位"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "MiniMax能力与媒体规格保持M2/M3边界，Responses不虚报音视频"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_minimax_responses_reasoning_matches_each_model_family",
+      "pythonLine": 828,
+      "pythonAssertCount": 5,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "MiniMax三代型号与三协议分别保留真实推理开关和档位"
+        }
+      ],
+      "protectedAssertions": [
+        "M3非none仅开推理、disabled省略",
+        "M2始终思考且不强设effort"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "MiniMax三代型号与三协议分别保留真实推理开关和档位"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_request_snapshots_do_not_add_unsupported_provider_parameters",
+      "pythonLine": 848,
+      "pythonAssertCount": 6,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "Qwen旧型号不继承Qwen3思考或JSON，Anthropic只列已支持型号"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "独立complete返回可见正文，JSON追加分支不额外发送response_format"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "无历史追加分支仍标记新增基础system，动态任务不进入缓存锚点且无空tools"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/openai.test.ts",
+          "name": "真实Chat请求用正确工具schema、缓存用量与参数字节，工具按index重组而不输出思考"
+        }
+      ],
+      "protectedAssertions": [
+        "未知Qwen型号省略thinking/JSON",
+        "已有历史的JSON追加分支不增response_format"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "Qwen旧型号不继承Qwen3思考或JSON，Anthropic只列已支持型号"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "厂商协议声明和模型边界覆盖空型号、历史别名、禁用思考与专属媒体"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": [
+          {
+            "file": "gugu-core/tests/agent/providers/openai.test.ts",
+            "name": "独立complete返回可见正文，JSON追加分支不额外发送response_format"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/openai.test.ts",
+            "name": "无历史追加分支仍标记新增基础system，动态任务不进入缓存锚点且无空tools"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/openai.test.ts",
+            "name": "真实Chat请求用正确工具schema、缓存用量与参数字节，工具按index重组而不输出思考"
+          }
+        ]
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_diagnostic_request_builder_keeps_protocol_and_auth_provider_local",
+      "pythonLine": 863,
+      "pythonAssertCount": 5,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "诊断与模型列表保持协议路径和厂商认证，Qwen展开思考字段而非额外SDK包装"
+        }
+      ],
+      "protectedAssertions": [
+        "诊断完整URL按协议选择",
+        "MiMo只用api-key",
+        "Qwen原生参数展开",
+        "Anthropic模型列表补v1路径"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "诊断与模型列表保持协议路径和厂商认证，Qwen展开思考字段而非额外SDK包装"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_diagnostic_request_expands_openai_provider_extra_body",
+      "pythonLine": 876,
+      "pythonAssertCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "诊断与模型列表保持协议路径和厂商认证，Qwen展开思考字段而非额外SDK包装"
+        }
+      ],
+      "protectedAssertions": [
+        "诊断完整URL按协议选择",
+        "MiMo只用api-key",
+        "Qwen原生参数展开",
+        "Anthropic模型列表补v1路径"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "诊断与模型列表保持协议路径和厂商认证，Qwen展开思考字段而非额外SDK包装"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_providers.py::test_models_request_builder_uses_provider_protocol_path",
+      "pythonLine": 884,
+      "pythonAssertCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "诊断与模型列表保持协议路径和厂商认证，Qwen展开思考字段而非额外SDK包装"
+        }
+      ],
+      "protectedAssertions": [
+        "诊断完整URL按协议选择",
+        "MiMo只用api-key",
+        "Qwen原生参数展开",
+        "Anthropic模型列表补v1路径"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "诊断与模型列表保持协议路径和厂商认证，Qwen展开思考字段而非额外SDK包装"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_model_reasoning_policy.py::test_run_policy_comes_from_selected_model",
+      "pythonLine": 27,
+      "pythonAssertCount": 1,
+      "classification": "相邻HostData",
+      "tsTests": [],
+      "protectedAssertions": [
+        "模型级reasoning持久策略合法值/缺省off",
+        "Chat与pending ask恢复禁用跨Run续接"
+      ],
+      "gap": "llm_select/HostData可信选模、交互恢复及私有加密存储生命周期不在厂商Provider模块；Responses单请求开关不能替代这些断言。",
+      "status": "边界延后",
+      "nodeValidation": {
+        "verifiedVendorTests": [],
+        "vendorRun": null,
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_model_reasoning_policy.py::test_missing_model_policy_defaults_to_off",
+      "pythonLine": 33,
+      "pythonAssertCount": 1,
+      "classification": "相邻HostData",
+      "tsTests": [],
+      "protectedAssertions": [
+        "模型级reasoning持久策略合法值/缺省off",
+        "Chat与pending ask恢复禁用跨Run续接"
+      ],
+      "gap": "llm_select/HostData可信选模、交互恢复及私有加密存储生命周期不在厂商Provider模块；Responses单请求开关不能替代这些断言。",
+      "status": "边界延后",
+      "nodeValidation": {
+        "verifiedVendorTests": [],
+        "vendorRun": null,
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_model_reasoning_policy.py::test_chat_completions_disables_reasoning_persistence",
+      "pythonLine": 39,
+      "pythonAssertCount": 1,
+      "classification": "相邻HostData",
+      "tsTests": [],
+      "protectedAssertions": [
+        "模型级reasoning持久策略合法值/缺省off",
+        "Chat与pending ask恢复禁用跨Run续接"
+      ],
+      "gap": "llm_select/HostData可信选模、交互恢复及私有加密存储生命周期不在厂商Provider模块；Responses单请求开关不能替代这些断言。",
+      "status": "边界延后",
+      "nodeValidation": {
+        "verifiedVendorTests": [],
+        "vendorRun": null,
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_model_reasoning_policy.py::test_pending_ask_resume_disables_cross_run_reasoning_state",
+      "pythonLine": 46,
+      "pythonAssertCount": 1,
+      "classification": "相邻HostData",
+      "tsTests": [],
+      "protectedAssertions": [
+        "模型级reasoning持久策略合法值/缺省off",
+        "Chat与pending ask恢复禁用跨Run续接"
+      ],
+      "gap": "llm_select/HostData可信选模、交互恢复及私有加密存储生命周期不在厂商Provider模块；Responses单请求开关不能替代这些断言。",
+      "status": "边界延后",
+      "nodeValidation": {
+        "verifiedVendorTests": [],
+        "vendorRun": null,
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_model_reasoning_policy.py::test_known_openai_provider_empty_format_uses_chat_completions",
+      "pythonLine": 53,
+      "pythonAssertCount": 1,
+      "classification": "相邻HostData",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "旧DeepSeek模型不接收新thinking，Anthropic端点按协议而非URL关键字选择"
+        }
+      ],
+      "protectedAssertions": [
+        "已知默认Chat不按URL改协议",
+        "未知provider不进行自动协议探测"
+      ],
+      "gap": "Provider选择只保护协议；原resolve_run_config_for_user的BYOK/不写配置/跨Run reasoning off待HostData接入。",
+      "status": "部分覆盖",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "旧DeepSeek模型不接收新thinking，Anthropic端点按协议而非URL关键字选择"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_model_reasoning_policy.py::test_unknown_provider_does_not_switch_protocol_or_enable_chat_continuation",
+      "pythonLine": 61,
+      "pythonAssertCount": 5,
+      "classification": "相邻HostData",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "旧DeepSeek模型不接收新thinking，Anthropic端点按协议而非URL关键字选择"
+        }
+      ],
+      "protectedAssertions": [
+        "已知默认Chat不按URL改协议",
+        "未知provider不进行自动协议探测"
+      ],
+      "gap": "Provider选择只保护协议；原resolve_run_config_for_user的BYOK/不写配置/跨Run reasoning off待HostData接入。",
+      "status": "部分覆盖",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "注册优先显式Provider，历史URL仅用于兼容选择且不改变原配置"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "旧DeepSeek模型不接收新thinking，Anthropic端点按协议而非URL关键字选择"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_model_reasoning_policy.py::test_explicit_chat_keeps_off_for_stale_persistence",
+      "pythonLine": 82,
+      "pythonAssertCount": 2,
+      "classification": "相邻HostData",
+      "tsTests": [],
+      "protectedAssertions": [
+        "模型级reasoning持久策略合法值/缺省off",
+        "Chat与pending ask恢复禁用跨Run续接"
+      ],
+      "gap": "llm_select/HostData可信选模、交互恢复及私有加密存储生命周期不在厂商Provider模块；Responses单请求开关不能替代这些断言。",
+      "status": "边界延后",
+      "nodeValidation": {
+        "verifiedVendorTests": [],
+        "vendorRun": null,
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_media.py::test_provider_media_limits_use_shared_defaults_unless_model_has_override",
+      "pythonLine": 9,
+      "pythonAssertCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开媒体规格使用通用默认和M3官方数值，ASR声明50MiB与500秒限制"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "MiniMax能力与媒体规格保持M2/M3边界，Responses不虚报音视频"
+        }
+      ],
+      "protectedAssertions": [
+        "公共默认媒体规格完整",
+        "MiniMax M3/M3.1原始规格512MB/1800秒/10MB图片/4MiB上传阈值",
+        "ASR独立50MiB和500秒"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "公开媒体规格使用通用默认和M3官方数值，ASR声明50MiB与500秒限制"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "MiniMax能力与媒体规格保持M2/M3边界，Responses不虚报音视频"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_media.py::test_minimax_m3_declares_official_direct_upload_limits",
+      "pythonLine": 17,
+      "pythonAssertCount": 15,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开媒体规格使用通用默认和M3官方数值，ASR声明50MiB与500秒限制"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "MiniMax能力与媒体规格保持M2/M3边界，Responses不虚报音视频"
+        }
+      ],
+      "protectedAssertions": [
+        "公共默认媒体规格完整",
+        "MiniMax M3/M3.1原始规格512MB/1800秒/10MB图片/4MiB上传阈值",
+        "ASR独立50MiB和500秒"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "公开媒体规格使用通用默认和M3官方数值，ASR声明50MiB与500秒限制"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "MiniMax能力与媒体规格保持M2/M3边界，Responses不虚报音视频"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_media.py::test_minimax_m31_flash_uses_m3_video_capabilities_and_limits",
+      "pythonLine": 44,
+      "pythonAssertCount": 5,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开媒体规格使用通用默认和M3官方数值，ASR声明50MiB与500秒限制"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "MiniMax能力与媒体规格保持M2/M3边界，Responses不虚报音视频"
+        }
+      ],
+      "protectedAssertions": [
+        "公共默认媒体规格完整",
+        "MiniMax M3/M3.1原始规格512MB/1800秒/10MB图片/4MiB上传阈值",
+        "ASR独立50MiB和500秒"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "公开媒体规格使用通用默认和M3官方数值，ASR声明50MiB与500秒限制"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "MiniMax能力与媒体规格保持M2/M3边界，Responses不虚报音视频"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_media.py::test_minimax_asr_module_owns_standalone_api_limits",
+      "pythonLine": 55,
+      "pythonAssertCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开媒体规格使用通用默认和M3官方数值，ASR声明50MiB与500秒限制"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "MiniMax能力与媒体规格保持M2/M3边界，Responses不虚报音视频"
+        }
+      ],
+      "protectedAssertions": [
+        "公共默认媒体规格完整",
+        "MiniMax M3/M3.1原始规格512MB/1800秒/10MB图片/4MiB上传阈值",
+        "ASR独立50MiB和500秒"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "公开媒体规格使用通用默认和M3官方数值，ASR声明50MiB与500秒限制"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "MiniMax能力与媒体规格保持M2/M3边界，Responses不虚报音视频"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_provider_media.py::test_mimo_native_audio_formats_are_owned_by_provider_media_module",
+      "pythonLine": 60,
+      "pythonAssertCount": 5,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "MiMo专用认证、原生音视频格式及Responses思考仅由自身声明"
+        }
+      ],
+      "protectedAssertions": [
+        "MiMo原生音频容器和Responses音视频能力受显式开关限制"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "MiMo专用认证、原生音视频格式及Responses思考仅由自身声明"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_deep_research_providers.py::test_tavily_is_normalized",
+      "pythonLine": 27,
+      "pythonAssertCount": 3,
+      "classification": "Tools",
+      "tsTests": [],
+      "protectedAssertions": [
+        "Tools.deep_research对Tavily/You/Baidu的业务请求与统一结果"
+      ],
+      "gap": "实现位于agent/tools/deep_research.py，不在providers厂商适配；需Tools切片迁移及鉴权/额度/业务结果验收。",
+      "status": "边界延后",
+      "nodeValidation": {
+        "verifiedVendorTests": [],
+        "vendorRun": null,
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_deep_research_providers.py::test_you_uses_research_api",
+      "pythonLine": 38,
+      "pythonAssertCount": 4,
+      "classification": "Tools",
+      "tsTests": [],
+      "protectedAssertions": [
+        "Tools.deep_research对Tavily/You/Baidu的业务请求与统一结果"
+      ],
+      "gap": "实现位于agent/tools/deep_research.py，不在providers厂商适配；需Tools切片迁移及鉴权/额度/业务结果验收。",
+      "status": "边界延后",
+      "nodeValidation": {
+        "verifiedVendorTests": [],
+        "vendorRun": null,
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_deep_research_providers.py::test_baidu_uses_ordinary_search",
+      "pythonLine": 50,
+      "pythonAssertCount": 6,
+      "classification": "Tools",
+      "tsTests": [],
+      "protectedAssertions": [
+        "Tools.deep_research对Tavily/You/Baidu的业务请求与统一结果"
+      ],
+      "gap": "实现位于agent/tools/deep_research.py，不在providers厂商适配；需Tools切片迁移及鉴权/额度/业务结果验收。",
+      "status": "边界延后",
+      "nodeValidation": {
+        "verifiedVendorTests": [],
+        "vendorRun": null,
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm7_p3.py::test_ollama_native_stream_and_tool_roundtrip",
+      "pythonLine": 76,
+      "pythonAssertCount": 11,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "name": "真实分片流按token→usage→complete输出并保留工具参数、thinking和实际用量"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "name": "仅有回执的工具进入投影，确认门后的未派发兄弟不留孤儿且Canonical原文不变"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "name": "旧历史多个完整轮复用ollama-call-0时仍逐轮恢复配对，不全局去重丢结果"
+        }
+      ],
+      "protectedAssertions": [
+        "真实原生NDJSON到Harness token/usage/complete与工具往返",
+        "历史工具原序配对"
+      ],
+      "gap": "无ID调用升级为绑定Run/round的稳定指纹，旧重复ID历史仍逐轮恢复；缺done EOF和坏JSON从旧宽松行为收紧为明确失败。",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+            "name": "真实分片流按token→usage→complete输出并保留工具参数、thinking和实际用量"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+            "name": "仅有回执的工具进入投影，确认门后的未派发兄弟不留孤儿且Canonical原文不变"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+            "name": "旧历史多个完整轮复用ollama-call-0时仍逐轮恢复配对，不全局去重丢结果"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm7_p3.py::test_local_capability_probe_classifies_tool_and_json_server_rejection",
+      "pythonLine": 120,
+      "pythonAssertCount": 6,
+      "classification": "相邻HostData",
+      "tsTests": [],
+      "protectedAssertions": [
+        "Admin probe分类/未保存预览/密钥mask/能力指纹与配置持久化"
+      ],
+      "gap": "Host Admin服务和运行配置写入仍未迁；Provider capabilitySnapshot及受控网络并不替代Admin鉴权、原子配置修改或探测结果持久化。",
+      "status": "边界延后",
+      "nodeValidation": {
+        "verifiedVendorTests": [],
+        "vendorRun": null,
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm7_p3.py::test_admin_preset_response_masks_api_key",
+      "pythonLine": 157,
+      "pythonAssertCount": 5,
+      "classification": "相邻HostData",
+      "tsTests": [],
+      "protectedAssertions": [
+        "Admin probe分类/未保存预览/密钥mask/能力指纹与配置持久化"
+      ],
+      "gap": "Host Admin服务和运行配置写入仍未迁；Provider capabilitySnapshot及受控网络并不替代Admin鉴权、原子配置修改或探测结果持久化。",
+      "status": "边界延后",
+      "nodeValidation": {
+        "verifiedVendorTests": [],
+        "vendorRun": null,
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm7_p3.py::test_model_list_auth_error_is_classified_without_returning_upstream_body",
+      "pythonLine": 179,
+      "pythonAssertCount": 3,
+      "classification": "相邻HostData",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "模型列表鉴权失败给安全认证分类，上游错误正文和密钥只允许进入受限诊断"
+        }
+      ],
+      "protectedAssertions": [
+        "Provider模型列表401转安全authentication且不泄露上游正文/密钥"
+      ],
+      "gap": "原Admin HTTP502及固定detail响应属于Host映射，尚未接Node Admin接口。",
+      "status": "部分覆盖",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "模型列表鉴权失败给安全认证分类，上游错误正文和密钥只允许进入受限诊断"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm7_p3.py::test_capability_fingerprint_changes_when_model_changes",
+      "pythonLine": 203,
+      "pythonAssertCount": 3,
+      "classification": "相邻HostData",
+      "tsTests": [],
+      "protectedAssertions": [
+        "Admin probe分类/未保存预览/密钥mask/能力指纹与配置持久化"
+      ],
+      "gap": "Host Admin服务和运行配置写入仍未迁；Provider capabilitySnapshot及受控网络并不替代Admin鉴权、原子配置修改或探测结果持久化。",
+      "status": "边界延后",
+      "nodeValidation": {
+        "verifiedVendorTests": [],
+        "vendorRun": null,
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm7_p3.py::test_media_probe_preview_supports_unsaved_preset",
+      "pythonLine": 225,
+      "pythonAssertCount": 2,
+      "classification": "相邻HostData",
+      "tsTests": [],
+      "protectedAssertions": [
+        "Admin probe分类/未保存预览/密钥mask/能力指纹与配置持久化"
+      ],
+      "gap": "Host Admin服务和运行配置写入仍未迁；Provider capabilitySnapshot及受控网络并不替代Admin鉴权、原子配置修改或探测结果持久化。",
+      "status": "边界延后",
+      "nodeValidation": {
+        "verifiedVendorTests": [],
+        "vendorRun": null,
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_llm7_p3.py::test_media_probe_persists_definitive_capabilities",
+      "pythonLine": 242,
+      "pythonAssertCount": 5,
+      "classification": "相邻HostData",
+      "tsTests": [],
+      "protectedAssertions": [
+        "Admin probe分类/未保存预览/密钥mask/能力指纹与配置持久化"
+      ],
+      "gap": "Host Admin服务和运行配置写入仍未迁；Provider capabilitySnapshot及受控网络并不替代Admin鉴权、原子配置修改或探测结果持久化。",
+      "status": "边界延后",
+      "nodeValidation": {
+        "verifiedVendorTests": [],
+        "vendorRun": null,
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_minimax_error_details.py::test_context_overflow_message_gets_dedicated_summary_and_key",
+      "pythonLine": 24,
+      "pythonAssertCount": 5,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "同2013错误按真实上下文语义分类：%s"
+        }
+      ],
+      "protectedAssertions": [
+        "同2013按窄窗口短语给固定summary/i18n",
+        "普通参数和体量错误不谎称窗口超限"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "同2013错误按真实上下文语义分类：%s"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_minimax_error_details.py::test_other_2013_parameter_errors_keep_generic_summary",
+      "pythonLine": 36,
+      "pythonAssertCount": 5,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "同2013错误按真实上下文语义分类：%s"
+        }
+      ],
+      "protectedAssertions": [
+        "同2013按窄窗口短语给固定summary/i18n",
+        "普通参数和体量错误不谎称窗口超限"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "同2013错误按真实上下文语义分类：%s"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_minimax_error_details.py::test_request_size_errors_are_not_reported_as_context_overflow",
+      "pythonLine": 48,
+      "pythonAssertCount": 5,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "同2013错误按真实上下文语义分类：%s"
+        }
+      ],
+      "protectedAssertions": [
+        "同2013按窄窗口短语给固定summary/i18n",
+        "普通参数和体量错误不谎称窗口超限"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "同2013错误按真实上下文语义分类：%s"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_minimax_error_details.py::test_non_minimax_error_is_not_classified",
+      "pythonLine": 65,
+      "pythonAssertCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "瞬时码须同时具备api_error类型，密钥和上游正文不得进详情"
+        }
+      ],
+      "protectedAssertions": [
+        "无MiniMax主机或base_resp标识时不当作该厂商错误"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "瞬时码须同时具备api_error类型，密钥和上游正文不得进详情"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_minimax_error_details.py::test_minimax_request_size_error_gives_actionable_input_guidance",
+      "pythonLine": 69,
+      "pythonAssertCount": 2,
+      "classification": "相邻HostData",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "同2013错误按真实上下文语义分类：%s"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+          "name": "MiniMax普通HTTP529不被业务码分类吞掉，2013窗口超限不重试"
+        }
+      ],
+      "protectedAssertions": [
+        "Provider层保留体量错误与窗口错误区别且不泄露正文"
+      ],
+      "gap": "原agent.errors.describe_llm_error的UI event code/provider_input_too_large及缩短附件指导属于Host展示映射；当前安全ProviderError不承诺相同UI DTO。",
+      "status": "部分覆盖",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "同2013错误按真实上下文语义分类：%s"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": [
+          {
+            "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+            "name": "MiniMax普通HTTP529不被业务码分类吞掉，2013窗口超限不重试"
+          }
+        ]
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_minimax_media_upload.py::test_upload_video_file_success",
+      "pythonLine": 13,
+      "pythonAssertCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "大视频以原始异步源multipart分块上传，返回稳定file_id而非复制base64"
+        }
+      ],
+      "protectedAssertions": [
+        "MiniMax真实multipart将原件、文件名、purpose和凭据交指定host",
+        "数值file_id转稳定字符串"
+      ],
+      "gap": "N3以专属模块函数替代Python adapter方法，通用Media装配尚未接入；不宣称Host上传端到端完成。",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "大视频以原始异步源multipart分块上传，返回稳定file_id而非复制base64"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_minimax_media_upload.py::test_upload_video_file_failure_status",
+      "pythonLine": 43,
+      "pythonAssertCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "上传缺配置不联网，失败状态或缺file_id返回null并清理响应"
+        }
+      ],
+      "protectedAssertions": [
+        "非成功HTTP或缺file_id返回null",
+        "缺凭据/地址不发请求且响应清理"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "上传缺配置不联网，失败状态或缺file_id返回null并清理响应"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_minimax_media_upload.py::test_upload_video_file_requires_credentials",
+      "pythonLine": 73,
+      "pythonAssertCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "上传缺配置不联网，失败状态或缺file_id返回null并清理响应"
+        }
+      ],
+      "protectedAssertions": [
+        "非成功HTTP或缺file_id返回null",
+        "缺凭据/地址不发请求且响应清理"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "上传缺配置不联网，失败状态或缺file_id返回null并清理响应"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_minimax_media_upload.py::test_adapter_upload_media_file_uses_provider_implementation",
+      "pythonLine": 83,
+      "pythonAssertCount": 3,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "大视频以原始异步源multipart分块上传，返回稳定file_id而非复制base64"
+        }
+      ],
+      "protectedAssertions": [
+        "MiniMax真实multipart将原件、文件名、purpose和凭据交指定host",
+        "数值file_id转稳定字符串"
+      ],
+      "gap": "N3以专属模块函数替代Python adapter方法，通用Media装配尚未接入；不宣称Host上传端到端完成。",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "大视频以原始异步源multipart分块上传，返回稳定file_id而非复制base64"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_minimax_media_upload.py::test_base_adapter_does_not_support_file_upload",
+      "pythonLine": 103,
+      "pythonAssertCount": 1,
+      "classification": "Media",
+      "tsTests": [],
+      "protectedAssertions": [
+        "通用Provider默认不提供文件上传"
+      ],
+      "gap": "旧base.upload_media_file默认None方法不复制；通用Media能力分发尚未迁入，不能用空wrapper标完成。",
+      "status": "边界延后",
+      "nodeValidation": {
+        "verifiedVendorTests": [],
+        "vendorRun": null,
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_minimax_video_duration_gate.py::test_m3_spec_declares_official_hard_limit",
+      "pythonLine": 38,
+      "pythonAssertCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开媒体规格使用通用默认和M3官方数值，ASR声明50MiB与500秒限制"
+        }
+      ],
+      "protectedAssertions": [
+        "MiniMax M3声明1800秒且边界非包含"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "公开媒体规格使用通用默认和M3官方数值，ASR声明50MiB与500秒限制"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_minimax_video_duration_gate.py::test_video_over_limit_is_rejected_before_any_upload",
+      "pythonLine": 46,
+      "pythonAssertCount": 3,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "M3视频时长%s非法或超限时在任何上传之前拒绝"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "可信已知视频时长跳过重复探测，缺少时只调用一次注入探测并在读数据前拒绝超长文件"
+        }
+      ],
+      "protectedAssertions": [
+        "严格大于1800秒拒绝，上传和源数据读取均未开始",
+        "错误明确未发送"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "M3视频时长%s非法或超限时在任何上传之前拒绝"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "可信已知视频时长跳过重复探测，缺少时只调用一次注入探测并在读数据前拒绝超长文件"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_minimax_video_duration_gate.py::test_video_just_over_limit_is_rejected",
+      "pythonLine": 74,
+      "pythonAssertCount": 0,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "M3视频时长%s非法或超限时在任何上传之前拒绝"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "可信已知视频时长跳过重复探测，缺少时只调用一次注入探测并在读数据前拒绝超长文件"
+        }
+      ],
+      "protectedAssertions": [
+        "严格大于1800秒拒绝，上传和源数据读取均未开始",
+        "错误明确未发送"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "M3视频时长%s非法或超限时在任何上传之前拒绝"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "可信已知视频时长跳过重复探测，缺少时只调用一次注入探测并在读数据前拒绝超长文件"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_minimax_video_duration_gate.py::test_video_at_exact_limit_is_allowed",
+      "pythonLine": 85,
+      "pythonAssertCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "M3视频%s秒保留原件base64，正好1800秒不误拒"
+        }
+      ],
+      "protectedAssertions": [
+        "正好1800秒和略低时长原始base64保留，未误拒"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "M3视频%s秒保留原件base64，正好1800秒不误拒"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_minimax_video_duration_gate.py::test_video_under_limit_is_allowed",
+      "pythonLine": 96,
+      "pythonAssertCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "M3视频%s秒保留原件base64，正好1800秒不误拒"
+        }
+      ],
+      "protectedAssertions": [
+        "正好1800秒和略低时长原始base64保留，未误拒"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "M3视频%s秒保留原件base64，正好1800秒不误拒"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_minimax_video_duration_gate.py::test_gate_uses_other_providers_own_limit",
+      "pythonLine": 107,
+      "pythonAssertCount": 2,
+      "classification": "Media",
+      "tsTests": [],
+      "protectedAssertions": [
+        "其它Provider通用媒体管线使用本身规格执行时长闸门"
+      ],
+      "gap": "通用Media.prepare_video_media与探测/转码服务未迁；仅有Provider规格声明不能证明该通用执行路径。",
+      "status": "边界延后",
+      "nodeValidation": {
+        "verifiedVendorTests": [],
+        "vendorRun": null,
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_minimax_video_duration_gate.py::test_duration_gate_is_shared_across_provider_registry",
+      "pythonLine": 127,
+      "pythonAssertCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "公开媒体规格使用通用默认和M3官方数值，ASR声明50MiB与500秒限制"
+        }
+      ],
+      "protectedAssertions": [
+        "Provider均有明确有效默认时长规格"
+      ],
+      "gap": "这里只验收Provider注册策略的有效规格；其它Provider通用Media执行管线仍独立边界延后。",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "公开媒体规格使用通用默认和M3官方数值，ASR声明50MiB与500秒限制"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_minimax_video_duration_gate.py::test_probe_video_at_reads_the_stored_file_without_copying_it",
+      "pythonLine": 150,
+      "pythonAssertCount": 2,
+      "classification": "Media",
+      "tsTests": [],
+      "protectedAssertions": [
+        "授权存储原文件路径探测不复制",
+        "无本地副本回退字节探测",
+        "本地FS解析"
+      ],
+      "gap": "通用Media/Storage Adapter和FFprobe未迁；Provider仅接收授权stream/可信探测结果，不能拿注入fake探测证明真实FS行为。",
+      "status": "边界延后",
+      "nodeValidation": {
+        "verifiedVendorTests": [],
+        "vendorRun": null,
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_minimax_video_duration_gate.py::test_probe_video_at_returns_none_when_no_local_path",
+      "pythonLine": 181,
+      "pythonAssertCount": 1,
+      "classification": "Media",
+      "tsTests": [],
+      "protectedAssertions": [
+        "授权存储原文件路径探测不复制",
+        "无本地副本回退字节探测",
+        "本地FS解析"
+      ],
+      "gap": "通用Media/Storage Adapter和FFprobe未迁；Provider仅接收授权stream/可信探测结果，不能拿注入fake探测证明真实FS行为。",
+      "status": "边界延后",
+      "nodeValidation": {
+        "verifiedVendorTests": [],
+        "vendorRun": null,
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_minimax_video_duration_gate.py::test_prepare_video_media_skips_probe_when_duration_already_known",
+      "pythonLine": 196,
+      "pythonAssertCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "可信已知视频时长跳过重复探测，缺少时只调用一次注入探测并在读数据前拒绝超长文件"
+        }
+      ],
+      "protectedAssertions": [
+        "可信已知duration不重复探测",
+        "未知duration调用注入探测器一次"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "可信已知视频时长跳过重复探测，缺少时只调用一次注入探测并在读数据前拒绝超长文件"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_minimax_video_duration_gate.py::test_prepare_video_media_falls_back_to_byte_probe_without_local_path",
+      "pythonLine": 213,
+      "pythonAssertCount": 2,
+      "classification": "Media",
+      "tsTests": [],
+      "protectedAssertions": [
+        "授权存储原文件路径探测不复制",
+        "无本地副本回退字节探测",
+        "本地FS解析"
+      ],
+      "gap": "通用Media/Storage Adapter和FFprobe未迁；Provider仅接收授权stream/可信探测结果，不能拿注入fake探测证明真实FS行为。",
+      "status": "边界延后",
+      "nodeValidation": {
+        "verifiedVendorTests": [],
+        "vendorRun": null,
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_minimax_video_duration_gate.py::test_check_video_duration_rejects_when_duration_unknown",
+      "pythonLine": 239,
+      "pythonAssertCount": 0,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "未知视频时长必须探测，探测缺失不传文件，取消后不启动上传"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "M3视频时长%s非法或超限时在任何上传之前拒绝"
+        }
+      ],
+      "protectedAssertions": [
+        "未知、非正或非有限视频时长fail-closed且未发送"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "未知视频时长必须探测，探测缺失不传文件，取消后不启动上传"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "M3视频时长%s非法或超限时在任何上传之前拒绝"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_minimax_video_duration_gate.py::test_local_storage_backend_exposes_local_path",
+      "pythonLine": 252,
+      "pythonAssertCount": 1,
+      "classification": "Media",
+      "tsTests": [],
+      "protectedAssertions": [
+        "授权存储原文件路径探测不复制",
+        "无本地副本回退字节探测",
+        "本地FS解析"
+      ],
+      "gap": "通用Media/Storage Adapter和FFprobe未迁；Provider仅接收授权stream/可信探测结果，不能拿注入fake探测证明真实FS行为。",
+      "status": "边界延后",
+      "nodeValidation": {
+        "verifiedVendorTests": [],
+        "vendorRun": null,
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_minimax_voice_audio.py::test_audio_without_ext_uses_container_extension_for_probe_and_upload",
+      "pythonLine": 16,
+      "pythonAssertCount": 5,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "ASR缺ext时%s推导%s供探测和multipart文件名"
+        }
+      ],
+      "protectedAssertions": [
+        "WAV/MP3/OGG缺ext时按MIME推导相同探测扩展和multipart文件名"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "ASR缺ext时%s推导%s供探测和multipart文件名"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_minimax_voice_audio.py::test_unknown_or_excessive_duration_is_rejected_before_request",
+      "pythonLine": 42,
+      "pythonAssertCount": 0,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+          "name": "ASR时长%s未知或超过500秒在任何请求前拒绝"
+        }
+      ],
+      "protectedAssertions": [
+        "音频未知或超过500秒时在请求前拒绝"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/policies.test.ts",
+            "name": "ASR时长%s未知或超过500秒在任何请求前拒绝"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/providers/test_minimax_voice_audio.py::test_generated_wav_without_ext_can_be_probed_with_derived_extension",
+      "pythonLine": 52,
+      "pythonAssertCount": 3,
+      "classification": "Media",
+      "tsTests": [],
+      "protectedAssertions": [
+        "真实生成WAV可以经本机ffprobe按派生扩展探测到1秒"
+      ],
+      "gap": "Media转码/FFprobe原生Adapter未迁；ASR只通过注入探测器调用，不能把fake返回1秒视为原生音频验证。",
+      "status": "边界延后",
+      "nodeValidation": {
+        "verifiedVendorTests": [],
+        "vendorRun": null,
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_provider_web_search.py::test_minimax_search_retries_only_transient_error",
+      "pythonLine": 36,
+      "pythonAssertCount": 5,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "name": "MiniMax错误码%s仅瞬时1033进行有限三次重试"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "name": "MiniMax第二次成功返回原结果，HTTP失败/重定向不按1033重放或回显上游"
+        }
+      ],
+      "protectedAssertions": [
+        "MiniMax仅1033重试最多三次",
+        "成功返回原数据，鉴权/余额错误不重试",
+        "诊断不含查询和凭据"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+            "name": "MiniMax错误码%s仅瞬时1033进行有限三次重试"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+            "name": "MiniMax第二次成功返回原结果，HTTP失败/重定向不按1033重放或回显上游"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_provider_web_search.py::test_run_schemas_and_validation_stay_bound_to_their_provider",
+      "pythonLine": 61,
+      "pythonAssertCount": 6,
+      "classification": "Tools",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "name": "搜索Schema按当前协议返回独立副本，不把厂商字段归一成通用query"
+        }
+      ],
+      "protectedAssertions": [
+        "Provider schema按厂商/协议返回独立副本"
+      ],
+      "gap": "Tools snapshot、validate_input、OpenAI/Anthropic工具schema注册及并发隔离尚未接入，Provider getter回归不能代替该组合。",
+      "status": "部分覆盖",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+            "name": "搜索Schema按当前协议返回独立副本，不把厂商字段归一成通用query"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_provider_web_search.py::test_compact_catalog_fields_follow_current_provider",
+      "pythonLine": 84,
+      "pythonAssertCount": 2,
+      "classification": "Tools",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "name": "搜索Schema按当前协议返回独立副本，不把厂商字段归一成通用query"
+        }
+      ],
+      "protectedAssertions": [
+        "厂商原生字段schema已迁且不会彼此覆盖"
+      ],
+      "gap": "真实capability injector简介目录尚无Node Tools实现，不能拿Provider schema名称证明目录正文正确。",
+      "status": "部分覆盖",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+            "name": "搜索Schema按当前协议返回独立副本，不把厂商字段归一成通用query"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_provider_web_search.py::test_provider_sends_native_arguments_and_preserves_native_results",
+      "pythonLine": 115,
+      "pythonAssertCount": 10,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "name": "$provider的$api_format请求走实际transport并保留原生结果与计费字段"
+        }
+      ],
+      "protectedAssertions": [
+        "六厂商七协议真实transport请求保持原生字段、sources和usage",
+        "端点及专属认证正确"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+            "name": "$provider的$api_format请求走实际transport并保留原生结果与计费字段"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_provider_web_search.py::test_foreign_api_host_cannot_receive_provider_credentials",
+      "pythonLine": 147,
+      "pythonAssertCount": 1,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "name": "%s搜索拒绝foreign host，不把当前凭据转发给任意端点"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "name": "官方host仍拒绝重定向目标、嵌入凭据和非标准端口，Ollama local不借用云搜索"
+        }
+      ],
+      "protectedAssertions": [
+        "非官方域/非HTTPS/嵌入凭据/非法端口不能接收当前Provider Key"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+            "name": "%s搜索拒绝foreign host，不把当前凭据转发给任意端点"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+            "name": "官方host仍拒绝重定向目标、嵌入凭据和非标准端口，Ollama local不借用云搜索"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_provider_web_search.py::test_provider_switch_refreshes_restored_schema_without_rewriting_history",
+      "pythonLine": 151,
+      "pythonAssertCount": 7,
+      "classification": "Tools",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/harness/context/history-preparation.test.ts",
+          "name": "主准备链按当前模型registry刷新schema仅作本请求增量，旧调用仍解释为旧schema"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "name": "搜索Schema按当前协议返回独立副本，不把厂商字段归一成通用query"
+        }
+      ],
+      "protectedAssertions": [
+        "Canonical请求刷新当前schema而不重写持久旧调用",
+        "Provider schema副本互不污染"
+      ],
+      "gap": "两个真实Provider Tools快照接入同一Run标准准备链仍缺Tools生产Adapter，不声明该完整跨层路径迁入。",
+      "status": "部分覆盖",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+            "name": "搜索Schema按当前协议返回独立副本，不把厂商字段归一成通用query"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": [
+          {
+            "file": "gugu-core/tests/agent/harness/context/history-preparation.test.ts",
+            "name": "主准备链按当前模型registry刷新schema仅作本请求增量，旧调用仍解释为旧schema"
+          }
+        ]
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_provider_web_search.py::test_added_providers_send_native_payload_and_keep_sources",
+      "pythonLine": 192,
+      "pythonAssertCount": 7,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "name": "$provider的$api_format请求走实际transport并保留原生结果与计费字段"
+        }
+      ],
+      "protectedAssertions": [
+        "六厂商七协议真实transport请求保持原生字段、sources和usage",
+        "端点及专属认证正确"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+            "name": "$provider的$api_format请求走实际transport并保留原生结果与计费字段"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_provider_web_search.py::test_search_injection_respects_switch_credentials_and_provider_requirements",
+      "pythonLine": 218,
+      "pythonAssertCount": 5,
+      "classification": "Tools",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "name": "官方host仍拒绝重定向目标、嵌入凭据和非标准端口，Ollama local不借用云搜索"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "name": "%s搜索拒绝foreign host，不把当前凭据转发给任意端点"
+        }
+      ],
+      "protectedAssertions": [
+        "官方搜索模型/端点要求和本地Ollama不向云发凭据已保护"
+      ],
+      "gap": "Tools.search_tool_is_configured的web_search_enabled开关、凭据缺失时工具注入以及授权registry尚未迁。",
+      "status": "部分覆盖",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+            "name": "官方host仍拒绝重定向目标、嵌入凭据和非标准端口，Ollama local不借用云搜索"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+            "name": "%s搜索拒绝foreign host，不把当前凭据转发给任意端点"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      }
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_provider_web_search.py::test_search_http_does_not_follow_redirect_or_expose_upstream_errors",
+      "pythonLine": 238,
+      "pythonAssertCount": 4,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "name": "MiniMax第二次成功返回原结果，HTTP失败/重定向不按1033重放或回显上游"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/transport.test.ts",
+          "name": "拒绝自动跟随重定向，gzip解压后的字节进入JSON与响应预算"
+        }
+      ],
+      "protectedAssertions": [
+        "搜索非200不解析或暴露正文，不跟随Location重定向",
+        "真实Node传输禁重定向"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+            "name": "MiniMax第二次成功返回原结果，HTTP失败/重定向不按1033重放或回显上游"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": [
+          {
+            "file": "gugu-core/tests/agent/providers/transport.test.ts",
+            "name": "拒绝自动跟随重定向，gzip解压后的字节进入JSON与响应预算"
+          }
+        ]
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_provider_web_search.py::test_every_provider_bounds_actual_http_results",
+      "pythonLine": 264,
+      "pythonAssertCount": 2,
+      "classification": "Provider本体",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "name": "$provider的$api_format请求走实际transport并保留原生结果与计费字段"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "name": "响应大小同时检查声明长度与实际流，超过2MiB后立即停止读取并取消"
+        },
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "name": "模型结果预算计入结构，保留状态/用量，文本和数组显式截断，链接保持完整或省略"
+        }
+      ],
+      "protectedAssertions": [
+        "每厂商真实搜索路径均传大结果并执行64KiB结果预算",
+        "2MiB实际解压流体量提前停止"
+      ],
+      "gap": "",
+      "status": "已实现并通过基准",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+            "name": "$provider的$api_format请求走实际transport并保留原生结果与计费字段"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+            "name": "响应大小同时检查声明长度与实际流，超过2MiB后立即停止读取并取消"
+          },
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+            "name": "模型结果预算计入结构，保留状态/用量，文本和数组显式截断，链接保持完整或省略"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      },
+      "statusBeforeIntegratedValidation": "已实现待Python"
+    },
+    {
+      "pythonNode": "backend/tests/agent/test_provider_web_search.py::test_model_search_output_budget_has_default_and_ceiling",
+      "pythonLine": 283,
+      "pythonAssertCount": 3,
+      "classification": "Tools",
+      "tsTests": [
+        {
+          "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+          "name": "%s搜索输出预算%s有默认与2048上限"
+        }
+      ],
+      "protectedAssertions": [
+        "MiMo/Qwen Responses真实请求有默认输出预算与2048上限"
+      ],
+      "gap": "HTTP请求已保护；原Tools.validate_input对100000的拒绝需Tools schema validator接入。",
+      "status": "部分覆盖",
+      "nodeValidation": {
+        "verifiedVendorTests": [
+          {
+            "file": "gugu-core/tests/agent/providers/vendors/ollama.test.ts",
+            "name": "%s搜索输出预算%s有默认与2048上限"
+          }
+        ],
+        "vendorRun": "vendor-audit-node-141",
+        "python": "provider-python-517：本轮43文件517通过、0跳过；详见integratedValidation。",
+        "pythonAtSubtaskAudit": "待主Agent补充本任务执行证据",
+        "sharedTestsInIntegratedRun": []
+      }
+    }
+  ],
+  "summary": {
+    "pythonFiles": 10,
+    "pythonDefinitions": 119,
+    "classificationCounts": {
+      "Provider本体": 90,
+      "相邻HostData": 14,
+      "Tools": 8,
+      "Media": 7
+    },
+    "statusCounts": {
+      "部分覆盖": 14,
+      "已实现并通过基准": 85,
+      "边界延后": 20
+    },
+    "finalStatusCounts": {
+      "部分覆盖": 14,
+      "已实现并通过基准": 85,
+      "边界延后": 20
+    },
+    "subtaskSnapshotStatusCounts": {
+      "部分覆盖": 14,
+      "已实现待Python": 85,
+      "边界延后": 20
+    }
+  },
+  "importantDifferences": [
+    "不复制Python SDK异常类型/辅助类API；以HTTP协议状态与明确重试边界替代",
+    "Ollama缺done、坏JSON参数明确失败；缺usage保持未知",
+    "Ollama新默认call id绑定run/round，旧重复ID历史仍按轮配对恢复",
+    "只有显式可信local/ollama配置可允许内网；URL兼容推断不授权",
+    "MiniMax上传路径改为授权媒体层提供的异步流；真实FS/FFprobe/通用转码边界延后",
+    "原生Ollama工具图片提供未传入模型的明确通知，避免把base64序列化成正文"
+  ],
+  "knownPendingCoreAssertions": "C本体必要回归已补并运行通过；剩余部分覆盖为SDK facade/API差异或HostData/Tools跨层边界，不据此升级为端到端。",
+  "auditIteration": "逐119定义复核后修复Local/Ollama generic参数实际遗漏并补协议组合、temperature/DTO/诊断/媒体数值/所有搜索预算/rawUsage/None等回归。",
+  "validationRuns": [
+    {
+      "id": "vendor-audit-node-140-failed-1",
+      "kind": "node",
+      "environment": "本地原生 Node 26",
+      "command": "node node_modules/vitest/vitest.mjs run tests/agent/providers/vendors/policies.test.ts tests/agent/providers/vendors/ollama.test.ts",
+      "files": 2,
+      "passed": 140,
+      "failed": 1,
+      "skipped": 0,
+      "status": "历史失败",
+      "notes": "4个Responses夹具已补真实user输入后，剩MiniMax恢复夹具缺message_start。核实际SDK后确认该形状属于RuntimeError顺序错误，不是可恢复缺块；按真正旧基线补message_start，未放宽driver。"
+    },
+    {
+      "id": "vendor-audit-node-141",
+      "kind": "node",
+      "environment": "本地原生 Node 26",
+      "command": "node node_modules/vitest/vitest.mjs run tests/agent/providers/vendors/policies.test.ts tests/agent/providers/vendors/ollama.test.ts",
+      "files": 2,
+      "passed": 141,
+      "failed": 0,
+      "skipped": 0,
+      "durationSeconds": 0.652,
+      "status": "通过",
+      "notes": "有效合成user输入保留Responses空input拒绝；MiniMax恢复形状对齐SDK既有message_start后的缺块边界，保留两请求及恢复正文断言。所有最新C代码/回归已运行；共享Provider/Harness与Python由主Agent独立整合。"
+    }
+  ],
+  "integratedValidation": {
+    "providerNode": {
+      "id": "provider-node-final-366",
+      "reportedBy": "主Agent最终独立执行",
+      "environment": "本地原生Node 26",
+      "files": 7,
+      "passed": 366,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "time": "2026-11-13 17:55:53",
+      "notes": "所有源与测试已冻结后运行；包含真实socket复用/idle失效及A/B/Runtime最后补充断言。transport文件23项。"
+    },
+    "python": {
+      "id": "provider-python-517",
+      "reportedBy": "主Agent实际执行",
+      "environment": "本地原生Linux隔离副本",
+      "files": 43,
+      "passed": 517,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "durationSeconds": 13.75,
+      "notes": "补齐ffprobe后原跳过已实际执行；未使用devserver，未读取或改写运行配置。"
+    },
+    "coreUnit": {
+      "id": "core-unit-final-855",
+      "reportedBy": "主Agent最终独立执行",
+      "files": 36,
+      "passed": 855,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "time": "2026-11-13 17:57:23"
+    },
+    "types": {
+      "status": "通过",
+      "reportedBy": "主Agent最终实际执行",
+      "notes": "17:55后最终测试tsc通过，含B reduce<number>修正。"
+    },
+    "coreBuild": {
+      "status": "通过",
+      "reportedBy": "主Agent最终实际执行",
+      "notes": "17:55后最终Core build通过。"
+    },
+    "limits": [
+      "两侧测试各自执行通过与逐定义语义审计共同构成证据，不是自动差分运行或真实外部服务验收。",
+      "Provider协议与Core接线已经有真实生产实现；Host/Data/Redis/Tools/观测缺口不因合成HTTP或全套通过升级。"
+    ],
+    "latestTargeted": [
+      {
+        "id": "provider-runtime-final-25",
+        "reportedBy": "主Agent实际执行",
+        "file": "gugu-core/tests/agent/providers/runtime.test.ts",
+        "passed": 25,
+        "failed": 0,
+        "skipped": 0,
+        "time": "2026-11-13 17:49:21",
+        "notes": "覆盖最终稳定正文/tools键、idle前后factory及TTL/跨Run/终态引用拒绝；随后tsc通过。"
+      },
+      {
+        "id": "provider-openai-final-105",
+        "reportedBy": "A实际执行",
+        "files": 2,
+        "passed": 105,
+        "failed": 0,
+        "skipped": 0,
+        "time": "2026-11-13 17:52:52",
+        "notes": "含新增4项真实组合用例，原6条partial缺口按断言证据闭合。"
+      },
+      {
+        "id": "provider-anthropic-final-70",
+        "reportedBy": "B实际执行",
+        "files": 1,
+        "passed": 70,
+        "failed": 0,
+        "skipped": 0,
+        "notes": "包含三历史轮重复恢复幂等和普通system主动缓存branch断言。"
+      },
+      {
+        "id": "provider-transport-socket-idle",
+        "reportedBy": "主Agent实际执行",
+        "file": "gugu-core/tests/agent/providers/transport.test.ts",
+        "time": "2026-11-13 17:54:36",
+        "status": "通过",
+        "name": "完整JSON读取后复用真实TCP连接，空闲过期后新建连接而非只复用fake对象"
+      }
+    ],
+    "freeze": "主Agent确认所有Provider源/测试停笔后执行；文档最终整合未再修改源或测试。"
+  },
+  "finalSummary": {
+    "definitions": 119,
+    "uniqueDefinitions": 119,
+    "statusCounts": {
+      "部分覆盖": 14,
+      "已实现并通过基准": 85,
+      "边界延后": 20
+    },
+    "pythonFiles": [
+      "backend/tests/agent/providers/test_deep_research_providers.py",
+      "backend/tests/agent/providers/test_llm7_p3.py",
+      "backend/tests/agent/providers/test_minimax_error_details.py",
+      "backend/tests/agent/providers/test_minimax_media_upload.py",
+      "backend/tests/agent/providers/test_minimax_video_duration_gate.py",
+      "backend/tests/agent/providers/test_minimax_voice_audio.py",
+      "backend/tests/agent/providers/test_model_reasoning_policy.py",
+      "backend/tests/agent/providers/test_provider_media.py",
+      "backend/tests/agent/providers/test_providers.py",
+      "backend/tests/agent/test_provider_web_search.py"
+    ],
+    "countingRule": "按pytest定义计数，参数化执行个数另见517；已实现并通过基准不表示线上服务或生产Host迁移。"
+  },
+  "rootFinalIntegration": {
+    "providerNode": {
+      "id": "provider-node-final-457",
+      "reportedBy": "主Agent独立执行",
+      "environment": "本地原生Node 26",
+      "files": 7,
+      "passed": 457,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "time": "2026-11-13 18:58:10",
+      "durationSeconds": 2.75,
+      "notes": "四协议摘要三阶段、截断拒收；Anthropic/MiniMax实际双工具反思分支；真实TLS/代理/CA和池身份。"
+    },
+    "coreUnit": {
+      "id": "core-unit-final-943",
+      "reportedBy": "主Agent独立执行",
+      "files": 36,
+      "passed": 943,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "time": "2026-11-13 18:58:55",
+      "durationSeconds": 12.37
+    },
+    "types": "tsconfig.tests严格检查通过",
+    "coreBuild": "最终生产源码构建通过；随后仅补测试及文档。",
+    "limits": "整合通过只升级逐项已有直接证据的定义，Host/外部服务及已接受API差异不批量关闭。"
+  }
+}

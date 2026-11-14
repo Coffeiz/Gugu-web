@@ -18,6 +18,11 @@
 
 单切片日志保留原文件，记录实现范围、回归结果和未验收依赖；索引页不再重复列出逐次检查快照。
 
+### 2026-11-13：N3 Agent Harness 与 Provider
+
+- [N3 Agent Harness 可移植迁移](./2026-11-13-N3-Agent-Harness可移植迁移.md)
+- [N3 Provider 协议迁移与 Harness 整合复查](./2026-11-13-N3-Provider协议迁移与Harness整合复查.md)
+
 ### 2026-11-12
 
 - [Core 测试分层与 Electron 迁移](./2026-11-12-Core测试分层与Electron迁移.md)

@@ -121,6 +121,8 @@ export function createRunCoordinator<C>(ports: HarnessPorts<C>): RunHarness<C> {
     async function executeTool(call: ToolCall, resolving: InteractionResolution | null, signal = controller.signal, waitForCleanup = false): Promise<ToolResult> {
       if (signal.aborted)
         throw new HarnessError('cancelled', '当前任务已取消')
+      if (call.parseError)
+        return { kind: 'completed', value: { error: '工具参数不是合法的 JSON 对象，请修正参数后重试', code: call.parseError }, executed: false, successful: false, mutated: false }
       dispatchedCalls.add(dispatchKey(call))
       const round = state!.round
       let closed = false
@@ -672,7 +674,7 @@ export function createRunCoordinator<C>(ports: HarnessPorts<C>): RunHarness<C> {
                   throw new HarnessError('invalid_state', '群回复门调用分类无效')
                 gate = decideReplyGate(state.replyChoice, text, gateCalls)
               }
-              const context = await ports.context.afterRound(state.context, { text, calls, contextInput: state.usage.contextInput, ...(item.continuation === undefined ? {} : { continuation: item.continuation }), ...(item.cacheAnchor === undefined ? {} : { cacheAnchor: portableSnapshot(item.cacheAnchor) }) }, state.round)
+              const context = await ports.context.afterRound(state.context, { text, calls, contextInput: state.usage.contextInput, ...(item.continuation === undefined ? {} : { continuation: item.continuation }), ...(item.cacheAnchor === undefined ? {} : { cacheAnchor: portableSnapshot(item.cacheAnchor) }), ...(item.consumedInitialMedia === undefined ? {} : { consumedInitialMedia: portableSnapshot(item.consumedInitialMedia) as unknown as typeof item.consumedInitialMedia }) }, state.round)
               let plan: ToolPlan = calls.length && ports.tools.plan && gate.choice !== 'silent' ? await ports.tools.plan(calls, identity) : { mode: 'serial' }
               const gateResults = calls.flatMap<{ callId: string; result: ToolResult }>((call) => {
                 const blocked = gate.blocked.find((item) => item.id === call.id)

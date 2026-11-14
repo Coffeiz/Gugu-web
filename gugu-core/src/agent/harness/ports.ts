@@ -364,6 +364,7 @@ export interface ContextPort<C> {
     readonly continuation?: unknown
     readonly cacheAnchor?: unknown
     readonly contextInput?: number | null
+    readonly consumedInitialMedia?: import('./contracts.js').ConsumedInitialMedia
   }, round: number): Promise<C>
   afterTool(context: C, call: ToolCall, result: ToolResult, round: number): Promise<C>
   resumeInteraction(context: C, pending: PendingInteraction, resolution: InteractionResolution): Promise<C>

@@ -1,7 +1,7 @@
 
 import type { Block,CanonicalHarnessContext,CanonicalMessage,CompactionResult,CurrentUser,EntryInput,FrozenProviderRequest,Json,PersistedHistoryRow,PrepareContextInput,PreparedContext,RagContext,RunIdentity,ToolCall,ToolResult } from '../contracts.js'
 import { HarnessError,isEarlyExit } from '../contracts.js'
-import { createToolResultCheckpoint,restorePreparedContext,savePreparedContext } from '../history/attachment-refs.js'
+import { collapseConsumedImage,createToolResultCheckpoint,hasInitialInlineImage,restorePreparedContext,savePreparedContext } from '../history/attachment-refs.js'
 import { appendCanonicalEvents,blocks,canonicalizeMessage,canonicalToolRound,copy,mediaTypes,MessageArea,portableSnapshot,redactToolRequestHeaders,refreshCanonicalToolSchemas } from '../history/canonical-history.js'
 import { hasOnlyLegacyTimeContext,isInternalUserMessage,lastUserIndex,protectedMessageIds,restoreHistoryForRequest,userTextFromMessage,validateHistoryRows } from '../history/ordering.js'
 import type { CanonicalContextPorts,ContextPort,ContextServices,PreparationPorts } from '../ports.js'
@@ -305,6 +305,16 @@ export function createCanonicalContextPort(ports: CanonicalContextPorts): Contex
       // 捕获的是模型实际读取的前缀，不能在追加回复后再把回复重复附加一次。
       const frozen = frozenRequest(state, prepared)
       mainRequests.set(key(state.identity), frozen ?? { prepared, request: null })
+      if (result.consumedInitialMedia) {
+        const effect = result.consumedInitialMedia
+        if (round !== 1 || effect.expectedRevision !== prepared.area.revision || !Array.isArray(effect.entryIds)
+          || effect.entryIds.some(id => typeof id !== 'string' || !id) || new Set(effect.entryIds).size !== effect.entryIds.length)
+          throw new HarnessError('invalid_state', '初始图片消费的轮次、revision或身份无效')
+        const entries = effect.entryIds.map(id => prepared.area.entries.find(entry => entry.entryId === id))
+        if (entries.some(entry => !entry || !Array.isArray(entry.message.content) || !hasInitialInlineImage(entry.message.content)))
+          throw new HarnessError('invalid_state', '初始图片消费不能修订其他消息')
+        for (const entry of entries) prepared.area.reviseEntry(entry!.entryId, collapseConsumedImage(entry!.message), prepared.area.revision)
+      }
       if (!result.calls.length && result.text)
         prepared.area.append({ role: 'assistant', content: result.text }, {
           source: 'tool_round', persistencePolicy: 'request_only', roundId: `round-${round}`,
@@ -342,6 +352,7 @@ export function createCanonicalContextPort(ports: CanonicalContextPorts): Contex
         ...state, continuationRef, providerCacheAnchor, currentProviderInput, pendingRound: result.calls.length ? {
           round, text: result.text, calls: result.calls.map((call) => ({
             id: call.id, name: call.name, input: redactToolRequestHeaders(json(call.input)),
+            ...(call.parseError ? { parseError: call.parseError } : {}),
             ...('rawArguments' in call && typeof call.rawArguments === 'string' ? { rawArguments: String(redactToolRequestHeaders(call.rawArguments)) } : {}),
             ...('responsesItemId' in call && typeof call.responsesItemId === 'string' ? { responsesItemId: call.responsesItemId } : {}),
           })),

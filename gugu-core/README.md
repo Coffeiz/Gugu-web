@@ -82,4 +82,14 @@ pnpm --filter @gugu/core test:golden
 
 完整反思 wire 快照仅保留进程内；Run checkpoint 不含媒体载荷、签名 URL、私有推理或授权材料。续接记录 ID 不是实现完成的证明，真实 Provider/Reasoning/Data 适配及重启恢复仍需独立验收。各 Python 行为与实际 TS 测试状态见 [Harness 映射](../docs/testing/node-agent-harness-parity.md)，未闭合项不得解释为全部 Agent 已迁移或允许切换生产调用方。
 
+## Provider 协议与 Harness 接线
+
+`@gugu/core/providers` 提供实际的 Chat Completions、Responses、Anthropic 和 Ollama 原生请求、历史投影、流解析及非聊天分支。`connectProviderHarness` 将这些实现接入现有 Canonical Harness；Provider 不拥有 Run 状态、工具授权或执行器。可信 Host 必须提供选模/凭据解析、稳定模型和访问范围身份，以及已有上下文的引用 codec、请求准备和持久化端口。解析后的配置不从 Core 自动读取用户运行文件。
+
+Node HTTP/DNS/TLS/代理实现单独从 `@gugu/core/providers/node` 导入。可移植入口不会隐式装载 Node、数据库或平台 SDK。传输固定已校验的 DNS 地址、拒绝自动重定向，连接/写/读空闲/池等待分别有预算；本地网络同时需要 Host 和显式 local/ollama 配置授权。Host 显式提供代理、CA 及 `networkIdentity`，网络配置改变后须使客户端池键失效；自定义 CA 不自动读取 `SSL_CERT_FILE`/`SSL_CERT_DIR`，SOCKS 代理明确不支持。
+
+原生 thinking/signature 和实际请求 wire 仅存在有界进程内状态中，绑定 owner/session/run/model/访问范围；引用过期、进程重启或成功收尾后明确拒绝续接。该实现不是加密的跨进程 ReasoningStore。缓存前缀协调默认只在进程内排序，不共享模型答案；Redis 租约和续租仍需共享 runtime/Host adapter。完整请求探针只交给显式受控 sink，不能直接用于公开日志或用户事件。
+
+Provider 的真实协议逻辑使用注入 HTTP 测试；测试替身只替换外部网络和存储，不能据此宣称已切换 Web/IM/Worker 或完成 BYOK、Tools、RAG、媒体文件探测/转码、数据库/Redis、持久 Job。逐 Python 定义、生产调用点及差异见 [Provider 回归映射](../docs/testing/node-agent-provider-parity.md)。
+
 目标架构、目录职责、迁移 checklist 与当前回归测试对齐任务统一见 [架构与迁移任务清单](../docs/refactor/Gugu-2.0-架构与迁移任务清单.md)。历史方案和验证记录见 [归档索引](../docs/refactor/_archive/gugu-2.0/README.md)。

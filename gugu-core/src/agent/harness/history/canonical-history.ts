@@ -690,10 +690,13 @@ export function snapshotToolCall(call: ToolCall): ToolCall {
     throw new HarnessError('invalid_state', '工具调用身份无效')
   if ((call.rawArguments !== undefined && typeof call.rawArguments !== 'string') || (call.responsesItemId !== undefined && typeof call.responsesItemId !== 'string'))
     throw new HarnessError('invalid_state', '工具调用原始元数据无效')
+  if (call.parseError !== undefined && !['invalid_json', 'not_object'].includes(call.parseError))
+    throw new HarnessError('invalid_state', '工具参数错误分类无效')
   return Object.freeze({
     id: call.id, name: call.name, input: portableSnapshot(call.input),
     ...(call.rawArguments === undefined ? {} : { rawArguments: call.rawArguments }),
     ...(call.responsesItemId === undefined ? {} : { responsesItemId: call.responsesItemId }),
+    ...(call.parseError === undefined ? {} : { parseError: call.parseError }),
   })
 }
 

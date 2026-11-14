@@ -6,6 +6,41 @@ import type { ContextReferenceCodec,ContextServices,RunCoordination } from '../p
 
 import { blocks,copy,mediaTypes,MessageArea,portableSnapshot,snapshotToolCall,stableJson } from './canonical-history.js'
 
+/** 只看真实内容块与工具结果内容；工具参数中的同名业务对象不能当作图片消费。 */
+export function hasInitialInlineImage(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(hasInitialInlineImage)
+  if (!value || typeof value !== 'object') return false
+  const block = value as Record<string, unknown>
+  if (block.type === 'image') {
+    const source = block.source as Record<string, unknown> | null
+    return !!source && source.type === 'base64' && !!source.data
+  }
+  if (block.type === 'image_url') {
+    const url = typeof block.image_url === 'string' ? block.image_url : (block.image_url as Record<string, unknown> | null)?.url
+    return typeof url === 'string' && url.startsWith('data:')
+  }
+  return block.type === 'tool_result' && hasInitialInlineImage(block.content)
+}
+
+/** 配对工具结果保留原事件，只把其中已消费图片换成占位，不能破坏工具历史配对。 */
+export function collapseConsumedImage(message: CanonicalMessage): CanonicalMessage {
+  const result = copy(message)
+  if (!Array.isArray(result.content)) return result
+  const content = blocks(result.content)
+  if (!content.some(block => ['tool_result', 'tool_call', 'tool_use'].includes(block.type))) {
+    result.content = content.filter(block => block.type === 'text' && block.text).map(block => String(block.text)).join('\n') || '[图片已查看]'
+    return result
+  }
+  const replace = (value: Json): Json => {
+    if (Array.isArray(value)) return value.map(replace)
+    if (!value || typeof value !== 'object') return value
+    if (hasInitialInlineImage(value) && ['image', 'image_url'].includes(String(value.type))) return { type: 'text', text: '[图片已查看]' }
+    return value
+  }
+  result.content = content.map(block => block.type === 'tool_result' ? { ...block, content: replace(block.content ?? null) } : block)
+  return result
+}
+
 /** 对端口输出再做协议无关检查，不接受媒体载荷或私有推理偷偷进入持久化。 */
 export function assertDurableCanonical(value: Json): void {
   visitDurableCanonical(value, true)
@@ -177,7 +212,7 @@ export function normalizeScope(scope: ToolResultCheckpointScope, services: Diges
     throw new Error('工具结果检查点身份无效')
   if (!Number.isSafeInteger(scope.round) || scope.round < 1)
     throw new Error('工具结果检查点轮次无效')
-  const rawCall = object(scope.call, ['id', 'name', 'input', 'rawArguments', 'responsesItemId'], ['rawArguments', 'responsesItemId'])
+  const rawCall = object(scope.call, ['id', 'name', 'input', 'rawArguments', 'responsesItemId', 'parseError'], ['rawArguments', 'responsesItemId', 'parseError'])
   const call = snapshotToolCall(rawCall as unknown as ToolCall)
   return {
     marker: {
@@ -201,7 +236,7 @@ export function normalizeResult(result: ToolResult, call: ToolCall): ToolResult 
     if (typeof pending.id !== 'string' || !pending.id || !['question', 'confirmation', 'credential'].includes(String(pending.kind))
       || pending.afterConfirmation !== undefined && typeof pending.afterConfirmation !== 'boolean')
       throw new Error('等待交互控制字段无效')
-    const pendingCall = object(pending.toolCall, ['id', 'name', 'input', 'rawArguments', 'responsesItemId'], ['rawArguments', 'responsesItemId'])
+    const pendingCall = object(pending.toolCall, ['id', 'name', 'input', 'rawArguments', 'responsesItemId', 'parseError'], ['rawArguments', 'responsesItemId', 'parseError'])
     if (stableJson(snapshotToolCall(pendingCall as unknown as ToolCall)) !== stableJson(call))
       throw new Error('等待交互不属于原工具调用')
     return {

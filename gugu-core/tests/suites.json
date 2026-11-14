@@ -190,5 +190,42 @@
     "markers": [],
     "layer": "L1",
     "purpose": "contract"
+  },
+  "tests/agent/providers/anthropic.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/providers/openai-responses.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/providers/openai.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/providers/ollama.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/providers/policies.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/providers/runtime.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/agent/providers/transport.test.ts": {
+    "markers": [
+      "external_service"
+    ],
+    "layer": "L1",
+    "purpose": "contract"
   }
 }
