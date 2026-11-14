@@ -24,7 +24,12 @@ function plan(): RegistrationSeedPlan {
   }
 }
 
-function fakePool(options: { failOnFileInsert?: number; failOnStateUpdate?: boolean; seeded?: boolean } = {}) {
+function fakePool(options: {
+  failOnFileInsert?: number
+  failOnStateUpdate?: boolean
+  seeded?: boolean
+  userStorageLimitBytes?: number | null
+} = {}) {
   let state: Record<string, unknown> = options.seeded
     ? { seed: { seeded: true, project_id: 7, project_name: '旧项目' }, guide: { enabled: false } }
     : { seed: { seeded: false, project_id: null, project_name: null }, guide: { enabled: false } }
@@ -34,6 +39,8 @@ function fakePool(options: { failOnFileInsert?: number; failOnStateUpdate?: bool
   let commits = 0
   let rollbacks = 0
   let nextFileId = 10
+  const quotaLedgerInserts: unknown[][] = []
+  const quotaInitializationEvents: unknown[][] = []
   const client = {
     async query<Row extends QueryResultRow = QueryResultRow>(sql: string, values: unknown[] = []) {
       if (sql === 'BEGIN' || sql === 'ROLLBACK') {
@@ -46,7 +53,12 @@ function fakePool(options: { failOnFileInsert?: number; failOnStateUpdate?: bool
       if (sql.includes('INSERT INTO projects')) { projectInserts++; return { rows: [{ id: 42 }] as unknown as Row[], rowCount: 1 } }
       if (sql.includes('INSERT INTO calendar_events')) { eventInserts++; return { rows: [], rowCount: 1 } as never }
       if (sql.startsWith('SELECT id,name,color')) return { rows: [{ id: 42, name: '从这里开始', color: null, year: '2026', month: '11' }] as unknown as Row[], rowCount: 1 }
-      if (sql.includes('SELECT storage_limit_bytes FROM users')) return { rows: [{ storage_limit_bytes: null }] as unknown as Row[], rowCount: 1 }
+      if (sql.includes('SELECT storage_limit_bytes FROM users'))
+        return { rows: [{ storage_limit_bytes: options.userStorageLimitBytes ?? null }] as unknown as Row[], rowCount: 1 }
+      if (sql.includes('INSERT INTO storage_quota_ledgers')) {
+        quotaLedgerInserts.push(values)
+        return { rows: [], rowCount: 1 } as never
+      }
       if (sql.includes('SELECT used_bytes,reserved_bytes,limit_bytes FROM storage_quota_ledgers'))
         return { rows: [{ used_bytes: 0, reserved_bytes: 0, limit_bytes: Number.MAX_SAFE_INTEGER }] as unknown as Row[], rowCount: 1 }
       if (sql.includes('SELECT used_bytes,reserved_bytes FROM storage_quota_ledgers'))
@@ -58,7 +70,10 @@ function fakePool(options: { failOnFileInsert?: number; failOnStateUpdate?: bool
         return { rows: [{ id: nextFileId++, size_bytes: values[11] }] as unknown as Row[], rowCount: 1 }
       }
       if (sql.includes('UPDATE storage_quota_ledgers')) return { rows: [], rowCount: 1 } as never
-      if (sql.includes('INSERT INTO storage_quota_events')) return { rows: [], rowCount: 1 } as never
+      if (sql.includes('INSERT INTO storage_quota_events')) {
+        if (sql.includes("'initialize'")) quotaInitializationEvents.push(values)
+        return { rows: [], rowCount: 1 } as never
+      }
       if (sql.includes('UPDATE onboarding_state SET state=')) {
         if (options.failOnStateUpdate) throw new Error('synthetic onboarding state failure')
         state = JSON.parse(String(values[1])) as Record<string, unknown>
@@ -69,7 +84,11 @@ function fakePool(options: { failOnFileInsert?: number; failOnStateUpdate?: bool
     release() {},
   }
   const pool = { async connect() { return client } } as unknown as Pick<Pool, 'connect'>
-  return { pool, stats: () => ({ fileInserts, projectInserts, eventInserts, commits, rollbacks, state }) }
+  return {
+    pool,
+    quotaStats: () => ({ quotaLedgerInserts, quotaInitializationEvents }),
+    stats: () => ({ fileInserts, projectInserts, eventInserts, commits, rollbacks, state }),
+  }
 }
 
 async function collectFiles(root: string): Promise<string[]> {
@@ -89,7 +108,7 @@ test('注册播种在同一事务创建项目、首日活动、Local 文件与�
   const root = await mkdtemp(path.join(tmpdir(), 'gugu-seed-adapter-test-'))
   try {
     const db = fakePool()
-    const applySeed = createPostgresRegistrationSeedOperations(db.pool, { storageRoot: root })
+    const applySeed = createPostgresRegistrationSeedOperations(db.pool, { storageRoot: root, defaultLimitBytes: 4096 })
     assert.equal(await applySeed('00000000-0000-4000-8000-000000000001', plan()), 'applied')
     assert.deepEqual(db.stats(), {
       fileInserts: 2, projectInserts: 1, eventInserts: 1, commits: 1, rollbacks: 0,
@@ -98,9 +117,26 @@ test('注册播种在同一事务创建项目、首日活动、Local 文件与�
         guide: { enabled: true, version: 1, current_step: 'locale', completed_steps: [], dismissed: false, completed_at: null },
       },
     })
+    assert.deepEqual(db.quotaStats(), {
+      quotaLedgerInserts: [['00000000-0000-4000-8000-000000000001', 'file_library', '4096']],
+      quotaInitializationEvents: [['00000000-0000-4000-8000-000000000001', 'file_library', 'quota-init:00000000-0000-4000-8000-000000000001:file_library']],
+    })
     const files = await collectFiles(root)
     assert.equal(files.length, 2)
     assert.deepEqual((await Promise.all(files.map((file) => readFile(file, 'utf8')))).sort(), ['# 示例文件\n', '# 第一份记录\n'])
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test('注册用户明确设置零额度时，播种仍受该上限约束并初始化零额度账本', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'gugu-seed-zero-quota-test-'))
+  try {
+    const db = fakePool({ userStorageLimitBytes: 0 })
+    const applySeed = createPostgresRegistrationSeedOperations(db.pool, { storageRoot: root, defaultLimitBytes: 4096 })
+    await assert.rejects(applySeed('00000000-0000-4000-8000-000000000001', plan()), /存储空间已满/)
+    assert.deepEqual(db.quotaStats().quotaLedgerInserts, [
+      ['00000000-0000-4000-8000-000000000001', 'file_library', '0'],
+    ])
+    assert.deepEqual(await collectFiles(root), [])
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 

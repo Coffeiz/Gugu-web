@@ -15,8 +15,8 @@ export interface MindCanvasUndoRecord {
   userId: string
   contextId: string
   resource: 'mind'
-  action: 'create' | 'update'
-  targetRefs: Array<{ kind: 'canvas'; id: number }>
+  action: 'create' | 'update' | 'delete'
+  targetRefs: Array<{ kind: string; id: number }>
   beforeState: { items: Record<string, Record<string, unknown>> }
   afterState: { items: Record<string, Record<string, unknown>> }
   baseVersions: Record<string, Record<string, never>>
@@ -24,10 +24,10 @@ export interface MindCanvasUndoRecord {
 
 export interface MindCanvasChangedEvent {
   ownerId: string
-  operation: 'create' | 'update'
+  operation: 'create' | 'update' | 'delete'
   entityId: number
   origin: string | null
-  entity: MindCanvasResponse
+  entity: MindCanvasResponse | { id: number }
 }
 
 export interface MindCanvasMutationTransaction {
@@ -35,6 +35,7 @@ export interface MindCanvasMutationTransaction {
   insert(ownerId: string, title: string, projectId: number | null): Promise<MindCanvasRecord>
   getOwned(ownerId: string, canvasId: number): Promise<MindCanvasRecord | null>
   update(ownerId: string, canvasId: number, fields: { title?: string; dataJson?: string }): Promise<MindCanvasRecord | null>
+  delete?(ownerId: string, canvasId: number): Promise<{ targetRefs: Array<{ kind: string; id: number }>; before: Record<string, Record<string, unknown>>; after: Record<string, Record<string, unknown>> } | null>
   recordUndo(record: MindCanvasUndoRecord): Promise<void>
 }
 
@@ -109,6 +110,27 @@ function undoRecord(
   }
 }
 
+function deleteUndoRecord(
+  ownerId: string,
+  contextId: string | null,
+  targetRefs: Array<{ kind: string; id: number }>,
+  before: Record<string, Record<string, unknown>>,
+  after: Record<string, Record<string, unknown>>,
+): MindCanvasUndoRecord | null {
+  const normalized = contextId?.trim().slice(0, 128)
+  if (!normalized) return null
+  return {
+    userId: ownerId,
+    contextId: normalized,
+    resource: 'mind',
+    action: 'delete',
+    targetRefs,
+    beforeState: { items: before },
+    afterState: { items: after },
+    baseVersions: {},
+  }
+}
+
 function projectId(value: unknown): number | null {
   if (value === undefined || value === null) return null
   const parsed = typeof value === 'number' ? value
@@ -174,6 +196,21 @@ export function createMindCanvasMutations(runtime: MindCanvasMutationRuntime) {
         (operation, error) => runtime.reportFailure?.(operation, error),
       )
       return response
+    },
+
+    async delete(ownerId: string, canvasId: number, metadata: MindCanvasMutationMetadata): Promise<void> {
+      await runtime.transaction(ownerId, async (tx) => {
+        if (!tx.delete) throw new Error('Mind canvas delete is not configured')
+        const result = await tx.delete(ownerId, canvasId)
+        if (!result) throw new MindCanvasMutationError(404, '画布不存在')
+        const undo = deleteUndoRecord(ownerId, metadata.undoContextId, result.targetRefs, result.before, result.after)
+        if (undo) await tx.recordUndo(undo)
+      })
+      await runBestEffort(
+        'Mind canvas delete notification',
+        () => runtime.publishChanged({ ownerId, operation: 'delete', entityId: canvasId, origin: metadata.clientId, entity: { id: canvasId } }),
+        (operation, error) => runtime.reportFailure?.(operation, error),
+      )
     },
   }
 }

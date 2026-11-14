@@ -10,11 +10,13 @@ import { createApp } from '../../src/app.js'
 import { createUserRepository } from '../../src/domains/auth/persistence/users.js'
 import { createPostgresRegistrationOperations } from '../../src/domains/auth/persistence/registration.js'
 import { createPostgresWorkspaceDirectoryOperations } from '../../src/domains/workspaces/persistence/workspace-directories.js'
+import { createRegistrationSeeder } from '../../src/domains/onboarding/registration-seed.js'
+import { createPostgresRegistrationSeedOperations } from '../../src/domains/onboarding/persistence/registration-seed-postgres.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const secret = 'synthetic-registration-vite-secret'
 
-test('Vite→Node Host registers a user, restores the cookie session, and exposes the committed Local default workspace', {
+test('Vite→Node Host registers a user and seeds the Local onboarding flow with a quota ledger', {
   skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated registration HTTP integration',
 }, async () => {
   const schema = `gugu_register_vite_${randomUUID().replaceAll('-', '')}`
@@ -23,6 +25,12 @@ test('Vite→Node Host registers a user, restores the cookie session, and expose
   const pool = new Pool({ connectionString: databaseUrl, options: `-c search_path=${schema}`, max: 4 })
   const storageRoot = await mkdtemp(join(tmpdir(), 'gugu-register-vite-'))
   const userRepository = createUserRepository(pool)
+  const seedFailures: unknown[] = []
+  const seedRegistration = createRegistrationSeeder({
+    applySeed: createPostgresRegistrationSeedOperations(pool, { storageRoot, defaultLimitBytes: 1024 * 1024 }),
+    async surpriseMp3() { return null },
+    onFailure(error) { seedFailures.push(error) },
+  }, { now: () => new Date('2026-11-14T00:00:00.000Z'), random: () => 0 })
   const registration = createPostgresRegistrationOperations(pool, {
     workspaceShellSupported: () => true,
     async prepareDefaultWorkspaceRoot(userId, directoryName) {
@@ -46,8 +54,7 @@ test('Vite→Node Host registers a user, restores the cookie session, and expose
       userExists: registration.userExists,
       verifyRegistrationCode: async () => false,
       registerUser: registration.registerUser,
-      // Node 暂未迁移可选 onboarding.seed；该回调按 Python 的 best-effort 边界保持非阻塞。
-      seedUser: async () => {},
+      seedUser(user, locale) { return seedRegistration(user.id, locale) },
     },
     workspaceDirectories: createPostgresWorkspaceDirectoryOperations(pool, {
       localPath: storageRoot,
@@ -65,7 +72,7 @@ test('Vite→Node Host registers a user, restores the cookie session, and expose
         hashed_password varchar(200) NOT NULL, display_name varchar(100), is_active boolean NOT NULL,
         account_status varchar(16) NOT NULL, security_version integer NOT NULL, avatar varchar(500),
         is_developer boolean NOT NULL, created_at timestamptz NOT NULL, timezone varchar(64),
-        email_subscribed boolean NOT NULL, last_active_at timestamptz
+        email_subscribed boolean NOT NULL, last_active_at timestamptz, storage_limit_bytes bigint
       );
       CREATE TABLE user_bots (
         id serial PRIMARY KEY, user_id uuid NOT NULL, platform varchar(20) NOT NULL, enabled boolean NOT NULL
@@ -92,8 +99,12 @@ test('Vite→Node Host registers a user, restores the cookie session, and expose
         updated_at timestamptz NOT NULL, UNIQUE(user_id, directory_id)
       );
       CREATE TABLE files (
-        id serial PRIMARY KEY, user_id uuid NOT NULL, workspace_directory_id integer NOT NULL,
-        space text NOT NULL, folder_id integer, deleted_at timestamptz, updated_at timestamptz
+        id serial PRIMARY KEY, user_id uuid NOT NULL, display_name varchar(300) NOT NULL, ext varchar(20) NOT NULL,
+        space text NOT NULL, project_id integer, folder_id integer, workspace_directory_id integer,
+        stage_name varchar(100), mind_map_id integer, storage_key varchar(1000) NOT NULL,
+        storage_backend varchar(20) NOT NULL, version integer NOT NULL, size varchar(50), size_bytes bigint NOT NULL,
+        mime_type varchar(200), img_width integer, img_height integer, created_at timestamptz NOT NULL,
+        updated_at timestamptz NOT NULL, deleted_at timestamptz
       );
       CREATE TABLE folders (
         id serial PRIMARY KEY, user_id uuid NOT NULL, workspace_directory_id integer NOT NULL,
@@ -101,6 +112,35 @@ test('Vite→Node Host registers a user, restores the cookie session, and expose
       );
       CREATE TABLE conversation_sessions (id serial PRIMARY KEY, user_id uuid NOT NULL, workspace_id integer);
       CREATE TABLE scheduled_tasks (id serial PRIMARY KEY, user_id uuid, workspace_id integer, enabled boolean NOT NULL);
+      CREATE TABLE projects (
+        id serial PRIMARY KEY, user_id uuid NOT NULL, name varchar(200) NOT NULL, summary text, contact_name text,
+        status varchar(20) NOT NULL, start_date date, deadline date, color varchar(300),
+        progress integer NOT NULL, stages_json text NOT NULL, current_stage varchar(100), priority varchar(20),
+        version integer NOT NULL, archived boolean NOT NULL, done_at timestamptz, created_at timestamptz NOT NULL,
+        updated_at timestamptz NOT NULL, deleted_at timestamptz
+      );
+      CREATE TABLE calendar_events (
+        id serial PRIMARY KEY, user_id uuid NOT NULL, title varchar(300) NOT NULL, date varchar(10) NOT NULL,
+        type varchar(50) NOT NULL, project_id integer, version integer NOT NULL,
+        created_at timestamptz NOT NULL, deleted_at timestamptz
+      );
+      CREATE TABLE onboarding_state (
+        user_id uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        state json NOT NULL, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL
+      );
+      CREATE TABLE storage_quota_ledgers (
+        id serial PRIMARY KEY, user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        category varchar(32) NOT NULL, root_path varchar(1000), limit_bytes bigint NOT NULL,
+        used_bytes bigint NOT NULL, reserved_bytes bigint NOT NULL, status varchar(20) NOT NULL,
+        initialized_at timestamptz NOT NULL, last_reconciled_at timestamptz, updated_at timestamptz NOT NULL,
+        UNIQUE(user_id, category)
+      );
+      CREATE TABLE storage_quota_events (
+        id serial PRIMARY KEY, user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        category varchar(32) NOT NULL, operation varchar(32) NOT NULL, delta_bytes bigint NOT NULL,
+        resource_type varchar(32), resource_id varchar(255), idempotency_key varchar(255) NOT NULL,
+        metadata_json json, created_at timestamptz NOT NULL, UNIQUE(user_id, idempotency_key)
+      );
     `)
 
     const hostAddress = await app.listen({ host: '127.0.0.1', port: 0 })
@@ -193,6 +233,49 @@ test('Vite→Node Host registers a user, restores the cookie session, and expose
     assert.equal(persisted.rows[0]?.email, 'sample.user@example.test')
     assert.deepEqual(JSON.parse(persisted.rows[0]!.locale), { locale: 'zh-CN' })
     assert.equal(persisted.rows[0]?.workspace_count, '1')
+    assert.deepEqual(seedFailures, [])
+
+    const seeded = await pool.query<{
+      project_id: number
+      project_name: string
+      event_count: string
+      file_count: string
+      file_bytes: string
+      quota_used_bytes: string
+      quota_limit_bytes: string
+      state: { seed: { seeded: boolean; project_id: number; project_name: string }; guide: { enabled: boolean } }
+      quota_events: string[]
+    }>(
+      `SELECT projects.id AS project_id, projects.name AS project_name,
+              (SELECT count(*)::text FROM calendar_events WHERE user_id=$1) AS event_count,
+              (SELECT count(*)::text FROM files WHERE user_id=$1) AS file_count,
+              (SELECT sum(size_bytes)::text FROM files WHERE user_id=$1) AS file_bytes,
+              ledger.used_bytes::text AS quota_used_bytes, ledger.limit_bytes::text AS quota_limit_bytes,
+              onboarding.state,
+              (SELECT array_agg(operation ORDER BY operation) FROM storage_quota_events WHERE user_id=$1) AS quota_events
+       FROM projects
+       JOIN onboarding_state onboarding ON onboarding.user_id=projects.user_id
+       JOIN storage_quota_ledgers ledger ON ledger.user_id=projects.user_id AND ledger.category='file_library'
+       WHERE projects.user_id=$1`,
+      [registered.user.id],
+    )
+    const seedResult = seeded.rows[0]
+    assert.ok(seedResult)
+    assert.equal(seedResult.project_name, '从这里开始')
+    assert.equal(seedResult.event_count, '1')
+    assert.equal(seedResult.file_count, '2')
+    assert.ok(Number(seedResult.file_bytes) > 0)
+    assert.equal(seedResult.quota_used_bytes, seedResult.file_bytes)
+    assert.equal(seedResult.quota_limit_bytes, String(1024 * 1024))
+    assert.deepEqual(seedResult.state.seed, {
+      seeded: true, project_id: seedResult.project_id, project_name: '从这里开始',
+    })
+    assert.equal(seedResult.state.guide.enabled, true)
+    assert.deepEqual(seedResult.quota_events, ['initialize', 'onboarding_seed', 'onboarding_seed'])
+    const seededFiles = await pool.query<{ storage_key: string }>(
+      'SELECT storage_key FROM files WHERE user_id=$1 ORDER BY id', [registered.user.id],
+    )
+    for (const file of seededFiles.rows) await stat(join(storageRoot, ...file.storage_key.split('/')))
   } finally {
     if (vite) await vite.close()
     await app.close().catch(() => undefined)

@@ -36,7 +36,7 @@ test('canvas reader scopes canvases, active nodes, event snapshots, and relation
         created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz
       );
       CREATE TABLE calendar_events (
-        id bigserial PRIMARY KEY, user_id uuid NOT NULL, date date NOT NULL, time text, end_time text,
+        id bigserial PRIMARY KEY, user_id uuid NOT NULL, date varchar(10) NOT NULL, time text, end_time text,
         description text, deleted_at timestamptz
       );
       CREATE TABLE mind_relations (
@@ -86,7 +86,7 @@ test('canvas reader scopes canvases, active nodes, event snapshots, and relation
 
     assert.deepEqual(canvases.map((canvas) => canvas.title), ['自有画布'])
     assert.equal(canvases[0]?.data.detachedRelationIds instanceof Array, true)
-    assert.deepEqual(items?.map((item) => item.nodeId), [1])
+    assert.deepEqual(items?.map((item) => item.nodeId), [1, 4])
     assert.deepEqual(items?.[0]?.refData, { date: '2026-11-15', time: '09:00', endTime: '10:00', description: '评审' })
     assert.deepEqual(relations?.map((relation) => relation.id), [11])
     assert.equal(canvasLocation, 1)

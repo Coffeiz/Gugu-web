@@ -87,9 +87,9 @@ async function applySeed(
 /** One PostgreSQL transaction for the seed gate, project, calendar, Local files and onboarding state. */
 export function createPostgresRegistrationSeedOperations(
   pool: Pick<Pool, 'connect'>,
-  options: { storageRoot: string; onFailure?(error: unknown): void },
+  options: { storageRoot: string; defaultLimitBytes?: number | null; onFailure?(error: unknown): void },
 ): RegistrationSeedPorts['applySeed'] {
-  const writeFiles = createPostgresRegistrationSeedFileWriter(options.storageRoot)
+  const writeFiles = createPostgresRegistrationSeedFileWriter(options.storageRoot, options.defaultLimitBytes ?? null)
   return async (rawOwnerId, plan) => {
     const ownerId = normalizeOwnerId(rawOwnerId)
     const client = await pool.connect()

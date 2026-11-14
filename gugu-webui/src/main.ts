@@ -28,8 +28,17 @@ import { createClientOperations } from './domains/clients/persistence/clients.js
 import { createEventOperations } from './domains/calendar/persistence/events.js'
 import { createPostgresMindNoteReader } from './domains/mind/mind-notes-read.js'
 import { createPostgresMindCanvasReader } from './domains/mind/mind-canvas-read.js'
+import { createPostgresMindRefSuggestOperations } from './domains/mind/persistence/mind-ref-suggest-postgres.js'
 import { createMindCanvasMutations } from './domains/mind/application/mind-canvas-mutations.js'
 import { createPostgresMindCanvasMutationRuntime } from './domains/mind/persistence/mind-canvas-mutations-postgres.js'
+import { createMindCanvasNoteMutations } from './domains/mind/application/mind-canvas-note-mutations.js'
+import { createPostgresMindCanvasNoteMutationRuntime } from './domains/mind/persistence/mind-canvas-note-mutations-postgres.js'
+import { createMindCanvasItemMutations } from './domains/mind/application/mind-canvas-item-mutations.js'
+import { createPostgresMindCanvasItemMutationRuntime } from './domains/mind/persistence/mind-canvas-item-mutations-postgres.js'
+import { createMindCanvasRelationMutations } from './domains/mind/application/mind-canvas-relation-mutations.js'
+import { createPostgresMindCanvasRelationMutationRuntime } from './domains/mind/persistence/mind-canvas-relation-mutations-postgres.js'
+import { createMindRefNodeCreator } from './domains/mind/application/mind-ref-node-create.js'
+import { createPostgresMindRefNodeCreateRuntime } from './domains/mind/persistence/mind-ref-node-create-postgres.js'
 import { createMindNoteCreator } from './domains/mind/application/mind-note-create.js'
 import { createPostgresMindNoteInserter } from './domains/mind/persistence/mind-note-create-postgres.js'
 import { createMindNoteMutations } from './domains/mind/application/mind-note-mutations.js'
@@ -66,6 +75,11 @@ import { createPostgresWorkspaceLister } from './domains/workspaces/persistence/
 import { createPostgresWorkspaceDeleter } from './domains/workspaces/persistence/workspace-delete.js'
 import { createPostgresWorkspaceDirectoryOperations } from './domains/workspaces/persistence/workspace-directories.js'
 import { createAgentSessionLister } from './domains/agent-sessions/agent-sessions.js'
+import {
+  createAgentSessionFilesystemAuthorization,
+  unavailableFilesystemAuthorizationConfirmations,
+} from './domains/agent-sessions/agent-filesystem-authorization.js'
+import { createFilesystemAuthorizationConfirmationStore } from './domains/agent-sessions/filesystem-authorization-confirmations.js'
 import { createPostgresAgentSessionRefresher } from './domains/agent-sessions/agent-session-refresh.js'
 import { createPostgresAgentSessionRenamer } from './domains/agent-sessions/agent-session-rename.js'
 import { createAgentMessageHistory } from './domains/agent-sessions/persistence/agent-message-history.js'
@@ -112,6 +126,7 @@ import {
   createRedisPasswordResetCommands,
   createRedisAgentActiveStatusReader,
   createRedisAgentRunRecoveryState,
+  createRedisFilesystemAuthorizationCommands,
   createRedisTrashPurgeNotifier,
   type RedisEventPublisher,
 } from './adapters/redis-events.js'
@@ -374,6 +389,76 @@ function createWebUiApp(
       console.error(`gugu-webui ${operation} failed`)
     },
   ))
+  const mindCanvasNoteMutations = createMindCanvasNoteMutations(createPostgresMindCanvasNoteMutationRuntime(
+    pool,
+    async ({ ownerId, operation, entityId, origin, mutationId, entityKind, entity }) => {
+      await publisher.publishResourceChanged({
+        ownerId,
+        resource: 'mind',
+        operation,
+        entityId,
+        origin,
+        mutationId,
+        payload: { kind: entityKind, entity },
+      })
+    },
+    (operation) => {
+      console.error(`gugu-webui ${operation} failed`)
+    },
+  ))
+  const mindCanvasItemMutations = createMindCanvasItemMutations(createPostgresMindCanvasItemMutationRuntime(
+    pool,
+    async ({ ownerId, operation, entityId, origin, mutationId, entity }) => {
+      await publisher.publishResourceChanged({
+        ownerId,
+        resource: 'mind',
+        operation,
+        entityId,
+        origin,
+        mutationId,
+        payload: { kind: 'canvas_item', entity },
+      })
+    },
+    (operation) => {
+      console.error(`gugu-webui ${operation} failed`)
+    },
+  ))
+  const mindCanvasRelationMutations = createMindCanvasRelationMutations(createPostgresMindCanvasRelationMutationRuntime(
+    pool,
+    async ({ ownerId, operation, entityId, origin, mutationId, entity }) => {
+      await publisher.publishResourceChanged({
+        ownerId,
+        resource: 'mind',
+        operation,
+        entityId,
+        origin,
+        mutationId,
+        payload: { kind: 'relation', entity },
+      })
+    },
+    (operation) => {
+      console.error(`gugu-webui ${operation} failed`)
+    },
+  ))
+  const mindRefNodeCreator = createMindRefNodeCreator(createPostgresMindRefNodeCreateRuntime(
+    pool,
+    async ({ ownerId, entityId, origin, mutationId, entity }) => {
+      await publisher.publishResourceChanged({
+        ownerId,
+        resource: 'mind',
+        operation: 'create',
+        entityId,
+        origin,
+        mutationId,
+        payload: { kind: 'ref_node', entity },
+      })
+    },
+    (operation) => {
+      console.error(`gugu-webui ${operation} failed`)
+    },
+  ))
+  const globalSearch = createPostgresGlobalSearchOperations(pool)
+  const mindRefSuggest = createPostgresMindRefSuggestOperations(pool, globalSearch)
   const publishProjectMutation = createProjectPostCommitPublisher(pool, {
     bumpContextRevision: (ownerId, resource) => publisher.bumpContextRevision(ownerId, resource),
     async publishResourceChanged(event) {
@@ -501,6 +586,20 @@ function createWebUiApp(
   const agentQueueStatuses = config.redisUrl
     ? createRedisAgentActiveStatusReader(config.redisUrl)
     : async () => new Map<number, boolean>()
+  const filesystemAuthorizationConfirmations = config.redisUrl
+    ? createFilesystemAuthorizationConfirmationStore(
+      createRedisFilesystemAuthorizationCommands(config.redisUrl),
+    )
+    : unavailableFilesystemAuthorizationConfirmations
+  const agentFilesystemAuthorization = createAgentSessionFilesystemAuthorization(
+    pool,
+    filesystemAuthorizationConfirmations,
+    {
+      enabled: () => config.workspaceRuntimeSettings.fullUserSandboxAuthorizationEnabled,
+      secretKey: config.secretKey,
+      terminateActivePty: createSandboxdWorkspacePtyTerminator(pool, config.sandboxdSocket),
+    },
+  )
   const publishPendingQueueChanged = async (ownerId: string, sessionId: number, origin?: string) => {
     await publisher.publishResourceChanged({
       ownerId,
@@ -526,7 +625,10 @@ function createWebUiApp(
     : null
   const authEmailSender = createAuthEmailSender(config.smtp)
   const seedRegistration = createRegistrationSeeder({
-    applySeed: createPostgresRegistrationSeedOperations(pool, { storageRoot: config.storageLocalPath }),
+    applySeed: createPostgresRegistrationSeedOperations(pool, {
+      storageRoot: config.storageLocalPath,
+      defaultLimitBytes: config.storageDefaultLimitBytes,
+    }),
     surpriseMp3: createOnboardingSurpriseMp3Reader(
       resolve(dirname(fileURLToPath(import.meta.url)), '../../backend/onboarding/assets'),
     ),
@@ -740,6 +842,7 @@ function createWebUiApp(
     },
     mindNotes: createPostgresMindNoteReader(pool),
     mindCanvasReads: createPostgresMindCanvasReader(pool),
+    mindRefSuggest,
     mindCanvasMutations: {
       create: (ownerId, input, metadata) => mindCanvasMutations.create(ownerId, input, {
         undoContextId: metadata.undoContextId,
@@ -748,6 +851,72 @@ function createWebUiApp(
       update: (ownerId, canvasId, input, metadata) => mindCanvasMutations.update(ownerId, canvasId, input, {
         undoContextId: metadata.undoContextId,
         clientId: metadata.clientId,
+      }),
+      delete: (ownerId, canvasId, metadata) => mindCanvasMutations.delete(ownerId, canvasId, {
+        undoContextId: metadata.undoContextId,
+        clientId: metadata.clientId,
+      }),
+    },
+    mindCanvasNoteMutations: {
+      create: (ownerId, canvasId, input, metadata) => mindCanvasNoteMutations.create(ownerId, canvasId, input, {
+        undoContextId: metadata.undoContextId,
+        clientId: metadata.clientId,
+        mutationId: metadata.mutationId,
+      }),
+      update: (ownerId, nodeId, input, metadata) => mindCanvasNoteMutations.update(ownerId, nodeId, input, {
+        undoContextId: metadata.undoContextId,
+        clientId: metadata.clientId,
+        mutationId: metadata.mutationId,
+      }),
+    },
+    mindCanvasItemMutations: {
+      add: (ownerId, canvasId, input, metadata) => mindCanvasItemMutations.add(ownerId, canvasId, input, {
+        undoContextId: metadata.undoContextId,
+        clientId: metadata.clientId,
+        mutationId: metadata.mutationId,
+      }),
+      update: (ownerId, canvasId, itemId, input, metadata) => mindCanvasItemMutations.update(ownerId, canvasId, itemId, input, {
+        undoContextId: metadata.undoContextId,
+        clientId: metadata.clientId,
+        mutationId: metadata.mutationId,
+      }),
+      bringToFront: (ownerId, canvasId, itemId, input, metadata) => mindCanvasItemMutations.bringToFront(ownerId, canvasId, itemId, input, {
+        undoContextId: metadata.undoContextId,
+        clientId: metadata.clientId,
+        mutationId: metadata.mutationId,
+      }),
+      remove: (ownerId, canvasId, itemId, metadata) => mindCanvasItemMutations.remove(ownerId, canvasId, itemId, {
+        undoContextId: metadata.undoContextId,
+        clientId: metadata.clientId,
+        mutationId: metadata.mutationId,
+      }),
+    },
+    mindCanvasRelationMutations: {
+      create: (ownerId, input, metadata) => mindCanvasRelationMutations.create(ownerId, input, {
+        undoContextId: metadata.undoContextId,
+        clientId: metadata.clientId,
+        mutationId: metadata.mutationId,
+      }),
+      delete: (ownerId, canvasId, relationId, metadata) => mindCanvasRelationMutations.delete(
+        ownerId, canvasId, relationId, {
+          undoContextId: metadata.undoContextId,
+          clientId: metadata.clientId,
+          mutationId: metadata.mutationId,
+        },
+      ),
+      deleteGlobal: (ownerId, relationId, metadata) => mindCanvasRelationMutations.deleteGlobal(
+        ownerId, relationId, {
+          undoContextId: metadata.undoContextId,
+          clientId: metadata.clientId,
+          mutationId: metadata.mutationId,
+        },
+      ),
+    },
+    mindRefNodeCreate: {
+      create: (ownerId, input, metadata) => mindRefNodeCreator.create(ownerId, input, {
+        undoContextId: metadata.undoContextId,
+        clientId: metadata.clientId,
+        mutationId: metadata.mutationId,
       }),
     },
     mindNoteCreate: {
@@ -776,6 +945,7 @@ function createWebUiApp(
     listWorkspaces: workspaceList,
     workspaceDirectories,
     listAgentSessions,
+    agentFilesystemAuthorization: { operations: agentFilesystemAuthorization },
     refreshAgentSession: createPostgresAgentSessionRefresher(pool),
     renameAgentSession: createPostgresAgentSessionRenamer(pool),
     lookupAgentInteractionSession: createInteractionSessionLookup(pool).get,
@@ -906,7 +1076,7 @@ function createWebUiApp(
         await publisher.publishResourceChanged({ ownerId, resource: 'files', operation: 'create', origin })
       },
     }),
-    globalSearch: createPostgresGlobalSearchOperations(pool),
+    globalSearch,
     folderDownloads: createPostgresFileBatchDownloadOperations(pool, config.storageLocalPath),
     folderReads: createPostgresFolderReadOperations(pool),
     folderWrites,

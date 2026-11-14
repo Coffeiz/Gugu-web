@@ -234,7 +234,10 @@ async function compressionEntries(client: PoolClient, userId: string, input: Fil
   const defaultFolderId = selectedFiles[0]?.folder_id == null
     ? (selectedFiles.length ? null : selectedFolders[0]?.parent_id == null ? null : Number(selectedFolders[0]!.parent_id))
     : Number(selectedFiles[0]!.folder_id)
-  return { entries, scope, defaultFolderId, sourceBytes }
+  const defaultName = selectedFiles[0]
+    ? `${selectedFiles[0].display_name}${selectedFiles[0].ext ? `.${selectedFiles[0].ext}` : ''}`
+    : String(selectedFolders[0]!.name)
+  return { entries, scope, defaultFolderId, sourceBytes, defaultName }
 }
 
 async function writeZip(entries: Entry[], userId: string, rootPath: string, outputPath: string): Promise<{ size: number; digest: string }> {
@@ -291,11 +294,7 @@ async function archiveFiles(pool: Pool, options: PostgresFileArchiveOptions, raw
     const built = await compressionEntries(client, userId, input)
     const destinationFolderId = input.folderId === undefined ? built.defaultFolderId : input.folderId
     const target = await storageKey(client, userId, built.scope, destinationFolderId, 'placeholder.zip')
-    const firstFile = built.entries.find((entry) => entry.kind === 'file')?.row
-    const firstFolder = built.entries.find((entry) => entry.kind === 'folder')?.row
-    const initialName = input.name?.trim() || String(firstFile
-      ? `${firstFile.display_name}${firstFile.ext ? `.${firstFile.ext}` : ''}`
-      : firstFolder?.name ?? 'archive')
+    const initialName = input.name?.trim() || built.defaultName || 'archive'
     const displayBase = initialName.toLowerCase().endsWith('.zip') ? initialName.slice(0, -4) : initialName
     if (!displayBase || displayBase.length > 300 || displayBase.includes('/') || displayBase.includes('\\')
       || displayBase === '.' || displayBase === '..') throw new CoreError('invalid_request', '压缩包名称无效')

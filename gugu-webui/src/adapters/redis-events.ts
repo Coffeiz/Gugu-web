@@ -4,6 +4,7 @@ import { connect as connectTls, type TLSSocket } from 'node:tls'
 import type { RedisRateLimitCommands } from '../domains/auth/rate-limit.js'
 import type { RegistrationCodeRedisCommands } from '../domains/auth/persistence/registration-codes.js'
 import type { PasswordResetRedisCommands } from '../domains/auth/password-reset.js'
+import type { FilesystemAuthorizationRedisCommands } from '../domains/agent-sessions/filesystem-authorization-confirmations.js'
 
 type RedisConnection = Socket | TLSSocket
 type RedisReply = string | null
@@ -26,6 +27,12 @@ export interface RedisEventPublisher {
   publishResourceChanged(input: ResourceChangedInput): Promise<boolean>
 }
 
+export interface RedisAgentCancellationCommands {
+  get(key: string): Promise<string | null>
+  set(key: string, value: string, ttlSeconds: number): Promise<boolean>
+  publish(channel: string, value: string): Promise<number>
+}
+
 const contextRevisionResources = new Set([
   'projects', 'calendar', 'files', 'memory', 'preferences', 'timezone', 'im_channels',
 ])
@@ -42,6 +49,50 @@ export function createRedisRateLimitCommands(redisUrl: string): RedisRateLimitCo
     async expire(key, seconds) {
       if (!Number.isSafeInteger(seconds) || seconds < 1) throw new Error('Redis expiry invalid')
       return withRedis(redisUrl, (command) => command('EXPIRE', key, String(seconds)))
+    },
+  }
+}
+
+/** Agent run 取消适配器使用的 Redis 命令；写入标记与发布通知分别执行。 */
+export function createRedisAgentCancellationCommands(redisUrl: string): RedisAgentCancellationCommands {
+  return {
+    get: (key) => withRedis(redisUrl, (command) => command('GET', key)),
+    async set(key, value, ttlSeconds) {
+      if (!Number.isSafeInteger(ttlSeconds) || ttlSeconds < 1)
+        throw new Error('Redis Agent cancellation TTL invalid')
+      return (await withRedis(redisUrl, (command) => command(
+        'SET', key, value, 'EX', String(ttlSeconds),
+      ))) === 'OK'
+    },
+    async publish(channel, value) {
+      const result = await withRedis(redisUrl, (command) => command('PUBLISH', channel, value))
+      const subscribers = result === null ? NaN : Number(result)
+      if (!Number.isSafeInteger(subscribers) || subscribers < 0)
+        throw new Error('Redis Agent cancellation publish response invalid')
+      return subscribers
+    },
+  }
+}
+
+/** 提供与 Python 确认码协议兼容的 Redis 原始命令，并保留 Lua 返回值。 */
+export function createRedisFilesystemAuthorizationCommands(
+  redisUrl: string,
+): FilesystemAuthorizationRedisCommands {
+  return {
+    get: (key) => withRedis(redisUrl, (command) => command('GET', key)),
+    async del(...keys) {
+      const result = await withRedis(redisUrl, (command) => command('DEL', ...keys))
+      const count = result === null ? NaN : Number(result)
+      if (!Number.isSafeInteger(count) || count < 0)
+        throw new Error('Redis filesystem authorization delete response invalid')
+      return count
+    },
+    eval(script, keyCount, ...args) {
+      if (!Number.isSafeInteger(keyCount) || keyCount < 0)
+        throw new Error('Redis filesystem authorization script key count invalid')
+      return withRedis(redisUrl, (command) => command(
+        'EVAL', script, String(keyCount), ...args,
+      ))
     },
   }
 }

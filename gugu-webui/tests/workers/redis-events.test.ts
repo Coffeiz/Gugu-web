@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { createServer } from 'node:net'
 import test from 'node:test'
 import {
+  createRedisAgentCancellationCommands,
   createRedisAgentActiveStatusReader,
   createRedisAgentRunRecoveryState,
   createRedisEventPublisher,
@@ -52,6 +53,10 @@ function bufferLength(parts: string[]): number {
 }
 
 function fakeRedisReply(command: string[], getValues: Record<string, string>): string {
+  if (command[0] === 'SET') {
+    getValues[command[1] ?? ''] = command[2] ?? ''
+    return '+OK\r\n'
+  }
   if (command[0] === 'GET') {
     const value = getValues[command[1] ?? '']
     return value === undefined ? '$-1\r\n' : `$${Buffer.byteLength(value)}\r\n${value}\r\n`
@@ -176,6 +181,27 @@ test('rate-limit Redis adapter increments a counter and applies its TTL', async 
   ])
   assert.deepEqual(redis.commands[2], ['INCR', 'rl:login:ip:hashed'])
   assert.deepEqual(redis.commands[5], ['EXPIRE', 'rl:login:ip:hashed', '300'])
+})
+
+test('Agent cancellation Redis commands persist a run marker with TTL before publish', async () => {
+  const redis = await fakeRedis(() => undefined)
+  try {
+    const commands = createRedisAgentCancellationCommands(redis.url)
+    assert.equal(await commands.set('agent-run-cancel:v1:owner-1:17:run-1', 'run-1', 300), true)
+    assert.equal(await commands.get('agent-run-cancel:v1:owner-1:17:run-1'), 'run-1')
+    assert.equal(await commands.publish('agent-run-cancel:v1:owner-1', '{"runId":"run-1"}'), 1)
+  } finally {
+    await redis.close()
+  }
+  assert.deepEqual(redis.commands.map((command) => command[0]), [
+    'AUTH', 'SELECT', 'SET', 'AUTH', 'SELECT', 'GET', 'AUTH', 'SELECT', 'PUBLISH',
+  ])
+  assert.deepEqual(redis.commands[2], [
+    'SET', 'agent-run-cancel:v1:owner-1:17:run-1', 'run-1', 'EX', '300',
+  ])
+  assert.deepEqual(redis.commands[8], [
+    'PUBLISH', 'agent-run-cancel:v1:owner-1', '{"runId":"run-1"}',
+  ])
 })
 
 test('回收站 Worker 唤醒使用 Python 共享频道，通知不携带用户或资源数据', async () => {

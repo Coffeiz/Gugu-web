@@ -2,6 +2,42 @@ import { CoreError } from '@gugu/core'
 import type { PoolClient } from 'pg'
 
 const FILE_LIBRARY = 'file_library'
+const UNLIMITED_BYTES = '9223372036854775807'
+
+/** 初始化新注册用户的文件库账本，账本与引导文件写入处于同一 PostgreSQL 事务。 */
+export async function ensureRegistrationFileLibraryQuota(
+  client: PoolClient,
+  userId: string,
+  defaultLimitBytes: number | null,
+): Promise<void> {
+  const user = await client.query<{ storage_limit_bytes: string | number | null }>(
+    'SELECT storage_limit_bytes FROM users WHERE id=$1', [userId],
+  )
+  if (!user.rowCount) throw new CoreError('not_found', '用户不存在')
+
+  const userLimit = user.rows[0]!.storage_limit_bytes
+  const configuredLimit = userLimit === null ? defaultLimitBytes : userLimit
+  const configuredLimitText = configuredLimit === null ? null : String(configuredLimit)
+  const limitBytes = configuredLimitText === null || configuredLimitText === '-1'
+    ? UNLIMITED_BYTES
+    : configuredLimitText
+
+  await client.query(
+    `INSERT INTO storage_quota_ledgers
+       (user_id,category,root_path,limit_bytes,used_bytes,reserved_bytes,status,
+        initialized_at,last_reconciled_at,updated_at)
+     VALUES ($1,$2,NULL,$3,0,0,'active',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+     ON CONFLICT (user_id,category) DO NOTHING`,
+    [userId, FILE_LIBRARY, limitBytes],
+  )
+  await client.query(
+    `INSERT INTO storage_quota_events
+       (user_id,category,operation,delta_bytes,resource_type,resource_id,idempotency_key,metadata_json,created_at)
+     VALUES ($1,$2,'initialize',0,'quota',$2,$3,'{"root_path":null}'::json,CURRENT_TIMESTAMP)
+     ON CONFLICT (user_id,idempotency_key) DO NOTHING`,
+    [userId, FILE_LIBRARY, `quota-init:${userId}:${FILE_LIBRARY}`],
+  )
+}
 
 export type FileQuotaOperation = 'file_upload' | 'file_copy' | 'file_copy_overwrite' | 'onboarding_seed'
 

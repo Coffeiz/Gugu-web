@@ -136,3 +136,42 @@ test('canvas update hides another owner and rejects non-object view data', async
   await assert.rejects(mutations.update(ownerId, 7, { data: [] }, metadata), MindCanvasMutationError)
   assert.equal(updated, false)
 })
+
+test('canvas deletion records every scoped resource atomically and publishes after the commit', async () => {
+  const order: string[] = []
+  let undo: unknown
+  const mutations = createMindCanvasMutations({
+    async transaction(_ownerId, work) {
+      return work({
+        async projectExistsForOwner() { return true },
+        async insert() { return canvas() },
+        async getOwned() { return canvas() },
+        async update() { return canvas() },
+        async delete(owner, id) {
+          order.push(`delete:${owner}:${id}`)
+          return {
+            targetRefs: [{ kind: 'canvas', id }, { kind: 'canvas_item', id: 8 }, { kind: 'relation', id: 9 }, { kind: 'canvas_note', id: 10 }],
+            before: { 'canvas:7': { deleted_at: null }, 'canvas_item:8': { deleted_at: null }, 'relation:9': { deleted_at: null }, 'canvas_note:10': { content_md: '保留' } },
+            after: { 'canvas:7': { deleted_at: 'deleted' }, 'canvas_item:8': { deleted_at: 'deleted' }, 'relation:9': { deleted_at: 'deleted' }, 'canvas_note:10': { content_md: '保留' } },
+          }
+        },
+        async recordUndo(record) { undo = record; order.push('undo') },
+      })
+    },
+    async publishChanged(event) { order.push(`publish:${event.operation}:${event.entityId}`) },
+  })
+
+  await mutations.delete(ownerId, 7, metadata)
+
+  assert.deepEqual(order, [`delete:${ownerId}:7`, 'undo', 'publish:delete:7'])
+  assert.deepEqual(undo, {
+    userId: ownerId,
+    contextId: 'undo-context',
+    resource: 'mind',
+    action: 'delete',
+    targetRefs: [{ kind: 'canvas', id: 7 }, { kind: 'canvas_item', id: 8 }, { kind: 'relation', id: 9 }, { kind: 'canvas_note', id: 10 }],
+    beforeState: { items: { 'canvas:7': { deleted_at: null }, 'canvas_item:8': { deleted_at: null }, 'relation:9': { deleted_at: null }, 'canvas_note:10': { content_md: '保留' } } },
+    afterState: { items: { 'canvas:7': { deleted_at: 'deleted' }, 'canvas_item:8': { deleted_at: 'deleted' }, 'relation:9': { deleted_at: 'deleted' }, 'canvas_note:10': { content_md: '保留' } } },
+    baseVersions: {},
+  })
+})

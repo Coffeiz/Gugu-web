@@ -36,3 +36,22 @@
 - Python 兼容基线在 devserver 串行运行 10 个文件：`tests/projects/test_projects_core.py`、`tests/projects/test_projects_live_events.py`、`tests/projects/test_project_trash.py`、`tests/projects/test_undo_phase4.py`、`tests/api/test_create_idempotency.py`、`tests/agent/test_live_write_origins.py`、`tests/scheduling/events/test_event_atomic_update.py`、`tests/scheduling/events/test_event_update_reminders.py`、`tests/scheduling/events/test_event_bus.py`、`tests/scheduling/calendar/test_calendar_reminders.py`，共 `66 passed`。
 - `corepack pnpm run typecheck` 通过。集成输出仍有 `fatal: not a git repository` stderr 和 Node `module.register()` 弃用提示；它们未使测试失败，stderr 来源尚未定位。
 - 本轮补齐了项目 PATCH、DELETE/restore、Local 文件系统补偿，以及日历创建事务和提交后效果在 Vite→生产 Node Host→随机 PostgreSQL schema 的当前树证据。Redis 跨进程广播与 durable RAG job 被 Python Worker 消费仍待验收。
+
+## 2026-11-14 当前树再次复验与差异边界
+
+- 在 devserver Node 26.13.1 下串行重跑 `tests/projects/*.test.ts`、`tests/calendar/*.test.ts` 及两条 `tests/host/project-calendar-*.vite.integration.test.ts`，共 `105/105` 通过、0 失败、0 跳过。两条认证 Vite 路径分别启动生产 `startServer` 组合根与 Node Host，在随机隔离 PostgreSQL schema 中验证项目 PATCH、DELETE/restore、Local 文件目录往返、日历创建、Undo 和 durable RAG job。
+- 串行重跑对应的 10 个 Python pytest 文件，`66 passed`。项目/事件相关随机隔离 schema 测试结束后，按 `gugu_project_%`、`gugu_event_%`、`gugu_calendar_%` 查询，残留 schema 数为 `0`。
+- Python 与 Node 的成功事务路径行为一致。故障边界有一项差异：Node 将提交后的 context/live 通知作为 best-effort，失败不会把已提交写入改报失败；Python 部分路由在提交后等待事件发布，发布异常可能使响应为 500，但数据库写入已经提交。当前不把该错误响应策略差异记为主流程等价，也不声称错误路径完全兼容。
+- 项目过期回收清理仍由 Python Worker housekeeping 承担，不属于本次 PATCH/DELETE/restore HTTP 路径验收；Redis 跨进程广播及 Python Worker 消费 Node durable RAG job 也仍未做端到端验收。
+
+## 未注入隔离 PG 地址的共享树探测
+
+- Node 26.13.1 在 devserver 重跑项目、日历和两条 Vite 集成测试，共发现 105 项：76 通过、29 项因当前 shell 未设置 `GUGU_WEBUI_TEST_DATABASE_URL` 跳过、0 失败。被跳过的 PostgreSQL/Vite 集成项不计为本次通过；此前 105/105 的隔离 PostgreSQL 证据仍是最近一次完整数据库验收。
+- 对应 Python 10 个项目、Undo、幂等和日历文件回归串行运行 `66 passed`；`@gugu/webui` typecheck 通过。
+- 已核对本地与 devserver 的 `app.ts`、`main.ts` 及两条 Vite 集成测试哈希一致，确认本轮测试针对当前共享 Host 文件。真实 PostgreSQL 写入、生产组合根和 Vite 认证主流程本轮未验收。
+
+## 2026-11-14 最新共享树真实 PG/Vite 回归
+
+- 使用只读运行配置在测试进程内设置隔离测试连接变量，未改写 `backend/config.override.json` 或其他运行配置。Node 26.13.1 对项目、日历及两条 Vite 集成测试共 `105/105` 通过、0 失败、0 跳过，包含生产 `startServer` 组合根和 Node Host 的认证写入路径。
+- 相同 10 个 Python pytest 文件串行回归 `66 passed`；`@gugu/webui` typecheck 通过。
+- 本轮 Node 集成测试结束后查询项目、事件和日历测试 schema，残留数为 `0`。本轮真实 PostgreSQL/Vite 验收覆盖项目 PATCH、DELETE/restore、Local 文件目录往返、日历创建、Undo 与 durable RAG job。

@@ -42,7 +42,12 @@ import { registerClientRoutes } from './domains/clients/routes/clients.js'
 import { registerEventRoutes } from './domains/calendar/routes/events.js'
 import { registerMindNoteReadRoutes, type MindNoteReadOperations } from './domains/mind/mind-notes-read.js'
 import { registerMindCanvasReadRoutes, type MindCanvasReadOperations } from './domains/mind/mind-canvas-read.js'
+import { registerMindRefSuggestRoute, type MindRefSuggestOperations } from './domains/mind/mind-ref-suggest.js'
 import { registerMindCanvasMutationRoutes, type MindCanvasMutationOptions } from './domains/mind/routes/mind-canvas-mutations.js'
+import { registerMindCanvasNoteMutationRoutes, type MindCanvasNoteMutationOptions } from './domains/mind/routes/mind-canvas-note-mutations.js'
+import { registerMindCanvasItemMutationRoutes, type MindCanvasItemMutationOptions } from './domains/mind/routes/mind-canvas-item-mutations.js'
+import { registerMindCanvasRelationMutationRoutes, type MindCanvasRelationMutationOptions } from './domains/mind/routes/mind-canvas-relation-mutations.js'
+import { registerMindRefNodeCreateRoute, type MindRefNodeCreateOptions } from './domains/mind/routes/mind-ref-node-create.js'
 import { registerMindNoteCreateRoute, type MindNoteCreateOptions } from './domains/mind/routes/mind-note-create.js'
 import { registerMindNoteMutationRoutes, type MindNoteMutationOptions } from './domains/mind/routes/mind-note-mutations.js'
 import { registerNotificationRoutes } from './domains/notifications/routes/notifications.js'
@@ -122,6 +127,10 @@ import {
 } from './domains/agent-sessions/agent-session-rename.js'
 import { registerAgentToolEventDetailsRoute } from './domains/agent-sessions/agent-tool-event-details.js'
 import { registerAgentMiscRoutes, type AgentMiscRoutesOptions } from './domains/agent-sessions/agent-misc.js'
+import {
+  registerAgentFilesystemAuthorizationRoutes,
+  type AgentFilesystemAuthorizationRouteOptions,
+} from './domains/agent-sessions/agent-filesystem-authorization-route.js'
 
 export type { UserAuthOptions } from './domains/auth/contracts.js'
 
@@ -211,7 +220,12 @@ export interface WebUiOptions {
   events?: EventOptions
   mindNotes?: MindNoteReadOperations
   mindCanvasReads?: MindCanvasReadOperations
+  mindRefSuggest?: MindRefSuggestOperations
   mindCanvasMutations?: MindCanvasMutationOptions
+  mindCanvasNoteMutations?: MindCanvasNoteMutationOptions
+  mindCanvasItemMutations?: MindCanvasItemMutationOptions
+  mindCanvasRelationMutations?: MindCanvasRelationMutationOptions
+  mindRefNodeCreate?: MindRefNodeCreateOptions
   mindNoteCreate?: MindNoteCreateOptions
   mindNoteMutations?: MindNoteMutationOptions
   notifications?: NotificationOptions
@@ -248,6 +262,7 @@ export interface WebUiOptions {
     messageId: number,
     timelineIndex: number,
   ) => Promise<unknown | null>
+  agentFilesystemAuthorization?: Omit<AgentFilesystemAuthorizationRouteOptions, 'requireUser' | 'userIdFromRequest'>
   agentMisc?: Omit<AgentMiscRoutesOptions, 'requireUser'>
   fileBrowser?: FileBrowserOperations
   folderWrites?: FolderWriteOperations
@@ -458,9 +473,32 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
         options.mindCanvasReads!,
       ),
     )
+  if (options.mindRefSuggest)
+    registerProtectedDomain(app, auth, (routes, userFromRequest) =>
+      registerMindRefSuggestRoute(routes, {
+        ownerId: (request) => userFromRequest(request).requestContext.data.ownerId,
+        operations: options.mindRefSuggest!,
+      }),
+    )
   if (options.mindCanvasMutations)
     registerProtectedDomain(app, auth, (routes, userFromRequest) =>
       registerMindCanvasMutationRoutes(routes, userFromRequest, options.mindCanvasMutations!),
+    )
+  if (options.mindCanvasNoteMutations)
+    registerProtectedDomain(app, auth, (routes, userFromRequest) =>
+      registerMindCanvasNoteMutationRoutes(routes, userFromRequest, options.mindCanvasNoteMutations!),
+    )
+  if (options.mindCanvasItemMutations)
+    registerProtectedDomain(app, auth, (routes, userFromRequest) =>
+      registerMindCanvasItemMutationRoutes(routes, userFromRequest, options.mindCanvasItemMutations!),
+    )
+  if (options.mindCanvasRelationMutations)
+    registerProtectedDomain(app, auth, (routes, userFromRequest) =>
+      registerMindCanvasRelationMutationRoutes(routes, userFromRequest, options.mindCanvasRelationMutations!),
+    )
+  if (options.mindRefNodeCreate)
+    registerProtectedDomain(app, auth, (routes, userFromRequest) =>
+      registerMindRefNodeCreateRoute(routes, userFromRequest, options.mindRefNodeCreate!),
     )
   if (options.mindNoteCreate)
     registerProtectedDomain(app, auth, (routes, userFromRequest) =>
@@ -508,11 +546,18 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
   if (options.listAgentSessions || options.lookupAgentInteractionSession || options.refreshAgentSession
     || options.agentPendingQueueReads || options.agentPendingQueuePatch || options.agentPendingQueueReplace || options.agentPendingQueueClaims
     || options.renameAgentSession || options.listAgentMessages || options.locateAgentMessage
-    || options.readAgentToolEventDetails || options.agentMisc) {
+    || options.readAgentToolEventDetails || options.agentFilesystemAuthorization || options.agentMisc) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) =>
       {
         const requireUser = async (request: FastifyRequest) => { void userFromRequest(request) }
         const userIdFromRequest = (request: FastifyRequest) => userFromRequest(request).requestContext.data.ownerId
+        if (options.agentFilesystemAuthorization) {
+          registerAgentFilesystemAuthorizationRoutes(routes, {
+            requireUser,
+            userIdFromRequest,
+            ...options.agentFilesystemAuthorization,
+          })
+        }
         if (options.listAgentSessions) {
           registerAgentSessionRoute(routes, {
             requireUser,

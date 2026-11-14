@@ -8,7 +8,7 @@ import { isPathWithin } from '../../adapters/path-safety.js'
 import type { FileUploadInput, FileUploadOperations, StagedUpload } from './file-upload.js'
 import { normalizeFileOwnerId } from './file-owner.js'
 import { formatFileSize } from './file-size.js'
-import { updateFileStorageQuota } from './persistence/storage-quota.js'
+import { ensureRegistrationFileLibraryQuota, updateFileStorageQuota } from './persistence/storage-quota.js'
 
 const FILE_LIBRARY = 'file_library'
 const UNDO_CONTENT_MAX = 64 * 1024 * 1024
@@ -427,7 +427,7 @@ export interface RegistrationSeedLocalFile {
  * Writes onboarding files through the same Local path, collision, metadata and quota rules
  * as regular uploads, while letting the onboarding adapter keep all rows in its transaction.
  */
-export function createPostgresRegistrationSeedFileWriter(storageRoot: string) {
+export function createPostgresRegistrationSeedFileWriter(storageRoot: string, defaultLimitBytes: number | null = null) {
   return async function writeSeedFiles(
     client: PoolClient,
     userId: string,
@@ -441,10 +441,11 @@ export function createPostgresRegistrationSeedFileWriter(storageRoot: string) {
     const tempDirectory = await mkdtemp(path.join(tmpdir(), 'gugu-onboarding-seed-'))
     const options: UploadStoreOptions = {
       storageRoot,
-      defaultLimitBytes: null,
+      defaultLimitBytes,
       async publishChanged() {},
     }
     try {
+      await ensureRegistrationFileLibraryQuota(client, userId, defaultLimitBytes)
       const fileIds: number[] = []
       for (const [index, file] of files.entries()) {
         const tempPath = path.join(tempDirectory, `seed-${index}`)
@@ -459,7 +460,7 @@ export function createPostgresRegistrationSeedFileWriter(storageRoot: string) {
           path: tempPath, sizeBytes: file.data.byteLength, sha256: '', imgWidth: null, imgHeight: null,
         }
         const target = await resolveTarget(client, userId, input)
-        const allowedBytes = await capacity(client, userId, null, null)
+        const allowedBytes = await capacity(client, userId, null, defaultLimitBytes)
         if (allowedBytes !== null && upload.sizeBytes > allowedBytes) throw uploadTooLarge()
         const { displayName, ext } = parseName(upload.originalName)
         const row = await storeNewFile(client, options, state, userId, upload, { undoContextId: null }, target,

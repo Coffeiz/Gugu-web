@@ -99,7 +99,9 @@
 
 ### N5——收敛与发行
 
-- [ ] `backend/` 的现有业务与 Host 按稳定边界交接到目标布局，前端搬迁另行决策。
+- [ ] 按架构说明将 Vue 前端、Node Web Host、Electron Host 和共享 Core 迁入 `apps/web/`、`apps/web-host/`、`apps/desktop/`、`packages/core/`；目录搬迁与业务重写分开，更新 workspace、构建/部署、CI、测试清单和文档路径。
+- [ ] N2/N3 生产调用方切换后清理 `backend/` 中已退役的 Python API/业务实现；仍需独立运行的 Python Worker 只有在确有独立生命周期时才迁入 `apps/python-worker/`，否则随对应 Host 收敛或一并退出。
+- [ ] 将独立子项目 `loopscope/` 保持为自己的 workspace，不为了顶层目录形式统一而重排其内部包。
 - [ ] 无生产调用方后移除对应 `compat/` 包、安装路径和重复依赖；保留仍需独立运行的计算服务。
 - [ ] 旧 FS 数据完整性与恢复验收通过且 2.0 无生产调用方后，删除旧 DB↔FS 对账的 Admin 页面/API、对应测试与生成契约；保留有独立业务依据的配额账本核对和云同步运维能力。
 - [ ] MXC 管理能力接替旧实现且 Linux 多用户隔离验收通过后，删除 Docker 专属 Shell Admin 字段、镜像/daemon/Rootless 与容器生命周期 API、UI 和测试；按 MXC 能力保留或重设计通用状态、启停、授权、资源/网络策略及执行中断管理，不迁移旧 Docker 接口语义。
