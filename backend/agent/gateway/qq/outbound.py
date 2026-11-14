@@ -13,6 +13,7 @@ from app.core import redis as R
 from app.core.redaction import diag_log, diag_log_raw, redact
 from .text import complete_qq_lines, prepare_qq_text, prepare_qq_link_buttons
 from agent.im.message_format import message_type as _message_type
+from agent.security.sanitize import strip_disallowed_emoji
 from .client import (
     QQAPIError,
     QQStreamFinalizationError,
@@ -218,17 +219,18 @@ class QQPrivateTextStream:
     ) -> tuple[str, str] | None:
         """只生成稳定的追加正文；读取排队后的最新状态，不提前确认缓冲尾行。"""
         raw = self.full_text if input_state == 10 else complete_qq_lines(self.full_text)
-        content = override if override is not None else prepare_qq_text(raw)
+        # 在完整行出站前执行定稿同款表情清洗，避免结束帧删除已确认字符。
+        content = override if override is not None else prepare_qq_text(strip_disallowed_emoji(raw))
         if not content.strip() or (input_state != 10 and content == self.last_sent_content):
             return None
         if not content.startswith(self.last_sent_content):
             # 定稿可能只修正了已发送前缀中的 Markdown 空白。保留 QQ 已接受的
             # 原始前缀，只追加能确认属于定稿的后缀，不能让 replace 改写前文。
             if allow_rewrite and override is None and self.prefix_normalizer and self.last_sent_text:
-                normalized = self.prefix_normalizer(self.last_sent_text)
-                if raw.startswith(normalized):
+                normalized = self.prefix_normalizer(strip_disallowed_emoji(self.last_sent_text))
+                if normalized and raw.startswith(normalized):
                     raw = self.last_sent_text + raw[len(normalized):]
-                    content = prepare_qq_text(raw)
+                    content = prepare_qq_text(strip_disallowed_emoji(raw))
             if not content.startswith(self.last_sent_content):
                 from agent.security.logsafe import fingerprint
 

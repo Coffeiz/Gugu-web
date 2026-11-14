@@ -199,25 +199,30 @@ def test_inline_and_persisted_summary_keep_identical_provider_prefix(monkeypatch
 
     monkeypatch.setattr("agent.context.compaction._generate_append_summary", fake_summary)
     messages = [
-        {"role": "system", "content": "固定系统"},
-        {"role": "user", "content": "固定 snapshot"},
+        {"role": "system", "content": "固定 snapshot"},
         *_history_beyond_protected_window(),
         {"role": "user", "content": "当前消息"},
     ]
 
-    result = asyncio.run(
-        _compact_area(
-            messages, fixed_prefix_size=2, model_cfg=MODEL_CFG,
-        )
-    )
+    area = assemble(fixed_parts=messages[:1], history=messages[1:], render_options={"api_format": "anthropic"})
+    result = asyncio.run(compact_context(area, model_cfg=MODEL_CFG))
 
     assert result.changed
-    inline_summary = result.messages[2]["content"]
+    area.replace_request_baseline(result.messages, expected_revision=area.revision)
 
     class PersistedSummary:
         role = "summary"
         content = "稳定摘要"
         content_json = None
 
-    restored = build_history_parts([PersistedSummary()], object(), use_anthropic=True)
-    assert inline_summary == restored[0]["content"]
+    from agent.context.history import canonical_restore_record
+
+    restored = assemble(
+        fixed_parts=messages[:1], history=[canonical_restore_record(PersistedSummary())],
+        render_options={"api_format": "anthropic"},
+    )
+    inline = area.provider_projection().to_messages()
+    loaded = restored.provider_projection().to_messages()
+    assert inline[0] == loaded[0]
+    assert inline[1]["role"] == loaded[1]["role"] == "user"
+    assert inline[1]["content"][0] == loaded[1]["content"][0]
