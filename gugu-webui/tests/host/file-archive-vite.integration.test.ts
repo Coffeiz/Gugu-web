@@ -147,10 +147,10 @@ test('Vite→Node Host→隔离 PostgreSQL 完成 Local 文件夹 ZIP 往返并�
     assert.equal(extraction.created_count, 3)
     assert.equal(extraction.file_ids.length, 1)
     assert.equal(extraction.folder_ids.length, 2)
-    const extractedRow = await pool.query<{ storage_key: string; size_bytes: number }>(
+    const extractedRow = await pool.query<{ storage_key: string; size_bytes: number | string }>(
       'SELECT storage_key,size_bytes FROM files WHERE id=$1 AND user_id=$2', [extraction.file_ids[0], ownerId],
     )
-    assert.equal(extractedRow.rows[0]!.size_bytes, Buffer.byteLength('Local 正文'))
+    assert.equal(Number(extractedRow.rows[0]!.size_bytes), Buffer.byteLength('Local 正文'))
     assert.equal(await readFile(join(storageRoot, extractedRow.rows[0]!.storage_key), 'utf8'), 'Local 正文')
     assert.deepEqual(published, [`file:${ownerId}:${archive.id}`, `batch:${ownerId}:`])
     const quota = await pool.query<{ operations: string[]; used_bytes: string }>(

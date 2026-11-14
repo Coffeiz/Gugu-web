@@ -91,15 +91,16 @@ test('PostgreSQL Local 归档保留选中文件夹树并可解压回原空间', 
     }, { created_count: 3, file_count: 1, folder_count: 2, skipped_count: 0 })
     assert.equal(extracted.file_ids.length, 1)
     assert.equal(extracted.folder_ids.length, 2)
-    const extractedRow = await pool.query<{ storage_key: string; size_bytes: number }>(
+    const extractedRow = await pool.query<{ storage_key: string; size_bytes: number | string }>(
       'SELECT storage_key,size_bytes FROM files WHERE id=$1 AND user_id=$2', [extracted.file_ids[0], ownerId])
-    assert.equal(extractedRow.rows[0]!.size_bytes, 6)
+    assert.equal(Number(extractedRow.rows[0]!.size_bytes), 6)
     assert.equal(await readFile(path.join(storageRoot, extractedRow.rows[0]!.storage_key), 'utf8'), '正文')
     assert.deepEqual(publishedBatches, [`${ownerId}:archive-test`])
-    const quota = await pool.query<{ used_bytes: number; operations: string[] }>(
+    const quota = await pool.query<{ used_bytes: number | string; operations: string[] }>(
       `SELECT ledger.used_bytes,ARRAY(SELECT operation FROM storage_quota_events WHERE user_id=ledger.user_id ORDER BY operation) operations
        FROM storage_quota_ledgers ledger WHERE user_id=$1 AND category='file_library'`, [ownerId])
-    assert.equal(quota.rows[0]!.used_bytes, 4 + archived.sizeBytes + extractedRow.rows[0]!.size_bytes)
+    assert.equal(Number(quota.rows[0]!.used_bytes),
+      4 + archived.sizeBytes + Number(extractedRow.rows[0]!.size_bytes))
     assert.deepEqual(quota.rows[0]!.operations, ['archive_compress', 'archive_extract'])
   } finally {
     await pool.end()

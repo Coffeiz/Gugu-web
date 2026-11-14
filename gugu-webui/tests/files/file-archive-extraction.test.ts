@@ -25,7 +25,7 @@ test('解压器可读取 Node 归档器生成的 ZIP 目录树和文件正文', 
 
     const result = await extractZip(archive, stage)
     assert.deepEqual(result.members.map(({ archivePath, kind }) => [archivePath, kind]), [
-      ['资料/', 'folder'], ['资料/子目录/', 'folder'], ['资料/子目录/说明.txt', 'file'],
+      ['资料', 'folder'], ['资料/子目录', 'folder'], ['资料/子目录/说明.txt', 'file'],
     ])
     const file = result.members.find((member) => member.archivePath === '资料/子目录/说明.txt')
     assert.ok(file?.stagedPath)
