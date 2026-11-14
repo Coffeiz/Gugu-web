@@ -1,4 +1,5 @@
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify'
+import { addUtcDaysToDateKey, dateKeyInTimeZone, startOfDateKeyInTimeZone } from '../../shared/date-time.js'
 
 type Row = Record<string, unknown>
 export interface AgentUsageQueryAdapter {
@@ -24,34 +25,10 @@ function zone(name: unknown): string {
   const fallback = Intl.DateTimeFormat().resolvedOptions().timeZone
   return fallback || 'UTC'
 }
-function localParts(date: Date, timeZone: string) {
-  const parts = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(date)
-  return Object.fromEntries(parts.map(({ type, value }) => [type, value])) as { year: string; month: string; day: string }
-}
-function dateString(year: number, month: number, day: number) {
-  return `${year.toString().padStart(4, '0')}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`
-}
 function parseDate(value: unknown): string | null {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null
   const date = new Date(`${value}T00:00:00.000Z`)
   return date.toISOString().slice(0, 10) === value ? value : null
-}
-function shiftDate(value: string, days: number): string {
-  const date = new Date(`${value}T00:00:00Z`)
-  date.setUTCDate(date.getUTCDate() + days)
-  return date.toISOString().slice(0, 10)
-}
-function localBoundary(value: string, timeZone: string): Date {
-  const [year, month, day] = value.split('-').map(Number)
-  const target = Date.UTC(year, month - 1, day)
-  let guess = target
-  for (let i = 0; i < 3; i++) {
-    const parts = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(guess))
-    const values = Object.fromEntries(parts.map((part) => [part.type, Number(part.value)]))
-    const represented = Date.UTC(values.year, values.month - 1, values.day, values.hour, values.minute, values.second)
-    guess += target - represented
-  }
-  return new Date(guess)
 }
 function nextMonth(month: string) {
   const [year, value] = month.split('-').map(Number)
@@ -90,11 +67,10 @@ export function registerAdminAgentUsageRoute(app: FastifyInstance, options: Agen
   app.get('/api/v1/admin/agent/usage', { preHandler }, async (request) => {
     const queryParams = request.query as Record<string, unknown>
     const now = options.now?.() ?? new Date(), timeZone = zone(queryParams.timezone)
-    const todayParts = localParts(now, timeZone)
-    const currentDate = `${todayParts.year}-${todayParts.month}-${todayParts.day}`
+    const currentDate = dateKeyInTimeZone(now, timeZone)
     const selectedDate = parseDate(queryParams.date) ?? currentDate
     const anchor = selectedDate > currentDate ? currentDate : selectedDate
-    const todayStart = localBoundary(anchor, timeZone), nextDay = localBoundary(shiftDate(anchor, 1), timeZone)
+    const todayStart = startOfDateKeyInTimeZone(anchor, timeZone), nextDay = startOfDateKeyInTimeZone(addUtcDaysToDateKey(anchor, 1), timeZone)
     const todayEnd = anchor === currentDate && nextDay > now ? now : nextDay
     const includeByok = queryParams.include_byok === 'true', excludeDev = queryParams.exclude_dev === 'true', model = typeof queryParams.model === 'string' ? queryParams.model : null
     const where = filters(includeByok, excludeDev)
@@ -111,7 +87,7 @@ export function registerAdminAgentUsageRoute(app: FastifyInstance, options: Agen
     const targetMonth = typeof queryParams.month === 'string' && months.includes(queryParams.month)
       ? queryParams.month
       : queryParams.date ? anchor.slice(0, 7) : months[0] ?? anchor.slice(0, 7)
-    const monthStart = localBoundary(firstDay(targetMonth), timeZone), monthEnd = localBoundary(nextMonth(targetMonth) + '-01', timeZone)
+    const monthStart = startOfDateKeyInTimeZone(firstDay(targetMonth), timeZone), monthEnd = startOfDateKeyInTimeZone(nextMonth(targetMonth) + '-01', timeZone)
     const monthFilter = `${where}${model ? ' AND model = $4' : ''}`
     const dailyResult = await options.query(`SELECT TO_CHAR(created_at AT TIME ZONE $3,'YYYY-MM-DD') AS day,COUNT(*) AS calls,
       COALESCE(SUM(${fullInput}),0) AS tokens_in,COALESCE(SUM(tokens_out),0) AS tokens_out,
@@ -119,16 +95,16 @@ export function registerAdminAgentUsageRoute(app: FastifyInstance, options: Agen
       WHERE created_at >= $1 AND created_at < $2 ${monthFilter} GROUP BY day ORDER BY day`, model ? [monthStart, monthEnd, timeZone, model] : [monthStart, monthEnd, timeZone])
     const dailyMap = new Map(dailyResult.rows.map((row) => [String(row.day), summary(row)]))
     const daily = Array.from({ length: daysInMonth(targetMonth) }, (_, i) => {
-      const date = shiftDate(firstDay(targetMonth), i), totals = dailyMap.get(date) ?? summary()
+      const date = addUtcDaysToDateKey(firstDay(targetMonth), i), totals = dailyMap.get(date) ?? summary()
       return { date, ...totals }
     })
-    const weekStart = shiftDate(anchor, -((new Date(`${anchor}T00:00:00Z`).getUTCDay() + 6) % 7)), weekEnd = shiftDate(weekStart, 7)
+    const weekStart = addUtcDaysToDateKey(anchor, -((new Date(`${anchor}T00:00:00Z`).getUTCDay() + 6) % 7)), weekEnd = addUtcDaysToDateKey(weekStart, 7)
     const weekResult = await options.query(`SELECT TO_CHAR(created_at AT TIME ZONE $3,'YYYY-MM-DD') AS day,COUNT(*) AS calls,
       COALESCE(SUM(${fullInput}),0) AS tokens_in,COALESCE(SUM(tokens_out),0) AS tokens_out,
       COALESCE(SUM(cache_read),0) AS cache_read,COALESCE(SUM(cache_write),0) AS cache_write FROM agent_usage
-      WHERE created_at >= $1 AND created_at < $2 ${monthFilter} GROUP BY day ORDER BY day`, model ? [localBoundary(weekStart,timeZone),localBoundary(weekEnd,timeZone),timeZone,model] : [localBoundary(weekStart,timeZone),localBoundary(weekEnd,timeZone),timeZone])
+      WHERE created_at >= $1 AND created_at < $2 ${monthFilter} GROUP BY day ORDER BY day`, model ? [startOfDateKeyInTimeZone(weekStart,timeZone),startOfDateKeyInTimeZone(weekEnd,timeZone),timeZone,model] : [startOfDateKeyInTimeZone(weekStart,timeZone),startOfDateKeyInTimeZone(weekEnd,timeZone),timeZone])
     const weekMap = new Map(weekResult.rows.map((row) => [String(row.day), summary(row)]))
-    const weekDaily = Array.from({ length: 7 }, (_, i) => { const date = shiftDate(weekStart,i); return { date, ...(weekMap.get(date) ?? summary()) } })
+    const weekDaily = Array.from({ length: 7 }, (_, i) => { const date = addUtcDaysToDateKey(weekStart,i); return { date, ...(weekMap.get(date) ?? summary()) } })
     const hourResult = await options.query(`SELECT EXTRACT(HOUR FROM created_at AT TIME ZONE $3) AS hour,COUNT(*) AS calls,
       COALESCE(SUM(${fullInput}),0) AS tokens_in,COALESCE(SUM(tokens_out),0) AS tokens_out,
       COALESCE(SUM(cache_read),0) AS cache_read,COALESCE(SUM(cache_write),0) AS cache_write FROM agent_usage
@@ -136,7 +112,7 @@ export function registerAdminAgentUsageRoute(app: FastifyInstance, options: Agen
     const hourMap = new Map(hourResult.rows.map((row) => [numeric(row.hour), summary(row)]))
     const todayHourly = Array.from({ length: 24 }, (_, hour) => ({ date: `${String(hour).padStart(2,'0')}:00`, ...(hourMap.get(hour) ?? summary()) }))
     const [scenarioDay, scenarioWeek, scenarioMonth, mcpSummary, mcpCalls] = await Promise.all([
-      scenarioUsage(options.query,todayStart,todayEnd,where), scenarioUsage(options.query,localBoundary(weekStart,timeZone),localBoundary(weekEnd,timeZone),where), scenarioUsage(options.query,monthStart,monthEnd,where),
+      scenarioUsage(options.query,todayStart,todayEnd,where), scenarioUsage(options.query,startOfDateKeyInTimeZone(weekStart,timeZone),startOfDateKeyInTimeZone(weekEnd,timeZone),where), scenarioUsage(options.query,monthStart,monthEnd,where),
       options.query(`SELECT COUNT(*) AS servers,COUNT(DISTINCT user_id) AS users FROM user_mcp_servers WHERE scope='user' AND enabled IS TRUE${excludeDev ? ' AND user_id NOT IN (SELECT id FROM users WHERE is_developer)' : ''}`),
       options.query(`SELECT COUNT(*) AS calls FROM agent_usage WHERE scenario='mcp' ${where}`),
     ])

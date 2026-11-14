@@ -6,6 +6,7 @@ import {
   AgentSessionNotFoundError,
   createAgentMessageHistory,
   projectMessageBodies,
+  projectMessageBodiesWithMentions,
   projectTimelineEvents,
 } from '../../src/domains/agent-sessions/persistence/agent-message-history.js'
 
@@ -62,6 +63,61 @@ test('QQ 历史仅移除匹配同条附件的占位符并保留不匹配的用�
   ], 'web')[0]?.content, marker)
 })
 
+test('群聊历史正文和引用原文按已解析昵称展示，未知平台 ID 保持原样', () => {
+  const [message] = projectMessageBodiesWithMentions([{
+    id: 20, role: 'user', content: '<@member-1> <@unknown>', files: null,
+    created_at: new Date('2026-11-12T00:00:00Z'), is_display_body: true,
+    has_display_timeline: false, display_timeline: null, conversation_seq: '20',
+    run_id: null, round_id: null, quoted_text: '<@!other-bot> 你好',
+  }], 'qq', new Map([['member-1', '小北'], ['other-bot', '二号小咕']]))
+
+  assert.equal(message?.content, '@小北 <@unknown>')
+  assert.equal(message?.quotedText, '@二号小咕 你好')
+})
+
+test('历史正文保留聊天恢复字段并按 Python 优先级生成发生时间', () => {
+  const bodyMarker = '<attachmentType="image/jpeg",attachmentIndex=0,description="opaque">'
+  const quoteMarker = '<attachmentType="image/png",attachmentIndex=1,description="quoted">'
+  const files = [
+    { mime: 'image/jpeg', quoted: false },
+    { mime: 'image/png', quoted: true },
+  ]
+  const createdAt = new Date('2026-11-12T00:00:00Z')
+  const platformSentAt = 1_800_000_000_000
+  const eventReceivedAt = 1_700_000_000_000
+  const [message] = projectMessageBodies([{
+    id: 7, role: 'user', content: bodyMarker, files, created_at: createdAt,
+    is_display_body: true, has_display_timeline: false, display_timeline: null,
+    conversation_seq: '4', run_id: 'run-4', round_id: 'round-2',
+    client_message_id: 'client-7', quoted_text: quoteMarker,
+    references_json: [{ type: 'project', id: 9 }],
+    platform_user_id: 'member-2', platform_user_name: '小北', platform_bot_user_id: 'bot-1',
+    run_outcome: { status: 'interrupted' },
+    im_platform_sent_ms: platformSentAt, im_event_received_ms: eventReceivedAt,
+  }], 'qq')
+
+  assert.equal(message?.content, '')
+  assert.equal(message?.quotedText, '')
+  assert.equal(message?.clientMessageId, 'client-7')
+  assert.equal(message?.timelineOrder, 7_000_000)
+  assert.deepEqual(message?.files, files)
+  assert.deepEqual(message?.references, [{ type: 'project', id: 9 }])
+  assert.equal(message?.platformUserId, 'member-2')
+  assert.equal(message?.platformUserName, '小北')
+  assert.equal(message?.platformBotUserId, 'bot-1')
+  assert.deepEqual(message?.runOutcome, { status: 'interrupted' })
+  assert.equal(message?.createdAt, createdAt.toISOString())
+  assert.equal(message?.occurredAt, new Date(platformSentAt).toISOString())
+
+  const receivedOnly = projectMessageBodies([{
+    id: 8, role: 'user', content: 'received', files: null, created_at: createdAt,
+    is_display_body: true, has_display_timeline: false, display_timeline: null,
+    conversation_seq: '5', run_id: null, round_id: null,
+    im_platform_sent_ms: null, im_event_received_ms: eventReceivedAt,
+  }])[0]
+  assert.equal(receivedOnly?.occurredAt, new Date(eventReceivedAt).toISOString())
+})
+
 test('消息历史按会话来源应用 QQ 附件占位符投影', async () => {
   const marker = '<attachmentType="image/jpeg",attachmentIndex=0,description="opaque">'
   const pool = {
@@ -88,6 +144,7 @@ test('消息历史按会话来源应用 QQ 附件占位符投影', async () => {
 
 test('through_id 缺少同会话游标时生成空页，不回退为按 ID 截断', async () => {
   const statements: string[] = []
+  let interactionReads = 0
   const pool = {
     async query(sql: string) {
       statements.push(sql)
@@ -97,8 +154,12 @@ test('through_id 缺少同会话游标时生成空页，不回退为按 ID 截�
       return { rows: [], rowCount: 0 }
     },
   }
-  const page = await createAgentMessageHistory(pool as never).list('owner', 3, { throughId: 999 })
+  const page = await createAgentMessageHistory(pool as never, {
+    async listInteractions() { interactionReads++; return [] },
+  }).list('owner', 3, { throughId: 999 })
   assert.deepEqual(page.messages, [])
+  assert.deepEqual(page.interactions, [])
+  assert.equal(interactionReads, 0)
   assert.equal(statements.some((sql) => /WHERE[\s\S]*AND FALSE/.test(sql)), true)
   const pageSql = statements.find((sql) => sql.includes('pg_column_size'))!
   assert.match(pageSql, /display_timeline <> 'null'::jsonb/)
@@ -117,11 +178,17 @@ test('消息历史按可见行分页、旧到新返回，并排除摘要与纯 c
     await pool.query(`
       CREATE TABLE users (id uuid PRIMARY KEY);
       CREATE TABLE conversation_sessions (
-        id serial PRIMARY KEY, user_id uuid NOT NULL REFERENCES users(id), source text
+        id serial PRIMARY KEY, user_id uuid NOT NULL REFERENCES users(id), source text,
+        title text, chat_type text, workspace_id integer, session_context jsonb,
+        execution_state text, pending_message_count integer, bot_id text
       );
+      CREATE TABLE workspaces (id serial PRIMARY KEY, name text);
+      CREATE TABLE conversation_pending_queues (user_id uuid, queue_id text, items jsonb);
       CREATE TABLE conversation_messages (
         id serial PRIMARY KEY, session_id integer NOT NULL REFERENCES conversation_sessions(id),
         role text NOT NULL, content text NOT NULL, content_json jsonb, display_timeline jsonb,
+        client_message_id text, quoted_text text, references_json jsonb,
+        platform_user_id text, platform_user_name text, platform_bot_user_id text, run_outcome jsonb,
         files jsonb, conversation_seq bigint NOT NULL, run_id text, round_id text,
         im_platform_sent_ms bigint, im_event_received_ms bigint, created_at timestamptz NOT NULL
       );

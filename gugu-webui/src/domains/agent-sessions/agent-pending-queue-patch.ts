@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify'
-import type { Pool, PoolClient } from 'pg'
+import type { Pool } from 'pg'
+import { withPostgresTransaction } from '../../adapters/postgres-transaction.js'
 
 export class AgentPendingQueueSessionNotFoundError extends Error {
   readonly statusCode = 404
@@ -44,6 +45,7 @@ const patchBody = z.object({
   items: z.array(item).max(200).default([]),
   remove_keys: z.array(z.number().int()).max(200).default([]),
 }).strict()
+const replaceBody = z.object({ items: z.array(item).max(200) }).strict()
 
 const integerFields = new Set(['session_id', 'key', 'id', 'remove_keys', 'file_id', 'size', 'size_bytes', 'img_width', 'img_height'])
 const floatFields = new Set(['duration'])
@@ -141,6 +143,34 @@ export interface AgentPendingQueuePatchRouteOptions {
   publishChanged(ownerId: string, sessionId: number, origin?: string): Promise<void>
 }
 
+export interface AgentPendingQueueReplaceRouteOptions {
+  requireUser: preHandlerHookHandler
+  userIdFromRequest(request: FastifyRequest): string
+  replaceDraft(ownerId: string, queueId: string, items: Array<Record<string, unknown>>): Promise<void>
+}
+
+export function registerAgentPendingQueueReplaceRoute(
+  app: FastifyInstance,
+  options: AgentPendingQueueReplaceRouteOptions,
+): void {
+  app.put<{ Params: { queue_id: string }; Body: unknown }>(
+    '/api/v1/agent/pending-queues/:queue_id',
+    { preHandler: options.requireUser },
+    async (request, reply) => {
+      const queueId = request.params.queue_id
+      if (!queueId || queueId.length > 64 || !/^[A-Za-z0-9_-]+$/.test(queueId))
+        return reply.code(422).send({ detail: '队列标识无效' })
+      if (queueId.startsWith('session-'))
+        return reply.code(409).send({ detail: '会话队列必须使用增量更新' })
+      const parsed = replaceBody.safeParse(coercePydanticJsonValues(request.body))
+      if (!parsed.success) return reply.code(422).send({ detail: pydanticLikeErrors(parsed.error, request.body) })
+      const ownerId = options.userIdFromRequest(request)
+      await options.replaceDraft(ownerId, queueId, parsed.data.items)
+      return { ok: true, count: parsed.data.items.length }
+    },
+  )
+}
+
 export function mergePendingQueueItems(
   existingItems: unknown,
   upsertItems: Array<Record<string, unknown>>,
@@ -201,21 +231,6 @@ export function registerAgentPendingQueuePatchRoute(
 
 interface QueueRow { session_id: number | null; items: unknown }
 
-async function inTransaction<T>(pool: Pick<Pool, 'connect'>, run: (client: PoolClient) => Promise<T>): Promise<T> {
-  const client = await pool.connect()
-  try {
-    await client.query('BEGIN')
-    const result = await run(client)
-    await client.query('COMMIT')
-    return result
-  } catch (error) {
-    await client.query('ROLLBACK').catch(() => undefined)
-    throw error
-  } finally {
-    client.release()
-  }
-}
-
 export function createPostgresAgentPendingQueuePatch(pool: Pick<Pool, 'query' | 'connect'>) {
   return async function patch(
     ownerId: string,
@@ -230,7 +245,7 @@ export function createPostgresAgentPendingQueuePatch(pool: Pick<Pool, 'query' | 
     if (!session.rowCount) throw new AgentPendingQueueSessionNotFoundError()
     if (queueId !== `session-${sessionId}`) throw new AgentPendingQueueConflictError()
 
-    await inTransaction(pool, async (client) => {
+    await withPostgresTransaction(pool, async (client) => {
       let selected = await client.query<QueueRow>(
         `SELECT session_id, items FROM conversation_pending_queues
          WHERE user_id=$1 AND queue_id=$2 FOR UPDATE`, [ownerId, queueId],
@@ -260,6 +275,30 @@ export function createPostgresAgentPendingQueuePatch(pool: Pick<Pool, 'query' | 
            WHERE user_id=$3 AND queue_id=$4`, [sessionId, JSON.stringify(items), ownerId, queueId],
         )
       }
+    })
+  }
+}
+
+export function createPostgresAgentPendingQueueReplace(pool: Pick<Pool, 'query' | 'connect'>) {
+  return async function replaceDraft(
+    ownerId: string,
+    queueId: string,
+    items: Array<Record<string, unknown>>,
+  ): Promise<void> {
+    await withPostgresTransaction(pool, async (client) => {
+      if (!items.length) {
+        await client.query(
+          'DELETE FROM conversation_pending_queues WHERE user_id=$1 AND queue_id=$2', [ownerId, queueId],
+        )
+        return
+      }
+      await client.query(
+        `INSERT INTO conversation_pending_queues(user_id,queue_id,session_id,items,updated_at)
+         VALUES ($1,$2,NULL,$3::jsonb,now())
+         ON CONFLICT (user_id,queue_id) DO UPDATE
+         SET session_id=NULL, items=EXCLUDED.items, updated_at=now()`,
+        [ownerId, queueId, JSON.stringify(items)],
+      )
     })
   }
 }

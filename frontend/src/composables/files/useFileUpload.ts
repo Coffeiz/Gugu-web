@@ -67,7 +67,6 @@ export function useFileUpload(options: FileUploadOptions) {
       },
       uploadOne: async (file, resolvedFolderId, _relativePath, decision, onProgress) => {
         const form = new FormData()
-        form.append('file', file)
         form.append('space', context.space)
         if (context.projectId != null) form.append('project_id', String(context.projectId))
         if (resolvedFolderId != null) form.append('folder_id', String(resolvedFolderId))
@@ -77,6 +76,8 @@ export function useFileUpload(options: FileUploadOptions) {
           form.append('on_conflict', 'overwrite')
           form.append('overwrite_file_id', String(overwriteId))
         }
+        // Node Host 需要先读取目标空间与覆盖信息，才能按用户剩余额度限制流式暂存。
+        form.append('file', file)
         const created = await uploadWithProgress('/files', form, onProgress)
         if (overwriteId != null) {
           options.fileCacheStore.updateFile(overwriteId, { ...created, thumbRevision: Date.now() })

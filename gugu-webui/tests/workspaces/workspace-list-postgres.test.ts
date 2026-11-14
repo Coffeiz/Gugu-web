@@ -64,7 +64,6 @@ test('PostgreSQL workspace list returns owner rows, disabled items, per-owner se
     )
 
     const settings = {
-      storageBackend: 'local' as const,
       shellEnabled: true,
       shellSystemEnabled: false,
       shellDangerousEnabled: true,
@@ -102,23 +101,6 @@ test('PostgreSQL workspace list returns owner rows, disabled items, per-owner se
       ],
     })
 
-    const ossSettings = {
-      ...settings,
-      storageBackend: 'oss' as const,
-      shellEnabled: false,
-      sandboxReady: false,
-      terminalMode: 'entry_disabled',
-    }
-    const listOss = createPostgresWorkspaceLister(pool, { readRuntimeSettings: () => ossSettings })
-    const ossResponse = await listOss(ownerId)
-    assert.equal(ossResponse.workspaceSupported, false)
-    assert.equal(ossResponse.storageBackend, 'oss')
-    assert.equal(ossResponse.filesystemAuthorizationEnabled, false)
-    assert.equal(ossResponse.userEnabled, true, 'user preference remains visible independently of global OSS support')
-    assert.equal(ossResponse.sandboxEnabled, false)
-    assert.equal(ossResponse.terminalEntryEnabled, false)
-    assert.equal(ossResponse.ptyEnabled, false)
-    assert.deepEqual(ossResponse.items, [])
   } finally {
     await pool.end()
     await admin.query(`DROP SCHEMA "${schema}" CASCADE`).catch(() => undefined)

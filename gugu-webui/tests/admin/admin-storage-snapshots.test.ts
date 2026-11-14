@@ -105,14 +105,13 @@ test('days 接受 1 到 365，越界和非法整数在访问依赖前返回 422'
   } finally { await ctx.close() }
 })
 
-test('数据库异常不回显底层内容，OSS 不报告本地磁盘容量', async () => {
+test('数据库异常不回显底层内容', async () => {
   const ctx = setup()
   try {
     ctx.queryError = new Error('postgres://secret-host/private-db')
     const failed = await ctx.app.inject({ url: '/api/v1/admin/ops/storage-snapshots', headers: { authorization: 'admin' } })
     assert.equal(failed.statusCode, 500)
     assert.equal(failed.body.includes('secret-host'), false)
-    assert.deepEqual(diskUsageForStorage({ backend: 'oss', localPath: '/unused' }), null)
   } finally { await ctx.close() }
 })
 
@@ -120,7 +119,7 @@ test('本地磁盘用 statvfs 口径报告总量、实际使用和调用者可�
   const path = mkdtempSync(join(tmpdir(), 'gugu-storage-snapshot-'))
   try {
     const actual = statfsSync(path, { bigint: true })
-    const usage = diskUsageForStorage({ backend: 'local', localPath: path })
+    const usage = diskUsageForStorage({ localPath: path })
     assert.deepEqual(usage, {
       total_bytes: actual.bsize * actual.blocks,
       used_bytes: (actual.blocks - actual.bfree) * actual.bsize,
@@ -130,7 +129,7 @@ test('本地磁盘用 statvfs 口径报告总量、实际使用和调用者可�
 })
 
 test('无效本地路径和磁盘查询异常按 Python 约定返回 null', async () => {
-  assert.equal(diskUsageForStorage({ backend: 'local', localPath: join(tmpdir(), `gugu-missing-${randomUUID()}`) }), null)
+  assert.equal(diskUsageForStorage({ localPath: join(tmpdir(), `gugu-missing-${randomUUID()}`) }), null)
   const app = Fastify()
   try {
     installHttpErrorHandler(app)

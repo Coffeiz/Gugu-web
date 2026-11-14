@@ -105,11 +105,13 @@ test('calendar create commits before context/live effects and coalesces durable 
 }, async () => withDatabase(async (pool) => {
   const effectOrder: string[] = []
   const failures: Array<{ operation: string; code?: string; message?: string }> = []
-  const postCommit = createCalendarEventPostCommitPublisher(pool, {
+  const postCommit = createCalendarEventPostCommitPublisher({
     async bumpContextRevision(userId) {
       assert.equal(userId, ownerId)
       const committed = await pool.query('SELECT count(*)::int AS count FROM calendar_events')
       assert.ok(Number(committed.rows[0]?.count) >= 1, 'revision bump runs after event commit')
+      const jobs = await pool.query('SELECT count(*)::int AS count FROM rag_index_jobs WHERE user_id=$1', [ownerId])
+      assert.equal(jobs.rows[0]?.count, 1, 'RAG job commits with the event before post-commit effects')
       effectOrder.push('context')
       return true
     },

@@ -54,7 +54,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { agentApi, authApi } from '@/services/api'
+import { agentApi } from '@/services/api'
+import { authApi } from '@/api/auth'
 import { usePreferencesStore } from '@/stores/preferences'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import ProfilePersonalityPane from './ProfilePersonalityPane.vue'

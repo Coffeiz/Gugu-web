@@ -2,9 +2,11 @@ import assert from 'node:assert/strict'
 import { createServer } from 'node:net'
 import test from 'node:test'
 import {
-  createRedisAdminAuthVersionStore,
+  createRedisAgentActiveStatusReader,
+  createRedisAgentRunRecoveryState,
   createRedisEventPublisher,
   createRedisRateLimitCommands,
+  createRedisTrashPurgeNotifier,
 } from '../../src/adapters/redis-events.js'
 
 function decodeCommand(buffer: Buffer): string[] | null {
@@ -16,7 +18,7 @@ function decodeCommand(buffer: Buffer): string[] | null {
   return Array.from({ length: count }, (_, index) => lines[index * 2 + 2] ?? '')
 }
 
-async function fakeRedis(run: (commands: string[][]) => void) {
+async function fakeRedis(run: (commands: string[][]) => void, getValues: Record<string, string> = {}) {
   const commands: string[][] = []
   const server = createServer((socket) => {
     let buffered = Buffer.alloc(0)
@@ -28,11 +30,7 @@ async function fakeRedis(run: (commands: string[][]) => void) {
         const frame = bufferLength(parsed)
         buffered = buffered.subarray(frame)
         commands.push(parsed)
-        const response = parsed[0] === 'INCR' ? ':7\r\n'
-          : parsed[0] === 'EVAL' ? ':0\r\n'
-          : parsed[0] === 'EXPIRE' || parsed[0] === 'PUBLISH' ? ':1\r\n'
-            : '+OK\r\n'
-        socket.write(response)
+        socket.write(fakeRedisReply(parsed, getValues))
       }
     })
   })
@@ -51,6 +49,26 @@ async function fakeRedis(run: (commands: string[][]) => void) {
 
 function bufferLength(parts: string[]): number {
   return Buffer.byteLength(`*${parts.length}\r\n${parts.map((part) => `$${Buffer.byteLength(part)}\r\n${part}\r\n`).join('')}`)
+}
+
+function fakeRedisReply(command: string[], getValues: Record<string, string>): string {
+  if (command[0] === 'GET') {
+    const value = getValues[command[1] ?? '']
+    return value === undefined ? '$-1\r\n' : `$${Buffer.byteLength(value)}\r\n${value}\r\n`
+  }
+  if (command[0] === 'EXISTS') return `:${getValues[command[1] ?? ''] === undefined ? 0 : 1}\r\n`
+  if (command[0] === 'DEL') {
+    const removed = command.slice(1).filter((key) => {
+      if (getValues[key!] === undefined) return false
+      delete getValues[key!]
+      return true
+    }).length
+    return `:${removed}\r\n`
+  }
+  const responses: Record<string, string> = {
+    INCR: ':7\r\n', EVAL: ':0\r\n', EXPIRE: ':1\r\n', PUBLISH: ':1\r\n',
+  }
+  return responses[command[0] ?? ''] ?? '+OK\r\n'
 }
 
 test('auth-state notification uses the shared per-user Redis channel and payload', async () => {
@@ -116,6 +134,7 @@ test('resource event increments shared revision and publishes the committed resp
       operation: 'create',
       entityId: 23,
       origin: 'browser-tab',
+      mutationId: 'mutation-17',
       payload: { id: 23, name: 'Synthetic project' },
     }), true)
   } finally {
@@ -139,6 +158,7 @@ test('resource event increments shared revision and publishes the committed resp
     entity_id: 23,
     payload: { id: 23, name: 'Synthetic project' },
     origin: 'browser-tab',
+    mutation_id: 'mutation-17',
   })
 })
 
@@ -158,21 +178,57 @@ test('rate-limit Redis adapter increments a counter and applies its TTL', async 
   assert.deepEqual(redis.commands[5], ['EXPIRE', 'rl:login:ip:hashed', '300'])
 })
 
-test('admin auth version store reads and increments the shared Redis revocation key', async () => {
+test('回收站 Worker 唤醒使用 Python 共享频道，通知不携带用户或资源数据', async () => {
   const redis = await fakeRedis(() => undefined)
   try {
-    const store = createRedisAdminAuthVersionStore(redis.url)
-    assert.equal(await store.getAuthVersion(), 0)
-    assert.equal(await store.incrementAuthVersion(), 7)
+    await createRedisTrashPurgeNotifier(redis.url)()
   } finally {
     await redis.close()
   }
+  assert.deepEqual(redis.commands.map((command) => command[0]), ['AUTH', 'SELECT', 'PUBLISH'])
+  assert.deepEqual(redis.commands[2], ['PUBLISH', 'jobs:trash-purge:wakeup', '1'])
+})
+
+test('Agent 会话运行态读取复用 genstream 状态键并按 done 区分活动快照', async () => {
+  const redis = await fakeRedis(() => undefined, {
+    'genstream:state:11': '{"done":false}',
+    'genstream:state:12': '{"done":true}',
+  })
+  let statuses: Map<number, boolean>
+  try {
+    statuses = await createRedisAgentActiveStatusReader(redis.url)([11, 12, 13])
+  } finally {
+    await redis.close()
+  }
+  assert.deepEqual([...statuses], [[11, true], [12, false], [13, false]])
   assert.deepEqual(redis.commands.map((command) => command[0]), [
-    'AUTH', 'SELECT', 'EVAL', 'AUTH', 'SELECT', 'INCR',
+    'AUTH', 'SELECT', 'GET', 'GET', 'GET',
   ])
-  assert.deepEqual(redis.commands[2], [
-    'EVAL', 'return tonumber(redis.call("GET", KEYS[1]) or "0")', '1', 'auth:admin:security-version',
+  assert.deepEqual(redis.commands.slice(2).map((command) => command[1]), [
+    'genstream:state:11', 'genstream:state:12', 'genstream:state:13',
   ])
-  assert.deepEqual(redis.commands[5], ['INCR', 'auth:admin:security-version'])
-  await assert.rejects(createRedisAdminAuthVersionStore(null).getAuthVersion(), /管理员认证服务/)
+})
+
+test('Agent 孤儿 run 探测区分活跃租约与僵尸快照，并复用 Python genstream 键', async () => {
+  const values = {
+    'genstream:state:11': '{"done":false,"owner_run_id":"dead-run"}',
+    'genstream:state:12': '{"done":false,"owner_run_id":"live-run"}',
+    'genstream:owner:12': 'live-run',
+    'genstream:lease:12': 'live-run',
+  }
+  const redis = await fakeRedis(() => undefined, values)
+  const recovery = createRedisAgentRunRecoveryState(redis.url)
+  try {
+    assert.deepEqual(await recovery.probe(11), { redisOk: true, active: true, stale: true })
+    assert.deepEqual(await recovery.probe(12), { redisOk: true, active: true, stale: false })
+    assert.equal(await recovery.compressionLockExists(11), false)
+    await recovery.reap(11)
+  } finally {
+    await redis.close()
+  }
+  assert.equal(values['genstream:state:11'], undefined)
+  assert.deepEqual(redis.commands.filter((command) => command[0] === 'DEL'), [[
+    'DEL', 'genstream:state:11', 'genstream:cancel:11', 'genstream:lease:11',
+    'genstream:owner:11', 'genstream:beat:11',
+  ]])
 })

@@ -1,7 +1,9 @@
 import { CoreError, dataContext } from '@gugu/core'
 import type { Fields } from '@gugu/core'
 import type { Pool, PoolClient } from 'pg'
-import type { WorkspaceCreateResponse, WorkspaceCreateRuntime } from './workspace-create.js'
+import { isPostgresUniqueViolation } from '../../../adapters/postgres-errors.js'
+import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
+import type { WorkspaceCreateResponse } from './workspace-create.js'
 
 type WorkspaceKind = 'folder' | 'project' | 'directory'
 
@@ -63,10 +65,6 @@ function validateDirectoryDisplayName(value: string): string {
   return name
 }
 
-function isUniqueViolation(error: unknown): boolean {
-  return typeof error === 'object' && error !== null && 'code' in error && (error as { code?: unknown }).code === '23505'
-}
-
 async function loadOwnedWorkspace(client: PoolClient, ownerId: string, workspaceId: number): Promise<WorkspaceRow> {
   const result = await client.query<WorkspaceRow>(
     `SELECT id, user_id::text AS user_id, name, kind, folder_id, project_id,
@@ -122,7 +120,7 @@ async function updateWorkspaceDirectoryName(
       [ownerId, directoryId, name],
     )
   } catch (error) {
-    if (isUniqueViolation(error)) throw new WorkspaceUpdateError(400, 'Workspace 已存在')
+    if (isPostgresUniqueViolation(error)) throw new WorkspaceUpdateError(400, 'Workspace 已存在')
     throw error
   }
 }
@@ -156,7 +154,7 @@ async function toResponse(
 }
 
 /** Port of PATCH /api/v1/workspaces/{id}; directory display renames preserve the physical path. */
-export function createPostgresWorkspaceUpdater(pool: Pool, runtime: WorkspaceCreateRuntime) {
+export function createPostgresWorkspaceUpdater(pool: Pool) {
   return async function updateWorkspace(
     authenticatedOwnerId: string,
     workspaceId: number,
@@ -173,12 +171,7 @@ export function createPostgresWorkspaceUpdater(pool: Pool, runtime: WorkspaceCre
     }
     if (!Number.isSafeInteger(workspaceId) || workspaceId < 1)
       throw new CoreError('invalid_request', '工作区 ID 无效')
-    if (!(await runtime.workspaceShellSupported()))
-      throw new WorkspaceUpdateError(400, 'OSS 存储模式不支持 workspace，请使用独立 Shell 沙盒')
-
-    const client = await pool.connect()
-    try {
-      await client.query('BEGIN')
+    return withPostgresTransaction(pool, async (client) => {
       const workspace = await loadOwnedWorkspace(client, ownerId, workspaceId)
       if (input.name !== null) {
         const name = input.name.trim()
@@ -202,14 +195,7 @@ export function createPostgresWorkspaceUpdater(pool: Pool, runtime: WorkspaceCre
           [workspaceId, ownerId, input.enabled],
         )
       }
-      const response = await toResponse(client, ownerId, workspaceId)
-      await client.query('COMMIT')
-      return response
-    } catch (error) {
-      await client.query('ROLLBACK').catch(() => undefined)
-      throw error
-    } finally {
-      client.release()
-    }
+      return toResponse(client, ownerId, workspaceId)
+    })
   }
 }

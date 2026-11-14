@@ -14,6 +14,8 @@
     "./transport": "./dist/runtime/commands.js",
     "./executor": "./dist/agent/executor/contracts.js",
     "./executor/policy": "./dist/agent/executor/policy.js",
+    "./executor/runtime": "./dist/agent/executor/executor.js",
+    "./harness": "./dist/agent/harness/index.js",
     "./executor/platform": "./dist/agent/executor/platform.js",
     "./ipc": "./dist/runtime/transport/ipc.js",
     "./domain": "./dist/domain/index.js",

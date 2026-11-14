@@ -26,7 +26,6 @@ test('GET workspace route uses authenticated owner and returns complete list sna
     userAutomaticModeEnabled: true,
     filesystemAuthorizationEnabled: true,
     workspaceSupported: true,
-    storageBackend: 'local',
     terminalMode: 'pty_disabled',
     terminalEntryEnabled: true,
     ptyEnabled: false,

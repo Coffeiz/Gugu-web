@@ -1,6 +1,8 @@
-import { randomUUID } from 'node:crypto'
 import type { Fields, ProjectRecord } from '@gugu/core'
 import type { Pool, PoolClient } from 'pg'
+import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
+import { recordForwardUndoOperation } from '../../undo/persistence/forward-operation.js'
+import { projectTimestamp, readProjectFileCount } from './projects.js'
 import type {
   ProjectUpdatedEvent,
   ProjectUpdateRuntime,
@@ -15,13 +17,6 @@ const columns = `id, user_id::text AS user_id, name, summary, contact_name AS cl
   start_date, deadline, color, progress, stages_json, current_stage, priority, version, archived,
   done_at::text AS done_at, created_at::text AS created_at, updated_at::text AS updated_at,
   deleted_at::text AS deleted_at`
-
-function timestamp(value: unknown): string | null {
-  if (value == null) return null
-  if (value instanceof Date) return value.toISOString()
-  return String(value).replace(' ', 'T')
-    .replace(/([+-]\d{2})$/, '$1:00')
-}
 
 function project(row: Record<string, unknown>): ProjectRecord {
   return {
@@ -40,21 +35,11 @@ function project(row: Record<string, unknown>): ProjectRecord {
     priority: row.priority == null ? null : String(row.priority),
     version: Number(row.version),
     archived: Boolean(row.archived),
-    done_at: timestamp(row.done_at),
-    created_at: timestamp(row.created_at) ?? '',
-    updated_at: timestamp(row.updated_at) ?? '',
-    deleted_at: timestamp(row.deleted_at),
+    done_at: projectTimestamp(row.done_at),
+    created_at: projectTimestamp(row.created_at) ?? '',
+    updated_at: projectTimestamp(row.updated_at) ?? '',
+    deleted_at: projectTimestamp(row.deleted_at),
   }
-}
-
-function json(value: unknown): string {
-  const serialized = JSON.stringify(value)
-  if (serialized === undefined) throw new Error('Undo 状态无法序列化')
-  return serialized
-}
-
-function undoId(kind: 'op' | 'group'): string {
-  return `${kind}-${randomUUID().replaceAll('-', '')}`
 }
 
 const fieldColumns: Record<string, string> = {
@@ -118,26 +103,7 @@ function transactionAdapter(client: PoolClient): ProjectUpdateTransaction {
     async recordUndo(record: ProjectUpdateUndoRecord) {
       const context = record.contextId.trim().slice(0, 128)
       if (!context) return
-      await client.query(
-        `UPDATE undo_operations SET status = 'expired', failure_code = 'redo_cleared_by_new_operation'
-         WHERE user_id = $1 AND undo_context_id = $2 AND actor_type = 'web' AND status = 'undone'`,
-        [record.userId, context],
-      )
-      await client.query(
-        `INSERT INTO undo_operations (
-          id, user_id, undo_context_id, group_id, resource, action, target_refs,
-          before_state, after_state, base_versions, artifact_refs, actor_type,
-          status, created_at, expires_at, undone_at, failure_code
-        ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7::json, $8::json, $9::json, $10::json,
-          '{}'::json, 'web', 'active', CURRENT_TIMESTAMP,
-          CURRENT_TIMESTAMP + INTERVAL '30 days', NULL, NULL
-        )`,
-        [
-          undoId('op'), record.userId, context, undoId('group'), record.resource, record.action,
-          json(record.targetRefs), json(record.beforeState), json(record.afterState), json(record.baseVersions),
-        ],
-      )
+      await recordForwardUndoOperation(client, { ...record, contextId: context })
     },
   }
 }
@@ -150,29 +116,11 @@ export function createPostgresProjectUpdateRuntime(
 ): ProjectUpdateRuntime {
   return {
     async transaction<T>(work: (tx: ProjectUpdateTransaction) => Promise<T>): Promise<T> {
-      const client = await pool.connect()
-      try {
-        await client.query('BEGIN')
-        const result = await work(transactionAdapter(client))
-        await client.query('COMMIT')
-        return result
-      } catch (error) {
-        await client.query('ROLLBACK').catch(() => undefined)
-        throw error
-      } finally {
-        client.release()
-      }
+      return withPostgresTransaction(pool, (client) => work(transactionAdapter(client)))
     },
     renameProjectDirectory,
     async getFileCount(ownerId, projectId) {
-      const result = await pool.query<{ file_count: string }>(
-        `SELECT COALESCE(counts.file_count, 0)::text AS file_count
-         FROM projects
-         LEFT JOIN project_file_counts AS counts ON counts.project_id = projects.id
-         WHERE projects.user_id = $1 AND projects.id = $2`,
-        [ownerId, projectId],
-      )
-      return Number(result.rows[0]?.file_count ?? 0)
+      return readProjectFileCount(pool, ownerId, projectId)
     },
     publishProjectUpdated,
   }

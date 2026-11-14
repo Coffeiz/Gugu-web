@@ -1,6 +1,7 @@
 import { CoreError, dataContext } from '@gugu/core'
 import type { Fields } from '@gugu/core'
 import type { Pool, PoolClient } from 'pg'
+import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
 
 type WorkspaceKind = 'folder' | 'project' | 'directory'
 
@@ -32,10 +33,6 @@ interface NormalizedWorkspaceCreate {
   projectId: number | null
   directoryId: number | null
   enabled: boolean
-}
-
-export interface WorkspaceCreateRuntime {
-  workspaceShellSupported(): boolean | Promise<boolean>
 }
 
 function invalid(message: string): never {
@@ -144,7 +141,7 @@ async function createInTransaction(
 }
 
 /** Port of POST /api/v1/workspaces; relation checks and declaration insert share one PG transaction. */
-export function createPostgresWorkspaceCreator(pool: Pool, runtime: WorkspaceCreateRuntime) {
+export function createPostgresWorkspaceCreator(pool: Pool) {
   return async function createWorkspace(
     authenticatedOwnerId: string,
     rawInput: Fields,
@@ -158,20 +155,6 @@ export function createPostgresWorkspaceCreator(pool: Pool, runtime: WorkspaceCre
       if (error instanceof CoreError) throw error
       throw new CoreError('invalid_request', error instanceof Error ? error.message : '工作区字段无效')
     }
-    if (!(await runtime.workspaceShellSupported()))
-      throw new CoreError('conflict', 'OSS 存储模式不支持 workspace，请使用独立 Shell 沙盒')
-
-    const client = await pool.connect()
-    try {
-      await client.query('BEGIN')
-      const response = await createInTransaction(client, ownerId, input)
-      await client.query('COMMIT')
-      return response
-    } catch (error) {
-      await client.query('ROLLBACK').catch(() => undefined)
-      throw error
-    } finally {
-      client.release()
-    }
+    return withPostgresTransaction(pool, (client) => createInTransaction(client, ownerId, input))
   }
 }

@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify'
 import type { Pool } from 'pg'
+import { sanitizeMediaPayload } from './media-payload.js'
 
 export class AgentToolEventSessionNotFoundError extends Error {
   readonly statusCode = 404
@@ -15,25 +16,6 @@ export interface AgentToolEventDetailsRouteOptions {
   requireUser: preHandlerHookHandler
   userIdFromRequest(request: FastifyRequest): string
   readDetails(ownerId: string, sessionId: number, messageId: number, timelineIndex: number): Promise<unknown | null>
-}
-
-function stripMedia(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(stripMedia)
-  if (!value || typeof value !== 'object') return value
-  const record = value as Record<string, unknown>
-  if (record.type === 'image' || record.type === 'video' || record.type === 'audio') {
-    const label = record.type === 'image' ? '图片' : record.type === 'video' ? '视频' : '音频'
-    return { type: 'text', text: `[${label}已查看]` }
-  }
-  if (record.type === 'image_url') {
-    const imageUrl = record.image_url
-    const url = imageUrl && typeof imageUrl === 'object'
-      ? (imageUrl as Record<string, unknown>).url
-      : imageUrl
-    if (typeof url === 'string' && url.startsWith('data:'))
-      return { type: 'text', text: '[图片已查看]' }
-  }
-  return Object.fromEntries(Object.entries(record).map(([key, item]) => [key, stripMedia(item)]))
 }
 
 export function registerAgentToolEventDetailsRoute(
@@ -60,7 +42,7 @@ export function registerAgentToolEventDetailsRoute(
           options.userIdFromRequest(request), sessionId, messageId, timelineIndex,
         )
         if (details === null) return reply.code(404).send({ detail: '工具事件不存在' })
-        return stripMedia(details)
+        return sanitizeMediaPayload(details)
       } catch (error) {
         if (error instanceof AgentToolEventSessionNotFoundError)
           return reply.code(404).send({ detail: '对话不存在' })

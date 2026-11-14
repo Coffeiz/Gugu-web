@@ -12,7 +12,7 @@ const state = vi.hoisted(() => ({
   showAppError: vi.fn(),
 }))
 
-vi.mock('@/services/api', () => ({ eventsApi: { list: state.list, update: state.update } }))
+vi.mock('@/api/calendar', () => ({ eventsApi: { list: state.list, update: state.update } }))
 vi.mock('@/stores/projects', () => ({
   useProjectStore: () => ({
     projects: state.projects,

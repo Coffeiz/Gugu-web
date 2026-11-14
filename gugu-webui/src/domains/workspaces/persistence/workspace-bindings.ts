@@ -1,6 +1,8 @@
-import { CoreError, dataContext } from '@gugu/core'
+import { CoreError } from '@gugu/core'
 import type { Pool, PoolClient } from 'pg'
-import type { WorkspaceCreateResponse, WorkspaceCreateRuntime } from './workspace-create.js'
+import { normalizeOwnerId } from '../../../adapters/owner-context.js'
+import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
+import type { WorkspaceCreateResponse } from './workspace-create.js'
 
 interface WorkspaceRow {
   id: number
@@ -24,32 +26,9 @@ export interface WorkspaceBindingOperations {
   current(ownerId: string, sessionId: number): Promise<WorkspaceCreateResponse | null>
 }
 
-function validateOwner(ownerId: string): string {
-  try {
-    return dataContext(ownerId).ownerId
-  } catch {
-    throw new CoreError('invalid_request', '用户 ID 无效')
-  }
-}
-
 function validateId(id: number, label: string): number {
   if (!Number.isSafeInteger(id)) throw new CoreError('invalid_request', `${label} 无效`)
   return id
-}
-
-async function inTransaction<T>(pool: Pool, work: (client: PoolClient) => Promise<T>): Promise<T> {
-  const client = await pool.connect()
-  try {
-    await client.query('BEGIN')
-    const result = await work(client)
-    await client.query('COMMIT')
-    return result
-  } catch (error) {
-    await client.query('ROLLBACK').catch(() => undefined)
-    throw error
-  } finally {
-    client.release()
-  }
 }
 
 async function ownedSession(client: PoolClient, ownerId: string, sessionId: number): Promise<SessionRow> {
@@ -91,19 +70,14 @@ async function workspaceForOwner(
 }
 
 /** PostgreSQL port of bind_session, describe_session and current_workspace data access. */
-export function createPostgresWorkspaceBindingOperations(
-  pool: Pool,
-  runtime: WorkspaceCreateRuntime,
-): WorkspaceBindingOperations {
+export function createPostgresWorkspaceBindingOperations(pool: Pool): WorkspaceBindingOperations {
   return {
     async bind(rawOwnerId, workspaceId, sessionId) {
-      const ownerId = validateOwner(rawOwnerId)
+      const ownerId = normalizeOwnerId(rawOwnerId)
       validateId(workspaceId, '工作区 ID')
       validateId(sessionId, '会话 ID')
-      return inTransaction(pool, async (client) => {
+      return withPostgresTransaction(pool, async (client) => {
         await ownedSession(client, ownerId, sessionId)
-        if (!(await runtime.workspaceShellSupported()))
-          throw new CoreError('conflict', 'OSS 存储模式不支持 workspace，请使用独立 Shell 沙盒')
         const workspace = await workspaceForOwner(client, ownerId, workspaceId, true)
         if (!workspace) throw new CoreError('not_found', '工作区不存在或已停用')
         await client.query(
@@ -117,9 +91,9 @@ export function createPostgresWorkspaceBindingOperations(
     },
 
     async unbind(rawOwnerId, sessionId) {
-      const ownerId = validateOwner(rawOwnerId)
+      const ownerId = normalizeOwnerId(rawOwnerId)
       validateId(sessionId, '会话 ID')
-      await inTransaction(pool, async (client) => {
+      await withPostgresTransaction(pool, async (client) => {
         await ownedSession(client, ownerId, sessionId)
         await client.query(
           `UPDATE conversation_sessions SET workspace_id = NULL
@@ -130,11 +104,11 @@ export function createPostgresWorkspaceBindingOperations(
     },
 
     async current(rawOwnerId, sessionId) {
-      const ownerId = validateOwner(rawOwnerId)
+      const ownerId = normalizeOwnerId(rawOwnerId)
       validateId(sessionId, '会话 ID')
-      return inTransaction(pool, async (client) => {
+      return withPostgresTransaction(pool, async (client) => {
         const session = await ownedSession(client, ownerId, sessionId)
-        if (session.workspace_id == null || !(await runtime.workspaceShellSupported())) return null
+        if (session.workspace_id == null) return null
         // Python get_workspace does not require enabled here; stale/disabled bindings remain visible.
         return workspaceForOwner(client, ownerId, session.workspace_id, false)
       })

@@ -27,7 +27,7 @@ function scriptedPool(options: { owned?: boolean; failOnTaskUpdate?: boolean } =
 
 test('删除工作区在一个事务内解除 owner 会话与普通任务绑定并返回原有响应', async () => {
   const fake = scriptedPool()
-  const remove = createPostgresWorkspaceDeleter(fake.pool, { workspaceShellSupported: () => true })
+  const remove = createPostgresWorkspaceDeleter(fake.pool)
 
   assert.deepEqual(await remove(ownerId, 41), { ok: true, workspaceId: 41 })
   assert.equal(fake.calls[0]?.sql, 'BEGIN')
@@ -47,7 +47,7 @@ test('删除工作区在一个事务内解除 owner 会话与普通任务绑定�
 
 test('他人工作区 owner-scoped 查询返回 404 且不执行任何删除副作用', async () => {
   const fake = scriptedPool({ owned: false })
-  const remove = createPostgresWorkspaceDeleter(fake.pool, { workspaceShellSupported: () => true })
+  const remove = createPostgresWorkspaceDeleter(fake.pool)
 
   await assert.rejects(remove(ownerId, 41), (error: unknown) =>
     error instanceof CoreError && error.code === 'not_found',
@@ -56,20 +56,9 @@ test('他人工作区 owner-scoped 查询返回 404 且不执行任何删除副�
   assert.equal(fake.calls.at(-1)?.sql, 'ROLLBACK')
 })
 
-test('OSS 模式按 legacy 语义返回冲突且不打开数据库事务', async () => {
-  const fake = scriptedPool()
-  const remove = createPostgresWorkspaceDeleter(fake.pool, { workspaceShellSupported: () => false })
-
-  await assert.rejects(remove(ownerId, 41), (error: unknown) =>
-    error instanceof CoreError && error.code === 'conflict',
-  )
-  assert.equal(fake.calls.length, 0)
-  assert.equal(fake.released(), false)
-})
-
 test('绑定清理中途失败会回滚，避免部分解除后留下工作区', async () => {
   const fake = scriptedPool({ failOnTaskUpdate: true })
-  const remove = createPostgresWorkspaceDeleter(fake.pool, { workspaceShellSupported: () => true })
+  const remove = createPostgresWorkspaceDeleter(fake.pool)
 
   await assert.rejects(remove(ownerId, 41), /synthetic task update failure/)
   assert.equal(fake.calls.at(-1)?.sql, 'ROLLBACK')

@@ -58,11 +58,68 @@ function unavailableError(): RateLimitError {
   return new RateLimitError(unavailable, 503)
 }
 
+/** 单进程限流计数，供未配置 Redis 的单节点 Admin 登录使用。 */
+export function createInMemoryRateLimitCommands(now: () => number = Date.now): RedisRateLimitCommands {
+  const maximumBuckets = 10_000
+  const counters = new Map<string, { count: number; expiresAt: number }>()
+
+  function pruneExpired(currentTime: number): void {
+    for (const [key, counter] of counters) {
+      if (counter.expiresAt <= currentTime) counters.delete(key)
+    }
+  }
+
+  return {
+    async incr(key) {
+      const currentTime = now()
+      pruneExpired(currentTime)
+      const counter = counters.get(key)
+      if (counter && counter.expiresAt > currentTime) {
+        counter.count += 1
+        counters.delete(key)
+        counters.set(key, counter)
+        return counter.count
+      }
+
+      while (counters.size >= maximumBuckets) {
+        const oldestKey = counters.keys().next().value
+        if (oldestKey === undefined) break
+        counters.delete(oldestKey)
+      }
+      counters.set(key, { count: 1, expiresAt: Number.POSITIVE_INFINITY })
+      return 1
+    },
+    async expire(key, seconds) {
+      if (!Number.isSafeInteger(seconds) || seconds < 1) throw new Error('Rate-limit expiry invalid')
+      const counter = counters.get(key)
+      if (!counter) return false
+      counter.expiresAt = now() + seconds * 1000
+      return true
+    },
+  }
+}
+
 /**
  * 创建共享 Redis 固定窗口限流器。每个桶首个 INCR 设置一次 TTL；默认 fail-open 与 Python
  * 认证限流一致，只有明确 failClosed 的调用方会在 Redis 缺失或故障时收到 503。
  */
-export function createRedisRateLimiter(redis: RedisRateLimitCommands | null): RateLimitHandler {
+function redisFailureCategory(error: unknown): string {
+  const message = error instanceof Error ? error.message : ''
+  const code = typeof error === 'object' && error !== null && 'code' in error
+    ? String((error as { code?: unknown }).code ?? '')
+    : ''
+  if (/NOPERM|ACL/i.test(message)) return 'acl_denied'
+  if (/NOAUTH|WRONGPASS/i.test(message)) return 'authentication_failed'
+  if (/WRONGTYPE|not an integer|integer or out of range/i.test(message)) return 'counter_key_invalid'
+  if (/ECONNREFUSED|ENOTFOUND|ECONNRESET|ETIMEDOUT|timed out/i.test(`${code} ${message}`)) return 'transport_failed'
+  if (/Redis command failed/i.test(message)) return 'redis_command_failed'
+  return 'unknown'
+}
+
+export function createRedisRateLimiter(
+  redis: RedisRateLimitCommands | null,
+  onFailClosedRedisError?: (scope: 'ip' | 'device', category: string) => void,
+): RateLimitHandler {
   return async (request, options) => {
     if (!redis) {
       if (options.failClosed) throw unavailableError()
@@ -77,6 +134,7 @@ export function createRedisRateLimiter(redis: RedisRateLimitCommands | null): Ra
       if (count > maximum) throw new RateLimitError(tooManyRequests, 429)
     }
 
+    let activeScope: 'ip' | 'device' = 'ip'
     try {
       const extra = options.extra ?? ''
       const ip = clientIp(request)
@@ -86,6 +144,7 @@ export function createRedisRateLimiter(redis: RedisRateLimitCommands | null): Ra
       if (options.deviceLimit !== undefined && typeof rawDeviceId === 'string') {
         const deviceId = rawDeviceId.trim()
         if (deviceIdPattern.test(deviceId)) {
+          activeScope = 'device'
           await check(
             keyFor(options.bucket, 'device', deviceId, extra),
             options.deviceLimit,
@@ -95,7 +154,10 @@ export function createRedisRateLimiter(redis: RedisRateLimitCommands | null): Ra
       }
     } catch (error) {
       if (error instanceof RateLimitError) throw error
-      if (options.failClosed) throw unavailableError()
+      if (options.failClosed) {
+        try { onFailClosedRedisError?.(activeScope, redisFailureCategory(error)) } catch { /* Diagnostics must not alter rate-limit behavior. */ }
+        throw unavailableError()
+      }
       // 与 Python 默认认证限流一致：Redis 故障不锁死登录流程。
     }
   }

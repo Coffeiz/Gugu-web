@@ -59,7 +59,6 @@ test('PostgreSQL Workspace Directory CRUD 保持归属、计数、绑定和删�
     const terminated: string[] = []
     const prepared: string[] = []
     const operations = createPostgresWorkspaceDirectoryOperations(pool, {
-      storageBackend: 'local',
       localPath: root,
       async prepareDirectoryAcl(path) {
         prepared.push(path)

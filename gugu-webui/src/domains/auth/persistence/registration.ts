@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { performance } from 'node:perf_hooks'
 import type { Pool, PoolClient } from 'pg'
+import { isPostgresUniqueViolation } from '../../../adapters/postgres-errors.js'
 import type { PublicUserRecord } from '../auth.js'
 import {
   RegistrationRequestError,
@@ -54,11 +55,6 @@ interface RegistrationOperations {
   userExists(username: string, normalizedEmail: string): Promise<boolean>
   emailIsOccupied(normalizedEmail: string): Promise<boolean>
   registerUser(input: RegistrationInput, proof: RegistrationCodeProof | null): Promise<PublicUserRecord>
-}
-
-function isUniqueConstraintViolation(error: unknown): boolean {
-  return typeof error === 'object' && error !== null && 'code' in error
-    && (error as { code?: unknown }).code === '23505'
 }
 
 async function rollback(client: PoolClient): Promise<void> {
@@ -132,8 +128,8 @@ export function createPostgresRegistrationOperations(
         const inserted = await client.query<InsertedUser>(
           `INSERT INTO users (
              id, username, email, hashed_password, display_name, is_active, account_status,
-             security_version, avatar, created_at, timezone, email_subscribed
-           ) VALUES ($1, $2, $3, $4, $5, TRUE, 'active', 1, NULL, $6, NULL, $7)
+             security_version, avatar, created_at, timezone, email_subscribed, is_developer
+           ) VALUES ($1, $2, $3, $4, $5, TRUE, 'active', 1, NULL, $6, NULL, $7, FALSE)
            RETURNING id::text, username, display_name, email, is_active, account_status,
                      security_version, avatar, created_at, timezone, email_subscribed`,
           [newUserId(), input.username, input.email, input.hashedPassword, input.displayName, timestamp, input.emailSubscribed],
@@ -209,7 +205,7 @@ export function createPostgresRegistrationOperations(
         return publicUser(userRow)
       } catch (error) {
         if (transactionOpen) await rollback(client)
-        if (isUniqueConstraintViolation(error))
+        if (isPostgresUniqueViolation(error))
           throw new RegistrationRequestError('用户名或邮箱已被注册', 400)
         throw error
       } finally {

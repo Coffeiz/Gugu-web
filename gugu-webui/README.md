@@ -2,7 +2,9 @@
 
 `gugu-webui` 是 2.0 的独立 Node HTTP Host。它不启动 Python Web 进程；PostgreSQL 由外部服务提供。
 
-当前实现范围是启动配置、PostgreSQL schema readiness、健康检查、主站/Admin Vue 静态资源及 history fallback、公开站点配置 `GET /api/v1/site-config`、bcrypt 密码登录与用户令牌校验、`GET /api/v1/auth/me`、基于 `gugu-core` 的项目活动/回收站列表与详情读取、项目文件计数读取、日历事件列表/详情、客户列表/创建/删除、站内通知列表/气泡/标已读/个人隐藏，以及 `POST /api/v1/track` 前端行为埋点。登录支持用户名或邮箱、与 Python 兼容的 bcrypt/JWT、Bearer 或 HttpOnly/CSRF Cookie、成功登录事件和单进程固定窗口限流；Redis 共享限流仍待迁移。静态资源来自 `frontend/dist`，API 和 health 未命中仍返回 JSON 404。站点配置仅公开备案信息和 SMTP 能力布尔值，不返回邮件账号或密钥；备案信息从 `GUGU_SITE_ICP_NUMBER` / `GUGU_SITE_ICP_URL` 读取，SMTP 能力使用 `SMTP__*` 环境变量计算。项目回收站列表按 30 天保留期过滤；通知读写保留注册时间可见边界、持久态、已读和仅对当前用户生效的隐藏状态。注册、登出、找回、资料/API 头像、其他业务 API/SSE、Worker 和剩余 Python 行为仍在迁移中，因此当前构建用于开发验收，不作为完整 Web 替代版。
+当前实现范围包括启动配置、PostgreSQL schema readiness、健康检查、主站/Admin Vue 静态资源、公开站点配置、认证与部分项目/文件/日历/客户/通知 API，以及 Admin 配置读取、保存和 PostgreSQL/Redis 连接测试。Admin 配置继续写入 `config.override.json` 格式，原子替换并保留其他配置段；数据库连接异常时 Host 仍提供仅 Admin 配置入口，健康检查保持未就绪，保存连接信息后重启生效。Redis 地址由 `GUGU_WEBUI_REDIS_URL` 提供，密码可单独放在 `GUGU_WEBUI_REDIS_PASSWORD`；独立密码变量优先于 URL 密码和配置文件密码。静态资源来自 `frontend/dist`，未迁移的业务 API/SSE、Worker 和 Python 行为仍在迁移中，因此当前构建用于开发验收，不作为完整 Web 替代版。
+
+Admin 登录的认证版本和限流由单个 Node Host 进程内维护；登录认证不依赖 Redis 或 PostgreSQL 查询，审计写入失败也不会阻断登录。Host 重启会使旧 Admin token 失效，因此当前自托管部署按单实例运行。业务 API 需要 PostgreSQL；数据库不可用时只开放 Admin 配置界面和连接测试。未配置 Redis 时，注册的 fail-closed 限流和验证码能力不可用。
 
 ## Docker Compose
 
@@ -12,7 +14,7 @@
 cp gugu-webui/.env.example gugu-webui/.env
 ```
 
-编辑 `gugu-webui/.env`，填写专用 PostgreSQL 连接地址及与现有 Gugu JWT 一致的 `SECRET_KEY`。不要提交 `.env`。数据库应先通过仓库维护的 PostgreSQL schema bootstrap/migration 准备；readiness 会检查用户认证、Core 项目读取、日历读取、客户读写、通知持久态读写、前端埋点和项目文件计数投影依赖的表和列。
+编辑 `gugu-webui/.env`，设置与现有 Gugu JWT 一致的 `SECRET_KEY` 和 Admin 登录密码。PostgreSQL 连接地址可通过 `GUGU_WEBUI_DATABASE_URL` 提供，也可在 Admin 配置页首次录入。不要提交 `.env`。数据库应先通过仓库维护的 PostgreSQL schema bootstrap/migration 准备；readiness 会检查用户认证和业务 API 所需的表和列。配置页变更写入 Compose 持久卷中的 `config.override.json`，更新数据库或 Redis 后重启容器生效；Redis 密码建议单独设置 `GUGU_WEBUI_REDIS_PASSWORD`。
 
 启动和检查：
 
@@ -39,7 +41,7 @@ corepack pnpm --filter @gugu/webui build
 corepack pnpm --filter @gugu/webui start
 ```
 
-本地运行至少设置 `GUGU_WEBUI_DATABASE_URL` 和 `SECRET_KEY`。连接串支持 PostgreSQL URI，也接受 Python 现有的 `postgresql+asyncpg://` 形式。
+本地运行必须设置 `SECRET_KEY` 和 Admin 登录密码。数据库连接可先设置 `GUGU_WEBUI_DATABASE_URL`，也可在 Admin 配置页首次录入；连接串支持 PostgreSQL URI 和 Python 现有的 `postgresql+asyncpg://` 形式。
 
 ## 回归测试
 

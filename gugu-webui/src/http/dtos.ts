@@ -13,6 +13,11 @@ export const clientCreateBodySchema = z.object({
   notes: z.string().optional().default(''),
 })
 
+export const feedbackCreateBodySchema = z.object({
+  category: z.string(),
+  content: z.string(),
+})
+
 const notificationIdSchema = z.union([
   z.number().int().safe(),
   z.string().regex(/^-?\d+$/).transform(Number).pipe(z.number().int().safe()),

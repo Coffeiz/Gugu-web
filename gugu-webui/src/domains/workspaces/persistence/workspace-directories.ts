@@ -1,7 +1,10 @@
-import { CoreError, dataContext } from '@gugu/core'
+import { CoreError } from '@gugu/core'
 import type { Pool, PoolClient, QueryResultRow } from 'pg'
+import { normalizeOwnerId } from '../../../adapters/owner-context.js'
+import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
+import { isPathWithin } from '../../../adapters/path-safety.js'
 import { access, rename, rm, realpath } from 'node:fs/promises'
-import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path'
+import { basename, dirname, resolve } from 'node:path'
 import type { WorkspaceDirectoryCard, WorkspaceDirectoryOperations } from '../workspace-directories.js'
 
 type SqlExecutor = Pick<PoolClient, 'query'>
@@ -32,7 +35,6 @@ interface DirectoryCounts {
 }
 
 export interface WorkspaceDirectoryRuntime {
-  storageBackend: 'local' | 'oss'
   localPath: string
   /** 创建目录或修复已有目录权限，必须使用 Host 的沙盒 ACL 事实源。 */
   prepareDirectoryAcl(directoryPath: string): Promise<void>
@@ -43,12 +45,6 @@ export interface WorkspaceDirectoryRuntime {
 
 const reservedRoots = new Set(['workspace', 'shell', '个人文件', '项目文件', '思维', '素材板'])
 const invalidName = /[\\/:*?"<>|]/
-
-function ownerId(raw: string): string {
-  try { return dataContext(raw).ownerId } catch {
-    throw new CoreError('invalid_request', '用户 ID 无效')
-  }
-}
 
 function directoryId(value: number): number {
   if (!Number.isSafeInteger(value))
@@ -104,8 +100,7 @@ async function workspaceRoot(runtime: WorkspaceDirectoryRuntime, user: string, s
   const root = resolve(expected, segment)
   if (dirname(root) !== expected) throw new CoreError('conflict', 'Workspace 目录不在用户存储根内')
   const resolvedRoot = await resolveNonStrict(root)
-  const fromWorkspace = relative(expected, resolvedRoot)
-  if (!fromWorkspace || fromWorkspace === '..' || fromWorkspace.startsWith(`..${sep}`) || isAbsolute(fromWorkspace))
+  if (resolvedRoot === expected || !isPathWithin(expected, resolvedRoot))
     throw new CoreError('conflict', 'Workspace 目录不在用户存储根内')
   return resolvedRoot
 }
@@ -277,20 +272,8 @@ function conflictOnUnique(error: unknown): boolean {
     && ['uq_workspace_directory_name', 'uq_workspace_directory_display_name'].includes(pgError.constraint)
 }
 
-async function inTransaction<T>(pool: Pool, work: (client: PoolClient) => Promise<T>): Promise<T> {
-  const client = await pool.connect()
-  try {
-    await client.query('BEGIN')
-    const result = await work(client)
-    await client.query('COMMIT')
-    return result
-  } catch (error) {
-    await client.query('ROLLBACK').catch(() => undefined)
-    if (conflictOnUnique(error)) throw new CoreError('conflict', 'Workspace 已存在')
-    throw error
-  } finally {
-    client.release()
-  }
+function mapTransactionError(error: unknown): unknown {
+  return conflictOnUnique(error) ? new CoreError('conflict', 'Workspace 已存在') : error
 }
 
 /** PostgreSQL 与本地存储端口；事务/PTY/磁盘次序与 Python workspace_directories_router 一致。 */
@@ -300,28 +283,24 @@ export function createPostgresWorkspaceDirectoryOperations(
 ): WorkspaceDirectoryOperations {
   return {
     async list(rawOwnerId) {
-      const user = ownerId(rawOwnerId)
+      const user = normalizeOwnerId(rawOwnerId)
       const result = await pool.query<DirectoryRow>(
         `SELECT id, user_id::text, name, directory_name, is_default, is_system
          FROM workspace_directories WHERE user_id = $1 AND deleted_at IS NULL
          ORDER BY is_default DESC, name`, [user],
       )
       const resultCards = await cards(pool, user, result.rows)
-      if (runtime.storageBackend === 'local') {
-        for (const row of result.rows) {
-          const path = await workspaceRoot(runtime, user, row.directory_name)
-          if (await existingPath(path)) await runtime.prepareDirectoryAcl(path)
-        }
+      for (const row of result.rows) {
+        const path = await workspaceRoot(runtime, user, row.directory_name)
+        if (await existingPath(path)) await runtime.prepareDirectoryAcl(path)
       }
       return resultCards
     },
 
     async create(rawOwnerId, rawName) {
-      const user = ownerId(rawOwnerId)
-      if (runtime.storageBackend !== 'local')
-        throw new CoreError('conflict', '当前存储后端不支持本地 Workspace')
+      const user = normalizeOwnerId(rawOwnerId)
       const name = normalizeName(rawName)
-      return inTransaction(pool, async (client) => {
+      return withPostgresTransaction(pool, async (client) => {
         await lockOwner(client, user)
         await ensureDefaultDirectory(client, user, runtime)
         validateDisplayName(name)
@@ -358,14 +337,14 @@ export function createPostgresWorkspaceDirectoryOperations(
         await runtime.prepareDirectoryAcl(root)
         await ensureWorkspaceBinding(client, user, row)
         return cardById(client, user, Number(row.id))
-      })
+      }, mapTransactionError)
     },
 
     async update(rawOwnerId, rawId, rawName) {
-      const user = ownerId(rawOwnerId)
+      const user = normalizeOwnerId(rawOwnerId)
       const id = directoryId(rawId)
       const name = normalizeName(rawName)
-      return inTransaction(pool, async (client) => {
+      return withPostgresTransaction(pool, async (client) => {
         await lockOwner(client, user)
         const row = await getDirectory(client, user, id, true)
         if (row.is_system) throw new CoreError('conflict', '默认 Workspace 不可重命名')
@@ -387,11 +366,11 @@ export function createPostgresWorkspaceDirectoryOperations(
           )
         }
         return cardById(client, user, id)
-      })
+      }, mapTransactionError)
     },
 
     async previewDelete(rawOwnerId, rawId) {
-      const user = ownerId(rawOwnerId)
+      const user = normalizeOwnerId(rawOwnerId)
       const id = directoryId(rawId)
       const row = await getDirectory(pool, user, id)
       if (row.is_default || row.is_system)
@@ -400,12 +379,10 @@ export function createPostgresWorkspaceDirectoryOperations(
     },
 
     async delete(rawOwnerId, rawId) {
-      const user = ownerId(rawOwnerId)
+      const user = normalizeOwnerId(rawOwnerId)
       const id = directoryId(rawId)
-      if (runtime.storageBackend !== 'local')
-        throw new CoreError('conflict', '当前存储后端不支持本地 Workspace')
       let root = ''
-      await inTransaction(pool, async (client) => {
+      await withPostgresTransaction(pool, async (client) => {
         await lockOwner(client, user)
         const directory = await getDirectory(client, user, id, true)
         if (directory.is_default || directory.is_system)
@@ -456,7 +433,7 @@ export function createPostgresWorkspaceDirectoryOperations(
         )
         // PTY 必须在 DB commit 前关停；若关停失败，inTransaction 回滚所有授权与绑定变更。
         for (const terminalId of terminalIds) await runtime.terminateActivePty(terminalId)
-      })
+      }, mapTransactionError)
 
       // 只有提交成功才原子移走目录。清理失败会留下墓碑目录供后续回收，不恢复 DB 记录。
       try {

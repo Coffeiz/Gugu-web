@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify'
+import { maskSecret } from '../../shared/secret-mask.js'
 
 type Preset = {
   id: string
@@ -58,12 +59,8 @@ function validatePreset(value: Record<string, unknown>): Preset {
     api_format: format as Preset['api_format'], dashscope_service: service,
   }
 }
-function maskKey(key: string): string {
-  if (!key) return ''
-  return key.length <= 8 ? '•'.repeat(key.length) : `${key.slice(0, 3)}${'•'.repeat(key.length - 7)}${key.slice(-4)}`
-}
 function response(item: Preset, activeId: string) {
-  return { ...item, api_key: maskKey(item.api_key), has_api_key: Boolean(item.api_key), active: item.id === activeId }
+  return { ...item, api_key: maskSecret(item.api_key), has_api_key: Boolean(item.api_key), active: item.id === activeId }
 }
 function findPreset(config: Config, id: string) {
   const presets = collection(config), item = presets.items!.find((row) => row.id === id)

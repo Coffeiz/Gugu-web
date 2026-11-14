@@ -22,9 +22,13 @@ const mocks = vi.hoisted(() => ({
   },
 }))
 
-vi.mock('@/services/api', () => ({
+vi.mock('@/api/projects', () => ({
   projectsApi: mocks.projectsApi,
-  eventsApi: mocks.eventsApi,
+}))
+
+vi.mock('@/api/calendar', () => ({ eventsApi: mocks.eventsApi }))
+
+vi.mock('@/services/api', () => ({
   mindApi: mocks.mindApi,
   searchApi: {},
 }))

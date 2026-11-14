@@ -30,6 +30,28 @@ test('交互深链查询限定 owner 与 prompt，且不投影敏感字段', asy
   assert.equal(JSON.stringify(result).includes('hidden-server'), false)
 })
 
+test('空 secret_fields 即使带有 MCP target 也按 Python 语义隐藏深链', async () => {
+  const pool = {
+    async query() {
+      return {
+        rows: [{
+          session_id: 41,
+          schema_json: {
+            secret_fields: [],
+            context: { secret_target: { kind: 'mcp_credentials', server_id: 'hidden-server' } },
+          },
+        }],
+        rowCount: 1,
+      }
+    },
+  }
+
+  await assert.rejects(
+    createInteractionSessionLookup(pool as never).get('trusted-owner', 8),
+    (error: unknown) => error instanceof InteractionNotFoundError && error.statusCode === 404,
+  )
+})
+
 test('凭据交互深链仅回显所属会话，不回显敏感字段；过期提示仍按 Python 路由解析', {
   skip: !databaseUrl && '需要隔离 PostgreSQL：设置 GUGU_WEBUI_TEST_DATABASE_URL',
 }, async () => {

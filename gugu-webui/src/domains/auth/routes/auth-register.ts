@@ -2,6 +2,8 @@ import bcrypt from 'bcryptjs'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { createCsrfToken, createUserToken, type PublicUserRecord } from '../auth.js'
 import { InvalidEmailError, normalizeEmail } from '../email.js'
+import { RateLimitError } from '../rate-limit.js'
+import { userResponse } from '../user-response.js'
 
 export interface RegistrationRateLimit {
   readonly bucket: 'register'
@@ -97,28 +99,22 @@ function parseRegistration(body: unknown): ParsedRegistration | null {
   }
 }
 
-function responseUser(user: PublicUserRecord) {
-  const createdAt = user.createdAt instanceof Date
-    ? user.createdAt.toISOString().slice(0, 10)
-    : user.createdAt?.slice(0, 10) ?? ''
-  return {
-    id: user.id,
-    username: user.username,
-    display_name: user.displayName,
-    email: user.email,
-    is_active: user.isActive,
-    avatar_url: user.avatarUrl,
-    created_at: createdAt,
-    im_channels: user.imChannels,
-    timezone: user.timezone,
-    email_subscribed: user.emailSubscribed,
-  }
-}
-
 function failure(reply: FastifyReply, error: unknown): boolean {
+  if (error instanceof RateLimitError) {
+    reply.code(error.statusCode).send({ detail: error.message })
+    return true
+  }
   if (!(error instanceof RegistrationRequestError)) return false
   reply.code(error.statusCode).send({ detail: error.message })
   return true
+}
+
+function reportRegistrationFailure(stage: string, error: unknown): void {
+  const code = typeof error === 'object' && error !== null && 'code' in error
+    ? (error as { code?: unknown }).code
+    : undefined
+  const sqlState = typeof code === 'string' && /^[0-9A-Z]{5}$/.test(code) ? ` SQLSTATE=${code}` : ''
+  console.error(`gugu-webui registration ${stage} failed${sqlState}`)
 }
 
 export function registerUserRoute(app: FastifyInstance, options: RegisterUserRouteOptions): void {
@@ -134,6 +130,7 @@ export function registerUserRoute(app: FastifyInstance, options: RegisterUserRou
         deviceLimit: 5, deviceWindowSeconds: 86400, failClosed: true,
       })
     } catch (error) {
+      reportRegistrationFailure('rate limit', error)
       if (failure(reply, error)) return
       return reply.code(503).send({ detail: '注册服务暂不可用，请稍后重试' })
     }
@@ -148,8 +145,13 @@ export function registerUserRoute(app: FastifyInstance, options: RegisterUserRou
       throw error
     }
 
-    if (await options.userExists(body.username, email))
-      return reply.code(400).send({ detail: '用户名或邮箱已被注册' })
+    try {
+      if (await options.userExists(body.username, email))
+        return reply.code(400).send({ detail: '用户名或邮箱已被注册' })
+    } catch (error) {
+      reportRegistrationFailure('user lookup', error)
+      throw error
+    }
 
     let proof: RegistrationCodeProof | null = null
     if (options.verificationRequired) {
@@ -177,6 +179,7 @@ export function registerUserRoute(app: FastifyInstance, options: RegisterUserRou
     try {
       user = await options.registerUser(input, proof)
     } catch (error) {
+      reportRegistrationFailure('user transaction', error)
       if (failure(reply, error)) return
       throw error
     }
@@ -202,7 +205,7 @@ export function registerUserRoute(app: FastifyInstance, options: RegisterUserRou
     return reply.code(201).send({
       access_token: request.headers['x-auth-transport'] === 'cookie' ? null : token,
       token_type: 'bearer',
-      user: responseUser(user),
+      user: userResponse(user),
     })
   })
 }

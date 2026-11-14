@@ -1,4 +1,5 @@
 import type { Pool } from 'pg'
+import { runBestEffort } from '../../../adapters/best-effort.js'
 
 export type ProjectPostCommitResource = 'projects' | 'files' | 'calendar' | 'scheduled_tasks'
 export type ProjectPostCommitOperation = 'create' | 'update' | 'delete'
@@ -26,20 +27,6 @@ const ragSourceByResource: Partial<Record<ProjectPostCommitResource, 'project' |
   scheduled_tasks: 'scheduled_task',
 }
 
-async function bestEffort(
-  operation: string,
-  work: () => Promise<unknown>,
-  reportFailure: ProjectPostCommitFailureReporter,
-): Promise<void> {
-  try {
-    await work()
-  } catch (error) {
-    const code = typeof error === 'object' && error !== null && 'code' in error
-      && typeof error.code === 'string' ? error.code : undefined
-    try { reportFailure(operation, code) } catch { /* 已提交的项目变更不受副作用影响。 */ }
-  }
-}
-
 /** 项目 create/update/trash 的 Redis revision、持久 RAG 队列与 live event 提交后处理。 */
 export function createProjectPostCommitPublisher(
   pool: Pool,
@@ -49,7 +36,7 @@ export function createProjectPostCommitPublisher(
   },
 ): (publication: ProjectPostCommitPublication) => Promise<void> {
   return async (publication) => {
-    await bestEffort('project context revision', () =>
+    await runBestEffort('project context revision', () =>
       effects.bumpContextRevision(publication.userId, publication.resource), reportFailure)
 
     const sourceType = ragSourceByResource[publication.resource]
@@ -58,7 +45,7 @@ export function createProjectPostCommitPublisher(
       .filter((id) => id.length > 0)
     if (sourceType) {
       for (const sourceId of sourceIds) {
-        await bestEffort('project RAG index enqueue', async () => {
+        await runBestEffort('project RAG index enqueue', async () => {
           await pool.query(
             `INSERT INTO rag_index_jobs (
                user_id, source_type, source_id, version, operation, status,
@@ -102,7 +89,7 @@ export function createProjectPostCommitPublisher(
       }
     }
 
-    await bestEffort('project resource notification', () =>
+    await runBestEffort('project resource notification', () =>
       effects.publishResourceChanged(publication), reportFailure)
   }
 }

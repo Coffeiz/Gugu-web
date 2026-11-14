@@ -1,12 +1,14 @@
 import type { Pool, PoolClient } from 'pg'
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify'
+import { withPostgresTransaction } from '../../adapters/postgres-transaction.js'
+import { adminHttpError } from './errors.js'
+import { toUtcIsoWithOffset } from '../../shared/date-time.js'
 
 export type AdminUsersQuery = (sql: string, values: unknown[]) => Promise<Record<string, unknown>[]>
 
 export interface AdminUsersOptions {
   requireAdmin: preHandlerHookHandler
   query: AdminUsersQuery
-  storageBackend: 'local' | 'oss'
   now?: () => Date
 }
 
@@ -56,9 +58,7 @@ export function createPostgresAdminUsersQuery(pool: Pick<Pool, 'query'>): AdminU
 
 function utcIso(value: unknown): string | null {
   if (value === null || value === undefined) return null
-  const date = value instanceof Date ? value : new Date(String(value))
-  if (Number.isNaN(date.getTime())) throw new Error('invalid user timestamp')
-  return date.toISOString().replace(/Z$/, '+00:00')
+  return toUtcIsoWithOffset(value)
 }
 
 function asNumber(value: unknown): number {
@@ -76,10 +76,6 @@ function sixHourWindowUtc(now: Date): Date {
     now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(),
     Math.floor(now.getUTCHours() / 6) * 6,
   ))
-}
-
-function safeFailure(): Error & { statusCode: number } {
-  return Object.assign(new Error('用户列表查询失败'), { statusCode: 500 })
 }
 
 const USER_QUERY = `SELECT id, username, email, display_name, is_active, account_status,
@@ -122,9 +118,7 @@ export function registerAdminUsersRoute(app: FastifyInstance, options: AdminUser
           options.query(USAGE_QUERY, [mondayUtc(now)]),
           options.query(USAGE_QUERY, [sixHourWindowUtc(now)]),
           options.query(FILE_USAGE_QUERY, []),
-          options.storageBackend === 'local'
-            ? options.query(LOCAL_LIBRARY_USAGE_QUERY, [])
-            : Promise.resolve([]),
+          options.query(LOCAL_LIBRARY_USAGE_QUERY, []),
         ])
 
         const q = request.query.q
@@ -139,10 +133,8 @@ export function registerAdminUsersRoute(app: FastifyInstance, options: AdminUser
         const weekUsage = toUsageMap(weekRows)
         const sixHourUsage = toUsageMap(sixHourRows)
         const storageUsage = new Map(fileRows.map((row) => [String(row.user_id), asNumber(row.storage_used)]))
-        if (options.storageBackend === 'local') {
-          // Local 的 file_library 账本已经含所有可写持久根；按 Python update 语义覆盖文件记录值。
-          for (const row of libraryRows) storageUsage.set(String(row.user_id), asNumber(row.storage_used))
-        }
+        // Local 的 file_library 账本已经含所有可写持久根；按 Python update 语义覆盖文件记录值。
+        for (const row of libraryRows) storageUsage.set(String(row.user_id), asNumber(row.storage_used))
 
         return {
           items: visibleUsers.map((user) => {
@@ -169,14 +161,10 @@ export function registerAdminUsersRoute(app: FastifyInstance, options: AdminUser
           total: visibleUsers.length,
         }
       } catch {
-        throw safeFailure()
+        throw adminHttpError(500, '用户列表查询失败')
       }
     },
   )
-}
-
-function statusError(statusCode: number, detail: string): Error & { statusCode: number } {
-  return Object.assign(new Error(detail), { statusCode })
 }
 
 function createStatusRoutesOptions(options: AdminUserStatusRouteOptions) {
@@ -220,12 +208,12 @@ export function registerAdminUserStatusRoutes(app: FastifyInstance, options: Adm
     },
     async (request) => {
       const body = request.body ?? {}
-      if (body.confirm !== true) throw statusError(400, '冻结操作需要确认')
+      if (body.confirm !== true) throw adminHttpError(400, '冻结操作需要确认')
       const durationSeconds = body.duration_seconds ?? 1_800
       const reason = body.reason ?? 'repeated_ownership_denied'
       const now = options.now?.() ?? new Date()
       const user = await options.store.suspend(request.params.user_id, durationSeconds, reason, now)
-      if (!user) throw statusError(404, '用户不存在')
+      if (!user) throw adminHttpError(404, '用户不存在')
 
       await publishAfterCommit(options, user.id)
       await options.writeAuditLog(adminUsername(options, request), 'user', `冻结用户 ${user.username}`, request)
@@ -252,7 +240,7 @@ export function registerAdminUserStatusRoutes(app: FastifyInstance, options: Adm
     async (request) => {
       const now = options.now?.() ?? new Date()
       const user = await options.store.unsuspend(request.params.user_id, now)
-      if (!user) throw statusError(404, '用户不存在')
+      if (!user) throw adminHttpError(404, '用户不存在')
 
       await publishAfterCommit(options, user.id)
       await options.writeAuditLog(adminUsername(options, request), 'user', `解封用户 ${user.username}`, request)
@@ -269,12 +257,8 @@ async function transitionUserStatus<T extends AdminManagedUserStatus>(
   values: unknown[],
 ): Promise<T | null> {
   const current = await client.query('SELECT id FROM users WHERE id = $1::uuid FOR UPDATE', [values[0]])
-  if (current.rows.length === 0) {
-    await client.query('ROLLBACK')
-    return null
-  }
+  if (current.rows.length === 0) return null
   const result = await client.query(sql, values)
-  await client.query('COMMIT')
   return (result.rows[0] as T | undefined) ?? null
 }
 
@@ -282,16 +266,7 @@ async function inStatusTransaction<T>(
   pool: Pick<Pool, 'connect'>,
   operation: (client: PgClient) => Promise<T>,
 ): Promise<T> {
-  const client = await pool.connect()
-  try {
-    await client.query('BEGIN')
-    return await operation(client)
-  } catch (error) {
-    try { await client.query('ROLLBACK') } catch { /* 保留原始失败 */ }
-    throw error
-  } finally {
-    client.release()
-  }
+  return withPostgresTransaction(pool, operation)
 }
 
 export function createPostgresAdminUserStatusStore(pool: Pick<Pool, 'connect'>): AdminUserStatusStore {

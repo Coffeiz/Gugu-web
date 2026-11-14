@@ -1,5 +1,5 @@
 import { computed, nextTick, ref, watch, type ComputedRef, type Ref } from 'vue'
-import { eventsApi } from '@/services/api'
+import { eventsApi } from '@/api/calendar'
 import { showAppError, showAppNotice } from '@/composables/core/useAppToast'
 import { useLiveStore } from '@/stores/live'
 import { reconcileOptimisticById } from '@/utils/reconcileById'

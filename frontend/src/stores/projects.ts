@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
-import { projectsApi, eventsApi } from '@/services/api'
+import { projectsApi } from '@/api/projects'
+import { eventsApi } from '@/api/calendar'
 import { useLiveStore } from '@/stores/live'
 import { mapProjectResponse, type Project, type ProjectStage, type ProjectStatus } from '@/types/project'
 import {

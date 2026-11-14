@@ -20,7 +20,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import AuthBrand from '@/components/common/auth/AuthBrand.vue'
 import AuthLanguageSwitcher from '@/components/common/auth/AuthLanguageSwitcher.vue'
-import { authApi } from '@/services/api'
+import { authApi } from '@/api/auth'
 
 const { t } = useI18n()
 const route = useRoute()

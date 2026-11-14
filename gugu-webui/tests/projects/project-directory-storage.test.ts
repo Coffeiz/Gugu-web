@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { stat } from 'node:fs/promises'
 import test, { type TestContext } from 'node:test'
-import { createLocalProjectDirectoryRenamer } from '../../src/domains/projects/persistence/project-directory-storage.js'
+import { createLocalProjectDirectoryRenamer, renameLocalProjectDirectory } from '../../src/domains/projects/persistence/project-directory-storage.js'
 
 async function temporaryRoot(t: TestContext) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'gugu-project-storage-'))
@@ -41,6 +41,21 @@ test('本地项目目录改名移动整棵树并为目录/文件继承 group rw(
   assert.equal((await stat(moved)).gid, targetGid)
   assert.equal((await stat(newNested)).gid, (await stat(moved)).gid)
   assert.equal((await stat(newFile)).gid, (await stat(newNested)).gid)
+})
+
+test('项目数据库事务失败时可用同一 Local 移动能力把整棵目录树移回', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'gugu-project-rollback-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const original = path.join(root, 'owner', '项目文件', '2026', '11', '原项目 #17')
+  const renamed = path.join(root, 'owner', '项目文件', '2026', '11', '新项目 #17')
+  await mkdir(path.join(original, '嵌套'), { recursive: true })
+  await writeFile(path.join(original, '嵌套', '说明.txt'), '保留正文')
+
+  await renameLocalProjectDirectory(root, 'owner/项目文件/2026/11/原项目 #17', 'owner/项目文件/2026/11/新项目 #17')
+  await renameLocalProjectDirectory(root, 'owner/项目文件/2026/11/新项目 #17', 'owner/项目文件/2026/11/原项目 #17')
+
+  assert.equal(await readFile(path.join(original, '嵌套', '说明.txt'), 'utf8'), '保留正文')
+  await assert.rejects(stat(renamed), { code: 'ENOENT' })
 })
 
 test('源目录不存在时静默返回且不创建目标父目录', async (t) => {

@@ -58,6 +58,7 @@ function makeHarness(initial = baseState()) {
   const published: unknown[] = []
   const storage: unknown[] = []
   let committed = false
+  let failNextTransaction = false
   const runtime = {
     async transaction<T>(work: (tx: any) => Promise<T>): Promise<T> {
       committed = false
@@ -88,6 +89,10 @@ function makeHarness(initial = baseState()) {
         async updateTask(_owner: string, row: any) { Object.assign(state.tasks.find((item: any) => item.id === row.id)!, row) },
         async recordUndo(record: unknown) { undo.push(record) },
         })
+        if (failNextTransaction) {
+          failNextTransaction = false
+          throw new Error('simulated transaction commit failure')
+        }
         committed = true
         return result
       } catch (error) {
@@ -111,8 +116,46 @@ function makeHarness(initial = baseState()) {
       return { storageKey: `${owner}/项目文件/2026/11/回归项目 #17/文档/计划.md`, displayName: file.display_name }
     },
   }
-  return { state, undo, published, storage, runtime, fileStorage }
+  return { state, undo, published, storage, runtime, fileStorage, failNextCommit() { failNextTransaction = true } }
 }
+
+test('DELETE 与 RESTORE 提交失败时撤销物理移动并保持数据库状态和事件一致', async () => {
+  const harness = makeHarness()
+  let physicalLocation = 'original'
+  const storage = {
+    async moveToTrash() {
+      physicalLocation = 'trash'
+      return {
+        storageKey: `${ownerId}/trash/2026/11/回归项目 #17/文档/计划.md`,
+        rollback: async () => { physicalLocation = 'original' },
+      }
+    },
+    async restoreFromTrash() {
+      physicalLocation = 'original'
+      return {
+        storageKey: `${ownerId}/项目文件/2026/11/回归项目 #17/文档/计划.md`,
+        displayName: '计划',
+        rollback: async () => { physicalLocation = 'trash' },
+      }
+    },
+  }
+  const trash = createProjectTrashService(harness.runtime as never, storage as never)
+
+  harness.failNextCommit()
+  await assert.rejects(trash.deleteProject(ownerId, 17), /simulated transaction commit failure/)
+  assert.equal(physicalLocation, 'original', 'DELETE 回滚后物理文件仍在原路径')
+  assert.equal(harness.state.project.deleted_at, null, 'DELETE 失败时数据库事务回滚')
+  assert.equal(harness.published.length, 0, 'DELETE 失败不发布事件')
+
+  await trash.deleteProject(ownerId, 17)
+  assert.equal(physicalLocation, 'trash')
+  const publishedBeforeRestore = harness.published.length
+  harness.failNextCommit()
+  await assert.rejects(trash.restoreProject(ownerId, 17), /simulated transaction commit failure/)
+  assert.equal(physicalLocation, 'trash', 'RESTORE 回滚后物理文件仍在回收站')
+  assert.ok(harness.state.project.deleted_at, 'RESTORE 失败时项目墓碑保留')
+  assert.equal(harness.published.length, publishedBeforeRestore, 'RESTORE 失败不发布事件')
+})
 
 test('DELETE 项目按 owner 软删同一批资源、停用提醒、事务内写 Undo 并提交后发布四类事件', async () => {
   const harness = makeHarness()

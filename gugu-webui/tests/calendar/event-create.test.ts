@@ -38,6 +38,7 @@ function makeStore(options: {
   existing?: { fingerprint: string; event: CalendarEventRecord } | null
   projectOwned?: boolean
   insertError?: Error
+  enqueueError?: Error
   publishedError?: Error
 } = {}) {
   const calls: string[] = []
@@ -56,6 +57,10 @@ function makeStore(options: {
       if (options.insertError) throw options.insertError
       assert.deepEqual(payload, input)
       return event()
+    },
+    async enqueueRagIndex(eventId) {
+      calls.push(`enqueueRagIndex:${eventId}`)
+      if (options.enqueueError) throw options.enqueueError
     },
     async recordUndo(record) {
       calls.push('recordUndo')
@@ -135,7 +140,20 @@ test('a new event checks an owner project, records undo atomically, then publish
   })
   assert.deepEqual(calls, [
     `transaction:${ownerId}:begin`, 'findIdempotent', 'project:12',
-    'insertWithSavepoint', 'recordUndo', 'transaction:commit', 'publish',
+    'insertWithSavepoint', 'enqueueRagIndex:31', 'recordUndo', 'transaction:commit', 'publish',
+  ])
+})
+
+test('a failed durable RAG enqueue rolls back the new event and prevents publication', async () => {
+  const { store, calls } = makeStore({ enqueueError: new Error('synthetic RAG queue failure') })
+
+  await assert.rejects(
+    createCalendarEvent(store, { ownerId, input, undoContextId: 'tab-1' }),
+    /synthetic RAG queue failure/,
+  )
+  assert.deepEqual(calls, [
+    `transaction:${ownerId}:begin`, 'project:12', 'insertWithSavepoint',
+    'enqueueRagIndex:31', 'transaction:rollback',
   ])
 })
 
@@ -194,6 +212,7 @@ test('a concurrent idempotency winner is reread after the insert savepoint rolls
       calls.push('insert')
       throw new CalendarEventIdempotencyUniqueViolation()
     },
+    async enqueueRagIndex() { calls.push('enqueue') },
     async recordUndo() { calls.push('undo') },
   }
   const store: EventCreateStore = {

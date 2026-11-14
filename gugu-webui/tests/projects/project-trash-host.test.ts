@@ -39,10 +39,18 @@ test('Host exposes owner-scoped project trash routes and forwards write metadata
       'x-client-id': 'web-client',
     }
     const deleted = await app.inject({ method: 'DELETE', url: '/api/v1/projects/17', headers })
-    const restored = await app.inject({ method: 'POST', url: '/api/v1/projects/17/restore', headers })
+    const restored = await app.inject({
+      method: 'POST', url: '/api/v1/projects/17/restore',
+      headers: { ...headers, 'content-type': 'application/json' },
+    })
+    const malformed = await app.inject({
+      method: 'POST', url: '/api/v1/projects/17/restore',
+      headers: { ...headers, 'content-type': 'application/json' }, payload: '{',
+    })
 
     assert.equal(deleted.statusCode, 204)
     assert.equal(restored.statusCode, 200)
+    assert.equal(malformed.statusCode, 400)
     assert.deepEqual(restored.json(), { id: 17, name: 'Restored project' })
     assert.deepEqual(calls, [
       ['delete', ownerId, 17, { idempotencyKey: null, undoContextId: 'tab-undo', clientId: 'web-client' }],

@@ -2,7 +2,11 @@ import assert from 'node:assert/strict'
 import { createHmac } from 'node:crypto'
 import test from 'node:test'
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify'
-import { AdminAuthError, createAdminAuthAdapter } from '../../src/domains/admin/admin-auth.js'
+import {
+  AdminAuthError,
+  createAdminAuthAdapter,
+  createInMemoryAdminAuthVersionStore,
+} from '../../src/domains/admin/admin-auth.js'
 
 const secret = 'synthetic-admin-auth-secret-with-enough-entropy'
 const fixedNow = 1_800_000_000_000
@@ -39,11 +43,11 @@ function createFixture() {
     tokenExpiresMinutes: 60,
     now: () => fixedNow,
     async getAuthVersion() {
-      if (failRead) throw new Error('synthetic Redis GET failure')
+      if (failRead) throw new Error('synthetic auth-version read failure')
       return version
     },
     async incrementAuthVersion() {
-      if (failIncrement) throw new Error('synthetic Redis INCR failure')
+      if (failIncrement) throw new Error('synthetic auth-version increment failure')
       version += 1
       return version
     },
@@ -74,6 +78,50 @@ function createFixture() {
     set denyHost(value: boolean) { denyHost = value },
   }
 }
+
+test('Admin 登录认证版本不依赖 Redis 或 PostgreSQL，重启后旧令牌失效', async () => {
+  const createAppWithVersion = (initialVersion: number) => {
+    const versions = createInMemoryAdminAuthVersionStore(initialVersion)
+    const app = Fastify({ logger: false })
+    const adapter = createAdminAuthAdapter({
+      username: 'admin-example',
+      password: 'synthetic-admin-password',
+      secret,
+      tokenExpiresMinutes: 60,
+      now: () => fixedNow,
+      getAuthVersion: versions.getAuthVersion,
+      incrementAuthVersion: versions.incrementAuthVersion,
+      rateLimit: async () => {},
+      async hostGuard(_request, _reply) {},
+    })
+    adapter.registerRoutes(app)
+    return app
+  }
+  const firstApp = createAppWithVersion(41)
+  const restartedApp = createAppWithVersion(42)
+
+  try {
+    const login = await firstApp.inject({
+      method: 'POST', url: '/api/v1/admin/auth/login',
+      payload: { username: 'admin-example', password: 'synthetic-admin-password' },
+    })
+    assert.equal(login.statusCode, 200)
+
+    const token = login.json().access_token as string
+    const oldTokenAfterRestart = await restartedApp.inject({
+      url: '/api/v1/admin/auth/me', headers: { authorization: `Bearer ${token}` },
+    })
+    assert.equal(oldTokenAfterRestart.statusCode, 401)
+
+    const generated = createInMemoryAdminAuthVersionStore()
+    const initialVersion = await generated.getAuthVersion()
+    assert.ok(Number.isSafeInteger(initialVersion) && initialVersion >= 0)
+    assert.equal(await generated.incrementAuthVersion(), initialVersion + 1)
+  } finally {
+    await firstApp.close()
+    await restartedApp.close()
+  }
+})
 
 test('admin login issues av token and independent cookies; logout invalidates all prior tokens', async () => {
   const fixture = createFixture()
@@ -160,7 +208,7 @@ test('cookie admin sessions require CSRF on logout and cookie transport omits th
   }
 })
 
-test('admin login rejects missing configuration, invalid credentials, rate limits, and version-store outages', async () => {
+test('admin login rejects missing configuration, invalid credentials, rate limits, and auth-version store outages', async () => {
   const fixture = createFixture()
   try {
     fixture.limited = true
@@ -220,7 +268,7 @@ test('admin login rejects missing configuration, invalid credentials, rate limit
   }
 })
 
-test('admin and superadmin roles are accepted, user tokens are denied, and Redis failures return 503', async () => {
+test('admin and superadmin roles are accepted, user tokens are denied, and auth-version store failures return 503', async () => {
   const fixture = createFixture()
   try {
     const adminToken = signToken({

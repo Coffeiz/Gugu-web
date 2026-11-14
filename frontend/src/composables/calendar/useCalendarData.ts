@@ -1,5 +1,5 @@
 import { computed, ref, watch, type ComputedRef } from 'vue'
-import { eventsApi } from '@/services/api'
+import { eventsApi } from '@/api/calendar'
 import { calendarSignal } from '@/services/cache'
 import { projectProgress } from '@/utils/projectProgress'
 import { browserDayKey as toIso } from '@/utils/dateAttribution'

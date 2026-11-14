@@ -1,40 +1,21 @@
-import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
+import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
+import { recordForwardUndoOperation } from '../../undo/persistence/forward-operation.js'
+import { projectExistsForOwner as isProjectOwnedAndActive } from '../../projects/persistence/projects.js'
+import { calendarEventRecord } from '../event-projection.js'
+import { findOwnedActiveEvent as findCalendarEventByOwner } from './events.js'
 import type {
   CalendarEventUpdateFields,
-  CalendarEventUpdateRecord,
   EventUpdatePublication,
   EventUpdateReminderRecord,
   EventUpdateReminderSchedule,
   EventUpdateStore,
   EventUpdateTransaction,
-  EventUpdateUndoRecord,
 } from '../application/event-update.js'
 
 type DatabaseRow = Record<string, unknown>
 type EventUpdatePublisher = (publication: EventUpdatePublication) => Promise<unknown>
 type PublicationFailureReporter = (operation: string) => void
-
-function timestamp(value: unknown): string | null {
-  if (value == null) return null
-  return value instanceof Date ? value.toISOString() : String(value)
-}
-
-function eventRecord(row: DatabaseRow): CalendarEventUpdateRecord {
-  return {
-    id: Number(row.id),
-    title: String(row.title),
-    date: String(row.date),
-    time: row.time == null ? null : String(row.time),
-    end_time: row.end_time == null ? null : String(row.end_time),
-    type: String(row.type),
-    client: row.client == null ? null : String(row.client),
-    project_id: row.project_id == null ? null : Number(row.project_id),
-    description: row.description == null ? null : String(row.description),
-    version: Number(row.version || 1),
-    deleted_at: timestamp(row.deleted_at),
-  }
-}
 
 function reminderRecord(row: DatabaseRow): EventUpdateReminderRecord {
   return {
@@ -51,41 +32,6 @@ function reminderRecord(row: DatabaseRow): EventUpdateReminderRecord {
   }
 }
 
-function newUndoId(prefix: 'op' | 'group'): string {
-  return `${prefix}-${randomUUID().replaceAll('-', '')}`
-}
-
-async function insertUndo(
-  client: PoolClient,
-  ownerId: string,
-  record: EventUpdateUndoRecord,
-): Promise<void> {
-  await client.query(
-    `UPDATE undo_operations
-     SET status = 'expired', failure_code = 'redo_cleared_by_new_operation'
-     WHERE user_id = $1 AND undo_context_id = $2
-       AND actor_type = 'web' AND status = 'undone'`,
-    [ownerId, record.contextId],
-  )
-  await client.query(
-    `INSERT INTO undo_operations (
-       id, user_id, undo_context_id, group_id, resource, action,
-       target_refs, before_state, after_state, base_versions, artifact_refs,
-       actor_type, status, created_at, expires_at
-     ) VALUES (
-       $1, $2, $3, $4, $5, $6,
-       $7::json, $8::json, $9::json, $10::json, '{}'::json,
-       'web', 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + INTERVAL '30 days'
-     )`,
-    [
-      newUndoId('op'), ownerId, record.contextId, newUndoId('group'),
-      record.resource, record.action, JSON.stringify(record.targetRefs),
-      JSON.stringify(record.beforeState), JSON.stringify(record.afterState),
-      JSON.stringify(record.baseVersions),
-    ],
-  )
-}
-
 function transactionAdapter(client: PoolClient, ownerId: string): EventUpdateTransaction {
   const eventColumns = `id, title, date, time, end_time, type, contact_name AS client,
     project_id, description, version, deleted_at`
@@ -93,22 +39,11 @@ function transactionAdapter(client: PoolClient, ownerId: string): EventUpdateTra
     reminder_lead_minutes, channels, delivery_targets`
   return {
     async findOwnedActiveEvent(eventId) {
-      const result = await client.query<DatabaseRow>(
-        `SELECT ${eventColumns} FROM calendar_events
-         WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL LIMIT 1`,
-        [eventId, ownerId],
-      )
-      const row = result.rows[0]
-      return row ? eventRecord(row) : null
+      return findCalendarEventByOwner(client, ownerId, eventId)
     },
 
     async projectExistsForOwner(projectId) {
-      const result = await client.query(
-        `SELECT 1 FROM projects WHERE id = $1 AND user_id = $2
-         AND deleted_at IS NULL LIMIT 1`,
-        [projectId, ownerId],
-      )
-      return result.rowCount === 1
+      return isProjectOwnedAndActive(client, ownerId, projectId)
     },
 
     async listOwnedEventReminders(eventId) {
@@ -140,7 +75,7 @@ function transactionAdapter(client: PoolClient, ownerId: string): EventUpdateTra
         values,
       )
       const row = result.rows[0]
-      return row ? eventRecord(row) : null
+      return row ? calendarEventRecord(row, Number(row.version || 1)) : null
     },
 
     async stageReminderCron(taskId, cron) {
@@ -178,7 +113,7 @@ function transactionAdapter(client: PoolClient, ownerId: string): EventUpdateTra
     },
 
     async recordUndo(record) {
-      await insertUndo(client, ownerId, record)
+      await recordForwardUndoOperation(client, { ...record, userId: ownerId })
     },
   }
 }
@@ -192,27 +127,7 @@ export function createPostgresEventUpdateStore(
 ): EventUpdateStore {
   return {
     async transaction<T>(ownerId: string, work: (tx: EventUpdateTransaction) => Promise<T>): Promise<T> {
-      const client = await pool.connect()
-      let released = false
-      try {
-        await client.query('BEGIN')
-        try {
-          const result = await work(transactionAdapter(client, ownerId))
-          await client.query('COMMIT')
-          return result
-        } catch (error) {
-          try {
-            await client.query('ROLLBACK')
-          } catch {
-            client.release(true)
-            released = true
-            throw error
-          }
-          throw error
-        }
-      } finally {
-        if (!released) client.release()
-      }
+      return withPostgresTransaction(pool, (client) => work(transactionAdapter(client, ownerId)))
     },
 
     async publishCalendarEvent(publication) {

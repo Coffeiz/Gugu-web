@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import { useAudioStore } from './audio'
-import { authApi } from '@/services/api'
+import { authApi } from '@/api/auth'
 import { getCsrfHeaders } from '@/services/api'
 import { getAuthDeviceId } from '@/utils/authDevice'
 import type { components } from '@/types/api'

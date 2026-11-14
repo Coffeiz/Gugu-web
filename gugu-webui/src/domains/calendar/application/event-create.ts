@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { calendarEventResponse, calendarEventSnapshot } from '../event-projection.js'
 
 export interface CalendarEventCreateInput {
   title: string
@@ -50,6 +51,8 @@ export interface EventCreateTransaction {
     input: CalendarEventCreateInput,
     idempotency: { keyHash: string; fingerprint: string } | null,
   ): Promise<CalendarEventRecord>
+  /** Must enqueue the durable RAG job in the same transaction as the event. */
+  enqueueRagIndex(eventId: number): Promise<void>
   /** Must persist the Undo row using the same transaction as the event insert. */
   recordUndo(record: CalendarEventUndoRecord): Promise<void>
 }
@@ -171,34 +174,7 @@ function idempotencyValues(key: string | null | undefined, input: CalendarEventC
 }
 
 function eventResponse(event: CalendarEventRecord): CalendarEventResponse {
-  return {
-    id: event.id,
-    title: event.title,
-    date: event.date,
-    time: event.time,
-    endTime: event.end_time,
-    type: event.type,
-    client: event.client,
-    projectId: event.project_id,
-    description: event.description,
-    version: Number(event.version || 1),
-  }
-}
-
-function eventSnapshot(event: CalendarEventRecord): Record<string, unknown> {
-  return {
-    id: event.id,
-    title: event.title,
-    date: event.date,
-    time: event.time,
-    end_time: event.end_time,
-    type: event.type,
-    client: event.client,
-    project_id: event.project_id,
-    description: event.description,
-    version: Number(event.version || 1),
-    deleted_at: event.deleted_at ?? null,
-  }
+  return calendarEventResponse(event)
 }
 
 function makeUndoRecord(contextId: string, event: CalendarEventRecord): CalendarEventUndoRecord {
@@ -209,7 +185,7 @@ function makeUndoRecord(contextId: string, event: CalendarEventRecord): Calendar
     action: 'create',
     targetRefs: [{ kind: 'event', id: event.id }],
     beforeState: { items: {} },
-    afterState: { items: { [ref]: eventSnapshot(event) } },
+    afterState: { items: { [ref]: calendarEventSnapshot(event) } },
     baseVersions: { [ref]: { version: 0 } },
   }
 }
@@ -250,6 +226,7 @@ export async function createCalendarEvent(
       return { event: eventResponse(winner.event), created: false }
     }
 
+    await tx.enqueueRagIndex(event.id)
     const contextId = options.undoContextId?.trim()
     if (contextId) await tx.recordUndo(makeUndoRecord(contextId, event))
     return { event: eventResponse(event), created: true }

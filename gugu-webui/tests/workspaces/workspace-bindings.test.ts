@@ -155,9 +155,7 @@ test('PostgreSQL bind/unbind/current session operations preserve owner and enabl
       [ownerId, otherOwnerId],
     )
 
-    const operations = createPostgresWorkspaceBindingOperations(pool, {
-      workspaceShellSupported: () => true,
-    })
+    const operations = createPostgresWorkspaceBindingOperations(pool)
     const bound = await operations.bind(ownerId, 1, 101)
     const activeWorkspace = { ...workspaceResponse(1), name: 'Active' }
     assert.deepEqual(bound, activeWorkspace)
@@ -182,12 +180,6 @@ test('PostgreSQL bind/unbind/current session operations preserve owner and enabl
     assert.equal(await operations.current(ownerId, 101), null)
     await assert.rejects(operations.unbind(ownerId, 103), { code: 'not_found' })
 
-    const unsupported = createPostgresWorkspaceBindingOperations(pool, {
-      workspaceShellSupported: () => false,
-    })
-    await assert.rejects(unsupported.bind(ownerId, 1, 101), { code: 'conflict' })
-    await unsupported.unbind(ownerId, 101)
-    assert.equal(await unsupported.current(ownerId, 101), null)
   } finally {
     await pool.end()
     await admin.query(`DROP SCHEMA "${schema}" CASCADE`).catch(() => undefined)

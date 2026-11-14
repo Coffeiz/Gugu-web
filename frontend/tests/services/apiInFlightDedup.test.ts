@@ -1,15 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { projectsApi } from '@/services/api'
+import { projectsApi } from '@/api/projects'
+import { projectsApi as compatibilityProjectsApi } from '@/services/api'
+import { jsonResponse } from '../api/response'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
   const promise = new Promise<T>(done => { resolve = done })
   return { promise, resolve }
-}
-
-function jsonResponse(value: unknown): Response {
-  return new Response(JSON.stringify(value), { status: 200, headers: { 'Content-Type': 'application/json' } })
 }
 
 afterEach(() => {
@@ -19,6 +17,10 @@ afterEach(() => {
 })
 
 describe('API 并发 GET 合并', () => {
+  it('旧 services 入口继续导出同一个项目 API 模块', () => {
+    expect(compatibilityProjectsApi).toBe(projectsApi)
+  })
+
   it('A/B 对比：两个页面同时读取项目列表时只保留一条网络请求', async () => {
     document.cookie = 'gugu_user_csrf_token=synthetic-ab-session; path=/'
     const payload = [{ id: 7, name: '合成项目' }]

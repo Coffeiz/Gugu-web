@@ -21,15 +21,16 @@ test('loadConfig supplies stable local defaults and keeps the database URL priva
       passwordResetEnabled: false,
       registrationVerificationEnabled: false,
     },
-    staticRoot: fileURLToPath(new URL('../../frontend/dist', import.meta.url)),
+    staticRoot: fileURLToPath(new URL('../../../frontend/dist', import.meta.url)),
   })
   assert.equal(config.databaseUrl, 'postgres://synthetic:synthetic-only@db.invalid/gugu_test')
-  assert.equal(config.storageBackend, 'local')
+  assert.equal(config.storageDefaultLimitBytes, null)
   assert.equal(config.adminUsername, 'admin')
   assert.equal(config.adminPassword, '')
   assert.equal(config.adminAllowedHosts, '')
   assert.equal(config.accessTokenExpiresMinutes, 10080)
   assert.equal(config.storageLocalPath, resolve('../Gugu-data/users'))
+  assert.equal(config.filesyncEnabled, true)
   assert.deepEqual(config.workspaceRuntimeSettings, {
     shellEnabled: true,
     shellSystemEnabled: false,
@@ -51,7 +52,6 @@ test('loadConfig keeps Admin credentials, host policy, and storage location priv
     ADMIN_ALLOWED_HOSTS: 'admin.example.test',
     GUGU_LOG_FILE: '/tmp/synthetic-gugu/logs/gugu.log',
     ACCESS_TOKEN_EXPIRE_MINUTES: '720',
-    STORAGE__BACKEND: 'oss',
     STORAGE__LOCAL_PATH: '/srv/gugu/users',
   })
   assert.equal(config.adminUsername, 'ops-admin')
@@ -96,17 +96,55 @@ test('loadConfig reads workspace runtime capabilities with strict Python-aligned
   }), /SANDBOX__TERMINAL_MODE/)
 })
 
-test('loadConfig follows Python storage backend and fails closed for unsupported values', () => {
+test('loadConfig keeps the Python-default file sync side effects enabled unless explicitly disabled', () => {
   assert.equal(loadConfig({
     GUGU_WEBUI_DATABASE_URL: 'postgres://db.invalid/gugu',
     SECRET_KEY: 'synthetic-secret',
+  }).filesyncEnabled, true)
+  assert.equal(loadConfig({
+    GUGU_WEBUI_DATABASE_URL: 'postgres://db.invalid/gugu',
+    SECRET_KEY: 'synthetic-secret',
+    FILESYNC__ENABLED: 'false',
+  }).filesyncEnabled, false)
+  assert.throws(() => loadConfig({
+    GUGU_WEBUI_DATABASE_URL: 'postgres://db.invalid/gugu',
+    SECRET_KEY: 'synthetic-secret',
+    FILESYNC__ENABLED: 'maybe',
+  }), /FILESYNC__ENABLED/)
+})
+
+test('loadConfig refuses a legacy OSS backend setting until its data has been migrated', () => {
+  assert.throws(() => loadConfig({
+    GUGU_WEBUI_DATABASE_URL: 'postgres://db.invalid/gugu',
+    SECRET_KEY: 'synthetic-secret',
     STORAGE__BACKEND: 'oss',
-  }).storageBackend, 'oss')
+  }), /旧 OSS 数据需先完成迁移或导出/)
   assert.throws(() => loadConfig({
     GUGU_WEBUI_DATABASE_URL: 'postgres://db.invalid/gugu',
     SECRET_KEY: 'synthetic-secret',
     STORAGE__BACKEND: 'remote',
-  }), /STORAGE__BACKEND/)
+  }), /只支持本地文件系统/)
+})
+
+test('loadConfig reads the optional default storage quota without exposing it', () => {
+  const config = loadConfig({
+    GUGU_WEBUI_DATABASE_URL: 'postgres://db.invalid/gugu',
+    SECRET_KEY: 'synthetic-secret',
+    QUOTA__DEFAULT_STORAGE_LIMIT_BYTES: '0',
+  })
+
+  assert.equal(config.storageDefaultLimitBytes, 0)
+  assert.equal(Object.keys(config).includes('storageDefaultLimitBytes'), false)
+  assert.equal(loadConfig({
+    GUGU_WEBUI_DATABASE_URL: 'postgres://db.invalid/gugu',
+    SECRET_KEY: 'synthetic-secret',
+    QUOTA__DEFAULT_STORAGE_LIMIT_BYTES: '-1',
+  }).storageDefaultLimitBytes, -1)
+  assert.throws(() => loadConfig({
+    GUGU_WEBUI_DATABASE_URL: 'postgres://db.invalid/gugu',
+    SECRET_KEY: 'synthetic-secret',
+    QUOTA__DEFAULT_STORAGE_LIMIT_BYTES: '-2',
+  }), /QUOTA__DEFAULT_STORAGE_LIMIT_BYTES/)
 })
 
 test('loadConfig reflects public email capabilities without exposing SMTP secrets', () => {

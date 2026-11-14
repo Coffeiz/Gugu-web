@@ -1,6 +1,7 @@
 import bcrypt from 'bcryptjs'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { Pool } from 'pg'
+import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
 import { createCsrfToken, createUserToken } from '../auth.js'
 
 export interface ProfileUser {
@@ -103,9 +104,7 @@ async function persistProfileUpdate(
   userId: string,
   update: ProfileUpdate,
 ): Promise<PersistedProfileUpdate> {
-  const client = await pool.connect()
-  try {
-    await client.query('BEGIN')
+  return withPostgresTransaction(pool, async (client) => {
     const result = await client.query<ProfileRow>(
       'SELECT timezone, hashed_password, security_version FROM users WHERE id = $1 FOR UPDATE',
       [userId],
@@ -151,18 +150,8 @@ async function persistProfileUpdate(
       if (!updated.rows[0]) throw new ProfileRequestError('用户不存在', 404)
       securityVersion = updated.rows[0].security_version
     }
-    await client.query('COMMIT')
     return { timezoneChanged, passwordChanged, securityVersion }
-  } catch (error) {
-    try {
-      await client.query('ROLLBACK')
-    } catch {
-      // Keep the original validation or database error.
-    }
-    throw error
-  } finally {
-    client.release()
-  }
+  })
 }
 
 function userResponse(user: ProfileUser) {

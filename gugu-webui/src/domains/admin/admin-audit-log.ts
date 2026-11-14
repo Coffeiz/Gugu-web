@@ -1,6 +1,7 @@
 import type { Pool } from 'pg'
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify'
 import { createHmac } from 'node:crypto'
+import { adminHttpError } from './errors.js'
 
 export type AdminSecurityEventQuery = (sql: string, values: unknown[]) => Promise<unknown[]>
 export interface AdminSecurityEventOptions {
@@ -35,10 +36,6 @@ export function createPostgresAdminSecurityEventQuery(pool: Pick<Pool, 'query'>)
     const result = await pool.query(sql, values as never[])
     return result.rows as SecurityEventRecord[]
   }
-}
-
-function safeFailure(): Error & { statusCode: number } {
-  return Object.assign(new Error('安全事件查询失败'), { statusCode: 500 })
 }
 
 export function registerAdminSecurityEventRoutes(app: FastifyInstance, options: AdminSecurityEventOptions): void {
@@ -120,7 +117,7 @@ export function registerAdminSecurityEventRoutes(app: FastifyInstance, options: 
         })
         return { items, total: items.length, since_minutes: sinceMinutes }
       } catch {
-        throw safeFailure()
+        throw adminHttpError(500, '安全事件查询失败')
       }
     },
   )

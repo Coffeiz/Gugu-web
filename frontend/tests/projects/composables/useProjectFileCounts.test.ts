@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 const { fileCounts } = vi.hoisted(() => ({ fileCounts: vi.fn() }))
 
-vi.mock('@/services/api', () => ({ projectsApi: { fileCounts } }))
+vi.mock('@/api/projects', () => ({ projectsApi: { fileCounts } }))
 vi.mock('@/composables/core/useAppToast', () => ({ showAppError: vi.fn() }))
 
 import { useProjectFileCounts } from '@/composables/projects/useProjectFileCounts'

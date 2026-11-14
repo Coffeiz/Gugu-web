@@ -25,6 +25,7 @@ async function createFixture(options: {
     id uuid PRIMARY KEY, username varchar(100) NOT NULL UNIQUE, email varchar(300) NOT NULL UNIQUE,
     hashed_password varchar(200) NOT NULL, display_name varchar(100), is_active boolean NOT NULL,
     account_status varchar(16) NOT NULL, security_version integer NOT NULL, avatar varchar(500),
+    is_developer boolean NOT NULL,
     created_at timestamptz NOT NULL, timezone varchar(64), email_subscribed boolean NOT NULL
   )`)
   await pool.query(`CREATE TABLE user_preferences (
@@ -88,8 +89,8 @@ async function createFixture(options: {
     async seedUser(username: string, email: string) {
       await pool.query(`INSERT INTO users
         (id, username, email, hashed_password, display_name, is_active, account_status,
-         security_version, created_at, email_subscribed)
-        VALUES ($1, $2, $3, 'synthetic-hash', $2, true, 'active', 1, CURRENT_TIMESTAMP, false)`,
+         security_version, created_at, email_subscribed, is_developer)
+        VALUES ($1, $2, $3, 'synthetic-hash', $2, true, 'active', 1, CURRENT_TIMESTAMP, false, false)`,
       [randomUUID(), username, email])
     },
     async close() {
@@ -151,6 +152,9 @@ test('PostgreSQL registration atomically creates user, locale preference and def
     assert.equal(user.isActive, true)
     assert.equal(user.securityVersion, 1)
     assert.equal(user.emailSubscribed, true)
+    assert.equal((await fixture.pool.query<{ is_developer: boolean }>(
+      'SELECT is_developer FROM users WHERE id = $1', [user.id],
+    )).rows[0]?.is_developer, false)
     assert.equal(user.createdAt instanceof Date || typeof user.createdAt === 'string', true)
     assert.equal((await stat(join(fixture.root, user.id, 'workspace', 'default'))).isDirectory(), true)
     assert.deepEqual(fixture.calls, [

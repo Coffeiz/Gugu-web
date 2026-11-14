@@ -8,8 +8,9 @@ import { i18n } from '@/i18n'
 
 vi.mock('@/services/api', () => ({
   filesApi: { get: vi.fn().mockRejectedValue(Object.assign(new Error('missing'), { status: 404 })) },
-  agentApi: {}, eventsApi: {}, mindApi: {},
+  agentApi: {}, mindApi: {},
 }))
+vi.mock('@/api/calendar', () => ({ eventsApi: {} }))
 
 vi.mock('@/composables/core/useAppToast', () => ({
   showAppNotice: vi.fn(),

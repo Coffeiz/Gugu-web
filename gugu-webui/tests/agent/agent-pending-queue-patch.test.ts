@@ -8,7 +8,9 @@ import {
   AgentPendingQueueSessionNotFoundError,
   mergePendingQueueItems,
   createPostgresAgentPendingQueuePatch,
+  createPostgresAgentPendingQueueReplace,
   registerAgentPendingQueuePatchRoute,
+  registerAgentPendingQueueReplaceRoute,
 } from '../../src/domains/agent-sessions/agent-pending-queue-patch.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
@@ -141,6 +143,41 @@ test('PATCH payload 保持 Pydantic 的常见 JSON 类型强制与附件 extra �
   } finally { await app.close() }
 })
 
+test('PUT 仅替换草稿队列，校验标识与完整 item 结构并使用可信 owner', async () => {
+  const app = Fastify(), calls: unknown[][] = []
+  registerAgentPendingQueueReplaceRoute(app, {
+    async requireUser(_request, reply) { return reply.code(401).send({ detail: '未认证' }) },
+    userIdFromRequest() { throw new Error('未认证时不得读取 owner') },
+    async replaceDraft(...args) { calls.push(args) },
+  })
+  try {
+    const denied = await app.inject({ method: 'PUT', url: '/api/v1/agent/pending-queues/draft-one', payload: { items: [] } })
+    assert.equal(denied.statusCode, 401)
+  } finally { await app.close() }
+
+  const authenticated = Fastify()
+  registerAgentPendingQueueReplaceRoute(authenticated, {
+    async requireUser() {},
+    userIdFromRequest() { return 'trusted-owner' },
+    async replaceDraft(...args) { calls.push(args) },
+  })
+  try {
+    const replaced = await authenticated.inject({ method: 'PUT', url: '/api/v1/agent/pending-queues/draft-one?owner_id=attacker', payload: {
+      items: [{ key: '4', text: '草稿', attachments: [{ file_id: '7', ignored: true }] }],
+    } })
+    assert.equal(replaced.statusCode, 200)
+    assert.deepEqual(replaced.json(), { ok: true, count: 1 })
+    assert.deepEqual(calls, [['trusted-owner', 'draft-one', [{ key: 4, text: '草稿', attachments: [{ file_id: 7 }], references: [] }]]])
+    const sessionQueue = await authenticated.inject({ method: 'PUT', url: '/api/v1/agent/pending-queues/session-4', payload: { items: [] } })
+    assert.equal(sessionQueue.statusCode, 409)
+    const invalid = await authenticated.inject({ method: 'PUT', url: '/api/v1/agent/pending-queues/draft-one', payload: { items: [{ key: 0, text: 'x' }] } })
+    assert.equal(invalid.statusCode, 422)
+    const extra = await authenticated.inject({ method: 'PUT', url: '/api/v1/agent/pending-queues/draft-one', payload: { items: [], unexpected: true } })
+    assert.equal(extra.statusCode, 422)
+    assert.equal(calls.length, 1)
+  } finally { await authenticated.close() }
+})
+
 test('PostgreSQL patch 合并时保留 claim lease，删除最后一项则移除队列行', {
   skip: !databaseUrl && '需要隔离 PostgreSQL：设置 GUGU_WEBUI_TEST_DATABASE_URL',
 }, async () => {
@@ -182,6 +219,40 @@ test('PostgreSQL patch 合并时保留 claim lease，删除最后一项则移除
     assert.equal((await pool.query('SELECT 1 FROM conversation_pending_queues WHERE user_id=$1', [owner])).rowCount, 0)
     await patch(owner, 'session-3', 3, [], [])
     assert.equal((await pool.query('SELECT 1 FROM conversation_pending_queues WHERE user_id=$1', [owner])).rowCount, 0)
+  } finally {
+    await pool.end()
+    await admin.query(`DROP SCHEMA "${schema}" CASCADE`).catch(() => undefined)
+    await admin.end()
+  }
+})
+
+test('PostgreSQL PUT 只改动当前 owner 的草稿并支持空列表删除', {
+  skip: !databaseUrl && '需要隔离 PostgreSQL：设置 GUGU_WEBUI_TEST_DATABASE_URL',
+}, async () => {
+  const schema = `gugu_pending_replace_${randomUUID().replaceAll('-', '')}`
+  const admin = new Pool({ connectionString: databaseUrl, max: 1 })
+  await admin.query(`CREATE SCHEMA "${schema}"`)
+  const pool = new Pool({ connectionString: databaseUrl, options: `-c search_path=${schema}`, max: 3 })
+  try {
+    await pool.query(`CREATE TABLE conversation_pending_queues (
+      id serial PRIMARY KEY, user_id uuid NOT NULL, queue_id varchar(64) NOT NULL,
+      session_id integer, items jsonb NOT NULL, updated_at timestamptz NOT NULL,
+      UNIQUE(user_id, queue_id)
+    )`)
+    const owner = randomUUID(), otherOwner = randomUUID()
+    const replace = createPostgresAgentPendingQueueReplace(pool)
+    await replace(owner, 'draft-one', [{ key: 1, text: '旧内容' }])
+    await replace(owner, 'draft-one', [{ key: 2, text: '新内容' }])
+    await replace(otherOwner, 'draft-one', [{ key: 3, text: '另一用户' }])
+    const result = await pool.query<{ user_id: string; session_id: number | null; items: unknown }>(
+      'SELECT user_id, session_id, items FROM conversation_pending_queues ORDER BY user_id',
+    )
+    assert.equal(result.rowCount, 2)
+    assert.ok(result.rows.every((row) => row.session_id === null))
+    assert.deepEqual(result.rows.find((row) => row.user_id === owner)?.items, [{ key: 2, text: '新内容' }])
+    await replace(owner, 'draft-one', [])
+    assert.equal((await pool.query('SELECT 1 FROM conversation_pending_queues WHERE user_id=$1', [owner])).rowCount, 0)
+    assert.equal((await pool.query('SELECT 1 FROM conversation_pending_queues WHERE user_id=$1', [otherOwner])).rowCount, 1)
   } finally {
     await pool.end()
     await admin.query(`DROP SCHEMA "${schema}" CASCADE`).catch(() => undefined)

@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import { scheduledTaskUndoSnapshot } from '../../scheduled-tasks/undo-snapshot.js'
+import { calendarEventSnapshot } from '../event-projection.js'
 
 export type CalendarEventUpdateFields = Partial<{
   title: string | null
@@ -170,42 +172,6 @@ function parseUpdate(body: unknown): { version: number; fields: CalendarEventUpd
   return { version, fields }
 }
 
-function toIso(value: Date | string | null): string | null {
-  if (value === null) return null
-  return value instanceof Date ? value.toISOString() : value
-}
-
-function eventSnapshot(event: CalendarEventUpdateRecord): Record<string, unknown> {
-  return {
-    id: event.id,
-    title: event.title,
-    date: event.date,
-    time: event.time,
-    end_time: event.end_time,
-    type: event.type,
-    client: event.client,
-    project_id: event.project_id,
-    description: event.description,
-    version: Number(event.version || 1),
-    deleted_at: event.deleted_at,
-  }
-}
-
-function taskSnapshot(task: EventUpdateReminderRecord): Record<string, unknown> {
-  return {
-    id: task.id,
-    enabled: Boolean(task.enabled),
-    name: task.name,
-    payload: task.payload,
-    cron: task.cron,
-    schedule_kind: task.schedule_kind,
-    start_at: toIso(task.start_at),
-    reminder_lead_minutes: task.reminder_lead_minutes,
-    channels: task.channels,
-    delivery_targets: task.delivery_targets,
-  }
-}
-
 function eventBaseMillis(event: Pick<CalendarEventUpdateRecord, 'date' | 'time'>): number {
   if (!event.date) throw new EventUpdateError(422, '事件日期无效，无法重排提醒')
   const [year, month, day] = event.date.split('-').map(Number)
@@ -287,17 +253,17 @@ function makeUndoRecord(
   afterTasks: EventUpdateReminderRecord[],
 ): EventUpdateUndoRecord {
   const eventRef = `event:${beforeEvent.id}`
-  const beforeItems: Record<string, Record<string, unknown>> = { [eventRef]: eventSnapshot(beforeEvent) }
-  const afterItems: Record<string, Record<string, unknown>> = { [eventRef]: eventSnapshot(afterEvent) }
+  const beforeItems: Record<string, Record<string, unknown>> = { [eventRef]: calendarEventSnapshot(beforeEvent) }
+  const afterItems: Record<string, Record<string, unknown>> = { [eventRef]: calendarEventSnapshot(afterEvent) }
   const baseVersions: Record<string, { version: number }> = {
     [eventRef]: { version: Number(beforeEvent.version || 1) },
   }
   for (const task of beforeTasks) {
     const ref = `task:${task.id}`
-    beforeItems[ref] = taskSnapshot(task)
+    beforeItems[ref] = scheduledTaskUndoSnapshot(task)
     baseVersions[ref] = { version: 0 }
   }
-  for (const task of afterTasks) afterItems[`task:${task.id}`] = taskSnapshot(task)
+  for (const task of afterTasks) afterItems[`task:${task.id}`] = scheduledTaskUndoSnapshot(task)
   const targetRefs = Object.keys(afterItems).map((ref) => {
     const [kind, rawId] = ref.split(':', 2)
     return { kind: kind as 'event' | 'task', id: Number(rawId) }
@@ -332,9 +298,9 @@ export async function updateCalendarEvent(
 
     const beforeTasks = await tx.listOwnedEventReminders(event.id)
     const beforeItems: Record<string, Record<string, unknown>> = {
-      [`event:${event.id}`]: eventSnapshot(event),
+      [`event:${event.id}`]: calendarEventSnapshot(event),
     }
-    for (const task of beforeTasks) beforeItems[`task:${task.id}`] = taskSnapshot(task)
+    for (const task of beforeTasks) beforeItems[`task:${task.id}`] = scheduledTaskUndoSnapshot(task)
 
     if (fields.project_id !== undefined && fields.project_id !== null
       && !await tx.projectExistsForOwner(fields.project_id)) {

@@ -1,3 +1,6 @@
+import { scheduledTaskUndoSnapshot } from '../../scheduled-tasks/undo-snapshot.js'
+import { calendarEventSnapshot } from '../event-projection.js'
+
 export interface CalendarEventDeleteRecord {
   id: number
   title: string
@@ -82,42 +85,6 @@ export class EventDeleteError extends Error {
   }
 }
 
-function iso(value: Date | string | null): string | null {
-  if (value === null) return null
-  return value instanceof Date ? value.toISOString() : value
-}
-
-function eventSnapshot(event: CalendarEventDeleteRecord): Record<string, unknown> {
-  return {
-    id: event.id,
-    title: event.title,
-    date: event.date,
-    time: event.time,
-    end_time: event.end_time,
-    type: event.type,
-    client: event.client,
-    project_id: event.project_id,
-    description: event.description,
-    version: event.version || 1,
-    deleted_at: event.deleted_at,
-  }
-}
-
-function taskSnapshot(task: CalendarEventReminderRecord): Record<string, unknown> {
-  return {
-    id: task.id,
-    enabled: Boolean(task.enabled),
-    name: task.name,
-    payload: task.payload,
-    cron: task.cron,
-    schedule_kind: task.schedule_kind,
-    start_at: iso(task.start_at),
-    reminder_lead_minutes: task.reminder_lead_minutes,
-    channels: task.channels,
-    delivery_targets: task.delivery_targets,
-  }
-}
-
 function makeUndoRecord(
   contextId: string,
   beforeEvent: CalendarEventDeleteRecord,
@@ -125,8 +92,8 @@ function makeUndoRecord(
   beforeTasks: CalendarEventReminderRecord[],
 ): CalendarEventDeleteUndoRecord {
   const eventRef = `event:${beforeEvent.id}`
-  const beforeItems: Record<string, Record<string, unknown>> = { [eventRef]: eventSnapshot(beforeEvent) }
-  const afterItems: Record<string, Record<string, unknown>> = { [eventRef]: eventSnapshot(afterEvent) }
+  const beforeItems: Record<string, Record<string, unknown>> = { [eventRef]: calendarEventSnapshot(beforeEvent) }
+  const afterItems: Record<string, Record<string, unknown>> = { [eventRef]: calendarEventSnapshot(afterEvent) }
   const targetRefs: Array<{ kind: 'event' | 'task'; id: number }> = [
     { kind: 'event', id: beforeEvent.id },
   ]
@@ -135,7 +102,7 @@ function makeUndoRecord(
   }
   for (const task of beforeTasks) {
     const taskRef = `task:${task.id}`
-    const before = taskSnapshot(task)
+    const before = scheduledTaskUndoSnapshot(task)
     beforeItems[taskRef] = before
     afterItems[taskRef] = { ...before, enabled: false }
     targetRefs.push({ kind: 'task', id: task.id })

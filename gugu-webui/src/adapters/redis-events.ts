@@ -3,6 +3,7 @@ import { connect as connectTcp, type Socket } from 'node:net'
 import { connect as connectTls, type TLSSocket } from 'node:tls'
 import type { RedisRateLimitCommands } from '../domains/auth/rate-limit.js'
 import type { RegistrationCodeRedisCommands } from '../domains/auth/persistence/registration-codes.js'
+import type { PasswordResetRedisCommands } from '../domains/auth/password-reset.js'
 
 type RedisConnection = Socket | TLSSocket
 type RedisReply = string | null
@@ -15,6 +16,7 @@ export interface ResourceChangedInput {
   entityId?: number | string
   entityIds?: Array<number | string>
   origin?: string | null
+  mutationId?: string | null
   payload?: unknown
 }
 
@@ -68,27 +70,125 @@ export function createRedisRegistrationCodeCommands(redisUrl: string): Registrat
   }
 }
 
-export function createRedisAdminAuthVersionStore(redisUrl: string | null) {
-  const unavailable = () => new Error('管理员认证服务暂不可用')
-  const parseVersion = (value: string) => {
-    const version = Number(value)
-    if (!Number.isSafeInteger(version) || version < 0) throw new Error('Redis admin auth version invalid')
-    return version
-  }
+const claimPasswordResetScript = `
+local userId = redis.call('GET', KEYS[1])
+if not userId then return false end
+local ttl = redis.call('PTTL', KEYS[1])
+if ttl <= 0 then return false end
+if redis.call('SET', KEYS[2], userId, 'PX', ttl, 'NX') ~= 'OK' then return false end
+redis.call('DEL', KEYS[1])
+return userId
+`
+
+const restorePasswordResetScript = `
+if redis.call('GET', KEYS[2]) ~= ARGV[1] then return 0 end
+local ttl = redis.call('PTTL', KEYS[2])
+if ttl <= 0 then redis.call('DEL', KEYS[2]); return 0 end
+local restored = redis.call('SET', KEYS[1], ARGV[1], 'PX', ttl, 'NX')
+redis.call('DEL', KEYS[2])
+if restored == 'OK' then return 1 end
+return 0
+`
+
+export function createRedisPasswordResetCommands(redisUrl: string): PasswordResetRedisCommands {
   return {
-    async getAuthVersion(): Promise<number> {
-      if (!redisUrl) throw unavailable()
-      const value = await withRedis(redisUrl, (command) => command(
-        'EVAL', 'return tonumber(redis.call("GET", KEYS[1]) or "0")', '1', 'auth:admin:security-version',
-      ))
-      if (value === null) throw new Error('Redis admin auth version invalid')
-      return parseVersion(value)
+    get: (key) => withRedis(redisUrl, (command) => command('GET', key)),
+    set: (key, value, ...options) => withRedis(redisUrl, (command) => command('SET', key, value, ...options)),
+    async del(...keys) {
+      const result = await withRedis(redisUrl, (command) => command('DEL', ...keys))
+      const count = result === null ? NaN : Number(result)
+      if (!Number.isSafeInteger(count) || count < 0) throw new Error('Redis delete response invalid')
+      return count
     },
-    async incrementAuthVersion(): Promise<number> {
-      if (!redisUrl) throw unavailable()
-      const value = await withRedis(redisUrl, (command) => command('INCR', 'auth:admin:security-version'))
-      if (value === null) throw new Error('Redis admin auth version invalid')
-      return parseVersion(value)
+    claim: (tokenKey, claimKey) => withRedis(redisUrl, (command) => command(
+      'EVAL', claimPasswordResetScript, '2', tokenKey, claimKey,
+    )),
+    async restore(tokenKey, claimKey, userId) {
+      const result = await withRedis(redisUrl, (command) => command(
+        'EVAL', restorePasswordResetScript, '2', tokenKey, claimKey, userId,
+      ))
+      return result === '1'
+    },
+  }
+}
+
+/** 唤醒共享 Python 回收站 Worker；数据库任务已持久化，Redis 通知失败可由 Worker 扫描恢复。 */
+export function createRedisTrashPurgeNotifier(redisUrl: string): () => Promise<void> {
+  return async () => {
+    await withRedis(redisUrl, (command) => command('PUBLISH', 'jobs:trash-purge:wakeup', '1'))
+  }
+}
+
+/** Read the WebUI session-list status snapshot with the same key and terminal rule as genstream. */
+export function createRedisAgentActiveStatusReader(redisUrl: string) {
+  return async (sessionIds: number[]): Promise<Map<number, boolean>> => {
+    if (sessionIds.length === 0) return new Map()
+    try {
+      return await withRedis(redisUrl, async (command) => {
+        const statuses = new Map<number, boolean>()
+        for (const sessionId of sessionIds) {
+          const raw = await command('GET', `genstream:state:${sessionId}`)
+          statuses.set(sessionId, raw === null ? false : !Boolean((JSON.parse(raw) as { done?: unknown }).done))
+        }
+        return statuses
+      })
+    } catch {
+      reportFailure('agent session status lookup')
+      return new Map()
+    }
+  }
+}
+
+/** Probe/reap the same generation lease keys used by Python genstream. */
+export function createRedisAgentRunRecoveryState(redisUrl: string) {
+  return {
+    async probe(sessionId: number) {
+      try {
+        return await withRedis(redisUrl, async (command) => {
+          const raw = await command('GET', `genstream:state:${sessionId}`)
+          const state = raw === null ? null : JSON.parse(raw) as { done?: unknown }
+          if (state !== null && (!state || typeof state !== 'object' || Array.isArray(state)))
+            throw new Error('Generation state invalid')
+          const hasOwner = await command('EXISTS', `genstream:owner:${sessionId}`)
+          const hasLease = await command('EXISTS', `genstream:lease:${sessionId}`)
+          const hasBeat = await command('EXISTS', `genstream:beat:${sessionId}`)
+          const ownerExists = hasOwner === '1'
+          const leaseExists = hasLease === '1'
+          const beatExists = hasBeat === '1'
+          if (![hasOwner, hasLease, hasBeat].every((value) => value === '0' || value === '1'))
+            throw new Error('Generation lease response invalid')
+          const active = Boolean((state && !state.done) || ownerExists || leaseExists)
+          return {
+            redisOk: true,
+            active,
+            stale: active && !beatExists && !ownerExists && !leaseExists,
+          }
+        })
+      } catch {
+        reportFailure('agent run recovery probe')
+        return { redisOk: false, active: null, stale: false }
+      }
+    },
+    async reap(sessionId: number) {
+      try {
+        await withRedis(redisUrl, (command) => command(
+          'DEL',
+          `genstream:state:${sessionId}`,
+          `genstream:cancel:${sessionId}`,
+          `genstream:lease:${sessionId}`,
+          `genstream:owner:${sessionId}`,
+          `genstream:beat:${sessionId}`,
+        ))
+      } catch {
+        reportFailure('agent run recovery reap')
+      }
+    },
+    async compressionLockExists(sessionId: number) {
+      const result = await withRedis(redisUrl, (command) =>
+        command('EXISTS', `agent:context:compress:${sessionId}`),
+      )
+      if (result !== '0' && result !== '1') throw new Error('Compression lock response invalid')
+      return result === '1'
     },
   }
 }
@@ -193,6 +293,10 @@ async function withRedis<T>(redisUrl: string, work: (command: RedisCommand) => P
   }
 }
 
+export async function pingRedis(redisUrl: string): Promise<boolean> {
+  return withRedis(redisUrl, async (command) => (await command('PING')) === 'PONG')
+}
+
 function reportFailure(operation: string): void {
   console.error(`gugu-webui ${operation} failed`)
 }
@@ -251,6 +355,7 @@ export function createRedisEventPublisher(
           if (input.entityIds !== undefined) payload.entity_ids = input.entityIds
           if (input.payload !== undefined) payload.payload = input.payload
           if (input.origin) payload.origin = input.origin
+          if (input.mutationId) payload.mutation_id = input.mutationId
           return command('PUBLISH', `events:${input.ownerId}`, JSON.stringify(payload))
         })
         return true

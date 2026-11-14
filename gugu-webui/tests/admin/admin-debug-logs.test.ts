@@ -151,7 +151,7 @@ test('SSE从连接时的日志末尾开始读取，持续发出新增行并只�
     paths: ctx.paths,
     webCandidates: [join(ctx.root, 'web-dev.log'), ctx.paths.web],
     verifyAdmin: async () => { verifyCalls++; return true },
-    pollIntervalMs: 10,
+    pollIntervalMs: 100,
   })
   try {
     await writeFile(ctx.paths.worker, '11-12 09:00:00 existing\n')

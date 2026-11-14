@@ -114,11 +114,18 @@ test('PostgreSQL 刷新只递增 epoch 并过期快照，不清空上下文或�
       [otherOwnerId, JSON.stringify(context), '2026-12-01T00:00:00Z', stamp],
     )
     const ownId = ownRows[0]!.id, foreignId = foreignRows[0]!.id
-    const invalidationEvents: Array<{ sessionId: number; contextEpoch: number }> = []
+    const invalidationEvents: Array<{
+      sessionId: number; contextEpoch: number; snapshotHash: string | null
+      sessionInfoHash: string | null; expiresAt: string
+    }> = []
     const refresh = createPostgresAgentSessionRefresher(pool, async (event) => {
       const persisted = await pool.query('SELECT context_epoch FROM conversation_sessions WHERE id = $1', [event.sessionId])
       assert.equal(persisted.rows[0]?.context_epoch, event.contextEpoch, '旁路事件发生时主写入已提交')
-      invalidationEvents.push({ sessionId: event.sessionId, contextEpoch: event.contextEpoch })
+      invalidationEvents.push({
+        sessionId: event.sessionId, contextEpoch: event.contextEpoch,
+        snapshotHash: event.snapshotHash, sessionInfoHash: event.sessionInfoHash,
+        expiresAt: event.expiresAt,
+      })
     })
 
     assert.deepEqual(await refresh(ownerId, ownId), { id: ownId, context_epoch: 6 })
@@ -129,7 +136,10 @@ test('PostgreSQL 刷新只递增 epoch 并过期快照，不清空上下文或�
     assert.equal(rows[0]!.context_epoch, 6)
     assert.deepEqual(rows[0]!.session_context, context)
     assert.equal(rows[0]!.snapshot_hash, 'own-hash')
-    assert.ok(new Date(rows[0]!.snapshot_expires_at).getTime() <= Date.now())
+    const { rows: expirationRows } = await pool.query<{ expired: boolean }>(
+      'SELECT snapshot_expires_at <= now() AS expired FROM conversation_sessions WHERE id = $1', [ownId],
+    )
+    assert.equal(expirationRows[0]?.expired, true)
     assert.ok(new Date(rows[0]!.updated_at).getTime() > new Date(stamp).getTime())
     assert.equal(rows[1]!.context_epoch, 3)
     assert.equal(new Date(rows[1]!.snapshot_expires_at).toISOString(), '2026-12-01T00:00:00.000Z')

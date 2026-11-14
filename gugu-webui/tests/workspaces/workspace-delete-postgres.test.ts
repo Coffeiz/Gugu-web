@@ -89,7 +89,7 @@ test('PostgreSQL 删除工作区仅清理归属绑定、停用普通任务且保
       [ownerId],
     )
 
-    const remove = createPostgresWorkspaceDeleter(pool, { workspaceShellSupported: () => true })
+    const remove = createPostgresWorkspaceDeleter(pool)
     await assert.rejects(remove(otherOwnerId, 41), (error: unknown) =>
       error instanceof CoreError && error.code === 'not_found',
     )

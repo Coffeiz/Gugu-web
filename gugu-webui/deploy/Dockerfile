@@ -26,6 +26,8 @@ COPY --from=build --chown=node:node /workspace/gugu-webui/dist ./gugu-webui/dist
 COPY --from=build --chown=node:node /workspace/gugu-core/package.json ./gugu-core/package.json
 COPY --from=build --chown=node:node /workspace/gugu-core/dist ./gugu-core/dist
 COPY --from=build --chown=node:node /workspace/frontend/dist ./frontend/dist
+COPY --from=build --chown=node:node /workspace/backend/onboarding/assets ./backend/onboarding/assets
+RUN mkdir -p /data && chown node:node /data
 
 USER node
 EXPOSE 9595

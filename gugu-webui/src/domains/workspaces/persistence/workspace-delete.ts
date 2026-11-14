@@ -1,21 +1,11 @@
-import { CoreError, dataContext } from '@gugu/core'
-import type { Pool, PoolClient } from 'pg'
-
-export interface WorkspaceDeleteRuntime {
-  workspaceShellSupported(): boolean | Promise<boolean>
-}
+import { CoreError } from '@gugu/core'
+import type { Pool } from 'pg'
+import { normalizeOwnerId } from '../../../adapters/owner-context.js'
+import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
 
 export interface WorkspaceDeleteResult {
   ok: true
   workspaceId: number
-}
-
-function validateOwner(ownerId: string): string {
-  try {
-    return dataContext(ownerId).ownerId
-  } catch {
-    throw new CoreError('invalid_request', '用户 ID 无效')
-  }
 }
 
 function validateWorkspaceId(workspaceId: number): number {
@@ -23,32 +13,13 @@ function validateWorkspaceId(workspaceId: number): number {
   return workspaceId
 }
 
-async function inTransaction<T>(pool: Pool, work: (client: PoolClient) => Promise<T>): Promise<T> {
-  const client = await pool.connect()
-  try {
-    await client.query('BEGIN')
-    const result = await work(client)
-    await client.query('COMMIT')
-    return result
-  } catch (error) {
-    await client.query('ROLLBACK').catch(() => undefined)
-    throw error
-  } finally {
-    client.release()
-  }
-}
-
 /** PostgreSQL port of DELETE /workspaces/{id}; file and parent-resource data are retained. */
-export function createPostgresWorkspaceDeleter(pool: Pool, runtime: WorkspaceDeleteRuntime) {
+export function createPostgresWorkspaceDeleter(pool: Pool) {
   return async function deleteWorkspace(rawOwnerId: string, rawWorkspaceId: number): Promise<WorkspaceDeleteResult> {
-    const ownerId = validateOwner(rawOwnerId)
+    const ownerId = normalizeOwnerId(rawOwnerId)
     const workspaceId = validateWorkspaceId(rawWorkspaceId)
 
-    // The Python service rejects OSS before looking up an ID, so preserve its 409 precedence.
-    if (!(await runtime.workspaceShellSupported()))
-      throw new CoreError('conflict', 'OSS 存储模式不支持 workspace，请使用独立 Shell 沙盒')
-
-    return inTransaction(pool, async (client) => {
+    return withPostgresTransaction(pool, async (client) => {
       const owned = await client.query<{ id: number } & Record<string, unknown>>(
         `SELECT id FROM workspaces WHERE id = $1 AND user_id = $2 FOR UPDATE`,
         [workspaceId, ownerId],

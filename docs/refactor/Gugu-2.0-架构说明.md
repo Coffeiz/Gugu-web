@@ -1,6 +1,6 @@
 # Gugu 2.0 架构说明
 
-> 更新：2026-11-12。本文只维护目标架构、多端职责和跨端约束；实施顺序、当前完成状态与待办见[迁移任务清单](Gugu-2.0-迁移任务清单.md)。
+> 更新：2026-11-13。本文只维护目标架构、多端职责和跨端约束；实施顺序、当前完成状态与待办见[迁移任务清单](Gugu-2.0-迁移任务清单.md)。
 > 当前桌面路线为 Electron + TypeScript Host + 随包 Node 26。完整 Agent、其他业务域、同步与正式发行仍需按迁移任务清单验收。
 
 ## 1. 目标架构与产品边界
@@ -9,12 +9,15 @@
 
 - 业务领域、应用用例、统一数据运行时和 Agent 编排逐步集中到顶层 `gugu-core/`，目标语言为 TypeScript，完整桌面/服务端 Runtime 由 Node 承载。
 - `gugu-desktop/` 使用 Electron + TypeScript 装配桌面 Host，负责窗口、生命周期和受限 IPC。可复用的执行契约、策略与平台适配收敛到 Core 的 `agent/executor/`；端侧 Host 注入授权与原生后端，必要时使用独立原生 helper。`gugu-webui/` 是 Linux/NAS 自托管版的 Node HTTP Host，负责 Web API/SSE、可信身份上下文、服务生命周期和 Core 装配，并提供现有 Vue 前端的静态构建产物。`gugu-saas/` 保留为 SaaS 专属的 Gateway、身份、同步和部署装配边界；具备独立构建边界后可迁入私有仓库。Core 不反向依赖 Web Host、SaaS 或 Electron 源码。
-- `frontend/` 暂时保留，共享现有 Vue UI，不在本轮重命名或整体搬迁。
+- `frontend/` 暂时保留 Vue 功能 UI；Web 与桌面共享看板、日历、笔记、画布等领域功能，分别装配应用壳、顶栏和主导航。不要求桌面沿用 WebUI 布局，也不在本轮整体重命名或搬迁前端目录。
 - macOS、Windows 桌面采用本地优先、应用内单用户；Linux/NAS 与 SaaS 保留多用户。桌面是默认家节点，SaaS 不是必经中转。
 - SaaS 长期以多用户 DB、云同步及相应消息/任务路由为职责，不持有用户 FS，也不装配本机用户目录、watcher 或通用 Shell。首版可保留旧 FS 兼容链路，须完成数据去向和恢复验收后再退出。
 - 文件正文以授权范围内的本地 FS 为唯一真源，业务读写直接通过 FS Adapter 完成；不再采用“本地文件与 DB 正文副本靠 watcher 同步”的方案。DB 不为本地文件单独生成持久对象 ID；需要索引、搜索或预览时，可保存可丢弃、可从文件重建的派生数据。文件以授权根目录下的相对路径定位，改名或移动后旧路径引用允许失效；watcher 仅可作为派生数据刷新的优化，不得作为一致性或数据恢复的前提。
+- Linux/NAS 自托管版 2.0 只支持本地文件系统存储，取消应用在线文件/附件/记忆存储的 OSS/S3 后端及其直传、预签名 URL、对象配额和对象搬移 API。升级路径必须包含旧版 OSS 数据的盘点与迁移/导出验收；不能在数据去向未确认时直接禁用旧对象读取。独立备份目标可另行设计，SaaS 云端对象存储由 SaaS 架构单独决定，不受此项取消决定约束。
+- 2.0 不把旧版“DB File 记录 ↔ 物理文件对象”双向对账和互相修复作为常规 Admin 能力；幽灵记录、孤儿文件导入/删除、路径镜像迁移仅可作为旧 FS 兼容数据迁移期的一次性诊断/修复工具。完成旧数据去向、完整性及恢复验收后，退役对应 Admin 页面、API 和维护任务。后续 Admin 存储页定位为存储健康与迁移/派生索引状态；若仍维护持久配额账本，可独立保留账本与 FS 实际占用核对，不与文件对象身份对账混为一体。缺失 FS 目录不得作为删除用户账号的依据。
 - RAG 目标复用 Gugu 1.7.8 的 TypeScript RAG 实现，作为 Node/Core 的唯一生产检索路径；不再把 Cython RAG 算法移植到 Node，也不长期维护 TS 与 Cython 两套生产引擎。Python/Cython 仅可在迁移期作为当前行为的参考基准，退出前以回归与质量集确认 TS 行为。
 - Linux/NAS 自部署保留多用户，执行后端目标改为 MXC 调用受授权的系统环境；2.0 不再维护 Linux Docker 执行沙箱。SaaS 不使用该 Linux 自部署执行方案，也不提供因此隐含的宿主机命令能力。MXC 必须在 Linux 上落实账号间的工作区、进程、资源和网络边界后，才可作为多用户通用执行后端启用；系统环境调用不等于无边界的宿主机 Shell。
+- Admin 的 Shell 管理随执行后端去 Docker 化：退役 Docker/Rootless/镜像状态、容器重建/重启和 Docker 网络诊断等实现专属控制；Linux/NAS 自托管保留通用执行环境健康/能力状态、全局启停、用户与 Agent 授权、危险操作策略、资源配额、网络策略和执行审计。网络及资源限制由 MXC/Host 的受控执行边界落实。SaaS 不展示或开放 Linux 自部署 Shell 管理；桌面端使用本地 Host 的权限和状态界面。
 - 各 Host 使用同一套 Core 定义，但分别拥有数据实例和运行生命周期。代码共享、数据同步、远程任务转交是三件事，分别验收。
 
 ### 1.2 各端职责
@@ -61,8 +64,10 @@ flowchart LR
     Broker --> Task["授权范围内的不可信工具进程"]
 ```
 
-- **Renderer / Preload**：复用 `frontend/src/desktop/` 的 Vue 界面，通过逐项声明的 `contextBridge` API 暴露受限业务调用。显式设置 `nodeIntegration: false`、`contextIsolation: true`、`sandbox: true`；不暴露原始 `ipcRenderer`、任意 channel、Shell、SQL 或通用文件路径接口。主进程校验调用窗口、frame/来源、命令和 DTO；身份、数据库路径及执行授权由 Host 建立。使用受限自定义协议加载随包 UI，验证资源根目录，限制导航/新窗口并设置 CSP。依据 [Electron 安全建议](https://www.electronjs.org/docs/latest/tutorial/security) 与 [Context Isolation](https://www.electronjs.org/docs/latest/tutorial/context-isolation)。
+- **Renderer / Preload**：复用 `frontend/` 中的领域功能 UI；桌面入口装配桌面专属 Shell，并通过逐项声明的 `contextBridge` API 暴露受限业务调用。显式设置 `nodeIntegration: false`、`contextIsolation: true`、`sandbox: true`；不暴露原始 `ipcRenderer`、任意 channel、Shell、SQL 或通用文件路径接口。主进程校验调用窗口、frame/来源、命令和 DTO；身份、数据库路径及执行授权由 Host 建立。使用受限自定义协议加载随包 UI，验证资源根目录，限制导航/新窗口并设置 CSP。依据 [Electron 安全建议](https://www.electronjs.org/docs/latest/tutorial/security) 与 [Context Isolation](https://www.electronjs.org/docs/latest/tutorial/context-isolation)。
 - **Main**：管理窗口、单实例、菜单、系统对话框、私有数据位置、授权、子进程及退出回收；将现有 Rust Host 的白名单、完整性校验、有界通信、未知结果恢复等契约迁入 TS。业务事务仍由 Core 执行。主进程与渲染进程职责依据 [Electron 进程模型](https://www.electronjs.org/docs/latest/tutorial/process-model)。
+- **Windows / macOS 适配**：保持同一 Desktop Shell、领域页面、业务状态和 Preload/Core 契约；按平台适配窗口标题栏/控制区、菜单栏、快捷键修饰符、文件对话框和窗口关闭/退出行为。平台差异由 Electron Main 的平台模块和 Renderer 的小型 chrome/style 适配承载，不在业务页面散布 OS 判断。Renderer 只接收有限、只读的平台显示信息；不自绘或仿造系统安全边界。
+- **桌面构建与发布**：一次版本发布使用同一源码提交和版本号，Windows/macOS 在同一发布流水线中作为独立平台任务构建，完成后汇总为同一版本的 artifacts。macOS 签名/公证在 macOS runner 完成；Windows 产物在 Windows runner 构建并按发布配置签名。开发期可产出未签名验证包；正式分发需显式要求签名，缺失凭据时不得静默发布未签名包。CPU 架构与 macOS 是否提供 Universal 包按发行支持矩阵确定；每个平台产物分别做安装/启动 smoke。electron-builder 支持多目标配置，但原生依赖与 macOS 签名存在目标平台约束，不能将“单次流水线”理解成必须由单台机器打包全部平台；参考 [electron-builder 多平台构建](https://www.electron.build/v26/docs/features/multi-platform-build/)、[代码签名](https://www.electron.build/v26/docs/features/code-signing/) 与 [Electron 签名说明](https://www.electronjs.org/docs/latest/tutorial/code-signing)。
 - **Core 进程**：首个 Electron 版本继续随包独立 Node 26，通过固定可执行路径、固定参数和 `shell: false` 启动，清理环境注入；复用现有 NDJSON v2、Worker、schema 3 和操作收据。Core 不导入 Electron，不在 UI/Main 执行同步数据库工作，不启动 localhost HTTP 服务或依赖系统 PATH。
 - **运行时版本与 ABI**：Electron 自带 Node 的版本不等于 Core 声明的 Node 26。本阶段保留独立 Node，接受新增包体成本并纳入 N0 预算；`better-sqlite3` 仅在独立 Node 的 Worker 加载，按该 Node ABI 和目标架构装配。未来若改为 Electron `utilityProcess`，须先验证内嵌 Node、Core engines 和原生模块 ABI，再单独决策；启动失败不能自动切换运行时。Electron 原生模块的 ABI 差异见 [官方说明](https://www.electronjs.org/docs/latest/tutorial/using-native-node-modules)。
 - **Executor / 原生 Broker**：Core 的 `agent/executor/` 定义执行请求、确认/取消、策略与能力协商，并提供可选的 MXC/平台适配；授权材料、真实目录和可用原生后端由 Host 注入。`mxc.ts` 封装 SDK 或版本化 native bridge 调用，不依赖 Electron；`platform.ts` 仅选择已授权且能落实策略的 Adapter。必要的原生 helper 保持有界协议和能力校验。桌面 `sandbox/diagnostics.ts` 只负责探测与脱敏诊断，不再复制执行策略或另建业务执行器。Electron 渲染沙箱不能据此替代 OS 隔离或放宽 MXC 策略。
@@ -114,6 +119,10 @@ gugu-desktop/
     main/
       index.ts                     # 组合各模块、注册应用入口与桥接
       windows.ts                   # 窗口、安全配置、导航与窗口来源管理
+      platform/                    # 〔规划〕桌面 OS 差异集中在 Host 层
+        windows.ts                 # Windows 标题栏、菜单、快捷键和退出行为
+        macos.ts                   # macOS 交通灯、菜单栏、快捷键和窗口关闭行为
+        shared.ts                  # 两端共享的安全窗口设置和生命周期逻辑
       core-host.ts                 # 可信 IPC 边界、随包 Core 通信与完整性/恢复
       lifecycle.ts                 # 单实例、Core 启停、休眠/退出和资源回收
       updater.ts                   # 更新检查、制品校验、确认安装与恢复
@@ -196,6 +205,24 @@ gugu-webui/                        # Linux/NAS 自托管版 Node HTTP Host 与�
 gugu-saas/                         # 〔规划〕SaaS Gateway、身份、同步与云端部署装配
 gugu-mobile/                       # 〔规划〕移动 Host 与系统能力 Adapter
 frontend/                          # 保留 Vue/Web 与 src/desktop；桌面 bridge 待接 preload
+  src/entrypoints/                 # 〔规划〕端侧启动入口；共享功能，不共享根 Shell
+    web.ts                         # Web 路由、服务和 Web Shell 装配
+    desktop.ts                     # 桌面路由、桌面服务和 Desktop Shell 装配
+  src/shells/                      # 〔规划〕应用级布局，各端分别持有
+    web/                           # Web 顶栏、侧栏、主导航与页面框架
+    desktop/                       # 桌面工具栏、窗口导航、可隐藏侧栏与页面框架
+  src/features/                    # 〔规划〕跨端复用的产品功能，按领域组织
+    board/                         # 看板页面、组件、composable 和领域状态
+    calendar/                      # 日历功能
+    notes/                          # 笔记功能
+    canvas/                         # 画布功能
+  src/shared/                      # 〔规划〕不依赖具体 Shell/平台的 UI 与业务状态
+    components/                    # 两端共享的基础控件
+    composables/                   # 两端共享交互逻辑
+    stores/                        # 跨端一致的业务状态
+  src/platform/                    # 〔规划〕端特有能力适配，不让功能组件直接依赖平台 API
+    web/                           # HTTP、浏览器存储等 Web Adapter
+    desktop/                       # Preload IPC、Core 命令和桌面存储 Adapter
   src/api/
     client.ts                      # 从 services/api.ts 收口通用请求、CSRF、错误处理和请求去重
     auth.ts                        # 认证/账户 API
@@ -221,6 +248,14 @@ WebUI 目录参照 Python `backend/app/api/v1/`、`backend/app/services/`、`bac
 2026-11-13 已将现有认证、Admin、Agent 会话、项目、工作区、日历、联系人、通知和站点 API 模块从 `src/` 根目录移入 `src/domains/<domain>/`，并将共享 Redis 事件 Adapter 移入 `src/adapters/`；`app.ts`、`main.ts`、启动配置、数据库 readiness、静态资源、HTTP 边界、Worker 与 migrations 保持 Host/基础设施职责。当前部分 Admin 与 Agent 原型仍在单个模块中混合 route/service/persistence，后续在行为切片稳定和 Host 接线时按上述分层继续拆分，不做一次性全树重写。`src/http/` 是共享边界，不能把业务 SQL/服务塞入该目录。
 
 Vue 前端 API 客户端也按业务域组织在 `frontend/src/api/`：通用传输、CSRF、错误与请求去重由 `client.ts` 承担；`auth.ts`、`files.ts`、`projects.ts`、`mind.ts`、`calendar.ts`、`schedules.ts`、`agent.ts`、`integrations.ts`、`preferences.ts` 和 `admin/` 各自负责对应领域。领域类型放在所属 API 模块，`types/` 只收真正跨域共享类型。现有 `frontend/src/services/api.ts` 在迁移期作为兼容入口逐步收口到新模块，调用方分批迁移；`index.ts` 可提供短期兼容导出，不能重新成为所有业务 API 的集中实现。
+
+### 多端前端：共享功能，分端 Shell
+
+Web 与桌面共享产品领域功能，不共享整站布局。看板、日历、笔记、画布等页面及其组件、composable、业务状态和交互规则应保持同一实现；Web 的 Topbar、Sidebar、Nav 与桌面窗口工具栏、主导航、侧栏布局分别由 `shells/web/`、`shells/desktop/` 持有。两端可共享设计 token、基础控件与领域组件，但桌面端可采用适合窗口空间、菜单栏、快捷键和侧栏显隐的布局，不以复刻 Web 页面为目标。
+
+领域功能通过稳定的应用服务接口访问数据与平台能力；Web Adapter 走 HTTP，桌面 Adapter 通过受限 Preload/IPC 调用 Core。功能组件不得直接导入 Electron、`window.guguDesktop` 或 Web 专属路由/请求单例。端侧启动入口负责选择 Router、Shell、存储与服务 Adapter；桌面 UI 状态（窗口、导航展开、工具栏）与 Web UI 状态分别持有，业务状态只有语义一致时才共享。
+
+以上目录是渐进式目标而非当前已完成结构。迁移时先提取 Shell 边界和服务端口，再按领域迁移可复用页面；不为目录对称而整体搬动 `views/`，也不通过条件分支把两端布局塞进单一大 Shell。验收需分别检查 Web 与桌面入口，并确认功能组件不依赖平台实现。
 
 正式 stdio 已移入 `runtime/transport/stdio.ts`；原 `.mjs` 制品/主动验证脚本作为 package/smoke 的共用辅助保留。生成的 Node/Core/原生资源放打包暂存及应用资源目录，不作为新的源代码职责层，也不提交 Git。
 
@@ -282,4 +317,4 @@ RAG 复用既有 TypeScript 算法实现，不从 Cython 重写算法。迁移�
 | 云同步 | 方向和本地稳定身份/版本底座已有定义 | 实体全局 ID、同步游标、墓碑、冲突/重放/离线恢复、设备绑定与隔离协议 |
 | 任务转交 | 与数据同步分开设计 | 任务/父 Run ID、目标、授权引用、幂等/租约、接受/结果/取消回执及离线状态 |
 
-同步不复制本机绝对路径、bookmark、OS 授权、凭据或活跃进程。本地路径引用不代表文件已同步到其他设备；附件/记忆的逻辑记录及其正文是否进入云端属于独立产品能力，云端对象存储是否提供仍需单独冻结，不能把“记录已同步”显示成“文件已备份”。SaaS 退出旧 FS 前，须明确附件和长期记忆正文的去向及恢复路径。
+同步不复制本机绝对路径、bookmark、OS 授权、凭据或活跃进程。本地路径引用不代表文件已同步到其他设备；附件/记忆的逻辑记录及其正文是否进入云端属于独立产品能力，SaaS 云端对象存储方案仍需单独冻结，不能把“记录已同步”显示成“文件已备份”。SaaS 退出旧 FS 前，须明确附件和长期记忆正文的去向及恢复路径。

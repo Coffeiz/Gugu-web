@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify'
+import { maskSecret } from '../../shared/secret-mask.js'
 
 type Preset = Record<string, unknown> & { id: string; provider: string; api_key: string; base_url: string; model: string }
 type Config = { ai_presets?: { active_id?: string; items?: Preset[]; strategy?: string; pool_mode?: string }; ai?: Record<string, unknown> }
@@ -36,11 +37,8 @@ function presets(config: Config) {
   if (!config.ai_presets || !Array.isArray(config.ai_presets.items)) config.ai_presets = { active_id: '', items: [] }
   return config.ai_presets
 }
-function mask(key: string) {
-  return !key ? '' : key.length <= 8 ? '•'.repeat(key.length) : `${key.slice(0, 3)}${'•'.repeat(key.length - 7)}${key.slice(-4)}`
-}
 function show(item: Preset, snapshot: (value: Record<string, unknown>) => Record<string, unknown>) {
-  return { ...item, api_key: mask(item.api_key), in_pool: Boolean(item.in_pool), declared_capabilities: snapshot(item) }
+  return { ...item, api_key: maskSecret(item.api_key), in_pool: Boolean(item.in_pool), declared_capabilities: snapshot(item) }
 }
 function activeSegment(item: Preset) {
   return Object.fromEntries(aiKeys.map((key) => [key, item[key] ?? defaults[key]]))
@@ -88,7 +86,7 @@ export function registerAdminLlmPresetRoutes(app: FastifyInstance, options: Admi
     const result = options.mutate((config) => {
       const collection = presets(config); collection.items!.push(item)
       if (!collection.active_id) { collection.active_id = id; config.ai = activeSegment(item) }
-      return { ...item, api_key: mask(item.api_key) }
+      return { ...item, api_key: maskSecret(item.api_key) }
     })
     await audit('llm_preset.create', { preset_id: id, provider: item.provider })
     return reply.code(201).send(result)
@@ -106,7 +104,7 @@ export function registerAdminLlmPresetRoutes(app: FastifyInstance, options: Admi
       if (changes.capability_overrides !== undefined) { next.capability_checked_at = ''; next.capability_fingerprint = '' }
       Object.assign(item, next)
       if (all.active_id === item.id) config.ai = activeSegment(item)
-      return { ...item, api_key: mask(item.api_key) }
+      return { ...item, api_key: maskSecret(item.api_key) }
     })
     await audit('llm_preset.update', { preset_id: request.params.preset_id })
     return result

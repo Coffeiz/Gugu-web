@@ -8,7 +8,7 @@ const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const ownerId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
 const otherOwnerId = 'ad0902a0-c899-44ee-b180-d54eb04e4604'
 
-test('POST workspace 创建校验 kind 关联对象归属、shell 支持与 directory 绑定', {
+test('POST workspace 创建校验 kind 关联对象归属与 directory 绑定', {
   skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL integration',
 }, async () => {
   const schema = `gugu_workspace_create_${randomUUID().replaceAll('-', '')}`
@@ -47,7 +47,7 @@ test('POST workspace 创建校验 kind 关联对象归属、shell 支持与 dire
       [ownerId, otherOwnerId],
     )
 
-    const create = createPostgresWorkspaceCreator(pool, { workspaceShellSupported: () => true })
+    const create = createPostgresWorkspaceCreator(pool)
     const folder = await create(ownerId, { name: ' 文件夹环境 ', folderId: 11 })
     assert.deepEqual(folder, {
       id: folder.id,
@@ -87,9 +87,6 @@ test('POST workspace 创建校验 kind 关联对象归属、shell 支持与 dire
     await assert.rejects(create(ownerId, { name: '缺少 folder id' }), { code: 'conflict' })
     await assert.rejects(create(ownerId, { name: '非法类型', kind: 'global' }), { code: 'invalid_request' })
     await assert.rejects(create(ownerId, { name: '' }), { code: 'invalid_request' })
-
-    const unsupported = createPostgresWorkspaceCreator(pool, { workspaceShellSupported: () => false })
-    await assert.rejects(unsupported(ownerId, { name: '不支持的工作区' }), { code: 'conflict' })
 
     const rows = await pool.query('SELECT user_id::text AS user_id, name, kind FROM workspaces ORDER BY id')
     assert.deepEqual(rows.rows, [

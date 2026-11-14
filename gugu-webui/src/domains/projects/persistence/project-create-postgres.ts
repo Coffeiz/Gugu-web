@@ -1,5 +1,6 @@
-import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
+import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
+import { recordForwardUndoOperation } from '../../undo/persistence/forward-operation.js'
 import type {
   ProjectCreateRecord,
   ProjectCreateRuntime,
@@ -42,12 +43,6 @@ function rowAsProject(row: Record<string, unknown>): ProjectCreateRecord {
   }
 }
 
-function json(value: unknown): string {
-  const encoded = JSON.stringify(value)
-  if (encoded === undefined) throw new Error('Undo 状态无法序列化')
-  return encoded
-}
-
 function timestamp(value: unknown): string | null {
   if (value == null) return null
   if (value instanceof Date) return value.toISOString()
@@ -57,10 +52,6 @@ function timestamp(value: unknown): string | null {
       fraction.split('').every((digit) => digit === '0') ? '' : `.${fraction}`,
     )
     .replace(/([+-]\d{2})$/, '$1:00')
-}
-
-function newUndoId(prefix: 'op' | 'group'): string {
-  return `${prefix}-${randomUUID().replaceAll('-', '')}`
 }
 
 function transactionAdapter(client: PoolClient): ProjectCreateTransaction {
@@ -112,38 +103,7 @@ function transactionAdapter(client: PoolClient): ProjectCreateTransaction {
     async recordUndo(record) {
       const contextId = record.contextId.trim().slice(0, 128)
       if (!contextId) return
-
-      // 和 Python UndoService.record_forward 一样，新正向操作会截断当前标签页 redo 分支。
-      await client.query(
-        `UPDATE undo_operations
-         SET status = 'expired', failure_code = 'redo_cleared_by_new_operation'
-         WHERE user_id = $1 AND undo_context_id = $2 AND actor_type = 'web'
-           AND status = 'undone'`,
-        [record.userId, contextId],
-      )
-      await client.query(
-        `INSERT INTO undo_operations (
-           id, user_id, undo_context_id, group_id, resource, action, target_refs,
-           before_state, after_state, base_versions, artifact_refs, actor_type,
-           status, created_at, expires_at, undone_at, failure_code
-         ) VALUES (
-           $1, $2, $3, $4, $5, $6, $7::json, $8::json, $9::json, $10::json,
-           '{}'::json, 'web', 'active', CURRENT_TIMESTAMP,
-           CURRENT_TIMESTAMP + INTERVAL '30 days', NULL, NULL
-         )`,
-        [
-          newUndoId('op'),
-          record.userId,
-          contextId,
-          newUndoId('group'),
-          record.resource,
-          record.action,
-          json(record.targetRefs),
-          json(record.beforeState),
-          json(record.afterState),
-          json(record.baseVersions),
-        ],
-      )
+      await recordForwardUndoOperation(client, { ...record, contextId })
     },
   }
 }
@@ -152,18 +112,7 @@ function transactionAdapter(client: PoolClient): ProjectCreateTransaction {
 export function createPostgresProjectCreateRuntime(pool: Pool, publishProjectCreated: EventPublisher): ProjectCreateRuntime {
   return {
     async transaction<T>(work: (tx: ProjectCreateTransaction) => Promise<T>): Promise<T> {
-      const client = await pool.connect()
-      try {
-        await client.query('BEGIN')
-        const result = await work(transactionAdapter(client))
-        await client.query('COMMIT')
-        return result
-      } catch (error) {
-        await client.query('ROLLBACK').catch(() => undefined)
-        throw error
-      } finally {
-        client.release()
-      }
+      return withPostgresTransaction(pool, (client) => work(transactionAdapter(client)))
     },
     publishProjectCreated,
   }

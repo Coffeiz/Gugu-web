@@ -7,7 +7,6 @@ import type { ProjectRecord } from '@gugu/core'
 import type { ProjectTrashFile, ProjectTrashFolder } from '../../src/domains/projects/application/project-trash.js'
 import {
   createLocalProjectTrashStorage,
-  createOssProjectTrashStorage,
   createProjectTrashOriginalStorageKeyResolver,
   projectFileTrashKey,
 } from '../../src/domains/projects/persistence/project-trash-storage.js'
@@ -47,6 +46,11 @@ test('Local 项目文件物理移入回收站，再恢复时按 Python 规则解
     assert.equal(await readFile(path.join(root, trashKey), 'utf8'), '原始内容')
     const mode = (await stat(path.join(root, trashKey))).mode & 0o777
     assert.equal(mode & 0o060, 0o060, '移动后的文件应保留 group rw 权限')
+    await moved.rollback?.()
+    assert.equal(await readFile(path.join(root, originalKey), 'utf8'), '原始内容', 'DELETE 事务失败补偿应恢复原文件')
+
+    const movedAgain = await storage.moveToTrash(ownerId, file)
+    assert.equal(movedAgain.storageKey, trashKey)
 
     const conflictingPath = path.join(root, originalKey)
     await mkdir(path.dirname(conflictingPath), { recursive: true })
@@ -55,6 +59,8 @@ test('Local 项目文件物理移入回收站，再恢复时按 Python 规则解
     assert.equal(restored.storageKey, `${ownerId}/项目文件/2026/11/计划 #17/文档/计划(1).md`)
     assert.equal(restored.displayName, '计划(1)')
     assert.equal(await readFile(path.join(root, restored.storageKey), 'utf8'), '原始内容')
+    await restored.rollback?.()
+    assert.equal(await readFile(path.join(root, trashKey), 'utf8'), '原始内容', 'RESTORE 事务失败补偿应回到回收站 key')
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -71,16 +77,6 @@ test('Local 存储 adapter 对 owner key 越界拒绝操作，缺失源文件返
   } finally {
     await rm(root, { recursive: true, force: true })
   }
-})
-
-test('OSS 项目软删保留原对象 key，常规恢复不调用对象搬运', async () => {
-  let moves = 0
-  const storage = createOssProjectTrashStorage(() => originalKey, async () => { moves += 1 })
-  const moved = await storage.moveToTrash(ownerId, file)
-  const restored = await storage.restoreFromTrash(ownerId, file, project, folders)
-  assert.equal(moved.storageKey, originalKey)
-  assert.equal(restored.storageKey, originalKey)
-  assert.equal(moves, 0)
 })
 
 test('Python-compatible resolver owner-scopes MindMap metadata and follows its key layout', async () => {

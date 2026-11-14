@@ -11,7 +11,7 @@ import { installHttpErrorHandler } from '../../src/http/errors.js'
 const userIdA = '00000000-0000-4000-8000-000000000001'
 const userIdB = '00000000-0000-4000-8000-000000000002'
 
-function setup(storageBackend: 'local' | 'oss' = 'local') {
+function setup() {
   const calls: { sql: string; values: unknown[] }[] = []
   let queryError: Error | undefined
   const app = Fastify()
@@ -19,7 +19,6 @@ function setup(storageBackend: 'local' | 'oss' = 'local') {
     requireAdmin: async (request, reply) => {
       if (request.headers.authorization !== 'admin') return reply.code(401).send({ error: 'unauthorized' })
     },
-    storageBackend,
     now: () => new Date('2026-11-13T14:23:45.000Z'),
     query: async (sql, values) => {
       calls.push({ sql, values })
@@ -90,8 +89,8 @@ test('列表按创建时间倒序，q 对用户名和邮箱不区分大小写过
   } finally { await ctx.cleanup() }
 })
 
-test('搜索邮箱命中，保留账户状态和空配额，并在 OSS 模式使用文件记录统计', async () => {
-  const ctx = setup('oss')
+test('搜索邮箱命中，保留账户状态和空配额，并为无本地账本的用户使用文件记录统计', async () => {
+  const ctx = setup()
   try {
     const response = await ctx.app.inject({ url: '/api/v1/admin/users?q=BETA@EXAMPLE', headers: { authorization: 'admin' } })
     assert.equal(response.statusCode, 200)
@@ -104,7 +103,7 @@ test('搜索邮箱命中，保留账户状态和空配额，并在 OSS 模式使
     assert.equal(body.items[0].tokens_6h, 5)
     assert.equal(body.items[0].storage_used, 11)
     assert.equal(body.items[0].token_limit_6h, null)
-    assert.equal(ctx.calls.some(({ sql }) => sql.includes('storage_quota_ledgers')), false)
+    assert.equal(ctx.calls.some(({ sql }) => sql.includes('storage_quota_ledgers')), true)
   } finally { await ctx.cleanup() }
 })
 

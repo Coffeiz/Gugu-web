@@ -1,5 +1,6 @@
 import type { Pool } from 'pg'
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify'
+import { adminHttpError } from './errors.js'
 
 export type AdminAnalyticsSummaryQuery = (sql: string, values: unknown[]) => Promise<unknown[]>
 export interface AdminAnalyticsSummaryOptions {
@@ -226,7 +227,7 @@ export function registerAdminAnalyticsSummaryRoute(app: FastifyInstance, options
         if (!isRecord(row) || !isRecord(row.summary)) throw new Error('invalid analytics summary result')
         return row.summary
       } catch {
-        throw Object.assign(new Error('分析汇总查询失败'), { statusCode: 500 })
+        throw adminHttpError(500, '分析汇总查询失败')
       }
     },
   )

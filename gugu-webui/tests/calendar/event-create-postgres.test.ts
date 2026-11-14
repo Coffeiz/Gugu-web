@@ -73,6 +73,29 @@ async function withDatabase(work: (pool: Pool) => Promise<void>) {
         failure_code varchar(80)
       )
     `)
+    await pool.query(`
+      CREATE TABLE rag_index_jobs (
+        id serial PRIMARY KEY,
+        user_id uuid NOT NULL,
+        source_type varchar(32) NOT NULL,
+        source_id varchar(255) NOT NULL DEFAULT '',
+        version varchar(64) NOT NULL DEFAULT '',
+        operation varchar(24) NOT NULL DEFAULT 'upsert',
+        status varchar(16) NOT NULL DEFAULT 'queued',
+        generation integer NOT NULL DEFAULT 1,
+        completed_generation integer NOT NULL DEFAULT 0,
+        attempts integer NOT NULL DEFAULT 0,
+        next_attempt_at timestamptz,
+        lease_until timestamptz,
+        last_started_at timestamptz,
+        last_succeeded_at timestamptz,
+        last_error_code varchar(64),
+        pending_source_ids json,
+        created_at timestamptz NOT NULL,
+        updated_at timestamptz NOT NULL,
+        CONSTRAINT uq_rag_index_job_user_source UNIQUE(user_id, source_type)
+      )
+    `)
     await work(pool)
   } finally {
     await pool.end()
@@ -89,8 +112,10 @@ test('PostgreSQL store scopes project and idempotency, writes Undo in the event 
   const store = createPostgresEventCreateStore(pool, async (publication) => {
     const eventCount = await pool.query('SELECT count(*)::int AS count FROM calendar_events')
     const undoCount = await pool.query('SELECT count(*)::int AS count FROM undo_operations')
+    const jobCount = await pool.query('SELECT count(*)::int AS count FROM rag_index_jobs')
     assert.equal(eventCount.rows[0]?.count, 1, 'publication runs after the event commit')
     assert.equal(undoCount.rows[0]?.count, 1, 'Undo commits with the event')
+    assert.equal(jobCount.rows[0]?.count, 1, 'durable RAG job commits with the event')
     publications.push(publication)
   })
   const result = await createCalendarEvent(store, {
@@ -216,6 +241,29 @@ test('PostgreSQL rolls event back when Undo insert fails and keeps unrelated uni
   )
   rows = await pool.query('SELECT count(*)::int AS count FROM calendar_events')
   assert.equal(rows.rows[0]?.count, 1)
+}))
+
+test('PostgreSQL rolls back event and Undo when the durable RAG job cannot be enqueued', {
+  skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL integration',
+}, async () => withDatabase(async (pool) => {
+  const store = createPostgresEventCreateStore(pool, async () => assert.fail('rolled back event must not publish'))
+  await pool.query(`
+    CREATE FUNCTION fail_calendar_rag_enqueue() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN RAISE EXCEPTION 'synthetic RAG enqueue failure'; END
+    $$
+  `)
+  await pool.query(`CREATE TRIGGER fail_calendar_rag_enqueue BEFORE INSERT ON rag_index_jobs
+                    FOR EACH ROW EXECUTE FUNCTION fail_calendar_rag_enqueue()`)
+
+  await assert.rejects(createCalendarEvent(store, {
+    ownerId, input: { ...input, project_id: null }, undoContextId: 'tab-1',
+  }), /synthetic RAG enqueue failure/)
+  const events = await pool.query('SELECT count(*)::int AS count FROM calendar_events')
+  const undo = await pool.query('SELECT count(*)::int AS count FROM undo_operations')
+  const jobs = await pool.query('SELECT count(*)::int AS count FROM rag_index_jobs')
+  assert.equal(events.rows[0]?.count, 0)
+  assert.equal(undo.rows[0]?.count, 0)
+  assert.equal(jobs.rows[0]?.count, 0)
 }))
 
 test('PostgreSQL publisher failure is logged and does not fail the committed create', {

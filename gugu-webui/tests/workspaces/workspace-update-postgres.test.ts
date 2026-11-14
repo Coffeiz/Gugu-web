@@ -77,7 +77,7 @@ test('PATCH workspace 保持 owner、directory path、绑定名称、enabled 与
       [ownerId],
     )
 
-    const update = createPostgresWorkspaceUpdater(pool, { workspaceShellSupported: () => true })
+    const update = createPostgresWorkspaceUpdater(pool)
     const result = await update(ownerId, 41, { name: '  New Display  ', enabled: false })
     assert.deepEqual(result, {
       id: 41,
@@ -120,9 +120,6 @@ test('PATCH workspace 保持 owner、directory path、绑定名称、enabled 与
     await assert.rejects(update(ownerId, 999, { enabled: false }), { statusCode: 404 })
     const disabledProjectWorkspace = await update(ownerId, 45, { enabled: false })
     assert.equal(disabledProjectWorkspace.enabled, false)
-
-    const unsupported = createPostgresWorkspaceUpdater(pool, { workspaceShellSupported: () => false })
-    await assert.rejects(unsupported(ownerId, 41, { enabled: true }), { statusCode: 400 })
 
     const noChange = await update(ownerId, 41, {})
     assert.equal(noChange.name, 'New Display')

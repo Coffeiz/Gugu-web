@@ -1,6 +1,8 @@
-import { randomUUID } from 'node:crypto'
 import type { ProjectRecord } from '@gugu/core'
 import type { Pool, PoolClient } from 'pg'
+import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
+import { recordForwardUndoOperation } from '../../undo/persistence/forward-operation.js'
+import { projectTimestamp, readProjectFileCount } from './projects.js'
 import type {
   ProjectTrashEvent,
   ProjectTrashFile,
@@ -20,12 +22,6 @@ const projectColumns = `id, user_id::text AS user_id, name, summary,
   created_at::text AS created_at, updated_at::text AS updated_at,
   deleted_at::text AS deleted_at`
 
-function timestamp(value: unknown): string | null {
-  if (value == null) return null
-  if (value instanceof Date) return value.toISOString()
-  return String(value).replace(' ', 'T').replace(/([+-]\d{2})$/, '$1:00')
-}
-
 function recordProject(row: Record<string, unknown>): ProjectRecord {
   return {
     id: Number(row.id),
@@ -43,10 +39,10 @@ function recordProject(row: Record<string, unknown>): ProjectRecord {
     priority: row.priority == null ? null : String(row.priority),
     version: Number(row.version || 1),
     archived: Boolean(row.archived),
-    done_at: timestamp(row.done_at),
-    created_at: timestamp(row.created_at) ?? '',
-    updated_at: timestamp(row.updated_at) ?? '',
-    deleted_at: timestamp(row.deleted_at),
+    done_at: projectTimestamp(row.done_at),
+    created_at: projectTimestamp(row.created_at) ?? '',
+    updated_at: projectTimestamp(row.updated_at) ?? '',
+    deleted_at: projectTimestamp(row.deleted_at),
   }
 }
 
@@ -65,7 +61,7 @@ function fileRow(row: Record<string, unknown>): ProjectTrashFile {
     mime_type: row.mime_type == null ? null : String(row.mime_type),
     img_width: row.img_width == null ? null : Number(row.img_width),
     img_height: row.img_height == null ? null : Number(row.img_height),
-    deleted_at: timestamp(row.deleted_at),
+    deleted_at: projectTimestamp(row.deleted_at),
   }
 }
 
@@ -74,7 +70,7 @@ function folderRow(row: Record<string, unknown>): ProjectTrashFolder {
     id: id(row.id), user_id: String(row.user_id), project_id: row.project_id == null ? null : id(row.project_id),
     workspace_directory_id: row.workspace_directory_id == null ? null : id(row.workspace_directory_id),
     parent_id: row.parent_id == null ? null : id(row.parent_id), name: String(row.name),
-    version: Number(row.version || 1), deleted_at: timestamp(row.deleted_at),
+    version: Number(row.version || 1), deleted_at: projectTimestamp(row.deleted_at),
   }
 }
 
@@ -85,7 +81,7 @@ function eventRow(row: Record<string, unknown>): ProjectTrashEvent {
     type: String(row.type), client: row.client == null ? null : String(row.client),
     project_id: row.project_id == null ? null : id(row.project_id),
     description: row.description == null ? null : String(row.description),
-    version: Number(row.version || 1), deleted_at: timestamp(row.deleted_at),
+    version: Number(row.version || 1), deleted_at: projectTimestamp(row.deleted_at),
   }
 }
 
@@ -94,19 +90,11 @@ function taskRow(row: Record<string, unknown>): ProjectTrashTask {
     id: id(row.id), user_id: row.user_id == null ? null : String(row.user_id),
     event_id: row.event_id == null ? null : id(row.event_id), enabled: Boolean(row.enabled),
     name: String(row.name), payload: String(row.payload ?? ''), cron: String(row.cron),
-    schedule_kind: String(row.schedule_kind ?? 'cron'), start_at: timestamp(row.start_at),
+    schedule_kind: String(row.schedule_kind ?? 'cron'), start_at: projectTimestamp(row.start_at),
     reminder_lead_minutes: row.reminder_lead_minutes == null ? null : id(row.reminder_lead_minutes),
     channels: String(row.channels ?? ''), delivery_targets: row.delivery_targets ?? null,
   }
 }
-
-function json(value: unknown): string {
-  const encoded = JSON.stringify(value)
-  if (encoded === undefined) throw new Error('Undo 状态无法序列化')
-  return encoded
-}
-
-function undoId(kind: 'op' | 'group'): string { return `${kind}-${randomUUID().replaceAll('-', '')}` }
 
 function transactionAdapter(client: PoolClient): ProjectTrashTransaction {
   return {
@@ -208,22 +196,16 @@ function transactionAdapter(client: PoolClient): ProjectTrashTransaction {
     async recordUndo(record: ProjectTrashUndoRecord) {
       const context = record.contextId.trim().slice(0, 128)
       if (!context) return
-      await client.query(
-        `UPDATE undo_operations SET status = 'expired', failure_code = 'redo_cleared_by_new_operation'
-         WHERE user_id = $1 AND undo_context_id = $2 AND actor_type = 'web' AND status = 'undone'`,
-        [record.userId, context],
-      )
-      await client.query(
-        `INSERT INTO undo_operations (
-           id, user_id, undo_context_id, group_id, resource, action, target_refs,
-           before_state, after_state, base_versions, artifact_refs, actor_type,
-           status, created_at, expires_at, undone_at, failure_code
-         ) VALUES ($1, $2, $3, $4, 'projects', 'delete', $5::json, $6::json, $7::json,
-                   $8::json, '{}'::json, 'web', 'active', CURRENT_TIMESTAMP,
-                   CURRENT_TIMESTAMP + INTERVAL '30 days', NULL, NULL)`,
-        [undoId('op'), record.userId, context, undoId('group'), json(record.targetRefs),
-          json(record.beforeState), json(record.afterState), json(record.baseVersions)],
-      )
+      await recordForwardUndoOperation(client, {
+        userId: record.userId,
+        contextId: context,
+        resource: 'projects',
+        action: 'delete',
+        targetRefs: record.targetRefs,
+        beforeState: record.beforeState,
+        afterState: record.afterState,
+        baseVersions: record.baseVersions,
+      })
     },
   }
 }
@@ -232,27 +214,10 @@ function transactionAdapter(client: PoolClient): ProjectTrashTransaction {
 export function createPostgresProjectTrashRuntime(pool: Pool, publish: EventPublisher): ProjectTrashRuntime {
   return {
     async transaction<T>(work: (tx: ProjectTrashTransaction) => Promise<T>): Promise<T> {
-      const client = await pool.connect()
-      try {
-        await client.query('BEGIN')
-        const result = await work(transactionAdapter(client))
-        await client.query('COMMIT')
-        return result
-      } catch (error) {
-        await client.query('ROLLBACK').catch(() => undefined)
-        throw error
-      } finally {
-        client.release()
-      }
+      return withPostgresTransaction(pool, (client) => work(transactionAdapter(client)))
     },
     async getProjectFileCount(ownerId, projectId) {
-      const result = await pool.query<{ file_count: string }>(
-        `SELECT COALESCE(counts.file_count, 0)::text AS file_count
-         FROM projects LEFT JOIN project_file_counts AS counts ON counts.project_id = projects.id
-         WHERE projects.user_id = $1 AND projects.id = $2`,
-        [ownerId, projectId],
-      )
-      return Number(result.rows[0]?.file_count ?? 0)
+      return readProjectFileCount(pool, ownerId, projectId)
     },
     publishResourceChanged: publish,
   }

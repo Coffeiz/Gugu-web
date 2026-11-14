@@ -1,14 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import type { RequestContext } from '@gugu/core'
 import type { EventOptions, UserFromRequest, WriteRequestMetadata } from '../../../app.js'
-import { writeRequestMetadata } from '../../../http/request.js'
-
-function parsePythonInteger(value: unknown): number | null | undefined {
-  if (value === undefined) return undefined
-  if (typeof value !== 'string' || !/^[+-]?\d+$/.test(value.trim())) return null
-  const parsed = Number(value.trim())
-  return Number.isSafeInteger(parsed) ? parsed : null
-}
+import { parsePythonInteger, writeRequestMetadata } from '../../../http/request.js'
 
 export interface EventUpdateRouteOptions {
   update?: (

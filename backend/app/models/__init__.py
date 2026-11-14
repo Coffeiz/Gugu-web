@@ -10,8 +10,8 @@ from uuid import UUID
 import json
 
 from sqlalchemy import (
-    String, Integer, Float, Text, DateTime, ForeignKey, Boolean, BigInteger, Uuid, JSON,
-    UniqueConstraint, CheckConstraint, Index, func, literal_column, text,
+    String, Integer, Float, Text, DateTime, ForeignKey, Boolean, BigInteger, Uuid, JSON, LargeBinary,
+    UniqueConstraint, CheckConstraint, ForeignKeyConstraint, Index, func, literal_column, text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
@@ -977,6 +977,91 @@ class ConversationSession(Base):
     provider_reasoning_states: Mapped[list["ProviderReasoningState"]] = relationship(
         back_populates="session", cascade="all, delete-orphan"
     )
+
+
+class AgentRunLease(Base):
+    """跨 Node Host 实例互斥的 Agent run fencing lease。"""
+
+    __tablename__ = "agent_run_leases"
+    __table_args__ = (Index("ix_agent_run_leases_expires_at", "expires_at"),)
+
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("conversation_sessions.id", ondelete="CASCADE"), primary_key=True
+    )
+    run_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    token: Mapped[str] = mapped_column(String(64), nullable=False)
+    fence: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+
+class AgentRunCheckpoint(Base):
+    """加密保存 Node Agent 的可恢复运行检查点。"""
+
+    __tablename__ = "agent_run_checkpoints"
+
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("conversation_sessions.id", ondelete="CASCADE"), primary_key=True
+    )
+    run_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    version: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    phase: Mapped[str] = mapped_column(String(20), nullable=False)
+    nonce: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    payload: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+
+class AgentRunEvent(Base):
+    """加密的 Agent run event outbox；确认后保留事件以支持幂等重放审计。"""
+
+    __tablename__ = "agent_run_events"
+    __table_args__ = (
+        UniqueConstraint("user_id", "session_id", "run_id", "sequence", name="uq_agent_run_events_sequence"),
+        ForeignKeyConstraint(
+            ["user_id", "session_id", "run_id"],
+            ["agent_run_checkpoints.user_id", "agent_run_checkpoints.session_id", "agent_run_checkpoints.run_id"],
+            ondelete="CASCADE",
+        ),
+        Index(
+            "ix_agent_run_events_pending", "user_id", "session_id", "run_id", "sequence",
+            postgresql_where=text("acknowledged_at IS NULL"),
+        ),
+    )
+
+    user_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    session_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    event_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    nonce: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    payload: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    acknowledged_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+
+
+class AgentRunInteractionReceipt(Base):
+    """一次性 interaction receipt，和对应 checkpoint 提交在同一事务消费。"""
+
+    __tablename__ = "agent_run_interaction_receipts"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["user_id", "session_id", "run_id"],
+            ["agent_run_checkpoints.user_id", "agent_run_checkpoints.session_id", "agent_run_checkpoints.run_id"],
+            ondelete="CASCADE",
+        ),
+    )
+
+    user_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    session_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    receipt: Mapped[str] = mapped_column(Text, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
 
 
 class ConversationPendingQueue(Base):

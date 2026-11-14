@@ -1,4 +1,5 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
+import { parseCookieHeader } from '../../http/cookies.js'
 
 const accessCookie = 'gugu_user_access_token'
 const csrfCookie = 'gugu_user_csrf_token'
@@ -46,18 +47,6 @@ export interface AuthRequest {
   readonly csrfHeader?: string
 }
 
-function cookies(header: string | undefined): Map<string, string> {
-  const result = new Map<string, string>()
-  for (const item of header?.split(';') ?? []) {
-    const separator = item.indexOf('=')
-    if (separator < 0) continue
-    const name = item.slice(0, separator).trim()
-    const value = item.slice(separator + 1).trim()
-    if (name && !result.has(name)) result.set(name, value)
-  }
-  return result
-}
-
 function constantTimeEqual(left: string, right: string): boolean {
   const leftBytes = Buffer.from(left)
   const rightBytes = Buffer.from(right)
@@ -68,7 +57,7 @@ export function extractUserToken(request: AuthRequest): string {
   const match = request.authorization?.match(/^Bearer\s+(.+)$/i)
   if (match?.[1]) return match[1]
 
-  const cookieValues = cookies(request.cookie)
+  const cookieValues = parseCookieHeader(request.cookie)
   const token = cookieValues.get(accessCookie)
   if (!token) throw new AuthenticationError('未提供认证凭据')
 

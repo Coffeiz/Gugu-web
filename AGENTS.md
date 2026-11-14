@@ -6,6 +6,7 @@
 |-------|------|---------|
 | frontend | `agentskills/frontend/SKILL.md` | Vue/TS 前端开发 |
 | backend | `agentskills/backend/SKILL.md` | Python/FastAPI 后端 |
+| node-webui | `agentskills/node-webui/SKILL.md` | gugu-webui Node.js/Fastify 后端与 API 迁移 |
 | canvas-mind | `agentskills/canvas-mind/SKILL.md` | 画布/便签/Mind |
 | design | `agentskills/design/SKILL.md` | UI 视觉与交互规范 |
 | testing | `agentskills/testing/SKILL.md` | 写/改测试 |

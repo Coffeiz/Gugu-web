@@ -1,12 +1,17 @@
 /**
- * 咕咕 API 客户端
- * 浏览器请求统一依赖 HttpOnly 会话 Cookie；写请求附带 CSRF token。
+ * 旧 API 兼容入口。新调用方按领域从 `@/api/*` 导入。
  */
 import type { components } from '@/types/api'
+import { BASE_URL, CLIENT_ID, UNDO_CONTEXT_ID, del, get, getCookieValue, getCsrfHeaders, patch, post, put, request, upload, uploadWithProgress } from '@/api/client'
+import type { RequestMeta } from '@/api/client'
 import { getLocale, i18n, type SupportedLocale } from '@/i18n'
-import { getInteractionClientId } from '@/interaction/sync/InteractionSyncState'
-import { handleUnauthorized, isUnauthorizedResponse } from '@/services/authSession'
-import { getAuthDeviceId } from '@/utils/authDevice'
+import { isUnauthorizedResponse } from '@/services/authSession'
+
+export { CLIENT_ID, UNDO_CONTEXT_ID, getCookieValue, getCsrfHeaders, uploadWithProgress }
+export type { RequestMeta }
+export { projectsApi } from '@/api/projects'
+export { authApi } from '@/api/auth'
+export { eventsApi } from '@/api/calendar'
 
 // 后端 Pydantic 模型（由 OpenAPI 生成，见 npm run gen:types）。高频实体直接复用，前后端对齐。
 type Schemas = components['schemas']
@@ -14,8 +19,6 @@ type Schemas = components['schemas']
 export interface FileSummaryResponse {
   recentFiles: Schemas['FileResponse'][]
 }
-
-const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
 
 export interface SiteConfig {
   icpNumber: string
@@ -28,162 +31,6 @@ export async function fetchSiteConfig(): Promise<SiteConfig> {
   const response = await fetch(`${BASE_URL}/site-config`, { credentials: 'same-origin' })
   if (!response.ok) throw new Error(`HTTP ${response.status}`)
   return response.json() as Promise<SiteConfig>
-}
-
-export function getCookieValue(name: string): string {
-  if (typeof document === 'undefined') return ''
-  const prefix = `${encodeURIComponent(name)}=`
-  const item = document.cookie.split('; ').find(value => value.startsWith(prefix))
-  return item ? decodeURIComponent(item.slice(prefix.length)) : ''
-}
-
-export function getCsrfHeaders(cookieName = 'gugu_user_csrf_token'): Record<string, string> {
-  const token = getCookieValue(cookieName)
-  return token ? { 'X-CSRF-Token': token } : {}
-}
-
-// 本标签页的 client-id：每次写操作作为 X-Client-Id 头发给后端，后端把它塞进 SSE 事件的 origin。
-// 前端收到「origin === 自己」的回声时跳过重拉（本页已乐观更新过），只让别的标签页/端刷新。
-// 每标签页独立并在 sessionStorage 中保持；刷新同一 Tab 不会改变来源身份。
-export const CLIENT_ID: string = getInteractionClientId()
-
-const UNDO_CONTEXT_STORAGE_KEY = 'gugu.undo.context-id'
-
-function getUndoContextId(): string {
-  if (typeof window === 'undefined') return `undo-${CLIENT_ID}`
-  try {
-    const existing = window.sessionStorage.getItem(UNDO_CONTEXT_STORAGE_KEY)
-    if (existing) return existing
-    const value = `undo-${typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`}`
-    window.sessionStorage.setItem(UNDO_CONTEXT_STORAGE_KEY, value)
-    return value
-  } catch {
-    return `undo-${CLIENT_ID}`
-  }
-}
-
-export const UNDO_CONTEXT_ID = getUndoContextId()
-
-export interface RequestMeta { mutationId?: string; undoGroupId?: string; headers?: Record<string, string> }
-
-// 同一标签页中多个页面/全局组件可能在启动时同时读取同一资源。只合并进行中的
-// GET；请求结束后立即移除，显式刷新仍会访问服务端。
-const inFlightGetRequests = new Map<string, Promise<unknown>>()
-
-// 泛型默认 any：未显式标注返回类型的调用方拿到 any（不给存量代码添堵）；
-// 标注了 <T> 的端点拿到精确类型。逐步把更多端点标上类型即可收紧。
-async function request<T = any>(method: string, path: string, body: any = null, isForm = false,
-                                signal?: AbortSignal, meta?: RequestMeta): Promise<T> {
-  const sessionKey = getCookieValue('gugu_user_csrf_token')
-  // CSRF cookie 为每次登录随机生成，可区分共享同源的不同账号会话。
-  const canDeduplicate = method.toUpperCase() === 'GET' && !!sessionKey && !signal && !meta && body === null
-  if (!canDeduplicate) return performRequest<T>(method, path, body, isForm, signal, meta)
-
-  const key = JSON.stringify([sessionKey, path])
-  const cloneResult = (value: T): T =>
-    value === null || value === undefined || typeof value !== 'object' ? value : JSON.parse(JSON.stringify(value)) as T
-  const existing = inFlightGetRequests.get(key)
-  if (existing) return (existing as Promise<T>).then(cloneResult)
-
-  const pending = performRequest<T>(method, path, body, isForm, signal, meta)
-  inFlightGetRequests.set(key, pending)
-  const clearPending = () => {
-    if (inFlightGetRequests.get(key) === pending) inFlightGetRequests.delete(key)
-  }
-  void pending.then(clearPending, clearPending)
-  return pending.then(cloneResult)
-}
-
-async function performRequest<T>(method: string, path: string, body: any, isForm: boolean,
-                                 signal: AbortSignal | undefined, meta: RequestMeta | undefined): Promise<T> {
-  const headers: Record<string, string> = {
-    'X-Client-Id': CLIENT_ID,
-    ...(['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase())
-      ? {}
-      : { ...getCsrfHeaders(), 'X-Undo-Context-ID': UNDO_CONTEXT_ID }),
-  }
-  if (meta?.mutationId) headers['X-Mutation-Id'] = meta.mutationId
-  if (meta?.undoGroupId) headers['X-Undo-Group-ID'] = meta.undoGroupId
-  if (meta?.headers) Object.assign(headers, meta.headers)
-
-  const opts: RequestInit = { method, headers, signal, credentials: 'include' }
-  if (body !== null) {
-    if (isForm) {
-      opts.body = body
-    } else {
-      headers['Content-Type'] = 'application/json'
-      opts.body = JSON.stringify(body)
-    }
-  }
-
-  const res = await fetch(`${BASE_URL}${path}`, opts)
-
-  if (!res.ok) {
-    // token 失效时自动清除并跳转登录
-    if (isUnauthorizedResponse(res)) {
-      throw new Error(i18n.global.t('errors.loginRequired'))
-    }
-    const err = await res.json().catch(() => ({}))
-    const d = err.detail
-    const msg = !d ? i18n.global.t('errors.http', { status: res.status })
-      : typeof d === 'string' ? d
-      : Array.isArray(d) ? d.map((e: any) => e.msg ?? e).join('；')
-      : typeof (d as any).message === 'string' ? (d as any).message
-      : i18n.global.t('errors.http', { status: res.status })
-    const apiErr = new Error(msg) as Error & { status?: number; code?: string; params?: Record<string, unknown> }
-    apiErr.status = res.status
-    if (d && typeof d === 'object' && !Array.isArray(d)) {
-      if (typeof (d as any).code === 'string') apiErr.code = (d as any).code
-      if ((d as any).params && typeof (d as any).params === 'object') apiErr.params = (d as any).params
-    }
-    throw apiErr
-  }
-
-  if (res.status === 204) return null as T
-  return res.json()
-}
-
-const get    = <T = any>(path: string)             => request<T>('GET',    path)
-const post   = <T = any>(path: string, body?: any, meta?: RequestMeta) => request<T>('POST',   path, body, false, undefined, meta)
-const patch  = <T = any>(path: string, body?: any, meta?: RequestMeta) => request<T>('PATCH',  path, body, false, undefined, meta)
-const put    = <T = any>(path: string, body?: any) => request<T>('PUT',    path, body)
-const del    = <T = any>(path: string, meta?: RequestMeta)             => request<T>('DELETE', path, null, false, undefined, meta)
-const upload = <T = any>(path: string, form: FormData) => request<T>('POST', path, form, true)
-
-export function uploadWithProgress(path: string, form: FormData, onProgress: (p: number) => void): Promise<any> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest()
-    xhr.open('POST', `${BASE_URL}${path}`)
-    xhr.withCredentials = true
-    xhr.setRequestHeader('X-Client-Id', CLIENT_ID)   // 上传也带 client-id，供后端回声抑制
-    xhr.setRequestHeader('X-Undo-Context-ID', UNDO_CONTEXT_ID)
-    const csrf = getCsrfHeaders()
-    if (csrf['X-CSRF-Token']) xhr.setRequestHeader('X-CSRF-Token', csrf['X-CSRF-Token'])
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) onProgress(e.loaded / e.total)
-    }
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        try { resolve(JSON.parse(xhr.responseText)) } catch { resolve(null) }
-      } else {
-        if (xhr.status === 401) {
-          handleUnauthorized('user')
-          reject(new Error(i18n.global.t('errors.loginRequired')))
-          return
-        }
-        try {
-          const d = JSON.parse(xhr.responseText).detail
-          const msg = !d ? i18n.global.t('errors.http', { status: xhr.status })
-            : typeof d === 'string' ? d
-            : Array.isArray(d) ? d.map((e: any) => e.msg ?? e).join('；')
-            : i18n.global.t('errors.http', { status: xhr.status })
-          reject(new Error(msg))
-        } catch { reject(new Error(i18n.global.t('errors.http', { status: xhr.status }))) }
-      }
-    }
-    xhr.onerror = () => reject(new Error(i18n.global.t('errors.network')))
-    xhr.send(form)
-  })
 }
 
 export interface UndoPreview {
@@ -310,19 +157,6 @@ export function uploadDirectWithProgress(url: string, file: File, onProgress: (p
     xhr.onerror = () => reject(new Error(i18n.global.t('errors.network')))
     xhr.send(file)
   })
-}
-
-// ── Projects ─────────────────────────────────────────────────────────────────
-export const projectsApi = {
-  list:   (archived = false, deleted = false)      => get<Schemas['ProjectResponse'][]>(`/projects${archived ? '?archived=true' : deleted ? '?deleted=true' : ''}`),
-  fileCounts: ()                            => get<{ projectId: number; fileCount: number }[]>('/projects/file-counts'),
-  get:    (id: number)                             => get<Schemas['ProjectResponse']>(`/projects/${id}`),
-  create: (data: Schemas['ProjectCreate'], idempotencyKey?: string) => post<Schemas['ProjectResponse']>(
-    '/projects', data, idempotencyKey ? { headers: { 'Idempotency-Key': idempotencyKey } } : undefined,
-  ),
-  update: (id: number, data: Schemas['ProjectUpdate'], meta?: RequestMeta) => patch<Schemas['ProjectResponse']>(`/projects/${id}`, data, meta),
-  delete: (id: number)                             => del(`/projects/${id}`),
-  restore: (id: number)                             => post<Schemas['ProjectResponse']>(`/projects/${id}/restore`),
 }
 
 // ── ScheduledTasks（定时任务）─────────────────────────────────────────────────
@@ -614,17 +448,6 @@ export const userSkillsApi = {
   create: (data: UserSkillWrite) => post<UserSkillItem>('/skills', data),
   update: (skillId: string, data: Partial<UserSkillWrite>) => patch<UserSkillItem>(`/skills/${encodeURIComponent(skillId)}`, data),
   delete: (skillId: string) => del(`/skills/${encodeURIComponent(skillId)}`),
-}
-
-// ── Events ────────────────────────────────────────────────────────────────────
-export const eventsApi = {
-  list:   (year: number, month: number) => get<Schemas['EventResponse'][]>(`/events?year=${year}&month=${month}`),
-  get:    (id: number) => get<Schemas['EventResponse']>(`/events/${id}`),
-  create: (data: Schemas['EventCreate'], idempotencyKey?: string) => post<Schemas['EventResponse']>(
-    '/events', data, idempotencyKey ? { headers: { 'Idempotency-Key': idempotencyKey } } : undefined,
-  ),
-  update: (id: number, data: Schemas['EventUpdate'], meta?: RequestMeta) => patch<Schemas['EventResponse']>(`/events/${id}`, data, meta),
-  delete: (id: number, version: number, meta?: RequestMeta) => del(`/events/${id}?version=${version}`, meta),
 }
 
 // ── Mind（思维面板 · 记录）─────────────────────────────────────────────────────
@@ -1132,25 +955,6 @@ export const searchApi = {
     const params = new URLSearchParams({ mode: 'OR', per_type: '200', types: 'note' })
     params.append('queries', query)
     return request('GET', `/search?${params.toString()}`, null, false, signal)
-  },
-}
-
-export const authApi = {
-  sendRegistrationCode: (email: string) => post<{ ok: boolean }>(
-    '/auth/registration-code', { email }, { headers: { 'X-Device-ID': getAuthDeviceId() } },
-  ),
-  updateProfile: (data: any)     => request('PATCH',  '/auth/profile', data),
-  requestEmailChange: (data: { newEmail: string; currentPassword: string }) => request('POST', '/auth/email-change/request', data),
-  resendEmailChange: () => request('POST', '/auth/email-change/resend'),
-  cancelEmailChange: () => request('POST', '/auth/email-change/cancel'),
-  verifyEmailChange: (token: string) => request('POST', '/auth/email-change/verify', { token }),
-  getQuota:      ()              => request<{ used_6h: number; limit_6h: number | null; reset_6h_at: string | null; used_weekly: number; limit_weekly: number | null; usage_kind: 'platform' | 'byok'; is_byok: boolean; byok_tokens_today: number; byok_tokens_month: number; byok_cache_rate: number }>('GET', '/auth/quota'),
-  getUsageTrends: (days = 30)    => request<{ labels: string[]; tokens_in: number[]; cache_read: number[]; cache_write: number[]; tokens_out: number[]; total: number; daily_avg: number; today: number; cache_rate: number }>('GET', `/auth/usage/trends?days=${days}`),
-  deleteAccount: (password: string) => request('DELETE', '/auth/me', { password }),
-  uploadAvatar:  (file: File) => {
-    const fd = new FormData()
-    fd.append('file', file)
-    return request('POST', '/auth/avatar', fd, true)
   },
 }
 

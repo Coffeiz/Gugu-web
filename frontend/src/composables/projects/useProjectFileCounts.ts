@@ -1,6 +1,6 @@
 import { ref, watch, type ComputedRef } from 'vue'
 import { showAppError } from '@/composables/core/useAppToast'
-import { projectsApi } from '@/services/api'
+import { projectsApi } from '@/api/projects'
 
 /** 文件数由服务端事务投影维护；文件变更后只读取小型项目计数摘要。 */
 export function useProjectFileCounts(filesRevision: ComputedRef<unknown>) {

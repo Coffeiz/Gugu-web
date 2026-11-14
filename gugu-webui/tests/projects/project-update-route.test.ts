@@ -4,6 +4,7 @@ import test from 'node:test'
 import { CoreError } from '@gugu/core'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
 import type { UserFromRequest } from '../../src/app.js'
+import { createProjectUpdater, type ProjectUpdateRuntime } from '../../src/domains/projects/application/project-update.js'
 import { registerProjectRoutes } from '../../src/domains/projects/routes/projects.js'
 
 const ownerId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
@@ -60,6 +61,35 @@ test('PATCH project route maps owner-scoped not found and CAS conflict to HTTP s
     const stale = await app.inject({ method: 'PATCH', url: '/api/v1/projects/18', payload: { version: 1, name: 'x' } })
     assert.equal(missing.statusCode, 404)
     assert.equal(stale.statusCode, 409)
+  } finally {
+    await app.close()
+  }
+})
+
+test('PATCH maps pre-lookup schema errors to HTTP 422 without opening persistence transaction', async () => {
+  const app = Fastify({ logger: false })
+  installHttpErrorHandler(app)
+  let transactions = 0
+  const userFromRequest = (() => ({ id: unrelatedUserId, requestContext: { data: { ownerId } } })) as unknown as UserFromRequest
+  const runtime = {
+    async transaction<T>() {
+      transactions += 1
+      throw new Error('schema validation must happen before persistence')
+    },
+    async renameProjectDirectory() {},
+    async getFileCount() { return 0 },
+    async publishProjectUpdated() {},
+  } as ProjectUpdateRuntime
+  registerProjectRoutes(app, userFromRequest, { updateProject: createProjectUpdater(runtime) })
+  try {
+    const response = await app.inject({
+      method: 'PATCH',
+      url: '/api/v1/projects/817',
+      payload: { name: 42 },
+    })
+    assert.equal(response.statusCode, 422)
+    assert.deepEqual(response.json(), { detail: 'name 必须是文本或空值' })
+    assert.equal(transactions, 0)
   } finally {
     await app.close()
   }

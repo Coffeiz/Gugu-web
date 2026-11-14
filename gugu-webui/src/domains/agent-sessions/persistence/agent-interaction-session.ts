@@ -16,6 +16,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
+function hasPythonTruthyValue(value: unknown): boolean {
+  if (value === null || value === undefined || value === false || value === 0 || value === '') return false
+  if (Array.isArray(value)) return value.length > 0
+  if (isRecord(value)) return Object.keys(value).length > 0
+  return true
+}
+
 /** Owner-scoped lookup used to resolve a sensitive-interaction deep link. */
 export function createInteractionSessionLookup(pool: Pool) {
   return {
@@ -32,7 +39,7 @@ export function createInteractionSessionLookup(pool: Pool) {
       const schema = isRecord(prompt.schema_json) ? prompt.schema_json : {}
       const context = isRecord(schema.context) ? schema.context : {}
       const target = context.secret_target
-      if (!schema.secret_fields || !isRecord(target) || target.kind !== 'mcp_credentials')
+      if (!hasPythonTruthyValue(schema.secret_fields) || !isRecord(target) || target.kind !== 'mcp_credentials')
         throw new InteractionNotFoundError()
 
       // Match Python get_user_prompt: expiry/status govern action consumption, not link resolution.

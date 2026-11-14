@@ -1,4 +1,6 @@
 import { CoreError, dataContext, type ProjectRecord } from '@gugu/core'
+import { scheduledTaskUndoSnapshot } from '../../scheduled-tasks/undo-snapshot.js'
+import { calendarEventSnapshot } from '../../calendar/event-projection.js'
 import { projectResponse } from '../persistence/projects.js'
 
 export interface ProjectTrashFile extends Record<string, unknown> {
@@ -109,13 +111,23 @@ export interface ProjectTrashRuntime {
 }
 
 export interface ProjectTrashStorage {
-  moveToTrash(ownerId: string, file: ProjectTrashFile): Promise<{ storageKey: string }>
+  moveToTrash(ownerId: string, file: ProjectTrashFile): Promise<{
+    storageKey: string
+    rollback?: () => Promise<void>
+  }>
   restoreFromTrash(
     ownerId: string,
     file: ProjectTrashFile,
     project: ProjectRecord,
     folders: ProjectTrashFolder[],
-  ): Promise<{ storageKey: string; displayName: string }>
+  ): Promise<{ storageKey: string; displayName: string; rollback?: () => Promise<void> }>
+}
+
+export class ProjectTrashStoragePathError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'ProjectTrashStoragePathError'
+  }
 }
 
 export interface ProjectTrashMetadata {
@@ -201,45 +213,15 @@ function folderSnapshot(folder: ProjectTrashFolder): Record<string, unknown> {
   }
 }
 
-function eventSnapshot(event: ProjectTrashEvent): Record<string, unknown> {
-  return {
-    id: event.id,
-    title: event.title,
-    date: event.date,
-    time: event.time,
-    end_time: event.end_time,
-    type: event.type,
-    client: event.client,
-    project_id: event.project_id,
-    description: event.description,
-    version: Number(event.version || 1),
-    deleted_at: nullableDate(event.deleted_at),
-  }
-}
-
-function taskSnapshot(task: ProjectTrashTask): Record<string, unknown> {
-  return {
-    id: task.id,
-    enabled: Boolean(task.enabled),
-    name: task.name,
-    payload: task.payload,
-    cron: task.cron,
-    schedule_kind: task.schedule_kind,
-    start_at: nullableDate(task.start_at),
-    reminder_lead_minutes: task.reminder_lead_minutes,
-    channels: task.channels,
-    delivery_targets: task.delivery_targets,
-  }
-}
-
 function state(items: Record<string, Record<string, unknown>>) { return { items } }
 
 function refs(resources: ProjectTrashResources, projectId: number) {
   const result: Record<string, Record<string, unknown>> = { [`project:${projectId}`]: {} }
   for (const file of resources.files) result[`file:${file.id}`] = fileSnapshot(file)
   for (const folder of resources.folders) result[`folder:${folder.id}`] = folderSnapshot(folder)
-  for (const event of resources.events) result[`event:${event.id}`] = eventSnapshot(event)
-  for (const task of resources.tasks) result[`task:${task.id}`] = taskSnapshot(task)
+  for (const event of resources.events)
+    result[`event:${event.id}`] = calendarEventSnapshot(event, nullableDate)
+  for (const task of resources.tasks) result[`task:${task.id}`] = scheduledTaskUndoSnapshot(task, nullableDate)
   return result
 }
 
@@ -254,12 +236,24 @@ async function publishBestEffort(runtime: ProjectTrashRuntime, events: ProjectTr
   for (const event of events) await runtime.publishResourceChanged(event).catch(() => undefined)
 }
 
+async function rollbackStorageMoves(moves: Array<() => Promise<void>>, originalError: unknown): Promise<never> {
+  let rollbackFailed = false
+  for (const rollback of moves.reverse()) {
+    try { await rollback() } catch { rollbackFailed = true }
+  }
+  if (rollbackFailed) throw new CoreError('busy', '项目文件恢复失败，请稍后重试')
+  throw originalError
+}
+
 export function createProjectTrashService(runtime: ProjectTrashRuntime, storage: ProjectTrashStorage) {
   return {
     async deleteProject(owner: string, id: number, metadata: ProjectTrashMetadata = {}): Promise<void> {
       const ownerId = dataContext(owner).ownerId
       if (!Number.isSafeInteger(id)) throw new CoreError('not_found', '项目不存在')
-      const result = await runtime.transaction(async (tx) => {
+      const storageMoves: Array<() => Promise<void>> = []
+      const result = await (async () => {
+        try {
+          return await runtime.transaction(async (tx) => {
         const project = await tx.getOwnedProject(ownerId, id)
         if (!project || project.deleted_at !== null) throw new CoreError('not_found', '项目不存在')
         const related = await tx.listProjectResources(ownerId, id)
@@ -271,7 +265,11 @@ export function createProjectTrashService(runtime: ProjectTrashRuntime, storage:
           try {
             const moved = await storage.moveToTrash(ownerId, file)
             file.storage_key = moved.storageKey
-          } catch { /* Python 的回收站移动失败不阻止数据库软删 */ }
+            if (moved.rollback) storageMoves.push(moved.rollback)
+          } catch (error) {
+            if (error instanceof ProjectTrashStoragePathError) throw error
+            /* Python 的物理重命名失败不阻止数据库软删；不安全路径必须中止。 */
+          }
           file.deleted_at = stamp
           file.version = Number(file.version || 1) + 1
           await tx.updateFile(ownerId, file)
@@ -311,8 +309,12 @@ export function createProjectTrashService(runtime: ProjectTrashRuntime, storage:
             baseVersions: Object.fromEntries(Object.entries(before).map(([ref, snapshot]) => [ref, { version: Number(snapshot.version ?? 0) }])),
           })
         }
-        return { project: updated, resources: related }
-      })
+            return { project: updated, resources: related }
+          })
+        } catch (error) {
+          return rollbackStorageMoves(storageMoves, error)
+        }
+      })()
 
       const origin = metadata.clientId?.trim() || null
       const events: ProjectTrashResourceChangedEvent[] = [{
@@ -336,7 +338,10 @@ export function createProjectTrashService(runtime: ProjectTrashRuntime, storage:
     async restoreProject(owner: string, id: number, metadata: ProjectTrashMetadata = {}): Promise<Record<string, unknown>> {
       const ownerId = dataContext(owner).ownerId
       if (!Number.isSafeInteger(id)) throw new CoreError('not_found', '项目不在回收站中')
-      const result = await runtime.transaction(async (tx) => {
+      const storageMoves: Array<() => Promise<void>> = []
+      const result = await (async () => {
+        try {
+          return await runtime.transaction(async (tx) => {
         const project = await tx.getOwnedProject(ownerId, id)
         const deletedAt = asDate(project?.deleted_at)
         if (!project || !deletedAt) throw new CoreError('not_found', '项目不在回收站中')
@@ -357,6 +362,7 @@ export function createProjectTrashService(runtime: ProjectTrashRuntime, storage:
           // Storage adapters swallow physical move errors and return Python's expected key;
           // resolution/security errors still abort the transaction instead of hiding corruption.
           const restored = await storage.restoreFromTrash(ownerId, file, updatedProject, related.folders)
+          if (restored.rollback) storageMoves.push(restored.rollback)
           file.storage_key = restored.storageKey
           file.display_name = restored.displayName
           file.deleted_at = null
@@ -372,8 +378,12 @@ export function createProjectTrashService(runtime: ProjectTrashRuntime, storage:
           task.enabled = true
           await tx.updateTask(ownerId, task)
         }
-        return { project: updatedProject, resources: related }
-      })
+            return { project: updatedProject, resources: related }
+          })
+        } catch (error) {
+          return rollbackStorageMoves(storageMoves, error)
+        }
+      })()
 
       const response = projectResponse(result.project, await runtime.getProjectFileCount(ownerId, id))
       const origin = metadata.clientId?.trim() || null

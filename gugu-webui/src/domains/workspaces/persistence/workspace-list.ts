@@ -1,12 +1,11 @@
-import { CoreError, dataContext } from '@gugu/core'
+import { CoreError } from '@gugu/core'
 import type { Pool } from 'pg'
+import { normalizeOwnerId } from '../../../adapters/owner-context.js'
 
-export type WorkspaceListStorageBackend = 'local' | 'oss'
 export type WorkspaceListTerminalMode = 'auto' | 'pty_disabled' | 'entry_disabled'
 
 /** Host runtime facts that Python derives from application and sandbox settings. */
 export interface WorkspaceListRuntimeSettings {
-  storageBackend: WorkspaceListStorageBackend
   shellEnabled: boolean
   shellSystemEnabled: boolean
   shellDangerousEnabled: boolean
@@ -37,14 +36,6 @@ interface CountRow extends Record<string, unknown> {
   count: string
 }
 
-function validateOwner(ownerId: string): string {
-  try {
-    return dataContext(ownerId).ownerId
-  } catch {
-    throw new CoreError('invalid_request', '用户 ID 无效')
-  }
-}
-
 function parsePreferences(value: string | null | undefined): Record<string, unknown> {
   try {
     const parsed: unknown = JSON.parse(value || '{}')
@@ -71,11 +62,9 @@ function normalizedTerminalMode(value: string): WorkspaceListTerminalMode {
 /** PostgreSQL read port for the management GET /api/v1/workspaces snapshot. */
 export function createPostgresWorkspaceLister(pool: Pool, runtime: WorkspaceListRuntime) {
   return async function listWorkspaces(rawOwnerId: string): Promise<Record<string, unknown>> {
-    const ownerId = validateOwner(rawOwnerId)
+    const ownerId = normalizeOwnerId(rawOwnerId)
     const settings = await runtime.readRuntimeSettings()
     const terminalMode = normalizedTerminalMode(settings.terminalMode)
-    const workspaceSupported = settings.storageBackend === 'local'
-
     const preferencesResult = await pool.query<{ data_json: string } & Record<string, unknown>>(
       'SELECT data_json FROM user_preferences WHERE user_id = $1',
       [ownerId],
@@ -91,31 +80,28 @@ export function createPostgresWorkspaceLister(pool: Pool, runtime: WorkspaceList
     const terminalEntryEnabled = settings.sandboxReady && terminalMode !== 'entry_disabled' && shellAvailable
     const ptyEnabled = settings.sandboxReady && terminalMode === 'auto' && shellAvailable
 
-    let items: Array<Record<string, unknown>> = []
-    if (workspaceSupported) {
-      const rowsResult = await pool.query<WorkspaceRow>(
-        `SELECT id, name, kind, folder_id, project_id, directory_id, enabled, is_default
-         FROM workspaces WHERE user_id = $1 ORDER BY updated_at DESC`,
-        [ownerId],
-      )
-      const countsResult = await pool.query<CountRow>(
-        `SELECT workspace_id, COUNT(id)::text AS count FROM conversation_sessions
-         WHERE user_id = $1 AND workspace_id IS NOT NULL GROUP BY workspace_id`,
-        [ownerId],
-      )
-      const counts = new Map(countsResult.rows.map((row) => [Number(row.workspace_id), Number(row.count)]))
-      items = rowsResult.rows.map((row) => ({
-        id: Number(row.id),
-        name: row.name,
-        kind: row.kind,
-        folderId: row.folder_id == null ? null : Number(row.folder_id),
-        projectId: row.project_id == null ? null : Number(row.project_id),
-        directoryId: row.directory_id == null ? null : Number(row.directory_id),
-        enabled: row.enabled,
-        isDefault: row.is_default,
-        boundSessionCount: counts.get(Number(row.id)) ?? 0,
-      }))
-    }
+    const rowsResult = await pool.query<WorkspaceRow>(
+      `SELECT id, name, kind, folder_id, project_id, directory_id, enabled, is_default
+       FROM workspaces WHERE user_id = $1 ORDER BY updated_at DESC`,
+      [ownerId],
+    )
+    const countsResult = await pool.query<CountRow>(
+      `SELECT workspace_id, COUNT(id)::text AS count FROM conversation_sessions
+       WHERE user_id = $1 AND workspace_id IS NOT NULL GROUP BY workspace_id`,
+      [ownerId],
+    )
+    const counts = new Map(countsResult.rows.map((row) => [Number(row.workspace_id), Number(row.count)]))
+    const items = rowsResult.rows.map((row) => ({
+      id: Number(row.id),
+      name: row.name,
+      kind: row.kind,
+      folderId: row.folder_id == null ? null : Number(row.folder_id),
+      projectId: row.project_id == null ? null : Number(row.project_id),
+      directoryId: row.directory_id == null ? null : Number(row.directory_id),
+      enabled: row.enabled,
+      isDefault: row.is_default,
+      boundSessionCount: counts.get(Number(row.id)) ?? 0,
+    }))
 
     return {
       globalEnabled: Boolean(settings.shellEnabled),
@@ -127,9 +113,9 @@ export function createPostgresWorkspaceLister(pool: Pool, runtime: WorkspaceList
       userSystemEnabled,
       userDangerousEnabled,
       userAutomaticModeEnabled,
-      filesystemAuthorizationEnabled: workspaceSupported && settings.fullUserSandboxAuthorizationEnabled,
-      workspaceSupported,
-      storageBackend: settings.storageBackend,
+      filesystemAuthorizationEnabled: settings.fullUserSandboxAuthorizationEnabled,
+      workspaceSupported: true,
+      storageBackend: 'local',
       terminalMode,
       terminalEntryEnabled,
       ptyEnabled,

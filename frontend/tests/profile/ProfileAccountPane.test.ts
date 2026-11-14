@@ -25,7 +25,7 @@ vi.mock('@/stores/auth', () => ({
   useAuthStore: () => mocks.auth,
 }))
 
-vi.mock('@/services/api', () => ({
+vi.mock('@/api/auth', () => ({
   authApi: {
     requestEmailChange: mocks.requestEmailChange,
     resendEmailChange: mocks.resendEmailChange,

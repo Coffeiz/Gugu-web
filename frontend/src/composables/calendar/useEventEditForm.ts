@@ -3,7 +3,8 @@
  * Calendar/index.vue 抽出来，好让日历新建表单与跨页面活动引用弹窗复用同一套字段和提醒逻辑。
  */
 import { ref, computed } from 'vue'
-import { eventsApi, scheduledTasksApi } from '@/services/api'
+import { eventsApi } from '@/api/calendar'
+import { scheduledTasksApi } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 import { useLiveStore } from '@/stores/live'
 import { InteractionSync } from '@/interaction/sync/InteractionSync'

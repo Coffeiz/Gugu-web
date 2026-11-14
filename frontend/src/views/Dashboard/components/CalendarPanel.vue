@@ -100,7 +100,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { eventsApi } from '@/services/api'
+import { eventsApi } from '@/api/calendar'
 import { InteractionSync } from '@/interaction/sync/InteractionSync'
 import { useProjectStore } from '@/stores/projects'
 import { useUiStore } from '@/stores/ui'

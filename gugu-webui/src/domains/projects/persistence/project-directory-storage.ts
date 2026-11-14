@@ -1,5 +1,6 @@
 import { chmod, chown, lstat, mkdir, readdir, realpath, rename, stat } from 'node:fs/promises'
 import path from 'node:path'
+import { isPathWithin } from '../../../adapters/path-safety.js'
 
 function keySegments(key: string): string[] {
   if (typeof key !== 'string' || key.length === 0 || key.includes('\0') || key.includes('\\') || key.startsWith('/'))
@@ -10,19 +11,14 @@ function keySegments(key: string): string[] {
   return segments
 }
 
-function isWithin(root: string, target: string): boolean {
-  const relative = path.relative(root, target)
-  return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))
-}
-
 function targetPath(root: string, key: string): string {
   const target = path.resolve(root, ...keySegments(key))
-  if (!isWithin(root, target)) throw new Error('项目目录路径超出存储根目录')
+  if (!isPathWithin(root, target)) throw new Error('项目目录路径超出存储根目录')
   return target
 }
 
 async function assertNoSymlinkComponents(root: string, target: string): Promise<void> {
-  if (!isWithin(root, target)) throw new Error('项目目录路径超出存储根目录')
+  if (!isPathWithin(root, target)) throw new Error('项目目录路径超出存储根目录')
   const relative = path.relative(root, target)
   if (!relative) return
   let current = root
@@ -43,7 +39,7 @@ async function assertNoSymlinkComponents(root: string, target: string): Promise<
 
 async function assertRealpathWithin(root: string, target: string): Promise<void> {
   const resolved = await realpath(target)
-  if (!isWithin(root, resolved)) throw new Error('项目目录路径超出存储根目录')
+  if (!isPathWithin(root, resolved)) throw new Error('项目目录路径超出存储根目录')
 }
 
 async function assertTreeContainsNoSymlinks(directory: string): Promise<void> {
@@ -99,7 +95,7 @@ export async function renameLocalProjectDirectory(
   const oldPath = targetPath(root, oldPrefix)
   const newPath = targetPath(root, newPrefix)
   if (oldPath === newPath) return
-  if (!isWithin(root, oldPath) || !isWithin(root, newPath))
+  if (!isPathWithin(root, oldPath) || !isPathWithin(root, newPath))
     throw new Error('项目目录路径超出存储根目录')
   await assertNoSymlinkComponents(root, oldPath)
   await assertNoSymlinkComponents(root, newPath)

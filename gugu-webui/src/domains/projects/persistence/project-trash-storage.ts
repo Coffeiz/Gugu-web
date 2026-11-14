@@ -5,7 +5,9 @@ import type {
   ProjectTrashFolder,
   ProjectTrashStorage,
 } from '../application/project-trash.js'
+import { ProjectTrashStoragePathError } from '../application/project-trash.js'
 import type { ProjectRecord } from '@gugu/core'
+import { isPathWithin } from '../../../adapters/path-safety.js'
 
 const INVALID_NAME = /[\\/:*?"<>|]/g
 
@@ -14,13 +16,6 @@ function safeName(value: string): string { return value.replace(INVALID_NAME, '_
 function safeFilename(displayName: string, ext: string): string {
   const name = safeName(displayName)
   return ext ? `${name}.${ext.toLowerCase()}` : name
-}
-
-export class ProjectTrashStoragePathError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'ProjectTrashStoragePathError'
-  }
 }
 
 function safeKey(ownerId: string, key: string): string[] {
@@ -47,15 +42,10 @@ function withConflictName(key: string, displayName: string, ext: string, number:
   return { key: `${parent}${safeName(name)}.${ext.toLowerCase()}`, name }
 }
 
-function within(root: string, target: string): boolean {
-  const relative = path.relative(root, target)
-  return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))
-}
-
 async function checkedPath(root: string, ownerId: string, key: string, allowMissing = true): Promise<string> {
   const segments = safeKey(ownerId, key)
   const target = path.resolve(root, ...segments)
-  if (!within(root, target)) throw new ProjectTrashStoragePathError('文件存储路径超出配置根目录')
+  if (!isPathWithin(root, target)) throw new ProjectTrashStoragePathError('文件存储路径超出配置根目录')
   let current = root
   for (const segment of segments) {
     current = path.join(current, segment)
@@ -73,7 +63,7 @@ async function checkedPath(root: string, ownerId: string, key: string, allowMiss
 
 async function verifyRealFileWithin(root: string, target: string): Promise<void> {
   const resolved = await realpath(target)
-  if (!within(root, resolved)) throw new ProjectTrashStoragePathError('文件存储路径超出配置根目录')
+  if (!isPathWithin(root, resolved)) throw new ProjectTrashStoragePathError('文件存储路径超出配置根目录')
 }
 
 async function inheritGroupAccess(filePath: string): Promise<void> {
@@ -238,7 +228,7 @@ export function createLocalProjectTrashStorage(
 
   async function rootPath(): Promise<string> {
     const root = await realpath(absoluteRoot)
-    if (!within(root, root)) throw new ProjectTrashStoragePathError('存储根目录无效')
+    if (!isPathWithin(root, root)) throw new ProjectTrashStoragePathError('存储根目录无效')
     return root
   }
 
@@ -260,7 +250,7 @@ export function createLocalProjectTrashStorage(
     }
   }
 
-  async function move(oldKey: string, newKey: string, ownerId: string): Promise<void> {
+  async function move(oldKey: string, newKey: string, ownerId: string): Promise<() => Promise<void>> {
     const root = await rootPath()
     const oldPath = await checkedPath(root, ownerId, oldKey, false)
     const newPath = await checkedPath(root, ownerId, newKey)
@@ -268,9 +258,24 @@ export function createLocalProjectTrashStorage(
     await mkdir(newParent, { recursive: true })
     await checkedPath(root, ownerId, newKey)
     await rename(oldPath, newPath)
-    await checkedPath(root, ownerId, newKey, false)
-    await verifyRealFileWithin(root, newPath)
+    try {
+      await checkedPath(root, ownerId, newKey, false)
+      await verifyRealFileWithin(root, newPath)
+    } catch (error) {
+      try {
+        await rename(newPath, oldPath)
+      } catch {
+        throw new ProjectTrashStoragePathError('文件移动后无法恢复原路径')
+      }
+      throw error
+    }
     await inheritGroupAccess(newPath)
+    let rolledBack = false
+    return async () => {
+      if (rolledBack) return
+      await move(newKey, oldKey, ownerId)
+      rolledBack = true
+    }
   }
 
   return {
@@ -280,8 +285,8 @@ export function createLocalProjectTrashStorage(
       if (file.storage_key === baseKey) return { storageKey: file.storage_key }
       const available = await findAvailableKey(root, ownerId, baseKey, file.display_name, file.ext)
       try {
-        await move(file.storage_key, available.key, ownerId)
-        return { storageKey: available.key }
+        const rollback = await move(file.storage_key, available.key, ownerId)
+        return { storageKey: available.key, rollback }
       } catch (error) {
         if (error instanceof ProjectTrashStoragePathError) throw error
         // Python 捕获 storage.rename_file 异常，继续提交墓碑并保留原 key。
@@ -306,38 +311,14 @@ export function createLocalProjectTrashStorage(
       } else {
         available = await findAvailableKey(root, ownerId, baseKey, file.display_name, file.ext)
       }
+      let rollback: (() => Promise<void>) | undefined
       try {
-        if (file.storage_key !== available.key) await move(file.storage_key, available.key, ownerId)
+        if (file.storage_key !== available.key) rollback = await move(file.storage_key, available.key, ownerId)
       } catch (error) {
         if (error instanceof ProjectTrashStoragePathError) throw error
         /* 与 restore_file_storage 一致：物理源缺失时也复原预期 DB 路径 */
       }
-      return { storageKey: available.key, displayName: available.name }
-    },
-  }
-}
-
-export type OssProjectFileRenamer = (oldKey: string, newKey: string) => Promise<void>
-
-/** OSS 回收站与 Python 一致：软删保留对象原 key；通常 restore 不搬对象。 */
-export function createOssProjectTrashStorage(
-  originalKeyFor: OriginalProjectFileKey = projectOriginalStorageKey,
-  renameFile?: OssProjectFileRenamer,
-): ProjectTrashStorage {
-  return {
-    async moveToTrash(_ownerId, file) {
-      return { storageKey: file.storage_key }
-    },
-    async restoreFromTrash(ownerId, file, project, folders) {
-      const target = await originalKeyFor(ownerId, file, project, folders)
-      safeKey(ownerId, target)
-      if (file.storage_key !== target) {
-        try {
-          if (!renameFile) throw new Error('OSS 文件 key 变化时需要提供对象复制/删除回调')
-          await renameFile(file.storage_key, target)
-        } catch { /* Python 仍把记录恢复到期望 key，物理对象由对账流程发现 */ }
-      }
-      return { storageKey: target, displayName: file.display_name }
+      return { storageKey: available.key, displayName: available.name, rollback }
     },
   }
 }

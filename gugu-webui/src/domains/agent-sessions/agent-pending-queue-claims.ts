@@ -1,6 +1,7 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify'
 import type { Pool, PoolClient } from 'pg'
+import { withPostgresTransaction } from '../../adapters/postgres-transaction.js'
 
 export class AgentPendingQueueSessionNotFoundError extends Error {
   readonly statusCode = 404
@@ -97,21 +98,6 @@ export function registerAgentPendingQueueClaimRoutes(
 
 interface QueueRow { session_id: number | null; items: unknown }
 
-async function inTransaction<T>(pool: Pick<Pool, 'connect'>, run: (client: PoolClient) => Promise<T>): Promise<T> {
-  const client = await pool.connect()
-  try {
-    await client.query('BEGIN')
-    const result = await run(client)
-    await client.query('COMMIT')
-    return result
-  } catch (error) {
-    await client.query('ROLLBACK').catch(() => undefined)
-    throw error
-  } finally {
-    client.release()
-  }
-}
-
 function isActiveClaim(item: Record<string, unknown>, now: number): boolean {
   return Boolean(item._claim_token)
     && typeof item._claim_until === 'number'
@@ -156,7 +142,7 @@ export function createPostgresAgentPendingQueueClaims(
     async claim(ownerId: string, sessionId: number, queueId: string, itemKey: number) {
       await assertOwnedSession(ownerId, sessionId, queueId)
       if (await options.isSessionActive(sessionId)) return { claimToken: null, reason: 'session_active' as const }
-      return inTransaction(pool, async (client) => {
+      return withPostgresTransaction(pool, async (client) => {
         const row = await lockQueue(client, ownerId, sessionId, queueId)
         const items = Array.isArray(row?.items) ? row.items : []
         const item = items.find((entry) => !!entry && typeof entry === 'object'
@@ -176,7 +162,7 @@ export function createPostgresAgentPendingQueueClaims(
 
     async release(ownerId: string, sessionId: number, queueId: string, itemKey: number, claimToken: string) {
       await assertOwnedSession(ownerId, sessionId, queueId)
-      return inTransaction(pool, async (client) => {
+      return withPostgresTransaction(pool, async (client) => {
         const row = await lockQueue(client, ownerId, sessionId, queueId)
         const items = Array.isArray(row?.items) ? row.items : []
         const index = items.findIndex((entry) => !!entry && typeof entry === 'object'

@@ -153,6 +153,41 @@ test('PATCH 按 owner 隔离并用 CAS 将陈旧 version 映射为冲突', async
   assert.equal(fake.events.length, 0)
 })
 
+test('PATCH 缺少 version 时先按 owner 查找项目，且兼容 Python 接受的数字字符串', async () => {
+  const fake = fakeRuntime()
+  const update = createProjectUpdater(fake.runtime)
+
+  await assert.rejects(update(ownerId, 99, {}), { code: 'not_found' })
+  await assert.rejects(update('ad0902a0-c899-44ee-b180-d54eb04e4604', 17, {}), { code: 'not_found' })
+  await assert.rejects(update(ownerId, 17, {}), { code: 'invalid_request' })
+
+  const response = await update(ownerId, 17, { version: '4', name: '兼容更新' })
+  assert.equal(response.name, '兼容更新')
+  assert.equal(response.version, 5)
+})
+
+test('PATCH 先完成 Python schema 校验再查询 owner，并兼容整数/布尔字段的 Pydantic 转换', async () => {
+  const fake = fakeRuntime()
+  const update = createProjectUpdater(fake.runtime)
+  const foreignOwnerId = 'ad0902a0-c899-44ee-b180-d54eb04e4604'
+
+  for (const body of [
+    { version: 4, name: 42 },
+    { version: 4, status: 'blocked' },
+    { version: 4, startDate: '2026-02-30' },
+    { version: 4, color: 'not-a-preset' },
+    { version: 4, stages: [{ key: '', label: '阶段' }] },
+    { version: 4, progress: 101 },
+  ]) {
+    await assert.rejects(update(foreignOwnerId, 99, body), { code: 'invalid_request' })
+  }
+  await assert.rejects(update(foreignOwnerId, 99, { version: 4, name: '有效名称' }), { code: 'not_found' })
+
+  const response = await update(ownerId, 17, { version: '4', progress: '60', archived: 'false' })
+  assert.equal(response.progress, 60)
+  assert.equal(response.archived, false)
+})
+
 test('PATCH 校验字段、日期和 version 范围；不会部分写入', async () => {
   const fake = fakeRuntime()
   const update = createProjectUpdater(fake.runtime)
@@ -183,6 +218,31 @@ test('Undo 写入失败回滚更新且不发布事件', async () => {
   }
   const update = createProjectUpdater(runtime)
   await assert.rejects(update(ownerId, 17, { version: 4, name: '待回滚' }, { undoContextId: 'tab-1' }), /undo failed/)
+  assert.equal(fake.row.name, '原项目')
+  assert.equal(fake.row.version, 4)
+  assert.equal(fake.events.length, 0)
+})
+
+test('PATCH 数据事务失败时反向移动已改名目录，避免数据库回滚后文件路径失配', async () => {
+  const fake = fakeRuntime()
+  const moves: Array<[string, string]> = []
+  const runtime: ProjectUpdateRuntime = {
+    ...fake.runtime,
+    async renameProjectDirectory(_owner, oldPrefix, newPrefix) {
+      moves.push([oldPrefix, newPrefix])
+    },
+    async transaction<T>(work: (tx: ProjectUpdateTransaction) => Promise<T>): Promise<T> {
+      return fake.runtime.transaction((tx) => work({ ...tx, async recordUndo() { throw new Error('undo failed') } }))
+    },
+  }
+  const update = createProjectUpdater(runtime)
+
+  await assert.rejects(update(ownerId, 17, { version: 4, name: '新项目' }, { undoContextId: 'tab-1' }), /undo failed/)
+
+  assert.equal(moves.length, 2)
+  assert.equal(moves[0]![0].endsWith('/原项目 #17'), true)
+  assert.equal(moves[0]![1].endsWith('/新项目 #17'), true)
+  assert.deepEqual(moves[1], [moves[0]![1], moves[0]![0]])
   assert.equal(fake.row.name, '原项目')
   assert.equal(fake.row.version, 4)
   assert.equal(fake.events.length, 0)

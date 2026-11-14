@@ -88,8 +88,8 @@ export function createUserRepository(pool: Pool): {
         `WITH active_user AS (
            UPDATE users SET last_active_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING id
          )
-         INSERT INTO frontend_events (user_id, event)
-         SELECT id, 'web_login' FROM active_user`,
+         INSERT INTO frontend_events (user_id, event, created_at)
+         SELECT id, 'web_login', CURRENT_TIMESTAMP FROM active_user`,
         [userId],
       )
     },

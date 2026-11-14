@@ -2,6 +2,7 @@ import { statfsSync } from 'node:fs'
 import type { Pool } from 'pg'
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify'
 import { resolve } from 'node:path'
+import { adminHttpError } from './errors.js'
 
 export interface AdminStorageSnapshotRow {
   category: string
@@ -29,7 +30,6 @@ export interface StorageDiskUsage {
 }
 
 export interface StorageLocation {
-  backend: 'local' | 'oss'
   localPath: string
 }
 
@@ -49,7 +49,6 @@ export function createPostgresAdminStorageSnapshotQuery(pool: Pick<Pool, 'query'
 
 /** 与 Python shutil.disk_usage 一样区分实际已用和调用者可用空间。 */
 export function diskUsageForStorage(storage: StorageLocation): StorageDiskUsage | null {
-  if (storage.backend === 'oss') return null
   try {
     const stats = statfsSync(resolve(storage.localPath), { bigint: true })
     return {
@@ -129,10 +128,6 @@ function cutoffIso(value: Date | string, days: number): string {
   return `${cutoffSecond}${fraction && /[1-9]/.test(fraction) ? `.${fraction}` : ''}Z`
 }
 
-function safeFailure(): Error & { statusCode: number } {
-  return Object.assign(new Error('服务器内部错误，请稍后重试'), { statusCode: 500 })
-}
-
 export function registerAdminStorageSnapshotsRoute(app: FastifyInstance, options: AdminStorageSnapshotOptions): void {
   app.get<{ Querystring: { days?: number } }>(
     '/api/v1/admin/ops/storage-snapshots',
@@ -168,7 +163,7 @@ export function registerAdminStorageSnapshotsRoute(app: FastifyInstance, options
         try { disk = await options.diskUsage() } catch { disk = null }
         return reply.type('application/json').send(jsonWithBigInt({ categories, disk }))
       } catch {
-        throw safeFailure()
+        throw adminHttpError(500, '服务器内部错误，请稍后重试')
       }
     },
   )

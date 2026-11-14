@@ -1,4 +1,5 @@
 import type { Pool } from 'pg'
+import { runBestEffort } from '../../../adapters/best-effort.js'
 import type { CalendarEventDeletePublication } from '../application/event-delete.js'
 import type { EventUpdatePublication } from '../application/event-update.js'
 
@@ -11,24 +12,6 @@ export interface CalendarMutationPostCommitEffects {
 }
 
 export type CalendarMutationPostCommitFailureReporter = (operation: string, errorCode?: string, errorMessage?: string) => void
-
-async function bestEffort(
-  operation: string,
-  work: () => Promise<unknown>,
-  reportFailure: CalendarMutationPostCommitFailureReporter,
-): Promise<void> {
-  try {
-    await work()
-  } catch (error) {
-    try {
-      const code = typeof error === 'object' && error !== null && 'code' in error
-        && typeof error.code === 'string' ? error.code : undefined
-      reportFailure(operation, code, error instanceof Error ? error.message : undefined)
-    } catch {
-      // Post-commit diagnostics must not change an already committed mutation.
-    }
-  }
-}
 
 function ragEvent(publication: CalendarMutationPublication): {
   sourceType: 'calendar' | 'scheduled_task'
@@ -63,13 +46,13 @@ export function createCalendarMutationPostCommitPublisher(
 ): (publication: CalendarMutationPublication) => Promise<void> {
   return async (publication) => {
     if (publication.resource === 'calendar') {
-      await bestEffort('calendar context revision', () =>
+      await runBestEffort('calendar context revision', () =>
         effects.bumpContextRevision(publication.ownerId), reportFailure)
     }
 
     const rag = ragEvent(publication)
     for (const sourceId of rag.sourceIds) {
-      await bestEffort('calendar RAG index enqueue', async () => {
+      await runBestEffort('calendar RAG index enqueue', async () => {
         await pool.query(
           `INSERT INTO rag_index_jobs (
              user_id, source_type, source_id, version, operation, status,
@@ -112,7 +95,7 @@ export function createCalendarMutationPostCommitPublisher(
       }, reportFailure)
     }
 
-    await bestEffort('calendar resource notification', () =>
+    await runBestEffort('calendar resource notification', () =>
       effects.publishResourceChanged(publication), reportFailure)
   }
 }

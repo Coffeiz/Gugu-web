@@ -3,9 +3,10 @@ export type DatabaseReadinessQuery = (statement: string) => Promise<unknown>
 const requiredSchemaQueries = [
   'SELECT 1',
   `SELECT id, username, hashed_password, display_name, email, is_active, account_status,
-          security_version, avatar, created_at, timezone, email_subscribed,
-          last_active_at
+          security_version, avatar, created_at, timezone, email_subscribed, is_developer,
+          last_active_at, storage_limit_bytes
    FROM users LIMIT 0`,
+  'SELECT user_id, data_json, updated_at FROM user_preferences LIMIT 0',
   'SELECT user_id, platform, enabled FROM user_bots LIMIT 0',
   'SELECT id, user_id, tokens_in, tokens_out, created_at, is_byok FROM agent_usage LIMIT 0',
   'SELECT user_id, size_bytes FROM files LIMIT 0',
@@ -18,6 +19,10 @@ const requiredSchemaQueries = [
   `SELECT id, user_id, title, date, time, end_time, type, contact_name, project_id,
           description, version, deleted_at, idempotency_key, idempotency_fingerprint
    FROM calendar_events LIMIT 0`,
+  `SELECT id, user_id, source_type, source_id, version, operation, status,
+          generation, completed_generation, attempts, next_attempt_at, lease_until,
+          last_started_at, last_succeeded_at, last_error_code, pending_source_ids,
+          created_at, updated_at FROM rag_index_jobs LIMIT 0`,
   'SELECT id, user_id, name, contact, email, phone, notes, created_at FROM clients LIMIT 0',
   `SELECT id, title, content, color, target, bubble, persist, bubble_expire_at, created_at
    FROM site_notifications LIMIT 0`,

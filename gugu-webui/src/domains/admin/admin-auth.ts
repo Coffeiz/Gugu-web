@@ -1,6 +1,7 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import bcrypt from 'bcryptjs'
 import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerHookHandler } from 'fastify'
+import { parseCookieHeader } from '../../http/cookies.js'
 
 export type AdminRole = 'superadmin' | 'admin'
 
@@ -52,7 +53,27 @@ export class AdminAuthError extends Error {
 const accessCookie = 'gugu_admin_access_token'
 const csrfCookie = 'gugu_admin_csrf_token'
 const safeMethods = new Set(['GET', 'HEAD', 'OPTIONS', 'TRACE'])
-export const ADMIN_AUTH_VERSION_KEY = 'auth:admin:security-version'
+const authVersionRange = 2 ** 48
+
+/**
+ * 单进程 Node Host 使用进程内认证版本；启动时随机生成版本，让重启前签发的 Admin token 失效。
+ * 多实例部署需要改用共享版本存储。
+ */
+export function createInMemoryAdminAuthVersionStore(initialVersion = randomBytes(6).readUIntBE(0, 6)) {
+  if (!Number.isSafeInteger(initialVersion) || initialVersion < 0 || initialVersion >= authVersionRange)
+    throw new Error('管理员认证版本无效')
+
+  let version = initialVersion
+  return {
+    async getAuthVersion(): Promise<number> {
+      return version
+    },
+    async incrementAuthVersion(): Promise<number> {
+      version = version + 1 < authVersionRange ? version + 1 : randomBytes(6).readUIntBE(0, 6)
+      return version
+    },
+  }
+}
 
 interface TokenPayload {
   readonly sub?: unknown
@@ -67,18 +88,6 @@ interface DecodedAdminIdentity {
   readonly authVersion: number
 }
 
-function cookieValues(header: string | undefined): Map<string, string> {
-  const values = new Map<string, string>()
-  for (const part of header?.split(';') ?? []) {
-    const separator = part.indexOf('=')
-    if (separator < 0) continue
-    const name = part.slice(0, separator).trim()
-    const value = part.slice(separator + 1).trim()
-    if (name && !values.has(name)) values.set(name, value)
-  }
-  return values
-}
-
 function constantTimeEqual(left: string, right: string): boolean {
   const leftBytes = Buffer.from(left)
   const rightBytes = Buffer.from(right)
@@ -89,7 +98,7 @@ function requestToken(request: FastifyRequest): string {
   const bearer = request.headers.authorization?.match(/^Bearer\s+(.+)$/i)?.[1]
   if (bearer) return bearer
 
-  const cookies = cookieValues(request.headers.cookie)
+  const cookies = parseCookieHeader(request.headers.cookie)
   const token = cookies.get(accessCookie)
   if (!token) throw new AdminAuthError('未提供认证凭据', 401)
   if (!safeMethods.has(request.method.toUpperCase())) {

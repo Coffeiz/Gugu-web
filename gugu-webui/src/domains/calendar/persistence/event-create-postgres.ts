@@ -1,10 +1,11 @@
-import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
+import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
+import { recordForwardUndoOperation } from '../../undo/persistence/forward-operation.js'
+import { projectExistsForOwner as isProjectOwnedAndActive } from '../../projects/persistence/projects.js'
+import { calendarEventRecord } from '../event-projection.js'
 import {
   CalendarEventIdempotencyUniqueViolation,
   type CalendarEventCreateInput,
-  type CalendarEventRecord,
-  type CalendarEventUndoRecord,
   type EventCreatePublication,
   type EventCreateStore,
   type EventCreateTransaction,
@@ -14,65 +15,11 @@ type DatabaseRow = Record<string, unknown>
 type CalendarEventPublisher = (publication: EventCreatePublication) => Promise<unknown>
 type PublicationFailureReporter = (operation: string) => void
 
-function eventRecord(row: DatabaseRow): CalendarEventRecord {
-  const deletedAt = row.deleted_at
-  return {
-    id: Number(row.id),
-    title: String(row.title),
-    date: String(row.date),
-    time: row.time == null ? null : String(row.time),
-    end_time: row.end_time == null ? null : String(row.end_time),
-    type: String(row.type),
-    client: row.client == null ? null : String(row.client),
-    project_id: row.project_id == null ? null : Number(row.project_id),
-    description: row.description == null ? null : String(row.description),
-    version: Number(row.version ?? 1),
-    deleted_at: deletedAt instanceof Date ? deletedAt.toISOString() : deletedAt == null ? null : String(deletedAt),
-  }
-}
-
 function calendarUniqueViolation(error: unknown): boolean {
   return typeof error === 'object' && error !== null
     && 'code' in error && (error as { code?: unknown }).code === '23505'
     && 'constraint' in error
     && (error as { constraint?: unknown }).constraint === 'uq_calendar_events_user_idempotency_key'
-}
-
-function newUndoId(prefix: 'op' | 'group'): string {
-  return `${prefix}-${randomUUID().replaceAll('-', '')}`
-}
-
-async function insertUndo(
-  client: PoolClient,
-  ownerId: string,
-  record: CalendarEventUndoRecord,
-): Promise<void> {
-  // Match UndoService.record_forward: a new forward action invalidates the same
-  // web context's redo branch and stores the operation in the business transaction.
-  await client.query(
-    `UPDATE undo_operations
-     SET status = 'expired', failure_code = 'redo_cleared_by_new_operation'
-     WHERE user_id = $1 AND undo_context_id = $2
-       AND actor_type = 'web' AND status = 'undone'`,
-    [ownerId, record.contextId],
-  )
-  await client.query(
-    `INSERT INTO undo_operations (
-       id, user_id, undo_context_id, group_id, resource, action,
-       target_refs, before_state, after_state, base_versions, artifact_refs,
-       actor_type, status, created_at, expires_at
-     ) VALUES (
-       $1, $2, $3, $4, $5, $6,
-       $7::json, $8::json, $9::json, $10::json, '{}'::json,
-       'web', 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + INTERVAL '30 days'
-     )`,
-    [
-      newUndoId('op'), ownerId, record.contextId, newUndoId('group'),
-      record.resource, record.action, JSON.stringify(record.targetRefs),
-      JSON.stringify(record.beforeState), JSON.stringify(record.afterState),
-      JSON.stringify(record.baseVersions),
-    ],
-  )
 }
 
 function makeTransaction(client: PoolClient, ownerId: string): EventCreateTransaction {
@@ -90,18 +37,12 @@ function makeTransaction(client: PoolClient, ownerId: string): EventCreateTransa
       if (!row) return null
       return {
         fingerprint: String(row.idempotency_fingerprint ?? ''),
-        event: eventRecord(row),
+        event: calendarEventRecord(row, Number(row.version ?? 1)),
       }
     },
 
     async projectExistsForOwner(projectId) {
-      const result = await client.query(
-        `SELECT 1 FROM projects
-         WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
-         LIMIT 1`,
-        [projectId, ownerId],
-      )
-      return result.rowCount === 1
+      return isProjectOwnedAndActive(client, ownerId, projectId)
     },
 
     async insertWithSavepoint(input: CalendarEventCreateInput, idempotency) {
@@ -124,7 +65,7 @@ function makeTransaction(client: PoolClient, ownerId: string): EventCreateTransa
         )
         const row = result.rows[0]
         if (!row) throw new Error('Calendar event insert returned no row')
-        const event = eventRecord(row)
+        const event = calendarEventRecord(row, Number(row.version ?? 1))
         await client.query('RELEASE SAVEPOINT event_create_insert')
         return event
       } catch (error) {
@@ -137,7 +78,49 @@ function makeTransaction(client: PoolClient, ownerId: string): EventCreateTransa
     },
 
     async recordUndo(record) {
-      await insertUndo(client, ownerId, record)
+      await recordForwardUndoOperation(client, { ...record, userId: ownerId })
+    },
+
+    async enqueueRagIndex(eventId) {
+      await client.query(
+        `INSERT INTO rag_index_jobs (
+           user_id, source_type, source_id, version, operation, status,
+           generation, completed_generation, attempts, next_attempt_at,
+           lease_until, last_started_at, last_succeeded_at, last_error_code,
+           pending_source_ids, created_at, updated_at
+         ) VALUES (
+           $1, 'calendar', $2, '', 'create', 'queued',
+           1, 0, 0, CURRENT_TIMESTAMP,
+           NULL, NULL, NULL, NULL,
+           json_build_array($2::varchar), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+         )
+         ON CONFLICT (user_id, source_type) DO UPDATE SET
+           source_id = EXCLUDED.source_id,
+           version = EXCLUDED.version,
+           operation = EXCLUDED.operation,
+           status = 'queued',
+           generation = rag_index_jobs.generation + 1,
+           next_attempt_at = CURRENT_TIMESTAMP,
+           lease_until = NULL,
+           last_error_code = NULL,
+           pending_source_ids = (
+             SELECT COALESCE(json_agg(ordered.id ORDER BY ordered.first_ordinal), '[]'::json)
+             FROM (
+               SELECT candidates.id, MIN(candidates.ordinal) AS first_ordinal
+               FROM (
+                 SELECT value AS id, ordinality AS ordinal
+                 FROM jsonb_array_elements_text(
+                   COALESCE(rag_index_jobs.pending_source_ids::jsonb, '[]'::jsonb)
+                 ) WITH ORDINALITY
+                 UNION ALL
+                 SELECT EXCLUDED.source_id AS id, 2147483647 AS ordinal
+               ) AS candidates
+               GROUP BY candidates.id
+             ) AS ordered
+           ),
+           updated_at = CURRENT_TIMESTAMP`,
+        [ownerId, String(eventId)],
+      )
     },
   }
 }
@@ -156,28 +139,7 @@ export function createPostgresEventCreateStore(
 ): EventCreateStore {
   return {
     async transaction<T>(ownerId: string, work: (tx: EventCreateTransaction) => Promise<T>): Promise<T> {
-      const client = await pool.connect()
-      let released = false
-      try {
-        await client.query('BEGIN')
-        try {
-          const result = await work(makeTransaction(client, ownerId))
-          await client.query('COMMIT')
-          return result
-        } catch (error) {
-          try {
-            await client.query('ROLLBACK')
-          } catch {
-            // Keep the business error; the connection is discarded if rollback failed.
-            client.release(true)
-            released = true
-            throw error
-          }
-          throw error
-        }
-      } finally {
-        if (!released) client.release()
-      }
+      return withPostgresTransaction(pool, (client) => work(makeTransaction(client, ownerId)))
     },
 
     async publishCalendarEvent(publication) {

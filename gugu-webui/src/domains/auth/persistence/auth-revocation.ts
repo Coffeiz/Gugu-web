@@ -1,4 +1,5 @@
 import type { Pool } from 'pg'
+import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
 
 export class UserNotFoundError extends Error {
   constructor() {
@@ -15,9 +16,7 @@ export async function revokeUserSessions(
   pool: Pick<Pool, 'connect'>,
   userId: string,
 ): Promise<number> {
-  const client = await pool.connect()
-  try {
-    await client.query('BEGIN')
+  return withPostgresTransaction(pool, async (client) => {
     const result = await client.query<{ security_version: number }>(
       `UPDATE users
        SET security_version = COALESCE(security_version, 0) + 1
@@ -27,17 +26,6 @@ export async function revokeUserSessions(
     )
     const version = result.rows[0]?.security_version
     if (version === undefined) throw new UserNotFoundError()
-
-    await client.query('COMMIT')
     return version
-  } catch (error) {
-    try {
-      await client.query('ROLLBACK')
-    } catch {
-      // Preserve the database or missing-user error that caused the rollback.
-    }
-    throw error
-  } finally {
-    client.release()
-  }
+  })
 }

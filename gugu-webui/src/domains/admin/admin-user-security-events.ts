@@ -1,5 +1,7 @@
 import type { Pool } from 'pg'
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify'
+import { adminHttpError } from './errors.js'
+import { toUtcIsoWithOffset } from '../../shared/date-time.js'
 
 export type AdminUserSecurityEventQuery = (sql: string, values: unknown[]) => Promise<Record<string, unknown>[]>
 export interface AdminUserSecurityEventOptions {
@@ -12,17 +14,7 @@ export function createPostgresAdminUserSecurityEventQuery(pool: Pick<Pool, 'quer
 }
 
 function isoUtc(value: unknown): string {
-  const date = value instanceof Date ? value : new Date(String(value))
-  if (Number.isNaN(date.getTime())) throw new Error('invalid security event timestamp')
-  return date.toISOString().replace(/Z$/, '+00:00')
-}
-
-function notFound(): Error & { statusCode: number } {
-  return Object.assign(new Error('用户不存在'), { statusCode: 404 })
-}
-
-function safeFailure(): Error & { statusCode: number } {
-  return Object.assign(new Error('用户安全事件查询失败'), { statusCode: 500 })
+  return toUtcIsoWithOffset(value)
 }
 
 export function registerAdminUserSecurityEventRoute(app: FastifyInstance, options: AdminUserSecurityEventOptions): void {
@@ -48,9 +40,9 @@ export function registerAdminUserSecurityEventRoute(app: FastifyInstance, option
       try {
         users = await options.query('SELECT id FROM users WHERE id = $1::uuid LIMIT 1', [userId])
       } catch {
-        throw safeFailure()
+        throw adminHttpError(500, '用户安全事件查询失败')
       }
-      if (!users.length) throw notFound()
+      if (!users.length) throw adminHttpError(404, '用户不存在')
       try {
         const rows = await options.query(
           `SELECT id, event_type, resource_type, resource_fingerprint, owner_fingerprint,
@@ -74,7 +66,7 @@ export function registerAdminUserSecurityEventRoute(app: FastifyInstance, option
           occurred_at: isoUtc(row.occurred_at),
         })) }
       } catch {
-        throw safeFailure()
+        throw adminHttpError(500, '用户安全事件查询失败')
       }
     },
   )

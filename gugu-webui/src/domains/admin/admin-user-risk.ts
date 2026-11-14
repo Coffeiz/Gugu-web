@@ -1,5 +1,7 @@
 import type { Pool } from 'pg'
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify'
+import { adminHttpError } from './errors.js'
+import { toUtcIsoWithOffset } from '../../shared/date-time.js'
 
 export type AdminUserRiskQuery = (sql: string, values: unknown[]) => Promise<Record<string, unknown>[]>
 export interface AdminUserRiskOptions {
@@ -14,13 +16,7 @@ export function createPostgresAdminUserRiskQuery(pool: Pick<Pool, 'query'>): Adm
 
 function isoUtc(value: unknown): string | null {
   if (value === null || value === undefined) return null
-  const date = value instanceof Date ? value : new Date(String(value))
-  if (Number.isNaN(date.getTime())) throw new Error('invalid timestamp')
-  return date.toISOString().replace(/Z$/, '+00:00')
-}
-
-function safeFailure(): Error & { statusCode: number } {
-  return Object.assign(new Error('风险用户查询失败'), { statusCode: 500 })
+  return toUtcIsoWithOffset(value)
 }
 
 export function registerAdminUserRiskRoute(app: FastifyInstance, options: AdminUserRiskOptions): void {
@@ -81,7 +77,7 @@ export function registerAdminUserRiskRoute(app: FastifyInstance, options: AdminU
         })
         return { items, total: items.length, window_minutes: windowMinutes, policy_window_minutes: 5 }
       } catch {
-        throw safeFailure()
+        throw adminHttpError(500, '风险用户查询失败')
       }
     },
   )

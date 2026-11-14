@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { CoreError, dataContext, DEFAULT_PROJECT_COLOR, prepareProjectCreate } from '@gugu/core'
 import type { Fields, ProjectRecord } from '@gugu/core'
+import { isPostgresUniqueViolation } from '../../../adapters/postgres-errors.js'
 
 export interface ProjectCreateRecord extends ProjectRecord {
   idempotency_fingerprint: string | null
@@ -105,10 +106,6 @@ function createPayload(input: Fields, includeAgentFields: boolean): Fields {
   return payload
 }
 
-function isUniqueViolation(error: unknown): boolean {
-  return typeof error === 'object' && error !== null && 'code' in error && (error as { code?: unknown }).code === '23505'
-}
-
 function projectSnapshot(project: ProjectRecord): Record<string, unknown> {
   return {
     id: project.id,
@@ -200,7 +197,7 @@ export function createProjectCreator(runtime: ProjectCreateRuntime) {
         return { project, created: true }
       })
     } catch (error) {
-      if (!idem || !isUniqueViolation(error)) throw error
+      if (!idem || !isPostgresUniqueViolation(error)) throw error
       // A competing transaction won the unique (owner, key) insert. Read it after rollback.
       const winner = await runtime.transaction((tx) => tx.findIdempotent(ownerId, idem.keyHash))
       if (!winner) throw error

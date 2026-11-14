@@ -3,6 +3,7 @@ import test from 'node:test'
 import { createHash } from 'node:crypto'
 import type { FastifyRequest } from 'fastify'
 import {
+  createInMemoryRateLimitCommands,
   createRedisRateLimiter,
   RateLimitError,
   type RedisRateLimitCommands,
@@ -102,4 +103,21 @@ test('missing Redis commands fail open by default and fail closed only when requ
     rateLimit(request, { ...loginLimit, failClosed: true }),
     (error: unknown) => error instanceof RateLimitError && error.statusCode === 503,
   )
+})
+
+test('in-memory Admin rate-limit counters retain the fixed-window limit without Redis', async () => {
+  let now = 1_000
+  const rateLimit = createRedisRateLimiter(createInMemoryRateLimitCommands(() => now))
+  const request = makeRequest('198.51.100.20')
+  const options = { bucket: 'adminlogin', limit: 2, windowSeconds: 300 }
+
+  await rateLimit(request, options)
+  await rateLimit(request, options)
+  await assert.rejects(
+    rateLimit(request, options),
+    (error: unknown) => error instanceof RateLimitError && error.statusCode === 429,
+  )
+
+  now += 300_000
+  await assert.doesNotReject(rateLimit(request, options))
 })

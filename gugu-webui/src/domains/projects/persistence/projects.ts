@@ -1,7 +1,13 @@
 import { dataContext } from '@gugu/core'
 import type { ProjectRecord } from '@gugu/core'
 import type { SqlDataRuntime } from '@gugu/core/data'
-import type { Pool } from 'pg'
+import type { Pool, PoolClient } from 'pg'
+
+export function projectTimestamp(value: unknown): string | null {
+  if (value == null) return null
+  if (value instanceof Date) return value.toISOString()
+  return String(value).replace(' ', 'T').replace(/([+-]\d{2})$/, '$1:00')
+}
 
 export function projectResponse(project: ProjectRecord, fileCount: number) {
   return {
@@ -36,6 +42,25 @@ async function projectFileCounts(pool: Pool, ownerId: string, projectIds: number
     [ownerId, projectIds],
   )
   return new Map(counts.rows.map((row) => [row.project_id, Number(row.file_count)]))
+}
+
+export async function readProjectFileCount(pool: Pool, ownerId: string, projectId: number): Promise<number> {
+  const counts = await projectFileCounts(pool, ownerId, [projectId])
+  return counts.get(projectId) ?? 0
+}
+
+export async function projectExistsForOwner(
+  client: PoolClient,
+  ownerId: string,
+  projectId: number,
+): Promise<boolean> {
+  const result = await client.query(
+    `SELECT 1 FROM projects
+     WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
+     LIMIT 1`,
+    [projectId, ownerId],
+  )
+  return result.rowCount === 1
 }
 
 export function createProjectListing(core: SqlDataRuntime, pool: Pool) {
