@@ -386,10 +386,15 @@ export async function extractZip(zipPath: string, stageDirectory: string): Promi
   const valid = directory.files.map((entry, index) => {
     const archivePath = safeArchivePath(entry.path)
     const isDirectory = entry.type === 'Directory' || entry.path.endsWith('/')
-    const mode = Number(entry.externalFileAttributes ?? 0) >>> 16
+    const metadata = entry as unknown as {
+      flags?: number; uncompressedSize?: number; externalFileAttributes?: number
+      vars?: { flags?: number; uncompressedSize?: number; externalFileAttributes?: number }
+    }
+    const values = metadata.vars ?? metadata
+    const mode = Number(values.externalFileAttributes ?? 0) >>> 16
     const symlink = (mode & 0o170000) === 0o120000
-    if ((entry.flags ?? 0) & 0x1) throw new CoreError('invalid_request', '不支持加密压缩包')
-    const size = isDirectory || symlink ? 0 : Number(entry.uncompressedSize)
+    if ((values.flags ?? 0) & 0x1) throw new CoreError('invalid_request', '不支持加密压缩包')
+    const size = isDirectory || symlink ? 0 : Number(values.uncompressedSize)
     if (!Number.isSafeInteger(size) || size < 0) throw new CoreError('invalid_request', '压缩包损坏')
     validateMemberName(archivePath, isDirectory)
     declaredTotal += size
