@@ -375,9 +375,13 @@ export function desktopHandlers(
     [DESKTOP_CHANNELS.projects]: () => host.request('projects.list'),
     [DESKTOP_CHANNELS.createProject]: (name: unknown) =>
       host.request('projects.create', { name }),
+    [DESKTOP_CHANNELS.renameProject]: (id: unknown, version: unknown, name: unknown) =>
+      host.request('projects.rename', { id, version, name }),
     [DESKTOP_CHANNELS.clients]: () => host.request('clients.list'),
     [DESKTOP_CHANNELS.createClient]: (name: unknown) =>
       host.request('clients.create', { name }),
+    [DESKTOP_CHANNELS.renameClient]: (id: unknown, name: unknown) =>
+      host.request('clients.update', { id, fields: { name } }),
     [DESKTOP_CHANNELS.receipt]: (operation: unknown) =>
       host.request('operations.get', { operation_id: operation }),
     [DESKTOP_CHANNELS.sandboxStatus]: diagnostics,

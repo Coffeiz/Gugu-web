@@ -8,7 +8,7 @@ import {tmpdir} from 'node:os'
 import {Pool} from 'pg'
 import Fastify from 'fastify'
 import {createPostgresRuntime} from '@gugu/core/data'
-import {createFileSyncDryRun} from '../../../../packages/core/src/filesync/dry-run.js'
+import {createFileSyncDryRun} from '@gugu/core/filesync-dry-run'
 import {registerAdminFileSyncDryRunRoute} from '../../src/modules/filesync/admin-dry-run.js'
 const databaseUrl=process.env.GUGU_WEBUI_TEST_DATABASE_URL,redisUrl=process.env.GUGU_WEBUI_TEST_REDIS_URL,python=process.env.GUGU_WEBUI_TEST_PYTHON
 

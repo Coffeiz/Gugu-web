@@ -8,8 +8,8 @@ import pg from 'pg'
 import SQLite from 'better-sqlite3'
 import { test } from 'vitest'
 import { createWorkspaceDeclarationCreator, createWorkspaceDeclarationUpdater } from '../../../src/workspaces/workspace-declarations.js'
-import { createKyselyWorkspaceDeclarationRuntime } from '../../../src/data/workspace-declarations.js'
-import type { WorkspaceDeclarationDatabase } from '../../../src/data/workspace-declarations.js'
+import { createKyselyWorkspaceDeclarationRuntime } from '../../../src/workspaces/workspace-declarations-store.js'
+import type { WorkspaceDeclarationDatabase } from '../../../src/workspaces/workspace-declarations-store.js'
 
 const url = process.env.GUGU_CORE_TEST_POSTGRES_URL
 if (!url) throw new Error('工作区双库测试必须显式提供隔离 PostgreSQL')

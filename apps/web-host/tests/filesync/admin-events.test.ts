@@ -3,7 +3,7 @@ import test from 'node:test'
 import {execFileSync} from 'node:child_process'
 import {resolve} from 'node:path'
 import Fastify from 'fastify'
-import {serializeLiveMessage} from '../../../../packages/core/src/realtime/live-message.js'
+import {serializeLiveMessage} from '@gugu/core/live-message'
 import {registerAdminFileSyncEventsRoute} from '../../src/modules/filesync/admin-events.js'
 import {RedisLiveSubscriptionError} from '../../src/adapters/redis-live-subscription.js'
 

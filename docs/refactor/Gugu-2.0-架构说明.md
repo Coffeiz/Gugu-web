@@ -20,7 +20,7 @@
 - 可复用的 FS 能力收敛于 `packages/fs/`，Node 实现通过独立入口按需导入；Host 负责建立可信身份和授权根。当前仅安全只读打开已接入 Web 文件读取，写入、目录操作和其他端的接入仍待迁移。
 - Linux/NAS 自托管版 2.0 只支持本地文件系统存储，取消应用在线文件/附件/记忆存储的 OSS/S3 后端及其直传、预签名 URL、对象配额和对象搬移 API。升级路径必须包含旧版 OSS 数据的盘点与迁移/导出验收；不能在数据去向未确认时直接禁用旧对象读取。独立备份目标可另行设计，SaaS 云端对象存储由 SaaS 架构单独决定，不受此项取消决定约束。
 - 2.0 不把旧版“DB File 记录 ↔ 物理文件对象”双向对账和互相修复作为常规 Admin 能力；幽灵记录、孤儿文件导入/删除、路径镜像迁移仅可作为旧 FS 兼容数据迁移期的一次性诊断/修复工具。完成旧数据去向、完整性及恢复验收后，退役对应 Admin 页面、API 和维护任务。后续 Admin 存储页定位为存储健康与迁移/派生索引状态；若仍维护持久配额账本，可独立保留账本与 FS 实际占用核对，不与文件对象身份对账混为一体。缺失 FS 目录不得作为删除用户账号的依据。
-- RAG 目标复用 Gugu 1.7.8 的 TypeScript RAG 实现，作为 Node/Core 的唯一生产检索路径；不再把 Cython RAG 算法移植到 Node，也不长期维护 TS 与 Cython 两套生产引擎。Python/Cython 仅可在迁移期作为当前行为的参考基准，退出前以回归与质量集确认 TS 行为。
+- RAG 目标复用 Gugu 1.7.7 的 TypeScript RAG 实现，作为 Node/Core 的唯一生产检索路径；不再把 Cython RAG 算法移植到 Node，也不长期维护 TS 与 Cython 两套生产引擎。Python/Cython 仅可在迁移期作为当前行为的参考基准，退出前以回归与质量集确认 TS 行为。
 - Linux/NAS 自部署保留多用户，执行后端目标改为 MXC 调用受授权的系统环境；2.0 不再维护 Linux Docker 执行沙箱。SaaS 不使用该 Linux 自部署执行方案，也不提供因此隐含的宿主机命令能力。MXC 必须在 Linux 上落实账号间的工作区、进程、资源和网络边界后，才可作为多用户通用执行后端启用；系统环境调用不等于无边界的宿主机 Shell。
 - Admin 的 Shell 管理随执行后端去 Docker 化：退役 Docker/Rootless/镜像状态、容器重建/重启和 Docker 网络诊断等实现专属控制；Linux/NAS 自托管保留通用执行环境健康/能力状态、全局启停、用户与 Agent 授权、危险操作策略、资源配额、网络策略和执行审计。网络及资源限制由 MXC/Host 的受控执行边界落实。SaaS 不展示或开放 Linux 自部署 Shell 管理；桌面端使用本地 Host 的权限和状态界面。
 - **2.0 出网目标**：Linux/NAS 不再把旧 Docker sandbox 专用 egress 网络及代理作为部署依赖。Web Host 自身调用模型、邮件、更新和外部服务时使用系统网络，并可按部署配置普通代理；对用户或模型提供的 URL，继续执行地址、DNS、重定向及连接目标的安全校验。MXC 策略只约束实际置于沙箱内的进程，不自动约束 Host 请求。
@@ -312,7 +312,7 @@ packages/ui/                  # 多个 App 确有共用需求时再提取
 | Core Domain / Application | 领域不变量、业务用例、所有权规则、确认与副作用语义 | Host 建立可信身份、展示确认并验证调用来源 |
 | Core Data Runtime | 仓储、schema、事务、精度、CAS、操作收据及迁移实现 | Host 停写、备份编排、独占升级、启动和运维配置 |
 | Core Agent | Canonical 历史、Provider 适配、上下文、工具及 Run 编排 | Host 注入凭据、网络/进程能力与入口交付 |
-| Core RAG | 复用 1.7.8 TypeScript 检索与排序规则；索引为派生数据，可从授权 FS/Canonical 数据重建 | Host/Core Data Adapter 负责授权来源读取和索引持久化；Python/Cython 不作为 Node 生产执行路径 |
+| Core RAG | 复用 1.7.7 TypeScript 检索与排序规则；索引为派生数据，可从授权 FS/Canonical 数据重建 | Host/Core Data Adapter 负责授权来源读取和索引持久化；Python/Cython 不作为 Node 生产执行路径 |
 | Core Runtime / Transport | `commands.ts` 统一命令边界；stdio/进程 IPC 只处理编码、消息、背压、超时与错误终态 | Electron IPC 的窗口/frame 来源校验和 Preload 暴露由 Desktop 负责 |
 | Sandbox 包（目标；当前部分实现位于 Core Executor） | 共用执行契约、策略计算、能力协商、MXC/平台适配及执行终态 | Host 注入真实授权、原生后端、私有资源与生命周期；OS 后端强制隔离 |
 | Host Broker | 数据及平台 Adapter 装配、能力协商、进程和资源生命周期 | 业务数据规则继续由 Core 统一维护 |

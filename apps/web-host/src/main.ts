@@ -71,10 +71,14 @@ import { createPortabilityJobReader } from '@gugu/core/data-portability/read-job
 import { createPostgresUserBotsReader } from './modules/im/user-bots.js'
 import { createImPlatformSettingsReader } from './modules/im/platform-settings.js'
 import { createCredentialDeletion } from '@gugu/core/byok/credential-delete'
+import { createCredentialPatch } from '@gugu/core/byok/credential-patch'
+import { createCredentialModelsPreview } from '@gugu/core/byok/credential-models-preview'
 import { createCredentialCreator } from '@gugu/core/byok/credential-create'
+import { createProviderCapabilityPreview } from '@gugu/core/byok/capabilities-preview'
 import { createByokListService, createPostgresByokListReader } from '@gugu/core/agent/config'
 import { createConfiguredByokEnvelope } from './adapters/byok-envelope.js'
 import { createByokGateReader } from './modules/byok/gate.js'
+import { createByokModelsPreviewFetcher } from './modules/byok/models-preview.js'
 import { createStorageLiveTotals } from '@gugu/core/admin/storage-live-totals'
 import { createUserSkillDeletion } from '@gugu/core/agent/skills/user-delete'
 import { createSafeEgressSettingsReader } from './modules/admin/safe-egress-settings.js'
@@ -89,7 +93,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { dirname, resolve } from 'node:path'
 import { Pool, type PoolClient } from 'pg'
-import { createPostgresRuntime, createPostgresGlobalSearchSources, type SqlDataRuntime } from '@gugu/core/data'
+import { createPostgresRuntime, type SqlDataRuntime } from '@gugu/core/data'
+import { createPostgresGlobalSearchSources } from '@gugu/core/search/postgres'
 import { createGlobalSearchOperations, createKyselyPreferenceDocumentStore, type Fields, type RequestContext } from '@gugu/core'
 import { createApp, type WriteRequestMetadata } from './app.js'
 import type { UserAuthOptions } from './domains/auth/contracts.js'
@@ -103,8 +108,8 @@ import { createPostgresUserAvatarOperations } from './domains/auth/persistence/a
 import { createPostgresPreferencesStore } from './domains/preferences/persistence/postgres.js'
 import { createKyselyOnboardingStore } from '@gugu/core/onboarding'
 import { createRegistrationSeeder } from '@gugu/core/onboarding'
-import { createPostgresRegistrationSeedOperations } from './domains/onboarding/persistence/registration-seed-postgres.js'
-import { createOnboardingSurpriseMp3Reader } from './domains/onboarding/surprise-asset.js'
+import { createPostgresRegistrationSeedOperations } from './modules/onboarding/persistence/registration-seed-postgres.js'
+import { createOnboardingSurpriseMp3Reader } from './modules/onboarding/surprise-asset.js'
 import { createRedisRegistrationCodeStore } from './domains/auth/persistence/registration-codes.js'
 import { createPostgresRegistrationOperations } from './domains/auth/persistence/registration.js'
 import { createPostgresPasswordResetStore } from './domains/auth/password-reset.js'
@@ -127,7 +132,7 @@ import { createKyselyScheduledTaskReader, createScheduledTaskQueries } from '@gu
 import { createScheduledTaskDeliveryTargets } from './modules/scheduled-tasks/delivery-targets.js'
 import { createKyselyNotificationOperations } from '@gugu/core/notifications'
 import { createKyselySmtpStore, createUserSmtpSettings } from '@gugu/core/smtp'
-import { encryptSmtpPassword } from './domains/preferences/persistence/smtp-credentials.js'
+import { encryptEncryptedString as encryptSmtpPassword } from './adapters/encrypted-string.js'
 import { startSecurityRetentionWorker } from './maintenance/security-retention.js'
 import { createTrackOperations } from './modules/site/persistence/track.js'
 import { createFeedbackNotifier, createFeedbackService, createFeedbackSubmission, createKyselyFeedbackOperations } from '@gugu/core/feedback'
@@ -147,10 +152,10 @@ import {
 import { createPostgresProjectTrashPathMetadataReader } from './domains/projects/persistence/project-trash-path-metadata-postgres.js'
 import { createProjectPostCommitPublisher } from './domains/projects/persistence/project-post-commit-postgres.js'
 import { createCalendarEvent } from '@gugu/core/calendar'
-import { createCalendarEventPostCommitPublisher } from './domains/calendar/persistence/calendar-create-post-commit-postgres.js'
+import { createCalendarEventPostCommitPublisher } from './modules/calendar/persistence/calendar-create-post-commit-postgres.js'
 import { createCalendarEventReader, createKyselyCalendarReadPort, createKyselyCalendarCreateStore, createKyselyCalendarMutationStores } from '@gugu/core/calendar'
 import { deleteCalendarEvent } from '@gugu/core/calendar'
-import { createCalendarMutationPostCommitPublisher } from './domains/calendar/persistence/calendar-mutation-post-commit-postgres.js'
+import { createCalendarMutationPostCommitPublisher } from './modules/calendar/persistence/calendar-mutation-post-commit-postgres.js'
 import { updateCalendarEvent } from '@gugu/core/calendar'
 import { createPostgresWorkspaceCreator } from './domains/workspaces/persistence/workspace-create.js'
 import { createPostgresWorkspaceUpdater } from './domains/workspaces/persistence/workspace-update.js'
@@ -168,7 +173,7 @@ import { createPostgresAgentSessionRefresher } from './domains/agent-sessions/ag
 import { createPostgresAgentSessionRenamer } from './domains/agent-sessions/agent-session-rename.js'
 import { createAgentMessageHistory } from './domains/agent-sessions/persistence/agent-message-history.js'
 import { createPostgresAgentOrphanRecovery } from './domains/agent-sessions/persistence/agent-run-recovery.js'
-import { createPostgresAgentInteractionHistory } from './domains/agent-sessions/persistence/agent-interaction-history.js'
+import { createPostgresAgentInteractionHistory } from '@gugu/core/agent-sessions'
 import { createInteractionSessionLookup } from './domains/agent-sessions/persistence/agent-interaction-session.js'
 import { createPostgresAgentMessageLocator } from './domains/agent-sessions/agent-message-location.js'
 import {
@@ -676,7 +681,7 @@ function createWebUiApp(
     ...(agentRunRecoveryState ? {
       recoverOrphanedSession: createPostgresAgentOrphanRecovery(pool, agentRunRecoveryState),
     } : {}),
-    listInteractions: createPostgresAgentInteractionHistory(pool).list,
+    listInteractions: createPostgresAgentInteractionHistory(pool),
   }).list
   const agentQueueStatuses = config.redisUrl
     ? createRedisAgentActiveStatusReader(config.redisUrl)
@@ -1341,6 +1346,16 @@ function createWebUiApp(
     taskFilesystemAuthorization: createTaskFilesystemAuthorization(core.db, { confirmations: filesystemAuthorizationConfirmations, enabled: createTaskAuthorizationEnabledReader(resolveConfigOverridePath(env), env), fingerprint: createSecurityEventFingerprint(config.secretKey), ...(config.redisUrl ? { recordMetric: createRedisFilesystemAuthorizationMetric(config.redisUrl) } : {}) }),
     taskFilesystemRevoke: { revoke: createTaskFilesystemRevoker(core.db, { revokeConfirmation: (owner, summary, identity) => filesystemAuthorizationConfirmations.revoke(owner, summary, identity), fingerprint: createSecurityEventFingerprint(config.secretKey), ...(config.redisUrl ? { recordMetric: createRedisFilesystemRevokeMetric(config.redisUrl) } : {}) }) },
     credentialDelete: { remove: createCredentialDeletion(core.db, createByokGateReader(resolveConfigOverridePath(env), env)) },
+    credentialPatch: { patch: createCredentialPatch(core.db, {
+      enabled: createByokGateReader(resolveConfigOverridePath(env), env),
+      encrypt: async (value, allowEmpty) => { const envelope = await createConfiguredByokEnvelope(env).encrypt(value, allowEmpty); return envelope },
+      decrypt: async row => createConfiguredByokEnvelope(env).decrypt({ ciphertext: row.encrypted_value, nonce: row.nonce, encryptedDataKey: row.encrypted_data_key, keyVersion: row.key_version }),
+    }) },
+    credentialModelsPreview: { preview: createCredentialModelsPreview(core.db, {
+      enabled: createByokGateReader(resolveConfigOverridePath(env), env),
+      decrypt: async row => createConfiguredByokEnvelope(env).decrypt({ ciphertext: row.encrypted_value, nonce: row.nonce, encryptedDataKey: row.encrypted_data_key, keyVersion: row.key_version }),
+      fetchModels: createByokModelsPreviewFetcher(env),
+    }) },
     credentialCreate: { create: createCredentialCreator({
       transaction: work => withPostgresTransaction(pool, client => work((sql, values) => client.query<Record<string, unknown>>(sql, [...values]))),
       enabled: createByokGateReader(resolveConfigOverridePath(env), env),
@@ -1354,6 +1369,7 @@ function createWebUiApp(
           encryptedDataKey: envelope.encrypted_data_key, keyVersion: envelope.key_version })
       },
     }) },
+    providerCapabilityPreview: { preview: createProviderCapabilityPreview(createByokGateReader(resolveConfigOverridePath(env), env)) },
     userSkillDelete: { remove: createUserSkillDeletion(core.db, 'postgres', async ownerId => { await publisher.publishResourceChanged({ ownerId, resource: 'skills', operation: 'refresh' }) }) },
     notifications: createKyselyNotificationOperations(core.db, 'postgres'),
     track: createTrackOperations(pool),

@@ -13,7 +13,7 @@ import { startServer } from '../../src/main.js'
 import { createCalendarEvent } from '@gugu/core/calendar'
 import { createPostgresRuntime } from '@gugu/core/data'
 import { calendarCreateStore } from '../calendar/calendar-core-stores.js'
-import { decryptSmtpPassword } from '../../src/domains/preferences/persistence/smtp-credentials.js'
+import { decryptEncryptedString as decryptSmtpPassword } from '../../src/adapters/encrypted-string.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const ownerId = '00000000-0000-4000-8000-000000000072'

@@ -19,7 +19,7 @@ const python=process.env.GUGU_WEBUI_TEST_PYTHON
 
 test('BYOK无凭据能力预览与Python实际handler多Provider/协议完全对照',{skip:!python&&'需要显式测试Python'},async t=>{
  const script="import asyncio,json,sys; from app.api.v1 import byok; byok.require_byok_enabled=lambda:None; payloads=json.load(sys.stdin); print(json.dumps([asyncio.run(byok.preview_provider_capabilities(byok.ProviderCapabilityPreview(**p),None)) for p in payloads]))"
- const expected=JSON.parse(execFileSync(python!,['-c',script],{input:JSON.stringify(samples),encoding:'utf8',cwd:resolve('../../backend'),env:{...process.env,GUGU_ENV_FILE:'/dev/null',GUGU_CONFIG_OVERRIDE_FILE:'/tmp/nonexistent-capability-preview-config',PYTHONPATH:'.'}}))
+ const expected=JSON.parse(execFileSync(python!,['-c',script],{input:JSON.stringify(samples),encoding:'utf8',cwd:resolve('../../backend'),env:{...process.env,GUGU_ENV_FILE:'/dev/null',GUGU_CONFIG_OVERRIDE_FILE:'/tmp/nonexistent-capability-preview-config',PYTHONPATH:'.:../compat/core-python/src'}}))
  const preview=createProviderCapabilityPreview(()=>true)
  for(let index=0;index<samples.length;index++)await t.test(samples[index]!.provider,()=>assert.deepEqual(preview(samples[index]!),expected[index]))
 })

@@ -1,11 +1,39 @@
 import { randomUUID } from 'node:crypto'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { Kysely, PostgresDialect, SqliteDialect, sql } from 'kysely'
 import SQLite from 'better-sqlite3'
 import { Pool } from 'pg'
 import { describe, expect, it } from 'vitest'
 import { createCalendarEvent } from '../../src/calendar/application/event-create.js'
-import { createKyselyCalendarCreateStore } from '../../src/calendar/create-store.js'
+import { createBorrowedCalendarCreateStore, createKyselyCalendarCreateStore } from '../../src/calendar/create-store.js'
 import { tablesSql } from '../../src/data/schema.js'
+import { initializeSqlite, openSqliteRuntime } from '../../src/data/sqlite.js'
+import { dataContext } from '../../src/contracts/index.js'
+
+it('借用正式 SQLite 事务使活动、索引、撤销和操作收据原子提交', async () => {
+  const folder = await mkdtemp(join(tmpdir(), 'gugu-calendar-receipt-')), path = join(folder, 'core.db')
+  try {
+    await initializeSqlite(path)
+    const { runtime, ownerId } = await openSqliteRuntime(path)
+    try {
+      const input = { title: '合成活动', date: '2026-11-15' }, context = dataContext(ownerId), operationId = randomUUID()
+      const run = (id: string, fail: boolean) => runtime.operationWithTransaction(context, id, 'calendar.create', input, async tx => {
+        const result = await createCalendarEvent(createBorrowedCalendarCreateStore(tx, 'sqlite'), { ownerId, input, undoContextId: 'tab' })
+        if (fail) throw new Error('合成回滚')
+        return result
+      })
+      await expect(run(randomUUID(), true)).rejects.toThrow('合成回滚')
+      for (const table of ['calendar_events', 'rag_index_jobs', 'undo_operations', 'core_operation_receipts'])
+        expect((await sql.raw(`SELECT * FROM ${table}`).execute(runtime.db)).rows).toHaveLength(0)
+      const first = await run(operationId, false), replay = await run(operationId, false)
+      expect(first.replayed).toBe(false); expect(replay.replayed).toBe(true); expect(replay.result).toEqual(first.result)
+      for (const table of ['calendar_events', 'rag_index_jobs', 'undo_operations', 'core_operation_receipts'])
+        expect((await sql.raw(`SELECT * FROM ${table}`).execute(runtime.db)).rows).toHaveLength(1)
+    } finally { await runtime.close() }
+  } finally { await rm(folder, { recursive: true, force: true }) }
+})
 
 const pgUrl = process.env.GUGU_CORE_TEST_POSTGRES_URL
 describe.each(['sqlite', 'postgres'] as const)('日历创建事务 %s', (backend) => {

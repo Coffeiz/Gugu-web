@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import test from 'node:test'
-import { createPosixConfigFileLock } from '../../src/domains/agent-config/posix-config-lock.js'
+import { createPosixConfigFileLock } from '../../src/adapters/posix-config-lock.js'
 const unsupported = !['darwin', 'linux'].includes(process.platform) || Number(process.versions.node.split('.')[0]) < 26
 const probe = "import fcntl,os,sys; f=os.open(sys.argv[1],os.O_CREAT|os.O_RDWR,0o600);\ntry: fcntl.flock(f,fcntl.LOCK_EX|fcntl.LOCK_NB); print('acquired')\nexcept BlockingIOError: print('blocked')"
 
@@ -41,7 +41,7 @@ test('异步锁覆盖 await，出错后释放；同步入口不会提前释放�
 
 test('Node 持锁进程崩溃后 Python 可以立即获取同一把锁', { skip: unsupported && '需要 Node 26 和 POSIX 平台' }, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'gugu-lock-test-')), path = join(dir, '.config.lock')
-  const moduleUrl = pathToFileURL(join(process.cwd(), 'src/domains/agent-config/posix-config-lock.ts')).href
+  const moduleUrl = pathToFileURL(join(process.cwd(), 'src/adapters/posix-config-lock.ts')).href
   let child: ReturnType<typeof spawn> | undefined
   try {
     const source = `import {createPosixConfigFileLock} from ${JSON.stringify(moduleUrl)}; await createPosixConfigFileLock().withExclusive(process.argv[1], async () => { console.log('ready'); await new Promise(resolve => process.stdin.once('data', resolve)) })`
@@ -57,7 +57,7 @@ test('Node 持锁进程崩溃后 Python 可以立即获取同一把锁', { skip:
 test('启动时禁用 FFI 明确失败且不创建锁文件', { skip: unsupported && '需要 Node 26 和 POSIX 平台' }, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'gugu-lock-test-')), path = join(dir, '.config.lock')
   try {
-    const moduleUrl = pathToFileURL(join(process.cwd(), 'src/domains/agent-config/posix-config-lock.ts')).href
+    const moduleUrl = pathToFileURL(join(process.cwd(), 'src/adapters/posix-config-lock.ts')).href
     const source = `import {createPosixConfigFileLock} from ${JSON.stringify(moduleUrl)}; try { createPosixConfigFileLock().exclusive(process.argv[1], () => {}) } catch (e) { console.log(e.message) }`
     const output = execFileSync(process.execPath, ['--no-experimental-ffi', '--import', 'tsx', '--input-type=module', '-e', source, path], { encoding: 'utf8' })
     assert.match(output, /FFI 被禁用/)

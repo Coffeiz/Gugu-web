@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { after, before, describe, it } from 'node:test'
 import { Pool } from 'pg'
 import { createGlobalSearchOperations, parseGlobalSearchQuery } from '@gugu/core'
-import { createPostgresGlobalSearchSources } from '@gugu/core/data'
+import { createPostgresGlobalSearchSources } from '@gugu/core/search/postgres'
 import { createApp } from '../../src/app.js'
 import { signedUserToken } from '../helpers/auth.js'
 

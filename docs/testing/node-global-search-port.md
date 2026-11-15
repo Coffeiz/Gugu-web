@@ -68,6 +68,6 @@ SQLite会话来源接入前必须在LIMIT前处理全部可能排序记录的时
 
 最新定向Node3文件44/44（查询11、片段23、独立会话10）、认证Host搜索14/14、真实PG/正式SQLite会话对照3/3、Python搜索与片段52/52通过，均0失败/跳过。Core build、Core测试/Host类型检查、生成物check与diff通过；PG实例及schema已关闭清理。ESCAPE由聊天会话实现，我方整合复验；来源仍不装配，没有生产Agent Run/Worker搜索验收。edit-check没有调用签名不兼容，整树quality_delta仍有19项门禁，不宣称全仓质量通过。
 
-SQLite其余来源仍未开放，独立conversation来源补齐上述边界后再协调接入；不可借PG通过声称双库全部等价。Agent `global_search`尚无完整ToolDefinition、工具参数/结果映射和生产Run调用验收，不因Web搜索公共化升级工具状态。真实生产部署、用户库/Redis、索引维护及完整RAG迁移未验收；RAG仍按复用1.7.8 TypeScript方向推进，不迁Cython算法。
+SQLite其余来源仍未开放，独立conversation来源补齐上述边界后再协调接入；不可借PG通过声称双库全部等价。Agent `global_search`尚无完整ToolDefinition、工具参数/结果映射和生产Run调用验收，不因Web搜索公共化升级工具状态。真实生产部署、用户库/Redis、索引维护及完整RAG迁移未验收；RAG仍按复用1.7.7 TypeScript方向推进，不迁Cython算法。
 
 本轮未修改main/app、共享schema、package/lockfile、用户运行配置或前端；root/data导出已协调追加，没有提交、推送或触发CI。

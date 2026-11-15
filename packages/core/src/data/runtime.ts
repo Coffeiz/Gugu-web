@@ -9,9 +9,6 @@ import type { Database } from './schema.js'
 import { services } from './repositories.js'
 import type { Backend } from './repositories.js'
 
-// 保留现有数据入口，仓储实现与事务/收据生命周期分别维护。
-export { SqlClientRepository } from '../clients/repository.js'
-export { SqlProjectRepository } from '../projects/repository.js'
 export type { Backend } from './repositories.js'
 
 function canonical(value: unknown): string {

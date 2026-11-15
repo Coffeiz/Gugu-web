@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto'
 import type { RagDocument, RagSearchScope, RagSearchResult, RagSearchDiagnostics } from './contracts.js'
-import { scoreTerms, termFrequency, tokenize as tokens } from './ranking/bm25.js'
+import { corpusStatistics, scoreTerms, termFrequency, tokenize as tokens } from './ranking/bm25.js'
 import { rankingText } from './ranking/document-text.js'
 import type { Posting } from './ranking/types.js'
+import { hybridFuseScores } from './ranking/hybrid.js'
 type Document = RagDocument
 type State = { revision:string; documents:Document[]; documentsById:Map<string,Document>; postings:Map<string,Posting>; lengths:Map<string,number>; docFreq:Map<string,number>; avgLength:number; totalLength:number; fingerprints:Map<string,string> }
 function replaceInMemory(state: State, revision: string, documents: Document[]): void {
@@ -268,6 +269,21 @@ export function createRagLexicalIndex(ownerId:string) {
   replace(owner:string,revision:string,documents:Document[]){authorize(owner);const next:State={revision:'',documents:[],documentsById:new Map(),postings:new Map(),lengths:new Map(),docFreq:new Map(),avgLength:0,totalLength:0,fingerprints:new Map()};replaceInMemory(next,revision,structuredClone(documents));state=next},
   patch(owner:string,baseRevision:string,revision:string,upserts:Document[],deletes:string[]){authorize(owner);if(state.revision!==baseRevision)throw new Error('RAG 索引版本不匹配');const next=structuredClone(state);const unique=[...new Map(upserts.map(item=>[item.id,item])).values()];patchInMemory(next,revision,structuredClone(unique),[...deletes]);state=next},
   search(owner:string,query:string,limit:number,allowedSources:ReadonlyArray<string>,scope:RagSearchScope){authorize(owner);validateScope(scope);return structuredClone(search(state,query,limit,new Set(allowedSources),scope))},
+  searchHybrid(owner:string,query:string,limit:number,allowedSources:ReadonlyArray<string>,scope:RagSearchScope,options:{queryVector:readonly number[];vectorVersion:string;expectedVersion:string;vectors:ReadonlyMap<string,readonly number[]>}){
+   authorize(owner);validateScope(scope)
+   if(!options.queryVector.every(Number.isFinite))throw new Error('RAG 查询向量无效')
+   const lexical=search(state,query,limit,new Set(allowedSources),scope)
+   if(!options.expectedVersion||options.vectorVersion!==options.expectedVersion||!options.queryVector.length||!options.vectors.size)return {...structuredClone(lexical),fusion:'bm25' as const,vectorDocCount:0}
+   const hits=lexical.results.map(row=>({chunk_id:row.id}))
+   const vectors=new Map<string,readonly number[]>()
+   for(const hit of hits){const value=options.vectors.get(hit.chunk_id);if(value?.every(Number.isFinite))vectors.set(hit.chunk_id,value)}
+   const {fusedScores,vectorScores}=hybridFuseScores(hits,options.queryVector,vectors)
+   if(!fusedScores.size)return {...structuredClone(lexical),fusion:'bm25' as const,vectorDocCount:0}
+   const results=lexical.results.map(row=>({...row,score:fusedScores.get(row.id)!,...(vectorScores.has(row.id)?{semantic_score:vectorScores.get(row.id)!}:{})}))
+    .sort((a,b)=>b.score-a.score||(a.id<b.id?-1:a.id>b.id?1:0))
+   return {results:structuredClone(results),diagnostics:structuredClone(lexical.diagnostics),fusion:'hybrid-rrf' as const,vectorDocCount:vectorScores.size}
+  },
   revision(){return state.revision},
+  statistics(owner:string){authorize(owner);return structuredClone(corpusStatistics(state))},
  }
 }

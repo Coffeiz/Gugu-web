@@ -18,6 +18,8 @@ it('Preload 只暴露固定业务函数，不透传任意 channel 或 Electron �
     'createProject',
     'projects',
     'receipt',
+    'renameClient',
+    'renameProject',
     'sandboxStatus',
     'undoApply',
     'undoPreview',
@@ -25,6 +27,10 @@ it('Preload 只暴露固定业务函数，不透传任意 channel 或 Electron �
   ])
   await bridge.createProject('合成计划')
   expect(spies.invoke).toHaveBeenCalledWith('gugu:projects:create', '合成计划')
+  await bridge.renameProject(3, 2, '合成名称')
+  expect(spies.invoke).toHaveBeenCalledWith('gugu:projects:rename', 3, 2, '合成名称')
+  await bridge.renameClient(4, '合成联系人')
+  expect(spies.invoke).toHaveBeenCalledWith('gugu:clients:rename', 4, '合成联系人')
   await bridge.receipt('合成操作 ID')
   expect(spies.invoke).toHaveBeenCalledWith('gugu:operations:get', '合成操作 ID')
   await bridge.undoApply('合成上下文', '合成撤销', '合成操作')

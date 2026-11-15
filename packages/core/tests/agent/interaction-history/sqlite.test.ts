@@ -9,6 +9,26 @@ import { expect, it } from 'vitest'
 import { initializeSqlite, openSqliteRuntime } from '../../../src/data/sqlite.js'
 import { createSqlAgentInteractionHistory } from '../../../src/agent/sessions/interaction-history.js'
 
+it('MCP 密钥输入不返回选项令牌、不轮换哈希且不泄漏目标密文', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'gugu-secret-history-')), path = join(dir, 'core.db')
+  try {
+    await initializeSqlite(path)
+    const { runtime, ownerId } = await openSqliteRuntime(path)
+    try {
+      const owner = ownerId.replaceAll('-', ''), date = '2026-01-01 00:00:00.000000'
+      const schema = JSON.stringify({ secret_fields: [{ name: 'api_key' }], context: { secret_target: { kind: 'mcp_credentials', credential_value: 'synthetic-private' } } })
+      await sql`INSERT INTO conversation_sessions(id,user_id,title,title_locked,summary,source,context_epoch,created_at,updated_at) VALUES (1,${owner},'对话',0,'','web',1,${date},${date})`.execute(runtime.db)
+      await sql`INSERT INTO interaction_prompts(id,user_id,session_id,kind,title,body,schema_json,status,expires_at,created_at) VALUES (1,${owner},1,'form','凭据','',${schema},'active','2027-01-01 00:00:00',${date})`.execute(runtime.db)
+      await sql`INSERT INTO interaction_actions(id,prompt_id,token_hash,action_type,option_id,context_json,status,expires_at,created_at) VALUES (1,1,'original-hash','mcp_secret_input','input_credentials','{}','pending','2027-01-01 00:00:00',${date})`.execute(runtime.db)
+      const rows = await createSqlAgentInteractionHistory(runtime.db, 'sqlite', () => new Date('2026-01-02T00:00:00Z'))(ownerId, 1, { restoreActive: true })
+      expect(rows).toHaveLength(1)
+      expect(rows[0]!.options).toEqual([])
+      expect(JSON.stringify(rows)).not.toContain('synthetic-private')
+      expect((await sql<{ token_hash: string }>`SELECT token_hash FROM interaction_actions WHERE id=1`.execute(runtime.db)).rows[0]!.token_hash).toBe('original-hash')
+    } finally { await runtime.close() }
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})
+
 it('正式 SQLite 交互历史校验并归一时间，在事务提交后返回可用 token', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'gugu-history-')), path = join(dir, 'core.db')
   try {

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import test from 'node:test'
-import { createPostgresAgentInteractionHistory } from '../../src/domains/agent-sessions/persistence/agent-interaction-history.js'
+import { createPostgresAgentInteractionHistory } from '@gugu/core/agent-sessions'
 import {
   AgentSessionNotFoundError,
   createAgentMessageHistory,
@@ -268,7 +268,7 @@ test('消息历史按可见行分页、旧到新返回，并排除摘要与纯 c
     await pool.query(`INSERT INTO interaction_prompts VALUES
       (21,$1,$2,'choice','边界内','','{}','resolved','1970-01-01','1969-12-31T23:59:59.998500Z'),
       (22,$1,$2,'choice','边界外','','{}','resolved','1970-01-01','1969-12-31T23:59:59.998501Z')`, [owner, session.id])
-    const actual = createAgentMessageHistory(pool, { listInteractions: createPostgresAgentInteractionHistory(pool).list })
+    const actual = createAgentMessageHistory(pool, { listInteractions: createPostgresAgentInteractionHistory(pool) })
     const cursorId = (await pool.query<{ id: number }>('SELECT id FROM conversation_messages WHERE session_id=$1 AND conversation_seq=11', [session.id])).rows[0]!.id
     const actualPage = await actual.list(owner, session.id, { throughId: cursorId })
     assert.deepEqual(actualPage.interactions.map((item: unknown) => (item as { id: number }).id), [21])

@@ -6,7 +6,7 @@ import { createKyselyPreferenceDocumentStore } from '@gugu/core'
 import { createPostgresRuntime } from '@gugu/core/data'
 import { createKyselySmtpStore, createUserSmtpSettings } from '@gugu/core/smtp'
 import { createPostgresPreferencesStore } from '../../src/domains/preferences/persistence/postgres.js'
-import { encryptSmtpPassword } from '../../src/domains/preferences/persistence/smtp-credentials.js'
+import { encryptEncryptedString as encryptSmtpPassword } from '../../src/adapters/encrypted-string.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 

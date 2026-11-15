@@ -30,6 +30,45 @@ afterEach(() => {
 })
 
 describe('桌面本地工作台', () => {
+  it('联系人重命名支持取消并在保存后重读', async () => {
+    const rows = [{ id: 4, name: '旧联系人' }]
+    const renameClient = vi.fn(async (id: number, name: string) => { rows[0] = { id, name }; return { ok: true, result: rows[0] } })
+    ;(window as any).guguDesktop = { projects: async () => ({ ok: true, result: [] }), clients: async () => ({ ok: true, result: [...rows] }), renameClient, sandboxStatus: async () => ({ ok: true, result: { supported: false, methods: [], checkAvailable: false } }) }
+    const element = mountWorkbench(); await flushUi()
+    const button = () => Array.from(element.querySelectorAll('button')).find(item => item.textContent?.includes('重命名'))!
+    button().click(); await nextTick()
+    Array.from(element.querySelectorAll('button')).find(item => item.textContent?.includes('取消'))!.click(); await nextTick()
+    expect(renameClient).not.toHaveBeenCalled()
+    button().click(); await nextTick()
+    const input = element.querySelector<HTMLInputElement>('input[aria-label="联系人名称"]')!
+    input.value = '新联系人'; input.dispatchEvent(new Event('input', { bubbles: true }))
+    input.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await flushUi()
+    expect(renameClient).toHaveBeenCalledWith(4, '新联系人')
+    expect(element.textContent).toContain('新联系人')
+  })
+  it('重命名提交当前版本并重读列表，取消不发请求', async () => {
+    const rows = [{ id: 3, name: '旧项目', version: 2 }]
+    const renameProject = vi.fn(async (id: number, version: number, name: string) => {
+      rows[0] = { id, name, version: version + 1 }
+      return { ok: true, result: rows[0] }
+    })
+    ;(window as any).guguDesktop = { projects: async () => ({ ok: true, result: [...rows] }), clients: async () => ({ ok: true, result: [] }), renameProject, sandboxStatus: async () => ({ ok: true, result: { supported: false, methods: [], checkAvailable: false } }) }
+    const element = mountWorkbench()
+    await flushUi()
+    const button = () => Array.from(element.querySelectorAll('button')).find(item => item.textContent?.includes('重命名'))!
+    button().click(); await nextTick()
+    Array.from(element.querySelectorAll('button')).find(item => item.textContent?.includes('取消'))!.click(); await nextTick()
+    expect(renameProject).not.toHaveBeenCalled()
+    button().click(); await nextTick()
+    const input = element.querySelector<HTMLInputElement>('input[aria-label="项目名称"]')!
+    input.value = '新项目'; input.dispatchEvent(new Event('input', { bubbles: true }))
+    input.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await flushUi()
+    expect(renameProject).toHaveBeenCalledWith(3, 2, '新项目')
+    expect(element.textContent).toContain('新项目')
+    expect(element.textContent).toContain('v3')
+  })
   it('创建后从 Core 重读列表，不依赖 Web 登录或 HTTP', async () => {
     const rows: { id: number; name: string; version: number }[] = []
     const createProject = vi.fn(async (name: string) => { rows.push({ id: 1, name, version: 1 }); return { ok: true, result: rows[0] } })

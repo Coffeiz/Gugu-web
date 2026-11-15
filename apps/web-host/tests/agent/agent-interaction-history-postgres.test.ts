@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import test from 'node:test'
-import { createPostgresAgentInteractionHistory } from '../../src/domains/agent-sessions/persistence/agent-interaction-history.js'
+import { createPostgresAgentInteractionHistory } from '@gugu/core/agent-sessions'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 
@@ -64,7 +64,7 @@ test('interaction history owner-scopes prompts, rotates only active action token
     )
 
     const history = createPostgresAgentInteractionHistory(pool, () => now)
-    const restored = await history.list(ownerId, 7, { restoreActive: true })
+    const restored = await history(ownerId, 7, { restoreActive: true })
     assert.deepEqual(restored.map((item) => item.id), [ended.id, active.id])
     const endedPrompt = restored[0] as Record<string, any>
     const activePrompt = restored[1] as Record<string, any>
@@ -89,7 +89,7 @@ test('interaction history owner-scopes prompts, rotates only active action token
       createHash('sha256').update(activePrompt.options[0].token).digest('hex'))
     assert.notEqual(saved.rows[0]?.token_hash, oldTokenHash)
 
-    const historicalRun = await history.list(ownerId, 7, {
+    const historicalRun = await history(ownerId, 7, {
       restoreActive: false,
       toolCallIds: ['tool-ended'],
     })

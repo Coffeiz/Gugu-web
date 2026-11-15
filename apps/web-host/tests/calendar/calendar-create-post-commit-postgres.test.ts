@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import test from 'node:test'
 import { createCalendarEvent } from '@gugu/core/calendar'
-import { createCalendarEventPostCommitPublisher } from '../../src/domains/calendar/persistence/calendar-create-post-commit-postgres.js'
+import { createCalendarEventPostCommitPublisher } from '../../src/modules/calendar/persistence/calendar-create-post-commit-postgres.js'
 import { calendarCreateStore } from './calendar-core-stores.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL

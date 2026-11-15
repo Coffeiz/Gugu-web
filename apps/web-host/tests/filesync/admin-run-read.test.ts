@@ -6,7 +6,7 @@ import {resolve} from 'node:path'
 import {Pool} from 'pg'
 import Fastify from 'fastify'
 import {createPostgresRuntime} from '@gugu/core/data'
-import {createFileSyncRunReader} from '../../../../packages/core/src/filesync/read-runs.js'
+import {createFileSyncRunReader} from '@gugu/core/filesync-run-read'
 import {registerAdminFileSyncRunReadRoutes} from '../../src/modules/filesync/admin-run-read.js'
 import {installHttpErrorHandler} from '../../src/http/errors.js'
 const databaseUrl=process.env.GUGU_WEBUI_TEST_DATABASE_URL,python=process.env.GUGU_WEBUI_TEST_PYTHON

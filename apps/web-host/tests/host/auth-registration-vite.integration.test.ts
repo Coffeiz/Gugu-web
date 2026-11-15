@@ -11,7 +11,7 @@ import { createUserRepository } from '../../src/domains/auth/persistence/users.j
 import { createPostgresRegistrationOperations } from '../../src/domains/auth/persistence/registration.js'
 import { createPostgresWorkspaceDirectoryOperations } from '../../src/domains/workspaces/persistence/workspace-directories.js'
 import { createRegistrationSeeder } from '@gugu/core/onboarding'
-import { createPostgresRegistrationSeedOperations } from '../../src/domains/onboarding/persistence/registration-seed-postgres.js'
+import { createPostgresRegistrationSeedOperations } from '../../src/modules/onboarding/persistence/registration-seed-postgres.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const secret = 'synthetic-registration-vite-secret'

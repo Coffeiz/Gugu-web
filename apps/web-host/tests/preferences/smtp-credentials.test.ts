@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { createDecipheriv, hkdfSync } from 'node:crypto'
 import test from 'node:test'
-import { decryptSmtpPassword, encryptSmtpPassword } from '../../src/domains/preferences/persistence/smtp-credentials.js'
+import { decryptEncryptedString as decryptSmtpPassword, encryptEncryptedString as encryptSmtpPassword } from '../../src/adapters/encrypted-string.js'
 
 test('SMTP password storage uses Python-compatible authenticated encryption and never stores plaintext', () => {
   const secretKey = 'synthetic-smtp-test-secret'

@@ -6,7 +6,7 @@ import {resolve} from 'node:path'
 import {Pool} from 'pg'
 import Fastify from 'fastify'
 import {createPostgresRuntime} from '@gugu/core/data'
-import {createFileSyncRunCancellation} from '../../../../packages/core/src/filesync/cancel-run.js'
+import {createFileSyncRunCancellation} from '@gugu/core/filesync-run-cancel'
 import {registerAdminFileSyncRunCancelRoute} from '../../src/modules/filesync/admin-run-cancel.js'
 const databaseUrl=process.env.GUGU_WEBUI_TEST_DATABASE_URL,python=process.env.GUGU_WEBUI_TEST_PYTHON
 

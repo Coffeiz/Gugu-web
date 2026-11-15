@@ -31,10 +31,10 @@ export function createSqlRagRebuildWorker(db:Kysely<any>,backend:'postgres'|'sql
    return {...row,generation:Number(row.generation),attempts:Number(row.attempts)+1,lease_until:lease}
   })
   if(!job)return 'idle'
-  const sourceId=ids(job.pending_source_ids)[0]||job.source_id||null
   const rawOwner=String(job.user_id)
   const owner=backend==='sqlite'&&/^[0-9a-f]{32}$/iu.test(rawOwner)?rawOwner.replace(/^(........)(....)(....)(....)(............)$/u,'$1-$2-$3-$4-$5'):rawOwner
   try{
+   const sourceId=ids(job.pending_source_ids)[0]||job.source_id||null
    const documents=await sources[job.source_type]!(owner,sourceId,signal)
    signal?.throwIfAborted()
    await writer.replaceFenced(owner,job.source_type,sourceId,documents,{

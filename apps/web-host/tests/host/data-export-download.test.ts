@@ -4,7 +4,7 @@ import {mkdtemp,readFile,rm} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import test from 'node:test'
-import {createDataExportDownloader,ExportDownloadError} from '../../../../packages/core/src/data-portability/download-export-node.js'
+import {createDataExportDownloader,ExportDownloadError} from '@gugu/core/data-portability/download-export'
 import {writePythonPortableArchive} from '../helpers/portable-archive.js'
 const owner='00000000-0000-4000-8000-000000000001',job='00000000-0000-4000-8000-000000000002'
 

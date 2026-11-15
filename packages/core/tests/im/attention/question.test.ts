@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import test from 'node:test'
+import { test } from 'vitest'
 import { questionEvidence } from '../../../src/im/attention/question.js'
 
 test('疑问语素、转述与否定劝告使用相同判断', () => {

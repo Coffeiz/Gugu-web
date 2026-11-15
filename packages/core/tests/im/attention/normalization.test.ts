@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import test from 'node:test'
+import { test } from 'vitest'
 import { normalizeAttentionText, buildLogicalCandidates } from '../../../src/im/attention/normalization.js'
 import { attentionMessageFromPayload } from '../../../src/im/attention/message.js'
 

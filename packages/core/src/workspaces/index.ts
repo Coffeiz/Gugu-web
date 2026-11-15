@@ -1,5 +1,7 @@
 export * from './workspace-declarations.js'
+export * from './workspace-declarations-store.js'
 export * from './workspace-list.js'
+export * from './workspace-list-store.js'
 export * from './workspace-bindings.js'
 export * from './workspace-delete.js'
 export * from './workspace-bindings-store.js'

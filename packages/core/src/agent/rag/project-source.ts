@@ -22,8 +22,12 @@ export function createProjectRagSource(core:SqlDataRuntime):RagRebuildSource {
  }
 }
 function record(project:ProjectRecord) {
- const stages=JSON.parse(project.stages_json) as unknown
- if(!Array.isArray(stages))throw new Error('项目阶段数据无效')
+ let stages:unknown
+ try{stages=JSON.parse(project.stages_json)}catch(error){if(!(error instanceof SyntaxError))throw error;stages=[]}
+ if(!Array.isArray(stages)){
+  if(stages===null||stages===false||stages===0||typeof stages==='string'||typeof stages==='object')stages=[]
+  else throw new Error('项目阶段数据无效')
+ }
  const lines=[`项目：${project.name||'未命名项目'}`]
  if(project.client)lines.push(`联系人：${project.client}`)
  if(project.status)lines.push(`状态：${project.status}`)
@@ -32,7 +36,7 @@ function record(project:ProjectRecord) {
  if(project.current_stage)lines.push(`当前阶段：${project.current_stage}`)
  if(project.start_date)lines.push(`开始日期：${project.start_date}`)
  if(project.deadline)lines.push(`截止日期：${project.deadline}`)
- const names=stages.filter((stage):stage is Record<string,unknown>=>stage!==null&&typeof stage==='object'&&!Array.isArray(stage)).map(stage=>String(stage.name||''))
+ const names=(stages as unknown[]).filter((stage):stage is Record<string,unknown>=>stage!==null&&typeof stage==='object'&&!Array.isArray(stage)).map(stage=>String(stage.name||''))
  if(names.length)lines.push(`阶段：${names.join('、')}`)
  const content=lines.join('\n')
  return {source_type:'project',id:String(project.id),source_id:String(project.id),parent_id:`project:${project.id}`,title:project.name||'未命名项目',summary:[...content].slice(0,240).join(''),content,document_version:'',version_parts:[project.id,project.version||1],updated_at:project.updated_at,scope:{scope_type:'owner',scope_id:''},metadata:{project_id:String(project.id),status:project.status||'pending'}}

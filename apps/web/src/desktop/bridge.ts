@@ -21,8 +21,10 @@ async function call<T>(action: (bridge: DesktopBridge) => Promise<DesktopReply<T
 export const desktopData = {
   projects: () => call(bridge => bridge.projects()),
   createProject: (name: string) => call(bridge => bridge.createProject(name)),
+  renameProject: (id: number, version: number, name: string) => call(bridge => bridge.renameProject(id, version, name)),
   clients: () => call(bridge => bridge.clients()),
   createClient: (name: string) => call(bridge => bridge.createClient(name)),
+  renameClient: (id: number, name: string) => call(bridge => bridge.renameClient(id, name)),
   sandboxStatus: () => call(bridge => bridge.sandboxStatus()),
   receipt: (operationId: string) => call(bridge => bridge.receipt(operationId)),
 }

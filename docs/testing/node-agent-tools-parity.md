@@ -179,7 +179,7 @@ Node 保持现有 `Harness ToolPort.plan/dispatch/reconcile` 和 Executor 边界
 | 定时任务 | `modules/scheduled-tasks` 有并行会话开发中的服务；需 Agent 适配与可信任务主体/授权、创建更新确认、调度/投递凭据和副作用 | `scheduling/tasks/test_scheduled_task_schedule_rules.py`、`test_scheduled_task_execution.py`、`test_scheduled_task_workspace.py`、`im/test_scheduled_group_imctx.py` |
 | Web/图片/研究搜索 | Core Provider search adapter 存在，不能等同具体 Agent 搜索工具；需配置、可信凭据、URL/重定向/代理安全及结果归一 | `agent/knowledge/test_search_tools.py`、`agent/test_search_limits.py`、`agent/knowledge/test_similar_image_search.py`、`agent/providers/test_deep_research_providers.py` |
 | http_get/web_download | Core Provider 网络 transport 是 Provider 出站边界；工具仍需明确 URL/DNS/重定向安全、下载配额/文件落点/媒体提取端口，不能直接裸 fetch | `agent/test_tool_schema_security_contract.py`、`agent/test_tool_schema_validation.py`；沿 `tools/web.py` 的 URL 安全服务继续核对专门测试 |
-| 知识/记忆/全局搜索 | 目标复用 1.7.8 TypeScript RAG；需知识/长期记忆持久服务和 owner/IM scope、CAS、索引一致性，Cython 不迁 TS | `agent/knowledge/test_knowledge.py`、`test_read_knowledge_tool.py`、`test_knowledge_append_reuse.py`、`test_global_search.py`、`test_search_memory_boundary.py`、`agent/memory/test_remember_tool.py`、`im/test_im_memory_scopes.py` |
+| 知识/记忆/全局搜索 | 目标复用 1.7.7 TypeScript RAG；需知识/长期记忆持久服务和 owner/IM scope、CAS、索引一致性，Cython 不迁 TS | `agent/knowledge/test_knowledge.py`、`test_read_knowledge_tool.py`、`test_knowledge_append_reuse.py`、`test_global_search.py`、`test_search_memory_boundary.py`、`agent/memory/test_remember_tool.py`、`im/test_im_memory_scopes.py` |
 | 对话/群上下文 | Node Canonical 历史有持久适配，搜索/读取/绑定工具尚无 adapter；需 owner、群身份、访问范围与可信会话绑定 | `agent/test_tool_isolation.py`、`im/test_group_tool_permissions.py`、`agent/test_tool_history_request_boundary.py` |
 | react/link buttons/email | 需可信渠道、地址/目标、邮件凭据与收件人安全策略；邮件 destructive 确认及附件 owner 校验不可省略 | `agent/test_send_link_buttons_tool.py`、`platform/email/test_email_tool.py`、`test_email_attachments.py`、`im/feishu/test_feishu_tool_summary.py` |
 | MCP/Skill 管理 | Core 仅有 Harness 能力端口；需目录发现、不可变 Schema 快照、凭据存储、URL/stdio 安全后端、确认及配额 | `agent/mcp/test_mcp_manager_dispatch.py`、`test_mcp_credentials.py`、`test_mcp_schema_snapshot.py`、`test_mcp_stdio_quota.py`、`test_mcp_user_tools_e2e.py`、`agent/test_on_demand_tools.py` |
@@ -191,7 +191,7 @@ Node 保持现有 `Harness ToolPort.plan/dispatch/reconcile` 和 Executor 边界
 - Linux/NAS 2.0 OSS/S3 在线存储、直传/预签名及对象搬移实现退役；上述文件工具保留业务用途，但需改用 Local 与明确授权边界，不能把整类工具退役。旧 OSS 数据盘点、导出、迁移完整性与恢复验收仍必须保留。
 - Docker 沙盒生命周期、Rootless/镜像/容器重建等管理实现退役；`shell` 本身是待重设计/依赖阻塞，Linux MXC 账号、工作区、进程、资源和网络隔离未验收前不启用。
 - DB↔FS 双向对账不迁为常规能力；旧数据一次性诊断/恢复与配额账本核对另列，不混入普通 Agent 文件工具。
-- RAG 改为复用 1.7.8 TypeScript 引擎；Python/Cython 仅作迁移行为基准，不另造 TS 算法副本。
+- RAG 改为复用 1.7.7 TypeScript 引擎；Python/Cython 仅作迁移行为基准，不另造 TS 算法副本。
 
 ## 初始接入证据与测试边界
 
@@ -929,7 +929,7 @@ Core 交互协调器测试 18 项、Host 注册器与交互描述 16 项通过�
 
 ### 历史对话正文读取（2026-11-15）
 
-`read_conversation` 按旧版工具组放入 tools/conversations.ts，注册器仅在可信 Host 显式装配历史读取并授权时开放。共享会话历史数据适配器在同一 PostgreSQL 查询内限定 owner、排除 content_json 非 SQL NULL 的结构化记录，先取最近 N 条再按顺序输出；空正文在取数后过滤，单条截取 1200 个 Unicode 字符。不存在和跨 owner 使用相同错误，取消和撤权不返回正文。关键词搜索仍需 1.7.8 TypeScript RAG；不以站内搜索替代 BM25。生产 Host 和桌面 SQLite 历史读取能力仍待装配。
+`read_conversation` 按旧版工具组放入 tools/conversations.ts，注册器仅在可信 Host 显式装配历史读取并授权时开放。共享会话历史数据适配器在同一 PostgreSQL 查询内限定 owner、排除 content_json 非 SQL NULL 的结构化记录，先取最近 N 条再按顺序输出；空正文在取数后过滤，单条截取 1200 个 Unicode 字符。不存在和跨 owner 使用相同错误，取消和撤权不返回正文。关键词搜索仍需 1.7.7 TypeScript RAG；不以站内搜索替代 BM25。生产 Host 和桌面 SQLite 历史读取能力仍待装配。
 
 隔离 PostgreSQL 随机 schema 的工具调用测试 1 项通过，覆盖真实授权查询、空会话、最近顺序、JSON null、截断、跨用户、非法上限、撤权、组禁用与取消。Core Agent 运行测试 63 项通过，新增用例将工具结果送入模型下一轮（历史读取为明确替身）；Host 注册器 14 项通过；Python 对应 owner/跨用户测试 2 项通过。Core 构建和 Host 类型检查通过。第一次新增 PG 测试误将注册器追加的错误提示当成业务不一致，修正测试以检查原始错误字段后重跑通过，未放宽旧断言。真实 Redis、生产运行、桌面 SQLite 和 RAG 未验收。
 
@@ -974,3 +974,17 @@ RAG 专项严格类型检查通过；Web Host 全量类型检查未通过，当�
 另外使用旧版现有的 `@node-rs/jieba` 2.0.1 制品和内存 SQLite，实际执行会话候选与统一排序，合成用例通过；该本机制品仅供验证，不是 2.0 的依赖声明或生产装配。
 
 重建补充持久任务处理器：只领取 Host 显式注入来源的任务；索引写入、generation/租约验证和任务结果在同一事务内提交，失败采用不含原始异常的错误码与退避。SQLite 定向测试覆盖多 ID、任务执行期间 generation 变化、失败和重试；隔离 PostgreSQL 测试从真实临时表读取来源并完成重建。Core 定向 35 项、PostgreSQL 与文件测试 3 项通过。正式索引表、领域来源与生产调度未装配，不能把处理器存在视为重建能力已上线。
+
+项目重建来源现复用共享项目领域服务，读取同 owner 的未归档项目事实，并支持按单项目重建；归档后空投影产生墓碑。临时 SQLite 与隔离 PostgreSQL 均执行真实领域读取、队列消费和持久写入，Python 来源记录对照通过。其他领域来源、正式表、可信授权和生产调度仍未完成。Node 定向 35 项、PostgreSQL/文件 3 项、Python 定向 22 项通过；PostgreSQL 初次运行因夹具到期时间比毫秒时钟晚不足 1 毫秒而返回 idle，调整夹具为明确已到期后通过，未改断言。
+
+日历重建来源也已复用共享日历读取端口，限定 owner、忽略已删除活动，删除后通过同一任务处理器生成墓碑。SQLite 和隔离 PostgreSQL 验证真实日历读取、队列及索引；Python 活动记录对照通过。Node 定向 35 项、PostgreSQL/文件 3 项、Python 定向 23 项通过。生产调度仍未装配，不能将项目或日历来源记为生产完成。
+
+便签与定时任务来源继续复用共享领域查询：便签限定存活的 note/suggestion，读取内容、版本及索引摘要；定时任务包括活动提醒，并保留更新时间的微秒。两者经临时 SQLite 和隔离 PostgreSQL 读取真实业务表，再通过持久队列写入索引；覆盖跨 owner、删除和墓碑，Python 来源记录对照通过。Core 三个定向文件 38 项通过、1 项跳过（该文件的独立 PostgreSQL 用例未提供连接）；另行隔离 PostgreSQL 的 Host 测试 3 项通过，Python 定向 25 项通过。来源尚未装配生产调度；画布、记忆、知识和完整会话索引来源仍有未完成部分。
+
+词法索引增加旧版余弦与 RRF 候选融合，并限定在已授权 scope 的词法结果内；模型版本不符或缺向量时继续走词法。使用 Node 原生 TypeScript 加载及临时 loader 验证融合规则和实际索引边界；另用旧版本地 Jieba 2.0.1 制品验证一组合成查询。工作区根 Node 依赖及本地 Python 虚拟环境在本轮期间不可用，新增 Vitest 与对应 Python pytest 未能运行，不能将这些手动验证当成完整回归或生产装配。
+
+随后使用独立临时依赖重新运行 Core 定向测试，37 项通过，RAG 严格类型检查通过；临时 SQLite、真实向量文件、旧版 Jieba 和实际混合排序联动通过，并验证 embedding 期间撤权不返回结果。授权与 embedding 为明确替身，正式表、可信授权、embedding 后端和生产 Agent 装配仍未完成。另以真实 SQLite 和 Jieba 经工具注册器执行会话搜索，验证 baseline 前历史、跨用户及群聊隔离；该测试不是生产 Host 启动验收。Python 环境缺失，未重跑本轮 pytest。
+
+相同范围检索组合再以隔离 PostgreSQL、真实临时向量文件和旧版 Jieba 运行，验证 owner/群隔离、向量命中及查询中撤权；授权与 embedding 依旧为替身。此测试不改变生产接入状态。
+
+临时依赖环境下尝试完整 Core 类型检查时，因未安装可选 `@microsoft/mxc-sdk/v1` 而无法完成；RAG 子集严格类型检查通过。未为本次查询验证安装或运行沙盒后端。

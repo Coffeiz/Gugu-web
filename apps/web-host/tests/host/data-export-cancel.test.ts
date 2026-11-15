@@ -3,7 +3,7 @@ import {randomUUID} from 'node:crypto'
 import test from 'node:test'
 import {Pool} from 'pg'
 import {withPostgresTransaction} from '../../src/adapters/postgres-transaction.js'
-import {createDataExportCanceler} from '../../../../packages/core/src/data-portability/cancel-export.js'
+import {createDataExportCanceler} from '@gugu/core/data-portability/cancel-export'
 const url=process.env.GUGU_WEBUI_TEST_DATABASE_URL
 
 test('取消导出按owner行锁转换状态，过期不阻止取消，终态拒绝且并发仅一次成功', {skip:!url&&'需要隔离PG'},async()=>{

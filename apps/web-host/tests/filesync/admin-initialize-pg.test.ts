@@ -8,7 +8,7 @@ import {tmpdir} from 'node:os'
 import {Pool} from 'pg'
 import Fastify from 'fastify'
 import {createPostgresRuntime} from '@gugu/core/data'
-import {createFileSyncInitialize} from '../../../../packages/core/src/filesync/dry-run.js'
+import {createFileSyncInitialize} from '@gugu/core/filesync-dry-run'
 const databaseUrl=process.env.GUGU_WEBUI_TEST_DATABASE_URL,redisUrl=process.env.GUGU_WEBUI_TEST_REDIS_URL,python=process.env.GUGU_WEBUI_TEST_PYTHON
 
 test('初始化任务幂等且由真实Python runner执行', {skip:(!databaseUrl||!redisUrl||!python)&&'需要隔离PG/Redis与显式Python'},async()=>{

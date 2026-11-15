@@ -6,8 +6,8 @@ import {tmpdir} from 'node:os'
 import {join,resolve} from 'node:path'
 import {execFileSync} from 'node:child_process'
 import {Pool} from 'pg'
-import {createPostgresRuntime} from '../../../../packages/core/src/data/postgres.js'
-import {createDataExportPreviewReader} from '../../../../packages/core/src/data-portability/export-preview.js'
+import {createPostgresRuntime} from '@gugu/core/data'
+import {createDataExportPreviewReader} from '@gugu/core/data-portability/export-preview'
 test('导出预览正式PG全模型与实际Python handler等价，隔离关联owner/草稿引用，统计墓碑与字节且不写数据',async()=>{
  const url=process.env.GUGU_WEBUI_TEST_DATABASE_URL,python=process.env.GUGU_CORE_GOLDEN_PYTHON;assert.ok(url);assert.ok(python)
  const schema=`export_preview_${randomUUID().replaceAll('-','')}`,owner=randomUUID(),other=randomUUID(),root=await mkdtemp(join(tmpdir(),'export-preview-')),path=join(root,'override.json'),admin=new Pool({connectionString:url,max:1});await admin.query(`CREATE SCHEMA "${schema}"`)

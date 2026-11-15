@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
-import { createPortabilityJobReader } from '../../../../packages/core/src/data-portability/read-jobs.js'
+import { createPortabilityJobReader } from '@gugu/core/data-portability/read-jobs'
 
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const owner='00000000-0000-4000-8000-000000000001', foreign='00000000-0000-4000-8000-000000000002'

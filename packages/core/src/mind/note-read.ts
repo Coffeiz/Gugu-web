@@ -20,6 +20,17 @@ export function createSqlMindNoteReader(db: Kysely<Database>, backend: Backend) 
       const row = await db.selectFrom('mind_nodes').selectAll().where('id', '=', noteId).where('user_id', '=', ownerId(raw)).where('kind', '=', 'note').where('deleted_at', 'is', null).executeTakeFirst()
       return row ? mindNodeReadResponse(row) : null
     },
+    /** 供可信索引重建读取；覆盖 Python 的 note/suggestion，包含分词版本所需字段。 */
+    async listForRag(raw:string, id:number|null, signal?:AbortSignal) {
+      signal?.throwIfAborted()
+      const owner=ownerId(raw)
+      const updated=backend==='postgres'?sql<string>`to_char(updated_at AT TIME ZONE 'UTC','YYYY-MM-DD HH24:MI:SS.US') || '+00:00'`:sql<string>`updated_at`
+      let query=db.selectFrom('mind_nodes').select(['id','kind','title','content_md','content_plain','indexed_hash','version']).select(updated.as('updated_at'))
+        .where('user_id','=',owner).where('kind','in',['note','suggestion']).where('deleted_at','is',null)
+      if(id!==null)query=query.where('id','=',id)
+      try{return await query.orderBy('updated_at','desc').orderBy('id','desc').execute()}
+      finally{signal?.throwIfAborted()}
+    },
   }
 }
 

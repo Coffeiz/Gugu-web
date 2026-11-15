@@ -8,11 +8,21 @@ import { CalendarEventIdempotencyUniqueViolation, type EventCreatePublication, t
 
 /** 此适配器要求宿主使用单写者 SQLite 或 BEGIN IMMEDIATE；PG 使用行锁。 */
 export function createKyselyCalendarCreateStore<DB>(db: Kysely<DB>, backend: 'sqlite' | 'postgres', publish: (event: EventCreatePublication) => Promise<unknown>, clock: Clock = nowUtc): EventCreateStore {
+  if (db.isTransaction) throw new Error('借用事务必须使用日历借用事务入口')
+  return calendarCreateStore(db, backend, publish, clock)
+}
+
+/** 借用外层事务时由外层负责提交后的通知；不得提前发布。 */
+export function createBorrowedCalendarCreateStore<DB>(tx: Transaction<DB>, backend: 'sqlite' | 'postgres', clock: Clock = nowUtc): EventCreateStore {
+  return calendarCreateStore(tx, backend, async () => {}, clock)
+}
+
+function calendarCreateStore<DB>(db: Kysely<DB>, backend: 'sqlite' | 'postgres', publish: (event: EventCreatePublication) => Promise<unknown>, clock: Clock): EventCreateStore {
   return {
     async transaction(rawOwnerId, work) {
       const owner = dataContext(rawOwnerId).ownerId
       const ownerId = backend === 'sqlite' ? owner.replaceAll('-', '') : owner
-      return db.transaction().execute(async (tx) => {
+      const run = async (tx: Transaction<DB>) => {
         const timestamp = backend === 'sqlite' ? sql`${databaseTime(clock(), backend)}` : sql`CURRENT_TIMESTAMP`
         const query: EventCreateTransaction = {
           async findIdempotent(key) {
@@ -40,7 +50,8 @@ export function createKyselyCalendarCreateStore<DB>(db: Kysely<DB>, backend: 'sq
           },
         }
         return work(query)
-      })
+      }
+      return db.isTransaction ? run(db as Transaction<DB>) : db.transaction().execute(run)
     },
     async publishCalendarEvent(event) { await publish(event) },
   }

@@ -3,7 +3,7 @@ import { dataContext } from '../contracts/index.js'
 import type { WorkspaceBindingRuntime } from '../workspaces/workspace-bindings.js'
 import type { WorkspaceDeclaration } from '../workspaces/workspace-declarations.js'
 import type { WorkspaceListRow } from '../workspaces/workspace-list.js'
-import type { WorkspaceListTables } from '../data/workspace-list.js'
+import type { WorkspaceListTables } from './workspace-list-store.js'
 
 export type WorkspaceBindingTables = Pick<WorkspaceListTables, 'workspaces' | 'conversation_sessions'>
 

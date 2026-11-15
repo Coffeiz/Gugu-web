@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import test from 'node:test'
+import { test } from 'vitest'
 import { visibleAttentionUnits } from '../../../src/im/attention/visible-units.js'
 
 test('引用和行内代码不作为提问事实，偏移以 Unicode 码点计', () => {

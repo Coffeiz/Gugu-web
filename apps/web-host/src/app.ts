@@ -43,6 +43,9 @@ import { registerUserBotsListRoute, type UserBotsListOptions } from './modules/i
 import { registerCredentialDeleteRoute, type CredentialDeleteOptions } from './modules/byok/credential-delete.js'
 import { registerCredentialCreateRoute, type CredentialCreateOptions } from './modules/byok/credential-create.js'
 import { registerCredentialListRoute, type CredentialListOptions } from './modules/byok/credential-list.js'
+import { registerCredentialPatchRoute, type CredentialPatchRouteOptions } from './modules/byok/credential-patch.js'
+import { registerCredentialModelsPreviewRoute, type CredentialModelsPreviewOptions } from './modules/byok/models-preview.js'
+import { registerProviderCapabilityPreviewRoute, type ProviderCapabilityPreviewOptions } from './modules/byok/capabilities-preview.js'
 import { registerStorageLiveTotalsRoute } from './modules/admin/storage-live-totals.js'
 import { registerUserSkillDeleteRoute, type UserSkillDeleteOptions } from './modules/skills/user-delete.js'
 import { registerSafeEgressReadRoute } from './modules/admin/safe-egress-read.js'
@@ -95,7 +98,7 @@ import { registerCurrentUserRoute, registerLoginRoute } from './domains/auth/rou
 import { registerLogoutRoute } from './domains/auth/routes/auth-logout.js'
 import { registerUserRoute, type RegisterUserRouteOptions } from './domains/auth/routes/auth-register.js'
 import { registerPreferencesRoutes, type PreferencesStore } from './domains/preferences/preferences.js'
-import { registerOnboardingRoutes } from './domains/onboarding/onboarding.js'
+import { registerOnboardingRoutes } from './modules/onboarding/onboarding.js'
 import type { OnboardingStore } from '@gugu/core/onboarding'
 import {
   registerRegistrationCodeRoute,
@@ -120,7 +123,7 @@ import { installHttpErrorHandler } from './http/errors.js'
 import { registerAuthenticatedDomain } from './http/authenticated-domain.js'
 import { registerProjectRoutes } from './domains/projects/routes/projects.js'
 import { registerClientRoutes } from './modules/clients/routes/clients.js'
-import { registerEventRoutes } from './domains/calendar/routes/events.js'
+import { registerEventRoutes } from './modules/calendar/routes/events.js'
 import { registerMindNoteReadRoutes, type MindNoteReadOperations } from './domains/mind/mind-notes-read.js'
 import { registerMindCanvasReadRoutes, type MindCanvasReadOperations } from './domains/mind/mind-canvas-read.js'
 import { registerMindRefSuggestRoute, type MindRefSuggestOperations } from './domains/mind/mind-ref-suggest.js'
@@ -138,7 +141,7 @@ import { registerScheduledTaskList, type ScheduledTaskList } from './modules/sch
 import { registerScheduledTaskDeliveryTargets, type createScheduledTaskDeliveryTargets } from './modules/scheduled-tasks/delivery-targets.js'
 import { registerNotificationRoutes } from './modules/notifications/routes/notifications.js'
 import { registerTrackRoute } from './modules/site/routes/track.js'
-import { registerAdminFeedbackRoute, registerFeedbackRoute, type AdminFeedbackOperations } from './domains/feedback/feedback.js'
+import { registerAdminFeedbackRoute, registerFeedbackRoute, type AdminFeedbackOperations } from './modules/feedback/feedback.js'
 import { registerWorkspaceRoutes } from './domains/workspaces/routes/workspaces.js'
 import { registerWorkspaceDirectoryRoutes } from './domains/workspaces/workspace-directories.js'
 import { registerFileBrowserRoutes, type FileBrowserOperations } from './domains/files/browser.js'
@@ -153,7 +156,7 @@ import { registerFileCopyRoutes, type FileCopyOperations } from './domains/files
 import { registerFileConflictRoutes, type FileConflictOperations } from './domains/files/file-conflicts.js'
 import { registerFileBatchDownloadRoutes, type FileBatchDownloadOperations } from './domains/files/file-batch-download.js'
 import { registerFileArchiveRoutes, type FileArchiveOperations } from './domains/files/file-archive.js'
-import { registerGlobalSearchRoute } from './domains/search/search.js'
+import { registerGlobalSearchRoute } from './modules/search/search.js'
 import type { GlobalSearchOperations } from '@gugu/core'
 import { registerFolderDownloadRoutes, type FolderDownloadOperations } from './domains/files/folder-download.js'
 import {
@@ -414,7 +417,10 @@ export interface WebUiOptions {
   taskFilesystemRevoke?: Omit<TaskFilesystemRevokeOptions, 'requireUser' | 'ownerIdFromRequest'>
   credentialDelete?: Omit<CredentialDeleteOptions, 'requireUser' | 'ownerIdFromRequest'>
   credentialCreate?: Omit<CredentialCreateOptions, 'requireUser' | 'ownerIdFromRequest'>
+  credentialPatch?: Omit<CredentialPatchRouteOptions, 'requireUser' | 'ownerIdFromRequest'>
+  credentialModelsPreview?: Omit<CredentialModelsPreviewOptions, 'requireUser' | 'ownerIdFromRequest'>
   credentialList?: Omit<CredentialListOptions, 'requireUser' | 'ownerIdFromRequest'>
+  providerCapabilityPreview?: Omit<ProviderCapabilityPreviewOptions, 'requireUser'>
   userSkillDelete?: Omit<UserSkillDeleteOptions, 'requireUser' | 'ownerIdFromRequest'>
   secretPromptCancel?: Omit<SecretPromptCancelOptions, 'requireUser' | 'ownerIdFromRequest'>
   safeEgressRead?: { readSettings(): SafeEgressReadSettings }
@@ -731,6 +737,20 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => registerCredentialListRoute(routes, { ...options.credentialList!,
       requireUser: async request => { void userFromRequest(request) },
       ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId }))
+  }
+  if (options.credentialPatch) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerCredentialPatchRoute(routes, { ...options.credentialPatch!,
+      requireUser: async request => { void userFromRequest(request) },
+      ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId }))
+  }
+  if (options.credentialModelsPreview) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerCredentialModelsPreviewRoute(routes, { ...options.credentialModelsPreview!,
+      requireUser: async request => { void userFromRequest(request) },
+      ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId }))
+  }
+  if (options.providerCapabilityPreview) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerProviderCapabilityPreviewRoute(routes, { ...options.providerCapabilityPreview!,
+      requireUser: async request => { void userFromRequest(request) } }))
   }
   if (options.credentialDelete) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => {

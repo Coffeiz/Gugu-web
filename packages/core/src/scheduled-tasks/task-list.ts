@@ -40,6 +40,20 @@ export function createKyselyScheduledTaskReader<DB>(db: Kysely<DB>, backend: Bac
     } finally { signal?.throwIfAborted() }
   }
 }
+
+/** 重建索引需要全部任务（含事件提醒）及原始更新时间。 */
+export function createKyselyScheduledTaskRagReader<DB>(db:Kysely<DB>,backend:Backend) {
+ return async(rawOwner:string,id:number|null,signal?:AbortSignal)=>{
+  signal?.throwIfAborted()
+  const owner=dataContext(rawOwner).ownerId,key=backend==='sqlite'?owner.replaceAll('-',''):owner
+  const time=backend==='postgres'?sql`to_char(updated_at AT TIME ZONE 'UTC','YYYY-MM-DD HH24:MI:SS.US') || '+00:00'`:sql`updated_at`
+  const filter=id===null?sql``:sql`AND id=${id}`
+  try{
+   const result=await sql<{id:number;name:string;payload:string;cron:string;enabled:boolean|number;updated_at:string}>`SELECT id,name,payload,cron,enabled,${time} AS updated_at FROM scheduled_tasks WHERE user_id=${key} ${filter} ORDER BY updated_at DESC,id DESC`.execute(db)
+   return result.rows.map(row=>({...row,id:integer(row.id),enabled:Boolean(row.enabled),updated_at:utc(row.updated_at).replace(' ','T')}))
+  }finally{signal?.throwIfAborted()}
+ }
+}
 function status(row: ScheduledTaskListRow, now: string): string {
   if (!['once', 'cron', 'interval'].includes(row.schedule_kind)) throw new Error('数据库中的 schedule_kind 非法')
   if (row.schedule_kind !== 'once' && row.end_at && utc(row.end_at) <= utc(now)) return 'ended'

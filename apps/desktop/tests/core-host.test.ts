@@ -40,6 +40,39 @@ function fake(response: string, undoAvailable = true) {
   return CoreHost.launch(process.execPath, entry, join(root, 'core.db'))
 }
 describe('Electron 与独立 Node Core 的真实边界', () => {
+  it('联系人重命名经具名 IPC 写入正式 SQLite 并在重启后保留', async () => {
+    const root = directory(), database = join(root, 'core.db')
+    const runtime = await LocalRuntime.initialize(database)
+    await runtime.close()
+    const entry = resolve(import.meta.dirname, '../../../packages/core/dist/runtime/transport/stdio.js')
+    let host = await CoreHost.launch(process.execPath, entry, database)
+    try {
+      const handlers = desktopHandlers(host, async () => null)
+      const client = await handlers['gugu:clients:create']!('旧联系人') as { id: number }
+      expect(await handlers['gugu:clients:rename']!(client.id, '新联系人')).toMatchObject({ id: client.id, name: '新联系人' })
+      await expect(handlers['gugu:clients:rename']!(client.id, '  ')).rejects.toMatchObject({ code: 'invalid_request' })
+    } finally { await host.close() }
+    host = await CoreHost.launch(process.execPath, entry, database)
+    try { expect(await desktopHandlers(host, async () => null)['gugu:clients:list']!()).toEqual(expect.arrayContaining([expect.objectContaining({ name: '新联系人' })])) }
+    finally { await host.close() }
+  })
+  it('项目重命名经具名 IPC 写入正式 SQLite 并在重启后保留', async () => {
+    const root = directory(), database = join(root, 'core.db')
+    const runtime = await LocalRuntime.initialize(database)
+    await runtime.close()
+    const entry = resolve(import.meta.dirname, '../../../packages/core/dist/runtime/transport/stdio.js')
+    let host = await CoreHost.launch(process.execPath, entry, database)
+    try {
+      const handlers = desktopHandlers(host, async () => null)
+      const project = await handlers['gugu:projects:create']!('原项目') as { id: number; version: number }
+      const updated = await handlers['gugu:projects:rename']!(project.id, project.version, '新项目') as { version: number }
+      expect(updated.version).toBe(project.version + 1)
+      await expect(handlers['gugu:projects:rename']!(project.id, project.version, '旧版本')).rejects.toMatchObject({ code: 'conflict' })
+    } finally { await host.close() }
+    host = await CoreHost.launch(process.execPath, entry, database)
+    try { expect(await desktopHandlers(host, async () => null)['gugu:projects:list']!()).toEqual(expect.arrayContaining([expect.objectContaining({ name: '新项目', version: 2 })])) }
+    finally { await host.close() }
+  })
   it('拒绝旧 schema 的 Core 握手', async () => {
     const root = directory(), entry = join(root, 'old.mjs')
     writeFileSync(entry, `process.stdout.write(JSON.stringify({v:2,event:'ready',schema:'5',capabilities:['operation_receipts']})+'\\n')`)

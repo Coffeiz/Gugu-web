@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import Fastify from 'fastify'
 import { registerAdminConfigRoutes } from '../../src/domains/admin/admin-config.js'
-import { createPosixConfigFileLock } from '../../src/domains/agent-config/posix-config-lock.js'
+import { createPosixConfigFileLock } from '../../src/adapters/posix-config-lock.js'
 import { updateConfigOverride } from '../../src/adapters/config-override-file.js'
 const unsupported = !['darwin', 'linux'].includes(process.platform) || Number(process.versions.node.split('.')[0]) < 26
 

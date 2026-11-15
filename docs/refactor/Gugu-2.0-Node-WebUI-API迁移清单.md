@@ -141,11 +141,11 @@
 | `backend/app/api/v1/auth.py` | `POST` | `/api/v1/auth/registration-code` | `send_registration_code` | Node Host 已接 Redis code-store adapter 与系统 SMTP sender；注册码路由、SMTP sender 和 Host 定向回归 43/43，Python 注册安全/邮件能力/SMTP 相邻 pytest 20/20。Vite 合成空体返回 422，验证路由与代理；未发真实邮件。Redis 实时预留、真实 SMTP 投递、认证注册及 PostgreSQL 写入未验收 |
 | `backend/app/api/v1/auth.py` | `POST` | `/api/v1/auth/reset-password` | `reset_password` | Node Host 已接一次性 token 认领、凭据事务更新、security_version 递增、提交后通知及认证 cookie 清除；token 写入失败会释放冷却键。devserver Node/Vite 定向回归通过；Python 相关基线 21/21。隔离 PostgreSQL 集成未验收；见 `docs/devlog/2026-11-13-Node-WebUI密码找回重置切片.md` |
 | `backend/app/api/v1/byok.py` | `DELETE` | `/api/v1/byok/{credential_id}` | `delete_credential` | 生产 Host 经动态 BYOK 策略委托 Core 同事务删除凭据与失效推理状态；先红后绿 Node 4/4、Python handler/gate/失效规则各 1/1，生产入口使用 Python 模型 PG 表验收。损坏配置显式失败为安全差异；正式 SQLite、完整 Alembic、真实部署和其他 BYOK 接口未验收。 |
-| `backend/app/api/v1/byok.py` | `GET` | `/api/v1/byok/` | `get_credentials` | Core 公开入口已有 owner 隔离列表用例、PG 读取和显式信封校验端口；合成数据单测 1/1、隔离 PG 1/1、Python 安全定向 4/4；Host 解密器与 Python 合成双层信封组合测试 1/1。可信开关/主密钥、生产 Host 路由和正式 SQLite 尚未接通，隔离 PG 测试使用合成校验器。 |
+| `backend/app/api/v1/byok.py` | `GET` | `/api/v1/byok/` | `get_credentials` | 已接入生产 Host → Core owner 限定 PG 读取与 Python 兼容密钥信封状态校验；路由先红后绿 Node 1/1，`startServer` 隔离 PG create→list/认证/响应不泄密集成 1/1，Python BYOK 状态与编辑器维度回归 2/2。正式 SQLite、完整生产 schema/Alembic、真实部署未验收。 |
 | `backend/app/api/v1/byok.py` | `GET` | `/api/v1/byok/embedding-rebuild/status` | `rebuild_my_vectors_status` | 生产 Host 已接 Core 状态读取与隔离 Redis 旧 Worker 协议键；先红后绿 Node 4/4、Python idle 基线 1/1，覆盖 owner 隔离、错误脱敏及未配置 Redis 的 503。实际 Worker、向量计算、POST 和真实部署未验收。 |
-| `backend/app/api/v1/byok.py` | `PATCH` | `/api/v1/byok/{credential_id}` | `patch_credential` | 待迁移：缺目标共享 BYOK 信封及密钥版本适配，更新还须按原目的地校验密钥复用和失败副作用。 |
-| `backend/app/api/v1/byok.py` | `POST` | `/api/v1/byok/` | `create_credential` | Core 创建、Python 兼容信封与 Host 生产入口已接线，隔离 PG、Python handler 和双向信封对照通过；生产入口测试因 devserver 高负载超时，尚未验收，亦未取得入口先红证据。默认文件密钥需可信目录及正确同步忽略；非 Linux 需环境密钥，正式 SQLite、真实部署未验收。 |
-| `backend/app/api/v1/byok.py` | `POST` | `/api/v1/byok/capabilities` | `preview_provider_capabilities` | 待迁移：共享 Provider 快照与 Python handler 的 Ollama native 行为不一致（协议选择及 reasoning 选项），custom/unknown 默认 base URL 也不一致；定向对照保留失败，未接生产，待共享能力对齐。 |
+| `backend/app/api/v1/byok.py` | `PATCH` | `/api/v1/byok/{credential_id}` | `patch_credential` | 生产 Host 已接 Core owner 限定 PG 事务、Python 兼容信封密钥轮换和目的地绑定；先红后绿 Core 隔离 PG 1/1、`startServer` 生产入口 create→list→patch/Python 解密 1/1，Python patch 目的地基线 9/9。完整 Host 类型检查被现有 `conversation-tools-runtime-postgres.test.ts` 的 src/dist 重复类型声明错误阻断，生产代码 `tsconfig.build.json` 通过；正式 SQLite、完整生产 schema/Alembic 和真实部署未验收。 |
+| `backend/app/api/v1/byok.py` | `POST` | `/api/v1/byok/` | `create_credential` | Core 创建、Python 兼容信封与 Host 生产入口已接线；隔离 PG、Python handler/解密及 `startServer` 集成 1/1 通过，默认文件密钥需可信目录及正确同步忽略；非 Linux 需环境密钥，正式 SQLite、完整生产 schema/Alembic、真实部署未验收。 |
+| `backend/app/api/v1/byok.py` | `POST` | `/api/v1/byok/capabilities` | `preview_provider_capabilities` | 已接入生产 Host → Core 静态能力快照与动态 BYOK gate；路由先红后绿，Host/PG 合批含认证与 create→list 1/1，Node 10/10；Python handler 六种 Provider/协议逐项对照通过。Core Vitest 额外回归因 `tests/suites.json` 与当前发现文件不一致未能启动；生产部署未验收。 |
 | `backend/app/api/v1/byok.py` | `POST` | `/api/v1/byok/embedding-rebuild` | `rebuild_my_vectors` | 待迁移：缺实际用户向量重建执行器；已有 Redis 状态不是可消费的任务队列。 |
 | `backend/app/api/v1/byok.py` | `POST` | `/api/v1/byok/media-capability-probe` | `probe_media` | 待迁移：缺目标 BYOK 凭据解密及媒体探测执行与指纹校验能力。 |
 | `backend/app/api/v1/byok.py` | `POST` | `/api/v1/byok/models-preview` | `preview_models` | 待迁移：缺 owner 限定凭据解密与 resolve_preview_key 目的地绑定裁决，不能把保存的密钥用于不同端点。 |
@@ -263,12 +263,12 @@
 | `backend/app/api/v1/folders.py` | `POST` | `/api/v1/folders/{fid}/copy` | `copy_folder` | 待迁移 |
 | `backend/app/api/v1/live.py` | `GET` | `/api/v1/live/stream` | `stream_live_events` | Web Host 在 `modules/live` 保留认证、Redis 订阅与 SSE 生命周期；消息校验/字段裁剪复用 `@gugu/core/live-message`，与 Filesync 共用，严格时间解析遵循 Python；逐消息账号与 security version 复核、断连清理不变。真实 PostgreSQL/Redis Pub/Sub 未验收，详见 Live SSE Host devlog |
 | `backend/app/api/v1/loopscope.py` | `GET` | `/api/v1/dev/loopscope/{path:path}` | `proxy_loopscope_read` | 生产 Host 已接认证及受限只读 HTTP/SSE 代理；先红后绿 Node 2/2（合成 Collector/生产认证/断连）、Python handler 对照 1/1；真实 Collector 和部署未验收。 |
-| `backend/app/api/v1/mcp_settings.py` | `DELETE` | `/api/v1/mcp/servers/{server_id}` | `delete_server` | 待迁移 |
-| `backend/app/api/v1/mcp_settings.py` | `GET` | `/api/v1/mcp/servers` | `list_servers` | 待迁移 |
+| `backend/app/api/v1/mcp_settings.py` | `DELETE` | `/api/v1/mcp/servers/{server_id}` | `delete_server` | Host CRUD 路由原型及注入操作测试已通过 1/1；旧 Python 创建/配置保存及写后失效基线 2/2。未注册进生产组合根、无 Core/PG 持久化，MCP runtime/cache 消费者也未接入，仍未迁移完成。 |
+| `backend/app/api/v1/mcp_settings.py` | `GET` | `/api/v1/mcp/servers` | `list_servers` | Host CRUD 路由原型及注入操作测试已通过 1/1；旧 Python 创建/配置保存及写后失效基线 2/2。未注册进生产组合根、无 Core/PG 读取与 owner 编辑视图，MCP manager 运行状态消费者未接入，仍未迁移完成。 |
 | `backend/app/api/v1/mcp_settings.py` | `GET` | `/api/v1/mcp/servers/{server_id}/tools` | `list_loaded_tools` | 待迁移 |
 | `backend/app/api/v1/mcp_settings.py` | `GET` | `/api/v1/mcp/status` | `mcp_status` | 生产 Host 已接 Core 动态开关读取；先红后绿 Node 3/3（含生产认证和配置热更新）、Python handler 对照 1/1。仅读取入口状态，MCP 管理器、工具发现与真实部署未验收。 |
-| `backend/app/api/v1/mcp_settings.py` | `PATCH` | `/api/v1/mcp/servers/{server_id}` | `update_server` | 待迁移 |
-| `backend/app/api/v1/mcp_settings.py` | `POST` | `/api/v1/mcp/servers` | `create_server` | 待迁移 |
+| `backend/app/api/v1/mcp_settings.py` | `PATCH` | `/api/v1/mcp/servers/{server_id}` | `update_server` | Host CRUD 路由原型及注入操作测试已通过 1/1；旧 Python 创建/配置保存及写后失效基线 2/2。未注册进生产组合根、无 Core/PG 事务与密文持久化，MCP 缓存/快照失效消费者未接入，仍未迁移完成。 |
+| `backend/app/api/v1/mcp_settings.py` | `POST` | `/api/v1/mcp/servers` | `create_server` | Host CRUD 路由原型及注入操作测试已通过 1/1；旧 Python 创建/配置保存及写后失效基线 2/2。未注册进生产组合根、无 Core/PG 事务与密文持久化，MCP schema snapshot 消费者未接入，仍未迁移完成。 |
 | `backend/app/api/v1/mcp_settings.py` | `POST` | `/api/v1/mcp/servers/{server_id}/load_status` | `load_server_status` | 待迁移 |
 | `backend/app/api/v1/mcp_settings.py` | `POST` | `/api/v1/mcp/servers/{server_id}/reconnect` | `reconnect_server` | 待迁移 |
 | `backend/app/api/v1/mcp_settings.py` | `POST` | `/api/v1/mcp/servers/{server_id}/test_connection` | `test_connection` | 待迁移 |
@@ -399,10 +399,10 @@
 | `backend/app/api/v1/user_bots.py` | `POST` | `/api/v1/me/bots/{bot_id}/qq-binding-code` | `create_qq_binding_code` | 生产 Host 已委托 Core 签发并写入旧 Python 消费者使用的 Redis 键；先红后绿 Node 2/2（含生产 Host→隔离 PG/Redis→真实 Python 消费者）、Python 原回归 30/30。Redis 不可用时显式 503；真实 IM、Node 网关、正式 SQLite 和完整部署未验收。 |
 | `backend/app/api/v1/user_bots.py` | `PUT` | `/api/v1/me/bots/{bot_id}` | `update_my_bot` | 生产 Host 已接 Core 更新、加密、快照失效及通知；先红后绿 Node Bot 源码合批 4/4、Python 原回归 7/7，真实 handler 14 步对照通过。生产 Host/PG/Redis/SSE 合批通过，Core 构建及 Host typecheck 通过；正式 SQLite、真实 IM 和部署未验收。 |
 | `backend/app/api/v1/user_skills.py` | `DELETE` | `/api/v1/skills/{skill_id}` | `delete_skill` | 生产 Host 已委托 Core owner 限定删除，并在提交后发布 skills refresh；先红后绿 Node 2/2、Python 真实 handler 1/1，生产入口隔离 PG 正式模型表与 Redis 订阅集成 1/1。完整 Alembic、正式 SQLite、真实部署及技能列表 GET 尚未验收；Python 全文件另有 2 例因缺 httpx2 失败。 |
-| `backend/app/api/v1/user_skills.py` | `GET` | `/api/v1/skills/` | `list_skills` | 待迁移 |
-| `backend/app/api/v1/user_skills.py` | `GET` | `/api/v1/skills/tools` | `list_skill_tools` | 待迁移 |
-| `backend/app/api/v1/user_skills.py` | `PATCH` | `/api/v1/skills/{skill_id}` | `update_skill` | 待迁移 |
-| `backend/app/api/v1/user_skills.py` | `POST` | `/api/v1/skills/` | `create_skill` | 待迁移 |
+| `backend/app/api/v1/user_skills.py` | `GET` | `/api/v1/skills/` | `list_skills` | Host/Core 路由与管理器原型存在但未注册生产；默认工具目录依赖尚未接入的可信内置能力表及 MCP 动态发现，不能用空工具列表代替。 |
+| `backend/app/api/v1/user_skills.py` | `GET` | `/api/v1/skills/tools` | `list_skill_tools` | 待迁移：缺生产内置工具目录和 MCP manager 的动态 discovery/授权结果。 |
+| `backend/app/api/v1/user_skills.py` | `PATCH` | `/api/v1/skills/{skill_id}` | `update_skill` | Host/Core 管理器原型存在但未注册生产；关联工具校验依赖未接入的工具目录和 MCP 动态发现。 |
+| `backend/app/api/v1/user_skills.py` | `POST` | `/api/v1/skills/` | `create_skill` | Host/Core 管理器原型存在但未注册生产；关联工具校验依赖未接入的工具目录和 MCP 动态发现。 |
 | `backend/app/api/v1/users_admin.py` | `DELETE` | `/api/v1/admin/users/{user_id}` | `delete_user` | 待迁移 |
 | `backend/app/api/v1/users_admin.py` | `GET` | `/api/v1/admin/users/` | `list_users` | Node Host 已接入并受 Admin guard 保护；devserver行为测试4/4、Vite未认证401；Python最近邻9/9（无直接列表回归），真实PG未验收 |
 | `backend/app/api/v1/users_admin.py` | `GET` | `/api/v1/admin/users/risk` | `list_risk_users` | Node Host 已接 Admin guard + PostgreSQL query adapter；Python 最近邻 3/3、Node route/domain/Host 6/6、Vite 未认证 401；真实 PG 查询未验收 |

@@ -22,7 +22,7 @@ import { createPostgresProjectUpdateRuntime } from '../../src/domains/projects/p
 import { createCalendarEvent } from '@gugu/core/calendar'
 import { createPostgresRuntime, type SqlDataRuntime } from '@gugu/core/data'
 import { calendarCreateStore } from '../calendar/calendar-core-stores.js'
-import { createCalendarEventPostCommitPublisher } from '../../src/domains/calendar/persistence/calendar-create-post-commit-postgres.js'
+import { createCalendarEventPostCommitPublisher } from '../../src/modules/calendar/persistence/calendar-create-post-commit-postgres.js'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const ownerId = '00000000-0000-4000-8000-000000000071'

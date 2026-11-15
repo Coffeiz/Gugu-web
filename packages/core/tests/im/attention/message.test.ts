@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import test from 'node:test'
+import { test } from 'vitest'
 import { attentionMessageFromPayload } from '../../../src/im/attention/message.js'
 
 test('注意力消息只接受可信流时间并归一媒体与提及事实', () => {

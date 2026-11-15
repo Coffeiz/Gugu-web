@@ -622,6 +622,90 @@ it('迁入的词法索引支持版本化重建和增量更新，并隔离 owner 
  expect(index.search('owner-a','omega',10,['conversation'],ownerScope).results).toHaveLength(1)
 })
 
+it('向量融合仅处理已授权的词法候选，模型版本变更时保留词法结果',async()=>{
+ const {createRagLexicalIndex}=await import('../../../src/agent/rag/lexical-index.js')
+ const {buildDocuments}=await import('../../../src/agent/rag/adapters/base.js')
+ const owner={scope_type:'owner',scope_id:''},group={scope_type:'group',scope_id:'g',platform:'qq',bot_id:'b',group_id:'g'}
+ const make=(id:string,scope:typeof owner)=>buildDocuments({id,source_type:'memory',title:'合成',content:'alpha beta',document_version:'v1',scope})[0]!
+ const first=make('1',owner),second=make('2',owner),privateDoc=make('3',group),index=createRagLexicalIndex('owner-a')
+ index.replace('owner-a','r1',[first,second,privateDoc])
+ const vectors=new Map([[first.id,[1,0]],[second.id,[0,1]],[privateDoc.id,[1,0]]])
+ const result=index.searchHybrid('owner-a','alpha',10,['memory'],owner,{queryVector:[0,1],vectorVersion:'v1',expectedVersion:'v1',vectors})
+ expect(result.fusion).toBe('hybrid-rrf');expect(result.vectorDocCount).toBe(2)
+ expect(result.results.map(row=>row.id)).toEqual([second.id,first.id])
+ expect(result.results.some(row=>row.id===privateDoc.id)).toBe(false)
+ expect(index.searchHybrid('owner-a','alpha',10,['memory'],owner,{queryVector:[0,1],vectorVersion:'v1',expectedVersion:'v2',vectors}).fusion).toBe('bm25')
+ expect(()=>index.searchHybrid('owner-b','alpha',10,['memory'],owner,{queryVector:[1],vectorVersion:'v1',expectedVersion:'v1',vectors})).toThrow('owner 不匹配')
+ expect(()=>index.searchHybrid('owner-a','alpha',10,['memory'],owner,{queryVector:[NaN],vectorVersion:'v1',expectedVersion:'v1',vectors})).toThrow('向量无效')
+})
+
+it('持久 RAG 查询限制授权范围并在 embedding 中撤权时拒绝返回',async()=>{
+ const {createSqlRagPersistentIndexReader}=await import('../../../src/agent/rag/persistent-index.js')
+ const {createScopedRagSearch}=await import('../../../src/agent/rag/scoped-search.js')
+ const dir=await mkdtemp(join(tmpdir(),'gugu-rag-scoped-')),path=join(dir,'core.db')
+ try{
+  await initializeSqlite(path);const {runtime,ownerId}=await openSqliteRuntime(path)
+  try{
+   const owner=ownerId.replaceAll('-','')
+   await sql.raw(`CREATE TABLE knowledge_index_entries(id INTEGER PRIMARY KEY,owner_user_id TEXT,indexed_at TEXT,deleted_at TEXT,source_type TEXT,source_id TEXT,scope_type TEXT,scope_id TEXT,platform TEXT,bot_id TEXT,group_id TEXT,document_id TEXT,parent_document_id TEXT,document_version TEXT,chunk_index INTEGER,chunk_count INTEGER,title TEXT,summary TEXT,content TEXT,metadata_json TEXT,source_updated_at TEXT)`).execute(runtime.db)
+   await sql`INSERT INTO knowledge_index_entries VALUES
+    (1,${owner},'2026-01-01 00:00:00.000001',NULL,'memory','daily','owner','','','','','a','a','v1',0,1,'合成','','alpha first','{}',NULL),
+    (2,${owner},'2026-01-01 00:00:00.000002',NULL,'memory','daily','group','g','qq','b','g','b','b','v1',0,1,'私有','','alpha private','{}',NULL),
+    (3,${owner},'2026-01-01 00:00:00.000003',NULL,'conversation','5','owner','','','','','c','c','v1',0,1,'会话','','alpha history','{"kind":"message","message_id":5}',NULL)`.execute(runtime.db)
+   let authorized=true,revoke=false,cancel:AbortController|undefined
+   const search=createScopedRagSearch({index:createSqlRagPersistentIndexReader(runtime.db,'sqlite'),authorize:async()=>authorized,
+    vectors:{version:'model-v1',source:async()=>async kind=>kind==='memory'?JSON.stringify({'rag:a:v1:0':{t:'model-v1',v:[1,0]},'rag:b:v1:0':{t:'model-v1',v:[1,0]}}):null,
+     embed:async()=>{if(revoke)authorized=false;cancel?.abort();return [1,0]}}})
+   const options={sourceTypes:['memory'],limit:5},scope={scope_type:'owner',scope_id:''}
+   const result=await search(ownerId,scope,'alpha',options)
+   expect(result.fusion).toBe('hybrid-rrf');expect(result.results.map(row=>row.document.content)).toEqual(['alpha first'])
+   expect(JSON.stringify(result)).not.toContain('private')
+   expect((await search(ownerId,scope,'alpha',{sourceTypes:['conversation'],limit:5,beforeMessageId:5})).results).toEqual([])
+   expect((await search(ownerId,scope,'alpha',{sourceTypes:['conversation'],limit:5,beforeMessageId:6})).results).toHaveLength(1)
+   cancel=new AbortController();await expect(search(ownerId,scope,'alpha',options,cancel.signal)).rejects.toThrow();cancel=undefined
+   revoke=true;await expect(search(ownerId,scope,'alpha',options)).rejects.toThrow('授权已撤销')
+   await expect(search(ownerId,scope,'alpha',options)).rejects.toThrow('未授权')
+  }finally{await runtime.close()}
+ }finally{await rm(dir,{recursive:true,force:true})}
+})
+
+it('查询 embedding 使用受控传输、限制重定向并且不泄露凭据或异常',async()=>{
+ const {embedRagQuery}=await import('../../../src/agent/rag/query-embedding.js')
+ const requests:Array<{url:string;headers:Readonly<Record<string,string>>;body:unknown}>=[]
+ const transport={request:async(request:{url:string;headers:Readonly<Record<string,string>>;body?:unknown})=>{
+  requests.push(request)
+  return {status:200,headers:{},body:(async function*(){yield new TextEncoder().encode(JSON.stringify({data:[{embedding:[0.25,-0.75]}]}))})(),cancel:async()=>{}}
+ }}
+ const settings={provider:'openai',baseUrl:'https://embedding.example/v1',model:'synthetic-model',apiKey:'synthetic-secret',dimensions:2}
+ const result=await embedRagQuery(settings,'  合成查询  ',transport,new AbortController().signal)
+ expect(result).toEqual({vector:[0.25,-0.75],outcome:'success',httpStatus:200})
+ expect(requests).toMatchObject([{url:'https://embedding.example/v1/embeddings',headers:{authorization:'Bearer synthetic-secret'},body:{model:'synthetic-model',input:'合成查询',dimensions:2}}])
+ expect(JSON.stringify(result)).not.toContain('synthetic-secret')
+ const redirect=await embedRagQuery(settings,'查询',{request:async()=>({status:302,headers:{location:'https://other.example/'},body:(async function*(){})(),cancel:async()=>{}})},new AbortController().signal)
+ expect(redirect).toEqual({vector:[],outcome:'http_error',httpStatus:302})
+ const fail=await embedRagQuery(settings,'查询',{request:async()=>{throw new Error('synthetic-secret 私有异常')}},new AbortController().signal)
+ expect(fail).toEqual({vector:[],outcome:'network_error'})
+ expect(JSON.stringify(fail)).not.toContain('synthetic-secret')
+ expect((await embedRagQuery({...settings,baseUrl:'https://user:password@example.invalid'},'查询',transport,new AbortController().signal)).outcome).toBe('invalid_config')
+ const abort=new AbortController();abort.abort();await expect(embedRagQuery(settings,'查询',transport,abort.signal)).rejects.toThrow()
+})
+
+it('查询 embedding 保留百炼载荷并限制响应体，取消时传播原原因',async()=>{
+ const {embedRagQuery}=await import('../../../src/agent/rag/query-embedding.js')
+ const settings={provider:'dashscope',baseUrl:'https://embedding.example/compatible-mode/v1',model:'synthetic-model',apiKey:'synthetic-secret',dimensions:2,multimodal:true}
+ let sent:unknown,cancelled=false
+ const result=await embedRagQuery(settings,'合成查询',{request:async request=>{
+  sent=request
+  return {status:200,headers:{},body:(async function*(){yield new TextEncoder().encode(JSON.stringify({output:{embeddings:[{embedding:[1,0]}]}}))})(),cancel:async()=>{}}
+ }},new AbortController().signal)
+ expect(result).toEqual({vector:[1,0],outcome:'success',httpStatus:200})
+ expect(sent).toMatchObject({url:'https://embedding.example/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding',body:{model:'synthetic-model',input:{contents:[{text:'合成查询'}]},parameters:{output_type:'dense',dimension:2,enable_fusion:false}}})
+ const large=await embedRagQuery(settings,'合成查询',{request:async()=>({status:200,headers:{},body:(async function*(){yield new Uint8Array(2*1024*1024+1)})(),cancel:async()=>{cancelled=true}})},new AbortController().signal)
+ expect(large.outcome).toBe('response_too_large');expect(cancelled).toBe(true)
+ const controller=new AbortController(),reason=new Error('合成取消')
+ await expect(embedRagQuery(settings,'合成查询',{request:async()=>({status:200,headers:{},body:(async function*(){controller.abort(reason);yield new Uint8Array()})(),cancel:async()=>{}})},controller.signal)).rejects.toBe(reason)
+})
+
 it('旧版持久索引读取隔离 owner、排除文件索引并用微秒游标消费墓碑',async()=>{
  const {createSqlRagPersistentIndexReader}=await import('../../../src/agent/rag/persistent-index.js')
  const dir=await mkdtemp(join(tmpdir(),'gugu-rag-persistent-')),path=join(dir,'core.db')
@@ -761,6 +845,8 @@ it('持久重建任务消费多个来源 ID，并在新 generation 出现时阻�
    const projects=createProjectRagSource(runtime)
    expect((await projects(ownerId,String(project.id)))[0]?.content).toContain('联系人：小北')
    expect(await projects(randomUUID(),String(project.id))).toEqual([])
+   await sql`UPDATE projects SET stages_json='无效 JSON' WHERE id=${project.id}`.execute(runtime.db)
+   expect((await projects(ownerId,String(project.id)))[0]?.content).toContain('项目：上线计划')
    await sql`INSERT INTO rag_index_jobs(user_id,source_type,source_id,pending_source_ids,version,operation,status,generation,completed_generation,attempts,next_attempt_at,created_at,updated_at) VALUES (${owner},'project',${String(project.id)},${JSON.stringify([String(project.id)])},'','upsert','queued',1,0,0,${now},${now},${now})`.execute(runtime.db)
    const projectWorker=createSqlRagRebuildWorker(runtime.db,'sqlite',{project:projects},()=>wall)
    expect(await projectWorker()).toBe('ready')
@@ -772,6 +858,57 @@ it('持久重建任务消费多个来源 ID，并在新 generation 出现时阻�
    expect(await projectWorker()).toBe('ready')
    expect((await reader.snapshot(ownerId)).documents.some(item=>item.source_type==='project')).toBe(false)
    expect((await reader.delta(ownerId,indexed.watermark)).deletes).toContain(`project:project:${project.id}:0`)
+   await sql`UPDATE rag_index_jobs SET status='queued',generation=generation+1,pending_source_ids='{',next_attempt_at=${now} WHERE source_type='note'`.execute(runtime.db)
+   expect(await worker()).toBe('retrying')
+   const {createCalendarRagSource}=await import('../../../src/agent/rag/calendar-source.js')
+   const {createKyselyCalendarReadPort}=await import('../../../src/calendar/read-store.js')
+   await sql`INSERT INTO calendar_events(id,user_id,title,date,time,type,description,version,created_at) VALUES (1,${owner},'合成活动','2026-03-01',NULL,'meeting','活动正文',1,${now})`.execute(runtime.db)
+   const calendar=createCalendarRagSource(createKyselyCalendarReadPort(runtime.db,'sqlite'))
+   expect((await calendar(ownerId,'1'))[0]?.content).toContain('时间：全天')
+   expect(await calendar(randomUUID(),'1')).toEqual([])
+   await sql`INSERT INTO rag_index_jobs(user_id,source_type,source_id,pending_source_ids,version,operation,status,generation,completed_generation,attempts,next_attempt_at,created_at,updated_at) VALUES (${owner},'calendar','1','["1"]','','upsert','queued',1,0,0,${now},${now},${now})`.execute(runtime.db)
+   const calendarWorker=createSqlRagRebuildWorker(runtime.db,'sqlite',{calendar},()=>wall)
+   expect(await calendarWorker()).toBe('ready')
+   expect((await reader.snapshot(ownerId)).documents.find(item=>item.source_type==='calendar')?.content).toContain('活动正文')
+   await sql`UPDATE calendar_events SET deleted_at=${now} WHERE id=1`.execute(runtime.db)
+   await sql`UPDATE rag_index_jobs SET status='queued',generation=generation+1,pending_source_ids='["1"]',next_attempt_at=${now} WHERE source_type='calendar'`.execute(runtime.db)
+   expect(await calendarWorker()).toBe('ready')
+   expect((await reader.snapshot(ownerId)).documents.some(item=>item.source_type==='calendar')).toBe(false)
+   const {createSqlMindNoteReader}=await import('../../../src/mind/note-read.js')
+   const {createNoteRagSource}=await import('../../../src/agent/rag/note-source.js')
+   await sql`INSERT INTO mind_nodes(id,user_id,kind,title,content_md,content_plain,origin,indexed_hash,version,captured_at,created_at,updated_at) VALUES
+    (1,${owner},'note','便签标题','# 便签标题\n正文','纯文本正文','user','hash-a',1,${now},${now},${now}),
+    (2,${owner},'suggestion','建议','# 建议','建议内容','user','hash-b',2,${now},${now},${now}),
+    (3,${owner},'canvas_note','画布','# 画布','不应作为便签','user','hash-c',1,${now},${now},${now})`.execute(runtime.db)
+   const notes=createNoteRagSource(createSqlMindNoteReader(runtime.db,'sqlite'))
+   expect((await notes(ownerId,null)).map(item=>item.source_id)).toEqual(['2','1'])
+   expect((await notes(ownerId,'1'))[0]?.content).toContain('纯文本正文')
+   expect(await notes(randomUUID(),'1')).toEqual([])
+   await sql`UPDATE rag_index_jobs SET status='queued',generation=generation+1,source_id='1',pending_source_ids='["1"]',next_attempt_at=${now} WHERE source_type='note'`.execute(runtime.db)
+   const noteWorker=createSqlRagRebuildWorker(runtime.db,'sqlite',{note:notes},()=>wall)
+   expect(await noteWorker()).toBe('ready')
+   expect((await reader.snapshot(ownerId)).documents.find(item=>item.source_type==='note'&&item.source_id==='1')?.content).toContain('纯文本正文')
+   await sql`UPDATE mind_nodes SET deleted_at=${now} WHERE id=1`.execute(runtime.db)
+   await sql`UPDATE rag_index_jobs SET status='queued',generation=generation+1,pending_source_ids='["1"]',next_attempt_at=${now} WHERE source_type='note'`.execute(runtime.db)
+   expect(await noteWorker()).toBe('ready')
+   expect((await reader.snapshot(ownerId)).documents.some(item=>item.source_type==='note'&&item.source_id==='1')).toBe(false)
+   const {createKyselyScheduledTaskRagReader}=await import('../../../src/scheduled-tasks/task-list.js')
+   const {createScheduledTaskRagSource}=await import('../../../src/agent/rag/scheduled-task-source.js')
+   await sql`INSERT INTO scheduled_tasks(id,user_id,event_id,name,payload,cron,schedule_kind,channels,enabled,created_at,updated_at) VALUES
+    (1,${owner},NULL,'日常任务','合成指令','0 9 * * *','cron','',1,${now},${now}),
+    (2,${owner},1,'活动提醒','提醒指令','0 8 * * *','cron','',0,${now},${now})`.execute(runtime.db)
+   const tasks=createScheduledTaskRagSource(createKyselyScheduledTaskRagReader(runtime.db,'sqlite'))
+   expect((await tasks(ownerId,null)).map(item=>item.source_id)).toEqual(['2','1'])
+   expect((await tasks(ownerId,'2'))[0]?.content).toContain('状态：停用')
+   expect(await tasks(randomUUID(),'1')).toEqual([])
+   await sql`INSERT INTO rag_index_jobs(user_id,source_type,source_id,pending_source_ids,version,operation,status,generation,completed_generation,attempts,next_attempt_at,created_at,updated_at) VALUES (${owner},'scheduled_task','1','["1"]','','upsert','queued',1,0,0,${now},${now},${now})`.execute(runtime.db)
+   const taskWorker=createSqlRagRebuildWorker(runtime.db,'sqlite',{scheduled_task:tasks},()=>wall)
+   expect(await taskWorker()).toBe('ready')
+   expect((await reader.snapshot(ownerId)).documents.find(item=>item.source_type==='scheduled_task')?.content).toContain('合成指令')
+   await sql`DELETE FROM scheduled_tasks WHERE id=1`.execute(runtime.db)
+   await sql`UPDATE rag_index_jobs SET status='queued',generation=generation+1,pending_source_ids='["1"]',next_attempt_at=${now} WHERE source_type='scheduled_task'`.execute(runtime.db)
+   expect(await taskWorker()).toBe('ready')
+   expect((await reader.snapshot(ownerId)).documents.some(item=>item.source_type==='scheduled_task')).toBe(false)
   }finally{await runtime.close()}
  }finally{await rm(dir,{recursive:true,force:true})}
 })

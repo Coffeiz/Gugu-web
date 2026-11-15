@@ -8,6 +8,10 @@ const projects = ref<ProjectRow[]>([])
 const clients = ref<ClientRow[]>([])
 const projectName = ref('')
 const clientName = ref('')
+const editingProject = ref<ProjectRow | null>(null)
+const editedProjectName = ref('')
+const editingClient = ref<ClientRow | null>(null)
+const editedClientName = ref('')
 const busy = ref(false)
 const error = ref('')
 const connected = ref(false)
@@ -68,6 +72,26 @@ function createClient() {
   })
 }
 
+function renameProject() {
+  return perform(async () => {
+    const project = editingProject.value
+    if (!project) return
+    await desktopData.renameProject(project.id, project.version, editedProjectName.value)
+    editingProject.value = null
+    await refresh()
+  })
+}
+
+function renameClient() {
+  return perform(async () => {
+    const client = editingClient.value
+    if (!client) return
+    await desktopData.renameClient(client.id, editedClientName.value)
+    editingClient.value = null
+    await refresh()
+  })
+}
+
 function checkSandbox() {
   return perform(async () => {
     sandboxMessage.value = '正在检测…'
@@ -100,7 +124,7 @@ onMounted(() => perform(async () => {
           <input id="project-name" v-model="projectName" class="form-input" aria-labelledby="project-name-title" maxlength="200" placeholder="准备开展的新项目" required :disabled="busy" />
           <ActionButton fit type="submit" :disabled="busy">创建项目</ActionButton>
         </form>
-        <ul v-if="projects.length"><li v-for="project in projects" :key="project.id"><span>{{ project.name }}</span><small>v{{ project.version }}</small></li></ul>
+        <ul v-if="projects.length"><li v-for="project in projects" :key="project.id"><form v-if="editingProject?.id === project.id" @submit.prevent="renameProject"><input v-model="editedProjectName" class="form-input" aria-label="项目名称" maxlength="200" required :disabled="busy" /><ActionButton fit type="submit" :disabled="busy">保存</ActionButton><ActionButton fit variant="secondary" type="button" :disabled="busy" @click="editingProject = null">取消</ActionButton></form><template v-else><span>{{ project.name }}</span><small>v{{ project.version }}</small><ActionButton fit variant="secondary" :disabled="busy" @click="editingProject = project; editedProjectName = project.name">重命名</ActionButton></template></li></ul>
         <p v-else class="desktop-empty">从第一个项目开始。</p>
       </section>
       <section class="desktop-panel" aria-labelledby="desktop-clients">
@@ -110,7 +134,7 @@ onMounted(() => perform(async () => {
           <input id="client-name" v-model="clientName" class="form-input" aria-labelledby="client-name-title" maxlength="200" placeholder="添加一位联系人" required :disabled="busy" />
           <ActionButton fit type="submit" :disabled="busy">添加联系人</ActionButton>
         </form>
-        <ul v-if="clients.length"><li v-for="client in clients" :key="client.id"><span>{{ client.name }}</span></li></ul>
+        <ul v-if="clients.length"><li v-for="client in clients" :key="client.id"><form v-if="editingClient?.id === client.id" @submit.prevent="renameClient"><input v-model="editedClientName" class="form-input" aria-label="联系人名称" maxlength="200" required :disabled="busy" /><ActionButton fit type="submit" :disabled="busy">保存</ActionButton><ActionButton fit variant="secondary" type="button" :disabled="busy" @click="editingClient = null">取消</ActionButton></form><template v-else><span>{{ client.name }}</span><ActionButton fit variant="secondary" :disabled="busy" @click="editingClient = client; editedClientName = client.name">重命名</ActionButton></template></li></ul>
         <p v-else class="desktop-empty">这里会保存你的联系人。</p>
       </section>
     </div>

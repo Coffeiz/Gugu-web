@@ -4,7 +4,8 @@ import { Pool } from 'pg'
 import test from 'node:test'
 import { createPostgresWorkspaceLister } from '../../src/domains/workspaces/persistence/workspace-list.js'
 import { createWorkspaceLister } from '@gugu/core'
-import { createKyselyWorkspaceListReader, createPostgresRuntime } from '@gugu/core/data'
+import { createKyselyWorkspaceListReader } from '@gugu/core/workspaces'
+import { createPostgresRuntime } from '@gugu/core/data'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const ownerId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'

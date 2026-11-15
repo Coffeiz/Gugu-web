@@ -5,7 +5,7 @@ import { Pool } from 'pg'
 import { createApp } from '../../src/app.js'
 import { signedUserToken } from '../helpers/auth.js'
 import { createGlobalSearchOperations } from '@gugu/core'
-import { createPostgresGlobalSearchSources } from '@gugu/core/data'
+import { createPostgresGlobalSearchSources } from '@gugu/core/search/postgres'
 import type { GlobalSearchQuery } from '@gugu/core'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL

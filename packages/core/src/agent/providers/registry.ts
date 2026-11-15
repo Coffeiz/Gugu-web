@@ -40,14 +40,18 @@ export function providerSelection(config: ProviderConfig): { policy: ProviderPol
 export function capabilitySnapshot(config: ProviderConfig) {
   const { policy, config: filtered } = providerSelection(config)
   const protocol = policy.protocol(filtered), supported = policy.supportedApiFormats(filtered)
-  const generic = genericThinkingToggleSupported(filtered, protocol)
-  const reasoning = generic ? DEFAULT_REASONING : policy.reasoningCapabilities(filtered, protocol)
+  // 能力预览描述用户选中的公开 API 格式；Ollama 原生传输仍由运行时 protocol
+  // 单独选择，避免把内部传输名当成配置表单中的 API 格式。
+  const selectedApiFormat = policy.name === 'ollama' && filtered.ollama_api_mode === 'native' ? 'openai' : protocol
+  const generic = genericThinkingToggleSupported(filtered, selectedApiFormat)
+  const reasoning = generic ? DEFAULT_REASONING : policy.reasoningCapabilities(filtered, selectedApiFormat)
   const selectable = policy.name === 'ollama' ? ['native', ...supported.filter(item => item !== 'ollama')] : [...supported]
-  const urls = Object.fromEntries(selectable.map(format => [format, policy.baseUrl({ ...config, base_url: undefined, api_format: format === 'native' ? undefined : format, ...(policy.name === 'ollama' ? { ollama_api_mode: format === 'native' ? 'native' : 'openai' } : {}) })]))
+  const unknownCustomProvider = policy.name === 'unknown' && config.provider?.trim().toLowerCase() !== 'openai'
+  const urls = Object.fromEntries(selectable.map(format => [format, unknownCustomProvider ? '' : policy.baseUrl({ ...config, base_url: undefined, api_format: format === 'native' ? undefined : format, ...(policy.name === 'ollama' ? { ollama_api_mode: format === 'native' ? 'native' : 'openai' } : {}) })]))
   return {
-    provider: policy.name, model: config.model, default_base_url: policy.baseUrl({ ...config, base_url: undefined }),
+    provider: policy.name, model: config.model, default_base_url: unknownCustomProvider ? '' : policy.baseUrl({ ...config, base_url: undefined }),
     default_base_urls: urls, default_api_format: policy.name === 'ollama' ? 'native' : policy.capabilities(config).api_format,
-    selected_api_format: protocol, supported_api_formats: [...supported],
+    selected_api_format: selectedApiFormat, supported_api_formats: [...supported],
     selectable_api_formats: selectable,
     api_format_source: ['local', 'ollama'].includes(policy.name) ? 'user_selectable' : 'provider_declared',
     reasoning_modes: [...reasoning.modes], reasoning_efforts: [...reasoning.efforts],

@@ -3,7 +3,7 @@ import { normalizeOwnerId } from '../../../adapters/owner-context.js'
 import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
 import { normalizeOnboardingState } from '@gugu/core/onboarding'
 import type { RegistrationSeedPlan, RegistrationSeedPorts } from '@gugu/core/onboarding'
-import { createPostgresRegistrationSeedFileWriter } from '../../files/file-upload-postgres.js'
+import { createPostgresRegistrationSeedFileWriter } from '../../../domains/files/file-upload-postgres.js'
 
 interface SeedStateRow { state: unknown }
 interface InsertedId { id: number | string }

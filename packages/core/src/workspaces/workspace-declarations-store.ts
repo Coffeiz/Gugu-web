@@ -1,7 +1,7 @@
 import type { Generated, Kysely } from 'kysely'
-import { WorkspaceUpdateError } from '../workspaces/workspace-declarations.js'
-import type { WorkspaceDeclaration, WorkspaceDeclarationRuntime, WorkspaceDeclarationTransaction, WorkspaceKind } from '../workspaces/workspace-declarations.js'
-import type { Backend } from './repositories.js'
+import { WorkspaceUpdateError } from './workspace-declarations.js'
+import type { WorkspaceDeclaration, WorkspaceDeclarationRuntime, WorkspaceDeclarationTransaction, WorkspaceKind } from './workspace-declarations.js'
+import type { Backend } from '../data/repositories.js'
 
 type Bool = boolean | number
 interface WorkspaceTable {

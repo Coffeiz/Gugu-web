@@ -1,9 +1,10 @@
 import re
 
-from app.models import ConversationMessage, ConversationSession, Project
+from app.models import CalendarEvent, ConversationMessage, ConversationSession, MindNode, Project, ScheduledTask
 from agent.rag.models import IndexDocument, Scope
 from agent.rag.adapters.conversations import ConversationAdapter
 from agent.rag.adapters.projects import ProjectAdapter
+from agent.rag.index_builder import build_source_records, calendar_record
 from agent.tools.conversations import _search_conversations
 
 
@@ -43,6 +44,41 @@ async def test_project_rag_source_uses_only_live_owner_projects(db, user_a, user
     assert len(records) == 1
     assert "项目：上线计划" in records[0][0]["content"]
     assert "联系人：小北" in records[0][0]["content"]
+
+
+async def test_calendar_rag_record_keeps_event_fields_and_version(db, user_a):
+    event = await _mk(db, CalendarEvent(user_id=user_a.id, title="合成活动", date="2026-03-01", description="活动正文"))
+    record = calendar_record(event)
+    assert record["id"] == str(event.id)
+    assert record["time"] == ""
+    assert record["description"] == "活动正文"
+    assert record["version_parts"] == [str(event.id), str(event.version), event.date, event.description]
+
+
+async def test_note_rag_records_keep_kind_content_and_owner(db, user_a, user_b):
+    note = await _mk(db, MindNode(user_id=user_a.id, kind="note", title="便签标题", content_md="# 标题", content_plain="纯文本正文", indexed_hash="hash-a", version=2))
+    await _mk(db, MindNode(user_id=user_a.id, kind="suggestion", title="建议", content_md="建议", content_plain="建议"))
+    await _mk(db, MindNode(user_id=user_a.id, kind="canvas_note", title="画布", content_md="画布", content_plain="画布"))
+    await _mk(db, MindNode(user_id=user_b.id, kind="note", title="其他", content_md="其他", content_plain="其他"))
+    records = await build_source_records(db, user_a.id, "note")
+    assert records is not None
+    assert {record["kind"] for record, _ in records} == {"note", "suggestion"}
+    matched = next(record for record, _ in records if record["id"] == str(note.id))
+    assert matched["content_plain"] == "纯文本正文"
+    assert matched["version_parts"] == [str(note.id), "2", "hash-a"]
+
+
+async def test_scheduled_task_rag_records_include_event_reminders(db, user_a, user_b):
+    event = await _mk(db, CalendarEvent(user_id=user_a.id, title="合成活动", date="2026-03-01"))
+    await _mk(db, ScheduledTask(user_id=user_a.id, name="合成任务", payload="任务正文", cron="0 9 * * *", enabled=True))
+    reminder = await _mk(db, ScheduledTask(user_id=user_a.id, event_id=event.id, name="活动提醒", payload="提醒正文", cron="0 8 * * *", enabled=False))
+    await _mk(db, ScheduledTask(user_id=user_b.id, name="他人任务", payload="私有正文", cron="0 9 * * *", enabled=True))
+    records = await build_source_records(db, user_a.id, "scheduled_task")
+    assert records is not None
+    assert {record["name"] for record, _ in records} == {"合成任务", "活动提醒"}
+    item = next(record for record, _ in records if record["id"] == str(reminder.id))
+    assert item["enabled"] is False
+    assert item["version_parts"][2:] == ["0 8 * * *", "提醒正文"]
 
 
 async def test_search_conversations_accepts_multiple_keywords(db, user_a, monkeypatch):

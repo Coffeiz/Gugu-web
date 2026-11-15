@@ -4,7 +4,7 @@ import {randomUUID,createHash} from 'node:crypto'
 import {execFileSync} from 'node:child_process'
 import {resolve} from 'node:path'
 import {Pool} from 'pg'
-import {createDataImportApplier,createDataImportRollbackCreator,createDataImportRecoverer} from '../../../../packages/core/src/data-portability/apply-import.js'
+import {createDataImportApplier,createDataImportRollbackCreator,createDataImportRecoverer} from '@gugu/core/data-portability/apply-import'
 import {withPostgresTransaction} from '../../src/adapters/postgres-transaction.js'
 const hash=(v:string)=>createHash('sha256').update(v).digest('hex')
 test('真实PG导入确认保护owner/一次性token/模式/互斥/幂等及事务失败回滚',async()=>{

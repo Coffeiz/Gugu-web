@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import {execFileSync} from 'node:child_process'
 import {randomUUID} from 'node:crypto'
+import {createServer as createHttpServer} from 'node:http'
 import {mkdtemp,rm,writeFile} from 'node:fs/promises'
 import {createServer} from 'node:net'
 import {tmpdir} from 'node:os'
@@ -17,15 +18,19 @@ test('生产入口创建的凭据由正式 PG 模型持久化并由 Python 解�
  await admin.query(`CREATE SCHEMA "${schema}"`)
  const scoped=new URL(databaseUrl!);scoped.searchParams.set('options',`-c search_path=${schema}`)
  const pool=new Pool({connectionString:scoped.toString(),max:1}),root=await mkdtemp(join(tmpdir(),'byok-host-'))
- let host:Awaited<ReturnType<typeof startServer>>|undefined
+ let host:Awaited<ReturnType<typeof startServer>>|undefined,providerServer:ReturnType<typeof createHttpServer>|undefined
  try{
   const master='synthetic-production-master',secret='synthetic-production-auth'
   const env={...process.env,BYOK_TEST_PG:databaseUrl!.replace(/^postgresql:/,'postgresql+asyncpg:'),BYOK_TEST_SCHEMA:schema,CREDENTIALS_MASTER_KEY:master,CREDENTIALS_MASTER_KEY_FILE:join(root,'master'),GUGU_ENV_FILE:'/dev/null',GUGU_CONFIG_OVERRIDE_FILE:join(root,'config.json'),PYTHONPATH:'.:../compat/core-python/src'}
   await writeFile(env.GUGU_CONFIG_OVERRIDE_FILE,'{}')
   execFileSync(python!,['../apps/web-host/tests/byok/fixtures/create_python.py'],{cwd:'../../backend',env,encoding:'utf8',timeout:60000})
+  const providerRequests:string[]=[]
+  providerServer=createHttpServer((request,response)=>{providerRequests.push(request.headers.authorization??'');response.writeHead(200,{'content-type':'application/json'});response.end(JSON.stringify({data:[{id:'model-z'},{id:'model-a'},{id:'model-z'}]}))})
+  await new Promise<void>(resolve=>providerServer!.listen(0,'127.0.0.1',resolve));const providerAddress=providerServer.address();assert.ok(providerAddress&&typeof providerAddress!=='string')
+  const providerBase=`http://127.0.0.1:${providerAddress.port}/v1`
   const socket=createServer();await new Promise<void>(resolve=>socket.listen(0,'127.0.0.1',resolve));const address=socket.address();assert.ok(address&&typeof address!=='string');await new Promise<void>(resolve=>socket.close(()=>resolve()))
   host=await startServer({GUGU_WEBUI_DATABASE_URL:scoped.toString(),GUGU_WEBUI_SECRET_KEY:secret,GUGU_CONFIG_OVERRIDE_FILE:env.GUGU_CONFIG_OVERRIDE_FILE,GUGU_WEBUI_HOST:'127.0.0.1',GUGU_WEBUI_PORT:String(address.port),GUGU_WEBUI_REDIS_URL:'',STORAGE__LOCAL_PATH:root,CREDENTIALS_MASTER_KEY:master,BYOK__ENABLED:'true'})
-  const owner='00000000-0000-4000-8000-000000000072',headers={authorization:`Bearer ${signedUserToken(secret,owner)}`},payload={provider:'local',capability:'embedding',value:'synthetic-host-value'}
+  const owner='00000000-0000-4000-8000-000000000072',headers={authorization:`Bearer ${signedUserToken(secret,owner)}`},payload={provider:'local',capability:'embedding',value:'synthetic-host-value',base_url:providerBase,model:'original-model'}
   assert.equal((await host.app.inject({method:'POST',url:'/api/v1/byok',payload})).statusCode,401)
   const response=await host.app.inject({method:'POST',url:'/api/v1/byok',headers,payload})
   assert.equal(response.statusCode,200,response.body)
@@ -37,8 +42,36 @@ test('生产入口创建的凭据由正式 PG 模型持久化并由 Python 解�
   assert.equal(listed.json().items.length,1);assert.equal(listed.json().items[0].has_value,true)
   assert.equal(listed.json().items[0].dimensions,null)
   assert.doesNotMatch(listed.body,/synthetic-host-value|encrypted_value|encrypted_data_key/)
+  const credentialId=listed.json().items[0].id
+  const foreignCredentialId=(await pool.query('SELECT id FROM user_provider_credentials WHERE user_id<>$1 LIMIT 1',[owner])).rows[0]?.id
+  assert.ok(foreignCredentialId)
+  assert.equal((await host.app.inject({method:'POST',url:'/api/v1/byok/models-preview',payload:{provider:'local'}})).statusCode,401)
+  const models=await host.app.inject({method:'POST',url:'/api/v1/byok/models-preview',headers,payload:{provider:'local',api_format:'openai',base_url:`${providerBase}/`,model:'preview-model',credential_id:credentialId}})
+  assert.equal(models.statusCode,200,models.body);assert.deepEqual(models.json(),{models:['model-a','model-z']});assert.deepEqual(providerRequests,['Bearer synthetic-host-value'])
+  assert.doesNotMatch(models.body,/synthetic-host-value|api_key/)
+  const foreignCredential=await host.app.inject({method:'POST',url:'/api/v1/byok/models-preview',headers,payload:{provider:'local',base_url:providerBase,credential_id:foreignCredentialId}})
+  assert.equal(foreignCredential.statusCode,404,foreignCredential.body);assert.equal(providerRequests.length,1)
+  const wrongDestination=await host.app.inject({method:'POST',url:'/api/v1/byok/models-preview',headers,payload:{provider:'local',base_url:'http://127.0.0.1:9/v1',credential_id:credentialId}})
+  assert.equal(wrongDestination.statusCode,422,wrongDestination.body);assert.equal(providerRequests.length,1)
+  assert.equal((await host.app.inject({method:'PATCH',url:`/api/v1/byok/${credentialId}`,payload:{model:'patched-model'}})).statusCode,401)
+  const deniedPatch=await host.app.inject({method:'PATCH',url:`/api/v1/byok/${credentialId}`,headers,payload:{base_url:'https://other.example.test/v1'}})
+  assert.equal(deniedPatch.statusCode,422,deniedPatch.body)
+  assert.equal(deniedPatch.json().detail,'Provider 或自定义 Endpoint 已变更。请确认目标地址；如地址已更换，请重新填写 API Key')
+  const patched=await host.app.inject({method:'PATCH',url:`/api/v1/byok/${credentialId}`,headers,payload:{base_url:'https://other.example.test/v1',model:'patched-model',value:'synthetic-patched-secret'}})
+  assert.equal(patched.statusCode,200,patched.body);assert.equal(patched.json().model,'patched-model');assert.equal(patched.json().has_value,true)
+  assert.doesNotMatch(patched.body,/synthetic-patched-secret|encrypted_value|encrypted_data_key/)
+  const afterPatch=await host.app.inject({url:'/api/v1/byok',headers})
+  assert.equal(afterPatch.json().items[0].base_url,'https://other.example.test/v1')
+  assert.equal(afterPatch.json().items[0].model,'patched-model')
+  const compatiblePatch=await host.app.inject({method:'PATCH',url:`/api/v1/byok/${credentialId}`,headers,payload:{max_tokens:'123',image:'false'}})
+  assert.equal(compatiblePatch.statusCode,200,compatiblePatch.body);assert.equal(compatiblePatch.json().max_tokens,123);assert.equal(compatiblePatch.json().image,false)
+  assert.equal((await host.app.inject({method:'PATCH',url:'/api/v1/byok/-1',headers,payload:{model:'missing'}})).statusCode,404)
+  assert.equal((await host.app.inject({method:'POST',url:'/api/v1/byok/capabilities',payload:{provider:'ollama'}})).statusCode,401)
+  const capability=await host.app.inject({method:'POST',url:'/api/v1/byok/capabilities',headers,payload:{provider:'ollama',model:'qwen3:8b',ollama_api_mode:'native',api_key:'synthetic-preview-secret'}})
+  assert.equal(capability.statusCode,200,capability.body);assert.equal(capability.json().selected_api_format,'openai')
+  assert.doesNotMatch(capability.body,/synthetic-preview-secret|api_key/)
   const row=await pool.query('SELECT count(*)::int AS n FROM user_provider_credentials WHERE user_id=$1 AND enabled',[owner]);assert.equal(row.rows[0].n,1)
   const verified=JSON.parse(execFileSync(python!,['../apps/web-host/tests/byok/fixtures/create_python.py'],{cwd:'../../backend',env:{...env,BYOK_TEST_VERIFY:'1'},encoding:'utf8',timeout:60000}))
-  assert.equal(verified.value,payload.value)
- }finally{await host?.close();await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();await rm(root,{recursive:true,force:true})}
+  assert.equal(verified.value,'synthetic-patched-secret')
+ }finally{await host?.close();if(providerServer)await new Promise<void>(resolve=>providerServer!.close(()=>resolve()));await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();await rm(root,{recursive:true,force:true})}
 })

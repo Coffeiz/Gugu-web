@@ -1,4 +1,8 @@
 {
+  "tests/im/attention/message.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
+  "tests/im/attention/normalization.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
+  "tests/im/attention/question.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
+  "tests/im/attention/visible-units.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
   "tests/preferences/document-store.test.ts": {"markers": ["external_service"], "layer": "L2", "purpose": "postgres"},
   "tests/feedback/feedback.test.ts": {
     "markers": ["external_service"],

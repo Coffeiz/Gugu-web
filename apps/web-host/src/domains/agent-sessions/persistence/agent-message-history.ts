@@ -1,5 +1,5 @@
 import type { Pool } from 'pg'
-import type { AgentInteractionHistoryWindow } from './agent-interaction-history.js'
+import type { AgentInteractionHistoryWindow } from '@gugu/core/agent-sessions'
 import { loadGroupMentionNames } from './agent-group-mentions.js'
 import { replacePlatformMentionIds } from '@gugu/core/agent/context/messages'
 import { sanitizeMediaPayload } from '@gugu/core/agent/context/messages'

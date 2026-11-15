@@ -1,6 +1,6 @@
 import { sql, type Kysely } from 'kysely'
 import { dataContext } from '../contracts/index.js'
-import type { WorkspaceListReadPort, WorkspaceListRow } from '../workspaces/workspace-list.js'
+import type { WorkspaceListReadPort, WorkspaceListRow } from './workspace-list.js'
 
 /** 既有管理查询所需的最小表契约，不创建表或替代正式schema迁移。 */
 export interface WorkspaceListTables {
@@ -50,7 +50,7 @@ export function createKyselyWorkspaceListReader(db: Kysely<WorkspaceListTables>,
 }
 
 /** 与管理列表同属工作区域；关联名称及计数均在SQL内按同一owner验证。 */
-export function createKyselyAgentWorkspaceReader(db: Kysely<any>, backend: 'sqlite' | 'postgres'): import('../workspaces/workspace-list.js').WorkspaceAgentReadPort {
+export function createKyselyAgentWorkspaceReader(db: Kysely<any>, backend: 'sqlite' | 'postgres'): import('./workspace-list.js').WorkspaceAgentReadPort {
   return { async read(rawOwner, workspaceId, signal) {
     signal?.throwIfAborted()
     const normalized = dataContext(rawOwner).ownerId, owner = backend === 'sqlite' ? normalized.replaceAll('-', '') : normalized
