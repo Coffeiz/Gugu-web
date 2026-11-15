@@ -68,3 +68,5 @@ export async function enqueueCalendarRagIndex<DB>(tx: Kysely<DB> | Transaction<D
     VALUES(${owner},'calendar',${id},'',${operation},'queued',1,0,0,${timestamp},NULL,NULL,NULL,NULL,json_array(${id}),${timestamp},${timestamp})
     ON CONFLICT(user_id,source_type) DO UPDATE SET source_id=excluded.source_id,version='',operation=excluded.operation,status='queued',generation=rag_index_jobs.generation+1,next_attempt_at=${timestamp},lease_until=NULL,last_error_code=NULL,pending_source_ids=(SELECT json_group_array(value) FROM (SELECT value,MIN(ord) AS first_ord FROM (SELECT value,CAST(key AS INTEGER) AS ord FROM json_each(COALESCE(rag_index_jobs.pending_source_ids,'[]')) UNION ALL SELECT excluded.source_id,2147483647) GROUP BY value ORDER BY first_ord)),updated_at=${timestamp}`.execute(tx)
 }
+
+/** 日历内联提醒也属于 scheduled_task 来源；与提醒变更共用事务。 */

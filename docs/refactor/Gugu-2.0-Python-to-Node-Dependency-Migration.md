@@ -108,7 +108,16 @@
 | `striprtf==0.0.28` | RTF 文本 | 独立 RTF parser；仅在明确需要高保真转换时评估受限转换服务 | H | Unicode 转义、嵌套样式、容错与资源上限 |
 | `odfpy==1.4.1` | ODF 文本 | `xlsx`（SheetJS CE，仅 ODS 读取）；ODT/ODP 使用专用 ZIP/XML 适配器 | H | ODS 表格兼容性、ODT/ODP 命名空间和内容顺序；不引入 `officeparser` 兜底 |
 
-**Office 依赖选型（2026-11-15）**：Node 侧以 Mammoth（DOCX）和 SheetJS CE（XLS/XLSX/ODS）作为格式专用读取依赖；OOXML/ODF XML 解析采用 `fast-xml-parser`，PPTX/ODT/ODP 的包结构和业务投影由小型专用适配器负责。PPTX ZIP 层先复用 Web Host 已有的 `jszip`，只有内存/流式验证显示实际需要时才另评估 ZIP 库。明确不采用 `officeparser`。以上选型不等于相应 Node API 或 Office 格式已迁移：仍须按实际调用方补充合成与兼容性样本、owner/资源限制及安全回归；SheetJS 读写往返、Mammoth HTML 净化、未知 OOXML/ODF 部件保留和创建/结构编辑能力分别评估，不从读取能力推断无损写入。
+**Office 依赖决策（2026-11-16）**：
+
+| 格式 | 首选方案 | 选择理由与边界 |
+|---|---|---|
+| DOCX | Mammoth | 专注 Word 文档，维护历史较长；用于文本/HTML 抽取，不承担 HTML 净化或结构编辑。 |
+| XLSX、XLS、ODS | SheetJS CE（npm 包 `xlsx`） | 成熟表格解析；分别验证工作表、BIFF8、日期序列、ODS 和公式缓存等 Gugu 所需行为。读取能力不代表无损写入。 |
+| PPTX、ODT、ODP | `fast-xml-parser` + 格式专用适配器 | 由适配器处理 OOXML/ODF ZIP 结构和 Gugu 所需投影；PPTX ZIP 层先复用 Web Host 已有的 `jszip`。 |
+| RTF | 独立 RTF parser；必要时另评估受限转换服务 | 暂不绑定低活跃度综合解析库；先覆盖 Unicode 转义、嵌套样式、容错和资源限制。 |
+
+不引入 `officeparser`。当前 Core 的 XLSX 预览消费者已声明并锁定 SheetJS CE 0.20.3 与 `fast-xml-parser` 5.11.2：SheetJS 读取单元格、合并区域和行列尺寸，XML parser 校验并投影工作簿、关系及绘图 XML；ZIP 资源校验和图片定位由 XLSX 适配代码负责。XML 路径拒绝 DTD/ENTITY、未知实体、非法 XML 字符及不合法文档结构。Mammoth 尚无已迁移的服务端消费者。DOCX/PPTX/ODF API 仍须依据实际调用方补充合成与兼容性样本、owner/资源限制及安全回归；未知 OOXML/ODF 部件保留和创建/结构编辑能力需单独评估，不从读取能力推断。
 
 ### 1.6 Python 传递依赖与安全约束（同样逐项记录）
 

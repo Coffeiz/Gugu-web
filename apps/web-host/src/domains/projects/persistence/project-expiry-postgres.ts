@@ -2,6 +2,7 @@ import type { Pool, PoolClient } from 'pg'
 import { randomUUID } from 'node:crypto'
 import { lockQuota, reconcileLocalUsage, recoverStagedLocalFile, stageLocalFileRemoval } from '../../files/persistence/trash-mutations-postgres.js'
 import { ensureRegistrationFileLibraryQuota } from '../../files/persistence/storage-quota.js'
+import { enqueueScheduledTaskRagRebuild } from '../../../modules/scheduled-tasks/persistence/task-rag-job-postgres.js'
 
 /** 清理一个过期项目；行锁使恢复和多个清理者不会同时处理同一项目。 */
 export async function purgeExpiredProject(pool: Pool, storageRoot: string, cutoff: Date, defaultLimitBytes: number | null): Promise<boolean> {
@@ -47,10 +48,11 @@ export async function purgeExpiredProject(pool: Pool, storageRoot: string, cutof
       if (item) staged.push(item)
     }
     await client.query('DELETE FROM files WHERE user_id=$1 AND id=ANY($2::int[])', [owner, files.rows.map((file) => file.id)])
-    await client.query(
+    const removedTasks = await client.query<{ id: number }>(
       `DELETE FROM scheduled_tasks WHERE user_id=$1 AND event_id IN
-       (SELECT id FROM calendar_events WHERE user_id=$1 AND project_id=$2)`, [owner, id],
+       (SELECT id FROM calendar_events WHERE user_id=$1 AND project_id=$2) RETURNING id`, [owner, id],
     )
+    for (const task of removedTasks.rows) await enqueueScheduledTaskRagRebuild(client, owner, Number(task.id))
     await client.query('DELETE FROM calendar_events WHERE user_id=$1 AND project_id=$2', [owner, id])
     await client.query('DELETE FROM folders WHERE user_id=$1 AND project_id=$2', [owner, id])
     await client.query('DELETE FROM projects WHERE user_id=$1 AND id=$2', [owner, id])

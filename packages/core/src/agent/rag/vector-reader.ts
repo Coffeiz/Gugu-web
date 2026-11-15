@@ -17,7 +17,9 @@ export async function readRagDocumentVectors(documents:readonly RagDocument[],ve
  })
  const result:Record<string,number[]>={}
  for(const document of documents){
-  const parent=String(document.parent_id||document.id),chunk=Number(document.chunk_index||0)
+  // memory 索引的持久 parent ID 会加 scope 命名空间，避免 owner 内不同 IM
+  // scope 覆盖同一 SQL 索引行；1.7.7 向量文件仍按原始 parent ID 存储。
+  const parent=String(document.metadata?.memory_parent_id??document.parent_id??document.id),chunk=Number(document.chunk_index||0)
   const key=document.source_id==='pattern'?String(document.metadata?.vector_key||''):`rag:${parent}:${String(document.document_version||'')}:${chunk}`
   const map=maps[document.source_type==='knowledge'?1:document.source_id==='pattern'?2:0]!
   const item=map[key]

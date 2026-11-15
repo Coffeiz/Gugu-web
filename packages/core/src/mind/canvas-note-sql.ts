@@ -4,6 +4,7 @@ import { databaseTime, nowUtc, utc, type Clock } from '../data/codec.js'
 import type { Backend } from '../data/repositories.js'
 import type { Database, MindNodeTable } from '../data/schema.js'
 import { recordForwardUndoOperation } from '../data/undo.js'
+import { enqueueMindRagIndex } from './rag-index-job.js'
 import { canvasItemResponse, canvasItemSnapshot } from './canvas-item-add-sql.js'
 import { mindCanvasNoteContentProjection, MindCanvasNoteMutationError, type MindCanvasNoteMutationRuntime } from './canvas-note.js'
 
@@ -27,6 +28,7 @@ export function createSqlMindCanvasNoteRuntime(db: Kysely<Database>, backend: Ba
         const now = databaseTime(clock(), backend), content = mindCanvasNoteContentProjection(input.contentMd)
         const node = await tx.insertInto('mind_nodes').values({ user_id: owner, kind: 'canvas_note', title: input.title, content_md: input.contentMd, content_plain: content.contentPlain, color: input.color, ref_type: null, ref_id: null, ref_snapshot: null, origin: 'user', indexed_at: null, indexed_hash: content.indexedHash, version: 1, captured_at: now, created_at: now, updated_at: now, deleted_at: null }).returningAll().executeTakeFirstOrThrow()
         const item = await tx.insertInto('mind_canvas_items').values({ user_id: owner, canvas_id: canvasId, node_id: Number(node.id), x: input.x, y: input.y, w: input.w, h: input.h, z: input.z, collapsed: backend === 'sqlite' ? 0 : false, data_json: '{}', created_at: now, updated_at: now, deleted_at: null }).returningAll().executeTakeFirstOrThrow()
+        await enqueueMindRagIndex(tx, backend, owner, 'canvas', '', now, 'create')
         const context = contextId?.trim().slice(0, 128)
         if (context) { const nodeId = Number(node.id), itemId = Number(item.id), nodeKey = `canvas_note:${nodeId}`, itemKey = `canvas_item:${itemId}`; await recordForwardUndoOperation(tx, backend, { userId: canonical, contextId: context, resource: 'mind', action: 'create', targetRefs: [{ kind: 'canvas_note', id: nodeId }, { kind: 'canvas_item', id: itemId }], beforeState: { items: {} }, afterState: { items: { [nodeKey]: snapshot(node), [itemKey]: canvasItemSnapshot(item) } }, baseVersions: { [nodeKey]: { version: 0 }, [itemKey]: {} } }, clock) }
         return canvasItemResponse(tx, owner, item, node)
@@ -48,6 +50,8 @@ export function createSqlMindCanvasNoteRuntime(db: Kysely<Database>, backend: Ba
         patch.updated_at = databaseTime(clock(), backend)
         const after = await tx.updateTable('mind_nodes').set(patch).set({ version: sql`version + 1` }).where('id', '=', nodeId).where('user_id', '=', owner).where('kind', '=', 'canvas_note').where('version', '=', input.version).where('deleted_at', 'is', null).returningAll().executeTakeFirst()
         if (!after) throw new MindCanvasNoteMutationError('画布便签已被其他端修改，请刷新后重试', 409)
+        const canvasIds = await tx.selectFrom('mind_canvas_items').select('canvas_id').distinct().where('user_id', '=', owner).where('node_id', '=', nodeId).where('deleted_at', 'is', null).execute()
+        if (canvasIds.length) await enqueueMindRagIndex(tx, backend, owner, 'canvas', '', patch.updated_at!, 'update')
         const context = contextId?.trim().slice(0, 128)
         if (context) { const key = `canvas_note:${nodeId}`; await recordForwardUndoOperation(tx, backend, { userId: canonical, contextId: context, resource: 'mind', action: 'update', targetRefs: [{ kind: 'canvas_note', id: nodeId }], beforeState: { items: { [key]: snapshot(before) } }, afterState: { items: { [key]: snapshot(after) } }, baseVersions: { [key]: { version: Number(before.version) } } }, clock) }
         return { note: response(after), changed: true }

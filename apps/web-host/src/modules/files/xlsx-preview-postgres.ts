@@ -88,6 +88,7 @@ async function loadArchive(raw: Buffer): Promise<XlsxPreviewArchive> {
     const byName = new Map(Object.entries(zip.files).map(([name, file]) => [name, file]))
     return {
       rawSize: raw.byteLength,
+      rawWorkbook: raw,
       entries,
       async read(name) {
         const file = byName.get(name)

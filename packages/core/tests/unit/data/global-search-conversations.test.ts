@@ -270,7 +270,7 @@ it('历史搜索经可信端口保留旧版分词、会话去重与无法定位�
  hits=[{session_id:'1',session_updated_at:'2026-02-30T03:04:00Z'},{message_id:8,session_updated_at:'2026-01-02'}]
  const dates=await registry.tools.dispatch({...call,input:{query:'时间'}},scope)
  expect(dates).toMatchObject({successful:true,value:{matches:[{session_id:1,updated_at:''},{session_id:2,updated_at:'2026-01-02 00:00'}]}})
- for(const [input,expected] of [['20260102T030405','2026-01-02 03:04'],['2026-W01-5','2026-01-02 00:00'],['2026-W01','2025-12-29 00:00'],['2026-01-02x03:04:05,123+08','2026-01-02 03:04'],['2026-01-02T03:04:05+24:00','']] as const){
+ for(const [input,expected] of [['20260102T030405','2026-01-02 03:04'],['2026-W01-5','2026-01-02 00:00'],['2026-W01','2025-12-29 00:00'],['2026-01-02x03:04:05,123+08','2026-01-02 03:04'],['2026-01-02T03:04:05+01:02:03','2026-01-02 03:04'],['2026-01-02T03:04:05+01:99','2026-01-02 03:04'],['2026-01-02T03:04:05+01:02:60','2026-01-02 03:04'],['2026-01-02T03:04:05+00:99:99','2026-01-02 03:04'],['2026-01-02T03:04:05+23:59:60',''],['2026-01-02T03:04:05+24:00','']] as const){
   hits=[{session_id:'1',session_updated_at:input}]
   expect(await registry.tools.dispatch({...call,input:{query:'时间'}},scope)).toMatchObject({successful:true,value:{matches:[{updated_at:expected}]}})
  }

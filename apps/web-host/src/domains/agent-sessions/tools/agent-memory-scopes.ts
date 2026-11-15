@@ -1,5 +1,7 @@
 import { MemorySearchAccessError, type RunIdentity } from '@gugu/core/agent'
 import type { AuthorizedMemoryScope, MemorySearchScope } from '@gugu/core/agent'
+import type { Pool } from 'pg'
+import { normalizeOwnerId } from '../../../adapters/owner-context.js'
 
 export interface TrustedAgentImMemoryContext {
   platform: string
@@ -20,6 +22,61 @@ interface ScopeQuery {
 }
 
 const imPlatforms = new Set(['qq', 'feishu', 'wechat'])
+
+type ImContextRow = {
+  platform: string | null
+  chat_type: string | null
+  chat_id: string | null
+  channel_id: string | null
+  owner_platform_user_id: string | null
+  platform_user_id: string | null
+  inbound_message_id: string | null
+}
+
+/**
+ * 从当前 owner 的会话和本次 Run 的入站消息恢复可信 IM 身份。
+ * 缺少当前消息、Bot 绑定或消息发送者时拒绝 IM scope，不能退回 owner scope。
+ */
+export function createPostgresAgentImMemoryContextReader(pool: Pick<Pool, 'query'>) {
+  return async (identity: RunIdentity, signal: AbortSignal): Promise<TrustedAgentImMemoryContext | null> => {
+    signal.throwIfAborted()
+    const ownerId = normalizeOwnerId(identity.ownerId)
+    if (!/^[1-9]\d*$/u.test(identity.sessionId) || !Number.isSafeInteger(Number(identity.sessionId)) || !identity.runId.trim()) {
+      throw new MemorySearchAccessError('记忆检索上下文不可用')
+    }
+    const result = await pool.query<ImContextRow>(`SELECT s.source AS platform,s.chat_type,s.chat_id,
+        b.bot_platform_user_id AS channel_id,b.owner_platform_user_id,m.platform_user_id,m.id::text AS inbound_message_id
+      FROM conversation_sessions s
+      LEFT JOIN LATERAL (
+        SELECT bot_platform_user_id,owner_platform_user_id FROM user_bots
+        WHERE user_id=s.user_id AND platform=s.source AND id::text=s.bot_id
+        ORDER BY id LIMIT 1
+      ) b ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT id,platform_user_id FROM conversation_messages
+        WHERE session_id=s.id AND role='user' AND (run_id=$3 OR run_id IS NULL)
+        ORDER BY conversation_seq DESC,id DESC LIMIT 1
+      ) m ON TRUE
+      WHERE s.user_id=$1 AND s.id=$2 AND s.active_run_id=$3`, [ownerId, identity.sessionId, identity.runId])
+    signal.throwIfAborted()
+
+    const row = result.rows[0]
+    if (!row) throw new MemorySearchAccessError('记忆检索上下文不可用')
+    if (!imPlatforms.has(row.platform ?? '')) return null
+    if (!row.chat_type || !row.channel_id || !row.owner_platform_user_id || !row.platform_user_id || !row.inbound_message_id
+      || (row.chat_type === 'group' && !row.chat_id)) {
+      throw new MemorySearchAccessError('记忆检索上下文不可用')
+    }
+    return {
+      platform: row.platform!,
+      chatType: row.chat_type,
+      chatId: row.chat_id ?? '',
+      channelId: row.channel_id,
+      role: row.owner_platform_user_id === row.platform_user_id ? 'owner' : 'member',
+      platformUserId: row.platform_user_id,
+    }
+  }
+}
 
 /**
  * 复刻 Python resolve_memory_query_scopes：IM 上下文必须来自可信 Host，

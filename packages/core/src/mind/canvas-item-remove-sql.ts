@@ -5,6 +5,7 @@ import type { Backend } from '../data/repositories.js'
 import type { Database, MindCanvasItemTable } from '../data/schema.js'
 import { recordForwardUndoOperation } from '../data/undo.js'
 import { MindCanvasItemMutationError, type MindCanvasItemRemoveRuntime } from './canvas-item-remove.js'
+import { enqueueMindRagIndex } from './rag-index-job.js'
 
 function snapshot(row: Selectable<MindCanvasItemTable>) {
   const rawDeleted: unknown = row.deleted_at
@@ -45,6 +46,7 @@ export function createSqlMindCanvasItemRemoveRuntime(db: Kysely<Database>, backe
       }
       const after = await tx.updateTable('mind_canvas_items').set({ deleted_at: now, updated_at: now }).where('id', '=', itemId).where('canvas_id', '=', canvasId).where('user_id', '=', owner).where('deleted_at', 'is', null).returningAll().executeTakeFirst()
       if (!after) throw new MindCanvasItemMutationError('画布贴纸不存在', 404)
+      await enqueueMindRagIndex(tx, backend, owner, 'canvas', '', now, 'update')
       const context = contextId?.trim().slice(0, 128)
       if (context) {
         const key = `canvas_item:${itemId}`

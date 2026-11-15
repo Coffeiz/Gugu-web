@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createWorkspaceDeleter } from '../../../src/workspaces/workspace-delete.js'
 import { createKyselyWorkspaceDeletionRuntime } from '../../../src/workspaces/workspace-delete-store.js'
 import type { WorkspaceDeletionTables } from '../../../src/workspaces/workspace-delete-store.js'
+import { tablesSql } from '../../../src/data/schema.js'
 
 // 合成最小表及单列FK匹配旧Host回归，不代表正式SQLite schema、复合owner FK或PG验收。
 let directory: string, native: SQLite.Database, db: Kysely<WorkspaceDeletionTables>
@@ -17,7 +18,7 @@ function runtime() { return createKyselyWorkspaceDeletionRuntime(db, 'sqlite') }
 function deleter() { return createWorkspaceDeleter(runtime()) }
 function rows(table: string) { return native.prepare(`SELECT * FROM ${table} ORDER BY id`).all() }
 function snapshot() {
-  return Object.fromEntries(['workspaces', 'conversation_sessions', 'scheduled_tasks', 'file_sync_bindings', 'terminal_sessions', 'projects'].map(table => [table, rows(table)]))
+  return Object.fromEntries(['workspaces', 'conversation_sessions', 'scheduled_tasks', 'file_sync_bindings', 'terminal_sessions', 'projects', 'rag_index_jobs'].map(table => [table, rows(table)]))
 }
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), 'gugu-workspace-delete-'))
@@ -31,6 +32,7 @@ beforeEach(async () => {
     CREATE TABLE file_sync_bindings(id INTEGER PRIMARY KEY,user_id TEXT,workspace_id INTEGER REFERENCES workspaces(id) ON DELETE CASCADE);
     CREATE TABLE terminal_sessions(id INTEGER PRIMARY KEY,owner_id TEXT,workspace_id INTEGER REFERENCES workspaces(id) ON DELETE SET NULL,running INTEGER);
   `)
+  native.exec(tablesSql('sqlite').ragJobs)
   owner = randomUUID(); other = randomUUID(); queries = 0
   native.prepare('INSERT INTO projects VALUES (?,?)').run(9, '保留项目')
   const workspace = native.prepare('INSERT INTO workspaces VALUES (?,?,9)')
@@ -63,6 +65,9 @@ describe('工作区删除真实SQLite事务与单列FK副作用', () => {
       { id: 24, user_id: key(owner), workspace_id: 3, event_id: null, enabled: 1 },
       { id: 25, user_id: key(other), workspace_id: 2, event_id: null, enabled: 1 },
     ])
+    expect(native.prepare("SELECT user_id,source_type,source_id,pending_source_ids,generation FROM rag_index_jobs").all()).toEqual([
+      { user_id: key(owner), source_type: 'scheduled_task', source_id: '21', pending_source_ids: '["21"]', generation: 1 },
+    ])
     expect(rows('file_sync_bindings')).toEqual([{ id: 32, user_id: key(other), workspace_id: 2 }])
     expect(rows('terminal_sessions')).toEqual([{ id: 41, owner_id: key(owner), workspace_id: null, running: 1 }])
     expect(rows('projects')).toEqual([{ id: 9, name: '保留项目' }])
@@ -76,6 +81,9 @@ describe('工作区删除真实SQLite事务与单列FK副作用', () => {
     expect(rows('conversation_sessions')).toContainEqual({ id: 12, user_id: key(other), workspace_id: 1 })
     expect(rows('scheduled_tasks')).toContainEqual({ id: 23, user_id: key(other), workspace_id: 1, event_id: null, enabled: 1 })
     expect(rows('scheduled_tasks')).toContainEqual({ id: 22, user_id: key(owner), workspace_id: 1, event_id: 7, enabled: 1 })
+    expect(native.prepare("SELECT user_id,source_type,source_id,generation FROM rag_index_jobs").all()).toEqual([
+      { user_id: key(owner), source_type: 'scheduled_task', source_id: '21', generation: 1 },
+    ])
   })
   it('数据端口直接删除也限定owner，不依赖应用层存在性检查', async () => {
     const before = snapshot()

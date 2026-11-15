@@ -40,7 +40,9 @@ export function createIndexedAgentConversationSearchPort(core:Pick<SqlDataRuntim
    const terms=[...new Set(queries.map(term=>term.trim()).filter(Boolean))]
    if(!terms.length)return []
    const search=createScopedRagSearch({index,authorize:async(owner,requested)=>Boolean(owner.trim())&&requested.scope_type==='owner'&&requested.scope_id===''})
-   const result=await search(identity.ownerId,scope,terms.join(' '),{sourceTypes:['conversation'],limit:Math.max(1,Math.min(limit,50))},signal)
+   // Python search_conversations 的 UnifiedRecallService 将候选上限固定为 20；
+   // 工具层虽会为跨消息去重请求 4 倍候选，RAG 本身仍须保留这个旧上限。
+   const result=await search(identity.ownerId,scope,terms.join(' '),{sourceTypes:['conversation'],limit:Math.max(1,Math.min(limit,20))},signal)
    signal.throwIfAborted()
    const documents=result.results.map(item=>item.document)
    const details=await sources.details(identity.ownerId,documents.map(document=>Number(document.metadata?.session_id)).filter(Number.isSafeInteger),signal)

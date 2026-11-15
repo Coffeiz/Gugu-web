@@ -290,7 +290,24 @@ onMounted(() => perform(async () => {
 </script>
 
 <template>
-  <main class="desktop-workbench">
+  <div class="desktop-shell">
+    <aside class="desktop-sidebar" aria-label="主导航">
+      <div class="brand"><span class="brand-mark">咕</span><strong>咕咕</strong><small>桌面工作台</small></div>
+      <nav>
+        <a href="#desktop-home" class="nav-item active"><span>⌂</span>工作台</a>
+        <a href="#desktop-projects" class="nav-item"><span>▧</span>项目</a>
+        <a href="#desktop-calendar" class="nav-item"><span>▦</span>日历</a>
+        <a href="#desktop-notes" class="nav-item"><span>▤</span>便签</a>
+        <a href="#desktop-canvases" class="nav-item"><span>⌘</span>思维画布</a>
+      </nav>
+      <div class="sidebar-footer"><span class="connection-dot" :class="{ connected }"></span>{{ connected ? 'Core 已连接' : '连接中' }}</div>
+    </aside>
+    <header class="desktop-topbar">
+      <div class="window-spacer" aria-hidden="true"></div>
+      <div class="topbar-search"><span>⌕</span><span>搜索项目、日程与便签</span><kbd>⌘ K</kbd></div>
+      <button class="profile-chip" type="button" aria-label="本地工作区">本地工作区 <span>⌄</span></button>
+    </header>
+    <main id="desktop-home" class="desktop-workbench">
     <header class="desktop-header">
       <div><span class="desktop-eyebrow">咕咕 · 桌面验证版</span><h1>本地工作台</h1><p>项目和联系人保存在当前设备。</p></div>
       <span class="desktop-state">{{ connected ? 'Core 已连接' : '正在连接 Core' }}</span>
@@ -320,8 +337,8 @@ onMounted(() => perform(async () => {
     </section>
     <ActionButton v-if="pendingOperation" fit variant="secondary" :disabled="busy" @click="perform(recoverPendingOperation)">查询待确认操作</ActionButton>
     <div class="desktop-columns">
-      <section class="desktop-panel" aria-labelledby="desktop-projects">
-        <h2 id="desktop-projects">项目 <span>{{ projects.length }}</span></h2>
+      <section id="desktop-projects" class="desktop-panel" aria-labelledby="desktop-projects-title">
+        <h2 id="desktop-projects-title">项目 <span>{{ projects.length }}</span></h2>
         <form @submit.prevent="createProject">
           <span id="project-name-title" class="sr-only">项目名称</span>
           <input id="project-name" v-model="projectName" class="form-input" aria-labelledby="project-name-title" maxlength="200" placeholder="准备开展的新项目" required :disabled="busy" />
@@ -330,8 +347,8 @@ onMounted(() => perform(async () => {
         <ul v-if="projects.length"><li v-for="project in projects" :key="project.id"><form v-if="editingProject?.id === project.id" @submit.prevent="renameProject"><input v-model="editedProjectName" class="form-input" aria-label="项目名称" maxlength="200" required :disabled="busy" /><ActionButton fit type="submit" :disabled="busy">保存</ActionButton><ActionButton fit variant="secondary" type="button" :disabled="busy" @click="editingProject = null">取消</ActionButton></form><template v-else><span>{{ project.name }}</span><small>v{{ project.version }}</small><ActionButton fit variant="secondary" :disabled="busy" @click="editingProject = project; editedProjectName = project.name">重命名</ActionButton></template></li></ul>
         <p v-else class="desktop-empty">从第一个项目开始。</p>
       </section>
-      <section class="desktop-panel" aria-labelledby="desktop-clients">
-        <h2 id="desktop-clients">联系人 <span>{{ clients.length }}</span></h2>
+      <section id="desktop-clients" class="desktop-panel" aria-labelledby="desktop-clients-title">
+        <h2 id="desktop-clients-title">联系人 <span>{{ clients.length }}</span></h2>
         <form @submit.prevent="createClient">
           <span id="client-name-title" class="sr-only">联系人名称</span>
           <input id="client-name" v-model="clientName" class="form-input" aria-labelledby="client-name-title" maxlength="200" placeholder="添加一位联系人" required :disabled="busy" />
@@ -341,8 +358,8 @@ onMounted(() => perform(async () => {
         <p v-else class="desktop-empty">这里会保存你的联系人。</p>
       </section>
     </div>
-    <section class="desktop-panel desktop-calendar" aria-labelledby="desktop-calendar">
-      <h2 id="desktop-calendar">日历 <span>{{ calendar.length }}</span></h2>
+    <section id="desktop-calendar" class="desktop-panel desktop-calendar" aria-labelledby="desktop-calendar-title">
+      <h2 id="desktop-calendar-title">日历 <span>{{ calendar.length }}</span></h2>
       <form @submit.prevent="createEvent">
         <span id="calendar-title-label" class="sr-only">日程标题</span>
         <input v-model="eventTitle" class="form-input" aria-labelledby="calendar-title-label" maxlength="200" placeholder="添加日程" required :disabled="busy" />
@@ -354,8 +371,8 @@ onMounted(() => perform(async () => {
       <ul v-if="calendar.length"><li v-for="event in calendar" :key="event.id"><form v-if="editingCalendarEvent?.id === event.id" @submit.prevent="updateCalendarEvent"><span id="calendar-edit-title-label" class="sr-only">日程标题</span><input v-model="editedEventTitle" class="form-input" aria-labelledby="calendar-edit-title-label" maxlength="200" required :disabled="busy" /><span id="calendar-edit-date-label" class="sr-only">日程日期</span><input v-model="editedEventDate" class="form-input" aria-labelledby="calendar-edit-date-label" type="date" required :disabled="busy" /><ActionButton fit type="submit" :disabled="busy">保存</ActionButton><ActionButton fit variant="secondary" type="button" :disabled="busy" @click="editingCalendarEvent = null">取消</ActionButton></form><template v-else><span>{{ event.title }}</span><time>{{ event.date }}</time><small>v{{ event.version }}</small><ActionButton fit variant="secondary" :disabled="busy" @click="editingCalendarEvent = event; editedEventTitle = event.title; editedEventDate = event.date">编辑</ActionButton><ActionButton fit variant="secondary" :disabled="busy" @click="deleteCalendarEvent(event)">删除</ActionButton></template></li></ul>
       <p v-else class="desktop-empty">这里会显示你的日程。</p>
     </section>
-    <section class="desktop-panel desktop-calendar" aria-labelledby="desktop-notes">
-      <h2 id="desktop-notes">便签 <span>{{ notes.length }}</span></h2>
+    <section id="desktop-notes" class="desktop-panel desktop-calendar" aria-labelledby="desktop-notes-title">
+      <h2 id="desktop-notes-title">便签 <span>{{ notes.length }}</span></h2>
       <form @submit.prevent="createNote">
         <span id="note-content-label" class="sr-only">便签 Markdown 正文</span>
         <textarea v-model="noteContent" class="form-input" aria-labelledby="note-content-label" maxlength="20000" placeholder="# 便签标题&#10;&#10;记录内容" required :disabled="busy" />
@@ -364,8 +381,8 @@ onMounted(() => perform(async () => {
       <ul v-if="notes.length"><li v-for="note in notes" :key="note.id"><form v-if="editingNote?.id === note.id" @submit.prevent="updateNote"><span id="note-edit-label" class="sr-only">便签 Markdown 正文</span><textarea v-model="editedNoteContent" class="form-input" aria-labelledby="note-edit-label" maxlength="20000" required :disabled="busy" /><ActionButton fit type="submit" :disabled="busy">保存</ActionButton><ActionButton fit variant="secondary" type="button" :disabled="busy" @click="editingNote = null">取消</ActionButton></form><template v-else><span>{{ note.contentMd }}</span><small>v{{ note.version }}</small><ActionButton fit variant="secondary" :disabled="busy" @click="editingNote = note; editedNoteContent = note.contentMd">编辑</ActionButton><ActionButton fit variant="secondary" :disabled="busy" @click="deleteNote(note)">删除</ActionButton></template></li></ul>
       <p v-else class="desktop-empty">这里会保存你的便签。</p>
     </section>
-    <section class="desktop-panel" aria-labelledby="desktop-canvases">
-      <h2 id="desktop-canvases">画布 <span>{{ canvases.length }}</span></h2>
+    <section id="desktop-canvases" class="desktop-panel" aria-labelledby="desktop-canvases-title">
+      <h2 id="desktop-canvases-title">画布 <span>{{ canvases.length }}</span></h2>
       <form @submit.prevent="createCanvas">
         <span id="canvas-title-label" class="sr-only">画布标题</span>
         <input v-model="canvasTitle" class="form-input" aria-labelledby="canvas-title-label" maxlength="300" placeholder="创建画布" required :disabled="busy" />
@@ -404,11 +421,18 @@ onMounted(() => perform(async () => {
       <ActionButton fit variant="secondary" :disabled="busy" @click="checkSandbox">重新检测</ActionButton>
     </section>
     <ActionButton fit variant="secondary" class="desktop-refresh" :disabled="busy" @click="perform(refresh)">{{ busy ? '处理中…' : '刷新本地数据' }}</ActionButton>
-  </main>
+    </main>
+  </div>
 </template>
 
 <style scoped>
-.desktop-workbench { max-width: 1120px; margin: 0 auto; padding: 48px 40px; color: var(--text-primary); }
+.desktop-shell { height: 100vh; width: 100vw; overflow: hidden; display: grid; grid-template-columns: 204px minmax(0, 1fr); grid-template-rows: 64px minmax(0, 1fr); color: var(--text-primary); background: radial-gradient(ellipse at 18% 0%, color-mix(in srgb, var(--primary) 14%, transparent), transparent 42%), var(--surface-app, #eef0f5); }
+.desktop-sidebar { grid-column: 1; grid-row: 1 / 3; z-index: 2; display: flex; flex-direction: column; padding: 66px 14px 18px; border-right: 1px solid color-mix(in srgb, var(--glass-card-border) 85%, transparent); background: color-mix(in srgb, var(--glass-card-background) 72%, transparent); backdrop-filter: blur(30px) saturate(145%); -webkit-backdrop-filter: blur(30px) saturate(145%); }
+.brand { display: flex; align-items: center; gap: 9px; padding: 2px 10px 34px; font-size: 17px; }.brand small { margin-left: auto; font-size: 10px; font-weight: 500; }.brand-mark { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 10px; color: white; background: var(--primary, #686b75); font-weight: 700; }
+.desktop-sidebar nav { display: grid; gap: 7px; }.nav-item { display: flex; align-items: center; gap: 13px; height: 42px; padding: 0 12px; border-radius: 11px; color: var(--content-secondary, var(--text-secondary)); font-size: 13px; text-decoration: none; transition: background .16s ease, color .16s ease; }.nav-item span { width: 18px; font-size: 18px; text-align: center; }.nav-item:hover,.nav-item.active { color: var(--content-primary, var(--text-primary)); background: color-mix(in srgb, var(--primary) 12%, transparent); }.nav-item.active { font-weight: 650; }
+.sidebar-footer { margin-top: auto; display: flex; align-items: center; gap: 8px; padding: 12px; color: var(--text-secondary); font-size: 11px; }.connection-dot { width: 8px; height: 8px; border-radius: 50%; background: #d9a441; }.connection-dot.connected { background: #54ad72; }
+.desktop-topbar { grid-column: 1 / 3; grid-row: 1; z-index: 1; display: flex; align-items: center; gap: 24px; padding: 8px 28px 8px 118px; background: color-mix(in srgb, var(--glass-card-background) 66%, transparent); border-bottom: 1px solid color-mix(in srgb, var(--glass-card-border) 76%, transparent); backdrop-filter: blur(28px) saturate(145%); -webkit-backdrop-filter: blur(28px) saturate(145%); -webkit-app-region: drag; }.window-spacer { display: none; }.topbar-search { -webkit-app-region: no-drag; display: flex; align-items: center; gap: 10px; width: min(520px, 58%); margin: auto; padding: 10px 14px; border: 1px solid color-mix(in srgb, var(--content-divider) 70%, transparent); border-radius: 12px; color: var(--text-secondary); background: color-mix(in srgb, var(--surface-card-solid) 55%, transparent); font-size: 12px; }.topbar-search > span:first-child { font-size: 19px; }.topbar-search kbd { margin-left: auto; font: inherit; opacity: .7; }.profile-chip { -webkit-app-region: no-drag; border: 0; border-radius: 20px; padding: 9px 12px; color: var(--text-primary); background: color-mix(in srgb, var(--surface-card-solid) 65%, transparent); font: inherit; font-size: 12px; }
+.desktop-workbench { grid-column: 2; grid-row: 2; min-width: 0; min-height: 0; overflow: auto; margin: 14px 16px 16px 12px; padding: 32px clamp(22px, 3vw, 48px) 48px; border: 1px solid color-mix(in srgb, var(--content-divider) 75%, transparent); border-radius: 18px; background: var(--surface-card-solid, #fff); box-shadow: 0 12px 34px rgba(34, 39, 52, .08); }
 .desktop-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 36px; }
 .desktop-header > div { min-width: 0; }
 .desktop-eyebrow, .desktop-state { color: var(--text-secondary); font-size: 13px; }
@@ -436,5 +460,5 @@ small, .desktop-empty { color: var(--text-secondary); }
 .desktop-refresh { margin-top: 20px; }
 .desktop-error { padding: 12px 16px; background: var(--control-bg); border: 1px solid var(--status-danger); border-radius: 8px; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); }
-@media (max-width: 760px) { .desktop-workbench { padding: 24px 20px; } .desktop-columns { grid-template-columns: 1fr; } }
+@media (max-width: 760px) { .desktop-shell { grid-template-columns: 64px minmax(0,1fr); grid-template-rows: 64px minmax(0,1fr); }.desktop-sidebar { padding: 66px 7px 16px; }.brand { display:none; }.nav-item:not(.active) { font-size: 0; }.nav-item { justify-content: center; padding: 0; }.nav-item span { font-size: 18px; }.sidebar-footer { justify-content: center; padding: 8px 0; font-size: 0; }.desktop-topbar { padding: 8px 12px 8px 104px; gap: 8px; }.topbar-search { width: auto; flex: 1; margin: 0; }.profile-chip { font-size: 0; }.profile-chip span { font-size: 12px; }.desktop-workbench { margin: 8px; padding: 24px 20px; }.desktop-columns { grid-template-columns: 1fr; } }
 </style>

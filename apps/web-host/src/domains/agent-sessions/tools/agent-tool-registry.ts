@@ -5,8 +5,9 @@ import { createTrashRestoreTools, type TrashRestorePort } from '@gugu/core/tools
 import { createConversationReadTool, createConversationSearchTool, type ConversationReadPort, type ConversationSearchPort } from '@gugu/core/tools'
 import { createMemorySearchTool, type MemorySearchPort } from '@gugu/core/tools'
 import { createCanvasPlacementTools, createCanvasRelationTools, createCanvasEditTools, type CanvasEditPort } from '@gugu/core/tools'
-import { createCanvasPlaceableSearchTool, createCanvasCreateTool, createSkillManagementReadTools } from '@gugu/core/tools'
+import { createCanvasPlaceableSearchTool, createCanvasCreateTool, createSkillManagementReadTools, createSkillManagementWriteTools } from '@gugu/core/tools'
 import type { CanvasCreatePort, SkillMetadataListPort } from '@gugu/core/tools'
+import type { createUserSkillManager } from '@gugu/core/agent/skills/user-management'
 import type { createAgentPlaceableSearch } from '@gugu/core/mind'
 import type { AgentCanvasReader } from '@gugu/core/tools'
 import type { createAgentCalendarReader, CalendarEventReadPort } from '@gugu/core/calendar'
@@ -19,7 +20,7 @@ import type { WorkspaceMutationPort, ProjectMutationPort, TrashListPort, Project
 import type { ProjectCreateRuntime } from '@gugu/core/project-create'
 import { agentProjectDispatchKey } from './agent-project-tool.js'
 
-type AuthorizedToolName = 'create_project' | 'list_clients' | 'create_client' | 'update_client' | 'list_projects' | 'get_project' | 'get_current_time' | 'use_skill' | 'list_scheduled_tasks' | 'global_search' | 'get_upcoming' | 'list_trash' | 'list_events' | 'list_workspaces' | 'get_workspace' | 'get_dashboard_stats' | 'update_project' | 'set_color' | 'archive_project' | 'add_stage' | 'remove_stage' | 'rename_stage' | 'set_stages' | 'update_stage' | 'note_search' | 'note_get' | 'get_tool_schema' | 'canvas_list' | 'canvas_get' | 'canvas_search' | 'canvas_focus_node' | 'update_workspace' | 'canvas_search_placeable' | 'canvas_create' | 'list_skills' | 'canvas_update_node' | 'canvas_remove_node' | 'canvas_update_note' | 'canvas_create_note' | 'canvas_add_node' | 'canvas_update_anchor' | 'canvas_connect' | 'note_delete' | 'note_restore' | 'note_undo'
+type AuthorizedToolName = 'create_project' | 'list_clients' | 'create_client' | 'update_client' | 'list_projects' | 'get_project' | 'get_current_time' | 'use_skill' | 'list_scheduled_tasks' | 'global_search' | 'get_upcoming' | 'list_trash' | 'list_events' | 'list_workspaces' | 'get_workspace' | 'get_dashboard_stats' | 'update_project' | 'set_color' | 'archive_project' | 'add_stage' | 'remove_stage' | 'rename_stage' | 'set_stages' | 'update_stage' | 'note_search' | 'note_get' | 'get_tool_schema' | 'canvas_list' | 'canvas_get' | 'canvas_search' | 'canvas_focus_node' | 'update_workspace' | 'canvas_search_placeable' | 'canvas_create' | 'list_skills' | 'create_skill' | 'update_skill' | 'canvas_update_node' | 'canvas_remove_node' | 'canvas_update_note' | 'canvas_create_note' | 'canvas_add_node' | 'canvas_update_anchor' | 'canvas_connect' | 'note_delete' | 'note_restore' | 'note_undo'
 
 export interface AgentToolRegistryOptions {
   core: SqlDataRuntime
@@ -58,6 +59,8 @@ export interface AgentToolRegistryOptions {
   canvasEdits?: CanvasEditPort
   canvasCreation?: CanvasCreatePort
   skillMetadata?: SkillMetadataListPort
+  /** 用户 Skill 创建和更新通过共享领域服务执行；删除等待确认协议接入。 */
+  skillManagement?: Pick<ReturnType<typeof createUserSkillManager>, 'create' | 'update'>
   canvases?: AgentCanvasReader
   workspaceMutations?: WorkspaceMutationPort
   noteLifecycle?: NoteLifecyclePort
@@ -107,7 +110,7 @@ export function createAgentToolRegistry(options: AgentToolRegistryOptions) {
         ...(options.canvasPlaceableSearch ? [createCanvasPlaceableSearchTool(options.canvasPlaceableSearch)] : []),
         ...(options.canvasCreation ? [createCanvasCreateTool(options.canvasCreation)] : []),
       ]}] : []),
-      ...(options.skillMetadata ? [{id:'skill_management',name:'技能管理',tools:createSkillManagementReadTools(options.skillMetadata)}] : []),
+      ...(options.skillMetadata || options.skillManagement ? [{id:'skill_management',name:'技能管理',tools:[...(options.skillMetadata?createSkillManagementReadTools(options.skillMetadata):[]),...(options.skillManagement?createSkillManagementWriteTools(options.skillManagement):[])]}] : []),
       ...(options.trash || options.trashRestore ? [{ id: 'trash', name: '回收站', tools: [...(options.trash?[createListTrashTool(options.trash)]:[]),...(options.trashRestore?createTrashRestoreTools(options.trashRestore):[])] }] : []),
       ...(options.search ? [{ id: 'global_search', name: '站内搜索', tools: [createGlobalSearchTool(options.search)] }] : []),
       ...(options.time ? [{ id: 'time', name: '时间', tools: [createTimeTool(options.time)] }] : []),

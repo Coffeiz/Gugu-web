@@ -79,14 +79,6 @@
     "keyBehavior": "技能owner隔离及事务",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/agent/user-skill-management-route.test.ts": {
-    "domain": "agent",
-    "layer": "L2",
-    "owner": "apps/web-host/src/modules/agent-skills/user-management.ts",
-    "productionEntry": "apps/web-host/src/main.ts",
-    "keyBehavior": "技能管理HTTP合同",
-    "ci": "node-webui"
-  },
   "apps/web-host/tests/agent/mcp-tool-directory.test.ts": {
     "domain": "agent",
     "layer": "L2",
@@ -141,6 +133,22 @@
     "owner": "packages/core/src/data-portability/export-preview.ts",
     "productionEntry": "apps/web-host/src/main.ts",
     "keyBehavior": "导出预览认证与响应",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/data-portability/delete-export.test.ts": {
+    "domain": "data-portability",
+    "layer": "L1",
+    "owner": "packages/core/src/data-portability/delete-export.ts",
+    "productionEntry": "Host认证路由 → Core owner事务 → Local归档清理",
+    "keyBehavior": "认证及UUID解析、只删所属结束任务、活动与跨owner拒绝、归档清理失败保留任务",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/portability/delete-export-postgres.test.ts": {
+    "domain": "data-portability",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/data-portability/delete-export-postgres.ts",
+    "productionEntry": "PostgreSQL行锁事务 + 目录句柄锚定的Local删除",
+    "keyBehavior": "隔离PG检查owner/状态事务及真实临时归档删除，拒绝符号链接父路径且不触碰外部目标",
     "ci": "node-webui"
   },
   "apps/web-host/tests/host/export-preview-main.integration.test.ts": {
@@ -844,7 +852,7 @@
     "layer": "L2",
     "owner": "packages/core/src/mcp/status.ts",
     "productionEntry": "apps/web-host/src/main.ts",
-    "keyBehavior": "MCP开关认证及配置优先级",
+    "keyBehavior": "认证、开关与server/tool限额的Python env/override优先级和热更新",
     "ci": "node-webui"
   },
   "compat/tests/test_mcp_status.py": {
@@ -3647,6 +3655,14 @@
     "keyBehavior": "置信区间、去重、来源上限和上下文预算遵循排序契约与确定性边界",
     "ci": "backend-pytest"
   },
+  "backend/tests/agent/rag/test_rag_relevance_corpus.py": {
+    "domain": "rag-cython-quality",
+    "layer": "L1",
+    "owner": "backend/agent/rag/cython_backend.py + docs/testing/fixtures/rag-relevance-corpus.json",
+    "productionEntry": "旧版 Cython BM25 build_text_index/search 与固定检索语料",
+    "keyBehavior": "共享固定语料验证旧 tokenizer/BM25 的 Recall@3、MRR、同词 group scope 候选过滤及无关查询空结果",
+    "ci": "backend-pytest"
+  },
   "backend/tests/agent/rag/test_cython_sidecar.py": {
     "domain": "rag-cython-sidecar",
     "layer": "L1",
@@ -4727,6 +4743,14 @@
     "keyBehavior": "双库任务读取、用户隔离与可信能力投影",
     "ci": "core-node"
   },
+  "packages/core/tests/scheduled-tasks/task-write.test.ts": {
+    "domain": "scheduled-tasks",
+    "layer": "L1",
+    "owner": "packages/core/src/scheduled-tasks/task-write.ts",
+    "productionEntry": "Core 创建/更新用例 → PostgreSQL 事务适配器",
+    "keyBehavior": "活动提醒幂等与只通知一次、调度类型切换、owner 事务校验失败不写入及提交后发布",
+    "ci": "core-node"
+  },
   "packages/core/tests/undo/state-machine-sqlite.test.ts": {
     "domain": "undo",
     "layer": "L2",
@@ -4904,7 +4928,7 @@
 "packages/core/tests/mind/note-lifecycle-contract.test.ts":{"domain": "mind", "layer": "L1", "owner": "packages/core/src/mind", "productionEntry": "createSqlMindNoteMutator.restore", "keyBehavior": "SQLite恢复字段/版本和Undo原子性、借用外层事务回滚", "ci": "core-node"},
 "packages/core/tests/integration/postgres/note-lifecycle.test.ts":{"domain": "mind", "layer": "L2", "owner": "packages/core/src/mind", "productionEntry": "createSqlMindNoteMutator.restore", "keyBehavior": "PG复用同一恢复合同及外层/Undo失败回滚", "ci": "core-node"},
 "packages/core/tests/agent/tools/link-buttons.test.ts":{"domain": "agent-tools", "layer": "L1", "owner": "packages/core/src/agent/tools", "productionEntry": "send_link_buttons", "keyBehavior": "URL安全和可信投递边界", "ci": "core-node"},
-"apps/web-host/tests/mcp/safe-fetch.test.ts":{"domain":"mcp","layer":"L1","owner":"apps/web-host/src/modules/mcp","productionEntry":"受控 MCP Fetch 适配器（尚未接生产）","keyBehavior":"受控传输拒绝跳转并传播 SSE 流取消","ci":"node-webui"},
+"apps/web-host/tests/mcp/safe-fetch.test.ts":{"domain":"mcp","layer":"L1","owner":"apps/web-host/src/modules/mcp/safe-fetch.ts","productionEntry":"MCP 连接测试 startServer 固定 DNS 出站适配","keyBehavior":"拒绝跳转、传播 SSE 取消、限制响应体大小","ci":"node-webui"},
 "apps/web-host/tests/byok/envelope-new.test.ts":{"domain":"byok","layer":"L1","owner":"apps/web-host/src/modules/byok","productionEntry":"BYOK 创建（待生产入口接线）","keyBehavior":"信封跨 Python 加解密、版本轮换和密钥路径竞争","ci":"node-webui"},
 "apps/web-host/tests/byok/credential-create-new.test.ts":{"domain":"byok","layer":"L1","owner":"apps/web-host/src/modules/byok","productionEntry":"BYOK 创建（待生产入口接线）","keyBehavior":"凭据创建的隔离 PG、owner、并发与事务回滚","ci":"node-webui"},
 "apps/web-host/tests/byok/credential-create-route.test.ts":{"domain":"byok","layer":"L1","owner":"apps/web-host/src/modules/byok","productionEntry":"BYOK 创建（待生产入口接线）","keyBehavior":"创建请求校验与认证错误","ci":"node-webui"},
@@ -4913,7 +4937,13 @@
 "apps/web-host/tests/byok/capabilities-preview.test.ts":{"domain":"byok","layer":"L2","owner":"packages/core/src/byok/capabilities-preview.ts","productionEntry":"BYOK 能力预览 startServer 生产入口","keyBehavior":"无凭据/无外网能力快照、认证与gate、Python多Provider协议对照及额外密钥字段不泄露","ci":"node-webui"},
 "apps/web-host/tests/byok/credential-patch.test.ts":{"domain":"byok","layer":"L2","owner":"packages/core/src/byok/credential-patch.ts","productionEntry":"BYOK PATCH Core 隔离 PostgreSQL","keyBehavior":"owner隔离、跨目的地拒绝无副作用、显式换Key更新及事务授权","ci":"node-webui"},
 "apps/web-host/tests/byok/credential-models-preview.test.ts":{"domain":"byok","layer":"L2","owner":"packages/core/src/byok/credential-models-preview.ts","productionEntry":"BYOK models-preview Core 隔离 PostgreSQL","keyBehavior":"owner限定的已保存密钥复用、origin校验、显式新Key优先及请求失败前拒绝越权","ci":"node-webui"},
-"apps/web-host/tests/mcp/server-routes.test.ts":{"domain":"mcp","layer":"L1","owner":"apps/web-host/src/modules/mcp/servers.ts","productionEntry":"MCP CRUD Host 路由原型（未接生产组合根）","keyBehavior":"认证、owner 参数和保存后的失效/快照回调","ci":"node-webui"},
+"apps/web-host/tests/mcp/server-routes.test.ts":{"domain":"mcp","layer":"L1","owner":"apps/web-host/src/modules/mcp/servers.ts","productionEntry":"MCP 配置 CRUD 路由原型及创建路由","keyBehavior":"认证、owner 参数、Python 创建 DTO 与 201 响应","ci":"node-webui"},
+"apps/web-host/tests/host/mcp-server-create-host.test.ts":{"domain":"mcp","layer":"L2","owner":"apps/web-host/src/main.ts MCP 创建接线","productionEntry":"createApp 认证路由与注入 Core creator","keyBehavior":"JWT owner 优先于伪造 header，未认证请求无业务副作用","ci":"node-webui"},
+"apps/web-host/tests/mcp/server-create-postgres.test.ts":{"domain":"mcp","layer":"L2","owner":"packages/core/src/mcp/server-create.ts","productionEntry":"apps/web-host/src/main.ts MCP 创建生产接线","keyBehavior":"owner 配置事务、端点与凭据只存 envelope、限额及 Python 工具快照失效","ci":"node-webui"},
+"apps/web-host/tests/mcp/test-connection-route.test.ts":{"domain":"mcp","layer":"L1","owner":"apps/web-host/src/modules/mcp/test-connection.ts","productionEntry":"apps/web-host/src/app.ts MCP 连接测试认证路由","keyBehavior":"认证、owner 传递、成功/失败 Python DTO","ci":"node-webui"},
+"apps/web-host/tests/mcp/server-list-route.test.ts":{"domain":"mcp","layer":"L1","owner":"apps/web-host/src/modules/mcp/server-list.ts","productionEntry":"apps/web-host/src/main.ts owner-scoped PG 配置列表与 owner-only 编辑视图","keyBehavior":"认证/owner 传递、envelope 解密、未加载状态不触发外网","ci":"node-webui"},
+"apps/web-host/tests/mcp/test-connection.test.ts":{"domain":"mcp","layer":"L1","owner":"apps/web-host/src/modules/mcp/test-connection.ts","productionEntry":"apps/web-host/src/main.ts PG MCP 探测组合","keyBehavior":"owner 限定读取、信封解密、仅 Header 凭据、schema/白名单/热读工具上限过滤、资源关闭和错误脱敏","ci":"node-webui"},
+"packages/core/tests/mcp/test-connection.test.ts":{"domain":"mcp","layer":"L1","owner":"packages/core/src/mcp/test-connection.ts","productionEntry":"MCP tools/list 业务筛选","keyBehavior":"无效声明/白名单过滤、重复名去重及超过单 server 限额时整体拒绝","ci":"core-node"},
 "apps/web-host/tests/agent/mcp-schema-adapter.test.ts":{"domain":"mcp","layer":"L1","owner":"packages/core/src/mcp","productionEntry":"MCP 声明适配（SDK/manager 尚未接线）","keyBehavior":"旧 Python schema 命名、校验、降级与描述规则","ci":"node-webui"},
 "apps/web-host/tests/mcp/sdk-client.test.ts":{"domain":"mcp","layer":"L1","owner":"apps/web-host/src/modules/mcp","productionEntry":"MCP SDK HTTP client over pinned transport","keyBehavior":"官方 SDK 握手、发现及调用经受控传输","ci":"node-webui"},
 "apps/web-host/tests/byok/media-capability-probe.test.ts":{"domain":"byok","layer":"L2","owner":"packages/core/src/byok/media-capability-probe.ts","productionEntry":"apps/web-host/src/main.ts + pinned Node Provider transport","keyBehavior":"BYOK媒体探测按owner和目的地裁决凭据并实际发送本地合成媒体请求","ci":"node-webui"},
@@ -4922,11 +4952,35 @@
 "packages/core/tests/byok/credential-test-preview.test.ts":{"domain":"byok","layer":"L1","owner":"packages/core/src/byok/credential-test-preview.ts","productionEntry":"apps/web-host/src/modules/byok/credential-test-preview.ts","keyBehavior":"试呼只解密同owner同目的地的保存密钥，显式新Key优先；已保存深度研究和相似图凭据会真实探测且不写入","ci":"core-node"},
 "apps/web-host/tests/agent/conversation-tools-runtime-sqlite.test.ts":{"domain":"agent-tools","layer":"L1","owner":"apps/web-host/src/domains/agent-sessions/tools/agent-conversations.ts","productionEntry":"临时 SQLite Host 搜索适配器 + 真实 Jieba + 工具注册器 dispatch（Agent Run 尚未接入）","keyBehavior":"临时 SQLite 会话事实表验证 Host 权限拒绝不泄露正文、模型伪传 owner 无效、群聊/工具角色过滤、baseline前历史检索、LIKE元字符字面匹配、多关键词、空结果、Python 结果投影与真实 Jieba 分词","ci":"node-webui"},
 "apps/web-host/tests/agent/rag-index-worker.test.ts":{"domain":"agent-rag","layer":"L2","owner":"apps/web-host/src/domains/agent-sessions/rag-rebuild.ts","productionEntry":"main.ts 迁移门控 + Host 来源组工厂 + 调度器 + Core 持久 Worker","keyBehavior":"临时 SQLite 真实 Core 项目、owner FS knowledge 与队列经七类来源 Worker 写入正式索引表；未就绪的 memory 任务保持 queued；验证首次基线、幂等、排空、串行、错误、取消停止及禁用边界","ci":"node-webui"},
-"apps/web-host/tests/agent/rag-jieba.test.ts":{"domain":"agent-rag","layer":"L1","owner":"apps/web-host/src/domains/agent-sessions/tools/agent-rag-jieba.ts","productionEntry":"Host 内置 1.7.7 同版 Jieba 词典初始化","keyBehavior":"检查生产 Jieba 注入使用稳定单例、HMM=false 与原版中文词边界；会话查询端到端行为由 conversation-tools-runtime-sqlite 覆盖","ci":"node-webui"},
+"apps/web-host/tests/agent/rag-index-corruption.test.ts":{"domain":"agent-rag","layer":"L2","owner":"packages/core/src/agent/rag/persistent-index.ts + rebuild-worker.ts + persistent-writer.ts","productionEntry":"Host SQLite adapter → Core 持久读取器/重建 Worker/写入器","keyBehavior":"损坏 metadata_json 映射为脱敏索引错误；持久任务重建源投影后恢复可读，不回显原始损坏值","ci":"node-webui"},
+"apps/web-host/tests/agent/rag-relevance-corpus.test.ts":{"domain":"agent-rag-quality","layer":"L2","owner":"packages/core/src/agent/rag/lexical-index.ts + docs/testing/fixtures/rag-relevance-corpus.json","productionEntry":"Host 正式 Jieba → Core RAG lexical index","keyBehavior":"与旧 Python/Cython 共用中文、英文、混合固定语料，检查 Recall@3、MRR、owner scope、同词 group 干扰过滤及无关查询空结果","ci":"node-webui"},
+"apps/web-host/tests/agent/conversation-rag-job-postgres.test.ts":{"domain":"agent-rag","layer":"L2","owner":"apps/web-host/src/domains/agent-sessions/persistence/conversation-rag-job-postgres.ts","productionEntry":"Web 用户消息准备与 Canonical 历史写入事务 → owner 级 conversation RAG 持久任务","keyBehavior":"隔离 PostgreSQL 验证全来源重建合并、generation 使旧租约失效，以及队列与会话事务一同回滚","ci":"node-webui"},
+"apps/web-host/tests/agent/rag-jieba.test.ts":{"domain":"agent-rag","layer":"L1","owner":"apps/web-host/src/domains/agent-sessions/tools/agent-rag-jieba.ts + packages/core/src/agent/rag/tokenizer.ts","productionEntry":"Host 1.7.7 Jieba → Core tokenizer","keyBehavior":"实际 Host Jieba 经 Core tokenizer 对照固定 golden 语料，保护词典、HMM=false、ASCII实体和中文切词不漂移","ci":"node-webui"},
 "apps/web-host/tests/agent/agent-rag-memory-store.test.ts":{"domain":"agent-rag","layer":"L1","owner":"apps/web-host/src/domains/agent-sessions/tools/agent-rag-memory-store.ts","productionEntry":"Host owner-bound memory RAG 文件读取适配器","keyBehavior":"限制 owner namespace 和 RAG 文件白名单，执行字符/字节上限并拒绝跨 owner、路径穿越、未知文件和符号链接","ci":"node-webui"},
 "apps/web-host/tests/files/file-update-commit-unknown.test.ts":{"domain":"files","layer":"L2","owner":"apps/web-host/src/domains/files/file-update-postgres.ts","productionEntry":"Web Host PostgreSQL 文件更新操作","keyBehavior":"COMMIT响应丢失后通过新连接核实提交状态并保持数据库路径与物理文件一致","ci":"node-webui"},
-"packages/core/tests/files/xlsx-preview.test.ts":{"domain":"files","layer":"L1","owner":"packages/core/src/files/xlsx-preview.ts","productionEntry":"Core XLSX 预览解析用例","keyBehavior":"XLSX工作表数据边界与Python投影等价，并在解压前拒绝重复条目和异常压缩比","ci":"core-node"},
+"packages/core/tests/files/xlsx-preview.test.ts":{"domain":"files","layer":"L1","owner":"packages/core/src/files/xlsx-preview.ts","productionEntry":"Core SheetJS与fast-xml-parser XLSX预览解析用例","keyBehavior":"SheetJS工作表读取与Python字段投影、行列边界、合并区域及尺寸保持一致；XML拒绝非法字符和未声明实体，归档拒绝重复条目和异常压缩比","ci":"core-node"},
 "apps/web-host/tests/files/xlsx-preview-host.test.ts":{"domain":"files","layer":"L2","owner":"apps/web-host/src/modules/files/xlsx-preview-postgres.ts","productionEntry":"apps/web-host/src/main.ts → Core 预览 + PostgreSQL owner 查询 + 本地文件系统","keyBehavior":"认证 owner 隔离、真实临时 XLSX 文件与图片解析、私有缓存头、非 XLSX 及物理文件丢失错误语义","ci":"node-webui"},
 "packages/core/tests/agent/rag/memory-loader.test.ts":{"domain":"agent-rag","layer":"L1","owner":"packages/core/src/agent/rag/memory-loader.ts + memory-scope-state.ts","productionEntry":"Core 1.7.7 memory loader 与 SQL scope 状态读取器，StorageReader 由 Host 注入","keyBehavior":"按 owner/scope/tombstone/source/snapshot 裁剪 memory 文档；scope revision 和删除屏障按完整 owner key 查询；只装载与 embedding 版本一致的 owner-bound 向量","ci":"core-node"},
 "packages/core/tests/agent/rag/memory-search.test.ts":{"domain":"agent-rag","layer":"L1","owner":"packages/core/src/agent/rag/memory-search.ts + tools/memory.ts","productionEntry":"Core RAG memory query 经工具注册器 dispatch；Host scope/storage/授权/embedding 端口显式注入","keyBehavior":"临时 owner memory index 经真实工具 dispatch 排序；异主文档被拒、伪造身份无效、撤权不返回正文、非法参数拒绝","ci":"core-node"},
-"apps/web-host/tests/agent/memory-tools-runtime-sqlite.test.ts":{"domain":"agent-rag","layer":"L2","owner":"apps/web-host/src/domains/agent-sessions/tools/agent-memory-search.ts + agent-memory-scopes.ts","productionEntry":"Web owner/可信 IM scope Host 适配器 + 受限本地 memory FS + Core RAG + 实际工具注册器","keyBehavior":"临时 owner 与 IM scope 文件经真实 Host registry dispatch 命中；owner reflection cursor 限定跨群，成员范围只返回本人，群聊不得读取 owner 私人记忆；同名来源键在多个已授权 scope 下均保留；跨 owner 文档不返回、授权撤销不泄露正文、BYOK gate 关闭时不查询或发送凭据","ci":"node-webui"}}
+"packages/core/tests/agent/rag/ranking.test.ts":{"domain":"agent-rag","layer":"L1","owner":"packages/core/src/agent/rag/ranking","productionEntry":"rankCandidates","keyBehavior":"保护 1.7.7 默认 confidence-v4、来源权重、阈值、v1 回滚、零匹配拒绝和 corpus IDF 重评分上界","ci":"core-node"},
+"packages/core/tests/agent/rag/tokenizer.test.ts":{"domain":"agent-rag","layer":"L1","owner":"packages/core/src/agent/rag/tokenizer.ts","productionEntry":"tokenizeRaw","keyBehavior":"保护月别名、英文月份日期语境与普通词区分，并验证索引和查询共享日期词项","ci":"core-node"},
+"packages/core/tests/agent/rag/source-adapters.test.ts":{"domain":"agent-rag","layer":"L1","owner":"packages/core/src/agent/rag/adapters + index-builder.ts","productionEntry":"RAG 来源适配器组合入口","keyBehavior":"对照 1.7.7 冻结适配器文本、版本摘要、会话上下文、分块边界及退役文件索引，保护来源投影不漂移","ci":"core-node"},
+"packages/core/tests/agent/rag/query-embedding.test.ts":{"domain":"agent-rag","layer":"L1","owner":"packages/core/src/agent/rag/query-embedding.ts","productionEntry":"embedRagQuery + Host 注入 ProviderTransport","keyBehavior":"模拟传输验证 OpenAI/Bailian payload、非法 URL 拒绝、redirect 不跟随、响应过限取消与凭据结果脱敏；不触发外部 Provider","ci":"core-node"},
+"packages/core/tests/agent/rag/scoped-search.test.ts":{"domain":"agent-rag","layer":"L1","owner":"packages/core/src/agent/rag/scoped-search.ts","productionEntry":"createScopedRagSearch + Host 授权与向量端口","keyBehavior":"查询 embedding 失败时保留 owner 授权 BM25 结果；调用取消仍以取消错误结束；scope 命名空间化后仍用 1.7.7 原始 memory parent ID 读取向量","ci":"core-node"},
+"packages/core/tests/agent/rag/ttl-cache.test.ts":{"domain":"agent-rag","layer":"L1","owner":"packages/core/src/agent/rag/ttl-cache.ts","productionEntry":"memory-loader document/vector cache","keyBehavior":"冻结滑动 TTL、静默过期、Infinity TTL 与 LRU 驱逐，防止活跃 memory 索引被固定 TTL 提前淘汰","ci":"core-node"},
+"packages/core/tests/agent/rag/service-cache.test.ts":{"domain":"agent-rag","layer":"L1","owner":"packages/core/src/agent/rag/index-cache-service.ts + snapshot-cache.ts + rag-service.ts","productionEntry":"Core TS RAG cache lifecycle and scoped search service","keyBehavior":"固定旧版索引/snapshot滑动TTL、revision失效、scope隔离、构建失败重试和查询错误显式传播，避免串用户缓存或把失败当空召回","ci":"core-node"},
+"apps/web-host/tests/agent/memory-tools-runtime-sqlite.test.ts":{"domain":"agent-rag","layer":"L2","owner":"apps/web-host/src/domains/agent-sessions/tools/agent-memory-search.ts + agent-memory-scopes.ts","productionEntry":"Web owner/可信 IM scope Host 适配器 + 受限本地 memory FS + Core RAG + 实际工具注册器","keyBehavior":"临时 owner 与 IM scope 文件经真实 Host registry dispatch 命中；owner reflection cursor 限定跨群，成员范围只返回本人，群聊不得读取 owner 私人记忆；同名来源键在多个已授权 scope 下均保留；跨 owner 文档不返回、授权撤销不泄露正文、BYOK gate 关闭时不查询或发送凭据","ci":"node-webui"},
+"apps/web-host/tests/agent/voice-availability.test.ts":{"domain":"byok","layer":"L1","owner":"packages/core/src/agent/config/voice-availability.ts + apps/web-host/src/modules/agent/voice-availability.ts","productionEntry":"startServer → authenticated Fastify route → owner-scoped PostgreSQL credential → configured envelope decrypt → Core voice support rule","keyBehavior":"公开配置与有效用户 BYOK 按旧 Python 规则选择语音识别能力；拒绝未支持格式且不暴露凭据","ci":"node-webui"},
+"apps/web-host/tests/agent/memory-clear.test.ts":{"domain":"agent-memory","layer":"L2","owner":"packages/core/src/agent/memory-clear.ts + packages/core/src/agent/rag/rebuild-worker.ts + apps/web-host/src/modules/agent/memory-clear.ts","productionEntry":"startServer → authenticated route → Core clearer → Local storage delete → transactionally tombstone old memory projection and enqueue rebuild → context revision publisher → Core worker rebuild","keyBehavior":"临时目录和 SQLite 验证 DELETE 只清认证 owner、generation 更新，旧正文立即隐藏、重建后仍不可见；不支持的来源拒绝入队，墓碑写失败时队列与索引变更一起回滚；清理失败不入队或递增上下文版本","ci":"node-webui"},
+"apps/web-host/tests/mind/mind-ref-suggest-core.test.ts":{"domain":"mind","layer":"L1","owner":"packages/core/src/mind/ref-suggest.ts","productionEntry":"Core 引用建议用例与注入查询端口","keyBehavior":"空查询类别顺序/总量上限、owner 限定全局搜索参数、逐消息引用锚点及 Unicode 片段裁剪","ci":"node-webui"},
+"apps/web-host/tests/mind/mind-ref-suggest-postgres.test.ts":{"domain":"mind","layer":"L1","owner":"apps/web-host/src/modules/mind/ref-suggest-postgres.ts","productionEntry":"PostgreSQL 查询适配器由 Core 引用建议用例调用","keyBehavior":"owner 限定的近期对象读取、已删除画布项排除、平台 MCP 候选及逐条消息结果投影；Pool 为合成测试","ci":"node-webui"},
+"apps/web-host/tests/mind/mind-ref-suggest-host.test.ts":{"domain":"mind","layer":"L2","owner":"apps/web-host/src/modules/mind/ref-suggest.ts","productionEntry":"createApp 认证路由和 Core use-case 类型接线","keyBehavior":"未认证拒绝、owner 从已验证身份提取、query/limit 参数边界","ci":"node-webui"},
+"apps/web-host/tests/auth/account-delete.test.ts":{"domain":"auth","layer":"L2","owner":"apps/web-host/src/modules/auth/account-delete.ts","productionEntry":"startServer → authenticated Fastify route → password verifier → Core account deleter","keyBehavior":"缺少密码时拒绝；密码错误不触发账户数据删除；密码正确返回 204","ci":"node-webui"},
+"packages/core/tests/account/delete-account.test.ts":{"domain":"auth","layer":"L1","owner":"packages/core/src/account/delete-account.ts","productionEntry":"共享账户注销用例与注入的存储、缓存、暂存和持久化适配器","keyBehavior":"owner 规范化、历史清理顺序、存储失败继续删库、缓存失败中止、用户不存在无副作用","ci":"core-node"},
+"apps/web-host/tests/admin/user-delete.test.ts":{"domain":"admin-users","layer":"L2","owner":"apps/web-host/src/modules/admin/user-delete.ts","productionEntry":"startServer → Admin guard → PostgreSQL/Core account deletion → audit_logs","keyBehavior":"管理员删除完成后写入审计并返回存储清理数；目标不存在时返回 404 且不写审计","ci":"node-webui"},
+"apps/web-host/tests/host/mcp-server-mutations-host.test.ts":{"domain":"mcp","layer":"L2","owner":"apps/web-host/src/modules/mcp/servers.ts + apps/web-host/src/app.ts","productionEntry":"createApp 认证 MCP 配置 CRUD 路由与注入 Core mutations","keyBehavior":"认证 owner 限定配置 PATCH/DELETE、Core not_found 映射为 404 且回执保持兼容","ci":"node-webui"},
+"apps/web-host/tests/mcp/server-mutations-postgres.test.ts":{"domain":"mcp","layer":"L2","owner":"packages/core/src/mcp/server-mutations.ts","productionEntry":"apps/web-host/src/main.ts MCP 配置生产事务","keyBehavior":"隔离 PostgreSQL 更新密文、owner 隔离和配置快照原子失效","ci":"node-webui"},
+"apps/web-host/tests/files/file-undo.test.ts":{"domain":"files","layer":"L2","owner":"packages/core/src/undo/file-adapter.ts + apps/web-host/src/modules/files/undo-storage.ts","productionEntry":"apps/web-host/src/main.ts → authenticated Undo route → Core SQLite/PostgreSQL transaction → safe local file replacement","keyBehavior":"合成用户正文 Undo/redo 恢复正文和版本、隔离异主、数据库失败时回滚本地文件替换","ci":"node-webui"},
+"packages/core/tests/auth/profile-update.test.ts":{"domain":"auth","layer":"L1","owner":"packages/core/src/auth/profile-update.ts","productionEntry":"Core 个人资料更新用例与 Host 持久化端口","keyBehavior":"认证 owner 更新、字段规范化、时区校验、改密验证和版本递增","ci":"core-node"},
+"apps/web-host/tests/auth/auth-profile.test.ts":{"domain":"auth","layer":"L2","owner":"packages/core/src/auth/profile-update.ts + apps/web-host/src/modules/auth/profile-update-postgres.ts","productionEntry":"apps/web-host/src/main.ts → authenticated profile route → Core → PostgreSQL row-lock transaction","keyBehavior":"用户资料更新、时区上下文失效、错密码无副作用、改密后安全版本与通知顺序","ci":"node-webui"}
+}

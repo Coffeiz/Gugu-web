@@ -6,6 +6,7 @@ import type { Database, MindCanvasItemTable, MindNodeTable } from '../data/schem
 import { recordForwardUndoOperation } from '../data/undo.js'
 import { MindCanvasItemMutationError } from './canvas-item-remove.js'
 import type { CanvasItemAddRuntime } from './canvas-item-add.js'
+import { enqueueMindRagIndex } from './rag-index-job.js'
 const iso = (value: unknown) => new Date(utc(value instanceof Date ? value.toISOString() : value).replace(' ', 'T')).toISOString().replace(/Z$/, '+00:00')
 function parseObject(value: unknown) { if (typeof value === 'string') { try { value = JSON.parse(value || '{}') } catch { value = {} } } return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {} }
 export function canvasItemSnapshot(row: Selectable<MindCanvasItemTable>) { return { id: Number(row.id), canvas_id: Number(row.canvas_id), node_id: Number(row.node_id), x: Number(row.x), y: Number(row.y), w: row.w === null ? null : Number(row.w), h: row.h === null ? null : Number(row.h), z: Number(row.z), collapsed: Boolean(row.collapsed), data_json: row.data_json, deleted_at: row.deleted_at === null ? null : iso(row.deleted_at) } }
@@ -33,6 +34,7 @@ export function createSqlMindCanvasItemAddRuntime(db: Kysely<Database>, backend:
       const now = databaseTime(clock(), backend)
       const fields = { x: input.x, y: input.y, w: input.w, h: input.h, z: input.z, collapsed: backend === 'sqlite' ? Number(input.collapsed) : input.collapsed, data_json: input.dataJson || '{}', deleted_at: null, updated_at: now }
       const after = existing ? await tx.updateTable('mind_canvas_items').set(fields).where('id', '=', Number(existing.id)).where('user_id', '=', owner).returningAll().executeTakeFirstOrThrow() : await tx.insertInto('mind_canvas_items').values({ ...fields, user_id: owner, canvas_id: canvasId, node_id: input.nodeId, created_at: now }).returningAll().executeTakeFirstOrThrow()
+      await enqueueMindRagIndex(tx, backend, owner, 'canvas', '', now, 'update')
       const context = contextId?.trim().slice(0, 128)
       if (context) { const id = Number(after.id), key = `canvas_item:${id}`; await recordForwardUndoOperation(tx, backend, { userId: canonical, contextId: context, resource: 'mind', action: 'create', targetRefs: [{ kind: 'canvas_item', id }], beforeState: { items: {} }, afterState: { items: { [key]: canvasItemSnapshot(after) } }, baseVersions: { [key]: {} } }, clock) }
       return { item: await canvasItemResponse(tx, owner, after, node), created: true }

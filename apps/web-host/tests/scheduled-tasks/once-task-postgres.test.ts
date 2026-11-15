@@ -12,7 +12,8 @@ test('一次性任务并发开始仅一次成功，失败后可重试且完成�
   await admin.query(`CREATE SCHEMA "${schema}"`)
   const pool = new Pool({ connectionString: url, options: `-c search_path=${schema}` })
   try {
-    await pool.query(`CREATE TABLE scheduled_tasks (id integer primary key, user_id uuid, enabled boolean, schedule_kind text, start_at timestamptz, last_run_at timestamptz, last_run_failed boolean)`)
+    await pool.query(`CREATE TABLE scheduled_tasks (id integer primary key, user_id uuid, enabled boolean, schedule_kind text, start_at timestamptz, last_run_at timestamptz, last_run_failed boolean);
+      CREATE TABLE rag_index_jobs(id bigserial PRIMARY KEY,user_id uuid NOT NULL,source_type text NOT NULL,source_id text NOT NULL,pending_source_ids json,version text NOT NULL,operation text NOT NULL,status text NOT NULL,generation int NOT NULL,completed_generation int NOT NULL,attempts int NOT NULL,next_attempt_at timestamptz,lease_until timestamptz,last_error_code text,last_started_at timestamptz,last_succeeded_at timestamptz,created_at timestamptz NOT NULL,updated_at timestamptz NOT NULL,UNIQUE(user_id,source_type))`)
     await pool.query(`INSERT INTO scheduled_tasks VALUES (1,'11111111-1111-4111-8111-111111111111',true,'once',now(),NULL,NULL)`)
     const repo = createPostgresOnceTaskRepository(pool)
     const results = await Promise.all([repo.markStarted('1', 1000), repo.markStarted('1', 1000)])
@@ -23,6 +24,8 @@ test('一次性任务并发开始仅一次成功，失败后可重试且完成�
     assert.ok(await repo.getOnce('1'))
     await repo.deleteCompleted('1', '11111111-1111-4111-8111-111111111111')
     assert.equal(await repo.getOnce('1'), null)
+    const job = (await pool.query(`SELECT source_id,pending_source_ids,generation FROM rag_index_jobs WHERE user_id=$1 AND source_type='scheduled_task'`, ['11111111-1111-4111-8111-111111111111'])).rows[0]
+    assert.deepEqual(job, { source_id: '1', pending_source_ids: ['1'], generation: 1 })
   } finally {
     await pool.end()
     await admin.query(`DROP SCHEMA "${schema}" CASCADE`)

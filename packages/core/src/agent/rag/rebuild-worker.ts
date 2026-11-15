@@ -1,4 +1,5 @@
 import { sql, type Kysely } from 'kysely'
+import { dataContext } from '../../contracts/index.js'
 import { createSqlRagPersistentIndexWriter } from './persistent-writer.js'
 import type { RagDocument } from './contracts.js'
 
@@ -37,7 +38,10 @@ export function createSqlRagRebuildWorker(db:Kysely<any>,backend:'postgres'|'sql
    const sourceId=ids(job.pending_source_ids)[0]||job.source_id||null
    const documents=await sources[job.source_type]!(owner,sourceId,signal)
    signal?.throwIfAborted()
-   await writer.replaceFenced(owner,job.source_type,sourceId,documents,{
+   // Memory rebuild reads the complete owner index, so its write must replace the whole
+   // owner/source projection even when an upstream event carries one leaf source id.
+   const writeSourceId=job.source_type==='memory'?null:sourceId
+   await writer.replaceFenced(owner,job.source_type,writeSourceId,documents,{
     before:async tx=>{
      const checkTime=stamp(clock())
      const lock=backend==='postgres'?sql`FOR UPDATE`:sql``
@@ -88,4 +92,27 @@ export async function enqueueMissingAgentRagBaselines(db:Kysely<any>,backend:'po
   queued+=Number(result.numAffectedRows??0)
  }
  return queued
+}
+
+/** 来源文件在 Host 成功变更后，排入该 owner 的完整来源重建。 */
+const REBUILDABLE_AGENT_RAG_SOURCES=new Set(['project','calendar','note','scheduled_task','conversation','canvas','knowledge','memory'])
+export async function enqueueAgentRagRebuild(db:Kysely<any>,backend:'postgres'|'sqlite',rawOwner:string,sourceType:string):Promise<void> {
+ const normalized=dataContext(rawOwner).ownerId
+ const owner=backend==='sqlite'?normalized.replaceAll('-',''):normalized
+ if(!REBUILDABLE_AGENT_RAG_SOURCES.has(sourceType))throw new Error('RAG 索引来源无效')
+ const pending=JSON.stringify([])
+ await db.transaction().execute(async tx=>{
+  await sql`INSERT INTO rag_index_jobs (
+   user_id,source_type,source_id,pending_source_ids,version,operation,status,generation,completed_generation,attempts,
+   next_attempt_at,lease_until,last_error_code,last_started_at,last_succeeded_at,created_at,updated_at
+  ) VALUES (${owner},${sourceType},'',${pending},'','refresh','queued',1,0,0,CURRENT_TIMESTAMP,NULL,NULL,NULL,NULL,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+  ON CONFLICT (user_id,source_type) DO UPDATE SET
+   source_id='',pending_source_ids=${pending},version='',operation='refresh',status='queued',
+   generation=rag_index_jobs.generation+1,next_attempt_at=CURRENT_TIMESTAMP,lease_until=NULL,
+   last_error_code=NULL,updated_at=CURRENT_TIMESTAMP`.execute(tx)
+  // Memory removal is security-sensitive: hide the previous projection immediately,
+  // rather than keeping it searchable until the asynchronous rebuild is claimed.
+  if(sourceType==='memory')await sql`UPDATE knowledge_index_entries SET deleted_at=CURRENT_TIMESTAMP,indexed_at=CURRENT_TIMESTAMP
+   WHERE owner_user_id=${owner} AND source_type='memory' AND deleted_at IS NULL`.execute(tx)
+ })
 }

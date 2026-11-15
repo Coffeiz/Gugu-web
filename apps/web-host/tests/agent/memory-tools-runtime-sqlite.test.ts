@@ -7,12 +7,52 @@ import { configureRagJieba } from '@gugu/core/agent'
 import { prepareMemory } from '@gugu/core/agent'
 import { initializeSqlite, openSqliteRuntime } from '@gugu/core/data'
 import { createAgentToolRegistry } from '../../src/domains/agent-sessions/tools/agent-tool-registry.js'
-import { createWebOwnerMemorySearchPort } from '../../src/domains/agent-sessions/tools/agent-memory-search.js'
-import { createPostgresAgentMemoryScopeResolver } from '../../src/domains/agent-sessions/tools/agent-memory-scopes.js'
+import { createPostgresAgentMemorySearchPort, createWebOwnerMemorySearchPort } from '../../src/domains/agent-sessions/tools/agent-memory-search.js'
+import { createPostgresAgentImMemoryContextReader, createPostgresAgentMemoryScopeResolver } from '../../src/domains/agent-sessions/tools/agent-memory-scopes.js'
 import { createLocalAgentMemoryRagStore } from '../../src/domains/agent-sessions/tools/agent-rag-memory-store.js'
 import { createPostgresAgentEmbeddingSettingsResolver, createPostgresAgentRagEmbeddingPort } from '../../src/domains/agent-sessions/tools/agent-rag-vectors.js'
 
 configureRagJieba({ cut: text => [text] })
+
+test('IM memory context 从当前 owner 会话和本次 run 的用户消息读取，并对缺失身份 fail closed', async () => {
+  const owner = 'f17421a3-8520-4c8b-92e5-736882f4bd82'
+  const calls: Array<{ text: string; values: unknown[] }> = []
+  let row: Record<string, unknown> | null = {
+    platform: 'qq', chat_type: 'group', chat_id: 'group-7', channel_id: 'channel-9',
+    owner_platform_user_id: 'owner-user', platform_user_id: 'member-3', inbound_message_id: '501',
+  }
+  const pool = { async query(text: string, values: unknown[]) {
+    calls.push({ text, values })
+    return { rows: row ? [row] : [] }
+  } } as unknown as Parameters<typeof createPostgresAgentImMemoryContextReader>[0]
+  const read = createPostgresAgentImMemoryContextReader(pool)
+  const identity = { ownerId: owner, sessionId: '41', runId: 'run-8' }
+  const signal = new AbortController().signal
+
+  assert.deepEqual(await read(identity, signal), {
+    platform: 'qq', chatType: 'group', chatId: 'group-7', channelId: 'channel-9', role: 'member', platformUserId: 'member-3',
+  })
+  assert.deepEqual(calls[0]?.values, [owner, '41', 'run-8'])
+  assert.match(calls[0]?.text ?? '', /s\.user_id\s*=\s*\$1/u)
+  assert.match(calls[0]?.text ?? '', /s\.active_run_id\s*=\s*\$3/u)
+  assert.match(calls[0]?.text ?? '', /run_id\s*=\s*\$3/u)
+
+  row = { ...row, platform_user_id: 'owner-user' }
+  assert.equal((await read(identity, signal))?.role, 'owner')
+  row = { ...row, platform: 'web', chat_type: null, chat_id: null, channel_id: null,
+    owner_platform_user_id: null, platform_user_id: null, inbound_message_id: null }
+  assert.equal(await read(identity, signal), null)
+
+  row = { platform: 'qq', chat_type: 'group', chat_id: 'group-7', channel_id: 'channel-9',
+    owner_platform_user_id: 'owner-user', platform_user_id: null, inbound_message_id: null }
+  await assert.rejects(() => read(identity, signal), /记忆检索上下文不可用/u)
+
+  const cancelled = new AbortController()
+  cancelled.abort(new Error('取消记忆检索'))
+  const queryCount = calls.length
+  await assert.rejects(() => read(identity, cancelled.signal), /取消记忆检索/u)
+  assert.equal(calls.length, queryCount)
+})
 
 test('Web owner memory 经受限 Host FS、Core RAG 与实际工具 registry dispatch', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'gugu-memory-tool-'))
@@ -224,10 +264,15 @@ test('IM 记忆 scope 从可信上下文和 owner reflection cursor 解析并经
       key: `${owner}/.agent/im/qq/bot-1/groups/group-1/profile.json`, maxChars: 1000 }), JSON.stringify({ text: 'coffee current group' }))
 
     let imContext = { platform: 'qq', chatType: 'group', chatId: 'group-1', channelId: 'bot-1', role: 'member', platformUserId: 'member-1' }
-    const scopesFor = createPostgresAgentMemoryScopeResolver(core.db, { context: async current => {
-      assert.equal(current.ownerId, owner)
-      return imContext
-    } })
+    const pool = { async query(text: string, values: unknown[]) {
+      assert.match(text, /s\.active_run_id\s*=\s*\$3/u)
+      assert.deepEqual(values, [owner, '1', identity.runId])
+      return { rows: [{ platform: imContext.platform, chat_type: imContext.chatType, chat_id: imContext.chatId,
+        channel_id: imContext.channelId, owner_platform_user_id: 'owner-actor',
+        platform_user_id: imContext.role === 'owner' ? 'owner-actor' : imContext.platformUserId, inbound_message_id: '601' }] }
+    } } as unknown as Parameters<typeof createPostgresAgentImMemoryContextReader>[0]
+    const context = createPostgresAgentImMemoryContextReader(pool)
+    const scopesFor = createPostgresAgentMemoryScopeResolver(core.db, { context })
     const testSignal = new AbortController().signal
     const prepared = await prepareMemory({ ownerId: owner,
       scopes: await scopesFor(identity, 'current_group', testSignal), sourceFilter: 'all',
@@ -238,9 +283,8 @@ test('IM 记忆 scope 从可信上下文和 owner reflection cursor 解析并经
       [['group', 'group-1', '群组资料'], ['member', 'group-1:member-1', '群友资料']])
     const authorizedScopes: string[][] = []
     const registry = createAgentToolRegistry({ core, authorize: async (_current, name) => name === 'search_memory',
-      memorySearch: createWebOwnerMemorySearchPort(core, {
+      memorySearch: createPostgresAgentMemorySearchPort(core, pool, {
         storageRoot,
-        resolveScopes: scopesFor,
         async authorize(_current, _signal, scopes) { authorizedScopes.push((scopes || []).map(scope => scope.id)); return true },
         async snapshot() { return { revision: 'scope-snapshot-v1', text: '' } },
       }),

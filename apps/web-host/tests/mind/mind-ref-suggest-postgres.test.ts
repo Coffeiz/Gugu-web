@@ -2,9 +2,10 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { Pool } from 'pg'
 import { GLOBAL_SEARCH_TYPES, type GlobalSearchOperations } from '@gugu/core'
-import { createPostgresMindRefSuggestOperations } from '../../src/domains/mind/persistence/mind-ref-suggest-postgres.js'
+import { createMindReferenceSuggester } from '../../../../packages/core/src/mind/ref-suggest.js'
+import { createPostgresMindReferenceSuggestionPorts } from '../../src/modules/mind/ref-suggest-postgres.js'
 
-const ownerId = 'synthetic-suggest-owner'
+const ownerId = 'd1e37042-3229-4cbe-a260-a63dcb95e001'
 
 test('recent suggestions return owner-scoped resource categories in Python order and enforce the aggregate cap', async () => {
   const calls: Array<{ sql: string; values?: unknown[] }> = []
@@ -24,12 +25,14 @@ test('recent suggestions return owner-scoped resource categories in Python order
   } as unknown as Pool
   const search: GlobalSearchOperations = { availableTypes: GLOBAL_SEARCH_TYPES, missingTypes: [], async search() { throw new Error('search should not be called for an empty query') } }
 
-  const result = await createPostgresMindRefSuggestOperations(pool, search).suggest(ownerId, '  ', 1)
+  const result = await createMindReferenceSuggester({
+    ...createPostgresMindReferenceSuggestionPorts(pool), globalSearch: search,
+  }).suggest(ownerId, '  ', 1)
 
   assert.deepEqual(result, [
     { type: 'project', id: 1, label: '项目', subtitle: '小北' },
     { type: 'file', id: 2, label: '计划.md', subtitle: 'mind' },
-    { type: 'folder', id: 3, label: '资料夹' },
+    { type: 'folder', id: 3, label: '资料夹', subtitle: null },
     { type: 'event', id: 4, label: '评审', subtitle: '2026-11-14' },
     { type: 'canvas_note', id: 5, label: '无标题画布便签', subtitle: '画布 6' },
     { type: 'skill', id: 7, label: '写作', subtitle: 'write' },
@@ -62,7 +65,9 @@ test('query suggestions reuse typed global search results and return individual 
     },
   }
 
-  const result = await createPostgresMindRefSuggestOperations(pool, search).suggest(ownerId, '  检索词  ', 3)
+  const result = await createMindReferenceSuggester({
+    ...createPostgresMindReferenceSuggestionPorts(pool), globalSearch: search,
+  }).suggest(ownerId, '  检索词  ', 3)
 
   assert.deepEqual(result, [
     { type: 'project', id: 2, label: '项目命中', subtitle: '客户' },

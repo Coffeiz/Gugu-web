@@ -1,6 +1,7 @@
 import { sql, type Kysely } from 'kysely'
 import { dataContext } from '../contracts/index.js'
 import { databaseTime, utc, uuid } from '../data/codec.js'
+import { enqueueScheduledTaskRagIndex } from './rag-index-job.js'
 
 export interface OnceTaskRecord {
   id: string
@@ -43,7 +44,11 @@ export function createKyselyOnceTaskRepository<DB>(db: Kysely<DB>, backend: 'sql
     },
     async deleteCompleted(id: string, rawOwner: string): Promise<void> {
       const owner = dataContext(rawOwner).ownerId
-      await sql`DELETE FROM scheduled_tasks WHERE id=${id} AND user_id=${backend === 'sqlite' ? owner.replaceAll('-', '') : owner} AND schedule_kind='once'`.execute(db)
+      const user = backend === 'sqlite' ? owner.replaceAll('-', '') : owner
+      await db.transaction().execute(async tx => {
+        const result = await sql<{ id: number }>`DELETE FROM scheduled_tasks WHERE id=${id} AND user_id=${user} AND schedule_kind='once' RETURNING id`.execute(tx)
+        if (result.rows[0]) await enqueueScheduledTaskRagIndex(tx, backend, user, Number(result.rows[0].id))
+      })
     },
     async findStartedOnceBefore(at: number): Promise<OnceTaskRecord[]> {
       const result = await sql<Record<string, unknown>>`SELECT id,user_id,enabled,start_at,last_run_at,last_run_failed FROM scheduled_tasks WHERE schedule_kind='once' AND user_id IS NOT NULL AND start_at IS NOT NULL AND last_run_at < ${time(at)} AND COALESCE(last_run_failed,FALSE)=FALSE`.execute(db)

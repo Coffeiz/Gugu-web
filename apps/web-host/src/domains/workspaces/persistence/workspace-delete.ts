@@ -1,6 +1,7 @@
 import { createWorkspaceDeleter } from '@gugu/core'
 import type { Pool } from 'pg'
 import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
+import { enqueueScheduledTaskRagRebuild } from '../../../modules/scheduled-tasks/persistence/task-rag-job-postgres.js'
 
 export type { WorkspaceDeleteResult } from '@gugu/core'
 
@@ -23,11 +24,12 @@ export function createPostgresWorkspaceDeleter(pool: Pool) {
         )
       },
       async disableOrdinaryTasks(ownerId, workspaceId) {
-        await client.query(
+        const changed = await client.query<{ id: number }>(
           `UPDATE scheduled_tasks SET enabled = FALSE, workspace_id = NULL
-           WHERE user_id = $1 AND workspace_id = $2 AND event_id IS NULL`,
+           WHERE user_id = $1 AND workspace_id = $2 AND event_id IS NULL RETURNING id`,
           [ownerId, workspaceId],
         )
+        for (const task of changed.rows) await enqueueScheduledTaskRagRebuild(client, ownerId, Number(task.id))
       },
       async deleteDeclaration(ownerId, workspaceId) {
         await client.query(

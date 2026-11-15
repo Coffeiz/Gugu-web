@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { Kysely, SqliteDialect, sql } from 'kysely'
 import SQLite from 'better-sqlite3'
 import { prepareMemory, type MemoryRagScopeStatePort, type MemoryRagStorageReader } from '../../../src/agent/rag/memory-loader.js'
+import { createMemoryRagSource } from '../../../src/agent/rag/memory-source.js'
 import { createSqlMemoryScopeStateReader } from '../../../src/agent/rag/memory-scope-state.js'
+import { textVersion } from '../../../src/agent/rag/adapters/base.js'
 
 const owner = 'f17421a3-8520-4c8b-92e5-736882f4bd82'
 const ownerScopes = [{ type: 'owner' as const, id: owner, ownerId: owner }]
@@ -131,5 +133,48 @@ it('scope 状态查询按 owner 和完整 scope key 读取 revision、映射成�
   } finally {
     await db.destroy()
   }
+})
+
+it('正式 memory 来源按可信 owner scope 重建 1.7.7 owner 与群文档并遵守 tombstone', async () => {
+  const group = { ownerId: owner, type: 'group' as const, id: 'group-live', platform: 'qq', botId: 'bot-a', groupId: 'group-live' }
+  const groupPeer = { ownerId: owner, type: 'group' as const, id: 'group-peer', platform: 'qq', botId: 'bot-a', groupId: 'group-peer' }
+  const member = { ownerId: owner, type: 'member' as const, id: 'group-live:member-a', platform: 'qq', botId: 'bot-a', groupId: 'group-live' }
+  const tombstoned = { ownerId: owner, type: 'group' as const, id: 'group-old', platform: 'qq', botId: 'bot-a', groupId: 'group-old' }
+  const source = createMemoryRagSource({
+    async scopes(currentOwner) {
+      expect(currentOwner).toBe(owner)
+      return [group, groupPeer, member, tombstoned]
+    },
+    scopeState: { async getMemoryScopeState(_context, scope) {
+      return { revision: '4:cursor', tombstoned: scope.id === 'group-old' }
+    } },
+    storage: memoryFileStore({
+      [`${owner}/.agent/rag/memory/index.json`]: JSON.stringify({ schema_version: 1, documents: [
+        { document_id: 'profile:0', parent_document_id: 'memory:profile:profile:0', chunk_index: 0, chunk_count: 1,
+          source_type: 'memory', source_id: 'profile', title: '用户画像', summary: '', content: 'owner only fact', version: textVersion('owner only fact', 'profile', 'profile:0'),
+          scope: { owner_user_id: owner, scope_type: 'owner', scope_id: '' }, metadata: {} },
+        { document_id: 'foreign:0', parent_document_id: 'memory:foreign', chunk_index: 0, chunk_count: 1,
+          source_type: 'memory', source_id: 'profile', title: '异主内容', summary: '', content: 'foreign secret', version: 'v1',
+          scope: { owner_user_id: '08a80873-5266-43b9-a27c-d288b602a9cb', scope_type: 'owner', scope_id: '' }, metadata: {} },
+      ] }),
+      [`${owner}/.agent/im/qq/bot-a/groups/group-live/profile.json`]: JSON.stringify({ text: 'owner only fact' }),
+      [`${owner}/.agent/im/qq/bot-a/groups/group-peer/profile.json`]: JSON.stringify({ text: 'owner only fact' }),
+      [`${owner}/.agent/im/qq/bot-a/platform-users/group-live%3Amember-a/profile.json`]: JSON.stringify({ text: 'owner only fact' }),
+      [`${owner}/.agent/im/qq/bot-a/groups/group-old/profile.json`]: JSON.stringify({ text: 'deleted group fact' }),
+    }),
+  })
+  const documents = await source(owner, null)
+  expect(documents.map(document => [document.scope_type, document.scope_id, document.content])).toEqual([
+    ['owner', '', 'owner only fact'],
+    ['group', 'group-live', 'owner only fact'],
+    ['group', 'group-peer', 'owner only fact'],
+    ['member', 'group-live:member-a', 'owner only fact'],
+  ])
+  expect(new Set(documents.map(document => document.source_id)).size).toBe(4)
+  // owner 索引与文件投影的版本不同；两个群和成员文件内容相同时按旧版投影生成相同版本。
+  expect(new Set(documents.map(document => document.document_version)).size).toBe(2)
+  const groupVersions = documents.filter(document => document.scope_type === 'group').map(document => document.document_version)
+  expect(new Set(groupVersions).size).toBe(1)
+  expect(new Set(documents.map(document => document.parent_id)).size).toBe(4)
 })
 })

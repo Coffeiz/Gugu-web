@@ -33,6 +33,8 @@ export function windowOptions(
 ): BrowserWindowConstructorOptions {
   return {
     title: '咕咕 · 本地工作台',
+    titleBarStyle: 'hidden',
+    trafficLightPosition: { x: 16, y: 16 },
     width: 1024,
     height: 740,
     minWidth: 680,

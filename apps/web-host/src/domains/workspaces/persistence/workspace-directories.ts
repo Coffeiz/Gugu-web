@@ -2,6 +2,7 @@ import { CoreError, normalizeWorkspaceDirectoryName, validateWorkspaceDirectoryN
 import type { Pool, PoolClient, QueryResultRow } from 'pg'
 import { normalizeOwnerId } from '../../../adapters/owner-context.js'
 import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
+import { enqueueScheduledTaskRagRebuild } from '../../../modules/scheduled-tasks/persistence/task-rag-job-postgres.js'
 import { isPathWithin } from '../../../adapters/path-safety.js'
 import { access, rename, rm, realpath } from 'node:fs/promises'
 import { basename, dirname, resolve } from 'node:path'
@@ -387,10 +388,11 @@ export function createPostgresWorkspaceDirectoryOperations(
             `UPDATE conversation_sessions SET workspace_id = NULL
              WHERE user_id = $1 AND workspace_id = ANY($2::integer[])`, [user, bindingIds],
           )
-          await client.query(
+          const changedTasks = await client.query<{ id: number | string } & QueryResultRow>(
             `UPDATE scheduled_tasks SET workspace_id = NULL, enabled = FALSE
-             WHERE user_id = $1 AND workspace_id = ANY($2::integer[])`, [user, bindingIds],
+             WHERE user_id = $1 AND workspace_id = ANY($2::integer[]) RETURNING id`, [user, bindingIds],
           )
+          for (const task of changedTasks.rows) await enqueueScheduledTaskRagRebuild(client, user, Number(task.id))
           const now = runtime.now?.() ?? new Date()
           await client.query(
             `UPDATE terminal_sessions SET status = 'terminated', closed_at = $3, updated_at = $3

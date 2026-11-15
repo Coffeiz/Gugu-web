@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import Fastify from 'fastify'
 import {createMcpStatusReader} from '@gugu/core/mcp/status'
-import {createMcpEnabledReader,registerMcpStatusRoute} from '../../src/modules/mcp/status.js'
+import {createMcpEnabledReader,createMcpSettingsReader,registerMcpStatusRoute} from '../../src/modules/mcp/status.js'
 import {installHttpErrorHandler} from '../../src/http/errors.js'
 
 test('MCP状态按默认/环境JSON/嵌套环境/override优先级热读，不连接server',async()=>{
@@ -22,6 +22,21 @@ test('MCP状态按默认/环境JSON/嵌套环境/override优先级热读，不�
   assert.deepEqual(await read(),{enabled:true})
   await writeFile(path,'{')
   await assert.rejects(read())
+ }finally{await rm(root,{recursive:true,force:true})}
+})
+
+test('MCP limits follow Python env and override precedence and hot reload',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'gugu-mcp-settings-')),path=join(root,'config.json')
+ try{
+  await writeFile(path,'{}')
+  const read=createMcpSettingsReader(path,{MCP:'{"enabled":false,"max_servers_per_user":7,"max_tools_per_server":21}'})
+  assert.deepEqual(read(),{enabled:false,max_servers_per_user:7,max_tools_per_server:21})
+  const explicit=createMcpSettingsReader(path,{MCP:'{"max_servers_per_user":7}',MCP__MAX_SERVERS_PER_USER:'5',MCP__MAX_TOOLS_PER_SERVER:'12'})
+  assert.deepEqual(explicit(),{enabled:true,max_servers_per_user:5,max_tools_per_server:12})
+  await writeFile(path,'{"mcp":{"max_servers_per_user":3,"max_tools_per_server":9}}')
+  assert.deepEqual(explicit(),{enabled:true,max_servers_per_user:3,max_tools_per_server:9})
+  await writeFile(path,'{')
+  assert.throws(()=>explicit())
  }finally{await rm(root,{recursive:true,force:true})}
 })
 

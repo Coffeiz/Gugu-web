@@ -516,6 +516,16 @@
     "layer": "L2",
     "purpose": "postgres"
   },
+  "tests/scheduled-tasks/task-write.test.ts": {
+    "markers": [],
+    "layer": "L1",
+    "purpose": "contract"
+  },
+  "tests/scheduled-tasks/task-delete-rag-freshness.test.ts": {
+    "markers": [],
+    "layer": "L2",
+    "purpose": "contract"
+  },
   "tests/scheduled-tasks/fire-receipts.test.ts": {
     "markers": [
       "external_service"
@@ -757,4 +767,15 @@
 "tests/byok/credential-test-preview.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/files/xlsx-preview.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/agent/rag/memory-loader.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
-"tests/agent/rag/memory-search.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"}}
+"tests/agent/rag/memory-search.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/agent/rag/ranking.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/agent/rag/tokenizer.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/agent/rag/source-adapters.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/agent/rag/query-embedding.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/agent/rag/scoped-search.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/agent/rag/ttl-cache.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/agent/rag/service-cache.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/mind/rag-freshness.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/account/delete-account.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/mcp/test-connection.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/auth/profile-update.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"}}

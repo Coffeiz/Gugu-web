@@ -6,6 +6,7 @@ import { sanitizeMediaPayload } from '@gugu/core/agent/context/messages'
 import { recordAgentUsage, type AgentUsageConfig } from './agent-usage-postgres.js'
 import { lockCanonicalHistoryBaseline } from './agent-history-baseline-postgres.js'
 import type { AgentRunHistoryWrite } from './agent-run-store-postgres.js'
+import { enqueueConversationRagRebuild } from './conversation-rag-job-postgres.js'
 
 const digest = (value: unknown) => createHash('sha256').update(stableJson(value)).digest('hex')
 const shortDigest = (value: unknown) => digest(value).slice(0, 16)
@@ -144,6 +145,7 @@ export function createCanonicalHistoryWriter(resolveConfig: (identity: RunIdenti
     }
     if (context.providerCacheAnchor) await client.query(`UPDATE conversation_sessions SET session_context = jsonb_set(coalesce(session_context::jsonb,'{}'::jsonb), '{provider_cache_anchor}', $3::jsonb)
       WHERE id = $1 AND user_id = $2`, [identity.sessionId, identity.ownerId, JSON.stringify(context.providerCacheAnchor.anchor)])
+    if (total > 0) await enqueueConversationRagRebuild(client, identity.ownerId)
     await recordAgentUsage(client, identity, checkpoint.totalUsage, config, checkpoint.providerRounds, canonicalToolsUsed(checkpoint, delta.entries))
   }
 }

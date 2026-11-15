@@ -35,7 +35,7 @@ export type CanvasEditPublication = Parameters<MindRelationCreateRuntime['publis
 interface EditContext {
   tx: Transaction<Database>; backend: Backend; owner: string; canonical: string; context: string; signal: AbortSignal
 }
-interface EditResult { results: Record<string,unknown>[]; publications: CanvasEditPublication[] }
+interface EditResult { results: Record<string,unknown>[]; publications: CanvasEditPublication[]; changed: boolean }
 async function readItem(ctx:EditContext,id:number,canvasId:number) {
   const row=await ctx.tx.selectFrom('mind_canvas_items as i').innerJoin('mind_nodes as n','n.id','i.node_id').selectAll('n')
     .select(['i.id as item_id','i.x','i.y','i.w','i.h','i.z','i.collapsed']).where('i.id','=',id).where('i.canvas_id','=',canvasId)
@@ -46,11 +46,12 @@ async function readItem(ctx:EditContext,id:number,canvasId:number) {
 }
 async function removeItems(ctx:EditContext,intent:Extract<CanvasEditIntent,{action:'remove'}>):Promise<EditResult> {
   const runtime=createSqlMindCanvasItemRemoveRuntime(ctx.tx,ctx.backend,async()=>{},undefined,undefined,{includeDeletedNodes:true})
-  const result:EditResult={results:[],publications:[]}
+  const result:EditResult={results:[],publications:[],changed:false}
   for(const id of intent.item_ids) {
     const before=await readItem(ctx,id,intent.canvas_id)
     await runtime.remove(ctx.canonical,intent.canvas_id,id,ctx.context)
     ctx.signal.throwIfAborted()
+    result.changed=true
     result.publications.push({ownerId:ctx.canonical,operation:'delete',entityId:id,origin:null,mutationId:null,entity:{id,canvas_id:intent.canvas_id}})
     result.results.push({canvas_id:intent.canvas_id,removed_item_id:id,node_id:Number(before.id),node_preserved:true})
   }
@@ -66,11 +67,18 @@ function layoutInput(edit:CanvasLayoutEdit,kind:string) {
 }
 async function updateItems(ctx:EditContext,intent:Extract<CanvasEditIntent,{action:'layout'}>):Promise<EditResult> {
   const runtime=createSqlMindCanvasItemUpdateRuntime(ctx.tx,ctx.backend,async()=>{},undefined,undefined,{includeDeletedNodes:true})
-  const result:EditResult={results:[],publications:[]}
+  const result:EditResult={results:[],publications:[],changed:false}
   for(const edit of intent.entries) {
     const before=await readItem(ctx,edit.item_id,intent.canvas_id)
-    const updated=await runtime.update(ctx.canonical,intent.canvas_id,edit.item_id,layoutInput(edit,before.kind),ctx.context)
+    const input=layoutInput(edit,before.kind)
+    const updated=await runtime.update(ctx.canonical,intent.canvas_id,edit.item_id,input,ctx.context)
     ctx.signal.throwIfAborted()
+    result.changed ||= Object.entries(input).some(([field,value]) => {
+      const previous=(before as unknown as Record<string,unknown>)[field]
+      if(field==='collapsed')return Boolean(previous)!==Boolean(value)
+      if(value===null||previous===null)return previous!==value
+      return value!==undefined&&Number(previous)!==Number(value)
+    })
     const after=await readItem(ctx,edit.item_id,intent.canvas_id)
     result.publications.push({ownerId:ctx.canonical,operation:'update',entityId:edit.item_id,origin:null,mutationId:null,entity:updated})
     result.results.push({canvas_id:intent.canvas_id,node:agentCanvasNodeSummary(after),updated:true})
@@ -79,7 +87,7 @@ async function updateItems(ctx:EditContext,intent:Extract<CanvasEditIntent,{acti
 }
 async function updateNotes(ctx:EditContext,intent:Extract<CanvasEditIntent,{action:'note'}>):Promise<EditResult> {
   const runtime=createSqlMindCanvasNoteRuntime(ctx.tx,ctx.backend,async()=>{})
-  const result:EditResult={results:[],publications:[]}
+  const result:EditResult={results:[],publications:[],changed:false}
   for(const edit of intent.entries) {
     let query=ctx.tx.selectFrom('mind_nodes').selectAll().where('id','=',edit.node_id).where('user_id','=',ctx.owner).where('kind','=','canvas_note').where('deleted_at','is',null)
     if(ctx.backend==='postgres')query=query.forUpdate()
@@ -88,6 +96,7 @@ async function updateNotes(ctx:EditContext,intent:Extract<CanvasEditIntent,{acti
     const updated=await runtime.update(ctx.canonical,edit.node_id,{version:Number(before.version),
       ...(edit.title===undefined?{}:{title:strip(edit.title)||'新便签'}),...(edit.content===undefined?{}:{contentMd:edit.content}),...(edit.color===undefined?{}:{color:edit.color})},ctx.context)
     ctx.signal.throwIfAborted()
+    result.changed ||= updated.changed
     const row=await ctx.tx.selectFrom('mind_nodes').selectAll().where('id','=',edit.node_id).where('user_id','=',ctx.owner).executeTakeFirstOrThrow()
     result.results.push({node:agentCanvasNodeFields(row),updated:true})
     result.publications.push({ownerId:ctx.canonical,operation:'update',entityId:edit.node_id,origin:null,mutationId:null,entityKind:'canvas_note',entity:updated.note})
@@ -108,12 +117,13 @@ async function updateAnchor(ctx:EditContext,intent:Extract<CanvasEditIntent,{act
   if(!canvas||new Set(items.map(row=>Number(row.node_id))).size!==new Set(ids).size)throw new MindCanvasItemMutationError('关联的两个节点必须都位于指定画布',422)
   const data=parseCanvasData(canvas.data_json),raw=data.relationAnchors
   const anchors=raw&&typeof raw==='object'&&!Array.isArray(raw)?raw as Record<string,unknown>:{}
+  const previous=savedAnchor(data,intent.relation_id)
   anchors[String(relation.id)]={srcSide:intent.source_side,dstSide:intent.target_side};data.relationAnchors=anchors
   const publications:CanvasEditPublication[]=[]
   const update=createMindCanvasUpdate(createSqlMindCanvasUpdateRuntime(ctx.tx,ctx.backend,async event=>{publications.push(event)}))
   await update(ctx.canonical,intent.canvas_id,{data},{undoContextId:ctx.context,clientId:null})
   ctx.signal.throwIfAborted()
-  return {results:[{relation_id:Number(relation.id),source_node_id:ids[0],target_node_id:ids[1],source_side:intent.source_side,target_side:intent.target_side,updated:true}],publications}
+  return {results:[{relation_id:Number(relation.id),source_node_id:ids[0],target_node_id:ids[1],source_side:intent.source_side,target_side:intent.target_side,updated:true}],publications,changed:previous?.source_side!==intent.source_side||previous?.target_side!==intent.target_side}
 }
 function savedAnchor(data:Record<string,unknown>,id:number) {
   const anchors=data.relationAnchors
@@ -137,6 +147,9 @@ async function connectItems(ctx:EditContext,intent:Extract<CanvasEditIntent,{act
   const sides=recommendedCanvasSides({x:source.position.x,w:source.layout.effective_size.w},{x:target.position.x,w:target.layout.effective_size.w})
   if(intent.source_side!==undefined&&(intent.source_side!==sides[0]||intent.target_side!==sides[1])&&intent.allow_custom_anchor!==true)
     throw new MindCanvasItemMutationError('普通连接的端点与卡片左右位置不一致，请省略 source_side/target_side；只有明确的回环或自定义布局才可传 allow_custom_anchor=true',422)
+  const edgeSource=Math.min(intent.source_node_id,intent.target_node_id),edgeTarget=Math.max(intent.source_node_id,intent.target_node_id)
+  const existing=await ctx.tx.selectFrom('mind_relations').select(['id','deleted_at']).where('user_id','=',ctx.owner).where('canvas_id','=',intent.canvas_id).where('src_node_id','=',edgeSource).where('dst_node_id','=',edgeTarget).where('rel_type','=','related').where('edge_key','=','').executeTakeFirst()
+  ctx.signal.throwIfAborted()
   const publications:CanvasEditPublication[]=[]
   const create=createMindCanvasRelationCreate(createSqlMindCanvasRelationCreateRuntime(ctx.tx,ctx.backend,async event=>{publications.push(event)}))
   const relation=await create(ctx.canonical,{canvas_id:intent.canvas_id,src_node_id:ids[0],dst_node_id:ids[1]},{undoContextId:ctx.context,clientId:null,mutationId:null})
@@ -149,7 +162,8 @@ async function connectItems(ctx:EditContext,intent:Extract<CanvasEditIntent,{act
   const after={source_side:normalized[0]!,target_side:normalized[1]!}
   return {results:[{relation_id:relation.id,source_node_id:relation.srcNodeId,target_node_id:relation.dstNodeId,type:relation.relType,created_or_reused:true,
     changed:before?.source_side!==after.source_side||before?.target_side!==after.target_side,anchor_source:intent.source_side===undefined?'geometry':'explicit',
-    verification:{checked_node_ids:ids,checked_relation_id:relation.id,geometry_recommendation:{source_side:sides[0],target_side:sides[1]}},...after}],publications}
+    verification:{checked_node_ids:ids,checked_relation_id:relation.id,geometry_recommendation:{source_side:sides[0],target_side:sides[1]}},...after}],publications,
+    changed:!existing||existing.deleted_at!==null||before?.source_side!==after.source_side||before?.target_side!==after.target_side}
 }
 /** 批量编辑复用同一外层事务的领域写服务，失败整批回滚；通知由调用方提交后发送。 */
 export async function applyCanvasEdits(tx: Transaction<Database>, backend: Backend, rawOwner: string, intent: CanvasEditIntent, context: string, signal: AbortSignal) {
@@ -167,6 +181,8 @@ export async function applyCanvasEdits(tx: Transaction<Database>, backend: Backe
     create_note:()=>applyCanvasPlacements(ctx,intent as CanvasPlacementIntent),add:()=>applyCanvasPlacements(ctx,intent as CanvasPlacementIntent)}
   const result=await operations[intent.action]()
   signal.throwIfAborted()
+  const changed= 'changed' in result ? result.changed : undefined
+  const mutated:boolean=typeof changed==='boolean'?changed:result.results.some(row=>row.created===true)
   const value=intent.batched?{...(intent.action==='note'?{}:{canvas_id:intent.canvas_id}),results:result.results,count:result.results.length}:result.results[0]!
-  return {value,publications:result.publications,mutated:intent.action!=='add'||result.results.some(row=>row.created===true)}
+  return {value,publications:result.publications,mutated}
 }

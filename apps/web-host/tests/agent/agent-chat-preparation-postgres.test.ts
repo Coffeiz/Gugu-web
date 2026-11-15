@@ -15,6 +15,7 @@ test('隔离 PG 新会话和问候先于用户消息提交，附件或队列失�
   try {
     await pool.query(`CREATE TABLE conversation_sessions (id serial PRIMARY KEY, user_id uuid NOT NULL, title text NOT NULL, title_locked boolean NOT NULL, summary text NOT NULL, source text NOT NULL, context_epoch integer NOT NULL, baseline_message_seq bigint NOT NULL, last_message_seq bigint NOT NULL, execution_state text NOT NULL, pending_message_count integer NOT NULL, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL);
       CREATE TABLE conversation_messages (id serial PRIMARY KEY, session_id integer NOT NULL REFERENCES conversation_sessions(id), conversation_seq bigint NOT NULL, role text NOT NULL, content text NOT NULL, client_message_id text, files json, references_json json, content_json json, created_at timestamptz NOT NULL, sent_at timestamptz NOT NULL, UNIQUE(session_id, conversation_seq));
+      CREATE TABLE rag_index_jobs (id bigserial PRIMARY KEY,user_id uuid NOT NULL,source_type text NOT NULL,source_id text NOT NULL,version text NOT NULL,operation text NOT NULL,status text NOT NULL,generation integer NOT NULL,completed_generation integer NOT NULL,attempts integer NOT NULL,next_attempt_at timestamptz,lease_until timestamptz,last_started_at timestamptz,last_succeeded_at timestamptz,last_error_code text,pending_source_ids json NOT NULL,created_at timestamptz NOT NULL,updated_at timestamptz NOT NULL,UNIQUE(user_id,source_type));
       CREATE TABLE claims (message_id integer REFERENCES conversation_messages(id));
       CREATE TABLE agent_run_startups (user_id uuid NOT NULL,session_id integer NOT NULL,run_id text NOT NULL,status text NOT NULL,created_at timestamptz NOT NULL,updated_at timestamptz NOT NULL,PRIMARY KEY(user_id,session_id,run_id));
       CREATE TABLE agent_run_dispatch(sequence bigserial PRIMARY KEY,user_id uuid,session_id integer,run_id text,state text,message_id integer,nonce bytea,payload bytea,request_expires_at timestamptz,UNIQUE(user_id,session_id,run_id));
@@ -37,12 +38,15 @@ test('隔离 PG 新会话和问候先于用户消息提交，附件或队列失�
     const messages = (await pool.query('SELECT id, role, content, conversation_seq, client_message_id FROM conversation_messages ORDER BY conversation_seq')).rows
     assert.deepEqual(messages.map(row => [row.role, row.content, Number(row.conversation_seq)]), [['assistant', '欢迎', 1], ['user', '测试', 2]])
     assert.equal(messages[1].id, result.userMessageId); assert.equal(messages[1].client_message_id, 'client-1')
+    const firstJob = (await pool.query(`SELECT source_id,operation,status,generation,pending_source_ids FROM rag_index_jobs WHERE user_id=$1 AND source_type='conversation'`, [owner])).rows[0]
+    assert.deepEqual(firstJob, { source_id: '', operation: 'refresh', status: 'queued', generation: 1, pending_source_ids: [] })
     for (fail of ['attachment', 'queue']) {
       await assert.rejects(prepare(owner, { message: '回滚' }, `run-${fail}`, { mode: 'direct' }))
       assert.equal(Number((await pool.query('SELECT count(*) FROM conversation_sessions')).rows[0].count), 1)
       assert.equal(Number((await pool.query('SELECT count(*) FROM conversation_messages')).rows[0].count), 2)
       assert.equal(Number((await pool.query('SELECT count(*) FROM claims')).rows[0].count), 1)
       assert.equal(Number((await pool.query('SELECT count(*) FROM agent_run_startups')).rows[0].count), 1)
+      assert.equal(Number((await pool.query(`SELECT generation FROM rag_index_jobs WHERE user_id=$1 AND source_type='conversation'`, [owner])).rows[0].generation), 1)
     }
     fail = ''
     const send = () => prepare(owner, { session_id: result.sessionId, message: '并发' }, 'same-run', { mode: 'direct' })
@@ -50,6 +54,7 @@ test('隔离 PG 新会话和问候先于用户消息提交，附件或队列失�
     assert.equal(outcomes.filter(value => value.status === 'fulfilled').length, 1)
     assert.equal(Number((await pool.query('SELECT count(*) FROM conversation_messages')).rows[0].count), 3)
     assert.equal(Number((await pool.query('SELECT count(*) FROM agent_run_startups')).rows[0].count), 2)
+    assert.equal(Number((await pool.query(`SELECT generation FROM rag_index_jobs WHERE user_id=$1 AND source_type='conversation'`, [owner])).rows[0].generation), 2)
     fail = 'dispatch'
     await assert.rejects(prepare(owner, { session_id: result.sessionId, message: '事务失败' }, 'dispatch-failure', { mode: 'dispatch', origin: null, accessVersion: 'a'.repeat(64), ttlSeconds: 60 }))
     assert.equal(Number((await pool.query('SELECT count(*) FROM conversation_messages')).rows[0].count), 3)

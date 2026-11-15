@@ -6,6 +6,7 @@ import type { Database, MindCanvasItemTable, MindNodeTable } from '../data/schem
 import { recordForwardUndoOperation } from '../data/undo.js'
 import { canvasItemResponse, canvasItemSnapshot } from './canvas-item-add-sql.js'
 import { MindCanvasItemMutationError } from './canvas-item-remove.js'
+import { enqueueMindRagIndex } from './rag-index-job.js'
 import type { CanvasItemUpdateRuntime } from './canvas-item-update.js'
 
 type Item = Selectable<MindCanvasItemTable>
@@ -50,7 +51,16 @@ export function createSqlMindCanvasItemUpdateRuntime(db: Kysely<Database>, backe
       if (input.collapsed !== undefined) patch.collapsed = backend === 'sqlite' ? Number(input.collapsed) : input.collapsed
       if (input.dataJson !== undefined) patch.data_json = input.dataJson
       let after = before
-      if (Object.keys(patch).length) { patch.updated_at = databaseTime(clock(), backend); after = await tx.updateTable('mind_canvas_items').set(patch).where('id', '=', itemId).where('canvas_id', '=', canvasId).where('user_id', '=', owner).where('deleted_at', 'is', null).returningAll().executeTakeFirstOrThrow() }
+      if (Object.keys(patch).length) {
+        const changed = Object.entries(patch).some(([field, value]) => {
+          const previous = (before as unknown as Record<string, unknown>)[field]
+          if (field === 'collapsed') return Boolean(previous) !== Boolean(value)
+          return previous !== value
+        })
+        patch.updated_at = databaseTime(clock(), backend)
+        after = await tx.updateTable('mind_canvas_items').set(patch).where('id', '=', itemId).where('canvas_id', '=', canvasId).where('user_id', '=', owner).where('deleted_at', 'is', null).returningAll().executeTakeFirstOrThrow()
+        if (changed) await enqueueMindRagIndex(tx, backend, owner, 'canvas', '', patch.updated_at, 'update')
+      }
       await undo(tx, canonical, context, [before], [after], false)
       return canvasItemResponse(tx, owner, after, node)
     }),
@@ -77,6 +87,7 @@ export function createSqlMindCanvasItemUpdateRuntime(db: Kysely<Database>, backe
       if (!updated) throw new MindCanvasItemMutationError('画布贴纸不存在', 404)
       const after = await tx.selectFrom('mind_canvas_items').selectAll().where('canvas_id', '=', canvasId).where('user_id', '=', owner).orderBy('id').execute()
       await undo(tx, canonical, context, before, after, true)
+      await enqueueMindRagIndex(tx, backend, owner, 'canvas', '', now, 'update')
       return canvasItemResponse(tx, owner, updated, target.node)
     }), publishChanged, reportFailure,
   }

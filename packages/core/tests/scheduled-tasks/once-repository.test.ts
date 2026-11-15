@@ -19,6 +19,7 @@ describe.each(['sqlite', 'postgres'] as const)('一次性任务仓储 %s', backe
       : new Kysely<{}>({ dialect: new SqliteDialect({ database: new SQLite(':memory:') }) })
     try {
       await sql.raw(tablesSql(backend).scheduledTasks).execute(db)
+      await sql.raw(tablesSql(backend).ragJobs).execute(db)
       const owner = randomUUID(), other = randomUUID()
       const stored = backend === 'sqlite' ? owner.replaceAll('-', '') : owner
       for (const [id, start, enabled, kind] of [[1, '2026-11-14 12:34:00.000000', true, 'once'], [2, '2026-11-14 12:30:00.000000', true, 'once'], [3, '2026-11-14 12:34:00.000000', false, 'once'], [4, '2026-11-14 12:34:00.000000', true, 'cron']] as const)
@@ -37,10 +38,16 @@ describe.each(['sqlite', 'postgres'] as const)('一次性任务仓储 %s', backe
       expect((await repo.getOnce('1'))?.lastRunFailed).toBe(true)
       expect(await repo.findStartedOnceBefore(now + 1)).toEqual([])
       expect(await repo.markStarted('1', now + 1)).toBe(true)
+      await sql`INSERT INTO rag_index_jobs(user_id,source_type,source_id,pending_source_ids,version,operation,status,generation,completed_generation,attempts,next_attempt_at,created_at,updated_at)
+        VALUES(${stored},'scheduled_task','legacy','[]','','upsert','queued',1,0,0,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`.execute(db)
       await repo.deleteCompleted('1', other)
       expect(await repo.getOnce('1')).not.toBeNull()
       await repo.deleteCompleted('1', owner)
       expect(await repo.getOnce('1')).toBeNull()
+      const indexJob = (await sql<{ source_id: string; generation: number; pending_source_ids: unknown }>`SELECT source_id,generation,pending_source_ids FROM rag_index_jobs WHERE user_id=${stored} AND source_type='scheduled_task'`.execute(db)).rows[0]!
+      expect(indexJob.source_id).toBe('1')
+      expect(Number(indexJob.generation)).toBe(2)
+      expect(typeof indexJob.pending_source_ids === 'string' ? JSON.parse(indexJob.pending_source_ids) : indexJob.pending_source_ids).toEqual(['legacy', '1'])
       expect(await repo.markStarted('3', now)).toBe(false)
     } finally {
       await db.destroy()

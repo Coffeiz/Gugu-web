@@ -22,9 +22,11 @@ afterEach(async () => {
 
 async function makeXlsx(): Promise<Buffer> {
   const zip = new JSZip()
-  zip.file('xl/workbook.xml', '<workbook xmlns:r="urn:r"><sheets><sheet name="合成表" r:id="rId1"/></sheets></workbook>')
-  zip.file('xl/_rels/workbook.xml.rels', '<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>')
-  zip.file('xl/worksheets/sheet1.xml', '<worksheet xmlns:r="urn:r"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>样例值</t></is></c></row></sheetData><drawing r:id="rIdDraw"/></worksheet>')
+  zip.file('[Content_Types].xml', '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/></Types>')
+  zip.file('_rels/.rels', '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdRoot" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>')
+  zip.file('xl/workbook.xml', '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="合成表" sheetId="1" r:id="rId1"/></sheets></workbook>')
+  zip.file('xl/_rels/workbook.xml.rels', '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>')
+  zip.file('xl/worksheets/sheet1.xml', '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>样例值</t></is></c></row></sheetData><drawing r:id="rIdDraw"/></worksheet>')
   zip.file('xl/worksheets/_rels/sheet1.xml.rels', '<Relationships><Relationship Id="rIdDraw" Target="../drawings/drawing1.xml"/></Relationships>')
   zip.file('xl/drawings/drawing1.xml', '<wsDr xmlns:r="urn:r"><oneCellAnchor><from><col>1</col><row>0</row></from><ext cx="9525" cy="9525"/><pic><blipFill><blip r:embed="rIdImage"/></blipFill></pic></oneCellAnchor></wsDr>')
   zip.file('xl/drawings/_rels/drawing1.xml.rels', '<Relationships><Relationship Id="rIdImage" Target="../media/image.png"/></Relationships>')

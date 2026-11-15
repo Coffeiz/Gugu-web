@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { PoolClient } from 'pg'
 import { MindUndoConflict, MindUndoUnsupported } from './mind.js'
+import { enqueueScheduledTaskRagRebuild } from '../../../modules/scheduled-tasks/persistence/task-rag-job-postgres.js'
 
 type Snapshot = Record<string, unknown>
 type Items = Record<string, Snapshot>
@@ -57,6 +58,7 @@ export async function applyCalendarUndo(client: PoolClient, ownerId: string, ope
         const fields = ['enabled', 'name', 'payload', 'cron', 'schedule_kind', 'start_at', 'reminder_lead_minutes', 'channels', 'delivery_targets'].filter(field => field in target)
         await client.query(`UPDATE scheduled_tasks SET ${fields.map((field, i) => `${field}=$${i + 3}`).join(', ')} WHERE id=$1 AND user_id=$2`, [id, ownerId, ...fields.map(field => target[field])])
       } else throw new MindUndoUnsupported()
+      await enqueueScheduledTaskRagRebuild(client, ownerId, id)
       versions[ref] = 0
     } else throw new MindUndoUnsupported()
   }

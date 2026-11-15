@@ -17,6 +17,7 @@ function scriptedPool(options: { owned?: boolean; failOnTaskUpdate?: boolean } =
         return { rows: options.owned === false ? [] : [{ id: 41 }], rowCount: options.owned === false ? 0 : 1 }
       if (/^UPDATE scheduled_tasks/i.test(sql) && options.failOnTaskUpdate)
         throw new Error('synthetic task update failure')
+      if (/^UPDATE scheduled_tasks/i.test(sql)) return { rows: [{ id: 61 }], rowCount: 1 }
       return { rows: [], rowCount: 1 }
     },
     release() { released = true },
@@ -38,8 +39,10 @@ test('删除工作区在一个事务内解除 owner 会话与普通任务绑定�
   assert.match(fake.calls[3]?.sql ?? '', /UPDATE scheduled_tasks SET enabled = FALSE, workspace_id = NULL/i)
   assert.match(fake.calls[3]?.sql ?? '', /event_id IS NULL/i)
   assert.deepEqual(fake.calls[3]?.values, [ownerId, 41])
-  assert.match(fake.calls[4]?.sql ?? '', /DELETE FROM workspaces WHERE id = \$1 AND user_id = \$2/i)
-  assert.deepEqual(fake.calls[4]?.values, [41, ownerId])
+  const enqueue = fake.calls.find(call => /INSERT INTO rag_index_jobs/i.test(call.sql))
+  assert.deepEqual(enqueue?.values, [ownerId, '61'])
+  const deletion = fake.calls.find(call => /DELETE FROM workspaces WHERE id = \$1 AND user_id = \$2/i.test(call.sql))
+  assert.deepEqual(deletion?.values, [41, ownerId])
   assert.equal(fake.calls.at(-1)?.sql, 'COMMIT')
   assert.equal(fake.released(), true)
   assert.equal(fake.calls.some((call) => call.values?.includes(otherOwnerId)), false)

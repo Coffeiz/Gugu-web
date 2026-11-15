@@ -17,9 +17,12 @@ test('用户技能持久创建、owner隔离、序列并发和失败回滚',{ski
   const input={name:'合成',description_short:'摘要',description_long:null,category:'personal',body:'正文',related_tools:['web_search'],enabled:true}
   const [one,two]=await Promise.all([manager.create(a,input),manager.create(a,input)])
   assert.deepEqual(new Set([one.id,two.id]),new Set(['U1','U2']))
+  const assistantSkill=await manager.create(a,{...input,name:'助理归纳',managed_by:'assistant'})
+  assert.equal(assistantSkill.managed_by,'assistant')
   await assert.rejects(manager.update(b,one.id,{name:'越权'}));assert.equal((await manager.list(b)).length,0)
-  await assert.rejects(manager.create(a,{...input,related_tools:['unknown']}));assert.equal((await pool.query('SELECT next_skill_sequence FROM users WHERE id=$1',[a])).rows[0].next_skill_sequence,3)
+  await assert.rejects(manager.create(a,{...input,related_tools:['unknown']}));assert.equal((await pool.query('SELECT next_skill_sequence FROM users WHERE id=$1',[a])).rows[0].next_skill_sequence,4)
   const updated=await manager.update(a,one.id,{body:'更新正文',enabled:false});assert.equal(updated.body,'更新正文');assert.equal(updated.enabled,false)
-  assert.equal((await manager.list(a)).length,2);assert.equal(events.length,3)
+  const assistantUpdated=await manager.update(a,assistantSkill.id,{body:'保留管理者'});assert.equal(assistantUpdated.managed_by,'assistant')
+  assert.equal((await manager.list(a)).length,3);assert.equal(events.length,5)
  }finally{await runtime.close();await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end()}
 })

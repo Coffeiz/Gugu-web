@@ -17,18 +17,25 @@ import { registerFeishuConnectRoutes, type FeishuConnectRouteOptions } from './m
 import { registerWechatConnectRoutes, type WechatConnectRouteOptions } from './modules/im/wechat-connect.js'
 import { registerDataExportBrowserDownloadRoute, registerDataExportDownloadRoutes, type DataExportDownloadOptions } from './modules/data-portability/download-export.js'
 import type { createDataExportCreator } from '@gugu/core/data-portability/create-export'
+import type { LlmPresetTestResult } from '@gugu/core/agent/config'
 import { registerTaskFilesystemAuthorizationRoutes, type TaskFilesystemAuthorizationOptions } from './modules/scheduled-tasks/task-filesystem-authorize.js'
 import { registerVoicePresetMutationRoutes, type VoicePresetMutationOptions } from './modules/admin/voice-presets-mutate.js'
 import { registerDataExportCancelRoute } from './modules/data-portability/cancel-export.js'
+import { registerDataExportDeleteRoute, type DataExportDeleteOptions } from './modules/data-portability/delete-export.js'
+import type { createDataExportDeleter } from '@gugu/core/data-portability/delete-export'
 import type { createDataExportCanceler } from '@gugu/core/data-portability/cancel-export'
 import { registerTerminalDeleteRoute, type TerminalDeleteOptions } from './modules/terminals/delete.js'
 import { registerVoicePresetsReadRoute, type VoicePresetsReadOptions } from './modules/admin/voice-presets-read.js'
 import { registerAdminVoicePresetTestRoute, registerAdminVoiceTestRoute, type AdminVoicePresetTestOptions, type AdminVoiceTestOptions } from './modules/admin/voice-test.js'
 import { registerAdminSearchTestRoute, type AdminSearchTestOptions } from './modules/admin/search-test.js'
 import { registerAdminMaintenanceStatusRoutes } from './modules/admin/maintenance-status.js'
+import { registerAccountDeleteRoute, type AccountDeleteOptions } from './modules/auth/account-delete.js'
+import { registerAdminUserDeleteRoute, type AdminUserDeleteOptions } from './modules/admin/user-delete.js'
 import type { createAdminMaintenanceStatus } from '@gugu/core/maintenance/admin-status'
 import { registerServiceStatusRoute, type createServiceStatusReader } from './modules/admin/service-status.js'
 import { registerAttachmentDownloadRoute, type AttachmentDownloadOptions } from './modules/agent/attachments/download.js'
+import { registerVoiceAvailabilityRoute, type VoiceAvailabilityOptions } from './modules/agent/voice-availability.js'
+import { registerMemoryClearRoute, type MemoryClearOptions } from './modules/agent/memory-clear.js'
 import { registerAttachmentThumbnailRoute } from './modules/agent/attachment-thumbnail.js'
 import { registerUserBotBindingCodeRoutes, type UserBotBindingCodeOptions } from './modules/im/binding-code.js'
 import { registerLoopScopeProxyRoutes } from './modules/loopscope/proxy.js'
@@ -37,6 +44,9 @@ import { registerStorageQuotaStatusRoute, type StorageQuotaStatusOptions } from 
 import { registerNotificationBroadcastRoute } from './modules/notifications/routes/broadcast.js'
 import type { NotificationBroadcastInput } from '@gugu/core/notifications/broadcast'
 import { registerMcpStatusRoute, type McpStatusOptions } from './modules/mcp/status.js'
+import { registerMcpServerCreateRoute, registerMcpServerRoutes, type McpServerCreateRouteOptions, type McpServerRoutesOptions } from './modules/mcp/servers.js'
+import { registerMcpConnectionTestRoute, type McpConnectionTestOptions } from './modules/mcp/test-connection.js'
+import { registerMcpServerListRoute, type McpServerListRouteOptions } from './modules/mcp/server-list.js'
 import { registerAttentionDefaultsRoute, type AttentionDefaultsOptions } from './modules/im/attention-defaults.js'
 import { registerEmailRecipientCountRoute } from './modules/admin/email-recipient-count.js'
 import { registerEmbeddingRebuildStatusRoute, type EmbeddingRebuildStatusOptions } from './modules/byok/embedding-rebuild-status.js'
@@ -78,6 +88,10 @@ import { registerAdminFileSyncInitializeRoute, type AdminFileSyncInitializeOptio
 import { registerWatcherCapacityRoute } from './modules/filesync/watcher-capacity.js'
 import { registerAdminFileSyncEventsRoute, type AdminFileSyncEventsOptions } from './modules/filesync/admin-events.js'
 import { registerEmbeddingProbeRoute, type createEmbeddingFileProbe } from './modules/admin/embedding-probe.js'
+import { registerAdminMediaProbePreviewRoute, type AdminMediaProbePreview } from './modules/admin/media-probe-preview.js'
+import { registerAdminLlmPresetTestRoute } from './modules/admin/llm-preset-test.js'
+import { registerAdminLlmPresetMediaProbeRoute } from './modules/admin/llm-preset-media-probe.js'
+import { registerAdminLlmCapabilityProbeRoute } from './modules/admin/llm-capability-probe.js'
 import { registerAdminEmbeddingRebuildStatusRoute, type AdminEmbeddingRebuildStatusOptions } from './modules/admin/embedding-rebuild-status.js'
 import { registerSafeEgressUpdateRoute, type SafeEgressUpdateOptions } from './modules/admin/safe-egress-update.js'
 import { registerSafeEgressProbeRoute } from './modules/admin/safe-egress-probe.js'
@@ -133,7 +147,7 @@ import { registerClientRoutes } from './modules/clients/routes/clients.js'
 import { registerEventRoutes } from './modules/calendar/routes/events.js'
 import { registerMindNoteReadRoutes, type MindNoteReadOperations } from './domains/mind/mind-notes-read.js'
 import { registerMindCanvasReadRoutes, type MindCanvasReadOperations } from './domains/mind/mind-canvas-read.js'
-import { registerMindRefSuggestRoute, type MindRefSuggestOperations } from './domains/mind/mind-ref-suggest.js'
+import { registerMindReferenceSuggestRoute, type MindReferenceSuggestOperations } from './modules/mind/ref-suggest.js'
 import { registerMindCanvasMutationRoutes, type MindCanvasMutationOptions } from './domains/mind/routes/mind-canvas-mutations.js'
 import { registerMindCanvasNoteMutationRoutes, type MindCanvasNoteMutationOptions } from './domains/mind/routes/mind-canvas-note-mutations.js'
 import { registerMindCanvasItemMutationRoutes, type MindCanvasItemMutationOptions } from './domains/mind/routes/mind-canvas-item-mutations.js'
@@ -146,6 +160,7 @@ import { registerScheduledTaskDelete } from './modules/scheduled-tasks/task-dele
 import type { createScheduledTaskDeleter } from '@gugu/core/scheduled-task-delete'
 import { registerScheduledTaskList, type ScheduledTaskList } from './modules/scheduled-tasks/task-list.js'
 import { registerScheduledTaskDeliveryTargets, type createScheduledTaskDeliveryTargets } from './modules/scheduled-tasks/delivery-targets.js'
+import { registerScheduledTaskTestNotify, type ScheduledTaskTestNotifier } from './modules/scheduled-tasks/test-notify.js'
 import { registerScheduledTaskWrites } from './modules/scheduled-tasks/task-write-routes.js'
 import type { createPostgresTaskWrites } from './modules/scheduled-tasks/persistence/task-writes-postgres.js'
 import { registerNotificationRoutes } from './modules/notifications/routes/notifications.js'
@@ -156,6 +171,7 @@ import { registerWorkspaceDirectoryRoutes } from './domains/workspaces/workspace
 import { registerFileBrowserRoutes, type FileBrowserOperations } from './domains/files/browser.js'
 import { registerFolderWriteRoutes, type FolderWriteOperations } from './domains/files/folder-writes.js'
 import { registerFolderCopyRoute, type FolderCopyOperations } from './modules/files/folder-copy.js'
+import { registerFolderDeleteRoute, type FolderDeleteOperations } from './modules/files/folder-delete.js'
 import { registerFileReadRoutes, type FileReadOperations } from './domains/files/file-reads.js'
 import { registerXlsxPreviewRoutes } from './modules/files/xlsx-preview.js'
 import { registerFileThumbnailRoute } from './modules/files/thumbnail.js'
@@ -326,7 +342,7 @@ export interface WebUiOptions {
   events?: EventOptions
   mindNotes?: MindNoteReadOperations
   mindCanvasReads?: MindCanvasReadOperations
-  mindRefSuggest?: MindRefSuggestOperations
+  mindRefSuggest?: MindReferenceSuggestOperations
   mindCanvasMutations?: MindCanvasMutationOptions
   mindCanvasNoteMutations?: MindCanvasNoteMutationOptions
   mindCanvasItemMutations?: MindCanvasItemMutationOptions
@@ -338,6 +354,7 @@ export interface WebUiOptions {
   deleteScheduledTask?: ReturnType<typeof createScheduledTaskDeleter>
   listScheduledTasks?: ScheduledTaskList
   scheduledTaskDeliveryTargets?: ReturnType<typeof createScheduledTaskDeliveryTargets>
+  scheduledTaskTestNotify?: ScheduledTaskTestNotifier
   scheduledTaskWrites?: ReturnType<typeof createPostgresTaskWrites>
   notifications?: NotificationOptions
   track?: TrackOptions
@@ -380,6 +397,7 @@ export interface WebUiOptions {
   fileBrowser?: FileBrowserOperations
   folderWrites?: FolderWriteOperations
   folderCopy?: FolderCopyOperations
+  folderDelete?: FolderDeleteOperations
   fileReads?: FileReadOperations
   folderReads?: FolderReadOperations
   fileUploads?: FileUploadOperations
@@ -415,6 +433,7 @@ export interface WebUiOptions {
   recoverDataImport?: ReturnType<typeof createDataImportRecoverer>
   dataExportDownload?: DataExportDownloadOptions
   cancelDataExport?: ReturnType<typeof createDataExportCanceler>
+  deleteDataExport?: ReturnType<typeof createDataExportDeleter>
   portabilityJobs?: ReturnType<typeof createPortabilityJobReader>
   userBotBindingCode?: Omit<UserBotBindingCodeOptions, 'requireUser' | 'ownerIdFromRequest'>
   userBotUnbind?: Omit<UserBotUnbindOptions, 'requireUser' | 'ownerIdFromRequest'>
@@ -425,9 +444,15 @@ export interface WebUiOptions {
   feishuConnect?: Omit<FeishuConnectRouteOptions, 'requireUser' | 'ownerIdFromRequest'>
   wechatConnect?: Omit<WechatConnectRouteOptions, 'requireUser' | 'ownerIdFromRequest'>
   mcpStatus?: Omit<McpStatusOptions, 'requireUser'>
+  mcpServerCreate?: Omit<McpServerCreateRouteOptions, 'requireUser' | 'ownerIdFromRequest'>
+  mcpServerConfig?: Omit<McpServerRoutesOptions, 'requireUser' | 'ownerIdFromRequest'>
+  mcpConnectionTest?: Omit<McpConnectionTestOptions, 'requireUser' | 'ownerIdFromRequest'>
+  mcpServerList?: Omit<McpServerListRouteOptions, 'requireUser' | 'ownerIdFromRequest'>
   attentionDefaults?: Omit<AttentionDefaultsOptions, 'requireUser'>
   loopScopeProxy?: { endpoint: string }
   attachmentDownload?: Omit<AttachmentDownloadOptions, 'requireUser' | 'ownerIdFromRequest'>
+  voiceAvailability?: Omit<VoiceAvailabilityOptions, 'requireUser' | 'ownerIdFromRequest'>
+  clearAgentMemory?: { clear: MemoryClearOptions['clear'] }
   terminalDelete?: Omit<TerminalDeleteOptions, 'requireUser' | 'ownerIdFromRequest'>
   userBotsList?: Omit<UserBotsListOptions, 'requireUser' | 'ownerIdFromRequest'>
   embeddingRebuildStatus?: Omit<EmbeddingRebuildStatusOptions, 'requireUser' | 'ownerIdFromRequest'>
@@ -443,6 +468,7 @@ export interface WebUiOptions {
   providerCapabilityPreview?: Omit<ProviderCapabilityPreviewOptions, 'requireUser'>
   userSkillDelete?: Omit<UserSkillDeleteOptions, 'requireUser' | 'ownerIdFromRequest'>
   userSkillList?: Omit<UserSkillListOptions, 'requireUser' | 'ownerIdFromRequest'>
+  accountDelete?: Omit<AccountDeleteOptions, 'requireUser' | 'ownerIdFromRequest'>
   secretPromptCancel?: Omit<SecretPromptCancelOptions, 'requireUser' | 'ownerIdFromRequest'>
   safeEgressRead?: { readSettings(): SafeEgressReadSettings }
   imMemorySummary?: Omit<ImMemorySummaryOptions, 'requireAdmin'>
@@ -467,6 +493,10 @@ export interface WebUiOptions {
   watcherCapacity?: Omit<Parameters<typeof registerWatcherCapacityRoute>[1], 'requireAdmin'>
   adminFileSyncEvents?: Omit<AdminFileSyncEventsOptions, 'requireAdmin'>
   adminEmbeddingProbe?: { probe: ReturnType<typeof createEmbeddingFileProbe> }
+  adminMediaProbePreview?: { probe: AdminMediaProbePreview }
+  adminLlmPresetTest?: { test(id: string): Promise<LlmPresetTestResult> }
+  adminLlmPresetMediaProbe?: { probe(id: string, dim?: 'image' | 'video' | 'audio'): Promise<unknown> }
+  adminLlmCapabilityProbe?: { probe(id: string): Promise<unknown> }
   adminEmbeddingRebuildStatus?: Omit<AdminEmbeddingRebuildStatusOptions, 'requireAdmin'>
   safeEgressUpdate?: Omit<SafeEgressUpdateOptions, 'requireAdmin'>
   safeEgressProbe?: Omit<Parameters<typeof registerSafeEgressProbeRoute>[1], 'requireAdmin'>
@@ -481,6 +511,7 @@ export interface WebUiOptions {
   adminAnalytics?: Omit<AdminAnalyticsOptions, 'requireAdmin'>
   adminAuditLog?: Omit<AdminAuditLogOptions, 'requireAdmin'>
   adminUserSettings?: Omit<AdminUserSettingsOptions, 'requireAdmin'>
+  adminUserDelete?: Omit<AdminUserDeleteOptions, 'requireAdmin'>
   notificationBroadcast?: { broadcast(input: NotificationBroadcastInput): Promise<{ ok: true; id: number }> }
   notificationAdminHistory?: Omit<NotificationAdminHistoryOptions, 'requireAdmin'>
   adminAgentUsage?: Omit<AgentUsageOptions, 'requireAdmin'>
@@ -662,6 +693,13 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
   if (options.cancelDataExport) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => registerDataExportCancelRoute(routes, userFromRequest, options.cancelDataExport!))
   }
+  if (options.deleteDataExport) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerDataExportDeleteRoute(routes, {
+      remove: options.deleteDataExport!,
+      requireUser: async request => { void userFromRequest(request) },
+      ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId,
+    } satisfies DataExportDeleteOptions))
+  }
   if (options.portabilityJobs) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => registerPortabilityJobReadRoutes(routes, userFromRequest, options.portabilityJobs!))
   }
@@ -714,6 +752,34 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
   if (options.mcpStatus) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => registerMcpStatusRoute(routes, { ...options.mcpStatus!, requireUser: async request => { void userFromRequest(request) } }))
   }
+  if (options.mcpServerCreate) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerMcpServerCreateRoute(routes, {
+      ...options.mcpServerCreate!,
+      requireUser: async request => { void userFromRequest(request) },
+      ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId,
+    }))
+  }
+  if (options.mcpServerConfig) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerMcpServerRoutes(routes, {
+      ...options.mcpServerConfig!,
+      requireUser: async request => { void userFromRequest(request) },
+      ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId,
+    }))
+  }
+  if (options.mcpConnectionTest) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerMcpConnectionTestRoute(routes, {
+      ...options.mcpConnectionTest!,
+      requireUser: async request => { void userFromRequest(request) },
+      ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId,
+    }))
+  }
+  if (options.mcpServerList) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerMcpServerListRoute(routes, {
+      ...options.mcpServerList!,
+      requireUser: async request => { void userFromRequest(request) },
+      ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId,
+    }))
+  }
   if (options.attentionDefaults) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => registerAttentionDefaultsRoute(routes, { ...options.attentionDefaults!, requireUser: async request => { void userFromRequest(request) } }))
   }
@@ -727,6 +793,20 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => registerAttachmentThumbnailRoute(routes, { ...options.attachmentDownload!,
       requireUser: async request => { void userFromRequest(request) },
       ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId }))
+  }
+  if (options.voiceAvailability) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerVoiceAvailabilityRoute(routes, {
+      ...options.voiceAvailability!,
+      requireUser: async request => { void userFromRequest(request) },
+      ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId,
+    }))
+  }
+  if (options.clearAgentMemory) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerMemoryClearRoute(routes, {
+      clear: options.clearAgentMemory!.clear,
+      requireUser: async request => { void userFromRequest(request) },
+      ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId,
+    }))
   }
   if (options.terminalDelete) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => registerTerminalDeleteRoute(routes, { ...options.terminalDelete!,
@@ -812,6 +892,13 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
       ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId,
     }))
   }
+  if (options.accountDelete) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerAccountDeleteRoute(routes, {
+      ...options.accountDelete!,
+      requireUser: async request => { void userFromRequest(request) },
+      ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId,
+    }))
+  }
   if (options.onboarding) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => {
       registerOnboardingResetGuideRoute(routes, {
@@ -858,7 +945,7 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
     )
   if (options.mindRefSuggest)
     registerProtectedDomain(app, auth, (routes, userFromRequest) =>
-      registerMindRefSuggestRoute(routes, {
+      registerMindReferenceSuggestRoute(routes, {
         ownerId: (request) => userFromRequest(request).requestContext.data.ownerId,
         operations: options.mindRefSuggest!,
       }),
@@ -906,6 +993,10 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
   if (options.scheduledTaskDeliveryTargets)
     registerProtectedDomain(app, auth, (routes, userFromRequest) =>
       registerScheduledTaskDeliveryTargets(routes, userFromRequest, options.scheduledTaskDeliveryTargets!),
+    )
+  if (options.scheduledTaskTestNotify)
+    registerProtectedDomain(app, auth, (routes, userFromRequest) =>
+      registerScheduledTaskTestNotify(routes, userFromRequest, options.scheduledTaskTestNotify!),
     )
   if (options.scheduledTaskWrites)
     registerProtectedDomain(app, auth, (routes, userFromRequest) =>
@@ -1079,6 +1170,15 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
         requireUser: async (request) => { void userFromRequest(request) },
         ownerIdFromRequest: (request) => userFromRequest(request).requestContext.data.ownerId,
         operations: options.folderCopy!,
+      })
+    })
+  }
+  if (options.folderDelete) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => {
+      registerFolderDeleteRoute(routes, {
+        requireUser: async (request) => { void userFromRequest(request) },
+        ownerIdFromRequest: (request) => userFromRequest(request).requestContext.data.ownerId,
+        operations: options.folderDelete!,
       })
     })
   }
@@ -1350,6 +1450,10 @@ export function createApp(options: WebUiOptions) {
   if (options.adminAuth && options.watcherCapacity) registerWatcherCapacityRoute(app, { ...options.watcherCapacity, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.adminFileSyncEvents) registerAdminFileSyncEventsRoute(app, { ...options.adminFileSyncEvents, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.adminEmbeddingProbe) registerEmbeddingProbeRoute(app, { ...options.adminEmbeddingProbe, requireAdmin: options.adminAuth.requireAdmin })
+  if (options.adminAuth && options.adminMediaProbePreview) registerAdminMediaProbePreviewRoute(app, { ...options.adminMediaProbePreview, requireAdmin: options.adminAuth.requireAdmin })
+  if (options.adminAuth && options.adminLlmPresetTest) registerAdminLlmPresetTestRoute(app, { ...options.adminLlmPresetTest, requireAdmin: options.adminAuth.requireAdmin })
+  if (options.adminAuth && options.adminLlmPresetMediaProbe) registerAdminLlmPresetMediaProbeRoute(app, { ...options.adminLlmPresetMediaProbe, requireAdmin: options.adminAuth.requireAdmin })
+  if (options.adminAuth && options.adminLlmCapabilityProbe) registerAdminLlmCapabilityProbeRoute(app, { ...options.adminLlmCapabilityProbe, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.adminEmbeddingRebuildStatus) registerAdminEmbeddingRebuildStatusRoute(app, { ...options.adminEmbeddingRebuildStatus, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.safeEgressUpdate) registerSafeEgressUpdateRoute(app, { ...options.safeEgressUpdate, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.safeEgressProbe) registerSafeEgressProbeRoute(app, { ...options.safeEgressProbe, requireAdmin: options.adminAuth.requireAdmin })
@@ -1359,6 +1463,10 @@ export function createApp(options: WebUiOptions) {
   if (options.adminAuth && options.adminAnalytics) registerAdminAnalyticsRoutes(app, { ...options.adminAnalytics, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.adminAuditLog) registerAdminAuditLogRoute(app, { ...options.adminAuditLog, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.adminUserSettings) registerAdminUserSettingsRoutes(app, { ...options.adminUserSettings, requireAdmin: options.adminAuth.requireAdmin })
+  if (options.adminAuth && options.adminUserDelete) registerAdminUserDeleteRoute(app, {
+    ...options.adminUserDelete,
+    requireAdmin: options.adminAuth.requireAdmin,
+  })
   if (options.adminAuth && options.notificationBroadcast) registerNotificationBroadcastRoute(app, { ...options.notificationBroadcast, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.notificationAdminHistory) registerNotificationAdminHistoryRoutes(app, { ...options.notificationAdminHistory, requireAdmin: options.adminAuth.requireAdmin })
   if (options.staticRoot) registerStaticFrontend(app, options.staticRoot)

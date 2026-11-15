@@ -19,7 +19,7 @@
 | `scheduled-tasks.ts` | 定时任务领域工具。 |
 | `global-search.ts` | 站内全局搜索工具组，委托共享搜索服务。 |
 | `time.ts` | 时间工具组及共用可信时钟投影。 |
-| `skill-management.ts` | 技能管理工具组；元数据列表含停用用户项，复用共享目录，不读取正文或授予权限。 |
+| `skill-management.ts` | 技能管理工具组；列表包含停用项且不返回正文，创建/更新复用共享生命周期服务；删除在持久确认接入前不开放。 |
 | `link-buttons.ts` | 链接按钮校验、Web artifact 及 IM 持久投递收据；生产 Host 和具体渠道能力须显式装配。 |
 | `meta.ts` | Skill正文加载、当前授权工具Schema发现及普通澄清交互；不实现Skill持久化管理或第二套执行器。 |
 

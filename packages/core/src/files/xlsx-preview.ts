@@ -1,6 +1,10 @@
+import * as XLSX from 'xlsx'
+import { XMLParser, XMLValidator } from 'fast-xml-parser'
+
 export interface XlsxPreviewArchiveEntry { name: string; size: number; compressedSize: number }
 export interface XlsxPreviewArchive {
   rawSize: number
+  rawWorkbook: Uint8Array
   entries: readonly XlsxPreviewArchiveEntry[]
   read(name: string): Promise<Uint8Array | null>
 }
@@ -49,76 +53,92 @@ export class XlsxPreviewError extends Error {
 type XmlNode = { name: string; attrs: Record<string, string>; text: string; children: XmlNode[] }
 const localName = (name: string) => name.includes(':') ? name.slice(name.lastIndexOf(':') + 1) : name
 
-function xmlText(value: string): string {
-  return value.replace(/&(#x[\da-f]+|#\d+|amp|lt|gt|quot|apos);/gi, (_match, entity: string) => {
-    if (entity[0] === '#') {
-      const point = entity[1]?.toLowerCase() === 'x' ? Number.parseInt(entity.slice(2), 16) : Number.parseInt(entity.slice(1), 10)
-      if (!Number.isInteger(point) || point < 0 || point > 0x10ffff || point >= 0xd800 && point <= 0xdfff) throw new Error('xml entity')
-      return String.fromCodePoint(point)
+const xmlParser = new XMLParser({
+  preserveOrder: true,
+  ignoreAttributes: false,
+  attributeNamePrefix: '@_',
+  parseTagValue: false,
+  parseAttributeValue: false,
+  trimValues: false,
+  processEntities: true,
+  maxNestedTags: 128,
+})
+
+type OrderedXmlEntry = Record<string, unknown>
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function validXmlCodePoint(point: number): boolean {
+  return point === 0x9 || point === 0xa || point === 0xd
+    || point >= 0x20 && point <= 0xd7ff
+    || point >= 0xe000 && point <= 0xfffd
+    || point >= 0x10000 && point <= 0x10ffff
+}
+
+function validateXmlEntities(source: string): void {
+  const predefined = new Set(['amp', 'lt', 'gt', 'quot', 'apos'])
+  for (const [, entity] of source.matchAll(/&([^;\s<&]*);/g)) {
+    if (predefined.has(entity!)) continue
+    const hexadecimal = /^#x([\da-f]+)$/i.exec(entity!)
+    const decimal = /^#(\d+)$/.exec(entity!)
+    const point = hexadecimal ? Number.parseInt(hexadecimal[1]!, 16)
+      : decimal ? Number.parseInt(decimal[1]!, 10) : Number.NaN
+    if (!Number.isSafeInteger(point) || !validXmlCodePoint(point)) throw new Error('xml entity')
+  }
+}
+
+function orderedNode(name: string, content: unknown, attributes?: unknown): XmlNode {
+  const node: XmlNode = { name, attrs: {}, text: '', children: [] }
+  if (attributes !== undefined) {
+    if (!isRecord(attributes)) throw new Error('xml attributes')
+    for (const [attribute, attributeValue] of Object.entries(attributes)) {
+      if (!attribute.startsWith('@_') || typeof attributeValue !== 'string') throw new Error('xml attribute')
+      const attributeName = attribute.slice(2)
+      if (Object.hasOwn(node.attrs, attributeName)) throw new Error('xml duplicate attribute')
+      node.attrs[attributeName] = attributeValue
     }
-    return ({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" } as Record<string, string>)[entity.toLowerCase()]!
-  }).replace(/&[^;\s]+;/g, () => { throw new Error('xml entity') })
+  }
+  const entries = Array.isArray(content) ? content : [content]
+  for (const entry of entries) {
+    if (!isRecord(entry)) throw new Error('xml node')
+    for (const [key, value] of Object.entries(entry as OrderedXmlEntry)) {
+      if (key === ':@') {
+        continue
+      } else if (key === '#text' || key === '#cdata') {
+        if (typeof value !== 'string') throw new Error('xml text')
+        node.text += value
+      } else if (key.startsWith('?')) {
+        continue
+      } else {
+        node.children.push(orderedNode(key, value, entry[':@']))
+      }
+    }
+  }
+  return node
 }
 
 function parseXml(source: string): XmlNode {
   if (/<!\s*(?:DOCTYPE|ENTITY)/i.test(source)) throw new Error('xml doctype')
-  const root: XmlNode = { name: '', attrs: {}, text: '', children: [] }
-  const stack = [root]
-  const token = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|<(?:(?:"[^"]*")|(?:'[^']*')|[^'">])*?>|[^<]+/gy
-  let offset = 0
-  while (offset < source.length) {
-    token.lastIndex = offset
-    const match = token.exec(source)
-    if (!match) throw new Error('xml token')
-    const part = match[0]
-    offset = token.lastIndex
-    if (part.startsWith('<!--') || part.startsWith('<?')) continue
-    if (part.startsWith('<![CDATA[')) { stack.at(-1)!.text += part.slice(9, -3); continue }
-    if (part.startsWith('</')) {
-      const name = part.slice(2, -1).trim()
-      if (stack.length < 2 || stack.at(-1)!.name !== name) throw new Error('xml close')
-      stack.pop()
-      continue
-    }
-    if (part.startsWith('<!')) throw new Error('xml declaration')
-    if (part.startsWith('<')) {
-      const selfClosing = /\/\s*>$/.test(part)
-      const body = part.slice(1, selfClosing ? part.lastIndexOf('/') : -1).trim()
-      const nameMatch = /^([^\s/>]+)/.exec(body)
-      if (!nameMatch) throw new Error('xml name')
-      const node: XmlNode = { name: nameMatch[1]!, attrs: {}, text: '', children: [] }
-      const attrs = body.slice(nameMatch[0].length)
-      const attrToken = /([^\s=]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/gy
-      let attrOffset = 0
-      while (attrOffset < attrs.length) {
-        while (/\s/.test(attrs[attrOffset] ?? '')) attrOffset++
-        if (attrOffset >= attrs.length) break
-        attrToken.lastIndex = attrOffset
-        const attr = attrToken.exec(attrs)
-        if (!attr) throw new Error('xml attribute')
-        attrOffset = attrToken.lastIndex
-        const key = attr[1]!
-        if (Object.hasOwn(node.attrs, key)) throw new Error('xml duplicate attribute')
-        node.attrs[key] = xmlText(attr[2] ?? attr[3] ?? '')
-      }
-      stack.at(-1)!.children.push(node)
-      if (!selfClosing) stack.push(node)
-      continue
-    }
-    stack.at(-1)!.text += xmlText(part)
-  }
-  if (stack.length !== 1 || root.children.length !== 1) throw new Error('xml root')
-  return root.children[0]!
+  if (/[^\u0009\u000A\u000D\u0020-\uD7FF\uE000-\uFFFD\u{10000}-\u{10FFFF}]/u.test(source)) throw new Error('xml character')
+  validateXmlEntities(source)
+  if (XMLValidator.validate(source) !== true) throw new Error('xml invalid')
+  const parsed = xmlParser.parse(source) as unknown
+  if (!Array.isArray(parsed)) throw new Error('xml root')
+  const roots = parsed.filter(isRecord).flatMap(entry => Object.entries(entry)
+    .filter(([name]) => !name.startsWith('?') && name !== ':@')
+    .map(([name, content]) => ({ name, content, attributes: entry[':@'] })))
+  if (roots.length !== 1) throw new Error('xml root')
+  const root = roots[0]!
+  return orderedNode(root.name, root.content, root.attributes)
 }
 
 function walk(root: XmlNode): XmlNode[] { return [root, ...root.children.flatMap(walk)] }
 function first(root: XmlNode, name: string): XmlNode | undefined { return walk(root).find(node => localName(node.name) === name) }
-function direct(root: XmlNode, name: string): XmlNode[] { return root.children.filter(node => localName(node.name) === name) }
 function attr(root: XmlNode | undefined, name: string): string | undefined {
   if (!root) return undefined
-  return Object.entries(root.attrs).find(([key]) => localName(key) === name)?.[1]
+  return Object.entries(root.attrs).find(([key]) => localName(key.replace(/^@_/, '')) === name)?.[1]
 }
-function textOf(root: XmlNode): string { return root.text + root.children.map(textOf).join('') }
 function resolvePath(base: string, target: string): string {
   const parts: string[] = []
   for (const part of `${base}/${target}`.split('/')) {
@@ -128,24 +148,6 @@ function resolvePath(base: string, target: string): string {
   }
   return parts.join('/')
 }
-function columnNumber(reference: string): number {
-  const letters = [...reference].filter(char => /[A-Za-z]/.test(char)).join('').toUpperCase()
-  let column = 0
-  for (const char of letters) column = column * 26 + char.charCodeAt(0) - 64
-  return column
-}
-function cellPosition(reference: string): { row: number; col: number } | null {
-  const letters = [...reference].filter(char => /[A-Za-z]/.test(char)).join('').toUpperCase()
-  const digits = [...reference].filter(char => /\d/.test(char)).join('')
-  const row = Number(digits), col = columnNumber(letters)
-  return row > 0 && col > 0 ? { row, col } : null
-}
-function finiteFloat(value: string | undefined): number | null {
-  if (value === undefined || value.trim() === '') return null
-  const result = Number(value)
-  return Number.isFinite(result) ? result : null
-}
-
 function validateArchive(archive: XlsxPreviewArchive): void {
   if (archive.rawSize > MAX_FILE_BYTES) throw new XlsxPreviewError(413, 'XLSX 文件超过预览大小限制')
   if (archive.entries.length > MAX_ARCHIVE_ENTRIES) throw new XlsxPreviewError(413, 'XLSX 文件条目数量超过预览限制')
@@ -180,7 +182,7 @@ async function readXml(archive: XlsxPreviewArchive, name: string): Promise<XmlNo
 
 function relationMap(root: XmlNode): Map<string, string> {
   return new Map(walk(root).filter(item => localName(item.name) === 'Relationship')
-    .map(item => [item.attrs.Id ?? '', item.attrs.Target ?? '']))
+    .map(item => [attr(item, 'Id') ?? '', attr(item, 'Target') ?? '']))
 }
 
 async function extractImages(archive: XlsxPreviewArchive): Promise<{ sheets: Array<Record<string, XlsxPreviewImage[]>>; imageTargets: Map<number, XlsxPreviewImageTarget> }> {
@@ -231,55 +233,48 @@ async function extractImages(archive: XlsxPreviewArchive): Promise<{ sheets: Arr
   return { sheets, imageTargets }
 }
 
-async function extractSheetData(archive: XlsxPreviewArchive): Promise<XlsxPreviewSheetData[]> {
-  const entries = new Set(archive.entries.map(item => item.name))
-  let sharedStrings: string[] = []
-  if (entries.has('xl/sharedStrings.xml')) {
-    const strings = await readXml(archive, 'xl/sharedStrings.xml')
-    sharedStrings = direct(strings, 'si').map(textOf)
-  }
-  const workbook = await readXml(archive, 'xl/workbook.xml')
-  const relations = relationMap(await readXml(archive, 'xl/_rels/workbook.xml.rels'))
+function xlsxCellText(cell: XLSX.CellObject): string {
+  if (cell.t === 'b') return cell.v ? '1' : '0'
+  if (cell.t === 'e' && cell.w) return cell.w
+  return cell.v == null ? '' : String(cell.v)
+}
+
+function extractSheetData(rawWorkbook: Uint8Array): XlsxPreviewSheetData[] {
+  const workbook = XLSX.read(rawWorkbook, { type: 'array', cellDates: false, cellText: true, cellStyles: true })
   const result: XlsxPreviewSheetData[] = []
-  for (const sheet of walk(workbook).filter(item => localName(item.name) === 'sheet')) {
-    const name = sheet.attrs.name || '工作表'
-    const target = relations.get(attr(sheet, 'id') ?? '')
-    if (!target) { result.push({ name, cells: {}, merges: [], rowHeights: {}, colWidths: {}, rows: 0, cols: 0 }); continue }
-    const root = await readXml(archive, resolvePath('xl', target))
+  for (const name of workbook.SheetNames) {
+    const sheet = workbook.Sheets[name]!
     const cells: Record<string, string> = {}, rowHeights: Record<string, number> = {}, colWidths: Record<string, number> = {}
     let maxRow = 0, maxCol = 0
-    for (const node of walk(root)) {
-      if (localName(node.name) === 'row') {
-        const row = Number(node.attrs.r ?? '0'), height = finiteFloat(node.attrs.ht)
-        if (Number.isInteger(row) && row > 0 && row <= MAX_ROWS && height !== null) rowHeights[String(row - 1)] = Math.round(height * 1.333)
-      } else if (localName(node.name) === 'col') {
-        const start = Number(node.attrs.min ?? '1'), end = Number(node.attrs.max ?? String(start)), width = finiteFloat(node.attrs.width ?? '10')
-        if (Number.isInteger(start) && Number.isInteger(end) && width !== null) {
-          const pixels = Math.round(width * 8 + 16)
-          for (let column = Math.max(0, start - 1); column < Math.min(MAX_COLS, end); column++) colWidths[String(column)] = Math.max(72, pixels)
-        }
-      }
+    for (const [reference, cell] of Object.entries(sheet)) {
+      if (reference.startsWith('!')) continue
+      let position: XLSX.CellAddress
+      try { position = XLSX.utils.decode_cell(reference) } catch { continue }
+      if (position.r >= MAX_ROWS || position.c >= MAX_COLS || !cell || typeof cell !== 'object' || !('v' in cell)) continue
+      cells[reference] = xlsxCellText(cell as XLSX.CellObject)
+      maxRow = Math.max(maxRow, position.r + 1)
+      maxCol = Math.max(maxCol, position.c + 1)
     }
-    for (const cell of walk(root).filter(item => localName(item.name) === 'c')) {
-      const ref = cell.attrs.r, position = ref ? cellPosition(ref) : null
-      if (!ref || !position || position.row > MAX_ROWS || position.col > MAX_COLS) continue
-      const value = cell.children.find(item => ['v', 'is'].includes(localName(item.name)))
-      let content = value ? textOf(value) : ''
-      if (cell.attrs.t === 's') { const index = Number.parseInt(content, 10); content = Number.isInteger(index) ? sharedStrings[index] ?? '' : '' }
-      else if (cell.attrs.t === 'inlineStr') content = value ? textOf(value) : ''
-      cells[ref] = content
-      maxRow = Math.max(maxRow, position.row)
-      maxCol = Math.max(maxCol, position.col)
+    for (const [index, row] of (sheet['!rows'] ?? []).entries()) {
+      if (index >= MAX_ROWS || !row) continue
+      const pixels = typeof row.hpt === 'number' ? Math.round(row.hpt * 1.333) : typeof row.hpx === 'number' ? row.hpx : null
+      if (pixels !== null && pixels > 0) rowHeights[String(index)] = pixels
+    }
+    for (const [index, column] of (sheet['!cols'] ?? []).entries()) {
+      if (index >= MAX_COLS || !column) continue
+      const pixels = typeof column.width === 'number' ? Math.round(column.width * 8 + 16)
+        : typeof column.wch === 'number' ? Math.round(column.wch * 8 + 16) : null
+      if (pixels !== null && pixels > 0) colWidths[String(index)] = Math.max(72, pixels)
     }
     const merges: XlsxPreviewSheetData['merges'] = []
-    for (const merge of walk(root).filter(item => localName(item.name) === 'mergeCell')) {
-      const ref = merge.attrs.ref ?? '', [start, end] = ref.split(':')
-      if (!start || !end) continue
-      const begin = cellPosition(start), finish = cellPosition(end)
-      if (!begin || !finish || begin.row > MAX_ROWS || begin.col > MAX_COLS) continue
-      merges.push({ s: begin.row - 1, c: begin.col - 1, e: Math.min(finish.row - 1, MAX_ROWS - 1), d: Math.min(finish.col - 1, MAX_COLS - 1) })
-      maxRow = Math.max(maxRow, Math.min(finish.row, MAX_ROWS))
-      maxCol = Math.max(maxCol, Math.min(finish.col, MAX_COLS))
+    for (const merge of sheet['!merges'] ?? []) {
+      if (merge.s.r >= MAX_ROWS || merge.s.c >= MAX_COLS) continue
+      merges.push({
+        s: merge.s.r, c: merge.s.c,
+        e: Math.min(merge.e.r, MAX_ROWS - 1), d: Math.min(merge.e.c, MAX_COLS - 1),
+      })
+      maxRow = Math.max(maxRow, Math.min(merge.e.r + 1, MAX_ROWS))
+      maxCol = Math.max(maxCol, Math.min(merge.e.c + 1, MAX_COLS))
     }
     result.push({ name, cells, merges, rowHeights, colWidths, rows: Math.min(maxRow, MAX_ROWS), cols: Math.min(maxCol, MAX_COLS) })
   }
@@ -289,7 +284,7 @@ async function extractSheetData(archive: XlsxPreviewArchive): Promise<XlsxPrevie
 export async function extractXlsxPreview(archive: XlsxPreviewArchive): Promise<XlsxPreviewResult> {
   validateArchive(archive)
   let images: Awaited<ReturnType<typeof extractImages>>, data: XlsxPreviewSheetData[]
-  try { [images, data] = await Promise.all([extractImages(archive), extractSheetData(archive)]) }
+  try { [images, data] = await Promise.all([extractImages(archive), Promise.resolve().then(() => extractSheetData(archive.rawWorkbook))]) }
   catch (error) {
     if (error instanceof XlsxPreviewError) throw error
     throw new XlsxPreviewError(400, '不是有效的 XLSX 文件')

@@ -4,6 +4,7 @@ import { databaseTime, nowUtc, utc, type Clock } from '../data/codec.js'
 import type { Backend } from '../data/repositories.js'
 import type { Database } from '../data/schema.js'
 import { recordForwardUndoOperation } from '../data/undo.js'
+import { enqueueMindRagIndex } from './rag-index-job.js'
 import type { MindNoteCreateInput, MindNoteReadResponse } from './note-create.js'
 
 export type MindDatabase = Database
@@ -29,6 +30,7 @@ function noteInserter(db: Kysely<MindDatabase> | Transaction<MindDatabase>, back
         createdAt: iso(row.created_at), updatedAt: iso(row.updated_at), deletedAt: null,
         refType: null, refId: null, refSnapshot: null,
       }
+      await enqueueMindRagIndex(tx, backend, owner, 'note', String(response.id), now, 'create')
       const context = contextId?.trim().slice(0, 128)
       if (context) {
         const ref = `note:${response.id}`

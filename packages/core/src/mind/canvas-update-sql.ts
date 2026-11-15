@@ -4,6 +4,7 @@ import { databaseTime, nowUtc, utc, type Clock } from '../data/codec.js'
 import type { Backend } from '../data/repositories.js'
 import type { Database, MindCanvasTable } from '../data/schema.js'
 import { recordForwardUndoOperation } from '../data/undo.js'
+import { enqueueMindRagIndex } from './rag-index-job.js'
 import type { MindCanvasUpdateRuntime } from './canvas-update.js'
 
 function canvas(row: Selectable<MindCanvasTable>) {
@@ -27,8 +28,14 @@ export function createSqlMindCanvasUpdateRuntime(db: Kysely<Database>, backend: 
             const row = await tx.selectFrom('mind_maps').selectAll().where('id', '=', id).where('user_id', '=', owner).where('deleted_at', 'is', null).executeTakeFirst()
             return row ? canvas(row) : null
           }
+          const before = fields.title === undefined
+            ? null
+            : await tx.selectFrom('mind_maps').select('title').where('id', '=', id).where('user_id', '=', owner).where('deleted_at', 'is', null).executeTakeFirst()
           const patch = { ...(fields.title !== undefined ? { title: fields.title } : {}), ...(fields.dataJson !== undefined ? { data_json: fields.dataJson } : {}), updated_at: databaseTime(clock(), backend) }
           const row = await tx.updateTable('mind_maps').set(patch).where('id', '=', id).where('user_id', '=', owner).where('deleted_at', 'is', null).returningAll().executeTakeFirst()
+          // RAG canvas projection reads the title plus item/node text; canvas view data
+          // (camera and relation anchors) cannot change an indexed document.
+          if (row && before && before.title !== row.title) await enqueueMindRagIndex(tx, backend, owner, 'canvas', '', patch.updated_at, 'update')
           return row ? canvas(row) : null
         },
         async recordUndo(record) { await recordForwardUndoOperation(tx, backend, { ...record, userId: canonical }, clock) },

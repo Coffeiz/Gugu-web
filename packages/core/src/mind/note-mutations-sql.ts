@@ -4,6 +4,7 @@ import { databaseTime, nowUtc, utc, type Clock } from '../data/codec.js'
 import type { Backend } from '../data/repositories.js'
 import type { Database, MindNodeTable } from '../data/schema.js'
 import { recordForwardUndoOperation } from '../data/undo.js'
+import { enqueueMindRagIndex } from './rag-index-job.js'
 import type { MindNoteReadResponse } from './note-create.js'
 import { MindNoteMutationError, type MindNoteUpdateInput } from './note-mutations.js'
 
@@ -50,7 +51,8 @@ export function createSqlMindNoteMutator(db: Kysely<Database>, backend: Backend,
         if (!Object.keys(fields).length) return { note: response(before), changed: false }
         if (input.version !== Number(before.version)) throw new MindNoteMutationError('便签已被其他端修改，请刷新后重试', 409)
       } else fields.deleted_at = databaseTime(clock(), backend)
-      fields.updated_at = databaseTime(clock(), backend)
+      const updatedAt = databaseTime(clock(), backend)
+      fields.updated_at = updatedAt
       const updating = tx.updateTable('mind_nodes').set(fields).set({ version: sql`version + 1` })
         .where('id', '=', noteId).where('user_id', '=', owner).where('kind', '=', 'note')
         .where('version', '=', Number(before.version))
@@ -64,6 +66,7 @@ export function createSqlMindNoteMutator(db: Kysely<Database>, backend: Backend,
           beforeState: { items: { [key]: snapshot(before) } }, afterState: { items: { [key]: snapshot(after) } },
           baseVersions: { [key]: { version: Number(before.version) } } }, clock)
       }
+      await enqueueMindRagIndex(tx, backend, owner, 'note', String(noteId), updatedAt, input === 'restore' ? 'update' : input ? 'update' : 'delete')
       return { note: response(after), changed: true }
     })
   }

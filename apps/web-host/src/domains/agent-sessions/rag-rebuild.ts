@@ -3,11 +3,13 @@ import {
   createCanvasRagSource,
   createConversationRagSource,
   createKnowledgeRagSource,
+  createMemoryRagSource,
   createNoteRagSource,
   createProjectRagSource,
   createScheduledTaskRagSource,
   createSqlRagRebuildWorker,
   enqueueMissingAgentRagBaselines,
+  createSqlMemoryScopeStateReader,
 } from '@gugu/core/agent'
 import { createKyselyCalendarReadPort } from '@gugu/core/calendar'
 import type { SqlDataRuntime } from '@gugu/core/data'
@@ -15,14 +17,18 @@ import type { AgentKnowledgeReadStore } from '@gugu/core/agent'
 import { createSqlMindCanvasReader, createSqlMindNoteReader } from '@gugu/core/mind'
 import { createKyselyScheduledTaskRagReader } from '@gugu/core/scheduled-task-list'
 import { startRagIndexWorker, type RagIndexWorkerOptions } from './rag-index-worker.js'
+import { createLocalAgentMemoryRagStore } from './tools/agent-rag-memory-store.js'
+import { createPostgresAgentMemoryIndexScopeReader } from './tools/agent-memory-index-scopes.js'
 
 /**
  * Production PostgreSQL source set for the persistent RAG index.
  * Every source delegates to a Core domain reader or an explicitly injected owner-bound
- * storage port. Memory remains omitted until its owner/group/member scope authorization
- * service is ready; knowledge is enabled only when Host injects its authorized FS reader.
+ * storage port. Memory indexing is enabled only with an injected storage root; its Host
+ * cursor reader enumerates owner scopes for rebuilding and does not grant query access.
+ * Knowledge is enabled only when Host injects its authorized FS reader.
  */
-export function createAgentRagRebuildWorker(core: SqlDataRuntime, options: { knowledgeStore?: AgentKnowledgeReadStore } = {}) {
+export function createAgentRagRebuildWorker(core: SqlDataRuntime, options: { knowledgeStore?: AgentKnowledgeReadStore; memoryStorageRoot?: string } = {}) {
+  const memoryStore = options.memoryStorageRoot ? createLocalAgentMemoryRagStore(options.memoryStorageRoot) : undefined
   const sources = {
     project: createProjectRagSource(core),
     calendar: createCalendarRagSource(createKyselyCalendarReadPort(core.db, core.backend)),
@@ -31,15 +37,20 @@ export function createAgentRagRebuildWorker(core: SqlDataRuntime, options: { kno
     conversation: createConversationRagSource(core.db, core.backend),
     canvas: createCanvasRagSource(createSqlMindCanvasReader(core.db, core.backend)),
     ...(options.knowledgeStore ? { knowledge: createKnowledgeRagSource(options.knowledgeStore) } : {}),
+    ...(memoryStore ? { memory: createMemoryRagSource({
+      storage: memoryStore,
+      scopeState: { getMemoryScopeState: createSqlMemoryScopeStateReader(core.db) },
+      scopes: createPostgresAgentMemoryIndexScopeReader(core.db),
+    }) } : {}),
   } as const
   const work = createSqlRagRebuildWorker(core.db, core.backend, sources)
   return { work, sources: Object.keys(sources) }
 }
 
 /** Host 生命周期入口：统一装配可用来源、持久 Worker 与单消费者调度器。 */
-export function startAgentRagIndexWorker(core: SqlDataRuntime, options: Omit<RagIndexWorkerOptions, 'work'> & { knowledgeStore?: AgentKnowledgeReadStore }) {
-  const { knowledgeStore, ...schedulerOptions } = options
-  const { work, sources } = createAgentRagRebuildWorker(core, { knowledgeStore })
+export function startAgentRagIndexWorker(core: SqlDataRuntime, options: Omit<RagIndexWorkerOptions, 'work'> & { knowledgeStore?: AgentKnowledgeReadStore; memoryStorageRoot?: string }) {
+  const { knowledgeStore, memoryStorageRoot, ...schedulerOptions } = options
+  const { work, sources } = createAgentRagRebuildWorker(core, { knowledgeStore, memoryStorageRoot })
   let baselineEnqueued = false
   const scheduler = startRagIndexWorker({
     ...schedulerOptions,

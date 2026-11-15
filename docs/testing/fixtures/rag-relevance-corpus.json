@@ -1,0 +1,92 @@
+{
+  "owner_id": "fixture-owner-a",
+  "top_k": 3,
+  "documents": [
+    {
+      "id": "knowledge:deploy-plan",
+      "source_type": "knowledge",
+      "scope_type": "owner",
+      "scope_id": "fixture-owner-a",
+      "text": "项目上线部署计划：数据库迁移后分阶段灰度发布，保留回滚清单和监控指标。"
+    },
+    {
+      "id": "conversation:deploy-window",
+      "source_type": "conversation",
+      "scope_type": "owner",
+      "scope_id": "fixture-owner-a",
+      "text": "项目会议确认上线窗口和部署步骤，先小流量灰度再全量发布。"
+    },
+    {
+      "id": "memory:owner-scope",
+      "source_type": "memory",
+      "scope_type": "owner",
+      "scope_id": "fixture-owner-a",
+      "text": "owner scope 只允许当前用户读取，跨用户隔离需要在查询前完成授权。"
+    },
+    {
+      "id": "memory:group-scope-decoy",
+      "source_type": "memory",
+      "scope_type": "group",
+      "scope_id": "fixture-group-a",
+      "platform": "synthetic",
+      "bot_id": "fixture-bot",
+      "group_id": "fixture-group-a",
+      "text": "owner scope 只允许当前用户读取，跨用户隔离需要在查询前完成授权。"
+    },
+    {
+      "id": "note:nanjing-weather",
+      "source_type": "note",
+      "scope_type": "owner",
+      "scope_id": "fixture-owner-a",
+      "text": "南京天气记录：周末有小雨，出门携带雨伞。"
+    },
+    {
+      "id": "conversation:gta6-release",
+      "source_type": "conversation",
+      "scope_type": "owner",
+      "scope_id": "fixture-owner-a",
+      "text": "GTA6 发售日期和 release date 尚未由发行方确认。"
+    },
+    {
+      "id": "project:f1-maintenance",
+      "source_type": "project",
+      "scope_type": "owner",
+      "scope_id": "fixture-owner-a",
+      "text": "F1 2026 赛车维护安排：检查刹车、轮胎和驾驶舱。"
+    },
+    {
+      "id": "calendar:health-reminder",
+      "source_type": "calendar",
+      "scope_type": "owner",
+      "scope_id": "fixture-owner-a",
+      "text": "每周三提醒浇花并整理阳台。"
+    }
+  ],
+  "queries": [
+    {
+      "id": "zh-project-deploy",
+      "query": "项目 上线 部署 计划",
+      "relevant_ids": ["knowledge:deploy-plan", "conversation:deploy-window"]
+    },
+    {
+      "id": "zh-nanjing-weather",
+      "query": "南京 天气",
+      "relevant_ids": ["note:nanjing-weather"]
+    },
+    {
+      "id": "mixed-gta6-release",
+      "query": "GTA6 发售 release date",
+      "relevant_ids": ["conversation:gta6-release"]
+    },
+    {
+      "id": "mixed-owner-scope",
+      "query": "owner scope 跨用户 隔离",
+      "relevant_ids": ["memory:owner-scope"]
+    },
+    {
+      "id": "empty-result",
+      "query": "火星豆腐量子回忆",
+      "relevant_ids": []
+    }
+  ]
+}

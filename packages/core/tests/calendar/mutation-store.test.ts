@@ -3,8 +3,10 @@ import { Kysely, PostgresDialect, SqliteDialect, sql } from 'kysely'
 import SQLite from 'better-sqlite3'
 import { Pool } from 'pg'
 import { describe, expect, it } from 'vitest'
-import { tablesSql } from '../../src/data/schema.js'
+import { tablesSql, type Database } from '../../src/data/schema.js'
 import { createKyselyCalendarMutationStores } from '../../src/calendar/mutation-store.js'
+import { createCalendarUndoAdapter } from '../../src/calendar/undo-adapter.js'
+import type { UndoAdapterContext } from '../../src/undo/state-machine.js'
 import { updateCalendarEvent } from '../../src/calendar/application/event-update.js'
 import { deleteCalendarEvent } from '../../src/calendar/application/event-delete.js'
 
@@ -35,6 +37,12 @@ describe.each(['sqlite', 'postgres'] as const)('日历更新和删除事务 %s',
       const tasks = (await sql<{ name: string; cron: string; enabled: boolean | number }>`SELECT name,cron,enabled FROM scheduled_tasks ORDER BY id`.execute(db)).rows
       expect(tasks.map(task => task.name)).toEqual(['新活动 提醒', '新活动 提醒'])
       expect(tasks.map(task => task.cron)).toEqual(['@once:2099-11-15T01:55:00+00:00', '@once:2099-11-15T01:50:00+00:00'])
+      const reminderJob = (await sql<{ generation: number; pending_source_ids: unknown }>`SELECT generation,pending_source_ids FROM rag_index_jobs WHERE user_id=${stored} AND source_type='scheduled_task'`.execute(db)).rows[0]!
+      expect(Number(reminderJob.generation)).toBe(2)
+      expect(typeof reminderJob.pending_source_ids === 'string' ? JSON.parse(reminderJob.pending_source_ids) : reminderJob.pending_source_ids).toEqual(['1', '2'])
+      const calendarJob = (await sql<{ generation: number; pending_source_ids: unknown }>`SELECT generation,pending_source_ids FROM rag_index_jobs WHERE user_id=${stored} AND source_type='calendar'`.execute(db)).rows[0]!
+      expect(Number(calendarJob.generation)).toBe(1)
+      expect(typeof calendarJob.pending_source_ids === 'string' ? JSON.parse(calendarJob.pending_source_ids) : calendarJob.pending_source_ids).toEqual(['1'])
       expect((await sql`SELECT id FROM undo_operations`.execute(db)).rows).toHaveLength(1)
       const concurrent = await Promise.allSettled([1, 2].map(() => updateCalendarEvent(stores.update, { ownerId: owner, eventId: 1, body: { version: 2, description: '并发' }, undoContextId: 'tab' })))
       expect(concurrent.filter(result => result.status === 'fulfilled')).toHaveLength(1)
@@ -44,17 +52,30 @@ describe.each(['sqlite', 'postgres'] as const)('日历更新和删除事务 %s',
       await expect(updateCalendarEvent(stores.update, { ownerId: owner, eventId: 1, body: { version: 3, title: '必须回滚' }, undoContextId: 'tab' })).rejects.toThrow()
       expect((await sql`SELECT * FROM calendar_events`.execute(db)).rows).toEqual(beforeFailure)
       expect((await sql<{ name: string }>`SELECT name FROM scheduled_tasks`.execute(db)).rows.map(row => row.name)).toEqual(['新活动 提醒', '新活动 提醒'])
+      expect(Number((await sql<{ generation: number }>`SELECT generation FROM rag_index_jobs WHERE user_id=${stored} AND source_type='scheduled_task'`.execute(db)).rows[0]!.generation)).toBe(2)
+      expect(Number((await sql<{ generation: number }>`SELECT generation FROM rag_index_jobs WHERE user_id=${stored} AND source_type='calendar'`.execute(db)).rows[0]!.generation)).toBe(2)
       await expect(deleteCalendarEvent(stores.delete, { ownerId: owner, eventId: 1, version: 3, undoContextId: 'tab' })).rejects.toThrow()
       expect((await sql`SELECT * FROM calendar_events`.execute(db)).rows).toEqual(beforeFailure)
       expect((await sql<{ enabled: boolean | number }>`SELECT enabled FROM scheduled_tasks`.execute(db)).rows.every(row => Boolean(row.enabled))).toBe(true)
       expect(publications).toHaveLength(2)
       await sql.raw(definitions.undo).execute(db)
       await deleteCalendarEvent(stores.delete, { ownerId: owner, eventId: 1, version: 3, undoContextId: 'tab' })
+      expect(Number((await sql<{ generation: number }>`SELECT generation FROM rag_index_jobs WHERE user_id=${stored} AND source_type='calendar'`.execute(db)).rows[0]!.generation)).toBe(3)
       const undo = (await sql<{ action: string; after_state: unknown }>`SELECT action,after_state FROM undo_operations`.execute(db)).rows[0]!
       expect(undo.action).toBe('delete')
       const snapshot = typeof undo.after_state === 'string' ? JSON.parse(undo.after_state) : undo.after_state
       expect(snapshot).toMatchObject({ items: { 'task:1': { enabled: false }, 'task:2': { enabled: false } } })
       expect((await sql<{ enabled: boolean | number }>`SELECT enabled FROM scheduled_tasks`.execute(db)).rows.every(row => !row.enabled)).toBe(true)
+      expect(Number((await sql<{ generation: number }>`SELECT generation FROM rag_index_jobs WHERE user_id=${stored} AND source_type='scheduled_task'`.execute(db)).rows[0]!.generation)).toBe(4)
+      const undoRow = {
+        id: 'undo-task', action: 'update',
+        before_state: { items: { 'task:1': { enabled: true, name: '恢复提醒' } } },
+        after_state: { items: { 'task:1': { enabled: false, name: '新活动 提醒' } } },
+      } as unknown as UndoAdapterContext['row']
+      const calendarUndo = createCalendarUndoAdapter(backend)
+      await db.transaction().execute(tx => calendarUndo.apply({ tx: tx as Kysely<Database>, owner, row: undoRow, mode: 'undo' }))
+      expect(Boolean((await sql<{ enabled: boolean | number }>`SELECT enabled FROM scheduled_tasks WHERE id=1`.execute(db)).rows[0]!.enabled)).toBe(true)
+      expect(Number((await sql<{ generation: number }>`SELECT generation FROM rag_index_jobs WHERE user_id=${stored} AND source_type='scheduled_task'`.execute(db)).rows[0]!.generation)).toBe(5)
       expect(publications).toHaveLength(4)
     } finally {
       await db.destroy()

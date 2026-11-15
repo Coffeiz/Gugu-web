@@ -117,6 +117,10 @@ SaaS 尚无当前仓库内的 Node Host；稳定后可维持独立私有仓库�
 
 同名业务模块在 Core 和 Host 中分别承担业务实现与入口适配，不维护两套规则。按需拆分领域规则、用例与仓储，不要求每个模块创建相同的空目录，也不为每条接口增加一层。2.0 尚未发布：现有内部调用、测试及导出应随迁移同步切换，确认无调用方后删除仅为旧 Node 目录或导出保留的转发层；不得因此删除 Python 参考后端或改变旧版对外行为、数据兼容及仍在使用的运行时协议。
 
+Web Host 的 `app.ts` 与 `main.ts` 是组合根，不承担逐路由业务实现。`app.ts` 创建 Fastify 实例、安装共享认证/错误/请求上下文边界、提供健康检查并注册业务域插件；各 `modules/<domain>/routes.ts` 汇总本域路由并作为 Fastify 插件挂载，单条路由可继续留在同域现有文件中。`main.ts` 负责解析启动配置、建立 PostgreSQL/Core/Redis 等共享资源、调用 Host 装配、启动服务与 Worker，并管理关闭顺序。只有当一个业务域确有多项平台依赖或生命周期需要集中构造时，才在 `modules/<domain>/host.ts` 放该域 Host 工厂；不要求每个目录都创建它。
+
+组合根应保持薄且可审查，但不设机械行数门槛。按业务域增量收敛路由注册和 Host 依赖装配，保持 Fastify 插件生命周期、认证 owner、HTTP 状态/错误语义、事务和启动关闭顺序；不引入通用 DI 容器、不按每条路由增加空壳层，也不在迁移进行中批量搬动同一根文件。
+
 公共数据访问优先沿用 Core 已有 Kysely 与 SQLite/PostgreSQL 适配：通用查询、数据编码和业务约束可共用，锁、事务并发、数据库专有查询与迁移保留必要的方言实现。按已实现业务切片建立 SQLite 与 PostgreSQL 同契约回归，不假定同一 SQL 自然拥有相同语义。Fastify、HTTP DTO/错误映射、Cookie、服务端部署和 Admin 等端专属职责留在 Host；桌面经受限 IPC 调用相同 Core 用例。无需为每条 API 新增抽象层或将 Host 专属能力迁入 Core。
 
 ```text
@@ -195,6 +199,8 @@ apps/web-host/                     # Linux/NAS 自托管版 Node HTTP Host 与�
       server.ts                    # HTTP 服务生命周期
       sse/                         # 流式事件与连接生命周期
     modules/                       # 〔目标〕按业务域组织 HTTP 插件、Host 适配和装配
+      <domain>/routes.ts           # 汇总本域 Fastify 路由插件，由 app.ts 挂载
+      <domain>/host.ts             # 〔按需〕构造本域平台依赖；不为统一目录结构而创建空工厂
       auth/routes/                 # 认证 HTTP 入口
       projects/routes/             # 项目 HTTP 入口
       workspaces/routes/           # 工作区 HTTP 入口

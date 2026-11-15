@@ -20,6 +20,7 @@ test('过期项目清理限定 owner，删除文件并在事务中更新配额',
       if (sql.includes('SELECT id,storage_key FROM files')) return { rows: [{ id: 9, storage_key: `${owner}/trash/a` }], rowCount: 1 }
       if (sql.includes('SELECT storage_limit_bytes')) return { rows: [{ storage_limit_bytes: null }], rowCount: 1 }
       if (sql.includes('SELECT used_bytes')) return { rows: [{ used_bytes: 3 }], rowCount: 1 }
+      if (sql.includes('DELETE FROM scheduled_tasks')) return { rows: [{ id: 16 }, { id: 17 }], rowCount: 2 }
       return { rows: [], rowCount: 0 }
     },
     release() {},
@@ -28,6 +29,7 @@ test('过期项目清理限定 owner，删除文件并在事务中更新配额',
     assert.equal(await purgeExpiredProject({ connect: async () => client, query: async () => ({ rows: [] }) } as unknown as Pool, root, new Date(), null), true)
     await assert.rejects(readFile(path.join(root, owner, 'trash', 'a')))
     assert.ok(calls.some(({ sql, args }) => sql.includes('DELETE FROM projects') && args[0] === owner && args[1] === 7))
+    assert.deepEqual(calls.filter(({ sql }) => sql.includes('INSERT INTO rag_index_jobs')).map(({ args }) => args), [[owner, '16'], [owner, '17']])
     assert.ok(calls.some(({ sql, args }) => sql.includes('INSERT INTO storage_quota_ledgers') && args[0] === owner))
     assert.ok(calls.some(({ sql }) => sql === 'COMMIT'))
   } finally { await rm(root, { recursive: true, force: true }) }

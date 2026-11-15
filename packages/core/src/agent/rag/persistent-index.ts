@@ -11,7 +11,9 @@ interface IndexRow {
 }
 function metadata(raw:unknown):Record<string,string|number|boolean|null> {
  let value=raw
- if(typeof value==='string')value=JSON.parse(value)
+ if(typeof value==='string'){
+  try{value=JSON.parse(value)}catch{throw new Error('RAG 索引元数据无效')}
+ }
  if(value===null||value===undefined)return {}
  if(typeof value!=='object'||Array.isArray(value))throw new Error('RAG 索引元数据无效')
  return value as Record<string,string|number|boolean|null>

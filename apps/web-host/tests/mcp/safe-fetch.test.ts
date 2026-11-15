@@ -36,3 +36,15 @@ test('MCP 请求经过固定目标传输，拒绝跳转并可取消响应流',as
   await new Promise(resolve=>setTimeout(resolve,30));assert.equal(closed,true)
  }finally{await transport.close();server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()))}
 })
+
+test('MCP tools/list 响应超过大小上限时中止读取',async()=>{
+ const server=createServer((_req,res)=>{res.writeHead(200,{'content-type':'application/json'});res.end('{"tools":[]}')})
+ await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve))
+ const address=server.address();if(!address||typeof address==='string')throw new Error('地址无效')
+ const transport=new NodeProviderTransport({allowLocal:true,trustEnvironment:false})
+ const fetcher=createMcpSafeFetch({request:(request,signal)=>transport.request({...request,allowLocal:true},signal)},{maxResponseBytes:4})
+ try{
+  const response=await fetcher(`http://127.0.0.1:${address.port}/mcp`)
+  await assert.rejects(response.text(),/MCP 响应超过大小限制/)
+ }finally{await transport.close();server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()))}
+})

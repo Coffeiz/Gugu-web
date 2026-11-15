@@ -4,8 +4,12 @@ import type { SqlDataRuntime } from '@gugu/core/data'
 import type { ProviderTransport } from '@gugu/core/providers'
 import type { RagQueryEmbeddingSettings } from '@gugu/core/agent'
 import type { MemorySearchPort } from '@gugu/core/tools'
+import type { Pool } from 'pg'
 import { createLocalAgentMemoryRagStore } from './agent-rag-memory-store.js'
 import { createOwnerAgentRagVectorResolver } from './agent-rag-vectors.js'
+import { createPostgresAgentImMemoryContextReader, createPostgresAgentMemoryScopeResolver } from './agent-memory-scopes.js'
+
+type WebOwnerMemorySearchOptions = Parameters<typeof createWebOwnerMemorySearchPort>[1]
 
 /** Web 请求没有 IM 群身份；scope 解析与快照都必须由可信 Run 装配提供。 */
 export function createWebOwnerMemorySearchPort(core: Pick<SqlDataRuntime, 'db'>, options: {
@@ -46,4 +50,12 @@ export function createWebOwnerMemorySearchPort(core: Pick<SqlDataRuntime, 'db'>,
     } } : {}),
   })
   return { search }
+}
+
+/** PostgreSQL Host 组合：当前 IM 身份来自 owner/session/active-run 持久上下文，scope 再由 owner cursor 限定。 */
+export function createPostgresAgentMemorySearchPort(core: Pick<SqlDataRuntime, 'db'>, pool: Pick<Pool, 'query'>,
+  options: Omit<WebOwnerMemorySearchOptions, 'resolveScopes'>): MemorySearchPort {
+  const context = createPostgresAgentImMemoryContextReader(pool)
+  const resolveScopes = createPostgresAgentMemoryScopeResolver(core.db, { context })
+  return createWebOwnerMemorySearchPort(core, { ...options, resolveScopes })
 }

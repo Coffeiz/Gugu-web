@@ -250,3 +250,112 @@ test('生产 Host RAG 生命周期经共享 Core 项目服务重建正式索引�
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+test('Host Memory 来源经可信 owner scope 与旧版 FS 投影重建正式索引表', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'gugu-rag-memory-source-'))
+  const path = join(directory, 'core.db')
+  const storageRoot = join(directory, 'users')
+  let runtime: Awaited<ReturnType<typeof openSqliteRuntime>>['runtime'] | undefined
+  try {
+    await initializeSqlite(path)
+    const opened = await openSqliteRuntime(path)
+    runtime = opened.runtime
+    const owner = opened.ownerId
+    const ownerKey = owner.replaceAll('-', '')
+    await runtime.db.schema.createTable('memory_reflection_cursors')
+      .addColumn('id', 'integer', column => column.primaryKey().autoIncrement())
+      .addColumn('owner_user_id', 'text', column => column.notNull())
+      .addColumn('platform', 'text', column => column.notNull())
+      .addColumn('bot_id', 'text', column => column.notNull())
+      .addColumn('scope_type', 'text', column => column.notNull())
+      .addColumn('scope_id', 'text', column => column.notNull())
+      .addColumn('scope_version', 'integer')
+      .addColumn('updated_at', 'text')
+      .execute()
+    await runtime.db.schema.createTable('memory_scope_tombstones')
+      .addColumn('id', 'integer', column => column.primaryKey().autoIncrement())
+      .addColumn('owner_user_id', 'text', column => column.notNull())
+      .addColumn('platform', 'text', column => column.notNull())
+      .addColumn('bot_id', 'text', column => column.notNull())
+      .addColumn('scope_type', 'text', column => column.notNull())
+      .addColumn('scope_id', 'text', column => column.notNull())
+      .execute()
+    const memoryDb = runtime.db as unknown as {
+      insertInto(table: 'memory_reflection_cursors' | 'memory_scope_tombstones' | 'rag_index_jobs'): {
+        values(rows: Record<string, unknown> | Record<string, unknown>[]): { execute(): Promise<unknown> }
+      }
+      selectFrom(table: 'rag_index_jobs'): {
+        select(column: 'status'): { where(column: 'source_type', operator: '=', value: string): { executeTakeFirst(): Promise<{ status: string } | undefined> } }
+      }
+    }
+    await memoryDb.insertInto('memory_reflection_cursors').values([
+      { owner_user_id: owner, platform: 'qq', bot_id: 'bot-a', scope_type: 'group', scope_id: 'group-live', scope_version: 1, updated_at: '2026-01-01T00:00:00Z' },
+      { owner_user_id: owner, platform: 'qq', bot_id: 'bot-a', scope_type: 'group', scope_id: 'group-peer', scope_version: 1, updated_at: '2026-01-01T00:00:00Z' },
+      { owner_user_id: owner, platform: 'qq', bot_id: 'bot-a', scope_type: 'group', scope_id: 'group-old', scope_version: 2, updated_at: '2026-01-01T00:00:00Z' },
+      { owner_user_id: owner, platform: 'qq', bot_id: 'bot-a', scope_type: 'platform-user', scope_id: 'group-live:member-a', scope_version: 1, updated_at: '2026-01-01T00:00:00Z' },
+      { owner_user_id: '08a80873-5266-43b9-a27c-d288b602a9cb', platform: 'qq', bot_id: 'bot-a', scope_type: 'group', scope_id: 'foreign-group', scope_version: 3, updated_at: '2026-01-01T00:00:00Z' },
+    ]).execute()
+    await memoryDb.insertInto('memory_scope_tombstones').values({ owner_user_id: owner, platform: 'qq', bot_id: 'bot-a', scope_type: 'group', scope_id: 'group-old' }).execute()
+
+    const memoryDirectory = join(storageRoot, owner, '.agent', 'rag', 'memory')
+    await mkdir(memoryDirectory, { recursive: true })
+    await writeFile(join(memoryDirectory, 'index.json'), JSON.stringify({ schema_version: 1, documents: [
+      { document_id: 'profile:0', parent_document_id: 'memory:profile:profile:0', chunk_index: 0, chunk_count: 1,
+        source_type: 'memory', source_id: 'profile', title: '用户画像', summary: '', content: 'owner memory fact', version: 'profile-v1',
+        scope: { owner_user_id: owner, scope_type: 'owner', scope_id: '' }, metadata: {} },
+      { document_id: 'foreign:0', parent_document_id: 'memory:profile:foreign:0', chunk_index: 0, chunk_count: 1,
+        source_type: 'memory', source_id: 'profile', title: '异主内容', summary: '', content: 'foreign private fact', version: 'profile-v1',
+        scope: { owner_user_id: '08a80873-5266-43b9-a27c-d288b602a9cb', scope_type: 'owner', scope_id: '' }, metadata: {} },
+    ] }), 'utf8')
+    const groupDirectory = join(storageRoot, owner, '.agent', 'im', 'qq', 'bot-a', 'groups', 'group-live')
+    await mkdir(groupDirectory, { recursive: true })
+    await writeFile(join(groupDirectory, 'profile.json'), JSON.stringify({ text: 'authorized group fact' }), 'utf8')
+    const peerGroupDirectory = join(storageRoot, owner, '.agent', 'im', 'qq', 'bot-a', 'groups', 'group-peer')
+    await mkdir(peerGroupDirectory, { recursive: true })
+    await writeFile(join(peerGroupDirectory, 'profile.json'), JSON.stringify({ text: 'authorized group fact' }), 'utf8')
+    const memberDirectory = join(storageRoot, owner, '.agent', 'im', 'qq', 'bot-a', 'platform-users', 'group-live%3Amember-a')
+    await mkdir(memberDirectory, { recursive: true })
+    await writeFile(join(memberDirectory, 'profile.json'), JSON.stringify({ text: 'authorized member fact' }), 'utf8')
+    const oldGroupDirectory = join(storageRoot, owner, '.agent', 'im', 'qq', 'bot-a', 'groups', 'group-old')
+    await mkdir(oldGroupDirectory, { recursive: true })
+    await writeFile(join(oldGroupDirectory, 'profile.json'), JSON.stringify({ text: 'tombstoned group fact' }), 'utf8')
+    await memoryDb.insertInto('rag_index_jobs').values({
+      user_id: ownerKey, source_type: 'memory', source_id: '', pending_source_ids: '[]', version: '', operation: 'upsert',
+      status: 'queued', generation: 1, completed_generation: 0, attempts: 0,
+      next_attempt_at: '2026-01-01 00:00:00.000000', created_at: '2026-01-01 00:00:00.000000', updated_at: '2026-01-01 00:00:00.000000',
+    }).execute()
+
+    const production = startAgentRagIndexWorker(runtime, {
+      enabled: true, intervalMs: 1000, onError: error => { throw error }, memoryStorageRoot: storageRoot,
+    })
+    try {
+      let status = await memoryDb.selectFrom('rag_index_jobs').select('status').where('source_type', '=', 'memory').executeTakeFirst()
+      for (let attempt = 0; attempt < 100 && status?.status !== 'ready'; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 2))
+        status = await memoryDb.selectFrom('rag_index_jobs').select('status').where('source_type', '=', 'memory').executeTakeFirst()
+      }
+      assert.deepEqual(status, { status: 'ready' })
+      const snapshot = await createSqlRagPersistentIndexReader(runtime.db, 'sqlite').snapshot(owner)
+      assert.deepEqual(snapshot.documents.filter(document => document.source_type === 'memory').map(document => [
+        document.scope_type, document.scope_id, document.content,
+      ]), [
+        ['owner', '', 'owner memory fact'],
+        ['group', 'group-live', 'authorized group fact'],
+        ['group', 'group-peer', 'authorized group fact'],
+        ['member', 'group-live:member-a', 'authorized member fact'],
+      ])
+      const groupDocs = snapshot.documents.filter(document => document.source_type === 'memory' && document.scope_type === 'group')
+      assert.equal(new Set(groupDocs.map(document => document.metadata?.memory_source_id)).size, 1)
+      assert.equal(new Set(groupDocs.map(document => document.source_id)).size, 2)
+      assert.equal(new Set(groupDocs.map(document => document.document_version)).size, 1)
+      assert.equal(new Set(groupDocs.map(document => document.parent_id)).size, 2)
+      assert.equal(snapshot.documents.filter(document => document.source_type === 'memory' && document.scope_type === 'member').length, 1)
+      assert.doesNotMatch(JSON.stringify(snapshot.documents), /foreign private fact|tombstoned group fact|foreign-group/u)
+    } finally {
+      await production.stop()
+    }
+  } finally {
+    await runtime?.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})

@@ -1,6 +1,7 @@
 import type { ProjectRecord } from '@gugu/core'
 import type { Pool, PoolClient } from 'pg'
 import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
+import { enqueueScheduledTaskRagRebuild } from '../../../modules/scheduled-tasks/persistence/task-rag-job-postgres.js'
 import { recordForwardUndoOperation } from '../../undo/persistence/forward-operation.js'
 import { projectTimestamp, readProjectFileCount } from './projects.js'
 import type {
@@ -191,6 +192,7 @@ function transactionAdapter(client: PoolClient): ProjectTrashTransaction {
         'UPDATE scheduled_tasks SET enabled = $3 WHERE id = $1 AND user_id = $2',
         [task.id, ownerId, task.enabled],
       )
+      await enqueueScheduledTaskRagRebuild(client, ownerId, Number(task.id))
     },
 
     async recordUndo(record: ProjectTrashUndoRecord) {

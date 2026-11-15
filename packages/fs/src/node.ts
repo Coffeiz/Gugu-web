@@ -1,5 +1,5 @@
 import { constants } from 'node:fs'
-import { link, lstat, open, realpath, unlink } from 'node:fs/promises'
+import { link, lstat, open, readdir, realpath, rmdir, unlink } from 'node:fs/promises'
 import path from 'node:path'
 
 /** 不可信路径不能用于访问授权根之外的内容。 */
@@ -36,6 +36,85 @@ export async function openLocalFile(rootPath: string, relativePath: string) {
     const code = (error as NodeJS.ErrnoException).code
     if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'ELOOP') return null
     throw error
+  }
+}
+
+/**
+ * 删除授权根内的目录树。Linux 上通过已打开目录的 /proc/self/fd 锚定每层路径，
+ * 检查后的父目录即使被替换为符号链接，也不会把递归删除导向根目录之外。
+ * 返回删除的普通文件数；目录、符号链接和其他文件系统节点不计数。
+ */
+export async function removeLocalTree(rootPath: string, relativePath: string): Promise<number> {
+  const segments = relativePath.split('/')
+  if (process.platform !== 'linux' || segments.some(segment =>
+    !segment || segment === '.' || segment === '..' || segment.includes('\\') || segment.includes('\0')))
+    throw new UnsafeLocalPathError()
+
+  async function removeEntry(parent: string, name: string): Promise<number> {
+    const entry = path.join(parent, name)
+    let info
+    try { info = await lstat(entry) }
+    catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code === 'ENOENT' || code === 'ENOTDIR') return 0
+      throw error
+    }
+    if (info.isSymbolicLink() || !info.isDirectory()) {
+      try { await unlink(entry) }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      }
+      return info.isFile() ? 1 : 0
+    }
+
+    let child
+    try { child = await open(entry, constants.O_RDONLY | constants.O_DIRECTORY | (constants.O_NOFOLLOW ?? 0)) }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ELOOP') throw new UnsafeLocalPathError()
+      throw error
+    }
+    let count = 0
+    try {
+      const anchoredChild = `/proc/self/fd/${child.fd}`
+      for (const childName of await readdir(anchoredChild)) count += await removeEntry(anchoredChild, childName)
+    } finally { await child.close() }
+    await rmdir(entry)
+    return count
+  }
+
+  let root
+  try { root = await realpath(rootPath) }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 0
+    throw error
+  }
+  let handle
+  try { handle = await open(root, constants.O_RDONLY | constants.O_DIRECTORY | (constants.O_NOFOLLOW ?? 0)) }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ELOOP') throw new UnsafeLocalPathError()
+    throw error
+  }
+  const ancestors: Awaited<ReturnType<typeof open>>[] = []
+  try {
+    let parent = `/proc/self/fd/${handle.fd}`
+    for (const segment of segments.slice(0, -1)) {
+      const current = path.join(parent, segment)
+      let next
+      try { next = await open(current, constants.O_RDONLY | constants.O_DIRECTORY | (constants.O_NOFOLLOW ?? 0)) }
+      catch (error) {
+        const code = (error as NodeJS.ErrnoException).code
+        if (code === 'ENOENT' || code === 'ENOTDIR') return 0
+        if (code === 'ELOOP') throw new UnsafeLocalPathError()
+        throw error
+      }
+      parent = `/proc/self/fd/${next.fd}`
+      // Keep all ancestor descriptors open until traversal completes.
+      ancestors.push(next)
+    }
+    return await removeEntry(parent, segments.at(-1)!)
+  } finally {
+    for (const ancestor of ancestors.reverse()) await ancestor.close()
+    await handle.close()
   }
 }
 

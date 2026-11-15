@@ -186,6 +186,18 @@ export function createRedisUserBotReachCleaner(redisUrl: string) {
   }
 }
 
+/** Remove legacy per-user chat attachment metadata and the account-level IM reach key. */
+export function createRedisAccountAttachmentCleaner(redisUrl:string) {
+  return async(ownerId:string):Promise<readonly string[]>=>{
+    const script="local cursor='0';local keys={};repeat local page=redis.call('SCAN',cursor,'MATCH',ARGV[1],'COUNT','200');cursor=page[1];for _,key in ipairs(page[2]) do local raw=redis.call('GET',key);if raw then local ok,value=pcall(cjson.decode,raw);if ok and type(value)=='table' and type(value.storage_key)=='string' then table.insert(keys,value.storage_key) end end;redis.call('DEL',key) end until cursor=='0';redis.call('DEL',KEYS[1]);if #keys==0 then return '[]' end;return cjson.encode(keys)"
+    const raw=await withRedis(redisUrl,command=>command('EVAL',script,'1',`imreach:${ownerId}`,`chatfile:${ownerId}:*`))
+    if(raw===null)return []
+    const parsed:unknown=JSON.parse(raw)
+    if(!Array.isArray(parsed)||parsed.some(key=>typeof key!=='string'))throw new Error('账户暂存清理响应无效')
+    return parsed as string[]
+  }
+}
+
 /** Agent run 取消适配器使用的 Redis 命令；写入标记与发布通知分别执行。 */
 export function createRedisAgentCancellationCommands(redisUrl: string): RedisAgentCancellationCommands {
   return {

@@ -78,6 +78,18 @@ function cacheThumbnail(key: string, result: RenderedThumbnail): void {
   thumbnailCacheBytes += result.bytes.byteLength
 }
 
+/** Remove shared-cache entries belonging to the deleted owner's database file IDs. */
+export function deleteOwnerThumbnailCache(ownerId: string, fileIds: readonly number[]): void {
+  const ownedIds = new Set(fileIds)
+  for (const [key, value] of thumbnailCache) {
+    let identity: unknown
+    try { identity = JSON.parse(key) } catch { continue }
+    if (!Array.isArray(identity) || identity[0] !== ownerId || !ownedIds.has(identity[1])) continue
+    thumbnailCache.delete(key)
+    thumbnailCacheBytes -= value.bytes.byteLength
+  }
+}
+
 async function createThumbnail(
   raw: Buffer,
   declaredMimeType: string | null,

@@ -1,7 +1,5 @@
-import bcrypt from 'bcryptjs'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import type { Pool } from 'pg'
-import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
+import { ProfileUpdateError, type ProfileUpdateInput, type ProfileUpdateResult } from '@gugu/core/auth/profile-update'
 import { createCsrfToken, createUserToken } from '../auth.js'
 
 export interface ProfileUser {
@@ -23,7 +21,7 @@ export interface ProfileIdentity {
 }
 
 export interface ProfileRouteOptions {
-  readonly pool: Pick<Pool, 'connect'>
+  readonly updateProfile: (ownerId: string, input: ProfileUpdateInput) => Promise<ProfileUpdateResult>
   readonly secret: string
   readonly tokenExpiresMinutes?: number
   readonly authenticate: (
@@ -35,41 +33,11 @@ export interface ProfileRouteOptions {
   readonly publishAuthStateChanged: (userId: string) => Promise<unknown>
 }
 
-interface ProfileUpdate {
-  readonly displayName?: string
-  readonly timezone?: string
-  readonly emailSubscribed?: boolean
-  readonly currentPassword?: string
-  readonly newPassword?: string
-}
-
-interface PersistedProfileUpdate {
-  readonly timezoneChanged: boolean
-  readonly passwordChanged: boolean
-  readonly securityVersion: number | null
-}
-
-interface ProfileRow {
-  readonly timezone: string | null
-  readonly hashed_password: string
-  readonly security_version: number | null
-}
-
-export class ProfileRequestError extends Error {
-  constructor(
-    message: string,
-    readonly statusCode: 400 | 404,
-  ) {
-    super(message)
-    this.name = 'ProfileRequestError'
-  }
-}
-
 function field(body: Record<string, unknown>, camel: string, snake: string): unknown {
   return body[camel] === undefined ? body[snake] : body[camel]
 }
 
-function parseProfileUpdate(body: unknown): ProfileUpdate | null {
+function parseProfileUpdate(body: unknown): ProfileUpdateInput | null {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return null
   const value = body as Record<string, unknown>
   const displayName = field(value, 'displayName', 'display_name')
@@ -89,70 +57,6 @@ function parseProfileUpdate(body: unknown): ProfileUpdate | null {
     ...(typeof currentPassword === 'string' ? { currentPassword } : {}),
     ...(typeof newPassword === 'string' ? { newPassword } : {}),
   }
-}
-
-function isValidTimezone(timezone: string): boolean {
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: timezone }).format(0)
-    return true
-  } catch {
-    return false
-  }
-}
-
-async function persistProfileUpdate(
-  pool: Pick<Pool, 'connect'>,
-  userId: string,
-  update: ProfileUpdate,
-): Promise<PersistedProfileUpdate> {
-  return withPostgresTransaction(pool, async (client) => {
-    const result = await client.query<ProfileRow>(
-      'SELECT timezone, hashed_password, security_version FROM users WHERE id = $1 FOR UPDATE',
-      [userId],
-    )
-    const current = result.rows[0]
-    if (!current) throw new ProfileRequestError('用户不存在', 404)
-
-    const values: unknown[] = [userId]
-    const assignments: string[] = []
-    if (update.displayName !== undefined) {
-      values.push(update.displayName.trim() || null)
-      assignments.push(`display_name = $${values.length}`)
-    }
-    let timezoneChanged = false
-    if (update.timezone !== undefined) {
-      const timezone = update.timezone.trim()
-      timezoneChanged = timezone !== (current.timezone || '')
-      values.push(timezone || null)
-      assignments.push(`timezone = $${values.length}`)
-    }
-    if (update.emailSubscribed !== undefined) {
-      values.push(update.emailSubscribed)
-      assignments.push(`email_subscribed = $${values.length}`)
-    }
-
-    const passwordChanged = Boolean(update.newPassword)
-    if (passwordChanged) {
-      if (!update.currentPassword)
-        throw new ProfileRequestError('请输入当前密码', 400)
-      if (!await bcrypt.compare(update.currentPassword, current.hashed_password))
-        throw new ProfileRequestError('当前密码错误', 400)
-      values.push(await bcrypt.hash(update.newPassword!, 12))
-      assignments.push(`hashed_password = $${values.length}`)
-      assignments.push('security_version = COALESCE(security_version, 0) + 1')
-    }
-
-    let securityVersion = current.security_version
-    if (assignments.length) {
-      const updated = await client.query<{ security_version: number | null }>(
-        `UPDATE users SET ${assignments.join(', ')} WHERE id = $1 RETURNING security_version`,
-        values,
-      )
-      if (!updated.rows[0]) throw new ProfileRequestError('用户不存在', 404)
-      securityVersion = updated.rows[0].security_version
-    }
-    return { timezoneChanged, passwordChanged, securityVersion }
-  })
 }
 
 function userResponse(user: ProfileUser) {
@@ -200,11 +104,8 @@ export function registerProfileRoute(app: FastifyInstance, options: ProfileRoute
     if (!identity) return
     const update = parseProfileUpdate(request.body)
     if (!update) return reply.code(422).send({ detail: '个人资料请求字段无效' })
-    if (update.timezone !== undefined && update.timezone.trim() && !isValidTimezone(update.timezone.trim()))
-      return reply.code(400).send({ detail: '无效的时区' })
-
     try {
-      const committed = await persistProfileUpdate(options.pool, identity.id, update)
+      const committed = await options.updateProfile(identity.id, update)
       if (committed.timezoneChanged)
         await options.bumpContextRevision(identity.id, 'timezone')
 
@@ -228,8 +129,10 @@ export function registerProfileRoute(app: FastifyInstance, options: ProfileRoute
       }
       return userResponse(user)
     } catch (error) {
-      if (error instanceof ProfileRequestError)
-        return reply.code(error.statusCode).send({ detail: error.message })
+      if (error instanceof ProfileUpdateError) {
+        const statusCode = error.code === 'not_found' ? 404 : 400
+        return reply.code(statusCode).send({ detail: error.message })
+      }
       throw error
     }
   })

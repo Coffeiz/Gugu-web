@@ -23,6 +23,7 @@ test('活动提醒创建幂等、更新受 owner 限制且验证失败回滚', {
       CREATE TABLE filesystem_authorization_grants(id int PRIMARY KEY,user_id uuid,revoked_at timestamptz,updated_at timestamptz);
       CREATE TABLE security_events(user_id uuid,event_type text,resource_type text,resource_fingerprint text,owner_fingerprint text,client_fingerprint text,ip_fingerprint text,user_agent_fingerprint text,action text,reason_code text,metadata_json jsonb,occurred_at timestamptz,expires_at timestamptz);
       CREATE TABLE scheduled_tasks(id serial PRIMARY KEY,user_id uuid,event_id int,workspace_id int,filesystem_authorization_grant_id int,name text,payload text,cron text,schedule_kind text,interval_minutes int,start_at timestamptz,end_at timestamptz,channels text,enabled boolean,delivery_targets json,authorized_tools json,email_attachment_file_ids json,reminder_lead_minutes int,last_run_at timestamptz,last_run_failed boolean,created_at timestamptz,updated_at timestamptz);
+      CREATE TABLE rag_index_jobs(id bigserial PRIMARY KEY,user_id uuid NOT NULL,source_type text NOT NULL,source_id text NOT NULL,pending_source_ids json,version text NOT NULL,operation text NOT NULL,status text NOT NULL,generation int NOT NULL,completed_generation int NOT NULL,attempts int NOT NULL,next_attempt_at timestamptz,lease_until timestamptz,last_error_code text,last_started_at timestamptz,last_succeeded_at timestamptz,created_at timestamptz NOT NULL,updated_at timestamptz NOT NULL,UNIQUE(user_id,source_type));
       CREATE UNIQUE INDEX task_event ON scheduled_tasks(user_id,event_id,cron) WHERE event_id IS NOT NULL;
       CREATE TABLE undo_operations(id text PRIMARY KEY,user_id uuid,undo_context_id text,actor_type text,resource text,action text,status text,created_at timestamptz,after_state json,target_refs json,base_versions json)`)
     await pool.query("INSERT INTO calendar_events VALUES(1,$1,NULL,'2099-01-01','09:00')", [owner])
@@ -49,9 +50,14 @@ test('活动提醒创建幂等、更新受 owner 限制且验证失败回滚', {
       const headers = { authorization: `Bearer ${signedUserToken(secret, owner)}` }
       const created = await app.inject({ method: 'POST', url: '/api/v1/scheduled-tasks', headers, payload: input })
       assert.equal(created.statusCode, 201, created.body)
+      const createJob = (await pool.query('SELECT source_id,pending_source_ids,generation FROM rag_index_jobs WHERE user_id=$1 AND source_type=$2', [owner, 'scheduled_task'])).rows[0]
+      assert.equal(createJob.source_id, String(created.json().id))
+      assert.deepEqual(createJob.pending_source_ids, [String(created.json().id)])
+      assert.equal(createJob.generation, 1)
       const duplicate = await app.inject({ method: 'POST', url: '/api/v1/scheduled-tasks', headers, payload: input })
       assert.equal(duplicate.statusCode, 200, duplicate.body)
       assert.equal(duplicate.json().id, created.json().id)
+      assert.equal((await pool.query('SELECT generation FROM rag_index_jobs WHERE user_id=$1 AND source_type=$2', [owner, 'scheduled_task'])).rows[0].generation, 1)
       const foreignHeaders = { authorization: `Bearer ${signedUserToken(secret, other)}` }
       assert.equal((await app.inject({ method: 'PATCH', url: `/api/v1/scheduled-tasks/${created.json().id}`, headers: foreignHeaders, payload: { name: '越权' } })).statusCode, 404)
       const invalid = await app.inject({ method: 'PATCH', url: `/api/v1/scheduled-tasks/${created.json().id}`, headers, payload: { name: '必须回滚', workspace_id: 2 } })
@@ -73,6 +79,8 @@ test('活动提醒创建幂等、更新受 owner 限制且验证失败回滚', {
     await assert.rejects(writes.update(owner, a.task.id, { email_attachment_file_ids: [2] }, null), /附件不存在/)
     const updated = await writes.update(owner, a.task.id, { name: '新提醒' }, null)
     assert.equal(updated.name, '新提醒')
+    const updateJob = (await pool.query('SELECT source_id,pending_source_ids,generation FROM rag_index_jobs WHERE user_id=$1 AND source_type=$2', [owner, 'scheduled_task'])).rows[0]
+    assert.deepEqual(updateJob, { source_id: String(a.task.id), pending_source_ids: [String(a.task.id)], generation: 2 })
     assert.equal(updated.start_at, '2099-01-01T00:00:00.123456Z')
     assert.equal(events, 2)
     await pool.query('UPDATE workspaces SET enabled=FALSE WHERE id=1')
@@ -93,6 +101,8 @@ test('活动提醒创建幂等、更新受 owner 限制且验证失败回滚', {
     assert.equal(rescheduled.cron, '@once:2099-01-01T00:00:00.123456+00:00')
     const standalone = await writes.create(owner, { name: '任务', schedule_kind: 'interval', interval_minutes: 5, channels: ['qq'], qq_delivery: { mode: 'group', chat_id: 'owned' } }, null, null)
     assert.equal((standalone.delivery_targets as any).qq.chat_id, 'owned')
+    const accumulated = (await pool.query('SELECT source_id,pending_source_ids FROM rag_index_jobs WHERE user_id=$1 AND source_type=$2', [owner, 'scheduled_task'])).rows[0]
+    assert.deepEqual(accumulated, { source_id: String(standalone.task.id), pending_source_ids: [String(a.task.id), String(standalone.task.id)] })
     await assert.rejects(writes.update(owner, standalone.task.id, { channels: ['qq'], qq_delivery: { mode: 'group', chat_id: 'foreign' } }, null), /找不到该群会话/)
     await pool.query('INSERT INTO filesystem_authorization_grants VALUES(5,$1,NULL,NULL)', [owner])
     await pool.query('UPDATE scheduled_tasks SET filesystem_authorization_grant_id=5 WHERE id=$1', [standalone.task.id])

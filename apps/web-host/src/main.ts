@@ -1,3 +1,5 @@
+import bcrypt from 'bcryptjs'
+import { createProfileUpdater } from '@gugu/core/auth/profile-update'
 import { createDataExportCreator } from '@gugu/core/data-portability/create-export'
 import { createDataExportPreviewReader } from '@gugu/core/data-portability/export-preview'
 import { createDataImportResumer } from '@gugu/core/data-portability/resume-import'
@@ -35,9 +37,14 @@ import { createTaskAuthorizationEnabledReader } from './modules/scheduled-tasks/
 import { createRedisFilesystemAuthorizationMetric } from './adapters/redis-events.js'
 import { createVoicePresetFileMutations } from './modules/admin/voice-presets-mutate.js'
 import { createDataExportCanceler } from '@gugu/core/data-portability/cancel-export'
+import { createPostgresDataExportDeleter } from './modules/data-portability/delete-export-postgres.js'
 import { withPostgresTransaction } from './adapters/postgres-transaction.js'
 import { createTerminalDeletion } from '@gugu/core/terminals/delete'
 import { createVoicePresetsFileReader } from './modules/admin/voice-presets-read.js'
+import { createPostgresVoiceAvailabilityReader } from './modules/agent/voice-availability.js'
+import { createMemoryClearer } from '@gugu/core/agent/memory-clear'
+import { enqueueAgentRagRebuild } from '@gugu/core/agent'
+import { activeVoiceTestSettings } from '@gugu/core/agent/config/voice-test'
 import { createAdminVoicePresetTestOperations, createAdminVoiceTestOperations } from './modules/admin/voice-test.js'
 import { createAdminSearchTestOperations } from './modules/admin/search-test.js'
 import { createAdminMaintenanceStatus } from '@gugu/core/maintenance/admin-status'
@@ -45,7 +52,7 @@ import { createRedisAdminMaintenanceCommands } from './adapters/redis-events.js'
 import { createServiceStatusReader } from './modules/admin/service-status.js'
 import { createRedisServiceStatusCommands } from './adapters/redis-events.js'
 import { createAttachmentDownloader } from '@gugu/core/agent/attachments/download'
-import { openLocalFile, UnsafeLocalPathError } from '@gugu/fs/node'
+import { openLocalFile, removeLocalTree, UnsafeLocalPathError } from '@gugu/fs/node'
 import { createPostgresRedisBindingCodeIssuer } from './modules/im/binding-code.js'
 import { createTaskFilesystemRevoker } from '@gugu/core/scheduled-task-filesystem-revoke'
 import { createPostgresTaskWrites } from './modules/scheduled-tasks/persistence/task-writes-postgres.js'
@@ -57,8 +64,15 @@ import { createRedisStorageQuotaStatusStore } from './modules/admin/storage-quot
 import { createNotificationBroadcaster } from '@gugu/core/notifications/broadcast'
 import { createRedisNotificationPublisher } from './adapters/redis-events.js'
 import { createMcpStatusReader } from '@gugu/core/mcp/status'
+import { createMcpServerCreator } from '@gugu/core/mcp/server-create'
+import { createMcpServerMutations } from '@gugu/core/mcp/server-mutations'
+import type { McpServerCreateInput } from '@gugu/core/mcp/server-create'
+import type { McpServerPatch } from '@gugu/core/mcp/server-mutations'
+import { createMcpServerConfigLister } from '@gugu/core/mcp/server-list'
+import { createMcpServerListReader } from './modules/mcp/server-list.js'
+import { createPostgresMcpConnectionTester } from './modules/mcp/test-connection.js'
 import { getAttentionDefaults } from '@gugu/core/im/attention/defaults'
-import { createMcpEnabledReader } from './modules/mcp/status.js'
+import { createMcpSettingsReader } from './modules/mcp/status.js'
 import { createEmailRecipientCounter } from '@gugu/core/admin/email-recipient-count'
 import { createEmbeddingRebuildStatusReader } from '@gugu/core/byok/embedding-rebuild-status'
 import { createRedisValueReader } from './adapters/redis-events.js'
@@ -73,6 +87,9 @@ import { createFeishuConnectHostOptions } from './modules/im/feishu-connect.js'
 import { createWechatConnector } from '@gugu/core/im/wechat-connect'
 import { createWechatConnectHostOptions } from './modules/im/wechat-connect.js'
 import { createRedisUserBotReachCleaner } from './adapters/redis-events.js'
+import { createRedisAccountAttachmentCleaner } from './adapters/redis-events.js'
+import { createPostgresAccountDeleter, createPostgresAccountPasswordVerifier, createPostgresAdminAccountDeleter } from './modules/auth/account-deletion-postgres.js'
+import { createPostgresProfileUpdateStore } from './modules/auth/profile-update-postgres.js'
 import { encryptEncryptedString, decryptEncryptedString } from './adapters/encrypted-string.js'
 import { createPortabilityJobReader } from '@gugu/core/data-portability/read-jobs'
 import { createPostgresUserBotsReader } from './modules/im/user-bots.js'
@@ -97,6 +114,10 @@ import { createSafeEgressSettingsReader } from './modules/admin/safe-egress-sett
 import { createSafeEgressFileUpdater } from './modules/admin/safe-egress-update.js'
 import { createSafeEgressFileProbe } from './modules/admin/safe-egress-probe.js'
 import { createEmbeddingFileProbe } from './modules/admin/embedding-probe.js'
+import { createAdminMediaProbePreview } from './modules/admin/media-probe-preview.js'
+import { createAdminLlmPresetTest } from './modules/admin/llm-preset-test.js'
+import { createAdminLlmPresetMediaProbe } from './modules/admin/llm-preset-media-probe.js'
+import { createAdminLlmCapabilityProbe } from './modules/admin/llm-capability-probe.js'
 import { createSystemLogReader } from '@gugu/core/admin/system-logs'
 import { createAdminAuditLogReader } from '@gugu/core/admin-audit-log'
 import { createNotificationAdminHistory } from '@gugu/core/notifications/admin-history'
@@ -130,18 +151,21 @@ import { createAuthEmailSender, createSmtpTransport } from './domains/auth/smtp-
 import { createProjectFileCountListing, createProjectGetter, createProjectListing } from './domains/projects/persistence/projects.js'
 import { projectResponse } from '@gugu/core'
 import { createClientOperations } from './modules/clients/persistence/clients.js'
-import { createPostgresMindRefSuggestOperations } from './domains/mind/persistence/mind-ref-suggest-postgres.js'
+import { createPostgresMindReferenceSuggestionPorts } from './modules/mind/ref-suggest-postgres.js'
 import { createMindCanvasNoteMutations } from '@gugu/core/mind'
-import { createMindRefNodeCreator } from '@gugu/core/mind'
+import { createMindRefNodeCreator, createMindReferenceSuggester } from '@gugu/core/mind'
 import { createMindNoteCreator } from '@gugu/core/mind'
 import { createMindCanvasCreation, createMindCanvasUpdate, createMindCanvasDelete, createMindCanvasItemAdd, createMindCanvasItemRemove, createMindCanvasItemUpdate, createMindCanvasRelationCreate, createMindCanvasRelationDelete, createMindGlobalRelationDelete, createSqlMindCanvasCreateRuntime, createSqlMindCanvasUpdateRuntime, createSqlMindCanvasDeleteRuntime, createSqlMindCanvasNoteRuntime, createSqlMindCanvasItemAddRuntime, createSqlMindCanvasItemRemoveRuntime, createSqlMindCanvasItemUpdateRuntime, createSqlMindCanvasRelationCreateRuntime, createSqlMindCanvasRelationDeleteRuntime, createSqlMindGlobalRelationDeleteRuntime, createSqlMindRefNodeCreateRuntime, createSqlMindCanvasReader, createSqlMindNoteReader, createSqlMindNoteInserter, createSqlMindNoteMutator } from '@gugu/core/mind'
 import { createMindNoteMutations } from '@gugu/core/mind'
 import { createHostCoreUndoOperations } from './domains/undo/persistence/core-operations.js'
+import { createLocalFileUndoStorage } from './modules/files/undo-storage.js'
 import { createRuntimeUndoTransactionPort } from '@gugu/core/undo'
 import { createScheduledTaskDeleter } from '@gugu/core/scheduled-task-delete'
 import { createKyselyScheduledTaskDeleteRuntime } from '@gugu/core/scheduled-task-delete-data'
 import { createKyselyScheduledTaskReader, createScheduledTaskQueries } from '@gugu/core/scheduled-task-list'
 import { createScheduledTaskDeliveryTargets } from './modules/scheduled-tasks/delivery-targets.js'
+import { createScheduledTaskTestNotifier } from '@gugu/core/scheduled-task-test-notify'
+import { createPostgresScheduledTaskTestDelivery } from './modules/scheduled-tasks/test-notify-postgres.js'
 import { createKyselyNotificationOperations } from '@gugu/core/notifications'
 import { createKyselySmtpStore, createUserSmtpSettings } from '@gugu/core/smtp'
 import { encryptEncryptedString as encryptSmtpPassword } from './adapters/encrypted-string.js'
@@ -224,6 +248,7 @@ import { capturePostgresFolderPathMirrorDirectoryKeys, createPostgresFolderPathM
 import { createLocalPathMirrorMutation } from './domains/files/local-path-mirror.js'
 import { createPostgresFolderWriteOperations, type FolderUndoRecord } from './domains/files/folder-writes-postgres.js'
 import { createPostgresFolderCopyOperations } from './modules/files/folder-copy-postgres.js'
+import { createPostgresFolderDeleteOperations } from './modules/files/folder-delete-postgres.js'
 import { prepareWorkspaceDirectoryAcl } from './adapters/workspace-directory-acl.js'
 import { createSandboxdWorkspacePtyTerminator } from './adapters/sandboxd-pty.js'
 import {
@@ -442,6 +467,13 @@ function createWebUiApp(
   env: NodeJS.ProcessEnv = process.env,
 ) {
   const publisher = redisEvents ?? noRedisEvents
+  const readMcpSettings = createMcpSettingsReader(resolveConfigOverridePath(env), env)
+  const accountDeleter = createPostgresAccountDeleter(
+    pool,
+    config.storageLocalPath,
+    config.redisUrl ? createRedisAccountAttachmentCleaner(config.redisUrl) : async () => { throw new Error('Redis is not configured') },
+    userId => publisher.publishAuthStateChanged(userId),
+  )
   const qqConnectOptions = createQqConnectHostOptions(env, config.redisUrl ?? '')
   const feishuConnectOptions = createFeishuConnectHostOptions(env, config.redisUrl ?? '')
   const wechatConnectOptions = createWechatConnectHostOptions(env, config.redisUrl ?? '')
@@ -572,7 +604,10 @@ function createWebUiApp(
     },
   ))
   const globalSearch = createGlobalSearchOperations(createPostgresGlobalSearchSources(pool))
-  const mindRefSuggest = createPostgresMindRefSuggestOperations(pool, globalSearch)
+  const mindRefSuggest = createMindReferenceSuggester({
+    ...createPostgresMindReferenceSuggestionPorts(pool),
+    globalSearch,
+  })
   const publishProjectMutation = createProjectPostCommitPublisher(pool, {
     bumpContextRevision: (ownerId, resource) => publisher.bumpContextRevision(ownerId, resource),
     async publishResourceChanged(event) {
@@ -674,6 +709,28 @@ function createWebUiApp(
         origin: event.origin,
         payload: { kind: 'folder', entity: event.folder },
       })
+    },
+  })
+  const folderDelete = createPostgresFolderDeleteOperations(pool, {
+    storageRoot: config.storageLocalPath,
+    async captureDirectoryKeys(client, ownerId, folderId) {
+      return capturePostgresFolderPathMirrorDirectoryKeys(config.storageLocalPath, client, ownerId, folderId)
+    },
+    async publishChanged(event) {
+      await publisher.publishResourceChanged({
+        ownerId: event.ownerId,
+        resource: 'files',
+        operation: 'delete',
+        entityId: event.folderId,
+        origin: event.origin,
+        payload: { kind: 'folder', id: event.folderId },
+      })
+    },
+    onPathCleanupFailure(errorType) {
+      console.error(`gugu-webui folder delete PathMirror cleanup failed: ${errorType}`)
+    },
+    onPathRollbackFailure(errorType) {
+      console.error(`gugu-webui folder delete PathMirror rollback failed: ${errorType}`)
     },
   })
   const workspaceCreate = createPostgresWorkspaceCreator(pool)
@@ -923,7 +980,11 @@ function createWebUiApp(
       },
     },
     profile: {
-      pool,
+      updateProfile: createProfileUpdater({
+        ...createPostgresProfileUpdateStore(pool),
+        verifyPassword: (password, hash) => bcrypt.compare(password, hash),
+        hashPassword: (password) => bcrypt.hash(password, 12),
+      }),
       secret: config.secretKey,
       tokenExpiresMinutes: config.accessTokenExpiresMinutes,
       lookupUser: userRepository.lookupUser,
@@ -986,7 +1047,7 @@ function createWebUiApp(
         ownerId, resource: String(event.resource), operation: String(event.operation),
         origin: String(event.origin), entityIds: event.entity_ids as number[],
       })
-    }),
+    }, undefined, createLocalFileUndoStorage(config.storageLocalPath)),
     deleteScheduledTask: createScheduledTaskDeleter(createKyselyScheduledTaskDeleteRuntime(core.db, 'postgres', async (ownerId, id, origin) => {
       await publisher.publishResourceChanged({ ownerId, resource: 'scheduled_tasks', operation: 'delete', entityId: id, origin })
     })),
@@ -995,6 +1056,10 @@ function createWebUiApp(
       filesystemAuthorizationEnabled: config.workspaceRuntimeSettings.fullUserSandboxAuthorizationEnabled,
     })).web,
     scheduledTaskDeliveryTargets: createScheduledTaskDeliveryTargets(pool),
+    scheduledTaskTestNotify: createScheduledTaskTestNotifier(createPostgresScheduledTaskTestDelivery(
+      pool,
+      config.redisUrl ? createRedisNotificationPublisher(config.redisUrl) : async () => false,
+    )),
     scheduledTaskWrites: createPostgresTaskWrites(pool, {
       validateCron: validateTaskCron,
       filesystemAuthorizationEnabled: () => config.workspaceRuntimeSettings.fullUserSandboxAuthorizationEnabled,
@@ -1259,6 +1324,7 @@ function createWebUiApp(
     folderReads: createPostgresFolderReadOperations(pool),
     folderWrites,
     folderCopy,
+    folderDelete,
     adminAuth: createAdminAuth(pool, config),
     adminConfig: config.configOverridePath ? { path: config.configOverridePath, env } : undefined,
     adminVoiceTest: { test: createAdminVoiceTestOperations(config.configOverridePath, env) },
@@ -1306,6 +1372,19 @@ function createWebUiApp(
     secretPromptCancel: { cancel: createSecretPromptCancellation(core.db) },
     adminFileSyncEvents: { subscribe: createRedisLiveSubscription(config.redisUrl) },
     adminEmbeddingProbe: { probe: createEmbeddingFileProbe(env, resolveConfigOverridePath(env)) },
+    adminMediaProbePreview: { probe: createAdminMediaProbePreview(env) },
+    adminLlmPresetTest: { test: createAdminLlmPresetTest({ readDocument: () => readConfigOverride(resolveConfigOverridePath(env)), environment: env }) },
+    adminLlmPresetMediaProbe: { probe: createAdminLlmPresetMediaProbe({
+      environment: env,
+      readDocument: () => readConfigOverride(resolveConfigOverridePath(env)),
+      mutate: createLlmStrategyFileMutator(resolveConfigOverridePath(env)),
+      invalidate: () => invalidateAllProviderReasoningStates(core.db),
+    }) },
+    adminLlmCapabilityProbe: { probe: createAdminLlmCapabilityProbe({
+      environment: env, readDocument: () => readConfigOverride(resolveConfigOverridePath(env)),
+      mutate: createLlmStrategyFileMutator(resolveConfigOverridePath(env)),
+      invalidate: () => invalidateAllProviderReasoningStates(core.db),
+    }) },
     adminEmbeddingRebuildStatus: { available: () => Boolean(config.redisUrl), read: createAdminEmbeddingRebuildStatusReader(() => createRedisValueReader(config.redisUrl ?? '')('emb:rebuild')) },
     safeEgressUpdate: { update: createSafeEgressFileUpdater(env, resolveConfigOverridePath(env), config.secretKey) },
     safeEgressProbe: { probe: createSafeEgressFileProbe(env, resolveConfigOverridePath(env), config.secretKey) },
@@ -1323,6 +1402,15 @@ function createWebUiApp(
         const forwarded = request.headers['x-forwarded-for']
         const ip = typeof forwarded === 'string' ? forwarded.split(',', 1)[0]?.trim().slice(0, 60) || null : request.ip.slice(0, 60) || null
         await pool.query('INSERT INTO audit_logs (username, action, description, ip, created_at) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)', [username, action, description, ip])
+      },
+    },
+    adminUserDelete: {
+      deleteUser: createPostgresAdminAccountDeleter(pool, accountDeleter),
+      adminUsername: request => request.adminIdentity?.username ?? 'admin',
+      async writeAuditLog(username, action, description, request) {
+        const forwarded=request.headers['x-forwarded-for']
+        const ip=typeof forwarded==='string'?forwarded.split(',',1)[0]?.trim().slice(0,60)||null:request.ip.slice(0,60)||null
+        await pool.query('INSERT INTO audit_logs (username, action, description, ip, created_at) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)',[username,action,description,ip])
       },
     },
     adminAgentUsage: {
@@ -1363,6 +1451,7 @@ function createWebUiApp(
     resumeDataImport: createDataImportResumer(work => withPostgresTransaction(pool, client => work((sql, values) => client.query(sql, values))), (sql, values) => pool.query(sql, values), { token: () => randomBytes(32).toString('base64url'), hash: token => createHash('sha256').update(token).digest('hex') }),
     dataExportDownload: { secretKey: config.secretKey, download: createDataExportDownloader((sql, values) => pool.query(sql, values), createPortableArtifactOpener(config.storageLocalPath), config.secretKey), requireReady: (owner, job) => requireExportReadyForTicket((sql, values) => pool.query(sql, values), owner, job) },
     cancelDataExport: createDataExportCanceler(work => withPostgresTransaction(pool, client => work((sql, values) => client.query(sql, values))), (sql, values) => pool.query(sql, values)),
+    deleteDataExport: createPostgresDataExportDeleter(pool, config.storageLocalPath),
     portabilityJobs: createPortabilityJobReader((sql, values) => pool.query(sql, values)),
     userBotBindingCode: { issue: createPostgresRedisBindingCodeIssuer(pool, config.redisUrl ?? '', config.secretKey) },
     userBotUnbind: { unbind: createPostgresUserBotUnbinder(pool, async ownerId => {
@@ -1397,7 +1486,26 @@ function createWebUiApp(
       platforms: createImPlatformSettingsReader(env, resolveConfigOverridePath(env)),
       publishChanged: ownerId => publisher.publishResourceChanged({ ownerId, resource: 'im_channels', operation: 'refresh' }),
     }) },
-    mcpStatus: { read: createMcpStatusReader(createMcpEnabledReader(resolveConfigOverridePath(env), env)) },
+    mcpStatus: { read: createMcpStatusReader(() => readMcpSettings().enabled) },
+    mcpServerConfig: { operations: (() => {
+      const crypto = createConfiguredByokEnvelope(env)
+      const create = createMcpServerCreator(core.db, {
+        maxServersPerUser: () => readMcpSettings().max_servers_per_user,
+        id: () => randomUUID(), encrypt: async plaintext => crypto.encrypt(plaintext),
+      })
+      const mutations = createMcpServerMutations(core.db, { crypto, maxTools: () => readMcpSettings().max_tools_per_server })
+      return {
+        list: createMcpServerListReader({ list: createMcpServerConfigLister(core.db), decrypt: crypto, settings: readMcpSettings }),
+        create: (owner: string, input: Record<string, unknown>) => create(owner, input as unknown as McpServerCreateInput),
+        update: (owner: string, id: string, input: Record<string, unknown>) => mutations.update(owner, id, input as McpServerPatch),
+        remove: mutations.remove,
+      }
+    })() },
+    mcpConnectionTest: { test: createPostgresMcpConnectionTester(core.db, {
+      decrypt: createConfiguredByokEnvelope(env),
+      transport: () => createNodeProviderTransport({ allowLocal: false, connectTimeoutMs: 5_000, writeTimeoutMs: 10_000, environment: () => env }),
+      maxTools: () => readMcpSettings().max_tools_per_server,
+    }) },
     attentionDefaults: { read: getAttentionDefaults },
     loopScopeProxy: { endpoint: env.LOOPSCOPE_ENDPOINT || 'http://127.0.0.1:4320' },
     attachmentDownload: { download: createAttachmentDownloader(core.db, {
@@ -1409,6 +1517,19 @@ function createWebUiApp(
     embeddingRebuildStatus: { available: () => Boolean(config.redisUrl), read: createEmbeddingRebuildStatusReader(async ownerId => {
       if (!config.redisUrl) throw Object.assign(new Error('重建状态服务不可用'), { statusCode: 503 })
       return createRedisValueReader(config.redisUrl)(`emb:rebuild:user:${ownerId}`)
+    }) },
+    voiceAvailability: createPostgresVoiceAvailabilityReader(pool, {
+      enabled: createByokGateReader(resolveConfigOverridePath(env), env),
+      readBaseSettings: () => activeVoiceTestSettings(readConfigOverride(resolveConfigOverridePath(env))),
+      decrypt: async row => createConfiguredByokEnvelope(env).decrypt({
+        ciphertext: row.encrypted_value, nonce: row.nonce,
+        encryptedDataKey: row.encrypted_data_key, keyVersion: row.key_version,
+      }),
+    }),
+    clearAgentMemory: { clear: createMemoryClearer({
+      clearOwner: ownerId => removeLocalTree(config.storageLocalPath, `${ownerId}/.agent`),
+      enqueueMemoryRebuild: ownerId => enqueueAgentRagRebuild(core.db, core.backend, ownerId, 'memory'),
+      bumpContextRevision: async ownerId => { await publisher.bumpContextRevision(ownerId, 'memory') },
     }) },
     taskFilesystemAuthorization: createTaskFilesystemAuthorization(core.db, { confirmations: filesystemAuthorizationConfirmations, enabled: createTaskAuthorizationEnabledReader(resolveConfigOverridePath(env), env), fingerprint: createSecurityEventFingerprint(config.secretKey), ...(config.redisUrl ? { recordMetric: createRedisFilesystemAuthorizationMetric(config.redisUrl) } : {}) }),
     taskFilesystemRevoke: { revoke: createTaskFilesystemRevoker(core.db, { revokeConfirmation: (owner, summary, identity) => filesystemAuthorizationConfirmations.revoke(owner, summary, identity), fingerprint: createSecurityEventFingerprint(config.secretKey), ...(config.redisUrl ? { recordMetric: createRedisFilesystemRevokeMetric(config.redisUrl) } : {}) }) },
@@ -1454,6 +1575,10 @@ function createWebUiApp(
     providerCapabilityPreview: { preview: createProviderCapabilityPreview(createByokGateReader(resolveConfigOverridePath(env), env)) },
     userSkillDelete: { remove: createUserSkillDeletion(core.db, 'postgres', async ownerId => { await publisher.publishResourceChanged({ ownerId, resource: 'skills', operation: 'refresh' }) }) },
     userSkillList: { list: createUserSkillLister(core.db, 'postgres') },
+    accountDelete: {
+      verifyPassword: createPostgresAccountPasswordVerifier(pool),
+      remove: accountDeleter,
+    },
     notifications: createKyselyNotificationOperations(core.db, 'postgres'),
     track: createTrackOperations(pool),
   })
@@ -1537,6 +1662,7 @@ export async function startServer(env: NodeJS.ProcessEnv = process.env) {
     ? startAgentRagIndexWorker(core, {
         enabled: true,
         knowledgeStore: createLocalAgentKnowledgeReadStore(config.storageLocalPath),
+        memoryStorageRoot: config.storageLocalPath,
         onError: () => { console.error('Agent RAG 索引重建失败') },
       })
     : undefined

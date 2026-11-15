@@ -22,6 +22,7 @@ test('历史增量与展示顺序同事务提交，回滚与重放不产生重�
       CREATE TABLE conversation_messages (id bigserial PRIMARY KEY,session_id integer,conversation_seq bigint,history_anchor_seq bigint,
         role text,content text,content_json jsonb,canonical_batch_id bigint,run_id text,round_id text,created_at timestamptz,
         sent_at timestamptz,im_platform_sent_ms bigint,im_event_received_ms bigint,files jsonb,display_timeline jsonb,covers_until_seq bigint);
+      CREATE TABLE rag_index_jobs (id bigserial PRIMARY KEY,user_id uuid NOT NULL,source_type text NOT NULL,source_id text NOT NULL,version text NOT NULL,operation text NOT NULL,status text NOT NULL,generation integer NOT NULL,completed_generation integer NOT NULL,attempts integer NOT NULL,next_attempt_at timestamptz,lease_until timestamptz,last_started_at timestamptz,last_succeeded_at timestamptz,last_error_code text,pending_source_ids json NOT NULL,created_at timestamptz NOT NULL,updated_at timestamptz NOT NULL,UNIQUE(user_id,source_type));
       CREATE TABLE agent_usage (user_id uuid, session_id integer, tokens_in integer, tokens_out integer, cache_read integer,
         cache_write integer,cache_round_stats jsonb,model text,provider text,is_byok boolean,tools_used jsonb,scenario text,input_source text,created_at timestamptz)`)
     await pool.query('INSERT INTO users (id) VALUES ($1)', [identity.ownerId])
@@ -42,9 +43,11 @@ test('历史增量与展示顺序同事务提交，回滚与重放不产生重�
       await writer(client, identity, { outcome: 'success', context, text: '回答' }, checkpoint)
       await client.query('ROLLBACK')
       assert.equal(Number((await pool.query('SELECT count(*) AS n FROM conversation_messages')).rows[0].n), 1)
+      assert.equal(Number((await pool.query(`SELECT count(*) AS n FROM rag_index_jobs WHERE user_id=$1`, [identity.ownerId])).rows[0].n), 0)
       await client.query('BEGIN')
       await writer(client, identity, { outcome: 'success', context, text: '回答' }, checkpoint)
       await client.query('COMMIT')
+      assert.equal(Number((await pool.query(`SELECT generation FROM rag_index_jobs WHERE user_id=$1 AND source_type='conversation'`, [identity.ownerId])).rows[0].generation), 1)
       const rows = await pool.query('SELECT role,content,history_anchor_seq FROM conversation_messages ORDER BY conversation_seq')
       assert.deepEqual(rows.rows.map(row => row.content), ['问题', '上下文', '工具轮次', '回答'])
       assert.equal(Number(rows.rows[1].history_anchor_seq), 1)
@@ -70,6 +73,7 @@ test('历史增量与展示顺序同事务提交，回滚与重放不产生重�
       await client.query('BEGIN')
       await writer(client, nextIdentity, { outcome: 'success', context: compactContext, text: '' }, compactCheckpoint)
       await client.query('COMMIT')
+      assert.equal(Number((await pool.query(`SELECT generation FROM rag_index_jobs WHERE user_id=$1 AND source_type='conversation'`, [identity.ownerId])).rows[0].generation), 2)
       const saved = await pool.query('SELECT baseline_message_seq,baseline_message_hash FROM conversation_sessions WHERE id=1')
       assert.equal(Number(saved.rows[0].baseline_message_seq), 1)
       assert.ok(saved.rows[0].baseline_message_hash)

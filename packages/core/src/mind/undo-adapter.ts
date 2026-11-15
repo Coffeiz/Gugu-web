@@ -4,6 +4,7 @@ import { dataContext } from '../contracts/index.js'
 import { databaseTime, nowUtc, utc, type Clock } from '../data/codec.js'
 import type { Backend } from '../data/repositories.js'
 import type { Database } from '../data/schema.js'
+import { enqueueMindRagIndex } from './rag-index-job.js'
 
 type Snapshot = Record<string, unknown>
 type Items = Record<string, Snapshot>
@@ -63,6 +64,7 @@ async function applyMindUndoWork(tx: Kysely<Database>, backend: Backend, rawOwne
     loaded.set(key, { spec, id })
   }
   const versions: Record<string, unknown> = {}, now = databaseTime(clock(), backend)
+  const changedNoteIds = new Set<string>(), changedCanvasIds = new Set<string>()
   for (const [key, { spec, id }] of loaded) {
     if (mode === 'redo' && operation.action !== 'create' && operation.action !== 'delete' && !(key in before)) continue
     const snapshot = after[key]!
@@ -80,9 +82,18 @@ async function applyMindUndoWork(tx: Kysely<Database>, backend: Backend, rawOwne
     const precise = backend === 'postgres' ? sql.raw(`, to_char(deleted_at AT TIME ZONE 'UTC','YYYY-MM-DD HH24:MI:SS.US') || '+00:00' AS deleted_at`) : sql``
     const result = (await sql<Snapshot>`UPDATE ${sql.table(spec.table)} SET ${sql.join(assignments)} WHERE id=${id} AND user_id=${owner} RETURNING *${precise}`.execute(tx)).rows[0]
     if (!result) throw new MindUndoConflict()
+    const kind = key.slice(0, key.indexOf(':'))
+    if (kind === 'note') changedNoteIds.add(String(id))
+    if (kind === 'canvas') changedCanvasIds.add(String(id))
+    if (kind === 'canvas_item' || kind === 'canvas_note' || kind === 'ref_node') {
+      const canvasIds = await sql<{ canvas_id: number }>`SELECT DISTINCT canvas_id FROM mind_canvas_items WHERE user_id=${owner} AND node_id=${kind === 'canvas_item' ? sql`(SELECT node_id FROM mind_canvas_items WHERE id=${id} AND user_id=${owner})` : id}`.execute(tx)
+      for (const row of canvasIds.rows) changedCanvasIds.add(String(row.canvas_id))
+    }
     if (spec.table === 'mind_nodes') versions[key] = Number(result.version ?? 1)
     else versions[key] = Object.fromEntries(['id', ...spec.compare].map(field => [field, result[field] ?? null]))
   }
+  for (const id of changedNoteIds) await enqueueMindRagIndex(tx, backend, owner, 'note', id, now, 'update')
+  if (changedCanvasIds.size) await enqueueMindRagIndex(tx, backend, owner, 'canvas', '', now, 'update')
   const eventOperation = operation.action === 'create' || operation.action === 'delete' ? ((operation.action === 'create') === (mode === 'undo') ? 'delete' : 'create') : 'update'
   return { versions, events: [{ resource: 'mind', operation: eventOperation, entity_ids: Object.keys(versions).map(key => Number(key.split(':')[1])), origin: `undo:${operation.id}` }] }
 }

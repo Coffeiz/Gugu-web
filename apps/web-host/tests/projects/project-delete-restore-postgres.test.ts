@@ -54,6 +54,7 @@ test('PostgreSQL 项目删除/恢复原子更新同批资源、Undo 和提交后
       schedule_kind varchar(16) NOT NULL, start_at timestamptz, reminder_lead_minutes integer,
       channels varchar(40) NOT NULL, delivery_targets jsonb
     )`)
+    await pool.query(`CREATE TABLE rag_index_jobs(id bigserial PRIMARY KEY,user_id uuid NOT NULL,source_type text NOT NULL,source_id text NOT NULL,pending_source_ids json,version text NOT NULL,operation text NOT NULL,status text NOT NULL,generation int NOT NULL,completed_generation int NOT NULL,attempts int NOT NULL,next_attempt_at timestamptz,lease_until timestamptz,last_error_code text,last_started_at timestamptz,last_succeeded_at timestamptz,created_at timestamptz NOT NULL,updated_at timestamptz NOT NULL,UNIQUE(user_id,source_type))`)
     await pool.query(`CREATE TABLE project_file_counts (project_id integer PRIMARY KEY, file_count bigint NOT NULL)`)
     await pool.query(`CREATE TABLE undo_operations (
       id varchar(80) PRIMARY KEY, user_id uuid NOT NULL, undo_context_id varchar(128) NOT NULL,
@@ -135,6 +136,7 @@ test('PostgreSQL 项目删除/恢复原子更新同批资源、Undo 和提交后
     assert.equal(deleted.file_version, 5)
     assert.equal(deleted.enabled, false)
     assert.match(deleted.storage_key, /\/trash\//)
+    assert.deepEqual((await pool.query(`SELECT source_id,pending_source_ids,generation FROM rag_index_jobs WHERE user_id=$1 AND source_type='scheduled_task'`, [ownerId])).rows[0], { source_id: '61', pending_source_ids: ['61'], generation: 1 })
     const undo = await pool.query(
       `SELECT resource, action, actor_type, target_refs, before_state, after_state,
       status, created_at, expires_at FROM undo_operations WHERE undo_context_id='tab-trash' AND status='active'`,
@@ -175,6 +177,7 @@ test('PostgreSQL 项目删除/恢复原子更新同批资源、Undo 和提交后
     assert.equal(active.folder_deleted, null)
     assert.equal(active.event_deleted, null)
     assert.equal(active.enabled, true)
+    assert.deepEqual((await pool.query(`SELECT source_id,pending_source_ids,generation FROM rag_index_jobs WHERE user_id=$1 AND source_type='scheduled_task'`, [ownerId])).rows[0], { source_id: '61', pending_source_ids: ['61'], generation: 2 })
     assert.ok(!String(active.storage_key).includes('/trash/'))
     await assert.rejects(trash.deleteProject(otherOwnerId, projectId), { code: 'not_found' })
     assert.deepEqual(published.map(({ resource, operation }) => [resource, operation]), [

@@ -6,18 +6,26 @@ const objectSchema=z.record(z.string(),z.unknown())
 const enabledSchema=z.union([z.boolean(),z.literal(0).transform(()=>false),z.literal(1).transform(()=>true),z.stringbool()])
 
 /** 只读取MCP开关；override高于嵌套环境和环境JSON，每次读取反映后台热更新。 */
-export function createMcpEnabledReader(overridePath:string,env:NodeJS.ProcessEnv):()=>unknown{
+export interface McpRuntimeSettings {enabled:unknown;max_servers_per_user:number;max_tools_per_server:number}
+function positiveOrZeroInteger(value:unknown,key:string):number{
+ const parsed=typeof value==='number'?value:typeof value==='string'&&/^\d+$/.test(value.trim())?Number(value):NaN
+ if(!Number.isSafeInteger(parsed)||parsed<0)throw new Error(`MCP 配置 ${key} 无效`)
+ return parsed
+}
+/** 按 Python Settings 优先级热读总开关与配置限额。 */
+export function createMcpSettingsReader(overridePath:string,env:NodeJS.ProcessEnv):()=>McpRuntimeSettings{
  return ()=>{
   const environment=Object.fromEntries(Object.entries(env).map(([key,value])=>[key.toUpperCase(),value]))
   const base=environment.MCP===undefined?{}:objectSchema.parse(JSON.parse(environment.MCP))
-  const fromEnv=environment.MCP__ENABLED!==undefined?environment.MCP__ENABLED:Object.hasOwn(base,'enabled')?base.enabled:true
-  const enabled=enabledSchema.parse(fromEnv)
-  const override=readConfigOverride(overridePath)
-  if(override.mcp===undefined||override.mcp===null)return enabled
-  const mcp=objectSchema.parse(override.mcp)
-  // Python model_construct保留override值；不将字符串等强制改成另一种开关语义。
-  return Object.hasOwn(mcp,'enabled')?mcp.enabled:enabled
+  const override=readConfigOverride(overridePath),mcp=override.mcp===undefined||override.mcp===null?{}:objectSchema.parse(override.mcp)
+  const resolve=(key:'enabled'|'max_servers_per_user'|'max_tools_per_server',envKey:string,fallback:unknown)=>Object.hasOwn(mcp,key)?mcp[key]:environment[envKey]!==undefined?environment[envKey]:Object.hasOwn(base,key)?base[key]:fallback
+  const enabled=enabledSchema.parse(resolve('enabled','MCP__ENABLED',true))
+  return {enabled,max_servers_per_user:positiveOrZeroInteger(resolve('max_servers_per_user','MCP__MAX_SERVERS_PER_USER',10),'max_servers_per_user'),max_tools_per_server:positiveOrZeroInteger(resolve('max_tools_per_server','MCP__MAX_TOOLS_PER_SERVER',64),'max_tools_per_server')}
  }
+}
+export function createMcpEnabledReader(overridePath:string,env:NodeJS.ProcessEnv):()=>unknown{
+ const read=createMcpSettingsReader(overridePath,env)
+ return ()=>read().enabled
 }
 export interface McpStatusOptions{
  requireUser:preHandlerHookHandler

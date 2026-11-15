@@ -29,7 +29,11 @@ export function createScopedRagSearch(ports:{
   index.replace(owner,snapshot.revision||'empty',documents)
   let fused
   if(ports.vectors&&documents.length){
-   const queryVector=await ports.vectors.embed(owner,query,signal)
+   let queryVector:readonly number[]=[]
+   try{queryVector=await ports.vectors.embed(owner,query,signal)}catch{
+    // embedding 传输不可用时按 Python 行为保留词法候选；调用方取消仍必须向上传播。
+    signal?.throwIfAborted()
+   }
    signal?.throwIfAborted()
    if(queryVector.length){
     const source=await ports.vectors.source(owner,signal)

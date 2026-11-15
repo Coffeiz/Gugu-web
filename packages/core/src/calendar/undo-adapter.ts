@@ -3,6 +3,7 @@ import { sql } from 'kysely'
 import { dataContext } from '../contracts/index.js'
 import { databaseTime, nowUtc } from '../data/codec.js'
 import type { Backend } from '../data/repositories.js'
+import { enqueueScheduledTaskRagIndex } from '../scheduled-tasks/rag-index-job.js'
 import { enqueueCalendarRagIndex } from './create-store.js'
 import {
   UndoAdapterConflict,
@@ -139,6 +140,8 @@ export function createCalendarUndoAdapter(backend: Backend): UndoResourceAdapter
       for (const ref of Object.keys(versions)) {
         if (ref.startsWith('event:')) {
           await enqueueCalendarRagIndex(tx, backend, owner, ref.slice('event:'.length), indexTimestamp, action)
+        } else if (ref.startsWith('task:')) {
+          await enqueueScheduledTaskRagIndex(tx, backend, owner, Number(ref.slice('task:'.length)), indexTimestamp)
         }
       }
       const events = ['event', 'task'].map(kind => ({

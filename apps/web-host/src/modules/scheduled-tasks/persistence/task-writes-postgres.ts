@@ -2,11 +2,21 @@ import type { Pool, PoolClient } from 'pg'
 import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
 import { normalizeOwnerId } from '../../../adapters/owner-context.js'
 import { isPostgresUniqueViolation } from '../../../adapters/postgres-errors.js'
-import { normalizeSchedule, scheduleTimestamp, type ScheduleSpec } from '@gugu/core/scheduled-task-schedule'
+import { scheduleTimestamp, type ScheduleSpec } from '@gugu/core/scheduled-task-schedule'
+import {
+  createScheduledTask,
+  normalizeScheduledTaskChannels,
+  normalizeScheduledTaskContext,
+  normalizeScheduledTaskTools,
+  updateScheduledTask,
+  type ScheduledTaskCreateInput,
+  type ScheduledTaskPatch,
+  type ScheduledTaskPreparedUpdate,
+} from '@gugu/core/scheduled-task-write'
 import { taskPreciseColumns, taskResponse } from '../task-list.js'
 import { scheduledTaskUndoSnapshot } from '@gugu/core/calendar'
 import { validateTaskReferences } from './task-resolver-postgres.js'
-import type { TaskCreateInput } from '../task-create.js'
+import { enqueueScheduledTaskRagRebuild } from './task-rag-job-postgres.js'
 
 type Row = Record<string, any> & { schedule_kind: string; end_at: Date | null; enabled: boolean }
 export interface ResolvedTaskFields {
@@ -19,30 +29,8 @@ export interface TaskWriteOptions {
   filesystemAuthorizationEnabled(): boolean
   publish(owner: string, operation: 'create' | 'update', task: unknown, origin: string | null): Promise<void>
 }
-const channels = new Set(['web', 'email', 'feishu', 'qq', 'wechat', 'telegram', 'im', 'chat'])
-const normalizeChannels = (value: unknown): string => {
-  if (!Array.isArray(value) || value.some(item => typeof item !== 'string')) throw new TypeError('channels 必须是字符串数组')
-  const result = [...new Set(value.filter((item): item is string => typeof item === 'string' && channels.has(item)))]
-  return result.length ? result.join(',') : 'web'
-}
-const tools = (value: unknown) => {
-  if (value == null) return []
-  if (!Array.isArray(value) || value.some(item => typeof item !== 'string')) throw new TypeError('authorized_tools 必须是字符串数组')
-  return value.includes('send_email') ? ['send_email'] : []
-}
-const context = (value: string | null) => value?.trim().slice(0, 128) || null
-function validateFields(input: Record<string, unknown>, create: boolean): void {
-  if (create || input.name != null) {
-    if (typeof input.name !== 'string' || (create && (!input.name.length || [...input.name].length > 100))) throw new TypeError('任务名称无效')
-  }
-  if (input.payload != null && typeof input.payload !== 'string') throw new TypeError('任务内容无效')
-  if (input.enabled != null && typeof input.enabled !== 'boolean') throw new TypeError('enabled 必须是布尔值')
-  if (input.channels != null) normalizeChannels(input.channels)
-  if (input.authorized_tools != null) tools(input.authorized_tools)
-}
-
 async function attachReminder(client: PoolClient, owner: string, contextId: string | null, eventId: number, task: Row): Promise<void> {
-  const ctx = context(contextId)
+  const ctx = normalizeScheduledTaskContext(contextId)
   if (!ctx) return
   const found = await client.query<Row>(`SELECT id,after_state,target_refs,base_versions FROM undo_operations WHERE user_id=$1 AND undo_context_id=$2 AND actor_type='web' AND resource='calendar' AND action='create' AND status='active' ORDER BY created_at DESC LIMIT 1 FOR UPDATE`, [owner, ctx])
   const operation = found.rows[0]
@@ -56,11 +44,11 @@ async function attachReminder(client: PoolClient, owner: string, contextId: stri
 /** CRUD 使用事务持锁；外部能力不可用时 resolve 必须抛错。 */
 export function createPostgresTaskWrites(pool: Pool, options: TaskWriteOptions) {
   return {
-    async create(rawOwner: string, input: TaskCreateInput, contextId: string | null, origin: string | null) {
-      const owner = normalizeOwnerId(rawOwner)
-      validateFields(input as unknown as Record<string, unknown>, true)
-      const spec = normalizeSchedule(input, options.validateCron)
-      if (input.event_id != null && spec.schedule_kind !== 'once') throw new TypeError('日历活动提醒必须使用 once 类型')
+    create(rawOwner: string, input: ScheduledTaskCreateInput, contextId: string | null, origin: string | null) {
+      return createScheduledTask({
+        validateCron: options.validateCron,
+        persist: async (rawId, input, spec, undoContextId) => {
+      const owner = normalizeOwnerId(rawId)
       const findExisting = async () => (await pool.query<Row>(`SELECT *,${taskPreciseColumns} FROM scheduled_tasks WHERE user_id=$1 AND event_id=$2 AND cron=$3`, [owner, input.event_id, spec.cron])).rows[0]
       let created = false
       let row: Row
@@ -74,9 +62,10 @@ export function createPostgresTaskWrites(pool: Pool, options: TaskWriteOptions) 
             if (existing.rows[0]) return existing.rows[0]
           }
           const resolved = await options.resolve(client, owner, input as unknown as Record<string, unknown>, spec, null)
-          const result = await client.query<Row>(`INSERT INTO scheduled_tasks(user_id,event_id,workspace_id,name,payload,cron,schedule_kind,interval_minutes,start_at,end_at,channels,enabled,delivery_targets,authorized_tools,email_attachment_file_ids,reminder_lead_minutes,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::json,$14::json,$15::json,$16,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) RETURNING *,${taskPreciseColumns}`, [owner, input.event_id ?? null, resolved.workspace_id, input.name, input.payload || '', spec.cron, spec.schedule_kind, spec.interval_minutes, scheduleTimestamp(spec.start_at), scheduleTimestamp(spec.end_at), normalizeChannels(input.channels ?? ['web']), input.enabled ?? true, JSON.stringify(resolved.delivery_targets ?? null), JSON.stringify(tools(input.authorized_tools)), JSON.stringify(resolved.email_attachment_file_ids), resolved.reminder_lead_minutes])
+          const result = await client.query<Row>(`INSERT INTO scheduled_tasks(user_id,event_id,workspace_id,name,payload,cron,schedule_kind,interval_minutes,start_at,end_at,channels,enabled,delivery_targets,authorized_tools,email_attachment_file_ids,reminder_lead_minutes,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::json,$14::json,$15::json,$16,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) RETURNING *,${taskPreciseColumns}`, [owner, input.event_id ?? null, resolved.workspace_id, input.name, input.payload || '', spec.cron, spec.schedule_kind, spec.interval_minutes, scheduleTimestamp(spec.start_at), scheduleTimestamp(spec.end_at), normalizeScheduledTaskChannels(input.channels ?? ['web']), input.enabled ?? true, JSON.stringify(resolved.delivery_targets ?? null), JSON.stringify(normalizeScheduledTaskTools(input.authorized_tools)), JSON.stringify(resolved.email_attachment_file_ids), resolved.reminder_lead_minutes])
           const task = result.rows[0]!
-          if (input.event_id != null) await attachReminder(client, owner, contextId, input.event_id, task)
+          if (input.event_id != null) await attachReminder(client, owner, undoContextId, Number(input.event_id), task)
+          await enqueueScheduledTaskRagRebuild(client, owner, Number(task.id))
           created = true
           return task
         })
@@ -87,45 +76,61 @@ export function createPostgresTaskWrites(pool: Pool, options: TaskWriteOptions) 
         row = existing
       }
       const response = taskResponse(row, options.filesystemAuthorizationEnabled())
-      if (created) await options.publish(owner, 'create', response, origin)
       return { task: response, created }
+        },
+        publish: (owner, task, from) => options.publish(owner, 'create', task, from),
+      }, rawOwner, input, contextId, origin)
     },
-    async update(rawOwner: string, id: number, patch: Record<string, unknown>, origin: string | null) {
-      const owner = normalizeOwnerId(rawOwner)
-      validateFields(patch, false)
+    update(rawOwner: string, id: number, patch: ScheduledTaskPatch, origin: string | null) {
+      return updateScheduledTask({
+        validateCron: options.validateCron,
+        persist: async (rawId, taskId, values, prepare) => {
+      const owner = normalizeOwnerId(rawId)
       const row = await withPostgresTransaction(pool, async client => {
-        const found = await client.query<Row>(`SELECT *,to_char(start_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS precise_start,to_char(end_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS precise_end FROM scheduled_tasks WHERE id=$1 AND user_id=$2 FOR UPDATE`, [id, owner])
+        const found = await client.query<Row>(`SELECT *,to_char(start_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS precise_start,to_char(end_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS precise_end FROM scheduled_tasks WHERE id=$1 AND user_id=$2 FOR UPDATE`, [taskId, owner])
         const current = found.rows[0]
         if (!current) throw Object.assign(new Error('任务不存在'), { statusCode: 404 })
-        const has = (key: string) => Object.prototype.hasOwnProperty.call(patch, key)
+        const has = (key: string) => Object.prototype.hasOwnProperty.call(values, key)
         const scheduleKeys = ['schedule_kind', 'cron', 'interval_minutes', 'start_at', 'end_at']
-        let spec: ScheduleSpec = { schedule_kind: current.schedule_kind, cron: current.cron, interval_minutes: current.interval_minutes, start_at: current.start_at, end_at: current.end_at }
         const scheduleChanged = scheduleKeys.some(has)
-        if (scheduleChanged) {
-          const kind = has('schedule_kind') ? patch.schedule_kind : current.schedule_kind
-          const changed = kind !== current.schedule_kind
-          const dateValue = (key: string) => { const value = has(key) ? patch[key] : changed ? null : current[key === 'start_at' ? 'precise_start' : 'precise_end']; return value as string | null }
-          spec = normalizeSchedule({ schedule_kind: kind as string, cron: (has('cron') ? patch.cron : changed || kind !== 'cron' ? null : current.cron) as string | null,
-            interval_minutes: (has('interval_minutes') ? patch.interval_minutes : changed ? null : current.interval_minutes) as number | null,
-            start_at: dateValue('start_at'), end_at: dateValue('end_at') }, options.validateCron)
-          if (current.event_id != null && spec.schedule_kind !== 'once') throw new TypeError('日历活动提醒必须使用 once 类型')
-          if (current.event_id != null) {
+        const coreCurrent = {
+          schedule_kind: String(current.schedule_kind), cron: String(current.cron),
+          interval_minutes: current.interval_minutes == null ? null : Number(current.interval_minutes),
+          start_at: current.precise_start as string | null, end_at: current.precise_end as string | null,
+          event_id: current.event_id == null ? null : Number(current.event_id),
+        }
+        let resolved: ResolvedTaskFields | undefined
+        const prepared: ScheduledTaskPreparedUpdate = await prepare(coreCurrent, async (_task, nextPatch, schedule) => {
+          const spec: ScheduleSpec = schedule ?? {
+            schedule_kind: current.schedule_kind, cron: current.cron,
+            interval_minutes: current.interval_minutes, start_at: current.start_at, end_at: current.end_at,
+          }
+          if (scheduleChanged && current.event_id != null && schedule) {
             const event = await client.query('SELECT id FROM calendar_events WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL FOR SHARE', [current.event_id, owner])
             if (!event.rowCount) throw new TypeError('绑定的日历事件不存在')
-            const conflict = await client.query('SELECT id FROM scheduled_tasks WHERE user_id=$1 AND event_id=$2 AND cron=$3 AND id<>$4', [owner, current.event_id, spec.cron, id])
+            const conflict = await client.query('SELECT id FROM scheduled_tasks WHERE user_id=$1 AND event_id=$2 AND cron=$3 AND id<>$4', [owner, current.event_id, spec.cron, taskId])
             if (conflict.rowCount) throw Object.assign(new Error('该活动在同一触发时刻已有提醒'), { statusCode: 409 })
           }
+          resolved = await options.resolve(client, owner, nextPatch, spec, current)
+        })
+        const spec = prepared.schedule ?? {
+          schedule_kind: current.schedule_kind, cron: current.cron,
+          interval_minutes: current.interval_minutes, start_at: current.start_at, end_at: current.end_at,
         }
-        const resolved = await options.resolve(client, owner, patch, spec, current)
-        const nextChannels = has('channels') && patch.channels != null ? normalizeChannels(patch.channels) : current.channels
-        const nextTools = has('authorized_tools') && patch.authorized_tools != null ? tools(patch.authorized_tools)
-          : has('payload') && patch.payload != null || scheduleKeys.some(has) || has('channels') && patch.channels != null ? [] : current.authorized_tools
-        const result = await client.query<Row>(`UPDATE scheduled_tasks SET name=$3,payload=$4,cron=$5,schedule_kind=$6,interval_minutes=$7,start_at=CASE WHEN $17::boolean THEN $8::timestamptz ELSE start_at END,end_at=CASE WHEN $17::boolean THEN $9::timestamptz ELSE end_at END,channels=$10,enabled=$11,workspace_id=$12,delivery_targets=$13::json,authorized_tools=$14::json,email_attachment_file_ids=$15::json,reminder_lead_minutes=$16,updated_at=CURRENT_TIMESTAMP WHERE id=$1 AND user_id=$2 RETURNING *,${taskPreciseColumns}`, [id, owner, patch.name ?? current.name, patch.payload ?? current.payload, spec.cron, spec.schedule_kind, spec.interval_minutes, scheduleTimestamp(spec.start_at), scheduleTimestamp(spec.end_at), nextChannels, patch.enabled ?? current.enabled, resolved.workspace_id, JSON.stringify(resolved.delivery_targets ?? null), JSON.stringify(nextTools ?? []), JSON.stringify(resolved.email_attachment_file_ids), resolved.reminder_lead_minutes, scheduleChanged])
+        const normalizedPatch = prepared.patch
+        const resolvedFields = resolved!
+        const nextChannels = has('channels') && normalizedPatch.channels != null ? normalizeScheduledTaskChannels(normalizedPatch.channels) : current.channels
+        const nextTools = has('authorized_tools') && normalizedPatch.authorized_tools != null ? normalizeScheduledTaskTools(normalizedPatch.authorized_tools)
+          : has('payload') && normalizedPatch.payload != null || scheduleKeys.some(has) || has('channels') && normalizedPatch.channels != null ? [] : current.authorized_tools
+        const result = await client.query<Row>(`UPDATE scheduled_tasks SET name=$3,payload=$4,cron=$5,schedule_kind=$6,interval_minutes=$7,start_at=CASE WHEN $17::boolean THEN $8::timestamptz ELSE start_at END,end_at=CASE WHEN $17::boolean THEN $9::timestamptz ELSE end_at END,channels=$10,enabled=$11,workspace_id=$12,delivery_targets=$13::json,authorized_tools=$14::json,email_attachment_file_ids=$15::json,reminder_lead_minutes=$16,updated_at=CURRENT_TIMESTAMP WHERE id=$1 AND user_id=$2 RETURNING *,${taskPreciseColumns}`, [taskId, owner, normalizedPatch.name ?? current.name, normalizedPatch.payload ?? current.payload, spec.cron, spec.schedule_kind, spec.interval_minutes, scheduleTimestamp(spec.start_at), scheduleTimestamp(spec.end_at), nextChannels, normalizedPatch.enabled ?? current.enabled, resolvedFields.workspace_id, JSON.stringify(resolvedFields.delivery_targets ?? null), JSON.stringify(nextTools ?? []), JSON.stringify(resolvedFields.email_attachment_file_ids), resolvedFields.reminder_lead_minutes, scheduleChanged])
+        await enqueueScheduledTaskRagRebuild(client, owner, taskId)
         return result.rows[0]!
       })
       const response = taskResponse(row, options.filesystemAuthorizationEnabled())
-      await options.publish(owner, 'update', response, origin)
       return response
+        },
+        publish: (owner, task, from) => options.publish(owner, 'update', task, from),
+      }, rawOwner, id, patch, origin)
     },
   }
 }

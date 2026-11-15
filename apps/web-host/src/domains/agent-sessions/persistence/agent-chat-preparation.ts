@@ -3,6 +3,7 @@ import type { AgentChatInput } from '../agent-chat-route.js'
 import type { RunIdentity } from '@gugu/core/agent'
 import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
 import type { AgentDispatchInput } from './agent-run-dispatch-postgres.js'
+import { enqueueConversationRagRebuild } from './conversation-rag-job-postgres.js'
 
 export interface AgentChatPreparationPorts {
   /** 按 Python 会话默认值创建会话；调用方不得提交或关闭事务。 */
@@ -58,6 +59,7 @@ export function createPostgresAgentChatPreparation(pool: Pick<Pool, 'connect'>, 
     const inserted = await client.query<{ id: string | number }>("INSERT INTO conversation_messages (session_id, conversation_seq, role, content, client_message_id, files, references_json, content_json, created_at, sent_at) VALUES ($1,$2,'user',$3,$4,$5::json,$6::json,$7::json,clock_timestamp(),clock_timestamp()) RETURNING id", [sessionId, end, input.message, input.client_message_id ?? null, attachments.cards.length ? JSON.stringify(attachments.cards) : null, input.references?.length ? JSON.stringify(input.references) : null, referenceContent === null ? null : JSON.stringify(referenceContent)])
     const messageId = Number(inserted.rows[0]?.id)
     if (!Number.isSafeInteger(messageId) || messageId < 1) throw new Error('用户消息创建失败')
+    await enqueueConversationRagRebuild(client, ownerId)
     await ports.claimAttachments(client, ownerId, messageId, attachments.attachIds)
     await ports.bindQueue(client, ownerId, sessionId, isNew, input)
     if (scheduling.mode === 'dispatch') await ports.enqueueDispatch(client, { ownerId, sessionId: String(sessionId), runId }, { userMessageId: messageId, locale: input.locale ?? null, origin: scheduling.origin, accessVersion: scheduling.accessVersion, v: 2, source: 'web' }, scheduling.ttlSeconds)

@@ -4,6 +4,7 @@ import { databaseTime, nowUtc, utc, type Clock } from '../data/codec.js'
 import type { Backend } from '../data/repositories.js'
 import type { Database, MindCanvasTable, MindNodeTable, MindCanvasItemTable, MindRelationTable } from '../data/schema.js'
 import { recordForwardUndoOperation } from '../data/undo.js'
+import { enqueueMindRagIndex } from './rag-index-job.js'
 import type { MindCanvasDeleteRuntime, MindCanvasDeleteState } from './canvas-delete.js'
 
 const time = (value: unknown) => value === null ? null : new Date(utc(value instanceof Date ? value.toISOString() : value).replace(' ', 'T')).toISOString().replace(/Z$/, '+00:00')
@@ -41,6 +42,7 @@ export function createSqlMindCanvasDeleteRuntime(db: Kysely<Database>, backend: 
           const changedItems = await tx.updateTable('mind_canvas_items').set({ deleted_at: now, updated_at: now }).where('user_id', '=', owner).where('canvas_id', '=', id).returningAll().execute()
           const changedRelations = await tx.updateTable('mind_relations').set({ deleted_at: now, updated_at: now }).where('user_id', '=', owner).where('canvas_id', '=', id).where('deleted_at', 'is', null).returningAll().execute()
           const changedCanvas = await tx.updateTable('mind_maps').set({ deleted_at: now, updated_at: now }).where('id', '=', id).where('user_id', '=', owner).where('deleted_at', 'is', null).returningAll().executeTakeFirstOrThrow()
+          await enqueueMindRagIndex(tx, backend, owner, 'canvas', '', now, 'delete')
           result.after[`canvas:${id}`] = canvasSnapshot(changedCanvas)
           for (const item of changedItems) result.after[`canvas_item:${Number(item.id)}`] = itemSnapshot(item)
           for (const relation of relations) result.after[`relation:${Number(relation.id)}`] = relationSnapshot(relation)
