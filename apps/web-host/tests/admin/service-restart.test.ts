@@ -12,14 +12,15 @@ function runtime(overrides: Partial<ServiceRestartRuntime> = {}) {
     },
     hostName: () => 'synthetic-host',
     processCommandLine: (_pid: number) => '/venv/bin/python -m worker',
+    processExecutable: (_pid: number) => '/venv/bin/python',
     signal(_pid: number, signal: string) { calls.push(`signal:${signal}`) },
     async waitForExit(_pid: number, timeoutMs: number) {
       calls.push(`wait:${timeoutMs}`)
       return true
     },
     async isSystemdManaged(_name: string) { return true },
-    async respawn(name: string, oldPid: number) {
-      calls.push(`respawn:${name}:${oldPid}`)
+    async respawn(name: string, executable: string) {
+      calls.push(`respawn:${name}:${executable}`)
       return 9001
     },
   }
@@ -62,7 +63,7 @@ test('非 systemd 服务等待旧进程退出后按白名单模块重新拉起',
   assert.equal(result.ok, true)
   assert.equal(result.msg, '已重启 gateway：旧 pid 4242 → 新 pid 9001（后端自管理，非 systemd）。')
   assert.deepEqual(fake.calls, [
-    'heartbeat:gateway', 'signal:SIGTERM', 'wait:8000', 'signal:SIGKILL', 'wait:3000', 'respawn:gateway:4242',
+    'heartbeat:gateway', 'signal:SIGTERM', 'wait:8000', 'signal:SIGKILL', 'wait:3000', 'respawn:gateway:/venv/bin/python',
   ])
 })
 
