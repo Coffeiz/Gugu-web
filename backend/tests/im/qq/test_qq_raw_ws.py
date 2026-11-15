@@ -83,7 +83,7 @@ def test_qq_message_mentions_bot_requires_current_instance_marker():
     assert qq_events._qq_message_mentions_bot(
         {"mentions": [{"bot": True}]}, "GROUP_AT_MESSAGE_CREATE"
     ) is False
-    assert qq_events._qq_message_mentions_bot({}, "GROUP_AT_MESSAGE_CREATE") is False
+    assert qq_events._qq_message_mentions_bot({}, "GROUP_AT_MESSAGE_CREATE") is True
     assert qq_events._qq_message_mentions_bot(
         {"mentions": []}, "GROUP_AT_MESSAGE_CREATE"
     ) is False
@@ -259,6 +259,74 @@ async def test_qq_group_at_event_without_current_bot_marker_is_not_claimed(monke
 
     assert len(produced) == 1
     assert produced[0]["group_mentioned"] is False
+
+
+async def test_qq_empty_group_at_event_is_preserved_as_mention_only(monkeypatch):
+    produced: list[dict] = []
+
+    async def fake_group_settings(_bot_id):
+        return True, True, True
+
+    async def fake_produce(_stream, payload):
+        produced.append(payload)
+
+    monkeypatch.setattr(qq_events, "_group_settings", fake_group_settings)
+    monkeypatch.setattr(qq_events.R, "produce", fake_produce)
+
+    from agent import router
+    from agent.runtime import runtime_state
+
+    async def fake_async_false(*args, **kwargs):
+        return False
+
+    async def fake_async_none(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(router, "decide", lambda *args, **kwargs: {"action": "run"})
+    monkeypatch.setattr(runtime_state, "get_state", fake_async_none)
+    monkeypatch.setattr(runtime_state, "is_awaiting", fake_async_false)
+
+    data = _raw_group_event(
+        content="",
+        message_scene={"ext": ["msg_idx=2"]},
+        msg_elements=[{"msg_idx": "2", "msg_id": "msg-1", "content": "", "attachments": []}],
+    )
+    data.pop("mentions", None)
+
+    await qq_events._handle_raw_qq_message(
+        "GROUP_AT_MESSAGE_CREATE", data, "bot-1", "user-1", {},
+    )
+
+    assert len(produced) == 1
+    assert produced[0]["text"] == ""
+    assert produced[0]["mention_only"] is True
+    assert produced[0]["group_mentioned"] is True
+    assert produced[0]["native_bot_mentioned"] is True
+
+
+async def test_ordinary_empty_group_message_is_still_dropped(monkeypatch):
+    produced: list[dict] = []
+
+    async def fake_group_settings(_bot_id):
+        return True, False, True
+
+    async def fake_produce(_stream, payload):
+        produced.append(payload)
+
+    monkeypatch.setattr(qq_events, "_group_settings", fake_group_settings)
+    monkeypatch.setattr(qq_events.R, "produce", fake_produce)
+    data = _raw_group_event(
+        content="",
+        message_scene={"ext": ["msg_idx=2"]},
+        msg_elements=[{"msg_idx": "2", "msg_id": "msg-1", "content": "", "attachments": []}],
+    )
+    data.pop("mentions", None)
+
+    await qq_events._handle_raw_qq_message(
+        "GROUP_MESSAGE_CREATE", data, "bot-1", "user-1", {},
+    )
+
+    assert produced == []
 
 
 def test_qq_extracts_quoted_text_by_ref_msg_idx():
@@ -498,7 +566,8 @@ async def test_qq_raw_group_event_to_payload(monkeypatch):
     assert produced[0]["platform_user_id"] == "member_1"
     assert produced[0]["chat_id"] == "group_1"
     assert produced[0]["chat_type"] == "group"
-    assert produced[0]["group_mentioned"] is False
+    assert produced[0]["group_mentioned"] is True
+    assert produced[0]["native_bot_mentioned"] is True
 
 
 async def test_qq_group_image_protocol_placeholder_is_not_forwarded_as_message_text(monkeypatch):

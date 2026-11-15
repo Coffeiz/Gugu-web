@@ -447,6 +447,7 @@ async def _reuse_early_user_rows(
                 "current_bot": item.get("native_bot_mentioned"),
                 "other_bot": item.get("mentions_other_bot"),
                 "other_member": item.get("mentions_other_member"),
+                "mention_only": item.get("mention_only") is True,
             }
             ordered.append(row)
         await db.flush()

@@ -346,6 +346,7 @@ async def get_session_messages(
              "platformUserId": m.platform_user_id,
              "platformUserName": m.platform_user_name,
              "platformBotUserId": m.platform_bot_user_id,
+             "mentionOnly": bool((m.im_mention_facts or {}).get("mention_only")),
              "runOutcome": m.run_outcome,
              "runId": m.run_id,
              "roundId": m.round_id,

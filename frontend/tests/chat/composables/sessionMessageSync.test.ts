@@ -11,6 +11,15 @@ const message = (id: number, key: string, text: string): ChatMessage => ({
 })
 
 describe('mergeSessionMessageDelta', () => {
+  it('历史回放保留空正文 @ 咕咕消息的专用展示标记', () => {
+    const [mention] = mapSessionMessageDelta({
+      messages: [{ id: 74, role: 'user', content: '', mentionOnly: true, createdAt: '2026-11-15T06:00:00Z' }],
+      timelineEvents: [],
+    }, () => 9, role => ({ role }))
+
+    expect(mention).toMatchObject({ role: 'user', text: '', mentionOnly: true })
+  })
+
   it('claims the local user bubble atomically when final history gains a run identity', () => {
     const local: ChatMessage = { ...message(1, 'client:request-a', '测试'), role: 'user', clientMessageId: 'request-a' }
     const persisted: ChatMessage = { ...local, id: 2, dbId: 10, runId: 'run-a' }

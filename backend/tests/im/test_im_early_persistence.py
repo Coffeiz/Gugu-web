@@ -111,6 +111,39 @@ async def test_early_persisted_row_is_written_before_any_run(db, user_a):
 
 
 @pytest.mark.asyncio
+async def test_empty_mention_only_group_message_is_persisted_for_chat_history(db, user_a):
+    """空正文仅提及事件进入 Run 前也有可回放的会话消息。"""
+    from agent.im.early_persist import persist_early_im_message
+
+    session = await _make_group_session(db, user_a)
+    payload = _group_payload(
+        owner_user_id=str(user_a.id), message_id="msg-mention-only", text="",
+        mention_only=True, native_bot_mentioned=True,
+    )
+
+    row_id = await persist_early_im_message(payload, message_id="msg-mention-only")
+
+    assert row_id is not None
+    rows = await _messages(db, session.id)
+    assert len(rows) == 1
+    assert rows[0].content == ""
+    assert rows[0].im_mention_facts["mention_only"] is True
+
+
+@pytest.mark.asyncio
+async def test_empty_group_message_without_mention_only_is_not_early_persisted(db, user_a):
+    from agent.im.early_persist import persist_early_im_message
+
+    await _make_group_session(db, user_a)
+    payload = _group_payload(
+        owner_user_id=str(user_a.id), message_id="msg-empty-group", text="",
+        mention_only=False,
+    )
+
+    assert await persist_early_im_message(payload, message_id="msg-empty-group") is None
+
+
+@pytest.mark.asyncio
 async def test_redelivered_message_reuses_the_same_early_row(db, user_a):
     """同一条消息被重投时复用同一行，不插第二条。"""
     from agent.im.early_persist import persist_early_im_message

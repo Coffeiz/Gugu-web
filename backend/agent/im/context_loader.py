@@ -175,6 +175,7 @@ def _group_message_rows(
                 "display_name": message.get("platform_user_name") or None,
             },
             "body": str(message.get("text") or ""),
+            "mention_only": message.get("mention_only") is True,
             "quoted_text": message.get("quoted_text") or None,
             "attachment_ids": [
                 str(item.get("attach_id")) if isinstance(item, dict) else str(item)
@@ -196,6 +197,8 @@ def format_group_message(row: dict[str, Any], supplemental_context: str = "") ->
         "【消息正文】",
         str(row.get("body") or ""),
     ]
+    if row.get("mention_only") is True:
+        message_lines.extend(("【消息类型】", "仅提及咕咕，没有附加文字"))
     quoted_text = row.get("quoted_text")
     if quoted_text:
         message_lines.extend(("【引用消息】", str(quoted_text)))

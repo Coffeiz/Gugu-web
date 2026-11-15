@@ -96,14 +96,14 @@ def _quoted_platform_message_id(data: Dict[str, Any]) -> str:
 def _qq_message_mentions_bot(data: Dict[str, Any], event_type: str) -> bool:
     """只有 QQ 明确标记属于当前实例的 mention 才算 @ 到本机器人。
 
-    同群多个机器人都会收到 AT 事件；事件类型或 ``bot=True`` 只能说明目标
-    是某个机器人，不能证明目标是当前实例。缺少 ``is_you`` 时保守按未命中处理。
+    QQ 某些群 @ 事件会省略 ``mentions`` 数组；此时事件类型本身表示当前订阅
+    的机器人被提及。若数组存在，则仍以其中的当前实例标记为准。
     """
     if event_type not in {"GROUP_AT_MESSAGE_CREATE", "GROUP_MESSAGE_CREATE"}:
         return False
     mentions = data.get("mentions")
     if not isinstance(mentions, list):
-        return False
+        return event_type == "GROUP_AT_MESSAGE_CREATE"
     for item in mentions:
         if (
             isinstance(item, dict)
@@ -157,6 +157,8 @@ def _qq_attention_mention_facts(data: Dict[str, Any], event_type: str) -> tuple[
         return False, False, False, False
     mentions = data.get("mentions")
     if not isinstance(mentions, list):
+        if event_type == "GROUP_AT_MESSAGE_CREATE":
+            return True, None, None, False
         return None, None, None, False
     current = False
     other_bot = False
@@ -408,7 +410,14 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         if should_reply and now - last_ack.get(ack_key, 0.0) > _ACK_COOLDOWN:
             last_ack[ack_key] = now
             await _qq_reply(channel_id, chat_type, ack_target, "文件收到啦，让我看看~", msg_id)
-    if not text and not all_attachments and not quoted_text:
+    mention_only = bool(
+        chat_type == "group"
+        and mentioned
+        and not text.strip()
+        and not all_attachments
+        and not quoted_text
+    )
+    if not text and not all_attachments and not quoted_text and not mention_only:
         return
     from agent.runtime import trace
     tid = trace.new_trace()
@@ -424,6 +433,7 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         "platform_sent_ms": _qq_platform_sent_ms(data),
         "chat_type": chat_type,
         "text": text,
+        "mention_only": mention_only,
         "attention_raw_text": text,
         "quoted_text": quoted_text or None,
         "attachments": all_attachments,

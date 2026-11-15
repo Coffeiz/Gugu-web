@@ -70,6 +70,7 @@ export function mapSessionMessageDelta(
       files: item.files?.length ? item.files as ChatFile[] : undefined,
       references: item.references?.length ? item.references as ChatReference[] : undefined,
       quotedText: item.quotedText || undefined,
+      mentionOnly: item.mentionOnly === true,
       time: displayTime(occurredAt), _createdAt: occurredAt,
       _timelineOrder: item.timelineOrder ?? item.id,
       runId, roundId,
