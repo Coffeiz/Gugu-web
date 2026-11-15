@@ -16,11 +16,24 @@ export class DesktopBridgeError extends Error {
 }
 
 async function call<T>(action: (bridge: DesktopBridge) => Promise<DesktopReply<T>>): Promise<T> {
-  const bridge = (window as DesktopWindow).guguDesktop
+  const bridge = (window as DesktopWindow).guguDesktop ?? (createPreviewBridge())
   if (!bridge) throw new Error('请在咕咕桌面应用中打开本地工作台')
   const reply = await action(bridge)
   if (reply.ok === false) throw new DesktopBridgeError(reply.error.code, reply.error.message, reply.error.operationId)
   return reply.result
+}
+
+function createPreviewBridge(): DesktopBridge | undefined {
+  if (!import.meta.env.DEV || new URLSearchParams(location.search).get('desktopPreview') !== '1') return undefined
+  const defaults = {
+    appearance: { theme: 'light', themeFamily: 'glass', palette: 'neutral' },
+    onboarding: { should_show: false, guide: { enabled: false, current_step: '', completed_steps: [], dismissed: false, completed_at: null, should_show: false }, seed: {} },
+    sandboxStatus: { supported: false, methods: [], checkAvailable: false, reason: '浏览器预览模式' },
+  }
+  const arrayMethods = new Set(['projects', 'clients', 'calendar', 'canvases', 'canvasItems', 'notes'])
+  return new Proxy({} as DesktopBridge, {
+    get: (_target, key: string) => async () => ({ ok: true, result: key in defaults ? defaults[key as keyof typeof defaults] : arrayMethods.has(key) ? [] : null }),
+  })
 }
 
 export const desktopData = {

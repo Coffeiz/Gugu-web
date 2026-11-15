@@ -33,6 +33,7 @@ import { registerAccountDeleteRoute, type AccountDeleteOptions } from './modules
 import { registerAdminUserDeleteRoute, type AdminUserDeleteOptions } from './modules/admin/user-delete.js'
 import type { createAdminMaintenanceStatus } from '@gugu/core/maintenance/admin-status'
 import { registerServiceStatusRoute, type createServiceStatusReader } from './modules/admin/service-status.js'
+import { registerServiceRestartRoute, type ServiceRestartOperations } from './modules/admin/service-restart.js'
 import { registerAttachmentDownloadRoute, type AttachmentDownloadOptions } from './modules/agent/attachments/download.js'
 import { registerVoiceAvailabilityRoute, type VoiceAvailabilityOptions } from './modules/agent/voice-availability.js'
 import { registerMemoryClearRoute, type MemoryClearOptions } from './modules/agent/memory-clear.js'
@@ -503,6 +504,7 @@ export interface WebUiOptions {
   emailRecipientCount?: { read(): Promise<{ count: number; locale_counts: Record<string, number> }> }
   storageQuotaStatus?: Omit<StorageQuotaStatusOptions, 'requireAdmin'>
   serviceStatus?: { read: ReturnType<typeof createServiceStatusReader> }
+  serviceRestart?: ServiceRestartOperations
   adminMaintenanceStatus?: { available(): boolean; read: ReturnType<typeof createAdminMaintenanceStatus> }
   storageLiveTotals?: { read(): Promise<{ categories: Record<string, { object_count: number; total_bytes: number }> }> }
   voicePresetsMutate?: Omit<VoicePresetMutationOptions, 'requireAdmin'>
@@ -1425,6 +1427,7 @@ export function createApp(options: WebUiOptions) {
   if (options.adminAuth && options.emailRecipientCount) registerEmailRecipientCountRoute(app, { ...options.emailRecipientCount, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.storageQuotaStatus) registerStorageQuotaStatusRoute(app, { ...options.storageQuotaStatus, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.serviceStatus) registerServiceStatusRoute(app, { ...options.serviceStatus, requireAdmin: options.adminAuth.requireAdmin })
+  if (options.adminAuth && options.serviceRestart) registerServiceRestartRoute(app, { ...options.serviceRestart, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.adminMaintenanceStatus) registerAdminMaintenanceStatusRoutes(app, { ...options.adminMaintenanceStatus, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.storageLiveTotals) registerStorageLiveTotalsRoute(app, { ...options.storageLiveTotals, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.safeEgressRead) registerSafeEgressReadRoute(app, { ...options.safeEgressRead, requireAdmin: options.adminAuth.requireAdmin })

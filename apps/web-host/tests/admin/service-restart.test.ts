@@ -37,7 +37,7 @@ test('远端心跳和命令行不匹配时跳过进程操作', async () => {
   const remote = runtime({ async readHeartbeat() { return { pid: 4242, host: 'other-host' } } })
   const remoteResult = await createServiceRestarter(remote.ports)('worker')
   assert.equal(remoteResult.ok, false)
-  assert.deepEqual(remote.calls, ['heartbeat:worker'])
+  assert.deepEqual(remote.calls, [])
 
   const reusedPid = runtime({ processCommandLine: () => '/usr/bin/python -m unrelated' })
   const reusedResult = await createServiceRestarter(reusedPid.ports)('worker')
@@ -48,13 +48,14 @@ test('远端心跳和命令行不匹配时跳过进程操作', async () => {
 test('systemd 管理的服务只发 SIGTERM 并交由 systemd 拉起', async () => {
   const fake = runtime()
   const result = await createServiceRestarter(fake.ports)('worker')
-  assert.deepEqual(result, { ok: true, msg: '已停止 worker (pid 4242)，systemd 将自动拉起。' })
+  assert.deepEqual(result, { ok: true, msg: '已重启 worker(pid 4242)，systemd 将在几秒内自动拉起。' })
   assert.deepEqual(fake.calls, ['heartbeat:worker', 'signal:SIGTERM'])
 })
 
 test('非 systemd 服务等待旧进程退出后按白名单模块重新拉起', async () => {
   const fake = runtime({
     async isSystemdManaged() { return false },
+    processCommandLine: () => '/venv/bin/python -m agent.gateway.gateway',
     async waitForExit(_pid: number, timeoutMs: number) { fake.calls.push(`wait:${timeoutMs}`); return false },
   })
   const result = await createServiceRestarter(fake.ports)('gateway')

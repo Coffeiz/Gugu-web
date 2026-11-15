@@ -50,6 +50,7 @@ import { createAdminSearchTestOperations } from './modules/admin/search-test.js'
 import { createAdminMaintenanceStatus } from '@gugu/core/maintenance/admin-status'
 import { createRedisAdminMaintenanceCommands } from './adapters/redis-events.js'
 import { createServiceStatusReader } from './modules/admin/service-status.js'
+import { createNodeServiceRestartRuntime, createServiceRestarter } from './modules/admin/service-restart.js'
 import { createRedisServiceStatusCommands } from './adapters/redis-events.js'
 import { createAttachmentDownloader } from '@gugu/core/agent/attachments/download'
 import { openLocalFile, removeLocalTree, UnsafeLocalPathError } from '@gugu/fs/node'
@@ -1343,6 +1344,7 @@ function createWebUiApp(
     emailRecipientCount: { read: createEmailRecipientCounter((sql, values) => pool.query(sql, values)) },
     storageQuotaStatus: { store: config.redisUrl ? createRedisStorageQuotaStatusStore(config.redisUrl) : { async read() { throw new Error('Redis unavailable') }, async lockExists() { throw new Error('Redis unavailable') }, async interruptIfUnchanged() { throw new Error('Redis unavailable') } } },
     serviceStatus: { read: createServiceStatusReader({ redis: config.redisUrl ? createRedisServiceStatusCommands(config.redisUrl) : null, dbOk: async () => { try { await pool.query('SELECT 1'); return true } catch { return false } } }) },
+    serviceRestart: { restart: createServiceRestarter(createNodeServiceRestartRuntime(config.redisUrl ? createRedisValueReader(config.redisUrl) : async () => null)) },
     adminMaintenanceStatus: { available: () => Boolean(config.redisUrl), read: createAdminMaintenanceStatus({
       get: key => { if (!config.redisUrl) throw new Error('维护状态服务不可用'); return createRedisAdminMaintenanceCommands(config.redisUrl).get(key) },
       compareAndSet: async (key, expected, value, ttl) => { if (!config.redisUrl) throw new Error('维护状态服务不可用'); return await createRedisAdminMaintenanceCommands(config.redisUrl).compareAndSet(key, expected, value, ttl) === '1' }

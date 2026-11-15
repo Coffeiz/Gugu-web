@@ -895,6 +895,14 @@
     "keyBehavior": "服务状态及Redis故障",
     "ci": "node-webui"
   },
+  "apps/web-host/tests/admin/service-restart.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/admin/service-restart.ts",
+    "productionEntry": "apps/web-host/src/main.ts → admin guard → process and systemd adapter",
+    "keyBehavior": "白名单、主机和PID命令行校验、systemd/手动拉起分支及管理员守卫",
+    "ci": "node-webui"
+  },
   "apps/web-host/tests/agent/attachment-download.test.ts": {
     "domain": "api",
     "layer": "L2",
