@@ -33,10 +33,10 @@ async function reset() {
     .execute()
 }
 
-async function insertCredential(input: { id: number; user: string; baseUrl?: string }) {
+async function insertCredential(input: { id: number; user: string; baseUrl?: string; capability?: string; provider?: string }) {
   await db.insertInto('user_provider_credentials').values({
-    id: input.id, user_id: input.user, provider: 'deepseek', api_format: 'openai',
-    base_url: input.baseUrl ?? 'https://api.deepseek.example/v1', model: 'deepseek-v4', capability: 'llm', dimensions: null,
+    id: input.id, user_id: input.user, provider: input.provider ?? 'deepseek', api_format: 'openai',
+    base_url: input.baseUrl ?? 'https://api.deepseek.example/v1', model: 'deepseek-v4', capability: input.capability ?? 'llm', dimensions: null,
     encrypted_value: 'cipher', nonce: 'nonce', encrypted_data_key: 'wrapped', key_version: 1,
   }).execute()
 }
@@ -148,6 +148,20 @@ describe('BYOK draft connection preview', () => {
     expect(probed).toMatchObject([{ provider: 'deepseek', model: 'deepseek-v4', apiKey: 'saved-secret' }])
     await expect(savedTest(foreign, 4)).rejects.toMatchObject({ code: 'not_found' })
     expect(decrypted).toHaveLength(1)
+    await expect(db.selectFrom('user_provider_credentials').selectAll().execute()).resolves.toHaveLength(1)
+  })
+
+  it.each(['deep_research', 'similar_image_search'] as const)('已保存 %s 凭据会解密并进行真实能力探测', async capability => {
+    await insertCredential({ id: 5, user: owner, capability, provider: capability === 'deep_research' ? 'tavily' : 'baidu' })
+    const savedTest = createCredentialSavedTest(db, {
+      enabled: () => true,
+      decrypt: async row => { decrypted.push(1); return row.encrypted_value === 'cipher' ? 'saved-secret' : '' },
+      probe: async input => { probed.push(input); return { ok: true, status: 200, detail: '', message: 'Provider连接正常' } },
+    })
+
+    await expect(savedTest(owner, 5)).resolves.toMatchObject({ ok: true, status: 200, message: 'Provider连接正常' })
+    expect(decrypted).toHaveLength(1)
+    expect(probed).toMatchObject([{ provider: capability === 'deep_research' ? 'tavily' : 'baidu', capability, apiKey: 'saved-secret' }])
     await expect(db.selectFrom('user_provider_credentials').selectAll().execute()).resolves.toHaveLength(1)
   })
 })

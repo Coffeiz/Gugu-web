@@ -17,6 +17,12 @@ async function flushUi() {
 }
 
 function mountWorkbench() {
+  const bridge = (window as any).guguDesktop
+  if (bridge) {
+    bridge.appearance ??= async () => ({ ok: true, result: { theme: 'light', themeFamily: 'glass', palette: 'neutral' } })
+    bridge.updateAppearance ??= async (patch: Record<string, unknown>) => ({ ok: true, result: { theme: 'light', themeFamily: 'glass', palette: 'neutral', ...patch } })
+    bridge.onboarding ??= async () => ({ ok: true, result: { should_show: false, seed: { seeded: false }, guide: { enabled: false, current_step: 'locale', completed_steps: [], dismissed: false, completed_at: null, should_show: false } } })
+  }
   host = document.createElement('div')
   document.body.appendChild(host)
   app = createApp(DesktopWorkbench)
@@ -38,6 +44,40 @@ beforeEach(() => {
 })
 
 describe('桌面本地工作台', () => {
+  it('外观选择经桌面 IPC 持久化并在工作台启动时恢复', async () => {
+    let saved = { theme: 'light', themeFamily: 'glass', palette: 'neutral' }
+    const guide = { should_show: true, seed: { seeded: true }, guide: { enabled: true, current_step: 'style', completed_steps: ['locale'], dismissed: false, completed_at: null, should_show: true } }
+    const updateAppearance = vi.fn(async (patch: Partial<typeof saved>) => {
+      saved = { ...saved, ...patch }
+      return { ok: true, result: saved }
+    })
+    ;(window as any).guguDesktop = {
+      projects: async () => ({ ok: true, result: [] }), clients: async () => ({ ok: true, result: [] }),
+      calendar: async () => ({ ok: true, result: [] }), canvases: async () => ({ ok: true, result: [] }), notes: async () => ({ ok: true, result: [] }),
+      appearance: async () => ({ ok: true, result: saved }), updateAppearance,
+      onboarding: async () => ({ ok: true, result: guide }),
+      undoPreview: async () => ({ ok: true, result: { undo: null, redo: null } }),
+      sandboxStatus: async () => ({ ok: true, result: { supported: false, methods: [], checkAvailable: false } }),
+    }
+    const element = mountWorkbench(); await flushUi()
+    expect(document.documentElement.dataset.theme).toBe('light')
+    expect(element.textContent).toContain('引导进行中：style · 已完成 1 步。')
+    const dark = Array.from(element.querySelectorAll('button')).find(button => button.textContent?.trim() === '深色')!
+    dark.click(); await flushUi()
+    expect(updateAppearance).toHaveBeenCalledWith({ theme: 'dark' })
+    expect(document.documentElement.dataset.theme).toBe('dark')
+    const mono = Array.from(element.querySelectorAll('button')).find(button => button.textContent?.trim() === 'Mono')!
+    mono.click(); await flushUi()
+    expect(updateAppearance).toHaveBeenLastCalledWith({ themeFamily: 'mono' })
+    const ink = Array.from(element.querySelectorAll('button')).find(button => button.textContent?.trim() === 'Ink')!
+    ink.click(); await flushUi()
+    expect(updateAppearance).toHaveBeenLastCalledWith({ palette: 'neutral' })
+    app?.unmount(); app = undefined; host?.remove(); host = undefined
+    mountWorkbench(); await flushUi()
+    expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(document.documentElement.dataset.family).toBe('mono')
+    expect(document.documentElement.dataset.palette).toBe('neutral')
+  })
   it('从桌面打开画布、添加画布便签并通过版本字段保存正文', async () => {
     const canvas = { id: 2, title: '桌面画布', projectId: null, data: {}, createdAt: '', updatedAt: '' }
     const items = [{ id: 8, canvasId: 2, nodeId: 9, x: 0, y: 0, w: null, h: null, z: 0, collapsed: false, data: {}, refData: null,

@@ -14,13 +14,13 @@
 
 ## 当前交付状态摘要
 
-本表按**完整工具及实际生产Run装配**计数，不将Core合成Harness、注册器工厂或部分端口记为生产完成。当前109个静态工具：**已完成并接入0、已实现待接入48、部分实现3、依赖共享能力或平台57、退役/重设计1**。动态MCP另计；部分实现的工具同样仍有依赖阻塞，不重复计数。
+本表按**完整工具及实际生产Run装配**计数，不将Core合成Harness、注册器工厂或部分端口记为生产完成。当前109个静态工具：**已完成并接入0、已实现待接入49、部分实现3、依赖共享能力或平台56、退役/重设计1**。动态MCP另计；部分实现的工具同样仍有依赖阻塞，不重复计数。
 
 | 状态 | 工具/范围 | 当前证据与缺口 |
 | --- | --- | --- |
-| 已实现待接入（48） | list_clients、create_client、update_client、list_projects、get_project、create_project、get_current_time、use_skill、list_scheduled_tasks、global_search、get_upcoming、list_trash、restore_file、restore_folder、read_conversation、list_events、list_workspaces、get_workspace、get_dashboard_stats、update_project、set_color、archive_project、add_stage、remove_stage、rename_stage、set_stages、update_stage、note_search、note_get、get_tool_schema、update_workspace、canvas_list、canvas_get、canvas_search、canvas_focus_node、canvas_search_placeable、canvas_create、list_skills、canvas_update_node、canvas_remove_node、canvas_update_note、canvas_create_note、canvas_add_node、canvas_update_anchor、canvas_connect、note_delete、note_restore、note_undo | Core真实调用及行为回归已列；Node生产main尚未装配Agent runtime/registry，Skill可信loader/资源source与部分领域Host链仍缺验收。此状态不保证全部后端已经具备。 |
-| 部分实现（3） | read_file、ask_user、search_conversations | read_file 仅文本file_id子集；ask_user 的表单、沙盒授权与生产Host待接入；历史搜索缺真实 RAG 和生产装配。 |
-| 依赖共享能力或平台（57） | 见逐工具清单 | 依赖共享领域/文件/历史/渠道/MCP/RAG/确认与实际执行后端；对应能力由A/B或可信平台Host提供，不注册假成功工具。 |
+| 已实现待接入（49） | list_clients、create_client、update_client、list_projects、get_project、create_project、get_current_time、use_skill、list_scheduled_tasks、global_search、get_upcoming、list_trash、restore_file、restore_folder、read_conversation、search_memory、list_events、list_workspaces、get_workspace、get_dashboard_stats、update_project、set_color、archive_project、add_stage、remove_stage、rename_stage、set_stages、update_stage、note_search、note_get、get_tool_schema、update_workspace、canvas_list、canvas_get、canvas_search、canvas_focus_node、canvas_search_placeable、canvas_create、list_skills、canvas_update_node、canvas_remove_node、canvas_update_note、canvas_create_note、canvas_add_node、canvas_update_anchor、canvas_connect、note_delete、note_restore、note_undo | Core真实调用及行为回归已列；Node生产main尚未装配Agent runtime/registry，Skill可信loader/资源source与部分领域Host链仍缺验收。此状态不保证全部后端已经具备。 |
+| 部分实现（3） | read_file、ask_user、search_conversations | read_file 仅文本file_id子集；ask_user 的表单、沙盒授权与生产Host待接入；历史搜索已有持久 RAG/Jieba BM25 适配器（遵循 Python strategy），但真实生产 Agent Run 资源装配和 PostgreSQL 验收未完成。 |
+| 依赖共享能力或平台（56） | 见逐工具清单 | 依赖共享领域/文件/历史/渠道/MCP/RAG/确认与实际执行后端；对应能力由A/B或可信平台Host提供，不注册假成功工具。 |
 | 退役/重设计（1） | shell | 工具用途保留；Docker生命周期实现退役，Linux MXC多用户隔离及真实平台后端未验收，当前不开放。 |
 
 真实调用方复核：`main.ts`未装配Agent chat/runtime/reconstructor，`createAgentToolRegistry`只有工厂与测试引用，已由聊天会话再次确认；技能生产source同样未接入。上述判断与本文件后续历史分阶段测试记录分别看待；旧记录中的“Core完成/已接入Harness”只描述当时测试层级，不能覆盖当前生产状态。
@@ -108,7 +108,7 @@ Node 保持现有 `Harness ToolPort.plan/dispatch/reconcile` 和 Executor 边界
 | `link_buttons.py` | `send_link_buttons` | message, buttons | 否 | 依赖阻塞 |
 | `mcp.py` | `manage_mcp_servers` | action | 是 | 依赖阻塞 |
 | `memory.py` | `remember` | 无 | 否 | 依赖阻塞 |
-| `memory.py` | `search_memory` | query | 否 | 依赖阻塞 |
+| `memory.py` | `search_memory` | query | 否 | 已实现待接入（Core 查询、Web owner/可信 IM scope resolver 和真实 dispatch 已实现；生产 Run/可信 IM context 未接） |
 | `meta.py` | `call_tool` | tool_name, arguments | 否 | 依赖阻塞 |
 | `meta.py` | `get_tool_schema` | tools | 否 | 已实现待接入 |
 | `meta.py` | `use_skill` | id | 否 | 已实现待接入（可信技能loader与资源未装配） |
@@ -1008,4 +1008,59 @@ Core schema 17 增加 `knowledge_index_entries` 的 SQLite/PostgreSQL DDL 和范
 
 ### Host RAG 重建调度器（2026-11-15）
 
-新增 Host 单消费者轮询器：启动即工作，按 Core Worker 返回的状态排空可用任务，空闲/重试后退避轮询；捕获错误并回调、取消停止且等待当前任务退出，禁用时不触发工作。临时 SQLite 回归经该调度器调用 Core 持久 Worker 消费 `rag_index_jobs` 并写入 `knowledge_index_entries`；另覆盖排空、无并发、失败重试、取消和禁用，共 **5/5 通过**。该调度器模块尚未接入 `main.ts` 生产组合根，未证明多实例/部署环境接管；不能记为生产重建已上线。
+新增 Host 单消费者轮询器：启动即工作，按 Core Worker 返回的状态排空可用任务，空闲/重试后退避轮询；捕获错误并回调、取消停止且等待当前任务退出，禁用时不触发工作。临时 SQLite 回归经该调度器调用 Core 持久 Worker 消费 `rag_index_jobs` 并写入 `knowledge_index_entries`；另覆盖排空、无并发、失败重试、取消和禁用。后续已接入 `main.ts` 迁移门控及首次索引基线入队；当前回归状态以“首次 RAG 索引基线与持久会话工具”一节为准。多实例部署和真实 PG 环境仍未验收。
+
+### RAG Host 来源组与会话搜索安全回归（2026-11-15）
+
+新增 `rag-rebuild.ts` Host 工厂及 `startAgentRagIndexWorker` 生命周期入口，固定装配 project、calendar、note、scheduled_task、conversation、canvas 六个已具备真实 Core 读取端口的来源；memory/knowledge 仍未启用。Host 生命周期通过正式队列和 Core Worker 写入索引表；缺少来源时任务保持 queued，不报假成功。后续已由生产 `main.ts` 在 PG 迁移状态通过后启动，并为既无索引也无任务的来源补全基线队列。显式会话搜索新增持久索引/向量适配器，安全和调用回归以“首次 RAG 索引基线与持久会话工具”一节为当前结果。正式 PG、生产向量/embedding 凭据、memory/knowledge 授权来源和 Web Agent Run 真实装配仍未验收。
+
+### RAG 主机启动门控与正式分词器（2026-11-15）
+
+Web Host 锁定 `@node-rs/jieba@2.0.1`，使用包内词典与 HMM=false。`search_conversations` 有持久索引 BM25 适配器：真实注册器 dispatch 读取 owner scope 的正式 RAG 索引，并通过共享 owner 限定查询补齐会话元数据，符合 Python 的 `strategy="bm25"`，不调用 embedding。通用 RAG Host 向量 resolver 把 memory/knowledge/pattern 旧向量文件绑定到固定存储根和 owner，按 owner 动态解析 embedding 设置、模型版本及受控 Provider Transport；另有 PostgreSQL owner BYOK 配置读取器，通过 Host 解密端口获取启用的 embedding 凭据，默认不放行 local endpoint。无设置或无效 embedding 时 memory RAG 词法回退，不伪造向量。Host 向量链测试使用临时 SQLite/文件系统、合成向量文件及 mock Transport，没有调用真实 Provider。会话来源回归验证群记录不进入 owner 查询，缺少 `chat_id` 的群记录 fail-closed。生产 `main.ts` 在监听端口前校验正式 PG 索引迁移状态，只在 `applied` 时启动 Worker；首次 Worker 运行会为既无索引也无任务的 owner/source 幂等建立全量基线任务，不覆盖已有增量任务；关闭时停止并等待当前任务。近期 Host Agent/RAG 定向测试 **26/26 通过**，Core RAG/build 与 Host/Core 定向类型检查通过。正式 PG/隔离 PG、真实生产 embedding 凭据解析/端口装配及 Web Agent Run 对工具端口的生产装配仍未验收；Python pytest 当前环境缺少 pytest/venv，不能据此宣称 Python 全量等价或生产搜索已上线。
+
+### 首次 RAG 索引基线与持久会话工具（2026-11-15）
+
+首次启动队列只处理“无该来源索引行、无该来源任务行”的 owner/source；已有增量任务或索引不被覆盖，空 source ID 由 Core Worker 作为全量来源重建。通过临时 SQLite 验证重复启动幂等、已有 project 增量队列不变、已有 calendar 索引不重复入队，并验证 Host 生命周期实际消费任务、写入正式索引表。`search_conversations` 经真实工具注册/dispatch、正式 Jieba、持久会话来源与正式索引表验证，按 Python `strategy="bm25"` 固定词法检索；测试不再为历史会话调用 embedding。混合/向量召回在 memory RAG 切片另以合成向量及 transport 验证。授权拒绝不会返回命中正文。真实 PG、多实例启动、生产凭据/向量来源及 Web Run 资源装配仍未验收。
+
+### Knowledge RAG 授权文件来源（2026-11-15）
+
+Core 新增 `createKnowledgeRagSource`，从 Host 注入的 `AgentKnowledgeReadStore` 读取 owner 授权知识 Markdown；只将 Python `KnowledgeAdapter` 对应的 canonical 投影写入派生索引，保留 topic/keywords/description 摘要、元数据版本戳、owner/group 等来源 scope 与软删除过滤。Core 临时 SQLite 用例经持久任务 Worker 写入 `knowledge_index_entries`，覆盖 owner 目录边界、foreign owner、inactive 条目、非 Markdown 文件、全量/单条读取、取消、版本更新、删除墓碑及群 scope 投影；定向会话/RAG 文件 **42/42 通过**，Core build 执行成功。Python pytest 未能运行：devserver 无项目 pytest，系统 Python 也无 pytest。Host Worker 工厂现支持显式注入知识存储，但生产 `main.ts` 未提供授权 FS 端口，故生产仍不构建 knowledge 索引；memory scope 服务、PG、生产 Run、Python/固定语料差分继续未验收。此切片未调用真实外部服务；存储使用内存模拟，索引与队列使用隔离 SQLite。
+Host 来源组集成测试另经真实 `startAgentRagIndexWorker` 把临时 owner 文件和隔离 SQLite 队列连到 Core Worker，确认 project 与 knowledge 均写入正式索引、knowledge 回执变为 ready，同时 memory 因来源未注入保持 queued；该 Host 测试文件 **7/7 通过**，Host 来源/Worker/测试定向严格类型检查通过。此为 Host 真实组装工厂的 SQLite 集成，不是 Web PostgreSQL 生产 Run 验收。
+
+新增 Web Host `createLocalAgentKnowledgeReadStore`，固定到可信 Host storage root 和 Core Worker 提供的 owner；读取复用 `@gugu/fs/node` 的 symlink/越界防护，目录枚举仅返回普通 `.md` 文件并支持 keyset 分页，单文件读取限制 1 MiB。Node 临时目录安全测试 **1/1 通过**，Host reader/Worker 工厂定向严格类型检查通过；该 Host reader 尚未由生产 `main.ts` 注入，不构成线上索引接入。
+
+### 1.7.7 Memory loader 迁入 Core（2026-11-15）
+
+按 Git tag `v1.7.7` 的 `backend/ts/workers/rag/src/memory-loader.ts` 迁移完整 loader 到 `packages/core/src/agent/rag/memory-loader.ts`，删除旧 worker 的 `DataRuntime`/`StorageReader` 绑定，改由 Core 契约接收 trusted scope-state 与 Host storage reader；`@gugu/core/agent` 导出 `prepareMemory`、`loadDocumentVectors` 和必要端口。回归覆盖 owner index 外主记录过滤、daily、向量模型版本筛选、空 pattern tombstone 不回退旧 facts、owner 校验、群 scope tombstone/投影和 snapshot 去重。Core 定向回归 **4/4 通过**，Core `typecheck` 与 build 通过。Host 新增 `createLocalAgentMemoryRagStore` 和临时目录用例，固定 owner namespace、文件白名单、文件大小/字符上限并拒绝跨 owner key、路径穿越、`.env`、未允许的 owner memory 根文件及符号链接，Host 回归 **1/1 通过**、新增 Host 文件定向严格类型检查通过。
+
+这些用例使用隔离临时 FS、内存 scope-state 替身，没有真实 scope 授权服务或 PG。全量 Host typecheck 仍被并行测试中的 user-list fixture 元数据缺项和 BYOK 测试类型错误阻断，未修改对应文件。memory loader 是查询时准备逻辑；scope 枚举/授权、PG scope-state 适配、生产 memory 调用方和持久 Worker 来源仍未接通，不能标记生产 memory/RAG 完成。
+
+### RAG scope 状态查询与生产 knowledge 来源接线（2026-11-15）
+
+Core 新增 `createSqlMemoryScopeStateReader`，沿用 1.7.7 Data Runtime 查询的完整 owner/platform/bot/scope key、group→`group`、member→`platform-user` 映射、`missing`/`version:updated_at` revision 和 tombstone 语义。新增隔离 SQLite 实际 SQL 回归，与原 loader 合并后 **5/5 通过**；覆盖 owner 不匹配、missing cursor、成员类型和删除屏障。Core typecheck/build 通过。该 reader 只查状态，不提供 scope 授权或枚举。
+
+生产 `main.ts` 现仅在 RAG schema 检查为 `applied` 时，把 `createLocalAgentKnowledgeReadStore(config.storageLocalPath)` 注入已有 Worker。Host 临时目录 + SQLite 测试通过 `startAgentRagIndexWorker`、持久任务队列和正式索引表，验证 knowledge 文档真实入表并将任务置为 ready，未就绪 memory 任务保持 queued；Host Worker 文件 **7/7 通过**。Worker 的关闭/取消、串行排空和首次基线幂等仍由同文件回归覆盖。此接线未在正式 PostgreSQL/部署环境验收。
+
+先前 Host 类型检查曾被并行新增模块的导出缺失阻断；本轮 Core build 后 Host 生产源码 typecheck 已通过。对应 Python pytest 未能运行：本机未安装 pytest，2.0 工作区没有项目虚拟环境。生产 Agent Run 仍没有 `createAgentToolRegistry` / `search_conversations` 资源装配 caller；memory scope 授权、真实 PG、真实生产 embedding 与 Python 全量行为对照仍未完成，不能据此宣称 Agent RAG/search 已经生产接通。
+
+### search_memory Core 查询链（2026-11-15）
+
+新增 `createMemorySearch`：scope 必须来自 Host `resolveScopes`，并在读文件前和返回前重验授权；Core 复用 1.7.7 `prepareMemory` 读取 owner/group/member 来源、tombstone/snapshot/source 过滤与版本匹配向量，然后使用共享 TS BM25/混合召回与 `rankCandidates`。`search_memory` 工具沿 Core 注册器校验 query/scope/source/strategy/1–25 limit；Web Host 只有显式注入 `memorySearch` 端口才注册，并按 `search_memory` 权限再次检查。未接受模型提供的 owner/group/member 身份。
+
+Core 实际注册器 dispatch 测试原 **3/3**，新增版本匹配向量端到端召回后 **4/4 通过**：使用临时合成 owner memory index 和 scope-state/授权/snapshot/embedding 替身，验证词法与混合召回、来源、异主索引行隔离、模型伪传身份无效、权限撤销、空 query 和非法 limit。新增 Web owner-only Host adapter，复用 owner-bound FS reader 与 SQL scope-state reader；临时 SQLite + owner memory 文件经 Host `createAgentToolRegistry`→Core RAG→实际 dispatch **1/1 通过**，覆盖 BM25 与 Host 向量文件/受控 mock transport 的混合召回、凭据不泄漏、异主索引行过滤、非 IM `current_group` 按 Python 语义收敛到 owner scope、授权关闭不读取快照。Host registry 独立用例 **16/16 通过**，确认缺注入时隐藏、有注入时只传可信 RunIdentity。这里使用临时 DB/FS、合成授权/快照/Jieba/embedding 与向量文件，未连接真实向量 Provider。Core typecheck/build、Host typecheck 通过。Python `test_rag_memory_service.py` 和 `test_search_memory_boundary.py` 本环境未能运行：未安装 pytest。
+
+剩余关键缺口：Web owner-only Host 适配器支持注入 BYOK resolver/受控 transport 并调用向量召回；Host 另有从可信 IM context + owner reflection cursor 按 Python 规则解析 scope 的 resolver，但尚未从生产 Agent Run 注入可信上下文、逐 scope 授权、凭据服务和向量能力。故 `search_memory` 仍是已实现待接入；真实 PostgreSQL、平台会话授权、生产 embedding 和 Agent Run 运行不能标为完成。详见 Core RAG README。
+
+### IM memory scope dispatch 回归（2026-11-15）
+
+Host `agent-memory-scopes.ts` 复刻 Python `resolve_memory_query_scopes`：IM 平台和角色来自 Host 注入上下文；跨群只查询当前 owner 的 `memory_reflection_cursors`；成员查询只匹配同一 platform-user scope；owner/member 的群数上限、排除当前群、私有 memory 拒绝规则与请求 scope 映射保持 Python 语义。Web Run 没有 IM 身份时仍只解析 owner scope。
+
+新增临时 SQLite + 文件夹具经 `createAgentToolRegistry` → Core memory search → 工具 dispatch，验证 member 的 current_group 和 all_my_groups 只返回本人群记忆、owner 跨群不返回成员记忆、当前群之外的结果只在显式跨群请求时出现，且模型传入伪造 owner/group 字段不扩展授权。该回归还固定了同名 memory source key 在多个 scope 下必须都能参与排序，防止 transient index 的 ID map 覆盖合法文档。Host 定向 memory 组 4/4、Core memory loader/search 9/9 通过。授权上下文、cursor、scope 文件均为合成数据，未连接生产 IM、PostgreSQL 或 Agent Run。
+
+### RAG 工具和来源回归复验（2026-11-15）
+
+Web owner-only memory dispatch 回归补正快照读取次数：成功的 owner 查询与 Web 非 IM `current_group` 查询各读取一次快照；随后撤权的调用在 registry 权限门被拒绝，不再读快照。另经真实 Host dispatch 撤销检索中 scope 授权，验证第二次授权检查拒绝结果且不返回已读取的记忆正文。验证仍走临时 SQLite、owner memory 文件、合成授权/快照、合成向量文件及 mock embedding transport。Core RAG memory-loader/search **9/9**、含会话/知识/项目/日历/便签/画布来源与持久 Worker 的共享数据回归 **42/42** 通过；Host 工具注册、会话搜索、memory 搜索、持久 Worker、知识/记忆文件 reader、BYOK gate 与正式 Jieba **31/31** 通过；Core build 通过。首次 Host 定向运行因 devserver 缺少最新 Core dist 失败，先在同一已同步副本构建 Core 后重跑通过。
+
+BYOK embedding resolver 必须先通过 Host BYOK gate 才查 owner credential，并在解密后及发送 query embedding 请求前再次确认 gate 仍开启；关闭时不查库，读取/解密期间或请求开始前关闭时不返回 API key、不发起网络请求。现在 Web memory 的真实注册器 dispatch 经该 resolver、合成 owner credential 行、mock 解密及 mock Transport 完成混合向量召回；更新后的 Host memory 测试文件 **3/3 通过**。这验证 Host→Core RAG→工具调用链，不代表真实 PostgreSQL 或生产密钥/Provider 服务。
+
+Host 全量 typecheck 未通过，错误见并行新增的 user-list fixture、BYOK 测试与 folder-writes 测试，未改动这些文件；本次 RAG 实现和测试没有新增诊断。Python 基准测试未能启动：devserver 没有项目 pytest，系统 Python 也未安装 pytest。当前没有真实 PG、生产 embedding 或生产 Agent Run 验收；`createAgentToolRegistry` 尚无生产 Run caller，Web RAG 授权/快照和 IM scope 仍须由可信 Host 装配，所以这批回归不改变“已实现待生产接入”的状态。

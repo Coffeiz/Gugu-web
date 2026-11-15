@@ -1,4 +1,5 @@
 import type { DesktopBridge, DesktopProject, DesktopClient, DesktopCalendarEvent, DesktopCanvas, DesktopCanvasItem, DesktopNote, DesktopReply } from '@gugu/core/desktop'
+import type { DesktopAppearancePreferences, DesktopOnboardingState } from '@gugu/core/desktop'
 export type { SandboxStatus } from '@gugu/core/desktop'
 export type ProjectRow = DesktopProject
 export type ClientRow = DesktopClient
@@ -23,6 +24,9 @@ async function call<T>(action: (bridge: DesktopBridge) => Promise<DesktopReply<T
 }
 
 export const desktopData = {
+  appearance: () => call(bridge => bridge.appearance()),
+  updateAppearance: (patch: Partial<DesktopAppearancePreferences>) => call(bridge => bridge.updateAppearance(patch)),
+  onboarding: () => call(bridge => bridge.onboarding()),
   projects: () => call(bridge => bridge.projects()),
   createProject: (name: string) => call(bridge => bridge.createProject(name)),
   renameProject: (id: number, version: number, name: string) => call(bridge => bridge.renameProject(id, version, name)),

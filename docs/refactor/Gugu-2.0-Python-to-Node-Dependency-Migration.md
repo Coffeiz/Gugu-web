@@ -101,12 +101,14 @@
 | `pillow-heif>=0.16.0` | iPhone HEIC/HEIF | `sharp`（经验证的 HEIF/libheif build）/ 独立 `libheif` | H | 实机 HEIC/HEIF、授权/编解码器、跨平台包 |
 | `pilk>=0.2.4` | QQ/微信 SILK → PCM | SILK 原生解码器或 WASM 包；FFmpeg 后处理 | H | 腾讯头、24k/单声道、错误音频、Windows/macOS；许可证审查 |
 | `trafilatura>=2.0.0` | 网页正文抽取 → Markdown | `@mozilla/readability` + `jsdom`，必要时 `cheerio` | H | 中文页面、动态站点、链接、表格与正文质量 |
-| `python-docx==1.1.2` | DOCX 文本 | `mammoth` 或 OOXML 解析 | M | 段落顺序、表格、页眉脚、批注 |
-| `openpyxl==3.1.5` | XLSX 文本 | `exceljs` / `xlsx`（许可证确认） | M | 公式缓存、合并单元格、多个 sheet |
-| `xlrd==2.0.1` | 旧 XLS | 支持 BIFF8 的 XLS 解析器（PoC 选型） | H | .xls 兼容性、日期序列、编码 |
-| `python-pptx==1.0.2` | PPTX 文本 | OOXML 专用抽取适配器 | H | 文字框、组合形状、表格、备注、排序 |
-| `striprtf==0.0.28` | RTF 文本 | RTF parser / 转换工具（PoC） | H | Unicode 转义、嵌套样式、容错 |
-| `odfpy==1.4.1` | ODF 文本 | ODF ZIP/XML 自定义抽取 / 适配库 | H | ODT/ODS/ODP 格式、命名空间、表格 |
+| `python-docx==1.1.2` | DOCX 文本 | `mammoth`（DOCX→HTML/文本抽取） | M | 段落顺序、表格、页眉脚等；Mammoth 不负责 HTML 净化，不视为结构编辑能力 |
+| `openpyxl==3.1.5` | XLSX 文本 | `xlsx`（SheetJS CE，读取） | M | 公式缓存、合并单元格、多个 sheet；先验证 Gugu 所需字段与工作簿特性 |
+| `xlrd==2.0.1` | 旧 XLS | `xlsx`（SheetJS CE，BIFF/XLS 读取） | H | BIFF8、日期序列、编码与真实样本兼容性 |
+| `python-pptx==1.0.2` | PPTX 文本 | 现有 `jszip` + `fast-xml-parser` + OOXML 专用抽取适配器 | H | 关系与部件顺序、文字框、组合形状、表格、备注；限制 ZIP/XML 资源并拒绝 DTD/实体 |
+| `striprtf==0.0.28` | RTF 文本 | 独立 RTF parser；仅在明确需要高保真转换时评估受限转换服务 | H | Unicode 转义、嵌套样式、容错与资源上限 |
+| `odfpy==1.4.1` | ODF 文本 | `xlsx`（SheetJS CE，仅 ODS 读取）；ODT/ODP 使用专用 ZIP/XML 适配器 | H | ODS 表格兼容性、ODT/ODP 命名空间和内容顺序；不引入 `officeparser` 兜底 |
+
+**Office 依赖选型（2026-11-15）**：Node 侧以 Mammoth（DOCX）和 SheetJS CE（XLS/XLSX/ODS）作为格式专用读取依赖；OOXML/ODF XML 解析采用 `fast-xml-parser`，PPTX/ODT/ODP 的包结构和业务投影由小型专用适配器负责。PPTX ZIP 层先复用 Web Host 已有的 `jszip`，只有内存/流式验证显示实际需要时才另评估 ZIP 库。明确不采用 `officeparser`。以上选型不等于相应 Node API 或 Office 格式已迁移：仍须按实际调用方补充合成与兼容性样本、owner/资源限制及安全回归；SheetJS 读写往返、Mammoth HTML 净化、未知 OOXML/ODF 部件保留和创建/结构编辑能力分别评估，不从读取能力推断无损写入。
 
 ### 1.6 Python 传递依赖与安全约束（同样逐项记录）
 

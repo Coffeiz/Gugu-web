@@ -29,10 +29,18 @@ export function createScopedRagSearch(ports:{
   index.replace(owner,snapshot.revision||'empty',documents)
   let fused
   if(ports.vectors&&documents.length){
-   const source=await ports.vectors.source(owner,signal)
-   const [vectorMap,queryVector]=await Promise.all([readRagDocumentVectors(documents,ports.vectors.version,source,signal),ports.vectors.embed(owner,query,signal)])
+   const queryVector=await ports.vectors.embed(owner,query,signal)
    signal?.throwIfAborted()
-   fused=index.searchHybrid(owner,query,50,options.sourceTypes,trustedScope,{vectors:new Map(Object.entries(vectorMap)),queryVector,vectorVersion:ports.vectors.version,expectedVersion:ports.vectors.version})
+   if(queryVector.length){
+    const source=await ports.vectors.source(owner,signal)
+    const vectorMap=await readRagDocumentVectors(documents,ports.vectors.version,source,signal)
+    signal?.throwIfAborted()
+    fused=index.searchHybrid(owner,query,50,options.sourceTypes,trustedScope,{vectors:new Map(Object.entries(vectorMap)),queryVector,vectorVersion:ports.vectors.version,expectedVersion:ports.vectors.version})
+   }else{
+    // Python 在 embedding 未配置/请求失败时退回同一 owner scope 下的词法召回。
+    const lexical=index.search(owner,query,50,options.sourceTypes,trustedScope)
+    fused={...lexical,fusion:'bm25' as const,vectorDocCount:0}
+   }
   }else{
    const lexical=index.search(owner,query,50,options.sourceTypes,trustedScope)
    fused={...lexical,fusion:'bm25' as const,vectorDocCount:0}

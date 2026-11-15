@@ -7,7 +7,7 @@ import type { createPostgresTaskWrites } from '../../src/modules/scheduled-tasks
 
 test('任务路由转换 Python 接受的数字和布尔输入，并拒绝非法日期', async () => {
   const app = Fastify(), seen: unknown[] = []
-  const writes = { async create(_owner: string, body: unknown) { seen.push(body); return { id: 1 } }, async update() { return {} } } as unknown as ReturnType<typeof createPostgresTaskWrites>
+  const writes = { async create(_owner: string, body: unknown) { seen.push(body); return { task: { id: 1 }, created: true } }, async update() { return {} } } as unknown as ReturnType<typeof createPostgresTaskWrites>
   registerScheduledTaskWrites(app, (() => ({ requestContext: { data: { ownerId: 'synthetic' } } })) as unknown as UserFromRequest, writes)
   try {
     const result = await app.inject({ method: 'POST', url: '/api/v1/scheduled-tasks', payload: { name: '任务', schedule_kind: 'once', start_at: 1893456000, event_id: '2', enabled: 'false' } })

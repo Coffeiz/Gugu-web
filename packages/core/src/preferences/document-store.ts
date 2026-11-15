@@ -1,9 +1,9 @@
-import { sql, type Kysely } from 'kysely'
+import { sql, type Kysely, type Transaction } from 'kysely'
 import { dataContext } from '../contracts/index.js'
 import type { PreferenceDocumentStore } from './service.js'
 
 /** 读写可信 owner 的偏好文档；连接生命周期由 Host 持有。 */
-export function createKyselyPreferenceDocumentStore<DB>(db: Kysely<DB>, backend: 'sqlite' | 'postgres'): PreferenceDocumentStore {
+export function createKyselyPreferenceDocumentStore<DB>(db: Kysely<DB> | Transaction<DB>, backend: 'sqlite' | 'postgres'): PreferenceDocumentStore {
   const ownerKey = (ownerId: string) => {
     const normalized = dataContext(ownerId).ownerId
     return backend === 'sqlite' ? normalized.replaceAll('-', '') : normalized

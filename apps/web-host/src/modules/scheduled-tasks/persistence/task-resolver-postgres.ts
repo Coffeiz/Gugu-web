@@ -1,5 +1,5 @@
 import type { PoolClient } from 'pg'
-import { scheduleMicroseconds, shanghaiWallMilliseconds, type ScheduleSpec } from '../normalize-schedule.js'
+import { scheduleMicroseconds, shanghaiWallMilliseconds, type ScheduleSpec } from '@gugu/core/scheduled-task-schedule'
 import type { ResolvedTaskFields } from './task-writes-postgres.js'
 
 type Row = Record<string, any>

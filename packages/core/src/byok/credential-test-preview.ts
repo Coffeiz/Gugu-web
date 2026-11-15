@@ -110,9 +110,8 @@ export function createCredentialSavedTest<DB>(db: Kysely<DB>, options: Credentia
 
     if (row.capability === 'embedding' && (!row.base_url || !row.model))
       return { ok: false, status: 0, message: '请先填写 Base URL 和模型名再测试' }
-    if (row.capability === 'deep_research' || row.capability === 'similar_image_search')
-      return { ok: false, status: 0, message: '该凭据能力的试呼尚未接通' }
-    if (row.capability !== 'llm' && row.capability !== 'speech_to_text' && row.capability !== 'embedding')
+    if (row.capability !== 'llm' && row.capability !== 'speech_to_text' && row.capability !== 'embedding'
+        && row.capability !== 'deep_research' && row.capability !== 'similar_image_search')
       return { ok: true, status: 'stored', message: '凭据已保存且可正常解密' }
 
     const probe = await options.probe({ provider: row.provider, capability: row.capability,

@@ -1,4 +1,4 @@
-import { normalizeSchedule, type ScheduleInput, type ScheduleSpec } from './normalize-schedule.js'
+import { normalizeSchedule, type ScheduleInput, type ScheduleSpec } from '@gugu/core/scheduled-task-schedule'
 
 export type TaskPatch = Partial<ScheduleInput> & Record<string, unknown>
 export interface CurrentTask { schedule_kind: string; cron: string; interval_minutes: number | null; start_at: string | null; end_at: string | null; event_id: number | null }

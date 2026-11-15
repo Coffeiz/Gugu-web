@@ -183,6 +183,57 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
       expect(databaseView.prepare('SELECT deleted_at FROM mind_maps WHERE id=?').get(canvas!.id)).toMatchObject({ deleted_at: expect.any(String) })
     } finally { databaseView.close() }
   })
+  it('外观偏好经受限 IPC 写入正式 SQLite，保留无关偏好并在重启后恢复', async () => {
+    const root = directory(), database = join(root, 'core.db')
+    const entry = resolve(import.meta.dirname, '../../../packages/core/dist/runtime/transport/stdio.js')
+    let host = await CoreHost.launch(process.execPath, entry, database)
+    try {
+      const handlers = desktopHandlers(host, async () => null)
+      expect(await handlers['gugu:preferences:appearance:get']!()).toEqual({ theme: 'light', themeFamily: 'glass', palette: 'neutral' })
+    } finally { await host.close() }
+    const databaseView = new DatabaseSync(database)
+    try {
+      const owner = databaseView.prepare("SELECT value FROM core_runtime_meta WHERE key='owner_id'").get() as { value: string }
+      databaseView.prepare('INSERT INTO user_preferences (user_id,data_json,updated_at) VALUES (?,?,CURRENT_TIMESTAMP)').run(owner.value.replaceAll('-', ''), JSON.stringify({ custom_reply_style: '保留的旧文本偏好', automatic_mode_enabled: true }))
+    } finally { databaseView.close() }
+    host = await CoreHost.launch(process.execPath, entry, database)
+    try {
+      const handlers = desktopHandlers(host, async () => null)
+      expect(await handlers['gugu:preferences:appearance:update']!({ theme: 'dark', themeFamily: 'mono', palette: 'cafe' })).toEqual({ theme: 'dark', themeFamily: 'mono', palette: 'cafe' })
+      await expect(handlers['gugu:preferences:appearance:update']!({ smtpPassword: '不允许' })).rejects.toMatchObject({ code: 'invalid_request' })
+    } finally { await host.close() }
+    const persistedView = new DatabaseSync(database)
+    try {
+      const row = persistedView.prepare('SELECT data_json FROM user_preferences').get() as { data_json: string }
+      expect(JSON.parse(row.data_json)).toMatchObject({ theme: 'dark', theme_family: 'mono', palette: 'cafe', custom_reply_style: '保留的旧文本偏好', automatic_mode_enabled: true })
+    } finally { persistedView.close() }
+    host = await CoreHost.launch(process.execPath, entry, database)
+    try {
+      expect(await desktopHandlers(host, async () => null)['gugu:preferences:appearance:get']!()).toEqual({ theme: 'dark', themeFamily: 'mono', palette: 'cafe' })
+    } finally { await host.close() }
+  })
+  it('引导状态经具名 IPC 从正式 SQLite 读取，并按 owner 当前状态计算展示条件', async () => {
+    const root = directory(), database = join(root, 'core.db')
+    const entry = resolve(import.meta.dirname, '../../../packages/core/dist/runtime/transport/stdio.js')
+    let host = await CoreHost.launch(process.execPath, entry, database)
+    try {
+      expect(await desktopHandlers(host, async () => null)['gugu:onboarding:state:get']!()).toMatchObject({ should_show: false, guide: { enabled: false } })
+    } finally { await host.close() }
+    const databaseView = new DatabaseSync(database)
+    try {
+      const owner = databaseView.prepare("SELECT value FROM core_runtime_meta WHERE key='owner_id'").get() as { value: string }
+      const state = { seed: { seeded: true, project_id: 6, project_name: '本地项目' }, guide: { enabled: true, version: 1, current_step: 'style', completed_steps: ['locale'], dismissed: false, completed_at: null } }
+      databaseView.prepare('UPDATE onboarding_state SET state=? WHERE user_id=?').run(JSON.stringify(state), owner.value.replaceAll('-', ''))
+    } finally { databaseView.close() }
+    host = await CoreHost.launch(process.execPath, entry, database)
+    try {
+      expect(await desktopHandlers(host, async () => null)['gugu:onboarding:state:get']!()).toMatchObject({
+        should_show: true,
+        seed: { seeded: true, project_id: 6 },
+        guide: { enabled: true, current_step: 'style', completed_steps: ['locale'], should_show: true },
+      })
+    } finally { await host.close() }
+  })
   it('画布便签经具名 IPC 创建、编辑、定位、移除并通过 SQLite 与 Undo/Redo 持久化', async () => {
     const root = directory(), database = join(root, 'core.db')
     const entry = resolve(import.meta.dirname, '../../../packages/core/dist/runtime/transport/stdio.js')
@@ -562,6 +613,6 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
           async () => null,
         ),
       ),
-    ).toHaveLength(29)
+      ).toHaveLength(32)
   })
 })

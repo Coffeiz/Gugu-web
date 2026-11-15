@@ -1,4 +1,4 @@
-import { normalizeSchedule, type ScheduleInput, type ScheduleSpec } from './normalize-schedule.js'
+import { normalizeSchedule, type ScheduleInput, type ScheduleSpec } from '@gugu/core/scheduled-task-schedule'
 
 export interface TaskCreateInput extends ScheduleInput {
   name: string; payload?: string; channels?: string[]; enabled?: boolean; event_id?: number | null

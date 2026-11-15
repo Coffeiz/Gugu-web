@@ -5,6 +5,12 @@ export type ThemePreference = 'light' | 'dark' | 'system'
 export type ResolvedTheme = 'light' | 'dark'
 export type ThemeFamily = 'glass' | 'mono'
 export type ThemePalette = 'cafe' | 'neutral' | 'red' | 'blue' | 'green'
+export type ThemePreferencePatch = {
+  theme?: ThemePreference
+  themeFamily?: ThemeFamily
+  palette?: ThemePalette
+}
+type ThemePreferenceWriter = (patch: ThemePreferencePatch) => Promise<unknown>
 
 // 偏好必须在版本门执行后再读取，避免模块导入顺序让旧 localStorage 状态进入内存。
 const preference = ref<ThemePreference>('light')
@@ -99,20 +105,24 @@ export function applyServerTheme(nextTheme: unknown, nextFamily: unknown, nextPa
   watchSystem()
 }
 
-export function useTheme() {
+export function useTheme(writePreference?: ThemePreferenceWriter) {
   function setTheme(value: ThemePreference) {
     preference.value = value
     localStorage.setItem('gugu-theme', value)
     apply()
     watchSystem()
-    void preferencesApi.update({ theme: value } as any).catch(() => {})
+    return writePreference
+      ? writePreference({ theme: value })
+      : preferencesApi.update({ theme: value } as any).catch(() => {})
   }
 
   function setFamily(value: ThemeFamily) {
     family.value = value
     localStorage.setItem('gugu-theme-family', value)
     apply()
-    void preferencesApi.update({ themeFamily: value } as any).catch(() => {})
+    return writePreference
+      ? writePreference({ themeFamily: value })
+      : preferencesApi.update({ themeFamily: value } as any).catch(() => {})
   }
 
   function setPalette(value: ThemePalette) {
@@ -120,7 +130,9 @@ export function useTheme() {
     palette.value = next
     localStorage.setItem('gugu-palette', next)
     apply()
-    void preferencesApi.update({ palette: next } as any).catch(() => {})
+    return writePreference
+      ? writePreference({ palette: next })
+      : preferencesApi.update({ palette: next } as any).catch(() => {})
   }
 
   return {

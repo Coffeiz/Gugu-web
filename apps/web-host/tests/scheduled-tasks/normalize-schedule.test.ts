@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { normalizeSchedule } from '../../src/modules/scheduled-tasks/normalize-schedule.js'
+import { normalizeSchedule } from '@gugu/core/scheduled-task-schedule'
 import { validateTaskCron } from '../../src/modules/scheduled-tasks/validate-cron.js'
 
 test('一次性时间按上海时区解析，并拒绝过去时间和冲突字段', () => {

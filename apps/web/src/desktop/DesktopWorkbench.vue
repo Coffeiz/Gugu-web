@@ -5,6 +5,20 @@ import ActionButton from '@/components/common/controls/ActionButton.vue'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { useDesktopCanvases } from './composables/useDesktopCanvases'
 import type { CalendarRow, ClientRow, NoteRow, ProjectRow, SandboxStatus } from './bridge'
+import type { DesktopOnboardingState } from '@gugu/core/desktop'
+import { applyServerTheme, useTheme, type ThemeFamily, type ThemePalette, type ThemePreference } from '@/composables/core/useTheme'
+
+const { preference: themePreference, family: themeFamily, palette, setTheme, setFamily, setPalette } = useTheme(patch => desktopData.updateAppearance(patch))
+const themeOptions: { value: ThemePreference; label: string }[] = [
+  { value: 'light', label: '浅色' }, { value: 'dark', label: '深色' }, { value: 'system', label: '跟随系统' },
+]
+const familyOptions: { value: ThemeFamily; label: string }[] = [
+  { value: 'glass', label: 'Aero' }, { value: 'mono', label: 'Mono' },
+]
+const paletteOptions: { value: ThemePalette; label: string }[] = [
+  { value: 'neutral', label: 'Ink' }, { value: 'cafe', label: 'Cafe' }, { value: 'red', label: 'Terra' },
+  { value: 'blue', label: 'Harbor' }, { value: 'green', label: 'Grove' },
+]
 
 const projects = ref<ProjectRow[]>([])
 const clients = ref<ClientRow[]>([])
@@ -31,6 +45,7 @@ const error = ref('')
 const connected = ref(false)
 const sandbox = ref<SandboxStatus | null>(null)
 const sandboxMessage = ref('')
+const onboarding = ref<DesktopOnboardingState | null>(null)
 const pendingOperation = ref('')
 const PENDING_OPERATION_KEY = 'gugu.desktop.pending-operation'
 const canvasPanel = useDesktopCanvases({ perform, refresh, refreshHistory: refreshNoteHistory })
@@ -266,6 +281,9 @@ function checkSandbox() {
 onMounted(() => perform(async () => {
   pendingOperation.value = localStorage.getItem(PENDING_OPERATION_KEY) ?? ''
   if (pendingOperation.value) await recoverPendingOperation()
+  const appearance = await desktopData.appearance()
+  applyServerTheme(appearance.theme, appearance.themeFamily, appearance.palette)
+  onboarding.value = await desktopData.onboarding()
   await refresh()
   sandbox.value = await desktopData.sandboxStatus()
 }))
@@ -278,6 +296,28 @@ onMounted(() => perform(async () => {
       <span class="desktop-state">{{ connected ? 'Core 已连接' : '正在连接 Core' }}</span>
     </header>
     <p v-if="error" class="desktop-error" role="alert">{{ error }}</p>
+    <section class="desktop-panel desktop-appearance" aria-labelledby="desktop-appearance">
+      <h2 id="desktop-appearance">外观</h2>
+      <div class="appearance-group" role="group" aria-label="主题模式">
+        <span>主题</span>
+        <ActionButton v-for="option in themeOptions" :key="option.value" fit variant="secondary" :aria-pressed="themePreference === option.value" :disabled="busy" @click="perform(async () => { await setTheme(option.value) })">{{ option.label }}</ActionButton>
+      </div>
+      <div class="appearance-group" role="group" aria-label="主题样式">
+        <span>样式</span>
+        <ActionButton v-for="option in familyOptions" :key="option.value" fit variant="secondary" :aria-pressed="themeFamily === option.value" :disabled="busy" @click="perform(async () => { await setFamily(option.value) })">{{ option.label }}</ActionButton>
+      </div>
+      <div class="appearance-group" role="group" aria-label="强调配色">
+        <span>配色</span>
+        <ActionButton v-for="option in paletteOptions" :key="option.value" fit variant="secondary" :aria-pressed="palette === option.value" :disabled="busy" @click="perform(async () => { await setPalette(option.value) })">{{ option.label }}</ActionButton>
+      </div>
+    </section>
+    <section v-if="onboarding" class="desktop-panel desktop-onboarding" aria-labelledby="desktop-onboarding">
+      <h2 id="desktop-onboarding">新手引导状态</h2>
+      <p v-if="!onboarding.guide.enabled">当前未启用引导。</p>
+      <p v-else-if="onboarding.guide.completed_at">引导已完成。</p>
+      <p v-else-if="onboarding.guide.dismissed">引导已暂时关闭。</p>
+      <p v-else>引导进行中：{{ onboarding.guide.current_step }} · 已完成 {{ onboarding.guide.completed_steps.length }} 步。</p>
+    </section>
     <ActionButton v-if="pendingOperation" fit variant="secondary" :disabled="busy" @click="perform(recoverPendingOperation)">查询待确认操作</ActionButton>
     <div class="desktop-columns">
       <section class="desktop-panel" aria-labelledby="desktop-projects">
@@ -378,6 +418,10 @@ h2 span { margin-left: 8px; color: var(--text-secondary); font-size: 13px; }
 p { color: var(--text-secondary); line-height: 1.6; }
 .desktop-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
 .desktop-panel { padding: 24px; border: 1px solid var(--content-divider); border-radius: 16px; background: var(--surface-card-solid); min-width: 0; }
+.desktop-appearance { margin-bottom: 24px; }
+.desktop-onboarding { margin-bottom: 24px; }
+.appearance-group { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.appearance-group > span { min-width: 56px; color: var(--text-secondary); }
 form { display: flex; gap: 10px; }
 input { min-width: 0; width: 100%; }
 textarea { min-width: 0; width: 100%; min-height: 100px; resize: vertical; }

@@ -10,8 +10,10 @@ import { ollamaNativeBaseUrl, ollamaPolicy } from '../../../src/agent/providers/
 import { qwenPolicy } from '../../../src/agent/providers/qwen/policy.js'
 import { DEFAULT_MEDIA_LIMITS, validateVendorImage } from '../../../src/agent/providers/media.js'
 import { MINIMAX_M3_MEDIA_LIMITS, prepareMiniMaxVideo, uploadMiniMaxVideo } from '../../../src/agent/providers/minimax/media.js'
-import { dashscopeAsrEndpoint, dashscopeAsrTranscript, minimaxAsrEndpoint, transcribeCompatibleAsr, transcribeMiniMax, MINIMAX_ASR_MAX_DURATION_SECONDS, MINIMAX_ASR_MAX_FILE_BYTES } from '../../../src/agent/providers/asr.js'
+import { dashscopeAsrEndpoint, dashscopeAsrServiceForModel, dashscopeAsrTranscript, minimaxAsrEndpoint, transcribeCompatibleAsr, transcribeMiniMax, MINIMAX_ASR_MAX_DURATION_SECONDS, MINIMAX_ASR_MAX_FILE_BYTES } from '../../../src/agent/providers/asr.js'
 import { minimaxErrorDetails } from '../../../src/agent/providers/minimax/errors.js'
+import { deepResearchProbe } from '../../../src/agent/providers/deep-research.js'
+import { similarImageProbe } from '../../../src/agent/providers/similar-image.js'
 import { fakeDependencies, fakeResponse, invocation, readRequestBody, requestJsonBody } from './fixtures.js'
 import { adapterFor, capabilitySnapshot, providerSelection } from '../../../src/agent/providers/registry.js'
 import { genericThinkingParams } from '../../../src/agent/providers/base.js'
@@ -19,6 +21,56 @@ import { listProviderModels, providerDiagnosticRequest } from '../../../src/agen
 import { streamWithRetry } from '../../../src/agent/providers/retry.js'
 
 const config = (provider: string, model: string, more: Partial<ProviderConfig> = {}): ProviderConfig => ({ provider, model, ...more })
+describe('DashScope ASR模型产品线映射', () => {
+  it.each([['Qwen3-ASR-Flash', 'qwen3-asr'], ['qwen-audio-3.0-asr-flash', 'qwen-audio'], ['Fun-ASR-Plus', 'fun-asr']])(
+    '根据模型名前缀选择%s的原生产品线', (model, service) => {
+      expect(dashscopeAsrServiceForModel(model)).toBe(service)
+    })
+  it('拒绝不属于已支持产品线的模型', () => {
+    expect(() => dashscopeAsrServiceForModel('other-asr')).toThrow(/Qwen3 ASR、Qwen-Audio 或 Fun-ASR/)
+  })
+})
+describe('BYOK深度研究 Provider 请求和统一投影', () => {
+  it('Tavily把Key留在JSON体并投影答案和来源', async () => {
+    const f = fakeDependencies([fakeResponse({ answer: '答案', results: [{ title: '来源', url: 'https://source.example.test', content: '正文' }] })])
+    const result = await deepResearchProbe('tavily', 'synthetic-key', '问题', 1, 'basic', f.dependencies, new AbortController().signal)
+    expect(f.requests[0]).toMatchObject({ url: 'https://api.tavily.com/search', headers: { 'Content-Type': 'application/json' },
+      body: { api_key: 'synthetic-key', query: '问题', max_results: 1, search_depth: 'basic', include_answer: true } })
+    expect(f.requests[0]?.headers.Authorization).toBeUndefined()
+    expect(result).toEqual({ query: '问题', answer: '答案', results: [{ title: '来源', url: 'https://source.example.test', content: '正文' }] })
+  })
+  it('You.com映射advanced为deep并从output.sources读取摘要', async () => {
+    const f = fakeDependencies([fakeResponse({ output: { content: '研究结论', sources: [{ title: '来源', url: 'https://source.example.test', snippets: ['摘录'] }] } })])
+    const result = await deepResearchProbe('you', 'synthetic-key', '问题', 5, 'advanced', f.dependencies, new AbortController().signal)
+    expect(f.requests[0]).toMatchObject({ url: 'https://api.you.com/v1/research', headers: { 'X-API-Key': 'synthetic-key' },
+      body: { input: '问题', research_effort: 'deep' } })
+    expect(result).toMatchObject({ answer: '研究结论', results: [{ title: '来源', content: '摘录' }] })
+  })
+  it('百度普通搜索截断72个字符、限制top_k并使用Qianfan认证头', async () => {
+    const query = '问'.repeat(80)
+    const f = fakeDependencies([fakeResponse({ references: [{ title: '来源', url: 'https://source.example.test', content: '网页片段' }] })])
+    const result = await deepResearchProbe('baidu', 'synthetic-key', query, 99, 'basic', f.dependencies, new AbortController().signal)
+    expect(f.requests[0]).toMatchObject({ url: 'https://qianfan.baidubce.com/v2/ai_search/web_search',
+      headers: { 'X-Appbuilder-Authorization': 'Bearer synthetic-key' },
+      body: { messages: [{ content: '问'.repeat(72), role: 'user' }], search_source: 'baidu_search_v2',
+        resource_type_filter: [{ type: 'web', top_k: 50 }] } })
+    expect(result).toMatchObject({ answer: null, results: [{ title: '来源', content: '网页片段' }] })
+  })
+})
+describe('BYOK百度相似图 Provider 请求和统一投影', () => {
+  it('把图片转为官方接口要求的base64并投影相似结果', async () => {
+    const f = fakeDependencies([fakeResponse({ requestId: 'synthetic-request', result: { res_data: { res_items: {
+      first: { title: '候选图', site_name: '示例站', fromurl: 'https://source.example.test/page', objurl: 'https://source.example.test/image.png',
+        detail_page: 'https://source.example.test/detail', sim_level: '高', width: 640, height: 480 },
+    } } } })])
+    const result = await similarImageProbe('synthetic-key', new Uint8Array([1, 2, 3]), 2, f.dependencies, new AbortController().signal)
+    expect(f.requests[0]).toMatchObject({ url: 'https://qianfan.baidubce.com/v2/tools/image_similar_info',
+      headers: { Authorization: 'Bearer synthetic-key', 'Content-Type': 'application/json' }, body: { image: 'AQID', count: 2 } })
+    expect(result).toEqual({ results: [{ title: '候选图', site_name: '示例站', source_url: 'https://source.example.test/page',
+      image_url: 'https://source.example.test/image.png', detail_url: 'https://source.example.test/detail', similarity: '高', width: 640, height: 480 }],
+      request_id: 'synthetic-request', count: 1 })
+  })
+})
 describe('厂商模型和协议能力不互相冒用', () => {
   it.each(['deepseek-flash', 'deepseek-v4-flash-vision-exp'])('DeepSeek仅明确视觉模型%s声明图片，显式缓存保持关闭', model => {
     expect(deepseekPolicy.capabilities(config('deepseek', model))).toMatchObject({ image: true, cache_mode: 'active' })

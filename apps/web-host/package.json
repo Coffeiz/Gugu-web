@@ -27,6 +27,7 @@
     "@gugu/fs": "workspace:*",
     "@modelcontextprotocol/sdk": "1.32.0",
     "@napi-rs/canvas": "1.0.13",
+    "@node-rs/jieba": "2.0.1",
     "bcryptjs": "3.0.2",
     "fastify": "5.12.8",
     "image-size": "2.0.4",

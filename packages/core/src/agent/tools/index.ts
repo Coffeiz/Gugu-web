@@ -2,6 +2,8 @@ export type { ToolDefinition, ToolGroupDefinition, ToolRegistryConfiguration, To
 export { createToolRegistry } from './registry.js'
 export { createConversationReadTool, createConversationSearchTool } from './conversations.js'
 export type { ConversationReadPort, ConversationSearchPort, ConversationSearchHit } from './conversations.js'
+export { createMemorySearchTool } from './memory.js'
+export type { MemorySearchPort } from './memory.js'
 export { canUseTool, filterToolNames } from './permissions.js'
 export type { ToolPermissionContext } from './permissions.js'
 export { selectToolSchemas } from './schema-selection.js'

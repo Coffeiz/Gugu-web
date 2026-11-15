@@ -754,4 +754,7 @@
 "tests/unit/files/attachment-thumbnail.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/byok/media-capability-probe.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/unit/files/file-thumbnail.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
-"tests/byok/credential-test-preview.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"}}
+"tests/byok/credential-test-preview.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/files/xlsx-preview.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/agent/rag/memory-loader.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
+"tests/agent/rag/memory-search.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"}}

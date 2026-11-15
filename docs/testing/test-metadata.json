@@ -4123,8 +4123,8 @@
     "domain": "agent-provider",
     "layer": "L1",
     "owner": "packages/core/src/agent/providers",
-    "productionEntry": "packages/core/src/agent/providers/provider-policies.ts、search.ts + search/、asr.ts + asr/shared.ts + openai/asr.ts + qwen/asr.ts + minimax/asr.ts、media.ts + minimax/media.ts + mimo/media.ts",
-    "keyBehavior": "厂商与模型能力/思考参数及协议选择、显式本地授权、MiniMax图片/视频时长和上传/ASR预检、业务码及安全错误边界",
+    "productionEntry": "packages/core/src/agent/providers/provider-policies.ts、search.ts + search/、deep-research.ts、similar-image.ts、asr.ts + asr/shared.ts + openai/asr.ts + qwen/asr.ts + minimax/asr.ts、media.ts + minimax/media.ts + mimo/media.ts",
+    "keyBehavior": "厂商与模型能力/思考参数及协议选择、深度研究和相似图请求投影、显式本地授权、MiniMax图片/视频时长和上传/ASR预检、业务码及安全错误边界",
     "ci": "core-node"
   },
   "packages/core/tests/agent/providers/ollama.test.ts": {
@@ -4836,7 +4836,7 @@
     "layer": "L1",
     "owner": "apps/web-host/src/domains/agent-sessions/tools",
     "productionEntry": "apps/web-host/src/domains/agent-sessions/tools/agent-tool-registry.ts",
-    "keyBehavior": "可信Host按实际服务与逐调用授权启用工具，验证搜索与任务缺端口拒绝、撤权隔离及真实注册器派发",
+    "keyBehavior": "可信Host按实际服务与逐调用授权启用工具，验证搜索与任务缺端口拒绝、Memory 工具显式注入/授权后派发、撤权隔离及真实注册器派发",
     "ci": "node-webui"
   },
   "packages/core/tests/agent/tools/overview.test.ts": {
@@ -4917,8 +4917,16 @@
 "apps/web-host/tests/agent/mcp-schema-adapter.test.ts":{"domain":"mcp","layer":"L1","owner":"packages/core/src/mcp","productionEntry":"MCP 声明适配（SDK/manager 尚未接线）","keyBehavior":"旧 Python schema 命名、校验、降级与描述规则","ci":"node-webui"},
 "apps/web-host/tests/mcp/sdk-client.test.ts":{"domain":"mcp","layer":"L1","owner":"apps/web-host/src/modules/mcp","productionEntry":"MCP SDK HTTP client over pinned transport","keyBehavior":"官方 SDK 握手、发现及调用经受控传输","ci":"node-webui"},
 "apps/web-host/tests/byok/media-capability-probe.test.ts":{"domain":"byok","layer":"L2","owner":"packages/core/src/byok/media-capability-probe.ts","productionEntry":"apps/web-host/src/main.ts + pinned Node Provider transport","keyBehavior":"BYOK媒体探测按owner和目的地裁决凭据并实际发送本地合成媒体请求","ci":"node-webui"},
-"apps/web-host/tests/byok/credential-test-preview.test.ts":{"domain":"byok","layer":"L2","owner":"packages/core/src/byok/credential-test-preview.ts","productionEntry":"apps/web-host/src/main.ts + pinned Node Provider transport","keyBehavior":"草稿/已保存凭据试呼路由鉴权、LLM真实本地请求、无鉴权Embedding响应向量及错误映射","ci":"node-webui"},
+"apps/web-host/tests/byok/credential-test-preview.test.ts":{"domain":"byok","layer":"L2","owner":"packages/core/src/byok/credential-test-preview.ts + packages/core/src/agent/providers/deep-research.ts + similar-image.ts + asr.ts","productionEntry":"apps/web-host/src/main.ts + pinned Node Provider transport","keyBehavior":"草稿试呼路由鉴权、LLM本地请求、无鉴权Embedding向量、DashScope/MiniMax原生ASR、Tavily深度研究和百度相似图探测及安全错误映射","ci":"node-webui"},
 "packages/core/tests/byok/media-capability-probe.test.ts":{"domain":"byok","layer":"L1","owner":"packages/core/src/byok/media-capability-probe.ts","productionEntry":"apps/web-host/src/modules/byok/media-capability-probe.ts","keyBehavior":"保存密钥只对本owner同目的地复用，拒绝越权或换址且不产生写入","ci":"core-node"},
-"packages/core/tests/byok/credential-test-preview.test.ts":{"domain":"byok","layer":"L1","owner":"packages/core/src/byok/credential-test-preview.ts","productionEntry":"apps/web-host/src/modules/byok/credential-test-preview.ts","keyBehavior":"试呼只解密同owner同目的地的保存密钥，显式新Key优先且无持久化副作用","ci":"core-node"},
-"apps/web-host/tests/agent/conversation-tools-runtime-sqlite.test.ts":{"domain":"agent-tools","layer":"L1","owner":"apps/web-host/src/domains/agent-sessions/tools/agent-conversations.ts","productionEntry":"createAgentToolRegistry.search_conversations 实际 dispatch","keyBehavior":"临时 SQLite 会话事实表验证 Host 权限拒绝不泄露正文、owner/群聊/他人/工具角色过滤、baseline前历史检索、LIKE元字符字面匹配、多关键词、空结果及 Python 结果投影","ci":"node-webui"},
-"apps/web-host/tests/agent/rag-index-worker.test.ts":{"domain":"agent-rag","layer":"L2","owner":"apps/web-host/src/domains/agent-sessions/rag-index-worker.ts","productionEntry":"Host 调度器 + Core 持久 Worker","keyBehavior":"临时 SQLite 真实队列经 Host 调度器写入正式索引表，并验证排空、串行、错误、取消停止及禁用边界","ci":"node-webui"}}
+"packages/core/tests/byok/credential-test-preview.test.ts":{"domain":"byok","layer":"L1","owner":"packages/core/src/byok/credential-test-preview.ts","productionEntry":"apps/web-host/src/modules/byok/credential-test-preview.ts","keyBehavior":"试呼只解密同owner同目的地的保存密钥，显式新Key优先；已保存深度研究和相似图凭据会真实探测且不写入","ci":"core-node"},
+"apps/web-host/tests/agent/conversation-tools-runtime-sqlite.test.ts":{"domain":"agent-tools","layer":"L1","owner":"apps/web-host/src/domains/agent-sessions/tools/agent-conversations.ts","productionEntry":"临时 SQLite Host 搜索适配器 + 真实 Jieba + 工具注册器 dispatch（Agent Run 尚未接入）","keyBehavior":"临时 SQLite 会话事实表验证 Host 权限拒绝不泄露正文、模型伪传 owner 无效、群聊/工具角色过滤、baseline前历史检索、LIKE元字符字面匹配、多关键词、空结果、Python 结果投影与真实 Jieba 分词","ci":"node-webui"},
+"apps/web-host/tests/agent/rag-index-worker.test.ts":{"domain":"agent-rag","layer":"L2","owner":"apps/web-host/src/domains/agent-sessions/rag-rebuild.ts","productionEntry":"main.ts 迁移门控 + Host 来源组工厂 + 调度器 + Core 持久 Worker","keyBehavior":"临时 SQLite 真实 Core 项目、owner FS knowledge 与队列经七类来源 Worker 写入正式索引表；未就绪的 memory 任务保持 queued；验证首次基线、幂等、排空、串行、错误、取消停止及禁用边界","ci":"node-webui"},
+"apps/web-host/tests/agent/rag-jieba.test.ts":{"domain":"agent-rag","layer":"L1","owner":"apps/web-host/src/domains/agent-sessions/tools/agent-rag-jieba.ts","productionEntry":"Host 内置 1.7.7 同版 Jieba 词典初始化","keyBehavior":"检查生产 Jieba 注入使用稳定单例、HMM=false 与原版中文词边界；会话查询端到端行为由 conversation-tools-runtime-sqlite 覆盖","ci":"node-webui"},
+"apps/web-host/tests/agent/agent-rag-memory-store.test.ts":{"domain":"agent-rag","layer":"L1","owner":"apps/web-host/src/domains/agent-sessions/tools/agent-rag-memory-store.ts","productionEntry":"Host owner-bound memory RAG 文件读取适配器","keyBehavior":"限制 owner namespace 和 RAG 文件白名单，执行字符/字节上限并拒绝跨 owner、路径穿越、未知文件和符号链接","ci":"node-webui"},
+"apps/web-host/tests/files/file-update-commit-unknown.test.ts":{"domain":"files","layer":"L2","owner":"apps/web-host/src/domains/files/file-update-postgres.ts","productionEntry":"Web Host PostgreSQL 文件更新操作","keyBehavior":"COMMIT响应丢失后通过新连接核实提交状态并保持数据库路径与物理文件一致","ci":"node-webui"},
+"packages/core/tests/files/xlsx-preview.test.ts":{"domain":"files","layer":"L1","owner":"packages/core/src/files/xlsx-preview.ts","productionEntry":"Core XLSX 预览解析用例","keyBehavior":"XLSX工作表数据边界与Python投影等价，并在解压前拒绝重复条目和异常压缩比","ci":"core-node"},
+"apps/web-host/tests/files/xlsx-preview-host.test.ts":{"domain":"files","layer":"L2","owner":"apps/web-host/src/modules/files/xlsx-preview-postgres.ts","productionEntry":"apps/web-host/src/main.ts → Core 预览 + PostgreSQL owner 查询 + 本地文件系统","keyBehavior":"认证 owner 隔离、真实临时 XLSX 文件与图片解析、私有缓存头、非 XLSX 及物理文件丢失错误语义","ci":"node-webui"},
+"packages/core/tests/agent/rag/memory-loader.test.ts":{"domain":"agent-rag","layer":"L1","owner":"packages/core/src/agent/rag/memory-loader.ts + memory-scope-state.ts","productionEntry":"Core 1.7.7 memory loader 与 SQL scope 状态读取器，StorageReader 由 Host 注入","keyBehavior":"按 owner/scope/tombstone/source/snapshot 裁剪 memory 文档；scope revision 和删除屏障按完整 owner key 查询；只装载与 embedding 版本一致的 owner-bound 向量","ci":"core-node"},
+"packages/core/tests/agent/rag/memory-search.test.ts":{"domain":"agent-rag","layer":"L1","owner":"packages/core/src/agent/rag/memory-search.ts + tools/memory.ts","productionEntry":"Core RAG memory query 经工具注册器 dispatch；Host scope/storage/授权/embedding 端口显式注入","keyBehavior":"临时 owner memory index 经真实工具 dispatch 排序；异主文档被拒、伪造身份无效、撤权不返回正文、非法参数拒绝","ci":"core-node"},
+"apps/web-host/tests/agent/memory-tools-runtime-sqlite.test.ts":{"domain":"agent-rag","layer":"L2","owner":"apps/web-host/src/domains/agent-sessions/tools/agent-memory-search.ts","productionEntry":"Web owner memory Host 适配器 + 受限本地 memory FS + Core RAG + 实际工具注册器","keyBehavior":"临时 owner 文件经真实 Host registry dispatch 命中；跨 owner 文档不返回、Web 群 scope 明确拒绝、工具授权关闭时不读 snapshot","ci":"node-webui"}}

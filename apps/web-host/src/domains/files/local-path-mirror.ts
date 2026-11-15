@@ -5,6 +5,7 @@ import { isPathWithin } from '../../adapters/path-safety.js'
 export interface PathMirrorMove {
   readonly fromKey: string
   readonly toKey: string
+  readonly preserveSourceUntilFinalize?: boolean
 }
 
 export interface PreparedPathMirrorMutation {
@@ -112,6 +113,29 @@ async function removeEmpty(paths: string[]): Promise<void> {
   }
 }
 
+async function assertSameFile(sourcePath: string, targetPath: string, message: string): Promise<void> {
+  const [source, target] = await Promise.all([lstat(sourcePath), lstat(targetPath)])
+  if (source.dev !== target.dev || source.ino !== target.ino) throw new PathMirrorMutationError(message)
+}
+
+async function rollbackMove(root: string, ownerId: string, move: { from: string; to: string; preserveSourceUntilFinalize?: boolean }): Promise<void> {
+  if (move.preserveSourceUntilFinalize) {
+    await assertSameFile(move.from, move.to, '回滚时源与目标已不再指向同一文件')
+    await unlink(move.to)
+    return
+  }
+  const relativeParent = path.relative(root, path.dirname(move.from)).split(path.sep).join('/')
+  await ensureSafeDirectory(root, ownerId, relativeParent)
+  await link(move.to, move.from)
+  await unlink(move.to)
+}
+
+async function finalizeMove(move: { from: string; to: string; preserveSourceUntilFinalize?: boolean }): Promise<void> {
+  if (!move.preserveSourceUntilFinalize) return
+  await assertSameFile(move.from, move.to, '提交后源与目标已不再指向同一文件')
+  await unlink(move.from)
+}
+
 /**
  * Create a reversible PathMirror mutation. File moves happen before the PostgreSQL commit and can
  * be compensated if SQL commit fails; old empty directory skeletons are removed only afterwards.
@@ -121,8 +145,9 @@ export function createLocalPathMirrorMutation(rootPath: string, ownerId: string,
   const resolved = moves.map(async (move) => ({
     from: await checkedPath(root, ownerId, move.fromKey),
     to: await checkedPath(root, ownerId, move.toKey),
+    preserveSourceUntilFinalize: move.preserveSourceUntilFinalize,
   }))
-  let files: Array<{ from: string; to: string }> = []
+  let files: Array<{ from: string; to: string; preserveSourceUntilFinalize?: boolean }> = []
   let createdDirectories: string[] = []
   let movedCount = 0
   let pendingLink: { from: string; to: string } | null = null
@@ -153,7 +178,7 @@ export function createLocalPathMirrorMutation(rootPath: string, ownerId: string,
         createdDirectories.push(...parentCreated)
         await link(move.from, move.to)
         pendingLink = move
-        await unlink(move.from)
+        if (!move.preserveSourceUntilFinalize) await unlink(move.from)
         pendingLink = null
         movedCount += 1
       }
@@ -167,16 +192,14 @@ export function createLocalPathMirrorMutation(rootPath: string, ownerId: string,
         pendingLink = null
       }
       for (const move of [...files.slice(0, movedCount)].reverse()) {
-        const relativeParent = path.relative(root, path.dirname(move.from)).split(path.sep).join('/')
-        await ensureSafeDirectory(root, ownerId, relativeParent)
-        await link(move.to, move.from)
-        await unlink(move.to)
+        await rollbackMove(root, ownerId, move)
       }
       movedCount = 0
       await removeEmpty(createdDirectories)
       createdDirectories = []
     },
     async finalize() {
+      for (const move of files.slice(0, movedCount)) await finalizeMove(move)
       const oldDirectories = await Promise.all(removeDirectoryKeys.map((key) => checkedPath(root, ownerId, key)))
       oldDirectories.sort((left, right) => left.split(path.sep).length - right.split(path.sep).length)
       await removeEmpty(oldDirectories)

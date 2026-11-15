@@ -51,6 +51,8 @@ export function createConversationRagSource(db:Kysely<any>,backend:'postgres'|'s
   for(const row of rows.rows){const key=String(row.session_id),list=bySession.get(key)||[];list.push(row);bySession.set(key,list)}
   const records=[]
   for(const session of sessions){
+   // 群会话缺少可信 chat_id 时无法形成可授权 scope，绝不能降级为 owner 内容。
+   if(session.chat_type==='group'&&!session.chat_id)continue
    const sid=String(session.id),scope=sessionScope(session)
    if((sourceId===null||summaryId!==null)&&(session.summary||'').trim())records.push({id:`${sid}:summary`,kind:'summary' as const,session_id:sid,title:session.title||'',summary:session.summary||'',session_source:session.source||'',session_updated_at:iso(session.updated_at),version_parts:[sid,iso(session.updated_at),session.summary||''],updated_at:iso(session.updated_at),scope})
    const baseline=Number(session.baseline_message_seq||0)

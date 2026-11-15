@@ -12,6 +12,9 @@ export const DESKTOP_METHODS = [
   'clients.delete',
   'calendar.update',
   'calendar.delete',
+  'preferences.desktop.get',
+  'preferences.desktop.update',
+  'onboarding.desktop.get',
   'mind.canvases.list',
   'mind.canvases.items.list',
   'mind.canvases.create',
@@ -33,6 +36,7 @@ export const DESKTOP_MUTATIONS: readonly string[] = [
   'calendar.create',
   'calendar.update',
   'calendar.delete',
+  'preferences.desktop.update',
   'mind.canvases.create',
   'mind.canvases.update',
   'mind.canvases.delete',
@@ -53,6 +57,9 @@ export const DESKTOP_CHANNELS = {
   renameClient: 'gugu:clients:rename',
   deleteClient: 'gugu:clients:delete',
   calendar: 'gugu:calendar:list',
+  appearance: 'gugu:preferences:appearance:get',
+  updateAppearance: 'gugu:preferences:appearance:update',
+  onboarding: 'gugu:onboarding:state:get',
   createCalendarEvent: 'gugu:calendar:create',
   updateCalendarEvent: 'gugu:calendar:update',
   deleteCalendarEvent: 'gugu:calendar:delete',
@@ -137,6 +144,9 @@ export type DesktopReply<T> =
       error: { code: string; message: string; operationId?: string }
     }
 export interface DesktopBridge {
+  appearance(): Promise<DesktopReply<DesktopAppearancePreferences>>
+  updateAppearance(patch: Partial<DesktopAppearancePreferences>): Promise<DesktopReply<DesktopAppearancePreferences>>
+  onboarding(): Promise<DesktopReply<DesktopOnboardingState>>
   projects(): Promise<DesktopReply<DesktopProject[]>>
   createProject(name: string): Promise<DesktopReply<DesktopProject>>
   renameProject(id: number, version: number, name: string): Promise<DesktopReply<DesktopProject>>
@@ -166,4 +176,21 @@ export interface DesktopBridge {
   undoApply(contextId: string, undoId: string, operationId: string): Promise<DesktopReply<unknown>>
   undoRedo(contextId: string, undoId: string, operationId: string): Promise<DesktopReply<unknown>>
   sandboxStatus(): Promise<DesktopReply<SandboxStatus>>
+}
+export interface DesktopAppearancePreferences {
+  theme: 'light' | 'dark' | 'system'
+  themeFamily: 'glass' | 'mono'
+  palette: 'cafe' | 'neutral' | 'red' | 'blue' | 'green'
+}
+export interface DesktopOnboardingState {
+  should_show: boolean
+  guide: {
+    enabled: boolean
+    current_step: string
+    completed_steps: string[]
+    dismissed: boolean
+    completed_at: string | null
+    should_show: boolean
+  }
+  seed: Record<string, unknown>
 }

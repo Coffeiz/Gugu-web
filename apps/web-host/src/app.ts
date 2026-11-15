@@ -23,6 +23,8 @@ import { registerDataExportCancelRoute } from './modules/data-portability/cancel
 import type { createDataExportCanceler } from '@gugu/core/data-portability/cancel-export'
 import { registerTerminalDeleteRoute, type TerminalDeleteOptions } from './modules/terminals/delete.js'
 import { registerVoicePresetsReadRoute, type VoicePresetsReadOptions } from './modules/admin/voice-presets-read.js'
+import { registerAdminVoicePresetTestRoute, registerAdminVoiceTestRoute, type AdminVoicePresetTestOptions, type AdminVoiceTestOptions } from './modules/admin/voice-test.js'
+import { registerAdminSearchTestRoute, type AdminSearchTestOptions } from './modules/admin/search-test.js'
 import { registerAdminMaintenanceStatusRoutes } from './modules/admin/maintenance-status.js'
 import type { createAdminMaintenanceStatus } from '@gugu/core/maintenance/admin-status'
 import { registerServiceStatusRoute, type createServiceStatusReader } from './modules/admin/service-status.js'
@@ -35,6 +37,7 @@ import { registerStorageQuotaStatusRoute, type StorageQuotaStatusOptions } from 
 import { registerNotificationBroadcastRoute } from './modules/notifications/routes/broadcast.js'
 import type { NotificationBroadcastInput } from '@gugu/core/notifications/broadcast'
 import { registerMcpStatusRoute, type McpStatusOptions } from './modules/mcp/status.js'
+import { registerAttentionDefaultsRoute, type AttentionDefaultsOptions } from './modules/im/attention-defaults.js'
 import { registerEmailRecipientCountRoute } from './modules/admin/email-recipient-count.js'
 import { registerEmbeddingRebuildStatusRoute, type EmbeddingRebuildStatusOptions } from './modules/byok/embedding-rebuild-status.js'
 import { registerUserBotUnbindRoute, type UserBotUnbindOptions } from './modules/im/user-bot-unbind.js'
@@ -143,6 +146,8 @@ import { registerScheduledTaskDelete } from './modules/scheduled-tasks/task-dele
 import type { createScheduledTaskDeleter } from '@gugu/core/scheduled-task-delete'
 import { registerScheduledTaskList, type ScheduledTaskList } from './modules/scheduled-tasks/task-list.js'
 import { registerScheduledTaskDeliveryTargets, type createScheduledTaskDeliveryTargets } from './modules/scheduled-tasks/delivery-targets.js'
+import { registerScheduledTaskWrites } from './modules/scheduled-tasks/task-write-routes.js'
+import type { createPostgresTaskWrites } from './modules/scheduled-tasks/persistence/task-writes-postgres.js'
 import { registerNotificationRoutes } from './modules/notifications/routes/notifications.js'
 import { registerTrackRoute } from './modules/site/routes/track.js'
 import { registerAdminFeedbackRoute, registerFeedbackRoute, type AdminFeedbackOperations } from './modules/feedback/feedback.js'
@@ -150,7 +155,9 @@ import { registerWorkspaceRoutes } from './domains/workspaces/routes/workspaces.
 import { registerWorkspaceDirectoryRoutes } from './domains/workspaces/workspace-directories.js'
 import { registerFileBrowserRoutes, type FileBrowserOperations } from './domains/files/browser.js'
 import { registerFolderWriteRoutes, type FolderWriteOperations } from './domains/files/folder-writes.js'
+import { registerFolderCopyRoute, type FolderCopyOperations } from './modules/files/folder-copy.js'
 import { registerFileReadRoutes, type FileReadOperations } from './domains/files/file-reads.js'
+import { registerXlsxPreviewRoutes } from './modules/files/xlsx-preview.js'
 import { registerFileThumbnailRoute } from './modules/files/thumbnail.js'
 import { registerFileDeleteRoutes, type FileDeleteOperations } from './domains/files/file-delete.js'
 import { registerFileRestoreRoutes, type FileRestoreOperations } from './domains/files/file-restore.js'
@@ -331,6 +338,7 @@ export interface WebUiOptions {
   deleteScheduledTask?: ReturnType<typeof createScheduledTaskDeleter>
   listScheduledTasks?: ScheduledTaskList
   scheduledTaskDeliveryTargets?: ReturnType<typeof createScheduledTaskDeliveryTargets>
+  scheduledTaskWrites?: ReturnType<typeof createPostgresTaskWrites>
   notifications?: NotificationOptions
   track?: TrackOptions
   feedback?: FeedbackOptions
@@ -371,6 +379,7 @@ export interface WebUiOptions {
   agentMisc?: Omit<AgentMiscRoutesOptions, 'requireUser'>
   fileBrowser?: FileBrowserOperations
   folderWrites?: FolderWriteOperations
+  folderCopy?: FolderCopyOperations
   fileReads?: FileReadOperations
   folderReads?: FolderReadOperations
   fileUploads?: FileUploadOperations
@@ -387,6 +396,9 @@ export interface WebUiOptions {
   folderDownloads?: FolderDownloadOperations
   adminAuth?: AdminAuthAdapter
   adminConfig?: Omit<AdminConfigOptions, 'requireAdmin'>
+  adminVoiceTest?: Omit<AdminVoiceTestOptions, 'requireAdmin'>
+  adminVoicePresetTest?: Omit<AdminVoicePresetTestOptions, 'requireAdmin'>
+  adminSearchTest?: Omit<AdminSearchTestOptions, 'requireAdmin'>
   adminLlmPresets?: Omit<AdminLlmPresetOptions, 'requireAdmin'>
   adminStorageSnapshots?: Omit<AdminStorageSnapshotOptions, 'requireAdmin'>
   adminUsers?: Omit<AdminUsersOptions, 'requireAdmin'>
@@ -413,6 +425,7 @@ export interface WebUiOptions {
   feishuConnect?: Omit<FeishuConnectRouteOptions, 'requireUser' | 'ownerIdFromRequest'>
   wechatConnect?: Omit<WechatConnectRouteOptions, 'requireUser' | 'ownerIdFromRequest'>
   mcpStatus?: Omit<McpStatusOptions, 'requireUser'>
+  attentionDefaults?: Omit<AttentionDefaultsOptions, 'requireUser'>
   loopScopeProxy?: { endpoint: string }
   attachmentDownload?: Omit<AttachmentDownloadOptions, 'requireUser' | 'ownerIdFromRequest'>
   terminalDelete?: Omit<TerminalDeleteOptions, 'requireUser' | 'ownerIdFromRequest'>
@@ -701,6 +714,9 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
   if (options.mcpStatus) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => registerMcpStatusRoute(routes, { ...options.mcpStatus!, requireUser: async request => { void userFromRequest(request) } }))
   }
+  if (options.attentionDefaults) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerAttentionDefaultsRoute(routes, { ...options.attentionDefaults!, requireUser: async request => { void userFromRequest(request) } }))
+  }
   if (options.loopScopeProxy) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => registerLoopScopeProxyRoutes(routes, { ...options.loopScopeProxy!, requireUser: async request => { void userFromRequest(request) } }))
   }
@@ -891,6 +907,10 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) =>
       registerScheduledTaskDeliveryTargets(routes, userFromRequest, options.scheduledTaskDeliveryTargets!),
     )
+  if (options.scheduledTaskWrites)
+    registerProtectedDomain(app, auth, (routes, userFromRequest) =>
+      registerScheduledTaskWrites(routes, userFromRequest, options.scheduledTaskWrites!),
+    )
   if (options.notifications)
     registerProtectedDomain(app, auth, (routes, userFromRequest) =>
       registerNotificationRoutes(routes, userFromRequest, options.notifications!),
@@ -1053,6 +1073,15 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
       })
     })
   }
+  if (options.folderCopy) {
+    registerProtectedDomain(app, auth, (routes, userFromRequest) => {
+      registerFolderCopyRoute(routes, {
+        requireUser: async (request) => { void userFromRequest(request) },
+        ownerIdFromRequest: (request) => userFromRequest(request).requestContext.data.ownerId,
+        operations: options.folderCopy!,
+      })
+    })
+  }
   if (options.fileReads) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => {
       registerFileReadRoutes(routes, {
@@ -1060,6 +1089,16 @@ function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) {
         ownerIdFromRequest: (request) => userFromRequest(request).requestContext.data.ownerId,
         operations: options.fileReads!,
       })
+      if (options.fileReads?.xlsxPreview && options.fileReads.xlsxPreviewImage) {
+        registerXlsxPreviewRoutes(routes, {
+          requireUser: async (request) => { void userFromRequest(request) },
+          ownerIdFromRequest: (request) => userFromRequest(request).requestContext.data.ownerId,
+          operations: {
+            preview: (ownerId, fileId) => options.fileReads!.xlsxPreview!(ownerId, fileId),
+            image: (ownerId, fileId, imageId) => options.fileReads!.xlsxPreviewImage!(ownerId, fileId, imageId),
+          },
+        })
+      }
       registerFileThumbnailRoute(routes, {
         requireUser: async (request) => { void userFromRequest(request) },
         ownerIdFromRequest: (request) => userFromRequest(request).requestContext.data.ownerId,
@@ -1218,6 +1257,15 @@ export function createApp(options: WebUiOptions) {
       ...options.adminConfig,
       requireAdmin: options.adminAuth.requireAdmin,
     })
+  }
+  if (options.adminAuth && options.adminVoiceTest) {
+    registerAdminVoiceTestRoute(app, { ...options.adminVoiceTest, requireAdmin: options.adminAuth.requireAdmin })
+  }
+  if (options.adminAuth && options.adminVoicePresetTest) {
+    registerAdminVoicePresetTestRoute(app, { ...options.adminVoicePresetTest, requireAdmin: options.adminAuth.requireAdmin })
+  }
+  if (options.adminAuth && options.adminSearchTest) {
+    registerAdminSearchTestRoute(app, { ...options.adminSearchTest, requireAdmin: options.adminAuth.requireAdmin })
   }
   if (options.adminAuth && options.adminLlmPresets) {
     registerAdminLlmPresetRoutes(app, { ...options.adminLlmPresets, requireAdmin: options.adminAuth.requireAdmin })

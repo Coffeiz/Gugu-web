@@ -2,8 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { UserFromRequest } from '../../app.js'
 import { parsePythonInteger, writeRequestMetadata } from '../../http/request.js'
-import { ScheduleValidationError } from './schedule-status.js'
-import { normalizeSchedule } from './normalize-schedule.js'
+import { normalizeSchedule, ScheduleValidationError } from '@gugu/core/scheduled-task-schedule'
 import type { createPostgresTaskWrites } from './persistence/task-writes-postgres.js'
 
 const delivery = z.record(z.string(), z.unknown()).nullable()
@@ -57,8 +56,8 @@ export function registerScheduledTaskWrites(app: FastifyInstance, userFromReques
     if (!parsed.success) return reply.code(422).send({ detail: '任务参数无效' })
     try {
       const metadata = writeRequestMetadata(request)
-      const task = await writes.create(userFromRequest(request).requestContext.data.ownerId, parsed.data, metadata.undoContextId, metadata.clientId)
-      return reply.code(201).send(task)
+      const result = await writes.create(userFromRequest(request).requestContext.data.ownerId, parsed.data, metadata.undoContextId, metadata.clientId)
+      return reply.code(result.created ? 201 : 200).send(result.task)
     } catch (error) { return sendError(error, reply) }
   })
   app.patch<{ Params: { taskId: string } }>('/api/v1/scheduled-tasks/:taskId', async (request, reply) => {

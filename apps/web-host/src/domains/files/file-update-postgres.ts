@@ -43,7 +43,7 @@ async function folderPath(client: PoolClient, userId: string, folderId: number, 
   return { names: rows.rows.map((row: Row) => String(row.name).replace(/[\\/:*?"<>|]/g, '_')), name: String(leaf.name) }
 }
 
-async function fileResponse(client: PoolClient, row: Row): Promise<Record<string, unknown>> {
+async function fileResponse(client: Pick<PoolClient, 'query'>, row: Row): Promise<Record<string, unknown>> {
   const related = await client.query<Row>(`SELECT p.name project_name,p.color project_color,f.name folder_name
     FROM files file LEFT JOIN projects p ON p.id=file.project_id AND p.user_id=file.user_id
     LEFT JOIN folders f ON f.id=file.folder_id AND f.user_id=file.user_id WHERE file.id=$1 AND file.user_id=$2`, [row.id,row.user_id])
@@ -72,7 +72,8 @@ export function createPostgresFileUpdateOperations(pool: Pool, options: {
 }): FileUpdateOperations {
   return { async update(rawOwner, id, input: FileUpdateInput, metadata: WriteRequestMetadata) {
     const userId=normalizeFileOwnerId(rawOwner), client=await pool.connect()
-    let mutation: ReturnType<typeof createLocalPathMirrorMutation> | null=null, applied=false, committed=false
+    let mutation: ReturnType<typeof createLocalPathMirrorMutation> | null=null, applied=false, committed=false, preserveMutationForRecovery=false
+    let releaseError: Error | undefined
     try {
       await client.query('BEGIN')
       const found=await client.query<Row>('SELECT * FROM files WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL FOR UPDATE',[id,userId])
@@ -120,7 +121,7 @@ export function createPostgresFileUpdateOperations(pool: Pool, options: {
           if(!statExists&&!db.rowCount) break
           newDisplay=`${display}(${suffix++})`; key=`${parent}/${newDisplay}${ext?'.'+ext:''}`
         }
-        mutation=createLocalPathMirrorMutation(options.storageRoot,userId,[{fromKey:String(before.storage_key),toKey:key}],[parent],[])
+        mutation=createLocalPathMirrorMutation(options.storageRoot,userId,[{fromKey:String(before.storage_key),toKey:key,preserveSourceUntilFinalize:true}],[parent],[])
         await mutation.apply(); applied=true
       }
       const result=await client.query<Row>(`UPDATE files SET display_name=$4,ext=$5,stage_name=$6,folder_id=$7,project_id=$8,
@@ -140,14 +141,27 @@ export function createPostgresFileUpdateOperations(pool: Pool, options: {
           JSON.stringify([{kind:'file',id}]),JSON.stringify({items:{[ref]:undoSnapshot(before)}}),JSON.stringify({items:{[ref]:undoSnapshot(after)}}),
           JSON.stringify({[ref]:{version:Number(before.version)}})])
       }
-      await client.query('COMMIT'); committed=true
+      try {
+        await client.query('COMMIT')
+        committed=true
+      } catch (commitError) {
+        releaseError=commitError instanceof Error?commitError:new Error('COMMIT 结果未知')
+        const persisted=await pool.query<Row>('SELECT storage_key,version FROM files WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL',[id,userId]).catch(()=>null)
+        const current=persisted?.rows[0]
+        if(String(current?.storage_key??'')===String(after.storage_key)&&Number(current?.version)===Number(after.version)) committed=true
+        else if(String(current?.storage_key??'')===String(before.storage_key)&&Number(current?.version)===Number(before.version)) throw commitError
+        else {
+          preserveMutationForRecovery=true
+          throw new CoreError('storage_error','文件修改提交结果暂时无法确认；原文件与目标文件均已保留，请稍后检查文件状态')
+        }
+      }
       if(mutation) await mutation.finalize().catch(()=>undefined)
-      const payload=await fileResponse(client,after)
+      const payload=await fileResponse(releaseError?pool:client,after)
       await options.publishChanged({ownerId:userId,entityId:id,payload,origin:metadata.clientId}).catch(()=>undefined)
       return payload
     } catch(error){
-      if(!committed){await client.query('ROLLBACK').catch(()=>undefined);if(applied&&mutation)await mutation.rollback().catch(()=>undefined)}
+      if(!committed&&!preserveMutationForRecovery){await client.query('ROLLBACK').catch(()=>undefined);if(applied&&mutation)await mutation.rollback().catch(()=>undefined)}
       throw error
-    } finally { client.release() }
+    } finally { client.release(releaseError) }
   } }
 }

@@ -663,6 +663,12 @@ it('持久 RAG 查询限制授权范围并在 embedding 中撤权时拒绝返回
    expect(JSON.stringify(result)).not.toContain('private')
    expect((await search(ownerId,scope,'alpha',{sourceTypes:['conversation'],limit:5,beforeMessageId:5})).results).toEqual([])
    expect((await search(ownerId,scope,'alpha',{sourceTypes:['conversation'],limit:5,beforeMessageId:6})).results).toHaveLength(1)
+   let vectorsRead=false
+   const unavailableEmbedding=createScopedRagSearch({index:createSqlRagPersistentIndexReader(runtime.db,'sqlite'),authorize:async()=>true,
+    vectors:{version:'model-v1',source:async()=>{vectorsRead=true;return async()=>null},embed:async()=>[]}})
+   const lexicalFallback=await unavailableEmbedding(ownerId,scope,'alpha',options)
+   expect(lexicalFallback.fusion).toBe('bm25');expect(lexicalFallback.results.map(row=>row.document.content)).toEqual(['alpha first'])
+   expect(vectorsRead).toBe(false)
    cancel=new AbortController();await expect(search(ownerId,scope,'alpha',options,cancel.signal)).rejects.toThrow();cancel=undefined
    revoke=true;await expect(search(ownerId,scope,'alpha',options)).rejects.toThrow('授权已撤销')
    await expect(search(ownerId,scope,'alpha',options)).rejects.toThrow('未授权')
@@ -842,6 +848,75 @@ it('持久 RAG 会话来源按 Python baseline、上下文和群聊授权投影�
    await expect(source(ownerId,'0')).rejects.toThrow('来源标识无效')
    const aborted=new AbortController();aborted.abort();await expect(source(ownerId,null,aborted.signal)).rejects.toThrow()
    expect((await sql<{status:string}>`SELECT status FROM rag_index_jobs WHERE source_type='conversation'`.execute(runtime.db)).rows[0]?.status).toBe('ready')
+  }finally{await runtime.close()}
+ }finally{await rm(dir,{recursive:true,force:true})}
+})
+
+it('授权知识 Markdown 来源保留 Python record 语义并由持久 Worker 写入 owner 索引',async()=>{
+ const {createKnowledgeRagSource}=await import('../../../src/agent/rag/knowledge-source.js')
+ const {createSqlRagRebuildWorker}=await import('../../../src/agent/rag/rebuild-worker.js')
+ const dir=await mkdtemp(join(tmpdir(),'gugu-rag-knowledge-source-')),path=join(dir,'core.db')
+ try{
+  await initializeSqlite(path);const {runtime,ownerId}=await openSqliteRuntime(path)
+  try{
+   const owner=ownerId,foreign=randomUUID(),prefix=`${owner}/.agent/knowledge/entries/`
+   const knowledge=(id:string,scopeOwner=owner,active='true',content='先确认健康检查，再切换到新的 Node 入口。',version=3,scopeFields:Record<string,string>={})=>new TextEncoder().encode([
+    '---',`id: ${id}`,'title: 路由切换策略','topic: 发布','keywords_json: ["Node", "蓝绿部署"]',
+    'description: 何时需要切换线上路由','scope_json: '+JSON.stringify({type:'owner',owner_user_id:scopeOwner,platform:'',bot_id:'',group_id:'',scope_id:'',project_id:'',...scopeFields}),
+    'source_json: '+JSON.stringify({type:'user',ref:'',label:'手动记录',checked_at:null}),
+    'confidence: confirmed',`version: ${version}`,'parent_id:','created_at: 2026-01-01T00:00:00.000000+00:00',
+    'updated_at: 2026-02-03T04:05:06.123456+00:00',`active: ${active}`,'---',content,'',
+   ].join('\n'))
+   const values=new Map<string,Uint8Array>([
+    [`${owner}/.agent/knowledge/.timestamps-iso-v1`,new Uint8Array()],
+    [`${prefix}k-1.md`,knowledge('k-1')],
+    [`${prefix}inactive.md`,knowledge('inactive',owner,'false')],
+    [`${foreign}/.agent/knowledge/entries/foreign.md`,knowledge('foreign',foreign)],
+    [`${prefix}ignored.txt`,knowledge('ignored')],
+   ])
+   const store={
+    async exists(key:string){return values.has(key)},
+    async list(wanted:string,cursor:string|null){return{keys:[...values.keys()].filter(key=>key.startsWith(wanted)).sort(),nextCursor:null}},
+    async read(key:string){const value=values.get(key);if(!value)throw new Error('missing');return value},
+   }
+   const source=createKnowledgeRagSource(store)
+   const docs=await source(ownerId,null)
+   expect(docs).toHaveLength(1)
+   expect(docs[0]).toMatchObject({source_type:'knowledge',source_id:'k-1',parent_id:'k-1',scope_type:'owner',scope_id:'',title:'路由切换策略',summary:'发布；关键词：Node、蓝绿部署；何时需要切换线上路由',content:'先确认健康检查，再切换到新的 Node 入口。',updated_at:'2026-02-03T04:05:06.123456+00:00'})
+   expect(docs[0]!.document_version).toMatch(/^3:k[0-9a-f]{12}$/u)
+   expect(docs[0]!.metadata).toMatchObject({topic:'发布',keywords:'Node、蓝绿部署',description:'何时需要切换线上路由',source_type:'user',source_label:'手动记录',parent_id:''})
+   const next=await source(ownerId,'k-1');expect(next).toEqual(docs)
+   expect(await source(ownerId,'missing')).toEqual([])
+   await expect(source(foreign,null)).rejects.toThrow()
+   const aborted=new AbortController();aborted.abort();await expect(source(ownerId,null,aborted.signal)).rejects.toThrow()
+   const worker=createSqlRagRebuildWorker(runtime.db,'sqlite',{knowledge:source},()=>new Date('2026-03-01T00:00:00.000Z'))
+   const stamp='2026-01-01 00:00:00.000000',dbOwner=owner.replaceAll('-','')
+   await sql`INSERT INTO rag_index_jobs(user_id,source_type,source_id,pending_source_ids,version,operation,status,generation,completed_generation,attempts,next_attempt_at,created_at,updated_at)
+    VALUES (${dbOwner},'knowledge','',NULL,'','upsert','queued',1,0,0,${stamp},${stamp},${stamp})`.execute(runtime.db)
+   expect(await worker()).toBe('ready')
+   const rows=await sql<{source_id:string;summary:string;content:string;document_version:string;metadata_json:string}>`
+    SELECT source_id,summary,content,document_version,metadata_json FROM knowledge_index_entries WHERE owner_user_id=${dbOwner} AND source_type='knowledge' AND deleted_at IS NULL`.execute(runtime.db)
+   expect(rows.rows).toHaveLength(1)
+   expect(rows.rows[0]).toMatchObject({source_id:'k-1',summary:'发布；关键词：Node、蓝绿部署；何时需要切换线上路由',content:'先确认健康检查，再切换到新的 Node 入口。'})
+   expect(JSON.parse(rows.rows[0]!.metadata_json)).toMatchObject({topic:'发布',source_type:'user'})
+   expect(rows.rows[0]!.document_version).toBe(docs[0]!.document_version)
+   values.set(`${prefix}group-k.md`,knowledge('group-k',owner,'true','群范围知识内容',1,{type:'group',platform:'qq',bot_id:'bot-7',group_id:'group-9',scope_id:'group-9'}))
+   const scopedDocs=await source(ownerId,null)
+   expect(scopedDocs.find(doc=>doc.source_id==='group-k')).toMatchObject({scope_type:'group',scope_id:'group-9',platform:'qq',bot_id:'bot-7',group_id:'group-9'})
+   values.delete(`${prefix}group-k.md`)
+   const originalVersion=rows.rows[0]!.document_version
+   values.set(`${prefix}k-1.md`,knowledge('k-1',owner,'true','新的路由切换流程先观察健康探针，再推进流量。',4))
+   await sql`UPDATE rag_index_jobs SET status='queued',generation=2,completed_generation=1,next_attempt_at=${stamp},updated_at=${stamp} WHERE user_id=${dbOwner} AND source_type='knowledge'`.execute(runtime.db)
+   expect(await worker()).toBe('ready')
+   const updated=await sql<{content:string;document_version:string}>`SELECT content,document_version FROM knowledge_index_entries WHERE owner_user_id=${dbOwner} AND source_type='knowledge' AND deleted_at IS NULL`.execute(runtime.db)
+   expect(updated.rows).toHaveLength(1)
+   expect(updated.rows[0]).toMatchObject({content:'新的路由切换流程先观察健康探针，再推进流量。'})
+   expect(updated.rows[0]!.document_version).not.toBe(originalVersion)
+   values.set(`${prefix}k-1.md`,knowledge('k-1',owner,'false'))
+   await sql`UPDATE rag_index_jobs SET status='queued',generation=3,completed_generation=2,next_attempt_at=${stamp},updated_at=${stamp} WHERE user_id=${dbOwner} AND source_type='knowledge'`.execute(runtime.db)
+   expect(await worker()).toBe('ready')
+   const tombstone=await sql<{deleted_at:string|null}>`SELECT deleted_at FROM knowledge_index_entries WHERE owner_user_id=${dbOwner} AND source_type='knowledge'`.execute(runtime.db)
+   expect(tombstone.rows[0]?.deleted_at).not.toBeNull()
   }finally{await runtime.close()}
  }finally{await rm(dir,{recursive:true,force:true})}
 })

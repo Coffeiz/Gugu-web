@@ -30,6 +30,10 @@ import { createMindCanvasItemUpdate } from '../mind/canvas-item-update.js'
 import { createSqlMindCanvasItemUpdateRuntime } from '../mind/canvas-item-update-sql.js'
 import { createMindCanvasItemRemove, MindCanvasItemMutationError } from '../mind/canvas-item-remove.js'
 import { createSqlMindCanvasItemRemoveRuntime } from '../mind/canvas-item-remove-sql.js'
+import { createDesktopAppearanceService } from '../preferences/desktop-appearance.js'
+import { createKyselyPreferenceDocumentStore } from '../preferences/document-store.js'
+import { createKyselyOnboardingStore } from '../onboarding/store.js'
+import { createOnboardingService } from '../onboarding/service.js'
 
 interface Job {
   id: number
@@ -72,7 +76,19 @@ try {
         }
         if (signal.aborted) throw new CoreError('cancelled', '操作已取消')
         let result: unknown
-        if (job.method === 'operations.get') {
+        if (job.method === 'preferences.desktop.get') {
+          validateCommandParams(job.method, job.params)
+          result = await createDesktopAppearanceService(createKyselyPreferenceDocumentStore(runtime.db, runtime.backend)).get(ownerId)
+        } else if (job.method === 'preferences.desktop.update') {
+          validateCommandParams(job.method, job.params)
+          if (!job.operationId) throw new CoreError('invalid_request', '偏好写入必须提供稳定操作标识')
+          const outcome = await runtime.operationWithTransaction(context, job.operationId, job.method, job.params,
+            tx => createDesktopAppearanceService(createKyselyPreferenceDocumentStore(tx, runtime.backend)).update(ownerId, job.params.patch), { signal })
+          result = outcome.result
+        } else if (job.method === 'onboarding.desktop.get') {
+          validateCommandParams(job.method, job.params)
+          result = await createOnboardingService(createKyselyOnboardingStore(runtime.db, runtime.backend)).get(ownerId)
+        } else if (job.method === 'operations.get') {
           validateCommandParams(job.method, job.params)
           const operationId = job.params.operation_id
           if (typeof operationId !== 'string')

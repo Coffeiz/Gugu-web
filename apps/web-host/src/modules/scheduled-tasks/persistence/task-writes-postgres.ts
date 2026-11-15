@@ -2,7 +2,7 @@ import type { Pool, PoolClient } from 'pg'
 import { withPostgresTransaction } from '../../../adapters/postgres-transaction.js'
 import { normalizeOwnerId } from '../../../adapters/owner-context.js'
 import { isPostgresUniqueViolation } from '../../../adapters/postgres-errors.js'
-import { normalizeSchedule, scheduleTimestamp, type ScheduleSpec } from '../normalize-schedule.js'
+import { normalizeSchedule, scheduleTimestamp, type ScheduleSpec } from '@gugu/core/scheduled-task-schedule'
 import { taskPreciseColumns, taskResponse } from '../task-list.js'
 import { scheduledTaskUndoSnapshot } from '@gugu/core/calendar'
 import { validateTaskReferences } from './task-resolver-postgres.js'
@@ -88,7 +88,7 @@ export function createPostgresTaskWrites(pool: Pool, options: TaskWriteOptions) 
       }
       const response = taskResponse(row, options.filesystemAuthorizationEnabled())
       if (created) await options.publish(owner, 'create', response, origin)
-      return response
+      return { task: response, created }
     },
     async update(rawOwner: string, id: number, patch: Record<string, unknown>, origin: string | null) {
       const owner = normalizeOwnerId(rawOwner)

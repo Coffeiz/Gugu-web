@@ -13,6 +13,7 @@ it('Preload 只暴露固定业务函数，不透传任意 channel 或 Electron �
   const [name, bridge] = spies.expose.mock.calls[0]!
   expect(name).toBe('guguDesktop')
   expect(Object.keys(bridge).sort()).toEqual([
+    'appearance',
     'calendar',
     'canvasItems',
     'canvases',
@@ -29,6 +30,7 @@ it('Preload 只暴露固定业务函数，不透传任意 channel 或 Electron �
     'deleteClient',
     'deleteNote',
     'notes',
+    'onboarding',
     'projects',
     'receipt',
     'renameClient',
@@ -37,12 +39,19 @@ it('Preload 只暴露固定业务函数，不透传任意 channel 或 Electron �
     'undoApply',
     'undoPreview',
     'undoRedo',
+    'updateAppearance',
     'updateCalendarEvent',
     'updateCanvas',
     'updateCanvasItem',
     'updateCanvasNote',
     'updateNote',
   ])
+  await bridge.onboarding()
+  expect(spies.invoke).toHaveBeenCalledWith('gugu:onboarding:state:get')
+  await bridge.appearance()
+  expect(spies.invoke).toHaveBeenCalledWith('gugu:preferences:appearance:get')
+  await bridge.updateAppearance({ theme: 'dark' })
+  expect(spies.invoke).toHaveBeenCalledWith('gugu:preferences:appearance:update', { theme: 'dark' })
   await bridge.createProject('合成计划')
   expect(spies.invoke).toHaveBeenCalledWith('gugu:projects:create', '合成计划')
   await bridge.renameProject(3, 2, '合成名称')

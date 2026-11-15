@@ -20,6 +20,7 @@ export function isMutation(method: string): boolean {
     'calendar.create',
     'calendar.update',
     'calendar.delete',
+    'preferences.desktop.update',
     'mind.notes.create',
     'mind.notes.update',
     'mind.notes.delete',
@@ -50,6 +51,9 @@ const commandFields: Readonly<Record<string, readonly string[]>> = {
   'calendar.create': ['title', 'date'],
   'calendar.update': ['id', 'body'],
   'calendar.delete': ['id', 'version'],
+  'preferences.desktop.get': [],
+  'preferences.desktop.update': ['patch'],
+  'onboarding.desktop.get': [],
   'mind.notes.list': [],
   'mind.notes.create': ['contentMd', 'title', 'color', 'capturedAt'],
   'mind.notes.update': ['id', 'fields'],
@@ -164,6 +168,8 @@ export function validateCommandParams(method: string, params: Fields): void {
     if (method === 'mind.canvases.notes.update' && (!params.fields || typeof params.fields !== 'object' || Array.isArray(params.fields))) throw new CoreError('invalid_request', '便签内容无效')
     if (method === 'mind.canvases.items.update' && (!params.body || typeof params.body !== 'object' || Array.isArray(params.body))) throw new CoreError('invalid_request', '画布位置无效')
   }
+  if (method === 'preferences.desktop.update' && (!params.patch || typeof params.patch !== 'object' || Array.isArray(params.patch)))
+    throw new CoreError('invalid_request', '桌面外观设置无效')
 }
 export async function execute(
   data: DataServices,

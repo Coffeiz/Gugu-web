@@ -1,4 +1,10 @@
-import { ScheduleValidationError } from './schedule-status.js'
+/** HTTP 适配器与定时任务用例共用的校验错误。 */
+export class ScheduleValidationError extends Error {
+  constructor(message: string, readonly field = 'schedule') {
+    super(message)
+    this.name = 'ScheduleValidationError'
+  }
+}
 
 export interface ScheduleInput { schedule_kind: string; cron?: string | null; interval_minutes?: number | null; start_at?: string | null; end_at?: string | null }
 export interface ScheduleSpec { schedule_kind: string; cron: string; interval_minutes: number | null; start_at: Date | null; end_at: Date | null }

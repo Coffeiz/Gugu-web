@@ -89,5 +89,17 @@ export function createSqlAgentConversationSearchSources(db:Kysely<any>,backend:'
    const result=await sql<{session_id:number}>`SELECT m.session_id FROM conversation_messages m JOIN conversation_sessions s ON s.id=m.session_id WHERE m.id=${message} AND s.user_id=${owner}`.execute(db)
    signal?.throwIfAborted();return result.rows[0]?Number(result.rows[0].session_id):null
   },
+  async details(rawOwner:string,sessionIds:readonly number[],signal?:AbortSignal){
+   signal?.throwIfAborted();const owner=key(rawOwner),ids=[...new Set(sessionIds)]
+   if(ids.some(id=>!Number.isSafeInteger(id)||id<1)||ids.length>50)throw new CoreError('invalid_request','会话范围无效')
+   if(!ids.length)return new Map<number,{title:string;summary:string;source:string|null;updated_at:string}>()
+   const updated=backend==='postgres'?sql`to_char(updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US') || '+00:00'`:sql`CAST(updated_at AS TEXT)`
+   const result=await sql<{id:number;title:string|null;summary:string|null;source:string|null;updated_at:string}>`
+    SELECT id,title,summary,source,${updated} AS updated_at FROM conversation_sessions
+    WHERE user_id=${owner} AND id IN (${sql.join(ids)})
+   `.execute(db)
+   signal?.throwIfAborted()
+   return new Map(result.rows.map(row=>[Number(row.id),{title:row.title||'未命名对话',summary:row.summary||'',source:row.source,updated_at:String(row.updated_at||'')}]))
+  },
  }
 }

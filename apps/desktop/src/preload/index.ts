@@ -1,8 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { DESKTOP_CHANNELS } from '@gugu/core/desktop'
 import type { DesktopBridge } from '@gugu/core/desktop'
+import type { DesktopAppearancePreferences } from '@gugu/core/desktop'
 
 const bridge: DesktopBridge = Object.freeze({
+  appearance: () => ipcRenderer.invoke(DESKTOP_CHANNELS.appearance),
+  updateAppearance: (patch: Partial<DesktopAppearancePreferences>) => ipcRenderer.invoke(DESKTOP_CHANNELS.updateAppearance, patch),
+  onboarding: () => ipcRenderer.invoke(DESKTOP_CHANNELS.onboarding),
   projects: () => ipcRenderer.invoke(DESKTOP_CHANNELS.projects),
   createProject: (name: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.createProject, name),
   renameProject: (id: number, version: number, name: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.renameProject, id, version, name),

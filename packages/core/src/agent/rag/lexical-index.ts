@@ -268,9 +268,9 @@ export function createRagLexicalIndex(ownerId:string) {
  return {
   replace(owner:string,revision:string,documents:Document[]){authorize(owner);const next:State={revision:'',documents:[],documentsById:new Map(),postings:new Map(),lengths:new Map(),docFreq:new Map(),avgLength:0,totalLength:0,fingerprints:new Map()};replaceInMemory(next,revision,structuredClone(documents));state=next},
   patch(owner:string,baseRevision:string,revision:string,upserts:Document[],deletes:string[]){authorize(owner);if(state.revision!==baseRevision)throw new Error('RAG 索引版本不匹配');const next=structuredClone(state);const unique=[...new Map(upserts.map(item=>[item.id,item])).values()];patchInMemory(next,revision,structuredClone(unique),[...deletes]);state=next},
-  search(owner:string,query:string,limit:number,allowedSources:ReadonlyArray<string>,scope:RagSearchScope){authorize(owner);validateScope(scope);return structuredClone(search(state,query,limit,new Set(allowedSources),scope))},
-  searchHybrid(owner:string,query:string,limit:number,allowedSources:ReadonlyArray<string>,scope:RagSearchScope,options:{queryVector:readonly number[];vectorVersion:string;expectedVersion:string;vectors:ReadonlyMap<string,readonly number[]>}){
-   authorize(owner);validateScope(scope)
+  search(owner:string,query:string,limit:number,allowedSources:ReadonlyArray<string>,scope?:RagSearchScope){authorize(owner);if(scope)validateScope(scope);return structuredClone(search(state,query,limit,new Set(allowedSources),scope))},
+  searchHybrid(owner:string,query:string,limit:number,allowedSources:ReadonlyArray<string>,scope: RagSearchScope | undefined,options:{queryVector:readonly number[];vectorVersion:string;expectedVersion:string;vectors:ReadonlyMap<string,readonly number[]>}){
+   authorize(owner);if(scope)validateScope(scope)
    if(!options.queryVector.every(Number.isFinite))throw new Error('RAG 查询向量无效')
    const lexical=search(state,query,limit,new Set(allowedSources),scope)
    if(!options.expectedVersion||options.vectorVersion!==options.expectedVersion||!options.queryVector.length||!options.vectors.size)return {...structuredClone(lexical),fusion:'bm25' as const,vectorDocCount:0}

@@ -387,6 +387,9 @@ export function desktopHandlers(
   diagnostics: () => Promise<unknown>,
 ): Record<string, (...args: unknown[]) => Promise<unknown>> {
   return {
+    [DESKTOP_CHANNELS.appearance]: () => host.request('preferences.desktop.get'),
+    [DESKTOP_CHANNELS.updateAppearance]: (patch: unknown) => host.request('preferences.desktop.update', { patch }),
+    [DESKTOP_CHANNELS.onboarding]: () => host.request('onboarding.desktop.get'),
     [DESKTOP_CHANNELS.projects]: () => host.request('projects.list'),
     [DESKTOP_CHANNELS.createProject]: (name: unknown) =>
       host.request('projects.create', { name }),

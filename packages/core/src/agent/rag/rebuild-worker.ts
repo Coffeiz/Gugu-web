@@ -62,3 +62,30 @@ export function createSqlRagRebuildWorker(db:Kysely<any>,backend:'postgres'|'sql
   }
  }
 }
+
+/**
+ * 队列为空的老 owner 也需要首次建立当前支持来源的持久索引。只为既无
+ * 索引行也无队列行的来源入队；空 source_id 在 Worker 边界表示全来源重建，
+ * 已有的增量任务与正在更新的索引均不会被启动扫描覆盖。
+ */
+export async function enqueueMissingAgentRagBaselines(db:Kysely<any>,backend:'postgres'|'sqlite',sourceTypes:readonly string[]):Promise<number> {
+ let queued=0
+ const owners=backend==='postgres'?sql`SELECT id FROM users`:sql`SELECT user_id AS id FROM projects
+  UNION SELECT user_id AS id FROM calendar_events UNION SELECT user_id AS id FROM mind_nodes
+  UNION SELECT user_id AS id FROM mind_maps UNION SELECT user_id AS id FROM scheduled_tasks
+  UNION SELECT user_id AS id FROM conversation_sessions UNION SELECT owner_user_id AS id FROM knowledge_index_entries
+  UNION SELECT user_id AS id FROM rag_index_jobs`
+ for(const sourceType of new Set(sourceTypes.filter(value=>typeof value==='string'&&/^[a-z_]{1,32}$/u.test(value)&&value!=='file'))){
+  const pending=backend==='postgres'?sql`CAST(${JSON.stringify([])} AS json)`:sql`${JSON.stringify([])}`
+  const result=await sql`INSERT INTO rag_index_jobs (
+   user_id,source_type,source_id,pending_source_ids,version,operation,status,generation,completed_generation,attempts,
+   next_attempt_at,lease_until,last_error_code,last_started_at,last_succeeded_at,created_at,updated_at
+  ) SELECT u.id,${sourceType},'',${pending},'','upsert','queued',1,0,0,CURRENT_TIMESTAMP,NULL,NULL,NULL,NULL,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP
+   FROM (${owners}) u
+   WHERE NOT EXISTS (SELECT 1 FROM rag_index_jobs j WHERE j.user_id=u.id AND j.source_type=${sourceType})
+    AND NOT EXISTS (SELECT 1 FROM knowledge_index_entries i WHERE i.owner_user_id=u.id AND i.source_type=${sourceType})
+  `.execute(db)
+  queued+=Number(result.numAffectedRows??0)
+ }
+ return queued
+}

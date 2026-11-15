@@ -63,6 +63,26 @@ test('历史搜索仅在完整可信搜索端口注入且授权时开放', async
   assert.match(JSON.stringify(await registry.tools.dispatch(call,scope())),/没有权限/)
 })
 
+test('Memory 搜索仅在 Host 注入可信 RAG 服务后注册并向其传入运行身份', async () => {
+  let allowed = true
+  const options = { core: {} as SqlDataRuntime, authorize: async (_identity: typeof identity, name: string) => allowed && name === 'search_memory' }
+  const absent = createAgentToolRegistry(options)
+  assert.equal((await absent.capabilities(identity)).some(item => item.name === 'search_memory'), false)
+  let observed: unknown
+  const registry = createAgentToolRegistry({ ...options, memorySearch: { async search(current, request) {
+    observed = { current, request }
+    return { query: request.query, results: [], has_more: false }
+  } } })
+  assert.equal((await registry.capabilities(identity)).some(item => item.name === 'search_memory'), true)
+  const result = await registry.tools.dispatch({ id: 'memory', name: 'search_memory', input: { query: '合成词', owner_id: '伪造 owner' } }, scope())
+  assert.equal(result.kind, 'completed')
+  assert.deepEqual(observed, { current: identity, request: { query: '合成词', owner_id: '伪造 owner' } })
+  allowed = false
+  const denied = await registry.tools.dispatch({ id: 'denied-memory', name: 'search_memory', input: { query: '合成词' } }, scope())
+  assert.equal(denied.kind, 'completed')
+  if (denied.kind === 'completed') assert.equal(denied.executed, false)
+})
+
 test('普通问题仅在 Host 显式开放且授权时注册并进入等待', async () => {
   let allowed=true
   const options={core:{} as SqlDataRuntime,authorize:async()=>allowed}

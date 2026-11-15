@@ -8,6 +8,14 @@ import { prepareCompatibleAudioParts, requestCompatibleAsr, type AsrMedia, type 
 const dashscopeServices = new Set(['qwen3-asr', 'qwen-audio', 'fun-asr'])
 const dashscopeSuffix = '/api/v1/services/aigc/multimodal-generation/generation'
 
+/** 与 Python voice_config.dashscope_service_for_model 一致的原生产品线规则。 */
+export function dashscopeAsrServiceForModel(model: string): string {
+  const name = model.trim().toLowerCase()
+  for (const [prefix, service] of [['qwen3-asr', 'qwen3-asr'], ['qwen-audio', 'qwen-audio'], ['fun-asr', 'fun-asr']] as const)
+    if (name.startsWith(prefix)) return service
+  throw new Error('百炼原生语音模型须属于 Qwen3 ASR、Qwen-Audio 或 Fun-ASR 产品线')
+}
+
 /** 原生地址必须完整填写；保留地域、Workspace前缀和非凭据query，不自动补路径。 */
 export function dashscopeAsrEndpoint(baseUrl: string | undefined): string {
   let url: URL

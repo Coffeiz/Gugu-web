@@ -38,6 +38,8 @@ import { createDataExportCanceler } from '@gugu/core/data-portability/cancel-exp
 import { withPostgresTransaction } from './adapters/postgres-transaction.js'
 import { createTerminalDeletion } from '@gugu/core/terminals/delete'
 import { createVoicePresetsFileReader } from './modules/admin/voice-presets-read.js'
+import { createAdminVoicePresetTestOperations, createAdminVoiceTestOperations } from './modules/admin/voice-test.js'
+import { createAdminSearchTestOperations } from './modules/admin/search-test.js'
 import { createAdminMaintenanceStatus } from '@gugu/core/maintenance/admin-status'
 import { createRedisAdminMaintenanceCommands } from './adapters/redis-events.js'
 import { createServiceStatusReader } from './modules/admin/service-status.js'
@@ -46,11 +48,16 @@ import { createAttachmentDownloader } from '@gugu/core/agent/attachments/downloa
 import { openLocalFile, UnsafeLocalPathError } from '@gugu/fs/node'
 import { createPostgresRedisBindingCodeIssuer } from './modules/im/binding-code.js'
 import { createTaskFilesystemRevoker } from '@gugu/core/scheduled-task-filesystem-revoke'
+import { createPostgresTaskWrites } from './modules/scheduled-tasks/persistence/task-writes-postgres.js'
+import { createPostgresTaskResolver } from './modules/scheduled-tasks/persistence/task-resolver-postgres.js'
+import { createPostgresTaskExternal } from './modules/scheduled-tasks/persistence/task-external-postgres.js'
+import { validateTaskCron } from './modules/scheduled-tasks/validate-cron.js'
 import { createRedisFilesystemRevokeMetric } from './adapters/redis-events.js'
 import { createRedisStorageQuotaStatusStore } from './modules/admin/storage-quota-status.js'
 import { createNotificationBroadcaster } from '@gugu/core/notifications/broadcast'
 import { createRedisNotificationPublisher } from './adapters/redis-events.js'
 import { createMcpStatusReader } from '@gugu/core/mcp/status'
+import { getAttentionDefaults } from '@gugu/core/im/attention/defaults'
 import { createMcpEnabledReader } from './modules/mcp/status.js'
 import { createEmailRecipientCounter } from '@gugu/core/admin/email-recipient-count'
 import { createEmbeddingRebuildStatusReader } from '@gugu/core/byok/embedding-rebuild-status'
@@ -139,6 +146,9 @@ import { createKyselyNotificationOperations } from '@gugu/core/notifications'
 import { createKyselySmtpStore, createUserSmtpSettings } from '@gugu/core/smtp'
 import { encryptEncryptedString as encryptSmtpPassword } from './adapters/encrypted-string.js'
 import { startSecurityRetentionWorker } from './maintenance/security-retention.js'
+import { checkRagIndexMigration, RagIndexMigrationError } from './migrations/rag-index-migrate.js'
+import { startAgentRagIndexWorker } from './domains/agent-sessions/rag-rebuild.js'
+import { createLocalAgentKnowledgeReadStore } from './domains/agent-sessions/tools/agent-rag-knowledge-store.js'
 import { createTrackOperations } from './modules/site/persistence/track.js'
 import { createFeedbackNotifier, createFeedbackService, createFeedbackSubmission, createKyselyFeedbackOperations } from '@gugu/core/feedback'
 import { runBestEffort } from './adapters/best-effort.js'
@@ -196,6 +206,7 @@ import { DEFAULT_AGENT_STATE_LABELS } from '@gugu/core/agent-sessions'
 import { createAgentStateLabelOverrides } from './domains/agent-sessions/agent-state-label-config.js'
 import { createPostgresFileBrowserOperations } from './domains/files/file-browser-postgres.js'
 import { createPostgresFileReadOperations } from './domains/files/file-reads-postgres.js'
+import { createPostgresXlsxPreviewOperations } from './modules/files/xlsx-preview-postgres.js'
 import { createPostgresFileUploadOperations } from './domains/files/file-upload-postgres.js'
 import { createPostgresFileDeleteOperations } from './domains/files/file-delete-postgres.js'
 import { createPostgresFileRestoreOperations } from './domains/files/file-restore-postgres.js'
@@ -212,6 +223,7 @@ import { createPostgresFolderReadOperations } from './domains/files/folder-reads
 import { capturePostgresFolderPathMirrorDirectoryKeys, createPostgresFolderPathMirrorPlanner } from './domains/files/folder-path-planner.js'
 import { createLocalPathMirrorMutation } from './domains/files/local-path-mirror.js'
 import { createPostgresFolderWriteOperations, type FolderUndoRecord } from './domains/files/folder-writes-postgres.js'
+import { createPostgresFolderCopyOperations } from './modules/files/folder-copy-postgres.js'
 import { prepareWorkspaceDirectoryAcl } from './adapters/workspace-directory-acl.js'
 import { createSandboxdWorkspacePtyTerminator } from './adapters/sandboxd-pty.js'
 import {
@@ -649,6 +661,21 @@ function createWebUiApp(
       console.error(`gugu-webui files PathMirror rollback failed: ${errorType}`)
     },
   })
+  const folderCopy = createPostgresFolderCopyOperations(pool, {
+    storageRoot: config.storageLocalPath,
+    fileSyncEnabled: config.filesyncEnabled,
+    buildSearchRomaji: folderSearchAlias,
+    async publishChanged(event) {
+      await publisher.publishResourceChanged({
+        ownerId: event.ownerId,
+        resource: 'files',
+        operation: 'create',
+        entityId: Number(event.folder.id),
+        origin: event.origin,
+        payload: { kind: 'folder', entity: event.folder },
+      })
+    },
+  })
   const workspaceCreate = createPostgresWorkspaceCreator(pool)
   const workspaceUpdate = createPostgresWorkspaceUpdater(pool)
   const workspaceBindings = createPostgresWorkspaceBindingOperations(pool)
@@ -968,6 +995,33 @@ function createWebUiApp(
       filesystemAuthorizationEnabled: config.workspaceRuntimeSettings.fullUserSandboxAuthorizationEnabled,
     })).web,
     scheduledTaskDeliveryTargets: createScheduledTaskDeliveryTargets(pool),
+    scheduledTaskWrites: createPostgresTaskWrites(pool, {
+      validateCron: validateTaskCron,
+      filesystemAuthorizationEnabled: () => config.workspaceRuntimeSettings.fullUserSandboxAuthorizationEnabled,
+      resolve: createPostgresTaskResolver(createPostgresTaskExternal({
+        secretKey: config.secretKey,
+        async readWechatPrivate(owner) {
+          if (!config.redisUrl) return null
+          const raw = await createRedisValueReader(config.redisUrl)(`imreach-private:${owner}:wechat`)
+          if (!raw) return null
+          try {
+            const value: unknown = JSON.parse(raw)
+            return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
+          } catch { return null }
+        },
+        async revokeConfirmation(owner, summary, identity) {
+          await filesystemAuthorizationConfirmations.revoke(owner, summary, identity)
+        },
+      })),
+      async publish(ownerId, operation, task, origin) {
+        const item = task as { id?: unknown }
+        await publisher.publishResourceChanged({
+          ownerId, resource: 'scheduled_tasks', operation,
+          entityId: Number(item.id), origin,
+          payload: { kind: 'task', entity: task },
+        })
+      },
+    }),
     mindNotes: createSqlMindNoteReader(core.db, 'postgres'),
     mindCanvasReads: createSqlMindCanvasReader(core.db, 'postgres'),
     mindRefSuggest,
@@ -1106,7 +1160,10 @@ function createWebUiApp(
         config.configOverridePath ? readConfigOverride(config.configOverridePath) : {}),
     },
     fileBrowser: createPostgresFileBrowserOperations(pool, config.secretKey),
-    fileReads: createPostgresFileReadOperations(pool, config.storageDefaultLimitBytes, config.storageLocalPath),
+    fileReads: {
+      ...createPostgresFileReadOperations(pool, config.storageDefaultLimitBytes, config.storageLocalPath),
+      ...createPostgresXlsxPreviewOperations(pool, config.storageLocalPath),
+    },
     fileUploads: createPostgresFileUploadOperations(pool, {
       storageRoot: config.storageLocalPath,
       defaultLimitBytes: config.storageDefaultLimitBytes,
@@ -1201,8 +1258,12 @@ function createWebUiApp(
     folderDownloads: createPostgresFileBatchDownloadOperations(pool, config.storageLocalPath),
     folderReads: createPostgresFolderReadOperations(pool),
     folderWrites,
+    folderCopy,
     adminAuth: createAdminAuth(pool, config),
     adminConfig: config.configOverridePath ? { path: config.configOverridePath, env } : undefined,
+    adminVoiceTest: { test: createAdminVoiceTestOperations(config.configOverridePath, env) },
+    adminVoicePresetTest: createAdminVoicePresetTestOperations(config.configOverridePath, env),
+    adminSearchTest: { test: createAdminSearchTestOperations(config.configOverridePath, env) },
     adminStorageSnapshots: {
       query: createPostgresAdminStorageSnapshotQuery(pool),
       diskUsage: () => diskUsageForStorage({ localPath: config.storageLocalPath }),
@@ -1337,6 +1398,7 @@ function createWebUiApp(
       publishChanged: ownerId => publisher.publishResourceChanged({ ownerId, resource: 'im_channels', operation: 'refresh' }),
     }) },
     mcpStatus: { read: createMcpStatusReader(createMcpEnabledReader(resolveConfigOverridePath(env), env)) },
+    attentionDefaults: { read: getAttentionDefaults },
     loopScopeProxy: { endpoint: env.LOOPSCOPE_ENDPOINT || 'http://127.0.0.1:4320' },
     attachmentDownload: { download: createAttachmentDownloader(core.db, {
       readLegacy: async (ownerId, attachId) => { if (!config.redisUrl) throw new Error('附件元数据服务不可用'); return createRedisValueReader(config.redisUrl)(`chatfile:${ownerId}:${attachId}`) },
@@ -1425,6 +1487,9 @@ export async function startServer(env: NodeJS.ProcessEnv = process.env) {
       isReady: async () => false,
       adminAuth: createAdminAuth(pool, config),
       adminConfig: config.configOverridePath ? { path: config.configOverridePath, env } : undefined,
+      adminVoiceTest: { test: createAdminVoiceTestOperations(config.configOverridePath, env) },
+      adminVoicePresetTest: createAdminVoicePresetTestOperations(config.configOverridePath, env),
+      adminSearchTest: { test: createAdminSearchTestOperations(config.configOverridePath, env) },
     })
     try {
       await listen(app, config.host, config.port)
@@ -1447,6 +1512,15 @@ export async function startServer(env: NodeJS.ProcessEnv = process.env) {
     }
   }
   const app = createWebUiApp(config, pool, core, redisEvents, env)
+  let ragIndexMigration: 'pending' | 'applied' | 'unavailable'
+  try {
+    ragIndexMigration = await checkRagIndexMigration(pool)
+  } catch (error) {
+    ragIndexMigration = 'unavailable'
+    console.error(error instanceof RagIndexMigrationError
+      ? `Agent RAG 索引检查不可用（${error.code}），后台重建未启动`
+      : 'Agent RAG 索引检查不可用，后台重建未启动')
+  }
   try {
     await listen(app, config.host, config.port)
   } catch (error) {
@@ -1459,6 +1533,14 @@ export async function startServer(env: NodeJS.ProcessEnv = process.env) {
     pool,
     onError: () => { console.error('安全事件过期清理失败') },
   })
+  const ragIndexWorker = ragIndexMigration === 'applied'
+    ? startAgentRagIndexWorker(core, {
+        enabled: true,
+        knowledgeStore: createLocalAgentKnowledgeReadStore(config.storageLocalPath),
+        onError: () => { console.error('Agent RAG 索引重建失败') },
+      })
+    : undefined
+  if (ragIndexMigration === 'pending') console.info('Agent RAG 索引迁移尚未应用，后台重建未启动')
   let closePromise: Promise<void> | undefined
   return {
     app,
@@ -1468,6 +1550,7 @@ export async function startServer(env: NodeJS.ProcessEnv = process.env) {
         try {
           await app.close()
         } finally {
+          await ragIndexWorker?.stop()
           await securityRetention.stop()
           await core.close()
           await pool.end()

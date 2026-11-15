@@ -2,10 +2,28 @@ import assert from 'node:assert/strict'
 import { CoreError } from '@gugu/core'
 import Fastify from 'fastify'
 import test from 'node:test'
+import { nextFolderCopyName, planFolderCopyTree } from '@gugu/core/files/folder-copy'
 import { installHttpErrorHandler } from '../../src/http/errors.js'
 import { registerFolderWriteRoutes } from '../../src/domains/files/folder-writes.js'
+import { registerFolderCopyRoute } from '../../src/modules/files/folder-copy.js'
 
 const ownerId = '00000000-0000-4000-8000-000000000012'
+
+test('folder copy planning keeps parents before children, rejects copying into its subtree, and suffixes collisions', () => {
+  const plan = planFolderCopyTree(1, [
+    { id: 4, parentId: 2, name: '更深目录' },
+    { id: 2, parentId: 1, name: '子目录' },
+    { id: 1, parentId: null, name: '资料' },
+    { id: 3, parentId: 1, name: '另一个' },
+  ], 8)
+  assert.deepEqual(plan.map((item) => [item.sourceId, item.parentSourceId, item.name]), [
+    [1, null, '资料'], [2, 1, '子目录'], [3, 1, '另一个'], [4, 2, '更深目录'],
+  ])
+  assert.throws(() => planFolderCopyTree(1, [
+    { id: 1, parentId: null, name: '资料' }, { id: 2, parentId: 1, name: '子目录' },
+  ], 2), /自身或其子文件夹/)
+  assert.equal(nextFolderCopyName('资料', (candidate) => ['资料', '资料(1)'].includes(candidate)), '资料(2)')
+})
 
 test('folder create and rename parse the Python camelCase contract and pass trusted owner/metadata', async () => {
   const calls: unknown[] = []
@@ -94,6 +112,44 @@ test('folder writes reject unsafe names, missing CAS versions, and malformed IDs
     assert.equal(malformedId.statusCode, 422)
     assert.equal(malformedMoveVersion.statusCode, 422)
     assert.equal(calls, 0)
+  } finally {
+    await app.close()
+  }
+})
+
+test('folder copy parses target scope and passes trusted owner to the copy operation', async () => {
+  const calls: unknown[] = []
+  const app = Fastify()
+  installHttpErrorHandler(app)
+  registerFolderCopyRoute(app, {
+    requireUser: async () => {},
+    ownerIdFromRequest: () => ownerId,
+    operations: {
+      async copy(owner, id, input, metadata) {
+        calls.push([owner, id, input, metadata])
+        return { id: 9, projectId: 7, workspaceDirectoryId: null, parentId: 4, name: '副本', fileCount: 2, folderCount: 1, version: 1 }
+      },
+    },
+  })
+  try {
+    const result = await app.inject({
+      method: 'POST', url: '/api/v1/folders/3/copy',
+      headers: { 'x-client-id': 'web' },
+      payload: { parentId: 4, projectId: 7 },
+    })
+    assert.equal(result.statusCode, 201)
+    assert.deepEqual(result.json(), {
+      id: 9, projectId: 7, workspaceDirectoryId: null, parentId: 4,
+      name: '副本', fileCount: 2, folderCount: 1, version: 1,
+    })
+    assert.deepEqual(calls, [[ownerId, 3, {
+      parentId: 4, projectId: 7, workspaceDirectoryId: null,
+    }, { undoContextId: null, clientId: 'web', idempotencyKey: null }]])
+    const nullBody = await app.inject({ method: 'POST', url: '/api/v1/folders/3/copy', payload: null })
+    const emptyBody = await app.inject({ method: 'POST', url: '/api/v1/folders/3/copy' })
+    assert.equal(nullBody.statusCode, 422)
+    assert.equal(emptyBody.statusCode, 422)
+    assert.equal(calls.length, 1)
   } finally {
     await app.close()
   }

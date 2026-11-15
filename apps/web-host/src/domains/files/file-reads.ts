@@ -17,6 +17,8 @@ export interface FileReadOperations {
   getLibraryCounts(ownerId: string): Promise<unknown>
   getStorage(ownerId: string): Promise<unknown>
   openContent(ownerId: string, fileId: number): Promise<FileContentSource | null>
+  xlsxPreview?(ownerId: string, fileId: number): Promise<{ version: number; sheets: unknown[] }>
+  xlsxPreviewImage?(ownerId: string, fileId: number, imageId: number): Promise<{ content: Uint8Array; mime: string }>
   resolveRelativePaths?(ownerId: string, fileId: number, paths: string[]): Promise<unknown[] | null>
 }
 

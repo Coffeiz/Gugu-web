@@ -1,11 +1,7 @@
-const SCHEDULE_KINDS = new Set(['cron', 'interval', 'once'])
+import { ScheduleValidationError } from '@gugu/core/scheduled-task-schedule'
+export { ScheduleValidationError } from '@gugu/core/scheduled-task-schedule'
 
-export class ScheduleValidationError extends Error {
-  constructor(message: string, readonly field = 'schedule') {
-    super(message)
-    this.name = 'ScheduleValidationError'
-  }
-}
+const SCHEDULE_KINDS = new Set(['cron', 'interval', 'once'])
 
 export interface ScheduledTaskStatusRecord {
   schedule_kind: unknown

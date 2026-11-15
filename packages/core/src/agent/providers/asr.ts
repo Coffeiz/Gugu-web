@@ -6,7 +6,7 @@ import type { AsrMedia, CompatibleAsrDependencies } from './asr/shared.js'
 
 export type { AsrMedia, AsrDependencies, CompatibleAsrDependencies } from './asr/shared.js'
 export {
-  dashscopeAsrEndpoint, dashscopeAsrTranscript, transcribeDashscopeAsr,
+  dashscopeAsrEndpoint, dashscopeAsrServiceForModel, dashscopeAsrTranscript, transcribeDashscopeAsr,
 } from './qwen/asr.js'
 export {
   MINIMAX_ASR_MAX_FILE_BYTES, MINIMAX_ASR_MAX_DURATION_SECONDS,

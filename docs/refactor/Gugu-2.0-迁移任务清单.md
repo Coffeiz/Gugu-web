@@ -1,6 +1,6 @@
 # Gugu 2.0 迁移任务清单
 
-> 更新：2026-11-13。本文维护实施顺序、当前状态、验收证据与未完成任务。目标架构和多端职责见[架构说明](Gugu-2.0-架构说明.md)；依赖替换盘点见[Python → Node 依赖迁移矩阵](Gugu-2.0-Python-to-Node-Dependency-Migration.md)。
+> 更新：2026-11-15。本文维护实施顺序、当前状态、验收证据与未完成任务。目标架构和多端职责见[架构说明](Gugu-2.0-架构说明.md)；依赖替换盘点见[Python → Node 依赖迁移矩阵](Gugu-2.0-Python-to-Node-Dependency-Migration.md)。
 >
 > **当前路线：先完成 Node Web/NAS 后端迁移，再基于稳定的共享 Core 推进桌面产品化。** Web 使用 Node Host + PostgreSQL；桌面使用 Electron + Node Core + 本地 SQLite。两端共享 Core 契约，但拥有不同 Host 和数据生命周期。迁移期间未具备完整 Node 命令的 Web 写路径继续整体走 Python，不双写。
 
@@ -73,7 +73,7 @@ Admin 专属 API 为服务端能力，当前 Web 使用 PostgreSQL，未来 SaaS
 - [ ] **工具与调用方**：让已有跨端工具复用 Core 用例及平台端口，接通实际注册和装配，并核对授权、确认、错误与提交后副作用。
 - [ ] **公共化收尾**：逐项核对 PostgreSQL / 正式 SQLite、Web Host 及适用的桌面调用方，保留 Python 对照和必要回归；记录仍属于单端的能力及未覆盖边界，再继续新增 N2 功能迁移。
 
-**桌面首批定向验收记录**：devserver Core 构建通过；`apps/desktop/tests/core-host.test.ts` 与 `preload.test.ts` 合计 28/28，覆盖项目/联系人、日历 Undo/Redo、便签操作、画布便签/位置/移除及 Undo/Redo 的真实 Core Worker/正式 SQLite 路径；`apps/web/tests/desktop/DesktopWorkbench.test.ts` 12/12，desktop 与 Web 类型检查通过。Core 单测入口因当前工作区 `tests/suites.json` 与实际测试发现清单不一致而未能启动；该文件处于并行未提交修改中，本轮保持未改，也未跑全量测试。偏好和引导仍没有 Desktop Renderer 实际调用方，Core/SQLite 能力不计为桌面接通。Windows/macOS 实际 Electron 窗口与打包制品验收、完整空间画布 UI、引用/关系编辑、偏好/引导 UI、文件授权根与旧库升级流程仍待处理。
+**桌面首批定向验收记录**：devserver Core 构建通过；`apps/desktop/tests/core-host.test.ts` 与 `preload.test.ts` 合计 30/30，覆盖项目/联系人、日历 Undo/Redo、便签/画布操作、外观偏好持久化和引导状态读取的真实 Core Worker/正式 SQLite 路径；`apps/web/tests/desktop/DesktopWorkbench.test.ts` 13/13，桌面与 Web 类型检查通过。Core 单测入口因当前工作区 `tests/suites.json` 与实际测试发现清单不一致而未能启动；该文件处于并行未提交修改中，本轮保持未改，也未跑全量测试。外观偏好和引导状态只读已由工作台调用；引导进度写入/重开与完整引导 UI 尚未接通。Windows/macOS 实际 Electron 窗口与打包制品验收、完整空间画布 UI、引用/关系编辑、文件授权根与旧库升级流程仍待处理。
 
 **状态：进行中。** Node WebUI Host 和主要用户、项目、文件、日历、工作区、偏好、通知及部分 Admin/Agent 路由已接入。逐路由覆盖见[Node WebUI API 迁移清单](Gugu-2.0-Node-WebUI-API迁移清单.md)；历史测试与切片细节见[devlog 索引](../devlog/README.md)。旧版全量数量快照已过期，不作为当前完成率。
 
@@ -86,6 +86,12 @@ Agent 历史图片的 owner/session 限定两阶段读取已由 Core PostgreSQL 
 Knowledge overview 已有要求迁移标记存在的 Core 只读子集，合成存储回归 2/2；真实存储、Host 和旧文档自动迁移尚未接入。Python 知识对照全量为 43 通过、1 失败：失败项需要本环境尚未构建的 Cython RAG 内核；排除该项后 43 通过、1 未选，不表示 RAG 已迁移。
 
 个人记忆已有明确限定为规范小规模数据的 Core 读取规则，合成存储 Node 4/4、Python 记忆存储对照 19/19；真实存储和 Host 未接入，legacy 写回、超预算 embedding 与 Python 容错尚未实现，不能作为完整记忆服务。
+
+RAG Host 单消费者 Worker 已在生产 `main.ts` 启动前校验 PG 索引迁移状态，仅 `applied` 时启动，并于关闭时停止/等待。首次 Worker 调用幂等地为无索引、无任务的 owner/source 建全量基线，不覆盖现存增量任务。生产 Worker 已注入 owner-bound knowledge FS reader，来源集合为六个 Core 领域来源加 knowledge；memory loader 及 SQL scope revision/tombstone reader 已迁入 Core，但尚无生产 scope 授权/枚举和 Agent Run caller。Host 锁定 `@node-rs/jieba@2.0.1` 并装配包内词典；`search_conversations` 的持久索引查询固定使用 Python 一致的 BM25，临时 SQLite/正式 Jieba 回归不调用 embedding。向量读取与受控 mock embedding transport 在 `search_memory` Host 工具调用链独立验证。RAG、Host 工具与 Worker 测试通过；本机未安装 pytest。真实 PostgreSQL/部署、生产 embedding、memory scope 授权及 Web Agent Run 对工具端口的实际装配仍未完成，不能标为全量生产接通。
+
+2026-11-15 更新：新增 `createMemorySearch` 组合 Core memory loader、scope/source/snapshot 过滤、版本匹配持久向量读取和统一 TS 排序，并把 `search_memory` 接入可配置 Core/Host 工具组。新增 Web owner-only Host 适配器，复用受限 memory FS 与 SQL scope-state reader；适配器支持由可信 Host 注入 BYOK resolver/受控 transport，省略时显式使用词法召回。Core memory dispatch/vector 4/4、Host Registry 16/16、Host 临时 SQLite/文件系统真实调用链 1/1、Host Agent/RAG 定向测试 26/26、Core typecheck/build、Host typecheck 通过。授权、快照、Jieba、embedding 与向量为合成回归依赖；Python pytest 缺失。IM scope resolver、生产 Agent Run 对会话与 memory 搜索资源的装配仍缺，故 `search_memory` 为已实现待接入，不代表生产检索完成；`search_conversations` 已有真实注册器/持久 RAG 临时库行为回归，仍缺生产 Run caller。
+
+后续从 `v1.7.7` 的 `backend/ts/workers/rag/src/memory-loader.ts` 迁入 Core 查询期 memory 准备逻辑，保留 owner/group/member scope 检验、tombstone、snapshot 去重和模型版本向量加载；Core 4/4、owner-bound Host FS reader 1/1，Core 构建及新增 Host 文件定向严格类型检查通过。该 loader 不等于持久 memory 重建来源：真实 scope 枚举/授权、PG scope 状态端口和生产 Run caller 仍未装配，Python pytest 因环境没有 pytest 未运行。
 
 Web 聊天准备现将可信来源写入加密调度载荷，worker 与重建器检查来源；旧载荷在确认无活跃 Harness 租约后进入现有版本冲突状态并保留数据，不根据会话历史来源推断。隔离 PG/Redis 调度及重建回归 5/5、Python 取消对照 11/11；这些测试仍使用合成 Provider/部分上下文，生产聊天入口尚未装配。账号状态仍按 Python 的请求认证语义处理，未新增运行中按版本中断。
 
@@ -140,7 +146,7 @@ Host 定时任务目录已由 `domains` 迁至 `modules/scheduled-tasks`，真�
 
 **RAG 目标**：复用 Gugu 1.7.7 TypeScript RAG 作为 Node/Core 唯一生产检索路径，不迁移 Cython 算法到 TS，也不保留双引擎线上选择。迁移时以当前 Python/Cython 行为回归和固定质量语料为基准，接入 Node/Core 授权来源读取、派生索引存储/重建及 ACL 过滤；具体验收见依赖迁移矩阵。RAG 来源文件正文按架构说明从授权 FS 直读，DB 不保存文件正文副本。
 
-**当前 RAG 接入证据**：Core schema 17 已定义 SQLite/PostgreSQL `knowledge_index_entries` DDL，SQLite v1-v16 通过显式备份升级新增该派生表。Web Host 已增加显式 `migrate:rag-index:check/apply` 命令，可校验并认领结构兼容的旧 Python 索引表；隔离 PostgreSQL 行为尚未验收/执行，不能称生产数据库已升级。project、calendar、note、scheduled_task、conversation 及 canvas 来源可复用 Core 业务读取服务，但仍未接 Node 生产重建调度；memory、knowledge、file 仍依赖授权 FS/领域服务。`search_conversations` 已有临时 SQLite 工具边界回归，通过 Host 搜索适配器与真实注册器验证 owner 注入、群聊过滤、OR/AND 和结果正文结构；测试使用固定 Jieba 替身。正式 Jieba 依赖、生产向量与 embedding 注入、可信 scope 授权、Node 重建消费者以及到生产 Agent Run 的真实调用链仍未完成。不得按 schema、worker 工厂或工具注册代码将 RAG/search 标为完成。
+**当前 RAG 接入证据**：Core schema 17 已定义 SQLite/PostgreSQL `knowledge_index_entries` DDL，SQLite v1-v16 通过显式备份迁移升级新增该派生表。Web Host 有显式 `migrate:rag-index:check/apply` 命令，启动入口只在迁移返回 `applied` 后运行 Node 单消费者和六个 Core 领域来源加 knowledge 的后台重建 Worker；knowledge 使用 `@gugu/fs/node` owner-bound reader，memory 未作为持久 Worker 来源启用。迁移未应用或检查不可用时 Worker 关闭，检查状态使用脱敏日志，Host 其他服务继续运行。隔离 PostgreSQL 行为尚未验收/执行，不能称生产数据库已升级。正式 Jieba `@node-rs/jieba@2.0.1` 已加入 Host 并装配包内词典；Host 会话工具测试以真实 Jieba 经注册器执行。`v1.7.7` 查询期 memory loader 和 SQL scope revision/tombstone reader 已迁入 Core，Host 有 owner-bound FS reader；scope 枚举/授权与撤权服务、生产 Run caller 仍缺。file 自动索引按 2.0 决策退役。可信 scope 授权、生产向量与 embedding 注入以及到生产 Agent Run 的真实调用链仍未完成。不得按 schema、Worker 工厂、启动钩子或工具注册代码将 RAG/search 标为完成。
 
 - [ ] 会话/消息/附件引用、Canonical 历史与顺序规则。
 - [ ] 待发消息队列按架构说明收敛为 Core 共用规则与存储/通知契约；Web 接入 PostgreSQL 和所需跨进程事件，桌面接入 SQLite、本地 Run 生命周期和 IPC 通知，不依赖 Redis。以现有 Python 队列与 pytest 为行为基线，分别验收消息顺序、认领冲突、停止后排队消息、通知丢失重读、重启恢复和发送结果未知时防重复；当前 Web PostgreSQL 部分实现不等于桌面或共享队列已完成。Steer 和跨设备同步另行设计。
@@ -188,13 +194,15 @@ Host 定时任务目录已由 `domains` 迁至 `modules/scheduled-tasks`，真�
 
 ### N4——桌面产品化与发行准备
 
-**桌面首批实际入口（2026-11-15）**：当前桌面验证工作台已调用项目和联系人列表、创建及名称编辑；项目重命名与联系人删除经具名 Preload/IPC、Core 命令及正式 SQLite 接通，并使用操作收据。日历已有列表/创建，便签已有 Markdown 创建/列表/版本更新/软删除；本轮 CoreHost/Preload 定向 26/26、工作台组件 9/9。未验收真实 Electron 窗口、跨平台制品与最终交互布局。日历编辑/删除、画布、偏好和引导尚未由该界面接通；Mind Undo IPC 已有独立接线，但不代表桌面正向画布编辑可用。文件授权根、相对路径身份和恢复仍待落实，不能用 Web 文件 ID 替代。
+**桌面首批实际入口（2026-11-15）**：当前桌面验证工作台已调用项目和联系人列表、创建及名称编辑，日历列表/创建/编辑/删除，便签增删改和画布基本便签/位置操作，并使用正式 SQLite、操作收据及适用的 Undo/Redo。外观偏好现由工作台加载与更新；Core 窄服务复用 `user_preferences` 正式 SQLite 仓储和 schema 17 owner 约束，只开放主题模式、Aero/Mono 样式、Ink/Cafe/Terra/Harbor/Grove 配色，不触发回复风格文本迁移。引导状态现可通过具名 IPC 由工作台读取并显示，但不提供进度写入、重开或完整引导界面；现有普通状态更新不接受 `enabled`，重开操作也不启用默认关闭的引导，需先明确桌面引导语义。devserver 本轮 CoreHost/Preload 定向 30/30、工作台组件 13/13，桌面与 Web 类型检查通过。真实 Electron 窗口与跨平台制品、完整空间画布 UI、引用/关系编辑、桌面 FS 授权根与旧库升级仍待验收；现有 `packages/fs` 只有受根目录限制的普通文件读取及文件暂存/恢复原语，Web Host 将其用于文件读取/回收清理，Core 工具依赖 Host 注入，桌面尚无调用方。它没有覆盖授权根授予/撤销、目录枚举、直接写入与原子替换，也不能替代 Web 文件库的 ID/元数据服务；不得用 Web 文件 ID 替代桌面路径身份。
 
 联系人名称编辑与删除现由工作台经具名 Preload/IPC 调用 Core `clients.update`、`clients.delete`，使用正式 SQLite 和操作收据；删除按 owner 限定，确认前不写入，删除后刷新列表。devserver CoreHost/Preload 定向 26/26，真实 Worker/SQLite 删除及重启后不可见回归通过，工作台组件 9/9，桌面和 Web 类型检查通过。联系人名称以外字段、真实 Electron 窗口及跨平台制品尚未验收。
 
 桌面日历已由工作台调用具名 Preload/IPC，接入 Core 列表与创建命令、正式 SQLite 读写和持久操作回执；创建同事务写入活动、RAG 索引任务及 Undo。devserver Core 构建通过，Core SQLite 合同 2/2、桌面 CoreHost 经真实 Worker 创建/列表/重启恢复 1/1、CoreHost/preload 23/23、工作台组件 6/6；隔离 PostgreSQL 用例未配置而跳过。桌面创建目前仅暴露标题和日期，编辑/删除、日历视图及真实 Electron 窗口未验收；版本升级由既有正式 schema 初始化/升级负责，仍需验证旧库迁移。项目/联系人与日历真实 SQLite 接入不代表笔记、画布、偏好和引导已由该界面接通。
 
 桌面便签现已接通 Markdown 创建、列表、版本更新和软删除：Core 复用正式 SQLite 适配，写入借用外层事务并与 Undo、操作回执原子提交；桌面 IPC 受能力协商与字段白名单约束。devserver Core 构建通过，真实 Worker/SQLite 创建、更新版本冲突、软删除、重启恢复及 Undo 恢复回归通过，工作台组件 9/9（含删除确认、取消不写入、确认后刷新和撤销恢复）。桌面/Web 类型检查通过。未验收旧库升级、真实 Electron 窗口及完整渲染交互；便签尚无画布操作入口。
+
+桌面外观设置已由工作台复用 `useTheme`，通过窄字段 Preload/IPC 写入 Core 正式 SQLite 偏好文档；读写只处理主题、样式和配色，保留其他历史偏好键，更新与操作收据同事务提交。CoreHost 定向测试覆盖字段拒绝、旧字段保留及重启恢复；工作台测试覆盖 IPC 更新与重启后界面恢复。引导状态已由正式 SQLite 仓储经只读 IPC 接入并展示；状态写入、启用/重开语义与完整引导 UI 仍未接通。
 
 - [ ] 按架构说明设计并接入用户可控的桌面埋点采集和批量上传：可用 SQLite 实现受容量和保留时间限制的离线队列，上传故障不阻塞主流程；验证授权、关闭后停止上传、敏感字段排除和自部署目标配置。SaaS 接收、聚合与控制台在独立仓库规划，不以此要求实现桌面 Admin API。
 
@@ -227,7 +235,7 @@ Host 定时任务目录已由 `domains` 迁至 `modules/scheduled-tasks`，真�
 ### N5——收敛与发行
 
 - [ ] 当前 N2 继续在 `apps/web/` 维护 Linux/NAS Admin 独立入口；桌面和移动端不提供 Admin 页面，分别使用端侧设置与状态界面。未来 SaaS 控制台开始实施且功能、权限、发布及仓库边界明确后，再评估提取 `apps/admin/` 或独立私有控制台；该拆分不是当前 N2 或桌面可运行版本的前置条件。复用界面须以各 Host 的管理员认证和服务端授权为前提。
-- [ ] 建立独立 `packages/fs/` 和 `packages/sandbox/`，迁移现有 Web Host 文件能力及 Core Executor 的可复用部分；Host 负责可信身份、授权根目录、执行后端与能力注入。现有部分实现不等于两包完成。
+- [ ] 补齐 `packages/fs/` 的授权根授予/撤销、目录枚举、受控写入、原子替换与恢复能力，并建立独立 `packages/sandbox/`、迁移 Web Host 文件能力及 Core Executor 的可复用部分；Host 负责可信身份、授权根目录、执行后端与能力注入。当前 FS 包只有读取及暂存/恢复原语，尚无桌面调用方，不能记为端侧 FS 完成。
 - [ ] 完成 FS 授权边界、直接读写、原子写入与恢复验收；Linux MXC 须完成多用户、进程、资源和网络隔离验收后才能启用。
 
 - [ ] 按架构说明将 Vue 前端、Node Web Host、Electron Host 和共享 Core 迁入 `apps/web/`、`apps/web-host/`、`apps/desktop/`、`packages/core/`；目录搬迁与业务重写分开，更新 workspace、构建/部署、CI、测试清单和文档路径。
@@ -410,7 +418,7 @@ CI 若按 `unit`、`ipc`、`postgres`、`parity` 分片，不能再额外执行�
 
 Core 新增会话重建来源，复用旧版 baseline/角色过滤、摘要/消息投影、相邻上下文和群聊 scope；临时 SQLite 测试通过既有持久 Worker 写入正式索引表。对应 Core 会话/RAG 文件 **41/41 通过**，来源严格类型检查通过；Python pytest 未能运行（devserver 当前没有 pytest）。生产 Node 调度、可信 scope 来源、正式 Jieba/向量装配、PG 回归及 Agent Run 接通仍未完成，因此 `search_conversations` 仍不是生产完成。实现与未验收边界见[工具行为迁移清单](../testing/node-agent-tools-parity.md#会话索引来源与持久-worker-写入2026-11-15)。
 
-Host RAG 单消费者调度器已新增，并经临时 SQLite 的真实队列、Core Worker 与正式索引表验证 **5/5 通过**；启动排空、串行、不重叠、错误重试、取消停止和禁用路径均有回归。尚未接入 `main.ts`，也没有 PostgreSQL、生产来源全量装配或 Agent Run 验收；因此当前仅为已验证的 Host 调度模块，不是生产 RAG 完成。详见[工具行为迁移清单](../testing/node-agent-tools-parity.md#host-rag-重建调度器2026-11-15)。
+Host RAG 单消费者调度器已接入 `main.ts` 的迁移状态门控，并经临时 SQLite 的真实队列、Core Worker 与正式索引表验证；首次部署还会为无既有索引/任务的来源建立基线队列。此次新增基线幂等与真实索引 `search_conversations` 后，Host 两个定向测试文件为 **9/9 通过**。正式 PostgreSQL/生产凭据和 Agent Run 真实资源装配仍待验收；详见[工具行为迁移清单](../testing/node-agent-tools-parity.md#首次-rag-索引基线与持久会话工具2026-11-15)。
 
 
 链接按钮新增安全校验及可信投递端口原型；实际平台投递、持久恢复及Host装配未完成，仍记依赖阻塞。Node专项1项、Python基准49项通过，详见工具行为清单。
